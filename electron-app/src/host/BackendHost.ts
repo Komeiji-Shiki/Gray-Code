@@ -67,6 +67,7 @@ import {
   __resolveToast,
   Uri
 } from '../vscode-shim.js';
+import { menuLabel } from '../menu-i18n.js';
 
 const log = Logger.get('BackendHost');
 
@@ -83,6 +84,10 @@ export interface BackendHostOptions {
   native: <T = any>(op: string, payload?: any) => Promise<T>;
   /** Called when the backend wants to open a diff preview in the renderer. */
   onOpenDiffPreview: (payload: any) => void;
+  /** 渲染层上报 UI 语言切换后回调（主进程据此重建应用菜单文案）。 */
+  onMenuLanguageChange?: (lang: string) => void;
+  /** 系统 locale（如 app.getLocale()），用于界面语言为 auto/未配置时的文案回退。 */
+  systemLocale?: () => string;
 }
 
 export class BackendHost {
@@ -112,6 +117,16 @@ export class BackendHost {
   /** 子代理 Monitor 内嵌面板桥（事件推送 + monitor 协议消息处理） */
   private subAgentMonitorBridge?: SubAgentMonitorBridge;
   private messageHandlingQueue: Promise<void> = Promise.resolve();
+  /**
+   * 开场动画（Splash）完成信号：渲染层在动画淡出后（或用户关闭动画时立即）上报。
+   * 「未打开工作区」/首启欢迎等启动提示必须等该信号再弹，避免弹窗盖在动画上。
+   */
+  private splashDoneReceived = false;
+  /** 等待 splashDone 期间积压的提示队列（到达 splashDone/超时后统一补发） */
+  private pendingAfterSplash: Array<() => void> = [];
+  /** splashDone 兜底超时：渲染层异常未上报时也要保证提示最终可见 */
+  private splashWaitTimer: NodeJS.Timeout | null = null;
+  private static readonly SPLASH_WAIT_TIMEOUT_MS = 20_000;
   /**
    * settingsManager 就绪信号：initialize 第一步完成后 resolve。
    * getSettings 快速通道（Splash ready 信号）只等这个信号，不等完整 initPromise；
@@ -812,17 +827,35 @@ export class BackendHost {
     if (type === 'webviewReady') {
       this.postToRenderer('response', requestId || 'webviewReady', { success: true });
       // If no workspace is open (e.g. a previously saved folder was deleted),
-      // surface a hint now that the renderer is listening.
+      // surface a hint - but only after the intro animation (Splash) finishes:
+      // the renderer reports splashDone when the animation is done (or when the
+      // animation is disabled), so the toast never overlaps the animation.
       const folders = vscode.workspace.workspaceFolders;
       if (!folders || folders.length === 0) {
-        this.postToRenderer('command', 'host.noWorkspace', {
-          title: 'Workspace',
-          message: 'No workspace folder is open. Use File > Open Workspace Folder... to get started.'
-        });
+        this.postWhenSplashDone(() => this.maybeShowNoWorkspaceToast());
       }
       // First-run onboarding: if no channel has a real API key configured yet,
       // nudge the user to set one up (the backend seeds a placeholder default).
       this.checkFirstRunOnboarding();
+      return;
+    }
+
+    // 开场动画完成信号（渲染层在 Splash 淡出后 / 动画关闭时上报）：
+    // 放行积压的启动提示（未打开工作区等），保证提示在动画结束后才出现。
+    if (type === 'splashDone') {
+      this.postToRenderer('response', requestId || 'splashDone', { success: true });
+      this.flushPendingAfterSplash();
+      return;
+    }
+
+    // 渲染层 UI 语言生效（含 auto 解析后）上报：主进程重建应用菜单文案。
+    if (type === 'app.setMenuLanguage') {
+      this.postToRenderer('response', requestId || 'app.setMenuLanguage', { success: true });
+      try {
+        this.options.onMenuLanguageChange?.(typeof data?.lang === 'string' ? data.lang : '');
+      } catch (err) {
+        console.error('[BackendHost] menu language change callback error:', err);
+      }
       return;
     }
 
@@ -924,6 +957,7 @@ export class BackendHost {
    * First-run onboarding: when no channel has a real API key yet, push a
    * welcome command so the renderer can guide the user to configure one.
    * 只显示一次：标记持久化到 globalState，重启/重复握手不再弹出。
+   * 弹窗同样等开场动画结束（postWhenSplashDone），避免盖在动画上。
    */
   private checkFirstRunOnboarding(): void {
     void (async () => {
@@ -942,14 +976,108 @@ export class BackendHost {
           await this.context.globalState.update('graycode.onboardingSeen', true);
           return;
         }
-        this.postToRenderer('command', 'host.firstRun', {
-          message: 'Welcome to GrayCode Desktop! Configure an API channel to start chatting with AI.'
+        const message = menuLabel('firstRunMessage', this.resolveToastLanguage());
+        this.postWhenSplashDone(() => {
+          this.postToRenderer('command', 'host.firstRun', {
+            title: menuLabel('firstRunTitle', this.resolveToastLanguage()),
+            message,
+            openSettingsLabel: menuLabel('openSettingsBtn', this.resolveToastLanguage()),
+            openFolderLabel: menuLabel('openFolderBtn', this.resolveToastLanguage())
+          });
         });
         await this.context.globalState.update('graycode.onboardingSeen', true);
       } catch (err) {
         console.error('[BackendHost] first-run check failed:', err);
       }
     })();
+  }
+
+  /**
+   * 开场动画门控：动画未结束时把 fn 积压到 splashDone 到达后补发；
+   * 超时（渲染层异常未上报）则按可见性兜底直接放行。
+   */
+  private postWhenSplashDone(fn: () => void): void {
+    if (this.splashDoneReceived) {
+      try {
+        fn();
+      } catch (err) {
+        console.error('[BackendHost] splash-gated toast failed:', err);
+      }
+      return;
+    }
+    this.pendingAfterSplash.push(fn);
+    if (this.splashWaitTimer === null) {
+      this.splashWaitTimer = setTimeout(() => {
+        this.flushPendingAfterSplash();
+      }, BackendHost.SPLASH_WAIT_TIMEOUT_MS);
+    }
+  }
+
+  private flushPendingAfterSplash(): void {
+    if (this.splashWaitTimer !== null) {
+      clearTimeout(this.splashWaitTimer);
+      this.splashWaitTimer = null;
+    }
+    if (this.splashDoneReceived && this.pendingAfterSplash.length === 0) return;
+    this.splashDoneReceived = true;
+    const queue = this.pendingAfterSplash.splice(0);
+    for (const fn of queue) {
+      try {
+        fn();
+      } catch (err) {
+        console.error('[BackendHost] splash-gated toast failed:', err);
+      }
+    }
+  }
+
+  /** 启动提示文案语言：设置项优先，auto/未配置时回退主进程注入的系统 locale */
+  private resolveToastLanguage(): string {
+    try {
+      const language = this.settingsManager.getSettings()?.ui?.language;
+      if (language && language !== 'auto') return language;
+    } catch {
+      // settings 尚未就绪/损坏：回退系统 locale
+    }
+    try {
+      return this.options.systemLocale?.() ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  /** 工作区行为（启动恢复策略）：'restore'（恢复上次）/ 'none'（不打开任何工作区） */
+  getWorkspaceBehavior(): 'restore' | 'none' {
+    try {
+      const behavior = this.settingsManager.getSettings()?.ui?.workspaceBehavior;
+      if (behavior === 'none' || behavior === 'restore') return behavior;
+    } catch {
+      // 设置未就绪：按默认恢复策略处理
+    }
+    return 'restore';
+  }
+
+  /**
+   * 「未打开工作区」启动提示：
+   * - 工作区行为为 'none' 时不提示（用户显式选择不打开）
+   * - 发送时重查工作区列表：主进程的启动恢复（setWorkspaceFolders）可能已先行完成，
+   *   此时不应再提示
+   * - 文案按当前界面语言本地化
+   */
+  private maybeShowNoWorkspaceToast(): void {
+    try {
+      const behavior = this.getWorkspaceBehavior();
+      if (behavior === 'none') return;
+    } catch {
+      // 设置读取失败：按默认行为继续
+    }
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length > 0) return;
+    const lang = this.resolveToastLanguage();
+    this.postToRenderer('command', 'host.noWorkspace', {
+      title: menuLabel('noWorkspaceTitle', lang),
+      message: menuLabel('noWorkspaceMessage', lang),
+      openFolderLabel: menuLabel('openFolderBtn', lang)
+    });
   }
 
   private async routeMessage(message: any): Promise<void> {

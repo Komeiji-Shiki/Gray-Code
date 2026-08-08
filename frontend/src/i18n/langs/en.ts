@@ -2207,6 +2207,12 @@ const en: LanguageMessages = {
                     autoDescription: 'Auto follow VS Code language settings',
                     followSystem: 'Follow system'
                 },
+                workspaceBehavior: {
+                    title: 'Workspace Behavior',
+                    description: 'Choose how to handle the last opened workspace on startup',
+                    optionRestore: 'Reopen the workspace from the last session',
+                    optionNone: "Don't open any workspace"
+                },
                 appInfo: {
                     title: 'Application Info',
                     name: '{appName} - Vibe Coding Assistant',

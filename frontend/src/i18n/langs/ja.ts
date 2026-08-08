@@ -2207,6 +2207,12 @@ const ja: LanguageMessages = {
                     autoDescription: 'VS Code の言語設定に自動的に従う',
                     followSystem: 'システム設定に従う'
                 },
+                workspaceBehavior: {
+                    title: 'ワークスペースの動作',
+                    description: '起動時に最後に開いたワークスペースをどう扱うかを選択します',
+                    optionRestore: '前回終了時に開いていたワークスペースを開く',
+                    optionNone: 'ワークスペースを開かない'
+                },
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: '{appName} - Vibe Coding アシスタント',

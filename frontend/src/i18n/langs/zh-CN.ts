@@ -2208,6 +2208,12 @@ const zhCN = {
                     autoDescription: '自动跟随 VS Code 语言设置',
                     followSystem: '跟随系统'
                 },
+                workspaceBehavior: {
+                    title: '工作区行为',
+                    description: '选择启动时如何处理上次打开的工作区',
+                    optionRestore: '打开关闭界面时的工作区',
+                    optionNone: '不打开任何工作区'
+                },
                 appInfo: {
                     title: '应用信息',
                     name: '{appName} - Vibe Coding 助手',

@@ -10,6 +10,32 @@
 
 （暂无未发布改动）
 
+## [1.7.6] - 2026-08-09
+
+### Fixed
+  - **「未打开工作区」提示不再抢在开场动画之前弹出**：
+    - 根因：`webviewReady` 握手（BackendHost）与工作区恢复失败路径（main.ts）都在渲染层就绪瞬间发送 `host.noWorkspace` 命令，早于 Splash 动画结束，toast 直接盖在开场动画上；
+    - 修复：渲染层在动画淡出后（或用户关闭动画时立即）上报 `splashDone` 信号，BackendHost 将「未打开工作区」/首启欢迎提示积压到该信号到达后再发送（20s 超时兜底，渲染层异常也不会丢提示）；发送时重查工作区列表，避免恢复路径已完成时误提示；main.ts 恢复失败路径不再重复发送（与握手路径去重）；
+    - 提示文案同时本地化（zh-CN / en / ja，跟随界面语言）。
+  - **工作区恢复失效回归（1.7.5 懒加载引入）**：1.7.5 启动提速把 `createBackend` 改为动态懒加载，但「恢复上次工作区」仍放在 `createWindow` 内执行——此时 `backendHost` 还是 null，恢复被静默跳过（实测启动后工作区列表为空、且必弹「未打开工作区」提示）。修复：恢复逻辑抽为 `restoreWorkspace()`，改在 BackendHost 就绪后（`createBackend` 的懒加载回调内）执行，恢复只跑一次且早于渲染层 splashDone，不会再出现「恢复已完成却仍提示」的时序问题。
+  - **文件夹选择对话框暴露 i18n 键名 `dialogs.selectFolder`**：`WorkspaceHandlers.openWorkspaceFolder` 的 `showOpenDialog` 传参把 `t('dialogs.selectFolder')` 写成了缺 `webview.` 前缀的键，缺失回退直接返回键名字面量，标题/按钮上显示原始 key；已修正为 `t('webview.dialogs.selectFolder')` / `t('webview.dialogs.openWorkspaceFolder')`（与 StoragePathHandlers 写法一致）。
+  - **应用菜单（File / Edit / View / Help）未多语言化**：Electron 原生菜单此前全部硬编码英文，无论界面语言怎么选都保持 English；现主进程引入独立小字典 `electron-app/src/menu-i18n.ts`（zh-CN / en / ja），顶层菜单与全部下拉项、File 菜单的文件夹选择对话框、About 对话框均跟随界面语言；启动时读取设置文件中的 `graycode.ui.language`（auto 回退系统 locale），语言切换时由渲染层上报 `app.setMenuLanguage` 即时重建菜单，无需重启窗口。
+  - **语言切换后部分 UI 冻结在旧语言（工作区选择器标签等）**：
+    - 根因：`t()` 有按 key 的翻译缓存，且缓存命中时短路返回、不读取响应式 `currentMessages`。组件内先求值的计算属性（如 tooltip）写入缓存后，后求值的计算属性（如 `.ws-label` 标签）首次求值走缓存短路——丢失对语言切换的响应式依赖，之后语言无论怎么切，标签都冻结在首帧语言（实测：切到 English/日本語 后「未打开工作区」仍不更新，观感如同漏译）；
+    - 修复：`t()` 在查缓存前先读取 `currentMessages`（命中缓存也建立响应式依赖；开销仅一次 computed getter，`currentMessages` 只在语言变化时重算，热路径无额外负担）；
+    - 新增回归测试（`i18nReactivity.test.ts`）：按真实组件的求值顺序（tooltip 先求值写缓存 → label 后求值读缓存）复现，zh→en→ja 切换下计算属性标签必须跟随。
+  - **启动首帧语言错位（保存 English/日本語 的用户首帧看到中文）**：
+    - 根因：界面语言只在 `getSettings` 往返完成后（`languageLoaded`）才应用，此前渲染层按默认/auto 语言渲染首帧（工作区选择器、欢迎面板等）；
+    - 修复：`i18n` 模块启动时从 localStorage（`gc-ui-language`，语言成功应用时写入）同步恢复界面语言——首帧即用已保存语言渲染，与 `gc-splash-disabled` 同模式，零异步开销、不影响启动速度。
+
+### Added
+  - **设置页「通用」新增「工作区行为」**（`ui.workspaceBehavior`，默认 `restore`）：
+    - `restore`（默认，保持原行为）：启动时自动打开上次关闭界面时打开的工作区；
+    - `none`：启动时不打开任何工作区（跳过恢复，也不再弹出「未打开工作区」启动提示）。
+
+### Performance
+  - 本批次未触碰启动路径的热点代码：菜单语言解析为设置文件单次同步读取 + 渲染层一条轻量 IPC；`splashDone` 为渲染层单向上报信号（宿主回 success 应答但不被渲染层 await），不影响启动流水线（实测窗口出现/后端就绪时长与 1.7.5 一致）。
+
 ## [1.7.5] - 2026-08-08
 
 ### Fixed

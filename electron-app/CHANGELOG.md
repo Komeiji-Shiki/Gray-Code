@@ -12,6 +12,21 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.6] - 2026-08-09
+
+### Fixed
+  - **「未打开工作区」提示在开场动画播完之前弹出**：toast 改由渲染层 `splashDone` 信号门控（BackendHost 积压待发，20s 超时兜底）；main.ts 工作区恢复失败路径不再重复发送（与 webviewReady 握手路径去重，此前两条路径会双弹）；提示文案本地化（zh-CN / en / ja）。
+  - **工作区恢复失效回归（1.7.5 懒加载引入）**：`createBackend` 改为动态 import 后 `createWindow` 执行时 `backendHost` 仍为 null，原「恢复上次工作区」逻辑被静默跳过；恢复逻辑抽为模块级 `restoreWorkspace()`，在 BackendHost 就绪后（懒加载回调内）执行（详见根目录 CHANGELOG [1.7.6]）。
+  - **文件夹选择对话框暴露 `dialogs.selectFolder` 键名**：`WorkspaceHandlers.openWorkspaceFolder` 的 showOpenDialog 键缺 `webview.` 前缀，缺失回退把键名字面量显示到标题/按钮上；已修正（详见根目录 CHANGELOG [1.7.6]）。
+  - **应用菜单未多语言化**：新增 `electron-app/src/menu-i18n.ts` 独立小字典（zh-CN / en / ja，不引入 backend 语言包以保住主进程壳体积），File / Edit / View / Help 及全部下拉项、文件夹选择对话框、About 对话框随界面语言；启动读设置文件 `graycode.ui.language`（auto 回退 `app.getLocale()`），语言切换经渲染层 `app.setMenuLanguage` 消息即时重建菜单（BackendHost → main.ts `onMenuLanguageChange`）。
+  - **语言切换后部分 UI 冻结在旧语言 / 启动首帧语言错位**（渲染层 i18n）：`t()` 缓存短路导致计算属性丢失语言响应式依赖（工作区选择器标签等冻结在首帧语言）；界面语言改为 localStorage 同步恢复（首帧即用已保存语言）。详见根目录 CHANGELOG [1.7.6]。
+
+### Added
+  - **设置页「通用」新增「工作区行为」**（`ui.workspaceBehavior`：`restore` 默认 / `none`）：`none` 时主进程跳过工作区恢复，BackendHost 不再弹「未打开工作区」启动提示。
+
+### Performance
+  - 未改动启动热点：菜单语言为启动时单次读 JSON + 一条轻量 IPC；`splashDone` 为渲染层单向上报信号（宿主回 success 应答但不被渲染层 await，不阻塞任何启动流水线）；无新增同步阻塞（窗口出现/后端就绪与 1.7.5 持平）。
+
 ## [1.7.5] - 2026-08-08
 
 ### Performance

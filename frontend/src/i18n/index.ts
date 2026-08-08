@@ -35,6 +35,41 @@ const messages: Record<string, LanguageMessages> = {
 const currentLanguage = ref<SupportedLanguage>('auto');
 
 /**
+ * 界面语言持久化缓存（localStorage）。
+ *
+ * 启动即恢复上次界面语言：getSettings 往返（可能数百 ms）完成前，渲染层
+ * 首帧就会用当前语言渲染（工作区选择器/欢迎面板等）。若等 getSettings 回来
+ * 才 setLanguage，已保存「English」的用户会在首帧看到中文界面——与
+ * gc-splash-disabled（settingsStore）同一模式的同步缓存，零异步开销。
+ */
+const UI_LANGUAGE_CACHE_KEY = 'gc-ui-language';
+
+const CACHED_LANGUAGES: ReadonlySet<string> = new Set(['auto', 'zh-CN', 'en', 'ja']);
+
+function restoreCachedLanguage(): void {
+  try {
+    const cached = localStorage.getItem(UI_LANGUAGE_CACHE_KEY);
+    if (cached && CACHED_LANGUAGES.has(cached)) {
+      currentLanguage.value = cached as SupportedLanguage;
+    }
+  } catch {
+    // localStorage 不可用（受限环境/测试）：保持默认 auto
+  }
+}
+restoreCachedLanguage();
+
+/**
+ * 保存当前界面语言到缓存（语言成功应用后调用，与设置持久化同步）。
+ */
+export function persistUILanguage(lang: SupportedLanguage): void {
+  try {
+    localStorage.setItem(UI_LANGUAGE_CACHE_KEY, lang);
+  } catch {
+    // 同上：不可用时静默跳过
+  }
+}
+
+/**
  * VS Code 检测到的语言
  */
 const detectedLanguage = ref<string>(
@@ -94,6 +129,7 @@ export function setLanguage(lang: SupportedLanguage) {
     if (typeof document !== 'undefined') {
         document.documentElement.lang = actualLanguage.value;
     }
+    persistUILanguage(lang);
 }
 
 /**
@@ -124,6 +160,12 @@ export function setDetectedLanguage(lang: string) {
  * 支持参数替换：t('message.error', { count: 5 })
  */
 export function t(key: string, params?: Record<string, any>): string {
+    // 先触碰响应式依赖：即使命中缓存也必须读取 currentMessages，
+    // 否则计算属性首次求值若走缓存短路，会丢失对语言切换的响应式依赖——
+    // 之后无论语言怎么切，该计算属性（如工作区选择器的标签）都不会再更新
+    // （缓存值不断变化但 UI 冻结在首帧语言）。读取开销为一次 computed getter，
+    // currentMessages 只在语言变化时重算，热路径无额外负担。
+    const msgs = currentMessages.value;
     // 无参数调用直接查缓存（命中即返回，跳过 split + 逐层属性访问）
     if (!params) {
         const cached = translationCache.get(key);
@@ -131,7 +173,7 @@ export function t(key: string, params?: Record<string, any>): string {
     }
 
     const keys = key.split('.');
-    let result: any = currentMessages.value;
+    let result: any = msgs;
     
     for (const k of keys) {
         if (result && typeof result === 'object' && k in result) {

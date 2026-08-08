@@ -15,6 +15,7 @@ import * as fs from 'fs';
 // 此处仅保留类型导入（编译期擦除，不产生运行时依赖）。
 import type { BackendHost } from './host/BackendHost.js';
 import { runNative, setPickWorkspaceHandler, setOpenWorkspaceHandler } from './native';
+import { menuLabel, resolveMenuLang, type MenuLang } from './menu-i18n.js';
 import { Logger, LogLevel } from '../../backend/core/logger';
 // esbuild 把 vscode-shim 打成独立共享包（dist/vscode-shim.js，主进程壳与 BackendHost 共用同一实例）；
 // 此处的具名导入会被静态解析，不能使用 require('./vscode-shim')（打包产物中不存在该独立文件，
@@ -237,8 +238,8 @@ async function pickWorkspaceFolder(): Promise<void> {
   // 窗口可能已销毁（关闭竞态）：isDestroyed 的窗口传给 dialog 会抛 "Object has been destroyed"
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open Workspace Folder',
-    buttonLabel: 'Choose Folder',
+    title: menuLabel('pickFolderTitle', currentMenuLang),
+    buttonLabel: menuLabel('pickFolderButton', currentMenuLang),
     properties: ['openDirectory']
   });
   if (!result.canceled && result.filePaths.length > 0) {
@@ -562,8 +563,16 @@ function createBackend(): void {
             data: payload
           });
         }
-      }
+      },
+      // 渲染层 UI 语言生效后重建应用菜单（含 auto 解析后的实际语言）
+      onMenuLanguageChange: (lang) => rebuildMenu(lang),
+      // 界面语言为 auto/未配置时的系统 locale 回退（app.getLocale）
+      systemLocale: () => app.getLocale()
     });
+
+    // 工作区恢复必须在 backendHost 就绪后执行（懒加载就绪前 createWindow 里
+    // backendHost 仍为 null，放这里保证恢复只跑一次、且早于渲染层 splashDone）。
+    restoreWorkspace();
 
     // 补投懒加载窗口期内到达的渲染层消息（窗口可能在 BackendHost 就绪前完成加载）
     const queued = pendingRendererMessages.splice(0);
@@ -609,78 +618,155 @@ ipcMain.on('graycode:renderer-to-backend', (event, message: any) => {
 // Window + menu
 // ============================================================================
 
-function buildMenu(): void {
+/** 当前菜单语言（buildMenu 时写入，供 pickWorkspaceFolder 等对话框复用） */
+let currentMenuLang: MenuLang = 'en';
+
+/**
+ * 读取设置文件里的界面语言（启动时后端尚未就绪，直接读 vscode-config.json）。
+ * 设置文件不存在/损坏时返回空串，由调用方回退系统 locale。
+ */
+function readUiLanguageFromDisk(): string {
+  try {
+    const file = path.join(app.getPath('userData'), 'graycode', 'settings', 'vscode-config.json');
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const lang = raw?.graycode?.ui?.language;
+    if (typeof lang === 'string' && lang) return lang;
+  } catch {
+    // 首次启动或设置文件尚未写入：回退系统 locale
+  }
+  return '';
+}
+
+/** 解析当前界面语言：设置项优先，'auto'/未配置时跟随系统 locale */
+function resolveUiLanguage(): MenuLang {
+  const saved = readUiLanguageFromDisk();
+  if (saved && saved !== 'auto') return resolveMenuLang(saved);
+  return resolveMenuLang(app.getLocale());
+}
+
+/** 渲染层上报语言变更后重建菜单（更新菜单文案，不重启窗口） */
+function rebuildMenu(lang: string): void {
+  buildMenu(lang);
+}
+
+function buildMenu(lang?: string): void {
+  const L = resolveMenuLang(lang || currentMenuLang);
+  currentMenuLang = L;
   const isMac = process.platform === 'darwin';
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac ? [{ role: 'appMenu' as const }] : []),
     {
-      label: 'File',
+      label: menuLabel('menuFile', L),
       submenu: [
         {
-          label: 'Open Workspace Folder...',
+          label: menuLabel('openWorkspaceFolder', L),
           accelerator: 'CmdOrCtrl+O',
           click: () => void pickWorkspaceFolder()
         },
         { type: 'separator' },
-        { role: 'reload', label: 'Reload' },
-        { role: 'forceReload', label: 'Force Reload' },
-        ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const, label: 'Exit' }])
+        { role: 'reload', label: menuLabel('reload', L) },
+        { role: 'forceReload', label: menuLabel('forceReload', L) },
+        ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const, label: menuLabel('exit', L) }])
       ]
     },
     {
-      label: 'Edit',
+      label: menuLabel('menuEdit', L),
       submenu: [
-        { role: 'undo', label: 'Undo' },
-        { role: 'redo', label: 'Redo' },
+        { role: 'undo', label: menuLabel('undo', L) },
+        { role: 'redo', label: menuLabel('redo', L) },
         { type: 'separator' },
-        { role: 'cut', label: 'Cut' },
-        { role: 'copy', label: 'Copy' },
-        { role: 'paste', label: 'Paste' },
-        { role: 'selectAll', label: 'Select All' }
+        { role: 'cut', label: menuLabel('cut', L) },
+        { role: 'copy', label: menuLabel('copy', L) },
+        { role: 'paste', label: menuLabel('paste', L) },
+        { role: 'selectAll', label: menuLabel('selectAll', L) }
       ]
     },
     {
-      label: 'View',
+      label: menuLabel('menuView', L),
       submenu: [
-        { role: 'togglefullscreen', label: 'Toggle Full Screen' },
+        { role: 'togglefullscreen', label: menuLabel('toggleFullScreen', L) },
         { type: 'separator' },
-        { role: 'toggleDevTools', label: 'Developer Tools' }
+        { role: 'toggleDevTools', label: menuLabel('developerTools', L) }
       ]
     },
     {
-      label: 'Help',
+      label: menuLabel('menuHelp', L),
       submenu: [
         {
-          label: 'About GrayCode Desktop',
+          label: menuLabel('about', L),
           click: () => {
             // macOS 关闭全部窗口后 mainWindow 为 null / 已销毁：退化为无父窗口对话框
             // （与 native.ts 的 usableWindow 模式一致，避免 mainWindow! 抛 TypeError 崩溃）
             const w = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-            void (w
-              ? dialog.showMessageBox(w, {
-                type: 'info',
-                title: 'About',
-                message: 'GrayCode Desktop',
-                detail:
-                  `GrayCode AI coding assistant (standalone desktop edition)\n` +
-                  `Based on GrayCode v${readRootVersion()}\n` +
-                  `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`
-              })
-              : dialog.showMessageBox({
-                type: 'info',
-                title: 'About',
-                message: 'GrayCode Desktop',
-                detail:
-                  `GrayCode AI coding assistant (standalone desktop edition)\n` +
-                  `Based on GrayCode v${readRootVersion()}\n` +
-                  `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`
-              }));
+            const detail = menuLabel('aboutDetail', L)
+              .replace('{version}', readRootVersion())
+              .replace('{electron}', process.versions.electron)
+              .replace('{chromium}', process.versions.chrome);
+            const options: Electron.MessageBoxOptions = {
+              type: 'info',
+              title: menuLabel('aboutTitle', L),
+              message: menuLabel('aboutMessage', L),
+              detail
+            };
+            void (w ? dialog.showMessageBox(w, options) : dialog.showMessageBox(options));
           }
         }
       ]
     }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// ============================================================================
+// Workspace restore
+// ============================================================================
+
+// 注：createBackend 的懒加载意味着 createWindow 执行时 backendHost 可能还是 null，
+// 恢复必须放在 BackendHost 就绪之后（见 createBackend 内的 restoreWorkspace() 调用），
+// 放在 createWindow 内会因为 backendHost 为 null 而静默跳过。
+function restoreWorkspace(): void {
+  const host = backendHost;
+  if (!host) return;
+  void host.ready.then(() => {
+    diagLog('backend-ready');
+    // 工作区行为 'none'（不打开任何工作区）：跳过恢复，也不发「未打开工作区」提示
+    // （用户显式选择不打开，启动提示只会造成打扰；BackendHost 侧同样跳过）。
+    if (host.getWorkspaceBehavior() === 'none') {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.setTitle('GrayCode \u2014 No workspace');
+      }
+      return;
+    }
+    const folders = filterExistingFolders(loadWorkspaceState());
+    if (folders.length > 0) {
+      void setWorkspaceFolders(folders);
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitle('GrayCode \u2014 No workspace');
+      // 「未打开工作区」提示统一由 BackendHost 在渲染层开场动画结束后发送
+      // （webviewReady 握手路径，重查工作区状态 + 本地化文案 + 动画门控），
+      // 此处不再重复发送，避免与握手路径双弹。
+    }
+  }).catch((error) => {
+    // 初始化失败（如数据目录损坏、配置解析崩溃）必须可见，不能留下 unhandled rejection + 空白窗口（M-8）
+    console.error('GrayCode backend initialization failed:', error);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      void dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'GrayCode Failed to Start',
+        message: 'The backend failed to initialize.',
+        detail: String(error?.message || error),
+        buttons: ['Open Data Folder', 'Quit']
+      }).then(async ({ response }) => {
+        if (response === 0) {
+          const { shell } = await import('electron');
+          void shell.openPath(app.getPath('userData'));
+        }
+        app.quit();
+      });
+    } else {
+      app.exit(1);
+    }
+  });
 }
 
 function createWindow(): void {
@@ -939,6 +1025,14 @@ function createWindow(): void {
               chatHeader: !!document.querySelector('.chat-header'),
               title: document.title,
               bodyLen: document.body.innerText.length,
+              bodyText: document.body.innerText.slice(0, 600),
+              wsLabel: (document.querySelector('.ws-label') || {}).innerText || null,
+              wsLabelLate: await (async () => {
+                await new Promise((r) => setTimeout(r, 1500));
+                return (document.querySelector('.ws-label') || {}).innerText || null;
+              })(),
+              docLang: document.documentElement.lang,
+              langToggleLabel: (document.querySelector('.lang-toggle') || {}).innerText || null,
               welcome: !!document.querySelector('.welcome-panel'),
               topBarButtons: !!document.querySelector('.tabs-bar .lang-toggle') && !!document.querySelector('.tabs-bar .codicon-settings-gear'),
               toastShown: !!document.querySelector('.gc-toast'),
@@ -1238,47 +1332,6 @@ function createWindow(): void {
       }, 12000);
     });
   }
-
-  // restore workspace
-  // createBackend() 总在 createWindow() 之前调用，backendHost 必然已就绪；用可选链兜底
-  if (backendHost) {
-    void backendHost.ready.then(() => {
-    diagLog('backend-ready');
-    const folders = filterExistingFolders(loadWorkspaceState());
-    if (folders.length > 0) {
-      void setWorkspaceFolders(folders);
-    } else if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setTitle('GrayCode \u2014 No workspace');
-      // Let the renderer know there is no usable workspace (e.g. a previously
-      // saved folder was deleted or moved) so it can surface a hint.
-      mainWindow.webContents.send('graycode:backend-to-renderer', {
-        type: 'command',
-        command: 'host.noWorkspace',
-        data: { message: 'No workspace folder is open. Use File > Open Workspace Folder... to get started.' }
-      });
-    }
-  }).catch((error) => {
-    // 初始化失败（如数据目录损坏、配置解析崩溃）必须可见，不能留下 unhandled rejection + 空白窗口（M-8）
-    console.error('GrayCode backend initialization failed:', error);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      void dialog.showMessageBox(mainWindow, {
-        type: 'error',
-        title: 'GrayCode Failed to Start',
-        message: 'The backend failed to initialize.',
-        detail: String(error?.message || error),
-        buttons: ['Open Data Folder', 'Quit']
-      }).then(async ({ response }) => {
-        if (response === 0) {
-          const { shell } = await import('electron');
-          void shell.openPath(app.getPath('userData'));
-        }
-        app.quit();
-      });
-    } else {
-      app.exit(1);
-    }
-  });
-  }
 }
 
 // ============================================================================
@@ -1330,7 +1383,7 @@ if (gotSingleInstanceLock) {
       diagLog('when-ready');
       registerCustomProtocol();
       registerNativeOps();
-      buildMenu();
+      buildMenu(resolveUiLanguage());
       createBackend();
       createWindow();
 

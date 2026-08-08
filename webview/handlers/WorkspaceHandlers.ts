@@ -175,8 +175,8 @@ export const openWorkspaceFolder: MessageHandler = async (data, requestId, ctx) 
                 canSelectFiles: false,
                 canSelectFolders: true,
                 canSelectMany: false,
-                title: t('dialogs.openWorkspaceFolder'),
-                openLabel: t('dialogs.selectFolder')
+                title: t('webview.dialogs.openWorkspaceFolder'),
+                openLabel: t('webview.dialogs.selectFolder')
             });
             fsPath = result && result.length > 0 ? result[0].fsPath : '';
         }

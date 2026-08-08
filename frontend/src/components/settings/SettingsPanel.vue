@@ -752,6 +752,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     anchor: '[data-search-anchor="language"]'
   },
   {
+    key: 'general-workspaceBehavior', tab: 'general',
+    labelKey: 'components.settings.settingsPanel.workspaceBehavior.title',
+    keywords: ['工作区', 'workspace', 'ワークスペース', '工作区行为', '上次', '恢复', '记住', '记忆', 'restore'],
+    anchor: '[data-search-anchor="workspace-behavior"]'
+  },
+  {
     key: 'general-storage', tab: 'general',
     labelKey: 'components.settings.storageSettings.title',
     keywords: ['存储路径', 'storage', '保存先', '数据目录', '自定义路径', '迁移'],
@@ -931,6 +937,13 @@ const proxySettings = reactive({
 // 语言设置
 const languageSetting = ref<string>('auto')
 
+// 工作区行为（启动时如何处理上次打开的工作区）
+const workspaceBehavior = ref<'restore' | 'none'>('restore')
+const workspaceBehaviorOptions = computed<SelectOption[]>(() => [
+  { value: 'restore', label: t('components.settings.settingsPanel.workspaceBehavior.optionRestore') },
+  { value: 'none', label: t('components.settings.settingsPanel.workspaceBehavior.optionNone') }
+])
+
 // 是否正在保存
 const isSaving = ref(false)
 // 保存状态消息
@@ -965,6 +978,8 @@ async function loadSettings() {
       languageSetting.value = response.settings.ui.language
       setLanguage(response.settings.ui.language)
     }
+    // 加载工作区行为（默认恢复上次打开的工作区）
+    workspaceBehavior.value = response?.settings?.ui?.workspaceBehavior === 'none' ? 'none' : 'restore'
     // 加载自动更新检查开关（默认开启）
     checkUpdatesEnabled.value = response?.settings?.checkForUpdates !== false
     
@@ -1326,6 +1341,19 @@ async function updateLanguage(lang: string) {
     })
   } catch (error) {
     console.error('Failed to save language setting:', error)
+  }
+}
+
+// 保存工作区行为
+async function saveWorkspaceBehavior(value: string) {
+  const next = value === 'none' ? 'none' : 'restore'
+  workspaceBehavior.value = next
+  try {
+    await sendToExtension('updateUISettings', {
+      ui: { workspaceBehavior: next }
+    })
+  } catch (error) {
+    console.error('Failed to save workspace behavior setting:', error)
   }
 }
 
@@ -1745,6 +1773,25 @@ onMounted(() => {
                     :options="languageOptions"
                     :placeholder="t('components.settings.settingsPanel.language.placeholder')"
                     @update:model-value="updateLanguage"
+                  />
+                </div>
+              </div>
+              
+              <div class="divider"></div>
+
+              <!-- 工作区行为 -->
+              <div class="form-group" data-search-anchor="workspace-behavior">
+                <label class="group-label">
+                  <i class="codicon codicon-folder-opened"></i>
+                  {{ t('components.settings.settingsPanel.workspaceBehavior.title') }}
+                </label>
+                <p class="field-description">{{ t('components.settings.settingsPanel.workspaceBehavior.description') }}</p>
+
+                <div class="workspace-behavior-settings">
+                  <CustomSelect
+                    :model-value="workspaceBehavior"
+                    :options="workspaceBehaviorOptions"
+                    @update:model-value="saveWorkspaceBehavior"
                   />
                 </div>
               </div>

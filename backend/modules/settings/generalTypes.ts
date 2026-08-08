@@ -203,6 +203,14 @@ export interface GlobalSettings {
         language?: string;
 
         /**
+         * 工作区行为（启动时如何处理上次打开的工作区）
+         *
+         * - restore（默认）: 启动时自动打开上次关闭界面时打开的工作区
+         * - none: 启动时不打开任何工作区
+         */
+        workspaceBehavior?: 'restore' | 'none';
+
+        /**
          * 外观设置
          */
         appearance?: {
@@ -361,6 +369,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     ui: {
         theme: 'auto',
         language: 'zh-CN',
+        workspaceBehavior: 'restore',
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）
             loadingText: '',

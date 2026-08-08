@@ -210,7 +210,8 @@
     const el = document.createElement('div');
     el.className = 'gc-toast warning';
     const detail = String(payload.message || 'No workspace folder is open.');
-    el.innerHTML = `<div class="gc-toast-header"><span class="gc-toast-ico">!</span><span style="flex:1;min-width:0">${escapeHtml(payload.title || 'Workspace')}</span><button class="gc-btn" data-act="__close">×</button></div><div class="gc-toast-detail">${escapeHtml(detail)}</div><div class="gc-toast-actions" style="display:flex"><button class="gc-btn primary" data-act="open">Open Folder…</button></div>`;
+    const openLabel = String(payload.openFolderLabel || 'Open Folder...');
+    el.innerHTML = `<div class="gc-toast-header"><span class="gc-toast-ico">!</span><span style="flex:1;min-width:0">${escapeHtml(payload.title || 'Workspace')}</span><button class="gc-btn" data-act="__close">×</button></div><div class="gc-toast-detail">${escapeHtml(detail)}</div><div class="gc-toast-actions" style="display:flex"><button class="gc-btn primary" data-act="open">${escapeHtml(openLabel)}</button></div>`;
     el.addEventListener('click', (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'open') {
@@ -229,7 +230,10 @@
     const el = document.createElement('div');
     el.className = 'gc-toast info';
     const detail = String(payload.message || 'Welcome to GrayCode Desktop!');
-    el.innerHTML = `<div class="gc-toast-header"><span class="gc-toast-ico">i</span><span style="flex:1;min-width:0">Welcome to GrayCode Desktop</span><button class="gc-btn" data-act="__close">×</button></div><div class="gc-toast-detail">${escapeHtml(detail)}</div><div class="gc-toast-actions" style="display:flex"><button class="gc-btn primary" data-act="openSettings">Open Settings</button><button class="gc-btn" data-act="openFolder">Open Folder…</button></div>`;
+    const title = String(payload.title || 'Welcome to GrayCode Desktop');
+    const openSettingsLabel = String(payload.openSettingsLabel || 'Open Settings');
+    const openFolderLabel = String(payload.openFolderLabel || 'Open Folder...');
+    el.innerHTML = `<div class="gc-toast-header"><span class="gc-toast-ico">i</span><span style="flex:1;min-width:0">${escapeHtml(title)}</span><button class="gc-btn" data-act="__close">×</button></div><div class="gc-toast-detail">${escapeHtml(detail)}</div><div class="gc-toast-actions" style="display:flex"><button class="gc-btn primary" data-act="openSettings">${escapeHtml(openSettingsLabel)}</button><button class="gc-btn" data-act="openFolder">${escapeHtml(openFolderLabel)}</button></div>`;
     el.addEventListener('click', (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act === 'openSettings') {

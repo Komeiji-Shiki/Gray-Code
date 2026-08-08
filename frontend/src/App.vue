@@ -57,7 +57,7 @@ const CodeViewPanel = withLazyFallback('CodeViewPanel', () => import('./componen
 const UpdateModal = withLazyFallback('UpdateModal', () => import('./components/common/UpdateModal.vue'))
 
 // i18n
-const { t } = useI18n()
+const { t, actualLanguage } = useI18n()
 
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
 const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMonitor'
@@ -476,6 +476,22 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 // 这里只在独立桌面版按 ui.theme 设置（light/dark/auto）切换 body class。
 const isElectronHost = (window as any).__GRAYCODE_HOST === 'electron'
 
+// ============ 开场动画完成信号 + 菜单语言同步（仅 Electron 宿主） ============
+// 主进程据此延迟「未打开工作区」等启动提示（弹窗不盖在开场动画上）；
+// 语言切换时（含 auto 解析）重建原生菜单文案。VS Code 版无这些宿主能力，跳过。
+let splashNotified = false
+function notifySplashDone(): void {
+  if (splashNotified) return
+  splashNotified = true
+  if (!isElectronHost) return
+  sendToExtension('splashDone', {}).catch(() => { /* 主进程无需应答，失败无害 */ })
+}
+watch(splashDone, (done) => { if (done) notifySplashDone() })
+watch(actualLanguage, (lang) => {
+  if (!isElectronHost) return
+  sendToExtension('app.setMenuLanguage', { lang }).catch(() => { /* 同上 */ })
+})
+
 function resolveDesktopThemeLight(theme?: string): boolean {
   if (theme === 'light') return true
   if (theme === 'dark') return false
@@ -543,6 +559,9 @@ async function loadLanguageSettings() {
     languageLoaded.value = true
     // 启动里程碑：UI 可用（Splash ready 信号）时刻（配合 GRAYCODE_DIAG 主进程计时定位热点）
     console.info(`[startup] renderer languageLoaded at ${Date.now()}`)
+    // 开场动画已关闭（设置里关闭开屏动画）：没有动画可等，立即通知主进程，
+    // 「未打开工作区」等提示不必等动画时长；动画开启时由 Splash done 事件上报。
+    if (!settingsStore.splashEnabled) notifySplashDone()
   }
 }
 
