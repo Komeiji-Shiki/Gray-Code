@@ -50,7 +50,12 @@ function formatConfig(config: MemoryConfig): string {
 async function memoryConfigHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
     // 纯读（无更新参数）时传 createIfMissing=false：不创建缺失的工作区记忆目录，
     // 与 wake/recall/zoom 的只读无副作用策略一致；有更新参数才允许创建。
-    const hasUpdates = ['wakeLines', 'entryChars'].some(k => typeof args[k] === 'number');
+    // 仅接受 >=1 的整数：0/负数/小数不是合法配置值（MemoryManager 边界为 min=1），
+    // 不应被当作“更新意图”（否则会触发目录创建或走到 updateConfig 抛错）。
+    const hasUpdates = ['wakeLines', 'entryChars', 'partChars', 'partLines'].some(k => {
+        const v = args[k];
+        return typeof v === 'number' && Number.isInteger(v) && v >= 1;
+    });
     const mgr = await getMemoryManagerForTool(context?.activeWorkspaceUri, undefined, hasUpdates);
     if (!mgr) {
         // 无工作区上下文：全局实例未初始化
