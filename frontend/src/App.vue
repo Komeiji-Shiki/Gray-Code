@@ -34,13 +34,13 @@ import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 const { t } = useI18n()
 
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
-const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMonitor'
+const isSubAgentMonitor = window.__GRAYCODE_VIEW_MODE === 'subagentMonitor'
 
 // 语言是否已加载
 const languageLoaded = ref(false)
-// 本次启动是否播放开屏动画：null 表示外观设置尚未解析，期间不挂载任何偏好专属启动画面。
-// 该值只在启动配置读取结束时确定一次，避免运行中把开关改为开启后突然补播开屏动画。
-const startupSplashEnabled = ref<boolean | null>(null)
+// 扩展在生成 Webview HTML 时同步注入本次启动偏好；模块执行与 Vue 挂载无需等待 IPC。
+// 浏览器预览等非扩展环境没有注入值时，沿用后端默认的“开启”。
+const startupSplashEnabled = window.__GRAYCODE_STARTUP_SPLASH_ENABLED !== false
 // 主界面启动数据是否已完成初始化；关闭开屏动画时据此结束专属占位画面。
 const mainViewInitialized = ref(false)
 // 开始动画是否已完成（Splash 淡出后置 true，移除组件）
@@ -416,10 +416,6 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 }
 
 async function loadLanguageSettings() {
-  // 后端默认开启；请求失败或旧配置没有 appearance 时仍沿用该默认值。
-  // 必须等请求结束后再发布给模板，不能让 store 的初始 true 提前挂载 Splash。
-  let resolvedStartupSplashEnabled = true
-
   try {
     const response = await sendToExtension<any>('getSettings', {})
     if (response?.settings?.ui?.language) {
@@ -433,8 +429,7 @@ async function loadLanguageSettings() {
       settingsStore.setAppearanceLoadingText(appearance.loadingText || '')
       settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
       settingsStore.setTpsBarEnabled(appearance.tpsBarEnabled !== false)
-      resolvedStartupSplashEnabled = appearance.splashEnabled !== false
-      settingsStore.setSplashEnabled(resolvedStartupSplashEnabled)
+      settingsStore.setSplashEnabled(appearance.splashEnabled !== false)
     }
 
     // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
@@ -442,8 +437,6 @@ async function loadLanguageSettings() {
   } catch (error) {
     console.error('Failed to load language settings:', error)
   } finally {
-    // 先冻结本次启动的播放决定，再开放主界面；关闭时 Splash 从未进入组件树。
-    startupSplashEnabled.value = resolvedStartupSplashEnabled
     languageLoaded.value = true
   }
 }
@@ -580,12 +573,11 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
-    <!-- 关闭开屏动画后才显示石墨灰加载光场；配置未知或明确开启时绝不挂载 -->
-    <StartupBackdrop v-if="startupSplashEnabled === false && !mainViewInitialized" />
+    <!-- 关闭态占位与 Splash 从 HTML 首帧起就依据同一个同步快照严格互斥 -->
+    <StartupBackdrop v-if="!startupSplashEnabled && !mainViewInitialized" />
 
-    <!-- 开屏动画只在启动设置解析完且明确启用后挂载，避免关闭状态下先闪现再卸载 -->
     <Splash
-      v-if="!splashDone && startupSplashEnabled === true"
+      v-if="!splashDone && startupSplashEnabled"
       :ready="languageLoaded"
       @done="splashDone = true"
     />

@@ -64,6 +64,13 @@ import { disposeUsageCache } from './handlers/UsageHandlers';
 import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { disposeFileHandlerResources } from './handlers/FileHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
+import {
+    buildDeferredFrontendLoader,
+    buildStartupBootstrapMarkup,
+    buildStartupBootstrapStyles,
+    buildStartupPreferenceAssignment,
+    resolveStartupSplashEnabled
+} from './startupBootstrap';
 
 const log = Logger.get('ChatViewProvider');
 const UPDATE_CHECK_DELAY_MS = 10_000;
@@ -1327,14 +1334,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const codiconsUri = webview.asWebviewUri(
             vscode.Uri.file(path.join(this.context.extensionPath, 'resources', 'codicons', 'codicon.css'))
         );
+        const iconUri = webview.asWebviewUri(
+            vscode.Uri.file(path.join(this.context.extensionPath, 'resources', 'icon.svg'))
+        );
 
         const devServerUrl = this.webviewDevServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
         const nonce = randomBytes(16).toString('base64');
         const cspContent = this.buildCsp(webview, nonce, devServerOrigin);
+        // VS Code 配置读取是同步的：在 HTML 首帧中冻结开屏偏好，避免前端再等 getSettings IPC。
+        const uiConfig = vscode.workspace.getConfiguration('graycode').get<unknown>('ui');
+        const startupSplashEnabled = resolveStartupSplashEnabled(uiConfig);
+        const startupBootstrapScript = `<script nonce="${nonce}">${buildStartupPreferenceAssignment(startupSplashEnabled)}</script>`;
+        const startupBootstrapStyles = `<style>${buildStartupBootstrapStyles(iconUri.toString())}</style>`;
+        const startupBootstrapMarkup = buildStartupBootstrapMarkup(startupSplashEnabled);
         const builtinSoundAssetsScript = `<script nonce="${nonce}">window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
+            const frontendLoader = buildDeferredFrontendLoader(
+                [codiconsUri.toString()],
+                [`${devServerUrl}/@vite/client`, `${devServerUrl}/src/main.ts`]
+            );
             log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });
             return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1342,18 +1362,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="${cspContent}">
-    <link href="${codiconsUri}" rel="stylesheet">
+    ${startupBootstrapStyles}
+    ${startupBootstrapScript}
     ${builtinSoundAssetsScript}
     <title>GrayCode Chat (Dev)</title>
 </head>
 <body>
-    <div id="app"></div>
-    <script nonce="${nonce}" type="module" src="${devServerUrl}/@vite/client"></script>
-    <script nonce="${nonce}" type="module" src="${devServerUrl}/src/main.ts"></script>
+    <div id="app">${startupBootstrapMarkup}</div>
+    <script nonce="${nonce}">${frontendLoader}</script>
 </body>
 </html>`;
         }
 
+        const frontendLoader = buildDeferredFrontendLoader(
+            [codiconsUri.toString(), styleUri.toString()],
+            [scriptUri.toString()]
+        );
         log.info('webview_load', { source: 'frontend/dist' });
         return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1361,14 +1385,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="${cspContent}">
-    <link href="${codiconsUri}" rel="stylesheet">
-    <link href="${styleUri}" rel="stylesheet">
+    ${startupBootstrapStyles}
+    ${startupBootstrapScript}
     ${builtinSoundAssetsScript}
     <title>GrayCode Chat</title>
 </head>
 <body>
-    <div id="app"></div>
-    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+    <div id="app">${startupBootstrapMarkup}</div>
+    <script nonce="${nonce}">${frontendLoader}</script>
 </body>
 </html>`;
     }
