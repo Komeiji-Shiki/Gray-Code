@@ -50,6 +50,7 @@ function mockState(): ChatStoreState {
     currentPromptModeId: ref('code'),
     activeBuild: ref(null),
     pendingModelOverride: ref(null),
+    pendingConfigIdOverride: ref<string | null>(null),
     messageQueue: ref([]),
     _lastCancelledStreamId: ref(null),
     _lastApprovalGatedStreamId: ref(null),

@@ -802,8 +802,10 @@ async function sendToolConfirmation(
   try {
     const currentConversationId = chatStore.currentConversationId
     const currentConfig = chatStore.currentConfig
+    // 本回合一次性渠道覆盖（Plan 等场景）优先，其次才是全局渠道
+    const confirmationConfigId = chatStore.pendingConfigIdOverride || currentConfig?.id || ''
 
-    if (!currentConversationId || !currentConfig?.id) {
+    if (!currentConversationId || !confirmationConfigId) {
       console.error('No conversation or config ID')
       return false
     }
@@ -815,7 +817,7 @@ async function sendToolConfirmation(
 
     await sendToExtension('toolConfirmation', {
       conversationId: currentConversationId,
-      configId: currentConfig.id,
+      configId: confirmationConfigId,
       modelOverride: chatStore.pendingModelOverride || undefined,
       toolResponses,
       annotation,

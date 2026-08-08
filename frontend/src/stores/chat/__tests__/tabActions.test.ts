@@ -49,6 +49,7 @@ function mockState(): ChatStoreState {
     currentPromptModeId: ref('code'),
     activeBuild: ref(null),
     pendingModelOverride: ref(null),
+    pendingConfigIdOverride: ref<string | null>(null),
     messageQueue: ref([]),
     _lastCancelledStreamId: ref(null),
     _lastApprovalGatedStreamId: ref(null),
@@ -185,6 +186,28 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
       newText: 'edited',
       configId: 'cfg-1'
     })
+  })
+
+  it('snapshotCurrentSession 保存并恢复一次性渠道覆盖（pendingConfigIdOverride）', () => {
+    const state = mockState()
+    state.currentConversationId.value = 'conv-1'
+    state.pendingConfigIdOverride.value = 'oneoff_b'
+
+    const snapshot = snapshotCurrentSession(state)
+    expect(snapshot.pendingConfigIdOverride).toBe('oneoff_b')
+
+    state.pendingConfigIdOverride.value = null
+    restoreSessionFromSnapshot(state, snapshot)
+    expect(state.pendingConfigIdOverride.value).toBe('oneoff_b')
+  })
+
+  it('resetConversationState 清除一次性渠道覆盖', () => {
+    const state = mockState()
+    state.pendingConfigIdOverride.value = 'oneoff_b'
+
+    resetConversationState(state)
+
+    expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
   it('switchTab 快照当前标签页分支图，切回后恢复分支视图状态', () => {

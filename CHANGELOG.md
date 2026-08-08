@@ -11,6 +11,9 @@
 ### Added
   - 关闭开屏动画时新增主题自适应的「石墨蚀刻光场」启动占位：以宿主编辑器背景、侧栏、浮层与前景色变量生成银黑/雾白灰阶渐变，叠加宽幅棱面、椭圆折射层和极淡拉丝纹理；中心光环低频呼吸并轻微偏转，斜向交界的灰银反光周期性掠过，明确表示仍在加载，同时不复刻正式 Splash 的 Logo 演出；不含 logo、文字或传统转圈图标，`prefers-reduced-motion` 下恢复静态画面。设置读取完成后立即让位给主界面；配置尚未解析期间同样使用该底图，避免首帧空白且仍不会预挂载 Splash。
 
+### Fixed
+  - 修复 Plan 执行「临时切换渠道」实际是永久切换：`executePlan`（write_file 面板）与任务卡确认流（`withSelectedChannel`）此前通过临时调用 `setConfigId` 切换渠道，但 `setConfigId` 会写后端全局 `settings.setActiveChannelId` 并改写当前对话元数据 `inputModelConfig`（`persistConversationModelConfig`），且 write_file 面板捕获了原渠道却从不恢复——执行完 Plan 后渠道永久停留在 Plan 所选渠道，全局与对话级配置一并被改，与「one-off 仅本次使用」的预期不符。现 `sendMessage` 新增 `configIdOverride` 选项（配套 `pendingConfigIdOverride` 回合级状态）：只覆盖本次 `chatStream` 请求的 `configId`（后端 configId 本就是 per-request 纯值），不写全局设置、不写对话元数据；同一回合内的 `toolConfirmation`（工具确认 / 批量拒绝）沿用同一覆盖渠道，回合终结（complete/cancelled/error）时与 `pendingModelOverride` 一并清除；无全局渠道 + 有回合覆盖时工具确认不再因 `currentConfig` 为空而卡死。三个任务卡确认入口（executePlan / generatePlan / generatePlanFromReview）与 write_file 面板改为直接传 `configIdOverride`，移除 `setConfigId` 切换/恢复 hack（顺带消除执行期间用户手动切渠道被 finally 恢复覆盖的竞态）。新增 `oneOffChannelOverride.test.ts`（8 用例：chatStream 载荷用覆盖渠道且不写全局设置与对话元数据、未指定/空白覆盖保持原行为、发送失败不改全局渠道、toolConfirmation 沿用回合覆盖、无覆盖回退全局、无覆盖且无全局渠道不发送），并扩展终结清理、快照往返回归断言。
+
 ## [1.4.6] - 2026-08-08
 
 ### Added
