@@ -108,15 +108,16 @@ export interface OpenAIConfig extends BaseChannelConfig {
             /**
              * 思考强度
              * - none: 不使用思考
+             * - minimal: 最少思考
              * - low: 较少的思考
              * - medium: 中等思考
              * - high: 较多思考
              * - xhigh: 最高思考强度 (extra high)
              * - max: 最大思考强度
-             * - ultra: 极限思考强度
+             * - ultra: 极端思考强度
              * - custom: 自定义（使用 effortCustom 字段的值）
              */
-            effort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'custom';
+            effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | 'custom';
             
             /**
              * 自定义思考强度

@@ -3070,7 +3070,7 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考強度 (Effort)',
-                    effortHint: 'none: 使用しない | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム',
+                    effortHint: 'none: 使用しない | minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム',
                     effortNone: 'なし',
                     effortMinimal: '極小',
                     effortLow: '低',
