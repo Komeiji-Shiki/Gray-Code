@@ -1582,19 +1582,23 @@ export class SummarizeService {
      * 原生 fetch 中断会抛出 name === 'AbortError' 的 DOMException；
      * 部分调用方还会用 code='CANCELLED' / 'ABORTED' 标记取消。
      */
-    private isAbortError(err: any): boolean {
-        return !!err && (
-            err.type === ErrorType.CANCELLED_ERROR
-            || err.name === 'AbortError'
-            || err.code === 'CANCELLED'
-            || err.code === 'ABORTED'
+    private isAbortError(err: unknown): boolean {
+        if (!err || typeof err !== 'object') {
+            return false;
+        }
+        const e = err as { type?: unknown; name?: unknown; code?: unknown };
+        return (
+            e.type === ErrorType.CANCELLED_ERROR
+            || e.name === 'AbortError'
+            || e.code === 'CANCELLED'
+            || e.code === 'ABORTED'
         );
     }
 
     /**
      * 检查是否是 AsyncGenerator
      */
-    private isAsyncGenerator(obj: any): obj is AsyncGenerator<StreamChunk> {
-        return obj && typeof obj[Symbol.asyncIterator] === 'function';
+    private isAsyncGenerator(obj: unknown): obj is AsyncGenerator<StreamChunk> {
+        return !!obj && typeof (obj as AsyncGenerator<StreamChunk>)[Symbol.asyncIterator] === 'function';
     }
 }

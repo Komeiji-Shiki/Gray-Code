@@ -86,9 +86,15 @@ export class TokenEstimationService {
         if (!targetMessage || targetMessage.role !== 'user') {
             return;
         }
-        
+
+        // channelType 为空直接返回：写入侧只在 channelType 非空时落键（见下方 124 行），
+        // 空串键在存储中不存在，检查 `tokenCountByChannel['']` 语义不成立。
+        if (!channelType) {
+            return;
+        }
+
         // 检查是否已经有 token 数（除非强制重新计算）
-        if (!forceRecount && targetMessage.tokenCountByChannel?.[channelType || ''] !== undefined) {
+        if (!forceRecount && targetMessage.tokenCountByChannel?.[channelType] !== undefined) {
             return;
         }
         

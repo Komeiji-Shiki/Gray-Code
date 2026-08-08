@@ -395,6 +395,22 @@ export class ToolIterationLoopService {
         return context;
     }
 
+    /**
+     * 在真实用户消息落盘前生成本回合的动态上下文快照。
+     *
+     * 快照必须随新消息一次性写入；消息进入历史后只允许读取，禁止再用 updateMessage 改写，
+     * 否则后台回执或新请求会把已经参与 provider 前缀缓存的旧回合内容覆盖掉。
+     */
+    async createTurnDynamicContext(
+        conversationId: string,
+        turnStartId: string,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
+    ): Promise<string> {
+        const runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
+        const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
+        return serializePromptContextCache(promptContextBundle);
+    }
+
     private orderToolResultsByCallSequence(
         calls: FunctionCallInfo[],
         groups: Array<ToolExecutionResult[] | undefined>
@@ -523,37 +539,14 @@ export class ToolIterationLoopService {
     }
 
     /**
-     * preserve 策略启用时，把当前回合之前所有已缓存动态上下文的用户回合锚定为 preserve。
-     *
-     * 这里必须同步更新传入的 history：不同存储适配器对 loadHistory 的引用语义不一致，
-     * 如果只持久化 updateMessage，本次请求后续裁剪/组装仍可能读到旧的 single 标记，
-     * 导致主人按 Enter 发送的这一轮没有把旧动态上下文插回原位。
+     * preserve 模式只改变发送侧的插入策略，不再修改任何历史消息。
      */
     private async preserveHistoricalTurnDynamicContexts(
-        conversationId: string,
-        history: Content[],
-        currentTurnStartIndex: number
+        _conversationId: string,
+        _history: Content[],
+        _currentTurnStartIndex: number
     ): Promise<void> {
-        const updates: Array<{ messageIndex: number; updates: Partial<Content> }> = [];
-
-        for (let i = currentTurnStartIndex - 1; i >= 0; i--) {
-            const message = history[i];
-            if (message.role !== 'user' || !message.isUserInput) {
-                continue;
-            }
-
-            if (message.turnDynamicContext && message.turnDynamicContextStrategy !== 'preserve') {
-                message.turnDynamicContextStrategy = 'preserve';
-                updates.push({
-                    messageIndex: i,
-                    updates: { turnDynamicContextStrategy: 'preserve' }
-                });
-            }
-        }
-
-        if (updates.length > 0) {
-            await this.conversationManager.updateMessagesBatch(conversationId, updates);
-        }
+        // 历史快照本身已经随各自真实用户消息固化，formatter 会直接读取它们。
     }
 
     /**
@@ -719,7 +712,7 @@ export class ToolIterationLoopService {
         let promptContext: RequestPromptContext;
         let dynamicContextText: string;
         let dynamicContextCache: string;
-        let runtimeContext: any = undefined;
+        let runtimeContext: DynamicRuntimeContext | undefined = undefined;
 
         // 获取历史以定位回合起始用户消息
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
@@ -734,12 +727,9 @@ export class ToolIterationLoopService {
             isNewTurn,
         );
 
-        if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
-            await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
-        }
-
-        if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
-            // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
+        if (turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
+            // 新用户消息已经在 ChatFlowService 中携带快照；这里只对旧历史缺失缓存的兼容路径
+            // 临时生成并使用，绝不把结果写回已经存在的消息。
             runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
             const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
             promptContext = {
@@ -750,13 +740,7 @@ export class ToolIterationLoopService {
             dynamicContextText = promptContextBundle.text;
             dynamicContextCache = serializePromptContextCache(promptContextBundle);
 
-            // 存到回合起始用户消息上
-            if (turnStartIndex >= 0) {
-                await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
-                    turnDynamicContext: dynamicContextCache,
-                    turnDynamicContextStrategy: dynamicContextStrategy
-                });
-            }
+            // 快照只在真实用户消息创建时落盘；这里禁止 updateMessage 覆盖已发送消息。
         } else {
             // 回合继续（如工具确认后、重试等）：从结构化缓存恢复，旧纯文本缓存也兼容
             dynamicContextCache = historyRef[turnStartIndex].turnDynamicContext!;
@@ -914,18 +898,8 @@ export class ToolIterationLoopService {
                         status: 'completed' as const
                     } satisfies ChatStreamAutoSummaryStatusData;
 
-                    // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，
-                    // 需要将当前的动态上下文重新存到新历史的回合起始消息上，
-                    // 确保后续迭代（如工具确认后的新 runToolLoop 调用）能读到缓存
-                    const postSummarizeHistory = await this.conversationManager.getHistoryRef(conversationId);
-                    const postSummarizeTurnIndex = this.findTurnStartMessageIndex(postSummarizeHistory);
-                    if (postSummarizeTurnIndex >= 0 && !postSummarizeHistory[postSummarizeTurnIndex].turnDynamicContext) {
-                        await this.conversationManager.updateMessage(conversationId, postSummarizeTurnIndex, {
-                            turnDynamicContext: dynamicContextCache,
-                            turnDynamicContextStrategy: dynamicContextStrategy
-                        });
-                    }
-
+                    // 动态快照位于不可变的真实用户消息上；总结后的当前循环继续使用内存快照，
+                    // 不再为了迁移缓存而修改历史消息。
                     // 总结调用不占用主模型工具迭代额度；重新获取历史后再发起本轮 API 请求。
                     iteration--;
                     continue;
@@ -1092,7 +1066,9 @@ export class ToolIterationLoopService {
                                     // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
                                     undefined,
                                     // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
-                                    runtimeContext?.workspaceUri
+                                    runtimeContext?.workspaceUri,
+                                    // General Worker 模型继承：把主会话当前模型透传给工具上下文
+                                    modelOverride
                                 ).catch(err => {
                                     // 执行异常分类：可预期的执行失败（渠道层 ChannelError）
                                     // 保持既有包装写入历史，toolResults.result 仍是工具业务
@@ -1334,10 +1310,12 @@ export class ToolIterationLoopService {
                         // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
                         // 与 abort 事件做 race，取消时立即退出等待循环。
                         let onAbort: (() => void) | undefined;
-                        const abortPromise = new Promise<void>((resolve) => {
-                            onAbort = () => resolve();
-                            abortSignal.addEventListener('abort', onAbort, { once: true });
-                        });
+                        const abortPromise = abortSignal.aborted
+                            ? Promise.resolve()
+                            : new Promise<void>((resolve) => {
+                                onAbort = () => resolve();
+                                abortSignal.addEventListener('abort', onAbort, { once: true });
+                            });
                         try {
                             await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
                         } finally {
@@ -1404,6 +1382,9 @@ export class ToolIterationLoopService {
             if (earlyToolSystemError !== undefined) {
                 throw earlyToolSystemError;
             }
+
+            // C-21：预构建 id -> 下标映射，避免每个 start 事件都线性扫描 autoPrefix（上游 5e8f666）
+            const autoPrefixIndexById = new Map<string, number>(autoPrefix.map((c, i) => [c.id, i]));
 
             const earlyFullResults = Array.from(streamingToolResults.values());
             const earlyToolResults = this.orderToolResultsByCallSequence(
@@ -1520,7 +1501,9 @@ export class ToolIterationLoopService {
                     // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
                     undefined,
                     // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
-                    runtimeContext?.workspaceUri
+                    runtimeContext?.workspaceUri,
+                    // General Worker 模型继承：把主会话当前模型透传给工具上下文
+                    modelOverride
                 );
 
                 while (true) {
@@ -1530,12 +1513,16 @@ export class ToolIterationLoopService {
                     // 响应 abort 的工具会快速返回已完成部分的真实结果（不能丢，否则历史只剩
                     // "用户拒绝"占位），窗口结束仍未返回则放弃，立即走下方取消路径。
                     let onAbort: (() => void) | undefined;
-                    const abortPromise = abortSignal
-                        ? new Promise<void>((resolve) => {
-                            onAbort = () => resolve();
-                            abortSignal.addEventListener('abort', onAbort, { once: true });
-                        })
-                        : undefined;
+                    // C-12：创建 abortPromise 前先检查信号已 aborted——
+                    // 若已中止，立即 resolve 走取消路径，避免注册 listener 后信号永不触发导致挂起。
+                    const abortPromise = abortSignal?.aborted
+                        ? Promise.resolve()
+                        : abortSignal
+                            ? new Promise<void>((resolve) => {
+                                onAbort = () => resolve();
+                                abortSignal.addEventListener('abort', onAbort, { once: true });
+                            })
+                            : undefined;
                     try {
                         const nextPromise = gen.next();
                         const winner = abortPromise
@@ -1559,8 +1546,8 @@ export class ToolIterationLoopService {
                         const event = value as ToolExecutionProgressEvent;
 
                         if (event.type === 'start') {
-                            // 计算当前工具及所有剩余待执行工具
-                            const currentIndex = autoPrefix.findIndex(c => c.id === event.call.id);
+                            // 计算当前工具及所有剩余待执行工具（O(1) 查表，替代逐次 findIndex）
+                            const currentIndex = autoPrefixIndexById.get(event.call.id) ?? -1;
                             const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
 
                             // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
@@ -1787,16 +1774,14 @@ export class ToolIterationLoopService {
             isNewTurn,
         );
 
-        if (isNewTurn && dynamicContextStrategy === 'preserve' && turnStartIndex >= 0) {
-            await this.preserveHistoricalTurnDynamicContexts(conversationId, historyRef, turnStartIndex);
-        }
-
         let promptContext: RequestPromptContext;
         let dynamicContextText: string;
         let dynamicContextCache: string;
-        let runtimeContext: any = undefined;
+        let runtimeContext: DynamicRuntimeContext | undefined = undefined;
 
-        if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
+        if (turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
+            // 新用户消息已经在 ChatFlowService 中携带快照；这里只对旧历史缺失缓存的兼容路径
+            // 临时生成并使用，绝不把结果写回已经存在的消息。
             runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
             const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
             promptContext = {
@@ -1807,12 +1792,7 @@ export class ToolIterationLoopService {
             dynamicContextText = promptContextBundle.text;
             dynamicContextCache = serializePromptContextCache(promptContextBundle);
 
-            if (turnStartIndex >= 0) {
-                await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
-                    turnDynamicContext: dynamicContextCache,
-                    turnDynamicContextStrategy: dynamicContextStrategy
-                });
-            }
+            // 快照只在真实用户消息创建时落盘；这里禁止 updateMessage 覆盖已发送消息。
         } else {
             dynamicContextCache = historyRef[turnStartIndex].turnDynamicContext!;
             const cached = deserializePromptContextCache(dynamicContextCache);
@@ -1927,18 +1907,8 @@ export class ToolIterationLoopService {
                 }
 
                 if (summarizeResult.success) {
-                    // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，
-                    // 需要将当前的动态上下文重新存到新历史的回合起始消息上，
-                    // 确保后续迭代（如工具确认后的新 runToolLoop 调用）能读到缓存。
-                    const postSummarizeHistory = await this.conversationManager.getHistoryRef(conversationId);
-                    const postSummarizeTurnIndex = this.findTurnStartMessageIndex(postSummarizeHistory);
-                    if (postSummarizeTurnIndex >= 0 && !postSummarizeHistory[postSummarizeTurnIndex].turnDynamicContext) {
-                        await this.conversationManager.updateMessage(conversationId, postSummarizeTurnIndex, {
-                            turnDynamicContext: dynamicContextCache,
-                            turnDynamicContextStrategy: dynamicContextStrategy
-                        });
-                    }
-
+                    // 动态快照位于不可变的真实用户消息上；总结后的当前循环继续使用内存快照，
+                    // 不再为了迁移缓存而修改历史消息。
                     // 总结调用不占用主模型工具迭代额度。
                     iteration--;
                     continue;
@@ -1979,12 +1949,16 @@ export class ToolIterationLoopService {
             const history = trimResult.history;
 
             // 获取静态系统提示词（可被 API provider 缓存）
+            // 与流式路径（runToolLoop 顶部）的差异说明：流式在 isFirstMessage && iteration===1 时
+            // 用 refreshAndGetPrompt 强制刷新一次（环境上下文新鲜度优先），后续迭代与非流式一致
+            // 复用 getSystemPrompt 的缓存；非流式路径首轮不强制刷新，行为差异是有意设计。
             const dynamicSystemPrompt = this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
 
-            // 调用 AI（非流式）
+            // 调用 AI（非流式）；透传 abortSignal：非流式模型生成阶段同样需要支持取消
             const response = await this.channelManager.generate({
                 configId,
                 history,
+                abortSignal,
                 dynamicSystemPrompt,
                 promptContext,
                 dynamicContextStrategy,
@@ -2052,7 +2026,9 @@ export class ToolIterationLoopService {
                 // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
                 undefined,
                 // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
-                runtimeContext?.workspaceUri
+                runtimeContext?.workspaceUri,
+                // General Worker 模型继承：把主会话当前模型透传给工具上下文
+                modelOverride
             );
             repeatedCallGuard.recordResults(executionResult.toolResults);
 

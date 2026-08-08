@@ -6,6 +6,7 @@
 
 import { t } from '../../../i18n';
 import type { SettingsManager } from '../../settings/SettingsManager';
+import type { CheckpointConfig, GenerateImageToolConfig, MemoryToolConfig, SummarizeConfig } from '../../settings/types';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
 import { TokenCountService } from '../../channel/TokenCountService';
 import { getPromptManager } from '../../prompt/PromptManager';
@@ -32,6 +33,9 @@ import type {
     UpdateListFilesConfigRequest,
     UpdateApplyDiffConfigRequest
 } from './types';
+
+/** 扩展 ID（getCurrentVersion / getChangelogSinceVersion 共用，避免散落硬编码） */
+const GRAYCODE_EXTENSION_ID = 'czocelot.graycode';
 
 /**
  * 设置处理器
@@ -404,8 +408,17 @@ export class SettingsHandler {
                 };
             }
             
-            // 获取通用工具配置
             const toolsConfig = this.settingsManager.getToolsConfig();
+            const registeredTool = this.toolRegistry?.getTool(toolName);
+            if ((this.toolRegistry && !registeredTool) || (!this.toolRegistry && !(toolName in toolsConfig))) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'TOOL_NOT_FOUND',
+                        message: t('modules.api.settings.errors.toolNotFound', { toolName }),
+                    },
+                };
+            }
             const config = toolsConfig[toolName] || {};
             
             return {
@@ -562,7 +575,7 @@ export class SettingsHandler {
     /**
      * 更新存档点配置
      */
-    async updateCheckpointConfig(request: { config: any }): Promise<UpdateToolConfigResponse> {
+    async updateCheckpointConfig(request: { config: Partial<CheckpointConfig> }): Promise<UpdateToolConfigResponse> {
         try {
             await this.settingsManager.updateCheckpointConfig(request.config);
             const settings = this.settingsManager.getSettings();
@@ -618,7 +631,7 @@ export class SettingsHandler {
                 success: false,
                 error: {
                     code: err.code || 'UNKNOWN_ERROR',
-                    message: err.message || 'Failed to get memory config'
+                    message: err.message || t('modules.api.settings.errors.memoryConfigFailed')
                 }
             };
         }
@@ -627,7 +640,7 @@ export class SettingsHandler {
     /**
      * 更新记忆工具配置
      */
-    async updateMemoryConfig(request: { config: any }): Promise<UpdateToolConfigResponse> {
+    async updateMemoryConfig(request: { config: Partial<MemoryToolConfig> }): Promise<UpdateToolConfigResponse> {
         try {
             await this.settingsManager.updateMemoryConfig(request.config);
             const settings = this.settingsManager.getSettings();
@@ -638,7 +651,7 @@ export class SettingsHandler {
                 success: false,
                 error: {
                     code: err.code || 'UNKNOWN_ERROR',
-                    message: err.message || 'Failed to update memory config'
+                    message: err.message || t('modules.api.settings.errors.updateMemoryConfigFailed')
                 }
             };
         }
@@ -647,7 +660,7 @@ export class SettingsHandler {
     /**
      * 更新总结配置
      */
-    async updateSummarizeConfig(request: { config: any }): Promise<UpdateToolConfigResponse> {
+    async updateSummarizeConfig(request: { config: Partial<SummarizeConfig> }): Promise<UpdateToolConfigResponse> {
         try {
             await this.settingsManager.updateSummarizeConfig(request.config);
             const settings = this.settingsManager.getSettings();
@@ -693,7 +706,7 @@ export class SettingsHandler {
     /**
      * 更新图像生成配置
      */
-    async updateGenerateImageConfig(request: { config: any }): Promise<UpdateToolConfigResponse> {
+    async updateGenerateImageConfig(request: { config: Partial<GenerateImageToolConfig> }): Promise<UpdateToolConfigResponse> {
         try {
             await this.settingsManager.updateGenerateImageConfig(request.config);
             const settings = this.settingsManager.getSettings();
@@ -734,11 +747,9 @@ export class SettingsHandler {
             // 获取 token 计数配置
             const tokenCountConfig = this.settingsManager.getTokenCountConfig();
             
-            // 更新代理设置
+            // 每次计数把当前代理 URL 作为参数传入（不共享实例可变状态，避免并发计数交叉）
             const proxySettings = this.settingsManager.getProxySettings();
-            this.tokenCountService.setProxyUrl(
-                proxySettings?.enabled ? proxySettings.url : undefined
-            );
+            const proxyUrl = proxySettings?.enabled ? proxySettings.url : undefined;
             
             // 构建一个简单的 Content 对象
             const contents = [{
@@ -750,7 +761,8 @@ export class SettingsHandler {
             const result = await this.tokenCountService.countTokens(
                 channelType,
                 tokenCountConfig,
-                contents
+                contents,
+                proxyUrl
             );
             
             if (result.success) {
@@ -763,7 +775,7 @@ export class SettingsHandler {
                     success: false,
                     error: {
                         code: 'TOKEN_COUNT_FAILED',
-                        message: result.error || 'Token count failed'
+                        message: result.error || t('modules.api.settings.errors.tokenCountFailed')
                     }
                 };
             }
@@ -773,7 +785,7 @@ export class SettingsHandler {
                 success: false,
                 error: {
                     code: err.code || 'UNKNOWN_ERROR',
-                    message: err.message || 'Token count failed'
+                    message: err.message || t('modules.api.settings.errors.tokenCountFailed')
                 }
             };
         }
@@ -804,11 +816,9 @@ export class SettingsHandler {
             // 获取 token 计数配置
             const tokenCountConfig = this.settingsManager.getTokenCountConfig();
             
-            // 更新代理设置
+            // 每次计数把当前代理 URL 作为参数传入（不共享实例可变状态，避免并发计数交叉）
             const proxySettings = this.settingsManager.getProxySettings();
-            this.tokenCountService.setProxyUrl(
-                proxySettings?.enabled ? proxySettings.url : undefined
-            );
+            const proxyUrl = proxySettings?.enabled ? proxySettings.url : undefined;
             
             // 尝试获取会话级的运行时数据
             // 多工作区支持：即使没有 custom 元数据也要带上 workspaceUri，
@@ -828,17 +838,20 @@ export class SettingsHandler {
             }
 
             // 使用 PromptManager 生成实际的系统提示词（替换占位符后的内容）
+            // 注意：staticTokens 按 request.staticText（模板原文）计数，这里仅保留 refresh
+            // 副作用调用（强制刷新动态上下文缓存），返回值不再参与计数。
             const promptManager = getPromptManager();
             const promptModeSnapshot = this.settingsManager.resolvePromptMode();
-            const actualSystemPrompt = promptManager.refreshAndGetPrompt(promptModeSnapshot, runtime);
+            promptManager.refreshAndGetPrompt(promptModeSnapshot, runtime);
             
             // 获取实际的动态上下文内容
             const dynamicText = promptManager.getDynamicContextText(promptModeSnapshot, runtime);
             
-            // 准备静态模板的 token 计数请求
+            // 准备静态模板的 token 计数请求（基于 request.staticText：只数模板本身，
+            // 不再把已填充动态内容的完整提示词当 staticTokens 计数——否则与 dynamicTokens 重复虚高）
             const staticContents = [{
                 role: 'user' as const,
-                parts: [{ text: actualSystemPrompt }]
+                parts: [{ text: request.staticText }]
             }];
             
             // 准备动态内容的 token 计数请求（如果有）
@@ -847,14 +860,14 @@ export class SettingsHandler {
                 parts: [{ text: dynamicText }]
             }] : null;
             
-            // 并行调用 token 计数 API
+            // 并行调用 token 计数 API（每次计数传入当前代理 URL）
             const countPromises: Promise<{ success: boolean; totalTokens?: number; error?: string }>[] = [
-                this.tokenCountService.countTokens(channelType, tokenCountConfig, staticContents)
+                this.tokenCountService.countTokens(channelType, tokenCountConfig, staticContents, proxyUrl)
             ];
             
             if (dynamicContents) {
                 countPromises.push(
-                    this.tokenCountService.countTokens(channelType, tokenCountConfig, dynamicContents)
+                    this.tokenCountService.countTokens(channelType, tokenCountConfig, dynamicContents, proxyUrl)
                 );
             }
             
@@ -881,7 +894,7 @@ export class SettingsHandler {
                     success: false,
                     error: {
                         code: 'TOKEN_COUNT_FAILED',
-                        message: staticResult.error || 'Token count failed'
+                        message: staticResult.error || t('modules.api.settings.errors.tokenCountFailed')
                     }
                 };
             }
@@ -891,7 +904,7 @@ export class SettingsHandler {
                 success: false,
                 error: {
                     code: err.code || 'UNKNOWN_ERROR',
-                    message: err.message || 'Token count failed'
+                    message: err.message || t('modules.api.settings.errors.tokenCountFailed')
                 }
             };
         }
@@ -946,7 +959,12 @@ export class SettingsHandler {
      * 标记公告已读
      */
     async markAnnouncementRead(version: string): Promise<void> {
-        await this.settingsManager.setLastReadAnnouncementVersion(version);
+        // 写盘失败不向上抛（公告状态非关键路径），记录后静默
+        try {
+            await this.settingsManager.setLastReadAnnouncementVersion(version);
+        } catch (error) {
+            console.error('Failed to mark announcement as read:', error);
+        }
     }
     
     /**
@@ -955,7 +973,7 @@ export class SettingsHandler {
     private getCurrentVersion(): string {
         try {
             const vscode = require('vscode');
-            const extension = vscode.extensions.getExtension('czocelot.graycode');
+            const extension = vscode.extensions.getExtension(GRAYCODE_EXTENSION_ID);
             if (extension) {
                 return extension.packageJSON.version || '';
             }
@@ -970,33 +988,47 @@ export class SettingsHandler {
      * 返回: -1 表示 a < b, 0 表示 a == b, 1 表示 a > b
      * 支持可选预发布段（如 1.3.1-1）：预发布 < 对应正式版（1.3.1-1 < 1.3.1）。
      */
-    private parseVersion(v: string): { parts: number[]; pre: number } {
-        const m = /^(\d+\.\d+\.\d+)(?:-(\d+))?$/.exec((v || '').trim());
-        if (!m) {
-            return { parts: [0], pre: -1 };
-        }
-        return {
-            parts: m[1].split('.').map((n) => parseInt(n, 10) || 0),
-            pre: m[2] !== undefined ? (parseInt(m[2], 10) || 0) : -1
-        };
-    }
-
     private compareVersions(a: string, b: string): number {
-        const pa = this.parseVersion(a);
-        const pb = this.parseVersion(b);
-
-        const maxLen = Math.max(pa.parts.length, pb.parts.length);
+        const parse = (version: string): { core: number[]; prerelease: string[] | null } => {
+            const normalized = version.trim().replace(/^v/i, '').split('+', 1)[0];
+            const separator = normalized.indexOf('-');
+            const coreText = separator >= 0 ? normalized.slice(0, separator) : normalized;
+            const prereleaseText = separator >= 0 ? normalized.slice(separator + 1) : '';
+            return {
+                core: coreText.split('.').map(part => Number.parseInt(part, 10) || 0),
+                prerelease: separator >= 0 ? prereleaseText.split('.') : null,
+            };
+        };
+        const left = parse(a);
+        const right = parse(b);
+        const maxLen = Math.max(left.core.length, right.core.length);
         for (let i = 0; i < maxLen; i++) {
-            const aNum = pa.parts[i] || 0;
-            const bNum = pb.parts[i] || 0;
-            if (aNum < bNum) return -1;
-            if (aNum > bNum) return 1;
+            const leftNumber = left.core[i] ?? 0;
+            const rightNumber = right.core[i] ?? 0;
+            if (leftNumber !== rightNumber) {
+                return leftNumber < rightNumber ? -1 : 1;
+            }
         }
-        // 基础版本相同：无预发布段（pre=-1）视为正式版，正式版 > 预发布
-        if (pa.pre === pb.pre) return 0;
-        if (pa.pre === -1) return 1;
-        if (pb.pre === -1) return -1;
-        return pa.pre < pb.pre ? -1 : 1;
+        if (left.prerelease === null || right.prerelease === null) {
+            if (left.prerelease === right.prerelease) return 0;
+            return left.prerelease === null ? 1 : -1;
+        }
+        const prereleaseLength = Math.max(left.prerelease.length, right.prerelease.length);
+        for (let i = 0; i < prereleaseLength; i++) {
+            const leftPart = left.prerelease[i];
+            const rightPart = right.prerelease[i];
+            if (leftPart === undefined) return -1;
+            if (rightPart === undefined) return 1;
+            if (leftPart === rightPart) continue;
+            const leftNumeric = /^\d+$/.test(leftPart);
+            const rightNumeric = /^\d+$/.test(rightPart);
+            if (leftNumeric && rightNumeric) {
+                return Number(leftPart) < Number(rightPart) ? -1 : 1;
+            }
+            if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+            return leftPart < rightPart ? -1 : 1;
+        }
+        return 0;
     }
     
     /**
@@ -1012,7 +1044,7 @@ export class SettingsHandler {
             const path = require('path');
             
             // 获取插件路径
-            const extension = vscode.extensions.getExtension('czocelot.graycode');
+            const extension = vscode.extensions.getExtension(GRAYCODE_EXTENSION_ID);
             if (!extension) {
                 return '';
             }
@@ -1024,7 +1056,7 @@ export class SettingsHandler {
             }
             
             // 解析缓存：CHANGELOG.md（数百 KB）按 mtime 缓存解析结果，仅文件变化时重解析。
-            // 公告检查在版本升级后的首次启动与设置页重复触发，此前每次都全量读+正则解析。
+            // 公告在版本升级后的首次启动与设置页重复触发，此前每次都全量读+正则解析。
             const stat = fs.statSync(changelogPath);
             let cached = SettingsHandler.changelogParseCache.get(changelogPath);
             if (!cached || cached.mtimeMs !== stat.mtimeMs || cached.size !== stat.size) {
@@ -1060,12 +1092,7 @@ export class SettingsHandler {
                 return '';
             }
             
-            // 如果只有一个版本，直接返回内容
-            if (relevantVersions.length === 1) {
-                return relevantVersions[0].content;
-            }
-            
-            // 多个版本，每个版本加上版本号标题
+            // 统一格式：单版本与多版本都带版本号标题
             return relevantVersions
                 .map(v => `## v${v.version}\n${v.content}`)
                 .join('\n\n');
@@ -1084,7 +1111,7 @@ export class SettingsHandler {
 
     /** 解析 CHANGELOG 全部版本块（版本号支持可选预发布段，如 [1.3.1-1]；重复版本只取第一个） */
     private static parseChangelogVersions(content: string): { version: string; content: string }[] {
-        const versionBlockRegex = /## \[(\d+\.\d+\.\d+(?:-\d+)?)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
+        const versionBlockRegex = /## \[(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
         const versions: { version: string; content: string }[] = [];
         const seenVersions = new Set<string>();
 

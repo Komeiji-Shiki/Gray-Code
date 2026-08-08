@@ -100,11 +100,21 @@ export class McpHandler {
         try {
             const serverId = await this.mcpManager.createServer(request.input);
             const server = await this.mcpManager.getServerInfo(serverId);
+            // 并发删除窗口内 create 后可能查不到：null 返回明确的 SERVER_NOT_FOUND，而非 success:true 泄漏
+            if (!server) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'SERVER_NOT_FOUND',
+                        message: t('modules.api.mcp.errors.serverNotFound', { serverId }),
+                    },
+                };
+            }
             
             return {
                 success: true,
                 serverId,
-                server: server!
+                server
             };
         } catch (error) {
             const err = error as any;
@@ -125,10 +135,19 @@ export class McpHandler {
         try {
             await this.mcpManager.updateServer(request.serverId, request.updates);
             const server = await this.mcpManager.getServerInfo(request.serverId);
+            if (!server) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'SERVER_NOT_FOUND',
+                        message: t('modules.api.mcp.errors.serverNotFound', { serverId: request.serverId }),
+                    },
+                };
+            }
             
             return {
                 success: true,
-                server: server!
+                server
             };
         } catch (error) {
             const err = error as any;
@@ -171,10 +190,19 @@ export class McpHandler {
         try {
             await this.mcpManager.setServerEnabled(request.serverId, request.enabled);
             const server = await this.mcpManager.getServerInfo(request.serverId);
+            if (!server) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'SERVER_NOT_FOUND',
+                        message: t('modules.api.mcp.errors.serverNotFound', { serverId: request.serverId }),
+                    },
+                };
+            }
             
             return {
                 success: true,
-                server: server!
+                server
             };
         } catch (error) {
             const err = error as any;
@@ -195,10 +223,19 @@ export class McpHandler {
         try {
             await this.mcpManager.connect(request.serverId);
             const status = this.mcpManager.getServerStatus(request.serverId);
+            if (!status) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'SERVER_NOT_FOUND',
+                        message: t('modules.api.mcp.errors.serverNotFound', { serverId: request.serverId }),
+                    },
+                };
+            }
             
             return {
                 success: true,
-                status: status!
+                status
             };
         } catch (error) {
             const err = error as any;
@@ -219,10 +256,19 @@ export class McpHandler {
         try {
             await this.mcpManager.disconnect(request.serverId);
             const status = this.mcpManager.getServerStatus(request.serverId);
+            if (!status) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'SERVER_NOT_FOUND',
+                        message: t('modules.api.mcp.errors.serverNotFound', { serverId: request.serverId }),
+                    },
+                };
+            }
             
             return {
                 success: true,
-                status: status!
+                status
             };
         } catch (error) {
             const err = error as any;
@@ -234,15 +280,6 @@ export class McpHandler {
                 }
             };
         }
-    }
-
-    /**
-     * 获取 MCP 配置 JSON 字符串
-     * 用于同步到配置文件
-     */
-    getConfigJsonString(): string {
-        const servers = this.mcpManager.listServerConfigs();
-        return JSON.stringify(servers, null, 2);
     }
 
     /**
