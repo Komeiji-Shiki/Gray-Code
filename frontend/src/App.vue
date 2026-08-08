@@ -18,6 +18,7 @@ import { CustomScrollbar } from './components/common'
 import UpdateModal from './components/common/UpdateModal.vue'
 import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import Splash from './components/Splash.vue'
+import StartupBackdrop from './components/StartupBackdrop.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage } from './i18n'
@@ -572,6 +573,9 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
+    <!-- 设置尚未返回时显示石墨灰加载光场；关闭开屏动画时，它就是主界面就绪前的占位画面 -->
+    <StartupBackdrop v-if="startupSplashEnabled === null" />
+
     <!-- 开屏动画只在启动设置解析完且明确启用后挂载，避免关闭状态下先闪现再卸载 -->
     <Splash
       v-if="!splashDone && startupSplashEnabled === true"
