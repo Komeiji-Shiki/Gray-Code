@@ -15,7 +15,7 @@ import { app } from 'electron';
 import * as http from 'http';
 import * as path from 'path';
 import * as fs from 'fs';
-import { BackendHost } from './host/BackendHost';
+import { BackendHost } from './host/BackendHost.js';
 
 const log = (msg: string) => console.log(`[e2e] ${msg}`);
 let failures = 0;

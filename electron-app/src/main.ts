@@ -9,12 +9,17 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { BackendHost } from './host/BackendHost';
+// BackendHost 体积大（内联整个 backend + webview 路由），启动路径必须懒加载：
+// createBackend 内动态 import('./host/BackendHost.js')，让 when-ready 之前只解析
+// 轻量主进程壳（main/native/protocol/vscode-shim），后端初始化在窗口创建后并行进行。
+// 此处仅保留类型导入（编译期擦除，不产生运行时依赖）。
+import type { BackendHost } from './host/BackendHost.js';
 import { runNative, setPickWorkspaceHandler, setOpenWorkspaceHandler } from './native';
 import { Logger, LogLevel } from '../../backend/core/logger';
-// esbuild 把 vscode-shim 内联进主进程 bundle；此处的具名导入会被静态解析，
-// 不能使用 require('./vscode-shim')（打包产物中不存在该独立文件，运行时会抛 MODULE_NOT_FOUND）。
-import { __setWindowFocused } from './vscode-shim';
+// esbuild 把 vscode-shim 打成独立共享包（dist/vscode-shim.js，主进程壳与 BackendHost 共用同一实例）；
+// 此处的具名导入会被静态解析，不能使用 require('./vscode-shim')（打包产物中不存在该独立文件，
+// 运行时会抛 MODULE_NOT_FOUND）。
+import { __setWindowFocused } from './vscode-shim.js';
 
 // ============================================================================
 // stdout/stderr EPIPE 防护（必须在任何日志输出之前安装）
@@ -531,37 +536,74 @@ function isTrustedSender(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEv
 function createBackend(): void {
   if (backendHost) return;
 
-  backendHost = new BackendHost({
-    userDataPath: app.getPath('userData'),
-    extensionPath: REPO_ROOT,
-    postToRenderer: (message) => {
-      // 内嵌面板方案：所有消息（含子代理 Monitor 的事件推送）都投递到主窗口渲染进程，
-      // 前端按 requestId/clientId 自行分发。窗口可能已销毁，逐个判空。
-      const target = mainWindow?.webContents;
-      if (target && !target.isDestroyed()) {
-        target.send('graycode:backend-to-renderer', message);
-      }
-    },
-    native: (op, payload) => runNative(op, payload, mainWindow),
-    onOpenDiffPreview: (payload) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('graycode:backend-to-renderer', {
-          type: 'command',
-          command: 'host.openDiffPreview',
-          data: payload
-        });
-      }
-    }
-  });
+  // 懒加载后端宿主：BackendHost 及其内联的 backend/webview 代码从主进程壳中拆出
+  // （build.mjs 三包拆分：main.js / host/BackendHost.js / vscode-shim.js），
+  // 启动路径不再解析/执行 ~1.2MB 后端代码，when-ready 与窗口首帧提前。
+  void import('./host/BackendHost.js').then(({ BackendHost: BackendHostCtor }) => {
+    if (backendHost) return;
 
-  // 消息入口注册一次（不放在 createWindow 内，避免 macOS activate 重建窗口时重复注册，
-  // 导致每条渲染层消息被处理两次）。同一窗口内的所有消息都走同一个入口。
-  ipcMain.on('graycode:renderer-to-backend', (event, message: any) => {
-    // 只接受主窗口主框架的消息（与 graycode:native 同一套发送方校验）
-    if (!isTrustedSender(event)) return;
-    void backendHost?.handleRendererMessage(message);
+    backendHost = new BackendHostCtor({
+      userDataPath: app.getPath('userData'),
+      extensionPath: REPO_ROOT,
+      postToRenderer: (message) => {
+        // 内嵌面板方案：所有消息（含子代理 Monitor 的事件推送）都投递到主窗口渲染进程，
+        // 前端按 requestId/clientId 自行分发。窗口可能已销毁，逐个判空。
+        const target = mainWindow?.webContents;
+        if (target && !target.isDestroyed()) {
+          target.send('graycode:backend-to-renderer', message);
+        }
+      },
+      native: (op, payload) => runNative(op, payload, mainWindow),
+      onOpenDiffPreview: (payload) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('graycode:backend-to-renderer', {
+            type: 'command',
+            command: 'host.openDiffPreview',
+            data: payload
+          });
+        }
+      }
+    });
+
+    // 补投懒加载窗口期内到达的渲染层消息（窗口可能在 BackendHost 就绪前完成加载）
+    const queued = pendingRendererMessages.splice(0);
+    for (const message of queued) {
+      void backendHost.handleRendererMessage(message);
+    }
+  }).catch((error) => {
+    // 懒加载失败（chunk 缺失/损坏）必须可见，不能静默挂起（消息缓冲会无限堆积）
+    console.error('[main] failed to lazy-load backend host:', error);
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    void (win ? dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'GrayCode Failed to Start',
+      message: 'The backend failed to load.',
+      detail: String(error?.message || error),
+      buttons: ['Quit']
+    }) : dialog.showMessageBox({
+      type: 'error',
+      title: 'GrayCode Failed to Start',
+      message: 'The backend failed to load.',
+      detail: String(error?.message || error),
+      buttons: ['Quit']
+    })).then(() => app.exit(1)).catch(() => app.exit(1));
   });
 }
+
+/** BackendHost 懒加载就绪前到达的渲染层消息（窗口先于后端加载完成时排队，就绪后补投） */
+const pendingRendererMessages: unknown[] = [];
+
+// 消息入口注册一次（不放在 createWindow 内，避免 macOS activate 重建窗口时重复注册，
+// 导致每条渲染层消息被处理两次）。同一窗口内的所有消息都走同一个入口。
+ipcMain.on('graycode:renderer-to-backend', (event, message: any) => {
+  // 只接受主窗口主框架的消息（与 graycode:native 同一套发送方校验）
+  if (!isTrustedSender(event)) return;
+  if (backendHost) {
+    void backendHost.handleRendererMessage(message);
+  } else {
+    pendingRendererMessages.push(message);
+  }
+});
 
 // ============================================================================
 // Window + menu
@@ -660,7 +702,9 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false
+      backgroundThrottling: false,
+      // 应用不做拼写检查：关闭可省渲染进程拼写词典初始化开销（启动提速）
+      spellcheck: false
     }
   });
 
@@ -1223,9 +1267,9 @@ function createWindow(): void {
         message: 'The backend failed to initialize.',
         detail: String(error?.message || error),
         buttons: ['Open Data Folder', 'Quit']
-      }).then(({ response }) => {
+      }).then(async ({ response }) => {
         if (response === 0) {
-          const { shell } = require('electron');
+          const { shell } = await import('electron');
           void shell.openPath(app.getPath('userData'));
         }
         app.quit();

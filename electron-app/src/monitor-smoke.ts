@@ -14,7 +14,7 @@
 import { app } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
-import { BackendHost } from './host/BackendHost';
+import { BackendHost } from './host/BackendHost.js';
 import { subAgentRunEventBus } from '../../backend/tools/subagents';
 
 const log = (msg: string) => console.log(`[monitor-smoke] ${msg}`);

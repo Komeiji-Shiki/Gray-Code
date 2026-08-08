@@ -1,6 +1,6 @@
 {
   "name": "graycode-desktop",
-  "version": "1.7.5-1dev",
+  "version": "1.7.5",
   "description": "GrayCode desktop app (Electron) - AI coding assistant, no VS Code installation needed (runs on a built-in vscode-shim compat layer)",
   "author": {
     "name": "czocelot",
@@ -24,7 +24,8 @@
     "smoke": "node build.mjs && cross-env GRAYCODE_UISMOKE=1 electron .",
     "clean:release": "node -e \"require('fs').rmSync('release', { recursive: true, force: true })\"",
     "dist": "npm run clean:release && npm run build:all && electron-builder",
-    "dist:win": "npm run clean:release && npm run build:all && electron-builder --win",
+    "dist:win": "npm run clean:release && npm run build:all && npm run patch:portable && electron-builder --win",
+    "patch:portable": "node patch-portable.mjs",
     "dist:mac": "npm run clean:release && npm run build:all && electron-builder --mac",
     "dist:linux": "npm run clean:release && npm run build:all && electron-builder --linux"
   },
@@ -73,7 +74,8 @@
       "ja"
     ],
     "portable": {
-      "artifactName": "GrayCode-Portable-${version}.${ext}"
+      "artifactName": "GrayCode-Portable-${version}.${ext}",
+      "unpackDirName": "GrayCode-Portable"
     },
     "nsis": {
       "oneClick": false,

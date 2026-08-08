@@ -11,7 +11,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
-import { Uri } from '../vscode-shim';
+import { Uri } from '../vscode-shim.js';
 
 const WIN32 = process.platform === 'win32';
 

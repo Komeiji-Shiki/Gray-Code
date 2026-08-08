@@ -173,6 +173,25 @@ describe('UpdateChecker.check', () => {
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
+    it('关闭自动检查时 force 手动检查仍执行（修复：禁用自动检查后手动检查失效）', async () => {
+        const fetchImpl = jest.fn(async () => okResponse({
+            tag_name: 'v1.5.0',
+            name: 'v1.5.0',
+            body: 'new',
+            assets: [{ name: 'GrayCode.Setup.1.5.0.exe', browser_download_url: 'https://example.com/GrayCode.Setup.1.5.0.exe' }],
+        }));
+        const { checker } = createChecker({
+            isCheckEnabled: () => false,
+            fetchImpl,
+            currentVersion: '1.4.4',
+        });
+        const status = await checker.check(true);
+        expect(status.state).toBe('updateAvailable');
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        // 状态机正常推进，不是 disabled
+        expect(checker.getStatus().state).not.toBe('disabled');
+    });
+
     it('24h 节流窗口内不重复请求', async () => {
         const fetchImpl = jest.fn();
         const { checker } = createChecker({

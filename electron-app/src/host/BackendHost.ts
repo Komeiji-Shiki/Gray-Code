@@ -66,7 +66,7 @@ import {
   __initMementoPaths,
   __resolveToast,
   Uri
-} from '../vscode-shim';
+} from '../vscode-shim.js';
 
 const log = Logger.get('BackendHost');
 

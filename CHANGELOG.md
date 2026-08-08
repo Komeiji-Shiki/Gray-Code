@@ -10,6 +10,27 @@
 
 （暂无未发布改动）
 
+## [1.7.5] - 2026-08-08
+
+### Fixed
+  - **更新检查修复：禁用「自动检查更新」后手动检查失效**（`UpdateChecker.check`）：
+    - 根因：`checkForUpdates=false` 时 `check()` 顶部的 `isCheckEnabled()` 闸门无条件拦截，手动检查（force=true，设置页「立即检查 / 一键更新」）同样被短路为 `disabled` 且不发任何请求——设置页点「立即检查」表现为「没反应」；
+    - 修复：`force=true` 绕过该闸门——开关（`checkForUpdates`）只约束启动时的自动检查（10s 定时器走 force=false），手动检查始终可用；`updateNow` 的 disabled 分支保留为防御性兜底；
+    - 新增回归测试：关闭自动检查 + force 手动检查仍发起请求并正常推进状态机（updateChecker.test.ts）。
+
+### Performance
+  - **便携版 exe 解压缓存（实测：二次启动 3.0s → ~0.5s，首次启动不变）**：
+    - 根因：便携版（NSIS 自解压）每次启动都把 ~95MB LZMA 载荷解压到 %TEMP% 再运行、退出后整目录删除——解压占启动耗时大头（本机实测 2.27s / 总 3.0s）；
+    - `patch-portable.mjs` 给 electron-builder 的 portable.nsi 模板打「缓存优先」补丁：首次启动解压到固定目录（`portable.unpackDirName = "GrayCode-Portable"`）后写入 `gc-cache-key`（内容 = 本次构建随机 build ID）；再次启动命中缓存（应用文件存在且 build ID 一致）→ 跳过解压直接运行，退出不再删除缓存；exe 被替换/重新下载（build ID 变化）→ 自动失效重解压。载荷仍为 LZMA 压缩，便携版体积不变（81.5MB）；
+    - 实测（同机）：冷启动解压 ~2.3s / 窗口 ~3.0s；缓存命中后进程启动 ~90ms / 窗口出现 ~0.5s；
+    - 解压算法对比实测：LZMA 95MB/解压 2.27s、store 313MB/1.59s、zip(DEFLATE) 130MB/2.0s——store/zip 提速有限且体积翻倍（3.3×/1.4×），故保持 LZMA 体积 + 缓存方案；
+    - CI 与 `dist:win` 脚本同步接入 `patch:portable`（幂等：先还原模板备份再打补丁，模板与预期不符时构建直接报错，不静默产出未优化启动器）。
+  - **主进程三包拆分 + 后端懒加载（应用层启动提速）**（`build.mjs`）：
+    - 原单包 main.js 1.71MB 内联整个 backend + webview 路由，启动路径全量解析执行；现拆为 main.js（323KB 主进程壳）/ host/BackendHost.js（1.55MB 后端宿主）/ vscode-shim.js（31KB 共享实例），`createBackend` 改为动态 `import('./host/BackendHost.js')` 懒加载，when-ready 前不再解析 ~1.2MB 后端代码；
+    - vscode-shim 独立成包保证主进程壳与后端宿主共用同一实例（windowFocused / memento 存储状态不双份漂移）；e2e / monitor-smoke 动态导入路径同步适配；
+    - 渲染层消息在 BackendHost 就绪前缓冲、就绪后补投（消除窗口先于后端加载完成时的丢消息窗口）；懒加载失败弹窗兜底退出，不静默挂起。
+  - **渲染层拼写检查关闭**（`BrowserWindow` webPreferences `spellcheck: false`）：应用无拼写检查功能，省渲染进程词典初始化开销（渲染进程启动提速）。
+
 ## [1.7.5.1dev] - 2026-08-08
 
 ### Performance

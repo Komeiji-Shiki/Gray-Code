@@ -124,7 +124,7 @@ export function parseReleaseResponse(data: unknown): UpdateInfo | null {
 // ─── UpdateChecker ──────────────────────────────────
 
 export interface UpdateCheckerOptions {
-    /** 是否启用自动检查（用户设置 checkForUpdates !== false） */
+    /** 是否启用自动检查（用户设置 checkForUpdates !== false）；仅约束非 force 的自动检查 */
     isCheckEnabled: () => boolean;
     /** 代理 URL（未启用代理时返回 undefined） */
     getProxyUrl?: () => string | undefined;
@@ -160,9 +160,13 @@ export class UpdateChecker {
     /**
      * 检查更新（幂等：进行中的检查返回同一结果，不会并发重复请求）。
      * force=true 忽略 24h 节流（手动检查）。
+     *
+     * 注意：force 也绕过「自动检查」开关——该开关（checkForUpdates）只约束
+     * 启动时的自动检查；设置页「立即检查 / 一键更新」在开关关闭时仍可手动触发，
+     * 否则用户关掉自动检查后连手动检查也会被静默拒绝（修复）。
      */
     async check(force = false): Promise<UpdateCheckStatus> {
-        if (!this.options.isCheckEnabled()) {
+        if (!force && !this.options.isCheckEnabled()) {
             this.status = { state: 'disabled' };
             return this.status;
         }

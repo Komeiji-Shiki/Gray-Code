@@ -65,7 +65,9 @@ jobs:
           GRAYCODE_CI: '1'
 
       - name: Package (electron-builder)
-        run: npx electron-builder --win
+        run: |
+          npm run patch:portable
+          npx electron-builder --win
         working-directory: electron-app
         env:
           GRAYCODE_CI: '1'

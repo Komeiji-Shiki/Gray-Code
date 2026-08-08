@@ -12,6 +12,19 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.5] - 2026-08-08
+
+### Performance
+  - **便携版 exe 解压缓存**（`patch-portable.mjs` + `portable.unpackDirName = GrayCode-Portable`）：NSIS 启动器缓存优先——首次启动解压后写入 gc-cache-key（随机 build ID），二次启动命中缓存直接运行、退出不删缓存（实测窗口出现 3.0s → ~0.5s）；exe 替换/重下（build ID 变化）自动失效重解压；载荷仍为 LZMA，体积不变。详见根目录 CHANGELOG [1.7.5]。
+  - **主进程三包拆分 + BackendHost 懒加载**（`build.mjs`）：main.js（主进程壳）/ host/BackendHost.js（后端宿主，动态 import 懒加载）/ vscode-shim.js（共享实例）；渲染层消息在 BackendHost 就绪前缓冲、就绪后补投；`spellcheck: false` 省渲染进程初始化。
+  - 解压算法对比实测（同机）：LZMA 95MB/2.27s、store 313MB/1.59s、zip(DEFLATE) 130MB/2.0s——保持 LZMA 体积 + 缓存方案。
+
+### Fixed
+  - **更新检查：禁用自动检查后手动检查失效**（`UpdateChecker.check` force 绕过 isCheckEnabled 闸门，自动检查开关只约束启动时检查；见根目录 CHANGELOG [1.7.5]）。
+
+### Changed
+  - 版本号 1.7.5.1dev -> 1.7.5（package.json / package-lock.json）。
+
 ## [1.7.5dev] - 2026-08-08
 
 ### 同步上游
