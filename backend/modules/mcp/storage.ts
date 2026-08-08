@@ -87,6 +87,8 @@ export class FileSystemMcpStorageAdapter implements McpStorageAdapter {
     private filePath: string;
     private fs: typeof import('fs/promises');
     private path: typeof import('path');
+    /** 读写串行队列：read-modify-write 不被并发 save/delete 交错覆盖 */
+    private queue: Promise<unknown> = Promise.resolve();
 
     constructor(
         filePath: string,
@@ -96,6 +98,16 @@ export class FileSystemMcpStorageAdapter implements McpStorageAdapter {
         this.filePath = filePath;
         this.fs = fs;
         this.path = path;
+    }
+
+    /** 将操作加入串行队列（防止并发 save/delete 的 read-modify-write 互相覆盖） */
+    private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this.queue.then(fn);
+        this.queue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
     }
 
     private async ensureDir(): Promise<void> {
@@ -108,13 +120,23 @@ export class FileSystemMcpStorageAdapter implements McpStorageAdapter {
     }
 
     private async readFile(): Promise<McpServerConfig[]> {
+        let content: string;
         try {
-            const content = await this.fs.readFile(this.filePath, 'utf-8');
+            content = await this.fs.readFile(this.filePath, 'utf-8');
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+                return []; // 文件不存在：视为无配置
+            }
+            // 权限等读取错误：上抛，禁止静默按“无配置”处理后被 saveConfig 覆盖
+            throw error;
+        }
+        try {
             const data = JSON.parse(content);
             // 支持 mcpServers 格式
             return data.mcpServers || data.servers || [];
         } catch {
-            return [];
+            // JSON 损坏：明确抛错，禁止静默当“无配置”后覆盖原文件
+            throw new Error(`MCP config file is corrupted: ${this.filePath}`);
         }
     }
 
@@ -126,31 +148,37 @@ export class FileSystemMcpStorageAdapter implements McpStorageAdapter {
     }
 
     async getAllConfigs(): Promise<McpServerConfig[]> {
-        return await this.readFile();
+        return this.enqueue(() => this.readFile());
     }
 
     async saveConfig(config: McpServerConfig): Promise<void> {
-        const configs = await this.readFile();
-        const index = configs.findIndex(c => c.id === config.id);
-        
-        if (index >= 0) {
-            configs[index] = config;
-        } else {
-            configs.push(config);
-        }
-        
-        await this.writeFile(configs);
+        return this.enqueue(async () => {
+            const configs = await this.readFile();
+            const index = configs.findIndex(c => c.id === config.id);
+            
+            if (index >= 0) {
+                configs[index] = config;
+            } else {
+                configs.push(config);
+            }
+            
+            await this.writeFile(configs);
+        });
     }
 
     async deleteConfig(id: string): Promise<void> {
-        const configs = await this.readFile();
-        const filtered = configs.filter(c => c.id !== id);
-        await this.writeFile(filtered);
+        return this.enqueue(async () => {
+            const configs = await this.readFile();
+            const filtered = configs.filter(c => c.id !== id);
+            await this.writeFile(filtered);
+        });
     }
 
     async getConfig(id: string): Promise<McpServerConfig | null> {
-        const configs = await this.readFile();
-        return configs.find(c => c.id === id) ?? null;
+        return this.enqueue(async () => {
+            const configs = await this.readFile();
+            return configs.find(c => c.id === id) ?? null;
+        });
     }
 }
 
@@ -197,6 +225,8 @@ interface McpServersJson {
 export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
     private fileUri: import('vscode').Uri;
     private vscodeFs: typeof import('vscode').workspace.fs;
+    /** 读写串行队列：read-modify-write 不被并发 save/delete 交错覆盖 */
+    private queue: Promise<unknown> = Promise.resolve();
 
     constructor(
         fileUri: import('vscode').Uri,
@@ -206,14 +236,36 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
         this.vscodeFs = vscodeFs;
     }
 
+    /** 将操作加入串行队列（防止并发 save/delete 的 read-modify-write 互相覆盖） */
+    private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this.queue.then(fn);
+        this.queue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
+    }
+
     private async readFile(): Promise<McpServersJson> {
+        let content: Uint8Array;
         try {
-            const content = await this.vscodeFs.readFile(this.fileUri);
+            content = await this.vscodeFs.readFile(this.fileUri);
+        } catch (error) {
+            // 文件不存在（ENOENT/EntryNotFound/FileNotFound）：视为无配置；
+            // 其他错误上抛，禁止静默当“无配置”后被 saveConfig 覆盖
+            const code = String((error as any)?.code || '');
+            if (code === 'ENOENT' || code === 'EntryNotFound' || code === 'FileNotFound') {
+                return { mcpServers: {} };
+            }
+            throw error;
+        }
+        try {
             const text = new TextDecoder().decode(content);
             const data = JSON.parse(text);
             return { mcpServers: data.mcpServers || {} };
         } catch {
-            return { mcpServers: {} };
+            // JSON 损坏：明确抛错，禁止静默当“无配置”后覆盖原文件
+            throw new Error(`MCP config file is corrupted: ${this.fileUri.fsPath || this.fileUri.toString()}`);
         }
     }
 
@@ -304,26 +356,34 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
     }
 
     async getAllConfigs(): Promise<McpServerConfig[]> {
-        const data = await this.readFile();
-        return Object.entries(data.mcpServers).map(([id, json]) => this.jsonToConfig(id, json));
+        return this.enqueue(async () => {
+            const data = await this.readFile();
+            return Object.entries(data.mcpServers).map(([id, json]) => this.jsonToConfig(id, json));
+        });
     }
 
     async saveConfig(config: McpServerConfig): Promise<void> {
-        const data = await this.readFile();
-        data.mcpServers[config.id] = this.configToJson(config);
-        await this.writeFile(data);
+        return this.enqueue(async () => {
+            const data = await this.readFile();
+            data.mcpServers[config.id] = this.configToJson(config);
+            await this.writeFile(data);
+        });
     }
 
     async deleteConfig(id: string): Promise<void> {
-        const data = await this.readFile();
-        delete data.mcpServers[id];
-        await this.writeFile(data);
+        return this.enqueue(async () => {
+            const data = await this.readFile();
+            delete data.mcpServers[id];
+            await this.writeFile(data);
+        });
     }
 
     async getConfig(id: string): Promise<McpServerConfig | null> {
-        const data = await this.readFile();
-        const json = data.mcpServers[id];
-        if (!json) return null;
-        return this.jsonToConfig(id, json);
+        return this.enqueue(async () => {
+            const data = await this.readFile();
+            const json = data.mcpServers[id];
+            if (!json) return null;
+            return this.jsonToConfig(id, json);
+        });
     }
 }

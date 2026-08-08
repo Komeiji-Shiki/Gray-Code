@@ -95,6 +95,8 @@ export class HttpMcpClient extends EventEmitter {
     private requestId = 0;
     private sessionId?: string;
     private connected = false;
+    /** disconnect 已调用：中止请求与「外部取消」区分（避免误报 requestTimeout） */
+    private disconnected = false;
     private timeout: number;
     
     // 进行中的 fetch AbortController（disconnect 时统一中止）
@@ -115,7 +117,9 @@ export class HttpMcpClient extends EventEmitter {
     
     constructor(
         private url: string,
-        private transportType: 'sse' | 'streamable-http',
+        // transportType 仅为兼容旧配置保留（'sse' 按 streamable-http 语义统一处理：
+        // POST + SSE 响应流；经典 SSE 的 GET /sse 端点不支持）。字段只写不读，不存。
+        _transportType: 'sse' | 'streamable-http',
         private headers: Record<string, string> = {},
         timeout: number = 30000
     ) {
@@ -127,6 +131,8 @@ export class HttpMcpClient extends EventEmitter {
      * 连接到服务器
      */
     async connect(): Promise<void> {
+        // 支持断开后复用：重置 disconnect 标志，后续请求不再被误判为「已断开」
+        this.disconnected = false;
         // 发送初始化请求
         const initResult = await this.sendRequest<InitializeResult>('initialize', {
             protocolVersion: '2025-12-19',
@@ -180,6 +186,8 @@ export class HttpMcpClient extends EventEmitter {
      */
     async disconnect(): Promise<void> {
         this.connected = false;
+        // 标记断开：进行中的请求被 abort 时据此区分「断开中止」与「请求超时」
+        this.disconnected = true;
         this.sessionId = undefined;
         this.tools = [];
         this.resources = [];
@@ -206,6 +214,32 @@ export class HttpMcpClient extends EventEmitter {
         this.activeReaders.clear();
     }
     
+    /**
+     * 重新拉取服务器公开列表。
+     * 列表变更通知由 McpManager 串行调用本方法，失败向上抛出并保留旧缓存。
+     */
+    async refreshLists(): Promise<void> {
+        if (!this.connected) {
+            throw new Error('MCP client is not connected');
+        }
+
+        const [tools, resources, prompts] = await Promise.all([
+            this.capabilities?.tools
+                ? this.sendRequest<{ tools: McpTool[] }>('tools/list', {}).then(result => result.tools || [])
+                : Promise.resolve([] as McpTool[]),
+            this.capabilities?.resources
+                ? this.sendRequest<{ resources: McpResource[] }>('resources/list', {}).then(result => result.resources || [])
+                : Promise.resolve([] as McpResource[]),
+            this.capabilities?.prompts
+                ? this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {}).then(result => result.prompts || [])
+                : Promise.resolve([] as McpPrompt[]),
+        ]);
+
+        this.tools = tools;
+        this.resources = resources;
+        this.prompts = prompts;
+    }
+
     /**
      * 获取工具列表
      */
@@ -292,6 +326,10 @@ export class HttpMcpClient extends EventEmitter {
      * - 错误文案区分外部中止（'MCP tool call aborted'）与内部超时（requestTimeout）
      */
     private async sendRequest<T>(method: string, params?: any, signal?: AbortSignal): Promise<T> {
+        // 未连接（initialize 之外的请求）：直接拒绝，避免对已断开/未连接客户端发起请求
+        if (!this.connected && method !== 'initialize') {
+            throw new Error('MCP client is not connected');
+        }
         // 外部信号已中止：立即拒绝，不发起请求
         if (signal?.aborted) {
             throw new Error('MCP tool call aborted');
@@ -305,10 +343,12 @@ export class HttpMcpClient extends EventEmitter {
             params
         };
         
+        // 协议头放在用户自定义 headers 之后：Content-Type/Accept 是 MCP 必需，
+        // 不能被用户 headers 覆盖导致服务器拒绝
         const headers: Record<string, string> = {
+            ...this.headers,
             'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            ...this.headers
+            'Accept': 'application/json, text/event-stream'
         };
         
         // 如果有 session ID，添加到请求头
@@ -348,6 +388,10 @@ export class HttpMcpClient extends EventEmitter {
                     throw new Error('MCP tool call aborted');
                 }
                 if (error?.name === 'AbortError') {
+                    // disconnect 触发的中止：报「已断开」而非「请求超时」
+                    if (this.disconnected) {
+                        throw new Error('MCP client disconnected');
+                    }
                     throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
                 }
                 throw error;
@@ -386,6 +430,10 @@ export class HttpMcpClient extends EventEmitter {
                     throw new Error('MCP tool call aborted');
                 }
                 if (error?.name === 'AbortError') {
+                    // disconnect 触发的中止：报「已断开」而非「请求超时」
+                    if (this.disconnected) {
+                        throw new Error('MCP client disconnected');
+                    }
                     throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
                 }
                 throw error;
@@ -431,6 +479,11 @@ export class HttpMcpClient extends EventEmitter {
                 reader.cancel().catch(() => {});
             }, this.timeout);
         };
+
+        // 总 deadline：不随数据重置——服务器持续推无关事件时，tools/call 不能无限等待
+        const absoluteDeadline = setTimeout(() => {
+            reader.cancel().catch(() => {});
+        }, Math.max(this.timeout * 3, 120_000));
 
         // 外部中止：取消读流，让 read() 快速结束（中止标记由 sendRequest 的 listener 置位）
         const onExternalAbort = () => {
@@ -480,9 +533,9 @@ export class HttpMcpClient extends EventEmitter {
                     eventData = null;
                     if (!jsonStr || jsonStr === '[DONE]') return;
 
-                    let event: Partial<JsonRpcResponse> | undefined;
+                    let event: (Partial<JsonRpcResponse> & { method?: string; params?: unknown }) | undefined;
                     try {
-                        event = JSON.parse(jsonStr) as Partial<JsonRpcResponse>;
+                        event = JSON.parse(jsonStr) as Partial<JsonRpcResponse> & { method?: string; params?: unknown };
                     } catch {
                         // 忽略解析错误（多行 data 已在合并后解析）
                         return;
@@ -494,6 +547,11 @@ export class HttpMcpClient extends EventEmitter {
                         }
                         matched = true;
                         result = event.result as T;
+                    } else if (event.jsonrpc === '2.0'
+                        && event.id === undefined
+                        && typeof event.method === 'string') {
+                        // 服务器通知（无 id）：按 method 派发，供 McpManager 刷新列表缓存等
+                        this.emit('notification', event.method, event.params);
                     }
                 };
 
@@ -527,6 +585,7 @@ export class HttpMcpClient extends EventEmitter {
             }
         } finally {
             if (idleTimer) clearTimeout(idleTimer);
+            clearTimeout(absoluteDeadline);
             signal?.removeEventListener('abort', onExternalAbort);
             try {
                 reader.releaseLock();
@@ -557,9 +616,10 @@ export class HttpMcpClient extends EventEmitter {
             params
         };
         
+        // 协议头优先（与 sendRequest 同口径），不被用户自定义 headers 覆盖
         const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-            ...this.headers
+            ...this.headers,
+            'Content-Type': 'application/json'
         };
         
         if (this.sessionId) {
@@ -581,6 +641,9 @@ export class HttpMcpClient extends EventEmitter {
             });
         } catch (error: any) {
             if (error?.name === 'AbortError') {
+                if (this.disconnected) {
+                    throw new Error('MCP client disconnected');
+                }
                 throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
             }
             throw error;

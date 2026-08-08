@@ -273,7 +273,7 @@ export class StdioMcpClient extends EventEmitter {
             }
             const pid = this.process.pid;
             let timeoutHandle: NodeJS.Timeout | undefined;
-            // treeKill 回调报错（进程不存在）时立即 resolve，不等 10s 兜底
+            // treeKill 回调报错（进程不存在）时立即 resolve，不等兜底
             let treeKillFailed = false;
             const treeKillError = new Promise<void>((resolve) => {
                 treeKill(pid, 'SIGTERM', (err?: Error) => {
@@ -290,7 +290,7 @@ export class StdioMcpClient extends EventEmitter {
             const exitOrTimeout = Promise.race([
                 new Promise<void>((resolve) => {
                     this.process!.once('exit', () => {
-                        // 进程先退出时清除 10s 兜底定时器，避免 MCP 频繁重启时悬空 handle 累积
+                        // 进程先退出时清除兜底定时器，避免 MCP 频繁重启时悬空 handle 累积
                         if (timeoutHandle) {
                             clearTimeout(timeoutHandle);
                         }
@@ -304,10 +304,29 @@ export class StdioMcpClient extends EventEmitter {
                         resolve();
                         return;
                     }
-                    timeoutHandle = setTimeout(resolve, 10000);
+                    timeoutHandle = setTimeout(resolve, 5000);
                 })
             ]);
             await exitOrTimeout;
+            // SIGTERM 未生效：SIGKILL 强制终止并再等待退出，仍超时则告警（上游 cddf515 分级升级）
+            const processAfterSigterm = this.process;
+            if (processAfterSigterm && processAfterSigterm.exitCode === null && processAfterSigterm.signalCode === null) {
+                await new Promise<void>((resolve) => {
+                    try { treeKill(pid, 'SIGKILL'); } catch {}
+                    const timer = setTimeout(resolve, 5000);
+                    const activeProcess = this.process;
+                    if (!activeProcess) {
+                        clearTimeout(timer);
+                        resolve();
+                        return;
+                    }
+                    activeProcess.once('exit', () => { clearTimeout(timer); resolve(); });
+                });
+                const processAfterSigkill = this.process;
+                if (processAfterSigkill && processAfterSigkill.exitCode === null && processAfterSigkill.signalCode === null) {
+                    console.warn(`[MCP] stdio process ${pid} did not exit after SIGKILL`);
+                }
+            }
             this.cleanup();
         } else {
             this.cleanup();
@@ -553,6 +572,16 @@ export class StdioMcpClient extends EventEmitter {
         });
     }
     
+    /** 直接向 stdin 写入一条 JSON-RPC 消息（带换行）；进程已退出时忽略 */
+    private writeRaw(payload: Record<string, unknown>): void {
+        if (!this.process || !this.process.stdin) return;
+        try {
+            this.process.stdin.write(JSON.stringify(payload) + '\n');
+        } catch {
+            // 进程刚退出，忽略
+        }
+    }
+
     /**
      * 发送 JSON-RPC 通知（无需响应）
      */
@@ -638,7 +667,17 @@ export class StdioMcpClient extends EventEmitter {
                 }
             }
         } else if ('method' in message) {
-            // 这是通知或请求
+            // 服务器发来的 JSON-RPC 请求（带 id）：客户端不支持服务器发起的请求，
+            // 回 method-not-found 错误，避免服务器等待响应而挂起
+            if (message.id !== undefined && message.id !== null) {
+                this.writeRaw({
+                    jsonrpc: '2.0',
+                    id: message.id,
+                    error: { code: -32601, message: `Method not found: ${String(message.method)}` }
+                });
+                return;
+            }
+            // 无 id 的通知：按 method 派发
             this.emit('notification', message.method, message.params);
         }
     }
