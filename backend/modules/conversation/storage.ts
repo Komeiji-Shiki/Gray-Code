@@ -19,6 +19,13 @@ import { Logger } from '../../core/logger';
 const log = Logger.get('storage');
 
 /**
+ * readDirectory 返回的 [name, type] 中 type 的取值（vscode.FileType 枚举值）。
+ * 用符号常量代替魔法数字 1/2，避免与其它文件类型混淆。
+ */
+const FS_ENTRY_TYPE_FILE = 1;
+const FS_ENTRY_TYPE_DIRECTORY = 2;
+
+/**
  * 校验会被直接用作文件/目录名的存储 ID。
  *
  * conversationId / snapshotId 会来自 Webview 消息和导入数据，不能在未校验时交给
@@ -1674,14 +1681,17 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             const entries = await this.vscode.workspace.fs.readDirectory(dirUri);
             const ids = new Set<string>();
             for (const [name, type] of entries as Array<[string, number]>) {
+                // corrupt-* 是 meta 损坏降级备份文件（{id}.meta.json.corrupt-{ts}），
+                // 无论如何都不能被当成对话 ID 列入列表。
+                if (name.includes('.corrupt-')) continue;
                 // 只识别对话历史文件：{id}.json（legacy）与 {id}/ 目录（segmented）；
                 // {id}.meta.json 元数据与 {id}.usage.json 用量索引必须排除，
                 // 否则会被当成假对话 ID（如 xxx.usage）显示在历史列表并报 metadata missing。
-                if (type === 1 && name.endsWith('.json') && !name.endsWith('.meta.json') && !name.endsWith('.usage.json')) {
+                if (type === FS_ENTRY_TYPE_FILE && name.endsWith('.json') && !name.endsWith('.meta.json') && !name.endsWith('.usage.json')) {
                     ids.add(name.replace('.json', ''));
                     continue;
                 }
-                if (type === 2) {
+                if (type === FS_ENTRY_TYPE_DIRECTORY) {
                     // 排除假对话目录：旧版 bug 把 {id}.usage.json 误识别为对话 ID {id}.usage，
                     // 用户点入后写入 segmented 历史，磁盘留下 {id}.usage/ 目录；
                     // 目录分支必须同样排除（.usage 后缀不可能是真实对话 ID）。
@@ -1863,7 +1873,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             
             const snapshots: string[] = [];
             for (const [name, type] of entries) {
-                if (type === 1 && name.endsWith('.json')) {
+                if (type === FS_ENTRY_TYPE_FILE && name.endsWith('.json')) {
                     const snapshotId = name.replace('.json', '');
                     const snapshot = await this.loadSnapshot(snapshotId);
                     if (snapshot && snapshot.conversationId === conversationId) {

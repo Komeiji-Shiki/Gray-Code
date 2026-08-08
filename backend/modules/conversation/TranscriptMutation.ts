@@ -317,12 +317,15 @@ export function collectRespondedToolCallIds(history: ReadonlyArray<Content>): Se
 /**
  * 扫描历史中「没有对应响应且尚未被标记 rejected」的 functionCall，原地标记 rejected，
  * 并按所在消息索引分组返回调用信息。无未响应调用时返回空 Map（不做任何修改）。
+ *
+ * @param preserveDetachedAgents 为真时 subagents 调用不标记 rejected（保留后台运行语义）
  */
 export function collectUnresolvedToolCalls(
     history: Content[],
-    respondedToolCallIds: ReadonlySet<string>
-): Map<number, Array<{ id: string; name: string }>> {
-    const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+    respondedToolCallIds: ReadonlySet<string>,
+    preserveDetachedSubAgents?: boolean
+): Map<number, Array<{ id: string; name: string; detached?: boolean }>> {
+    const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string; detached?: boolean }>> = new Map();
     for (let i = 0; i < history.length; i++) {
         const message = history[i];
         if (message.parts) {
@@ -330,11 +333,15 @@ export function collectUnresolvedToolCalls(
                 if (part.functionCall && part.functionCall.id) {
                     // 如果工具调用没有对应的响应，且还没有被标记为 rejected
                     if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                        part.functionCall.rejected = true;
+                        const detached = preserveDetachedSubAgents === true && part.functionCall.name === 'subagents';
+                        if (!detached) {
+                            part.functionCall.rejected = true;
+                        }
                         const calls = unresolvedCallsByIndex.get(i) || [];
                         calls.push({
                             id: part.functionCall.id,
-                            name: part.functionCall.name || 'unknown'
+                            name: part.functionCall.name || 'unknown',
+                            detached
                         });
                         unresolvedCallsByIndex.set(i, calls);
                     }
@@ -345,17 +352,24 @@ export function collectUnresolvedToolCalls(
     return unresolvedCallsByIndex;
 }
 
-/** 构造「用户拒绝」的 functionResponse parts（与三处旧实现逐字段一致） */
-export function buildRejectedResponseParts(calls: Array<{ id: string; name: string }>): ContentPart[] {
+/** 构造「用户拒绝/后台保留」的 functionResponse parts（与三处旧实现逐字段一致） */
+export function buildRejectedResponseParts(calls: Array<{ id: string; name: string; detached?: boolean }>): ContentPart[] {
     return calls.map(call => ({
         functionResponse: {
             name: call.name,
             id: call.id,
-            response: {
-                success: false,
-                error: t('modules.api.chat.errors.userRejectedTool'),
-                rejected: true
-            }
+            response: call.detached
+                ? {
+                    success: true,
+                    detached: true,
+                    background: true,
+                    note: 'SubAgent continued in background after the parent turn was replaced.'
+                }
+                : {
+                    success: false,
+                    error: t('modules.api.chat.errors.userRejectedTool'),
+                    rejected: true
+                }
         }
     }));
 }
@@ -386,7 +400,7 @@ export function findFunctionResponseInsertIndex(history: ReadonlyArray<Content>,
  */
 export function insertRejectedResponses(
     history: Content[],
-    unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>>,
+    unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string; detached?: boolean }>>,
     ensureNodeId: (content: Content, parent: Content | null | undefined) => Content
 ): boolean {
     let inserted = false;
@@ -418,10 +432,11 @@ export function insertRejectedResponses(
  */
 export function rejectUnresolvedToolCalls(
     history: Content[],
-    ensureNodeId: (content: Content, parent: Content | null | undefined) => Content
+    ensureNodeId: (content: Content, parent: Content | null | undefined) => Content,
+    preserveDetachedSubAgents?: boolean
 ): boolean {
     const respondedToolCallIds = collectRespondedToolCallIds(history);
-    const unresolvedCallsByIndex = collectUnresolvedToolCalls(history, respondedToolCallIds);
+    const unresolvedCallsByIndex = collectUnresolvedToolCalls(history, respondedToolCallIds, preserveDetachedSubAgents);
     if (unresolvedCallsByIndex.size === 0) {
         return false;
     }

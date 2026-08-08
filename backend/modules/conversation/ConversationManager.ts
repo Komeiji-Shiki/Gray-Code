@@ -395,6 +395,14 @@ export class ConversationManager {
         return this.deletedConversationIds.has(conversationId);
     }
 
+    /**
+     * 同一 targetConversationId 的并发 createBranchConversation 合并表（BR-13，上游 e57a657）。
+     * 与 conversationCreations 同风格：只合并仍在进行的创建；创建完成后的显式重复
+     * 调用仍按「对话已存在」原语义报错。防止并发分支创建都通过「不存在」检查后
+     * 互相覆盖落盘（内容不同的分支静默丢失其一）。
+     */
+    private readonly branchCreations = new Map<string, Promise<CreateBranchConversationResult>>();
+
     /** append/mutate 入口短路：会话已被删除时拒绝写入（正常删除后不应再有写入） */
     private assertNotDeleted(conversationId: string): void {
         if (this.isDeletedConversation(conversationId)) {
@@ -1303,6 +1311,49 @@ export class ConversationManager {
             ? options.conversationId.trim()
             : `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+        // BR-13：同一 targetConversationId 的并发 createBranchConversation 去重保护。
+        // 两条并发调用都可能先通过「历史不存在」检查（existing.value 为空），随后各自落盘
+        // 互相覆盖（后写覆盖先写，内容不同的分支会静默丢失其一）。与 createConversation 的
+        // conversationCreations 同风格：先到者持有 in-flight 创建，后到者等待其完成后重查
+        // 「已存在」按原语义报错（幂等保护）；先到者失败未落盘时后到者继续正常创建。
+        const inFlight = this.branchCreations.get(targetConversationId);
+        if (inFlight) {
+            await inFlight;
+            const recheck = await this.storage.loadHistoryWithStatus(targetConversationId);
+            if (recheck.value) {
+                throw new Error(t('modules.conversation.errors.conversationExists', { conversationId: targetConversationId }));
+            }
+        }
+
+        const creation = this.createBranchConversationCore(
+            normalizedSourceId,
+            history,
+            index,
+            targetConversationId,
+            options
+        );
+        this.branchCreations.set(targetConversationId, creation);
+        try {
+            return await creation;
+        } finally {
+            if (this.branchCreations.get(targetConversationId) === creation) {
+                this.branchCreations.delete(targetConversationId);
+            }
+        }
+    }
+
+    /**
+     * createBranchConversation 的核心落盘体（BR-13 并发去重保护的受保护区）。
+     *
+     * 入参 history/index 已在调用方完成分支点校验，此处只做目标会话的存在性检查与落盘。
+     */
+    private async createBranchConversationCore(
+        normalizedSourceId: string,
+        history: ConversationHistory,
+        index: number,
+        targetConversationId: string,
+        options: { conversationId?: string; title?: string; workspaceUri?: string }
+    ): Promise<CreateBranchConversationResult> {
         const existing = await this.storage.loadHistoryWithStatus(targetConversationId);
         if (existing.value) {
             throw new Error(t('modules.conversation.errors.conversationExists', { conversationId: targetConversationId }));
@@ -1577,8 +1628,7 @@ export class ConversationManager {
         conversationId: string,
         role: 'user' | 'model' | 'system',
         parts: ContentPart[],
-        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source'>>,
-        messageId?: string,
+        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source' | 'turnDynamicContext' | 'turnDynamicContextStrategy'>>,        messageId?: string,
     ): Promise<void> {
         // MED-3 / H1-2：新的真实 user 消息 = 新回合开始。清空主会话信箱未消费消息，
         // 防止上一回合滞留的 agent→main / 用户打断消息跨轮过期投递。
@@ -2170,8 +2220,15 @@ export class ConversationManager {
         // 修改原因：重试/删除到指定消息的语义是从目标索引开始截断，不能在主对话和 SubAgent 子对话各写一套实现。
         // 修改方式：通过 TranscriptRepository.mutateContents 委托 TranscriptMutation.truncateFrom 统一处理截断和 index 规范化。
         // 修改目的：保证后续工具配对规则升级时，主窗口和 Monitor 同步继承。
-        const nextHistory = await repository.mutateContents(currentHistory => truncateFrom(currentHistory, targetIndex));
-        const deleteCount = history.length - nextHistory.length;
+        // deleteCount 必须在 mutateContents 回调内基于同一份锁内快照计算：
+        // 此前用外部 history.length 减 nextHistory.length，两次读取之间若有并发追加，
+        // 删除数会失真（甚至为负）。
+        let deleteCount = 0;
+        const nextHistory = await repository.mutateContents(currentHistory => {
+            const next = truncateFrom(currentHistory, targetIndex);
+            deleteCount = currentHistory.length - next.length;
+            return next;
+        });
         if (deleteCount > 0) {
             // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
             await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
@@ -2215,14 +2272,14 @@ export class ConversationManager {
             }
 
             if (filter.hasFunctionCall !== undefined) {
-                const hasFunctionCall = message.parts.some(p => p.functionCall !== undefined);
+                const hasFunctionCall = (message.parts ?? []).some(p => p.functionCall !== undefined);
                 if (hasFunctionCall !== filter.hasFunctionCall) {
                     matches = false;
                 }
             }
 
             if (filter.hasText !== undefined) {
-                const hasText = message.parts.some(
+                const hasText = (message.parts ?? []).some(
                     p => p.text !== undefined && p.text.trim() !== ''
                 );
                 if (hasText !== filter.hasText) {
@@ -2231,7 +2288,7 @@ export class ConversationManager {
             }
 
             if (filter.isThought !== undefined) {
-                const isThought = message.parts.some(p => p.thought === true);
+                const isThought = (message.parts ?? []).some(p => p.thought === true);
                 if (isThought !== filter.isThought) {
                     matches = false;
                 }
@@ -2341,6 +2398,7 @@ export class ConversationManager {
         
         let userMessages = 0;
         let modelMessages = 0;
+        let systemMessages = 0;
         let functionCalls = 0;
         let hasThoughtSignatures = false;
         let hasThoughts = false;
@@ -2363,6 +2421,9 @@ export class ConversationManager {
         for (const message of history) {
             if (message.role === 'user') {
                 userMessages++;
+            } else if (message.role === 'system') {
+                // system 角色单独统计，不计入 modelMessages（避免模型消息数虚高）
+                systemMessages++;
             } else {
                 modelMessages++;
             }
@@ -2389,7 +2450,7 @@ export class ConversationManager {
                 messagesWithCandidatesTokens++;
             }
 
-            for (const part of message.parts) {
+            for (const part of message.parts ?? []) {
                 // 函数调用
                 if (part.functionCall) {
                     functionCalls++;
@@ -2441,6 +2502,7 @@ export class ConversationManager {
             totalMessages: history.length,
             userMessages,
             modelMessages,
+            systemMessages,
             functionCalls,
             hasThoughtSignatures,
             hasThoughts,
@@ -2735,7 +2797,7 @@ export class ConversationManager {
         // 会变成普通 tool_calls 无对应 tool 消息 → OpenAI/Anthropic 400。
         const respondedCallIds = new Set<string>();
         for (const message of history) {
-            for (const part of message.parts) {
+            for (const part of message.parts ?? []) {
                 if (part.functionCall?.rejected && part.functionCall.id) {
                     rejectedToolCallIds.add(part.functionCall.id);
                 }
@@ -2838,13 +2900,13 @@ export class ConversationManager {
             
             // 登记本消息中的 functionCall id（BR-07）：后续的 functionResponse 只有
             // 出现在该集合中才被保留，被截断/reroll 后残留的孤儿 functionResponse 将被过滤。
-            for (const part of message.parts) {
+            for (const part of message.parts ?? []) {
                 if (part.functionCall?.id) {
                     seenFunctionCallIds.add(part.functionCall.id);
                 }
             }
             
-            let parts = message.parts;
+            let parts = message.parts ?? [];
             
             // 处理思考内容 (Thought Text/Reasoning Content)
             // 注意：思考发送不依赖于 includeThoughts（渠道是否支持思考）
@@ -3539,7 +3601,10 @@ export class ConversationManager {
      * 
      * @param conversationId 对话 ID
      */
-    async rejectAllPendingToolCalls(conversationId: string): Promise<void> {
+    async rejectAllPendingToolCalls(
+        conversationId: string,
+        options: { preserveDetachedSubAgents?: boolean } = {}
+    ): Promise<void> {
         const repository = this.getTranscriptRepository(conversationId);
         let changed = false;
 
@@ -3550,13 +3615,14 @@ export class ConversationManager {
             if (history.length === 0) return history;
 
             // 共享逻辑：收集未响应 functionCall → 标记 rejected → 插入 functionResponse 占位
-            // （行为与 normalizeHistoryForDisplay 完全等价，见 TranscriptMutation.rejectUnresolvedToolCalls）。
-            if (!rejectUnresolvedToolCalls(history, (content, parent) => this.ensureNodeId(content, parent))) {
+            // （行为与 normalizeHistoryForDisplay 完全等价，见 TranscriptMutation.rejectUnresolvedToolCalls；
+            //  preserveDetachedSubAgents 为真时 subagents 调用不拒绝、回 background 占位，上游 e57a657）
+            if (!rejectUnresolvedToolCalls(history, (content, parent) => this.ensureNodeId(content, parent), options.preserveDetachedSubAgents)) {
                 // 无变更：返回原引用跳过写回（此时没有任何原地修改）
                 return history;
             }
             changed = true;
-            // 有插入：返回新引用触发写回（mutateContents 契约：返回原引用=跳过写回）
+            // 有插入：返回新引用触发写回（mutateContents 契约返回原引用=跳过写回）
             return history.slice();
         });
 
