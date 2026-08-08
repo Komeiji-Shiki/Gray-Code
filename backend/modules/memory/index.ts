@@ -169,27 +169,33 @@ export async function getMemoryManagerForWorkspace(
     const initPromise = (async () => {
         const dir = workspaceMemoryDir(scopeKey);
         if (!dir) return null;
+        // B-8: 只读访问（createIfMissing=false）跳过全部写副作用——mkdir / scope.json /
+        // manager.init()（会创建 TREE/LOG.txt/config）都不执行，只读 loadConfig；
+        // 只读实例不写入 _workspaceInstances 缓存：后续写路径（createIfMissing=true）
+        // 会走完整初始化分支，避免缓存未初始化实例供写工具使用。
+        if (!createIfMissing) {
+            const manager = new MemoryManager(dir);
+            await manager.loadConfig();
+            return manager;
+        }
         await fs.promises.mkdir(dir, { recursive: true });
         // 持久化 scope 元信息：供设置页枚举工作区记忆时展示名称。
-        // 只读访问（createIfMissing=false）不写 meta，保持无磁盘副作用。
-        if (createIfMissing) {
-            const metaPath = path.join(dir, 'scope.json');
-            // uri 存原始 workspaceUri：非 file:// 形态（如 vscode-remote://）时
-            // 无法从 fsPath 无损还原 URI（file:// 重建会损坏），故原样持久化
-            const meta = {
-                fsPath: uriToFsPathForMeta(scopeKey),
-                name: path.basename(uriToFsPathForMeta(scopeKey)),
-                uri: workspaceUri,
-            };
-            try {
-                const raw = await fs.promises.readFile(metaPath, 'utf-8');
-                const existingMeta = JSON.parse(raw);
-                if (existingMeta.fsPath !== meta.fsPath || existingMeta.uri !== meta.uri) {
-                    await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
-                }
-            } catch {
+        const metaPath = path.join(dir, 'scope.json');
+        // uri 存原始 workspaceUri：非 file:// 形态（如 vscode-remote://）时
+        // 无法从 fsPath 无损还原 URI（file:// 重建会损坏），故原样持久化
+        const meta = {
+            fsPath: uriToFsPathForMeta(scopeKey),
+            name: path.basename(uriToFsPathForMeta(scopeKey)),
+            uri: workspaceUri,
+        };
+        try {
+            const raw = await fs.promises.readFile(metaPath, 'utf-8');
+            const existingMeta = JSON.parse(raw);
+            if (existingMeta.fsPath !== meta.fsPath || existingMeta.uri !== meta.uri) {
                 await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
             }
+        } catch {
+            await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
         }
         const manager = new MemoryManager(dir);
         await manager.init();
