@@ -220,7 +220,10 @@ export class CheckpointRetentionService {
             try {
                 await this.manifestRepository.writeManifest(successor.id, successorManifest);
             } catch (err) {
+                // C-3: manifest 写失败与文件合并失败同语义——抛错中止删除。
+                // 若只 console.warn 后继续持久化，恢复链仍指向旧 manifest → 必报 missing_in_chain。
                 console.warn(`[CheckpointRetentionService] Failed to update manifest of ${successor.backupDir}:`, err);
+                throw err;
             }
         }
 

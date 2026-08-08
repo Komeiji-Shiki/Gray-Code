@@ -66,7 +66,9 @@ export class CheckpointQueryService {
         private readonly conversationManager: ConversationManager,
         private readonly checkpointsDir: string,
         private readonly manifestRepository: CheckpointManifestRepository,
-        private readonly defaultTitle: (conversationId: string) => string
+        private readonly defaultTitle: (conversationId: string) => string,
+        /** C-2: 孤儿判定前询问该备份目录是否正被进行中 create 使用（跨工作区场景保护） */
+        private readonly isBackupDirBeingCreated?: (backupDir: string) => boolean
     ) {}
 
     /** 读取对话元数据中的原始存档记录（内部使用，含旧格式完整字段） */
@@ -344,6 +346,12 @@ export class CheckpointQueryService {
                         }
                     } catch {
                         continue; // stat 失败（目录刚消失等）：本次跳过，下轮再判
+                    }
+                    // C-2: 删除前检查「进行中 create」引用——另一工作区正在创建该存档时
+                    //（目录已建、manifest 未写，大工作区 mkdir→writeManifest 可能超 5 分钟新鲜度窗口），
+                    // 绝不能把它当孤儿删除。
+                    if (this.isBackupDirBeingCreated?.(entry.name)) {
+                        continue;
                     }
                 }
                 try {

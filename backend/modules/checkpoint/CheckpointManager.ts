@@ -33,7 +33,6 @@ import {
     createRuntimeWorkspaceRoots,
     createWorkspaceSnapshot,
     parseWorkspaceScopedPath,
-    type CheckpointWorkspaceRoot,
     type RuntimeWorkspaceRoot
 } from './CheckpointWorkspace';
 import { checkpointOperationLockManager, CHECKPOINT_LOCK_CANCELLED_MESSAGE } from './CheckpointOperationLock';
@@ -87,6 +86,9 @@ export type {
 
 const log = Logger.get('CheckpointManager');
 
+/** C-13: copyFileToBackup 单次操作逐文件告警上限（其余失败由 unbackedPaths 统计聚合，避免超大备份刷屏） */
+const MAX_COPY_FAILURE_WARN = 10;
+
 /**
  * BCP-06：计算「必须保留」的存档 ID 祖先闭包（CP-05 逻辑抽取，纯函数）。
  *
@@ -136,7 +138,9 @@ export class CheckpointManager {
     private readonly queryService: CheckpointQueryService;
     private readonly retentionService: CheckpointRetentionService;
     /** CPF-11: 进行中操作的进度状态与取消控制器（operationId -> 记录） */
-    private readonly operations = new Map<string, { progress: CheckpointOperationProgress; controller: AbortController }>();
+    private readonly operations = new Map<string, { progress: CheckpointOperationProgress; controller: AbortController; creatingBackupDir?: string }>();
+    /** C-13: 本次复制失败已打印的逐文件告警条数（超上限后静默，由 unbackedPaths 统计兜底） */
+    private copyFailureWarnCount = 0;
     /** CPF-12: 恢复准备/执行辅助（从 CheckpointManager 拆分的独立服务） */
     private readonly restoreService: CheckpointRestoreService;
     
@@ -156,7 +160,9 @@ export class CheckpointManager {
             conversationManager,
             this.checkpointsDir,
             this.manifestRepository,
-            (conversationId: string) => t('modules.checkpoint.defaultConversationTitle', { conversationId: conversationId.slice(0, 8) })
+            (conversationId: string) => t('modules.checkpoint.defaultConversationTitle', { conversationId: conversationId.slice(0, 8) }),
+            // C-2: 孤儿清理前检查「进行中 create」——避免跨工作区清理删掉正在创建的备份目录
+            (backupDir: string) => this.isBackupDirBeingCreated(backupDir)
         );
         this.retentionService = new CheckpointRetentionService(
             {
@@ -333,7 +339,9 @@ export class CheckpointManager {
         const progressCb = options?.progress;
         const reportProgress = (patch: Partial<CheckpointOperationProgress>): void => {
             const merged = this.updateOperation(operationId, patch);
-            progressCb?.(merged);
+            if (merged) {
+                progressCb?.(merged);
+            }
         };
         reportProgress({ phase: 'scanning', processed: 0, total: 0 });
         
@@ -383,6 +391,12 @@ export class CheckpointManager {
         
         const checkpointId = this.generateCheckpointId();
         const backupDir = path.join(this.checkpointsDir, checkpointId);
+        // C-2: 登记「进行中 create」的目标备份目录，供孤儿清理（removeOrphanBackupDirs）
+        // 避开跨工作区误删；在操作 finally 中注销（早退/失败路径同样覆盖）。
+        const createOperationRecord = this.operations.get(operationId);
+        if (createOperationRecord) {
+            createOperationRecord.creatingBackupDir = checkpointId;
+        }
 
         // CP-03: 存档创建进入工作区级互斥（与恢复、删除、写工具互斥，保证快照一致性）
         // 多工作区并发支持：文件锁范围 = 本次快照的工作区根，不再取全局根锁，
@@ -708,6 +722,9 @@ export class CheckpointManager {
             }
             throw err;
         } finally {
+            if (createOperationRecord) {
+                createOperationRecord.creatingBackupDir = undefined;
+            }
             this.endOperation(operationId);
         }
     }
@@ -762,7 +779,12 @@ export class CheckpointManager {
             }
             return { ok: true, bytes: stat.size };
         } catch (err) {
-            console.warn(`[CheckpointManager] Failed to copy ${scopedPath}:`, err);
+            // C-13: 超大备份逐文件告警会刷屏——只打印前 MAX_COPY_FAILURE_WARN 条，
+            // 其余由调用方的 unbackedPaths 统计/日志（full_backup/incremental_backup）聚合。
+            if (this.copyFailureWarnCount < MAX_COPY_FAILURE_WARN) {
+                this.copyFailureWarnCount += 1;
+                console.warn(`[CheckpointManager] Failed to copy ${scopedPath}:`, err);
+            }
             return { ok: false, bytes: 0 };
         }
     }
@@ -868,7 +890,7 @@ export class CheckpointManager {
             return await checkpointOperationLockManager.runExclusive(
             roots.map(root => root.id),
             'restore',
-            `checkpoint:${conversationId}:${checkpointId}`,
+            `checkpoint:${conversationId}:${checkpointId}:restore:${operationId}`,
             async () => {
                 try {
                     // 在恢复前，取消所有 pending diffs（因为恢复后它们将无效），
@@ -976,7 +998,7 @@ export class CheckpointManager {
                         // 前端据此提示“这些文件未被该存档备份，恢复不会删除/恢复它们”
                         unbackedPaths: this.restoreService.toDisplayUnbackedPaths(checkpoint.unbackedPaths, roots),
                         // EX-11: 解释「该存档创建时按当时规则排除了哪些文件」
-                        excludedNote: this.restoreService.buildExcludedNote(prepared.ctx.manifest, checkpoint),
+                        excludedNote: this.restoreService.buildExcludedNote(prepared.ctx.manifest),
                     };
 
                 } catch (err) {
@@ -1021,7 +1043,7 @@ export class CheckpointManager {
         return checkpointOperationLockManager.runExclusive(
             roots.map(root => root.id),
             'restore',
-            `checkpoint:${conversationId}:${checkpointId}:preview`,
+            `checkpoint:${conversationId}:${checkpointId}:preview:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             async () => {
                 try {
                     const prepared = await this.restoreService.prepareRestore(conversationId, checkpointId, roots);
@@ -1070,7 +1092,7 @@ export class CheckpointManager {
                             missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
                             autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
                             // EX-11: 旧存档无 manifest 时不生成排除说明
-                            excludedNote: prepared.ctx.manifest ? this.restoreService.buildExcludedNote(prepared.ctx.manifest, checkpoint) : undefined,
+                            excludedNote: prepared.ctx.manifest ? this.restoreService.buildExcludedNote(prepared.ctx.manifest) : undefined,
                         };
                     }
 
@@ -1106,7 +1128,7 @@ export class CheckpointManager {
                         missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
                         autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
                         // EX-11: 解释「该存档创建时按当时规则排除了哪些文件」
-                        excludedNote: this.restoreService.buildExcludedNote(prepared.ctx.manifest, checkpoint),
+                        excludedNote: this.restoreService.buildExcludedNote(prepared.ctx.manifest),
                     };
                 } catch (err) {
                     const error = err instanceof Error ? err.message : 'Unknown error';
@@ -1132,10 +1154,16 @@ export class CheckpointManager {
      * 删除检查点
      */
     async deleteCheckpoint(conversationId: string, checkpointId: string): Promise<boolean> {
+        // C-1: ownerId 追加本次调用唯一 token——restoreCheckpoint 与 deleteCheckpoint 原先共用
+        // `checkpoint:{conversationId}:{checkpointId}` 模板，并发恢复+删除同一存档时
+        // CheckpointOperationLock 的可重入分支会按 ownerId 把第二次调用误判为同栈嵌套而跳过
+        // 互斥，恢复可能读到正在被删除的备份目录。唯一 token 使二者真正串行；
+        // 当前代码中不存在同 ownerId 的合法嵌套调用（锁内清理走无锁 Internal 版）。
+        const ownerId = `checkpoint:${conversationId}:${checkpointId}:delete:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         return checkpointOperationLockManager.runExclusive(
             this.getCheckpointDeletionLockIds(),
             'delete',
-            `checkpoint:${conversationId}:${checkpointId}`,
+            ownerId,
             () => this.deleteCheckpointInternal(conversationId, checkpointId)
         );
     }
@@ -1147,10 +1175,10 @@ export class CheckpointManager {
      * 清理旧存档时若再走公开方法，会以不同 ownerId 等待自己持有的锁而死锁。
      */
     private async deleteCheckpointInternal(conversationId: string, checkpointId: string): Promise<boolean> {
+        // 元数据更新（读-判-算保留集合）在链内原子完成；磁盘删除放在写回成功之后，
+        // 此时竞态窗口已收敛，不会出现「读到旧列表 → 删磁盘 → 覆盖他人新写入」的丢记录场景。
+        let backupDirToDelete: string | undefined;
         try {
-            // 元数据更新（读-判-算保留集合）在链内原子完成；磁盘删除放在写回成功之后，
-            // 此时竞态窗口已收敛，不会出现「读到旧列表 → 删磁盘 → 覆盖他人新写入」的丢记录场景。
-            let backupDirToDelete: string | undefined;
             const result = await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
                 // 路径安全：删除路径同样经过 sanitize，非法 backupDir 绝不进入 fs.rm
                 const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
@@ -1173,29 +1201,31 @@ export class CheckpointManager {
                 return list.filter(cp => cp.id !== checkpointId);
             });
             void result;
-
-            if (backupDirToDelete === undefined) {
-                return false;
-            }
-
-            // CPF-01: 目录删除后清掉 manifest 缓存，避免后续读旧数据
-            this.manifestRepository.clearCache(backupDirToDelete);
-
-            // 删除备份目录（写回成功后才删）
-            const backupPath = path.join(this.checkpointsDir, backupDirToDelete);
-            try {
-                await fs.rm(backupPath, { recursive: true, force: true });
-            } catch (err) {
-                // 元数据已移除；磁盘目录残留为孤儿目录，不影响增量链正确性，但必须记录以便排查
-                console.warn(`[CheckpointManager] Failed to remove backup dir ${backupDirToDelete}:`, err);
-            }
-            
-            return true;
-            
         } catch (err) {
-            console.error('[CheckpointManager] Failed to delete checkpoint:', err);
+            // C-17: 元数据写回失败是真实存储/IO 错误（区别于「记录不存在/被拒绝」返回 false 的
+            // 正常路径），显式记录后返回 false，不冒泡；调用方据此区分「不存在」与「IO 失败」。
+            console.error(`[CheckpointManager] Failed to delete checkpoint ${checkpointId} (metadata write failed):`, err);
             return false;
         }
+
+        if (backupDirToDelete === undefined) {
+            // 未删除：记录不存在 / 被引用为基快照 / backupDir 越界（以上路径已分别处理或告警）
+            return false;
+        }
+
+        // CPF-01: 目录删除后清掉 manifest 缓存，避免后续读旧数据
+        this.manifestRepository.clearCache(backupDirToDelete);
+
+        // 删除备份目录（写回成功后才删）
+        const backupPath = path.join(this.checkpointsDir, backupDirToDelete);
+        try {
+            await fs.rm(backupPath, { recursive: true, force: true });
+        } catch (err) {
+            // 元数据已移除；磁盘目录残留为孤儿目录，不影响增量链正确性，但必须记录以便排查
+            console.warn(`[CheckpointManager] Failed to remove backup dir ${backupDirToDelete}:`, err);
+        }
+
+        return true;
     }
     
     /**
@@ -1210,7 +1240,7 @@ export class CheckpointManager {
         return checkpointOperationLockManager.runExclusive(
             this.getCheckpointDeletionLockIds(),
             'delete',
-            `checkpoint:${conversationId}:delete-from-index`,
+            `checkpoint:${conversationId}:delete-from-index:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             () => this.deleteCheckpointsFromIndexInternal(conversationId, fromIndex, excludeCheckpointId)
         );
     }
@@ -1314,7 +1344,7 @@ export class CheckpointManager {
             return await checkpointOperationLockManager.runExclusive(
             lockWorkspaceIds,
             'delete',
-            `checkpoint:${conversationId}:delete-all`,
+            `checkpoint:${conversationId}:delete-all:${operationId}`,
             async () => {
                 try {
                     // 清空列表在链内原子完成；磁盘删除放在写回成功之后
@@ -1403,7 +1433,7 @@ export class CheckpointManager {
                 await checkpointOperationLockManager.runExclusive(
                     this.getCheckpointDeletionLockIds(),
                     'delete',
-                    `checkpoint:${item.conversationId}:delete-batch`,
+                    `checkpoint:${item.conversationId}:delete-batch:${operationId}`,
                     async () => {
                         // 计算与写回在链内原子完成；磁盘删除放在写回成功之后
                         let backupDirsToDelete: string[] = [];
@@ -1531,7 +1561,7 @@ export class CheckpointManager {
             await checkpointOperationLockManager.runExclusive(
                 this.getCheckpointDeletionLockIds(),
                 'delete',
-                `checkpoint:${conversationId}:delete-by-node-ids`,
+                `checkpoint:${conversationId}:delete-by-node-ids:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 async () => {
                     // 计算与写回在链内原子完成；磁盘删除放在写回成功之后（与 deleteCheckpointsBatch 一致）
                     let backupDirsToDelete: string[] = [];
@@ -1679,6 +1709,16 @@ export class CheckpointManager {
         return latest;
     }
 
+    /** C-2: 该备份目录是否正被进行中的 create 使用（孤儿清理保护，供 CheckpointQueryService 查询） */
+    private isBackupDirBeingCreated(backupDir: string): boolean {
+        for (const record of this.operations.values()) {
+            if (record.creatingBackupDir === backupDir) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * 取消指定存档操作（CPF-11）：触发 AbortSignal，操作循环内检查并中止。
      *
@@ -1704,7 +1744,7 @@ export class CheckpointManager {
         kind: CheckpointOperationProgress['kind'],
         conversationId?: string,
         checkpointId?: string
-    ): { operationId: string; signal: AbortSignal; report: (patch: Partial<CheckpointOperationProgress>) => CheckpointOperationProgress } {
+    ): { operationId: string; signal: AbortSignal; report: (patch: Partial<CheckpointOperationProgress>) => CheckpointOperationProgress | null } {
         const operationId = `op_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const controller = new AbortController();
         const now = Date.now();
@@ -1722,13 +1762,16 @@ export class CheckpointManager {
         };
         this.operations.set(operationId, { progress, controller });
 
-        // 容量保护：清理已结束的最旧记录，避免长期累积
+        // 容量保护只清理终态记录。进行中操作必须保留取消句柄和 creatingBackupDir
+        // 守卫；淘汰活跃记录会让孤儿清理误删仍在创建的备份目录。
         if (this.operations.size > 64) {
             const finished = [...this.operations.entries()]
                 .filter(([, record]) =>
                     record.progress.phase === 'done' || record.progress.phase === 'failed' || record.progress.phase === 'cancelled')
                 .sort((a, b) => a[1].progress.updatedAt - b[1].progress.updatedAt);
-            for (const [id] of finished.slice(0, this.operations.size - 32)) {
+            const terminalRetention = 32;
+            const removeCount = Math.max(0, this.operations.size - 64, finished.length - terminalRetention);
+            for (const [id] of finished.slice(0, removeCount)) {
                 this.operations.delete(id);
             }
         }
@@ -1741,21 +1784,12 @@ export class CheckpointManager {
     }
 
     /** 更新操作进度（并刷新 updatedAt） */
-    private updateOperation(operationId: string, patch: Partial<CheckpointOperationProgress>): CheckpointOperationProgress {
+    private updateOperation(operationId: string, patch: Partial<CheckpointOperationProgress>): CheckpointOperationProgress | null {
         const record = this.operations.get(operationId);
         if (!record) {
-            // 操作已被清理：返回补丁快照（调用方仅用于转发给 progress 回调）
-            return {
-                operationId,
-                kind: 'create',
-                phase: 'unknown',
-                processed: 0,
-                total: 0,
-                cancelled: false,
-                startedAt: Date.now(),
-                updatedAt: Date.now(),
-                ...patch
-            };
+            // C-8: 操作已被清理时返回 null，而非硬编码 kind:'create' 的兜底对象——
+            // 恢复/删除进度回调若转发该兜底会把操作类型误报为 create。
+            return null;
         }
         Object.assign(record.progress, patch, { updatedAt: Date.now() });
         return record.progress;
