@@ -23,7 +23,8 @@ export function renderWindowsAgentStopTemplate(
   return template.replace(/\{([^{}]+)\}/g, (_match, rawName: string) => {
     const name = String(rawName || '').trim()
     if (!ALLOWED_TEMPLATE_VARIABLES.has(name as 'appName' | 'windowTitle' | 'actionLabel' | 'reasonLabel')) {
-      return ''
+      // 未知变量保留原样（而非静默替换为空串）：模板拼写错误在通知里可见，便于排查
+      return `{${rawName}}`
     }
 
     if (name === 'appName') return context.appName

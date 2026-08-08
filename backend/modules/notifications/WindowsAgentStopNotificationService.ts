@@ -429,7 +429,10 @@ export class WindowsAgentStopNotificationService {
 
     const result = await this.showToast(rendered.title, rendered.message)
     if (!result.shown) {
-      log.debug('notify_finished_without_toast', { ...result })
+      // 回滚去重键：toast 未显示（权限/失败）时不应占住去重键，
+      // 否则后续通知被误判为 duplicate，用户永远收不到
+      this.dedupeByKey.delete(dedupeKey)
+      log.debug('dedupe_key_rolled_back', { dedupeKey })
       return result
     }
 

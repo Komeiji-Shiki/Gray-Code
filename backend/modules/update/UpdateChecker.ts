@@ -20,6 +20,8 @@ import { createProxyFetch } from '../channel/proxyFetch';
 
 /** GitHub 仓库（owner/repo） */
 export const UPDATE_REPO = 'Komeiji-Shiki/Gray-Code';
+/** 本扩展 ID（安装/版本读取用） */
+export const EXTENSION_ID = 'Komeiji-Shiki.graycode';
 /** 检查节流间隔：24 小时 */
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** 版本检查请求超时：10s（启动路径，不能拖慢激活） */
@@ -61,16 +63,27 @@ export function stripVersionPrefix(version: string): string {
 
 /**
  * 语义版本比较（支持任意段数，缺段按 0；非数字段按 0）。
+ * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）。
  * 返回 -1（a < b）/ 0（相等）/ 1（a > b）。
  */
 export function compareVersions(a: string, b: string): number {
-    const ap = stripVersionPrefix(a).split('.').map(n => parseInt(n, 10) || 0);
-    const bp = stripVersionPrefix(b).split('.').map(n => parseInt(n, 10) || 0);
-    const len = Math.max(ap.length, bp.length);
+    const parse = (v: string): { nums: number[]; prerelease: boolean } => {
+        const main = stripVersionPrefix(v).split('-')[0];
+        return {
+            nums: main.split('.').map(n => parseInt(n, 10) || 0),
+            prerelease: stripVersionPrefix(v).includes('-')
+        };
+    };
+    const ap = parse(a);
+    const bp = parse(b);
+    const len = Math.max(ap.nums.length, bp.nums.length);
     for (let i = 0; i < len; i++) {
-        const x = ap[i] ?? 0;
-        const y = bp[i] ?? 0;
+        const x = ap.nums[i] ?? 0;
+        const y = bp.nums[i] ?? 0;
         if (x !== y) return x < y ? -1 : 1;
+    }
+    if (ap.prerelease !== bp.prerelease) {
+        return ap.prerelease ? -1 : 1;
     }
     return 0;
 }
@@ -91,7 +104,14 @@ export function parseReleaseResponse(data: unknown): UpdateInfo | null {
     const raw = data as Record<string, unknown>;
     if (typeof raw.tag_name !== 'string' || !raw.tag_name) return null;
     const assets: Array<Record<string, unknown>> = Array.isArray(raw.assets) ? raw.assets as Array<Record<string, unknown>> : [];
-    const vsix = assets.find(a => typeof a?.name === 'string' && a.name.endsWith('.vsix'));
+    const vsix = assets
+        .filter(a => typeof a?.name === 'string' && /\.vsix$/i.test(a.name))
+        .sort((x, y) => {
+            // 多平台资产时优先通用包（无平台后缀），其次按名称字典序稳定取一个
+            const xPlatform = /-(win32|darwin|linux|linux-x64|linux-arm64|universal)\.vsix$/i.test(x.name as string) ? 1 : 0;
+            const yPlatform = /-(win32|darwin|linux|linux-x64|linux-arm64|universal)\.vsix$/i.test(y.name as string) ? 1 : 0;
+            return xPlatform - yPlatform || String(x.name).localeCompare(String(y.name));
+        })[0];
     return {
         version: stripVersionPrefix(raw.tag_name),
         tagName: raw.tag_name,
@@ -169,14 +189,22 @@ export class UpdateChecker {
             } else {
                 this.status = { state: 'upToDate', checkedAt: now };
             }
-        } catch (e: any) {
-            this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
-        } finally {
-            // 无论成功失败都记录检查时间：失败也进入节流窗口，避免网络异常时每次启动都重试
+            // 成功：记录检查时间进入节流窗口
             try {
                 await this.options.storage.update(this.lastCheckKey, now);
             } catch {
                 // 存储失败不影响检查状态
+            }
+        } catch (e: any) {
+            this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
+            // 非 force 的自动检查失败也记录（进入节流窗口，避免网络异常时每次启动都重试）；
+            // force 手动检查失败不记录——不吞掉下一次自动检查的机会
+            if (!force) {
+                try {
+                    await this.options.storage.update(this.lastCheckKey, now);
+                } catch {
+                    // 存储失败不影响检查状态
+                }
             }
         }
         return this.status;
@@ -187,12 +215,18 @@ export class UpdateChecker {
      * 安装成功后返回本地 vsix 文件路径；失败抛错（调用方提示用户打开 Release 页兜底）。
      */
     async downloadAndInstall(update: UpdateInfo): Promise<string> {
-        if (!update.vsixAssetUrl) {
-            throw new Error('该 Release 未附带 vsix 安装包，请前往 GitHub Releases 手动下载。');
+        // 安全校验：只允许下载本仓库 GitHub Releases 的 vsix，且版本号符合合法格式，
+        // 防止前端传入任意 URL / 版本拼出恶意下载路径（本地代码执行路径）
+        if (!update.vsixAssetUrl || !update.vsixAssetUrl.startsWith(`https://github.com/${UPDATE_REPO}/releases/`)) {
+            throw new Error('非法下载地址：仅接受本仓库 GitHub Releases 的 vsix 安装包。');
+        }
+        if (!/^[\w.\-+]+$/.test(update.version)) {
+            throw new Error(`非法版本号：${update.version}`);
         }
         const dir = path.join(this.options.globalStoragePath, 'update');
         await fs.mkdir(dir, { recursive: true });
         const target = path.join(dir, `graycode-${update.version}.vsix`);
+        const tmpTarget = `${target}.tmp`;
 
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), UPDATE_DOWNLOAD_TIMEOUT_MS);
@@ -205,9 +239,12 @@ export class UpdateChecker {
             if (buf.length === 0) {
                 throw new Error('下载内容为空，vsix 可能已损坏。');
             }
-            await fs.writeFile(target, buf);
+            // 先写 .tmp 再 rename：中断/失败不残留半成品 .vsix（防旧版本文件被当成可用包）
+            await fs.writeFile(tmpTarget, buf);
+            await fs.rename(tmpTarget, target);
         } finally {
             clearTimeout(timer);
+            await fs.rm(tmpTarget, { force: true }).catch(() => undefined);
         }
 
         await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(target));
@@ -225,7 +262,7 @@ export class UpdateChecker {
         if (this.options.getCurrentVersion) {
             return this.options.getCurrentVersion();
         }
-        const ext = vscode.extensions.getExtension('Komeiji-Shiki.graycode');
+        const ext = vscode.extensions.getExtension(EXTENSION_ID);
         return ext?.packageJSON?.version || '';
     }
 

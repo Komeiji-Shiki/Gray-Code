@@ -39,6 +39,8 @@ export class ActivityTracker implements vscode.Disposable {
     /** 是否处于暂停状态（窗口失焦 / 空闲超时 / 已停止） */
     private paused = true;
     private disposed = false;
+    /** 是否已 start（防重复注册监听器/定时器） */
+    private started = false;
     /** AI 工作引用计数：>0 表示模型生成/工具执行/子代理运行中，不受空闲与失焦暂停 */
     private aiWorkCount = 0;
 
@@ -56,7 +58,8 @@ export class ActivityTracker implements vscode.Disposable {
      * 启动时若窗口已聚焦且用户有近期活动，立即恢复采样。
      */
     start(): void {
-        if (this.disposed) return;
+        if (this.disposed || this.started) return;
+        this.started = true;
 
         this.disposables.push(
             vscode.window.onDidChangeWindowState((state) => {

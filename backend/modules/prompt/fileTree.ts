@@ -103,12 +103,8 @@ function matchesGitignorePattern(relativePath: string, pattern: string, isDirect
         return regex.test(baseName) || regex.test(relativePath.replace(/\\/g, '/'))
     }
 
-    // 精确匹配
-    if (baseName === p || relativePath === p || relativePath.startsWith(p + '/')) {
-        return true
-    }
-    // 检查路径中是否包含该目录
-    if (relativePath.includes('/' + p + '/') || relativePath.startsWith(p + '/')) {
+    // 精确匹配 + 路径中包含该目录（startsWith(p + '/') 不再重复判断）
+    if (baseName === p || relativePath === p || relativePath.includes('/' + p + '/') || relativePath.startsWith(p + '/')) {
         return true
     }
     return false
@@ -385,23 +381,3 @@ export function getWorkspaceRoot(): string | undefined {
     return workspaceFolders[0].uri.fsPath
 }
 
-/**
- * 获取多工作区描述
- */
-export function getWorkspacesDescription(): string {
-    const workspaceFolders = vscode.workspace.workspaceFolders
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        return 'No workspace open'
-    }
-    
-    if (workspaceFolders.length === 1) {
-        return workspaceFolders[0].uri.fsPath
-    }
-    
-    // Multi-root workspace
-    const lines = ['Multi-root Workspace:']
-    for (const folder of workspaceFolders) {
-        lines.push(`- ${folder.name}: ${folder.uri.fsPath}`)
-    }
-    return lines.join('\n')
-}

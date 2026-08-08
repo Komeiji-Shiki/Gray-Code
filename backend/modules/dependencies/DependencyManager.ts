@@ -296,10 +296,8 @@ export class DependencyManager {
                 }
             );
             
-            console.log('npm install stdout:', stdout);
-            if (stderr) {
-                console.log('npm install stderr:', stderr);
-            }
+            // 只记摘要：npm 输出可达数十 MB，整体 console.log 会刷屏并拖慢 extension host
+            console.log(`[deps] npm install ${name} finished (stdout ${stdout?.length ?? 0} chars, stderr ${stderr?.length ?? 0} chars)`);
             
             // 移动安装的依赖到目标目录
             // 需要复制整个 node_modules 目录，因为 sharp 等原生模块有平台依赖包

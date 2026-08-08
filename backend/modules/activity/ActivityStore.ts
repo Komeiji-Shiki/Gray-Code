@@ -64,7 +64,8 @@ export class ActivityStore {
      * 损坏文件不抛出：返回空并尽力删除坏文件，避免污染后续统计。
      */
     loadDay(date: string): Promise<number[]> {
-        return this.runExclusive(() => this.loadDayUnlocked(date));
+        // 返回拷贝：缓存数组是内部状态，外部读取方修改会污染后续统计
+        return this.runExclusive(async () => [...await this.loadDayUnlocked(date)]);
     }
 
     private async loadDayUnlocked(date: string): Promise<number[]> {
@@ -82,8 +83,8 @@ export class ActivityStore {
                     .filter((t): t is number => typeof t === 'number' && Number.isFinite(t))
                     .sort((a, b) => a - b);
             }
-        } catch (error: any) {
-            if (error?.code !== 'ENOENT') {
+        } catch (error: unknown) {
+            if ((error as { code?: string } | null)?.code !== 'ENOENT') {
                 // 文件损坏：删除坏文件，按无数据处理（下次写入时重建）
                 try {
                     await fs.rm(this.dayFilePath(date), { force: true });
@@ -135,9 +136,18 @@ export class ActivityStore {
         return this.runExclusive(() => this.flushDayUnlocked(date ?? toDateStr(Date.now())));
     }
 
+    /** 上次落盘时各天的采样签名（date -> samples.join），无变化时跳过写盘 */
+    private readonly lastFlushedSignatures = new Map<string, string>();
+
     private async flushDayUnlocked(targetDate: string): Promise<void> {
         const samples = await this.loadDayUnlocked(targetDate);
         if (samples.length === 0) {
+            return;
+        }
+
+        // 无变化跳过写盘：采样未变时每 2 分钟的定时 flush 不应重复全量写文件
+        const signature = samples.join(',');
+        if (this.lastFlushedSignatures.get(targetDate) === signature) {
             return;
         }
 
@@ -147,6 +157,7 @@ export class ActivityStore {
         const content = JSON.stringify({ date: targetDate, samples });
         await fs.writeFile(tmpPath, content, 'utf-8');
         await fs.rename(tmpPath, filePath);
+        this.lastFlushedSignatures.set(targetDate, signature);
     }
 
     /**
@@ -189,7 +200,7 @@ export class ActivityStore {
             const result: Array<{ date: string; samples: number[] }> = [];
             for (const date of dates) {
                 const samples = stored.has(date) || date === today
-                    ? await this.loadDayUnlocked(date)
+                    ? [...await this.loadDayUnlocked(date)]
                     : [];
                 result.push({ date, samples });
             }
@@ -204,9 +215,21 @@ export class ActivityStore {
     loadAllDays(): Promise<Array<{ date: string; samples: number[] }>> {
         return this.runExclusive(async () => {
             const dates = await this.listDaysUnlocked();
+            // 与 loadRecentDays 一致：全量范围也含今天（今天尚未落盘时内存有采样）
+            const today = toDateStr(Date.now());
+            if (!dates.includes(today)) {
+                dates.push(today);
+                dates.sort();
+            }
             const result: Array<{ date: string; samples: number[] }> = [];
             for (const date of dates) {
-                result.push({ date, samples: await this.loadDayUnlocked(date) });
+                result.push({ date, samples: [...await this.loadDayUnlocked(date)] });
+            }
+            // 全量扫描用后即弃：range='all' 会读数年天文件，不把它们长期滞留内存缓存
+            for (const date of dates) {
+                if (date !== today) {
+                    this.cache.delete(date);
+                }
             }
             return result;
         });
