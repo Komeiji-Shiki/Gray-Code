@@ -421,7 +421,13 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             // 描述文案同步说明，避免误导模型以为嵌套 worker 拥有全量权限。
             description: 'Zero-config general-purpose worker that inherits the current session channel and all available non-memory tool permissions. When invoked from another sub-agent, its tools are limited to the dispatching agent\'s own tool set.',
             systemPrompt: 'You are a general-purpose worker sub-agent. Complete the task given in the prompt using all available tools. Be thorough and self-directed. Your final response is the deliverable — make it complete and self-contained.',
-            channel: { channelId: channelConfigId },
+            // 模型继承：General Worker 零配置，必须与主会话当前模型一致，否则会落到
+            // 渠道默认模型（默认模型配额/权限与主模型不同时报错）。channelModelId 由
+            // ToolExecutionService 注入主请求的 modelOverride；为空时走渠道默认，与主会话一致。
+            channel: {
+                channelId: channelConfigId,
+                modelId: context?.channelModelId || undefined
+            },
             tools: { mode: 'all' },
             // P2：General Worker 是零配置虚拟代理，迭代次数跟随全局默认配置（executor 会再回退到 50）
             maxIterations: getGlobalDefaultMaxIterations(),

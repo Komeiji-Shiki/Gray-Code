@@ -89,7 +89,12 @@ const TEST_RUN_IDS = [
 ];
 
 describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialResponse', () => {
+    beforeEach(() => {
+        jest.useFakeTimers();
+    });
+
     afterEach(() => {
+        jest.useRealTimers();
         // LOW-18：executor 在最外层 finally 已释放本 run 的席位（幂等）；
         // 此处对全部已知 runId 再兜底释放一次——用例在 acquire 后、finally 前失败
         // （断言前置失败/异常中断）时补释放，避免信号量占用泄漏影响后续用例。
@@ -106,17 +111,22 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         // 构造：第一轮返回"幻觉文本+工具调用"；第二轮返回空内容（上游抽风）
         const generateMock = jest.fn()
             .mockImplementationOnce(async () => hallucinationTurnResponse())
-            .mockImplementationOnce(async () => emptyResponseError());
+            // ChannelManager 失败后 executor 还会做两次 run 级兜底重试；
+            // 本用例需要模拟重试耗尽，避免 mock 队列耗尽后返回 undefined 被误判成成功。
+            .mockImplementation(async () => emptyResponseError());
 
         const executor = createDefaultExecutor(createConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
-        const result = await executor({
+        const resultPromise = executor({
             agentType: 'tester',
             prompt: '请分析漫画图片 page-15.png',
             runId: 'partial_hallucination'
         });
+        // 跳过两次 run 级退避（10s + 30s），测试不应真实等待。
+        await jest.advanceTimersByTimeAsync(40_000);
+        const result = await resultPromise;
 
         // 空响应导致本轮失败（与线上复现案例一致：上游返回空响应）
         expect(result.success).toBe(false);
@@ -266,18 +276,21 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
                 } as any,
                 model: 'model-x'
             }))
-            // 第三轮失败（模拟超时/API 错误）
-            .mockRejectedValueOnce(new Error('AI call failed: upstream error'));
+            // 第三轮及其两次 run 级重试全部失败，确保走“重试耗尽”终态。
+            .mockRejectedValue(new Error('AI call failed: upstream error'));
 
         const executor = createDefaultExecutor(createConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
-        const result = await executor({
+        const resultPromise = executor({
             agentType: 'tester',
             prompt: '请分析漫画图片',
             runId: 'partial_two_tool_turns'
         });
+        // 跳过两次 run 级退避（10s + 30s），测试不应真实等待。
+        await jest.advanceTimersByTimeAsync(40_000);
+        const result = await resultPromise;
 
         expect(result.success).toBe(false);
         // 首个工具结果之前的幻觉预生成仍不进入响应

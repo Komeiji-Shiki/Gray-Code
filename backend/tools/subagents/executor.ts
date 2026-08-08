@@ -24,6 +24,7 @@ import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/cha
 import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
 import type { Content, ContentPart } from '../../modules/conversation/types';
 import type { ToolExecutionResult } from '../../modules/api/chat/utils';
+import { ChannelError, ErrorType } from '../../modules/channel/types';
 import type { GenerateRequest } from '../../modules/channel/types';
 import type { BaseChannelConfig } from '../../modules/config/configs/base';
 import { extractMessageTokens, type UsageIndexMessage } from '../../modules/conversation/usageStats';
@@ -495,7 +496,10 @@ async function executeToolCall(
                 // 子代理内部的 subagents 工具调用据此得知父 run 深度（见 subagents.ts executeSubAgent）。
                 nestingDepth,
                 // 多工作区支持：子代理继承主会话绑定的工作区，路径解析/终端 cwd 与主会话保持一致
-                context.activeWorkspaceUri
+                context.activeWorkspaceUri,
+                //模型继承：子代理内部再派发 General Worker 时继承本 run 的模型（config.channel.modelId），
+                // 与主会话路径注入 channelModelId 的口径一致（无则走渠道默认模型，上游 63676f2）。
+                agentConfig.channel.modelId
             );
             const executionOutcome = await waitForAbortableOperation(
                 toolExecution,
@@ -613,8 +617,7 @@ async function reportUsageToMainConversation(
     usageIndexAppend: SubAgentExecutorContext['usageIndexAppend']
 ): Promise<void> {
     if (!conversationId) {
-        // 子代理无主会话归属：跳过归集（不写索引）
-        console.debug('[SubAgent] Usage attribution skipped: no main conversation id for this run.');
+        // 子代理无主会话归属是测试、自定义 executor 与独立运行的正常情况，静默跳过归集。
         return;
     }
     if (typeof usageIndexAppend !== 'function') return;
@@ -654,6 +657,77 @@ function isContextLengthError(error: unknown): boolean {
         || message.includes('too many tokens')
         || message.includes('prompt is too long')
         || message.includes('reduce the length of the messages');
+}
+
+/**
+ * 子代理 LLM 调用失败后的 run 级兜底重试次数。
+ *
+ * ChannelManager.generate 内部已按渠道配置自动重试（默认 3 次 × 3s）；
+ * 这是第二层兜底：对可重试错误（429/5xx/网络/超时/空响应）再退避重试，
+ * 避免子代理因瞬时配额/限流直接失败退出（用户无感知）。
+ */
+const SUBAGENT_LLM_CALL_RETRY_MAX = 2;
+
+/**
+ * 判断 LLM 调用错误是否值得 run 级重试（与 ChannelManager.isRetryableError 同口径）。
+ */
+function isSubAgentRetryableLlmError(error: unknown): boolean {
+    if (error instanceof ChannelError) {
+        if (error.type === ErrorType.CANCELLED_ERROR
+            || error.type === ErrorType.PARSE_ERROR
+            || error.type === ErrorType.VALIDATION_ERROR
+            || error.type === ErrorType.CONFIG_ERROR) {
+            return false;
+        }
+        // API_ERROR / NETWORK_ERROR / TIMEOUT_ERROR / EMPTY_RESPONSE_ERROR 可重试
+        return true;
+    }
+    // 非 ChannelError：上下文超限/认证/参数类不重试，其余（网络层异常等）重试
+    if (isContextLengthError(error)) return false;
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    if (message.includes('unauthorized')
+        || message.includes('invalid api key')
+        || message.includes('authentication')
+        || message.includes('auth failed')
+        || message.includes('invalid request')
+        || message.includes('bad request')
+        || message.includes('not found')
+        || message.includes('400')) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 429 类配额/限流错误：恢复需要更长时间，使用更长的退避间隔。
+ */
+function isQuotaOrRateLimitError(error: unknown): boolean {
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    return message.includes('429')
+        || message.includes('rate limit')
+        || message.includes('quota')
+        || message.includes('too many requests')
+        || message.includes('insufficient_quota')
+        || message.includes('resource_exhausted');
+}
+
+/**
+ * 可中断等待：signal 触发中止时立即返回 false，正常等到时间返回 true。
+ */
+function waitWithAbort(ms: number, signal?: AbortSignal | null): Promise<boolean> {
+    if (signal?.aborted) return Promise.resolve(false);
+    return new Promise<boolean>(resolve => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const onAbort = () => {
+            if (timer) clearTimeout(timer);
+            resolve(false);
+        };
+        timer = setTimeout(() => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(true);
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
 }
 
 /**
@@ -1058,6 +1132,7 @@ export function createDefaultExecutor(
                         ? 'run_cancelled'
                         : (finalized.success ? 'run_completed' : 'run_failed'),
                     payload: {
+                        response: finalized.response,
                         error: finalized.error,
                         steps: finalized.steps,
                         modelVersion: finalized.modelVersion
@@ -1332,7 +1407,10 @@ export function createDefaultExecutor(
             ];
             
             // 工具迭代循环
-            
+            // 本轮 LLM 调用的 run 级兜底重试计数（ChannelManager 内部重试之外的第二层；
+            // 失败重试时累计，成功时重置——见下方 catch 与 reportUsage 后的重置点）
+            let llmCallRetryCount = 0;
+
             while (true) {
                 const controlWaitResult = await waitForControlIfNeeded();
                 if (controlWaitResult) {
@@ -1548,6 +1626,53 @@ export function createDefaultExecutor(
                         continue;
                     }
 
+                    // run 级兜底重试：ChannelManager 内部重试耗尽后，对可重试错误
+                    // （429/5xx/网络/超时/空响应）再退避重试，避免子代理因瞬时配额/限流
+                    // 直接失败退出。重试不增加 steps（同一轮重新调用 LLM），退避间隔对
+                    // 429 类配额错误更长（配额恢复需要时间）。重试状态发到事件总线，
+                    // Monitor 可见"自动重试中"。
+                    if (llmCallRetryCount < SUBAGENT_LLM_CALL_RETRY_MAX && isSubAgentRetryableLlmError(e)) {
+                        llmCallRetryCount++;
+                        const retryFailureMessage = e instanceof Error ? e.message : String(e);
+                        const isQuota = isQuotaOrRateLimitError(e);
+                        const delayMs = isQuota
+                            ? (llmCallRetryCount === 1 ? 15000 : 45000)
+                            : (llmCallRetryCount === 1 ? 10000 : 30000);
+                        subAgentRunEventBus.emit({
+                            runId,
+                            agentName: config.name,
+                            type: 'run_updated',
+                            payload: {
+                                status: 'running',
+                                note: `LLM call failed (${retryFailureMessage}); auto-retrying in ${Math.round(delayMs / 1000)}s (attempt ${llmCallRetryCount}/${SUBAGENT_LLM_CALL_RETRY_MAX})`
+                            }
+                        });
+                        const waited = await waitWithAbort(delayMs, timeoutController?.signal);
+                        if (!waited || parentAbort()?.aborted || timeoutController?.signal.aborted) {
+                            const timeoutCheckAfter = checkTimeout();
+                            if (timeoutCheckAfter.exceeded) {
+                                return finalizeRun({
+                                    success: false,
+                                    response: lastResponse,
+                                    modelVersion,
+                                    steps,
+                                    toolCalls,
+                                    error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheckAfter.elapsed}s`
+                                });
+                            }
+                            return finalizeRun({
+                                success: false,
+                                response: lastResponse,
+                                modelVersion,
+                                steps,
+                                toolCalls,
+                                error: 'Cancelled during LLM retry wait',
+                                cancelled: true
+                            });
+                        }
+                        continue;
+                    }
+
                     if (retryFailedInThisCall && resolveFailureModeAfterRetries() === 'wait_for_monitor_action') {
                         const reason = e instanceof Error ? e.message : String(e);
                         subAgentRunController.markAwaitingMonitorAction(runId, reason);
@@ -1557,6 +1682,9 @@ export function createDefaultExecutor(
                     }
 
                     const failureMessage = e instanceof Error ? e.message : String(e);
+                    const retryNote = llmCallRetryCount > 0
+                        ? ` (auto-retried ${llmCallRetryCount} time(s) before giving up)`
+                        : '';
                     return finalizeRun({
                         success: false,
                         response: lastResponse,
@@ -1569,7 +1697,7 @@ export function createDefaultExecutor(
                             + `lower this agent's maxIterations, narrow the task, `
                             + `avoid tools that return very large results, or split the work across several sub-agent calls. `
                             + `Original error: ${failureMessage}`
-                            : `AI call failed: ${failureMessage}`
+                            : `AI call failed${retryNote}: ${failureMessage}`
                     });
                 } finally {
                     // 本轮 LLM 调用结束，摘除组合信号挂在父信号上的 abort 监听器
@@ -1581,6 +1709,8 @@ export function createDefaultExecutor(
                 //          无主会话归属或未注入归集回调时跳过（见 reportUsageToMainConversation）。
                 // 修改目的：用量统计页能汇总展示子代理消耗（source='subagent'），且不影响主会话历史。
                 await reportUsageToMainConversation(response, currentConversationId, context.usageIndexAppend);
+                // 本轮 LLM 调用成功：重置 run 级重试计数（下一次失败重新从 0 累计）
+                llmCallRetryCount = 0;
                 
                 // 修改原因：SubAgent 过去自己解析各 provider 的工具调用，主流程支持 XML/JSON prompt tool mode 后容易漏同步。
                 // 修改方式：统一把标准 Content 交给 ToolCallParserService 转换和提取 functionCall。
