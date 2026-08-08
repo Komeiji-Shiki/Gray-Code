@@ -985,6 +985,11 @@ const en: LanguageMessages = {
                     confirm: 'Confirm',
                     cancel: 'Cancel'
                 },
+                empty: {
+                    title: 'No channel configured',
+                    hint: 'Create a channel and fill in your API Key to start chatting.',
+                    create: 'New Channel'
+                },
                 dialog: {
                     new: {
                         title: 'New Configuration',
@@ -999,13 +1004,12 @@ const en: LanguageMessages = {
                     delete: {
                         title: 'Delete Configuration',
                         message: 'Are you sure you want to delete config "{name}"? This action cannot be undone.',
-                        atLeastOne: 'At least one config must be kept',
                         cancel: 'Cancel',
                         confirm: 'Confirm'
                     },
                     changeType: {
                         title: 'Change Channel Type',
-                        message: 'Are you sure you want to change the channel type to "{name}"? Type-specific settings (API URL, model list, advanced options, etc.) will be reset to the defaults for the new type; common settings (name, API Key, timeout, retry, etc.) will be kept.'
+                        message: 'Are you sure you want to change the channel type to "{name}"? Type-specific settings (model list, advanced options, etc.) will be reset to the defaults for the new type; the API Key and a custom API URL are kept, and common settings stay unchanged.'
                     }
                 },
                 form: {
@@ -1032,7 +1036,7 @@ const en: LanguageMessages = {
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API',
-                        changeHint: 'Changing the channel type resets type-specific settings (API URL, model list, advanced options, etc.) to defaults; common settings are kept.'
+                        changeHint: 'Changing the channel type resets type-specific settings (model list, advanced options, etc.) to defaults; the API Key and a custom API URL are kept, and common settings stay unchanged.'
                     },
                     toolMode: {
                         label: 'Tool Call Format',
