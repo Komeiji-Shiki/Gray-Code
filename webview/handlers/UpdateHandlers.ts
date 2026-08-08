@@ -99,6 +99,10 @@ export const updateNow: MessageHandler = async (data, requestId, ctx) => {
             ctx.sendError(requestId, 'UPDATE_NOW_ERROR', '自动更新检查已关闭');
             return;
         }
+        if (status.state === 'checking') {
+            ctx.sendError(requestId, 'UPDATE_NOW_ERROR', '正在检查更新，请稍候');
+            return;
+        }
         ctx.sendError(requestId, 'UPDATE_NOW_ERROR', status.state === 'error' ? status.message : '检查更新失败');
     } catch (error: any) {
         ctx.sendError(requestId, 'UPDATE_NOW_ERROR', error?.message || 'Failed to update');
