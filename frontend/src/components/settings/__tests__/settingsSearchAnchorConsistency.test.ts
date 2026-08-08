@@ -7,18 +7,31 @@
  * 其目标选择器必须在某个设置组件中存在。
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, it, expect } from 'vitest'
 
 const SETTINGS_DIR = path.resolve(process.cwd(), 'src/components/settings')
 
-/** 读取 settings 目录下所有 .vue 文件内容（含 SettingsPanel.vue 本身） */
+/** 递归收集 settings 目录下所有 .vue 文件（含子目录，如 tools/files/apply_diff.vue） */
+function collectVueFiles(dir: string): string[] {
+  const results: string[] = []
+  for (const entry of readdirSync(dir)) {
+    const full = path.join(dir, entry)
+    if (statSync(full).isDirectory()) {
+      results.push(...collectVueFiles(full))
+    } else if (entry.endsWith('.vue')) {
+      results.push(full)
+    }
+  }
+  return results
+}
+
+/** 读取 settings 目录下所有 .vue 文件内容（含 SettingsPanel.vue 本身与子目录组件） */
 function readSettingsComponentSources(): { fileName: string; source: string }[] {
-  const entries = readdirSync(SETTINGS_DIR).filter(line => line.endsWith('.vue'))
-  return entries.map(fileName => ({
-    fileName,
-    source: readFileSync(path.join(SETTINGS_DIR, fileName), 'utf8')
+  return collectVueFiles(SETTINGS_DIR).map(fullPath => ({
+    fileName: path.relative(SETTINGS_DIR, fullPath).replace(/\\/g, '/'),
+    source: readFileSync(fullPath, 'utf8')
   }))
 }
 

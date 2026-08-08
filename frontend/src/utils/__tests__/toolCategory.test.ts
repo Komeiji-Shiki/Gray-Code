@@ -58,8 +58,10 @@ describe('getCategoryName / getCategoryIcon', () => {
   it('已知分类返回本地化名称与图标', () => {
     expect(getCategoryName('file')).toBe('文件操作')
     expect(getCategoryName('mcp')).toBe('MCP 工具')
+    expect(getCategoryName('sandbox')).toBe('沙箱')
     expect(getCategoryIcon('file')).toBe('codicon-file')
     expect(getCategoryIcon('mcp')).toBe('codicon-plug')
+    expect(getCategoryIcon('sandbox')).toBe('codicon-terminal')
   })
 
   it('未知分类回退「其他」文案与默认图标', () => {

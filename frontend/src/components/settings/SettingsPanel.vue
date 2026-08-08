@@ -22,6 +22,7 @@ import type { UsageStatsResult, UsageTimeRange } from '@/types/usage'
 import { CustomScrollbar, CustomCheckbox, CustomSelect, Modal, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
+import { pendingToolConfigExpand } from './tools/toolConfigFocus'
 
 const settingsStore = useSettingsStore()
 const { t, setLanguage } = useI18n()
@@ -199,7 +200,7 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   {
     key: 'tools', tab: 'tools',
     labelKey: 'components.settings.settingsPanel.sections.tools.title',
-    keywords: ['工具', 'tools', 'ツール', 'apply_diff', 'insert_code', 'delete_code', '文件编辑', '终端', 'terminal', 'ターミナル', '浏览器', 'browser', '搜索', 'search', '网页抓取', '图片', '图像', 'image', '生成', 'generate', '诊断', 'diagnostics']
+    keywords: ['工具', 'tools', 'ツール', 'apply_diff', 'insert_code', 'delete_code', '文件编辑', '终端', 'terminal', 'ターミナル', '浏览器', 'browser', '搜索', 'search', '网页抓取', '图片', '图像', 'image', '生成', 'generate', '诊断', 'diagnostics', '自动应用', '自动批准', '应用diff']
   },
   {
     key: 'tools-max-iterations', tab: 'tools',
@@ -210,13 +211,19 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   {
     key: 'tools-list', tab: 'tools',
     labelKey: 'components.settings.settingsPanel.sections.tools.title',
-    keywords: ['工具列表', 'tool list', 'ツール一覧', '全部启用', '全部禁用', '启用', '禁用', '依赖'],
+    keywords: ['工具列表', 'tool list', 'ツール一覧', '全部启用', '全部禁用', '启用', '禁用', '依赖', '自动应用', '自动批准', '应用diff', 'auto apply'],
     anchor: '[data-search-anchor="tool-list"]'
+  },
+  {
+    key: 'apply-diff-config', tab: 'tools',
+    labelKey: 'components.settings.toolSettings.files.applyDiff.autoApply',
+    keywords: ['自动应用', '自动批准', 'auto apply', 'auto approve', '自动保存', '应用diff', 'apply diff', '差异审阅', '跳过差异视图', '警戒值', 'diff guard', '自动执行 diff'],
+    anchor: '[data-search-anchor="apply-diff-config"]'
   },
   {
     key: 'autoExec', tab: 'autoExec',
     labelKey: 'components.settings.settingsPanel.sections.autoExec.title',
-    keywords: ['自动执行', 'auto exec', '自動実行', '确认', 'confirmation', '確認', '批准', '执行模式', '手动', '工具确认', 'diff 审阅']
+    keywords: ['自动执行', 'auto exec', '自動実行', '确认', 'confirmation', '確認', '批准', '执行模式', '手动', '工具确认', 'diff 审阅', '自动批准', 'auto approve', '自动应用']
   },
   {
     key: 'autoExec-intro', tab: 'autoExec',
@@ -851,8 +858,14 @@ function openSearchResult(entry: SearchIndexEntry) {
   // L-2：跳转完成即清空搜索词，侧边栏恢复常态高亮（避免跳转后仍整页置灰/高亮）
   searchQuery.value = ''
   activeSearchIndex.value = 0
+  // 工具配置面板内的锚点：先请求 ToolsSettings 展开对应配置面板，锚点才会出现在 DOM 中
+  if (entry.key === 'apply-diff-config') {
+    pendingToolConfigExpand.value = 'apply_diff'
+  }
   settingsStore.setActiveTab(entry.tab)
-  nextTick(() => {
+  // 双重 nextTick：首次渲染完成页签切换；若本次跳转同时请求了工具配置面板展开
+  // （ToolsSettings onMounted/watch 触发第二次渲染），确保锚点已出现在 DOM 中
+  nextTick(() => nextTick(() => {
     const section = document.querySelector('.settings-section')
     if (!section) return
     let target: HTMLElement | null = null
@@ -888,7 +901,7 @@ function openSearchResult(entry: SearchIndexEntry) {
     })
     target!.classList.add('search-flash')
     window.setTimeout(() => target!.classList.remove('search-flash'), 1600)
-  })
+  }))
 }
 
 function handleSearchOutsideClick(event: MouseEvent) {

@@ -10,13 +10,14 @@
  * 5. 检查工具依赖并显示安装提示
  */
 
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, DependencyWarning } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useDependency, TOOL_DEPENDENCIES, hasToolDependencies, getToolDependencies } from '@/composables/useDependency'
 import { useI18n } from '@/composables'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
+import { pendingToolConfigExpand } from './tools/toolConfigFocus'
 import ReadFileConfig from './tools/files/read_file.vue'
 import WriteFileConfig from './tools/files/write_file.vue'
 import ListFilesConfig from './tools/files/list_files.vue'
@@ -94,6 +95,23 @@ function areAllDependenciesInstalled(toolName: string): boolean {
 
 // 展开的工具配置面板
 const expandedTools = ref<Set<string>>(new Set())
+
+// 分类折叠状态
+const collapsedCategories = ref<Set<string>>(new Set())
+
+// 切换分类折叠
+function toggleCategory(category: string) {
+  if (collapsedCategories.value.has(category)) {
+    collapsedCategories.value.delete(category)
+  } else {
+    collapsedCategories.value.add(category)
+  }
+}
+
+// 检查分类是否折叠
+function isCategoryCollapsed(category: string): boolean {
+  return collapsedCategories.value.has(category)
+}
 
 // 切换配置面板展开状态
 function toggleConfigPanel(toolName: string) {
@@ -235,6 +253,24 @@ onMounted(() => {
   loadDependencies()
   loadMaxToolIterations()
 })
+
+// 设置搜索跳转到未展开的工具配置面板时，自动展开对应面板（信号消费后复位）
+function expandFromSearchSignal(toolName: string | null) {
+  if (!toolName) return
+  expandedTools.value.add(toolName)
+  // 若目标工具所在分类被折叠，同时展开该分类，保证锚点真实出现在 DOM 中
+  for (const [category, categoryTools] of Object.entries(toolsByCategory.value)) {
+    if (categoryTools.some(t => t.name === toolName)) {
+      collapsedCategories.value.delete(category)
+      break
+    }
+  }
+  pendingToolConfigExpand.value = null
+}
+
+onMounted(() => expandFromSearchSignal(pendingToolConfigExpand.value))
+
+watch(pendingToolConfigExpand, (toolName) => expandFromSearchSignal(toolName))
 </script>
 
 <template>
@@ -299,13 +335,14 @@ onMounted(() => {
         :key="category"
         class="tool-category"
       >
-        <div class="category-header">
+        <div class="category-header" :class="{ collapsed: isCategoryCollapsed(category) }" @click="toggleCategory(category)">
+          <i :class="['codicon', isCategoryCollapsed(category) ? 'codicon-chevron-right' : 'codicon-chevron-down']"></i>
           <i :class="['codicon', getCategoryIcon(category)]"></i>
           <span>{{ getCategoryName(category) }}</span>
           <span class="category-count">{{ categoryTools.length }}</span>
         </div>
         
-        <div class="category-tools">
+        <div v-show="!isCategoryCollapsed(category)" class="category-tools">
           <div
             v-for="tool in categoryTools"
             :key="tool.name"
@@ -593,6 +630,17 @@ onMounted(() => {
   border-radius: 4px;
   font-size: 13px;
   font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s;
+}
+
+.category-header:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.category-header.collapsed {
+  opacity: 0.85;
 }
 
 .category-header .codicon {

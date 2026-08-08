@@ -15,6 +15,7 @@ import {
   updateConversationAfterMessage,
   loadHistory,
   loadCheckpoints,
+  renameConversationTitle,
   MESSAGES_PAGE_SIZE
 } from '../conversationActions'
 
@@ -397,5 +398,58 @@ describe('loadCheckpoints（L-8）', () => {
     await loadCheckpoints(state)
 
     expect(state.checkpoints.value).toEqual([])
+  })
+})
+
+describe('renameConversationTitle', () => {
+  beforeEach(() => {
+    mockSend.mockReset()
+  })
+
+  it('IPC 成功后更新列表标题与已打开标签页标题', async () => {
+    mockSend.mockResolvedValue({})
+    const state = createState({
+      conversations: ref([{ id: 'conv-1', title: '旧标题', isPersisted: true } as any]),
+      openTabs: ref([{ id: 'tab-1', conversationId: 'conv-1', title: '旧标题' } as any])
+    })
+
+    const ok = await renameConversationTitle(state, 'conv-1', '  新标题  ')
+
+    expect(ok).toBe(true)
+    expect(mockSend).toHaveBeenCalledWith('conversation.setTitle', {
+      conversationId: 'conv-1',
+      title: '新标题'
+    })
+    expect(state.conversations.value[0].title).toBe('新标题')
+    expect(state.openTabs.value[0].title).toBe('新标题')
+  })
+
+  it('空白标题或未变标题不发送 IPC', async () => {
+    const state = createState({
+      conversations: ref([{ id: 'conv-1', title: '旧标题', isPersisted: true } as any])
+    })
+
+    expect(await renameConversationTitle(state, 'conv-1', '   ')).toBe(false)
+    expect(await renameConversationTitle(state, 'conv-1', '旧标题')).toBe(false)
+    expect(mockSend).not.toHaveBeenCalled()
+  })
+
+  it('不存在的对话直接返回 false', async () => {
+    const state = createState({ conversations: ref([]) })
+    expect(await renameConversationTitle(state, 'ghost', '新标题')).toBe(false)
+    expect(mockSend).not.toHaveBeenCalled()
+  })
+
+  it('IPC 失败时标题保持不变并返回 false', async () => {
+    mockSend.mockRejectedValue(new Error('ipc down'))
+    const state = createState({
+      conversations: ref([{ id: 'conv-1', title: '旧标题', isPersisted: true } as any])
+    })
+
+    const ok = await renameConversationTitle(state, 'conv-1', '新标题')
+
+    expect(ok).toBe(false)
+    expect(state.conversations.value[0].title).toBe('旧标题')
+    expect(state.error.value?.code).toBe('RENAME_CONVERSATION_ERROR')
   })
 })

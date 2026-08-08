@@ -19,6 +19,7 @@ import {
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
+import { findTabByConversationId, updateTabTitle } from './tabActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -925,6 +926,48 @@ export async function deleteConversation(
   } finally {
     // 无论成功失败，都移除删除锁
     state.deletingConversationIds.value.delete(id)
+  }
+}
+
+/**
+ * 修改对话标题
+ *
+ * 用户手动重命名对话：trim 校验后走 conversation.setTitle（后端已有 setTitle
+ * 写 meta.json），成功后同步本地列表与已打开标签页标题。失败不改变本地状态。
+ */
+export async function renameConversationTitle(
+  state: ChatStoreState,
+  id: string,
+  title: string
+): Promise<boolean> {
+  const conv = state.conversations.value.find(c => c.id === id)
+  if (!conv) return false
+
+  const trimmed = title.trim()
+  if (!trimmed || trimmed === conv.title) return false
+
+  try {
+    await sendToExtension('conversation.setTitle', {
+      conversationId: id,
+      title: trimmed
+    })
+
+    conv.title = trimmed
+    conv.updatedAt = Date.now()
+
+    // 同步已打开标签页的标题（若有）
+    const tab = findTabByConversationId(state, id)
+    if (tab) {
+      updateTabTitle(state, tab.id, trimmed)
+    }
+
+    return true
+  } catch (err: any) {
+    state.error.value = {
+      code: err.code || 'RENAME_CONVERSATION_ERROR',
+      message: err.message || 'Failed to rename conversation'
+    }
+    return false
   }
 }
 

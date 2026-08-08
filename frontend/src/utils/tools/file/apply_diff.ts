@@ -23,7 +23,7 @@ interface StructuredHunk {
 // 注册 apply_diff 工具
 registerTool('apply_diff', {
   name: 'apply_diff',
-  label: '应用差异',
+  label: '应用diff',
   icon: 'codicon-diff',
   
   // 描述生成器 - 显示文件路径和 diff 数量

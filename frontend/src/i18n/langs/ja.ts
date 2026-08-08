@@ -326,6 +326,11 @@ const ja: LanguageMessages = {
             showHistory: '履歴を表示：',
             revealInExplorer: 'エクスプローラーで表示',
             deleteConversation: '会話を削除',
+            renameConversation: '会話名を変更',
+            renameDialogTitle: '会話のタイトルを変更',
+            renamePlaceholder: '新しい会話のタイトルを入力',
+            renameConfirm: '保存',
+            renameCancel: 'キャンセル',
             messages: '件のメッセージ'
         },
 
@@ -1228,10 +1233,14 @@ const ja: LanguageMessages = {
                 },
                 diffReview: {
                     label: 'Diff レビューで管理',
-                    tooltip: 'このツールの変更はチャット内の確認ダイアログではなく、Diff レビューで確認されます。自動適用は「ツール設定 → Apply Diff → 自動適用」で設定してください。'
+                    tooltip: 'このツールの変更はチャット内の確認ダイアログではなく、Diff レビューで確認されます。自動適用は「ツール設定 → 差分を適用 → 自動適用」で設定してください。',
+                    autoApprove: '自動承認',
+                    autoApproveTooltip: '有効にすると、このツールの差分変更は「差分を適用 設定」の遅延後に自動承認・適用されます（write_file / apply_diff / insert_code / delete_code は同じスイッチを共有します）。',
+                    statusAutoApprove: '自動承認',
+                    statusNeedConfirm: '確認が必要'
                 },
                 tips: {
-                    diffReviewNote: '• 書き込み系ツール（write_file / apply_diff / insert_code / delete_code）は Diff レビューで確認されます。Apply Diff ツール設定で「自動適用」を有効にすると完全自動になります（このページでのチェックは不要）',
+                    diffReviewNote: '• 書き込み系ツール（write_file / apply_diff / insert_code / delete_code）は Diff レビューで確認されます。上の「自動承認」を有効にするか、ツール設定 → 差分を適用 の「自動適用」で完全自動にできます',
                     dangerousDefault: '• 「危険」とマークされたツールは、デフォルトでユーザーの確認が必要です',
                     deleteFileWarning: '• delete_file: ファイル削除は元に戻せないため、確認を有効にすることをお勧めします',
                     executeCommandWarning: '• execute_command: ターミナルコマンドの実行はシステムに影響を与える可能性があります',
@@ -2522,6 +2531,7 @@ const ja: LanguageMessages = {
                     agents: 'エージェント',
                     mcp: 'MCP ツール',
                     activity: '使用時間',
+                    sandbox: 'サンドボックス',
                     other: 'その他'
                 },
                 dependency: {
@@ -2591,6 +2601,7 @@ const ja: LanguageMessages = {
                     create_directory: 'ワークスペースにディレクトリを作成します（親ディレクトリも自動生成）。',
                     list_files: 'ディレクトリ内のファイルとサブディレクトリを一覧表示します。',
                     apply_diff: 'Hunks 配列形式でファイルに構造化された置換を適用します。',
+                    sandbox: '隔離されたサンドボックス（タイムアウトと出力上限付きの一時ディレクトリ）でコードを実行します。信頼できないコード片を実行する際、execute_command より安全です：コードは使い捨ての一時ディレクトリで実行され、実行後にクリーンアップされます。ハードタイムアウトでプロセスツリーを強制終了し、出力行数上限で洪水を防止します。対応言語: python, javascript, bash, powershell, sh。code パラメータで完全なソースコードを渡すと、ツールがファイルに書き込み、対応するインタプリタを呼び出します。オプションの stdin はプログラムに標準入力として渡されます。注意：これは軽量なファイルシステム隔離であり、OS レベルのサンドボックスではありません。ネットワークアクセスを遮断せず、CPU/メモリも制限しません。本当に悪意のあるコードには使用しないでください。デフォルトでは実行前にユーザー確認が必要です（execute_command と同じ）。ツール自動実行設定で自動実行に変更できます。',
                     execute_command: 'シェルコマンドを実行し出力を返します。PowerShell、CMD、Bash、WSL 等に対応。',
                     find_files: 'Glob パターンでファイルを検索します。一致したファイル一覧を返します。',
                     search_in_files: 'ワークスペースファイル内で検索または置換を行います。正規表現対応。',

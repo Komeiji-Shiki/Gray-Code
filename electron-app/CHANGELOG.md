@@ -10,7 +10,15 @@ are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
 
+### Added
+  - **用户可修改对话标题**（1.7.4，详见根目录 CHANGELOG [Unreleased]）：历史页/首页对话列表悬停新增「重命名对话」按钮（InputDialog 弹窗），走 `conversation.setTitle` 持久化到 meta.json，成功后同步列表与已打开标签页标题；新增 store 回归测试 4 例。
+  - **设置页「自动执行」给 Diff 审阅类工具提供「自动批准」开关**（1.7.4）：write_file / apply_diff / insert_code / delete_code 徽标旁新增真实开关，读写「应用diff 设置」的 autoSave（四工具共用），显示「自动批准 / 需确认」状态。
+  - **设置页子菜单折叠**（1.7.4）：「自动执行」与「工具」页签分类子菜单头部可点击折叠/展开。
+
 ### Fixed
+  - **沙箱工具描述与分类汉化**（1.7.4）：工具管理页/自动执行页 sandbox 描述缺失 `toolDescriptions.sandbox` i18n 条目、回退英文声明，现三语补齐；工具管理页沙箱分类名缺失 `toolsSettings.categories.sandbox` 条目（显示原始 key），三语补齐。
+  - **apply_diff 汉化统一为「应用diff」**（1.7.4）：工具显示名、工具注册表 label（消息卡片）、消息卡片标题、审阅面板标题统一为「应用diff」；自动执行页「Diff 审阅管理」→「差异审阅管理」、文案中的 "Apply Diff" 替换、「Diff 警戒值」→「差异警戒值」。
+  - **设置搜索补齐 apply_diff 自动应用条目**（1.7.4）：搜索索引新增 `apply-diff-config` 锚点条目（关键词含 自动应用/自动批准/auto apply/auto approve/应用diff），跳转时自动展开目标工具配置面板（新增 `tools/toolConfigFocus.ts` 展开信号 + 双重 nextTick 定位），消除静默回退。
   - **对话内禁止切换工作区——切换工作区 = 打开绑定新工作区的新对话**（详见根目录 CHANGELOG [Unreleased]）：
     - 移除下拉切换/打开文件夹对当前对话的重绑定（对话绑定不再被强行切换改写，修复标题与绑定错位）；
     - 切换工作区打开绑定新工作区的新对话（空白标签页），同工作区空白标签复用、首个消息前不持久化——不产生对话堆积；

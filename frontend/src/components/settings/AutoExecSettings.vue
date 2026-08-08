@@ -45,6 +45,56 @@ const isLoading = ref(false)
 // 保存状态
 const savingTools = ref<Set<string>>(new Set())
 
+// Diff 审阅类工具的自动批准开关（读取/写入 apply_diff 配置的 autoSave，
+// write_file / apply_diff / insert_code / delete_code 共用同一开关）
+const diffAutoApprove = ref(false)
+const isLoadingDiffConfig = ref(false)
+
+// 分类折叠状态
+const collapsedCategories = ref<Set<string>>(new Set())
+
+// 切换分类折叠
+function toggleCategory(category: string) {
+  if (collapsedCategories.value.has(category)) {
+    collapsedCategories.value.delete(category)
+  } else {
+    collapsedCategories.value.add(category)
+  }
+}
+
+// 检查分类是否折叠
+function isCategoryCollapsed(category: string): boolean {
+  return collapsedCategories.value.has(category)
+}
+
+// 加载 apply_diff 配置中的自动应用开关
+async function loadDiffAutoApproveConfig() {
+  isLoadingDiffConfig.value = true
+  try {
+    const response = await sendToExtension<{ config: { autoSave?: boolean } }>('tools.getToolConfig', {
+      toolName: 'apply_diff'
+    })
+    diffAutoApprove.value = response?.config?.autoSave ?? false
+  } catch (error) {
+    console.error('Failed to load apply_diff auto-save config:', error)
+  } finally {
+    isLoadingDiffConfig.value = false
+  }
+}
+
+// 切换 Diff 审阅类工具的自动批准
+async function toggleDiffAutoApprove(autoApprove: boolean) {
+  diffAutoApprove.value = autoApprove
+  try {
+    await sendToExtension('tools.updateApplyDiffConfig', {
+      config: { autoSave: autoApprove }
+    })
+  } catch (error) {
+    console.error('Failed to update apply_diff auto-save config:', error)
+    diffAutoApprove.value = !autoApprove
+  }
+}
+
 // 按分类分组的工具
 const toolsByCategory = computed(() => {
   const grouped: Record<string, ToolInfo[]> = {}
@@ -222,6 +272,7 @@ function isMcpTool(tool: ToolInfo): boolean {
 // 组件挂载
 onMounted(() => {
   loadData()
+  loadDiffAutoApproveConfig()
 })
 </script>
 
@@ -271,13 +322,14 @@ onMounted(() => {
         :key="category"
         class="tool-category"
       >
-        <div class="category-header">
+        <div class="category-header" :class="{ collapsed: isCategoryCollapsed(category) }" @click="toggleCategory(category)">
+          <i :class="['codicon', isCategoryCollapsed(category) ? 'codicon-chevron-right' : 'codicon-chevron-down']"></i>
           <i :class="['codicon', getCategoryIcon(category)]"></i>
           <span>{{ getCategoryDisplayName(category) }}</span>
           <span class="category-count">{{ categoryTools.length }}</span>
         </div>
         
-        <div class="category-tools">
+        <div v-show="!isCategoryCollapsed(category)" class="category-tools">
           <div
             v-for="tool in categoryTools"
             :key="tool.name"
@@ -299,12 +351,21 @@ onMounted(() => {
               <div class="tool-description">{{ getToolDescription(tool) }}</div>
             </div>
             
-            <!-- Diff 审阅类工具：显示真实生效状态而非误导性勾选框 -->
+            <!-- Diff 审阅类工具：显示真实生效状态 + 自动批准开关（共用 apply_diff 的 autoSave 配置） -->
             <div v-if="isDiffReviewTool(tool.name)" class="tool-toggle">
+              <span class="toggle-label" :class="{ 'auto-exec': diffAutoApprove }">
+                {{ diffAutoApprove ? t('components.settings.autoExec.diffReview.statusAutoApprove') : t('components.settings.autoExec.diffReview.statusNeedConfirm') }}
+              </span>
               <span class="diff-review-badge" :title="t('components.settings.autoExec.diffReview.tooltip')">
                 <i class="codicon codicon-git-compare"></i>
                 {{ t('components.settings.autoExec.diffReview.label') }}
               </span>
+              <CustomCheckbox
+                :model-value="diffAutoApprove"
+                :disabled="isLoadingDiffConfig"
+                :title="t('components.settings.autoExec.diffReview.autoApproveTooltip')"
+                @update:model-value="toggleDiffAutoApprove"
+              />
             </div>
             <div v-else class="tool-toggle" :class="{ saving: savingTools.has(tool.name) }">
               <span class="toggle-label" :class="{ 'auto-exec': isAutoExec(tool.name) }">
@@ -454,6 +515,17 @@ onMounted(() => {
   border-radius: 4px;
   font-size: 13px;
   font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s;
+}
+
+.category-header:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.category-header.collapsed {
+  opacity: 0.85;
 }
 
 .category-header .codicon {

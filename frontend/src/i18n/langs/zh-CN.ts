@@ -327,6 +327,11 @@ const zhCN = {
             showHistory: '显示对话历史：',
             revealInExplorer: '在文件管理器中显示',
             deleteConversation: '删除对话',
+            renameConversation: '重命名对话',
+            renameDialogTitle: '修改对话标题',
+            renamePlaceholder: '输入新的对话标题',
+            renameConfirm: '保存',
+            renameCancel: '取消',
             messages: '条消息'
         },
 
@@ -1228,11 +1233,15 @@ const zhCN = {
                     dangerous: '危险'
                 },
                 diffReview: {
-                    label: 'Diff 审阅管理',
-                    tooltip: '此工具的修改经由 Diff 审阅机制确认，不使用聊天内确认框。是否自动应用请在「工具设置 → Apply Diff → 自动应用修改」中配置。'
+                    label: '差异审阅管理',
+                    tooltip: '此工具的修改经由差异审阅机制确认，不使用聊天内确认框。是否自动应用请在「工具设置 → 应用diff → 自动应用修改」中配置。',
+                    autoApprove: '自动批准',
+                    autoApproveTooltip: '开启后，该工具的差异修改将按「应用diff 设置」中的延迟自动批准应用（write_file / apply_diff / insert_code / delete_code 共用同一开关）。',
+                    statusAutoApprove: '自动批准',
+                    statusNeedConfirm: '需确认'
                 },
                 tips: {
-                    diffReviewNote: '• 写入类工具（write_file / apply_diff / insert_code / delete_code）由 Diff 审阅机制确认：在 Apply Diff 工具设置中开启"自动应用"后即完全自动，无需在本页勾选',
+                    diffReviewNote: '• 写入类工具（write_file / apply_diff / insert_code / delete_code）由差异审阅机制确认：在上方开启「自动批准」或到「工具设置 → 应用diff → 自动应用修改」配置后即完全自动',
                     dangerousDefault: '• 标记为"危险"的工具默认需要用户确认后才能执行',
                     deleteFileWarning: '• delete_file: 删除文件操作不可恢复，建议保持需确认',
                     executeCommandWarning: '• execute_command: 执行终端命令可能对系统造成影响',
@@ -2353,7 +2362,7 @@ const zhCN = {
                         enableSkipDiffView: '自动应用时不打开差异视图',
                         enableSkipDiffViewDesc: '开启后，自动应用修改时将直接保存文件而不打开差异对比视图',
 
-                        diffGuard: 'Diff 警戒值',
+                        diffGuard: '差异警戒值',
                         enableDiffGuard: '启用删除行数警戒值',
                         enableDiffGuardDesc: '当一次性删除的行数超过文件总行数的指定百分比时，在工具外侧显示警告提示',
                         diffGuardThreshold: '警戒阈值',
@@ -2523,6 +2532,7 @@ const zhCN = {
                     agents: '代理',
                     mcp: 'MCP 工具',
                     activity: '使用时间',
+                    sandbox: '沙箱',
                     other: '其他'
                 },
                 dependency: {
@@ -2539,7 +2549,7 @@ const zhCN = {
                     delete_file: '删除文件',
                     create_directory: '创建目录',
                     list_files: '列出文件',
-                    apply_diff: '应用差异',
+                    apply_diff: '应用diff',
                     execute_command: '执行命令',
                     sandbox: '沙箱',
                     find_files: '查找文件',
@@ -2592,6 +2602,7 @@ const zhCN = {
                     create_directory: '在工作区创建目录（自动创建父目录）。',
                     list_files: '列出目录中的文件和子目录，支持递归和行数统计。',
                     apply_diff: '对文件应用结构化内容替换，使用 hunks 数组格式进行精确修改。',
+                    sandbox: '在隔离的沙箱（临时目录，带超时与输出上限）中运行代码。比 execute_command 更适合运行不可信代码片段：代码在一次性临时目录中运行，结束后自动清理；硬超时会终止进程树；输出行数上限防止刷屏。支持的语言：python, javascript, bash, powershell, sh。通过 code 参数传入完整源码，工具会写入文件并调用对应解释器；可选 stdin 会通过标准输入管道传给程序。注意：这是轻量级文件系统隔离，并非操作系统级强隔离，不阻止网络访问，也不限制 CPU/内存。请勿用于真正恶意的代码。默认执行前需要用户确认（与 execute_command 一致），可在工具自动执行设置中改为自动执行。',
                     execute_command: '执行 Shell 命令并返回输出。支持 PowerShell、CMD、Bash、WSL 等多种 Shell。',
                     find_files: '根据一个或多个 glob 模式查找文件，返回匹配的文件列表及行数详情。',
                     search_in_files: '在工作区文件中搜索或搜索替换内容，支持正则表达式。',
@@ -3194,14 +3205,14 @@ const zhCN = {
                 deleteFile: '删除文件',
                 createDirectory: '创建目录',
                 listFiles: '列出文件',
-                applyDiff: '应用差异',
+                applyDiff: '应用diff',
                 filesRead: '已读取文件',
                 filesWritten: '已写入文件',
                 filesDeleted: '已删除文件',
                 directoriesCreated: '已创建目录',
                 changesApplied: '已应用更改',
                 applyDiffPanel: {
-                    title: '应用差异',
+                    title: '应用diff',
                     changes: '个更改',
                     diffApplied: '差异已应用',
                     pending: '待审阅',

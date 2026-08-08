@@ -5,7 +5,7 @@
  */
 
 import { ref } from 'vue'
-import { IconButton } from '../common'
+import { IconButton, InputDialog } from '../common'
 import { useChatStore } from '../../stores'
 import { sendToExtension } from '../../utils/vscode'
 import type { Conversation } from '../../stores'
@@ -33,6 +33,34 @@ const chatStore = useChatStore()
 
 // 悬停状态
 const hoverItemId = ref<string | null>(null)
+
+// 重命名对话框状态
+const renamingConversationId = ref<string | null>(null)
+const isSavingTitle = ref(false)
+
+// 打开重命名对话框
+function handleRename(id: string) {
+  renamingConversationId.value = id
+}
+
+// 确认重命名
+async function handleRenameConfirm(title: string) {
+  const id = renamingConversationId.value
+  renamingConversationId.value = null
+  if (!id) return
+  isSavingTitle.value = true
+  try {
+    await chatStore.renameConversationTitle(id, title)
+  } catch (error) {
+    console.error('Failed to rename conversation:', error)
+  } finally {
+    isSavingTitle.value = false
+  }
+}
+
+function handleRenameCancel() {
+  renamingConversationId.value = null
+}
 
 // 处理删除
 function handleDelete(id: string) {
@@ -119,6 +147,13 @@ function getIntegrityTooltip(conversation: Conversation): string {
           ></i>
           <template v-else>
             <IconButton
+              icon="codicon-edit"
+              size="small"
+              :title="t('components.history.renameConversation')"
+              :disabled="isSavingTitle"
+              @click="handleRename(conversation.id)"
+            />
+            <IconButton
               icon="codicon-folder-opened"
               size="small"
               :title="t('components.history.revealInExplorer')"
@@ -139,6 +174,18 @@ function getIntegrityTooltip(conversation: Conversation): string {
         <i class="codicon codicon-loading codicon-modifier-spin"></i>
       </div>
     </div>
+
+    <!-- 重命名对话框 -->
+    <InputDialog
+      :model-value="renamingConversationId !== null"
+      :title="t('components.history.renameDialogTitle')"
+      :placeholder="t('components.history.renamePlaceholder')"
+      :default-value="renamingConversationId ? (conversations.find(c => c.id === renamingConversationId)?.title || '') : ''"
+      :confirm-text="t('components.history.renameConfirm')"
+      :cancel-text="t('components.history.renameCancel')"
+      @confirm="handleRenameConfirm"
+      @cancel="handleRenameCancel"
+    />
   </div>
 </template>
 

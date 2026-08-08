@@ -49,6 +49,7 @@ import {
   switchConversation as switchConvAction,
   deleteConversation as deleteConvAction,
   isDeletingConversation,
+  renameConversationTitle as renameConvTitleAction,
   updateConversationAfterMessage,
   createBranchConversation as createBranchConversationAction
 } from './chat/conversationActions'
@@ -540,6 +541,8 @@ export const useChatStore = defineStore('chat', () => {
     switchConversation,
     createNewConversation
   )
+
+  const renameConversationTitle = (id: string, title: string) => renameConvTitleAction(state, id, title)
   
   // ============ 配置操作 ============
   
@@ -1087,6 +1090,7 @@ export const useChatStore = defineStore('chat', () => {
     loadMoreConversations,
     switchConversation,
     deleteConversation,
+    renameConversationTitle,
     branchFromMessage,
     isDeletingConversation: (id: string) => isDeletingConversation(state, id),
     

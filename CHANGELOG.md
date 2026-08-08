@@ -8,7 +8,25 @@
 
 ## [Unreleased]
 
+### Added
+  - **用户可修改对话标题**（1.7.4）：
+    - 历史页/首页对话列表悬停新增「重命名对话」按钮（`ConversationList.vue`），复用 `InputDialog` 弹窗；支持 Enter 确认、Escape 取消。
+    - 新增 store action `renameConversationTitle`（`conversationActions.ts`）：trim 校验 → `conversation.setTitle` IPC（后端 `ConversationManager.setTitle` 早已存在，写 meta.json 并原子提交）→ 成功后同步本地列表标题、`updatedAt` 与已打开标签页标题（`updateTabTitle`）；空白/未变化标题不发 IPC，失败保持原状并写入 store error。
+    - 新增回归测试：`conversationActions.test.ts` 重命名 4 例（成功同步标签页 / 空白与未变化跳过 / 不存在对话 / IPC 失败保持原状）。
+  - **设置页「自动执行」给 Diff 审阅类工具提供「自动批准」开关**（1.7.4）：
+    - `write_file / apply_diff / insert_code / delete_code` 原先只显示「差异审阅管理」徽标、无任何可操作控件；现徽标旁新增真实开关（`AutoExecSettings.vue`），状态读写「应用diff 设置」的 `autoSave`（四个工具共用同一开关），并显示「自动批准 / 需确认」状态文字；切换即通过 `tools.updateApplyDiffConfig` 持久化。
+  - **设置页子菜单折叠**（1.7.4）：
+    - 「自动执行」与「工具」页签的分类子菜单（文件操作/搜索/终端/…）头部可点击折叠/展开（`AutoExecSettings.vue` / `ToolsSettings.vue`），折叠时显示 chevron-right 图标、收起分类内工具列表；状态为组件会话内记忆，不持久化。
+
 ### Fixed
+  - **沙箱工具描述与分类汉化**（1.7.4）：
+    - 工具管理页/自动执行页的 sandbox 工具描述此前缺失 `toolDescriptions.sandbox` i18n 条目，回退显示后端英文声明；现三语（zh-CN/en/ja）补齐（内容与工具声明对齐：隔离临时目录/超时杀进程树/输出上限/语言列表/按需确认）。
+    - **工具管理页沙箱分类名缺失 `toolsSettings.categories.sandbox` 条目**（自动执行页的 `autoExec.categories.sandbox` 一直存在）：工具页、子代理设置、提示词设置页的沙箱分类标题显示原始 i18n key（`components.settings.toolsSettings.categories.sandbox`）——即「工具页面沙箱未汉化」的真正残留；三语补齐。
+  - **apply_diff 汉化统一为「应用diff」**（1.7.4）：中文界面中工具显示名、工具注册表 label（工具消息卡片标题，`utils/tools/file/apply_diff.ts`）、消息卡片标题、审阅面板标题从「应用差异」/英文混排统一为「应用diff」；自动执行页徽标文案「Diff 审阅管理」→「差异审阅管理」、提示与 tooltip 中的 "Apply Diff" → 「应用diff」；「Diff 警戒值」→「差异警戒值」；ja 指引文案同步为「差分を適用」。
+  - **设置搜索补齐 apply_diff 自动应用条目**（1.7.4）：
+    - `SettingsPanel.vue` 搜索索引新增 `apply-diff-config` 条目（锚点 `[data-search-anchor="apply-diff-config"]`，位于「工具 → 应用diff → 自动应用开关」区块），关键词覆盖 自动应用/自动批准/auto apply/auto approve/应用diff/跳过差异视图/警戒值 等；`tools` / `tools-list` / `autoExec` 条目关键词同步补全。
+    - 搜索跳转自动展开目标工具配置面板：新增 `tools/toolConfigFocus.ts` 展开信号，`openSearchResult` 对 `apply-diff-config` 先请求 `ToolsSettings` 展开面板再定位锚点（双重 nextTick 保证锚点已渲染），消除「点了没反应」式静默回退到节标题。
+  - **回归测试**：`toolLocalization.test.ts` 断言更新为「应用diff」并新增 sandbox 描述本地化断言；`settingsSearchAnchorConsistency.test.ts` 反向断言覆盖新锚点。
   - **安全加固批次**：
     - **更新器安装包路径注入修复**（`UpdateChecker.downloadAndInstall`）：远端 Release 的版本号此前直接拼入本地文件名（`path.join` 后 `writeFile` + 系统打开执行），tag 名含路径穿越序列（如 `v1.0.0/../../evil`）时安装包可被写到更新目录之外并被执行；现下载前校验版本号仅允许 `[0-9A-Za-z._+-]`（含 semver 构建元数据 `+`），非法即抛错并走 Release 页兜底。
     - **终端工具 cwd 越界守卫**（`execute_command.ts`）：相对 cwd（含工作区前缀解析路径）折叠 `..` 后校验必须仍落在工作区内，`cwd: '../..'` 不再把命令工作目录带出工作区（与 write 类工具的工作区外审批策略对齐）；盘根工作区（`C:\`）尾分隔符不再误伤合法相对路径。

@@ -326,6 +326,11 @@ const en: LanguageMessages = {
             showHistory: 'Show history:',
             revealInExplorer: 'Reveal in Explorer',
             deleteConversation: 'Delete Conversation',
+            renameConversation: 'Rename Conversation',
+            renameDialogTitle: 'Rename Conversation',
+            renamePlaceholder: 'Enter a new conversation title',
+            renameConfirm: 'Save',
+            renameCancel: 'Cancel',
             messages: 'messages'
         },
 
@@ -1228,7 +1233,11 @@ const en: LanguageMessages = {
                 },
                 diffReview: {
                     label: 'Managed by Diff review',
-                    tooltip: 'Changes from this tool are confirmed through the Diff review flow instead of the in-chat confirmation dialog. Configure auto-apply in "Tools Settings → Apply Diff → Auto Apply".'
+                    tooltip: 'Changes from this tool are confirmed through the Diff review flow instead of the in-chat confirmation dialog. Configure auto-apply in "Tools Settings → Apply Diff → Auto Apply".',
+                    autoApprove: 'Auto Approve',
+                    autoApproveTooltip: 'When enabled, diffs from this tool are applied automatically after the delay configured in the Apply Diff settings (write_file / apply_diff / insert_code / delete_code share this single switch).',
+                    statusAutoApprove: 'Auto Approve',
+                    statusNeedConfirm: 'Needs Confirmation'
                 },
                 tips: {
                     diffReviewNote: '• Write tools (write_file / apply_diff / insert_code / delete_code) are confirmed via Diff review: enable "Auto Apply" in the Apply Diff tool settings to make them fully automatic — no checkbox needed on this page',
@@ -2522,6 +2531,7 @@ const en: LanguageMessages = {
                     agents: 'Agents',
                     mcp: 'MCP Tools',
                     activity: 'Usage Time',
+                    sandbox: 'Sandbox',
                     other: 'Other'
                 },
                 dependency: {
@@ -2591,6 +2601,7 @@ const en: LanguageMessages = {
                     create_directory: 'Create one or more directories in the workspace (auto-creates parents).',
                     list_files: 'List files and subdirectories in directories, supports recursion and line counts.',
                     apply_diff: 'Apply structured content replacements to a file using hunks array format.',
+                    sandbox: 'Run code in an isolated sandbox (temporary directory with timeout and output limits). Safer than execute_command for running untrusted code snippets: the code runs in a throwaway temp directory that is cleaned up afterwards, with a hard timeout that kills the process tree and an output line cap to prevent flooding. Supported languages: python, javascript, bash, powershell, sh. Pass the full source code via the `code` parameter; the tool writes it to a file and invokes the corresponding interpreter. Optional `stdin` is piped to the program. NOTE: This is lightweight filesystem isolation, NOT OS-level sandboxing. It does not block network access or limit CPU/memory. Do not use for truly malicious code. By default this tool requires user confirmation before execution (same as execute_command); it can be set to auto-execute in the tool auto-execution settings.',
                     execute_command: 'Execute a shell command and return output. Supports PowerShell, CMD, Bash, WSL and more.',
                     find_files: 'Find files by glob patterns. Returns matched file list with details.',
                     search_in_files: 'Search or search-and-replace content in workspace files. Supports regex.',

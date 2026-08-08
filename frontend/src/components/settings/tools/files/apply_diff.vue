@@ -249,7 +249,7 @@ onMounted(() => {
       </div>
 
       <!-- 自动应用开关 -->
-      <div class="config-section">
+      <div class="config-section" data-search-anchor="apply-diff-config">
         <div class="section-header">
           <i class="codicon codicon-play-circle"></i>
           <span>{{ t('components.settings.toolSettings.files.applyDiff.autoApply') }}</span>
