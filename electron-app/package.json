@@ -1,6 +1,6 @@
 {
   "name": "graycode-desktop",
-  "version": "1.7.5dev",
+  "version": "1.7.5-1dev",
   "description": "GrayCode desktop app (Electron) - AI coding assistant, no VS Code installation needed (runs on a built-in vscode-shim compat layer)",
   "author": {
     "name": "czocelot",
@@ -67,6 +67,11 @@
       ],
       "icon": "../resources/icon.png"
     },
+    "electronLanguages": [
+      "en-US",
+      "zh-CN",
+      "ja"
+    ],
     "portable": {
       "artifactName": "GrayCode-Portable-${version}.${ext}"
     },
