@@ -21,6 +21,11 @@ export function throwIfAborted(signal?: AbortSignal): void {
     }
 }
 
+/** C-7: 规整并发度——NaN/负值/非法数值回退 DEFAULT，避免 Array.from({length:NaN}) 生成 0 个 worker 静默跳过全部任务 */
+function effectiveConcurrency(concurrency: number): number {
+    return Number.isFinite(concurrency) && concurrency >= 1 ? concurrency : DEFAULT_CHECKPOINT_CONCURRENCY;
+}
+
 /**
  * 有界并发池：以固定并发度执行 items，全部完成后返回。
  *
@@ -54,7 +59,7 @@ export async function runBounded<T>(
         }
     };
     const workers = Array.from(
-        { length: Math.min(Math.max(concurrency, 1), items.length) },
+        { length: Math.min(Math.max(effectiveConcurrency(concurrency), 1), items.length) },
         () => runNext()
     );
     await Promise.all(workers);

@@ -10,6 +10,8 @@ import {
     getExclusionProfile,
     resolveEnabledProfiles
 } from './CheckpointExclusionProfiles';
+// C-11: 强制排除绝对路径判断统一引用 checkpointPathUtils 单实现，避免两份重复逻辑漂移
+import { isExcludedAbsolutePath } from './checkpointPathUtils';
 
 /**
  * CheckpointIgnoreResolver
@@ -217,13 +219,20 @@ function isUsableRuleLine(line: string): boolean {
     return trimmed.length > 0 && !trimmed.startsWith('#');
 }
 
+/** 预编译的单行规则 matcher（findMatchingRule 的缓存输入，C-5） */
+interface CompiledRuleLine {
+    trimmed: string;
+    matcher: Ignore;
+}
+
 /**
- * 在规则行列表中查找第一个命中 candidatePath 的忽略规则。
+ * 把规则行预编译为单模式 matcher 列表。
  *
- * 用于“为什么被排除”的解释：逐行构建单模式 matcher 求值，
- * 只返回会产生 ignore 结果的行（`!` 否定行返回 unignore，自然被跳过）。
+ * 避免 findMatchingRule 对每个候选路径、每行规则都 new ignore() 构造 matcher——
+ * 大工作区百万级实例化（C-5）；编译一次后按需复用。
  */
-function findMatchingRule(patternLines: readonly string[], candidatePath: string): string | undefined {
+function compileRuleLines(patternLines: readonly string[]): CompiledRuleLine[] {
+    const compiled: CompiledRuleLine[] = [];
     for (const line of patternLines) {
         const trimmed = line.trim();
         if (!isUsableRuleLine(trimmed)) {
@@ -231,32 +240,24 @@ function findMatchingRule(patternLines: readonly string[], candidatePath: string
         }
         const single = ignore();
         single.add(trimmed);
-        const result = single.test(candidatePath);
-        if (result.ignored) {
+        compiled.push({ trimmed, matcher: single });
+    }
+    return compiled;
+}
+
+/**
+ * 在预编译规则行中查找第一个命中 candidatePath 的忽略规则。
+ *
+ * 用于“为什么被排除”的解释：逐行求值单模式 matcher，只返回会产生 ignore 结果的行
+ * （`!` 否定行返回 unignore，自然被跳过）。
+ */
+function findMatchingRule(compiledLines: ReadonlyArray<CompiledRuleLine>, candidatePath: string): string | undefined {
+    for (const { trimmed, matcher } of compiledLines) {
+        if (matcher.test(candidatePath).ignored) {
             return trimmed;
         }
     }
     return undefined;
-}
-
-/** 判断绝对路径是否位于任一强制排除目录内（EX-02；win32/darwin 下统一小写比较，EX-CASE-2） */
-function isExcludedAbsolutePath(absolutePath: string, excludePaths: readonly string[]): boolean {
-    if (excludePaths.length === 0) {
-        return false;
-    }
-    const normalized = path.resolve(absolutePath);
-    // Windows 与 macOS 默认文件系统不区分大小写：排除配置与磁盘路径的大小写差异不应放行强制排除
-    const caseFold = CASE_INSENSITIVE_FS
-        ? (p: string) => p.toLowerCase()
-        : (p: string) => p;
-    const target = caseFold(normalized);
-    return excludePaths.some(excludePath => {
-        const excluded = caseFold(path.resolve(excludePath));
-        if (target === excluded) {
-            return true;
-        }
-        return target.startsWith(excluded + path.sep);
-    });
 }
 
 export class CheckpointIgnoreResolver {
@@ -274,6 +275,10 @@ export class CheckpointIgnoreResolver {
     private readonly profilePatterns: readonly string[];
     /** 每个类别的独立 matcher（用于定位命中的具体规则） */
     private readonly profileMatchers = new Map<CheckpointExclusionProfileId, Ignore>();
+    /** C-5/C-12: 每个类别「生效模式」（覆盖优先，缺省默认清单）的单行 matcher（解释与匹配同一口径） */
+    private readonly profileRuleLines = new Map<CheckpointExclusionProfileId, CompiledRuleLine[]>();
+    /** C-5: 用户自定义模式的单行 matcher（解释 custom 命中） */
+    private readonly customRuleLines: CompiledRuleLine[];
 
     constructor(
         private readonly rootDir: string,
@@ -284,6 +289,8 @@ export class CheckpointIgnoreResolver {
         this.customMatcher = this.normalizedExtraPatterns.length > 0
             ? createMatcher(this.normalizedExtraPatterns)
             : null;
+        // C-5: 自定义模式解释用的单行 matcher 一次性预编译
+        this.customRuleLines = compileRuleLines(this.normalizedExtraPatterns);
         this.normalizedExcludePaths = (options.excludeAbsolutePaths ?? []).map(p => path.resolve(p));
         // 缺省不启用默认类别层（保持历史行为）；快照构建器显式传入设置解析结果
         this.enabledProfileIds = options.enabledProfiles === undefined
@@ -302,6 +309,8 @@ export class CheckpointIgnoreResolver {
                     matcher.add(pattern);
                 }
                 this.profileMatchers.set(profileId, matcher);
+                // C-5/C-12: 解释与匹配同一口径——预编译「生效模式」（覆盖优先）的单行 matcher
+                this.profileRuleLines.set(profileId, compileRuleLines(patterns));
             }
         }
     }
@@ -483,7 +492,7 @@ export class CheckpointIgnoreResolver {
 
         // 归属原因：自定义最终阶段命中时优先归属 custom
         if (customDecided === true) {
-            const rule = findMatchingRule(this.normalizedExtraPatterns, candidatePath);
+            const rule = findMatchingRule(this.customRuleLines, candidatePath);
             return { ignored: true, reason: 'custom', source: 'custom', rule };
         }
 
@@ -569,13 +578,15 @@ export class CheckpointIgnoreResolver {
         }
 
         const gitignoreMatcher = createMatcher(patternBlocks);
+        // C-5: gitignore 行预编译为单行 matcher（ruleOf 解释命中规则时复用，不再逐路径逐行 new ignore()）
+        const compiledGitignoreLines = compileRuleLines(patternLines);
         if (gitignoreMatcher) {
             sources.push({
                 matcher: gitignoreMatcher,
                 reason: 'gitignore',
                 source: relativeDir ? `${normalizeCheckpointPath(relativeDir)}/.gitignore` : '.gitignore',
                 ruleOf: candidate => {
-                    const rule = findMatchingRule(patternLines, candidate);
+                    const rule = findMatchingRule(compiledGitignoreLines, candidate);
                     return rule ? { rule } : undefined;
                 }
             });
@@ -625,7 +636,8 @@ export class CheckpointIgnoreResolver {
                 continue;
             }
             if (profileMatcher.test(candidatePath).ignored) {
-                const rule = findMatchingRule(profile.patterns, candidatePath);
+                // C-12: 用「生效模式」（覆盖优先）解释命中，与 profileMatcher 实际匹配的模式一致
+                const rule = findMatchingRule(this.profileRuleLines.get(profileId) ?? [], candidatePath);
                 if (rule) {
                     return { rule, source: profileId };
                 }

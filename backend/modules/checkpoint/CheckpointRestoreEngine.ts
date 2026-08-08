@@ -381,7 +381,7 @@ export async function restoreWorkspaceSnapshot(
     currentHashes: Record<string, string>,
     currentEmptyDirs: string[]
 ): Promise<RestoreEngineResult> {
-    const { checkpointsDir, roots, protectedScopedPaths = new Set() } = options;
+    const { checkpointsDir, roots } = options;
 
     const failures: RestoreFailure[] = [];
     const modifiedPaths: string[] = [];
@@ -392,7 +392,6 @@ export async function restoreWorkspaceSnapshot(
     // 恢复计划：与 previewRestore 共用同一纯计算逻辑，预览清单与实际删除严格一致
     const plan = computeRestorePlan(options, chain, target, currentHashes, currentEmptyDirs);
     const { added, modified, toDelete, untrackedToDelete, skipped, targetEmptyDirs, untrackedEmptyDirs } = plan;
-
     // 快照后新建的文件/空目录默认保留（#29）；用户确认删除清单后（CP-09）才一并清理
     const deletionList = options.deleteUntrackedFiles
         ? [...toDelete, ...untrackedToDelete]
@@ -498,20 +497,18 @@ export async function restoreWorkspaceSnapshot(
         }
     }
 
-    // 5. 删除多余的空目录（当前有而目标没有的，L4：循环内检查取消信号）。
+    // 5. 删除多余的空目录。直接消费 plan.untrackedEmptyDirs（computeRestorePlan 已按
+    //    「目标存在 / 受保护路径」过滤）——此前在此处重算同套过滤逻辑，两处口径可能漂移（C-6）。
     //    快照后出现的空目录默认保留（#29），仅在用户确认删除快照后新建内容时清理
-    const targetEmptySet = new Set(targetEmptyDirs);
-    for (const scopedKey of currentEmptyDirs) {
-        throwIfAborted(options.signal);
-        if (targetEmptySet.has(scopedKey)) continue;
-        // M-3（R7b 补充）：目录级保护前缀同样覆盖受保护目录下的空目录
-        if (isProtectedScopedPath(scopedKey, protectedScopedPaths)) continue;
-        if (!options.deleteUntrackedFiles) continue;
-        try {
-            const absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
-            await fs.rmdir(absolutePath);
-        } catch {
-            // 目录非空或不存在：忽略
+    if (options.deleteUntrackedFiles) {
+        for (const scopedKey of untrackedEmptyDirs) {
+            throwIfAborted(options.signal);
+            try {
+                const absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
+                await fs.rmdir(absolutePath);
+            } catch {
+                // 目录非空或不存在：忽略
+            }
         }
     }
 
