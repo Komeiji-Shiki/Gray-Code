@@ -995,7 +995,8 @@ export class StreamAccumulator {
                 index: i,
                 name: fc.name,
                 id: fc.id,
-                args: fc.args,
+                // 返回浅拷贝：避免调用方修改污染累加器内部 parts 的 args 引用（上游 6d4bb95）
+                args: { ...fc.args },
             });
         }
 

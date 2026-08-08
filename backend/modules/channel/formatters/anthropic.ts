@@ -611,10 +611,8 @@ export class AnthropicFormatter extends BaseFormatter {
         const genConfig: any = {};
         const optionsEnabled = (config as any).optionsEnabled || {};
         
-        // max_tokens: 仅在启用时发送
-        if (optionsEnabled.max_tokens && config.options?.max_tokens !== undefined) {
-            genConfig.max_tokens = config.options.max_tokens;
-        }
+        // max_tokens: Anthropic API 强制要求该字段，无条件发送（未显式配置时用 65535 兜底，上游 6d4bb95）
+        genConfig.max_tokens = config.options?.max_tokens ?? 65535;
         
         if (optionsEnabled.temperature && config.options?.temperature !== undefined) {
             genConfig.temperature = config.options.temperature;
