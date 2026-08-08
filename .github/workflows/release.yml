@@ -32,10 +32,13 @@ jobs:
           # 前端有独立 package.json（非 workspaces），需单独安装其依赖
           npm --prefix frontend ci
 
-      - name: Build
-        run: npm run build
+      - name: Typecheck & test
+        run: |
+          npm run typecheck
+          npm test
 
       - name: Package vsix
+        # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤
         run: npx vsce package --out "graycode-${{ github.ref_name }}.vsix"
 
       - name: Extract release notes from CHANGELOG

@@ -2,7 +2,13 @@
     "extends": "./tsconfig.json",
     "compilerOptions": {
         "types": ["node", "jest"],
-        "lib": ["ES2020", "DOM"]
+        "lib": ["ES2020", "DOM"],
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["frontend/src/*"]
+        }
     },
     "include": [
         "backend/**/*.ts",
@@ -10,5 +16,11 @@
         "frontend/src/**/*.ts",
         "test/**/*.ts",
         "extension.ts"
+    ],
+    // 显式覆盖父配置的 exclude：父级 exclude 含 "frontend"，会与上面 include 的 frontend/src 冲突导致其不被编译
+    "exclude": [
+        "node_modules",
+        "dist",
+        "backend/__tests__"
     ]
 }

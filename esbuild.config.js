@@ -12,9 +12,10 @@ const esbuild = require('esbuild');
 const path = require('path');
 
 // 需要在 node_modules 中保留的包（不能打进 bundle）
+// 注意：typescript 仅是 devDependency 且被 .vscodeignore 排除，不能留在 external 里，
+// 否则 bundle 中出现 require('typescript') 时用户环境会直接崩溃。
 const externalModules = [
     'vscode',
-    'typescript',
 ];
 
 const outdir = path.join(__dirname, 'dist');
@@ -27,7 +28,7 @@ const buildOptions = {
     outfile: path.join(outdir, 'extension.js'),
     platform: 'node',
     format: 'cjs',
-    target: 'node18',
+    target: 'node20',
     external: externalModules,
     sourcemap: true,
     minify: false,

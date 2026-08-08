@@ -7,6 +7,7 @@ import * as fs from 'fs/promises';
 import { ChatViewProvider } from './webview/ChatViewProvider';
 import { t, setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
 import { Logger } from './backend/core/logger';
+import { initializeProductMetadata } from './backend/core/productMetadata';
 import { getDiffCodeLensProvider } from './backend/tools/file/DiffCodeLensProvider';
 import { getDiffEditorActionsProvider } from './backend/tools/file/DiffEditorActionsProvider';
 import { getDiffInlineProvider, DiffInlineProvider } from './backend/tools/file/DiffInlineProvider';
@@ -33,6 +34,9 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(outputChannel);
     Logger.setOutputChannel((line) => outputChannel.appendLine(line));
     // Logger.setLevel(LogLevel.DEBUG); // 取消注释以启用 DEBUG 级别日志
+
+    // 以当前扩展自身的 packageJSON 初始化产品元数据（运行时版本唯一来源，供 MCP clientInfo 等使用）
+    initializeProductMetadata(context);
 
     log.info('GrayCode extension is now active!');
 
@@ -393,24 +397,41 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(diffCodeActionDisposable);
 
+    // diff 命令失败时的统一错误处理：记录日志 + 提示用户
+    const handleDiffCommandError = (command: string, err: unknown): void => {
+        const message = err instanceof Error ? err.message : String(err);
+        log.error(`diff.${command}.failed`, { error: message });
+        vscode.window.showErrorMessage(`Diff ${command} 操作失败：${message}`);
+    };
+
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.confirmBlock', async (sessionId: string, blockIndex?: number) => {
-            await diffCodeLensProvider.confirmBlock(sessionId, blockIndex);
-            // 刷新编辑器操作提供者状态
-            getDiffEditorActionsProvider().refresh();
-            // 刷新内联装饰器
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffCodeLensProvider.confirmBlock(sessionId, blockIndex);
+            } catch (err) {
+                handleDiffCommandError('confirmBlock', err);
+            } finally {
+                // 刷新编辑器操作提供者状态
+                getDiffEditorActionsProvider().refresh();
+                // 刷新内联装饰器
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册 diff 拒绝命令（CodeLens 和 Code Actions 使用）
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff._rejectBlockFromCodeLens', async (sessionId: string, blockIndex?: number) => {
-            await diffCodeLensProvider.rejectBlock(sessionId, blockIndex);
-            // 刷新编辑器操作提供者状态
-            getDiffEditorActionsProvider().refresh();
-            // 刷新内联装饰器
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffCodeLensProvider.rejectBlock(sessionId, blockIndex);
+            } catch (err) {
+                handleDiffCommandError('_rejectBlockFromCodeLens', err);
+            } finally {
+                // 刷新编辑器操作提供者状态
+                getDiffEditorActionsProvider().refresh();
+                // 刷新内联装饰器
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
@@ -420,62 +441,100 @@ export function activate(context: vscode.ExtensionContext) {
     // 注册命令：接受所有修改
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.acceptAll', async () => {
-            await diffEditorActionsProvider.acceptAll();
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffEditorActionsProvider.acceptAll();
+            } catch (err) {
+                handleDiffCommandError('acceptAll', err);
+            } finally {
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册命令：拒绝所有修改
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.rejectAll', async () => {
-            await diffEditorActionsProvider.rejectAll();
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffEditorActionsProvider.rejectAll();
+            } catch (err) {
+                handleDiffCommandError('rejectAll', err);
+            } finally {
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册命令：选择并接受 diff 块
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.acceptBlock', async () => {
-            await diffEditorActionsProvider.showBlockPicker('accept');
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffEditorActionsProvider.showBlockPicker('accept');
+            } catch (err) {
+                handleDiffCommandError('acceptBlock', err);
+            } finally {
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册命令：选择并拒绝 diff 块
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.rejectBlock', async () => {
-            await diffEditorActionsProvider.showBlockPicker('reject');
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffEditorActionsProvider.showBlockPicker('reject');
+            } catch (err) {
+                handleDiffCommandError('rejectBlock', err);
+            } finally {
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册命令：接受当前光标位置的 diff 块
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.acceptCurrentBlock', async () => {
-            await diffEditorActionsProvider.acceptCurrentBlock();
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffEditorActionsProvider.acceptCurrentBlock();
+            } catch (err) {
+                handleDiffCommandError('acceptCurrentBlock', err);
+            } finally {
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册命令：拒绝当前光标位置的 diff 块
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.rejectCurrentBlock', async () => {
-            await diffEditorActionsProvider.rejectCurrentBlock();
-            diffInlineProvider.refreshAllDecorations();
+            try {
+                await diffEditorActionsProvider.rejectCurrentBlock();
+            } catch (err) {
+                handleDiffCommandError('rejectCurrentBlock', err);
+            } finally {
+                diffInlineProvider.refreshAllDecorations();
+            }
         })
     );
     
     // 注册命令：跳转到下一个 diff 块
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.nextBlock', async () => {
-            await diffEditorActionsProvider.goToNextBlock();
+            try {
+                await diffEditorActionsProvider.goToNextBlock();
+            } catch (err) {
+                handleDiffCommandError('nextBlock', err);
+            }
         })
     );
     
     // 注册命令：跳转到上一个 diff 块
     context.subscriptions.push(
         vscode.commands.registerCommand('graycode.diff.prevBlock', async () => {
-            await diffEditorActionsProvider.goToPrevBlock();
+            try {
+                await diffEditorActionsProvider.goToPrevBlock();
+            } catch (err) {
+                handleDiffCommandError('prevBlock', err);
+            }
         })
     );
 
