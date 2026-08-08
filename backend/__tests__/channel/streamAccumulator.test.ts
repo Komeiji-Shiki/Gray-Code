@@ -160,3 +160,38 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
         expect(parts.map(p => p.text).join('')).toContain('<<<TOOL_CALL>>>');
     });
 });
+
+
+describe('StreamAccumulator - ttft（首字延迟）', () => {
+    it('buildContent 计算 ttft = 首块时间 - 请求开始时间', () => {
+        const acc = new StreamAccumulator('function_call', makeIdFactory());
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
+        try {
+            acc.setRequestStartTime(1000); // 请求开始 t=1000
+            nowSpy.mockReturnValue(2450); // 第一个流式块 t=2450
+            acc.add(chunkOf([{ text: 'hello' }]));
+            nowSpy.mockReturnValue(3000); // 第二个块 t=3000
+            acc.add(chunkOf([{ text: ' world' }]));
+
+            const content = acc.getFinalContent();
+            expect(content.ttft).toBe(1450); // 2450 - 1000
+            expect(content.firstChunkTime).toBe(2450);
+            expect(content.responseDuration).toBe(2000); // 3000 - 1000
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('未设置请求开始时间时不输出 ttft', () => {
+        const acc = new StreamAccumulator('function_call', makeIdFactory());
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
+        try {
+            acc.add(chunkOf([{ text: 'hello' }])); // 未调用 setRequestStartTime
+            const content = acc.getFinalContent();
+            expect(content.ttft).toBeUndefined();
+            expect(content.responseDuration).toBeUndefined();
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+});

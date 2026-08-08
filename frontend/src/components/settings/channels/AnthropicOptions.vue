@@ -45,6 +45,11 @@ const thinkingTypeOptions = computed<SelectOption[]>(() => [
 // Effort 级别选项
 const effortOptions = computed<SelectOption[]>(() => [
   {
+    value: 'ultra',
+    label: 'ultra',
+    description: t('components.channels.anthropic.thinking.effortUltra')
+  },
+  {
     value: 'max',
     label: 'max',
     description: t('components.channels.anthropic.thinking.effortMax')
@@ -68,6 +73,11 @@ const effortOptions = computed<SelectOption[]>(() => [
     value: 'low',
     label: 'low',
     description: t('components.channels.anthropic.thinking.effortLow')
+  },
+  {
+    value: 'custom',
+    label: 'custom',
+    description: t('components.channels.anthropic.thinking.effortCustom')
   }
 ])
 
@@ -318,6 +328,15 @@ function handleThinkingNumberChange(field: string, event: any) {
             :options="effortOptions"
             :disabled="!isOptionEnabled('thinking')"
             @update:model-value="(v: string) => updateThinking('effort', v)"
+          />
+          <input
+            v-if="getThinkingValue('effort') === 'custom'"
+            type="text"
+            :value="getThinkingValue('effortCustom', '')"
+            :placeholder="t('components.channels.anthropic.thinking.effortCustomPlaceholder')"
+            :disabled="!isOptionEnabled('thinking')"
+            :class="{ disabled: !isOptionEnabled('thinking') }"
+            @input="(e: any) => updateThinking('effortCustom', e.target.value)"
           />
           <span class="option-hint">
             {{ t('components.channels.anthropic.thinking.effortHint') }}

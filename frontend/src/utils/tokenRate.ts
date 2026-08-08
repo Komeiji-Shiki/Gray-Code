@@ -19,6 +19,10 @@ export function getTokenRateTokenCount(usage?: UsageMetadata): number {
  * 修改原因：旧实现用 streamDuration 作为唯一分母，遇到上游攒包后会把大量 token 除以极短解析窗口。
  * 修改方式：统一从 MessageMetadata 中选取完整响应耗时；responseDuration 优先，streamDuration 只在旧数据缺失 responseDuration 时兜底。
  * 修改目的：既修复新旧主界面与 Monitor 的速度显示，又保持历史记录在信息不完整时仍能 best-effort 展示。
+ *
+ * TTFT 剥离：完整响应耗时包含首字等待窗口（从请求发出到第一个 token 到达），
+ * 首字等待属于延迟而非吞吐，直接作分母会把速率拉低；因此从分母中减去 ttft（如有）。
+ * 旧数据 / 无 ttft 字段时退化为原分母，不改变历史展示。
  */
 export function calculateTokenRate(
   metadata?: MessageMetadata,
@@ -32,10 +36,15 @@ export function calculateTokenRate(
   const duration = metadata.responseDuration ?? metadata.streamDuration
   if (!duration || duration <= 0) return undefined
 
+  // 剥离首字延迟：速率只反映生成阶段吞吐；ttft 缺失（旧记录）时退化为原分母
+  const ttft = typeof metadata.ttft === 'number' && metadata.ttft > 0 ? metadata.ttft : 0
+  const generationDuration = duration - ttft
+  if (generationDuration <= 0) return undefined
+
   const totalTokens = getTokenRateTokenCount(resolvedUsage ?? metadata.usageMetadata)
   if (totalTokens <= 0) return undefined
 
-  return totalTokens / (duration / 1000)
+  return totalTokens / (generationDuration / 1000)
 }
 
 /**

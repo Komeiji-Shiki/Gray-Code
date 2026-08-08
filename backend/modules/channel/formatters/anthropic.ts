@@ -652,9 +652,14 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 // effort 通过 output_config 发送
-                if (thinking.effort) {
+                let effort: string | undefined = thinking.effort;
+                // 自定义模式：使用 effortCustom 的值原样透传
+                if (effort === 'custom') {
+                    effort = thinking.effortCustom?.trim() || undefined;
+                }
+                if (effort) {
                     genConfig.output_config = {
-                        effort: thinking.effort
+                        effort
                     };
                 }
             } else if (thinkingType === 'enabled') {

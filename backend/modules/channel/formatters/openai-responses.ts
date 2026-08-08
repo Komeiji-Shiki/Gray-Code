@@ -589,8 +589,13 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // 处理推理配置
         if (optionsEnabled.reasoning && options.reasoning) {
             const reasoning: any = {};
-            if (options.reasoning.effort && options.reasoning.effort !== 'none') {
-                reasoning.effort = options.reasoning.effort;
+            let effort: string | undefined = options.reasoning.effort;
+            // 自定义模式：使用 effortCustom 的值原样透传
+            if (effort === 'custom') {
+                effort = options.reasoning.effortCustom?.trim() || undefined;
+            }
+            if (effort && effort !== 'none') {
+                reasoning.effort = effort;
             }
             
             // 处理输出详细程度 (Summary)

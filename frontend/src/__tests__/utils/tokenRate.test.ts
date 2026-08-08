@@ -82,6 +82,19 @@ describe('calculateTokenRate', () => {
     const usage: UsageMetadata = { candidatesTokenCount: 100 }
     expect(calculateTokenRate(metadata, usage)).toBeCloseTo(100 / 2, 5)
   })
+
+  it('strips TTFT from the denominator: rate = tokens / ((duration - ttft) / 1000)', () => {
+    // 首字等待 2s 不再计入分母：100 / ((10000 - 2000) / 1000) = 100 / 8 = 12.5
+    const metadata: MessageMetadata = { chunkCount: 3, responseDuration: 10000, ttft: 2000 }
+    const usage: UsageMetadata = { candidatesTokenCount: 100 }
+    expect(calculateTokenRate(metadata, usage)).toBeCloseTo(100 / 8, 5)
+  })
+
+  it('returns undefined when TTFT exceeds or equals the total duration', () => {
+    const metadata: MessageMetadata = { chunkCount: 3, responseDuration: 2000, ttft: 3000 }
+    const usage: UsageMetadata = { candidatesTokenCount: 100 }
+    expect(calculateTokenRate(metadata, usage)).toBeUndefined()
+  })
 })
 
 describe('shouldShowStreamDuration', () => {
