@@ -136,9 +136,10 @@ export class StoragePathManager {
             dirs.push(path.join(basePath, 'settings'));
         }
         
-        for (const dir of dirs) {
-            await fs.mkdir(dir, { recursive: true });
-        }
+        // 并行创建：12 个目录串行 await 在慢盘（HDD/冷缓存）上可达数百 ms，
+        // 且每次 await 之间还有事件循环调度成本；mkdir recursive 本身幂等，
+        // 并行无副作用，冷启动路径收益明显。
+        await Promise.all(dirs.map((dir) => fs.mkdir(dir, { recursive: true })));
     }
     
     /**

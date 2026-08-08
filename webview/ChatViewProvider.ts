@@ -46,10 +46,12 @@ import {
     setGlobalChannelManager,
     setGlobalToolRegistry,
     setGlobalDiffStorageManager,
-    setGlobalMcpManager
+    setGlobalMcpManager,
+    setGlobalStoragePath
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
 import { getDiffManager } from '../backend/tools/file/diffManager';
+import { warmUpShellAvailabilityCache } from '../backend/tools/terminal/execute_command';
 import { resolveMainChatDiffViewColumn } from '../backend/tools/file/diffViewColumn';
 import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { MessageRouter } from './MessageRouter';
@@ -359,6 +361,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 11.1 从 settingsManager 同步 skills 状态到 SkillsManager
         await this.syncSkillsState();
+        
+        // 11.2 shell 可用性磁盘缓存预热：registerAllTools 内 createExecuteCommandTool
+        // 会对所有启用 shell 做同步 spawn 探测（wsl --status 最坏阻塞 3s），
+        // 预热使探测命中 24h 磁盘缓存，冷启动免 spawn（无缓存时退化为原行为）。
+        setGlobalStoragePath(this.storagePathManager.getEffectiveDataPath());
+        warmUpShellAvailabilityCache();
         
         // 12. 注册所有工具到工具注册器（必须在 ChannelManager 之前）
         registerAllTools(toolRegistry);

@@ -12,14 +12,14 @@
  * 时间轴（相对挂载，与 CSS 动画严格对齐）：
  *   0.00s  点阵背景淡入          0.05~0.75s  帽子描线 + 笔尖光点
  *   0.50~1.60s 身体描线 + 光点   0.75s       标题浮现
- *   1.15s  副标题 + 格雷码线起跳（周期 2s，相位 001 起始）
+ *   0.80s  副标题 + 格雷码线起跳（周期 1.2s，相位 001 起始）
  *   1.35s  光标闪烁              1.60s       色块渗入 + 线稿退位细描边（0.5s）
  *   1.75s  帽子色块渗入          2.00s       完稿定影（0.5s）
  *   2.30s  DRAW_TOTAL_MS → drawDone → 呼吸待机
  *
  * 退场（ready 后两拍）：先归一（MERGE_MS，蓝线合并 + 光标定格）再淡出（FADE_MS）
- * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 1.15s+2s=3.15s）再归一，
- * 保证每次启动都能看到完整 8 步循环
+ * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 0.8s+1.2s=2.0s）再归一，
+ * 保证每次启动都能看到完整 8 步循环（最短总展示 ≈ max(DRAW_TOTAL_MS, 2.0s)）
  *
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
@@ -45,10 +45,10 @@ const FADE_MS = 450
 const MERGE_MS = 420
 /** 全部绘制动画完成（描线 0.05~1.6s + 上色 1.6~2.25s + 定影 2.0s 起） */
 const DRAW_TOTAL_MS = 2300
-/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 1.15s 对齐） */
-const GRAY_LINE_DELAY = 1150
-/** 格雷码等待线：单周期 2s（8 步 × 250ms，与 CSS 2s linear 对齐） */
-const GRAY_LINE_PERIOD = 2000
+/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 0.8s 对齐） */
+const GRAY_LINE_DELAY = 800
+/** 格雷码等待线：单周期 1.2s（8 步 × 150ms，与 CSS 1.2s linear 对齐） */
+const GRAY_LINE_PERIOD = 1200
 
 function prefersReducedMotion(): boolean {
   return (
@@ -473,7 +473,7 @@ onBeforeUnmount(() => {
   text-indent: 0.42em;
   color: var(--vscode-descriptionForeground);
   opacity: 0;
-  animation: fade-up 0.6s ease-out 1.15s both;
+  animation: fade-up 0.6s ease-out 0.8s both;
 }
 
 @keyframes fade-up {
@@ -487,13 +487,13 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 格雷码等待线：3-bit 序列周期 2s（8 步 × 250ms），每步恰好只变一位；1.15s 与副标题同刻入场 */
+/* 格雷码等待线：3-bit 序列周期 1.2s（8 步 × 150ms），每步恰好只变一位；0.8s 与副标题同刻入场 */
 .gray-line {
   display: flex;
   gap: 5px;
   margin-top: 4px;
   opacity: 0;
-  animation: fade-up 0.6s ease-out 1.15s both;
+  animation: fade-up 0.6s ease-out 0.8s both;
 }
 
 .bit {
@@ -507,15 +507,15 @@ onBeforeUnmount(() => {
 
 /* 001→011→010→110→111→101→100→000 循环（相位旋转：第一帧即有一条亮着，杜绝开场全灭） */
 .b0 {
-  animation: g0 2s linear 1.15s infinite;
+  animation: g0 1.2s linear 0.8s infinite;
 }
 
 .b1 {
-  animation: g1 2s linear 1.15s infinite;
+  animation: g1 1.2s linear 0.8s infinite;
 }
 
 .b2 {
-  animation: g2 2s linear 1.15s infinite;
+  animation: g2 1.2s linear 0.8s infinite;
 }
 
 @keyframes g0 {

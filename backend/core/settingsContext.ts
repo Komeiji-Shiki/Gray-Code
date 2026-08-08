@@ -138,6 +138,25 @@ export function getGlobalMcpManager(): McpManager | null {
     return globalContext.mcpManager;
 }
 
+// ========== 数据存储路径 ==========
+
+/**
+ * 全局有效数据目录（StoragePathManager.getEffectiveDataPath 的结果）。
+ *
+ * 用途：跨会话持久化缓存（如 shell 可用性探测结果）需要知道数据目录，
+ * 但后端模块在初始化完成前拿不到 StoragePathManager；由宿主（BackendHost /
+ * ChatViewProvider）在初始化早期注入，未注入时依赖方退回进程内缓存。
+ */
+let globalStoragePath: string | null = null;
+
+export function setGlobalStoragePath(path: string): void {
+    globalStoragePath = path;
+}
+
+export function getGlobalStoragePath(): string | null {
+    return globalStoragePath;
+}
+
 // ========== 便捷方法 ==========
 
 /**

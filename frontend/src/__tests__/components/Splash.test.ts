@@ -22,7 +22,9 @@ import Splash from '../../components/Splash.vue'
 /** drawDone 完成时刻（与 Splash.vue DRAW_TOTAL_MS 一致） */
 const DRAW_TOTAL_MS = 2300
 /** 格雷码线完整播完一轮的时刻（与 Splash.vue GRAY_LINE_DELAY + GRAY_LINE_PERIOD 一致） */
-const GRAY_LINE_END_MS = 3150
+const GRAY_LINE_END_MS = 2000
+/** 淡出门槛：ready 后需 drawDone 完成且格雷码线播完一轮（两者取晚） */
+const FADE_GATE_MS = Math.max(DRAW_TOTAL_MS, GRAY_LINE_END_MS)
 /** 归一演出时长（与 Splash.vue MERGE_MS 一致） */
 const MERGE_MS = 420
 /** 淡出时长（与 Splash.vue FADE_MS 一致） */
@@ -89,12 +91,12 @@ describe('Splash 状态机', () => {
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
-    vi.advanceTimersByTime(DRAW_TOTAL_MS - 1000) // drawDone 完成，但格雷码线需播完一轮才归一
+    vi.advanceTimersByTime(GRAY_LINE_END_MS - 1000) // 格雷码线已播完一轮，但 drawDone 未完成
     await nextTick()
     expect(wrapper.classes()).not.toContain('merged')
     expect(wrapper.classes()).not.toContain('leaving')
 
-    vi.advanceTimersByTime(GRAY_LINE_END_MS - DRAW_TOTAL_MS) // 格雷码线完整一轮 → 进入归一（第一拍）
+    vi.advanceTimersByTime(FADE_GATE_MS - GRAY_LINE_END_MS) // drawDone 完成 → 进入归一（第一拍）
     await nextTick()
     expect(wrapper.classes()).toContain('merged')
     expect(wrapper.classes()).not.toContain('leaving')
@@ -111,7 +113,7 @@ describe('Splash 状态机', () => {
   it('done 只触发一次', () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 0 } })
 
-    vi.advanceTimersByTime(GRAY_LINE_END_MS + MERGE_MS + FADE_MS)
+    vi.advanceTimersByTime(FADE_GATE_MS + MERGE_MS + FADE_MS)
     expect(wrapper.emitted('done')).toHaveLength(1)
 
     vi.advanceTimersByTime(5000)
@@ -129,7 +131,7 @@ describe('Splash 状态机', () => {
   it('ready 未到时保持展示，ready 到达后才淡出', async () => {
     const wrapper = mount(Splash, { props: { ready: false, minDisplayMs: 100 } })
 
-    vi.advanceTimersByTime(GRAY_LINE_END_MS + 100) // 已过 drawDone、最短时长与格雷码一轮
+    vi.advanceTimersByTime(FADE_GATE_MS + 100) // 已过 drawDone、最短时长与格雷码一轮
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 

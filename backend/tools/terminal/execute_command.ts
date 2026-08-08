@@ -19,7 +19,7 @@ import type { Tool, ToolResult, ToolContext } from '../types';
 // tree-kill 库，用于跨平台终止进程树
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;
-import { getGlobalSettingsManager } from '../../core/settingsContext';
+import { getGlobalSettingsManager, getGlobalStoragePath } from '../../core/settingsContext';
 import { getDefaultExecuteCommandConfig } from '../../modules/settings';
 import type { ShellConfig } from '../../modules/settings';
 import { TaskManager, type TaskEvent } from '../taskManager';
@@ -615,12 +615,102 @@ function getOSName(): string {
  */
 const SHELL_AVAILABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * 磁盘缓存 TTL：跨会话复用探测结果，冷启动不再重复 spawn 子进程。
+ *
+ * 为什么加磁盘层：进程内缓存只能省掉进程生命周期内的重复探测，每次启动
+ * （尤其打包版 exe）仍要对全部启用 shell 做一轮同步 spawn（wsl --status
+ * 最坏可阻塞 3s），是启动路径上最大的同步阻塞点。
+ * 怎么改：探测结果落盘到数据目录 shell-availability.json（24h TTL），
+ * 宿主在数据路径就绪后调用 warmUpShellAvailabilityCache() 预热进内存，
+ * 启动路径完全免 spawn；进程内 5 分钟 TTL 语义保留（运行期间新装 shell
+ * 5 分钟内被重新识别），预热条目的进程内 TTL 从预热时刻重新起算。
+ */
+const SHELL_CACHE_DISK_TTL_MS = 24 * 60 * 60 * 1000;
+const SHELL_CACHE_FILE_NAME = 'shell-availability.json';
+
 interface ShellAvailabilityCacheEntry {
     available: boolean;
     expiresAt: number;
 }
 
 const shellAvailabilityCache = new Map<string, ShellAvailabilityCacheEntry>();
+
+/**
+ * 磁盘缓存文件路径：{ [cacheKey]: { available, expiresAt } }
+ * 读写均容错：读失败/解析失败视为无缓存，写失败静默（缓存只是加速手段）。
+ */
+function getShellCacheFilePath(): string | null {
+    const dataPath = getGlobalStoragePath();
+    if (!dataPath) {
+        return null;
+    }
+    return path.join(dataPath, SHELL_CACHE_FILE_NAME);
+}
+
+function loadShellCacheFromDisk(): void {
+    const cachePath = getShellCacheFilePath();
+    if (!cachePath) {
+        return;
+    }
+    try {
+        if (!fs.existsSync(cachePath)) {
+            return;
+        }
+        const raw = JSON.parse(fs.readFileSync(cachePath, 'utf-8')) as Record<string, ShellAvailabilityCacheEntry>;
+        if (!raw || typeof raw !== 'object') {
+            return;
+        }
+        const now = Date.now();
+        for (const [key, entry] of Object.entries(raw)) {
+            if (!entry || typeof entry.available !== 'boolean' || typeof entry.expiresAt !== 'number') {
+                continue;
+            }
+            if (entry.expiresAt <= now) {
+                continue;
+            }
+            // 预热进进程内缓存：TTL 从预热时刻起算（保持"5 分钟内新装可识别"语义）
+            shellAvailabilityCache.set(key, {
+                available: entry.available,
+                expiresAt: now + SHELL_AVAILABILITY_CACHE_TTL_MS
+            });
+        }
+    } catch {
+        // 损坏缓存忽略，下次探测后重写
+    }
+}
+
+function persistShellCacheToDisk(): void {
+    const cachePath = getShellCacheFilePath();
+    if (!cachePath) {
+        return;
+    }
+    try {
+        const now = Date.now();
+        // 只写磁盘有效窗口内的条目（进程内 5 分钟 TTL 的条目也一并落盘，
+        // 磁盘侧 TTL 统一按 24h 起算）
+        const data: Record<string, ShellAvailabilityCacheEntry> = {};
+        for (const [key, entry] of shellAvailabilityCache) {
+            if (entry.expiresAt > now) {
+                data[key] = {
+                    available: entry.available,
+                    expiresAt: now + SHELL_CACHE_DISK_TTL_MS
+                };
+            }
+        }
+        fs.writeFileSync(cachePath, JSON.stringify(data), 'utf-8');
+    } catch {
+        // 写缓存失败不影响功能
+    }
+}
+
+/**
+ * 启动时预热磁盘缓存（宿主在数据路径就绪后、工具注册前调用，
+ * 使工具注册阶段的同步探测直接命中缓存，免 spawn）。
+ */
+export function warmUpShellAvailabilityCache(): void {
+    loadShellCacheFromDisk();
+}
 
 function getShellAvailabilityCacheKey(shellType: string, customPath?: string): string {
     return `${shellType}:${customPath ?? ''}`;
@@ -669,7 +759,9 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
         available = false;
     }
 
+    // 探测结果双写：进程内 5 分钟 TTL（运行期新装可识别）+ 磁盘 24h TTL（冷启动免 spawn）
     shellAvailabilityCache.set(cacheKey, { available, expiresAt: Date.now() + SHELL_AVAILABILITY_CACHE_TTL_MS });
+    persistShellCacheToDisk();
     return available;
 }
 

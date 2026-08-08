@@ -55,6 +55,8 @@ import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/Wo
 import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandlers';
 import type { HandlerContext } from '../../../webview/types';
 import { getDiffManager, type PendingDiff, type FinalizedDiffInfo } from '../../../backend/tools/file/diffManager';
+import { warmUpShellAvailabilityCache } from '../../../backend/tools/terminal/execute_command';
+import { setGlobalStoragePath } from '../../../backend/core/settingsContext';
 import { ElectronContext } from './ElectronContext';
 import { SubAgentMonitorBridge } from './SubAgentMonitorBridge';
 import {
@@ -447,6 +449,11 @@ export class BackendHost {
     });
     await this.syncSkillsState();
 
+    // shell 可用性磁盘缓存预热：registerAllTools 内 createExecuteCommandTool
+    // 会对所有启用 shell 做同步 spawn 探测（wsl --status 最坏阻塞 3s），
+    // 预热使探测命中 24h 磁盘缓存，冷启动免 spawn（无缓存时退化为原行为）。
+    setGlobalStoragePath(this.storagePathManager.getEffectiveDataPath());
+    warmUpShellAvailabilityCache();
     registerAllTools(toolRegistry);
 
     this.channelManager = new ChannelManager(this.configManager, toolRegistry, this.settingsManager);
@@ -461,7 +468,41 @@ export class BackendHost {
       this.context as any,
       this.storagePathManager.getEffectiveDataPath()
     );
-    await this.checkpointManager.initialize();
+
+    // ===== 启动并行化：以下初始化互不依赖（只依赖上文已就绪的
+    // settings/storage/conversation/config），串行执行在慢盘上可达数百 ms，
+    // 并行后冷启动时间显著下降。MCP 自动连接本身已 fire-and-forget。 =====
+    const mcpConfigDir = this.storagePathManager.getMcpPath();
+    const mcpStorage = new VSCodeFileSystemMcpStorageAdapter(
+      vscode.Uri.file(path.join(mcpConfigDir, 'servers.json')),
+      vscode.workspace.fs
+    );
+    this.mcpManager = new McpManager(mcpStorage);
+
+    await Promise.all([
+      this.checkpointManager.initialize(),
+      this.mcpManager.initialize(),
+      initMemoryManager(this.storagePathManager.getEffectiveDataPath()),
+      // 使用时间统计追踪器（与 ChatViewProvider 25.65 对齐）：心跳 + 用户活动事件按天采样落盘。
+      // 桌面端无编辑器事件，采样依赖窗口焦点桥接（main.ts focus/blur → __setWindowFocused）与心跳。
+      (async () => {
+        this.activityTracker = new ActivityTracker(
+          path.join(this.storagePathManager.getEffectiveDataPath(), 'activity')
+        );
+        this.activityTracker.start();
+        setGlobalActivityTracker(this.activityTracker);
+      })(),
+      (async () => {
+        this.dependencyManager = DependencyManager.getInstance(this.context as any, this.storagePathManager.getDependenciesPath());
+        await this.dependencyManager.initialize();
+        toolRegistry.setDependencyChecker({
+          isInstalled: (name: string) => this.dependencyManager.isInstalledSync(name)
+        });
+        this.unsubscribers.push(
+          this.dependencyManager.onProgress((event: InstallProgressEvent) => this.postToRenderer('message', 'dependencyProgress', event))
+        );
+      })()
+    ]);
 
     this.chatHandler = new ChatHandler(this.configManager, this.channelManager, this.conversationManager, toolRegistry);
     this.chatHandler.setCheckpointManager(this.checkpointManager);
@@ -478,24 +519,9 @@ export class BackendHost {
       TaskManager.onTaskEvent((event: TaskEvent) => this.postToRenderer('message', 'taskEvent', event))
     );
 
-    const mcpConfigDir = this.storagePathManager.getMcpPath();
-    const mcpStorage = new VSCodeFileSystemMcpStorageAdapter(vscode.Uri.file(path.join(mcpConfigDir, 'servers.json')), vscode.workspace.fs);
-    this.mcpManager = new McpManager(mcpStorage);
-    await this.mcpManager.initialize();
-
     this.channelManager.setMcpManager(this.mcpManager);
     this.chatHandler.setMcpManager(this.mcpManager);
     setGlobalMcpManager(this.mcpManager);
-
-    await initMemoryManager(this.storagePathManager.getEffectiveDataPath());
-
-    // 使用时间统计追踪器（与 ChatViewProvider 25.65 对齐）：心跳 + 用户活动事件按天采样落盘。
-    // 桌面端无编辑器事件，采样依赖窗口焦点桥接（main.ts focus/blur → __setWindowFocused）与心跳。
-    this.activityTracker = new ActivityTracker(
-      path.join(this.storagePathManager.getEffectiveDataPath(), 'activity')
-    );
-    this.activityTracker.start();
-    setGlobalActivityTracker(this.activityTracker);
 
     setSubAgentExecutorContext({
       channelManager: this.channelManager,
@@ -505,15 +531,6 @@ export class BackendHost {
       configManager: this.configManager,
       toolExecutionService: this.chatHandler.getToolExecutionService()
     });
-
-    this.dependencyManager = DependencyManager.getInstance(this.context as any, this.storagePathManager.getDependenciesPath());
-    await this.dependencyManager.initialize();
-    toolRegistry.setDependencyChecker({
-      isInstalled: (name: string) => this.dependencyManager.isInstalledSync(name)
-    });
-    this.unsubscribers.push(
-      this.dependencyManager.onProgress((event: InstallProgressEvent) => this.postToRenderer('message', 'dependencyProgress', event))
-    );
 
     // Diff status changes -> frontend (pending diff bar / countdown)
     // 退订函数入 unsubscribers：dispose 时移除，避免模块级 diffManager 持闭包引用泄漏
