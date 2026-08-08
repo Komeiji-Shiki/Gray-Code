@@ -136,7 +136,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.reasoning.effort).toBe('medium');
     });
 
-    it('普通更新不回归：type 未变更时保持旧行为（options 整体替换、type 字段不变）', async () => {
+    it('普通更新深合并 options，保留未更新的兄弟字段且 type 不变', async () => {
         const { manager, id } = await createGeminiManager();
 
         await manager.updateConfig(id, { name: '改名后', options: { stream: false } });
@@ -144,9 +144,12 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         const after = await manager.getConfig(id) as any;
         expect(after.type).toBe('gemini');
         expect(after.name).toBe('改名后');
-        // 普通更新为浅合并：options 整体替换
-        expect(after.options).toEqual({ stream: false });
-        expect(after.options.thinkingConfig).toBeUndefined();
+        expect(after.options).toMatchObject({
+            stream: false,
+            temperature: 0.7,
+            maxOutputTokens: 8192,
+        });
+        expect(after.options.thinkingConfig).toBeDefined();
     });
 
     it('显式传相同 type 不触发重建，类型特有字段保留', async () => {

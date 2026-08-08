@@ -449,6 +449,17 @@ export interface BaseChannelConfig {
 }
 
 /**
+ * 合并键黑名单：__proto__/constructor/prototype 键在 Object.entries 中会出现，
+ * `result['__proto__'] = value` 会触发原型 setter 替换合并结果的原型链（原型污染）。
+ * 与 SettingsCore 的 isSafeMergeKey 同思路（本地实现避免跨模块依赖）。
+ */
+const UNSAFE_MERGE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
+function isSafeMergeKey(key: string): boolean {
+    return !UNSAFE_MERGE_KEYS.has(key);
+}
+
+/**
  * 深度合并两个对象
  *
  * @param target 目标对象
@@ -533,10 +544,17 @@ export function applyCustomBody(originalBody: any, customBody?: CustomBodyConfig
                 const nestedObj = {};
                 let current: any = nestedObj;
                 for (let i = 0; i < parts.length - 1; i++) {
+                    // 跳过 __proto__/constructor/prototype 段，防止 current[key]= 触发原型 setter
+                    if (!isSafeMergeKey(parts[i])) {
+                        continue;
+                    }
                     current[parts[i]] = {};
                     current = current[parts[i]];
                 }
-                current[parts[parts.length - 1]] = value;
+                const lastKey = parts[parts.length - 1];
+                if (isSafeMergeKey(lastKey)) {
+                    current[lastKey] = value;
+                }
                 result = deepMerge(result, nestedObj);
             } else {
                 result = deepMerge(result, { [rawKey]: value });

@@ -25,10 +25,7 @@ export class SubAgentsSettingsService {
      * 获取子代理配置
      */
     getSubAgentsConfig(): SubAgentsConfig {
-        return {
-            ...DEFAULT_SUBAGENTS_CONFIG,
-            ...(this.core.settings.toolsConfig?.subagents || {})
-        };
+        return this.core.getToolsConfigEntry('subagents', DEFAULT_SUBAGENTS_CONFIG);
     }
 
     /**
@@ -49,43 +46,50 @@ export class SubAgentsSettingsService {
      * 添加子代理
      */
     async addSubAgent(agent: SubAgentConfigItem): Promise<void> {
-        const config = this.getSubAgentsConfig();
-        const agents = [...config.agents, agent];
-        
-        await this.updateSubAgentsConfig({ agents });
+        // 读-改-写整体入队串行：并发调用基于同一旧列表写回时后写会覆盖先写
+        await this.core.serializeMutation(async () => {
+            const config = this.getSubAgentsConfig();
+            const agents = [...config.agents, agent];
+            
+            await this.updateSubAgentsConfig({ agents });
+        });
     }
 
     /**
      * 更新子代理
      */
     async updateSubAgent(type: string, updates: Partial<SubAgentConfigItem>): Promise<boolean> {
-        const config = this.getSubAgentsConfig();
-        const index = config.agents.findIndex(a => a.type === type);
-        
-        if (index === -1) {
-            return false;
-        }
-        
-        const agents = [...config.agents];
-        agents[index] = { ...agents[index], ...updates };
-        
-        await this.updateSubAgentsConfig({ agents });
-        return true;
+        return this.core.serializeMutation(async () => {
+            const config = this.getSubAgentsConfig();
+            const index = config.agents.findIndex(a => a.type === type);
+            
+            if (index === -1) {
+                return false;
+            }
+            
+            const agents = [...config.agents];
+            agents[index] = { ...agents[index], ...updates };
+            
+            await this.updateSubAgentsConfig({ agents });
+            return true;
+        });
     }
 
     /**
      * 删除子代理
      */
     async deleteSubAgent(type: string): Promise<boolean> {
-        const config = this.getSubAgentsConfig();
-        const agents = config.agents.filter(a => a.type !== type);
-        
-        if (agents.length === config.agents.length) {
-            return false;
-        }
-        
-        await this.updateSubAgentsConfig({ agents });
-        return true;
+        return this.core.serializeMutation(async () => {
+            const config = this.getSubAgentsConfig();
+            const agents = config.agents.filter(a => a.type !== type);
+            
+            if (agents.length === config.agents.length) {
+                return false;
+            }
+            
+            await this.updateSubAgentsConfig({ agents });
+            return true;
+        });
     }
 
     /**

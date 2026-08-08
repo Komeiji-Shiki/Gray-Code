@@ -17,6 +17,7 @@ import type { ChannelConfig } from '../config/types';
 import type { McpManager } from '../mcp/McpManager';
 import type { McpServerConfig } from '../mcp/types';
 import { SkillsManager } from '../skills/SkillsManager';
+import { ALL_CONFIG_KEYS } from './VSCodeSettingsStorage';
 import { MACHINE_SCOPE_KEYS } from './types';
 
 /** 导出包的版本号 */
@@ -182,6 +183,11 @@ export class SettingsExporter {
             throw new Error('导出文件缺少 version 字段');
         }
 
+        // 版本兼容性校验：不支持的导出版本给出明确错误，避免按错误结构静默导入
+        if (obj.version !== EXPORT_FORMAT_VERSION) {
+            throw new Error(`不支持的导出文件版本：${obj.version}（当前仅支持 ${EXPORT_FORMAT_VERSION}）`);
+        }
+
         if (!Array.isArray(obj.channelConfigs)) {
             throw new Error('导出文件缺少 channelConfigs 数组');
         }
@@ -341,21 +347,12 @@ export class SettingsExporter {
         const config = vscode.workspace.getConfiguration('graycode');
         const result: Record<string, unknown> = {};
 
-        // 列出所有 graycode.* 配置键
-        const knownKeys = [
-            'toolsConfig',
-            'ui',
-            'toolsEnabled',
-            'toolAutoExec',
-            'maxToolIterations',
-            'defaultToolMode',
-            'activeChannelId',
-            'lastReadAnnouncementVersion',
-        ];
-
+        // 复用 VSCodeSettingsStorage 的配置键清单（syncable + machine），避免硬编码清单
+        // 与该存储的 SYNCABLE_KEYS 失同步（旧清单遗漏 checkForUpdates）；
+        // 机器作用域键（proxy/storagePath）仍需在此跳过，防止跨机器导出/导入污染。
         const machineScopeSet = new Set(MACHINE_SCOPE_KEYS);
 
-        for (const key of knownKeys) {
+        for (const key of ALL_CONFIG_KEYS) {
             // 跳过机器作用域键
             if (machineScopeSet.has(key)) continue;
 
@@ -390,7 +387,9 @@ export class SettingsExporter {
         const config = vscode.workspace.getConfiguration('graycode');
         const machineScopeSet = new Set(MACHINE_SCOPE_KEYS);
 
-        const updates: Array<Promise<void>> = [];
+        // 逐键 try/catch：Promise.all 并行更新在部分失败时整体 reject，且已成功写入的键
+        // 无法回滚；改为逐键写入并收集失败，保证已成功的键保留、失败原因汇总上报。
+        const failures: string[] = [];
         for (const [key, value] of Object.entries(settings)) {
             // 跳过 undefined 值
             if (value === undefined) continue;
@@ -409,13 +408,15 @@ export class SettingsExporter {
 
             // 使用 Global target 写入（和现有保存逻辑一致）
             // VSCode 的 Thenable 需要通过 Promise.resolve 转换为标准 Promise
-            updates.push(
-                Promise.resolve(config.update(key, value, vscode.ConfigurationTarget.Global)).then(() => {})
-            );
+            try {
+                await config.update(key, value, vscode.ConfigurationTarget.Global);
+            } catch (error: any) {
+                failures.push(`${key}: ${error?.message || String(error)}`);
+            }
         }
 
-        if (updates.length > 0) {
-            await Promise.all(updates);
+        if (failures.length > 0) {
+            throw new Error(`部分 VSCode 设置导入失败：${failures.join('; ')}`);
         }
     }
 
@@ -586,7 +587,9 @@ export class SettingsExporter {
     private buildSkillMarkdown(skill: SkillExportData): string {
         const lines: string[] = [];
         lines.push('---');
-        lines.push(`name: ${skill.name}`);
+        // name 同样用 JSON.stringify 生成双引号 YAML 标量：含换行/冒号/引号时
+        // frontmatter 不再错乱（与 description 的转义方式保持一致）
+        lines.push(`name: ${JSON.stringify(skill.name)}`);
         // description 用 JSON.stringify 生成双引号 YAML 标量：
         // 不加引号直接写入时，含换行/引号/冒号行的描述导出再导入后 frontmatter 解析错乱。
         // 解析端（SkillsManager.parseFrontmatter）配套支持双引号值反转义，保证往返一致。

@@ -23,6 +23,8 @@ import type {
     AnthropicConfig
 } from './types';
 import { CHANNEL_TYPES } from './types';
+import { deepMerge } from './configs/base';
+import type { ModelInfo } from '../channel/modelList';
 import type { ConfigStorageAdapter } from './storage';
 import { randomBytes } from 'crypto';
 
@@ -175,10 +177,15 @@ export class ConfigManager {
         
         const configIds = await this.storageAdapter.list();
         
+        // 逐条容错：单条配置损坏/读取失败只跳过该条并告警，不影响整个 ConfigManager 初始化
         for (const id of configIds) {
-            const config = await this.storageAdapter.load(id);
-            if (config) {
-                this.configCache.set(id, config);
+            try {
+                const config = await this.storageAdapter.load(id);
+                if (config) {
+                    this.configCache.set(id, config);
+                }
+            } catch (error) {
+                console.warn(`[ConfigManager] Failed to load config ${id}, skipping:`, error);
             }
         }
         
@@ -423,7 +430,7 @@ export class ConfigManager {
      * });
      * ```
      */
-    async updateConfig(configId: string, updates: UpdateConfigInput): Promise<void> {
+    async updateConfig(configId: string, updates: UpdateConfigInput): Promise<ChannelConfig> {
         await this.ensureLoaded();
         
         const existing = this.configCache.get(configId);
@@ -454,10 +461,13 @@ export class ConfigManager {
                 updatedAt: Date.now()  // 更新时间
             } as ChannelConfig;
         } else {
-            // 普通合并更新
+            // 普通合并更新：嵌套纯对象字段（options/customBody/tokenCountApiConfig 等）
+            // 深合并，避免部分嵌套更新（如只改 options.temperature）整体替换 options 丢失兄弟字段；
+            // 数组（customHeaders/models/tags 等）与原始值仍按覆盖（复用 base.ts deepMerge
+            // 的纯对象合并语义，数组分支在本合并中不会触发）。
             updated = {
                 ...existing,
-                ...updates,
+                ...this.mergeNestedUpdates(existing, updates),
                 id: configId,  // 保持 ID 不变
                 type: existing.type,  // 防御性兜底：防止显式传 undefined 覆盖 type
                 createdAt: existing.createdAt,  // 保持创建时间
@@ -472,8 +482,34 @@ export class ConfigManager {
         // 保存（不验证配置）
         await this.storageAdapter.save(updated);
         this.configCache.set(configId, updated);
+        // 返回更新后的配置（与 getConfig 同样返回深拷贝，调用方可直接消费，避免再次读取）
+        return JSON.parse(JSON.stringify(updated)) as ChannelConfig;
     }
     
+    /**
+     * 原子合并模型列表（基于最新缓存合并后写回，避免 ModelsHandler 的 check-then-write 竞态）。
+     *
+     * mergeFn 在 ensureLoaded 之后同步执行、期间无 await，同一时刻只有一个调用能基于最新列表合并。
+     *
+     * @returns 更新后的配置（深拷贝）
+     */
+    async updateModels(configId: string, mergeFn: (current: ModelInfo[]) => ModelInfo[]): Promise<ChannelConfig> {
+        await this.ensureLoaded();
+        const existing = this.configCache.get(configId);
+        if (!existing) {
+            throw new Error(t('modules.config.errors.configNotFound', { configId }));
+        }
+        const currentModels = (existing as { models?: ModelInfo[] }).models ?? [];
+        const updated = {
+            ...existing,
+            models: mergeFn(currentModels),
+            updatedAt: Date.now()
+        } as ChannelConfig;
+        await this.storageAdapter.save(updated);
+        this.configCache.set(configId, updated);
+        return JSON.parse(JSON.stringify(updated)) as ChannelConfig;
+    }
+
     /**
      * 删除配置
      * 
@@ -754,7 +790,11 @@ export class ConfigManager {
         };
         
         for (const config of configs) {
-            byType[config.type]++;
+            // 运行时守卫：配置来源可能绕过 TypeScript 类型（webview/导入），
+            // 非法 type 会以字符串键写入 Record<ChannelType, number> 产生 NaN 计数
+            if (isChannelType(config.type)) {
+                byType[config.type]++;
+            }
         }
         
         // 最近创建的配置
@@ -875,7 +915,7 @@ export class ConfigManager {
         if (filter.nameSearch) {
             const search = filter.nameSearch.toLowerCase();
             result = result.filter(c =>
-                c.name.toLowerCase().includes(search)
+                (c.name || '').toLowerCase().includes(search)
             );
         }
         
@@ -897,8 +937,9 @@ export class ConfigManager {
             
             switch (sort.field) {
                 case 'name':
-                    aVal = a.name.toLowerCase();
-                    bVal = b.name.toLowerCase();
+                    // name 可能 undefined（createConfig 不校验必填），缺兜底会抛 TypeError
+                    aVal = (a.name || '').toLowerCase();
+                    bVal = (b.name || '').toLowerCase();
                     break;
                 case 'createdAt':
                     aVal = a.createdAt;
@@ -924,6 +965,36 @@ export class ConfigManager {
         return sorted;
     }
     
+    /**
+     * 嵌套字段深合并（用于 updateConfig 普通合并路径）
+     *
+     * 仅当目标与来源都是纯对象时用 base.ts deepMerge 递归合并（options/customBody/
+     * tokenCountApiConfig 等），数组（customHeaders/models/tags）与原始值按覆盖，
+     * 保持既有浅合并语义不回归；同时过滤 __proto__/constructor/prototype 键，
+     * 防止 webview/导入来源的恶意键触发原型链污染（与 configs/base.ts deepMerge 一致）。
+     */
+    private mergeNestedUpdates(existing: ChannelConfig, updates: UpdateConfigInput): Record<string, unknown> {
+        const result: Record<string, unknown> = {};
+        const source = existing as unknown as Record<string, unknown>;
+        const unsafeKeys = new Set(['__proto__', 'constructor', 'prototype']);
+
+        for (const [key, value] of Object.entries(updates)) {
+            if (unsafeKeys.has(key)) {
+                continue;
+            }
+            const existingValue = source[key];
+            if (
+                value !== null && typeof value === 'object' && !Array.isArray(value) &&
+                existingValue !== null && typeof existingValue === 'object' && !Array.isArray(existingValue)
+            ) {
+                result[key] = deepMerge(existingValue, value);
+            } else {
+                result[key] = value;
+            }
+        }
+        return result;
+    }
+
     /**
      * 验证 URL
      */

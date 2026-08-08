@@ -81,6 +81,12 @@ export class SettingsCore {
     readonly storage: SettingsStorage;
     /** 变更监听器集合 */
     private listeners: Set<SettingsChangeListener> = new Set();
+    /**
+     * 串行写队列：把「读 → 改 → 整体写回」串行化（参考 config/storage.ts
+     * MementoStorageAdapter 的 writeQueue）。主题服务的更新方法基于同一旧列表
+     * 整体写回，并发调用时后写会覆盖先写，必须整段入队串行执行。
+     */
+    private writeQueue: Promise<void> = Promise.resolve();
 
     constructor(storage: SettingsStorage) {
         this.storage = storage;
@@ -160,7 +166,9 @@ export class SettingsCore {
      */
     getToolsConfigEntry<T extends object>(key: string, defaults: Readonly<T>): Readonly<T> {
         const cfg = this.settings.toolsConfig?.[key] as unknown as Partial<T> | undefined;
-        return deepMergeToolsConfig(defaults, cfg || {});
+        // 深拷贝返回：deepMergeToolsConfig 对数组/原始值直接赋值，返回结果与存储活对象
+        // 或模块级默认对象共享嵌套引用，调用方原地修改会污染全局默认/未保存状态。
+        return this.cloneConfig(deepMergeToolsConfig(defaults, cfg || {}));
     }
 
     /**
@@ -195,7 +203,25 @@ export class SettingsCore {
      * 获取完整设置
      */
     getSettings(): Readonly<GlobalSettings> {
-        return { ...this.settings };
+        // 深拷贝返回：浅展开只保护顶层，嵌套对象（toolsConfig/toolsEnabled 等）仍是活引用。
+        return this.cloneConfig(this.settings);
+    }
+
+    /**
+     * 串行执行读-改-写操作
+     *
+     * 多个主题服务的更新方法（addPinnedFile / setSkillEnabled 等）基于同一旧列表
+     * 整体写回，并发调用基于同一旧快照写回时后写覆盖先写、静默丢更新。
+     * 将 mutator 整体入队串行执行，保证每次「读 → 改 → 写」期间没有其它写操作交错。
+     */
+    serializeMutation<T>(mutator: () => T | Promise<T>): Promise<T> {
+        const run = this.writeQueue.then(async () => mutator());
+        // 链尾吞掉本次错误（调用方仍从 run 拿到真实结果），防止单次失败阻塞后续写
+        this.writeQueue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
     }
 
     /**
@@ -299,10 +325,16 @@ export class SettingsCore {
      */
     notifyChange(event: SettingsChangeEvent): void {
         for (const listener of this.listeners) {
-            // 异步执行，避免阻塞
-            Promise.resolve(listener(event)).catch(error => {
+            // listener(event) 在 Promise.resolve 之前同步求值：监听器同步 throw 会
+            // 中断整条通知链，且调用方已保存成功却收到异常。这里把求值也包进 try/catch。
+            try {
+                // 异步执行，避免阻塞
+                Promise.resolve(listener(event)).catch(error => {
+                    console.error('Settings change listener error:', error);
+                });
+            } catch (error) {
                 console.error('Settings change listener error:', error);
-            });
+            }
         }
     }
 }
