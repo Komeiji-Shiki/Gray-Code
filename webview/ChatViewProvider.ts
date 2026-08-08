@@ -52,7 +52,7 @@ import {
 import { DiffStorageManager } from '../backend/modules/conversation';
 import { getDiffManager } from '../backend/tools/file/diffManager';
 import { resolveMainChatDiffViewColumn } from '../backend/tools/file/diffViewColumn';
-import { setChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
+import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { MessageRouter } from './MessageRouter';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
@@ -391,7 +391,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
         this.chatHandler.setCheckpointManager(this.checkpointManager);
         this.chatHandler.setSettingsManager(this.settingsManager);
-        this.chatHandler.setDiffStorageManager(this.diffStorageManager);
         
         // 18. 初始化模型管理处理器
         this.modelsHandler = new ModelsHandler(this.configManager, this.settingsManager);
@@ -956,11 +955,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 关闭 diff 标签归还 workbench 焦点后，通知前端把光标放回聊天输入框
         // （见 backend/core/chatFocusGuard.ts）
-        setChatFocusRestoreNotifier(() => {
+        const removeChatFocusRestoreNotifier = addChatFocusRestoreNotifier(() => {
             this.sendCommand('chat.restoreInputFocus', {});
         });
         this.viewDisposables.push({
-            dispose: () => setChatFocusRestoreNotifier(undefined)
+            dispose: removeChatFocusRestoreNotifier
         });
 
         // 立即发送一次当前状态
