@@ -19,7 +19,6 @@ import type { WindowsAgentStopNotificationService } from '../backend/modules/not
 import type { WebviewClientId } from './runtime/WebviewClientRegistry';
 import type { StreamAbortManager } from './stream/StreamAbortManager';
 import type { UpdateChecker } from '../backend/modules/update';
-import type { StreamAbortManager } from './stream/StreamAbortManager';
 
 /**
  * 消息处理器上下文

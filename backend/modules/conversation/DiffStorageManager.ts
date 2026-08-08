@@ -507,7 +507,6 @@ export class DiffStorageManager {
                 }
             }
         }
-        }
 
         // 2) 回退 __global__（旧版数据 / 未绑定对话的 diff）
         const filePath = path.join(this.basePath, 'diffs', '__global__', `${diffId}.json`);

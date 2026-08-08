@@ -83,7 +83,6 @@ import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../typ
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
 import { calculateTokenRate, formatTokenRate } from '../../utils/tokenRate'
-import { isPerfEnabled } from '../../utils/perf'
 import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../utils/toolRenderEntries'
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'

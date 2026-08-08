@@ -81,6 +81,7 @@ export function translate(lang: string, key: string, params?: Record<string, any
     // 如文件名 price$1.txt 在字符串替换下会变成 price.txt）
     if (params) {
         return Object.keys(params).reduce((result, paramKey) => {
+            const escapedKey = paramKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
             return result.replace(getParamRegex(escapedKey), () => String(params[paramKey]))
         }, value)
     }

@@ -225,14 +225,16 @@ describe('子代理危险工具确认门（SEC）', () => {
         // 方法内部依赖 this（真实实现调用 this.getToolRejectionReason）时抛出
         // "Cannot read properties of undefined (reading 'getToolRejectionReason')"，
         // 子代理执行任何工具都会报错。修复后经实例 bind 调用，行为与主链路一致。
-        mockResolveTools(['read_file', 'delete_file']);
+        // fork 适配：delete_file 在本地 SUBAGENT_DEFAULT_BLOCKED_TOOLS 中被更早剔除走不到确认门，
+        // 改用通过白名单但需要确认的 search_in_files（replace 模式）验证 this 绑定。
+        mockResolveTools(['read_file', 'search_in_files']);
         const executeMock = jest.fn().mockResolvedValue({
             toolResults: [{ result: { success: true, result: 'ok' } }],
             responseParts: [],
             multimodalAttachments: undefined
         });
         const generateMock = jest.fn()
-            .mockResolvedValueOnce(toolCallResponse('delete_file', { path: 'C:/tmp/secret.txt' }))
+            .mockResolvedValueOnce(toolCallResponse('search_in_files', { query: 'x', mode: 'replace', replace: 'y' }))
             .mockResolvedValueOnce(textResponse());
 
         // 模拟真实 ToolExecutionService：toolNeedsConfirmation 是实例方法，内部依赖 this
@@ -242,7 +244,7 @@ describe('子代理危险工具确认门（SEC）', () => {
                 return this.isDangerousTool(toolName);
             }
             private isDangerousTool(toolName: string): boolean {
-                return toolName === 'delete_file' || toolName === 'execute_command';
+                return toolName === 'search_in_files';
             }
         }
 
@@ -253,11 +255,11 @@ describe('子代理危险工具确认门（SEC）', () => {
 
         const result = await executor({
             agentType: 'tester',
-            prompt: 'delete the file',
+            prompt: 'replace in the file',
             runId: 'sec_confirm_this_binding'
         });
 
-        // 不再 TypeError：确认门正常生效，delete_file 被拒绝且未执行
+        // 不再 TypeError：确认门正常生效，search_in_files 被拒绝且未执行
         expect(result.toolCalls![0].success).toBe(false);
         const secondRequestHistory = generateMock.mock.calls[1][0].history as Content[];
         const refusalPart = secondRequestHistory

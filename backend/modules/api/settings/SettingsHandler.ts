@@ -750,6 +750,8 @@ export class SettingsHandler {
             // 每次计数把当前代理 URL 作为参数传入（不共享实例可变状态，避免并发计数交叉）
             const proxySettings = this.settingsManager.getProxySettings();
             const proxyUrl = proxySettings?.enabled ? proxySettings.url : undefined;
+            // 本地 TokenCountService 通过 setProxyUrl 注入（构造器/实例状态），计数内部自建超时 AbortController
+            this.tokenCountService.setProxyUrl(proxyUrl);
             
             // 构建一个简单的 Content 对象
             const contents = [{
@@ -761,8 +763,7 @@ export class SettingsHandler {
             const result = await this.tokenCountService.countTokens(
                 channelType,
                 tokenCountConfig,
-                contents,
-                proxyUrl
+                contents
             );
             
             if (result.success) {
@@ -819,6 +820,8 @@ export class SettingsHandler {
             // 每次计数把当前代理 URL 作为参数传入（不共享实例可变状态，避免并发计数交叉）
             const proxySettings = this.settingsManager.getProxySettings();
             const proxyUrl = proxySettings?.enabled ? proxySettings.url : undefined;
+            //  TokenCountService 通过 setProxyUrl 注入，计数内部自建超时 AbortController
+            this.tokenCountService.setProxyUrl(proxyUrl);
             
             // 尝试获取会话级的运行时数据
             // 多工作区支持：即使没有 custom 元数据也要带上 workspaceUri，
@@ -862,12 +865,12 @@ export class SettingsHandler {
             
             // 并行调用 token 计数 API（每次计数传入当前代理 URL）
             const countPromises: Promise<{ success: boolean; totalTokens?: number; error?: string }>[] = [
-                this.tokenCountService.countTokens(channelType, tokenCountConfig, staticContents, proxyUrl)
+                this.tokenCountService.countTokens(channelType, tokenCountConfig, staticContents)
             ];
             
             if (dynamicContents) {
                 countPromises.push(
-                    this.tokenCountService.countTokens(channelType, tokenCountConfig, dynamicContents, proxyUrl)
+                    this.tokenCountService.countTokens(channelType, tokenCountConfig, dynamicContents)
                 );
             }
             

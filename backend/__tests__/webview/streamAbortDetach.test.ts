@@ -79,38 +79,20 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(subAgentRunController.isActive('detach_replace')).toBe(true);
     });
 
-    it('detach 后注册为正常后台任务，并在终态事件中回传完整报告', () => {
-        const events: TaskEvent[] = [];
-        const dispose = TaskManager.onTaskEvent(event => events.push(event));
-        try {
-            const manager = new StreamAbortManager();
-            manager.create('conv_report');
-            subAgentRunEventBus.createRun('detach_report', 'Review Agent', undefined, { conversationId: 'conv_report' });
-            subAgentRunController.register('detach_report', 'Review Agent', 0, true);
+    it('detach 后 run 保持活跃（本地机制：后台回执经既有展示层处理，不注册 TaskManager 后台任务）', () => {
+        const manager = new StreamAbortManager();
+        manager.create('conv_report');
+        subAgentRunEventBus.createRun('detach_report', 'Review Agent', undefined, { conversationId: 'conv_report' });
+        subAgentRunController.register('detach_report', 'Review Agent', 0, true);
 
-            manager.cancelForNewTurn('conv_report');
+        manager.cancelForNewTurn('conv_report');
 
-            const task = TaskManager.getAllTasks().find(item => item.metadata?.runId === 'detach_report');
-            expect(task?.type).toBe('background_subagent');
-            expect(task?.metadata).toMatchObject({
-                conversationId: 'conv_report',
-                runId: 'detach_report',
-                detached: true
-            });
-
-            subAgentRunEventBus.emit({
-                runId: 'detach_report',
-                agentName: 'Review Agent',
-                type: 'run_completed',
-                payload: { response: '完整审查报告', steps: 7 }
-            });
-
-            expect(TaskManager.getAllTasks().some(item => item.id === task?.id)).toBe(false);
-            expect(events.find(event => event.type === 'complete' && event.taskId === task?.id)?.data)
-                .toMatchObject({ response: '完整审查报告', steps: 7, runId: 'detach_report' });
-        } finally {
-            dispose();
-        }
+        // detach 成功且 run 继续活跃（本地 detach 机制：executor 父信号解绑 + 后台回执展示层）
+        expect(subAgentRunController.isDetached('detach_report')).toBe(true);
+        expect(subAgentRunController.isActive('detach_report')).toBe(true);
+        // 上游 detachedTaskBridge 后台任务体系未引入（见 63676f2/b0fb1f5 适配说明），
+        // 本地不在 TaskManager 注册 background_subagent 任务
+        expect(TaskManager.getAllTasks().find(item => item.metadata?.runId === 'detach_report')).toBeUndefined();
     });
 
     it('普通 cancel 保持显式停止语义，不会把前台 SubAgent 转后台', () => {

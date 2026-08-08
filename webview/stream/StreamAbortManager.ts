@@ -8,7 +8,6 @@ import type * as vscode from 'vscode';
 import type { ConversationRunScope, IRunController, RunControllerSnapshot } from '../../backend/core/RunController';
 import { subAgentRunController } from '../../backend/tools/subagents/runController';
 import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
-import { registerDetachedSubAgentTask } from '../../backend/tools/subagents/detachedTaskBridge';
 
 /**
  * 旧流退出等待超时（毫秒）。
@@ -221,7 +220,8 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         if (!subAgentRunController.isActive(snapshot.runId)) continue;
         if (subAgentRunController.isDetached(snapshot.runId)) continue;
         if (subAgentRunController.detachFromParent(snapshot.runId)) {
-          registerDetachedSubAgentTask(snapshot);
+          // 本地 detach 机制已接管后台运行（executor 父信号解绑 + 后台回执展示层），
+          // 上游 detachedTaskBridge 后台任务体系未引入（见 63676f2/b0fb1f5 适配说明），无需注册。
         }
       }
     } catch (err) {

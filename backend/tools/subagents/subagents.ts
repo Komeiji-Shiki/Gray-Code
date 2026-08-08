@@ -426,7 +426,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             // ToolExecutionService 注入主请求的 modelOverride；为空时走渠道默认，与主会话一致。
             channel: {
                 channelId: channelConfigId,
-                modelId: context?.channelModelId || undefined
+                modelId: typeof context?.channelModelId === 'string' ? context.channelModelId : undefined
             },
             tools: { mode: 'all' },
             // P2：General Worker 是零配置虚拟代理，迭代次数跟随全局默认配置（executor 会再回退到 50）

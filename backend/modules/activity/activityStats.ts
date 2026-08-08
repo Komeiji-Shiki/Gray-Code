@@ -182,10 +182,13 @@ export async function getActivityStats(
     // range='all' 时不把数年采样全量复制进内存（只用到最后一段）
     const recentAll = recent.slice(-2).flatMap((day) => day.samples);
 
+    const includeHourly = query.includeHourly === true;
+
     const daily: DayActivityStats[] = [];
     for (const day of recent) {
-        // daily 统计自身不需要热力（hourlyHeatmap 单独按需计算），惰性跳过
-        daily.push(dayStats(day.date, day.samples, false));
+        // daily 统计自身默认不需要热力，惰性跳过；includeHourly 时一并计算，
+        // 下方 hourlyHeatmap 直接复用 daily 的热力（避免二次 buildSessions/hourlyHeatmap）
+        daily.push(dayStats(day.date, day.samples, includeHourly));
     }
     // 倒序：最新在前
     daily.reverse();
@@ -196,8 +199,7 @@ export async function getActivityStats(
     const todayEntry = todayStr ? daily.find((d) => d.date === todayStr) ?? null : null;
     const today = todayEntry && todayEntry.sessions.length > 0 ? todayEntry : null;
 
-    const includeHourly = query.includeHourly === true;
-    // 直接复用 daily 里已计算的作息热力，避免同一批采样二次 buildSessions/hourlyHeatmap
+    // 直接复用 daily 里已计算的作息热力（includeHourly 时 daily.hourly 已填）
     const hourlyHeatmap = includeHourly
         ? recent.map((day) => ({ date: day.date, hours: byDate.get(day.date)!.hourly }))
         : [];

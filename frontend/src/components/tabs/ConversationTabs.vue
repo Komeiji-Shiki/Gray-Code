@@ -244,6 +244,10 @@ watch(() => props.tabs.length, () => {
             @click="emit('switchTab', tab.id)"
             @mousedown="handleMouseDown($event, tab.id)"
             :title="tab.title || t('components.tabs.newChat')"
+            role="tab"
+            :aria-selected="tab.id === activeTabId"
+            tabindex="0"
+            @keydown="handleTabKeydown($event, tab.id)"
           >
             <!-- 流式指示器 -->
             <i v-if="tab.isStreaming" class="codicon codicon-loading spin tab-spinner"></i>
@@ -256,6 +260,8 @@ watch(() => props.tabs.length, () => {
             <!-- 关闭按钮 -->
             <button
               class="tab-close-btn"
+              draggable="false"
+              @dragstart.stop.prevent
               @click="handleClose($event, tab.id)"
               :title="t('components.tabs.closeTab')"
             >

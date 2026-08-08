@@ -50,15 +50,6 @@ const LIST_MIN_WIDTH = 260
 const LIST_MAX_WIDTH = 420
 const LIST_MAX_HEIGHT = 320
 const LIST_MIN_VISIBLE_HEIGHT = 80
-let positionListenersAttached = false
-let positionFrame = 0
-function scheduleListPositionUpdate(): void {
-  if (positionFrame) return
-  positionFrame = requestAnimationFrame(() => {
-    positionFrame = 0
-    updateListPosition()
-  })
-}
 /** 两步删除确认：第一次点击进入待确认态，再次点击同一候选才真正删除 */
 const pendingDeleteNodeId = ref<string | null>(null)
 /** BCP-04：待确认「是否连工作区一起恢复」的候选节点（决策 1：默认仅切聊天） */
@@ -140,6 +131,15 @@ function updateListPosition(): void {
     width: `${width}px`,
     maxHeight: `${Math.max(0, Math.floor(maxHeight))}px`
   }
+}
+
+let positionFrame = 0
+function scheduleListPositionUpdate(): void {
+  if (positionFrame) return
+  positionFrame = requestAnimationFrame(() => {
+    positionFrame = 0
+    updateListPosition()
+  })
 }
 
 function attachPositionListeners(): void {
