@@ -4,6 +4,7 @@
  */
 
 import { computed, watch, onMounted, onUnmounted } from 'vue'
+import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -44,13 +45,16 @@ function handleEsc(e: KeyboardEvent) {
   }
 }
 
+let ownsScrollLock = false
 watch(visible, (val) => {
-  if (val) {
-    document.body.style.overflow = 'hidden'
-  } else {
-    document.body.style.overflow = ''
+  if (val && !ownsScrollLock) {
+    lockBodyScroll()
+    ownsScrollLock = true
+  } else if (!val && ownsScrollLock) {
+    unlockBodyScroll()
+    ownsScrollLock = false
   }
-})
+}, { immediate: true })
 
 onMounted(() => {
   document.addEventListener('keydown', handleEsc)
@@ -58,7 +62,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleEsc)
-  document.body.style.overflow = ''
+  if (ownsScrollLock) {
+    unlockBodyScroll()
+    ownsScrollLock = false
+  }
 })
 </script>
 
@@ -66,7 +73,7 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="modal-fade">
       <div v-if="visible" class="modal-overlay" @click.self="handleMaskClick">
-        <div class="modal" :style="{ width }">
+        <div class="modal" :style="{ width }" role="dialog" aria-modal="true" :aria-label="title || 'Dialog'">
           <!-- 头部 -->
           <div v-if="title || closable" class="modal-header">
             <h3 v-if="title" class="modal-title">{{ title }}</h3>

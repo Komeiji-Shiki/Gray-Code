@@ -61,18 +61,24 @@ function rangeToStartTime(range: UsageTimeRange): number | undefined {
 
 // ==================== 数据加载 ====================
 
+let loadRequestId = 0
 async function loadStats(force = false) {
+  const requestId = ++loadRequestId
   isLoading.value = true
   loadError.value = ''
   try {
-    const startTime = rangeToStartTime(activeRange.value)
+    const range = activeRange.value
+    const startTime = rangeToStartTime(range)
     const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
     if (force) query.force = true
-    stats.value = await sendToExtension<UsageStatsResult>('usage.getStats', query)
+    const result = await sendToExtension<UsageStatsResult>('usage.getStats', query)
+    if (requestId === loadRequestId) stats.value = result
   } catch (error) {
-    loadError.value = error instanceof Error ? error.message : String(error)
+    if (requestId === loadRequestId) {
+      loadError.value = error instanceof Error ? error.message : String(error)
+    }
   } finally {
-    isLoading.value = false
+    if (requestId === loadRequestId) isLoading.value = false
   }
 }
 
@@ -175,10 +181,10 @@ async function savePricing() {
 async function openConversation(conversationId: string) {
   try {
     await chatStore.switchConversation(conversationId)
+    settingsStore.showChat()
   } catch (error) {
     console.error('Failed to open conversation from usage page:', error)
-  } finally {
-    settingsStore.showChat()
+    loadError.value = error instanceof Error ? error.message : String(error)
   }
 }
 

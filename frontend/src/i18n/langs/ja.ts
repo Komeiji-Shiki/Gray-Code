@@ -309,6 +309,7 @@ const ja: LanguageMessages = {
             showHistory: '履歴を表示：',
             revealInExplorer: 'エクスプローラーで表示',
             deleteConversation: '会話を削除',
+            deleteConversationConfirm: 'この会話とすべてのメッセージを削除しますか？',
             messages: '件のメッセージ'
         },
 
@@ -577,6 +578,7 @@ const ja: LanguageMessages = {
                 }
             },
             emptyResponse: '（モデルの返答が空です）',
+            historyFolded: '以前のメッセージは折りたたまれています（{count} 件破棄）。上にスクロールすると読み込めます。',
             stats: {
                 ttft: '初回トークン遅延 (TTFT)',
                 responseDuration: '応答時間',
@@ -1513,7 +1515,8 @@ const ja: LanguageMessages = {
                     title: 'インターフェース言語',
                     description: '表示言語を選択',
                     auto: 'システムに従う',
-                    autoDescription: 'VS Code の言語設定に自動的に従う'
+                    autoDescription: 'VS Code の言語設定に自動的に従う',
+                    followSystem: 'システム設定に従う'
                 },
             },
             contextSettings: {
@@ -1737,6 +1740,7 @@ const ja: LanguageMessages = {
                     idChecking: 'ID を検証中、お待ちください',
                     commandRequired: 'コマンドを入力してください',
                     urlRequired: 'URL を入力してください',
+                    invalidJson: '有効な JSON オブジェクトを入力してください',
                     createFailed: '作成に失敗しました',
                     updateFailed: '更新に失敗しました'
                 },
@@ -2169,7 +2173,8 @@ const ja: LanguageMessages = {
                     title: 'インターフェース言語',
                     description: '表示言語を選択',
                     placeholder: '言語を選択',
-                    autoDescription: 'VS Code の言語設定に自動的に従う'
+                    autoDescription: 'VS Code の言語設定に自動的に従う',
+                    followSystem: 'システム設定に従う'
                 },
                 appInfo: {
                     title: 'アプリケーション情報',

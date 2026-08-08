@@ -70,7 +70,7 @@ function handleDragOver(e: DragEvent, index: number) {
   }
   if (dragFromIndex.value === null || dragFromIndex.value === index) {
     dragOverIndex.value = null
-  return
+    return
   }
 
   // 根据鼠标在目标标签页内的水平位置判断插入方向
@@ -139,10 +139,20 @@ function scrollToActiveTab() {
   })
 }
 
+const TAB_TITLE_MAX_LENGTH = 18
+
 /** 截断标题 */
-function truncateTitle(title: string, maxLen = 18): string {
+function truncateTitle(title: string, maxLen = TAB_TITLE_MAX_LENGTH): string {
   if (title.length <= maxLen) return title
   return title.slice(0, maxLen) + '...'
+}
+
+function handleTabKeydown(event: KeyboardEvent, tabId: string) {
+  if (event.target !== event.currentTarget) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    emit('switchTab', tabId)
+  }
 }
 
 /** 处理关闭按钮点击（阻止冒泡） */
@@ -202,6 +212,10 @@ watch(() => props.tabs.length, () => {
           @click="emit('switchTab', tab.id)"
           @mousedown="handleMouseDown($event, tab.id)"
           :title="tab.title || t('components.tabs.newChat')"
+          role="tab"
+          :aria-selected="tab.id === activeTabId"
+          tabindex="0"
+          @keydown="handleTabKeydown($event, tab.id)"
         >
           <!-- 流式指示器 -->
           <i v-if="tab.isStreaming" class="codicon codicon-loading spin tab-spinner"></i>
@@ -214,6 +228,8 @@ watch(() => props.tabs.length, () => {
           <!-- 关闭按钮 -->
           <button
             class="tab-close-btn"
+            draggable="false"
+            @dragstart.stop.prevent
             @click="handleClose($event, tab.id)"
             :title="t('components.tabs.closeTab')"
           >
@@ -294,6 +310,7 @@ watch(() => props.tabs.length, () => {
   transition: opacity var(--transition-fast, 0.1s ease),
               background var(--transition-fast, 0.1s ease);
   position: relative;
+  z-index: 20;
   flex-shrink: 0;
 }
 

@@ -120,7 +120,7 @@ export function useCheckpointExclusion(
   // 保存大小上限（MiB -> 字节；0 = 不限制）
   async function saveMaxFileSize(event: any) {
     const raw = parseFloat(String(event.target?.value ?? ''))
-    if (Number.isNaN(raw) || raw < 0) {
+    if (!Number.isFinite(raw) || raw < 0) {
       maxFileSizeError.value = t('components.settings.checkpoint.sections.exclusion.maxFileSize.invalid')
       return
     }

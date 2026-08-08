@@ -255,6 +255,9 @@ export function handleStreamChunk(
         finishSmoothStreamForState(state)
         resetTerminalStreamState(state)
         finishBranchStreamTracking(state)
+        // 与携带 content 的终结性 toolIteration 一致：后端不会再发 complete，
+        // 必须在这里调度普通队列，否则排队消息会一直滞留到下一次终结事件。
+        nextTick(() => processQueue())
       }
       break
       

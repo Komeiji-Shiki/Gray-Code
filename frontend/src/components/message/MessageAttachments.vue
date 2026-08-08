@@ -35,6 +35,7 @@ function getAttachmentIconClass(type: string): string {
 
 // 判断附件是否有预览
 function hasPreview(attachment: Attachment): boolean {
+  if (!attachment.data) return false
   if (attachment.type === 'image' && attachment.thumbnail) return true
   if (attachment.type === 'video' && attachment.thumbnail) return true
   if (attachment.type === 'audio') return true

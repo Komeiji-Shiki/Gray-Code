@@ -20,12 +20,20 @@ const settingsStore = useSettingsStore()
 
 // 处理选择对话
 async function handleSelect(id: string) {
-  await chatStore.switchConversation(id)
+  try {
+    await chatStore.switchConversation(id)
+  } catch (error) {
+    console.error('[WelcomePanel] Failed to open conversation:', error)
+  }
 }
 
 // 处理删除对话
 async function handleDelete(id: string) {
-  await chatStore.deleteConversation(id)
+  try {
+    await chatStore.deleteConversation(id)
+  } catch (error) {
+    console.error('[WelcomePanel] Failed to delete conversation:', error)
+  }
 }
 </script>
 

@@ -211,6 +211,8 @@ const activeOscillators = new Set<OscillatorNode>()
 // base64/url -> AudioBuffer 缓存（避免重复 decode）
 const decodedAudioBufferCache = new Map<string, AudioBuffer>()
 const decodingPromises = new Map<string, Promise<AudioBuffer>>()
+const decodeFailureRetryAt = new Map<string, number>()
+const DECODE_FAILURE_BACKOFF_MS = 30_000
 
 // 冷却按 key 维度隔离（默认全局；可按 conversation 分组）
 const lastPlayedAtByKey = new Map<string, number>()
@@ -467,6 +469,10 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 async function decodeAudioBuffer(ctx: AudioContext, asset: UISoundAsset): Promise<AudioBuffer> {
   const key = asset.dataBase64
+  const retryAt = decodeFailureRetryAt.get(key)
+  if (retryAt !== undefined && retryAt > Date.now()) {
+    throw new Error('Sound asset decode is temporarily backed off after a previous failure')
+  }
   const cached = decodedAudioBufferCache.get(key)
   if (cached) return cached
 
@@ -477,12 +483,16 @@ async function decodeAudioBuffer(ctx: AudioContext, asset: UISoundAsset): Promis
     const arr = base64ToArrayBuffer(asset.dataBase64)
     const buffer = await ctx.decodeAudioData(arr)
     decodedAudioBufferCache.set(key, buffer)
+    decodeFailureRetryAt.delete(key)
     return buffer
   })()
 
   decodingPromises.set(key, promise)
   try {
     return await promise
+  } catch (error) {
+    decodeFailureRetryAt.set(key, Date.now() + DECODE_FAILURE_BACKOFF_MS)
+    throw error
   } finally {
     decodingPromises.delete(key)
   }
@@ -524,6 +534,10 @@ async function playSoundAsset(ctx: AudioContext, asset: UISoundAsset, abortSigna
 
 async function decodeAudioBufferFromUrl(ctx: AudioContext, url: string): Promise<AudioBuffer> {
   const key = `url:${url}`
+  const retryAt = decodeFailureRetryAt.get(key)
+  if (retryAt !== undefined && retryAt > Date.now()) {
+    throw new Error('Sound URL decode is temporarily backed off after a previous failure')
+  }
   const cached = decodedAudioBufferCache.get(key)
   if (cached) return cached
 
@@ -538,12 +552,16 @@ async function decodeAudioBufferFromUrl(ctx: AudioContext, url: string): Promise
     const arr = await res.arrayBuffer()
     const buffer = await ctx.decodeAudioData(arr)
     decodedAudioBufferCache.set(key, buffer)
+    decodeFailureRetryAt.delete(key)
     return buffer
   })()
 
   decodingPromises.set(key, promise)
   try {
     return await promise
+  } catch (error) {
+    decodeFailureRetryAt.set(key, Date.now() + DECODE_FAILURE_BACKOFF_MS)
+    throw error
   } finally {
     decodingPromises.delete(key)
   }

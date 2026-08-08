@@ -175,7 +175,7 @@ function loadFormFromConfig(config: McpServerConfig) {
   formData.description = config.description || ''
   formData.enabled = config.enabled
   formData.autoConnect = config.autoConnect
-  formData.timeout = config.timeout || 30000
+  formData.timeout = config.timeout ?? 30000
   formData.cleanSchema = config.cleanSchema !== false  // 默认为 true
   
   const transport = config.transport
@@ -268,7 +268,20 @@ function cancelEdit() {
   resetForm()
 }
 
-// 构建传输配置
+// 构建传输配置；JSON 字段无效时抛错并阻止保存。
+function parseJsonObject(value: string, fieldName: string): Record<string, string> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error(`${fieldName}: ${t('components.settings.mcpSettings.validation.invalidJson')}`)
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${fieldName}: ${t('components.settings.mcpSettings.validation.invalidJson')}`)
+  }
+  return parsed as Record<string, string>
+}
+
 function buildTransportConfig(): McpTransportConfig {
   if (formData.transportType === 'stdio') {
     const config: any = {
@@ -279,11 +292,7 @@ function buildTransportConfig(): McpTransportConfig {
       config.args = formData.args.trim().split(/\s+/)
     }
     if (formData.env.trim()) {
-      try {
-        config.env = JSON.parse(formData.env)
-      } catch (e) {
-        // 忽略无效的 JSON
-      }
+      config.env = parseJsonObject(formData.env, 'env')
     }
     return config
   } else {
@@ -292,11 +301,7 @@ function buildTransportConfig(): McpTransportConfig {
       url: formData.url.trim()
     }
     if (formData.headers.trim()) {
-      try {
-        config.headers = JSON.parse(formData.headers)
-      } catch (e) {
-        // 忽略无效的 JSON
-      }
+      config.headers = parseJsonObject(formData.headers, 'headers')
     }
     return config
   }

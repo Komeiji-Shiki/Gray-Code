@@ -103,6 +103,14 @@ function setViewMode(mode: BranchTreeViewMode): void {
   resetTransient()
 }
 
+async function runBranchAction(action: () => Promise<unknown>): Promise<void> {
+  try {
+    await action()
+  } catch (error) {
+    console.error('[BranchTreePanel] Branch operation failed:', error)
+  }
+}
+
 function switchTo(row: { id: string; node: BranchNodeData; active: boolean }): void {
   const node = row.node
   if (row.active || node.deleted) return
@@ -112,27 +120,27 @@ function switchTo(row: { id: string; node: BranchNodeData; active: boolean }): v
     showWorkspaceConfirm.value = true
     return
   }
-  void chatStore.switchBranchCandidate(node.id)
+  void runBranchAction(() => chatStore.switchBranchCandidate(node.id))
 }
 
 function confirmSwitchMode(mode: SwitchBranchWorkspaceMode): void {
   const nodeId = pendingWorkspaceSwitchNodeId.value
   pendingWorkspaceSwitchNodeId.value = null
   showWorkspaceConfirm.value = false
-  if (nodeId) void chatStore.switchBranchCandidate(nodeId, { mode })
+  if (nodeId) void runBranchAction(() => chatStore.switchBranchCandidate(nodeId, { mode }))
 }
 
 function toggleDelete(nodeId: string): void {
   if (pendingDeleteNodeId.value === nodeId) {
     pendingDeleteNodeId.value = null
-    void chatStore.deleteBranchCandidate(nodeId)
+    void runBranchAction(() => chatStore.deleteBranchCandidate(nodeId))
     return
   }
   pendingDeleteNodeId.value = nodeId
 }
 
 function restore(nodeId: string): void {
-  void chatStore.restoreBranchCandidate(nodeId)
+  void runBranchAction(() => chatStore.restoreBranchCandidate(nodeId))
 }
 
 function startRename(node: BranchNodeData): void {
@@ -144,7 +152,7 @@ function commitRename(): void {
   const nodeId = renamingNodeId.value
   if (!nodeId) return
   renamingNodeId.value = null
-  void chatStore.renameBranchCandidate(nodeId, renameInput.value)
+  void runBranchAction(() => chatStore.renameBranchCandidate(nodeId, renameInput.value))
 }
 
 function cancelRename(): void {

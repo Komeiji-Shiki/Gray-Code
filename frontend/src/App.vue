@@ -319,16 +319,23 @@ async function handleAttachFile() {
   input.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt'
   
   input.onchange = async (e) => {
-    const files = Array.from((e.target as HTMLInputElement).files || [])
-    if (files.length > 0) {
-      try {
-        await addAttachments(files)
-      } catch (err) {
-        console.error('上传附件失败:', err)
+    try {
+      const files = Array.from((e.target as HTMLInputElement).files || [])
+      if (files.length > 0) {
+        try {
+          await addAttachments(files)
+        } catch (err) {
+          console.error('上传附件失败:', err)
+        }
       }
+    } finally {
+      input.remove()
+      // 清空闭包引用，避免动态 input 与 FileList 被长期保留
+      input.onchange = null
     }
   }
-  
+
+  document.body.appendChild(input)
   input.click()
 }
 
@@ -444,7 +451,9 @@ onMounted(async () => {
   console.log('GrayCode Chat 已加载')
   
   // Notify the extension that the webview is ready to receive command messages.
-  sendToExtension('webviewReady', {}).catch(() => {})
+    sendToExtension('webviewReady', {}).catch(error => {
+    console.error('[App] Failed to notify extension that webview is ready:', error)
+  })
   
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()

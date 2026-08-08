@@ -249,6 +249,32 @@ async function updateRetryInterval(interval: number) {
   await updateConfigField('retryInterval', interval)
 }
 
+// 数字输入清空或包含非有限值时不更新配置，避免空串被 Number('') 转成 0 持久化。
+function readFiniteNumberInput(event: Event): number | null {
+  const raw = (event.target as HTMLInputElement | null)?.value?.trim() ?? ''
+  if (!raw) return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
+function updateNumericConfigField(field: string, event: Event): void {
+  const value = readFiniteNumberInput(event)
+  if (value === null) return
+  void updateConfigField(field, value)
+}
+
+function updateRetryCountInput(event: Event): void {
+  const value = readFiniteNumberInput(event)
+  if (value === null) return
+  void updateRetryCount(value)
+}
+
+function updateRetryIntervalInput(event: Event): void {
+  const value = readFiniteNumberInput(event)
+  if (value === null) return
+  void updateRetryInterval(value)
+}
+
 // ==================== 工具配置 ====================
 
 // 工具配置类型
@@ -1002,7 +1028,7 @@ onMounted(async () => {
           :value="currentConfig.timeout"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.timeout.placeholder')"
-          @input="(e: any) => updateConfigField('timeout', Number(e.target.value))"
+          @input="updateNumericConfigField('timeout', $event)"
         />
       </div>
       
@@ -1012,7 +1038,7 @@ onMounted(async () => {
           :value="currentConfig.maxContextTokens || 256000"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.maxContextTokens.placeholder')"
-          @input="(e: any) => updateConfigField('maxContextTokens', Number(e.target.value))"
+          @input="updateNumericConfigField('maxContextTokens', $event)"
         />
         <span class="field-hint">{{ t('components.settings.channelSettings.form.maxContextTokens.hint') }}</span>
       </div>
@@ -1253,7 +1279,7 @@ onMounted(async () => {
                 max="10"
                 :disabled="!retryEnabled"
                 :class="{ disabled: !retryEnabled }"
-                @input="(e: any) => updateRetryCount(Number(e.target.value))"
+                @input="updateRetryCountInput"
               />
               <span class="option-hint">{{ t('components.settings.channelSettings.form.autoRetry.retryCount.hint') }}</span>
             </div>
@@ -1270,7 +1296,7 @@ onMounted(async () => {
                 step="1000"
                 :disabled="!retryEnabled"
                 :class="{ disabled: !retryEnabled }"
-                @input="(e: any) => updateRetryInterval(Number(e.target.value))"
+                @input="updateRetryIntervalInput"
               />
               <span class="option-hint">{{ t('components.settings.channelSettings.form.autoRetry.retryInterval.hint') }}</span>
             </div>

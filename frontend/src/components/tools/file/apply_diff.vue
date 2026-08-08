@@ -149,7 +149,12 @@ const filePath = computed(() => {
 // - 新格式：优先读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
 // - 旧格式：兼容 args.diffs
 const diffList = computed((): DiffBlock[] => {
-  const rejectedIndices = new Set<number>(resultData.value?.rejectedBlockIndices || [])
+  const rawRejectedIndices = resultData.value?.rejectedBlockIndices
+  const rejectedIndices = new Set<number>(
+    Array.isArray(rawRejectedIndices)
+      ? rawRejectedIndices.filter((value): value is number => typeof value === 'number' && Number.isInteger(value))
+      : []
+  )
 
   // 结构化 hunks（推荐新格式）
   const hunks = props.args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined

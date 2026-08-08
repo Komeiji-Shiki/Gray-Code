@@ -32,7 +32,7 @@ function hide() {
 </script>
 
 <template>
-  <div class="tooltip-wrapper" @mouseenter="show" @mouseleave="hide">
+  <div class="tooltip-wrapper" @mouseenter="show" @mouseleave="hide" @focusin="show" @focusout="hide">
     <slot />
     <Transition name="tooltip-fade">
       <div

@@ -212,7 +212,7 @@ const zhCN = {
                 }
             },
             scrollToTop: '回到顶部',
-            scrollToBottom: '回到最下'
+            scrollToBottom: '回到底部'
         },
 
         header: {
@@ -310,6 +310,7 @@ const zhCN = {
             showHistory: '显示对话历史：',
             revealInExplorer: '在文件管理器中显示',
             deleteConversation: '删除对话',
+            deleteConversationConfirm: '确定要删除这个对话及其全部消息吗？',
             messages: '条消息'
         },
 
@@ -578,6 +579,7 @@ const zhCN = {
                 }
             },
             emptyResponse: '（模型返回空内容）',
+            historyFolded: '更早消息已折叠（已丢弃 {count} 条），继续上拉可加载',
             stats: {
                 ttft: '首字延迟 (TTFT)',
                 responseDuration: '响应时间',
@@ -1514,7 +1516,8 @@ const zhCN = {
                     title: '界面语言',
                     description: '选择界面显示语言',
                     auto: '跟随系统',
-                    autoDescription: '自动跟随 VS Code 语言设置'
+                    autoDescription: '自动跟随 VS Code 语言设置',
+                    followSystem: '跟随系统'
                 },
             },
             contextSettings: {
@@ -1738,6 +1741,7 @@ const zhCN = {
                     idChecking: '正在验证 ID，请稍候',
                     commandRequired: '请输入命令',
                     urlRequired: '请输入 URL',
+                    invalidJson: '请输入有效的 JSON 对象',
                     createFailed: '创建失败',
                     updateFailed: '更新失败'
                 },
@@ -2170,7 +2174,8 @@ const zhCN = {
                     title: '界面语言',
                     description: '选择界面显示语言',
                     placeholder: '选择语言',
-                    autoDescription: '自动跟随 VS Code 语言设置'
+                    autoDescription: '自动跟随 VS Code 语言设置',
+                    followSystem: '跟随系统'
                 },
                 appInfo: {
                     title: '应用信息',

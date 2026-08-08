@@ -309,6 +309,7 @@ const en: LanguageMessages = {
             showHistory: 'Show history:',
             revealInExplorer: 'Reveal in Explorer',
             deleteConversation: 'Delete Conversation',
+            deleteConversationConfirm: 'Delete this conversation and all of its messages?',
             messages: 'messages'
         },
 
@@ -577,6 +578,7 @@ const en: LanguageMessages = {
                 }
             },
             emptyResponse: '(Empty response from model)',
+            historyFolded: 'Earlier messages are folded ({count} discarded). Scroll up to load them.',
             stats: {
                 ttft: 'Time to first token (TTFT)',
                 responseDuration: 'Response Duration',
@@ -1513,7 +1515,8 @@ const en: LanguageMessages = {
                     title: 'Interface Language',
                     description: 'Choose interface display language',
                     auto: 'Follow System',
-                    autoDescription: 'Automatically follow VS Code language setting'
+                    autoDescription: 'Automatically follow VS Code language setting',
+                    followSystem: 'Follow system'
                 },
             },
             contextSettings: {
@@ -1737,6 +1740,7 @@ const en: LanguageMessages = {
                     idChecking: 'Validating ID, please wait',
                     commandRequired: 'Please enter command',
                     urlRequired: 'Please enter URL',
+                    invalidJson: 'Enter a valid JSON object',
                     createFailed: 'Create failed',
                     updateFailed: 'Update failed'
                 },
@@ -2169,7 +2173,8 @@ const en: LanguageMessages = {
                     title: 'Interface Language',
                     description: 'Select interface display language',
                     placeholder: 'Select Language',
-                    autoDescription: 'Auto follow VS Code language settings'
+                    autoDescription: 'Auto follow VS Code language settings',
+                    followSystem: 'Follow system'
                 },
                 appInfo: {
                     title: 'Application Info',

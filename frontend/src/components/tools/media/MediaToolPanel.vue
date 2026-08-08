@@ -158,9 +158,9 @@ const errorMessage = computed(() => {
 
 // 是否被取消
 const isCancelled = computed(() => {
-  if (resultData.value.cancelled) return true
-  if (isFailed.value && errorMessage.value?.includes('终止')) return true
-  return false
+  if (resultData.value.cancelled === true) return true
+  const errorCode = typeof resultData.value.errorCode === 'string' ? resultData.value.errorCode.toUpperCase() : ''
+  return errorCode === 'CANCELLED' || errorCode === 'ABORTED'
 })
 
 // 是否正在运行
@@ -244,7 +244,9 @@ async function saveImage(imageData: MultimodalData, path: string) {
     payload.mimeType = imageData.mimeType
     const result = await sendToExtension('saveImageToPath', payload) as { success: boolean; error?: string }
 
-    if (result.success) {
+    if (!result) {
+      saveError.value = tk('saveFailed')
+    } else if (result.success) {
       saveSuccess.value = true
       setTimeout(() => {
         saveSuccess.value = false
@@ -289,7 +291,10 @@ async function handleCancel() {
         error?: string
       }
 
-      if (!result.success) {
+      if (!result) {
+        console.warn('取消任务失败: empty response')
+        await chatStore.cancelStream()
+      } else if (!result.success) {
         console.warn('取消任务失败:', result.error)
         await chatStore.cancelStream()
       }
