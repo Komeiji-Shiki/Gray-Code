@@ -355,6 +355,9 @@ export function createChatState(): ChatStoreState {
   /** 当前回合模型覆盖（用于 Plan 执行的“渠道 + 模型”选择） */
   const pendingModelOverride = ref<string | null>(null)
 
+  /** 当前回合一次性渠道覆盖（Plan 等「仅本次使用所选渠道」场景，不写全局设置） */
+  const pendingConfigIdOverride = ref<string | null>(null)
+
   /** 消息排队队列（候选区） */
   const messageQueue = ref<QueuedMessage[]>([])
 
@@ -457,6 +460,7 @@ export function createChatState(): ChatStoreState {
     attachments,
     currentPromptModeId,
     pendingModelOverride,
+    pendingConfigIdOverride,
     messageQueue,
     _lastCancelledStreamId,
     _lastApprovalGatedStreamId,

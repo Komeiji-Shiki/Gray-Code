@@ -287,6 +287,15 @@ export interface ChatStoreState {
    */
   pendingModelOverride: Ref<string | null>
 
+  /**
+   * 当前回合的一次性渠道覆盖（仅对本轮流式/工具确认生效）
+   *
+   * Plan 等「仅本次使用所选渠道」场景：chatStream/toolConfirmation 的 configId
+   * 改用该值，但绝不写后端全局 activeChannelId、也不写对话元数据。
+   * 回合结束（complete/cancelled/error）时与 pendingModelOverride 一并清除。
+   */
+  pendingConfigIdOverride: Ref<string | null>
+
   /** 消息排队队列（候选区） */
   messageQueue: Ref<QueuedMessage[]>
 
@@ -430,6 +439,8 @@ export interface ConversationSessionSnapshot {
   inputValue: string
   /** 模型覆盖 */
   pendingModelOverride: string | null
+  /** 一次性渠道覆盖（仅对本轮流式/工具确认生效） */
+  pendingConfigIdOverride: string | null
   /** 编辑器节点（富文本状态，包含上下文徽章） */
   editorNodes: EditorNode[]
   /** 附件列表 */

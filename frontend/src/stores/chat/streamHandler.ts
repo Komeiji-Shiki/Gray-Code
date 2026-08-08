@@ -67,6 +67,7 @@ function resetTerminalStreamState(state: ChatStoreState): void {
   state.isWaitingForResponse.value = false
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state.pendingConfigIdOverride.value = null
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }

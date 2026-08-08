@@ -998,6 +998,7 @@ export const useChatStore = defineStore('chat', () => {
     activeBuild: state.activeBuild,
     setActiveBuild,
     pendingModelOverride: state.pendingModelOverride,
+    pendingConfigIdOverride: state.pendingConfigIdOverride,
     
     // 上下文总结
     summarizeContext,
