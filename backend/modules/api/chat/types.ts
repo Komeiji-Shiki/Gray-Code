@@ -432,11 +432,6 @@ export interface ChatStreamToolConfirmationData {
 }
 
 /**
- * 工具开始执行数据（用于在工具执行前先发送计时信息）
- *
- * 这样前端可以在工具执行期间就显示 AI 响应的计时信息（思考时间、响应时间等）
- */
-/**
  * 工具状态更新数据（用于前端实时展示工具队列推进）
  */
 export interface ChatStreamToolStatusData {

@@ -8,22 +8,14 @@ import { t } from '../../../i18n';
 import type { ConfigManager } from '../../config/ConfigManager';
 import type { ChannelManager } from '../../channel/ChannelManager';
 import type { ConversationManager } from '../../conversation/ConversationManager';
-import type { DiffStorageManager } from '../../conversation/DiffStorageManager';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
-import type { CheckpointManager, CheckpointRecord } from '../../checkpoint';
+import type { CheckpointManager } from '../../checkpoint';
 import type { SettingsManager } from '../../settings/SettingsManager';
 import type { SettingsChangeEvent, SettingsChangeListener } from '../../settings/types';
 import type { McpManager } from '../../mcp/McpManager';
 import { PromptManager } from '../../prompt';
-import { StreamAccumulator } from '../../channel/StreamAccumulator';
-import { TokenCountService, type TokenCountResult } from '../../channel/TokenCountService';
-import type { Content, ContentPart, ChannelTokenCounts } from '../../conversation/types';
-import type { GetHistoryOptions } from '../../conversation/ConversationManager';
-import type { BaseChannelConfig } from '../../config/configs/base';
-import type { StreamChunk, GenerateResponse } from '../../channel/types';
+import { TokenCountService } from '../../channel/TokenCountService';
 import { ChannelError, ErrorType } from '../../channel/types';
-import { getDiffManager } from '../../../tools/file/diffManager';
-import { getMultimodalCapability, type MultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../tools/utils';
 import type {
     ChatRequestData,
     ChatSuccessData,
@@ -39,26 +31,17 @@ import type {
     ChatStreamAutoSummaryData,
     ChatStreamAutoSummaryStatusData,
     ToolConfirmationResponseData,
-    PendingToolCall,
     RetryRequestData,
     EditAndRetryRequestData,
     DeleteToMessageRequestData,
     DeleteToMessageSuccessData,
     DeleteToMessageErrorData,
-    AttachmentData,
     SummarizeContextRequestData,
     SummarizeContextSuccessData,
     SummarizeContextErrorData
 } from './types';
-import {
-    generateToolCallId,
-    type ConversationRound,
-    type ContextTrimInfo,
-    type FunctionCallInfo
-} from './utils';
 import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, DiffInterruptService, ChatFlowService } from './services';
 import { ContextBudgetExceededError } from './services/ContextTrimService';
-import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 import type { RerollRequestData, EditBranchRequestData } from './services/ChatFlowService';
 
 /**
@@ -77,7 +60,6 @@ export class ChatHandler {
     private settingsManager?: SettingsManager;
     private settingsChangeListener?: SettingsChangeListener;
     private mcpManager?: McpManager;
-    private diffStorageManager?: DiffStorageManager;
     private promptManager: PromptManager;
     private tokenCountService: TokenCountService;
     private toolCallParserService: ToolCallParserService;
@@ -241,14 +223,6 @@ export class ChatHandler {
     }
     
     /**
-     * 设置 Diff 存储管理器（可选）
-     * 用于抽离 apply_diff 工具的 originalContent/newContent 大字段
-     */
-    setDiffStorageManager(diffStorageManager: DiffStorageManager): void {
-        this.diffStorageManager = diffStorageManager;
-    }
-    
-    /**
      * 处理非流式对话请求
      * 支持工具调用循环：当 AI 返回工具调用时，自动执行工具并将结果返回给 AI
      *
@@ -345,6 +319,15 @@ export class ChatHandler {
                 } as any;
                 return;
             }
+
+            // C-5：abort 后底层可能抛原生 AbortError（非 ChannelError），补信号检查避免误报"出错"
+            if (request.abortSignal?.aborted) {
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
             
             yield {
                 conversationId: request.conversationId,
@@ -435,8 +418,7 @@ export class ChatHandler {
     ): Promise<{ success: true; restoredCount: number; removedSummaryId?: string }> {
         return this.summarizeService.restoreSummarizedMessages(conversationId, summaryMessageId);
     }
-    
-/**
+    /**
      * 处理重试请求（非流式）
      * 支持工具调用循环
      *
@@ -489,6 +471,15 @@ export class ChatHandler {
                 } as any;
                 return;
             }
+
+            // C-5：abort 后底层可能抛原生 AbortError（非 ChannelError），补信号检查避免误报"出错"
+            if (request.abortSignal?.aborted) {
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
             
             yield {
                 conversationId: request.conversationId,
@@ -532,6 +523,15 @@ export class ChatHandler {
                 return;
             }
 
+            // C-5：abort 后底层可能抛原生 AbortError（非 ChannelError），补信号检查避免误报"出错"
+            if (request.abortSignal?.aborted) {
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
             yield {
                 conversationId: request.conversationId,
                 error: this.formatError(error)
@@ -568,6 +568,15 @@ export class ChatHandler {
             // 检查是否是用户取消错误
             if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
                 // 用户取消，yield cancelled 消息
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            // C-5：abort 后底层可能抛原生 AbortError（非 ChannelError），补信号检查避免误报"出错"
+            if (request.abortSignal?.aborted) {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
@@ -631,6 +640,15 @@ export class ChatHandler {
             // 检查是否是用户取消错误
             if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
                 // 用户取消，yield cancelled 消息
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            // C-5：abort 后底层可能抛原生 AbortError（非 ChannelError），补信号检查避免误报"出错"
+            if (request.abortSignal?.aborted) {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const

@@ -28,7 +28,7 @@ function createService(updateMessagesBatch = jest.fn()) {
 }
 
 describe('ToolIterationLoopService dynamic context preserve anchoring', () => {
-    it('marks every cached historical user turn as preserve and updates the current in-memory history snapshot', async () => {
+    it('preserve 模式不修改任何历史消息或持久化字段', async () => {
         const { service, updateMessagesBatch } = createService();
         const history: Content[] = [
             {
@@ -57,13 +57,10 @@ describe('ToolIterationLoopService dynamic context preserve anchoring', () => {
 
         await (service as any).preserveHistoricalTurnDynamicContexts('conv-1', history, 4);
 
-        expect(history[0].turnDynamicContextStrategy).toBe('preserve');
-        expect(history[2].turnDynamicContextStrategy).toBe('preserve');
+        expect(history[0].turnDynamicContextStrategy).toBe('single');
+        expect(history[2].turnDynamicContextStrategy).toBeUndefined();
         expect(history[4].turnDynamicContextStrategy).toBe('preserve');
-        expect(updateMessagesBatch).toHaveBeenCalledWith('conv-1', [
-            { messageIndex: 2, updates: { turnDynamicContextStrategy: 'preserve' } },
-            { messageIndex: 0, updates: { turnDynamicContextStrategy: 'preserve' } }
-        ]);
+        expect(updateMessagesBatch).not.toHaveBeenCalled();
     });
 
     it('does not persist anything when historical cached turns are already preserved', async () => {

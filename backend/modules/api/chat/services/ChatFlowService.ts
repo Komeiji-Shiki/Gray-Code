@@ -9,6 +9,7 @@
  */
 
 import { t } from '../../../../i18n';
+import { randomUUID } from 'node:crypto';
 import { Logger } from '../../../../core/logger';
 import type { ConfigManager } from '../../../config/ConfigManager';
 import type { ChannelManager } from '../../../channel/ChannelManager';
@@ -84,7 +85,48 @@ export type ChatStreamOutput =
   | ChatStreamToolsExecutingData
   | ChatStreamToolStatusData
   | ChatStreamAutoSummaryData
-  | ChatStreamAutoSummaryStatusData;
+  | ChatStreamAutoSummaryStatusData
+  | ChatStreamCancelledData;
+
+/**
+ * C-19：取消信号输出（流式取消语义的显式类型成员；此前 yield cancelled 只能 as any 逃逸类型检查）。
+ */
+export interface ChatStreamCancelledData {
+  conversationId: string;
+  cancelled: true;
+  content?: Content;
+}
+
+/**
+ * C-6：创建与 abortSignal race 的 Promise，供 gen.next() 主循环防挂起。
+ *
+ * - 信号已中止时立即 resolve（避免 listener 注册后信号永不触发、Promise 永不落定）；
+ * - 返回 dispose() 在 finally 中移除 listener，防止泄漏。
+ */
+function createAbortRacePromise(signal: AbortSignal | undefined): {
+  abortPromise: Promise<void> | undefined;
+  dispose: () => void;
+} {
+  if (!signal) {
+    return { abortPromise: undefined, dispose: () => {} };
+  }
+  if (signal.aborted) {
+    return { abortPromise: Promise.resolve(), dispose: () => {} };
+  }
+  let onAbort: (() => void) | undefined;
+  const abortPromise = new Promise<void>((resolve) => {
+    onAbort = () => resolve();
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  return {
+    abortPromise,
+    dispose: () => {
+      if (onAbort) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    },
+  };
+}
 
 /**
  * reroll（重新生成并保留旧回答）请求数据（TREE-01）。
@@ -884,7 +926,7 @@ export class ChatFlowService {
    * 非流式 Chat 流程
    */
   async handleChat(request: ChatRequestData): Promise<ChatSuccessData | ChatErrorData> {
-    const { conversationId, configId, message, modelOverride, hiddenFunctionResponse } = request;
+    const { conversationId, configId, message, messageId, modelOverride, hiddenFunctionResponse } = request;
 
     // 1. 确保对话存在（自动创建）
     await this.ensureConversation(conversationId);
@@ -929,15 +971,26 @@ export class ChatFlowService {
     await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
-    // 3. 添加输入到历史
+    // 3. 添加输入到历史；真实用户消息在创建时一次性携带动态上下文快照。
     if (hiddenFunctionResponse) {
       await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
     } else {
       const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
+      const persistedMessageId = messageId || randomUUID();
+      const turnDynamicContext = request.source === 'background_task'
+        ? undefined
+        : await this.toolIterationLoopService.createTurnDynamicContext(
+            conversationId,
+            persistedMessageId,
+            promptModeSnapshot
+          );
       await this.conversationManager.addMessage(conversationId, 'user', userParts, {
         isUserInput: request.source !== 'background_task',
-        source: request.source
-      });
+        source: request.source,
+        ...(turnDynamicContext
+          ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
+          : {})
+      }, persistedMessageId);
     }
 
     // 4. 工具调用循环（委托给 ToolIterationLoopService，非流式）
@@ -950,7 +1003,7 @@ export class ChatFlowService {
       modelOverride,
       promptModeSnapshot,
       dynamicContextStrategy,
-      !hiddenFunctionResponse,
+      !hiddenFunctionResponse && request.source !== 'background_task',
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
@@ -962,6 +1015,18 @@ export class ChatFlowService {
         error: {
           code: 'MAX_TOOL_ITERATIONS',
           message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations }),
+        },
+      };
+    }
+
+    // C-1：非流式路径透传取消语义——abort 后若返回 success:true + content:undefined，
+    // 前端会把取消当成功处理；流式路径已有 cancelled 输出，这里与之一致。
+    if (loopResult.cancelled) {
+      return {
+        success: false,
+        error: {
+          code: 'CANCELLED',
+          message: t('modules.api.chat.errors.requestCancelled'),
         },
       };
     }
@@ -1052,6 +1117,17 @@ export class ChatFlowService {
       };
     }
 
+    // C-1：非流式路径透传取消语义（与 handleChat 一致）
+    if (loopResult.cancelled) {
+      return {
+        success: false,
+        error: {
+          code: 'CANCELLED',
+          message: t('modules.api.chat.errors.requestCancelled'),
+        },
+      };
+    }
+
     return {
       success: true,
       content: loopResult.content!,
@@ -1103,7 +1179,7 @@ export class ChatFlowService {
       };
     }
 
-    if (message.role !== 'user') {
+    if (message.role !== 'user' || isFunctionResponseMessage(message)) {
       return {
         success: false,
         error: {
@@ -1178,6 +1254,17 @@ export class ChatFlowService {
         error: {
           code: 'MAX_TOOL_ITERATIONS',
           message: t('modules.api.chat.errors.maxToolIterations', { maxIterations: maxToolIterations }),
+        },
+      };
+    }
+
+    // C-1：非流式路径透传取消语义（与 handleChat 一致）
+    if (loopResult.cancelled) {
+      return {
+        success: false,
+        error: {
+          code: 'CANCELLED',
+          message: t('modules.api.chat.errors.requestCancelled'),
         },
       };
     }
@@ -1269,10 +1356,21 @@ export class ChatFlowService {
 
         // 5. 添加用户消息到历史（包含附件）；携带前端稳定节点 id（BR-01 对齐）
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
+        const persistedMessageId = messageId || randomUUID();
+        const turnDynamicContext = request.source === 'background_task'
+          ? undefined
+          : await this.toolIterationLoopService.createTurnDynamicContext(
+              conversationId,
+              persistedMessageId,
+              promptModeSnapshot
+            );
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
           isUserInput: request.source !== 'background_task',
-          source: request.source
-        }, messageId);
+          source: request.source,
+          ...(turnDynamicContext
+            ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
+            : {})
+        }, persistedMessageId);
 
         // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
         // 与系统提示词、动态上下文一起并行计算，节省时间
@@ -1315,7 +1413,7 @@ export class ChatFlowService {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
-      isNewTurn: !hiddenFunctionResponse,
+      isNewTurn: !hiddenFunctionResponse && request.source !== 'background_task',
       promptModeSnapshot,
       dynamicContextStrategy,
     })) {
@@ -1695,7 +1793,8 @@ export class ChatFlowService {
             conversationId,
             error: {
               code: 'NODE_NOT_FOUND',
-              message: `target user node ${target.nodeId} not found in main history`,
+              // C-16：旧数据消息可能无 id，findIndex 恒返回 -1——报错里说明可能原因，避免笼统的 not found
+              message: `target user node ${target.nodeId} not found in main history (the message may lack an id or have been removed by context compaction)`,
             },
           };
           return;
@@ -1734,7 +1833,8 @@ export class ChatFlowService {
               conversationId,
               error: {
                 code: 'NODE_NOT_FOUND',
-                message: `target user node ${target.nodeId} not found in main history`,
+                // C-16：旧数据消息可能无 id，findIndex 恒返回 -1——报错里说明可能原因，避免笼统的 not found
+                message: `target user node ${target.nodeId} not found in main history (the message may lack an id or have been removed by context compaction)`,
               },
             };
             return;
@@ -2010,7 +2110,7 @@ export class ChatFlowService {
       return;
     }
 
-    if (message.role !== 'user') {
+    if (message.role !== 'user' || isFunctionResponseMessage(message)) {
       yield {
         conversationId,
         error: {
@@ -2298,7 +2398,12 @@ export class ChatFlowService {
         undefined,
         // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
         conversationId,
-        MAIN_SESSION_RUN_ID
+        MAIN_SESSION_RUN_ID,
+        // 主会话路径无嵌套深度、无工作区 URI（General Worker 模型继承见下）
+        undefined,
+        undefined,
+        // General Worker 模型继承：把主会话当前模型透传给工具上下文
+        modelOverride
       );
 
       while (true) {
@@ -2307,13 +2412,7 @@ export class ChatFlowService {
         // （含停止按钮）永久挂起。abort 先到时先给生成器一个短暂收尾窗口：响应 abort 的
         // 工具会快速返回已完成部分的真实结果（不能丢，否则历史只剩“用户拒绝”占位），
         // 窗口结束仍未返回则放弃，随后由下方 abort 检查输出 cancelled 可读信号。
-        let onAbort: (() => void) | undefined;
-        const abortPromise = request.abortSignal
-          ? new Promise<void>((resolve) => {
-            onAbort = () => resolve();
-            request.abortSignal!.addEventListener('abort', onAbort, { once: true });
-          })
-          : undefined;
+        const { abortPromise, dispose } = createAbortRacePromise(request.abortSignal);
         try {
           const nextPromise = gen.next();
           const winner = abortPromise
@@ -2354,11 +2453,18 @@ export class ChatFlowService {
           }
 
           if (event.type === 'end') {
-            const r = event.toolResult.result as any;
+            // C-19：工具结果按宽松形状窄化访问（unknown 收窄），替代裸 as any
+            const r = event.toolResult.result as {
+              success?: boolean;
+              error?: string;
+              cancelled?: boolean;
+              rejected?: boolean;
+              data?: { partial?: boolean; status?: string; appliedCount?: number; failedCount?: number };
+            } | null | undefined;
             let status: ChatStreamToolStatusData['tool']['status'] = 'success';
             if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
               status = 'error';
-            } else if (r?.data && (r.data.partial === true || r.data.status === 'partial' || (r.data.appliedCount > 0 && r.data.failedCount > 0))) {
+            } else if (r?.data && (r.data.partial === true || r.data.status === 'partial' || ((r.data.appliedCount ?? 0) > 0 && (r.data.failedCount ?? 0) > 0))) {
               status = 'warning';
             }
 
@@ -2374,9 +2480,7 @@ export class ChatFlowService {
             } satisfies ChatStreamToolStatusData;
           }
         } finally {
-          if (onAbort && request.abortSignal) {
-            request.abortSignal.removeEventListener('abort', onAbort);
-          }
+          dispose();
         }
       }
 
@@ -2440,20 +2544,19 @@ export class ChatFlowService {
         undefined,
         // A-COMM：主会话信箱按 conversationId + 主会话保留 runId 挂载
         conversationId,
-        MAIN_SESSION_RUN_ID
+        MAIN_SESSION_RUN_ID,
+        // 主会话路径无嵌套深度、无工作区 URI（General Worker 模型继承见下）
+        undefined,
+        undefined,
+        // General Worker 模型继承：把主会话当前模型透传给工具上下文
+        modelOverride
       );
 
       while (true) {
         // 与上方队首工具循环相同的 abort-race + 收尾窗口模式：
         // 不响应 abort 且永不结束的工具不再让请求（含停止按钮）永久挂起；
         // abort 后由下方 abort 检查输出 cancelled 可读信号。
-        let onAbort: (() => void) | undefined;
-        const abortPromise = request.abortSignal
-          ? new Promise<void>((resolve) => {
-            onAbort = () => resolve();
-            request.abortSignal!.addEventListener('abort', onAbort, { once: true });
-          })
-          : undefined;
+        const { abortPromise, dispose } = createAbortRacePromise(request.abortSignal);
         try {
           const nextPromise = gen.next();
           const winner = abortPromise
@@ -2494,11 +2597,18 @@ export class ChatFlowService {
           }
 
           if (event.type === 'end') {
-            const r = event.toolResult.result as any;
+            // C-19：工具结果按宽松形状窄化访问（unknown 收窄），替代裸 as any
+            const r = event.toolResult.result as {
+              success?: boolean;
+              error?: string;
+              cancelled?: boolean;
+              rejected?: boolean;
+              data?: { partial?: boolean; status?: string; appliedCount?: number; failedCount?: number };
+            } | null | undefined;
             let status: ChatStreamToolStatusData['tool']['status'] = 'success';
             if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
               status = 'error';
-            } else if (r?.data && (r.data.partial === true || r.data.status === 'partial' || (r.data.appliedCount > 0 && r.data.failedCount > 0))) {
+            } else if (r?.data && (r.data.partial === true || r.data.status === 'partial' || ((r.data.appliedCount ?? 0) > 0 && (r.data.failedCount ?? 0) > 0))) {
               status = 'warning';
             }
 
@@ -2514,9 +2624,7 @@ export class ChatFlowService {
             } satisfies ChatStreamToolStatusData;
           }
         } finally {
-          if (onAbort && request.abortSignal) {
-            request.abortSignal.removeEventListener('abort', onAbort);
-          }
+          dispose();
         }
       }
 
@@ -2556,7 +2664,7 @@ export class ChatFlowService {
       yield {
         conversationId,
         cancelled: true as const,
-      } as any;
+      } satisfies ChatStreamCancelledData;
       return;
     }
 
@@ -2583,7 +2691,10 @@ export class ChatFlowService {
     }
 
     // 如果本轮存在 cancelled，则不再继续推进，也不再等待下一次确认
-    const hasCancelledTools = toolResultsThisTurn.some(r => (r.result as any).cancelled);
+    const hasCancelledTools = toolResultsThisTurn.some(r => {
+      const result = r.result as { cancelled?: boolean } | null | undefined;
+      return result?.cancelled === true;
+    });
     if (hasCancelledTools) {
       yield {
         conversationId,
@@ -2672,6 +2783,17 @@ export class ChatFlowService {
       // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树。
       // 必须同时用于 M1 校验：在校验与删除之间不得有其他写入（rejectAllPendingToolCalls 只追加）。
       const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);
+      // C-3：校验 targetIndex 边界。负数/越界此前会让 deletedFromMessageId 变 null、删除语义错误，
+      // 这里在删除动作前显式拒绝，返回明确的 INVALID_TARGET_INDEX。
+      if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= historyBeforeDelete.length) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_TARGET_INDEX',
+            message: t('modules.api.chat.errors.invalidTargetIndex', { targetIndex }),
+          },
+        };
+      }
       if (typeof requestMessageId === 'string' && requestMessageId.trim() !== '') {
         const targetMessage = historyBeforeDelete[targetIndex];
         if (!targetMessage || targetMessage.id !== requestMessageId.trim()) {

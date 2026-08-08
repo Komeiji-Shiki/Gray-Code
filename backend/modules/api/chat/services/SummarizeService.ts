@@ -895,7 +895,10 @@ export class SummarizeService {
             // 优先 usageMetadata / tokenCountByChannel，缺失才本地估算，避免两套口径不一致
             // 导致规划出的范围必然超出总结模型上下文）
             const channelType = config.type;
-            let estimatedTokens = this.estimateMessagesTokens(messagesToSummarize, channelType);
+            // C-15：一次性逐条估算 token，之后增量维护总和（每轮收缩只扣减被排除段，
+            // 替代每轮全量重扫+全量重估的 O(n²) 行为）
+            const perMessageTokens = messagesToSummarize.map(msg => this.estimateMessageTokensForBudget(msg, channelType));
+            let estimatedTokens = perMessageTokens.reduce((sum, t) => sum + t, 0);
             let insertIndex = summarizeEndIndex;
 
             // 超出了总结模型上下文：循环排除最后一对工具交互所在轮，重新估算直到装得下
@@ -940,7 +943,11 @@ export class SummarizeService {
                     break;
                 }
 
-                // 把该轮（或该工具交互）排除在总结范围外，重新估算剩余内容
+                // 把该轮（或该工具交互）排除在总结范围外，增量扣减被排除段的 token 并截短逐条数组
+                for (let i = cutIndex; i < perMessageTokens.length; i++) {
+                    estimatedTokens -= perMessageTokens[i];
+                }
+                perMessageTokens.length = cutIndex;
                 messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
                 insertIndex = newEndIndex;
                 this.log.warn('auto.context_overflow_trimmed', {
@@ -952,7 +959,6 @@ export class SummarizeService {
                     originalRange: `${summarizeInputStartIndex}-${prevEndIndex}`,
                     newRange: `${summarizeInputStartIndex}-${newEndIndex}`
                 });
-                estimatedTokens = this.estimateMessagesTokens(messagesToSummarize, channelType);
             }
 
             if (messagesToSummarize.length === 0) {
@@ -1609,19 +1615,23 @@ export class SummarizeService {
      * 原生 fetch 中断会抛出 name === 'AbortError' 的 DOMException；
      * 部分调用方还会用 code='CANCELLED' / 'ABORTED' 标记取消。
      */
-    private isAbortError(err: any): boolean {
-        return !!err && (
-            err.type === ErrorType.CANCELLED_ERROR
-            || err.name === 'AbortError'
-            || err.code === 'CANCELLED'
-            || err.code === 'ABORTED'
+    private isAbortError(err: unknown): boolean {
+        if (!err || typeof err !== 'object') {
+            return false;
+        }
+        const e = err as { type?: unknown; name?: unknown; code?: unknown };
+        return (
+            e.type === ErrorType.CANCELLED_ERROR
+            || e.name === 'AbortError'
+            || e.code === 'CANCELLED'
+            || e.code === 'ABORTED'
         );
     }
 
     /**
      * 检查是否是 AsyncGenerator
      */
-    private isAsyncGenerator(obj: any): obj is AsyncGenerator<StreamChunk> {
-        return obj && typeof obj[Symbol.asyncIterator] === 'function';
+    private isAsyncGenerator(obj: unknown): obj is AsyncGenerator<StreamChunk> {
+        return !!obj && typeof (obj as AsyncGenerator<StreamChunk>)[Symbol.asyncIterator] === 'function';
     }
 }

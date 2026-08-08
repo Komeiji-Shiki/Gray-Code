@@ -71,7 +71,16 @@ function cloneToolResponse(response: Record<string, unknown>): Record<string, un
     try {
         return structuredClone(response);
     } catch {
-        return JSON.parse(JSON.stringify(response));
+        try {
+            return JSON.parse(JSON.stringify(response));
+        } catch {
+            // C-11：JSON 回退同样可能失败（循环引用/非序列化值）——返回失败结果，
+            // 避免异常逃逸丢整批工具结果。
+            return {
+                success: false,
+                error: 'tool result serialization failed (circular reference or non-serializable value)',
+            };
+        }
     }
 }
 
@@ -135,7 +144,9 @@ export class ToolExecutionService {
     private readonly mailboxDrainEpochs = new Map<string, number>();
     private mailboxDrainEpochCounter = 0;
     /** H4 兜底可观测性：已提示过「会话未绑定工作区」的会话集合（每会话仅告警一次，避免刷屏） */
-    private readonly unboundWorkspaceWarned = new Set<string>();
+    /** C-10：带时间戳的 Map 实现，超过上限时淘汰最旧条目，避免无界增长 */
+    private readonly unboundWorkspaceWarned = new Map<string, number>();
+    private static readonly UNBOUND_WARNED_MAX = 500;
     private readonly log = Logger.get('ToolExec');
 
     private claimMailboxDrainEpoch(
@@ -267,7 +278,8 @@ export class ToolExecutionService {
         progressEmitter?: ToolProgressEmitter,
         mailboxConversationId?: string,
         mailboxRunId?: string,
-        nestingDepth?: number
+        nestingDepth?: number,
+        modelOverride?: string
     ): Promise<ContentPart[]> {
         const { responseParts } = await this.executeFunctionCallsWithResults(
             calls,
@@ -281,7 +293,9 @@ export class ToolExecutionService {
             undefined,
             mailboxConversationId,
             mailboxRunId,
-            nestingDepth
+            nestingDepth,
+            undefined,
+            modelOverride
         );
         return responseParts;
     }
@@ -315,7 +329,8 @@ export class ToolExecutionService {
         mailboxConversationId?: string,
         mailboxRunId?: string,
         nestingDepth?: number,
-        activeWorkspaceUri?: string
+        activeWorkspaceUri?: string,
+        modelOverride?: string
     ): Promise<ToolExecutionFullResult> {
         const generator = this.executeFunctionCallsWithProgress(
             calls,
@@ -330,7 +345,8 @@ export class ToolExecutionService {
             mailboxConversationId,
             mailboxRunId,
             nestingDepth,
-            activeWorkspaceUri
+            activeWorkspaceUri,
+            modelOverride
         );
 
         let next = await generator.next();
@@ -367,7 +383,8 @@ export class ToolExecutionService {
         mailboxConversationId?: string,
         mailboxRunId?: string,
         nestingDepth?: number,
-        activeWorkspaceUri?: string
+        activeWorkspaceUri?: string,
+        modelOverride?: string
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         // MED-1：领取 drain epoch——最新启动的执行循环持有 (conversationId, runId) 的 drain 权
         const mailboxDrain = this.claimMailboxDrainEpoch(mailboxConversationId, mailboxRunId);
@@ -386,7 +403,8 @@ export class ToolExecutionService {
                 mailboxRunId,
                 nestingDepth,
                 mailboxDrain,
-                activeWorkspaceUri
+                activeWorkspaceUri,
+                modelOverride
             );
         } finally {
             // E-2：生成器异常/被提前 return() 时兜底释放（正常完成路径由核心 return 后同样
@@ -417,7 +435,8 @@ export class ToolExecutionService {
         mailboxRunId?: string,
         nestingDepth?: number,
         mailboxDrain?: { key: string; epoch: number },
-        activeWorkspaceUri?: string
+        activeWorkspaceUri?: string,
+        modelOverride?: string
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
         const resolvedProgressEmitter = typeof executionOptions === 'function'
@@ -438,7 +457,21 @@ export class ToolExecutionService {
         // webview 正常路径会在创建/读取时绑定工作区；此处覆盖纯后端/API 等漏网路径，
         // 把「静默降级」变为可观测——每会话仅告警一次。
         if (conversationId && !resolvedWorkspaceUri && !this.unboundWorkspaceWarned.has(conversationId)) {
-            this.unboundWorkspaceWarned.add(conversationId);
+            // C-10：有界记录——超过上限时淘汰最旧的一条，Set 永不清除的问题一并解决
+            if (this.unboundWorkspaceWarned.size >= ToolExecutionService.UNBOUND_WARNED_MAX) {
+                let oldestKey: string | undefined;
+                let oldestAt = Infinity;
+                for (const [key, at] of this.unboundWorkspaceWarned) {
+                    if (at < oldestAt) {
+                        oldestAt = at;
+                        oldestKey = key;
+                    }
+                }
+                if (oldestKey !== undefined) {
+                    this.unboundWorkspaceWarned.delete(oldestKey);
+                }
+            }
+            this.unboundWorkspaceWarned.set(conversationId, Date.now());
             this.log.warn('conversation_unbound_workspace', {
                 conversationId,
                 hint: '会话未绑定工作区，记忆工具将使用全局作用域；如预期应为工作区记忆，请检查会话创建/读取路径是否传入 workspaceUri',
@@ -661,12 +694,15 @@ export class ToolExecutionService {
                 // 给已启动调用一个收尾窗口，窗口内落定的用真实结果结算（真实副作用
                 // 结果不能丢），窗口结束仍未落定的按取消结算；窗口有界，停止按钮不被拖死。
                 let onAbort: (() => void) | undefined;
-                const abortPromise: Promise<undefined> | undefined = abortSignal
-                    ? new Promise<undefined>((resolve) => {
-                        onAbort = () => resolve(undefined);
-                        abortSignal.addEventListener('abort', onAbort, { once: true });
-                    })
-                    : undefined;
+                // C-12：创建 abortPromise 前先检查信号已 aborted（已中止时立即 resolve 走取消路径）
+                const abortPromise: Promise<undefined> | undefined = abortSignal?.aborted
+                    ? Promise.resolve(undefined)
+                    : abortSignal
+                        ? new Promise<undefined>((resolve) => {
+                            onAbort = () => resolve(undefined);
+                            abortSignal.addEventListener('abort', onAbort, { once: true });
+                        })
+                        : undefined;
 
                 const callPromises = group.map(item =>
                     this.runSingleToolCall(
@@ -683,7 +719,8 @@ export class ToolExecutionService {
                         nestingDepth,
                         beforeCheckpointPromise,
                         deferWriteLock,
-                        resolvedWorkspaceUri
+                        resolvedWorkspaceUri,
+                        modelOverride
                     )
                 );
 
@@ -756,7 +793,8 @@ export class ToolExecutionService {
                 nestingDepth,
                 beforeCheckpointPromise,
                 deferWriteLock,
-                resolvedWorkspaceUri
+                resolvedWorkspaceUri,
+                modelOverride
             );
 
             const toolResult = this.finalizeToolResponse(
@@ -947,7 +985,8 @@ export class ToolExecutionService {
         nestingDepth?: number,
         checkpointReady?: Promise<CheckpointRecord | null> | null,
         deferWriteLock?: boolean,
-        activeWorkspaceUri?: string
+        activeWorkspaceUri?: string,
+        modelOverride?: string
     ): Promise<Record<string, unknown>> {
         // AI 正在执行工具：工具执行期间算用户在场（主人在等待/查看结果）
         beginAiWork();
@@ -969,7 +1008,8 @@ export class ToolExecutionService {
                 nestingDepth,
                 checkpointReady,
                 deferWriteLock,
-                activeWorkspaceUri
+                activeWorkspaceUri,
+                modelOverride
             );
         } catch (error) {
             const err = error as Error;
@@ -1190,7 +1230,8 @@ export class ToolExecutionService {
         nestingDepth?: number,
         checkpointReady?: Promise<CheckpointRecord | null> | null,
         deferWriteLock?: boolean,
-        activeWorkspaceUri?: string
+        activeWorkspaceUri?: string,
+        modelOverride?: string
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -1270,6 +1311,11 @@ export class ToolExecutionService {
             // 修改方式：把当前请求渠道配置 id 注入 toolContext，供 subagents handler 构造动态 worker 配置。
             // 修改目的：用户零配置即可让主模型派发与自己同渠道同权限的 worker。
             channelConfigId: config?.id,
+            // 修改原因：General Worker 虚拟子代理需要继承主会话当前模型（modelOverride），
+            // 只传渠道 id 会让它落到渠道默认模型上，与主模型不一致（默认模型配额/权限不同时报错）。
+            // 修改方式：把当前请求的模型覆盖 id 注入 toolContext。
+            // 修改目的：用户零配置派发的 worker 与主模型使用同一模型。
+            channelModelId: modelOverride,
             // 让 SubAgent Monitor 和长耗时工具复用同一工具执行链路上报进度。
             emitProgress: progressEmitter
                 ? (event: Parameters<ToolProgressEmitter>[0]) => progressEmitter({
@@ -1435,7 +1481,7 @@ export class ToolExecutionService {
                 });
             } else {
                 // 渠道不支持 function_call 模式的多模态（如 OpenAI）
-                console.log(`[Multimodal] Channel ${channelType} does not support function_call multimodal, image data will be discarded`);
+                this.log.warn('multimodal_function_call_unsupported', { channelType });
                 delete (response as any).multimodal;
 
                 // 构建函数响应 part
