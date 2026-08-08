@@ -63,7 +63,7 @@ describe('routeExtensionMessage', () => {
   });
 
   it('主动推送消息广播给订阅者', () => {
-    const broadcasts: any[] = [];
+    const broadcasts: unknown[] = [];
     const result = routeExtensionMessage(
       { type: 'subagentMonitor.event', data: { runId: 'run_1' } },
       new Map(),
@@ -71,13 +71,14 @@ describe('routeExtensionMessage', () => {
     );
 
     expect(result).toBe('broadcast');
-    expect(broadcasts[0].type).toBe('subagentMonitor.event');
+    const first = broadcasts[0] as { type?: unknown };
+    expect(first.type).toBe('subagentMonitor.event');
   });
 
   it('无人等待的 requestId 响应不会被当作推送消息广播出去', () => {
     // 这正是旧实现的缺陷：第一个监听器兑现并删除 requestId 后，
     // 其余监听器查不到它，就把这条响应交给了业务 handler。
-    const broadcasts: any[] = [];
+    const broadcasts: unknown[] = [];
     const result = routeExtensionMessage(
       { requestId: 'req_gone', success: true, data: { ok: 1 } },
       new Map(),
@@ -89,8 +90,8 @@ describe('routeExtensionMessage', () => {
   });
 
   it('非对象消息与无 type 的消息一律忽略', () => {
-    const broadcasts: any[] = [];
-    const sink = (message: any) => broadcasts.push(message);
+    const broadcasts: unknown[] = [];
+    const sink = (message: unknown) => broadcasts.push(message);
 
     expect(routeExtensionMessage(null, new Map(), sink)).toBe('ignored');
     expect(routeExtensionMessage('ping', new Map(), sink)).toBe('ignored');

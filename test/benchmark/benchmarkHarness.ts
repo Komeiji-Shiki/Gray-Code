@@ -100,10 +100,37 @@ export function printMetric(metric: BenchmarkMetric): void {
 
 // ==================== 真实文件系统 vscode shim ====================
 
+interface ShimUri {
+    fsPath: string;
+    scheme: string;
+    path: string;
+}
+
+interface ShimFileStat {
+    type: number;
+    size: number;
+    mtime: number;
+    ctime: number;
+}
+
+interface ShimFileSystem {
+    stat(uri: ShimUri): Promise<ShimFileStat>;
+    readFile(uri: ShimUri): Promise<Uint8Array>;
+    writeFile(uri: ShimUri, content: Uint8Array): Promise<void>;
+    createDirectory(uri: ShimUri): Promise<void>;
+    delete(uri: ShimUri, options?: { recursive?: boolean; useTrash?: boolean }): Promise<void>;
+    rename(source: ShimUri, target: ShimUri): Promise<void>;
+    readDirectory(uri: ShimUri): Promise<Array<[string, number]>>;
+}
+
 export interface VscodeShim {
-    Uri: any;
-    workspace: { fs: any };
-    FileType: any;
+    Uri: {
+        parse(value: string): ShimUri;
+        file(value: string): ShimUri;
+        joinPath(base: ShimUri, ...segments: string[]): ShimUri;
+    };
+    workspace: { fs: ShimFileSystem };
+    FileType: { File: number; Directory: number; SymbolicLink: number; Unknown: number };
 }
 
 /**
@@ -116,9 +143,9 @@ export interface VscodeShim {
  */
 export function createRealFsVscodeShim(): VscodeShim {
     const FileType = { File: 1, Directory: 2, SymbolicLink: 64, Unknown: 0 };
-    const uriCache = new Map<string, any>();
+    const uriCache = new Map<string, ShimUri>();
 
-    const toUri = (fsPath: string): any => {
+    const toUri = (fsPath: string): ShimUri => {
         const norm = path.normalize(fsPath);
         let uri = uriCache.get(norm);
         if (!uri) {
@@ -129,18 +156,18 @@ export function createRealFsVscodeShim(): VscodeShim {
     };
 
     const Uri = {
-        parse: (value: string): any => {
+        parse: (value: string): ShimUri => {
             if (value.startsWith('file://')) {
                 return toUri(decodeURIComponent(value.replace(/^file:\/\//, '')));
             }
             return toUri(value);
         },
-        file: (value: string): any => toUri(value),
-        joinPath: (base: any, ...segments: string[]): any => toUri(path.join(base.fsPath, ...segments)),
+        file: (value: string): ShimUri => toUri(value),
+        joinPath: (base: ShimUri, ...segments: string[]): ShimUri => toUri(path.join(base.fsPath, ...segments)),
     };
 
-    const fsShim: any = {
-        async stat(uri: any) {
+    const fsShim: ShimFileSystem = {
+        async stat(uri: ShimUri) {
             const st = await fs.stat(uri.fsPath);
             return {
                 type: st.isDirectory() ? FileType.Directory : FileType.File,
@@ -149,23 +176,23 @@ export function createRealFsVscodeShim(): VscodeShim {
                 ctime: st.ctimeMs,
             };
         },
-        async readFile(uri: any): Promise<Uint8Array> {
+        async readFile(uri: ShimUri): Promise<Uint8Array> {
             return await fs.readFile(uri.fsPath);
         },
-        async writeFile(uri: any, content: Uint8Array): Promise<void> {
+        async writeFile(uri: ShimUri, content: Uint8Array): Promise<void> {
             await fs.mkdir(path.dirname(uri.fsPath), { recursive: true });
             await fs.writeFile(uri.fsPath, content);
         },
-        async createDirectory(uri: any): Promise<void> {
+        async createDirectory(uri: ShimUri): Promise<void> {
             await fs.mkdir(uri.fsPath, { recursive: true });
         },
-        async delete(uri: any, opts?: { recursive?: boolean; useTrash?: boolean }): Promise<void> {
+        async delete(uri: ShimUri, opts?: { recursive?: boolean; useTrash?: boolean }): Promise<void> {
             await fs.rm(uri.fsPath, { recursive: opts?.recursive === true, force: true });
         },
-        async rename(src: any, dest: any): Promise<void> {
+        async rename(src: ShimUri, dest: ShimUri): Promise<void> {
             await fs.rename(src.fsPath, dest.fsPath);
         },
-        async readDirectory(uri: any): Promise<Array<[string, number]>> {
+        async readDirectory(uri: ShimUri): Promise<Array<[string, number]>> {
             const entries = await fs.readdir(uri.fsPath, { withFileTypes: true });
             return entries.map(entry => [
                 entry.name,

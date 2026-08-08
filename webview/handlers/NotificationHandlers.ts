@@ -148,7 +148,7 @@ export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
       ...result
     })
   } catch (error) {
-    console.error('[notifications.agentStop] Failed to dispatch notification:', error)
+    log.error('agent_stop_dispatch_failed', error)
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,
@@ -194,7 +194,7 @@ export const previewWindowsNotification: MessageHandler = async (data, requestId
       ...result
     })
   } catch (error) {
-    console.error('[notifications.preview] Failed to dispatch preview notification:', error)
+    log.error('preview_dispatch_failed', error)
     ctx.sendResponse(requestId, {
       success: true,
       shown: false,

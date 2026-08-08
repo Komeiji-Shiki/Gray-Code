@@ -20,6 +20,7 @@ import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modul
 
 /** 结果缓存 TTL（毫秒）：5 分钟内重复打开直接命中，手动刷新强制重算 */
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_STATS_CACHE_ENTRIES = 32;
 
 interface CachedStats {
     result: UsageStatsResult;
@@ -45,9 +46,18 @@ function getOrInitUsageCache(ctx: HandlerContext): UsageStatsCache | undefined {
     if (usageCache) return usageCache;
     const conversationsDir = ctx.conversationManager.getConversationsDirFsPath?.();
     if (!conversationsDir) return undefined;
-    usageCache = new UsageStatsCache();
-    disposeUsageWatcher = startUsageDirectoryWatcher(conversationsDir, usageCache);
-    return usageCache;
+    const candidate = new UsageStatsCache();
+    try {
+        const disposeWatcher = startUsageDirectoryWatcher(conversationsDir, candidate);
+        usageCache = candidate;
+        disposeUsageWatcher = disposeWatcher;
+        return usageCache;
+    } catch (error) {
+        usageCache = undefined;
+        disposeUsageWatcher = undefined;
+        console.warn('[UsageHandlers] Failed to initialize usage directory watcher:', error);
+        return undefined;
+    }
 }
 
 /** 释放目录监听与内存缓存（扩展 dispose 时调用） */
@@ -82,7 +92,15 @@ export const getUsageStats: MessageHandler = async (data, requestId, ctx) => {
       indexStore: ctx.conversationManager.getUsageIndexStore(),
       cache: getOrInitUsageCache(ctx)
     });
-    statsCache.set(key, { result: stats, cachedAt: Date.now() });
+    const now = Date.now();
+    for (const [cacheKey_, entry] of statsCache) {
+      if (now - entry.cachedAt >= CACHE_TTL_MS) statsCache.delete(cacheKey_);
+    }
+    if (!statsCache.has(key) && statsCache.size >= MAX_STATS_CACHE_ENTRIES) {
+      const oldestKey = [...statsCache.entries()].sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0]?.[0];
+      if (oldestKey) statsCache.delete(oldestKey);
+    }
+    statsCache.set(key, { result: stats, cachedAt: now });
     ctx.sendResponse(requestId, stats);
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_USAGE_STATS_ERROR', error?.message || 'Failed to aggregate usage stats');

@@ -3,6 +3,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { getSkillsManager } from '../../backend/modules/skills';
@@ -87,18 +88,17 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
         
         // 获取所有 skills 并合并持久化配置
         const allSkills = skillsManager.getAllSkills();
+        const enabledSkillIds = new Set(skillsManager.getEnabledSkills().map(skill => skill.id));
+        let globalStateChanged = false;
         const skills: SkillItem[] = allSkills.map(skill => {
             const saved = savedSkillsMap.get(skill.id);
             const enabled = saved?.enabled ?? true;          // 默认启用
             const sendContent = saved?.sendContent ?? true;  // 默认发送内容 (deprecated)
 
-            // 仅全局模式同步状态到 SkillsManager（对话隔离模式不污染全局）
-            if (!conversationId) {
-                if (enabled) {
-                    skillsManager.enableSkill(skill.id);
-                } else {
-                    skillsManager.disableSkill(skill.id);
-                }
+            if (!conversationId && enabledSkillIds.has(skill.id) !== enabled) {
+                globalStateChanged = enabled
+                    ? skillsManager.enableSkill(skill.id) || globalStateChanged
+                    : skillsManager.disableSkill(skill.id) || globalStateChanged;
             }
             
             return {
@@ -137,9 +137,11 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
                 }
             }
             
-            if (finalSkillsToSync.length > 0) {
-                // 批量更新配置，确保元数据得到同步
+            const currentSerialized = JSON.stringify(savedConfig.skills);
+            const nextSerialized = JSON.stringify(finalSkillsToSync);
+            if (finalSkillsToSync.length > 0 && currentSerialized !== nextSerialized) {
                 await ctx.settingsManager.updateSkillsConfig({ skills: finalSkillsToSync });
+                globalStateChanged = true;
             }
         }
         
@@ -160,7 +162,9 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
         // 同步完 enabled 状态后刷新 read_skill 工具声明，
         // 确保 AI 看到的 Skill 列表和面板中的启用状态一致。
         // 不加这一步的话，getSkillsConfig 中默认启用新 Skill 的逻辑不会反映到工具描述中。
-        toolRegistry.refreshTool('read_skill');
+        if (globalStateChanged) {
+            toolRegistry.refreshTool('read_skill');
+        }
         
         ctx.sendResponse(requestId, { skills });
     } catch (error: any) {
@@ -173,10 +177,13 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
  */
 export const checkSkillsExistence: MessageHandler = async (data, requestId, ctx) => {
     try {
-        const { skills } = data;
+        const skills = Array.isArray(data?.skills)
+            ? data.skills.filter((skill: unknown): skill is { id: string } =>
+                !!skill && typeof skill === 'object' && typeof (skill as { id?: unknown }).id === 'string')
+            : [];
         const skillsManager = getSkillsManager();
         
-        if (!skillsManager || !skills) {
+        if (!skillsManager || skills.length === 0) {
             ctx.sendResponse(requestId, { skills: [] });
             return;
         }
@@ -265,11 +272,10 @@ export const removeSkillConfig: MessageHandler = async (data, requestId, ctx) =>
             const skills = (await getConversationSkillsRaw(ctx, normalizedConversationId))
                 ?? [...ctx.settingsManager.getSkills()];
 
-            await saveConversationSkills(
-                ctx,
-                normalizedConversationId,
-                skills.filter(s => s.id !== id)
-            );
+            const updated = skills.filter(s => s.id !== id);
+            if (updated.length !== skills.length) {
+                await saveConversationSkills(ctx, normalizedConversationId, updated);
+            }
             ctx.sendResponse(requestId, { success: true });
             return;
         }
@@ -326,17 +332,14 @@ export const getSkillsDirectory: MessageHandler = async (data, requestId, ctx) =
  */
 export const openDirectory: MessageHandler = async (data, requestId, ctx) => {
     try {
-        const { path: dirPath } = data;
-        if (dirPath) {
-            // 确保目录存在后再打开，避免"系统找不到指定的文件"错误
-            const fs = await import('fs');
-            if (!fs.existsSync(dirPath)) {
-                await fs.promises.mkdir(dirPath, { recursive: true });
-            }
-
-            const uri = vscode.Uri.file(dirPath);
-            await vscode.env.openExternal(uri);
+        const dirPath = typeof data?.path === 'string' ? data.path.trim() : '';
+        if (!dirPath) {
+            ctx.sendError(requestId, 'OPEN_DIRECTORY_ERROR', 'Invalid directory path');
+            return;
         }
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        const uri = vscode.Uri.file(dirPath);
+        await vscode.env.openExternal(uri);
         ctx.sendResponse(requestId, { success: true });
     } catch (error: any) {
         ctx.sendError(requestId, 'OPEN_DIRECTORY_ERROR', error.message || 'Failed to open directory');

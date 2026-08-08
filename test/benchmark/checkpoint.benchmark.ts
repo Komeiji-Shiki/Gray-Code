@@ -204,7 +204,9 @@ describe('MIG-09 基准 ① 大工作区 checkpoint', () => {
         expect(restoreResult.deleted).toBe(0); // 与恢复计划一致：untracked 保留（白名单外，deleted=0）
         expect(restoreResult.failures).toEqual([]);
         // untracked 保留判定：快照后新建文件未被删除
-        await expect(fs.stat(path.join(wsDir, 'untracked_new.txt'))).resolves.toBeTruthy();
+        await expect(fs.stat(path.join(wsDir, 'untracked_new.txt'))).resolves.toMatchObject({
+            size: Buffer.byteLength('new file after snapshot')
+        });
         printMetric({
             label: '恢复（增量，目标=已漂移工作区）',
             ms: restore.ms,
@@ -279,7 +281,7 @@ describe('MIG-09 基准 ① 大工作区 checkpoint', () => {
         expect(corruptResult.success).toBe(false);
         expect(corruptResult.failures.some(f => f.path === targetKey && f.reason === 'hash_mismatch')).toBe(true);
         expect(corruptResult.restored).toBe(0); // 哈希校验失败不落盘
-        await expect(fs.stat(path.join(wsDir, targetRel))).rejects.toBeTruthy();
+        await expect(fs.stat(path.join(wsDir, targetRel))).rejects.toMatchObject({ code: 'ENOENT' });
         printMetric({
             label: '恢复（完整性：备份哈希校验失败）',
             ms: corruptRestore.ms,

@@ -5,7 +5,26 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
-import type { HandlerContext, MessageHandler } from '../types';
+import type { MessageHandler } from '../types';
+
+function requireMcpData(data: unknown, requestId: string, ctx: Parameters<MessageHandler>[2]): Record<string, any> | null {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    ctx.sendError(requestId, 'INVALID_PARAMS', 'Invalid MCP request parameters');
+    return null;
+  }
+  return data as Record<string, any>;
+}
+
+async function pathExists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code === 'FileNotFound' || code === 'ENOENT') return false;
+    throw error;
+  }
+}
 
 /**
  * 打开 MCP 配置文件
@@ -17,17 +36,13 @@ export const openMcpConfigFile: MessageHandler = async (data, requestId, ctx) =>
     
     // 确保目录存在
     const configDirUri = vscode.Uri.file(mcpConfigDir);
-    try {
-      await vscode.workspace.fs.stat(configDirUri);
-    } catch {
+    if (!await pathExists(configDirUri)) {
       await vscode.workspace.fs.createDirectory(configDirUri);
     }
     
     // 确保配置文件存在
     const configUri = vscode.Uri.file(mcpConfigFile);
-    try {
-      await vscode.workspace.fs.stat(configUri);
-    } catch {
+    if (!await pathExists(configUri)) {
       const defaultConfig = { mcpServers: {} };
       await vscode.workspace.fs.writeFile(
         configUri,
@@ -65,7 +80,9 @@ export const getMcpServers: MessageHandler = async (data, requestId, ctx) => {
  */
 export const validateMcpServerId: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { id, excludeId } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { id, excludeId } = params;
     const result = await ctx.mcpManager.validateServerId(id, excludeId);
     ctx.sendResponse(requestId, { success: true, ...result });
   } catch (error: any) {
@@ -78,7 +95,9 @@ export const validateMcpServerId: MessageHandler = async (data, requestId, ctx) 
  */
 export const createMcpServer: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { input, customId } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { input, customId } = params;
     const serverId = await ctx.mcpManager.createServer(input, customId);
     ctx.sendResponse(requestId, { success: true, serverId });
   } catch (error: any) {
@@ -91,7 +110,9 @@ export const createMcpServer: MessageHandler = async (data, requestId, ctx) => {
  */
 export const updateMcpServer: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { serverId, updates } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { serverId, updates } = params;
     await ctx.mcpManager.updateServer(serverId, updates);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -104,7 +125,9 @@ export const updateMcpServer: MessageHandler = async (data, requestId, ctx) => {
  */
 export const deleteMcpServer: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { serverId } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { serverId } = params;
     await ctx.mcpManager.deleteServer(serverId);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -117,7 +140,9 @@ export const deleteMcpServer: MessageHandler = async (data, requestId, ctx) => {
  */
 export const connectMcpServer: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { serverId } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { serverId } = params;
     await ctx.mcpManager.connect(serverId);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -130,7 +155,9 @@ export const connectMcpServer: MessageHandler = async (data, requestId, ctx) => 
  */
 export const disconnectMcpServer: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { serverId } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { serverId } = params;
     await ctx.mcpManager.disconnect(serverId);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -143,7 +170,9 @@ export const disconnectMcpServer: MessageHandler = async (data, requestId, ctx) 
  */
 export const setMcpServerEnabled: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { serverId, enabled } = data;
+    const params = requireMcpData(data, requestId, ctx);
+    if (!params) return;
+    const { serverId, enabled } = params;
     await ctx.mcpManager.setServerEnabled(serverId, enabled);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {

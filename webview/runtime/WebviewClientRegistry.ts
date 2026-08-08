@@ -82,7 +82,7 @@ export class WebviewClientRegistry {
       return fallback;
     }
 
-    return this.clients.keys().next().value;
+    return undefined;
   }
 
   postMessage(clientId: unknown, message: Record<string, unknown>): boolean {
@@ -103,10 +103,19 @@ export class WebviewClientRegistry {
     };
 
     try {
-      void Promise.resolve(client.postMessage(routedMessage)).catch(error => {
-        console.error('[WebviewClientRegistry] Failed to post routed webview message:', error);
-      });
-      return true;
+      const delivery = client.postMessage(routedMessage);
+      if (typeof delivery !== 'boolean') {
+        void Promise.resolve(delivery).then(delivered => {
+          if (delivered === false) {
+            console.warn('[WebviewClientRegistry] Routed webview rejected message delivery:', client.clientId);
+          }
+        }, error => {
+          console.error('[WebviewClientRegistry] Failed to post routed webview message:', error);
+        });
+        // VS Code 的异步 transport 无法同步等待；isAlive 已完成同步存活判断，异步 false 记录为失败证据。
+        return true;
+      }
+      return delivery;
     } catch (error) {
       console.error('[WebviewClientRegistry] Failed to post routed webview message:', error);
       return false;

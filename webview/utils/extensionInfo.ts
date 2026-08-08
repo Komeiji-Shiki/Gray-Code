@@ -21,7 +21,8 @@ export function getExtensionVersion(extensionPath: string): string {
   try {
     const packageJsonPath = path.join(extensionPath, 'package.json');
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-    const version = packageJson.version || '0.0.0';
+    const rawVersion = packageJson.version;
+    const version = typeof rawVersion === 'string' && rawVersion.trim() ? rawVersion : '0.0.0';
     versionCache.set(extensionPath, version);
     return version;
   } catch (error) {
