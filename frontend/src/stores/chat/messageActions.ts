@@ -382,16 +382,18 @@ export async function sendMessage(
   
   try {
     if (!state.currentConversationId.value) {
+      // await 前固化目标标签页：创建对话期间用户可能切换标签页，绑定必须基于快照
+      const tabIdAtSend = state.activeTabId.value
       const newId = await createAndPersistConversation(state, messageText)
       if (!newId) {
         throw new Error('Failed to create conversation')
       }
       originConvId = newId
-      // 更新当前标签页的 conversationId 和标题
-      if (state.activeTabId.value) {
-        updateTabConversationId(state, state.activeTabId.value, newId)
+      // 更新当前标签页的 conversationId 和标题（仅当用户没有切换走）
+      if (tabIdAtSend && state.activeTabId.value === tabIdAtSend) {
+        updateTabConversationId(state, tabIdAtSend, newId)
         const title = messageText.slice(0, 30) + (messageText.length > 30 ? '...' : '')
-        updateTabTitle(state, state.activeTabId.value, title)
+        updateTabTitle(state, tabIdAtSend, title)
       }
 
       await persistConversationModelConfig(state)
@@ -518,13 +520,16 @@ export async function sendMessage(
     }
 
   } catch (err: any) {
-    if (state.isStreaming.value) {
+    // 独立于 isStreaming 判断是否取消：取消瞬间 isStreaming 已被 cancelStream 清除，
+    // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉
+    const wasStreamCancelled = state._lastCancelledStreamId.value === state.activeStreamId.value
+    if (!wasStreamCancelled) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'
       })
-      resetPendingSendState(state)
     }
+    resetPendingSendState(state)
     return false
   } finally {
     state.isLoading.value = false

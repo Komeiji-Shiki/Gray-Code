@@ -24,44 +24,6 @@ import {
 } from '../../utils/functionCallMerge'
 
 /**
- * 解析 XML 工具调用
- */
-export function parseXMLToolCall(xmlContent: string): { name: string; args: Record<string, unknown> } | null {
-  try {
-    const nameMatch = xmlContent.match(/<name>([\s\S]*?)<\/name>/)
-    const argsMatch = xmlContent.match(/<args>([\s\S]*?)<\/args>/)
-    
-    if (nameMatch && argsMatch) {
-      return {
-        name: nameMatch[1].trim(),
-        args: JSON.parse(argsMatch[1].trim())
-      }
-    }
-  } catch {
-    // 解析失败
-  }
-  return null
-}
-
-/**
- * 解析 JSON 工具调用
- */
-export function parseJSONToolCall(jsonContent: string): { name: string; args: Record<string, unknown> } | null {
-  try {
-    const parsed = JSON.parse(jsonContent.trim())
-    if (parsed.tool && parsed.parameters) {
-      return {
-        name: parsed.tool,
-        args: parsed.parameters
-      }
-    }
-  } catch {
-    // 解析失败
-  }
-  return null
-}
-
-/**
  * 从 MIME 类型获取附件类型
  */
 export function getAttachmentTypeFromMime(mimeType: string): 'image' | 'video' | 'audio' | 'document' | 'code' {

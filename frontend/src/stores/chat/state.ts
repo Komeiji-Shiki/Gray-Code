@@ -49,8 +49,14 @@ function getMessageIndexMap(state: MessageIndexLookupState): Map<string, number>
   return hasMessageIndexState(state) ? state.messageIndexById.value : null
 }
 
+let messageIndexAssertionCounter = 0
+
 function assertMessageIndexInvariant(state: MessageIndexLookupState): void {
   if (!SHOULD_ASSERT_MESSAGE_INDEX_INVARIANT || !hasMessageIndexState(state)) return
+  // dev/test 下每次 append 都重建整表校验是 O(n)：抽样降频（每 50 次校验一次），
+  // 保持防护能力的同时避免长会话流式期间的无谓开销
+  messageIndexAssertionCounter++
+  if (messageIndexAssertionCounter % 50 !== 0) return
 
   const expected = buildMessageIndexById(state.allMessages.value)
   const actual = state.messageIndexById.value

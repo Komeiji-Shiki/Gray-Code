@@ -32,8 +32,7 @@ import { loadBranchGraph } from './branchActions'
 export {
   addFunctionCallToMessage,
   addTextToMessage,
-  processStreamingText,
-  flushToolCallBuffer
+  processStreamingText
 } from './streamHelpers'
 
 /**
@@ -241,6 +240,9 @@ export function handleStreamChunk(
         if (state.activeStreamId.value === null) {
           finishSmoothStreamForState(state)
           finishBranchStreamTracking(state)
+          // 终结性 toolIteration（审批门闸/工具被取消终止流，后端不再发 complete）
+          // 不会走到下方 complete 分支的 processQueue：这里补触发，避免排队消息滞留
+          nextTick(() => processQueue())
         } else {
           // P1 排队消息提前投递：当前动作已彻底结束——后端在 yield toolIteration 之前
           // 已把工具结果 settleFunctionResponses/addContent 落盘，此处即是“执行完当前动作”

@@ -84,9 +84,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   /** 是否有运行中的终端 */
   const hasRunning = computed(() => runningCount.value > 0)
   
-  /** 命令到终端ID的映射（用于通过命令匹配终端） */
-  const commandToTerminalId = ref<Map<string, string>>(new Map())
-  
+  // ============ 方法 ============
   // ============ 方法 ============
   
   /**
@@ -163,10 +161,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
         terminals.value.set(terminalId, terminal)
         
-        // 建立命令到终端ID的映射
-        if (command) {
-          commandToTerminalId.value.set(command, terminalId)
-        }
         break
         
       case 'output':
@@ -210,10 +204,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         terminal.killed = killed
         terminal.duration = duration
         
-        // 清理命令映射
-        if (terminal.command) {
-          commandToTerminalId.value.delete(terminal.command)
-        }
         break
     }
   }
@@ -234,7 +224,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         terminal.running = false
         terminal.killed = true
         if (result.output) {
-          terminal.output = result.output
+          terminal.output = result.output.slice(-MAX_TERMINAL_OUTPUT)
         }
       }
       
@@ -260,7 +250,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       if (result.success) {
         const terminal = terminals.value.get(terminalId)
         if (terminal && result.output) {
-          terminal.output = result.output
+          terminal.output = result.output.slice(-MAX_TERMINAL_OUTPUT)
           terminal.running = result.running ?? terminal.running
         }
       }
@@ -309,7 +299,10 @@ export const useTerminalStore = defineStore('terminal', () => {
     
     onMessageFromExtension((message) => {
       if (message.type === 'terminalOutput') {
-        handleTerminalOutput(message.data as TerminalOutputEvent)
+        const event = message.data as TerminalOutputEvent | undefined
+        // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）
+        if (!event || typeof event.terminalId !== 'string' || typeof event.type !== 'string') return
+        handleTerminalOutput(event)
       }
     })
     

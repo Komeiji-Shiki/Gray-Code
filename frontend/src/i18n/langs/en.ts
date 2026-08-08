@@ -604,7 +604,9 @@ const en: LanguageMessages = {
                 historyTokenLabel: 'History',
                 requestTokenLabel: 'Request',
                 dividerMarker: 'Context summary truncation point: above this line is summarized history (original messages still viewable), below is the active content sent to the AI',
-                dividerMarkerPrefix: 'Summary Cut'
+                dividerMarkerPrefix: 'Summary Cut',
+                marker: 'Context Summary · {count} messages compressed',
+                markerPrefix: 'Context Summary'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',

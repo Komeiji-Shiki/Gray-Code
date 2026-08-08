@@ -109,11 +109,17 @@ async function handleRestore() {
 </script>
 
 <template>
-  <div class="summary-message">
+  <div
+    class="summary-message"
+    :data-preview="t('components.message.summary.marker', { count: message.summarizedMessageCount || 0 })"
+    data-marker-color="rgba(221, 185, 47, 0.9)"
+    :data-marker-tooltip-prefix="t('components.message.summary.markerPrefix')"
+  >
     <div class="summary-bar" @click="isExpanded = !isExpanded">
       <!-- 左侧：图标和标题 -->
       <div class="summary-left">
         <i class="codicon" :class="isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
+        <i class="codicon codicon-fold summary-icon"></i>
         <span class="summary-title">{{ t('components.message.summary.title') }}</span>
         <span v-if="message.summarizedMessageCount" class="summary-count">
           {{ t('components.message.summary.compressed', { count: message.summarizedMessageCount }) }}
@@ -170,22 +176,24 @@ async function handleRestore() {
 
 <style scoped>
 .summary-message {
-  margin: 8px 16px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  margin: 2px 0;
+  border: none;
+  border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
   overflow: hidden;
   background: var(--vscode-editor-background);
+  box-shadow: inset 0 0 0 1px rgba(221, 185, 47, 0.08);
 }
 
 .summary-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 8px 16px;
   background: linear-gradient(
-    135deg,
-    rgba(128, 128, 128, 0.08),
-    rgba(128, 128, 128, 0.03)
+    90deg,
+    rgba(221, 185, 47, 0.12),
+    rgba(128, 128, 128, 0.035) 38%,
+    transparent
   );
   cursor: pointer;
   user-select: none;
@@ -194,9 +202,10 @@ async function handleRestore() {
 
 .summary-bar:hover {
   background: linear-gradient(
-    135deg,
-    rgba(128, 128, 128, 0.12),
-    rgba(128, 128, 128, 0.06)
+    90deg,
+    rgba(221, 185, 47, 0.18),
+    rgba(128, 128, 128, 0.07) 42%,
+    transparent
   );
 }
 
@@ -204,6 +213,7 @@ async function handleRestore() {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .summary-left .codicon {
@@ -211,8 +221,14 @@ async function handleRestore() {
   color: var(--vscode-descriptionForeground);
 }
 
+.summary-left .summary-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--vscode-charts-yellow, #ddb92f);
+}
+
 .summary-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--vscode-foreground);
 }
@@ -227,8 +243,8 @@ async function handleRestore() {
 
 .summary-auto-badge {
   font-size: 11px;
-  color: var(--vscode-badge-foreground);
-  background: var(--vscode-badge-background);
+  color: var(--vscode-charts-yellow, #ddb92f);
+  background: rgba(221, 185, 47, 0.1);
   padding: 2px 8px;
   border-radius: 10px;
   border: 1px solid var(--vscode-focusBorder);
@@ -312,17 +328,17 @@ async function handleRestore() {
 }
 
 .summary-preview {
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 6px 16px 8px 42px;
+  font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  line-height: 1.5;
-  border-top: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-textBlockQuote-background);
+  line-height: 1.45;
+  border-top: 1px solid rgba(221, 185, 47, 0.1);
+  background: rgba(221, 185, 47, 0.035);
 }
 
 .summary-content {
-  padding: 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: 12px 16px 14px 42px;
+  border-top: 1px solid rgba(221, 185, 47, 0.15);
   background: var(--vscode-editor-background);
 }
 
