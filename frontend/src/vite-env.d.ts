@@ -9,6 +9,15 @@ declare module '*.vue' {
   export default component
 }
 
+interface Window {
+  __GRAYCODE_VIEW_MODE?: 'subagentMonitor'
+  __GRAYCODE_STARTUP_SPLASH_ENABLED?: boolean
+  __GRAYCODE_WEBVIEW_CLIENT_ID?: string
+  __GRAYCODE_INITIAL_RUN_ID?: string | null
+  __GRAYCODE_BUILTIN_SOUND_ASSETS?: unknown
+  __GRAYCODE_FRONTEND_STYLES_READY?: Promise<void>
+}
+
 // VSCode Webview API 类型声明
 interface VsCodeApi {
   postMessage(message: unknown): void

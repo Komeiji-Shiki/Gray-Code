@@ -155,6 +155,7 @@ describe('App 开屏动画启动偏好', () => {
 
   beforeEach(() => {
     settingsRequest = deferred<any>()
+    window.__GRAYCODE_STARTUP_SPLASH_ENABLED = true
 
     const settingsStore = reactive({
       currentView: 'chat',
@@ -216,31 +217,34 @@ describe('App 开屏动画启动偏好', () => {
   afterEach(() => {
     wrapper?.unmount()
     wrapper = undefined
+    delete window.__GRAYCODE_STARTUP_SPLASH_ENABLED
   })
 
-  it('配置请求未返回时不挂载任何偏好专属启动画面', async () => {
+  it('同步偏好开启时首帧立即挂载 Splash，不等待配置请求返回', async () => {
     wrapper = mount(App)
     await nextTick()
 
     expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
   })
 
-  it('配置明确关闭时只在主界面初始化期间显示关闭态占位，从始至终不挂载 Splash', async () => {
+  it('同步偏好关闭时首帧立即显示关闭态占位，从始至终不挂载 Splash', async () => {
+    window.__GRAYCODE_STARTUP_SPLASH_ENABLED = false
     const chatInitialization = deferred<void>()
     runtime.chatStore.initialize.mockReturnValueOnce(chatInitialization.promise)
 
     wrapper = mount(App)
     await nextTick()
-    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
+
+    const initialBackdrop = wrapper.get('.startup-backdrop')
+    expect(initialBackdrop.attributes('aria-hidden')).toBe('true')
+    expect(initialBackdrop.text()).toBe('')
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
 
     settingsRequest.resolve(makeSettingsResponse(false))
     await flushPromises()
 
-    const backdrop = wrapper.get('.startup-backdrop')
-    expect(backdrop.attributes('aria-hidden')).toBe('true')
-    expect(backdrop.text()).toBe('')
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(true)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
     expect(runtime.settingsStore.splashEnabled).toBe(false)
 
@@ -251,15 +255,18 @@ describe('App 开屏动画启动偏好', () => {
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
-  it('配置明确开启时只挂载 Splash，启动全程不显示关闭态占位', async () => {
+  it('同步偏好开启时启动全程只显示 Splash，异步配置不会切入关闭态占位', async () => {
     wrapper = mount(App)
     await nextTick()
-    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
 
-    settingsRequest.resolve(makeSettingsResponse(true))
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
+
+    // 模拟 HTML 生成后设置被外部改动：本次启动仍使用生成 HTML 时冻结的快照。
+    settingsRequest.resolve(makeSettingsResponse(false))
     await flushPromises()
 
+    expect(runtime.settingsStore.splashEnabled).toBe(false)
     expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
 
@@ -271,6 +278,7 @@ describe('App 开屏动画启动偏好', () => {
   })
 
   it('本次启动关闭后，运行中重新开启只影响下次启动，不会突然补播', async () => {
+    window.__GRAYCODE_STARTUP_SPLASH_ENABLED = false
     wrapper = mount(App)
     settingsRequest.resolve(makeSettingsResponse(false))
     await flushPromises()
