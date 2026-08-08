@@ -40,6 +40,11 @@ function resetPendingSendState(state: ChatStoreState): void {
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   state._lastCancelledStreamId.value = null
+  // 发送失败即完全复位：回合级覆盖（模型/渠道）不留残渣。
+  // 注：仅「流转入后台对话继续」路径（validateSessionIdentity 二次校验失败）保留覆盖，
+  // 由目标标签页快照恢复兜底，不经过本函数。
+  state.pendingModelOverride.value = null
+  state.pendingConfigIdOverride.value = null
 }
 
 /**
@@ -89,6 +94,12 @@ export interface HiddenFunctionResponsePayload {
 
 export interface SendMessageOptions {
   modelOverride?: string
+  /**
+   * 一次性渠道覆盖：仅本次请求（及同一回合内的工具确认）使用该 configId，
+   * 不写后端全局 activeChannelId、不写对话元数据。
+   * 建议配套 modelOverride 一并传入，保证 assistant 消息 modelVersion 显示一致。
+   */
+  configIdOverride?: string
   hidden?: { functionResponse: HiddenFunctionResponsePayload }
   dynamicContextStrategyOverride?: 'single' | 'preserve'
   /** 消息来源，'background_task' 时前端渲染为后台任务卡片而非普通用户消息 */
@@ -379,6 +390,8 @@ export async function sendMessage(
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   let originConvId: string | null = state.currentConversationId.value
   const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
+  // 一次性渠道覆盖：仅本次请求生效，不改全局 configId/后端设置
+  const effectiveConfigId = (options?.configIdOverride || '').trim() || state.configId.value
   
   try {
     if (!state.currentConversationId.value) {
@@ -475,6 +488,10 @@ export async function sendMessage(
     }
 
     state.pendingModelOverride.value = effectiveModelOverride || null
+    // 一次性渠道覆盖随本回合生效：工具确认等后续请求沿用同一渠道
+    state.pendingConfigIdOverride.value = (options?.configIdOverride || '').trim()
+      ? effectiveConfigId
+      : null
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastApprovalGatedStreamId.value = null
@@ -496,7 +513,7 @@ export async function sendMessage(
 
     await sendToExtension('chatStream', {
       conversationId: targetConvId,
-      configId: state.configId.value,
+      configId: effectiveConfigId,
       message: messageText,
       // BR-01：窗口 user 消息的稳定节点 id（后端原样落库，编辑/重试才能按 id 定位）
       messageId: pendingUserMessageId,

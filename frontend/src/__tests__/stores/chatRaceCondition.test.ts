@@ -281,6 +281,7 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
       foldedMessageCount: 0,
       inputValue: '',
       pendingModelOverride: null,
+      pendingConfigIdOverride: null,
       editorNodes: [],
       attachments: [],
       messageQueue: [],
