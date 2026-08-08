@@ -113,6 +113,13 @@ export class VSCodeSettingsStorage implements SettingsStorage {
     /** 上次成功保存/加载的配置快照（键 → 值），save 时据此只写变更的键 */
     private lastSavedSnapshot: Record<string, unknown> = {};
 
+    /**
+     * save 串行队列：save() 对 lastSavedSnapshot 的「读旧快照 → 写盘 → 更新快照」
+     * 无互斥，并发 save 会让先完成的 save 用旧快照覆盖后写入的键，或快照与磁盘不一致。
+     * 整段入队串行执行（参考 SettingsCore.serializeMutation 的链式队列）。
+     */
+    private saveQueue: Promise<void> = Promise.resolve();
+
     constructor(options: VSCodeSettingsStorageOptions = {}) {
         this.options = {
             legacySettingsDir: options.legacySettingsDir!,
@@ -160,36 +167,45 @@ export class VSCodeSettingsStorage implements SettingsStorage {
     }
 
     async save(settings: GlobalSettings): Promise<void> {
-        const config = vscode.workspace.getConfiguration(GRAYCODE_CONFIG_SECTION);
+        const run = this.saveQueue.then(async () => {
+            const config = vscode.workspace.getConfiguration(GRAYCODE_CONFIG_SECTION);
 
-        try {
-            // 修改原因：旧实现每次保存都把全部 graycode.* 键全量 config.update 一遍，
-            // 包括庞大的 toolsConfig，触发多次写入与 Settings Sync 全量同步。
-            // 修改方式：与上次快照（上次保存/加载的结果）逐键深比较，只写变更的键；
-            // 全部未变更时不产生任何 config.update。
-            const updates: PromiseLike<void>[] = [];
-            const nextSnapshot: Record<string, unknown> = {};
-            const source = settings as unknown as Record<string, unknown>;
+            try {
+                // 修改原因：旧实现每次保存都把全部 graycode.* 键全量 config.update 一遍，
+                // 包括庞大的 toolsConfig，触发多次写入与 Settings Sync 全量同步。
+                // 修改方式：与上次快照（上次保存/加载的结果）逐键深比较，只写变更的键；
+                // 全部未变更时不产生任何 config.update。
+                const updates: PromiseLike<void>[] = [];
+                const nextSnapshot: Record<string, unknown> = {};
+                const source = settings as unknown as Record<string, unknown>;
 
-            for (const key of ALL_CONFIG_KEYS) {
-                const value = source[key];
-                // 快照存深拷贝：与活对象解耦，后续原地变更才能被 deepEqual 检出
-                nextSnapshot[key] = deepCloneValue(value);
-                if (deepEqual(value, this.lastSavedSnapshot[key])) {
-                    continue;
+                for (const key of ALL_CONFIG_KEYS) {
+                    const value = source[key];
+                    // 快照存深拷贝：与活对象解耦，后续原地变更才能被 deepEqual 检出
+                    nextSnapshot[key] = deepCloneValue(value);
+                    if (deepEqual(value, this.lastSavedSnapshot[key])) {
+                        continue;
+                    }
+                    updates.push(config.update(key, value, vscode.ConfigurationTarget.Global));
                 }
-                updates.push(config.update(key, value, vscode.ConfigurationTarget.Global));
+
+                // 仍使用 Promise.all 并行写入，减小更新期间处于不一致状态的时间窗口
+                await Promise.all(updates);
+
+                // 写入成功后才更新快照；部分失败时不记录，下次保存会重试全部变更键
+                this.lastSavedSnapshot = nextSnapshot;
+            } catch (error) {
+                console.error('[VSCodeSettingsStorage] Failed to save settings:', error);
+                throw new Error(`保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
             }
+        });
 
-            // 仍使用 Promise.all 并行写入，减小更新期间处于不一致状态的时间窗口
-            await Promise.all(updates);
-
-            // 写入成功后才更新快照；部分失败时不记录，下次保存会重试全部变更键
-            this.lastSavedSnapshot = nextSnapshot;
-        } catch (error) {
-            console.error('[VSCodeSettingsStorage] Failed to save settings:', error);
-            throw new Error(`保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        // 链尾吞掉本次错误（调用方仍从 run 拿到真实结果），防止单次失败阻塞后续写
+        this.saveQueue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
     }
 
     private readSettingsFromVSCode(

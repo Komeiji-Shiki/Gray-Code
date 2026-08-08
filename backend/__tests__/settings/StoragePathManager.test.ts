@@ -139,7 +139,7 @@ describe('StoragePathManager', () => {
         expect(result).toMatchObject({ success: false, copiedFiles: 0 });
         await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe('chat');
         expect(settingsManager.getStoragePathConfig().customDataPath).toBeUndefined();
-        expect(settingsManager.getStoragePathConfig().migrationStatus).toBe('none');
+        expect(settingsManager.getStoragePathConfig().migrationStatus).toBe('failed');
         expect(settingsManager.getStoragePathConfig().migrationError).toBe('copy failed');
     });
 
@@ -167,7 +167,7 @@ describe('StoragePathManager', () => {
         expect(manager.getEffectiveDataPath()).toBe(customPath);
         expect(settingsManager.getStoragePathConfig()).toMatchObject({
             customDataPath: customPath,
-            migrationStatus: 'completed',
+            migrationStatus: 'failed',
             lastMigrationAt: 123,
             migrationError: 'copy failed'
         });

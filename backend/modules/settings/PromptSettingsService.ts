@@ -76,8 +76,8 @@ export class PromptSettingsService {
                         dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy)
                     },
                     [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
-                    'plan': PLAN_PROMPT_MODE,
-                    'ask': ASK_PROMPT_MODE,
+                    [PLAN_MODE_ID]: PLAN_PROMPT_MODE,
+                    [ASK_MODE_ID]: ASK_PROMPT_MODE,
                     [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE
                 }
             };
@@ -93,13 +93,13 @@ export class PromptSettingsService {
             needsUpdate = true;
         }
         
-        if (!modes['plan']) {
-            modes['plan'] = PLAN_PROMPT_MODE;
+        if (!modes[PLAN_MODE_ID]) {
+            modes[PLAN_MODE_ID] = PLAN_PROMPT_MODE;
             needsUpdate = true;
         }
         
-        if (!modes['ask']) {
-            modes['ask'] = ASK_PROMPT_MODE;
+        if (!modes[ASK_MODE_ID]) {
+            modes[ASK_MODE_ID] = ASK_PROMPT_MODE;
             needsUpdate = true;
         }
 
@@ -528,7 +528,12 @@ export class PromptSettingsService {
     async deletePromptMode(modeId: string): Promise<void> {
         const config = this.getSystemPromptConfig();
         const modes = { ...config.modes };
-        
+
+        // 不存在/已删除的模式：直接返回，不做无意义的保存广播
+        if (!modes[modeId]) {
+            return;
+        }
+
         // 至少保留一个模式
         if (Object.keys(modes).length <= 1) {
             throw new Error('Cannot delete the last mode');

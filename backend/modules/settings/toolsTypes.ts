@@ -109,6 +109,13 @@ export interface SearchInFilesToolConfig {
     excludePatterns: string[];
     
     /**
+     * vscode.workspace.findFiles 单次枚举的最大文件数。
+     * 工具会额外请求 1 个条目判断是否真的截断，避免恰好等于上限时误报。
+     * 默认 1000。
+     */
+    maxFindFiles?: number;
+
+    /**
      * 是否启用基于文件头的文本/二进制检测
      *
      * 启用后：在读取/搜索前先读取少量文件头字节进行启发式判断，
@@ -695,6 +702,7 @@ export const DEFAULT_SEARCH_IN_FILES_CONFIG: SearchInFilesToolConfig = {
         '**/coverage/**',
         '**/.nyc_output/**'
     ],
+    maxFindFiles: 1000,
     enableHeaderTextCheck: true,
     headerSampleBytes: 4096,
     maxFileSizeBytes: 5 * 1024 * 1024,
@@ -773,11 +781,6 @@ export function getDefaultExecuteCommandConfig(): ExecuteCommandToolConfig {
         maxOutputLines: 50
     };
 }
-
-/**
- * 默认 execute_command 配置（运行时生成）
- */
-export const DEFAULT_EXECUTE_COMMAND_CONFIG: ExecuteCommandToolConfig = getDefaultExecuteCommandConfig();
 
 /**
  * 默认工具自动执行配置

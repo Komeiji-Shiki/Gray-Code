@@ -57,25 +57,28 @@ export class PinnedFilesSettingsService {
      * @returns 新添加的文件项
      */
     async addPinnedFile(path: string, workspaceUri: string): Promise<PinnedFileItem> {
-        const files = [...this.getPinnedFiles()];
-        
-        // 检查是否已存在（同一工作区同一路径）
-        if (files.some(f => f.path === path && f.workspaceUri === workspaceUri)) {
-            throw new Error(`File already pinned: ${path}`);
-        }
-        
-        const newFile: PinnedFileItem = {
-            id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            path,
-            workspaceUri,
-            enabled: true,
-            addedAt: Date.now()
-        };
-        
-        files.push(newFile);
-        await this.updatePinnedFilesConfig({ files });
-        
-        return newFile;
+        // 读-改-写整体入队串行：并发添加基于同一旧列表写回时后写会覆盖先写
+        return this.core.serializeMutation(async () => {
+            const files = [...this.getPinnedFiles()];
+            
+            // 检查是否已存在（同一工作区同一路径）
+            if (files.some(f => f.path === path && f.workspaceUri === workspaceUri)) {
+                throw new Error(`File already pinned: ${path}`);
+            }
+            
+            const newFile: PinnedFileItem = {
+                id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                path,
+                workspaceUri,
+                enabled: true,
+                addedAt: Date.now()
+            };
+            
+            files.push(newFile);
+            await this.updatePinnedFilesConfig({ files });
+            
+            return newFile;
+        });
     }
 
     /**
@@ -99,8 +102,10 @@ export class PinnedFilesSettingsService {
      * @param id 文件 ID
      */
     async removePinnedFile(id: string): Promise<void> {
-        const files = this.getPinnedFiles().filter(f => f.id !== id);
-        await this.updatePinnedFilesConfig({ files });
+        await this.core.serializeMutation(async () => {
+            const files = this.getPinnedFiles().filter(f => f.id !== id);
+            await this.updatePinnedFilesConfig({ files });
+        });
     }
 
     /**
@@ -109,10 +114,12 @@ export class PinnedFilesSettingsService {
      * @param enabled 是否启用
      */
     async setPinnedFileEnabled(id: string, enabled: boolean): Promise<void> {
-        const files = this.getPinnedFiles().map(f =>
-            f.id === id ? { ...f, enabled } : f
-        );
-        await this.updatePinnedFilesConfig({ files });
+        await this.core.serializeMutation(async () => {
+            const files = this.getPinnedFiles().map(f =>
+                f.id === id ? { ...f, enabled } : f
+            );
+            await this.updatePinnedFilesConfig({ files });
+        });
     }
 
     /**
@@ -121,17 +128,21 @@ export class PinnedFilesSettingsService {
      * @param newPath 新路径
      */
     async updatePinnedFilePath(id: string, newPath: string): Promise<void> {
-        const files = this.getPinnedFiles().map(f =>
-            f.id === id ? { ...f, path: newPath } : f
-        );
-        await this.updatePinnedFilesConfig({ files });
+        await this.core.serializeMutation(async () => {
+            const files = this.getPinnedFiles().map(f =>
+                f.id === id ? { ...f, path: newPath } : f
+            );
+            await this.updatePinnedFilesConfig({ files });
+        });
     }
 
     /**
      * 清空所有固定文件
      */
     async clearPinnedFiles(): Promise<void> {
-        await this.updatePinnedFilesConfig({ files: [] });
+        await this.core.serializeMutation(async () => {
+            await this.updatePinnedFilesConfig({ files: [] });
+        });
     }
 
     /**

@@ -57,7 +57,7 @@ export const getModels: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, result.models);
   } else {
-    ctx.sendError(requestId, 'GET_MODELS_ERROR', result.error || t('webview.errors.getModelsFailed'));
+    ctx.sendError(requestId, 'GET_MODELS_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.getModelsFailed')));
   }
 };
 
@@ -69,7 +69,7 @@ export const addModels: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    ctx.sendError(requestId, 'ADD_MODELS_ERROR', result.error || t('webview.errors.addModelsFailed'));
+    ctx.sendError(requestId, 'ADD_MODELS_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.addModelsFailed')));
   }
 };
 
@@ -81,7 +81,7 @@ export const removeModel: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    ctx.sendError(requestId, 'REMOVE_MODEL_ERROR', result.error || t('webview.errors.removeModelFailed'));
+    ctx.sendError(requestId, 'REMOVE_MODEL_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.removeModelFailed')));
   }
 };
 
@@ -93,7 +93,7 @@ export const setActiveModel: MessageHandler = async (data, requestId, ctx) => {
   if (result.success) {
     ctx.sendResponse(requestId, { success: true });
   } else {
-    ctx.sendError(requestId, 'SET_ACTIVE_MODEL_ERROR', result.error || t('webview.errors.setActiveModelFailed'));
+    ctx.sendError(requestId, 'SET_ACTIVE_MODEL_ERROR', typeof result.error === 'string' ? result.error : (result.error?.message || t('webview.errors.setActiveModelFailed')));
   }
 };
 
