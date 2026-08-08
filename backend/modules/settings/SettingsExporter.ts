@@ -20,6 +20,10 @@ import { SkillsManager } from '../skills/SkillsManager';
 import { ALL_CONFIG_KEYS } from './VSCodeSettingsStorage';
 import { MACHINE_SCOPE_KEYS } from './types';
 
+export const SETTINGS_EXPORT_KEYS = ALL_CONFIG_KEYS.filter(
+    key => !new Set<string>(MACHINE_SCOPE_KEYS).has(key)
+) as readonly string[];
+
 /** 导出包的版本号 */
 const EXPORT_FORMAT_VERSION = '1.0';
 
@@ -298,19 +302,11 @@ export class SettingsExporter {
      * 不导出 defaultValue（避免将包默认值固化为用户值）。
      * 自动跳过 MACHINE_SCOPE_KEYS 中的键（proxy、storagePath 等）。
      */
-    private collectVSCodeSettings(): Record<string, unknown> {
+    collectVSCodeSettings(): Record<string, unknown> {
         const config = vscode.workspace.getConfiguration('graycode');
         const result: Record<string, unknown> = {};
 
-        // 复用 VSCodeSettingsStorage 的配置键清单（syncable + machine），避免硬编码清单
-        // 与该存储的 SYNCABLE_KEYS 失同步（旧清单遗漏 checkForUpdates）；
-        // 机器作用域键（proxy/storagePath）仍需在此跳过，防止跨机器导出/导入污染。
-        const machineScopeSet = new Set(MACHINE_SCOPE_KEYS);
-
-        for (const key of ALL_CONFIG_KEYS) {
-            // 跳过机器作用域键
-            if (machineScopeSet.has(key)) continue;
-
+        for (const key of SETTINGS_EXPORT_KEYS) {
             const inspected = config.inspect(key);
             // 只取用户真实设定的值：globalValue > workspaceValue > workspaceFolderValue
             // 不使用 defaultValue，避免将包默认值固化为用户值导出

@@ -29,6 +29,8 @@ import {
     type SettingsChangeEvent,
 } from '../../../backend/modules/settings/types';
 import { SkillsManager } from '../../../backend/modules/skills/SkillsManager';
+import { SettingsExporter, SETTINGS_EXPORT_KEYS } from '../../../backend/modules/settings/SettingsExporter';
+import * as vscode from 'vscode';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -264,26 +266,29 @@ describe('reloadAndNotify (#22)', () => {
 // ---------------------------------------------------------------------------
 
 describe('VSCode settings value resolution (#21)', () => {
-    it('confirms workspaceFolderValue is in the VSCode Inspection API', () => {
-        // This is a specification test: we verify that the VSCode API
-        // supports `workspaceFolderValue` which we now include in the chain.
-        // The actual collectVSCodeSettings function is in SettingsExporter
-        // and uses `inspected?.workspaceFolderValue`.
-        const mockInspected = {
-            globalValue: undefined,
-            workspaceValue: undefined,
-            workspaceFolderValue: 'workspace-folder-value',
-            defaultValue: 'default-value',
-            key: 'test',
-        };
+    it('collectVSCodeSettings reads explicit scope values and excludes defaultValue', () => {
+        const inspect = jest.fn((key: string) => {
+            if (key === 'ui') {
+                return {
+                    globalValue: undefined,
+                    workspaceValue: undefined,
+                    workspaceFolderValue: { language: 'en' },
+                    defaultValue: { language: 'zh-CN' },
+                };
+            }
+            if (key === 'toolsEnabled') {
+                return { defaultValue: ['read_file'] };
+            }
+            return undefined;
+        });
+        (vscode.workspace as any).getConfiguration = jest.fn(() => ({ inspect }));
 
-        // Simulate the new resolution order
-        const value =
-            mockInspected.globalValue ??
-            mockInspected.workspaceValue ??
-            mockInspected.workspaceFolderValue;
-        expect(value).toBe('workspace-folder-value');
-        // defaultValue is NOT used
+        const exporter = Object.create(SettingsExporter.prototype) as SettingsExporter;
+        const result = exporter.collectVSCodeSettings();
+
+        expect(result.ui).toEqual({ language: 'en' });
+        expect(result).not.toHaveProperty('toolsEnabled');
+        expect(inspect).toHaveBeenCalledWith('ui');
     });
 });
 
@@ -292,23 +297,12 @@ describe('VSCode settings value resolution (#21)', () => {
 // ---------------------------------------------------------------------------
 
 describe('Import merge strategy (#15, #18)', () => {
-    it('MACHINE_SCOPE_KEYS are not in the knownKeys list for export', () => {
-        // Verify the knownKeys in SettingsExporter no longer include
-        // 'storagePath' and 'proxy' — these are filtered by MACHINE_SCOPE_KEYS.
-        // (Design-level verification: the exporter code was changed to remove them.)
-        const knownExportKeys = [
-            'toolsConfig',
-            'ui',
-            'toolsEnabled',
-            'toolAutoExec',
-            'maxToolIterations',
-            'defaultToolMode',
-            'activeChannelId',
-            'lastReadAnnouncementVersion',
-        ];
-        for (const mk of MACHINE_SCOPE_KEYS) {
-            expect(knownExportKeys).not.toContain(mk);
+    it('production export key list excludes all machine-scope keys', () => {
+        for (const machineKey of MACHINE_SCOPE_KEYS) {
+            expect(SETTINGS_EXPORT_KEYS).not.toContain(machineKey);
         }
+        expect(SETTINGS_EXPORT_KEYS).toContain('toolsConfig');
+        expect(SETTINGS_EXPORT_KEYS).toContain('checkForUpdates');
     });
 });
 
