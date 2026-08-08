@@ -13,6 +13,7 @@ import { CustomScrollbar, AnnouncementModal } from '../common'
 import ConversationList from '../history/ConversationList.vue'
 import { useChatStore, useSettingsStore } from '@/stores'
 import { useI18n } from '@/i18n'
+import { showNotification } from '@/utils/vscode'
 
 const { t } = useI18n()
 const chatStore = useChatStore()
@@ -30,9 +31,13 @@ async function handleSelect(id: string) {
 // 处理删除对话
 async function handleDelete(id: string) {
   try {
-    await chatStore.deleteConversation(id)
+    const ok = await chatStore.deleteConversation(id)
+    if (!ok) {
+      await showNotification(t('stores.chatStore.errors.deleteConversationFailed'), 'error')
+    }
   } catch (error) {
     console.error('[WelcomePanel] Failed to delete conversation:', error)
+    await showNotification(t('stores.chatStore.errors.deleteConversationFailed'), 'error')
   }
 }
 </script>
