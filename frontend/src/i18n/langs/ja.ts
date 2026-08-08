@@ -626,7 +626,9 @@ const ja: LanguageMessages = {
                 historyTokenLabel: '履歴',
                 requestTokenLabel: 'リクエスト',
                 dividerMarker: 'コンテキスト要約の切れ目：この線より上が要約済みの履歴（原文は引き続き閲覧可能）、下が AI に送信されるアクティブな内容です',
-                dividerMarkerPrefix: '要約切れ目'
+                dividerMarkerPrefix: '要約切れ目',
+                marker: 'コンテキスト要約 · {count} 件のメッセージを圧縮',
+                markerPrefix: 'コンテキスト要約'
             },
             checkpoint: {
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',

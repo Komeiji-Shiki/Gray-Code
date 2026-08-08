@@ -57,6 +57,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
     if (event.type === 'start') {
       if (!isBackgroundStartEvent(event)) return
+      // 已存在则忽略：重复 start 事件不能把已 completed/cancelled 的任务复活成 running
+      if (tasks.value[event.taskId]) return
       tasks.value = { ...tasks.value, [event.taskId]: taskRecordFromStartEvent(event) }
       return
     }
@@ -111,6 +113,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     const ready = taskList.value.filter(t =>
       !t.reported
       && t.status !== 'running'
+      // 子代理内部的后台命令不回流主会话（任务条仍展示，可单独取消）
+      && !t.subagentRunId
       && (!t.conversationId || t.conversationId === currentId)
     )
     if (ready.length === 0) return
@@ -186,6 +190,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     const ready = taskList.value.filter(t =>
       !t.reported
       && t.status !== 'running'
+      // 子代理内部的后台命令不回流主会话（任务条仍展示，可单独取消）
+      && !t.subagentRunId
       && (!t.conversationId || t.conversationId === currentId)
     )
     if (ready.length === 0) return
@@ -290,8 +296,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
   // ============ 初始化 ============
 
-  function initialize(): void {
-    if (initialized.value) return
+  function initialize(): () => void {
+    if (initialized.value) return () => undefined
     initialized.value = true
 
     onMessageFromExtension(message => {
@@ -306,19 +312,28 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     //          挂起的回执不会被补发，要一直等到下一次流结束或切换会话。
     // 修改方式：两个忙闲信号都监听，任一转为空闲即尝试补发（flushReports 自身幂等且有 flushing 保护）。
     // 修改目的：忙闲判断条件与补发触发条件保持一致。
-    watch(() => chatStore.isStreaming, streaming => {
+    // watch 句柄保存并在组件卸载时销毁，避免 HMR/重挂载后重复监听（重复触发 flushReports 是幂等的，
+    // 但重复 watch 是资源泄漏）。
+    const stopWatchStreaming = watch(() => chatStore.isStreaming, streaming => {
       if (!streaming) void flushReports()
     })
-    watch(() => chatStore.isWaitingForResponse, waiting => {
+    const stopWatchWaiting = watch(() => chatStore.isWaitingForResponse, waiting => {
       if (!waiting) void flushReports()
     })
 
     // 切换会话 → 补发属于新会话的挂起回执
-    watch(() => chatStore.currentConversationId, () => {
+    const stopWatchConversation = watch(() => chatStore.currentConversationId, () => {
       void flushReports()
     })
 
     void restoreActiveTasks()
+
+    // 返回清理函数：调用方（组件卸载/HMR）应调用以销毁 watch
+    return () => {
+      stopWatchStreaming()
+      stopWatchWaiting()
+      stopWatchConversation()
+    }
   }
 
   return {

@@ -203,6 +203,15 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value)
 }
 
+/** 短哈希：大 payload 的 eventId 派生用（避免 processedEventIds 无限膨胀） */
+function shortHash(input: string): string {
+  let hash = 0
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
+
 /**
  * 事件稳定 ID 规则。
  *
@@ -212,6 +221,7 @@ function stableStringify(value: unknown): string {
  * 说明：
  * - 推荐未来热路径显式提供 eventId 或 sequence。
  * - 当前 fallback 仅服务于 WP20 草案与测试基础设施，不声称已接管生产协议。
+ * - 大 payload（text delta / tool result）用短哈希派生键，避免 processedEventIds 记录全量文本无限膨胀。
  */
 export function getAgentRunEventId(event: AgentRunEvent): string {
   const explicitEventId = normalizeOptionalString(event.envelope.eventId)
@@ -225,17 +235,17 @@ export function getAgentRunEventId(event: AgentRunEvent): string {
     case 'run_started':
       return `${envelopeBase}|conversation:${normalizeOptionalString(event.payload.conversationId)}|status:${event.payload.status || 'running'}`
     case 'run_status_changed':
-      return `${envelopeBase}|status:${event.payload.status}|error:${stableStringify(event.payload.error || null)}`
+      return `${envelopeBase}|status:${event.payload.status}|error:${shortHash(stableStringify(event.payload.error || null))}`
     case 'message_snapshot':
       return `${envelopeBase}|message:${event.payload.message.id}`
     case 'message_text_delta':
-      return `${envelopeBase}|message:${event.payload.messageId}|thought:${event.payload.thought === true ? '1' : '0'}|text:${stableStringify(event.payload.text)}`
+      return `${envelopeBase}|message:${event.payload.messageId}|thought:${event.payload.thought === true ? '1' : '0'}|text:${shortHash(stableStringify(event.payload.text))}`
     case 'message_function_call_delta':
-      return `${envelopeBase}|message:${event.payload.messageId}|call:${stableStringify(event.payload.call)}`
+      return `${envelopeBase}|message:${event.payload.messageId}|call:${shortHash(stableStringify(event.payload.call))}`
     case 'tool_status':
-      return `${envelopeBase}|message:${event.payload.messageId}|tool:${stableStringify(event.payload.tool)}`
+      return `${envelopeBase}|message:${event.payload.messageId}|tool:${shortHash(stableStringify(event.payload.tool))}`
     case 'tool_result':
-      return `${envelopeBase}|message:${event.payload.messageId}|tool:${stableStringify(event.payload)}`
+      return `${envelopeBase}|message:${event.payload.messageId}|tool:${shortHash(stableStringify(event.payload))}`
   }
 }
 

@@ -116,13 +116,6 @@ export function processStreamingText(
 }
 
 /**
- * 兼容旧调用链。
- * Prompt 模式工具缓冲现在位于后端，此处不再需要额外处理。
- */
-export function flushToolCallBuffer(_message: Message, _state: ChatStoreState): void {
-}
-
-/**
  * 处理工具调用 part（原生function call format）
  */
 

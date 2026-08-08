@@ -591,6 +591,17 @@ const enhancedTools = computed<ToolUsage[]>(() => {
         }
       }
 
+      // 前台 SubAgent 转后台后的合成响应不是失败：旧父回合被替换，但子代理仍在后台任务栏运行。
+      if (tool.name === 'subagents' && (data as any)?.detached === true) {
+        return {
+          ...tool,
+          result: response || undefined,
+          error: undefined,
+          status: 'background',
+          awaitingConfirmation: false
+        }
+      }
+
       // 后台派发子代理（#58 修复）：按 backgroundTaskStore 中的真实任务状态推导头部图标
       if (tool.name === 'subagents' && (data as any)?.background === true) {
         const taskId = (data as any)?.taskId as string | undefined
@@ -1044,6 +1055,8 @@ function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string 
       return 'codicon-loading'
     case 'awaiting_apply':
       return 'codicon-diff'
+    case 'background':
+      return 'codicon-server-process'
     case 'success':
       return 'codicon-check'
     case 'warning':
@@ -1062,6 +1075,8 @@ function getStatusClass(status?: string, awaitingConfirmation?: boolean): string
   }
 
   switch (status) {
+    case 'background':
+      return 'status-background'
     case 'success':
       return 'status-success'
     case 'error':
@@ -1442,6 +1457,10 @@ const ToolContentHost = defineComponent({
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
   margin-left: var(--spacing-xs, 4px);
+}
+
+.status-icon.status-background {
+  color: var(--vscode-charts-purple, var(--vscode-descriptionForeground));
 }
 
 .status-icon.status-success {

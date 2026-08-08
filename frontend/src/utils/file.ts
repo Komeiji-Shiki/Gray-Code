@@ -280,7 +280,7 @@ export function downloadFile(data: string, filename: string, mimeType: string) {
 // Base64 转 Blob
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const byteCharacters = atob(base64)
-  const byteArrays = []
+    const byteArrays: number[] = []
   
   for (let i = 0; i < byteCharacters.length; i++) {
     byteArrays.push(byteCharacters.charCodeAt(i))

@@ -15,12 +15,16 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 
 // 滚动容器（用于分页加载）
-const scrollbarRef = ref<any>(null)
+const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 let scrollEl: HTMLElement | null = null
 let scrollTicking = false
 // 单次挂载最多自动补齐页数：数千条历史时递归补齐会串行拉几十页，造成 IPC 风暴（M9）
 let autoFillPages = 0
 const MAX_AUTO_FILL_PAGES = 3
+
+// 连续空页计数：加载后高度无增长时停止自调度，避免空页每帧空转烧 CPU
+let emptyLoadCount = 0
+const MAX_EMPTY_LOADS = 3
 
 function checkShouldLoadMore() {
   if (!scrollEl) return
@@ -29,13 +33,22 @@ function checkShouldLoadMore() {
   const remaining = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight
   // 提前 400px 触发预加载，做到无感
   if (remaining <= 400) {
-    chatStore.loadMoreConversations().then(() => {
-      // 如果加载后仍然不足以产生滚动条，继续补齐下一页（限页数，其余交给滚动触发）
-      if (autoFillPages < MAX_AUTO_FILL_PAGES) {
-        autoFillPages++
-        requestAnimationFrame(() => checkShouldLoadMore())
-      }
-    })
+    const heightBefore = scrollEl.scrollHeight
+    chatStore.loadMoreConversations()
+      .then(() => {
+        const heightAfter = scrollEl?.scrollHeight ?? heightBefore
+        // 连续多次加载后高度无增长（空页/数据异常）：停止自调度（上游 2a4f222）
+        emptyLoadCount = heightAfter > heightBefore ? 0 : emptyLoadCount + 1
+        if (emptyLoadCount >= MAX_EMPTY_LOADS) return
+        // 如果加载后仍然不足以产生滚动条，继续补齐下一页（限页数，其余交给滚动触发，本地 M9）
+        if (autoFillPages < MAX_AUTO_FILL_PAGES) {
+          autoFillPages++
+          requestAnimationFrame(() => checkShouldLoadMore())
+        }
+      })
+      .catch((error) => {
+        console.error('[HistoryPage] Failed to load more conversations:', error)
+      })
   }
 }
 
@@ -80,7 +93,7 @@ const filteredConversations = computed(() => {
   if (searchKeyword.value.trim()) {
     const keyword = searchKeyword.value.toLowerCase().trim()
     conversations = conversations.filter(conversation =>
-      conversation.title.toLowerCase().includes(keyword)
+      (conversation.title || '').toLowerCase().includes(keyword)
     )
   }
   return conversations
@@ -104,7 +117,11 @@ async function handleSelect(id: string) {
 
 // 处理删除对话
 async function handleDelete(id: string) {
-  await chatStore.deleteConversation(id)
+  try {
+    await chatStore.deleteConversation(id)
+  } catch (error) {
+    console.error('Failed to delete conversation from history page:', error)
+  }
 }
 </script>
 

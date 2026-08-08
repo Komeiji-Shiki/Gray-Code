@@ -463,12 +463,8 @@ export const useChatStore = defineStore('chat', () => {
     // 创建新标签页
     const tabId = createTabAction(state, { title: 'New Chat' })
     if (tabId) {
-      // 如果该标签页已存在（重复对话），直接切换
-      const existingTab = state.openTabs.value.find(t => t.id === tabId)
-      if (existingTab && existingTab.conversationId) {
-        switchTabWrapped(tabId)
-        return
-      }
+      // createTabAction 未传 conversationId：新标签页的 conversationId 恒为 null，
+      // existingTab.conversationId 分支是死代码（旧实现每次都会走到），直接切换
       switchTabWrapped(tabId)
     }
   }
@@ -492,16 +488,19 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
+    // await 前固化目标标签页：切换期间用户可能点了别的标签页，绑定必须基于快照
+    const targetTabId = state.activeTabId.value
+
     // 在当前标签页中加载该对话
     await switchConvAction(state, id, cancelStreamAndRejectTools)
     void loadBranchGraphAction(state)
 
-    // 更新当前标签页的信息
-    if (state.activeTabId.value) {
-      updateTabConversationId(state, state.activeTabId.value, id)
+    // 更新当前标签页的信息（仅当用户没有切换走）
+    if (targetTabId && state.activeTabId.value === targetTabId) {
+      updateTabConversationId(state, targetTabId, id)
       const conv = state.conversations.value.find(c => c.id === id)
       if (conv) {
-        updateTabTitle(state, state.activeTabId.value, conv.title)
+        updateTabTitle(state, targetTabId, conv.title)
       }
     }
   }
@@ -593,10 +592,12 @@ export const useChatStore = defineStore('chat', () => {
 
     // 用户在响应期间发话：若当前会话正有前台命令在等待，将其转入后台，
     // 让本轮尽快结束、排队消息尽快送达（命令结果稍后以回执回流唤醒模型）。
-    // fire-and-forget：后端没有可转移的命令时是 no-op。
-    void sendToExtension('terminal.detachToBackground', {
-      conversationId: state.currentConversationId.value
-    }).catch(() => {})
+    // 空闲时无前台命令可转移，跳过无效 IPC。
+    if (state.isStreaming.value || state.isWaitingForResponse.value) {
+      void sendToExtension('terminal.detachToBackground', {
+        conversationId: state.currentConversationId.value
+      }).catch(() => {})
+    }
   }
 
   /**
@@ -679,7 +680,13 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 发送消息
-    await sendMessage(item.content, item.attachments, item.sendOptions)
+    const sent = await sendMessage(item.content, item.attachments, item.sendOptions)
+    // 发送失败（sendMessage 内部已 catch）：放回队首，等待下次动作边界/回合结束重试，
+    // 与 processQueue 的失败回退语义一致，避免消息被静默丢弃
+    if (!sent) {
+      console.error('[chatStore] Failed to send queued message immediately, put back to queue head')
+      state.messageQueue.value = [item, ...state.messageQueue.value]
+    }
   }
 
   /**
@@ -814,15 +821,16 @@ export const useChatStore = defineStore('chat', () => {
         }
       : build
 
+    // 防止把 A 对话的 Build 误写到 B 对话（切换竞态）：
+    // 校验必须在写内存之前，否则校验失败时内存态已被污染
+    if (normalizedBuild && normalizedBuild.conversationId !== conversationId) {
+      return
+    }
+
     state.activeBuild.value = normalizedBuild
 
     if (options?.persist === false) return
     if (!conversationId) return
-
-    // 防止把 A 对话的 Build 误写到 B 对话（切换竞态）
-    if (normalizedBuild && normalizedBuild.conversationId !== conversationId) {
-      return
-    }
 
     try {
       await sendToExtension('conversation.setCustomMetadata', {
@@ -839,7 +847,7 @@ export const useChatStore = defineStore('chat', () => {
   
   const getCheckpointsForMessage = (messageIndex: number) => getCheckpointsFn(state, messageIndex)
   const hasCheckpoint = (messageIndex: number) => hasCheckpointFn(state, messageIndex)
-  const addCheckpoint = (checkpoint: any) => addCheckpointFn(state, checkpoint)
+  const addCheckpoint = (checkpoint: CheckpointRecord) => addCheckpointFn(state, checkpoint)
   const createManualCheckpoint = () => createManualCheckpointFn(state)
   const previewRestore = (checkpointId: string) => previewRestoreFn(state, checkpointId)
   const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean, confirmedDiscardDirty?: boolean) =>

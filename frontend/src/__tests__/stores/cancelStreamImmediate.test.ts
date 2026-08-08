@@ -69,4 +69,40 @@ describe('cancelStream immediate feedback', () => {
       conversationId: 'conv_cancel_stream_only'
     })
   })
+
+  it('preserveSubAgents 将未完成子代理标记为后台，不显示错误状态', async () => {
+    vi.mocked(sendToExtension).mockResolvedValue({ cancelled: true })
+    const state = createChatState()
+    state.currentConversationId.value = 'conv_detach_subagent'
+    state.streamingMessageId.value = 'assistant_with_subagent'
+    state.activeStreamId.value = 'stream_with_subagent'
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
+    state.allMessages.value = [{
+      id: 'assistant_with_subagent',
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      timestamp: Date.now(),
+      tools: [{
+        id: 'subagent_call_1',
+        name: 'subagents',
+        args: { agentName: '代码审核者', prompt: 'review' },
+        status: 'executing'
+      }]
+    } as any]
+
+    await cancelStream(state, {} as ChatStoreComputed, { preserveSubAgents: true })
+
+    expect(state.allMessages.value[0]?.tools?.[0]?.status).toBe('background')
+    const response = state.allMessages.value
+      .flatMap(message => message.parts || [])
+      .find(part => part.functionResponse?.id === 'subagent_call_1')
+      ?.functionResponse?.response
+    expect(response).toMatchObject({ success: true, detached: true, background: true })
+    expect(sendToExtension).toHaveBeenCalledWith('cancelStream', {
+      conversationId: 'conv_detach_subagent',
+      preserveSubAgents: true
+    })
+  })
 })

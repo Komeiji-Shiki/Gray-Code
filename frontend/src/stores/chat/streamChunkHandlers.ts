@@ -14,11 +14,10 @@ import { contentToMessage, contentToMessageEnhanced } from './parsers'
 import {
   addTextToMessage,
   processStreamingText,
-  flushToolCallBuffer,
   handleFunctionCallPart
 } from './streamHelpers'
 import { syncTotalMessagesFromWindow, syncFoldedHistoryHint, trimWindowFromTop } from './windowUtils'
-import { appendMessage, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
+import { appendMessage, buildToolResponseIndex, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 import { isPerfEnabled } from '../../utils/perf'
 import type { StreamFunctionCall } from '../../utils/functionCallMerge'
@@ -835,16 +834,8 @@ export function handleAwaitingConfirmation(
   // 将 toolResults 也同步为一个隐藏的 functionResponse 消息（保持与 toolIteration 行为一致），
   // 这样 getToolResponseById / hasToolResponse 等逻辑可以正常工作。
   if (chunk.toolResults && chunk.toolResults.length > 0) {
-    const existingResponseIds = new Set<string>()
-    for (const m of state.allMessages.value) {
-      if (m.isFunctionResponse && m.parts) {
-        for (const p of m.parts) {
-          if (p.functionResponse?.id) {
-            existingResponseIds.add(p.functionResponse.id)
-          }
-        }
-      }
-    }
+    // 复用权威索引 toolResponseIndex（appendMessage/rebuild 增量维护），避免每轮全量扫描窗口
+    const existingResponseIds = state.toolResponseIndex.value
 
     const newParts = chunk.toolResults
       .filter(r => r.id && !existingResponseIds.has(r.id))
@@ -922,7 +913,7 @@ export function handleToolIteration(
       if (r && typeof r.id === 'string') {
         toolResultMap.set(r.id, r)
       }
-      if ((r.result as any)?.cancelled && r.id) {
+      if ((r.result as { cancelled?: boolean } | undefined)?.cancelled === true && r.id) {
         cancelledToolIds.add(r.id)
       }
     }
@@ -1010,16 +1001,10 @@ export function handleToolIteration(
   // 注意：在“自动执行 + 等待批准”混合场景下，部分 toolResults 可能已在 awaitingConfirmation 阶段被同步过。
   // 这里做一次去重，避免重复插入。
   if (chunk.toolResults && chunk.toolResults.length > 0) {
-    const existingResponseIds = new Set<string>()
-    for (const m of state.allMessages.value) {
-      if (m.isFunctionResponse && m.parts) {
-        for (const p of m.parts) {
-          if (p.functionResponse?.id) {
-            existingResponseIds.add(p.functionResponse.id)
-          }
-        }
-      }
-    }
+    // 正常 store 始终持有权威索引；旧持久化状态或精简测试 state 缺失时，
+    // 从当前窗口重建一次，避免 toolIteration 因状态升级而崩溃。
+    const existingResponseIds = state.toolResponseIndex?.value
+      ?? buildToolResponseIndex(state.allMessages.value)
 
     const parts = chunk.toolResults
       .filter(r => r.id && !existingResponseIds.has(r.id))
@@ -1174,8 +1159,6 @@ export function handleComplete(
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 tools 信息（complete 阶段的 content 通常只含文本，不含 functionCall）
     const existingTools = message.tools
-    // 刷新工具调用缓冲区
-    flushToolCallBuffer(message, state)
     // 保存原有的 modelVersion（使用创建时的模型，不从 API 响应更新）
     const existingModelVersion = message.metadata?.modelVersion
     

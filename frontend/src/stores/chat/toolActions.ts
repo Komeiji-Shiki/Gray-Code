@@ -179,7 +179,11 @@ function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: stri
   }
 }
 
-function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | null): IncompleteToolInfo | null {
+function markIncompleteToolsAsError(
+  state: ChatStoreState,
+  messageId?: string | null,
+  preserveDetachedSubAgents = false
+): IncompleteToolInfo | null {
   const all = state.allMessages.value
 
   // 只要工具调用在历史中没有对应 functionResponse，就认为它“未完成”
@@ -227,7 +231,12 @@ function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | 
 
   const updatedTools = message.tools?.map(tool => {
     if (isToolIncomplete(tool.id)) {
-      return { ...tool, status: 'error' as const }
+      return {
+        ...tool,
+        status: preserveDetachedSubAgents && tool.name === 'subagents'
+          ? ('background' as const)
+          : ('error' as const)
+      }
     }
     return tool
   })
@@ -256,7 +265,11 @@ function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | 
  * 背景：后端在 cancelStream / deleteToMessage 等场景会 rejectAllPendingToolCalls，
  * 并在工具调用消息后插入 functionResponse；前端如果不同步插入，会导致索引错位。
  */
-function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, info: IncompleteToolInfo | null): void {
+function ensureFunctionResponseMessageForRejectedTools(
+  state: ChatStoreState,
+  info: IncompleteToolInfo | null,
+  preserveDetachedSubAgents = false
+): void {
   if (!info || info.toolCalls.length === 0) return
 
   const all = state.allMessages.value
@@ -294,11 +307,18 @@ function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, in
       functionResponse: {
         id: call.id,
         name: call.name,
-        response: {
-          success: false,
-          error: 'Cancelled by user',
-          rejected: true
-        }
+        response: preserveDetachedSubAgents && call.name === 'subagents'
+          ? {
+              success: true,
+              detached: true,
+              background: true,
+              note: 'SubAgent continued in background after the parent turn was replaced.'
+            }
+          : {
+              success: false,
+              error: 'Cancelled by user',
+              rejected: true
+            }
       }
     }))
   }
@@ -441,8 +461,16 @@ export async function cancelStream(
   
   // 点击后立即收敛本地状态，不等待后端关闭 diff、拒绝悬空工具和持久化 functionResponse。
   // 调用方仍会 await 下方请求，因此删除/切会话等依赖后端清理的操作顺序保持不变。
-  const info = markIncompleteToolsAsError(state, currentStreamingId)
-  ensureFunctionResponseMessageForRejectedTools(state, info)
+  const info = markIncompleteToolsAsError(
+    state,
+    currentStreamingId,
+    options.preserveSubAgents === true
+  )
+  ensureFunctionResponseMessageForRejectedTools(
+    state,
+    info,
+    options.preserveSubAgents === true
+  )
   state.streamingMessageId.value = null
   state.activeStreamId.value = null
   state.isLoading.value = false

@@ -19,7 +19,7 @@ import {
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
-import { findTabByConversationId, updateTabTitle } from './tabActions'
+import { findTabByConversationId, resetConversationState, updateTabTitle } from './tabActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -357,29 +357,9 @@ export async function createNewConversation(
     await cancelStreamAndRejectTools()
   }
   
-  state.currentConversationId.value = null
-  state.allMessages.value = []  // 清空消息
-  rebuildMessageIndexById(state)  // 索引与消息窗口同步清空，避免残留旧会话条目
-  state._failedStreamMessageId.value = null
-  state.windowStartIndex.value = 0
-  state.totalMessages.value = 0
-  state.isLoadingMoreMessages.value = false
-  state.historyFolded.value = false
-  state.foldedMessageCount.value = 0
-  state.checkpoints.value = []  // 清空存档
-  state.toolResponseCache.value = new Map()  // 清空扩展工具响应缓存
-  state.error.value = null
-  state.activeBuild.value = null
-  
-  // 清除所有加载和流式状态
-  state.isLoading.value = false
-  state.isStreaming.value = false
-  state.streamingMessageId.value = null
-  state.activeStreamId.value = null
-  state._lastCancelledStreamId.value = null
-  state._pendingBranchRefreshAfterStream.value = null
-  state._pendingBranchReplayContext.value = null
-  state.isWaitingForResponse.value = false
+  // 复用 resetConversationState 清理全部会话状态：手工清理此前遗漏了
+  // attachments/editorNodes/messageQueue/currentPromptModeId 以及平滑流/重试/自动总结残留（上游 2a4f222）
+  resetConversationState(state)
 }
 
 /**

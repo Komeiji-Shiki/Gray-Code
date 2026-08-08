@@ -120,7 +120,15 @@ function ensureLastModelContent(contents: Content[], timestamp: number, baseInde
   return created
 }
 
-export function applyStreamChunkToContents(contents: Content[], chunk: any, timestamp: number = Date.now(), baseIndex: number = 0): Content[] {
+export interface AgentRunStreamChunkLike {
+  contentSnapshot?: Content
+  delta?: ContentPart[]
+  usage?: Content['usageMetadata']
+  modelVersion?: string
+  thinkingStartTime?: number
+}
+
+export function applyStreamChunkToContents(contents: Content[], chunk: AgentRunStreamChunkLike | undefined | null, timestamp: number = Date.now(), baseIndex: number = 0): Content[] {
   // 修改原因：SubAgent Monitor 不能继续依赖每个 llm_delta 附带完整 snapshot，否则events 和contents 都会随输出长度O(n²) 膨胀。
   // 修改方式：把主聊天流式reducer 的核心语义收敛为 Content[] delta reducer，支持text、thought、functionCall、contentSnapshot 和usage。
   // 目的：Monitor 实时显示 SubAgent 输出，同时保持后端只发送轻量delta。

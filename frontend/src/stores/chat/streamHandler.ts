@@ -33,8 +33,7 @@ import { loadBranchGraph } from './branchActions'
 export {
   addFunctionCallToMessage,
   addTextToMessage,
-  processStreamingText,
-  flushToolCallBuffer
+  processStreamingText
 } from './streamHelpers'
 
 /**

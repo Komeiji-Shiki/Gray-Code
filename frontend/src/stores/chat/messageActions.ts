@@ -427,15 +427,17 @@ export async function sendMessage(
   
   try {
     if (!state.currentConversationId.value) {
+      // await 前固化目标标签页：创建对话期间用户可能切换标签页，绑定必须基于快照
+      const tabIdAtSend = state.activeTabId.value
       const newId = await createAndPersistConversation(state, messageText)
       if (!newId) {
         throw new Error('Failed to create conversation')
       }
       originConvId = newId
-      // 更新当前标签页的 conversationId 和标题
-      if (state.activeTabId.value) {
-        updateTabConversationId(state, state.activeTabId.value, newId)
-        updateTabTitle(state, state.activeTabId.value, buildConversationTitle(state, messageText))
+      // 更新当前标签页 conversationId 和标题（仅当用户没有切换走——await 期间切走则不绑定）
+      if (tabIdAtSend && state.activeTabId.value === tabIdAtSend) {
+        updateTabConversationId(state, tabIdAtSend, newId)
+        updateTabTitle(state, tabIdAtSend, buildConversationTitle(state, messageText))
       }
 
       await persistConversationModelConfig(state)
@@ -574,8 +576,8 @@ export async function sendMessage(
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'
       })
-      resetPendingSendState(state)
     }
+    resetPendingSendState(state)
     return false
   } finally {
     state.isLoading.value = false
