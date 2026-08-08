@@ -735,7 +735,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
         if (platform === 'win32') {
             // WSL 特殊处理（与其它检测一致走 argv 参数数组，杜绝字符串拼接注入面）
             if (shellType === 'wsl') {
-                cp.execFileSync('wsl.exe', ['--status'], { timeout: 3000, stdio: 'ignore' });
+                cp.execFileSync('wsl.exe', ['--status'], { timeout: 1500, stdio: 'ignore' });
             } else if (shellPath.includes('\\') || shellPath.includes('/')) {
                 // 绝对路径检查文件存在
                 fs.accessSync(shellPath, fs.constants.X_OK);
@@ -743,7 +743,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
                 // 使用 where 检查 PATH
                 // 参数必须通过 argv 传递，不能拼进命令字符串：shellPath 来自配置/消息，
                 // 字符串拼接会被 `&`、`|`、`;` 等字符注入成任意命令
-                cp.execFileSync('where.exe', [shellPath], { timeout: 3000, stdio: 'ignore' });
+                cp.execFileSync('where.exe', [shellPath], { timeout: 1500, stdio: 'ignore' });
             }
         } else {
             // 绝对路径检查文件存在
@@ -751,7 +751,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
                 // 使用 which 检查 PATH
-                cp.execFileSync('which', [shellPath], { timeout: 3000, stdio: 'ignore' });
+                cp.execFileSync('which', [shellPath], { timeout: 1500, stdio: 'ignore' });
             }
         }
         available = true;

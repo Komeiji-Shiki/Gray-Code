@@ -112,6 +112,15 @@ export class BackendHost {
   /** 子代理 Monitor 内嵌面板桥（事件推送 + monitor 协议消息处理） */
   private subAgentMonitorBridge?: SubAgentMonitorBridge;
   private messageHandlingQueue: Promise<void> = Promise.resolve();
+  /**
+   * settingsManager 就绪信号：initialize 第一步完成后 resolve。
+   * getSettings 快速通道（Splash ready 信号）只等这个信号，不等完整 initPromise；
+   * checkpoint/MCP/memory/activity/dependency 等后台初始化对设置响应无依赖。
+   */
+  private settingsReadyPromise!: Promise<void>;
+  private resolveSettingsReady!: () => void;
+  /** 启动阶段计时起点（GRAYCODE_DIAG=1 时输出各里程碑耗时，诊断用） */
+  private readonly initStartedAt = performance.now();
   /** 单条消息处理超时：handler 卡死（挂起的工具调用/等待 toast 回复等）不应把整个串行队列冻结 */
   private static readonly MESSAGE_HANDLING_TIMEOUT_MS = 60_000;
   private unsubscribers: Array<() => void> = [];
@@ -174,6 +183,10 @@ export class BackendHost {
     this.context = new ElectronContext({
       userDataPath: options.userDataPath,
       extensionPath: options.extensionPath
+    });
+
+    this.settingsReadyPromise = new Promise<void>((resolve) => {
+      this.resolveSettingsReady = resolve;
     });
 
     // Wire the vscode shim to this host.
@@ -389,6 +402,9 @@ export class BackendHost {
     const settingsStorage = new VSCodeSettingsStorage({ legacySettingsDir });
     this.settingsManager = new SettingsManager(settingsStorage);
     await this.settingsManager.initialize();
+    // settings 就绪即放行 getSettings 快速通道（Splash ready 不等完整后端初始化）
+    this.resolveSettingsReady();
+    this.markInitStage('settings-loaded');
     this.windowsAgentStopNotificationService = new WindowsAgentStopNotificationService({ settingsManager: this.settingsManager });
 
     this.storagePathManager = new StoragePathManager(this.settingsManager, this.context as any);
@@ -455,6 +471,7 @@ export class BackendHost {
     setGlobalStoragePath(this.storagePathManager.getEffectiveDataPath());
     warmUpShellAvailabilityCache();
     registerAllTools(toolRegistry);
+    this.markInitStage('tools-registered');
 
     this.channelManager = new ChannelManager(this.configManager, toolRegistry, this.settingsManager);
     this.channelManager.setRetryStatusCallback((status) => {
@@ -624,6 +641,14 @@ export class BackendHost {
     }, 10_000);
 
     log.info('backend_initialized', { effectiveDataPath: this.storagePathManager.getEffectiveDataPath() });
+    this.markInitStage('backend-initialized');
+  }
+
+  /** GRAYCODE_DIAG=1 时输出启动里程碑耗时（主进程 stdout，诊断用） */
+  private markInitStage(stage: string): void {
+    if (process.env.GRAYCODE_DIAG === '1') {
+      console.log(`[startup] backend ${stage} at +${Math.round(performance.now() - this.initStartedAt)}ms`);
+    }
   }
 
   private getWorkspacePath(): string | undefined {
@@ -798,6 +823,28 @@ export class BackendHost {
       // First-run onboarding: if no channel has a real API key configured yet,
       // nudge the user to set one up (the backend seeds a placeholder default).
       this.checkFirstRunOnboarding();
+      return;
+    }
+
+    // getSettings 快速通道：只依赖 settingsManager（initialize 第一步即就绪），
+    // 不必排队等完整 initPromise——前端 Splash ready 信号（languageLoaded）由此提前，
+    // 用户在 checkpoint/MCP/memory/activity/dependency 等后台初始化完成前即可退出
+    // 启动画面；其余消息仍走下方队列等 initPromise。响应形状与
+    // SettingsHandlers.getSettings（{ success, settings }）完全一致。
+    if (type === 'getSettings') {
+      void this.settingsReadyPromise
+        .then(() => {
+          try {
+            const settings = this.settingsManager.getSettings();
+            this.postToRenderer('response', requestId || 'getSettings', { success: true, settings });
+          } catch (error: any) {
+            this.postToRenderer('response', requestId || 'getSettings', {
+              success: false,
+              error: { code: error?.code || 'GET_SETTINGS_ERROR', message: error?.message || String(error) }
+            });
+          }
+        })
+        .catch((err) => console.error('[BackendHost] getSettings fast-path error:', err));
       return;
     }
 

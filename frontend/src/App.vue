@@ -541,11 +541,17 @@ async function loadLanguageSettings() {
     console.error('Failed to load language settings:', error)
   } finally {
     languageLoaded.value = true
+    // 启动里程碑：UI 可用（Splash ready 信号）时刻（配合 GRAYCODE_DIAG 主进程计时定位热点）
+    console.info(`[startup] renderer languageLoaded at ${Date.now()}`)
   }
 }
 
 // 组件挂载
 onMounted(async () => {
+  // 移除首帧静态启动画面（#gc-boot）：Vue 已接管渲染（splash 关闭/监视窗等
+  // 不渲染 Splash 组件的场景也在此兜底移除；Splash.vue 挂载时同样会移除）
+  document.querySelector('#gc-boot')?.remove()
+
   if (isSubAgentMonitor) {
     // 修改原因：Monitor 复用同一前端入口但过去直接 return，从不加载语言设置；
     //          导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文，

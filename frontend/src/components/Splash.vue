@@ -9,17 +9,17 @@
  * - 最短展示 minDisplayMs，ready 后淡出（FADE_MS，blur+scale 消散）并 emit('done')
  * - 支持 prefers-reduced-motion（动画即时完成/静止，淡出无过渡）
  *
- * 时间轴（相对挂载，与 CSS 动画严格对齐）：
- *   0.00s  点阵背景淡入          0.05~0.75s  帽子描线 + 笔尖光点
- *   0.50~1.60s 身体描线 + 光点   0.75s       标题浮现
- *   0.80s  副标题 + 格雷码线起跳（周期 1.2s，相位 001 起始）
- *   1.35s  光标闪烁              1.60s       色块渗入 + 线稿退位细描边（0.5s）
- *   1.75s  帽子色块渗入          2.00s       完稿定影（0.5s）
- *   2.30s  DRAW_TOTAL_MS → drawDone → 呼吸待机
+ * 时间轴（相对挂载，与 CSS 动画严格对齐，1.4s 速播版）：
+ *   0.00s  点阵背景淡入          0.05~0.50s  帽子描线 + 笔尖光点
+ *   0.30~0.95s 身体描线 + 光点   0.45s       标题浮现
+ *   0.50s  副标题 + 格雷码线起跳（周期 0.8s，相位 001 起始）
+ *   0.80s  光标闪烁              0.90s       色块渗入 + 线稿退位细描边（0.3s）
+ *   1.00s  帽子色块渗入          1.05s       完稿定影（0.35s）
+ *   1.40s  DRAW_TOTAL_MS → drawDone → 呼吸待机
  *
  * 退场（ready 后两拍）：先归一（MERGE_MS，蓝线合并 + 光标定格）再淡出（FADE_MS）
- * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 0.8s+1.2s=2.0s）再归一，
- * 保证每次启动都能看到完整 8 步循环（最短总展示 ≈ max(DRAW_TOTAL_MS, 2.0s)）
+ * ready 早到时（加载快）也强制等格雷码线完整播完一轮（挂载后 0.5s+0.8s=1.3s）再归一，
+ * 保证每次启动都能看到完整 8 步循环（最短总展示 ≈ max(DRAW_TOTAL_MS, 1.3s)）
  *
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
@@ -32,7 +32,7 @@ const props = withDefaults(defineProps<{
   minDisplayMs?: number
 }>(), {
   ready: false,
-  minDisplayMs: 2300
+  minDisplayMs: 1400
 })
 
 const emit = defineEmits<{
@@ -40,15 +40,15 @@ const emit = defineEmits<{
 }>()
 
 /** 淡出时长（与 CSS transition 一致） */
-const FADE_MS = 450
+const FADE_MS = 300
 /** 归一演出时长：ready 后先蓝线归一 + 光标定格，再淡出 */
-const MERGE_MS = 420
-/** 全部绘制动画完成（描线 0.05~1.6s + 上色 1.6~2.25s + 定影 2.0s 起） */
-const DRAW_TOTAL_MS = 2300
-/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 0.8s 对齐） */
-const GRAY_LINE_DELAY = 800
-/** 格雷码等待线：单周期 1.2s（8 步 × 150ms，与 CSS 1.2s linear 对齐） */
-const GRAY_LINE_PERIOD = 1200
+const MERGE_MS = 300
+/** 全部绘制动画完成（描线 0.05~0.95s + 上色 0.9~1.3s + 定影 1.05s 起） */
+const DRAW_TOTAL_MS = 1400
+/** 格雷码等待线：bit 循环动画延迟（与 CSS animation-delay 0.5s 对齐） */
+const GRAY_LINE_DELAY = 500
+/** 格雷码等待线：单周期 0.8s（8 步 × 100ms，与 CSS 0.8s linear 对齐） */
+const GRAY_LINE_PERIOD = 800
 
 function prefersReducedMotion(): boolean {
   return (
@@ -58,12 +58,30 @@ function prefersReducedMotion(): boolean {
 }
 const reducedMotion = prefersReducedMotion()
 
+// ── 首帧启动画面无缝接管 ──────────────────────────────────────────────
+// index.html 里静态注入的 boot-splash（#gc-boot，纯 CSS 动画）在 Vue 挂载前
+// 已开始播放同款动画；boot-splash.js 于 <head> 记录 __GC_BOOT_TS（Date.now()）。
+// 挂载时算得已播放时长 bootOffset，据此：
+//   1. 根节点 --gc-boot-offset 设负值，全部动画负延迟续播（calc(var + Xs)）
+//   2. SMIL 笔尖 begin 同量回拨（SMIL 允许负 begin）
+//   3. drawDone 定时器缩短为 DRAW_TOTAL_MS - bootOffset
+//   4. startedAt 前移至 boot 起点（minDisplay / 格雷码一轮门槛含 boot 时段）
+// 随后移除 #gc-boot——动画时间轴无跳变，无「纯色等待 JS」空窗。
+const bootStartedAt = (window as any).__GC_BOOT_TS as number | undefined
+const bootOffset = typeof bootStartedAt === 'number'
+  ? Math.min(Math.max(Date.now() - bootStartedAt, 0), DRAW_TOTAL_MS)
+  : 0
+/** SMIL 笔尖光点 begin：随 boot 偏移负向回拨（bootOffset=0 时保持原值） */
+const capPenBegin = `${0.05 - bootOffset / 1000}s`
+const bodyPenBegin = `${0.3 - bootOffset / 1000}s`
+
 const fading = ref(false)
 const merging = ref(false)
 const done = ref(false)
 const drawDone = ref(false)
 
-const startedAt = Date.now()
+/** 动画起点：boot 存在时以 boot 时刻为起点（含首帧动画时段） */
+const startedAt = typeof bootStartedAt === 'number' ? bootStartedAt : Date.now()
 
 let fadeTimer: number | null = null
 let drawTimer: number | null = null
@@ -111,6 +129,7 @@ function beginFadeOut(): void {
 function finish(): void {
   if (done.value) return
   done.value = true
+  console.info(`[startup] splash done at ${Date.now()}`)
   emit('done')
 }
 
@@ -135,11 +154,20 @@ watch(
 )
 
 onMounted(() => {
+  // 负延迟续播 boot-splash 动画（须在元素插入 DOM 后设置，var 才会参与计算）
+  if (bootOffset > 0) {
+    const rootEl = document.querySelector('.splash') as HTMLElement | null
+    rootEl?.style.setProperty('--gc-boot-offset', `-${bootOffset}ms`)
+  }
+  // Vue Splash 已就位（同款动画负延迟续播），移除首帧静态画面
+  if (bootStartedAt !== undefined) {
+    document.querySelector('#gc-boot')?.remove()
+  }
   if (reducedMotion) {
     // reduced-motion：动画即时完成（CSS 静态最终态），去掉无意义的等待
     markDrawDone()
   } else {
-    drawTimer = window.setTimeout(markDrawDone, DRAW_TOTAL_MS)
+    drawTimer = window.setTimeout(markDrawDone, Math.max(0, DRAW_TOTAL_MS - bootOffset))
   }
   // 极端情况：挂载时 ready 已为 true
   if (props.ready) tryFadeOut()
@@ -189,8 +217,8 @@ onBeforeUnmount(() => {
         <!-- 笔尖光点：沿描线路径移动，先帽后身（SMIL animateMotion + mpath，与描线同曲线同节奏） -->
         <circle class="pen pen-cap" r="13" fill="currentColor">
           <animateMotion
-            dur="0.7s"
-            begin="0.05s"
+            dur="0.45s"
+            :begin="capPenBegin"
             fill="freeze"
             calcMode="spline"
             keySplines="0 0 .58 1"
@@ -202,8 +230,8 @@ onBeforeUnmount(() => {
         </circle>
         <circle class="pen pen-body" r="13" fill="currentColor">
           <animateMotion
-            dur="1.1s"
-            begin="0.5s"
+            dur="0.65s"
+            :begin="bodyPenBegin"
             fill="freeze"
             calcMode="spline"
             keySplines="0 0 .58 1"
@@ -240,7 +268,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   background: var(--vscode-editor-background);
   color: var(--vscode-foreground);
-  transition: opacity 0.45s ease;
+  transition: opacity 0.3s ease;
 }
 
 /* 蓝图点阵背景 + 晕影：极淡网格点，径向遮罩聚焦中心 */
@@ -254,7 +282,7 @@ onBeforeUnmount(() => {
   -webkit-mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
   mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
   opacity: 0;
-  animation: bg-in 1s ease 0.2s both;
+  animation: bg-in 0.6s ease calc(var(--gc-boot-offset, 0ms) + 0.15s) both;
 }
 
 @keyframes bg-in {
@@ -274,7 +302,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 14px;
   padding: 24px;
-  transition: transform 0.45s ease, filter 0.45s ease;
+  transition: transform 0.3s ease, filter 0.3s ease;
 }
 
 .girl {
@@ -286,8 +314,8 @@ onBeforeUnmount(() => {
   --ink-cap: color-mix(in srgb, var(--vscode-foreground) 45%, var(--vscode-editor-background));
   --ink-body: color-mix(in srgb, var(--vscode-foreground) 30%, var(--vscode-editor-background));
   --paper: var(--vscode-editor-background);
-  /* 完稿定影：2.0s 起轻微提亮再回落（0% 帧在 delay 期间压低透明度） */
-  animation: girl-settle 0.5s ease-out 2s both;
+  /* 完稿定影：1.05s 起轻微提亮再回落（0% 帧在 delay 期间压低透明度） */
+  animation: girl-settle 0.35s ease-out calc(var(--gc-boot-offset, 0ms) + 1.05s) both;
 }
 
 @keyframes girl-settle {
@@ -304,30 +332,30 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 色块层（草稿→上色）：body 1.6s 渗入（下层），cap 1.75s 渗入（错峰分层上色） */
+/* 色块层（草稿→上色）：body 0.9s 渗入（下层），cap 1.0s 渗入（错峰分层上色） */
 .fills path {
   opacity: 0;
-  animation: ink-in 0.5s ease-out both;
+  animation: ink-in 0.3s ease-out both;
 }
 
 .fill-body {
   fill: var(--ink-body);
-  animation-delay: 1.6s;
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 0.9s);
 }
 
 .fill-hair {
   fill: var(--ink-hair);
-  animation-delay: 1.6s;
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 0.9s);
 }
 
 .fill-face {
   fill: var(--paper);
-  animation-delay: 1.6s;
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 0.9s);
 }
 
 .fill-cap {
   fill: var(--ink-cap);
-  animation-delay: 1.75s;
+  animation-delay: calc(var(--gc-boot-offset, 0ms) + 1s);
 }
 
 @keyframes ink-in {
@@ -346,21 +374,21 @@ onBeforeUnmount(() => {
   stroke-linecap: round;
 }
 
-/* 双动画：先描线（dashoffset），1.6s 起同步退位为细描边（line-retire 的 delay 自元素插入起算，与色块渗入同刻） */
+/* 双动画：先描线（dashoffset），0.9s 起同步退位为细描边（line-retire 的 delay 自元素插入起算，与色块渗入同刻） */
 .draw-cap {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation:
-    draw-stroke 0.7s ease-out 0.05s both,
-    line-retire 0.5s ease-out 1.6s both;
+    draw-stroke 0.45s ease-out calc(var(--gc-boot-offset, 0ms) + 0.05s) both,
+    line-retire 0.3s ease-out calc(var(--gc-boot-offset, 0ms) + 0.9s) both;
 }
 
 .draw-body {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation:
-    draw-stroke 1.1s ease-out 0.5s both,
-    line-retire 0.5s ease-out 1.6s both;
+    draw-stroke 0.65s ease-out calc(var(--gc-boot-offset, 0ms) + 0.3s) both,
+    line-retire 0.3s ease-out calc(var(--gc-boot-offset, 0ms) + 0.9s) both;
 }
 
 @keyframes draw-stroke {
@@ -383,11 +411,11 @@ onBeforeUnmount(() => {
 }
 
 .pen-cap {
-  animation: pen-life 0.7s linear 0.05s both;
+  animation: pen-life 0.45s linear calc(var(--gc-boot-offset, 0ms) + 0.05s) both;
 }
 
 .pen-body {
-  animation: pen-life 1.1s linear 0.5s both;
+  animation: pen-life 0.65s linear calc(var(--gc-boot-offset, 0ms) + 0.3s) both;
 }
 
 @keyframes pen-life {
@@ -407,7 +435,7 @@ onBeforeUnmount(() => {
 
 /* 呼吸待机：等待期整体缓慢浮动 */
 .splash-inner.settled {
-  animation: idle-float 4s ease-in-out 0.3s infinite;
+  animation: idle-float 4s ease-in-out calc(var(--gc-boot-offset, 0ms) + 0.3s) infinite;
 }
 
 @keyframes idle-float {
@@ -422,7 +450,7 @@ onBeforeUnmount(() => {
   font-size: 26px;
   letter-spacing: 0.08em;
   opacity: 0;
-  animation: title-in 0.6s ease-out 0.75s both;
+  animation: title-in 0.45s ease-out calc(var(--gc-boot-offset, 0ms) + 0.45s) both;
 }
 
 .t-gray {
@@ -437,7 +465,7 @@ onBeforeUnmount(() => {
 .caret {
   color: var(--vscode-charts-blue, #0050b3);
   font-weight: 300;
-  animation: caret-blink 1.1s steps(1, end) 1.35s infinite;
+  animation: caret-blink 0.8s steps(1, end) calc(var(--gc-boot-offset, 0ms) + 0.8s) infinite;
 }
 
 @keyframes caret-blink {
@@ -473,7 +501,7 @@ onBeforeUnmount(() => {
   text-indent: 0.42em;
   color: var(--vscode-descriptionForeground);
   opacity: 0;
-  animation: fade-up 0.6s ease-out 0.8s both;
+  animation: fade-up 0.4s ease-out calc(var(--gc-boot-offset, 0ms) + 0.5s) both;
 }
 
 @keyframes fade-up {
@@ -487,13 +515,13 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 格雷码等待线：3-bit 序列周期 1.2s（8 步 × 150ms），每步恰好只变一位；0.8s 与副标题同刻入场 */
+/* 格雷码等待线：3-bit 序列周期 0.8s（8 步 × 100ms），每步恰好只变一位；0.5s 与副标题同刻入场 */
 .gray-line {
   display: flex;
   gap: 5px;
   margin-top: 4px;
   opacity: 0;
-  animation: fade-up 0.6s ease-out 0.8s both;
+  animation: fade-up 0.4s ease-out calc(var(--gc-boot-offset, 0ms) + 0.5s) both;
 }
 
 .bit {
@@ -507,15 +535,15 @@ onBeforeUnmount(() => {
 
 /* 001→011→010→110→111→101→100→000 循环（相位旋转：第一帧即有一条亮着，杜绝开场全灭） */
 .b0 {
-  animation: g0 1.2s linear 0.8s infinite;
+  animation: g0 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.5s) infinite;
 }
 
 .b1 {
-  animation: g1 1.2s linear 0.8s infinite;
+  animation: g1 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.5s) infinite;
 }
 
 .b2 {
-  animation: g2 1.2s linear 0.8s infinite;
+  animation: g2 0.8s linear calc(var(--gc-boot-offset, 0ms) + 0.5s) infinite;
 }
 
 @keyframes g0 {
@@ -540,9 +568,8 @@ onBeforeUnmount(() => {
 /* ready：三位归一，合并为蓝色实线（一次性闪光，覆盖 fade-up 入场动画） */
 .gray-line.is-ready {
   gap: 0;
-  animation: line-flash 0.45s ease;
+  animation: line-flash 0.3s ease;
 }
-
 .gray-line.is-ready .bit {
   animation: none;
   opacity: 1;

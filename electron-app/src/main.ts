@@ -108,6 +108,14 @@ process.on('uncaughtException', (error) => {
 const REPO_ROOT = process.env.GRAYCODE_REPO_ROOT || path.resolve(__dirname, '..', '..');
 const CUSTOM_SCHEME = 'graycode';
 
+// 启动阶段计时（GRAYCODE_DIAG=1 时输出各里程碑耗时到 stdout，与 BackendHost.markInitStage 配套）
+const MAIN_STARTED_AT = performance.now();
+function diagLog(stage: string): void {
+  if (process.env.GRAYCODE_DIAG === '1') {
+    console.log(`[startup] main ${stage} at +${Math.round(performance.now() - MAIN_STARTED_AT)}ms`);
+  }
+}
+
 function readRootVersion(): string {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8'));
@@ -657,6 +665,7 @@ function createWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => {
+    diagLog('window-shown');
     mainWindow?.show();
   });
 
@@ -664,6 +673,11 @@ function createWindow(): void {
   // 前端 rebuild 会覆盖 dist/index.html 导致 theme.css/overlay.js 链接丢失，
   // 一旦 CSS 变量缺失，整个 UI 会退回浏览器默认色（灰底黑字），即历史对比度 bug 根因。
   mainWindow.webContents.on('did-finish-load', () => {
+    diagLog('did-finish-load');
+    // 兜底移除首帧静态启动画面：正常路径 Vue 挂载时（App.vue/Splash.vue）已移除，
+    // 这里防渲染层脚本加载失败等场景下 #gc-boot 残留（与启动画面 z-index 9998 无冲突）
+    mainWindow?.webContents.executeJavaScript('document.querySelector(\'#gc-boot\')?.remove()', true)
+      .catch(() => undefined);
     void injectDesktopRendererAssets(mainWindow!);
   });
 
@@ -1185,6 +1199,7 @@ function createWindow(): void {
   // createBackend() 总在 createWindow() 之前调用，backendHost 必然已就绪；用可选链兜底
   if (backendHost) {
     void backendHost.ready.then(() => {
+    diagLog('backend-ready');
     const folders = filterExistingFolders(loadWorkspaceState());
     if (folders.length > 0) {
       void setWorkspaceFolders(folders);
@@ -1268,6 +1283,7 @@ if (gotSingleInstanceLock) {
     });
   } else {
     app.whenReady().then(() => {
+      diagLog('when-ready');
       registerCustomProtocol();
       registerNativeOps();
       buildMenu();

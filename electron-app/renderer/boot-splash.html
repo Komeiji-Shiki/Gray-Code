@@ -1,0 +1,411 @@
+<!--
+  boot-splash.html - 首帧启动画面（注入 frontend/dist/index.html 的 <body> 开头）
+
+  作用：渲染进程的 Vue 应用（index.js ~1.3MB）需要数百 ms 解析/挂载，期间窗口
+  只有纯色背景；本片段是纯静态 HTML+CSS（无 JS），窗口第一帧即显示与 Splash.vue
+  完全同款、同节奏的动画，Vue 挂载后由 Splash.vue 无缝接管。
+
+  接管机制：patch-dist.mjs 同时注入 boot-splash.js，在 <head> 执行时记录
+  window.__GC_BOOT_TS = Date.now()；Splash.vue 挂载时计算 elapsed 并以
+  calc(var(--gc-boot-offset) + Xs) 负延迟续播动画（SMIL begin 同样减去 offset），
+  随后移除本元素——动画时间轴无跳变。
+
+  一致性：本文件与 frontend/src/components/Splash.vue 的时间轴/路径必须严格一致，
+  bootSplash.test.ts（frontend vitest）会比对两者 d= 路径与时间常量，防止漂移。
+  与 Splash.vue 的差异仅限：id 前缀（gc-boot-，避免 mpath href 重复 id 解析错位）、
+  CSS 选择器加 #gc-boot 前缀、vscode CSS 变量替换为系统配色 fallback（theme.css
+  在 did-finish-load 后才注入，首帧还没有 --vscode-* 变量）。
+-->
+<style>
+#gc-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  --gc-boot-bg: #ffffff;
+  --gc-boot-fg: #1f1f1f;
+  --gc-boot-blue: #0050b3;
+  background: var(--gc-boot-bg);
+  color: var(--gc-boot-fg);
+}
+@media (prefers-color-scheme: dark) {
+  #gc-boot {
+    --gc-boot-bg: #1e1e1e;
+    --gc-boot-fg: #e5e5e5;
+    --gc-boot-blue: #3794ff;
+  }
+}
+
+/* 蓝图点阵背景 + 晕影：极淡网格点，径向遮罩聚焦中心 */
+#gc-boot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(currentColor 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
+  mask-image: radial-gradient(ellipse at center, black 25%, transparent 72%);
+  opacity: 0;
+  animation: gc-boot-bg-in 0.6s ease 0.15s both;
+}
+@keyframes gc-boot-bg-in {
+  to {
+    opacity: 0.05;
+  }
+}
+
+#gc-boot .gc-boot-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 24px;
+  animation: gc-boot-float 4s ease-in-out 0.3s infinite;
+}
+@keyframes gc-boot-float {
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+
+#gc-boot .girl {
+  display: block;
+  color: var(--gc-boot-fg);
+  opacity: 0.95;
+  --ink-hair: color-mix(in srgb, currentColor 92%, var(--gc-boot-bg));
+  --ink-cap: color-mix(in srgb, currentColor 45%, var(--gc-boot-bg));
+  --ink-body: color-mix(in srgb, currentColor 30%, var(--gc-boot-bg));
+  --paper: var(--gc-boot-bg);
+  animation: gc-boot-settle 0.35s ease-out 1.05s both;
+}
+@keyframes gc-boot-settle {
+  0% {
+    opacity: 0.82;
+  }
+  40% {
+    opacity: 1;
+    filter: drop-shadow(0 0 10px currentColor);
+  }
+  100% {
+    opacity: 0.95;
+    filter: none;
+  }
+}
+
+#gc-boot .fills path {
+  opacity: 0;
+  animation: gc-boot-ink-in 0.3s ease-out both;
+}
+#gc-boot .fill-body,
+#gc-boot .fill-hair,
+#gc-boot .fill-face {
+  animation-delay: 0.9s;
+}
+#gc-boot .fill-cap {
+  animation-delay: 1s;
+}
+@keyframes gc-boot-ink-in {
+  to {
+    opacity: 1;
+  }
+}
+
+#gc-boot .draw-cap,
+#gc-boot .draw-body {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 26;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+#gc-boot .draw-cap {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation:
+    gc-boot-draw 0.45s ease-out 0.05s both,
+    gc-boot-retire 0.3s ease-out 0.9s both;
+}
+#gc-boot .draw-body {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation:
+    gc-boot-draw 0.65s ease-out 0.3s both,
+    gc-boot-retire 0.3s ease-out 0.9s both;
+}
+@keyframes gc-boot-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes gc-boot-retire {
+  to {
+    opacity: 0.3;
+    stroke-width: 10;
+  }
+}
+
+#gc-boot .pen {
+  opacity: 0;
+  filter: drop-shadow(0 0 8px currentColor);
+}
+#gc-boot .pen-cap {
+  animation: gc-boot-pen 0.45s linear 0.05s both;
+}
+#gc-boot .pen-body {
+  animation: gc-boot-pen 0.65s linear 0.3s both;
+}
+@keyframes gc-boot-pen {
+  0% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+#gc-boot .title {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: 0.08em;
+  opacity: 0;
+  animation: gc-boot-title-in 0.45s ease-out 0.45s both;
+}
+@keyframes gc-boot-title-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+#gc-boot .t-gray {
+  font-weight: 600;
+}
+#gc-boot .t-code {
+  font-weight: 300;
+  color: var(--gc-boot-fg);
+  opacity: 0.7;
+}
+#gc-boot .caret {
+  color: var(--gc-boot-blue);
+  font-weight: 300;
+  animation: gc-boot-caret 0.8s steps(1, end) 0.8s infinite;
+}
+@keyframes gc-boot-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+#gc-boot .subtitle {
+  margin: -6px 0 0;
+  font-size: 10px;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  color: var(--gc-boot-fg);
+  opacity: 0;
+  animation: gc-boot-fade-up 0.4s ease-out 0.5s both;
+}
+@keyframes gc-boot-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 0.8;
+    transform: none;
+  }
+}
+
+#gc-boot .gray-line {
+  display: flex;
+  gap: 5px;
+  margin-top: 4px;
+  opacity: 0;
+  animation: gc-boot-fade-up 0.4s ease-out 0.5s both;
+}
+#gc-boot .bit {
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.12;
+}
+#gc-boot .b0 {
+  animation: gc-boot-g0 0.8s linear 0.5s infinite;
+}
+#gc-boot .b1 {
+  animation: gc-boot-g1 0.8s linear 0.5s infinite;
+}
+#gc-boot .b2 {
+  animation: gc-boot-g2 0.8s linear 0.5s infinite;
+}
+@keyframes gc-boot-g0 {
+  0%,
+  24.9% {
+    opacity: 1;
+  }
+  25%,
+  49.9% {
+    opacity: 0.12;
+  }
+  50%,
+  74.9% {
+    opacity: 1;
+  }
+  75%,
+  100% {
+    opacity: 0.12;
+  }
+}
+@keyframes gc-boot-g1 {
+  0%,
+  12.4% {
+    opacity: 0.12;
+  }
+  12.5%,
+  62.4% {
+    opacity: 1;
+  }
+  62.5%,
+  100% {
+    opacity: 0.12;
+  }
+}
+@keyframes gc-boot-g2 {
+  0%,
+  37.4% {
+    opacity: 0.12;
+  }
+  37.5%,
+  87.4% {
+    opacity: 1;
+  }
+  87.5%,
+  100% {
+    opacity: 0.12;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #gc-boot .pen {
+    display: none;
+  }
+  #gc-boot::before,
+  #gc-boot .gc-boot-inner,
+  #gc-boot .draw-cap,
+  #gc-boot .draw-body,
+  #gc-boot .title,
+  #gc-boot .subtitle,
+  #gc-boot .caret,
+  #gc-boot .bit,
+  #gc-boot .girl,
+  #gc-boot .fills path,
+  #gc-boot .gray-line {
+    animation: none;
+  }
+  #gc-boot .draw-cap,
+  #gc-boot .draw-body {
+    stroke-dashoffset: 0;
+    opacity: 0.3;
+    stroke-width: 10;
+  }
+  #gc-boot .fills path {
+    opacity: 1;
+  }
+  #gc-boot .gray-line {
+    opacity: 1;
+  }
+  #gc-boot .title {
+    opacity: 1;
+  }
+  #gc-boot .subtitle {
+    opacity: 0.8;
+  }
+  #gc-boot .bit {
+    opacity: 0.9;
+  }
+}
+</style>
+<div id="gc-boot" role="status" aria-label="Gray Code 正在启动">
+  <div class="gc-boot-inner">
+    <svg
+      class="girl"
+      viewBox="220 170 580 630"
+      width="150"
+      aria-hidden="true"
+    >
+      <g class="fills">
+        <path class="fill-body" d="M 744.0 758.0 L 724.0 723.0 L 704.0 706.0 L 687.0 698.0 L 630.0 684.0 L 625.0 684.0 L 583.0 725.0 L 582.0 719.0 L 517.0 750.0 L 497.0 754.0 L 476.0 753.0 L 455.0 743.0 L 438.0 724.0 L 432.0 697.0 L 436.0 688.0 L 396.0 700.0 L 393.0 720.0 L 382.0 708.0 L 373.0 706.0 L 377.0 742.0 L 345.0 715.0 L 319.0 745.0 L 302.0 784.0 L 751.0 784.0 Z" />
+        <path class="fill-body" d="M 588.0 600.0 L 544.0 631.0 L 485.0 655.0 L 485.0 679.0 L 447.0 696.0 L 443.0 701.0 L 446.0 716.0 L 454.0 728.0 L 471.0 740.0 L 482.0 743.0 L 512.0 740.0 L 572.0 714.0 L 585.0 706.0 L 590.0 688.0 L 592.0 653.0 L 588.0 616.0 Z" />
+        <path class="fill-hair" d="M 334.0 534.0 L 329.0 587.0 L 332.0 645.0 L 339.0 677.0 L 354.0 710.0 L 364.0 722.0 L 357.0 683.0 L 358.0 657.0 L 369.0 679.0 L 387.0 700.0 L 374.0 641.0 L 372.0 572.0 L 341.0 544.0 Z" />
+        <path class="fill-hair" d="M 587.0 408.0 L 601.0 509.0 L 606.0 582.0 L 604.0 651.0 L 596.0 700.0 L 615.0 673.0 L 631.0 639.0 L 647.0 588.0 L 653.0 550.0 L 680.0 532.0 L 690.0 512.0 L 692.0 495.0 L 685.0 475.0 L 678.0 471.0 L 662.0 472.0 L 666.0 443.0 L 673.0 455.0 L 694.0 471.0 L 701.0 487.0 L 701.0 509.0 L 696.0 526.0 L 687.0 541.0 L 672.0 553.0 L 707.0 696.0 L 722.0 706.0 L 742.0 728.0 L 755.0 762.0 L 753.0 694.0 L 737.0 594.0 L 765.0 660.0 L 785.0 760.0 L 790.0 743.0 L 786.0 701.0 L 745.0 532.0 L 728.0 436.0 L 639.0 393.0 L 606.0 404.0 Z" />
+        <path class="fill-face" d="M 326.0 374.0 L 306.0 418.0 L 299.0 457.0 L 301.0 493.0 L 310.0 522.0 L 312.0 484.0 L 323.0 450.0 L 329.0 491.0 L 338.0 518.0 L 353.0 542.0 L 369.0 556.0 L 370.0 513.0 L 377.0 480.0 L 411.0 401.0 L 414.0 481.0 L 409.0 477.0 L 402.0 445.0 L 386.0 482.0 L 381.0 506.0 L 393.0 571.0 L 417.0 601.0 L 446.0 622.0 L 481.0 640.0 L 548.0 612.0 L 594.0 577.0 L 588.0 483.0 L 577.0 410.0 L 534.0 413.0 L 483.0 398.0 L 462.0 434.0 L 439.0 460.0 L 466.0 389.0 L 402.0 362.0 L 343.0 352.0 Z" />
+        <path class="fill-cap" d="M 230.0 366.0 L 232.0 369.0 L 258.0 355.0 L 292.0 344.0 L 350.0 340.0 L 381.0 344.0 L 424.0 356.0 L 498.0 391.0 L 529.0 401.0 L 567.0 400.0 L 624.0 385.0 L 589.0 364.0 L 527.0 336.0 L 480.0 322.0 L 428.0 314.0 L 365.0 315.0 L 325.0 321.0 L 280.0 334.0 L 240.0 355.0 Z" />
+        <path class="fill-cap" d="M 358.0 246.0 L 339.0 313.0 L 380.0 305.0 L 432.0 304.0 L 508.0 318.0 L 565.0 340.0 L 738.0 428.0 L 735.0 349.0 L 723.0 276.0 L 690.0 241.0 L 634.0 207.0 L 562.0 184.0 L 531.0 180.0 L 488.0 181.0 L 456.0 187.0 L 418.0 200.0 L 393.0 213.0 L 364.0 235.0 Z" />
+      </g>
+      <path
+        id="gc-boot-cap-path"
+        class="draw-cap"
+        pathLength="1"
+        d="M 230.0 366.0 L 232.0 369.0 L 258.0 355.0 L 292.0 344.0 L 350.0 340.0 L 381.0 344.0 L 424.0 356.0 L 498.0 391.0 L 529.0 401.0 L 567.0 400.0 L 624.0 385.0 L 589.0 364.0 L 527.0 336.0 L 480.0 322.0 L 428.0 314.0 L 365.0 315.0 L 325.0 321.0 L 280.0 334.0 L 240.0 355.0 Z M 358.0 246.0 L 339.0 313.0 L 380.0 305.0 L 432.0 304.0 L 508.0 318.0 L 565.0 340.0 L 738.0 428.0 L 735.0 349.0 L 723.0 276.0 L 690.0 241.0 L 634.0 207.0 L 562.0 184.0 L 531.0 180.0 L 488.0 181.0 L 456.0 187.0 L 418.0 200.0 L 393.0 213.0 L 364.0 235.0 Z"
+      />
+      <path
+        id="gc-boot-body-path"
+        class="draw-body"
+        pathLength="1"
+        d="M 744.0 758.0 L 724.0 723.0 L 704.0 706.0 L 687.0 698.0 L 630.0 684.0 L 625.0 684.0 L 583.0 725.0 L 582.0 719.0 L 517.0 750.0 L 497.0 754.0 L 476.0 753.0 L 455.0 743.0 L 438.0 724.0 L 432.0 697.0 L 436.0 688.0 L 396.0 700.0 L 393.0 720.0 L 382.0 708.0 L 373.0 706.0 L 377.0 742.0 L 345.0 715.0 L 319.0 745.0 L 302.0 784.0 L 751.0 784.0 Z M 588.0 600.0 L 544.0 631.0 L 485.0 655.0 L 485.0 679.0 L 447.0 696.0 L 443.0 701.0 L 446.0 716.0 L 454.0 728.0 L 471.0 740.0 L 482.0 743.0 L 512.0 740.0 L 572.0 714.0 L 585.0 706.0 L 590.0 688.0 L 592.0 653.0 L 588.0 616.0 Z M 334.0 534.0 L 329.0 587.0 L 332.0 645.0 L 339.0 677.0 L 354.0 710.0 L 364.0 722.0 L 357.0 683.0 L 358.0 657.0 L 369.0 679.0 L 387.0 700.0 L 374.0 641.0 L 372.0 572.0 L 341.0 544.0 Z M 587.0 408.0 L 601.0 509.0 L 606.0 582.0 L 604.0 651.0 L 596.0 700.0 L 615.0 673.0 L 631.0 639.0 L 647.0 588.0 L 653.0 550.0 L 680.0 532.0 L 690.0 512.0 L 692.0 495.0 L 685.0 475.0 L 678.0 471.0 L 662.0 472.0 L 666.0 443.0 L 673.0 455.0 L 694.0 471.0 L 701.0 487.0 L 701.0 509.0 L 696.0 526.0 L 687.0 541.0 L 672.0 553.0 L 707.0 696.0 L 722.0 706.0 L 742.0 728.0 L 755.0 762.0 L 753.0 694.0 L 737.0 594.0 L 765.0 660.0 L 785.0 760.0 L 790.0 743.0 L 786.0 701.0 L 745.0 532.0 L 728.0 436.0 L 639.0 393.0 L 606.0 404.0 Z M 326.0 374.0 L 306.0 418.0 L 299.0 457.0 L 301.0 493.0 L 310.0 522.0 L 312.0 484.0 L 323.0 450.0 L 329.0 491.0 L 338.0 518.0 L 353.0 542.0 L 369.0 556.0 L 370.0 513.0 L 377.0 480.0 L 411.0 401.0 L 414.0 481.0 L 409.0 477.0 L 402.0 445.0 L 386.0 482.0 L 381.0 506.0 L 393.0 571.0 L 417.0 601.0 L 446.0 622.0 L 481.0 640.0 L 548.0 612.0 L 594.0 577.0 L 588.0 483.0 L 577.0 410.0 L 534.0 413.0 L 483.0 398.0 L 462.0 434.0 L 439.0 460.0 L 466.0 389.0 L 402.0 362.0 L 343.0 352.0 Z"
+      />
+      <circle class="pen pen-cap" r="13" fill="currentColor">
+        <animateMotion
+          dur="0.45s"
+          begin="0.05s"
+          fill="freeze"
+          calcMode="spline"
+          keySplines="0 0 .58 1"
+          keyPoints="0;1"
+          keyTimes="0;1"
+        >
+          <mpath href="#gc-boot-cap-path" />
+        </animateMotion>
+      </circle>
+      <circle class="pen pen-body" r="13" fill="currentColor">
+        <animateMotion
+          dur="0.65s"
+          begin="0.3s"
+          fill="freeze"
+          calcMode="spline"
+          keySplines="0 0 .58 1"
+          keyPoints="0;1"
+          keyTimes="0;1"
+        >
+          <mpath href="#gc-boot-body-path" />
+        </animateMotion>
+      </circle>
+    </svg>
+    <h1 class="title">
+      <span class="t-gray">Gray</span>&nbsp;<span class="t-code">Code</span><span class="caret">▍</span>
+    </h1>
+    <p class="subtitle">AI&thinsp;CODING&thinsp;ASSISTANT</p>
+    <div class="gray-line" aria-hidden="true">
+      <span class="bit b2"></span><span class="bit b1"></span><span class="bit b0"></span>
+    </div>
+  </div>
+</div>

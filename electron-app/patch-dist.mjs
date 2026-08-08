@@ -38,6 +38,19 @@ fs.writeFileSync(
   'utf-8'
 );
 
+// 首帧启动画面时间戳标记（外部文件，CSP script-src 'self' 兼容）：
+// 在 <head> 最早执行，记录 Vue 应用挂载前的动画起点；Splash.vue 挂载后据此
+// 以负延迟无缝续播 boot-splash.html 的动画（见 Splash.vue --gc-boot-offset）。
+fs.writeFileSync(
+  path.join(distDir, 'boot-splash.js'),
+  `window.__GC_BOOT_TS = Date.now();\n`,
+  'utf-8'
+);
+
+// 首帧启动画面（纯静态 HTML+CSS，无 JS 依赖）：注入 <body> 开头，
+// 窗口第一帧即显示 Splash.vue 同款动画，免去「纯色背景等待 JS 解析挂载」的空窗。
+const bootSplashHtml = fs.readFileSync(path.join(__dirname, 'renderer', 'boot-splash.html'), 'utf-8');
+
 let html = fs.readFileSync(indexHtml, 'utf-8');
 
 if (html.includes('<!-- graycode-patch-dist -->')) {
@@ -48,7 +61,8 @@ if (html.includes('<!-- graycode-patch-dist -->')) {
 const headInject = [
   '<link href="../../resources/codicons/codicon.css" rel="stylesheet">',
   '<link href="./theme.css" rel="stylesheet">',
-  '<script src="./sound-assets.js"></script>'
+  '<script src="./sound-assets.js"></script>',
+  '<script src="./boot-splash.js"></script>'
 ].join('\n    ');
 
 // 严格 CSP：脚本仅允许同源（graycode://local），样式允许内联（Vue 动态注入 style 标签需要），
@@ -76,6 +90,11 @@ html = html.replace(/<script>window\.__GRAYCODE_BUILTIN_SOUND_ASSETS[^<]*<\/scri
 
 if (!html.includes('Content-Security-Policy')) {
   html = html.replace('</head>', `    <meta http-equiv="Content-Security-Policy" content="${CSP}">\n  </head>`);
+}
+
+// 首帧启动画面注入 <body> 开头（id="gc-boot"，Vue 挂载后由 Splash.vue 移除）
+if (!html.includes('id="gc-boot"')) {
+  html = html.replace(/<body[^>]*>/i, (match) => `${match}\n${bootSplashHtml}`);
 }
 
 html += '\n<!-- graycode-patch-dist -->';

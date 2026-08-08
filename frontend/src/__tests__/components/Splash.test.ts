@@ -10,8 +10,8 @@
  * - done 只触发一次
  * - 卸载清理定时器：不再触发 done
  * - ready 未到时保持展示，ready 到达后才淡出
- * - ready 后两拍退场：先归一（merged，420ms）再淡出（leaving，450ms）
- * - reduced-motion：无 50ms 静态等待；ready 后按最短时长直接 done（跳过 450ms 淡出）
+ * - ready 后两拍退场：先归一（merged，300ms）再淡出（leaving，300ms）
+ * - reduced-motion：无 50ms 静态等待；ready 后按最短时长直接 done（跳过 300ms 淡出）
  * - SVG 装饰性图：保留 aria-hidden、无 role（避免与 aria-hidden 矛盾）
  */
 import { mount } from '@vue/test-utils'
@@ -20,15 +20,15 @@ import { nextTick } from 'vue'
 import Splash from '../../components/Splash.vue'
 
 /** drawDone 完成时刻（与 Splash.vue DRAW_TOTAL_MS 一致） */
-const DRAW_TOTAL_MS = 2300
+const DRAW_TOTAL_MS = 1400
 /** 格雷码线完整播完一轮的时刻（与 Splash.vue GRAY_LINE_DELAY + GRAY_LINE_PERIOD 一致） */
-const GRAY_LINE_END_MS = 2000
+const GRAY_LINE_END_MS = 1300
 /** 淡出门槛：ready 后需 drawDone 完成且格雷码线播完一轮（两者取晚） */
 const FADE_GATE_MS = Math.max(DRAW_TOTAL_MS, GRAY_LINE_END_MS)
 /** 归一演出时长（与 Splash.vue MERGE_MS 一致） */
-const MERGE_MS = 420
+const MERGE_MS = 300
 /** 淡出时长（与 Splash.vue FADE_MS 一致） */
-const FADE_MS = 450
+const FADE_MS = 300
 
 function stubMatchMedia(matches: boolean): void {
   Object.defineProperty(window, 'matchMedia', {
@@ -61,13 +61,13 @@ describe('Splash 状态机', () => {
   it('ready 早到也需等最短展示时长', async () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 5000 } })
 
-    // drawDone 在 2300ms 才完成，此前不淡出
+    // drawDone 在 1400ms 才完成，此前不淡出
     vi.advanceTimersByTime(2000)
     await nextTick()
     expect(wrapper.classes()).not.toContain('leaving')
     expect(wrapper.emitted('done')).toBeUndefined()
 
-    // drawDone(2300) 后仍需等 minDisplayMs：5000ms 处进入归一（两拍退场第一拍）
+    // drawDone(1400) 后仍需等 minDisplayMs：5000ms 处进入归一（两拍退场第一拍）
     vi.advanceTimersByTime(3000) // t = 5000ms（相对挂载）
     await nextTick()
     expect(wrapper.classes()).toContain('merged')
@@ -77,7 +77,7 @@ describe('Splash 状态机', () => {
     vi.advanceTimersByTime(MERGE_MS) // 归一结束 → 开始淡出
     await nextTick()
     expect(wrapper.classes()).toContain('leaving')
-    expect(wrapper.emitted('done')).toBeUndefined() // 淡出中，450ms 后才 done
+    expect(wrapper.emitted('done')).toBeUndefined() // 淡出中，300ms 后才 done
 
     vi.advanceTimersByTime(FADE_MS)
     expect(wrapper.emitted('done')).toHaveLength(1)
