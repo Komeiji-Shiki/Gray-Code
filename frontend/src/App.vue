@@ -615,7 +615,7 @@ onMounted(async () => {
     // 后端 diff 状态推送 → 同步变更面板内的条目状态与删除警戒
     // 注意：后端经 sendCommand 发送，type 为 'command'
     if (message.type === 'command' && message.command === 'diff.statusChanged') {
-      diffStore.syncStatuses(message.data?.pendingDiffs)
+      diffStore.syncStatuses(message.data)
     }
 
     // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成等）

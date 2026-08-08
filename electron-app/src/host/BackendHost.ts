@@ -54,7 +54,7 @@ import { initializeSubAgentsFromSettings } from '../../../webview/handlers/SubAg
 import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/WorkspaceManager';
 import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandlers';
 import type { HandlerContext } from '../../../webview/types';
-import { getDiffManager, type PendingDiff } from '../../../backend/tools/file/diffManager';
+import { getDiffManager, type PendingDiff, type FinalizedDiffInfo } from '../../../backend/tools/file/diffManager';
 import { ElectronContext } from './ElectronContext';
 import { SubAgentMonitorBridge } from './SubAgentMonitorBridge';
 import {
@@ -466,7 +466,6 @@ export class BackendHost {
     this.chatHandler = new ChatHandler(this.configManager, this.channelManager, this.conversationManager, toolRegistry);
     this.chatHandler.setCheckpointManager(this.checkpointManager);
     this.chatHandler.setSettingsManager(this.settingsManager);
-    this.chatHandler.setDiffStorageManager(this.diffStorageManager);
 
     this.modelsHandler = new ModelsHandler(this.configManager, this.settingsManager);
 
@@ -518,7 +517,11 @@ export class BackendHost {
 
     // Diff status changes -> frontend (pending diff bar / countdown)
     // 退订函数入 unsubscribers：dispose 时移除，避免模块级 diffManager 持闭包引用泄漏
-    const diffStatusListener = (pendingDiffs: PendingDiff[], allProcessed: boolean) => {
+    const diffStatusListener = (
+      pendingDiffs: PendingDiff[],
+      allProcessed: boolean,
+      finalized: FinalizedDiffInfo[] = []
+    ) => {
       // track toolId -> diff ids so the renderer diff modal can accept/reject
       this.toolDiffIds.clear();
       for (const d of pendingDiffs) {
@@ -545,6 +548,9 @@ export class BackendHost {
           diffGuardWarning: d.diffGuardWarning,
           diffGuardDeletePercent: d.diffGuardDeletePercent
         })),
+        // 最近终结 diff 的终态：前端据此把已自动应用/取消、从 pending 列表消失的
+        // 条目结算为 accepted/rejected，否则面板接受/拒绝按钮残留。
+        finalized: finalized.map((d) => ({ id: d.id, status: d.status })),
         allProcessed
       });
     };

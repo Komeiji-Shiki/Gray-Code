@@ -46,6 +46,12 @@ export interface PendingDiffStatus {
   diffGuardDeletePercent?: number
 }
 
+export interface DiffStatusChangedPayload {
+  pendingDiffs?: PendingDiffStatus[]
+  /** 最近终结 diff 的终态（自动应用/取消路径：条目从 pendingDiffs 消失，靠此结算） */
+  finalized?: Array<{ id: string; status: string }>
+}
+
 /** 推送方（host.openDiffPreview）提供的字段；status/busy 等状态字段由 store 管理 */
 export type DiffViewerEntryInput = Omit<
   DiffViewerEntry,
@@ -183,12 +189,24 @@ export const useDiffStore = defineStore('diffViewer', () => {
   }
 
   /** 后端 diff.statusChanged 推送 → 同步面板内条目状态与删除警戒 */
-  function syncStatuses(pendingDiffs: PendingDiffStatus[] | undefined) {
-    if (!Array.isArray(pendingDiffs)) return
+  function syncStatuses(payload: DiffStatusChangedPayload | undefined) {
+    if (!payload) return
+    const pendingDiffs = Array.isArray(payload.pendingDiffs) ? payload.pendingDiffs : []
+    const finalized = Array.isArray(payload.finalized) ? payload.finalized : []
+    if (pendingDiffs.length === 0 && finalized.length === 0) return
     const byId = new Map(pendingDiffs.map((d) => [d.id, d]))
+    const finalizedById = new Map(finalized.map((d) => [d.id, d.status]))
     for (const entry of entries.value) {
       if (!entry.sessionId) continue
+      // 已从 pending 列表消失的条目：按后端最近终结快照结算（自动应用/取消路径）。
+      // 注意终态条目也可能再次进入 pending（同文件新 diff 复用 id 的场景少见，
+      // 由下方 pending 分支优先覆盖，避免误结算新一轮变更）。
+      const finalStatus = finalizedById.get(entry.sessionId)
       const backend = byId.get(entry.sessionId)
+      if (!backend && (finalStatus === 'accepted' || finalStatus === 'rejected')) {
+        entry.status = finalStatus
+        continue
+      }
       if (!backend) continue
       if (backend.status === 'accepted' || backend.status === 'rejected') {
         entry.status = backend.status

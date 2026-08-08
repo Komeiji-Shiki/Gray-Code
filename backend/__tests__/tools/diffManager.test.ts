@@ -333,6 +333,51 @@ describe('DiffManager lifecycle closure', () => {
         expect((manager as any).closeListeners.has(diff.id)).toBe(false);
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
     });
+    it('status change push carries finalized status after accept (auto-apply settles frontend entries)', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        let lastFinalized: Array<{ id: string; status: string }> = [];
+        manager.addStatusListener((_pending, _allProcessed, finalized) => {
+            lastFinalized = finalized ?? [];
+        });
+
+        // 自动应用前推送：终态快照不含该 diff
+        const pendingBefore = manager.getPendingDiffs();
+        expect(pendingBefore.some((d) => d.id === diff.id)).toBe(true);
+
+        const accepted = await manager.acceptDiff(diff.id, false, true);
+
+        expect(accepted).toBe(true);
+        expect(diff.status).toBe('accepted');
+        // 自动应用后：diff 已从 pending 列表消失，但终态快照必须携带 accepted
+        expect(manager.getPendingDiffs().some((d) => d.id === diff.id)).toBe(false);
+        expect(lastFinalized.some((f) => f.id === diff.id && f.status === 'accepted')).toBe(true);
+    });
+    it('status change push carries rejected status after reject', async () => {
+        const manager = getManager();
+        const doc = createDocument({ initialContent: 'accepted', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+        attachListenerDisposables(manager, diff.id);
+
+        let lastFinalized: Array<{ id: string; status: string }> = [];
+        manager.addStatusListener((_pending, _allProcessed, finalized) => {
+            lastFinalized = finalized ?? [];
+        });
+
+        const rejected = await manager.rejectDiff(diff.id);
+
+        expect(rejected).toBe(true);
+        expect(lastFinalized.some((f) => f.id === diff.id && f.status === 'rejected')).toBe(true);
+    });
     it('acceptDiff records partial and rejectedBlockIndices on partial acceptance', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });

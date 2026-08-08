@@ -137,9 +137,18 @@ export interface DiffSettings {
 }
 
 /**
+ * 已终结 diff 的最小终态信息（随 statusChanged 推送，供前端把已从 pending 列表
+ * 消失的条目结算为 accepted/rejected——自动应用路径无前端请求可读响应）。
+ */
+export interface FinalizedDiffInfo {
+    id: string;
+    status: PendingDiff['status'];
+}
+
+/**
  * 状态变化监听器
  */
-type StatusChangeListener = (pending: PendingDiff[], allProcessed: boolean) => void;
+type StatusChangeListener = (pending: PendingDiff[], allProcessed: boolean, finalized?: FinalizedDiffInfo[]) => void;
 
 /**
  * Diff 保存监听器（当diff 被实际保存到磁盘时调用）
@@ -604,6 +613,18 @@ export class DiffManager {
     /** 已终结 diff 的 FIFO 淘汰队列（延迟删除，终态条目仍可能被工具链路读一次） */
     private finalizedDiffOrder: string[] = [];
     private static readonly MAX_FINALIZED_DIFFS = 50;
+    /**
+     * 最近终结 diff 的终态缓存（id → status）。
+     *
+     * 为什么需要：notifyStatusChange 只推送 pending diff，自动应用（autoSave）终结后
+     * 该 diff 从推送载荷消失，前端无法得知其已接受/拒绝，面板按钮残留。
+     * 怎么改：各终结路径（accept/reject/cancel）记录终态，随 statusChanged 推送携带，
+     * 前端据此把不在 pending 列表的条目结算。
+     * 容量：FIFO 上限兜底，防止大量终结时无界增长；前端按 id 匹配，旧条目即使被淘汰
+     * 也已结算（推送在前端挂载期间必然送达）。
+     */
+    private finalizedStatusCache: Map<string, PendingDiff['status']> = new Map();
+    private static readonly MAX_FINALIZED_STATUS_CACHE = 100;
     /** 被淘汰 rejected diff 墓碑 Set 的容量上限（C6）：超出时 FIFO 淘汰最旧墓碑 */
     private static readonly MAX_EVICTED_REJECTED_TOMBSTONES = 2000;
     /**
@@ -726,8 +747,32 @@ export class DiffManager {
     private notifyStatusChange(): void {
         const pending = this.getPendingDiffs();
         const allProcessed = this.areAllProcessed();
+        // 已终结 diff 的终态快照：前端据此结算已从 pending 列表消失的条目
+        // （自动应用/取消路径无请求-响应可读，只能依赖推送）。
+        // 快照在通知前生成：终结后新创建的 pending diff 会在下一次推送覆盖。
+        const finalized: FinalizedDiffInfo[] = Array.from(
+            this.finalizedStatusCache,
+            ([id, status]) => ({ id, status })
+        );
         for (const listener of this.statusListeners) {
-            listener(pending, allProcessed);
+            listener(pending, allProcessed, finalized);
+        }
+    }
+
+    /**
+     * 记录已终结 diff 的终态（供 statusChanged 推送携带；FIFO 上限兜底防无界增长）。
+     */
+    private recordFinalizedStatus(id: string, status: PendingDiff['status']): void {
+        if (this.finalizedStatusCache.has(id)) {
+            this.finalizedStatusCache.set(id, status);
+            return;
+        }
+        this.finalizedStatusCache.set(id, status);
+        if (this.finalizedStatusCache.size > DiffManager.MAX_FINALIZED_STATUS_CACHE) {
+            const oldest = this.finalizedStatusCache.keys().next().value;
+            if (oldest !== undefined) {
+                this.finalizedStatusCache.delete(oldest);
+            }
         }
     }
 
@@ -836,6 +881,7 @@ export class DiffManager {
         this.disposeDiffListeners(diff.id);
         this.cleanup(diff.id);
         this.evictOldFinalizedDiffs(diff.id);
+        this.recordFinalizedStatus(diff.id, 'accepted');
         this.notifyStatusChange();
         this.notifySaveComplete(diff);
     }
@@ -876,6 +922,7 @@ export class DiffManager {
         this.cleanup(diff.id);
         this.removeNewFileResidue(diff);
         this.evictOldFinalizedDiffs(diff.id);
+        this.recordFinalizedStatus(diff.id, 'rejected');
         this.notifyStatusChange();
     }
 
@@ -894,6 +941,7 @@ export class DiffManager {
         this.cleanup(diff.id);
         this.removeNewFileResidue(diff);
         this.evictOldFinalizedDiffs(diff.id);
+        this.recordFinalizedStatus(diff.id, 'rejected');
     }
 
     /**

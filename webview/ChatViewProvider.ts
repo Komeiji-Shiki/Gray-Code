@@ -928,7 +928,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 监听 Diff 状态变化并同步到前端
         const diffManager = getDiffManager();
-        const diffStatusListener = (pending: any[], allProcessed: boolean) => {
+        const diffStatusListener = (pending: any[], allProcessed: boolean, finalized: any[] = []) => {
             // 我们只同步最近一次状态变化
             // 如果所有都处理完了，可能意味着有接受/拒绝发生
             // 找出所有已处理但还未通知前端的 diff 可能比较复杂，
@@ -944,6 +944,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     diffGuardWarning: d.diffGuardWarning,
                     diffGuardDeletePercent: d.diffGuardDeletePercent
                 })),
+                // 最近终结 diff 的终态（自动应用/取消路径前端无响应可读，
+                // 靠此把已从 pending 列表消失的条目结算，避免接受/拒绝按钮残留）
+                finalized: finalized.map(d => ({ id: d.id, status: d.status })),
                 allProcessed
             });
         };
