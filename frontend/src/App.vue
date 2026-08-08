@@ -38,9 +38,11 @@ const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMoni
 
 // 语言是否已加载
 const languageLoaded = ref(false)
-// 本次启动是否播放开屏动画：null 表示外观设置尚未解析，期间绝不预挂载 Splash。
+// 本次启动是否播放开屏动画：null 表示外观设置尚未解析，期间不挂载任何偏好专属启动画面。
 // 该值只在启动配置读取结束时确定一次，避免运行中把开关改为开启后突然补播开屏动画。
 const startupSplashEnabled = ref<boolean | null>(null)
+// 主界面启动数据是否已完成初始化；关闭开屏动画时据此结束专属占位画面。
+const mainViewInitialized = ref(false)
 // 开始动画是否已完成（Splash 淡出后置 true，移除组件）
 const splashDone = ref(false)
 
@@ -547,9 +549,14 @@ onMounted(async () => {
     }
   })
   
-  // 异步初始化 chatStore（加载历史对话等）
-  // onMounted 回调本身是 async，这里 await 并 catch：初始化失败不产生未处理 rejection，且有错误日志
-  await chatStore.initialize().catch(err => console.error('[App] chatStore.initialize failed', err))
+  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
+  try {
+    await chatStore.initialize()
+  } catch (err) {
+    console.error('[App] chatStore.initialize failed', err)
+  } finally {
+    mainViewInitialized.value = true
+  }
 })
 
 onBeforeUnmount(() => {
@@ -573,8 +580,8 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
-    <!-- 设置尚未返回时显示石墨灰加载光场；关闭开屏动画时，它就是主界面就绪前的占位画面 -->
-    <StartupBackdrop v-if="startupSplashEnabled === null" />
+    <!-- 关闭开屏动画后才显示石墨灰加载光场；配置未知或明确开启时绝不挂载 -->
+    <StartupBackdrop v-if="startupSplashEnabled === false && !mainViewInitialized" />
 
     <!-- 开屏动画只在启动设置解析完且明确启用后挂载，避免关闭状态下先闪现再卸载 -->
     <Splash

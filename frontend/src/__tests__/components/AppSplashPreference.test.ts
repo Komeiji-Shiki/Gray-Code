@@ -218,30 +218,43 @@ describe('App 开屏动画启动偏好', () => {
     wrapper = undefined
   })
 
-  it('配置请求未返回时显示灰阶加载动效占位，但不预挂载 Splash', async () => {
+  it('配置请求未返回时不挂载任何偏好专属启动画面', async () => {
     wrapper = mount(App)
     await nextTick()
 
-    const backdrop = wrapper.get('.startup-backdrop')
-    expect(backdrop.attributes('aria-hidden')).toBe('true')
-    expect(backdrop.text()).toBe('')
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
-  it('配置明确关闭时从始至终都不挂载 Splash', async () => {
+  it('配置明确关闭时只在主界面初始化期间显示关闭态占位，从始至终不挂载 Splash', async () => {
+    const chatInitialization = deferred<void>()
+    runtime.chatStore.initialize.mockReturnValueOnce(chatInitialization.promise)
+
     wrapper = mount(App)
+    await nextTick()
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
 
     settingsRequest.resolve(makeSettingsResponse(false))
     await flushPromises()
 
-    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
+    const backdrop = wrapper.get('.startup-backdrop')
+    expect(backdrop.attributes('aria-hidden')).toBe('true')
+    expect(backdrop.text()).toBe('')
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
     expect(runtime.settingsStore.splashEnabled).toBe(false)
+
+    chatInitialization.resolve()
+    await flushPromises()
+
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
-  it('配置明确开启时在配置解析后才挂载 Splash', async () => {
+  it('配置明确开启时只挂载 Splash，启动全程不显示关闭态占位', async () => {
     wrapper = mount(App)
+    await nextTick()
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
 
     settingsRequest.resolve(makeSettingsResponse(true))
@@ -249,6 +262,12 @@ describe('App 开屏动画启动偏好', () => {
 
     expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
+
+    wrapper.getComponent({ name: 'Splash' }).vm.$emit('done')
+    await nextTick()
+
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
   it('本次启动关闭后，运行中重新开启只影响下次启动，不会突然补播', async () => {
