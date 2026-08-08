@@ -51,6 +51,9 @@ describe('ActivityTracker', () => {
     let store: ActivityStore;
 
     beforeEach(async () => {
+        // 固定在本地中午，避免跨午夜运行时本组最长约 19 分钟的 fake timer 推进切到次日，
+        // todaySamples() 随 Date.now() 查询新日期后把已有样本误判为 0。
+        jest.setSystemTime(new Date(2026, 5, 15, 12, 0, 0, 0));
         dir = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-activity-tracker-'));
         tracker = new ActivityTracker(dir);
         store = tracker.getStore();
