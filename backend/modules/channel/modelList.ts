@@ -149,10 +149,15 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
   try {
     const proxyFetch = createProxyFetch(proxyUrl);
     const allModels: any[] = [];
+    let hasMore = true;
     let pageToken: string | undefined;
+    const seenCursors = new Set<string>();
+    const MAX_PAGES = 500;
+    let pageCount = 0;
 
     // 循环获取所有分页数据
     do {
+      pageCount += 1;
       const params = new URLSearchParams({ pageSize: '1000' });
       // 未启用 useAuthorizationHeader 时，将 apiKey 放入 query parameter
       if (!(config as any).useAuthorizationHeader) {
@@ -182,8 +187,23 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
       const models = data.models || [];
       allModels.push(...models);
 
-      pageToken = data.nextPageToken;
-    } while (pageToken);
+      // 分页保护：无数据/无游标/游标重复/超过上限时停止，
+      // 避免代理故障时无限请求（与 getOpenAIModels 行为对齐）
+      const nextToken: string | undefined = data.nextPageToken;
+      if (models.length === 0 || !nextToken) {
+        hasMore = false;
+      } else if (nextToken === pageToken || seenCursors.has(nextToken)) {
+        console.warn('[modelList] Gemini models pagination stopped: repeated cursor', nextToken);
+        hasMore = false;
+      } else if (pageCount >= MAX_PAGES) {
+        console.warn('[modelList] Gemini models pagination stopped: reached max pages', MAX_PAGES);
+        hasMore = false;
+      } else {
+        seenCursors.add(nextToken);
+        pageToken = nextToken;
+        hasMore = true;
+      }
+    } while (hasMore);
 
     // 过滤出支持 generateContent 的模型（兼容第三方中转站未返回 supportedGenerationMethods 的情况）
     const models = allModels

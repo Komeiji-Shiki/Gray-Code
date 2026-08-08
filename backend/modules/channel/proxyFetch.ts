@@ -1,5 +1,5 @@
 /**
- * LimCode - 代理 Fetch 实现
+ * GrayCode - 代理 Fetch 实现
  *
  * 支持通过 HTTP 代理发起 HTTPS 请求（CONNECT 隧道方式）
  */
@@ -50,6 +50,10 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
 }
 
 // User-Agent 标识
+/**
+ * 默认代理请求 User-Agent。GrayCode 是当前扩展的正式产品名（扩展 ID：Komeiji-Shiki.graycode）；
+ * LimCode 仅是部分历史模块注释中的旧称，因此这里有意保持 GrayCode。
+ */
 const USER_AGENT = 'GrayCode';
 
 /**
@@ -332,7 +336,7 @@ function sendRequestOverSocket(
     // 发送实际的 HTTP 请求
     const requestLine = `${init.method} ${targetUrl.pathname}${targetUrl.search} HTTP/1.1\r\n`;
 
-    // 确保 User-Agent 被包含
+    // 确保 User-Agent 被包含；init.headers 展开在后，调用方显式传入的 UA 优先生效
     const headersWithUserAgent = { 'User-Agent': USER_AGENT, ...init.headers };
     const headers = [
         `Host: ${targetUrl.hostname}`,
@@ -463,7 +467,16 @@ function sendRequestOverSocket(
             statusText,
             headers: responseHeaders,
             text: async () => finalBody,
-            json: async () => JSON.parse(finalBody),
+            json: async () => {
+                // HTTP 200 + 非 JSON 体（如纯文本错误页）时给出带 body 摘要的明确错误，
+                // 避免裸 SyntaxError 逃逸
+                try {
+                    return JSON.parse(finalBody);
+                } catch (error) {
+                    const preview = finalBody.length > 200 ? `${finalBody.slice(0, 200)}...` : finalBody;
+                    throw new SyntaxError(`Failed to parse response body as JSON: ${preview}`);
+                }
+            },
             body: null
         });
     };
@@ -757,7 +770,7 @@ export async function* proxyStreamFetch(
     
     const requestLine = `${init.method} ${targetUrl.pathname}${targetUrl.search} HTTP/1.1\r\n`;
     
-    // 确保 User-Agent 被包含
+    // 确保 User-Agent 被包含；init.headers 展开在后，调用方显式传入的 UA 优先生效
     const headersWithUserAgent = { 'User-Agent': USER_AGENT, ...init.headers };
     const streamHeaders = [
         `Host: ${targetUrl.hostname}`,
