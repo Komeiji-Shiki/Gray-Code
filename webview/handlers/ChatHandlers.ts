@@ -16,6 +16,16 @@ import {
 import { StreamChunkProcessor } from '../stream/StreamChunkProcessor';
 import type { HandlerContext, MessageHandler } from '../types';
 
+async function stopConversationStream(ctx: HandlerContext, conversationId: string): Promise<void> {
+  const abortManager = ctx.streamAbortControllers;
+  if (typeof abortManager?.abortAndWaitForCompletion === 'function') {
+    await abortManager.abortAndWaitForCompletion(conversationId);
+    return;
+  }
+  abortManager?.cancel(conversationId);
+  await abortManager?.waitForIdle(conversationId);
+}
+
 /**
  * 懒解析/创建全局 BranchService（与 BranchHandlers 同模式，供 rerollStream 后端流程使用）。
  * chat.rerollStream 是第一个可能不经分支 API 就触达分支服务的入口，必须在此确保服务已注册。
@@ -40,23 +50,7 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
   // 先取消该对话的流式请求（如果有）
   // 取消只是“尽力而为”的前置清理：取消失败不应阻断删除主流程，独立 try/catch 仅告警。
   try {
-    // streamAbortControllers 实际上是 StreamAbortManager，但类型定义为 Map
-    const abortManager = ctx.streamAbortControllers as any;
-    if (typeof abortManager.abortAndWaitForCompletion === 'function') {
-      await abortManager.abortAndWaitForCompletion(conversationId);
-    } else if (abortManager.cancel) {
-      abortManager.cancel(conversationId);
-      if (typeof abortManager.waitForIdle === 'function') {
-        await abortManager.waitForIdle(conversationId);
-      }
-    } else if (abortManager.get) {
-      // 如果是纯 Map，手动取消
-      const controller = abortManager.get(conversationId);
-      if (controller) {
-        controller.abort();
-        abortManager.delete(conversationId);
-      }
-    }
+    await stopConversationStream(ctx, conversationId);
   } catch (err) {
     console.warn('[ChatHandlers] Failed to cancel stream before deleteMessage:', err);
   }
@@ -78,28 +72,28 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
  * 删除单条消息
  */
 export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, targetIndex } = data;
+  const { conversationId, targetIndex } = data || {};
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || !Number.isInteger(targetIndex) || targetIndex < 0) {
+    ctx.sendError(requestId, 'DELETE_SINGLE_MESSAGE_ERROR', 'Invalid conversationId or targetIndex');
+    return;
+  }
   try {
-    const abortManager = ctx.streamAbortControllers as any;
-    if (typeof abortManager?.abortAndWaitForCompletion === 'function') {
-      await abortManager.abortAndWaitForCompletion(conversationId);
-    } else {
-      abortManager?.cancel?.(conversationId);
-      if (typeof abortManager?.waitForIdle === 'function') {
-        await abortManager.waitForIdle(conversationId);
-      }
-    }
+    await stopConversationStream(ctx, conversationId);
     await ctx.conversationManager.deleteMessage(conversationId, targetIndex);
 
-    // 删除单条消息后刷新派生元数据（todoList / activeBuild），
-    // 避免删除 todo/create_plan 轨迹后历史会话残留无效 Build 壳。
+    // 删除本身已经成功，派生元数据刷新仅是维护动作，失败不能把主操作误报为失败。
     if (ctx.chatHandler) {
-      await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+      try {
+        await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+      } catch (refreshError) {
+        console.warn('[ChatHandlers] Failed to refresh derived metadata after deleting a message:', refreshError);
+      }
     }
 
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
-    ctx.sendError(requestId, 'DELETE_SINGLE_MESSAGE_ERROR', error.message || t('webview.errors.deleteMessageFailed'));
+    ctx.sendError(requestId, 'DELETE_SINGLE_MESSAGE_ERROR', error?.message || t('webview.errors.deleteMessageFailed'));
   }
 };
 
@@ -107,15 +101,13 @@ export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) 
  * 取消总结请求（仅取消总结 API，不中断主对话流）
  */
 export const cancelSummarizeRequest: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId } = data;
-
-  const abortManager = ctx.streamAbortControllers as any;
-  let cancelled = false;
-
-  if (abortManager?.cancelSummary) {
-    cancelled = !!abortManager.cancelSummary(conversationId);
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'CANCEL_SUMMARIZE_INVALID_CONVERSATION', 'Invalid conversation ID');
+    return;
   }
 
+  const cancelled = !!ctx.streamAbortControllers?.cancelSummary(conversationId);
   ctx.sendResponse(requestId, { cancelled });
 };
 
@@ -126,16 +118,8 @@ export const awaitConversationIdle: MessageHandler = async (data, requestId, ctx
     return;
   }
 
-  const abortManager = ctx.streamAbortControllers as any;
-  if (typeof abortManager?.waitForIdle === 'function') {
-    await abortManager.waitForIdle(conversationId);
-  } else {
-    // HandlerContext 仍允许测试/旧调用点传普通 Map；没有活跃控制器时可直接视为空闲。
-    const controller = abortManager?.get?.(conversationId);
-    if (controller) {
-      await new Promise<void>(resolve => controller.signal.addEventListener('abort', () => resolve(), { once: true }));
-    }
-  }
+  const abortManager = ctx.streamAbortControllers;
+  await abortManager.waitForIdle(conversationId);
 
   ctx.sendResponse(requestId, { idle: true });
 };
@@ -233,28 +217,17 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
 
-  // H1：注册取消控制器（与 StreamRequestHandler.handleRetryStream 同模式：create + 传 signal + finally delete）。
-  // create 会中止该会话旧流（含正在运行的 chat/retry 流）并登记新控制器；
-  // 纯 Map 注入路径（测试/旧路径）退化为手动 abort 旧流 + set 新控制器。
-  const abortManager = ctx.streamAbortControllers as any;
-  let controller: AbortController | undefined;
-  let summarizeController: AbortController | undefined;
+  // H1：注册主流与总结流的取消控制器。HandlerContext 的契约已经明确为
+  // StreamAbortManager，不再保留会掩盖注入错误的 Map 鸭子类型兼容分支。
+  const abortManager = ctx.streamAbortControllers;
+  let controller: AbortController;
+  let summarizeController: AbortController;
   try {
-    if (abortManager?.create) {
-      controller = abortManager.create(conversationId);
-    } else if (abortManager?.get) {
-      const existing = abortManager.get(conversationId);
-      if (existing) {
-        existing.abort();
-      }
-      controller = new AbortController();
-      abortManager.set(conversationId, controller);
-    }
-    if (abortManager?.createSummary) {
-      summarizeController = abortManager.createSummary(conversationId);
-    }
-  } catch (err) {
-    console.warn('[ChatHandlers] Failed to register abort controller for rerollStream:', err);
+    controller = abortManager.create(conversationId);
+    summarizeController = abortManager.createSummary(conversationId);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'REROLL_ERROR', error?.message || 'failed to initialize stream cancellation');
+    return;
   }
 
   const resolvedStreamId = typeof streamId === 'string' && streamId.trim() ? streamId : requestId;
@@ -274,8 +247,8 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
       configId,
       modelOverride,
       promptModeId,
-      abortSignal: controller?.signal,
-      summarizeAbortSignal: summarizeController?.signal,
+      abortSignal: controller.signal,
+      summarizeAbortSignal: summarizeController.signal,
     });
     // 发送响应，通知前端请求已接收并开始（与 StreamRequestHandler 协议一致）
     ctx.sendResponse(requestId, { started: true });
@@ -287,7 +260,7 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
   } catch (error: any) {
     // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致），
     // 避免残留空占位消息；不按错误处理。
-    if (controller?.signal.aborted) {
+    if (controller.signal.aborted) {
       processor.processChunk({ cancelled: true });
       processor.flush();
       return;
@@ -301,12 +274,8 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
   } finally {
     // 流结束/取消/异常统一注销控制器（delete 带引用校验，不会误删新流控制器）
     try {
-      if (controller && abortManager?.delete) {
-        abortManager.delete(conversationId, controller);
-      }
-      if (summarizeController && abortManager?.deleteSummary) {
-        abortManager.deleteSummary(conversationId, summarizeController);
-      }
+      abortManager.delete(conversationId, controller);
+      abortManager.deleteSummary(conversationId, summarizeController);
     } catch (err) {
       console.warn('[ChatHandlers] Failed to cleanup abort controller for rerollStream:', err);
     }
@@ -345,26 +314,16 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     return;
   }
 
-  // H1：注册取消控制器（与 rerollStream 同模式：create + 传 signal + finally delete）
-  const abortManager = ctx.streamAbortControllers as any;
-  let controller: AbortController | undefined;
-  let summarizeController: AbortController | undefined;
+  // H1：HandlerContext 已保证注入 StreamAbortManager，直接使用明确契约。
+  const abortManager = ctx.streamAbortControllers;
+  let controller: AbortController;
+  let summarizeController: AbortController;
   try {
-    if (abortManager?.create) {
-      controller = abortManager.create(conversationId);
-    } else if (abortManager?.get) {
-      const existing = abortManager.get(conversationId);
-      if (existing) {
-        existing.abort();
-      }
-      controller = new AbortController();
-      abortManager.set(conversationId, controller);
-    }
-    if (abortManager?.createSummary) {
-      summarizeController = abortManager.createSummary(conversationId);
-    }
-  } catch (err) {
-    console.warn('[ChatHandlers] Failed to register abort controller for editBranchStream:', err);
+    controller = abortManager.create(conversationId);
+    summarizeController = abortManager.createSummary(conversationId);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'EDIT_BRANCH_ERROR', error?.message || 'failed to initialize stream cancellation');
+    return;
   }
 
   const resolvedStreamId = typeof streamId === 'string' && streamId.trim() ? streamId : requestId;
@@ -384,8 +343,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
       modelOverride,
       promptModeId,
       mode: resolvedMode,
-      abortSignal: controller?.signal,
-      summarizeAbortSignal: summarizeController?.signal,
+      abortSignal: controller.signal,
+      summarizeAbortSignal: summarizeController.signal,
     });
     // 发送响应，通知前端请求已接收并开始（与 StreamRequestHandler 协议一致）
     ctx.sendResponse(requestId, { started: true });
@@ -396,7 +355,7 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     processor.flush();
   } catch (error: any) {
     // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致）
-    if (controller?.signal.aborted) {
+    if (controller.signal.aborted) {
       processor.processChunk({ cancelled: true });
       processor.flush();
       return;
@@ -410,12 +369,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
   } finally {
     // 流结束/取消/异常统一注销控制器（delete 带引用校验，不会误删新流控制器）
     try {
-      if (controller && abortManager?.delete) {
-        abortManager.delete(conversationId, controller);
-      }
-      if (summarizeController && abortManager?.deleteSummary) {
-        abortManager.deleteSummary(conversationId, summarizeController);
-      }
+      abortManager.delete(conversationId, controller);
+      abortManager.deleteSummary(conversationId, summarizeController);
     } catch (err) {
       console.warn('[ChatHandlers] Failed to cleanup abort controller for editBranchStream:', err);
     }

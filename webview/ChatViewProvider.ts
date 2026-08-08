@@ -7,7 +7,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import * as os from 'os';
 import { randomBytes } from 'crypto';
 import { t, setLanguage as setBackendLanguage } from '../backend/i18n';
 import type { SupportedLanguage } from '../backend/i18n';
@@ -27,11 +26,11 @@ import { ChannelManager } from '../backend/modules/channel';
 import { ChatHandler } from '../backend/modules/api/chat';
 import { ModelsHandler } from '../backend/modules/api/models';
 import { SettingsManager, VSCodeSettingsStorage, StoragePathManager, SettingsExporter } from '../backend/modules/settings';
-import type { StoragePathConfig, StorageStats, SettingsChangeEvent } from '../backend/modules/settings';
+import type { SettingsChangeEvent } from '../backend/modules/settings';
 import { SettingsHandler } from '../backend/modules/api/settings';
 import { CheckpointManager } from '../backend/modules/checkpoint';
 import { McpManager, VSCodeFileSystemMcpStorageAdapter } from '../backend/modules/mcp';
-import type { CreateMcpServerInput, UpdateMcpServerInput, McpServerInfo } from '../backend/modules/mcp';
+import type { McpServerInfo } from '../backend/modules/mcp';
 import { DependencyManager, type InstallProgressEvent } from '../backend/modules/dependencies';
 import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
@@ -63,9 +62,11 @@ import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
 import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
+import { disposeFileHandlerResources } from './handlers/FileHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
 
 const log = Logger.get('ChatViewProvider');
+const UPDATE_CHECK_DELAY_MS = 10_000;
 
 /**
  * Diff 预览内容提供者
@@ -467,8 +468,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 30.5. 启动延迟更新检查（避开启动竞态；24h 节流在 UpdateChecker 内部处理，失败静默）
         this.updateCheckTimer = setTimeout(() => {
-            this.updateChecker?.check(false).catch(() => {});
-        }, 10_000);
+            if (!this.updateChecker) {
+                log.warn('update_check_skipped_not_initialized');
+                return;
+            }
+            this.updateChecker.check(false).catch(error => {
+                log.warn('update_check_failed', { error: error?.message || String(error) });
+            });
+        }, UPDATE_CHECK_DELAY_MS);
 
         this.subAgentMonitorPanel = new SubAgentMonitorPanel(
             this.context,
@@ -655,7 +662,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             storagePathManager: this.storagePathManager,
             diffStorageManager: this.diffStorageManager,
             updateChecker: this.updateChecker,
-            streamAbortControllers: this.messageRouter.getAbortManager() as any,
+            streamAbortControllers: this.messageRouter.getAbortManager(),
             diffPreviewProvider: this.diffPreviewProvider,
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
             sendResponse: this.sendResponse.bind(this),
@@ -737,23 +744,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         try {
             const existingConfig = await this.configManager.getConfig('gemini-pro');
             if (!existingConfig) {
-                const config = {
-                    id: 'gemini-default',
-                    type: 'gemini' as const,
+                await this.configManager.ensureConfig('gemini-pro', {
+                    type: 'gemini',
                     name: 'Gemini(Default)',
                     apiKey: process.env.GEMINI_API_KEY || 'YOUR_API_KEY_HERE',
                     url: 'https://generativelanguage.googleapis.com/v1beta',
                     model: 'gemini-3-pro-preview',
                     timeout: 120000,
-                    enabled: true,
-                    createdAt: Date.now(),
-                    updatedAt: Date.now()
-                };
-                
-                const storage = (this.configManager as any).storageAdapter;
-                await storage.save(config);
-                
-                (this.configManager as any).loaded = false;
+                    enabled: true
+                });
             }
         } catch (error) {
             console.error('Failed to create default config:', error);
@@ -892,7 +891,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             diffStorageManager: this.diffStorageManager,
             updateChecker: this.updateChecker,
             windowsAgentStopNotificationService: this.windowsAgentStopNotificationService,
-            streamAbortControllers: this.messageRouter.getAbortManager() as any,
+            streamAbortControllers: this.messageRouter.getAbortManager(),
             diffPreviewProvider: this.diffPreviewProvider,
             // 主聊天自身发起的 diff 也跟随主聊天所在列（与 Monitor 路由同语义）：
             // 主聊天在侧边栏（无列）时 undefined，openDiffView 回退主区域第一列。
@@ -909,6 +908,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理来自前端的消息
      */
     private async handleMessage(message: any) {
+        if (!message || typeof message !== 'object' || Array.isArray(message)) {
+            this.sendError('', 'INVALID_MESSAGE', 'Invalid webview message');
+            return;
+        }
         const { type, data, requestId } = message;
         // 安全：不信任消息体中的 clientId。来源 webview 是主聊天视图
         // （注册身份固定为 mainChat），路由身份按来源 webview 的注册身份决定，
@@ -999,6 +1002,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     public dispose(): void {
         // 取消所有活跃的流式请求
         this.cancelAllStreams();
+
+        // 清理视图级监听器，包括 chat focus notifier。
+        for (const disposable of this.viewDisposables.splice(0)) {
+            try {
+                disposable.dispose();
+            } catch (error) {
+                log.warn('view_disposable_cleanup_failed', { error: String(error) });
+            }
+        }
+        disposeFileHandlerResources();
 
         // Drop queued commands.
         this.pendingCommands = [];

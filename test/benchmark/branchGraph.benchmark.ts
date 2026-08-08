@@ -174,7 +174,7 @@ describe('MIG-09 基准 ③ 大量分支（100 候选）', () => {
         // 让 activePath / switchActivePath 承受 100+ 层深度压力。
         const deepBuild = await withTiming(async () => {
             let g = graph;
-            let parent = g.activeTailNodeId; // 当前活跃尾（reroll_run_99）
+            let parent = g.activeTailNodeId; // 当前活跃尾（reroll_run_90）
             for (let i = 0; i < DEEP_COUNT; i++) {
                 const node = makeNode(`deep_${i}`, parent, i % 2 === 0 ? 'user' : 'model');
                 g = insertNode(g, node, { setActive: true, updateTail: true });

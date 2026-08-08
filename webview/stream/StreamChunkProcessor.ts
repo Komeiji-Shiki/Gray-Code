@@ -56,9 +56,12 @@ export class StreamChunkProcessor {
    * @returns 是否为错误类型
    */
   processChunk(chunk: any): boolean {
-    // AI 正在生成：视为用户在场（主人在看输出，可能不操作编辑器）
-    markAiActive();
+    if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) {
+      return false;
+    }
     if (!this.getView()) return false;
+    // 只有存在实际观看端时才把流式输出视为活跃，后台无视图流不应制造虚假在场时间。
+    markAiActive();
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });

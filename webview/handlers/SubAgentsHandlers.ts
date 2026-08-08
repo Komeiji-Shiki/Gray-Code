@@ -9,6 +9,19 @@ import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 
 const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
+const MAX_SUBAGENT_ITERATIONS = 100_000;
+const MAX_SUBAGENT_RUNTIME_MS = 24 * 60 * 60 * 1000;
+
+function optionalBoundedNumber(
+  value: unknown,
+  options: { integer: boolean; min: number; max: number; allowMinusOne?: boolean }
+): number | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  if (options.allowMinusOne && value === -1) return value;
+  if (options.integer && !Number.isInteger(value)) return null;
+  return value >= options.min && value <= options.max ? value : null;
+}
 
 /**
  * 控制类响应统一附带 run 的可控制性与最新状态。
@@ -115,6 +128,17 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
       return;
     }
 
+    const maxIterations = optionalBoundedNumber(data?.maxIterations, {
+      integer: true, min: 1, max: MAX_SUBAGENT_ITERATIONS, allowMinusOne: true
+    });
+    const maxRuntime = optionalBoundedNumber(data?.maxRuntime, {
+      integer: true, min: 1, max: MAX_SUBAGENT_RUNTIME_MS, allowMinusOne: true
+    });
+    if (maxIterations === null || maxRuntime === null) {
+      ctx.sendError(requestId, 'SUBAGENT_INVALID_LIMITS', 'maxIterations/maxRuntime must be -1 or a bounded positive integer');
+      return;
+    }
+
     const config: SubAgentConfigItem = {
       type,
       name,
@@ -122,8 +146,8 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
       systemPrompt: data.systemPrompt || '',
       channel: data.channel || { channelId: '' },
       tools: data.tools || { mode: 'all' },
-      maxIterations: data.maxIterations,
-      maxRuntime: data.maxRuntime,
+      maxIterations,
+      maxRuntime,
       failureModeAfterRetries: data.failureModeAfterRetries || 'fail_parent_tool',
       enabled: data.enabled !== false
     };
@@ -162,7 +186,11 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
  */
 export const updateSubAgent: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { type, updates } = data;
+    const { type, updates } = data || {};
+    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+      ctx.sendError(requestId, 'UPDATE_SUBAGENT_INVALID_INPUT', 'updates must be an object');
+      return;
+    }
     
     if (!ctx.settingsManager.getSubAgent(type)) {
       ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
@@ -344,7 +372,7 @@ export const exitRun: MessageHandler = async (data, requestId, ctx) => {
     const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
     const reason = typeof data?.reason === 'string' && data.reason.trim()
       ? data.reason.trim()
-      : '用户主动终止 SubAgent 执行';
+      : 'SubAgent run stopped by user';
     if (!runId) {
       ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_INVALID_INPUT', 'runId is required');
       return;
@@ -360,10 +388,13 @@ export const exitRun: MessageHandler = async (data, requestId, ctx) => {
 export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => {
   try {
     const runId = typeof data?.runId === 'string' ? data.runId : '';
-    const contentIndex = Number(data?.contentIndex);
+    const rawContentIndex = data?.contentIndex;
+    const contentIndex = typeof rawContentIndex === 'number' && Number.isInteger(rawContentIndex) && rawContentIndex >= 0
+      ? rawContentIndex
+      : undefined;
     const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
 
-    if (!runId || !Number.isFinite(contentIndex)) {
+    if (!runId || contentIndex === undefined) {
       ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
       return;
     }
@@ -393,10 +424,13 @@ export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => 
 export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) => {
   try {
     const runId = typeof data?.runId === 'string' ? data.runId : '';
-    const contentIndex = Number(data?.contentIndex);
+    const rawContentIndex = data?.contentIndex;
+    const contentIndex = typeof rawContentIndex === 'number' && Number.isInteger(rawContentIndex) && rawContentIndex >= 0
+      ? rawContentIndex
+      : undefined;
     const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
 
-    if (!runId || !Number.isFinite(contentIndex)) {
+    if (!runId || contentIndex === undefined) {
       ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
       return;
     }
@@ -428,11 +462,21 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
  */
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'Invalid global config payload');
+      return;
+    }
     const updates: Record<string, unknown> = {};
 
     // 支持的全局配置字段
     if (data.maxConcurrentAgents !== undefined) {
-      updates.maxConcurrentAgents = data.maxConcurrentAgents;
+      const value = data.maxConcurrentAgents;
+      if (typeof value !== 'number' || !Number.isFinite(value)
+          || !Number.isInteger(value) || (value !== -1 && value < 1)) {
+        ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'maxConcurrentAgents must be -1 or a positive integer');
+        return;
+      }
+      updates.maxConcurrentAgents = value;
     }
 
     if (data.failureModeAfterRetries === 'fail_parent_tool' || data.failureModeAfterRetries === 'wait_for_monitor_action') {

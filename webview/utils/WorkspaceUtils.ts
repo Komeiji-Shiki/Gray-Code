@@ -23,16 +23,22 @@ export function shouldIgnorePath(relativePath: string, ignorePatterns: string[])
  * 支持 * 和 ** 通配符
  */
 export function matchGlobPattern(filePath: string, pattern: string): boolean {
-  const regexPattern = pattern
-    .replace(/\\/g, '/')
-    .replace(/\./g, '\\.')
-    .replace(/\*\*/g, '<<<GLOBSTAR>>>')
-    .replace(/\*/g, '[^/]*')
-    .replace(/<<<GLOBSTAR>>>/g, '.*')
-    .replace(/\//g, '[/\\\\]');
-  
-  const regex = new RegExp(`^${regexPattern}$|[/\\\\]${regexPattern}$|^${regexPattern}[/\\\\]|[/\\\\]${regexPattern}[/\\\\]`, 'i');
-  return regex.test(filePath.replace(/\\/g, '/'));
+  if (typeof filePath !== 'string' || typeof pattern !== 'string' || !pattern) return false;
+  try {
+    const normalizedPattern = pattern.replace(/\\/g, '/');
+    const GLOBSTAR = '\u0000';
+    const STAR = '\u0001';
+    const regexPattern = normalizedPattern
+      .replace(/\*\*/g, GLOBSTAR)
+      .replace(/\*/g, STAR)
+      .replace(/[.+^${}()|[\]\\?]/g, '\\$&')
+      .replace(new RegExp(GLOBSTAR, 'g'), '.*')
+      .replace(new RegExp(STAR, 'g'), '[^/]*');
+    const regex = new RegExp(`(?:^|/)${regexPattern}(?:$|/)`, 'i');
+    return regex.test(filePath.replace(/\\/g, '/'));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -193,12 +199,14 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
     // 如果 API 返回 null，手动通过路径匹配（解决远程 SSH scheme 不一致问题）
     // 例如：文件是 vscode-remote://ssh-remote+host/path 但工作区是 file:///path
     if (!belongingWorkspace) {
-      const fileFsPath = fileUri.path; // 获取文件系统路径部分
+      const fileFsPath = fileUri.path;
+      const normalizedFilePath = fileFsPath.toLowerCase();
       
       for (const folder of workspaceFolders) {
         const workspaceFsPath = folder.uri.path;
-        // 检查文件路径是否以工作区路径开头
-        if (fileFsPath.startsWith(workspaceFsPath + '/') || fileFsPath === workspaceFsPath) {
+        const normalizedWorkspacePath = workspaceFsPath.toLowerCase();
+        if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')
+            || normalizedFilePath === normalizedWorkspacePath) {
           belongingWorkspace = folder;
           break;
         }

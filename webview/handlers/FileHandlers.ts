@@ -27,6 +27,18 @@ import {
  * 超过该上限时拒绝传输/预览，引导用户改用文件选择或预览方式查看。
  */
 const MAX_ATTACHMENT_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_TEXT_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const TEMP_PREVIEW_TTL_MS = 10 * 60 * 1000;
+const MAX_BASE64_ATTACHMENT_LENGTH = Math.ceil(MAX_ATTACHMENT_SIZE_BYTES / 3) * 4;
+
+function scheduleTempFileCleanup(filePath: string): void {
+  const timer = setTimeout(() => {
+    void fs.promises.rm(filePath, { force: true }).catch(error => {
+      console.warn('[FileHandlers] Failed to remove temporary preview file:', error);
+    });
+  }, TEMP_PREVIEW_TTL_MS);
+  timer.unref?.();
+}
 
 // ========== 工作区包含校验 ==========
 
@@ -261,7 +273,7 @@ export const addPinnedFile: MessageHandler = async (data, requestId, ctx) => {
       }
 
       const file: PinnedFileItem = {
-        id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        id: `pinned_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
         path: validation.relativePath!,
         workspaceUri: actualWorkspaceUri,
         enabled: true,
@@ -385,7 +397,12 @@ export const readFileForContext: MessageHandler = async (data, requestId, ctx) =
       return;
     }
     
-    // 读取文件内容
+    // 在读取前检查大小，避免把超大文本整体载入扩展进程。
+    const stat = await vscode.workspace.fs.stat(fileUri);
+    if (stat.size > MAX_TEXT_FILE_SIZE_BYTES) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.readFileFailed') });
+      return;
+    }
     const content = await vscode.workspace.fs.readFile(fileUri);
     const textContent = Buffer.from(content).toString('utf-8');
     
@@ -505,6 +522,11 @@ export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx
       return;
     }
 
+    const stat = await vscode.workspace.fs.stat(fileUri);
+    if (stat.size > MAX_TEXT_FILE_SIZE_BYTES) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.readFileFailed') });
+      return;
+    }
     const content = await vscode.workspace.fs.readFile(fileUri);
     if (!isLikelyTextFile(relativePath, content)) {
       ctx.sendResponse(requestId, {
@@ -553,6 +575,21 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
       return;
     }
 
+    const stat = await vscode.workspace.fs.stat(fileUri);
+    const ext = path.extname(relativePath).toLowerCase();
+    if (stat.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) })
+      });
+      return;
+    }
+    // 大于文本上限时，仅允许扩展名明确标识为二进制的附件继续读取。
+    // 未知扩展名需要读取内容才能嗅探，直接拒绝可避免先载入超大文件再判定。
+    if (stat.size > MAX_TEXT_FILE_SIZE_BYTES && !BINARY_FILE_EXTENSIONS.has(ext)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.readFileFailed') });
+      return;
+    }
     const content = await vscode.workspace.fs.readFile(fileUri);
     const isText = isLikelyTextFile(relativePath, content);
 
@@ -567,16 +604,7 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
       return;
     }
 
-    const stat = await vscode.workspace.fs.stat(fileUri);
-    // 大文件整体 base64 后塞进 postMessage 会导致扩展进程内存暴涨/序列化阻塞，
-    // 超限时返回可读错误，引导用户改用文件选择/预览方式查看。
-    if (stat.size > MAX_ATTACHMENT_SIZE_BYTES) {
-      ctx.sendResponse(requestId, {
-        success: false,
-        error: t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) })
-      });
-      return;
-    }
+    // 大文件整体 base64 后塞进 postMessage 会导致扩展进程内存暴涨/序列化阻塞。
     const mimeType = inferMimeTypeByPath(relativePath);
 
     ctx.sendResponse(requestId, {
@@ -635,9 +663,10 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
     };
     const ext = extMap[language || ''] || '.txt';
     
-    // 使用固定文件名，这样每次都会复用同一个文件
+    // 每次预览使用唯一文件名，避免并发请求互相覆盖。
     const safeTitle = (title || 'context').replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
-    const tempFilePath = path.join(tempDir, `preview_${safeTitle}${ext}`);
+    const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const tempFilePath = path.join(tempDir, `preview_${safeTitle}_${uniqueSuffix}${ext}`);
     
     // 写入内容
     await fs.promises.writeFile(tempFilePath, content, 'utf-8');
@@ -647,9 +676,10 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
     // 打开文档，使用 preview 模式（单击预览，再次点击同一文件会复用）
     const doc = await vscode.workspace.openTextDocument(uri);
     await vscode.window.showTextDocument(doc, {
-      preview: true,           // 预览模式，不会持久占用标签
-      preserveFocus: true      // 保持焦点在原来的编辑器
+      preview: true,
+      preserveFocus: true
     });
+    scheduleTempFileCleanup(tempFilePath);
     
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -664,14 +694,25 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
 
 export const previewAttachment: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { name, mimeType, data: base64Data } = data;
+    const { name, data: base64Data } = data || {};
+    if (typeof name !== 'string' || !name || typeof base64Data !== 'string' || !base64Data) {
+      ctx.sendError(requestId, 'PREVIEW_ATTACHMENT_ERROR', t('webview.errors.previewAttachmentFailed'));
+      return;
+    }
+    // base64 解码前按编码长度预判，避免超大字符串再额外分配完整 Buffer。
+    if (base64Data.length > MAX_BASE64_ATTACHMENT_LENGTH) {
+      ctx.sendError(requestId, 'PREVIEW_ATTACHMENT_ERROR',
+        t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) }));
+      return;
+    }
     
     const tempDir = path.join(os.tmpdir(), 'graycode-preview');
     await fs.promises.mkdir(tempDir, { recursive: true });
     
     const timestamp = Date.now();
+    const uniqueSuffix = Math.random().toString(36).slice(2, 10);
     const safeFileName = name.replace(/[<>:"/\\|?*]/g, '_');
-    const tempFilePath = path.join(tempDir, `${timestamp}_${safeFileName}`);
+    const tempFilePath = path.join(tempDir, `${timestamp}_${uniqueSuffix}_${safeFileName}`);
     
     const buffer = Buffer.from(base64Data, 'base64');
     // 与 readWorkspaceFileForInput 共用附件大小上限，拒绝超大附件写入临时目录
@@ -687,6 +728,7 @@ export const previewAttachment: MessageHandler = async (data, requestId, ctx) =>
     
     const uri = vscode.Uri.file(tempFilePath);
     await vscode.commands.executeCommand('vscode.open', uri);
+    scheduleTempFileCleanup(tempFilePath);
     
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -711,6 +753,14 @@ export const readWorkspaceImage: MessageHandler = async (data, requestId, ctx) =
       return;
     }
 
+    const stat = await vscode.workspace.fs.stat(fileUri);
+    if (stat.size > MAX_ATTACHMENT_SIZE_BYTES) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) })
+      });
+      return;
+    }
     const content = await vscode.workspace.fs.readFile(fileUri);
 
     const ext = path.extname(imgPath).toLowerCase();
@@ -784,8 +834,8 @@ function getJumpHighlightDecorationType(ctx: HandlerContext): vscode.TextEditorD
       overviewRulerLane: vscode.OverviewRulerLane.Right
     });
 
-    // 绑定到扩展生命周期，避免资源泄漏
-    ctx.context?.subscriptions?.push(jumpHighlightDecorationType);
+    // 绑定统一销毁逻辑，确保装饰与尚未触发的计时器一起释放。
+    ctx.context?.subscriptions?.push({ dispose: disposeFileHandlerResources });
   }
   return jumpHighlightDecorationType;
 }
@@ -794,9 +844,20 @@ function clearJumpHighlightForUri(uriString: string): void {
   if (!jumpHighlightDecorationType) return;
   for (const editor of vscode.window.visibleTextEditors) {
     if (editor.document.uri.toString() === uriString) {
-      editor.setDecorations(jumpHighlightDecorationType, []);
+      try {
+        editor.setDecorations(jumpHighlightDecorationType, []);
+      } catch {
+        // 扩展销毁期间 editor/decoration 可能已释放。
+      }
     }
   }
+}
+
+export function disposeFileHandlerResources(): void {
+  for (const timer of jumpHighlightTimers.values()) clearTimeout(timer);
+  jumpHighlightTimers.clear();
+  jumpHighlightDecorationType?.dispose();
+  jumpHighlightDecorationType = null;
 }
 
 function applyTemporaryJumpHighlight(ctx: HandlerContext, uri: vscode.Uri, range: vscode.Range, durationMs: number): void {
@@ -940,7 +1001,19 @@ export const openWorkspaceFileAt: MessageHandler = async (data, requestId, ctx) 
 
 export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { data: base64Data, path: imgPath } = data;
+    const { data: base64Data, path: imgPath } = data || {};
+    if (typeof imgPath !== 'string' || !imgPath.trim()
+        || typeof base64Data !== 'string' || !base64Data.trim()) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.saveImageFailed') });
+      return;
+    }
+    if (base64Data.length > MAX_BASE64_ATTACHMENT_LENGTH) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: t('webview.errors.attachmentTooLarge', { maxSizeMB: MAX_ATTACHMENT_SIZE_BYTES / (1024 * 1024) })
+      });
+      return;
+    }
     
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
@@ -966,6 +1039,10 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
     }
     
     const buffer = Buffer.from(base64Data, 'base64');
+    if (buffer.length === 0 || buffer.length > MAX_ATTACHMENT_SIZE_BYTES) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.saveImageFailed') });
+      return;
+    }
     await vscode.workspace.fs.writeFile(fileUri, buffer);
     
     ctx.sendResponse(requestId, { success: true });
@@ -1028,16 +1105,19 @@ export const restoreSummarizedMessages: MessageHandler = async (data, requestId,
 };
 
 export const summarizeContext: MessageHandler = async (data, requestId, ctx) => {
-  const abortManager = ctx.streamAbortControllers as any;
-  const controller = abortManager?.createSummary
-    ? abortManager.createSummary(data.conversationId)
-    : new AbortController();
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'SUMMARIZE_ERROR', 'Invalid conversation ID');
+    return;
+  }
+  const abortManager = ctx.streamAbortControllers;
+  const controller = abortManager.createSummary(conversationId);
 
   try {
     const result = await ctx.chatHandler.handleSummarizeContext({
-      conversationId: data.conversationId,
-      configId: data.configId,
-      modelOverride: data.modelOverride,
+      conversationId,
+      configId: data?.configId,
+      modelOverride: data?.modelOverride,
       abortSignal: controller.signal
     });
     ctx.sendResponse(requestId, result);
@@ -1058,9 +1138,7 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
   } finally {
     // 引用校验：同一会话两个 summarize 交叠时，旧者的 finally 不能误删新者的控制器
     // （deleteSummary 仅在传入的引用仍是当前条目时才删除）。
-    if (abortManager?.deleteSummary) {
-      abortManager.deleteSummary(data.conversationId, controller);
-    }
+    abortManager.deleteSummary(conversationId, controller);
   }
 };
 
@@ -1104,16 +1182,17 @@ async function searchDirectories(
     return;
   }
   
+  const normalizedQuery = query.toLowerCase();
   const subDirectoryPromises: Promise<void>[] = [];
   for (const [name, type] of entries) {
     // 跳过排除的目录
-    if (EXCLUDED_DIRS.has(name)) continue;
+    if (EXCLUDED_DIRS.has(name.toLowerCase())) continue;
     
     const relativePath = currentPath ? `${currentPath}/${name}` : name;
     
     if (type === vscode.FileType.Directory) {
-      // 检查文件夹名是否匹配查询
-      if (!query || name.toLowerCase().includes(query.toLowerCase())) {
+      const nameMatches = !normalizedQuery || name.toLowerCase().includes(normalizedQuery);
+      if (nameMatches) {
         if (results.length >= limit) break;
         results.push({
           path: relativePath,
@@ -1122,9 +1201,9 @@ async function searchDirectories(
         });
       }
       
-      // 并行递归搜索子目录（限制深度避免性能问题）
+      // 有查询时只递归匹配目录，避免对每个不相关目录做深度五层的全量扫描。
       const depth = relativePath.split('/').length;
-      if (depth < 5) {
+      if (depth < 5 && (!normalizedQuery || nameMatches)) {
         const subUri = vscode.Uri.joinPath(baseUri, name);
         subDirectoryPromises.push(searchDirectories(subUri, query, limit, results, relativePath));
       }
@@ -1160,7 +1239,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
     if (activeEditor && !activeEditor.document.isUntitled) {
       const activeUri = activeEditor.document.uri;
       // 检查文件是否在工作区内
-      if (activeUri.fsPath.startsWith(workspaceFolder.uri.fsPath)) {
+      if (vscode.workspace.getWorkspaceFolder(activeUri) === workspaceFolder) {
         activeFilePath = vscode.workspace.asRelativePath(activeUri);
       }
     }
@@ -1171,7 +1250,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
         if (tab.input instanceof vscode.TabInputText) {
           const uri = tab.input.uri;
           // 检查文件是否在工作区内
-          if (uri.fsPath.startsWith(workspaceFolder.uri.fsPath)) {
+          if (vscode.workspace.getWorkspaceFolder(uri) === workspaceFolder) {
             const relativePath = vscode.workspace.asRelativePath(uri);
             openPaths.add(relativePath);
           }
@@ -1189,7 +1268,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
           if (tab.input instanceof vscode.TabInputText) {
             const uri = tab.input.uri;
             // 检查文件是否在工作区内
-            if (uri.fsPath.startsWith(workspaceFolder.uri.fsPath)) {
+            if (vscode.workspace.getWorkspaceFolder(uri) === workspaceFolder) {
               const relativePath = vscode.workspace.asRelativePath(uri);
               if (!addedPaths.has(relativePath)) {
                 addedPaths.add(relativePath);

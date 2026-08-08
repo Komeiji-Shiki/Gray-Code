@@ -40,7 +40,6 @@ import {
     cancelStreamAndSubAgents,
     detectDirtyFilesInWorkspace,
 } from '../utils/WorkspaceRestoreGuard';
-import type { StreamAbortManager } from '../stream/StreamAbortManager';
 import type { HandlerContext, MessageHandler } from '../types';
 
 // ==================== BCP-04：写工具判据（决策 1） ====================
@@ -176,22 +175,11 @@ export const BRANCH_BUSY_STREAMING_MESSAGE = '会话正在流式生成中，请�
 /**
  * TREE-13：判断会话是否处于流式生成中。
  *
- * ctx.streamAbortControllers 类型声明为 Map<string, AbortController>，实际注入的是
- * StreamAbortManager 实例（ChatViewProvider L580/803：
- * `streamAbortControllers: this.messageRouter.getAbortManager() as any`）。
- * 优先走 StreamAbortManager.isActive（研究文档 TREE-13 行：L111–113 既有语义，
- * 只统计主流请求，summary 请求不拦截）；若注入的是纯 Map，则按「存在 controller」兜底判定。
+ * HandlerContext 注入真实的 StreamAbortManager；isActive 只统计主流请求，
+ * summary 请求不拦截分支操作。
  */
 export function isConversationStreaming(ctx: HandlerContext, conversationId: string): boolean {
-    const controllers = ctx.streamAbortControllers;
-    if (!controllers) {
-        return false;
-    }
-    const abortManager = controllers as unknown as StreamAbortManager;
-    if (typeof abortManager.isActive === 'function') {
-        return abortManager.isActive(conversationId);
-    }
-    return controllers.has(conversationId);
+    return ctx.streamAbortControllers?.isActive(conversationId) ?? false;
 }
 
 /**
@@ -401,10 +389,11 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
       if (!preview.success
           || (preview.failures && preview.failures.length > 0)
           || (preview.missingBackupDirs && preview.missingBackupDirs.length > 0)) {
-        const reason = preview.error
-          ?? (preview.failures ?? []).map(f => `${f.path}: ${f.reason}`).join('; ')
-          ?? (preview.missingBackupDirs ?? []).join(', ')
-          ?? 'unknown';
+        const reason = [
+          preview.error,
+          (preview.failures ?? []).map(f => `${f.path}: ${f.reason}`).join('; '),
+          (preview.missingBackupDirs ?? []).join(', '),
+        ].find(value => typeof value === 'string' && value.trim().length > 0) ?? 'unknown';
         throw new BranchError('WORKSPACE_CHECKPOINT_BROKEN', `工作区存档无法安全恢复：${reason}`);
       }
 
@@ -454,7 +443,13 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
       }
     }
 
-    // 6. 图状态切换（BranchService，会话写锁内）——恢复（工作区锁）已完成，锁不嵌套
+    // 6. 真正切图前再次检查。前面的预检到此处之间包含图校验、dirty 检测和工作区恢复，
+    // 新流可能在这些 await 期间启动；二次校验封闭该 TOCTOU 窗口，避免迟到 chunk 写入切换后的历史。
+    if (rejectIfStreaming(ctx, conversationId, requestId)) {
+      return;
+    }
+
+    // 图状态切换（BranchService，会话写锁内）——恢复（工作区锁）已完成，锁不嵌套
     const switched = await service.switchBranchCandidate(conversationId, nodeId);
 
     // 7. 主历史重写（ConversationManager，会话写锁内）

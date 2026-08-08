@@ -573,7 +573,7 @@ describe('TREE-03 webview handler：chat.editBranchStream', () => {
             storagePathManager: {
                 getEffectiveDataPath: () => tempDir,
             } as unknown as HandlerContext['storagePathManager'],
-            streamAbortControllers: new Map() as unknown as Map<string, AbortController>,
+            streamAbortControllers: new StreamAbortManager(),
             sendResponse: (requestId, data) => { responses.push({ requestId, data }); },
             sendError: (requestId, code, message) => { errors.push({ requestId, code, message }); },
             ...overrides,
@@ -635,7 +635,7 @@ describe('TREE-03 webview handler：chat.editBranchStream', () => {
 
         const ctx = makeCtx({
             chatHandler: fakeChatHandler,
-            streamAbortControllers: abortManager as unknown as Map<string, AbortController>,
+            streamAbortControllers: abortManager,
         });
 
         await editBranchStream(
@@ -677,7 +677,7 @@ describe('TREE-03 webview handler：chat.editBranchStream', () => {
 
         const ctx = makeCtx({
             chatHandler: fakeChatHandler,
-            streamAbortControllers: abortManager as unknown as Map<string, AbortController>,
+            streamAbortControllers: abortManager,
         });
 
         const pending = editBranchStream(

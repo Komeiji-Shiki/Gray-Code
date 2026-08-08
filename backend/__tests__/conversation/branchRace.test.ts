@@ -77,7 +77,7 @@ describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () =
             storagePathManager: {
                 getEffectiveDataPath: () => tempDir,
             } as unknown as HandlerContext['storagePathManager'],
-            streamAbortControllers: abortManager as unknown as Map<string, AbortController>,
+            streamAbortControllers: abortManager,
             sendResponse: sendResponse || (() => undefined),
             sendError: (requestId: string, code: string, message: string) => {
                 throw new Error(`[${requestId}] ${code}: ${message}`);
@@ -117,17 +117,6 @@ describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () =
             expect(isConversationStreaming(ctx, 'c1')).toBe(false);
         });
 
-        test('纯 Map 兜底：按「存在 controller」判定', () => {
-            const map = new Map<string, AbortController>();
-            const ctx = makeCtx(abortManager, undefined);
-            (ctx.streamAbortControllers as unknown) = map;
-            expect(isConversationStreaming(ctx, 'c1')).toBe(false);
-
-            map.set('c1', new AbortController());
-            expect(isConversationStreaming(ctx, 'c1')).toBe(true);
-            map.delete('c1');
-            expect(isConversationStreaming(ctx, 'c1')).toBe(false);
-        });
     });
 
     describe('TREE-13 流式期间互斥矩阵（集成：真实 BranchService + BranchHandlers）', () => {

@@ -10,11 +10,14 @@ export const workspace = {
         stat: jest.fn(),
         createDirectory: jest.fn(),
         delete: jest.fn(),
+        rename: jest.fn(),
+        readDirectory: jest.fn(),
     },
     findFiles: jest.fn(),
     openTextDocument: jest.fn(),
     asRelativePath: jest.fn(),
     getWorkspaceFolder: jest.fn(),
+    getConfiguration: jest.fn(),
     applyEdit: jest.fn(),
     onWillSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidSaveTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
@@ -30,17 +33,24 @@ function createFileUri(inputPath: string) {
 export const Uri = {
     file: createFileUri,
     parse: (value: string) => {
-        if (value.startsWith('file://')) {
-            return createFileUri(decodeURIComponent(value.replace(/^file:\/\//, '')));
+        const decoded = decodeURIComponent(value);
+        if (/^file:\/\//i.test(decoded)) {
+            let filePath = decoded.replace(/^file:\/\/\/?/i, '');
+            if (process.platform !== 'win32' && /^[a-zA-Z]:\//.test(filePath)) {
+                filePath = `/${filePath}`;
+            }
+            return createFileUri(filePath);
         }
-        return { fsPath: value, scheme: value.split(':')[0], path: value };
+        return { fsPath: decoded, scheme: decoded.split(':')[0], path: decoded };
     },
     joinPath: jest.fn((base: any, ...paths: string[]) => createFileUri(pathModule.join(base.fsPath, ...paths))),
 };
 
 export const FileType = {
+    Unknown: 0,
     File: 1,
     Directory: 2,
+    SymbolicLink: 64,
 };
 
 export const ConfigurationTarget = {
@@ -57,8 +67,14 @@ export const ViewColumn = {
     Three: 3,
 };
 
-export const Position = jest.fn();
-export const Range = jest.fn();
+export const Position = jest.fn((line: number = 0, character: number = 0) => ({ line, character }));
+export const Range = jest.fn((...args: any[]) => {
+    if (args.length === 2) return { start: args[0], end: args[1] };
+    return {
+        start: { line: args[0] ?? 0, character: args[1] ?? 0 },
+        end: { line: args[2] ?? args[0] ?? 0, character: args[3] ?? args[1] ?? 0 },
+    };
+});
 
 /** 文本标签页输入（PromptManager.openTabs 测试需要 instanceof 判断） */
 export class TabInputText {

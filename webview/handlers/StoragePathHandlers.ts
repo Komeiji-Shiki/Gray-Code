@@ -137,9 +137,16 @@ export const openInExplorer: MessageHandler = async (data, requestId, ctx) => {
 /**
  * 重新加载窗口
  */
-export const reloadWindow: MessageHandler = async (data, requestId, ctx) => {
-  await vscode.commands.executeCommand('workbench.action.reloadWindow');
-  ctx.sendResponse(requestId, { success: true });
+export const reloadWindow: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    // reload 会销毁当前 webview，必须先结束 IPC 请求，再触发窗口重载。
+    ctx.sendResponse(requestId, { success: true });
+    void vscode.commands.executeCommand('workbench.action.reloadWindow').then(undefined, error => {
+      console.error('[StoragePathHandlers] Failed to reload window:', error);
+    });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'RELOAD_WINDOW_ERROR', error?.message || 'Failed to reload window');
+  }
 };
 
 /**
