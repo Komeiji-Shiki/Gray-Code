@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-08-08
+
 ### Added
   - 后台任务回执「完成即插入」（排队消息提前投递的 P2 增强）：后台子代理 / 后台命令完成时，回执不再硬等模型回合完整结束——LLM 执行完当前动作（非终结 toolIteration，工具结果已全部落盘）且无排队消息可投时，动作边界立即投递回执（`backgroundTaskStore.flushReportsAfterAction`，与排队消息提前投递同构：`cancelStream({preserveSubAgents:true})` 替换当前回合 + 新 `chatStream`，H1 写序保证旧流完全退出后才写入新消息）；队列非空时排队消息优先，回执等下一动作边界或回合结束补发。安全护栏复用既有语义：跨会话跳过（只投递归属当前会话的任务）、投递窗口（cancelStream 往返）内会话切换 / 并发发送者抢先开新流时放弃投递并回滚 reported 等待补发、发送失败回滚 reported 不静默丢失、`queueAfterActionDraining` 防动作边界重入。新增 `backgroundReportEarlyEmit.test.ts`（16 用例：忙时替换回合投递回执、无任务/已回流/运行中不投递、跨会话跳过、投递窗口会话切换、并发发送者抢先、发送失败回滚、重入防护、队列空编排转投回执、排队消息优先、动作边界触发编排、flushReports 持锁跳过、sendMessage false 回滚、迟到调度直投、编排窗口会话切换、失败重试恢复链）。
   - 新增「手动创建存档点」：检查点此前完全由 AI 工具执行时自动创建（受 enabled 开关与工具/消息类型配置过滤），用户没有主动存档入口——AI 做了一系列改动后想回档检查点 / 切分支时，无法先保存当前状态（用户自己手动改过的文件更是从未被存档保护）。现输入区底部工具栏新增存档按钮（codicon-save，BranchTreePanel 旁）：后端 `CheckpointManager.createCheckpoint` 支持 `forceCreate`（跳过 enabled 开关与工具/消息类型过滤，无条件创建；仍尊重排除规则——自定义忽略 / 默认类别 / 文件大小上限等安全边界不变），新 webview 消息 `checkpoint.createManual` 把存档绑定到当前最后一条消息（恢复时「回档到该消息前」= 回到现在）并绑定当前分支活跃尾节点（BCP-02，分支切换 chat-and-workspace 切走再切回也能恢复，往返无损）；前端 `createManualCheckpoint` action + chatStore 接线 + 三语 i18n（按钮提示 / 创建成功 / 失败）。新增测试：CheckpointManager forceCreate 无条件创建（enabled=false 且未配置工具时普通调用仍跳过）+ 手动存档可恢复工作区文件（核心价值）；checkpointActions 成功入列 / 后端拒绝 / 无会话短路 / IPC 异常兜底（4 用例）。
