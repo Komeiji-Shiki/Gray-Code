@@ -12,6 +12,7 @@ import { buildPlanDocument } from './documentLayout';
 import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
 import { buildTrackedPlanSourceArtifact, renderPlanSourceArtifactSection, type PlanSourceArtifactInput } from './sourceArtifactSection';
 import { syncProgressFromPlanArtifact } from '../progress/autoSync';
+import { withProgressWriteLock } from '../progress/progressWriteLock';
 
 export interface CreatePlanArgs {
   title?: string;
@@ -101,38 +102,51 @@ export function createCreatePlanTool(): Tool {
       }
 
       try {
-        await ensureParentDir(uri.fsPath);
-
-        const normalizedPlan = normalizeLineEndingsToLF(plan);
-        const trackedSourceArtifact = args.sourceArtifact
-          ? await buildTrackedPlanSourceArtifact(args.sourceArtifact)
-          : undefined;
-        const sourceSection = trackedSourceArtifact
-          ? renderPlanSourceArtifactSection(trackedSourceArtifact)
-          : undefined;
-        const { content, todos } = buildPlanDocument(normalizedPlan, args.todos, sourceSection);
-        const bytes = new TextEncoder().encode(content);
-        await vscode.workspace.fs.writeFile(uri, bytes);
-        const progressWarnings = await syncProgressFromPlanArtifact({
-          planPath: outPath,
-          title: title || undefined,
-          todos,
-          updateMode: 'revision'
-        });
-
-        return {
-          success: true,
-          requiresUserConfirmation: true,
-          data: {
-            path: outPath,
-            content,
-            todos,
-            sourceArtifact: trackedSourceArtifact,
-            ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
+        return await withProgressWriteLock(outPath, async (): Promise<ToolResult> => {
+          try {
+            await vscode.workspace.fs.stat(uri);
+            return {
+              success: false,
+              error: `Plan document already exists at ${outPath}. Use update_plan to revise it instead of overwriting.`
+            };
+          } catch (e: unknown) {
+            if ((e as { code?: string } | null)?.code !== 'FileNotFound') {
+              throw e;
+            }
           }
-        };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
+
+          await ensureParentDir(uri.fsPath);
+          const normalizedPlan = normalizeLineEndingsToLF(plan);
+          const trackedSourceArtifact = args.sourceArtifact
+            ? await buildTrackedPlanSourceArtifact(args.sourceArtifact)
+            : undefined;
+          const sourceSection = trackedSourceArtifact
+            ? renderPlanSourceArtifactSection(trackedSourceArtifact)
+            : undefined;
+          const { content, todos } = buildPlanDocument(normalizedPlan, args.todos, sourceSection);
+          const bytes = new TextEncoder().encode(content);
+          await vscode.workspace.fs.writeFile(uri, bytes);
+          const progressWarnings = await syncProgressFromPlanArtifact({
+            planPath: outPath,
+            title: title || undefined,
+            todos,
+            updateMode: 'revision'
+          });
+
+          return {
+            success: true,
+            requiresUserConfirmation: true,
+            data: {
+              path: outPath,
+              content,
+              todos,
+              sourceArtifact: trackedSourceArtifact,
+              ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
+            }
+          };
+        });
+      } catch (e: unknown) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) };
       }
     }
   };

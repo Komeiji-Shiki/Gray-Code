@@ -98,30 +98,6 @@ async function saveTodos(context: ToolContext, todos: TodoItem[]): Promise<void>
     await store.setCustomMetadata(conversationId, TODO_METADATA_KEY, todos);
 }
 
-function mergeTodos(existing: TodoItem[], incoming: TodoItem[]): TodoItem[] {
-    const result: TodoItem[] = existing.map(t => ({ ...t }));
-    const indexById = new Map<string, number>();
-    for (let i = 0; i < result.length; i++) {
-        indexById.set(result[i].id, i);
-    }
-
-    for (const todo of incoming) {
-        const idx = indexById.get(todo.id);
-        if (idx === undefined) {
-            indexById.set(todo.id, result.length);
-            result.push({ ...todo });
-            continue;
-        }
-        result[idx] = {
-            ...result[idx],
-            content: todo.content,
-            status: todo.status
-        };
-    }
-
-    return result;
-}
-
 function countByStatus(todos: TodoItem[]): Record<TodoStatus, number> {
     const c: Record<TodoStatus, number> = { pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
     for (const t of todos) c[t.status]++;

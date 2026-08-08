@@ -252,6 +252,16 @@ export interface ToolContext {
      * 修改目的：用户零配置即可让主模型按需派发与自己同渠道同权限的 worker。
      */
     channelConfigId?: string;
+
+    /**
+     * 当前请求实际使用的模型 ID（主会话 modelOverride；未指定即走渠道默认模型时为空）。
+     *
+     * 修改原因：General Worker 虚拟子代理需要继承主会话当前模型，只传渠道 id 会让它
+     *          落到渠道默认模型上，与主模型不一致（默认模型配额/权限不同时报错）。
+     * 修改方式：executeBuiltinTool 把当前请求的模型覆盖 id 注入 toolContext。
+     * 修改目的：用户零配置派发的 worker 与主模型使用同一模型。
+     */
+    channelModelId?: string;
     
     /**
      * 对话存储

@@ -226,30 +226,6 @@ function getPathKind(filePath: string): ReadFileDebugInfo['pathKind'] {
     return 'text';
 }
 
-function buildReadFileDebugInfo(
-    filePath: string,
-    multimodalEnabled: boolean,
-    capability: MultimodalCapability,
-    context?: ToolContext
-): ReadFileDebugInfo {
-    // 调试原因：read_file 的错误取决于工具执行上下文，而上下文由多个服务组装；需要保留上游快照。
-    // 调试方式：复制 ToolExecutionService 注入的 multimodalDebug，并记录 read_file 实际收到的能力值。
-    // 调试目的：当图片读取失败时，可以对比 upstream 与 handler 两层值，判断是上游漏传还是本工具判断错误。
-    const upstream = typeof context?.multimodalDebug === 'object' && context.multimodalDebug !== null
-        ? context.multimodalDebug as Record<string, unknown>
-        : undefined;
-
-    return {
-        source: 'read_file.handler',
-        pathKind: getPathKind(filePath),
-        handlerMultimodalEnabled: multimodalEnabled,
-        handlerCapability: capability,
-        contextKeys: Object.keys(context ?? {}).sort(),
-        upstream
-    };
-}
-
-
 /**
  * 读取单个文件
  *
@@ -591,6 +567,12 @@ export function createReadFileTool(
             const workspaces = getAllWorkspaces();
             const isMultiRoot = workspaces.length > 1;
             
+            // 调试上下文与文件无关的部分在循环外预计算（避免批量读取时每文件重建）
+            const debugContextKeys = Object.keys(context ?? {}).sort();
+            const upstreamDebug = typeof context?.multimodalDebug === 'object' && context.multimodalDebug !== null
+                ? context.multimodalDebug as Record<string, unknown>
+                : undefined;
+            
             const hasSinglePath = typeof args.path === 'string' && args.path.trim() !== '';
             const batchFiles = Array.isArray(args.files) ? args.files : undefined;
             // 某些 function-calling 客户端会把未提供的可选数组补成 []。当 path 有值时，
@@ -642,7 +624,14 @@ export function createReadFileTool(
                     };
                 }
 
-                const debug = buildReadFileDebugInfo(fileReq.path, multimodalEnabled, capability, context);
+                const debug: ReadFileDebugInfo = {
+                    source: 'read_file.handler',
+                    pathKind: getPathKind(fileReq.path),
+                    handlerMultimodalEnabled: multimodalEnabled,
+                    handlerCapability: capability,
+                    contextKeys: debugContextKeys,
+                    upstream: upstreamDebug
+                };
                 const { result, multimodal } = await readSingleFile(
                     fileReq.path,
                     capability,

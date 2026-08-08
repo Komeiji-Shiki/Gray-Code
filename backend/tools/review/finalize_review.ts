@@ -16,6 +16,7 @@ import {
 import { projectReviewToolResultData } from './resultProjection';
 import { ensureMatchingActiveReviewSession, saveReviewSessionState } from './sessionState';
 import { syncProgressFromReviewArtifact } from '../progress/autoSync';
+import { withProgressWriteLock } from '../progress/progressWriteLock';
 
 export interface FinalizeReviewArgs {
   path: string;
@@ -86,49 +87,52 @@ export function createFinalizeReviewTool(): Tool {
       }
 
       try {
-        const contentBytes = await vscode.workspace.fs.readFile(uri);
-        const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
-        const locale = getCurrentReviewDocumentLocale();
-        const next = finalizeReviewDocument(originalContent, {
-          conclusion,
-          overallDecision: args.overallDecision,
-          recommendedNextAction: typeof args.recommendedNextAction === 'string' ? args.recommendedNextAction : '',
-          reviewedModules: Array.isArray(args.reviewedModules) ? args.reviewedModules : []
-        }, locale);
+        // 读改写整体进 per-path 写锁：并行子代理不会基于同一份旧盘面互相覆盖
+        return await withProgressWriteLock(path, async (): Promise<ToolResult> => {
+          const contentBytes = await vscode.workspace.fs.readFile(uri);
+          const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
+          const locale = getCurrentReviewDocumentLocale();
+          const next = finalizeReviewDocument(originalContent, {
+            conclusion,
+            overallDecision: args.overallDecision,
+            recommendedNextAction: typeof args.recommendedNextAction === 'string' ? args.recommendedNextAction : '',
+            reviewedModules: Array.isArray(args.reviewedModules) ? args.reviewedModules : []
+          }, locale);
 
-        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
-        const progressWarnings = await syncProgressFromReviewArtifact({
-          reviewPath: path,
-          title: next.reviewSnapshot.header.title,
-          latestConclusion: next.reviewSnapshot.summary.latestConclusion || undefined,
-          nextAction: next.reviewSnapshot.summary.recommendedNextAction || undefined,
-          eventMessage: `同步审查结论：${path}`
+          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
+          const progressWarnings = await syncProgressFromReviewArtifact({
+            reviewPath: path,
+            title: next.reviewSnapshot.header.title,
+            latestConclusion: next.reviewSnapshot.summary.latestConclusion || undefined,
+            nextAction: next.reviewSnapshot.summary.recommendedNextAction || undefined,
+            eventMessage: `同步审查结论：${path}`
+          });
+
+          await saveReviewSessionState(context, {
+            reviewRunId: next.reviewSnapshot.reviewRunId,
+            reviewPath: path,
+            status: next.reviewSnapshot.status,
+            createdAt: next.reviewSnapshot.createdAt,
+            finalizedAt: next.reviewSnapshot.finalizedAt
+          });
+
+          return {
+            success: true,
+            data: projectReviewToolResultData({
+              path,
+              content: next.content,
+              delta: {
+                type: 'finalized',
+                changedFields: ['status', 'overallDecision', 'finalizedAt', 'summary', 'reviewSnapshot', 'reviewSession']
+              },
+              extra: {
+                findings: next.findings,
+                structuredFindings: next.structuredFindings,
+                ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
+              }
+            })
+          };
         });
-
-        await saveReviewSessionState(context, {
-          reviewRunId: next.reviewSnapshot.reviewRunId,
-          reviewPath: path,
-          status: next.reviewSnapshot.status,
-          createdAt: next.reviewSnapshot.createdAt,
-          finalizedAt: next.reviewSnapshot.finalizedAt
-        });
-
-        return {
-          success: true,
-          data: projectReviewToolResultData({
-            path,
-            content: next.content,
-            delta: {
-              type: 'finalized',
-              changedFields: ['status', 'overallDecision', 'finalizedAt', 'summary', 'reviewSnapshot', 'reviewSession']
-            },
-            extra: {
-              findings: next.findings,
-              structuredFindings: next.structuredFindings,
-              ...(progressWarnings.length > 0 ? { warnings: progressWarnings } : {})
-            }
-          })
-        };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
       }

@@ -105,7 +105,11 @@ Returns references grouped by file, with line numbers and code content.`;
         handler: async (args, context): Promise<ToolResult> => {
             const filePath = args.path as string;
             const line = args.line as number;
-            const column = (args.column as number) || 1;
+            // column 校验：仅接受有限正整数（负数/小数构造 Position 会抛 Illegal argument）
+            const rawColumn = args.column;
+            const column = (typeof rawColumn === 'number' && Number.isInteger(rawColumn) && rawColumn >= 1)
+                ? rawColumn
+                : 1;
             const symbolName = args.symbol as string | undefined;
             // 修改原因：context 无上限时，模型传大值会让每个引用携带近乎整文件上下文，
             // 引用多时响应体暴涨。

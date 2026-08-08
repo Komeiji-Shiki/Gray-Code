@@ -352,6 +352,9 @@ function hasNonWhitespaceBody(lines: StructuredLineSpan[]): boolean {
     return lines.some(line => stripLeadingHorizontalWhitespace(line.content).trim().length > 0);
 }
 
+/** 缩进 fallback 的 oldContent 行数上限：超大块（模型提交整文件）匹配成本高且误落风险大，直接禁用 */
+const MAX_FALLBACK_SEARCH_LINES = 1000;
+
 function findIndentFallbackCandidates(
     normalizedContent: string,
     normalizedOldContent: string
@@ -366,6 +369,13 @@ function findIndentFallbackCandidates(
         return { candidates: [], disabledReason: 'oldContent has no logical lines.' };
     }
 
+    if (searchLines.length > MAX_FALLBACK_SEARCH_LINES) {
+        return {
+            candidates: [],
+            disabledReason: `oldContent has too many lines (${searchLines.length}, maximum ${MAX_FALLBACK_SEARCH_LINES}) for indentation fallback; provide a smaller context block.`
+        };
+    }
+
     if (!hasNonWhitespaceBody(searchLines)) {
         return {
             candidates: [],
@@ -377,9 +387,26 @@ function findIndentFallbackCandidates(
         return { candidates: [] };
     }
 
-    const candidates: StructuredMatchCandidate[] = [];
+    // 首行预筛：按「去行首缩进后的首行」哈希索引候选起点，只在这些位置上做完整行窗口验证，
+    // 避免大文件上每行都进入内层循环（最坏 O(N·M) 退化为仅首行命中位置做 O(M) 验证）。
+    // 索引按行号升序构建，候选顺序与旧实现一致。
+    const firstSearchBody = stripLeadingHorizontalWhitespace(searchLines[0].content);
+    const maxStartLineIndex = contentLines.length - searchLines.length;
+    const startLineIndexesByFirstBody = new Map<string, number[]>();
+    for (let startLineIndex = 0; startLineIndex <= maxStartLineIndex; startLineIndex++) {
+        const body = stripLeadingHorizontalWhitespace(contentLines[startLineIndex].content);
+        let indexes = startLineIndexesByFirstBody.get(body);
+        if (!indexes) {
+            indexes = [];
+            startLineIndexesByFirstBody.set(body, indexes);
+        }
+        indexes.push(startLineIndex);
+    }
 
-    for (let startLineIndex = 0; startLineIndex <= contentLines.length - searchLines.length; startLineIndex++) {
+    const candidates: StructuredMatchCandidate[] = [];
+    const candidateStarts = startLineIndexesByFirstBody.get(firstSearchBody) ?? [];
+
+    for (const startLineIndex of candidateStarts) {
         let ok = true;
 
         for (let offset = 0; offset < searchLines.length; offset++) {
@@ -425,15 +452,46 @@ function buildNewToOldLineAlignment(oldLines: StructuredLineSpan[], newLines: St
     const newBodies = newLines.map(line => stripLeadingHorizontalWhitespace(line.content));
 
     // 行数护栏：LCS DP 为 O(n·m) 全矩阵，超大输入（模型提交超大 oldContent/newContent）会分配海量内存并阻塞主线程。
-    // 超过护栏（min(n,m) > 2000 或 n*m > 4M）跳过 DP，退化为顺序配对：
-    // 第 i 个新行对应第 i 个旧行，超出部分映射到最后一个旧行；调用方对缺失对齐已有兜底，行为语义不变。
+    // 超过护栏（min(n,m) > 200 或 n*m > 40_000）跳过 DP，退化为锚点配对：
+    // 用「去行首缩进后的行内容」首次出现索引找公共锚点行，锚点之间按顺序配对；
+    // 找不到任何锚点时退化为顺序配对（旧实现行为）。
     // 正常小 hunk 路径完全不受影响。
     const n = oldBodies.length;
     const m = newBodies.length;
-    if (Math.min(n, m) > 2000 || n * m > 4_000_000) {
+    if (Math.min(n, m) > 200 || n * m > 40_000) {
+        const firstOldIndexByBody = new Map<string, number>();
+        for (let i = 0; i < n; i++) {
+            if (!firstOldIndexByBody.has(oldBodies[i])) {
+                firstOldIndexByBody.set(oldBodies[i], i);
+            }
+        }
+        const anchors: Array<{ oldIndex: number; newIndex: number }> = [];
+        let lastOldIndex = -1;
+        for (let j = 0; j < m; j++) {
+            const oldIndex = firstOldIndexByBody.get(newBodies[j]);
+            if (oldIndex !== undefined && oldIndex > lastOldIndex) {
+                anchors.push({ oldIndex, newIndex: j });
+                lastOldIndex = oldIndex;
+            }
+        }
+
         const alignment: Array<number | undefined> = Array(m).fill(undefined);
-        for (let i = 0; i < m; i++) {
-            alignment[i] = i < n ? i : n - 1;
+        let previousOld = -1;
+        let previousNew = -1;
+        for (const anchor of [...anchors, { oldIndex: n, newIndex: m }]) {
+            const oldGapStart = previousOld + 1;
+            const newGapStart = previousNew + 1;
+            const oldGapLength = anchor.oldIndex - oldGapStart;
+            const newGapLength = anchor.newIndex - newGapStart;
+            const pairedGapLength = Math.min(oldGapLength, newGapLength);
+            for (let i = 0; i < pairedGapLength; i++) {
+                alignment[newGapStart + i] = oldGapStart + i;
+            }
+            if (anchor.newIndex < m) {
+                alignment[anchor.newIndex] = anchor.oldIndex;
+            }
+            previousOld = anchor.oldIndex;
+            previousNew = anchor.newIndex;
         }
         return alignment;
     }
@@ -919,9 +977,23 @@ function tryApplyIndependentExactStructuredHunks(
         if (!oldContent) return undefined;
         const matches = findAllExactMatchIndexes(normalizedOriginal, oldContent);
         // matches === null 表示候选超限（歧义过多），与多匹配一样放弃独立应用
-        if (matches === null || matches.length !== 1) return undefined;
+        if (matches === null || matches.length === 0) return undefined;
 
-        const startIndex = matches[0];
+        let startIndex: number;
+        if (matches.length === 1) {
+            startIndex = matches[0];
+        } else {
+            // 多匹配：仅当 hunk 携带 startLine 且能唯一消歧时才纳入计划。
+            // 计划内 hunk 按原始坐标互不重叠且顺序应用时，慢路径的 lineDelta 补偿映射回
+            // 原始坐标即为 startLine 本身，故此处 lineDelta=0 消歧与慢路径结果一致。
+            if (typeof hunk.startLine !== 'number' || !Number.isFinite(hunk.startLine)) return undefined;
+            const startOffset = getCharOffsetForLine(normalizedOriginal, hunk.startLine);
+            if (startOffset === undefined) return undefined;
+            const selected = matches.find(index => index >= startOffset);
+            if (selected === undefined) return undefined;
+            startIndex = selected;
+        }
+
         const previous = planned[planned.length - 1];
         if (previous && startIndex < previous.endIndex) return undefined;
         planned.push({

@@ -7,7 +7,7 @@
 /**
  * Skill 来源
  */
-export type SkillSource = 'project-graycode' | 'project-agents' | 'legacy' | 'user-graycode' | 'user-agents';
+export type SkillSource = 'project-graycode' | 'project-limcode' | 'project-agents' | 'legacy' | 'user-graycode' | 'user-limcode' | 'user-agents';
 
 /**
  * Skill 定义
@@ -36,12 +36,6 @@ export interface Skill {
     
     /** 是否当前启用（在对话中可用） */
     enabled: boolean;
-    
-    /** 
-     * 是否发送内容给 AI 
-     * @deprecated 不再使用拼接注入模式。Skills 现在通过 read_skill 工具按需读取。
-     */
-    sendContent: boolean;
 }
 
 /**
@@ -53,14 +47,6 @@ export interface SkillFrontmatter {
     
     /** Skill 描述 */
     description: string;
-}
-
-/**
- * Skills 状态
- */
-export interface SkillsState {
-    /** 已启用的 skill IDs */
-    enabledSkills: Set<string>;
 }
 
 /**

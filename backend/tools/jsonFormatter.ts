@@ -18,6 +18,10 @@ import type { ToolDeclaration } from './types';
 export const TOOL_CALL_START = '<<<TOOL_CALL>>>';
 export const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
 
+/** JSON 解析失败告警节流：一次调用内大量失败块时只记录前几次，避免刷屏 */
+let jsonParseWarnCount = 0;
+const MAX_JSON_PARSE_WARNS = 5;
+
 /**
  * JSON 工具调用的格式定义
  */
@@ -237,15 +241,30 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             const parsed = parseJsonLenient(jsonStr);
             
             // 验证是否是有效的工具调用格式
-            if (parsed && typeof parsed === 'object' && typeof (parsed as any).tool === 'string' && (parsed as any).tool) {
-                results.push({
-                    tool: (parsed as any).tool,
-                    parameters: (parsed as any).parameters || {}
-                });
+            if (parsed && typeof parsed === 'object' && typeof (parsed as any).tool === 'string') {
+                const toolName = (parsed as any).tool as string;
+                if (!toolName.trim()) {
+                    // 空 tool 名：不再静默丢弃整块，构造带解析错误的调用反馈给模型
+                    results.push({
+                        tool: 'malformed_tool_call',
+                        parameters: {
+                            __toolCallParseError: 'The tool call block has an empty "tool" field. Fix it and send the tool call again.'
+                        }
+                    });
+                } else {
+                    results.push({
+                        tool: toolName,
+                        parameters: (parsed as any).parameters || {}
+                    });
+                }
             }
         } catch (error) {
             // JSON 解析失败，跳过这个块（上层 promptToolParser 会生成解析失败反馈）
-            console.warn('Failed to parse JSON tool call:', error);
+            // 节流：只记录前几次，避免批量失败块 console.warn 刷屏
+            if (jsonParseWarnCount < MAX_JSON_PARSE_WARNS) {
+                jsonParseWarnCount++;
+                console.warn(`Failed to parse JSON tool call (${jsonParseWarnCount}/${MAX_JSON_PARSE_WARNS}; further failures suppressed):`, error);
+            }
         }
         searchFrom = endIndex + TOOL_CALL_END.length;
     }

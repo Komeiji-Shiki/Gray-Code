@@ -9,8 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { t } from '../../i18n';
-import { getActualLanguage } from '../../i18n/index';
+import { t, getActualLanguage } from '../../i18n';
 import type { Skill, SkillFrontmatter, SkillsChangeEvent, SkillsChangeListener, SkillSource } from './types';
 
 /**
@@ -41,6 +40,10 @@ export class SkillsManager {
     
     /** 是否已初始化 */
     private initialized: boolean = false;
+    /** 进行中的初始化（幂等合并并发 initialize 调用） */
+    private initPromise: Promise<void> | null = null;
+    /** name -> id 索引（getSkillByName 用，避免全量线性扫描） */
+    private nameToId: Map<string, string> = new Map();
     
     constructor(options: { workspacePath?: string; globalStoragePath: string }) {
         this.legacySkillsDir = path.join(options.globalStoragePath, 'skills');
@@ -58,10 +61,10 @@ export class SkillsManager {
                 path: path.join(options.workspacePath, '.graycode', 'skills'), 
                 source: 'project-graycode' 
             });
-            // fallback: 兼容旧 LimCode 项目技能目录
+            // fallback: 兼容旧 LimCode 项目技能目录（独立 source，避免与 graycode 目录混淆）
             this.scanDirs.push({ 
                 path: path.join(options.workspacePath, '.limcode', 'skills'), 
-                source: 'project-graycode' 
+                source: 'project-limcode' 
             });
             this.scanDirs.push({ 
                 path: path.join(options.workspacePath, '.agents', 'skills'), 
@@ -69,25 +72,25 @@ export class SkillsManager {
             });
         }
 
-        // 2. Legacy 目录 (原有插件存储目录)
-        this.scanDirs.push({ 
-            path: this.legacySkillsDir, 
-            source: 'legacy' 
-        });
-
-        // 3. 用户全局目录
+        // 2. 用户全局目录（用户自建 skill 优先于插件 legacy 目录，防止同名被遮蔽）
         this.scanDirs.push({ 
             path: path.join(os.homedir(), '.graycode', 'skills'), 
             source: 'user-graycode' 
         });
-        // fallback: 兼容旧 LimCode 用户技能目录
+        // fallback: 兼容旧 LimCode 用户技能目录（独立 source）
         this.scanDirs.push({ 
             path: path.join(os.homedir(), '.limcode', 'skills'), 
-            source: 'user-graycode' 
+            source: 'user-limcode' 
         });
         this.scanDirs.push({ 
             path: path.join(os.homedir(), '.agents', 'skills'), 
             source: 'user-agents' 
+        });
+
+        // 3. Legacy 目录 (原有插件存储目录)
+        this.scanDirs.push({ 
+            path: this.legacySkillsDir, 
+            source: 'legacy' 
         });
     }
     
@@ -100,28 +103,33 @@ export class SkillsManager {
         if (this.initialized) {
             return;
         }
-        
-        // 确保 legacy 目录存在
+        // 幂等合并：两次并发 initialize 复用同一个初始化任务，避免交错 refresh
+        if (!this.initPromise) {
+            this.initPromise = this.doInitialize().finally(() => {
+                this.initPromise = null;
+            });
+        }
+        return this.initPromise;
+    }
+
+    private async doInitialize(): Promise<void> {
+        // 确保 legacy 目录存在（失败向上抛，不再吞错后标记 initialized）
         await this.ensureSkillsDirectory();
-        
+
         // 创建示例 skill (在 legacy 目录)
         await this.createExampleSkillIfNotExists();
-        
+
         // 扫描并加载所有 skills
         await this.refresh();
-        
+
         this.initialized = true;
     }
-    
+
     /**
-     * 确保 legacy skills 目录存在
+     * 确保 legacy skills 目录存在（mkdir recursive 失败自然抛错）
      */
     private async ensureSkillsDirectory(): Promise<void> {
-        try {
-            await fs.promises.mkdir(this.legacySkillsDir, { recursive: true });
-        } catch (error) {
-            console.error('[SkillsManager] Failed to create legacy skills directory:', error);
-        }
+        await fs.promises.mkdir(this.legacySkillsDir, { recursive: true });
     }
     
     /**
@@ -146,9 +154,11 @@ export class SkillsManager {
             const description = t('tools.skills.exampleSkill.description');
             const content = t('tools.skills.exampleSkill.content');
             
+            // description 用 JSON.stringify 生成双引号 YAML 标量：
+            // 含换行/引号/冒号时 frontmatter 不再错乱（parseFrontmatter 配套反转义）
             const exampleContent = `---
 name: how-to-create-skill
-description: "${description}"
+description: ${JSON.stringify(description)}
 ---
 
 ${content}
@@ -177,6 +187,7 @@ ${content}
      */
     async refresh(): Promise<void> {
         this.skills.clear();
+        this.nameToId.clear();
         
         for (const dirInfo of this.scanDirs) {
             await this.scanDirectory(dirInfo.path, dirInfo.source);
@@ -209,26 +220,46 @@ ${content}
             
             const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
             
+            // 收集目录条目：符号链接用 fs.stat 跟随判断是否指向目录，
+            // 否则 symlink 的 isDirectory() 恒为 false，符号链接 skill 目录永不被加载
+            const dirs: Array<{ name: string; fullPath: string }> = [];
             for (const entry of entries) {
                 if (entry.isDirectory()) {
-                    // 如果已存在同名 Skill (id 相同)，由于 scanDirs 顺序决定了优先级，后扫到的跳过
-                    if (this.skills.has(entry.name)) {
-                        continue;
-                    }
-
-                    const skillFile = path.join(dirPath, entry.name, 'SKILL.md');
-                    if (fs.existsSync(skillFile)) {
-                        try {
-                            const skill = await this.loadSkill(entry.name, skillFile, source);
-                            if (skill) {
-                                this.skills.set(skill.id, skill);
-                            }
-                        } catch (error) {
-                            console.warn(`[SkillsManager] Failed to load skill ${entry.name} from ${source}:`, error);
+                    dirs.push({ name: entry.name, fullPath: path.join(dirPath, entry.name) });
+                } else if (entry.isSymbolicLink()) {
+                    try {
+                        const st = await fs.promises.stat(path.join(dirPath, entry.name));
+                        if (st.isDirectory()) {
+                            dirs.push({ name: entry.name, fullPath: path.join(dirPath, entry.name) });
                         }
+                    } catch {
+                        // 悬空符号链接：跳过
                     }
                 }
             }
+            
+            // 并发放置加载：readdir 收集后 Promise.all（同一目录内条目名唯一，
+            // has 检查 + set 无竞态；跨目录优先级由外层 scanDirs 串行顺序保证）
+            await Promise.all(dirs.map(async ({ name, fullPath }) => {
+                // 如果已存在同名 Skill (id 相同)，由于 scanDirs 顺序决定了优先级，后扫到的跳过
+                if (this.skills.has(name)) {
+                    return;
+                }
+
+                const skillFile = path.join(fullPath, 'SKILL.md');
+                if (!fs.existsSync(skillFile)) {
+                    return;
+                }
+                try {
+                    const skill = await this.loadSkill(name, skillFile, source);
+                    if (skill) {
+                        this.skills.set(skill.id, skill);
+                        this.nameToId.set(skill.name, skill.id);
+                    }
+                } catch (error) {
+                    console.warn(`[SkillsManager] Failed to load skill ${name} from ${source}:`, error);
+                }
+            }));
         } catch (error) {
             console.error(`[SkillsManager] Failed to scan directory ${dirPath}:`, error);
         }
@@ -262,11 +293,14 @@ ${content}
      */
     private async loadSkill(id: string, filePath: string, source: SkillSource): Promise<Skill | null> {
         try {
-            const content = await fs.promises.readFile(filePath, 'utf-8');
+            // 剥离 UTF-8 BOM：BOM 会让 content.startsWith('---') 为 false，
+            // frontmatter 完全不解析，报误导性「missing required frontmatter fields」
+            const raw = await fs.promises.readFile(filePath, 'utf-8');
+            const content = raw.replace(/^\uFEFF/, '');
             const { frontmatter, body } = this.parseFrontmatter(content);
 
-            if (!frontmatter.name || !frontmatter.description) {
-                console.warn(`[SkillsManager] Skill ${id} missing required frontmatter fields`);
+            if (!frontmatter.name?.trim() || !frontmatter.description?.trim()) {
+                console.warn(`[SkillsManager] Skill ${id} missing required frontmatter fields (path: ${filePath})`);
                 return null;
             }
 
@@ -281,17 +315,22 @@ ${content}
                 console.warn(`[SkillsManager] Skill ${id} name "${frontmatter.name}" is invalid. Must be 1-64 chars, lowercase, digits, and hyphens only, no consecutive hyphens. Skipping.`);
                 return null;
             }
+
+            const trimmedBody = body.trim();
+            if (!trimmedBody) {
+                // 仅有 frontmatter 无正文：可加载但告警（可能是未写完的 skill）
+                console.warn(`[SkillsManager] Skill ${id} (${filePath}) has an empty body`);
+            }
             
             return {
                 id,
                 name: frontmatter.name,
                 description: frontmatter.description,
-                content: body.trim(),
+                content: trimmedBody,
                 path: filePath,
                 basePath: path.dirname(filePath),
                 source,
-                enabled: this.enabledSkillIds.has(id),
-                sendContent: false // Deprecated 模式下不再使用拼接
+                enabled: this.enabledSkillIds.has(id)
             };
         } catch (error) {
             console.error(`[SkillsManager] Failed to load skill ${id}:`, error);
@@ -382,16 +421,23 @@ ${content}
     
     /**
      * 获取所有已加载的 skills
+     *
+     * 返回副本：enabled 统一从 enabledSkillIds 派生（唯一状态源），
+     * 外部修改返回对象不会污染内部状态。
      */
     getAllSkills(): Skill[] {
-        return Array.from(this.skills.values());
+        return Array.from(this.skills.values()).map(s => ({
+            ...s,
+            enabled: this.enabledSkillIds.has(s.id)
+        }));
     }
     
     /**
-     * 获取指定 skill
+     * 获取指定 skill（返回副本，enabled 从 enabledSkillIds 派生）
      */
     getSkill(id: string): Skill | undefined {
-        return this.skills.get(id);
+        const skill = this.skills.get(id);
+        return skill ? { ...skill, enabled: this.enabledSkillIds.has(skill.id) } : undefined;
     }
 
     /**
@@ -399,7 +445,9 @@ ${content}
      * 注意：AI 可能在知道已禁用的情况下尝试读取，我们需要返回对象以便 read_skill 处理提示语。
      */
     getSkillByName(name: string): Skill | undefined {
-        return Array.from(this.skills.values()).find(s => s.name === name);
+        const id = this.nameToId.get(name);
+        const skill = id ? this.skills.get(id) : undefined;
+        return skill ? { ...skill, enabled: this.enabledSkillIds.has(skill.id) } : undefined;
     }
 
     /**
@@ -413,10 +461,12 @@ ${content}
     }
     
     /**
-     * 获取已启用的 skills
+     * 获取已启用的 skills（返回副本）
      */
     getEnabledSkills(): Skill[] {
-        return Array.from(this.skills.values()).filter(skill => this.enabledSkillIds.has(skill.id));
+        return Array.from(this.skills.values())
+            .filter(skill => this.enabledSkillIds.has(skill.id))
+            .map(s => ({ ...s, enabled: true }));
     }
     
     /**
@@ -437,11 +487,6 @@ ${content}
         if (!this.enabledSkillIds.has(id)) {
             this.enabledSkillIds.add(id);
             
-            const skill = this.skills.get(id);
-            if (skill) {
-                skill.enabled = true;
-            }
-            
             this.notifyChange({
                 type: 'enabled',
                 skillIds: [id]
@@ -458,11 +503,6 @@ ${content}
         if (this.enabledSkillIds.has(id)) {
             this.enabledSkillIds.delete(id);
             
-            const skill = this.skills.get(id);
-            if (skill) {
-                skill.enabled = false;
-            }
-            
             this.notifyChange({
                 type: 'disabled',
                 skillIds: [id]
@@ -474,50 +514,12 @@ ${content}
         return false;
     }
     
-    /**
-     * 批量设置 skills 状态
-     */
-    setSkillsState(skillStates: Record<string, boolean>): void {
-        const changedIds: string[] = [];
-        
-        for (const [id, enabled] of Object.entries(skillStates)) {
-            if (!this.skills.has(id)) {
-                continue;
-            }
-            
-            const currentlyEnabled = this.enabledSkillIds.has(id);
-            
-            if (enabled && !currentlyEnabled) {
-                this.enabledSkillIds.add(id);
-                const skill = this.skills.get(id);
-                if (skill) skill.enabled = true;
-                changedIds.push(id);
-            } else if (!enabled && currentlyEnabled) {
-                this.enabledSkillIds.delete(id);
-                const skill = this.skills.get(id);
-                if (skill) skill.enabled = false;
-                changedIds.push(id);
-            }
-        }
-        
-        if (changedIds.length > 0) {
-            this.notifyChange({ type: 'update', skillIds: changedIds });
-        }
-    }
     
     /**
      * 禁用所有 skills
      */
     disableAllSkills(): void {
         const disabledIds = Array.from(this.enabledSkillIds);
-        
-        for (const id of disabledIds) {
-            const skill = this.skills.get(id);
-            if (skill) {
-                skill.enabled = false;
-            }
-        }
-        
         this.enabledSkillIds.clear();
         
         if (disabledIds.length > 0) {
@@ -553,20 +555,6 @@ ${content}
     }
     
     /**
-     * 获取 skills 数量
-     */
-    getSkillsCount(): number {
-        return this.skills.size;
-    }
-    
-    /**
-     * 获取启用的 skills 数量
-     */
-    getEnabledSkillsCount(): number {
-        return this.enabledSkillIds.size;
-    }
-    
-    /**
      * 释放资源
      */
     dispose(): void {
@@ -585,17 +573,12 @@ export function getSkillsManager(): SkillsManager | null {
 }
 
 /**
- * 设置全局 SkillsManager 实例
+ * 设置全局 SkillsManager 实例（createSkillsManager 初始化完成后调用）
  */
-export function setSkillsManager(manager: SkillsManager): void {
+export function setSkillsManager(manager: SkillsManager | null): void {
     globalSkillsManager = manager;
 }
 
-/**
- * 创建并初始化 SkillsManager
- *
- * @param options 初始化选项，包含工作区路径和全局存储路径
- */
 export async function createSkillsManager(options: {
     workspacePath?: string;
     globalStoragePath: string;

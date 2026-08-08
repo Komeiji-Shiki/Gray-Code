@@ -512,8 +512,16 @@ async function historySearchHandler(
             ...(userCfg || {})
         };
 
-        // 获取完整对话历史
-        const fullHistory = await conversationStore.getHistory(conversationId) as Content[];
+        // 获取完整对话历史（判空：getHistory 可能返回 null/undefined，
+        // 直接 filter 会抛 TypeError 被包装成笼统的 "Search failed"）
+        const rawHistory = await conversationStore.getHistory(conversationId);
+        if (!Array.isArray(rawHistory)) {
+            return {
+                success: false,
+                error: t('tools.history.noHistory')
+            };
+        }
+        const fullHistory = rawHistory as Content[];
 
         const targetMessages = cfg.searchScope === 'summarized' ? getSummarizedMessages(fullHistory) : fullHistory;
 

@@ -2243,12 +2243,19 @@ export class DiffManager {
             };
 
             const rejectAndFinish = (reason: Exclude<DiffResolutionReason, 'none'>) => {
-                this.rejectDiff(id).catch(() => {});
-                finish(reason);
+                // 等 rejectDiff 落定后再 finish：立即 finish 会让调用方误以为文件已恢复，
+                // 而 rejectDiff 走串行队列，可能失败（文件残留修改但报告成功结论）
+                this.rejectDiff(id)
+                    .catch((error: unknown) => {
+                        console.error(`[DiffManager] rejectDiff failed while settling diff ${id}:`, error);
+                    })
+                    .then(() => finish(reason));
             };
 
             const scheduleNextCheck = () => {
-                if (resolved || pollTimer) return;
+                // 已注册状态监听器时依赖事件驱动（状态变化即触发 checkStatus），
+                // 不再 100ms 轮询空转；仅监听器缺失的异常路径才轮询兜底
+                if (resolved || pollTimer || statusListener) return;
                 pollTimer = setTimeout(() => {
                     pollTimer = undefined;
                     checkStatus();

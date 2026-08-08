@@ -180,6 +180,19 @@ function wrapXmlValue(value: string): string {
     return `<![CDATA[${value.replace(/\]\]>/g, ']]]]><![CDATA[>')}]]>`;
 }
 
+/**
+ * XML 属性值转义：属性不能使用 CDATA，必须做实体转义。
+ * 用于 <tool_result tool="..."> 等属性插值，防止工具名含引号/尖括号时破坏重放历史结构。
+ */
+function escapeXmlAttribute(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
 /** 合法 XML 元素名（保守子集：字母/下划线开头，仅含字母数字、_ . -） */
 const XML_ELEMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.\-]*$/;
 
@@ -255,7 +268,7 @@ export function convertFunctionCallToXML(name: string, args: Record<string, any>
         : `    ${wrapXmlValue(JSON.stringify(args))}`;
 
     return `<tool_use>
-  <tool_name>${name}</tool_name>
+  <tool_name>${wrapXmlValue(name)}</tool_name>
   <parameters>
 ${params}
   </parameters>
@@ -277,7 +290,7 @@ export function convertFunctionResponseToXML(name: string, response: Record<stri
     const { multimodal, ...textResponse } = response;
     // CDATA 包裹：响应内容里出现 </tool_result> 或 <tool_use> 等标记文本时，
     // 裸嵌会破坏重放历史的结构（调用侧 wrapXmlValue 早已这么做，响应侧此前漏了）
-    return `<tool_result tool="${name}">
+    return `<tool_result tool="${escapeXmlAttribute(name)}">
 ${wrapXmlValue(JSON.stringify(textResponse, null, 2))}
 </tool_result>`;
 }
@@ -296,12 +309,16 @@ function processParameterValue(value: any): any {
         return value;
     }
     
-    // 检查是否是数组格式（包含 item 属性）
-    if (value.item !== undefined) {
-        // 确保 item 是数组
-        const items = Array.isArray(value.item) ? value.item : [value.item];
+    // 数组格式：fast-xml-parser 对重复标签生成数组、单标签生成标量/对象。
+    // 只有当 item 为数组、或容器对象仅含 item 一个键（单元素数组的退化形态）
+    // 时才按数组处理；普通对象的字段恰好叫 item（如 {item: {id: 1}, other: 2}）
+    // 不再被误判为数组结构。
+    if (Array.isArray(value.item)) {
         // 递归处理数组中的每个元素
-        return items.map((item: any) => processParameterValue(item));
+        return value.item.map((item: any) => processParameterValue(item));
+    }
+    if (value.item !== undefined && Object.keys(value).every(k => k === 'item')) {
+        return [processParameterValue(value.item)];
     }
     
     // 对象：递归处理每个子元素，并统计真实子元素数量

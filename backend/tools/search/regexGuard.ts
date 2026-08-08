@@ -50,6 +50,15 @@ function sanitizePatternForHeuristic(pattern: string): string {
             out += 'X';
             continue;
         }
+        if (ch === '(' && pattern[i + 1] === '?') {
+            // 组前缀 (? 的 ? 不是量词（(?:ab)+ 的 ? 属于语法标记），
+            // 净化掉避免 DANGEROUS_GROUP_QUANTIFIER 把 (?:ab)+ 误判为组内量词；
+            // 真正的懒惰/可选量词（如 (a?)+、a+?）的 ? 不在组前缀位置，不受影响。
+            out += '(';
+            out += 'X';
+            i += 1;
+            continue;
+        }
         out += ch;
     }
     return out;

@@ -17,6 +17,7 @@ import {
 import { projectReviewToolResultData } from './resultProjection';
 import { ensureMatchingActiveReviewSession, saveReviewSessionState } from './sessionState';
 import { syncProgressFromReviewArtifact } from '../progress/autoSync';
+import { withProgressWriteLock } from '../progress/progressWriteLock';
 
 export interface RecordReviewMilestoneArgs {
   path: string;
@@ -158,24 +159,27 @@ export function createRecordReviewMilestoneTool(): Tool {
       }
 
       try {
-        const contentBytes = await vscode.workspace.fs.readFile(uri);
-        const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
-        const locale = getCurrentReviewDocumentLocale();
-        const next = appendReviewMilestone(originalContent, {
-          milestoneId: typeof args.milestoneId === 'string' ? args.milestoneId : '',
-          milestoneTitle,
-          summary,
-          status: args.status,
-          conclusion: typeof args.conclusion === 'string' ? args.conclusion : '',
-          evidenceFiles: Array.isArray(args.evidenceFiles) ? args.evidenceFiles : [],
-          evidence: Array.isArray(args.evidence) ? args.evidence : [],
-          findings: Array.isArray(args.findings) ? args.findings : [],
-          structuredFindings: Array.isArray(args.structuredFindings) ? args.structuredFindings : [],
-          reviewedModules: Array.isArray(args.reviewedModules) ? args.reviewedModules : [],
-          recommendedNextAction: typeof args.recommendedNextAction === 'string' ? args.recommendedNextAction : ''
-        }, locale);
-
-        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
+        // 读改写整体进 per-path 写锁：并行子代理不会基于同一份旧盘面互相覆盖
+        const next = await withProgressWriteLock(path, async () => {
+          const contentBytes = await vscode.workspace.fs.readFile(uri);
+          const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
+          const locale = getCurrentReviewDocumentLocale();
+          const result = appendReviewMilestone(originalContent, {
+            milestoneId: typeof args.milestoneId === 'string' ? args.milestoneId : '',
+            milestoneTitle,
+            summary,
+            status: args.status,
+            conclusion: typeof args.conclusion === 'string' ? args.conclusion : '',
+            evidenceFiles: Array.isArray(args.evidenceFiles) ? args.evidenceFiles : [],
+            evidence: Array.isArray(args.evidence) ? args.evidence : [],
+            findings: Array.isArray(args.findings) ? args.findings : [],
+            structuredFindings: Array.isArray(args.structuredFindings) ? args.structuredFindings : [],
+            reviewedModules: Array.isArray(args.reviewedModules) ? args.reviewedModules : [],
+            recommendedNextAction: typeof args.recommendedNextAction === 'string' ? args.recommendedNextAction : ''
+          }, locale);
+          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(result.content));
+          return result;
+        });
         const progressWarnings = await syncProgressFromReviewArtifact({
           reviewPath: path,
           title: next.reviewSnapshot.header.title,

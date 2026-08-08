@@ -74,6 +74,10 @@ function getIgnorePatterns(): string[] {
 function shouldIgnore(name: string, ignorePatterns: string[]): boolean {
     for (const pattern of ignorePatterns) {
         // 通配符匹配
+        if (pattern === '*') {
+            // 忽略全部条目
+            return true;
+        }
         if (pattern.startsWith('*') && pattern.length > 1) {
             // *.ext 匹配
             const suffix = pattern.slice(1);

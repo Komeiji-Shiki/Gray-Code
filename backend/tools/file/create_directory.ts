@@ -6,8 +6,9 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
 /**
  * 单个目录创建结果
@@ -85,10 +86,16 @@ export function createCreateDirectoryTool(): Tool {
                 required: ['paths']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const pathList = args.paths as string[];
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required' };
+            }
+
+            // 越权防护：拒绝在工作区之外创建目录（子代理/直调工具链路同样生效）
+            const accessError = ensureOutsideWorkspaceAccessApproved('create_directory', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
             }
 
             const results: CreateResult[] = [];

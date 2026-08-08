@@ -288,11 +288,9 @@ export async function syncProgressFromReviewArtifact(
           ? normalizeSingleLineText(args.title)
           : base.currentFocus,
         latestConclusion: normalizeSingleLineText(args.latestConclusion)
-          ? args.latestConclusion
-          : base.latestConclusion,
+          || base.latestConclusion,
         nextAction: normalizeSingleLineText(args.nextAction)
-          ? args.nextAction
-          : base.nextAction,
+          || base.nextAction,
         activeArtifacts: {
           ...(base.activeArtifacts || {}),
           review: reviewPath,

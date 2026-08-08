@@ -76,14 +76,12 @@ describe('extractPromptToolParts - JSON 模式', () => {
         expect(parts[0].functionCall?.name).toBe(MALFORMED_TOOL_CALL_NAME);
     });
 
-    it('空块保持文本处理（非调用意图）', () => {
+    it('空块丢弃边界标记（无调用意图）', () => {
         const text = `${TOOL_CALL_START}${TOOL_CALL_END}`;
 
         const { parts } = extractPromptToolParts(text, 'json');
 
-        expect(parts).toHaveLength(1);
-        expect(parts[0].text).toBe(text);
-        expect(parts[0].functionCall).toBeUndefined();
+        expect(parts).toHaveLength(0);
     });
 
     it('JSON 有效但缺 tool 字段时给出针对性错误', () => {

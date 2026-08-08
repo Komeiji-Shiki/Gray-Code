@@ -137,6 +137,8 @@ interface SearchBudget {
 interface SearchPassResult {
     results: SearchMatch[];
     budgetTruncated: boolean;
+    /** findFiles 达到文件数上限（结果可能不完整） */
+    filesTruncated: boolean;
 }
 
 interface SearchQueryFallbackInfo {
@@ -352,14 +354,17 @@ async function searchInDirectory(
     excludePattern: string,
     config: Readonly<SearchInFilesToolConfig>,
     budget?: SearchBudget
-): Promise<SearchMatch[]> {
+): Promise<{ matches: SearchMatch[]; filesTruncated: boolean }> {
     // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
     // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
     const searchRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
     const results: SearchMatch[] = [];
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
-    const files = await vscode.workspace.findFiles(pattern, excludePattern, 1000);
+    const findLimit = Math.max(1, Math.floor(clampNonNegativeNumber(config.maxFindFiles, 1000)));
+    const foundFiles = await vscode.workspace.findFiles(pattern, excludePattern, findLimit + 1);
+    const filesTruncated = foundFiles.length > findLimit;
+    const files = filesTruncated ? foundFiles.slice(0, findLimit) : foundFiles;
 
     const enableHeaderTextCheck = config.enableHeaderTextCheck !== false;
     const headerSampleBytes = Math.max(64, clampNonNegativeNumber(config.headerSampleBytes, 4096));
@@ -485,7 +490,7 @@ async function searchInDirectory(
         }
     }
     
-    return results;
+    return { matches: results, filesTruncated };
 }
 
 /**
@@ -538,7 +543,10 @@ async function searchAndReplaceInDirectory(
     let matchesTruncated = false;
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
-    const files = await vscode.workspace.findFiles(pattern, excludePattern, 1000);
+    const findLimit = Math.max(1, Math.floor(clampNonNegativeNumber(config.maxFindFiles, 1000)));
+    const foundFiles = await vscode.workspace.findFiles(pattern, excludePattern, findLimit + 1);
+    const filesTruncated = foundFiles.length > findLimit;
+    const files = filesTruncated ? foundFiles.slice(0, findLimit) : foundFiles;
 
     const enableHeaderTextCheck = config.enableHeaderTextCheck !== false;
     const headerSampleBytes = Math.max(64, clampNonNegativeNumber(config.headerSampleBytes, 4096));
@@ -757,7 +765,7 @@ async function searchAndReplaceInDirectory(
         }
     }
     
-    return { matches, replacements, totalReplacements, processedFiles, skippedFiles, cancelled: cancelledBySignal, truncated: matchesTruncated };
+    return { matches, replacements, totalReplacements, processedFiles, skippedFiles, cancelled: cancelledBySignal, truncated: matchesTruncated || filesTruncated };
 }
 
 /**
@@ -964,8 +972,8 @@ export function createSearchInFilesTool(): Tool {
                 ? (args.caseSensitive as boolean)
                 : isReplaceMode;
             
-            // 搜索模式参数
-            const maxResults = (args.maxResults as number) || 100;
+            // 搜索模式参数（0/负值/非数字语义混乱：统一回退默认 100 并取整，参照 find_files）
+            const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.floor(args.maxResults) : 100;
             
             // 替换模式参数（仅在替换模式下使用）。
             // isRegex=false 时 query 按字面量匹配，替换串也必须按字面量写入：
@@ -975,7 +983,9 @@ export function createSearchInFilesTool(): Tool {
             const replacement = isReplaceMode && !isRegex
                 ? rawReplacement.replace(/\$/g, '$$$$')
                 : rawReplacement;
-            const maxFiles = isReplaceMode ? ((args.maxFiles as number) || 50) : 50;
+            const maxFiles = isReplaceMode && typeof args.maxFiles === 'number' && args.maxFiles > 0
+                ? Math.floor(args.maxFiles)
+                : 50;
 
             if (!query) {
                 return { success: false, error: 'query is required' };
@@ -1179,6 +1189,7 @@ export function createSearchInFilesTool(): Tool {
                     
                     const runSearchPass = async (regex: RegExp): Promise<SearchPassResult> => {
                         const results: SearchMatch[] = [];
+                        let filesTruncated = false;
 
                         if (isExplicit && targetWorkspace) {
                             // 显式指定了工作区，只搜索该工作区
@@ -1191,7 +1202,7 @@ export function createSearchInFilesTool(): Tool {
                             if (accessError) {
                                 throw new OutsideWorkspaceAccessError(accessError);
                             }
-                            results.push(...await searchInDirectory(
+                            const pass = await searchInDirectory(
                                 searchRoot,
                                 effectivePattern,
                                 regex,
@@ -1200,7 +1211,9 @@ export function createSearchInFilesTool(): Tool {
                                 excludePattern,
                                 searchConfig,
                                 budget
-                            ));
+                            );
+                            results.push(...pass.matches);
+                            filesTruncated = pass.filesTruncated;
                         } else if (searchPath === '.' && workspaces.length > 1) {
                             // 搜索所有工作区
                             for (const ws of workspaces) {
@@ -1208,7 +1221,7 @@ export function createSearchInFilesTool(): Tool {
                                 if (budget && budget.remainingChars <= 0) break;
 
                                 const remaining = maxResults - results.length;
-                                const wsResults = await searchInDirectory(
+                                const wsPass = await searchInDirectory(
                                     ws.uri,
                                     filePattern,
                                     regex,
@@ -1218,7 +1231,8 @@ export function createSearchInFilesTool(): Tool {
                                     searchConfig,
                                     budget
                                 );
-                                results.push(...wsResults);
+                                results.push(...wsPass.matches);
+                                filesTruncated = filesTruncated || wsPass.filesTruncated;
                             }
                         } else {
                             // 单工作区或未指定，使用默认
@@ -1232,7 +1246,7 @@ export function createSearchInFilesTool(): Tool {
                             if (accessError) {
                                 throw new OutsideWorkspaceAccessError(accessError);
                             }
-                            results.push(...await searchInDirectory(
+                            const pass = await searchInDirectory(
                                 searchRoot,
                                 effectivePattern,
                                 regex,
@@ -1241,12 +1255,15 @@ export function createSearchInFilesTool(): Tool {
                                 excludePattern,
                                 searchConfig,
                                 budget
-                            ));
+                            );
+                            results.push(...pass.matches);
+                            filesTruncated = filesTruncated || pass.filesTruncated;
                         }
 
                         return {
                             results,
-                            budgetTruncated: !!budget?.truncated
+                            budgetTruncated: !!budget?.truncated,
+                            filesTruncated
                         };
                     };
 
@@ -1286,7 +1303,7 @@ export function createSearchInFilesTool(): Tool {
                         data: {
                             results: allResults,
                             count: allResults.length,
-                            truncated: allResults.length >= maxResults || searchPass.budgetTruncated,
+                            truncated: allResults.length >= maxResults || searchPass.budgetTruncated || searchPass.filesTruncated,
                             multiRoot: workspaces.length > 1,
                             queryFallback: fallbackInfo,
                             pathWarning: allResults.length === 0 ? pathWarning : undefined

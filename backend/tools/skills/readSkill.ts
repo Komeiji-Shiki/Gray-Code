@@ -12,6 +12,7 @@
 
 import type { Tool, ToolArgs, ToolDeclaration, ToolResult, ToolRegistration } from '../types';
 import { getSkillsManager } from '../../modules/skills';
+import { t } from '../../i18n';
 
 /** 工具描述中 Skill 列表的最大字符预算（参考 Claude Code 的 15,000 字符上限） */
 const SKILL_LIST_BUDGET = 15000;
@@ -98,7 +99,7 @@ async function handleReadSkill(args: ToolArgs): Promise<ToolResult> {
     if (!skillsManager) {
         return {
             success: false,
-            error: 'Skills manager not initialized',
+            error: t('tools.skills.errors.managerNotInitialized'),
         };
     }
     

@@ -997,7 +997,12 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             const command = args.command as string;
             const cwd = args.cwd as string | undefined;
             const shell = (args.shell as ShellType) || 'default';
-            const timeout = (args.timeout as number) ?? 60000;
+            // 超时钳制：仅接受有限非负数（0 = 显式不超时）；负数/NaN/非数字回退默认 60000，
+            // 避免非法值把 timeout>0 判为 false 而意外禁用超时。
+            const rawTimeout = args.timeout;
+            const timeout = (typeof rawTimeout === 'number' && Number.isFinite(rawTimeout) && rawTimeout >= 0)
+                ? Math.floor(rawTimeout)
+                : 60000;
             // 修改原因：长耗时命令会阻塞主对话，用户只能干等。
             // 修改方式：background=true 时进程启动后立即返回；不挂外部 abortSignal、不设 timeout，
             //          退出时结果经 TaskManager 完成事件回流。
@@ -1214,7 +1219,10 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         cwd: workingDir,
                         shell,
                         background,
-                        conversationId: context?.conversationId
+                        conversationId: context?.conversationId,
+                        // 子代理归属标记：子代理内部执行命令时 mailboxRunId 存在（主会话为 undefined）。
+                        // 前端据此区分任务归属，子代理内部的后台命令完成不回流为主会话消息。
+                        subagentRunId: typeof context?.mailboxRunId === 'string' ? context.mailboxRunId : undefined
                     });
                     
                     // 监听外部的 abortSignal（用户取消对话时触发）
@@ -1396,6 +1404,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                                 killed: terminalProcess.killed,
                                 background: effectiveBackground,
                                 conversationId: context?.conversationId,
+                                subagentRunId: typeof context?.mailboxRunId === 'string' ? context.mailboxRunId : undefined,
                                 command,
                                 output: lastOutput.join('\n'),
                                 error: terminalProcess.error
@@ -1459,7 +1468,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                                 truncatedNote
                             },
                             error,
-                            cancelled: isExternalAbort
+                            cancelled: isExternalAbort || terminalProcess.killed === true
                         });
                     });
 

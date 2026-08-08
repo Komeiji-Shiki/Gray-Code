@@ -272,12 +272,17 @@ export class IncrementalPromptToolParser {
                 parts.push(...functionCallParts);
             } else {
                 // 解析失败的非空块转为合成错误调用，让模型能收到可读的失败反馈；
-                // 仅空块保持原文本处理
+                // 空块（inner 为空，仅边界标记）丢弃边界标记，仅保留标记之前的文本，
+                // 避免 <<<START>>>/<<<END>>> 这类边界标记泄漏进正文。
                 const failurePart = buildParseFailurePart(blockText, this.mode);
                 if (failurePart) {
                     parts.push(failurePart);
                 } else {
-                    pushTextPart(parts, blockText);
+                    const markers = getMarkers(this.mode);
+                    const markerStart = blockText.indexOf(markers.start);
+                    if (markerStart > 0) {
+                        pushTextPart(parts, blockText.slice(0, markerStart));
+                    }
                 }
             }
 
