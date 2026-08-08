@@ -218,10 +218,13 @@ describe('App 开屏动画启动偏好', () => {
     wrapper = undefined
   })
 
-  it('配置请求未返回时不预挂载 Splash', async () => {
+  it('配置请求未返回时显示灰阶加载动效占位，但不预挂载 Splash', async () => {
     wrapper = mount(App)
     await nextTick()
 
+    const backdrop = wrapper.get('.startup-backdrop')
+    expect(backdrop.attributes('aria-hidden')).toBe('true')
+    expect(backdrop.text()).toBe('')
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
@@ -232,6 +235,7 @@ describe('App 开屏动画启动偏好', () => {
     settingsRequest.resolve(makeSettingsResponse(false))
     await flushPromises()
 
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
     expect(runtime.settingsStore.splashEnabled).toBe(false)
   })
@@ -243,6 +247,7 @@ describe('App 开屏动画启动偏好', () => {
     settingsRequest.resolve(makeSettingsResponse(true))
     await flushPromises()
 
+    expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
   })
 
