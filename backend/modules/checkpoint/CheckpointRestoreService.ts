@@ -166,7 +166,10 @@ export class CheckpointRestoreService {
 
         const filteredFileHashes: Record<string, string> = {};
         // 文件恢复目标和工作区扫描使用同一忽略口径，确保比较一致。
-        for (const [rawKey, hash] of Object.entries(fileHashes)) {
+        // C-15: 逐文件串行 await isIgnored 在 10 万+文件时明显慢（首个 isIgnored 还会触发
+        // .gitignore 读取），改为共享 runBounded 有界并发。
+        const fileTargets = Object.entries(fileHashes).map(([rawKey, hash]) => ({ rawKey, hash }));
+        await runBounded(fileTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ rawKey, hash }) => {
             const scopedKey = toScopedKey(rawKey, roots);
             try {
                 const parsed = parseWorkspaceScopedPath(scopedKey, roots as RuntimeWorkspaceRoot[]);
@@ -176,21 +179,24 @@ export class CheckpointRestoreService {
             } catch (err) {
                 console.warn(`[CheckpointManager] Skip unparsable checkpoint path ${scopedKey}:`, err);
             }
-        }
+        });
 
-        const filteredEmptyDirs: string[] = [];
         // 空目录同样需要按当前规则过滤，否则 restore 会重新创建当前已忽略的目录壳。
-        for (const rawKey of emptyDirs) {
+        // C-15: 同样有界并发；结果按下标回填，保持输出顺序稳定。
+        const emptyDirResults: Array<string | undefined> = new Array(emptyDirs.length);
+        const dirTargets = emptyDirs.map((rawKey, idx) => ({ rawKey, idx }));
+        await runBounded(dirTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ rawKey, idx }) => {
             const scopedKey = toScopedKey(rawKey, roots);
             try {
                 const parsed = parseWorkspaceScopedPath(scopedKey, roots as RuntimeWorkspaceRoot[]);
                 if (!(await getResolver(parsed.root).isIgnored(parsed.relativePath, true))) {
-                    filteredEmptyDirs.push(scopedKey);
+                    emptyDirResults[idx] = scopedKey;
                 }
             } catch (err) {
                 console.warn(`[CheckpointManager] Skip unparsable checkpoint dir ${scopedKey}:`, err);
             }
-        }
+        });
+        const filteredEmptyDirs: string[] = emptyDirResults.filter((key): key is string => key !== undefined);
 
         return {
             fileHashes: filteredFileHashes,
@@ -703,8 +709,7 @@ export class CheckpointRestoreService {
      *   当前明确忽略的文件。
      */
     public buildExcludedNote(
-        manifest: CheckpointManifestMeta | undefined,
-        _record: CheckpointRecord
+        manifest: CheckpointManifestMeta | undefined
     ): CheckpointExcludedNote | undefined {
         if (!manifest) {
             return undefined; // 旧存档无规则快照，不生成说明

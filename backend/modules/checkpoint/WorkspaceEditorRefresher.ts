@@ -21,9 +21,14 @@ import { restoreChatInputFocus, shouldRestoreChatInputFocus } from '../../core/c
  * @param deletedFiles 被删除的文件路径列表
  */
 export async function refreshAffectedDocuments(modifiedFiles: string[], deletedFiles: string[]): Promise<void> {
+    // C-10: 大小写策略按平台决定——win32/darwin 默认大小写不敏感卷折叠小写比较；
+    // 大小写敏感文件系统（Linux 等）按原样比较，避免误刷新大小写不同的另一个文件。
+    const caseFold = process.platform === 'win32' || process.platform === 'darwin'
+        ? (p: string) => p.toLowerCase()
+        : (p: string) => p;
     // 创建快速查找集合
-    const modifiedSet = new Set(modifiedFiles.map(f => f.toLowerCase()));
-    const deletedSet = new Set(deletedFiles.map(f => f.toLowerCase()));
+    const modifiedSet = new Set(modifiedFiles.map(f => caseFold(f)));
+    const deletedSet = new Set(deletedFiles.map(f => caseFold(f)));
     
     try {
         // 获取所有已打开的文本文档
@@ -32,7 +37,7 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
         for (const doc of openDocuments) {
             if (doc.uri.scheme !== 'file') continue;
             
-            const docPath = doc.uri.fsPath.toLowerCase();
+            const docPath = caseFold(doc.uri.fsPath);
             
             // 检查文档是否在受影响列表中
             if (modifiedSet.has(docPath)) {
@@ -74,7 +79,7 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
             for (const tab of tabGroup.tabs) {
                 if (tab.input instanceof vscode.TabInputTextDiff) {
                     const diffInput = tab.input as vscode.TabInputTextDiff;
-                    const modifiedPath = diffInput.modified.fsPath.toLowerCase();
+                    const modifiedPath = caseFold(diffInput.modified.fsPath);
                     
                     // 如果 diff 涉及被修改或删除的文件，关闭它
                     if (modifiedSet.has(modifiedPath) || deletedSet.has(modifiedPath)) {

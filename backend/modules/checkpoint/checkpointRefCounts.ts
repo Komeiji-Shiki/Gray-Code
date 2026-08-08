@@ -48,7 +48,18 @@ export async function computeCheckpointReferenceCounts(
     const ids = conversationIds ?? (await repo.listConversationIds());
     const counts = new Map<string, number>();
     for (const conversationId of ids) {
-        const loaded = await repo.load(conversationId);
+        // C-4: 逐会话 try/catch——repo.load 直接抛异常（IO/解析失败）时不再中止整个扫描，
+        // 记录后 continue，避免单会话损坏导致全部引用计数丢失。
+        let loaded: BranchGraphReadResult;
+        try {
+            loaded = await repo.load(conversationId);
+        } catch (err) {
+            log.warn('checkpoint_refcount_load_failed', {
+                conversationId,
+                error: err instanceof Error ? err.message : String(err),
+            });
+            continue;
+        }
         const graph: ConversationBranchGraph | null = loaded.graph;
         if (!graph || loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
             if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
