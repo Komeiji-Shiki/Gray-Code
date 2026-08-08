@@ -42,12 +42,17 @@ export function createFakeFs(options: { failWriteMatching?: (normPath: string) =
     };
 
     const ensureParents = (p: string): void => {
-        const parts = p.split('/');
-        parts.pop();
-        let acc = '';
-        for (const part of parts) {
-            acc = acc ? `${acc}/${part}` : part;
-            if (acc) dirs.add(acc);
+        // 基于 lastIndexOf 逐级生成父目录，保留前导斜杠：
+        // split('/') 会把 `/abs/path` 的首元素切成空串，导致生成的父目录丢失前导斜杠
+        // （`/c:/data/...` → `c:/data/...`），Linux 上删除时的前缀匹配会漏掉这些幽灵目录。
+        let idx = p.lastIndexOf('/');
+        if (idx <= 0) return; // 无父目录（无 '/'，或只有前导 '/'）
+        let parent = p.slice(0, idx);
+        while (parent) {
+            dirs.add(parent);
+            const next = parent.lastIndexOf('/');
+            if (next <= 0) break;
+            parent = parent.slice(0, next);
         }
     };
 
