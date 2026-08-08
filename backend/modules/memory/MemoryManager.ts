@@ -42,11 +42,19 @@ function pad(text: string, rec: number): Buffer {
     return buf;
 }
 
-/** 解析一行日志记录 */
-function parse(line: string): LogEntry {
+/** 解析一行日志记录；损坏行（无空格头部/非数字 id）返回 null，由调用方跳过 */
+function parse(line: string): LogEntry | null {
     // 格式: "#id date text"
     const headEnd = line.indexOf(' ');
+    // B-9: 无空格（headEnd=-1）或 "#" 后无内容时 substring 参数倒置会产生错误切片、
+    // parseInt 产出 NaN id 并向 wake/recall 传播——损坏行标记为不可解析。
+    if (headEnd <= 1) {
+        return null;
+    }
     const id = parseInt(line.substring(1, headEnd), 10);
+    if (Number.isNaN(id)) {
+        return null;
+    }
     const rest = line.substring(headEnd + 1);
     const dateEnd = rest.indexOf(' ');
     const date = rest.substring(0, dateEnd);
@@ -87,7 +95,11 @@ function records(buf: Buffer): LogEntry[] {
         const slice = buf.subarray(i, i + LOG_REC);
         const str = slice.toString('utf-8').trimEnd();
         if (str) {
-            out.push(parse(str));
+            // B-9: 损坏行（无空格头部/非数字 id）跳过，不让 NaN id 伪记录进入 wake/recall
+            const entry = parse(str);
+            if (entry) {
+                out.push(entry);
+            }
         }
     }
     return out;
@@ -302,9 +314,25 @@ export class MemoryManager {
             const p = this.treePath(size);
             await this.repair(p, TREE_REC);
             const n = await this.count(p, TREE_REC);
-            if (n !== lo / size) return false;
-            await fs.appendFile(p, pad(text, TREE_REC));
-            return true;
+            const targetIndex = lo / size;
+            if (n < targetIndex) return false;
+            if (n === targetIndex) {
+                await fs.appendFile(p, pad(text, TREE_REC));
+                return true;
+            }
+
+            // treeDrop 会把中间槽位清空以保留后续块；允许重新压缩时复用该空槽。
+            const handle = await fs.open(p, 'r+');
+            try {
+                const buffer = Buffer.alloc(TREE_REC);
+                await handle.read(buffer, 0, TREE_REC, targetIndex * TREE_REC);
+                if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) return false;
+                const record = pad(text, TREE_REC);
+                await handle.write(record, 0, record.length, targetIndex * TREE_REC);
+                return true;
+            } finally {
+                await handle.close();
+            }
         } finally {
             release();
         }
@@ -319,15 +347,39 @@ export class MemoryManager {
             const T = await this.logLen();
             while (size <= T) {
                 const p = this.treePath(size);
-                const k = Math.floor(lo / size);
+                // 只删除覆盖被删区间 [lo, hi) 的块（索引 kStart..kEnd），
+                // 不再连带删除 kStart 之后的所有块：此前 truncate(k*TREE_REC)
+                // 会误删不含被删记忆的后缀块，forget 的 gone/firstId 与实际失效范围
+                // 不符，且这些块被清空后 pending 会反复要求重新压缩。
+                const kStart = Math.floor(lo / size);
+                const kEnd = Math.floor((hi - 1) / size);
                 const n = await this.count(p, TREE_REC);
-                if (n > k) {
-                    for (let i = k; i < n; i++) {
-                        gone.push([i * size, (i + 1) * size]);
-                    }
+                const clearEnd = Math.min(n, kEnd + 1);
+                if (clearEnd > kStart) {
                     const handle = await fs.open(p, 'r+');
                     try {
-                        await handle.truncate(k * TREE_REC);
+                        const emptyRecord = pad('', TREE_REC);
+                        for (let i = kStart; i < clearEnd; i++) {
+                            const buffer = Buffer.alloc(TREE_REC);
+                            await handle.read(buffer, 0, TREE_REC, i * TREE_REC);
+                            if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) {
+                                gone.push([i * size, (i + 1) * size]);
+                                await handle.write(emptyRecord, 0, emptyRecord.length, i * TREE_REC);
+                            }
+                        }
+
+                        // 尾部空槽可安全截断；中间空槽必须保留索引，供后续 treePut 复用。
+                        let trailingCount = n;
+                        const buffer = Buffer.alloc(TREE_REC);
+                        while (trailingCount > 0) {
+                            buffer.fill(0);
+                            await handle.read(buffer, 0, TREE_REC, (trailingCount - 1) * TREE_REC);
+                            if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) break;
+                            trailingCount--;
+                        }
+                        if (trailingCount < n) {
+                            await handle.truncate(trailingCount * TREE_REC);
+                        }
                     } finally {
                         await handle.close();
                     }
@@ -389,22 +441,46 @@ export class MemoryManager {
             }
         }
         const out = this._cover(T, hi);
-        // 用尽剩余预算：拆分最大的块
+        // 用尽剩余预算：拆分最大的块。用最大堆按块大小选取，替代逐次线性扫描的 O(budget²)
+        //（wakeLines 上限 10000 时旧实现最坏约 5×10⁷ 次迭代，B-5）。
         const result = [...out];
-        while (result.length < budget) {
-            let bestIdx = -1, bestSize = 0;
-            for (let i = 0; i < result.length; i++) {
-                const s = result[i][1] - result[i][0];
-                if (s > bestSize) {
-                    bestSize = s;
-                    bestIdx = i;
+        if (result.length < budget) {
+            const heap: Array<[number, number]> = result.slice();
+            const sizeOf = (b: [number, number]): number => b[1] - b[0];
+            const siftDown = (i: number, n: number): void => {
+                while (true) {
+                    let largest = i;
+                    const l = 2 * i + 1;
+                    const r = 2 * i + 2;
+                    if (l < n && sizeOf(heap[l]) > sizeOf(heap[largest])) largest = l;
+                    if (r < n && sizeOf(heap[r]) > sizeOf(heap[largest])) largest = r;
+                    if (largest === i) return;
+                    [heap[i], heap[largest]] = [heap[largest], heap[i]];
+                    i = largest;
                 }
+            };
+            const siftUp = (i: number): void => {
+                while (i > 0) {
+                    const parent = (i - 1) >> 1;
+                    if (sizeOf(heap[parent]) >= sizeOf(heap[i])) return;
+                    [heap[parent], heap[i]] = [heap[i], heap[parent]];
+                    i = parent;
+                }
+            };
+            for (let i = (heap.length >> 1) - 1; i >= 0; i -= 1) siftDown(i, heap.length);
+            while (heap.length < budget) {
+                if (sizeOf(heap[0]) <= 1) break;
+                const [l, h] = heap[0];
+                const m = (l + h) >> 1;
+                heap[0] = [l, m];
+                siftDown(0, heap.length);
+                heap.push([m, h]);
+                siftUp(heap.length - 1);
             }
-            if (bestIdx < 0 || bestSize <= 1) break;
-            const [l, h] = result[bestIdx];
-            const m = (l + h) >> 1;
-            result.splice(bestIdx, 1, [l, m], [m, h]);
+            result.splice(0, result.length, ...heap);
         }
+        // 堆按块大小组织，需按 lo 还原输出顺序（wake 依赖块按 lo 升序做连续原始块合并）
+        result.sort((a, b) => a[0] - b[0]);
         return result;
     }
 
@@ -685,10 +761,20 @@ export class MemoryManager {
         const T = await this.logLen();
         let said = false;
 
+        if (blockId && summary === undefined) {
+            die('summary is required when blockId is provided.');
+        }
+
         if (blockId && summary !== undefined) {
             const [lo, hi] = this.parseBlockId(blockId);
             const todo = await this.pending(T, 1);
             if (todo.length === 0) {
+                // B-7: 无待压缩块时也要校验请求块——越界/未压缩的块给出明确错误，
+                // 而不是静默返回 done:0（已压缩的块重复提交仍幂等返回 done:0）。
+                const existing = await this.treeGet(lo, hi);
+                if (existing === null) {
+                    die(`Wrong block: ${blockId}. Nothing is pending for compression. Run memory_compress.`);
+                }
                 return { done: 0 };
             }
             if (lo !== todo[0][0] || hi !== todo[0][1]) {
@@ -710,6 +796,10 @@ export class MemoryManager {
                     // 块已存在或 treePut 返回 false（并行会话已处理）时保持 said=false，
                     // 避免上报 done:1 与实际写入不符。
                     said = true;
+                } else {
+                    // B-7: treePut 返回 false（并行会话已压缩该块）时明确告警，不再静默丢弃摘要；
+                    // 保持 said=false（done:0），与并行会话幂等语义一致。
+                    console.warn(`[MemoryManager] Block ${blockId} was already compressed by another session; summary not written.`);
                 }
             }
         }
@@ -863,16 +953,27 @@ export class MemoryManager {
             const rebuilt: Buffer[] = [];
             const handle = await fs.open(logPath, 'r');
             try {
-                const rec = Buffer.alloc(LOG_REC);
-                for (let i = 0; i < T; i++) {
-                    const { bytesRead } = await handle.read(rec, 0, LOG_REC, i * LOG_REC);
-                    if (bytesRead <= 0) break;
-                    const str = rec.subarray(0, bytesRead).toString('utf-8').trimEnd();
-                    // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
-                    if (!str) continue;
-                    if (i >= lo && i <= hi) continue;
-                    const parsed = parse(str);
-                    rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
+                // B-6: 分块读取（每次至多 CHUNK 条），避免百万条记忆时逐条 320B read 的百万次系统调用。
+                // 物理索引对齐与空/损坏记录跳过语义与旧实现一致。
+                const CHUNK = 4096;
+                for (let base = 0; base < T; base += CHUNK) {
+                    const count = Math.min(CHUNK, T - base);
+                    const buf = Buffer.alloc(count * LOG_REC);
+                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * LOG_REC);
+                    const effective = Math.floor(bytesRead / LOG_REC);
+                    for (let i = 0; i < effective; i++) {
+                        const idx = base + i;
+                        const slice = buf.subarray(i * LOG_REC, (i + 1) * LOG_REC);
+                        const str = slice.toString('utf-8').trimEnd();
+                        // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
+                        if (!str) continue;
+                        if (idx >= lo && idx <= hi) continue;
+                        const parsed = parse(str);
+                        if (!parsed) {
+                            continue; // B-9: 损坏行跳过（不重建），与 records() 解析口径一致
+                        }
+                        rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
+                    }
                 }
             } finally {
                 await handle.close();
@@ -957,7 +1058,12 @@ export class MemoryManager {
             const lo = Math.floor(id / size) * size;
             const hi = lo + size;
             // 用 treeDrop 丢弃该块及上层
-            await this.treeDrop(lo, hi).catch(() => {});
+            try {
+                await this.treeDrop(lo, hi);
+            } catch (err) {
+                // B-3: 丢弃失败至少告警，不再静默吞掉（树是缓存，缺失可重建，但需可观测）
+                console.warn(`[MemoryManager] Failed to drop summaries covering #${lo}-${hi - 1}:`, err);
+            }
             size *= 2;
         }
     }
@@ -967,7 +1073,8 @@ export class MemoryManager {
      * keepId=0 表示清空全部记忆。
      */
     async truncateLog(keepId: number): Promise<{ removed: number }> {
-        if (keepId < 0) {
+        // B-4: Number.isInteger 校验——NaN 绕过 keepId<0 检查后 fs.truncate(NaN) 会抛晦涩错误
+        if (!Number.isInteger(keepId) || keepId < 0) {
             die(`Invalid keepId: ${keepId}.`);
         }
 
@@ -1035,7 +1142,8 @@ export class MemoryManager {
         }
         this.config = { ...this.config, ...validated };
         await this.writeConfig(this.config);
-        return this.config;
+        // B-2: 返回拷贝，调用方修改返回对象不能绕过校验污染内部 config
+        return { ...this.config };
     }
 
     private async writeConfig(cfg: MemoryConfig): Promise<void> {

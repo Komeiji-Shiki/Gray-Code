@@ -92,6 +92,15 @@ describe('MemoryManager.compress', () => {
         }
     });
 
+    it('只传 blockId 时明确拒绝缺失的 summary', async () => {
+        const { mm, dir } = await setup8();
+        try {
+            await expect(mm.compress('0-1')).rejects.toThrow('summary is required');
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it('treePut 返回 false（并行会话已处理）时 done=0', async () => {
         const { mm, dir } = await setup8();
         try {
