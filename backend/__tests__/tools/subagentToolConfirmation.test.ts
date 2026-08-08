@@ -98,6 +98,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         subAgentConcurrencyLimiter.release('sec_confirm_blocked');
         subAgentConcurrencyLimiter.release('sec_confirm_allowed');
         subAgentConcurrencyLimiter.release('sec_confirm_fail_closed');
+        subAgentConcurrencyLimiter.release('sec_confirm_this_binding');
         jest.clearAllMocks();
     });
 
@@ -215,6 +216,55 @@ describe('子代理危险工具确认门（SEC）', () => {
             .find(p => p.functionResponse?.response && 'error' in (p.functionResponse.response as Record<string, unknown>));
         const response = refusalPart?.functionResponse?.response as Record<string, unknown> | undefined;
         expect(String(response?.error)).toContain('does not provide a confirmation gate');
+        expect(executeMock).not.toHaveBeenCalled();
+        expect(result.success).toBe(true);
+    });
+
+    it('确认门方法依赖 this（真实 ToolExecutionService 形态）：不因解构丢失绑定而 TypeError', async () => {
+        // 回归测试：修复前 executor 把 toolNeedsConfirmation 解构为独立函数调用，
+        // 方法内部依赖 this（真实实现调用 this.getToolRejectionReason）时抛出
+        // "Cannot read properties of undefined (reading 'getToolRejectionReason')"，
+        // 子代理执行任何工具都会报错。修复后经实例 bind 调用，行为与主链路一致。
+        mockResolveTools(['read_file', 'delete_file']);
+        const executeMock = jest.fn().mockResolvedValue({
+            toolResults: [{ result: { success: true, result: 'ok' } }],
+            responseParts: [],
+            multimodalAttachments: undefined
+        });
+        const generateMock = jest.fn()
+            .mockResolvedValueOnce(toolCallResponse('delete_file', { path: 'C:/tmp/secret.txt' }))
+            .mockResolvedValueOnce(textResponse());
+
+        // 模拟真实 ToolExecutionService：toolNeedsConfirmation 是实例方法，内部依赖 this
+        class FakeToolExecutionService {
+            executeFunctionCallsWithResults = executeMock;
+            toolNeedsConfirmation(toolName: string): boolean {
+                return this.isDangerousTool(toolName);
+            }
+            private isDangerousTool(toolName: string): boolean {
+                return toolName === 'delete_file' || toolName === 'execute_command';
+            }
+        }
+
+        const executor = createDefaultExecutor(createConfig(), createContext({
+            channelManager: { generate: generateMock } as any,
+            toolExecutionService: new FakeToolExecutionService() as any
+        }));
+
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'delete the file',
+            runId: 'sec_confirm_this_binding'
+        });
+
+        // 不再 TypeError：确认门正常生效，delete_file 被拒绝且未执行
+        expect(result.toolCalls![0].success).toBe(false);
+        const secondRequestHistory = generateMock.mock.calls[1][0].history as Content[];
+        const refusalPart = secondRequestHistory
+            .flatMap(m => m.parts ?? [])
+            .find(p => p.functionResponse?.response && 'error' in (p.functionResponse.response as Record<string, unknown>));
+        const response = refusalPart?.functionResponse?.response as Record<string, unknown> | undefined;
+        expect(String(response?.error)).toContain('requires user confirmation');
         expect(executeMock).not.toHaveBeenCalled();
         expect(result.success).toBe(true);
     });
