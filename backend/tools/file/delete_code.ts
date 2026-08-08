@@ -11,6 +11,7 @@ import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, formatFileSize } from '../utils';
 import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
@@ -89,27 +90,28 @@ async function deleteSingleFile(
     }
 
     const absolutePath = uri.fsPath;
-    if (!fs.existsSync(absolutePath)) {
-        return { path: filePath, success: false, error: `File not found: ${filePath}` };
-    }
 
-    // 文件大小护栏：超大文件全量 readFileSync 会阻塞 extension host，先 stat 拦截。
+    // 文件存在性 + 大小护栏：单次 stat 即可（ENOENT 归为文件不存在）
+    let fileStat;
     try {
-        const stat = fs.statSync(absolutePath);
-        if (stat.size > MAX_EDIT_FILE_BYTES) {
-            return {
-                path: filePath,
-                success: false,
-                error: `File is too large (${formatFileSize(stat.size)}, limit ${formatFileSize(MAX_EDIT_FILE_BYTES)}). Editing files this large is not supported; use write_file to replace the whole file, or edit a smaller file.`
-            };
+        fileStat = await fs.promises.stat(absolutePath);
+    } catch (e: any) {
+        if (e?.code === 'ENOENT') {
+            return { path: filePath, success: false, error: `File not found: ${filePath}` };
         }
-    } catch (e) {
         return { path: filePath, success: false, error: `Failed to stat file: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    if (fileStat.size > MAX_EDIT_FILE_BYTES) {
+        return {
+            path: filePath,
+            success: false,
+            error: `File is too large (${formatFileSize(fileStat.size)}, limit ${formatFileSize(MAX_EDIT_FILE_BYTES)}). Editing files this large is not supported; use write_file to replace the whole file, or edit a smaller file.`
+        };
     }
 
     try {
         const originalContent = normalizeLineEndingsToLF(
-            fs.readFileSync(absolutePath, 'utf8')
+            await fs.promises.readFile(absolutePath, 'utf8')
         );
         const originalLines = originalContent.split('\n');
         const totalLines = originalLines.length;
@@ -277,6 +279,12 @@ export function createDeleteCodeTool(): Tool {
             const fileList = args.files as DeleteCodeEntry[] | undefined;
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required and must be a non-empty array' };
+            }
+
+            // 越权防护：拒绝在工作区之外删除代码（子代理/直调工具链路同样生效）
+            const accessError = ensureOutsideWorkspaceAccessApproved('delete_code', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
             }
 
             const results: DeleteResult[] = [];

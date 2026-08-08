@@ -89,7 +89,7 @@ class TaskManagerClass {
      * 生成唯一任务 ID
      */
     generateTaskId(prefix: string = 'task'): string {
-        return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     }
     
     /**

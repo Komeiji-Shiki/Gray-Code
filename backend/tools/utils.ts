@@ -613,7 +613,8 @@ export async function mapWithConcurrency<T, R>(
     }
     const results = new Array<R>(items.length);
     let nextIndex = 0;
-    const runnerCount = Math.max(1, Math.min(Math.floor(limit), items.length));
+    const normalizedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 4;
+    const runnerCount = Math.min(normalizedLimit, items.length);
     const runners = Array.from({ length: runnerCount }, async () => {
         while (true) {
             const index = nextIndex++;

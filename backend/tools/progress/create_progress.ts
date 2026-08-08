@@ -207,7 +207,8 @@ export function createCreateProgressTool(): Tool {
             createdAt: now,
             updatedAt: now,
             status: isProgressStatus(args.status) ? args.status : 'active',
-            phase: isProgressPhase(args.phase) ? args.phase : 'implementation',
+            // 默认 phase 与 autoSync.buildInitialProgressMetadata 保持一致（项目创建初期处于设计阶段）
+            phase: isProgressPhase(args.phase) ? args.phase : 'design',
             currentFocus: args.currentFocus,
             latestConclusion: args.latestConclusion,
             currentBlocker: args.currentBlocker,

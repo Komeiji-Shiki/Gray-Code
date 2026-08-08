@@ -6,8 +6,9 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces, normalizePathForComparison } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
 /**
  * 删除结果
@@ -57,10 +58,16 @@ export function createDeleteFileTool(): Tool {
                 required: ['paths']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const pathList = args.paths as string[];
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required' };
+            }
+
+            // 越权防护：拒绝删除工作区之外的文件/目录（子代理/直调工具链路同样生效）
+            const accessError = ensureOutsideWorkspaceAccessApproved('delete_file', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
             }
 
             const results: DeleteResult[] = [];

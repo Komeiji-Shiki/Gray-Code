@@ -15,6 +15,7 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext, CropImageToolOptions } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
+import { readImageFile } from './imageUtils';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
@@ -117,44 +118,6 @@ interface TaskResult {
     croppedDimensions?: { width: number; height: number; aspectRatio: string };
     multimodal?: MultimodalData[];
     cancelled?: boolean;
-}
-
-/**
- * 读取图片文件
- */
-async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string } | null> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
-    if (!uri) {
-        return null;
-    }
-
-    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
-    if (isOutsideWorkspace) {
-        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imagePath }, context);
-        if (readAccessError) {
-            return null;
-        }
-    }
-
-    try {
-        const content = await vscode.workspace.fs.readFile(uri);
-        const ext = path.extname(imagePath).toLowerCase();
-        let mimeType = 'image/png';
-        if (ext === '.jpg' || ext === '.jpeg') {
-            mimeType = 'image/jpeg';
-        } else if (ext === '.webp') {
-            mimeType = 'image/webp';
-        } else if (ext === '.gif') {
-            mimeType = 'image/gif';
-        }
-
-        return {
-            data: Buffer.from(content),
-            mimeType
-        };
-    } catch (error) {
-        return null;
-    }
 }
 
 /**

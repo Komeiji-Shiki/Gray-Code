@@ -218,13 +218,13 @@ export function createRecordProgressMilestoneTool(): Tool {
           ...currentMetadata,
           updatedAt: now,
           latestConclusion: Object.prototype.hasOwnProperty.call(rawArgs, 'latestConclusion')
-            ? args.latestConclusion
+            ? normalizeOptionalProgressSingleLineText(args.latestConclusion)
             : currentMetadata.latestConclusion,
           currentBlocker: Object.prototype.hasOwnProperty.call(rawArgs, 'currentBlocker')
-            ? args.currentBlocker
+            ? normalizeOptionalProgressSingleLineText(args.currentBlocker)
             : currentMetadata.currentBlocker,
           nextAction: Object.prototype.hasOwnProperty.call(rawArgs, 'nextAction')
-            ? args.nextAction
+            ? normalizeOptionalProgressSingleLineText(args.nextAction)
             : currentMetadata.nextAction,
           milestones: [...currentMetadata.milestones, milestone],
           log: [

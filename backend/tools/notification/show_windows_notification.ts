@@ -87,8 +87,8 @@ export function createShowWindowsNotificationTool(
         }
       }
 
-      const silent = args.silent !== false
-      const openChatOnClick = args.openChatOnClick !== false
+      const silent = typeof args.silent === 'boolean' ? args.silent : true
+      const openChatOnClick = typeof args.openChatOnClick === 'boolean' ? args.openChatOnClick : true
 
       try {
         const result = await adapter.show({

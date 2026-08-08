@@ -143,14 +143,10 @@ export function registerAllTools(
         ...getSubAgentsRegistrations()
     ];
 
-    // 注册所有工具（read_skill 除外，它需要特殊处理）
+    // 注册所有工具。collectAllToolRegistrations 按约定不包含 read_skill
+    // （read_skill 在下方以真实工厂单独注册）；这里不再预执行工厂做探测，
+    // 避免「只为跳过 read_skill 而提前构建全部工具实例」的重复执行。
     for (const registration of registrations) {
-        // read_skill 不在 collectAllToolRegistrations 中，此处仅作防御性跳过，
-        // 保持"read_skill 单独以真实工厂注册"的既有逻辑。
-        const probe = registration();
-        if (probe.declaration.name === 'read_skill') {
-            continue;
-        }
         registry.register(registration);
     }
 

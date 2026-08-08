@@ -11,6 +11,7 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
+import { saveImage, parseImageDimensionsFromBase64 } from './imageUtils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -330,76 +331,6 @@ async function callGeminiImageApi(
 }
 
 /**
- * 解析 base64 图片数据获取尺寸（支持 PNG, JPEG, WebP）
- */
-function parseImageDimensionsFromBase64(base64Data: string, mimeType: string): { width: number; height: number } | null {
-    try {
-        const buffer = Buffer.from(base64Data, 'base64');
-        
-        if (mimeType === 'image/png') {
-            // PNG: 宽度在偏移 16-19，高度在 20-23（大端序）
-            if (buffer.length >= 24 &&
-                buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
-                const width = (buffer[16] << 24) | (buffer[17] << 16) | (buffer[18] << 8) | buffer[19];
-                const height = (buffer[20] << 24) | (buffer[21] << 16) | (buffer[22] << 8) | buffer[23];
-                if (width > 0 && height > 0) {
-                    return { width, height };
-                }
-            }
-        } else if (mimeType === 'image/jpeg') {
-            // JPEG: 需要查找 SOF0/SOF2 标记
-            let offset = 2;  // 跳过 FFD8
-            while (offset < buffer.length - 9) {
-                if (buffer[offset] !== 0xFF) {
-                    offset++;
-                    continue;
-                }
-                const marker = buffer[offset + 1];
-                // SOF0 (0xC0) 或 SOF2 (0xC2) 标记包含尺寸
-                if (marker === 0xC0 || marker === 0xC2) {
-                    const height = (buffer[offset + 5] << 8) | buffer[offset + 6];
-                    const width = (buffer[offset + 7] << 8) | buffer[offset + 8];
-                    if (width > 0 && height > 0) {
-                        return { width, height };
-                    }
-                    break;
-                }
-                // 跳到下一个标记
-                const length = (buffer[offset + 2] << 8) | buffer[offset + 3];
-                offset += 2 + length;
-            }
-        } else if (mimeType === 'image/webp') {
-            // WebP: 检查 RIFF 头
-            if (buffer.length >= 30 &&
-                buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-                buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) {
-                // VP8X (扩展格式)
-                if (buffer[12] === 0x56 && buffer[13] === 0x50 && buffer[14] === 0x38 && buffer[15] === 0x58) {
-                    const width = ((buffer[24] | (buffer[25] << 8) | (buffer[26] << 16)) + 1);
-                    const height = ((buffer[27] | (buffer[28] << 8) | (buffer[29] << 16)) + 1);
-                    if (width > 0 && height > 0) {
-                        return { width, height };
-                    }
-                }
-                // VP8 (有损格式)
-                else if (buffer[12] === 0x56 && buffer[13] === 0x50 && buffer[14] === 0x38 && buffer[15] === 0x20) {
-                    if (buffer.length >= 30) {
-                        const width = (buffer[26] | (buffer[27] << 8)) & 0x3FFF;
-                        const height = (buffer[28] | (buffer[29] << 8)) & 0x3FFF;
-                        if (width > 0 && height > 0) {
-                            return { width, height };
-                        }
-                    }
-                }
-            }
-        }
-    } catch {
-        // 解析失败
-    }
-    return null;
-}
-
-/**
  * 从响应中提取图片和文本
  */
 function extractFromResponse(response: GeminiImageResponse): {
@@ -430,35 +361,6 @@ function extractFromResponse(response: GeminiImageResponse): {
     }
 
     return { images, texts };
-}
-
-/**
- * 保存图片到文件
- */
-async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext): Promise<void> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath);
-    if (!uri) {
-        throw new Error('No workspace folder open');
-    }
-
-    // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
-    if (isOutsideWorkspace) {
-        const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: outputPath }, context);
-        if (writeAccessError) {
-            throw new Error(writeAccessError);
-        }
-    }
-
-    // 确保目录存在
-    const dirUri = vscode.Uri.joinPath(uri, '..');
-    try {
-        await vscode.workspace.fs.createDirectory(dirUri);
-    } catch {
-        // 目录可能已存在
-    }
-
-    // 写入文件
-    await vscode.workspace.fs.writeFile(uri, buffer);
 }
 
 /**

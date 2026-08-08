@@ -164,7 +164,8 @@ function cleanupTodoContent(text: string, id: string): string {
 
   out = out.replace(/`#([^`]+)`/g, ' ');
   if (id) {
-    const idPattern = new RegExp(`(?:^|\\s)#${escapeRegExp(id)}\\b`, 'g');
+    // 仅删除「行首」或「紧邻 checkbox 标记」的 id，正文中出现的 #id 保留
+    const idPattern = new RegExp(`(?:^|\\s-\\s*\\[[ xX]\\]\\s*)#${escapeRegExp(id)}\\b`, 'gm');
     out = out.replace(idPattern, ' ');
   }
 

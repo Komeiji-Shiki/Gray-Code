@@ -15,6 +15,7 @@ import {
 import { projectReviewToolResultData } from './resultProjection';
 import { loadReviewSessionState, saveReviewSessionState } from './sessionState';
 import { syncProgressFromReviewArtifact } from '../progress/autoSync';
+import { withProgressWriteLock } from '../progress/progressWriteLock';
 
 export interface ReopenReviewArgs {
   path: string;
@@ -65,12 +66,15 @@ export function createReopenReviewTool(): Tool {
       }
 
       try {
-        const contentBytes = await vscode.workspace.fs.readFile(uri);
-        const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
-        const locale = getCurrentReviewDocumentLocale();
-        const next = reopenReviewDocument(originalContent, locale);
-
-        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
+        // 读改写整体进 per-path 写锁：并行子代理不会基于同一份旧盘面互相覆盖
+        const next = await withProgressWriteLock(path, async () => {
+          const contentBytes = await vscode.workspace.fs.readFile(uri);
+          const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
+          const locale = getCurrentReviewDocumentLocale();
+          const result = reopenReviewDocument(originalContent, locale);
+          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(result.content));
+          return result;
+        });
         const progressWarnings = await syncProgressFromReviewArtifact({
           reviewPath: path,
           title: next.reviewSnapshot.header.title,

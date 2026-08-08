@@ -17,6 +17,7 @@ import {
 import { projectReviewToolResultData } from './resultProjection';
 import { ensureNoActiveReviewSession, saveReviewSessionState } from './sessionState';
 import { syncProgressFromReviewArtifact } from '../progress/autoSync';
+import { withProgressWriteLock } from '../progress/progressWriteLock';
 
 export interface CreateReviewArgs {
   title?: string;
@@ -87,47 +88,60 @@ export function createCreateReviewTool(): Tool {
       }
 
       try {
-        await ensureParentDir(uri.fsPath);
+        return await withProgressWriteLock(outPath, async (): Promise<ToolResult> => {
+          try {
+            await vscode.workspace.fs.stat(uri);
+            return {
+              success: false,
+              error: `Review document already exists at ${outPath}. Continue it with record_review_milestone or finalize_review, or choose a different path.`
+            };
+          } catch (e: unknown) {
+            if ((e as { code?: string } | null)?.code !== 'FileNotFound') {
+              throw e;
+            }
+          }
 
-        const locale = getCurrentReviewDocumentLocale();
-        const content = buildInitialReviewDocument({
-          title,
-          overview: typeof args.overview === 'string' ? args.overview : '',
-          review
-        }, locale);
-        const summary = summarizeReviewDocument(content);
-        const bytes = new TextEncoder().encode(content);
-        await vscode.workspace.fs.writeFile(uri, bytes);
-        const progressWarnings = await syncProgressFromReviewArtifact({
-          reviewPath: outPath,
-          title: summary.title || title || undefined,
-          eventMessage: `同步审查文档：${outPath}`
-        });
-
-        if (summary.reviewSnapshot) {
-          await saveReviewSessionState(context, {
-            reviewRunId: summary.reviewSnapshot.reviewRunId,
+          await ensureParentDir(uri.fsPath);
+          const locale = getCurrentReviewDocumentLocale();
+          const content = buildInitialReviewDocument({
+            title,
+            overview: typeof args.overview === 'string' ? args.overview : '',
+            review
+          }, locale);
+          const summary = summarizeReviewDocument(content);
+          const bytes = new TextEncoder().encode(content);
+          await vscode.workspace.fs.writeFile(uri, bytes);
+          const progressWarnings = await syncProgressFromReviewArtifact({
             reviewPath: outPath,
-            status: summary.reviewSnapshot.status,
-            createdAt: summary.reviewSnapshot.createdAt,
-            finalizedAt: summary.reviewSnapshot.finalizedAt
+            title: summary.title || title || undefined,
+            eventMessage: `同步审查文档：${outPath}`
           });
-        }
 
-        return {
-          success: true,
-          data: projectReviewToolResultData({
-            path: outPath,
-            content,
-            delta: {
-              type: 'created',
-              changedFields: ['header', 'scope', 'reviewSnapshot', 'reviewSession']
-            },
-            extra: progressWarnings.length > 0 ? { warnings: progressWarnings } : undefined
-          })
-        };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
+          if (summary.reviewSnapshot) {
+            await saveReviewSessionState(context, {
+              reviewRunId: summary.reviewSnapshot.reviewRunId,
+              reviewPath: outPath,
+              status: summary.reviewSnapshot.status,
+              createdAt: summary.reviewSnapshot.createdAt,
+              finalizedAt: summary.reviewSnapshot.finalizedAt
+            });
+          }
+
+          return {
+            success: true,
+            data: projectReviewToolResultData({
+              path: outPath,
+              content,
+              delta: {
+                type: 'created',
+                changedFields: ['header', 'scope', 'reviewSnapshot', 'reviewSession']
+              },
+              extra: progressWarnings.length > 0 ? { warnings: progressWarnings } : undefined
+            })
+          };
+        });
+      } catch (e: unknown) {
+        return { success: false, error: e instanceof Error ? e.message : String(e) };
       }
     }
   };

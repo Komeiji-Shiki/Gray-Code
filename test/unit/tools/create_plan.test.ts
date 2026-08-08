@@ -1,5 +1,6 @@
 const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
 const mockReadFile = jest.fn()
+const mockStat = jest.fn().mockRejectedValue({ code: 'FileNotFound' })
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
 const mockResolveUriWithInfo = jest.fn()
@@ -11,6 +12,7 @@ jest.mock('vscode', () => ({
     fs: {
       createDirectory: mockCreateDirectory,
       readFile: mockReadFile,
+      stat: mockStat,
       writeFile: mockWriteFile
     }
   },

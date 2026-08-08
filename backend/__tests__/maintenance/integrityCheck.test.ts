@@ -687,6 +687,28 @@ describe('runIntegrityCheck / 辅助函数', () => {
         expect(report.history.checked).toBe(1);
     });
 
+    test('逐会话报告进度，观察器异常不打断扫描', async () => {
+        await writeSegmentedHistory(tempDir, 'conv-a', 1);
+        await writeSegmentedHistory(tempDir, 'conv-b', 1);
+        const progress: Array<{ completed: number; total: number; conversationId: string }> = [];
+
+        const report = await runIntegrityCheck({
+            baseDir: tempDir,
+            checkpointsDir,
+            conversationIds: ['conv-a', 'conv-b'],
+            onProgress: value => {
+                progress.push(value);
+                if (value.completed === 1) throw new Error('observer failed');
+            },
+        });
+
+        expect(report.history.checked).toBe(2);
+        expect(progress).toEqual([
+            { completed: 1, total: 2, conversationId: 'conv-a' },
+            { completed: 2, total: 2, conversationId: 'conv-b' },
+        ]);
+    });
+
     test('getCheckpointRecords 提供者注入生效', async () => {
         await writeSegmentedHistory(tempDir, 'conv-a', 2);
         await writeCheckpointDir(checkpointsDir, 'cp_a');

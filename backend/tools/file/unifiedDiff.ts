@@ -221,8 +221,19 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
                     break;
                 }
 
-                // patch 末尾通常会有一个空行（最后一个换行导致 split 出来），直接忽略
+                // patch 末尾通常会有一个空行（最后一个换行导致 split 出来），直接忽略；
+                // 但 hunk 中间出现裸空行（无前缀）是非法格式：静默跳过会掩盖模型生成的坏 patch。
+                // 仅当空行后不再跟随 hunk 内容行（' '、'+'、'-' 前缀）时按尾部空行容忍。
                 if (l === '') {
+                    const nextLine = lines[i + 1];
+                    const isNextFileHeaderPair = nextLine?.startsWith('--- ')
+                        && (lines[i + 2] ?? '').startsWith('+++ ');
+                    const isNextHunkBody = nextLine !== undefined
+                        && !isNextFileHeaderPair
+                        && (nextLine.startsWith(' ') || nextLine.startsWith('+') || nextLine.startsWith('-'));
+                    if (isNextHunkBody) {
+                        throw new Error("Invalid hunk line: bare empty line inside hunk body. Each hunk body line must start with ' ', '+' or '-' (context/add/delete).");
+                    }
                     i++;
                     continue;
                 }
@@ -319,6 +330,9 @@ export function applyUnifiedDiffHunks(
         let idx = startIndex;
         let removed = 0;
         let added = 0;
+        // hunk 输出段：context 行原样保留、del 行删除、add 行插入。
+        // 收集完成后一次性 splice，避免逐行 splice 的 O(n) 数组移位（hunk 行数多时退化为 O(n·m)）。
+        const hunkOutput: string[] = [];
 
         for (const line of hunk.lines) {
             if (line.type === 'context') {
@@ -328,6 +342,7 @@ export function applyUnifiedDiffHunks(
                         `Hunk context mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
                     );
                 }
+                hunkOutput.push(actual);
                 idx++;
                 continue;
             }
@@ -339,16 +354,19 @@ export function applyUnifiedDiffHunks(
                         `Hunk delete mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
                     );
                 }
-                lines.splice(idx, 1);
+                idx++;
                 removed++;
                 continue;
             }
 
             // add
-            lines.splice(idx, 0, line.content);
-            idx++;
+            hunkOutput.push(line.content);
             added++;
         }
+
+        // 一次性替换 [startIndex, idx) 区间：context 行重新写回、del 行真正移除、add 行插入，
+        // 与逐行 splice 的最终结果逐字节一致。
+        lines.splice(startIndex, idx - startIndex, ...hunkOutput);
 
         const newLen = computeHunkNewLen(hunk);
         const startLine = startIndex + 1;
@@ -437,6 +455,10 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
             for (let startIndex = 0; startIndex <= scanLimit; startIndex++) {
                 if (lines[startIndex] === firstLine && matchesAt(startIndex)) {
                     fallbackMatches.push(startIndex);
+                    // 只需区分 0 / 1 / ≥2 三种情况：找到第 2 个即可停止，避免大文件全量扫描
+                    if (fallbackMatches.length >= 2) {
+                        break;
+                    }
                 }
             }
 
