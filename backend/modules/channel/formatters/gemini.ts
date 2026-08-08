@@ -364,6 +364,8 @@ export class GeminiFormatter extends BaseFormatter {
                 promptTokenCount: response.usageMetadata.promptTokenCount,
                 candidatesTokenCount: response.usageMetadata.candidatesTokenCount,
                 totalTokenCount: response.usageMetadata.totalTokenCount,
+                // Gemini 的 cachedContentTokenCount 语义即“本次读取命中缓存的 token”，
+                // 映射到 cacheReadTokenCount；无独立的 cacheCreation 字段，保持 undefined
                 cachedContentTokenCount: response.usageMetadata.cachedContentTokenCount,
                 cacheReadTokenCount: response.usageMetadata.cachedContentTokenCount,
                 thoughtsTokenCount: response.usageMetadata.thoughtsTokenCount,
@@ -440,6 +442,8 @@ export class GeminiFormatter extends BaseFormatter {
                     promptTokenCount: chunk.usageMetadata.promptTokenCount,
                     candidatesTokenCount: chunk.usageMetadata.candidatesTokenCount,
                     totalTokenCount: chunk.usageMetadata.totalTokenCount,
+                    // Gemini 的 cachedContentTokenCount 语义即“本次读取命中缓存的 token”，
+                    // 映射到 cacheReadTokenCount；无独立的 cacheCreation 字段，保持 undefined
                     cachedContentTokenCount: chunk.usageMetadata.cachedContentTokenCount,
                     cacheReadTokenCount: chunk.usageMetadata.cachedContentTokenCount,
                     thoughtsTokenCount: chunk.usageMetadata.thoughtsTokenCount,

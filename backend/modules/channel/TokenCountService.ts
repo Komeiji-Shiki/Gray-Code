@@ -35,6 +35,9 @@ export interface TokenCountResult {
  * 根据渠道类型调用对应的 token 计数 API
  */
 export class TokenCountService {
+    /** 计数请求超时（毫秒），超时由 AbortSignal.timeout 触发 reject 后返回 success:false */
+    private static readonly COUNT_REQUEST_TIMEOUT_MS = 30_000;
+
     private proxyUrl?: string;
     
     constructor(proxyUrl?: string) {
@@ -111,7 +114,8 @@ export class TokenCountService {
     async countTokens(
         channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         const channelConfig = config[channelType];
         
@@ -132,13 +136,13 @@ export class TokenCountService {
         try {
             switch (channelType) {
                 case 'gemini':
-                    return await this.countGeminiTokens(channelConfig, contents);
+                    return await this.countGeminiTokens(channelConfig, contents, proxyUrl);
                 case 'openai':
-                    return await this.countOpenAITokens(channelConfig, contents);
+                    return await this.countOpenAITokens(channelConfig, contents, proxyUrl);
                 case 'openai-responses':
-                    return await this.countOpenAIResponsesTokens(channelConfig, contents);
+                    return await this.countOpenAIResponsesTokens(channelConfig, contents, proxyUrl);
                 case 'anthropic':
-                    return await this.countAnthropicTokens(channelConfig, contents);
+                    return await this.countAnthropicTokens(channelConfig, contents, proxyUrl);
                 default:
                     return {
                         success: false,
@@ -169,7 +173,8 @@ export class TokenCountService {
      */
     async countTokensWithChannelConfig(
         channelConfig: ChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         const method = channelConfig.tokenCountMethod || 'channel_default';
         const apiConfig = channelConfig.tokenCountApiConfig;
@@ -198,13 +203,13 @@ export class TokenCountService {
         try {
             switch (actualMethod) {
                 case 'gemini':
-                    return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
                 case 'openai_custom':
-                    return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
                 case 'openai_responses':
-                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
                 case 'anthropic':
-                    return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents);
+                    return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
                 case 'local':
                     return this.countLocalTokens(contents);
                 default:
@@ -234,11 +239,12 @@ export class TokenCountService {
     async countTokensBatch(
         channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
-        contentsList: Content[][]
+        contentsList: Content[][],
+        proxyUrl?: string
     ): Promise<TokenCountResult[]> {
         // 并行执行所有计数请求
         const promises = contentsList.map(contents => 
-            this.countTokens(channelType, config, contents)
+            this.countTokens(channelType, config, contents, proxyUrl)
         );
         
         return Promise.all(promises);
@@ -273,7 +279,8 @@ export class TokenCountService {
     private async countGeminiTokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const url = apiConfig?.url || channelConfig.url;
@@ -331,12 +338,13 @@ export class TokenCountService {
             contents: geminiContents
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(countUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -367,7 +375,8 @@ export class TokenCountService {
     private async countOpenAITokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const url = apiConfig?.url;
@@ -422,13 +431,14 @@ export class TokenCountService {
             requestBody.model = model;
         }
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -467,7 +477,8 @@ export class TokenCountService {
     private async countOpenAIResponsesTokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const url = apiConfig?.url || (channelConfig.type === 'openai-responses' ? channelConfig.url : undefined);
@@ -539,13 +550,14 @@ export class TokenCountService {
             requestBody.model = model;
         }
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(countUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -583,7 +595,8 @@ export class TokenCountService {
     private async countAnthropicTokensWithConfig(
         channelConfig: ChannelConfig,
         apiConfig: TokenCountApiConfig | undefined,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 使用独立配置或渠道配置
         const baseUrl = apiConfig?.url || channelConfig.url;
@@ -618,7 +631,7 @@ export class TokenCountService {
             messages
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(countUrl, {
             method: 'POST',
             headers: {
@@ -626,6 +639,7 @@ export class TokenCountService {
                 'x-api-key': apiKey,
                 'anthropic-version': '2023-06-01'
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -670,7 +684,8 @@ export class TokenCountService {
      */
     private async countGeminiTokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 构建 URL
         let url = config.baseUrl
@@ -696,12 +711,13 @@ export class TokenCountService {
             contents: geminiContents
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -739,7 +755,8 @@ export class TokenCountService {
      */
     private async countOpenAITokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 如果没有配置 baseUrl，返回失败让调用方回退到估算
         if (!config.baseUrl) {
@@ -784,13 +801,14 @@ export class TokenCountService {
             messages
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(config.baseUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${config.apiKey}`
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -845,7 +863,8 @@ export class TokenCountService {
      */
     private async countOpenAIResponsesTokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         if (!config.baseUrl) {
             return {
@@ -898,13 +917,14 @@ export class TokenCountService {
             instructions: instructions || undefined
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${config.apiKey}`
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         
@@ -954,7 +974,8 @@ export class TokenCountService {
      */
     private async countAnthropicTokens(
         config: TokenCountChannelConfig,
-        contents: Content[]
+        contents: Content[],
+        proxyUrl?: string
     ): Promise<TokenCountResult> {
         // 清理并转换内容格式为 Anthropic messages 格式
         const messages = contents.map(content => {
@@ -976,7 +997,7 @@ export class TokenCountService {
             messages
         };
         
-        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(config.baseUrl, {
             method: 'POST',
             headers: {
@@ -984,6 +1005,7 @@ export class TokenCountService {
                 'x-api-key': config.apiKey,
                 'anthropic-version': '2023-06-01'
             },
+            signal: AbortSignal.timeout(TokenCountService.COUNT_REQUEST_TIMEOUT_MS),
             body: JSON.stringify(requestBody)
         });
         

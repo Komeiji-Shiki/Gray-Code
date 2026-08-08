@@ -332,6 +332,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      * 解析 OpenAI Responses API 响应 (非流式)
      */
     parseResponse(response: any): GenerateResponse {
+        // 兼容代理常在 HTTP 200 的响应体里内联错误（余额不足、模型不存在等），
+        // 这类 body 没有 output 数组，不识别就会被当成 invalidResponse 误报
+        throwIfStreamError(response, 'OpenAI');
+
         if (!response || !response.output || !Array.isArray(response.output)) {
             throw new Error(t('modules.channel.formatters.openai.errors.invalidResponse'));
         }

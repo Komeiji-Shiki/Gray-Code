@@ -398,8 +398,8 @@ export class ChannelManager {
             try {
                 const httpResponse = await this.executeRequest(httpRequest, request.abortSignal);
                 
-                // 检查 HTTP 状态
-                if (httpResponse.status !== 200) {
+                // 检查 HTTP 状态（与流式 response.ok 一致：接受全部 2xx）
+                if (httpResponse.status < 200 || httpResponse.status >= 300) {
                     const upstreamMessage = extractUpstreamErrorMessage(httpResponse.body);
                     throw new ChannelError(
                         ErrorType.API_ERROR,
@@ -623,7 +623,13 @@ export class ChannelManager {
                 let hasToolUse = false;
                 
                 if (keepAliveEnabled) {
+                    let keepAliveInFlight = false;
                     keepAliveTimer = setInterval(async () => {
+                        // 防重入：上一次保活请求未完成时跳过本轮，避免慢响应堆积
+                        if (keepAliveInFlight) {
+                            return;
+                        }
+                        keepAliveInFlight = true;
                         keepAliveFiredCount++;
                         this.log.info('prompt_caching_keepalive_sending', { count: keepAliveFiredCount });
                         try {
@@ -632,6 +638,8 @@ export class ChannelManager {
                             this.log.info('prompt_caching_keepalive_sent', { count: keepAliveFiredCount });
                         } catch (err: any) {
                             this.log.warn('prompt_caching_keepalive_failed', { error: err.message });
+                        } finally {
+                            keepAliveInFlight = false;
                         }
                     }, 270000);
                 }

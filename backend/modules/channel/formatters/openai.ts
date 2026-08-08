@@ -27,16 +27,12 @@ import type { ToolDeclaration } from '../../../tools/types';
 import {
     convertToolsToXML,
     convertFunctionCallToXML,
-    convertFunctionResponseToXML,
-    parseXMLToolCalls
+    convertFunctionResponseToXML
 } from '../../../tools/xmlFormatter';
 import {
     convertToolsToJSON,
     convertFunctionCallToJSON,
-    convertFunctionResponseToJSON,
-    parseJSONToolCalls,
-    TOOL_CALL_START,
-    TOOL_CALL_END
+    convertFunctionResponseToJSON
 } from '../../../tools/jsonFormatter';
 import {
     detectPromptToolMode,
@@ -475,13 +471,22 @@ export class OpenAIFormatter extends BaseFormatter {
                     });
                 }
             } else if (part.fileData) {
-                // 文件引用 -> URL
-                contentArray.push({
-                    type: 'image_url',
-                    image_url: {
-                        url: part.fileData.fileUri
-                    }
-                });
+                // 文件引用（File API URI）：按 MIME 分发，不能一律当作图片
+                const mimeType = part.fileData.mimeType;
+                if (isImageMimeType(mimeType)) {
+                    contentArray.push({
+                        type: 'image_url',
+                        image_url: {
+                            url: part.fileData.fileUri
+                        }
+                    });
+                } else {
+                    // PDF/文本等其他类型 Chat Completions 无法直接引用，转文本占位避免 400
+                    contentArray.push({
+                        type: 'text',
+                        text: buildUnsupportedAttachmentText(mimeType)
+                    });
+                }
             }
         }
         
@@ -801,115 +806,6 @@ export class OpenAIFormatter extends BaseFormatter {
         return [...parts, ...extracted.parts];
     }
     
-    /**
-     * 从内容中提取 JSON 格式的工具调用
-     *
-     * 根据 <<<TOOL_CALL>>> 边界标记拆分内容
-     * 返回 text + functionCall 交错的 parts 数组
-     */
-    private extractJSONToolCallsFromContent(content: string, existingParts: ContentPart[]): ContentPart[] {
-        const parts = [...existingParts];
-        
-        // 使用边界标记拆分内容
-        const segments = content.split(TOOL_CALL_START);
-        
-        for (let i = 0; i < segments.length; i++) {
-            const segment = segments[i];
-            
-            if (i === 0) {
-                // 第一个段落是开始标记之前的文本
-                const text = segment.trim();
-                if (text) {
-                    parts.push({ text });
-                }
-            } else {
-                // 后续段落包含工具调用和可能的文本
-                const endIndex = segment.indexOf(TOOL_CALL_END);
-                
-                if (endIndex !== -1) {
-                    // 提取工具调用 JSON
-                    const jsonStr = segment.substring(0, endIndex).trim();
-                    try {
-                        const parsed = JSON.parse(jsonStr);
-                        if (parsed.tool && typeof parsed.tool === 'string') {
-                            parts.push({
-                                functionCall: {
-                                    name: parsed.tool,
-                                    args: parsed.parameters || {},
-                                    id: `call_${Date.now()}_${i}`
-                                }
-                            });
-                        }
-                    } catch (error) {
-                        // JSON 解析失败，作为普通文本
-                        console.warn('Failed to parse JSON tool call:', error);
-                        parts.push({ text: `${TOOL_CALL_START}${jsonStr}${TOOL_CALL_END}` });
-                    }
-                    
-                    // 提取工具调用后的文本
-                    const afterText = segment.substring(endIndex + TOOL_CALL_END.length).trim();
-                    if (afterText) {
-                        parts.push({ text: afterText });
-                    }
-                } else {
-                    // 没有找到结束标记，可能是不完整的工具调用
-                    parts.push({ text: `${TOOL_CALL_START}${segment}` });
-                }
-            }
-        }
-        
-        return parts;
-    }
-    
-    /**
-     * 从内容中提取 XML 格式的工具调用
-     *
-     * 根据 <tool_use> 标签拆分内容
-     * 返回 text + functionCall 交错的 parts 数组
-     */
-    private extractXMLToolCallsFromContent(content: string, existingParts: ContentPart[]): ContentPart[] {
-        const parts = [...existingParts];
-        
-        // 使用正则匹配 <tool_use>...</tool_use> 块
-        const toolUseRegex = /<tool_use>([\s\S]*?)<\/tool_use>/g;
-        let lastIndex = 0;
-        let match;
-        
-        while ((match = toolUseRegex.exec(content)) !== null) {
-            // 添加工具调用之前的文本
-            const beforeText = content.substring(lastIndex, match.index).trim();
-            if (beforeText) {
-                parts.push({ text: beforeText });
-            }
-            
-            // 解析工具调用
-            const toolCalls = parseXMLToolCalls(match[0]);
-            for (const call of toolCalls) {
-                parts.push({
-                    functionCall: {
-                        name: call.name,
-                        args: call.args,
-                        id: `call_${Date.now()}_${parts.length}`
-                    }
-                });
-            }
-            
-            lastIndex = match.index + match[0].length;
-        }
-        
-        // 添加最后一个工具调用之后的文本
-        const afterText = content.substring(lastIndex).trim();
-        if (afterText) {
-            parts.push({ text: afterText });
-        }
-        
-        // 如果没有找到任何工具调用，直接添加整个内容
-        if (parts.length === existingParts.length && content.trim()) {
-            parts.push({ text: content });
-        }
-        
-        return parts;
-    }
     
     /**
      * 解析流式响应块
@@ -1081,7 +977,7 @@ export class OpenAIFormatter extends BaseFormatter {
         // 转换为 OpenAI 格式（Chat Completions API）
         // OpenAI 要求同一请求中若任一工具 strict: true 则所有工具必须 strict: true；
         // 工具集混有 strict 与非 strict 时显式发送 strict: false 会被 API 400 拒绝，
-        // 因此整体降级为不启用（行为更安全）。
+        // 因此整体降级为不启用（行为更安全）：非 allStrict 时直接省略 strict 字段。
         const allStrict = strictEnabled === true && tools.every(tool => tool.strict === true);
         
         return tools.map(tool => ({
@@ -1092,7 +988,7 @@ export class OpenAIFormatter extends BaseFormatter {
                 parameters: allStrict
                     ? ensureStrictSchema(tool.parameters)
                     : tool.parameters,
-                strict: allStrict ? true : false
+                ...(allStrict ? { strict: true } : {})
             }
         }));
     }

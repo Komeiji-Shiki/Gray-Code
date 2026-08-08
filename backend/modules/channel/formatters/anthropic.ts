@@ -30,19 +30,15 @@ import type { ToolDeclaration } from '../../../tools/types';
 import {
     convertToolsToXML,
     convertFunctionCallToXML,
-    convertFunctionResponseToXML,
-    parseXMLToolCalls
+    convertFunctionResponseToXML
 } from '../../../tools/xmlFormatter';
 import {
     convertToolsToJSON,
     convertFunctionCallToJSON,
-    convertFunctionResponseToJSON,
-    TOOL_CALL_START,
-    TOOL_CALL_END
+    convertFunctionResponseToJSON
 } from '../../../tools/jsonFormatter';
 import {
     detectPromptToolMode,
-    extractPromptToolParts,
     IncrementalPromptToolParser
 } from '../../../tools/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
@@ -402,7 +398,10 @@ export class AnthropicFormatter extends BaseFormatter {
                         content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
                     });
                 }
-                
+                // 工具结果消息可能同时携带截图/文件等附件；作为同一 user 消息的后续内容块发送，
+                // 避免 functionResponse 分支吞掉 mediaParts。
+                contentArray.push(...this.buildMessageContent([], mediaParts));
+
                 this.pushMergedMessage(messages, 'user', contentArray);
             }
 
@@ -517,14 +516,24 @@ export class AnthropicFormatter extends BaseFormatter {
                     });
                 }
             } else if (part.fileData) {
-                // 文件引用 -> URL 格式
-                contentArray.push({
-                    type: 'image',
-                    source: {
-                        type: 'url',
-                        url: part.fileData.fileUri
-                    }
-                });
+                const { mimeType, fileUri } = part.fileData;
+                if (isImageMimeType(mimeType)) {
+                    contentArray.push({
+                        type: 'image',
+                        source: { type: 'url', url: fileUri }
+                    });
+                } else if (isPdfMimeType(mimeType)) {
+                    contentArray.push({
+                        type: 'document',
+                        source: { type: 'url', url: fileUri }
+                    });
+                } else {
+                    // Anthropic 的 URL source 仅用于受支持的图片/文档，文本和其他文件不能伪装成图片。
+                    contentArray.push({
+                        type: 'text',
+                        text: buildUnsupportedAttachmentText(mimeType)
+                    });
+                }
             }
         }
         
@@ -576,13 +585,14 @@ export class AnthropicFormatter extends BaseFormatter {
                     const responseText = mode === 'xml'
                         ? convertFunctionResponseToXML(resp.name, resp.response)
                         : convertFunctionResponseToJSON(resp.name, resp.response);
-                    
+
                     contentArray.push({
                         type: 'text',
                         text: responseText
                     });
                 }
-                
+                contentArray.push(...this.buildMessageContent([], mediaParts));
+
                 this.pushMergedMessage(messages, 'user', contentArray);
             } else {
                 // 将 functionCall 转回文本，与 text 合并
@@ -622,10 +632,8 @@ export class AnthropicFormatter extends BaseFormatter {
         const genConfig: any = {};
         const optionsEnabled = (config as any).optionsEnabled || {};
         
-        // max_tokens: 仅在启用时发送
-        if (optionsEnabled.max_tokens && config.options?.max_tokens !== undefined) {
-            genConfig.max_tokens = config.options.max_tokens;
-        }
+        // max_tokens: Anthropic API 强制要求该字段，无条件发送（未显式配置时用 65535 兜底）
+        genConfig.max_tokens = config.options?.max_tokens ?? 65535;
         
         if (optionsEnabled.temperature && config.options?.temperature !== undefined) {
             genConfig.temperature = config.options.temperature;
@@ -880,114 +888,6 @@ export class AnthropicFormatter extends BaseFormatter {
         };
     }
     
-    /**
-     * 自动检测模式解析响应
-     */
-    private parseResponseAutoDetect(contentText: string): ContentPart[] {
-        const promptMode = detectPromptToolMode(contentText);
-        if (!promptMode) {
-            const parts: ContentPart[] = [];
-            if (contentText.trim()) {
-                parts.push({ text: contentText });
-            }
-            return parts;
-        }
-
-        const extracted = extractPromptToolParts(contentText, promptMode, {
-            flushIncompleteTailAsText: true
-        });
-        return extracted.parts;
-    }
-    
-    /**
-     * 从内容中提取 JSON 格式的工具调用
-     */
-    private extractJSONToolCallsFromContent(content: string, existingParts: ContentPart[]): ContentPart[] {
-        const parts = [...existingParts];
-        const segments = content.split(TOOL_CALL_START);
-        
-        for (let i = 0; i < segments.length; i++) {
-            const segment = segments[i];
-            
-            if (i === 0) {
-                const text = segment.trim();
-                if (text) {
-                    parts.push({ text });
-                }
-            } else {
-                const endIndex = segment.indexOf(TOOL_CALL_END);
-                
-                if (endIndex !== -1) {
-                    const jsonStr = segment.substring(0, endIndex).trim();
-                    try {
-                        const parsed = JSON.parse(jsonStr);
-                        if (parsed.tool && typeof parsed.tool === 'string') {
-                            parts.push({
-                                functionCall: {
-                                    name: parsed.tool,
-                                    args: parsed.parameters || {},
-                                    id: `toolu_${Date.now()}_${i}`
-                                }
-                            });
-                        }
-                    } catch (error) {
-                        console.warn('Failed to parse JSON tool call:', error);
-                        parts.push({ text: `${TOOL_CALL_START}${jsonStr}${TOOL_CALL_END}` });
-                    }
-                    
-                    const afterText = segment.substring(endIndex + TOOL_CALL_END.length).trim();
-                    if (afterText) {
-                        parts.push({ text: afterText });
-                    }
-                } else {
-                    parts.push({ text: `${TOOL_CALL_START}${segment}` });
-                }
-            }
-        }
-        
-        return parts;
-    }
-    
-    /**
-     * 从内容中提取 XML 格式的工具调用
-     */
-    private extractXMLToolCallsFromContent(content: string, existingParts: ContentPart[]): ContentPart[] {
-        const parts = [...existingParts];
-        const toolUseRegex = /<tool_use>([\s\S]*?)<\/tool_use>/g;
-        let lastIndex = 0;
-        let match;
-        
-        while ((match = toolUseRegex.exec(content)) !== null) {
-            const beforeText = content.substring(lastIndex, match.index).trim();
-            if (beforeText) {
-                parts.push({ text: beforeText });
-            }
-            
-            const toolCalls = parseXMLToolCalls(match[0]);
-            for (const call of toolCalls) {
-                parts.push({
-                    functionCall: {
-                        name: call.name,
-                        args: call.args,
-                        id: `toolu_${Date.now()}_${parts.length}`
-                    }
-                });
-            }
-            
-            lastIndex = match.index + match[0].length;
-        }
-        
-        const afterText = content.substring(lastIndex).trim();
-        if (afterText) {
-            parts.push({ text: afterText });
-        }
-        
-        if (parts.length === existingParts.length && content.trim()) {
-            parts.push({ text: content });
-        }
-        
-        return parts;
-    }
     
     /**
      * 解析流式响应块
