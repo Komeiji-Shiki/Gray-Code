@@ -26,6 +26,10 @@ are tracked in the root `CHANGELOG.md`.
     - 打开对话/切换标签页锁定工作区到对话绑定工作区，不再因绑定工作区未打开而静默重绑定；
     - 顶部工作区下拉切换修复：Windows 大小写不敏感匹配（规范 URI 固定）、未打开工作区不再误解除固定、打开收藏工作区后重绑定当前对话、绑定未打开工作区以锁定条目展示；
     - UI smoke 新增 workspaceSelector 步骤。
+  - **LLM 前缀缓存命中率修复（消息插入不再吃缓存，1.7.4）**（详见根目录 CHANGELOG [1.7.4]）：
+    - 根因：消息插入（chat.sendInterruptMessage / agent→main 信箱）注入的 agentInbox 随工具结果落盘，旧实现跨轮剥离导致同一 tool_result 内容在回合边界翻转，Anthropic cache_control / OpenAI prefix caching 整段前缀失效；
+    - `cleanFunctionResponseForAPI` 移除 agentInbox 剥离（常驻历史，跨回合字节稳定）；子代理路径同步删除 `stripReplayedAgentInboxForModel`；
+    - 消息插入功能补齐：`serializeToolResultForLLM` 文本路径（execute_command 等）此前不含 agentInbox，模型看不到插入的消息，新增 `[Agent inbox messages]` 文本段统一渲染。
 
 ### Changed
   - 沙箱功能完整化批次（详见根目录 CHANGELOG [Unreleased]）：声明缓存指纹纳入沙箱开关、空白名单语义统一、超时杀进程 SIGKILL 升级、输出内存护栏、GBK 解码降级、设置页 i18n 键路径修正与搜索索引补齐等。

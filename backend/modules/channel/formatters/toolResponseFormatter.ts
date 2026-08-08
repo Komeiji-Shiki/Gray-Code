@@ -39,6 +39,10 @@ function formatResultItem(result: Record<string, unknown>): string {
     const metaFields: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(result)) {
+        // agentInbox 由 formatAgentInboxSection 统一渲染（避免 JSON 摘要与文本段双份出现）
+        if (key === 'agentInbox') {
+            continue;
+        }
         if (TEXT_CONTENT_KEYS.has(key) && typeof value === 'string' && value.length > 0) {
             textParts.push(value);
         } else if (value !== undefined && value !== null) {
@@ -116,6 +120,33 @@ function formatPartialResultsBlock(data: Record<string, unknown>): string {
 }
 
 /**
+ * A-COMM：把注入到工具结果里的 agentInbox（顶层或 data 子对象）渲染为模型可见的文本段。
+ *
+ * injectInboxMessages 在顶层与 data 双写同一 payload，这里只渲染一份（优先顶层）。
+ * 纯结构化数据路径走 JSON.stringify 兜底时已含 agentInbox，无需额外渲染；文本路径
+ * （output / results / 部分成功结果）原本会丢信箱消息（模型看不到用户插入的指令），
+ * 统一在此补上，保证「消息插入」功能对全部工具生效，且内容跨回合字节稳定。
+ */
+function formatAgentInboxSection(response: Record<string, unknown> | undefined): string {
+    const data = response?.data as Record<string, unknown> | undefined;
+    const inbox = response?.agentInbox ?? data?.agentInbox;
+    if (!Array.isArray(inbox) || inbox.length === 0) {
+        return '';
+    }
+    const lines = inbox.map((m: unknown) => {
+        const entry = (m ?? {}) as Record<string, unknown>;
+        const who = typeof entry.fromAgentName === 'string' && entry.fromAgentName.trim()
+            ? `from ${entry.fromAgentName}`
+            : typeof entry.fromRunId === 'string' && entry.fromRunId
+                ? `from ${entry.fromRunId}`
+                : '';
+        const text = typeof entry.text === 'string' ? entry.text : '';
+        return who ? `- ${who}: ${text}` : `- ${text}`;
+    });
+    return `\n\n[Agent inbox messages]\n${lines.join('\n')}`;
+}
+
+/**
  * 将 ToolResult.response 序列化为适合发给 LLM 的纯文本字符串。
  *
  * - read_file / search_in_files 等含大段原始文本的工具 → 文本原样透出
@@ -185,7 +216,7 @@ export function serializeToolResultForLLM(
                 parts.push('', 'Partial response:', data.partialResponse.trimEnd());
             }
         }
-        return parts.join('\n');
+        return parts.join('\n') + formatAgentInboxSection(response);
     }
 
     // data.results 数组：read_file / search_in_files / write_file 等批量结果
@@ -196,7 +227,7 @@ export function serializeToolResultForLLM(
         if (results.some(r => typeof r === 'object' && r !== null && hasTextContentFields(r as Record<string, unknown>))) {
             const formatted = results.map(r => formatResultItem(r as Record<string, unknown>));
             // 去掉末尾多余空行
-            return formatted.join('\n\n').trimEnd();
+            return formatted.join('\n\n').trimEnd() + formatAgentInboxSection(response);
         }
 
         // 纯结构化数组（如 list_files 的文件列表）→ JSON（包含 data 中全部字段，而非仅 results）
@@ -205,7 +236,7 @@ export function serializeToolResultForLLM(
 
     // 检测顶层的 data 是否直接含文本字段
     if (data && typeof data === 'object' && hasTextContentFields(data as Record<string, unknown>)) {
-        return formatResultItem(data as Record<string, unknown>);
+        return formatResultItem(data as Record<string, unknown>) + formatAgentInboxSection(response);
     }
 
     // 兜底：纯结构化数据，用 JSON

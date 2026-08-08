@@ -299,7 +299,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
     });
 });
 
-describe('agent_send_message - 历史重放防护（FIX-B）', () => {
+describe('agent_send_message - 注入可见性与历史稳定（缓存批次）', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });
@@ -333,7 +333,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect(response.data.applied).toBe(true);
     });
 
-    it('历史中的 functionResponse 不含 agentInbox：cleanFunctionResponseForAPI 剥离顶层与 data（防重放）', async () => {
+    it('历史中的 functionResponse 保留 agentInbox：cleanFunctionResponseForAPI 不清除顶层与 data（内容跨回合稳定）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -341,7 +341,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
             fromRunId: 'run_a',
             fromAgentName: 'Agent A',
             targetRunId: 'run_b',
-            text: 'do not replay'
+            text: 'keep this'
         });
 
         const service = new ToolExecutionService({ getTool: () => makeStubTool() } as any, undefined, undefined);
@@ -352,13 +352,14 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
 
         // 模拟「历史中的 functionResponse 经 cleanFunctionResponseForAPI 后再发给模型」
         const injected = (result.responseParts[0] as any).functionResponse.response;
-        // 当轮确实可见（顶层 + data）
+        // 当轮可见（顶层 + data）
         expect(injected.agentInbox).toBeDefined();
         expect(injected.data.agentInbox).toBeDefined();
 
         const cleaned = cleanFunctionResponseForAPI(injected);
-        expect(cleaned?.agentInbox).toBeUndefined();
-        expect((cleaned?.data as any)?.agentInbox).toBeUndefined();
+        // 常驻保留：历史与当轮内容一致 → provider 前缀缓存持续命中
+        expect(cleaned?.agentInbox).toHaveLength(1);
+        expect((cleaned?.data as any)?.agentInbox).toHaveLength(1);
         // 非信箱字段保留（不破坏既有清理逻辑）
         expect(cleaned?.success).toBe(true);
         expect((cleaned?.data as any)?.applied).toBe(true);

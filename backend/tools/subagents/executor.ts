@@ -131,61 +131,6 @@ const SUBAGENT_TOOL_DISCIPLINE_NOTICE = [
 export const WRITE_CAPABILITY_TOOLS = [...WRITE_TOOLS, 'execute_command'];
 
 /**
- * H1-4：子代理发给子模型的 history 剥离已投递的 agentInbox，防重放。
- *
- * 背景：子代理本地 history 直进 formatter（不经 formatHistoryForAPI），工具结果里的
- * agentInbox（本 run 信箱已 drain 的消息）会被原样发给子模型。同 run 后续迭代与
- * continueFromRunId 续跑都会重放这些已投递消息（prompt 膨胀、模型可能重复响应）。
- *
- * 语义（与主路径 formatHistoryForAPI「当轮保留、跨轮剥离」对齐）：只保留**最后一条**
- * 消息中尚未投递过的 agentInbox——工具结果入 history 后第一次发给子模型的请求即是投递；
- * 更早条目中的 agentInbox 一律剥离。只做浅拷贝（functionResponse.response 内其余字段
- * 原样引用），不改写持久化 transcript。
- */
-export function stripReplayedAgentInboxForModel(history: Content[]): Content[] {
-    const lastIndex = history.length - 1;
-    let changed = false;
-    const stripped = history.map((message, index) => {
-        if (index === lastIndex || !message.parts?.some(part => part.functionResponse)) {
-            return message;
-        }
-        const newParts: ContentPart[] = [];
-        let partsChanged = false;
-        for (const part of message.parts) {
-            if (!part.functionResponse) {
-                newParts.push(part);
-                continue;
-            }
-            const response = part.functionResponse.response;
-            if (!response || typeof response !== 'object' || Array.isArray(response)) {
-                newParts.push(part);
-                continue;
-            }
-            const cleaned = { ...(response as Record<string, unknown>) };
-            delete cleaned.agentInbox;
-            if (cleaned.data && typeof cleaned.data === 'object' && !Array.isArray(cleaned.data)) {
-                cleaned.data = { ...(cleaned.data as Record<string, unknown>) };
-                delete (cleaned.data as Record<string, unknown>).agentInbox;
-            }
-            newParts.push({
-                ...part,
-                functionResponse: {
-                    ...part.functionResponse,
-                    response: cleaned
-                }
-            });
-            partsChanged = true;
-        }
-        if (!partsChanged) {
-            return message;
-        }
-        changed = true;
-        return { ...message, parts: newParts };
-    });
-    return changed ? stripped : history;
-}
-
-/**
  * 判断子代理工具配置是否「不具备完整写/执行能力」（H-1，R4 复查）。
  *
  * - mode 'all' / 'builtin'：内置工具含全部写/执行工具 → 具备
@@ -1442,11 +1387,13 @@ export function createDefaultExecutor(
                 const operation = createOperationSignal();
                 const operationSignal = operation.signal;
                 let retryFailedInThisCall = false;
-                // H1-4：剥离已投递的 agentInbox（只保留最后一条未投递消息的），
-                // 防止同 run 后续迭代 / continueFromRunId 续跑重放已 drain 的信箱消息。
-                // 剥离结果就是本轮实际发送给 provider 的请求历史，随后立即记录到事件总线
-                // （lastSentHistory），供 continueFromRunId 续跑精确复用前缀（见 baseContents 选取逻辑）。
-                const sentHistory = stripReplayedAgentInboxForModel(history);
+                // agentInbox 常驻历史（不剥离）：injectInboxMessages 注入的信箱消息随工具结果
+                // 落盘后原样发给子模型——同 run 后续迭代与 continueFromRunId 续跑看到的内容
+                // 字节稳定，子模型的 provider 前缀缓存（DeepSeek user_id / Anthropic user_id
+                // 缓存域，见下方 conversationId 注释）才能持续命中；重放代价由 prompt cache 吸收。
+                // 本轮实际发送给 provider 的请求历史随后立即记录到事件总线（lastSentHistory），
+                // 供 continueFromRunId 续跑精确复用前缀（见 baseContents 选取逻辑）。
+                const sentHistory = history;
                 // 修改原因（SEC）：子代理 history 只增不减，长任务会撞上模型上下文上限直接失败。
                 // 修改方式：发送前做请求级上下文裁剪（保留首条任务消息与末尾配对，超长字符串截断），
                 //         裁剪结果即为本轮实际发送内容；updateLastSentHistory 同步记录裁剪结果，

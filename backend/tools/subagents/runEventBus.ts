@@ -71,12 +71,12 @@ export interface SubAgentRunPersistedRecord {
      */
     eventSequence?: number;
     /**
-     * 最后一次实际发送给 provider 的 history（generate 前剥离重放 agentInbox 后的请求历史）。
+     * 最后一次实际发送给 provider 的 history（agentInbox 常驻保留，内容与落盘历史一致）。
      *
      * 修改原因：Monitor 展示的 contents 首条是 # SubAgent Invocation 卡片，从未发给 provider；
      *          continueFromRunId 续跑若以 contents 为前缀，请求历史与旧 run 从第 0 条就不同，
      *          provider 侧前缀缓存（DeepSeek KVCache / Anthropic user_id 域）必然 miss。
-     * 修改方式：executor 每次 generate 前把剥离后的请求历史经 updateLastSentHistory 写入本字段，
+     * 修改方式：executor 每次 generate 前把实际发送的请求历史经 updateLastSentHistory 写入本字段，
      *          随现有 metadata 一起持久化/恢复；续跑时优先取它作为 baseContents。
      * 修改目的：续跑请求前缀与旧 run 最后一次实际发送逐条一致，命中 provider 前缀缓存；
      *          旧 metadata 缺该字段时由 executor 降级处理（过滤卡片 contents）。

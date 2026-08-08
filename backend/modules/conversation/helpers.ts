@@ -355,25 +355,22 @@ export function createMultiTextMessage(
  * 清理 functionResponse 中不应发送给 API 的内部字段
  *
  * 过滤的字段包括：
- * - 顶层：diffContentId, diffId, diffs, pendingDiffId,
- *          agentInbox（A-COMM 信箱消息，drain 一次性语义，仅当轮随工具结果返回给模型，禁止历史重放）
+ * - 顶层：diffContentId, diffId, diffs, pendingDiffId
  * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell,
- *                   channelName, modelId（subagents 运行时元数据，仅供 UI 展示）, agentInbox
+ *                   channelName, modelId（subagents 运行时元数据，仅供 UI 展示）
  * - data.results 数组中的：diffContentId, pendingDiffId
  *
  * 保留的字段：killed, duration（AI 需要知道命令执行状态）；
- *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）
+ *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）；
+ *             agentInbox（A-COMM 信箱消息，顶层与 data 子对象均保留——injectInboxMessages 注入的
+ *             agent→main 消息随工具结果落盘后常驻历史，保证发给 LLM 的 tool_result 内容跨回合
+ *             字节稳定，Anthropic/OpenAI 前缀缓存才能持续命中；历史重放代价由 prompt cache 吸收）
  *
  * @param response functionResponse.response 对象
- * @param isHistoryMessage 是否是历史消息（当前回合之前的消息）。默认 true：历史中的
- *        agentInbox 必须剥离（drain 一次性语义，禁止跨轮重放、prompt 膨胀）；当轮
- *        （false）保留 agentInbox——injectInboxMessages 注入的 agent→main 信箱消息随工具
- *        结果落盘后，下一轮请求仍属当前回合，必须保留主模型才能真正看到（HIGH-1）。
  * @returns 清理后的 response 对象
  */
 export function cleanFunctionResponseForAPI(
-    response: Record<string, unknown> | undefined,
-    isHistoryMessage = true
+    response: Record<string, unknown> | undefined
 ): Record<string, unknown> | undefined {
     // H1-3：数组也是 typeof 'object'，无法被上面拦截；数组没有内部字段语义，原样返回
     if (!response || typeof response !== 'object' || Array.isArray(response)) {
@@ -381,13 +378,8 @@ export function cleanFunctionResponseForAPI(
     }
     
     // 过滤顶层内部字段
-    // agentInbox：A-COMM 瞬态信箱消息（drain 一次性），只允许当轮随工具结果返回给模型；
-    // 历史中的 functionResponse 必须剥离，否则每轮请求都会把 agent 消息重放给模型（prompt 持续膨胀）
-    const { diffContentId, diffId, diffs, pendingDiffId, agentInbox, ...rest } = response;
-    // HIGH-1：当轮（isHistoryMessage=false）保留 agentInbox，跨轮（默认）剥离防重放
-    if (!isHistoryMessage && agentInbox !== undefined) {
-        rest.agentInbox = agentInbox;
-    }
+    // agentInbox 不在剥离清单内：随工具结果常驻历史，模型侧内容跨回合不变（缓存稳定性）
+    const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = response;
     
     // 检查 data 字段中是否也有这些字段
     if (rest.data && typeof rest.data === 'object') {
@@ -408,7 +400,6 @@ export function cleanFunctionResponseForAPI(
             modelId: dataModelId,
             // steps / toolsUsed 保留给 AI：用于告知子代理是否调用过工具及调用数量
             // （空数组 = 未调用任何工具），不参与剥离。
-            agentInbox: dataAgentInbox,
             ...dataRest
         } = rest.data as Record<string, unknown>;
         
@@ -421,11 +412,6 @@ export function cleanFunctionResponseForAPI(
                 }
                 return item;
             });
-        }
-        
-        // HIGH-1：当轮保留 data.agentInbox（与顶层同理）
-        if (!isHistoryMessage && dataAgentInbox !== undefined) {
-            dataRest.agentInbox = dataAgentInbox;
         }
         
         rest.data = dataRest;

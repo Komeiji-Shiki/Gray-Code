@@ -3,9 +3,10 @@
  *
  * 覆盖：
  * - HIGH-1：injectInboxMessages 注入的 agentInbox 随工具结果 addContent 落盘后，
- *   getHistoryForAPIFrom 在「当轮」保留 agentInbox（主模型可见），跨轮（新真实 user
- *   消息后）剥离（不重放）——修复 cleanFunctionResponseForAPI 无条件剥离导致的
- *   “主模型永远看不到 agent→main 信箱消息”。
+ *   getHistoryForAPIFrom 在「当轮」与「跨轮」一致保留 agentInbox（主模型可见）——
+ *   保留而非剥离，保证发给 LLM 的 tool_result 内容跨回合字节稳定，
+ *   provider 前缀缓存（Anthropic cache_control / OpenAI prefix caching）持续命中；
+ *   重放代价由 prompt cache 吸收（消息插入不再吃缓存）。
  * - MED-3：新的真实 user 消息（新回合边界）清空主会话信箱未消费消息（防跨轮过期投递）；
  *   回合内 functionResponse / 总结消息不清空。
  * - MED-2：deleteConversation 清理 A-COMM 信箱（clearConversation 接线），
@@ -46,7 +47,7 @@ function makeInjectedFunctionResponse(callId: string, inboxText: string): Conten
     } as Content;
 }
 
-describe('HIGH-1：当轮保留 agentInbox / 跨轮剥离（端到端）', () => {
+describe('HIGH-1：agentInbox 当轮与跨轮一致保留（端到端，缓存稳定性）', () => {
     let storage: MemoryStorageAdapter;
     let manager: ConversationManager;
     const convId = 'conv-g1-high1';
@@ -56,7 +57,7 @@ describe('HIGH-1：当轮保留 agentInbox / 跨轮剥离（端到端）', () =>
         manager = new ConversationManager(storage);
     });
 
-    test('注入 → addContent 落盘 → getHistoryForAPI：当轮含 agentInbox，新回合后不含', async () => {
+    test('注入 → addContent 落盘 → getHistoryForAPI：当轮与跨轮均含 agentInbox（内容稳定，缓存不失效）', async () => {
         await manager.createConversation(convId, 'G1');
         // 回合 1：真实 user 消息 → 模型 functionCall → 工具结果（含注入的 agentInbox）
         await manager.addMessage(convId, 'user', [{ text: 'do it' }], { isUserInput: true });
@@ -75,15 +76,16 @@ describe('HIGH-1：当轮保留 agentInbox / 跨轮剥离（端到端）', () =>
         // data 子对象同样保留（覆盖 formatter 的 JSON/文本两条序列化路径）
         expect(frPart?.functionResponse?.response?.data?.agentInbox).toHaveLength(1);
 
-        // 回合 2：新真实 user 消息 → 上一回合的工具结果变成历史 → agentInbox 剥离（不重放）
+        // 回合 2：新真实 user 消息 → 同一工具结果的 agentInbox 仍保留（字节一致 → 前缀缓存命中）
         await manager.addMessage(convId, 'user', [{ text: 'next round' }], { isUserInput: true });
         const nextRound = await manager.getHistoryForAPI(convId);
         const frPart2 = nextRound
             .find(m => m.role === 'user' && m.parts?.some(p => !!p.functionResponse))
             ?.parts?.[0] as any;
-        expect(frPart2?.functionResponse?.response?.agentInbox).toBeUndefined();
-        expect(frPart2?.functionResponse?.response?.data?.agentInbox).toBeUndefined();
-        // 非信箱字段保留（不破坏既有清理逻辑）
+        expect(frPart2?.functionResponse?.response?.agentInbox).toHaveLength(1);
+        expect(frPart2?.functionResponse?.response?.agentInbox?.[0]?.text).toBe('agent says hello');
+        expect(frPart2?.functionResponse?.response?.data?.agentInbox).toHaveLength(1);
+        // 非信箱字段照常保留（不破坏既有清理逻辑）
         expect(frPart2?.functionResponse?.response?.success).toBe(true);
         expect(frPart2?.functionResponse?.response?.data?.applied).toBe(true);
     });
@@ -136,14 +138,15 @@ describe('HIGH-1：当轮保留 agentInbox / 跨轮剥离（端到端）', () =>
         expect(frPart?.functionResponse?.response?.agentInbox?.[0]?.text).toBe('in-round msg');
         expect(frPart?.functionResponse?.response?.data?.agentInbox?.[0]?.text).toBe('in-round msg');
 
-        // 新真实 user 消息 = 新回合 → 上一回合的 functionResponse 变为历史 → 剥离（不重放）
+        // 新真实 user 消息 = 新回合 → 上一回合的 functionResponse 的 agentInbox 仍保留
+        // （内容跨回合一致，前缀缓存持续命中）
         await manager.addMessage(convId, 'user', [{ text: 'next round' }], { isUserInput: true });
         const nextRound = await manager.getHistoryForAPI(convId);
         const frPart2 = nextRound
             .find(m => m.role === 'user' && m.parts?.some(p => !!p.functionResponse))
             ?.parts?.[0] as any;
-        expect(frPart2?.functionResponse?.response?.agentInbox).toBeUndefined();
-        expect(frPart2?.functionResponse?.response?.data?.agentInbox).toBeUndefined();
+        expect(frPart2?.functionResponse?.response?.agentInbox).toHaveLength(1);
+        expect(frPart2?.functionResponse?.response?.data?.agentInbox).toHaveLength(1);
     });
 });
 

@@ -221,3 +221,72 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
         expect(result).not.toContain('"content": "text content"');
     });
 });
+
+describe('serializeToolResultForLLM - agentInbox 模型可见（消息插入功能补齐）', () => {
+    const inbox = (text: string) => [
+        { fromRunId: 'run_a', fromAgentName: 'Agent A', text, threadId: 't1', hopDepth: 1, createdAt: 1 }
+    ];
+
+    it('文本路径（data.output，execute_command）补渲染 agentInbox 文本段', () => {
+        const result = serializeToolResultForLLM('execute_command', {
+            success: true,
+            data: {
+                output: 'build ok',
+                exitCode: 0,
+                agentInbox: inbox('please stop')
+            }
+        });
+
+        expect(result).toContain('build ok');
+        expect(result).toContain('[Agent inbox messages]');
+        expect(result).toContain('- from Agent A: please stop');
+    });
+
+    it('顶层优先渲染（避免 data 重复段）', () => {
+        const result = serializeToolResultForLLM('read_file', {
+            success: true,
+            agentInbox: inbox('top-level only'),
+            data: {
+                results: [{ success: true, path: 'a.txt', content: 'AAA', lineCount: 1 }],
+                agentInbox: inbox('data-level only')
+            }
+        });
+
+        expect(result).toContain('- from Agent A: top-level only');
+        expect(result).not.toContain('data-level only');
+    });
+
+    it('错误路径同样带出 agentInbox', () => {
+        const result = serializeToolResultForLLM('execute_command', {
+            success: false,
+            error: 'Command exited with code 1',
+            agentInbox: inbox('fix it'),
+            data: { output: 'boom' }
+        });
+
+        expect(result).toContain('Error: Command exited with code 1');
+        expect(result).toContain('- from Agent A: fix it');
+    });
+
+    it('无 fromAgentName 时用 fromRunId 兜底', () => {
+        const result = serializeToolResultForLLM('execute_command', {
+            success: true,
+            data: {
+                output: 'ok',
+                agentInbox: [{ fromRunId: 'run_x', text: 'hi' }]
+            }
+        });
+
+        expect(result).toContain('- from run_x: hi');
+    });
+
+    it('无 agentInbox 时输出与原来一致（不引入空段）', () => {
+        const result = serializeToolResultForLLM('execute_command', {
+            success: true,
+            data: { output: 'plain' }
+        });
+
+        expect(result).not.toContain('[Agent inbox messages]');
+        expect(result).toContain('plain');
+    });
+});

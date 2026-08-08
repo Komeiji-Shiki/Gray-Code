@@ -2539,7 +2539,7 @@ export class ConversationManager {
         
         // 找到最后一个非函数响应的 user 消息的索引（H1-1：与 MED-3 同谓词，
         // 总结消息不构成回合边界——SummarizeService 在历史中间插入总结，
-        // 不得让总结之前的当轮 functionResponse 被判为历史而剥离 agentInbox）
+        // 不得让总结之前的当轮 functionResponse 被判为历史）
         let lastNonFunctionResponseUserIndex = -1;
         for (let i = history.length - 1; i >= 0; i--) {
             const message = history[i];
@@ -2811,12 +2811,12 @@ export class ConversationManager {
             }
             
             // 清理不应发送给 AI 的内部字段（使用共享函数确保一致性）。
-            // HIGH-1：历史消息剥离 agentInbox（防跨轮重放）；当轮（isHistoryMessage=false）保留——
-            // injectInboxMessages 注入的 agent→main 信箱消息随工具结果落盘后，下一轮请求仍属
-            // 当前回合（lastNonFunctionResponseUserIndex 之后），保留才能让主模型真正看到。
+            // agentInbox 常驻历史（不剥离）：注入的消息随工具结果落盘后，当轮与跨轮请求
+            // 的 tool_result 内容保持一致——模型侧前缀缓存（Anthropic cache_control /
+            // OpenAI prefix caching）依赖请求字节稳定，跨轮剥离会让该消息之后的整段
+            // 前缀每次翻转、缓存整段失效（消息插入越频繁命中率越低）。
             const cleanedResponse = cleanFunctionResponseForAPI(
-                part.functionResponse.response as Record<string, unknown>,
-                isHistoryMessage
+                part.functionResponse.response as Record<string, unknown>
             );
             
             return {

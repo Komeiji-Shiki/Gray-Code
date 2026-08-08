@@ -55,6 +55,13 @@
     - Windows 下输出解码接入 UTF-8 → GBK 自动降级（与 execute_command 同一机制），中文脚本输出不再乱码；清理原先从未被调用的死代码解码路径。
     - `truncateOutputLines` 边界修复（`-1` 返回真实行数、`0` 全部截断）；写文件/spawn 失败路径的临时目录清理尊重 `cleanupTempDir` 配置；工具声明补 `strict: true` 并注明默认需确认。
     - `updateSandboxConfig` 保存时过滤未知语言、钳制超时上限（1000~600000ms），与前端输入范围对齐。
+  - **LLM 前缀缓存命中率修复（消息插入不再吃缓存）**：
+    - 根因：`injectInboxMessages` 把用户插入 / agent→main 信箱消息注入最近一次工具结果（agentInbox）并随历史落盘；旧实现（HIGH-1）在请求组装时对历史 functionResponse 剥离 agentInbox——同一 tool_result 在当轮请求含信箱消息、跨轮（新真实 user 消息后）被剥离，模型侧内容在回合边界翻转，Anthropic cache_control / OpenAI prefix caching 按字节匹配前缀，从翻转消息起整段缓存失效，消息插入越频繁命中率越低。
+    - `cleanFunctionResponseForAPI` 移除 agentInbox 剥离（顶层与 data 均保留，删除 isHistoryMessage 参数）：信箱消息随工具结果常驻历史，发给 LLM 的 tool_result 内容跨回合字节稳定，前缀缓存持续命中；重放代价由 prompt cache 吸收（缓存读远低于重算）。
+    - 子代理路径同步：删除 `stripReplayedAgentInboxForModel` 及其调用——子模型请求历史与落盘一致，同 run 迭代与 continueFromRunId 续跑前缀稳定（DeepSeek user_id / Anthropic user_id 缓存域命中）。
+    - `SummarizeService.cleanMessagesForSummarize` 与主路径统一改用 `cleanFunctionResponseForAPI`：总结请求同样保留 agentInbox（策略一致，总结上下文不丢信箱消息）。
+    - 消息插入功能补齐：`serializeToolResultForLLM` 文本序列化路径（execute_command 输出 / 批量结果 / 部分成功）此前不含 agentInbox，模型实际看不到插入的消息；新增 `[Agent inbox messages]` 文本段（顶层优先渲染，formatResultItem 跳过 agentInbox 键防双份渲染），全部工具结果对模型可见且跨回合字节稳定。
+    - 回归测试：helpers.test.ts / ConversationManager.agentInbox.test.ts / agentSendMessage.test.ts 更新为「跨轮保留」断言（含跨轮字节一致契约）；toolResponseFormatter.test.ts 新增 agentInbox 序列化 5 例；删除废弃的 subagentMailboxReplay.test.ts（H1-4 剥离函数已移除，防止旧语义回归）。
 
 ### Changed
   - 沙箱设置页 i18n 键路径修正：此前组件引用 `components.settings.sandbox.*`，实际键位于 `components.settings.settingsPanel.sandbox.*`，导致全部文案渲染为原始 key；现已统一，搜索索引 labelKey 同步修正。
