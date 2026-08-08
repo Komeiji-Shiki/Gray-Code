@@ -246,7 +246,11 @@ const zhCN = {
                     getSummarizeConfigFailed: '获取总结配置失败',
                     updateSummarizeConfigFailed: '更新总结配置失败',
                     getGenerateImageConfigFailed: '获取图像生成配置失败',
-                    updateGenerateImageConfigFailed: '更新图像生成配置失败'
+                    updateGenerateImageConfigFailed: '更新图像生成配置失败',
+                    tokenCountFailed: 'Token 计数失败',
+                    toolNotFound: '未找到工具: {toolName}',
+                    memoryConfigFailed: '获取记忆配置失败',
+                    updateMemoryConfigFailed: '更新记忆配置失败'
                 }
             },
             models: {
@@ -298,6 +302,7 @@ const zhCN = {
                     messageNotFound: '消息不存在: 索引 {messageIndex}',
                     canOnlyEditUserMessage: '只能编辑用户消息，当前消息角色为: {role}',
                     messageChanged: '消息已变化，请刷新后重试',
+                    invalidTargetIndex: '无效的删除目标索引: {targetIndex}',
                     editTargetNotInHistory: '所选消息不在当前对话历史中，可能已被上下文压缩移除',
                     contextOverflow: '无法在模型上下文窗口内构造合法请求：最小候选约需 {estimatedInputTokens} 个输入 token，超出 {inputTokenLimit} token 的窗口。请增大模型上下文窗口，或清理历史/调整保留预算',
                     summarizeContextOverflow: '待总结内容和总结提示词超出总结模型上下文上限，请增大总结模型的上下文窗口或调整保留预算'
@@ -432,7 +437,6 @@ const zhCN = {
         },
         
         skills: {
-            description: '开启或关闭 Skills。Skills 是用户自定义的知识模块，提供专业的上下文和指令。每个参数是一个 skill 名称 - 设为 true 启用，false 禁用。',
             exampleSkill: {
                 description: '创建 Skill 前必读！了解 Skill 的正确格式、命名规则和常见错误。',
                 content: `# 创建 Skill 前必读
@@ -440,21 +444,21 @@ const zhCN = {
 ## ⚠️ 注意事项（常见错误）
 
 1. **name 必须与文件夹名完全一致**
-   - 文件夹名为 \\\`my-tool\\\`，则 frontmatter 中必须写 \\\`name: my-tool\\\`
+   - 文件夹名为 \`my-tool\`，则 frontmatter 中必须写 \`name: my-tool\`
    - 不一致时 Skill 会被静默跳过，不会出现在面板中
 
 2. **name 只允许小写字母、数字、连字符**
-   - ✅ \\\`my-skill-name\\\`、\\\`tool2\\\`
-   - ❌ \\\`My_Skill\\\`、\\\`工具\\\`、\\\`my--skill\\\`（不允许连续连字符）
+   - ✅ \`my-skill-name\`、\`tool2\`
+   - ❌ \`My_Skill\`、\`工具\`、\`my--skill\`（不允许连续连字符）
    - 长度 1-64 个字符
 
 3. **frontmatter 是必需的**
-   - 文件必须以 \\\`---\\\` 开头，包含 \\\`name\\\` 和 \\\`description\\\` 两个字段
+   - 文件必须以 \`---\` 开头，包含 \`name\` 和 \`description\` 两个字段
    - 缺少 frontmatter 的 SKILL.md 会被忽略
 
 ## Skill 文件格式
 
-\\\`\\\`\\\`markdown
+\`\`\`markdown
 ---
 name: your-skill-name
 description: "简要描述该技能的功能及使用场景"
@@ -467,26 +471,26 @@ description: "简要描述该技能的功能及使用场景"
 
 ## 示例
 [使用此技能的具体例子]
-\\\`\\\`\\\`
+\`\`\`
 
 ## 创建步骤
 
 1. 在 skills 目录中创建文件夹（名称即为 skill name）
-2. 在该文件夹中创建 \\\`SKILL.md\\\` 文件
-3. 在文件开头写 frontmatter（\\\`name\\\` + \\\`description\\\`）
+2. 在该文件夹中创建 \`SKILL.md\` 文件
+3. 在文件开头写 frontmatter（\`name\` + \`description\`）
 4. 在 frontmatter 之后写技能内容
 
 ## Skills 目录位置
 
-- 项目级：\\\`.graycode/skills/\\\` 或 \\\`.agents/skills/\\\`
-- 用户级：\\\`~/.graycode/skills/\\\` 或 \\\`~/.agents/skills/\\\`
+- 项目级：\`.graycode/skills/\` 或 \`.agents/skills/\`
+- 用户级：\`~/.graycode/skills/\` 或 \`~/.agents/skills/\`
 
 项目级优先级高于用户级。同名 Skill 只加载优先级最高的那个。
 
 ## 工作原理
 
 1. AI 在工具描述中可以看到所有已启用 Skill 的名称和描述
-2. 当 AI 判断需要时，会调用 \\\`read_skill\\\` 工具读取 Skill 全文
+2. 当 AI 判断需要时，会调用 \`read_skill\` 工具读取 Skill 全文
 3. 这种按需加载机制可以节省 token，让 AI 根据任务动态选择知识模块`
             },
             errors: {

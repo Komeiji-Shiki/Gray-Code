@@ -22,14 +22,15 @@ const FALLBACK_METADATA: ProductMetadata = {
 
 let productMetadata: ProductMetadata | undefined;
 
-function normalizePackageMetadata(packageJSON: any): ProductMetadata {
+function normalizePackageMetadata(packageJSON: unknown): ProductMetadata {
     // 修改原因：packageJSON 来自 VS Code 扩展宿主，字段类型不是本仓库可控的静态类型。
     // 修改方式：只提取 name/displayName/version 三个字段并做字符串兜底，避免异常元数据污染调用方。
     // 修改目的：让 MCP 握手、模块注册和设置页显示都能安全使用同一份产品元数据。
+    const src = (packageJSON ?? {}) as Record<string, unknown>;
     return {
-        name: typeof packageJSON?.name === 'string' && packageJSON.name ? packageJSON.name : FALLBACK_METADATA.name,
-        displayName: typeof packageJSON?.displayName === 'string' && packageJSON.displayName ? packageJSON.displayName : FALLBACK_METADATA.displayName,
-        version: typeof packageJSON?.version === 'string' && packageJSON.version ? packageJSON.version : FALLBACK_METADATA.version
+        name: typeof src.name === 'string' && src.name ? src.name : FALLBACK_METADATA.name,
+        displayName: typeof src.displayName === 'string' && src.displayName ? src.displayName : FALLBACK_METADATA.displayName,
+        version: typeof src.version === 'string' && src.version ? src.version : FALLBACK_METADATA.version
     };
 }
 
@@ -69,7 +70,7 @@ export function getProductVersion(): string {
 
 export function createGrayCodeMcpClientInfo(): { name: string; version: string } {
     // 修改原因：HTTP MCP 和 Stdio MCP 原来各自硬编码 clientInfo.version，容易出现协议元数据分叉。
-    // 修改方式：统一由产品元数据生成 MCP clientInfo，name 保持协议里已有的 LimCode，version 来自扩展 packageJSON。
+    // 修改方式：统一由产品元数据生成 MCP clientInfo，name 保持协议里已有的 GrayCode，version 来自扩展 packageJSON。
     // 修改目的：让所有 MCP transport 对外报告同一个当前扩展版本。
     return {
         name: 'GrayCode',

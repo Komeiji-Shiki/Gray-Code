@@ -13,7 +13,7 @@ import ja from './langs/ja';
 /**
  * 语言包
  */
-const messages: Record<string, BackendLanguageMessages> = {
+const messages: Record<Exclude<SupportedLanguage, 'auto'>, BackendLanguageMessages> = {
     'zh-CN': zhCN,
     'en': en,
     'ja': ja
@@ -32,10 +32,10 @@ let detectedLanguage: string = 'zh-CN';
 /**
  * 获取实际使用的语言
  */
-export function getActualLanguage(): string {
+export function getActualLanguage(): Exclude<SupportedLanguage, 'auto'> {
     if (currentLanguage === 'auto') {
         // 尝试匹配检测到的语言
-        if (detectedLanguage && messages[detectedLanguage]) {
+        if (detectedLanguage === 'zh-CN' || detectedLanguage === 'en' || detectedLanguage === 'ja') {
             return detectedLanguage;
         }
         // 如果检测的语言包含 zh，使用中文
@@ -74,7 +74,9 @@ export function getMessagesForLanguage(lang?: SupportedLanguage | string): Backe
         return getCurrentMessages();
     }
 
-    if (typeof lang === 'string' && messages[lang]) return messages[lang];
+    if (lang === 'zh-CN' || lang === 'en' || lang === 'ja') {
+        return messages[lang];
+    }
     if (typeof lang === 'string' && lang.startsWith('zh')) return messages['zh-CN'];
     if (typeof lang === 'string' && lang.startsWith('en')) return messages['en'];
     if (typeof lang === 'string' && lang.startsWith('ja')) return messages['ja'];
@@ -109,25 +111,32 @@ export function setDetectedLanguage(lang: string): void {
  * 例如：t('core.registry.moduleAlreadyRegistered', { moduleId: 'config' })
  * 支持参数替换：{paramName} 格式的占位符
  */
-export function t(key: string, params?: Record<string, any>): string {
+/** 已告警过的缺失 key（节流，避免每次调用刷屏） */
+const warnedMissingKeys = new Set<string>();
+
+export function t(key: string, params?: Record<string, string | number | boolean>): string {
     const keys = key.split('.');
-    let result: any = getCurrentMessages();
+    let result: unknown = getCurrentMessages();
 
     for (const k of keys) {
         if (result && typeof result === 'object' && k in result) {
-            result = result[k];
+            result = (result as Record<string, unknown>)[k];
         } else {
-            // 找不到翻译，返回 key 本身
-            console.warn(`[i18n] Missing translation: ${key}`);
+            // 找不到翻译，返回 key 本身（同一 key 只告警一次）
+            if (!warnedMissingKeys.has(key)) {
+                warnedMissingKeys.add(key);
+                console.warn(`[i18n] Missing translation: ${key}`);
+            }
             return key;
         }
     }
 
     if (typeof result === 'string') {
-        // 如果有参数，替换占位符
+        // 如果有参数，替换占位符（null/undefined 保留原占位符，避免输出字面量 "null"）
         if (params) {
-            return result.replace(/\{(\w+)\}/g, (match, paramName) => {
-                return params[paramName] !== undefined ? String(params[paramName]) : match;
+            return result.replace(/\{([\w-]+)\}/g, (match, paramName: string) => {
+                const value = params[paramName];
+                return value != null ? String(value) : match;
             });
         }
         return result;
@@ -144,5 +153,6 @@ export default {
     setLanguage,
     getLanguage,
     setDetectedLanguage,
-    getMessagesForLanguage
+    getMessagesForLanguage,
+    getActualLanguage
 };
