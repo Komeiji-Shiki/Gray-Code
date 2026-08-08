@@ -14,7 +14,7 @@ import type { SubAgentRunSnapshot } from './runEventBus';
 
 export interface SubAgentTranscriptStore {
     getSnapshot(runId: string): SubAgentRunSnapshot | undefined;
-    appendContent(runId: string, content: Content): void;
+    appendContent(runId: string, content: Content): SubAgentRunSnapshot | undefined;
     replaceContents(runId: string, contents: Content[]): SubAgentRunSnapshot | undefined;
 }
 
@@ -42,9 +42,10 @@ export class SubAgentTranscriptRepository extends DelegatingTranscriptRepository
     async appendContent(content: Content): Promise<Content[]> {
         // 修改原因：事件总线 appendContent 额外负责补 index/timestamp、广播 content_snapshot、入队 metadata 落盘；
         // 如果 SubAgent 仓储退化成 generic mutate，会绕开这条既有单一入口。
-        // 修改方式：append 特化为直接委托事件总线 appendContent，再回读保存后的 contents。
+        // 修改方式：append 特化为直接委托事件总线 appendContent，由事件总线直接返回追加后的快照，
+        // 避免 append 后再回读全量 contents 的重复读取。
         // 修改目的：在统一仓储接口下继续保持 SubAgent append 的原始副作用与时序不变。
-        this.store.appendContent(this.runId, content);
-        return await this.getContents();
+        const snapshot = this.store.appendContent(this.runId, content);
+        return snapshot?.contents || [];
     }
 }
