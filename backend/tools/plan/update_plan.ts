@@ -95,6 +95,14 @@ export function createUpdatePlanTool(): Tool {
   return {
     declaration: createUpdatePlanToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
+      // 意外字段校验（上游 171dc86）：防止模型幻觉字段静默混入
+      const allowedKeys = new Set([
+        'path', 'plan', 'todos', 'title', 'overview', 'changeSummary', 'updateMode', 'sourceArtifact'
+      ]);
+      const unexpectedKeys = Object.keys(rawArgs).filter(key => !allowedKeys.has(key));
+      if (unexpectedKeys.length > 0) {
+        return { success: false, error: `Unexpected update_plan fields: ${unexpectedKeys.join(', ')}` };
+      }
       const args = rawArgs as unknown as UpdatePlanArgs;
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
       const plan = typeof args.plan === 'string' ? args.plan : '';

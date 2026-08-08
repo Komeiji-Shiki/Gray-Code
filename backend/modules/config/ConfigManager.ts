@@ -400,6 +400,15 @@ export class ConfigManager {
     }
     
     /**
+     * 确保指定 ID 的配置存在。不存在时通过公开 createConfig API 创建，
+     * 让调用方不必访问 storageAdapter/loaded 私有实现细节。
+     */
+    async ensureConfig(configId: string, input: CreateConfigInput): Promise<void> {
+        await this.ensureLoaded();
+        if (this.configCache.has(configId)) return;
+        await this.createConfig(input, configId);
+    }
+    /**
      * 获取配置
      * 
      * @param configId 配置 ID
