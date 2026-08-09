@@ -14,6 +14,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, DependencyWarning } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useDependency, TOOL_DEPENDENCIES, hasToolDependencies, getToolDependencies } from '@/composables/useDependency'
+import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
 import { useI18n } from '@/composables'
 import { getToolDisplayName, getToolDescription } from '@/utils/toolLocalization'
 import { groupToolsByCategory, getCategoryName, getCategoryIcon } from '@/utils/toolCategory'
@@ -47,6 +48,14 @@ const { t } = useI18n()
 const maxToolIterations = ref<number>(0)
 const isLoadingMaxIterations = ref(false)
 const isSavingMaxIterations = ref(false)
+
+// 草稿模式：清空后不立即回退旧值；离开设置页时自动回填已保存值
+// -1 表示无限制，正整数表示具体次数（保留原 parseInt 的整数语义）
+const {
+  draft: maxIterationsDraft,
+  handleInput: handleMaxIterationsDraftInput,
+  syncFromStored: syncMaxIterationsFromStored
+} = useDeferredNumberInput(() => maxToolIterations.value, v => (v === -1 || v >= 1) && Number.isInteger(v))
 
 // 获取所有需要的依赖（从所有工具中）
 const allDependencies = Object.values(TOOL_DEPENDENCIES).flat()
@@ -216,6 +225,7 @@ async function loadMaxToolIterations() {
     const response = await sendToExtension<{ maxIterations: number }>('tools.getMaxToolIterations', {})
     if (response?.maxIterations !== undefined) {
       maxToolIterations.value = response.maxIterations
+      syncMaxIterationsFromStored()
     }
   } catch (error) {
     console.error('Failed to load maxToolIterations:', error)
@@ -237,14 +247,11 @@ async function saveMaxToolIterations(value: number) {
   }
 }
 
-// 处理最大工具调用次数变化
+// 处理最大工具调用次数变化：清空/无效值不提交（保持为空），有效值立即保存
 function handleMaxIterationsChange(event: Event) {
   const target = event.target as HTMLInputElement
-  const value = parseInt(target.value, 10)
   // -1 表示无限制，正整数表示具体次数
-  if (!isNaN(value) && (value === -1 || value >= 1)) {
-    saveMaxToolIterations(value)
-  }
+  handleMaxIterationsDraftInput(target.value, saveMaxToolIterations)
 }
 
 // 组件挂载
@@ -286,7 +293,7 @@ watch(pendingToolConfigExpand, (toolName) => expandFromSearchSignal(toolName))
           <input
             type="number"
             class="iterations-input"
-            :value="maxToolIterations"
+            :value="maxIterationsDraft"
             min="-1"
             :disabled="isLoadingMaxIterations || isSavingMaxIterations"
             @input="handleMaxIterationsChange"
