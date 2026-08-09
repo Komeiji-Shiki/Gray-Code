@@ -109,10 +109,11 @@ export const updateNow: MessageHandler = async (data, requestId, ctx) => {
     }
 };
 
-/** 打开 GitHub Releases 页面（安装失败/无 vsix 资产时的兜底入口） */
+/** 打开 GitHub Releases 页面（安装失败/无 vsix 资产时的兜底入口；按当前渠道打开对应页面） */
 export const openUpdatePage: MessageHandler = async (data, requestId, ctx) => {
     try {
-        await UpdateChecker.openReleasePage();
+        const checker = getChecker(ctx);
+        await checker.openReleasePage();
         ctx.sendResponse(requestId, { success: true });
     } catch (error: any) {
         ctx.sendError(requestId, 'OPEN_UPDATE_PAGE_ERROR', error?.message || 'Failed to open release page');

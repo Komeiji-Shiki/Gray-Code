@@ -44,7 +44,8 @@ const SYNCABLE_KEYS = [
     'defaultToolMode',
     'activeChannelId',
     'lastReadAnnouncementVersion',
-    'checkForUpdates'
+    'checkForUpdates',
+    'updateChannel'
 ] as const;
 
 // 这些 key 应在 package.json 中声明 scope: "machine"
@@ -239,6 +240,11 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             const checkForUpdates = config.get<boolean>('checkForUpdates');
             if (typeof checkForUpdates === 'boolean') {
                 settings.checkForUpdates = checkForUpdates;
+            }
+
+            const updateChannel = config.get<string>('updateChannel');
+            if (updateChannel === 'stable' || updateChannel === 'nightly') {
+                settings.updateChannel = updateChannel;
             }
         }
 

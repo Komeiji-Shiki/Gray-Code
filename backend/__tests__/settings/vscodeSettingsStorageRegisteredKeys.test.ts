@@ -44,6 +44,7 @@ describe('VSCodeSettingsStorage 配置键注册校验', () => {
             'activeChannelId',
             'lastReadAnnouncementVersion',
             'checkForUpdates',
+            'updateChannel',
             'proxy',
             'storagePath'
         ]);

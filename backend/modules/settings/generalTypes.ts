@@ -36,6 +36,7 @@ import { DEFAULT_TOKEN_COUNT_CONFIG } from './tokenCountTypes';
 import { DEFAULT_CONTEXT_AWARENESS_CONFIG } from './contextTypes';
 import { DEFAULT_PINNED_FILES_CONFIG } from './pinnedFilesTypes';
 import { DEFAULT_SYSTEM_PROMPT_CONFIG } from './promptModes';
+import type { UpdateChannel } from '../update';
 
 /**
  * 代理配置
@@ -279,6 +280,14 @@ export interface GlobalSettings {
      * - false: 关闭检查（用户可在设置页「通用」中关闭）
      */
     checkForUpdates?: boolean;
+
+    /**
+     * 更新渠道
+     *
+     * - stable（默认）: 检查正式发布版（GitHub Releases latest）
+     * - nightly: 检查每日自动构建（tag=nightly 的预览版，版本号高于正式版，仅供测试）
+     */
+    updateChannel?: UpdateChannel;
     
     /**
      * 最后更新时间戳
@@ -325,6 +334,7 @@ export type SettingsChangeListener = (event: SettingsChangeEvent) => void | Prom
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
     checkForUpdates: true,
+    updateChannel: 'stable',
     toolsEnabled: {
         // 默认所有工具启用
     },

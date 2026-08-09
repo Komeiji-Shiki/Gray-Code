@@ -98,7 +98,8 @@ const ja: LanguageMessages = {
             viewPage: 'GitHub で見る',
             downloading: 'ダウンロード中...',
             installed: 'インストールが完了しました。ウィンドウをリロードしてください。',
-            failed: 'ダウンロードまたはインストールに失敗しました'
+            failed: 'ダウンロードまたはインストールに失敗しました',
+            nightlyBadge: 'Nightly プレビュー'
         },
         attachment: {
             preview: 'プレビュー',
@@ -2192,6 +2193,10 @@ const ja: LanguageMessages = {
                     title: '自動更新',
                     description: '起動時に GitHub Releases の新バージョンを確認します（24時間以内の再確認は行いません）。新しいバージョンは自動でダウンロード・インストールできます。',
                     enableLabel: '自動更新チェックを有効にする',
+                    channelLabel: '更新チャンネル',
+                    channelDescription: 'stable：正式リリース版；nightly：毎日の自動ビルド（プレビュー版。正式版より高いバージョン番号。テスト用のみ）。',
+                    channelStable: '安定版（正式リリース）',
+                    channelNightly: 'Nightly（毎日ビルド）',
                     checkNow: '今すぐ確認',
                     updateNow: '今すぐ更新',
                     checking: '確認中...',

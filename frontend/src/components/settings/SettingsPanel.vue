@@ -911,6 +911,8 @@ async function loadSettings() {
     }
     // 加载自动更新检查开关（默认开启）
     checkUpdatesEnabled.value = response?.settings?.checkForUpdates !== false
+    // 加载更新渠道（stable 正式版 / nightly 每日构建）
+    updateChannel.value = response?.settings?.updateChannel === 'nightly' ? 'nightly' : 'stable'
     
     // 加载存储路径配置
     await loadStorageConfig()
@@ -1181,6 +1183,11 @@ async function saveProxySettings() {
 // ========== 自动更新设置 ==========
 
 const checkUpdatesEnabled = ref(true)
+const updateChannel = ref<'stable' | 'nightly'>('stable')
+const updateChannelOptions = computed<SelectOption[]>(() => [
+  { value: 'stable', label: t('components.settings.settingsPanel.update.channelStable') },
+  { value: 'nightly', label: t('components.settings.settingsPanel.update.channelNightly') },
+])
 const isUpdateChecking = ref(false)
 const isUpdating = ref(false)
 const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
@@ -1192,6 +1199,17 @@ async function saveCheckUpdates(value: boolean) {
     await sendToExtension('updateSettings', { settings: { checkForUpdates: value } })
   } catch (error) {
     console.error('Failed to save update check setting:', error)
+  }
+}
+
+// 保存更新渠道（stable 正式版 / nightly 每日构建）
+async function saveUpdateChannel(value: string) {
+  const channel = value === 'nightly' ? 'nightly' : 'stable'
+  updateChannel.value = channel
+  try {
+    await sendToExtension('updateSettings', { settings: { updateChannel: channel } })
+  } catch (error) {
+    console.error('Failed to save update channel setting:', error)
   }
 }
 
@@ -1701,6 +1719,16 @@ onMounted(() => {
                     :label="t('components.settings.settingsPanel.update.enableLabel')"
                     @update:model-value="saveCheckUpdates"
                   />
+
+                  <div class="update-channel-row">
+                    <label class="field-label">{{ t('components.settings.settingsPanel.update.channelLabel') }}</label>
+                    <CustomSelect
+                      :model-value="updateChannel"
+                      :options="updateChannelOptions"
+                      @update:model-value="saveUpdateChannel"
+                    />
+                    <p class="field-hint">{{ t('components.settings.settingsPanel.update.channelDescription') }}</p>
+                  </div>
 
                   <div class="update-check-row">
                     <button class="save-btn" :disabled="isUpdateChecking || isUpdating" @click="checkUpdateNow">
@@ -2375,6 +2403,23 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.update-channel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-channel-row .field-label {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.update-channel-row .field-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
 }
 
 .update-check-row {
