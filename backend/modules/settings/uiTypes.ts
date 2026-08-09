@@ -60,6 +60,16 @@ export interface UISoundSettings {
         taskComplete?: boolean;
         /** 任务失败提示音（可与 error 分开控制） */
         taskError?: boolean;
+
+        /**
+         * 子代理（SubAgent）事件提示音开关：与主代理分开控制
+         */
+        subagent?: {
+            warning?: boolean;
+            error?: boolean;
+            taskComplete?: boolean;
+            taskError?: boolean;
+        };
     };
 
     /**

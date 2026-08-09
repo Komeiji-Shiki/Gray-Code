@@ -6,6 +6,7 @@ import MessageItem from '../message/MessageItem.vue'
 import { contentToMessageEnhanced } from '@/stores/chat/parsers'
 import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
 import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
+import { setVscodeWindowFocused } from '@/services/soundEventController'
 import { shouldApplyEventFocus } from './monitorFocusPolicy'
 import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
 import {
@@ -32,11 +33,17 @@ import {
   type MonitorLiveDeltaEvent
 } from './monitorLiveDeltaBuffer'
 import type { Content, ContentPart, Message, ToolUsage } from '@/types'
+import {
+  getRunRetryEventCue,
+  getRunStatusTransitionCue,
+  playMonitorSubagentCue,
+  type MonitorRunStatus
+} from './monitorSoundCues'
 
 // 修改原因：Monitor 需要区分暂停、等待用户处理和扩展重载中断，不能把它们都展示成失败。
-// 修改方式：与后端 SubAgentRunStatus 保持同构的前端状态联合类型。
+// 修改方式：与后端 SubAgentRunStatus 保持同构的联合类型（定义见 monitorSoundCues.ts，供提示音迁移检测复用）。
 // 修改目的：后续顶部控制按钮可以根据状态判断是否允许继续、退出或仅查看历史。
-type RunStatus = 'queued' | 'running' | 'paused' | 'awaiting_monitor_action' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+type RunStatus = MonitorRunStatus
 
 interface SubAgentRunEvent {
   runId: string
@@ -177,6 +184,77 @@ function upsertManifest(manifest: SubAgentRunManifest | undefined) {
   } else {
     manifests.value = [manifest, ...manifests.value]
   }
+}
+
+// ============ 子代理提示音：run 状态迁移检测 ============
+
+// 修改原因：Monitor 面板也承担“子代理跑完/失败/重试”的提醒职责，但过去完全不播提示音。
+// 修改方式：跟踪每个 run 最近一次状态，只在「非终态 → 终态」迁移时经子代理独立开关播放一次；
+//          打开面板时已存在的 run 只播种不播报（历史 run 不应补响）。
+// 修改目的：状态迁移语义与事件回放天然幂等——重同步不会重复响铃；
+//          续跑（completed → running → completed）是第二次真实完成，会再次响铃，符合预期。
+const lastSeenRunStatus = new Map<string, MonitorRunStatus>()
+let runStatusSoundSeeded = false
+
+watch(
+  () => manifests.value,
+  (list) => {
+    const nextStatuses = new Map<string, MonitorRunStatus>()
+    for (const manifest of list) {
+      if (manifest?.runId) nextStatuses.set(manifest.runId, manifest.status)
+    }
+
+    if (!runStatusSoundSeeded) {
+      runStatusSoundSeeded = true
+      for (const [runId, status] of nextStatuses) {
+        lastSeenRunStatus.set(runId, status)
+      }
+      return
+    }
+
+    for (const [runId, status] of nextStatuses) {
+      const prev = lastSeenRunStatus.get(runId)
+      // 首播之后新出现的 run 不播报（可能来自 manifest 重同步的历史 run）
+      if (prev === undefined) {
+        lastSeenRunStatus.set(runId, status)
+        continue
+      }
+      lastSeenRunStatus.set(runId, status)
+      const cue = getRunStatusTransitionCue(prev, status)
+      if (cue) playMonitorSubagentCue(cue)
+    }
+
+    // 容量上限：长会话 run 数无界，Map 不能随 run 数无限增长；只保留仍在 manifests 中的 run
+    if (lastSeenRunStatus.size > 500) {
+      const liveRunIds = new Set(nextStatuses.keys())
+      for (const runId of Array.from(lastSeenRunStatus.keys())) {
+        if (!liveRunIds.has(runId)) lastSeenRunStatus.delete(runId)
+      }
+    }
+  }
+)
+
+// ============ 子代理提示音：重试事件去重 ============
+
+const monitorSoundPlayedKeys = new Set<string>()
+/** 去重集合容量上限：超出后整体清空，防止随会话运行无限增长 */
+const MONITOR_SOUND_PLAYED_KEYS_LIMIT = 500
+
+function handleMonitorRunSoundEvent(event: SubAgentRunEvent): void {
+  if (!event?.runId) return
+  const cue = getRunRetryEventCue(String(event.type || ''))
+  if (!cue) return
+
+  // 同一 run 的同一事件（按 attempt 区分）只播一次；attempt 缺失时整 run 只播一次
+  const attempt = typeof event.payload?.attempt === 'number' ? event.payload.attempt : undefined
+  const key = attempt !== undefined ? `${event.runId}:${event.type}:${attempt}` : `${event.runId}:${event.type}`
+  if (monitorSoundPlayedKeys.has(key)) return
+
+  monitorSoundPlayedKeys.add(key)
+  if (monitorSoundPlayedKeys.size > MONITOR_SOUND_PLAYED_KEYS_LIMIT) {
+    monitorSoundPlayedKeys.clear()
+  }
+  playMonitorSubagentCue(cue, event.timestamp)
 }
 
 function applyManifestPayload(data: any) {
@@ -1002,6 +1080,10 @@ onMounted(async () => {
   // 修改方式：挂载后请求轻量 manifests，并订阅后续 manifest/event；聚焦 run 再请求窗口。
   // 修改目的：像主聊天窗口一样展示消息语义，同时避免大输出 Monitor 打开卡顿。
   disposeMessageListener = onMessageFromExtension((message: any) => {
+    // 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播），与主窗口同一套规则
+    if (message.type === 'command' && message.command === 'windowFocusChanged') {
+      setVscodeWindowFocused(message.data?.focused === true)
+    }
     if (message.type === 'subagentMonitor.event') {
       if (message.data?.manifest) upsertManifest(message.data.manifest)
       if (shouldApplyEventFocus({
@@ -1016,6 +1098,8 @@ onMounted(async () => {
       }
       if (message.data?.event) {
         appendEvent(message.data.event)
+        // 重试类事件（retrying/retryFailed）经子代理独立开关播提示音
+        handleMonitorRunSoundEvent(message.data.event)
         if (message.data.event.type === 'llm_delta') {
           // 修改原因：高频 llm_delta 不能每个都触发响应式更新，统一入队后由 rAF 批量 flush。
           // 修改方式：llm_delta 只入队；content_snapshot/tool_* 等状态事件仍即时处理保证低延迟。
