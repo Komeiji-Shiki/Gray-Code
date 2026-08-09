@@ -86,14 +86,26 @@ export class MessageBuilderService {
         const multimodalEnabled = config.multimodalToolsEnabled ?? false;
         const capability = getMultimodalCapability(channelType, toolMode, multimodalEnabled);
         
-        // 历史思考回合数配置
-        // 仅在发送历史思考内容或签名时生效
+        // OAI 的 reasoning_content 在同一条 assistant 消息从当前轮次转为历史轮次后，
+        // 必须保持相同的回传策略，否则已发送的提示词前缀会被重写并导致缓存失效。
+        // 以历史开关作为统一值：既尊重“不要发送历史思考”的既有选择，也与界面合并后的单开关一致。
+        const isOpenAIChannel = config.type === 'openai';
         const sendHistoryThoughts = config.sendHistoryThoughts ?? false;
+        const sendCurrentThoughts = isOpenAIChannel
+            ? sendHistoryThoughts
+            : (config.sendCurrentThoughts ?? true);
         const sendHistoryThoughtSignatures = config.sendHistoryThoughtSignatures ?? false;
         const historyThinkingRounds = (sendHistoryThoughts || sendHistoryThoughtSignatures)
             ? (config.historyThinkingRounds ?? -1)
             : -1;
-        
+
+        // Responses 渠道的 reasoning item 回传不区分「当前/历史」轮次（convertToResponsesInput
+        // 统一遍历），因此把 current 签名开关合并到 history 开关：两者共用 sendHistoryThoughtSignatures。
+        const isResponsesChannel = config.type === 'openai-responses';
+        const sendCurrentThoughtSignatures = isResponsesChannel
+            ? sendHistoryThoughtSignatures
+            : (config.sendCurrentThoughtSignatures ?? (config.type === 'gemini' || config.type === 'anthropic'));
+
         return {
             // 当前轮次是否包含思考
             includeThoughts: thinkingEnabled,
@@ -101,10 +113,12 @@ export class MessageBuilderService {
             sendHistoryThoughts,
             // 是否发送历史思考签名
             sendHistoryThoughtSignatures,
-            // 是否发送当前思考内容 (默认: true)
-            sendCurrentThoughts: config.sendCurrentThoughts ?? true,
-            // 是否发送当前思考签名 (默认: OAI 为 false, Gemini/Anthropic/OAI-Responses 为 true)
-            sendCurrentThoughtSignatures: config.sendCurrentThoughtSignatures ?? (config.type === 'gemini' || config.type === 'anthropic' || config.type === 'openai-responses'),
+            // 是否发送当前思考内容
+            // OAI 与历史思考共用同一值，其他渠道仍保留独立配置
+            sendCurrentThoughts,
+            // 是否发送当前思考签名 (默认: OAI 为 false, Gemini/Anthropic 为 true)
+            // Responses 渠道已与历史签名合并，由 sendHistoryThoughtSignatures 统一控制
+            sendCurrentThoughtSignatures,
             // 渠道类型，用于选择对应格式的签名
             channelType: config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
             // 多模态能力，用于过滤历史中的多模态数据

@@ -128,7 +128,8 @@ export class OpenAIFormatter extends BaseFormatter {
         processedHistory = this.injectPromptContextMessages(
             processedHistory,
             this.getPromptContextForRequest(request),
-            request.dynamicContextStrategy
+            request.dynamicContextStrategy,
+            { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
@@ -722,12 +723,12 @@ export class OpenAIFormatter extends BaseFormatter {
             const usage = response.usage;
             const completionTokens = usage.completion_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
-            const candidatesTokenCount = completionTokens - reasoningTokens;
             const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
             
             content.usageMetadata = {
                 promptTokenCount: usage.prompt_tokens,
-                candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
+                // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出。
+                candidatesTokenCount: completionTokens > 0 ? completionTokens : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
                 ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
@@ -877,12 +878,12 @@ export class OpenAIFormatter extends BaseFormatter {
             const usage = chunk.usage;
             const completionTokens = usage.completion_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
-            const candidatesTokenCount = completionTokens - reasoningTokens;
             const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
             
             streamChunk.usage = {
                 promptTokenCount: usage.prompt_tokens,
-                candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
+                // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出。
+                candidatesTokenCount: completionTokens > 0 ? completionTokens : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
                 ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})

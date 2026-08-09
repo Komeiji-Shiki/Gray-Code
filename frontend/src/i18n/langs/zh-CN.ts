@@ -327,6 +327,7 @@ const zhCN = {
         input: {
             placeholder: '输入消息...',
             placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径，Ctrl+Shift+拖拽插入 @path 文本)',
+            resizeInput: '调整输入框高度；方向键调整，Home 或双击恢复自动高度',
             send: '发送消息',
             sendPreserveDynamicContext: '发送并保留旧动态上下文原位',
             stopGenerating: '停止生成',
@@ -2865,6 +2866,9 @@ const zhCN = {
                 },
                 thinkingBackfill: {
                     title: '思考回传配置',
+                    signatures: '发送思考签名',
+                    signaturesHint: '回传推理上下文（含历史思考签名与摘要），保持多轮交互的思考衔接；关闭时不回传 reasoning 项，以兼容不支持 reasoning 输入类型的第三方端点',
+                    content: '发送思考内容',
                     currentGroup: '当前轮次',
                     currentSignatures: '发送最新思考签名',
                     currentSignaturesHint: '保持当前步骤的思考衔接',
@@ -2996,7 +3000,7 @@ const zhCN = {
                 },
                 thinkingBackfill: {
                     sendSignaturesHint: '启用后，将发送历史对话中的思考签名（OpenAI 暂不支持）。不建议开启，且发送的是非最新一轮对话的签名',
-                    sendContentHint: '启用后，将发送历史对话中的 reasoning_content（包括摘要），这可能会显著增加上下文长度'
+                    sendContentHint: '统一控制当前轮次与历史回合的 reasoning_content，避免同一条消息在后续请求中因回合身份变化而改写提示词前缀'
                 }
             },
             'openai-responses': {

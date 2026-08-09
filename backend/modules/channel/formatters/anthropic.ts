@@ -130,7 +130,8 @@ export class AnthropicFormatter extends BaseFormatter {
         processedHistory = this.injectPromptContextMessages(
             processedHistory,
             this.getPromptContextForRequest(request),
-            request.dynamicContextStrategy
+            request.dynamicContextStrategy,
+            { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
@@ -921,7 +922,6 @@ export class AnthropicFormatter extends BaseFormatter {
         const cachedTotal = cacheCreation + cacheRead;
         const outputTokens = usage.output_tokens ?? 0;
         const thinkingTokens = usage.output_tokens_details?.thinking_tokens ?? 0;
-        const candidatesTokens = thinkingTokens > 0 ? outputTokens - thinkingTokens : outputTokens;
 
         // totalTokenCount 只在收到原生 input 侧计数时提供：Anthropic 的 message_delta
         // usage 只含 output_tokens，若此时也输出 total（= 0 + output），累加器的
@@ -933,7 +933,8 @@ export class AnthropicFormatter extends BaseFormatter {
 
         return {
             promptTokenCount: promptTotal || undefined,
-            candidatesTokenCount: candidatesTokens > 0 ? candidatesTokens : (outputTokens > 0 ? outputTokens : undefined),
+            // Anthropic output_tokens 已包含 thinking token；界面统一展示总输出。
+            candidatesTokenCount: outputTokens > 0 ? outputTokens : undefined,
             totalTokenCount: hasInputSideTokens ? (promptTotal + outputTokens || undefined) : undefined,
             ...(thinkingTokens > 0 ? { thoughtsTokenCount: thinkingTokens } : {}),
             ...(cacheCreation > 0 ? { cacheCreationTokenCount: cacheCreation } : {}),

@@ -9,10 +9,15 @@
 ## [Unreleased]
 
 ### Added
+  - 聊天输入框新增高度调整手柄：可向上/向下拖动以扩展超长内容的编辑空间，支持方向键微调，双击或按 Home 恢复按内容自动伸缩；手动高度限制在当前 Webview 可视区域内，并保留内部滚动与光标跟随。
   - 关闭开屏动画时新增主题自适应的「石墨蚀刻光场」启动占位：以宿主编辑器背景、侧栏、浮层与前景色变量生成银黑/雾白灰阶渐变，叠加宽幅棱面、椭圆折射层和极淡拉丝纹理；中心光环低频呼吸并轻微偏转，斜向交界的灰银反光周期性掠过，明确表示仍在加载，同时不复刻正式 Splash 的 Logo 演出；不含 logo、文字或传统转圈图标，`prefers-reduced-motion` 下恢复静态画面。扩展生成 Webview HTML 时同步读取开屏偏好，关闭态从首帧立即显示并持续至主界面初始化结束。
 
 ### Fixed
+  - 修复聊天输入框在空窗口/无工作区场景下纯文本粘贴与 `Ctrl+Z` 撤销不可靠：不再于粘贴事件中临时切换 `contenteditable` 编辑宿主，改为单次原生 `insertText` 写入纯文本及浏览器撤销栈；受控节点同步仅在 DOM 与外部状态确实不一致时重建，避免无意义的 `innerHTML` 清空破坏复制、粘贴、选区和撤销历史；光标 Range 初始化同步加固。输入框自动高度测量改为先恢复 `auto` 再读取真实内容高度，删除长文本后可正常收缩。
+  - 修复 OpenAI Responses API 的推理上下文回传与输出 token 统计：按官方格式完整保存并在后续无状态请求中回传 reasoning item 的 `id`、`status`、`summary`、可选 `content` 与 `encrypted_content`，流式摘要增量和 `response.output_item.done` 最终项合并为同一思考分段，旧历史中相邻的摘要/签名分段也可重新组合；移除非标准的 `content: null`。OpenAI Responses、OpenAI Compatible 与 Anthropic 的主输出统计统一采用上游原生总输出 token（已包含 reasoning/thinking token），TPS 与界面输出数字不再遗漏思考 token；推理 token 明细仍单独保留在元数据中。
+  - 修复 OpenAI Responses 渠道在第三方兼容端点下请求报 `400 输入项类型 'reasoning' 当前暂不支持`：reasoning item 是 OpenAI 官方 Responses 专有输入类型，兼容端点往往不支持。现在把「发送最新思考签名」与「发送历史思考签名」合并为单一「发送思考签名」开关（Responses 渠道 reasoning 回传本就不区分当前/历史轮次），回传与否统一由该开关控制——关闭时不回传 reasoning 项，可见思考摘要降级为普通 assistant 文本保留，避免整体丢失；上游 `buildHistoryOptions` 对 Responses 渠道同步统一 current/history 签名字段。其余渠道（Gemini/OpenAI/Anthropic）的当前/历史思考开关保持独立不变。
   - 修复点击插件后需等待约一秒才出现启动动画的问题：`ChatViewProvider` 现在生成 HTML 时同步读取 `graycode.ui.appearance.splashEnabled`，在完整前端 CSS/JavaScript 加载前直接内联对应的首帧启动壳与关键样式；浏览器先绘制 Gray icon 描线预备动效或关闭态石墨光场，再异步加载完整资源并由 Vue 接管。开启与关闭两种画面从 HTML 首帧起使用同一份不可变偏好快照，互不串画面；完整样式加载失败时仍继续启动前端模块，`prefers-reduced-motion` 仍使用静态画面。
+  - 修复预设 assistant 种子消息（fakeThought 伪造思考）在会话中途被反复重写导致提示词前缀缓存整体失效：`turnDynamicContext` 缓存此前把消息所有 parts（含 thought）无分隔拍平成纯文本，回合继续时伪造思考被烤进正文；`applyPromptContextThoughtPolicy` 默认保留（`!== false`）而 `formatHistoryForAPI` 对真实历史思考默认剥离（`?? false`），同一条消息在直发/缓存两条路径和不同开关配置下产出不同字节（正文在「思考+正文」与「纯正文」之间翻转），共享前缀在会话早期即被打断（实测缓存命中从 97.5% 跌至 7.8%）。现统一为：伪造思考与真实历史思考完全同构——仅显式开启「发送历史思考内容」（`sendHistoryThoughts === true`）时回传，未配置或显式关闭都剥离，且仅以独立字段（OpenAI `reasoning_content`、Anthropic thinking block 等）发送，正文 content 跨请求恒定、绝不随开关翻转；`promptContextCache` 序列化新增 `thoughtText` 字段分离保存思考与正文（旧格式缓存向后兼容），回合开始与回合继续产出结构一致的消息；preserve 回插路径不再于快照创建时剥离伪造思考，改由 formatter 按同一开关统一过滤（新增 `PromptContextInjectionOptions.stripPreservedThoughtParts`，默认剥离与开关默认关闭语义一致）。新增/更新测试：`promptContextCache.test.ts`（6 用例：往返无损、纯文本不变、纯思考不伪造空正文、多 thought 合并与 formatter join 语义一致、legacy 纯文本 / 无 thoughtText 旧 v2 缓存兼容）、`toolIterationThoughtPolicy`（仅显式开启保留、未配置/显式关闭剥离、输入不可变）、`dynamicContextPreserve`（回插快照按开关剥离/保留/默认剥离三态）、`PromptManager.promptEntries`（preserve 快照保留伪造思考）。
 
 ### Changed
   - 移除首次启动自动预置的默认 Gemini 渠道（此前扩展激活时无条件创建 `gemini-pro` 渠道，含占位 API Key，易让用户误以为开箱即用）。现在首次打开显示「无渠道」空态，引导用户新建渠道并填写 API Key；设置页允许删除全部渠道（不再强制「至少保留一个」），删除当前聊天会话正在使用的渠道后自动切换到剩余渠道、删光则回到无渠道空态。

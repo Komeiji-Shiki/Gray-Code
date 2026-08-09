@@ -57,6 +57,13 @@ export interface ContentPart {
     parts?: ContentPart[]
   }
   thoughtSignature?: string
+  thoughtSignatures?: Record<string, string | undefined>
+  openaiResponsesReasoning?: {
+    id?: string
+    status?: 'in_progress' | 'completed' | 'incomplete'
+    summary?: Array<{ type: 'summary_text'; text: string }>
+    content?: Array<{ type: 'reasoning_text'; text: string }>
+  }
   thought?: boolean
 }
 
@@ -77,7 +84,7 @@ export interface UsageMetadata {
   /** 输入 prompt 的 token 数量 */
   promptTokenCount?: number
   
-  /** 候选输出内容的 token 数量 */
+  /** 提供商报告的总输出 token；reasoning/thinking token 已包含在内 */
   candidatesTokenCount?: number
   
   /** 总 token 数量 */

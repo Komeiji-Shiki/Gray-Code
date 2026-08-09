@@ -17,6 +17,18 @@ import type { RequestPromptContext } from '../types';
 import { deserializePromptContextCache } from '../../prompt/promptContextCache';
 
 /**
+ * prompt context 注入选项。
+ */
+export interface PromptContextInjectionOptions {
+    /**
+     * preserve 回插的历史动态快照是否剥离 thought parts（伪造思考）。
+     * 默认 true（剥离），与「发送历史思考内容」开关的默认关闭语义一致；
+     * 各 formatter 按渠道配置传入 `config.sendHistoryThoughts !== true`。
+     */
+    stripPreservedThoughtParts?: boolean;
+}
+
+/**
  * 格式转换器基类
  * 
  * 所有格式转换器都必须继承此类并实现抽象方法
@@ -213,7 +225,8 @@ export abstract class BaseFormatter {
     protected injectDynamicContextMessages(
         history: Content[],
         dynamicContextMessages?: Content[],
-        strategy: 'single' | 'preserve' = 'single'
+        strategy: 'single' | 'preserve' = 'single',
+        options?: PromptContextInjectionOptions
     ): Content[] {
         return this.injectPromptContextMessages(
             history,
@@ -224,18 +237,20 @@ export abstract class BaseFormatter {
                     historyPlacement: 'legacy'
                 }
                 : undefined,
-            strategy
+            strategy,
+            options
         );
     }
 
     protected injectPromptContextMessages(
         history: Content[],
         promptContext?: RequestPromptContext,
-        strategy: 'single' | 'preserve' = 'single'
+        strategy: 'single' | 'preserve' = 'single',
+        options?: PromptContextInjectionOptions
     ): Content[] {
         const context = promptContext ?? { beforeHistoryMessages: [], afterHistoryMessages: [], historyPlacement: 'legacy' as const };
         const preservedHistory = strategy === 'preserve'
-            ? this.injectPreservedDynamicSnapshots(history)
+            ? this.injectPreservedDynamicSnapshots(history, options?.stripPreservedThoughtParts ?? true)
             : history;
 
         if (context.historyPlacement === 'entry') {
@@ -264,7 +279,7 @@ export abstract class BaseFormatter {
         return this.injectCurrentDynamicContext(preservedHistory, legacyMessages);
     }
 
-    private injectPreservedDynamicSnapshots(history: Content[]): Content[] {
+    private injectPreservedDynamicSnapshots(history: Content[], stripThoughtParts: boolean): Content[] {
         const result: Content[] = [];
         const currentTurnStartIndex = this.findCurrentTurnStartIndex(history);
         for (let i = 0; i < history.length; i++) {
@@ -278,7 +293,16 @@ export abstract class BaseFormatter {
                 !!message.turnDynamicContext;
 
             if (isHistoricalPreservedTurn) {
-                result.push(...this.createDynamicContextMessagesFromCache(message.turnDynamicContext!));
+                const snapshotMessages = this.createDynamicContextMessagesFromCache(message.turnDynamicContext!);
+                // preserve 回插的快照与直发路径共用同一开关语义：未显式开启
+                // 「发送历史思考内容」时剥离 thought part，保证同一消息在
+                // 当前轮/历史轮字节一致，不重写提示词前缀缓存。
+                result.push(...(stripThoughtParts
+                    ? snapshotMessages.map(snapshot => ({
+                        ...snapshot,
+                        parts: snapshot.parts?.filter(part => part.thought !== true)
+                    }))
+                    : snapshotMessages));
             }
             result.push(message);
         }
