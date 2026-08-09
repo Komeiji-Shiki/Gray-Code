@@ -10,6 +10,22 @@
 
 （暂无未发布改动）
 
+## [1.7.5.2dev] - 2026-08-09
+
+### Added
+  - **更新检查按发布通道隔离**（`UpdateChecker`）：`releases/latest` 按创建时间返回，dev release 晚于 stable 创建时会把正式版用户引到 dev 通道（反之亦然）。改为一次拉取全部 releases（`per_page=30`）并在通道内按版本号取最高：版本号含 `dev` 后缀（`resolveReleaseChannel`）归 dev 通道、其余归 stable 通道；dev 通道无候选时回退全部 release。上游/历史 tag（`dev`、`dev-1.7.1`）版本解析恒 0，天然不参与竞争。
+  - **一键更新按运行形态匹配安装包**（`pickInstallerAsset`）：便携版运行时由 `patch-portable.mjs` 注入 `PORTABLE_EXECUTABLE_DIR`，`BackendHost` 注入 `getInstallerKind`；便携用户优先下载 `GrayCode-Portable-*.exe`（不再被拉进安装版污染系统环境），安装版用户优先 `GrayCode.Setup.*.exe`，无匹配回退 zip。
+  - **版本比较支持 dash/点号双形态**（`normalizeVersion`）：electron-builder 只接受合法 semver，四段版本被塞进 prerelease（`1.7.5-2dev` ↔ `1.7.5.2dev`、`1.7.6-1` ↔ `1.7.6.1`）；比较前统一归一化，dash 构建号不再丢失（`1.7.5-3dev > 1.7.5-2dev` 可识别）；非数字预发布（`-beta` 等）仍判为旧并按标识字符串排序。
+
+### Fixed
+  - **输入框 IME 撤销栈污染**：合成期间每个拼音键的 input 事件不再入历史栈（`isComposing` 跳过），合成结束（compositionend）补推最终态一次；重复条目（收尾 input + compositionend 双推、Esc 取消合成）在 `pushHistory` 去重。发送成功/切换会话等外部清空时撤销栈同步复位，杜绝 Ctrl+Z 恢复已发送草稿。
+  - **`settleFunctionResponses` 二次全历史扫描**：BR-08 归属消息定位并入首趟索引构建（`functionCallLastIndex`），长会话多工具轮次扫描系数下降，语义等价（577 测试背书）。
+  - **死代码清理**：`StreamRequestHandler` 解构残留 `annotation`/`annotationMessageId`（批注机制已删除）；`modeToolsPolicy.getReadonlyModeDangerousTools` 零调用且与 `GENERAL_FILE_WRITE_TOOLS` 口径不一致，删除。
+  - **后端默认声音设置补齐 `subagent` 分组**（`generalTypes`）：前端 normalize 已有兜底，后端默认值补齐防导入导出/严格校验丢键。
+
+### Other
+  - **同步上游 e75cfd8..be43158（21 commits，按模块取优合并）**：启动画面系列（StartupBackdrop 石墨占位 + startupBootstrap 首帧注入；桌面主窗口无同步注入时保留本地 1.7.6 响应式门控，关闭开屏动画用户不回归全动画）、输入框自定义撤销/重做栈（粘贴后 Ctrl+Z 可靠）、工具确认批注移除（点击执行不再自动发出输入栏文字，待确认工具时发送改为中断回合）、Plan 渠道一次性覆盖（`pendingConfigIdOverride`）、后端并行工具调用竞态修复（孤儿调用剔除/迟到结算归位/drain 超时 cancelled 占位）、子代理提示音独立控制、agent 模式权限加固、最近对话删除+渠道改进、思考回传统一、恢复默认模板 `{{}}` 占位符；冲突处按本地/上游实现优劣取并集（`findFunctionResponseInsertIndex` 接本地已重构的模块级函数、`StreamRequestHandler` 保留本地 `INVALID_CONVERSATION_ID` 校验）。CHANGELOG 保留本地版本体系。
+
 ## [1.7.6.1] - 2026-08-09
 
 ### Fixed

@@ -12,6 +12,12 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.5.2dev] - 2026-08-09
+
+### Fixed
+  - **一键更新按运行形态匹配安装包**：`BackendHost` 为 `UpdateChecker` 注入 `getInstallerKind`（`process.env.PORTABLE_EXECUTABLE_DIR` 存在即便携版）——便携用户优先下载 `GrayCode-Portable-*.exe`，不再被拉进安装版；安装版用户优先 `GrayCode.Setup.*.exe`。配套版本归一化（`1.7.5-2dev` ↔ `1.7.5.2dev`）与 stable/dev 通道隔离见根目录 CHANGELOG [1.7.5.2dev]。
+  - **版本号升至 1.7.5.2dev**（根 package.json 1.7.5.2dev；electron-app package+lock 1.7.5-2dev，electron-builder 仅接受合法 semver，点分四段会被 `fixVersionField` 拒绝）。
+
 ## [1.7.6.1] - 2026-08-09
 
 ### Fixed

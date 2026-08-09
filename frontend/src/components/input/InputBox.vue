@@ -440,6 +440,10 @@ function renderNodesToDom() {
 // ========== input / key / IME ==========
 
 function pushHistory(nodes: EditorNode[], caretOffset: number) {
+  // 与当前条目内容相同则跳过（IME 提交会先派发收尾 input、compositionend 再补推一次，
+  // Esc 取消合成时内容与栈顶相同——去重后撤销一步即可，不会出现"按一次没反应"）
+  const last = history.value[historyIndex.value]
+  if (last && editorNodesEqual(last.nodes, nodes)) return
   if (historyIndex.value < history.value.length - 1) {
     history.value = history.value.slice(0, historyIndex.value + 1)
   }

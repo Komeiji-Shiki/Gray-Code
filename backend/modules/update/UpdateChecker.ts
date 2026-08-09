@@ -59,16 +59,40 @@ export function stripVersionPrefix(version: string): string {
 }
 
 /**
+ * 版本号归一化：dash 形式的构建号并入版本段，与点号形式等价比较。
+ *
+ * 同一个版本在仓库内有两种写法：
+ * - 点号（tag / 根 package.json）：v1.7.5.2dev、1.7.5.2dev；
+ * - dash（electron-builder 只接受合法 semver，四段版本被塞进 prerelease）：
+ *   1.7.5-2dev、1.7.6-1。
+ * 两者语义相同，比较前必须统一为同一形态，否则
+ * compareVersions('1.7.5-3dev', '1.7.5-2dev') 会把构建号丢弃判为相等，
+ * dev 用户永远收不到同主版本的后续构建更新提示。
+ */
+export function normalizeVersion(version: string): string {
+    const s = stripVersionPrefix(version);
+    const dash = s.indexOf('-');
+    if (dash === -1) return s;
+    const prerelease = s.slice(dash + 1);
+    // electron-builder 构建号以数字开头（1.7.5-2dev / 1.7.6-1）：并入版本段成为第四段。
+    if (/^\d/.test(prerelease)) {
+        return `${s.slice(0, dash)}.${prerelease}`;
+    }
+    // 语义预发布（-beta / -alpha 等）：不并入，保持 dash 形态参与 prerelease 判定。
+    return s;
+}
+
+/**
  * 语义版本比较（支持任意段数，缺段按 0；非数字段按 0）。
  * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）。
  * 返回 -1（a < b）/ 0（相等）/ 1（a > b）。
  */
 export function compareVersions(a: string, b: string): number {
     const parse = (v: string): { nums: number[]; prerelease: boolean } => {
-        const main = stripVersionPrefix(v).split('-')[0];
+        const raw = stripVersionPrefix(v);
         return {
-            nums: main.split('.').map(n => parseInt(n, 10) || 0),
-            prerelease: stripVersionPrefix(v).includes('-')
+            nums: normalizeVersion(raw).split('.').map(n => parseInt(n, 10) || 0),
+            prerelease: raw.includes('-') && !/^\d/.test(raw.split('-')[1] ?? '')
         };
     };
     const ap = parse(a);
@@ -81,6 +105,12 @@ export function compareVersions(a: string, b: string): number {
     }
     if (ap.prerelease !== bp.prerelease) {
         return ap.prerelease ? -1 : 1;
+    }
+    if (ap.prerelease && bp.prerelease) {
+        // 同为预发布：按标识字符串比较（alpha < beta < rc）
+        const pa = stripVersionPrefix(a).split('-')[1] ?? '';
+        const pb = stripVersionPrefix(b).split('-')[1] ?? '';
+        if (pa !== pb) return pa < pb ? -1 : 1;
     }
     return 0;
 }
@@ -115,6 +145,8 @@ export function pickInstallerAsset(
     const setup = byName(/\.Setup\.[^/\\]+\.exe$/i);
     const portable = byName(/Portable/i);
 
+    // portable 优先便携版；该形态 release 未附便携资产时回退 Setup（保证用户仍有更新可装，
+    // 而非卡在无更新状态）——正常发布流程会同时附齐两种形态。
     const asset = kind === 'portable' ? (portable ?? setup ?? anyExe) : (setup ?? anyExe);
     return asset ?? zip;
 }

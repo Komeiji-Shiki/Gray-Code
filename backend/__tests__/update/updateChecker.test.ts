@@ -54,6 +54,24 @@ describe('compareVersions', () => {
     it('非数字段按 0 处理', () => {
         expect(compareVersions('1.4.x', '1.4.0')).toBe(0);
     });
+
+    it('dash 构建号与点号形式等价（1.7.5-2dev ↔ 1.7.5.2dev）', () => {
+        expect(compareVersions('1.7.5-2dev', '1.7.5.2dev')).toBe(0);
+        expect(compareVersions('1.7.6-1', '1.7.6.1')).toBe(0);
+        expect(compareVersions('v1.7.5.1dev', '1.7.5-1dev')).toBe(0);
+    });
+
+    it('dash 构建号递增可识别（1.7.5-3dev > 1.7.5-2dev，不再丢失构建号）', () => {
+        expect(compareVersions('1.7.5-3dev', '1.7.5-2dev')).toBe(1);
+        expect(compareVersions('1.7.5-2dev', '1.7.5-3dev')).toBe(-1);
+        expect(compareVersions('1.7.5-3dev', '1.7.6.1')).toBe(-1);
+    });
+
+    it('语义预发布（-beta 等）仍判为旧', () => {
+        expect(compareVersions('1.0.0-beta', '1.0.0')).toBe(-1);
+        expect(compareVersions('1.0.0', '1.0.0-beta')).toBe(1);
+        expect(compareVersions('1.0.0-alpha', '1.0.0-beta')).toBe(-1);
+    });
 });
 
 describe('shouldCheck', () => {
