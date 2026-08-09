@@ -17,6 +17,7 @@ import { createContextChipElement } from './inputBox/ContextChipFactory'
 import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNodesDom'
 import {
   getCaretTextOffset,
+  getDomPointFromTextOffset,
   insertLineBreakAtCaret,
   insertPlainTextAsSingleUndo,
   insertTextAtCaret,
@@ -76,6 +77,17 @@ const manualEditorHeight = ref<number | null>(null)
 // 拖拽状态
 const isDragOver = ref(false)
 
+
+// ========== 自定义撤销/重做历史栈 ==========
+// VS Code Webview 中浏览器原生 undo 栈不可靠（execCommand 产生的记录常丢失），
+// 因此自行维护历史快照，接管 Ctrl+Z / Ctrl+Y。
+interface HistoryEntry {
+  nodes: EditorNode[]
+  caretOffset: number
+}
+const history = ref<HistoryEntry[]>([])
+const historyIndex = ref(-1)
+const MAX_HISTORY = 100
 // 滚动条状态
 const thumbHeight = ref(0)
 const thumbTop = ref(0)
@@ -422,6 +434,51 @@ function renderNodesToDom() {
 
 // ========== input / key / IME ==========
 
+function pushHistory(nodes: EditorNode[], caretOffset: number) {
+  if (historyIndex.value < history.value.length - 1) {
+    history.value = history.value.slice(0, historyIndex.value + 1)
+  }
+  history.value.push({ nodes: JSON.parse(JSON.stringify(nodes)), caretOffset })
+  if (history.value.length > MAX_HISTORY) {
+    history.value.shift()
+  } else {
+    historyIndex.value++
+  }
+}
+
+function undo() {
+  if (historyIndex.value <= 0) return
+  historyIndex.value--
+  restoreHistoryEntry(history.value[historyIndex.value])
+}
+
+function redo() {
+  if (historyIndex.value >= history.value.length - 1) return
+  historyIndex.value++
+  restoreHistoryEntry(history.value[historyIndex.value])
+}
+
+function restoreHistoryEntry(entry: HistoryEntry) {
+  if (!editorRef.value) return
+  isInputting = true
+  emit('update:nodes', entry.nodes)
+  nextTick(() => {
+    if (!editorRef.value) { isInputting = false; return }
+    renderNodesToDom()
+    const point = getDomPointFromTextOffset(editorRef.value, entry.caretOffset)
+    const range = document.createRange()
+    range.setStart(point.container, point.offset)
+    range.collapse(true)
+    const selection = window.getSelection()
+    if (selection) {
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    adjustHeight()
+    isInputting = false
+  })
+}
+
 function handleInput() {
   const editor = editorRef.value
   if (!editor) return
@@ -439,6 +496,7 @@ function handleInput() {
   atTrigger.onTextChanged(textContent, cursorPos)
 
   emit('update:nodes', newNodes)
+  pushHistory(newNodes, cursorPos)
 
   nextTick(() => {
     isInputting = false
@@ -455,6 +513,19 @@ function handleKeydown(e: KeyboardEvent) {
   if (!editor) return
 
   if (atTrigger.handleKeydown(e)) return
+
+  // 自定义撤销/重做：接管浏览器原生 undo（VS Code Webview 中原生 undo 不可靠）
+  const isMod = e.ctrlKey || e.metaKey
+  if (isMod && !e.shiftKey && e.key.toLowerCase() === 'z') {
+    e.preventDefault()
+    undo()
+    return
+  }
+  if (isMod && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+    e.preventDefault()
+    redo()
+    return
+  }
 
   const onContextRemoved = (removedId: string) => {
     if (previewContext.value?.id === removedId) previewContext.value = null
@@ -755,6 +826,7 @@ onMounted(() => {
   nextTick(() => {
     renderNodesToDom()
     adjustHeight()
+    pushHistory(props.nodes, 0)
   })
 
   // 扩展端关闭 diff 标签归还焦点后，把光标放回输入框。

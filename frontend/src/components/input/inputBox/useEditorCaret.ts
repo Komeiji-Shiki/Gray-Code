@@ -224,7 +224,7 @@ export function insertPlainTextAsSingleUndo(editor: HTMLElement, text: string): 
   return { ok: true, inputFired: false }
 }
 
-function getDomPointFromTextOffset(editor: HTMLElement, targetOffset: number): DomPoint {
+export function getDomPointFromTextOffset(editor: HTMLElement, targetOffset: number): DomPoint {
   let textCount = 0
   const children = Array.from(editor.childNodes)
 
