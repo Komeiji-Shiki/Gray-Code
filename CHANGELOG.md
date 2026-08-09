@@ -11,6 +11,15 @@
 ### Added
   - 关闭开屏动画时新增主题自适应的「石墨蚀刻光场」启动占位：以宿主编辑器背景、侧栏、浮层与前景色变量生成银黑/雾白灰阶渐变，叠加宽幅棱面、椭圆折射层和极淡拉丝纹理；中心光环低频呼吸并轻微偏转，斜向交界的灰银反光周期性掠过，明确表示仍在加载，同时不复刻正式 Splash 的 Logo 演出；不含 logo、文字或传统转圈图标，`prefers-reduced-motion` 下恢复静态画面。设置读取完成后立即让位给主界面；配置尚未解析期间同样使用该底图，避免首帧空白且仍不会预挂载 Splash。
 
+### Changed
+  - 移除首次启动自动预置的默认 Gemini 渠道（此前扩展激活时无条件创建 `gemini-pro` 渠道，含占位 API Key，易让用户误以为开箱即用）。现在首次打开显示「无渠道」空态，引导用户新建渠道并填写 API Key；设置页允许删除全部渠道（不再强制「至少保留一个」），删除当前聊天会话正在使用的渠道后自动切换到剩余渠道、删光则回到无渠道空态。
+  - 切换渠道类型时保留自定义 API URL 与 API Key（API Key 此前已保留；自定义端点如中转站/代理对多种类型通用，无需重写）；若旧 URL 只是旧类型的默认端点（用户未自定义），则跟随新类型默认端点，避免残留旧默认值。模型列表、高级选项等类型特有字段仍重置为新类型默认值；相关确认框与提示文案同步更新。
+
+### Fixed
+  - 修复「最近对话/历史对话无法删除」：删除确认框（ConfirmDialog）确认时先置 `visible=false`（同步 emit `update:modelValue:false`）再 emit `confirm`，`ConversationList.vue` 通过 `@update:model-value` 同步清空 `pendingDeleteId` 导致 `confirmDelete` 读到的恒为 null、`delete` 事件永不发出（点击删除只关框无任何动作、无报错、刷新后对话仍在）。改为仅由 `@cancel` 清理待删 id；同类竞态一并修复于 `DirtyFilesConfirm.vue`（v-model setter 同步清空待确认动作导致「丢弃更改并继续」只关框不执行续作）。
+  - 删除对话失败时给出可见错误提示（此前失败仅写 store error 与控制台日志，用户看到的是「点了没反应」）。
+  - 修复 `ActivityTracker.test.ts` 的午夜跨天脆弱性：测试累计推进约 30+ 分钟，真实运行时刻临近午夜时 `Date.now()` 跨天导致 `todaySamples()` 读取次日空文件而误报失败；现固定系统时间（beforeEach 重新设置，afterEach `useRealTimers` 自动恢复）。
+
 ## [1.4.6] - 2026-08-08
 
 ### Added

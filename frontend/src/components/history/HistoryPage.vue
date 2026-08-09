@@ -10,6 +10,7 @@ import ConversationList from './ConversationList.vue'
 import { useChatStore, useSettingsStore } from '@/stores'
 import type { WorkspaceFilter } from '@/stores/chatStore'
 import { t } from '../../i18n'
+import { showNotification } from '../../utils/vscode'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
@@ -111,9 +112,13 @@ async function handleSelect(id: string) {
 // 处理删除对话
 async function handleDelete(id: string) {
   try {
-    await chatStore.deleteConversation(id)
+    const ok = await chatStore.deleteConversation(id)
+    if (!ok) {
+      await showNotification(t('stores.chatStore.errors.deleteConversationFailed'), 'error')
+    }
   } catch (error) {
     console.error('Failed to delete conversation from history page:', error)
+    await showNotification(t('stores.chatStore.errors.deleteConversationFailed'), 'error')
   }
 }
 </script>

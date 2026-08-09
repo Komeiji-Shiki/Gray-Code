@@ -429,14 +429,6 @@ function onConfirmDialogConfirm() {
 // 删除当前配置
 async function deleteCurrentConfig() {
   if (!currentConfig.value) return
-  if (configs.value.length <= 1) {
-    showConfirm(
-      t('components.settings.channelSettings.dialog.delete.title'),
-      t('components.settings.channelSettings.dialog.delete.atLeastOne'),
-      () => {}
-    )
-    return
-  }
   
   showConfirm(
     t('components.settings.channelSettings.dialog.delete.title'),
@@ -447,6 +439,18 @@ async function deleteCurrentConfig() {
           configId: currentConfig.value!.id
         })
         await loadConfigs()
+        // 删光渠道：清空选择并同步 chatStore（无渠道状态）
+        if (configs.value.length === 0) {
+          currentConfigId.value = ''
+          if (chatStore.configId) {
+            await chatStore.setConfigId('')
+          }
+        } else if (!configs.value.some(c => c.id === currentConfigId.value)) {
+          // 优先保留聊天仍在用的渠道，其次选中剩余第一个，避免误切当前会话渠道
+          currentConfigId.value = configs.value.some(c => c.id === chatStore.configId)
+            ? chatStore.configId
+            : configs.value[0].id
+        }
       } catch (error) {
         console.error('Failed to delete config:', error)
       }
@@ -708,7 +712,7 @@ onMounted(async () => {
         v-if="!isEditing"
         class="icon-btn danger"
         :title="t('components.settings.channelSettings.selector.delete')"
-        :disabled="configs.length <= 1"
+        :disabled="!currentConfigId"
         @click="deleteCurrentConfig"
       >
         <i class="codicon codicon-trash"></i>
@@ -1304,6 +1308,17 @@ onMounted(async () => {
         </div>
       </div>
     </div>
+
+    <!-- 无渠道空态：首次打开无默认渠道，引导用户新建 -->
+    <div v-else class="config-empty">
+      <i class="codicon codicon-plug channel-empty-icon"></i>
+      <p class="config-empty-text">{{ t('components.settings.channelSettings.empty.title') }}</p>
+      <p class="config-empty-hint">{{ t('components.settings.channelSettings.empty.hint') }}</p>
+      <button class="btn primary" @click="showNewDialog = true">
+        <i class="codicon codicon-add"></i>
+        {{ t('components.settings.channelSettings.empty.create') }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -1319,6 +1334,36 @@ onMounted(async () => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* 无渠道空态 */
+.config-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+  text-align: center;
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.channel-empty-icon {
+  font-size: 32px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.config-empty-text {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.config-empty-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
 }
 
 .config-select-wrapper {

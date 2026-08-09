@@ -74,7 +74,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         // 旧类型特有字段（Gemini 思考配置）不再残留
         expect(after.options.thinkingConfig).toBeUndefined();
         expect(after.options.thinkingLevel).toBeUndefined();
-        // 新类型默认字段就位
+        // 旧 url 是旧类型默认端点（未自定义）：跟随新类型默认端点
         expect(after.url).toBe('https://api.anthropic.com/v1');
         expect(after.options.thinking).toEqual(expect.objectContaining({ budget_tokens: 10000 }));
         expect(after.optionsEnabled.thinking).toBe(false);
@@ -119,6 +119,25 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.apiKey).toBe('sk-proxy-key');
         // 未显式传入的类型特有字段仍取新类型默认值
         expect(after.options.max_output_tokens).toBe(65535);
+    });
+
+    it('类型变更时自定义 URL 与 API Key 保留（无需用户重写端点/密钥）', async () => {
+        const { manager, id } = await createGeminiManager();
+
+        // 用户自定义端点（中转站/代理），非 gemini 默认端点
+        await manager.updateConfig(id, { url: 'https://my-proxy.example.com/gemini' });
+
+        await manager.updateConfig(id, { type: 'openai' });
+
+        const after = await manager.getConfig(id) as any;
+        expect(after.type).toBe('openai');
+        // 自定义端点跨类型保留；apiKey 保留
+        expect(after.url).toBe('https://my-proxy.example.com/gemini');
+        expect(after.apiKey).toBe('AIza-test-key');
+        // 类型特有字段仍重置（模型列表/选项不残留）
+        expect(after.model).toBe('');
+        expect(after.models).toEqual([]);
+        expect(after.options.thinkingConfig).toBeUndefined();
     });
 
     it('openai -> openai-responses 互转：默认 URL 与选项同步切换', async () => {

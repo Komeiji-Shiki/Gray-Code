@@ -985,6 +985,11 @@ const ja: LanguageMessages = {
                     confirm: '確認',
                     cancel: 'キャンセル'
                 },
+                empty: {
+                    title: 'チャンネルが設定されていません',
+                    hint: 'チャンネルを作成して API Key を入力すると、会話を開始できます。',
+                    create: 'チャンネルを作成'
+                },
                 dialog: {
                     new: {
                         title: '新規設定',
@@ -999,13 +1004,12 @@ const ja: LanguageMessages = {
                     delete: {
                         title: '設定を削除',
                         message: '設定 "{name}" を削除してもよろしいですか？この操作は元に戻せません。',
-                        atLeastOne: '少なくとも 1 つの設定を保持する必要があります',
                         cancel: 'キャンセル',
                         confirm: '確認'
                     },
                     changeType: {
                         title: 'チャンネルタイプの変更',
-                        message: 'チャンネルタイプを「{name}」に変更してもよろしいですか？このタイプ固有のパラメータ（API URL、モデル一覧、詳細オプションなど）は新しいタイプのデフォルトにリセットされます。共通設定（名前、API Key、タイムアウト、リトライなど）は保持されます。'
+                        message: 'チャンネルタイプを「{name}」に変更してもよろしいですか？このタイプ固有のパラメータ（モデル一覧、詳細オプションなど）は新しいタイプのデフォルトにリセットされます。API Key とカスタム API URL は保持され、共通設定は変更されません。'
                     }
                 },
                 form: {
@@ -1032,7 +1036,7 @@ const ja: LanguageMessages = {
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API',
-                        changeHint: 'チャンネルタイプを変更すると、このタイプ固有のパラメータ（API URL、モデル一覧、詳細オプションなど）がデフォルトにリセットされます。共通設定は保持されます。'
+                        changeHint: 'チャンネルタイプを変更すると、このタイプ固有のパラメータ（モデル一覧、詳細オプションなど）がデフォルトにリセットされます。API Key とカスタム API URL は保持され、共通設定は変更されません。'
                     },
                     toolMode: {
                         label: 'ツール呼び出し形式',

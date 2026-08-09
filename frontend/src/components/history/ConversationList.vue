@@ -149,13 +149,18 @@ function getIntegrityTooltip(conversation: Conversation): string {
       </div>
     </div>
 
+    <!--
+      注意：这里不能通过 @update:model-value 清空 pendingDeleteId。
+      ConfirmDialog 确认时先置 visible=false（同步 emit update:modelValue:false）再 emit confirm，
+      若在此同步清空，confirmDelete 读到的恒为 null，删除事件将永远不会发出。
+      所有关闭路径（取消按钮 / 遮罩点击 / Esc）都会 emit cancel，由 @cancel 统一清空。
+    -->
     <ConfirmDialog
       :model-value="pendingDeleteId !== null"
       :title="t('components.history.deleteConversation')"
       :message="t('components.history.deleteConversationConfirm')"
       :confirm-text="t('common.delete')"
       is-danger
-      @update:model-value="value => { if (!value) pendingDeleteId = null }"
       @confirm="confirmDelete"
       @cancel="pendingDeleteId = null"
     />
