@@ -641,6 +641,7 @@ export class BackendHost {
     // GitHub Releases 自动更新检查（与 ChatViewProvider 对齐：设置项开关 + 代理 + 10s 延迟首查）
     this.updateChecker = new UpdateChecker({
       isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
+      getInstallerKind: () => (process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'installed'),
       getProxyUrl: () => {
         const proxy = this.settingsManager.getSettings().proxy;
         return proxy?.enabled && proxy?.url ? proxy.url : undefined;

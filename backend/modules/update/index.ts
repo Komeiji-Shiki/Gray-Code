@@ -12,10 +12,14 @@ export {
     compareVersions,
     shouldCheck,
     parseReleaseResponse,
+    resolveReleaseChannel,
+    pickInstallerAsset,
 } from './UpdateChecker';
 
 export type {
     UpdateInfo,
     UpdateCheckStatus,
     UpdateCheckerOptions,
+    ReleaseChannel,
+    InstallerKind,
 } from './UpdateChecker';

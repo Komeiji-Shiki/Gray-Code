@@ -167,18 +167,3 @@ export function isSearchInFilesReplaceForbidden(toolPolicy: readonly string[] | 
     }
     return !toolPolicy.some(name => GENERAL_FILE_WRITE_TOOLS.has(name));
 }
-
-/**
- * 获取只读模式下被认为是危险的工具集合
- * 
- * @returns 危险工具名称的 Set
- */
-export function getReadonlyModeDangerousTools(): Set<string> {
-    return new Set([
-        'apply_diff',
-        'write_file',
-        'delete_file',
-        'create_directory',
-        'execute_command'
-    ]);
-}

@@ -385,7 +385,13 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
                 warning: true,
                 error: true,
                 taskComplete: true,
-                taskError: true
+                taskError: true,
+                subagent: {
+                    warning: true,
+                    error: true,
+                    taskComplete: true,
+                    taskError: true
+                }
             },
             theme: 'beep',
             windowsAgentStopNotification: {

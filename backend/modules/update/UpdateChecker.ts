@@ -93,22 +93,46 @@ export function shouldCheck(lastCheckAt: number | undefined, now: number, force:
 }
 
 /**
+ * 当前运行形态（决定一键更新下载的安装包类型）：
+ * - portable：便携版（自解压 exe，运行时注入 PORTABLE_EXECUTABLE_DIR）——只应下载
+ *   GrayCode-Portable-*.exe，避免便携版用户被拉进安装版（污染系统环境）；
+ * - installed：安装版（NSIS Setup）或免安装 zip——优先 GrayCode.Setup.*.exe。
+ */
+export type InstallerKind = 'portable' | 'installed';
+
+/** 按运行形态挑选安装包资产（纯函数，可独立测试） */
+export function pickInstallerAsset(
+    assets: Array<Record<string, unknown>>,
+    kind: InstallerKind,
+): { name: string; browser_download_url: string } | undefined {
+    const isNamed = (a: Record<string, unknown>): a is { name: string; browser_download_url: string } & Record<string, unknown> =>
+        typeof a?.name === 'string' && !!a.name;
+    const named = assets.filter(isNamed);
+    const byName = (pattern: RegExp) => named.find(a => pattern.test(a.name));
+    const anyExe = named.find(a => a.name.endsWith('.exe'));
+    const zip = named.find(a => /GrayCode/i.test(a.name) && a.name.endsWith('.zip'));
+
+    const setup = byName(/\.Setup\.[^/\\]+\.exe$/i);
+    const portable = byName(/Portable/i);
+
+    const asset = kind === 'portable' ? (portable ?? setup ?? anyExe) : (setup ?? anyExe);
+    return asset ?? zip;
+}
+
+/**
  * 解析 GitHub Releases API 响应为 UpdateInfo。
  * 响应格式异常时返回 null（调用方按错误处理）。
  *
- * 资产匹配（fork 桌面版）：优先 NSIS 安装包（GrayCode.Setup.*.exe），
- * 其次任意 .exe（便携版），再次 .zip（免安装包）。
+ * 资产匹配（fork 桌面版）：按当前运行形态匹配——
+ * - portable：优先便携版 exe（GrayCode-Portable-*），避免便携用户被拉进安装版；
+ * - installed：优先 NSIS 安装包（GrayCode.Setup.*.exe），其次任意 .exe，再次 .zip。
  */
-export function parseReleaseResponse(data: unknown): UpdateInfo | null {
+export function parseReleaseResponse(data: unknown, installerKind: InstallerKind = 'installed'): UpdateInfo | null {
     if (!data || typeof data !== 'object') return null;
     const raw = data as Record<string, unknown>;
     if (typeof raw.tag_name !== 'string' || !raw.tag_name) return null;
     const assets: Array<Record<string, unknown>> = Array.isArray(raw.assets) ? raw.assets as Array<Record<string, unknown>> : [];
-    const isNamed = (a: Record<string, unknown>) => typeof a?.name === 'string' && !!a.name;
-    const setup = assets.find(a => isNamed(a) && /\.Setup\.[^/\\]+\.exe$/i.test(a.name as string));
-    const exe = setup ?? assets.find(a => isNamed(a) && (a.name as string).endsWith('.exe'));
-    const isGrayCodeZip = (a: Record<string, unknown>) => isNamed(a) && /GrayCode/i.test(a.name as string) && (a.name as string).endsWith('.zip');
-    const installer = exe ?? assets.find(isGrayCodeZip);
+    const installer = pickInstallerAsset(assets, installerKind);
     return {
         version: stripVersionPrefix(raw.tag_name),
         tagName: raw.tag_name,
@@ -119,6 +143,19 @@ export function parseReleaseResponse(data: unknown): UpdateInfo | null {
             : undefined,
         publishedAt: typeof raw.published_at === 'string' ? raw.published_at : '',
     };
+}
+
+/**
+ * 版本发布通道：dev 通道（tag/版本号含 dev 后缀，如 v1.7.5.2dev / 1.7.5.2dev / 1.7.5-2dev）
+ * 与 stable 通道（正式版）。稳定版用户只应被提示升级到 stable release，dev 用户只应被
+ * 提示升级到 dev release（dev 无候选时回退 stable）——避免 dev/stable 互相污染更新提示
+ * （releases/latest 按创建时间返回，dev release 晚于 stable 创建时会把 stable 用户引到
+ * dev 通道，反之亦然）。
+ */
+export type ReleaseChannel = 'stable' | 'dev';
+
+export function resolveReleaseChannel(version: string): ReleaseChannel {
+    return stripVersionPrefix(version).toLowerCase().includes('dev') ? 'dev' : 'stable';
 }
 
 // ─── UpdateChecker ──────────────────────────────────
@@ -137,6 +174,8 @@ export interface UpdateCheckerOptions {
     globalStoragePath: string;
     /** 当前扩展版本（缺省从 vscode.extensions 读取） */
     getCurrentVersion?: () => string;
+    /** 当前运行形态（缺省 installed）：便携版运行时注入 PORTABLE_EXECUTABLE_DIR */
+    getInstallerKind?: () => InstallerKind;
     /** fetch 实现（缺省按代理配置创建；测试注入） */
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
     /** 当前时间戳（测试注入） */
@@ -183,9 +222,9 @@ export class UpdateChecker {
 
         this.status = { state: 'checking' };
         try {
-            const info = await this.fetchLatestRelease();
             const current = this.getCurrentVersion();
-            if (current && compareVersions(info.version, current) > 0) {
+            const info = await this.fetchLatestRelease(resolveReleaseChannel(current || ''));
+            if (current && info && compareVersions(info.version, current) > 0) {
                 this.status = { state: 'updateAvailable', checkedAt: now, update: info };
             } else {
                 this.status = { state: 'upToDate', checkedAt: now };
@@ -270,6 +309,12 @@ export class UpdateChecker {
         return ext?.packageJSON?.version || '';
     }
 
+    private getInstallerKind(): InstallerKind {
+        return this.options.getInstallerKind
+            ? this.options.getInstallerKind()
+            : 'installed';
+    }
+
     private getFetch(): (url: string, init?: RequestInit) => Promise<Response> {
         if (this.options.fetchImpl) {
             return this.options.fetchImpl;
@@ -278,22 +323,40 @@ export class UpdateChecker {
         return createProxyFetch(proxyUrl) as (url: string, init?: RequestInit) => Promise<Response>;
     }
 
-    private async fetchLatestRelease(): Promise<UpdateInfo> {
+    /**
+     * 拉取最新 release（按发布通道）。
+     *
+     * 一次请求取全部 releases（per_page=30 覆盖历史 dev/stable 序列），在通道内按
+     * **版本号**取最高（而非创建时间）：
+     * - stable 用户只看 stable release（dev release 无论何时创建都不影响正式版用户）；
+     * - dev 用户只看 dev release（dev 通道无候选时回退全部 release，保证 dev 用户总能
+     *   收到更新提示）；
+     * - 上游/历史 tag（dev、dev-1.7.1 等无法按版本号解析的）版本恒为 0，天然不参与竞争。
+     * 兼容单对象响应（测试/极端情况）。
+     */
+    private async fetchLatestRelease(channel: ReleaseChannel): Promise<UpdateInfo | null> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), UPDATE_FETCH_TIMEOUT_MS);
         try {
-            const res = await this.getFetch()(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+            const res = await this.getFetch()(`https://api.github.com/repos/${UPDATE_REPO}/releases?per_page=30`, {
                 headers: { 'Accept': 'application/vnd.github+json' },
                 signal: controller.signal,
             });
             if (!res.ok) {
                 throw new Error(`GitHub Releases API 返回 ${res.status} ${res.statusText}`);
             }
-            const info = parseReleaseResponse(await res.json());
-            if (!info) {
+            const body = await res.json();
+            const rawReleases = Array.isArray(body) ? body : [body];
+            const installerKind = this.getInstallerKind();
+            const releases = rawReleases
+                .map(r => parseReleaseResponse(r, installerKind))
+                .filter((r): r is UpdateInfo => r !== null);
+            if (releases.length === 0) {
                 throw new Error('GitHub Releases API 响应格式异常');
             }
-            return info;
+            const channelReleases = releases.filter(r => resolveReleaseChannel(r.version) === channel);
+            const candidates = channelReleases.length > 0 ? channelReleases : releases;
+            return candidates.reduce((best, cur) => (compareVersions(cur.version, best.version) > 0 ? cur : best));
         } finally {
             clearTimeout(timer);
         }

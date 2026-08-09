@@ -484,7 +484,7 @@ function restoreHistoryEntry(entry: HistoryEntry) {
   })
 }
 
-function handleInput() {
+function handleInput(e?: InputEvent) {
   const editor = editorRef.value
   if (!editor) return
 
@@ -501,7 +501,9 @@ function handleInput() {
   atTrigger.onTextChanged(textContent, cursorPos)
 
   emit('update:nodes', newNodes)
-  pushHistory(newNodes, cursorPos)
+  // IME 合成中间态（每个拼音键一次 input）不入撤销栈：合成结束由
+  // handleCompositionEnd 补推最终态，避免历史被拼音中间态灌满且反复全量深拷贝。
+  if (!e?.isComposing) pushHistory(newNodes, cursorPos)
 
   nextTick(() => {
     isInputting = false
@@ -576,6 +578,9 @@ function handleCompositionStart() {
 
 function handleCompositionEnd() {
   emit('composition-end')
+  // IME 合成结束（Chromium 不派发收尾 input 事件）：把最终结果补推为一个历史条目，
+  // 合成期间的中间态已全部跳过——撤销一步即回到合成后状态，而不是逐拼音回退。
+  handleInput()
 }
 
 function handlePaste(e: ClipboardEvent) {
@@ -814,6 +819,12 @@ watch(() => props.nodes, () => {
   }
 
   if (!isInputting && editorRef.value) {
+    // 外部清空（发送成功/切换会话/恢复历史）：撤销栈同步复位，
+    // 防止 Ctrl+Z 把已发送的草稿恢复到输入框（自定义撤销栈与外部受控状态脱节）。
+    if (props.nodes.length === 0 && history.value.length > 0) {
+      history.value = []
+      historyIndex.value = -1
+    }
     const domNodes = extractNodesFromEditor(editorRef.value, {
       knownNodes: props.nodes,
       transientContexts
@@ -888,7 +899,7 @@ defineExpose({
       :class="{ disabled: !!disabled, 'is-empty': props.nodes.length === 0 }"
       contenteditable="true"
       :data-placeholder="placeholderText"
-      @input="handleInput"
+      @input="handleInput($event)"
       @keydown="handleKeydown"
       @scroll="handleScroll"
       @compositionstart="handleCompositionStart"

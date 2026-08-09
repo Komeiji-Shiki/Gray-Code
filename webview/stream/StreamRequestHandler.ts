@@ -377,7 +377,7 @@ export class StreamRequestHandler {
       this.deps.finalizeRequest(requestId);
       return;
     }
-    const { toolResponses, annotation, annotationMessageId, configId, modelOverride, promptModeId } = data;
+    const { toolResponses, configId, modelOverride, promptModeId } = data;
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
     let controller: AbortController | undefined;
     let summarizeController: AbortController | undefined;

@@ -3682,6 +3682,7 @@ export class ConversationManager {
             const functionCallIds = new Set<string>();
             const responseIdx = new Map<string, number>();     // id → historyIndex
             const placeholderIds = new Set<string>();          // id 是占位
+            const functionCallLastIndex = new Map<string, number>(); // functionCallId → 最后出现的 historyIndex（供 BR-08 定位归属消息，避免二次全历史扫描）
             for (let i = 0; i < history.length; i++) {
                 const msg = history[i];
                 if (!msg.parts) continue;
@@ -3689,6 +3690,7 @@ export class ConversationManager {
                     const callId = part.functionCall?.id;
                     if (callId) {
                         functionCallIds.add(callId);
+                        functionCallLastIndex.set(callId, i);
                     }
                     const fr = part.functionResponse;
                     if (!fr?.id) continue;
@@ -3746,13 +3748,10 @@ export class ConversationManager {
                 // tool] 的非法交替顺序，触发 OpenAI/Anthropic 400。插回 FR 块保证 assistant
                 // 的 tool_calls 永远紧随其 tool 消息，且与前端窗口（按 FR 块顺序渲染）对齐。
                 let ownerMessageIndex = -1;
-                for (let i = 0; i < history.length; i++) {
-                    const msg = history[i];
-                    if (!msg.parts) continue;
-                    for (const part of msg.parts) {
-                        if (part.functionCall?.id && settledResponseIds.has(part.functionCall.id)) {
-                            ownerMessageIndex = i;
-                        }
+                for (const id of settledResponseIds) {
+                    const idx = functionCallLastIndex.get(id);
+                    if (idx !== undefined && idx > ownerMessageIndex) {
+                        ownerMessageIndex = idx;
                     }
                 }
                 // 找不到归属消息时回退到历史末尾（保持与旧行为一致，不应实际发生：

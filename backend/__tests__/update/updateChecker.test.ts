@@ -13,6 +13,8 @@ import {
     compareVersions,
     shouldCheck,
     parseReleaseResponse,
+    resolveReleaseChannel,
+    pickInstallerAsset,
     UPDATE_CHECK_INTERVAL_MS,
 } from '../../modules/update';
 import * as vscode from 'vscode';
@@ -133,6 +135,69 @@ describe('parseReleaseResponse', () => {
         expect(parseReleaseResponse('oops')).toBeNull();
         expect(parseReleaseResponse({})).toBeNull();
         expect(parseReleaseResponse({ tag_name: 123 })).toBeNull();
+    });
+
+    it('installed 形态优先 Setup 安装包', () => {
+        const info = parseReleaseResponse({
+            tag_name: 'v1.7.6.1',
+            assets: [
+                { name: 'GrayCode-Portable-1.7.6-1.exe', browser_download_url: 'https://example.com/P.exe' },
+                { name: 'GrayCode.Setup.1.7.6-1.exe', browser_download_url: 'https://example.com/S.exe' },
+            ],
+        });
+        expect(info!.installerAssetUrl).toContain('S.exe');
+    });
+
+    it('portable 形态优先便携版 exe（绝不把便携用户拉进安装版）', () => {
+        const info = parseReleaseResponse({
+            tag_name: 'v1.7.5.2dev',
+            assets: [
+                { name: 'GrayCode.Setup.1.7.5-2dev.exe', browser_download_url: 'https://example.com/S.exe' },
+                { name: 'GrayCode-Portable-1.7.5-2dev.exe', browser_download_url: 'https://example.com/P.exe' },
+            ],
+        }, 'portable');
+        expect(info!.installerAssetUrl).toContain('P.exe');
+    });
+
+    it('portable 形态无便携资产时回退 Setup（仍有更新可装）', () => {
+        const info = parseReleaseResponse({
+            tag_name: 'v1.7.6.1',
+            assets: [
+                { name: 'GrayCode.Setup.1.7.6-1.exe', browser_download_url: 'https://example.com/S.exe' },
+            ],
+        }, 'portable');
+        expect(info!.installerAssetUrl).toContain('S.exe');
+    });
+
+    it('pickInstallerAsset：无匹配时回退 zip', () => {
+        const asset = pickInstallerAsset(
+            [{ name: 'GrayCode-1.7.6.1-win.zip', browser_download_url: 'https://example.com/Z.zip' }],
+            'portable',
+        );
+        expect(asset?.browser_download_url).toContain('Z.zip');
+        expect(pickInstallerAsset([{ name: 'source.zip', browser_download_url: 'x' }], 'installed')).toBeUndefined();
+    });
+});
+
+describe('resolveReleaseChannel', () => {
+    it('dev 后缀归入 dev 通道（tag/根版本/electron-builder 三种命名）', () => {
+        expect(resolveReleaseChannel('1.7.5.2dev')).toBe('dev');
+        expect(resolveReleaseChannel('v1.7.5dev')).toBe('dev');
+        expect(resolveReleaseChannel('1.7.5-2dev')).toBe('dev');
+        expect(resolveReleaseChannel('v1.7.5.1dev')).toBe('dev');
+    });
+
+    it('正式版归入 stable 通道', () => {
+        expect(resolveReleaseChannel('1.7.6.1')).toBe('stable');
+        expect(resolveReleaseChannel('v1.6.9')).toBe('stable');
+        expect(resolveReleaseChannel('1.7.6-1')).toBe('stable');
+        expect(resolveReleaseChannel('')).toBe('stable');
+    });
+
+    it('历史手动 tag（dev、dev-1.7.1）按 dev 处理但版本恒为 0 不参与竞争', () => {
+        expect(resolveReleaseChannel('dev')).toBe('dev');
+        expect(resolveReleaseChannel('dev-1.7.1')).toBe('dev');
+        expect(compareVersions('dev-1.7.1', '1.7.5.2dev')).toBe(-1);
     });
 });
 
@@ -268,7 +333,96 @@ describe('UpdateChecker.check', () => {
         const status = await checker.check();
         expect(status.state).toBe('error');
     });
+
+    it('稳定版用户只匹配 stable release：dev release 不污染更新提示', async () => {
+        // 列表按创建时间倒序（dev 最新创建在最前，若按时间取会误命中 dev）
+        const { checker } = createChecker({
+            fetchImpl: async () => okResponse([
+                release('v1.7.7dev', ['GrayCode.Setup.1.7.7-dev.exe']),
+                release('v1.7.6.1', ['GrayCode.Setup.1.7.6-1.exe']),
+            ]),
+            currentVersion: '1.7.6.1',
+        });
+        const status = await checker.check();
+        expect(status).toEqual({ state: 'upToDate', checkedAt: 2_000_000 });
+    });
+
+    it('稳定版用户可升级到更新的 stable release（列表含更高 dev 也不选它）', async () => {
+        const { checker } = createChecker({
+            fetchImpl: async () => okResponse([
+                release('v1.7.7dev', ['GrayCode.Setup.1.7.7-dev.exe']),
+                release('v1.7.6.2', ['GrayCode.Setup.1.7.6-2.exe']),
+            ]),
+            currentVersion: '1.7.6.1',
+        });
+        const status = await checker.check();
+        expect(status.state).toBe('updateAvailable');
+        if (status.state === 'updateAvailable') {
+            expect(status.update.version).toBe('1.7.6.2');
+            expect(status.update.installerAssetUrl).toContain('GrayCode.Setup.1.7.6-2.exe');
+        }
+    });
+
+    it('dev 用户只匹配 dev release：stable 更高也不跨通道提示', async () => {
+        const { checker } = createChecker({
+            fetchImpl: async () => okResponse([
+                release('v1.7.6.1', ['GrayCode.Setup.1.7.6-1.exe']),
+                release('v1.7.5.2dev', ['GrayCode.Setup.1.7.5-2dev.exe']),
+            ]),
+            currentVersion: '1.7.5.1dev',
+        });
+        const status = await checker.check();
+        expect(status.state).toBe('updateAvailable');
+        if (status.state === 'updateAvailable') {
+            expect(status.update.version).toBe('1.7.5.2dev');
+            expect(status.update.installerAssetUrl).toContain('GrayCode.Setup.1.7.5-2dev.exe');
+        }
+    });
+
+    it('dev 通道无候选时回退 stable（dev 用户至少能收到正式版更新提示）', async () => {
+        const { checker } = createChecker({
+            fetchImpl: async () => okResponse([
+                release('v1.7.6.1', ['GrayCode.Setup.1.7.6-1.exe']),
+            ]),
+            currentVersion: '1.7.5.2dev',
+        });
+        const status = await checker.check();
+        expect(status.state).toBe('updateAvailable');
+        if (status.state === 'updateAvailable') {
+            expect(status.update.version).toBe('1.7.6.1');
+        }
+    });
+
+    it('列表内按版本号取最高（忽略创建顺序）', async () => {
+        const { checker } = createChecker({
+            fetchImpl: async () => okResponse([
+                release('v1.7.6.1', ['GrayCode.Setup.1.7.6-1.exe']),
+                release('v1.7.5', ['GrayCode.Setup.1.7.5.exe']),
+                release('v1.7.6', ['GrayCode.Setup.1.7.6.exe']),
+            ]),
+            currentVersion: '1.7.5',
+        });
+        const status = await checker.check();
+        expect(status.state).toBe('updateAvailable');
+        if (status.state === 'updateAvailable') {
+            expect(status.update.version).toBe('1.7.6.1');
+        }
+    });
 });
+
+/** 构造单个 release 对象（测试用） */
+function release(tagName: string, assetNames: string[]): Record<string, unknown> {
+    return {
+        tag_name: tagName,
+        name: tagName,
+        body: '',
+        published_at: '2026-08-09T00:00:00Z',
+        assets: assetNames.map(name => ({
+            name,
+            browser_download_url: `https://example.com/download/${name}`,
+        })),
+    };
+}
 
 describe('UpdateChecker.downloadAndInstall', () => {
     let tmpDir: string;
