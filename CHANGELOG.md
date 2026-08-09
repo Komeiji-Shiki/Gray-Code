@@ -28,6 +28,9 @@
   - 删除对话失败时给出可见错误提示（此前失败仅写 store error 与控制台日志，用户看到的是「点了没反应」）。
   - 修复 `ActivityTracker.test.ts` 的午夜跨天脆弱性：测试累计推进约 30+ 分钟，真实运行时刻临近午夜时 `Date.now()` 跨天导致 `todaySamples()` 读取次日空文件而误报失败；现固定系统时间（beforeEach 重新设置，afterEach `useRealTimers` 自动恢复）。
 
+### Fixed
+  - 修复 Plan 执行「临时切换渠道」实际是永久切换：`executePlan`（write_file 面板）与任务卡确认流（`withSelectedChannel`）此前通过临时调用 `setConfigId` 切换渠道，但 `setConfigId` 会写后端全局 `settings.setActiveChannelId` 并改写当前对话元数据 `inputModelConfig`（`persistConversationModelConfig`），且 write_file 面板捕获了原渠道却从不恢复——执行完 Plan 后渠道永久停留在 Plan 所选渠道，全局与对话级配置一并被改，与「one-off 仅本次使用」的预期不符。现 `sendMessage` 新增 `configIdOverride` 选项（配套 `pendingConfigIdOverride` 回合级状态）：只覆盖本次 `chatStream` 请求的 `configId`（后端 configId 本就是 per-request 纯值），不写全局设置、不写对话元数据；同一回合内的 `toolConfirmation`（工具确认 / 批量拒绝）沿用同一覆盖渠道，回合终结（complete/cancelled/error）时与 `pendingModelOverride` 一并清除；无全局渠道 + 有回合覆盖时工具确认不再因 `currentConfig` 为空而卡死。三个任务卡确认入口（executePlan / generatePlan / generatePlanFromReview）与 write_file 面板改为直接传 `configIdOverride`，移除 `setConfigId` 切换/恢复 hack（顺带消除执行期间用户手动切渠道被 finally 恢复覆盖的竞态）。新增 `oneOffChannelOverride.test.ts`（8 用例：chatStream 载荷用覆盖渠道且不写全局设置与对话元数据、未指定/空白覆盖保持原行为、发送失败不改全局渠道、toolConfirmation 沿用回合覆盖、无覆盖回退全局、无覆盖且无全局渠道不发送），并扩展终结清理、快照往返回归断言。
+
 ## [1.4.6] - 2026-08-08
 
 ### Added

@@ -53,6 +53,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     currentConfig: ref(null),
     currentPromptModeId: ref('code'),
     pendingModelOverride: ref<string | null>(null),
+    pendingConfigIdOverride: ref<string | null>(null),
     _lastCancelledStreamId: ref<string | null>(null),
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),
@@ -94,7 +95,8 @@ describe('streamHandler 终结事件状态复位', () => {
       streamingMessageId: ref('msg_1'),
       activeStreamId: ref('stream_1'),
       autoSummaryStatus: ref({ isSummarizing: true, mode: 'auto', message: 'x' }),
-      pendingModelOverride: ref('model-override')
+      pendingModelOverride: ref('model-override'),
+      pendingConfigIdOverride: ref('oneoff-config')
     })
     const processQueue = vi.fn()
     const ctx = createCtx(state, { processQueue })
@@ -110,6 +112,8 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(state.activeStreamId.value).toBeNull()
     expect(state.autoSummaryStatus.value).toBeNull()
     expect(state.pendingModelOverride.value).toBeNull()
+    // 一次性渠道覆盖随回合终结一并清除，避免泄漏到后续请求
+    expect(state.pendingConfigIdOverride.value).toBeNull()
 
     await nextTick()
     expect(processQueue).toHaveBeenCalled()
@@ -136,6 +140,53 @@ describe('streamHandler 终结事件状态复位', () => {
 
     await nextTick()
     expect(processQueue).toHaveBeenCalledOnce()
+  })
+
+  it('content-less cancelled 无条件复位流式状态并清除回合覆盖', async () => {
+    const state = createState({
+      isStreaming: ref(true),
+      isWaitingForResponse: ref(true),
+      streamingMessageId: ref('msg_1'),
+      activeStreamId: ref('stream_1'),
+      pendingModelOverride: ref('model-override'),
+      pendingConfigIdOverride: ref('oneoff-config')
+    })
+
+    handleStreamChunk(
+      { type: 'cancelled', conversationId: 'conv_1', streamId: 'stream_1' } as any,
+      createCtx(state)
+    )
+
+    expect(state.isStreaming.value).toBe(false)
+    expect(state.isWaitingForResponse.value).toBe(false)
+    expect(state.pendingModelOverride.value).toBeNull()
+    expect(state.pendingConfigIdOverride.value).toBeNull()
+  })
+
+  it('content-less error 复位流式状态并清除回合覆盖', async () => {
+    const state = createState({
+      isStreaming: ref(true),
+      isWaitingForResponse: ref(true),
+      streamingMessageId: ref('msg_1'),
+      activeStreamId: ref('stream_1'),
+      pendingModelOverride: ref('model-override'),
+      pendingConfigIdOverride: ref('oneoff-config')
+    })
+
+    handleStreamChunk(
+      {
+        type: 'error',
+        conversationId: 'conv_1',
+        streamId: 'stream_1',
+        error: { code: 'API_ERROR', message: 'boom' }
+      } as any,
+      createCtx(state)
+    )
+
+    expect(state.isStreaming.value).toBe(false)
+    expect(state.isWaitingForResponse.value).toBe(false)
+    expect(state.pendingModelOverride.value).toBeNull()
+    expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
   it('携带 content 的 complete 保持原有行为（消息替换 + 状态复位）', async () => {
