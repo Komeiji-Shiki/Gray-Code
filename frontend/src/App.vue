@@ -132,7 +132,8 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
     // 后台模式：工具在启动瞬间即返回 { success: true, data: { background: true } } stub，
     // 真实完成/失败由 taskEvent（background_subagent）送达——若在这里播会「开始就响一次、
     // 完成再响一次」。跳过 stub，交给 taskEvent 路径统一播报。
-    if (tool.status === 'success' && tool.result?.data?.background === true) return
+    const resultData = tool.result?.data as Record<string, unknown> | undefined
+    if (tool.status === 'success' && resultData?.background === true) return
     if (tool.status === 'success' || tool.status === 'error') {
       addSoundPlayedToolId(tool.id)
       dispatchConversationCue(
