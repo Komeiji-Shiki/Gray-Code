@@ -167,11 +167,8 @@ const canSend = computed(() => {
   const hasContexts = getContexts(editorNodes.value).length > 0
   const hasContent = plainText.length > 0 || hasContexts || (props.attachments?.length || 0) > 0
 
-  if (chatStore.hasPendingToolConfirmation && hasContent) {
-    return true
-  }
-
-  // 允许在 AI 响应期间输入（会入队），只需有内容且未上传中即可
+  // 允许在 AI 响应期间输入（会入队）；有待确认工具时同样允许发送（发送即中断当前回合）。
+  // 注意：上传中（props.uploading）一律禁用，含待确认工具场景。
   return hasContent && !props.uploading
 })
 
@@ -192,7 +189,7 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
     emit('send', content, currentAttachments, sendOptions)
   } else {
     // 加入候选区队列
-    // 如果有工具待确认，仍走直接发送路径（拒绝工具的场景）
+    // 如果有工具待确认，仍走直接发送路径（发送即中断当前回合，不入队滞留）
     if (chatStore.hasPendingToolConfirmation) {
       emit('send', content, currentAttachments, sendOptions)
     } else {

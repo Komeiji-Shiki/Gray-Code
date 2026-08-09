@@ -303,4 +303,50 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
         });
         expect(found).toBe(true);
     });
+
+    it('BR-08：drain 收尾超时（不响应 abort 且永不结束的工具）仍结算 cancelled 占位，不留孤儿调用', async () => {
+        const convId = 'conv-main-drain-timeout';
+        const hanging = makeHangingTool();
+        const controller = new AbortController();
+        async function* stream() {
+            yield { delta: [{ text: 'hello' }] };
+            yield { delta: [{ functionCall: { id: 'call_apply3', name: 'apply_diff', args: { oldString: 'a', newString: 'b' } } }] };
+            yield { delta: [], done: true };
+        }
+        const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
+        const { service, conversationManager } = createHarness(channelManager, { getTool: () => hanging.tool });
+
+        const outputs: unknown[] = [];
+        const loopPromise = (async () => {
+            for await (const output of service.runToolLoop({
+                conversationId: convId,
+                configId: 'cfg-1',
+                config,
+                abortSignal: controller.signal,
+                maxIterations: 1
+            })) {
+                outputs.push(output);
+            }
+        })();
+
+        await hanging.handlerStarted;
+        controller.abort();
+        await loopPromise;
+
+        expect(outputs.some(o => (o as { cancelled?: boolean })?.cancelled === true)).toBe(true);
+
+        // 修复点：drain 超时拿不到真实结果时，仍为调用结算 cancelled 占位
+        // （此前整段跳过结算，历史残留无响应的孤儿 tool_calls → 下次请求 400）
+        const settleCalls = conversationManager.settleFunctionResponses.mock.calls as Array<
+            [string, Array<{ functionResponse?: { id?: string; response?: Record<string, unknown> } }>]
+        >;
+        const found = settleCalls.some(call => {
+            const parts = call[1] ?? [];
+            return parts.some(p =>
+                p.functionResponse?.id === 'call_apply3'
+                && (p.functionResponse.response as Record<string, unknown>)?.cancelled === true
+            );
+        });
+        expect(found).toBe(true);
+    });
 });

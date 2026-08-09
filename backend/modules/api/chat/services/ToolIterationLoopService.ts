@@ -1293,13 +1293,17 @@ export class ToolIterationLoopService {
                     earlyResponseParts,
                     earlyToolResults
                 );
-                await this.conversationManager.addContent(conversationId, {
-                    role: 'user',
-                    parts: earlyMultimodalAttachments.length > 0
+                // BR-08：改用 settleFunctionResponses 落盘（替代 addContent 末尾追加）：
+                // 正常路径（assistant 为历史末条）插入位置等价；与用户插话竞态时插回
+                // assistant 的 FR 块之后，不会形成 [assistant(tool_calls), user, tool]
+                // 的非法交替顺序，已执行工具的真实结果对后续请求保持可见。
+                // 对已存在的 rejected 占位同样有就地替换语义。
+                await this.conversationManager.settleFunctionResponses(
+                    conversationId,
+                    earlyMultimodalAttachments.length > 0
                         ? [...earlyMultimodalAttachments, ...earlyResponseParts]
-                        : earlyResponseParts,
-                    isFunctionResponse: true
-                });
+                        : earlyResponseParts
+                );
 
                 const earlyStopState = await resolveAndPersistPostToolStopState(
                     this.conversationManager,
@@ -1491,6 +1495,32 @@ export class ToolIterationLoopService {
                                 logContext: { iteration, executionPath: 'stream_abort' }
                             }
                         );
+                    } else {
+                        // BR-08：drain 收尾窗口超时拿不到真实结果（工具不响应 abort 且永不结束）。
+                        // 此前整段跳过结算，历史残留"无响应的孤儿 tool_calls"——下一个请求构建时
+                        // formatter 会原样发送这些 call（无配对 tool 消息）→ OpenAI/Anthropic 400，
+                        // 或新回合 rejectAllPendingToolCalls 把它们误标为"用户拒绝"。
+                        // 这里把早启动工具的真实结果与其余调用的 cancelled 占位一并结算，
+                        // 保证 assistant 的每个 tool_calls 都有配对响应。
+                        const earlySettledResults = new Map<string, ToolExecutionFullResult>();
+                        let attachmentsAssigned = false;
+                        for (const part of earlyResponseParts) {
+                            const id = part.functionResponse?.id;
+                            if (id) {
+                                // 多模态附件只随第一个 wrapper 携带：settleCancelledToolCalls
+                                // 会对所有 settledResults 的附件做 flatMap，重复携带会写 N 份
+                                earlySettledResults.set(id, {
+                                    toolResults: [],
+                                    responseParts: [part],
+                                    checkpoints: [],
+                                    multimodalAttachments: attachmentsAssigned
+                                        ? []
+                                        : earlyMultimodalAttachments
+                                });
+                                attachmentsAssigned = true;
+                            }
+                        }
+                        await this.settleCancelledToolCalls(conversationId, finalContent, earlySettledResults);
                     }
 
                     yield {
@@ -1533,11 +1563,11 @@ export class ToolIterationLoopService {
                     multimodalAttachments: combinedMultimodalAttachments.length > 0 ? combinedMultimodalAttachments : undefined
                 };
 
-                await this.conversationManager.addContent(conversationId, {
-                    role: 'user',
-                    parts: functionResponseParts,
-                    isFunctionResponse: true
-                });
+                // BR-08：与 1285 分支一致，用 settleFunctionResponses 落盘（替代 addContent）：
+                // 正常路径位置等价；与用户插话竞态时插回 assistant 的 FR 块之后，不会形成
+                // [assistant(tool_calls), user, tool] 非法交替；且对 cancel 竞态下已写入的
+                // rejected 占位有就地替换语义（addContent 的去重会丢弃真实结果）。
+                await this.conversationManager.settleFunctionResponses(conversationId, functionResponseParts);
             }
 
             if (executionResult) {

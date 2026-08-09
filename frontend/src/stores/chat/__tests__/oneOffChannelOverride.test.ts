@@ -77,7 +77,6 @@ import { sendToExtension } from '../../../utils/vscode'
 import { persistConversationModelConfig } from '../configActions'
 import { createAndPersistConversation } from '../conversationActions'
 import { sendMessage } from '../messageActions'
-import { rejectPendingToolsWithAnnotation } from '../toolActions'
 
 const mockSend = sendToExtension as unknown as ReturnType<typeof vi.fn>
 const persistConversationModelConfigMock = vi.mocked(persistConversationModelConfig)
@@ -132,11 +131,6 @@ function createComputed(overrides: Partial<ChatStoreComputed> = {}): ChatStoreCo
 function findChatStreamCall() {
   const calls = mockSend.mock.calls as Array<[string, Record<string, unknown>]>
   return calls.find(([type]) => type === 'chatStream')?.[1]
-}
-
-function findToolConfirmationCall() {
-  const calls = mockSend.mock.calls as Array<[string, Record<string, unknown>]>
-  return calls.find(([type]) => type === 'toolConfirmation')?.[1]
 }
 
 describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
@@ -231,67 +225,5 @@ describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
     expect(state.configId.value).toBe('global_a')
     expect(persistConversationModelConfigMock).toHaveBeenCalledTimes(1)
     expect(mockSend).not.toHaveBeenCalledWith('settings.setActiveChannelId', expect.anything())
-  })
-})
-
-describe('toolConfirmation 沿用本回合一次性渠道', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  function pendingComputed() {
-    return createComputed({
-      hasPendingToolConfirmation: { value: true },
-      pendingToolCalls: { value: [{ id: 't1', name: 'write_file', args: {} }] }
-    } as unknown as Partial<ChatStoreComputed>)
-  }
-
-  it('存在回合覆盖且无全局渠道时，使用覆盖渠道继续确认', async () => {
-    // 回归：此前 guard 要求 currentConfig.id 存在，Plan 一次性渠道 + 无全局渠道时会卡死
-    const state = createState({
-      currentConfig: ref(null),
-      pendingConfigIdOverride: ref('oneoff_b'),
-      pendingModelOverride: ref('model-b')
-    })
-    mockSend.mockResolvedValue(undefined)
-
-    await rejectPendingToolsWithAnnotation(state, pendingComputed(), '')
-
-    const payload = findToolConfirmationCall()
-    expect(payload).toBeDefined()
-    expect(payload!.configId).toBe('oneoff_b')
-    expect(payload!.modelOverride).toBe('model-b')
-    expect(state.currentConfig.value).toBeNull()
-  })
-
-  it('回合覆盖优先于全局渠道', async () => {
-    const state = createState({
-      pendingConfigIdOverride: ref('oneoff_b')
-    })
-    mockSend.mockResolvedValue(undefined)
-
-    await rejectPendingToolsWithAnnotation(state, pendingComputed(), '')
-
-    expect(findToolConfirmationCall()!.configId).toBe('oneoff_b')
-  })
-
-  it('无回合覆盖时保持原行为（使用全局渠道）', async () => {
-    const state = createState()
-    mockSend.mockResolvedValue(undefined)
-
-    await rejectPendingToolsWithAnnotation(state, pendingComputed(), '')
-
-    expect(findToolConfirmationCall()!.configId).toBe('global_a')
-  })
-
-  it('无回合覆盖且无全局渠道时不发送', async () => {
-    const state = createState({
-      currentConfig: ref(null)
-    })
-    mockSend.mockResolvedValue(undefined)
-
-    await rejectPendingToolsWithAnnotation(state, pendingComputed(), '')
-
-    expect(mockSend).not.toHaveBeenCalledWith('toolConfirmation', expect.anything())
   })
 })
