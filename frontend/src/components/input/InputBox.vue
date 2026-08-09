@@ -765,13 +765,19 @@ function insertContextAtCaret(context: PromptContextItem): boolean {
   return true
 }
 
-// 输入框占位符：有内容时不显示 placeholder
-const placeholderText = computed(() => {
-  const hasContent = props.nodes.length > 0 && (
+// 输入框是否包含有效内容（有 context 节点或非空文本）。
+// 用于占位符文本显示；is-empty 样式保持基于 props.nodes.length（含空白文本节点时
+// 视为非空——纯空白也应隐藏占位符浮层，避免与真实内容叠加）。
+const hasContent = computed(() =>
+  props.nodes.length > 0 && (
     props.nodes.some(n => n.type === 'context') ||
     props.nodes.some(n => n.type === 'text' && n.text.trim())
   )
-  if (hasContent) return ''
+)
+
+// 输入框占位符：有内容时不显示 placeholder
+const placeholderText = computed(() => {
+  if (hasContent.value) return ''
   return props.placeholder || t('components.input.placeholderHint')
 })
 
@@ -965,6 +971,7 @@ defineExpose({
 
 /* contenteditable 编辑器 */
 .input-editor {
+  position: relative;
   box-sizing: border-box;
   width: 100%;
   min-height: 0;
@@ -1003,11 +1010,18 @@ defineExpose({
   pointer-events: none;
 }
 
-/* 占位符 */
+/* 占位符：绝对定位浮层，不占用内容布局空间。
+   ::before 若参与文档流会占据首行位置，清空输入后光标会被推到
+   灰色占位符文本之后；改为浮层后光标保持在内容起点（占位符之前）。 */
 .input-editor.is-empty::before {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: inherit;
   content: attr(data-placeholder);
   color: var(--vscode-input-placeholderForeground);
   pointer-events: none;
+  overflow: hidden;
 }
 
 /* 拖拽悬停状态 */
