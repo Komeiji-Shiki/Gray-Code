@@ -1356,6 +1356,12 @@ export async function deleteMessage(
   const backendIndex = !isLocalPlaceholder
     ? calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
     : -1
+  // 越界兑底：后端索引 >= 后端历史长度（totalMessages）说明该消息在后端并不存在——
+  // 典型场景是「前端窗口包含未持久化的尾部占位消息」（localOnly 标记因流式异常/重载而丢失，
+  // 或数据文件被外部修改后前后端不一致）。此时走后端删除会命中 INVALID_TARGET_INDEX，
+  // 这里降级为本地删除（与 localOnly 占位同一路径）。
+  const isBackendIndexOutOfBounds = !isLocalPlaceholder && backendIndex >= (state.totalMessages.value || 0)
+  const treatAsLocal = isLocalPlaceholder || isBackendIndexOutOfBounds
 
   // 如果正在流式响应或等待工具确认，先取消
   if (state.isStreaming.value || state.isWaitingForResponse.value) {
@@ -1364,10 +1370,10 @@ export async function deleteMessage(
 
   // 校验归属：cancel 期间当前会话可能已切换，目标消息可能已变化
   if (state.currentConversationId.value !== originConvId) return
-  if (!isLocalPlaceholder && state.allMessages.value[targetIndex]?.id !== targetMessageId) return
+  if (!treatAsLocal && state.allMessages.value[targetIndex]?.id !== targetMessageId) return
 
-  // 如果删除目标是”本地空占位 assistant”（后端并不存在），只做本地删除，避免后端索引越界。
-  if (isLocalPlaceholder) {
+  // 如果删除目标是”本地空占位 assistant / 后端索引越界”（后端并不存在），只做本地删除，避免后端索引越界。
+  if (treatAsLocal) {
     const msgId = state.allMessages.value[targetIndex]?.id
     // H1/M6：删除前清理该消息的平滑条目（如流式占位残留），避免 smoothTexts 泄漏
     finishSmoothStreamForState(state, msgId)
@@ -1460,6 +1466,20 @@ export async function deleteSingleMessage(
 
   // 校验归属：cancel 期间当前会话可能已切换
   if (state.currentConversationId.value !== originConvId) return
+
+  // 越界兑底：目标索引 >= 后端历史长度时，该消息在后端不存在
+  // （前端窗口含未持久化的尾部占位 / 数据被外部修改后前后端不一致），
+  // 只做本地移除，避免后端 INVALID_TARGET_INDEX；后续消息索引不受影响（原本就不在后端）。
+  if (backendIndex >= (state.totalMessages.value || 0)) {
+    state.allMessages.value = state.allMessages.value.filter(m => m.backendIndex !== backendIndex)
+    if (removedMessageId) {
+      finishSmoothStreamForState(state, removedMessageId)
+    }
+    setTotalMessagesFromWindow(state)
+    rebuildMessageIndexById(state)
+    await refreshCurrentConversationBuildSession(state)
+    return
+  }
 
   try {
     const response = await sendToExtension<{ success: boolean }>('deleteSingleMessage', {
