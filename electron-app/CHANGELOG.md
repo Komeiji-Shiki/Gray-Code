@@ -12,6 +12,17 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.7] - 2026-08-09
+
+### Fixed
+  - **关闭开屏动画后仍闪现 1-2 帧 Splash 动画**：桌面主窗口无 `__GRAYCODE_STARTUP_SPLASH_ENABLED` 同步注入，`App.vue` 的 `splashActive` 走 `settingsStore.splashEnabled`（此前默认 `true`，等 `getSettings` 往返后才纠正）——首帧静态画面已被 `gc-splash-disabled` 标记抑制，Vue Splash 却仍挂载播放动画直到配置返回。修复：`splashEnabled` 初始值读取与首帧静态画面同一个 localStorage 标记 `gc-splash-disabled`，首帧决定严格一致，关闭动画用户从第一帧起完全不渲染 Splash（详见根目录 CHANGELOG [1.7.7]）。
+
+### Performance
+  - **渲染层资源注入并行**：`injectDesktopRendererAssets` 的 theme.css / codicons / overlay.js 文件读取改 `Promise.all` 并行（注入仍按 keyName 隔离串行），省两次跨进程 IPC 往返。
+  - **TaskManager 泄漏兜底接线**：`cleanup()` 此前无任何调用点；`registerTask` 惰性启动 unref 的 5 分钟周期清扫定时器，仅补发「已 abort 却未注销」任务的 cancelled 终态（不再按驻留时长强杀长任务，避免伪造取消回执；详见根目录 CHANGELOG [1.7.7]）。
+  - **工具声明热路径免全量克隆**：`settingsFingerprint` 改走 `getSettingsRaw()` 裸引用（`SettingsCore`/`SettingsManager` 新增，仅限内部只读），不再每次迭代深拷贝整份设置（详见根目录 CHANGELOG [1.7.7]）。
+  - **前端启动链并行化**（共用前端）：`chatStore.initialize` 去重 + `Promise.all` 并行、`App.vue` 并行初始化（详见根目录 CHANGELOG [1.7.7]）。
+
 ## [1.7.5.2dev] - 2026-08-09
 
 ### Fixed

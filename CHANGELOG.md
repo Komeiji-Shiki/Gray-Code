@@ -10,6 +10,20 @@
 
 （暂无未发布改动）
 
+## [1.7.7] - 2026-08-09
+
+### Fixed
+  - **关闭开屏动画后仍闪现 1-2 帧 Splash 动画（桌面主窗口）**：桌面主窗口直接加载 `frontend/dist/index.html`、没有 `__GRAYCODE_STARTUP_SPLASH_ENABLED` 同步注入，`App.vue` 的 `splashActive` 走 `settingsStore.splashEnabled`——该值此前默认 `true`，需等 `getSettings` 往返完成后才被 `setSplashEnabled(false)` 纠正。首帧静态画面（`#gc-boot`）已被 `gc-splash-disabled` 标记（boot-splash.js）正确抑制，但 Vue Splash 组件仍会挂载并播放动画直到配置返回，表现为「关闭动画仍闪现 1-2 帧」。修复：`settingsStore.splashEnabled` 初始值与首帧静态画面读取同一个 localStorage 标记 `gc-splash-disabled`（`readInitialSplashEnabled`，隐私模式等不可用时回退默认开启），首帧决定与静态画面严格一致——关闭动画的用户从第一帧起完全不渲染 Splash；新增初始化标记回归测试（settingsStore.test.ts）。webview 宿主（有同步注入快照）首帧走注入值、不受影响。
+
+### Performance
+  - **启动提速批次③（桌面与 webview 共用前端）**：
+    - `chatStore.initialize` 启动链去重 + 并行：删除重复的 `config.getConfig` 请求（`loadSavedConfigId` 内部已调用 `loadCurrentConfig`）；`loadSavedWorkspaces` / `loadSavedConfigId` / `loadCheckpointConfig` / `loadConversations` 四个互不依赖的 IPC 改为 `Promise.all` 并行（各写独立 state 字段，应答经 per-request 响应处理器送达、无消息路由竞态）——串行 6 跳 IPC 降为约 2 跳；
+    - `App.vue` onMounted 并行初始化：`chatStore.initialize()` 与 `loadLanguageSettings()` 无数据依赖（各写独立 store），改为并行启动（initialize 内部监听在调用瞬间同步注册、IPC 应答不受命令监听器注册顺序影响），关闭开屏动画用户的「专属占位」结束点由「两条链之和」提前为「两条链之较慢者」；
+    - **工具声明热路径免全量克隆**：`ToolDeclarationResolver.settingsFingerprint` 每次工具循环迭代都经 `getSettings()` 深拷贝整份设置（含全部 prompt 模板等大字符串对象）只为计算指纹；`SettingsCore` / `SettingsManager` 新增 `getSettingsRaw()` 内部只读裸引用访问器（仅限只读热路径，外部仍走深拷贝语义防污染），指纹计算改走裸引用（测试 mock 无该方法时回退 `getSettings`）；
+    - **TaskManager 泄漏兜底接线**：`cleanup()` 此前设计完成却无任何调用点（已取消却未注销的任务永久驻留 `activeTasks`）；`registerTask` 惰性启动 unref 的 5 分钟周期清扫定时器（不阻止进程退出、无任务时零开销）。同时修正清扫语义：只补发「已 abort 却未注销」任务的 cancelled 终态，不再按驻留时长强杀——合法长任务（长终端命令/后台子代理 run）可能运行数小时，按 30 分钟阈值伪造 cancelled 会丢失真实完成事件；
+    - **死代码清理**：`frontend/src/utils/format.ts`（formatRelativeTime/truncateText/sleep/isEmpty/deepClone/debounce/throttle）、`chatStore`（removeStoreAttachment/clearStoreAttachments/dequeueMessage）、`settingsStore`（isVisible/hideSettings）、`utils/vscode.ts`（clearState）、`backend/tools/index.ts`（initializeToolSystem/refreshToolDependencies）、`execute_command.ts`（onTerminalTaskEvent/getEnabledShellTypes）——全仓库（含测试）零引用，删除无行为影响；
+    - **桌面渲染层资源注入并行**（electron-app）：theme.css / codicons / overlay.js 三次注入的文件读取改 `Promise.all` 并行（注入操作本身仍按 keyName 隔离串行），省两次跨进程 IPC 往返。
+
 ## [1.7.5.2dev] - 2026-08-09
 
 ### Added
