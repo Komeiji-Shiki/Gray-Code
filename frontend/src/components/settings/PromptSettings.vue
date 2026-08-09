@@ -274,6 +274,8 @@ const CODE_MODE_TEMPLATE = `You are a professional programming assistant, profic
 
 {{$MCP_TOOLS}}
 
+{{$MEMORY}}
+
 ====
 
 GUIDELINES
