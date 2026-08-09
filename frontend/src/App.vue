@@ -26,6 +26,7 @@ import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
+import type { SoundAgentRole } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
@@ -100,28 +101,52 @@ let agentStopNotificationController: AgentStopNotificationController | null = nu
  * 从 toolStatus chunk 中检测特定工具完成并播放音效：
  * - create_plan 成功 → taskComplete
  * - todo_write / todo_update 导致 TODO 全部完成 → taskComplete
+ * - subagents 工具成功/失败 → 子代理独立 taskComplete/taskError（role: subagent）
  */
 function dispatchConversationCue(
   cue: 'warning' | 'error' | 'taskComplete' | 'taskError',
   source: 'taskEvent' | 'retryStatus' | 'streamChunk' | 'chatError',
   conversationId?: string,
-  createdAt?: number
+  createdAt?: number,
+  role?: SoundAgentRole
 ): void {
   void handleSoundEvent({
     cue,
     source,
     conversationId,
-    createdAt
+    createdAt,
+    role
   })
 }
 
 function handleSoundForToolStatus(chunk: StreamChunk): void {
   if (!chunk.toolStatus || !chunk.tool) return
   const tool = chunk.tool
-  if (tool.status !== 'success') return
 
   // 去重：同一个 tool id 只播放一次
   if (soundPlayedToolIds.has(tool.id)) return
+
+  // 子代理工具：成功 → 子代理任务完成音；失败 → 子代理任务失败音。
+  // 与主聊天工具的提示音开关分开控制（cues.subagent.*）。
+  if (tool.name === 'subagents') {
+    // 后台模式：工具在启动瞬间即返回 { success: true, data: { background: true } } stub，
+    // 真实完成/失败由 taskEvent（background_subagent）送达——若在这里播会「开始就响一次、
+    // 完成再响一次」。跳过 stub，交给 taskEvent 路径统一播报。
+    if (tool.status === 'success' && tool.result?.data?.background === true) return
+    if (tool.status === 'success' || tool.status === 'error') {
+      addSoundPlayedToolId(tool.id)
+      dispatchConversationCue(
+        tool.status === 'error' ? 'taskError' : 'taskComplete',
+        'streamChunk',
+        chunk.conversationId,
+        chunk.createdAt,
+        'subagent'
+      )
+    }
+    return
+  }
+
+  if (tool.status !== 'success') return
 
   // create_plan 成功
   if (tool.name === 'create_plan') {
@@ -446,12 +471,17 @@ async function loadLanguageSettings() {
 onMounted(async () => {
   if (isSubAgentMonitor) {
     console.log('GrayCode SubAgent Monitor 已加载')
-    // 修改原因：Monitor 复用同一前端入口但过去直接 return，从不加载语言设置；
+    // 修改原因：Monitor 复用同一前端入口但过去从不加载语言设置；
     //          导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文，
     //          英文和日文用户看到的子代理详情是混合语言。
     // 修改方式：Monitor 模式同样加载语言设置，只是继续跳过主聊天时间线的初始化。
     // 修改目的：主窗口与 Monitor 面板共享同一套语言配置。
     await loadLanguageSettings()
+
+    // 子代理面板同样启用提示音（run 完成/失败/重试事件走子代理独立开关）：
+    // 注册音频解锁与可见性 hooks，面板内首个用户手势后即可按主窗口同一套焦点规则播放。
+    disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
+    disposeVisibilityHooks = registerVisibilityChangeHooks()
     return
   }
 
@@ -499,13 +529,15 @@ onMounted(async () => {
       }
     }
 
-    // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成等）
+    // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成、后台子代理等）。
+    // 后台子代理（background_subagent）事件走子代理独立提示音开关。
     if (message.type === 'taskEvent') {
       const event = message.data
+      const eventRole = event?.taskType === 'background_subagent' ? 'subagent' : undefined
       if (event?.type === 'complete') {
-        dispatchConversationCue('taskComplete', 'taskEvent', undefined, event?.createdAt)
+        dispatchConversationCue('taskComplete', 'taskEvent', undefined, event?.createdAt, eventRole)
       } else if (event?.type === 'error') {
-        dispatchConversationCue('taskError', 'taskEvent', undefined, event?.createdAt)
+        dispatchConversationCue('taskError', 'taskEvent', undefined, event?.createdAt, eventRole)
       }
     }
 
