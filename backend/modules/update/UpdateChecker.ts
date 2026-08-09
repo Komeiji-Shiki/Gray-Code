@@ -69,14 +69,21 @@ export function stripVersionPrefix(version: string): string {
 /**
  * 语义版本比较（支持任意段数，缺段按 0；非数字段按 0）。
  * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）。
+ * 特例：nightly 预发布（-nightly.<YYYYMMDD>）视为「高于同主版本正式版」的最新构建，
+ * 两个 nightly 之间按日期段比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）。
  * 返回 -1（a < b）/ 0（相等）/ 1（a > b）。
  */
 export function compareVersions(a: string, b: string): number {
-    const parse = (v: string): { nums: number[]; prerelease: boolean } => {
-        const main = stripVersionPrefix(v).split('-')[0];
+    const parse = (v: string): { nums: number[]; nightlyDate: string | null; prerelease: boolean } => {
+        const cleaned = stripVersionPrefix(v);
+        const dash = cleaned.indexOf('-');
+        const main = dash >= 0 ? cleaned.slice(0, dash) : cleaned;
+        const suffix = dash >= 0 ? cleaned.slice(dash + 1) : null;
+        const nightlyDate = suffix && suffix.startsWith('nightly.') ? suffix.slice('nightly.'.length) : null;
         return {
             nums: main.split('.').map(n => parseInt(n, 10) || 0),
-            prerelease: stripVersionPrefix(v).includes('-')
+            nightlyDate,
+            prerelease: suffix !== null && nightlyDate === null
         };
     };
     const ap = parse(a);
@@ -86,6 +93,14 @@ export function compareVersions(a: string, b: string): number {
         const x = ap.nums[i] ?? 0;
         const y = bp.nums[i] ?? 0;
         if (x !== y) return x < y ? -1 : 1;
+    }
+    // 主版本相同：nightly 构建视为更新（nightly > 正式版；nightly 之间按日期）
+    if (ap.nightlyDate || bp.nightlyDate) {
+        if (ap.nightlyDate && bp.nightlyDate) {
+            if (ap.nightlyDate !== bp.nightlyDate) return ap.nightlyDate < bp.nightlyDate ? -1 : 1;
+            return 0;
+        }
+        return ap.nightlyDate ? 1 : -1;
     }
     if (ap.prerelease !== bp.prerelease) {
         return ap.prerelease ? -1 : 1;
@@ -101,14 +116,15 @@ export function shouldCheck(lastCheckAt: number | undefined, now: number, force:
 }
 
 /**
- * nightly 版本号格式：主版本 + 构建日期第四段（如 1.4.6.20260809）。
- * 该格式高于同主版本的正式版（1.4.6.20260809 > 1.4.6），可用常规版本比较判断更新。
+ * nightly 版本号格式：<semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809）。
+ * 合法 semver（vsce 打包校验要求）；compareVersions 将 nightly 预发布视为
+ * 「高于同主版本正式版」的最新构建，nightly 之间按日期比较。
  */
-const NIGHTLY_VERSION_RE = /(\d+\.\d+\.\d+(?:\.\d+)+)/;
+const NIGHTLY_VERSION_RE = /(?<![\d.])(\d+\.\d+\.\d+-nightly\.\d{8})\b/i;
 
 /**
  * 从 nightly Release 名称中提取版本号。
- * 例如 "Gray Code Nightly v1.4.6.20260809" → "1.4.6.20260809"。
+ * 例如 "Gray Code Nightly v1.4.6-nightly.20260809" → "1.4.6-nightly.20260809"。
  * 提取失败返回 null。
  */
 export function extractNightlyVersionFromName(name: unknown): string | null {
@@ -137,9 +153,11 @@ export function parseReleaseResponse(data: unknown, channel: UpdateChannel = 'st
     let version = stripVersionPrefix(raw.tag_name);
     if (channel === 'nightly') {
         // nightly Release 的 tag 固定为 nightly，真实版本号写在 Release name 中
-        //（如 "Gray Code Nightly v1.4.6.20260809"），从 name 提取
+        //（如 "Gray Code Nightly v1.4.6-nightly.20260809"），从 name 提取；
+        // 提取失败视为响应格式异常（避免 version 退化为 'nightly' 导致静默判为已最新）
         const nameVersion = extractNightlyVersionFromName(raw.name);
-        if (nameVersion) version = nameVersion;
+        if (!nameVersion) return null;
+        version = nameVersion;
     }
     return {
         version,
@@ -216,8 +234,9 @@ export class UpdateChecker {
         try {
             const info = await this.fetchLatestRelease();
             const current = this.getCurrentVersion();
-            // nightly 版本号为主版本 + 日期第四段（如 1.4.6.20260809），
-            // 常规版本比较即可判定更新（1.4.6.20260810 > 1.4.6.20260809 > 1.4.6）
+            // nightly 版本号为 <semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809），
+            // compareVersions 将其视为「高于同主版本正式版」的最新构建，
+            // 两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）
             if (current && compareVersions(info.version, current) > 0) {
                 this.status = { state: 'updateAvailable', checkedAt: now, update: info };
             } else {
@@ -311,6 +330,16 @@ export class UpdateChecker {
         return 'stable';
     }
 
+    /**
+     * 渠道等影响检查结果的条件变化时调用：清除内存状态并重置节流时间戳，
+     * 使下一次检查（含启动自动检查）按新条件重新拉取，
+     * 避免旧渠道的缓存结果（如 Nightly 徽章/可安装项）残留到新渠道。
+     */
+    resetStatus(): void {
+        this.status = { state: 'idle' };
+        void this.options.storage.update('lastUpdateCheckAt', 0).catch(() => undefined);
+    }
+
     private getFetch(): (url: string, init?: RequestInit) => Promise<Response> {
         if (this.options.fetchImpl) {
             return this.options.fetchImpl;
@@ -322,7 +351,7 @@ export class UpdateChecker {
     private async fetchLatestRelease(): Promise<UpdateInfo> {
         const channel = this.getUpdateChannel();
         // stable：最新正式 Release；nightly：固定 tag=nightly 的每日构建 Release。
-        // nightly 基于最新代码构建且版本号（如 1.4.7.<date>）恒高于正式版（1.4.7），
+        // nightly 基于最新代码构建且版本号（如 1.4.7-nightly.<date>）恒高于正式版（1.4.7），
         // 正式版变更会随下一次 nightly 构建自然覆盖，无需再检查正式版。
         const endpoint = channel === 'nightly'
             ? `https://api.github.com/repos/${UPDATE_REPO}/releases/tags/nightly`
