@@ -965,6 +965,7 @@ defineExpose({
 
 /* contenteditable 编辑器 */
 .input-editor {
+  position: relative;
   box-sizing: border-box;
   width: 100%;
   min-height: 0;
@@ -1003,11 +1004,19 @@ defineExpose({
   pointer-events: none;
 }
 
-/* 占位符 */
+/* 占位符：绝对定位浮层，不占用内容布局空间。
+   ::before 若参与文档流会占据首行位置，清空输入后光标会被推到
+   灰色占位符文本之后；改为浮层后光标保持在内容起点（占位符之前）。 */
 .input-editor.is-empty::before {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: inherit;
+  border: 1px solid transparent;
   content: attr(data-placeholder);
   color: var(--vscode-input-placeholderForeground);
   pointer-events: none;
+  overflow: hidden;
 }
 
 /* 拖拽悬停状态 */

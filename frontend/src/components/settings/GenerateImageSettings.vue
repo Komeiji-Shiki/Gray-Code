@@ -8,6 +8,7 @@ import { reactive, ref, onMounted, computed } from 'vue'
 import { CustomSelect, CustomCheckbox, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
+import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
 
 const { t } = useI18n()
 
@@ -26,6 +27,19 @@ const imageConfig = reactive({
 
 // API Key 显示状态
 const showApiKey = ref(false)
+
+// 草稿模式：清空后不立即回填默认值；离开设置页时自动回填已保存值
+// 保留原 parseInt 的整数语义
+const {
+  draft: maxBatchTasksDraft,
+  handleInput: handleMaxBatchTasksInput,
+  syncFromStored: syncMaxBatchTasksFromStored
+} = useDeferredNumberInput(() => imageConfig.maxBatchTasks, Number.isInteger)
+const {
+  draft: maxImagesPerTaskDraft,
+  handleInput: handleMaxImagesPerTaskInput,
+  syncFromStored: syncMaxImagesPerTaskFromStored
+} = useDeferredNumberInput(() => imageConfig.maxImagesPerTask, Number.isInteger)
 
 // 宽高比选项
 const aspectRatioOptions = computed<SelectOption[]>(() => [
@@ -56,6 +70,8 @@ async function loadConfig() {
     const response = await sendToExtension<any>('getGenerateImageConfig', {})
     if (response) {
       Object.assign(imageConfig, response)
+      syncMaxBatchTasksFromStored()
+      syncMaxImagesPerTaskFromStored()
     }
   } catch (error) {
     console.error('Failed to load generate image config:', error)
@@ -224,10 +240,10 @@ onMounted(async () => {
         <label>{{ t('components.settings.generateImageSettings.batch.maxTasks') }}</label>
         <input
           type="number"
-          :value="imageConfig.maxBatchTasks"
+          :value="maxBatchTasksDraft"
           min="1"
           max="20"
-          @input="(e: any) => updateConfigField('maxBatchTasks', parseInt(e.target.value) || 5)"
+          @input="(e: any) => handleMaxBatchTasksInput(e.target.value, v => updateConfigField('maxBatchTasks', v))"
         />
         <p class="field-hint">{{ t('components.settings.generateImageSettings.batch.maxTasksHint') }}</p>
       </div>
@@ -236,10 +252,10 @@ onMounted(async () => {
         <label>{{ t('components.settings.generateImageSettings.batch.maxImagesPerTask') }}</label>
         <input
           type="number"
-          :value="imageConfig.maxImagesPerTask"
+          :value="maxImagesPerTaskDraft"
           min="1"
           max="10"
-          @input="(e: any) => updateConfigField('maxImagesPerTask', parseInt(e.target.value) || 1)"
+          @input="(e: any) => handleMaxImagesPerTaskInput(e.target.value, v => updateConfigField('maxImagesPerTask', v))"
         />
         <p class="field-hint">{{ t('components.settings.generateImageSettings.batch.maxImagesPerTaskHint') }}</p>
       </div>

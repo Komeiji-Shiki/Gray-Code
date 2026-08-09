@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { getSettingsView } from '@/composables/useDeferredNumberInput'
 
 interface PromptModule {
   id: string
@@ -47,6 +48,44 @@ type DropPosition = 'before' | 'after'
 
 const dragSourceId = ref<string | null>(null)
 const dropIndicator = ref<{ id: string; position: DropPosition } | null>(null)
+
+// 条目名称草稿：清空后不立即回填「Prompt N」（编辑期间保持为空），
+// 离开设置页时仍为空的名称自动回填最后一次提交的名称。
+const nameDrafts = reactive<Record<string, string>>({})
+
+function handleNameInput(entry: PromptEntry, event: Event) {
+  if (isChatHistoryEntry(entry)) return
+  const raw = readInputValue(event)
+  nameDrafts[entry.id] = raw
+  const trimmed = raw.trim()
+  if (trimmed && trimmed !== entry.name) {
+    updateEntry(entry.id, { name: trimmed })
+  }
+}
+
+// 离开设置页：空名称自动回填（新条目回填「Prompt N」，被清空的回填上次提交的名称）
+watch(
+  getSettingsView,
+  (view) => {
+    if (view !== 'settings') {
+      let changed = false
+      const next = entries.value.map((entry, index) => {
+        if (isChatHistoryEntry(entry)) return entry
+        const current = nameDrafts[entry.id] ?? entry.name
+        if (!current.trim()) {
+          const fallback = `Prompt ${index + 1}`
+          nameDrafts[entry.id] = fallback
+          if (entry.name !== fallback) {
+            changed = true
+            return { ...entry, name: fallback }
+          }
+        }
+        return entry
+      })
+      if (changed) emitNormalized(next)
+    }
+  }
+)
 
 const entries = computed(() => normalizeEntries(props.modelValue))
 
@@ -153,12 +192,16 @@ function createEntry(role: PromptEntryRole = 'system'): PromptEntry {
 }
 
 function addEntry(role: PromptEntryRole = 'system') {
-  emitNormalized([...entries.value, createEntry(role)])
+  const entry = createEntry(role)
+  // 新建条目名称不自动补全（输入框保持为空）；离开设置页时回填「Prompt N」
+  nameDrafts[entry.id] = ''
+  emitNormalized([...entries.value, entry])
 }
 
 function removeEntry(id: string) {
   const target = entries.value.find(entry => entry.id === id)
   if (!target || isChatHistoryEntry(target)) return
+  delete nameDrafts[id]
   emitNormalized(entries.value.filter(entry => entry.id !== id))
 }
 
@@ -406,9 +449,9 @@ function handleDragEnd() {
 
           <input
             class="entry-name-input"
-            :value="entry.name"
+            :value="nameDrafts[entry.id] ?? entry.name"
             placeholder="条目名称"
-            @input="updateEntry(entry.id, { name: readInputValue($event) })"
+            @input="handleNameInput(entry, $event)"
           />
 
           <select

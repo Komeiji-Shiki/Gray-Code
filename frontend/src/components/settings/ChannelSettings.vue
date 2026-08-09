@@ -14,6 +14,7 @@ import {
 } from './channels'
 import { sendToExtension } from '@/utils/vscode'
 import { useChatStore } from '@/stores'
+import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
 import type { ModelInfo } from '@/types'
 import { t } from '@/i18n'
 
@@ -224,16 +225,6 @@ const retryEnabled = computed(() => {
   return currentConfig.value?.retryEnabled ?? true
 })
 
-// 重试次数
-const retryCount = computed(() => {
-  return currentConfig.value?.retryCount ?? 3
-})
-
-// 重试间隔
-const retryInterval = computed(() => {
-  return currentConfig.value?.retryInterval ?? 3000
-})
-
 // 更新重试启用状态
 async function updateRetryEnabled(enabled: boolean) {
   await updateConfigField('retryEnabled', enabled)
@@ -249,31 +240,41 @@ async function updateRetryInterval(interval: number) {
   await updateConfigField('retryInterval', interval)
 }
 
-// 数字输入清空或包含非有限值时不更新配置，避免空串被 Number('') 转成 0 持久化。
-function readFiniteNumberInput(event: Event): number | null {
-  const raw = (event.target as HTMLInputElement | null)?.value?.trim() ?? ''
-  if (!raw) return null
-  const value = Number(raw)
-  return Number.isFinite(value) ? value : null
+// ==================== 草稿模式数字输入 ====================
+// 清空后不立即回退旧值（编辑期间保持为空）；离开设置页时自动回填已保存值。
+
+const {
+  draft: timeoutDraft,
+  handleInput: handleTimeoutInput,
+  syncFromStored: syncTimeoutFromStored
+} = useDeferredNumberInput(() => currentConfig.value?.timeout)
+const {
+  draft: maxContextTokensDraft,
+  handleInput: handleMaxContextTokensInput,
+  syncFromStored: syncMaxContextTokensFromStored
+} = useDeferredNumberInput(() => currentConfig.value?.maxContextTokens ?? 256000)
+const {
+  draft: retryCountDraft,
+  handleInput: handleRetryCountInput,
+  syncFromStored: syncRetryCountFromStored
+} = useDeferredNumberInput(() => currentConfig.value?.retryCount ?? 3)
+const {
+  draft: retryIntervalDraft,
+  handleInput: handleRetryIntervalInput,
+  syncFromStored: syncRetryIntervalFromStored
+} = useDeferredNumberInput(() => currentConfig.value?.retryInterval ?? 3000)
+
+function syncChannelNumericDrafts() {
+  syncTimeoutFromStored()
+  syncMaxContextTokensFromStored()
+  syncRetryCountFromStored()
+  syncRetryIntervalFromStored()
 }
 
-function updateNumericConfigField(field: string, event: Event): void {
-  const value = readFiniteNumberInput(event)
-  if (value === null) return
-  void updateConfigField(field, value)
-}
-
-function updateRetryCountInput(event: Event): void {
-  const value = readFiniteNumberInput(event)
-  if (value === null) return
-  void updateRetryCount(value)
-}
-
-function updateRetryIntervalInput(event: Event): void {
-  const value = readFiniteNumberInput(event)
-  if (value === null) return
-  void updateRetryInterval(value)
-}
+// 切换渠道配置时，草稿跟随新配置重置
+watch(currentConfigId, () => {
+  syncChannelNumericDrafts()
+})
 
 // ==================== 工具配置 ====================
 
@@ -1029,20 +1030,20 @@ onMounted(async () => {
       <div class="form-group" data-search-anchor="timeout">
         <label>{{ t('components.settings.channelSettings.form.timeout.label') }}</label>
         <input
-          :value="currentConfig.timeout"
+          :value="timeoutDraft"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.timeout.placeholder')"
-          @input="updateNumericConfigField('timeout', $event)"
+          @input="(e: any) => handleTimeoutInput(e.target.value, v => updateConfigField('timeout', v))"
         />
       </div>
       
       <div class="form-group" data-search-anchor="max-context-tokens">
         <label>{{ t('components.settings.channelSettings.form.maxContextTokens.label') }}</label>
         <input
-          :value="currentConfig.maxContextTokens || 256000"
+          :value="maxContextTokensDraft"
           type="number"
           :placeholder="t('components.settings.channelSettings.form.maxContextTokens.placeholder')"
-          @input="updateNumericConfigField('maxContextTokens', $event)"
+          @input="(e: any) => handleMaxContextTokensInput(e.target.value, v => updateConfigField('maxContextTokens', v))"
         />
         <span class="field-hint">{{ t('components.settings.channelSettings.form.maxContextTokens.hint') }}</span>
       </div>
@@ -1158,9 +1159,10 @@ onMounted(async () => {
         </button>
         
         <div v-if="showAdvancedOptions" class="advanced-options">
-          <!-- Gemini 选项 -->
+          <!-- Gemini 选项（key=渠道ID：切换配置时重挂载，草稿跟随新配置） -->
           <GeminiOptions
             v-if="currentConfig.type === 'gemini'"
+            :key="currentConfig.id"
             :config="currentConfig"
             @update:option="updateOption"
             @update:option-enabled="updateOptionEnabled"
@@ -1170,6 +1172,7 @@ onMounted(async () => {
           <!-- OpenAI 选项 -->
           <OpenAIOptions
             v-if="currentConfig.type === 'openai'"
+            :key="currentConfig.id"
             :config="currentConfig"
             @update:option="updateOption"
             @update:option-enabled="updateOptionEnabled"
@@ -1179,6 +1182,7 @@ onMounted(async () => {
           <!-- OpenAI Responses 选项 -->
           <OpenAIResponsesOptions
             v-if="currentConfig.type === 'openai-responses'"
+            :key="currentConfig.id"
             :config="currentConfig"
             @update:option="updateOption"
             @update:option-enabled="updateOptionEnabled"
@@ -1188,6 +1192,7 @@ onMounted(async () => {
           <!-- Anthropic 选项 -->
           <AnthropicOptions
             v-if="currentConfig.type === 'anthropic'"
+            :key="currentConfig.id"
             :config="currentConfig"
             @update:option="updateOption"
             @update:option-enabled="updateOptionEnabled"
@@ -1278,12 +1283,12 @@ onMounted(async () => {
               </div>
               <input
                 type="number"
-                :value="retryCount"
+                :value="retryCountDraft"
                 min="1"
                 max="10"
                 :disabled="!retryEnabled"
                 :class="{ disabled: !retryEnabled }"
-                @input="updateRetryCountInput"
+                @input="(e: any) => handleRetryCountInput(e.target.value, v => updateRetryCount(v))"
               />
               <span class="option-hint">{{ t('components.settings.channelSettings.form.autoRetry.retryCount.hint') }}</span>
             </div>
@@ -1294,13 +1299,13 @@ onMounted(async () => {
               </div>
               <input
                 type="number"
-                :value="retryInterval"
+                :value="retryIntervalDraft"
                 min="1000"
                 max="60000"
                 step="1000"
                 :disabled="!retryEnabled"
                 :class="{ disabled: !retryEnabled }"
-                @input="updateRetryIntervalInput"
+                @input="(e: any) => handleRetryIntervalInput(e.target.value, v => updateRetryInterval(v))"
               />
               <span class="option-hint">{{ t('components.settings.channelSettings.form.autoRetry.retryInterval.hint') }}</span>
             </div>

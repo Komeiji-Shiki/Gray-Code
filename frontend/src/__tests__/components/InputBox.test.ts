@@ -174,3 +174,44 @@ describe('InputBox 尺寸调整', () => {
     expect(parseFloat(editor.style.height)).toBeLessThanOrEqual(160)
   })
 })
+
+describe('InputBox 占位符', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('空输入框显示占位符，有内容时隐藏', async () => {
+    const empty = mount(InputBox, {
+      props: { nodes: [], placeholder: '输入消息...' }
+    })
+    const emptyEditor = empty.get('.input-editor')
+    expect(emptyEditor.classes()).toContain('is-empty')
+    expect(emptyEditor.attributes('data-placeholder')).toBe('输入消息...')
+    empty.unmount()
+
+    const withText = mount(InputBox, {
+      props: { nodes: [{ type: 'text', text: 'hello' }], placeholder: '输入消息...' }
+    })
+    const editor = withText.get('.input-editor')
+    expect(editor.classes()).not.toContain('is-empty')
+    expect(editor.attributes('data-placeholder')).toBe('')
+    withText.unmount()
+
+    const withWhitespace = mount(InputBox, {
+      props: { nodes: [{ type: 'text', text: '   ' }], placeholder: '输入消息...' }
+    })
+    const wsEditor = withWhitespace.get('.input-editor')
+    expect(wsEditor.classes()).not.toContain('is-empty')
+    withWhitespace.unmount()
+  })
+
+  it('未传 placeholder 时回退到 i18n 提示', () => {
+    const wrapper = mount(InputBox, {
+      props: { nodes: [] }
+    })
+    const editor = wrapper.get('.input-editor')
+    expect(editor.classes()).toContain('is-empty')
+    expect(editor.attributes('data-placeholder')).toBeTruthy()
+    wrapper.unmount()
+  })
+})
