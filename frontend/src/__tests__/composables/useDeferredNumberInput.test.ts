@@ -72,6 +72,24 @@ describe('useDeferredNumberInput', () => {
     expect(commit).not.toHaveBeenCalled()
   })
 
+  it('小数中间值（如 2. / .5 / 1e3）不提交，完整小数正常提交', () => {
+    const commit = vi.fn()
+    const { draft, handleInput } = useDeferredNumberInput(() => 30)
+    // Number('2.') === 2：若不拦截会在输入过程中提交中间值
+    expect(handleInput('2.', commit)).toBeNull()
+    expect(commit).not.toHaveBeenCalled()
+    expect(draft.value).toBe('2.')
+    // Number('.5') === 0.5：同样拦截
+    expect(handleInput('.5', commit)).toBeNull()
+    expect(commit).not.toHaveBeenCalled()
+    // 科学计数法中间态也不提交
+    expect(handleInput('1e3', commit)).toBeNull()
+    expect(commit).not.toHaveBeenCalled()
+    // 完整小数正常提交
+    expect(handleInput('2.5', commit)).toBe(2.5)
+    expect(commit).toHaveBeenCalledWith(2.5)
+  })
+
   it('在设置页时切换到其他视图：空输入框自动回填已保存值', async () => {
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()

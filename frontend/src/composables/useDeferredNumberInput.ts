@@ -1,17 +1,9 @@
 import { ref, watch } from 'vue'
-import { useSettingsStore } from '@/stores/settingsStore'
+import { getSettingsView } from './useSettingsView'
 
-/**
- * 安全读取当前应用视图：未安装 Pinia（组件单测环境）时返回 undefined，
- * 此时「离开设置页回填」行为自动降级为不可用（组件单测不依赖它）。
- */
-export function getSettingsView(): string | undefined {
-  try {
-    return useSettingsStore().currentView
-  } catch {
-    return undefined
-  }
-}
+// getSettingsView（设置视图 getter）已迁移到独立模块 useSettingsView；
+// 此处 re-export 保持既有引用兼容（多个设置组件仍从本文件导入）。
+export { getSettingsView }
 
 /**
  * 「清空后延迟回填」数字输入框草稿管理。
@@ -47,10 +39,13 @@ export function useDeferredNumberInput(
     touched.value = false
   }
 
-  /** 解析草稿：空/非有限/未通过校验 → null */
+  /** 解析草稿：空/非有限/格式非法/未通过校验 → null */
   function parseDraft(): number | null {
     const text = draft.value.trim()
     if (text === '') return null
+    // 只接受完整数字格式（整数与普通小数），拒绝「2.」「.5」「1e3」等中间态：
+    // Number('2.') === 2、Number('.5') === 0.5，直接提交会在输入过程中写入中间值。
+    if (!/^-?\d+(\.\d+)?$/.test(text)) return null
     const parsed = Number(text)
     if (!Number.isFinite(parsed)) return null
     if (isValid && !isValid(parsed)) return null

@@ -87,7 +87,7 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     expect(lastInput.value).toBe('')
   })
 
-  it('离开设置页时，空名称自动回填「Prompt N」并提交', async () => {
+  it('离开设置页时，被清空的自定义名称回填「最后一次提交的名称」而非 Prompt N', async () => {
     const w = await mountEditor()
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()
@@ -99,9 +99,33 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     settingsStore.showChat()
     await flushPromises()
 
-    expect((w.find('.entry-name-input').element as HTMLInputElement).value).toBe('Prompt 1')
+    // 回填的是上次提交的自定义名称（不覆盖用户命名）；
+    // 回填值 = entry.name（已是「我的工具」），无需额外 emit（modelValue 不变）
+    expect((w.find('.entry-name-input').element as HTMLInputElement).value).toBe('我的工具')
+    const emitted = w.emitted('update:modelValue')
+    expect(emitted ?? []).toHaveLength(0)
+  })
+
+  it('离开设置页时，新建条目空名称回填「Prompt N」', async () => {
+    const w = await mountEditor()
+    const settingsStore = useSettingsStore()
+    settingsStore.showSettings()
+
+    await w.findAll('button').find(b => b.text().includes('新增条目'))!.trigger('click')
+    await flushPromises()
+    const next = emittedEntries()
+    await w.setProps({ modelValue: next, staticModules: [], dynamicModules: [] })
+    await flushPromises()
+
+    settingsStore.showChat()
+    await flushPromises()
+
+    const nameInputs = w.findAll('.entry-name-input')
+    const lastInput = nameInputs[nameInputs.length - 1].element as HTMLInputElement
+    // 新建条目从未提交过自定义名 → 回填按位置生成的 Prompt N（第 3 条 → Prompt 3）
+    expect(lastInput.value).toBe('Prompt 3')
     const entries = emittedEntries()
-    expect(entries.find(e => e.id === 'entry-1')?.name).toBe('Prompt 1')
+    expect(entries.find(e => e.name === 'Prompt 3')?.name).toBe('Prompt 3')
   })
 
   it('离开设置页时，非空名称保持用户输入', async () => {
