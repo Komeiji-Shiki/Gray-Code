@@ -8,6 +8,7 @@ import { reactive, ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
+import { useDeferredNumberInput, getSettingsView } from '@/composables/useDeferredNumberInput'
 import type { ModelInfo } from '@/types'
 
 const { t } = useI18n()
@@ -64,6 +65,58 @@ const hasManualDefaultPrompt = computed(() =>
 const hasAutoDefaultPrompt = computed(() =>
   !!defaultSummarizeConfig.value.autoSummarizePrompt?.trim()
 )
+
+// 草稿模式：清空后不立即回填默认值；离开设置页时自动回填已保存值
+const {
+  draft: keepRecentRoundsDraft,
+  handleInput: handleKeepRecentRoundsInput,
+  syncFromStored: syncKeepRecentRoundsFromStored
+} = useDeferredNumberInput(() => summarizeConfig.keepRecentRounds)
+const {
+  draft: maxAttemptsDraft,
+  handleInput: handleMaxAttemptsInput,
+  syncFromStored: syncMaxAttemptsFromStored
+} = useDeferredNumberInput(() => summarizeConfig.maxAutoSummarizeAttemptsPerTurn, v => v >= 1 && v <= 5)
+const {
+  draft: maxInputRatioDraft,
+  handleInput: handleMaxInputRatioInput,
+  syncFromStored: syncMaxInputRatioFromStored
+} = useDeferredNumberInput(
+  () => (summarizeConfig.summarizeMaxInputRatio === undefined ? undefined : Math.round(summarizeConfig.summarizeMaxInputRatio * 100)),
+  v => v >= 5 && v <= 95
+)
+
+// 保留预算：数字或百分比文本，允许编辑期间为空；离开设置页时回填已保存值
+const keepRecentTokensDraft = ref('')
+function syncKeepRecentTokensFromStored() {
+  const stored = summarizeConfig.keepRecentTokens
+  keepRecentTokensDraft.value = stored === undefined || stored === null ? '' : String(stored)
+}
+function handleKeepRecentTokensInput(event: Event) {
+  const raw = (event.target as HTMLInputElement).value
+  keepRecentTokensDraft.value = raw
+  const text = raw.trim()
+  if (!text) {
+    // 清空 = 恢复后端内置默认（旧 updateKeepRecentTokens 行为，PR 移除后 UI 上不可达）
+    const fallback = defaultSummarizeConfig.value.keepRecentTokens
+    if (fallback !== undefined && fallback !== null) {
+      keepRecentTokensDraft.value = String(fallback)
+      void updateConfigField('keepRecentTokens', fallback)
+    }
+    return
+  }
+  const value = /^\d+$/.test(text) ? Number(text) : text
+  void updateConfigField('keepRecentTokens', value)
+}
+watch(
+  getSettingsView,
+  (view) => {
+    if (view !== 'settings') {
+      if (!keepRecentTokensDraft.value.trim()) syncKeepRecentTokensFromStored()
+    }
+  }
+)
+syncKeepRecentTokensFromStored()
 
 async function restorePromptToDefault(kind: 'manual' | 'auto') {
   const field = kind === 'manual' ? 'summarizePrompt' : 'autoSummarizePrompt'
@@ -137,6 +190,10 @@ async function loadConfig() {
       }
 
       Object.assign(summarizeConfig, merged)
+      syncKeepRecentRoundsFromStored()
+      syncMaxAttemptsFromStored()
+      syncMaxInputRatioFromStored()
+      syncKeepRecentTokensFromStored()
     }
   } catch (error) {
     console.error('Failed to load summarize config:', error)
@@ -189,29 +246,6 @@ async function updateConfigField(field: string, value: any) {
   } catch (error) {
     console.error('Failed to save summarize config:', error)
   }
-}
-
-// 保存保留预算（空值回落到后端下发的内置默认值，纯数字转 number）
-async function updateKeepRecentTokens(raw: string) {
-  const text = raw.trim()
-  if (!text) {
-    await updateConfigField('keepRecentTokens', defaultSummarizeConfig.value.keepRecentTokens)
-    return
-  }
-  const value = /^\d+$/.test(text) ? Number(text) : text
-  await updateConfigField('keepRecentTokens', value)
-}
-
-// 保存自动总结最大尝试次数（钳制 1-5，非法回落默认 2）
-async function updateMaxAutoSummarizeAttempts(raw: string) {
-  const value = Math.min(5, Math.max(1, Math.floor(Number(raw) || 2)))
-  await updateConfigField('maxAutoSummarizeAttemptsPerTurn', value)
-}
-
-// 保存总结输入占比（百分比输入，存储 0-1 比例，钳制 5%-95%）
-async function updateSummarizeMaxInputRatio(raw: string) {
-  const percent = Math.min(95, Math.max(5, Number(raw) || 50))
-  await updateConfigField('summarizeMaxInputRatio', percent / 100)
 }
 
 // 更新渠道选择
@@ -293,10 +327,10 @@ onMounted(async () => {
         <div class="rounds-input">
           <input
             type="number"
-            :value="summarizeConfig.keepRecentRounds"
+            :value="keepRecentRoundsDraft"
             min="1"
             max="10"
-            @input="(e: any) => updateConfigField('keepRecentRounds', Number(e.target.value))"
+            @input="(e: any) => handleKeepRecentRoundsInput(e.target.value, v => updateConfigField('keepRecentRounds', v))"
           />
           <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.keepRoundsUnit') }}</span>
         </div>
@@ -309,9 +343,9 @@ onMounted(async () => {
         <div class="rounds-input">
           <input
             type="text"
-            :value="String(summarizeConfig.keepRecentTokens ?? '')"
+            :value="keepRecentTokensDraft"
             :placeholder="String(defaultSummarizeConfig.keepRecentTokens ?? '')"
-            @change="(e: any) => updateKeepRecentTokens(e.target.value)"
+            @change="handleKeepRecentTokensInput"
           />
         </div>
         <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.keepTokensHint') }}</p>
@@ -322,10 +356,10 @@ onMounted(async () => {
         <div class="rounds-input">
           <input
             type="number"
-            :value="summarizeConfig.maxAutoSummarizeAttemptsPerTurn"
+            :value="maxAttemptsDraft"
             min="1"
             max="5"
-            @change="(e: any) => updateMaxAutoSummarizeAttempts(e.target.value)"
+            @change="(e: any) => handleMaxAttemptsInput(e.target.value, v => updateConfigField('maxAutoSummarizeAttemptsPerTurn', v))"
           />
           <span class="unit">{{ t('components.settings.summarizeSettings.optionsSection.maxAttemptsUnit') }}</span>
         </div>
@@ -337,10 +371,10 @@ onMounted(async () => {
         <div class="rounds-input">
           <input
             type="number"
-            :value="Math.round((summarizeConfig.summarizeMaxInputRatio ?? 0.5) * 100)"
+            :value="maxInputRatioDraft"
             min="5"
             max="95"
-            @change="(e: any) => updateSummarizeMaxInputRatio(e.target.value)"
+            @change="(e: any) => handleMaxInputRatioInput(e.target.value, v => updateConfigField('summarizeMaxInputRatio', v / 100))"
           />
           <span class="unit">%</span>
         </div>
