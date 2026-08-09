@@ -543,6 +543,9 @@ function onChangeType(newType: string) {
 // 更新多个配置字段（单个请求，避免竞态条件）
 async function updateConfigFields(updates: Record<string, any>) {
   if (!currentConfig.value) return
+  // await 前捕获目标配置 id：请求往返期间用户可能已切换渠道，
+  // 若 await 后重新读 currentConfig.value.id 会命中新渠道，把旧渠道的 updates 合并进新渠道本地配置（跨渠道污染）
+  const configId = currentConfig.value.id
   
   try {
     // 确保数据可序列化（深拷贝移除响应式代理）
@@ -552,12 +555,16 @@ async function updateConfigFields(updates: Record<string, any>) {
     }
     
     await sendToExtension('config.updateConfig', {
-      configId: currentConfig.value.id,
+      configId,
       updates: serializableUpdates
     })
     
+    // 渠道已切换：跳过本地合并（后端已写入旧渠道，其数据在下次 loadConfigs 时正确；
+    // 避免旧渠道的 updates 污染新渠道的本地显示）
+    if (currentConfig.value?.id !== configId) return
+    
     // 直接在本地更新配置值
-    const configIndex = configs.value.findIndex(c => c.id === currentConfig.value!.id)
+    const configIndex = configs.value.findIndex(c => c.id === configId)
     if (configIndex !== -1) {
       configs.value[configIndex] = {
         ...configs.value[configIndex],
@@ -566,7 +573,7 @@ async function updateConfigFields(updates: Record<string, any>) {
     }
     
     // 如果修改的是当前使用的配置，同步到 chatStore
-    if (currentConfig.value.id === chatStore.configId) {
+    if (configId === chatStore.configId) {
       await chatStore.loadCurrentConfig()
     }
   } catch (error) {
@@ -577,6 +584,8 @@ async function updateConfigFields(updates: Record<string, any>) {
 // 更新配置字段
 async function updateConfigField(field: string, value: any) {
   if (!currentConfig.value) return
+  // await 前捕获目标配置 id（防止往返期间切渠道后，本地更新污染新渠道）
+  const configId = currentConfig.value.id
   
   try {
     // 确保数据可序列化（深拷贝移除响应式代理）
@@ -594,12 +603,15 @@ async function updateConfigField(field: string, value: any) {
     }
     
     await sendToExtension('config.updateConfig', {
-      configId: currentConfig.value.id,
+      configId,
       updates: { [field]: serializableValue }
     })
     
+    // 渠道已切换：跳过本地合并
+    if (currentConfig.value?.id !== configId) return
+    
     // 直接在本地更新配置值，避免重新加载导致滚动位置丢失
-    const configIndex = configs.value.findIndex(c => c.id === currentConfig.value!.id)
+    const configIndex = configs.value.findIndex(c => c.id === configId)
     if (configIndex !== -1) {
       configs.value[configIndex] = {
         ...configs.value[configIndex],
@@ -608,7 +620,7 @@ async function updateConfigField(field: string, value: any) {
     }
     
     // 如果修改的是当前使用的配置，同步到 chatStore
-    if (currentConfig.value.id === chatStore.configId) {
+    if (configId === chatStore.configId) {
       await chatStore.loadCurrentConfig()
     }
   } catch (error) {

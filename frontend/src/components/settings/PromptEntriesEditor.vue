@@ -57,6 +57,9 @@ function handleNameInput(entry: PromptEntry, event: Event) {
   if (isChatHistoryEntry(entry)) return
   const raw = readInputValue(event)
   nameDrafts[entry.id] = raw
+  // IME 合成期间不提交（中文输入过程的中间拼音/单字不被提交为条目名称）；
+  // 草稿仍跟随输入，compositionend 后会再次触发 input 完成最终提交。
+  if ((event as InputEvent).isComposing) return
   const trimmed = raw.trim()
   if (trimmed && trimmed !== entry.name) {
     updateEntry(entry.id, { name: trimmed })
@@ -73,7 +76,10 @@ watch(
         if (isChatHistoryEntry(entry)) return entry
         const current = nameDrafts[entry.id] ?? entry.name
         if (!current.trim()) {
-          const fallback = `Prompt ${index + 1}`
+          // 回填「最后一次提交的名称」：entry.name 始终为已提交的非空名称
+          // （用户输入时 handleNameInput 已同步提交；新建条目 createEntry 默认 Prompt N），
+          // 不会覆盖用户之前提交的自定义名称（如清空「我的工具」应回填「我的工具」而非「Prompt N」）。
+          const fallback = entry.name.trim() || `Prompt ${index + 1}`
           nameDrafts[entry.id] = fallback
           if (entry.name !== fallback) {
             changed = true

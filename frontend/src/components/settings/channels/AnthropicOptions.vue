@@ -17,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 // 草稿模式：清空后不立即回填 -1；离开设置页时自动回填已保存值
+// （historyThinkingRounds 为无条件展开的普通数字输入，清空保持空语义合理）
 const {
   draft: historyThinkingRoundsDraft,
   handleInput: handleHistoryThinkingRoundsInput
@@ -176,6 +177,10 @@ function updateThinking(field: string, value: any) {
 }
 
 // 处理数字输入变更，允许空值
+// 注意：temperature/max_tokens/top_p/top_k/budget_tokens 等「开关控制的选项」刻意保留此实现
+// （清空 → emit undefined → JSON.stringify 剔除键 → 渠道不发送该参数、恢复渠道默认值），
+// 与 useDeferredNumberInput 的「清空保持空、离开回填上次值」语义不同——
+// 前者对 toggle 选项是正确行为（清空=恢复默认），故不迁移到草稿模式。
 function handleNumberChange(optionKey: string, event: any) {
   const value = event.target.value
   if (value === '' || value === null || value === undefined) {
