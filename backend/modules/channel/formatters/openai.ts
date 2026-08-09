@@ -299,10 +299,18 @@ export class OpenAIFormatter extends BaseFormatter {
         // 也一并丢弃，避免「call 被滤掉而 tool 消息残留」的孤儿 tool 消息 400。
         // 主路径 formatHistoryForAPI 已做配对感知处理（成对保留/丢弃），此处是防御层。
         const rejectedCallIds = new Set<string>();
+        // BR-08 防御层：无配对响应（全历史范围）的 call id 也一并剔除，
+        // 防止直进 formatter 的本地历史（如子代理历史）残留孤儿 tool_calls 触发 400。
+        // 注：此处只按「响应是否存在于历史」判定，不感知 FR 块位置——主路径
+        // formatHistoryForAPI 已做块感知剔除，错位形态到不了本层。
+        const respondedCallIds = new Set<string>();
         for (const content of history) {
             for (const part of content.parts) {
                 if (part.functionCall?.rejected && part.functionCall.id) {
                     rejectedCallIds.add(part.functionCall.id);
+                }
+                if (part.functionResponse?.id) {
+                    respondedCallIds.add(part.functionResponse.id);
                 }
             }
         }
@@ -313,7 +321,7 @@ export class OpenAIFormatter extends BaseFormatter {
             // 分离各种类型的 parts
             const textParts = content.parts.filter(p => 'text' in p && !p.thought);
             const thoughtParts = content.parts.filter(p => 'text' in p && p.thought === true);
-            const functionCallParts = content.parts.filter(p => p.functionCall && !p.functionCall.rejected);
+            const functionCallParts = content.parts.filter(p => p.functionCall && !!p.functionCall.id && !p.functionCall.rejected && respondedCallIds.has(p.functionCall.id));
             const functionResponseParts = content.parts.filter(
                 p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
             );

@@ -232,15 +232,16 @@ function handleNewTab() {
 async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!content.trim() && messageAttachments.length === 0) return
 
-  // 先判断待确认分支：走“拒绝待确认工具”路径时不 clearAttachments，
-  // 避免带附件输入在拒绝待确认工具时被静默丢弃
+  // 有待确认工具时：发送即中断——先拒绝待确认工具并结束当前回合，
+  // 再走正常发送路径把消息作为新回合发出。此前的"批注+批量拒绝"语义
+  // （把输入栏文字当作批注随 toolConfirmation 发送）已移除。
   if (chatStore.hasPendingToolConfirmation) {
     try {
-      await chatStore.rejectPendingToolsWithAnnotation(content)
+      await chatStore.cancelStreamAndRejectTools()
     } catch (err) {
-      console.error('发送失败:', err)
+      console.error('拒绝待确认工具失败:', err)
     }
-    return
+    // 拒绝失败也继续发送（消息不丢，后端 prepareConversationForRequest 会兜底拒绝）
   }
 
   // 正常发送消息：先立即清除附件，不需要等待响应完成

@@ -325,7 +325,7 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, annotationMessageId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
+    const { conversationId, toolResponses, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
     let controller: AbortController | undefined;
@@ -338,8 +338,6 @@ export class StreamRequestHandler {
       const stream = this.deps.chatHandler.handleToolConfirmation({
         conversationId,
         toolResponses,
-        annotation,
-        annotationMessageId,
         configId,
         modelOverride,
         promptModeId: this.normalizePromptModeId(promptModeId),

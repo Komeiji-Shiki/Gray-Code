@@ -89,8 +89,7 @@ import {
   hasToolResponse as hasToolResponseFn,
   getActualIndex as getActualIndexFn,
   cancelStream as cancelStreamFn,
-  cancelStreamAndRejectTools as cancelStreamAndRejectToolsFn,
-  rejectPendingToolsWithAnnotation as rejectPendingToolsWithAnnotationFn
+  cancelStreamAndRejectTools as cancelStreamAndRejectToolsFn
 } from './chat/toolActions'
 
 import {
@@ -270,8 +269,6 @@ export const useChatStore = defineStore('chat', () => {
   
   const cancelStreamAndRejectTools = () => cancelStreamAndRejectToolsFn(state, computed)
   const cancelStream = (options?: CancelStreamOptions) => cancelStreamFn(state, computed, options)
-  const rejectPendingToolsWithAnnotation = (annotation: string) => 
-    rejectPendingToolsWithAnnotationFn(state, computed, annotation)
 
   // ============ 消息操作 ============
   
@@ -917,7 +914,7 @@ export const useChatStore = defineStore('chat', () => {
     retryAfterError,
     dismissError,
     cancelStream,
-    rejectPendingToolsWithAnnotation,
+    cancelStreamAndRejectTools,
     editAndRetry,
     deleteMessage,
     deleteSingleMessage,

@@ -11,7 +11,7 @@
  */
 
 import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, defineComponent, type PropType, type Component, type ComponentPublicInstance } from 'vue'
-import type { ToolUsage, Message } from '../../types'
+import type { ToolUsage } from '../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
@@ -761,43 +761,17 @@ async function submitToolDecision(toolId: string, toolName: string, confirmed: b
   // 标记为正在处理（注意：Set 变更需替换引用才能触发响应式更新）
   addProcessingToolId(toolId)
 
-  // 获取输入栏的批注内容（可选）
-  const annotation = chatStore.inputValue.trim()
-
-  // 清空输入栏
-  let userMessage: Message | undefined
-  if (annotation) {
-    chatStore.clearInputValue()
-
-    // 先在聊天流中添加用户的批注消息（确保显示顺序正确）
-    userMessage = {
-      id: generateId(),
-      role: 'user',
-      content: annotation,
-      timestamp: Date.now(),
-      parts: [{ text: annotation }]
-    }
-    chatStore.allMessages.push(userMessage)
-  }
-
-  const sent = await sendToolConfirmation(
-    [{ id: toolId, name: toolName, confirmed }],
-    annotation
-  )
+  const sent = await sendToolConfirmation([
+    { id: toolId, name: toolName, confirmed }
+  ])
   if (!sent) {
     removeProcessingToolId(toolId)
-    // 发送失败时回滚已插入的批注消息，避免幻影消息导致前后端索引错位
-    if (userMessage) {
-      const idx = chatStore.allMessages.findIndex(m => m.id === userMessage!.id)
-      if (idx !== -1) chatStore.allMessages.splice(idx, 1)
-    }
   }
 }
 
 // 发送工具确认响应到后端
 async function sendToolConfirmation(
-  toolResponses: Array<{ id: string; name: string; confirmed: boolean }>,
-  annotation?: string
+  toolResponses: Array<{ id: string; name: string; confirmed: boolean }>
 ): Promise<boolean> {
   try {
     const currentConversationId = chatStore.currentConversationId
@@ -820,7 +794,6 @@ async function sendToolConfirmation(
       configId: confirmationConfigId,
       modelOverride: chatStore.pendingModelOverride || undefined,
       toolResponses,
-      annotation,
       streamId,
       promptModeId: chatStore.currentPromptModeId
     })
