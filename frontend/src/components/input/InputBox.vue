@@ -18,6 +18,7 @@ import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNo
 import {
   getCaretTextOffset,
   insertLineBreakAtCaret,
+  insertPlainTextAsSingleUndo,
   insertTextAtCaret,
   getRangeInEditor,
   replaceTextRangeByOffsets
@@ -521,13 +522,17 @@ function handlePaste(e: ClipboardEvent) {
   }
 
   const editor = editorRef.value
-  const plainText = clipboardData.getData('text/plain')
-  if (!editor || !plainText) return
+  // 纯文本粘贴：拦截默认插入，一次性写入原生 undo 栈（Ctrl+Z 整体撤销本次粘贴）。
+  // 不切换 contenteditable 属性：切换编辑宿主会重建 Chromium 的原生 undo 栈，
+  // 粘贴记录随恢复动作一并销毁。多行文本必须走 insertHTML + 带 data-lim-break
+  // 标记的 <br>：insertText 会把 \n 转成裸 <br>，被 extractNodesFromEditor 吞掉换行。
+  const text = clipboardData.getData('text/plain').replace(/\r\n?/g, '\n')
+  if (!editor || !text) return
 
-  // 不切换 contenteditable 属性：切换编辑宿主会清空 Chromium 的原生 undo 栈。
-  // insertText 同时保证纯文本粘贴和单次 Ctrl+Z 撤销；不支持时 helper 回退 DOM 插入。
   e.preventDefault()
-  const result = insertTextAtCaret(editor, plainText)
+  const result = insertPlainTextAsSingleUndo(editor, text)
+  // execCommand 路径会自动派发 input 事件（handleInput 同步状态）；
+  // 手动 DOM 回退路径不派发，需要手动同步。
   if (result.ok && !result.inputFired) handleInput()
 }
 
