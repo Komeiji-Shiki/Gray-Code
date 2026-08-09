@@ -132,6 +132,43 @@ export function isProgressPathAllowed(path: string): boolean {
 }
 
 /**
+ * 通用文件写工具集合。
+ *
+ * search_in_files 是读写混合工具：replace 模式等价于通用文件写操作。
+ * 若某模式的 toolPolicy allowlist 只授予了 search_in_files 而未授予
+ * 任一通用写工具，则 replace 模式构成权限逃逸（只读模式借搜索工具写文件）。
+ * 该集合与 tools/subagents/presets.ts 的 WRITE_TOOLS 保持一致，
+ * 供模式工具策略与工具执行服务共用判定口径。
+ */
+export const GENERAL_FILE_WRITE_TOOLS: ReadonlySet<string> = new Set([
+    'write_file',
+    'apply_diff',
+    'insert_code',
+    'delete_code',
+    'delete_file',
+    'create_directory',
+]);
+
+/**
+ * 判断模式的 allowlist 是否允许 search_in_files 的 replace 模式。
+ *
+ * 规则：allowlist 授予了 search_in_files，但未授予任何通用文件写工具时，
+ * replace 模式必须被拒绝（防止只读模式借搜索工具修改文件）；search 模式不受影响。
+ *
+ * @param toolPolicy 模式工具策略 allowlist（undefined/空数组视为未启用过滤，不限制）
+ * @returns true 表示 replace 模式被禁止
+ */
+export function isSearchInFilesReplaceForbidden(toolPolicy: readonly string[] | undefined): boolean {
+    if (!toolPolicy || toolPolicy.length === 0) {
+        return false;
+    }
+    if (!toolPolicy.includes('search_in_files')) {
+        return false;
+    }
+    return !toolPolicy.some(name => GENERAL_FILE_WRITE_TOOLS.has(name));
+}
+
+/**
  * 获取只读模式下被认为是危险的工具集合
  * 
  * @returns 危险工具名称的 Set
