@@ -488,9 +488,12 @@ export async function rejectPendingToolsWithAnnotation(
   computed: ChatStoreComputed,
   annotation: string
 ): Promise<void> {
-  if (!computed.hasPendingToolConfirmation.value || !state.currentConversationId.value || !state.currentConfig.value?.id) {
+  if (!computed.hasPendingToolConfirmation.value || !state.currentConversationId.value) {
     return
   }
+  // 无全局渠道时，若本回合存在一次性渠道覆盖（Plan 等场景）仍可继续
+  const confirmationConfigId = state.pendingConfigIdOverride.value || state.currentConfig.value?.id || ''
+  if (!confirmationConfigId) return
 
   const toolResponses = computed.pendingToolCalls.value.map(tool => ({
     id: tool.id,
@@ -556,7 +559,7 @@ export async function rejectPendingToolsWithAnnotation(
     state._lastCancelledStreamId.value = null
     await sendToExtension('toolConfirmation', {
       conversationId: state.currentConversationId.value,
-      configId: state.currentConfig.value.id,
+      configId: confirmationConfigId,
       modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
       annotation: trimmedAnnotation,

@@ -49,6 +49,7 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     foldedMessageCount: state.foldedMessageCount.value,
     inputValue: state.inputValue.value,
     pendingModelOverride: state.pendingModelOverride.value,
+    pendingConfigIdOverride: state.pendingConfigIdOverride.value,
     editorNodes: [...state.editorNodes.value],
     attachments: [...state.attachments.value],
     messageQueue: [...state.messageQueue.value],
@@ -92,6 +93,7 @@ export function restoreSessionFromSnapshot(
   state.foldedMessageCount.value = snapshot.foldedMessageCount
   state.inputValue.value = snapshot.inputValue
   state.pendingModelOverride.value = snapshot.pendingModelOverride
+  state.pendingConfigIdOverride.value = snapshot.pendingConfigIdOverride ?? null
   state.editorNodes.value = [...snapshot.editorNodes]
   state.attachments.value = [...snapshot.attachments]
   state.messageQueue.value = [...snapshot.messageQueue]
@@ -137,6 +139,7 @@ export function resetConversationState(state: ChatStoreState): void {
   state.foldedMessageCount.value = 0
   state.inputValue.value = ''
   state.pendingModelOverride.value = null
+  state.pendingConfigIdOverride.value = null
   state.selectedModelId.value = state.currentConfig.value?.model || ''
   state.editorNodes.value = []
   state.attachments.value = []
