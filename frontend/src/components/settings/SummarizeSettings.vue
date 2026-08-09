@@ -96,7 +96,15 @@ function handleKeepRecentTokensInput(event: Event) {
   const raw = (event.target as HTMLInputElement).value
   keepRecentTokensDraft.value = raw
   const text = raw.trim()
-  if (!text) return
+  if (!text) {
+    // 清空 = 恢复后端内置默认（旧 updateKeepRecentTokens 行为，PR 移除后 UI 上不可达）
+    const fallback = defaultSummarizeConfig.value.keepRecentTokens
+    if (fallback !== undefined && fallback !== null) {
+      keepRecentTokensDraft.value = String(fallback)
+      void updateConfigField('keepRecentTokens', fallback)
+    }
+    return
+  }
   const value = /^\d+$/.test(text) ? Number(text) : text
   void updateConfigField('keepRecentTokens', value)
 }

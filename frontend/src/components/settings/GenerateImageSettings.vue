@@ -29,17 +29,18 @@ const imageConfig = reactive({
 const showApiKey = ref(false)
 
 // 草稿模式：清空后不立即回填默认值；离开设置页时自动回填已保存值
-// 保留原 parseInt 的整数语义
+// 保留原 parseInt 的整数语义：旧代码 parseInt(v) || 5 / || 1，输入 0 会归一化为默认值；
+// 这里用 v >= 1 拦截 0/负数（模板 min="1"），避免 0 被直接持久化（批量任务数为 0 语义非法）
 const {
   draft: maxBatchTasksDraft,
   handleInput: handleMaxBatchTasksInput,
   syncFromStored: syncMaxBatchTasksFromStored
-} = useDeferredNumberInput(() => imageConfig.maxBatchTasks, Number.isInteger)
+} = useDeferredNumberInput(() => imageConfig.maxBatchTasks, v => Number.isInteger(v) && v >= 1)
 const {
   draft: maxImagesPerTaskDraft,
   handleInput: handleMaxImagesPerTaskInput,
   syncFromStored: syncMaxImagesPerTaskFromStored
-} = useDeferredNumberInput(() => imageConfig.maxImagesPerTask, Number.isInteger)
+} = useDeferredNumberInput(() => imageConfig.maxImagesPerTask, v => Number.isInteger(v) && v >= 1)
 
 // 宽高比选项
 const aspectRatioOptions = computed<SelectOption[]>(() => [
