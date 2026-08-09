@@ -280,8 +280,8 @@ export function createChatState(): ChatStoreState {
   /** 已折叠丢弃的消息条数（包含 functionResponse） */
   const foldedMessageCount = ref(0)
   
-  /** 配置ID */
-  const configId = ref('gemini-pro')
+  /** 配置ID（空 = 尚未配置任何渠道，首次打开显示无渠道） */
+  const configId = ref('')
 
   /** 当前会话选择的模型 ID（对话级隔离） */
   const selectedModelId = ref('')

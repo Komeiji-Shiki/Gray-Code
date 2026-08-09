@@ -42,11 +42,14 @@ function isChannelType(value: unknown): value is ChannelType {
  * 渠道类型变更时保留的跨类型通用字段（白名单）
  *
  * 切换渠道类型时，配置以新类型的默认配置为基底重建，仅保留此列表中的通用字段；
- * 类型特有字段（url、models、model、options、optionsEnabled、useAuthorizationHeader、
+ * 类型特有字段（models、model、options、optionsEnabled、useAuthorizationHeader、
  * deepSeekUserIdEnabled、pdfAttachmentEnabled 等）重置为新类型默认值，避免旧类型字段残留
  * 污染新类型请求（例如 Gemini 的 thinkingConfig 残留到 Anthropic 配置上）。
+ * url 属例外：它是「半通用」字段——用户自定义端点（中转站/代理）跨类型通常仍有效，
+ * 切换时保留；但若旧 url 只是旧类型的默认端点（用户未自定义），则跟随新类型默认端点
+ * （见 updateConfig 的 typeChanged 分支）。
  */
-const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey'> = [
+const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey' | 'url'> = [
     'name',
     'enabled',
     'description',
@@ -81,7 +84,10 @@ const COMMON_CHANNEL_FIELDS: ReadonlyArray<keyof BaseChannelConfig | 'apiKey'> =
     'strictToolsEnabled',
     // apiKey 跨类型保留：OpenAI 与 OpenAI Responses 等转换场景下密钥通常仍有效，
     // 无效时用户可在表单中直接覆盖
-    'apiKey'
+    'apiKey',
+    // url（API 端点）跨类型保留：自定义端点（中转站/代理）通常对多种类型通用；
+    // 旧类型默认端点的特殊情况在 updateConfig 中剔除
+    'url'
 ];
 
 /**
@@ -436,12 +442,19 @@ export class ConfigManager {
         let updated: ChannelConfig;
         if (typeChanged) {
             // 渠道类型变更：以新类型默认配置为基底重建，仅保留跨类型通用字段，
-            // 类型特有字段（url、options、models 等）重置为新类型默认值；
+            // 类型特有字段（options、models 等）重置为新类型默认值；
             // 显式传入的 updates 优先级最高
             const defaults = this.getDefaultConfig(newType);
+            const common = pickCommonFields(existing);
+            // url 特例：若旧 url 只是旧类型的默认端点（用户未自定义过），
+            // 不保留、跟随新类型默认端点；自定义端点（中转站/代理）则跨类型保留，
+            // 避免切换类型时要求用户重写 URL
+            if (existing.url === this.getDefaultConfig(existing.type).url) {
+                delete common.url;
+            }
             updated = {
                 ...defaults,
-                ...pickCommonFields(existing),
+                ...common,
                 ...updates,
                 id: configId,  // 保持 ID 不变
                 createdAt: existing.createdAt,  // 保持创建时间

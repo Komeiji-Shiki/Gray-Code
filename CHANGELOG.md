@@ -14,6 +14,15 @@
 ### Fixed
   - 修复点击插件后需等待约一秒才出现启动动画的问题：`ChatViewProvider` 现在生成 HTML 时同步读取 `graycode.ui.appearance.splashEnabled`，在完整前端 CSS/JavaScript 加载前直接内联对应的首帧启动壳与关键样式；浏览器先绘制 Gray icon 描线预备动效或关闭态石墨光场，再异步加载完整资源并由 Vue 接管。开启与关闭两种画面从 HTML 首帧起使用同一份不可变偏好快照，互不串画面；完整样式加载失败时仍继续启动前端模块，`prefers-reduced-motion` 仍使用静态画面。
 
+### Changed
+  - 移除首次启动自动预置的默认 Gemini 渠道（此前扩展激活时无条件创建 `gemini-pro` 渠道，含占位 API Key，易让用户误以为开箱即用）。现在首次打开显示「无渠道」空态，引导用户新建渠道并填写 API Key；设置页允许删除全部渠道（不再强制「至少保留一个」），删除当前聊天会话正在使用的渠道后自动切换到剩余渠道、删光则回到无渠道空态。
+  - 切换渠道类型时保留自定义 API URL 与 API Key（API Key 此前已保留；自定义端点如中转站/代理对多种类型通用，无需重写）；若旧 URL 只是旧类型的默认端点（用户未自定义），则跟随新类型默认端点，避免残留旧默认值。模型列表、高级选项等类型特有字段仍重置为新类型默认值；相关确认框与提示文案同步更新。
+
+### Fixed
+  - 修复「最近对话/历史对话无法删除」：删除确认框（ConfirmDialog）确认时先置 `visible=false`（同步 emit `update:modelValue:false`）再 emit `confirm`，`ConversationList.vue` 通过 `@update:model-value` 同步清空 `pendingDeleteId` 导致 `confirmDelete` 读到的恒为 null、`delete` 事件永不发出（点击删除只关框无任何动作、无报错、刷新后对话仍在）。改为仅由 `@cancel` 清理待删 id；同类竞态一并修复于 `DirtyFilesConfirm.vue`（v-model setter 同步清空待确认动作导致「丢弃更改并继续」只关框不执行续作）。
+  - 删除对话失败时给出可见错误提示（此前失败仅写 store error 与控制台日志，用户看到的是「点了没反应」）。
+  - 修复 `ActivityTracker.test.ts` 的午夜跨天脆弱性：测试累计推进约 30+ 分钟，真实运行时刻临近午夜时 `Date.now()` 跨天导致 `todaySamples()` 读取次日空文件而误报失败；现固定系统时间（beforeEach 重新设置，afterEach `useRealTimers` 自动恢复）。
+
 ## [1.4.6] - 2026-08-08
 
 ### Added
