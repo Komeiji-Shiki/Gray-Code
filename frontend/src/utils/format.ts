@@ -2,45 +2,6 @@
  * 格式化工具函数
  */
 
-// 格式化相对时间（如"刚刚"、"3分钟前"）
-export function formatRelativeTime(timestamp: number): string {
-  const date = new Date(timestamp)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  
-  // 小于1分钟
-  if (diff < 60000) {
-    return '刚刚'
-  }
-  
-  // 小于1小时
-  if (diff < 3600000) {
-    const minutes = Math.floor(diff / 60000)
-    return `${minutes}分钟前`
-  }
-  
-  // 小于1天
-  if (diff < 86400000) {
-    const hours = Math.floor(diff / 3600000)
-    return `${hours}小时前`
-  }
-  
-  // 小于7天
-  if (diff < 604800000) {
-    const days = Math.floor(diff / 86400000)
-    return `${days}天前`
-  }
-  
-  // 显示完整日期
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
-
 // 格式化时间戳（支持自定义格式）
 export function formatTime(timestamp: number, format = 'YYYY-MM-DD HH:mm:ss'): string {
   const date = new Date(timestamp)
@@ -62,11 +23,6 @@ export function formatTime(timestamp: number, format = 'YYYY-MM-DD HH:mm:ss'): s
 }
 
 // 截断文本
-export function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.substring(0, maxLength) + '...'
-}
-
 // 转义正则表达式特殊字符
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -115,101 +71,9 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   return false
 }
 
-type DebouncedFunction<T extends (...args: any[]) => any> = ((...args: Parameters<T>) => void) & { cancel: () => void }
-
-// 防抖函数
-export function debounce<T extends (...args: any[]) => any>(
-  fn: T,
-  delay: number
-): DebouncedFunction<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined
-
-  const debounced = function (...args: Parameters<T>) {
-    if (timeoutId !== undefined) clearTimeout(timeoutId)
-    timeoutId = setTimeout(() => {
-      timeoutId = undefined
-      fn(...args)
-    }, delay)
-  } as DebouncedFunction<T>
-
-  debounced.cancel = () => {
-    if (timeoutId !== undefined) clearTimeout(timeoutId)
-    timeoutId = undefined
-  }
-  return debounced
-}
-
-// 节流函数
-export function throttle<T extends (...args: any[]) => any>(
-  fn: T,
-  delay: number
-): (...args: Parameters<T>) => void {
-  let lastCall = 0
-  let trailingTimer: ReturnType<typeof setTimeout> | undefined
-  let trailingArgs: Parameters<T> | undefined
-
-  return function (...args: Parameters<T>) {
-    const now = Date.now()
-    const remaining = delay - (now - lastCall)
-
-    if (remaining <= 0) {
-      if (trailingTimer !== undefined) clearTimeout(trailingTimer)
-      trailingTimer = undefined
-      trailingArgs = undefined
-      lastCall = now
-      fn(...args)
-      return
-    }
-
-    trailingArgs = args
-    if (trailingTimer !== undefined) return
-    trailingTimer = setTimeout(() => {
-      trailingTimer = undefined
-      lastCall = Date.now()
-      const pending = trailingArgs
-      trailingArgs = undefined
-      if (pending) fn(...pending)
-    }, remaining)
-  }
-}
-
-// 延迟执行
-export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 // 生成唯一ID
 export function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-}
-
-// 判断是否为空值（上游 89c64c9：Date/Map/Set 支持）
-export function isEmpty(value: any): boolean {
-  if (value === null || value === undefined) return true
-  if (typeof value === 'string') return value.trim() === ''
-  if (Array.isArray(value)) return value.length === 0
-  if (value instanceof Date) return false
-  if (value instanceof Map || value instanceof Set) return value.size === 0
-  if (typeof value === 'object') return Object.keys(value).length === 0
-  return false
-}
-
-// 深度克隆
-// 深度克隆
-export function deepClone<T>(obj: T): T {
-  if (obj === null || typeof obj !== 'object') return obj
-  
-  if (obj instanceof Date) return new Date(obj.getTime()) as any
-  if (obj instanceof Array) return obj.map(item => deepClone(item)) as any
-  
-  const clonedObj = {} as T
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      clonedObj[key] = deepClone(obj[key])
-    }
-  }
-  
-  return clonedObj
 }
 
 // 格式化数字（添加千分位分隔符，始终保留一位小数）

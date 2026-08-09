@@ -639,6 +639,14 @@ onMounted(async () => {
   disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
   disposeVisibilityHooks = registerVisibilityChangeHooks()
   
+  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
+  // 与语言/设置加载无数据依赖（各写独立 store），并行启动缩短开屏/占位时长：
+  // initialize 内部的 streamChunk/workspace 监听在调用瞬间同步注册，IPC 应答经
+  // sendToExtension 的 per-request 处理器送达，不受下方命令监听器注册顺序影响。
+  const chatInit = chatStore.initialize().catch((err) => {
+    console.error('[App] chatStore.initialize failed', err)
+  })
+
   // 先加载语言设置，确保 UI 语言正确
   await loadLanguageSettings()
 
@@ -736,14 +744,9 @@ onMounted(async () => {
     }
   })
   
-  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
-  try {
-    await chatStore.initialize()
-  } catch (err) {
-    console.error('[App] chatStore.initialize failed', err)
-  } finally {
-    mainViewInitialized.value = true
-  }
+  // 并行初始化完成（含失败兜底）后结束关闭态占位
+  await chatInit
+  mainViewInitialized.value = true
 })
 
 onBeforeUnmount(() => {

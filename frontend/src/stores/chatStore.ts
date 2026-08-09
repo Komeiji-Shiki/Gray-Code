@@ -563,14 +563,6 @@ export const useChatStore = defineStore('chat', () => {
     state.attachments.value = [...state.attachments.value, att]
   }
 
-  function removeStoreAttachment(id: string) {
-    state.attachments.value = state.attachments.value.filter(a => a.id !== id)
-  }
-
-  function clearStoreAttachments() {
-    state.attachments.value = []
-  }
-
   // ============ 消息队列（候选区） ============
 
   /**
@@ -595,17 +587,6 @@ export const useChatStore = defineStore('chat', () => {
         conversationId: state.currentConversationId.value
       }).catch(() => {})
     }
-  }
-
-  /**
-   * 取出队列第一条消息
-   */
-  function dequeueMessage(): QueuedMessage | null {
-    const queue = state.messageQueue.value
-    if (queue.length === 0) return null
-    const first = queue[0]
-    state.messageQueue.value = queue.slice(1)
-    return first
   }
 
   /**
@@ -1033,13 +1014,16 @@ export const useChatStore = defineStore('chat', () => {
     } catch {
       // 忽略错误
     }
-    
-    await loadSavedWorkspaces(state)
-    
-    await loadSavedConfigId(state)
-    await loadCurrentConfig(state)
-    await loadCheckpointConfig(state)
-    await loadConversations()
+
+    // 并行加载互不依赖的启动数据（各写独立 state 字段，后端应答经 per-request
+    // 响应处理器送达、无消息路由竞态；loadSavedConfigId 内部已调 loadCurrentConfig，
+    // 不再重复请求 config.getConfig）
+    await Promise.all([
+      loadSavedWorkspaces(state),
+      loadSavedConfigId(state),
+      loadCheckpointConfig(state),
+      loadConversations()
+    ])
     
     state.currentConversationId.value = null
     state.allMessages.value = []
@@ -1195,13 +1179,10 @@ export const useChatStore = defineStore('chat', () => {
 
     storeAttachments: state.attachments,
     addStoreAttachment,
-    removeStoreAttachment,
-    clearStoreAttachments,
 
     // 消息队列（候选区）
     messageQueue: state.messageQueue,
     enqueueMessage,
-    dequeueMessage,
     removeQueuedMessage,
     sendQueuedMessageNow,
     moveQueuedMessage,

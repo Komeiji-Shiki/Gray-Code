@@ -4,6 +4,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 
 describe('settingsStore appearance', () => {
   beforeEach(() => {
+    localStorage.clear()
     setActivePinia(createPinia())
   })
 
@@ -31,6 +32,18 @@ describe('settingsStore appearance', () => {
     expect(localStorage.getItem('gc-splash-disabled')).toBe('1')
     store.setSplashEnabled(true)
     expect(localStorage.getItem('gc-splash-disabled')).toBeNull()
+  })
+
+  it('初始化时读取 gc-splash-disabled 标记：已关闭动画的用户首帧即不渲染 Splash（桌面无同步注入场景）', () => {
+    localStorage.setItem('gc-splash-disabled', '1')
+    const store = useSettingsStore()
+    expect(store.splashEnabled).toBe(false)
+  })
+
+  it('gc-splash-disabled 标记缺失时初始默认开启 Splash', () => {
+    localStorage.removeItem('gc-splash-disabled')
+    const store = useSettingsStore()
+    expect(store.splashEnabled).toBe(true)
   })
 
   it('appearance fields coexist independently (tpsBar toggle does not touch others)', () => {

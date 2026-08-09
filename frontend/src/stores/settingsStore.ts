@@ -4,7 +4,7 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import type { SmoothMode } from '../utils/smoothStream'
 
 export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'memory' | 'sandbox' | 'general' | 'usage'
@@ -44,12 +44,22 @@ export const useSettingsStore = defineStore('settings', () => {
   const tpsBarEnabled = ref(true)
 
   // 外观设置：开屏动画开关（关闭后启动直接进入主界面）
-  const splashEnabled = ref(true)
+  // 初始值同步首帧静态启动画面的 localStorage 标记（boot-splash.js 读同一个 key）：
+  // 桌面主窗口无 HTML 同步注入（__GRAYCODE_STARTUP_SPLASH_ENABLED），App.vue 首帧即读
+  // 本 store——若默认 true，关闭开屏动画的用户会在 getSettings 往返完成前闪现 1-2 帧
+  // Splash（首帧 #gc-boot 已被 gc-no-splash 抑制，Vue 端却还在播动画）。从标记初始化后
+  // 首帧决定与静态画面一致：关闭动画的用户从第一帧就完全不渲染 Splash。
+  function readInitialSplashEnabled(): boolean {
+    try {
+      return localStorage.getItem('gc-splash-disabled') !== '1'
+    } catch {
+      // localStorage 不可用（隐私模式等）：沿用默认开启
+      return true
+    }
+  }
+  const splashEnabled = ref(readInitialSplashEnabled())
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
-
-  // 计算属性：是否显示设置面板（向后兼容）
-  const isVisible = computed(() => currentView.value === 'settings')
 
   // 切换到聊天视图
   function showChat() {
@@ -72,11 +82,6 @@ export const useSettingsStore = defineStore('settings', () => {
     if (tab) {
       activeTab.value = tab
     }
-  }
-
-  // 隐藏设置面板（回到聊天）
-  function hideSettings() {
-    currentView.value = 'chat'
   }
 
   // 设置当前标签
@@ -154,7 +159,6 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     // 状态
     currentView,
-    isVisible,
     activeTab,
     language,
     appearanceLoadingText,
@@ -171,7 +175,6 @@ export const useSettingsStore = defineStore('settings', () => {
     showHistory,
     showUsage,
     showSettings,
-    hideSettings,
     setActiveTab,
     setLanguage,
     setAppearanceLoadingText,

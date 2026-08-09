@@ -106,10 +106,16 @@ export class ToolDeclarationResolver {
 
     /** 设置指纹：只序列化影响工具声明的配置切片（值都很小，序列化成本可忽略） */
     private settingsFingerprint(): string {
-        const settings = this.settingsManager
-            && typeof (this.settingsManager as any).getSettings === 'function'
-            ? (this.settingsManager as any).getSettings() as { toolsEnabled?: unknown; toolAutoExec?: unknown; toolsConfig?: Record<string, unknown> }
-            : undefined;
+        // 优先 getSettingsRaw 只读裸引用：getSettings 的全量深拷贝（含全部 prompt 模板等
+        // 大字符串）每次工具循环迭代都会触发，仅为了计算指纹，成本与收益不成比例；
+        // 无裸引用访问器（测试 mock / 自定义实现）时回退 getSettings，语义不变。
+        const sm = this.settingsManager as any;
+        if (!sm) {
+            return '';
+        }
+        const settings = typeof sm.getSettingsRaw === 'function'
+            ? sm.getSettingsRaw()
+            : sm.getSettings?.();
         if (!settings) {
             return '';
         }

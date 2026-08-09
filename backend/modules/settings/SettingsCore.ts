@@ -208,6 +208,18 @@ export class SettingsCore {
     }
 
     /**
+     * 获取完整设置（内部只读裸引用，不做深拷贝）。
+     *
+     * 仅供内部热路径只读使用（如工具声明缓存指纹 settingsFingerprint 每次迭代都要读
+     * 全部配置切片，getSettings 的全量深拷贝含 prompt 模板等大字符串对象，成本可观）。
+     * 外部读取必须走 getSettings() 的深拷贝语义，防止调用方原地修改污染存储中的活对象；
+     * 设置更新走整体替换（updateSettings 换新对象），同步读期间引用始终有效。
+     */
+    getSettingsRaw(): Readonly<GlobalSettings> {
+        return this.settings;
+    }
+
+    /**
      * 串行执行读-改-写操作
      *
      * 多个主题服务的更新方法（addPinnedFile / setSkillEnabled 等）基于同一旧列表

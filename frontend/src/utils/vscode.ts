@@ -317,11 +317,6 @@ export function loadState<T = any>(key: string, defaultValue?: T): T | undefined
   return state[key] !== undefined ? state[key] : defaultValue
 }
 
-export function clearState() {
-  const vscode = getVSCodeAPI()
-  vscode.setState({})
-}
-
 /**
  * 显示 VSCode 通知
  *

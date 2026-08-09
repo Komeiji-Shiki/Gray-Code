@@ -84,6 +84,14 @@ class TaskManagerClass {
     
     /** 事件发射器 */
     private eventEmitter: EventEmitter = new EventEmitter();
+
+    /**
+     * 泄漏兜底清扫周期：cleanup() 兜底此前无任何调用点，驻留任务（已取消却未注销、
+     * 超 30 分钟未终态）会永久留在 activeTasks。挂一个 unref 定时器周期性清扫，
+     * 不阻止进程退出；仅在注册过任务后才启动，无任务时零开销。
+     */
+    private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+    private static readonly CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
     
     /**
      * 生成唯一任务 ID
@@ -115,6 +123,15 @@ class TaskManagerClass {
         };
         
         this.activeTasks.set(id, taskInfo);
+        
+        // 惰性启动泄漏兜底清扫（unref：不阻止进程退出；任务全部注销后定时器自然空转，
+        // 每轮 cleanup 都无事可做，开销可忽略）
+        if (this.cleanupTimer === null) {
+            this.cleanupTimer = setInterval(() => this.cleanup(), TaskManagerClass.CLEANUP_INTERVAL_MS);
+            if (typeof this.cleanupTimer.unref === 'function') {
+                this.cleanupTimer.unref();
+            }
+        }
         
         // 发送开始事件
         this.emitEvent({
@@ -336,11 +353,6 @@ class TaskManagerClass {
     }
     
     /**
-     * 驻留超过此时长（毫秒）仍未注销的任务视为泄漏（超时兜底，阈值足够大，正常长任务不受影响）
-     */
-    private static readonly CLEANUP_STALE_TASK_TIMEOUT_MS = 30 * 60 * 1000;
-
-    /**
      * 清理异常泄漏的任务。
      *
      * 正常生命周期中，任务在终态（completed/cancelled/error）时由 unregisterTask
@@ -348,23 +360,24 @@ class TaskManagerClass {
      * 本方法清扫的是「应该已终态却仍驻留」的泄漏任务：
      * - 已取消（abortController 已触发）但从未走 unregisterTask 注销的任务：
      *   补发 cancelled 终态事件后移除，前端任务条不会永久停留在「已取消但无结果」；
-     * - 超时兜底：驻留超过 CLEANUP_STALE_TASK_TIMEOUT_MS 的任务同样视为泄漏，
-     *   中止其 abortController、补发 cancelled 事件后移除。
+     *
+     * 注意：只清扫「已 abort 却未注销」的任务，不对仍运行中的任务做时长兜底——
+     * 合法长任务（长时间终端命令/后台子代理 run）可能运行数小时，按驻留时长强行
+     * 补发 cancelled 会伪造「用户取消」回执，而任务实际还在运行（这里也并未真正
+     * abort 它），取消能力随之丢失、真实完成事件被 no-op 吞掉，比泄漏更糟。
      *
      * 兼容性：unregisterTask 后续对已清理 ID 的调用是安全空操作（Map 查不到即返回），
-     * 不会重复发事件；正在正常执行且未超时的任务不受影响。
+     * 不会重复发事件；正在正常执行的任务不受影响。
      */
     cleanup(): void {
-        const now = Date.now();
         for (const [id, task] of [...this.activeTasks]) {
-            const stale = now - task.startTime > TaskManagerClass.CLEANUP_STALE_TASK_TIMEOUT_MS;
-            if (task.abortController.signal.aborted || stale) {
+            if (task.abortController.signal.aborted) {
                 this.activeTasks.delete(id);
                 this.emitEvent({
                     taskId: id,
                     taskType: task.type,
                     type: 'cancelled',
-                    data: { reason: stale ? 'cleanup_stale' : 'cleanup_aborted' }
+                    data: { reason: 'cleanup_aborted' }
                 });
             }
         }

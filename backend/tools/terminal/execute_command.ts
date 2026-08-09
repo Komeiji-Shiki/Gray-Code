@@ -22,7 +22,7 @@ const treeKill = require('tree-kill') as (pid: number, signal?: string, callback
 import { getGlobalSettingsManager, getGlobalStoragePath } from '../../core/settingsContext';
 import { getDefaultExecuteCommandConfig } from '../../modules/settings';
 import type { ShellConfig } from '../../modules/settings';
-import { TaskManager, type TaskEvent } from '../taskManager';
+import { TaskManager } from '../taskManager';
 import { getAllWorkspaces, getWorkspaceByUri, parseWorkspacePath } from '../utils';
 import { t } from '../../i18n';
 
@@ -156,16 +156,6 @@ export interface TerminalOutputEvent {
 export function onTerminalOutput(listener: (event: TerminalOutputEvent) => void): () => void {
     terminalEmitter.on('output', listener);
     return () => terminalEmitter.off('output', listener);
-}
-
-/**
- * 订阅终端任务事件（使用 TaskManager）
- * 这是统一事件系统的入口，可用于未来替换 terminalEmitter
- * @param listener 监听器函数
- * @returns 取消订阅函数
- */
-export function onTerminalTaskEvent(listener: (event: TaskEvent) => void): () => void {
-    return TaskManager.onTaskEventByType(TASK_TYPE_TERMINAL, listener);
 }
 
 /**
@@ -339,15 +329,6 @@ function getShellConfig(shellType: ShellType): {
             }
             return { shell: '/bin/sh', shellArgs: ['-c'] };
     }
-}
-
-/**
- * 获取启用的 shell 列表（用于工具描述）
- */
-export function getEnabledShellTypes(): string[] {
-    const settingsManager = getGlobalSettingsManager();
-    const config = settingsManager?.getExecuteCommandConfig() || getDefaultExecuteCommandConfig();
-    return config.shells.filter(s => s.enabled).map(s => s.type);
 }
 
 /**

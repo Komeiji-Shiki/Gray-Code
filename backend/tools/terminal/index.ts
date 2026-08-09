@@ -13,7 +13,6 @@ export {
     killTerminalProcess,
     getTerminalOutput,
     getActiveTerminalProcesses,
-    getEnabledShellTypes,
     checkShellAvailability,
     checkAllShellsAvailability,
     onTerminalOutput,

@@ -326,33 +326,39 @@ async function insertCssOnce(win: BrowserWindow, css: string, keyName: string): 
 async function injectDesktopRendererAssets(win: BrowserWindow): Promise<void> {
   try {
     const themePath = findRendererAsset('theme.css');
-    if (themePath) {
-      const css = fs.readFileSync(themePath, 'utf-8');
-      await insertCssOnce(win, css, 'theme');
-    } else {
-      console.warn('[main] theme.css not found; UI will fall back to browser defaults');
-    }
-
     // codicons 图标字体：dist 重建会冲掉 patch-dist.mjs 注入的 <link>，
     // 与 theme.css 同策略改为运行时注入；相对字体 URL 必须改写成绝对 graycode:// URL，
     // 否则会相对页面路径解析（graycode://local/frontend/dist/codicon.ttf）导致字体 404、图标全丢
     const codiconCssPath = path.join(REPO_ROOT, 'resources', 'codicons', 'codicon.css');
-    if (fs.existsSync(codiconCssPath)) {
-      let codiconCss = fs.readFileSync(codiconCssPath, 'utf-8');
-      codiconCss = codiconCss.replace(
-        /url\(\s*(['"]?)(\.\/[^)'"]+)\1\s*\)/g,
-        (_match, quote, relPath) => {
-          const absolute = `graycode://local/resources/codicons/${relPath.replace(/^\.\//, '')}`;
-          return `url(${quote}${absolute}${quote})`;
-        }
-      );
+    const overlayPath = findRendererAsset('overlay.js');
+
+    // 三类注入互不依赖（insertedCssKeys 按 keyName 分键），并行执行省两次跨进程 IPC 往返
+    const [themeCss, codiconCss, overlayJs] = await Promise.all([
+      themePath ? fs.promises.readFile(themePath, 'utf-8') : Promise.resolve(null),
+      fs.existsSync(codiconCssPath)
+        ? fs.promises.readFile(codiconCssPath, 'utf-8').then((css) => css.replace(
+          /url\(\s*(['"]?)(\.\/[^)'"]+)\1\s*\)/g,
+          (_match, quote, relPath) => {
+            const absolute = `graycode://local/resources/codicons/${relPath.replace(/^\.\//, '')}`;
+            return `url(${quote}${absolute}${quote})`;
+          }
+        ))
+        : Promise.resolve(null),
+      overlayPath ? fs.promises.readFile(overlayPath, 'utf-8') : Promise.resolve(null)
+    ]);
+
+    if (themeCss !== null) {
+      await insertCssOnce(win, themeCss, 'theme');
+    } else {
+      console.warn('[main] theme.css not found; UI will fall back to browser defaults');
+    }
+
+    if (codiconCss !== null) {
       await insertCssOnce(win, codiconCss, 'codicons');
     }
 
-    const overlayPath = findRendererAsset('overlay.js');
-    if (overlayPath) {
-      const js = fs.readFileSync(overlayPath, 'utf-8');
-      await win.webContents.executeJavaScript(js, false).catch((err) => {
+    if (overlayJs !== null) {
+      await win.webContents.executeJavaScript(overlayJs, false).catch((err) => {
         console.warn('[main] overlay.js injection failed:', err);
       });
     }

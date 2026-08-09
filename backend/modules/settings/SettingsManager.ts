@@ -170,6 +170,13 @@ export class SettingsManager {
     }
 
     /**
+     * 获取完整设置（内部只读裸引用，不做深拷贝；仅限内部热路径只读使用）
+     */
+    getSettingsRaw(): Readonly<GlobalSettings> {
+        return this.core.getSettingsRaw();
+    }
+
+    /**
      * 更新设置（部分更新）
      */
     updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
