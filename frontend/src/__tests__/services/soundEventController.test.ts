@@ -111,4 +111,48 @@ describe('soundEventController 窗口焦点感知', () => {
     await handleSoundEvent(makeEvent('taskComplete', stale))
     expect(mockedPlayCue).not.toHaveBeenCalled()
   })
+
+  it('子代理事件（role: subagent）把角色透传给 playCue，由 soundCues 按子代理开关门控', async () => {
+    setVscodeWindowFocused(false)
+    await handleSoundEvent({
+      cue: 'taskComplete',
+      source: 'taskEvent',
+      role: 'subagent',
+      createdAt: Date.now()
+    })
+
+    expect(mockedPlayCue).toHaveBeenCalledWith(
+      'taskComplete',
+      expect.objectContaining({ role: 'subagent' })
+    )
+  })
+
+  it('未标注角色的事件按主代理处理（不携带 role，向后兼容）', async () => {
+    setVscodeWindowFocused(false)
+    await handleSoundEvent(makeEvent())
+
+    expect(mockedPlayCue).toHaveBeenCalledWith(
+      'taskComplete',
+      expect.not.objectContaining({ role: 'subagent' })
+    )
+  })
+
+  it('文档隐藏期间聚合的子代理事件：补播时保留 role', async () => {
+    setVscodeWindowFocused(false)
+    setDocumentHidden(true)
+    await handleSoundEvent({
+      cue: 'taskError',
+      source: 'taskEvent',
+      role: 'subagent',
+      createdAt: Date.now()
+    })
+    expect(mockedPlayCue).not.toHaveBeenCalled()
+
+    setDocumentHidden(false)
+    await flushHiddenSoundEvent()
+    expect(mockedPlayCue).toHaveBeenCalledWith(
+      'taskError',
+      expect.objectContaining({ role: 'subagent' })
+    )
+  })
 })

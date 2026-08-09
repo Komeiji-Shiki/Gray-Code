@@ -298,8 +298,26 @@ export class SubAgentMonitorPanel {
         this.panel.onDidChangeViewState(() => {
             if (this.panel?.visible) {
                 this.postManifest({ navigate: false });
+                // 可见性恢复时同步补推一次焦点状态，覆盖 webview 首次加载前消息丢失的场景
+                pushWindowFocus(vscode.window.state.focused);
             }
         }, undefined, this.panelDisposables);
+
+        // VSCode 窗口焦点状态推送：子代理面板启用提示音后，需要与主窗口同一套焦点感知——
+        // 焦点在 VSCode 窗口时用户看得见界面，不播；窗口失焦（切到其他应用）时才播提醒。
+        const pushWindowFocus = (focused: boolean) => {
+            this.postRoutedMessage({
+                type: 'command',
+                command: 'windowFocusChanged',
+                data: { focused: !!focused }
+            });
+        };
+        pushWindowFocus(vscode.window.state.focused);
+        this.panelDisposables.push(
+            vscode.window.onDidChangeWindowState((state) => {
+                pushWindowFocus(state.focused);
+            })
+        );
 
         this.panel.onDidDispose(() => {
             this.clearLlmDeltaQueue();
@@ -345,6 +363,13 @@ export class SubAgentMonitorPanel {
                 success: true,
                 data: this.createManifestPayload(true)
             }, clientId);
+            // 补推一次窗口焦点：open() 时的推送可能早于前端监听器注册（面板无 ready 队列），
+            // 前端若停在默认 focused=true，失焦场景的提示音会失效直到下次焦点变化。
+            this.postRoutedMessage({
+                type: 'command',
+                command: 'windowFocusChanged',
+                data: { focused: !!vscode.window.state.focused }
+            });
             return;
         }
 

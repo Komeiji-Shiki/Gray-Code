@@ -2654,7 +2654,9 @@ const zhCN = {
                 },
                 cues: {
                     title: '事件类型',
-                    description: '选择哪些事件需要播放提示音',
+                    description: '选择需要播放提示音的事件。主代理（主对话）与子代理（SubAgent）的事件可分别控制。',
+                    main: '主代理',
+                    subagent: '子代理',
                     warning: '警告（Warning）',
                     error: '错误（Error）',
                     taskComplete: '任务完成',
