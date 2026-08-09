@@ -426,6 +426,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.updateChecker = new UpdateChecker({
             // 用户可在设置页「通用」关闭自动检查（checkForUpdates !== false 默认开启）
             isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
+            // 更新渠道：stable 正式版 / nightly 每日构建（设置页「通用」可选）
+            getUpdateChannel: () => this.settingsManager.getSettings().updateChannel ?? 'stable',
             // 复用渠道代理配置：GitHub API/下载在代理环境下同样走代理
             getProxyUrl: () => {
                 const proxy = this.settingsManager.getSettings().proxy;

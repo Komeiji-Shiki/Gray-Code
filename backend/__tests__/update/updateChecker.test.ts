@@ -13,6 +13,7 @@ import {
     compareVersions,
     shouldCheck,
     parseReleaseResponse,
+    extractNightlyVersionFromName,
     UPDATE_CHECK_INTERVAL_MS,
 } from '../../modules/update';
 import * as vscode from 'vscode';
@@ -75,6 +76,18 @@ describe('shouldCheck', () => {
     });
 });
 
+describe('extractNightlyVersionFromName', () => {
+    it('从 Release name 提取 nightly 四段版本号', () => {
+        expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6.20260809')).toBe('1.4.6.20260809');
+    });
+
+    it('无版本号返回 null', () => {
+        expect(extractNightlyVersionFromName('Gray Code Nightly')).toBeNull();
+        expect(extractNightlyVersionFromName(undefined)).toBeNull();
+        expect(extractNightlyVersionFromName('')).toBeNull();
+    });
+});
+
 describe('parseReleaseResponse', () => {
     it('解析正常响应（含 vsix 资产）', () => {
         const info = parseReleaseResponse({
@@ -111,12 +124,37 @@ describe('parseReleaseResponse', () => {
         expect(parseReleaseResponse({})).toBeNull();
         expect(parseReleaseResponse({ tag_name: 123 })).toBeNull();
     });
+
+    it('nightly 渠道从 Release name 提取版本号（tag 固定为 nightly）', () => {
+        const info = parseReleaseResponse({
+            tag_name: 'nightly',
+            name: 'Gray Code Nightly v1.4.6.20260809',
+            body: 'auto build',
+            published_at: '2026-08-09T00:00:00Z',
+            assets: [{
+                name: 'graycode-nightly.vsix',
+                browser_download_url: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/nightly/graycode-nightly.vsix',
+            }],
+        }, 'nightly');
+        expect(info).not.toBeNull();
+        expect(info!.version).toBe('1.4.6.20260809');
+        expect(info!.tagName).toBe('nightly');
+        expect(info!.channel).toBe('nightly');
+        expect(info!.vsixAssetUrl).toContain('graycode-nightly.vsix');
+    });
+
+    it('stable 渠道默认使用 tag_name 作为版本号且标记渠道', () => {
+        const info = parseReleaseResponse({ tag_name: 'v1.4.5', assets: [] });
+        expect(info!.version).toBe('1.4.5');
+        expect(info!.channel).toBe('stable');
+    });
 });
 
 // ─── UpdateChecker ───────────────────────────────────
 
 function createChecker(overrides: {
     isCheckEnabled?: () => boolean;
+    getUpdateChannel?: () => 'stable' | 'nightly';
     storage?: { get: (k: string) => number | undefined; update: (k: string, v: number) => Promise<void> };
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
     currentVersion?: string;
@@ -128,6 +166,7 @@ function createChecker(overrides: {
     };
     const checker = new UpdateChecker({
         isCheckEnabled: overrides.isCheckEnabled ?? (() => true),
+        getUpdateChannel: overrides.getUpdateChannel,
         storage,
         globalStoragePath: fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-')),
         getCurrentVersion: () => overrides.currentVersion ?? '1.4.4',
@@ -225,6 +264,91 @@ describe('UpdateChecker.check', () => {
         });
         const status = await checker.check();
         expect(status.state).toBe('error');
+    });
+
+    it('nightly 渠道请求 /releases/tags/nightly 且四段版本高于当前时提示更新', async () => {
+        const fetchImpl = jest.fn(async () => okResponse({
+            tag_name: 'nightly',
+            name: 'Gray Code Nightly v1.4.6.20260810',
+            body: 'auto build',
+            assets: [{
+                name: 'graycode-nightly.vsix',
+                browser_download_url: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/nightly/graycode-nightly.vsix',
+            }],
+        }));
+        const { checker } = createChecker({
+            getUpdateChannel: () => 'nightly',
+            fetchImpl,
+            currentVersion: '1.4.6.20260809',
+        });
+        const status = await checker.check();
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(fetchImpl).toHaveBeenCalledWith(
+            'https://api.github.com/repos/Komeiji-Shiki/Gray-Code/releases/tags/nightly',
+            expect.objectContaining({ headers: { 'Accept': 'application/vnd.github+json' } })
+        );
+        expect(status.state).toBe('updateAvailable');
+        if (status.state === 'updateAvailable') {
+            expect(status.update.version).toBe('1.4.6.20260810');
+            expect(status.update.channel).toBe('nightly');
+        }
+    });
+
+    it('nightly 渠道：当前已是同日期构建时不提示更新', async () => {
+        const fetchImpl = jest.fn(async () => okResponse({
+            tag_name: 'nightly',
+            name: 'Gray Code Nightly v1.4.6.20260809',
+            assets: [{
+                name: 'graycode-nightly.vsix',
+                browser_download_url: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/nightly/graycode-nightly.vsix',
+            }],
+        }));
+        const { checker } = createChecker({
+            getUpdateChannel: () => 'nightly',
+            fetchImpl,
+            currentVersion: '1.4.6.20260809',
+        });
+        const status = await checker.check();
+        expect(status).toEqual({ state: 'upToDate', checkedAt: 2_000_000 });
+    });
+
+    it('nightly 渠道：四段版本高于当前正式版时提示更新', async () => {
+        const fetchImpl = jest.fn(async () => okResponse({
+            tag_name: 'nightly',
+            name: 'Gray Code Nightly v1.4.6.20260809',
+            assets: [{
+                name: 'graycode-nightly.vsix',
+                browser_download_url: 'https://github.com/Komeiji-Shiki/Gray-Code/releases/download/nightly/graycode-nightly.vsix',
+            }],
+        }));
+        const { checker } = createChecker({
+            getUpdateChannel: () => 'nightly',
+            fetchImpl,
+            currentVersion: '1.4.6',
+        });
+        const status = await checker.check();
+        expect(status.state).toBe('updateAvailable');
+    });
+
+    it('nightly 渠道：nightly 请求 404 时状态为 error（不降级到正式版）', async () => {
+        const fetchImpl = jest.fn(async () => okResponse({ message: 'Not Found' }, 404));
+        const { checker } = createChecker({ getUpdateChannel: () => 'nightly', fetchImpl });
+        const status = await checker.check();
+        expect(status.state).toBe('error');
+        if (status.state === 'error') {
+            expect(status.message).toContain('404');
+        }
+    });
+
+    it('stable 渠道（默认）仅请求 /releases/latest', async () => {
+        const fetchImpl = jest.fn(async () => okResponse({ tag_name: 'v1.4.4', assets: [] }));
+        const { checker } = createChecker({ fetchImpl, currentVersion: '1.4.4' });
+        await checker.check();
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(fetchImpl).toHaveBeenCalledWith(
+            'https://api.github.com/repos/Komeiji-Shiki/Gray-Code/releases/latest',
+            expect.objectContaining({ headers: { 'Accept': 'application/vnd.github+json' } })
+        );
     });
 });
 

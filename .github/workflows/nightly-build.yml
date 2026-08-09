@@ -1,0 +1,139 @@
+name: Nightly Build
+
+# 每 24 小时检查一次代码是否有变化：
+#   - 最近 24 小时内有新提交 → 重新打包 vsix
+#   - 没有新提交 → 跳过打包，任务直接成功结束（不浪费资源）
+#
+# 打包产物（两种途径都能拿到）：
+#   - Actions Artifact：本次运行 Summary 页面可下载
+#   - GitHub Release：发布/覆盖到 tag=nightly 的 Release，下载链接稳定：
+#     https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/nightly
+#
+# 手动触发：Actions → Nightly Build → Run workflow（可勾选 force 强制打包）
+# 注意：schedule 触发器只在默认分支（main/master）上生效。
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # 每天 UTC 02:00（北京时间 10:00 / 悉尼时间 12:00）
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '强制打包（跳过 24 小时变化检测）'
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: write # 发布 nightly Release 需要
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要提交历史来判断「最近 24 小时是否有新提交」
+
+      - name: Check for changes in last 24h
+        id: check
+        run: |
+          if git log --since="24 hours ago" --oneline | grep -q .; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 手动触发且勾选 force 时，无视变化检测直接打包
+      - name: Resolve whether to build
+        id: should
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=${{ steps.check.outputs.changed }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build timestamp
+        id: time
+        if: steps.should.outputs.build == 'true'
+        run: echo "now=$(date -u +'%Y-%m-%d %H:%M UTC')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        if: steps.should.outputs.build == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.should.outputs.build == 'true'
+        run: |
+          npm ci
+          # 前端有独立 package.json（非 workspaces），需单独安装其依赖
+          npm --prefix frontend ci
+
+      - name: Typecheck & test
+        if: steps.should.outputs.build == 'true'
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Compute nightly version
+        # nightly 版本号 = 当前版本 + 日期第四段（如 1.4.6.20260809），
+        # 高于同主版本的正式版（1.4.6.20260809 > 1.4.6），
+        # 供扩展 nightly 渠道用常规版本比较判断更新。
+        # 放在 npm ci 之后才改 package.json 的 version，避免影响依赖解析。
+        if: steps.should.outputs.build == 'true'
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+            const nightly = `${pkg.version}.${date}`;
+            pkg.version = nightly;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+            console.log(nightly);
+          ' > .nightly-version.txt
+          echo "nightly_version=$(cat .nightly-version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Package vsix
+        # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤；
+        # 使用固定资产名 graycode-nightly.vsix，便于 nightly Release 覆盖更新（不堆积旧资产）
+        if: steps.should.outputs.build == 'true'
+        run: npx vsce package --out graycode-nightly.vsix
+
+      - name: Upload artifact
+        if: steps.should.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: graycode-nightly
+          path: graycode-nightly.vsix
+          if-no-files-found: error
+
+      - name: Publish / overwrite nightly release
+        if: steps.should.outputs.build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          # name 内嵌真实版本号（如 v1.4.6.20260809），扩展 nightly 渠道据此解析版本
+          name: Gray Code Nightly v${{ steps.version.outputs.nightly_version }}
+          body: |
+            自动构建：${{ steps.time.outputs.now }}
+            Commit: `${{ github.sha }}`
+            版本：v${{ steps.version.outputs.nightly_version }}
+
+            > 注意：nightly 为每日自动构建（预览版），仅供测试，不建议作为正式版本安装。
+          files: graycode-nightly.vsix
+          overwrite: true
+          update_release_body: true
+          prerelease: true
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ steps.should.outputs.build }}" = "true" ]; then
+            echo "✅ 检测到代码变化，已完成打包并发布 nightly release。"
+          else
+            echo "⏭️ 最近 24 小时没有新提交（且未勾选 force），跳过打包。"
+          fi

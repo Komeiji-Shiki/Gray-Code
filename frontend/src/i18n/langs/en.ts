@@ -98,7 +98,8 @@ const en: LanguageMessages = {
             viewPage: 'View on GitHub',
             downloading: 'Downloading and installing…',
             installed: 'Installed. Reload the window to apply.',
-            failed: 'Download or install failed'
+            failed: 'Download or install failed',
+            nightlyBadge: 'Nightly Preview'
         },
         attachment: {
             preview: 'Preview',
@@ -2192,6 +2193,10 @@ const en: LanguageMessages = {
                     title: 'Auto Update',
                     description: 'Check GitHub Releases for new versions at startup (at most once every 24 hours). New versions can be downloaded and installed automatically.',
                     enableLabel: 'Enable automatic update checks',
+                    channelLabel: 'Update Channel',
+                    channelDescription: 'stable: official releases; nightly: daily automated builds (preview, versioned above stable, for testing only).',
+                    channelStable: 'Stable (official)',
+                    channelNightly: 'Nightly (daily builds)',
                     checkNow: 'Check Now',
                     updateNow: 'Update Now',
                     checking: 'Checking…',
