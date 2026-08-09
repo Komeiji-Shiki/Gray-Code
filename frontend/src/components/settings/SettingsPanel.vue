@@ -1205,10 +1205,18 @@ async function saveCheckUpdates(value: boolean) {
 // 保存更新渠道（stable 正式版 / nightly 每日构建）
 async function saveUpdateChannel(value: string) {
   const channel = value === 'nightly' ? 'nightly' : 'stable'
+  const previous = updateChannel.value
   updateChannel.value = channel
   try {
-    await sendToExtension('updateSettings', { settings: { updateChannel: channel } })
+    const response = await sendToExtension<any>('updateSettings', { settings: { updateChannel: channel } })
+    // SettingsHandler.updateSettings 失败时 resolve { success: false }（不抛错，内部 try/catch 捕获），
+    // 必须显式检查并回滚 UI 选择，否则界面显示已切换而实际未保存（静默丢失用户操作）。
+    if (response?.success === false) {
+      updateChannel.value = previous
+      console.error('Failed to save update channel setting:', response?.error?.message || response?.error)
+    }
   } catch (error) {
+    updateChannel.value = previous
     console.error('Failed to save update channel setting:', error)
   }
 }

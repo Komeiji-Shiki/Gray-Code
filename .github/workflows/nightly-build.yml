@@ -26,6 +26,12 @@ on:
 permissions:
   contents: write # 发布 nightly Release 需要
 
+# 同一时间只跑一个 nightly 构建：上次构建未结束时新触发的构建直接取消
+# （自动更新场景下只需保留最新产物，避免多个构建同时覆盖 nightly Release 互相打架）
+concurrency:
+  group: nightly-build
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -79,10 +85,16 @@ jobs:
           npm run typecheck
           npm test
 
+      # 注意：本步骤必须带 id: version——下方 Release name/body 通过 steps.version.outputs.nightly_version
+      # 引用本步骤输出；缺 id 时引用恒为空，Release 名会退化为 "Gray Code Nightly v"，
+      # 扩展 nightly 渠道无法从名称提取版本号（表现为永远提示已是最新）。
       - name: Compute nightly version
-        # nightly 版本号 = 当前版本 + 日期第四段（如 1.4.6.20260809），
-        # 高于同主版本的正式版（1.4.6.20260809 > 1.4.6），
-        # 供扩展 nightly 渠道用常规版本比较判断更新。
+        id: version
+        # nightly 版本号 = 当前版本 + -nightly.<YYYYMMDD> 预发布段（如 1.4.6-nightly.20260809）：
+        # - 合法 semver（vsce 打包校验 /^\.d+\.d+\.d+$/ 及预发布标识符要求）；
+        # - compareVersions 将 -nightly.<date> 视为「高于同主版本正式版」的最新构建，
+        #   两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）；
+        # - 扩展 nightly 渠道从 Release name 中提取该版本号用于更新判断。
         # 放在 npm ci 之后才改 package.json 的 version，避免影响依赖解析。
         if: steps.should.outputs.build == 'true'
         run: |
@@ -90,7 +102,7 @@ jobs:
             const fs = require("fs");
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
             const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-            const nightly = `${pkg.version}.${date}`;
+            const nightly = `${pkg.version}-nightly.${date}`;
             pkg.version = nightly;
             fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
             console.log(nightly);
