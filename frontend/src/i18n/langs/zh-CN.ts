@@ -713,6 +713,9 @@ const zhCN = {
                 viewDiff: '查看差异',
                 viewDiffInVSCode: '在 VSCode 中查看差异',
                 openDiffFailed: '打开 diff 预览失败',
+                pendingDiffNotFound: '未找到待处理的差异，请等待状态同步后重试。',
+                acceptDiffFailed: '接受差异失败，请重试。',
+                rejectDiffFailed: '拒绝差异失败，请重试。',
                 openDetails: '打开详情',
                 openSubAgentMonitorDetails: '打开 SubAgent Monitor 详情',
                 todoWrite: {

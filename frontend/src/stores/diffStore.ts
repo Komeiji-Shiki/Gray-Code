@@ -153,6 +153,12 @@ export const useDiffStore = defineStore('diffViewer', () => {
       entry.status = response?.status === 'accepted' ? 'accepted' : 'rejected'
       return true
     } catch (error: any) {
+      // 良性终态：diff 已被自动保存/其他入口接受或取消（自动应用后高频出现）。
+      // 不显示「操作失败」残留——条目状态随后由 diff.statusChanged/finalized 结算。
+      if (error?.code === 'DIFF_NOT_PENDING') {
+        entry.error = undefined
+        return false
+      }
       entry.error = error?.message || String(error)
       return false
     } finally {

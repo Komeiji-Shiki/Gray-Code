@@ -229,7 +229,9 @@ async function setWorkspaceFolders(folders: string[]): Promise<void> {
   saveWorkspaceState(folders);
   backendHost?.setWorkspaceFolders(folders);
   if (mainWindow) {
-    const label = folders.length > 0 ? path.basename(folders[0]) : 'No workspace';
+    // 窗口标题本地化：无工作区时的占位文案随界面语言（menu-i18n 字典），
+    // 有工作区时显示文件夹名（用户路径，不做翻译）。
+    const label = folders.length > 0 ? path.basename(folders[0]) : menuLabel('windowTitleNoWorkspace', currentMenuLang);
     mainWindow.setTitle(`GrayCode \u2014 ${label}`);
   }
 }
@@ -733,7 +735,7 @@ function restoreWorkspace(): void {
     // （用户显式选择不打开，启动提示只会造成打扰；BackendHost 侧同样跳过）。
     if (host.getWorkspaceBehavior() === 'none') {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.setTitle('GrayCode \u2014 No workspace');
+        mainWindow.setTitle(`GrayCode \u2014 ${menuLabel('windowTitleNoWorkspace', currentMenuLang)}`);
       }
       return;
     }
@@ -741,7 +743,7 @@ function restoreWorkspace(): void {
     if (folders.length > 0) {
       void setWorkspaceFolders(folders);
     } else if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setTitle('GrayCode \u2014 No workspace');
+      mainWindow.setTitle(`GrayCode \u2014 ${menuLabel('windowTitleNoWorkspace', currentMenuLang)}`);
       // 「未打开工作区」提示统一由 BackendHost 在渲染层开场动画结束后发送
       // （webviewReady 握手路径，重查工作区状态 + 本地化文案 + 动画门控），
       // 此处不再重复发送，避免与握手路径双弹。

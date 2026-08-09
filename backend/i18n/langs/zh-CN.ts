@@ -727,6 +727,10 @@ description: "简要描述该技能的功能及使用场景"
             invalidDiffData: '无效的 diff 数据',
             noFileContent: '无文件内容',
             unsupportedToolType: '不支持的工具类型: {toolName}',
+            diffNotPending: '该差异已不在待处理状态（可能已被自动应用或取消）。',
+            diffAlreadyProcessing: '差异操作正在进行中。',
+            acceptDiffFailed: '接受差异失败。该差异仍处于待处理状态，可重试。',
+            rejectDiffFailed: '拒绝差异失败。该差异仍处于待处理状态，可重试。',
             
             getRelativePathFailed: '获取相对路径失败',
             previewAttachmentFailed: '预览附件失败',

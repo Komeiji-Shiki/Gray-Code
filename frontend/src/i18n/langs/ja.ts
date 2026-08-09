@@ -712,6 +712,9 @@ const ja: LanguageMessages = {
                 viewDiff: '差分を表示',
                 viewDiffInVSCode: 'VSCode で差分を表示',
                 openDiffFailed: 'diff プレビューを開くのに失敗しました',
+                pendingDiffNotFound: '保留中の差分が見つかりません。ステータス同期後に再試行してください。',
+                acceptDiffFailed: '差分の受け入れに失敗しました。再試行してください。',
+                rejectDiffFailed: '差分の拒否に失敗しました。再試行してください。',
                 openDetails: '詳細を開く',
                 openSubAgentMonitorDetails: 'SubAgent Monitor の詳細を開く',
                 todoWrite: {

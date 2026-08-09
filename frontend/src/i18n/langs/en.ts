@@ -712,6 +712,9 @@ const en: LanguageMessages = {
                 viewDiff: 'View Diff',
                 viewDiffInVSCode: 'View diff in VSCode',
                 openDiffFailed: 'Failed to open diff preview',
+                pendingDiffNotFound: 'Pending diff not found. Please retry after status sync.',
+                acceptDiffFailed: 'Failed to accept diff. Please retry.',
+                rejectDiffFailed: 'Failed to reject diff. Please retry.',
                 openDetails: 'Open details',
                 openSubAgentMonitorDetails: 'Open SubAgent Monitor details',
                 todoWrite: {

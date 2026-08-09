@@ -165,6 +165,26 @@ function hasPendingDiffSession(sessionId: string): boolean {
   return getAllPendingDiffSessions().some((session) => session.id === sessionId)
 }
 
+/**
+ * 后端确认某个 diff 已不在 pending 状态时，从本地映射中移除该会话并清理其
+ * 计时器/错误态：UI 立即结算（按钮消失），无需等待下一次 diff.statusChanged 广播。
+ */
+function settleStaleDiffSession(sessionId: string): void {
+  let changed = false
+  const next = new Map<string, PendingDiffSession[]>()
+  for (const [toolId, sessions] of toolIdToPendingDiffs.value.entries()) {
+    const kept = sessions.filter((s) => s.id !== sessionId)
+    if (kept.length !== sessions.length) changed = true
+    if (kept.length > 0) next.set(toolId, kept)
+  }
+  if (changed) {
+    toolIdToPendingDiffs.value = next
+  }
+  stopDiffTimer(sessionId)
+  clearDiffActionError(sessionId)
+  removeProcessingDiffSessionId(sessionId)
+}
+
 function extractPendingDiffIdsFromResultData(data: any): string[] {
   const pendingDiffIds = new Set<string>()
 
@@ -266,6 +286,14 @@ function applyGlobalApplyDiffConfig(config: ApplyDiffAutoSaveConfig, opts?: { re
 }
 
 // 启动自动确认计时器
+//
+// 修复（1.7.6.1）：倒计时改为「纯展示」，到点不再发送 diff.accept。
+// 后端 DiffManager 在 diff 创建时（早于 statusChanged 广播到达渲染层）就已调度
+// 同款 autoSaveDelay 的自动接受定时器，前端倒计时到点再发 accept 必然晚于后端，
+// 构成「双自动接受竞态」：先到者接受成功，后到者命中 DIFF_NOT_PENDING，
+// 弹出「diff is no longer pending」错误弹窗——自动应用 diff 后高频出现（用户痛点）。
+// 后端定时器是唯一权威：到点接受后经 diff.statusChanged 广播终结，
+// 前端本倒计时自然停止，无需也不能二次接受。
 function startDiffTimer(sessionId: string, delay: number) {
   if (applyDiffTimers.has(sessionId)) return
   if (processingDiffSessionIds.value.has(sessionId)) return
@@ -286,11 +314,8 @@ function startDiffTimer(sessionId: string, delay: number) {
     applyDiffProgress.value.set(sessionId, (remaining / delay) * 100)
     
     if (remaining <= 0) {
+      // 纯展示：到点仅停止倒计时，等待后端自动保存定时器接受（见上方修复说明）
       stopDiffTimer(sessionId)
-      // 全部实例已卸载时只停止倒计时，不执行自动接受
-      if (mountedToolMessageInstances > 0) {
-        confirmDiff(sessionId)
-      }
     }
   }, 200)
   
@@ -315,7 +340,7 @@ async function confirmDiff(sessionId: string) {
   clearDiffActionError(sessionId)
 
   if (!hasPendingDiffSession(sessionId)) {
-    const message = 'Pending diff not found. Please retry after status sync.'
+    const message = t('components.message.tool.pendingDiffNotFound')
     setDiffActionError(sessionId, message)
     await showNotification(message, 'error')
     return
@@ -326,8 +351,16 @@ async function confirmDiff(sessionId: string) {
   try {
     await sendToExtension('diff.accept', { sessionId })
   } catch (err) {
+    // 良性终态：diff 已被自动保存/其他入口接受或取消，UI 尚未收到
+    // diff.statusChanged 广播而已。不弹错误提示（用户痛点：自动应用后
+    // 高频弹出「diff is no longer pending」且无法关闭），本地结算即可。
+    if ((err as any)?.code === 'DIFF_NOT_PENDING') {
+      console.debug(`[ToolMessage] diff ${sessionId} no longer pending (benign), settling UI`)
+      settleStaleDiffSession(sessionId)
+      return
+    }
     removeProcessingDiffSessionId(sessionId)
-    const message = getActionErrorMessage(err, 'Failed to accept diff. Please retry.')
+    const message = getActionErrorMessage(err, t('components.message.tool.acceptDiffFailed'))
     setDiffActionError(sessionId, message)
     await showNotification(message, 'error')
     console.error('Failed to accept diff:', err)
@@ -342,7 +375,7 @@ async function rejectDiff(sessionId: string) {
   clearDiffActionError(sessionId)
 
   if (!hasPendingDiffSession(sessionId)) {
-    const message = 'Pending diff not found. Please retry after status sync.'
+    const message = t('components.message.tool.pendingDiffNotFound')
     setDiffActionError(sessionId, message)
     await showNotification(message, 'error')
     return
@@ -353,8 +386,15 @@ async function rejectDiff(sessionId: string) {
   try {
     await sendToExtension('diff.reject', { sessionId })
   } catch (err) {
+    // 同上：diff 已不在 pending（自动保存/其他入口已结算），良性终态，
+    // 不弹错误提示，本地结算 UI。
+    if ((err as any)?.code === 'DIFF_NOT_PENDING') {
+      console.debug(`[ToolMessage] diff ${sessionId} no longer pending (benign), settling UI`)
+      settleStaleDiffSession(sessionId)
+      return
+    }
     removeProcessingDiffSessionId(sessionId)
-    const message = getActionErrorMessage(err, 'Failed to reject diff. Please retry.')
+    const message = getActionErrorMessage(err, t('components.message.tool.rejectDiffFailed'))
     setDiffActionError(sessionId, message)
     await showNotification(message, 'error')
     console.error('Failed to reject diff:', err)

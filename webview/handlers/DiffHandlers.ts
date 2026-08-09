@@ -446,19 +446,19 @@ export const acceptDiff: MessageHandler = async (data, requestId, ctx) => {
     const diffManager = getDiffManager();
 
     if (diffManager.isDiffActionInProgress(sessionId)) {
-      ctx.sendError(requestId, 'DIFF_ALREADY_PROCESSING', 'Diff action is already in progress.');
+      ctx.sendError(requestId, 'DIFF_ALREADY_PROCESSING', t('webview.errors.diffAlreadyProcessing'));
       return;
     }
 
     const diff = diffManager.getDiff(sessionId);
     if (!diff || diff.status !== 'pending') {
-      ctx.sendError(requestId, 'DIFF_NOT_PENDING', 'Diff is no longer pending.');
+      ctx.sendError(requestId, 'DIFF_NOT_PENDING', t('webview.errors.diffNotPending'));
       return;
     }
 
     const success = await diffManager.acceptDiff(sessionId, true);
     if (!success) {
-      ctx.sendError(requestId, 'DIFF_ACCEPT_FAILED', 'Failed to accept diff. The diff remains pending and can be retried.');
+      ctx.sendError(requestId, 'DIFF_ACCEPT_FAILED', t('webview.errors.acceptDiffFailed'));
       return;
     }
 
@@ -477,13 +477,13 @@ export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
     const diffManager = getDiffManager();
 
     if (diffManager.isDiffActionInProgress(sessionId)) {
-      ctx.sendError(requestId, 'DIFF_ALREADY_PROCESSING', 'Diff action is already in progress.');
+      ctx.sendError(requestId, 'DIFF_ALREADY_PROCESSING', t('webview.errors.diffAlreadyProcessing'));
       return;
     }
 
     const diff = diffManager.getDiff(sessionId);
     if (!diff || diff.status !== 'pending') {
-      ctx.sendError(requestId, 'DIFF_NOT_PENDING', 'Diff is no longer pending.');
+      ctx.sendError(requestId, 'DIFF_NOT_PENDING', t('webview.errors.diffNotPending'));
       return;
     }
 
@@ -495,7 +495,7 @@ export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
     // 让工具本身在收到 diffManager 状态变更后返回正确的 functionResponse（status=rejected, results 等）。
 
     if (!success) {
-      ctx.sendError(requestId, 'DIFF_REJECT_FAILED', 'Failed to reject diff. The diff remains pending and can be retried.');
+      ctx.sendError(requestId, 'DIFF_REJECT_FAILED', t('webview.errors.rejectDiffFailed'));
       return;
     }
 

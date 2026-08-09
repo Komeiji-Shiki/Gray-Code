@@ -726,6 +726,10 @@ description: "このスキルの機能と使用場面の簡単な説明"
             invalidDiffData: '無効な diff データ',
             noFileContent: 'ファイルコンテンツがありません',
             unsupportedToolType: 'サポートされていないツールタイプ: {toolName}',
+            diffNotPending: 'この差分は保留状態ではありません（自動適用またはキャンセル済みの可能性があります）。',
+            diffAlreadyProcessing: '差分操作は既に進行中です。',
+            acceptDiffFailed: '差分の受け入れに失敗しました。差分は保留状態のままです。再試行できます。',
+            rejectDiffFailed: '差分の拒否に失敗しました。差分は保留状態のままです。再試行できます。',
             
             getRelativePathFailed: '相対パスの取得に失敗しました',
             previewAttachmentFailed: '添付ファイルのプレビューに失敗しました',

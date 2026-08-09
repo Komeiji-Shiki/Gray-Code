@@ -130,4 +130,38 @@ describe('diffViewer store', () => {
     expect(store.entries[1].status).toBe('accepted')
     expect(store.pendingCount).toBe(0)
   })
+
+  it('DIFF_NOT_PENDING（自动应用后竞态）不残留错误提示：条目由广播结算', async () => {
+    const store = useDiffStore()
+    store.push(makeInput())
+    const err = new Error('The diff is no longer pending (it may have been auto-applied or cancelled).') as Error & { code?: string }
+    err.code = 'DIFF_NOT_PENDING'
+    mockSend.mockRejectedValueOnce(err)
+
+    const result = await store.accept(0)
+
+    expect(result).toBe(false)
+    expect(store.entries[0].error).toBeUndefined()
+    expect(store.entries[0].status).toBe('pending')
+    expect(store.entries[0].busy).toBe(false)
+
+    // 后端 finalized 广播随后把条目结算为已接受（自动应用路径）
+    store.syncStatuses({
+      pendingDiffs: [],
+      finalized: [{ id: 'diff-1', status: 'accepted' }]
+    })
+    expect(store.entries[0].status).toBe('accepted')
+    expect(store.entries[0].error).toBeUndefined()
+  })
+
+  it('非 DIFF_NOT_PENDING 错误仍保留行内错误提示', async () => {
+    const store = useDiffStore()
+    store.push(makeInput())
+    mockSend.mockRejectedValueOnce(new Error('DIFF_ACCEPT_FAILED: write failed'))
+
+    await store.accept(0)
+
+    expect(store.entries[0].error).toBe('DIFF_ACCEPT_FAILED: write failed')
+    expect(store.entries[0].busy).toBe(false)
+  })
 })

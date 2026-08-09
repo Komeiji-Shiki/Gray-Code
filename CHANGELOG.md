@@ -10,6 +10,17 @@
 
 （暂无未发布改动）
 
+## [1.7.6.1] - 2026-08-09
+
+### Fixed
+  - **自动应用 diff 后高频弹出「diff is no longer pending」错误提示且无法关闭**（`ToolMessage` 双自动接受竞态）：
+    - 根因：后端 `DiffManager`（diff 创建时调度）与前端 `ToolMessage` 倒计时（statusChanged 广播到达后调度）各持一个同 `autoSaveDelay` 的自动接受定时器——后端定时器总是先到点，前端倒计时到点再发 `diff.accept` 必然命中 `DIFF_NOT_PENDING`（或 `DIFF_ACCEPT_FAILED`），随后弹出 10s 自动消失的 error toast；自动应用 diff 后高频复现（用户痛点：弹窗无法手动关闭，只能等超时）；
+    - 修复一（根因）：前端倒计时改为**纯展示**——到点不再发送 `diff.accept`，后端定时器是唯一权威（创建更早、必然先到点，接受后经 `diff.statusChanged` 广播终结前端倒计时），竞态从源头消除；
+    - 修复二（兜底）：`confirmDiff` / `rejectDiff` / 变更查看面板 `diffStore.act` 对 `DIFF_NOT_PENDING` 按**良性终态**处理——diff 已被自动应用/其他入口结算，本地立即结算 UI（按钮消失、错误态清空），不再弹错误提示；
+    - 新增回归测试：变更面板 `DIFF_NOT_PENDING` 不残留错误提示、非该错误码仍保留行内错误（diffViewerStore.test.ts）。
+  - **「Diff is no longer pending.」等 diff 错误文案未多语言化**：`DiffHandlers` 的 `DIFF_NOT_PENDING` / `DIFF_ALREADY_PROCESSING` / `DIFF_ACCEPT_FAILED` / `DIFF_REJECT_FAILED` 全部硬编码英文，前端 `ToolMessage` 的兜底文案（未找到待处理差异 / 接受失败 / 拒绝失败）同样硬编码；已全部接入 `webview.errors.*` / `components.message.tool.*` 三语字典（zh-CN / en / ja）。
+  - **窗口标题「GrayCode — No workspace」未多语言化**：无工作区时窗口标题的占位文案硬编码英文；现经 `menu-i18n.ts` 新增 `windowTitleNoWorkspace` 键（zh-CN「未打开工作区」/ en「No workspace」/ ja「ワークスペース未選択」）随界面语言显示（有工作区时仍显示文件夹名，不翻译）。
+
 ## [1.7.6] - 2026-08-09
 
 ### Fixed

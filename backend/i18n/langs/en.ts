@@ -726,6 +726,10 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             invalidDiffData: 'Invalid diff data',
             noFileContent: 'No file content',
             unsupportedToolType: 'Unsupported tool type: {toolName}',
+            diffNotPending: 'The diff is no longer pending (it may have been auto-applied or cancelled).',
+            diffAlreadyProcessing: 'Diff action is already in progress.',
+            acceptDiffFailed: 'Failed to accept diff. The diff remains pending and can be retried.',
+            rejectDiffFailed: 'Failed to reject diff. The diff remains pending and can be retried.',
             
             getRelativePathFailed: 'Failed to get relative path',
             previewAttachmentFailed: 'Failed to preview attachment',

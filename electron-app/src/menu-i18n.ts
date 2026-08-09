@@ -59,7 +59,9 @@ const MENU_MESSAGES: Record<string, Record<MenuLang, string>> = {
     en: 'Welcome to GrayCode Desktop! Configure an API channel to start chatting with AI.',
     ja: 'GrayCode Desktop へようこそ！AI とチャットするには API チャンネルを設定してください。'
   },
-  openSettingsBtn: { 'zh-CN': '打开设置', en: 'Open Settings', ja: '設定を開く' }
+  openSettingsBtn: { 'zh-CN': '打开设置', en: 'Open Settings', ja: '設定を開く' },
+  // 窗口标题（无工作区时的占位文案；有工作区时显示文件夹名，无需翻译）
+  windowTitleNoWorkspace: { 'zh-CN': '未打开工作区', en: 'No workspace', ja: 'ワークスペース未選択' }
 };
 
 /** 把任意语言标识归一为支持的三种（zh 系 → zh-CN、ja 系 → ja、其余 → en） */

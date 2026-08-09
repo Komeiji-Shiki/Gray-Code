@@ -12,6 +12,13 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.6.1] - 2026-08-09
+
+### Fixed
+  - **自动应用 diff 后高频弹出「diff is no longer pending」错误提示且无法手动关闭**：前端 `ToolMessage` 倒计时与后端 `DiffManager` 自动保存定时器构成「双自动接受竞态」——后端先到点接受，前端倒计时到点再发 `diff.accept` 命中 `DIFF_NOT_PENDING`，error toast 只能等 10s 超时消失。修复：前端倒计时改为纯展示（到点不再发 accept，后端定时器为唯一权威），`DIFF_NOT_PENDING` 按良性终态本地结算（不弹提示）；变更查看面板 `diffStore.act` 同步处理。详见根目录 CHANGELOG [1.7.6.1]。
+  - **窗口标题「GrayCode — No workspace」未多语言化**：`menu-i18n.ts` 新增 `windowTitleNoWorkspace` 键，`setWorkspaceFolders` / `restoreWorkspace` 的标题占位文案随界面语言（zh-CN / en / ja）。
+  - **diff 错误文案未多语言化**（webview 侧）：`DIFF_NOT_PENDING` 等错误码消息接入 `webview.errors.*` 三语字典（详见根目录 CHANGELOG [1.7.6.1]）。
+
 ## [1.7.6] - 2026-08-09
 
 ### Fixed
