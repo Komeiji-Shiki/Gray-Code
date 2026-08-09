@@ -8,8 +8,9 @@
  *   conversation.updateBranchRetentionConfig，默认 30 天，0 = 不自动清理）
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
+import { getSettingsView } from '@/composables/useDeferredNumberInput'
 
 export interface BranchDeletedCountResult {
   conversationCount: number
@@ -49,6 +50,17 @@ export function useBranchCleanup() {
     const value = Number(retentionDraft.value)
     return Number.isInteger(value) && value >= 0
   })
+
+  // 离开设置页时，空/无效的保留期草稿自动回填最后一次保存的值
+  // （注意：Number('') === 0，空串会被 retentionDaysValid 判为有效，需显式排除）
+  watch(
+    getSettingsView,
+    (view) => {
+      if (view !== 'settings' && (retentionDraft.value.trim() === '' || !retentionDaysValid.value)) {
+        retentionDraft.value = String(retentionDays.value)
+      }
+    }
+  )
 
   /** 加载软删分支数量（全量扫描所有对话） */
   async function loadDeletedCount(): Promise<void> {
