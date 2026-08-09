@@ -326,6 +326,7 @@ const ja: LanguageMessages = {
         input: {
             placeholder: 'メッセージを入力...',
             placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグまたは@でパスを追加、Ctrl+Shift+ドラッグで @path を挿入）',
+            resizeInput: '入力欄の高さを調整します。矢印キー、Home、またはダブルクリックで自動高さに戻します',
             send: 'メッセージを送信',
             sendPreserveDynamicContext: '古い動的コンテキストを元の位置に保って送信',
             stopGenerating: '生成を停止',
@@ -2864,6 +2865,9 @@ const ja: LanguageMessages = {
                 },
                 thinkingBackfill: {
                     title: '思考回伝設定',
+                    signatures: '思考署名を送信',
+                    signaturesHint: '推論コンテキスト（履歴の署名・サマリー）を回伝して多ターン継続性を維持します。reasoning 入力タイプをサポートしないエンドポイントではオフにして reasoning 項目をスキップしてください',
+                    content: '思考内容を送信',
                     currentGroup: '最新ターン',
                     currentSignatures: '最新の思考署名を送信',
                     currentSignaturesHint: '現在のステップの思考継続性を維持',
@@ -2995,7 +2999,7 @@ const ja: LanguageMessages = {
                 },
                 thinkingBackfill: {
                     sendSignaturesHint: '有効にすると、履歴会話の思考署名が送信されます（OpenAI 未対応）。非推奨であり、最新以外のターンの署名が送信されます。',
-                    sendContentHint: '有効にすると、履歴会話の reasoning_content（要約を含む）が送信されます。これによりコンテキスト長が大幅に増加する可能性があります。'
+                    sendContentHint: '現在と履歴の reasoning_content に同じポリシーを適用し、メッセージが履歴になった際のプロンプト接頭辞の書き換えを防ぎます'
                 }
             },
             'openai-responses': {

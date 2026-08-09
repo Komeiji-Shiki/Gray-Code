@@ -180,7 +180,7 @@ describe('PromptManager prompt entries', () => {
         expect(userMessage!.parts[0]).toEqual({ text: 'Static user context' });
     });
 
-    it('strips fakeThought from dynamic snapshots used for preserve re-injection', () => {
+    it('keeps fakeThought in dynamic snapshots for preserve re-injection', () => {
         const dynamicAssistantMode: ResolvedPromptModeSnapshot = {
             ...mode,
             promptEntries: mode.promptEntries!.map(entry =>
@@ -203,12 +203,12 @@ describe('PromptManager prompt entries', () => {
         const assistantMessage = bundle.beforeHistoryMessages.find(message => message.role === 'model');
         expect(assistantMessage!.parts[0]).toEqual({ text: 'Fake reasoning trace', thought: true });
 
-        // preserve 回插用的快照剥离伪造思考（回插路径不经过渠道思考开关过滤）
+        // preserve 回插用的快照同样保留伪造思考（缓存无损保存，回插时由 formatter 按渠道开关统一过滤）
         const snapshotAssistantMessage = bundle.dynamicSnapshotBeforeHistoryMessages.find(message => message.role === 'model');
         expect(snapshotAssistantMessage).toBeDefined();
-        expect(snapshotAssistantMessage!.parts).toHaveLength(1);
-        expect(snapshotAssistantMessage!.parts[0].thought).toBeUndefined();
-        expect(snapshotAssistantMessage!.parts[0].text).toContain('Assistant prelude');
+        expect(snapshotAssistantMessage!.parts).toHaveLength(2);
+        expect(snapshotAssistantMessage!.parts[0]).toEqual({ text: 'Fake reasoning trace', thought: true });
+        expect(snapshotAssistantMessage!.parts[1].text).toContain('Assistant prelude');
     });
 
     it('keeps legacy mode on traditional templates even when promptEntries exists', () => {

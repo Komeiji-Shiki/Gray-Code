@@ -68,6 +68,16 @@ export interface ThoughtSignatures {
     [key: string]: string | undefined;
 }
 
+export interface OpenAIResponsesReasoningMetadata {
+    /** Responses API reasoning output item 的稳定 ID，后续轮次需要原样回传 */
+    id?: string;
+    status?: 'in_progress' | 'completed' | 'incomplete';
+    /** 可分享的 reasoning summary，保持官方数组格式 */
+    summary?: Array<{ type: 'summary_text'; text: string }>;
+    /** GPT-OSS 等模型可能返回的 reasoning text，保持官方数组格式 */
+    content?: Array<{ type: 'reasoning_text'; text: string }>;
+}
+
 /**
  * Gemini Content Part（内容片段）
  *
@@ -201,6 +211,9 @@ export interface ContentPart {
      * - 对于其他情况：推荐返回以保持推理质量
      */
     thoughtSignatures?: ThoughtSignatures;
+
+    /** OpenAI Responses reasoning item 的标准元数据，用于无状态多轮原样回传 */
+    openaiResponsesReasoning?: OpenAIResponsesReasoningMetadata;
     
     /**
      * 是否为思考内容标志

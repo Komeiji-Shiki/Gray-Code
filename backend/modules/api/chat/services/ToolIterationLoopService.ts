@@ -721,7 +721,7 @@ export class ToolIterationLoopService {
         }
 
         // 预设临时消息中的伪造思考（fakeThought）受渠道「发送历史思考内容」开关控制：
-        // 显式关闭时不回传。必须在发送侧过滤，不能写入 turnDynamicContext 缓存。
+        // 未配置或显式关闭都不回传（与真实历史思考的默认语义一致）。必须在发送侧过滤，不能写入 turnDynamicContext 缓存。
         promptContext = applyPromptContextThoughtPolicy(promptContext, config);
 
         // -1 表示无限制
@@ -1686,7 +1686,7 @@ export class ToolIterationLoopService {
         }
 
         // 预设临时消息中的伪造思考（fakeThought）受渠道「发送历史思考内容」开关控制：
-        // 显式关闭时不回传。必须在发送侧过滤，不能写入 turnDynamicContext 缓存。
+        // 未配置或显式关闭都不回传（与真实历史思考的默认语义一致）。必须在发送侧过滤，不能写入 turnDynamicContext 缓存。
         promptContext = applyPromptContextThoughtPolicy(promptContext, config);
 
         // -1 表示无限制
@@ -1945,8 +1945,10 @@ export class ToolIterationLoopService {
  * 按渠道的「发送历史思考内容」（sendHistoryThoughts）开关处理预设临时消息中的伪造思考。
  *
  * 预设 assistant 条目配置 fakeThought 后，PromptManager 会以 thought part 附加在消息正文前。
- * 伪造思考与真实历史思考语义一致：渠道显式关闭 sendHistoryThoughts 时不回传（剥离 thought part，
- * 正文照发）；开启或未配置（默认开启）时原样保留。
+ * 伪造思考与真实历史思考语义完全一致：仅当渠道显式开启 sendHistoryThoughts 时回传；
+ * 未配置（undefined）或显式关闭都剥离 thought part（正文照发），
+ * 与 formatHistoryForAPI 对真实历史思考的 `sendHistoryThoughts ?? false` 默认保持一致——
+ * 同一条消息不会因默认值分歧在不同路径下产出不同字节，破坏提示词前缀缓存。
  *
  * 该过滤必须在发送侧执行，不能写进 turnDynamicContext 缓存：
  * 同一回合缓存可能被不同渠道复用，开关是渠道级的。
@@ -1955,7 +1957,7 @@ export function applyPromptContextThoughtPolicy(
     promptContext: RequestPromptContext,
     config: Pick<BaseChannelConfig, 'sendHistoryThoughts'>
 ): RequestPromptContext {
-    if (config.sendHistoryThoughts !== false) {
+    if (config.sendHistoryThoughts === true) {
         return promptContext;
     }
 

@@ -318,6 +318,57 @@ export class StreamAccumulator {
             return;
         }
 
+        // Responses API 在 output_item.done 才给出完整 reasoning item。把最终的
+        // id/summary/content/encrypted_content 合并回已经由 delta 建立的思考 part，
+        // 避免最终摘要被当作第二段文本重复追加，也保证后续轮次可以原样回传。
+        if (this.providerType === 'openai-responses' && part.openaiResponsesReasoning) {
+            const existingThought = [...this.parts].reverse().find(candidate =>
+                candidate.thought === true && !candidate.openaiResponsesReasoning
+            );
+
+            if (existingThought) {
+                existingThought.openaiResponsesReasoning = {
+                    ...part.openaiResponsesReasoning,
+                    ...(part.openaiResponsesReasoning.summary ? {
+                        summary: part.openaiResponsesReasoning.summary.map(entry => ({ ...entry }))
+                    } : {}),
+                    ...(part.openaiResponsesReasoning.content ? {
+                        content: part.openaiResponsesReasoning.content.map(entry => ({ ...entry }))
+                    } : {})
+                };
+                if (part.thoughtSignatures) {
+                    existingThought.thoughtSignatures = {
+                        ...(existingThought.thoughtSignatures || {}),
+                        ...part.thoughtSignatures
+                    };
+                }
+                // done 中的 summary/content 是最终权威文本，可修复未收到 delta 的兼容端点。
+                if (part.text) existingThought.text = part.text;
+            } else {
+                this.parts.push({
+                    ...part,
+                    openaiResponsesReasoning: {
+                        ...part.openaiResponsesReasoning,
+                        ...(part.openaiResponsesReasoning.summary ? {
+                            summary: part.openaiResponsesReasoning.summary.map(entry => ({ ...entry }))
+                        } : {}),
+                        ...(part.openaiResponsesReasoning.content ? {
+                            content: part.openaiResponsesReasoning.content.map(entry => ({ ...entry }))
+                        } : {})
+                    }
+                });
+                if (options?.visibleDelta && part.text) {
+                    options.visibleDelta.push({ text: part.text, thought: true });
+                }
+            }
+
+            if (part.thoughtSignatures) {
+                Object.assign(this.thoughtSignatures, part.thoughtSignatures);
+            }
+            this.contentRevision++;
+            return;
+        }
+
         // 注意：不在此处为 functionCall 生成 id。
         // id 的生成推迟到合并逻辑确认无法合并、需要作为新 Part 推入时再执行（见下方 newPart 构建处）。
 

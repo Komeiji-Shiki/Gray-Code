@@ -1,17 +1,17 @@
 import type { Content } from '../../modules/conversation/types';
-import { BaseFormatter } from '../../modules/channel/formatters/base';
+import { BaseFormatter, type PromptContextInjectionOptions } from '../../modules/channel/formatters/base';
 import type { ChannelConfig } from '../../modules/config/types';
 import type { ToolDeclaration } from '../../tools/types';
 import type { GenerateRequest, GenerateResponse, HttpRequestOptions, RequestPromptContext, StreamChunk } from '../../modules/channel/types';
 import { serializePromptContextCache } from '../../modules/prompt/promptContextCache';
 
 class TestFormatter extends BaseFormatter {
-    exposeInject(history: Content[], messages?: Content[], strategy: 'single' | 'preserve' = 'single'): Content[] {
-        return this.injectDynamicContextMessages(history, messages, strategy);
+    exposeInject(history: Content[], messages?: Content[], strategy: 'single' | 'preserve' = 'single', options?: PromptContextInjectionOptions): Content[] {
+        return this.injectDynamicContextMessages(history, messages, strategy, options);
     }
 
-    exposeInjectPromptContext(history: Content[], promptContext?: RequestPromptContext, strategy: 'single' | 'preserve' = 'single'): Content[] {
-        return this.injectPromptContextMessages(history, promptContext, strategy);
+    exposeInjectPromptContext(history: Content[], promptContext?: RequestPromptContext, strategy: 'single' | 'preserve' = 'single', options?: PromptContextInjectionOptions): Content[] {
+        return this.injectPromptContextMessages(history, promptContext, strategy, options);
     }
 
     buildRequest(_request: GenerateRequest, _config: ChannelConfig, _tools?: ToolDeclaration[]): HttpRequestOptions {
@@ -303,6 +303,50 @@ describe('BaseFormatter dynamic context insertion', () => {
         const result = formatter.exposeInject(history, [{ role: 'user', parts: [{ text: 'current ctx' }] }], 'preserve');
 
         expect(result.map(textOf)).toEqual(['old cached dynamic ctx', 'old user', 'old answer', 'current ctx', 'current user']);
+    });
+
+    it('applies the channel thought policy to preserved snapshots so bytes stay stable across paths', () => {
+        const formatter = new TestFormatter();
+        const oldCache = serializePromptContextCache({
+            beforeHistoryMessages: [
+                { role: 'model', parts: [{ text: 'fake chain', thought: true }, { text: 'old dynamic body' }] }
+            ],
+            afterHistoryMessages: [],
+            dynamicSnapshotBeforeHistoryMessages: [
+                { role: 'model', parts: [{ text: 'fake chain', thought: true }, { text: 'old dynamic body' }] }
+            ],
+            dynamicSnapshotAfterHistoryMessages: [],
+            messages: [],
+            dynamicSnapshotMessages: []
+        });
+        const history: Content[] = [
+            {
+                role: 'user',
+                isUserInput: true,
+                turnDynamicContext: oldCache,
+                turnDynamicContextStrategy: 'preserve',
+                parts: [{ text: 'old user' }]
+            },
+            { role: 'model', parts: [{ text: 'old answer' }] },
+            { role: 'user', isUserInput: true, parts: [{ text: 'current user' }] }
+        ];
+
+        // 开关未开启（默认）：回插快照剥离 thought part，正文保留——与直发路径经
+        // applyPromptContextThoughtPolicy 过滤后的结果一致
+        const stripped = formatter.exposeInjectPromptContext(history, undefined, 'preserve', { stripPreservedThoughtParts: true });
+        expect(stripped[0].role).toBe('model');
+        expect(stripped[0].parts).toEqual([{ text: 'old dynamic body' }]);
+
+        // 开关开启：回插快照保留 thought part，与直发路径结构一致
+        const kept = formatter.exposeInjectPromptContext(history, undefined, 'preserve', { stripPreservedThoughtParts: false });
+        expect(kept[0].parts).toEqual([
+            { text: 'fake chain', thought: true },
+            { text: 'old dynamic body' }
+        ]);
+
+        // 默认不传选项时按剥离处理（与「发送历史思考内容」默认关闭语义一致）
+        const defaulted = formatter.exposeInjectPromptContext(history, undefined, 'preserve');
+        expect(defaulted[0].parts).toEqual([{ text: 'old dynamic body' }]);
     });
 
     it('keeps legacy plain-text turnDynamicContext compatible in preserve mode', () => {

@@ -326,6 +326,7 @@ const en: LanguageMessages = {
         input: {
             placeholder: 'Type a message...',
             placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths, Ctrl+Shift+drag to insert @path text)',
+            resizeInput: 'Resize message input; use arrow keys, Home, or double-click to restore automatic height',
             send: 'Send message',
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
@@ -2864,6 +2865,9 @@ const en: LanguageMessages = {
                 },
                 thinkingBackfill: {
                     title: 'Thought Backfill Config',
+                    signatures: 'Send Thought Signatures',
+                    signaturesHint: 'Backfill reasoning context (history signatures & summaries) to keep multi-turn continuity; disable to skip reasoning items for endpoints that do not support the reasoning input type',
+                    content: 'Send Thought Content',
                     currentGroup: 'Current Round',
                     currentSignatures: 'Send Current Signatures',
                     currentSignaturesHint: 'Maintain reasoning context for current step',
@@ -2995,7 +2999,7 @@ const en: LanguageMessages = {
                 },
                 thinkingBackfill: {
                     sendSignaturesHint: 'When enabled, thought signatures from historical conversations will be sent (OpenAI not supported). Not recommended, and only signatures from non-latest turns are sent.',
-                    sendContentHint: 'When enabled, reasoning_content (including summaries) from historical conversations will be sent, which may significantly increase context length'
+                    sendContentHint: 'Use one policy for reasoning_content in both the current and historical turns, so a message does not rewrite the prompt prefix when it becomes historical'
                 }
             },
             'openai-responses': {

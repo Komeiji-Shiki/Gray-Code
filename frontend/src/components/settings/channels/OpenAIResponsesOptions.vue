@@ -109,6 +109,15 @@ function handleNumberChange(optionKey: string, event: any) {
     emit('update:option', optionKey, Number(value))
   }
 }
+
+// Responses 渠道的 reasoning item 回传不区分「当前/历史」轮次，
+// 把两个签名开关合并为一个：同时更新 current 与 history 两个字段，
+// 后端 MessageBuilderService 对 Responses 也按 history 开关统一处理。
+function onSendThoughtSignaturesChange(e: any) {
+  const value = e.target.checked
+  emit('update:field', 'sendHistoryThoughtSignatures', value)
+  emit('update:field', 'sendCurrentThoughtSignatures', value)
+}
 </script>
 
 <template>
@@ -244,34 +253,17 @@ function handleNumberChange(optionKey: string, event: any) {
       </div>
       
       <div class="option-section-content">
-        <div class="backfill-group-label">{{ t('components.channels.common.thinkingBackfill.currentGroup') }}</div>
-
-        <div class="option-item checkbox-option">
-          <label class="custom-checkbox">
-            <input
-              type="checkbox"
-              :checked="config.sendCurrentThoughtSignatures ?? false"
-              @change="(e: any) => emit('update:field', 'sendCurrentThoughtSignatures', e.target.checked)"
-            />
-            <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.currentSignatures') }}</span>
-          </label>
-          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.currentSignaturesHint') }}</span>
-        </div>
-
-        <div class="backfill-group-label">{{ t('components.channels.common.thinkingBackfill.historyGroup') }}</div>
-
         <div class="option-item checkbox-option">
           <label class="custom-checkbox">
             <input
               type="checkbox"
               :checked="config.sendHistoryThoughtSignatures ?? false"
-              @change="(e: any) => emit('update:field', 'sendHistoryThoughtSignatures', e.target.checked)"
+              @change="onSendThoughtSignaturesChange"
             />
             <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.historySignatures') }}</span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.signatures') }}</span>
           </label>
-          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.historySignaturesHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.signaturesHint') }}</span>
         </div>
         
         <!-- 历史思考回合数配置 - 条件展开 -->

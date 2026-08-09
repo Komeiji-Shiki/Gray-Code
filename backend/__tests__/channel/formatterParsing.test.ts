@@ -53,7 +53,7 @@ describe('OpenAIFormatter.parseResponse', () => {
         expect(result.model).toBe('gpt-4o');
         expect(result.content.usageMetadata).toEqual({
             promptTokenCount: 100,
-            candidatesTokenCount: 20, // completion - reasoning
+            candidatesTokenCount: 30, // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出
             totalTokenCount: 130,
             thoughtsTokenCount: 10,
             cacheReadTokenCount: 40,

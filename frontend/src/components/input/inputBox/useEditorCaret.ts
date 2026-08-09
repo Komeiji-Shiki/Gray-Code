@@ -25,18 +25,20 @@ export function getRangeInEditor(editor: HTMLElement): Range | null {
     range.collapse(false)
     selection.removeAllRanges()
     selection.addRange(range)
-  } else {
-    const range = selection.getRangeAt(0)
-    if (!editor.contains(range.startContainer)) {
-      const newRange = document.createRange()
-      newRange.selectNodeContents(editor)
-      newRange.collapse(false)
-      selection.removeAllRanges()
-      selection.addRange(newRange)
-    }
+    return range
   }
 
-  return selection.getRangeAt(0)
+  const range = selection.getRangeAt(0)
+  if (!editor.contains(range.startContainer)) {
+    const newRange = document.createRange()
+    newRange.selectNodeContents(editor)
+    newRange.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(newRange)
+    return newRange
+  }
+
+  return range
 }
 
 export function getCaretTextOffset(editor: HTMLElement): number {
