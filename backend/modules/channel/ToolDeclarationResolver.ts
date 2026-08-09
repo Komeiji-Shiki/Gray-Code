@@ -9,6 +9,7 @@
 import type { ToolDeclaration } from '../../tools/types';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings/SettingsManager';
+import { isSearchInFilesReplaceForbidden } from '../settings/modeToolsPolicy';
 import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
 import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
@@ -324,6 +325,31 @@ export class ToolDeclarationResolver {
         if (promptAllowlist && promptAllowlist.length > 0) {
             const promptAllowlistSet = new Set(promptAllowlist);
             filtered = filtered.filter(tool => promptAllowlistSet.has(tool.name));
+        }
+
+        // 受限模式（allowlist 授予 search_in_files 但未授予通用写工具）下，收敛
+        // search_in_files 声明为只读：移除 replace 枚举与 replace 专属参数，
+        // 让模型在声明层就看不到替换能力（运行时门 getToolRejectionReason 兜底）。
+        // 声明缓存键含 toolPolicy，各模式声明互不污染。
+        if (isSearchInFilesReplaceForbidden(promptAllowlist)) {
+            filtered = filtered.map(tool => {
+                if (tool.name !== 'search_in_files') {
+                    return tool;
+                }
+                const properties: Record<string, any> = { ...tool.parameters.properties };
+                const modeProperty = properties.mode as { type?: string; enum?: string[]; description?: string; default?: string } | undefined;
+                if (modeProperty && typeof modeProperty === 'object') {
+                    properties.mode = {
+                        ...modeProperty,
+                        enum: ['search'],
+                        description: 'Operation mode. This mode only permits read-only search; replace is not available in the current mode.'
+                    };
+                }
+                // replace 专属参数（replace 串、替换上限）一并移除
+                delete properties.replace;
+                delete properties.maxFiles;
+                return { ...tool, parameters: { type: 'object', properties, required: tool.parameters.required } };
+            });
         }
 
         return filtered;

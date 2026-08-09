@@ -40,7 +40,14 @@ describe('review mode config', () => {
       'validate_progress_document',
       'record_review_milestone',
       'finalize_review',
-      'reopen_review'
+      'reopen_review',
+      'memory_wake',
+      'memory_note',
+      'memory_recall',
+      'memory_compress',
+      'memory_zoom',
+      'memory_forget',
+      'memory_config'
     ])
     expect(REVIEW_PROMPT_MODE.toolPolicy).toEqual(REVIEW_MODE_TOOL_POLICY)
     expect(REVIEW_MODE_TEMPLATE).toContain('do the work incrementally instead of reading everything first and writing the review only at the end')

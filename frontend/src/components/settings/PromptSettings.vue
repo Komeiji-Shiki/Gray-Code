@@ -309,6 +309,8 @@ const DESIGN_MODE_TEMPLATE = `You are a professional software architect and desi
 
 {{$MCP_TOOLS}}
 
+{{$MEMORY}}
+
 ====
 
 GUIDELINES
@@ -362,6 +364,8 @@ const PLAN_MODE_TEMPLATE = `You are a professional programming assistant, profic
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
+
+{{$MEMORY}}
 
 ====
 
