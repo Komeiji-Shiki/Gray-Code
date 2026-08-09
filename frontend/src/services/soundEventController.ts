@@ -1,4 +1,4 @@
-import { playCue, unlockAudio, type SoundCue } from './soundCues'
+import { playCue, unlockAudio, type SoundAgentRole, type SoundCue } from './soundCues'
 
 export type SoundEventSource =
   | 'taskEvent'
@@ -13,6 +13,13 @@ export interface SoundEventPayload {
   source: SoundEventSource
   createdAt?: number
   conversationId?: string
+  /**
+   * 事件所属代理角色。
+   *
+   * - 'subagent'：子代理（SubAgent）事件，受 cues.subagent 独立开关控制
+   * - 缺省 / 'main'：主代理事件，受 cues 顶层开关控制（向后兼容）
+   */
+  role?: SoundAgentRole
 }
 
 interface HiddenSoundAggregate {
@@ -20,6 +27,7 @@ interface HiddenSoundAggregate {
   createdAt: number
   count: number
   conversationId?: string
+  role?: SoundAgentRole
 }
 
 const MAX_SOUND_EVENT_AGE_MS = 3000
@@ -97,13 +105,14 @@ async function attemptUnlockAudio(): Promise<boolean> {
   return unlockInFlight
 }
 
-function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | 'source' | 'createdAt'>> & Pick<SoundEventPayload, 'conversationId'>): void {
+function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | 'source' | 'createdAt'>> & Pick<SoundEventPayload, 'conversationId' | 'role'>): void {
   if (!hiddenAggregate) {
     hiddenAggregate = {
       cue: event.cue,
       createdAt: event.createdAt,
       count: 1,
-      conversationId: event.conversationId
+      conversationId: event.conversationId,
+      role: event.role
     }
     return
   }
@@ -116,7 +125,8 @@ function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | '
       cue: event.cue,
       createdAt: event.createdAt,
       count: hiddenAggregate.count + 1,
-      conversationId: event.conversationId
+      conversationId: event.conversationId,
+      role: event.role
     }
     return
   }
@@ -126,7 +136,11 @@ function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | '
       cue: hiddenAggregate.cue,
       createdAt: event.createdAt,
       count: hiddenAggregate.count + 1,
-      conversationId: event.conversationId ?? hiddenAggregate.conversationId
+      conversationId: event.conversationId ?? hiddenAggregate.conversationId,
+      // 同优先级同 cue 事件聚合后按「先到者优先」保留 role：
+      // 极端场景（3 秒窗口内主/子代理各一次同 cue 事件）补播时可能少覆盖一种开关，
+      // 但两者音效相同，仅门控开关不同，影响可忽略。
+      role: hiddenAggregate.role ?? event.role
     }
     return
   }
@@ -144,7 +158,8 @@ async function playSoundEvent(event: SoundEventPayload & { createdAt: number }):
   if (!unlocked) return
 
   await playCue(event.cue, {
-    cooldownKey: event.conversationId ? `conv:${event.conversationId}` : undefined
+    cooldownKey: event.conversationId ? `conv:${event.conversationId}` : undefined,
+    role: event.role
   })
 }
 
@@ -180,7 +195,8 @@ export async function flushHiddenSoundEvent(): Promise<void> {
     cue: pending.cue,
     source: 'visibilityRestore',
     createdAt: pending.createdAt,
-    conversationId: pending.conversationId
+    conversationId: pending.conversationId,
+    role: pending.role
   })
 }
 

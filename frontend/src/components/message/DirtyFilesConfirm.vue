@@ -19,11 +19,13 @@ import { pendingDirtyConfirm, clearPendingDirtyConfirm } from '../../stores/chat
 const { t } = useI18n()
 const chatStore = useChatStore()
 
+// 注意：setter 不能在这里清空 pendingDirtyConfirm。
+// ConfirmDialog 确认时先置 visible=false（同步 emit update:modelValue:false）再 emit confirm，
+// 若在此同步清空，confirmDiscard 读到的恒为 null，续作永远不会执行。
+// 所有关闭路径（取消按钮 / 遮罩点击 / Esc）都会 emit cancel，由 @cancel 统一清空。
 const visible = computed({
   get: () => pendingDirtyConfirm.value !== null,
-  set: (value: boolean) => {
-    if (!value) clearPendingDirtyConfirm()
-  }
+  set: () => {}
 })
 
 const files = computed(() => pendingDirtyConfirm.value?.files ?? [])

@@ -333,25 +333,6 @@ async function openDocFile(card: TaskCardItem) {
   }
 }
 
-async function withSelectedChannel<T>(runner: () => Promise<T>): Promise<T> {
-  const originalConfigId = chatStore.configId
-  const nextConfigId = selectedChannelId.value
-  const switchedConfig = !!nextConfigId && nextConfigId !== originalConfigId
-
-  try {
-    // one-off：仅本次操作使用所选渠道，不永久切换当前渠道
-    if (switchedConfig) {
-      chatStore.setConfigId(nextConfigId)
-    }
-
-    return await runner()
-  } finally {
-    if (switchedConfig) {
-      chatStore.setConfigId(originalConfigId)
-    }
-  }
-}
-
 function getPlanSourceState(card: TaskCardItem): PlanSourceState | null {
   if (card.kind !== 'plan' || !card.path) return null
   return planSourceStatusByPath.value.get(card.path) || null
@@ -470,75 +451,75 @@ async function executePlan(card: TaskCardItem) {
 
   isExecutingPlan.value = true
   try {
-    await withSelectedChannel(async () => {
-      const confirmResult = await sendToExtension<{
-        success: boolean
-        prompt: string
-        planContent: string
-        blocked?: boolean
-        blockReason?: 'source_mismatched' | 'source_missing'
-        sourceStatus?: PlanSourceStatus
-        sourceArtifactType?: 'design' | 'review'
-        sourcePath?: string
-        error?: string
-        approvalId?: string
-        todos?: Array<{
-          id: string
-          content: string
-          status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-        }>
-      }>('plan.confirmExecution', {
-        path: card.path,
-        originalContent: card.content,
-        toolId: card.toolId,
-        conversationId: chatStore.currentConversationId
-      })
+    const confirmResult = await sendToExtension<{
+      success: boolean
+      prompt: string
+      planContent: string
+      blocked?: boolean
+      blockReason?: 'source_mismatched' | 'source_missing'
+      sourceStatus?: PlanSourceStatus
+      sourceArtifactType?: 'design' | 'review'
+      sourcePath?: string
+      error?: string
+      approvalId?: string
+      todos?: Array<{
+        id: string
+        content: string
+        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+      }>
+    }>('plan.confirmExecution', {
+      path: card.path,
+      originalContent: card.content,
+      toolId: card.toolId,
+      conversationId: chatStore.currentConversationId
+    })
 
-      if (!confirmResult?.success) {
-        const message = String(confirmResult?.error || t('components.message.tool.planCard.executePlanFailed'))
-        await showNotification(message, 'warning')
-        await refreshPlanSourceStatuses(taskCards.value)
-        return
-      }
+    if (!confirmResult?.success) {
+      const message = String(confirmResult?.error || t('components.message.tool.planCard.executePlanFailed'))
+      await showNotification(message, 'warning')
+      await refreshPlanSourceStatuses(taskCards.value)
+      return
+    }
 
-      const prompt = String(confirmResult?.prompt || '')
-      const approvalId = typeof confirmResult?.approvalId === 'string'
-        ? confirmResult.approvalId.trim()
-        : ''
-      if (!approvalId) {
-        await showNotification(t('components.message.tool.planCard.executePlanFailed'), 'warning')
-        return
-      }
-      const latestPlanContent = confirmResult?.planContent || card.content
-      const todosFromPlan = Array.isArray(confirmResult?.todos) ? confirmResult.todos : []
+    const prompt = String(confirmResult?.prompt || '')
+    const approvalId = typeof confirmResult?.approvalId === 'string'
+      ? confirmResult.approvalId.trim()
+      : ''
+    if (!approvalId) {
+      await showNotification(t('components.message.tool.planCard.executePlanFailed'), 'warning')
+      return
+    }
+    const latestPlanContent = confirmResult?.planContent || card.content
+    const todosFromPlan = Array.isArray(confirmResult?.todos) ? confirmResult.todos : []
 
-      // 确认执行后，切换到用户选择的模式，确保后续请求按目标模式运行
-      try {
-        const targetModeId = String(selectedPlanExecutionModeId.value || 'code').trim() || 'code'
-        await chatStore.setCurrentPromptModeId(targetModeId)
-        saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
-      } catch (modeError) {
-        // 模式切换失败不阻塞执行
-        console.error('[plan] Failed to switch prompt mode before execution:', modeError)
-      }
+    // 确认执行后，切换到用户选择的模式，确保后续请求按目标模式运行
+    try {
+      const targetModeId = String(selectedPlanExecutionModeId.value || 'code').trim() || 'code'
+      await chatStore.setCurrentPromptModeId(targetModeId)
+      saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
+    } catch (modeError) {
+      // 模式切换失败不阻塞执行
+      console.error('[plan] Failed to switch prompt mode before execution:', modeError)
+    }
 
-      // 启动 Build 顶部卡片（Cursor-like）
-      await chatStore.setActiveBuild({
-        id: generateId(),
-        conversationId: chatStore.currentConversationId || '',
-        title: getDocumentTitle(latestPlanContent, card.path, 'plan'),
-        planContent: latestPlanContent,
-        planPath: card.path,
-        channelId: selectedChannelId.value || undefined,
-        modelId: selectedModelId.value || undefined,
-        startedAt: Date.now(),
-        status: 'running'
-      })
+    // 启动 Build 顶部卡片（Cursor-like）
+    await chatStore.setActiveBuild({
+      id: generateId(),
+      conversationId: chatStore.currentConversationId || '',
+      title: getDocumentTitle(latestPlanContent, card.path, 'plan'),
+      planContent: latestPlanContent,
+      planPath: card.path,
+      channelId: selectedChannelId.value || undefined,
+      modelId: selectedModelId.value || undefined,
+      startedAt: Date.now(),
+      status: 'running'
+    })
 
-      // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
-      await chatStore.sendMessage('', undefined, {
-        modelOverride: selectedModelId.value || undefined,
-        hidden: {
+    // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
+    await chatStore.sendMessage('', undefined, {
+      configIdOverride: selectedChannelId.value || undefined,
+      modelOverride: selectedModelId.value || undefined,
+      hidden: {
           functionResponse: {
             approvalId,
             id: card.toolId,
@@ -558,7 +539,6 @@ async function executePlan(card: TaskCardItem) {
           }
         }
       })
-    })
   } catch (error) {
     console.error(t('components.message.tool.planCard.executePlanFailed'), error)
   } finally {
@@ -572,51 +552,51 @@ async function generatePlan(card: TaskCardItem) {
 
   isGeneratingPlan.value = true
   try {
-    await withSelectedChannel(async () => {
-      const confirmResult = await sendToExtension<{
-        success: boolean
-        prompt: string
-        approvalId?: string
-        designContent: string
-        designPath: string
-        error?: string
-      }>('design.confirmPlanGeneration', {
-        path: card.path,
-        originalContent: card.content,
-        toolId: card.toolId,
-        conversationId: chatStore.currentConversationId
-      })
+    const confirmResult = await sendToExtension<{
+      success: boolean
+      prompt: string
+      approvalId?: string
+      designContent: string
+      designPath: string
+      error?: string
+    }>('design.confirmPlanGeneration', {
+      path: card.path,
+      originalContent: card.content,
+      toolId: card.toolId,
+      conversationId: chatStore.currentConversationId
+    })
 
-      if (!confirmResult?.success) {
-        await showNotification(String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed')), 'warning')
-        return
-      }
+    if (!confirmResult?.success) {
+      await showNotification(String(confirmResult?.error || t('components.message.tool.designCard.generatePlanFailed')), 'warning')
+      return
+    }
 
-      const prompt = String(confirmResult?.prompt || '')
-      const approvalId = typeof confirmResult?.approvalId === 'string'
-        ? confirmResult.approvalId.trim()
-        : ''
-      if (!approvalId) {
-        await showNotification(t('components.message.tool.designCard.generatePlanFailed'), 'warning')
-        return
-      }
-      const latestDesignContent = confirmResult?.designContent || card.content
-      const latestDesignPath = String(confirmResult?.designPath || card.path || '')
+    const prompt = String(confirmResult?.prompt || '')
+    const approvalId = typeof confirmResult?.approvalId === 'string'
+      ? confirmResult.approvalId.trim()
+      : ''
+    if (!approvalId) {
+      await showNotification(t('components.message.tool.designCard.generatePlanFailed'), 'warning')
+      return
+    }
+    const latestDesignContent = confirmResult?.designContent || card.content
+    const latestDesignPath = String(confirmResult?.designPath || card.path || '')
 
-      // 生成计划前，切换到用户选择的目标模式，默认优先 plan
-      try {
-        const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
-        await chatStore.setCurrentPromptModeId(targetModeId)
-        saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
-      } catch (modeError) {
-        // 模式切换失败不阻塞继续对话
-        console.error('[design] Failed to switch prompt mode before plan generation:', modeError)
-      }
+    // 生成计划前，切换到用户选择的目标模式，默认优先 plan
+    try {
+      const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
+      await chatStore.setCurrentPromptModeId(targetModeId)
+      saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
+    } catch (modeError) {
+      // 模式切换失败不阻塞继续对话
+      console.error('[design] Failed to switch prompt mode before plan generation:', modeError)
+    }
 
-      // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
-      await chatStore.sendMessage('', undefined, {
-        modelOverride: selectedModelId.value || undefined,
-        hidden: {
+    // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
+    await chatStore.sendMessage('', undefined, {
+      configIdOverride: selectedChannelId.value || undefined,
+      modelOverride: selectedModelId.value || undefined,
+      hidden: {
           functionResponse: {
             approvalId,
             id: card.toolId,
@@ -635,7 +615,6 @@ async function generatePlan(card: TaskCardItem) {
           }
         }
       })
-    })
   } catch (error) {
     console.error(t('components.message.tool.designCard.generatePlanFailed'), error)
   } finally {
@@ -649,48 +628,48 @@ async function generatePlanFromReview(card: TaskCardItem) {
 
   isGeneratingPlan.value = true
   try {
-    await withSelectedChannel(async () => {
-      const confirmResult = await sendToExtension<{
-        success: boolean
-        prompt: string
-        approvalId?: string
-        reviewContent: string
-        reviewPath: string
-        error?: string
-      }>('review.confirmPlanGeneration', {
-        path: card.path,
-        originalContent: card.content,
-        toolId: card.toolId,
-        conversationId: chatStore.currentConversationId
-      })
+    const confirmResult = await sendToExtension<{
+      success: boolean
+      prompt: string
+      approvalId?: string
+      reviewContent: string
+      reviewPath: string
+      error?: string
+    }>('review.confirmPlanGeneration', {
+      path: card.path,
+      originalContent: card.content,
+      toolId: card.toolId,
+      conversationId: chatStore.currentConversationId
+    })
 
-      if (!confirmResult?.success) {
-        await showNotification(String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed')), 'warning')
-        return
-      }
+    if (!confirmResult?.success) {
+      await showNotification(String(confirmResult?.error || t('components.message.tool.reviewCard.generatePlanFailed')), 'warning')
+      return
+    }
 
-      const prompt = String(confirmResult?.prompt || '')
-      const approvalId = typeof confirmResult?.approvalId === 'string'
-        ? confirmResult.approvalId.trim()
-        : ''
-      if (!approvalId) {
-        await showNotification(t('components.message.tool.reviewCard.generatePlanFailed'), 'warning')
-        return
-      }
-      const latestReviewContent = confirmResult?.reviewContent || card.content
-      const latestReviewPath = String(confirmResult?.reviewPath || card.path || '')
+    const prompt = String(confirmResult?.prompt || '')
+    const approvalId = typeof confirmResult?.approvalId === 'string'
+      ? confirmResult.approvalId.trim()
+      : ''
+    if (!approvalId) {
+      await showNotification(t('components.message.tool.reviewCard.generatePlanFailed'), 'warning')
+      return
+    }
+    const latestReviewContent = confirmResult?.reviewContent || card.content
+    const latestReviewPath = String(confirmResult?.reviewPath || card.path || '')
 
-      try {
-        const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
-        await chatStore.setCurrentPromptModeId(targetModeId)
-        saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
-      } catch (modeError) {
-        console.error('[review] Failed to switch prompt mode before plan generation:', modeError)
-      }
+    try {
+      const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
+      await chatStore.setCurrentPromptModeId(targetModeId)
+      saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
+    } catch (modeError) {
+      console.error('[review] Failed to switch prompt mode before plan generation:', modeError)
+    }
 
-      await chatStore.sendMessage('', undefined, {
-        modelOverride: selectedModelId.value || undefined,
-        hidden: {
+    await chatStore.sendMessage('', undefined, {
+      configIdOverride: selectedChannelId.value || undefined,
+      modelOverride: selectedModelId.value || undefined,
+      hidden: {
           functionResponse: {
             approvalId,
             id: card.toolId,
@@ -709,7 +688,6 @@ async function generatePlanFromReview(card: TaskCardItem) {
           }
         }
       })
-    })
   } catch (error) {
     console.error(t('components.message.tool.reviewCard.generatePlanFailed'), error)
   } finally {

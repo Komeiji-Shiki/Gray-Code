@@ -112,6 +112,14 @@ function handleNumberChange(optionKey: string, event: any) {
     emit('update:option', optionKey, Number(value))
   }
 }
+
+// OAI 的 reasoning_content 不应因 assistant 消息从当前轮次转为历史轮次而改变。
+// 界面使用单一开关，同时写回两个旧字段，兼顾现有配置格式和跨渠道切换。
+function onSendThoughtsChange(e: any) {
+  const value = e.target.checked
+  emit('update:field', 'sendHistoryThoughts', value)
+  emit('update:field', 'sendCurrentThoughts', value)
+}
 </script>
 
 <template>
@@ -369,23 +377,18 @@ function handleNumberChange(optionKey: string, event: any) {
       </div>
       
       <div class="option-section-content">
-        <div class="backfill-group-label">{{ t('components.channels.common.thinkingBackfill.currentGroup') }}</div>
-
-        <!-- OAI 不需要当前轮次签名选项 -->
         <div class="option-item checkbox-option">
           <label class="custom-checkbox">
             <input
               type="checkbox"
-              :checked="config.sendCurrentThoughts ?? true"
-              @change="(e: any) => emit('update:field', 'sendCurrentThoughts', e.target.checked)"
+              :checked="config.sendHistoryThoughts ?? false"
+              @change="onSendThoughtsChange"
             />
             <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.currentContent') }}</span>
+            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.content') }}</span>
           </label>
-          <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.currentContentHint') }}</span>
+          <span class="option-hint">{{ t('components.channels.openai.thinkingBackfill.sendContentHint') }}</span>
         </div>
-
-        <div class="backfill-group-label">{{ t('components.channels.common.thinkingBackfill.historyGroup') }}</div>
 
         <div class="option-item checkbox-option">
           <label class="custom-checkbox">
@@ -398,19 +401,6 @@ function handleNumberChange(optionKey: string, event: any) {
             <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.historySignatures') }}</span>
           </label>
           <span class="option-hint">{{ t('components.channels.openai.thinkingBackfill.sendSignaturesHint') }}</span>
-        </div>
-        
-        <div class="option-item checkbox-option">
-          <label class="custom-checkbox">
-            <input
-              type="checkbox"
-              :checked="config.sendHistoryThoughts ?? false"
-              @change="(e: any) => emit('update:field', 'sendHistoryThoughts', e.target.checked)"
-            />
-            <span class="checkmark"></span>
-            <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.historyContent') }}</span>
-          </label>
-          <span class="option-hint">{{ t('components.channels.openai.thinkingBackfill.sendContentHint') }}</span>
         </div>
         
         <!-- 历史思考回合数配置 - 条件展开 -->

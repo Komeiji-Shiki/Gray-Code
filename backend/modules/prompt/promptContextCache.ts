@@ -12,6 +12,12 @@ export type PromptContextCacheRole = 'user' | 'model';
 export interface SerializedPromptContextMessage {
     role: PromptContextCacheRole;
     text: string;
+    /**
+     * 思考内容（fakeThought 等 thought part 的文本）。
+     * 与正文分离保存，反序列化时恢复为 thought part，
+     * 避免回插路径把思考拍平进正文导致同一消息字节不稳定。
+     */
+    thoughtText?: string;
 }
 
 interface SerializedPromptContextCacheV1 {
@@ -75,14 +81,20 @@ function messageToSerialized(message: Content): SerializedPromptContextMessage |
         return null;
     }
 
-    const text = contentToText(message).trim();
-    if (!text) {
+    // 正文与思考分离保存：thought part 的文本进 thoughtText，
+    // 反序列化时可恢复原始结构，保证回插路径与直发路径字节一致。
+    const textParts = (message.parts ?? []).filter(part => part.text && part.thought !== true);
+    const thoughtParts = (message.parts ?? []).filter(part => part.text && part.thought === true);
+    const text = textParts.map(part => part.text || '').join('').trim();
+    const thoughtText = thoughtParts.map(part => part.text || '').join('\n').trim();
+    if (!text && !thoughtText) {
         return null;
     }
 
     return {
         role: message.role,
-        text
+        text,
+        ...(thoughtText ? { thoughtText } : {})
     };
 }
 
@@ -92,13 +104,21 @@ function serializedToContent(message: SerializedPromptContextMessage): Content |
     }
 
     const text = typeof message.text === 'string' ? message.text.trim() : '';
-    if (!text) {
+    const thoughtText = typeof message.thoughtText === 'string' ? message.thoughtText.trim() : '';
+    if (!text && !thoughtText) {
         return null;
     }
 
+    const parts: Content['parts'] = [];
+    if (thoughtText) {
+        parts.push({ text: thoughtText, thought: true });
+    }
+    if (text) {
+        parts.push({ text });
+    }
     return {
         role: message.role,
-        parts: [{ text }]
+        parts
     };
 }
 
@@ -112,10 +132,17 @@ function normalizeSerializedMessages(value: unknown): SerializedPromptContextMes
         if (!item || typeof item !== 'object') continue;
         const role = (item as any).role;
         const text = (item as any).text;
-        if ((role !== 'user' && role !== 'model') || typeof text !== 'string' || !text.trim()) {
+        const thoughtText = (item as any).thoughtText;
+        const normalizedText = typeof text === 'string' ? text.trim() : '';
+        const normalizedThoughtText = typeof thoughtText === 'string' ? thoughtText.trim() : '';
+        if ((role !== 'user' && role !== 'model') || (!normalizedText && !normalizedThoughtText)) {
             continue;
         }
-        messages.push({ role, text: text.trim() });
+        messages.push({
+            role,
+            text: normalizedText,
+            ...(normalizedThoughtText ? { thoughtText: normalizedThoughtText } : {})
+        });
     }
     return messages;
 }

@@ -132,7 +132,8 @@ export class OpenAIFormatter extends BaseFormatter {
         processedHistory = this.injectPromptContextMessages(
             processedHistory,
             this.getPromptContextForRequest(request),
-            request.dynamicContextStrategy
+            request.dynamicContextStrategy,
+            { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
@@ -295,10 +296,18 @@ export class OpenAIFormatter extends BaseFormatter {
         // 也一并丢弃，避免「call 被滤掉、tool 消息残留」的孤儿 tool 消息 400。
         // 主路径 formatHistoryForAPI 已做配对感知处理（成对保留/丢弃），此处是防御层。
         const rejectedCallIds = new Set<string>();
+        // BR-08 防御层：无配对响应（全历史范围）的 call id 也一并剔除，
+        // 防止直进 formatter 的本地历史（如子代理历史）残留孤儿 tool_calls 触发 400。
+        // 注：此处只按「响应是否存在于历史」判定，不感知 FR 块位置——主路径
+        // formatHistoryForAPI 已做块感知剔除，错位形态到不了本层。
+        const respondedCallIds = new Set<string>();
         for (const content of history) {
             for (const part of content.parts) {
                 if (part.functionCall?.rejected && part.functionCall.id) {
                     rejectedCallIds.add(part.functionCall.id);
+                }
+                if (part.functionResponse?.id) {
+                    respondedCallIds.add(part.functionResponse.id);
                 }
             }
         }
@@ -309,7 +318,7 @@ export class OpenAIFormatter extends BaseFormatter {
             // 分离各种类型的 parts
             const textParts = content.parts.filter(p => 'text' in p && !p.thought);
             const thoughtParts = content.parts.filter(p => 'text' in p && p.thought === true);
-            const functionCallParts = content.parts.filter(p => p.functionCall && !p.functionCall.rejected);
+            const functionCallParts = content.parts.filter(p => p.functionCall && !!p.functionCall.id && !p.functionCall.rejected && respondedCallIds.has(p.functionCall.id));
             const functionResponseParts = content.parts.filter(
                 p => p.functionResponse && !(p.functionResponse.id && rejectedCallIds.has(p.functionResponse.id))
             );
@@ -702,12 +711,12 @@ export class OpenAIFormatter extends BaseFormatter {
             const usage = response.usage;
             const completionTokens = usage.completion_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
-            const candidatesTokenCount = completionTokens - reasoningTokens;
             const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
             
             content.usageMetadata = {
                 promptTokenCount: usage.prompt_tokens,
-                candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
+                // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出。
+                candidatesTokenCount: completionTokens > 0 ? completionTokens : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
                 ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
@@ -966,12 +975,12 @@ export class OpenAIFormatter extends BaseFormatter {
             const usage = chunk.usage;
             const completionTokens = usage.completion_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
-            const candidatesTokenCount = completionTokens - reasoningTokens;
             const cachedTokens = usage.prompt_tokens_details?.cached_tokens || 0;
             
             streamChunk.usage = {
                 promptTokenCount: usage.prompt_tokens,
-                candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
+                // completion_tokens 已包含 reasoning_tokens；界面统一展示总输出。
+                candidatesTokenCount: completionTokens > 0 ? completionTokens : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
                 ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})

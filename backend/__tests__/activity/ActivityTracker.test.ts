@@ -14,6 +14,11 @@ import { ActivityStore, toDateStr } from '../../modules/activity/ActivityStore';
 
 jest.useFakeTimers();
 
+// 固定系统时间：测试累计推进约 30+ 分钟，若真实运行时刻临近午夜，
+// Date.now() 跨天会让 todaySamples() 读取次日的空文件（本地 23:43 左右必现）。
+// afterEach 的 jest.useRealTimers() 会恢复系统日期，故 beforeEach 需重新固定。
+const FIXED_SYSTEM_TIME = new Date('2026-01-15T10:00:00Z');
+
 /** 触发 mock 注册的文档编辑事件（markActive） */
 function fireDocumentChange(): void {
     const handler = (vscode.workspace.onDidChangeTextDocument as unknown as jest.Mock).mock.calls[0][0];
@@ -51,11 +56,15 @@ describe('ActivityTracker', () => {
     let store: ActivityStore;
 
     beforeEach(async () => {
+        // 固定在本地中午，避免跨午夜运行时本组最长约 19 分钟的 fake timer 推进切到次日，
+        // todaySamples() 随 Date.now() 查询新日期后把已有样本误判为 0。
+        jest.setSystemTime(new Date(2026, 5, 15, 12, 0, 0, 0));
         dir = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-activity-tracker-'));
         tracker = new ActivityTracker(dir);
         store = tracker.getStore();
         (vscode.window.state as { focused: boolean }).focused = true;
         jest.clearAllMocks();
+        jest.setSystemTime(FIXED_SYSTEM_TIME);
         tracker.start();
     });
 

@@ -27,6 +27,11 @@ function normalizeModelId(modelId: string | null | undefined): string { return (
  * 加载当前配置详情
  */
 export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
+  if (!state.configId.value) {
+    state.currentConfig.value = null
+    state.selectedModelId.value = ''
+    return
+  }
   try {
     const config = await sendToExtension<any>('config.getConfig', { configId: state.configId.value })
     if (config) {

@@ -13,6 +13,7 @@ import { WelcomePanel } from './components/home'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
 import Splash from './components/Splash.vue'
+import StartupBackdrop from './components/StartupBackdrop.vue'
 import { useChatStore, useDiffStore, useSettingsStore, useTerminalStore, useCodeViewStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage, setDetectedLanguage } from './i18n'
@@ -20,6 +21,7 @@ import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
+import type { SoundAgentRole } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
@@ -60,10 +62,24 @@ const UpdateModal = withLazyFallback('UpdateModal', () => import('./components/c
 const { t, actualLanguage } = useI18n()
 
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
-const isSubAgentMonitor = (window as any).__GRAYCODE_VIEW_MODE === 'subagentMonitor'
+const isSubAgentMonitor = window.__GRAYCODE_VIEW_MODE === 'subagentMonitor'
 
 // 语言是否已加载
 const languageLoaded = ref(false)
+// 扩展在生成 Webview HTML 时同步注入本次启动偏好；模块执行与 Vue 挂载无需等待 IPC。
+// 浏览器预览等非扩展环境没有注入值时，沿用后端默认的“开启”。
+const startupSplashInjected = window.__GRAYCODE_STARTUP_SPLASH_ENABLED !== undefined
+// 桌面主窗口直接加载 frontend/dist/index.html、不存在同步注入（Webview 面板/开发模式才注入）。
+// 该场景下沿用本地 1.7.6 的响应式门控：设置里关闭开屏动画则完全不渲染 Splash（配合
+// gc-splash-disabled 首帧标记），开关即时生效；注入场景则遵循上游语义——
+// 本次启动首帧定死、异步配置不中途切换。
+const splashActive = computed(() =>
+  startupSplashInjected
+    ? window.__GRAYCODE_STARTUP_SPLASH_ENABLED !== false
+    : settingsStore.splashEnabled
+)
+// 主界面启动数据是否已完成初始化；关闭开屏动画时据此结束专属占位画面。
+const mainViewInitialized = ref(false)
 // 开始动画是否已完成（Splash 淡出后置 true，移除组件）
 const splashDone = ref(false)
 
@@ -123,28 +139,53 @@ let agentStopNotificationController: AgentStopNotificationController | null = nu
  * 从 toolStatus chunk 中检测特定工具完成并播放音效：
  * - create_plan 成功 → taskComplete
  * - todo_write / todo_update 导致 TODO 全部完成 → taskComplete
+ * - subagents 工具成功/失败 → 子代理独立 taskComplete/taskError（role: subagent）
  */
 function dispatchConversationCue(
   cue: 'warning' | 'error' | 'taskComplete' | 'taskError',
   source: 'taskEvent' | 'retryStatus' | 'streamChunk' | 'chatError',
   conversationId?: string,
-  createdAt?: number
+  createdAt?: number,
+  role?: SoundAgentRole
 ): void {
   void handleSoundEvent({
     cue,
     source,
     conversationId,
-    createdAt
+    createdAt,
+    role
   })
 }
 
 function handleSoundForToolStatus(chunk: StreamChunk): void {
   if (!chunk.toolStatus || !chunk.tool) return
   const tool = chunk.tool
-  if (tool.status !== 'success') return
 
   // 去重：同一个 tool id 只播放一次
   if (soundPlayedToolIds.has(tool.id)) return
+
+  // 子代理工具：成功 → 子代理任务完成音；失败 → 子代理任务失败音。
+  // 与主聊天工具的提示音开关分开控制（cues.subagent.*）。
+  if (tool.name === 'subagents') {
+    // 后台模式：工具在启动瞬间即返回 { success: true, data: { background: true } } stub，
+    // 真实完成/失败由 taskEvent（background_subagent）送达——若在这里播会「开始就响一次、
+    // 完成再响一次」。跳过 stub，交给 taskEvent 路径统一播报。
+    const resultData = tool.result?.data as Record<string, unknown> | undefined
+    if (tool.status === 'success' && resultData?.background === true) return
+    if (tool.status === 'success' || tool.status === 'error') {
+      addSoundPlayedToolId(tool.id)
+      dispatchConversationCue(
+        tool.status === 'error' ? 'taskError' : 'taskComplete',
+        'streamChunk',
+        chunk.conversationId,
+        chunk.createdAt,
+        'subagent'
+      )
+    }
+    return
+  }
+
+  if (tool.status !== 'success') return
 
   // create_plan 成功
   if (tool.name === 'create_plan') {
@@ -255,15 +296,16 @@ function handleNewTab() {
 async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
   if (!content.trim() && messageAttachments.length === 0) return
 
-  // 先判断待确认分支：走“拒绝待确认工具”路径时不 clearAttachments，
-  // 避免带附件输入在拒绝待确认工具时被静默丢弃
+  // 有待确认工具时：发送即中断——先拒绝待确认工具并结束当前回合，
+  // 再走正常发送路径把消息作为新回合发出。此前的"批注+批量拒绝"语义
+  // （把输入栏文字当作批注随 toolConfirmation 发送）已移除。
   if (chatStore.hasPendingToolConfirmation) {
     try {
-      await chatStore.rejectPendingToolsWithAnnotation(content)
+      await chatStore.cancelStreamAndRejectTools()
     } catch (err) {
-      console.error('发送失败:', err)
+      console.error('拒绝待确认工具失败:', err)
     }
-    return
+    // 拒绝失败也继续发送（消息不丢，后端 prepareConversationForRequest 会兜底拒绝）
   }
 
   // 正常发送消息：先立即清除附件，不需要等待响应完成
@@ -578,6 +620,11 @@ onMounted(async () => {
     // 修改方式：Monitor 模式同样加载语言设置，只是继续跳过主聊天时间线的初始化。
     // 修改目的：主窗口与 Monitor 面板共享同一套语言配置。
     await loadLanguageSettings()
+
+    // 子代理面板同样启用提示音（run 完成/失败/重试事件走子代理独立开关）：
+    // 注册音频解锁与可见性 hooks，面板内首个用户手势后即可按主窗口同一套焦点规则播放。
+    disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
+    disposeVisibilityHooks = registerVisibilityChangeHooks()
     return
   }
 
@@ -643,13 +690,15 @@ onMounted(async () => {
       diffStore.syncStatuses(message.data)
     }
 
-    // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成等）
+    // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成、后台子代理等）。
+    // 后台子代理（background_subagent）事件走子代理独立提示音开关。
     if (message.type === 'taskEvent') {
       const event = message.data
+      const eventRole = event?.taskType === 'background_subagent' ? 'subagent' : undefined
       if (event?.type === 'complete') {
-        dispatchConversationCue('taskComplete', 'taskEvent', undefined, event?.createdAt)
+        dispatchConversationCue('taskComplete', 'taskEvent', undefined, event?.createdAt, eventRole)
       } else if (event?.type === 'error') {
-        dispatchConversationCue('taskError', 'taskEvent', undefined, event?.createdAt)
+        dispatchConversationCue('taskError', 'taskEvent', undefined, event?.createdAt, eventRole)
       }
     }
 
@@ -687,9 +736,14 @@ onMounted(async () => {
     }
   })
   
-  // 异步初始化 chatStore（加载历史对话等）
-  // onMounted 回调本身是 async，这里 await 并 catch：初始化失败不产生未处理 rejection，且有错误日志
-  await chatStore.initialize().catch(err => console.error('[App] chatStore.initialize failed', err))
+  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
+  try {
+    await chatStore.initialize()
+  } catch (err) {
+    console.error('[App] chatStore.initialize failed', err)
+  } finally {
+    mainViewInitialized.value = true
+  }
 })
 
 onBeforeUnmount(() => {
@@ -719,9 +773,11 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
-    <!-- 开始动画：Gray logo 描线（ready 沿用 languageLoaded，淡出后移除）；TPS 实时可视化条位于聊天面板底部 TpsBar -->
+    <!-- 关闭态占位与 Splash 从 HTML 首帧起就依据同一个同步快照严格互斥（桌面主窗口无注入快照时仅用响应式门控） -->
+    <StartupBackdrop v-if="startupSplashInjected && !splashActive && !mainViewInitialized" />
+
     <Splash
-      v-if="!splashDone && settingsStore.splashEnabled"
+      v-if="!splashDone && splashActive"
       :ready="languageLoaded"
       @done="splashDone = true"
     />

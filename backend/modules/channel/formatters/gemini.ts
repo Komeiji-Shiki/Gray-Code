@@ -118,7 +118,8 @@ export class GeminiFormatter extends BaseFormatter {
         processedHistory = this.injectPromptContextMessages(
             processedHistory,
             this.getPromptContextForRequest(request),
-            request.dynamicContextStrategy
+            request.dynamicContextStrategy,
+            { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
         
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API

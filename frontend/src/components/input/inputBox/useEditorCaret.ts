@@ -1,3 +1,5 @@
+import { escapeHtml } from '../../common/markdownUtils'
+
 export interface DomPoint {
   container: Node
   offset: number
@@ -25,18 +27,20 @@ export function getRangeInEditor(editor: HTMLElement): Range | null {
     range.collapse(false)
     selection.removeAllRanges()
     selection.addRange(range)
-  } else {
-    const range = selection.getRangeAt(0)
-    if (!editor.contains(range.startContainer)) {
-      const newRange = document.createRange()
-      newRange.selectNodeContents(editor)
-      newRange.collapse(false)
-      selection.removeAllRanges()
-      selection.addRange(newRange)
-    }
+    return range
   }
 
-  return selection.getRangeAt(0)
+  const range = selection.getRangeAt(0)
+  if (!editor.contains(range.startContainer)) {
+    const newRange = document.createRange()
+    newRange.selectNodeContents(editor)
+    newRange.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(newRange)
+    return newRange
+  }
+
+  return range
 }
 
 export function getCaretTextOffset(editor: HTMLElement): number {
@@ -154,7 +158,73 @@ export function insertLineBreakAtCaret(editor: HTMLElement): InsertResult {
   return { ok: true, inputFired: false }
 }
 
-function getDomPointFromTextOffset(editor: HTMLElement, targetOffset: number): DomPoint {
+function insertPlainTextManual(editor: HTMLElement, lines: string[]): void {
+  const range = getRangeInEditor(editor)
+  const selection = window.getSelection()
+  if (!range || !selection) return
+
+  range.deleteContents()
+
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]) {
+      const textNode = document.createTextNode(lines[i])
+      range.insertNode(textNode)
+      range.setStartAfter(textNode)
+    }
+    if (i < lines.length - 1) {
+      // 与 renderNodesToDOM / insertLineBreakAtCaretManual 一致：标记 BR + ZWSP
+      const br = document.createElement('br')
+      br.dataset.limBreak = '1'
+      range.insertNode(br)
+      const zwsp = document.createTextNode('\u200B')
+      range.setStartAfter(br)
+      range.insertNode(zwsp)
+      range.setStartAfter(zwsp)
+    }
+  }
+
+  range.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
+/**
+ * 粘贴路径专用：把多行纯文本作为「单个原生 undo 条目」插入，Ctrl+Z 一次整体撤销。
+ *
+ * 为什么不能靠临时切换 contenteditable=plaintext-only 走 Chromium 原生粘贴：
+ * contenteditable 属性值变化（'true' ⇄ 'plaintext-only'）会重建 editing host 的
+ * undo 栈——粘贴写入的 undo 记录随后被恢复 'true' 的动作一并销毁，Ctrl+Z 失效。
+ *
+ * 为什么不用 execCommand('insertText') 直接插多行文本：Chromium 会把 \n 转成
+ * 无标记的裸 <br>，而 extractNodesFromEditor 只认 data-lim-break="1" 的 <br>，
+ * 换行会被提取逻辑吞掉。这里改用一次性 insertHTML：转义后的纯文本 +
+ * 带标记 <br data-lim-break="1">\u200B，与渲染/提取/删除逻辑的内部表示完全一致，
+ * 且一次 execCommand 调用恰好产生一个 undo 条目（多次 insertText/insertHTML
+ * 拆段调用会产生 2N-1 个独立条目，需要反复 Ctrl+Z）。
+ *
+ * execCommand 不可用（jsdom 等环境）时回退手动 DOM 插入：功能可用，不进 undo 栈。
+ */
+export function insertPlainTextAsSingleUndo(editor: HTMLElement, text: string): InsertResult {
+  const lines = text.split('\n')
+
+  getRangeInEditor(editor)
+
+  if (typeof document.execCommand === 'function') {
+    const html = lines.map(escapeHtml).join('<br data-lim-break="1">\u200B')
+    try {
+      if (document.execCommand('insertHTML', false, html)) {
+        return { ok: true, inputFired: true }
+      }
+    } catch {
+      // jsdom 等未实现 execCommand 的环境：落入手动路径
+    }
+  }
+
+  insertPlainTextManual(editor, lines)
+  return { ok: true, inputFired: false }
+}
+
+export function getDomPointFromTextOffset(editor: HTMLElement, targetOffset: number): DomPoint {
   let textCount = 0
   const children = Array.from(editor.childNodes)
 

@@ -888,16 +888,13 @@ export class PromptManager {
                 targetMessages.push(message)
 
                 if (this.hasDynamicPlaceholder(entry.content)) {
-                    // 快照消息用于 preserve 策略回插历史（formatter 层注入，不经过
-                    // formatHistoryForAPI 的渠道思考开关过滤），因此剥离伪造思考，
-                    // 避免渠道关闭「发送历史思考内容」时历史快照仍携带 thought part。
-                    const snapshotMessage: Content = parts.some(part => part.thought === true)
-                        ? { role, parts: parts.filter(part => part.thought !== true) }
-                        : message
+                    // 快照消息用于 preserve 策略回插历史。保留完整 parts（含伪造思考）：
+                    // 缓存层已能无损保存 thought part，回插时由 formatter 按渠道
+                    // 「发送历史思考内容」开关统一过滤，与直发路径字节一致。
                     const targetSnapshotMessages = historyPlacement === 'entry' && index > chatHistoryIndex
                         ? dynamicSnapshotAfterHistoryMessages
                         : dynamicSnapshotBeforeHistoryMessages
-                    targetSnapshotMessages.push(snapshotMessage)
+                    targetSnapshotMessages.push(message)
                 }
             }
 

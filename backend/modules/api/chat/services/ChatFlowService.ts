@@ -2662,18 +2662,7 @@ export class ChatFlowService {
       await this.conversationManager.settleFunctionResponses(conversationId, settleParts);
     }
 
-    // 5.5 如果有用户批注，添加为新的用户消息
-    if (request.annotation && request.annotation.trim()) {
-      await this.conversationManager.addContent(conversationId, {
-        ...(typeof request.annotationMessageId === 'string' && request.annotationMessageId.length > 0
-          ? { id: request.annotationMessageId }
-          : {}),
-        role: 'user',
-        parts: [{ text: request.annotation.trim() }],
-      });
-    }
-
-    // 6. 检查是否已被中断。持久化（上方的 settleFunctionResponses / annotation）
+    // 5. 检查是否已被中断。持久化（上方的 settleFunctionResponses）
     // 必须在 abort 检查之前执行，否则真实执行产生的工具结果会被丢弃，
     // 历史里只剩 rejectAllPendingToolCalls 写下的「用户拒绝」占位。
     if (request.abortSignal?.aborted) {

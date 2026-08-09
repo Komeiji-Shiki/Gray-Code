@@ -7,6 +7,7 @@
  */
 
 import type { PromptMode, SystemPromptConfig } from './types';
+import { MEMORY_TOOL_NAMES } from '../memory/types';
 
 /**
  * 默认静态系统提示词模板
@@ -133,6 +134,8 @@ export const DESIGN_MODE_TEMPLATE = `You are a professional software architect a
 
 {{$MCP_TOOLS}}
 
+{{$MEMORY}}
+
 ====
 
 GUIDELINES
@@ -188,6 +191,8 @@ export const PLAN_MODE_TEMPLATE = `You are a professional programming assistant,
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
+
+{{$MEMORY}}
 
 ====
 
@@ -258,6 +263,8 @@ export const REVIEW_MODE_TEMPLATE = `You are a professional programming assistan
 
 {{$MCP_TOOLS}}
 
+{{$MEMORY}}
+
 ====
 
 REVIEW MODE
@@ -325,7 +332,8 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
         'validate_progress_document',
         'subagents',
         'create_design',
-        'update_design'
+        'update_design',
+        ...MEMORY_TOOL_NAMES
     ]
 };
 
@@ -357,7 +365,8 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'validate_progress_document',
         'subagents',
         'create_plan',
-        'update_plan'
+        'update_plan',
+        ...MEMORY_TOOL_NAMES
     ]
 };
 
@@ -408,7 +417,8 @@ export const REVIEW_MODE_TOOL_POLICY: string[] = [
     'validate_progress_document',
     'record_review_milestone',
     'finalize_review',
-    'reopen_review'
+    'reopen_review',
+    ...MEMORY_TOOL_NAMES
 ];
 
 export const REVIEW_PROMPT_MODE: PromptMode = {

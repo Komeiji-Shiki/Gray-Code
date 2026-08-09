@@ -17,7 +17,9 @@ import { createContextChipElement } from './inputBox/ContextChipFactory'
 import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNodesDom'
 import {
   getCaretTextOffset,
+  getDomPointFromTextOffset,
   insertLineBreakAtCaret,
+  insertPlainTextAsSingleUndo,
   insertTextAtCaret,
   getRangeInEditor,
   replaceTextRangeByOffsets
@@ -70,11 +72,22 @@ const currentRows = ref(props.minRows || 4)
 
 // 调整高度时的检测状态
 const cachedLineHeight = ref(0)
-const lastScrollHeight = ref(0)
+const manualEditorHeight = ref<number | null>(null)
 
 // 拖拽状态
 const isDragOver = ref(false)
 
+
+// ========== 自定义撤销/重做历史栈 ==========
+// VS Code Webview 中浏览器原生 undo 栈不可靠（execCommand 产生的记录常丢失），
+// 因此自行维护历史快照，接管 Ctrl+Z / Ctrl+Y。
+interface HistoryEntry {
+  nodes: EditorNode[]
+  caretOffset: number
+}
+const history = ref<HistoryEntry[]>([])
+const historyIndex = ref(-1)
+const MAX_HISTORY = 100
 // 滚动条状态
 const thumbHeight = ref(0)
 const thumbTop = ref(0)
@@ -82,6 +95,9 @@ const showScrollbar = ref(false)
 let isDragging = false
 let startY = 0
 let startScrollTop = 0
+let isResizingEditor = false
+let resizeStartY = 0
+let resizeStartHeight = 0
 
 // @ 触发状态
 const atTrigger = useAtTrigger({
@@ -148,6 +164,17 @@ function ensureCaretVisible(editor: HTMLElement, paddingPx: number = 8) {
   }
 }
 
+function getEditorHeightBounds(editor: HTMLElement) {
+  if (!cachedLineHeight.value) {
+    cachedLineHeight.value = parseInt(getComputedStyle(editor).lineHeight) || 20
+  }
+
+  const minRows = props.minRows || 4
+  const minHeight = minRows * cachedLineHeight.value
+  const maxHeight = Math.max(minHeight, Math.floor(window.innerHeight * 0.72))
+  return { minHeight, maxHeight }
+}
+
 function adjustHeight() {
   if (!editorRef.value) return
 
@@ -161,11 +188,16 @@ function adjustHeight() {
 
   const lineHeight = cachedLineHeight.value
   const minHeight = minRows * lineHeight
-
   const prevScrollTop = editor.scrollTop
   const prevWasAtBottom = editor.scrollTop + editor.clientHeight >= editor.scrollHeight - 2
 
-  if (editor.scrollHeight === lastScrollHeight.value && lastScrollHeight.value !== 0) {
+  if (manualEditorHeight.value !== null) {
+    const { minHeight: manualMinHeight, maxHeight } = getEditorHeightBounds(editor)
+    const height = Math.min(Math.max(manualEditorHeight.value, manualMinHeight), maxHeight)
+    manualEditorHeight.value = height
+    editor.style.maxHeight = `${maxHeight}px`
+    editor.style.height = `${height}px`
+    currentRows.value = Math.max(minRows, Math.round(height / lineHeight))
     nextTick(() => {
       updateScrollbar()
       ensureCaretVisible(editor)
@@ -173,23 +205,17 @@ function adjustHeight() {
     return
   }
 
-  const oldHeight = editor.style.height
+  // 每次先恢复 auto 再测量真实内容高度。固定高度下的 scrollHeight 会掩盖
+  // 删除内容后的收缩，导致输入框只能变高、不能变矮。
+  editor.style.maxHeight = `${maxRows * lineHeight}px`
   editor.style.height = 'auto'
 
   const contentHeight = editor.scrollHeight
   const targetHeight = Math.max(contentHeight, minHeight)
-
   const rows = Math.min(Math.max(Math.ceil(targetHeight / lineHeight), minRows), maxRows)
-  const finalHeight = `${rows * lineHeight}px`
+  editor.style.height = `${rows * lineHeight}px`
+  currentRows.value = rows
 
-  if (oldHeight !== finalHeight) {
-    editor.style.height = finalHeight
-    currentRows.value = rows
-  } else {
-    editor.style.height = oldHeight
-  }
-
-  lastScrollHeight.value = contentHeight
   // Preserve internal scroll position; without this, changing height can reset scrollTop and make
   // the caret appear to jump upward when the editor is overflowing (maxRows reached).
   const maxScrollTop = Math.max(0, editor.scrollHeight - editor.clientHeight)
@@ -203,6 +229,60 @@ function adjustHeight() {
     updateScrollbar()
     ensureCaretVisible(editor)
   })
+}
+
+function applyManualEditorHeight(height: number) {
+  const editor = editorRef.value
+  if (!editor) return
+
+  const { minHeight, maxHeight } = getEditorHeightBounds(editor)
+  manualEditorHeight.value = Math.min(Math.max(height, minHeight), maxHeight)
+  adjustHeight()
+}
+
+function handleEditorResizeMouseDown(e: MouseEvent) {
+  const editor = editorRef.value
+  if (!editor) return
+
+  isResizingEditor = true
+  resizeStartY = e.clientY
+  resizeStartHeight = editor.getBoundingClientRect().height || editor.clientHeight || parseFloat(editor.style.height) || 80
+  document.addEventListener('mousemove', handleEditorResizeMouseMove)
+  document.addEventListener('mouseup', handleEditorResizeMouseUp)
+  e.preventDefault()
+}
+
+function handleEditorResizeMouseMove(e: MouseEvent) {
+  if (!isResizingEditor) return
+  // 输入区固定在底部，向上拖动时增加高度，向下拖动时减小高度。
+  applyManualEditorHeight(resizeStartHeight + resizeStartY - e.clientY)
+}
+
+function handleEditorResizeMouseUp() {
+  isResizingEditor = false
+  document.removeEventListener('mousemove', handleEditorResizeMouseMove)
+  document.removeEventListener('mouseup', handleEditorResizeMouseUp)
+}
+
+function resetEditorHeight() {
+  manualEditorHeight.value = null
+  if (editorRef.value) {
+    editorRef.value.style.maxHeight = ''
+  }
+  adjustHeight()
+}
+
+function handleEditorResizeKeydown(e: KeyboardEvent) {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    const editor = editorRef.value
+    if (!editor) return
+    const currentHeight = manualEditorHeight.value ?? editor.getBoundingClientRect().height
+    applyManualEditorHeight(currentHeight + (e.key === 'ArrowUp' ? 20 : -20))
+    e.preventDefault()
+  } else if (e.key === 'Home') {
+    resetEditorHeight()
+    e.preventDefault()
+  }
 }
 
 function updateScrollbar() {
@@ -331,6 +411,18 @@ function handleRemoveContext(id: string) {
   emit('remove-context', id)
 }
 
+function editorNodesEqual(left: EditorNode[], right: EditorNode[]): boolean {
+  if (left.length !== right.length) return false
+
+  return left.every((node, index) => {
+    const other = right[index]
+    if (!other || node.type !== other.type) return false
+    if (node.type === 'text' && other.type === 'text') return node.text === other.text
+    if (node.type === 'context' && other.type === 'context') return node.context.id === other.context.id
+    return false
+  })
+}
+
 function renderNodesToDom() {
   if (!editorRef.value) return
 
@@ -346,6 +438,51 @@ function renderNodesToDom() {
 }
 
 // ========== input / key / IME ==========
+
+function pushHistory(nodes: EditorNode[], caretOffset: number) {
+  if (historyIndex.value < history.value.length - 1) {
+    history.value = history.value.slice(0, historyIndex.value + 1)
+  }
+  history.value.push({ nodes: JSON.parse(JSON.stringify(nodes)), caretOffset })
+  if (history.value.length > MAX_HISTORY) {
+    history.value.shift()
+  } else {
+    historyIndex.value++
+  }
+}
+
+function undo() {
+  if (historyIndex.value <= 0) return
+  historyIndex.value--
+  restoreHistoryEntry(history.value[historyIndex.value])
+}
+
+function redo() {
+  if (historyIndex.value >= history.value.length - 1) return
+  historyIndex.value++
+  restoreHistoryEntry(history.value[historyIndex.value])
+}
+
+function restoreHistoryEntry(entry: HistoryEntry) {
+  if (!editorRef.value) return
+  isInputting = true
+  emit('update:nodes', entry.nodes)
+  nextTick(() => {
+    if (!editorRef.value) { isInputting = false; return }
+    renderNodesToDom()
+    const point = getDomPointFromTextOffset(editorRef.value, entry.caretOffset)
+    const range = document.createRange()
+    range.setStart(point.container, point.offset)
+    range.collapse(true)
+    const selection = window.getSelection()
+    if (selection) {
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    adjustHeight()
+    isInputting = false
+  })
+}
 
 function handleInput() {
   const editor = editorRef.value
@@ -364,14 +501,10 @@ function handleInput() {
   atTrigger.onTextChanged(textContent, cursorPos)
 
   emit('update:nodes', newNodes)
+  pushHistory(newNodes, cursorPos)
 
   nextTick(() => {
     isInputting = false
-
-    if (newNodes.length === 0) {
-      renderNodesToDom()
-    }
-
     adjustHeight()
   })
 }
@@ -385,6 +518,19 @@ function handleKeydown(e: KeyboardEvent) {
   if (!editor) return
 
   if (atTrigger.handleKeydown(e)) return
+
+  // 自定义撤销/重做：接管浏览器原生 undo（VS Code Webview 中原生 undo 不可靠）
+  const isMod = e.ctrlKey || e.metaKey
+  if (isMod && !e.shiftKey && e.key.toLowerCase() === 'z') {
+    e.preventDefault()
+    undo()
+    return
+  }
+  if (isMod && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+    e.preventDefault()
+    redo()
+    return
+  }
 
   const onContextRemoved = (removedId: string) => {
     if (previewContext.value?.id === removedId) previewContext.value = null
@@ -433,13 +579,12 @@ function handleCompositionEnd() {
 }
 
 function handlePaste(e: ClipboardEvent) {
-  const items = e.clipboardData?.items
-  if (!items) return
-  const editor = editorRef.value
+  const clipboardData = e.clipboardData
+  if (!clipboardData) return
 
   const files: File[] = []
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
+  for (let i = 0; i < clipboardData.items.length; i++) {
+    const item = clipboardData.items[i]
     if (item.kind === 'file') {
       const file = item.getAsFile()
       if (file) files.push(file)
@@ -452,23 +597,19 @@ function handlePaste(e: ClipboardEvent) {
     return
   }
 
-  // 仅在本次 paste 默认动作期间启用 plaintext-only：Chromium 会按原生
-  // insertFromPaste 写入纯文本和 undo 栈。事件结束后恢复普通模式，避免影响
-  // 自定义换行使用的 insertHTML 以及不可编辑的上下文徽章。
-  if (editor) {
-    const previousContentEditable = editor.getAttribute('contenteditable')
-    editor.setAttribute('contenteditable', 'plaintext-only')
+  const editor = editorRef.value
+  // 纯文本粘贴：拦截默认插入，一次性写入原生 undo 栈（Ctrl+Z 整体撤销本次粘贴）。
+  // 不切换 contenteditable 属性：切换编辑宿主会重建 Chromium 的原生 undo 栈，
+  // 粘贴记录随恢复动作一并销毁。多行文本必须走 insertHTML + 带 data-lim-break
+  // 标记的 <br>：insertText 会把 \n 转成裸 <br>，被 extractNodesFromEditor 吞掉换行。
+  const text = clipboardData.getData('text/plain').replace(/\r\n?/g, '\n')
+  if (!editor || !text) return
 
-    setTimeout(() => {
-      if (editorRef.value !== editor || editor.getAttribute('contenteditable') !== 'plaintext-only') return
-
-      if (previousContentEditable === null) {
-        editor.removeAttribute('contenteditable')
-      } else {
-        editor.setAttribute('contenteditable', previousContentEditable)
-      }
-    }, 0)
-  }
+  e.preventDefault()
+  const result = insertPlainTextAsSingleUndo(editor, text)
+  // execCommand 路径会自动派发 input 事件（handleInput 同步状态）；
+  // 手动 DOM 回退路径不派发，需要手动同步。
+  if (result.ok && !result.inputFired) handleInput()
 }
 
 // ========== drag & drop ==========
@@ -672,8 +813,16 @@ watch(() => props.nodes, () => {
     }
   }
 
-  if (!isInputting || props.nodes.length === 0) {
-    renderNodesToDom()
+  if (!isInputting && editorRef.value) {
+    const domNodes = extractNodesFromEditor(editorRef.value, {
+      knownNodes: props.nodes,
+      transientContexts
+    })
+    // 受控 contenteditable 只有在外部状态确实不同步时才重建 DOM。
+    // 无意义的 innerHTML 重建会清空浏览器原生的复制、粘贴和撤销历史。
+    if (!editorNodesEqual(domNodes, props.nodes)) {
+      renderNodesToDom()
+    }
   }
 
   nextTick(() => adjustHeight())
@@ -683,6 +832,7 @@ onMounted(() => {
   nextTick(() => {
     renderNodesToDom()
     adjustHeight()
+    pushHistory(props.nodes, 0)
   })
 
   // 扩展端关闭 diff 标签归还焦点后，把光标放回输入框。
@@ -697,6 +847,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
+  document.removeEventListener('mousemove', handleEditorResizeMouseMove)
+  document.removeEventListener('mouseup', handleEditorResizeMouseUp)
   disposeRestoreFocusListener?.()
   disposeRestoreFocusListener = null
   if (hoverTimer) clearTimeout(hoverTimer)
@@ -718,6 +870,17 @@ defineExpose({
 
 <template>
   <div class="input-box" :class="{ 'drag-over': isDragOver }">
+    <div
+      class="input-resize-handle"
+      role="separator"
+      aria-orientation="horizontal"
+      :aria-label="t('components.input.resizeInput')"
+      tabindex="0"
+      @mousedown="handleEditorResizeMouseDown"
+      @dblclick="resetEditorHeight"
+      @keydown="handleEditorResizeKeydown"
+    />
+
     <!-- 编辑器区域（contenteditable） -->
     <div
       ref="editorRef"
@@ -779,10 +942,42 @@ defineExpose({
   flex-direction: column;
 }
 
+.input-resize-handle {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  z-index: 12;
+  height: 10px;
+  cursor: ns-resize;
+  outline: none;
+}
+
+.input-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 38px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity var(--transition-fast, 0.1s), background var(--transition-fast, 0.1s);
+}
+
+.input-resize-handle:hover::after,
+.input-resize-handle:focus-visible::after {
+  opacity: 1;
+  background: var(--vscode-focusBorder);
+}
+
 /* contenteditable 编辑器 */
 .input-editor {
+  box-sizing: border-box;
   width: 100%;
-  min-height: 80px; /* 至少四行视觉高度 */
+  min-height: 0;
   max-height: 160px;
   padding: var(--spacing-sm, 8px);
   background: var(--vscode-input-background);

@@ -82,6 +82,7 @@ function createState(overrides: Partial<ChatStoreState> = {}): ChatStoreState {
     currentConfig: ref(null),
     currentPromptModeId: ref('code'),
     pendingModelOverride: ref<string | null>(null),
+    pendingConfigIdOverride: ref<string | null>(null),
     _lastCancelledStreamId: ref<string | null>(null),
     _lastApprovalGatedStreamId: ref<string | null>(null),
     _failedStreamMessageId: ref<string | null>(null),

@@ -144,12 +144,10 @@ async function executePlan(planContent: string, planPath?: string) {
   isExecutingPlan.value = true
   
   try {
-    // 临时切换到选定的渠道
-    const originalConfigId = chatStore.configId
-    if (selectedChannelId.value && selectedChannelId.value !== originalConfigId) {
-      chatStore.setConfigId(selectedChannelId.value)
-    }
-    
+    // 一次性渠道/模型覆盖：仅本次请求生效，不写后端全局设置与对话元数据
+    const planChannelId = selectedChannelId.value || undefined
+    const planModelId = selectedModelId.value || undefined
+
     // 启动 Build 顶部卡片（Cursor-like）
     await chatStore.setActiveBuild({
       id: generateId(),
@@ -157,8 +155,8 @@ async function executePlan(planContent: string, planPath?: string) {
       title: getPlanTitle(planContent, planPath),
       planContent,
       planPath,
-      channelId: selectedChannelId.value || undefined,
-      modelId: selectedModelId.value || undefined,
+      channelId: planChannelId,
+      modelId: planModelId,
       startedAt: Date.now(),
       status: 'running'
     })
@@ -166,7 +164,8 @@ async function executePlan(planContent: string, planPath?: string) {
     // 发送 Plan 内容作为新消息
     const prompt = t('components.message.tool.planCard.promptPrefix', { plan: planContent })
     await chatStore.sendMessage(prompt, undefined, {
-      modelOverride: selectedModelId.value || undefined
+      configIdOverride: planChannelId,
+      modelOverride: planModelId
     })
   } catch (error) {
     console.error(t('components.message.tool.planCard.executePlanFailed'), error)

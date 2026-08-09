@@ -348,6 +348,7 @@ const en: LanguageMessages = {
         input: {
             placeholder: 'Type a message...',
             placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths, Ctrl+Shift+drag to insert @path text)',
+            resizeInput: 'Resize message input; use arrow keys, Home, or double-click to restore automatic height',
             send: 'Send message',
             sendPreserveDynamicContext: 'Send and preserve old dynamic context in place',
             stopGenerating: 'Stop generating',
@@ -1011,6 +1012,11 @@ const en: LanguageMessages = {
                     confirm: 'Confirm',
                     cancel: 'Cancel'
                 },
+                empty: {
+                    title: 'No channel configured',
+                    hint: 'Create a channel and fill in your API Key to start chatting.',
+                    create: 'New Channel'
+                },
                 dialog: {
                     new: {
                         title: 'New Configuration',
@@ -1025,13 +1031,12 @@ const en: LanguageMessages = {
                     delete: {
                         title: 'Delete Configuration',
                         message: 'Are you sure you want to delete config "{name}"? This action cannot be undone.',
-                        atLeastOne: 'At least one config must be kept',
                         cancel: 'Cancel',
                         confirm: 'Confirm'
                     },
                     changeType: {
                         title: 'Change Channel Type',
-                        message: 'Are you sure you want to change the channel type to "{name}"? Type-specific settings (API URL, model list, advanced options, etc.) will be reset to the defaults for the new type; common settings (name, API Key, timeout, retry, etc.) will be kept.'
+                        message: 'Are you sure you want to change the channel type to "{name}"? Type-specific settings (model list, advanced options, etc.) will be reset to the defaults for the new type; the API Key and a custom API URL are kept, and common settings stay unchanged.'
                     }
                 },
                 form: {
@@ -1058,7 +1063,7 @@ const en: LanguageMessages = {
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API',
-                        changeHint: 'Changing the channel type resets type-specific settings (API URL, model list, advanced options, etc.) to defaults; common settings are kept.'
+                        changeHint: 'Changing the channel type resets type-specific settings (model list, advanced options, etc.) to defaults; the API Key and a custom API URL are kept, and common settings stay unchanged.'
                     },
                     toolMode: {
                         label: 'Tool Call Format',
@@ -2718,7 +2723,9 @@ const en: LanguageMessages = {
                 },
                 cues: {
                     title: 'Event Types',
-                    description: 'Choose which events should play a cue',
+                    description: 'Choose which events should play a cue. Main agent and subagent events are controlled separately.',
+                    main: 'Main Agent',
+                    subagent: 'Subagents',
                     warning: 'Warning',
                     error: 'Error',
                     taskComplete: 'Task Completed',
@@ -2974,6 +2981,9 @@ const en: LanguageMessages = {
                 },
                 thinkingBackfill: {
                     title: 'Thought Backfill Config',
+                    signatures: 'Send Thought Signatures',
+                    signaturesHint: 'Backfill reasoning context (history signatures & summaries) to keep multi-turn continuity; disable to skip reasoning items for endpoints that do not support the reasoning input type',
+                    content: 'Send Thought Content',
                     currentGroup: 'Current Round',
                     currentSignatures: 'Send Current Signatures',
                     currentSignaturesHint: 'Maintain reasoning context for current step',
@@ -3105,7 +3115,7 @@ const en: LanguageMessages = {
                 },
                 thinkingBackfill: {
                     sendSignaturesHint: 'When enabled, thought signatures from historical conversations will be sent (OpenAI not supported). Not recommended, and only signatures from non-latest turns are sent.',
-                    sendContentHint: 'When enabled, reasoning_content (including summaries) from historical conversations will be sent, which may significantly increase context length'
+                    sendContentHint: 'Use one policy for reasoning_content in both the current and historical turns, so a message does not rewrite the prompt prefix when it becomes historical'
                 }
             },
             'openai-responses': {

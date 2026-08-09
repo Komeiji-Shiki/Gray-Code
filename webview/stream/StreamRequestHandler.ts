@@ -389,8 +389,6 @@ export class StreamRequestHandler {
       const stream = this.deps.chatHandler.handleToolConfirmation({
         conversationId,
         toolResponses,
-        annotation,
-        annotationMessageId,
         configId,
         modelOverride,
         promptModeId: this.normalizePromptModeId(promptModeId),

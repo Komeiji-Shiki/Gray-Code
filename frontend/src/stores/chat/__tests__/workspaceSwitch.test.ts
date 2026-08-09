@@ -69,6 +69,7 @@ function blankSnapshot(workspaceUri: string | null): ConversationSessionSnapshot
     toolResponseCache: [],
     pendingBranchRefreshAfterStream: null,
     pendingBranchReplayContext: null,
+    pendingConfigIdOverride: null,
     failedStreamMessageId: null,
     lastCancelledStreamId: null,
     lastApprovalGatedStreamId: null,

@@ -1217,6 +1217,7 @@ export function handleComplete(
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state.pendingConfigIdOverride.value = null
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
   
@@ -1507,6 +1508,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   turnBaseTokens = 0
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state.pendingConfigIdOverride.value = null
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }
@@ -1592,6 +1594,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
+  state.pendingConfigIdOverride.value = null
   // 与 handleCancelled 一致：本轮 base 估算不参与下轮校准（中止流的字符混入会拉偏因子）
   turnBaseTokens = 0
   state._lastApprovalGatedStreamId.value = null

@@ -43,6 +43,10 @@ const cueWarning = ref(DEFAULT_UI_SOUND_SETTINGS.cues.warning)
 const cueError = ref(DEFAULT_UI_SOUND_SETTINGS.cues.error)
 const cueTaskComplete = ref(DEFAULT_UI_SOUND_SETTINGS.cues.taskComplete)
 const cueTaskError = ref(DEFAULT_UI_SOUND_SETTINGS.cues.taskError)
+const cueSubagentWarning = ref(DEFAULT_UI_SOUND_SETTINGS.cues.subagent.warning)
+const cueSubagentError = ref(DEFAULT_UI_SOUND_SETTINGS.cues.subagent.error)
+const cueSubagentTaskComplete = ref(DEFAULT_UI_SOUND_SETTINGS.cues.subagent.taskComplete)
+const cueSubagentTaskError = ref(DEFAULT_UI_SOUND_SETTINGS.cues.subagent.taskError)
 const windowsAgentStopNotificationEnabled = ref(DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.enabled)
 const windowsAgentStopNotificationOnlyWhenWindowNotFocused = ref(
   DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.onlyWhenWindowNotFocused
@@ -149,7 +153,13 @@ function buildCurrentSettings(): UISoundSettings {
       warning: cueWarning.value,
       error: cueError.value,
       taskComplete: cueTaskComplete.value,
-      taskError: cueTaskError.value
+      taskError: cueTaskError.value,
+      subagent: {
+        warning: cueSubagentWarning.value,
+        error: cueSubagentError.value,
+        taskComplete: cueSubagentTaskComplete.value,
+        taskError: cueSubagentTaskError.value
+      }
     },
     assets: Object.keys(assets).length > 0 ? assets : undefined,
     windowsAgentStopNotification: {
@@ -271,6 +281,11 @@ async function loadConfig() {
     cueTaskComplete.value = normalized.cues.taskComplete
     cueTaskError.value = normalized.cues.taskError
 
+    cueSubagentWarning.value = normalized.cues.subagent.warning
+    cueSubagentError.value = normalized.cues.subagent.error
+    cueSubagentTaskComplete.value = normalized.cues.subagent.taskComplete
+    cueSubagentTaskError.value = normalized.cues.subagent.taskError
+
     assetWarning.value = normalized.assets.warning ?? null
     assetError.value = normalized.assets.error ?? null
     assetTaskComplete.value = normalized.assets.taskComplete ?? null
@@ -360,6 +375,10 @@ async function resetToDefault() {
   cueError.value = DEFAULT_UI_SOUND_SETTINGS.cues.error
   cueTaskComplete.value = DEFAULT_UI_SOUND_SETTINGS.cues.taskComplete
   cueTaskError.value = DEFAULT_UI_SOUND_SETTINGS.cues.taskError
+  cueSubagentWarning.value = DEFAULT_UI_SOUND_SETTINGS.cues.subagent.warning
+  cueSubagentError.value = DEFAULT_UI_SOUND_SETTINGS.cues.subagent.error
+  cueSubagentTaskComplete.value = DEFAULT_UI_SOUND_SETTINGS.cues.subagent.taskComplete
+  cueSubagentTaskError.value = DEFAULT_UI_SOUND_SETTINGS.cues.subagent.taskError
   windowsAgentStopNotificationEnabled.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.enabled
   windowsAgentStopNotificationOnlyWhenWindowNotFocused.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.onlyWhenWindowNotFocused
   windowsAgentStopNotificationCaseError.value = DEFAULT_UI_SOUND_SETTINGS.windowsAgentStopNotification.cases.error
@@ -547,11 +566,24 @@ onBeforeUnmount(() => {
             </label>
             <p class="field-description">{{ t('components.settings.soundSettings.cues.description') }}</p>
 
-            <div class="cues-grid">
-              <CustomCheckbox v-model="cueWarning" :label="t('components.settings.soundSettings.cues.warning')" />
-              <CustomCheckbox v-model="cueError" :label="t('components.settings.soundSettings.cues.error')" />
-              <CustomCheckbox v-model="cueTaskComplete" :label="t('components.settings.soundSettings.cues.taskComplete')" />
-              <CustomCheckbox v-model="cueTaskError" :label="t('components.settings.soundSettings.cues.taskError')" />
+            <div class="cue-group">
+              <div class="cue-group-title">{{ t('components.settings.soundSettings.cues.main') }}</div>
+              <div class="cues-grid">
+                <CustomCheckbox v-model="cueWarning" :label="t('components.settings.soundSettings.cues.warning')" />
+                <CustomCheckbox v-model="cueError" :label="t('components.settings.soundSettings.cues.error')" />
+                <CustomCheckbox v-model="cueTaskComplete" :label="t('components.settings.soundSettings.cues.taskComplete')" />
+                <CustomCheckbox v-model="cueTaskError" :label="t('components.settings.soundSettings.cues.taskError')" />
+              </div>
+            </div>
+
+            <div class="cue-group">
+              <div class="cue-group-title">{{ t('components.settings.soundSettings.cues.subagent') }}</div>
+              <div class="cues-grid">
+                <CustomCheckbox v-model="cueSubagentWarning" :label="t('components.settings.soundSettings.cues.warning')" />
+                <CustomCheckbox v-model="cueSubagentError" :label="t('components.settings.soundSettings.cues.error')" />
+                <CustomCheckbox v-model="cueSubagentTaskComplete" :label="t('components.settings.soundSettings.cues.taskComplete')" />
+                <CustomCheckbox v-model="cueSubagentTaskError" :label="t('components.settings.soundSettings.cues.taskError')" />
+              </div>
             </div>
           </div>
 
@@ -880,6 +912,18 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.cue-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cue-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
 }
 
 .assets-list {

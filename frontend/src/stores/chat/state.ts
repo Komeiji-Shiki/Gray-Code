@@ -289,8 +289,8 @@ export function createChatState(): ChatStoreState {
   /** 已折叠丢弃的消息条数（包含 functionResponse） */
   const foldedMessageCount = ref(0)
   
-  /** 配置ID */
-  const configId = ref('gemini-pro')
+  /** 配置ID（空 = 尚未配置任何渠道，首次打开显示无渠道） */
+  const configId = ref('')
 
   /** 当前会话选择的模型 ID（对话级隔离） */
   const selectedModelId = ref('')
@@ -390,6 +390,9 @@ export function createChatState(): ChatStoreState {
 
   /** 当前回合模型覆盖（用于 Plan 执行的“渠道 + 模型”选择） */
   const pendingModelOverride = ref<string | null>(null)
+
+  /** 当前回合一次性渠道覆盖（Plan 等「仅本次使用所选渠道」场景，不写全局设置） */
+  const pendingConfigIdOverride = ref<string | null>(null)
 
   /** 消息排队队列（候选区） */
   const messageQueue = ref<QueuedMessage[]>([])
@@ -496,6 +499,7 @@ export function createChatState(): ChatStoreState {
     attachments,
     currentPromptModeId,
     pendingModelOverride,
+    pendingConfigIdOverride,
     messageQueue,
     _lastCancelledStreamId,
     _lastApprovalGatedStreamId,

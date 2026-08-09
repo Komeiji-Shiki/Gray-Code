@@ -17,7 +17,7 @@ import { isDiffReviewToolCall } from './diffReviewTools';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
-import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
+import { isPlanPathAllowed, isSearchInFilesReplaceForbidden } from '../../../settings/modeToolsPolicy';
 import type { McpManager } from '../../../mcp/McpManager';
 import { mcpResultToToolResult } from '../../../mcp/toolAdapter';
 import { isMcpToolName, decodeMcpToolName } from '../../../mcp/mcpToolNameCodec';
@@ -1605,7 +1605,14 @@ export class ToolExecutionService {
             return `Tool "${toolName}" is not allowed in mode "${promptModeSnapshot?.id ?? 'unknown'}".`;
         }
 
-        // 3) Plan 模式 write_file 受控例外：只允许写入 .graycode/plans/**.md
+        // 3) 受限模式禁止 search_in_files 的 replace 模式（读模式借搜索工具写文件的权限漏洞）。
+        //    允许列表含 search_in_files 但未授予任何通用写工具（write_file/apply_diff 等）时，
+        //    replace 模式等价于越权写文件，一律拒绝；search 只读模式不受影响。
+        if (toolName === 'search_in_files' && (args as any)?.mode === 'replace' && isSearchInFilesReplaceForbidden(allowlist)) {
+            return `search_in_files with mode "replace" is not allowed in mode "${promptModeSnapshot?.id ?? 'unknown'}": this mode only permits read-only search. Use mode "search" instead.`;
+        }
+
+        // 4) Plan 模式 write_file 受控例外：只允许写入 .graycode/plans/**.md
         if (promptModeSnapshot?.id === 'plan' && toolName === 'write_file') {
             const validation = this.validatePlanModeWriteFileArgs(args);
             if (validation.ok === false) {

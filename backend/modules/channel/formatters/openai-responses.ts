@@ -28,6 +28,32 @@ import type {
     HttpRequestOptions
 } from '../types';
 
+function normalizeReasoningSummary(item: any): Array<{ type: 'summary_text'; text: string }> {
+    if (!Array.isArray(item?.summary)) return [];
+    return item.summary
+        .filter((entry: any) => typeof entry?.text === 'string' && entry.text.length > 0)
+        .map((entry: any) => ({ type: 'summary_text' as const, text: entry.text }));
+}
+
+function normalizeReasoningContent(item: any): Array<{ type: 'reasoning_text'; text: string }> {
+    if (!Array.isArray(item?.content)) return [];
+    return item.content
+        .filter((entry: any) => typeof entry?.text === 'string' && entry.text.length > 0)
+        .map((entry: any) => ({ type: 'reasoning_text' as const, text: entry.text }));
+}
+
+function getReasoningDisplayText(item: any): string | undefined {
+    const summaryText = normalizeReasoningSummary(item).map(entry => entry.text).join('\n');
+    if (summaryText) return summaryText;
+
+    const reasoningText = normalizeReasoningContent(item).map(entry => entry.text).join('\n');
+    if (reasoningText) return reasoningText;
+
+    if (typeof item?.text === 'string' && item.text) return item.text;
+    if (typeof item?.content === 'string' && item.content) return item.content;
+    return undefined;
+}
+
 /**
  * OpenAI Responses 格式转换器
  * 
@@ -58,14 +84,20 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         processedHistory = this.injectPromptContextMessages(
             processedHistory,
             this.getPromptContextForRequest(request),
-            request.dynamicContextStrategy
+            request.dynamicContextStrategy,
+            { stripPreservedThoughtParts: config.sendHistoryThoughts !== true }
         );
 
         // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
         processedHistory = this.cleanInternalFields(processedHistory);
 
-        // 转换历史消息为 OpenAI Responses input 格式
-        const input = this.convertToResponsesInput(processedHistory);
+        // 转换历史消息为 OpenAI Responses input 格式。
+        // reasoning item 是 OpenAI 官方 Responses 专有输入类型，第三方兼容端点往往不支持，
+        // 会直接 400「输入项类型 'reasoning' 当前暂不支持」。reasoning item 只来自历史轮次，
+        // 且其核心（encrypted_content）就是思考签名，因此回传由「发送历史思考签名」开关控制：
+        // 关闭时不回传 reasoning item，可见摘要降级为普通 assistant 文本。
+        const allowReasoningItems = !!(config.sendHistoryThoughtSignatures);
+        const input = this.convertToResponsesInput(processedHistory, { allowReasoningItems });
 
         // 构建请求体
         const body: any = {
@@ -127,7 +159,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      * - content: input_text, input_image, input_file
      * - function_call_output 类型项
      */
-    private convertToResponsesInput(history: Content[]): any[] {
+    private convertToResponsesInput(
+        history: Content[],
+        options?: { allowReasoningItems?: boolean }
+    ): any[] {
         const input: any[] = [];
         
         // 成对过滤：rejected functionCall 及其配对 function_call_output 一起丢弃，
@@ -159,25 +194,50 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 }
             };
             
-            for (const part of content.parts) {
-                // 1. 处理推理项 (OpenAI Reasoning Item - 包含签名和可能的摘要)
-                if (part.thoughtSignatures?.['openai-responses']) {
+            for (let partIndex = 0; partIndex < content.parts.length; partIndex++) {
+                const part = content.parts[partIndex];
+                const encryptedContent = part.thoughtSignatures?.['openai-responses'];
+                const reasoningMetadata = part.openaiResponsesReasoning;
+
+                // 1. 处理 OpenAI Responses reasoning item。新记录原样复放标准字段；
+                // 旧流式记录的摘要与签名分属相邻 part 时，在这里重新组合。
+                // 第三方兼容端点不支持 reasoning 输入项时，由 allowReasoningItems=false 整体跳过，
+                // 可见摘要文本降级为普通 assistant 内容保留（避免思考内容整体丢失）。
+                if (encryptedContent || reasoningMetadata?.id) {
+                    const displayText = part.text || (partIndex > 0 ? content.parts[partIndex - 1]?.text : undefined);
+                    const shouldSkip = !(options?.allowReasoningItems ?? true);
+                    if (shouldSkip) {
+                        if (displayText) {
+                            messageParts.push({
+                                type: role === 'assistant' ? 'output_text' : 'input_text',
+                                text: displayText
+                            });
+                        }
+                        continue;
+                    }
                     flushMessage();
+                    const previousPart = partIndex > 0 ? content.parts[partIndex - 1] : undefined;
+                    const legacyAdjacentSummary = previousPart?.thought && !previousPart.thoughtSignatures?.['openai-responses']
+                        ? previousPart.text
+                        : undefined;
+                    const summary = reasoningMetadata?.summary?.length
+                        ? reasoningMetadata.summary.map(entry => ({ type: 'summary_text', text: entry.text }))
+                        : (part.text || legacyAdjacentSummary
+                            ? [{ type: 'summary_text', text: part.text || legacyAdjacentSummary }]
+                            : []);
                     const reasoningItem: any = {
                         type: 'reasoning',
-                        encrypted_content: part.thoughtSignatures['openai-responses'],
-                        content: null,
-                        summary: [] // 必须提供 summary 字段，即使为空，否则 API 会报错
+                        summary
                     };
 
-                    // 如果该 Part 包含摘要文本，则添加到 summary 字段
-                    if ('text' in part && part.text) {
-                        reasoningItem.summary = [
-                            {
-                                type: 'summary_text',
-                                text: part.text
-                            }
-                        ];
+                    if (reasoningMetadata?.id) reasoningItem.id = reasoningMetadata.id;
+                    if (reasoningMetadata?.status) reasoningItem.status = reasoningMetadata.status;
+                    if (encryptedContent) reasoningItem.encrypted_content = encryptedContent;
+                    if (reasoningMetadata?.content?.length) {
+                        reasoningItem.content = reasoningMetadata.content.map(entry => ({
+                            type: 'reasoning_text',
+                            text: entry.text
+                        }));
                     }
 
                     input.push(reasoningItem);
@@ -346,32 +406,29 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     }
                 }
             } else if (item.type === 'reasoning') {
-                // 处理思考内容
+                const summary = normalizeReasoningSummary(item);
+                const reasoningContent = normalizeReasoningContent(item);
                 const reasoningPart: ContentPart = {
-                    thought: true
+                    thought: true,
+                    openaiResponsesReasoning: {
+                        ...(typeof item.id === 'string' ? { id: item.id } : {}),
+                        ...(item.status ? { status: item.status } : {}),
+                        ...(summary.length > 0 ? { summary } : {}),
+                        ...(reasoningContent.length > 0 ? { content: reasoningContent } : {})
+                    }
                 };
 
-                // 提取摘要文本
-                if (item.summary && Array.isArray(item.summary)) {
-                    const summaryText = item.summary
-                        .filter((s: any) => s.type === 'summary_text')
-                        .map((s: any) => s.text)
-                        .join('\n');
-                    if (summaryText) {
-                        reasoningPart.text = summaryText;
-                    }
-                } else if (item.content || item.text) {
-                    reasoningPart.text = item.content || item.text;
-                }
+                const displayText = getReasoningDisplayText(item);
+                if (displayText) reasoningPart.text = displayText;
 
-                // 提取思考签名 (Encrypted Content)
+                // store=false 时 encrypted_content 是后续轮次恢复 reasoning 上下文的关键字段。
                 if (item.encrypted_content) {
                     reasoningPart.thoughtSignatures = {
                         'openai-responses': item.encrypted_content
                     };
                 }
 
-                if (reasoningPart.text || reasoningPart.thoughtSignatures) {
+                if (reasoningPart.text || reasoningPart.thoughtSignatures || reasoningPart.openaiResponsesReasoning?.id) {
                     parts.push(reasoningPart);
                 }
             } else if (item.type === 'redacted_thinking') {
@@ -410,11 +467,11 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             const usage = response.usage;
             const outputTokens = usage.output_tokens || 0;
             const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0;
-            const candidatesTokenCount = outputTokens - reasoningTokens;
             const cachedTokens = usage.input_tokens_details?.cached_tokens || 0;
             content.usageMetadata = {
                 promptTokenCount: usage.input_tokens,
-                candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
+                // Responses API 的 output_tokens 已包含 reasoning_tokens；主界面按总输出显示。
+                candidatesTokenCount: outputTokens > 0 ? outputTokens : undefined,
                 totalTokenCount: usage.total_tokens,
                 thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
                 ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
@@ -461,14 +518,31 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.output_item.done':
-                // 当项完成时，再次尝试提取签名（可能在 added 时没有而在 done 时有）
-                if (chunk.item?.type === 'reasoning' && chunk.item.encrypted_content) {
-                    parts.push({
+                // reasoning item 的 id/summary/content/encrypted_content 必须一起持久化，
+                // 才能在 store=false 的后续请求中按官方格式原样回传。
+                if (chunk.item?.type === 'reasoning') {
+                    const summary = normalizeReasoningSummary(chunk.item);
+                    const reasoningContent = normalizeReasoningContent(chunk.item);
+                    const displayText = getReasoningDisplayText(chunk.item);
+                    const reasoningPart: ContentPart = {
                         thought: true,
-                        thoughtSignatures: {
-                            'openai-responses': chunk.item.encrypted_content
-                        }
-                    });
+                        ...(displayText ? { text: displayText } : {}),
+                        openaiResponsesReasoning: {
+                            ...(typeof chunk.item.id === 'string' ? { id: chunk.item.id } : {}),
+                            ...(chunk.item.status ? { status: chunk.item.status } : {}),
+                            ...(summary.length > 0 ? { summary } : {}),
+                            ...(reasoningContent.length > 0 ? { content: reasoningContent } : {})
+                        },
+                        ...(chunk.item.encrypted_content ? {
+                            thoughtSignatures: {
+                                'openai-responses': chunk.item.encrypted_content
+                            }
+                        } : {})
+                    };
+
+                    if (displayText || chunk.item.encrypted_content || chunk.item.id) {
+                        parts.push(reasoningPart);
+                    }
                 }
                 break;
             
@@ -524,11 +598,11 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     const u = chunk.response.usage;
                     const outputTokens = u.output_tokens || 0;
                     const reasoningTokens = u.output_tokens_details?.reasoning_tokens || 0;
-                    const candidatesTokenCount = outputTokens - reasoningTokens;
                     const cachedTokens = u.input_tokens_details?.cached_tokens || 0;
                     usage = {
                         promptTokenCount: u.input_tokens,
-                        candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
+                        // Responses API 的 output_tokens 已包含 reasoning_tokens；主界面按总输出显示。
+                        candidatesTokenCount: outputTokens > 0 ? outputTokens : undefined,
                         totalTokenCount: u.total_tokens,
                         thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined,
                         ...(cachedTokens > 0 ? { cacheReadTokenCount: cachedTokens, cachedContentTokenCount: cachedTokens } : {})
@@ -560,7 +634,15 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             done,
             usage,
             finishReason,
-            modelVersion: chunk.response?.model
+            modelVersion: chunk.response?.model,
+            providerEvent: {
+                type: chunk.type || 'unknown',
+                outputIndex: chunk.output_index,
+                contentIndex: chunk.content_index,
+                itemId: chunk.item_id || chunk.item?.id,
+                callId: chunk.item?.call_id,
+                isFinalArgs: chunk.type === 'response.function_call_arguments.done'
+            }
         };
     }
 

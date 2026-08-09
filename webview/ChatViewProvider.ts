@@ -67,6 +67,13 @@ import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { disposeFileHandlerResources } from './handlers/FileHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
 import { WorkspaceManager, setWorkspaceManager, type WorkspaceFolderInfo } from './utils/WorkspaceManager';
+import {
+    buildDeferredFrontendLoader,
+    buildStartupBootstrapMarkup,
+    buildStartupBootstrapStyles,
+    buildStartupPreferenceAssignment,
+    resolveStartupSplashEnabled
+} from './startupBootstrap';
 
 const log = Logger.get('ChatViewProvider');
 const UPDATE_CHECK_DELAY_MS = 10_000;
@@ -316,18 +323,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
         this.configManager = new ConfigManager(configStorage);
         
-        // 8. 创建默认配置（如果不存在）
-        await this.ensureDefaultConfig();
-        
-        // 9. 同步语言设置到后端 i18n
+        // 8. 同步语言设置到后端 i18n
         this.syncLanguageToBackend();
         
-        // 10. 设置全局上下文引用（供工具和其他模块访问）
+        // 9. 设置全局上下文引用（供工具和其他模块访问）
         setGlobalSettingsManager(this.settingsManager);
         setGlobalConfigManager(this.configManager);
         setGlobalToolRegistry(toolRegistry);
 
-        // 10.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
+        // 9.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
         const settingsChangeListener = (event: SettingsChangeEvent) => {
             if (event.type === 'tools' && event.path === 'toolsConfig.apply_diff') {
                 try {
@@ -869,28 +873,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
     
-    /**
-     * 确保存在默认配置
-     */
-    private async ensureDefaultConfig() {
-        try {
-            const existingConfig = await this.configManager.getConfig('gemini-pro');
-            if (!existingConfig) {
-                await this.configManager.ensureConfig('gemini-pro', {
-                    type: 'gemini',
-                    name: 'Gemini(Default)',
-                    apiKey: process.env.GEMINI_API_KEY || 'YOUR_API_KEY_HERE',
-                    url: 'https://generativelanguage.googleapis.com/v1beta',
-                    model: 'gemini-3-pro-preview',
-                    timeout: 120000,
-                    enabled: true
-                });
-            }
-        } catch (error) {
-            console.error('Failed to create default config:', error);
-        }
-    }
-
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         context: vscode.WebviewViewResolveContext,
@@ -1474,16 +1456,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const codiconsUri = webview.asWebviewUri(
             vscode.Uri.file(path.join(this.context.extensionPath, 'resources', 'codicons', 'codicon.css'))
         );
+        const iconUri = webview.asWebviewUri(
+            vscode.Uri.file(path.join(this.context.extensionPath, 'resources', 'icon.svg'))
+        );
 
         const devServerUrl = this.webviewDevServerUrl;
         const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
         const nonce = randomBytes(16).toString('base64');
         const cspContent = this.buildCsp(webview, nonce, devServerOrigin);
+        // VS Code 配置读取是同步的：在 HTML 首帧中冻结开屏偏好，避免前端再等 getSettings IPC。
+        const uiConfig = vscode.workspace.getConfiguration('graycode').get<unknown>('ui');
+        const startupSplashEnabled = resolveStartupSplashEnabled(uiConfig);
+        const startupBootstrapScript = `<script nonce="${nonce}">${buildStartupPreferenceAssignment(startupSplashEnabled)}</script>`;
+        const startupBootstrapStyles = `<style>${buildStartupBootstrapStyles(iconUri.toString())}</style>`;
+        const startupBootstrapMarkup = buildStartupBootstrapMarkup(startupSplashEnabled);
         // 内联 JSON 必须转义 < 防止 </script> 提前闭合注入
         const safeJson = (value: unknown): string => JSON.stringify(value).replace(/</g, '\\u003c');
         const builtinSoundAssetsScript = `<script nonce="${nonce}">window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${safeJson(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {
+            const frontendLoader = buildDeferredFrontendLoader(
+                [codiconsUri.toString()],
+                [`${devServerUrl}/@vite/client`, `${devServerUrl}/src/main.ts`]
+            );
             log.info('webview_load', { source: 'vite-dev-server', url: devServerUrl });
             return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1491,18 +1486,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="${cspContent}">
-    <link href="${codiconsUri}" rel="stylesheet">
+    ${startupBootstrapStyles}
+    ${startupBootstrapScript}
     ${builtinSoundAssetsScript}
     <title>GrayCode Chat (Dev)</title>
 </head>
 <body>
-    <div id="app"></div>
-    <script nonce="${nonce}" type="module" src="${devServerUrl}/@vite/client"></script>
-    <script nonce="${nonce}" type="module" src="${devServerUrl}/src/main.ts"></script>
+    <div id="app">${startupBootstrapMarkup}</div>
+    <script nonce="${nonce}">${frontendLoader}</script>
 </body>
 </html>`;
         }
 
+        const frontendLoader = buildDeferredFrontendLoader(
+            [codiconsUri.toString(), styleUri.toString()],
+            [scriptUri.toString()]
+        );
         log.info('webview_load', { source: 'frontend/dist' });
         return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1510,14 +1509,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="${cspContent}">
-    <link href="${codiconsUri}" rel="stylesheet">
-    <link href="${styleUri}" rel="stylesheet">
+    ${startupBootstrapStyles}
+    ${startupBootstrapScript}
     ${builtinSoundAssetsScript}
     <title>GrayCode Chat</title>
 </head>
 <body>
-    <div id="app"></div>
-    <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+    <div id="app">${startupBootstrapMarkup}</div>
+    <script nonce="${nonce}">${frontendLoader}</script>
 </body>
 </html>`;
     }

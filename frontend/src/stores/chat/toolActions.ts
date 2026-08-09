@@ -376,6 +376,10 @@ export async function cancelStreamAndRejectTools(
     state.retryStatus.value = null
   }
   
+  // 状态不变量：awaiting_approval（工具待确认）阶段不清 streamingMessageId
+  // （仍指向含待确认工具的 assistant 消息），因此当前流式消息必然存在；
+  // 若未来状态机变化使该不变量被打破，此处会跳过本地 FR 插入与 rejectToolCalls
+  // （后端 cancelStream 的 rejectAllPendingToolCalls 仍会兜底插 FR）。
   if (currentStreamingId) {
     const messageIndex = state.allMessages.value.findIndex(m => m.id === currentStreamingId)
     if (messageIndex !== -1) {
@@ -485,94 +489,5 @@ export async function cancelStream(
   } catch (err) {
     // 本地状态已经完成取消，后端错误只记录，不把 UI 恢复成永久等待。
     console.error('取消请求失败:', err)
-  }
-}
-
-/**
- * 发送带批注的工具确认响应
- */
-export async function rejectPendingToolsWithAnnotation(
-  state: ChatStoreState,
-  computed: ChatStoreComputed,
-  annotation: string
-): Promise<void> {
-  if (!computed.hasPendingToolConfirmation.value || !state.currentConversationId.value || !state.currentConfig.value?.id) {
-    return
-  }
-
-  const toolResponses = computed.pendingToolCalls.value.map(tool => ({
-    id: tool.id,
-    name: tool.name,
-    confirmed: false
-  }))
-
-  if (toolResponses.length === 0) return
-
-  const trimmedAnnotation = annotation.trim()
-
-  // BR-01：批注窗口消息的稳定节点 id（随 toolConfirmation 传给后端原样落库）
-  let annotationMessageId: string | undefined
-
-  if (state.streamingMessageId.value) {
-    const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
-    if (messageIndex !== -1) {
-      const message = state.allMessages.value[messageIndex]
-      const updatedTools = message.tools?.map(tool => {
-        if (tool.status === 'awaiting_approval') {
-          // 已提交确认（这里是批量拒绝），进入“处理中”状态
-          return { ...tool, status: 'executing' as const }
-        }
-        return tool
-      })
-
-      const updatedMessage: Message = {
-        ...message,
-        tools: updatedTools
-      }
-
-      state.allMessages.value = [
-        ...state.allMessages.value.slice(0, messageIndex),
-        updatedMessage,
-        ...state.allMessages.value.slice(messageIndex + 1)
-      ]
-    }
-  }
-
-  if (trimmedAnnotation) {
-    const userMessage: Message = {
-      id: generateId(),
-      role: 'user',
-      content: trimmedAnnotation,
-      timestamp: Date.now(),
-      backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
-      // BR-01：本地窗口近似父链（首条为 null）——编辑时根节点判断用；后端落库时生成准确 parentId
-      parentId: state.allMessages.value.length > 0
-        ? (state.allMessages.value[state.allMessages.value.length - 1]?.id ?? null)
-        : null,
-      parts: [{ text: trimmedAnnotation }]
-    }
-    // BR-01：批注消息 id 随 toolConfirmation 传给后端原样落库（窗口 id 与后端 id 对齐）
-    annotationMessageId = userMessage.id
-    state.allMessages.value.push(userMessage)
-    syncTotalMessagesFromWindow(state)
-    trimWindowFromTop(state)
-  }
-
-  try {
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
-    state._lastCancelledStreamId.value = null
-    await sendToExtension('toolConfirmation', {
-      conversationId: state.currentConversationId.value,
-      configId: state.currentConfig.value.id,
-      modelOverride: state.pendingModelOverride.value || undefined,
-      toolResponses,
-      annotation: trimmedAnnotation,
-      annotationMessageId,
-      streamId,
-      promptModeId: state.currentPromptModeId.value
-    })
-  } catch (error) {
-    console.error('Failed to send tool confirmation with annotation:', error)
   }
 }
