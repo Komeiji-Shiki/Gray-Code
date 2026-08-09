@@ -14,6 +14,14 @@ const MAX_SOUND_ASSET_BASE64_LENGTH = Math.ceil((MAX_SOUND_ASSET_BYTES * 4) / 3)
 
 export type SoundCue = 'warning' | 'error' | 'taskComplete' | 'taskError'
 
+/**
+ * 提示音事件所属代理角色。
+ *
+ * - 'main'：主代理（主对话）事件，使用 cues 顶层开关
+ * - 'subagent'：子代理（SubAgent）事件，使用 cues.subagent 独立开关
+ */
+export type SoundAgentRole = 'main' | 'subagent'
+
 export type BuiltinSoundAsset = {
   url: string
   name: string
@@ -111,6 +119,14 @@ export interface UISoundSettings {
     taskComplete?: boolean
     /** 任务失败提示音（可与 error 分开控制） */
     taskError?: boolean
+
+    /** 子代理（SubAgent）事件提示音开关：与主代理分开控制 */
+    subagent?: {
+      warning?: boolean
+      error?: boolean
+      taskComplete?: boolean
+      taskError?: boolean
+    }
   }
 
   /**
@@ -141,6 +157,13 @@ export interface NormalizedUISoundSettings {
     error: boolean
     taskComplete: boolean
     taskError: boolean
+    /** 子代理（SubAgent）事件提示音开关 */
+    subagent: {
+      warning: boolean
+      error: boolean
+      taskComplete: boolean
+      taskError: boolean
+    }
   }
   assets: {
     warning?: UISoundAsset
@@ -176,7 +199,13 @@ export const DEFAULT_UI_SOUND_SETTINGS: NormalizedUISoundSettings = {
     warning: true,
     error: true,
     taskComplete: true,
-    taskError: true
+    taskError: true,
+    subagent: {
+      warning: true,
+      error: true,
+      taskComplete: true,
+      taskError: true
+    }
   },
   assets: {},
   theme: 'beep',
@@ -275,7 +304,13 @@ export function normalizeUISoundSettings(input?: UISoundSettings | null): Normal
     warning: typeof input?.cues?.warning === 'boolean' ? input.cues.warning : DEFAULT_UI_SOUND_SETTINGS.cues.warning,
     error: typeof input?.cues?.error === 'boolean' ? input.cues.error : DEFAULT_UI_SOUND_SETTINGS.cues.error,
     taskComplete: typeof input?.cues?.taskComplete === 'boolean' ? input.cues.taskComplete : DEFAULT_UI_SOUND_SETTINGS.cues.taskComplete,
-    taskError: typeof input?.cues?.taskError === 'boolean' ? input.cues.taskError : DEFAULT_UI_SOUND_SETTINGS.cues.taskError
+    taskError: typeof input?.cues?.taskError === 'boolean' ? input.cues.taskError : DEFAULT_UI_SOUND_SETTINGS.cues.taskError,
+    subagent: {
+      warning: typeof input?.cues?.subagent?.warning === 'boolean' ? input.cues.subagent.warning : DEFAULT_UI_SOUND_SETTINGS.cues.subagent.warning,
+      error: typeof input?.cues?.subagent?.error === 'boolean' ? input.cues.subagent.error : DEFAULT_UI_SOUND_SETTINGS.cues.subagent.error,
+      taskComplete: typeof input?.cues?.subagent?.taskComplete === 'boolean' ? input.cues.subagent.taskComplete : DEFAULT_UI_SOUND_SETTINGS.cues.subagent.taskComplete,
+      taskError: typeof input?.cues?.subagent?.taskError === 'boolean' ? input.cues.subagent.taskError : DEFAULT_UI_SOUND_SETTINGS.cues.subagent.taskError
+    }
   }
 
   const theme = input?.theme === 'soft' || input?.theme === 'beep'
@@ -599,7 +634,28 @@ async function playSoundUrl(ctx: AudioContext, url: string, abortSignal?: AbortS
   }
 }
 
-function isCueEnabled(cue: SoundCue): boolean {
+/**
+ * 判断某类提示音是否被当前设置允许播放。
+ *
+ * 子代理（role === 'subagent'）事件使用 cues.subagent 独立开关，
+ * 主代理事件使用 cues 顶层开关；未标注角色的事件按主代理处理（向后兼容）。
+ */
+export function isCueEnabled(cue: SoundCue, role: SoundAgentRole = 'main'): boolean {
+  if (role === 'subagent') {
+    switch (cue) {
+      case 'warning':
+        return currentSettings.cues.subagent.warning
+      case 'error':
+        return currentSettings.cues.subagent.error
+      case 'taskComplete':
+        return currentSettings.cues.subagent.taskComplete
+      case 'taskError':
+        return currentSettings.cues.subagent.taskError
+      default:
+        return false
+    }
+  }
+
   switch (cue) {
     case 'warning':
       return currentSettings.cues.warning
@@ -667,14 +723,14 @@ function setLastPlayedAt(cooldownKey: string, timestamp: number): void {
 
 export async function playCue(
   cue: SoundCue,
-  options: { ignoreEnabled?: boolean; bypassCooldown?: boolean; cooldownKey?: string; abortSignal?: AbortSignal } = {}
+  options: { ignoreEnabled?: boolean; bypassCooldown?: boolean; cooldownKey?: string; abortSignal?: AbortSignal; role?: SoundAgentRole } = {}
 ): Promise<boolean> {
   try {
     if (options.abortSignal?.aborted) return false
 
     if (!options.ignoreEnabled) {
       if (!currentSettings.enabled) return false
-      if (!isCueEnabled(cue)) return false
+      if (!isCueEnabled(cue, options.role)) return false
     }
 
     const now = Date.now()

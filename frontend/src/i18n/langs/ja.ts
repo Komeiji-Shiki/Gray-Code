@@ -2653,7 +2653,9 @@ const ja: LanguageMessages = {
                 },
                 cues: {
                     title: 'イベント種類',
-                    description: '通知音を再生するイベントを選択します',
+                    description: '通知音を再生するイベントを選択します。メインエージェントとサブエージェントのイベントは個別に制御できます。',
+                    main: 'メインエージェント',
+                    subagent: 'サブエージェント',
                     warning: '警告（Warning）',
                     error: 'エラー（Error）',
                     taskComplete: 'タスク完了',

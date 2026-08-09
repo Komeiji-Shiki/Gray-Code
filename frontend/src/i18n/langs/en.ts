@@ -2653,7 +2653,9 @@ const en: LanguageMessages = {
                 },
                 cues: {
                     title: 'Event Types',
-                    description: 'Choose which events should play a cue',
+                    description: 'Choose which events should play a cue. Main agent and subagent events are controlled separately.',
+                    main: 'Main Agent',
+                    subagent: 'Subagents',
                     warning: 'Warning',
                     error: 'Error',
                     taskComplete: 'Task Completed',
