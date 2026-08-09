@@ -274,18 +274,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
         this.configManager = new ConfigManager(configStorage);
         
-        // 8. 创建默认配置（如果不存在）
-        await this.ensureDefaultConfig();
-        
-        // 9. 同步语言设置到后端 i18n
+        // 8. 同步语言设置到后端 i18n
         this.syncLanguageToBackend();
         
-        // 10. 设置全局上下文引用（供工具和其他模块访问）
+        // 9. 设置全局上下文引用（供工具和其他模块访问）
         setGlobalSettingsManager(this.settingsManager);
         setGlobalConfigManager(this.configManager);
         setGlobalToolRegistry(toolRegistry);
 
-        // 10.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
+        // 9.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
         const settingsChangeListener = (event: SettingsChangeEvent) => {
             if (event.type === 'tools' && event.path === 'toolsConfig.apply_diff') {
                 try {
@@ -744,28 +741,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
     
-    /**
-     * 确保存在默认配置
-     */
-    private async ensureDefaultConfig() {
-        try {
-            const existingConfig = await this.configManager.getConfig('gemini-pro');
-            if (!existingConfig) {
-                await this.configManager.ensureConfig('gemini-pro', {
-                    type: 'gemini',
-                    name: 'Gemini(Default)',
-                    apiKey: process.env.GEMINI_API_KEY || 'YOUR_API_KEY_HERE',
-                    url: 'https://generativelanguage.googleapis.com/v1beta',
-                    model: 'gemini-3-pro-preview',
-                    timeout: 120000,
-                    enabled: true
-                });
-            }
-        } catch (error) {
-            console.error('Failed to create default config:', error);
-        }
-    }
-
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         context: vscode.WebviewViewResolveContext,

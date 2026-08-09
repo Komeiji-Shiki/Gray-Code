@@ -986,6 +986,11 @@ const zhCN = {
                     confirm: '确认',
                     cancel: '取消'
                 },
+                empty: {
+                    title: '尚未配置任何渠道',
+                    hint: '首次使用需要先新建一个渠道并填写 API Key，之后即可开始对话。',
+                    create: '新建渠道'
+                },
                 dialog: {
                     new: {
                         title: '新建配置',
@@ -1000,13 +1005,12 @@ const zhCN = {
                     delete: {
                         title: '删除配置',
                         message: '确定要删除配置 "{name}" 吗？此操作不可恢复。',
-                        atLeastOne: '至少需要保留一个配置',
                         cancel: '取消',
                         confirm: '确定'
                     },
                     changeType: {
                         title: '更改渠道类型',
-                        message: '确定要将渠道类型更改为「{name}」吗？该类型特有的参数（API URL、模型列表、高级选项等）将重置为该类型默认值，通用设置（名称、API Key、超时、重试等）保持不变。'
+                        message: '确定要将渠道类型更改为「{name}」吗？该类型特有的参数（模型列表、高级选项等）将重置为该类型默认值；API Key 与自定义 API URL 保留，通用设置保持不变。'
                     }
                 },
                 form: {
@@ -1033,7 +1037,7 @@ const zhCN = {
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API',
-                        changeHint: '更改渠道类型会将该类型特有的参数（API URL、模型列表、高级选项等）重置为默认值，通用设置保持不变。'
+                        changeHint: '更改渠道类型会将该类型特有的参数（模型列表、高级选项等）重置为默认值；API Key 与自定义 API URL 保留，通用设置保持不变。'
                     },
                     toolMode: {
                         label: '工具调用格式',
