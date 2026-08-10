@@ -25,6 +25,13 @@
     - `ConversationManager.ts`（3,763 行）拆分为 `conversation/manager/` 九文件（1,885 行：types/nodeId/metadataUtils/historyFormatting/stats/utils/query/toolCalls/branchRewrite），主文件降为 2,075 行；全部 public 方法签名（含 GetHistoryOptions 等）原样保留，迁出代码与 git HEAD 字节级比对无内容差异。
     - webview `SettingsHandlers.ts`（799 行）拆出 `MemoryHandlers.ts`（309 行，记忆子域+作用域合并）与 `SettingsTransferHandlers.ts`（161 行，导入/导出），主文件降为 370 行壳；`BranchHandlers.ts`（702 行）写工具判据辅助（WRITE_TOOL_NAMES/collectToolNamesFromParts/collectPathToolNames/enrichGraphWorkspaceInfo）外移 `branchWritePolicy.ts`（139 行），主文件降为 569 行；33 个消息 key 逐一对应无改无删。
     - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿（全量首跑曾出现 1 例 usageCache 偶发失败，单独与重跑均全绿，确认为并行 CPU 抢占竞态）。
+  - 模块化摊平重构·第三批（tools 巨型文件 + webview 剩余拆分，纯重构行为零变化）：
+    - `file/apply_diff.ts`（2,298 行）拆分为 `file/diff/` 四文件（types 97/parse 364/match 609/apply 528/declaration 778），主文件降为 34 行壳；工具名/参数/描述/错误码/pendingDiffId 流程逐字保留。
+    - `terminal/execute_command.ts`（1,868 行）拆分为 `terminal/` 四文件（shellConfig 465/processRunner 1052/outputDecoder 122/promptDescriptions 287），主文件降为 34 行壳；GBK 回退解码与后台任务语义逐字保留；19/19 移动块逐字比对一致。
+    - `search/search_in_files.ts`（1,351 行）拆分为 `search/` 四文件（declaration 560/searchPass 382/replacePass 321/textEncoding 144），主文件降为 13 行壳；动态 description getter 与 mode=replace 门控原样保留。
+    - `subagents/executor.ts`（2,070 行）拆分为 `subagents/executor/` 十二文件（runLoop 1171 等），主文件降为 26 行壳；`subagents/runEventBus.ts`（1,118 行）拆分为 `subagents/eventBus/` 六文件（发布订阅核心/转录/持久化），主文件降为 22 行壳；事件协议（前端 subagentMonitor 契约）逐字保留，无循环 import。
+    - `webview/stream/StreamAbortManager.ts`（520 行）拆出 `stream/abort/AbortControllerRegistry.ts`（234 行）与 `RetiredStreamChain.ts`（123 行，OLD_STREAM_EXIT_WAIT_TIMEOUT_MS 随迁），主文件降为 345 行（等待语义/IRunController 适配层/detachActiveSubAgents 保留，后者第五批处理）；`ChatHandlers↔BranchHandlers` 横向依赖解除（isConversationStreaming/BRANCH_BUSY_STREAMING_MESSAGE 外移 `handlers/streamGuard.ts`）。
+    - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿（全量门禁改为主模型串行执行，避免多代理并行跑全量测试抢 CPU）。
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。
