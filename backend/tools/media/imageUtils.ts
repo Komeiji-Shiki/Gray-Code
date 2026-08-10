@@ -9,6 +9,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import type { ToolContext } from '../types';
 import { resolveFileToolPathWithInfo } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
@@ -75,10 +76,9 @@ export async function saveImage(buffer: Buffer, outputPath: string, context?: To
         }
     }
 
-    // 确保目录存在
-    const dirUri = vscode.Uri.joinPath(uri, '..');
+    // 确保目录存在（递归创建父目录）
     try {
-        await vscode.workspace.fs.createDirectory(dirUri);
+        await fs.promises.mkdir(path.dirname(uri.fsPath), { recursive: true });
     } catch {
         // 目录可能已存在
     }

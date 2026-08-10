@@ -3,7 +3,7 @@
  */
 
 import { t } from '../../backend/i18n';
-import { checkAllShellsAvailability, checkShellAvailability as probeShellAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
+import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
 import type { HandlerContext, MessageHandler } from '../types';
 
 function getResultError(result: unknown, fallback: string): string {
@@ -79,6 +79,10 @@ export const getAutoExecConfig: MessageHandler = async (data, requestId, ctx) =>
 export const getMcpTools: MessageHandler = async (data, requestId, ctx) => {
   try {
     const allMcpTools = ctx.mcpManager.getAllTools();
+    // 按 serverId 查询实际启用状态（listServers 从存储读取配置并合并运行时状态），
+    // 不再硬编码 enabled: true，使 setMcpServerEnabled 后的禁用状态如实反映到前端（R2-08 复查）。
+    const serverInfos = await ctx.mcpManager.listServers();
+    const enabledByServerId = new Map(serverInfos.map(info => [info.config.id, info.config.enabled !== false]));
     const mcpTools: Array<{
       name: string;
       description: string;
@@ -94,7 +98,7 @@ export const getMcpTools: MessageHandler = async (data, requestId, ctx) => {
         mcpTools.push({
           name: fullToolName,
           description: tool.description || '',
-          enabled: true,
+          enabled: enabledByServerId.get(serverTools.serverId) ?? true,
           category: 'mcp',
           serverId: serverTools.serverId,
           serverName: serverTools.serverName
@@ -193,23 +197,42 @@ export const updateApplyDiffConfig: MessageHandler = async (data, requestId, ctx
   }
 };
 
+/** getExecuteCommandConfig 的 shell 可用性探测结果缓存：避免每次请求对每个 shell spawn 探测 */
+const EXEC_CMD_AVAILABILITY_TTL_MS = 30 * 1000;
+let execCmdAvailabilityCache: {
+  at: number;
+  map: Map<string, { available: boolean; reason?: string }>;
+} | null = null;
+
 export const getExecuteCommandConfig: MessageHandler = async (_data, requestId, ctx) => {
-  const config = ctx.settingsManager.getExecuteCommandConfig();
-  
-  const availabilityMap = await checkAllShellsAvailability(
-    config.shells.map(s => ({ type: s.type, path: s.path }))
-  );
-  
-  const configWithAvailability = {
-    ...config,
-    shells: config.shells.map(shell => ({
-      ...shell,
-      available: availabilityMap.get(shell.type)?.available ?? false,
-      unavailableReason: availabilityMap.get(shell.type)?.reason
-    }))
-  };
-  
-  ctx.sendResponse(requestId, { config: configWithAvailability });
+  try {
+    const config = ctx.settingsManager.getExecuteCommandConfig();
+
+    // 短 TTL 缓存（30s）：spawn 探测慢且占住串行队列，结果在 TTL 内直接复用（R2-08 复查）
+    const now = Date.now();
+    if (!execCmdAvailabilityCache || now - execCmdAvailabilityCache.at >= EXEC_CMD_AVAILABILITY_TTL_MS) {
+      execCmdAvailabilityCache = {
+        at: now,
+        map: await checkAllShellsAvailability(
+          config.shells.map(s => ({ type: s.type, path: s.path }))
+        )
+      };
+    }
+    const availabilityMap = execCmdAvailabilityCache.map;
+
+    const configWithAvailability = {
+      ...config,
+      shells: config.shells.map(shell => ({
+        ...shell,
+        available: availabilityMap.get(shell.type)?.available ?? false,
+        unavailableReason: availabilityMap.get(shell.type)?.reason
+      }))
+    };
+    
+    ctx.sendResponse(requestId, { config: configWithAvailability });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_EXECUTE_COMMAND_CONFIG_ERROR', error.message || 'Failed to get execute command config');
+  }
 };
 
 export const updateExecuteCommandConfig: MessageHandler = async (data, requestId, ctx) => {
@@ -227,20 +250,6 @@ export const updateExecuteCommandConfig: MessageHandler = async (data, requestId
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'UPDATE_EXECUTE_COMMAND_CONFIG_ERROR', error.message || t('webview.errors.updateExecuteCommandConfigFailed'));
-  }
-};
-
-export const checkShellAvailability: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { shellType, path } = data || {};
-    if (typeof shellType !== 'string' || !shellType.trim()) {
-      ctx.sendError(requestId, 'CHECK_SHELL_ERROR', 'Invalid shell type');
-      return;
-    }
-    const result = await probeShellAvailability(shellType, typeof path === 'string' ? path : undefined);
-    ctx.sendResponse(requestId, result);
-  } catch (error: any) {
-    ctx.sendError(requestId, 'CHECK_SHELL_ERROR', error.message || t('webview.errors.checkShellFailed'));
   }
 };
 
@@ -324,16 +333,6 @@ export const taskCancel: MessageHandler = async (data, requestId, ctx) => {
   }
 };
 
-export const taskCancelByType: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { taskType } = data;
-    const count = TaskManager.cancelTasksByType(taskType);
-    ctx.sendResponse(requestId, { success: true, cancelledCount: count });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'CANCEL_TASKS_BY_TYPE_ERROR', error.message || t('webview.errors.cancelTaskFailed'));
-  }
-};
-
 export const taskGetAll: MessageHandler = async (data, requestId, ctx) => {
   try {
     const tasks = TaskManager.getAllTasks().map(task => ({
@@ -345,21 +344,6 @@ export const taskGetAll: MessageHandler = async (data, requestId, ctx) => {
     ctx.sendResponse(requestId, { tasks });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_ALL_TASKS_ERROR', error.message || t('webview.errors.getTasksFailed'));
-  }
-};
-
-export const taskGetByType: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { taskType } = data;
-    const tasks = TaskManager.getTasksByType(taskType).map(task => ({
-      id: task.id,
-      type: task.type,
-      startTime: task.startTime,
-      metadata: task.metadata
-    }));
-    ctx.sendResponse(requestId, { tasks });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'GET_TASKS_BY_TYPE_ERROR', error.message || t('webview.errors.getTasksFailed'));
   }
 };
 
@@ -390,7 +374,6 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   register('tools.updateApplyDiffConfig', 'UPDATE_APPLY_DIFF_CONFIG_ERROR', t('webview.errors.updateApplyDiffConfigFailed'), updateApplyDiffConfig);
   register('tools.getExecuteCommandConfig', 'GET_EXECUTE_COMMAND_CONFIG_ERROR', 'Failed to get execute command config', getExecuteCommandConfig);
   registry.set('tools.updateExecuteCommandConfig', updateExecuteCommandConfig);
-  registry.set('tools.checkShellAvailability', checkShellAvailability);
   registry.set('tools.getHistorySearchConfig', getHistorySearchConfig);
   registry.set('tools.updateHistorySearchConfig', updateHistorySearchConfig);
   
@@ -404,7 +387,5 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   
   // 任务管理
   registry.set('task.cancel', taskCancel);
-  registry.set('task.cancelByType', taskCancelByType);
   registry.set('task.getAll', taskGetAll);
-  registry.set('task.getByType', taskGetByType);
 }

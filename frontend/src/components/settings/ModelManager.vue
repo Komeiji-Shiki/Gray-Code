@@ -86,9 +86,17 @@ function handleDialogRemove(modelId: string) {
 async function addCustomModel() {
   if (!newModelId.value.trim()) return
   
+  const id = newModelId.value.trim()
+  
+  // 添加前查重：已存在同 ID 模型时提示并阻止，避免重复添加
+  if (props.models.some(m => m.id === id)) {
+    alert(t('components.settings.modelManager.errors.addFailed'))
+    return
+  }
+  
   const model = {
-    id: newModelId.value.trim(),
-    name: newModelId.value.trim()
+    id,
+    name: id
   }
   
   try {
@@ -135,6 +143,10 @@ function showClearConfirmDialog() {
 
 // 确认清除所有模型
 async function confirmClearAllModels() {
+  // 失败时局部回滚用：保存删除前的列表与选中项
+  const originalModels = [...props.models]
+  const originalSelected = props.selectedModel
+  
   try {
     // 逐个删除模型
     for (const model of props.models) {
@@ -149,6 +161,10 @@ async function confirmClearAllModels() {
     emit('update:selectedModel', '')
   } catch (error) {
     console.error('Failed to clear models:', error)
+    // 局部回滚：恢复删除前的本地列表（后端部分删除时，下次加载会与后端对齐）
+    emit('update:models', originalModels)
+    emit('update:selectedModel', originalSelected)
+    alert(t('components.settings.modelManager.errors.removeFailed'))
   }
 }
 

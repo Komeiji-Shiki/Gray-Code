@@ -1,4 +1,4 @@
-import { computed, ref, watch, type Ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { useDropdown, type UseDropdownOptions } from './useDropdown'
 
 export interface UseSearchableDropdownParams<T> {
@@ -24,6 +24,8 @@ export function useSearchableDropdown<T>(containerRef: Ref<HTMLElement | undefin
   const searchQuery = ref('')
   const highlightedIndex = ref(-1)
   const inputRef = ref<HTMLInputElement>()
+  // 打开后的 focus 定时器：保存句柄以便关闭/卸载时清除
+  let focusTimer: ReturnType<typeof setTimeout> | null = null
 
   const { isOpen, open, close, toggle } = useDropdown(containerRef, {
     disabled: params.disabled,
@@ -35,11 +37,23 @@ export function useSearchableDropdown<T>(containerRef: Ref<HTMLElement | undefin
       const idx = selected ? items.findIndex(it => params.getKey(it) === selected) : -1
       highlightedIndex.value = idx >= 0 ? idx : (items.length > 0 ? 0 : -1)
 
-      setTimeout(() => inputRef.value?.focus(), 10)
+      focusTimer = setTimeout(() => inputRef.value?.focus(), 10)
     },
     onClose: () => {
       searchQuery.value = ''
       highlightedIndex.value = -1
+      if (focusTimer) {
+        clearTimeout(focusTimer)
+        focusTimer = null
+      }
+    }
+  })
+
+  // 卸载时清除未触发的 focus 定时器，避免组件销毁后仍尝试聚焦
+  onBeforeUnmount(() => {
+    if (focusTimer) {
+      clearTimeout(focusTimer)
+      focusTimer = null
     }
   })
 

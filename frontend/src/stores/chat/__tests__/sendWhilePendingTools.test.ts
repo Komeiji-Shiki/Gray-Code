@@ -60,7 +60,29 @@ vi.mock('../utils', () => ({
 
 vi.mock('../state', () => ({
   rebuildMessageIndexById: vi.fn(),
-  appendMessage: vi.fn()
+  // appendMessage 必须真实写入 allMessages：本测试断言发送后的 user 消息在窗口中可见、
+  // 且位于本地 functionResponse 之后（oneOffChannelOverride 只断言 mock 调用与状态 ref，
+  // 无需数组内容，故那边可以用空 mock）。
+  appendMessage: vi.fn((state: any, message: any) => {
+    state.allMessages.value.push(message)
+  }),
+  // toolActions 取消/拒绝工具路径（ensureFunctionResponseMessageForRejectedTools）
+  // 通过 insertMessageAt 插入本地 functionResponse：
+  // 1) mock 缺该导出会直接 TypeError（insertMessageAt is not a function），
+  //    中断 cancelStreamAndRejectTools（调用点不在 try/catch 内）；
+  // 2) 必须真实插入数组，否则「本地已插入 functionResponse」断言（toHaveLength(1)）失败。
+  insertMessageAt: vi.fn((state: any, index: number, message: any) => {
+    state.allMessages.value.splice(index, 0, message)
+  }),
+  // 空 assistant 占位删除路径（removeEmptyAssistantPlaceholder）同用 removeMessageAt：
+  // 本测试 asm-1 含待确认工具不会被删除，补真实 splice 与 insertMessageAt 保持同语义。
+  removeMessageAt: vi.fn((state: any, index: number) => {
+    if (index < 0 || index >= state.allMessages.value.length) return
+    state.allMessages.value.splice(index, 1)
+  }),
+  // sendMessage 失败路径（cleanupFailedSendPlaceholders）会调用 getMessageIndexById：
+  // 与 oneOffChannelOverride.test.ts 同款 mock（占位未入数组 → -1）
+  getMessageIndexById: vi.fn().mockReturnValue(-1)
 }))
 
 vi.mock('../streamChunkHandlers', () => ({

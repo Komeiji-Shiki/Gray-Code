@@ -64,6 +64,7 @@ import { disposeUsageCache } from './handlers/UsageHandlers';
 import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { disposeFileHandlerResources } from './handlers/FileHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
+import { getCurrentWorkspaceUri as getCurrentWorkspaceUriFromUtils } from './utils/WorkspaceUtils';
 import {
     buildDeferredFrontendLoader,
     buildStartupBootstrapMarkup,
@@ -95,11 +96,26 @@ class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, 
         this.contents.set(uri, content);
 
         // 缓存条目数上限：超出时按插入顺序（Map 迭代序）淘汰最旧条目，
-        // 防止完整文件内容在长期使用中无界增长（内存泄漏）
+        // 防止完整文件内容在长期使用中无界增长（内存泄漏）。
+        // 淘汰时排除当前正在展示的预览：diff 标签已打开时若被淘汰，
+        // VSCode 重绘会得到空内容，正在查看的 diff 会“消失”（F5）。
         if (this.contents.size > DiffPreviewContentProvider.MAX_CONTENTS_ENTRIES) {
-            const oldestKey = this.contents.keys().next().value;
-            if (oldestKey !== undefined) {
-                this.contents.delete(oldestKey);
+            const openPreviewUris = new Set<string>();
+            for (const group of vscode.window.tabGroups.all) {
+                for (const tab of group.tabs) {
+                    if (tab.input instanceof vscode.TabInputText) {
+                        openPreviewUris.add(tab.input.uri.toString());
+                    }
+                }
+            }
+            for (const key of this.contents.keys()) {
+                if (this.contents.size <= DiffPreviewContentProvider.MAX_CONTENTS_ENTRIES) {
+                    break;
+                }
+                if (openPreviewUris.has(key)) {
+                    continue;
+                }
+                this.contents.delete(key);
             }
         }
 
@@ -126,6 +142,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Commands may be sent before the webview JS is ready. Queue them until we get a ready handshake.
     private webviewReady = false;
     private pendingCommands: Array<{ command: string; data?: any }> = [];
+    /** pendingCommands 超时兜底定时器：webview 长时间未 ready 时清空队列并告警（F7） */
+    private pendingCommandsFlushTimer?: NodeJS.Timeout;
+    private static readonly PENDING_COMMANDS_TIMEOUT_MS = 30_000;
     
     // Diff 预览内容提供者
     private diffPreviewProvider: DiffPreviewContentProvider;
@@ -165,6 +184,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     
     // 初始化状态
     private initPromise: Promise<void>;
+
+    /** 初始化失败时保存的错误（不 rethrow，供 handleMessage 读取并向 webview 展示根因，F1） */
+    private initError?: Error;
+
+    /** 已 dispose：置位后 openSubAgentMonitor/handleMessage 等入口直接短路，阻止旧消息继续执行（F2） */
+    private disposed = false;
+
+    /** HTML 静态部分缓存：非 nonce / 非 webview 相关部分只在首次构建时计算（F8） */
+    private cachedHtmlStatic?: {
+        devServerOrigin?: string;
+        startupSplashEnabled: boolean;
+        startupBootstrapMarkup: string;
+    };
 
     // 消息处理队列，用于确保消息按顺序处理（解决技能切换与对话请求的竞态问题）
     private messageHandlingQueue: Promise<void> = Promise.resolve();
@@ -206,14 +238,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 异步初始化后端
         this.initPromise = this.initializeBackend().catch(err => {
             console.error('Failed to initialize backend:', err);
-            throw err;
+            // 不 rethrow：initPromise 若永久 rejected，所有 await this.initPromise 的调用
+            // （handleMessage / routeSubAgentMonitorMessage / exportSettings 等）都会同步抛错，
+            // 前端永远收不到响应。改为保存错误，由 handleMessage 读取并向 webview 展示根因（F1）。
+            this.initError = err instanceof Error ? err : new Error(String(err));
         });
+
+        // 注册重试初始化命令：初始化失败后允许用户从命令面板重试（F1 最小实现）
+        this.context.subscriptions.push(
+            vscode.commands.registerCommand('graycode.retryInit', () => {
+                this.retryInitialization();
+            })
+        );
     }
 
     /**
      * 初始化后端模块
      */
     private async initializeBackend() {
+        // 先清理上一轮延迟更新检查定时器：重试初始化（graycode.retryInit）会再次进入本方法，
+        // 若旧定时器尚未触发就被 this.updateCheckTimer 直接覆盖，旧定时器将泄漏并重复触发检查（F2）
+        if (this.updateCheckTimer !== undefined) {
+            clearTimeout(this.updateCheckTimer);
+            this.updateCheckTimer = undefined;
+        }
+
         // 1. 初始化设置管理器（需要最先初始化以获取存储路径配置）
         const legacySettingsDir = path.join(this.context.globalStorageUri.fsPath, 'settings');
         const settingsStorage = new VSCodeSettingsStorage({
@@ -287,9 +336,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // 更新渠道（stable/nightly）切换：清除旧渠道的更新检查缓存（内存状态 + 节流时间戳），
             // 使下一次检查按新渠道重新拉取，避免 stable 用户看到旧渠道残留的 Nightly 徽章/可安装项
             // （例如先切到 nightly 触发检查得到 updateAvailable，再切回 stable 仍提示安装 nightly 构建）。
-            if (event.type === 'full' && (event as any).oldValue?.updateChannel !== undefined &&
+            // SettingsChangeEvent 已声明 oldValue?: any，无需 (event as any) 断言（F12）
+            if (event.type === 'full' && event.oldValue?.updateChannel !== undefined &&
                 event.settings?.updateChannel !== undefined &&
-                (event as any).oldValue?.updateChannel !== event.settings?.updateChannel) {
+                event.oldValue?.updateChannel !== event.settings?.updateChannel) {
                 try {
                     this.updateChecker?.resetStatus();
                 } catch (e) {
@@ -327,7 +377,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 11.1 从 settingsManager 同步 skills 状态到 SkillsManager
         await this.syncSkillsState();
         
-        // 12. 注册所有工具到工具注册器（必须在 ChannelManager 之前）
+        // 12. 注册所有工具到工具注册器（必须在 ChannelManager 之前）。
+        //     先清空再注册：重试初始化（graycode.retryInit）会再次走到这里，
+        //     避免同一工具被重复注册导致声明重复/覆盖异常（F11）。
+        toolRegistry.clear();
         registerAllTools(toolRegistry);
         
         // 13. 初始化渠道管理器（传入工具注册器和设置管理器）
@@ -460,6 +513,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
         await this.dependencyManager.initialize();
         
+        // dispose() 后中止初始化尾段：deactivate 时 initializeBackend 可能仍在进行，
+        // 此后的步骤（依赖检查器/消息路由器/更新检查定时器/SubAgentMonitorPanel 等）均为同步副作用，
+        // 继续执行会在扩展停用后留下跨生命周期资源（F2）
+        if (this.disposed) {
+            log.warn('backend_init_aborted_after_dispose');
+            return;
+        }
+        
         // 27. 设置依赖检查器到工具注册器（用于过滤未安装依赖的工具）
         toolRegistry.setDependencyChecker({
             isInstalled: (name: string) => this.dependencyManager.isInstalledSync(name)
@@ -507,17 +568,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             effectiveDataPath: this.storagePathManager.getEffectiveDataPath()
         });
     }
+
+    /**
+     * 重试后端初始化（graycode.retryInit 命令入口，F1）。
+     *
+     * 仅在初始化失败后调用：失败通常发生在早期步骤（settingsManager.initialize 等），
+     * 此时后续订阅/注册尚未建立，重跑 initializeBackend 不会叠加订阅；
+     * 若失败发生在后期（如 MCP 初始化），重试可能叠加订阅，此时应提示用户重载窗口。
+     */
+    private retryInitialization(): void {
+        if (!this.initError || this.disposed) {
+            return;
+        }
+        this.initError = undefined;
+        this.sendCommand('startupRetrying', {});
+        this.initPromise = this.initializeBackend().catch(err => {
+            console.error('Failed to initialize backend (retry):', err);
+            this.initError = err instanceof Error ? err : new Error(String(err));
+            this.sendCommand('startupFailed', { message: this.initError.message || String(this.initError) });
+        });
+    }
     
     /**
      * 处理终端输出事件，推送到前端
      */
     private handleTerminalOutputEvent(event: TerminalOutputEvent): void {
         if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'terminalOutput',
-            data: event
-        });
+        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        this.sendCommand('terminalOutput', event);
     }
     
     /**
@@ -525,11 +603,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private handleImageGenOutputEvent(event: ImageGenOutputEvent): void {
         if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'imageGenOutput',
-            data: event
-        });
+        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        this.sendCommand('imageGenOutput', event);
     }
     
     /**
@@ -541,11 +616,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.activityTracker?.markAiActive();
 
         if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'taskEvent',
-            data: event
-        });
+        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        this.sendCommand('taskEvent', event);
     }
     
     /**
@@ -553,14 +625,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private handleDependencyProgressEvent(event: InstallProgressEvent): void {
         if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'dependencyProgress',
-            data: event
-        });
+        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        this.sendCommand('dependencyProgress', event);
     }
 
     private openSubAgentMonitor(runId?: string, conversationId?: string): void {
+        // dispose() 后不再创建/打开面板（F2）
+        if (this.disposed) {
+            return;
+        }
         if (!this.subAgentMonitorPanel) {
             this.subAgentMonitorPanel = new SubAgentMonitorPanel(
                 this.context,
@@ -706,13 +779,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         conversationId?: string;
     }): void {
         if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'retryStatus',
-            data: {
-                ...status
-            }
-        });
+        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        this.sendCommand('retryStatus', { ...status });
     }
     
     /**
@@ -904,6 +972,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理来自前端的消息
      */
     private async handleMessage(message: any) {
+        // dispose() 后旧消息不再执行：扩展已停用，继续路由会访问已释放的模块（F2）
+        if (this.disposed) {
+            return;
+        }
         if (!message || typeof message !== 'object' || Array.isArray(message)) {
             this.sendError('', 'INVALID_MESSAGE', 'Invalid webview message');
             return;
@@ -928,6 +1000,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 }, this._view?.webview);
             }
             this.pendingCommands = [];
+            // 队列已 flush，取消超时兜底定时器（F7）
+            this.clearPendingCommandsTimeout();
 
             if (requestId) {
                 this.postRoutedWebviewMessage(routedClientId, {
@@ -943,6 +1017,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         try {
             // 等待初始化完成
             await this.initPromise;
+
+            // 初始化失败：messageRouter 等模块未初始化，继续路由会抛错。
+            // 向 webview 发送 startupFailed 命令展示根因，并回错误响应（F1）。
+            if (this.initError) {
+                const initErrorMessage = this.initError.message || String(this.initError);
+                this.sendCommand('startupFailed', { message: initErrorMessage });
+                this.sendError(requestId, 'INIT_FAILED', `Backend initialization failed: ${initErrorMessage}`);
+                return;
+            }
             
             // 创建处理器上下文
             const ctx = {
@@ -980,15 +1063,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 获取当前工作区 URI
      */
     private getCurrentWorkspaceUri(): string | null {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        return workspaceFolder ? workspaceFolder.uri.toString() : null;
+        // 复用 WorkspaceUtils 统一实现，避免双份逻辑漂移（F9）
+        return getCurrentWorkspaceUriFromUtils();
     }
     
     /**
      * 取消所有活跃的流式请求
      */
     public cancelAllStreams(): void {
-        this.messageRouter?.cancelAllStreams();
+        // messageRouter 在 initializeBackend 后期才创建；初始化失败/未完成时
+        // 无活跃流可取消，也不记“成功取消”日志（F10）
+        if (!this.messageRouter) {
+            return;
+        }
+        this.messageRouter.cancelAllStreams();
         log.info('all_streams_cancelled');
     }
     
@@ -996,6 +1084,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 清理资源
      */
     public dispose(): void {
+        // 置位 disposed：后续进入的旧消息/事件直接短路（F2）
+        this.disposed = true;
+
         // 取消所有活跃的流式请求
         this.cancelAllStreams();
 
@@ -1068,6 +1159,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         setGlobalActivityTracker(null);
         disposeActivityStatsCache();
 
+        // 取消 pendingCommands 超时兜底定时器（F7）
+        this.clearPendingCommandsTimeout();
+
+        // 显式释放 Diff 预览内容提供者（内容缓存 + emitter；F3）
+        this.diffPreviewProvider.dispose();
+        this.diffPreviewProviderDisposable.dispose();
+
+        // 路由映射清理：mainChatClientDisposable（上方）与 SubAgentMonitorPanel 的
+        // clientRegistration（subAgentMonitorPanel.dispose）已释放各自注册；
+        // registry 无整体 dispose API，注册均通过各自 Disposable 释放（F3）
+
         log.info('disposed');
     }
     
@@ -1109,6 +1211,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (this.pendingCommands.length > 100) {
                 this.pendingCommands.splice(0, this.pendingCommands.length - 100);
             }
+            // 超时兜底：webview 迟迟不就绪时清空队列并告警，防止命令跨会话残留（F7）
+            this.schedulePendingCommandsTimeout();
             return;
         }
 
@@ -1117,6 +1221,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             command,
             data
         }, this._view.webview);
+    }
+
+    /** webview 长时间未 ready 时清空 pendingCommands 并告警（F7） */
+    private schedulePendingCommandsTimeout(): void {
+        if (this.pendingCommandsFlushTimer) {
+            return;
+        }
+        this.pendingCommandsFlushTimer = setTimeout(() => {
+            this.pendingCommandsFlushTimer = undefined;
+            if (this.pendingCommands.length > 0 && !this.webviewReady) {
+                log.warn('pending_commands_timeout_flushed', { count: this.pendingCommands.length });
+                this.pendingCommands = [];
+            }
+        }, ChatViewProvider.PENDING_COMMANDS_TIMEOUT_MS);
+        (this.pendingCommandsFlushTimer as { unref?: () => void }).unref?.();
+    }
+
+    private clearPendingCommandsTimeout(): void {
+        if (this.pendingCommandsFlushTimer) {
+            clearTimeout(this.pendingCommandsFlushTimer);
+            this.pendingCommandsFlushTimer = undefined;
+        }
     }
 
     /**
@@ -1238,14 +1364,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    /** 内置提示音文件名缓存：按扩展路径 memoize，避免每次构建 HTML 都同步 readdirSync（F6） */
+    private static readonly builtinSoundFilesCache = new Map<string, string[]>();
+
     private buildBuiltinSoundAssets(webview: vscode.Webview): Record<string, { url: string; name: string }> {
         try {
             const soundDir = path.join(this.context.extensionPath, 'resources', 'sound');
-            if (!fs.existsSync(soundDir)) {
-                return {};
+            let files = ChatViewProvider.builtinSoundFilesCache.get(soundDir);
+            if (files === undefined) {
+                if (!fs.existsSync(soundDir)) {
+                    files = [];
+                } else {
+                    files = fs.readdirSync(soundDir).filter(f => f.toLowerCase().endsWith('.mp3'));
+                }
+                // 成功（含空目录）即缓存：resources/sound 在扩展生命周期内不变（F6）
+                ChatViewProvider.builtinSoundFilesCache.set(soundDir, files);
             }
-
-            const files = fs.readdirSync(soundDir).filter(f => f.toLowerCase().endsWith('.mp3'));
             if (files.length === 0) {
                 return {};
             }
@@ -1328,15 +1462,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
 
         const devServerUrl = this.webviewDevServerUrl;
-        const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
+        if (!this.cachedHtmlStatic) {
+            // VS Code 配置读取是同步 IPC：只在首次构建 HTML 时读取并缓存，
+            // 视图重建（resolveWebviewView）不再重复读配置（F8）。
+            const uiConfig = vscode.workspace.getConfiguration('graycode').get<unknown>('ui');
+            const startupSplashEnabled = resolveStartupSplashEnabled(uiConfig);
+            this.cachedHtmlStatic = {
+                devServerOrigin: devServerUrl ? new URL(devServerUrl).origin : undefined,
+                startupSplashEnabled,
+                startupBootstrapMarkup: buildStartupBootstrapMarkup(startupSplashEnabled)
+            };
+        }
+        const devServerOrigin = this.cachedHtmlStatic.devServerOrigin;
         const nonce = randomBytes(16).toString('base64');
         const cspContent = this.buildCsp(webview, nonce, devServerOrigin);
-        // VS Code 配置读取是同步的：在 HTML 首帧中冻结开屏偏好，避免前端再等 getSettings IPC。
-        const uiConfig = vscode.workspace.getConfiguration('graycode').get<unknown>('ui');
-        const startupSplashEnabled = resolveStartupSplashEnabled(uiConfig);
-        const startupBootstrapScript = `<script nonce="${nonce}">${buildStartupPreferenceAssignment(startupSplashEnabled)}</script>`;
+        const startupBootstrapScript = `<script nonce="${nonce}">${buildStartupPreferenceAssignment(this.cachedHtmlStatic.startupSplashEnabled)}</script>`;
         const startupBootstrapStyles = `<style>${buildStartupBootstrapStyles(iconUri.toString())}</style>`;
-        const startupBootstrapMarkup = buildStartupBootstrapMarkup(startupSplashEnabled);
+        const startupBootstrapMarkup = this.cachedHtmlStatic.startupBootstrapMarkup;
         const builtinSoundAssetsScript = `<script nonce="${nonce}">window.__GRAYCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
 
         if (devServerUrl) {

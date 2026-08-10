@@ -8,6 +8,20 @@
 
 ## [Unreleased]
 
+### Refactored
+  - 模块化摊平重构·第一批（纯重构，行为零变化；依据 .graycode/research/modularization/ 八份调研报告与 .graycode/plans/modularization-plan.md）：
+    - 删除 LimCode 时代遗留的死系统 `backend/core/registry`（ModuleRegistry 注册表）及 conversation/config/mcp/channel 四个 `register.ts`（合计约 1,650 行，全仓库零调用方）；同步清理 backend/index.ts 与 config/mcp/conversation 门面的对应 re-export，并补全 conversation 门面导出（helpers/pendingApprovalGate/TranscriptMutation/usageStats/usageCache）。
+    - `backend/tools/utils.ts`（1,030 行）按职责拆分为 `tools/shared/` 六个模块（workspacePaths/multimodal/textUtils/fileStats/concurrency/imageMath），utils.ts 保留为 re-export 壳，全部导出符号兼容；消除 utils.ts 与 types.ts 的 MultimodalCapability 重复定义；tools/index.ts 补导出 plan/sourceArtifactSection、subagents/runEventBus、file/diffViewColumn。
+    - `backend/tools/history/history_search.ts`（596 行）拆分为 virtualDocument（虚拟文档格式化引擎）+ historySearch（search/read 模式处理）+ 装配层，修复 history/index.ts 双路径导出（动态 description getter 与 require() 加载语义保持不变）。
+    - webview `FileHandlers.ts`（1,823 行）按职责拆分为 handlers/file/ 五个子文件 + PlanApprovalHandlers + SummarizeHandlers，showNotification 并入 NotificationHandlers、revealInExplorer 并入 ConversationHandlers 去重；全部 27 个消息 key、模块级状态与 dispose 钩子语义保持不变，FileHandlers.ts 保留为 re-export 壳。
+    - frontend chatStore.ts 消息队列编排（约 220 行）外移 `chat/queueActions.ts`，store 公共 API（含 return 对象全部属性）不变，行为逐位保留（跨会话投递防护/动作边界投递/P2 回执/重入保护）。
+    - backend 模块门面补齐：checkpoint/channel/settings/memory/prompt 补全缺失导出（CheckpointExclusionProfiles/checkpointRefCounts/CheckpointIgnoreResolver/RestoreEngine/Workspace/SnapshotBuilder、proxyFetch、SettingsExporter/DEFAULT_SUMMARIZE_CONFIG/checkpointTypes/modeToolsPolicy 等），notifications 新建 index.ts（此前无门面）。
+    - frontend stores/index.ts 补全导出（backgroundTaskStore/reportBuilder/agentRun 纯模块）；MessageItem.vue 模块级视图模式 Map 外移 `messageViewModes.ts`，删除 `MessageItem.vue.d.ts` 旁路声明。
+    - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿。
+
+### Fixed
+  - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。
+
 ### Added
   - 通知系统-声音提示新增「子代理（SubAgent）提示音独立控制」：事件类型分区为「主代理 / 子代理」两组开关（警告、错误、任务完成、任务失败各四档，互不干扰，旧设置自动回退默认开启）；后台子代理任务（taskEvent）、子代理工具状态（streamChunk）、SubAgent Monitor 的 run 完成/失败/重试事件均按子代理开关门控，Monitor 面板补齐窗口焦点推送与音频解锁 hooks，与主窗口同一套「失焦才播」规则。
   - 聊天输入框新增高度调整手柄：可向上/向下拖动以扩展超长内容的编辑空间，支持方向键微调，双击或按 Home 恢复按内容自动伸缩；手动高度限制在当前 Webview 可视区域内，并保留内部滚动与光标跟随。
@@ -26,6 +40,16 @@
   - 修复点击插件后需等待约一秒才出现启动动画的问题：`ChatViewProvider` 现在生成 HTML 时同步读取 `graycode.ui.appearance.splashEnabled`，在完整前端 CSS/JavaScript 加载前直接内联对应的首帧启动壳与关键样式；浏览器先绘制 Gray icon 描线预备动效或关闭态石墨光场，再异步加载完整资源并由 Vue 接管。开启与关闭两种画面从 HTML 首帧起使用同一份不可变偏好快照，互不串画面；完整样式加载失败时仍继续启动前端模块，`prefers-reduced-motion` 仍使用静态画面。
   - 修复预设 assistant 种子消息（fakeThought 伪造思考）在会话中途被反复重写导致提示词前缀缓存整体失效：`turnDynamicContext` 缓存此前把消息所有 parts（含 thought）无分隔拍平成纯文本，回合继续时伪造思考被烤进正文；`applyPromptContextThoughtPolicy` 默认保留（`!== false`）而 `formatHistoryForAPI` 对真实历史思考默认剥离（`?? false`），同一条消息在直发/缓存两条路径和不同开关配置下产出不同字节（正文在「思考+正文」与「纯正文」之间翻转），共享前缀在会话早期即被打断（实测缓存命中从 97.5% 跌至 7.8%）。现统一为：伪造思考与真实历史思考完全同构——仅显式开启「发送历史思考内容」（`sendHistoryThoughts === true`）时回传，未配置或显式关闭都剥离，且仅以独立字段（OpenAI `reasoning_content`、Anthropic thinking block 等）发送，正文 content 跨请求恒定、绝不随开关翻转；`promptContextCache` 序列化新增 `thoughtText` 字段分离保存思考与正文（旧格式缓存向后兼容），回合开始与回合继续产出结构一致的消息；preserve 回插路径不再于快照创建时剥离伪造思考，改由 formatter 按同一开关统一过滤（新增 `PromptContextInjectionOptions.stripPreservedThoughtParts`，默认剥离与开关默认关闭语义一致）。新增/更新测试：`promptContextCache.test.ts`（6 用例：往返无损、纯文本不变、纯思考不伪造空正文、多 thought 合并与 formatter join 语义一致、legacy 纯文本 / 无 thoughtText 旧 v2 缓存兼容）、`toolIterationThoughtPolicy`（仅显式开启保留、未配置/显式关闭剥离、输入不可变）、`dynamicContextPreserve`（回插快照按开关剥离/保留/默认剥离三态）、`PromptManager.promptEntries`（preserve 快照保留伪造思考）。
   - 修复前端「恢复默认模板」的 code 模式模板缺少 `{{$MEMORY}}` 占位符（后端默认 code 模板一直包含，前端的 design/plan 模板已随上一项同步补齐）：此前在设置页对 code 模式执行「恢复默认模板」后，模板被替换为不含 `{{$MEMORY}}` 的文本，后端渲染时记忆指令区块直接缺失，记忆功能表现为「静默失效」；现补齐占位符，前端四个内置模式（code/design/plan/ask）的恢复默认模板与后端默认模板保持一致（ask 模式本就不含记忆区块，未改动）。
+  - Bug Hunt Round 2 全面修复（侦察 2 轮 28 个审查代理 + 修复 2 轮 27 个修复代理 + 复查 2 轮 18 个代理）：
+    - 并发/竞态：文件写锁互斥判定改为 `${kind}:${id}` 复合身份键（消除 id 碰撞误锁/误释放）、acquire 增加整体超时；流退休链按代际计数释放（尾代先退不再删条目）、waitForIdle 全部分支加超时兜底、工具确认流改为只等不中止（杜绝重复副作用）、非流式工具执行补 abortSignal 透传与 abort-race 收尾；分支切换全局锁在会话切换后不再卡死、恢复 checkpoint 的副作用移至校验通过之后、runController 等待注册竞态封闭、update_plan 读改写补写锁；
+    - 数据一致性：checkpoint manifest/files 缓存补配对 revision 校验与深拷贝隔离、legacy 合并回退改逐文件复制（修复恢复链 missing_in_chain）、增量链补环检测（损坏元数据不再死循环）；ConfigManager 嵌套数组字段由拼接改为覆盖（删除项终于能删掉）、导入覆盖改整体替换语义、MCP 存储补串行队列与原子写、diff 写入改 tmp+rename 原子提交；
+    - 稳定性：扩展初始化失败不再永久瘫痪（可重试 + 可见错误）、dispose 链补齐（面板/路由映射/定时器）、webview 消息协议清理约 18 个无调用方死类型、后端 i18n 语言切换接线（`setDetectedLanguage(vscode.env.language)` + 设置页语言联动，后端错误消息不再永远中文）；
+    - 性能：流式 Markdown 渲染减少全量重渲（缓存/节流自适应）、输入框深 watch 与全量 DOM 重读优化（指纹短路）、文件树与 .gitignore 缓存、getHistory 等深拷贝路径梳理、token 计数请求加并发上限、SSE 缓冲改数组累积（消除 O(n²)）、活动热力图按本地时区切块；
+    - 平台/边界：路径大小写比较按平台区分（Windows 才折叠）、多根工作区路径解析、非流式取消码统一、图片/坐标/角度校验补 Number.isFinite、语言包未知语言回退改为 en；
+    - 测试：同步更新受行为变更影响的断言（更新检查 User-Agent、分支错误码、usageCache 异步化等），新增回归覆盖（发送失败占位清理、分支锁复位、i18n 回退、tpsMeter 乱序修剪、开标签转义往返等）；
+  - 记忆条目长度上限放宽：`LOG_REC` 固定宽度记录 320 → 1024 字节，`entryChars` 配置上限从 296 提升到 1000（`memory_config` 工具可设置更大条目）；旧格式 LOG 文件（320 字节/条）在首次访问时自动无损迁移（严格内容校验判别新旧格式、tmp+rename 原子替换、幂等且 fail-open），迁移后追加/编辑/删除/唤醒/回忆均正常；`compress` 摘要长度按树记录宽度钳制（`min(entryChars, TREE_REC-1)`），配置调高后不再因树写入而报错。新增 `logMigration.test.ts`（8 用例：无损迁移/幂等/撕裂尾/新格式不动/歧义尺寸/fail-open/迁移后读写）。
+  - 子代理工具调用并行化：子代理自身执行循环从逐个 `await` 串行改为并行执行 + 按原序回填结果（与主会话 ToolExecutionService 的分组并行语义对齐），同一轮模型输出的多个工具（含嵌套派发的多个子代理）不再 1 个 1 个排队；`currentOperationHandle` 升级为句柄数组，「转后台」时正确解绑全部在飞工具的父 abort 监听；`maxConcurrentAgents=1` 时的嵌套派发死锁改为立即明确拒绝（提示调整并发上限）。
+  - 测试类型检查恢复：`tsconfig.test.json` 移除对 `backend/__tests__` 的排除，220 个测试文件重新纳入 `typecheck:test` 与 ts-jest 诊断（清理 2 处 `import = require` 旧语法、修复 ModelsHandler 的 Logger 相对路径错误、toolActions 的 parts 空值保护）。
 
 ### Changed
   - plan/design/review 模式现可使用记忆指令（memory_wake/note/recall/compress/zoom/forget/config）：三个内置模式的 toolPolicy allowlist 统一追加 `MEMORY_TOOL_NAMES`，且各自系统提示词模板补充 `{{$MEMORY}}` 区块（记忆开关关闭时该区块自动留空，与 code 模式行为一致）；ask 模式保持纯问答只读定位，不授予记忆指令。前端「恢复默认模板」的 design/plan 模板同步补充 `{{$MEMORY}}` 占位符。

@@ -148,9 +148,13 @@ export class PinnedFilesSettingsService {
     /**
      * 检查文件是否已固定
      * @param path 文件路径
+     * @param workspaceUri 工作区 URI（可选；提供时与 addPinnedFile 的判重口径一致，
+     *                     同时比较路径与工作区，避免跨工作区同名路径误判为已固定）
      */
-    isFilePinned(path: string): boolean {
-        return this.getPinnedFiles().some(f => f.path === path);
+    isFilePinned(path: string, workspaceUri?: string): boolean {
+        return this.getPinnedFiles().some(f =>
+            f.path === path && (workspaceUri === undefined || f.workspaceUri === workspaceUri)
+        );
     }
 
     /**

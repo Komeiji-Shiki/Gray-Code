@@ -1023,11 +1023,13 @@ export async function* proxyStreamFetch(
                             if (decoded) {
                                 // 流式解码：跨 chunk 的多字节字符由 TextDecoder 内部缓冲拼接
                                 dataQueue.push(decoder.decode(decoded, { stream: true }));
+                                wakeDataWaiters();
                             }
                         } else {
                             // 非 chunked：同样走流式解码，跨包多字节字符由 TextDecoder 缓冲拼接
                             dataQueue.push(decoder.decode(rawBuffer, { stream: true }));
                             rawBuffer = Buffer.alloc(0);
+                            wakeDataWaiters();
                         }
                     }
                 };
@@ -1089,6 +1091,17 @@ export async function* proxyStreamFetch(
         let readPromise: Promise<void> | null = null;
         let readError: unknown = null;
         let isReading = true;
+
+        // 事件驱动等待链：数据到达 / 读取结束时唤醒等待者（替代 10ms 轮询，
+        // 避免流式消费慢时每秒空转上百次定时器）。
+        let dataWaiters: Array<() => void> = [];
+        function wakeDataWaiters(): void {
+            const waiters = dataWaiters;
+            dataWaiters = [];
+            for (const waiter of waiters) {
+                waiter();
+            }
+        }
         
         // 启动后台数据读取
         readPromise = readData()
@@ -1097,9 +1110,11 @@ export async function* proxyStreamFetch(
             })
             .finally(() => {
                 isReading = false;
+                wakeDataWaiters();
             });
         
-        // 使用轮询方式 yield 数据，避免阻塞
+        // 事件驱动 yield 数据，避免阻塞：有数据立即产出；无数据时挂起等待
+        // onData 推入数据或读取结束被唤醒（替代固定 10ms 轮询）。
         while (isReading || dataQueue.length > 0) {
             // 检查是否已取消
             if (init.signal?.aborted) {
@@ -1109,8 +1124,13 @@ export async function* proxyStreamFetch(
             if (dataQueue.length > 0) {
                 yield dataQueue.shift()!;
             } else if (isReading) {
-                // 等待一小段时间后重试
-                await new Promise(resolve => setTimeout(resolve, 10));
+                // 挂起等待：数据到达 / 读取结束时被唤醒（含竞态复查兜底）
+                await new Promise<void>(resolve => {
+                    dataWaiters.push(resolve);
+                    if (dataQueue.length > 0 || !isReading) {
+                        wakeDataWaiters();
+                    }
+                });
             }
         }
 

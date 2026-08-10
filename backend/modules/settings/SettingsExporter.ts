@@ -389,8 +389,10 @@ export class SettingsExporter {
                         // 跳过已存在的配置
                         continue;
                     }
-                    // 更新现有配置（保留原始 id 和创建时间）
-                    await this.configManager.updateConfig(cfg.id, cfg);
+                    // 覆盖导入：整体替换语义。updateConfig 对纯对象字段（options/customBody 等）
+                    // 走深合并，旧配置的多余子字段/数组项（如 customBody.items）无法清空，
+                    // 与「导入文件即最终状态」的预期不符；replaceConfig 直接以导入配置为准替换
+                    await this.configManager.replaceConfig(cfg.id, cfg);
                 } else {
                     // 新配置：直接通过 importConfig 导入（保留原始 id）
                     await this.configManager.importConfig(cfg, { overwrite: true });

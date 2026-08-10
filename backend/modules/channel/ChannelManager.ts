@@ -58,17 +58,23 @@ function extractUpstreamErrorMessage(body: unknown): string | undefined {
 }
 
 /**
+ * 判断单个 part 是否携带内容（文本/思考/工具调用/多模态附件）。
+ * 流式与非流式两条路径共用同一口径，避免判定规则分叉。
+ */
+function partHasContent(part: any): boolean {
+    return (part.text && part.text.length > 0)
+        || !!part.functionCall
+        || !!part.inlineData
+        || !!part.fileData;
+}
+
+/**
  * 判断模型响应内容是否为空（无文本/思考/工具调用/附件）。
  * HTTP 成功但内容全空 = 上游/代理抽风返回的无效响应，应触发自动重试。
  */
 function isResponseContentEmpty(content: Content | undefined): boolean {
     if (!content || !Array.isArray(content.parts) || content.parts.length === 0) return true;
-    return content.parts.every(part =>
-        !(part.text && part.text.length > 0)
-        && !part.functionCall
-        && !part.inlineData
-        && !part.fileData
-    );
+    return content.parts.every(part => !partHasContent(part));
 }
 
 /**
@@ -76,15 +82,11 @@ function isResponseContentEmpty(content: Content | undefined): boolean {
  *
  * 修改原因（SEC）：多模态流（Gemini inlineData/fileData）过去只查 text/functionCall，
  * 连接中断时已有图片/文件数据的流被误判为「空响应」→ 整条流从头重播，附件重复、重复计费。
- * 修改方式：与非流式 isResponseContentEmpty 同一口径，把 inlineData/fileData 纳入内容判定。
+ * 修改方式：与非流式 isResponseContentEmpty 同一口径（共用 partHasContent），
+ * 把 inlineData/fileData 纳入内容判定。
  */
 function streamChunkHasContent(chunk: StreamChunk): boolean {
-    return chunk.delta.some(part =>
-        (part.text && part.text.length > 0)
-        || !!part.functionCall
-        || !!part.inlineData
-        || !!part.fileData
-    );
+    return chunk.delta.some(part => partHasContent(part));
 }
 
 /**
@@ -582,7 +584,9 @@ export class ChannelManager {
             && ((config as any).promptCachingTtl || '5m') === '5m';
         // 保活请求：max_tokens=5, stream=false，其余参数与主请求一致
         const buildKeepAliveBody = () => {
-            const body = JSON.parse(JSON.stringify(httpRequest.body));
+            // 只浅拷贝并覆写 max_tokens/stream 两个字段：请求体可能很大
+            // （工具定义/系统提示词/多模态附件），深拷贝整份 JSON 纯属浪费。
+            const body = { ...httpRequest.body };
             body.max_tokens = 5;
             body.stream = false;
             return body;

@@ -3662,6 +3662,18 @@ const zhCN = {
                 daysAgo: '{days}天前'
             }
         }
+    },
+
+    utils: {
+        tools: {
+            noFile: '无文件',
+            changes: '{count} 个更改',
+            cwdLabel: '目录: {cwd}',
+            recursiveSuffix: ' (递归)',
+            dirCount: '{count} 个目录',
+            searchModeSearch: '搜索内容',
+            searchModeReplace: '搜索替换'
+        }
     }
 };
 

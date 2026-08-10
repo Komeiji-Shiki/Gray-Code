@@ -2,7 +2,9 @@
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
-    roots: ['<rootDir>/backend', '<rootDir>/test'],
+    // roots 收敛：只扫描真实测试目录（backend/__tests__ 与 test/unit）；
+    // test/benchmark 保留为独立 root，benchmark 脚本通过 --testMatch "**/*.benchmark.ts" 单独运行
+    roots: ['<rootDir>/backend/__tests__', '<rootDir>/test/unit', '<rootDir>/test/benchmark'],
     testMatch: ['**/*.test.ts'],
     moduleNameMapper: {
         '^vscode$': '<rootDir>/backend/__tests__/__mocks__/vscode.ts',

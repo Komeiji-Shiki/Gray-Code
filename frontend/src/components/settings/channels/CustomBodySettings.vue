@@ -40,11 +40,12 @@ const localJsonValue = ref('')
 // JSON 解析错误
 const jsonError = ref('')
 
-// 监听配置变化，同步到本地状态（仅当本地没有错误时）
+// 监听配置变化，同步到本地状态
+// 配置来源变化（如切换渠道导致 json 变化）时重置本地编辑状态与错误，
+// 否则旧渠道的无效 JSON 会残留并阻止新渠道 JSON 的同步（渠道切换残留旧 JSON）
 watch(() => props.customBody.json, (newJson) => {
-  if (!jsonError.value) {
-    localJsonValue.value = newJson || ''
-  }
+  jsonError.value = ''
+  localJsonValue.value = newJson || ''
 }, { immediate: true })
 
 // 更新模式

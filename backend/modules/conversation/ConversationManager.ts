@@ -2057,6 +2057,14 @@ export class ConversationManager {
         startIndex: number,
         endIndex: number
     ): Promise<void> {
+        // 入口参数校验：非法区间（非整数 / 负数 / start > end）直接抛参数错误，
+        // 避免负值 splice 静默 no-op 造成“调用成功但什么都没删”的假象。
+        if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex)
+            || startIndex < 0 || startIndex > endIndex) {
+            throw new TypeError(
+                `Invalid message range [${startIndex}, ${endIndex}]: expected integers with 0 <= startIndex <= endIndex`
+            );
+        }
         const nextHistory = await this.getTranscriptRepository(conversationId).mutateContents(history => {
             const start = Math.max(0, startIndex);
             const end = Math.min(history.length, endIndex + 1);

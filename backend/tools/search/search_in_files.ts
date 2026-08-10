@@ -136,6 +136,8 @@ interface SearchBudget {
 
 interface SearchPassResult {
     results: SearchMatch[];
+    /** 结果条数达到 maxResults 上限（maxResults+1 探测判定，恰好等于 maxResults 时不置位） */
+    matchesTruncated: boolean;
     budgetTruncated: boolean;
     /** findFiles 达到文件数上限（结果可能不完整） */
     filesTruncated: boolean;
@@ -709,8 +711,12 @@ async function searchAndReplaceInDirectory(
 
                 const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
 
-                const wasInterrupted = interruptReason !== 'none';
-                if (wasInterrupted) {
+                // 修改原因：waitForDiffResolution 的 'rejected'（用户拒绝了该文件的 diff，含被
+                //           FIFO 淘汰后留痕的拒绝）只影响当前文件，不应把整个 replace 工具标记为
+                //           cancelled；只有 'abort'（AbortSignal 中止）/ 'user'（用户中断）才是真取消。
+                // 修改方式：仅真取消置 cancelledBySignal，用户拒绝保持 per-file rejected 状态。
+                const wasAborted = interruptReason === 'abort' || interruptReason === 'user';
+                if (wasAborted) {
                     cancelledBySignal = true;
                 }
 
@@ -1190,6 +1196,9 @@ export function createSearchInFilesTool(): Tool {
                     const runSearchPass = async (regex: RegExp): Promise<SearchPassResult> => {
                         const results: SearchMatch[] = [];
                         let filesTruncated = false;
+                        // maxResults+1 探测语义（参照 find_files）：多取 1 条用于精确判定截断，
+                        // 恰好等于 maxResults 条时不误报 truncated；超出部分在返回前裁剪。
+                        const probeLimit = maxResults + 1;
 
                         if (isExplicit && targetWorkspace) {
                             // 显式指定了工作区，只搜索该工作区
@@ -1206,7 +1215,7 @@ export function createSearchInFilesTool(): Tool {
                                 searchRoot,
                                 effectivePattern,
                                 regex,
-                                maxResults,
+                                probeLimit,
                                 workspaces.length > 1 ? targetWorkspace.name : null,
                                 excludePattern,
                                 searchConfig,
@@ -1217,10 +1226,10 @@ export function createSearchInFilesTool(): Tool {
                         } else if (searchPath === '.' && workspaces.length > 1) {
                             // 搜索所有工作区
                             for (const ws of workspaces) {
-                                if (results.length >= maxResults) break;
+                                if (results.length >= probeLimit) break;
                                 if (budget && budget.remainingChars <= 0) break;
 
-                                const remaining = maxResults - results.length;
+                                const remaining = probeLimit - results.length;
                                 const wsPass = await searchInDirectory(
                                     ws.uri,
                                     filePattern,
@@ -1250,7 +1259,7 @@ export function createSearchInFilesTool(): Tool {
                                 searchRoot,
                                 effectivePattern,
                                 regex,
-                                maxResults,
+                                probeLimit,
                                 workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
                                 excludePattern,
                                 searchConfig,
@@ -1260,8 +1269,15 @@ export function createSearchInFilesTool(): Tool {
                             filesTruncated = filesTruncated || pass.filesTruncated;
                         }
 
+                        // 探测多取 1 条：只有真的超出 maxResults 才算截断；恰好等于时裁剪后不报 truncated
+                        const matchesTruncated = results.length > maxResults;
+                        if (matchesTruncated) {
+                            results.length = maxResults;
+                        }
+
                         return {
                             results,
+                            matchesTruncated,
                             budgetTruncated: !!budget?.truncated,
                             filesTruncated
                         };
@@ -1303,7 +1319,10 @@ export function createSearchInFilesTool(): Tool {
                         data: {
                             results: allResults,
                             count: allResults.length,
-                            truncated: allResults.length >= maxResults || searchPass.budgetTruncated || searchPass.filesTruncated,
+                            // 修改原因：allResults.length >= maxResults 在「恰好 maxResults 条」时误报 truncated；
+                            // 修改方式：改用 runSearchPass 的 maxResults+1 探测结果（matchesTruncated），
+                            //          与 find_files 的探测语义一致。
+                            truncated: searchPass.matchesTruncated || searchPass.budgetTruncated || searchPass.filesTruncated,
                             multiRoot: workspaces.length > 1,
                             queryFallback: fallbackInfo,
                             pathWarning: allResults.length === 0 ? pathWarning : undefined

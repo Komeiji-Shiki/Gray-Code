@@ -40,15 +40,20 @@ const activeFilePath = ref<string | null>(null)
 
 // 防抖定时器
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+// 搜索请求序号：响应晚到时丢弃过期结果，避免旧请求覆盖新搜索的结果
+let searchRequestId = 0
 
 // 搜索文件
 async function searchFiles(query: string, scrollToActive = false) {
+  const requestId = ++searchRequestId
   isLoading.value = true
   try {
     const result = await sendToExtension<{ files: FileItem[]; activeFilePath: string | null }>('searchWorkspaceFiles', {
       query: query.trim(),
       limit: 50
     })
+    // 期间用户又发起了新搜索：本次响应已过期，丢弃
+    if (requestId !== searchRequestId) return
     files.value = result?.files || []
     activeFilePath.value = result?.activeFilePath || null
     
@@ -68,10 +73,13 @@ async function searchFiles(query: string, scrollToActive = false) {
       selectedIndex.value = 0
     }
   } catch (error) {
+    if (requestId !== searchRequestId) return
     console.error('搜索文件失败:', error)
     files.value = []
   } finally {
-    isLoading.value = false
+    if (requestId === searchRequestId) {
+      isLoading.value = false
+    }
   }
 }
 
@@ -142,6 +150,8 @@ function handleKeydown(e: KeyboardEvent | { key: string, preventDefault?: Functi
     case 'ArrowDown':
       e.preventDefault?.()
       e.stopPropagation?.()
+      // 列表为空时直接跳过，避免 Math.min(..., files.length - 1) 把选中索引置为 -1
+      if (files.value.length === 0) break
       selectedIndex.value = Math.min(selectedIndex.value + 1, files.value.length - 1)
       scrollToSelected()
       break
@@ -191,13 +201,11 @@ watch(() => props.query, (newQuery) => {
 watch(() => props.visible, (visible) => {
   if (visible) {
     // 打开时立即搜索，并滚动到活跃文件
+    // 不主动聚焦面板，保持原输入框焦点以便继续输入
     searchFiles(props.query, true)
-    // 聚焦到列表以便键盘导航
-    nextTick(() => {
-      // 不需要聚焦搜索框，保持原输入框焦点
-    })
   } else {
     // 关闭时清理
+    searchRequestId++ // 使在途搜索请求失效
     files.value = []
     selectedIndex.value = 0
     activeFilePath.value = null
@@ -248,19 +256,21 @@ defineExpose({
         </div>
         
         <!-- 文件列表 -->
-        <div
-          v-else
-          v-for="(file, index) in highlightedPaths"
-          :key="file.path"
-          class="file-item"
-          :class="{ selected: index === selectedIndex, 'is-open': file.isOpen }"
-          @click="selectFile(file, $event)"
-          @mouseenter="selectedIndex = index"
-        >
-          <i :class="getFileIcon(file)"></i>
-          <span class="file-path" v-html="file.highlightedPath"></span>
-          <span v-if="file.isOpen" class="open-badge">•</span>
-        </div>
+        <!-- v-else 与 v-for 不能共存于同一元素（Vue 3 不推荐）：用 <template v-else> 包裹 v-for 列表 -->
+        <template v-else>
+          <div
+            v-for="(file, index) in highlightedPaths"
+            :key="file.path"
+            class="file-item"
+            :class="{ selected: index === selectedIndex, 'is-open': file.isOpen }"
+            @click="selectFile(file, $event)"
+            @mouseenter="selectedIndex = index"
+          >
+            <i :class="getFileIcon(file)"></i>
+            <span class="file-path" v-html="file.highlightedPath"></span>
+            <span v-if="file.isOpen" class="open-badge">•</span>
+          </div>
+        </template>
       </CustomScrollbar>
       
       <!-- 底部提示 -->

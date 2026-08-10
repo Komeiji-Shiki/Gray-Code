@@ -111,7 +111,19 @@ export class DiffInlineProvider implements vscode.HoverProvider, vscode.CodeActi
             }
             
             const startLine = Math.max(0, block.startLine - 1);
-            const endLine = Math.min(editor.document.lineCount - 1, block.endLine - 1);
+            // 防御：块起始行也可能超出文档末尾（如块按新内容坐标记录、文档被回滚/缩短后
+            // 文档行数小于块定位），此时 vscode.Range 与 lineAt 都会抛 Illegal argument/
+            // RangeError，直接跳过该块的装饰，不渲染越界范围。
+            if (startLine >= editor.document.lineCount) {
+                continue;
+            }
+            let endLine = Math.min(editor.document.lineCount - 1, block.endLine - 1);
+
+            // 防御：block 区间被倒置（如删除到文件末尾/整文件删除后新内容为空）时 clamp，
+            // 避免 new vscode.Range(startLine > endLine) 抛 Illegal argument。
+            if (endLine < startLine) {
+                endLine = startLine;
+            }
             
             // 整个块的范围
             const blockRange = new vscode.Range(startLine, 0, endLine, editor.document.lineAt(endLine).text.length);

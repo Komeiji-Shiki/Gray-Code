@@ -37,7 +37,6 @@ export function generateRequestId(): string {
 const UNBOUNDED_REQUEST_TYPES = new Set([
   'chatStream',
   'retryStream',
-  'editAndRetryStream',
   'chat.rerollStream',
   'chat.editBranchStream',
   'toolConfirmation',
@@ -60,8 +59,6 @@ const UNBOUNDED_REQUEST_TYPES = new Set([
   // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
   'tokenizer.getResource',
   'countSystemPromptTokens',
-  // 目录统计：大目录统计可达数十秒
-  'storagePath.getStats'
 ])
 
 /**

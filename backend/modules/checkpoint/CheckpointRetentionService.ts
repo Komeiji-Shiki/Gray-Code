@@ -41,13 +41,16 @@ export class CheckpointRetentionService {
      */
     async cleanupOldCheckpoints(conversationId: string): Promise<void> {
         const config = this.deps.getCheckpointConfig();
-        if (config.maxCheckpoints < 0) {
+        // maxCheckpoints <= 0 = 不保留策略：跳过清理自身——cleanupOldCheckpoints 在创建
+        // 新检查点之后调用，<=0 时若按「超限即删最旧」执行会把刚创建的检查点立即删除
+        if (config.maxCheckpoints <= 0) {
             return;
         }
         try {
             const checkpoints = await this.deps.getCheckpointRecords(conversationId);
             if (checkpoints.length > config.maxCheckpoints) {
-                const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp);
+                // 同毫秒时间戳时按 id 次键排序，保证删除顺序稳定（避免同批同戳存档顺序抖动）
+                const sorted = [...checkpoints].sort((a, b) => a.timestamp - b.timestamp || (a.id < b.id ? -1 : 1));
                 const excess = checkpoints.length - config.maxCheckpoints;
                 const deleted = new Set<string>();
                 // CP-RET-3: 预构建 baseCheckpointId → 后继列表 与 id → 排序位置索引，
@@ -136,35 +139,29 @@ export class CheckpointRetentionService {
         const removedFilesByKey = await this.loadRemovedFileEntries(removed);
         const successorRootId = await this.resolveSuccessorRootId(successor);
         const successorUsesScopedLayout = successorRootId !== undefined;
-        const diskFiles = removedFilesByKey !== undefined ? await this.listBackupFiles(removedBackupPath) : [];
+        // 统一逐文件枚举复制（listBackupFiles 已跳过 manifest/files.json 等元数据文件）；
+        // 不再用 fs.cp 整目录回退——legacy 目录整目录复制会把元数据文件一并拷入后继
+        const diskFiles = await this.listBackupFiles(removedBackupPath);
         const rewriteKey = (rawPath: string): string =>
             successorRootId !== undefined && !isWorkspaceScopedKey(rawPath)
                 ? `${successorRootId}/${rawPath.replace(/\\/g, '/').replace(/^\/+/, '')}`
                 : rawPath;
 
         // 1. 文件合并：后继目录优先，不覆盖已存在的更新版本。
-        //    无法枚举 removed 文件（真正 legacy 无哈希）时退回整目录复制（旧行为）。
-        if (removedFilesByKey === undefined) {
+        //    无法枚举 removed 文件（真正 legacy 无哈希）时同样逐文件复制
+        //   （removedFilesByKey 缺失只影响 manifest 合并的 hash 来源，不影响文件复制）。
+        for (const relative of diskFiles) {
+            const targetKey = rewriteKey(relative);
+            const src = path.join(removedBackupPath, ...relative.split('/'));
+            const dest = path.join(successorBackupPath, ...targetKey.split('/'));
             try {
-                await fs.cp(removedBackupPath, successorBackupPath, { recursive: true, force: false });
-            } catch (err) {
-                console.warn(`[CheckpointRetentionService] Failed to merge backup ${removed.backupDir} into ${successor.backupDir}:`, err);
-                throw err; // 合并失败必须中止删除，否则恢复时链上缺文件
-            }
-        } else {
-            for (const relative of diskFiles) {
-                const targetKey = rewriteKey(relative);
-                const src = path.join(removedBackupPath, ...relative.split('/'));
-                const dest = path.join(successorBackupPath, ...targetKey.split('/'));
+                await fs.access(dest); // 已存在（后继更新版本）→ 不覆盖
+            } catch {
                 try {
-                    await fs.access(dest); // 已存在（后继更新版本）→ 不覆盖
-                } catch {
-                    try {
-                        await fs.cp(src, dest, { force: false });
-                    } catch (err) {
-                        // 源文件缺失（manifest 声称有但磁盘没有）：跳过，恢复时按链上缺失处理
-                        console.warn(`[CheckpointRetentionService] Skip merging ${relative} into ${successor.backupDir}:`, err);
-                    }
+                    await fs.cp(src, dest, { force: false });
+                } catch (err) {
+                    // 源文件缺失（manifest 声称有但磁盘没有）：跳过，恢复时按链上缺失处理
+                    console.warn(`[CheckpointRetentionService] Skip merging ${relative} into ${successor.backupDir}:`, err);
                 }
             }
         }
@@ -212,8 +209,9 @@ export class CheckpointRetentionService {
                 const targetKey = rewriteKey(relative);
                 if (deletedInManifest.has(targetKey)) continue;
                 if (targetKey in successorManifest.files) continue;
-                const entry = removedFilesByKey?.[relative];
-                if (!entry) continue;
+                // hash 优先取 removed 节点 manifest/record；真 legacy 无哈希时以 size 0 占位
+                //（枚举到的文件无条件并入 manifest.files，恢复引擎按 scoped 寻址需要该条目）
+                const entry = removedFilesByKey?.[relative] ?? { hash: '', size: 0, mtimeMs: 0 };
                 successorManifest.files[targetKey] = entry;
             }
             try {
@@ -239,7 +237,8 @@ export class CheckpointRetentionService {
      *
      * - 优先用 manifest.files（新格式；legacy 缺失时由 loadManifestWithFiles 迁移生成，键为相对路径）；
      * - 无 manifest 时退回 record.fileHashes；
-     * - 都没有（真正 legacy 无哈希）→ undefined，调用方退回整目录复制（旧行为）。
+     * - 都没有（真正 legacy 无哈希）→ undefined，调用方仍逐文件枚举复制
+     *   （合并 manifest.files 时以 size 0 占位）。
      */
     private async loadRemovedFileEntries(
         removed: CheckpointRecord

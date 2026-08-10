@@ -982,16 +982,42 @@ export class StreamAccumulator {
         lastChunkTime?: number;
     } {
         const signatureFormats = Object.keys(this.thoughtSignatures).filter(k => this.thoughtSignatures[k]);
+
+        // 单遍累积三种文本长度与标志位，替代三次 filter+map+join 遍历
+        // （getText/getThoughts/getNormalText 语义：'text' in part 判定 + thought 标志分流）
+        let textLength = 0;
+        let thoughtsLength = 0;
+        let normalTextLength = 0;
+        let hasThoughts = false;
+        let hasRedactedThinking = false;
+        for (const part of this.parts) {
+            if ('text' in part) {
+                const text = part.text || '';
+                textLength += text.length;
+                if (part.thought === true) {
+                    thoughtsLength += text.length;
+                } else {
+                    normalTextLength += text.length;
+                }
+            }
+            if ('thought' in part && part.thought === true) {
+                hasThoughts = true;
+            }
+            if (part.redactedThinking) {
+                hasRedactedThinking = true;
+            }
+        }
+
         return {
             partCount: this.parts.length,
-            textLength: this.getText({ includeThoughts: true }).length,
-            thoughtsLength: this.getThoughts().length,
-            normalTextLength: this.getNormalText().length,
-            hasThoughts: this.parts.some(p => 'thought' in p && p.thought === true),
-            hasRedactedThinking: this.parts.some(p => p.redactedThinking),
+            textLength,
+            thoughtsLength,
+            normalTextLength,
+            hasThoughts,
+            hasRedactedThinking,
             hasThoughtSignatures: signatureFormats.length > 0,
             thoughtSignatureFormats: signatureFormats,
-            usageMetadata: this.usageMetadata,
+            usageMetadata: this.usageMetadata ? { ...this.usageMetadata } : undefined,
             thinkingDuration: this.getThinkingDuration(),
             chunkCount: this.chunkCount,
             firstChunkTime: this.firstChunkTime,

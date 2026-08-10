@@ -1863,12 +1863,15 @@ ${descriptionSuffix}`,
                         } catch (e) {
                             const msg = e instanceof Error ? e.message : String(e);
 
-                            // “裸 @@”兜底：将 patch 退化为 legacy search/replace diffs（全局精确匹配）
-                            if (msg.startsWith('Invalid hunk header')) {
-                                const legacyDiffs = parseLooseUnifiedPatchToLegacyDiffs(patch || '');
+                            // “裸 @@”兜底：将 patch 退化为 legacy search/replace diffs（全局精确匹配）。
+                            // 触发条件放宽：解析失败但 patch 中含 @@ 行即尝试兜底（错误附解析原因），
+                            // 避免只认 'Invalid hunk header' 前缀而漏掉其它解析错误（如行号越界/上下文不匹配）。
+                            const patchText = patch || '';
+                            if (patchText.split('\n').some(line => line.startsWith('@@'))) {
+                                const legacyDiffs = parseLooseUnifiedPatchToLegacyDiffs(patchText);
                                 const looseApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
                                     errorSuffix:
-                                        '(loose @@ fallback: ensure the search block is unique, or use a full @@ -a,b +c,d @@ header)'
+                                        `(loose @@ fallback after parse error: ${msg}; ensure the search block is unique, or use a full @@ -a,b +c,d @@ header)`
                                 });
 
                                 diffCount = legacyDiffs.length;
@@ -1934,11 +1937,15 @@ ${descriptionSuffix}`,
                     // 怎么改：统一等待方法同时监听状态事件、轮询中断标记，并处理 AbortSignal。
                     // 目的：让结构化 hunks 与旧 patch 路径共享可靠的 diff 生命周期收敛逻辑。
                     const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
-                    const wasInterrupted = interruptReason !== 'none';
+                    // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
+                    // - rejected：用户在 diff 审阅 UI 里显式点了拒绝 → status:'rejected' + 可读错误（不标记 cancelled）
+                    // - abort/user：请求被取消（AbortSignal / 新消息中断）→ cancelled: true
+                    const wasRejected = interruptReason === 'rejected';
+                    const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
 
                     // 获取最终状态
                     const finalDiff = diffManager.getDiff(pendingDiff.id);
-                    const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+                    const wasAccepted = !wasInterrupted && !wasRejected && (!finalDiff || finalDiff.status === 'accepted');
 
                     // 用户可能在保存前编辑了内容（手动保存/手动接受时）
                     const userEditedContent = finalDiff?.userEditedContent;
@@ -1958,6 +1965,28 @@ ${descriptionSuffix}`,
                         } catch (e) {
                             console.warn('Failed to save diff content to storage:', e);
                         }
+                    }
+
+                    if (wasRejected) {
+                        return {
+                            success: false,
+                            cancelled: false,
+                            error: 'Diff was rejected by user',
+                            data: {
+                                file: filePath,
+                                message: `Diff for ${filePath} was rejected by user.`,
+                                status: 'rejected',
+                                diffCount,
+                                totalCount: diffCount,
+                                appliedCount,
+                                failedCount,
+                                results,
+                                diffContentId,
+                                diffGuardWarning: pendingDiff.diffGuardWarning,
+                                diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
+                                fallbackMode
+                            }
+                        };
                     }
 
                     if (wasInterrupted) {
@@ -2137,10 +2166,13 @@ ${descriptionSuffix}`,
                 // 怎么改：复用 DiffManager.waitForDiffResolution，统一事件监听、轮询兜底和 abort 清理。
                 // 目的：让 apply_diff 的所有输入格式在自动保存和取消场景下表现一致。
                 const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
-                const wasInterrupted = interruptReason !== 'none';
+                // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理（与 unified 路径一致）：
+                // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
+                const wasRejected = interruptReason === 'rejected';
+                const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
 
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
-                const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+                const wasAccepted = !wasInterrupted && !wasRejected && (!finalDiff || finalDiff.status === 'accepted');
                 const userEditedContent = finalDiff?.userEditedContent;
 
                 const diffStorageManager = getDiffStorageManager();
@@ -2157,6 +2189,26 @@ ${descriptionSuffix}`,
                     } catch (e) {
                         console.warn('Failed to save diff content to storage:', e);
                     }
+                }
+
+                if (wasRejected) {
+                    return {
+                        success: false,
+                        cancelled: false,
+                        error: 'Diff was rejected by user',
+                        data: {
+                            file: filePath,
+                            message: `Diff for ${filePath} was rejected by user.`,
+                            status: 'rejected',
+                            diffCount: diffs.length,
+                            appliedCount,
+                            failedCount,
+                            results: diffResults,
+                            diffContentId,
+                            diffGuardWarning: pendingDiff.diffGuardWarning,
+                            diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent
+                        }
+                    };
                 }
 
                 if (wasInterrupted) {

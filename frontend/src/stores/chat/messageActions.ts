@@ -22,10 +22,53 @@ import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 import { validateSessionIdentity } from './utils'
-import { rebuildMessageIndexById, appendMessage } from './state'
+import { rebuildMessageIndexById, appendMessage, getMessageIndexById } from './state'
 import { finishSmoothStreamForState, clearAllSmoothForState } from './streamChunkHandlers'
 import { translate } from '../../composables/useI18n'
 import { useSettingsStore } from '../settingsStore'
+
+/**
+ * 发送失败清理：移除本次发送遗留的窗口占位（user 消息 + assistant 空气泡）。
+ *
+ * 仅当 assistant 占位仍为空（localOnly && 无 parts/content/tools）时移除两条：
+ * 若流式已产出内容（半截回答），保留两者供错误条重试；隐藏发送（无 user 消息）只处理占位。
+ */
+function cleanupFailedSendPlaceholders(
+  state: ChatStoreState,
+  pendingUserMessageId: string | undefined,
+  assistantMessageId: string | null
+): void {
+  if (!pendingUserMessageId && !assistantMessageId) return
+
+  const all = state.allMessages.value
+  const removeIds = new Set<string>()
+
+  if (assistantMessageId) {
+    const idx = getMessageIndexById(state, assistantMessageId)
+    if (idx !== -1) {
+      const msg = all[idx]
+      const isEmptyPlaceholder = msg?.localOnly === true
+        && !msg.content
+        && !msg.tools
+        && !msg.parts?.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
+      if (isEmptyPlaceholder) {
+        removeIds.add(assistantMessageId)
+      }
+    }
+  }
+
+  // user 消息仅在空气泡仍为空（或本次未创建空气泡）时一并移除，
+  // 避免误删用户已发送且已收到部分回答的消息
+  if (pendingUserMessageId && (removeIds.has(assistantMessageId ?? '') || !assistantMessageId)) {
+    removeIds.add(pendingUserMessageId)
+  }
+
+  if (removeIds.size === 0) return
+
+  state.allMessages.value = all.filter(m => !removeIds.has(m.id))
+  rebuildMessageIndexById(state)
+  setTotalMessagesFromWindow(state)
+}
 
 /**
  * H5：复位“本次 sendMessage 遗留的流式/待发送状态”。
@@ -367,6 +410,9 @@ export async function sendMessage(
   // BR-01：本次发送窗口 user 消息的稳定节点 id（随 chatStream 传给后端原样落库）
   let pendingUserMessageId: string | undefined
 
+  // 本次发送的 assistant 占位 id（catch 清理用；声明在 try 外，避免 try 早期抛错时 TDZ）
+  let assistantMessageId: string | null = null
+
   // U1（用户消息插入）：主会话正在工具循环/流式中时，不排队、不乐观插入窗口，
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
   // 让主模型在工具循环中尽快感知用户输入。
@@ -440,10 +486,10 @@ export async function sendMessage(
       // BR-01：记录窗口消息 id 并随 chatStream 传给后端原样落库，
       // 保证主历史 Content.id 与窗口消息 id 一致（编辑/重试/分支操作按 id 定位）
       pendingUserMessageId = userMessage.id
-      state.allMessages.value.push(userMessage)
+      appendMessage(state, userMessage)
     }
 
-    const assistantMessageId = generateId()
+    assistantMessageId = generateId()
     const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
     const assistantMessage: Message = {
       id: assistantMessageId,
@@ -457,7 +503,7 @@ export async function sendMessage(
         modelVersion: displayModelVersion
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
@@ -511,7 +557,7 @@ export async function sendMessage(
         }))
       : undefined
 
-    await sendToExtension('chatStream', {
+    const streamResult = await sendToExtension<{ success?: boolean }>('chatStream', {
       conversationId: targetConvId,
       configId: effectiveConfigId,
       message: messageText,
@@ -525,6 +571,10 @@ export async function sendMessage(
       source: options?.source,
       streamId
     })
+    // 发送被后端明确拒绝（渠道/参数校验失败等）：走 catch 同款清理（移除空气泡与 user 占位）
+    if (streamResult?.success === false) {
+      throw new Error('chatStream rejected by backend')
+    }
 
     // H5(b)：await 期间会话可能已切换（流会在后端继续、chunk 进入原会话的后台缓冲）。
     // 校验失败时停止后续流程并标记，避免在无 UI 状态下继续写状态。
@@ -538,14 +588,21 @@ export async function sendMessage(
 
   } catch (err: any) {
     // 独立于 isStreaming 判断是否取消：取消瞬间 isStreaming 已被 cancelStream 清除，
-    // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉
-    const wasStreamCancelled = state._lastCancelledStreamId.value === state.activeStreamId.value
+    // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉。
+    // _lastCancelledStreamId 存的是被取消请求的 streamingMessageId（消息 id，见
+    // toolActions.cancelStream 的写入与 types.ts 声明），与本次发送的占位消息 id
+    // （assistantMessageId）比较才能命中「用户取消 + 迟到失败」场景；不能与
+    // activeStreamId（streamId）比较——两者类型不同永不相等（原实现导致恒 false）。
+    const wasStreamCancelled = state._lastCancelledStreamId.value === assistantMessageId
     if (!wasStreamCancelled) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
         message: err.message || 'Failed to send message'
       })
     }
+    // 发送失败清理：占位仍为空（localOnly && 无 parts/content/tools）时
+    // 按本次 push 的 pendingUserMessageId + assistantMessageId 移除两条
+    cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
     resetPendingSendState(state)
     return false
   } finally {
@@ -680,7 +737,7 @@ export async function retryFromMessage(
         modelVersion: computed.currentModelName.value
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
@@ -741,7 +798,7 @@ export async function retryFromMessage(
       modelVersion: computed.currentModelName.value
     }
   }
-  state.allMessages.value.push(assistantMessage)
+  appendMessage(state, assistantMessage)
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -1080,7 +1137,7 @@ export async function retryAfterError(
       modelVersion: computed.currentModelName.value
     }
   }
-  state.allMessages.value.push(assistantMessage)
+  appendMessage(state, assistantMessage)
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -1190,7 +1247,7 @@ export async function editAndRetry(
         modelVersion: computed.currentModelName.value
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)

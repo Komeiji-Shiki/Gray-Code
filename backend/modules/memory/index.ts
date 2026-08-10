@@ -85,12 +85,16 @@ let _workspaceBaseDir: string | null = null;
 const _workspaceInstances = new Map<string, import('./MemoryManager').MemoryManager>();
 const _workspaceInitPromises = new Map<string, Promise<import('./MemoryManager').MemoryManager | null>>();
 
+/** scopeKey -> 只读 MemoryManager 实例（createIfMissing=false 时复用，含已加载 config） */
+const _workspaceReadonlyInstances = new Map<string, import('./MemoryManager').MemoryManager>();
+
 /** 设置工作区记忆存储根目录（由 initMemoryManager 调用） */
 export function setWorkspaceMemoryBaseDir(dir: string | null): void {
     _workspaceBaseDir = dir;
     // 存储根目录变更后旧实例仍指向旧路径：全部失效，下次访问按新路径重建
     _workspaceInstances.clear();
     _workspaceInitPromises.clear();
+    _workspaceReadonlyInstances.clear();
 }
 
 /** 规范化工作区 key：Windows 大小写不敏感 + 统一正斜杠 */
@@ -164,6 +168,9 @@ export async function getMemoryManagerForWorkspace(
         } catch {
             return null;
         }
+        // 复用已缓存的只读实例（含已加载 config）：避免每次只读访问都新建实例 + loadConfig
+        const readonly = _workspaceReadonlyInstances.get(scopeKey);
+        if (readonly) return readonly;
     }
 
     const initPromise = (async () => {
@@ -176,6 +183,9 @@ export async function getMemoryManagerForWorkspace(
         if (!createIfMissing) {
             const manager = new MemoryManager(dir);
             await manager.loadConfig();
+            // 缓存只读实例（含 config）：后续只读访问直接复用；
+            // 不写入 _workspaceInstances——写路径（createIfMissing=true）仍走完整初始化分支
+            _workspaceReadonlyInstances.set(scopeKey, manager);
             return manager;
         }
         await fs.promises.mkdir(dir, { recursive: true });
@@ -204,11 +214,19 @@ export async function getMemoryManagerForWorkspace(
         return manager;
     })();
 
-    _workspaceInitPromises.set(scopeKey, initPromise);
+    // 只读路径（createIfMissing=false）不注册到共享初始化池：否则并发写路径
+    // （createIfMissing=true）会复用只读 promise，拿到「只 loadConfig、未 init()」
+    // 的实例（无 TREE/LOG.txt），写工具随后会在 appendFile 处 ENOENT 失败。
+    // 只读路径重复 loadConfig 幂等无副作用，无需入池去重。
+    if (createIfMissing) {
+        _workspaceInitPromises.set(scopeKey, initPromise);
+    }
     try {
         return await initPromise;
     } finally {
-        _workspaceInitPromises.delete(scopeKey);
+        if (createIfMissing) {
+            _workspaceInitPromises.delete(scopeKey);
+        }
     }
 }
 

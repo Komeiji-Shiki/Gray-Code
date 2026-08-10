@@ -21,6 +21,8 @@ const FALLBACK_METADATA: ProductMetadata = {
 };
 
 let productMetadata: ProductMetadata | undefined;
+/** initialize 时缓存的当前扩展 id（如 'publisher.name'），供兜底路径复用，避免硬编码扩展 id */
+let cachedExtensionId: string | undefined;
 
 function normalizePackageMetadata(packageJSON: unknown): ProductMetadata {
     // 修改原因：packageJSON 来自 VS Code 扩展宿主，字段类型不是本仓库可控的静态类型。
@@ -36,9 +38,14 @@ function normalizePackageMetadata(packageJSON: unknown): ProductMetadata {
 
 export function initializeProductMetadata(context: vscode.ExtensionContext): ProductMetadata {
     // 修改原因：运行时读取版本必须绑定“当前扩展自身”，不能从 workspace 目录读取 package.json，避免被用户项目污染。
-    // 修改方式：activate 阶段从 ExtensionContext.extension.packageJSON 初始化全局元数据缓存。
+    // 修改方式：activate 阶段从 ExtensionContext.extension.packageJSON 初始化全局元数据缓存；
+    // 已初始化时直接返回旧值（幂等），避免重复调用覆盖；同时缓存扩展 id 供兜底路径复用。
     // 修改目的：让后续无 context 的后端模块也能读取同一份扩展版本。
+    if (productMetadata) {
+        return productMetadata;
+    }
     productMetadata = normalizePackageMetadata(context.extension.packageJSON);
+    cachedExtensionId = context.extension.id;
     return productMetadata;
 }
 
@@ -52,7 +59,8 @@ export function getProductMetadata(): ProductMetadata {
         // 修改方式：兜底从 VS Code extension registry 读取已安装扩展的 packageJSON，不从文件系统或 workspace 猜测。
         // 修改目的：保持运行时版本来源仍然是扩展宿主元数据，同时让旧调用路径具备安全退路。
         const vscodeApi = require('vscode') as typeof import('vscode');
-        const extension = vscodeApi.extensions?.getExtension?.('Komeiji-Shiki.graycode');
+        // 优先用 initialize 时缓存的扩展 id；未初始化过时回退默认 id，保证兜底仍可用
+        const extension = vscodeApi.extensions?.getExtension?.(cachedExtensionId ?? 'Komeiji-Shiki.graycode');
         if (extension?.packageJSON) {
             productMetadata = normalizePackageMetadata(extension.packageJSON);
             return productMetadata;

@@ -20,6 +20,13 @@ import { withLinkedAbort } from '../abortLink';
 const TASK_TYPE_IMAGE_GEN = 'image_generation';
 
 /**
+ * 默认生成模型（与 settings 默认值 toolsTypes.ts 保持一致）。
+ * 此前调用侧默认 'gemini-3-pro-image-preview'、返回侧默认 'gemini-2.5-flash-preview-05-20'，
+ * 两个默认值不一致会让返回的 model 字段与真实调用模型不符，统一为同一常量。
+ */
+const DEFAULT_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+
+/**
  * 图像生成输出事件类型（保持向后兼容）
  */
 export interface ImageGenOutputEvent {
@@ -256,7 +263,7 @@ async function callGeminiImageApi(
         throw new Error('API Key not configured. Please configure generate_image tool in settings.');
     }
 
-    const model = config.model || 'gemini-3-pro-image-preview';
+    const model = config.model || DEFAULT_IMAGE_MODEL;
     const baseUrl = config.url || 'https://generativelanguage.googleapis.com/v1beta';
     const url = `${baseUrl}/models/${model}:generateContent?key=${apiKey}`;
 
@@ -974,7 +981,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
                         totalImages: totalCount,
                         paths: allPaths,
                         dimensions: allDimensions.length > 0 ? allDimensions : undefined,
-                        model: config.model || 'gemini-2.5-flash-preview-05-20',
+                        model: config.model || DEFAULT_IMAGE_MODEL,
                         details: descriptions
                     },
                     multimodal: shouldReturnImageToAI && allMultimodal.length > 0 ? allMultimodal : undefined,

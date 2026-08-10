@@ -777,6 +777,13 @@ function closeSearchDropdown() {
   searchFocused.value = false
 }
 
+// Esc：关闭下拉并清空查询
+function handleSearchEsc() {
+  closeSearchDropdown()
+  searchQuery.value = ''
+  activeSearchIndex.value = 0
+}
+
 function clearSearch() {
   searchQuery.value = ''
   activeSearchIndex.value = 0
@@ -864,6 +871,23 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleSearchOutsideClick)
+  // 统一清理未触发的定时器，避免卸载后仍修改状态
+  if (validateDebounceTimer) {
+    clearTimeout(validateDebounceTimer)
+    validateDebounceTimer = null
+  }
+  if (storageMessageTimer) {
+    clearTimeout(storageMessageTimer)
+    storageMessageTimer = null
+  }
+  if (proxySaveMessageTimer) {
+    clearTimeout(proxySaveMessageTimer)
+    proxySaveMessageTimer = null
+  }
+  if (importExportMessageTimer) {
+    clearTimeout(importExportMessageTimer)
+    importExportMessageTimer = null
+  }
 })
 
 // 代理设置
@@ -879,7 +903,13 @@ const languageSetting = ref<string>('auto')
 const isSaving = ref(false)
 // 保存状态消息
 const saveMessage = ref('')
+// 保存消息类型（避免用文案字符串比较判断样式）
+const saveMessageType = ref<'success' | 'error'>('success')
 
+// 消息自动消失定时器（组件卸载时统一清理，避免卸载后仍修改状态）
+let storageMessageTimer: ReturnType<typeof setTimeout> | null = null
+let proxySaveMessageTimer: ReturnType<typeof setTimeout> | null = null
+let importExportMessageTimer: ReturnType<typeof setTimeout> | null = null
 // 存储路径设置
 const storageSettings = reactive({
   currentPath: '',
@@ -1098,7 +1128,8 @@ async function resetStoragePath() {
   
   // 只有非成功消息才自动消失
   if (!needsReload.value) {
-    setTimeout(() => {
+    if (storageMessageTimer) clearTimeout(storageMessageTimer)
+    storageMessageTimer = setTimeout(() => {
       storageMessage.value = ''
     }, 5000)
   }
@@ -1141,7 +1172,8 @@ async function executeMigration() {
   
   // 只有非成功消息才自动消失
   if (!needsReload.value) {
-    setTimeout(() => {
+    if (storageMessageTimer) clearTimeout(storageMessageTimer)
+    storageMessageTimer = setTimeout(() => {
       storageMessage.value = ''
     }, 5000)
   }
@@ -1169,12 +1201,15 @@ async function saveProxySettings() {
       }
     })
     saveMessage.value = t('components.settings.settingsPanel.proxy.saveSuccess')
-    setTimeout(() => {
+    saveMessageType.value = 'success'
+    if (proxySaveMessageTimer) clearTimeout(proxySaveMessageTimer)
+    proxySaveMessageTimer = setTimeout(() => {
       saveMessage.value = ''
     }, 2000)
   } catch (error) {
     console.error('Failed to save proxy settings:', error)
     saveMessage.value = t('components.settings.settingsPanel.proxy.saveFailed')
+    saveMessageType.value = 'error'
   } finally {
     isSaving.value = false
   }
@@ -1326,7 +1361,8 @@ async function handleExportSettings() {
   } finally {
     isExporting.value = false
     if (importExportMessage.value) {
-      setTimeout(() => { importExportMessage.value = '' }, 5000)
+      if (importExportMessageTimer) clearTimeout(importExportMessageTimer)
+      importExportMessageTimer = setTimeout(() => { importExportMessage.value = '' }, 5000)
     }
   }
 }
@@ -1361,7 +1397,8 @@ async function handleImportSettings() {
   } finally {
     isImporting.value = false
     if (importExportMessage.value) {
-      setTimeout(() => { importExportMessage.value = '' }, 8000)
+      if (importExportMessageTimer) clearTimeout(importExportMessageTimer)
+      importExportMessageTimer = setTimeout(() => { importExportMessage.value = '' }, 8000)
     }
   }
 }
@@ -1445,7 +1482,7 @@ onMounted(() => {
             @keydown.down.prevent="moveSearchSelection(1)"
             @keydown.up.prevent="moveSearchSelection(-1)"
             @keydown.enter.prevent="openSearchSelection"
-            @keydown.esc="closeSearchDropdown"
+            @keydown.esc="handleSearchEsc"
           />
           <button
             v-if="searchQuery"
@@ -1684,7 +1721,7 @@ onMounted(() => {
                       <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
                       <span v-else>{{ t('components.settings.settingsPanel.proxy.save') }}</span>
                     </button>
-                    <span v-if="saveMessage" class="save-message" :class="{ success: saveMessage === t('components.settings.settingsPanel.proxy.saveSuccess') }">
+                    <span v-if="saveMessage" class="save-message" :class="{ success: saveMessageType === 'success' }">
                       {{ saveMessage }}
                     </span>
                   </div>

@@ -203,13 +203,33 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value)
 }
 
+/**
+ * 短哈希碰撞登记：hash → 首次出现的原始输入。
+ * 碰撞（不同输入得到同一短哈希）时回退完整键（stableStringify 产物），
+ * 保证 getAgentRunEventId 对“同语义重复事件”的幂等去重不会误吞不同事件。
+ * 有界：达到上限时整体清空（最坏情况退化为原始纯短哈希语义，碰撞概率极低）。
+ */
+const shortHashRegistry = new Map<string, string>()
+const MAX_SHORT_HASH_REGISTRY = 2000
+
 /** 短哈希：大 payload 的 eventId 派生用（避免 processedEventIds 无限膨胀） */
 function shortHash(input: string): string {
   let hash = 0
   for (let i = 0; i < input.length; i++) {
     hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0
   }
-  return (hash >>> 0).toString(36)
+  const short = (hash >>> 0).toString(36)
+
+  const existing = shortHashRegistry.get(short)
+  if (existing === undefined) {
+    if (shortHashRegistry.size >= MAX_SHORT_HASH_REGISTRY) {
+      shortHashRegistry.clear()
+    }
+    shortHashRegistry.set(short, input)
+    return short
+  }
+  // 同一输入重复出现 → 同一短键（幂等）；不同输入碰撞 → 回退完整键（stableStringify）
+  return existing === input ? short : input
 }
 
 /**

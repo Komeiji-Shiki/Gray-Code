@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, toRaw } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -26,6 +26,8 @@ const isLoading = ref(true)
 const isSaving = ref(false)
 const saveMessage = ref('')
 const saveMessageType = ref<'success' | 'error'>('success')
+// 保存消息自动消失定时器（组件卸载时统一清理）
+let saveMessageTimer: ReturnType<typeof setTimeout> | null = null
 
 // 配置数据
 const config = reactive<TokenCountConfig>({
@@ -101,6 +103,17 @@ async function loadConfig() {
 
 // 保存配置
 async function saveConfig() {
+    // 保存前校验：任一渠道 enabled 但 API URL / API Key 为空时提示并阻止保存
+    const providers: (keyof TokenCountConfig)[] = ['gemini', 'openai', 'anthropic', 'openai-responses']
+    for (const provider of providers) {
+        const c = config[provider]
+        if (c?.enabled && (!c.baseUrl.trim() || !c.apiKey.trim())) {
+            saveMessage.value = '启用 Token 计数时，API URL 和 API Key 不能为空'
+            saveMessageType.value = 'error'
+            return
+        }
+    }
+    
     isSaving.value = true
     saveMessage.value = ''
     
@@ -120,7 +133,8 @@ async function saveConfig() {
         saveMessage.value = t('components.settings.tokenCountSettings.saveSuccess')
         saveMessageType.value = 'success'
         
-        setTimeout(() => {
+        if (saveMessageTimer) clearTimeout(saveMessageTimer)
+        saveMessageTimer = setTimeout(() => {
             saveMessage.value = ''
         }, 3000)
     } catch (error) {
@@ -144,6 +158,14 @@ function toggleApiKeyVisibility(channel: 'gemini' | 'openai' | 'anthropic' | 'op
 
 onMounted(() => {
     loadConfig()
+})
+
+onUnmounted(() => {
+    // 清理保存消息自动消失定时器，避免卸载后仍修改状态
+    if (saveMessageTimer) {
+        clearTimeout(saveMessageTimer)
+        saveMessageTimer = null
+    }
 })
 </script>
 

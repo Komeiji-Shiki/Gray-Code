@@ -3,8 +3,6 @@
  *
  * 注册（规划第七部分 L1687–1698 分支 API 的最小集）：
  * - conversation.getBranchGraph
- * - conversation.getBranchGraphMeta
- * - conversation.createRerollCandidate
  * - conversation.switchBranchCandidate
  * - conversation.deleteBranchCandidate
  * - conversation.restoreBranchCandidate（TREE-09：恢复软删候选）
@@ -229,7 +227,7 @@ export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
     const { conversationId } = data || {};
     // L-7（R4 复查）：入参显式类型校验——非 string（数字/对象等）一律按缺失处理
     if (typeof conversationId !== 'string' || !conversationId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId is required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
       return;
     }
     const result = await resolveBranchService(ctx).getBranchGraph(conversationId);
@@ -247,13 +245,16 @@ export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
 /**
  * 获取分支图元信息（BR-06）：{ exists, rootNodeId, activeTailNodeId, nodeCount,
  * candidateCount, activePathLength, exportedFrom, exportedRefs }——免整图下发。
+ *
+ * 注意：conversation.getBranchGraphMeta 注册已移除（无前端调用方，bug-hunt 第二轮）；
+ * 函数保留供单元测试直接调用（branchHandlers.test.ts）。
  */
 export const getBranchGraphMeta: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId } = data || {};
     // L-7（R4 复查）：入参显式类型校验
     if (typeof conversationId !== 'string' || !conversationId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId is required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
       return;
     }
     const result = await resolveBranchService(ctx).getBranchGraphMeta(conversationId);
@@ -266,6 +267,9 @@ export const getBranchGraphMeta: MessageHandler = async (data, requestId, ctx) =
 /**
  * 创建 reroll 候选（TREE-01 底座）：同一父节点下新增候选并切换 activeChildId，旧候选保留。
  * 入参：{ conversationId, parentNodeId, parts, modelVersion?, usageMetadata?, createdAt? }
+ *
+ * 注意：conversation.createRerollCandidate 注册已移除（无前端调用方，bug-hunt 第二轮）；
+ * 函数保留供单元测试直接调用（branchHandlers.test.ts）。
  */
 export const createRerollCandidate: MessageHandler = async (data, requestId, ctx) => {
   try {
@@ -273,7 +277,7 @@ export const createRerollCandidate: MessageHandler = async (data, requestId, ctx
     // L-7（R4 复查）：入参显式类型校验——非 string 的 ID 一律按缺失处理
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof parentNodeId !== 'string' || !parentNodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and parentNodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and parentNodeId are required');
       return;
     }
     // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
@@ -330,7 +334,12 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
     // L-7（R4 复查）：入参显式类型校验
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
+      return;
+    }
+    // mode 显式校验：仅允许 'chat-only' | 'chat-and-workspace'，非法值报错而非静默降级为 chat-only
+    if (mode !== undefined && mode !== 'chat-only' && mode !== 'chat-and-workspace') {
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'mode must be "chat-only" or "chat-and-workspace"');
       return;
     }
     // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
@@ -397,6 +406,13 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
         throw new BranchError('WORKSPACE_CHECKPOINT_BROKEN', `工作区存档无法安全恢复：${reason}`);
       }
 
+      // 4.1 二次流式互斥检查（restoreCheckpoint 之前，preview 之后）：预览与恢复之间
+      //     可能有新流启动；命中时直接返回 BRANCH_BUSY——此时工作区文件尚未恢复，
+      //     拒绝路径零副作用（原实现把检查放在恢复之后，命中时恢复副作用无法回滚）。
+      if (rejectIfStreaming(ctx, conversationId, requestId)) {
+        return;
+      }
+
       // 5. 恢复（BCP-03：恢复可安全省略——目标存档与当前工作区一致/无变化时跳过实际恢复；
       //    legacy 存档 preview.restored === -1，不命中省略条件，仍执行恢复）
       if (preview.restored !== 0 || preview.deletedIfUnconfirmed !== 0) {
@@ -443,8 +459,8 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
       }
     }
 
-    // 6. 真正切图前再次检查。前面的预检到此处之间包含图校验、dirty 检测和工作区恢复，
-    // 新流可能在这些 await 期间启动；二次校验封闭该 TOCTOU 窗口，避免迟到 chunk 写入切换后的历史。
+    // 6. 真正切图前再次检查。恢复（await 期间可能启动新流）到切图之间仍有 TOCTOU 窗口，
+    //    二次校验封闭该窗口，避免迟到 chunk 写入切换后的历史。
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
       return;
     }
@@ -513,7 +529,7 @@ export const deleteBranchCandidate: MessageHandler = async (data, requestId, ctx
     // L-7（R4 复查）：入参显式类型校验
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
       return;
     }
     // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
@@ -536,7 +552,7 @@ export const restoreBranchCandidate: MessageHandler = async (data, requestId, ct
     const { conversationId, nodeId } = data || {};
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
       return;
     }
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
@@ -559,7 +575,7 @@ export const renameBranchCandidate: MessageHandler = async (data, requestId, ctx
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()
         || typeof label !== 'string') {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId, nodeId and label are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId, nodeId and label are required');
       return;
     }
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
@@ -581,7 +597,7 @@ export const purgeBranchCandidate: MessageHandler = async (data, requestId, ctx)
     const { conversationId, nodeId } = data || {};
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
       return;
     }
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
@@ -602,7 +618,7 @@ export const getDeletedBranchCount: MessageHandler = async (data, requestId, ctx
   try {
     const { conversationId } = data || {};
     if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId must be a non-empty string when provided');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
       return;
     }
     const result = await resolveBranchService(ctx).getDeletedBranchCount(
@@ -622,11 +638,11 @@ export const pruneDeletedBranches: MessageHandler = async (data, requestId, ctx)
   try {
     const { conversationId, retentionDays } = data || {};
     if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId must be a non-empty string when provided');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
       return;
     }
     if (retentionDays !== undefined && (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0)) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'retentionDays must be a non-negative integer');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
       return;
     }
     const result = await resolveBranchService(ctx).pruneDeletedBranches({
@@ -658,7 +674,7 @@ export const updateBranchRetentionConfig: MessageHandler = async (data, requestI
   try {
     const { retentionDays } = data || {};
     if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'retentionDays must be a non-negative integer');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
       return;
     }
     const result = await resolveBranchService(ctx).updateBranchRetentionConfig(retentionDays);
@@ -673,8 +689,6 @@ export const updateBranchRetentionConfig: MessageHandler = async (data, requestI
  */
 export function registerBranchHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('conversation.getBranchGraph', getBranchGraph);
-  registry.set('conversation.getBranchGraphMeta', getBranchGraphMeta);
-  registry.set('conversation.createRerollCandidate', createRerollCandidate);
   registry.set('conversation.switchBranchCandidate', switchBranchCandidate);
   registry.set('conversation.deleteBranchCandidate', deleteBranchCandidate);
   registry.set('conversation.restoreBranchCandidate', restoreBranchCandidate);

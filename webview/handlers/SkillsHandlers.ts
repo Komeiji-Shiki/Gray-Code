@@ -86,21 +86,20 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
             savedSkillsMap.set(skill.id, { enabled: skill.enabled, sendContent: skill.sendContent });
         }
         
-        // 获取所有 skills 并合并持久化配置
+        // 获取所有 skills 并合并持久化配置（只读：本接口不修改任何全局/会话状态）。
+        // 全局启用状态以 SkillsManager.enabledSkillIds 为唯一真源（与 getAllSkills 口径一致）；
+        // 对话隔离模式优先取会话级配置，缺省回退全局运行时状态——不再用硬编码 true 兜底，
+        // 避免把工具侧已禁用的 skill 静默重新启用（原实现 enableSkill/disableSkill +
+        // updateSkillsConfig 写副作用已移除，同步改由显式写操作 setSkillEnabled 负责）。
         const allSkills = skillsManager.getAllSkills();
         const enabledSkillIds = new Set(skillsManager.getEnabledSkills().map(skill => skill.id));
-        let globalStateChanged = false;
         const skills: SkillItem[] = allSkills.map(skill => {
             const saved = savedSkillsMap.get(skill.id);
-            const enabled = saved?.enabled ?? true;          // 默认启用
+            const enabled = conversationId
+                ? (saved?.enabled ?? enabledSkillIds.has(skill.id))
+                : enabledSkillIds.has(skill.id);
             const sendContent = saved?.sendContent ?? true;  // 默认发送内容 (deprecated)
 
-            if (!conversationId && enabledSkillIds.has(skill.id) !== enabled) {
-                globalStateChanged = enabled
-                    ? skillsManager.enableSkill(skill.id) || globalStateChanged
-                    : skillsManager.disableSkill(skill.id) || globalStateChanged;
-            }
-            
             return {
                 id: skill.id,
                 name: skill.name,
@@ -111,39 +110,6 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
                 source: skill.source
             };
         });
-
-        // 仅全局模式：将最新元数据同步回 SettingsManager
-        // 对话隔离模式下不改全局 settings
-        if (!conversationId) {
-            const finalSkillsToSync: SkillConfigItem[] = [];
-            
-            // 1. 添加当前存在的 skills
-            for (const s of skills) {
-                if (s.exists) {
-                    finalSkillsToSync.push({
-                        id: s.id,
-                        name: s.name,
-                        description: s.description,
-                        enabled: s.enabled,
-                        sendContent: s.sendContent
-                    });
-                }
-            }
-            
-            // 2. 补充配置中存在但磁盘上缺失的 skills（保留其原样）
-            for (const savedSkill of savedConfig.skills) {
-                if (!finalSkillsToSync.some(s => s.id === savedSkill.id)) {
-                    finalSkillsToSync.push(savedSkill);
-                }
-            }
-            
-            const currentSerialized = JSON.stringify(savedConfig.skills);
-            const nextSerialized = JSON.stringify(finalSkillsToSync);
-            if (finalSkillsToSync.length > 0 && currentSerialized !== nextSerialized) {
-                await ctx.settingsManager.updateSkillsConfig({ skills: finalSkillsToSync });
-                globalStateChanged = true;
-            }
-        }
         
         // 检查已保存但不再存在的 skills (保留它们在 UI 显示为已丢失)
         for (const savedSkill of savedSkills) {
@@ -157,13 +123,6 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
                     exists: false
                 });
             }
-        }
-        
-        // 同步完 enabled 状态后刷新 read_skill 工具声明，
-        // 确保 AI 看到的 Skill 列表和面板中的启用状态一致。
-        // 不加这一步的话，getSkillsConfig 中默认启用新 Skill 的逻辑不会反映到工具描述中。
-        if (globalStateChanged) {
-            toolRegistry.refreshTool('read_skill');
         }
         
         ctx.sendResponse(requestId, { skills });
@@ -212,8 +171,11 @@ export const setSkillEnabled: MessageHandler = async (data, requestId, ctx) => {
         const skill = skillsManager?.getSkill(id);
 
         if (normalizedConversationId) {
-            const skills = (await getConversationSkillsRaw(ctx, normalizedConversationId))
-                ?? [...ctx.settingsManager.getSkills()];
+            // 深拷贝后再修改：settingsManager.getSkills() 返回共享引用，浅拷贝只复制数组，
+            // 原地修改 target 会污染全局内存配置并破坏对话隔离（R2-08 复查）。
+            const skills = ((await getConversationSkillsRaw(ctx, normalizedConversationId))
+                ?? ctx.settingsManager.getSkills())
+                .map(s => ({ ...s }));
 
             const target = skills.find(s => s.id === id);
             if (target) {
@@ -269,8 +231,10 @@ export const removeSkillConfig: MessageHandler = async (data, requestId, ctx) =>
         const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
 
         if (normalizedConversationId) {
-            const skills = (await getConversationSkillsRaw(ctx, normalizedConversationId))
-                ?? [...ctx.settingsManager.getSkills()];
+            // 深拷贝后再过滤：避免与 SettingsManager 共享引用（同 setSkillEnabled）
+            const skills = ((await getConversationSkillsRaw(ctx, normalizedConversationId))
+                ?? ctx.settingsManager.getSkills())
+                .map(s => ({ ...s }));
 
             const updated = skills.filter(s => s.id !== id);
             if (updated.length !== skills.length) {
@@ -327,7 +291,7 @@ export const getSkillsDirectory: MessageHandler = async (data, requestId, ctx) =
 /**
  * 打开目录
  * 
- * 如果目录不存在则先创建，防止 vscode.env.openExternal 报错
+ * 如果目录不存在则先创建，防止 revealFileInOS 对不存在路径报错
  * （用户点击"打开 Skills 目录"时，~/.graycode/skills/ 可能尚未创建）
  */
 export const openDirectory: MessageHandler = async (data, requestId, ctx) => {
@@ -339,7 +303,9 @@ export const openDirectory: MessageHandler = async (data, requestId, ctx) => {
         }
         await fs.promises.mkdir(dirPath, { recursive: true });
         const uri = vscode.Uri.file(dirPath);
-        await vscode.env.openExternal(uri);
+        // revealFileInOS 在各平台行为一致（资源管理器中选中目标目录）；
+        // env.openExternal(file uri) 在部分平台会退化为打开默认文件管理器根目录。
+        await vscode.commands.executeCommand('revealFileInOS', uri);
         ctx.sendResponse(requestId, { success: true });
     } catch (error: any) {
         ctx.sendError(requestId, 'OPEN_DIRECTORY_ERROR', error.message || 'Failed to open directory');

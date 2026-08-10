@@ -122,18 +122,27 @@ interface SegmentIndexLike {
 }
 
 /**
- * 统计非空行数：单次遍历计数，避免 split 产生大量临时字符串（大段文件时更省内存）。
+ * 段文件内容缓存：runIntegrityCheck 单次运行内，checkHistoryIntegrity 已读过的
+ * 段内容供 readHistoryIdsFromSegments 复用，避免同一会话的段文件被读两遍。
+ * 键为段文件绝对路径；runIntegrityCheck 入口清空，保证每次检查从磁盘读取。
+ */
+const segmentContentCache = new Map<string, string>();
+const MAX_SEGMENT_CONTENT_CACHE_ENTRIES = 2000;
+
+/**
+ * 统计非空行数：indexOf('\n') 跳跃扫描，避免逐字符循环（大段文件时更快）。
  */
 function countNonEmptyLines(text: string): number {
     let count = 0;
     let lineStart = 0;
-    for (let i = 0; i <= text.length; i++) {
-        if (i === text.length || text[i] === '\n') {
-            let j = lineStart;
-            while (j < i && (text[j] === ' ' || text[j] === '\t' || text[j] === '\r')) j++;
-            if (j < i) count++;
-            lineStart = i + 1;
-        }
+    while (lineStart <= text.length) {
+        const nl = text.indexOf('\n', lineStart);
+        const lineEnd = nl === -1 ? text.length : nl;
+        let j = lineStart;
+        while (j < lineEnd && (text[j] === ' ' || text[j] === '\t' || text[j] === '\r')) j++;
+        if (j < lineEnd) count++;
+        if (nl === -1) break;
+        lineStart = nl + 1;
     }
     return count;
 }
@@ -256,6 +265,10 @@ export async function checkHistoryIntegrity(
             issues.push(issue('history', 'error', 'HISTORY_SEGMENT_FILE_MISSING',
                 `索引引用的段文件不存在: ${file}`, { conversationId, detail: { file } }));
             continue;
+        }
+        // 缓存段内容：供同一次检查中的 readHistoryIdsFromSegments 复用（避免段文件读两遍）
+        if (segmentContentCache.size < MAX_SEGMENT_CONTENT_CACHE_ENTRIES) {
+            segmentContentCache.set(segmentPath, content);
         }
         // 非空行统计：单次遍历计数，避免 split 产生大量临时字符串（大段文件时更省内存）
         const lineCount = countNonEmptyLines(content);
@@ -611,11 +624,21 @@ export async function readHistoryIdsFromSegments(baseDir: string, conversationId
         if (!isSafeSegmentFileName(segment.file)) {
             continue;
         }
+        const segmentPath = path.join(historyDir, segment.file);
         let content: string;
-        try {
-            content = await fsp.readFile(path.join(historyDir, segment.file), 'utf8');
-        } catch {
-            continue;
+        const cached = segmentContentCache.get(segmentPath);
+        if (cached !== undefined) {
+            // checkHistoryIntegrity 已读过该段：直接复用，避免重复读盘
+            content = cached;
+        } else {
+            try {
+                content = await fsp.readFile(segmentPath, 'utf8');
+            } catch {
+                continue;
+            }
+            if (segmentContentCache.size < MAX_SEGMENT_CONTENT_CACHE_ENTRIES) {
+                segmentContentCache.set(segmentPath, content);
+            }
         }
         for (const line of content.split('\n')) {
             if (!line.trim()) {
@@ -661,6 +684,9 @@ export interface RunIntegrityCheckOptions {
  */
 export async function runIntegrityCheck(options: RunIntegrityCheckOptions): Promise<IntegrityReport> {
     const conversationIds = options.conversationIds ?? (await listConversationIds(options.baseDir));
+
+    // 清空段内容缓存：每次检查都从磁盘重新读取，避免跨运行读到过期内容
+    segmentContentCache.clear();
 
     const historyIssues: IntegrityIssue[] = [];
     const checkpointIssues: IntegrityIssue[] = [];

@@ -124,8 +124,10 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
             prompt: '请分析漫画图片 page-15.png',
             runId: 'partial_hallucination'
         });
-        // 跳过两次 run 级退避（10s + 30s），测试不应真实等待。
-        await jest.advanceTimersByTimeAsync(40_000);
+        // 跳过两次 run 级退避：10s + 30s 为基准间隔，±30% 随机抖动后单次最长 13s / 39s，
+        // 合计最长约 52s——固定推进 40s 时第二个退避定时器可能落在推进窗口之外，fake timer
+        // 永不触发，executor 挂在 waitWithAbort 上导致用例超时；推进 60s 覆盖最坏情况。
+        await jest.advanceTimersByTimeAsync(60_000);
         const result = await resultPromise;
 
         // 空响应导致本轮失败（与线上复现案例一致：上游返回空响应）
@@ -288,8 +290,9 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
             prompt: '请分析漫画图片',
             runId: 'partial_two_tool_turns'
         });
-        // 跳过两次 run 级退避（10s + 30s），测试不应真实等待。
-        await jest.advanceTimersByTimeAsync(40_000);
+        // 跳过两次 run 级退避：10s + 30s 为基准间隔，±30% 随机抖动后合计最长约 52s，
+        // 固定推进 60s 覆盖最坏情况（推进 40s 时第二个退避定时器可能落在窗口外挂起）。
+        await jest.advanceTimersByTimeAsync(60_000);
         const result = await resultPromise;
 
         expect(result.success).toBe(false);

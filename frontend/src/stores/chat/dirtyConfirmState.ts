@@ -38,11 +38,50 @@ export interface DirtyConfirmPending {
   files: string[]
   restore?: DirtyRestorePending
   switch?: DirtySwitchPending
+  /**
+   * 发起该待确认动作时的会话 ID（BCP-05 归属校验）。
+   * 切换会话时按此字段清空；确认/取消时校验归属，避免把续作动作发到错误会话。
+   * 旧写入方（未带归属）保持 undefined = 无归属，清空时一视同仁。
+   */
+  conversationId?: string | null
 }
 
 /** 当前待确认的 dirty 恢复动作（null = 无待确认） */
 export const pendingDirtyConfirm = ref<DirtyConfirmPending | null>(null)
 
-export function clearPendingDirtyConfirm(): void {
+/**
+ * 登记待确认动作并记录发起会话归属。
+ *
+ * @param conversationId 发起时的会话 ID（可为 null，如新建会话场景）
+ * @param pending 待确认动作
+ */
+export function setPendingDirtyConfirm(
+  conversationId: string | null | undefined,
+  pending: DirtyConfirmPending
+): void {
+  pendingDirtyConfirm.value = {
+    ...pending,
+    conversationId: conversationId ?? null
+  }
+}
+
+/**
+ * 清空待确认动作（带归属校验）。
+ *
+ * - 不传 conversationId（如 DirtyFilesConfirm.vue 的确认/取消）：无条件清空（旧语义）；
+ * - 传入 conversationId 时：仅当待确认动作无归属或归属与当前会话一致才清空——
+ *   动作属于其它会话时保留，避免把续作动作误发到新会话。
+ */
+export function clearPendingDirtyConfirm(conversationId?: string | null): void {
+  const pending = pendingDirtyConfirm.value
+  if (!pending) return
+  if (
+    typeof conversationId === 'string' &&
+    typeof pending.conversationId === 'string' &&
+    pending.conversationId !== conversationId
+  ) {
+    // 归属不匹配：该确认框属于其它会话，不在本会话清空
+    return
+  }
   pendingDirtyConfirm.value = null
 }

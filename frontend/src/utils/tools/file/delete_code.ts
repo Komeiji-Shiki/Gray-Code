@@ -16,6 +16,7 @@ interface DeleteEntry {
 // 注册 delete_code 工具
 registerTool('delete_code', {
   name: 'delete_code',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '删除代码',
   icon: 'codicon-diff-removed',
   

@@ -2,6 +2,8 @@ import {
   extractReviewCardData,
   isReviewToolName
 } from './reviewCards'
+// WP14：统一 type guard —— 本文件的 asRecord 语义（返回 null、不排除数组）对应 asRecordOrNull
+import { asRecordOrNull as asRecord } from './typeGuards'
 
 export type ContinuationIntent = 'generate_plan_now' | 'implement_now'
 export type ContinuationSourceArtifactType = 'design' | 'review' | 'plan'
@@ -24,10 +26,6 @@ export interface ToolContinuationContext {
 
 function normalizePrompt(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : null
 }
 
 function isContinuationIntent(value: unknown): value is ContinuationIntent {

@@ -36,6 +36,11 @@ export function useCheckpointManifest(
     return DEFAULT_PROFILE_IDS.filter(id => snap.enabledProfiles[id] !== false)
   })
 
+  // 数组深比较（顺序敏感）：join('\n') 在模式本身含换行或顺序不同时会误判
+  function samePatternList(a: string[], b: string[]): boolean {
+    return a.length === b.length && a.every((value, index) => value === b[index])
+  }
+
   // 快照规则与当前规则是否不一致（EX-11：解释“快照规则 vs 当前规则”）
   // 仅当配置已成功加载（无 loadError）时比较，避免默认配置误报差异。
   function manifestRulesChanged(): boolean {
@@ -44,7 +49,8 @@ export function useCheckpointManifest(
     const cur = config.exclusion
     if (!snap || !cur) return false
     if (snap.maxFileSizeBytes !== cur.maxFileSizeBytes) return true
-    if ((snap.customPatterns || []).join('\n') !== (cur.customPatterns || []).join('\n')) return true
+    // 深比较：join('\n') 在模式本身含换行或顺序不同时会误判
+    if (!samePatternList(snap.customPatterns || [], cur.customPatterns || [])) return true
     const snapProfiles = JSON.stringify(snap.enabledProfiles || {}, Object.keys(snap.enabledProfiles || {}).sort())
     const curProfiles = JSON.stringify(cur.enabledProfiles || {}, Object.keys(cur.enabledProfiles || {}).sort())
     return snapProfiles !== curProfiles

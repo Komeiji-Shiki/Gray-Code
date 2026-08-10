@@ -359,6 +359,17 @@ class TaskManagerClass {
         for (const [id, task] of [...this.activeTasks]) {
             const stale = now - task.startTime > TaskManagerClass.CLEANUP_STALE_TASK_TIMEOUT_MS;
             if (task.abortController.signal.aborted || stale) {
+                // 修改原因：旧实现删除/补发事件前从不 abort 控制器，泄漏任务的实际操作
+                //          （终端进程、图像生成请求等）会脱离任务表继续运行。
+                // 修改方式：删除前先 abort 控制器；但对「显式无超时且仍在运行」的任务
+                //          （timeout=0 或后台终端命令 background=true）跳过兜底，
+                //          避免误杀合法长任务。
+                if (!task.abortController.signal.aborted) {
+                    if (task.metadata?.timeout === 0 || task.metadata?.background === true) {
+                        continue;
+                    }
+                    task.abortController.abort();
+                }
                 this.activeTasks.delete(id);
                 this.emitEvent({
                     taskId: id,

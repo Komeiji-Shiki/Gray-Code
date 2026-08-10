@@ -79,7 +79,12 @@ export class SubAgentConcurrencyLimiter {
         if (this.running.has(runId)) {
             return;
         }
-        if (this.queue.length === 0 && this.hasFreeSlot()) {
+        // 修改原因：容量可能在排队期间被调大，若 onCapacityChanged 未及时触发，
+        //          队列头仍被旧容量卡住，直到有运行中的 run 释放才补位，形成长尾延迟。
+        // 修改方式：acquire 入口先按最新容量 drainQueue 补位（FIFO 保持：排队者优先），
+        //          随后有空位才直接分配，避免新请求跳过队列。
+        this.drainQueue();
+        if (this.hasFreeSlot()) {
             this.running.add(runId);
             return;
         }

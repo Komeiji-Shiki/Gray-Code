@@ -24,7 +24,8 @@ export class ProxySettingsService {
      * 获取代理设置
      */
     getProxySettings(): Readonly<ProxySettings> {
-        return this.core.settings.proxy || { enabled: false };
+        // 深拷贝返回：直接返回活引用会让调用方原地修改污染未保存的设置状态
+        return this.core.settings.proxy ? this.core.cloneConfig(this.core.settings.proxy) : { enabled: false };
     }
 
     /**

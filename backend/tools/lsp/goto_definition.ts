@@ -79,14 +79,20 @@ Returns the complete definition code with line numbers.`;
         handler: async (args, context): Promise<ToolResult> => {
             const filePath = args.path as string;
             const line = args.line as number;
-            const column = (args.column as number) || 1;
+            // column 校验：仅接受有限正整数（负数/小数/NaN 构造 Position 会抛 Illegal argument），
+            // 非法或缺失时回退默认 1（与 find_references 行为一致）
+            const rawColumn = args.column;
+            const column = (typeof rawColumn === 'number' && Number.isInteger(rawColumn) && rawColumn >= 1)
+                ? rawColumn
+                : 1;
             const symbolName = args.symbol as string | undefined;
             
             if (!filePath) {
                 return { success: false, error: 'path is required' };
             }
-            if (typeof line !== 'number' || line < 1) {
-                return { success: false, error: 'line must be a positive number' };
+            // line 校验：仅接受有限正整数（NaN/小数/Infinity 会穿透旧的 line < 1 检查）
+            if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
+                return { success: false, error: 'line must be a positive integer (1-based)' };
             }
             
             const uri = resolveUri(filePath);

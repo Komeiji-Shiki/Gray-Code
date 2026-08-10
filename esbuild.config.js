@@ -35,7 +35,8 @@ const buildOptions = {
     keepNames: true,
     tsconfig: 'tsconfig.json',
     define: {
-        'process.env.NODE_ENV': '"production"',
+        // watch 模式下保留 development 语义，正式构建固定为 production
+        'process.env.NODE_ENV': isWatch ? '"development"' : '"production"',
     },
 };
 

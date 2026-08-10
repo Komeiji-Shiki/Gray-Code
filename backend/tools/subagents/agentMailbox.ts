@@ -164,8 +164,23 @@ export class AgentMailbox {
         if (!conversationId || !runId) {
             return;
         }
-        this.knownRuns.get(conversationId)?.delete(runId);
+        // 修改原因：会话下最后一个 run 注销后，knownRuns 留下空的会话 Map 项（长会话残留）。
+        // 修改方式：注销后该会话已无任何已知 run 时，一并删除会话条目（主会话为隐式已知，
+        //          不占用 knownRuns 条目，不受影响）。
+        const convRuns = this.knownRuns.get(conversationId);
+        convRuns?.delete(runId);
+        if (convRuns && convRuns.size === 0) {
+            this.knownRuns.delete(conversationId);
+        }
         this.inboxes.get(conversationId)?.delete(runId);
+        // 修改原因：lastUserInterruptAt 只增不删，长会话中残留旧时间戳。
+        // 修改方式：本会话已无任何已知 run（且无残留 inbox）时一并清理防刷屏时间戳，
+        //          下一轮用户打断从全新状态开始。
+        const remainingRuns = this.knownRuns.get(conversationId);
+        const convInbox = this.inboxes.get(conversationId);
+        if ((!remainingRuns || remainingRuns.size === 0) && (!convInbox || convInbox.size === 0)) {
+            this.lastUserInterruptAt.delete(conversationId);
+        }
     }
 
     /**
@@ -469,6 +484,10 @@ export class AgentMailbox {
             return;
         }
         this.inboxes.get(conversationId)?.delete(MAIN_SESSION_RUN_ID);
+        // 修改原因：lastUserInterruptAt 只增不删；轮次边界（新的真实用户消息到来）后，
+        //          上一轮的防刷屏时间戳已无意义。
+        // 修改方式：随主会话 inbox 一并清理，避免旧记录残留下个轮次。
+        this.lastUserInterruptAt.delete(conversationId);
     }
 
     /**

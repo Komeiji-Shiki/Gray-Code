@@ -130,6 +130,49 @@ interface PinnedFileCacheEntry {
 /** 固定文件内容缓存：key=绝对路径；TTL + mtime 双失效 */
 const pinnedFileCache = new Map<string, PinnedFileCacheEntry>()
 
+/** 固定文件内容缓存条目数上限（超出后按 LRU 淘汰最久未访问条目） */
+export const PINNED_FILE_CACHE_MAX_ENTRIES = 32
+
+/** 固定文件内容缓存累计内容字节预算（超出后继续淘汰最久未访问条目直到达标） */
+export const PINNED_FILE_CACHE_MAX_TOTAL_BYTES = 16 * 1024 * 1024 // 16MB
+
+/**
+ * 写入固定文件缓存并执行 LRU 淘汰：
+ * - 条目数超过 PINNED_FILE_CACHE_MAX_ENTRIES 时淘汰最久未访问（Map 头部）的条目
+ * - 累计内容字节超过 PINNED_FILE_CACHE_MAX_TOTAL_BYTES 时继续淘汰直到达标
+ */
+function setPinnedFileCache(fullPath: string, entry: PinnedFileCacheEntry): void {
+    pinnedFileCache.delete(fullPath)
+    pinnedFileCache.set(fullPath, entry)
+    let totalBytes = 0
+    for (const [, cached] of pinnedFileCache) {
+        totalBytes += cached.bytesRead
+    }
+    while (
+        pinnedFileCache.size > PINNED_FILE_CACHE_MAX_ENTRIES ||
+        totalBytes > PINNED_FILE_CACHE_MAX_TOTAL_BYTES
+    ) {
+        const oldestKey = pinnedFileCache.keys().next().value as string | undefined
+        if (oldestKey === undefined) {
+            break
+        }
+        const evicted = pinnedFileCache.get(oldestKey)
+        pinnedFileCache.delete(oldestKey)
+        if (evicted) {
+            totalBytes -= evicted.bytesRead
+        }
+    }
+}
+
+/** 触碰缓存条目刷新 LRU 顺序（移到 Map 尾部 = 最近访问） */
+function touchPinnedFileCache(fullPath: string): void {
+    const cached = pinnedFileCache.get(fullPath)
+    if (cached) {
+        pinnedFileCache.delete(fullPath)
+        pinnedFileCache.set(fullPath, cached)
+    }
+}
+
 /**
  * 读取固定文件内容并应用单文件大小上限：
  * 小文件整体读取；大文件只读取前 PINNED_FILE_MAX_BYTES 字节（不把整文件载入内存）。
@@ -819,7 +862,8 @@ export class PromptManager {
         template: string,
         runtime?: DynamicRuntimeContext,
         diffBase?: DynamicContextDiffBase,
-        prebuiltModules?: Record<string, string>
+        prebuiltModules?: Record<string, string>,
+        templateFingerprintOverride?: string
     ): string {
         const settingsManager = getGlobalSettingsManager()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
@@ -849,12 +893,14 @@ export class PromptManager {
             modules['MEMORY'] = this.generateMemorySection()
         }
         // prebuiltModules 由 getPromptContextBundle 一次性生成并复用，避免每条 entry 重复渲染文件树/诊断。
+        // 差分指纹：entries 模式下传聚合指纹（全部动态条目内容拼接后的指纹），与上一轮缓存基准一致；
+        // 否则对单条模板内容算指纹（legacy 等路径的原有行为）。
         Object.assign(
             modules,
             this.applySectionDiff(
                 prebuiltModules ?? this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys),
                 diffBase,
-                fingerprint(template)
+                templateFingerprintOverride ?? fingerprint(template)
             )
         )
 
@@ -871,9 +917,10 @@ export class PromptManager {
         content: string,
         runtime?: DynamicRuntimeContext,
         diffBase?: DynamicContextDiffBase,
-        prebuiltModules?: Record<string, string>
+        prebuiltModules?: Record<string, string>,
+        templateFingerprintOverride?: string
     ): string {
-        return this.renderPromptTemplateContent(content, runtime, diffBase, prebuiltModules)
+        return this.renderPromptTemplateContent(content, runtime, diffBase, prebuiltModules, templateFingerprintOverride)
     }
     
     /**
@@ -931,7 +978,10 @@ export class PromptManager {
                         dynamicEntryKeys.add(key)
                     }
                 }
-                dynamicEntryFingerprintSource += entry.content
+                // 用不可见分隔符（'\u0000'）连接各条内容：无分隔符时 ['AB','C'] 与 ['A','BC']
+                // 拼接结果相同，指纹无法捕获条目边界变化；分隔符保证内容重新分布
+                // （新增/删除/合并条目）也会改变聚合指纹。
+                dynamicEntryFingerprintSource += entry.content + '\u0000'
             }
             const sectionValues = dynamicEntryKeys.size > 0
                 ? this.buildDynamicPromptModules(
@@ -955,7 +1005,10 @@ export class PromptManager {
                     continue
                 }
 
-                const text = this.renderPromptEntryContent(entry.content, runtime, options?.diffBase, sectionValues)
+                // 差分基准指纹必须是聚合指纹（dynamicTemplateFingerprint）：diffBase.templateFingerprint
+                // 存的就是聚合指纹，若按单条 entry 内容算指纹，多动态条目时永远与基准不相等，
+                // 每次都会触发全量发送，差分功能失效。
+                const text = this.renderPromptEntryContent(entry.content, runtime, options?.diffBase, sectionValues, dynamicTemplateFingerprint)
                 if (!text.trim()) {
                     continue
                 }
@@ -1459,6 +1512,7 @@ export class PromptManager {
                     content = cached.content
                     truncated = cached.truncated
                     bytesRead = cached.bytesRead
+                    touchPinnedFileCache(fullPath)
                 } else {
                     let stat: fs.Stats
                     try {
@@ -1475,9 +1529,10 @@ export class PromptManager {
                         content = cached.content
                         truncated = cached.truncated
                         bytesRead = cached.bytesRead
+                        touchPinnedFileCache(fullPath)
                     } else {
                         const read = readPinnedFileCapped(fullPath, stat.size)
-                        pinnedFileCache.set(fullPath, {
+                        setPinnedFileCache(fullPath, {
                             content: read.content,
                             mtimeMs: stat.mtimeMs,
                             bytesRead: read.bytesRead,

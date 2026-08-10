@@ -33,6 +33,8 @@ const statsCache = new Map<string, CachedStats>();
 /** 内存明细缓存与目录监听（懒初始化，扩展 dispose 时释放） */
 let usageCache: UsageStatsCache | undefined;
 let disposeUsageWatcher: (() => void) | undefined;
+/** 当前 watcher 绑定的 conversations 目录（storagePath.migrate 后目录变化需重建） */
+let usageCacheDir: string | undefined;
 
 function cacheKey(startTime?: number, endTime?: number): string {
     return `${startTime ?? ''}:${endTime ?? ''}`;
@@ -43,18 +45,28 @@ function cacheKey(startTime?: number, endTime?: number): string {
  * 拿不到 conversations 目录（内存存储等）时返回 undefined，统计退化全量扫描。
  */
 function getOrInitUsageCache(ctx: HandlerContext): UsageStatsCache | undefined {
-    if (usageCache) return usageCache;
     const conversationsDir = ctx.conversationManager.getConversationsDirFsPath?.();
     if (!conversationsDir) return undefined;
+    // 存储路径迁移后 conversations 目录变化：旧缓存与 watcher 仍绑定旧目录（R2-08 复查）。
+    // StoragePathManager 无迁移事件，用「目录与缓存绑定目录不一致」检测迁移并重建。
+    if (usageCache && usageCacheDir !== conversationsDir) {
+        disposeUsageWatcher?.();
+        disposeUsageWatcher = undefined;
+        usageCache = undefined;
+        usageCacheDir = undefined;
+    }
+    if (usageCache) return usageCache;
     const candidate = new UsageStatsCache();
     try {
         const disposeWatcher = startUsageDirectoryWatcher(conversationsDir, candidate);
         usageCache = candidate;
+        usageCacheDir = conversationsDir;
         disposeUsageWatcher = disposeWatcher;
         return usageCache;
     } catch (error) {
         usageCache = undefined;
         disposeUsageWatcher = undefined;
+        usageCacheDir = undefined;
         console.warn('[UsageHandlers] Failed to initialize usage directory watcher:', error);
         return undefined;
     }
@@ -65,6 +77,7 @@ export function disposeUsageCache(): void {
     disposeUsageWatcher?.();
     disposeUsageWatcher = undefined;
     usageCache = undefined;
+    usageCacheDir = undefined;
     // 结果缓存同样要清空：扩展重载/存储路径迁移后 statsCache 仍会命中旧统计直到 TTL 过期
     statsCache.clear();
 }

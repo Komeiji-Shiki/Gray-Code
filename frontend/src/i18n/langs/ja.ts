@@ -3661,6 +3661,18 @@ const ja: LanguageMessages = {
                 daysAgo: '{days}日前'
             }
         }
+    },
+
+    utils: {
+        tools: {
+            noFile: 'ファイルなし',
+            changes: '{count} 件の変更',
+            cwdLabel: 'ディレクトリ: {cwd}',
+            recursiveSuffix: ' (再帰)',
+            dirCount: '{count} 個のディレクトリ',
+            searchModeSearch: '検索',
+            searchModeReplace: '検索と置換'
+        }
     }
 };
 

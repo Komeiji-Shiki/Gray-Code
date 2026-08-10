@@ -125,12 +125,16 @@ function isKeyValueItem(obj: Record<string, unknown>): boolean {
  *
  * 仅用于 exportConfig 的 includeSensitive=false 路径：
  * - 任意层级的 apiKey / token / secret / authorization 等字段 → '***REDACTED***'
- * - customHeaders 条目（{ key, value, enabled }）的 value（可能为 Authorization）→ '***REDACTED***'
- * - customBody 条目的 value 及 advanced 模式的 json（可能内嵌密钥）→ '***REDACTED***'
+ * - customHeaders / customBody.items 条目（{ key, value, enabled }）的 value（可能为 Authorization）→ '***REDACTED***'
+ * - customBody advanced 模式的 json（可能内嵌密钥）→ '***REDACTED***'
+ * - url 查询参数中疑似密钥（?key=/?token= 等）→ '***REDACTED***'
+ *
+ * 脱敏按上下文精准触发：只有进入 customHeaders / customBody 子树后，条目 value
+ * 与 json 字段才脱敏；其它含 key/enabled 字段的对象（如工具配置）不受影响。
  */
-function redactSensitiveConfig(value: unknown): unknown {
+function redactSensitiveConfig(value: unknown, inCustomContext = false): unknown {
     if (Array.isArray(value)) {
-        return value.map((item) => redactSensitiveConfig(item));
+        return value.map((item) => redactSensitiveConfig(item, inCustomContext));
     }
     if (value === null || typeof value !== 'object') {
         return value;
@@ -142,18 +146,53 @@ function redactSensitiveConfig(value: unknown): unknown {
     for (const [key, val] of Object.entries(source)) {
         if (isSensitiveFieldName(key)) {
             result[key] = '***REDACTED***';
-        } else if (key === 'value' && typeof val === 'string' && isKeyValueItem(source)) {
-            // customHeaders / customBody 条目的 value：可能为 Authorization 或内嵌密钥的 JSON
+        } else if (key === 'url' && typeof val === 'string') {
+            // URL 查询参数可能内嵌密钥（?key=/?token= 等）
+            result[key] = redactUrlQuerySecrets(val);
+        } else if (key === 'value' && typeof val === 'string' && inCustomContext && isKeyValueItem(source)) {
+            // 仅在 customHeaders / customBody.items 条目上下文中脱敏 value：
+            // 其它含 key/enabled 字段的对象（如工具配置）的 value 不脱敏
             result[key] = '***REDACTED***';
-        } else if (key === 'json' && typeof val === 'string') {
+        } else if (key === 'json' && typeof val === 'string' && inCustomContext) {
             // customBody advanced 模式：整个 JSON 字符串可能内嵌密钥
             result[key] = '***REDACTED***';
+        } else if (key === 'customHeaders' || key === 'customBody') {
+            // 进入 customHeaders / customBody 上下文：条目 value 与 advanced json 可能含密钥
+            result[key] = redactSensitiveConfig(val, true);
         } else {
-            result[key] = redactSensitiveConfig(val);
+            result[key] = redactSensitiveConfig(val, inCustomContext);
         }
     }
     
     return result;
+}
+
+/** URL 查询参数中可能携带密钥的参数名（不区分大小写） */
+const SENSITIVE_URL_PARAM_NAMES: ReadonlySet<string> = new Set([
+    'key', 'apikey', 'api_key', 'api-key', 'token', 'access_token',
+    'auth_token', 'secret', 'password', 'authorization', 'signature', 'sig'
+]);
+
+/**
+ * 脱敏 URL 查询参数中疑似密钥的值（如 https://host/v1?key=sk-xxx）
+ *
+ * 仅用于 exportConfig 的 includeSensitive=false 路径；无法解析的 URL 原样返回。
+ */
+function redactUrlQuerySecrets(url: string): string {
+    try {
+        const parsed = new URL(url);
+        let changed = false;
+        for (const [name, value] of Array.from(parsed.searchParams.entries())) {
+            if (value && SENSITIVE_URL_PARAM_NAMES.has(name.toLowerCase())) {
+                parsed.searchParams.set(name, '***REDACTED***');
+                changed = true;
+            }
+        }
+        return changed ? parsed.toString() : url;
+    } catch {
+        // 无法解析的 URL 不猜测改写，原样返回
+        return url;
+    }
 }
 
 /**
@@ -168,22 +207,35 @@ export class ConfigManager {
     /** 是否已加载 */
     private loaded: boolean = false;
     
-    constructor(
-        private storageAdapter: ConfigStorageAdapter
-    ) {}
+    /** 加载中的 Promise（ensureLoaded 并发去重：避免并发调用重复 list/load） */
+    private loadingPromise: Promise<void> | null = null;
     
     /**
      * 初始化管理器（加载所有配置到缓存）
+     *
+     * 并发去重：加载进行中时后续调用直接复用同一 Promise；
+     * 各条配置并行加载，单条损坏/读取失败只跳过该条并告警。
      */
     private async ensureLoaded(): Promise<void> {
         if (this.loaded) {
             return;
         }
+        if (this.loadingPromise) {
+            return this.loadingPromise;
+        }
         
+        this.loadingPromise = this.loadAllConfigs().finally(() => {
+            this.loadingPromise = null;
+        });
+        return this.loadingPromise;
+    }
+    
+    private async loadAllConfigs(): Promise<void> {
         const configIds = await this.storageAdapter.list();
         
-        // 逐条容错：单条配置损坏/读取失败只跳过该条并告警，不影响整个 ConfigManager 初始化
-        for (const id of configIds) {
+        // 并行加载 + 逐条容错：单条配置损坏/读取失败只跳过该条并告警，
+        // 不影响整个 ConfigManager 初始化
+        await Promise.all(configIds.map(async (id) => {
             try {
                 const config = await this.storageAdapter.load(id);
                 if (config) {
@@ -192,10 +244,14 @@ export class ConfigManager {
             } catch (error) {
                 console.warn(`[ConfigManager] Failed to load config ${id}, skipping:`, error);
             }
-        }
+        }));
         
         this.loaded = true;
     }
+    
+    constructor(
+        private storageAdapter: ConfigStorageAdapter
+    ) {}
     
     // ========== CRUD 操作 ==========
     
@@ -362,6 +418,12 @@ export class ConfigManager {
             throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(input.type) }));
         }
 
+        // idOverride 用于导入等场景：若该 ID 已存在，静默覆盖会丢失原配置；
+        // 覆盖现有配置应走 updateConfig / importConfig(overwrite) / replaceConfig 路径
+        if (idOverride && this.configCache.has(idOverride)) {
+            throw new Error(t('modules.config.errors.configExists', { configId: idOverride }));
+        }
+
         // 生成唯一 ID（允许调用方覆盖，用于导入场景保留原始 id）
         const id = idOverride || randomBytes(16).toString('hex');
         const now = Date.now();
@@ -483,6 +545,40 @@ export class ConfigManager {
     }
     
     /**
+     * 整体替换配置（覆盖导入用）
+     *
+     * 与 updateConfig 的深合并语义不同：以传入配置为最终状态整体替换——
+     * 旧配置中导入文件未含有的子字段会被移除、数组会被清空（updateConfig 对纯对象
+     * 字段走 deepMerge，旧配置的多余子字段/数组项（如 customBody.items）无法清空）。
+     * 保留 id 与 createdAt，updatedAt 更新为当前时间。
+     */
+    async replaceConfig(configId: string, config: ChannelConfig): Promise<ChannelConfig> {
+        await this.ensureLoaded();
+        
+        const existing = this.configCache.get(configId);
+        if (!existing) {
+            throw new Error(t('modules.config.errors.configNotFound', { configId }));
+        }
+        
+        // 运行时校验渠道类型（导入来源不受 TypeScript 约束）
+        if (!isChannelType(config.type)) {
+            throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(config.type) }));
+        }
+        
+        const replaced: ChannelConfig = {
+            ...config,
+            id: configId,
+            createdAt: existing.createdAt,
+            updatedAt: Date.now()
+        } as ChannelConfig;
+        
+        await this.storageAdapter.save(replaced);
+        this.configCache.set(configId, replaced);
+        
+        return JSON.parse(JSON.stringify(replaced)) as ChannelConfig;
+    }
+    
+    /**
      * 原子合并模型列表（基于最新缓存合并后写回，避免 ModelsHandler 的 check-then-write 竞态）。
      *
      * mergeFn 在 ensureLoaded 之后同步执行、期间无 await，同一时刻只有一个调用能基于最新列表合并。
@@ -593,7 +689,8 @@ export class ConfigManager {
         const warnings: string[] = [];
         
         // 基础字段验证
-        if (!config.name || config.name.trim().length === 0) {
+        // 非字符串 name（webview/导入来源）直接调用 .trim() 会抛 TypeError，先做类型校验
+        if (typeof config.name !== 'string' || config.name.trim().length === 0) {
             errors.push(t('modules.config.validation.nameRequired'));
         }
         
@@ -786,8 +883,8 @@ export class ConfigManager {
             }
         }
         
-        // 最近创建的配置
-        const sorted = [...configs].sort((a, b) => b.createdAt - a.createdAt);
+        // 最近创建的配置（缺失 createdAt 的导入配置按 0 参与排序，避免 NaN 比较）
+        const sorted = [...configs].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
         const recentConfigs = sorted.slice(0, 5).map(c => ({
             id: c.id,
             name: c.name,
@@ -850,10 +947,12 @@ export class ConfigManager {
                 throw new Error(t('modules.config.errors.configExists', { configId: configData.id }));
             }
             
-            // 覆盖现有配置
-            const { id, createdAt, ...updates } = configData;
-            await this.updateConfig(id, updates);
-            return id;
+            // 覆盖导入：整体替换语义。updateConfig 对纯对象字段（options/customBody 等）
+            // 走深合并，旧配置的多余子字段/数组项（如 customBody.items）无法清空，
+            // 与「导入文件即最终状态」的预期不符；replaceConfig 直接以导入配置为准替换
+            // （保留原 id 与 createdAt，与 SettingsExporter.importChannelConfigs 一致）
+            await this.replaceConfig(configData.id, configData);
+            return configData.id;
         }
         
         // 创建新配置（保留原始 id，防止 activeChannelId 悬空）

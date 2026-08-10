@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import type { EditorNode } from '../../types/editorNode'
 import type { PromptContextItem } from '../../types/promptContext'
@@ -19,6 +19,8 @@ const nodes = computed<EditorNode[]>(() => parsed.value.nodes)
 const hoveredContextId = ref<string | null>(null)
 const previewContext = ref<PromptContextItem | null>(null)
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
+// 离开后延迟隐藏预览的定时器（onUnmounted 统一清理）
+let hidePreviewTimer: ReturnType<typeof setTimeout> | null = null
 
 function getContextIcon(ctx: PromptContextItem): { class: string; isFileIcon: boolean } {
   if (ctx.type === 'file' && ctx.filePath) {
@@ -56,12 +58,29 @@ function handleContextMouseLeave() {
     clearTimeout(hoverTimer)
     hoverTimer = null
   }
-  setTimeout(() => {
+  // 先清除旧的隐藏定时器，避免连续进入/离开时旧定时器提前隐藏预览
+  if (hidePreviewTimer) {
+    clearTimeout(hidePreviewTimer)
+    hidePreviewTimer = null
+  }
+  hidePreviewTimer = setTimeout(() => {
     if (!hoveredContextId.value) {
       previewContext.value = null
     }
   }, 100)
 }
+
+// 组件卸载时清理所有定时器，避免组件销毁后仍写入状态
+onUnmounted(() => {
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+  if (hidePreviewTimer) {
+    clearTimeout(hidePreviewTimer)
+    hidePreviewTimer = null
+  }
+})
 
 function truncatePreview(content: string, maxLines = 10, maxChars = 500): string {
   const lines = content.split('\n').slice(0, maxLines)

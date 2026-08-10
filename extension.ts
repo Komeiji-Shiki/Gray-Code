@@ -35,17 +35,20 @@ export function activate(context: vscode.ExtensionContext) {
     Logger.setOutputChannel((line) => outputChannel.appendLine(line));
     // Logger.setLevel(LogLevel.DEBUG); // 取消注释以启用 DEBUG 级别日志
 
-    // 以当前扩展自身的 packageJSON 初始化产品元数据（运行时版本唯一来源，供 MCP clientInfo 等使用）
-    initializeProductMetadata(context);
+    // 关键初始化分阶段保护：任何一步失败只记日志，不阻断后续基础命令注册；
+    // 已注册项均挂在 context.subscriptions 上，停用时由 VS Code 统一 dispose。
+    try {
+        // 以当前扩展自身的 packageJSON 初始化产品元数据（运行时版本唯一来源，供 MCP clientInfo 等使用）
+        initializeProductMetadata(context);
 
-    log.info('GrayCode extension is now active!');
+        log.info('GrayCode extension is now active!');
 
-    // Allow i18n to follow VS Code display language until settings load.
-    setDetectedLanguage(vscode.env.language);
-    setBackendLanguage('auto');
+        // Allow i18n to follow VS Code display language until settings load.
+        setDetectedLanguage(vscode.env.language);
+        setBackendLanguage('auto');
 
-    // 注册聊天视图提供者
-    chatViewProvider = new ChatViewProvider(context);
+        // 注册聊天视图提供者
+        chatViewProvider = new ChatViewProvider(context);
     
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
@@ -59,6 +62,9 @@ export function activate(context: vscode.ExtensionContext) {
             }
         )
     );
+    } catch (error) {
+        console.error('[GrayCode] activate: core initialization failed:', error);
+    }
 
     // 注册命令：打开聊天面板
     context.subscriptions.push(
@@ -252,6 +258,8 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // ====== Diff / Selection 提供者与命令注册（分阶段保护：失败仅记日志并继续） ======
+    try {
     // 注册 DiffCodeLensProvider
     const diffCodeLensProvider = getDiffCodeLensProvider();
     
@@ -270,7 +278,6 @@ export function activate(context: vscode.ExtensionContext) {
         ],
         diffCodeLensProvider
     );
-    context.subscriptions.push(diffCodeLensDisposable);
     
     // ========== Selection Context (Hover + Code Actions) ==========
     const selectionContextProvider = getSelectionContextProvider();
@@ -382,7 +389,6 @@ export function activate(context: vscode.ExtensionContext) {
         ],
         diffInlineProvider
     );
-    context.subscriptions.push(diffInlineDisposable);
 
     // 注册 Code Action 提供者（灯泡操作，自定义来源 "GrayCode Diff"）
     const diffCodeActionDisposable = vscode.languages.registerCodeActionsProvider(
@@ -537,12 +543,18 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+    } catch (error) {
+        console.error('[GrayCode] activate: diff provider registration failed:', error);
+    }
 
     log.info('GrayCode extension activated successfully!');
 }
 
 export function deactivate() {
     log.info('GrayCode extension deactivating...');
+
+    // 清空 Logger 的 OutputChannel writer：channel 已随 context.subscriptions 销毁，停用后不再写入
+    Logger.setOutputChannel(undefined);
 
     // 最先摘除 DiffManager 状态监听器——在任何 dispose 之前同步阻断
     // 微任务里的 notifyStatusChange，避免停用过程复活已 dispose 的 provider

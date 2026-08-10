@@ -89,7 +89,8 @@ function validateObjectValue(
 ): void {
     if (required) {
         for (const key of required) {
-            if (!(key in obj) || obj[key] === undefined) {
+            // 显式传 null 同样视为缺失：required 字段值为 null 时不能通过校验
+            if (!(key in obj) || obj[key] === undefined || obj[key] === null) {
                 issues.push(`The required parameter \`${joinPath(path, key)}\` is missing`);
             }
         }
@@ -97,7 +98,7 @@ function validateObjectValue(
 
     for (const [key, propSchema] of Object.entries(properties)) {
         const value = obj[key];
-        // null 视为"未提供"跳过类型检查（与 required 检查行为保持一致的宽松策略）
+        // null 对非 required 字段仍视为“未提供”跳过类型检查（宽松策略，与 required 的严格判定区分）
         if (!(key in obj) || value === undefined || value === null) {
             continue;
         }
@@ -155,6 +156,22 @@ function validateValue(
             `but \`${String(value)}\` was provided`
         );
         return;
+    }
+
+    // 数值边界：schema 声明了 minimum/maximum 时校验（number/integer 共用，越界直接报错）
+    if ((expectedType === 'number' || expectedType === 'integer') && typeof value === 'number') {
+        if (typeof schema.minimum === 'number' && value < schema.minimum) {
+            issues.push(
+                `The parameter \`${path}\` must be >= ${schema.minimum}, but \`${String(value)}\` was provided`
+            );
+            return;
+        }
+        if (typeof schema.maximum === 'number' && value > schema.maximum) {
+            issues.push(
+                `The parameter \`${path}\` must be <= ${schema.maximum}, but \`${String(value)}\` was provided`
+            );
+            return;
+        }
     }
 
     // 递归进入数组元素

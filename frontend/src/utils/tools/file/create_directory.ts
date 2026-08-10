@@ -8,6 +8,7 @@ import { registerTool } from '../../toolRegistry'
 // 只在外部显示创建的目录路径，不需要展开面板
 registerTool('create_directory', {
   name: 'create_directory',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '创建目录',
   icon: 'codicon-new-folder',
   

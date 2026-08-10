@@ -187,13 +187,14 @@ export function probeRecursiveWatchSupport(
  * 递归不可用时的降级路径：扫描 conversations 目录下所有文件的 mtime，
  * 每个对话取最大 mtime（写历史/元数据/索引都会触碰对应文件）。
  * 目录不存在或不可读时返回空 Map。
+ * 异步迭代（fs.promises.readdir/stat）：避免 readdirSync/statSync 在大目录下同步阻塞事件循环。
  */
-export function scanConversationMtimes(conversationsDirPath: string): Map<string, number> {
+export async function scanConversationMtimes(conversationsDirPath: string): Promise<Map<string, number>> {
     const result = new Map<string, number>();
-    const walk = (dir: string, prefix: string): void => {
+    const walk = async (dir: string, prefix: string): Promise<void> => {
         let entries: fs.Dirent[];
         try {
-            entries = fs.readdirSync(dir, { withFileTypes: true });
+            entries = await fs.promises.readdir(dir, { withFileTypes: true });
         } catch {
             return;
         }
@@ -201,13 +202,14 @@ export function scanConversationMtimes(conversationsDirPath: string): Map<string
             if (entry.name.startsWith(PROBE_DIR_PREFIX)) continue; // 跳过探测残留
             const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
             if (entry.isDirectory()) {
-                walk(path.join(dir, entry.name), rel);
+                await walk(path.join(dir, entry.name), rel);
                 continue;
             }
             const conversationId = parseConversationIdFromPath(rel);
             if (!conversationId) continue;
             try {
-                const mtime = fs.statSync(path.join(dir, entry.name)).mtimeMs;
+                const stat = await fs.promises.stat(path.join(dir, entry.name));
+                const mtime = stat.mtimeMs;
                 const prev = result.get(conversationId);
                 if (prev === undefined || mtime > prev) {
                     result.set(conversationId, mtime);
@@ -217,7 +219,7 @@ export function scanConversationMtimes(conversationsDirPath: string): Map<string
             }
         }
     };
-    walk(conversationsDirPath, '');
+    await walk(conversationsDirPath, '');
     return result;
 }
 
@@ -244,17 +246,24 @@ export function startMtimeFallbackScanner(
 ): () => void {
     let baseline: Map<string, number> | null = null;
     let timer: NodeJS.Timeout | null = null;
-    const scan = (): void => {
-        const current = scanConversationMtimes(conversationsDirPath);
-        if (baseline) {
-            for (const id of diffMtimeSnapshots(baseline, current)) {
-                cache.markDirty(id);
+    let scanning = false; // 防重入：扫描慢于周期时跳过本次 tick，下一 tick 继续（保持 15s 周期语义）
+    const scan = async (): Promise<void> => {
+        if (scanning) return;
+        scanning = true;
+        try {
+            const current = await scanConversationMtimes(conversationsDirPath);
+            if (baseline) {
+                for (const id of diffMtimeSnapshots(baseline, current)) {
+                    cache.markDirty(id);
+                }
             }
+            baseline = current;
+        } finally {
+            scanning = false;
         }
-        baseline = current;
     };
-    scan();
-    timer = setInterval(scan, intervalMs);
+    void scan();
+    timer = setInterval(() => { void scan(); }, intervalMs);
     return () => {
         if (timer) {
             clearInterval(timer);

@@ -67,9 +67,11 @@ watch(() => chatStore.inputValue, (val) => {
 }, { immediate: true })
 
 // 反向同步：editorNodes 变化时更新纯文本 inputValue
+// 浅比较：store 的 setEditorNodes 每次整体替换数组引用（每键击换新数组），
+// 深 watch 会逐节点递归遍历，纯属浪费
 watch(() => chatStore.editorNodes, (nodes) => {
   chatStore.setInputValue(getPlainText(nodes))
-}, { deep: true })
+})
 
 // ========== Configs / Modes ==========
 

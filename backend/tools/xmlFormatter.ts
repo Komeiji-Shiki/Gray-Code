@@ -71,7 +71,7 @@ export function convertToolsToXML(tools: ToolDeclaration[]): string {
             return `  - ${name}${requiredTag} [${typeInfo}]: ${description}`;
         }).join('\n');
         
-        return `<tool name="${tool.name}">
+        return `<tool name="${escapeXmlAttribute(tool.name)}">
   <description>
 ${tool.description}
   </description>
@@ -203,6 +203,12 @@ const XML_ELEMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.\-]*$/;
  */
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+
+/** 空容器占位标记属性：XML 无法直接表达空数组/空对象（round-trip 后空元素会变成空字符串），
+ * 序列化端把空数组/空对象写成带标记的 <item/>，解析端据此还原为 [] / {}。 */
+const EMPTY_CONTAINER_ATTR = '__graycode_empty';
+const EMPTY_CONTAINER_ARRAY = 'array';
+const EMPTY_CONTAINER_OBJECT = 'object';
 /**
  * 非法 XML 键名的可逆表示。
  *
@@ -272,7 +278,9 @@ function serializeParameterValue(value: unknown, indent: string): string {
     }
     if (Array.isArray(value)) {
         if (value.length === 0) {
-            return '';
+            // 空数组占位：不加标记会被解析成空字符串，round-trip 后 [] 失真
+            const childIndent = `${indent}  `;
+            return `\n${childIndent}<item ${EMPTY_CONTAINER_ATTR}="${EMPTY_CONTAINER_ARRAY}"/>\n${indent}`;
         }
         const childIndent = `${indent}  `;
         const inner = value
@@ -282,7 +290,9 @@ function serializeParameterValue(value: unknown, indent: string): string {
     }
     const entries = Object.entries(value as Record<string, unknown>);
     if (entries.length === 0) {
-        return '';
+        // 空对象占位：不加标记会被解析成空字符串，round-trip 后 {} 失真
+        const childIndent = `${indent}  `;
+        return `\n${childIndent}<item ${EMPTY_CONTAINER_ATTR}="${EMPTY_CONTAINER_OBJECT}"/>\n${indent}`;
     }
     const childIndent = `${indent}  `;
     const inner = entries
@@ -349,15 +359,37 @@ function processParameterValue(value: any): any {
         return value;
     }
     
+    // 空容器占位标记还原：序列化端把空数组/空对象写成带标记的 <item/>，
+    // 解析端据此还原为 [] / {}（否则空容器 round-trip 后变成空字符串）。
+    // 必须在 item 数组判定之前检查，避免被“单元素数组退化形态”误吞成 [{}]。
+    if (value.item && typeof value.item === 'object' && !Array.isArray(value.item)) {
+        const marker = (value.item as Record<string, unknown>)['@___graycode_empty'];
+        if (marker === EMPTY_CONTAINER_ARRAY) {
+            return [];
+        }
+        if (marker === EMPTY_CONTAINER_OBJECT) {
+            return {};
+        }
+    }
+
     // 数组格式：fast-xml-parser 对重复标签生成数组、单标签生成标量/对象。
     // 只有当 item 为数组、或容器对象仅含 item 一个键（单元素数组的退化形态）
     // 时才按数组处理；普通对象的字段恰好叫 item（如 {item: {id: 1}, other: 2}）
     // 不再被误判为数组结构。
+    // item 判定前先排除标量：{item: 'x'} 这种“单键对象、值为标量”的结构应保持为对象，
+    // 不能被误判成单元素数组 ['x']（对象与单元素数组的 XML 序列化相同，无法区分，
+    // 优先保留对象语义；对象型单元素数组 [{...}] 仍可正确还原）。
     if (Array.isArray(value.item)) {
         // 递归处理数组中的每个元素
         return value.item.map((item: any) => processParameterValue(item));
     }
-    if (value.item !== undefined && Object.keys(value).every(k => k === 'item')) {
+    if (
+        value.item !== undefined
+        && value.item !== null
+        && typeof value.item === 'object'
+        && !Array.isArray(value.item)
+        && Object.keys(value).every(k => k === 'item')
+    ) {
         return [processParameterValue(value.item)];
     }
     

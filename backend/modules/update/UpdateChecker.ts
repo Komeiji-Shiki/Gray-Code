@@ -198,7 +198,10 @@ export interface UpdateCheckerOptions {
 }
 
 export class UpdateChecker {
+    /** 上次成功检查时间戳：节流所有非 force 检查 */
     private readonly lastCheckKey = 'lastUpdateCheckAt';
+    /** 上次自动检查尝试时间戳：失败也只节流自动检查，不影响用户显式检查（UI 重试） */
+    private readonly lastAutoCheckKey = 'lastAutoCheckAt';
     private readonly options: UpdateCheckerOptions;
     private status: UpdateCheckStatus = { state: 'idle' };
 
@@ -226,7 +229,11 @@ export class UpdateChecker {
 
         const now = this.options.now ? this.options.now() : Date.now();
         const lastCheckAt = this.options.storage.get(this.lastCheckKey);
-        if (!shouldCheck(lastCheckAt, now, force)) {
+        const lastAutoCheckAt = this.options.storage.get(this.lastAutoCheckKey);
+        // 节流：force（用户显式检查）无视节流；非 force 检查受「上次成功检查」与
+        // 「上次自动检查尝试」两个时间戳共同节流——自动检查失败也只节流后续自动检查，
+        // 避免网络异常时每次启动都重试，但不会拖住用户显式检查/UI 重试
+        if (!shouldCheck(lastCheckAt, now, force) || (!force && !shouldCheck(lastAutoCheckAt, now, false))) {
             // 节流窗口内：返回内存状态（可能是本会话已查过的结果，或 idle）
             return this.status;
         }
@@ -235,6 +242,10 @@ export class UpdateChecker {
         try {
             const info = await this.fetchLatestRelease();
             const current = this.getCurrentVersion();
+            if (!current) {
+                // 当前扩展版本读取失败：置 error 而非静默 upToDate（否则会误导用户以为已是最新）
+                throw new Error('无法读取当前扩展版本');
+            }
             // nightly 版本号为 <semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809），
             // compareVersions 将其视为「高于同主版本正式版」的最新构建，
             // 两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）
@@ -243,19 +254,24 @@ export class UpdateChecker {
             } else {
                 this.status = { state: 'upToDate', checkedAt: now };
             }
-            // 成功：记录检查时间进入节流窗口
+            // 成功：记录成功检查时间（节流后续所有非 force 检查）；自动检查另记录尝试时间
             try {
                 await this.options.storage.update(this.lastCheckKey, now);
+                if (!force) {
+                    await this.options.storage.update(this.lastAutoCheckKey, now);
+                }
             } catch {
                 // 存储失败不影响检查状态
             }
         } catch (e: any) {
             this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
-            // 非 force 的自动检查失败也记录（进入节流窗口，避免网络异常时每次启动都重试）；
-            // force 手动检查失败不记录——不吞掉下一次自动检查的机会
+            // 失败只节流「自动检查」：写 lastAutoCheckAt（避免网络异常时每次启动都重试），
+            // 不写 lastCheckKey（成功检查时间戳）——否则用户显式检查/UI 重试会被失败的
+            // 自动检查拖入 24h 节流窗口而无法重试。
+            // force 手动检查失败不记录任何时间戳——不吞掉下一次自动检查的机会
             if (!force) {
                 try {
-                    await this.options.storage.update(this.lastCheckKey, now);
+                    await this.options.storage.update(this.lastAutoCheckKey, now);
                 } catch {
                     // 存储失败不影响检查状态
                 }
@@ -289,12 +305,29 @@ export class UpdateChecker {
             if (!res.ok) {
                 throw new Error(`下载失败：HTTP ${res.status} ${res.statusText}`);
             }
-            const buf = Buffer.from(await res.arrayBuffer());
-            if (buf.length === 0) {
-                throw new Error('下载内容为空，vsix 可能已损坏。');
-            }
             // 先写 .tmp 再 rename：中断/失败不残留半成品 .vsix（防旧版本文件被当成可用包）
-            await fs.writeFile(tmpTarget, buf);
+            if (res.body) {
+                // 流式写入 tmp：vsix 包可达数百 MB，避免整包载入内存
+                // （Node 18+ 的 web ReadableStream 可直接 for-await 迭代）
+                const fileHandle = await fs.open(tmpTarget, 'w');
+                try {
+                    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+                        await fileHandle.write(chunk);
+                    }
+                    if ((await fileHandle.stat()).size === 0) {
+                        throw new Error('下载内容为空，vsix 可能已损坏。');
+                    }
+                } finally {
+                    await fileHandle.close();
+                }
+            } else {
+                // 无流式响应体（如代理路径）：回退整包读取
+                const buf = Buffer.from(await res.arrayBuffer());
+                if (buf.length === 0) {
+                    throw new Error('下载内容为空，vsix 可能已损坏。');
+                }
+                await fs.writeFile(tmpTarget, buf);
+            }
             await fs.rename(tmpTarget, target);
         } finally {
             clearTimeout(timer);
@@ -302,6 +335,8 @@ export class UpdateChecker {
         }
 
         await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(target));
+        // 安装成功：状态置 upToDate（reload 后新版本才生效），避免 UI 仍显示 updateAvailable
+        this.status = { state: 'upToDate', checkedAt: Date.now() };
         return target;
     }
 
@@ -338,7 +373,9 @@ export class UpdateChecker {
      */
     resetStatus(): void {
         this.status = { state: 'idle' };
-        void this.options.storage.update('lastUpdateCheckAt', 0).catch(() => undefined);
+        void this.options.storage.update(this.lastCheckKey, 0).catch(() => undefined);
+        // 同步重置自动检查尝试时间戳：渠道切换后自动检查按新渠道立即重试
+        void this.options.storage.update(this.lastAutoCheckKey, 0).catch(() => undefined);
     }
 
     private getFetch(): (url: string, init?: RequestInit) => Promise<Response> {
@@ -365,7 +402,11 @@ export class UpdateChecker {
         const timer = setTimeout(() => controller.abort(), UPDATE_FETCH_TIMEOUT_MS);
         try {
             const res = await this.getFetch()(endpoint, {
-                headers: { 'Accept': 'application/vnd.github+json' },
+                headers: {
+                    'Accept': 'application/vnd.github+json',
+                    // GitHub API 要求显式 User-Agent（缺失会被 403）；带版本便于服务端排障
+                    'User-Agent': `graycode-updater/${this.getCurrentVersion() || 'unknown'}`
+                },
                 signal: controller.signal,
             });
             if (!res.ok) {

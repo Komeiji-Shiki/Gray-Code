@@ -24,7 +24,8 @@ export class StoragePathSettingsService {
      * 获取存储路径配置
      */
     getStoragePathConfig(): Readonly<StoragePathConfig> {
-        return this.core.settings.storagePath || {};
+        // 深拷贝返回：直接返回活引用会让调用方原地修改污染未保存的设置状态
+        return this.core.settings.storagePath ? this.core.cloneConfig(this.core.settings.storagePath) : {};
     }
 
     /**

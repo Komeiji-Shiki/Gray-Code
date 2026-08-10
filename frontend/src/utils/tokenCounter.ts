@@ -117,6 +117,9 @@ function countWith(fn: ((text: string) => number) | null, text: string): number 
   if (!fn) return null
   if (text.length <= BATCH_SIZE) return fn(text)
   let total = 0
+  // 误差说明（不改算法）：分片计数会丢失跨片边界的 token 合并——BPE 合并缓存按片重置，
+  // 本可合并为一个 token 的跨片字符序列会被计为多个，因此结果系统性略偏高（高估方向，
+  // 常规文本误差通常 <1%）；这是分批规避非线性退化的既定代价，仅用于估算/展示，不做修正。
   for (let i = 0; i < text.length; i += BATCH_SIZE) {
     total += fn(text.slice(i, i + BATCH_SIZE))
   }

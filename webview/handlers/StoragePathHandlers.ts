@@ -25,19 +25,6 @@ export const getStoragePathConfig: MessageHandler = async (data, requestId, ctx)
 };
 
 /**
- * 获取存储统计信息
- */
-export const getStorageStats: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { path: targetPath } = data;
-    const stats = await ctx.storagePathManager.getStorageStats(targetPath);
-    ctx.sendResponse(requestId, { stats });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'GET_STORAGE_STATS_ERROR', error.message || t('webview.errors.getStorageStatsFailed'));
-  }
-};
-
-/**
  * 验证存储路径
  */
 export const validateStoragePath: MessageHandler = async (data, requestId, ctx) => {
@@ -65,18 +52,6 @@ export const migrateStorage: MessageHandler = async (data, requestId, ctx) => {
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'MIGRATE_STORAGE_ERROR', error.message || t('webview.errors.migrateStorageFailed'));
-  }
-};
-
-/**
- * 清理旧存储
- */
-export const cleanupStorage: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const result = await ctx.storagePathManager.cleanupOldStorage();
-    ctx.sendResponse(requestId, result);
-  } catch (error: any) {
-    ctx.sendError(requestId, 'CLEANUP_STORAGE_ERROR', error.message || t('webview.errors.cleanupStorageFailed'));
   }
 };
 
@@ -154,10 +129,8 @@ export const reloadWindow: MessageHandler = async (_data, requestId, ctx) => {
  */
 export function registerStoragePathHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('storagePath.getConfig', getStoragePathConfig);
-  registry.set('storagePath.getStats', getStorageStats);
   registry.set('storagePath.validate', validateStoragePath);
   registry.set('storagePath.migrate', migrateStorage);
-  registry.set('storagePath.cleanup', cleanupStorage);
   registry.set('storagePath.reset', resetStoragePath);
   registry.set('storagePath.selectFolder', selectFolder);
   registry.set('storagePath.openInExplorer', openInExplorer);

@@ -93,25 +93,6 @@ export const getSubAgentPresets: MessageHandler = async (_data, requestId, ctx) 
 };
 
 /**
- * 获取单个子代理配置
- */
-export const getSubAgent: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { type } = data;
-    const agent = ctx.settingsManager.getSubAgent(type);
-    
-    if (!agent) {
-      ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
-      return;
-    }
-    
-    ctx.sendResponse(requestId, { agent });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'GET_SUBAGENT_ERROR', error.message || 'Failed to get subagent');
-  }
-};
-
-/**
  * 创建子代理
  */
 export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
@@ -281,38 +262,6 @@ export const deleteSubAgent: MessageHandler = async (data, requestId, ctx) => {
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_SUBAGENT_ERROR', error.message || 'Failed to delete subagent');
-  }
-};
-
-/**
- * 设置子代理启用状态
- */
-export const setSubAgentEnabled: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { type, enabled } = data;
-    
-    if (!ctx.settingsManager.getSubAgent(type)) {
-      ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
-      return;
-    }
-    
-    // 保存到 SettingsManager
-    const success = await ctx.settingsManager.updateSubAgent(type, { enabled });
-    
-    if (!success) {
-      ctx.sendError(requestId, 'SET_ENABLED_FAILED', 'Failed to set subagent enabled status');
-      return;
-    }
-    
-    // 更新内存 registry
-    subAgentRegistry.setEnabled(type, enabled);
-    
-    // 启用状态变化会影响可用的子代理列表
-    refreshSubAgentsTool();
-    
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SET_SUBAGENT_ENABLED_ERROR', error.message || 'Failed to set subagent enabled status');
   }
 };
 
@@ -490,7 +439,8 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
     // 全局默认迭代次数（-1 表示无限制，与 per-agent maxIterations 语义一致）
     if (data.defaultMaxIterations !== undefined) {
       const v = data.defaultMaxIterations;
-      if (typeof v === 'number' && Number.isFinite(v) && (v === -1 || v >= 1)) {
+      // Number.isInteger 校验：浮点值（如 2.5）不可入库（R2-08 复查）
+      if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && (v === -1 || v >= 1)) {
         updates.defaultMaxIterations = v;
       }
     }
@@ -538,12 +488,10 @@ export function initializeSubAgentsFromSettings(ctx: HandlerContext): void {
  */
 export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('subagents.list', listSubAgents);
-  registry.set('subagents.get', getSubAgent);
   registry.set('subagents.getPresets', getSubAgentPresets);
   registry.set('subagents.create', createSubAgent);
   registry.set('subagents.update', updateSubAgent);
   registry.set('subagents.delete', deleteSubAgent);
-  registry.set('subagents.setEnabled', setSubAgentEnabled);
   registry.set('subagents.updateGlobalConfig', updateGlobalConfig);
   registry.set('subagents.openMonitor', openSubAgentMonitor);
   registry.set('subagents.pauseRun', pauseRun);

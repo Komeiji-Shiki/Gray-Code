@@ -78,24 +78,9 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                         // 不完整，需要继续累积
                     }
                 }
-            } else if (currentData && line.trim()) {
-                // 非 data: 行但有内容，可能是 JSON 的延续
-                // 检查是否像是 JSON 的一部分（不是 chunked 大小指示器）
-                // chunked 大小指示器通常是纯十六进制数字
-                const isChunkedSize = /^[0-9a-fA-F]+$/.test(line.trim());
-
-                if (!isChunkedSize) {
-                    currentData += line;
-
-                    try {
-                        chunks.push(JSON.parse(currentData));
-                        currentData = '';
-                    } catch (e) {
-                        // 继续累积
-                    }
-                }
             }
-            // 忽略：空行、注释行(:开头)、chunked 大小指示器
+            // 非 data: 行一律忽略（空行、注释行、chunked 大小指示器、事件名等）：
+            // 只在 data: 行累积，避免垃圾内容被拼进正在解析的 JSON。
         }
 
         // 处理剩余的未完成数据
@@ -108,8 +93,9 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
                     return { chunks, remaining: '', unparsed: currentData };
                 }
             } else {
-                // 保留为 remaining，等待更多数据（需要保留原始的 data: 前缀）
-                remaining = 'data: ' + currentData;
+                // 保留为 remaining，等待更多数据（保留原始的 data: 前缀；
+                // 多行 data 事件的续行也补回 data: 前缀，保证下次解析仍只在 data: 行累积）
+                remaining = 'data: ' + currentData.replace(/\n/g, '\ndata: ');
             }
         }
 

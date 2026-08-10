@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, toRaw } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, watch, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -66,6 +66,8 @@ const isLoading = ref(true)
 const isSaving = ref(false)
 // 保存状态消息
 const saveMessage = ref('')
+// 保存成功消息清除定时器（卸载时清理，避免卸载后仍修改 saveMessage）
+let saveMessageTimer: ReturnType<typeof setTimeout> | null = null
 
 // 忽略模式输入框
 const newIgnorePattern = ref('')
@@ -147,8 +149,15 @@ async function loadPreview() {
   }
 }
 
-// 保存配置
-async function saveConfig() {
+// 保存队列：串行化整包保存，避免开关快速切换时后写覆盖先写（竞态丢更新）
+let saveChain: Promise<void> = Promise.resolve()
+
+function saveConfig(): Promise<void> {
+  saveChain = saveChain.then(() => doSaveConfig())
+  return saveChain
+}
+
+async function doSaveConfig() {
   isSaving.value = true
   saveMessage.value = ''
   
@@ -157,7 +166,11 @@ async function saveConfig() {
     const plainConfig = { ...toRaw(config) }
     await sendToExtension('updateContextAwarenessConfig', { config: plainConfig })
     saveMessage.value = t('components.settings.contextSettings.saveSuccess')
-    setTimeout(() => {
+    if (saveMessageTimer) {
+      clearTimeout(saveMessageTimer)
+    }
+    saveMessageTimer = setTimeout(() => {
+      saveMessageTimer = null
       saveMessage.value = ''
     }, 2000)
   } catch (error) {
@@ -238,6 +251,11 @@ onMounted(() => {
 // 组件卸载时清理
 onUnmounted(() => {
   stopAutoRefresh()
+  // 清理保存成功消息清除定时器，避免卸载后仍修改 saveMessage
+  if (saveMessageTimer) {
+    clearTimeout(saveMessageTimer)
+    saveMessageTimer = null
+  }
 })
 
 // 启动自动刷新
@@ -246,9 +264,19 @@ function startAutoRefresh() {
     clearInterval(refreshIntervalId)
   }
   refreshIntervalId = setInterval(() => {
+    // 两个预览开关都关闭时不轮询，避免无条件每 2 秒发请求
+    if (!config.includeOpenTabs && !config.includeActiveEditor) return
     loadPreview()
   }, REFRESH_INTERVAL)
 }
+
+// 预览开关变化时：立即刷新一次预览并重启轮询（开关全关时停止轮询）
+watch(() => [config.includeOpenTabs, config.includeActiveEditor], () => {
+  startAutoRefresh()
+  if (config.includeOpenTabs || config.includeActiveEditor) {
+    loadPreview()
+  }
+})
 
 // 停止自动刷新
 function stopAutoRefresh() {

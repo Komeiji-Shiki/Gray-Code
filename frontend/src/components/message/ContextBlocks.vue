@@ -4,7 +4,7 @@
  * 用于在用户消息中显示解析出的 context 块为小标签
  */
 
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import type { PromptContextItem } from '../../types/promptContext'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
@@ -21,6 +21,8 @@ defineProps<{
 const hoveredId = ref<string | null>(null)
 // 悬浮延迟定时器
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
+// 离开后延迟隐藏预览的定时器（onUnmounted 统一清理）
+let hidePreviewTimer: ReturnType<typeof setTimeout> | null = null
 // 当前显示预览的上下文项
 const previewItem = ref<PromptContextItem | null>(null)
 
@@ -74,13 +76,31 @@ function handleMouseLeave() {
     hoverTimer = null
   }
   
+  // 先清除旧的隐藏定时器，避免连续进入/离开时旧定时器提前隐藏预览
+  if (hidePreviewTimer) {
+    clearTimeout(hidePreviewTimer)
+    hidePreviewTimer = null
+  }
+  
   // 延迟隐藏预览，让用户可以移动到预览框
-  setTimeout(() => {
+  hidePreviewTimer = setTimeout(() => {
     if (!hoveredId.value) {
       previewItem.value = null
     }
   }, 100)
 }
+
+// 组件卸载时清理所有定时器，避免组件销毁后仍写入状态
+onUnmounted(() => {
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+  if (hidePreviewTimer) {
+    clearTimeout(hidePreviewTimer)
+    hidePreviewTimer = null
+  }
+})
 
 // 处理点击 - 在 VSCode 中打开内容预览
 async function handleClick(item: PromptContextItem) {

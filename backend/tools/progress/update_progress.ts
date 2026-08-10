@@ -214,11 +214,14 @@ export function createUpdateProgressTool(): Tool {
           latestConclusion: Object.prototype.hasOwnProperty.call(rawArgs, 'latestConclusion')
             ? normalizeOptionalProgressSingleLineText(args.latestConclusion)
             : currentMetadata.latestConclusion,
+          // 修改原因：currentBlocker/nextAction 过去未做单行归一化，与 currentFocus/
+          //           latestConclusion 行为不一致（多行/首尾空白会原样落盘）。
+          // 修改方式：四个摘要字段统一走 normalizeOptionalProgressSingleLineText。
           currentBlocker: Object.prototype.hasOwnProperty.call(rawArgs, 'currentBlocker')
-            ? args.currentBlocker
+            ? normalizeOptionalProgressSingleLineText(args.currentBlocker)
             : currentMetadata.currentBlocker,
           nextAction: Object.prototype.hasOwnProperty.call(rawArgs, 'nextAction')
-            ? args.nextAction
+            ? normalizeOptionalProgressSingleLineText(args.nextAction)
             : currentMetadata.nextAction,
           activeArtifacts: Object.prototype.hasOwnProperty.call(rawArgs, 'activeArtifacts')
             ? applyProgressArtifactPatch(currentMetadata.activeArtifacts, args.activeArtifacts)

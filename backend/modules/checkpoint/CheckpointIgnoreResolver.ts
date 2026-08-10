@@ -12,6 +12,8 @@ import {
 } from './CheckpointExclusionProfiles';
 // C-11: 强制排除绝对路径判断统一引用 checkpointPathUtils 单实现，避免两份重复逻辑漂移
 import { isExcludedAbsolutePath } from './checkpointPathUtils';
+// C-16: 同层子目录有界并发递归（与快照构建/恢复的并发口径一致）
+import { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY } from './checkpointConcurrency';
 
 /**
  * CheckpointIgnoreResolver
@@ -349,6 +351,7 @@ export class CheckpointIgnoreResolver {
 
         {
             let hasTrackedChildren = false;
+            const subDirectories: Array<{ fullPath: string; idx: number }> = [];
 
             for (const entry of entries) {
                 const fullPath = path.join(currentDir, entry.name);
@@ -371,7 +374,7 @@ export class CheckpointIgnoreResolver {
                 hasTrackedChildren = true;
 
                 if (isDirectory) {
-                    await this.collectEntries(fullPath, result);
+                    subDirectories.push({ fullPath, idx: subDirectories.length });
                 } else if (entry.isFile()) {
                     result.files.push(fullPath);
                 } else {
@@ -383,6 +386,22 @@ export class CheckpointIgnoreResolver {
                         reason: 'unsupported_file_type',
                         source: 'filesystem'
                     });
+                }
+            }
+
+            // C-16: 同层子目录有界并发递归（深目录树/大工作区下串行递归放大扫描耗时）；
+            // 每个子目录独立 result 对象，结果按下标回填后按序拼接——
+            // 保持与串行递归一致的深度优先输出顺序（files/dirs/excluded 顺序不变）。
+            if (subDirectories.length > 0) {
+                const subResults: Array<CheckpointSnapshotEntries | undefined> = new Array(subDirectories.length);
+                await runBounded(subDirectories, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ fullPath, idx }) => {
+                    subResults[idx] = await this.collectEntries(fullPath, { files: [], dirs: [], excluded: [] });
+                });
+                for (const sub of subResults) {
+                    if (!sub) continue;
+                    result.files.push(...sub.files);
+                    result.dirs.push(...sub.dirs);
+                    result.excluded.push(...sub.excluded);
                 }
             }
 

@@ -471,25 +471,15 @@ export function deepMerge(target: any, source: any): any {
         return target;
     }
     
-    // 如果目标是数组，将源合并进去（如果是数组则拼接，否则作为单项追加）
-    // 这确保了 tools 等数组字段永远不会被自定义设置直接抹除，只会增加
-    if (Array.isArray(target)) {
-        const sourceItems = Array.isArray(source) ? source : [source];
-        return [...target, ...sourceItems];
-    }
-    
-    // 如果源是数组（但目标不是），由于类型冲突，采用覆盖策略
-    if (Array.isArray(source)) {
+    // 数组与原始值直接覆盖（与 SettingsCore.deepMergeToolsConfig 语义一致）：
+    // 旧实现目标数组与源数组拼接（[...target, ...sourceItems]），自定义设置/导入
+    // 无法清空数组字段；改为覆盖后只有纯对象递归合并，其余一律以 source 为准。
+    if (Array.isArray(source) || typeof source !== 'object') {
         return source;
     }
     
-    // 如果源不是对象，直接覆盖
-    if (typeof source !== 'object') {
-        return source;
-    }
-    
-    // 如果目标不是对象，初始化为空对象
-    if (typeof target !== 'object' || target === null) {
+    // 目标为数组或非对象而源为纯对象：类型冲突，以源为准（覆盖语义）
+    if (Array.isArray(target) || typeof target !== 'object' || target === null) {
         target = {};
     }
     
@@ -566,6 +556,13 @@ export function applyCustomBody(originalBody: any, customBody?: CustomBodyConfig
         // 复杂模式：解析完整 JSON 并深度合并
         try {
             const customData = JSON.parse(customBody.json);
+            // 校验解析结果：只接受纯对象。数组/原始值（如 "123"、"[1,2]"）无法作为
+            // 请求体字段合并，deepMerge 对非对象值直接覆盖会整体替换 originalBody，
+            // 破坏请求体结构；非纯对象时告警并跳过本次合并
+            if (customData === null || typeof customData !== 'object' || Array.isArray(customData)) {
+                console.warn('Failed to apply custom body JSON: expected a JSON object, got:', typeof customData);
+                return result;
+            }
             result = deepMerge(result, customData);
         } catch (error) {
             console.warn('Failed to parse custom body JSON:', error);

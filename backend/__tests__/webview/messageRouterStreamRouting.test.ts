@@ -42,7 +42,6 @@ function createHarness() {
   const chatHandler = {
     handleChatStream: jest.fn(),
     handleRetryStream: jest.fn(),
-    handleEditAndRetryStream: jest.fn(),
     handleToolConfirmation: jest.fn()
   };
   const conversationManager = {

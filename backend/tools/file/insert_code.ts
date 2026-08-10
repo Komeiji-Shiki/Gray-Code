@@ -172,7 +172,10 @@ async function insertSingleFile(
             diffManager, pendingDiff.id, abortSignal
         );
 
-        const wasInterrupted = interruptReason !== 'none';
+        // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
+        // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
+        const wasRejected = interruptReason === 'rejected';
+        const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
         // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
@@ -193,6 +196,20 @@ async function insertSingleFile(
             } catch (e) {
                 console.warn('Failed to save diff content to storage:', e);
             }
+        }
+
+        if (wasRejected) {
+            // 用户显式拒绝：与取消区分，返回 status:'rejected' + 可读错误
+            return {
+                path: filePath,
+                success: false,
+                cancelled: false,
+                line,
+                insertedLines: insertedLineCount,
+                status: 'rejected',
+                error: 'Diff was rejected by user',
+                diffContentId
+            };
         }
 
         if (wasInterrupted) {

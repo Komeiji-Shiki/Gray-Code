@@ -338,14 +338,21 @@ function selectAgent(agentType: string) {
 async function updateAgentField(field: string, value: any): Promise<{ ok: boolean; error?: unknown }> {
   if (!currentAgent.value) return { ok: false }
 
+  // await 前捕获代理类型：请求往返期间用户可能切换代理，
+  // await 后重新读 currentAgentType.value 会把旧代理的更新合并进新代理（跨代理污染）
+  const agentType = currentAgentType.value
+
   try {
     await sendToExtension('subagents.update', {
-      type: currentAgentType.value,
+      type: agentType,
       updates: { [field]: value }
     })
 
+    // 代理已切换：跳过本地合并（后端已写入旧代理，切回旧代理时会重新加载）
+    if (currentAgentType.value !== agentType) return { ok: true }
+
     // 更新本地状态
-    const agent = subAgents.value.find(a => a.type === currentAgentType.value)
+    const agent = subAgents.value.find(a => a.type === agentType)
     if (agent) {
       (agent as any)[field] = value
     }
@@ -355,6 +362,30 @@ async function updateAgentField(field: string, value: any): Promise<{ ok: boolea
     console.error('Failed to update subagent:', error)
     saveError.value = errorText(error)
     return { ok: false, error }
+  }
+}
+
+// 全局数字输入非法提示（就地校验并提示，不再静默回退默认值）
+const globalNumberError = ref('')
+
+function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations') {
+  const raw = (event.target as HTMLInputElement).value
+  const parsed = parseInt(raw, 10)
+  const max = field === 'defaultMaxIterations' ? 1000 : Number.POSITIVE_INFINITY
+  if (isNaN(parsed) || parsed < 1 || parsed > max) {
+    // 非法输入：就地提示；:value 绑定已保存值，重渲染时自动回填
+    globalNumberError.value = field === 'defaultMaxIterations'
+      ? '请输入 1-1000 之间的整数'
+      : '请输入不小于 1 的整数'
+    return
+  }
+  globalNumberError.value = ''
+  if (field === 'maxConcurrentAgents') {
+    maxConcurrentAgents.value = parsed
+    void updateGlobalConfig('maxConcurrentAgents', parsed)
+  } else {
+    defaultMaxIterations.value = parsed
+    void updateGlobalConfig('defaultMaxIterations', parsed)
   }
 }
 
@@ -595,7 +626,7 @@ onMounted(async () => {
               type="number"
               :value="maxConcurrentAgents"
               min="1"
-              @change="maxConcurrentAgents = parseInt(($event.target as HTMLInputElement).value) || 3; updateGlobalConfig('maxConcurrentAgents', maxConcurrentAgents)"
+              @change="handleGlobalNumberChange($event, 'maxConcurrentAgents')"
             />
             <span class="field-hint">{{ t('components.settings.subagents.maxConcurrentAgentsHint') }}</span>
           </div>
@@ -606,11 +637,12 @@ onMounted(async () => {
               :value="defaultMaxIterations"
               min="1"
               max="1000"
-              @change="defaultMaxIterations = parseInt(($event.target as HTMLInputElement).value) || 80; updateGlobalConfig('defaultMaxIterations', defaultMaxIterations)"
+              @change="handleGlobalNumberChange($event, 'defaultMaxIterations')"
             />
             <span class="field-hint">{{ t('components.settings.subagents.defaultMaxIterationsHint') }}</span>
           </div>
         </div>
+        <p v-if="globalNumberError" class="field-hint global-number-error" style="color: var(--vscode-errorForeground)">{{ globalNumberError }}</p>
         <div class="form-group">
           <CustomCheckbox
             :modelValue="generalWorkerEnabled"

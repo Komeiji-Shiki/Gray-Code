@@ -370,11 +370,13 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 // 添加 tool_use
-                for (const part of functionCallParts) {
+                for (const [index, part] of functionCallParts.entries()) {
                     const fc = part.functionCall!;
                     contentArray.push({
                         type: 'tool_use',
-                        id: fc.id || `toolu_${Date.now()}`,
+                        // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_use 不重复
+                        // （对齐 openai.ts 的 _${index} 做法；裸 Date.now() 同毫秒会碰撞）
+                        id: fc.id || `toolu_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
                         name: fc.name,
                         input: fc.args
                     });
@@ -388,14 +390,28 @@ export class AnthropicFormatter extends BaseFormatter {
             // 原来的 else-if 会吞掉 functionResponse，导致 assistant tool_use
             // 后没有对应 tool_result → Anthropic 400。这里改为独立分支。
             if (functionResponseParts.length > 0) {
-                // user 消息包含 tool_result
+                // user 消息包含 tool_result；同消息的 textParts 一并并入 content
+                // （Anthropic tool_result 与 text 块可共存），避免 text + functionResponse
+                // 混合形态把文本丢掉。
                 const contentArray: any[] = [];
-                
-                for (const part of functionResponseParts) {
+
+                // 添加文本内容
+                for (const part of textParts) {
+                    if (part.text) {
+                        contentArray.push({
+                            type: 'text',
+                            text: part.text
+                        });
+                    }
+                }
+
+                for (const [index, part] of functionResponseParts.entries()) {
                     const resp = part.functionResponse!;
                     contentArray.push({
                         type: 'tool_result',
-                        tool_use_id: resp.id || `toolu_${Date.now()}`,
+                        // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_result 不重复
+                        // （对齐本文件 tool_use 的 id 生成；裸 Date.now() 同毫秒会碰撞）
+                        tool_use_id: resp.id || `toolu_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
                         content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
                     });
                 }
@@ -578,8 +594,20 @@ export class AnthropicFormatter extends BaseFormatter {
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
             
             if (functionResponseParts.length > 0) {
-                // functionResponse 作为 user 消息发送
+                // functionResponse 作为 user 消息发送；同消息的普通 text parts 一并并入
+                // （与 function_call 模式分支对齐：text → response 文本 → media 的顺序），
+                // 避免 text + functionResponse 混合形态把文本丢掉。
                 const contentArray: any[] = [];
+
+                // 添加同消息的普通文本内容
+                for (const part of content.parts) {
+                    if ('text' in part && part.text && !part.thought) {
+                        contentArray.push({
+                            type: 'text',
+                            text: part.text
+                        });
+                    }
+                }
                 
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;

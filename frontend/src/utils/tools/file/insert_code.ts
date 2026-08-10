@@ -16,6 +16,7 @@ interface InsertEntry {
 // 注册 insert_code 工具
 registerTool('insert_code', {
   name: 'insert_code',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '插入代码',
   icon: 'codicon-diff-added',
   

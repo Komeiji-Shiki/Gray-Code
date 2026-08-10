@@ -1,4 +1,5 @@
-const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
+const mockMkdir = jest.fn().mockResolvedValue(undefined)
+const mockReadFile = jest.fn().mockRejectedValue({ code: 'FileNotFound' })
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
 const mockResolveUriWithInfo = jest.fn()
@@ -8,7 +9,7 @@ const mockSyncProgressFromDesignArtifact = jest.fn().mockResolvedValue([])
 jest.mock('vscode', () => ({
   workspace: {
     fs: {
-      createDirectory: mockCreateDirectory,
+      readFile: mockReadFile,
       writeFile: mockWriteFile
     }
   },
@@ -16,6 +17,19 @@ jest.mock('vscode', () => ({
     file: (fsPath: string) => ({ fsPath })
   }
 }))
+
+// ensureParentDir 现使用 fs.promises.mkdir（backend/tools/design/pathUtils.ts），
+// 将真实 fs 的 mkdir 替换为 mock：避免测试在真实文件系统创建目录，并用于断言父目录创建
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs')
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      mkdir: mockMkdir
+    }
+  }
+})
 
 jest.mock('../../../backend/tools/utils', () => ({
   getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
@@ -53,9 +67,7 @@ describe('create_design tool', () => {
       content: '# API Design\n\n- scope'
     })
 
-    expect(mockCreateDirectory).toHaveBeenCalledWith({
-      fsPath: 'D:/workspace/.graycode/design'
-    })
+    expect(mockMkdir).toHaveBeenCalledWith('D:/workspace/.graycode/design', { recursive: true })
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
     expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/api-design.md')
     expect(mockSyncProgressFromDesignArtifact).toHaveBeenCalledWith({

@@ -56,7 +56,10 @@ vi.mock('../utils', () => ({
 
 vi.mock('../state', () => ({
   rebuildMessageIndexById: vi.fn(),
-  appendMessage: vi.fn()
+  appendMessage: vi.fn(),
+  // sendMessage 失败路径（cleanupFailedSendPlaceholders）会调用 getMessageIndexById：
+  // 测试中占位消息未真正写入数组（appendMessage 被 mock），返回 -1 与真实行为一致
+  getMessageIndexById: vi.fn().mockReturnValue(-1)
 }))
 
 vi.mock('../streamChunkHandlers', () => ({

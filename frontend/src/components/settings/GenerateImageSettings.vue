@@ -4,7 +4,7 @@
  * 配置图像生成 API 和默认参数
  */
 
-import { reactive, ref, onMounted, computed } from 'vue'
+import { reactive, ref, onMounted, onUnmounted, computed } from 'vue'
 import { CustomSelect, CustomCheckbox, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -79,12 +79,29 @@ async function loadConfig() {
   }
 }
 
-// 更新配置字段（即时保存）
+// 更新配置字段（即时更新本地值 + 防抖保存）
+// @input 每按键触发：统一 400ms 防抖提交，避免每按键全量写配置
+let configSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 async function updateConfigField(field: string, value: any) {
-  // 先更新本地值
-  (imageConfig as any)[field] = value
-  
-  // 保存到后端
+  // 先更新本地值（即时反馈）
+  ;(imageConfig as any)[field] = value
+  scheduleConfigSave()
+}
+
+// 防抖调度保存
+function scheduleConfigSave() {
+  if (configSaveDebounceTimer) {
+    clearTimeout(configSaveDebounceTimer)
+  }
+  configSaveDebounceTimer = setTimeout(() => {
+    configSaveDebounceTimer = null
+    void persistConfig()
+  }, 400)
+}
+
+// 保存到后端（快照当前配置）
+async function persistConfig() {
   try {
     await sendToExtension('updateGenerateImageConfig', {
       config: { ...imageConfig }
@@ -97,6 +114,15 @@ async function updateConfigField(field: string, value: any) {
 // 初始化
 onMounted(async () => {
   await loadConfig()
+})
+
+onUnmounted(() => {
+  // 卸载时若有待触发的防抖保存，立即 flush 一次（写配置不依赖组件存活），避免最后一次编辑丢失
+  if (configSaveDebounceTimer) {
+    clearTimeout(configSaveDebounceTimer)
+    configSaveDebounceTimer = null
+    void persistConfig()
+  }
 })
 </script>
 

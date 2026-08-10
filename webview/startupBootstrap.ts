@@ -260,13 +260,53 @@ export function buildDeferredFrontendLoader(stylesheetUrls: string[], moduleUrls
     const stylesheetUrls = ${styles};
     const moduleUrls = ${modules};
 
+    // 模块加载失败/超时时在 splash 上渲染可见错误文本（F21）：
+    // 前端模块加载失败会静默停留在启动画面，用户无法区分“还在加载”与“加载失败”。
+    const LOAD_TIMEOUT_MS = 15000;
+    const showFatalError = (message) => {
+        console.error('[GrayCode] 前端资源加载失败:', message);
+        const splash = document.querySelector('[data-graycode-bootstrap-screen]');
+        if (!splash) return;
+        const banner = document.createElement('div');
+        banner.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:10000;padding:12px 16px;background:var(--vscode-inputValidation-errorBackground, #5a1d1d);color:var(--vscode-inputValidation-errorForeground, #ffffff);font:12px/1.6 var(--vscode-font-family, sans-serif);white-space:pre-wrap;word-break:break-all;';
+        banner.textContent = message;
+        splash.appendChild(banner);
+    };
+
+    let loadFailures = 0;
     const loadModule = (index) => {
-        if (index >= moduleUrls.length) return;
+        if (index >= moduleUrls.length) {
+            if (loadFailures > 0) {
+                showFatalError('[GrayCode] 前端模块加载失败，请使用“Developer: Reload Window”重载窗口。');
+            }
+            return;
+        }
         const script = document.createElement('script');
         script.type = 'module';
         script.src = moduleUrls[index];
-        script.addEventListener('load', () => loadModule(index + 1), { once: true });
-        script.addEventListener('error', () => loadModule(index + 1), { once: true });
+        let settled = false;
+        // 单个模块加载超时兜底：不无限等待，失败后继续尝试下一个模块（F21）
+        const timeout = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            loadFailures += 1;
+            console.error('[GrayCode] 前端模块加载超时:', moduleUrls[index]);
+            loadModule(index + 1);
+        }, LOAD_TIMEOUT_MS);
+        script.addEventListener('load', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            loadModule(index + 1);
+        }, { once: true });
+        script.addEventListener('error', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeout);
+            loadFailures += 1;
+            console.error('[GrayCode] 前端模块加载失败:', moduleUrls[index]);
+            loadModule(index + 1);
+        }, { once: true });
         document.body.appendChild(script);
     };
 

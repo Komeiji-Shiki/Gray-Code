@@ -34,10 +34,11 @@ const isRestoring = ref(false)
 // 展开/收起状态
 const isExpanded = ref(false)
 
-// 格式化时间
-const formattedTime = computed(() =>
-  formatTime(props.message.timestamp, 'HH:mm')
-)
+// 格式化时间（timestamp 缺失/非法时不显示，避免出现 "00:00"）
+const formattedTime = computed(() => {
+  const ts = props.message.timestamp
+  return typeof ts === 'number' && ts > 0 ? formatTime(ts, 'HH:mm') : ''
+})
 
 // 获取总结内容（去除 [对话总结] 前缀）
 const summaryContent = computed(() => {

@@ -221,7 +221,10 @@ export type ToolIterationLoopOutput =
     | ChatStreamAutoSummaryStatusData
     | ChatStreamToolConfirmationData
     | ChatStreamToolsExecutingData
-    | ChatStreamToolStatusData;
+    | ChatStreamToolStatusData
+    // C-19：取消输出（与 ChatFlowService.ChatStreamCancelledData 同构；
+    // 带 content 时回传 addContent 返回的稳定节点 ID，而不是累加器的无 ID 副本）
+    | { conversationId: string; cancelled: true; content?: Content };
 
 /**
  * 非流式工具循环结果
@@ -545,17 +548,6 @@ export class ToolIterationLoopService {
     }
 
     /**
-     * preserve 模式只改变发送侧的插入策略，不再修改任何历史消息。
-     */
-    private async preserveHistoricalTurnDynamicContexts(
-        _conversationId: string,
-        _history: Content[],
-        _currentTurnStartIndex: number
-    ): Promise<void> {
-        // 历史快照本身已经随各自真实用户消息固化，formatter 会直接读取它们。
-    }
-
-    /**
      * 清除指定会话的裁剪状态
      * 
      * 在以下情况下应调用：
@@ -775,7 +767,7 @@ export class ToolIterationLoopService {
                 yield {
                     conversationId,
                     cancelled: true as const
-                } as any;
+                };
                 return;
             }
 
@@ -880,7 +872,7 @@ export class ToolIterationLoopService {
                         yield {
                             conversationId,
                             cancelled: true as const
-                        } as any;
+                        };
                         return;
                     }
 
@@ -1133,13 +1125,13 @@ export class ToolIterationLoopService {
                             }
                         );
                     }
-                    // CancelledData 不在对外的流式类型联合中，这里使用 any 交由上层处理。
+                    // 取消输出已并入 ToolIterationLoopOutput 联合（cancelled 成员）；
                     // 若半截内容已落盘，必须回传 addContent 返回的稳定节点 ID，而不是累加器的无 ID 副本。
                     yield {
                         conversationId,
                         cancelled: true as const,
                         ...(partialContent.parts.length > 0 ? { content: partialContent } : {})
-                    } as any;
+                    };
                     return;
                 }
 
@@ -1285,7 +1277,7 @@ export class ToolIterationLoopService {
                     yield {
                         conversationId,
                         cancelled: true as const
-                    } as any;
+                    };
                     return;
                 }
 
@@ -1568,7 +1560,7 @@ export class ToolIterationLoopService {
                     yield {
                         conversationId,
                         cancelled: true as const
-                    } as any;
+                    };
                     return;
                 }
 
@@ -1926,7 +1918,7 @@ export class ToolIterationLoopService {
                 conversationId,
                 messageIndex,
                 config,
-                undefined,
+                abortSignal,
                 promptModeSnapshot,
                 undefined,
                 undefined,

@@ -211,7 +211,11 @@ export class DiffReviewSession {
             if (this.outcomeValue !== 'pending') {
                 return;
             }
-            void callback(this);
+            // callback 可能返回 Promise（异步 auto-save）；void 丢弃会吞掉拒绝，
+            // 这里 catch 后记日志，避免保存失败静默无痕。
+            Promise.resolve(callback(this)).catch((error: unknown) => {
+                console.error(`[DiffReviewSession] auto-save callback failed for diff ${this.id}:`, error);
+            });
         }, delayMs);
 
         return this.autoSaveTimer;

@@ -37,11 +37,10 @@ export const openDiffPreview: MessageHandler = async (data, requestId, ctx) => {
 export const loadDiffContent: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { diffContentId } = data;
+    // 统一走 sendError 错误协议（R2-08 复查）：非法 id / 内容缺失不再返回
+    // { success: false, error } 载荷，前端无需特判两种协议。
     if (!isValidDiffContentId(diffContentId)) {
-      ctx.sendResponse(requestId, {
-        success: false,
-        error: t('webview.errors.invalidDiffData')
-      });
+      ctx.sendError(requestId, 'LOAD_DIFF_CONTENT_ERROR', t('webview.errors.invalidDiffData'));
       return;
     }
     const content = await ctx.diffStorageManager.loadGlobalDiff(diffContentId);
@@ -53,10 +52,7 @@ export const loadDiffContent: MessageHandler = async (data, requestId, ctx) => {
         filePath: content.filePath
       });
     } else {
-      ctx.sendResponse(requestId, {
-        success: false,
-        error: t('webview.errors.diffContentNotFound')
-      });
+      ctx.sendError(requestId, 'LOAD_DIFF_CONTENT_ERROR', t('webview.errors.diffContentNotFound'));
     }
   } catch (error: any) {
     ctx.sendError(requestId, 'LOAD_DIFF_CONTENT_ERROR', error.message || t('webview.errors.loadDiffContentFailed'));
@@ -333,6 +329,11 @@ async function handleWriteFilePreview(
   }
   
   for (const file of files) {
+    // 校验 path 非空：缺 path 时 encodeURIComponent(undefined) 会生成字面 "undefined"
+    // 的 diff URI（R2-08 复查）；非法项跳过，不阻断其余文件的预览。
+    if (typeof file.path !== 'string' || !file.path.trim()) {
+      continue;
+    }
     let originalContent = '';
     let newContent = file.content;
     let diffTitle: string;

@@ -4,18 +4,21 @@
 
 import { registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 import WriteFileComponent from '../../../components/tools/file/write_file.vue'
 
 // 注册 write_file 工具
 registerTool('write_file', {
   name: 'write_file',
-  label: '写入文件',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('write_file'),
   icon: 'codicon-save',
   
   // 描述生成器 - 显示文件路径
   descriptionFormatter: (args) => {
     const path = args.path as string | undefined
-    return path || '无文件'
+    return path || t('utils.tools.noFile')
   },
   
   // 使用自定义组件显示内容

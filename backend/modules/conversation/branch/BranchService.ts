@@ -1064,10 +1064,11 @@ export class BranchService {
      */
     async finishReroll(conversationId: string, candidateNodeId: string): Promise<RerollFinishResult> {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        // 工具循环已结束，历史在此之后基本稳定；在锁外读一次快照供同步用（getMessagesRaw 只读）
-        const history = await this.conversationManager.getMessagesRaw(conversationId);
         let requiresStructuralSync = false;
-        const result = await this.mutateGraph<RerollFinishResult>(conversationId, graph => {
+        const result = await this.mutateGraph<RerollFinishResult>(conversationId, async graph => {
+            // 历史快照在会话写锁内读取（mutator 在 runExclusive 回调内执行）：与图变更原子化，
+            // 避免锁外快照与锁内图状态不一致（getMessagesRaw 只读、不取锁，无重入风险）。
+            const history = await this.conversationManager.getMessagesRaw(conversationId);
             const candidate = graph.nodes[candidateNodeId];
             if (!candidate) {
                 throw new BranchError('NODE_NOT_FOUND', `reroll candidate node not found: ${candidateNodeId}`);
@@ -1177,7 +1178,9 @@ export class BranchService {
                     );
                 }
                 const removed = removeSubtree(next, candidateNodeId).graph;
-                next = { ...removed, activeTailNodeId: parentNodeId };
+                // removeNodeSet 内部已用 deriveActiveTail 重算尾指针（空占位删除后活跃尾=父节点），
+                // 不再需要调用方手工修补。
+                next = removed;
                 return {
                     next,
                     result: {
@@ -2117,12 +2120,14 @@ export class BranchService {
      */
     private async mutateGraph<T>(
         conversationId: string,
-        mutator: (graph: ConversationBranchGraph) => { next: ConversationBranchGraph; result: T }
+        mutator: (graph: ConversationBranchGraph) =>
+            | { next: ConversationBranchGraph; result: T }
+            | Promise<{ next: ConversationBranchGraph; result: T }>
     ): Promise<T> {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
         return await this.conversationManager.runExclusive(conversationId, async () => {
             const graph = await this.loadGraphForWrite(conversationId);
-            const { next, result } = mutator(graph);
+            const { next, result } = await mutator(graph);
             // R8c-P6：幂等路径（mutator 原样返回读到的图，如重复软删/恢复/清理不存在的节点）
             // 图未发生变化，跳过 validateAndSave——避免无意义的 sidecar 重写。
             if (next !== graph) {

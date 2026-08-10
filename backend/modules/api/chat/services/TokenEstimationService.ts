@@ -372,17 +372,43 @@ export class TokenEstimationService {
             return texts.map(() => 0);
         }
         
-        // 并行调用 API 计数
-        const countPromises = textsToCount.map(({ text }) => {
-            const message: Content = {
-                role: 'user',
-                parts: [{ text }]
-            };
-            return this.tokenCountService.countTokens(
-                normalizedChannelType!,
-                tokenCountConfig,
-                [message]
-            );
+        // 并行调用 API 计数（带并发上限：避免大量文本同时打 token 计数 API
+        // 打爆上游/代理——简单信号量，同时最多 4 个在飞请求）
+        const MAX_CONCURRENT_TOKEN_COUNTS = 4;
+        let activeCount = 0;
+        const waiters: Array<() => void> = [];
+        const acquire = async (): Promise<void> => {
+            if (activeCount < MAX_CONCURRENT_TOKEN_COUNTS) {
+                activeCount++;
+                return;
+            }
+            // 槽位已满：排队等待；release 时槽位直接转移给等待者（等待者不再自增）
+            await new Promise<void>((resolve) => waiters.push(resolve));
+        };
+        const release = (): void => {
+            const next = waiters.shift();
+            if (next) {
+                next(); // 槽位直接转移给等待者
+            } else {
+                activeCount--;
+            }
+        };
+
+        const countPromises = textsToCount.map(async ({ text }) => {
+            await acquire();
+            try {
+                const message: Content = {
+                    role: 'user',
+                    parts: [{ text }]
+                };
+                return await this.tokenCountService.countTokens(
+                    normalizedChannelType!,
+                    tokenCountConfig,
+                    [message]
+                );
+            } finally {
+                release();
+            }
         });
         
         const results = await Promise.all(countPromises);
