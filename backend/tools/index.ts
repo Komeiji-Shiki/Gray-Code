@@ -45,6 +45,11 @@ export * from './activity';
 // 导出工具辅助函数
 export * from './utils';
 
+// 补充导出（这些符号未随对应目录 index 导出）
+export { getPlanSourceStatusFromContent } from './plan/sourceArtifactSection';
+export type { SubAgentRunConversationStore } from './subagents/runEventBus';
+export { resolveMainChatDiffViewColumn } from './file/diffViewColumn';
+
 // 导出格式化器
 export * from './xmlFormatter';
 export * from './jsonFormatter';
@@ -152,33 +157,6 @@ export function registerAllTools(
 
     // 用真正的工厂函数注册 read_skill，使 refreshTool('read_skill') 能重新生成声明
     registry.register(getReadSkillToolRegistration());
-}
-
-/**
- * 初始化工具系统
- *
- * 这个函数需要在工具系统启动时调用，它会：
- * 1. 将 DependencyManager 连接到 ToolRegistry 作为依赖检查器
- * 2. 注册所有工具
- *
- * @param registry 工具注册器实例
- */
-export function initializeToolSystem(
-    registry: typeof import('./ToolRegistry').toolRegistry
-): void {
-    try {
-        // 获取 DependencyManager 实例并设置为依赖检查器
-        const depManager = DependencyManager.getInstance();
-        registry.setDependencyChecker({
-            isInstalled: (name: string) => depManager.isInstalledSync(name)
-        });
-    } catch (e) {
-        // DependencyManager 可能未初始化，忽略错误
-        console.log('DependencyManager not initialized yet, skipping dependency checker setup');
-    }
-    
-    // 注册所有工具
-    registerAllTools(registry);
 }
 
 /**

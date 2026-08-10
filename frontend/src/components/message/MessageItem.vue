@@ -1,60 +1,3 @@
-<script lang="ts">
-/**
- * R3-#5: 后台任务消息三段式视图模式的模块级持久化。
- * 组件实例会随列表滚动（虚拟化）、新增消息、重载等场景销毁重建；
- * 若折叠态只是组件实例级 ref，重建后会复位为 collapsed。
- * 仿照 MessageList 的 messageListUiStateByTab：以 messageId 为 key 存于模块级 Map，
- * 组件重建时按 id 恢复用户上次选择的视图模式。
- * 使用 reactive(Map) 以便 computed getter 追踪 key 访问、setter 触发更新。
- */
-import { reactive } from 'vue'
-import type { ThoughtViewMode } from './renderBlocks'
-
-export type BackgroundTaskViewMode = 'collapsed' | 'medium' | 'expanded'
-export const backgroundTaskViewModeByMessageId = reactive(new Map<string, BackgroundTaskViewMode>())
-
-/**
- * M1-1：视图模式 Map 容量上限（防御性兜底；正常路径由 pruneBackgroundTaskViewModes 定期清理）。
- * 消息删除/窗口裁剪/重试截断/对话关闭都会留下不再被渲染的 messageId 记录，
- * 该上限保证 Map 大小有界，避免无限增长。
- */
-export const BACKGROUND_TASK_VIEW_MODE_CAP = 500
-
-/**
- * M1-1：清理不再活跃（消息被删除/窗口裁剪/重试截断/对话关闭）的视图模式记录。
- *
- * @param activeIds 仍可能被渲染的消息 ID 集合（当前窗口 + 各标签页快照的并集）；
- *                  不在集合中的 messageId 记录会被删除。
- */
-export function pruneBackgroundTaskViewModes(activeIds: Set<string>): void {
-  for (const messageId of Array.from(backgroundTaskViewModeByMessageId.keys())) {
-    if (!activeIds.has(messageId)) {
-      backgroundTaskViewModeByMessageId.delete(messageId)
-    }
-  }
-}
-
-/**
- * 思考块视图模式记录的同口径清理（与 pruneBackgroundTaskViewModes 一起由 MessageList
- * 在对话/标签页切换时调用）：消息删除/窗口裁剪/重试截断/对话关闭后移除不再渲染的 id。
- */
-export function pruneThoughtViewModes(activeIds: Set<string>): void {
-  for (const messageId of Array.from(thoughtViewModeByMessageId.keys())) {
-    if (!activeIds.has(messageId)) {
-      thoughtViewModeByMessageId.delete(messageId)
-    }
-  }
-}
-
-/**
- * 思考块三段式视图模式的模块级持久化（与 backgroundTaskViewModeByMessageId 同模式）：
- * 虚拟列表滚动回收 MessageItem 后，用户选择的折叠/完全展开不应复位为默认中展开。
- * 带容量上限（消息删除/窗口裁剪会留下不再渲染的 messageId 记录）。
- */
-export const thoughtViewModeByMessageId = reactive(new Map<string, ThoughtViewMode>())
-export const THOUGHT_VIEW_MODE_CAP = 500
-</script>
-
 <script setup lang="ts">
 /**
  * MessageItem - 单条消息组件
@@ -80,7 +23,14 @@ import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../u
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
-import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
+import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps, type ThoughtViewMode } from './renderBlocks'
+import {
+  type BackgroundTaskViewMode,
+  backgroundTaskViewModeByMessageId,
+  BACKGROUND_TASK_VIEW_MODE_CAP,
+  thoughtViewModeByMessageId,
+  THOUGHT_VIEW_MODE_CAP
+} from './messageViewModes'
 import type { SmoothDisplayText } from '../../stores/chat/types'
 import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
@@ -1428,6 +1378,11 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .message-header :deep(.message-actions.actions-visible) {
+  opacity: 1;
+}
+
+/* 键盘聚焦（Tab 导航到消息内任意可聚焦元素）时同样显示操作按钮，保证纯键盘可用 */
+.message-item:focus-within .message-header :deep(.message-actions) {
   opacity: 1;
 }
 

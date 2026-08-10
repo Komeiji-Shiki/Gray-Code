@@ -41,6 +41,3 @@ export {
 
 // 核心管理器
 export { ConfigManager } from './ConfigManager';
-
-// 模块注册
-export { registerConfigModule } from './register';

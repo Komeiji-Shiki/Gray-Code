@@ -19,8 +19,9 @@ export {
 
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
-import MessageItem, { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './MessageItem.vue'
+import MessageItem from './MessageItem.vue'
 import { pruneMediumTrimmedByMessageId } from './MessageRenderBlock.vue'
+import { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './messageViewModes'
 import SummaryMessage from './SummaryMessage.vue'
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
 import { useChatStore } from '../../stores'
@@ -672,6 +673,20 @@ async function loadMore() {
       const newScrollHeight = container.scrollHeight
       container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
     }
+    // 内容仍不满一屏且还有更多时继续自动补载（覆盖初始挂载/首屏不满的场景）
+    maybeAutoLoadMore()
+  }
+}
+
+// 内容不满一屏时自动补载：覆盖初始挂载（容器尺寸就绪但内容不足一屏）的场景，
+// 避免顶部加载指示器可见却永远不触发加载。内部有 hasMore / isLoadingMore 防护，
+// 会在内容填满一屏或没有更多消息时自然收敛。
+function maybeAutoLoadMore() {
+  if (isLoadingMore.value || !hasMore.value) return
+  const container = scrollbarRef.value?.getContainer()
+  if (!container) return
+  if (container.scrollHeight <= container.clientHeight + 1) {
+    void loadMore()
   }
 }
 
@@ -848,6 +863,14 @@ onMounted(() => {
           // 使用 requestAnimationFrame 确保布局完成
           requestAnimationFrame(() => {
             tryScrollToBottom({ instant: true })
+          })
+        }
+
+        // 容器尺寸就绪后检查：内容不满一屏时自动补载
+        if (height > 0) {
+          // 使用 requestAnimationFrame 确保布局完成
+          requestAnimationFrame(() => {
+            maybeAutoLoadMore()
           })
         }
       }
@@ -1306,8 +1329,8 @@ function formatCheckpointTime(timestamp: number): string {
     <div class="message-scroll-area">
       <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message, .summary-message" :width="10" :marker-height="10">
       <div class="messages-container">
-        <!-- 自动加载更多指示器 -->
-        <div v-if="hasMore" class="load-more-container">
+        <!-- 自动加载更多指示器：点击可手动触发加载（自动补载的兜底入口） -->
+        <div v-if="hasMore" class="load-more-container" @click="loadMore()">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
           <span v-if="chatStore.historyFolded" class="load-more-text">
             {{ t('components.message.historyFolded', { count: chatStore.foldedMessageCount }) }}
@@ -1864,6 +1887,8 @@ function formatCheckpointTime(timestamp: number): string {
   padding: 12px;
   color: var(--vscode-descriptionForeground);
   opacity: 0.7;
+  /* 点击可手动触发加载更多 */
+  cursor: pointer;
 }
 
 .load-more-container .codicon {

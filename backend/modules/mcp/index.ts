@@ -49,12 +49,19 @@ export {
     VSCodeFileSystemMcpStorageAdapter
 } from './storage';
 
-// 模块注册
-export { registerMcpModule } from './register';
-
 // 工具适配器
 // WP12：MCP 工具名编解码统一走 mcpToolNameCodec；旧单下划线命名时代的
 // parseMcpToolName/createMcpTool/mcpToolsToDeclarations/collectAllMcpToolDeclarations
 // 无任何引用，已删除（导出同步移除）。
 export { mcpToolToDeclaration, mcpResultToToolResult } from './toolAdapter';
 export type { McpToolSchema } from './toolAdapter';
+
+// MCP 工具名编解码（WP12：统一 mcp__<serverId>__<toolName> 格式）
+export {
+    MCP_TOOL_PREFIX,
+    MCP_TOOL_SEPARATOR,
+    MCP_SERVER_ID_PATTERN,
+    encodeMcpToolName,
+    decodeMcpToolName,
+    isMcpToolName
+} from './mcpToolNameCodec';

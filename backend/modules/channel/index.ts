@@ -39,5 +39,14 @@ export type { TokenCountResult } from './TokenCountService';
 export type { ModelInfo } from './modelList';
 export { getModels, getGeminiModels, getOpenAIModels, getClaudeModels } from './modelList';
 
-// 模块注册
-export { registerChannelModule } from './register';
+// 代理请求（proxyFetch）
+export {
+    resolveProxyInsecureSkipVerify,
+    extractUpstreamErrorMessage,
+    closeSocketGracefully,
+    parseProxyLeg,
+    createProxyFetch,
+    decodeChunkedBuffer,
+    proxyStreamFetch
+} from './proxyFetch';
+export type { FetchOptions, FetchResponse } from './proxyFetch';
