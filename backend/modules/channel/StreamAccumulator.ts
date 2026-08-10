@@ -8,7 +8,7 @@
 import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../conversation';
 import type { StreamChunk, StreamUsageMetadata } from './types';
 import type { ToolMode } from '../config';
-import { IncrementalPromptToolParser } from '../../tools/promptToolParser';
+import { IncrementalPromptToolParser } from '../../core/parsers/promptToolParser';
 
 interface BuildContentOptions {
     parsePartialArgs: boolean;

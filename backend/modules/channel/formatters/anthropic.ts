@@ -40,7 +40,7 @@ import {
 import {
     detectPromptToolMode,
     IncrementalPromptToolParser
-} from '../../../tools/promptToolParser';
+} from '../../../core/parsers/promptToolParser';
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';

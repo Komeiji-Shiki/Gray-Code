@@ -18,7 +18,7 @@ import type { ToolRegistry } from '../../../../../tools/ToolRegistry';
 import type { ConversationStore, ToolProgressEmitter } from '../../../../../tools/types';
 import { normalizeToolArgs } from '../../../../../tools/coerceToolArgs';
 import { validateToolArgs } from '../../../../../tools/validateToolArgs';
-import { TOOL_CALL_PARSE_ERROR_ARG_KEY } from '../../../../../tools/promptToolParser';
+import { TOOL_CALL_PARSE_ERROR_ARG_KEY } from '../../../../../core/parsers/promptToolParser';
 import { REPEATED_CALL_GUARD_ARG_KEY } from '../repeatedCallGuard';
 import type { McpManager } from '../../../../mcp/McpManager';
 import { mcpResultToToolResult } from '../../../../mcp/toolAdapter';

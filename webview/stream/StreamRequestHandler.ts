@@ -8,6 +8,7 @@ import type * as vscode from 'vscode';
 import type { ChatHandler } from '../../backend/modules/api/chat';
 import type { ConversationManager } from '../../backend/modules/conversation';
 import { StreamAbortManager, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './StreamAbortManager';
+import { setStreamAbortManager } from '../../backend/core/streamAbortBridge';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools';
@@ -30,10 +31,11 @@ export interface StreamHandlerDeps {
  */
 export class StreamRequestHandler {
   constructor(private deps: StreamHandlerDeps) {
-    // H1：把 abort manager 注册为全局单例，供后端 ChatFlowService 读取同一实例，
-    // 在写入用户消息/截断历史之前等待旧流退出（reroll / editBranch 等不经本类
-    // create 的入口同样被覆盖）。
-    StreamAbortManager.setGlobalInstance(this.deps.abortManager);
+    // H1：把 abort manager 注册进 backend/core 桥接（setStreamAbortManager），供后端
+    // ChatFlowService 读取同一实例，在写入用户消息/截断历史之前等待旧流退出
+    // （reroll / editBranch 等不经本类 create 的入口同样被覆盖）。
+    // 第六批层反转：不再调用 StreamAbortManager.setGlobalInstance（该类静态槽保留供测试清理用）。
+    setStreamAbortManager(this.deps.abortManager);
   }
 
   /**

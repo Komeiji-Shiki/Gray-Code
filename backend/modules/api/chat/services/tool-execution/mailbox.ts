@@ -12,7 +12,7 @@
  * 逻辑与拆分前逐字一致；仅可见性从 private 调整为 protected（跨继承类调用所需，
  * 编译期属性，零运行时影响）。
  */
-import { agentMailbox } from '../../../../../tools/subagents/agentMailbox';
+import { agentMailbox } from '../../../../../core/services/agentMailbox';
 import type { ContentPart } from '../../../../conversation/types';
 import type { ToolExecutionResult } from '../../utils';
 

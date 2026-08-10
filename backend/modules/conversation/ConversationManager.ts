@@ -34,7 +34,7 @@ import { buildConversationUsageIndex, type UsageIndexMessage, type UsageIndexSto
 import { getDiffStorageManager } from './DiffStorageManager';
 import { getGlobalBranchService } from './branch/BranchService';
 import { isActiveEmptyPlaceholder } from './branch/BranchGraph';
-import { agentMailbox } from '../../tools/subagents/agentMailbox';
+import { agentMailbox } from '../../core/services/agentMailbox';
 import { Logger } from '../../core/logger';
 import { ConversationQueryService } from './manager/query';
 import { ConversationToolCallService } from './manager/toolCalls';
