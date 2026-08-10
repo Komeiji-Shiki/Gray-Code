@@ -99,8 +99,10 @@ export class CharFlow {
   /**
    * 本帧要浮现的字素 + 帧时长（ms，用于批内错峰间隔）。
    * instant=true 时跳过淡入直接定型（panic 快进 / flush 用）。
+   * deferTrim=true 时本帧不执行有界裁剪，由调用方在“可提升内容已被 promote
+   * 剥离”后调用 trimNow()——避免 trim 先于 promote 把未提升的完整表格结构裁掉。
    */
-  append(graphemes: string[], frameDurMs: number, instant = false): void {
+  append(graphemes: string[], frameDurMs: number, instant = false, deferTrim = false): void {
     if (this.disposed || graphemes.length === 0) return
     // 先回收已播完的 chip，保持 host 结构 = settled + 存活的 chips
     this.collapse()
@@ -112,7 +114,7 @@ export class CharFlow {
     if (this.reducedMotion || instant || this.noFade) {
       // 减少动效 / 直通：直接并入已定型文本，不建 span
       this.settled.appendData(chars.join(''))
-      this.trimToWindow()
+      if (!deferTrim) this.trimToWindow()
       this.scrollToEnd()
       return
     }
@@ -165,6 +167,14 @@ export class CharFlow {
     }
   }
 
+  /** 有界裁剪（公开版）：配合 append(deferTrim=true) 使用，
+   * 在“可提升内容已被 promote 剥离”后只裁真正无法提升的尾巴。 */
+  trimNow(): void {
+    if (this.disposed) return
+    this.trimToWindow()
+    this.scrollToEnd()
+  }
+
   /** 是否还有未播完动画的字符（供「升级为稳定块」判断） */
   idle(): boolean {
     return this.births.length === 0
@@ -184,6 +194,42 @@ export class CharFlow {
     const text = this.settled.data.slice(0, n)
     this.settled.replaceData(0, n, '')
     return text
+  }
+
+  /**
+   * 将一段文本作为“渲染交接桥”保留在 settled 之前，并返回幂等释放函数。
+   *
+   * bridge 不属于 settled/chips，因此不会被 collapse、trim 或后续 promote 误处理；
+   * MarkdownRenderer 确认真实 DOM 已更新后再释放它，可避免交接期间正文短暂消失。
+   */
+  bridgeText(text: string): () => void {
+    if (this.disposed || !text) return () => {}
+
+    const bridge = document.createTextNode(text)
+    this.host.insertBefore(bridge, this.settled)
+    let released = false
+
+    return () => {
+      if (released) return
+      released = true
+      bridge.parentNode?.removeChild(bridge)
+    }
+  }
+
+  /**
+   * 原子地把 settled 前缀的逻辑所有权交给 Markdown 层，同时用纯文本 bridge
+   * 保持视觉连续。调用方必须在 Markdown DOM 真正落地后调用 release。
+   */
+  promoteWithBridge(n: number): { text: string; release: () => void } | null {
+    if (this.disposed || n <= 0) return null
+    const text = this.settled.data.slice(0, n)
+    if (!text) return null
+
+    // bridge 先进入 DOM、再从 settled 删除；同一同步任务内最终文本完全一致，
+    // 且多个 bridge 总是按提升顺序排列在 settled 之前。
+    const release = this.bridgeText(text)
+    this.settled.replaceData(0, n, '')
+    return { text, release }
   }
 
   /** 立即定型全部字符（flush / 中止 / 终结前调用，不清空内容） */

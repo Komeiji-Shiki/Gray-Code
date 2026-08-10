@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { CustomSelect, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
+import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
 
 const { t } = useI18n()
 
@@ -89,6 +90,53 @@ function updateThinkingConfig(field: string, value: any) {
   
   emit('update:option', 'thinkingConfig', updatedThinkingConfig)
 }
+
+// ============ 草稿模式数字输入 ============
+// 清空后不立即回填默认值（编辑期间保持为空）；离开设置页时自动回填已保存值。
+const {
+  draft: temperatureDraft,
+  handleInput: handleTemperatureInput,
+  syncFromStored: syncTemperatureFromStored,
+  touched: temperatureTouched
+} = useDeferredNumberInput(() => props.config?.options?.temperature ?? 1.0)
+const {
+  draft: maxOutputTokensDraft,
+  handleInput: handleMaxOutputTokensInput,
+  syncFromStored: syncMaxOutputTokensFromStored,
+  touched: maxOutputTokensTouched
+} = useDeferredNumberInput(() => props.config?.options?.maxOutputTokens ?? 65535)
+const {
+  draft: maxImagesDraft,
+  handleInput: handleMaxImagesInput,
+  syncFromStored: syncMaxImagesFromStored,
+  touched: maxImagesTouched
+} = useDeferredNumberInput(() => props.config?.options?.maxImages ?? 0)
+const {
+  draft: thinkingBudgetDraft,
+  handleInput: handleThinkingBudgetInput,
+  syncFromStored: syncThinkingBudgetFromStored,
+  touched: thinkingBudgetTouched
+} = useDeferredNumberInput(() => props.config?.options?.thinkingConfig?.thinkingBudget ?? 1024)
+const {
+  draft: historyThinkingRoundsDraft,
+  handleInput: handleHistoryThinkingRoundsInput,
+  syncFromStored: syncHistoryThinkingRoundsFromStored,
+  touched: historyThinkingRoundsTouched
+} = useDeferredNumberInput(() => props.config?.historyThinkingRounds ?? -1)
+
+// 外部配置更新时同步草稿（用户已手动输入过的字段不被覆盖，
+// 避免快速连打时响应竞态把未提交的草稿回退）
+watch(
+  () => props.config,
+  () => {
+    if (!temperatureTouched.value) syncTemperatureFromStored()
+    if (!maxOutputTokensTouched.value) syncMaxOutputTokensFromStored()
+    if (!maxImagesTouched.value) syncMaxImagesFromStored()
+    if (!thinkingBudgetTouched.value) syncThinkingBudgetFromStored()
+    if (!historyThinkingRoundsTouched.value) syncHistoryThinkingRoundsFromStored()
+  },
+  { deep: true }
+)
 </script>
 
 <template>
@@ -111,11 +159,11 @@ function updateThinkingConfig(field: string, value: any) {
         step="0.1"
         min="0"
         max="2"
-        :value="config.options?.temperature ?? 1.0"
+        :value="temperatureDraft"
         placeholder="1.0"
         :disabled="!isOptionEnabled('temperature')"
         :class="{ disabled: !isOptionEnabled('temperature') }"
-        @input="(e: any) => emit('update:option', 'temperature', Number(e.target.value))"
+        @input="(e: any) => handleTemperatureInput(e.target.value, v => emit('update:option', 'temperature', v))"
       />
       <span class="option-hint">{{ t('components.channels.common.temperature.hint') }}</span>
     </div>
@@ -135,11 +183,11 @@ function updateThinkingConfig(field: string, value: any) {
       </div>
       <input
         type="number"
-        :value="config.options?.maxOutputTokens ?? 65535"
+        :value="maxOutputTokensDraft"
         placeholder="65535"
         :disabled="!isOptionEnabled('maxOutputTokens')"
         :class="{ disabled: !isOptionEnabled('maxOutputTokens') }"
-        @input="(e: any) => emit('update:option', 'maxOutputTokens', Number(e.target.value))"
+        @input="(e: any) => handleMaxOutputTokensInput(e.target.value, v => emit('update:option', 'maxOutputTokens', v))"
       />
     </div>
 
@@ -159,11 +207,11 @@ function updateThinkingConfig(field: string, value: any) {
       <input
         type="number"
         min="0"
-        :value="config.options?.maxImages ?? 0"
+        :value="maxImagesDraft"
         :placeholder="t('components.channels.gemini.maxImages.placeholder')"
         :disabled="!isOptionEnabled('maxImages')"
         :class="{ disabled: !isOptionEnabled('maxImages') }"
-        @input="(e: any) => emit('update:option', 'maxImages', Number(e.target.value))"
+        @input="(e: any) => handleMaxImagesInput(e.target.value, v => emit('update:option', 'maxImages', v))"
       />
       <span class="option-hint">{{ t('components.channels.gemini.maxImages.hint') }}</span>
     </div>
@@ -263,11 +311,11 @@ function updateThinkingConfig(field: string, value: any) {
           <label>{{ t('components.channels.gemini.thinking.budgetLabel') }}</label>
           <input
             type="number"
-            :value="getThinkingConfigValue('thinkingBudget', 1024)"
+            :value="thinkingBudgetDraft"
             :placeholder="t('components.channels.gemini.thinking.budgetPlaceholder')"
             :disabled="!isOptionEnabled('thinkingConfig')"
             :class="{ disabled: !isOptionEnabled('thinkingConfig') }"
-            @input="(e: any) => updateThinkingConfig('thinkingBudget', Number(e.target.value))"
+            @input="(e: any) => handleThinkingBudgetInput(e.target.value, v => updateThinkingConfig('thinkingBudget', v))"
           />
           <span class="option-hint">{{ t('components.channels.gemini.thinking.budgetHint') }}</span>
         </div>
@@ -348,10 +396,10 @@ function updateThinkingConfig(field: string, value: any) {
           <label>{{ t('components.channels.common.thinkingBackfill.roundsLabel') }}</label>
           <input
             type="number"
-            :value="config.historyThinkingRounds ?? -1"
+            :value="historyThinkingRoundsDraft"
             placeholder="-1"
             min="-1"
-            @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
+            @input="(e: any) => handleHistoryThinkingRoundsInput(e.target.value, v => emit('update:field', 'historyThinkingRounds', v))"
           />
           <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.roundsHint') }}</span>
         </div>

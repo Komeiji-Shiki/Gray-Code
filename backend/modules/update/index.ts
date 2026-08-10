@@ -12,10 +12,12 @@ export {
     compareVersions,
     shouldCheck,
     parseReleaseResponse,
+    extractNightlyVersionFromName,
 } from './UpdateChecker';
 
 export type {
     UpdateInfo,
+    UpdateChannel,
     UpdateCheckStatus,
     UpdateCheckerOptions,
 } from './UpdateChecker';

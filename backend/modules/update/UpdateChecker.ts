@@ -20,6 +20,9 @@ import { createProxyFetch } from '../channel/proxyFetch';
 
 /** GitHub 仓库（owner/repo） */
 export const UPDATE_REPO = 'Komeiji-Shiki/Gray-Code';
+
+/** 更新渠道：stable=正式发布版，nightly=每日自动构建（预览） */
+export type UpdateChannel = 'stable' | 'nightly';
 /** 本扩展 ID（安装/版本读取用） */
 export const EXTENSION_ID = 'Komeiji-Shiki.graycode';
 /** 检查节流间隔：24 小时 */
@@ -43,6 +46,8 @@ export interface UpdateInfo {
     vsixAssetUrl?: string;
     /** 发布时间（ISO） */
     publishedAt: string;
+    /** 所属更新渠道（stable / nightly） */
+    channel?: UpdateChannel;
 }
 
 /** 更新检查状态机（前端按 state 渲染） */
@@ -64,14 +69,21 @@ export function stripVersionPrefix(version: string): string {
 /**
  * 语义版本比较（支持任意段数，缺段按 0；非数字段按 0）。
  * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）。
+ * 特例：nightly 预发布（-nightly.<YYYYMMDD>）视为「高于同主版本正式版」的最新构建，
+ * 两个 nightly 之间按日期段比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）。
  * 返回 -1（a < b）/ 0（相等）/ 1（a > b）。
  */
 export function compareVersions(a: string, b: string): number {
-    const parse = (v: string): { nums: number[]; prerelease: boolean } => {
-        const main = stripVersionPrefix(v).split('-')[0];
+    const parse = (v: string): { nums: number[]; nightlyDate: string | null; prerelease: boolean } => {
+        const cleaned = stripVersionPrefix(v);
+        const dash = cleaned.indexOf('-');
+        const main = dash >= 0 ? cleaned.slice(0, dash) : cleaned;
+        const suffix = dash >= 0 ? cleaned.slice(dash + 1) : null;
+        const nightlyDate = suffix && suffix.startsWith('nightly.') ? suffix.slice('nightly.'.length) : null;
         return {
             nums: main.split('.').map(n => parseInt(n, 10) || 0),
-            prerelease: stripVersionPrefix(v).includes('-')
+            nightlyDate,
+            prerelease: suffix !== null && nightlyDate === null
         };
     };
     const ap = parse(a);
@@ -81,6 +93,14 @@ export function compareVersions(a: string, b: string): number {
         const x = ap.nums[i] ?? 0;
         const y = bp.nums[i] ?? 0;
         if (x !== y) return x < y ? -1 : 1;
+    }
+    // 主版本相同：nightly 构建视为更新（nightly > 正式版；nightly 之间按日期）
+    if (ap.nightlyDate || bp.nightlyDate) {
+        if (ap.nightlyDate && bp.nightlyDate) {
+            if (ap.nightlyDate !== bp.nightlyDate) return ap.nightlyDate < bp.nightlyDate ? -1 : 1;
+            return 0;
+        }
+        return ap.nightlyDate ? 1 : -1;
     }
     if (ap.prerelease !== bp.prerelease) {
         return ap.prerelease ? -1 : 1;
@@ -96,10 +116,29 @@ export function shouldCheck(lastCheckAt: number | undefined, now: number, force:
 }
 
 /**
+ * nightly 版本号格式：<semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809）。
+ * 合法 semver（vsce 打包校验要求）；compareVersions 将 nightly 预发布视为
+ * 「高于同主版本正式版」的最新构建，nightly 之间按日期比较。
+ */
+const NIGHTLY_VERSION_RE = /(?<![\d.])(\d+\.\d+\.\d+-nightly\.\d{8})\b/i;
+
+/**
+ * 从 nightly Release 名称中提取版本号。
+ * 例如 "v1.4.6-nightly.20260809" → "1.4.6-nightly.20260809"；
+ * 同时兼容旧的 "Gray Code Nightly v..." 名称。
+ * 提取失败返回 null。
+ */
+export function extractNightlyVersionFromName(name: unknown): string | null {
+    if (typeof name !== 'string' || !name) return null;
+    const m = NIGHTLY_VERSION_RE.exec(name);
+    return m ? m[1] : null;
+}
+
+/**
  * 解析 GitHub Releases API 响应为 UpdateInfo。
  * 响应格式异常时返回 null（调用方按错误处理）。
  */
-export function parseReleaseResponse(data: unknown): UpdateInfo | null {
+export function parseReleaseResponse(data: unknown, channel: UpdateChannel = 'stable'): UpdateInfo | null {
     if (!data || typeof data !== 'object') return null;
     const raw = data as Record<string, unknown>;
     if (typeof raw.tag_name !== 'string' || !raw.tag_name) return null;
@@ -112,8 +151,17 @@ export function parseReleaseResponse(data: unknown): UpdateInfo | null {
             const yPlatform = /-(win32|darwin|linux|linux-x64|linux-arm64|universal)\.vsix$/i.test(y.name as string) ? 1 : 0;
             return xPlatform - yPlatform || String(x.name).localeCompare(String(y.name));
         })[0];
+    let version = stripVersionPrefix(raw.tag_name);
+    if (channel === 'nightly') {
+        // nightly Release 的 tag 固定为 nightly，真实版本号写在 Release name 中
+        //（如 "v1.4.6-nightly.20260809"），从 name 提取；旧的装饰性名称仍兼容。
+        // 提取失败视为响应格式异常（避免 version 退化为 'nightly' 导致静默判为已最新）
+        const nameVersion = extractNightlyVersionFromName(raw.name);
+        if (!nameVersion) return null;
+        version = nameVersion;
+    }
     return {
-        version: stripVersionPrefix(raw.tag_name),
+        version,
         tagName: raw.tag_name,
         name: typeof raw.name === 'string' && raw.name ? raw.name : raw.tag_name,
         body: typeof raw.body === 'string' ? raw.body : '',
@@ -121,6 +169,7 @@ export function parseReleaseResponse(data: unknown): UpdateInfo | null {
             ? vsix.browser_download_url
             : undefined,
         publishedAt: typeof raw.published_at === 'string' ? raw.published_at : '',
+        channel,
     };
 }
 
@@ -129,6 +178,8 @@ export function parseReleaseResponse(data: unknown): UpdateInfo | null {
 export interface UpdateCheckerOptions {
     /** 是否启用自动检查（用户设置 checkForUpdates !== false） */
     isCheckEnabled: () => boolean;
+    /** 更新渠道（stable=正式发布 / nightly=每日构建；缺省 stable） */
+    getUpdateChannel?: () => UpdateChannel;
     /** 代理 URL（未启用代理时返回 undefined） */
     getProxyUrl?: () => string | undefined;
     /** 持久化存储（扩展 globalState 适配） */
@@ -184,6 +235,9 @@ export class UpdateChecker {
         try {
             const info = await this.fetchLatestRelease();
             const current = this.getCurrentVersion();
+            // nightly 版本号为 <semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809），
+            // compareVersions 将其视为「高于同主版本正式版」的最新构建，
+            // 两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）
             if (current && compareVersions(info.version, current) > 0) {
                 this.status = { state: 'updateAvailable', checkedAt: now, update: info };
             } else {
@@ -251,9 +305,13 @@ export class UpdateChecker {
         return target;
     }
 
-    /** 打开 GitHub Releases 页面（安装失败/无 vsix 资产时的兜底入口） */
-    static openReleasePage(): Thenable<boolean> {
-        return vscode.env.openExternal(vscode.Uri.parse(`https://github.com/${UPDATE_REPO}/releases/latest`));
+    /** 打开 GitHub Releases 页面（安装失败/无 vsix 资产时的兜底入口；按渠道打开对应页面） */
+    openReleasePage(): Thenable<boolean> {
+        const channel = this.getUpdateChannel();
+        const page = channel === 'nightly'
+            ? `https://github.com/${UPDATE_REPO}/releases/tag/nightly`
+            : `https://github.com/${UPDATE_REPO}/releases/latest`;
+        return vscode.env.openExternal(vscode.Uri.parse(page));
     }
 
     // ─── 私有 ──────────────────────────────────────
@@ -266,6 +324,23 @@ export class UpdateChecker {
         return ext?.packageJSON?.version || '';
     }
 
+    private getUpdateChannel(): UpdateChannel {
+        if (this.options.getUpdateChannel) {
+            return this.options.getUpdateChannel();
+        }
+        return 'stable';
+    }
+
+    /**
+     * 渠道等影响检查结果的条件变化时调用：清除内存状态并重置节流时间戳，
+     * 使下一次检查（含启动自动检查）按新条件重新拉取，
+     * 避免旧渠道的缓存结果（如 Nightly 徽章/可安装项）残留到新渠道。
+     */
+    resetStatus(): void {
+        this.status = { state: 'idle' };
+        void this.options.storage.update('lastUpdateCheckAt', 0).catch(() => undefined);
+    }
+
     private getFetch(): (url: string, init?: RequestInit) => Promise<Response> {
         if (this.options.fetchImpl) {
             return this.options.fetchImpl;
@@ -275,17 +350,28 @@ export class UpdateChecker {
     }
 
     private async fetchLatestRelease(): Promise<UpdateInfo> {
+        const channel = this.getUpdateChannel();
+        // stable：最新正式 Release；nightly：固定 tag=nightly 的每日构建 Release。
+        // nightly 基于最新代码构建且版本号（如 1.4.7-nightly.<date>）恒高于正式版（1.4.7），
+        // 正式版变更会随下一次 nightly 构建自然覆盖，无需再检查正式版。
+        const endpoint = channel === 'nightly'
+            ? `https://api.github.com/repos/${UPDATE_REPO}/releases/tags/nightly`
+            : `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`;
+        return this.fetchRelease(endpoint, channel);
+    }
+
+    private async fetchRelease(endpoint: string, channel: UpdateChannel): Promise<UpdateInfo> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), UPDATE_FETCH_TIMEOUT_MS);
         try {
-            const res = await this.getFetch()(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, {
+            const res = await this.getFetch()(endpoint, {
                 headers: { 'Accept': 'application/vnd.github+json' },
                 signal: controller.signal,
             });
             if (!res.ok) {
                 throw new Error(`GitHub Releases API 返回 ${res.status} ${res.statusText}`);
             }
-            const info = parseReleaseResponse(await res.json());
+            const info = parseReleaseResponse(await res.json(), channel);
             if (!info) {
                 throw new Error('GitHub Releases API 响应格式异常');
             }

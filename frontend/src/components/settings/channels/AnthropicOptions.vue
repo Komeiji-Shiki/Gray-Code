@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { CustomSelect, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
+import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
 
 const { t } = useI18n()
 
@@ -14,6 +15,13 @@ const emit = defineEmits<{
   (e: 'update:optionEnabled', optionKey: string, enabled: boolean, optionValue?: any): void
   (e: 'update:field', field: string, value: any): void
 }>()
+
+// 草稿模式：清空后不立即回填 -1；离开设置页时自动回填已保存值
+// （historyThinkingRounds 为无条件展开的普通数字输入，清空保持空语义合理）
+const {
+  draft: historyThinkingRoundsDraft,
+  handleInput: handleHistoryThinkingRoundsInput
+} = useDeferredNumberInput(() => props.config?.historyThinkingRounds ?? -1)
 
 // 默认配置值
 const DEFAULT_VALUES: Record<string, any> = {
@@ -169,6 +177,10 @@ function updateThinking(field: string, value: any) {
 }
 
 // 处理数字输入变更，允许空值
+// 注意：temperature/max_tokens/top_p/top_k/budget_tokens 等「开关控制的选项」刻意保留此实现
+// （清空 → emit undefined → JSON.stringify 剔除键 → 渠道不发送该参数、恢复渠道默认值），
+// 与 useDeferredNumberInput 的「清空保持空、离开回填上次值」语义不同——
+// 前者对 toggle 选项是正确行为（清空=恢复默认），故不迁移到草稿模式。
 function handleNumberChange(optionKey: string, event: any) {
   const value = event.target.value
   if (value === '' || value === null || value === undefined) {
@@ -446,10 +458,10 @@ function handleThinkingNumberChange(field: string, event: any) {
           <label>{{ t('components.channels.common.thinkingBackfill.roundsLabel') }}</label>
           <input
             type="number"
-            :value="config.historyThinkingRounds ?? -1"
+            :value="historyThinkingRoundsDraft"
             placeholder="-1"
             min="-1"
-            @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
+            @input="(e: any) => handleHistoryThinkingRoundsInput(e.target.value, v => emit('update:field', 'historyThinkingRounds', v))"
           />
           <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.roundsHint') }}</span>
         </div>

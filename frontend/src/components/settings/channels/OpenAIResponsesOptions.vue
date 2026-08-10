@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { CustomSelect, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
+import { useDeferredNumberInput } from '../../../composables/useDeferredNumberInput'
 
 const { t } = useI18n()
 
@@ -14,6 +15,12 @@ const emit = defineEmits<{
   (e: 'update:optionEnabled', optionKey: string, enabled: boolean, optionValue?: any): void
   (e: 'update:field', field: string, value: any): void
 }>()
+
+// 草稿模式：清空后不立即回填 -1；离开设置页时自动回填已保存值
+const {
+  draft: historyThinkingRoundsDraft,
+  handleInput: handleHistoryThinkingRoundsInput
+} = useDeferredNumberInput(() => props.config?.historyThinkingRounds ?? -1)
 
 // 思考强度选项
 const effortOptions = computed<SelectOption[]>(() => [
@@ -274,10 +281,10 @@ function onSendThoughtSignaturesChange(e: any) {
           <label>{{ t('components.channels.common.thinkingBackfill.roundsLabel') }}</label>
           <input
             type="number"
-            :value="config.historyThinkingRounds ?? -1"
+            :value="historyThinkingRoundsDraft"
             placeholder="-1"
             min="-1"
-            @input="(e: any) => emit('update:field', 'historyThinkingRounds', Number(e.target.value))"
+            @input="(e: any) => handleHistoryThinkingRoundsInput(e.target.value, v => emit('update:field', 'historyThinkingRounds', v))"
           />
           <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.roundsHint') }}</span>
         </div>
