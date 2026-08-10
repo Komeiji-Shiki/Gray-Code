@@ -17,9 +17,6 @@
     "Snippets",
     "Testing"
   ],
-  "activationEvents": [
-    "onView:graycode.chatView"
-  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
