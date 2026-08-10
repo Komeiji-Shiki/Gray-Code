@@ -10,6 +10,21 @@
 
 （暂无未发布改动）
 
+### Added（1.7.10dev 补记：远程控制 V4 全量重写——移动端 UI 架构重构 + 设置字段与桌面端完全对齐 + 稳定性加固）
+  - **客户端架构重构（V4）**：`remoteControlUiScript.ts` 整体重写为单一 IIFE + 明确模块分区（工具/API 客户端/内嵌 SVG 图标/状态/视图路由/会话页签/输入区四选择器/文件与工作区/schema 驱动设置页/SSE 看门狗/启动）；全部渲染函数幂等且经 `safe()` 错误边界包裹，任何异常只落 toast + 顶部错误横幅，**杜绝"页面随机变空白"**（含新增渠道后白屏、闲置白屏等历史故障）；
+  - **稳定性加固**：SSE 看门狗（readyState 静默断连 15s 兜底重连、断线退避重连、`visibilitychange` 回前台立即恢复）、服务器 bye/重启后 `probeServerRecovery` 周期性探活自动重连（此前 bye 后页面永久停摆）、全局 `window.onerror`/`unhandledrejection` 兜底；修复 `loadConfigModels` 对每个渠道重复拉取 + 触发设置页无限重渲染的隐患（新增 modelsLoaded 缓存）；
+  - **设置页字段与桌面端完全对齐（schema 驱动）**：
+    - 检查点改为 `toolsConfig.checkpoint.*`（此前误写 `toolsConfig.checkpoints.*` 复数键，开关/上限对桌面端零效果），补齐消息类型存档点（before/after 用户/模型消息、仅外部模型层、合并未变化检查点）、工具备份（执行前/后工具多选清单）、排除配置（8 类别开关、最大文件大小 MiB、自定义 gitignore 模式）；
+    - 自动总结改用桌面端真实字段（summarizePrompt/autoSummarizePrompt/keepRecentRounds/keepRecentTokens/useSeparateModel/summarizeChannelId/summarizeModelId/maxAutoSummarizeAttemptsPerTurn/summarizeMaxInputRatio 百分比输入，此前 rounds/maxTokens 等全部错位）；
+    - 记忆改用真实字段（wakeLines/entryChars/partChars/partLines，此前 wakeKeywords/maxCharsPerEntry 错位）、上下文感知补齐诊断子项（enabled/severities/workspaceOnly/openFilesOnly/每文件与文件数上限/ignorePatterns）、沙箱补齐（defaultTimeout(ms)/maxOutputLines/cleanupTempDir）、子代理改用真实字段（maxConcurrentAgents/failureModeAfterRetries/generalWorkerEnabled/defaultMaxIterations/defaultMaxRuntime）、系统提示词模式改读 `system_prompt.currentModeId`（modes 为对象映射）、Token 计数补 enabled、通用页补 workspaceBehavior/selectionContext/tpsBar 等；
+    - 渠道卡片新增「模型管理」对话框（添加/移除模型、设为当前模型）。
+  - **设置页 20 分类全部可渲染**：修复 `autoExec` 分类点击空白问题；四选择器（模式/渠道/模型/思考强度）底部弹层联动渠道/模型数据。
+  - **HTML/CSS**：新增 `#error-banner` 错误横幅、页签/抽屉/消息操作/确认条/清单（checklist/排除开关/百分比输入）等新控件样式，全部图标内嵌 SVG，零外部依赖。
+
+### Fixed（1.7.10dev 补记：远程控制 V4）
+  - **服务端设置写侧密钥占位符剥离**（`RemoteControlServer.ts`）：`POST /api/settings` 现在与 `config-update` 同语义——`toolsConfig.generate_image.apiKey` / `toolsConfig.token_count.*.apiKey` 为 `'********'` 或空串时不落库覆盖已存密钥；`proxy.url` 含脱敏 `***@` 时同样不覆盖真实凭据（此前设置页保存会把脱敏占位当真实值写回）。
+  - **远程控制测试扩至 143 例**：新增 jsdom DOM 交互测试（四选择器弹层全流程、20 分类切换渲染、检查点/自动总结字段路径断言、新增渠道 modal→POST→不白屏回归、SSE 空闲稳定性、发送透传）；模板完整性测试覆盖脚本全部 id 引用与全部 i18n key 三语言一致性。
+
 ### Added（1.7.10dev 补记：远程控制 V2 去虚拟化直连 + 移动端 UI 彻底重构）
   - **远程控制去虚拟化（V2 架构）**：远控端不再注册为 WebviewClientRegistry 的虚拟 webview 客户端、也不经 MessageRouter 路由——此前每次操作都要「HTTP → routeMessage → MessageRouter → handler → clientRegistry 回传 → pending 表」绕一整圈，落盘与响应多一层 JSON 序列化往返，延迟更高、链路更难维护。V2 起所有操作由 BackendHost 直连：
     - 非流式操作 `invokeHandler()` 进程内直接执行 webview handler 函数（sendResponse/sendError 直接 resolve/reject Promise），校验与业务逻辑与桌面端完全一致（同一批 handler 函数），但零虚拟客户端开销、无 20s 路由超时；

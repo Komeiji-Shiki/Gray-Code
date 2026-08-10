@@ -12,6 +12,17 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+### Added（1.7.10dev 补记：远程控制 V4 全量重写——移动端 UI 架构重构 + 设置字段与桌面端完全对齐 + 稳定性加固）
+  - **客户端架构重构（V4）**：`remoteControlUiScript.ts` 整体重写为单一 IIFE + 明确模块分区（工具/API 客户端/内嵌 SVG 图标/状态/视图路由/会话页签/输入区四选择器/文件与工作区/schema 驱动设置页/SSE 看门狗/启动）；全部渲染函数幂等且经 `safe()` 错误边界包裹，任何异常只落 toast + 顶部错误横幅，杜绝"页面随机变空白"（含新增渠道后白屏、闲置白屏等历史故障）。
+  - **稳定性加固**：SSE 看门狗（readyState 静默断连 15s 兜底重连、断线退避重连、回前台立即恢复）、服务器 bye/重启后 `probeServerRecovery` 周期性探活自动重连（此前 bye 后页面永久停摆）、全局 `window.onerror`/`unhandledrejection` 兜底；修复 `loadConfigModels` 重复拉取 + 设置页无限重渲染隐患（modelsLoaded 缓存）。
+  - **设置页字段与桌面端完全对齐（schema 驱动）**：检查点改 `toolsConfig.checkpoint.*`（此前误写复数键零效果）并补齐消息/工具/排除全量字段；自动总结改用桌面端真实字段；记忆/上下文诊断/沙箱/子代理/系统提示词模式/Token 计数/通用外观字段全部对齐桌面端路径；渠道卡片新增「模型管理」对话框。
+  - **HTML/CSS**：新增 `#error-banner` 错误横幅与页签/抽屉/清单/确认条等新控件样式，全部图标内嵌 SVG，零外部依赖。
+
+### Fixed（1.7.10dev 补记：远程控制 V4）
+  - **服务端设置写侧密钥占位符剥离**（`RemoteControlServer.ts`）：`POST /api/settings` 与 `config-update` 同语义——`generate_image.apiKey` / `token_count.*.apiKey` 为 `'********'` 或空串不落库；`proxy.url` 含脱敏 `***@` 不覆盖真实凭据。
+  - **远程控制测试扩至 143 例**：新增 jsdom DOM 交互测试（四选择器弹层、20 分类切换渲染、检查点/自动总结字段路径断言、新增渠道 modal→POST→不白屏回归、SSE 空闲稳定性、发送透传）；模板完整性测试覆盖脚本全部 id 引用与全部 i18n key 三语言一致性。
+
+
 ### Added（1.7.10dev 补记：远程控制 V2 去虚拟化直连 + 移动端 UI 彻底重构）
   - **远程控制去虚拟化（V2 架构）**：远控端不再注册为 WebviewClientRegistry 虚拟客户端、不再经 MessageRouter 路由——非流式操作由 `invokeHandler` 进程内直接执行 handler 函数（响应直接 resolve，零虚拟客户端开销）；流式操作由远控端专用 StreamRequestHandler 直连执行（与桌面端共享 StreamAbortManager，停止/取消跨端共用同一取消控制器）；移除 `remote-control` 客户端注册与 pending 应答表。
   - **会话列表实时双向同步**：移动端经 SSE `conversations` 事件实时刷新；桌面端经 `conversationsChanged` 广播实时刷新最近对话（远端新建对话不再需要重启应用才出现）。

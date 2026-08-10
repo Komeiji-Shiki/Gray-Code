@@ -294,6 +294,88 @@ interface UiText {
   seconds: string;
   chipAdd: string;
   chipRemove: string;
+  /* ---- V4 追加（与 UI_TEXTS 三语言字典键一致） ---- */
+  activeModel: string;
+  addModel: string;
+  assistant: string;
+  browseFolder: string;
+  channelChanged: string;
+  ckptAfterTools: string;
+  ckptBeforeTools: string;
+  ckptCustomPatterns: string;
+  ckptEnable: string;
+  ckptExclusion: string;
+  ckptMaxSizeMiB: string;
+  ckptMergeUnchanged: string;
+  ckptMessages: string;
+  ckptModelOuter: string;
+  ckptMsgAfter: string;
+  ckptMsgBefore: string;
+  ckptProfileAiModels: string;
+  ckptProfileArchives: string;
+  ckptProfileBuildArtifacts: string;
+  ckptProfileCaches: string;
+  ckptProfileDatasets: string;
+  ckptProfileLargeMedia: string;
+  ckptProfileLogs: string;
+  ckptProfilePythonVenvs: string;
+  ckptProfiles: string;
+  ckptTools: string;
+  copyFailed: string;
+  deleted: string;
+  disabled: string;
+  done: string;
+  edited: string;
+  emptyDir: string;
+  fldDiagEnabled: string;
+  fldDiagMaxFiles: string;
+  fldDiagOpenOnly: string;
+  fldDiagPerFile: string;
+  fldDiagSeverities: string;
+  fldDiagWorkspaceOnly: string;
+  fldMemEntryChars: string;
+  fldMemPartChars: string;
+  fldMemPartLines: string;
+  fldMemWakeLines: string;
+  fldSbxCleanup: string;
+  fldSbxOutputLines: string;
+  fldSbxTimeout: string;
+  fldSelectionContext: string;
+  fldSumAutoPrompt: string;
+  fldSumChannelId: string;
+  fldSumKeepRounds: string;
+  fldSumKeepTokens: string;
+  fldSumMaxAttempts: string;
+  fldSumMaxRatio: string;
+  fldSumModelId: string;
+  fldSumPrompt: string;
+  fldSumSeparateModel: string;
+  fldTokEnabled: string;
+  fldTpsBar: string;
+  manageModels: string;
+  modeChanged: string;
+  modelAdded: string;
+  modelChanged: string;
+  modelIdHint: string;
+  modelIdRequired: string;
+  modelNameHint: string;
+  moreActions: string;
+  msgTypeModel: string;
+  msgTypeUser: string;
+  noConversations: string;
+  nothingToCopy: string;
+  remove: string;
+  removed: string;
+  renamed: string;
+  rerolling: string;
+  secAppearance: string;
+  setActiveModel: string;
+  textarea: string;
+  toolApprove: string;
+  toolConfirmTitle: string;
+  toolReject: string;
+  toolUsed: string;
+  you: string;
 }
 
 export const UI_TEXTS: Record<UiLang, UiText> = {
@@ -559,7 +641,89 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     unlimited: '不限',
     seconds: '秒',
     chipAdd: '添加',
-    chipRemove: '移除'
+    chipRemove: '移除',
+    /* ---- V4 新增 ---- */
+    moreActions: '更多',
+    noConversations: '暂无会话',
+    renamed: '已重命名',
+    deleted: '已删除',
+    you: '你',
+    assistant: '助手',
+    toolUsed: '使用的工具',
+    edited: '已保存修改',
+    rerolling: '正在重新生成',
+    nothingToCopy: '没有可复制的内容',
+    textarea: '多行文本',
+    copyFailed: '复制失败',
+    toolConfirmTitle: '工具调用待确认',
+    toolReject: '拒绝',
+    toolApprove: '批准',
+    modeChanged: '已切换模式',
+    channelChanged: '已切换渠道',
+    modelChanged: '已切换模型',
+    emptyDir: '目录为空',
+    browseFolder: '浏览文件夹',
+    disabled: '已停用',
+    manageModels: '模型管理',
+    activeModel: '当前模型',
+    setActiveModel: '设为当前',
+    remove: '移除',
+    removed: '已移除',
+    modelIdHint: '模型 ID',
+    modelNameHint: '显示名称（可空）',
+    addModel: '添加模型',
+    modelIdRequired: '请输入模型 ID',
+    modelAdded: '模型已添加',
+    done: '完成',
+    secAppearance: '外观',
+    fldSelectionContext: '选中内容上下文',
+    fldTpsBar: '显示 TPS 状态栏',
+    fldTokEnabled: '启用计数',
+    fldSbxTimeout: '沙箱默认超时(ms)',
+    fldSbxOutputLines: '最大输出行数',
+    fldSbxCleanup: '自动清理临时目录',
+    fldMemWakeLines: '唤醒行数',
+    fldMemEntryChars: '条目字符上限',
+    fldMemPartChars: '分区字符上限',
+    fldMemPartLines: '分区行数上限',
+    fldSumPrompt: '总结提示词',
+    fldSumAutoPrompt: '自动总结提示词',
+    fldSumKeepRounds: '保留最近轮次',
+    fldSumKeepTokens: '保留最近 token（数字或百分比）',
+    fldSumSeparateModel: '独立模型总结',
+    fldSumChannelId: '总结渠道',
+    fldSumModelId: '总结模型',
+    fldSumMaxAttempts: '自动总结尝试次数',
+    fldSumMaxRatio: '总结输入比例(%)',
+    ckptEnable: '检查点开关',
+    ckptMessages: '消息类型存档点',
+    ckptMsgBefore: '消息前存档',
+    ckptMsgAfter: '消息后存档',
+    ckptModelOuter: '仅外部模型层',
+    ckptMergeUnchanged: '合并未变化检查点',
+    ckptTools: '工具备份配置',
+    ckptBeforeTools: '工具执行前备份',
+    ckptAfterTools: '工具执行后备份',
+    ckptExclusion: '排除配置',
+    ckptProfiles: '排除类别',
+    ckptMaxSizeMiB: '最大文件大小(MiB)',
+    ckptCustomPatterns: '自定义排除模式',
+    msgTypeUser: '用户消息',
+    msgTypeModel: '模型消息',
+    ckptProfileLogs: '日志文件',
+    ckptProfileAiModels: 'AI 模型文件',
+    ckptProfileDatasets: '数据集',
+    ckptProfileCaches: '缓存目录',
+    ckptProfilePythonVenvs: 'Python 虚拟环境',
+    ckptProfileBuildArtifacts: '构建产物',
+    ckptProfileLargeMedia: '大体积媒体',
+    ckptProfileArchives: '压缩包',
+    fldDiagEnabled: '启用诊断信息',
+    fldDiagSeverities: '包含的诊断等级',
+    fldDiagWorkspaceOnly: '仅工作区诊断',
+    fldDiagOpenOnly: '仅打开文件诊断',
+    fldDiagPerFile: '每文件最大诊断数',
+    fldDiagMaxFiles: '最大文件数'
   },
   en: {
     appTitle: 'GrayCode Remote',
@@ -823,7 +987,89 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     unlimited: 'Unlimited',
     seconds: 's',
     chipAdd: 'Add',
-    chipRemove: 'Remove'
+    chipRemove: 'Remove',
+    /* ---- V4 新增 ---- */
+    moreActions: 'More',
+    noConversations: 'No conversations yet',
+    renamed: 'Renamed',
+    deleted: 'Deleted',
+    you: 'You',
+    assistant: 'Assistant',
+    toolUsed: 'Tools used',
+    edited: 'Saved',
+    rerolling: 'Regenerating…',
+    nothingToCopy: 'Nothing to copy',
+    textarea: 'Multi-line text',
+    copyFailed: 'Copy failed',
+    toolConfirmTitle: 'Tool call awaiting approval',
+    toolReject: 'Reject',
+    toolApprove: 'Approve',
+    modeChanged: 'Mode switched',
+    channelChanged: 'Channel switched',
+    modelChanged: 'Model switched',
+    emptyDir: 'Empty directory',
+    browseFolder: 'Browse folder',
+    disabled: 'Disabled',
+    manageModels: 'Manage models',
+    activeModel: 'Active model',
+    setActiveModel: 'Set active',
+    remove: 'Remove',
+    removed: 'Removed',
+    modelIdHint: 'Model ID',
+    modelNameHint: 'Display name (optional)',
+    addModel: 'Add model',
+    modelIdRequired: 'Model ID required',
+    modelAdded: 'Model added',
+    done: 'Done',
+    secAppearance: 'Appearance',
+    fldSelectionContext: 'Selected context',
+    fldTpsBar: 'Show TPS bar',
+    fldTokEnabled: 'Enable counting',
+    fldSbxTimeout: 'Sandbox default timeout (ms)',
+    fldSbxOutputLines: 'Max output lines',
+    fldSbxCleanup: 'Clean temp dirs automatically',
+    fldMemWakeLines: 'Wake lines',
+    fldMemEntryChars: 'Max chars per entry',
+    fldMemPartChars: 'Max chars per part',
+    fldMemPartLines: 'Max lines per part',
+    fldSumPrompt: 'Summary prompt',
+    fldSumAutoPrompt: 'Auto-summary prompt',
+    fldSumKeepRounds: 'Keep recent rounds',
+    fldSumKeepTokens: 'Keep recent tokens (number or %)',
+    fldSumSeparateModel: 'Use separate model',
+    fldSumChannelId: 'Summary channel',
+    fldSumModelId: 'Summary model',
+    fldSumMaxAttempts: 'Auto-summary attempts',
+    fldSumMaxRatio: 'Summary input ratio (%)',
+    ckptEnable: 'Checkpoint toggle',
+    ckptMessages: 'Message checkpoints',
+    ckptMsgBefore: 'Checkpoint before messages',
+    ckptMsgAfter: 'Checkpoint after messages',
+    ckptModelOuter: 'Outer model layer only',
+    ckptMergeUnchanged: 'Merge unchanged checkpoints',
+    ckptTools: 'Tool backup config',
+    ckptBeforeTools: 'Backup before tools',
+    ckptAfterTools: 'Backup after tools',
+    ckptExclusion: 'Exclusions',
+    ckptProfiles: 'Exclusion profiles',
+    ckptMaxSizeMiB: 'Max file size (MiB)',
+    ckptCustomPatterns: 'Custom patterns',
+    msgTypeUser: 'User messages',
+    msgTypeModel: 'Model messages',
+    ckptProfileLogs: 'Logs',
+    ckptProfileAiModels: 'AI model files',
+    ckptProfileDatasets: 'Datasets',
+    ckptProfileCaches: 'Caches',
+    ckptProfilePythonVenvs: 'Python virtualenvs',
+    ckptProfileBuildArtifacts: 'Build artifacts',
+    ckptProfileLargeMedia: 'Large media',
+    ckptProfileArchives: 'Archives',
+    fldDiagEnabled: 'Enable diagnostics',
+    fldDiagSeverities: 'Diagnostic severities',
+    fldDiagWorkspaceOnly: 'Workspace-only diagnostics',
+    fldDiagOpenOnly: 'Open-files-only diagnostics',
+    fldDiagPerFile: 'Max diagnostics per file',
+    fldDiagMaxFiles: 'Max files'
   },
   ja: {
     appTitle: 'GrayCode リモート',
@@ -1087,7 +1333,89 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     unlimited: '無制限',
     seconds: '秒',
     chipAdd: '追加',
-    chipRemove: '削除'
+    chipRemove: '削除',
+    /* ---- V4 追加 ---- */
+    moreActions: 'その他',
+    noConversations: '会話がありません',
+    renamed: '名前を変更しました',
+    deleted: '削除しました',
+    you: 'あなた',
+    assistant: 'アシスタント',
+    toolUsed: '使用したツール',
+    edited: '保存しました',
+    rerolling: '再生成中…',
+    nothingToCopy: 'コピーする内容がありません',
+    textarea: '複数行テキスト',
+    copyFailed: 'コピーに失敗しました',
+    toolConfirmTitle: 'ツール呼び出しの確認待ち',
+    toolReject: '拒否',
+    toolApprove: '承認',
+    modeChanged: 'モードを切り替えました',
+    channelChanged: 'チャネルを切り替えました',
+    modelChanged: 'モデルを切り替えました',
+    emptyDir: '空のディレクトリです',
+    browseFolder: 'フォルダを参照',
+    disabled: '無効',
+    manageModels: 'モデル管理',
+    activeModel: '現在のモデル',
+    setActiveModel: '現在に設定',
+    remove: '削除',
+    removed: '削除しました',
+    modelIdHint: 'モデル ID',
+    modelNameHint: '表示名（任意）',
+    addModel: 'モデル追加',
+    modelIdRequired: 'モデル ID を入力してください',
+    modelAdded: 'モデルを追加しました',
+    done: '完了',
+    secAppearance: '外観',
+    fldSelectionContext: '選択コンテキスト',
+    fldTpsBar: 'TPS バーを表示',
+    fldTokEnabled: 'カウントを有効化',
+    fldSbxTimeout: 'サンドボックス既定タイムアウト(ms)',
+    fldSbxOutputLines: '最大出力行数',
+    fldSbxCleanup: '一時ディレクトリを自動削除',
+    fldMemWakeLines: 'ウェイク行数',
+    fldMemEntryChars: 'エントリ文字数上限',
+    fldMemPartChars: 'パート文字数上限',
+    fldMemPartLines: 'パート行数上限',
+    fldSumPrompt: '要約プロンプト',
+    fldSumAutoPrompt: '自動要約プロンプト',
+    fldSumKeepRounds: '保持する最近のラウンド',
+    fldSumKeepTokens: '保持するトークン（数値または%）',
+    fldSumSeparateModel: '専用モデルで要約',
+    fldSumChannelId: '要約チャネル',
+    fldSumModelId: '要約モデル',
+    fldSumMaxAttempts: '自動要約の試行回数',
+    fldSumMaxRatio: '要約入力比率(%)',
+    ckptEnable: 'チェックポイントスイッチ',
+    ckptMessages: 'メッセージチェックポイント',
+    ckptMsgBefore: 'メッセージ前チェックポイント',
+    ckptMsgAfter: 'メッセージ後チェックポイント',
+    ckptModelOuter: '外部モデル層のみ',
+    ckptMergeUnchanged: '未変更チェックポイントを統合',
+    ckptTools: 'ツールバックアップ設定',
+    ckptBeforeTools: 'ツール実行前バックアップ',
+    ckptAfterTools: 'ツール実行後バックアップ',
+    ckptExclusion: '除外設定',
+    ckptProfiles: '除外カテゴリ',
+    ckptMaxSizeMiB: '最大ファイルサイズ(MiB)',
+    ckptCustomPatterns: 'カスタム除外パターン',
+    msgTypeUser: 'ユーザーメッセージ',
+    msgTypeModel: 'モデルメッセージ',
+    ckptProfileLogs: 'ログファイル',
+    ckptProfileAiModels: 'AI モデルファイル',
+    ckptProfileDatasets: 'データセット',
+    ckptProfileCaches: 'キャッシュ',
+    ckptProfilePythonVenvs: 'Python 仮想環境',
+    ckptProfileBuildArtifacts: 'ビルド成果物',
+    ckptProfileLargeMedia: '大容量メディア',
+    ckptProfileArchives: 'アーカイブ',
+    fldDiagEnabled: '診断情報を有効化',
+    fldDiagSeverities: '診断レベル',
+    fldDiagWorkspaceOnly: 'ワークスペースのみ',
+    fldDiagOpenOnly: '開いているファイルのみ',
+    fldDiagPerFile: 'ファイルあたりの最大診断数',
+    fldDiagMaxFiles: '最大ファイル数'
   }
 };
 
@@ -1258,6 +1586,8 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
     </div>
   </div>
 </div>
+
+<div id="error-banner" hidden></div>
 
 <div id="toast"></div>
 

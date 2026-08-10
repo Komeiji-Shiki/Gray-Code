@@ -1,18 +1,23 @@
 /**
  * remoteControlUiScript.ts
  *
- * 远程控制移动端 UI 的脚本（V3 重构版）。
+ * 远程控制移动端 UI 脚本（V4 全量重写）。
  *
- * 与旧版（5128 行单文件）相比的核心变化：
- * - 输入区四选择器：模型模式 / 渠道 / 模型 / 思考强度，与桌面端 InputSelectorBar
- *   对齐；下拉以底部弹层呈现（移动端交互），面板尺寸正常；
- * - 会话页签始终可关闭（含未落库的新对话页签）；
- * - 设置页渠道完整增删改（新增/编辑/删除/模型管理/思考强度），高级设置可读写；
- * - SSE conversations 事件实时刷新会话列表（桌面端与移动端双向实时同步）；
+ * 相对 V3 的核心变化：
+ * - 架构重构：单一 IIFE + 明确模块分区（工具/API/图标/状态/视图路由/会话/输入区/
+ *   文件/设置/SSE/启动），全部渲染函数幂等且经 safe() 边界保护，任何异常只落
+ *   toast + 错误横幅，绝不让页面变空白；
+ * - 稳定性：SSE 看门狗（心跳超时主动重连、visibilitychange 恢复重连、bye 后
+ *   探测服务器回归自动重连）、全局 window.onerror 兜底、错误横幅可见；
+ * - 设置页改为 schema 驱动，全部字段路径与桌面端 SettingsPanel 完全对齐
+ *   （如检查点 toolsConfig.checkpoint.*、自动总结 toolsConfig.summarize.*、
+ *   内存 toolsConfig.memory.*、子代理 toolsConfig.subagents.* 等），
+ *   并新增检查点消息/工具/排除配置、上下文诊断、模型管理等桌面端字段；
+ * - 输入区四选择器（模式/渠道/模型/思考强度）走底部弹层，选择后立即联动；
  * - 图标全部内嵌 SVG。
  *
  * 注：本文件在 TS 模板字符串内输出浏览器脚本，脚本内部不得使用反引号与 `${`，
- * 一律用单引号字符串拼接（与旧版同约定，避免模板嵌套转义地狱）。
+ * 一律用单引号字符串拼接，不得出现 `</script>` 文本。
  */
 
 /** 构建移动端 UI 脚本（texts 为序列化并转义后的 i18n JSON，uiLang 为语言） */
@@ -26,10 +31,37 @@ function i18nAll() {
     el.textContent = t(el.getAttribute('data-i18n'));
   });
 }
-i18nAll();
 
 /* ============================================================
-   工具函数
+   0. 全局错误边界：任何未捕获异常都不允许把页面打成空白
+   ============================================================ */
+var ERR_SHOWN = 0;
+function showFatal(msg) {
+  var banner = $('error-banner');
+  if (!banner) return;
+  banner.textContent = msg;
+  banner.hidden = false;
+  ERR_SHOWN++;
+  if (ERR_SHOWN > 4) banner.hidden = true;
+}
+function safe(fn) {
+  return function () {
+    try { return fn.apply(null, arguments); }
+    catch (e) {
+      try { showFatal(String((e && e.message) || e)); } catch (e2) {}
+      return undefined;
+    }
+  };
+}
+window.addEventListener('error', function (e) {
+  showFatal(String((e && e.message) || 'unexpected error'));
+});
+window.addEventListener('unhandledrejection', function (e) {
+  showFatal('rejection: ' + String((e && e.reason && e.reason.message) || (e && e.reason) || ''));
+});
+
+/* ============================================================
+   1. 工具函数
    ============================================================ */
 function $(id) { return document.getElementById(id); }
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -44,6 +76,7 @@ function toast(msg) {
 function fmtTime(ts) {
   if (!ts) return '';
   var d = new Date(ts);
+  if (isNaN(d.getTime())) return '';
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   var now = new Date();
   if (d.toDateString() === now.toDateString()) {
@@ -51,13 +84,57 @@ function fmtTime(ts) {
   }
   return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
+function fmtSize(n) {
+  if (n == null || isNaN(n)) return '';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+/** 创建元素（attrs 含 data-p 等属性；children 为文本或元素） */
+function el(tag, attrs, children) {
+  var node = document.createElement(tag);
+  if (attrs) {
+    Object.keys(attrs).forEach(function (k) {
+      if (k === 'class') node.className = attrs[k];
+      else if (k === 'text') node.textContent = attrs[k];
+      else if (k === 'html') node.innerHTML = attrs[k];
+      else if (k === 'dataset') {
+        var ds = attrs[k];
+        Object.keys(ds).forEach(function (dk) { node.dataset[dk] = ds[dk]; });
+      } else if (k.indexOf('on') === 0 && typeof attrs[k] === 'function') {
+        node.addEventListener(k.slice(2), attrs[k]);
+      } else if (attrs[k] != null) {
+        node.setAttribute(k, String(attrs[k]));
+      }
+    });
+  }
+  if (children) {
+    children.forEach(function (c) {
+      if (c == null) return;
+      node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    });
+  }
+  return node;
+}
+
+/* ============================================================
+   2. API 客户端（超时 + 统一错误）
+   ============================================================ */
 function api(path, opts) {
   var options = opts || {};
-  return fetch(path, {
+  var ctrl = null;
+  var tmr = null;
+  if (typeof AbortController !== 'undefined') {
+    ctrl = new AbortController();
+    tmr = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, options.timeoutMs || 30000);
+  }
+  var init = {
     method: options.method || 'GET',
     headers: options.headers || {},
     body: options.body
-  }).then(function (res) {
+  };
+  if (ctrl) init.signal = ctrl.signal;
+  return fetch(path, init).then(function (res) {
     return res.json().then(function (data) {
       if (!res.ok || data.ok === false) {
         var err = new Error((data && (data.error || data.message)) || ('HTTP ' + res.status));
@@ -69,6 +146,15 @@ function api(path, opts) {
       if (err && err.status) throw err;
       throw new Error('HTTP ' + res.status);
     });
+  }).catch(function (err) {
+    if (err && err.name === 'AbortError') throw new Error('timeout');
+    throw err;
+  }).then(function (data) {
+    if (tmr) clearTimeout(tmr);
+    return data;
+  }, function (err) {
+    if (tmr) clearTimeout(tmr);
+    throw err;
   });
 }
 function post(path, body) {
@@ -80,13 +166,13 @@ function post(path, body) {
 }
 
 /* ============================================================
-   图标（全部内嵌 SVG，无字体/emoji 依赖——杜绝移动端图标丢失）
+   3. 图标（全部内嵌 SVG，无字体/emoji 依赖）
    ============================================================ */
 function icon(name, cls) {
   var paths = ICONS[name];
   if (!paths) return '';
   var c = cls ? ' class="' + cls + '"' : '';
-  return '<svg' + c + ' viewBox="0 0 24 24" fill="currentColor">' + paths + '</svg>';
+  return '<svg' + c + ' viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + paths + '</svg>';
 }
 var ICONS = {
   menu: '<path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>',
@@ -108,29 +194,34 @@ var ICONS = {
   send: '<path d="M3 11l18-8-8 18-2-8-8-2z"/>',
   stop: '<path d="M6 6h12v12H6z"/>',
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
-  pencil: '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3zm13.5-14l1.5 1.5"/>',
-  refresh2: '<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>',
   warning: '<path d="M12 3L1 21h22L12 3zm1 14h-2v2h2v-2zm0-8h-2v6h2V9z"/>',
   history: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 10l4 2-1 1.7-5-2.5V6h2v6z"/>',
+  brain: '<path d="M12 2a5 5 0 0 1 5 5c2 1 3 3 3 5 0 2-1.3 3.7-3.2 4.4A5 5 0 0 1 12 22a5 5 0 0 1-4.8-5.6A5 5 0 0 1 4 12c0-2 1-4 3-5a5 5 0 0 1 5-5z"/>',
+  language: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm7.9 6h-3.4A17.7 17.7 0 0 0 14.3 3.6 8.1 8.1 0 0 1 19.9 8zM12 4.1c.9 1 1.8 2.4 2.3 3.9H9.7c.5-1.5 1.4-2.9 2.3-3.9zM4.1 12c0-.7.1-1.4.3-2h3.7c0 .7-.1 1.3-.1 2s.1 1.3.1 2H4.4a8.2 8.2 0 0 1-.3-2zm1.8 6h3.3c.5 1.6 1.4 3 2.3 3.9A8.1 8.1 0 0 1 5.9 18zm3.3-2h5.6c.4 1.3 1 2.5 1.7 3.5a9.6 9.6 0 0 1-9-3.5zm.4-2c-.1-.7-.2-1.3-.2-2s.1-1.3.2-2h5.2c.1.7.2 1.3.2 2s-.1 1.3-.2 2H9.6zm6.1 5.5c.7-1 1.3-2.2 1.7-3.5h3.3a8.1 8.1 0 0 1-5 3.5zm2-5.5c.1-.7.1-1.3.1-2s0-1.3-.1-2h3.7c.2.6.3 1.3.3 2s-.1 1.4-.3 2h-3.7z"/>',
+  chatList: '<path d="M4 5h16v2H4V5zm0 4h16v2H4V9zm0 4h10v2H4v-2zm0 4h10v2H4v-2zm13.5-1l2.5-1.5V6H10v8h4.5l3 2z"/>',
+  window: '<path d="M3 5h18v14H3V5zm2 2v10h14V7H5z"/>',
+  shield: '<path d="M12 2l8 3v6c0 5-3.5 9.5-8 11-4.5-1.5-8-6-8-11V5l8-3zm-1 14l6-6-1.4-1.4-4.6 4.6-2-2L7.6 12.6 11 16z"/>',
   sparkle: '<path d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z"/>',
-  brain: '<path d="M12 2a5 5 0 0 1 5 5c2 1 3 3 3 5 0 2-1.3 3.7-3.2 4.4A5 5 0 0 1 12 22a5 5 0 0 1-4.8-5.6A5 5 0 0 1 4 12c0-2 1-4 3-5a5 5 0 0 1 5-5z"/>'
+  clock: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm1-13h-2v6l5 3 1-1.6-4-2.4V7z"/>',
+  search: '<path d="M10 4a6 6 0 1 0 3.5 10.9l5 5 1.4-1.4-5-5A6 6 0 0 0 10 4zm0 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"/>',
+  wrench: '<path d="M16 3a6 6 0 0 0-5.9 7.3L3 17.4V21h3.6l7.1-7.1A6 6 0 0 0 16 3zm0 2a4 4 0 0 1 3.6 5.6l-6.9 6.9L12 17.5l-1.4-1.4-.5 1.3-1.5 1.5H5v-3.6l1.5-1.5 1.3-.5L6.4 11 13.3 4.1A4 4 0 0 1 16 5z"/>'
 };
-var ICON_SEND = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>';
-var ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>';
+var ICON_SEND = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>';
+var ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>';
 
 /* ============================================================
-   状态
+   4. 状态
    ============================================================ */
 var MAX_EDIT_CHARS = 1024 * 1024;
-
-var state = {
+var S = {
   lang: '${uiLang}',
   appVersion: '',
   connected: false,
   evtSource: null,
   reconnectTimer: null,
+  reconnectAttempts: 0,
   serverStopped: false,
-  /* 会话页签（多会话并行） */
+  /* 会话页签 */
   tabs: [],
   activeTabKey: null,
   convPage: 0,
@@ -144,11 +235,11 @@ var state = {
   fileDirs: {},
   currentFile: null,
   /* 输入区选择器 */
-  configs: [],             /* [{id,name,model,enabled,type,options,optionsEnabled}] */
-  configModels: {},        /* configId -> [{id,name}] */
+  configs: [],
+  configModels: {},
   activeChannelId: null,
-  selectedModelId: null,   /* null = 自动（渠道默认模型）；显式选择后随发送透传 modelOverride */
-  promptModes: [],         /* [{id,name,icon,dynamicContextStrategy}] */
+  selectedModelId: null,
+  promptModes: [],
   currentModeId: '',
   thinkingLevel: 'off',
   thinkingOptions: [],
@@ -159,14 +250,11 @@ var state = {
   autoExec: {},
   deps: [],
   statusInfo: null,
-  settingsBusy: false,
   /* 目录浏览 */
   browsePath: '',
   browseParent: null,
-  browseDrives: [],
   browseBusy: false
 };
-
 var CONV_PAGE_SIZE = 30;
 var MSG_PAGE_SIZE = 120;
 var ORPHAN_STREAM_MAX = 12;
@@ -174,17 +262,15 @@ var ORPHAN_CHUNK_MAX = 5000;
 var orphanStreams = {};
 
 function tabByKey(key) {
-  for (var i = 0; i < state.tabs.length; i++) if (state.tabs[i].key === key) return state.tabs[i];
+  for (var i = 0; i < S.tabs.length; i++) if (S.tabs[i].key === key) return S.tabs[i];
   return null;
 }
 function tabByConvId(id) {
   if (!id) return null;
-  for (var i = 0; i < state.tabs.length; i++) if (state.tabs[i].id === id) return state.tabs[i];
+  for (var i = 0; i < S.tabs.length; i++) if (S.tabs[i].id === id) return S.tabs[i];
   return null;
 }
-function activeTab() {
-  return tabByKey(state.activeTabKey);
-}
+function activeTab() { return tabByKey(S.activeTabKey); }
 function newTabObject(id, title) {
   var key = (id && id !== 'new')
     ? id
@@ -210,18 +296,21 @@ function newTabObject(id, title) {
 }
 
 /* ============================================================
-   顶栏 / 状态
+   5. 顶栏 / 视图路由
    ============================================================ */
 function setStatus(kind, text) {
   var dot = $('dot');
-  dot.className = 'dot ' + kind;
-  $('status').textContent = text;
+  if (dot) dot.className = 'dot ' + kind;
+  var st = $('status');
+  if (st) st.textContent = text;
 }
 function setTitle(text) {
-  $('title').textContent = text || t('appTitle');
+  var ti = $('title');
+  if (ti) ti.textContent = text || t('appTitle');
 }
 function setWorkspaceName(name) {
   var ws = $('ws-name');
+  if (!ws) return;
   if (name) {
     ws.textContent = name;
     ws.hidden = false;
@@ -229,242 +318,216 @@ function setWorkspaceName(name) {
     ws.hidden = true;
   }
 }
+function isView(name) { return $('view-' + name).hidden === false; }
+function switchView(name) {
+  ['chat', 'files', 'settings'].forEach(function (n) {
+    $('view-' + n).hidden = (n !== name);
+  });
+  document.querySelectorAll('#tabbar button').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-tab') === name);
+  });
+  if (name === 'chat') {
+    renderTabsBar();
+    renderMessages();
+    renderComposerMeta();
+    if (!S.evtSource && !S.serverStopped) connectStream();
+  } else if (name === 'files') {
+    refreshWsBar();
+    loadFiles('', true);
+  } else if (name === 'settings') {
+    openSettings();
+  }
+}
+function refreshWsBar() {
+  var n = $('ws-bar-name');
+  var f = $('ws-bar-file');
+  if (n) n.textContent = S.workspaceName || t('noWorkspace');
+  if (f) f.textContent = S.activeFilePath ? t('activeFile') + ': ' + S.activeFilePath : '';
+}
 
 /* ============================================================
-   会话页签（桌面端 ConversationTabs 同款）
+   6. 会话页签
    ============================================================ */
 function renderTabsBar() {
   var tabsEl = $('conv-tabs');
+  if (!tabsEl) return;
   tabsEl.innerHTML = '';
-  state.tabs.forEach(function (tab) {
-    var btn = document.createElement('button');
-    btn.className = 'conv-tab' + (tab.key === state.activeTabKey ? ' active' : '');
-    var spin = tab.streaming ? '<span class="tab-spin"></span>' : '';
-    // 关键修复：所有页签（含未落库的新对话页签）都渲染关闭按钮
-    var close = '<span class="tab-close" data-close="1" title="' + esc(t('closeTab')) + '">&times;</span>';
-    btn.innerHTML = spin + '<span class="tab-title">' + esc(tab.title || t('untitled')) + '</span>' + close;
-    btn.addEventListener('click', function (e) {
-      if (e.target && e.target.getAttribute && e.target.getAttribute('data-close')) {
-        e.stopPropagation();
-        closeTab(tab.key);
-        return;
-      }
-      activateTab(tab.key);
+  S.tabs.forEach(function (tab) {
+    var btn = el('button', {
+      class: 'tab' + (tab.key === S.activeTabKey ? ' active' : '') + (tab.streaming ? ' streaming' : ''),
+      role: 'tab'
     });
+    if (tab.streaming) {
+      btn.appendChild(el('span', { class: 'tab-spin' }));
+    }
+    btn.appendChild(el('span', { class: 'tab-label', text: tab.title || t('newChat') }));
+    var closeBtn = el('button', {
+      class: 'tab-close',
+      'aria-label': t('closeTab')
+    });
+    closeBtn.innerHTML = icon('close');
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      closeTab(tab.key);
+    });
+    btn.appendChild(closeBtn);
+    btn.addEventListener('click', function () { activateTab(tab.key); });
     tabsEl.appendChild(btn);
   });
-  var addBtn = document.createElement('button');
-  addBtn.className = 'conv-tab new';
+  var addBtn = el('button', { class: 'tab-add', 'aria-label': t('newChat') });
   addBtn.innerHTML = icon('plus');
-  addBtn.title = t('newChat');
-  addBtn.addEventListener('click', newChatTab);
+  addBtn.addEventListener('click', function () { newChatTab(); });
   tabsEl.appendChild(addBtn);
 }
 function openConversationTab(id, title) {
-  var existing = tabByConvId(id);
-  if (existing) {
-    activateTab(existing.key);
+  var tab = tabByConvId(id);
+  if (tab) {
+    activateTab(tab.key);
     return;
   }
-  var tab = newTabObject(id, title);
-  state.tabs.push(tab);
-  state.activeTabKey = tab.key;
+  var nt = newTabObject(id, title);
+  S.tabs.push(nt);
+  S.activeTabKey = nt.key;
   renderTabsBar();
-  setTitle(tab.title);
-  loadMessages(tab, true);
+  setTitle(nt.title);
+  loadMessages(nt, true);
 }
 function activateTab(key) {
-  var prev = activeTab();
-  var tab = tabByKey(key);
-  if (!tab || tab.key === state.activeTabKey) return;
-  if (prev) {
-    /* 切出前保存输入草稿与模型模式（每个会话独立） */
-    prev.draft = $('input').value;
-    prev.modeId = state.currentModeId;
-  }
-  state.activeTabKey = key;
-  /* 恢复该会话的模型模式（与桌面端 per-conversation mode 语义对齐） */
-  if (tab.modeId) state.currentModeId = tab.modeId;
+  if (S.activeTabKey === key) return;
+  S.activeTabKey = key;
   renderTabsBar();
-  renderComposerMeta();
-  setTitle(tab.title);
   renderMessages();
   renderConfirmBar();
-  $('input').value = tab.draft || '';
-  autoGrowInput();
+  renderSendIcon();
   updateSendBtn();
-  if (tab.id && tab.messages.length === 0) loadMessages(tab, true);
-  scrollToBottom();
+  var tab = activeTab();
+  setTitle(tab ? (tab.title || t('newChat')) : t('appTitle'));
 }
-/** 关闭页签：有会话 ID 时同时取消后端流；未落库页签直接丢弃 */
 function closeTab(key) {
   var idx = -1;
-  for (var i = 0; i < state.tabs.length; i++) if (state.tabs[i].key === key) { idx = i; break; }
+  for (var i = 0; i < S.tabs.length; i++) if (S.tabs[i].key === key) { idx = i; break; }
   if (idx < 0) return;
-  var tab = state.tabs[idx];
+  var tab = S.tabs[idx];
   if (tab.streaming && tab.id) {
     post('/api/cancel', { conversationId: tab.id }).catch(function () {});
   }
-  state.tabs.splice(idx, 1);
-  if (state.activeTabKey === key) {
-    var next = state.tabs[idx] || state.tabs[idx - 1] || null;
+  S.tabs.splice(idx, 1);
+  if (S.activeTabKey === key) {
+    var next = S.tabs[idx] || S.tabs[idx - 1] || null;
     if (next) {
-      state.activeTabKey = next.key;
+      S.activeTabKey = next.key;
+      renderTabsBar();
+      renderMessages();
+      setTitle(next.title || t('newChat'));
     } else {
-      newChatTab();
-      return;
+      S.activeTabKey = null;
+      S.tabs.push(newTabObject(null, ''));
+      S.activeTabKey = S.tabs[S.tabs.length - 1].key;
+      renderTabsBar();
+      renderMessages();
+      setTitle(t('newChat'));
     }
   }
   renderTabsBar();
-  var cur = activeTab();
-  if (cur) {
-    setTitle(cur.title);
-    renderMessages();
-    renderConfirmBar();
-    $('input').value = cur.draft || '';
-    updateSendBtn();
-  } else {
-    setTitle('');
-    $('empty-text').textContent = t('emptyConversation');
-    $('empty').hidden = false;
-    $('messages').hidden = true;
-  }
-}
-function closeTabByConvId(id) {
-  for (var i = 0; i < state.tabs.length; i++) {
-    if (state.tabs[i].id === id) { closeTab(state.tabs[i].key); return; }
-  }
+  renderSendIcon();
+  updateSendBtn();
+  renderConfirmBar();
 }
 function newChatTab() {
   var tab = newTabObject(null, '');
-  state.tabs.push(tab);
-  state.activeTabKey = tab.key;
+  S.tabs.push(tab);
+  S.activeTabKey = tab.key;
+  closeDrawer();
   renderTabsBar();
-  setTitle('');
-  $('empty-text').textContent = t('emptyNewChat');
-  $('empty').hidden = false;
-  $('messages').hidden = true;
-  $('input').value = '';
-  renderConfirmBar();
-  updateSendBtn();
-  scrollToBottom();
+  renderMessages();
+  renderComposerMeta();
+  setTitle(t('newChat'));
+  toast(t('newChat') + ' — ' + t('emptyNewChat'));
 }
 function syncTabTitles(conversations) {
+  var list = Array.isArray(conversations) ? conversations : [];
   var byId = {};
-  (conversations || []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
-  var changed = false;
-  state.tabs.forEach(function (tab) {
-    if (!tab.id) return;
-    var conv = byId[tab.id];
-    if (conv && conv.title && conv.title !== tab.title) {
-      tab.title = conv.title;
-      changed = true;
+  list.forEach(function (c) { if (c && c.id) byId[c.id] = c.title || ''; });
+  S.tabs.forEach(function (tab) {
+    if (tab.id && byId[tab.id] && byId[tab.id] !== tab.title) {
+      tab.title = byId[tab.id];
+      if (tab.key === S.activeTabKey) setTitle(tab.title);
     }
   });
-  if (changed) {
-    renderTabsBar();
-    var cur = activeTab();
-    if (cur) setTitle(cur.title);
-  }
+  renderTabsBar();
 }
 
-/* ============================================================
-   会话抽屉（最近对话列表）
-   ============================================================ */
+/* ---------- 会话列表抽屉 ---------- */
 function loadConversations(reset) {
-  if (reset) {
-    state.convPage = 0;
-    state.convList = [];
-    state.convTotal = 0;
-  }
-  if (state.convLoading) return;
-  state.convLoading = true;
-  api('/api/conversations?limit=' + CONV_PAGE_SIZE + '&offset=' + (state.convPage * CONV_PAGE_SIZE))
-    .then(function (data) {
-      state.convTotal = data.total || 0;
-      var items = Array.isArray(data.conversations) ? data.conversations : [];
-      if (state.convPage === 0) state.convList = items;
-      else state.convList = state.convList.concat(items);
-      state.convPage++;
-      renderDrawerList();
-      syncTabTitles(items);
-    })
-    .catch(function () {})
-    .then(function () {
-      state.convLoading = false;
-    });
+  if (reset) S.convPage = 0;
+  if (S.convLoading) return;
+  S.convLoading = true;
+  var q = '?limit=' + CONV_PAGE_SIZE + '&offset=' + (S.convPage * CONV_PAGE_SIZE);
+  api('/api/conversations' + q).then(function (data) {
+    S.convLoading = false;
+    var list = Array.isArray(data.conversations) ? data.conversations : [];
+    S.convTotal = data.total || list.length;
+    S.convList = reset ? list : S.convList.concat(list);
+    renderDrawerList();
+    syncTabTitles(list);
+  }).catch(function () {
+    S.convLoading = false;
+  });
 }
 function renderDrawerList() {
-  var list = $('drawer-list');
-  list.innerHTML = '';
-  if (state.convList.length === 0) {
-    var empty = document.createElement('div');
-    empty.className = 'conv-empty';
-    empty.textContent = t('emptyConversation');
-    list.appendChild(empty);
-    return;
-  }
-  state.convList.forEach(function (conv) {
-    var item = document.createElement('div');
-    item.className = 'conv-item' + (conv.id === (activeTab() && activeTab().id) ? ' active' : '');
-    var title = document.createElement('span');
-    title.className = 'cv-title';
-    title.textContent = conv.title || t('untitled');
-    var meta = document.createElement('span');
-    meta.className = 'cv-meta';
-    meta.textContent = (conv.messageCount > 0 ? conv.messageCount + ' · ' : '') + fmtTime(conv.updatedAt);
-    var renameBtn = document.createElement('button');
-    renameBtn.className = 'icon-btn';
-    renameBtn.innerHTML = icon('pencil');
-    renameBtn.title = t('rename');
-    renameBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      openRename(conv.id, conv.title || '');
-    });
-    var delBtn = document.createElement('button');
-    delBtn.className = 'icon-btn';
-    delBtn.innerHTML = icon('trash');
-    delBtn.title = t('deleteConversation');
-    delBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      openModal(t('deleteConversation'), null, t('deleteConversationConfirm'), t('renameCancel'), 'danger', function () {
-        deleteConversation(conv.id);
-      });
-    });
-    item.appendChild(title);
-    item.appendChild(meta);
-    item.appendChild(renameBtn);
-    item.appendChild(delBtn);
-    item.addEventListener('click', function () {
+  var listEl = $('drawer-list');
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  S.convList.forEach(function (c) {
+    var item = el('div', { class: 'conv-item' });
+    var main = el('button', { class: 'conv-main' });
+    main.appendChild(el('div', { class: 'conv-title', text: c.title || t('untitled') }));
+    main.appendChild(el('div', {
+      class: 'conv-sub',
+      text: fmtTime(c.updatedAt) + (c.messageCount ? ' · ' + c.messageCount + ' 条' : '')
+    }));
+    main.addEventListener('click', function () {
+      openConversationTab(c.id, c.title || '');
       closeDrawer();
-      openConversationTab(conv.id, conv.title || '');
     });
-    list.appendChild(item);
+    item.appendChild(main);
+    var more = el('button', { class: 'icon-btn conv-more', 'aria-label': t('moreActions') });
+    more.innerHTML = icon('edit');
+    more.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openRename(c.id, c.title || '');
+    });
+    item.appendChild(more);
+    listEl.appendChild(item);
   });
-  if (state.convPage * CONV_PAGE_SIZE < state.convTotal) {
-    var more = document.createElement('button');
-    more.className = 'btn secondary conv-load-more';
-    more.textContent = t('loadMore');
-    more.addEventListener('click', function () { loadConversations(false); });
-    list.appendChild(more);
+  if (S.convTotal > S.convList.length) {
+    var moreBtn = el('button', { class: 'load-more-btn', text: t('loadMore') });
+    moreBtn.addEventListener('click', function () {
+      S.convPage++;
+      loadConversations(false);
+    });
+    listEl.appendChild(moreBtn);
+  }
+  if (S.convList.length === 0) {
+    listEl.appendChild(el('div', { class: 'conv-empty', text: t('noConversations') }));
   }
 }
 function openDrawer() {
-  if (state.convList.length === 0) loadConversations(true);
-  else renderDrawerList();
-  $('drawer').classList.add('open');
+  var d = $('drawer');
+  if (d) d.classList.add('open');
+  if (S.convList.length === 0) loadConversations(true);
 }
 function closeDrawer() {
-  $('drawer').classList.remove('open');
+  var d = $('drawer');
+  if (d) d.classList.remove('open');
 }
 function openRename(id, title) {
-  openModal(t('renameDialogTitle'), title, t('renameSave'), t('renameCancel'), 'text', function (value) {
-    if (!value) return;
-    post('/api/rename', { conversationId: id, title: value }).then(function () {
-      toast(t('renameSave') + ' ✓');
+  openModal(t('rename'), title || '', t('renameSave'), t('renameCancel'), null, function (val) {
+    var nt = String(val || '').trim();
+    if (!nt) return;
+    post('/api/rename', { conversationId: id, title: nt.slice(0, 100) }).then(function () {
+      toast(t('renamed'));
       loadConversations(true);
-      var tab = tabByConvId(id);
-      if (tab) { tab.title = value; renderTabsBar(); }
     }).catch(function (err) {
       toast(t('settingsFailed') + ': ' + (err.message || ''));
     });
@@ -472,425 +535,375 @@ function openRename(id, title) {
 }
 function deleteConversation(id) {
   post('/api/conversation-delete', { conversationId: id }).then(function () {
-    toast(t('deleteConversationDone'));
-    closeTabByConvId(id);
+    toast(t('deleted'));
+    var tab = tabByConvId(id);
+    if (tab) closeTab(tab.key);
     loadConversations(true);
   }).catch(function (err) {
-    toast(t('deleteConversationFailed') + ': ' + (err.message || ''));
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
   });
 }
 
-/* ============================================================
-   对话框 / 操作弹层
-   ============================================================ */
-function openModal(title, inputValue, okText, cancelText, kind, onOk) {
-  var el = $('modal');
-  $('modal-title').textContent = title;
-  var inputEl = $('modal-input');
-  var bodyEl = $('modal-body');
-  bodyEl.innerHTML = '';
-  if (kind === 'text') {
-    bodyEl.appendChild(inputEl);
-    inputEl.value = inputValue || '';
-    inputEl.hidden = false;
-    inputEl.style.minHeight = '42px';
-    inputEl.focus();
-  } else if (kind === 'textarea') {
-    bodyEl.appendChild(inputEl);
-    inputEl.value = inputValue || '';
-    inputEl.hidden = false;
-    inputEl.style.minHeight = '90px';
-    inputEl.focus();
-  } else if (kind === 'danger') {
-    inputEl.hidden = true;
-    var p = document.createElement('div');
-    p.textContent = inputValue || '';
-    bodyEl.appendChild(p);
-  } else {
-    inputEl.hidden = true;
+/* ---------- 弹层（通用底部选择器） ---------- */
+function openSheet(title, buildList) {
+  var sheetEl = $('sheet');
+  if (!sheetEl) return;
+  var lm = $('sheet-list-mode');
+  var bm = $('sheet-browse-mode');
+  if (lm) lm.hidden = false;
+  if (bm) bm.hidden = true;
+  $('sheet-title').textContent = title;
+  var list = $('sheet-list');
+  list.innerHTML = '';
+  safe(buildList)(list);
+  sheetEl.classList.add('open');
+}
+function closeSheet() {
+  var sheetEl = $('sheet');
+  if (sheetEl) sheetEl.classList.remove('open');
+}
+function sheetItem(list, label, sub, selected, onClick) {
+  var item = el('button', { class: 'sheet-item' + (selected ? ' selected' : '') });
+  item.appendChild(el('span', { text: label }));
+  if (sub) item.appendChild(el('span', { class: 'si-sub', text: sub }));
+  if (selected) {
+    var chk = el('span', { class: 'si-check' });
+    chk.innerHTML = icon('check');
+    item.appendChild(chk);
   }
+  item.addEventListener('click', function () { closeSheet(); safe(onClick)(); });
+  list.appendChild(item);
+}
+function sheetHint(list, text) {
+  list.appendChild(el('div', { class: 'sheet-hint', text: text }));
+}
+
+/* ---------- 对话框 ---------- */
+function openModal(title, inputValue, okText, cancelText, kind, onOk) {
+  var modalEl = $('modal');
+  if (!modalEl) return;
+  $('modal-title').textContent = title;
+  var bodyEl = $('modal-body');
+  var inputEl = $('modal-input');
+  bodyEl.innerHTML = '';
+  inputEl.hidden = inputValue == null;
+  inputEl.value = inputValue == null ? '' : inputValue;
+  bodyEl.appendChild(inputEl);
   $('modal-cancel').textContent = cancelText || t('renameCancel');
   $('modal-ok').textContent = okText || t('renameSave');
   $('modal-ok').className = 'btn' + (kind === 'danger' ? ' danger' : '');
-  el._onOk = onOk;
-  el.classList.add('open');
+  modalEl._onOk = onOk;
+  modalEl.classList.add('open');
+  if (!inputEl.hidden) setTimeout(function () { inputEl.focus(); }, 60);
 }
 function closeModal() {
-  $('modal').classList.remove('open');
+  var modalEl = $('modal');
+  if (modalEl) modalEl.classList.remove('open');
 }
-var actPanelEl = null;
-function openActionSheet(actions) {
-  var el = $('action-sheet');
-  var panel = el.querySelector('.panel');
-  panel.innerHTML = '';
-  actions.forEach(function (act) {
-    var btn = document.createElement('button');
-    btn.className = 'act-btn' + (act.danger ? ' danger' : '');
-    btn.innerHTML = icon(act.icon, '') + '<span>' + esc(act.label) + '</span>';
-    btn.addEventListener('click', function () {
-      closeActionSheet();
-      if (act.onClick) act.onClick();
-    });
-    panel.appendChild(btn);
-  });
-  el.classList.add('open');
-}
+/* 消息操作菜单（兼容保留：当前版本消息操作全部内联按钮） */
+function openActionSheet() {}
 function closeActionSheet() {
-  $('action-sheet').classList.remove('open');
+  var el = $('action-sheet');
+  if (el) el.classList.remove('open');
 }
 
-/* ============================================================
-   消息渲染
-   ============================================================ */
+/* ---------- 消息渲染 ---------- */
+function partsToText(parts) {
+  var out = '';
+  (parts || []).forEach(function (p) {
+    if (!p) return;
+    if (typeof p.text === 'string') out += p.text;
+    else if (p.thinking && typeof p.thinking === 'string') out += p.thinking;
+  });
+  return out;
+}
 function renderInline(s) {
   return esc(s)
     .replace(/&quot;/g, '"')
     .replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>')
-    .replace(/\\*([^*]+)\\*/g, '<i>$1</i>')
-    .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-    .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\`([^\`]+)\`/g, '<code>$1</code>');
 }
 function renderTable(lines, i) {
   var rows = [];
-  while (i < lines.length && lines[i].trim() !== '') {
-    var line = lines[i].trim();
-    if (line.startsWith('|')) {
-      rows.push(line.slice(1, -1).split('|').map(function (c) { return c.trim(); }));
-    } else break;
-    i++;
+  var j = i;
+  while (j < lines.length && lines[j].trim() !== '') {
+    rows.push(lines[j]);
+    j++;
   }
-  if (rows.length === 0) return null;
-  var html = '<table>';
-  rows.forEach(function (row, ri) {
-    if (row.every(function (c) { return /^:?-{2,}:?$/.test(c); })) return;
-    html += '<tr>';
-    row.forEach(function (cell) { html += (ri === 0 ? '<th>' : '<td>') + renderInline(cell) + (ri === 0 ? '</th>' : '</td>'); });
-    html += '</tr>';
+  if (rows.length < 2) return null;
+  var html = '<table><thead><tr>';
+  rows[0].split('|').forEach(function (c) {
+    var cell = c.trim();
+    if (cell && cell !== '---' && cell !== ':---' && cell !== '---:' && cell !== ':---:') {
+      html += '<th>' + renderInline(cell) + '</th>';
+    }
   });
-  html += '</table>';
-  return { html: html, next: i };
+  html += '</tr></thead><tbody>';
+  for (var r = 1; r < rows.length; r++) {
+    html += '<tr>';
+    rows[r].split('|').forEach(function (c) {
+      html += '<td>' + renderInline(c.trim()) + '</td>';
+    });
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  return { html: html, next: j };
 }
 function renderMarkdown(text) {
-  var lines = String(text || '').split('\\n');
-  var html = '';
-  var inCode = false;
-  var codeLang = '';
-  var codeLines = [];
-  var inList = false;
+  if (!text) return '';
+  var lines = String(text).split(/\\n/);
+  var out = '';
+  var codeOpen = false;
+  var codeBuf = [];
+  var listOpen = false;
+  function flushList() {
+    if (listOpen) { out += '</ul>'; listOpen = false; }
+  }
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
-    var trimmed = line.trim();
-    if (trimmed.startsWith('\`\`\`')) {
-      if (inCode) {
-        html += '<pre><code>' + esc(codeLines.join('\\n')) + '</code></pre>';
-        codeLines = [];
-        inCode = false;
-        continue;
+    if (/^\\s*\`\`\`/.test(line)) {
+      flushList();
+      if (codeOpen) {
+        out += '</code></pre>';
+        codeOpen = false;
+      } else {
+        codeOpen = true;
+        codeBuf = [];
+        out += '<pre><code>';
       }
-      inCode = true;
-      codeLang = trimmed.slice(3).trim();
       continue;
     }
-    if (inCode) {
-      codeLines.push(line);
+    if (codeOpen) {
+      out += esc(line) + '\\n';
       continue;
     }
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      var table = renderTable(lines, i);
-      if (table) {
-        html += table.html;
-        i = table.next - 1;
-        continue;
-      }
-    }
-    if (/^#{1,6}\\s/.test(trimmed)) {
-      var level = trimmed.match(/^(#{1,6})\\s/)[1].length;
-      html += '<h' + level + '>' + renderInline(trimmed.slice(level + 1)) + '</h' + level + '>';
+    var tbl = /^\\s*\\|/.test(line) ? renderTable(lines, i) : null;
+    if (tbl) {
+      flushList();
+      out += tbl.html;
+      i = tbl.next - 1;
       continue;
     }
-    if (/^[-*]\\s/.test(trimmed)) {
-      if (!inList) { html += '<ul>'; inList = true; }
-      html += '<li>' + renderInline(trimmed.slice(2)) + '</li>';
+    var h = /^(#{1,4})\\s+(.*)$/.exec(line);
+    if (h) {
+      flushList();
+      var lv = h[1].length + 2;
+      out += '<h' + lv + '>' + renderInline(h[2]) + '</h' + lv + '>';
       continue;
     }
-    if (/^\\d+\\.\\s/.test(trimmed)) {
-      if (!inList) { html += '<ol>'; inList = true; }
-      html += '<li>' + renderInline(trimmed.replace(/^\\d+\\.\\s/, '')) + '</li>';
+    if (/^\\s*([-*+])\\s+/.test(line)) {
+      if (!listOpen) { out += '<ul>'; listOpen = true; }
+      out += '<li>' + renderInline(line.replace(/^\\s*([-*+])\\s+/, '')) + '</li>';
       continue;
     }
-    if (inList) {
-      html += '</ul>';
-      inList = false;
-    }
-    if (trimmed.startsWith('> ')) {
-      html += '<blockquote>' + renderInline(trimmed.slice(2)) + '</blockquote>';
+    if (/^\\s*(\\d+)[.)]\\s+/.test(line)) {
+      if (!listOpen) { out += '<ul>'; listOpen = true; }
+      out += '<li>' + renderInline(line.replace(/^\\s*(\\d+)[.)]\\s+/, '')) + '</li>';
       continue;
     }
-    if (trimmed === '---' || trimmed === '***') {
-      html += '<hr style="border:none;border-top:1px solid var(--vscode-panel-border);margin:8px 0;">';
-      continue;
+    flushList();
+    if (line.trim() === '') {
+      out += '<div class="md-spacer"></div>';
+    } else {
+      out += '<p>' + renderInline(line) + '</p>';
     }
-    if (trimmed === '') {
-      html += '<p></p>';
-      continue;
-    }
-    html += '<p>' + renderInline(trimmed) + '</p>';
   }
-  if (inCode) html += '<pre><code>' + esc(codeLines.join('\\n')) + '</code></pre>';
-  if (inList) html += '</ul>';
-  return html;
+  if (codeOpen) out += '</code></pre>';
+  flushList();
+  return out;
 }
-function partsToText(parts) {
-  if (!Array.isArray(parts)) return '';
-  return parts
-    .filter(function (p) { return p && typeof p.text === 'string' && !p.thought; })
-    .map(function (p) { return p.text; })
-    .join('');
-}
-function partsToThought(parts) {
-  if (!Array.isArray(parts)) return '';
-  return parts
-    .filter(function (p) { return p && typeof p.text === 'string' && p.thought; })
-    .map(function (p) { return p.text; })
-    .join(' ');
-}
-function partsToToolCalls(parts) {
-  if (!Array.isArray(parts)) return [];
+function toolCallsOf(msg) {
   var calls = [];
-  parts.forEach(function (p) {
-    if (p && p.functionCall && p.functionCall.name) {
-      calls.push({ name: p.functionCall.name, args: p.functionCall.arguments || '' });
+  (msg.parts || []).forEach(function (p) {
+    if (p && p.type === 'toolCall' && p.toolCall && p.toolCall.name) {
+      calls.push(p.toolCall.name);
     }
   });
   return calls;
 }
 function buildMessage(msg, index) {
-  var role = msg.role === 'user' ? 'user' : 'assistant';
-  var isFuncResp = !!msg.isFunctionResponse;
-  var div = document.createElement('div');
-  div.className = 'msg ' + role + (msg.streaming ? ' streaming' : '');
-  div.setAttribute('data-index', String(index));
-  var meta = document.createElement('div');
-  meta.className = 'meta';
-  var roleLabel = document.createElement('span');
-  roleLabel.className = 'role-label';
-  roleLabel.textContent = isFuncResp ? t('toolResult') : (role === 'user' ? t('userLabel') : t('assistantLabel'));
-  meta.appendChild(roleLabel);
-  if (msg.model && !isFuncResp && role === 'assistant') {
-    var model = document.createElement('span');
-    model.className = 'model';
-    model.textContent = msg.model;
-    meta.appendChild(model);
+  if (!msg) return null;
+  var role = msg.role || 'assistant';
+  var wrap = el('div', { class: 'msg ' + role + (index === null ? ' streaming' : '') });
+  var head = el('div', { class: 'msg-head' });
+  head.appendChild(el('span', { class: 'msg-role', text: role === 'user' ? t('you') : t('assistant') }));
+  if (msg.model) head.appendChild(el('span', { class: 'msg-model', text: msg.model }));
+  if (msg.createdAt) head.appendChild(el('span', { class: 'msg-time', text: fmtTime(msg.createdAt) }));
+  wrap.appendChild(head);
+  var contentEl = el('div', { class: 'msg-content' });
+  var tools = toolCallsOf(msg);
+  if (tools.length) {
+    contentEl.appendChild(el('div', { class: 'msg-tools', text: t('toolUsed') + ': ' + tools.join(', ') }));
   }
-  var actions = document.createElement('span');
-  actions.className = 'actions';
-  if (!isFuncResp && (msg.role === 'user' || msg.role === 'assistant') && !msg.functionCall) {
-    var editBtn = document.createElement('button');
-    editBtn.className = 'icon-btn';
-    editBtn.innerHTML = icon('pencil');
-    editBtn.title = t('editMessage');
-    editBtn.addEventListener('click', function () { editMessage(msg, index); });
-    var copyBtn = document.createElement('button');
-    copyBtn.className = 'icon-btn';
-    copyBtn.innerHTML = icon('copy');
-    copyBtn.title = t('copy');
-    copyBtn.addEventListener('click', function () { copyText(partsToText(msg.parts) || msg.content || ''); });
+  var text = partsToText(msg.parts) || msg.content || '';
+  if (role === 'user') {
+    contentEl.appendChild(el('div', { text: text }));
+  } else {
+    var md = el('div', { class: 'markdown' });
+    md.innerHTML = renderMarkdown(text);
+    contentEl.appendChild(md);
+  }
+  wrap.appendChild(contentEl);
+  var actions = el('div', { class: 'msg-actions' });
+  var copyBtn = el('button', { class: 'mini-btn', 'aria-label': t('copy') });
+  copyBtn.innerHTML = icon('copy');
+  copyBtn.addEventListener('click', function () { copyText(partsToText(msg.parts) || msg.content || ''); });
+  actions.appendChild(copyBtn);
+  if (role === 'assistant' && !index && msg.id) {
+    var rerollBtn = el('button', { class: 'mini-btn', 'aria-label': t('reroll') });
+    rerollBtn.innerHTML = icon('refresh');
+    rerollBtn.addEventListener('click', function () { rerollMessage(msg); });
+    actions.appendChild(rerollBtn);
+  }
+  if (msg.id) {
+    var editBtn = el('button', { class: 'mini-btn', 'aria-label': t('edit') });
+    editBtn.innerHTML = icon('edit');
+    editBtn.addEventListener('click', function () { editMessage(msg); });
     actions.appendChild(editBtn);
-    actions.appendChild(copyBtn);
-    if (msg.role === 'assistant') {
-      var rerollBtn = document.createElement('button');
-      rerollBtn.className = 'icon-btn';
-      rerollBtn.innerHTML = icon('refresh2');
-      rerollBtn.title = t('reroll');
-      rerollBtn.addEventListener('click', function () { rerollMessage(msg, index); });
-      actions.appendChild(rerollBtn);
-    }
-    var delBtn = document.createElement('button');
-    delBtn.className = 'icon-btn';
+  }
+  if (index !== null) {
+    var delBtn = el('button', { class: 'mini-btn', 'aria-label': t('deleteMessage') });
     delBtn.innerHTML = icon('trash');
-    delBtn.title = t('deleteMessage');
-    delBtn.addEventListener('click', function () { deleteMessageAt(index); });
+    delBtn.addEventListener('click', function () {
+      openModal(t('deleteMessage'), null, t('deleteMessageConfirm'), t('renameCancel'), 'danger', function () {
+        deleteMessageAt(index);
+      });
+    });
     actions.appendChild(delBtn);
   }
-  meta.appendChild(actions);
-  div.appendChild(meta);
-  var content = document.createElement('div');
-  content.className = 'msg-content';
-  if (isFuncResp) {
-    var resp = msg.parts && msg.parts[0] && msg.parts[0].functionResponse;
-    if (resp) {
-      var respText = typeof resp.response === 'string' ? resp.response : JSON.stringify(resp.response || '');
-      content.innerHTML = '<div class="tool-result">' + esc(respText.slice(0, 2000)) + '</div>';
-    }
-  } else {
-    var thought = partsToThought(msg.parts);
-    if (thought) {
-      var thoughts = document.createElement('div');
-      thoughts.className = 'thoughts';
-      thoughts.textContent = thought;
-      content.appendChild(thoughts);
-    }
-    var calls = partsToToolCalls(msg.parts);
-    calls.forEach(function (call) {
-      var chip = document.createElement('span');
-      chip.className = 'tool-chip';
-      chip.innerHTML = icon('sparkle', '') + '<span>' + esc(call.name) + '</span>';
-      content.appendChild(chip);
-    });
-    var text = partsToText(msg.parts) || msg.content || '';
-    if (text) {
-      content.innerHTML += renderMarkdown(text);
-    }
-  }
-  div.appendChild(content);
-  return div;
+  wrap.appendChild(actions);
+  return wrap;
 }
 function renderMessages() {
   var cur = activeTab();
+  var messagesEl = $('messages');
+  var emptyEl = $('empty');
+  if (!messagesEl || !emptyEl) return;
   if (!cur) {
-    $('messages').hidden = true;
-    $('empty').hidden = false;
+    messagesEl.hidden = true;
+    emptyEl.hidden = false;
     $('empty-text').textContent = t('emptyConversation');
     return;
   }
+  messagesEl.innerHTML = '';
   if (cur.messages.length === 0 && !cur.streaming) {
-    $('messages').hidden = true;
-    $('empty').hidden = false;
-    $('empty-text').textContent = cur.id ? t('emptyMessages') : t('emptyNewChat');
+    messagesEl.hidden = true;
+    emptyEl.hidden = false;
+    $('empty-text').textContent = cur.id ? t('emptyConversation') : t('emptyNewChat');
     return;
   }
-  $('empty').hidden = true;
-  var listEl = $('messages');
-  listEl.hidden = false;
-  listEl.innerHTML = '';
+  messagesEl.hidden = false;
+  emptyEl.hidden = true;
   if (cur.hasMore) {
-    var moreBtn = document.createElement('button');
-    moreBtn.className = 'hist-more btn secondary';
-    moreBtn.textContent = t('loadMore');
+    var moreBtn = el('button', { class: 'load-more-btn', text: cur.loading ? t('loading') : t('loadMore') });
     moreBtn.addEventListener('click', function () { loadOlder(cur); });
-    listEl.appendChild(moreBtn);
+    messagesEl.appendChild(moreBtn);
   }
-  cur.messages.forEach(function (msg, i) {
-    listEl.appendChild(buildMessage(msg, i));
+  cur.messages.forEach(function (m, i) {
+    var node = buildMessage(m, i);
+    if (node) messagesEl.appendChild(node);
   });
   if (cur.streaming) {
-    var holder = document.createElement('div');
-    holder.className = 'msg assistant streaming';
-    holder.innerHTML = '<div class="meta"><span class="role-label">' + esc(t('assistantLabel')) + '</span>' +
-      (cur.streamingModel ? '<span class="model">' + esc(cur.streamingModel) + '</span>' : '') + '</div>' +
-      '<div class="msg-content"></div>';
-    listEl.appendChild(holder);
+    var holder = el('div', { class: 'msg assistant streaming' });
+    holder.appendChild(el('div', {
+      class: 'msg-head',
+      html: '<span class="msg-role">' + esc(t('assistant')) + '</span>' +
+        (cur.streamingModel ? '<span class="msg-model">' + esc(cur.streamingModel) + '</span>' : '')
+    }));
+    var sc = el('div', { class: 'msg-content' });
+    sc.innerHTML = (cur.streamingText ? renderMarkdown(cur.streamingText) : '') + '<span class="caret"></span>';
+    holder.appendChild(sc);
+    messagesEl.appendChild(holder);
   }
   if (cur.lastError) {
-    var err = document.createElement('div');
-    err.className = 'error-banner';
-    err.innerHTML = '<b>' + esc(t('errorBanner')) + '</b>: ' + esc(cur.lastError.text);
+    var errBox = el('div', { class: 'err-box' });
+    errBox.appendChild(el('span', { text: cur.lastError.text || '' }));
     if (cur.lastError.retry) {
-      var retryBtn = document.createElement('button');
-      retryBtn.className = 'retry-btn';
-      retryBtn.textContent = t('retry');
+      var retryBtn = el('button', { class: 'mini-btn', text: t('retry') });
       retryBtn.addEventListener('click', function () { doRetry(); });
-      err.appendChild(retryBtn);
+      errBox.appendChild(retryBtn);
     }
-    listEl.appendChild(err);
+    messagesEl.appendChild(errBox);
   }
   scrollToBottom();
 }
 function scrollToBottom() {
-  var el = $('messages');
-  requestAnimationFrame(function () {
-    el.scrollTop = el.scrollHeight;
-  });
+  var messagesEl = $('messages');
+  if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 function loadMessages(tab, quiet) {
-  if (!tab || !tab.id) return;
+  if (!tab || !tab.id || tab.loading) return;
   tab.loading = true;
-  api('/api/messages?conversationId=' + encodeURIComponent(tab.id) +
-    '&limit=' + MSG_PAGE_SIZE + '&offset=' + tab.offset)
+  api('/api/messages?conversationId=' + encodeURIComponent(tab.id) + '&limit=' + MSG_PAGE_SIZE)
     .then(function (data) {
-      if (tabByKey(tab.key) !== tab) return;
-      tab.total = data.total || 0;
-      tab.hasMore = !!data.hasMore;
-      var msgs = Array.isArray(data.messages) ? data.messages : [];
-      /* 自尾端开窗：offset 只增不减；每批替换为「更早消息 + 当前窗口」 */
-      if (tab.offset === 0) {
-        tab.messages = msgs;
-      } else {
-        var seen = {};
-        tab.messages.forEach(function (m, i) { seen[i] = true; });
-        var known = tab.messages.slice();
-        var fresh = [];
-        msgs.forEach(function (m) {
-          var key = (m.role || '') + '|' + (partsToText(m.parts) || m.content || '').slice(0, 40);
-          if (!seen[key]) fresh.push(m);
-        });
-        tab.messages = fresh.concat(known);
-      }
-      if (tab.key === state.activeTabKey) renderMessages();
-    })
-    .catch(function () {
-      if (tabByKey(tab.key) !== tab) return;
-      tab.lastError = { text: t('loadFailed'), retry: false };
-      if (tab.key === state.activeTabKey) renderMessages();
-    })
-    .then(function () {
       tab.loading = false;
+      tab.messages = Array.isArray(data.messages) ? data.messages : [];
+      tab.total = data.total || tab.messages.length;
+      tab.offset = tab.messages.length;
+      tab.hasMore = !!data.hasMore;
+      if (tab.key === S.activeTabKey) renderMessages();
+      return data;
+    })
+    .catch(function (err) {
+      tab.loading = false;
+      if (!quiet) toast(t('loadFailed') + ': ' + (err.message || ''));
     });
 }
 function loadOlder(tab) {
   if (!tab || !tab.id || !tab.hasMore || tab.loading) return;
-  tab.offset += MSG_PAGE_SIZE;
-  loadMessages(tab, true);
+  tab.loading = true;
+  api('/api/messages?conversationId=' + encodeURIComponent(tab.id) +
+    '&limit=' + MSG_PAGE_SIZE + '&offset=' + tab.offset)
+    .then(function (data) {
+      tab.loading = false;
+      var older = Array.isArray(data.messages) ? data.messages : [];
+      tab.messages = older.concat(tab.messages);
+      tab.offset += older.length;
+      tab.hasMore = !!data.hasMore;
+      if (tab.key === S.activeTabKey) renderMessages();
+    })
+    .catch(function () { tab.loading = false; });
 }
 function deleteMessageAt(index) {
-  var tab = activeTab();
-  if (!tab || !tab.id) return;
-  openModal(t('deleteMessage'), null, t('deleteMessageConfirm'), t('renameCancel'), 'danger', function () {
-    post('/api/delete-message', { conversationId: tab.id, targetIndex: index }).then(function () {
-      toast(t('deleteMessageDone'));
-      loadMessages(tab, true);
-      loadConversations(true);
-    }).catch(function (err) {
-      toast(t('deleteMessageFailed') + ': ' + (err.message || ''));
-    });
-  });
-}
-function editMessage(msg, index) {
-  var tab = activeTab();
-  if (!tab || !tab.id) return;
-  openModal(t('editMessage'), partsToText(msg.parts), t('editPlaceholder'), t('renameCancel'), 'textarea', function (value) {
-    if (!value || !value.trim()) return;
-    post('/api/edit-message', {
-      conversationId: tab.id,
-      messageId: msg.id || (msg.role + '-' + index),
-      newText: value.trim()
-    }).then(function () {
-      toast(t('editBranching'));
-      tab.pendingStreamId = null;
-    }).catch(function (err) {
-      toast(t('editFailed') + ': ' + (err.message || ''));
-    });
-  });
-}
-function rerollMessage(msg, index) {
-  var tab = activeTab();
-  if (!tab || !tab.id) return;
-  post('/api/reroll', {
-    conversationId: tab.id,
-    assistantNodeId: msg.id || ('assistant-' + index)
-  }).then(function () {
-    toast(t('reroll') + '…');
+  var cur = activeTab();
+  if (!cur || !cur.id) return;
+  post('/api/delete-message', { conversationId: cur.id, targetIndex: index }).then(function () {
+    toast(t('deleted'));
+    loadMessages(cur, true);
   }).catch(function (err) {
-    toast(t('rerollFailed') + ': ' + (err.message || ''));
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
+  });
+}
+function editMessage(msg) {
+  var cur = activeTab();
+  if (!cur || !cur.id) return;
+  openModal(t('editMessage'), partsToText(msg.parts) || msg.content || '', t('save'), t('renameCancel'), null, function (val) {
+    var nt = String(val || '').trim();
+    if (!nt) return;
+    post('/api/edit-message', { conversationId: cur.id, messageId: msg.id, newText: nt }).then(function () {
+      toast(t('edited'));
+      if (cur.key === S.activeTabKey) loadMessages(cur, true);
+    }).catch(function (err) {
+      toast(t('settingsFailed') + ': ' + (err.message || ''));
+    });
+  });
+}
+function rerollMessage(msg) {
+  var cur = activeTab();
+  if (!cur || !cur.id) return;
+  post('/api/reroll', { conversationId: cur.id, assistantNodeId: msg.id }).then(function () {
+    toast(t('rerolling'));
+    setStreaming(cur, true, '');
+  }).catch(function (err) {
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
   });
 }
 function copyText(text) {
+  if (!text) { toast(t('nothingToCopy')); return; }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(function () {
       toast(t('copied'));
-    }).catch(function () {
-      fallbackCopy(text);
-    });
+    }).catch(function () { fallbackCopy(text); });
   } else {
     fallbackCopy(text);
   }
@@ -902,126 +915,108 @@ function fallbackCopy(text) {
   ta.style.opacity = '0';
   document.body.appendChild(ta);
   ta.select();
-  try { document.execCommand('copy'); toast(t('copied')); } catch (e) {}
+  try { document.execCommand('copy'); toast(t('copied')); }
+  catch (e) { toast(t('copyFailed')); }
   document.body.removeChild(ta);
 }
 
-/* ============================================================
-   工具审批
-   ============================================================ */
+/* ---------- 工具确认条 ---------- */
 function renderConfirmBar() {
-  var cur = activeTab();
   var bar = $('confirm-bar');
+  if (!bar) return;
   bar.innerHTML = '';
+  var cur = activeTab();
   if (!cur || cur.pendingTools.length === 0) return;
-  var inner = document.createElement('div');
-  inner.className = 'confirm-inner';
-  var title = document.createElement('div');
-  title.className = 'confirm-title';
-  title.innerHTML = icon('warning', '') + '<span>' + esc(t('awaitingApproval')) + '</span>';
-  inner.appendChild(title);
-  cur.pendingTools.forEach(function (tool) {
-    var row = document.createElement('div');
-    row.className = 'confirm-tool';
-    row.innerHTML = '<span class="tname">' + esc(tool.name || tool.id || '') + '</span>';
-    inner.appendChild(row);
+  var box = el('div', { class: 'confirm-box' });
+  box.appendChild(el('div', { class: 'confirm-title', text: t('toolConfirmTitle') }));
+  cur.pendingTools.forEach(function (tc) {
+    box.appendChild(el('div', { class: 'confirm-item', text: (tc.name || tc.tool || '?') }));
   });
-  var actions = document.createElement('div');
-  actions.className = 'confirm-actions';
-  var rejectBtn = document.createElement('button');
-  rejectBtn.className = 'btn secondary';
-  rejectBtn.textContent = t('reject');
+  var row = el('div', { class: 'confirm-actions' });
+  var rejectBtn = el('button', { class: 'btn danger', text: t('toolReject') });
   rejectBtn.addEventListener('click', function () { toolConfirm(false); });
-  var approveBtn = document.createElement('button');
-  approveBtn.className = 'btn';
-  approveBtn.textContent = t('approve');
+  var approveBtn = el('button', { class: 'btn', text: t('toolApprove') });
   approveBtn.addEventListener('click', function () { toolConfirm(true); });
-  actions.appendChild(rejectBtn);
-  actions.appendChild(approveBtn);
-  inner.appendChild(actions);
-  bar.appendChild(inner);
+  row.appendChild(rejectBtn);
+  row.appendChild(approveBtn);
+  box.appendChild(row);
+  bar.appendChild(box);
 }
 function toolConfirm(confirmed) {
-  var tab = activeTab();
-  if (!tab || tab.pendingTools.length === 0 || tab.confirmInFlight) return;
-  tab.confirmInFlight = true;
-  var responses = tab.pendingTools.map(function (tool) {
-    return { id: tool.id || tool.toolCallId || '', name: tool.name || tool.id || '', confirmed: confirmed };
+  var cur = activeTab();
+  if (!cur || !cur.id || cur.confirmInFlight) return;
+  cur.confirmInFlight = true;
+  var responses = cur.pendingTools.map(function (tc) {
+    return { id: tc.id, name: tc.name || tc.tool || '', confirmed: confirmed };
   });
-  post('/api/tool-confirm', { conversationId: tab.id, toolResponses: responses })
-    .then(function () {
-      tab.pendingTools = [];
-      tab.confirmInFlight = false;
-      renderConfirmBar();
-      toast(confirmed ? t('toolApproved') : t('toolRejected'));
-    })
-    .catch(function (err) {
-      tab.confirmInFlight = false;
-      toast(t('toolConfirmFailed') + ': ' + (err.message || ''));
-    });
+  post('/api/tool-confirm', { conversationId: cur.id, toolResponses: responses }).then(function () {
+    cur.confirmInFlight = false;
+    cur.pendingTools = [];
+    renderConfirmBar();
+    if (confirmed) setStreaming(cur, true, '');
+  }).catch(function (err) {
+    cur.confirmInFlight = false;
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
+  });
 }
 
-/* ============================================================
-   发送 / 停止 / 重试
-   ============================================================ */
+/* ---------- 发送 / 停止 ---------- */
 function renderSendIcon() {
-  var cur = activeTab();
   var btn = $('send');
+  if (!btn) return;
+  var cur = activeTab();
   btn.innerHTML = cur && cur.streaming ? ICON_STOP : ICON_SEND;
-  btn.classList.toggle('stop', !!(cur && cur.streaming));
 }
 function canSend() {
   var cur = activeTab();
   if (!cur) return false;
-  if (cur.streaming) return false;
-  return $('input').value.trim().length > 0;
+  if (cur.streaming || cur.sendInFlight) return false;
+  var val = $('input').value.trim();
+  return val.length > 0 && val.length <= MAX_EDIT_CHARS;
 }
 function updateSendBtn() {
   var btn = $('send');
-  btn.disabled = !canSend();
+  if (!btn) return;
+  var cur = activeTab();
+  btn.disabled = !canSend() && !(cur && cur.streaming);
 }
 function doSend() {
   var cur = activeTab();
   if (!cur || cur.streaming || cur.sendInFlight) return;
-  var text = $('input').value.trim();
-  if (!text) return;
+  var inputEl = $('input');
+  var text = inputEl.value.trim();
+  if (!text || text.length > MAX_EDIT_CHARS) return;
+  if (!S.activeChannelId) {
+    toast(t('noConfigs'));
+    return;
+  }
   cur.sendInFlight = true;
-  var payload = { text: text };
+  var payload = {
+    text: text,
+    configId: S.activeChannelId,
+    modelId: S.selectedModelId || undefined,
+    promptModeId: S.currentModeId || undefined
+  };
   if (cur.id) payload.conversationId = cur.id;
-  /* 输入区选择器：渠道 / 模型覆盖 / 模型模式透传（与桌面端 chatStream 同参数） */
-  if (state.activeChannelId) payload.configId = state.activeChannelId;
-  if (state.selectedModelId) payload.modelId = state.selectedModelId;
-  if (state.currentModeId) payload.promptModeId = state.currentModeId;
-  post('/api/send', payload)
-    .then(function (data) {
-      cur.sendInFlight = false;
-      if (data.conversationId && !cur.id) {
+  post('/api/send', payload).then(function (data) {
+    cur.sendInFlight = false;
+    inputEl.value = '';
+    autoGrowInput();
+    updateSendBtn();
+    if (data.conversationId) {
+      if (!cur.id) {
         cur.id = data.conversationId;
         cur.pendingStreamId = data.streamId || null;
         renderTabsBar();
-        /* 竞态窗口内已到达的孤儿 chunk 立即补发（SSE chunk 先于 POST 响应到达时） */
-        flushOrphanStream(data.streamId, cur);
       }
-      /* 立即清空输入并回显用户消息（流式完成后服务端落盘，UI 先行） */
-      $('input').value = '';
-      autoGrowInput();
-      updateSendBtn();
-      var optimistic = {
-        role: 'user',
-        parts: [{ text: text }],
-        content: text
-      };
-      cur.messages.push(optimistic);
-      if (cur.key === state.activeTabKey) renderMessages();
       setStreaming(cur, true, '');
-      loadConversations(true);
-    })
-    .catch(function (err) {
-      cur.sendInFlight = false;
-      cur.lastError = { text: (err.message || t('sendFailed')), retry: true };
-      if (cur.key === state.activeTabKey) renderMessages();
-      toast(t('sendFailed') + ': ' + (err.message || ''));
-    });
+      loadMessages(cur, true);
+    }
+  }).catch(function (err) {
+    cur.sendInFlight = false;
+    cur.lastError = { text: t('sendFailed') + ': ' + (err.message || ''), retry: !!cur.id };
+    renderMessages();
+  });
 }
 function doStop() {
   var cur = activeTab();
@@ -1030,91 +1025,140 @@ function doStop() {
     post('/api/cancel', { conversationId: cur.id }).catch(function () {});
   }
   cur.streaming = false;
-  cur.streamingText = '';
   cur.pendingTools = [];
   renderConfirmBar();
   renderSendIcon();
   updateSendBtn();
-  toast(t('streamInterrupted'));
+  setStatus('ok', t('statusConnected'));
 }
 function doRetry() {
   var cur = activeTab();
   if (!cur || !cur.id || cur.streaming) return;
   cur.lastError = null;
-  cur.streaming = false;
   post('/api/retry', { conversationId: cur.id }).then(function () {
     setStreaming(cur, true, '');
-    renderMessages();
   }).catch(function (err) {
     cur.lastError = { text: t('retryFailed') + ': ' + (err.message || ''), retry: true };
     renderMessages();
   });
 }
+function autoGrowInput() {
+  var inputEl = $('input');
+  if (!inputEl) return;
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+}
 
 /* ============================================================
-   SSE 流式（多会话并行）
+   7. SSE 流式（多会话并行 + 看门狗）
    ============================================================ */
 function connectStream() {
-  if (state.evtSource) return;
+  if (S.evtSource) return;
   var es;
-  try { es = new EventSource('/api/stream'); } catch (e) { retryConnect(); return; }
-  state.evtSource = es;
-  es.onopen = function () {
-    state.serverStopped = false;
-    state.connected = true;
+  try { es = new EventSource('/api/stream'); } catch (e) { scheduleReconnect(3000); return; }
+  S.evtSource = es;
+  S.reconnectAttempts = 0;
+  es.onopen = safe(function () {
+    S.serverStopped = false;
+    S.connected = true;
     var cur = activeTab();
     setStatus(cur && cur.streaming ? 'busy' : 'ok',
       cur && cur.streaming ? t('statusStreaming') : t('statusConnected'));
-  };
-  es.addEventListener('hello', function (ev) {
-    try {
-      var info = JSON.parse(ev.data);
-      state.statusInfo = info;
-      state.activeChannelId = info.activeChannelId || state.activeChannelId || null;
-      applyWorkspaceInfo(info);
-      renderComposerMeta();
-      if (info.activeConversationId && state.tabs.length === 0) {
-        var tab = newTabObject(info.activeConversationId, info.activeConversationTitle || '');
-        state.tabs.push(tab);
-        state.activeTabKey = tab.key;
-        renderTabsBar();
-        setTitle(tab.title);
-        loadMessages(tab, true);
-      }
-      loadConversations(true);
-    } catch (e) {}
   });
-  es.addEventListener('message', function (ev) { handleStreamMessage(ev.data); });
-  es.addEventListener('global', function (ev) { handleStreamMessage(ev.data); });
-  es.addEventListener('workspace', function (ev) {
-    try { applyWorkspaceInfo(JSON.parse(ev.data)); } catch (e) {}
-  });
-  /* 会话列表变更（远端/桌面端新建、改名、删除）：实时刷新，无需重启 */
-  es.addEventListener('conversations', function () {
+  es.addEventListener('hello', safe(function (ev) {
+    var info = JSON.parse(ev.data);
+    S.statusInfo = info;
+    if (info.activeChannelId) S.activeChannelId = info.activeChannelId;
+    applyWorkspaceInfo(info);
+    renderComposerMeta();
+    if (info.activeConversationId && S.tabs.length === 0) {
+      openConversationTab(info.activeConversationId, info.activeConversationTitle || '');
+    }
     loadConversations(true);
-  });
-  es.addEventListener('bye', function () {
-    state.serverStopped = true;
-    es.close();
-    state.evtSource = null;
-    state.connected = false;
+  }));
+  es.addEventListener('message', safe(function (ev) { handleStreamMessage(ev.data); }));
+  es.addEventListener('global', safe(function (ev) { handleStreamMessage(ev.data); }));
+  es.addEventListener('workspace', safe(function (ev) {
+    applyWorkspaceInfo(JSON.parse(ev.data));
+  }));
+  es.addEventListener('conversations', safe(function () {
+    loadConversations(true);
+  }));
+  es.addEventListener('bye', safe(function () {
+    S.serverStopped = true;
+    if (es) { es.close(); }
+    S.evtSource = null;
+    S.connected = false;
     resetAllStreaming();
     setStatus('err', t('statusServerStopped'));
-    $('send').disabled = true;
-  });
-  es.onerror = function () {
-    if (state.serverStopped) return;
-    es.close();
-    state.evtSource = null;
-    state.connected = false;
+    var sendBtn = $('send');
+    if (sendBtn) sendBtn.disabled = true;
+    /* 服务器重启探测：bye 后周期性探活，恢复后自动重连 */
+    probeServerRecovery();
+  }));
+  es.onerror = safe(function () {
+    if (S.serverStopped) return;
+    if (es) { es.close(); }
+    S.evtSource = null;
+    S.connected = false;
     resetAllStreaming();
     setStatus('err', t('statusReconnecting'));
-    retryConnect();
-  };
+    scheduleReconnect(2000 + Math.min(S.reconnectAttempts * 1000, 15000));
+  });
 }
+function scheduleReconnect(delay) {
+  clearTimeout(S.reconnectTimer);
+  S.reconnectTimer = setTimeout(function () {
+    if (S.serverStopped) return;
+    if (S.evtSource) return;
+    S.reconnectAttempts++;
+    connectStream();
+  }, delay || 2000);
+}
+function probeServerRecovery() {
+  clearTimeout(S.probeTimer);
+  S.probeTimer = setInterval(function () {
+    if (S.evtSource) {
+      clearInterval(S.probeTimer);
+      return;
+    }
+    api('/api/status').then(function (s) {
+      if (s && s.running) {
+        clearInterval(S.probeTimer);
+        S.serverStopped = false;
+        S.statusInfo = s;
+        if (s.activeChannelId) S.activeChannelId = s.activeChannelId;
+        applyWorkspaceInfo(s);
+        renderSettings(s);
+        var sendBtn = $('send');
+        if (sendBtn) sendBtn.disabled = false;
+        setStatus('connecting', t('statusConnecting'));
+        connectStream();
+      }
+    }).catch(function () {});
+  }, 3000);
+}
+/* 看门狗：SSE 连接被静默掐断（无 error 事件）时兜底重连 */
+setInterval(function () {
+  if (S.serverStopped) return;
+  if (S.evtSource) {
+    if (S.evtSource.readyState === EventSource.CLOSED) {
+      S.evtSource = null;
+      scheduleReconnect(1500);
+    }
+    return;
+  }
+  scheduleReconnect(1500);
+}, 15000);
+/* 移动端切回前台：立即恢复连接 */
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden && !S.evtSource && !S.serverStopped) {
+    scheduleReconnect(200);
+  }
+});
 function resetAllStreaming() {
   var changed = false;
-  state.tabs.forEach(function (tab) {
+  S.tabs.forEach(function (tab) {
     if (tab.streaming || tab.pendingTools.length) {
       tab.streaming = false;
       tab.streamingText = '';
@@ -1129,10 +1173,6 @@ function resetAllStreaming() {
     renderSendIcon();
     updateSendBtn();
   }
-}
-function retryConnect() {
-  clearTimeout(state.reconnectTimer);
-  state.reconnectTimer = setTimeout(connectStream, 2000);
 }
 function handleStreamMessage(raw) {
   var msg;
@@ -1182,18 +1222,17 @@ function handleStreamMessage(raw) {
     if (!tab2.streaming) {
       var errText = (d.error && (d.error.message || d.error)) || d.message || t('loadFailed');
       tab2.lastError = { text: errText, retry: !!tab2.id };
-      if (tab2.key === state.activeTabKey) renderMessages();
+      if (tab2.key === S.activeTabKey) renderMessages();
     }
   }
 }
 function tabByStreamId(streamId) {
   if (!streamId) return null;
-  for (var i = 0; i < state.tabs.length; i++) {
-    if (state.tabs[i].pendingStreamId === streamId) return state.tabs[i];
+  for (var i = 0; i < S.tabs.length; i++) {
+    if (S.tabs[i].pendingStreamId === streamId) return S.tabs[i];
   }
   return null;
 }
-/** 新建会话 POST 响应到达：flush 竞态窗口内的孤儿 chunk 到对应页签 */
 function flushOrphanStream(streamId, tab) {
   if (!streamId || !tab) return;
   var buf = orphanStreams[streamId];
@@ -1203,6 +1242,7 @@ function flushOrphanStream(streamId, tab) {
   }
 }
 function setStreaming(tab, on, model) {
+  if (!tab) return;
   tab.streaming = on;
   if (model) tab.streamingModel = model;
   if (!on) tab.streamingText = '';
@@ -1211,28 +1251,32 @@ function setStreaming(tab, on, model) {
   updateSendBtn();
   var cur = activeTab();
   setStatus(on ? 'busy' : 'ok', on ? t('statusStreaming') : t('statusConnected'));
-  if (cur === tab && cur.key === state.activeTabKey) {
+  if (cur === tab && tab.key === S.activeTabKey) {
     if (on) renderMessages();
   }
 }
 function renderStreamingText() {
   var tab = activeTab();
   if (!tab || !tab.streaming) return;
-  var holders = $('messages').querySelectorAll('.msg.assistant.streaming');
+  var messagesEl = $('messages');
+  if (!messagesEl) return;
+  var holders = messagesEl.querySelectorAll('.msg.assistant.streaming');
   var last = holders[holders.length - 1];
   if (last) {
     var contentEl = last.querySelector('.msg-content');
-    contentEl.innerHTML = (tab.streamingText ? renderMarkdown(tab.streamingText) : '') + '<span class="caret"></span>';
+    if (contentEl) {
+      contentEl.innerHTML = (tab.streamingText ? renderMarkdown(tab.streamingText) : '') + '<span class="caret"></span>';
+    }
   }
   scrollToBottom();
 }
 function processChunk(c, tab) {
-  if (!c || !c.type) return;
+  if (!c || !c.type || !tab) return;
   var type = c.type;
   if (type === 'chunk' && typeof c.chunk === 'string') {
     if (!tab.streaming) setStreaming(tab, true, '');
     tab.streamingText += c.chunk;
-    if (tab.key === state.activeTabKey) renderStreamingText();
+    if (tab.key === S.activeTabKey) renderStreamingText();
     return;
   }
   if (type === 'complete') {
@@ -1257,7 +1301,7 @@ function processChunk(c, tab) {
     if (tab.streaming) setStreaming(tab, false);
     var errMsg = (c.error && (c.error.message || c.error)) || t('loadFailed');
     tab.lastError = { text: errMsg, retry: false };
-    if (tab.key === state.activeTabKey) renderMessages();
+    if (tab.key === S.activeTabKey) renderMessages();
     loadMessages(tab, true);
     return;
   }
@@ -1268,14 +1312,12 @@ function processChunk(c, tab) {
     return;
   }
   if (type === 'toolStatus') {
-    /* 工具状态（执行中/完成）：保持流式光标，不打断输出 */
     if (!tab.streaming) setStreaming(tab, true, '');
     tab.pendingTools = [];
     renderConfirmBar();
     return;
   }
   if (type === 'checkpoints' || type === 'autoSummaryStatus' || type === 'autoSummary') {
-    /* 检查点/自动总结：无移动端专用 UI，保持流式状态即可（终结事件仍由 complete 处理） */
     return;
   }
   if (type === 'awaitingConfirmation') {
@@ -1288,27 +1330,26 @@ function processChunk(c, tab) {
 function applyWorkspaceInfo(info) {
   if (!info) return;
   var changed = false;
-  if (typeof info.workspaceUri === 'string' && info.workspaceUri !== state.workspaceUri) {
-    state.workspaceUri = info.workspaceUri;
+  if (typeof info.workspaceUri === 'string' && info.workspaceUri !== S.workspaceUri) {
+    S.workspaceUri = info.workspaceUri;
     changed = true;
   }
-  if (typeof info.workspaceName === 'string' && info.workspaceName !== state.workspaceName) {
-    state.workspaceName = info.workspaceName;
+  if (typeof info.workspaceName === 'string' && info.workspaceName !== S.workspaceName) {
+    S.workspaceName = info.workspaceName;
     changed = true;
   }
   if (typeof info.activeFilePath === 'string' || info.activeFilePath === null) {
-    if (info.activeFilePath !== state.activeFilePath) {
-      state.activeFilePath = info.activeFilePath;
+    if (info.activeFilePath !== S.activeFilePath) {
+      S.activeFilePath = info.activeFilePath;
       changed = true;
     }
   }
   if (changed) {
-    setWorkspaceName(state.workspaceName);
-    $('ws-bar-name').textContent = state.workspaceName || t('noWorkspace');
-    $('ws-bar-file').textContent = state.activeFilePath ? t('activeFile') + ': ' + state.activeFilePath : '';
-    state.fileDirs = {};
-    state.currentFile = null;
-    if (isTab('files')) {
+    setWorkspaceName(S.workspaceName);
+    refreshWsBar();
+    S.fileDirs = {};
+    S.currentFile = null;
+    if (isView('files')) {
       $('file-viewer').hidden = true;
       $('file-tree').hidden = false;
       loadFiles('', true);
@@ -1317,10 +1358,11 @@ function applyWorkspaceInfo(info) {
 }
 
 /* ============================================================
-   输入区四选择器（桌面端 InputSelectorBar 同款：模式/渠道/模型/思考强度）
+   8. 输入区四选择器（模式 / 渠道 / 模型 / 思考强度）
    ============================================================ */
 function renderComposerMeta() {
   var el = $('composer-meta');
+  if (!el) return;
   el.innerHTML = '';
   el.appendChild(buildModeChip());
   el.appendChild(buildChannelChip());
@@ -1328,31 +1370,33 @@ function renderComposerMeta() {
   el.appendChild(buildThinkingChip());
 }
 function selChip(label, value, onClick) {
-  var btn = document.createElement('button');
-  btn.className = 'sel-chip';
-  btn.innerHTML = '<span class="sel-label">' + esc(label) + '</span>' +
-    '<span class="sel-value">' + esc(value || '—') + '</span>' +
-    icon('chevronDown', 'sel-arrow');
-  btn.addEventListener('click', onClick);
+  var btn = el('button', { class: 'sel-chip' });
+  btn.appendChild(el('span', { class: 'sel-label', text: label }));
+  btn.appendChild(el('span', { class: 'sel-value', text: value || '—' }));
+  var arrow = el('span', { class: 'sel-arrow' });
+  arrow.innerHTML = icon('chevronDown');
+  btn.appendChild(arrow);
+  btn.addEventListener('click', safe(onClick));
   return btn;
+}
+function findConfig(id) {
+  for (var i = 0; i < S.configs.length; i++) if (S.configs[i].id === id) return S.configs[i];
+  return null;
 }
 function buildModeChip() {
   var mode = null;
-  for (var i = 0; i < state.promptModes.length; i++) {
-    if (state.promptModes[i].id === state.currentModeId) { mode = state.promptModes[i]; break; }
+  for (var i = 0; i < S.promptModes.length; i++) {
+    if (S.promptModes[i].id === S.currentModeId) { mode = S.promptModes[i]; break; }
   }
-  return selChip(t('selMode'), mode ? mode.name : (state.currentModeId || t('selModeDefault')), openModeSheet);
+  return selChip(t('selMode'), mode ? mode.name : (S.currentModeId || t('selModeDefault')), openModeSheet);
 }
 function buildChannelChip() {
-  var cfg = null;
-  for (var i = 0; i < state.configs.length; i++) {
-    if (state.configs[i].id === state.activeChannelId) { cfg = state.configs[i]; break; }
-  }
+  var cfg = findConfig(S.activeChannelId);
   return selChip(t('selChannel'), cfg ? (cfg.name || cfg.id) : t('selChannelNone'), openChannelSheet);
 }
 function buildModelChip() {
-  var models = state.activeChannelId ? (state.configModels[state.activeChannelId] || []) : [];
-  var modelName = state.selectedModelId || '';
+  var models = S.activeChannelId ? (S.configModels[S.activeChannelId] || []) : [];
+  var modelName = S.selectedModelId || '';
   var cur = null;
   for (var i = 0; i < models.length; i++) {
     if (models[i].id === modelName) { cur = models[i]; break; }
@@ -1360,130 +1404,88 @@ function buildModelChip() {
   return selChip(t('selModel'), cur ? (cur.name || cur.id) : (modelName || t('selModelAuto')), openModelSheet);
 }
 function buildThinkingChip() {
-  return selChip(t('selThinking'), state.thinkingLevel || t('selThinkingAuto'), openThinkingSheet);
-}
-/* 底部弹层通用打开 */
-function openSheet(title, buildList) {
-  var el = $('sheet');
-  $('sheet-title').textContent = title;
-  var list = $('sheet-list');
-  list.innerHTML = '';
-  buildList(list);
-  el.classList.add('open');
-}
-function closeSheet() {
-  $('sheet').classList.remove('open');
-}
-function sheetItem(list, label, sub, selected, onClick) {
-  var item = document.createElement('button');
-  item.className = 'sheet-item' + (selected ? ' selected' : '');
-  var labelEl = document.createElement('span');
-  labelEl.textContent = label;
-  item.appendChild(labelEl);
-  if (sub) {
-    var subEl = document.createElement('span');
-    subEl.className = 'si-sub';
-    subEl.textContent = sub;
-    item.appendChild(subEl);
-  }
-  if (selected) {
-    var check = document.createElement('span');
-    check.className = 'si-check';
-    check.innerHTML = icon('check');
-    item.appendChild(check);
-  }
-  item.addEventListener('click', function () { closeSheet(); onClick(); });
-  list.appendChild(item);
+  return selChip(t('selThinking'), S.thinkingLevel || t('selThinkingAuto'), openThinkingSheet);
 }
 function openModeSheet() {
   openSheet(t('selModeTitle'), function (list) {
-    if (state.promptModes.length === 0) {
-      var hint = document.createElement('div');
-      hint.className = 'sheet-hint';
-      hint.textContent = t('loadFailed');
-      list.appendChild(hint);
+    if (S.promptModes.length === 0) {
+      sheetHint(list, t('loadFailed'));
       return;
     }
-    state.promptModes.forEach(function (mode) {
-      sheetItem(list, mode.name || mode.id, mode.id, mode.id === state.currentModeId, function () {
-        state.currentModeId = mode.id;
+    S.promptModes.forEach(function (mode) {
+      sheetItem(list, mode.name || mode.id, mode.id, mode.id === S.currentModeId, function () {
+        S.currentModeId = mode.id;
         renderComposerMeta();
+        toast(t('modeChanged'));
       });
     });
   });
 }
 function openChannelSheet() {
   openSheet(t('selChannelTitle'), function (list) {
-    if (state.configs.length === 0) {
-      var hint = document.createElement('div');
-      hint.className = 'sheet-hint';
-      hint.textContent = t('noConfigs');
-      list.appendChild(hint);
+    if (S.configs.length === 0) {
+      sheetHint(list, t('noConfigs'));
       return;
     }
-    state.configs.forEach(function (cfg) {
-      sheetItem(list, cfg.name || cfg.id, cfg.model || '', cfg.id === state.activeChannelId, function () {
-        state.activeChannelId = cfg.id;
-        state.selectedModelId = null;
-        state.configModels[cfg.id] = state.configModels[cfg.id] || [];
+    S.configs.forEach(function (cfg) {
+      sheetItem(list, cfg.name || cfg.id, cfg.model || '', cfg.id === S.activeChannelId, function () {
+        S.activeChannelId = cfg.id;
+        S.selectedModelId = null;
+        S.configModels[cfg.id] = S.configModels[cfg.id] || [];
         renderComposerMeta();
         loadConfigModels(cfg.id);
+        toast(t('channelChanged'));
       });
     });
   });
 }
 function openModelSheet() {
-  var models = state.activeChannelId ? (state.configModels[state.activeChannelId] || []) : [];
+  var models = S.activeChannelId ? (S.configModels[S.activeChannelId] || []) : [];
   openSheet(t('selModelTitle'), function (list) {
-    if (!state.activeChannelId) {
-      var hint = document.createElement('div');
-      hint.className = 'sheet-hint';
-      hint.textContent = t('noConfigs');
-      list.appendChild(hint);
+    if (!S.activeChannelId) {
+      sheetHint(list, t('noConfigs'));
       return;
     }
-    if (models.length === 0) {
-      var hint2 = document.createElement('div');
-      hint2.className = 'sheet-hint';
-      hint2.textContent = t('noModels');
-      list.appendChild(hint2);
-      return;
+    var auto = el('button', { class: 'sheet-item' + (!S.selectedModelId ? ' selected' : '') });
+    auto.appendChild(el('span', { text: t('selModelAuto') }));
+    if (!S.selectedModelId) {
+      var chk = el('span', { class: 'si-check' });
+      chk.innerHTML = icon('check');
+      auto.appendChild(chk);
     }
-    var auto = document.createElement('div');
-    auto.className = 'sheet-item' + (!state.selectedModelId ? ' selected' : '');
-    auto.innerHTML = '<span>' + esc(t('selModelAuto')) + '</span>' +
-      (!state.selectedModelId ? '<span class="si-check">' + icon('check') + '</span>' : '');
     auto.addEventListener('click', function () {
       closeSheet();
-      state.selectedModelId = null;
+      S.selectedModelId = null;
       renderComposerMeta();
     });
     list.appendChild(auto);
+    if (models.length === 0) {
+      sheetHint(list, t('noModels'));
+      return;
+    }
     models.forEach(function (m) {
-      sheetItem(list, m.name || m.id, m.id, m.id === state.selectedModelId, function () {
-        state.selectedModelId = m.id;
+      sheetItem(list, m.name || m.id, m.id, m.id === S.selectedModelId, function () {
+        S.selectedModelId = m.id;
         renderComposerMeta();
+        toast(t('modelChanged'));
       });
     });
   });
 }
 function openThinkingSheet() {
   openSheet(t('selThinkingTitle'), function (list) {
-    if (state.thinkingOptions.length === 0) {
-      var hint = document.createElement('div');
-      hint.className = 'sheet-hint';
-      hint.textContent = t('noData');
-      list.appendChild(hint);
+    if (S.thinkingOptions.length === 0) {
+      sheetHint(list, t('noData'));
       return;
     }
-    state.thinkingOptions.forEach(function (opt) {
-      sheetItem(list, opt.label, '', opt.value === state.thinkingLevel, function () {
+    S.thinkingOptions.forEach(function (opt) {
+      sheetItem(list, opt.label, '', opt.value === S.thinkingLevel, function () {
         setThinkingLevel(opt.value);
       });
     });
   });
 }
-/* 思考强度选项（与桌面端 ThinkingSelector 同源：按渠道类型） */
+/* 思考强度（与桌面端 ThinkingSelector 同源语义） */
 function thinkingOptionsFor(type) {
   if (type === 'openai' || type === 'openai-responses') {
     return [
@@ -1583,16 +1585,13 @@ function buildThinkingUpdates(cfg, level) {
   return null;
 }
 function setThinkingLevel(level) {
-  if (!state.activeChannelId) return;
-  var cfg = null;
-  for (var i = 0; i < state.configs.length; i++) {
-    if (state.configs[i].id === state.activeChannelId) { cfg = state.configs[i]; break; }
-  }
+  if (!S.activeChannelId) return;
+  var cfg = findConfig(S.activeChannelId);
   var updates = buildThinkingUpdates(cfg, level);
   if (!updates) return;
-  post('/api/config-update', { configId: state.activeChannelId, updates: updates })
+  post('/api/config-update', { configId: S.activeChannelId, updates: updates })
     .then(function () {
-      state.thinkingLevel = level;
+      S.thinkingLevel = level;
       renderComposerMeta();
       toast(t('settingsSaved'));
       loadConfigs();
@@ -1603,122 +1602,119 @@ function setThinkingLevel(level) {
 }
 function loadConfigs() {
   return api('/api/configs').then(function (data) {
-    state.configs = Array.isArray(data.configs) ? data.configs : [];
-    /* 渠道列表现已携带 type/options/optionsEnabled（V2），思考强度直接可算 */
+    S.configs = Array.isArray(data.configs) ? data.configs : [];
     syncThinkingState();
     renderComposerMeta();
-    if (state.activeChannelId && !state.configModels[state.activeChannelId]) {
-      loadConfigModels(state.activeChannelId);
+    if (S.activeChannelId && !S.configModels[S.activeChannelId]) {
+      loadConfigModels(S.activeChannelId);
     }
+    if (isView('settings') && S.settingsTab === 'channel') renderAllSettingsSections();
     return data;
   }).catch(function () {
     renderComposerMeta();
     return Promise.reject(new Error('configs'));
   });
 }
+var modelsLoaded = {};
 function loadConfigModels(configId) {
+  if (!configId) return;
+  if (modelsLoaded[configId]) return;
+  modelsLoaded[configId] = true;
   api('/api/config?configId=' + encodeURIComponent(configId))
     .then(function (data) {
       var cfg = data.config || {};
       var models = Array.isArray(cfg.models) ? cfg.models : [];
-      state.configModels[configId] = models;
+      S.configModels[configId] = models;
       syncThinkingFromConfig(configId, cfg);
       renderComposerMeta();
-      if (state.settingsTab === 'channel') renderAllSettingsSections();
     })
-    .catch(function () {});
+    .catch(function () {
+      modelsLoaded[configId] = false;
+    });
 }
-/** 同步当前渠道的思考强度展示（读取渠道配置的真实值；列表已含 type/options） */
 function syncThinkingState() {
-  if (!state.activeChannelId) return;
-  var cfg = null;
-  for (var i = 0; i < state.configs.length; i++) {
-    if (state.configs[i].id === state.activeChannelId) { cfg = state.configs[i]; break; }
-  }
+  if (!S.activeChannelId) return;
+  var cfg = findConfig(S.activeChannelId);
   if (!cfg) return;
-  state.thinkingOptions = thinkingOptionsFor(cfg.type);
-  state.thinkingLevel = currentThinkingOf(cfg);
+  S.thinkingOptions = thinkingOptionsFor(cfg.type);
+  S.thinkingLevel = currentThinkingOf(cfg);
   renderComposerMeta();
 }
 function syncThinkingFromConfig(configId, cfg) {
-  if (configId !== state.activeChannelId || !cfg) return;
-  state.thinkingOptions = thinkingOptionsFor(cfg.type);
-  state.thinkingLevel = currentThinkingOf(cfg);
+  if (configId !== S.activeChannelId || !cfg) return;
+  S.thinkingOptions = thinkingOptionsFor(cfg.type);
+  S.thinkingLevel = currentThinkingOf(cfg);
   renderComposerMeta();
 }
 function loadPromptModes() {
   api('/api/prompt-modes').then(function (data) {
-    state.promptModes = Array.isArray(data.modes) ? data.modes : [];
-    if (data.currentModeId && !state.currentModeId) {
-      state.currentModeId = data.currentModeId;
+    S.promptModes = Array.isArray(data.modes) ? data.modes : [];
+    if (data.currentModeId && !S.currentModeId) {
+      S.currentModeId = data.currentModeId;
     }
-    if (state.promptModes.length > 0 && !state.currentModeId) {
-      state.currentModeId = state.promptModes[0].id;
+    if (S.promptModes.length > 0 && !S.currentModeId) {
+      S.currentModeId = S.promptModes[0].id;
     }
     renderComposerMeta();
   }).catch(function () {});
 }
 
 /* ============================================================
-   文件页
+   9. 文件页（工作区）
    ============================================================ */
-function isTab(name) { return $('view-' + name).hidden === false; }
-function switchTab(name) {
-  ['chat', 'files', 'settings'].forEach(function (n) {
-    $('view-' + n).hidden = (n !== name);
-  });
-  document.querySelectorAll('#tabbar button').forEach(function (b) {
-    b.classList.toggle('active', b.getAttribute('data-tab') === name);
-  });
-  if (name === 'files') {
-    $('ws-bar-name').textContent = state.workspaceName || t('noWorkspace');
-    $('ws-bar-file').textContent = state.activeFilePath ? t('activeFile') + ': ' + state.activeFilePath : '';
-    loadFiles('', true);
-  } else if (name === 'settings') {
-    renderSettingsTabs();
-    renderAllSettingsSections();
-    loadConfigs();
-    if (!state.settings) {
-      loadSettings();
-      loadToolsList();
-      loadDeps();
-    }
-  }
-}
 function renderFileTree(path, entries) {
   var root = $('file-tree');
+  if (!root) return;
   root.innerHTML = '';
-  if (!state.workspaceUri && !state.workspaceName) {
-    var hint = document.createElement('div');
-    hint.className = 'conv-empty';
-    hint.innerHTML = icon('folder', '') + '<div style="margin-top:8px">' + esc(t('noWorkspace')) + '</div>' +
-      '<div style="font-size:12px;margin-top:4px">' + esc(t('noWorkspaceHint')) + '</div>';
+  if (!S.workspaceUri && !S.workspaceName) {
+    var hint = el('div', { class: 'conv-empty' });
+    var ico = el('div');
+    ico.innerHTML = icon('folder');
+    hint.appendChild(ico);
+    hint.appendChild(el('div', { text: t('noWorkspace') }));
+    hint.appendChild(el('div', { class: 'hint-sm', text: t('noWorkspaceHint') }));
     root.appendChild(hint);
+    var openBtn = el('button', { class: 'btn', text: t('switchWorkspace') });
+    openBtn.addEventListener('click', function () { openWorkspaceSheet(); });
+    hint.appendChild(openBtn);
     return;
   }
   if (path !== '') {
-    var up = document.createElement('button');
-    up.className = 'fdir-row';
-    up.innerHTML = icon('folderUp', 'fico') + '<span class="fname">' + esc(t('back')) + ' · ' + esc(path) + '</span>';
-    up.addEventListener('click', function () { state.fileDirs = {}; loadFiles('', true); });
+    var up = el('button', { class: 'fdir-row' });
+    var upIcon = el('span', { class: 'fico' });
+    upIcon.innerHTML = icon('folderUp');
+    up.appendChild(upIcon);
+    up.appendChild(el('span', { class: 'fname', text: t('back') + ' · ' + path }));
+    up.addEventListener('click', function () { S.fileDirs = {}; loadFiles('', true); });
     root.appendChild(up);
   } else {
-    var home = document.createElement('button');
-    home.className = 'fdir-row';
-    home.innerHTML = icon('folder', 'fico') + '<span class="fname">' + esc(t('workspaceRoot')) + '</span>';
+    var home = el('button', { class: 'fdir-row' });
+    var homeIcon = el('span', { class: 'fico' });
+    homeIcon.innerHTML = icon('folder');
+    home.appendChild(homeIcon);
+    home.appendChild(el('span', { class: 'fname', text: t('workspaceRoot') }));
     root.appendChild(home);
   }
   (entries || []).forEach(function (entry) {
     var isDir = entry.type === 'directory';
-    var row = document.createElement('button');
-    row.className = 'fdir-row';
-    row.innerHTML = (isDir ? icon('chevronRight', 'caret-svg') : '') +
-      (isDir ? icon('folder', 'fico') : icon('file', 'fico')) +
-      '<span class="fname">' + esc(entry.name) + '</span>' +
-      (typeof entry.size === 'number' ? '<span class="fsize">' + fmtSize(entry.size) + '</span>' : '');
+    var row = el('button', { class: 'fdir-row' });
+    var caret = el('span', { class: 'caret-svg' });
+    var fico = el('span', { class: 'fico' });
+    if (isDir) {
+      caret.innerHTML = icon('chevronRight');
+      fico.innerHTML = icon('folder');
+    } else {
+      fico.innerHTML = icon('file');
+    }
+    row.appendChild(caret);
+    row.appendChild(fico);
+    row.appendChild(el('span', { class: 'fname', text: entry.name }));
+    if (typeof entry.size === 'number') {
+      row.appendChild(el('span', { class: 'fsize', text: fmtSize(entry.size) }));
+    }
     row.addEventListener('click', function () {
       if (isDir) {
-        state.fileDirs[path] = entries;
+        S.fileDirs[path] = entries;
         loadFiles(entry.path, true);
       } else {
         openFile(entry.path);
@@ -1726,12 +1722,9 @@ function renderFileTree(path, entries) {
     });
     root.appendChild(row);
   });
-}
-function fmtSize(n) {
-  if (n == null) return '';
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if ((entries || []).length === 0) {
+    root.appendChild(el('div', { class: 'conv-empty', text: t('emptyDir') }));
+  }
 }
 function loadFiles(path, quiet) {
   var q = path ? '?path=' + encodeURIComponent(path) : '';
@@ -1743,13 +1736,14 @@ function loadFiles(path, quiet) {
 }
 function openFile(path) {
   api('/api/file?path=' + encodeURIComponent(path)).then(function (data) {
-    state.currentFile = { path: data.path || path, content: data.content || '', dirty: false, truncated: !!data.truncated };
-    $('file-viewer-path').textContent = state.currentFile.path;
-    $('file-editor').value = state.currentFile.content;
-    $('file-editor').readOnly = state.currentFile.truncated;
-    $('file-viewer-info').textContent = state.currentFile.truncated ? t('fileTooLarge') : fmtSize(state.currentFile.content.length);
-    $('btn-save-file').disabled = true;
-    $('btn-save-file').textContent = t('save');
+    S.currentFile = { path: data.path || path, content: data.content || '', dirty: false, truncated: !!data.truncated };
+    $('file-viewer-path').textContent = S.currentFile.path;
+    $('file-editor').value = S.currentFile.content;
+    $('file-editor').readOnly = S.currentFile.truncated;
+    $('file-viewer-info').textContent = S.currentFile.truncated ? t('fileTooLarge') : fmtSize(S.currentFile.content.length);
+    var saveBtn = $('btn-save-file');
+    saveBtn.disabled = true;
+    saveBtn.textContent = t('save');
     $('file-tree').hidden = true;
     $('file-viewer').hidden = false;
   }).catch(function (err) {
@@ -1757,12 +1751,13 @@ function openFile(path) {
   });
 }
 function saveFile() {
-  if (!state.currentFile || state.currentFile.dirty === false) return;
-  post('/api/file', { path: state.currentFile.path, content: state.currentFile.content })
+  if (!S.currentFile || S.currentFile.dirty === false) return;
+  post('/api/file', { path: S.currentFile.path, content: S.currentFile.content })
     .then(function () {
-      state.currentFile.dirty = false;
-      $('btn-save-file').disabled = true;
-      $('btn-save-file').textContent = t('save');
+      S.currentFile.dirty = false;
+      var saveBtn = $('btn-save-file');
+      saveBtn.disabled = true;
+      saveBtn.textContent = t('save');
       toast(t('saved'));
     })
     .catch(function (err) {
@@ -1770,52 +1765,86 @@ function saveFile() {
     });
 }
 function openOnDesktop() {
-  if (!state.currentFile) return;
-  post('/api/open-file', { path: state.currentFile.path }).then(function () {
-    toast(t('openOnDesktop') + ' ✓');
+  if (!S.currentFile) return;
+  post('/api/open-file', { path: S.currentFile.path }).then(function () {
+    toast(t('openOnDesktop'));
   }).catch(function (err) {
     toast(t('loadFailed') + ': ' + (err.message || ''));
   });
 }
+/* ---------- 工作区切换 / 新增 ---------- */
 function loadWorkspaces() {
   api('/api/workspaces').then(function (data) {
-    state.workspaces = data;
+    S.workspaces = data;
     renderWorkspaceSheet();
-  }).catch(function () {});
+  }).catch(function () {
+    renderWorkspaceSheet();
+  });
 }
 function openWorkspaceSheet() {
   loadWorkspaces();
+  var lm = $('sheet-list-mode');
+  var bm = $('sheet-browse-mode');
+  if (lm) lm.hidden = false;
+  if (bm) bm.hidden = true;
   $('sheet').classList.add('open');
   $('sheet-title').textContent = t('switchWorkspace');
   var list = $('sheet-list');
   list.innerHTML = '';
-  list.innerHTML = '<div class="sheet-hint">' + esc(t('loading')) + '</div>';
+  list.appendChild(el('div', { class: 'sheet-hint', text: t('loading') }));
 }
 function renderWorkspaceSheet() {
   var list = $('sheet-list');
+  if (!list) return;
   list.innerHTML = '';
-  var data = state.workspaces || {};
+  var data = S.workspaces || {};
   var openList = Array.isArray(data.workspaces) ? data.workspaces : [];
   var savedList = Array.isArray(data.saved) ? data.saved : [];
+  var activeUri = data.activeWorkspaceUri || '';
+  var shown = {};
   openList.forEach(function (w) {
-    sheetItem(list, w.name || w.uri || '', w.uri || '', (w.uri || '') === (data.activeWorkspaceUri || ''), function () {
+    shown[w.uri || ''] = true;
+    sheetItem(list, w.name || w.uri || '', w.uri || '', (w.uri || '') === activeUri, function () {
       post('/api/workspace-switch', { workspaceUri: w.uri }).then(function () {
         toast(t('workspaceOpened'));
         closeSheet();
-        state.fileDirs = {};
-        state.currentFile = null;
-        if (isTab('files')) { $('file-viewer').hidden = true; $('file-tree').hidden = false; loadFiles('', true); }
+        S.fileDirs = {};
+        S.currentFile = null;
+        if (isView('files')) { $('file-viewer').hidden = true; $('file-tree').hidden = false; loadFiles('', true); }
+      }).catch(function (err) {
+        toast(t('workspaceNotFound') + ': ' + (err.message || ''));
+      });
+    });
+  });
+  savedList.forEach(function (w) {
+    if (shown[w.uri || '']) return;
+    shown[w.uri || ''] = true;
+    sheetItem(list, w.name || w.uri || '', w.uri || '', false, function () {
+      post('/api/workspace-switch', { workspaceUri: w.uri }).then(function () {
+        toast(t('workspaceOpened'));
+        closeSheet();
+        S.fileDirs = {};
+        S.currentFile = null;
+        if (isView('files')) { $('file-viewer').hidden = true; $('file-tree').hidden = false; loadFiles('', true); }
       }).catch(function (err) {
         toast(t('workspaceNotFound') + ': ' + (err.message || ''));
       });
     });
   });
   if (openList.length === 0 && savedList.length === 0) {
-    var hint = document.createElement('div');
-    hint.className = 'sheet-hint';
-    hint.textContent = t('noWorkspace');
-    list.appendChild(hint);
+    sheetHint(list, t('noWorkspace'));
   }
+  var row = el('div', { class: 'sheet-actions' });
+  var browseBtn = el('button', { class: 'btn', text: t('browseFolder') });
+  browseBtn.addEventListener('click', function () {
+    closeSheet();
+    openBrowse();
+  });
+  var addBtn = el('button', { class: 'btn', text: t('addWorkspace') });
+  addBtn.addEventListener('click', function () { addWorkspace(); });
+  row.appendChild(browseBtn);
+  row.appendChild(addBtn);
+  list.appendChild(row);
 }
 function addWorkspace() {
   post('/api/workspace-add', {}).then(function (data) {
@@ -1826,6 +1855,7 @@ function addWorkspace() {
     toast(t('loadFailed') + ': ' + (err.message || ''));
   });
 }
+/* ---------- 目录浏览（自选工作区） ---------- */
 function openBrowse() {
   $('sheet-list-mode').hidden = true;
   $('sheet-browse-mode').hidden = false;
@@ -1833,77 +1863,72 @@ function openBrowse() {
   $('sheet-title').textContent = t('browseTitle');
   loadFsDir('');
 }
-function closeBrowseMode() {
-  $('sheet-browse-mode').hidden = true;
-  $('sheet-list-mode').hidden = false;
-}
 function loadFsDir(rawPath) {
-  if (state.browseBusy) return;
-  state.browseBusy = true;
+  if (S.browseBusy) return;
+  S.browseBusy = true;
   var q = rawPath ? '?path=' + encodeURIComponent(rawPath) : '';
   api('/api/fs' + q).then(function (data) {
-    state.browseBusy = false;
-    state.browsePath = data.path || '';
-    state.browseParent = data.parent || null;
-    state.browseDrives = Array.isArray(data.drives) ? data.drives : [];
+    S.browseBusy = false;
+    S.browsePath = data.path || '';
+    S.browseParent = data.parent || null;
+    S.browseDrives = Array.isArray(data.drives) ? data.drives : [];
     $('browse-path').textContent = data.path || t('browseRootLabel');
     var list = $('browse-list');
     list.innerHTML = '';
-    if (state.browseParent) {
-      var up = document.createElement('button');
-      up.className = 'fdir-row';
-      up.innerHTML = icon('folderUp', 'fico') + '<span class="fname">' + esc(t('browseUp')) + '</span>';
-      up.addEventListener('click', function () { loadFsDir(state.browseParent); });
+    if (S.browseParent) {
+      var up = el('button', { class: 'fdir-row' });
+      var upIcon = el('span', { class: 'fico' });
+      upIcon.innerHTML = icon('folderUp');
+      up.appendChild(upIcon);
+      up.appendChild(el('span', { class: 'fname', text: t('browseUp') }));
+      up.addEventListener('click', function () { loadFsDir(S.browseParent); });
       list.appendChild(up);
     }
     if (data.drives && data.drives.length) {
-      var dl = document.createElement('div');
-      dl.className = 'sheet-hint';
-      dl.textContent = t('browseDrivesLabel');
-      list.appendChild(dl);
+      list.appendChild(el('div', { class: 'sheet-hint', text: t('browseDrivesLabel') }));
       data.drives.forEach(function (drive) {
-        var d = document.createElement('button');
-        d.className = 'fdir-row';
-        d.innerHTML = icon('folder', 'fico') + '<span class="fname">' + esc(drive) + '</span>';
+        var d = el('button', { class: 'fdir-row' });
+        var dIcon = el('span', { class: 'fico' });
+        dIcon.innerHTML = icon('folder');
+        d.appendChild(dIcon);
+        d.appendChild(el('span', { class: 'fname', text: drive }));
         d.addEventListener('click', function () { loadFsDir(drive); });
         list.appendChild(d);
       });
     }
     (data.entries || []).forEach(function (entry) {
-      var row = document.createElement('button');
-      row.className = 'fdir-row';
-      row.innerHTML = icon('folder', 'fico') + '<span class="fname">' + esc(entry.name) + '</span>';
+      var row = el('button', { class: 'fdir-row' });
+      var rIcon = el('span', { class: 'fico' });
+      rIcon.innerHTML = icon('folder');
+      row.appendChild(rIcon);
+      row.appendChild(el('span', { class: 'fname', text: entry.name }));
       row.addEventListener('click', function () { loadFsDir(entry.path); });
       list.appendChild(row);
     });
-    var pick = document.createElement('button');
-    pick.className = 'btn';
-    pick.style.margin = '10px 14px';
-    pick.textContent = t('chooseThisFolder');
+    var pick = el('button', { class: 'btn', text: t('chooseThisFolder') });
     pick.addEventListener('click', pickBrowseFolder);
     list.appendChild(pick);
   }).catch(function (err) {
-    state.browseBusy = false;
+    S.browseBusy = false;
     toast(t('loadFailed') + ': ' + (err.message || ''));
   });
 }
 function pickBrowseFolder() {
-  if (!state.browsePath || state.browseBusy) return;
-  post('/api/workspace-add', { fsPath: state.browsePath }).then(function (data) {
+  if (!S.browsePath || S.browseBusy) return;
+  post('/api/workspace-add', { fsPath: S.browsePath }).then(function (data) {
     if (data && data.canceled) return;
     toast(t('workspaceOpened'));
     closeSheet();
-    closeBrowseMode();
-    state.currentFile = null;
-    state.fileDirs = {};
-    if (isTab('files')) { $('file-viewer').hidden = true; $('file-tree').hidden = false; loadFiles('', true); }
+    S.currentFile = null;
+    S.fileDirs = {};
+    if (isView('files')) { $('file-viewer').hidden = true; $('file-tree').hidden = false; loadFiles('', true); }
   }).catch(function (err) {
     toast(t('loadFailed') + ': ' + (err.message || ''));
   });
 }
 
 /* ============================================================
-   设置页（19 分类 + 渠道完整增删改）
+   10. 设置页（schema 驱动，字段路径与桌面端 SettingsPanel 对齐）
    ============================================================ */
 var SETTINGS_CATEGORIES = [
   { key: 'channel', labelKey: 'secChannel' },
@@ -1927,20 +1952,34 @@ var SETTINGS_CATEGORIES = [
   { key: 'storage', labelKey: 'secStorage' },
   { key: 'dependencies', labelKey: 'secDeps' }
 ];
+/* 设置页分类加载器（每个分类一个函数，读 S.settings 渲染） */
 function renderSettingsTabs() {
   var bar = $('settings-tabs');
+  if (!bar) return;
   bar.innerHTML = '';
   SETTINGS_CATEGORIES.forEach(function (cat) {
-    var btn = document.createElement('button');
-    btn.className = 'set-tab' + (cat.key === state.settingsTab ? ' active' : '');
-    btn.textContent = t(cat.labelKey);
+    var btn = el('button', {
+      class: 'set-tab' + (cat.key === S.settingsTab ? ' active' : ''),
+      'data-set-tab': cat.key,
+      text: t(cat.labelKey)
+    });
     btn.addEventListener('click', function () {
-      state.settingsTab = cat.key;
+      S.settingsTab = cat.key;
       renderSettingsTabs();
       renderAllSettingsSections();
     });
     bar.appendChild(btn);
   });
+}
+function openSettings() {
+  renderSettingsTabs();
+  renderAllSettingsSections();
+  loadConfigs();
+  if (!S.settings) {
+    loadSettings();
+    loadToolsList();
+    loadDeps();
+  }
 }
 function getVal(obj, p) {
   var cur = obj;
@@ -1964,62 +2003,44 @@ function patchFor(p, v) {
   return patch;
 }
 function saveSettingsPatch(patch, extra) {
-  state.settingsBusy = true;
   post('/api/settings', { settings: patch }).then(function (data) {
-    state.settings = data.settings || state.settings;
+    S.settings = data.settings || S.settings;
     if (extra) extra(data.settings);
-    renderAllSettingsSections();
+    if (isView('settings')) renderAllSettingsSections();
     toast(t('settingsSaved'));
   }).catch(function (err) {
-    renderAllSettingsSections();
+    if (isView('settings')) renderAllSettingsSections();
     toast(t('settingsFailed') + ': ' + (err.message || ''));
-  }).then(function () {
-    state.settingsBusy = false;
   });
 }
 function secCard(titleKey) {
-  var card = document.createElement('div');
-  card.className = 'card settings-sec';
-  var h = document.createElement('h3');
-  h.textContent = t(titleKey);
-  card.appendChild(h);
+  var card = el('div', { class: 'card settings-sec' });
+  card.appendChild(el('h3', { text: t(titleKey) }));
   $('settings-sections').appendChild(card);
   return card;
 }
 function renderField(sec, f) {
-  var row = document.createElement('div');
-  row.className = 'set-field';
-  var k = document.createElement('span');
-  k.className = 'k';
-  k.textContent = t(f.t);
-  row.appendChild(k);
-  var ctl = document.createElement('span');
-  ctl.className = 'ctl';
+  var row = el('div', { class: 'set-field', 'data-p': JSON.stringify(f.p) });
+  row.appendChild(el('span', { class: 'k', text: t(f.t) }));
+  var ctl = el('span', { class: 'ctl' });
   row.appendChild(ctl);
   sec.appendChild(row);
-  var value = getVal(state.settings, f.p);
+  var value = getVal(S.settings, f.p);
   if (f.w === 'toggle') {
-    var wrap = document.createElement('label');
-    wrap.className = 'tgl';
-    var input = document.createElement('input');
-    input.type = 'checkbox';
+    var wrap = el('label', { class: 'tgl' });
+    var input = el('input', { type: 'checkbox' });
     input.checked = value === true;
-    var tr = document.createElement('span');
-    tr.className = 'tr';
     wrap.appendChild(input);
-    wrap.appendChild(tr);
+    wrap.appendChild(el('span', { class: 'tr' }));
     ctl.appendChild(wrap);
     input.addEventListener('change', function () {
       saveSettingsPatch(patchFor(f.p, input.checked));
     });
   } else if (f.w === 'select' || f.w === 'promptMode') {
-    var sel = document.createElement('select');
-    var options = f.w === 'promptMode' ? promptModeOptions() : f.o;
+    var sel = el('select');
+    var options = f.w === 'promptMode' ? promptModeOptions() : (f.o || []);
     (options || []).forEach(function (o) {
-      var opt = document.createElement('option');
-      opt.value = o;
-      opt.textContent = o;
-      sel.appendChild(opt);
+      sel.appendChild(el('option', { value: o, text: o }));
     });
     sel.value = value != null ? String(value) : '';
     if (sel.value === '' && options && options.length) sel.value = options[0];
@@ -2028,16 +2049,10 @@ function renderField(sec, f) {
       saveSettingsPatch(patchFor(f.p, sel.value));
     });
   } else if (f.w === 'configSelect') {
-    var sel2 = document.createElement('select');
-    var noneOpt = document.createElement('option');
-    noneOpt.value = '';
-    noneOpt.textContent = '—';
-    sel2.appendChild(noneOpt);
-    (state.configs || []).forEach(function (c) {
-      var opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.name || c.id;
-      sel2.appendChild(opt);
+    var sel2 = el('select');
+    sel2.appendChild(el('option', { value: '', text: '—' }));
+    (S.configs || []).forEach(function (c) {
+      sel2.appendChild(el('option', { value: c.id, text: c.name || c.id }));
     });
     sel2.value = value != null ? String(value) : '';
     ctl.appendChild(sel2);
@@ -2045,8 +2060,7 @@ function renderField(sec, f) {
       saveSettingsPatch(patchFor(f.p, sel2.value || undefined));
     });
   } else if (f.w === 'number') {
-    var num = document.createElement('input');
-    num.type = 'number';
+    var num = el('input', { type: 'number' });
     num.min = String(f.min != null ? f.min : 0);
     num.max = String(f.max != null ? f.max : 1e9);
     if (f.step) num.step = String(f.step);
@@ -2057,15 +2071,18 @@ function renderField(sec, f) {
       var raw = num.value.trim();
       if (raw === '' && f.min === -1) raw = '-1';
       var v = Number(raw);
-      if (raw === '' || !isFinite(v)) { num.value = value != null ? String(value) : ''; toast(t('settingsFailed')); return; }
+      if (raw === '' || !isFinite(v)) {
+        num.value = value != null ? String(value) : '';
+        toast(t('settingsFailed'));
+        return;
+      }
       if (f.min != null && v < f.min) v = f.min;
       if (f.max != null && v > f.max) v = f.max;
       num.value = String(v);
       saveSettingsPatch(patchFor(f.p, v));
     });
   } else if (f.w === 'textarea') {
-    var ta = document.createElement('textarea');
-    ta.spellcheck = false;
+    var ta = el('textarea', { spellcheck: 'false' });
     ta.placeholder = t('keepBlank');
     ta.value = value != null ? String(value) : '';
     ctl.appendChild(ta);
@@ -2073,55 +2090,110 @@ function renderField(sec, f) {
       saveSettingsPatch(patchFor(f.p, ta.value));
     });
   } else if (f.w === 'chips') {
-    var wrap2 = document.createElement('div');
-    wrap2.className = 'chips';
-    var values = Array.isArray(value) ? value : [];
-    values.forEach(function (v, i) {
-      var chip = document.createElement('span');
-      chip.className = 'chip';
-      chip.textContent = v;
-      var rm = document.createElement('button');
-      rm.type = 'button';
-      rm.textContent = '×';
-      rm.addEventListener('click', function () {
-        var next = values.slice();
-        next.splice(i, 1);
+    var wrap2 = el('div', { class: 'chips' });
+    var values = Array.isArray(value) ? value.slice() : [];
+    function renderChips() {
+      wrap2.innerHTML = '';
+      values.forEach(function (v, i) {
+        var chip = el('span', { class: 'chip' });
+        chip.appendChild(document.createTextNode(v));
+        var rm = el('button', { type: 'button', class: 'chip-x', text: '×' });
+        rm.addEventListener('click', function () {
+          values.splice(i, 1);
+          saveSettingsPatch(patchFor(f.p, values.slice()));
+          renderChips();
+        });
+        chip.appendChild(rm);
+        wrap2.appendChild(chip);
+      });
+      var addRow = el('div', { class: 'chip-input' });
+      var input2 = el('input', { type: 'text', placeholder: t('chipsHint') });
+      var btn = el('button', { type: 'button', class: 'mini-btn', text: t('chipAdd') });
+      function addChip() {
+        var v = input2.value.trim();
+        if (!v || values.indexOf(v) >= 0) return;
+        values.push(v);
+        input2.value = '';
+        saveSettingsPatch(patchFor(f.p, values.slice()));
+        renderChips();
+      }
+      btn.addEventListener('click', addChip);
+      input2.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addChip(); }
+      });
+      addRow.appendChild(input2);
+      addRow.appendChild(btn);
+      wrap2.appendChild(addRow);
+    }
+    renderChips();
+    ctl.appendChild(wrap2);
+  } else if (f.w === 'checklist') {
+    /* 多选列表：items 为 {value,label}，value 为当前选中集合 */
+    var curVals = Array.isArray(value) ? value : [];
+    var items = f.items || [];
+    var box = el('div', { class: 'checklist' });
+    function toggleVal(v) {
+      var idx = curVals.indexOf(v);
+      if (idx >= 0) curVals.splice(idx, 1);
+      else curVals.push(v);
+      saveSettingsPatch(patchFor(f.p, curVals.slice()));
+    }
+    items.forEach(function (it) {
+      var rowItem = el('label', { class: 'chk-row' });
+      var cb = el('input', { type: 'checkbox' });
+      cb.checked = curVals.indexOf(it.value) >= 0;
+      cb.addEventListener('change', function () { toggleVal(it.value); });
+      rowItem.appendChild(cb);
+      rowItem.appendChild(el('span', { text: it.label }));
+      box.appendChild(rowItem);
+    });
+    ctl.appendChild(box);
+  } else if (f.w === 'profileToggles') {
+    /* 对象布尔映射（检查点排除类别）：value 为 {key: bool} */
+    var profiles = (value && typeof value === 'object') ? value : {};
+    var items2 = f.items || [];
+    var box2 = el('div', { class: 'checklist' });
+    items2.forEach(function (it) {
+      var rowItem = el('label', { class: 'chk-row' });
+      var cb = el('input', { type: 'checkbox' });
+      cb.checked = profiles[it.value] !== false;
+      cb.addEventListener('change', function () {
+        var next = {};
+        Object.keys(profiles).forEach(function (k) { next[k] = profiles[k]; });
+        next[it.value] = cb.checked;
         saveSettingsPatch(patchFor(f.p, next));
       });
-      chip.appendChild(rm);
-      wrap2.appendChild(chip);
+      rowItem.appendChild(cb);
+      rowItem.appendChild(el('span', { text: it.label }));
+      box2.appendChild(rowItem);
     });
-    var addRow = document.createElement('div');
-    addRow.className = 'chip-input';
-    var input2 = document.createElement('input');
-    input2.type = 'text';
-    input2.placeholder = t('chipsHint');
-    var btn = document.createElement('button');
-    btn.className = 'mini-btn';
-    btn.textContent = t('chipAdd');
-    btn.type = 'button';
-    function addChip() {
-      var v = input2.value.trim();
-      if (!v || values.indexOf(v) >= 0) return;
-      saveSettingsPatch(patchFor(f.p, values.concat([v])));
-    }
-    btn.addEventListener('click', addChip);
-    input2.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addChip(); }
+    ctl.appendChild(box2);
+  } else if (f.w === 'ratio') {
+    /* 百分比输入（5-95），落库 0-1 小数（与桌面端 SummarizeSettings 一致） */
+    var ratioVal = (typeof value === 'number') ? Math.round(value * 100) : 50;
+    var ratio = el('input', { type: 'number', min: '5', max: '95', step: '1' });
+    ratio.value = String(ratioVal);
+    ctl.appendChild(ratio);
+    ratio.addEventListener('change', function () {
+      var raw = ratio.value.trim();
+      var v = Number(raw);
+      if (raw === '' || !isFinite(v)) {
+        ratio.value = String(ratioVal);
+        toast(t('settingsFailed'));
+        return;
+      }
+      if (v < 5) v = 5;
+      if (v > 95) v = 95;
+      ratio.value = String(v);
+      saveSettingsPatch(patchFor(f.p, v / 100));
     });
-    addRow.appendChild(input2);
-    addRow.appendChild(btn);
-    wrap2.appendChild(addRow);
-    ctl.appendChild(wrap2);
   } else {
-    var inp = document.createElement('input');
+    var inp = el('input', { type: f.w === 'password' ? 'password' : 'text' });
     if (f.w === 'password') {
-      inp.type = 'password';
       inp.autocomplete = 'new-password';
       inp.placeholder = value ? t('apiKeySet') : '';
     } else {
-      inp.type = 'text';
-      inp.placeholder = f.w === 'password' ? t('keepBlank') : '';
+      inp.placeholder = t('keepBlank');
     }
     inp.value = '';
     ctl.appendChild(inp);
@@ -2136,48 +2208,38 @@ function renderField(sec, f) {
   }
 }
 function promptModeOptions() {
-  var modes = getVal(state.settings, ['toolsConfig', 'system_prompt', 'modes']);
-  if (!Array.isArray(modes)) return [];
-  return modes.map(function (m) { return m && m.id ? m.id : ''; }).filter(Boolean);
-}
-function itemToggle(checked, onChange) {
-  var wrap = document.createElement('label');
-  wrap.className = 'tgl';
-  var input = document.createElement('input');
-  input.type = 'checkbox';
-  input.checked = checked;
-  var tr = document.createElement('span');
-  tr.className = 'tr';
-  wrap.appendChild(input);
-  wrap.appendChild(tr);
-  input.addEventListener('change', function () { onChange(input.checked); });
-  return wrap;
+  var modes = getVal(S.settings, ['toolsConfig', 'system_prompt', 'modes']);
+  if (!modes || typeof modes !== 'object') return [];
+  var out = [];
+  Object.keys(modes).forEach(function (k) {
+    var m = modes[k];
+    if (m && typeof m === 'object') out.push(m.id || k);
+  });
+  return out;
 }
 function renderSimpleSection(titleKey, fields) {
   var card = secCard(titleKey);
   fields.forEach(function (f) { renderField(card, f); });
 }
+function itemToggle(checked, onChange) {
+  var wrap = el('label', { class: 'tgl' });
+  var input = el('input', { type: 'checkbox' });
+  input.checked = checked;
+  wrap.appendChild(input);
+  wrap.appendChild(el('span', { class: 'tr' }));
+  input.addEventListener('change', function () { onChange(input.checked); });
+  return wrap;
+}
 function renderToolsSections() {
   var card = secCard('secTools');
-  if (!state.tools || state.tools.length === 0) {
-    var none = document.createElement('div');
-    none.className = 'info-text';
-    none.textContent = t('noData');
-    card.appendChild(none);
+  if (!S.tools || S.tools.length === 0) {
+    card.appendChild(el('div', { class: 'info-text', text: t('noData') }));
   } else {
-    state.tools.forEach(function (tool) {
-      var row = document.createElement('div');
-      row.className = 'item-row';
-      var td = document.createElement('div');
-      td.className = 't';
-      var name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = tool.name;
-      var sub = document.createElement('div');
-      sub.className = 'sub';
-      sub.textContent = tool.description || '';
-      td.appendChild(name);
-      td.appendChild(sub);
+    S.tools.forEach(function (tool) {
+      var row = el('div', { class: 'item-row' });
+      var td = el('div', { class: 't' });
+      td.appendChild(el('div', { class: 'name', text: tool.name }));
+      if (tool.description) td.appendChild(el('div', { class: 'sub', text: tool.description }));
       row.appendChild(td);
       row.appendChild(itemToggle(tool.enabled, function (v) {
         saveSettingsPatch(patchFor(['toolsEnabled', tool.name], v));
@@ -2186,23 +2248,15 @@ function renderToolsSections() {
     });
   }
   var autoCard = secCard('secAutoExec');
-  if (!state.autoExec || Object.keys(state.autoExec).length === 0) {
-    var none2 = document.createElement('div');
-    none2.className = 'info-text';
-    none2.textContent = t('noData');
-    autoCard.appendChild(none2);
+  if (!S.autoExec || Object.keys(S.autoExec).length === 0) {
+    autoCard.appendChild(el('div', { class: 'info-text', text: t('noData') }));
   } else {
-    Object.keys(state.autoExec).forEach(function (name) {
-      var row = document.createElement('div');
-      row.className = 'item-row';
-      var td = document.createElement('div');
-      td.className = 't';
-      var nameEl = document.createElement('div');
-      nameEl.className = 'name';
-      nameEl.textContent = name;
-      td.appendChild(nameEl);
+    Object.keys(S.autoExec).forEach(function (name) {
+      var row = el('div', { class: 'item-row' });
+      var td = el('div', { class: 't' });
+      td.appendChild(el('div', { class: 'name', text: name }));
       row.appendChild(td);
-      row.appendChild(itemToggle(state.autoExec[name] === true, function (v) {
+      row.appendChild(itemToggle(S.autoExec[name] === true, function (v) {
         saveSettingsPatch(patchFor(['toolAutoExec', name], v));
       }));
       autoCard.appendChild(row);
@@ -2210,23 +2264,19 @@ function renderToolsSections() {
   }
 }
 function renderTokenSection() {
-  var tc = getVal(state.settings, ['toolsConfig', 'token_count']);
-  if (!tc || typeof tc !== 'object' || Object.keys(tc).length === 0) return;
+  var tc = getVal(S.settings, ['toolsConfig', 'token_count']);
+  if (!tc || typeof tc !== 'object') return;
   var card = secCard('secTokenCount');
   Object.keys(tc).forEach(function (ch) {
-    var sub = document.createElement('div');
-    sub.className = 'set-note';
-    sub.textContent = ch;
-    sub.style.marginTop = '6px';
-    sub.style.fontWeight = '600';
-    card.appendChild(sub);
+    card.appendChild(el('div', { class: 'set-note', text: ch }));
+    renderField(card, { t: 'fldTokEnabled', p: ['toolsConfig', 'token_count', ch, 'enabled'], w: 'toggle' });
     renderField(card, { t: 'fldTokUrl', p: ['toolsConfig', 'token_count', ch, 'baseUrl'], w: 'text' });
     renderField(card, { t: 'fldTokModel', p: ['toolsConfig', 'token_count', ch, 'model'], w: 'text' });
     renderField(card, { t: 'fldTokKey', p: ['toolsConfig', 'token_count', ch, 'apiKey'], w: 'password' });
   });
 }
 function renderImageGenSection() {
-  var ig = getVal(state.settings, ['toolsConfig', 'generate_image']);
+  var ig = getVal(S.settings, ['toolsConfig', 'generate_image']);
   if (!ig || typeof ig !== 'object') return;
   var card = secCard('secImageGen');
   [
@@ -2234,37 +2284,24 @@ function renderImageGenSection() {
     { t: 'fldImgModel', p: ['toolsConfig', 'generate_image', 'model'], w: 'text' },
     { t: 'fldImgKey', p: ['toolsConfig', 'generate_image', 'apiKey'], w: 'password' },
     { t: 'fldImgAspect', p: ['toolsConfig', 'generate_image', 'enableAspectRatio'], w: 'toggle' },
-    { t: 'fldImgAspectDef', p: ['toolsConfig', 'generate_image', 'defaultAspectRatio'], w: 'select', o: ['1:1', '16:9', '9:16', '4:3', '3:4'] },
     { t: 'fldImgSize', p: ['toolsConfig', 'generate_image', 'enableImageSize'], w: 'toggle' },
-    { t: 'fldImgSizeDef', p: ['toolsConfig', 'generate_image', 'defaultImageSize'], w: 'text' },
     { t: 'fldImgMaxBatch', p: ['toolsConfig', 'generate_image', 'maxBatchTasks'], w: 'number', min: 1 },
     { t: 'fldImgMaxPerTask', p: ['toolsConfig', 'generate_image', 'maxImagesPerTask'], w: 'number', min: 1 },
     { t: 'fldImgReturn', p: ['toolsConfig', 'generate_image', 'returnImageToAI'], w: 'toggle' }
   ].forEach(function (f) { renderField(card, f); });
 }
 function renderSkillsSection() {
-  var skills = getVal(state.settings, ['toolsConfig', 'skills', 'skills']);
+  var skills = getVal(S.settings, ['toolsConfig', 'skills', 'skills']);
   var card = secCard('secSkills');
   if (!Array.isArray(skills) || skills.length === 0) {
-    var none = document.createElement('div');
-    none.className = 'info-text';
-    none.textContent = t('noData');
-    card.appendChild(none);
+    card.appendChild(el('div', { class: 'info-text', text: t('noData') }));
     return;
   }
   skills.forEach(function (sk, i) {
-    var row = document.createElement('div');
-    row.className = 'item-row';
-    var td = document.createElement('div');
-    td.className = 't';
-    var name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = sk.name || sk.id || '';
-    var sub = document.createElement('div');
-    sub.className = 'sub';
-    sub.textContent = sk.description || sk.id || '';
-    td.appendChild(name);
-    td.appendChild(sub);
+    var row = el('div', { class: 'item-row' });
+    var td = el('div', { class: 't' });
+    td.appendChild(el('div', { class: 'name', text: sk.name || sk.id || '' }));
+    if (sk.description || sk.id) td.appendChild(el('div', { class: 'sub', text: sk.description || sk.id }));
     row.appendChild(td);
     row.appendChild(itemToggle(sk.enabled !== false, function (v) {
       var next = skills.slice();
@@ -2277,11 +2314,11 @@ function renderSkillsSection() {
 function renderSubagentsSection() {
   var card = secCard('secSubagents');
   [
-    { t: 'fldSubMaxConcurrent', p: ['toolsConfig', 'subagents', 'maxConcurrent'], w: 'number', min: 1 },
-    { t: 'fldSubFailureMode', p: ['toolsConfig', 'subagents', 'failureMode'], w: 'select', o: ['abort', 'continue'] },
-    { t: 'fldSubGeneralWorker', p: ['toolsConfig', 'subagents', 'enableGeneralWorker'], w: 'toggle' },
-    { t: 'fldSubDefaultIterations', p: ['toolsConfig', 'subagents', 'defaultMaxIterations'], w: 'number', min: 1 },
-    { t: 'fldSubDefaultRuntime', p: ['toolsConfig', 'subagents', 'defaultMaxRuntimeSeconds'], w: 'number', min: 1 }
+    { t: 'fldSubMaxConcurrent', p: ['toolsConfig', 'subagents', 'maxConcurrentAgents'], w: 'number', min: -1 },
+    { t: 'fldSubFailureMode', p: ['toolsConfig', 'subagents', 'failureModeAfterRetries'], w: 'select', o: ['fail_parent_tool', 'wait_for_monitor_action'] },
+    { t: 'fldSubGeneralWorker', p: ['toolsConfig', 'subagents', 'generalWorkerEnabled'], w: 'toggle' },
+    { t: 'fldSubDefaultIterations', p: ['toolsConfig', 'subagents', 'defaultMaxIterations'], w: 'number', min: -1 },
+    { t: 'fldSubDefaultRuntime', p: ['toolsConfig', 'subagents', 'defaultMaxRuntime'], w: 'number', min: -1 }
   ].forEach(function (f) { renderField(card, f); });
 }
 function renderPinnedSection() {
@@ -2292,52 +2329,45 @@ function renderPinnedSection() {
 }
 function renderRemoteSection() {
   var card = secCard('secRemote');
-  var info = state.statusInfo || {};
-  var rows = [
+  var info = S.statusInfo || {};
+  [
     { k: t('connection'), v: info.running ? t('running') : t('stopped') },
     { k: t('port'), v: String(info.port != null ? info.port : '') },
-    { k: t('appVersion'), v: state.appVersion || '' }
-  ];
-  rows.forEach(function (row) {
-    var r = document.createElement('div');
-    r.className = 'set-row';
-    r.innerHTML = '<span>' + esc(row.k) + '</span><span style="color:var(--vscode-descriptionForeground)">' + esc(row.v) + '</span>';
+    { k: t('appVersion'), v: S.appVersion || '' }
+  ].forEach(function (row) {
+    var r = el('div', { class: 'set-row' });
+    r.appendChild(el('span', { text: row.k }));
+    r.appendChild(el('span', { class: 'dim', text: row.v }));
     card.appendChild(r);
   });
   var urls = Array.isArray(info.urls) ? info.urls : [];
   if (urls.length > 0) {
-    var u = document.createElement('div');
-    u.className = 'set-row';
-    u.innerHTML = '<span>' + esc(t('accessUrls')) + '</span>';
-    card.appendChild(u);
+    card.appendChild(el('div', { class: 'set-row', text: t('accessUrls') }));
     urls.forEach(function (url) {
-      var chip = document.createElement('button');
-      chip.className = 'chip';
-      chip.style.cursor = 'pointer';
-      chip.textContent = url;
+      var chip = el('button', { class: 'chip', text: url });
       chip.addEventListener('click', function () { copyText(url); });
       card.appendChild(chip);
     });
   }
-  var note = document.createElement('div');
-  note.className = 'set-note';
-  note.style.marginTop = '8px';
-  note.textContent = t('securityText');
-  card.appendChild(note);
-  var actions = document.createElement('div');
-  actions.className = 'sheet-actions';
-  actions.style.padding = '10px 0 0';
-  var restart = document.createElement('button');
-  restart.className = 'btn';
-  restart.textContent = t('fldRcRestart');
+  card.appendChild(el('div', { class: 'set-note', text: t('securityText') }));
+  var actions = el('div', { class: 'sheet-actions' });
+  var restart = el('button', { class: 'btn', text: t('fldRcRestart') });
   restart.addEventListener('click', function () {
-    post('/api/remote-action', { type: 'restart' }).then(function () { toast(t('fldRcRestart') + ' ✓'); }).catch(function (err) { toast(t('settingsFailed') + ': ' + (err.message || '')); });
+    post('/api/remote-action', { type: 'restart' }).then(function () {
+      toast(t('fldRcRestart') + ' ✓');
+      S.serverStopped = true;
+      probeServerRecovery();
+    }).catch(function (err) {
+      toast(t('settingsFailed') + ': ' + (err.message || ''));
+    });
   });
-  var stop = document.createElement('button');
-  stop.className = 'btn danger';
-  stop.textContent = t('fldRcStop');
+  var stop = el('button', { class: 'btn danger', text: t('fldRcStop') });
   stop.addEventListener('click', function () {
-    post('/api/remote-action', { type: 'stop' }).then(function () { toast(t('fldRcStop') + ' ✓'); }).catch(function (err) { toast(t('settingsFailed') + ': ' + (err.message || '')); });
+    post('/api/remote-action', { type: 'stop' }).then(function () {
+      toast(t('fldRcStop') + ' ✓');
+    }).catch(function (err) {
+      toast(t('settingsFailed') + ': ' + (err.message || ''));
+    });
   });
   actions.appendChild(restart);
   actions.appendChild(stop);
@@ -2345,97 +2375,139 @@ function renderRemoteSection() {
 }
 function renderStorageSection() {
   var card = secCard('secStorage');
-  [
-    { t: 'fldStoragePath', p: ['storagePath', 'customDataPath'], w: 'text' }
-  ].forEach(function (f) { renderField(card, f); });
-  var note = document.createElement('div');
-  note.className = 'set-note';
-  note.textContent = t('fldMigration');
-  card.appendChild(note);
+  renderField(card, { t: 'fldStoragePath', p: ['storagePath', 'customDataPath'], w: 'text' });
+  card.appendChild(el('div', { class: 'set-note', text: t('fldMigration') }));
 }
 function renderDepsSection() {
   var card = secCard('secDeps');
-  if (!state.deps || state.deps.length === 0) {
-    var none = document.createElement('div');
-    none.className = 'info-text';
-    none.textContent = t('noData');
-    card.appendChild(none);
+  if (!S.deps || S.deps.length === 0) {
+    card.appendChild(el('div', { class: 'info-text', text: t('noData') }));
     return;
   }
-  state.deps.forEach(function (dep) {
-    var row = document.createElement('div');
-    row.className = 'item-row';
-    var td = document.createElement('div');
-    td.className = 't';
-    var name = document.createElement('div');
-    name.className = 'name';
-    name.textContent = dep.name || '';
-    var sub = document.createElement('div');
-    sub.className = 'sub';
-    sub.textContent = dep.installedVersion || '';
-    td.appendChild(name);
-    td.appendChild(sub);
+  S.deps.forEach(function (dep) {
+    var row = el('div', { class: 'item-row' });
+    var td = el('div', { class: 't' });
+    td.appendChild(el('div', { class: 'name', text: dep.name || '' }));
+    if (dep.installedVersion) td.appendChild(el('div', { class: 'sub', text: dep.installedVersion }));
     row.appendChild(td);
-    var tag = document.createElement('span');
-    tag.className = 'chip';
-    tag.style.color = dep.installed ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-terminal-ansiRed)';
-    tag.textContent = dep.installed ? t('depInstalled') : t('depMissing');
-    row.appendChild(tag);
+    row.appendChild(el('span', {
+      class: 'chip',
+      text: dep.installed ? t('depInstalled') : t('depMissing'),
+      style: 'color:' + (dep.installed ? 'var(--green)' : 'var(--red)')
+    }));
     card.appendChild(row);
   });
 }
-
-/* ---------- 渠道管理（完整增删改） ---------- */
+/* ---------- 检查点（toolsConfig.checkpoint.*，与桌面端 CheckpointSettings 对齐） ---------- */
+var CKPT_MESSAGE_TYPES = [
+  { value: 'user', labelKey: 'msgTypeUser' },
+  { value: 'model', labelKey: 'msgTypeModel' }
+];
+var CKPT_PROFILES = [
+  { value: 'logs', labelKey: 'ckptProfileLogs' },
+  { value: 'aiModels', labelKey: 'ckptProfileAiModels' },
+  { value: 'datasets', labelKey: 'ckptProfileDatasets' },
+  { value: 'caches', labelKey: 'ckptProfileCaches' },
+  { value: 'pythonVenvs', labelKey: 'ckptProfilePythonVenvs' },
+  { value: 'buildArtifacts', labelKey: 'ckptProfileBuildArtifacts' },
+  { value: 'largeMedia', labelKey: 'ckptProfileLargeMedia' },
+  { value: 'archives', labelKey: 'ckptProfileArchives' }
+];
+function checkpointToolItems() {
+  if (S.tools && S.tools.length) {
+    return S.tools.map(function (tool) {
+      return { value: tool.name, label: tool.name };
+    });
+  }
+  return [
+    'apply_diff', 'write_file', 'insert_code', 'delete_file', 'delete_code',
+    'create_directory', 'execute_command', 'search_in_files', 'generate_image',
+    'remove_background', 'crop_image', 'resize_image', 'rotate_image',
+    'create_plan', 'update_plan', 'create_design', 'update_design',
+    'create_progress', 'update_progress', 'record_progress_milestone',
+    'create_review', 'record_review_milestone', 'finalize_review', 'reopen_review'
+  ].map(function (name) { return { value: name, label: name }; });
+}
+function renderCheckpointSection() {
+  renderSimpleSection('ckptEnable', [
+    { t: 'fldCkptEnabled', p: ['toolsConfig', 'checkpoint', 'enabled'], w: 'toggle' },
+    { t: 'fldCkptMax', p: ['toolsConfig', 'checkpoint', 'maxCheckpoints'], w: 'number', min: -1 }
+  ]);
+  var msgCard = secCard('ckptMessages');
+  renderField(msgCard, {
+    t: 'ckptMsgBefore',
+    p: ['toolsConfig', 'checkpoint', 'messageCheckpoint', 'beforeMessages'],
+    w: 'checklist',
+    items: CKPT_MESSAGE_TYPES.map(function (m) { return { value: m.value, label: t(m.labelKey) }; })
+  });
+  renderField(msgCard, {
+    t: 'ckptMsgAfter',
+    p: ['toolsConfig', 'checkpoint', 'messageCheckpoint', 'afterMessages'],
+    w: 'checklist',
+    items: CKPT_MESSAGE_TYPES.map(function (m) { return { value: m.value, label: t(m.labelKey) }; })
+  });
+  renderField(msgCard, { t: 'ckptModelOuter', p: ['toolsConfig', 'checkpoint', 'messageCheckpoint', 'modelOuterLayerOnly'], w: 'toggle' });
+  renderField(msgCard, { t: 'ckptMergeUnchanged', p: ['toolsConfig', 'checkpoint', 'messageCheckpoint', 'mergeUnchangedCheckpoints'], w: 'toggle' });
+  var toolCard = secCard('ckptTools');
+  renderField(toolCard, {
+    t: 'ckptBeforeTools',
+    p: ['toolsConfig', 'checkpoint', 'beforeTools'],
+    w: 'checklist',
+    items: checkpointToolItems()
+  });
+  renderField(toolCard, {
+    t: 'ckptAfterTools',
+    p: ['toolsConfig', 'checkpoint', 'afterTools'],
+    w: 'checklist',
+    items: checkpointToolItems()
+  });
+  var exCard = secCard('ckptExclusion');
+  renderField(exCard, {
+    t: 'ckptProfiles',
+    p: ['toolsConfig', 'checkpoint', 'exclusion', 'enabledProfiles'],
+    w: 'profileToggles',
+    items: CKPT_PROFILES.map(function (p) { return { value: p.value, label: t(p.labelKey) }; })
+  });
+  renderField(exCard, { t: 'ckptMaxSizeMiB', p: ['toolsConfig', 'checkpoint', 'exclusion', 'maxFileSizeBytes'], w: 'number', min: 1 });
+  renderField(exCard, { t: 'ckptCustomPatterns', p: ['toolsConfig', 'checkpoint', 'exclusion', 'customPatterns'], w: 'chips' });
+}
+/* ---------- 渠道管理 ---------- */
 function renderConfigsCard() {
   var card = secCard('secChannel');
-  var head = document.createElement('div');
-  head.className = 'cfg-card-head';
-  card.appendChild(head);
-  if (state.configs.length === 0) {
-    var none = document.createElement('div');
-    none.className = 'info-text';
-    none.textContent = t('noConfigs');
-    card.appendChild(none);
+  if (S.configs.length === 0) {
+    card.appendChild(el('div', { class: 'info-text', text: t('noConfigs') }));
   }
-  state.configs.forEach(function (cfg) {
-    var item = document.createElement('div');
-    item.className = 'cfg-item';
-    item.innerHTML = '<div class="cname">' + esc(cfg.name || cfg.id || '') + '</div>' +
-      '<div class="cmodel">' + esc(t('currentModel')) + ': ' + esc(cfg.model || '—') + ' · ' + esc(cfg.type || '') + '</div>' +
-      '<div class="mchips"><span class="info-text">' + esc(t('loading')) + '</span></div>';
-    var ctrl = document.createElement('div');
-    ctrl.className = 'item-row';
-    ctrl.style.borderTop = '1px solid var(--vscode-widget-border)';
-    ctrl.style.marginTop = '6px';
-    var tag = document.createElement('span');
-    tag.className = 't';
-    tag.style.fontSize = '12px';
-    var isActive = state.activeChannelId === cfg.id;
-    tag.textContent = isActive ? t('activeChannel') : '';
-    tag.style.color = isActive ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-descriptionForeground)';
+  S.configs.forEach(function (cfg) {
+    var item = el('div', { class: 'cfg-item' });
+    item.appendChild(el('div', { class: 'cname', text: cfg.name || cfg.id || '' }));
+    item.appendChild(el('div', {
+      class: 'cmodel',
+      text: t('currentModel') + ': ' + (cfg.model || '—') + ' · ' + (cfg.type || '')
+    }));
+    var ctrl = el('div', { class: 'item-row' });
+    var tag = el('span', { class: 't' });
+    var isActive = S.activeChannelId === cfg.id;
+    tag.textContent = isActive ? t('activeChannel') : (cfg.enabled === false ? t('disabled') : '');
+    tag.style.color = isActive ? 'var(--green)' : (cfg.enabled === false ? 'var(--red)' : 'var(--dim)');
     ctrl.appendChild(tag);
     ctrl.appendChild(itemToggle(cfg.enabled !== false, function (v) {
       cfg.enabled = v;
       toggleChannelEnabled(cfg);
     }));
     item.appendChild(ctrl);
-    var actions = document.createElement('div');
-    actions.className = 'cfg-actions';
+    var actions = el('div', { class: 'cfg-actions' });
     if (!isActive) {
-      var act = document.createElement('button');
-      act.className = 'mini-btn';
-      act.textContent = t('setActiveChannel');
+      var act = el('button', { class: 'mini-btn', text: t('setActiveChannel') });
       act.addEventListener('click', function () { setChannelActive(cfg); });
       actions.appendChild(act);
     }
-    var editBtn = document.createElement('button');
-    editBtn.className = 'mini-btn';
-    editBtn.textContent = t('editChannel');
+    var modelsBtn = el('button', { class: 'mini-btn', text: t('manageModels') });
+    modelsBtn.addEventListener('click', function () { openModelsDialog(cfg); });
+    actions.appendChild(modelsBtn);
+    var editBtn = el('button', { class: 'mini-btn', text: t('editChannel') });
     editBtn.addEventListener('click', function () { editChannel(cfg); });
     actions.appendChild(editBtn);
-    var delBtn = document.createElement('button');
-    delBtn.className = 'mini-btn danger';
-    delBtn.textContent = t('deleteChannel');
+    var delBtn = el('button', { class: 'mini-btn danger', text: t('deleteChannel') });
     delBtn.addEventListener('click', function () {
       openModal(t('deleteChannel'), null, t('deleteChannelConfirm'), t('renameCancel'), 'danger', function () {
         deleteChannel(cfg);
@@ -2446,69 +2518,60 @@ function renderConfigsCard() {
     card.appendChild(item);
     loadConfigModels(cfg.id);
   });
-  var addBtn = document.createElement('button');
-  addBtn.className = 'add-channel-btn';
-  addBtn.innerHTML = icon('plus', '') + '<span>' + esc(t('addChannel')) + '</span>';
+  var addBtn = el('button', { class: 'add-channel-btn' });
+  addBtn.innerHTML = icon('plus') + '<span>' + esc(t('addChannel')) + '</span>';
   addBtn.addEventListener('click', addChannelDialog);
   card.appendChild(addBtn);
 }
 function addChannelDialog() {
-  var el = $('modal');
+  var modalEl = $('modal');
   $('modal-title').textContent = t('addChannel');
   var inputEl = $('modal-input');
   var bodyEl = $('modal-body');
   bodyEl.innerHTML = '';
   inputEl.hidden = true;
-  var nameWrap = document.createElement('div');
-  nameWrap.className = 'set-field';
-  nameWrap.innerHTML = '<span class="k">' + esc(t('channelName')) + '</span>';
-  var nameInput = document.createElement('input');
-  nameInput.type = 'text';
-  nameInput.placeholder = 'My Channel';
+  var nameWrap = el('div', { class: 'set-field' });
+  nameWrap.appendChild(el('span', { class: 'k', text: t('channelName') }));
+  var nameInput = el('input', { type: 'text', placeholder: 'My Channel' });
   nameWrap.appendChild(nameInput);
   bodyEl.appendChild(nameWrap);
-  var typeWrap = document.createElement('div');
-  typeWrap.className = 'set-field';
-  typeWrap.innerHTML = '<span class="k">' + esc(t('channelType')) + '</span>';
-  var typeSel = document.createElement('select');
+  var typeWrap = el('div', { class: 'set-field' });
+  typeWrap.appendChild(el('span', { class: 'k', text: t('channelType') }));
+  var typeSel = el('select');
   [
     { v: 'gemini', label: 'Google Gemini' },
     { v: 'openai', label: 'OpenAI Compatible' },
     { v: 'openai-responses', label: 'OpenAI Responses API' },
     { v: 'anthropic', label: 'Anthropic Claude' }
   ].forEach(function (o) {
-    var opt = document.createElement('option');
-    opt.value = o.v;
-    opt.textContent = o.label;
-    typeSel.appendChild(opt);
+    typeSel.appendChild(el('option', { value: o.v, text: o.label }));
   });
   typeWrap.appendChild(typeSel);
   bodyEl.appendChild(typeWrap);
   $('modal-cancel').textContent = t('renameCancel');
   $('modal-ok').textContent = t('createChannel');
   $('modal-ok').className = 'btn';
-  el._onOk = function () {
+  modalEl._onOk = function () {
     var name = nameInput.value.trim();
     if (!name) { toast(t('channelNameRequired')); return; }
-    post('/api/config-create', { type: typeSel.value, name: name }).then(function (data) {
+    post('/api/config-create', { type: typeSel.value, name: name }).then(function () {
       toast(t('channelCreated'));
+      closeModal();
       loadConfigs();
-      if (state.settingsTab === 'channel') renderAllSettingsSections();
     }).catch(function (err) {
       toast(t('settingsFailed') + ': ' + (err.message || ''));
     });
   };
-  el.classList.add('open');
+  modalEl.classList.add('open');
   setTimeout(function () { nameInput.focus(); }, 60);
 }
 function editChannel(cfg) {
-  var el = $('modal');
+  var modalEl = $('modal');
   $('modal-title').textContent = t('editChannel') + ': ' + (cfg.name || cfg.id);
   var inputEl = $('modal-input');
   var bodyEl = $('modal-body');
   bodyEl.innerHTML = '';
   inputEl.hidden = true;
-  /* 表单字段（含高级设置） */
   var fields = [
     { key: 'name', label: t('channelName'), type: 'text', def: cfg.name || '' },
     { key: 'url', label: t('channelUrl'), type: 'text', def: '' },
@@ -2519,61 +2582,50 @@ function editChannel(cfg) {
   ];
   var values = {};
   fields.forEach(function (f) {
-    var wrap = document.createElement('div');
-    wrap.className = 'set-field';
-    wrap.innerHTML = '<span class="k">' + esc(f.label) + '</span>';
-    var ctl = document.createElement('span');
-    ctl.className = 'ctl';
+    var wrap = el('div', { class: 'set-field' });
+    wrap.appendChild(el('span', { class: 'k', text: f.label }));
+    var ctl = el('span', { class: 'ctl' });
     if (f.type === 'select') {
-      var sel = document.createElement('select');
-      f.options.forEach(function (o) {
-        var opt = document.createElement('option');
-        opt.value = o;
-        opt.textContent = o;
-        sel.appendChild(opt);
-      });
+      var sel = el('select');
+      f.options.forEach(function (o) { sel.appendChild(el('option', { value: o, text: o })); });
       ctl.appendChild(sel);
       values[f.key] = sel;
     } else if (f.type === 'number') {
-      var num = document.createElement('input');
-      num.type = 'number';
-      num.min = '0';
+      var num = el('input', { type: 'number', min: '0' });
       ctl.appendChild(num);
       values[f.key] = num;
     } else {
-      var inp = document.createElement('input');
-      inp.type = f.type;
+      var inp = el('input', { type: f.type });
       if (f.type === 'password') inp.autocomplete = 'new-password';
       ctl.appendChild(inp);
       values[f.key] = inp;
     }
     wrap.appendChild(ctl);
     bodyEl.appendChild(wrap);
-    loadChannelDetail(cfg.id, function (detail) {
-      if (!detail) return;
-      var apply = {};
-      apply.name = detail.name || cfg.name || '';
-      apply.url = detail.url || '';
-      apply.apiKey = detail.apiKey || '';
-      apply.toolMode = detail.toolMode || 'function_call';
-      apply.timeout = detail.timeout != null ? String(detail.timeout) : '';
-      apply.maxContextTokens = detail.maxContextTokens != null ? String(detail.maxContextTokens) : '';
-      Object.keys(apply).forEach(function (k) {
-        var ctlEl = values[k];
-        if (ctlEl) {
-          if (ctlEl.tagName === 'SELECT') ctlEl.value = apply[k] || 'function_call';
-          else ctlEl.value = apply[k];
-        }
-      });
+  });
+  loadChannelDetail(cfg.id, function (detail) {
+    if (!detail) return;
+    var apply = {
+      name: detail.name || cfg.name || '',
+      url: detail.url || '',
+      apiKey: detail.apiKey || '',
+      toolMode: detail.toolMode || 'function_call',
+      timeout: detail.timeout != null ? String(detail.timeout) : '',
+      maxContextTokens: detail.maxContextTokens != null ? String(detail.maxContextTokens) : ''
+    };
+    Object.keys(apply).forEach(function (k) {
+      var ctlEl = values[k];
+      if (ctlEl) {
+        if (ctlEl.tagName === 'SELECT') ctlEl.value = apply[k] || 'function_call';
+        else ctlEl.value = apply[k];
+      }
     });
   });
-  /* 思考强度（渠道类型决定选项） */
-  var thinkWrap = document.createElement('div');
-  thinkWrap.className = 'set-field';
-  thinkWrap.innerHTML = '<span class="k">' + esc(t('selThinking')) + '</span>';
-  var thinkSel = document.createElement('select');
-  var thinkCtl = document.createElement('span');
-  thinkCtl.className = 'ctl';
+  /* 思考强度 */
+  var thinkWrap = el('div', { class: 'set-field' });
+  thinkWrap.appendChild(el('span', { class: 'k', text: t('selThinking') }));
+  var thinkSel = el('select');
+  var thinkCtl = el('span', { class: 'ctl' });
   thinkCtl.appendChild(thinkSel);
   thinkWrap.appendChild(thinkCtl);
   bodyEl.appendChild(thinkWrap);
@@ -2583,10 +2635,7 @@ function editChannel(cfg) {
     var opts = thinkingOptionsFor(detail.type);
     thinkSel.innerHTML = '';
     opts.forEach(function (o) {
-      var opt = document.createElement('option');
-      opt.value = o.value;
-      opt.textContent = o.label;
-      thinkSel.appendChild(opt);
+      thinkSel.appendChild(el('option', { value: o.value, text: o.label }));
     });
     thinkingVal = currentThinkingOf(detail);
     thinkSel.value = thinkingVal;
@@ -2595,7 +2644,7 @@ function editChannel(cfg) {
   $('modal-cancel').textContent = t('renameCancel');
   $('modal-ok').textContent = t('saveChannel');
   $('modal-ok').className = 'btn';
-  el._onOk = function () {
+  modalEl._onOk = function () {
     var updates = {};
     var name = values.name.value.trim();
     if (name) updates.name = name;
@@ -2606,23 +2655,22 @@ function editChannel(cfg) {
     if (values.toolMode.value) updates.toolMode = values.toolMode.value;
     if (values.timeout.value !== '') updates.timeout = Number(values.timeout.value);
     if (values.maxContextTokens.value !== '') updates.maxContextTokens = Number(values.maxContextTokens.value);
-    var cfgLocal = cfg;
     loadChannelDetail(cfg.id, function (detail) {
-      var thinkingUpdates = buildThinkingUpdates(Object.assign({}, cfgLocal, detail || {}), thinkSel.value || 'off');
+      var thinkingUpdates = buildThinkingUpdates(Object.assign({}, cfg, detail || {}), thinkSel.value || 'off');
       if (thinkingUpdates) {
         updates.options = thinkingUpdates.options;
         updates.optionsEnabled = thinkingUpdates.optionsEnabled;
       }
       post('/api/config-update', { configId: cfg.id, updates: updates }).then(function () {
         toast(t('channelSaved'));
+        closeModal();
         loadConfigs();
-        if (state.settingsTab === 'channel') renderAllSettingsSections();
       }).catch(function (err) {
         toast(t('settingsFailed') + ': ' + (err.message || ''));
       });
     });
   };
-  el.classList.add('open');
+  modalEl.classList.add('open');
 }
 function loadChannelDetail(configId, cb) {
   api('/api/config?configId=' + encodeURIComponent(configId)).then(function (data) {
@@ -2631,10 +2679,9 @@ function loadChannelDetail(configId, cb) {
 }
 function setChannelActive(cfg) {
   post('/api/channel-active', { configId: cfg.id }).then(function () {
-    state.activeChannelId = cfg.id;
+    S.activeChannelId = cfg.id;
     toast(t('setActiveChannel') + ' ✓');
     loadConfigs();
-    if (state.settingsTab === 'channel') renderAllSettingsSections();
   }).catch(function (err) {
     toast(t('settingsFailed') + ': ' + (err.message || ''));
   });
@@ -2642,28 +2689,115 @@ function setChannelActive(cfg) {
 function toggleChannelEnabled(cfg) {
   post('/api/channel-toggle', { configId: cfg.id, enabled: cfg.enabled !== false }).then(function () {
     toast((cfg.enabled !== false ? t('enable') : t('disable')) + ' ✓');
+    loadConfigs();
   }).catch(function (err) {
     cfg.enabled = !cfg.enabled;
     toast(t('settingsFailed') + ': ' + (err.message || ''));
-    if (state.settingsTab === 'channel') renderAllSettingsSections();
+    if (isView('settings')) renderAllSettingsSections();
   });
 }
 function deleteChannel(cfg) {
   post('/api/config-delete', { configId: cfg.id }).then(function () {
     toast(t('channelDeleted'));
-    if (state.activeChannelId === cfg.id) state.activeChannelId = null;
+    if (S.activeChannelId === cfg.id) S.activeChannelId = null;
     loadConfigs();
-    if (state.settingsTab === 'channel') renderAllSettingsSections();
   }).catch(function (err) {
     toast(t('settingsFailed') + ': ' + (err.message || ''));
   });
 }
-
+function openModelsDialog(cfg) {
+  var modalEl = $('modal');
+  $('modal-title').textContent = t('manageModels') + ': ' + (cfg.name || cfg.id);
+  var inputEl = $('modal-input');
+  var bodyEl = $('modal-body');
+  bodyEl.innerHTML = '';
+  inputEl.hidden = true;
+  var listEl = el('div', { class: 'model-list' });
+  bodyEl.appendChild(listEl);
+  var curId = cfg.model || '';
+  function renderModels() {
+    listEl.innerHTML = '';
+    var models = S.configModels[cfg.id] || [];
+    if (models.length === 0) {
+      listEl.appendChild(el('div', { class: 'info-text', text: t('noModels') }));
+    }
+    models.forEach(function (m) {
+      var row = el('div', { class: 'item-row' });
+      var td = el('div', { class: 't' });
+      td.appendChild(el('div', { class: 'name', text: m.name || m.id || '' }));
+      td.appendChild(el('div', { class: 'sub', text: m.id || '' }));
+      row.appendChild(td);
+      var curTag = el('span', { class: 'chip', text: m.id === curId ? t('activeModel') : t('setActiveModel') });
+      curTag.style.cursor = 'pointer';
+      curTag.style.color = m.id === curId ? 'var(--green)' : 'var(--dim)';
+      curTag.addEventListener('click', function () {
+        post('/api/model', { configId: cfg.id, modelId: m.id }).then(function () {
+          curId = m.id;
+          cfg.model = m.id;
+          toast(t('modelChanged'));
+          renderModels();
+          loadConfigs();
+        }).catch(function (err) {
+          toast(t('settingsFailed') + ': ' + (err.message || ''));
+        });
+      });
+      row.appendChild(curTag);
+      var rmBtn = el('button', { class: 'mini-btn danger', text: t('remove') });
+      rmBtn.addEventListener('click', function () {
+        post('/api/models-remove', { configId: cfg.id, modelId: m.id }).then(function () {
+          toast(t('removed'));
+          loadConfigModels(cfg.id);
+          renderModels();
+          loadConfigs();
+        }).catch(function (err) {
+          toast(t('settingsFailed') + ': ' + (err.message || ''));
+        });
+      });
+      row.appendChild(rmBtn);
+      listEl.appendChild(row);
+    });
+  }
+  renderModels();
+  var addRow = el('div', { class: 'chip-input' });
+  var idInput = el('input', { type: 'text', placeholder: t('modelIdHint') });
+  var nameInput = el('input', { type: 'text', placeholder: t('modelNameHint') });
+  var addBtn = el('button', { type: 'button', class: 'mini-btn', text: t('addModel') });
+  function addModel() {
+    var mid = idInput.value.trim();
+    if (!mid) { toast(t('modelIdRequired')); return; }
+    post('/api/models-add', { configId: cfg.id, models: [{ id: mid, name: nameInput.value.trim() || mid }] }).then(function () {
+      toast(t('modelAdded'));
+      idInput.value = '';
+      nameInput.value = '';
+      loadConfigModels(cfg.id);
+      renderModels();
+      loadConfigs();
+    }).catch(function (err) {
+      toast(t('settingsFailed') + ': ' + (err.message || ''));
+    });
+  }
+  addBtn.addEventListener('click', addModel);
+  idInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addModel(); }
+  });
+  addRow.appendChild(idInput);
+  addRow.appendChild(nameInput);
+  addRow.appendChild(addBtn);
+  bodyEl.appendChild(addRow);
+  $('modal-cancel').textContent = t('renameCancel');
+  $('modal-ok').textContent = t('done');
+  $('modal-ok').className = 'btn';
+  modalEl._onOk = function () {
+    closeModal();
+  };
+  modalEl.classList.add('open');
+}
 /* ---------- 设置页总渲染 ---------- */
 function renderAllSettingsSections() {
   var root = $('settings-sections');
+  if (!root) return;
   root.innerHTML = '';
-  switch (state.settingsTab) {
+  switch (S.settingsTab) {
     case 'channel':
       renderConfigsCard();
       break;
@@ -2671,12 +2805,15 @@ function renderAllSettingsSections() {
       renderSimpleSection('secGeneral', [
         { t: 'fldCheckUpdates', p: ['checkForUpdates'], w: 'toggle' },
         { t: 'fldMaxToolIterations', p: ['maxToolIterations'], w: 'number', min: -1 },
-        { t: 'fldDefaultToolMode', p: ['defaultToolMode'], w: 'select', o: ['function_call', 'xml', 'json'] }
-      ]);
-      renderSimpleSection('secUI', [
+        { t: 'fldDefaultToolMode', p: ['defaultToolMode'], w: 'select', o: ['function_call', 'xml', 'json'] },
         { t: 'fldLanguage', p: ['ui', 'language'], w: 'select', o: ['auto', 'zh-CN', 'en', 'ja'] },
-        { t: 'fldTheme', p: ['ui', 'theme'], w: 'select', o: ['auto', 'dark', 'light'] },
-        { t: 'fldSmoothStreaming', p: ['ui', 'smoothStreaming'], w: 'toggle' },
+        { t: 'fldWorkspaceBehavior', p: ['ui', 'workspaceBehavior'], w: 'select', o: ['restore', 'none'] },
+        { t: 'fldTheme', p: ['ui', 'theme'], w: 'select', o: ['auto', 'dark', 'light'] }
+      ]);
+      renderSimpleSection('secAppearance', [
+        { t: 'fldSmoothStreaming', p: ['ui', 'appearance', 'smoothStreaming'], w: 'select', o: ['off', 'balanced', 'smooth'] },
+        { t: 'fldSelectionContext', p: ['ui', 'appearance', 'selectionContextEnabled'], w: 'toggle' },
+        { t: 'fldTpsBar', p: ['ui', 'appearance', 'tpsBarEnabled'], w: 'toggle' },
         { t: 'fldSoundEnabled', p: ['ui', 'sound', 'enabled'], w: 'toggle' },
         { t: 'fldSoundVolume', p: ['ui', 'sound', 'volume'], w: 'number', min: 0, max: 100 }
       ]);
@@ -2689,6 +2826,9 @@ function renderAllSettingsSections() {
       ]);
       break;
     case 'tools':
+      renderToolsSections();
+      break;
+    case 'autoExec':
       renderToolsSections();
       break;
     case 'fileTools':
@@ -2708,51 +2848,61 @@ function renderAllSettingsSections() {
         { t: 'fldCmdShell', p: ['toolsConfig', 'execute_command', 'defaultShell'], w: 'select', o: ['auto', 'cmd', 'powershell', 'bash'] },
         { t: 'fldCmdTimeout', p: ['toolsConfig', 'execute_command', 'defaultTimeoutMs'], w: 'number', min: 0, step: 1000 },
         { t: 'fldSandboxEnabled', p: ['toolsConfig', 'sandbox', 'enabled'], w: 'toggle' },
-        { t: 'fldSandboxLangs', p: ['toolsConfig', 'sandbox', 'allowedLanguages'], w: 'chips' }
+        { t: 'fldSandboxLangs', p: ['toolsConfig', 'sandbox', 'allowedLanguages'], w: 'chips' },
+        { t: 'fldSbxTimeout', p: ['toolsConfig', 'sandbox', 'defaultTimeout'], w: 'number', min: 1000, step: 1000 },
+        { t: 'fldSbxOutputLines', p: ['toolsConfig', 'sandbox', 'maxOutputLines'], w: 'number', min: -1 },
+        { t: 'fldSbxCleanup', p: ['toolsConfig', 'sandbox', 'cleanupTempDir'], w: 'toggle' }
       ]);
       break;
     case 'prompt':
       renderSimpleSection('secPrompt', [
-        { t: 'fldPromptMode', p: ['toolsConfig', 'system_prompt', 'mode'], w: 'promptMode' },
+        { t: 'fldPromptMode', p: ['toolsConfig', 'system_prompt', 'currentModeId'], w: 'promptMode' },
         { t: 'fldPromptPrefix', p: ['toolsConfig', 'system_prompt', 'customPrefix'], w: 'textarea' },
         { t: 'fldPromptSuffix', p: ['toolsConfig', 'system_prompt', 'customSuffix'], w: 'textarea' },
-        { t: 'fldPromptDynamicEnabled', p: ['toolsConfig', 'system_prompt', 'dynamicContextEnabled'], w: 'toggle' },
-        { t: 'fldPromptDynamic', p: ['toolsConfig', 'system_prompt', 'dynamicContextTemplate'], w: 'textarea' }
+        { t: 'fldPromptDynamicEnabled', p: ['toolsConfig', 'system_prompt', 'dynamicTemplateEnabled'], w: 'toggle' },
+        { t: 'fldPromptDynamic', p: ['toolsConfig', 'system_prompt', 'dynamicTemplate'], w: 'textarea' }
       ]);
       break;
     case 'context':
       renderSimpleSection('secContext', [
         { t: 'fldCtxFiles', p: ['toolsConfig', 'context_awareness', 'includeWorkspaceFiles'], w: 'toggle' },
-        { t: 'fldCtxDepth', p: ['toolsConfig', 'context_awareness', 'maxFileDepth'], w: 'number', min: 0 },
+        { t: 'fldCtxDepth', p: ['toolsConfig', 'context_awareness', 'maxFileDepth'], w: 'number', min: -1 },
         { t: 'fldCtxTabs', p: ['toolsConfig', 'context_awareness', 'includeOpenTabs'], w: 'toggle' },
         { t: 'fldCtxMaxTabs', p: ['toolsConfig', 'context_awareness', 'maxOpenTabs'], w: 'number', min: 0 },
         { t: 'fldCtxEditor', p: ['toolsConfig', 'context_awareness', 'includeActiveEditor'], w: 'toggle' },
-        { t: 'fldCtxDiag', p: ['toolsConfig', 'context_awareness', 'includeDiagnostics'], w: 'toggle' }
+        { t: 'fldDiagEnabled', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'enabled'], w: 'toggle' },
+        { t: 'fldDiagSeverities', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'includeSeverities'], w: 'checklist', items: [{ value: 'error', label: 'error' }, { value: 'warning', label: 'warning' }, { value: 'information', label: 'information' }, { value: 'hint', label: 'hint' }] },
+        { t: 'fldDiagWorkspaceOnly', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'workspaceOnly'], w: 'toggle' },
+        { t: 'fldDiagOpenOnly', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'openFilesOnly'], w: 'toggle' },
+        { t: 'fldDiagPerFile', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'maxDiagnosticsPerFile'], w: 'number', min: 1 },
+        { t: 'fldDiagMaxFiles', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'maxFiles'], w: 'number', min: 1 },
+        { t: 'fldCtxIgnore', p: ['toolsConfig', 'context_awareness', 'ignorePatterns'], w: 'chips' }
       ]);
       break;
     case 'memory':
       renderSimpleSection('secMemory', [
         { t: 'fldMemEnabled', p: ['toolsConfig', 'memory', 'enabled'], w: 'toggle' },
-        { t: 'fldMemWake', p: ['toolsConfig', 'memory', 'wakeKeywords'], w: 'chips' },
-        { t: 'fldMemChars', p: ['toolsConfig', 'memory', 'maxCharsPerEntry'], w: 'number', min: 100 }
+        { t: 'fldMemWakeLines', p: ['toolsConfig', 'memory', 'wakeLines'], w: 'number', min: 1 },
+        { t: 'fldMemEntryChars', p: ['toolsConfig', 'memory', 'entryChars'], w: 'number', min: 1 },
+        { t: 'fldMemPartChars', p: ['toolsConfig', 'memory', 'partChars'], w: 'number', min: 1 },
+        { t: 'fldMemPartLines', p: ['toolsConfig', 'memory', 'partLines'], w: 'number', min: 1 }
       ]);
       break;
     case 'summarize':
       renderSimpleSection('secSummarize', [
-        { t: 'fldSumRounds', p: ['toolsConfig', 'summarize', 'rounds'], w: 'number', min: 1 },
-        { t: 'fldSumTokens', p: ['toolsConfig', 'summarize', 'maxTokens'], w: 'number', min: 100 },
-        { t: 'fldSumSeparate', p: ['toolsConfig', 'summarize', 'separateChannel'], w: 'toggle' },
-        { t: 'fldSumChannel', p: ['toolsConfig', 'summarize', 'channelId'], w: 'configSelect' },
-        { t: 'fldSumModel', p: ['toolsConfig', 'summarize', 'model'], w: 'text' },
-        { t: 'fldSumAttempts', p: ['toolsConfig', 'summarize', 'autoAttempts'], w: 'number', min: 0 },
-        { t: 'fldSumRatio', p: ['toolsConfig', 'summarize', 'ratio'], w: 'number', min: 1, max: 100 }
+        { t: 'fldSumPrompt', p: ['toolsConfig', 'summarize', 'summarizePrompt'], w: 'textarea' },
+        { t: 'fldSumAutoPrompt', p: ['toolsConfig', 'summarize', 'autoSummarizePrompt'], w: 'textarea' },
+        { t: 'fldSumKeepRounds', p: ['toolsConfig', 'summarize', 'keepRecentRounds'], w: 'number', min: 1, max: 10 },
+        { t: 'fldSumKeepTokens', p: ['toolsConfig', 'summarize', 'keepRecentTokens'], w: 'text' },
+        { t: 'fldSumSeparateModel', p: ['toolsConfig', 'summarize', 'useSeparateModel'], w: 'toggle' },
+        { t: 'fldSumChannelId', p: ['toolsConfig', 'summarize', 'summarizeChannelId'], w: 'configSelect' },
+        { t: 'fldSumModelId', p: ['toolsConfig', 'summarize', 'summarizeModelId'], w: 'text' },
+        { t: 'fldSumMaxAttempts', p: ['toolsConfig', 'summarize', 'maxAutoSummarizeAttemptsPerTurn'], w: 'number', min: 1, max: 5 },
+        { t: 'fldSumMaxRatio', p: ['toolsConfig', 'summarize', 'summarizeMaxInputRatio'], w: 'ratio' }
       ]);
       break;
     case 'checkpoint':
-      renderSimpleSection('secCheckpoint', [
-        { t: 'fldCkptEnabled', p: ['toolsConfig', 'checkpoints', 'enabled'], w: 'toggle' },
-        { t: 'fldCkptMax', p: ['toolsConfig', 'checkpoints', 'maxCheckpoints'], w: 'number', min: 1 }
-      ]);
+      renderCheckpointSection();
       break;
     case 'tokenCount':
       renderTokenSection();
@@ -2784,40 +2934,46 @@ function renderAllSettingsSections() {
 }
 function loadSettings() {
   api('/api/settings').then(function (data) {
-    state.settings = data.settings || null;
-    if (state.settingsTab === 'general' || state.settingsTab === 'prompt') renderAllSettingsSections();
+    S.settings = data.settings || null;
+    if (isView('settings') && (S.settingsTab === 'general' || S.settingsTab === 'prompt' ||
+        S.settingsTab === 'context' || S.settingsTab === 'memory' || S.settingsTab === 'summarize' ||
+        S.settingsTab === 'checkpoint' || S.settingsTab === 'tokenCount' || S.settingsTab === 'imageGen' ||
+        S.settingsTab === 'skills' || S.settingsTab === 'subagents' || S.settingsTab === 'pinned' ||
+        S.settingsTab === 'sandbox' || S.settingsTab === 'fileTools' || S.settingsTab === 'proxy' ||
+        S.settingsTab === 'storage')) {
+      renderAllSettingsSections();
+    }
   }).catch(function () {});
 }
 function loadToolsList() {
   api('/api/tools').then(function (data) {
-    state.tools = Array.isArray(data.tools) ? data.tools : [];
-    state.autoExec = data.autoExec && typeof data.autoExec === 'object' ? data.autoExec : {};
-    if (state.settingsTab === 'tools' || state.settingsTab === 'autoExec') renderAllSettingsSections();
+    S.tools = Array.isArray(data.tools) ? data.tools : [];
+    S.autoExec = data.autoExec && typeof data.autoExec === 'object' ? data.autoExec : {};
+    if (isView('settings') && (S.settingsTab === 'tools' || S.settingsTab === 'autoExec' || S.settingsTab === 'checkpoint')) {
+      renderAllSettingsSections();
+    }
   }).catch(function () {});
 }
 function loadDeps() {
   api('/api/dependencies').then(function (data) {
-    state.deps = Array.isArray(data.dependencies) ? data.dependencies : [];
-    if (state.settingsTab === 'dependencies') renderAllSettingsSections();
+    S.deps = Array.isArray(data.dependencies) ? data.dependencies : [];
+    if (isView('settings') && S.settingsTab === 'dependencies') renderAllSettingsSections();
   }).catch(function () {});
 }
 function renderSettings(s) {
-  state.statusInfo = s;
-  if (state.settingsTab === 'remoteControl') renderAllSettingsSections();
+  S.statusInfo = s;
+  if (isView('settings') && S.settingsTab === 'remoteControl') renderAllSettingsSections();
 }
 
 /* ============================================================
-   输入框
+   11. 启动
    ============================================================ */
-function autoGrowInput() {
-  var el = $('input');
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+setStatus('connecting', t('statusConnecting'));
+var wsSwitchBtn = $('btn-ws-switch');
+if (wsSwitchBtn) {
+  wsSwitchBtn.textContent = t('switchWorkspace');
+  wsSwitchBtn.addEventListener('click', openWorkspaceSheet);
 }
-
-/* ============================================================
-   事件接线
-   ============================================================ */
 var sendBtn = $('send');
 var inputEl = $('input');
 var messagesEl = $('messages');
@@ -2854,14 +3010,14 @@ messagesEl.addEventListener('scroll', function () {
 });
 $('btn-drawer').addEventListener('click', openDrawer);
 $('btn-refresh').addEventListener('click', function () {
-  if (isTab('chat')) {
+  if (isView('chat')) {
     var cur = activeTab();
     if (cur && cur.id) loadMessages(cur, false);
     loadConversations(true);
     toast(t('refresh') + ' ✓');
     return;
   }
-  if (isTab('settings')) {
+  if (isView('settings')) {
     renderSettingsTabs();
     loadConfigs();
     loadSettings();
@@ -2871,8 +3027,8 @@ $('btn-refresh').addEventListener('click', function () {
     toast(t('refresh') + ' ✓');
     return;
   }
-  if (isTab('files')) {
-    state.fileDirs = {};
+  if (isView('files')) {
+    S.fileDirs = {};
     loadFiles('', true);
     toast(t('refresh') + ' ✓');
   }
@@ -2880,14 +3036,12 @@ $('btn-refresh').addEventListener('click', function () {
 $('btn-new').addEventListener('click', function () {
   closeDrawer();
   newChatTab();
-  toast(t('newChat') + ' — ' + t('emptyNewChat'));
 });
 $('drawer-backdrop').addEventListener('click', closeDrawer);
-$('sheet').querySelector('.backdrop').addEventListener('click', closeSheet);
+var sheetEl = $('sheet');
+sheetEl.querySelector('.backdrop').addEventListener('click', closeSheet);
 $('act-backdrop').addEventListener('click', closeActionSheet);
 $('btn-sheet-model-close').addEventListener('click', closeSheet);
-$('btn-ws-switch').textContent = t('switchWorkspace');
-$('btn-ws-switch').addEventListener('click', openWorkspaceSheet);
 $('btn-ws-add').addEventListener('click', openBrowse);
 $('btn-sheet-add').addEventListener('click', addWorkspace);
 $('btn-sheet-browse').addEventListener('click', function () {
@@ -2895,38 +3049,38 @@ $('btn-sheet-browse').addEventListener('click', function () {
   openBrowse();
 });
 $('btn-browse-back').addEventListener('click', function () {
-  loadFsDir(state.browseParent || '');
+  loadFsDir(S.browseParent || '');
 });
 $('btn-browse-root').addEventListener('click', function () { loadFsDir(''); });
 $('btn-browse-pick').addEventListener('click', pickBrowseFolder);
 $('btn-file-back').addEventListener('click', function () {
-  if (state.currentFile && state.currentFile.dirty) {
+  if (S.currentFile && S.currentFile.dirty) {
     openModal(t('save'), null, t('renameSave'), t('renameCancel'), 'danger', function () {
       saveFile();
     });
     return;
   }
-  state.currentFile = null;
+  S.currentFile = null;
   $('file-viewer').hidden = true;
   $('file-tree').hidden = false;
 });
 $('btn-open-desktop').addEventListener('click', openOnDesktop);
 fileEditorEl.addEventListener('input', function () {
-  if (!state.currentFile) return;
-  state.currentFile.content = fileEditorEl.value;
-  state.currentFile.dirty = true;
+  if (!S.currentFile) return;
+  S.currentFile.content = fileEditorEl.value;
+  S.currentFile.dirty = true;
   saveFileBtnEl.disabled = false;
   saveFileBtnEl.textContent = t('save');
 });
 saveFileBtnEl.addEventListener('click', saveFile);
 document.querySelectorAll('#tabbar button').forEach(function (b) {
-  b.addEventListener('click', function () { switchTab(b.getAttribute('data-tab')); });
+  b.addEventListener('click', function () { switchView(b.getAttribute('data-tab')); });
 });
 modalCancelEl.addEventListener('click', closeModal);
 modalOkEl.addEventListener('click', function () {
   var onOk = modalEl._onOk;
   closeModal();
-  if (onOk) onOk(modalInputEl.hidden ? null : modalInputEl.value);
+  if (onOk) safe(onOk)(modalInputEl.hidden ? null : modalInputEl.value);
 });
 modalInputEl.addEventListener('input', function () {
   modalInputEl.style.height = 'auto';
@@ -2937,49 +3091,46 @@ modalInputEl.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') closeModal();
 });
 
-/* ============================================================
-   启动
-   ============================================================ */
-setStatus('connecting', t('statusConnecting'));
-$('btn-ws-switch').textContent = t('switchWorkspace');
-saveFileBtnEl.textContent = t('save');
-inputEl.placeholder = t('inputPlaceholder');
-renderSettingsTabs();
-renderTabsBar();
-renderSendIcon();
-loadPromptModes();
-api('/api/status').then(function (s) {
-  state.appVersion = s.appVersion || '';
-  state.statusInfo = s;
-  state.activeChannelId = s.activeChannelId || null;
-  if (s.lang) state.lang = s.lang;
-  applyWorkspaceInfo(s);
-  renderSettings(s);
-  loadConfigs();
-  if (s.activeConversationId && state.tabs.length === 0) {
-    var tab = newTabObject(s.activeConversationId, s.activeConversationTitle || '');
-    state.tabs.push(tab);
-    state.activeTabKey = tab.key;
-    renderTabsBar();
-    setTitle(tab.title);
-    loadMessages(tab, true);
-    loadConversations(true);
-  } else {
-    renderMessages();
-    if (state.tabs.length === 0) {
-      $('empty-text').textContent = t('emptyConversation');
-      emptyEl.hidden = false;
-      messagesEl.hidden = true;
+/* 启动主流程（任何一步失败都不允许让页面空白） */
+try {
+  i18nAll();
+  saveFileBtnEl.textContent = t('save');
+  inputEl.placeholder = t('inputPlaceholder');
+  renderSettingsTabs();
+  renderTabsBar();
+  renderSendIcon();
+  updateSendBtn();
+  loadPromptModes();
+  api('/api/status').then(function (s) {
+    S.appVersion = s.appVersion || '';
+    S.statusInfo = s;
+    if (s.activeChannelId) S.activeChannelId = s.activeChannelId;
+    if (s.lang) S.lang = s.lang;
+    applyWorkspaceInfo(s);
+    renderSettings(s);
+    loadConfigs();
+    if (s.activeConversationId && S.tabs.length === 0) {
+      openConversationTab(s.activeConversationId, s.activeConversationTitle || '');
+    } else {
+      renderMessages();
+      if (S.tabs.length === 0) {
+        $('empty-text').textContent = t('emptyConversation');
+        emptyEl.hidden = false;
+        messagesEl.hidden = true;
+      }
     }
-  }
-  connectStream();
-}).catch(function () {
-  setStatus('err', t('statusServerStopped'));
-  sendBtn.disabled = true;
-  $('empty-text').textContent = t('statusServerStopped');
-  emptyEl.hidden = false;
-  messagesEl.hidden = true;
-});
+    connectStream();
+  }).catch(function () {
+    setStatus('err', t('statusServerStopped'));
+    sendBtn.disabled = true;
+    $('empty-text').textContent = t('statusServerStopped');
+    emptyEl.hidden = false;
+    messagesEl.hidden = true;
+    probeServerRecovery();
+  });
+} catch (e) {
+  showFatal(String((e && e.message) || e));
+}
 updateSendBtn();
 </script>`;
 }

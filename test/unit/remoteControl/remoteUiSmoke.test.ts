@@ -1,5 +1,5 @@
 /**
- * 远程控制 UI 渲染冒烟测试（V3 重构版）
+ * 远程控制 UI 渲染冒烟测试（V4）
  *
  * 校验 renderRemoteControlUiHtml 输出的自包含页面脚本语法有效：
  * - 脚本可用 Function 构造器解析（防模板转义泄漏导致运行时 SyntaxError）；

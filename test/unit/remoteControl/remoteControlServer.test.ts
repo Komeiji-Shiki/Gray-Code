@@ -984,6 +984,88 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.body.ok).toBe(true);
   });
 
+  test('POST /api/settings strips masked apiKey placeholders on write side (generate_image + token_count)', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/settings', {
+      settings: {
+        toolsConfig: {
+          generate_image: { apiKey: '********', model: 'flux' },
+          token_count: {
+            gemini: { apiKey: '', baseUrl: 'https://gemini', model: 'm' },
+            openai: { apiKey: '********', baseUrl: 'https://openai', model: '' }
+          }
+        }
+      }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'updateSettings');
+    expect(call).toBeDefined();
+    const patch = call!.data.settings;
+    // 占位/空串 apiKey 不落库（保持已设置的密钥不变），其余字段原样透传
+    expect(patch.toolsConfig.generate_image.apiKey).toBeUndefined();
+    expect(patch.toolsConfig.generate_image.model).toBe('flux');
+    expect(patch.toolsConfig.token_count.gemini.apiKey).toBeUndefined();
+    expect(patch.toolsConfig.token_count.gemini.baseUrl).toBe('https://gemini');
+    expect(patch.toolsConfig.token_count.openai.apiKey).toBeUndefined();
+    expect(patch.toolsConfig.token_count.openai.baseUrl).toBe('https://openai');
+  });
+
+  test('POST /api/settings keeps real apiKey values on write side', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/settings', {
+      settings: {
+        toolsConfig: {
+          generate_image: { apiKey: 'sk-img-real', model: 'flux' },
+          token_count: { gemini: { apiKey: 'sk-tok-real', baseUrl: 'https://x' } }
+        }
+      }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'updateSettings');
+    expect(call).toBeDefined();
+    const patch = call!.data.settings;
+    expect(patch.toolsConfig.generate_image.apiKey).toBe('sk-img-real');
+    expect(patch.toolsConfig.token_count.gemini.apiKey).toBe('sk-tok-real');
+  });
+
+  test('POST /api/settings drops proxy.url containing masked userinfo (***@) without overwriting real credentials', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/settings', {
+      settings: { proxy: { enabled: true, url: 'http://***@127.0.0.1:7890' } }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'updateSettings');
+    expect(call).toBeDefined();
+    expect(call!.data.settings.proxy.url).toBeUndefined();
+    expect(call!.data.settings.proxy.enabled).toBe(true);
+  });
+
+  test('POST /api/settings keeps real proxy.url without masked userinfo', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/settings', {
+      settings: { proxy: { enabled: true, url: 'http://user:pass@127.0.0.1:7890' } }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'updateSettings');
+    expect(call).toBeDefined();
+    expect(call!.data.settings.proxy.url).toBe('http://user:pass@127.0.0.1:7890');
+  });
+
+  test('POST /api/settings stripMaskedSecrets tolerates malformed shapes without throwing', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/settings', {
+      settings: {
+        toolsConfig: 'not-an-object',
+        proxy: { url: 'http://***@x' },
+        ui: { sound: { volume: 60 } }
+      }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'updateSettings');
+    expect(call).toBeDefined();
+    expect(call!.data.settings.ui.sound.volume).toBe(60);
+  });
+
   test('POST /api/settings rejects non-object settings with 400', async () => {
     const res = await post(port, '/api/settings', { settings: 'nope' });
     expect(res.status).toBe(400);

@@ -1,4 +1,4 @@
-﻿﻿/** @type {import('jest').Config} */
+﻿/** @type {import('jest').Config} */
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
@@ -14,5 +14,10 @@ module.exports = {
         '^.+\\.ts$': ['ts-jest', {
             tsconfig: 'tsconfig.test.json',
         }],
+        // jsdom 依赖链中的 ESM-only 包（@exodus/bytes、@asamuzakjp/*、jsdom 嵌套的
+        // parse5/entities）：转为 CJS
+        'node_modules[\\\\/]((?:@exodus|@asamuzakjp|@csstools)[\\\\/][^\/]+|jsdom[\\\\/]node_modules[\\\\/](?:parse5|entities))[\\\\/].*\.(?:js|mjs)$': '<rootDir>/test/transform/esm-cjs-transform.js',
     },
+    // 仅放行上述 ESM 包参与转换，其余 node_modules 保持原样
+    transformIgnorePatterns: ['^(?!.*node_modules/((?:@exodus|@asamuzakjp|@csstools)/[^/]+|jsdom/node_modules/(?:parse5|entities))/).*node_modules/.*$'],
 };

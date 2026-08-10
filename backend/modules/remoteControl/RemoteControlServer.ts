@@ -1935,6 +1935,29 @@ export class RemoteControlServer {
     }
   }
 
+  /** 写侧密钥剥离：客户端回写脱敏占位串（********）/空串表示「保持不变」，
+   *  与 handleConfigUpdate 的 apiKey 剥离同语义；代理 URL 若含 ***@（脱敏后的
+   *  userinfo）同样视为占位，不覆盖真实凭据。 */
+  private stripMaskedSecrets(patch: any): void {
+    if (!patch || typeof patch !== 'object') return;
+    const stripKey = (obj: any): void => {
+      if (obj && typeof obj === 'object' && typeof obj.apiKey === 'string') {
+        if (!obj.apiKey || obj.apiKey === '********') delete obj.apiKey;
+      }
+    };
+    const toolsConfig = patch.toolsConfig;
+    if (toolsConfig && typeof toolsConfig === 'object') {
+      stripKey(toolsConfig.generate_image);
+      const tokenCount = toolsConfig.token_count;
+      if (tokenCount && typeof tokenCount === 'object') {
+        for (const key of Object.keys(tokenCount)) stripKey(tokenCount[key]);
+      }
+    }
+    if (typeof patch.proxy?.url === 'string' && patch.proxy.url.includes('***@')) {
+      delete patch.proxy.url;
+    }
+  }
+
   private async handleSettingsUpdate(res: http.ServerResponse, body: any): Promise<void> {
     const patch = body?.settings;
     if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
@@ -1945,6 +1968,7 @@ export class RemoteControlServer {
       this.sendJson(res, 413, { ok: false, error: 'Settings patch too large' });
       return;
     }
+    this.stripMaskedSecrets(patch);
     try {
       const result = await this.invokeHandler('updateSettings', { settings: patch });
       if (result?.success === false) {

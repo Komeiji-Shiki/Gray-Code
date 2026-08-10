@@ -1,14 +1,39 @@
 /**
- * 远程控制移动端 UI 模板完整性测试
+ * 远程控制移动端 UI 模板完整性测试（V4）
  *
  * 校验 renderRemoteControlUiHtml 输出的自包含页面：
  * - 三语言（zh-CN/en/ja）均能渲染，文案键集合一致且无空值；
  * - 内嵌 T 文案 JSON 可解析（JSON.stringify + \u003c 转义不破坏结构）；
  * - 页面包含三个页签与关键 API 端点（与 RemoteControlServer 路由保持一致）；
+ * - V4 错误边界：HTML 含 error-banner 元素，脚本所有 $('id') 引用都能在 HTML 找到；
+ * - V4 i18n 契约：脚本中 t('...') / t: / renderSimpleSection / secCard / labelKey
+ *   引用的全部 key 在 UI_TEXTS 三语言中都存在；
  * - 无外部资源依赖（零外链）与 script/style 闭合结构完整。
  */
 
 import { renderRemoteControlUiHtml, UI_TEXTS } from '../../../backend/modules/remoteControl/remoteControlUi';
+
+/** 从渲染产物中取出内嵌脚本文本 */
+function scriptOf(html: string): string {
+  const m = html.match(/<script>([\s\S]*?)<\/script>/);
+  return m ? m[1] : '';
+}
+
+/** 收集脚本中引用的全部 i18n key（t('...') / { t: '...' } / renderSimpleSection / secCard / labelKey） */
+function i18nKeysOf(script: string): Set<string> {
+  const keys = new Set<string>();
+  const collect = (re: RegExp): void => {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(script)) !== null) keys.add(m[1]);
+  };
+  // (?<=^|[^A-Za-z0-9_]) 排除 split('|') 与 toast('...') 的误匹配（t 前有词字符）
+  collect(/(?:^|[^A-Za-z0-9_])t\('([^']+)'\)/g);
+  collect(/\bt: '([^']+)'/g);
+  collect(/renderSimpleSection\('([^']+)'/g);
+  collect(/secCard\('([^']+)'/g);
+  collect(/labelKey: '([^']+)'/g);
+  return keys;
+}
 
 /** 服务器 handleRequest 支持的端点（路由白名单，模板引用的端点必须落在此集合内） */
 const SERVER_ENDPOINTS = new Set([
@@ -104,17 +129,51 @@ describe('remoteControlUi', () => {
     expect(html).toContain('function renderTabsBar()');
     expect(html).toContain('function newChatTab()');
     expect(html).toContain('function closeTab(key)');
-    // 设置分页：分类页签条 + 19 个分类（对齐桌面端 SettingsPanel 侧栏）
+    // 设置分页：分类页签条 + 20 个分类（对齐桌面端 SettingsPanel 侧栏）
     expect(html).toContain('id="settings-tabs"');
     expect(html).toContain('function renderSettingsTabs()');
     expect(html).toContain('var SETTINGS_CATEGORIES');
     expect(html).toContain("{ key: 'channel', labelKey: 'secChannel' }");
     expect(html).toContain("{ key: 'remoteControl', labelKey: 'secRemote' }");
     expect(html).toContain("{ key: 'dependencies', labelKey: 'secDeps' }");
+    expect((html.match(/\{ key: '[A-Za-z]+', labelKey: '/g) || []).length).toBe(20);
     // 输入区渠道/模型选择（桌面端 ChannelSelector 同款）
     expect(html).toContain('id="composer-meta"');
     expect(html).toContain('function renderComposerMeta()');
     expect(html).toContain('id="sheet-model-mode"');
+  });
+
+  test('HTML contains error-banner element (V4 error boundary is wired)', () => {
+    const html = renderRemoteControlUiHtml('zh-CN');
+    expect(html).toContain('<div id="error-banner" hidden></div>');
+  });
+
+  test("every $('id') reference in script resolves to an element in the HTML", () => {
+    const html = renderRemoteControlUiHtml('zh-CN');
+    const script = scriptOf(html);
+    const refs = new Set<string>();
+    let m: RegExpExecArray | null;
+    const reRef = /\$\('([^']+)'\)/g;
+    while ((m = reRef.exec(script)) !== null) refs.add(m[1]);
+    const ids = new Set<string>();
+    const reId = /id="([^"]+)"/g;
+    while ((m = reId.exec(html)) !== null) ids.add(m[1]);
+    expect(refs.size).toBeGreaterThan(20);
+    for (const ref of refs) {
+      expect(ids.has(ref)).toBe(true);
+    }
+  });
+
+  test('all i18n keys referenced by script exist in UI_TEXTS for every language', () => {
+    const langs = Object.keys(UI_TEXTS) as Array<keyof typeof UI_TEXTS>;
+    const script = scriptOf(renderRemoteControlUiHtml('zh-CN'));
+    const keys = i18nKeysOf(script);
+    expect(keys.size).toBeGreaterThan(100);
+    for (const lang of langs) {
+      const dict = new Set(Object.keys(UI_TEXTS[lang]));
+      const missing = [...keys].filter((k) => !dict.has(k));
+      expect(missing).toEqual([]);
+    }
   });
 
   test('template contains global [hidden] override (fix: loading overlay blocked conversation)', () => {

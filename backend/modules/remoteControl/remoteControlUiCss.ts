@@ -72,6 +72,9 @@ export const REMOTE_UI_CSS = `
   --header-h: 46px;
   --tabbar-h: 54px;
   --footer-safe: env(safe-area-inset-bottom, 0px);
+  --green: #89d185;
+  --red: #f14c4c;
+  --dim: #9d9d9d;
 }
 
 @media (prefers-color-scheme: light) {
@@ -117,6 +120,9 @@ export const REMOTE_UI_CSS = `
     --vscode-checkbox-border: #c8c8c8;
     --vscode-progressBar-background: #006ab1;
     --vscode-widget-shadow: rgba(0, 0, 0, 0.15);
+    --green: #137a00;
+    --red: #cd3131;
+    --dim: #6a737d;
   }
 }
 
@@ -148,6 +154,7 @@ svg { display: block; }
   display: flex;
   flex-direction: column;
   height: 100dvh;
+  min-height: 100dvh;
 }
 
 /* ================= 顶栏 ================= */
@@ -266,6 +273,68 @@ header {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* V4 页签：脚本渲染 .tab/.tab.active/.tab.streaming + .tab-label/.tab-close/.tab-add */
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 170px;
+  min-width: 0;
+  padding: 0 8px 0 10px;
+  font-size: 12.5px;
+  color: var(--vscode-tab-inactiveForeground);
+  background: var(--vscode-tab-inactiveBackground);
+  border-right: 1px solid var(--vscode-panel-border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tab.active {
+  background: var(--vscode-tab-activeBackground);
+  color: var(--vscode-tab-activeForeground);
+  box-shadow: inset 0 -2px 0 var(--vscode-textLink-foreground);
+}
+.tab.streaming {
+  color: var(--vscode-tab-activeForeground);
+  box-shadow: inset 0 -2px 0 var(--vscode-progressBar-background);
+}
+.tab.streaming:not(.active) { background: color-mix(in srgb, var(--vscode-progressBar-background) 8%, var(--vscode-tab-inactiveBackground)); }
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.tab .tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--vscode-icon-foreground);
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+.tab:hover .tab-close, .tab.active .tab-close, .tab:active .tab-close { opacity: 1; }
+.tab .tab-close:active { background: var(--vscode-list-hoverBackground); color: var(--vscode-foreground); }
+.tab .tab-close svg { width: 12px; height: 12px; }
+.tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 100%;
+  flex-shrink: 0;
+  color: var(--vscode-icon-foreground);
+  font-size: 18px;
+  font-weight: 600;
+}
+.tab-add:active { background: var(--vscode-list-hoverBackground); }
+.tab-add svg { width: 15px; height: 15px; }
+
 /* ================= 主视图 ================= */
 #views { flex: 1; min-height: 0; display: flex; }
 .view { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -299,6 +368,45 @@ header {
 .msg .actions .icon-btn { width: 24px; height: 24px; }
 .msg .actions .icon-btn svg { width: 14px; height: 14px; }
 .msg-content { font-size: 13px; }
+/* V4 消息：头 / 工具 / 操作行 / 错误盒 */
+.msg-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 11px; }
+.msg-role {
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.msg.assistant .msg-head .msg-role { color: var(--vscode-textLink-foreground); }
+.msg-model { color: var(--vscode-descriptionForeground); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-time { color: var(--vscode-descriptionForeground); margin-left: auto; flex-shrink: 0; }
+.msg-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-radius: var(--radius-md);
+  padding: 3px 10px;
+  font-size: 11.5px;
+  margin: 0 4px 6px 0;
+}
+.msg-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.msg-actions .mini-btn { padding: 4px 9px; min-height: 26px; }
+.msg-actions .mini-btn svg { width: 13px; height: 13px; }
+.err-box {
+  margin: 10px 16px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--vscode-terminal-ansiRed) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-terminal-ansiRed) 40%, transparent);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  color: var(--vscode-errorForeground);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.err-box .mini-btn { flex-shrink: 0; }
 .msg-content p { margin: 6px 0; }
 .msg-content p:first-child { margin-top: 0; }
 .msg-content p:last-child { margin-bottom: 0; }
@@ -332,6 +440,15 @@ header {
 .msg-content th, .msg-content td { border: 1px solid var(--vscode-panel-border); padding: 4px 10px; }
 .msg-content a { color: var(--vscode-textLink-foreground); }
 .msg-content h1, .msg-content h2, .msg-content h3 { margin: 10px 0 6px; }
+.markdown h4, .markdown h5, .markdown h6 {
+  margin: 8px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.markdown ul, .markdown ol { margin: 6px 0; padding-left: 22px; }
+.markdown li { margin: 2px 0; }
+.markdown pre, .markdown code { font-family: ui-monospace, Consolas, monospace; }
+.md-spacer { height: 8px; }
 .caret { display: inline-block; width: 7px; height: 14px; background: var(--vscode-progressBar-background); animation: blink 1s steps(1) infinite; vertical-align: text-bottom; }
 @keyframes blink { 50% { opacity: 0; } }
 .thoughts {
@@ -419,6 +536,19 @@ header {
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-focusBorderSoft);
   border-radius: var(--radius-md);
+}
+.confirm-box {
+  margin: 6px 12px;
+  padding: 10px 12px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-focusBorderSoft);
+  border-radius: var(--radius-md);
+}
+.confirm-item {
+  padding: 4px 0;
+  font-size: 12.5px;
+  font-family: ui-monospace, Consolas, monospace;
+  word-break: break-all;
 }
 .confirm-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
 .confirm-title svg { width: 14px; height: 14px; color: var(--vscode-terminal-ansiYellow); }
@@ -748,6 +878,41 @@ footer.composer {
 .item-row .name { font-size: 13px; }
 .item-row .sub { font-size: 11.5px; color: var(--vscode-descriptionForeground); }
 .info-text { font-size: 12.5px; color: var(--vscode-descriptionForeground); }
+/* V4 设置页补充：多选列表 / chips 删除钮 / 模型管理 / 弱化文字 */
+.checklist { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.chk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 3px 0;
+  cursor: pointer;
+}
+.chk-row input { accent-color: var(--vscode-button-background); }
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.7;
+}
+.chip-x:active { background: rgba(0, 0, 0, 0.2); opacity: 1; }
+.model-list { display: flex; flex-direction: column; gap: 2px; width: 100%; max-height: 40dvh; overflow-y: auto; }
+.model-list .item-row .t { flex: 1; }
+.dim { color: var(--vscode-descriptionForeground); font-size: 12px; }
+.hint-sm {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--vscode-descriptionForeground);
+}
+.settings-sec { scroll-margin-top: 8px; }
 
 /* 渠道管理 */
 .cfg-item { border: 1px solid var(--vscode-panel-border); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 10px; background: var(--vscode-sideBar-background); }
@@ -825,6 +990,38 @@ footer.composer {
 .conv-item.active .cv-meta { color: rgba(255, 255, 255, 0.8); }
 .conv-item .icon-btn { width: 26px; height: 26px; }
 .conv-item .icon-btn svg { width: 14px; height: 14px; }
+/* V4 抽屉列表：conv-main 主按钮 + 标题/副标题 + 更多操作 */
+.conv-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  text-align: left;
+  color: inherit;
+}
+.conv-title {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conv-sub {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+.conv-item.active .conv-sub { color: rgba(255, 255, 255, 0.8); }
+.conv-more { flex-shrink: 0; }
+.load-more-btn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  font-size: 12.5px;
+  color: var(--vscode-textLink-foreground);
+  text-align: center;
+}
+.load-more-btn:active { background: var(--vscode-list-hoverBackground); }
 .conv-load-more { padding: 12px; text-align: center; }
 .conv-empty { padding: 30px 16px; text-align: center; color: var(--vscode-descriptionForeground); font-size: 12.5px; }
 
@@ -1009,5 +1206,23 @@ footer.composer {
   font-size: 12px;
   text-align: center;
   padding: 6px 10px;
+}
+
+/* 全局致命错误横幅（脚本 showFatal 写入，固定顶部、最高层级、不遮挡交互） */
+#error-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 70;
+  background: var(--vscode-terminal-ansiRed);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  padding: 8px 12px;
+  pointer-events: none;
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+  word-break: break-word;
 }
 `;
