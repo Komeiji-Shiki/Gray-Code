@@ -117,7 +117,8 @@ describe('agent_send_message - handler', () => {
                 }
             }));
             // 事件不广播正文；正文仍由主模型 claim 接口从 mailbox 领取。
-            expect(events.at(-1)?.data).not.toHaveProperty('message');
+            // tsconfig.test.json lib 为 ES2020，不用 Array.prototype.at（ES2022）
+            expect(events[events.length - 1]?.data).not.toHaveProperty('message');
             expect(agentMailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)[0].text).toBe('wake the main model');
         } finally {
             dispose();
