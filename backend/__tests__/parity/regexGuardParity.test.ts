@@ -21,6 +21,9 @@
  *
  * 测试方式：backend jest 直接 import 两端源码（前端 regexGuard 无任何依赖，可被 ts-jest 编译），
  * 表驱动行为比对——只断言"两端一致"的模式集合。
+ *
+ * 09 批 M4 约束：本测试直接 import 前端文件路径（含重命名/迁移时同步更新）；
+ * 前端 regexGuard 必须保持零依赖，否则 backend jest 无法编译。
  */
 
 import { validateRegexPattern, MAX_REGEX_SOURCE_LENGTH } from '../../core/services/regexGuard';

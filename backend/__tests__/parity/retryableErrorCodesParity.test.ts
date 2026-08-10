@@ -43,11 +43,14 @@ const KNOWN_FRONTEND_ONLY: readonly string[] = ['PARSE_ERROR'];
 /**
  * 从前端源码提取 RETRYABLE_ERROR_CODES 的 Set 字面量成员。
  * 不 import 整个模块（retryFlows.ts 依赖前端 store 链，无法在 backend jest 加载）。
+ * 09 批 M4 加固：正则容忍类型注解变体（ReadonlySet<string>/Set<string>）与
+ * 空白/换行差异（`]` 与 `)` 不再要求相邻），避免纯格式化重构误报；
+ * 仅当 Set 字面量结构本身变化（改名/改写法）时才 fail-loud 提示人工同步。
  */
 function extractFrontendRetryableCodes(): string[] {
     const source = fs.readFileSync(FRONTEND_RETRY_FLOWS_SOURCE, 'utf8');
     const literal = source.match(
-        /export const RETRYABLE_ERROR_CODES:\s*ReadonlySet<string>\s*=\s*new Set\(\[([\s\S]*?)\]\)/
+        /export const RETRYABLE_ERROR_CODES\s*:\s*(?:ReadonlySet<string>|Set<string>)\s*=\s*new Set\(\s*\[([\s\S]*?)\]\s*\)/
     );
     if (!literal) {
         throw new Error(

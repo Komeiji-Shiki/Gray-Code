@@ -12,6 +12,9 @@
  *
  * 测试方式：backend jest 直接 import 两端源码（前端 codec 无任何依赖，可被 ts-jest 编译），
  * 表驱动行为比对 + 常量比对 + 导出面关系比对（前端导出 ⊆ 后端导出）。
+ *
+ * 09 批 M4 约束：本测试直接 import 前端文件路径（含重命名/迁移时同步更新）；
+ * 前端 codec 必须保持零依赖（不 import store/utils 链），否则 backend jest 无法编译。
  */
 
 import * as backendCodec from '../../modules/mcp/mcpToolNameCodec';
