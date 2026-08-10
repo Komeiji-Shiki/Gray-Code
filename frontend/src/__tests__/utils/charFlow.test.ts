@@ -110,6 +110,29 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
+  it('deferTrim delays trimming until trimNow() is called', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
+    flow.append(['1', '2', '3'], 30, false, true)
+    expect(host.textContent).toBe('123')
+    flow.append(['4', '5'], 30, false, true)
+    // deferTrim：本帧不裁剪，内容完整保留（供 promote 先剥离可提升段落）
+    expect(host.textContent).toBe('12345')
+    flow.trimNow()
+    // trimNow 只裁无法提升的尾巴
+    expect(host.textContent).toBe('2345')
+    flow.dispose()
+  })
+
+  it('append without deferTrim keeps legacy immediate trimming', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
+    flow.append(['1', '2', '3'], 30, false)
+    flow.append(['4', '5'], 30, false)
+    expect(host.textContent).toBe('2345')
+    flow.dispose()
+  })
+
   it('tailWindow trims restore and finish too', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
@@ -247,6 +270,28 @@ describe('CharFlow', () => {
     expect(flow.promote(999)).toBe('para three')
     expect(flow.settledText).toBe('')
     flow.dispose()
+  })
+
+  it('promoteWithBridge keeps promoted prefixes visible until each bridge is released', () => {
+    const host = makeHost()
+    const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
+    flow.restore('first\nsecond\ntail')
+
+    const first = flow.promoteWithBridge('first\n'.length)
+    const second = flow.promoteWithBridge('second\n'.length)
+    expect(first?.text).toBe('first\n')
+    expect(second?.text).toBe('second\n')
+    expect(flow.settledText).toBe('tail')
+    expect(host.textContent).toBe('first\nsecond\ntail')
+
+    first?.release()
+    first?.release() // release 必须幂等
+    expect(host.textContent).toBe('second\ntail')
+    second?.release()
+    expect(host.textContent).toBe('tail')
+
+    flow.dispose()
+    second?.release() // dispose 后晚到 ack 也是 no-op
   })
 
   it('promote after dispose and non-positive n are no-ops', () => {

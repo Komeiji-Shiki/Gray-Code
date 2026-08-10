@@ -170,6 +170,27 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
+  it('流式表格写入真实 DOM 后发出 rendered(source) 确认', async () => {
+    const tableHead = '| Name | Value |\n| --- | --- |\n'
+    const withRow = `${tableHead}| alpha | 1 |\n`
+    const wrapper = mountRenderer({ content: tableHead, isStreaming: true })
+
+    await tick()
+    await tick()
+    expect(wrapper.find('table').exists()).toBe(true)
+    const initialRenderedEvents = wrapper.emitted('rendered') ?? []
+    expect(initialRenderedEvents[initialRenderedEvents.length - 1]).toEqual([tableHead])
+
+    await wrapper.setProps({ content: withRow })
+    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+    await tick()
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    const updatedRenderedEvents = wrapper.emitted('rendered') ?? []
+    expect(updatedRenderedEvents[updatedRenderedEvents.length - 1]).toEqual([withRow])
+    wrapper.unmount()
+  })
+
   it('流式结束后对超高代码块保留 keep-expanded 展开态（不塌缩回 400px）', async () => {
     await withFakeScrollHeight(async () => {
       const wrapper = mountRenderer({ content: LONG_CODE, isStreaming: true })
