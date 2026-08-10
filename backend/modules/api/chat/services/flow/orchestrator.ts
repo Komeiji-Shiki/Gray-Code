@@ -28,9 +28,25 @@ import type { ToolExecutionFullResult, ToolExecutionProgressEvent } from '../Too
 import type { Content, ContentPart } from '../../../../conversation/types';
 import type { CheckpointRecord } from '../../../../checkpoint';
 import { getGlobalBranchService } from '../../../../conversation/branch';
-import { MAIN_SESSION_RUN_ID } from '../../../../../core/services/agentMailbox';
+import {
+  agentMailbox,
+  formatAgentMessagesForModel,
+  MAIN_SESSION_RUN_ID
+} from '../../../../../core/services/agentMailbox';
 import { resolveAndPersistPostToolStopState } from '../postToolStopState';
 import { ChatStreamOutput, ChatStreamCancelledData, ChatFlowContext, ChatFlowDeps, isFirstMessageHistory } from './context';
+
+function isInternalMessageSource(source: ChatRequestData['source']): boolean {
+  return source === 'background_task' || source === 'agent_message';
+}
+
+function isValidAgentMessageClaim(request: ChatRequestData): boolean {
+  if (request.source !== 'agent_message') return true;
+  const claimId = request.agentMessageClaimId?.trim();
+  if (!claimId) return false;
+  const claim = agentMailbox.getMessageClaim(request.conversationId, MAIN_SESSION_RUN_ID, claimId);
+  return !!claim && formatAgentMessagesForModel(claim.messages) === request.message;
+}
 
 /**
  * C-6：创建与 abortSignal race 的 Promise，供 gen.next() 主循环防挂起。
@@ -99,6 +115,16 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       };
     }
 
+    if (!isValidAgentMessageClaim(request)) {
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_AGENT_MESSAGE_CLAIM',
+          message: 'The agent message claim is missing, stale, or does not match the mailbox payload.',
+        },
+      };
+    }
+
     const approvalValidationError = await this.validateHiddenContinuationApproval(conversationId, hiddenFunctionResponse);
     if (approvalValidationError) {
       return approvalValidationError;
@@ -123,7 +149,8 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     } else {
       const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
       const persistedMessageId = messageId || randomUUID();
-      const turnDynamicContext = request.source === 'background_task'
+      const internalMessage = isInternalMessageSource(request.source);
+      const turnDynamicContext = internalMessage
         ? undefined
         : await this.toolIterationLoopService.createTurnDynamicContext(
             conversationId,
@@ -132,12 +159,15 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
             dynamicContextStrategy
           );
       await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-        isUserInput: request.source !== 'background_task',
+        isUserInput: !internalMessage,
         source: request.source,
         ...(turnDynamicContext
           ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
           : {})
       }, persistedMessageId);
+      if (request.source === 'agent_message' && request.agentMessageClaimId) {
+        agentMailbox.acknowledgeMessageClaim(conversationId, MAIN_SESSION_RUN_ID, request.agentMessageClaimId);
+      }
     }
 
     // 4. 工具调用循环（委托给 ToolIterationLoopService，非流式）
@@ -150,7 +180,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       modelOverride,
       promptModeSnapshot,
       dynamicContextStrategy,
-      !hiddenFunctionResponse && request.source !== 'background_task',
+      !hiddenFunctionResponse && !isInternalMessageSource(request.source),
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
@@ -219,6 +249,17 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       return;
     }
 
+    if (!isValidAgentMessageClaim(request)) {
+      yield {
+        conversationId,
+        error: {
+          code: 'INVALID_AGENT_MESSAGE_CLAIM',
+          message: 'The agent message claim is missing, stale, or does not match the mailbox payload.'
+        }
+      };
+      return;
+    }
+
     const approvalValidationError = await this.validateHiddenContinuationApproval(conversationId, hiddenFunctionResponse);
     if (approvalValidationError) {
       yield {
@@ -266,7 +307,8 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         // 5. 添加用户消息到历史（包含附件）；携带前端稳定节点 id（BR-01 对齐）
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
         const persistedMessageId = messageId || randomUUID();
-        const turnDynamicContext = request.source === 'background_task'
+        const internalMessage = isInternalMessageSource(request.source);
+        const turnDynamicContext = internalMessage
           ? undefined
           : await this.toolIterationLoopService.createTurnDynamicContext(
               conversationId,
@@ -275,12 +317,16 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
               dynamicContextStrategy
             );
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-          isUserInput: request.source !== 'background_task',
+          isUserInput: !internalMessage,
           source: request.source,
           ...(turnDynamicContext
             ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
             : {})
         }, persistedMessageId);
+
+        if (request.source === 'agent_message' && request.agentMessageClaimId) {
+          agentMailbox.acknowledgeMessageClaim(conversationId, MAIN_SESSION_RUN_ID, request.agentMessageClaimId);
+        }
 
         // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
         // 与系统提示词、动态上下文一起并行计算，节省时间
@@ -323,7 +369,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
-      isNewTurn: !hiddenFunctionResponse && request.source !== 'background_task',
+      isNewTurn: !hiddenFunctionResponse && !isInternalMessageSource(request.source),
       promptModeSnapshot,
       dynamicContextStrategy,
     })) {

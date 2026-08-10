@@ -25,6 +25,13 @@ import {
 // 会话状态/操作面经 backgroundTasks/bridge 注册表消费（chatStore 实例创建时注册）。
 import { getChatBridge, resolveChatBridge } from './backgroundTasks/bridge'
 
+interface AgentMessageClaimPayload {
+  claimId: string | null
+  conversationId: string
+  message: string | null
+  messageCount: number
+}
+
 export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   /**
    * 同步读取会话状态（桥未注册时按空闲/无会话兜底）：
@@ -67,6 +74,16 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   function handleTaskEvent(event: TaskEventLike): void {
     if (!event?.taskId) return
 
+    if (event.taskType === 'agent_message') {
+      // 正文留在后端 mailbox；事件只负责唤醒调度。忙时等动作边界/流结束，空闲立即领取。
+      if (flushing) {
+        flushDroppedEvent = true
+      } else {
+        void flushReports()
+      }
+      return
+    }
+
     if (event.type === 'start') {
       if (!isBackgroundStartEvent(event)) return
       // 已存在则忽略：重复 start 事件不能把已 completed/cancelled 的任务复活成 running
@@ -95,6 +112,60 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   let flushing = false
   /** flush 进行中到达的 complete/cancelled/error 事件标记：结束后补一轮 flush（见 handleTaskEvent） */
   let flushDroppedEvent = false
+
+  /** 领取当前会话的 agent→main 消息；没有消息时返回 null。 */
+  async function claimAgentMessages(conversationId: string): Promise<AgentMessageClaimPayload | null> {
+    const claim = await sendToExtension<AgentMessageClaimPayload>('chat.claimAgentMessages', { conversationId })
+    return claim?.claimId && claim.message ? claim : null
+  }
+
+  /** 尚未启动内部回合时退回领取，让活跃工具循环或下次调度可以继续消费。 */
+  async function releaseAgentMessages(claim: AgentMessageClaimPayload): Promise<void> {
+    if (!claim.claimId) return
+    try {
+      await sendToExtension('chat.releaseAgentMessages', {
+        conversationId: claim.conversationId,
+        claimId: claim.claimId
+      })
+    } catch (error) {
+      // claim 本身仍保存在后端；释放 IPC 失败不会丢消息，下次领取返回同一 claim。
+      console.warn('[backgroundTaskStore] Failed to release agent message claim:', error)
+    }
+  }
+
+  /**
+   * 尝试把一批 agent→main 消息作为内部回合发送。
+   * 返回 true 表示本次确实领取到消息（无论发送是否成功），调用方不再同时投递后台任务报告。
+   */
+  async function sendClaimedAgentMessages(
+    chat: Awaited<ReturnType<typeof resolveChatBridge>>,
+    conversationId: string
+  ): Promise<boolean> {
+    const claim = await claimAgentMessages(conversationId)
+    if (!claim) return false
+
+    // 领取 IPC 期间会话可能切换；尚未启动流，可以安全退回。
+    if (chat.getState().currentConversationId !== conversationId) {
+      await releaseAgentMessages(claim)
+      return true
+    }
+
+    try {
+      const sent = await chat.sendMessage(claim.message!, undefined, {
+        source: 'agent_message',
+        agentMessageClaimId: claim.claimId!
+      })
+      if (!sent) {
+        // 不主动 release：sendMessage=false 也可能表示“请求已在原会话启动，但前端随后切换会话”。
+        // 后端会在消息成功落库后确认 claim；未落库的 claim 会在下次空闲时原样重试。
+        console.warn('[backgroundTaskStore] Agent message round did not start; claim remains pending for retry')
+      }
+    } catch (error) {
+      // 与上面相同，保留 claim 等下一次 watcher/动作边界重试。
+      console.warn('[backgroundTaskStore] Failed to start agent message round; claim remains pending:', error)
+    }
+    return true
+  }
 
   /** 把一批任务乐观标记为已回流（不可变更新，保证响应性） */
   function markReported(records: BackgroundTaskRecord[]): void {
@@ -136,6 +207,11 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       if (chat.getState().isStreaming || chat.getState().isWaitingForResponse) return
 
       const currentId = chat.getState().currentConversationId
+      if (!currentId) return
+
+      // agent 消息优先：它通常是其他 agent 针对当前工作的即时补充，先于普通后台完成报告。
+      if (await sendClaimedAgentMessages(chat, currentId)) return
+
       const ready = taskList.value.filter(t =>
         !t.reported
         && t.status !== 'running'
@@ -198,7 +274,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       // 结束后重查挂起数，非零（且确实有被丢弃事件）则再调度一次 flushReports，避免回执永久滞留。
       // 注意：不能只看 pendingReportCount——发送失败回滚也会使其非零，无条件重调度会形成
       // 发送失败→回滚→重试 的热循环；因此必须叠加 flushDroppedEvent 标记（真实新完成事件）。
-      if (flushDroppedEvent && pendingReportCount.value > 0) {
+      if (flushDroppedEvent) {
         flushDroppedEvent = false
         void flushReports()
       }
@@ -231,6 +307,39 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       const chat = await resolveChatBridge()
 
       const currentId = chat.getState().currentConversationId
+      if (!currentId) return
+
+      // 先领取 agent 消息。若当前工具结果已通过 ToolExecutionService 消费了它，领取为空，
+      // 再继续处理普通后台任务报告。
+      const agentClaim = await claimAgentMessages(currentId)
+      if (agentClaim) {
+        if (chat.getState().isWaitingForResponse || chat.getState().isStreaming) {
+          await chat.cancelStream({ preserveSubAgents: true })
+        }
+
+        if (chat.getState().currentConversationId !== currentId) {
+          await releaseAgentMessages(agentClaim)
+          return
+        }
+        if (chat.getState().isStreaming || chat.getState().isWaitingForResponse) {
+          // 其他发送者抢先启动新流；claim 保留，等该流的动作边界/结束后继续。
+          return
+        }
+
+        try {
+          const sent = await chat.sendMessage(agentClaim.message!, undefined, {
+            source: 'agent_message',
+            agentMessageClaimId: agentClaim.claimId!
+          })
+          if (!sent) {
+            console.warn('[backgroundTaskStore] Agent message action-boundary round did not start; claim remains pending')
+          }
+        } catch (error) {
+          console.warn('[backgroundTaskStore] Failed to send agent message after action; claim remains pending:', error)
+        }
+        return
+      }
+
       const ready = taskList.value.filter(t =>
         !t.reported
         && t.status !== 'running'
@@ -271,6 +380,10 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       }
     } finally {
       flushing = false
+      if (flushDroppedEvent) {
+        flushDroppedEvent = false
+        void flushReports()
+      }
     }
   }
 
@@ -373,6 +486,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     })
 
     void restoreActiveTasks()
+    // Webview 重载期间到达的 agent 消息没有对应前端事件；初始化时主动领取一次。
+    void flushReports()
 
     cleanup = () => {
       unsubscribeMessages()

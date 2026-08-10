@@ -138,8 +138,8 @@ export interface Content {
   /** Token 使用统计（仅 model 消息有值） */
   usageMetadata?: UsageMetadata
   summaryTokenStats?: SummaryTokenStats
-  /** 系统内部消息来源；background_task 用于恢复后台任务卡片并排除新回合语义。 */
-  source?: 'user' | 'background_task'
+  /** 系统内部消息来源；后台任务和 agent 消息都不构成真实用户新回合。 */
+  source?: 'user' | 'background_task' | 'agent_message'
   /** 是否为函数响应消息 */
   isFunctionResponse?: boolean
   /** 是否为上下文总结消息 */
@@ -227,9 +227,9 @@ export interface Message {
    */
   parentId?: string | null
   /**
-   * 消息来源：'user' 为正常用户输入，'background_task' 为后台任务回流
+   * 消息来源：'user' 为正常用户输入，其他值为系统内部回流
    */
-  source?: 'user' | 'background_task'
+  source?: 'user' | 'background_task' | 'agent_message'
   /**
    * 该消息在后端历史中的绝对索引（Content.index）
    *
@@ -490,8 +490,10 @@ export interface ChatRequest {
   modelOverride?: string
   /** 可选：覆盖本次请求的动态上下文策略 */
   dynamicContextStrategyOverride?: 'single' | 'preserve'
-  /** 消息来源；background_task 是系统生成的后台结果回执 */
-  source?: 'user' | 'background_task'
+  /** 消息来源；background_task/agent_message 是系统生成的内部回流 */
+  source?: 'user' | 'background_task' | 'agent_message'
+  /** agent_message 领取凭据；随 chatStream 交由后端落库确认。 */
+  agentMessageClaimId?: string
 }
 
 export interface RetryRequest {

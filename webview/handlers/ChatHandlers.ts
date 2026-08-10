@@ -6,7 +6,11 @@
 
 import { t } from '../../backend/i18n';
 import { setChatInputFocused } from '../../backend/core/chatFocusGuard';
-import { agentMailbox } from '../../backend/tools/subagents';
+import {
+  agentMailbox,
+  formatAgentMessagesForModel,
+  MAIN_SESSION_RUN_ID
+} from '../../backend/core/services/agentMailbox';
 import {
     BranchGraphRepository,
     BranchService,
@@ -186,6 +190,41 @@ export const sendInterruptMessage: MessageHandler = async (data, requestId, ctx)
   } catch (error: any) {
     ctx.sendError(requestId, 'INTERRUPT_MESSAGE_ERROR', error?.message || t('webview.errors.interruptMessageFailed'));
   }
+};
+
+export const claimAgentMessages: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'AGENT_MESSAGE_INVALID_CONVERSATION', 'Invalid conversation ID');
+    return;
+  }
+
+  const metadata = await ctx.conversationManager.getMetadata(conversationId);
+  if (!metadata) {
+    ctx.sendError(requestId, 'AGENT_MESSAGE_CONVERSATION_NOT_FOUND', 'Conversation not found');
+    return;
+  }
+
+  const claim = agentMailbox.claimMainSessionAgentMessages(conversationId);
+  ctx.sendResponse(requestId, claim
+    ? {
+        claimId: claim.claimId,
+        conversationId,
+        message: formatAgentMessagesForModel(claim.messages),
+        messageCount: claim.messages.length
+      }
+    : { claimId: null, conversationId, message: null, messageCount: 0 });
+};
+
+export const releaseAgentMessages: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  const claimId = typeof data?.claimId === 'string' ? data.claimId.trim() : '';
+  if (!conversationId || !claimId) {
+    ctx.sendError(requestId, 'AGENT_MESSAGE_RELEASE_INVALID_ARGS', 'conversationId and claimId are required');
+    return;
+  }
+  const released = agentMailbox.releaseMessageClaim(conversationId, MAIN_SESSION_RUN_ID, claimId);
+  ctx.sendResponse(requestId, { released });
 };
 
 /**
@@ -414,6 +453,8 @@ export function registerChatHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('chatInput.focusState', chatInputFocusState);
   registry.set('chat.awaitConversationIdle', awaitConversationIdle);
   registry.set('chat.sendInterruptMessage', sendInterruptMessage);
+  registry.set('chat.claimAgentMessages', claimAgentMessages);
+  registry.set('chat.releaseAgentMessages', releaseAgentMessages);
   registry.set('chat.rerollStream', rerollStream);
   registry.set('chat.editBranchStream', editBranchStream);
 }

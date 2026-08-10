@@ -647,18 +647,14 @@ export class SummarizeService {
                         };
                     }
 
-                    // 清理 functionResponse.response 中的内部字段
-                    // 与 conversation/helpers.cleanFunctionResponseForAPI 行为对齐：
-                    // 顶层剥离 diffContentId/diffId/diffs/pendingDiffId/agentInbox（A-COMM 信箱消息，
-                    // drain 一次性语义，禁止历史重放），data 层额外剥离 toolId/terminalId/multiRoot/
-                    // command/cwd/shell/channelName/modelId 等运行时元数据（仅供前端 UI 展示）；
-                    // steps / toolsUsed 保留给 AI（告知主模型子代理是否调用过工具）。
-                    // response / data 为数组时没有内部字段语义，原样返回（防止把数组误当对象解构）
+                    // 清理 functionResponse.response 中仅供运行时/UI 使用的内部字段。
+                    // agentInbox 是已发生的模型可见历史，保留以便总结不遗漏代理补充内容；
+                    // 一次性消费由 mailbox drain/claim 保证，不通过删除历史字段实现。
                     if (cleanedPart.functionResponse) {
                         const rawResponse = cleanedPart.functionResponse.response as Record<string, unknown> | undefined;
 
                         if (rawResponse && typeof rawResponse === 'object' && !Array.isArray(rawResponse)) {
-                            const { diffContentId, diffId, diffs, pendingDiffId, agentInbox, ...rest } = rawResponse;
+                            const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = rawResponse;
 
                             if (rest.data && typeof rest.data === 'object' && !Array.isArray(rest.data)) {
                                 const {
@@ -674,9 +670,7 @@ export class SummarizeService {
                                     shell: dataShell,
                                     channelName: dataChannelName,
                                     modelId: dataModelId,
-                                    // steps / toolsUsed 保留给 AI（与 helpers.cleanFunctionResponseForAPI 对齐）：
-                                    // 告知主模型子代理是否调用过工具及调用数量，不参与剥离。
-                                    agentInbox: dataAgentInbox,
+                                    // steps / toolsUsed / agentInbox 保留给总结模型。
                                     ...dataRest
                                 } = rest.data as Record<string, unknown>;
 

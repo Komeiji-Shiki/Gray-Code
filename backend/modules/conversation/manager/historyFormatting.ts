@@ -63,9 +63,8 @@ export function formatHistoryForAPI(
     // 历史思考回合数，默认 -1 表示全部
     const historyThinkingRounds = opts.historyThinkingRounds ?? -1;
     
-    // 找到最后一个非函数响应的 user 消息的索引（H1-1：与 MED-3 同谓词，
-    // 总结消息不构成回合边界——SummarizeService 在历史中间插入总结，
-    // 不得让总结之前的当轮 functionResponse 被判为历史而剥离 agentInbox）
+    // 找到最后一个真实 user 消息的索引（H1-1：与回合识别同谓词；总结与内部回流
+    // 不构成真实用户边界）。该索引仅控制历史思考内容，不改写 agentInbox。
     let lastNonFunctionResponseUserIndex = -1;
     for (let i = history.length - 1; i >= 0; i--) {
         const message = history[i];
@@ -359,10 +358,8 @@ export function formatHistoryForAPI(
             };
         }
         
-        // 清理不应发送给 AI 的内部字段（使用共享函数确保一致性）。
-        // HIGH-1：历史消息剥离 agentInbox（防跨轮重放）；当轮（isHistoryMessage=false）保留——
-        // injectInboxMessages 注入的 agent→main 信箱消息随工具结果落盘后，下一轮请求仍属
-        // 当前回合（lastNonFunctionResponseUserIndex 之后），保留才能让主模型真正看到。
+        // 清理不应发送给 AI 的内部字段。agentInbox 已经作为工具结果历史发给模型后保持不变：
+        // mailbox drain/claim 负责一次性消费，稳定历史字节负责 provider 前缀缓存命中。
         const cleanedResponse = cleanFunctionResponseForAPI(
             part.functionResponse.response as Record<string, unknown>,
             isHistoryMessage
