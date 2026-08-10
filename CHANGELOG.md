@@ -18,6 +18,13 @@
     - backend 模块门面补齐：checkpoint/channel/settings/memory/prompt 补全缺失导出（CheckpointExclusionProfiles/checkpointRefCounts/CheckpointIgnoreResolver/RestoreEngine/Workspace/SnapshotBuilder、proxyFetch、SettingsExporter/DEFAULT_SUMMARIZE_CONFIG/checkpointTypes/modeToolsPolicy 等），notifications 新建 index.ts（此前无门面）。
     - frontend stores/index.ts 补全导出（backgroundTaskStore/reportBuilder/agentRun 纯模块）；MessageItem.vue 模块级视图模式 Map 外移 `messageViewModes.ts`，删除 `MessageItem.vue.d.ts` 旁路声明。
     - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿。
+  - 模块化摊平重构·第二批（backend 五个大文件拆分，纯重构行为零变化；沿用"re-export 壳"模式保证既有 import 不断）：
+    - `ToolExecutionService.ts`（1,690 行）拆分为 `services/tool-execution/` 四文件（execution 693/preflight 184/mailbox 193/result 534），主文件降为 74 行壳，继承链组合（ExecutionCore→ResultCore→PreflightCore→MailboxCore），全部 public 导出与 28 个移动代码块逐字核验一致。
+    - `CheckpointManager.ts`（1,763 行）拆出 `CheckpointBackupExecutor.ts`（522 行，createCheckpoint 锁内主体）与 `CheckpointDeletionService.ts`（469 行），主文件降为 1,020 行壳；删除族 4 方法收敛为单一服务，"强制保留祖先闭包"由 3 处调用+1 处内联复制统一为 computeForcedKeepIds 单点调用；锁获取位置与类型 re-export 兼容层保持不变。
+    - `ChatFlowService.ts`（2,873 行）拆分为 `services/flow/` 五文件（context 657/orchestrator 953/retry 237/reroll 232/editBranch 906），主文件降为 225 行壳；44/44 个移动代码块与原文件逐字比对一致；webview 常量 import（层反转）按计划保留待第五批处理。
+    - `ConversationManager.ts`（3,763 行）拆分为 `conversation/manager/` 九文件（1,885 行：types/nodeId/metadataUtils/historyFormatting/stats/utils/query/toolCalls/branchRewrite），主文件降为 2,075 行；全部 public 方法签名（含 GetHistoryOptions 等）原样保留，迁出代码与 git HEAD 字节级比对无内容差异。
+    - webview `SettingsHandlers.ts`（799 行）拆出 `MemoryHandlers.ts`（309 行，记忆子域+作用域合并）与 `SettingsTransferHandlers.ts`（161 行，导入/导出），主文件降为 370 行壳；`BranchHandlers.ts`（702 行）写工具判据辅助（WRITE_TOOL_NAMES/collectToolNamesFromParts/collectPathToolNames/enrichGraphWorkspaceInfo）外移 `branchWritePolicy.ts`（139 行），主文件降为 569 行；33 个消息 key 逐一对应无改无删。
+    - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿（全量首跑曾出现 1 例 usageCache 偶发失败，单独与重跑均全绿，确认为并行 CPU 抢占竞态）。
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。

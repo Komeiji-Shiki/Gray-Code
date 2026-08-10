@@ -8,6 +8,8 @@ import { registerConversationHandlers } from './ConversationHandlers';
 import { registerBranchHandlers } from './BranchHandlers';
 import { registerConfigHandlers } from './ConfigHandlers';
 import { registerSettingsHandlers } from './SettingsHandlers';
+import { registerMemoryHandlers } from './MemoryHandlers';
+import { registerSettingsTransferHandlers } from './SettingsTransferHandlers';
 import { registerCheckpointHandlers } from './CheckpointHandlers';
 import { registerToolHandlers } from './ToolHandlers';
 import { registerMcpHandlers } from './McpHandlers';
@@ -65,6 +67,8 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   registerBranchHandlers(registry);
   registerConfigHandlers(registry);
   registerSettingsHandlers(registry);
+  registerMemoryHandlers(registry);
+  registerSettingsTransferHandlers(registry);
   registerCheckpointHandlers(registry);
   registerToolHandlers(registry);
   registerMcpHandlers(registry);
