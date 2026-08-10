@@ -29,6 +29,18 @@
   - **移除 fast-tavern-main 子项目**：仓库内附带的 `fast-tavern-main/`（npm/py 双实现参考子项目）与主项目功能无实际关联，整体移除（81 个文件）；同步清理 `.vscodeignore` 条目、README/README_EN 目录结构、KNOWN_ISSUES 相关条目，`promptTypes.ts` 注释中的「fast-tavern 风格」表述改为「SillyTavern 风格」。
   - **版本号升至 1.7.10dev**（根与 electron-app package+lock 同步）。
 
+### Added（1.7.10dev 补记）
+  - **远程控制端 UI 风格对齐桌面端（VS Code Dark+ 设计令牌）**：移动端控制页整体重构为与桌面端一致的视觉体系——`electron-app/renderer/theme.css` 同款 CSS 变量（深色默认 + `prefers-color-scheme: light` 浅色跟随系统），扁平化黑白灰配色、2-4px 圆角、8pt 间距、桌面端同款控件（顶栏 tabs 栏、底部页签蓝顶边、widget 弹层、list 选中态）；消息列表由聊天气泡改为桌面端 MessageList 同款扁平行式（角色标签 + 用户消息淡蓝底 + 分隔线）。
+  - **会话侧栏抽屉（桌面端侧栏布局的移动端呈现）**：顶栏汉堡按钮滑出左侧会话列表，支持新建/切换/重命名（长按）/删除会话（`conversation.deleteConversation` 新端点）；会话列表读取口径修复后与桌面端历史一致（见 Fixed）。
+  - **消息操作菜单**：长按消息弹出操作菜单——用户消息可**编辑并重新生成**（`chat.editBranchStream`，创建编辑分支候选、不覆盖原消息）、助手消息可**重新生成**（`chat.rerollStream`，分支图保留旧回答）/重试、任意消息可删除（`deleteSingleMessage`）。
+  - **工作区管理补齐**：文件页与工作区弹层新增「新增工作区」（`workspace.openFolder` 透传，桌面端弹出文件夹选择框，选中自动收藏并激活）、收藏工作区可「移除收藏」（`workspace.removeSaved`）。
+  - **发送键图标修复**：发送按钮此前初始为空（仅流式状态切换时才写入文字，首次加载无任何图标/文字）；现内置纸飞机/停止 SVG 图标并在启动时立即渲染，与桌面端 SendButton（codicon-send）语义对齐。
+  - **新增 REST 端点**（沿用既有 Host/Origin/JSON-only 安全基线，参数形状白名单）：`POST /api/workspace-add|workspace-remove|conversation-delete|edit-message|reroll`。
+
+### Fixed（1.7.10dev 补记）
+  - **远程控制会话列表恒为空（移动端「看不到任何会话」）**：`handleListConversations` 读取 `meta.messageCount` 顶层字段——真实 `meta.json`（HIS-11 起）的 messageCount/preview 位于 `custom` 段，顶层恒为 undefined，再经 `messageCount > 0` 过滤后整个列表为空。已按桌面端 `getConversationMetadataBatch` 同口径读取 `custom.messageCount/custom.preview`，并取消按计数过滤（与桌面端历史列表一致）。
+  - **远程控制工作区根目录无法浏览（文件树打不开）**：移动端文件页以空路径（`path=`）表示工作区根目录，但服务器白名单 `isSafeWorkspacePath('')` 拒绝空字符串（400 Invalid path），根目录列举整体不可用。新增 `isSafeWorkspaceDirPath`（仅目录列举允许空路径，读写仍拒绝），与 webview `FileHandlers.listWorkspaceDirectory` 的「空路径=根目录」语义对齐。
+
 ## [1.7.9dev] - 2026-08-10
 
 ### Added

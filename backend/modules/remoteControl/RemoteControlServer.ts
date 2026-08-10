@@ -12,7 +12,10 @@
  * - 移动端可操作真实工作区：浏览目录、读写文本文件、在桌面端打开文件（带行号）、
  *   切换工作区（文件操作全部经 webview FileHandlers 的既有工作区包含校验）；
  * - 移动端可参与工具审批流（toolConfirmation）、重试（retryStream）、删除消息、
- *   切换渠道模型（models.setActiveModel），均复用桌面端同一消息管道与校验；
+ *   切换渠道模型（models.setActiveModel）、编辑用户消息重新生成（editBranchStream）、
+ *   重新生成助手消息（rerollStream）、删除会话（conversation.deleteConversation）、
+ *   新增/移除工作区（workspace.openFolder / workspace.removeSaved），
+ *   均复用桌面端同一消息管道与校验；
  * - 桌面端活动编辑器/工作区变化经 SSE workspace 事件实时镜像到手机；
  * - 设置页 remoteControl.enabled=false 或端口变更时，由 BackendHost 调用
  *   syncFromSettings() 启停/重启服务器；关闭时服务器完全不存在（零资源占用）。
@@ -80,6 +83,18 @@ function isSafeModelId(id: unknown): id is string {
   return typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\u0000-\u001f\u007f]/.test(id);
 }
 
+/** 消息/分支节点 ID 白名单（editBranchStream 的 userNodeId/messageId、rerollStream 的 assistantNodeId） */
+function isSafeNodeId(id: unknown): id is string {
+  return typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\u0000-\u001f\u007f]/.test(id);
+}
+
+/** 收藏工作区 fsPath 形状白名单（workspace.removeSaved 用）：本地绝对路径文本，禁控制字符 */
+function isSafeFsPath(path: unknown): path is string {
+  if (typeof path !== 'string') return false;
+  if (path.length === 0 || path.length > 4096) return false;
+  return !/[\u0000-\u001f\u007f]/.test(path);
+}
+
 /** 工作区相对路径：非空字符串、长度受限、不含控制字符、不以绝对路径开头、无 `..` / 尾点段 */
 function isSafeWorkspacePath(path: unknown): path is string {
   if (typeof path !== 'string') return false;
@@ -93,6 +108,13 @@ function isSafeWorkspacePath(path: unknown): path is string {
     if (seg === '..' || /^\.+$/.test(seg) || /[. ]$/.test(seg)) return false;
   }
   return true;
+}
+
+/** 目录列举路径：与 isSafeWorkspacePath 相同，但允许空字符串（空 = 工作区根目录，
+ * 与 webview FileHandlers.listWorkspaceDirectory 的根目录语义一致） */
+function isSafeWorkspaceDirPath(path: unknown): path is string {
+  if (path === '') return true;
+  return isSafeWorkspacePath(path);
 }
 
 /** 工具确认响应白名单：{id, name, confirmed} 各字段形状受限 */
@@ -150,6 +172,7 @@ interface ConversationMeta {
   updatedAt?: number;
   messageCount?: number;
   preview?: string;
+  custom?: Record<string, unknown>;
 }
 
 /** 远程控制服务器所需的宿主能力（由 BackendHost 注入，结构化类型避免循环依赖） */
@@ -702,6 +725,26 @@ export class RemoteControlServer {
       await this.handleRename(res, await this.readBody(req));
       return;
     }
+    if (req.method === 'POST' && pathname === '/api/workspace-add') {
+      await this.handleWorkspaceAdd(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/workspace-remove') {
+      await this.handleWorkspaceRemove(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/conversation-delete') {
+      await this.handleConversationDelete(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/edit-message') {
+      await this.handleEditMessage(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/reroll') {
+      await this.handleReroll(res, await this.readBody(req));
+      return;
+    }
 
     this.sendJson(res, 404, { ok: false, error: 'Not found' });
   }
@@ -800,15 +843,21 @@ export class RemoteControlServer {
       const metas = await Promise.all(
         ids.map((id) => this.host.conversationManager.getMetadata(id).catch(() => null))
       );
+      // 注意：meta.json 顶层没有 messageCount/preview 字段，二者位于 custom 段
+      // （HIS-11 起桌面端即按 custom.messageCount/custom.preview 汇总，远端必须同口径，
+      // 否则真实数据下 messageCount 恒为 0 导致会话列表被整体过滤为空）。
       const conversations = ids
-        .map((id, i) => ({
-          id,
-          title: metas[i]?.title || '',
-          updatedAt: metas[i]?.updatedAt || 0,
-          messageCount: metas[i]?.messageCount || 0,
-          preview: metas[i]?.preview || ''
-        }))
-        .filter((c) => c.messageCount > 0)
+        .map((id, i) => {
+          const meta = metas[i];
+          const custom = (meta?.custom ?? {}) as Record<string, unknown>;
+          return {
+            id,
+            title: typeof meta?.title === 'string' ? meta.title : '',
+            updatedAt: typeof meta?.updatedAt === 'number' ? meta.updatedAt : 0,
+            messageCount: typeof custom.messageCount === 'number' ? custom.messageCount : 0,
+            preview: typeof custom.preview === 'string' ? custom.preview : ''
+          };
+        })
         .sort((a, b) => b.updatedAt - a.updatedAt);
       this.sendJson(res, 200, { ok: true, conversations });
     } catch (err: any) {
@@ -915,6 +964,144 @@ export class RemoteControlServer {
     }
   }
 
+  /**
+   * 新增工作区：透传 workspace.openFolder（不传 fsPath），桌面端弹出文件夹选择
+   * 对话框；选中的文件夹自动加入收藏并设为活动工作区（与桌面端「打开工作区」同路径）。
+   * 返回与桌面端 handler 一致的结构（success/canceled/activeWorkspaceUri/workspaces/saved）。
+   */
+  private async handleWorkspaceAdd(res: http.ServerResponse, body: any): Promise<void> {
+    try {
+      const result = await this.routeMessage('workspace.openFolder', {});
+      if (result?.canceled === true) {
+        this.sendJson(res, 200, { ok: true, canceled: true });
+        return;
+      }
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to open workspace folder' });
+        return;
+      }
+      this.sendJson(res, 200, {
+        ok: true,
+        activeWorkspaceUri: result?.activeWorkspaceUri || null,
+        workspaces: Array.isArray(result?.workspaces) ? result.workspaces : [],
+        saved: Array.isArray(result?.saved) ? result.saved : []
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to open workspace folder' });
+    }
+  }
+
+  /** 从收藏列表移除工作区（不影响已打开的工作区；透传 workspace.removeSaved） */
+  private async handleWorkspaceRemove(res: http.ServerResponse, body: any): Promise<void> {
+    const fsPath = typeof body?.fsPath === 'string' ? body.fsPath : '';
+    if (!isSafeFsPath(fsPath)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid fsPath' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('workspace.removeSaved', { fsPath });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to remove saved workspace' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, saved: Array.isArray(result?.saved) ? result.saved : [] });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to remove saved workspace' });
+    }
+  }
+
+  /** 删除会话（透传 conversation.deleteConversation；删除激活会话后清空移动端跟踪） */
+  private async handleConversationDelete(res: http.ServerResponse, body: any): Promise<void> {
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    if (!isSafeConversationId(conversationId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('conversation.deleteConversation', { conversationId });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to delete conversation' });
+        return;
+      }
+      if (this.activeConversationId === conversationId) {
+        this.activeConversationId = null;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete conversation' });
+    }
+  }
+
+  /** 编辑用户消息并重新生成（透传 chat.editBranchStream，创建编辑分支候选，不覆盖原消息） */
+  private async handleEditMessage(res: http.ServerResponse, body: any): Promise<void> {
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    const messageId = typeof body?.messageId === 'string' ? body.messageId : '';
+    const newText = typeof body?.newText === 'string' ? body.newText.trim() : '';
+    if (!isSafeConversationId(conversationId) || !isSafeNodeId(messageId) || !newText) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId, messageId or newText' });
+      return;
+    }
+    if (newText.length > MAX_MESSAGE_LENGTH) {
+      this.sendJson(res, 400, { ok: false, error: `Message too long (max ${MAX_MESSAGE_LENGTH} chars)` });
+      return;
+    }
+    const configId = await this.resolveConfigId();
+    if (!configId) {
+      this.sendJson(res, 400, {
+        ok: false,
+        error: 'No channel enabled. Configure a channel with a valid API key in settings first.'
+      });
+      return;
+    }
+    this.activeConversationId = conversationId;
+    try {
+      await this.routeMessage('chat.editBranchStream', {
+        conversationId,
+        userNodeId: messageId,
+        messageId,
+        newText,
+        configId,
+        mode: 'branch',
+        streamId: `remote_${randomUUID()}`
+      });
+      this.sendJson(res, 200, { ok: true, started: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to edit message' });
+    }
+  }
+
+  /** 重新生成指定助手消息（透传 chat.rerollStream，分支图保留旧回答可切回） */
+  private async handleReroll(res: http.ServerResponse, body: any): Promise<void> {
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    const assistantNodeId = typeof body?.assistantNodeId === 'string' ? body.assistantNodeId : '';
+    if (!isSafeConversationId(conversationId) || !isSafeNodeId(assistantNodeId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId or assistantNodeId' });
+      return;
+    }
+    const configId = await this.resolveConfigId();
+    if (!configId) {
+      this.sendJson(res, 400, {
+        ok: false,
+        error: 'No channel enabled. Configure a channel with a valid API key in settings first.'
+      });
+      return;
+    }
+    try {
+      await this.routeMessage('chat.rerollStream', {
+        conversationId,
+        assistantNodeId,
+        configId,
+        streamId: `remote_${randomUUID()}`
+      });
+      this.sendJson(res, 200, { ok: true, started: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to reroll message' });
+    }
+  }
+
   // ==========================================================================
   // 工作区：状态 / 列表 / 切换 / 文件浏览 / 读写 / 桌面端打开
   // 文件操作全部经 MessageRouter 透传 webview FileHandlers（工作区包含校验、
@@ -957,7 +1144,8 @@ export class RemoteControlServer {
   private async handleListFiles(res: http.ServerResponse, rawPath: string): Promise<void> {
     // searchParams.get 已解码一次；不得再次 decode（否则文件名含 % 字面量的路径错乱）
     const path = rawPath;
-    if (!isSafeWorkspacePath(path)) {
+    // 空字符串 = 工作区根目录（FileHandlers.listWorkspaceDirectory 的根语义）
+    if (!isSafeWorkspaceDirPath(path)) {
       this.sendJson(res, 400, { ok: false, error: 'Invalid path' });
       return;
     }

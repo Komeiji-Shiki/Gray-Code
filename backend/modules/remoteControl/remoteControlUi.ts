@@ -9,11 +9,12 @@
  *   关闭时服务器不存在，UI 代码完全不进入运行态（零资源占用）；
  * - 语言：随桌面端 ui.language（zh-CN/en/ja），默认 zh-CN。
  *
- * 页面结构（底部三页签）：
- * - 会话：查看/切换/新建/重命名会话、发送/停止/重试、删除消息（长按）、
- *   流式输出（SSE）、工具确认（批准/拒绝）、思考/工具调用展示；
+ * 页面结构（底部三页签 + 左侧会话抽屉，风格对齐桌面端 VS Code Dark+）：
+ * - 会话：左侧抽屉查看/切换/新建/重命名/删除会话，长按消息可编辑（分支重生成）、
+ *   重新生成、重试、删除；发送/停止、流式输出（SSE）、工具确认（批准/拒绝）；
  * - 文件：工作区文件树浏览、文本文件查看与编辑（保存回真实工作区）、
- *   在桌面端打开文件（带行号跳转）、切换工作区；
+ *   在桌面端打开文件（带行号跳转）、切换工作区、新增工作区（桌面端弹选择框）、
+ *   移除收藏工作区；
  * - 设置：连接状态、局域网访问地址、渠道与模型切换、安全说明。
  *
  * 页面通过以下 API 与主进程通信（同一 origin，无 CORS）：
@@ -23,6 +24,8 @@
  *   GET  /api/workspace        当前工作区状态
  *   GET  /api/workspaces       工作区列表（当前打开 + 收藏）
  *   POST /api/workspace-switch 切换工作区
+ *   POST /api/workspace-add    新增工作区（桌面端文件夹选择框）
+ *   POST /api/workspace-remove 移除收藏工作区
  *   GET  /api/files            工作区目录列表
  *   GET  /api/file             读取工作区文本文件
  *   POST /api/file             写入工作区文本文件（影响真实工作区）
@@ -33,7 +36,10 @@
  *   POST /api/send             发送消息（chatStream）
  *   POST /api/cancel           停止生成
  *   POST /api/retry            重试（retryStream）
+ *   POST /api/edit-message     编辑用户消息并重新生成（chat.editBranchStream）
+ *   POST /api/reroll           重新生成助手消息（chat.rerollStream）
  *   POST /api/delete-message   删除消息
+ *   POST /api/conversation-delete 删除会话
  *   POST /api/tool-confirm     工具确认（批准/拒绝）
  *   POST /api/rename           重命名会话
  *   GET  /api/stream           SSE 事件流（hello/message/global/workspace/bye）
@@ -126,6 +132,22 @@ interface UiText {
   securityText: string;
   activeFile: string;
   streamLoading: string;
+  userLabel: string;
+  assistantLabel: string;
+  editMessage: string;
+  editPlaceholder: string;
+  editFailed: string;
+  editBranching: string;
+  reroll: string;
+  rerollFailed: string;
+  deleteConversation: string;
+  deleteConversationConfirm: string;
+  deleteConversationDone: string;
+  deleteConversationFailed: string;
+  addWorkspace: string;
+  removeWorkspace: string;
+  workspaceRemoved: string;
+  openFolderDialog: string;
 }
 
 export const UI_TEXTS: Record<UiLang, UiText> = {
@@ -210,7 +232,23 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     securityTitle: '安全说明',
     securityText: '远程控制仅在局域网内可用，无账号密码保护。请勿在不可信网络中开启，用毕请关闭。',
     activeFile: '正在编辑',
-    streamLoading: '正在加载历史消息…'
+    streamLoading: '正在加载历史消息…',
+    userLabel: '我',
+    assistantLabel: 'AI',
+    editMessage: '编辑消息',
+    editPlaceholder: '修改内容后重新生成…',
+    editFailed: '编辑失败',
+    editBranching: '正在重新生成…',
+    reroll: '重新生成',
+    rerollFailed: '重新生成失败',
+    deleteConversation: '删除会话',
+    deleteConversationConfirm: '确定删除该会话？此操作不可恢复。',
+    deleteConversationDone: '会话已删除',
+    deleteConversationFailed: '删除会话失败',
+    addWorkspace: '新增工作区',
+    removeWorkspace: '移除收藏',
+    workspaceRemoved: '已移除收藏',
+    openFolderDialog: '已弹出文件夹选择框，请在桌面端选择'
   },
   en: {
     appTitle: 'GrayCode Remote',
@@ -294,7 +332,23 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     securityTitle: 'Security note',
     securityText: 'Remote control works on your LAN only and has no password protection. Do not enable it on untrusted networks; turn it off when done.',
     activeFile: 'Editing',
-    streamLoading: 'Loading history…'
+    streamLoading: 'Loading history…',
+    userLabel: 'You',
+    assistantLabel: 'AI',
+    editMessage: 'Edit message',
+    editPlaceholder: 'Edit and regenerate…',
+    editFailed: 'Failed to edit',
+    editBranching: 'Regenerating…',
+    reroll: 'Regenerate',
+    rerollFailed: 'Failed to regenerate',
+    deleteConversation: 'Delete conversation',
+    deleteConversationConfirm: 'Delete this conversation? This cannot be undone.',
+    deleteConversationDone: 'Conversation deleted',
+    deleteConversationFailed: 'Failed to delete conversation',
+    addWorkspace: 'Add workspace',
+    removeWorkspace: 'Remove from saved',
+    workspaceRemoved: 'Removed from saved',
+    openFolderDialog: 'Folder picker opened on desktop'
   },
   ja: {
     appTitle: 'GrayCode リモート',
@@ -378,7 +432,23 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     securityTitle: 'セキュリティ注意',
     securityText: 'リモートコントロールはLAN内のみで動作し、パスワード保護はありません。信頼できないネットワークでは有効にせず、使用後はオフにしてください。',
     activeFile: '編集中',
-    streamLoading: '履歴を読み込み中…'
+    streamLoading: '履歴を読み込み中…',
+    userLabel: '私',
+    assistantLabel: 'AI',
+    editMessage: 'メッセージを編集',
+    editPlaceholder: '内容を編集して再生成…',
+    editFailed: '編集に失敗',
+    editBranching: '再生成中…',
+    reroll: '再生成',
+    rerollFailed: '再生成に失敗',
+    deleteConversation: '会話を削除',
+    deleteConversationConfirm: 'この会話を削除しますか？この操作は元に戻せません。',
+    deleteConversationDone: '会話を削除しました',
+    deleteConversationFailed: '会話の削除に失敗',
+    addWorkspace: 'ワークスペースを追加',
+    removeWorkspace: '保存済みから削除',
+    workspaceRemoved: '保存済みから削除しました',
+    openFolderDialog: 'デスクトップでフォルダ選択ダイアログを開きました'
   }
 };
 
@@ -404,185 +474,334 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#1e1e1e">
 <title>GrayCode Remote</title>
-<style>
+<style>/* ============================================================
+   GrayCode Remote — 与桌面端一致的视觉风格
+   设计令牌与 electron-app/renderer/theme.css（VS Code Dark+）
+   保持一致；浅色主题跟随系统 prefers-color-scheme
+   （与桌面端 ui.theme=auto 同源）。扁平化、极简、黑白灰 + 蓝色点缀。
+   ============================================================ */
 :root {
-  --bg: #1e1e1e;
-  --bg-panel: #252526;
-  --bg-elevated: #2d2d2f;
-  --border: #3c3c3c;
-  --text: #d4d4d4;
-  --text-dim: #9d9d9d;
-  --text-faint: #6b6b6b;
-  --accent: #4da3ff;
-  --accent-dim: #1f4e79;
-  --user-bubble: #2b4a68;
-  --assistant-bubble: #2d2d2f;
-  --danger: #f14c4c;
-  --ok: #4ec9b0;
-  --warn: #d7ba7d;
-  --code-bg: #1b1b1c;
-  --radius: 10px;
-  --header-h: 52px;
-  --tabbar-h: 54px;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --vscode-font-size: 13px;
+  --vscode-foreground: #cccccc;
+  --vscode-disabledForeground: rgba(204, 204, 204, 0.5);
+  --vscode-errorForeground: #f48771;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-editor-foreground: #d4d4d4;
+  --vscode-editor-selectionBackground: #264f78;
+  --vscode-editor-inactiveSelectionBackground: #3a3d41;
+  --vscode-editor-findMatchHighlightBackground: rgba(234, 92, 0, 0.33);
+  --vscode-focusBorder: #007fd4;
+  --vscode-scrollbarSlider-background: rgba(121, 121, 121, 0.4);
+  --vscode-scrollbarSlider-hoverBackground: rgba(100, 100, 100, 0.7);
+  --vscode-scrollbarSlider-activeBackground: rgba(191, 191, 191, 0.4);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-border: rgba(255, 255, 255, 0.07);
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #ffffff;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-border: #3c3c3c;
+  --vscode-input-placeholderForeground: #a6a6a6;
+  --vscode-inputValidation-errorBackground: #5a1d1d;
+  --vscode-inputValidation-errorForeground: #f48771;
+  --vscode-inputValidation-errorBorder: #be1100;
+  --vscode-inputValidation-warningBackground: #352a05;
+  --vscode-inputValidation-warningForeground: #f9c74f;
+  --vscode-inputValidation-warningBorder: #b89500;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-dropdown-foreground: #f0f0f0;
+  --vscode-dropdown-border: #3c3c3c;
+  --vscode-checkbox-background: #3c3c3c;
+  --vscode-checkbox-border: #3c3c3c;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-warningForeground: #cca700;
+  --vscode-tab-activeBackground: #1e1e1e;
+  --vscode-tab-activeForeground: #ffffff;
+  --vscode-tab-inactiveForeground: #969696;
+  --vscode-tab-hoverBackground: #2d2d2d;
+  --vscode-tab-activeBorderTop: #0078d4;
+  --vscode-editorGroupHeader-tabsBackground: #252526;
+  --vscode-sideBar-background: #252526;
+  --vscode-sideBarSectionHeader-background: #303031;
+  --vscode-editorWidget-background: #252526;
+  --vscode-editorWidget-border: #454545;
+  --vscode-editorHoverWidget-background: #252526;
+  --vscode-editorHoverWidget-border: #454545;
+  --vscode-editorHoverWidget-foreground: #cccccc;
+  --vscode-panel-border: #454545;
+  --vscode-widget-border: #454545;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-toolbar-hoverBackground: rgba(90, 93, 94, 0.31);
+  --vscode-toolbar-activeBackground: rgba(99, 102, 103, 0.31);
+  --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
+  --vscode-textBlockQuote-border: rgba(0, 122, 204, 0.5);
+  --vscode-textCodeBlock-background: rgba(10, 10, 10, 0.4);
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-textLink-activeForeground: #3794ff;
+  --vscode-keybindingLabel-background: rgba(128, 128, 128, 0.17);
+  --vscode-charts-red: #f14c4c;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-blue: #3794ff;
+  --vscode-charts-purple: #b180d7;
+  --vscode-charts-orange: #d18616;
+  --vscode-editorError-foreground: #f14c4c;
+  --vscode-editorWarning-foreground: #cca700;
+  --vscode-editorInfo-foreground: #3794ff;
+  --vscode-editorHint-foreground: rgba(238, 238, 238, 0.7);
+  --vscode-notificationsInfoIcon-foreground: #3794ff;
+  --vscode-notificationsWarningIcon-foreground: #cca700;
+  --vscode-terminal-background: #1e1e1e;
+  --vscode-terminal-foreground: #cccccc;
+  --vscode-terminal-ansiGreen: #0dbc79;
+  --vscode-terminal-ansiRed: #cd3131;
+  --vscode-editorLineNumber-foreground: #858585;
+  --vscode-textPreformat-foreground: #d7ba7d;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --transition-fast: 0.1s ease;
+  --transition-normal: 0.15s ease;
   --footer-safe: env(safe-area-inset-bottom, 0px);
+  --header-h: 46px;
+  --tabbar-h: 54px;
 }
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --vscode-foreground: #383a42;
+    --vscode-disabledForeground: rgba(56, 58, 66, 0.45);
+    --vscode-errorForeground: #d1242f;
+    --vscode-descriptionForeground: #6e6e6e;
+    --vscode-icon-foreground: #424242;
+    --vscode-editor-background: #ffffff;
+    --vscode-editor-foreground: #383a42;
+    --vscode-editor-selectionBackground: #add6ff;
+    --vscode-editor-inactiveSelectionBackground: #e5ebf1;
+    --vscode-editor-findMatchHighlightBackground: rgba(234, 92, 0, 0.2);
+    --vscode-focusBorder: #0090f1;
+    --vscode-scrollbarSlider-background: rgba(100, 100, 100, 0.4);
+    --vscode-scrollbarSlider-hoverBackground: rgba(100, 100, 100, 0.7);
+    --vscode-scrollbarSlider-activeBackground: rgba(0, 0, 0, 0.25);
+    --vscode-button-background: #0e639c;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-hoverBackground: #1177bb;
+    --vscode-button-border: rgba(0, 0, 0, 0.1);
+    --vscode-button-secondaryBackground: #e4e4e4;
+    --vscode-button-secondaryForeground: #383a42;
+    --vscode-button-secondaryHoverBackground: #d6d6d6;
+    --vscode-input-background: #ffffff;
+    --vscode-input-foreground: #383a42;
+    --vscode-input-border: #cecece;
+    --vscode-input-placeholderForeground: #6e6e6e;
+    --vscode-inputValidation-errorBackground: #f8d7da;
+    --vscode-inputValidation-errorForeground: #d1242f;
+    --vscode-inputValidation-errorBorder: #d1242f;
+    --vscode-inputValidation-warningBackground: #fff3cd;
+    --vscode-inputValidation-warningForeground: #9a6700;
+    --vscode-inputValidation-warningBorder: #b89500;
+    --vscode-dropdown-background: #ffffff;
+    --vscode-dropdown-foreground: #383a42;
+    --vscode-dropdown-border: #cecece;
+    --vscode-checkbox-background: #ffffff;
+    --vscode-checkbox-border: #a0a0a0;
+    --vscode-checkbox-foreground: #383a42;
+    --vscode-list-activeSelectionBackground: #0060c0;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-list-hoverBackground: #e8e8e8;
+    --vscode-list-warningForeground: #9a6700;
+    --vscode-tab-activeBackground: #ffffff;
+    --vscode-tab-activeForeground: #333333;
+    --vscode-tab-inactiveForeground: #666666;
+    --vscode-tab-hoverBackground: #f2f2f2;
+    --vscode-tab-activeBorderTop: #0066bf;
+    --vscode-editorGroupHeader-tabsBackground: #f3f3f3;
+    --vscode-sideBar-background: #f3f3f3;
+    --vscode-sideBarSectionHeader-background: #ebebeb;
+    --vscode-editorWidget-background: #f3f3f3;
+    --vscode-editorWidget-border: #c8c8c8;
+    --vscode-editorHoverWidget-background: #f3f3f3;
+    --vscode-editorHoverWidget-border: #c8c8c8;
+    --vscode-editorHoverWidget-foreground: #383a42;
+    --vscode-panel-border: #e0e0e0;
+    --vscode-widget-border: #c8c8c8;
+    --vscode-widget-shadow: rgba(0, 0, 0, 0.18);
+    --vscode-badge-background: #c4c4c4;
+    --vscode-badge-foreground: #333333;
+    --vscode-progressBar-background: #0e70c0;
+    --vscode-toolbar-hoverBackground: rgba(0, 0, 0, 0.08);
+    --vscode-toolbar-activeBackground: rgba(0, 0, 0, 0.12);
+    --vscode-textBlockQuote-background: rgba(0, 0, 0, 0.04);
+    --vscode-textBlockQuote-border: rgba(0, 122, 204, 0.4);
+    --vscode-textCodeBlock-background: #f0f0f0;
+    --vscode-textLink-foreground: #0969da;
+    --vscode-textLink-activeForeground: #0969da;
+    --vscode-keybindingLabel-background: rgba(0, 0, 0, 0.06);
+    --vscode-charts-red: #d1242f;
+    --vscode-charts-green: #388a34;
+    --vscode-charts-yellow: #9a6700;
+    --vscode-charts-blue: #0066bf;
+    --vscode-editorError-foreground: #d1242f;
+    --vscode-editorWarning-foreground: #9a6700;
+    --vscode-editorInfo-foreground: #0066bf;
+    --vscode-notificationsInfoIcon-foreground: #0066bf;
+    --vscode-notificationsWarningIcon-foreground: #9a6700;
+    --vscode-terminal-background: #ffffff;
+    --vscode-terminal-foreground: #333333;
+    --vscode-terminal-ansiGreen: #1a7f37;
+    --vscode-terminal-ansiRed: #d1242f;
+    --vscode-editorLineNumber-foreground: #9d9d9f;
+    --vscode-textPreformat-foreground: #a626a4;
+  }
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; }
 body {
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font: var(--vscode-font-size)/1.5 var(--vscode-font-family);
   display: flex;
   flex-direction: column;
   overscroll-behavior: none;
 }
+button { font-family: inherit; font-size: inherit; color: inherit; }
+textarea, input { font-family: inherit; font-size: inherit; color: inherit; }
+::selection { background: var(--vscode-editor-selectionBackground); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: var(--radius-sm); }
+
 #app { display: flex; flex-direction: column; height: 100dvh; }
 
+/* ---------- 顶栏：桌面端 tabs 栏同款 ---------- */
 header {
   height: var(--header-h);
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--vscode-editorGroupHeader-tabsBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
 header .title-wrap { flex: 1; min-width: 0; }
 header h1 {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--vscode-tab-activeForeground);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-header .sub {
-  font-size: 11px;
-  color: var(--text-faint);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-header .sub .ws {
-  max-width: 45vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: inline-block;
-}
-header .sub .ws::before { content: "·"; margin-right: 6px; color: var(--text-faint); }
-.dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--text-faint);
-  flex: none;
-}
-.dot.connected { background: var(--ok); }
-.dot.streaming { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
-.dot.connecting { background: var(--warn); }
-.dot.error { background: var(--danger); }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+header .sub { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 1px; }
+header .ws { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45vw; }
 
 .icon-btn {
   flex: none;
-  width: 38px; height: 38px;
+  width: 32px; height: 32px;
   display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 8px;
-  background: transparent; color: var(--text-dim);
-  font-size: 18px;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--vscode-foreground);
+  font-size: 16px;
   cursor: pointer;
+  padding: 0;
 }
-.icon-btn:active { background: var(--bg-elevated); color: var(--text); }
-.icon-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.icon-btn:active { background: var(--vscode-toolbar-activeBackground); }
+.icon-btn svg { width: 18px; height: 18px; fill: currentColor; }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-descriptionForeground); flex: none; }
+.dot.connected { background: var(--vscode-terminal-ansiGreen); }
+.dot.streaming { background: var(--vscode-charts-blue); animation: pulse 1.1s ease-in-out infinite; }
+.dot.connecting { background: var(--vscode-charts-yellow); }
+.dot.error { background: var(--vscode-charts-red); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
 #views { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view[hidden] { display: none; }
 
-/* ---------- chat ---------- */
+/* ---------- 消息列表：桌面端 MessageList 同款（扁平行式，无聊天气泡） ---------- */
 #messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 10px 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  padding-bottom: 4px;
 }
-#messages::-webkit-scrollbar { width: 4px; }
-#messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.msg { display: flex; flex-direction: column; max-width: 92%; }
-.msg.user { align-self: flex-end; align-items: flex-end; }
-.msg.assistant, .msg.system { align-self: flex-start; align-items: flex-start; }
-.msg.system { align-self: center; max-width: 96%; }
-
-.msg .meta {
-  font-size: 11px;
-  color: var(--text-faint);
-  margin: 0 4px 4px;
+.msg {
   display: flex;
+  flex-direction: column;
   gap: 6px;
-  align-items: center;
-  max-width: 100%;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
-.msg .meta .model { color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg:last-child { border-bottom: none; }
+.msg.user { background: color-mix(in srgb, var(--vscode-textLink-foreground) 6%, transparent); }
+.msg .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; max-width: 100%; }
+.msg .meta .role-label { font-size: 12px; font-weight: 600; color: var(--vscode-foreground); flex: none; }
+.msg.assistant .meta .role-label, .msg.system .meta .role-label { color: var(--vscode-descriptionForeground); }
+.msg .meta .model { color: var(--vscode-textLink-foreground); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-content { font-size: 13px; line-height: 1.6; color: var(--vscode-foreground); word-break: break-word; overflow-wrap: anywhere; }
+.msg.system .msg-content { color: var(--vscode-descriptionForeground); font-size: 12.5px; }
+.msg.error .msg-content { color: var(--vscode-charts-red); }
 
-.bubble {
-  border-radius: var(--radius);
-  padding: 9px 12px;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  min-width: 40px;
-  max-width: 100%;
-}
-.msg.user .bubble { background: var(--user-bubble); border-bottom-right-radius: 3px; }
-.msg.assistant .bubble { background: var(--assistant-bubble); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
-.msg.system .bubble { background: var(--bg-panel); border: 1px dashed var(--border); color: var(--text-dim); font-size: 12.5px; }
-.msg.error .bubble { border-color: var(--danger); color: var(--danger); }
-
-.bubble .md h1, .bubble .md h2, .bubble .md h3, .bubble .md h4 { margin: 10px 0 6px; line-height: 1.35; }
-.bubble .md h1 { font-size: 1.25em; }
-.bubble .md h2 { font-size: 1.15em; }
-.bubble .md h3 { font-size: 1.08em; }
-.bubble .md h4 { font-size: 1em; }
-.bubble .md p { margin: 6px 0; }
-.bubble .md p:first-child { margin-top: 0; }
-.bubble .md p:last-child { margin-bottom: 0; }
-.bubble .md ul, .bubble .md ol { margin: 6px 0; padding-left: 20px; }
-.bubble .md li { margin: 3px 0; }
-.bubble .md code {
+.md h1, .md h2, .md h3, .md h4 { margin: 10px 0 6px; line-height: 1.35; }
+.md h1 { font-size: 1.25em; }
+.md h2 { font-size: 1.15em; }
+.md h3 { font-size: 1.08em; }
+.md h4 { font-size: 1em; }
+.md p { margin: 6px 0; }
+.md p:first-child { margin-top: 0; }
+.md p:last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 6px 0; padding-left: 20px; }
+.md li { margin: 3px 0; }
+.md code {
   font: 12.5px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace;
-  background: var(--code-bg);
+  background: var(--vscode-textCodeBlock-background);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
-.bubble .md pre {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+.md pre {
+  background: var(--vscode-textCodeBlock-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   margin: 8px 0;
   overflow-x: auto;
 }
-.bubble .md pre code { background: none; padding: 0; display: block; white-space: pre; }
-.bubble .md blockquote {
-  border-left: 3px solid var(--accent-dim);
+.md pre code { background: none; padding: 0; display: block; white-space: pre; }
+.md blockquote {
+  border-left: 3px solid var(--vscode-textBlockQuote-border);
+  background: var(--vscode-textBlockQuote-background);
   padding: 2px 10px;
   margin: 8px 0;
-  color: var(--text-dim);
+  color: var(--vscode-descriptionForeground);
 }
-.bubble .md a { color: var(--accent); text-decoration: none; }
-.bubble .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
-.bubble .md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; max-width: 100%; }
-.bubble .md th, .bubble .md td { border: 1px solid var(--border); padding: 4px 8px; }
-.bubble .md .table-wrap { overflow-x: auto; }
+.md a { color: var(--vscode-textLink-foreground); text-decoration: none; }
+.md hr { border: none; border-top: 1px solid var(--vscode-panel-border); margin: 10px 0; }
+.md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; max-width: 100%; }
+.md th, .md td { border: 1px solid var(--vscode-panel-border); padding: 4px 8px; }
+.md .table-wrap { overflow-x: auto; }
 
 .caret {
   display: inline-block;
   width: 7px; height: 15px;
-  background: var(--accent);
+  background: var(--vscode-charts-blue);
   vertical-align: text-bottom;
   margin-left: 2px;
   animation: blink 0.9s steps(1) infinite;
@@ -590,11 +809,10 @@ header .sub .ws::before { content: "·"; margin-right: 6px; color: var(--text-fa
 @keyframes blink { 50% { opacity: 0; } }
 
 .thoughts {
-  margin: 2px 4px 6px;
   font-size: 11.5px;
-  color: var(--text-faint);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
+  color: var(--vscode-descriptionForeground);
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: var(--radius-md);
   padding: 4px 10px;
   max-width: 100%;
 }
@@ -605,9 +823,9 @@ header .sub .ws::before { content: "·"; margin-right: 6px; color: var(--text-fa
   align-items: center;
   gap: 5px;
   font-size: 11.5px;
-  color: var(--text-dim);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  color: var(--vscode-charts-blue);
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-panel-border);
   border-radius: 999px;
   padding: 2px 9px;
   margin: 2px 6px 2px 0;
@@ -617,22 +835,22 @@ header .sub .ws::before { content: "·"; margin-right: 6px; color: var(--text-fa
   text-overflow: ellipsis;
   vertical-align: middle;
 }
-.tool-chip .spin { animation: pulse 1s ease-in-out infinite; }
 
 .retry-btn {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-panel);
-  color: var(--accent);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-textLink-foreground);
   font-size: 12.5px;
   padding: 4px 12px;
   margin-top: 6px;
   cursor: pointer;
+  align-self: flex-start;
 }
-.retry-btn:active { background: var(--bg-elevated); }
+.retry-btn:active { background: var(--vscode-list-hoverBackground); }
 
 #empty {
   flex: 1;
@@ -641,62 +859,56 @@ header .sub .ws::before { content: "·"; margin-right: 6px; color: var(--text-fa
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--text-faint);
+  color: var(--vscode-descriptionForeground);
   font-size: 13px;
   padding: 20px;
   text-align: center;
 }
 #empty .big { font-size: 34px; opacity: .5; }
 
-/* 工具确认条 */
+/* ---------- 工具确认条：桌面端 widget 风格 ---------- */
 #confirm-bar {
   flex: none;
   display: none;
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
+  background: var(--vscode-editorWidget-background);
+  border-top: 1px solid var(--vscode-widget-border);
 }
 #confirm-bar.open { display: flex; }
-#confirm-bar .head { font-size: 12px; color: var(--warn); display: flex; align-items: center; gap: 6px; }
+#confirm-bar .head { font-size: 12px; color: var(--vscode-charts-yellow); display: flex; align-items: center; gap: 6px; }
 #confirm-bar .tool-item {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: var(--radius-md);
   padding: 8px 10px;
-}
-#confirm-bar .tool-item .tname {
-  font-size: 13px; font-weight: 600; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-#confirm-bar .tool-item .targs {
-  font: 11.5px/1.5 ui-monospace, Consolas, monospace;
-  color: var(--text-dim);
-  margin-top: 3px;
-  max-height: 64px;
   overflow: hidden;
-  word-break: break-all;
 }
+#confirm-bar .tool-item .tname { font-size: 12.5px; font-weight: 600; color: var(--vscode-foreground); word-break: break-all; }
+#confirm-bar .tool-item .targs { font-size: 11.5px; color: var(--vscode-descriptionForeground); margin-top: 4px; overflow: hidden; word-break: break-all; }
 #confirm-bar .tool-item .trow { display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end; }
 #confirm-bar button {
   border: none;
-  border-radius: 8px;
-  padding: 7px 18px;
+  border-radius: var(--radius-sm);
+  padding: 6px 16px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
-#confirm-bar .ok { background: var(--ok); color: #0e2b24; }
-#confirm-bar .no { background: var(--bg-elevated); color: var(--text-dim); border: 1px solid var(--border); }
+#confirm-bar .ok { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+#confirm-bar .ok:active { background: var(--vscode-button-hoverBackground); }
+#confirm-bar .no { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+#confirm-bar .no:active { background: var(--vscode-button-secondaryHoverBackground); }
 #confirm-bar .pending { opacity: .6; pointer-events: none; }
 
-/* ---------- composer ---------- */
+/* ---------- 输入区：桌面端 InputArea 同款 ---------- */
 footer.composer {
   flex: none;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
-  padding: 8px 10px;
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  padding: 10px 16px;
+  padding-bottom: calc(10px + var(--footer-safe));
   display: flex;
   gap: 8px;
   align-items: flex-end;
@@ -704,69 +916,156 @@ footer.composer {
 #input {
   flex: 1;
   resize: none;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elevated);
-  color: var(--text);
-  font: inherit;
-  padding: 9px 12px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  padding: 8px 10px;
   max-height: 120px;
-  min-height: 42px;
+  min-height: 34px;
   outline: none;
+  line-height: 1.5;
 }
-#input:focus { border-color: var(--accent-dim); }
+#input:focus { border-color: var(--vscode-focusBorder); }
 #input:disabled { opacity: .6; }
+#input::placeholder { color: var(--vscode-input-placeholderForeground); }
 #send {
   flex: none;
-  height: 42px;
-  min-width: 58px;
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
   border: none;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--vscode-foreground);
   cursor: pointer;
-  padding: 0 14px;
+  padding: 0;
 }
-#send:active { opacity: .8; }
-#send.stop { background: var(--danger); }
-#send:disabled { background: var(--accent-dim); cursor: default; }
+#send svg { width: 16px; height: 16px; fill: currentColor; }
+#send:active { background: var(--vscode-toolbar-activeBackground); }
+#send.stop { color: var(--vscode-charts-red); }
+#send:disabled { opacity: .3; cursor: default; }
 
-/* ---------- tab bar ---------- */
+/* ---------- 底部页签：桌面端 tabs 同款（蓝顶边 + 活动底色） ---------- */
 #tabbar {
   flex: none;
   display: flex;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
+  background: var(--vscode-editorGroupHeader-tabsBackground);
+  border-top: 1px solid var(--vscode-panel-border);
   padding-bottom: var(--footer-safe);
-  padding-top: 4px;
 }
 #tabbar button {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   border: none;
   background: transparent;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  padding: 6px 0 8px;
+  color: var(--vscode-tab-inactiveForeground);
+  font-size: 11px;
+  padding: 8px 0 9px;
   cursor: pointer;
+  position: relative;
 }
-#tabbar button svg { width: 21px; height: 21px; fill: currentColor; }
-#tabbar button.active { color: var(--accent); }
+#tabbar button svg { width: 20px; height: 20px; fill: currentColor; }
+#tabbar button.active { color: var(--vscode-tab-activeForeground); background: var(--vscode-tab-activeBackground); }
+#tabbar button.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: var(--vscode-tab-activeBorderTop);
+}
 
-/* ---------- files ---------- */
+/* ---------- 左侧会话抽屉：桌面端侧栏（sideBar）同款 ---------- */
+#drawer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+#drawer .drawer-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+#drawer.open { pointer-events: auto; }
+#drawer.open .drawer-backdrop { opacity: 1; pointer-events: auto; }
+.drawer-panel {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: min(320px, 84vw);
+  background: var(--vscode-sideBar-background);
+  border-right: 1px solid var(--vscode-panel-border);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform .18s ease;
+  box-shadow: 2px 0 12px var(--vscode-widget-shadow);
+}
+#drawer.open .drawer-panel { transform: none; }
+.drawer-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--vscode-sideBarSectionHeader-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.drawer-head .drawer-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--vscode-descriptionForeground); }
+.drawer-list { flex: 1; overflow-y: auto; padding: 4px 0 12px; }
+
+/* ---------- 会话项（抽屉/切换单共用）：桌面端列表项同款 ---------- */
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  border-radius: 0;
+}
+.conv-item:active { background: var(--vscode-list-hoverBackground); }
+.conv-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.conv-item .t { flex: 1; min-width: 0; }
+.conv-item .t .name {
+  font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conv-item.active .t .name { color: var(--vscode-list-activeSelectionForeground); }
+.conv-item .t .preview {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.conv-item.active .t .preview { color: var(--vscode-list-activeSelectionForeground); opacity: .8; }
+.conv-item .when { flex: none; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.conv-item .conv-del {
+  flex: none;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 0;
+}
+.conv-item .conv-del svg { width: 14px; height: 14px; fill: currentColor; }
+.conv-item .conv-del:active { background: var(--vscode-toolbar-activeBackground); color: var(--vscode-charts-red); }
+.sheet-sep { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 12px 12px 4px; }
+
+/* ---------- 文件页 ---------- */
 #ws-bar {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+  background: var(--vscode-editorGroupHeader-tabsBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
 #ws-bar .ws-name {
   flex: 1;
@@ -777,40 +1076,53 @@ footer.composer {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#ws-bar .ws-sub { font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#ws-bar .ws-sub { font-size: 11px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #ws-bar .mini-btn {
   flex: none;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  color: var(--text-dim);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
   font-size: 12px;
   padding: 5px 10px;
   cursor: pointer;
 }
-#ws-bar .mini-btn:active { background: var(--bg); }
+#ws-bar .mini-btn:active { background: var(--vscode-button-secondaryHoverBackground); }
+#ws-bar .ws-add-btn {
+  flex: none;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  cursor: pointer;
+  padding: 0;
+}
+#ws-bar .ws-add-btn svg { width: 14px; height: 14px; fill: currentColor; }
+#ws-bar .ws-add-btn:active { background: var(--vscode-button-secondaryHoverBackground); }
 
-#file-tree { flex: 1; overflow-y: auto; padding: 6px 8px 12px; }
+#file-tree { flex: 1; overflow-y: auto; padding: 4px 0 12px; }
 .fdir-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 8px;
-  border-radius: 8px;
-  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 0;
+  color: var(--vscode-foreground);
   cursor: pointer;
   width: 100%;
   background: transparent;
   border: none;
   text-align: left;
-  font-size: 14px;
+  font-size: 13px;
 }
-.fdir-row:active { background: var(--bg-elevated); }
-.fdir-row .caret-svg { width: 12px; height: 12px; fill: var(--text-faint); flex: none; transition: transform .12s ease; }
+.fdir-row:active { background: var(--vscode-list-hoverBackground); }
+.fdir-row .caret-svg { width: 12px; height: 12px; fill: var(--vscode-descriptionForeground); flex: none; transition: transform .12s ease; }
 .fdir-row.open .caret-svg { transform: rotate(90deg); }
 .fdir-row .fname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fdir-row .fico { width: 16px; height: 16px; fill: var(--text-faint); flex: none; }
-.fdir-row .fsize { flex: none; font-size: 11px; color: var(--text-faint); }
+.fdir-row .fico { width: 16px; height: 16px; fill: var(--vscode-descriptionForeground); flex: none; }
+.fdir-row .fsize { flex: none; font-size: 11px; color: var(--vscode-descriptionForeground); }
 .fdir-row.binary { opacity: .55; }
 
 #file-viewer { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -820,18 +1132,18 @@ footer.composer {
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: var(--bg-panel);
-  border-bottom: 1px solid var(--border);
+  background: var(--vscode-editorGroupHeader-tabsBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
-#file-viewer-head .fpath { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#file-viewer-head .fpath { flex: 1; min-width: 0; font-size: 12.5px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #file-editor {
   flex: 1;
   min-height: 0;
   resize: none;
   border: none;
-  background: var(--code-bg);
-  color: var(--text);
-  font: 12.5px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font: 12.5px/1.6 var(--vscode-editor-font-family, Consolas, monospace);
   padding: 10px 12px;
   outline: none;
   white-space: pre;
@@ -843,76 +1155,77 @@ footer.composer {
   align-items: center;
   gap: 8px;
   padding: 8px 12px calc(8px + var(--footer-safe));
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
+  background: var(--vscode-editorGroupHeader-tabsBackground);
+  border-top: 1px solid var(--vscode-panel-border);
 }
-#file-viewer-foot .finfo { flex: 1; min-width: 0; font-size: 11.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#file-viewer-foot .finfo { flex: 1; min-width: 0; font-size: 11.5px; color: var(--vscode-descriptionForeground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #file-viewer-foot .save-btn {
   flex: none;
   border: none;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
   font-size: 13px;
-  font-weight: 600;
-  padding: 8px 18px;
+  font-weight: 500;
+  padding: 7px 18px;
   cursor: pointer;
 }
-#file-viewer-foot .save-btn:disabled { background: var(--accent-dim); }
+#file-viewer-foot .save-btn:active { background: var(--vscode-button-hoverBackground); }
+#file-viewer-foot .save-btn:disabled { opacity: .5; cursor: default; }
 
-/* ---------- settings ---------- */
+/* ---------- 设置页：桌面端卡片（widget）风格 ---------- */
 #settings-scroll { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 .card {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: var(--radius-lg);
   padding: 12px;
 }
-.card h3 { font-size: 12px; color: var(--text-faint); margin-bottom: 8px; font-weight: 600; }
-.set-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 13.5px; }
-.set-row .k { color: var(--text-dim); width: 86px; flex: none; }
-.set-row .v { flex: 1; min-width: 0; color: var(--text); word-break: break-all; text-align: right; }
-.set-row .v.copyable { color: var(--accent); cursor: pointer; }
+.card h3 { font-size: 11px; color: var(--vscode-descriptionForeground); margin-bottom: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+.set-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; }
+.set-row .k { color: var(--vscode-descriptionForeground); width: 86px; flex: none; }
+.set-row .v { flex: 1; min-width: 0; color: var(--vscode-foreground); word-break: break-all; text-align: right; }
+.set-row .v.copyable { color: var(--vscode-textLink-foreground); cursor: pointer; }
 .url-chip {
   display: flex; align-items: center; gap: 8px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 10px;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
   margin-top: 6px;
   font: 12px ui-monospace, Consolas, monospace;
-  color: var(--text);
+  color: var(--vscode-foreground);
   cursor: pointer;
   word-break: break-all;
 }
-.url-chip:active { background: var(--bg); }
+.url-chip:active { background: var(--vscode-list-hoverBackground); }
 
 .cfg-item {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-elevated);
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: var(--radius-lg);
+  background: var(--vscode-editor-background);
   padding: 9px 11px;
   margin-bottom: 8px;
 }
-.cfg-item .cname { font-size: 13.5px; font-weight: 600; }
-.cfg-item .cmodel { font-size: 12px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cfg-item .cname { font-size: 13px; font-weight: 600; }
+.cfg-item .cmodel { font-size: 12px; color: var(--vscode-descriptionForeground); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cfg-item .mchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cfg-item .mchip {
-  border: 1px solid var(--border);
+  border: 1px solid var(--vscode-panel-border);
   border-radius: 999px;
-  background: var(--bg-panel);
-  color: var(--text-dim);
+  background: var(--vscode-input-background);
+  color: var(--vscode-foreground);
   font-size: 12px;
-  padding: 4px 11px;
+  padding: 3px 10px;
   cursor: pointer;
   max-width: 100%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.cfg-item .mchip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+.cfg-item .mchip.active { border-color: var(--vscode-textLink-foreground); color: var(--vscode-textLink-foreground); }
 .cfg-item .mchip:disabled { opacity: .5; }
-.info-text { font-size: 12px; color: var(--text-faint); line-height: 1.6; }
+.info-text { font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.6; }
 
-/* ---------- bottom sheets & modals ---------- */
+/* ---------- 底部弹层 / 操作菜单 / 模态框：桌面端 widget 风格 ---------- */
 #sheet {
   position: fixed;
   inset: 0;
@@ -922,109 +1235,139 @@ footer.composer {
 #sheet.open { display: flex; }
 #sheet .backdrop {
   position: absolute; inset: 0;
-  background: rgba(0,0,0,.5);
+  background: rgba(0, 0, 0, .5);
   animation: fadeIn .15s ease;
 }
 #sheet .panel {
   position: absolute;
   left: 0; right: 0; bottom: 0;
   max-height: 75dvh;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border);
-  border-radius: 16px 16px 0 0;
-  padding: 12px 10px calc(12px + var(--footer-safe));
+  background: var(--vscode-editorWidget-background);
+  border-top: 1px solid var(--vscode-widget-border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 10px 10px calc(10px + var(--footer-safe));
   display: flex;
   flex-direction: column;
   animation: slideUp .18s ease;
+  box-shadow: 0 -4px 16px var(--vscode-widget-shadow);
 }
 #sheet .head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 6px 10px;
+  padding: 2px 6px 8px;
 }
-#sheet .head b { font-size: 15px; }
-#sheet .list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-.conv-item {
+#sheet .head b { font-size: 13px; font-weight: 600; color: var(--vscode-foreground); }
+#sheet .list { overflow-y: auto; display: flex; flex-direction: column; }
+
+#action-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: none;
+  align-items: flex-end;
+  justify-content: stretch;
+}
+#action-sheet.open { display: flex; }
+#action-sheet .backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0, 0, 0, .5);
+  animation: fadeIn .15s ease;
+}
+#action-sheet .panel {
+  position: relative;
+  width: 100%;
+  background: var(--vscode-editorWidget-background);
+  border-top: 1px solid var(--vscode-widget-border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 8px 10px calc(8px + var(--footer-safe));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: slideUp .18s ease;
+  box-shadow: 0 -4px 16px var(--vscode-widget-shadow);
+}
+.act-btn {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 10px;
-  border-radius: 10px;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
   width: 100%;
-}
-.conv-item:active { background: var(--bg-elevated); }
-.conv-item.active { background: var(--accent-dim); }
-.conv-item .t { flex: 1; min-width: 0; }
-.conv-item .t .name {
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
   font-size: 14px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
 }
-.conv-item .t .preview {
-  font-size: 11.5px;
-  color: var(--text-faint);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  margin-top: 2px;
-}
-.conv-item .when { flex: none; font-size: 11px; color: var(--text-faint); }
-.sheet-sep { font-size: 11px; color: var(--text-faint); padding: 10px 10px 4px; }
+.act-btn:active { background: var(--vscode-list-hoverBackground); }
+.act-btn svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+.act-btn.danger { color: var(--vscode-charts-red); }
+.act-sep { height: 1px; background: var(--vscode-widget-border); margin: 4px 10px; }
 
 #modal {
   position: fixed; inset: 0; z-index: 40;
   display: none;
   align-items: center; justify-content: center;
   padding: 24px;
-  background: rgba(0,0,0,.55);
+  background: rgba(0, 0, 0, .55);
 }
 #modal.open { display: flex; }
 #modal .box {
   width: 100%; max-width: 320px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 16px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow);
 }
-#modal h3 { font-size: 15px; margin-bottom: 12px; }
-#modal input {
+#modal h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--vscode-foreground); }
+#modal textarea {
   width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-elevated);
-  color: var(--text);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
   font: inherit;
-  padding: 9px 11px;
+  padding: 8px 10px;
   outline: none;
+  resize: none;
+  min-height: 34px;
+  max-height: 220px;
+  line-height: 1.5;
 }
+#modal textarea:focus { border-color: var(--vscode-focusBorder); }
 #modal .row { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
 #modal button {
   border: none;
-  border-radius: 8px;
-  padding: 8px 16px;
-  font-size: 13.5px;
+  border-radius: var(--radius-sm);
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
-#modal .cancel { background: var(--bg-elevated); color: var(--text-dim); }
-#modal .ok { background: var(--accent); color: #fff; font-weight: 600; }
-#modal .danger { background: var(--danger); color: #fff; font-weight: 600; }
+#modal .cancel { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+#modal .cancel:active { background: var(--vscode-button-secondaryHoverBackground); }
+#modal .ok { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+#modal .ok:active { background: var(--vscode-button-hoverBackground); }
+#modal .danger { background: var(--vscode-charts-red); color: #fff; }
+#modal .danger:active { background: #e03e2f; }
+#modal button:disabled { opacity: .5; }
 
 #toast {
   position: fixed;
   left: 50%;
   bottom: calc(var(--tabbar-h) + 40px + var(--footer-safe));
   transform: translateX(-50%);
-  z-index: 50;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  color: var(--text);
+  z-index: 70;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-widget-border);
+  color: var(--vscode-foreground);
   font-size: 13px;
-  padding: 9px 16px;
+  padding: 8px 16px;
   border-radius: 999px;
-  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow);
   opacity: 0;
   pointer-events: none;
   transition: opacity .18s ease, transform .18s ease;
@@ -1040,38 +1383,55 @@ footer.composer {
 <body>
 <div id="app">
   <header>
-    <button class="icon-btn" id="btn-switch" title="switch" aria-label="switch">
-      <svg viewBox="0 0 24 24"><path d="M3 6h13v3H3zM3 11h10v3H3zM3 16h7v3H3zM17.5 15V9l4 3z"/></svg>
+    <button class="icon-btn" id="btn-drawer" title="conversations" aria-label="conversations">
+      <svg viewBox="0 0 24 24"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>
     </button>
     <div class="title-wrap">
       <h1 id="title">GrayCode</h1>
-      <div class="sub"><span class="dot" id="dot"></span><span id="status">…</span><span class="ws" id="ws-name" hidden></span></div>
+      <div class="sub"><span class="dot" id="dot"></span><span id="status">&hellip;</span><span class="ws" id="ws-name" hidden></span></div>
     </div>
     <button class="icon-btn" id="btn-refresh" title="refresh" aria-label="refresh">
       <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>
     </button>
   </header>
 
+  <!-- 会话侧栏：桌面端侧栏布局在手机端以左滑抽屉呈现 -->
+  <div id="drawer">
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <aside class="drawer-panel">
+      <div class="drawer-head">
+        <span class="drawer-title" data-i18n="conversations"></span>
+        <button class="icon-btn" id="btn-new" title="new" aria-label="new">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <div class="drawer-list" id="drawer-list"></div>
+    </aside>
+  </div>
+
   <div id="views">
     <section id="view-chat" class="view">
       <div id="messages" hidden></div>
       <div id="empty" hidden>
-        <div class="big">💬</div>
+        <div class="big">&#128172;</div>
         <div id="empty-text"></div>
       </div>
       <div id="confirm-bar"></div>
       <footer class="composer">
         <textarea id="input" rows="1" autocomplete="off" enterkeyhint="send"></textarea>
-        <button id="send"></button>
+        <button id="send" title="send" aria-label="send"></button>
       </footer>
     </section>
 
     <section id="view-files" class="view" hidden>
       <div id="ws-bar">
         <div style="flex:1;min-width:0;">
-          <div class="ws-name" id="ws-bar-name">—</div>
+          <div class="ws-name" id="ws-bar-name">&mdash;</div>
           <div class="ws-sub" id="ws-bar-file"></div>
         </div>
+        <button class="ws-add-btn" id="btn-ws-add" title="addWorkspace" aria-label="addWorkspace">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
         <button class="mini-btn" id="btn-ws-switch"></button>
       </div>
       <div id="file-tree"></div>
@@ -1097,9 +1457,9 @@ footer.composer {
       <div id="settings-scroll">
         <div class="card">
           <h3 id="set-conn-title"></h3>
-          <div class="set-row"><span class="k" id="set-conn-label"></span><span class="v" id="set-conn-val">—</span></div>
-          <div class="set-row"><span class="k" id="set-port-label"></span><span class="v" id="set-port-val">—</span></div>
-          <div class="set-row"><span class="k" id="set-ver-label"></span><span class="v" id="set-ver-val">—</span></div>
+          <div class="set-row"><span class="k" id="set-conn-label"></span><span class="v" id="set-conn-val">&mdash;</span></div>
+          <div class="set-row"><span class="k" id="set-port-label"></span><span class="v" id="set-port-val">&mdash;</span></div>
+          <div class="set-row"><span class="k" id="set-ver-label"></span><span class="v" id="set-ver-val">&mdash;</span></div>
         </div>
         <div class="card">
           <h3 id="set-urls-title"></h3>
@@ -1133,12 +1493,13 @@ footer.composer {
   </nav>
 </div>
 
+<!-- 底部弹层：工作区切换 -->
 <div id="sheet">
   <div class="backdrop"></div>
   <div class="panel">
     <div class="head">
-      <b id="sheet-title">…</b>
-      <button class="icon-btn" id="btn-new" aria-label="new">
+      <b id="sheet-title">&hellip;</b>
+      <button class="icon-btn" id="btn-sheet-add" title="addWorkspace" aria-label="addWorkspace">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
@@ -1146,10 +1507,17 @@ footer.composer {
   </div>
 </div>
 
+<!-- 消息操作菜单：长按消息弹出（编辑/重新生成/删除） -->
+<div id="action-sheet">
+  <div class="backdrop" id="act-backdrop"></div>
+  <div class="panel" id="act-panel"></div>
+</div>
+
+<!-- 模态框：重命名 / 编辑消息 / 删除确认 -->
 <div id="modal">
   <div class="box">
-    <h3 id="modal-title">…</h3>
-    <input id="modal-input" maxlength="100" autocomplete="off" hidden>
+    <h3 id="modal-title">&hellip;</h3>
+    <textarea id="modal-input" rows="1" autocomplete="off" hidden></textarea>
     <div class="row">
       <button class="cancel" id="modal-cancel"></button>
       <button class="ok" id="modal-ok"></button>
@@ -1158,7 +1526,6 @@ footer.composer {
 </div>
 
 <div id="toast"></div>
-
 <script>
 'use strict';
 var T = ${texts};
@@ -1229,6 +1596,19 @@ var fileEditorEl = $('file-editor');
 var fileViewerInfoEl = $('file-viewer-info');
 var fileViewerPathEl = $('file-viewer-path');
 var saveFileBtnEl = $('btn-save-file');
+var drawerEl = $('drawer');
+var drawerListEl = $('drawer-list');
+var actionSheetEl = $('action-sheet');
+var actPanelEl = $('act-panel');
+
+var ICON_SEND = '<svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
+var ICON_STOP = '<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>';
+
+function renderSendIcon() {
+  sendBtn.innerHTML = state.streaming ? ICON_STOP : ICON_SEND;
+  sendBtn.title = state.streaming ? t('stop') : t('send');
+  sendBtn.classList.toggle('stop', state.streaming);
+}
 
 function fmtTime(ts) {
   if (!ts) return '';
@@ -1415,10 +1795,10 @@ function buildMessage(msg, index) {
   var el = document.createElement('div');
   var role = msg.role === 'user' ? 'user' : (msg.role === 'system' ? 'system' : 'assistant');
   el.className = 'msg ' + role;
-  var meta = '';
-  if (msg.role === 'model' && msg.modelVersion) {
-    meta = '<div class="meta"><span class="model">' + esc(t('modelTag')) + ': ' + esc(msg.modelVersion) + '</span></div>';
-  }
+  var roleLabel = role === 'user' ? t('userLabel') : (role === 'system' ? t('systemMessage') : t('assistantLabel'));
+  var meta = '<div class="meta"><span class="role-label">' + esc(roleLabel) + '</span>' +
+    (msg.role === 'model' && msg.modelVersion ? '<span class="model">' + esc(msg.modelVersion) + '</span>' : '') +
+    '</div>';
   var body = '';
   if (msg.role === 'system') {
     body = partsToText(msg.parts, 'text') || t('systemMessage');
@@ -1427,11 +1807,15 @@ function buildMessage(msg, index) {
     var text = partsToText(msg.parts, 'text');
     var calls = partsToToolCalls(msg.parts);
     if (thought) body += '<div class="thoughts"><div class="md">' + renderMarkdown(thought) + '</div></div>';
-    calls.forEach(function (c) { body += '<span class="tool-chip">🔧 ' + esc(c) + '</span>'; });
-    if (text) body += '<div class="bubble"><div class="md">' + renderMarkdown(text) + '</div></div>';
-    else if (!thought && calls.length === 0) body += '<div class="bubble">' + esc(t('emptyMessages')) + '</div>';
+    calls.forEach(function (c) { body += '<span class="tool-chip">&#128295; ' + esc(c) + '</span>'; });
+    if (text) body += '<div class="msg-content"><div class="md">' + renderMarkdown(text) + '</div></div>';
+    else if (!thought && calls.length === 0) body += '<div class="msg-content">' + esc(t('emptyMessages')) + '</div>';
   }
   el.innerHTML = meta + body;
+  // 长按消息 → 操作菜单（编辑/重新生成/删除），与桌面端消息操作对齐
+  if (state.conversationId && role !== 'system') {
+    attachLongPress(el, function () { openActionSheet(msg, index); });
+  }
   return el;
 }
 function renderMessages() {
@@ -1446,36 +1830,93 @@ function renderMessages() {
   messagesEl.hidden = false;
   state.messages.forEach(function (m, i) {
     var el = buildMessage(m, i);
-    // 长按消息 → 删除该消息及其之后的消息（与桌面端删除语义一致）
-    if (state.conversationId) {
-      attachLongPress(el, function () {
-        openModal(t('deleteMessageConfirm'), null, t('deleteMessage'), t('renameCancel'), 'danger', function () {
-          api('/api/delete-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversationId: state.conversationId, targetIndex: i })
-          }).then(function () {
-            toast(t('deleteMessageDone'));
-            loadMessages(state.conversationId, true);
-            loadConversations();
-          }).catch(function (err) {
-            toast(t('deleteMessageFailed') + ': ' + (err.message || ''));
-          });
-        });
-      });
-    }
     messagesEl.appendChild(el);
   });
   if (state.streaming) {
     var holder = document.createElement('div');
     holder.className = 'msg assistant';
-    var bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    bubble.innerHTML = (state.streamingText ? renderMarkdown(state.streamingText) : '') + '<span class="caret"></span>';
-    holder.appendChild(bubble);
+    holder.innerHTML = '<div class="meta"><span class="role-label">' + esc(t('assistantLabel')) + '</span></div>' +
+      '<div class="msg-content">' + (state.streamingText ? renderMarkdown(state.streamingText) : '') + '<span class="caret"></span></div>';
     messagesEl.appendChild(holder);
   }
   scrollToBottom(true);
+}
+
+/* ---------- 消息操作菜单（编辑 / 重新生成 / 删除） ---------- */
+function openActionSheet(msg, index) {
+  var role = msg.role === 'user' ? 'user' : 'assistant';
+  var actions = [];
+  if (role === 'user') {
+    actions.push({ key: 'edit', label: t('editMessage'), icon: '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>' });
+  } else {
+    actions.push({ key: 'reroll', label: t('reroll'), icon: '<svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>' });
+    actions.push({ key: 'retry', label: t('retry'), icon: '<svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>' });
+  }
+  actions.push({ key: 'delete', label: t('deleteMessage'), danger: true, icon: '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>' });
+  actPanelEl.innerHTML = '';
+  actions.forEach(function (a) {
+    var btn = document.createElement('button');
+    btn.className = 'act-btn' + (a.danger ? ' danger' : '');
+    btn.innerHTML = a.icon + '<span>' + esc(a.label) + '</span>';
+    btn.addEventListener('click', function () {
+      closeActionSheet();
+      if (a.key === 'edit') editMessage(msg, index);
+      else if (a.key === 'reroll') rerollMessage(msg);
+      else if (a.key === 'retry') doRetry();
+      else if (a.key === 'delete') deleteMessageAt(index);
+    });
+    actPanelEl.appendChild(btn);
+  });
+  actionSheetEl.classList.add('open');
+}
+function closeActionSheet() { actionSheetEl.classList.remove('open'); actPanelEl.innerHTML = ''; }
+
+function deleteMessageAt(index) {
+  openModal(t('deleteMessageConfirm'), null, t('deleteMessage'), t('renameCancel'), 'danger', function () {
+    api('/api/delete-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: state.conversationId, targetIndex: index })
+    }).then(function () {
+      toast(t('deleteMessageDone'));
+      loadMessages(state.conversationId, true);
+      loadConversations();
+    }).catch(function (err) {
+      toast(t('deleteMessageFailed') + ': ' + (err.message || ''));
+    });
+  });
+}
+
+function editMessage(msg, index) {
+  var text = partsToText(msg.parts, 'text') || '';
+  if (!msg.id) { toast(t('editFailed')); return; }
+  openModal(t('editMessage'), text, t('renameSave'), t('renameCancel'), 'ok', function (val) {
+    var v = (val || '').trim();
+    if (!v || v === text) return;
+    toast(t('editBranching') + '…');
+    api('/api/edit-message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: state.conversationId, messageId: msg.id, newText: v })
+    }).then(function () {
+      setStreaming(true, '');
+    }).catch(function (err) {
+      toast(t('editFailed') + ': ' + (err.message || ''));
+    });
+  });
+}
+
+function rerollMessage(msg) {
+  if (!msg.id) { toast(t('rerollFailed')); return; }
+  api('/api/reroll', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversationId: state.conversationId, assistantNodeId: msg.id })
+  }).then(function () {
+    setStreaming(true, '');
+  }).catch(function (err) {
+    toast(t('rerollFailed') + ': ' + (err.message || ''));
+  });
 }
 
 /* 长按（600ms）/ 右键 → 回调；移动端无右键时 contextmenu 事件兜底 */
@@ -1531,8 +1972,8 @@ function renderLoading(on) {
 function showErrorBanner(msg, withRetry) {
   var el = document.createElement('div');
   el.className = 'msg error';
-  el.innerHTML = '<div class="bubble">' + esc(t('errorBanner')) + ': ' + esc(msg || '') + '</div>' +
-    (withRetry ? '<button class="retry-btn">↻ ' + esc(t('retry')) + '</button>' : '');
+  el.innerHTML = '<div class="msg-content">' + esc(t('errorBanner')) + ': ' + esc(msg || '') + '</div>' +
+    (withRetry ? '<button class="retry-btn">' + esc(t('retry')) + '</button>' : '');
   if (withRetry) {
     var btn = el.querySelector('.retry-btn');
     btn.addEventListener('click', doRetry);
@@ -1546,34 +1987,68 @@ function showErrorBanner(msg, withRetry) {
 function loadConversations() {
   return api('/api/conversations').then(function (data) {
     var list = Array.isArray(data.conversations) ? data.conversations : [];
-    sheetListEl.innerHTML = '';
+    drawerListEl.innerHTML = '';
     if (list.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'conv-item';
-      empty.style.color = 'var(--text-faint)';
+      empty.style.color = 'var(--vscode-descriptionForeground)';
       empty.textContent = t('emptyConversation');
-      sheetListEl.appendChild(empty);
+      drawerListEl.appendChild(empty);
     }
     list.forEach(function (c) {
+      var row = document.createElement('div');
+      row.className = 'conv-item' + (c.id === state.conversationId ? ' active' : '');
       var it = document.createElement('button');
-      it.className = 'conv-item' + (c.id === state.conversationId ? ' active' : '');
+      it.className = 'conv-item-main';
+      it.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:transparent;border:none;text-align:left;cursor:pointer;padding:0;color:inherit;font:inherit;';
       it.innerHTML = '<div class="t"><div class="name">' + esc(c.title || t('untitled')) + '</div>' +
         (c.preview ? '<div class="preview">' + esc(c.preview) + '</div>' : '') + '</div>' +
         '<span class="when">' + fmtTime(c.updatedAt) + '</span>';
       it.addEventListener('click', function () {
         switchConversation(c.id, c.title);
+        closeDrawer();
       });
       it.addEventListener('contextmenu', function (e) {
         e.preventDefault();
         openRename(c.id, c.title);
       });
-      sheetListEl.appendChild(it);
+      row.appendChild(it);
+      var del = document.createElement('button');
+      del.className = 'conv-del';
+      del.title = t('deleteConversation');
+      del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+      del.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openModal(t('deleteConversationConfirm'), null, t('deleteConversation'), t('renameCancel'), 'danger', function () {
+          api('/api/conversation-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId: c.id })
+          }).then(function () {
+            toast(t('deleteConversationDone'));
+            if (state.conversationId === c.id) {
+              state.conversationId = null;
+              state.messages = [];
+              state.streaming = false;
+              state.streamingText = '';
+              state.pendingTools = [];
+              renderConfirmBar();
+              setTitle('');
+              renderMessages();
+            }
+            loadConversations();
+          }).catch(function (err) {
+            toast(t('deleteConversationFailed') + ': ' + (err.message || ''));
+          });
+        });
+      });
+      row.appendChild(del);
+      drawerListEl.appendChild(row);
     });
     return list;
   });
 }
 function switchConversation(id, title) {
-  closeSheet();
   state.conversationId = id;
   state.streaming = false;
   state.streamingText = '';
@@ -1581,15 +2056,18 @@ function switchConversation(id, title) {
   state.pendingTools = [];
   renderConfirmBar();
   setTitle(title);
+  renderSendIcon();
   renderMessages();
   loadMessages(id);
   loadConversations();
 }
-function openSheet() {
-  sheetEl.classList.add('open');
-  sheetTitleEl.textContent = t('conversations');
+function openDrawer() {
+  drawerEl.classList.add('open');
   loadConversations();
 }
+function closeDrawer() { drawerEl.classList.remove('open'); }
+
+/* 工作区切换弹层（sheet 仅用于工作区；会话切换走左侧抽屉） */
 function closeSheet() { sheetEl.classList.remove('open'); }
 
 /* ---------- rename ---------- */
@@ -1615,7 +2093,10 @@ function openRename(id, title) {
 function openModal(title, inputValue, okText, cancelText, kind, onOk) {
   modalTitleEl.textContent = title;
   modalInputEl.value = inputValue || '';
+  var multiline = typeof inputValue === 'string' && inputValue.length > 80;
   modalInputEl.hidden = (typeof inputValue !== 'string');
+  modalInputEl.rows = multiline ? 5 : 1;
+  modalInputEl.maxLength = 20000;
   modalOkEl.textContent = okText || t('renameSave');
   modalCancelEl.textContent = cancelText || t('renameCancel');
   modalOkEl.className = (kind === 'danger' ? 'danger' : 'ok');
@@ -1626,6 +2107,12 @@ function openModal(title, inputValue, okText, cancelText, kind, onOk) {
   if (!modalInputEl.hidden) {
     setTimeout(function () { modalInputEl.focus(); }, 60);
   }
+  autoResizeModalInput();
+}
+function autoResizeModalInput() {
+  if (modalInputEl.hidden) return;
+  modalInputEl.style.height = 'auto';
+  modalInputEl.style.height = Math.min(modalInputEl.scrollHeight, 220) + 'px';
 }
 function closeModal() {
   modalEl.classList.remove('open');
@@ -1639,13 +2126,10 @@ function setStreaming(on, model) {
   state.streamingModel = model || '';
   if (on) {
     setStatus('streaming', t('statusStreaming'));
-    sendBtn.textContent = t('stop');
-    sendBtn.classList.add('stop');
   } else {
     setStatus(state.connected ? 'connected' : 'connecting', state.connected ? t('statusConnected') : t('statusConnecting'));
-    sendBtn.textContent = t('send');
-    sendBtn.classList.remove('stop');
   }
+  renderSendIcon();
   renderMessages();
 }
 function canSend() {
@@ -1929,8 +2413,8 @@ function renderStreamingText() {
   var holders = messagesEl.querySelectorAll('.msg.assistant');
   var last = holders[holders.length - 1];
   if (last && last.querySelector('.caret')) {
-    var bubble = last.querySelector('.bubble');
-    bubble.innerHTML = (state.streamingText ? renderMarkdown(state.streamingText) : '') + '<span class="caret"></span>';
+    var contentEl = last.querySelector('.msg-content');
+    contentEl.innerHTML = (state.streamingText ? renderMarkdown(state.streamingText) : '') + '<span class="caret"></span>';
   } else {
     renderMessages();
     return;
@@ -1963,7 +2447,7 @@ function renderFileTree(path, entries) {
   if (!state.workspaceUri && !state.workspaceName) {
     var hint = document.createElement('div');
     hint.className = 'conv-item';
-    hint.style.color = 'var(--text-faint)';
+    hint.style.color = 'var(--vscode-descriptionForeground)';
     hint.style.flexDirection = 'column';
     hint.style.alignItems = 'center';
     hint.style.gap = '6px';
@@ -2009,14 +2493,14 @@ function renderFileTree(path, entries) {
   });
 }
 function loadFiles(path, quiet) {
-  if (!quiet) fileTreeEl.innerHTML = '<div class="conv-item" style="color:var(--text-faint)">' + esc(t('loading')) + '</div>';
+  if (!quiet) fileTreeEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-descriptionForeground)">' + esc(t('loading')) + '</div>';
   return api('/api/files?path=' + encodeURIComponent(path))
     .then(function (data) {
       state.fileDirs[path] = Array.isArray(data.entries) ? data.entries : [];
       renderFileTree(path, state.fileDirs[path]);
     })
     .catch(function (err) {
-      fileTreeEl.innerHTML = '<div class="conv-item" style="color:var(--danger)">' + esc(t('loadFailed')) + ': ' + esc(err.message || '') + '</div>';
+      fileTreeEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-charts-red)">' + esc(t('loadFailed')) + ': ' + esc(err.message || '') + '</div>';
     });
 }
 function openFile(path) {
@@ -2108,20 +2592,22 @@ function loadWorkspaces() {
 function openWorkspaceSheet() {
   sheetEl.classList.add('open');
   sheetTitleEl.textContent = t('switchWorkspace');
-  sheetListEl.innerHTML = '<div class="conv-item" style="color:var(--text-faint)">' + esc(t('loading')) + '</div>';
+  sheetListEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-descriptionForeground)">' + esc(t('loading')) + '</div>';
   loadWorkspaces().then(function (items) {
     sheetListEl.innerHTML = '';
     if (items.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'conv-item';
-      empty.style.color = 'var(--text-faint)';
+      empty.style.color = 'var(--vscode-descriptionForeground)';
       empty.textContent = t('noWorkspace');
       sheetListEl.appendChild(empty);
       return;
     }
     items.forEach(function (w) {
+      var row = document.createElement('div');
+      row.className = 'conv-item' + (w.active ? ' active' : '');
       var it = document.createElement('button');
-      it.className = 'conv-item' + (w.active ? ' active' : '');
+      it.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:transparent;border:none;text-align:left;cursor:pointer;padding:0;color:inherit;font:inherit;';
       it.innerHTML = '<div class="t"><div class="name">' + esc(w.name) + '</div>' +
         (w.saved ? '<div class="preview">' + esc(t('savedWorkspaces')) + '</div>' : '') + '</div>';
       it.addEventListener('click', function () {
@@ -2131,8 +2617,6 @@ function openWorkspaceSheet() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ workspaceUri: w.uri })
           }).then(function () {
-            // SSE workspace 事件（BackendHost onActiveWorkspaceChanged → notifyWorkspaceChange）
-            // 会刷新工作区状态与文件页；此处兜底清理，防 SSE 未连接时保存到错误工作区
             state.currentFile = null;
             state.fileDirs = {};
             toast(t('switchWorkspace') + ' ✓');
@@ -2147,10 +2631,45 @@ function openWorkspaceSheet() {
         }
         closeSheet();
       });
-      sheetListEl.appendChild(it);
+      row.appendChild(it);
+      if (w.saved) {
+        var del = document.createElement('button');
+        del.className = 'conv-del';
+        del.title = t('removeWorkspace');
+        del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+        del.addEventListener('click', function (e) {
+          e.stopPropagation();
+          api('/api/workspace-remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fsPath: w.fsPath || w.uri })
+          }).then(function () {
+            toast(t('workspaceRemoved'));
+            openWorkspaceSheet();
+          }).catch(function (err) {
+            toast(t('loadFailed') + ': ' + (err.message || ''));
+          });
+        });
+        row.appendChild(del);
+      }
+      sheetListEl.appendChild(row);
     });
   }).catch(function (err) {
-    sheetListEl.innerHTML = '<div class="conv-item" style="color:var(--danger)">' + esc(err.message || '') + '</div>';
+    sheetListEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-charts-red)">' + esc(err.message || '') + '</div>';
+  });
+}
+
+/** 新增工作区：透传 workspace.openFolder，桌面端弹出文件夹选择框 */
+function addWorkspace() {
+  api('/api/workspace-add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({})
+  }).then(function (data) {
+    if (data && data.canceled) return;
+    toast(t('openFolderDialog'));
+  }).catch(function (err) {
+    toast(t('loadFailed') + ': ' + (err.message || ''));
   });
 }
 
@@ -2178,7 +2697,7 @@ function loadConfigs() {
       loadConfigModels(cfg.id, item.querySelector('.mchips'));
     });
   }).catch(function (err) {
-    $('configs-list').innerHTML = '<div class="info-text" style="color:var(--danger)">' + esc(err.message || '') + '</div>';
+    $('configs-list').innerHTML = '<div class="info-text" style="color:var(--vscode-charts-red)">' + esc(err.message || '') + '</div>';
   });
 }
 function loadConfigModels(configId, chipsEl) {
@@ -2222,7 +2741,7 @@ function renderSettings(s) {
   $('set-conn-title').textContent = t('connection');
   $('set-conn-label').textContent = t('connection');
   $('set-conn-val').textContent = s.running ? t('running') : t('stopped');
-  $('set-conn-val').style.color = s.running ? 'var(--ok)' : 'var(--danger)';
+  $('set-conn-val').style.color = s.running ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-charts-red)';
   $('set-port-label').textContent = t('port');
   $('set-port-val').textContent = String(s.port || '');
   $('set-ver-label').textContent = t('appVersion');
@@ -2282,7 +2801,7 @@ inputEl.addEventListener('keydown', function (e) {
     doSend();
   }
 });
-$('btn-switch').addEventListener('click', openSheet);
+$('btn-drawer').addEventListener('click', openDrawer);
 $('btn-refresh').addEventListener('click', function () {
   if (!isTab('chat')) return;
   loadMessages(state.conversationId);
@@ -2290,21 +2809,26 @@ $('btn-refresh').addEventListener('click', function () {
   toast(t('refresh') + ' ✓');
 });
 $('btn-new').addEventListener('click', function () {
-  closeSheet();
+  closeDrawer();
   state.conversationId = null;
   state.messages = [];
   state.streaming = false;
   state.streamingText = '';
   state.pendingTools = [];
   renderConfirmBar();
+  renderSendIcon();
   setTitle('');
   renderMessages();
   inputEl.focus();
   toast(t('newChat') + ' — ' + t('emptyConversation'));
 });
+$('drawer-backdrop').addEventListener('click', closeDrawer);
 sheetEl.querySelector('.backdrop').addEventListener('click', closeSheet);
+$('act-backdrop').addEventListener('click', closeActionSheet);
 $('btn-ws-switch').textContent = t('switchWorkspace');
 $('btn-ws-switch').addEventListener('click', openWorkspaceSheet);
+$('btn-ws-add').addEventListener('click', addWorkspace);
+$('btn-sheet-add').addEventListener('click', addWorkspace);
 $('btn-file-back').addEventListener('click', function () {
   if (state.currentFile && state.currentFile.dirty) {
     openModal(t('deleteMessage'), null, t('renameSave'), t('renameCancel'), 'danger', null);
@@ -2326,7 +2850,7 @@ fileEditorEl.addEventListener('input', function () {
   state.currentFile.dirty = true;
   saveFileBtnEl.disabled = false;
   saveFileBtnEl.textContent = t('save');
-  saveFileBtnEl.style.background = 'var(--warn)';
+  saveFileBtnEl.style.background = 'var(--vscode-charts-yellow)';
 });
 saveFileBtnEl.addEventListener('click', saveFile);
 document.querySelectorAll('#tabbar button').forEach(function (b) {
@@ -2340,8 +2864,9 @@ modalOkEl.addEventListener('click', function () {
     onOk(modalInputEl.hidden ? null : modalInputEl.value);
   }
 });
+modalInputEl.addEventListener('input', autoResizeModalInput);
 modalInputEl.addEventListener('keydown', function (e) {
-  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); modalOkEl.click(); }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); modalOkEl.click(); }
   if (e.key === 'Escape') closeModal();
 });
 
@@ -2349,6 +2874,7 @@ modalInputEl.addEventListener('keydown', function (e) {
 setStatus('connecting', t('statusConnecting'));
 $('btn-ws-switch').textContent = t('switchWorkspace');
 saveFileBtnEl.textContent = t('save');
+renderSendIcon();
 api('/api/status').then(function (s) {
   state.appVersion = s.appVersion || '';
   state.statusInfo = s;

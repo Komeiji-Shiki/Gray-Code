@@ -26,6 +26,19 @@ are tracked in the root `CHANGELOG.md`.
 ### Other
   - **移除 fast-tavern-main 子项目**（81 文件）并清理相关引用；版本号升至 1.7.10dev（详见根目录 CHANGELOG [1.7.10dev]）。
 
+
+### Added（1.7.10dev 补记）
+  - **远程控制端 UI 风格对齐桌面端（VS Code Dark+ 设计令牌）**：移动端控制页重构为桌面端同款视觉（深色默认 + 浅色跟随系统），消息列表改桌面端扁平行式，顶栏/底部页签/弹层/列表选中态全部对齐。
+  - **会话侧栏抽屉**：左侧滑出会话列表（新建/切换/重命名/删除会话），对齐桌面端侧栏布局。
+  - **消息操作菜单**：长按消息可编辑并重新生成（分支语义）、重新生成（reroll）、重试、删除。
+  - **工作区管理补齐**：新增工作区（桌面端文件夹选择框）、移除收藏工作区。
+  - **发送键图标修复**：发送/停止按钮内置 SVG 图标并启动即渲染（此前首次加载为空）。
+  - **新增 REST 端点**：`POST /api/workspace-add|workspace-remove|conversation-delete|edit-message|reroll`（沿用既有安全基线）。
+
+### Fixed（1.7.10dev 补记）
+  - **会话列表恒为空**：`handleListConversations` 改按 `custom.messageCount/custom.preview` 读取（与桌面端同口径），取消按计数过滤。
+  - **工作区根目录无法浏览**：目录列举白名单允许空路径（`path=`=根目录），与 FileHandlers 语义对齐。
+  - 详见根目录 CHANGELOG [1.7.10dev]。
 ## [1.7.9dev] - 2026-08-10
 
 ### Added

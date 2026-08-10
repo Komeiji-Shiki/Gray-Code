@@ -13,7 +13,7 @@ import * as http from 'http';
 import { RemoteControlServer, type RemoteControlServerHost } from '../../../backend/modules/remoteControl/RemoteControlServer';
 
 interface FakeConv {
-  meta: { title?: string; updatedAt?: number; messageCount?: number; preview?: string };
+  meta: { title?: string; updatedAt?: number; custom?: Record<string, unknown> };
   messages: unknown[];
 }
 
@@ -26,7 +26,12 @@ class FakeHost implements RemoteControlServerHost {
   workspace = { workspaceUri: 'file:///C%3A/work', activeFilePath: 'src/a.ts' };
   conversations: Record<string, FakeConv> = {
     conv_test_1: {
-      meta: { title: 'Test Chat', updatedAt: 1000, messageCount: 2, preview: 'hi' },
+      meta: {
+        title: 'Test Chat',
+        updatedAt: 1000,
+        // 与真实 meta.json 同构：messageCount/preview 在 custom 段，顶层没有
+        custom: { messageCount: 2, preview: 'hi' }
+      },
       messages: [{
         role: 'user',
         parts: [
@@ -36,7 +41,7 @@ class FakeHost implements RemoteControlServerHost {
         ]
       }]
     },
-    conv_empty: { meta: { title: 'Empty', updatedAt: 900, messageCount: 0, preview: '' }, messages: [] }
+    conv_empty: { meta: { title: 'Empty', updatedAt: 900, custom: {} }, messages: [] }
   };
   respondOverrides: Record<string, unknown> = {};
   configs = [
@@ -52,13 +57,20 @@ class FakeHost implements RemoteControlServerHost {
       case 'chatStream':
       case 'retryStream':
       case 'toolConfirmation':
+      case 'chat.editBranchStream':
+      case 'chat.rerollStream':
         return { started: true };
       case 'conversation.createConversation':
       case 'conversation.setTitle':
+      case 'conversation.deleteConversation':
       case 'workspace.setActive':
       case 'workspace.writeTextFile':
       case 'deleteSingleMessage':
         return { success: true };
+      case 'workspace.openFolder':
+        return { success: true, activeWorkspaceUri: 'file:///C%3A/new', workspaces: [], saved: [] };
+      case 'workspace.removeSaved':
+        return { success: true, saved: [] };
       case 'listWorkspaceDirectory':
         return {
           success: true,
@@ -277,13 +289,18 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.body.activeFilePath).toBe('src/a.ts');
   });
 
-  test('GET /api/conversations lists only conversations with messages, sorted by updatedAt', async () => {
+  test('GET /api/conversations lists all conversations sorted by updatedAt with custom.messageCount', async () => {
     const res = await requestJson(port, 'GET', '/api/conversations');
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(res.body.conversations).toHaveLength(1);
+    expect(res.body.conversations).toHaveLength(2);
     expect(res.body.conversations[0].id).toBe('conv_test_1');
     expect(res.body.conversations[0].title).toBe('Test Chat');
+    expect(res.body.conversations[0].messageCount).toBe(2);
+    expect(res.body.conversations[0].preview).toBe('hi');
+    expect(res.body.conversations[1].id).toBe('conv_empty');
+    // 真实 meta.json 顶层没有 messageCount：必须从 custom 段读取，否则恒为 0
+    expect(res.body.conversations[1].messageCount).toBe(0);
   });
 
   test('GET /api/messages returns messages for existing conversation', async () => {
@@ -422,6 +439,108 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.status).toBe(400);
   });
 
+  test('POST /api/workspace-add routes workspace.openFolder (desktop folder dialog)', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/workspace-add', {});
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'workspace.openFolder');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    expect(res.body.activeWorkspaceUri).toBe('file:///C%3A/new');
+  });
+
+  test('POST /api/workspace-add surfaces cancel without error', async () => {
+    host.respondOverrides['workspace.openFolder'] = { canceled: true };
+    const res = await post(port, '/api/workspace-add', {});
+    expect(res.status).toBe(200);
+    expect(res.body.canceled).toBe(true);
+    delete host.respondOverrides['workspace.openFolder'];
+  });
+
+  test('POST /api/workspace-remove routes workspace.removeSaved with fsPath', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/workspace-remove', { fsPath: 'C:\\saved' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'workspace.removeSaved');
+    expect(call).toBeDefined();
+    expect(call!.data.fsPath).toBe('C:\\saved');
+  });
+
+  test('POST /api/workspace-remove rejects control-char fsPath with 400', async () => {
+    const res = await post(port, '/api/workspace-remove', { fsPath: 'C:\\x\u0000y' });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/conversation-delete routes conversation.deleteConversation', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/conversation-delete', { conversationId: 'conv_test_1' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'conversation.deleteConversation');
+    expect(call).toBeDefined();
+    expect(call!.data.conversationId).toBe('conv_test_1');
+  });
+
+  test('POST /api/conversation-delete rejects invalid conversationId with 400', async () => {
+    const res = await post(port, '/api/conversation-delete', { conversationId: '../evil' });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/edit-message routes chat.editBranchStream with branch mode', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/edit-message', {
+      conversationId: 'conv_test_1',
+      messageId: 'msg_123',
+      newText: 'edited content'
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'chat.editBranchStream');
+    expect(call).toBeDefined();
+    expect(call!.data.conversationId).toBe('conv_test_1');
+    expect(call!.data.userNodeId).toBe('msg_123');
+    expect(call!.data.messageId).toBe('msg_123');
+    expect(call!.data.newText).toBe('edited content');
+    expect(call!.data.configId).toBe('ch1');
+    expect(call!.data.mode).toBe('branch');
+    expect(call!.data.streamId).toMatch(/^remote_/);
+  });
+
+  test('POST /api/edit-message rejects empty newText with 400', async () => {
+    const res = await post(port, '/api/edit-message', {
+      conversationId: 'conv_test_1',
+      messageId: 'msg_123',
+      newText: '   '
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/edit-message rejects control-char messageId with 400', async () => {
+    const res = await post(port, '/api/edit-message', {
+      conversationId: 'conv_test_1',
+      messageId: 'msg\u0000x',
+      newText: 'hi'
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/reroll routes chat.rerollStream with assistantNodeId', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/reroll', {
+      conversationId: 'conv_test_1',
+      assistantNodeId: 'assistant_42'
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'chat.rerollStream');
+    expect(call).toBeDefined();
+    expect(call!.data.conversationId).toBe('conv_test_1');
+    expect(call!.data.assistantNodeId).toBe('assistant_42');
+    expect(call!.data.configId).toBe('ch1');
+  });
+
+  test('POST /api/reroll rejects missing assistantNodeId with 400', async () => {
+    const res = await post(port, '/api/reroll', { conversationId: 'conv_test_1' });
+    expect(res.status).toBe(400);
+  });
+
   test('POST /api/tool-confirm routes toolConfirmation with resolved configId', async () => {
     host.calls = [];
     const res = await post(port, '/api/tool-confirm', {
@@ -482,6 +601,15 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.body.entries).toHaveLength(2);
     const call = host.calls.find((c) => c.type === 'listWorkspaceDirectory');
     expect(call!.data.path).toBe('src');
+  });
+
+  test('GET /api/files with empty path lists workspace root (root-directory semantic)', async () => {
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/files?path=');
+    expect(res.status).toBe(200);
+    expect(res.body.entries).toHaveLength(2);
+    const call = host.calls.find((c) => c.type === 'listWorkspaceDirectory');
+    expect(call!.data.path).toBe('');
   });
 
   test('GET /api/files rejects absolute paths with 400', async () => {

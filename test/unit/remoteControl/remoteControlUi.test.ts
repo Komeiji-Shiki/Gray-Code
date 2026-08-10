@@ -30,6 +30,11 @@ const SERVER_ENDPOINTS = new Set([
   '/api/delete-message',
   '/api/tool-confirm',
   '/api/rename',
+  '/api/workspace-add',
+  '/api/workspace-remove',
+  '/api/conversation-delete',
+  '/api/edit-message',
+  '/api/reroll',
   '/api/stream'
 ]);
 
@@ -75,6 +80,23 @@ describe('remoteControlUi', () => {
     expect(html).toContain('data-tab="chat"');
     expect(html).toContain('data-tab="files"');
     expect(html).toContain('data-tab="settings"');
+  });
+
+  test('send button icon is injected at boot (icon must never be missing)', () => {
+    const html = renderRemoteControlUiHtml('en');
+    // 发送键初始必须渲染图标：脚本内置发送/停止 SVG 常量，并在 boot 时立即调用
+    expect(html).toContain('var ICON_SEND = \'<svg');
+    expect(html).toContain('var ICON_STOP = \'<svg');
+    expect(html).toContain('function renderSendIcon()');
+    expect(html).toContain('renderSendIcon();');
+  });
+
+  test('template contains conversation drawer and message action sheet', () => {
+    const html = renderRemoteControlUiHtml('en');
+    expect(html).toContain('id="drawer"');
+    expect(html).toContain('id="drawer-list"');
+    expect(html).toContain('id="action-sheet"');
+    expect(html).toContain('id="btn-drawer"');
   });
 
   test('every API endpoint referenced in template exists on server route whitelist', () => {
