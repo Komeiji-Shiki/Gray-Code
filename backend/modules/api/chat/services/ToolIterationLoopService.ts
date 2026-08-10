@@ -48,7 +48,7 @@ import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './s
 import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
-import type { DynamicRuntimeContext } from '../../../prompt/PromptManager';
+import type { DynamicContextDiffBase, DynamicRuntimeContext } from '../../../prompt/PromptManager';
 import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
 import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
 
@@ -368,11 +368,53 @@ export class ToolIterationLoopService {
     async createTurnDynamicContext(
         conversationId: string,
         turnStartId: string,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        dynamicContextStrategy?: DynamicContextStrategy
     ): Promise<string> {
         const runtimeContext = await this.getOrLoadRuntimeContext(conversationId, turnStartId);
-        const promptContextBundle = this.promptManager.getPromptContextBundle(promptModeSnapshot, runtimeContext);
+        // 仅 preserve 策略启用跨回合差分：历史快照回插保证省略的 section 对模型仍可见。
+        const diffBase = dynamicContextStrategy === 'preserve'
+            ? await this.loadPreviousTurnDiffBase(conversationId, turnStartId)
+            : undefined;
+        const promptContextBundle = this.promptManager.getPromptContextBundle(
+            promptModeSnapshot,
+            runtimeContext,
+            diffBase ? { diffBase } : undefined
+        );
         return serializePromptContextCache(promptContextBundle);
+    }
+
+    /**
+     * 从历史中定位最近一个带 turnDynamicContext 的用户回合，作为差分基准。
+     *
+     * 新用户消息尚未落盘，历史里最近的缓存即上一轮；找不到（首轮 / 总结裁剪后）
+     * 或上一轮是旧格式缓存（无 section 级数据）时返回 undefined，
+     * 调用方退化为全量发送，保证信息不丢失。
+     */
+    private async loadPreviousTurnDiffBase(
+        conversationId: string,
+        currentTurnStartId: string
+    ): Promise<DynamicContextDiffBase | undefined> {
+        const historyRef = await this.conversationManager.getHistoryRef(conversationId);
+        for (let i = historyRef.length - 1; i >= 0; i--) {
+            const message = historyRef[i];
+            if (message.role !== 'user' || !message.turnDynamicContext) {
+                continue;
+            }
+            if (typeof message.id === 'string' && message.id === currentTurnStartId) {
+                continue;
+            }
+            const cached = deserializePromptContextCache(message.turnDynamicContext);
+            if (!cached.sectionValues) {
+                // 旧缓存无 section 级数据，无法差分：直接退化全量发送。
+                return undefined;
+            }
+            return {
+                sectionValues: cached.sectionValues,
+                templateFingerprint: cached.dynamicTemplateFingerprint
+            };
+        }
+        return undefined;
     }
 
     private orderToolResultsByCallSequence(
