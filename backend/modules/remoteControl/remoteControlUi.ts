@@ -185,6 +185,7 @@ interface UiText {
   secSkills: string;
   secSubagents: string;
   secPinned: string;
+  secRemote: string;
   secStorage: string;
   secDeps: string;
   fldCheckUpdates: string;
@@ -294,6 +295,12 @@ interface UiText {
   seconds: string;
   chipAdd: string;
   chipRemove: string;
+  /* 会话页签 / 设置分页 */
+  secChannel: string;
+  loadMore: string;
+  closeTab: string;
+  emptyNewChat: string;
+  modelSelect: string;
 }
 
 export const UI_TEXTS: Record<UiLang, UiText> = {
@@ -421,6 +428,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     secSkills: '技能',
     secSubagents: '子代理',
     secPinned: '固定文件',
+    secRemote: '远程控制',
     secStorage: '数据存储',
     secDeps: '依赖环境',
     fldCheckUpdates: '检查更新',
@@ -529,7 +537,12 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     unlimited: '不限',
     seconds: '秒',
     chipAdd: '添加',
-    chipRemove: '移除'
+    chipRemove: '移除',
+    secChannel: '渠道',
+    loadMore: '加载更多',
+    closeTab: '关闭会话页签',
+    emptyNewChat: '新对话已就绪，输入消息即可开始。',
+    modelSelect: '选择渠道与模型'
   },
   en: {
     appTitle: 'GrayCode Remote',
@@ -656,6 +669,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     secSkills: 'Skills',
     secSubagents: 'Subagents',
     secPinned: 'Pinned files',
+    secRemote: 'Remote control',
     secStorage: 'Data storage',
     secDeps: 'Dependencies',
     fldCheckUpdates: 'Check for updates',
@@ -764,7 +778,12 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     unlimited: 'Unlimited',
     seconds: 's',
     chipAdd: 'Add',
-    chipRemove: 'Remove'
+    chipRemove: 'Remove',
+    secChannel: 'Channel',
+    loadMore: 'Load more',
+    closeTab: 'Close tab',
+    emptyNewChat: 'New chat ready — type a message to begin.',
+    modelSelect: 'Select channel & model'
   },
   ja: {
     appTitle: 'GrayCode リモート',
@@ -891,6 +910,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     secSkills: 'スキル',
     secSubagents: 'サブエージェント',
     secPinned: '固定ファイル',
+    secRemote: 'リモートコントロール',
     secStorage: 'データ保存',
     secDeps: '依存環境',
     fldCheckUpdates: '更新を確認',
@@ -999,7 +1019,12 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     unlimited: '無制限',
     seconds: '秒',
     chipAdd: '追加',
-    chipRemove: '削除'
+    chipRemove: '削除',
+    secChannel: 'チャンネル',
+    loadMore: 'もっと読み込む',
+    closeTab: 'タブを閉じる',
+    emptyNewChat: '新しい会話の準備ができました。メッセージを入力して開始します。',
+    modelSelect: 'チャンネルとモデルを選択'
   }
 };
 
@@ -1285,6 +1310,129 @@ header .ws { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max
 #views { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view[hidden] { display: none; }
+
+/* 关键修复：author 样式的 display 会覆盖 UA 样式表的 [hidden]{display:none}，
+   此前 #messages/#empty/#file-viewer 设了 display:flex，切换会话/加载历史时
+   「正在加载历史消息」巨块与旧消息同屏显示、挡住大部分对话。全局兜底必须
+   用 !important 压过所有 display 规则（.view[hidden] 同款语义）。 */
+[hidden] { display: none !important; }
+
+/* ---------- 会话页签条：桌面端 ConversationTabs 同款 ---------- */
+#tabs-bar {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  min-height: 34px;
+}
+#conv-tabs { display: flex; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
+#conv-tabs::-webkit-scrollbar { display: none; }
+.conv-tab {
+  flex: none;
+  max-width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12.5px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--vscode-panel-border);
+  cursor: pointer;
+  overflow: hidden;
+}
+.conv-tab.active {
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background);
+  box-shadow: inset 0 -2px 0 var(--vscode-textLink-foreground);
+}
+.conv-tab .tab-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-tab .tab-close { flex: none; padding: 0 4px; border-radius: 3px; font-size: 15px; line-height: 1; opacity: .7; }
+.conv-tab .tab-close:active { background: var(--vscode-list-hoverBackground); opacity: 1; }
+.conv-tab.new { padding: 0 14px; font-size: 16px; color: var(--vscode-descriptionForeground); }
+.conv-tab.new:active { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground); }
+.conv-tab .tab-spin {
+  flex: none;
+  width: 10px; height: 10px;
+  border: 1.5px solid var(--vscode-descriptionForeground);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 输入区渠道/模型行：桌面端 ChannelSelector 同款 ---------- */
+.composer-meta {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.composer-meta::-webkit-scrollbar { display: none; }
+.composer-meta .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  max-width: 70vw;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 999px;
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  font-size: 12px;
+  padding: 3px 11px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.composer-meta .chip:active { background: var(--vscode-list-hoverBackground); }
+
+/* ---------- 设置页分类页签（分页化：对齐桌面端 SettingsPanel 侧栏 19 类） ---------- */
+#settings-tabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  scrollbar-width: none;
+}
+#settings-tabs::-webkit-scrollbar { display: none; }
+.set-tab {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-panel-border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.set-tab.active {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border-color: transparent;
+}
+.set-tab:active { opacity: .85; }
+
+/* ---------- 会话列表「加载更多」 ---------- */
+.load-more-row { padding: 10px 16px; text-align: center; }
+.load-more-btn {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-textLink-foreground);
+  font-size: 12.5px;
+  padding: 6px 18px;
+  cursor: pointer;
+}
+.load-more-btn:active { background: var(--vscode-list-hoverBackground); }
 
 /* ---------- 消息列表：桌面端 MessageList 同款（扁平行式，无聊天气泡） ---------- */
 #messages {
@@ -2029,6 +2177,9 @@ footer.composer {
     </button>
   </header>
 
+  <!-- 会话页签条：桌面端 ConversationTabs 同款（多会话并行，各页签独立流式状态） -->
+  <div id="tabs-bar"><div id="conv-tabs"></div></div>
+
   <!-- 会话侧栏：桌面端侧栏布局在手机端以左滑抽屉呈现 -->
   <div id="drawer">
     <div class="drawer-backdrop" id="drawer-backdrop"></div>
@@ -2052,8 +2203,11 @@ footer.composer {
       </div>
       <div id="confirm-bar"></div>
       <footer class="composer">
-        <textarea id="input" rows="1" autocomplete="off" enterkeyhint="send"></textarea>
-        <button id="send" title="send" aria-label="send"></button>
+        <div id="composer-meta"></div>
+        <div class="composer-row">
+          <textarea id="input" rows="1" autocomplete="off" enterkeyhint="send"></textarea>
+          <button id="send" title="send" aria-label="send"></button>
+        </div>
       </footer>
     </section>
 
@@ -2088,26 +2242,9 @@ footer.composer {
     </section>
 
     <section id="view-settings" class="view" hidden>
+      <div id="settings-tabs"></div>
       <div id="settings-scroll">
-        <div class="card">
-          <h3 id="set-conn-title"></h3>
-          <div class="set-row"><span class="k" id="set-conn-label"></span><span class="v" id="set-conn-val">&mdash;</span></div>
-          <div class="set-row"><span class="k" id="set-port-label"></span><span class="v" id="set-port-val">&mdash;</span></div>
-          <div class="set-row"><span class="k" id="set-ver-label"></span><span class="v" id="set-ver-val">&mdash;</span></div>
-        </div>
-        <div class="card">
-          <h3 id="set-urls-title"></h3>
-          <div id="urls-list"></div>
-        </div>
-        <div class="card">
-          <h3 id="set-model-title"></h3>
-          <div id="configs-list"></div>
-        </div>
         <div id="settings-sections"></div>
-        <div class="card">
-          <h3 id="set-sec-title"></h3>
-          <div class="info-text" id="set-sec-text"></div>
-        </div>
       </div>
     </section>
   </div>
@@ -2161,6 +2298,17 @@ footer.composer {
         <button class="mini-btn" id="btn-browse-pick"></button>
       </div>
     </div>
+    <div id="sheet-model-mode" hidden>
+      <div class="head">
+        <b id="sheet-model-title">&hellip;</b>
+        <span style="display:flex;gap:2px;">
+          <button class="icon-btn" id="btn-sheet-model-close" aria-label="closeTab">
+            <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </span>
+      </div>
+      <div class="list" id="model-list"></div>
+    </div>
   </div>
 </div>
 
@@ -2200,34 +2348,33 @@ var state = {
   lang: '${uiLang}',
   appVersion: '',
   connected: false,
-  streaming: false,
-  conversationId: null,
-  title: 'GrayCode',
-  messages: [],
-  streamingText: '',
-  streamingModel: '',
   evtSource: null,
   reconnectTimer: null,
   toastTimer: null,
-  sendInFlight: false,
-  inputting: false,
-  lastActiveConversation: null,
+  /* 会话页签（多会话并行：桌面端 ConversationTabs 同款） */
+  tabs: [],                /* [{ key, id, title, messages, total, offset, hasMore, loading,
+                                 streaming, streamingText, streamingModel, pendingTools,
+                                 confirmInFlight, sendInFlight, lastError }]
+                               id = null 表示尚未落库的新会话页签 */
+  activeTabKey: null,
+  convPage: 0,             /* 会话抽屉分页游标 */
+  convTotal: 0,
+  convLoading: false,
   /* 工作区 */
   workspaceUri: null,
   workspaceName: '',
   activeFilePath: null,
   fileDirs: {},            /* dirPath -> entries 缓存 */
   currentFile: null,       /* { path, content, dirty } */
-  /* 工具确认 */
-  pendingTools: [],        /* [{id,name,args}] */
-  confirmInFlight: false,
   /* 模型 */
   configs: [],             /* [{id,name,model}] */
   configModels: {},        /* configId -> [{id,name}] */
+  activeChannelId: null,
   statusInfo: null,
   serverStopped: false,
   /* 设置页全量设置项 */
   settings: null,          /* 脱敏后的完整设置 */
+  settingsTab: 'general',  /* 设置分页当前分类 */
   tools: [],               /* [{name,description,enabled,category}] */
   autoExec: {},            /* toolName -> boolean */
   deps: [],                /* [{name,installed,installedVersion}] */
@@ -2239,6 +2386,45 @@ var state = {
   browseBusy: false
 };
 
+var CONV_PAGE_SIZE = 30;    /* 会话抽屉分页（与后端默认一致） */
+var MSG_PAGE_SIZE = 120;    /* 消息历史窗口（与后端默认一致，桌面端同尺寸） */
+
+function tabByKey(key) {
+  for (var i = 0; i < state.tabs.length; i++) if (state.tabs[i].key === key) return state.tabs[i];
+  return null;
+}
+function tabByConvId(id) {
+  if (!id) return null;
+  for (var i = 0; i < state.tabs.length; i++) if (state.tabs[i].id === id) return state.tabs[i];
+  return null;
+}
+function activeTab() {
+  return tabByKey(state.activeTabKey);
+}
+function newTabObject(id, title) {
+  var key = (id && id !== 'new')
+    ? id
+    : ('new-' + Date.now() + '-' + Math.floor(Math.random() * 1e6));
+  return {
+    key: key,
+    id: id || null,
+    title: title || '',
+    messages: [],
+    total: 0,
+    offset: 0,
+    hasMore: false,
+    loading: false,
+    streaming: false,
+    streamingText: '',
+    streamingModel: '',
+    pendingTools: [],
+    confirmInFlight: false,
+    sendInFlight: false,
+    pendingStreamId: null, /* 新建会话竞态兜底：POST 响应返回的 streamId */
+    lastError: null
+  };
+}
+
 var $ = function (id) { return document.getElementById(id); };
 var messagesEl = $('messages');
 var emptyEl = $('empty');
@@ -2248,9 +2434,14 @@ var dotEl = $('dot');
 var statusEl = $('status');
 var titleEl = $('title');
 var wsNameEl = $('ws-name');
+var tabsEl = $('conv-tabs');
+var composerMetaEl = $('composer-meta');
 var sheetEl = $('sheet');
 var sheetListEl = $('sheet-list');
 var sheetTitleEl = $('sheet-title');
+var sheetModelModeEl = $('sheet-model-mode');
+var sheetModelTitleEl = $('sheet-model-title');
+var modelListEl = $('model-list');
 var modalEl = $('modal');
 var modalTitleEl = $('modal-title');
 var modalInputEl = $('modal-input');
@@ -2272,14 +2463,115 @@ var browseListEl = $('browse-list');
 var browsePathEl = $('browse-path');
 var browsePickBtn = $('btn-browse-pick');
 var settingsSectionsEl = $('settings-sections');
+var settingsTabsEl = $('settings-tabs');
 
 var ICON_SEND = '<svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
 var ICON_STOP = '<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>';
 
 function renderSendIcon() {
-  sendBtn.innerHTML = state.streaming ? ICON_STOP : ICON_SEND;
-  sendBtn.title = state.streaming ? t('stop') : t('send');
-  sendBtn.classList.toggle('stop', state.streaming);
+  var tab = activeTab();
+  var streaming = !!(tab && tab.streaming);
+  sendBtn.innerHTML = streaming ? ICON_STOP : ICON_SEND;
+  sendBtn.title = streaming ? t('stop') : t('send');
+  sendBtn.classList.toggle('stop', streaming);
+}
+
+/* ---------- 会话页签（多会话并行） ---------- */
+function renderTabsBar() {
+  tabsEl.innerHTML = '';
+  state.tabs.forEach(function (tab) {
+    var btn = document.createElement('button');
+    btn.className = 'conv-tab' + (tab.key === state.activeTabKey ? ' active' : '');
+    var spin = tab.streaming ? '<span class="tab-spin"></span>' : '';
+    var close = tab.id ? '<span class="tab-close" data-close="1">&times;</span>' : '';
+    btn.innerHTML = spin + '<span class="tab-title">' + esc(tab.title || t('untitled')) + '</span>' + close;
+    btn.addEventListener('click', function (e) {
+      if (e.target && e.target.getAttribute && e.target.getAttribute('data-close')) {
+        e.stopPropagation();
+        closeTab(tab.key);
+        return;
+      }
+      activateTab(tab.key);
+    });
+    tabsEl.appendChild(btn);
+  });
+  var plus = document.createElement('button');
+  plus.className = 'conv-tab new';
+  plus.title = t('newChat');
+  plus.textContent = '+';
+  plus.addEventListener('click', newChatTab);
+  tabsEl.appendChild(plus);
+  tabsEl.scrollLeft = tabsEl.scrollWidth;
+}
+function openConversationTab(id, title) {
+  var existing = tabByConvId(id);
+  if (existing) {
+    activateTab(existing.key);
+    return;
+  }
+  var tab = newTabObject(id, title);
+  state.tabs.push(tab);
+  activateTab(tab.key);
+  loadMessages(tab);
+}
+function activateTab(key) {
+  if (state.activeTabKey !== key) {
+    state.activeTabKey = key;
+  }
+  renderTabsBar();
+  renderMessages();
+  renderConfirmBar();
+  updateSendBtn();
+  var tab = activeTab();
+  setTitle(tab ? tab.title : '');
+}
+function closeTab(key) {
+  var idx = -1;
+  for (var i = 0; i < state.tabs.length; i++) {
+    if (state.tabs[i].key === key) { idx = i; break; }
+  }
+  if (idx < 0) return;
+  state.tabs.splice(idx, 1);
+  if (state.activeTabKey === key) {
+    var next = state.tabs[Math.min(idx, state.tabs.length - 1)];
+    state.activeTabKey = next ? next.key : null;
+  }
+  renderTabsBar();
+  renderMessages();
+  renderConfirmBar();
+  updateSendBtn();
+  var tab = activeTab();
+  setTitle(tab ? tab.title : '');
+}
+function newChatTab() {
+  var tab = newTabObject(null, t('newChat'));
+  state.tabs.push(tab);
+  activateTab(tab.key);
+  inputEl.focus();
+}
+function closeTabByConvId(id) {
+  var tab = tabByConvId(id);
+  if (tab) closeTab(tab.key);
+}
+function syncTabTitles(conversations) {
+  var changed = false;
+  state.tabs.forEach(function (tab) {
+    // 标题为空或仍是「新建会话」占位（远端新建会话标题由桌面端按首行生成）时回填
+    if (!tab.id) return;
+    if (tab.title && tab.title !== t('newChat')) return;
+    for (var i = 0; i < conversations.length; i++) {
+      if (conversations[i].id === tab.id && conversations[i].title) {
+        tab.title = conversations[i].title;
+        changed = true;
+        break;
+      }
+    }
+  });
+  if (changed) {
+    renderTabsBar();
+    var cur = activeTab();
+    if (cur) setTitle(cur.title);
+  }
 }
 
 function fmtTime(ts) {
@@ -2485,30 +2777,47 @@ function buildMessage(msg, index) {
   }
   el.innerHTML = meta + body;
   // 长按消息 → 操作菜单（编辑/重新生成/删除），与桌面端消息操作对齐
-  if (state.conversationId && role !== 'system') {
+  var cur = activeTab();
+  if (cur && cur.id && role !== 'system') {
     attachLongPress(el, function () { openActionSheet(msg, index); });
   }
   return el;
 }
 function renderMessages() {
+  var tab = activeTab();
   messagesEl.innerHTML = '';
-  if (state.messages.length === 0 && !state.streaming) {
+  if (!tab) {
     emptyEl.hidden = false;
     messagesEl.hidden = true;
-    $('empty-text').textContent = t('emptyMessages');
+    $('empty-text').textContent = t('emptyConversation');
+    return;
+  }
+  if (tab.loading && tab.messages.length === 0) {
+    emptyEl.hidden = false;
+    messagesEl.hidden = true;
+    $('empty-text').textContent = t('streamLoading');
+    return;
+  }
+  if (tab.messages.length === 0 && !tab.streaming) {
+    emptyEl.hidden = false;
+    messagesEl.hidden = true;
+    $('empty-text').textContent = tab.id ? t('emptyMessages') : t('emptyNewChat');
     return;
   }
   emptyEl.hidden = true;
   messagesEl.hidden = false;
-  state.messages.forEach(function (m, i) {
+  if (tab.lastError) {
+    messagesEl.appendChild(buildErrorBanner(tab.lastError.text, tab.lastError.retry));
+  }
+  tab.messages.forEach(function (m, i) {
     var el = buildMessage(m, i);
     messagesEl.appendChild(el);
   });
-  if (state.streaming) {
+  if (tab.streaming) {
     var holder = document.createElement('div');
     holder.className = 'msg assistant';
     holder.innerHTML = '<div class="meta"><span class="role-label">' + esc(t('assistantLabel')) + '</span></div>' +
-      '<div class="msg-content">' + (state.streamingText ? renderMarkdown(state.streamingText) : '') + '<span class="caret"></span></div>';
+      '<div class="msg-content">' + (tab.streamingText ? renderMarkdown(tab.streamingText) : '') + '<span class="caret"></span></div>';
     messagesEl.appendChild(holder);
   }
   scrollToBottom(true);
@@ -2535,7 +2844,10 @@ function openActionSheet(msg, index) {
       if (a.key === 'edit') editMessage(msg, index);
       else if (a.key === 'reroll') rerollMessage(msg);
       else if (a.key === 'retry') doRetry();
-      else if (a.key === 'delete') deleteMessageAt(index);
+      // 删除必须用消息的绝对 index（后端 deleteSingleMessage 按全量历史索引定位）：
+      // 历史分页后窗口内可见下标 ≠ 全量下标（tab.total - tab.offset + i），
+      // 用服务端下发的 msg.index 可同时覆盖分页窗口与旧版无分页两种形态
+      else if (a.key === 'delete') deleteMessageAt(typeof msg.index === 'number' ? msg.index : index);
     });
     actPanelEl.appendChild(btn);
   });
@@ -2544,15 +2856,17 @@ function openActionSheet(msg, index) {
 function closeActionSheet() { actionSheetEl.classList.remove('open'); actPanelEl.innerHTML = ''; }
 
 function deleteMessageAt(index) {
+  var tab = activeTab();
+  if (!tab || !tab.id) return;
   openModal(t('deleteMessageConfirm'), null, t('deleteMessage'), t('renameCancel'), 'danger', function () {
     api('/api/delete-message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: state.conversationId, targetIndex: index })
+      body: JSON.stringify({ conversationId: tab.id, targetIndex: index })
     }).then(function () {
       toast(t('deleteMessageDone'));
-      loadMessages(state.conversationId, true);
-      loadConversations();
+      loadMessages(tab, true);
+      loadConversations(true);
     }).catch(function (err) {
       toast(t('deleteMessageFailed') + ': ' + (err.message || ''));
     });
@@ -2560,6 +2874,8 @@ function deleteMessageAt(index) {
 }
 
 function editMessage(msg, index) {
+  var tab = activeTab();
+  if (!tab || !tab.id) return;
   var text = partsToText(msg.parts, 'text') || '';
   if (!msg.id) { toast(t('editFailed')); return; }
   openModal(t('editMessage'), text, t('renameSave'), t('renameCancel'), 'ok', function (val) {
@@ -2569,9 +2885,9 @@ function editMessage(msg, index) {
     api('/api/edit-message', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: state.conversationId, messageId: msg.id, newText: v })
+      body: JSON.stringify({ conversationId: tab.id, messageId: msg.id, newText: v })
     }).then(function () {
-      setStreaming(true, '');
+      setStreaming(tab, true, '');
     }).catch(function (err) {
       toast(t('editFailed') + ': ' + (err.message || ''));
     });
@@ -2579,13 +2895,15 @@ function editMessage(msg, index) {
 }
 
 function rerollMessage(msg) {
+  var tab = activeTab();
+  if (!tab || !tab.id) return;
   if (!msg.id) { toast(t('rerollFailed')); return; }
   api('/api/reroll', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversationId: state.conversationId, assistantNodeId: msg.id })
+    body: JSON.stringify({ conversationId: tab.id, assistantNodeId: msg.id })
   }).then(function () {
-    setStreaming(true, '');
+    setStreaming(tab, true, '');
   }).catch(function (err) {
     toast(t('rerollFailed') + ': ' + (err.message || ''));
   });
@@ -2608,40 +2926,59 @@ function attachLongPress(el, onLong) {
 }
 
 /* ---------- data loading ---------- */
-function loadMessages(conversationId, quiet) {
-  if (!conversationId) return Promise.resolve();
-  if (!quiet) renderLoading(true);
-  return api('/api/messages?conversationId=' + encodeURIComponent(conversationId))
+/**
+ * 加载会话消息窗口（自尾端向前分页，桌面端 MESSAGES_PAGE_SIZE 同款）。
+ * prepend=true 时把更早的一页拼接到窗口顶部（滚动向上回溯），并保持滚动位置。
+ * 完成事件后调用 loadMessages(tab, true)（offset 归零重取窗口）以纳入最新消息。
+ */
+function loadMessages(tab, quiet, prepend) {
+  if (!tab) return Promise.resolve();
+  if (!tab.id) return Promise.resolve();
+  if (!quiet && !tab.messages.length) {
+    tab.loading = true;
+    renderMessages();
+  }
+  var params = 'conversationId=' + encodeURIComponent(tab.id) +
+    '&limit=' + MSG_PAGE_SIZE + '&offset=' + (prepend ? tab.offset : 0);
+  return api('/api/messages?' + params)
     .then(function (data) {
-      state.messages = Array.isArray(data.messages) ? data.messages : [];
-      renderLoading(false);
-      renderMessages();
+      var page = Array.isArray(data.messages) ? data.messages : [];
+      var total = typeof data.total === 'number' ? data.total : 0;
+      if (prepend) {
+        tab.messages = page.concat(tab.messages);
+        tab.offset = tab.offset + page.length;
+        tab.total = total;
+      } else {
+        tab.messages = page;
+        tab.offset = page.length;
+        tab.total = total;
+      }
+      tab.hasMore = total > tab.offset;
+      tab.loading = false;
+      tab.lastError = null;
+      if (tab.key === state.activeTabKey) renderMessages();
+      return data;
     })
     .catch(function (err) {
-      renderLoading(false);
+      tab.loading = false;
       if (!quiet) {
         toast(t('loadFailed') + ': ' + (err.message || ''));
-        showErrorBanner(err.message || t('loadFailed'));
+        tab.lastError = { text: err.message || t('loadFailed'), retry: !!tab.id };
+        if (tab.key === state.activeTabKey) renderMessages();
       }
     });
 }
-function renderLoading(on) {
-  if (on && !state.messages.length) {
-    emptyEl.hidden = false;
-    messagesEl.hidden = true;
-    $('empty-text').textContent = t('streamLoading');
-  } else if (!on) {
-    if (!state.messages.length && !state.streaming) {
-      emptyEl.hidden = false;
-      messagesEl.hidden = true;
-      $('empty-text').textContent = t('emptyMessages');
-    } else {
-      emptyEl.hidden = true;
-      messagesEl.hidden = false;
+function loadOlder(tab) {
+  if (!tab || !tab.id || !tab.hasMore || tab.loading) return;
+  tab.loading = true;
+  var prevHeight = messagesEl.scrollHeight;
+  loadMessages(tab, true, true).then(function () {
+    if (tab.key === state.activeTabKey) {
+      messagesEl.scrollTop = messagesEl.scrollHeight - prevHeight;
     }
-  }
+  });
 }
-function showErrorBanner(msg, withRetry) {
+function buildErrorBanner(msg, withRetry) {
   var el = document.createElement('div');
   el.className = 'msg error';
   el.innerHTML = '<div class="msg-content">' + esc(t('errorBanner')) + ': ' + esc(msg || '') + '</div>' +
@@ -2650,97 +2987,118 @@ function showErrorBanner(msg, withRetry) {
     var btn = el.querySelector('.retry-btn');
     btn.addEventListener('click', doRetry);
   }
-  // 空状态（#empty 显示中）时错误条会被隐藏容器吞掉：显式切回消息视图
-  emptyEl.hidden = true;
-  messagesEl.hidden = false;
-  messagesEl.appendChild(el);
-  scrollToBottom(true);
+  return el;
 }
-function loadConversations() {
-  return api('/api/conversations').then(function (data) {
-    var list = Array.isArray(data.conversations) ? data.conversations : [];
+/**
+ * 会话列表（抽屉）：分页惰性加载（对齐桌面端 CONVERSATIONS_PAGE_SIZE=30）。
+ * reset=true 时回到第一页重取；否则追加下一页（「加载更多」按钮触发）。
+ * 同步把打开中的页签标题回填（远端新建会话的标题由桌面端按首行生成）。
+ */
+function loadConversations(reset) {
+  if (state.convLoading) return Promise.resolve();
+  if (reset) {
+    state.convPage = 0;
+    state.convTotal = 0;
     drawerListEl.innerHTML = '';
-    if (list.length === 0) {
-      var empty = document.createElement('div');
-      empty.className = 'conv-item';
-      empty.style.color = 'var(--vscode-descriptionForeground)';
-      empty.textContent = t('emptyConversation');
-      drawerListEl.appendChild(empty);
-    }
-    list.forEach(function (c) {
-      var row = document.createElement('div');
-      row.className = 'conv-item' + (c.id === state.conversationId ? ' active' : '');
-      var it = document.createElement('button');
-      it.className = 'conv-item-main';
-      it.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:transparent;border:none;text-align:left;cursor:pointer;padding:0;color:inherit;font:inherit;';
-      it.innerHTML = '<div class="t"><div class="name">' + esc(c.title || t('untitled')) + '</div>' +
-        (c.preview ? '<div class="preview">' + esc(c.preview) + '</div>' : '') + '</div>' +
-        '<span class="when">' + fmtTime(c.updatedAt) + '</span>';
-      it.addEventListener('click', function () {
-        switchConversation(c.id, c.title);
-        closeDrawer();
-      });
-      it.addEventListener('contextmenu', function (e) {
-        e.preventDefault();
-        openRename(c.id, c.title);
-      });
-      row.appendChild(it);
-      var del = document.createElement('button');
-      del.className = 'conv-del';
-      del.title = t('deleteConversation');
-      del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
-      del.addEventListener('click', function (e) {
-        e.stopPropagation();
-        openModal(t('deleteConversationConfirm'), null, t('deleteConversation'), t('renameCancel'), 'danger', function () {
-          api('/api/conversation-delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversationId: c.id })
-          }).then(function () {
-            toast(t('deleteConversationDone'));
-            if (state.conversationId === c.id) {
-              state.conversationId = null;
-              state.messages = [];
-              state.streaming = false;
-              state.streamingText = '';
-              state.pendingTools = [];
-              renderConfirmBar();
-              setTitle('');
-              renderMessages();
-            }
-            loadConversations();
-          }).catch(function (err) {
-            toast(t('deleteConversationFailed') + ': ' + (err.message || ''));
-          });
+  }
+  state.convLoading = true;
+  var offset = state.convPage * CONV_PAGE_SIZE;
+  return api('/api/conversations?limit=' + CONV_PAGE_SIZE + '&offset=' + offset)
+    .then(function (data) {
+      var list = Array.isArray(data.conversations) ? data.conversations : [];
+      var total = typeof data.total === 'number' ? data.total : 0;
+      state.convTotal = total;
+      var hasMore = typeof data.hasMore === 'boolean' ? data.hasMore : (offset + list.length < total);
+      appendConversationRows(list, hasMore);
+      state.convPage++;
+      syncTabTitles(list);
+      return list;
+    })
+    .catch(function () { /* 列表刷新失败静默：保留既有条目 */ })
+    .then(function (list) {
+      state.convLoading = false;
+      return list;
+    });
+}
+function appendConversationRows(list, hasMore) {
+  if (state.convPage === 0 && list.length === 0) {
+    var empty = document.createElement('div');
+    empty.className = 'conv-item';
+    empty.style.color = 'var(--vscode-descriptionForeground)';
+    empty.textContent = t('emptyConversation');
+    drawerListEl.appendChild(empty);
+    return;
+  }
+  list.forEach(function (c) {
+    var row = document.createElement('div');
+    row.className = 'conv-item' + (tabByConvId(c.id) ? ' active' : '');
+    var it = document.createElement('button');
+    it.className = 'conv-item-main';
+    it.style.cssText = 'flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:transparent;border:none;text-align:left;cursor:pointer;padding:0;color:inherit;font:inherit;';
+    it.innerHTML = '<div class="t"><div class="name">' + esc(c.title || t('untitled')) + '</div>' +
+      (c.preview ? '<div class="preview">' + esc(c.preview) + '</div>' : '') + '</div>' +
+      '<span class="when">' + fmtTime(c.updatedAt) + '</span>';
+    it.addEventListener('click', function () {
+      openConversationTab(c.id, c.title);
+      closeDrawer();
+    });
+    it.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      openRename(c.id, c.title);
+    });
+    row.appendChild(it);
+    var del = document.createElement('button');
+    del.className = 'conv-del';
+    del.title = t('deleteConversation');
+    del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>';
+    del.addEventListener('click', function (e) {
+      e.stopPropagation();
+      openModal(t('deleteConversationConfirm'), null, t('deleteConversation'), t('renameCancel'), 'danger', function () {
+        api('/api/conversation-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId: c.id })
+        }).then(function () {
+          toast(t('deleteConversationDone'));
+          closeTabByConvId(c.id);
+          loadConversations(true);
+        }).catch(function (err) {
+          toast(t('deleteConversationFailed') + ': ' + (err.message || ''));
         });
       });
-      row.appendChild(del);
-      drawerListEl.appendChild(row);
     });
-    return list;
+    row.appendChild(del);
+    drawerListEl.appendChild(row);
   });
-}
-function switchConversation(id, title) {
-  state.conversationId = id;
-  state.streaming = false;
-  state.streamingText = '';
-  state.messages = [];
-  state.pendingTools = [];
-  renderConfirmBar();
-  setTitle(title);
-  renderSendIcon();
-  renderMessages();
-  loadMessages(id);
-  loadConversations();
+  if (hasMore) {
+    var moreRow = document.createElement('div');
+    moreRow.className = 'load-more-row';
+    var moreBtn = document.createElement('button');
+    moreBtn.className = 'load-more-btn';
+    var loaded = state.convPage * CONV_PAGE_SIZE + list.length;
+    moreBtn.textContent = t('loadMore') + ' (' + loaded + '/' + state.convTotal + ')';
+    moreBtn.addEventListener('click', function () {
+      moreBtn.disabled = true;
+      moreRow.remove();
+      loadConversations(false);
+    });
+    moreRow.appendChild(moreBtn);
+    drawerListEl.appendChild(moreRow);
+  }
 }
 function openDrawer() {
   drawerEl.classList.add('open');
-  loadConversations();
+  loadConversations(true);
 }
 function closeDrawer() { drawerEl.classList.remove('open'); }
 
 /* 工作区切换弹层（sheet 仅用于工作区；会话切换走左侧抽屉） */
-function closeSheet() { sheetEl.classList.remove('open'); closeBrowseMode(); }
+function closeSheet() {
+  sheetEl.classList.remove('open');
+  closeBrowseMode();
+  $('sheet-model-mode').hidden = true;
+  $('sheet-list-mode').hidden = false;
+}
 
 /* ---------- rename ---------- */
 var renaming = null;
@@ -2754,8 +3112,13 @@ function openRename(id, title) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversationId: renaming, title: v })
     }).then(function () {
-      setTitle(v);
-      loadConversations();
+      var tab = tabByConvId(renaming);
+      if (tab) {
+        tab.title = v;
+        renderTabsBar();
+        if (tab.key === state.activeTabKey) setTitle(v);
+      }
+      loadConversations(true);
       toast(t('renameSave') + ' ✓');
     }).catch(function (err) {
       toast(t('sendFailed') + ': ' + (err.message || ''));
@@ -2793,69 +3156,90 @@ function closeModal() {
 }
 
 /* ---------- send / stop / retry ---------- */
-function setStreaming(on, model) {
-  state.streaming = on;
-  state.streamingModel = model || '';
-  if (on) {
-    setStatus('streaming', t('statusStreaming'));
+function setStreaming(tab, on, model) {
+  if (!tab) return;
+  tab.streaming = on;
+  tab.streamingModel = model || '';
+  if (tab.key === state.activeTabKey) {
+    if (on) {
+      setStatus('streaming', t('statusStreaming'));
+    } else {
+      setStatus(state.connected ? 'connected' : 'connecting', state.connected ? t('statusConnected') : t('statusConnecting'));
+    }
+    renderSendIcon();
+    renderMessages();
   } else {
-    setStatus(state.connected ? 'connected' : 'connecting', state.connected ? t('statusConnected') : t('statusConnecting'));
+    renderTabsBar(); /* 后台页签更新流转动画 */
   }
-  renderSendIcon();
-  renderMessages();
 }
 function canSend() {
-  return state.connected && !state.sendInFlight && !state.streaming;
+  if (!state.connected) return false;
+  var tab = activeTab();
+  if (!tab) return true; /* 无页签时发送 = 隐式新建会话 */
+  return !tab.streaming && !tab.sendInFlight;
 }
 function updateSendBtn() {
   var hasText = inputEl.value.trim().length > 0;
   sendBtn.disabled = !hasText || !canSend();
 }
 function doSend() {
+  var tab = activeTab();
+  if (!tab) newChatTab();
+  tab = activeTab();
+  if (!tab) return;
   var text = inputEl.value.trim();
   if (!text || !canSend()) return;
   inputEl.value = '';
   updateSendBtn();
-  state.sendInFlight = true;
+  tab.sendInFlight = true;
   sendBtn.disabled = true;
   var payload = { text: text };
-  if (state.conversationId) payload.conversationId = state.conversationId;
+  if (tab.id) payload.conversationId = tab.id;
   api('/api/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   }).then(function (data) {
-    if (data.conversationId && data.conversationId !== state.conversationId) {
-      state.conversationId = data.conversationId;
-      state.messages = [];
-      renderMessages();
-      loadConversations();
+    if (data.conversationId && data.conversationId !== tab.id) {
+      // 新建会话：页签从「未落库」转为真实会话（此后 SSE 流按 conversationId 路由回本页签）。
+      // 先置 streaming 再补发竞态窗口内的孤儿 chunk：若缓冲里已含 complete/error 终结
+      // 事件（超快响应时整个流可能在 POST 响应前结束），终结处理依赖 streaming 标志
+      // 复位，顺序颠倒会把页签永久卡在「生成中」
+      tab.id = data.conversationId;
+      tab.pendingStreamId = data.streamId || null;
+      setStreaming(tab, true, '');
+      flushOrphanStream(data.streamId, tab);
+      renderTabsBar();
+      loadConversations(true);
+      return;
     }
-    setStreaming(true, '');
+    setStreaming(tab, true, '');
   }).catch(function (err) {
     toast(t('sendFailed') + ': ' + (err.message || ''));
   }).finally(function () {
-    state.sendInFlight = false;
+    tab.sendInFlight = false;
     updateSendBtn();
   });
 }
 function doStop() {
-  if (!state.conversationId) return;
+  var tab = activeTab();
+  if (!tab || !tab.id) return;
   api('/api/cancel', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversationId: state.conversationId })
+    body: JSON.stringify({ conversationId: tab.id })
   }).catch(function () {});
 }
 function doRetry() {
-  if (!state.conversationId) return;
+  var tab = activeTab();
+  if (!tab || !tab.id) return;
   toast(t('retry') + '…');
   api('/api/retry', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversationId: state.conversationId })
+    body: JSON.stringify({ conversationId: tab.id })
   }).then(function () {
-    setStreaming(true, '');
+    setStreaming(tab, true, '');
   }).catch(function (err) {
     toast(t('retryFailed') + ': ' + (err.message || ''));
   });
@@ -2863,8 +3247,9 @@ function doRetry() {
 
 /* ---------- tool confirmation ---------- */
 function renderConfirmBar() {
+  var tab = activeTab();
   confirmBarEl.innerHTML = '';
-  if (state.pendingTools.length === 0) {
+  if (!tab || tab.pendingTools.length === 0) {
     confirmBarEl.classList.remove('open');
     return;
   }
@@ -2873,9 +3258,9 @@ function renderConfirmBar() {
   head.className = 'head';
   head.textContent = '🛠 ' + t('awaitingApproval');
   confirmBarEl.appendChild(head);
-  state.pendingTools.forEach(function (tool) {
+  tab.pendingTools.forEach(function (tool) {
     var item = document.createElement('div');
-    item.className = 'tool-item' + (state.confirmInFlight ? ' pending' : '');
+    item.className = 'tool-item' + (tab.confirmInFlight ? ' pending' : '');
     var argsText = '';
     try {
       argsText = tool.args && typeof tool.args === 'object'
@@ -2892,23 +3277,24 @@ function renderConfirmBar() {
   });
 }
 function toolConfirm(id, name, confirmed) {
-  if (state.confirmInFlight || !state.conversationId) return;
-  state.confirmInFlight = true;
+  var tab = activeTab();
+  if (!tab || tab.confirmInFlight || !tab.id) return;
+  tab.confirmInFlight = true;
   renderConfirmBar();
   api('/api/tool-confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      conversationId: state.conversationId,
+      conversationId: tab.id,
       toolResponses: [{ id: id, name: name, confirmed: confirmed }]
     })
   }).then(function () {
-    state.pendingTools = state.pendingTools.filter(function (p) { return p.id !== id; });
+    tab.pendingTools = tab.pendingTools.filter(function (p) { return p.id !== id; });
     toast(confirmed ? t('toolApproved') : t('toolRejected'));
   }).catch(function (err) {
     toast(t('toolConfirmFailed') + ': ' + (err.message || ''));
   }).finally(function () {
-    state.confirmInFlight = false;
+    tab.confirmInFlight = false;
     renderConfirmBar();
   });
 }
@@ -2932,20 +3318,28 @@ function connectStream() {
   es.onopen = function () {
     state.serverStopped = false;
     state.connected = true;
-    setStatus(state.streaming ? 'streaming' : 'connected', state.streaming ? t('statusStreaming') : t('statusConnected'));
+    var cur = activeTab();
+    setStatus(cur && cur.streaming ? 'streaming' : 'connected',
+      cur && cur.streaming ? t('statusStreaming') : t('statusConnected'));
   };
   es.addEventListener('hello', function (ev) {
     try {
       var info = JSON.parse(ev.data);
       state.statusInfo = info;
+      state.activeChannelId = info.activeChannelId || null;
       applyWorkspaceInfo(info);
-      if (info.activeConversationId && !state.conversationId) {
+      // 首次进入：打开桌面端当前激活会话为第一个页签（之后用户可自由开多会话）
+      if (info.activeConversationId && state.tabs.length === 0) {
         var id = info.activeConversationId;
-        state.conversationId = id;
-        setTitle(info.activeConversationTitle || '');
-        loadMessages(id, true);
-        loadConversations();
+        var tab = newTabObject(id, info.activeConversationTitle || '');
+        state.tabs.push(tab);
+        state.activeTabKey = tab.key;
+        renderTabsBar();
+        setTitle(tab.title);
+        loadMessages(tab, true);
+        loadConversations(true);
       }
+      renderComposerMeta();
     } catch (e) {}
   });
   es.addEventListener('message', function (ev) { handleStreamMessage(ev.data); });
@@ -2960,7 +3354,7 @@ function connectStream() {
     es.close();
     state.evtSource = null;
     state.connected = false;
-    state.streaming = false;
+    resetAllStreaming();
     setStatus('error', t('statusServerStopped'));
     sendBtn.disabled = true;
   });
@@ -2970,14 +3364,181 @@ function connectStream() {
     es.close();
     state.evtSource = null;
     state.connected = false;
-    if (state.streaming) { setStreaming(false); }
+    resetAllStreaming();
     setStatus('connecting', t('statusReconnecting'));
     retryConnect();
   };
 }
+/** 连接断开：所有页签的流式状态复位（流已随连接死亡，防发送键永久禁用） */
+function resetAllStreaming() {
+  var changed = false;
+  state.tabs.forEach(function (tab) {
+    if (tab.streaming || tab.pendingTools.length) {
+      tab.streaming = false;
+      tab.streamingText = '';
+      tab.pendingTools = [];
+      changed = true;
+    }
+  });
+  if (changed) {
+    renderTabsBar();
+    renderConfirmBar();
+    renderMessages();
+    updateSendBtn();
+  }
+}
 function retryConnect() {
   clearTimeout(state.reconnectTimer);
   state.reconnectTimer = setTimeout(connectStream, 2000);
+}
+/**
+ * SSE 消息路由（多会话并行核心）：
+ * - 会话 ID / streamId 的装配位置：桌面端 StreamChunkProcessor 在【每个 chunk 元素】上
+ *   携带 conversationId/streamId（streamChunk → data 单元素；streamChunkBatch → data
+ *   数组、包装层没有）。必须三种位置都兼容，否则 50ms 节流合并的批量流整体被丢弃，
+ *   手机端流式输出只能断续显示（历史故障根源）；
+ * - 找不到对应页签的流（桌面端正在生成、手机端未打开）按 streamId 暂存孤儿 chunk，
+ *   待页签出现（新建会话的 POST 响应比首个 SSE chunk 晚到的竞态窗口）后补发；
+ * - streamChunk / streamChunkBatch 的 data 可能是单个 chunk 对象或 chunk 数组，
+ *   逐个派发到目标页签；后台页签照常累积流式状态，切回时立即呈现完整进度。
+ */
+var ORPHAN_STREAM_MAX = 12;        /* 孤儿流上限（桌面端流未被本端打开时防无限堆积） */
+var ORPHAN_CHUNK_MAX = 5000;       /* 单孤儿流 chunk 上限 */
+var orphanStreams = {};            /* streamId -> { convId, chunks: [] } */
+
+function handleStreamMessage(raw) {
+  var msg;
+  try { msg = JSON.parse(raw); } catch (e) { return; }
+  if (!msg || !msg.type) return;
+  var d = msg.data || {};
+  if (msg.type === 'streamChunk' || msg.type === 'streamChunkBatch') {
+    var chunks = Array.isArray(d) ? d : [d];
+    var first = chunks[0] || {};
+    var convId = msg.conversationId || first.conversationId || '';
+    var streamId = msg.streamId || first.streamId || '';
+    var tab = tabByConvId(convId) || tabByStreamId(streamId);
+    if (!tab) {
+      // 孤儿流暂存：等页签出现后补发（新建会话竞态窗口 / 桌面端后台流）
+      if (streamId) {
+        var buf = orphanStreams[streamId];
+        if (!buf) {
+          if (Object.keys(orphanStreams).length >= ORPHAN_STREAM_MAX) {
+            var firstKey = null;
+            for (var k in orphanStreams) { firstKey = k; break; }
+            if (firstKey) delete orphanStreams[firstKey];
+          }
+          buf = { convId: convId, chunks: [] };
+          orphanStreams[streamId] = buf;
+        }
+        if (buf.chunks.length < ORPHAN_CHUNK_MAX) {
+          buf.chunks = buf.chunks.concat(chunks);
+        }
+      }
+      return;
+    }
+    // streamId 兜底命中：新建会话的 SSE chunk 先于 POST 响应到达（页签会话 ID
+    // 尚未写入），直接用 chunk 自带的 conversationId 落定页签，消除竞态
+    if (tab.id !== convId && convId && !tabByConvId(convId)) {
+      tab.id = convId;
+      tab.pendingStreamId = null;
+      renderTabsBar();
+    }
+    // 补发此前暂存的孤儿 chunk（若页签在竞态窗口内被创建）
+    var buffered = streamId && orphanStreams[streamId];
+    if (buffered && buffered.chunks.length) {
+      chunks = buffered.chunks.concat(chunks);
+      delete orphanStreams[streamId];
+    }
+    chunks.forEach(function (c) { processChunk(c, tab); });
+    return;
+  }
+  if (msg.type === 'error') {
+    var tab2 = tabByConvId(msg.conversationId || (d && d.conversationId)) || activeTab();
+    if (!tab2) return;
+    if (!tab2.streaming) {
+      var errText = (d.error && (d.error.message || d.error)) || d.message || t('loadFailed');
+      tab2.lastError = { text: errText, retry: !!tab2.id };
+      if (tab2.key === state.activeTabKey) renderMessages();
+    }
+  }
+}
+function tabByStreamId(streamId) {
+  if (!streamId) return null;
+  for (var i = 0; i < state.tabs.length; i++) {
+    if (state.tabs[i].pendingStreamId === streamId) return state.tabs[i];
+  }
+  return null;
+}
+/** 新建会话 POST 响应到达：flush 竞态窗口内的孤儿 chunk 到对应页签 */
+function flushOrphanStream(streamId, tab) {
+  if (!streamId || !tab) return;
+  var buf = orphanStreams[streamId];
+  if (buf && buf.chunks.length) {
+    delete orphanStreams[streamId];
+    buf.chunks.forEach(function (c) { processChunk(c, tab); });
+  }
+}
+function processChunk(c, tab) {
+  if (!c || !c.type) return;
+  var type = c.type;
+  if (type === 'chunk' && typeof c.chunk === 'string') {
+    if (!tab.streaming) setStreaming(tab, true, '');
+    tab.streamingText += c.chunk;
+    if (tab.key === state.activeTabKey) renderStreamingText();
+    return;
+  }
+  if (type === 'complete') {
+    if (tab.streaming) { tab.streamingText = c.content || tab.streamingText; setStreaming(tab, false); }
+    tab.pendingTools = [];
+    tab.lastError = null;
+    renderConfirmBar();
+    loadMessages(tab, true);
+    loadConversations(true);
+    return;
+  }
+  if (type === 'cancelled') {
+    if (tab.streaming) { tab.streamingText = c.content || tab.streamingText; setStreaming(tab, false); }
+    tab.pendingTools = [];
+    tab.lastError = null;
+    renderConfirmBar();
+    toast(t('streamInterrupted'));
+    loadMessages(tab, true);
+    return;
+  }
+  if (type === 'error') {
+    if (tab.streaming) setStreaming(tab, false);
+    var errMsg = (c.error && (c.error.message || c.error)) || t('loadFailed');
+    tab.lastError = { text: errMsg, retry: false };
+    if (tab.key === state.activeTabKey) renderMessages();
+    loadMessages(tab, true);
+    return;
+  }
+  if (type === 'toolsExecuting' || type === 'toolIteration') {
+    if (!tab.streaming) setStreaming(tab, true, '');
+    tab.pendingTools = [];
+    renderConfirmBar();
+    return;
+  }
+  if (type === 'awaitingConfirmation') {
+    if (!tab.streaming) setStreaming(tab, true, '');
+    tab.pendingTools = Array.isArray(c.pendingToolCalls) ? c.pendingToolCalls : [];
+    renderConfirmBar();
+    return;
+  }
+}
+function renderStreamingText() {
+  var tab = activeTab();
+  if (!tab || !tab.streaming) return;
+  var holders = messagesEl.querySelectorAll('.msg.assistant');
+  var last = holders[holders.length - 1];
+  if (last && last.querySelector('.caret')) {
+    var contentEl = last.querySelector('.msg-content');
+    contentEl.innerHTML = (tab.streamingText ? renderMarkdown(tab.streamingText) : '') + '<span class="caret"></span>';
+  } else {
+    renderMessages();
+    return;
+  }
+  scrollToBottom();
 }
 function applyWorkspaceInfo(info) {
   if (!info) return;
@@ -3012,87 +3573,6 @@ function applyWorkspaceInfo(info) {
     }
   }
 }
-function handleStreamMessage(raw) {
-  var msg;
-  try { msg = JSON.parse(raw); } catch (e) { return; }
-  if (!msg || !msg.type) return;
-  var convId = msg.conversationId || (msg.data && msg.data.conversationId) || '';
-  var d = msg.data || {};
-  if (convId && state.conversationId && convId !== state.conversationId) {
-    return;
-  }
-  switch (msg.type) {
-    case 'streamChunk':
-    case 'streamChunkBatch':
-      processChunks(d);
-      break;
-    case 'response':
-      break;
-    case 'error':
-      if (!state.streaming) {
-        var errText = (d.error && (d.error.message || d.error)) || d.message || t('loadFailed');
-        showErrorBanner(errText, state.conversationId ? true : false);
-      }
-      break;
-  }
-}
-function processChunks(d) {
-  var type = d.type;
-  if (type === 'chunk' && typeof d.chunk === 'string') {
-    if (!state.streaming) setStreaming(true, '');
-    state.streamingText += d.chunk;
-    renderStreamingText();
-    return;
-  }
-  if (type === 'complete') {
-    if (state.streaming) { state.streamingText = d.content || state.streamingText; setStreaming(false); }
-    state.pendingTools = [];
-    renderConfirmBar();
-    loadMessages(state.conversationId, true);
-    loadConversations();
-    return;
-  }
-  if (type === 'cancelled') {
-    if (state.streaming) { state.streamingText = d.content || state.streamingText; setStreaming(false); }
-    state.pendingTools = [];
-    renderConfirmBar();
-    toast(t('streamInterrupted'));
-    loadMessages(state.conversationId, true);
-    return;
-  }
-  if (type === 'error') {
-    if (state.streaming) setStreaming(false);
-    var errMsg = (d.error && (d.error.message || d.error)) || t('loadFailed');
-    showErrorBanner(errMsg);
-    loadMessages(state.conversationId, true);
-    return;
-  }
-  if (type === 'toolsExecuting' || type === 'toolIteration') {
-    if (!state.streaming) setStreaming(true, '');
-    state.pendingTools = [];
-    renderConfirmBar();
-    return;
-  }
-  if (type === 'awaitingConfirmation') {
-    if (!state.streaming) setStreaming(true, '');
-    state.pendingTools = Array.isArray(d.pendingToolCalls) ? d.pendingToolCalls : [];
-    renderConfirmBar();
-    return;
-  }
-}
-function renderStreamingText() {
-  if (!state.streaming) return;
-  var holders = messagesEl.querySelectorAll('.msg.assistant');
-  var last = holders[holders.length - 1];
-  if (last && last.querySelector('.caret')) {
-    var contentEl = last.querySelector('.msg-content');
-    contentEl.innerHTML = (state.streamingText ? renderMarkdown(state.streamingText) : '') + '<span class="caret"></span>';
-  } else {
-    renderMessages();
-    return;
-  }
-  scrollToBottom();
-}
 
 /* ---------- files ---------- */
 function isTab(name) { return $('view-' + name).hidden === false; }
@@ -3110,6 +3590,8 @@ function switchTab(name) {
       : '';
     loadFiles('', true);
   } else if (name === 'settings') {
+    renderSettingsTabs();
+    renderAllSettingsSections();
     loadConfigs();
     if (!state.settings) {
       loadSettings();
@@ -3352,52 +3834,55 @@ function addWorkspace() {
 
 /* ---------- settings / models ---------- */
 function loadConfigs() {
-  $('configs-list').innerHTML = '<div class="info-text">' + esc(t('loading')) + '</div>';
   return api('/api/configs').then(function (data) {
     state.configs = Array.isArray(data.configs) ? data.configs : [];
-    var listEl = $('configs-list');
-    listEl.innerHTML = '';
-    if (state.configs.length === 0) {
-      var none = document.createElement('div');
-      none.className = 'info-text';
-      none.textContent = t('noConfigs');
-      listEl.appendChild(none);
-      return;
-    }
-    state.configs.forEach(function (cfg) {
-      var item = document.createElement('div');
-      item.className = 'cfg-item';
-      item.innerHTML = '<div class="cname">' + esc(cfg.name || cfg.id || '') + '</div>' +
-        '<div class="cmodel">' + esc(t('currentModel')) + ': ' + esc(cfg.model || '—') + '</div>' +
-        '<div class="mchips"><span class="info-text" style="margin:2px 0">' + esc(t('loading')) + '</span></div>';
-      var ctrl = document.createElement('div');
-      ctrl.className = 'item-row';
-      ctrl.style.borderTop = '1px solid var(--vscode-widget-border)';
-      ctrl.style.marginTop = '6px';
-      var tag = document.createElement('span');
-      tag.className = 't';
-      tag.style.fontSize = '12px';
-      var isActive = state.statusInfo && state.statusInfo.activeChannelId === cfg.id;
-      tag.textContent = isActive ? t('activeChannel') : '';
-      tag.style.color = isActive ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-descriptionForeground)';
-      ctrl.appendChild(tag);
-      if (!isActive) {
-        var act = document.createElement('button');
-        act.className = 'mini-btn';
-        act.textContent = t('setActiveChannel');
-        act.addEventListener('click', function () { setChannelActive(cfg); });
-        ctrl.appendChild(act);
-      }
-      ctrl.appendChild(itemToggle(cfg.enabled !== false, function (v) {
-        cfg.enabled = v;
-        toggleChannelEnabled(cfg);
-      }));
-      item.appendChild(ctrl);
-      listEl.appendChild(item);
-      loadConfigModels(cfg.id, item.querySelector('.mchips'));
-    });
+    renderComposerMeta();
+    if (state.settingsTab === 'channel') renderAllSettingsSections();
+    return data;
   }).catch(function (err) {
-    $('configs-list').innerHTML = '<div class="info-text" style="color:var(--vscode-charts-red)">' + esc(err.message || '') + '</div>';
+    if (state.settingsTab === 'channel') renderAllSettingsSections();
+    return Promise.reject(err);
+  });
+}
+function renderConfigsCard(card) {
+  if (state.configs.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noConfigs');
+    card.appendChild(none);
+    return;
+  }
+  state.configs.forEach(function (cfg) {
+    var item = document.createElement('div');
+    item.className = 'cfg-item';
+    item.innerHTML = '<div class="cname">' + esc(cfg.name || cfg.id || '') + '</div>' +
+      '<div class="cmodel">' + esc(t('currentModel')) + ': ' + esc(cfg.model || '—') + '</div>' +
+      '<div class="mchips"><span class="info-text" style="margin:2px 0">' + esc(t('loading')) + '</span></div>';
+    var ctrl = document.createElement('div');
+    ctrl.className = 'item-row';
+    ctrl.style.borderTop = '1px solid var(--vscode-widget-border)';
+    ctrl.style.marginTop = '6px';
+    var tag = document.createElement('span');
+    tag.className = 't';
+    tag.style.fontSize = '12px';
+    var isActive = state.activeChannelId === cfg.id;
+    tag.textContent = isActive ? t('activeChannel') : '';
+    tag.style.color = isActive ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-descriptionForeground)';
+    ctrl.appendChild(tag);
+    if (!isActive) {
+      var act = document.createElement('button');
+      act.className = 'mini-btn';
+      act.textContent = t('setActiveChannel');
+      act.addEventListener('click', function () { setChannelActive(cfg); });
+      ctrl.appendChild(act);
+    }
+    ctrl.appendChild(itemToggle(cfg.enabled !== false, function (v) {
+      cfg.enabled = v;
+      toggleChannelEnabled(cfg);
+    }));
+    item.appendChild(ctrl);
+    card.appendChild(item);
+    loadConfigModels(cfg.id, item.querySelector('.mchips'));
   });
 }
 function loadConfigModels(configId, chipsEl) {
@@ -3437,42 +3922,10 @@ function loadConfigModels(configId, chipsEl) {
       chipsEl.innerHTML = '<span class="info-text">' + esc(t('loadFailed')) + '</span>';
     });
 }
+/** 记录连接状态（hello/status 携带），供「远程控制」分类卡片实时渲染 */
 function renderSettings(s) {
-  $('set-conn-title').textContent = t('connection');
-  $('set-conn-label').textContent = t('connection');
-  $('set-conn-val').textContent = s.running ? t('running') : t('stopped');
-  $('set-conn-val').style.color = s.running ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-charts-red)';
-  $('set-port-label').textContent = t('port');
-  $('set-port-val').textContent = String(s.port || '');
-  $('set-ver-label').textContent = t('appVersion');
-  $('set-ver-val').textContent = s.appVersion || '—';
-  $('set-urls-title').textContent = t('accessUrls');
-  var urlsEl = $('urls-list');
-  urlsEl.innerHTML = '';
-  var urls = Array.isArray(s.urls) ? s.urls : [];
-  if (!s.running || urls.length === 0) {
-    var none = document.createElement('div');
-    none.className = 'info-text';
-    none.textContent = t('noUrls');
-    urlsEl.appendChild(none);
-  }
-  urls.forEach(function (u) {
-    var chip = document.createElement('div');
-    chip.className = 'url-chip';
-    chip.textContent = u;
-    chip.addEventListener('click', function () {
-      var done = function () { toast(t('copied')); };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(u).then(done).catch(function () { fallbackCopy(u, done); });
-      } else {
-        fallbackCopy(u, done);
-      }
-    });
-    urlsEl.appendChild(chip);
-  });
-  $('set-model-title').textContent = t('model') + ' / ' + t('config');
-  $('set-sec-title').textContent = t('securityTitle');
-  $('set-sec-text').textContent = t('securityText');
+  state.statusInfo = s;
+  if (state.settingsTab === 'remoteControl') renderAllSettingsSections();
 }
 function fallbackCopy(text, done) {
   var ta = document.createElement('textarea');
@@ -4049,6 +4502,46 @@ function renderDepsSection() {
     });
   }
 }
+/** 设置分页分类（对齐桌面端 SettingsPanel 侧栏 19 类；MCP 无远端端点暂不提供） */
+var SETTINGS_CATEGORIES = [
+  { key: 'channel', labelKey: 'secChannel' },
+  { key: 'general', labelKey: 'secGeneral' },
+  { key: 'proxy', labelKey: 'secProxy' },
+  { key: 'tools', labelKey: 'secTools' },
+  { key: 'fileTools', labelKey: 'secFileTools' },
+  { key: 'sandbox', labelKey: 'secCommand' },
+  { key: 'prompt', labelKey: 'secPrompt' },
+  { key: 'context', labelKey: 'secContext' },
+  { key: 'memory', labelKey: 'secMemory' },
+  { key: 'summarize', labelKey: 'secSummarize' },
+  { key: 'checkpoint', labelKey: 'secCheckpoint' },
+  { key: 'tokenCount', labelKey: 'secTokenCount' },
+  { key: 'imageGen', labelKey: 'secImageGen' },
+  { key: 'skills', labelKey: 'secSkills' },
+  { key: 'subagents', labelKey: 'secSubagents' },
+  { key: 'pinned', labelKey: 'secPinned' },
+  { key: 'remoteControl', labelKey: 'secRemote' },
+  { key: 'storage', labelKey: 'secStorage' },
+  { key: 'dependencies', labelKey: 'secDeps' }
+];
+function renderSettingsTabs() {
+  settingsTabsEl.innerHTML = '';
+  SETTINGS_CATEGORIES.forEach(function (c) {
+    var b = document.createElement('button');
+    b.className = 'set-tab' + (c.key === state.settingsTab ? ' active' : '');
+    b.textContent = t(c.labelKey);
+    b.addEventListener('click', function () {
+      state.settingsTab = c.key;
+      renderSettingsTabs();
+      renderAllSettingsSections();
+    });
+    settingsTabsEl.appendChild(b);
+  });
+  var active = settingsTabsEl.querySelector('.set-tab.active');
+  if (active && active.scrollIntoView) {
+    try { active.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) {}
+  }
+}
 function renderAllSettingsSections() {
   settingsSectionsEl.innerHTML = '';
   if (!state.settings) {
@@ -4058,95 +4551,206 @@ function renderAllSettingsSections() {
     settingsSectionsEl.appendChild(p);
     return;
   }
-  var secs = [
-    { key: 'secGeneral', f: [
-      { t: 'fldCheckUpdates', p: ['checkForUpdates'], w: 'toggle' },
-      { t: 'fldMaxToolIterations', p: ['maxToolIterations'], w: 'number', min: -1 },
-      { t: 'fldDefaultToolMode', p: ['defaultToolMode'], w: 'select', o: ['function_call', 'xml', 'json'] }
-    ]},
-    { key: 'secUI', f: [
-      { t: 'fldLanguage', p: ['ui', 'language'], w: 'select', o: ['auto', 'zh-CN', 'en', 'ja'] },
-      { t: 'fldTheme', p: ['ui', 'theme'], w: 'select', o: ['auto', 'light', 'dark'] },
-      { t: 'fldWorkspaceBehavior', p: ['ui', 'workspaceBehavior'], w: 'select', o: ['restore', 'none'] },
-      { t: 'fldLoadingText', p: ['ui', 'appearance', 'loadingText'], w: 'text' },
-      { t: 'fldSmoothStreaming', p: ['ui', 'appearance', 'smoothStreaming'], w: 'select', o: ['off', 'smooth', 'balanced', 'silky'] },
-      { t: 'fldSoundEnabled', p: ['ui', 'sound', 'enabled'], w: 'toggle' },
-      { t: 'fldSoundVolume', p: ['ui', 'sound', 'volume'], w: 'number', min: 0, max: 100 },
-      { t: 'fldSoundTheme', p: ['ui', 'sound', 'theme'], w: 'select', o: ['beep', 'soft'] }
-    ]},
-    { key: 'secProxy', f: [
-      { t: 'fldProxyEnabled', p: ['proxy', 'enabled'], w: 'toggle' },
-      { t: 'fldProxyUrl', p: ['proxy', 'url'], w: 'text' },
-      { t: 'fldProxyInsecure', p: ['proxy', 'insecureSkipVerify'], w: 'toggle' }
-    ]},
-    { key: 'secFileTools', f: [
-      { t: 'fldReadOutside', p: ['toolsConfig', 'read_file', 'outsideWorkspaceAccess'], w: 'select', o: ['deny', 'ask', 'allow'] },
-      { t: 'fldWriteOutside', p: ['toolsConfig', 'write_file', 'outsideWorkspaceAccess'], w: 'select', o: ['deny', 'ask'] },
-      { t: 'fldListIgnore', p: ['toolsConfig', 'list_files', 'ignorePatterns'], w: 'chips' },
-      { t: 'fldFindExclude', p: ['toolsConfig', 'find_files', 'excludePatterns'], w: 'chips' },
-      { t: 'fldApplyFormat', p: ['toolsConfig', 'apply_diff', 'format'], w: 'select', o: ['unified', 'search_replace'] },
-      { t: 'fldApplyAutoSave', p: ['toolsConfig', 'apply_diff', 'autoSave'], w: 'toggle' },
-      { t: 'fldApplyAutoSaveDelay', p: ['toolsConfig', 'apply_diff', 'autoSaveDelay'], w: 'number', min: 0 },
-      { t: 'fldApplyGuard', p: ['toolsConfig', 'apply_diff', 'diffGuardEnabled'], w: 'toggle' },
-      { t: 'fldApplyAutoApply', p: ['toolsConfig', 'apply_diff', 'autoApplyWithoutDiffView'], w: 'toggle' },
-      { t: 'fldSearchExclude', p: ['toolsConfig', 'search_in_files', 'excludePatterns'], w: 'chips' },
-      { t: 'fldSearchMaxFind', p: ['toolsConfig', 'search_in_files', 'maxFindFiles'], w: 'number', min: 1 },
-      { t: 'fldSearchCtxBefore', p: ['toolsConfig', 'search_in_files', 'contextLinesBefore'], w: 'number', min: 0 },
-      { t: 'fldSearchCtxAfter', p: ['toolsConfig', 'search_in_files', 'contextLinesAfter'], w: 'number', min: 0 },
-      { t: 'fldHistoryScope', p: ['toolsConfig', 'history_search', 'searchScope'], w: 'select', o: ['all', 'summarized'] },
-      { t: 'fldHistoryMax', p: ['toolsConfig', 'history_search', 'maxSearchMatches'], w: 'number', min: 1 }
-    ]},
-    { key: 'secCommand', f: [
-      { t: 'fldCmdTimeout', p: ['toolsConfig', 'execute_command', 'defaultTimeout'], w: 'number', min: 1 },
-      { t: 'fldCmdMaxOutput', p: ['toolsConfig', 'execute_command', 'maxOutputLines'], w: 'number', min: 1 },
-      { t: 'fldSandboxEnabled', p: ['toolsConfig', 'sandbox', 'enabled'], w: 'toggle' },
-      { t: 'fldSandboxTimeout', p: ['toolsConfig', 'sandbox', 'defaultTimeout'], w: 'number', min: 1 }
-    ]},
-    { key: 'secPrompt', f: [
-      { t: 'fldPromptMode', p: ['toolsConfig', 'system_prompt', 'currentModeId'], w: 'promptMode' },
-      { t: 'fldPromptPrefix', p: ['toolsConfig', 'system_prompt', 'customPrefix'], w: 'textarea' },
-      { t: 'fldPromptSuffix', p: ['toolsConfig', 'system_prompt', 'customSuffix'], w: 'textarea' },
-      { t: 'fldPromptDynamicEnabled', p: ['toolsConfig', 'system_prompt', 'dynamicTemplateEnabled'], w: 'toggle' },
-      { t: 'fldPromptDynamic', p: ['toolsConfig', 'system_prompt', 'dynamicTemplate'], w: 'textarea' }
-    ]},
-    { key: 'secContext', f: [
-      { t: 'fldCtxFiles', p: ['toolsConfig', 'context_awareness', 'includeWorkspaceFiles'], w: 'toggle' },
-      { t: 'fldCtxDepth', p: ['toolsConfig', 'context_awareness', 'maxFileDepth'], w: 'number', min: -1 },
-      { t: 'fldCtxTabs', p: ['toolsConfig', 'context_awareness', 'includeOpenTabs'], w: 'toggle' },
-      { t: 'fldCtxMaxTabs', p: ['toolsConfig', 'context_awareness', 'maxOpenTabs'], w: 'number', min: 0 },
-      { t: 'fldCtxEditor', p: ['toolsConfig', 'context_awareness', 'includeActiveEditor'], w: 'toggle' },
-      { t: 'fldCtxIgnore', p: ['toolsConfig', 'context_awareness', 'ignorePatterns'], w: 'chips' },
-      { t: 'fldCtxDiag', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'enabled'], w: 'toggle' }
-    ]},
-    { key: 'secMemory', f: [
-      { t: 'fldMemEnabled', p: ['toolsConfig', 'memory', 'enabled'], w: 'toggle' },
-      { t: 'fldMemWake', p: ['toolsConfig', 'memory', 'wakeLines'], w: 'number', min: 0 },
-      { t: 'fldMemChars', p: ['toolsConfig', 'memory', 'entryChars'], w: 'number', min: 1 }
-    ]},
-    { key: 'secSummarize', f: [
-      { t: 'fldSumRounds', p: ['toolsConfig', 'summarize', 'keepRecentRounds'], w: 'number', min: 0 },
-      { t: 'fldSumTokens', p: ['toolsConfig', 'summarize', 'keepRecentTokens'], w: 'text' },
-      { t: 'fldSumSeparate', p: ['toolsConfig', 'summarize', 'useSeparateModel'], w: 'toggle' },
-      { t: 'fldSumChannel', p: ['toolsConfig', 'summarize', 'summarizeChannelId'], w: 'configSelect' },
-      { t: 'fldSumModel', p: ['toolsConfig', 'summarize', 'summarizeModelId'], w: 'text' },
-      { t: 'fldSumAttempts', p: ['toolsConfig', 'summarize', 'maxAutoSummarizeAttemptsPerTurn'], w: 'number', min: 1, max: 5 },
-      { t: 'fldSumRatio', p: ['toolsConfig', 'summarize', 'summarizeMaxInputRatio'], w: 'number', min: 0.05, max: 0.95, step: 0.05 }
-    ]},
-    { key: 'secCheckpoint', f: [
-      { t: 'fldCkptEnabled', p: ['toolsConfig', 'checkpoint', 'enabled'], w: 'toggle' },
-      { t: 'fldCkptMax', p: ['toolsConfig', 'checkpoint', 'maxCheckpoints'], w: 'number', min: -1 }
-    ]}
+  switch (state.settingsTab) {
+    case 'channel': {
+      var card = secCard('secChannel');
+      renderConfigsCard(card);
+      break;
+    }
+    case 'general': {
+      var gen = [
+        { t: 'fldCheckUpdates', p: ['checkForUpdates'], w: 'toggle' },
+        { t: 'fldMaxToolIterations', p: ['maxToolIterations'], w: 'number', min: -1 },
+        { t: 'fldDefaultToolMode', p: ['defaultToolMode'], w: 'select', o: ['function_call', 'xml', 'json'] }
+      ];
+      renderSimpleSection('secGeneral', gen);
+      var ui = [
+        { t: 'fldLanguage', p: ['ui', 'language'], w: 'select', o: ['auto', 'zh-CN', 'en', 'ja'] },
+        { t: 'fldTheme', p: ['ui', 'theme'], w: 'select', o: ['auto', 'light', 'dark'] },
+        { t: 'fldWorkspaceBehavior', p: ['ui', 'workspaceBehavior'], w: 'select', o: ['restore', 'none'] },
+        { t: 'fldLoadingText', p: ['ui', 'appearance', 'loadingText'], w: 'text' },
+        { t: 'fldSmoothStreaming', p: ['ui', 'appearance', 'smoothStreaming'], w: 'select', o: ['off', 'smooth', 'balanced', 'silky'] },
+        { t: 'fldSoundEnabled', p: ['ui', 'sound', 'enabled'], w: 'toggle' },
+        { t: 'fldSoundVolume', p: ['ui', 'sound', 'volume'], w: 'number', min: 0, max: 100 },
+        { t: 'fldSoundTheme', p: ['ui', 'sound', 'theme'], w: 'select', o: ['beep', 'soft'] }
+      ];
+      renderSimpleSection('secUI', ui);
+      break;
+    }
+    case 'proxy': {
+      var proxy = [
+        { t: 'fldProxyEnabled', p: ['proxy', 'enabled'], w: 'toggle' },
+        { t: 'fldProxyUrl', p: ['proxy', 'url'], w: 'text' },
+        { t: 'fldProxyInsecure', p: ['proxy', 'insecureSkipVerify'], w: 'toggle' }
+      ];
+      renderSimpleSection('secProxy', proxy);
+      break;
+    }
+    case 'tools':
+      renderToolsSections();
+      break;
+    case 'fileTools': {
+      var ft = [
+        { t: 'fldReadOutside', p: ['toolsConfig', 'read_file', 'outsideWorkspaceAccess'], w: 'select', o: ['deny', 'ask', 'allow'] },
+        { t: 'fldWriteOutside', p: ['toolsConfig', 'write_file', 'outsideWorkspaceAccess'], w: 'select', o: ['deny', 'ask'] },
+        { t: 'fldListIgnore', p: ['toolsConfig', 'list_files', 'ignorePatterns'], w: 'chips' },
+        { t: 'fldFindExclude', p: ['toolsConfig', 'find_files', 'excludePatterns'], w: 'chips' },
+        { t: 'fldApplyFormat', p: ['toolsConfig', 'apply_diff', 'format'], w: 'select', o: ['unified', 'search_replace'] },
+        { t: 'fldApplyAutoSave', p: ['toolsConfig', 'apply_diff', 'autoSave'], w: 'toggle' },
+        { t: 'fldApplyAutoSaveDelay', p: ['toolsConfig', 'apply_diff', 'autoSaveDelay'], w: 'number', min: 0 },
+        { t: 'fldApplyGuard', p: ['toolsConfig', 'apply_diff', 'diffGuardEnabled'], w: 'toggle' },
+        { t: 'fldApplyAutoApply', p: ['toolsConfig', 'apply_diff', 'autoApplyWithoutDiffView'], w: 'toggle' },
+        { t: 'fldSearchExclude', p: ['toolsConfig', 'search_in_files', 'excludePatterns'], w: 'chips' },
+        { t: 'fldSearchMaxFind', p: ['toolsConfig', 'search_in_files', 'maxFindFiles'], w: 'number', min: 1 },
+        { t: 'fldSearchCtxBefore', p: ['toolsConfig', 'search_in_files', 'contextLinesBefore'], w: 'number', min: 0 },
+        { t: 'fldSearchCtxAfter', p: ['toolsConfig', 'search_in_files', 'contextLinesAfter'], w: 'number', min: 0 },
+        { t: 'fldHistoryScope', p: ['toolsConfig', 'history_search', 'searchScope'], w: 'select', o: ['all', 'summarized'] },
+        { t: 'fldHistoryMax', p: ['toolsConfig', 'history_search', 'maxSearchMatches'], w: 'number', min: 1 }
+      ];
+      renderSimpleSection('secFileTools', ft);
+      break;
+    }
+    case 'sandbox': {
+      var cmd = [
+        { t: 'fldCmdTimeout', p: ['toolsConfig', 'execute_command', 'defaultTimeout'], w: 'number', min: 1 },
+        { t: 'fldCmdMaxOutput', p: ['toolsConfig', 'execute_command', 'maxOutputLines'], w: 'number', min: 1 },
+        { t: 'fldSandboxEnabled', p: ['toolsConfig', 'sandbox', 'enabled'], w: 'toggle' },
+        { t: 'fldSandboxTimeout', p: ['toolsConfig', 'sandbox', 'defaultTimeout'], w: 'number', min: 1 }
+      ];
+      renderSimpleSection('secCommand', cmd);
+      break;
+    }
+    case 'prompt': {
+      var prompt = [
+        { t: 'fldPromptMode', p: ['toolsConfig', 'system_prompt', 'currentModeId'], w: 'promptMode' },
+        { t: 'fldPromptPrefix', p: ['toolsConfig', 'system_prompt', 'customPrefix'], w: 'textarea' },
+        { t: 'fldPromptSuffix', p: ['toolsConfig', 'system_prompt', 'customSuffix'], w: 'textarea' },
+        { t: 'fldPromptDynamicEnabled', p: ['toolsConfig', 'system_prompt', 'dynamicTemplateEnabled'], w: 'toggle' },
+        { t: 'fldPromptDynamic', p: ['toolsConfig', 'system_prompt', 'dynamicTemplate'], w: 'textarea' }
+      ];
+      renderSimpleSection('secPrompt', prompt);
+      break;
+    }
+    case 'context': {
+      var ctx = [
+        { t: 'fldCtxFiles', p: ['toolsConfig', 'context_awareness', 'includeWorkspaceFiles'], w: 'toggle' },
+        { t: 'fldCtxDepth', p: ['toolsConfig', 'context_awareness', 'maxFileDepth'], w: 'number', min: -1 },
+        { t: 'fldCtxTabs', p: ['toolsConfig', 'context_awareness', 'includeOpenTabs'], w: 'toggle' },
+        { t: 'fldCtxMaxTabs', p: ['toolsConfig', 'context_awareness', 'maxOpenTabs'], w: 'number', min: 0 },
+        { t: 'fldCtxEditor', p: ['toolsConfig', 'context_awareness', 'includeActiveEditor'], w: 'toggle' },
+        { t: 'fldCtxIgnore', p: ['toolsConfig', 'context_awareness', 'ignorePatterns'], w: 'chips' },
+        { t: 'fldCtxDiag', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'enabled'], w: 'toggle' }
+      ];
+      renderSimpleSection('secContext', ctx);
+      break;
+    }
+    case 'memory': {
+      var mem = [
+        { t: 'fldMemEnabled', p: ['toolsConfig', 'memory', 'enabled'], w: 'toggle' },
+        { t: 'fldMemWake', p: ['toolsConfig', 'memory', 'wakeLines'], w: 'number', min: 0 },
+        { t: 'fldMemChars', p: ['toolsConfig', 'memory', 'entryChars'], w: 'number', min: 1 }
+      ];
+      renderSimpleSection('secMemory', mem);
+      break;
+    }
+    case 'summarize': {
+      var sum = [
+        { t: 'fldSumRounds', p: ['toolsConfig', 'summarize', 'keepRecentRounds'], w: 'number', min: 0 },
+        { t: 'fldSumTokens', p: ['toolsConfig', 'summarize', 'keepRecentTokens'], w: 'text' },
+        { t: 'fldSumSeparate', p: ['toolsConfig', 'summarize', 'useSeparateModel'], w: 'toggle' },
+        { t: 'fldSumChannel', p: ['toolsConfig', 'summarize', 'summarizeChannelId'], w: 'configSelect' },
+        { t: 'fldSumModel', p: ['toolsConfig', 'summarize', 'summarizeModelId'], w: 'text' },
+        { t: 'fldSumAttempts', p: ['toolsConfig', 'summarize', 'maxAutoSummarizeAttemptsPerTurn'], w: 'number', min: 1, max: 5 },
+        { t: 'fldSumRatio', p: ['toolsConfig', 'summarize', 'summarizeMaxInputRatio'], w: 'number', min: 0.05, max: 0.95, step: 0.05 }
+      ];
+      renderSimpleSection('secSummarize', sum);
+      break;
+    }
+    case 'checkpoint': {
+      var ckpt = [
+        { t: 'fldCkptEnabled', p: ['toolsConfig', 'checkpoint', 'enabled'], w: 'toggle' },
+        { t: 'fldCkptMax', p: ['toolsConfig', 'checkpoint', 'maxCheckpoints'], w: 'number', min: -1 }
+      ];
+      renderSimpleSection('secCheckpoint', ckpt);
+      break;
+    }
+    case 'tokenCount':
+      renderTokenSection();
+      break;
+    case 'imageGen':
+      renderImageGenSection();
+      break;
+    case 'skills':
+      renderSkillsSection();
+      break;
+    case 'subagents':
+      renderSubagentsSection();
+      break;
+    case 'pinned':
+      renderPinnedSection();
+      break;
+    case 'remoteControl':
+      renderRemoteControlCategory();
+      break;
+    case 'storage':
+      renderStorageSection();
+      break;
+    case 'dependencies':
+      renderDepsSection();
+      break;
+  }
+}
+/** 远程控制分类：连接状态 + 访问地址 + 安全说明 + 服务器操作 */
+function renderRemoteControlCategory() {
+  var s = state.statusInfo || {};
+  var card = secCard('connection');
+  var rows = [
+    { t: 'connection', v: s.running ? t('running') : t('stopped'), color: s.running ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-charts-red)' },
+    { t: 'port', v: String(s.port || '—') },
+    { t: 'appVersion', v: s.appVersion || '—' }
   ];
-  secs.forEach(function (sec) { renderSimpleSection(sec.key, sec.f); });
-  renderToolsSections();
-  renderTokenSection();
-  renderImageGenSection();
-  renderSkillsSection();
-  renderSubagentsSection();
-  renderPinnedSection();
+  rows.forEach(function (r) {
+    var row = document.createElement('div');
+    row.className = 'set-row';
+    var k = document.createElement('span');
+    k.className = 'k';
+    k.textContent = t(r.t);
+    var v = document.createElement('span');
+    v.className = 'v';
+    v.textContent = r.v;
+    if (r.color) v.style.color = r.color;
+    row.appendChild(k);
+    row.appendChild(v);
+    card.appendChild(row);
+  });
+  var urlsCard = secCard('accessUrls');
+  var urls = Array.isArray(s.urls) ? s.urls : [];
+  if (!s.running || urls.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noUrls');
+    urlsCard.appendChild(none);
+  }
+  urls.forEach(function (u) {
+    var chip = document.createElement('div');
+    chip.className = 'url-chip';
+    chip.textContent = u;
+    chip.addEventListener('click', function () {
+      var done = function () { toast(t('copied')); };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(u).then(done).catch(function () { fallbackCopy(u, done); });
+      } else {
+        fallbackCopy(u, done);
+      }
+    });
+    urlsCard.appendChild(chip);
+  });
+  var secCardEl = secCard('securityTitle');
+  var secText = document.createElement('div');
+  secText.className = 'info-text';
+  secText.textContent = t('securityText');
+  secCardEl.appendChild(secText);
   renderRemoteSection();
-  renderStorageSection();
-  renderDepsSection();
 }
 function loadSettings() {
   api('/api/settings').then(function (data) {
@@ -4190,19 +4794,96 @@ function setChannelActive(cfg) {
     body: JSON.stringify({ configId: cfg.id })
   }).then(function () {
     toast(t('setActiveChannel') + ' ✓');
-    state.statusInfo = state.statusInfo || {};
-    state.statusInfo.activeChannelId = cfg.id;
+    state.activeChannelId = cfg.id;
+    if (state.statusInfo) state.statusInfo.activeChannelId = cfg.id;
     loadConfigs();
+    renderComposerMeta();
   }).catch(function (err) {
     toast(t('settingsFailed') + ': ' + (err.message || ''));
+  });
+}
+
+/* ---------- 输入区渠道/模型选择（桌面端 ChannelSelector 同款，点击弹层切换） ---------- */
+function renderComposerMeta() {
+  if (!composerMetaEl) return;
+  composerMetaEl.innerHTML = '';
+  var activeId = state.activeChannelId || (state.configs.length ? state.configs[0].id : null);
+  var cfg = null;
+  state.configs.forEach(function (c) { if (c.id === activeId) cfg = c; });
+  var chip = document.createElement('button');
+  chip.className = 'chip';
+  if (!cfg) {
+    chip.textContent = t('noConfigs');
+  } else {
+    chip.textContent = cfg.name + (cfg.model ? ' · ' + cfg.model : '');
+  }
+  chip.addEventListener('click', openModelSheet);
+  composerMetaEl.appendChild(chip);
+}
+function openModelSheet() {
+  $('sheet-list-mode').hidden = true;
+  $('sheet-browse-mode').hidden = true;
+  sheetModelModeEl.hidden = false;
+  sheetModelTitleEl.textContent = t('modelSelect');
+  sheetEl.classList.add('open');
+  modelListEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-descriptionForeground)">' + esc(t('loading')) + '</div>';
+  api('/api/configs').then(function (data) {
+    var configs = Array.isArray(data.configs) ? data.configs : [];
+    modelListEl.innerHTML = '';
+    if (configs.length === 0) {
+      var none = document.createElement('div');
+      none.className = 'conv-item';
+      none.style.color = 'var(--vscode-descriptionForeground)';
+      none.textContent = t('noConfigs');
+      modelListEl.appendChild(none);
+      return;
+    }
+    configs.forEach(function (cfg) {
+      var group = document.createElement('div');
+      group.className = 'conv-item';
+      group.style.flexDirection = 'column';
+      group.style.alignItems = 'stretch';
+      group.style.gap = '4px';
+      var isActive = state.activeChannelId === cfg.id;
+      var head = document.createElement('div');
+      head.className = 't';
+      var name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = cfg.name || cfg.id || '';
+      if (isActive) name.style.color = 'var(--vscode-terminal-ansiGreen)';
+      var sub = document.createElement('div');
+      sub.className = 'preview';
+      sub.textContent = (isActive ? t('activeChannel') + ' · ' : '') + (cfg.model || '—');
+      head.appendChild(name);
+      head.appendChild(sub);
+      group.appendChild(head);
+      var chips = document.createElement('div');
+      chips.className = 'mchips';
+      chips.innerHTML = '<span class="info-text">' + esc(t('loading')) + '</span>';
+      group.appendChild(chips);
+      modelListEl.appendChild(group);
+      if (!isActive) {
+        var actBtn = document.createElement('button');
+        actBtn.className = 'mini-btn';
+        actBtn.style.alignSelf = 'flex-start';
+        actBtn.textContent = t('setActiveChannel');
+        actBtn.addEventListener('click', function () {
+          setChannelActive(cfg);
+          closeSheet();
+        });
+        group.appendChild(actBtn);
+      }
+      loadConfigModels(cfg.id, chips);
+    });
+  }).catch(function (err) {
+    modelListEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-charts-red)">' + esc(err.message || '') + '</div>';
   });
 }
 
 /* ============================================================
    目录浏览（移动端自选工作区文件夹，免桌面端弹窗）
    ============================================================ */
-function openBrowse() {
-  $('sheet-list-mode').hidden = true;
+function openBrowse() {  $('sheet-list-mode').hidden = true;
   $('sheet-browse-mode').hidden = false;
   sheetEl.classList.add('open');
   browsePickBtn.textContent = t('chooseThisFolder');
@@ -4297,7 +4978,8 @@ function pickBrowseFolder() {
 
 /* ---------- wiring ---------- */
 sendBtn.addEventListener('click', function () {
-  if (state.streaming) { doStop(); } else { doSend(); }
+  var tab = activeTab();
+  if (tab && tab.streaming) { doStop(); } else { doSend(); }
 });
 inputEl.addEventListener('input', function () {
   inputEl.style.height = 'auto';
@@ -4310,15 +4992,23 @@ inputEl.addEventListener('keydown', function (e) {
     doSend();
   }
 });
+/* 滚动到顶回溯加载更早历史（消息分页） */
+messagesEl.addEventListener('scroll', function () {
+  var tab = activeTab();
+  if (!tab || !tab.hasMore || tab.loading) return;
+  if (messagesEl.scrollTop < 60) loadOlder(tab);
+});
 $('btn-drawer').addEventListener('click', openDrawer);
 $('btn-refresh').addEventListener('click', function () {
   if (isTab('chat')) {
-    loadMessages(state.conversationId);
-    loadConversations();
+    var tab = activeTab();
+    if (tab && tab.id) loadMessages(tab, false);
+    loadConversations(true);
     toast(t('refresh') + ' ✓');
     return;
   }
   if (isTab('settings')) {
+    renderSettingsTabs();
     loadConfigs();
     loadSettings();
     loadToolsList();
@@ -4334,21 +5024,13 @@ $('btn-refresh').addEventListener('click', function () {
 });
 $('btn-new').addEventListener('click', function () {
   closeDrawer();
-  state.conversationId = null;
-  state.messages = [];
-  state.streaming = false;
-  state.streamingText = '';
-  state.pendingTools = [];
-  renderConfirmBar();
-  renderSendIcon();
-  setTitle('');
-  renderMessages();
-  inputEl.focus();
-  toast(t('newChat') + ' — ' + t('emptyConversation'));
+  newChatTab();
+  toast(t('newChat') + ' — ' + t('emptyNewChat'));
 });
 $('drawer-backdrop').addEventListener('click', closeDrawer);
 sheetEl.querySelector('.backdrop').addEventListener('click', closeSheet);
 $('act-backdrop').addEventListener('click', closeActionSheet);
+$('btn-sheet-model-close').addEventListener('click', closeSheet);
 $('btn-ws-switch').textContent = t('switchWorkspace');
 $('btn-ws-switch').addEventListener('click', openWorkspaceSheet);
 $('btn-ws-add').addEventListener('click', openBrowse);
@@ -4404,25 +5086,32 @@ modalInputEl.addEventListener('keydown', function (e) {
 setStatus('connecting', t('statusConnecting'));
 $('btn-ws-switch').textContent = t('switchWorkspace');
 saveFileBtnEl.textContent = t('save');
+inputEl.placeholder = t('inputPlaceholder');
+renderSettingsTabs();
+renderTabsBar();
 renderSendIcon();
 api('/api/status').then(function (s) {
   state.appVersion = s.appVersion || '';
   state.statusInfo = s;
+  state.activeChannelId = s.activeChannelId || (state.configs.length ? state.configs[0].id : null);
   if (s.lang) state.lang = s.lang;
-  state.lastActiveConversation = s.activeConversationId || null;
   applyWorkspaceInfo(s);
   renderSettings(s);
-  if (!state.conversationId && s.activeConversationId) {
-    state.conversationId = s.activeConversationId;
-  }
-  if (state.conversationId) {
-    loadMessages(state.conversationId, true);
-    loadConversations();
+  loadConfigs(); /* 输入区渠道/模型选择行与「渠道」设置分类共用 */
+  if (s.activeConversationId && state.tabs.length === 0) {
+    var tab = newTabObject(s.activeConversationId, s.activeConversationTitle || '');
+    state.tabs.push(tab);
+    state.activeTabKey = tab.key;
+    setTitle(tab.title);
+    loadMessages(tab, true);
+    loadConversations(true);
   } else {
     renderMessages();
-    $('empty-text').textContent = t('emptyConversation');
-    emptyEl.hidden = false;
-    messagesEl.hidden = true;
+    if (state.tabs.length === 0) {
+      $('empty-text').textContent = t('emptyConversation');
+      emptyEl.hidden = false;
+      messagesEl.hidden = true;
+    }
   }
   connectStream();
 }).catch(function () {

@@ -89,6 +89,56 @@ describe('remoteControlUi', () => {
     expect(html).toContain('data-tab="settings"');
   });
 
+  test('template contains conversation tab strip (multi-conversation) and settings pagination', () => {
+    const html = renderRemoteControlUiHtml('en');
+    // 会话页签条（多对话并行）
+    expect(html).toContain('id="tabs-bar"');
+    expect(html).toContain('id="conv-tabs"');
+    expect(html).toContain('function renderTabsBar()');
+    expect(html).toContain('function newChatTab()');
+    expect(html).toContain('function closeTab(key)');
+    // 设置分页：分类页签条 + 19 个分类（对齐桌面端 SettingsPanel 侧栏）
+    expect(html).toContain('id="settings-tabs"');
+    expect(html).toContain('function renderSettingsTabs()');
+    expect(html).toContain('var SETTINGS_CATEGORIES');
+    expect(html).toContain("{ key: 'channel', labelKey: 'secChannel' }");
+    expect(html).toContain("{ key: 'remoteControl', labelKey: 'secRemote' }");
+    expect(html).toContain("{ key: 'dependencies', labelKey: 'secDeps' }");
+    // 输入区渠道/模型选择（桌面端 ChannelSelector 同款）
+    expect(html).toContain('id="composer-meta"');
+    expect(html).toContain('function renderComposerMeta()');
+    expect(html).toContain('id="sheet-model-mode"');
+  });
+
+  test('template contains global [hidden] override (fix: loading overlay blocked conversation)', () => {
+    const html = renderRemoteControlUiHtml('zh-CN');
+    // 关键修复回归：author 样式 display:flex 覆盖 hidden 属性的历史故障——
+    // #messages/#empty/#file-viewer 必须被 [hidden] 全局规则兜底压掉
+    expect(html).toContain('[hidden] { display: none !important; }');
+    // 三者自身仍是 flex 容器（可见时布局不变）
+    expect(html).toContain('#messages {');
+    expect(html).toContain('#empty {');
+    expect(html).toContain('#file-viewer {');
+  });
+
+  test('streamChunkBatch array handling present (batched chunks must not be dropped)', () => {
+    const html = renderRemoteControlUiHtml('zh-CN');
+    expect(html).toContain('var chunks = Array.isArray(d) ? d : [d];');
+    expect(html).toContain('chunks.forEach(function (c) { processChunk(c, tab); });');
+  });
+
+  test('new settings i18n keys exist in all languages', () => {
+    const langs = Object.keys(UI_TEXTS) as Array<keyof typeof UI_TEXTS>;
+    for (const lang of langs) {
+      expect(UI_TEXTS[lang].secChannel.length).toBeGreaterThan(0);
+      expect(UI_TEXTS[lang].secRemote.length).toBeGreaterThan(0);
+      expect(UI_TEXTS[lang].loadMore.length).toBeGreaterThan(0);
+      expect(UI_TEXTS[lang].closeTab.length).toBeGreaterThan(0);
+      expect(UI_TEXTS[lang].emptyNewChat.length).toBeGreaterThan(0);
+      expect(UI_TEXTS[lang].modelSelect.length).toBeGreaterThan(0);
+    }
+  });
+
   test('send button icon is injected at boot (icon must never be missing)', () => {
     const html = renderRemoteControlUiHtml('en');
     // 发送键初始必须渲染图标：脚本内置发送/停止 SVG 常量，并在 boot 时立即调用

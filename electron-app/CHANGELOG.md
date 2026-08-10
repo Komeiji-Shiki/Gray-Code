@@ -12,6 +12,17 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+### Added（1.7.10dev 补记：多会话并行 + 设置分页 + 流式/落盘修复）
+  - **多会话并行（会话页签栏）**：移动端聊天视图新增桌面端 ConversationTabs 同款页签条，多会话同时打开、独立流式状态互不阻塞；新建会话页签、页签可关闭；会话抽屉分页惰性加载（每页 30 + 加载更多）。
+  - **设置页分页化**：对齐桌面端 SettingsPanel 19 类侧栏——渠道/通用/代理/工具/文件工具/命令与沙箱/提示词/上下文/记忆/总结/检查点/Token 计数/图像生成/技能/子代理/固定文件/远程控制/存储/依赖，连接状态与访问地址归入「远程控制」、渠道模型管理归入「渠道」。
+  - **输入区渠道/模型选择**：输入框上方渠道+模型胶囊（点击弹层切换，`/api/configs|config|model|channel-active`）。
+  - **历史/会话列表分页**：`GET /api/messages` 支持 `limit/offset`（默认 120 上限 500，自尾端开窗，滚动回溯）；`GET /api/conversations` 支持 `limit/offset`（默认 30 上限 100）且先按 updatedAt 降序再切片；`POST /api/send` 返回 `streamId` 消除新建会话竞态。
+  - **流式批量 chunk 修复**：按桌面端 StreamChunkProcessor 真实装配形状（conversationId/streamId 在 chunk 元素上）解析单/批量流，50ms 节流合并的批量输出完整累积；孤儿 chunk 按 streamId 缓冲补发。
+  - **会话摘要落盘修复**：服务器在流终结后自动补齐 `custom.messageCount/custom.preview`（此前远端会话列表计数恒 0/预览为空）。
+  - **其他修复**：`[hidden]` 被 display:flex 覆盖导致「巨大加载历史消息挡住对话」；消息删除改用绝对 index；连接断开复位页签流式状态；secRemote 三语言翻译补齐。
+  - **测试**：remoteControl 测试扩至 109 例（分页/摘要同步/真实 chunk 形状/UI 模板结构）。
+  （详见根目录 CHANGELOG [1.7.10dev]）
+
 ## [1.7.10dev] - 2026-08-10
 
 ### Added

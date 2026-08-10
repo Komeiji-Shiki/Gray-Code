@@ -330,6 +330,256 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.body.conversations[1].id).toBe('conv_empty');
     // 真实 meta.json 顶层没有 messageCount：必须从 custom 段读取，否则恒为 0
     expect(res.body.conversations[1].messageCount).toBe(0);
+    expect(res.body.total).toBe(2);
+    expect(res.body.hasMore).toBe(false);
+    expect(res.body.offset).toBe(0);
+    expect(res.body.limit).toBe(30);
+  });
+
+  test('GET /api/conversations paginates with limit/offset (newest-first across pages)', async () => {
+    // 注入 35 个会话验证分页（limit=10 → 4 页 + hasMore 边界）
+    // 关键：listConversations 返回顺序无更新序保证，服务端必须先按 updatedAt 降序
+    // 再切片——第 4 页内容必须全部旧于第 1 页（不可跨页乱序）
+    const extra: Record<string, FakeConv> = {};
+    for (let i = 0; i < 35; i++) {
+      extra[`conv_page_${i}`] = {
+        meta: { title: `Page Chat ${i}`, updatedAt: 100 + i, custom: { messageCount: i } },
+        messages: []
+      };
+    }
+    const saved = host.conversations;
+    host.conversations = { ...saved, ...extra };
+    try {
+      const page1 = await requestJson(port, 'GET', '/api/conversations?limit=10&offset=0');
+      expect(page1.status).toBe(200);
+      expect(page1.body.total).toBe(37);
+      expect(page1.body.conversations).toHaveLength(10);
+      expect(page1.body.hasMore).toBe(true);
+      // 全局最新（conv_test_1=1000）必须在第 1 页首位
+      expect(page1.body.conversations[0].id).toBe('conv_test_1');
+      const page4 = await requestJson(port, 'GET', '/api/conversations?limit=10&offset=30');
+      expect(page4.body.conversations).toHaveLength(7);
+      expect(page4.body.hasMore).toBe(false);
+      // 页间不重叠
+      const ids1 = new Set(page1.body.conversations.map((c: any) => c.id));
+      const ids4 = new Set(page4.body.conversations.map((c: any) => c.id));
+      for (const id of ids4) expect(ids1.has(id)).toBe(false);
+      // 跨页单调递减：第 1 页最旧 >= 第 4 页最新
+      const minPage1 = Math.min(...page1.body.conversations.map((c: any) => c.updatedAt));
+      const maxPage4 = Math.max(...page4.body.conversations.map((c: any) => c.updatedAt));
+      expect(minPage1).toBeGreaterThanOrEqual(maxPage4);
+      // 页内也是降序
+      for (let i = 1; i < page1.body.conversations.length; i++) {
+        expect(page1.body.conversations[i - 1].updatedAt).toBeGreaterThanOrEqual(page1.body.conversations[i].updatedAt);
+      }
+    } finally {
+      host.conversations = saved;
+    }
+  });
+
+  test('GET /api/conversations clamps invalid limit/offset to defaults', async () => {
+    const res = await requestJson(port, 'GET', '/api/conversations?limit=0&offset=-5');
+    expect(res.status).toBe(200);
+    expect(res.body.limit).toBe(30);
+    expect(res.body.offset).toBe(0);
+    const res2 = await requestJson(port, 'GET', '/api/conversations?limit=999999&offset=abc');
+    expect(res2.body.limit).toBe(100);
+    expect(res2.body.offset).toBe(0);
+  });
+
+  test('GET /api/messages paginates from the tail (window + total + hasMore)', async () => {
+    // 20 条消息：limit=8 offset=0 → 最后 8 条；offset=8 → 再前 8 条；offset=16 → 前 4 条
+    const msgs = Array.from({ length: 20 }, (_, i) => ({ role: 'user', parts: [{ text: `msg ${i}` }], index: i }));
+    const saved = host.conversations;
+    host.conversations = { ...saved, conv_many: { meta: { title: 'Many', updatedAt: 500, custom: {} }, messages: msgs } };
+    try {
+      const last = await requestJson(port, 'GET', '/api/messages?conversationId=conv_many&limit=8&offset=0');
+      expect(last.status).toBe(200);
+      expect(last.body.total).toBe(20);
+      expect(last.body.hasMore).toBe(true);
+      expect(last.body.messages).toHaveLength(8);
+      expect(last.body.messages[7].parts[0].text).toBe('msg 19');
+      expect(last.body.messages[0].parts[0].text).toBe('msg 12');
+
+      const mid = await requestJson(port, 'GET', '/api/messages?conversationId=conv_many&limit=8&offset=8');
+      expect(mid.body.messages).toHaveLength(8);
+      expect(mid.body.messages[0].parts[0].text).toBe('msg 4');
+      expect(mid.body.messages[7].parts[0].text).toBe('msg 11');
+
+      const first = await requestJson(port, 'GET', '/api/messages?conversationId=conv_many&limit=8&offset=16');
+      expect(first.body.messages).toHaveLength(4);
+      expect(first.body.hasMore).toBe(false);
+      expect(first.body.messages[0].parts[0].text).toBe('msg 0');
+
+      // 超过总数 → 空窗口
+      const beyond = await requestJson(port, 'GET', '/api/messages?conversationId=conv_many&limit=8&offset=999');
+      expect(beyond.body.messages).toHaveLength(0);
+      expect(beyond.body.hasMore).toBe(false);
+    } finally {
+      host.conversations = saved;
+    }
+  });
+
+  test('GET /api/messages default limit is 120 and clamps to max 500', async () => {
+    const msgs = Array.from({ length: 130 }, (_, i) => ({ role: 'user', parts: [{ text: `m ${i}` }], index: i }));
+    const saved = host.conversations;
+    host.conversations = { ...saved, conv_big: { meta: { title: 'Big', updatedAt: 600, custom: {} }, messages: msgs } };
+    try {
+      const def = await requestJson(port, 'GET', '/api/messages?conversationId=conv_big');
+      expect(def.body.messages).toHaveLength(120);
+      expect(def.body.hasMore).toBe(true);
+      const max = await requestJson(port, 'GET', '/api/messages?conversationId=conv_big&limit=99999');
+      expect(max.body.messages).toHaveLength(130);
+      expect(max.body.hasMore).toBe(false);
+    } finally {
+      host.conversations = saved;
+    }
+  });
+
+  test('stream terminal chunks trigger conversation.updateSummary with messageCount + preview', async () => {
+    host.calls = [];
+    const done = new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const summary = host.calls.find((c) => c.type === 'conversation.updateSummary');
+        if (summary) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, 10);
+      setTimeout(() => { clearInterval(timer); resolve(); }, 3000).unref?.();
+    });
+    // 模拟桌面端 StreamChunkProcessor 真实装配形状：conversationId/streamId 位于
+    // 每个 chunk 元素上（streamChunkBatch 包装层没有）——此前读取包装层字段导致
+    // 真实批量流被当作无主消息、摘要永不落盘
+    server.onClientMessage({
+      type: 'streamChunkBatch',
+      data: [
+        { conversationId: 'conv_test_1', streamId: 'remote_x1', type: 'chunk', chunk: 'hello ' },
+        { conversationId: 'conv_test_1', streamId: 'remote_x1', type: 'chunk', chunk: 'world' },
+        { conversationId: 'conv_test_1', streamId: 'remote_x1', type: 'complete', content: 'hello world' }
+      ]
+    });
+    await done;
+    const summary = host.calls.find((c) => c.type === 'conversation.updateSummary');
+    expect(summary).toBeDefined();
+    expect(summary!.data.conversationId).toBe('conv_test_1');
+    expect(summary!.data.messageCount).toBe(1);
+    expect(summary!.data.preview).toBe('hi');
+    expect(summary!.clientId).toBe('remote-control');
+  });
+
+  test('single streamChunk with nested data.conversationId also syncs summary', async () => {
+    host.calls = [];
+    const done = new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        const summary = host.calls.find((c) => c.type === 'conversation.updateSummary');
+        if (summary) { clearInterval(timer); resolve(); }
+      }, 10);
+      setTimeout(() => { clearInterval(timer); resolve(); }, 3000).unref?.();
+    });
+    server.onClientMessage({
+      type: 'streamChunk',
+      data: { conversationId: 'conv_empty', streamId: 'remote_x7', type: 'complete', content: 'done' }
+    });
+    await done;
+    const summary = host.calls.find((c) => c.type === 'conversation.updateSummary');
+    expect(summary).toBeDefined();
+    expect(summary!.data.conversationId).toBe('conv_empty');
+  });
+
+  test('cancelled/error terminal chunks also sync summary, plain chunks do not', async () => {
+    host.calls = [];
+    // 非终结 chunk（真实批量形状）：不触发摘要同步
+    server.onClientMessage({
+      type: 'streamChunkBatch',
+      data: [
+        { conversationId: 'conv_test_1', streamId: 'remote_x2', type: 'chunk', chunk: 'a' },
+        { conversationId: 'conv_test_1', streamId: 'remote_x2', type: 'chunk', chunk: 'b' }
+      ]
+    });
+    server.onClientMessage({
+      type: 'streamChunk',
+      data: { conversationId: 'conv_test_1', streamId: 'remote_x3', type: 'chunk', chunk: 'c' }
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(host.calls.some((c) => c.type === 'conversation.updateSummary')).toBe(false);
+
+    const waitSummary = () => new Promise<void>((resolve) => {
+      const before = host.calls.filter((c) => c.type === 'conversation.updateSummary').length;
+      const timer = setInterval(() => {
+        const now = host.calls.filter((c) => c.type === 'conversation.updateSummary').length;
+        if (now > before) { clearInterval(timer); resolve(); }
+      }, 10);
+      setTimeout(() => { clearInterval(timer); resolve(); }, 3000).unref?.();
+    });
+    const p1 = waitSummary();
+    server.onClientMessage({
+      type: 'streamChunkBatch',
+      data: [
+        { conversationId: 'conv_test_1', streamId: 'remote_x4', type: 'cancelled', content: 'partial' }
+      ]
+    });
+    await p1;
+    const p2 = waitSummary();
+    server.onClientMessage({
+      type: 'streamChunkBatch',
+      data: [
+        { conversationId: 'conv_test_1', streamId: 'remote_x5', type: 'error', error: { message: 'boom' } }
+      ]
+    });
+    await p2;
+    const count = host.calls.filter((c) => c.type === 'conversation.updateSummary').length;
+    expect(count).toBe(2);
+  });
+
+  test('summary sync uses last non-functionResponse user message as preview', async () => {
+    host.calls = [];
+    const saved = host.conversations;
+    host.conversations = {
+      ...saved,
+      conv_preview: {
+        meta: { title: 'Preview', updatedAt: 700, custom: {} },
+        messages: [
+          { role: 'user', isFunctionResponse: true, parts: [{ functionResponse: { name: 'read_file', response: '{}' } }] },
+          { role: 'model', parts: [{ text: 'thinking...' }] },
+          { role: 'user', isFunctionResponse: false, parts: [{ text: '你好，请分析这段代码并给出优化建议……' }, { thought: true, text: 'private thought' }] }
+        ]
+      }
+    };
+    try {
+      const done = new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          const summary = host.calls.find((c) => c.type === 'conversation.updateSummary');
+          if (summary) { clearInterval(timer); resolve(); }
+        }, 10);
+        setTimeout(() => { clearInterval(timer); resolve(); }, 3000).unref?.();
+      });
+      server.onClientMessage({
+        type: 'streamChunkBatch',
+        data: [
+          { conversationId: 'conv_preview', streamId: 'remote_x6', type: 'complete', content: 'done' }
+        ]
+      });
+      await done;
+      const summary = host.calls.find((c) => c.type === 'conversation.updateSummary');
+      expect(summary).toBeDefined();
+      expect(summary!.data.messageCount).toBe(3);
+      // 跳过 functionResponse 与 model，取最后一条用户消息文本；思考段不计入预览
+      expect(summary!.data.preview).toBe('你好，请分析这段代码并给出优化建议……');
+    } finally {
+      host.conversations = saved;
+    }
+  });
+
+  test('POST /api/send returns streamId for new-chat race-free routing', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/send', { text: 'race check' });
+    expect(res.status).toBe(200);
+    expect(typeof res.body.streamId).toBe('string');
+    expect(res.body.streamId.startsWith('remote_')).toBe(true);
+    const call = host.calls.find((c) => c.type === 'chatStream');
+    expect(call).toBeDefined();
+    expect(call!.data.streamId).toBe(res.body.streamId);
   });
 
   test('GET /api/messages returns messages for existing conversation', async () => {

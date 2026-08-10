@@ -80,11 +80,35 @@ const MAX_FS_LISTING_ENTRIES = 500;
 /** 目录浏览路径长度上限（配合绝对路径白名单的前置拦截） */
 const MAX_FS_PATH_LENGTH = 2048;
 
+/** 会话列表分页（移动端抽屉惰性加载，对齐桌面端 CONVERSATIONS_PAGE_SIZE=30） */
+const CONVERSATIONS_PAGE_SIZE = 30;
+
+/** 会话列表分页上限（防御一次请求拉取过多 meta 拖垮消息队列） */
+const CONVERSATIONS_PAGE_MAX = 100;
+
+/** 消息历史分页（移动端滚动向上回溯加载，对齐桌面端 MESSAGES_PAGE_SIZE=120） */
+const MESSAGES_PAGE_SIZE = 120;
+
+/** 消息历史分页上限（单次窗口上限，防止超大窗口经局域网全量下发） */
+const MESSAGES_PAGE_MAX = 500;
+
+/** 会话摘要预览长度（与桌面端 updateConversationAfterMessage 的 slice(0,50) 一致） */
+const SUMMARY_PREVIEW_LENGTH = 50;
+
 /** 移动端设置补丁体大小上限（64KB；全量设置中仅密钥字段被脱敏后可达数十 KB） */
 const MAX_SETTINGS_PATCH_BYTES = 64 * 1024;
 
 function isValidPort(port: unknown): port is number {
   return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+/** 解析并钳制整数查询参数：非法/缺失/小于 min 回退默认值，超上限收敛到 max */
+function clampInt(raw: string | null | undefined, fallback: number, min: number, max: number): number {
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || !isFinite(n)) return fallback;
+  if (n < min) return fallback;
+  return Math.min(max, n);
 }
 
 function isSafeConversationId(id: unknown): id is string {
@@ -433,8 +457,83 @@ export class RemoteControlServer {
     const type = message?.type;
     if (type === 'streamChunk' || type === 'streamChunkBatch') {
       this.broadcast('message', message);
+      // 流终结（complete/cancelled/error）后同步会话摘要元数据（messageCount/preview）：
+      // 桌面端由前端在流式完成后调用 conversation.updateSummary，移动端没有该前端逻辑，
+      // 若不补写，远端创建的会话在列表里 messageCount 恒为 0 / 预览为空（meta.custom 缺字段）。
+      const conversationId = this.extractStreamConversationId(message);
+      if (conversationId && isSafeConversationId(conversationId) && this.hasTerminalChunk(message)) {
+        this.syncConversationSummary(conversationId);
+      }
     }
     return true;
+  }
+
+  /**
+   * 从流式消息中提取会话 ID。桌面端 StreamChunkProcessor 的装配形状：
+   * - streamChunk       → data 为单个 chunk，conversationId 在 data.conversationId；
+   * - streamChunkBatch  → data 为 chunk 数组，conversationId 在【每个元素】上（包装层没有）。
+   * 兼容处理三种位置，避免真实批量流（50ms 节流合并）被整体当作无主消息丢弃。
+   */
+  private extractStreamConversationId(message: any): string {
+    if (typeof message?.conversationId === 'string' && message.conversationId) return message.conversationId;
+    const data = message?.data;
+    if (Array.isArray(data)) {
+      const first = data[0];
+      if (first && typeof first.conversationId === 'string' && first.conversationId) return first.conversationId;
+      return '';
+    }
+    if (data && typeof data === 'object') {
+      return typeof data.conversationId === 'string' ? data.conversationId : '';
+    }
+    return '';
+  }
+
+  /** streamChunk / streamChunkBatch 是否携带终结类事件（complete/cancelled/error） */
+  private hasTerminalChunk(message: any): boolean {
+    const data = message?.data;
+    const chunks = Array.isArray(data) ? data : (data && typeof data === 'object' ? [data] : []);
+    return chunks.some((c: any) => {
+      const t = c?.type;
+      return t === 'complete' || t === 'cancelled' || t === 'error';
+    });
+  }
+
+  /**
+   * 流结束后补齐会话摘要元数据（fire-and-forget）：
+   * messageCount 取实际历史消息数（后端 updateSummary 会钳制到真实历史提交数），
+   * preview 取最后一条非工具响应的用户消息文本前 50 字符（与桌面端口径一致）。
+   * 纯展示性数据，失败静默不影响会话本身。
+   */
+  private syncConversationSummary(conversationId: string): void {
+    void (async () => {
+      try {
+        const messages = await this.host.conversationManager.getMessages(conversationId, null);
+        let preview: string | undefined;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i];
+          if (!m || m.role !== 'user' || m.isFunctionResponse) continue;
+          // 与桌面端 partsToText 口径一致：只取非思考文本段，思考/工具段不计入预览
+          const text = Array.isArray(m.parts)
+            ? m.parts
+                .filter((p: any) => typeof p?.text === 'string' && p.text && !p.thought)
+                .map((p: any) => p.text)
+                .join('')
+                .trim()
+            : '';
+          if (text) {
+            preview = text.slice(0, SUMMARY_PREVIEW_LENGTH);
+            break;
+          }
+        }
+        await this.routeMessage('conversation.updateSummary', {
+          conversationId,
+          messageCount: messages.length,
+          preview: preview ?? undefined
+        });
+      } catch {
+        // 摘要同步失败静默：仅影响对话列表的计数/预览展示，不阻断会话操作
+      }
+    })();
   }
 
   /** 桌面端主聊天客户端的原始消息（镜像桌面端的流式输出到移动端） */
@@ -701,7 +800,7 @@ export class RemoteControlServer {
       return;
     }
     if (req.method === 'GET' && pathname === '/api/conversations') {
-      await this.handleListConversations(res);
+      await this.handleListConversations(res, url.searchParams.get('limit'), url.searchParams.get('offset'));
       return;
     }
     if (req.method === 'GET' && pathname === '/api/messages') {
@@ -719,10 +818,23 @@ export class RemoteControlServer {
           this.sendJson(res, 404, { ok: false, error: 'Conversation not found' });
           return;
         }
-        const messages = await this.host.conversationManager.getMessages(conversationId, null);
+        const all = await this.host.conversationManager.getMessages(conversationId, null);
         // 移动端带宽优化：剥离附件二进制（inlineData/fileData base64，可达数十 MB），
         // 移动端 UI 只渲染文本/思考/工具调用，附件载荷不应经局域网全量下发
-        this.sendJson(res, 200, { ok: true, messages: stripMessagePayloads(messages) });
+        const messages = stripMessagePayloads(all);
+        // 历史分页（自尾端向前）：offset=0 返回最后 limit 条；滚动向上回溯加载更早消息。
+        // 移动端避免整段历史（数百条）一次性渲染/下发，与桌面端 MESSAGES_PAGE_SIZE 语义一致
+        const limit = clampInt(url.searchParams.get('limit'), MESSAGES_PAGE_SIZE, 1, MESSAGES_PAGE_MAX);
+        const offset = clampInt(url.searchParams.get('offset'), 0, 0, 1_000_000);
+        const from = Math.max(0, messages.length - offset - limit);
+        const to = messages.length - offset;
+        this.sendJson(res, 200, {
+          ok: true,
+          messages: to > from ? messages.slice(from, to) : [],
+          total: messages.length,
+          hasMore: offset + limit < messages.length,
+          offset
+        });
       } catch (err: any) {
         this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load messages' });
       }
@@ -937,16 +1049,18 @@ export class RemoteControlServer {
     };
   }
 
-  private async handleListConversations(res: http.ServerResponse): Promise<void> {
+  private async handleListConversations(res: http.ServerResponse, rawLimit?: string | null, rawOffset?: string | null): Promise<void> {
     try {
       const ids = await this.host.conversationManager.listConversations();
+      // 列表分页（自最新排序后切片）：listConversations 的返回顺序无更新序保证
+      //（目录枚举/键序），必须先全量读 meta 排序再切片，否则分页会出现跨页乱序
       const metas = await Promise.all(
         ids.map((id) => this.host.conversationManager.getMetadata(id).catch(() => null))
       );
       // 注意：meta.json 顶层没有 messageCount/preview 字段，二者位于 custom 段
       // （HIS-11 起桌面端即按 custom.messageCount/custom.preview 汇总，远端必须同口径，
       // 否则真实数据下 messageCount 恒为 0 导致会话列表被整体过滤为空）。
-      const conversations = ids
+      const all = ids
         .map((id, i) => {
           const meta = metas[i];
           const custom = (meta?.custom ?? {}) as Record<string, unknown>;
@@ -959,7 +1073,17 @@ export class RemoteControlServer {
           };
         })
         .sort((a, b) => b.updatedAt - a.updatedAt);
-      this.sendJson(res, 200, { ok: true, conversations });
+      const limit = clampInt(rawLimit, CONVERSATIONS_PAGE_SIZE, 1, CONVERSATIONS_PAGE_MAX);
+      const offset = clampInt(rawOffset, 0, 0, 1_000_000);
+      const conversations = all.slice(offset, offset + limit);
+      this.sendJson(res, 200, {
+        ok: true,
+        conversations,
+        total: all.length,
+        offset,
+        limit,
+        hasMore: offset + conversations.length < all.length
+      });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list conversations' });
     }
@@ -1021,15 +1145,16 @@ export class RemoteControlServer {
     }
 
     this.activeConversationId = targetId;
+    const streamId = `remote_${randomUUID()}`;
     try {
       await this.routeMessage('chatStream', {
         conversationId: targetId,
         configId,
         message: text,
         messageId: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        streamId: `remote_${randomUUID()}`
+        streamId
       });
-      this.sendJson(res, 200, { ok: true, started: true, conversationId: targetId });
+      this.sendJson(res, 200, { ok: true, started: true, conversationId: targetId, streamId });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to start stream' });
     }
