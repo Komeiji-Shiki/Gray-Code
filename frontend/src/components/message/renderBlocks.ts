@@ -67,7 +67,7 @@ export function getRenderBlockMemoDeps(
 
   if (block.type === 'thought') {
     return smoothDisplayActive
-      ? [block.type, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, true]
+      ? [block.type, block.partKey, isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, true]
       : [block.type, block.text ?? '', isStreaming, isUser, thoughtViewMode, isThinking, thinkingTimeDisplay, false]
   }
 
