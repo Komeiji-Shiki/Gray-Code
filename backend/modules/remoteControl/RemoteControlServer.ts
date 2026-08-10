@@ -629,11 +629,18 @@ export class RemoteControlServer {
       return !this.running || this.listeningPort !== this.settings.port;
     };
     if (this.restartPromise) {
-      // 串行化重启：并发 syncFromSettings 只执行最后一次配置
-      return this.restartPromise.then(() => {
+      // 串行化重启：并发 syncFromSettings 只执行最后一次配置。
+      // 链式 then 的结果必须回写 restartPromise，否则第三次并发到达时
+      // restartPromise 已置 null，会与仍在进行的 doRestart 并发启动两个 start()，
+      // 旧 server 先占端口、新 server EADDRINUSE 后旧 server 又因代次不匹配自关，
+      // 最终端口空闲但 running=false 的死状态。
+      this.restartPromise = this.restartPromise.then(() => {
         if (needsRestart()) return this.doRestart();
         return undefined;
+      }).finally(() => {
+        this.restartPromise = null;
       });
+      return this.restartPromise;
     }
     this.restartPromise = this.doRestart().finally(() => {
       this.restartPromise = null;
@@ -1370,6 +1377,16 @@ export class RemoteControlServer {
       });
       this.sendJson(res, 200, { ok: true, started: true, conversationId: targetId, streamId });
     } catch (err: any) {
+      // 流启动失败：若会话是本请求刚创建的（无既有内容），回滚删除，
+      // 避免移动端抽屉残留空会话；既有会话不删（消息还在）。
+      if (!requestedId) {
+        try {
+          await this.invokeHandler('conversation.deleteConversation', { conversationId: targetId });
+          this.notifyConversationsChanged();
+        } catch (rollbackErr: any) {
+          // 回滚失败不影响主错误返回
+        }
+      }
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to start stream' });
     }
   }
@@ -1478,6 +1495,9 @@ export class RemoteControlServer {
         this.activeConversationId = null;
       }
       this.sendJson(res, 200, { ok: true });
+      // 广播删除事件：移动端据此关闭对应页签（conversations 事件是分页列表，
+      // 若仅靠重拉列表判断「不在列表即已删」会误删分页之外的页签）
+      this.broadcast('conversation-deleted', { conversationId });
       this.notifyConversationsChanged();
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete conversation' });
@@ -2936,7 +2956,7 @@ export class RemoteControlServer {
     });
   }
 
-  private broadcast(kind: 'message' | 'global' | 'workspace' | 'conversations', message: unknown): void {
+  private broadcast(kind: 'message' | 'global' | 'workspace' | 'conversations' | 'conversation-deleted', message: unknown): void {
     if (this.sseClients.size === 0) return;
     const payload = sseEvent(kind, message);
     for (const client of this.sseClients) {

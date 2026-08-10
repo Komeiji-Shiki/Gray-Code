@@ -2339,7 +2339,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
     <aside class="drawer-panel">
       <div class="drawer-head">
         <span class="drawer-title" data-i18n="conversations"></span>
-        <button class="icon-btn" id="btn-new" aria-label="${uiLang === 'en' ? 'new chat' : '新建会话'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
+        <button class="icon-btn" id="btn-new" aria-label="${uiLang === 'en' ? 'new chat' : '新建会话'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>'}</button>
       </div>
       <div class="drawer-list" id="drawer-list"></div>
     </aside>
@@ -2377,7 +2377,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
           <div class="ws-sub" id="ws-bar-file"></div>
         </div>
         <button class="mini-btn" id="btn-ws-switch"></button>
-        <button class="mini-btn" id="btn-ws-add">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}<span data-i18n="addWorkspace"></span></button>
+        <button class="mini-btn" id="btn-ws-add">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>'}<span data-i18n="addWorkspace"></span></button>
       </div>
       <div id="file-tree"></div>
       <div id="file-viewer" hidden>
@@ -2398,7 +2398,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
   <!-- 设置面板（全屏，替换主视图；纵向分类导航 + 分类卡片） -->
   <div id="panel-settings" hidden>
     <div class="panel-head">
-      <button class="icon-btn panel-back-btn" id="btn-settings-back" aria-label="${t('settingsClose')}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
+      <button class="icon-btn panel-back-btn" id="btn-settings-back" aria-label="${t('settingsClose')}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'}</button>
       <span class="panel-title" data-i18n="tabSettings"></span>
     </div>
     <div class="panel-body">
@@ -2419,7 +2419,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
         <b id="sheet-title">&hellip;</b>
         <span style="display:flex;gap:2px;">
           <button class="icon-btn" id="btn-sheet-browse" aria-label="${uiLang === 'en' ? 'browse' : '浏览目录'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
-          <button class="icon-btn" id="btn-sheet-add" aria-label="${uiLang === 'en' ? 'add workspace' : '新增工作区'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
+          <button class="icon-btn" id="btn-sheet-add" aria-label="${uiLang === 'en' ? 'add workspace' : '新增工作区'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>'}</button>
         </span>
       </div>
       <div class="list" id="sheet-list"></div>
@@ -2439,7 +2439,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
     <div id="sheet-model-mode" hidden>
       <div class="head">
         <b id="sheet-model-title">&hellip;</b>
-        <button class="icon-btn" id="btn-sheet-model-close" aria-label="${uiLang === 'en' ? 'close' : '关闭'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
+        <button class="icon-btn" id="btn-sheet-model-close" aria-label="${uiLang === 'en' ? 'close' : '关闭'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'}</button>
       </div>
       <div class="list" id="model-list"></div>
     </div>

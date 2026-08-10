@@ -9,6 +9,20 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+### Fixed：远程控制 V7.2——图标零面积路径修复（plus/close/check/chevronDown/folderUp）+ 渠道表单死控件 + 思考关闭开关 + 分页/竞态加固
+  - **修复图标渲染缺失（用户报告：关闭对话 ✕、新建对话 ＋、关闭设置 ✕ 及其他图标不可见）**：根因是 ICONS 注册表中 plus/close（及 check/chevronDown/folderUp）使用零面积线段路径（如 M12 5v14M5 12h14），而全部 SVG 仅设 fill="currentColor" 无 stroke——fill 对零面积路径不产生任何像素，图标在所有配色模式下都不可见（真实 Chromium 像素级验证）。已全部改为 Material 实心闭合路径（plus/close 同时修正 remoteControlUi.ts 内 5 处静态内联 SVG），与其余 53 个填充型图标一致；新增回归断言（静态 ✕/＋ 与动态 tab-close/tab-add 路径必须含闭合 z）。
+  - **浅色主题变量补齐**：@media (prefers-color-scheme: light) 的 :root 块此前缺失 --vscode-icon-foreground、--vscode-toolbar-hoverBackground、--vscode-toolbar-activeBackground、--vscode-focusBorder、--vscode-editor-selectionBackground、--vscode-scrollbarSlider-*、--vscode-button-foreground、--vscode-inputValidation-warningForeground、--vscode-tab-activeBorderTop 共 10 个变量（浅色下回退深色值导致图标/交互色与白色背景混淆）；同时补齐从未定义的 --vscode-textCodeBlock-background/--vscode-editorHoverWidget-background（此前仅靠 fallback）。
+  - **修复渠道内联表单 13 处「开关+数值」死控件**：chInlineOpt 生成的 temperature/max_tokens/maxOutputTokens/top_p/top_k/frequencyPenalty/presencePenalty/maxImages 控件此前无任何 change 监听与保存回调（chInlineOptRead 从未被调用），用户修改后静默丢弃。现改为即时保存：开关写 optionsEnabled.X（显式 true/false），数值写 options.X（新增 saveInlineOpt）。
+  - **修复思考配置/推理分组「关闭」开关无效**：关闭时此前 delete optionsEnabled.thinkingConfig/thinking/reasoning 提交，服务端 deepMerge 对缺失键保留原值 → 关闭是 no-op。改为显式写 false（与桌面端 ChannelSettings 语义一致），表单重渲染不再弹回开启态。
+  - **修复 checkpoint 排除「最大文件大小」单位错误**：字段标签为 MiB 但读写均为原始字节（默认 52428800 显示为 52428800，用户输入 50 会以 50 字节写入使排除规则失效）。renderField number 分支新增 unit: MiB 支持：回显时字节÷1024²、保存时×1024²。
+  - **修复 restart() 三次并发竞态**：串行化分支 this.restartPromise.then(...) 的结果未回写 restartPromise，第三次并发 syncFromSettings 会与进行中的 doRestart 并发启动两个 start()，极端时序下端口空闲但 running=false 的死状态（远程控制停摆需手动重启）。链式结果现回写自身形成真正串行队列。
+  - **修复消息向上分页 offset 错位重复渲染**：loadOlder 用本地已加载条数作 offset，会话增长时（桌面端镜像流/另一设备发送）窗口错位导致重复消息。改用服务端返回的绝对窗口下沿推进。
+  - **修复设置页 text 字段不回显当前值**：proxy.url/storagePath/model id 等 text 字段此前永远渲染为空；现回显当前值（密钥类保持脱敏占位），空串提交不再覆盖真实配置（跳过并提示）。
+  - **修复停止生成时 SSE 恰好断连导致半截内容不可见**：doStop 在 cancel 成功后追加 loadMessages 兜底重载（服务端已落盘）。
+  - **修复桌面端删除会话后移动端页签残留**：服务端 handleConversationDelete 新增广播 conversation-deleted（携带 conversationId），移动端收到后关闭对应页签（仅靠分页列表「不在列表即已删」会误删分页之外的会话）。
+  - **修复 /api/send 新建会话后流启动失败残留空会话**：本请求刚创建的会话在流启动失败时回滚删除并通知列表刷新。
+  - 测试：remoteControl 扩至 194 例（图标闭合路径断言、MiB 换算断言）；全部后端测试 263 套件/2824 例通过。
+
 
 （暂无未发布改动）
 

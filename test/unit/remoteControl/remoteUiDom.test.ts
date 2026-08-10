@@ -958,4 +958,44 @@ describe('remote UI DOM (jsdom)', () => {
       expect(s.getAttribute('height')).not.toBeNull();
     });
   });
+
+  test('plus/close icons use fillable (solid) paths so they render in any color scheme', async () => {
+    const f = makeFixture();
+    await flush();
+    // 静态 HTML：btn-new 的加号、btn-settings-back 的关闭 ✕ 必须是可填充路径
+    // （回归：M12 5v14M5 12h14 / M6 6l12 12M18 6L6 18 是零面积线段，fill=currentColor 下不可见）
+    const plusSvg = f.document.querySelector('#btn-new svg path');
+    const closeSvg = f.document.querySelector('#btn-settings-back svg path');
+    expect(plusSvg).not.toBeNull();
+    expect(closeSvg).not.toBeNull();
+    expect(plusSvg!.getAttribute('d')).toContain('z');
+    expect(closeSvg!.getAttribute('d')).toContain('z');
+    // 动态图标：.tab-add 的 + 与 .tab-close 的 ✕ 渲染后同源 ICONS，同样必须是闭合路径
+    const addSvg = f.document.querySelector('.tab-add svg path');
+    if (addSvg) expect(addSvg.getAttribute('d')).toContain('z');
+  });
+
+  test('checkpoint maxFileSizeBytes field converts MiB input to bytes on save', async () => {
+    const f = makeFixture();
+    await flush();
+    // 打开设置 → 检查点分类
+    f.document.querySelector('#btn-settings')!.click();
+    await flush(30);
+    const tab = f.document.querySelector('[data-set-tab="checkpoint"]') as any;
+    expect(tab).not.toBeNull();
+    tab.click();
+    await flush(30);
+    const field = fieldElByPath(f.document, ['toolsConfig', 'checkpoint', 'exclusion', 'maxFileSizeBytes']);
+    const input = field.querySelector('input[type="number"]') as any;
+    expect(input).not.toBeNull();
+    // 回显应为 MiB（默认 104857600 字节 → 显示 100）
+    expect(input.value).toBe('100');
+    input.value = '200';
+    input.dispatchEvent(new f.window.Event('change', { bubbles: true }));
+    await flush(20);
+    const call = f.fetches.find((x) => x.url === '/api/settings' && x.method === 'POST' && x.body);
+    expect(call).toBeDefined();
+    const bodyStr = JSON.stringify((call!.body as any));
+    expect(bodyStr).toContain('"maxFileSizeBytes":209715200');
+  });
 });

@@ -63,6 +63,8 @@ export const REMOTE_UI_CSS = `
   --vscode-editorGroupHeader-tabsBackground: #252526;
   --vscode-editorWidget-background: #252526;
   --vscode-editorWidget-border: #454545;
+  --vscode-editorHoverWidget-background: #252526;
+  --vscode-textCodeBlock-background: rgba(10, 10, 10, 0.4);
   --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
   --vscode-textLink-foreground: #3794ff;
   --vscode-textBlockQuote-background: rgba(127, 127, 127, 0.1);
@@ -96,9 +98,14 @@ export const REMOTE_UI_CSS = `
     --vscode-disabledForeground: rgba(56, 58, 66, 0.5);
     --vscode-errorForeground: #c42b1c;
     --vscode-descriptionForeground: #6a737d;
+    --vscode-icon-foreground: #424242;
     --vscode-editor-background: #ffffff;
     --vscode-editor-foreground: #383a42;
     --vscode-editor-inactiveSelectionBackground: #ececec;
+    --vscode-editor-selectionBackground: #add6ff;
+    --vscode-focusBorder: #0078d4;
+    --vscode-scrollbarSlider-background: rgba(0, 0, 0, 0.25);
+    --vscode-scrollbarSlider-hoverBackground: rgba(0, 0, 0, 0.4);
     --vscode-panel-background: #ffffff;
     --vscode-panel-border: #e0e0e0;
     --vscode-sideBar-background: #f3f3f3;
@@ -108,12 +115,15 @@ export const REMOTE_UI_CSS = `
     --vscode-tab-activeForeground: #1f1f1f;
     --vscode-tab-inactiveForeground: rgba(31, 31, 31, 0.7);
     --vscode-tab-hoverBackground: #e8e8e8;
+    --vscode-tab-activeBorderTop: #0060c0;
     --vscode-list-hoverBackground: #f0f0f0;
     --vscode-list-activeSelectionBackground: #0060c0;
     --vscode-list-activeSelectionForeground: #ffffff;
     --vscode-editorGroupHeader-tabsBackground: #ececec;
     --vscode-editorWidget-background: #f3f3f3;
     --vscode-editorWidget-border: #c8c8c8;
+    --vscode-editorHoverWidget-background: #f3f3f3;
+    --vscode-textCodeBlock-background: rgba(128, 128, 128, 0.15);
     --vscode-dropdown-background: #ffffff;
     --vscode-dropdown-foreground: #1f1f1f;
     --vscode-dropdown-border: #c8c8c8;
@@ -125,7 +135,9 @@ export const REMOTE_UI_CSS = `
     --vscode-inputValidation-errorBorder: #cd3131;
     --vscode-inputValidation-warningBackground: #fdf6d8;
     --vscode-inputValidation-warningBorder: #949800;
+    --vscode-inputValidation-warningForeground: #6a737d;
     --vscode-button-background: #0e639c;
+    --vscode-button-foreground: #ffffff;
     --vscode-button-hoverBackground: #1177bb;
     --vscode-button-secondaryBackground: #e4e4e4;
     --vscode-button-secondaryForeground: #1f1f1f;
@@ -144,6 +156,8 @@ export const REMOTE_UI_CSS = `
     --vscode-checkbox-background: #ffffff;
     --vscode-checkbox-border: #c8c8c8;
     --vscode-progressBar-background: #006ab1;
+    --vscode-toolbar-hoverBackground: rgba(0, 0, 0, 0.08);
+    --vscode-toolbar-activeBackground: rgba(0, 0, 0, 0.12);
     --vscode-widget-shadow: rgba(0, 0, 0, 0.15);
     --green: #137a00;
     --red: #cd3131;

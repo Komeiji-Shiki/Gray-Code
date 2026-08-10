@@ -181,23 +181,23 @@ function icon(name, cls) {
 var ICONS = {
   menu: '<path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>',
   refresh: '<path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  plus: '<path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>',
+  close: '<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>',
   chat: '<path d="M12 3C6.5 3 2 7.03 2 12c0 2.6 1.27 4.9 3.27 6.47L4.3 21.6l3.6-1.2c1.3.39 2.7.6 4.1.6 5.5 0 10-4.03 10-9s-4.5-9-10-9zm-5 10a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm5 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm5 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/>',
   folder: '<path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/>',
   gear: '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.1-1.2l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.06-1.2L16.2 3h-4l-.6 2.54a7 7 0 0 0-2.06 1.2l-2.35-.95-2 3.46 2 1.55a7 7 0 0 0 0 2.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.06 1.2L12.2 21h4l.6-2.54a7 7 0 0 0 2.06-1.2l2.35.95 2-3.46-2-1.55c.06-.4.1-.8.1-1.2z"/>',
   back: '<path d="M15 4l-8 8 8 8V4z"/>',
   desktop: '<path d="M4 5h16v10H4V5zm2 12h12v2H6v-2z"/>',
-  folderUp: '<path d="M19 12H5m6-6l-6 6 6 6"/>',
+  folderUp: '<path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>',
   file: '<path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>',
   chevronRight: '<path d="M9 6l6 6-6 6V6z"/>',
-  check: '<path d="M5 12l5 5 9-10"/>',
+  check: '<path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>',
   trash: '<path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z"/>',
   edit: '<path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3zm13.5-14l1.5 1.5"/>',
   copy: '<path d="M8 8h12v12H8V8zm4-6h12v12h-4V8h-8V2z"/>',
   send: '<path d="M3 11l18-8-8 18-2-8-8-2z"/>',
   stop: '<path d="M6 6h12v12H6z"/>',
-  chevronDown: '<path d="M6 9l6 6 6-6"/>',
+  chevronDown: '<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/>',
   warning: '<path d="M12 3L1 21h22L12 3zm1 14h-2v2h2v-2zm0-8h-2v6h2V9z"/>',
   history: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 10l4 2-1 1.7-5-2.5V6h2v6z"/>',
   brain: '<path d="M12 2a5 5 0 0 1 5 5c2 1 3 3 3 5 0 2-1.3 3.7-3.2 4.4A5 5 0 0 1 12 22a5 5 0 0 1-4.8-5.6A5 5 0 0 1 4 12c0-2 1-4 3-5a5 5 0 0 1 5-5z"/>',
@@ -1099,7 +1099,11 @@ function loadOlder(tab) {
       tab.loading = false;
       var older = Array.isArray(data.messages) ? data.messages : [];
       tab.messages = older.concat(tab.messages);
-      tab.offset += older.length;
+      // 服务端 offset 是「自尾端向前跳过条数」的绝对窗口下沿；若两次加载之间
+      // 会话新增消息（桌面端镜像流/另一设备发送），本地计数会与全局窗口错位，
+      // 导致与本地已有消息重叠重复渲染。改用服务端返回的窗口下沿推进。
+      if (typeof data.offset === 'number') tab.offset = data.offset + older.length;
+      else tab.offset += older.length;
       tab.hasMore = !!data.hasMore;
       if (tab.key === S.activeTabKey) renderMessages();
     })
@@ -1279,7 +1283,11 @@ function doStop() {
   var cur = activeTab();
   if (!cur || !cur.streaming) return;
   if (cur.id) {
-    post('/api/cancel', { conversationId: cur.id }).catch(function () {});
+    post('/api/cancel', { conversationId: cur.id }).then(function () {
+      // 服务端取消后以 cancelled chunk 回填半截内容；若点停止瞬间 SSE 恰好断连，
+      // cancelled 会丢失，这里重载兜底保证已生成内容可见（服务端已落盘）
+      if (cur && !cur.streaming) loadMessages(cur, true);
+    }).catch(function () {});
   }
   cur.streaming = false;
   cur.pendingTools = [];
@@ -1340,6 +1348,18 @@ function connectStream() {
   }));
   es.addEventListener('conversations', safe(function () {
     loadConversations(true);
+  }));
+  es.addEventListener('conversation-deleted', safe(function (ev) {
+    // 会话被删除（桌面端删除后广播）：关闭对应页签，避免残留页签发送 404
+    var d = {};
+    try { d = JSON.parse(ev.data); } catch (e) { /* ignore */ }
+    var cid = d && d.conversationId;
+    if (!cid) return;
+    var tab = tabByConvId(cid);
+    if (tab) {
+      closeTab(tab.key);
+      loadConversations(true);
+    }
   }));
   es.addEventListener('bye', safe(function () {
     S.serverStopped = true;
@@ -2369,7 +2389,8 @@ function renderField(sec, f) {
     num.min = String(f.min != null ? f.min : 0);
     num.max = String(f.max != null ? f.max : 1e9);
     if (f.step) num.step = String(f.step);
-    num.value = value != null ? String(value) : '';
+    var displayValue = (f.unit === 'MiB' && value != null) ? Math.round(Number(value) / (1024 * 1024)) : value;
+    num.value = displayValue != null ? String(displayValue) : '';
     num.placeholder = f.min === -1 ? t('unlimited') : '';
     ctl.appendChild(num);
     num.addEventListener('change', function () {
@@ -2377,14 +2398,14 @@ function renderField(sec, f) {
       if (raw === '' && f.min === -1) raw = '-1';
       var v = Number(raw);
       if (raw === '' || !isFinite(v)) {
-        num.value = value != null ? String(value) : '';
+        num.value = displayValue != null ? String(displayValue) : '';
         toast(t('settingsFailed'));
         return;
       }
       if (f.min != null && v < f.min) v = f.min;
       if (f.max != null && v > f.max) v = f.max;
       num.value = String(v);
-      saveSettingsPatch(patchFor(f.p, v));
+      saveSettingsPatch(patchFor(f.p, f.unit === 'MiB' ? Math.round(v * 1024 * 1024) : v));
     });
   } else if (f.w === 'seg') {
     /* 枚举按钮组：点击立即保存（如自动保存延迟档位） */
@@ -2543,17 +2564,26 @@ function renderField(sec, f) {
     if (f.w === 'password') {
       inp.autocomplete = 'new-password';
       inp.placeholder = value ? t('apiKeySet') : '';
+      inp.value = '';
     } else {
+      // 普通文本字段回显当前值（proxy.url/storagePath/model id 等），空串提交不覆盖真实配置
       inp.placeholder = t('keepBlank');
+      inp.value = value != null ? String(value) : '';
     }
-    inp.value = '';
     ctl.appendChild(inp);
     inp.addEventListener('change', function () {
       if (f.w === 'password') {
         if (!inp.value) { inp.value = ''; return; }
         saveSettingsPatch(patchFor(f.p, inp.value), function () { inp.value = ''; });
       } else {
-        saveSettingsPatch(patchFor(f.p, inp.value));
+        var tv = inp.value;
+        if (tv === '') {
+          if (value == null || value === '') return;
+          inp.value = String(value);
+          toast(t('settingsFailed'));
+          return;
+        }
+        saveSettingsPatch(patchFor(f.p, tv));
       }
     });
   }
@@ -3635,7 +3665,7 @@ function renderCheckpointSection() {
       w: 'chips'
     });
   });
-  renderField(exCard, { t: 'ckptMaxSizeMiB', p: ['toolsConfig', 'checkpoint', 'exclusion', 'maxFileSizeBytes'], w: 'number', min: 1 });
+  renderField(exCard, { t: 'ckptMaxSizeMiB', p: ['toolsConfig', 'checkpoint', 'exclusion', 'maxFileSizeBytes'], w: 'number', min: 1, unit: 'MiB' });
   renderField(exCard, { t: 'ckptCustomPatterns', p: ['toolsConfig', 'checkpoint', 'exclusion', 'customPatterns'], w: 'chips' });
 }
 /* ---------- 渠道管理 ---------- */
@@ -3749,6 +3779,20 @@ function saveChannelPatch(configId, updates) {
     toast(t('settingsFailed') + ': ' + (err.message || ''));
   });
 }
+/* 「开关+数值」成对保存：enabled 写 optionsEnabled.X（显式 false 以覆盖 deepMerge），数值写 options.X */
+function saveInlineOpt(configId, reg, op, oe, key, u) {
+  var oe2 = Object.assign({}, oe);
+  var op2 = Object.assign({}, op);
+  if (u.enabled) {
+    oe2[key] = true;
+    var n = parseFloat(u.value);
+    if (!isNaN(n)) op2[key] = n;
+  } else {
+    oe2[key] = false;
+    op2[key] = undefined;
+  }
+  saveChannelPatch(configId, { optionsEnabled: oe2, options: op2 });
+}
 /* 折叠面板：头部 chevron + 标题 + 可选 header toggle（点击开关不展开） */
 function collapSection(headLabel, opts) {
   var item = el('div', { class: 'collap' });
@@ -3859,25 +3903,25 @@ function chInline(container, reg, key, label, w, opts, onSave) {
   return c;
 }
 /* 「开关 + 数值」成对即时保存（optionsEnabled.X + options.X） */
-function chInlineOpt(container, reg, key, label) {
+function chInlineOpt(container, reg, key, label, onSave) {
   var wrap = el('div', { class: 'set-field' });
   wrap.appendChild(el('span', { class: 'k', text: label }));
   var ctl = el('span', { class: 'ctl' });
-  var tg = itemToggle(false, function (v) { tg._value = v; });
+  var tg = itemToggle(false, function (v) {
+    tg._value = v;
+    if (onSave) onSave({ enabled: v, value: String(num.value).trim() });
+  });
   tg._value = false;
   ctl.appendChild(tg);
   var num = el('input', { type: 'number', style: 'flex:1;min-width:120px;' });
+  num.addEventListener('change', function () {
+    if (onSave) onSave({ enabled: (tg._value === true), value: String(num.value).trim() });
+  });
   ctl.appendChild(num);
   wrap.appendChild(ctl);
   container.appendChild(wrap);
   reg[key] = { tg: tg, num: num };
   return reg[key];
-}
-function chInlineOptRead(reg, key) {
-  var c = reg[key];
-  if (!c) return null;
-  var inp = c.tg.querySelector('input');
-  return { enabled: (!!(inp && inp.checked) || c.tg._value === true), value: String(c.num.value).trim() };
 }
 function chInlineOptFill(reg, key, optionsEnabled, options) {
   var c = reg[key];
@@ -4026,9 +4070,9 @@ function renderChannelForm(card, cfg) {
     var oe = Object.assign({}, d.optionsEnabled || {});
     var op = Object.assign({}, d.options || {});
     if (type === 'gemini') {
-      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'));
-      chInlineOpt(adv.body, reg, 'maxOutputTokens', t('fldChMaxOutputTokens'));
-      chInlineOpt(adv.body, reg, 'maxImages', t('chMaxImages'));
+      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'), function (u) { saveInlineOpt(configId, reg, op, oe, 'temperature', u); });
+      chInlineOpt(adv.body, reg, 'maxOutputTokens', t('fldChMaxOutputTokens'), function (u) { saveInlineOpt(configId, reg, op, oe, 'maxOutputTokens', u); });
+      chInlineOpt(adv.body, reg, 'maxImages', t('chMaxImages'), function (u) { saveInlineOpt(configId, reg, op, oe, 'maxImages', u); });
       var thinkGroup = cfgSubGroup(t('chThinkingGroup'), {
         headerToggle: true,
         initial: oe.thinkingConfig === true,
@@ -4041,7 +4085,7 @@ function renderChannelForm(card, cfg) {
             tc.thinkingBudget = tc.thinkingBudget || 1024;
             saveChannelPatch(configId, { optionsEnabled: Object.assign({}, oe, { thinkingConfig: true }), options: Object.assign({}, op, { thinkingConfig: tc }) });
           } else {
-            var oe2 = Object.assign({}, oe); delete oe2.thinkingConfig;
+            var oe2 = Object.assign({}, oe); oe2.thinkingConfig = false;
             var op2 = Object.assign({}, op); delete op2.thinkingConfig;
             saveChannelPatch(configId, { optionsEnabled: oe2, options: op2 });
           }
@@ -4069,10 +4113,10 @@ function renderChannelForm(card, cfg) {
       });
       adv.body.appendChild(thinkGroup.box);
     } else if (type === 'anthropic') {
-      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'));
-      chInlineOpt(adv.body, reg, 'max_tokens', t('fldChMaxOutputTokens'));
-      chInlineOpt(adv.body, reg, 'top_p', t('fldChTopP'));
-      chInlineOpt(adv.body, reg, 'top_k', t('fldChTopK'));
+      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'), function (u) { saveInlineOpt(configId, reg, op, oe, 'temperature', u); });
+      chInlineOpt(adv.body, reg, 'max_tokens', t('fldChMaxOutputTokens'), function (u) { saveInlineOpt(configId, reg, op, oe, 'max_tokens', u); });
+      chInlineOpt(adv.body, reg, 'top_p', t('fldChTopP'), function (u) { saveInlineOpt(configId, reg, op, oe, 'top_p', u); });
+      chInlineOpt(adv.body, reg, 'top_k', t('fldChTopK'), function (u) { saveInlineOpt(configId, reg, op, oe, 'top_k', u); });
       var thinkGroupA = cfgSubGroup(t('chThinkingGroup'), {
         headerToggle: true,
         initial: oe.thinking === true,
@@ -4084,7 +4128,7 @@ function renderChannelForm(card, cfg) {
             tc.budget_tokens = tc.budget_tokens || 10000;
             saveChannelPatch(configId, { optionsEnabled: Object.assign({}, oe, { thinking: true }), options: Object.assign({}, op, { thinking: tc }) });
           } else {
-            var oe2 = Object.assign({}, oe); delete oe2.thinking;
+            var oe2 = Object.assign({}, oe); oe2.thinking = false;
             var op2 = Object.assign({}, op); delete op2.thinking;
             saveChannelPatch(configId, { optionsEnabled: oe2, options: op2 });
           }
@@ -4112,8 +4156,8 @@ function renderChannelForm(card, cfg) {
       });
       adv.body.appendChild(thinkGroupA.box);
     } else if (type === 'openai-responses') {
-      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'));
-      chInlineOpt(adv.body, reg, 'max_output_tokens', t('fldChMaxOutputTokens'));
+      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'), function (u) { saveInlineOpt(configId, reg, op, oe, 'temperature', u); });
+      chInlineOpt(adv.body, reg, 'max_output_tokens', t('fldChMaxOutputTokens'), function (u) { saveInlineOpt(configId, reg, op, oe, 'max_output_tokens', u); });
       var rGroupR = cfgSubGroup(t('chThinkingGroup'), {
         headerToggle: true,
         initial: oe.reasoning === true,
@@ -4123,7 +4167,7 @@ function renderChannelForm(card, cfg) {
             rc.effort = rc.effort || 'high';
             saveChannelPatch(configId, { optionsEnabled: Object.assign({}, oe, { reasoning: true }), options: Object.assign({}, op, { reasoning: rc }) });
           } else {
-            var oe2 = Object.assign({}, oe); delete oe2.reasoning;
+            var oe2 = Object.assign({}, oe); oe2.reasoning = false;
             var op2 = Object.assign({}, op); delete op2.reasoning;
             saveChannelPatch(configId, { optionsEnabled: oe2, options: op2 });
           }
@@ -4132,11 +4176,11 @@ function renderChannelForm(card, cfg) {
       reasoningFields(rGroupR.box, reg, d, function (updates) { saveChannelPatch(configId, updates); });
       adv.body.appendChild(rGroupR.box);
     } else {
-      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'));
-      chInlineOpt(adv.body, reg, 'max_tokens', t('fldChMaxOutputTokens'));
-      chInlineOpt(adv.body, reg, 'top_p', t('fldChTopP'));
-      chInlineOpt(adv.body, reg, 'frequencyPenalty', t('fldChFreqPenalty'));
-      chInlineOpt(adv.body, reg, 'presencePenalty', t('fldChPresencePenalty'));
+      chInlineOpt(adv.body, reg, 'temperature', t('fldChTemperature'), function (u) { saveInlineOpt(configId, reg, op, oe, 'temperature', u); });
+      chInlineOpt(adv.body, reg, 'max_tokens', t('fldChMaxOutputTokens'), function (u) { saveInlineOpt(configId, reg, op, oe, 'max_tokens', u); });
+      chInlineOpt(adv.body, reg, 'top_p', t('fldChTopP'), function (u) { saveInlineOpt(configId, reg, op, oe, 'top_p', u); });
+      chInlineOpt(adv.body, reg, 'frequencyPenalty', t('fldChFreqPenalty'), function (u) { saveInlineOpt(configId, reg, op, oe, 'frequencyPenalty', u); });
+      chInlineOpt(adv.body, reg, 'presencePenalty', t('fldChPresencePenalty'), function (u) { saveInlineOpt(configId, reg, op, oe, 'presencePenalty', u); });
       var rGroup = cfgSubGroup(t('chThinkingGroup'), {
         headerToggle: true,
         initial: oe.reasoning === true,
@@ -4146,7 +4190,7 @@ function renderChannelForm(card, cfg) {
             rc.effort = rc.effort || 'high';
             saveChannelPatch(configId, { optionsEnabled: Object.assign({}, oe, { reasoning: true }), options: Object.assign({}, op, { reasoning: rc }) });
           } else {
-            var oe2 = Object.assign({}, oe); delete oe2.reasoning;
+            var oe2 = Object.assign({}, oe); oe2.reasoning = false;
             var op2 = Object.assign({}, op); delete op2.reasoning;
             saveChannelPatch(configId, { optionsEnabled: oe2, options: op2 });
           }
