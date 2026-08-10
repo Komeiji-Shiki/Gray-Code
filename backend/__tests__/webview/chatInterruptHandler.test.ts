@@ -6,7 +6,13 @@
  */
 
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
-import { sendInterruptMessage, awaitConversationIdle, registerChatHandlers } from '../../../webview/handlers/ChatHandlers';
+import {
+    awaitConversationIdle,
+    claimAgentMessages,
+    releaseAgentMessages,
+    sendInterruptMessage,
+    registerChatHandlers
+} from '../../../webview/handlers/ChatHandlers';
 import { createMessageHandlerRegistry } from '../../../webview/handlers';
 
 function createCtx(overrides: Record<string, unknown> = {}) {
@@ -36,6 +42,8 @@ describe('chat.sendInterruptMessage 处理器', () => {
         const registry = createMessageHandlerRegistry();
         expect(registry.has('chat.sendInterruptMessage')).toBe(true);
         expect(registry.has('chat.awaitConversationIdle')).toBe(true);
+        expect(registry.has('chat.claimAgentMessages')).toBe(true);
+        expect(registry.has('chat.releaseAgentMessages')).toBe(true);
     });
 
     it('awaitConversationIdle 等待后端运行控制器真正空闲后才响应', async () => {
@@ -65,6 +73,33 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(drained).toHaveLength(1);
         expect(drained[0].fromAgentName).toBe('user');
         expect(drained[0].text).toBe('快点处理');
+    });
+
+    it('空闲主模型领取消息后可确认；发送失败可退回并再次领取', async () => {
+        agentMailbox.registerRun('conv_1', 'sender', 'Sender');
+        agentMailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'sender',
+            targetRunId: MAIN_SESSION_RUN_ID,
+            text: 'background agent says hello'
+        });
+        const ctx = createCtx();
+
+        await claimAgentMessages({ conversationId: 'conv_1' }, 'claim_1', ctx);
+        const payload = ctx.sendResponse.mock.calls.at(-1)?.[1];
+        expect(payload.claimId).toEqual(expect.any(String));
+        expect(payload.message).toContain('[Agent message received]');
+        expect(payload.message).toContain('background agent says hello');
+        expect(agentMailbox.getPendingMessageCount()).toBe(1);
+
+        await releaseAgentMessages({ conversationId: 'conv_1', claimId: payload.claimId }, 'release_1', ctx);
+        expect(ctx.sendResponse).toHaveBeenCalledWith('release_1', { released: true });
+        expect(agentMailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)).toHaveLength(1);
+
+        await claimAgentMessages({ conversationId: 'conv_1' }, 'claim_2', ctx);
+        const retry = ctx.sendResponse.mock.calls.at(-1)?.[1];
+        expect(agentMailbox.acknowledgeMessageClaim('conv_1', MAIN_SESSION_RUN_ID, retry.claimId)).toBe(true);
+        expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 
     it('缺会话 ID → INTERRUPT_MESSAGE_INVALID_CONVERSATION，不访问信箱', async () => {
