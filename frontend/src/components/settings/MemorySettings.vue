@@ -657,7 +657,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
               {{ t('components.settings.settingsPanel.memory.runtime.entryChars.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" :disabled="!enabled" />
+              <input type="number" v-model.number="entryChars" min="1" max="1000" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
             </div>
           </div>
