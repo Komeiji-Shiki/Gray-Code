@@ -141,6 +141,7 @@ import {
 
 import type { StreamHandlerContext } from './chat/streamHandler'
 import { useSettingsStore } from './settingsStore'
+import { registerChatBridge } from './backgroundTasks/bridge'
 
 // 重新导出类型
 export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './chat/types'
@@ -303,6 +304,24 @@ export const useChatStore = defineStore('chat', () => {
   const deleteMessage = (targetIndex: number) => deleteMessageFn(state, targetIndex, cancelStream)
   const deleteSingleMessage = (targetIndex: number) => deleteSingleMessageFn(state, targetIndex, cancelStream)
   const clearMessages = () => clearMessagesFn(state)
+
+  // ============ 后台任务桥接（单向：chat → backgroundTaskStore） ============
+  // 背景：chatStore ↔ backgroundTaskStore 曾是双向耦合（backgroundTaskStore 直接 useChatStore），
+  // 模块级 import 环是初始化幂等/HMR 补丁（disposeChatStreamListener / initializedChatStates）
+  // 存在的结构性原因之一。
+  // 解耦：本 store 实例创建时把会话状态/操作面注册到 backgroundTasks/bridge 注册表
+  // （单向依赖 chat → bridge），backgroundTaskStore 只消费注册表，不再反向依赖 chatStore。
+  // 注册时机取实例创建（setup 体）而非 initialize：保证任何先于 initialize 的消费方
+  // （backgroundTaskStore 的 flush/watch）都能拿到当前实例的实时状态（测试与生产同构）。
+  registerChatBridge({
+    getState: () => ({
+      isStreaming: state.isStreaming.value,
+      isWaitingForResponse: state.isWaitingForResponse.value,
+      currentConversationId: state.currentConversationId.value
+    }),
+    cancelStream,
+    sendMessage
+  })
 
   // ============ 分支操作（TREE-07 切换 / TREE-10 切换器数据源） ============
 

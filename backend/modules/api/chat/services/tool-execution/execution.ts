@@ -24,7 +24,7 @@ import type { CheckpointService } from '../CheckpointService';
 import type { ToolProgressEmitter } from '../../../../../tools/types';
 import type { LockHolder } from '../../../../../core/fileWriteLockManager';
 import { isDiffReviewToolCall } from '../diffReviewTools';
-import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../ToolIterationLoopService';
+import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../abortDrain';
 import { cloneToolResponse, ResultCore } from './result';
 
 /**

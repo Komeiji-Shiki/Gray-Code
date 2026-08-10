@@ -13,6 +13,7 @@ export type {
     AnthropicConfig,
     OpenAIResponsesConfig,
     ChannelConfig,
+    ModelInfo,
     TokenCountMethod,
     TokenCountApiConfig
 } from './configs';

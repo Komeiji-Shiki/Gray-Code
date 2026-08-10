@@ -48,10 +48,9 @@ import { ChatFlowEditBranch } from './flow/editBranch';
 
 // H1：读取 webview 层注册的全局 abort manager，在写入用户消息/截断历史前等待旧流退出。
 // StreamAbortManager 仅依赖 backend/core 与 tools/subagents，不构成与 api/chat 的循环依赖。
-import {
-  StreamAbortManager,
-  OLD_STREAM_EXIT_WAIT_TIMEOUT_MS,
-} from '../../../../../webview/stream/StreamAbortManager';
+// 等待超时常量 OLD_STREAM_EXIT_WAIT_TIMEOUT_MS 已下沉 backend/core（第五批层反转修复）。
+import { StreamAbortManager } from '../../../../../webview/stream/StreamAbortManager';
+import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../../../core/streamConstants';
 
 // —— 文件级导出符号（保持与拆分前完全一致）——
 export { ChatStreamOutput, ChatStreamCancelledData } from './flow/context';

@@ -39,6 +39,14 @@
     - `services/soundCues.ts`（884 行）拆分为 soundCueSettings（338，类型/默认值/归一化）+ soundAudioEngine（321，AudioContext/解码缓存）+ soundPlayback（256，playCue 编排/冷却/槽位），主文件降为 37 行壳；17 个导出符号保留，单例状态无复制。
     - 消费方 import 穿透收敛（依据 08-cross-layer 清单）：webview→modules 25 处、webview→tools 8 处、modules 跨模块 24 文件/51 条 import、core→modules 1 处、tools→modules 1 处全部改走门面；补门面导出（settings 聚合 types、conversation +UsageMetadata/getPendingApprovalGate、api +CheckpointService、tools/subagents +SubAgentRunConversationStore 等，只加不删）。
     - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿；子代理改为只跑定向测试，全量门禁由主模型串行执行。
+  - 模块化摊平重构·第五批（解环 + 依赖方向，高风险接口级改动）：
+    - E1 环解除（checkpoint↔conversation）：新建 `conversation/branch/checkpointCleanerBridge.ts` 收敛引用计数清理器注册表，conversation 对 checkpoint 实现零 import，依赖收敛为单向（checkpoint→conversation 注册 + 类型）；CheckpointManager 自注册时机与 purge/prune 联动语义不变。
+    - E2（settings↔checkpoint）纪律化：确认运行时依赖已单向，checkpoint 门面补纪律注释「不得 import settings 运行时值」；E3（config↔channel 类型环）消除：ModelInfo 三份定义收敛为一份（config/types 补导出），channel/modelList 改 re-export 壳，config 对 channel import 归零。
+    - E4 环解除（api/chat/services 内部）：`MAIN_LOOP_ABORT_DRAIN_GRACE_MS`/`drainToolExecutionGeneratorAfterAbort` 外移 `services/abortDrain.ts`，ToolExecutionService 与 ToolIterationLoopService 互不直接 import。
+    - 层反转修复：`OLD_STREAM_EXIT_WAIT_TIMEOUT_MS` 下沉 `backend/core/streamConstants.ts`，ChatFlowService 改从 core 导入，webview StreamAbortManager re-export 兼容（遗留：ChatFlowService 对 StreamAbortManager 类的 getGlobalInstance 既有依赖保留，H1 已文档化）。
+    - modules→tools 反向依赖消除：diffManager（2,546 行）/agentMailbox（516 行）/regexGuard（223 行）下沉 `backend/core/services/`，promptToolParser（329 行）下沉 `backend/core/parsers/`，tools 原路径保留 re-export 壳，消费方 import 不断；逻辑零改动（126 suites/1293 用例通过）。
+    - chatStore↔backgroundTaskStore 双向耦合解除：新建 `stores/backgroundTasks/bridge.ts`（提供者注册表 + 动态 import 兜底），依赖收敛为 chatStore→bridge←backgroundTaskStore 单向，重入防护与投递窗口语义逐位保持；修复 bridge.ts 一处相对路径错误。
+    - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿。
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。

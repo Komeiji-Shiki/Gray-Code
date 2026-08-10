@@ -1,0 +1,104 @@
+/**
+ * backgroundTaskStore ↔ chatStore 单向桥接（解耦第五批）
+ *
+ * 背景：chatStore ↔ backgroundTaskStore 曾是双向耦合——
+ * - chatStore → chat/queueActions → backgroundTaskStore（flushReportsAfterAction 运行时调用）；
+ * - backgroundTaskStore → chatStore（setup 内 useChatStore() 读取会话忙闲/归属状态 + watch + sendMessage/cancelStream）。
+ * 模块级 import 环是初始化幂等/HMR 补丁（disposeChatStreamListener / initializedChatStates）
+ * 存在的结构性原因之一。
+ *
+ * 解耦方案（方向收敛为单向 chatStore → backgroundTaskStore）：
+ * - chatStore 实例创建时（setup 体内）把「会话状态 + 操作面」注册到本模块的注册表；
+ * - backgroundTaskStore 只消费注册表（getChatBridge / resolveChatBridge），不再 import chatStore；
+ * - 本模块不静态 import chatStore（仅 type-only import chat/ 下的类型，编译期擦除），
+ *   兜底路径使用动态 import，保证任何情况下都不会形成模块级静态循环。
+ *
+ * 行为保持：
+ * - getState() 每次调用都重新读取底层 ref，watch getter 经它求值仍能建立响应式依赖
+ *   （与旧实现 watch(() => chatStore.isStreaming) 语义一致）；
+ * - resolveChatBridge() 已注册时返回注册桥（单微任务），未注册时动态 import chatStore
+ *   兜底包装（真实 store 实例化时会同步自注册；被 mock 的 store 走包装适配）。
+ */
+
+import type { Attachment } from '../../types'
+import type { SendMessageOptions } from '../chat/messageActions'
+import type { CancelStreamOptions } from '../chat/toolActions'
+
+/** 会话忙闲/归属状态快照（每次 getState() 重新求值，保证实时性） */
+export interface BackgroundTaskChatState {
+  isStreaming: boolean
+  isWaitingForResponse: boolean
+  currentConversationId: string | null
+}
+
+/** chatStore 向 backgroundTaskStore 暴露的会话状态/操作面 */
+export interface BackgroundTaskChatBridge {
+  /** 实时读取会话状态（供即时判断与 watch getter 求值） */
+  getState(): BackgroundTaskChatState
+  /** 取消当前流（动作边界替换回合；签名与 useChatStore().cancelStream 一致） */
+  cancelStream(options?: CancelStreamOptions): Promise<void>
+  /** 发送消息（签名与 useChatStore().sendMessage 一致） */
+  sendMessage(
+    messageText: string,
+    attachments?: Attachment[],
+    options?: SendMessageOptions
+  ): Promise<boolean>
+}
+
+let registeredBridge: BackgroundTaskChatBridge | null = null
+let fallbackBridge: BackgroundTaskChatBridge | null = null
+
+/**
+ * 注册/注销会话桥（chatStore 实例创建时调用；重复注册以最新实例为准）。
+ * 传 null 可注销（预留，当前无调用方）。
+ */
+export function registerChatBridge(bridge: BackgroundTaskChatBridge | null): void {
+  registeredBridge = bridge
+}
+
+/** 同步读取已注册的会话桥；未注册时返回 null（调用方按空闲/无会话兜底） */
+export function getChatBridge(): BackgroundTaskChatBridge | null {
+  return registeredBridge
+}
+
+/** 兜底包装的目标形态（兼容真实 store 与测试 mock 的纯对象） */
+interface ChatStoreLike {
+  isStreaming: boolean
+  isWaitingForResponse: boolean
+  currentConversationId: string | null
+  cancelStream?: (options?: CancelStreamOptions) => Promise<void>
+  sendMessage: (
+    messageText: string,
+    attachments?: Attachment[],
+    options?: SendMessageOptions
+  ) => Promise<boolean>
+}
+
+function wrapChatStore(store: ChatStoreLike): BackgroundTaskChatBridge {
+  return {
+    getState: () => ({
+      isStreaming: store.isStreaming,
+      isWaitingForResponse: store.isWaitingForResponse,
+      currentConversationId: store.currentConversationId ?? null
+    }),
+    cancelStream: (options) =>
+      store.cancelStream ? store.cancelStream(options) : Promise.resolve(),
+    sendMessage: (messageText, attachments, options) =>
+      store.sendMessage(messageText, attachments, options)
+  }
+}
+
+/**
+ * 异步解析会话桥（flush 路径使用）：
+ * - 已注册：直接返回注册桥（单微任务，保持 flush 的重入语义）；
+ * - 未注册（chatStore 尚未实例化 / 模块被 mock）：动态 import chatStore 兜底——
+ *   真实实例化时 setup 体内会同步自注册；非真实 store（测试 mock）走包装适配。
+ */
+export async function resolveChatBridge(): Promise<BackgroundTaskChatBridge> {
+  if (registeredBridge) return registeredBridge
+  if (fallbackBridge) return fallbackBridge
+  const { useChatStore } = await import('../chatStore')
+  const store = useChatStore()
+  fallbackBridge = registeredBridge ?? wrapChatStore(store as unknown as ChatStoreLike)
+  return fallbackBridge
+}

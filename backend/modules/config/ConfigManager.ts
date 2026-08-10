@@ -19,11 +19,11 @@ import type {
     ConfigSortOptions,
     GeminiConfig,
     OpenAIConfig,
-    AnthropicConfig
+    AnthropicConfig,
+    ModelInfo
 } from './types';
 import { CHANNEL_TYPES } from './types';
 import { deepMerge } from './configs/base';
-import type { ModelInfo } from '../channel';
 import type { ConfigStorageAdapter } from './storage';
 import { randomBytes } from 'crypto';
 

@@ -23,7 +23,7 @@ import type {
   ChatStreamToolsExecutingData,
   ChatStreamToolStatusData,
 } from '../../types';
-import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../ToolIterationLoopService';
+import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../abortDrain';
 import type { ToolExecutionFullResult, ToolExecutionProgressEvent } from '../ToolExecutionService';
 import type { Content, ContentPart } from '../../../../conversation/types';
 import type { CheckpointRecord } from '../../../../checkpoint';
