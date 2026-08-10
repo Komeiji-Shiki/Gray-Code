@@ -2,6 +2,9 @@
  * Plan 文档中的 TODO LIST 章节处理工具
  */
 
+import { escapeRegExp, normalizeSingleLineText } from '../shared/textUtils';
+import { isTodoStatus } from '../shared/todoValidation';
+
 export type PlanTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
 export interface PlanTodoItem {
@@ -15,17 +18,7 @@ const TODO_SECTION_START = '<!-- GRAYCODE_TODO_LIST_START -->';
 const TODO_SECTION_END = '<!-- GRAYCODE_TODO_LIST_END -->';
 
 function normalizeTodoStatus(value: unknown): PlanTodoStatus {
-  if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value;
-  return 'pending';
-}
-
-function normalizeSingleLineText(input: unknown): string {
-  if (typeof input !== 'string') return '';
-  return input.replace(/\s+/g, ' ').trim();
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return isTodoStatus(value) ? value : 'pending';
 }
 
 export function sortPlanTodoList(items: PlanTodoItem[]): PlanTodoItem[] {

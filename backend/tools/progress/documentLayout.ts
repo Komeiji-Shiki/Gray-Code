@@ -4,6 +4,8 @@
 
 import { createHash } from 'crypto';
 import { normalizeLineEndingsToLF } from '../utils';
+import { normalizeSingleLineText } from '../shared/textUtils';
+import { findDuplicateIds, isTodoStatus, validateTodos } from '../shared/todoValidation';
 import {
   MAX_PROGRESS_LOG_ENTRIES,
   PROGRESS_ARTIFACTS_END,
@@ -45,11 +47,6 @@ import {
   type ProgressValidationSummaryV1,
 } from './schema';
 
-function normalizeSingleLineText(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  return value.replace(/\s+/g, ' ').trim();
-}
-
 function normalizeMarkdownBlock(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = normalizeLineEndingsToLF(value).trim();
@@ -59,26 +56,6 @@ function normalizeMarkdownBlock(value: unknown): string | null {
 function normalizeTimestamp(value: unknown, fallback: string): string {
   const normalized = normalizeSingleLineText(value);
   return normalized || fallback;
-}
-
-function getDuplicateIds(value: unknown, fieldName: string): string[] {
-  if (!Array.isArray(value)) return [];
-  const seen = new Set<string>();
-  const duplicates = new Set<string>();
-
-  for (const item of value) {
-    if (!item || typeof item !== 'object') continue;
-    const rawId = (item as Record<string, unknown>).id;
-    const id = normalizeSingleLineText(rawId);
-    if (!id) continue;
-    if (seen.has(id)) {
-      duplicates.add(id);
-      continue;
-    }
-    seen.add(id);
-  }
-
-  return Array.from(duplicates).map((id) => `${fieldName}:${id}`);
 }
 
 function computeHash(content: string): string {
@@ -106,7 +83,7 @@ export function isProgressPhase(value: unknown): value is ProgressPhase {
 }
 
 export function isProgressTodoStatus(value: unknown): value is ProgressTodoStatus {
-  return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'cancelled';
+  return isTodoStatus(value);
 }
 
 export function isProgressMilestoneStatus(value: unknown): value is ProgressMilestoneStatus {
@@ -135,30 +112,12 @@ export function normalizeOptionalProgressSingleLineText(value: unknown): string 
 }
 
 export function validateProgressTodosInput(value: unknown): string | null {
-  if (!Array.isArray(value)) {
-    return 'todos must be an array';
-  }
-
-  for (const item of value) {
-    if (!item || typeof item !== 'object') {
-      return 'each todo must be an object';
-    }
-    const id = normalizeSingleLineText((item as Record<string, unknown>).id);
-    const content = normalizeSingleLineText((item as Record<string, unknown>).content);
-    const status = (item as Record<string, unknown>).status;
-    if (!id) return 'todo.id must be a non-empty string';
-    if (!content) return 'todo.content must be a non-empty string';
-    if (!isProgressTodoStatus(status)) {
-      return 'todo.status must be one of: pending, in_progress, completed, cancelled';
-    }
-  }
-
-  const duplicates = getDuplicateIds(value, 'todo');
-  if (duplicates.length > 0) {
-    return `duplicate todo ids are not allowed: ${duplicates.join(', ')}`;
-  }
-
-  return null;
+  const result = validateTodos(value, {
+    requireNonEmptyContent: true,
+    checkDuplicates: true,
+    duplicateFieldName: 'todo',
+  });
+  return result.ok ? null : result.error;
 }
 
 export function validateProgressRisksInput(value: unknown): string | null {
@@ -182,7 +141,7 @@ export function validateProgressRisksInput(value: unknown): string | null {
     }
   }
 
-  const duplicates = getDuplicateIds(value, 'risk');
+  const duplicates = findDuplicateIds(value, 'risk');
   if (duplicates.length > 0) {
     return `duplicate risk ids are not allowed: ${duplicates.join(', ')}`;
   }
@@ -661,17 +620,17 @@ function validateRawMetadata(value: unknown): string | null {
     return 'Progress metadata kind must be "graycode.progress"';
   }
 
-  const duplicateTodoIds = getDuplicateIds(record.todos, 'todo');
+  const duplicateTodoIds = findDuplicateIds(record.todos, 'todo');
   if (duplicateTodoIds.length > 0) {
     return `Duplicate todo ids detected: ${duplicateTodoIds.join(', ')}`;
   }
 
-  const duplicateMilestoneIds = getDuplicateIds(record.milestones, 'milestone');
+  const duplicateMilestoneIds = findDuplicateIds(record.milestones, 'milestone');
   if (duplicateMilestoneIds.length > 0) {
     return `Duplicate milestone ids detected: ${duplicateMilestoneIds.join(', ')}`;
   }
 
-  const duplicateRiskIds = getDuplicateIds(record.risks, 'risk');
+  const duplicateRiskIds = findDuplicateIds(record.risks, 'risk');
   if (duplicateRiskIds.length > 0) {
     return `Duplicate risk ids detected: ${duplicateRiskIds.join(', ')}`;
   }

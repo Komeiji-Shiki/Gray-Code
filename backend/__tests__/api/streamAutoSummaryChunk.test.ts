@@ -11,25 +11,7 @@ import { ToolIterationLoopService } from '../../modules/api/chat/services/ToolIt
 import { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
 import { agentMailbox } from '../../tools/subagents/agentMailbox';
 import type { Content } from '../../modules/conversation/types';
-
-function createPromptManagerMock() {
-    const emptyBundle = {
-        beforeHistoryMessages: [],
-        afterHistoryMessages: [],
-        dynamicSnapshotBeforeHistoryMessages: [],
-        dynamicSnapshotAfterHistoryMessages: [],
-        messages: [],
-        dynamicSnapshotMessages: [],
-        text: '',
-        dynamicSnapshotText: '',
-        historyPlacement: 'legacy' as const
-    };
-    return {
-        getPromptContextBundle: jest.fn().mockReturnValue(emptyBundle),
-        refreshAndGetPrompt: jest.fn().mockReturnValue('sys'),
-        getSystemPrompt: jest.fn().mockReturnValue('sys')
-    };
-}
+import { createPromptManagerMock } from '../__fixtures__/mockFixtures';
 
 function createHarness(summarizeResult: Record<string, unknown>) {
     const turnStartMessage: Content = {

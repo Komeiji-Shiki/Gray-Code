@@ -7,6 +7,9 @@
 
 import * as vscode from 'vscode';
 import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
+import { normalizeSingleLineText } from '../shared/textUtils';
+import { slugify } from '../shared/slugify';
+import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { buildProgressDocument, validateProgressDocument } from './documentLayout';
 import { ensureParentDir, isProgressModePathAllowedWithMultiRoot } from './pathUtils';
 import { withProgressWriteLock } from './progressWriteLock';
@@ -30,20 +33,6 @@ interface SyncProgressFromReviewArtifactArgs {
   latestConclusion?: string;
   nextAction?: string;
   eventMessage?: string;
-}
-
-function normalizeSingleLineText(value: unknown): string {
-  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
-}
-
-function slugify(input: string): string {
-  const source = (input || '').trim().toLowerCase();
-  const slug = source
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9\u4e00-\u9fa5-]+/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return slug || 'project';
 }
 
 function getWorkspaceDisplayName(): string | undefined {
@@ -100,7 +89,7 @@ async function loadExistingProgress(progressPath: string): Promise<{
 
 async function writeProgress(progressPath: string, metadata: Partial<ProgressDocumentMetadataV1>, now: string): Promise<void> {
   if (!isProgressModePathAllowedWithMultiRoot(progressPath)) {
-    throw new Error(`Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${progressPath}`);
+    throw new Error(buildPathRejectedError('progress', PROGRESS_PATH_SCOPE_LABEL, progressPath));
   }
 
   const { uri, error } = resolveUriWithInfo(progressPath);
@@ -116,7 +105,7 @@ async function writeProgress(progressPath: string, metadata: Partial<ProgressDoc
 function buildInitialProgressMetadata(now: string, progressPath: string): Partial<ProgressDocumentMetadataV1> {
   const projectName = getWorkspaceDisplayName();
   return {
-    projectId: slugify(projectName || progressPath),
+    projectId: slugify(projectName || progressPath, 'project'),
     projectName,
     createdAt: now,
     updatedAt: now,

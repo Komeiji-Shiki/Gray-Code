@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { PLAN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { buildPlanDocument, extractPlanBodyContent } from './documentLayout';
 import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
 import {
@@ -122,7 +123,7 @@ export function createUpdatePlanTool(): Tool {
       }
 
       if (!isPlanModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: buildPathRejectedError('plan', PLAN_PATH_SCOPE_LABEL, targetPath) };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath);

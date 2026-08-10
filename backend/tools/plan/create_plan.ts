@@ -8,6 +8,8 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { slugify } from '../shared/slugify';
+import { PLAN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { buildPlanDocument } from './documentLayout';
 import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
 import { buildTrackedPlanSourceArtifact, renderPlanSourceArtifactSection, type PlanSourceArtifactInput } from './sourceArtifactSection';
@@ -21,16 +23,6 @@ export interface CreatePlanArgs {
   todos?: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }>;
   path?: string;
   sourceArtifact?: PlanSourceArtifactInput;
-}
-
-function slugify(input: string): string {
-  const s = (input || '').trim().toLowerCase();
-  const slug = s
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9\u4e00-\u9fa5-]+/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return slug || `plan-${Date.now()}`;
 }
 
 export function createCreatePlanToolDeclaration(): ToolDeclaration {
@@ -89,11 +81,11 @@ export function createCreatePlanTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.graycode/plans/${slugify(title || 'plan')}.plan.md`;
+      const defaultPath = `.graycode/plans/${slugify(title || 'plan', `plan-${Date.now()}`)}.plan.md`;
       const outPath = (typeof args.path === 'string' && args.path.trim()) ? args.path.trim() : defaultPath;
 
       if (!isPlanModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: buildPathRejectedError('plan', PLAN_PATH_SCOPE_LABEL, outPath) };
       }
 
       const { uri, error } = resolveUriWithInfo(outPath);

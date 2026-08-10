@@ -14,6 +14,7 @@ import {
     createWorkspaceScopedPath,
     type RuntimeWorkspaceRoot
 } from '../../modules/checkpoint/CheckpointWorkspace';
+import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
 
 /**
  * CheckpointRestoreEngine 测试
@@ -25,10 +26,6 @@ import {
  * - missing_in_chain / hash_mismatch 失败清单
  * - 旧格式（相对路径）单根兼容
  */
-
-async function createTempWorkspace(): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-restore-'));
-}
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);

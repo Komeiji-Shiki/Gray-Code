@@ -12,6 +12,7 @@ import {
     createRuntimeWorkspaceRoots,
     createWorkspaceScopedPath
 } from '../../modules/checkpoint/CheckpointWorkspace';
+import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
 
 // L-1: 让 bad.txt 的流式哈希失败，构造“真实不可读文件”（跨平台确定，不依赖 chmod）
 jest.mock('fs', () => {
@@ -57,10 +58,6 @@ jest.mock('fs/promises', () => {
  * - stat 复用哈希
  * - 不可读文件记录
  */
-
-async function createTempWorkspace(): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-builder-'));
-}
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);

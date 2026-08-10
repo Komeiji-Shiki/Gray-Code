@@ -41,7 +41,7 @@
  *   文件写锁 → 存档锁 → 会话锁（存档操作内部需要会话锁时按此方向获取）。
  */
 
-import { randomUUID } from 'node:crypto';
+import { newUuid } from '../../../core/id';
 import * as fsp from 'fs/promises';
 import { Logger } from '../../../core/logger';
 import type { Content, ContentPart, UsageMetadata } from '../types';
@@ -2098,7 +2098,7 @@ export class BranchService {
     ): ConversationBranchNode {
         const now = Date.now();
         return {
-            id: randomUUID(),
+            id: newUuid(),
             parentId: parentNodeId,
             role: input.role ?? defaultRole,
             parts: JSON.parse(JSON.stringify(input.parts ?? [])),

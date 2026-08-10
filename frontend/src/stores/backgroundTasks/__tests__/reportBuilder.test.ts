@@ -11,7 +11,7 @@ import {
     buildCompletionReport,
     type TaskEventLike,
     type BackgroundTaskRecord
-} from '../../../../frontend/src/stores/backgroundTasks/reportBuilder';
+} from '../reportBuilder';
 
 function startEvent(overrides: Partial<TaskEventLike> = {}): TaskEventLike {
     return {

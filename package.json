@@ -301,7 +301,9 @@
     "test:coverage": "jest --config jest.backend.config.js --coverage",
     "test:frontend": "npm --prefix frontend test",
     "test:all": "npm test && npm run test:frontend",
-    "ci": "npm run typecheck:all && npm run test:all",
+    "test:fast-tavern-ts": "npm --prefix fast-tavern-main/npm-fast-tavern ci && npm --prefix fast-tavern-main/npm-fast-tavern test",
+    "test:fast-tavern-py": "python -m pip install --quiet pytest && python -m pytest fast-tavern-main/py-fast-tavern/tests -q",
+    "ci": "npm run typecheck:all && npm run test:all && npm run test:fast-tavern-ts && npm run test:fast-tavern-py",
     "benchmark": "jest --config jest.backend.config.js --testMatch \"**/*.benchmark.ts\" --runInBand --testTimeout 600000"
   },
   "dependencies": {

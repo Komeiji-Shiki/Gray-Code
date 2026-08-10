@@ -8,56 +8,35 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { randomBytes } from 'crypto';
-import { t, setLanguage as setBackendLanguage } from '../backend/i18n';
+import { setLanguage as setBackendLanguage } from '../backend/i18n';
 import type { SupportedLanguage } from '../backend/i18n';
-import {
-    ConversationManager,
-    FileSystemStorageAdapter,
-    FileUsageIndexStore
-} from '../backend/modules/conversation';
-import {
-    BranchGraphRepository,
-    BranchService,
-    getGlobalBranchService,
-    setGlobalBranchService,
-} from '../backend/modules/conversation/branch';
-import { ConfigManager, MementoStorageAdapter } from '../backend/modules/config';
-import { ChannelManager } from '../backend/modules/channel';
-import { ChatHandler } from '../backend/modules/api/chat';
-import { ModelsHandler } from '../backend/modules/api/models';
-import { SettingsManager, VSCodeSettingsStorage, StoragePathManager, SettingsExporter } from '../backend/modules/settings';
-import type { SettingsChangeEvent } from '../backend/modules/settings';
-import { SettingsHandler } from '../backend/modules/api/settings';
-import { CheckpointManager } from '../backend/modules/checkpoint';
-import { McpManager, VSCodeFileSystemMcpStorageAdapter } from '../backend/modules/mcp';
-import type { McpServerInfo } from '../backend/modules/mcp';
-import { DependencyManager, type InstallProgressEvent } from '../backend/modules/dependencies';
-import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../backend/tools';
+import type { ConversationManager, FileSystemStorageAdapter, DiffStorageManager } from '../backend/modules/conversation';
+import type { BranchService } from '../backend/modules/conversation/branch';
+import type { ConfigManager } from '../backend/modules/config';
+import type { ChannelManager } from '../backend/modules/channel';
+import type { ChatHandler } from '../backend/modules/api/chat';
+import type { ModelsHandler } from '../backend/modules/api/models';
+import type { SettingsManager, StoragePathManager } from '../backend/modules/settings';
+import { SettingsExporter } from '../backend/modules/settings';
+import type { SettingsHandler } from '../backend/modules/api/settings';
+import type { CheckpointManager } from '../backend/modules/checkpoint';
+import type { McpManager } from '../backend/modules/mcp';
+import type { DependencyManager } from '../backend/modules/dependencies';
+import type { InstallProgressEvent } from '../backend/modules/dependencies';
+import { toolRegistry, getDiffManager, resolveMainChatDiffViewColumn } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
-import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
-import { initMemoryManager } from '../backend/modules/memory';
-import { UpdateChecker } from '../backend/modules/update';
-import { ActivityTracker, setGlobalActivityTracker } from '../backend/modules/activity';
-import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../backend/modules/tokenizer';
-import type { SettingsExportData } from '../backend/modules/settings';
-import {
-    setGlobalSettingsManager,
-    setGlobalConfigManager,
-    setGlobalChannelManager,
-    setGlobalToolRegistry,
-    setGlobalDiffStorageManager,
-    setGlobalMcpManager
-} from '../backend/core/settingsContext';
-import { DiffStorageManager } from '../backend/modules/conversation';
-import { getDiffManager } from '../backend/tools';
-import { resolveMainChatDiffViewColumn } from '../backend/tools';
+import { getSkillsManager } from '../backend/modules/skills';
+import type { ActivityTracker } from '../backend/modules/activity';
+import type { UpdateChecker } from '../backend/modules/update';
+import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications';
 import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
+import { createBackend } from '../backend/bootstrap';
+import type { BackendRuntime } from '../backend/bootstrap';
 import { MessageRouter } from './MessageRouter';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
-import { WindowsAgentStopNotificationService } from '../backend/modules/notifications';
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
@@ -74,7 +53,6 @@ import {
 } from './startupBootstrap';
 
 const log = Logger.get('ChatViewProvider');
-const UPDATE_CHECK_DELAY_MS = 10_000;
 
 /**
  * Diff 预览内容提供者
@@ -169,18 +147,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private subAgentMonitorPanel?: SubAgentMonitorPanel;
     private activityTracker?: ActivityTracker;
     private updateChecker?: UpdateChecker;
-    private updateCheckTimer?: NodeJS.Timeout;
     private mainChatClientDisposable?: vscode.Disposable;
     private readonly webviewClientRegistry = new WebviewClientRegistry();
     
     // 消息路由器
     private messageRouter!: MessageRouter;
+
+    // 后端组合根（backend/bootstrap）：管理器装配已下沉，初始化完成后同步到上方字段
+    private backend?: BackendRuntime;
     
-    // 事件取消订阅函数
-    private terminalOutputUnsubscribe?: () => void;
-    private imageGenOutputUnsubscribe?: () => void;
-    private taskEventUnsubscribe?: () => void;
-    private dependencyProgressUnsubscribe?: () => void;
     
     // 初始化状态
     private initPromise: Promise<void>;
@@ -253,328 +228,74 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * 初始化后端模块
+     * 初始化后端模块（组合根已下沉 backend/bootstrap；此处只做钩子装配与字段同步）
      */
     private async initializeBackend() {
-        // 先清理上一轮延迟更新检查定时器：重试初始化（graycode.retryInit）会再次进入本方法，
-        // 若旧定时器尚未触发就被 this.updateCheckTimer 直接覆盖，旧定时器将泄漏并重复触发检查（F2）
-        if (this.updateCheckTimer !== undefined) {
-            clearTimeout(this.updateCheckTimer);
-            this.updateCheckTimer = undefined;
-        }
-
-        // 1. 初始化设置管理器（需要最先初始化以获取存储路径配置）
-        const legacySettingsDir = path.join(this.context.globalStorageUri.fsPath, 'settings');
-        const settingsStorage = new VSCodeSettingsStorage({
-            legacySettingsDir
-        });
-        this.settingsManager = new SettingsManager(settingsStorage);
-        await this.settingsManager.initialize();
-        this.windowsAgentStopNotificationService = new WindowsAgentStopNotificationService({ settingsManager: this.settingsManager });
-        
-        // 2. 初始化存储路径管理器
-        this.storagePathManager = new StoragePathManager(this.settingsManager, this.context);
-        await this.storagePathManager.ensureDirectories();
-        
-        // 3. 获取有效的数据存储路径（可能是自定义路径）
-        const effectiveDataUri = this.storagePathManager.getEffectiveDataUri();
-        
-        // 4. 初始化存储适配器（使用文件系统存储，避免 globalState 过大）
-        const storageAdapter = new FileSystemStorageAdapter(vscode, effectiveDataUri);
-        this.conversationStorageAdapter = storageAdapter;
-        
-        // 5. 初始化 Diff 存储管理器（用于 apply_diff 的大文件内容抽离）
-        this.diffStorageManager = DiffStorageManager.initialize(this.storagePathManager.getEffectiveDataPath());
-        setGlobalDiffStorageManager(this.diffStorageManager);
-        
-        // 6. 初始化对话管理器（附带用量索引：消息落盘时维护 token 明细，统计页免全量扫描）
-        this.conversationManager = new ConversationManager(
-            storageAdapter,
-            new FileUsageIndexStore(vscode, effectiveDataUri)
-        );
-
-        // 分支图同步是普通追加与总结写入的后台职责，不能依赖用户先打开分支面板才初始化。
-        // 本次实故障由已结束的空 reroll 占位冻结同步触发；这里额外封堵窗口重载后已有 sidecar
-        // 但全局服务尚未懒创建的独立复发路径。懒解析 handler 会复用这个实例。
-        this.branchService = new BranchService(
-            this.conversationManager,
-            new BranchGraphRepository(this.storagePathManager.getEffectiveDataPath())
-        );
-        setGlobalBranchService(this.branchService);
-
-        // 6.1 后台迁移旧版单文件历史到分段存储格式，不阻塞主初始化链路
-        void storageAdapter.migrateLegacyConversationsToSegmented().then(result => {
-            log.info('conversation_migration.finished', {
-                migrated: result.migrated,
-                skipped: result.skipped,
-                failedCount: result.failed.length
+        if (!this.backend) {
+            this.backend = createBackend(this.context, {
+                isDisposed: () => this.disposed,
+                sendCommand: (command, data) => this.sendCommand(command, data),
+                handleRetryStatus: (status) => this.handleRetryStatus(status),
+                handleTerminalOutputEvent: (event) => this.handleTerminalOutputEvent(event),
+                handleImageGenOutputEvent: (event) => this.handleImageGenOutputEvent(event),
+                handleTaskEvent: (event) => this.handleTaskEvent(event),
+                handleDependencyProgressEvent: (event) => this.handleDependencyProgressEvent(event),
+                syncLanguageToBackend: (settingsManager) => this.syncLanguageToBackend(settingsManager),
+                createMessageRouter: () => {
+                    const backend = this.backend;
+                    if (!backend) {
+                        return;
+                    }
+                    this.messageRouter = new MessageRouter(
+                        backend.chatHandler,
+                        backend.conversationManager,
+                        backend.settingsManager,
+                        (clientId?: string) => this.getClientView(clientId),
+                        this.sendResponse.bind(this),
+                        this.sendError.bind(this),
+                        this.webviewClientRegistry
+                    );
+                },
+                initializeSubAgents: () => this.initializeSubAgents(),
+                createSubAgentMonitorPanel: (conversationManager) => {
+                    this.subAgentMonitorPanel = new SubAgentMonitorPanel(
+                        this.context,
+                        this.webviewDevServerUrl,
+                        this.routeSubAgentMonitorMessage.bind(this),
+                        this.registerWebviewClient.bind(this),
+                        conversationManager
+                    );
+                }
             });
-            if (result.failed.length > 0) {
-                log.warn('conversation_migration.failed_conversations', { failed: result.failed });
-            }
-        }).catch(error => {
-            log.warn('conversation_migration.background_failed', { error: error?.message || String(error) });
-        });
-        
-        // 7. 初始化配置管理器（使用Memento存储）
-        const configStorage = new MementoStorageAdapter(
-            this.context.globalState,
-            'graycode.configs'
-        );
-        this.configManager = new ConfigManager(configStorage);
-        
-        // 8. 同步语言设置到后端 i18n
-        this.syncLanguageToBackend();
-        
-        // 9. 设置全局上下文引用（供工具和其他模块访问）
-        setGlobalSettingsManager(this.settingsManager);
-        setGlobalConfigManager(this.configManager);
-        setGlobalToolRegistry(toolRegistry);
-
-        // 9.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
-        const settingsChangeListener = (event: SettingsChangeEvent) => {
-            // 更新渠道（stable/nightly）切换：清除旧渠道的更新检查缓存（内存状态 + 节流时间戳），
-            // 使下一次检查按新渠道重新拉取，避免 stable 用户看到旧渠道残留的 Nightly 徽章/可安装项
-            // （例如先切到 nightly 触发检查得到 updateAvailable，再切回 stable 仍提示安装 nightly 构建）。
-            // SettingsChangeEvent 已声明 oldValue?: any，无需 (event as any) 断言（F12）
-            if (event.type === 'full' && event.oldValue?.updateChannel !== undefined &&
-                event.settings?.updateChannel !== undefined &&
-                event.oldValue?.updateChannel !== event.settings?.updateChannel) {
-                try {
-                    this.updateChecker?.resetStatus();
-                } catch (e) {
-                    console.warn('[ChatViewProvider] Failed to reset update checker status:', e);
-                }
-            }
-            if (event.type === 'tools' && event.path === 'toolsConfig.apply_diff') {
-                try {
-                    // 对已存在的 pending diff 重新调度/取消自动保存
-                    getDiffManager().refreshAutoSaveTimers();
-                } catch (e) {
-                    console.warn('[ChatViewProvider] Failed to refresh diff autoSave timers:', e);
-                }
-
-                // 推送最新配置到前端（用于更新倒计时/自动确认 UI）
-                try {
-                    const config = event.settings?.toolsConfig?.apply_diff || this.settingsManager.getApplyDiffConfig();
-                    this.sendCommand('tools.applyDiffConfigChanged', { config });
-                } catch {
-                    // ignore
-                }
-            }
-        };
-        this.settingsManager.addChangeListener(settingsChangeListener);
-        this.context.subscriptions.push({
-            dispose: () => this.settingsManager.removeChangeListener(settingsChangeListener)
-        });
-        
-        // 11. 初始化 Skills 管理器（必须在注册工具之前，因为 skills 工具需要它）
-        await createSkillsManager({
-            workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-            globalStoragePath: this.storagePathManager.getEffectiveDataPath(),
-        });
-        
-        // 11.1 从 settingsManager 同步 skills 状态到 SkillsManager
-        await this.syncSkillsState();
-        
-        // 12. 注册所有工具到工具注册器（必须在 ChannelManager 之前）。
-        //     先清空再注册：重试初始化（graycode.retryInit）会再次走到这里，
-        //     避免同一工具被重复注册导致声明重复/覆盖异常（F11）。
-        toolRegistry.clear();
-        registerAllTools(toolRegistry);
-        
-        // 13. 初始化渠道管理器（传入工具注册器和设置管理器）
-        this.channelManager = new ChannelManager(this.configManager, toolRegistry, this.settingsManager);
-        
-        // 14. 设置重试状态回调
-        this.channelManager.setRetryStatusCallback((status) => {
-            this.handleRetryStatus(status);
-        });
-        
-        // 15. 设置全局渠道管理器引用
-        setGlobalChannelManager(this.channelManager);
-        
-        // 16. 初始化检查点管理器（使用自定义路径）
-        this.checkpointManager = new CheckpointManager(
-            this.settingsManager,
-            this.conversationManager,
-            this.context,
-            this.storagePathManager.getEffectiveDataPath()
-        );
-        await this.checkpointManager.initialize();
-        
-        // 17. 初始化聊天处理器（传入工具注册器和检查点管理器）
-        this.chatHandler = new ChatHandler(
-            this.configManager,
-            this.channelManager,
-            this.conversationManager,
-            toolRegistry
-        );
-        this.chatHandler.setCheckpointManager(this.checkpointManager);
-        this.chatHandler.setSettingsManager(this.settingsManager);
-        
-        // 18. 初始化模型管理处理器
-        this.modelsHandler = new ModelsHandler(this.configManager, this.settingsManager);
-        
-        // 19. 初始化设置处理器（传入工具注册器）
-        this.settingsHandler = new SettingsHandler(this.settingsManager, toolRegistry);
-        this.settingsHandler.setConversationManager(this.conversationManager);
-        
-        // 20. 订阅终端输出事件
-        this.terminalOutputUnsubscribe = onTerminalOutput((event) => {
-            this.handleTerminalOutputEvent(event);
-        });
-        
-        // 21. 订阅图像生成输出事件
-        this.imageGenOutputUnsubscribe = onImageGenOutput((event) => {
-            this.handleImageGenOutputEvent(event);
-        });
-        
-        // 22. 订阅统一任务事件（用于未来扩展）
-        this.taskEventUnsubscribe = TaskManager.onTaskEvent((event) => {
-            this.handleTaskEvent(event);
-        });
-        
-        // 23. 初始化 MCP 管理器（使用自定义路径下的 mcp 目录）
-        const mcpConfigDir = vscode.Uri.file(this.storagePathManager.getMcpPath());
-        try {
-            await vscode.workspace.fs.stat(mcpConfigDir);
-        } catch {
-            await vscode.workspace.fs.createDirectory(mcpConfigDir);
         }
-        const mcpConfigFile = vscode.Uri.joinPath(mcpConfigDir, 'servers.json');
-        const mcpStorage = new VSCodeFileSystemMcpStorageAdapter(mcpConfigFile, vscode.workspace.fs);
-        this.mcpManager = new McpManager(mcpStorage);
-        await this.mcpManager.initialize();
-        
-        // 24. 将 MCP 管理器连接到 ChannelManager（用于工具声明）
-        this.channelManager.setMcpManager(this.mcpManager);
-        
-        // 25. 将 MCP 管理器连接到 ChatHandler（用于工具调用）
-        this.chatHandler.setMcpManager(this.mcpManager);
-        
-        // 25.5. 设置全局 MCP 管理器（用于 subagents 工具描述）
-        setGlobalMcpManager(this.mcpManager);
-        
-        // 25.6. 初始化 MemoryManager（永久记忆系统，含工作区记忆作用域支持）
-        await initMemoryManager(this.storagePathManager.getEffectiveDataPath());
-        
-        // 25.65. 初始化使用时间统计追踪器（活跃采样：心跳 + 用户活动事件，按天落盘）
-        const activityTracker = new ActivityTracker(
-            path.join(this.storagePathManager.getEffectiveDataPath(), 'activity')
-        );
-        activityTracker.start();
-        this.activityTracker = activityTracker;
-        setGlobalActivityTracker(activityTracker);
 
-        // 25.66. 初始化 tokenizer 词表资源管理器（运行时下载 cl100k / DeepSeek 词表到数据目录）
-        const tokenizerManager = new TokenizerResourceManager(this.storagePathManager.getTokenizerPath());
-        setGlobalTokenizerResourceManager(tokenizerManager);
-        
-        // 25.7. 设置 SubAgent 执行器上下文
-        setSubAgentExecutorContext({
-            channelManager: this.channelManager,
-            toolRegistry: toolRegistry,
-            mcpManager: this.mcpManager,
-            settingsManager: this.settingsManager,
-            configManager: this.configManager,
-            toolExecutionService: this.chatHandler.getToolExecutionService(),
-            // 修改原因：子代理 token 消耗需要归集到发起它的主会话用量统计（UsagePage）。
-            // 修改方式：把 ConversationManager 的索引追加入口注入 SubAgent 执行上下文，
-            //          executor 每轮 generate 后把 usageMetadata 以 source='subagent' 条目写入主会话索引。
-            // 修改目的：用量统计包含子代理消耗，且不把子代理运行明细写入主历史。
-            usageIndexAppend: (conversationId, messages) =>
-                this.conversationManager.appendUsageIndexMessages(conversationId, messages)
-        });
+        await this.backend.initialize();
 
-        // 25.75. 初始化更新检查器（GitHub Releases 自动更新）
-        this.updateChecker = new UpdateChecker({
-            // 用户可在设置页「通用」关闭自动检查（checkForUpdates !== false 默认开启）
-            isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
-            // 更新渠道：stable 正式版 / nightly 每日构建（设置页「通用」可选）
-            getUpdateChannel: () => this.settingsManager.getSettings().updateChannel ?? 'stable',
-            // 复用渠道代理配置：GitHub API/下载在代理环境下同样走代理
-            getProxyUrl: () => {
-                const proxy = this.settingsManager.getSettings().proxy;
-                return proxy?.enabled && proxy?.url ? proxy.url : undefined;
-            },
-            // 上次检查时间戳存扩展 globalState（内部状态，不参与 Settings Sync）
-            storage: {
-                get: (key) => this.context.globalState.get<number>(key),
-                update: (key, value) => Promise.resolve(this.context.globalState.update(key, value)),
-            },
-            globalStoragePath: this.context.globalStorageUri.fsPath,
-        });
-        
-        // 26. 初始化依赖管理器（使用自定义路径）
-        this.dependencyManager = DependencyManager.getInstance(
-            this.context,
-            this.storagePathManager.getDependenciesPath()
-        );
-        await this.dependencyManager.initialize();
-        
-        // dispose() 后中止初始化尾段：deactivate 时 initializeBackend 可能仍在进行，
-        // 此后的步骤（依赖检查器/消息路由器/更新检查定时器/SubAgentMonitorPanel 等）均为同步副作用，
-        // 继续执行会在扩展停用后留下跨生命周期资源（F2）
-        if (this.disposed) {
-            log.warn('backend_init_aborted_after_dispose');
-            return;
-        }
-        
-        // 27. 设置依赖检查器到工具注册器（用于过滤未安装依赖的工具）
-        toolRegistry.setDependencyChecker({
-            isInstalled: (name: string) => this.dependencyManager.isInstalledSync(name)
-        });
-        
-        // 28. 订阅依赖安装进度事件
-        this.dependencyProgressUnsubscribe = this.dependencyManager.onProgress((event) => {
-            this.handleDependencyProgressEvent(event);
-        });
-        
-        // 29. 初始化消息路由器
-        this.messageRouter = new MessageRouter(
-            this.chatHandler,
-            this.conversationManager,
-            this.settingsManager,
-            (clientId?: string) => this.getClientView(clientId),
-            this.sendResponse.bind(this),
-            this.sendError.bind(this),
-            this.webviewClientRegistry
-        );
-        
-        // 30. 初始化子代理（从持久化存储加载）
-        this.initializeSubAgents();
-
-        // 30.5. 启动延迟更新检查（避开启动竞态；24h 节流在 UpdateChecker 内部处理，失败静默）
-        this.updateCheckTimer = setTimeout(() => {
-            if (!this.updateChecker) {
-                log.warn('update_check_skipped_not_initialized');
-                return;
-            }
-            this.updateChecker.check(false).catch(error => {
-                log.warn('update_check_failed', { error: error?.message || String(error) });
-            });
-        }, UPDATE_CHECK_DELAY_MS);
-
-        this.subAgentMonitorPanel = new SubAgentMonitorPanel(
-            this.context,
-            this.webviewDevServerUrl,
-            this.routeSubAgentMonitorMessage.bind(this),
-            this.registerWebviewClient.bind(this),
-            this.conversationManager
-        );
-        
-        log.info('backend_initialized', {
-            effectiveDataPath: this.storagePathManager.getEffectiveDataPath()
-        });
+        // 同步管理器引用到字段：webview 层既有访问点（createHandlerContext/exportSettings/importSettings 等）保持不变
+        this.settingsManager = this.backend.settingsManager;
+        this.storagePathManager = this.backend.storagePathManager;
+        this.conversationStorageAdapter = this.backend.conversationStorageAdapter;
+        this.diffStorageManager = this.backend.diffStorageManager;
+        this.conversationManager = this.backend.conversationManager;
+        this.branchService = this.backend.branchService;
+        this.configManager = this.backend.configManager;
+        this.channelManager = this.backend.channelManager;
+        this.checkpointManager = this.backend.checkpointManager;
+        this.chatHandler = this.backend.chatHandler;
+        this.modelsHandler = this.backend.modelsHandler;
+        this.settingsHandler = this.backend.settingsHandler;
+        this.mcpManager = this.backend.mcpManager;
+        this.dependencyManager = this.backend.dependencyManager;
+        this.windowsAgentStopNotificationService = this.backend.windowsAgentStopNotificationService;
+        this.activityTracker = this.backend.activityTracker;
+        this.updateChecker = this.backend.updateChecker;
     }
 
     /**
      * 重试后端初始化（graycode.retryInit 命令入口，F1）。
      *
-     * 仅在初始化失败后调用：失败通常发生在早期步骤（settingsManager.initialize 等），
-     * 此时后续订阅/注册尚未建立，重跑 initializeBackend 不会叠加订阅；
-     * 若失败发生在后期（如 MCP 初始化），重试可能叠加订阅，此时应提示用户重载窗口。
+     * 仅在初始化失败后调用。组合根（backend/bootstrap）在失败时会先回滚已建立的
+     * 订阅/资源再抛错，因此重跑 initializeBackend 可在任意阶段安全进行，不会叠加订阅。
      */
     private retryInitialization(): void {
         if (!this.initError || this.disposed) {
@@ -734,25 +455,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     
     /**
-     * 初始化子代理（从持久化存储加载到内存 registry）
+     * 初始化子代理（从持久化存储加载到内存 registry）。
+     * 管理器引用经 this.backend（组合根）读取：本方法由 bootstrap 的 initSubAgents 阶段
+     * 经钩子调用，此时 webview 字段尚未从 runtime 同步。
      */
     private initializeSubAgents(): void {
+        const backend = this.backend;
+        if (!backend) {
+            return;
+        }
         const ctx: HandlerContext = {
             clientId: WEBVIEW_CLIENT_IDS.mainChat,
-            settingsManager: this.settingsManager,
-            configManager: this.configManager,
-            channelManager: this.channelManager,
+            settingsManager: backend.settingsManager,
+            configManager: backend.configManager,
+            channelManager: backend.channelManager,
             toolRegistry: toolRegistry,
-            settingsHandler: this.settingsHandler,
-            conversationManager: this.conversationManager,
-            chatHandler: this.chatHandler,
-            modelsHandler: this.modelsHandler,
-            checkpointManager: this.checkpointManager,
-            mcpManager: this.mcpManager,
-            dependencyManager: this.dependencyManager,
-            storagePathManager: this.storagePathManager,
-            diffStorageManager: this.diffStorageManager,
-            updateChecker: this.updateChecker,
+            settingsHandler: backend.settingsHandler,
+            conversationManager: backend.conversationManager,
+            chatHandler: backend.chatHandler,
+            modelsHandler: backend.modelsHandler,
+            checkpointManager: backend.checkpointManager,
+            mcpManager: backend.mcpManager,
+            dependencyManager: backend.dependencyManager,
+            storagePathManager: backend.storagePathManager,
+            diffStorageManager: backend.diffStorageManager,
+            updateChecker: backend.updateChecker,
             streamAbortControllers: this.messageRouter.getAbortManager(),
             diffPreviewProvider: this.diffPreviewProvider,
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
@@ -763,7 +490,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             },
             openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
-        
+
         initializeSubAgentsFromSettings(ctx);
     }
     
@@ -783,45 +510,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.sendCommand('retryStatus', { ...status });
     }
     
-    /**
-     * 同步 skills 状态到 SkillsManager
-     * 从 settingsManager 加载已保存的启用状态
-     * 对于 settings 中没有记录的新 Skill，默认设为启用
-     */
-    private async syncSkillsState(): Promise<void> {
-        try {
-            const { getSkillsManager } = await import('../backend/modules/skills');
-            const skillsManager = getSkillsManager();
-            
-            if (!skillsManager) {
-                return;
-            }
-            
-            // 从 settingsManager 获取已保存的 skills 配置
-            const savedConfig = this.settingsManager.getSkillsConfig() || { skills: [] };
-            const savedSkillIds = new Set(savedConfig.skills.map(s => s.id));
-            
-            // 同步已保存的 Skill 状态
-            for (const savedSkill of savedConfig.skills) {
-                if (savedSkill.enabled) {
-                    skillsManager.enableSkill(savedSkill.id);
-                } else {
-                    skillsManager.disableSkill(savedSkill.id);
-                }
-            }
 
-            // 对于 settings 中没有记录的新 Skill，默认启用。
-            // 否则新扫到的 Skill 在 read_skill 工具注册时不会出现在列表中，
-            // 直到前端 getSkillsConfig 被调用才会被默认启用。
-            for (const skill of skillsManager.getAllSkills()) {
-                if (!savedSkillIds.has(skill.id)) {
-                    skillsManager.enableSkill(skill.id);
-                }
-            }
-        } catch (error) {
-            console.error('[ChatViewProvider] Failed to sync skills state:', error);
-        }
-    }
     
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
@@ -1048,10 +737,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     /**
      * 同步语言设置到后端 i18n
+     *
+     * 初始化阶段由 bootstrap 经钩子传入 settingsManager（此时 webview 字段尚未同步）；
+     * 运行期由处理器上下文以无参形式调用（回退到字段）。
      */
-    private syncLanguageToBackend(): void {
+    private syncLanguageToBackend(settingsManager?: SettingsManager): void {
         try {
-            const settings = this.settingsManager.getSettings();
+            const settings = (settingsManager ?? this.settingsManager).getSettings();
             const language = settings.ui?.language || 'zh-CN';
             setBackendLanguage(language as SupportedLanguage);
         } catch (error) {
@@ -1105,58 +797,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.webviewReady = false;
         // 重置视图引用，避免重开面板后 postMessage 被静默丢弃（M7）
         this._view = undefined;
-        
-        // 取消终端输出订阅
-        if (this.terminalOutputUnsubscribe) {
-            this.terminalOutputUnsubscribe();
-        }
-        
-        // 取消图像生成输出订阅
-        if (this.imageGenOutputUnsubscribe) {
-            this.imageGenOutputUnsubscribe();
-        }
-        
-        // 取消统一任务事件订阅
-        if (this.taskEventUnsubscribe) {
-            this.taskEventUnsubscribe();
-        }
-        
-        // 取消依赖安装进度订阅
-        if (this.dependencyProgressUnsubscribe) {
-            this.dependencyProgressUnsubscribe();
-        }
-        
-        // 取消所有活跃任务
-        TaskManager.cancelAllTasks();
-        
-        // 释放 MCP 管理器资源（断开所有连接）
-        this.mcpManager?.dispose();
 
-        // 释放 Skills 管理器资源
-        getSkillsManager()?.dispose();
-        this.windowsAgentStopNotificationService?.dispose();
+        // 后端资源（订阅清理顺序与旧实现一致，见 BackendRuntime.dispose）：
+        // 设置监听 → 终端/图像/任务/依赖订阅 → TaskManager → MCP → Skills → 通知服务
+        // → 分支全局 → 更新检查定时器 → 活动追踪
+        this.backend?.dispose();
+
         this.subAgentMonitorPanel?.dispose();
         this.subAgentMonitorPanel = undefined;
-        if (getGlobalBranchService() === this.branchService) {
-            setGlobalBranchService(undefined);
-        }
-        this.branchService = undefined;
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
 
-        // 清理更新检查延迟任务
-        if (this.updateCheckTimer) {
-            clearTimeout(this.updateCheckTimer);
-            this.updateCheckTimer = undefined;
-        }
-
         // 释放用量统计的目录监听与内存缓存
         disposeUsageCache();
-
-        // 释放使用时间统计：停止采样并落盘，清理全局引用与结果缓存
-        this.activityTracker?.dispose();
-        this.activityTracker = undefined;
-        setGlobalActivityTracker(null);
         disposeActivityStatsCache();
 
         // 取消 pendingCommands 超时兜底定时器（F7）

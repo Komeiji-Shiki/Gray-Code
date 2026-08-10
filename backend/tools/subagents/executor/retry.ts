@@ -2,9 +2,12 @@
  * 子代理 LLM 调用错误识别与 run 级兜底重试判定。
  *
  * 拆分说明：从 executor.ts 迁出（纯移动，逻辑一字未改）。retryable 错误码判定逐字保留。
+ * 第六批收敛：ChannelError 分支的判定委托 core/errors.isRetryableError（与 ChannelManager
+ * 同口径），非 ChannelError 的额外启发式（上下文超限/认证/参数类）保留在本文件。
  */
 
-import { ChannelError, ErrorType } from '../../../modules/channel/types';
+import { ChannelError } from '../../../modules/channel/types';
+import { isRetryableError } from '../../../core/errors';
 
 /**
  * 识别「上下文超限」类错误。
@@ -40,14 +43,10 @@ export const SUBAGENT_LLM_CALL_RETRY_MAX = 2;
  */
 export function isSubAgentRetryableLlmError(error: unknown): boolean {
     if (error instanceof ChannelError) {
-        if (error.type === ErrorType.CANCELLED_ERROR
-            || error.type === ErrorType.PARSE_ERROR
-            || error.type === ErrorType.VALIDATION_ERROR
-            || error.type === ErrorType.CONFIG_ERROR) {
-            return false;
-        }
-        // API_ERROR / NETWORK_ERROR / TIMEOUT_ERROR / EMPTY_RESPONSE_ERROR 可重试
-        return true;
+        // ChannelError 判定委托 core/errors.isRetryableError：ErrorType 共 8 个成员，
+        // 原黑名单 {CANCELLED/PARSE/VALIDATION/CONFIG} 恰为 core 白名单
+        // {API/NETWORK/TIMEOUT/EMPTY_RESPONSE} 的补集，判定结果与收敛前完全一致。
+        return isRetryableError(error.type);
     }
     // 非 ChannelError：上下文超限/认证/参数类不重试，其余（网络层异常等）重试
     if (isContextLengthError(error)) return false;

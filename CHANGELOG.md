@@ -47,6 +47,14 @@
     - modules→tools 反向依赖消除：diffManager（2,546 行）/agentMailbox（516 行）/regexGuard（223 行）下沉 `backend/core/services/`，promptToolParser（329 行）下沉 `backend/core/parsers/`，tools 原路径保留 re-export 壳，消费方 import 不断；逻辑零改动（126 suites/1293 用例通过）。
     - chatStore↔backgroundTaskStore 双向耦合解除：新建 `stores/backgroundTasks/bridge.ts`（提供者注册表 + 动态 import 兜底），依赖收敛为 chatStore→bridge←backgroundTaskStore 单向，重入防护与投递窗口语义逐位保持；修复 bridge.ts 一处相对路径错误。
     - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿。
+  - 模块化摊平重构·第六批（组合根下沉 + 重复收敛 + 测试配套 + fast-tavern 接 CI）：
+    - 组合根下沉：新建 `backend/bootstrap/`（BackendRuntime + 17 阶段函数，654 行），ChatViewProvider 的 initializeBackend 313 行降为 63 行钩子装配（ChatViewProvider 1531→1183 行）；extension.ts 593→110 行（三个设置命令外移 `webview/commands/settingsCommands.ts`、diff 子系统封装 `diffUi.ts` 返回 Disposable 集合，模块级 let 配对清理消灭）；行为变化声明：retry 语义强化（失败先回滚已建订阅再抛，retryInit 任意阶段可安全重跑）+ dispose 微序调整（LIFO 实际顺序与旧一致）。
+    - tools 重复收敛：slugify×5→shared/slugify（fallback 参数化）、escapeRegExp/normalizeLineEndings/normalizeSingleLineText 收敛 shared/textUtils、todo 校验参数化 shared/todoValidation、路径白名单泛化版上移 shared/pathPolicy（design 保留 fs 变体并注明差异）、错误文案 15 处合一、ID 生成 shared/idGen（reviewRunId 持久化格式保留）；review 语义确认等价后收敛。
+    - 核心收敛：`core/deepMerge.ts`（SettingsCore 清空语义差异保留本地实现并注释）、`core/id.ts`（newUuid/newHexId，4 消费方）、`core/errors.ts`（RETRYABLE_ERROR_TYPES 单一来源，ChannelManager 委托、executor 非 ChannelError 启发式保留，前端 retryFlows 加同步注释）；时间格式化差异输出保留并注释。
+    - 测试配套：新建 `backend/__tests__/__fixtures__/` 四文件（40 处本地 builder 定义收敛为 7 个共享导出：makeContent×10/makeHistory×3/makeRecord×6/createTempDirectory×8/createTempWorkspace×3/createPromptManagerMock×4/diffManager mock×6；形状各异的 createHarness×18/createConfig×20 保持现状并注明）；test/unit 整体归位删除（tools 16→backend/__tests__/tools、settings 4→backend/__tests__/settings、前端 5 个并入 frontend vitest，regexGuard/parsers/format/monitorWindowState 重复覆盖合并去重），jest roots 收拢为 backend/__tests__ + test/benchmark。
+    - 大文件 smoke 测试：executeCommand 15 例（shell 选择/GBK 解码/输出护栏，mock child_process 隔离）、SettingsHandler 14 例（错误包装/分发）、TokenCountService 13 例（估算/路由/网络路径 mock）、historySearch 14 例（虚拟文档/检索/截断），共 56 例全绿，为后续重构建立回归网。
+    - fast-tavern 接入主 CI：根 package.json 新增 test:fast-tavern-ts（npm --prefix 自包含 npm ci+test，23/23 通过）与 test:fast-tavern-py（幂等 pip install pytest + pytest，25/25 通过），ci 链末尾追加；nightly/release workflow 均执行 npm run ci 自动覆盖，无需改 workflow。
+    - 门禁验证：后端 242 suites/2539 用例（归位合并 3 个重复 suite）、前端 85 文件/846 用例（+59 归位用例）、双 typecheck 全绿。
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。

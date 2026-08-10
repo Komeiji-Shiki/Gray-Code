@@ -18,10 +18,7 @@ import { ConversationManager } from '../../modules/conversation/ConversationMana
 import type { ConversationMetadata, Content } from '../../modules/conversation/types';
 import { Uri } from 'vscode';
 import { createAdapter, normPath } from './helpers/fakeVscodeFs';
-
-function makeContent(role: 'user' | 'model', text: string): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...(role === 'model' ? { modelVersion: 'test' } : {}) } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 const CONVERSATIONS_DIR = `${(Uri.parse('file:///c%3A/data/graycode') as any).fsPath}/conversations`;
 const metaPath = (id: string) => normPath(`${CONVERSATIONS_DIR}/${id}.meta.json`);

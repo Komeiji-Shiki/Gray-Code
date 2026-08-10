@@ -2,40 +2,25 @@
  * Progress 工具路径辅助函数
  */
 
-import * as vscode from 'vscode';
-import * as path from 'path';
-import { getAllWorkspaces } from '../utils';
 import {
   isDesignPathAllowed,
   isPlanPathAllowed,
   isProgressPathAllowed,
   isReviewPathAllowed,
 } from '../../modules/settings/modeToolsPolicy';
+import {
+  DESIGN_PATH_SCOPE_LABEL,
+  PLAN_PATH_SCOPE_LABEL,
+  REVIEW_PATH_SCOPE_LABEL,
+  ensureParentDir,
+  isScopedPathAllowedWithMultiRoot,
+} from '../shared/pathPolicy';
 import type { ProgressArtifactRef } from './schema';
+
+export { ensureParentDir };
 
 const PROGRESS_ARTIFACT_KEYS = ['design', 'plan', 'review'] as const;
 type ProgressArtifactKey = typeof PROGRESS_ARTIFACT_KEYS[number];
-
-function isScopedPathAllowedWithMultiRoot(
-  pathStr: string,
-  validator: (path: string) => boolean
-): boolean {
-  if (validator(pathStr)) return true;
-
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return validator(rest);
-}
 
 function getArtifactPathValidator(kind: ProgressArtifactKey): (path: string) => boolean {
   if (kind === 'design') return isDesignPathAllowed;
@@ -44,9 +29,9 @@ function getArtifactPathValidator(kind: ProgressArtifactKey): (path: string) => 
 }
 
 function getArtifactScopeLabel(kind: ProgressArtifactKey): string {
-  if (kind === 'design') return '.graycode/design/**.md';
-  if (kind === 'plan') return '.graycode/plans/**.md';
-  return '.graycode/review/**.md';
+  if (kind === 'design') return DESIGN_PATH_SCOPE_LABEL;
+  if (kind === 'plan') return PLAN_PATH_SCOPE_LABEL;
+  return REVIEW_PATH_SCOPE_LABEL;
 }
 
 export function isProgressModePathAllowedWithMultiRoot(pathStr: string): boolean {
@@ -135,9 +120,4 @@ export function applyProgressArtifactPatch(
   }
 
   return next;
-}
-
-export async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
 }

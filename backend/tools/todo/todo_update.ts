@@ -12,6 +12,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
+import { isTodoStatus } from '../shared/todoValidation';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
@@ -33,13 +34,6 @@ export interface TodoUpdateArgs {
 }
 
 const TODO_METADATA_KEY = 'todoList';
-
-function isTodoStatus(value: unknown): value is TodoStatus {
-    return value === 'pending' ||
-        value === 'in_progress' ||
-        value === 'completed' ||
-        value === 'cancelled';
-}
 
 function normalizeTodos(raw: unknown): TodoItem[] {
     if (!Array.isArray(raw)) return [];

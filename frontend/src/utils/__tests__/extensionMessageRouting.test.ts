@@ -9,7 +9,7 @@
 import {
   routeExtensionMessage,
   type PendingRequestHandler
-} from '../../../../frontend/src/utils/extensionMessageRouting';
+} from '../extensionMessageRouting';
 
 function createPending() {
   const resolved: unknown[] = [];

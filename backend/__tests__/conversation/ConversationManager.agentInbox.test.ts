@@ -18,10 +18,7 @@ import { ConversationManager } from '../../modules/conversation/ConversationMana
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
 import type { Content } from '../../modules/conversation/types';
-
-function makeContent(role: 'user' | 'model', text: string, extra: Record<string, unknown> = {}): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 模拟 injectInboxMessages 注入后的工具结果（顶层 + data 双写，与实现一致） */
 function makeInjectedFunctionResponse(callId: string, inboxText: string): Content {

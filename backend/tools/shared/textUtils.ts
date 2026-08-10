@@ -22,6 +22,14 @@ export function escapeRegExp(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * 归一化为单行文本：空白（含换行）压缩为单个空格并去除首尾空白；非字符串返回空串。
+ */
+export function normalizeSingleLineText(value: unknown): string {
+    if (typeof value !== 'string') return '';
+    return value.replace(/\s+/g, ' ').trim();
+}
+
 export interface RegexIntentDetection {
     suspected: boolean;
     signals: string[];
