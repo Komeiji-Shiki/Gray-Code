@@ -8,11 +8,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
-import MessageItem, {
+import MessageItem from '../MessageItem.vue'
+import {
   backgroundTaskViewModeByMessageId,
   pruneBackgroundTaskViewModes,
   BACKGROUND_TASK_VIEW_MODE_CAP
-} from '../MessageItem.vue'
+} from '../messageViewModes'
 import type { Message } from '../../../types'
 
 // 假 chatStore / settingsStore：MessageItem 仅用到 checkpoints / allMessages /

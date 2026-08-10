@@ -6,10 +6,7 @@
 
 import type { Tool, ToolRegistration } from '../types';
 
-// 导出各个工具的创建函数
-export { registerHistorySearch } from './history_search';
-
-// 导出 history_search 模块的所有内容（方便外部引用）
+// 导出 history_search 模块的所有内容（registerHistorySearch / createHistorySearchTool 等）
 export * from './history_search';
 
 /**

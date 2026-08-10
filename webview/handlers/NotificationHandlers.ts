@@ -5,6 +5,8 @@ import type {
 } from '../../backend/modules/notifications/types'
 import type { MessageHandler } from '../types'
 import { Logger } from '../../backend/core/logger'
+import * as vscode from 'vscode'
+import { t } from '../../backend/i18n'
 
 const log = Logger.get('NotificationHandlers')
 
@@ -149,11 +151,13 @@ export const notifyAgentStop: MessageHandler = async (data, requestId, ctx) => {
     })
   } catch (error) {
     log.error('agent_stop_dispatch_failed', error)
+    // R2-08 复查：抛错不再包装成 success:true，返回 success:false 与错误码
     ctx.sendResponse(requestId, {
-      success: true,
+      success: false,
       shown: false,
       skipped: true,
-      reason: 'handler_error'
+      reason: 'handler_error',
+      code: 'NOTIFY_AGENT_STOP_ERROR'
     })
   }
 }
@@ -195,16 +199,47 @@ export const previewWindowsNotification: MessageHandler = async (data, requestId
     })
   } catch (error) {
     log.error('preview_dispatch_failed', error)
+    // R2-08 复查：抛错不再包装成 success:true，返回 success:false 与错误码
     ctx.sendResponse(requestId, {
-      success: true,
+      success: false,
       shown: false,
       skipped: true,
-      reason: 'handler_error'
+      reason: 'handler_error',
+      code: 'PREVIEW_NOTIFICATION_ERROR'
     })
+  }
+}
+
+// ========== 通知 ==========
+
+/**
+ * 通用通知展示（拆分自 FileHandlers.ts 域 J，与原 NotificationHandlers 合并去重）
+ */
+export const showNotification: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { message, type } = data
+
+    switch (type) {
+      case 'error':
+        vscode.window.showErrorMessage(message)
+        break
+      case 'warning':
+        vscode.window.showWarningMessage(message)
+        break
+      case 'info':
+      default:
+        vscode.window.showInformationMessage(message)
+        break
+    }
+
+    ctx.sendResponse(requestId, { success: true })
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SHOW_NOTIFICATION_ERROR', error.message || t('webview.errors.showNotificationFailed'))
   }
 }
 
 export function registerNotificationHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('notifications.agentStop', notifyAgentStop)
   registry.set('notifications.preview', previewWindowsNotification)
+  registry.set('showNotification', showNotification)
 }

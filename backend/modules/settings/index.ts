@@ -39,3 +39,35 @@ export {
     MACHINE_SCOPE_KEYS
 } from './types';
 export { BUILTIN_MODE_TOOL_POLICIES } from './promptModes';
+
+// 摘要设置类型与默认值
+export {
+    DEFAULT_KEEP_RECENT_TOKENS,
+    DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN,
+    DEFAULT_SUMMARIZE_MAX_INPUT_RATIO,
+    clampMaxAutoSummarizeAttempts,
+    clampSummarizeMaxInputRatio,
+    DEFAULT_SUMMARIZE_CONFIG
+} from './summarizeTypes';
+export type { SummarizeConfig } from './summarizeTypes';
+
+// 检查点设置类型与默认值
+export {
+    DEFAULT_MESSAGE_CHECKPOINT_CONFIG,
+    DEFAULT_CHECKPOINT_CONFIG
+} from './checkpointTypes';
+export type {
+    MessageCheckpointConfig,
+    CheckpointConfig
+} from './checkpointTypes';
+
+// 模式工具策略
+export {
+    isPlanPathAllowed,
+    isDesignPathAllowed,
+    isReviewPathAllowed,
+    isProgressPathAllowed,
+    GENERAL_FILE_WRITE_TOOLS,
+    isSearchInFilesReplaceForbidden,
+    getReadonlyModeDangerousTools
+} from './modeToolsPolicy';
