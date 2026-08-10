@@ -8,6 +8,8 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { slugify } from '../shared/slugify';
+import { DESIGN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { ensureParentDir, isDesignModePathAllowedWithMultiRoot } from './pathUtils';
 import { syncProgressFromDesignArtifact } from '../progress/autoSync';
 
@@ -16,16 +18,6 @@ export interface CreateDesignArgs {
   overview?: string;
   design: string;
   path?: string;
-}
-
-function slugify(input: string): string {
-  const s = (input || '').trim().toLowerCase();
-  const slug = s
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9\u4e00-\u9fa5-]+/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return slug || `design-${Date.now()}`;
 }
 
 export function createCreateDesignToolDeclaration(): ToolDeclaration {
@@ -62,11 +54,11 @@ export function createCreateDesignTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.graycode/design/${slugify(title || 'design')}.md`;
+      const defaultPath = `.graycode/design/${slugify(title || 'design', `design-${Date.now()}`)}.md`;
       const outPath = (typeof args.path === 'string' && args.path.trim()) ? args.path.trim() : defaultPath;
 
       if (!isDesignModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid design path. Only ".graycode/design/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: buildPathRejectedError('design', DESIGN_PATH_SCOPE_LABEL, outPath) };
       }
 
       const { uri, error } = resolveUriWithInfo(outPath);

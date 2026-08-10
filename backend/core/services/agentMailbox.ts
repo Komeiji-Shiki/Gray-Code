@@ -10,7 +10,7 @@
  * 把消息追加到最近一次工具结果之后、与工具结果一起返回给模型（见 injectInboxMessages）。
  */
 
-import { randomUUID } from 'crypto';
+import { newUuid } from '../id';
 
 /** 主会话（主模型）在信箱中的保留 runId */
 export const MAIN_SESSION_RUN_ID = '__main__';
@@ -276,7 +276,7 @@ export class AgentMailbox {
         }
 
         // threadId + hopDepth 防循环
-        const threadId = input.threadId?.trim?.() || randomUUID();
+        const threadId = input.threadId?.trim?.() || newUuid();
         // 修改原因：旧实现把「读取 prevDepth」与「写回 hopDepth」拆在投递校验两端，
         //          读-写窗口若被 await/提前返回路径拆散，并发互回可能双写同一深度绕过
         //          MAX_HOP_DEPTH；且 threadDepths 按 (conversationId, threadId) 只增不删，
@@ -297,7 +297,7 @@ export class AgentMailbox {
         }
 
         const message: AgentMessage = {
-            id: randomUUID(),
+            id: newUuid(),
             threadId,
             fromRunId: input.fromRunId,
             ...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),

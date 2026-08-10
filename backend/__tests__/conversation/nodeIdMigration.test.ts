@@ -16,10 +16,7 @@ import { ConversationManager, deterministicNodeId } from '../../modules/conversa
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import type { StorageHistoryPage, StorageReadResult } from '../../modules/conversation/storage';
 import type { Content, ConversationHistory } from '../../modules/conversation/types';
-
-function makeContent(role: 'user' | 'model', text: string, extra: Record<string, unknown> = {}): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 典型旧历史：所有消息都没有 id/parentId */
 function legacyHistory(): ConversationHistory {

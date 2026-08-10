@@ -466,6 +466,8 @@ export function useCheckpointCleanup() {
   }
 
   // 格式化时间
+  // 本地实现（i18n 输出 + falsy 空值保护），与 utils/format.ts 的 formatRelativeTime
+  // （硬编码中文、必填 number）签名/行为不一致，保留本地副本不并入。
   function formatRelativeTime(timestamp?: number): string {
     if (!timestamp) return ''
     

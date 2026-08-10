@@ -300,6 +300,8 @@ export function dismissError(state: ChatStoreState): void {
 
 /**
  * 可重试错误码集合（H-3 + FIX-C-1）。
+ * 与 backend/core/errors.ts 同步维护（后端 ChannelError.type 可重试白名单；
+ * 本集合另有 STREAM_ERROR 等前端自有码）。
  *
  * 错误条“重试”按钮仅在这些错误码时显示/启用：普通流错误继续走 retryStream；
  * reroll / 编辑分支错误由 ErrorInfo.branchReplayContext 重放原分支流。

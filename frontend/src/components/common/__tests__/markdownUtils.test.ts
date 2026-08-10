@@ -4,7 +4,7 @@
  * 测试 escapeHtml 转义与 renderLatexOnly 行内公式正则在
  * #69 修复后的行为（货币金额不误判、被拒后仍匹配后续公式、含内部空格正常渲染）
  */
-import { escapeHtml, RENDER_LATEX_ONLY_INLINE_RE } from '../../../../../frontend/src/components/common/markdownUtils'
+import { escapeHtml, RENDER_LATEX_ONLY_INLINE_RE } from '../markdownUtils'
 
 describe('escapeHtml', () => {
     it('转义 & 符号', () => {

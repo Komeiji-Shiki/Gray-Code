@@ -30,6 +30,12 @@ function isSafeMergeKey(key: string): boolean {
  * 递归深合并纯对象（数组与原始值直接覆盖），用于工具配置与默认配置合并。
  * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
  * 其它子字段全部丢失），这里对纯对象逐层合并。
+ *
+ * 与 core/deepMerge.ts 的 deepMerge 语义差异（保留本地实现、不强制合一的原因）：
+ * - 覆盖值为 null/undefined 时本实现显式写入该值；core.deepMerge 保留目标值
+ *   （updateSettings 接收 webview 消息，null 清空字段语义依赖前者）；
+ * - 类型冲突（目标非纯对象、源为纯对象）时本实现直接复用源引用；
+ *   core.deepMerge 生成源对象副本（getToolsConfigEntry 已用 cloneConfig 兜底拷贝）。
  */
 export function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };

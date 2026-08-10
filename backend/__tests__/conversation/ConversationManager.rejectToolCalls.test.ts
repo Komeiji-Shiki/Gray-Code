@@ -11,10 +11,7 @@
 import { ConversationManager } from '../../modules/conversation/ConversationManager';
 import { createAdapter } from './helpers/fakeVscodeFs';
 import type { Content } from '../../modules/conversation/types';
-
-function makeContent(role: 'user' | 'model', text: string, extra: Record<string, unknown> = {}): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 构造历史：user 消息 + 含 N 个 functionCall 的 model 消息 */
 async function seedToolCallConversation(manager: ConversationManager, convId: string, toolIds: string[]): Promise<number> {

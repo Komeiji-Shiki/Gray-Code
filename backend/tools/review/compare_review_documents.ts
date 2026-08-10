@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { createHash } from 'crypto';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { REVIEW_PATH_SCOPE_LABEL, buildPathReceivedError } from '../shared/pathPolicy';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import type {
   ReviewCompareFindingChange,
@@ -247,7 +248,7 @@ export function createCompareReviewDocumentsTool(): Tool {
       if (!isProgressArtifactPathAllowedWithMultiRoot('review', basePath) || !isProgressArtifactPathAllowedWithMultiRoot('review', targetPath)) {
         return {
           success: false,
-          error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Received: ${basePath}, ${targetPath}`
+          error: buildPathReceivedError('review', REVIEW_PATH_SCOPE_LABEL, `${basePath}, ${targetPath}`)
         };
       }
 

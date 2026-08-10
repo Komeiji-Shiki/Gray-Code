@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { DESIGN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { ensureParentDir, isDesignModePathAllowedWithMultiRoot } from './pathUtils';
 import { syncProgressFromDesignArtifact } from '../progress/autoSync';
 
@@ -62,7 +63,7 @@ export function createUpdateDesignTool(): Tool {
       }
 
       if (!isDesignModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid design path. Only ".graycode/design/**.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: buildPathRejectedError('design', DESIGN_PATH_SCOPE_LABEL, targetPath) };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath);

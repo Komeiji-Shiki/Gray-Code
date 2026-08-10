@@ -13,10 +13,7 @@ import { ConversationManager } from '../../modules/conversation/ConversationMana
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import type { Content } from '../../modules/conversation/types';
 import { createAdapter } from './helpers/fakeVscodeFs';
-
-function makeContent(role: 'user' | 'model', text: string, extra: Record<string, unknown> = {}): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 describe('deleteConversation 与流式写入的“删除后复活”竞态', () => {
     test('删除后新发起的 append 被短路：历史目录不被重新创建（无幽灵会话）', async () => {

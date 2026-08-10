@@ -22,6 +22,7 @@ import type {
 } from './types';
 import type { Content } from '../conversation';
 import { ChannelError, ErrorType } from './types';
+import { isRetryableError as isRetryableErrorType } from '../../core/errors';
 import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
@@ -264,17 +265,9 @@ export class ChannelManager {
     private isRetryableError(error: any): boolean {
         // API 错误（非 200 状态码）可重试
         if (error instanceof ChannelError) {
-            // 用户取消错误不应重试
-            if (error.type === ErrorType.CANCELLED_ERROR) {
-                return false;
-            }
-            // 空响应（模型返回空内容）：可重试（无副作用、无已显示内容）
-            if (error.type === ErrorType.EMPTY_RESPONSE_ERROR) {
-                return true;
-            }
-            return error.type === ErrorType.API_ERROR ||
-                   error.type === ErrorType.NETWORK_ERROR ||
-                   error.type === ErrorType.TIMEOUT_ERROR;
+            // ChannelError.type 判定统一委托 core/errors（白名单：
+            // API/NETWORK/TIMEOUT/EMPTY_RESPONSE，其余含 CANCELLED 均不可重试）
+            return isRetryableErrorType(error.type);
         }
         // 网络错误可重试
         return true;

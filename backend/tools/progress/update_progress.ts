@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { resolveUriWithInfo } from '../utils';
+import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import {
   buildProgressDocument,
   isProgressPhase,
@@ -140,7 +141,7 @@ export function createUpdateProgressTool(): Tool {
         : '.graycode/progress.md';
 
       if (!isProgressModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: buildPathRejectedError('progress', PROGRESS_PATH_SCOPE_LABEL, targetPath) };
       }
 
       if (Object.prototype.hasOwnProperty.call(rawArgs, 'status') && !isProgressStatus(args.status)) {

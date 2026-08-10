@@ -21,7 +21,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { randomUUID } from 'node:crypto';
+import { newUuid } from '../../core/id';
 import type { CheckpointManifest, CheckpointManifestMeta, CheckpointIgnoreSnapshot } from './types';
 import type { CheckpointRecord } from './CheckpointManager';
 import { CheckpointPathError } from './CheckpointWorkspace';
@@ -225,7 +225,7 @@ export class CheckpointManifestRepository {
         const filesTmpPath = `${filesPath}.tmp`;
         const metaTmpPath = `${targetPath}.tmp`;
         const filesBackupPath = `${filesPath}.prev`;
-        const filesRevision = randomUUID();
+        const filesRevision = newUuid();
         const stampedMeta: CheckpointManifestMeta = { ...meta, filesRevision };
         await fs.mkdir(path.dirname(targetPath), { recursive: true });
         try {

@@ -25,7 +25,7 @@ import type {
 import { CHANNEL_TYPES } from './types';
 import { deepMerge } from './configs/base';
 import type { ConfigStorageAdapter } from './storage';
-import { randomBytes } from 'crypto';
+import { newHexId } from '../../core/id';
 
 /**
  * 运行时渠道类型守卫
@@ -425,7 +425,7 @@ export class ConfigManager {
         }
 
         // 生成唯一 ID（允许调用方覆盖，用于导入场景保留原始 id）
-        const id = idOverride || randomBytes(16).toString('hex');
+        const id = idOverride || newHexId();
         const now = Date.now();
         
         // 获取默认配置并与输入合并

@@ -12,21 +12,7 @@ import { CheckpointService } from '../../modules/api/chat/services/CheckpointSer
 import type { CheckpointManager } from '../../modules/checkpoint/CheckpointManager';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import type { ConversationManager } from '../../modules/conversation/ConversationManager';
-
-function makeRecord(partial: Partial<CheckpointRecord> = {}): CheckpointRecord {
-    return {
-        id: 'cp-1',
-        conversationId: 'conv-1',
-        messageIndex: 0,
-        toolName: 'user_message',
-        phase: 'after',
-        timestamp: 1000,
-        backupDir: 'cp-1',
-        fileCount: 1,
-        contentHash: 'hash',
-        ...partial
-    };
-}
+import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 interface Harness {
     service: CheckpointService;

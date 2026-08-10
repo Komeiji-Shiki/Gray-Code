@@ -20,6 +20,8 @@ jest.mock('fs/promises', () => {
     };
 });
 
+import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
+
 /**
  * CheckpointIgnoreResolver 测试
  *
@@ -29,9 +31,6 @@ jest.mock('fs/promises', () => {
  * - Windows 风格自定义忽略模式
  * - `.gitignore` 不可用时的收敛行为
  */
-async function createTempWorkspace(): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), 'limcode-checkpoint-ignore-'));
-}
 
 /**
  * 在临时工作区中创建文件，自动补齐父目录。

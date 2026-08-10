@@ -5,6 +5,8 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
+import { slugify } from '../shared/slugify';
+import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import {
   buildProgressDocument,
   isProgressPhase,
@@ -31,16 +33,6 @@ export interface CreateProgressArgs {
   activeArtifacts?: ProgressArtifactRef;
   todos?: ProgressTodoItem[];
   risks?: ProgressRiskItem[];
-}
-
-function slugify(input: string): string {
-  const source = (input || '').trim().toLowerCase();
-  const slug = source
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9\u4e00-\u9fa5-]+/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return slug || 'project';
 }
 
 function getDefaultProjectName(): string | undefined {
@@ -120,7 +112,7 @@ export function createCreateProgressTool(): Tool {
         : '.graycode/progress.md';
 
       if (!isProgressModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: buildPathRejectedError('progress', PROGRESS_PATH_SCOPE_LABEL, outPath) };
       }
 
       if (Object.prototype.hasOwnProperty.call(rawArgs, 'status') && !isProgressStatus(args.status)) {
@@ -196,7 +188,7 @@ export function createCreateProgressTool(): Tool {
           : getDefaultProjectName();
         const projectId = typeof args.projectId === 'string' && args.projectId.trim()
           ? args.projectId.trim()
-          : slugify(projectName || getDefaultProjectName() || 'project');
+          : slugify(projectName || getDefaultProjectName() || 'project', 'project');
 
         try {
           await ensureParentDir(uri.fsPath);

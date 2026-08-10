@@ -49,6 +49,12 @@ import {
   getActualLanguage,
   getMessagesForLanguage
 } from '../../i18n';
+import {
+  escapeRegExp,
+  normalizeLineEndingsToLF as normalizeLineEndings,
+  normalizeSingleLineText
+} from '../shared/textUtils';
+import { generateReviewRunId } from '../shared/idGen';
 
 export {
   DEFAULT_FINAL_CONCLUSION,
@@ -366,19 +372,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function normalizeLineEndings(text: string): string {
-  return (text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function normalizeSingleLineText(input: unknown): string {
-  if (typeof input !== 'string') return '';
-  return input.replace(/\s+/g, ' ').trim();
-}
-
 function normalizeMarkdownText(input: unknown): string {
   if (typeof input !== 'string') return '';
   return normalizeLineEndings(input).trim();
@@ -478,10 +471,6 @@ function parseDateToIsoStart(dateText: string): string {
   }
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? formatDateTime() : parsed.toISOString();
-}
-
-function createReviewRunId(date: Date = new Date()): string {
-  return `review-${date.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function sanitizeIdFragment(input: string, fallback: string): string {
@@ -1366,7 +1355,7 @@ function normalizeMetadataV3(raw: unknown, header?: ReviewHeaderMetadata): Revie
 
   return reconcileMetadataRelations({
     formatVersion: 3,
-    reviewRunId: normalizeSingleLineText(source.reviewRunId) || createReviewRunId(),
+    reviewRunId: normalizeSingleLineText(source.reviewRunId) || generateReviewRunId(),
     createdAt: normalizeSingleLineText(source.createdAt) || parseDateToIsoStart(header?.date || formatDate()),
     finalizedAt: normalizeSingleLineText(source.finalizedAt) || null,
     status: normalizeMilestoneStatus(source.status),
@@ -1497,7 +1486,7 @@ function migrateLegacyDocumentToV3(content: string): ReviewDocumentV3State {
 
   const metadata = reconcileMetadataRelations({
     formatVersion: 3,
-    reviewRunId: createReviewRunId(),
+    reviewRunId: generateReviewRunId(),
     createdAt,
     finalizedAt,
     status: header.status === 'completed' ? 'completed' : 'in_progress',
@@ -1637,7 +1626,7 @@ function normalizeReviewSnapshot(raw: unknown, fallbacks?: {
   const snapshot: ReviewSnapshotV4 = {
     formatVersion: 4,
     kind: 'graycode.review',
-    reviewRunId: normalizeSingleLineText(source.reviewRunId) || normalizeSingleLineText(fallbacks?.reviewRunId) || createReviewRunId(),
+    reviewRunId: normalizeSingleLineText(source.reviewRunId) || normalizeSingleLineText(fallbacks?.reviewRunId) || generateReviewRunId(),
     createdAt,
     updatedAt,
     finalizedAt,
@@ -2259,7 +2248,7 @@ function createInitialSnapshot(input: ReviewDocumentTemplateInput, locale: Revie
   return normalizeReviewSnapshot({
     formatVersion: 4,
     kind: 'graycode.review',
-    reviewRunId: createReviewRunId(),
+    reviewRunId: generateReviewRunId(),
     createdAt,
     updatedAt: createdAt,
     finalizedAt: null,

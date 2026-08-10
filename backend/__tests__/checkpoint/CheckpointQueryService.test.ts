@@ -8,6 +8,7 @@ import {
 import type { ConversationManager } from '../../modules/conversation/ConversationManager';
 import type { CheckpointManifestRepository } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 /**
  * CheckpointQueryService 测试
@@ -17,22 +18,6 @@ import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManage
  * - CP-QUERY-2：getCheckpoints 区分「无记录」与「读取失败」（失败返回 error 标记）
  * - CP-QUERY-1：getAllConversationsWithCheckpoints 有界并发 + 轻量元数据读取
  */
-
-function makeRecord(partial: Partial<CheckpointRecord> & { id: string }): CheckpointRecord {
-    return {
-        conversationId: 'conv-1',
-        messageIndex: 0,
-        toolName: 'test',
-        phase: 'before',
-        timestamp: 1000,
-        backupDir: 'cp_x',
-        fileCount: 1,
-        contentHash: 'abc',
-        excludedCount: 2,
-        manifestVersion: 2,
-        ...partial
-    };
-}
 
 function createHarness(): {
     service: CheckpointQueryService;

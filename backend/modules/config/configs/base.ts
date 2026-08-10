@@ -4,6 +4,11 @@
  * 所有渠道配置的基础接口和通用类型
  */
 
+import { deepMerge, isSafeMergeKey } from '../../../core/deepMerge';
+
+// deepMerge 实现已收敛至 core/deepMerge.ts（模块化重构第六批），此处 re-export 保持导出面
+export { deepMerge };
+
 /**
  * 支持的渠道类型
  */
@@ -448,54 +453,6 @@ export interface BaseChannelConfig {
     tokenCountApiConfig?: TokenCountApiConfig;
 }
 
-/**
- * 合并键黑名单：__proto__/constructor/prototype 键在 Object.entries 中会出现，
- * `result['__proto__'] = value` 会触发原型 setter 替换合并结果的原型链（原型污染）。
- * 与 SettingsCore 的 isSafeMergeKey 同思路（本地实现避免跨模块依赖）。
- */
-const UNSAFE_MERGE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
-
-function isSafeMergeKey(key: string): boolean {
-    return !UNSAFE_MERGE_KEYS.has(key);
-}
-
-/**
- * 深度合并两个对象
- *
- * @param target 目标对象
- * @param source 源对象
- * @returns 合并后的对象
- */
-export function deepMerge(target: any, source: any): any {
-    if (source === null || source === undefined) {
-        return target;
-    }
-    
-    // 数组与原始值直接覆盖（与 SettingsCore.deepMergeToolsConfig 语义一致）：
-    // 旧实现目标数组与源数组拼接（[...target, ...sourceItems]），自定义设置/导入
-    // 无法清空数组字段；改为覆盖后只有纯对象递归合并，其余一律以 source 为准。
-    if (Array.isArray(source) || typeof source !== 'object') {
-        return source;
-    }
-    
-    // 目标为数组或非对象而源为纯对象：类型冲突，以源为准（覆盖语义）
-    if (Array.isArray(target) || typeof target !== 'object' || target === null) {
-        target = {};
-    }
-    
-    const result = { ...target };
-    
-    for (const key of Object.keys(source)) {
-        // 跳过原型链污染键（__proto__/constructor/prototype）
-        if (!isSafeMergeKey(key)) {
-            continue;
-        }
-        // 递归合并所有子节点
-        result[key] = deepMerge(result[key], source[key]);
-    }
-    
-    return result;
-}
 
 /**
  * 解析自定义 body 配置并与原始 body 合并
