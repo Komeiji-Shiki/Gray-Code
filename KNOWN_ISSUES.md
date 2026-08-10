@@ -1,57 +1,30 @@
 # 已知问题与设计决定清单
 
-> 来源：2026-08-04 多轮全仓扫描（38+ 子代理，约 140 项发现，已修复 ~90 项）后仍存留的问题，
+> 来源：2026-08-04 多轮全仓扫描（38+ 子代理，约 140 项发现）后仍存留的问题，
 > 以及有意保留的设计决定（供后续维护者参考，避免误改）。
 >
-> 已修复项见 CHANGELOG.md [Unreleased] 三个批次条目。
+> 清单已于 2026-08-10 按当前源码复核；本文件仅保留仍未修复或仍需决策的项目。
 
 ---
 
 ## 一、未修复问题（低危 / 需决策）
 
-### 1. FileSystemStorageAdapter 会话 ID 未校验
-- **位置**：`backend/modules/conversation/storage.ts`（`getConversationDir` 等 `Uri.joinPath` 拼接）
-- **问题**：conversationId 未做白名单校验直接拼路径。BranchGraphRepository / DiffStorageManager 已加 `/^[a-zA-Z0-9_-]+$/` 校验，此适配器未覆盖（最小范围原则留待评估）
-- **风险**：低——会话 ID 目前均由内部生成（`conv_` 前缀），但 webview/IPC 入口若传入不可信 ID 存在路径逃逸面
-- **建议**：入口统一校验会话 ID（与其它两处对齐）
-
-### 2. history_search 正则 ReDoS
-- **位置**：`backend/tools/history/history_search.ts:232`
-- **问题**：模型提供的正则直接 `new RegExp` 逐行执行，无长度/复杂度限制，病态回溯（如 `(a+)+$`）在超长行上可造成明显卡顿
-- **建议**：与 `search_in_files` 对齐——限制正则源长度（500 字符）并捕获构造异常给可读错误
-
-### 3. WindowsAgentStopNotificationService 去重竞态
-- **位置**：`backend/modules/notifications/WindowsAgentStopNotificationService.ts:388-428`
-- **问题**：去重是"先查后记"且 `rememberDedupe` 在 `showToast` 之后，两个并发相同 dedupeKey 的通知可同时通过检查产生重复 toast
-- **建议**：检查前同步写入 dedupe 表（或对 notify 加互斥）
-
-### 4. xmlFormatter 非法键名整体降级丢参数
-- **位置**：`backend/tools/xmlFormatter.ts:246-263, 288-327`
-- **问题**：顶层参数名含非法 XML 元素名时整体降级为 `<parameters>` 内 CDATA JSON 文本，`parseToolUseNode` 解析回来时该文本落在 `#text` 键被跳过，历史重放的工具调用参数静默丢失
-- **风险**：低概率触发（需模型产出非法参数名）
-- **建议**：对非法键名逐键转义为合法元素名（或 base64/占位键映射）而非整体降级，保证可逆
-
-### 5. MarkdownRenderer 流式重复全量解析
+### 1. MarkdownRenderer 流式重复全量解析
 - **位置**：`frontend/src/components/common/MarkdownRenderer.vue:1067-1119`
 - **问题**：流式渲染对每条消息的完整累积内容反复 markdown-it 解析 + sanitize DOM 遍历（约每 120-180ms 一次），长消息总成本接近 O(n²)
 - **建议**：增量渲染（保留上次 HTML 尾部追加）或限制重建频率；前端渲染改动风险高，需配合基准验证
 
-### 6. esbuild.config.js external typescript 死配置
-- **位置**：`esbuild.config.js:15-18`
-- **问题**：external 声明了 `'typescript'`，但全仓库运行时源码无任何 `typescript` import；一旦未来某模块 `require('typescript')` 且 node_modules 不入包（.vscodeignore:66），打包产物将运行时崩溃
-- **建议**：移除该 external（或确需时把 typescript 移入 dependencies）
-
-### 7. activationEvents 使用 onStartupFinished
+### 2. activationEvents 使用 onStartupFinished
 - **位置**：`package.json:19-21`
 - **问题**：每次启动 VS Code 都会激活扩展并触发完整初始化（含后端初始化/历史迁移），未使用聊天面板的用户也承担启动开销
 - **建议**：改为按需激活（视图/命令触发）或将重初始化延后到 `resolveWebviewView` 首次调用；改动需验证激活时序
 
-### 8. jest / vitest 双测试框架无归属约定
+### 3. jest / vitest 前端测试归属仍待收敛
 - **位置**：`test/unit/`（jest）与 `frontend/src/__tests__/`（vitest）
-- **问题**：前端测试分散两套框架，新增用例易放错位置导致漏跑
+- **现状**：CI 已通过根目录 `npm run ci` 同时执行两套测试，发布门禁不会再漏掉 Vitest；但前端相关用例仍分散在两套框架中，新增用例的归属和本地应运行的命令不够直观
 - **建议**：明确"前端测试统一走 vitest、test/unit 仅存后端/纯逻辑"约定，逐步迁移 test/unit/frontend
 
-### 9. design / plan pathUtils 收敛
+### 4. design / plan pathUtils 收敛
 - **位置**：`backend/tools/design/pathUtils.ts`、`backend/tools/plan/pathUtils.ts`
 - **问题**：与 progress/review 同构的独立副本（仅 validator 与函数名不同），可统一指向 `progress/pathUtils.ts` 的 `isProgressArtifactPathAllowedWithMultiRoot('design' | 'plan', …)`
 - **性质**：纯重构零风险，随时可做（review 6 处已完成同类收敛）

@@ -1723,7 +1723,7 @@ const zhCN = {
                     command: '命令',
                     commandPlaceholder: '例如：npx, python, node',
                     args: '参数',
-                    argsPlaceholder: '空格分隔，例如：-m mcp_server',
+                    argsPlaceholder: 'JSON 字符串数组（仍兼容空格分隔），例如：["-m","mcp server"]',
                     env: '环境变量 (JSON)',
                     envPlaceholder: '{"KEY": "value"}',
                     url: 'URL',
@@ -1748,6 +1748,7 @@ const zhCN = {
                     commandRequired: '请输入命令',
                     urlRequired: '请输入 URL',
                     invalidJson: '请输入有效的 JSON 对象',
+                    invalidArgsJsonArray: '请输入仅包含字符串的有效 JSON 数组',
                     createFailed: '创建失败',
                     updateFailed: '更新失败'
                 },

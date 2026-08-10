@@ -1,11 +1,12 @@
 /**
  * xmlFormatter 回归测试
  *
- * 覆盖两个解析修复：
+ * 覆盖 XML 工具格式的关键回归修复：
  * 1. <tool_name> 带属性时（fast-xml-parser 会解析为 { '#text': ..., '@_xxx': ... }），
  *    工具名仍能正确提取为字符串，而不是把对象当作工具名往下传。
  * 2. 带属性的纯文本参数节点（如 <content lang="en">xxx</content>）保留 #text 内容，
  *    而不是把内容整个丢掉变成 {}。
+ * 3. 非法 XML 键名在历史重放中可逆编码，顶层、嵌套和数组对象均不丢结构。
  */
 
 import {
@@ -131,6 +132,65 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
         const calls = parseXMLToolCalls(xml);
         expect(calls[0].args.content).toBe('<x> & </y>');
     });
+
+    it('顶层非法 XML 键名使用可逆编码并保留其他参数', () => {
+        const args = {
+            '': 'empty key',
+            'bad key': 'value',
+            'path/segment': 'nested.txt',
+            'lone surrogate \uD800': 'preserved',
+            normal: 'kept'
+        };
+
+        const xml = convertFunctionCallToXML('example_tool', args);
+
+        expect(xml).toContain('<__graycode_encoded_key__');
+        expect(xml).not.toContain(JSON.stringify(args));
+        expect(parseXMLToolCalls(xml)[0].args).toEqual(args);
+    });
+
+    it('嵌套对象中的非法键名保持对象结构而非退化为 JSON 字符串', () => {
+        const args = {
+            options: {
+                'display name': 'Alice',
+                nested: {
+                    'path/segment': 'src/main.ts'
+                }
+            }
+        };
+
+        const calls = parseXMLToolCalls(convertFunctionCallToXML('example_tool', args));
+
+        expect(calls[0].args).toEqual(args);
+        expect(typeof calls[0].args.options).toBe('object');
+        expect(typeof calls[0].args.options.nested).toBe('object');
+    });
+
+    it('数组内对象的非法键名逐项往返，且保留 Unicode 键名', () => {
+        const args = {
+            rows: [
+                { 'bad key': 'first', valid: 'one' },
+                { 'emoji 😀': 'second', nested: { 'x/y': 'three' } }
+            ],
+            'invalid array key': [{ 'child key': 'single item' }]
+        };
+
+        const calls = parseXMLToolCalls(convertFunctionCallToXML('example_tool', args));
+
+        expect(calls[0].args).toEqual(args);
+    });
+
+    it('保留元素名作为真实对象键时也能无歧义往返', () => {
+        const args = {
+            options: {
+                __graycode_encoded_key__: 'literal value'
+            }
+        };
+
+        const calls = parseXMLToolCalls(convertFunctionCallToXML('example_tool', args));
+
+        expect(calls[0].args).toEqual(args);
+    });
 });
 
 describe('convertFunctionResponseToXML - 响应转义', () => {
@@ -218,5 +278,33 @@ describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
         // 参数对象不可能被污染；DANGEROUS_OBJECT_KEYS 是协议层的第二道防线
         expect(({} as any).polluted).toBeUndefined();
         expect(calls).toHaveLength(0);
+    });
+
+    it('编码后的危险键名在写入参数对象前被丢弃，其他参数仍可用', () => {
+        const args = JSON.parse(`{
+            "__proto__": { "polluted": "yes" },
+            "constructor": { "polluted": "yes" },
+            "prototype": { "polluted": "yes" },
+            "safe": "kept"
+        }`);
+
+        const calls = parseXMLToolCalls(convertFunctionCallToXML('example_tool', args));
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args).toEqual({ safe: 'kept' });
+        expect(Object.prototype.hasOwnProperty.call(calls[0].args, '__proto__')).toBe(false);
+        expect(({} as any).polluted).toBeUndefined();
+    });
+
+    it('无编码标记的保留标签仍按已有合法 XML 键解析', () => {
+        const calls = parseXMLToolCalls(`<tool_use>
+  <tool_name>example_tool</tool_name>
+  <parameters>
+    <__graycode_encoded_key__>legacy value</__graycode_encoded_key__>
+  </parameters>
+</tool_use>`);
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].args).toEqual({ __graycode_encoded_key__: 'legacy value' });
     });
 });

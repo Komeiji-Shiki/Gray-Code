@@ -33,9 +33,7 @@ jobs:
           npm --prefix frontend ci
 
       - name: Typecheck & test
-        run: |
-          npm run typecheck
-          npm test
+        run: npm run ci
 
       - name: Package vsix
         # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤
