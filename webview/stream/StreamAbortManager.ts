@@ -102,8 +102,9 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   async abortAndWaitForCompletion(conversationId: string, timeoutMs: number = OLD_STREAM_EXIT_WAIT_TIMEOUT_MS): Promise<void> {
     const existing = this.registry.get(conversationId);
     // 先注册等待者再 abort：若旧流在 abort 与 waitForIdle 之间退出，waitForIdle 会立即返回，
-    // 不存在漏唤醒。
-    const idle = this.waitForIdle(conversationId);
+    // 不存在漏唤醒。waitForIdle 内部使用同一 timeoutMs（M7：旧实现固定 6s，外层传更小
+    // 超时先返回时其内部定时器仍挂起最多 6s，残留 open handle）。
+    const idle = this.waitForIdle(conversationId, timeoutMs);
     if (existing) {
       existing.abort();
     }
@@ -210,8 +211,12 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 前端 complete chunk 只表示模型消息已经落盘，并不代表 StreamRequestHandler 的 finally
    * 已执行。后台任务回执若只看前端 isStreaming，会在这个窗口创建新流并中止旧流。
    * 本方法以控制器 Map 为唯一生命周期事实来源；空闲时立即返回，活跃时由 delete() 唤醒。
+   *
+   * @param timeoutMs 单轮等待上限（默认 OLD_STREAM_EXIT_WAIT_TIMEOUT_MS）；
+   *                  M7：调用方传更小超时（如 abortAndWaitForCompletion 的外层超时）时
+   *                  内部定时器同步使用该值，避免外层已返回而内部定时器仍挂起残留 open handle。
    */
-  async waitForIdle(conversationId: string): Promise<void> {
+  async waitForIdle(conversationId: string, timeoutMs: number = OLD_STREAM_EXIT_WAIT_TIMEOUT_MS): Promise<void> {
     while (true) {
       if (this.registry.isActive(conversationId)) {
         // 活跃流分支同样需要超时兜底：流的 finally 可能因工具挂死/网络挂起长期不执行，
@@ -219,7 +224,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         // 超时视同「已空闲」返回（而不是 continue 循环重试，避免每 6s 重试一次、永不返回）。
         const timedOut = await this.raceWithTimeout([
           this.registry.registerIdleWaiter(conversationId)
-        ], OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+        ], timeoutMs);
         if (timedOut) return;
         continue;
       }
@@ -235,7 +240,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
       // 条目残留会让后续 waitForIdle 再白等 6s。
       const timedOut = await this.raceWithTimeout(
         [retired.chain],
-        OLD_STREAM_EXIT_WAIT_TIMEOUT_MS
+        timeoutMs
       );
       if (timedOut) {
         this.retiredChain.clear(conversationId, retired);
