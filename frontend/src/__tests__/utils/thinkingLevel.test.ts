@@ -143,9 +143,10 @@ describe('buildThinkingLevelUpdates - openai / openai-responses', () => {
     options: { reasoning: { effort: 'high', summaryEnabled: true, summary: 'concise', effortCustom: '0.7' }, temperature: 1.0 }
   }
 
-  it('off 只关闸门（关闭思考），不触碰 options', () => {
+  it('off：关闭闸门 + 记录 effort=none（OpenAI 无独立 disabled 参数，缺省 reasoning 段即关闭）', () => {
     expect(buildThinkingLevelUpdates(config, 'off')).toEqual({
-      optionsEnabled: { reasoning: false, temperature: true }
+      optionsEnabled: { reasoning: false, temperature: true },
+      options: { reasoning: { effort: 'none', summaryEnabled: true, summary: 'concise', effortCustom: '0.7' }, temperature: 1.0 }
     })
   })
 
@@ -200,9 +201,10 @@ describe('buildThinkingLevelUpdates - gemini', () => {
     options: { thinkingConfig: { includeThoughts: true, mode: 'budget', thinkingLevel: 'low', thinkingBudget: 2048 } }
   }
 
-  it('off 关闸门（关闭思考）', () => {
+  it('off：闸门保持开启 + includeThoughts=false（请求显式携带禁用参数）', () => {
     expect(buildThinkingLevelUpdates(config, 'off')).toEqual({
-      optionsEnabled: { thinkingConfig: false }
+      optionsEnabled: { thinkingConfig: true },
+      options: { thinkingConfig: { includeThoughts: false, mode: 'budget', thinkingLevel: 'low', thinkingBudget: 2048 } }
     })
   })
 

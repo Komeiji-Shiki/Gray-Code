@@ -3056,7 +3056,7 @@ const zhCN = {
                 },
                 thinking: {
                     includeThoughts: '返回思考内容',
-                    includeThoughtsHint: '启用后，API 响应将包含模型的思考过程',
+                    includeThoughtsHint: '开启：请求携带 {"thinkingConfig":{"includeThoughts":true}}；关闭（取消勾选）= 关闭思考，请求显式携带 {"thinkingConfig":{"includeThoughts":false}}——Gemini 缺省即思考，必须显式传递 false 才真正关闭',
                     mode: '思考强度模式',
                     modeHint: '默认: 使用 API 默认值 | 等级: 选择预设等级 | 预算: 自定义 token 数',
                     modeDefault: '默认',
@@ -3099,7 +3099,7 @@ const zhCN = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
-                    effortHint: 'none: 不使用 | minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义',
+                    effortHint: 'none: 完全不传递思考参数（请求缺省该段，API 默认思考）| minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义。关闭思考（Off）时请求强制携带 {"reasoning":{"effort":"none"}}',
                     effortNone: '无',
                     effortMinimal: '最少',
                     effortLow: '低',
@@ -3129,7 +3129,7 @@ const zhCN = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
-                    effortHint: 'none: 不使用 | minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义',
+                    effortHint: 'none: 完全不传递思考参数（请求缺省该段，API 默认思考）| minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义。关闭思考（Off）时请求强制携带 {"reasoning":{"effort":"none"}}',
                     effortNone: '无 (none)',
                     effortMinimal: '最少 (minimal)',
                     effortLow: '低 (low)',

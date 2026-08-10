@@ -7,9 +7,11 @@
  * - 预设档位（max / ultra / xhigh 等）不受影响，直接透传
  */
 import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { GeminiFormatter } from '../../modules/channel/formatters/gemini';
 import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
 import type { AnthropicConfig } from '../../modules/config/configs/anthropic';
+import type { GeminiConfig } from '../../modules/config/configs/gemini';
 import type { OpenAIConfig } from '../../modules/config/configs/openai';
 import type { OpenAIResponsesConfig } from '../../modules/config/configs/openai-responses';
 import type { Content } from '../../modules/conversation/types';
@@ -208,6 +210,34 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
         expect(request.body.reasoning).toBeUndefined();
     });
 
+    it('Off（闸门关闭 + effort=none）强制传递 {"reasoning":{"effort":"none"}}——缺省段时模型仍按默认强度思考', () => {
+        const request = formatter.buildRequest({
+            configId: 'openai-test',
+            history: createHistory()
+        }, createConfig({
+            optionsEnabled: { reasoning: false },
+            options: {
+                reasoning: { effort: 'none', summaryEnabled: true, summary: 'concise' }
+            }
+        }));
+
+        expect(request.body.reasoning).toEqual({ effort: 'none' });
+    });
+
+    it('闸门关闭但未记录 effort=none 时不强制传递（保持原行为）', () => {
+        const request = formatter.buildRequest({
+            configId: 'openai-test',
+            history: createHistory()
+        }, createConfig({
+            optionsEnabled: { reasoning: false },
+            options: {
+                reasoning: { effort: 'high' }
+            }
+        }));
+
+        expect(request.body.reasoning).toBeUndefined();
+    });
+
     it('预设档位不受影响：xhigh / max / ultra 直接透传', () => {
         for (const preset of ['xhigh', 'max', 'ultra'] as const) {
             const request = formatter.buildRequest({
@@ -279,5 +309,65 @@ describe('思考强度 custom 档位（OpenAIResponsesFormatter）', () => {
         }));
 
         expect(request.body.reasoning).toEqual({ effort: 'max' });
+    });
+
+    it('Off（闸门关闭 + effort=none）强制传递 {"reasoning":{"effort":"none"}}', () => {
+        const request = formatter.buildRequest({
+            configId: 'openai-responses-test',
+            history: createHistory()
+        }, createConfig({
+            optionsEnabled: { reasoning: false },
+            options: {
+                reasoning: { effort: 'none' }
+            }
+        }));
+
+        expect(request.body.reasoning).toEqual({ effort: 'none' });
+    });
+});
+
+describe('思考显式关闭（GeminiFormatter）', () => {
+    const formatter = new GeminiFormatter();
+
+    function createConfig(overrides: Partial<GeminiConfig> = {}): GeminiConfig {
+        return {
+            id: 'gemini-test',
+            name: 'Gemini Test',
+            type: 'gemini',
+            enabled: true,
+            url: 'https://generativelanguage.googleapis.com/v1beta',
+            apiKey: 'test-key',
+            model: 'gemini-2.5-pro',
+            preferStream: false,
+            timeout: 30000,
+            toolMode: 'function_call',
+            optionsEnabled: { thinkingConfig: true },
+            options: {
+                thinkingConfig: { includeThoughts: false }
+            },
+            ...overrides
+        } as GeminiConfig;
+    }
+
+    it('includeThoughts=false（Off 档）时请求显式携带 {"thinkingConfig":{"includeThoughts":false}}', () => {
+        const request = formatter.buildRequest({
+            configId: 'gemini-test',
+            history: createHistory()
+        }, createConfig());
+
+        expect(request.body.generationConfig.thinkingConfig).toEqual({ includeThoughts: false });
+    });
+
+    it('includeThoughts=true + level 模式时发送等级，不受影响', () => {
+        const request = formatter.buildRequest({
+            configId: 'gemini-test',
+            history: createHistory()
+        }, createConfig({
+            options: {
+                thinkingConfig: { includeThoughts: true, mode: 'level', thinkingLevel: 'high' }
+            }
+        }));
+
+        expect(request.body.generationConfig.thinkingConfig).toEqual({ includeThoughts: true, thinkingLevel: 'high' });
     });
 });

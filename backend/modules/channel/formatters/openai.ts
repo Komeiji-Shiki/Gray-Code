@@ -630,26 +630,34 @@ export class OpenAIFormatter extends BaseFormatter {
         // 添加 reasoning 配置（如果启用）
         const reasoningEnabled = (config as any).optionsEnabled?.reasoning;
         const reasoning = config.options?.reasoning;
-        
-        if (reasoningEnabled && reasoning) {
+
+        if (reasoning && (reasoningEnabled || reasoning.effort === 'none')) {
             const reasoningConfig: any = {};
-            
-            // 思考强度 (effort): none, low, medium, high, xhigh, max, ultra, custom
-            let effort: string | undefined = reasoning.effort;
-            // 自定义模式：使用 effortCustom 的值原样透传
-            if (effort === 'custom') {
-                effort = reasoning.effortCustom?.trim() || undefined;
+
+            if (reasoningEnabled) {
+                // 思考强度 (effort): none, low, medium, high, xhigh, max, ultra, custom
+                let effort: string | undefined = reasoning.effort;
+                // 自定义模式：使用 effortCustom 的值原样透传
+                if (effort === 'custom') {
+                    effort = reasoning.effortCustom?.trim() || undefined;
+                }
+                // none 档位：不传递思考强度参数（请求缺省该段，模型按 API 默认行为思考）
+                if (effort && effort !== 'none') {
+                    reasoningConfig.effort = effort;
+                }
+
+                // 输出详细程度 (summary): auto, concise, detailed
+                // 只有当 summaryEnabled 为 true 时才发送
+                if (reasoning.summaryEnabled && reasoning.summary) {
+                    reasoningConfig.summary = reasoning.summary;
+                }
+            } else {
+                // Off（关闭思考）：闸门关闭且显式记录 effort='none' 时强制传递
+                // {"reasoning": {"effort": "none"}}——OpenAI 请求缺省 reasoning 段时
+                // 模型仍按默认强度思考，只有显式 effort='none' 才真正关闭思考。
+                reasoningConfig.effort = 'none';
             }
-            if (effort && effort !== 'none') {
-                reasoningConfig.effort = effort;
-            }
-            
-            // 输出详细程度 (summary): auto, concise, detailed
-            // 只有当 summaryEnabled 为 true 时才发送
-            if (reasoning.summaryEnabled && reasoning.summary) {
-                reasoningConfig.summary = reasoning.summary;
-            }
-            
+
             // 只有当有配置项时才添加 reasoning
             if (Object.keys(reasoningConfig).length > 0) {
                 genConfig.reasoning = reasoningConfig;

@@ -3055,7 +3055,7 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     includeThoughts: '思考内容を返す',
-                    includeThoughtsHint: '有効にすると、API レスポンスにモデルの思考プロセスが含まれます',
+                    includeThoughtsHint: 'オン: リクエストに {"thinkingConfig":{"includeThoughts":true}} を送信。オフ（チェック解除）= 思考を無効化し、リクエストに {"thinkingConfig":{"includeThoughts":false}} を明示送信——Gemini はデフォルトで思考するため、明示的な false でのみ完全に無効化されます',
                     mode: '思考強度モード',
                     modeHint: 'デフォルト: API デフォルトを使用 | レベル: プリセットレベルを選択 | バジェット: カスタムトークン数',
                     modeDefault: 'デフォルト',
@@ -3098,7 +3098,7 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考強度 (Effort)',
-                    effortHint: 'none: 使用しない | minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム',
+                    effortHint: 'none: 思考パラメータを一切送信しない（セクション省略、API デフォルトの思考）| minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム。思考オフ時はリクエストに {"reasoning":{"effort":"none"}} を明示送信',
                     effortNone: 'なし',
                     effortMinimal: '極小',
                     effortLow: '低',

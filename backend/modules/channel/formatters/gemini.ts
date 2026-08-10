@@ -288,6 +288,10 @@ export class GeminiFormatter extends BaseFormatter {
             const includeThoughts = thinkingConfig.includeThoughts !== false;
             if (includeThoughts) {
                 apiThinkingConfig.includeThoughts = true;
+            } else {
+                // 显式关闭思考：请求显式携带 {"thinkingConfig": {"includeThoughts": false}}
+                // （思考强度快捷下拉 Off 档写入 includeThoughts=false，与省略字段的隐式关闭等价但更明确）
+                apiThinkingConfig.includeThoughts = false;
             }
             
             // 根据模式设置思考等级或预算

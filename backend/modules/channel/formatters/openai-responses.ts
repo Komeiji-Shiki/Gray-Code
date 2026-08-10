@@ -669,20 +669,29 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         }
 
         // 处理推理配置
-        if (optionsEnabled.reasoning && options.reasoning) {
+        if (options.reasoning && (optionsEnabled.reasoning || options.reasoning.effort === 'none')) {
             const reasoning: any = {};
-            let effort: string | undefined = options.reasoning.effort;
-            // 自定义模式：使用 effortCustom 的值原样透传
-            if (effort === 'custom') {
-                effort = options.reasoning.effortCustom?.trim() || undefined;
-            }
-            if (effort && effort !== 'none') {
-                reasoning.effort = effort;
-            }
-            
-            // 处理输出详细程度 (Summary)
-            if (options.reasoning.summaryEnabled && options.reasoning.summary) {
-                reasoning.summary = options.reasoning.summary;
+
+            if (optionsEnabled.reasoning) {
+                let effort: string | undefined = options.reasoning.effort;
+                // 自定义模式：使用 effortCustom 的值原样透传
+                if (effort === 'custom') {
+                    effort = options.reasoning.effortCustom?.trim() || undefined;
+                }
+                // none 档位：不传递思考强度参数（请求缺省该段，模型按 API 默认行为思考）
+                if (effort && effort !== 'none') {
+                    reasoning.effort = effort;
+                }
+
+                // 处理输出详细程度 (Summary)
+                if (options.reasoning.summaryEnabled && options.reasoning.summary) {
+                    reasoning.summary = options.reasoning.summary;
+                }
+            } else {
+                // Off（关闭思考）：闸门关闭且显式记录 effort='none' 时强制传递
+                // {"reasoning": {"effort": "none"}}——OpenAI 请求缺省 reasoning 段时
+                // 模型仍按默认强度思考，只有显式 effort='none' 才真正关闭思考。
+                reasoning.effort = 'none';
             }
 
             if (Object.keys(reasoning).length > 0) {

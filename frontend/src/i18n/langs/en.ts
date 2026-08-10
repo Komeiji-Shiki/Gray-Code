@@ -3055,7 +3055,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     includeThoughts: 'Return Thought Content',
-                    includeThoughtsHint: 'When enabled, API response will include the model\'s thinking process',
+                    includeThoughtsHint: 'On: request carries {"thinkingConfig":{"includeThoughts":true}}; Off (unchecked) = thinking disabled, request explicitly carries {"thinkingConfig":{"includeThoughts":false}} — Gemini thinks by default, only an explicit false truly disables it',
                     mode: 'Thinking Intensity Mode',
                     modeHint: 'Default: Use API default | Level: Choose preset level | Budget: Custom token count',
                     modeDefault: 'Default',
@@ -3098,7 +3098,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
-                    effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom',
+                    effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"reasoning":{"effort":"none"}}',
                     effortNone: 'None',
                     effortMinimal: 'Minimal',
                     effortLow: 'Low',
@@ -3128,7 +3128,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
-                    effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom',
+                    effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"reasoning":{"effort":"none"}}',
                     effortNone: 'None (none)',
                     effortMinimal: 'Minimal (minimal)',
                     effortLow: 'Low (low)',
