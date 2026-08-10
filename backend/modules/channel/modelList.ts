@@ -6,29 +6,12 @@
  */
 
 import { t } from '../../i18n';
-import type { ChannelConfig } from '../config';
-import type { CustomHeader } from '../config';
+import type { ChannelConfig, CustomHeader, ModelInfo } from '../config';
 import { createProxyFetch } from './proxyFetch';
 
-/**
- * 模型信息
- */
-export interface ModelInfo {
-  /** 模型 ID */
-  id: string;
-  
-  /** 模型名称 */
-  name?: string;
-  
-  /** 模型描述 */
-  description?: string;
-  
-  /** 上下文窗口大小 */
-  contextWindow?: number;
-  
-  /** 最大输出token */
-  maxOutputTokens?: number;
-}
+// ModelInfo 类型下沉至 config 域（config/configs/base.ts，经 config 门面 re-export）。
+// 此处保留 re-export 壳：channel/index.ts、api/models/* 等既有导入方零改动。
+export type { ModelInfo };
 
 // ==================== 模型列表进程内 TTL 缓存 ====================
 // 模型列表每次请求都重新发起网络请求（含多页分页遍历）；同一渠道配置下的列表在

@@ -15,7 +15,10 @@ export type {
     OpenAIConfig,
     AnthropicConfig,
     ChannelConfig,
-    
+
+    // 模型信息（定义于 configs/base，channel 侧经 modelList re-export 兼容）
+    ModelInfo,
+
     // 输入类型
     CreateConfigInput,
     UpdateConfigInput,

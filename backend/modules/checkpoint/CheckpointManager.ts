@@ -48,9 +48,10 @@ import { throwIfAborted } from './checkpointConcurrency';
 // CPF-12: 恢复侧辅助拆分为独立服务/模块（方法体原样平移，纯重构）
 import { CheckpointRestoreService } from './CheckpointRestoreService';
 import { refreshAffectedDocuments } from './WorkspaceEditorRefresher';
-// BCP-06: 引用计数扫描 + 清理器注册表（BranchService purge/prune 联动）；
-// 本类作为生产实现自注册（见构造函数），不依赖注入链。
-import { setGlobalCheckpointRefCountCleaner } from './checkpointRefCounts';
+// BCP-06: 引用计数扫描 + 清理器注册表（BranchService purge/prune 联动）。
+// E1 解环（第五批）：注册表收敛到 conversation 侧桥接 checkpointCleanerBridge，
+// 本类构造时经桥接自注册生产实现（注册时机/语义不变）；checkpointRefCounts 为兼容导出壳。
+import { setGlobalCheckpointRefCountCleaner } from '../conversation/branch/checkpointCleanerBridge';
 // 第二批拆分：createCheckpoint 备份执行与删除族收敛为独立服务（方法体原样平移，纯重构）
 import { CheckpointBackupExecutor } from './CheckpointBackupExecutor';
 import { CheckpointDeletionService } from './CheckpointDeletionService';

@@ -21,14 +21,15 @@ import { subAgentRunEventBus } from '../../backend/tools/subagents';
 import { registerDetachedSubAgentTask } from '../../backend/tools/subagents';
 import { AbortControllerRegistry } from './abort/AbortControllerRegistry';
 import { RetiredStreamChain } from './abort/RetiredStreamChain';
-import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './abort/RetiredStreamChain';
+import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../backend/core/streamConstants';
 
 /**
- * 旧流退出等待超时（毫秒），定义于 abort/RetiredStreamChain（退休链自清理定时器同源），
+ * 旧流退出等待超时（毫秒），定义于 backend/core/streamConstants（第五批层反转修复：
+ * 后端 ChatFlowService 改从 core 导入；与退休链自清理定时器同源同值 6000ms），
  * 此处 re-export 保持既有 import（ChatFlowService / StreamRequestHandler /
  * ConversationHandlers）不破坏。
  */
-export { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './abort/RetiredStreamChain';
+export { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../backend/core/streamConstants';
 
 /**
  * 流式请求管理器

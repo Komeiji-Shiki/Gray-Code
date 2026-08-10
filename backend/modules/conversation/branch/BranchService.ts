@@ -83,12 +83,12 @@ import {
     WorkspaceState,
 } from './types';
 import type { ConversationManager } from '../ConversationManager';
-// BCP-06: 引用计数扫描 + 全局清理器（CheckpointManager 构造时自注册；
-// 仅依赖 checkpointRefCounts 模块，不反向依赖 CheckpointManager，避免模块环）。
+// BCP-06: 引用计数扫描 + 全局清理器（CheckpointManager 构造时经 checkpointCleanerBridge
+// 自注册；E1 解环：conversation 侧只依赖本域桥接模块，不再 import checkpoint 内部实现）。
 import {
     computeCheckpointReferenceCounts,
     getGlobalCheckpointRefCountCleaner,
-} from '../../checkpoint/checkpointRefCounts';
+} from './checkpointCleanerBridge';
 
 const log = Logger.get('BranchService');
 

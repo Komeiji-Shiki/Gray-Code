@@ -11,6 +11,10 @@
  *
  * CPF-01/CPF-12：完整存档数据（fileHashes/fileStats/excluded/ignoreSnapshot）写入
  * 独立 manifest（CheckpointManifestRepository），查询与保留策略拆分为独立服务。
+ *
+ * 模块纪律（E2 解环）：checkpoint 不得 import settings 的运行时值。
+ * settings → checkpoint 为单向运行时依赖（CheckpointSettingsService 读取排除规则常量）；
+ * checkpoint → settings 仅允许 type-only import 且一律走 settings 门面（'../settings'）。
  */
 
 export { CheckpointManager } from './CheckpointManager';
