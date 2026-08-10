@@ -6,18 +6,6 @@
  */
 
 const zhCN = {
-    core: {
-        registry: {
-            moduleAlreadyRegistered: '模块 "{moduleId}" 已经注册',
-            duplicateApiName: '模块 "{moduleId}" 中存在重复的 API 名称: {apiName}',
-            registeringModule: '[ModuleRegistry] 注册模块: {moduleId} ({moduleName} v{version})',
-            moduleNotRegistered: '模块未注册: {moduleId}',
-            unregisteringModule: '[ModuleRegistry] 取消注册模块: {moduleId}',
-            apiNotFound: 'API 不存在: {moduleId}.{apiName}',
-            missingRequiredParams: '缺少必需参数: {params}'
-        }
-    },
-
     modules: {
         config: {
             errors: {

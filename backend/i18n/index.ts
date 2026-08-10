@@ -50,8 +50,9 @@ export function getActualLanguage(): Exclude<SupportedLanguage, 'auto'> {
         if (detectedLanguage && detectedLanguage.startsWith('ja')) {
             return 'ja';
         }
-        // 默认使用中文
-        return 'zh-CN';
+        // 默认使用英文（未知语言的兜底；与前端 actualLanguage 一致，
+        // 避免 webview 英文、后端中文的割裂——R2 M2）
+        return 'en';
     }
     return currentLanguage;
 }
@@ -80,7 +81,7 @@ export function getMessagesForLanguage(lang?: SupportedLanguage | string): Backe
     if (typeof lang === 'string' && lang.startsWith('zh')) return messages['zh-CN'];
     if (typeof lang === 'string' && lang.startsWith('en')) return messages['en'];
     if (typeof lang === 'string' && lang.startsWith('ja')) return messages['ja'];
-    return messages['zh-CN'];
+    return messages['en']; // 未知语言兜底英文（与 getActualLanguage 一致）
 }
 
 /**

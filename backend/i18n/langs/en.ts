@@ -5,18 +5,6 @@
 import type { BackendLanguageMessages } from '../types';
 
 const en: BackendLanguageMessages = {
-    core: {
-        registry: {
-            moduleAlreadyRegistered: 'Module "{moduleId}" is already registered',
-            duplicateApiName: 'Duplicate API name in module "{moduleId}": {apiName}',
-            registeringModule: '[ModuleRegistry] Registering module: {moduleId} ({moduleName} v{version})',
-            moduleNotRegistered: 'Module not registered: {moduleId}',
-            unregisteringModule: '[ModuleRegistry] Unregistering module: {moduleId}',
-            apiNotFound: 'API not found: {moduleId}.{apiName}',
-            missingRequiredParams: 'Missing required parameters: {params}'
-        }
-    },
-
     modules: {
         config: {
             errors: {
