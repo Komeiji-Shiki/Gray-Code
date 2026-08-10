@@ -301,7 +301,18 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
 
     private async writeFile(data: McpServersJson): Promise<void> {
         const content = JSON.stringify(data, null, 2);
-        await this.vscodeFs.writeFile(this.fileUri, Buffer.from(content, 'utf-8'));
+        // tmp+rename 原子替换：先写临时文件再 rename，避免写入中途崩溃/断电
+        // 留下截断或半写的线上配置（调用方在 enqueue 队列内，tmp 文件名不会并发冲突）。
+        // vscode.workspace.fs 没有原子 write；用同目录 tmp + rename({ overwrite }) 逼近。
+        const tmpUri = this.fileUri.with({ path: this.fileUri.path + '.tmp' });
+        const buf = Buffer.from(content, 'utf-8');
+        await this.vscodeFs.writeFile(tmpUri, buf);
+        try {
+            await this.vscodeFs.rename(tmpUri, this.fileUri, { overwrite: true });
+        } catch {
+            // Windows 上目标文件被占用时 rename 可能 EPERM：回退直接写（非原子，但至少不失败）
+            await this.vscodeFs.writeFile(this.fileUri, buf);
+        }
     }
 
     /**
