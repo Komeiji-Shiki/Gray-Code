@@ -831,7 +831,11 @@ watch(() => props.nodes, () => {
 
   if (!isInputting && editorRef.value) {
     // 轻量指纹相同（长度 + 首尾节点文本）说明 DOM 与 nodes 大概率已同步，
-    // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM
+    // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM。
+    // 注意：lastRenderedNodesFingerprint 只在 renderNodesToDom 重建时更新；
+    // 用户直接编辑路径（DOM 由浏览器改，提取比对相等后不重建）会留下陈旧指纹，
+    // 发送清空（props.nodes → []，指纹恒为 '0'）时可能与旧值碰撞而跳过重建，
+    // 导致 DOM 残留旧内容、输入框发送后不清空。
     if (getNodesFingerprint(props.nodes) !== lastRenderedNodesFingerprint) {
       const domNodes = extractNodesFromEditor(editorRef.value, {
         knownNodes: props.nodes,
@@ -841,6 +845,10 @@ watch(() => props.nodes, () => {
       // 无意义的 innerHTML 重建会清空浏览器原生的复制、粘贴和撤销历史。
       if (!editorNodesEqual(domNodes, props.nodes)) {
         renderNodesToDom()
+      } else {
+        // DOM 已与 nodes 同步（浏览器直接编辑路径）：同步指纹，
+        // 避免下次外部状态变化（如发送清空）时指纹碰撞而跳过必要重建。
+        lastRenderedNodesFingerprint = getNodesFingerprint(props.nodes)
       }
     }
   }

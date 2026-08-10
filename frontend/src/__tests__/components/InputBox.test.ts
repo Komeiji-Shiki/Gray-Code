@@ -1,5 +1,6 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import InputBox from '../../components/input/InputBox.vue'
 
 function createClipboardItem(kind: 'string' | 'file', file: File | null = null): DataTransferItem {
@@ -213,5 +214,53 @@ describe('InputBox 占位符', () => {
     expect(editor.classes()).toContain('is-empty')
     expect(editor.attributes('data-placeholder')).toBeTruthy()
     wrapper.unmount()
+  })
+})
+
+describe('InputBox 外部状态同步（发送后清空回归）', () => {
+  let wrapper: VueWrapper
+
+  beforeEach(() => {
+    wrapper = mount(InputBox, {
+      props: { nodes: [] }
+    })
+  })
+
+  afterEach(() => {
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  it('浏览器直接编辑 DOM（输入路径）后，外部清空 nodes 必须重建 DOM 清除残留内容', async () => {
+    // 等待 mount 的 nextTick：onMounted 里 renderNodesToDom 已执行，
+    // lastRenderedNodesFingerprint = '0'（空 nodes）
+    await nextTick()
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+
+    // 模拟用户输入：DOM 由浏览器直接编辑，不经过 renderNodesToDom
+    editor.textContent = 'hello'
+
+    // 父组件收到 update:nodes 后回传新 props（输入路径的 store 同步）
+    await wrapper.setProps({ nodes: [{ type: 'text', text: 'hello' }] })
+    // 输入路径下 DOM 已同步：不应触发全量重建，但指纹应被同步
+    expect(editor.textContent).toContain('hello')
+
+    // 模拟发送清空：父组件把 nodes 置空（InputArea.handleSend）
+    await wrapper.setProps({ nodes: [] })
+    // 回归断言：DOM 必须被重建清空，不能残留 'hello'
+    expect(editor.textContent ?? '').not.toContain('hello')
+  })
+
+  it('外部替换节点内容时 DOM 同步刷新（中间内容变化不残留）', async () => {
+    await nextTick()
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+
+    // 初始渲染有内容（renderNodesToDom 路径），指纹与 DOM 同步
+    await wrapper.setProps({ nodes: [{ type: 'text', text: 'aaa' }] })
+    expect(editor.textContent).toContain('aaa')
+
+    // 外部整体替换为相同首尾的新内容（指纹碰撞场景）
+    await wrapper.setProps({ nodes: [{ type: 'text', text: 'bbb' }] })
+    expect(editor.textContent).toContain('bbb')
   })
 })
