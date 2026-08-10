@@ -484,7 +484,7 @@ describe('AgentMailbox - 清理', () => {
         expect(mailbox.isKnownRun('conv_2', 'run_c')).toBe(true);
     });
 
-    it('clearMainSessionInbox 只清空主会话 inbox，子代理 inbox / knownRuns 不受影响（MED-3）', () => {
+    it('clearMainSessionInbox 只重置回合频率状态，不删除未读主会话/子代理消息', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: MAIN_SESSION_RUN_ID, text: 'to main' });
         mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_a', text: 'self' });
@@ -493,7 +493,8 @@ describe('AgentMailbox - 清理', () => {
 
         mailbox.clearMainSessionInbox('conv_1');
 
-        expect(mailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        // 新用户回合不能删除尚未投递的消息；它们会由工具边界或空闲 claim 消费。
+        expect(mailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)).toHaveLength(1);
         // 子代理 inbox 与已知记录不受影响（由 unregisterRun 管理）
         expect(mailbox.peekMessages('conv_1', 'run_a')).toHaveLength(1);
         expect(mailbox.isKnownRun('conv_1', 'run_a')).toBe(true);
@@ -502,6 +503,50 @@ describe('AgentMailbox - 清理', () => {
         mailbox.sendMessage({ conversationId: 'conv_2', fromRunId: 'run_b', targetRunId: MAIN_SESSION_RUN_ID, text: 'other main' });
         mailbox.clearMainSessionInbox('conv_1');
         expect(mailbox.peekMessages('conv_2', MAIN_SESSION_RUN_ID)).toHaveLength(1);
+    });
+
+    it('主会话 claim 采用确认/退回语义，空闲投递失败不会丢消息', () => {
+        mailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'run_a',
+            targetRunId: MAIN_SESSION_RUN_ID,
+            text: 'idle delivery'
+        });
+
+        const firstClaim = mailbox.claimMainSessionAgentMessages('conv_1');
+        expect(firstClaim?.messages.map(message => message.text)).toEqual(['idle delivery']);
+        expect(mailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        expect(mailbox.getPendingMessageCount()).toBe(1); // claim 中仍计为待确认
+
+        // 重复领取返回同一 claim，不会复制正文。
+        expect(mailbox.claimMainSessionAgentMessages('conv_1')?.claimId).toBe(firstClaim?.claimId);
+        expect(mailbox.releaseMessageClaim('conv_1', MAIN_SESSION_RUN_ID, firstClaim!.claimId)).toBe(true);
+        expect(mailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)).toHaveLength(1);
+
+        const retryClaim = mailbox.claimMainSessionAgentMessages('conv_1')!;
+        expect(mailbox.acknowledgeMessageClaim('conv_1', MAIN_SESSION_RUN_ID, retryClaim.claimId)).toBe(true);
+        expect(mailbox.getPendingMessageCount()).toBe(0);
+    });
+
+    it('正常完成边界原子关闭：有消息时保持 run，可消费完后再关闭', () => {
+        mailbox.registerRun('conv_1', 'run_target', 'Target');
+        mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: MAIN_SESSION_RUN_ID,
+            targetRunId: 'run_target',
+            text: 'last moment'
+        });
+
+        const withMail = mailbox.closeRunIfInboxEmpty('conv_1', 'run_target');
+        expect(withMail.closed).toBe(false);
+        if (withMail.closed) return;
+        expect(withMail.messages[0].text).toBe('last moment');
+        expect(mailbox.isKnownRun('conv_1', 'run_target')).toBe(true);
+
+        const empty = mailbox.closeRunIfInboxEmpty('conv_1', 'run_target');
+        expect(empty.closed).toBe(true);
+        expect(mailbox.isKnownRun('conv_1', 'run_target')).toBe(false);
     });
 
     it('clearMainSessionInbox 缺 conversationId 为 no-op 不抛错', () => {

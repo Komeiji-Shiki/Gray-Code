@@ -2,8 +2,8 @@
  * conversation/helpers - cleanFunctionResponseForAPI / cleanContentForAPI 测试（FIX-B）
  *
  * 重点覆盖：
- * - agentInbox（A-COMM 信箱消息）在顶层与 data 子对象均被剥离 → 历史中的 functionResponse
- *   不会把信箱消息重放给模型（drain 一次性语义、prompt 不膨胀）；
+ * - agentInbox（A-COMM 信箱消息）在顶层与 data 子对象中保持不变：一次性消费由 mailbox
+ *   drain/claim 保证，稳定历史字节保障 provider 前缀缓存；
  * - 既有内部字段剥离行为不回归（diffContentId / diffs / toolId / channelName / modelId 等）；
  * - subagents 的 steps / toolsUsed 保留给 AI（告知主模型子代理是否调用过工具及调用数量）；
  * - 模型需要保留的字段（success / error / duration / killed / data.output / data.message / data.results）不受影响。
@@ -22,6 +22,7 @@ describe('isRealUserMessage', () => {
         expect(isRealUserMessage({ role: 'user', isUserInput: true })).toBe(true);
         expect(isRealUserMessage({ role: 'user' })).toBe(true);
         expect(isRealUserMessage({ role: 'user', source: 'background_task' })).toBe(false);
+        expect(isRealUserMessage({ role: 'user', source: 'agent_message' })).toBe(false);
         expect(isRealUserMessage({ role: 'user', isFunctionResponse: true })).toBe(false);
         expect(isRealUserMessage({ role: 'user', isSummary: true })).toBe(false);
         expect(isRealUserMessage({ role: 'user', isAutoSummary: true })).toBe(false);
@@ -65,18 +66,18 @@ describe('ensureBackgroundTaskSourceForDisplay', () => {
 });
 
 describe('cleanFunctionResponseForAPI', () => {
-    it('剥离顶层 agentInbox（A-COMM 信箱消息，禁止历史重放）', () => {
+    it('保留顶层 agentInbox，避免历史前缀在后续请求中被改写', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             agentInbox: [{ fromRunId: 'run_a', text: 'hi', threadId: 't1', hopDepth: 1, createdAt: 1 }],
             duration: 123
         });
-        expect(cleaned?.agentInbox).toBeUndefined();
+        expect(cleaned?.agentInbox).toHaveLength(1);
         expect(cleaned?.success).toBe(true);
         expect(cleaned?.duration).toBe(123);
     });
 
-    it('剥离 data 子对象中的 agentInbox', () => {
+    it('保留 data 子对象中的 agentInbox', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             data: {
@@ -84,11 +85,11 @@ describe('cleanFunctionResponseForAPI', () => {
                 agentInbox: [{ fromRunId: 'run_a', text: 'hi', threadId: 't1', hopDepth: 1, createdAt: 1 }]
             }
         });
-        expect((cleaned?.data as any)?.agentInbox).toBeUndefined();
+        expect((cleaned?.data as any)?.agentInbox).toHaveLength(1);
         expect((cleaned?.data as any)?.applied).toBe(true);
     });
 
-    it('同时剥离顶层与 data 的 agentInbox，其余字段保留', () => {
+    it('同时保留顶层与 data 的 agentInbox，其余内部字段仍正常清理', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             agentInbox: [{ fromRunId: 'run_a', text: 'top' }],
@@ -100,7 +101,12 @@ describe('cleanFunctionResponseForAPI', () => {
         });
         expect(cleaned).toEqual({
             success: true,
-            data: { applied: true, output: 'out' }
+            agentInbox: [{ fromRunId: 'run_a', text: 'top' }],
+            data: {
+                applied: true,
+                output: 'out',
+                agentInbox: [{ fromRunId: 'run_a', text: 'data' }]
+            }
         });
     });
 
@@ -240,19 +246,19 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(cleaned).toEqual({ success: true, data: { applied: true } });
     });
 
-    it('HIGH-1：默认（isHistoryMessage=true）仍剥离 agentInbox——既有防重放行为不回归', () => {
+    it('默认历史模式同样保留 agentInbox，保证相邻请求的已发送前缀逐字节稳定', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             agentInbox: [{ fromRunId: 'run_a', text: 'hi' }],
             data: { applied: true, agentInbox: [{ fromRunId: 'run_a', text: 'hi-data' }] }
         });
-        expect(cleaned?.agentInbox).toBeUndefined();
-        expect((cleaned?.data as any)?.agentInbox).toBeUndefined();
+        expect(cleaned?.agentInbox).toHaveLength(1);
+        expect((cleaned?.data as any)?.agentInbox).toHaveLength(1);
     });
 });
 
 describe('cleanContentForAPI', () => {
-    it('functionResponse part 剥离 agentInbox 与内部字段，保留 id/name 与展示字段', () => {
+    it('functionResponse part 保留 agentInbox 并剥离其它内部字段，保留 id/name 与展示字段', () => {
         const content: Content = {
             role: 'model',
             parts: [
@@ -277,8 +283,8 @@ describe('cleanContentForAPI', () => {
         const part = cleaned.parts[0] as ContentPart;
         expect(part.functionResponse?.name).toBe('stub_tool');
         expect(part.functionResponse?.id).toBe('call_1');
-        expect((part.functionResponse?.response as any)?.agentInbox).toBeUndefined();
-        expect((part.functionResponse?.response as any)?.data?.agentInbox).toBeUndefined();
+        expect((part.functionResponse?.response as any)?.agentInbox).toHaveLength(1);
+        expect((part.functionResponse?.response as any)?.data?.agentInbox).toHaveLength(1);
         expect((part.functionResponse?.response as any)?.data?.toolId).toBeUndefined();
         expect((part.functionResponse?.response as any)?.data?.applied).toBe(true);
     });
