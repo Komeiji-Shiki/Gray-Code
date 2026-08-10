@@ -129,7 +129,7 @@ jobs:
         with:
           tag_name: nightly
           # name 内嵌真实版本号（如 v1.4.6-nightly.20260809），扩展 nightly 渠道据此解析版本
-          name: Gray Code Nightly v${{ steps.version.outputs.nightly_version }}
+          name: Nightly v${{ steps.version.outputs.nightly_version }}
           body: |
             自动构建：${{ steps.time.outputs.now }}
             Commit: `${{ github.sha }}`
