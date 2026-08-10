@@ -55,6 +55,12 @@
     - 大文件 smoke 测试：executeCommand 15 例（shell 选择/GBK 解码/输出护栏，mock child_process 隔离）、SettingsHandler 14 例（错误包装/分发）、TokenCountService 13 例（估算/路由/网络路径 mock）、historySearch 14 例（虚拟文档/检索/截断），共 56 例全绿，为后续重构建立回归网。
     - fast-tavern 接入主 CI：根 package.json 新增 test:fast-tavern-ts（npm --prefix 自包含 npm ci+test，23/23 通过）与 test:fast-tavern-py（幂等 pip install pytest + pytest，25/25 通过），ci 链末尾追加；nightly/release workflow 均执行 npm run ci 自动覆盖，无需改 workflow。
     - 门禁验证：后端 242 suites/2539 用例（归位合并 3 个重复 suite）、前端 85 文件/846 用例（+59 归位用例）、双 typecheck 全绿。
+  - 模块化摊平重构·第七批（遗留尾巴清理：壳路径直连 + 依赖方向清零 + 跨端 parity 防漂移）：
+    - 壳路径直连：backend/modules 消费方 12 处 import 从 tools 兼容壳改为 core 直连（diffManager/agentMailbox/regexGuard 于 core/services/、promptToolParser 于 core/parsers/），壳保留仅供 webview/测试过渡；backend/modules 下四个壳路径引用清零（含 flow/orchestrator 最后一处）。
+    - modules→tools 反向依赖消除（ToolDeclarationResolver）：新建 `backend/tools/toolDeclarationRegistry.ts` 反向注册表（覆盖式注册幂等 / 懒创建不缓存单例 / clear 供测试隔离），组合根 bootstrap 注册 read_file + media 5 工厂；resolver 排除逻辑、字段替换不对称性（图片工具仅替换 description）、动态 description getter 语义逐字节保留；工厂未注册时回退静态声明。新增契约测试 6 例。遗留观察：resolver 对 hasAvailableSubAgent 的 tools 运行时导入仍存（全局状态查询，非工具工厂），可沿用反向注册模式单独处理。
+    - modules→webview 反向依赖清零（ChatFlowService）：新建 `backend/core/streamAbortBridge.ts`（最小 port 接口，仅暴露后端实际消费的 waitForOldStreamCompletion），webview/stream/StreamRequestHandler 构造时经 setStreamAbortManager 注册同一实例（原 setGlobalInstance 时机不变）；ChatFlowService 仅依赖 core bridge，undefined 分支 no-op 语义保留；backend/modules 全目录 webview import 0 命中；StreamAbortManager 静态 get/setGlobalInstance 保留供测试清理。
+    - 跨端双份实现 parity 防漂移测试：新建 `backend/__tests__/parity/` 三文件（46 断言）——① 可重试错误码偏差集快照（钉住 KNOWN_BACKEND_ONLY=EMPTY_RESPONSE_ERROR / KNOWN_FRONTEND_ONLY=PARSE_ERROR，任一增删偏差集变化即失败）；② MCP codec 表驱动行为比对（两端共享逻辑逐字一致，唯一差异 MCP_SERVER_ID_PATTERN 仅后端有意导出，为三处中最适合立即合并的一项）；③ regexGuard 共享词汇表比对（长度上限 500 与扁平启发式一致；前端为有意简化版，实证 4 误报 2 漏报但未钉住差异，避免阻碍未来修复）。
+    - 门禁验证：后端 246 suites/2591 用例（1 例 branchRace TREE-14 全量并行偶发失败，单独重跑 8/8 全绿，与第二批 usageCache 同类 CPU 抢占竞态，非回归）、前端 85 文件/846 用例、双 typecheck 全绿。
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。

@@ -58,6 +58,15 @@ import {
     getDiffManager
 } from '../tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../tools';
+import { registerToolDeclarationFactory } from '../tools/toolDeclarationRegistry';
+import { createReadFileTool } from '../tools/file/read_file';
+import {
+    createGenerateImageTool,
+    createRemoveBackgroundTool,
+    createCropImageTool,
+    createResizeImageTool,
+    createRotateImageTool
+} from '../tools/media';
 import { createSkillsManager, getSkillsManager } from '../modules/skills';
 import { initMemoryManager } from '../modules/memory';
 import { UpdateChecker } from '../modules/update';
@@ -351,6 +360,17 @@ export class BackendRuntime {
         // 避免同一工具被重复注册导致声明重复/覆盖异常（F11）。
         toolRegistry.clear();
         registerAllTools(toolRegistry);
+
+        // 注册动态工具声明工厂（read_file 多模态描述 / 图片工具参数），
+        // 供 ToolDeclarationResolver 反向获取（modules 层不直接依赖工具工厂实现）。
+        // 幂等：覆盖式注册，重试初始化重复调用安全；工厂懒创建，每次解析重建动态声明，
+        // 语义与改造前直连 createXxxTool 一致。
+        registerToolDeclarationFactory('read_file', (args) => createReadFileTool(args.multimodalEnabled, args.channelType, args.toolMode));
+        registerToolDeclarationFactory('generate_image', (args) => createGenerateImageTool(args.maxBatchTasks, args.maxImagesPerTask, args.paramsConfig));
+        registerToolDeclarationFactory('remove_background', (args) => createRemoveBackgroundTool(args.maxBatchTasks));
+        registerToolDeclarationFactory('crop_image', (args) => createCropImageTool(args.maxBatchTasks));
+        registerToolDeclarationFactory('resize_image', (args) => createResizeImageTool(args.maxBatchTasks));
+        registerToolDeclarationFactory('rotate_image', (args) => createRotateImageTool(args.maxBatchTasks));
     }
 
     /** 11.1. 同步 skills 启用状态（settings 无记录的新 Skill 默认启用） */

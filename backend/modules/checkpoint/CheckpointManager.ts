@@ -19,7 +19,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import type { SettingsManager } from '../settings';
 import type { ConversationManager } from '../conversation';
-import { getDiffManager } from '../../tools/file/diffManager';
+import { getDiffManager } from '../../core/services/diffManager';
 import {
     computeRestorePlan,
     restoreWorkspaceSnapshot

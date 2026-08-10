@@ -14,7 +14,7 @@ import {
     type NoteResult, type RecallResult, type CompressResult,
     type ZoomResult, type NapPrompt, type MemoryConfig,
 } from './types';
-import { validateRegexPattern } from '../../tools/search/regexGuard';
+import { validateRegexPattern } from '../../core/services/regexGuard';
 
 // ─── 工具函数 ─────────────────────────────────────────
 

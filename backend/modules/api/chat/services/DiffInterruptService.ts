@@ -5,7 +5,7 @@
  * 让 ChatHandler 只依赖此服务，而不直接依赖底层工具模块。
  */
 
-import { getDiffManager } from '../../../../tools/file/diffManager';
+import { getDiffManager } from '../../../../core/services/diffManager';
 
 export class DiffInterruptService {
   /** 标记用户发起了新请求，中断之前的 diff 等待 */

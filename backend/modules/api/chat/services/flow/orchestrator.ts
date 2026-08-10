@@ -28,7 +28,7 @@ import type { ToolExecutionFullResult, ToolExecutionProgressEvent } from '../Too
 import type { Content, ContentPart } from '../../../../conversation/types';
 import type { CheckpointRecord } from '../../../../checkpoint';
 import { getGlobalBranchService } from '../../../../conversation/branch';
-import { MAIN_SESSION_RUN_ID } from '../../../../../tools/subagents/agentMailbox';
+import { MAIN_SESSION_RUN_ID } from '../../../../../core/services/agentMailbox';
 import { resolveAndPersistPostToolStopState } from '../postToolStopState';
 import { ChatStreamOutput, ChatStreamCancelledData, ChatFlowContext, ChatFlowDeps, isFirstMessageHistory } from './context';
 

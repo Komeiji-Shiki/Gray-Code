@@ -50,7 +50,7 @@ import { RepeatedCallGuard } from './repeatedCallGuard';
 import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
 import type { DynamicContextDiffBase, DynamicRuntimeContext } from '../../../prompt/PromptManager';
-import { MAIN_SESSION_RUN_ID } from '../../../../tools/subagents/agentMailbox';
+import { MAIN_SESSION_RUN_ID } from '../../../../core/services/agentMailbox';
 import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
