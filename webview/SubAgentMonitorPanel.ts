@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunManifest, type SubAgentRunSnapshot } from '../backend/tools/subagents';
-import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
+import type { SubAgentRunConversationStore } from '../backend/tools/subagents';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
 

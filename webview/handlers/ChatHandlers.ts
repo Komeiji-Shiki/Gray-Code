@@ -6,7 +6,7 @@
 
 import { t } from '../../backend/i18n';
 import { setChatInputFocused } from '../../backend/core/chatFocusGuard';
-import { agentMailbox } from '../../backend/tools/subagents/agentMailbox';
+import { agentMailbox } from '../../backend/tools/subagents';
 import {
     BranchGraphRepository,
     BranchService,

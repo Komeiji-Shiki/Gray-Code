@@ -15,7 +15,7 @@ import type { McpManager } from '../backend/modules/mcp';
 import type { DependencyManager } from '../backend/modules/dependencies';
 import type { DiffStorageManager } from '../backend/modules/conversation';
 import type { ToolRegistry } from '../backend/tools';
-import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
+import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications';
 import type { WebviewClientId } from './runtime/WebviewClientRegistry';
 import type { UpdateChecker } from '../backend/modules/update';
 import type { StreamAbortManager } from './stream/StreamAbortManager';

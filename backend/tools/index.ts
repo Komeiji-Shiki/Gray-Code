@@ -47,6 +47,7 @@ export * from './utils';
 
 // 补充导出（这些符号未随对应目录 index 导出）
 export { getPlanSourceStatusFromContent } from './plan/sourceArtifactSection';
+export type { PlanSourceStatusResult } from './plan/sourceArtifactSection';
 export type { SubAgentRunConversationStore } from './subagents/runEventBus';
 export { resolveMainChatDiffViewColumn } from './file/diffViewColumn';
 

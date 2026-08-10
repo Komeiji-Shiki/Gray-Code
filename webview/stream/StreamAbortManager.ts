@@ -16,9 +16,9 @@
 
 import type * as vscode from 'vscode';
 import type { ConversationRunScope, IRunController, RunControllerSnapshot } from '../../backend/core/RunController';
-import { subAgentRunController } from '../../backend/tools/subagents/runController';
-import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
-import { registerDetachedSubAgentTask } from '../../backend/tools/subagents/detachedTaskBridge';
+import { subAgentRunController } from '../../backend/tools/subagents';
+import { subAgentRunEventBus } from '../../backend/tools/subagents';
+import { registerDetachedSubAgentTask } from '../../backend/tools/subagents';
 import { AbortControllerRegistry } from './abort/AbortControllerRegistry';
 import { RetiredStreamChain } from './abort/RetiredStreamChain';
 import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './abort/RetiredStreamChain';

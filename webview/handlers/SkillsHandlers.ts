@@ -7,8 +7,8 @@ import * as fs from 'fs';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { getSkillsManager } from '../../backend/modules/skills';
-import { toolRegistry } from '../../backend/tools/ToolRegistry';
-import type { SkillConfigItem } from '../../backend/modules/settings/types';
+import { toolRegistry } from '../../backend/tools';
+import type { SkillConfigItem } from '../../backend/modules/settings';
 
 // ========== Skills 类型 ==========
 

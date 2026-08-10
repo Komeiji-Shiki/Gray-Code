@@ -8,7 +8,7 @@
 import { t } from '../../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../../types';
 import { validateFileInWorkspace, checkFileExists } from '../../utils/WorkspaceUtils';
-import type { PinnedFileItem } from '../../../backend/modules/settings/types';
+import type { PinnedFileItem } from '../../../backend/modules/settings';
 
 // ========== 固定文件管理 ==========
 

@@ -60,8 +60,12 @@ export {
     type SubAgentRunStatus,
     type SubAgentRunManifest,
     type SubAgentRunContentWindow,
-    type SubAgentRunContentWindowOptions
+    type SubAgentRunContentWindowOptions,
+    type SubAgentRunConversationStore
 } from './runEventBus';
+
+// 分离转后台任务桥
+export { registerDetachedSubAgentTask } from './detachedTaskBridge';
 export { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
 export {
     subAgentRunController,

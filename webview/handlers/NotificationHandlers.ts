@@ -2,7 +2,7 @@ import type {
   AgentStopNotificationPayload,
   PendingAgentActionType,
   WindowsNotificationPreviewPayload
-} from '../../backend/modules/notifications/types'
+} from '../../backend/modules/notifications'
 import type { MessageHandler } from '../types'
 import { Logger } from '../../backend/core/logger'
 import * as vscode from 'vscode'

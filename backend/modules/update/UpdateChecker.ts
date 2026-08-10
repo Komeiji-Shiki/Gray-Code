@@ -16,7 +16,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { createProxyFetch } from '../channel/proxyFetch';
+import { createProxyFetch } from '../channel';
 
 /** GitHub 仓库（owner/repo） */
 export const UPDATE_REPO = 'Komeiji-Shiki/Gray-Code';

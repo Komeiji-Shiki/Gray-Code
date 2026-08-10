@@ -8,6 +8,10 @@ import type { Tool, ToolRegistration } from '../types';
 export { registerCreatePlan } from './create_plan';
 export { registerUpdatePlan } from './update_plan';
 
+// 计划内容辅助（todoListSection）
+export { extractPlanTodoListFromContent } from './todoListSection';
+export type { PlanTodoItem } from './todoListSection';
+
 /**
  * 获取所有 Plan 工具的注册函数
  */

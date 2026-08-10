@@ -5,9 +5,9 @@
  * 参考Gemini 流式响应格式设计
  */
 
-import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../conversation/types';
+import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../conversation';
 import type { StreamChunk, StreamUsageMetadata } from './types';
-import type { ToolMode } from '../config/configs/base';
+import type { ToolMode } from '../config';
 import { IncrementalPromptToolParser } from '../../tools/promptToolParser';
 
 interface BuildContentOptions {

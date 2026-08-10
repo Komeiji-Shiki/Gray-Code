@@ -18,7 +18,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { ConversationManager } from '../conversation';
 import type {
     BatchCheckpointDeleteItem,
     BatchCheckpointDeleteResult,

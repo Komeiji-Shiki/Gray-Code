@@ -6,12 +6,12 @@
  * 「真实工具名 ∩ 配置集合」判定同源（配置缺失时回退默认列表）。
  */
 
-import { DEFAULT_CHECKPOINT_CONFIG } from '../../backend/modules/settings/checkpointTypes';
-import type { ContentPart } from '../../backend/modules/conversation/types';
+import { DEFAULT_CHECKPOINT_CONFIG } from '../../backend/modules/settings';
+import type { ContentPart } from '../../backend/modules/conversation';
 import type {
     ConversationBranchGraph,
     ConversationBranchNode,
-} from '../../backend/modules/conversation/branch/types';
+} from '../../backend/modules/conversation/branch';
 
 // ==================== BCP-04：写工具判据（决策 1） ====================
 

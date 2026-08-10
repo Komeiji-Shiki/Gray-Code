@@ -7,7 +7,7 @@
  */
 
 import type { PromptMode, SystemPromptConfig } from './types';
-import { MEMORY_TOOL_NAMES } from '../memory/types';
+import { MEMORY_TOOL_NAMES } from '../memory';
 
 /**
  * 默认静态系统提示词模板

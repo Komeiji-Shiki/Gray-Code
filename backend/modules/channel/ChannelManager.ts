@@ -5,11 +5,11 @@
  */
 
 import { t } from '../../i18n';
-import type { ConfigManager } from '../config/ConfigManager';
+import type { ConfigManager } from '../config';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
-import type { SettingsManager } from '../settings/SettingsManager';
-import type { ResolvedPromptModeSnapshot } from '../settings/types';
-import type { McpManager } from '../mcp/McpManager';
+import type { SettingsManager } from '../settings';
+import type { ResolvedPromptModeSnapshot } from '../settings';
+import type { McpManager } from '../mcp';
 import { formatterRegistry } from './formatters';
 import { ToolDeclarationResolver } from './ToolDeclarationResolver';
 import type { ToolDeclaration } from '../../tools/types';
@@ -20,7 +20,7 @@ import type {
     HttpRequestOptions,
     HttpResponse
 } from './types';
-import type { Content } from '../conversation/types';
+import type { Content } from '../conversation';
 import { ChannelError, ErrorType } from './types';
 import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';

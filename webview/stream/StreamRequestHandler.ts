@@ -6,12 +6,12 @@
 
 import type * as vscode from 'vscode';
 import type { ChatHandler } from '../../backend/modules/api/chat';
-import type { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
+import type { ConversationManager } from '../../backend/modules/conversation';
 import { StreamAbortManager, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './StreamAbortManager';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
-import { getDiffManager } from '../../backend/tools/file/diffManager';
-import { ChannelError, ErrorType } from '../../backend/modules/channel/types';
+import { getDiffManager } from '../../backend/tools';
+import { ChannelError, ErrorType } from '../../backend/modules/channel';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;

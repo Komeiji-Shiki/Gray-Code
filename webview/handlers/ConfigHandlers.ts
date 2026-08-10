@@ -4,13 +4,13 @@
 
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
-import type { CreateConfigInput, UpdateConfigInput } from '../../backend/modules/config/types';
+import type { CreateConfigInput, UpdateConfigInput } from '../../backend/modules/config';
 import type {
   AddModelsRequest,
   GetModelsRequest,
   RemoveModelRequest,
   SetActiveModelRequest,
-} from '../../backend/modules/api/models/types';
+} from '../../backend/modules/api/models';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);

@@ -5,7 +5,7 @@
  * 以支持多条 user/model 临时上下文消息、chat-history 前后位置和 preserve 动态快照。
  */
 
-import type { Content } from '../conversation/types';
+import type { Content } from '../conversation';
 
 export type PromptContextCacheRole = 'user' | 'model';
 

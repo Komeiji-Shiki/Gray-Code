@@ -17,8 +17,8 @@ import { t } from '../../i18n';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import type { SettingsManager } from '../settings/SettingsManager';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { SettingsManager } from '../settings';
+import type { ConversationManager } from '../conversation';
 import { getDiffManager } from '../../tools/file/diffManager';
 import {
     computeRestorePlan,

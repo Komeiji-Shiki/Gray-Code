@@ -15,8 +15,8 @@
  */
 
 import type { MessageHandler, HandlerContext } from '../types';
-import { aggregateUsageStats, type UsageStatsResult } from '../../backend/modules/conversation/usageStats';
-import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modules/conversation/usageCache';
+import { aggregateUsageStats, type UsageStatsResult } from '../../backend/modules/conversation';
+import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modules/conversation';
 
 /** 结果缓存 TTL（毫秒）：5 分钟内重复打开直接命中，手动刷新强制重算 */
 const CACHE_TTL_MS = 5 * 60 * 1000;

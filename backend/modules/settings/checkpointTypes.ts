@@ -4,11 +4,11 @@
  * 从 types.ts 拆分而来：types.ts 通过 `export *` 重导出，旧引用路径保持兼容。
  */
 
-import type { CheckpointExclusionConfig } from '../checkpoint/types';
+import type { CheckpointExclusionConfig } from '../checkpoint';
 import {
     DEFAULT_ENABLED_PROFILES,
     DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES
-} from '../checkpoint/CheckpointExclusionProfiles';
+} from '../checkpoint';
 
 /**
  * 消息类型存档点配置

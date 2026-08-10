@@ -4,8 +4,8 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
-import { subAgentRunController } from '../../backend/tools/subagents/runController';
-import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
+import { subAgentRunController } from '../../backend/tools/subagents';
+import { subAgentRunEventBus } from '../../backend/tools/subagents';
 import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../stream/StreamAbortManager';
 import type { HandlerContext, MessageHandler } from '../types';
 

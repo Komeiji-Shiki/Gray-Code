@@ -8,11 +8,11 @@
 
 import type { ToolDeclaration } from '../../tools/types';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
-import type { SettingsManager } from '../settings/SettingsManager';
-import { isSearchInFilesReplaceForbidden } from '../settings/modeToolsPolicy';
-import type { ResolvedPromptModeSnapshot } from '../settings/types';
-import type { McpManager } from '../mcp/McpManager';
-import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
+import type { SettingsManager } from '../settings';
+import { isSearchInFilesReplaceForbidden } from '../settings';
+import type { ResolvedPromptModeSnapshot } from '../settings';
+import type { McpManager } from '../mcp';
+import { encodeMcpToolName } from '../mcp';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
 import { hasAvailableSubAgent } from '../../tools/subagents';

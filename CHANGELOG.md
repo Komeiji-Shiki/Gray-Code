@@ -32,6 +32,13 @@
     - `subagents/executor.ts`（2,070 行）拆分为 `subagents/executor/` 十二文件（runLoop 1171 等），主文件降为 26 行壳；`subagents/runEventBus.ts`（1,118 行）拆分为 `subagents/eventBus/` 六文件（发布订阅核心/转录/持久化），主文件降为 22 行壳；事件协议（前端 subagentMonitor 契约）逐字保留，无循环 import。
     - `webview/stream/StreamAbortManager.ts`（520 行）拆出 `stream/abort/AbortControllerRegistry.ts`（234 行）与 `RetiredStreamChain.ts`（123 行，OLD_STREAM_EXIT_WAIT_TIMEOUT_MS 随迁），主文件降为 345 行（等待语义/IRunController 适配层/detachActiveSubAgents 保留，后者第五批处理）；`ChatHandlers↔BranchHandlers` 横向依赖解除（isConversationStreaming/BRANCH_BUSY_STREAMING_MESSAGE 外移 `handlers/streamGuard.ts`）。
     - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿（全量门禁改为主模型串行执行，避免多代理并行跑全量测试抢 CPU）。
+  - 模块化摊平重构·第四批（frontend 大文件拆分 + 消费方 import 穿透收敛，纯重构行为零变化）：
+    - `stores/chat/messageActions.ts`（1,693 行）拆分为 `messageActions/` 五文件（sendMessageFlow 572/retryFlows 738/deleteFlows 224/summaryFlows 173/interruptNotices 61），主文件降为 57 行壳；40 个代码块逐字迁移，26 个导出符号保留。
+    - `stores/chat/streamChunkHandlers.ts`（1,598 行）拆分为 `chunkHandlers/` 四文件（chunkText 484/chunkTools 636/chunkTerminal 405/chunkSummary 127），主文件降为 35 行壳；模块级缓存（fcSeenBodies/smoothBaseCache/activeFactor 等）单例随迁无复制；30/30 代码块比对通过。
+    - `components/message/MessageList.vue`（2,414 行）script 内重逻辑 composable 化：抽出 useBuildPanel（289）/useTodoPanel（241）/useCheckpointRestoreFlow（433）/useVirtualMessageWindow（456），组件降为 1,327 行，模板零改动；`mediumTrimmedByMessageId` 状态外移 `mediumTrimState.ts`（解决 .ts 文件 import .vue 具名导出的类型解析问题，MessageRenderBlock.vue 保留 re-export）。
+    - `services/soundCues.ts`（884 行）拆分为 soundCueSettings（338，类型/默认值/归一化）+ soundAudioEngine（321，AudioContext/解码缓存）+ soundPlayback（256，playCue 编排/冷却/槽位），主文件降为 37 行壳；17 个导出符号保留，单例状态无复制。
+    - 消费方 import 穿透收敛（依据 08-cross-layer 清单）：webview→modules 25 处、webview→tools 8 处、modules 跨模块 24 文件/51 条 import、core→modules 1 处、tools→modules 1 处全部改走门面；补门面导出（settings 聚合 types、conversation +UsageMetadata/getPendingApprovalGate、api +CheckpointService、tools/subagents +SubAgentRunConversationStore 等，只加不删）。
+    - 门禁验证：后端 245 suites/2542 用例、前端 82 文件/787 用例、双 typecheck 全绿；子代理改为只跑定向测试，全量门禁由主模型串行执行。
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。

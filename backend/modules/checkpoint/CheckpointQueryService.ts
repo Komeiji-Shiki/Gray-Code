@@ -13,7 +13,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { ConversationManager } from '../conversation';
 import { Logger } from '../../core/logger';
 import type { CheckpointRecord } from './CheckpointManager';
 import type { CheckpointSummary } from './types';

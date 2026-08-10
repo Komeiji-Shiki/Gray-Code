@@ -16,8 +16,8 @@
 import { t } from '../../i18n';
 import * as vscode from 'vscode';
 import * as path from 'path';
-import type { SettingsManager } from '../settings/SettingsManager';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { SettingsManager } from '../settings';
+import type { ConversationManager } from '../conversation';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
 import { DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES, DEFAULT_ENABLED_PROFILES, buildIgnoreSnapshot } from './CheckpointExclusionProfiles';
 import { CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME } from './CheckpointManifestRepository';
@@ -38,7 +38,7 @@ import {
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 import { hashFileStreaming } from './fileHashing';
 import { Logger } from '../../core/logger';
-import type { CheckpointConfig } from '../settings/types';
+import type { CheckpointConfig } from '../settings';
 import type { CheckpointManifestRepository } from './CheckpointManifestRepository';
 import { isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import type { CheckpointQueryService } from './CheckpointQueryService';

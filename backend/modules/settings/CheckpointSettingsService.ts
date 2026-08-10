@@ -7,7 +7,7 @@
 
 import type { CheckpointConfig } from './types';
 import { t } from '../../i18n';
-import { validateCustomExclusionPatterns, DEFAULT_EXCLUSION_PROFILES } from '../checkpoint/CheckpointExclusionProfiles';
+import { validateCustomExclusionPatterns, DEFAULT_EXCLUSION_PROFILES } from '../checkpoint';
 import { SettingsCore, deepMergeToolsConfig } from './SettingsCore';
 import { DEFAULT_CHECKPOINT_CONFIG } from './types';
 

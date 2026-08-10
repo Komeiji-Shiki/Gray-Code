@@ -12,8 +12,8 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { subAgentRunController } from '../../backend/tools/subagents/runController';
-import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
+import { subAgentRunController } from '../../backend/tools/subagents';
+import { subAgentRunEventBus } from '../../backend/tools/subagents';
 import type { HandlerContext } from '../types';
 
 /**

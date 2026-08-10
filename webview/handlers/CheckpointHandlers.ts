@@ -5,18 +5,18 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
-import { previewExclusions as runExclusionPreview } from '../../backend/modules/checkpoint/CheckpointSnapshotBuilder';
-import { createRuntimeWorkspaceRoots } from '../../backend/modules/checkpoint/CheckpointWorkspace';
+import { previewExclusions as runExclusionPreview } from '../../backend/modules/checkpoint';
+import { createRuntimeWorkspaceRoots } from '../../backend/modules/checkpoint';
 import { cancelStreamAndSubAgents, detectDirtyFilesInWorkspace } from '../utils/WorkspaceRestoreGuard';
 import { getGlobalBranchService } from '../../backend/modules/conversation/branch';
 import {
     DEFAULT_ENABLED_PROFILES,
     DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
     DEFAULT_EXCLUSION_PROFILES
-} from '../../backend/modules/checkpoint/CheckpointExclusionProfiles';
+} from '../../backend/modules/checkpoint';
 import type { HandlerContext, MessageHandler } from '../types';
-import type { CheckpointConfig } from '../../backend/modules/settings/types';
-import type { CheckpointExclusionConfig } from '../../backend/modules/checkpoint/types';
+import type { CheckpointConfig } from '../../backend/modules/settings';
+import type { CheckpointExclusionConfig } from '../../backend/modules/checkpoint';
 
 interface HandlerError {
   code?: string;

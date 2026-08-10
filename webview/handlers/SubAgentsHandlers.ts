@@ -4,8 +4,8 @@
 
 import { t } from '../../backend/i18n';
 import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgentRunEventBus, subAgentConcurrencyLimiter, SUB_AGENT_PRESETS } from '../../backend/tools/subagents';
-import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation/TranscriptMutation';
-import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
+import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation';
+import type { SubAgentConfigItem } from '../../backend/modules/settings';
 import type { HandlerContext, MessageHandler } from '../types';
 
 const MUTATION_RESPONSE_WINDOW_LIMIT = 20;

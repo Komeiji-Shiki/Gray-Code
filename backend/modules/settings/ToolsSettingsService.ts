@@ -34,7 +34,7 @@ import {
     getDefaultExecuteCommandConfig,
     DEFAULT_MAX_TOOL_ITERATIONS
 } from './types';
-import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
+import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory';
 import { SettingsCore } from './SettingsCore';
 import { MemorySettingsService } from './MemorySettingsService';
 
