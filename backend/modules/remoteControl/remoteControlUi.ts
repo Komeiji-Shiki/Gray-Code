@@ -1,4 +1,4 @@
-/**
+﻿/**
  * remoteControlUi.ts
  *
  * 远程控制移动端 UI 入口（V3 重构版）。
@@ -2320,14 +2320,14 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
 <body>
 <div id="app">
   <header>
-    <button class="icon-btn" id="btn-drawer" aria-label="${uiLang === 'en' ? 'conversations' : '会话列表'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>'}</button>
+    <button class="icon-btn" id="btn-drawer" aria-label="${uiLang === 'en' ? 'conversations' : '会话列表'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/></svg>'}</button>
     <div class="title-wrap">
       <h1 id="title">GrayCode</h1>
       <div class="sub"><span class="dot" id="dot"></span><span id="status">&hellip;</span><span class="ws" id="ws-name" hidden></span></div>
     </div>
-    <button class="icon-btn" id="btn-files" aria-label="${t('btnFiles')}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
-    <button class="icon-btn" id="btn-settings" aria-label="${t('btnSettings')}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.1-1.2l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.06-1.2L16.2 3h-4l-.6 2.54a7 7 0 0 0-2.06 1.2l-2.35-.95-2 3.46 2 1.55a7 7 0 0 0 0 2.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.06 1.2L12.2 21h4l.6-2.54a7 7 0 0 0 2.06-1.2l2.35.95 2-3.46-2-1.55c.06-.4.1-.8.1-1.2z"/></svg>'}</button>
-    <button class="icon-btn" id="btn-refresh" aria-label="${uiLang === 'en' ? 'refresh' : '刷新'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>'}</button>
+    <button class="icon-btn" id="btn-files" aria-label="${t('btnFiles')}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
+    <button class="icon-btn" id="btn-settings" aria-label="${t('btnSettings')}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.1-1.2l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.06-1.2L16.2 3h-4l-.6 2.54a7 7 0 0 0-2.06 1.2l-2.35-.95-2 3.46 2 1.55a7 7 0 0 0 0 2.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.06 1.2L12.2 21h4l.6-2.54a7 7 0 0 0 2.06-1.2l2.35.95 2-3.46-2-1.55c.06-.4.1-.8.1-1.2z"/></svg>'}</button>
+    <button class="icon-btn" id="btn-refresh" aria-label="${uiLang === 'en' ? 'refresh' : '刷新'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>'}</button>
   </header>
 
   <!-- 会话页签条：桌面端 ConversationTabs 同款；全部页签可关闭（含未落库新对话） -->
@@ -2339,7 +2339,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
     <aside class="drawer-panel">
       <div class="drawer-head">
         <span class="drawer-title" data-i18n="conversations"></span>
-        <button class="icon-btn" id="btn-new" aria-label="${uiLang === 'en' ? 'new chat' : '新建会话'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
+        <button class="icon-btn" id="btn-new" aria-label="${uiLang === 'en' ? 'new chat' : '新建会话'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
       </div>
       <div class="drawer-list" id="drawer-list"></div>
     </aside>
@@ -2349,7 +2349,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
     <section id="view-chat" class="view">
       <div id="messages" hidden></div>
       <div id="empty" hidden>
-        <div class="big">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.5 3 2 7.03 2 12c0 2.6 1.27 4.9 3.27 6.47L4.3 21.6l3.6-1.2c1.3.39 2.7.6 4.1.6 5.5 0 10-4.03 10-9s-4.5-9-10-9z"/></svg>'}</div>
+        <div class="big">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.5 3 2 7.03 2 12c0 2.6 1.27 4.9 3.27 6.47L4.3 21.6l3.6-1.2c1.3.39 2.7.6 4.1.6 5.5 0 10-4.03 10-9s-4.5-9-10-9z"/></svg>'}</div>
         <div id="empty-text"></div>
       </div>
       <div id="confirm-bar"></div>
@@ -2367,7 +2367,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
   <!-- 文件面板（全屏，替换主视图；自选工作区 / 文件树 / 编辑器） -->
   <div id="panel-files" hidden>
     <div class="panel-head">
-      <button class="icon-btn panel-back-btn" id="btn-files-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
+      <button class="icon-btn panel-back-btn" id="btn-files-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
       <span class="panel-title" data-i18n="tabFiles"></span>
     </div>
     <div class="panel-body" style="flex-direction:column;">
@@ -2377,14 +2377,14 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
           <div class="ws-sub" id="ws-bar-file"></div>
         </div>
         <button class="mini-btn" id="btn-ws-switch"></button>
-        <button class="mini-btn" id="btn-ws-add">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}<span data-i18n="addWorkspace"></span></button>
+        <button class="mini-btn" id="btn-ws-add">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}<span data-i18n="addWorkspace"></span></button>
       </div>
       <div id="file-tree"></div>
       <div id="file-viewer" hidden>
         <div id="file-viewer-head">
-          <button class="icon-btn" id="btn-file-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
+          <button class="icon-btn" id="btn-file-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
           <span class="fpath" id="file-viewer-path"></span>
-          <button class="icon-btn" id="btn-open-desktop" aria-label="${uiLang === 'en' ? 'open on desktop' : '在桌面端打开'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v10H4V5zm2 12h12v2H6v-2z"/></svg>'}</button>
+          <button class="icon-btn" id="btn-open-desktop" aria-label="${uiLang === 'en' ? 'open on desktop' : '在桌面端打开'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v10H4V5zm2 12h12v2H6v-2z"/></svg>'}</button>
         </div>
         <textarea id="file-editor" spellcheck="false" readonly></textarea>
         <div id="file-viewer-foot">
@@ -2398,7 +2398,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
   <!-- 设置面板（全屏，替换主视图；纵向分类导航 + 分类卡片） -->
   <div id="panel-settings" hidden>
     <div class="panel-head">
-      <button class="icon-btn panel-back-btn" id="btn-settings-back" aria-label="${t('settingsClose')}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
+      <button class="icon-btn panel-back-btn" id="btn-settings-back" aria-label="${t('settingsClose')}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
       <span class="panel-title" data-i18n="tabSettings"></span>
     </div>
     <div class="panel-body">
@@ -2418,17 +2418,17 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
       <div class="head">
         <b id="sheet-title">&hellip;</b>
         <span style="display:flex;gap:2px;">
-          <button class="icon-btn" id="btn-sheet-browse" aria-label="${uiLang === 'en' ? 'browse' : '浏览目录'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
-          <button class="icon-btn" id="btn-sheet-add" aria-label="${uiLang === 'en' ? 'add workspace' : '新增工作区'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
+          <button class="icon-btn" id="btn-sheet-browse" aria-label="${uiLang === 'en' ? 'browse' : '浏览目录'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
+          <button class="icon-btn" id="btn-sheet-add" aria-label="${uiLang === 'en' ? 'add workspace' : '新增工作区'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
         </span>
       </div>
       <div class="list" id="sheet-list"></div>
     </div>
     <div id="sheet-browse-mode" hidden>
       <div class="head">
-        <button class="icon-btn" id="btn-browse-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
+        <button class="icon-btn" id="btn-browse-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
         <span class="fpath" id="browse-path"></span>
-        <button class="icon-btn" id="btn-browse-root" aria-label="${uiLang === 'en' ? 'drives' : '全部磁盘'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
+        <button class="icon-btn" id="btn-browse-root" aria-label="${uiLang === 'en' ? 'drives' : '全部磁盘'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
       </div>
       <div class="list" id="browse-list"></div>
       <div class="sheet-actions">
@@ -2439,7 +2439,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
     <div id="sheet-model-mode" hidden>
       <div class="head">
         <b id="sheet-model-title">&hellip;</b>
-        <button class="icon-btn" id="btn-sheet-model-close" aria-label="${uiLang === 'en' ? 'close' : '关闭'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
+        <button class="icon-btn" id="btn-sheet-model-close" aria-label="${uiLang === 'en' ? 'close' : '关闭'}">${'<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
       </div>
       <div class="list" id="model-list"></div>
     </div>

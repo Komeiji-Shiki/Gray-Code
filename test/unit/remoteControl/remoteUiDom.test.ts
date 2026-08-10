@@ -313,6 +313,25 @@ class Fixture {
         }
         return respond({ ok: true });
       }
+      case '/api/models-add': {
+        const tgt = this.configDetails[body && body.configId];
+        if (tgt && Array.isArray(tgt.models)) {
+          tgt.models.push(...((body && body.models) || []));
+        }
+        return respond({ ok: true });
+      }
+      case '/api/models-remove': {
+        const tgt = this.configDetails[body && body.configId];
+        if (tgt && Array.isArray(tgt.models)) {
+          tgt.models = tgt.models.filter((m: any) => m.id !== (body && body.modelId));
+        }
+        return respond({ ok: true });
+      }
+      case '/api/model': {
+        const tgt = this.configDetails[body && body.configId];
+        if (tgt) tgt.model = body && body.modelId;
+        return respond({ ok: true });
+      }
       case '/api/send':
         return respond({ ok: true, conversationId: (body && body.conversationId) || 'conv_new', streamId: 'remote_1' });
       default:
@@ -874,5 +893,69 @@ describe('remote UI DOM (jsdom)', () => {
     await flush(3);
     f.errors.length = 0;
     expect(f.errors).toEqual([]);
+  });
+
+  test('models dialog: force-reloads model list on open, add and remove stay in sync', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    // 打开模型管理对话框
+    let modelsBtn: any = null;
+    f.document.querySelectorAll('#settings-sections .cfg-actions .mini-btn').forEach((b: any) => {
+      if (b.textContent === '模型管理' && !modelsBtn) modelsBtn = b;
+    });
+    expect(modelsBtn).not.toBeNull();
+    modelsBtn.click();
+    await flush(8);
+    const modal = f.document.querySelector('#modal');
+    expect(modal.classList.contains('open')).toBe(true);
+    const list = f.document.querySelector('#modal .model-list');
+    expect(list).not.toBeNull();
+    let names = Array.from(list.querySelectorAll('.name')).map((e: any) => e.textContent);
+    expect(names).toContain('Model 1');
+    expect(names).toContain('Model 2');
+    // 打开即触发强制重拉（modelsLoaded 缓存不得短路）
+    const getCalls = f.fetches.filter((x) => x.url.startsWith('/api/config?configId=c1'));
+    expect(getCalls.length).toBeGreaterThanOrEqual(2);
+    // 添加模型 → POST /api/models-add → 列表刷新显示新模型
+    const inputs = f.document.querySelectorAll('#modal .chip-input input');
+    inputs[0].value = 'gpt-new';
+    inputs[1].value = 'New Model';
+    let addBtn: any = null;
+    f.document.querySelectorAll('#modal .chip-input .mini-btn').forEach((b: any) => {
+      if (b.textContent === '添加模型' && !addBtn) addBtn = b;
+    });
+    expect(addBtn).not.toBeNull();
+    addBtn.click();
+    await flush(10);
+    const addCall = f.fetches.find((x) => x.url === '/api/models-add' && x.method === 'POST');
+    expect(addCall).toBeDefined();
+    expect(addCall!.body).toEqual({ configId: 'c1', models: [{ id: 'gpt-new', name: 'New Model' }] });
+    names = Array.from(list.querySelectorAll('.name')).map((e: any) => e.textContent);
+    expect(names).toContain('New Model');
+    // 删除模型 → POST /api/models-remove → 列表移除
+    const removeBtn: any = Array.from(f.document.querySelectorAll('#modal .model-list .mini-btn')).find((b: any) => {
+      const row = b.closest('.item-row');
+      return row && row.querySelector('.name').textContent === 'Model 2';
+    });
+    expect(removeBtn).not.toBeNull();
+    removeBtn.click();
+    await flush(10);
+    const rmCall = f.fetches.find((x) => x.url === '/api/models-remove' && x.method === 'POST');
+    expect(rmCall).toBeDefined();
+    expect(rmCall!.body).toEqual({ configId: 'c1', modelId: 'm2' });
+    names = Array.from(list.querySelectorAll('.name')).map((e: any) => e.textContent);
+    expect(names).not.toContain('Model 2');
+    expect(f.errors).toEqual([]);
+  });
+
+  test('inline SVG icons carry explicit width/height fallback attributes', async () => {
+    const f = makeFixture();
+    await flush();
+    const svgs = f.document.querySelectorAll('#btn-new svg, #btn-ws-add svg, #btn-settings-back svg, #btn-files-back svg, #btn-drawer svg, #btn-settings svg, #btn-refresh svg');
+    expect(svgs.length).toBeGreaterThanOrEqual(7);
+    svgs.forEach((s: any) => {
+      expect(s.getAttribute('width')).not.toBeNull();
+      expect(s.getAttribute('height')).not.toBeNull();
+    });
   });
 });

@@ -176,7 +176,7 @@ function icon(name, cls) {
   var paths = ICONS[name];
   if (!paths) return '';
   var c = cls ? ' class="' + cls + '"' : '';
-  return '<svg' + c + ' viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + paths + '</svg>';
+  return '<svg' + c + ' width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' + paths + '</svg>';
 }
 var ICONS = {
   menu: '<path d="M3 6h18v2H3V6zm0 5h18v2H3v-2zm0 5h18v2H3v-2z"/>',
@@ -238,8 +238,8 @@ var ICONS = {
   list: '<path d="M4 6h2v2H4V6zm4 0h12v2H8V6zM4 11h2v2H4v-2zm4 0h12v2H8v-2zM4 16h2v2H4v-2zm4 0h12v2H8v-2z"/>',
   network: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm8 10h-2.6A14.5 14.5 0 0 1 15.4 5.6 8 8 0 0 1 19 12zM12 20a12.5 12.5 0 0 1-2.3-6h4.6A12.5 12.5 0 0 1 12 20zm-2.3-8a12.5 12.5 0 0 1 2.3-6 12.5 12.5 0 0 1 2.3 6H9.7zM8.6 5.6A14.5 14.5 0 0 1 7.6 12H5a8 8 0 0 1 3.6-6.4zM5 14h2.6a14.5 14.5 0 0 0 1 6.4A8 8 0 0 1 5 14zm10.4 6.4a14.5 14.5 0 0 0 1-6.4H19a8 8 0 0 1-3.6 6.4z"/>'
 };
-var ICON_SEND = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>';
-var ICON_STOP = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>';
+var ICON_SEND = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>';
+var ICON_STOP = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>';
 
 /* ============================================================
    4. 状态
@@ -1899,9 +1899,12 @@ function loadConfigs() {
   });
 }
 var modelsLoaded = {};
-function loadConfigModels(configId) {
+function loadConfigModels(configId, onDone) {
   if (!configId) return;
-  if (modelsLoaded[configId]) return;
+  if (modelsLoaded[configId]) {
+    if (onDone) onDone();
+    return;
+  }
   modelsLoaded[configId] = true;
   api('/api/config?configId=' + encodeURIComponent(configId))
     .then(function (data) {
@@ -1910,10 +1913,18 @@ function loadConfigModels(configId) {
       S.configModels[configId] = models;
       syncThinkingFromConfig(configId, cfg);
       renderComposerMeta();
+      if (onDone) onDone();
     })
     .catch(function () {
       modelsLoaded[configId] = false;
+      if (onDone) onDone();
     });
+}
+/** 强制重新拉取某渠道模型列表（模型管理对话框增删后用） */
+function reloadConfigModels(configId, onDone) {
+  if (!configId) return;
+  delete modelsLoaded[configId];
+  loadConfigModels(configId, onDone);
 }
 function syncThinkingState() {
   if (!S.activeChannelId) return;
@@ -4826,9 +4837,17 @@ function openModelsDialog(cfg) {
       rmBtn.addEventListener('click', function () {
         post('/api/models-remove', { configId: cfg.id, modelId: m.id }).then(function () {
           toast(t('removed'));
-          loadConfigModels(cfg.id);
-          renderModels();
-          loadConfigs();
+          /* 强制重拉模型列表（modelsLoaded 缓存会短路旧逻辑导致列表不刷新） */
+          reloadConfigModels(cfg.id, function () {
+            loadConfigs().then(function () {
+              var fresh = findConfig(cfg.id);
+              if (fresh) {
+                curId = fresh.model || '';
+                cfg.model = fresh.model;
+              }
+              renderModels();
+            }).catch(function () { renderModels(); });
+          });
         }).catch(function (err) {
           toast(t('settingsFailed') + ': ' + (err.message || ''));
         });
@@ -4838,6 +4857,8 @@ function openModelsDialog(cfg) {
     });
   }
   renderModels();
+  /* 打开对话框时强制刷新模型列表，避免首次打开显示空列表/旧缓存 */
+  reloadConfigModels(cfg.id, function () { renderModels(); });
   var addRow = el('div', { class: 'chip-input' });
   var idInput = el('input', { type: 'text', placeholder: t('modelIdHint') });
   var nameInput = el('input', { type: 'text', placeholder: t('modelNameHint') });
@@ -4849,8 +4870,7 @@ function openModelsDialog(cfg) {
       toast(t('modelAdded'));
       idInput.value = '';
       nameInput.value = '';
-      loadConfigModels(cfg.id);
-      renderModels();
+      reloadConfigModels(cfg.id, function () { renderModels(); });
       loadConfigs();
     }).catch(function (err) {
       toast(t('settingsFailed') + ': ' + (err.message || ''));
