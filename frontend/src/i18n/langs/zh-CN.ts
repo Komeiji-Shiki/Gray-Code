@@ -99,7 +99,8 @@ const zhCN = {
             viewPage: '前往 GitHub 查看',
             downloading: '正在下载并安装，请稍候…',
             installed: '安装完成，重新加载窗口后生效。',
-            failed: '下载或安装失败'
+            failed: '下载或安装失败',
+            nightlyBadge: 'Nightly 预览版'
         },
         attachment: {
             preview: '预览',
@@ -1722,7 +1723,7 @@ const zhCN = {
                     command: '命令',
                     commandPlaceholder: '例如：npx, python, node',
                     args: '参数',
-                    argsPlaceholder: '空格分隔，例如：-m mcp_server',
+                    argsPlaceholder: 'JSON 字符串数组（仍兼容空格分隔），例如：["-m","mcp server"]',
                     env: '环境变量 (JSON)',
                     envPlaceholder: '{"KEY": "value"}',
                     url: 'URL',
@@ -1747,6 +1748,7 @@ const zhCN = {
                     commandRequired: '请输入命令',
                     urlRequired: '请输入 URL',
                     invalidJson: '请输入有效的 JSON 对象',
+                    invalidArgsJsonArray: '请输入仅包含字符串的有效 JSON 数组',
                     createFailed: '创建失败',
                     updateFailed: '更新失败'
                 },
@@ -2193,6 +2195,10 @@ const zhCN = {
                     title: '自动更新',
                     description: '启动时检查 GitHub Releases 是否有新版本（24 小时内不重复检查），发现新版可自动下载安装。',
                     enableLabel: '启用自动检查更新',
+                    channelLabel: '更新渠道',
+                    channelDescription: 'stable：正式发布版；nightly：每日自动构建（预览版，版本号高于正式版，仅供测试）。',
+                    channelStable: '稳定版（正式发布）',
+                    channelNightly: 'Nightly（每日构建）',
                     checkNow: '立即检查',
                     updateNow: '一键更新',
                     checking: '检查中…',

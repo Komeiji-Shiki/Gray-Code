@@ -8,6 +8,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { useI18n } from '@/i18n'
+import { formatMcpArgsInput, parseMcpArgsInput } from '@/utils/mcpArgs'
 import type {
   McpServerInfo,
   McpServerConfig,
@@ -183,7 +184,7 @@ function loadFormFromConfig(config: McpServerConfig) {
   
   if (transport.type === 'stdio') {
     formData.command = transport.command
-    formData.args = transport.args?.join(' ') || ''
+    formData.args = formatMcpArgsInput(transport.args)
     formData.env = transport.env ? JSON.stringify(transport.env, null, 2) : ''
   } else {
     formData.url = transport.url
@@ -289,7 +290,11 @@ function buildTransportConfig(): McpTransportConfig {
       command: formData.command.trim()
     }
     if (formData.args.trim()) {
-      config.args = formData.args.trim().split(/\s+/)
+      try {
+        config.args = parseMcpArgsInput(formData.args)
+      } catch {
+        throw new Error(`args: ${t('components.settings.mcpSettings.validation.invalidArgsJsonArray')}`)
+      }
     }
     if (formData.env.trim()) {
       config.env = parseJsonObject(formData.env, 'env')

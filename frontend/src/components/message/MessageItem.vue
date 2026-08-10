@@ -186,19 +186,56 @@ function isSmoothThoughtBlock(block: RenderBlock): boolean {
 const tailHostRef = ref<HTMLElement | null>(null)
 let registeredTextHost: HTMLElement | null = null
 let registeredTextMessageId: string | null = null
+let registeredTextPartKey: string | null = null
 
-// 渐进 markdown：流式期间已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
+// 渐进 markdown：流式期间已定型段落/完整表格行由 CharFlow promote 到这里，
 // 即时渲染格式；未完成尾巴仍在 tailHost 逐字流出。段落切换/终结时清空（稳定块完整接管）。
 const tailRendered = ref('')
-function handleTailPromote(text: string): void {
-  tailRendered.value += text
+const tailRenderGeneration = ref(0)
+let lastTailRenderedSource = ''
+interface PendingTailRender {
+  source: string
+  resolve: () => void
+}
+const pendingTailRenders: PendingTailRender[] = []
+
+function handleTailPromote(text: string, kind: 'delta' | 'replay' = 'delta'): Promise<void> {
+  // re-register 会重放完整 promotedText；此时必须替换而不是追加，避免同 host/视图重建时重复。
+  tailRendered.value = kind === 'replay' ? text : tailRendered.value + text
+  const source = tailRendered.value
+
+  if (lastTailRenderedSource.startsWith(source)) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    pendingTailRenders.push({ source, resolve })
+  })
+}
+
+function handleTailMarkdownRendered(source: string): void {
+  lastTailRenderedSource = source
+  for (let i = pendingTailRenders.length - 1; i >= 0; i--) {
+    const pending = pendingTailRenders[i]
+    // debounce 可能跳过中间版本；一个较新的完整 source 可以确认多个旧 bridge。
+    if (!source.startsWith(pending.source)) continue
+    pendingTailRenders.splice(i, 1)
+    pending.resolve()
+  }
+}
+
+function resolvePendingTailRenders(): void {
+  for (const pending of pendingTailRenders.splice(0)) pending.resolve()
 }
 
 function releaseTextDisplay(): void {
-  if (!registeredTextHost || !registeredTextMessageId) return
-  unregisterSmoothDisplay(registeredTextMessageId, registeredTextHost)
+  if (registeredTextHost && registeredTextMessageId) {
+    unregisterSmoothDisplay(registeredTextMessageId, registeredTextHost)
+  }
   registeredTextHost = null
   registeredTextMessageId = null
+  registeredTextPartKey = null
+  resolvePendingTailRenders()
+  lastTailRenderedSource = ''
+  // 同一 tick 内 S → '' → replay(S) 会被 Vue 合并；换 key 强制新 renderer 发 rendered ack。
+  tailRenderGeneration.value++
   // 渐进渲染内容随显示层释放：旧段落由稳定块（renderBlocks）完整接管，避免重复显示
   if (tailRendered.value) tailRendered.value = ''
 }
@@ -212,7 +249,12 @@ watch(
   ([messageId, partKey, host]) => {
     if (
       registeredTextHost &&
-      (!partKey || registeredTextHost !== host || registeredTextMessageId !== messageId)
+      (
+        !partKey ||
+        registeredTextHost !== host ||
+        registeredTextMessageId !== messageId ||
+        registeredTextPartKey !== partKey
+      )
     ) {
       releaseTextDisplay()
     }
@@ -220,6 +262,7 @@ watch(
       registerSmoothDisplay(messageId, host, { onPromote: handleTailPromote })
       registeredTextHost = host
       registeredTextMessageId = messageId
+      registeredTextPartKey = partKey
     }
   },
   { immediate: true, flush: 'post' }
@@ -919,10 +962,12 @@ function handleRestoreAndRetry(checkpointId: string) {
         <div v-if="tailInfo?.type === 'text'" class="tail-stream">
           <MarkdownRenderer
             v-if="tailRendered"
+            :key="tailRenderGeneration"
             :content="tailRendered"
             :latex-only="false"
             :is-streaming="true"
             class="content-text"
+            @rendered="handleTailMarkdownRendered"
           />
           <div ref="tailHostRef" class="char-flow-host"></div>
         </div>

@@ -284,6 +284,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 9.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
         const settingsChangeListener = (event: SettingsChangeEvent) => {
+            // 更新渠道（stable/nightly）切换：清除旧渠道的更新检查缓存（内存状态 + 节流时间戳），
+            // 使下一次检查按新渠道重新拉取，避免 stable 用户看到旧渠道残留的 Nightly 徽章/可安装项
+            // （例如先切到 nightly 触发检查得到 updateAvailable，再切回 stable 仍提示安装 nightly 构建）。
+            if (event.type === 'full' && (event as any).oldValue?.updateChannel !== undefined &&
+                event.settings?.updateChannel !== undefined &&
+                (event as any).oldValue?.updateChannel !== event.settings?.updateChannel) {
+                try {
+                    this.updateChecker?.resetStatus();
+                } catch (e) {
+                    console.warn('[ChatViewProvider] Failed to reset update checker status:', e);
+                }
+            }
             if (event.type === 'tools' && event.path === 'toolsConfig.apply_diff') {
                 try {
                     // 对已存在的 pending diff 重新调度/取消自动保存
@@ -426,6 +438,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.updateChecker = new UpdateChecker({
             // 用户可在设置页「通用」关闭自动检查（checkForUpdates !== false 默认开启）
             isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
+            // 更新渠道：stable 正式版 / nightly 每日构建（设置页「通用」可选）
+            getUpdateChannel: () => this.settingsManager.getSettings().updateChannel ?? 'stable',
             // 复用渠道代理配置：GitHub API/下载在代理环境下同样走代理
             getProxyUrl: () => {
                 const proxy = this.settingsManager.getSettings().proxy;

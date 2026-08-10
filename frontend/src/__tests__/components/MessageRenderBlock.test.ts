@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { defineComponent, nextTick, watch } from 'vue'
 import MessageRenderBlock from '../../components/message/MessageRenderBlock.vue'
 import {
   disposeAllSmoothStreams,
@@ -12,6 +12,28 @@ function stubAnimationFrame(): void {
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
 }
+
+const MarkdownRendererStub = defineComponent({
+  name: 'MarkdownRenderer',
+  props: {
+    content: { type: String, default: '' },
+    isStreaming: Boolean,
+    latexOnly: Boolean
+  },
+  emits: ['rendered'],
+  setup(props, { emit }) {
+    watch(
+      () => props.content,
+      async (source) => {
+        await nextTick()
+        emit('rendered', source)
+      },
+      { immediate: true }
+    )
+    return {}
+  },
+  template: '<div class="markdown-stub">{{ content }}</div>'
+})
 
 function mountBlock(props: Record<string, unknown> = {}) {
   return mount(MessageRenderBlock, {
@@ -29,11 +51,7 @@ function mountBlock(props: Record<string, unknown> = {}) {
     },
     global: {
       stubs: {
-        MarkdownRenderer: {
-          name: 'MarkdownRenderer',
-          template: '<div class="markdown-stub">{{ content }}</div>',
-          props: ['content', 'isStreaming', 'latexOnly']
-        },
+        MarkdownRenderer: MarkdownRendererStub,
         InlineContextMessage: true,
         ToolMessage: true
       }
@@ -77,6 +95,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
 
     await nextTick()
+    await Promise.resolve() // rendered emit 后 bridge release 位于下一微任务
     // 注册即恢复基线并立即提升：已定型完整段落（\n\n 边界）进入渐进 markdown 层即时渲染格式
     expect(wrapper.get('.thought-block').classes()).toContain('view-medium')
     expect(wrapper.get('.markdown-stub').element.textContent).toBe('前段\n\n')
@@ -105,10 +124,35 @@ describe('MessageRenderBlock thought 三段式视图', () => {
 
     finishSmoothStream('thought-message')
     await nextTick()
+    await nextTick()
+    await Promise.resolve()
     // flush 后完整段落（\n\n 边界）被提升到渐进渲染层即时出格式，未完成尾巴留在 CharFlow host
     // （用 element.textContent 断言：test-utils 的 .text() 会 trim 尾随换行）
     expect(wrapper.get('.markdown-stub').element.textContent).toBe('para one\n\n')
     expect(wrapper.get('.thought-flow-content').text()).toBe('para two')
+
+    wrapper.unmount()
+  })
+
+  it('medium 切到 expanded 并 replay 相同 source 时会重新确认 Markdown DOM', async () => {
+    const source = 'para one\n\n'
+    const tail = 'para two'
+    pushSmoothText('thought-message', 'thought:0', '', 'balanced', source + tail, () => {})
+
+    const wrapper = mountBlock({ thoughtViewMode: 'medium' })
+    await nextTick()
+    await Promise.resolve()
+    expect(wrapper.get('.markdown-stub').element.textContent).toBe(source)
+    expect(wrapper.get('.thought-flow-medium').element.textContent).toBe(tail)
+
+    // release 与 replay 同处一个 Vue flush，source 值最终未变；generation key 必须强制新 ack。
+    await wrapper.setProps({ thoughtViewMode: 'expanded' })
+    await nextTick()
+    await nextTick()
+    await Promise.resolve()
+
+    expect(wrapper.get('.markdown-stub').element.textContent).toBe(source)
+    expect(wrapper.get('.thought-flow-content').element.textContent).toBe(tail)
 
     wrapper.unmount()
   })

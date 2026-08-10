@@ -224,6 +224,15 @@
           "default": true,
           "description": "启动后自动检查更新（可同步）"
         },
+        "graycode.updateChannel": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "nightly"
+          ],
+          "default": "stable",
+          "description": "更新渠道：stable 为正式发布版；nightly 为每日自动构建（预览版，版本号高于正式版，仅供测试）（可同步）"
+        },
         "graycode.toolsConfig": {
           "type": "object",
           "default": {},
@@ -281,6 +290,7 @@
     "compile": "npm run build:backend",
     "typecheck": "tsc -p ./ --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
+    "typecheck:all": "npm run typecheck && npm run typecheck:test && npm --prefix frontend run typecheck",
     "build:backend": "node esbuild.config.js",
     "watch": "node esbuild.config.js --watch",
     "build:frontend": "npm --prefix frontend run build",
@@ -290,11 +300,14 @@
     "test:watch": "jest --config jest.backend.config.js --watch",
     "test:coverage": "jest --config jest.backend.config.js --coverage",
     "test:frontend": "npm --prefix frontend test",
+    "test:all": "npm test && npm run test:frontend",
+    "ci": "npm run typecheck:all && npm run test:all",
     "benchmark": "jest --config jest.backend.config.js --testMatch \"**/*.benchmark.ts\" --runInBand --testTimeout 600000"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",
     "adm-zip": "^0.6.0",
+    "cross-spawn": "^7.0.6",
     "fast-xml-parser": "^5.10.1",
     "ignore": "^7.0.5",
     "tree-kill": "^1.2.2"

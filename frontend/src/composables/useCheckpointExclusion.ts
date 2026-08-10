@@ -118,16 +118,22 @@ export function useCheckpointExclusion(
   const maxFileSizeError = ref<string | null>(null)
 
   // 保存大小上限（MiB -> 字节；0 = 不限制）
-  async function saveMaxFileSize(event: any) {
-    const raw = parseFloat(String(event.target?.value ?? ''))
-    if (!Number.isFinite(raw) || raw < 0) {
+  // 空值不保存不报错（编辑期间允许清空，离开设置页时由组件回填已保存值）
+  async function saveMaxFileSize(raw: string) {
+    const text = String(raw ?? '').trim()
+    if (!text) {
+      maxFileSizeError.value = null
+      return
+    }
+    const parsed = parseFloat(text)
+    if (!Number.isFinite(parsed) || parsed < 0) {
       maxFileSizeError.value = t('components.settings.checkpoint.sections.exclusion.maxFileSize.invalid')
       return
     }
     if (!config.exclusion) {
       config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 0, customPatterns: [] }
     }
-    config.exclusion.maxFileSizeBytes = Math.round(raw * 1024 * 1024)
+    config.exclusion.maxFileSizeBytes = Math.round(parsed * 1024 * 1024)
     maxFileSizeError.value = null
     await updateConfigField('exclusion', { ...config.exclusion })
   }

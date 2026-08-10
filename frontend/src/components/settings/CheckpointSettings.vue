@@ -15,10 +15,11 @@
  * - useCheckpointManifest：存档排除清单详情（EX-11）
  */
 
-import { onMounted, watch, onUnmounted } from 'vue'
+import { onMounted, watch, onUnmounted, ref } from 'vue'
 import { CustomCheckbox, CustomScrollbar, PatternListEditor } from '../common'
 import { t } from '@/i18n'
 import { useChatStore } from '@/stores'
+import { useDeferredNumberInput, getSettingsView } from '@/composables/useDeferredNumberInput'
 import {
   useCheckpointConfig,
   getToolDisplayName,
@@ -160,9 +161,52 @@ const {
 // 加载配置（H-2: 失败时展示错误横幅并禁用表单，直到重试成功）
 async function loadConfig() {
   await loadConfigFromBackend()
+  syncMaxCheckpointsFromStored()
+  syncMaxFileSizeDraft()
   await loadExclusionProfiles()
   await loadTools()
 }
+
+// 草稿模式：清空后不立即回填 -1；离开设置页时自动回填已保存值
+// 校验器收紧为「-1（无上限）或 ≥1」：Number.isInteger 放行 0/-5，
+// 0 个存档上限语义非法（与模板 min="-1" 一致）
+const {
+  draft: maxCheckpointsDraft,
+  handleInput: handleMaxCheckpointsInput,
+  syncFromStored: syncMaxCheckpointsFromStored
+} = useDeferredNumberInput(() => config.maxCheckpoints, v => v === -1 || v >= 1)
+
+// 单文件大小上限：编辑期间允许清空（不报错不保存），离开设置页时回填已保存值
+const maxFileSizeDraft = ref('')
+function syncMaxFileSizeDraft() {
+  maxFileSizeDraft.value = String(maxFileSizeMiB.value)
+}
+function handleMaxFileSizeInput(event: Event) {
+  maxFileSizeDraft.value = (event.target as HTMLInputElement).value
+  maxFileSizeError.value = null
+}
+function handleMaxFileSizeChange() {
+  void saveMaxFileSize(maxFileSizeDraft.value).then(() => {
+    // 保存成功后回读后端归一化值（maxFileSizeMiB 保留 1 位小数）：
+    // 如输入 50.55 → 后端保存 50.5，若不同步草稿，输入框会一直显示 50.55 直到下次加载；
+    // 空值（不保存）时同样回填已保存值，避免草稿与存储分叉。
+    syncMaxFileSizeDraft()
+  })
+}
+watch(
+  getSettingsView,
+  (view) => {
+    if (view !== 'settings') {
+      const text = maxFileSizeDraft.value.trim()
+      const parsed = parseFloat(text)
+      if (text === '' || !Number.isFinite(parsed) || parsed < 0) {
+        maxFileSizeError.value = null
+        syncMaxFileSizeDraft()
+      }
+    }
+  }
+)
+syncMaxFileSizeDraft()
 
 // 组件挂载
 onMounted(async () => {
@@ -392,8 +436,8 @@ onUnmounted(() => {
           <label>{{ t('components.settings.checkpoint.sections.other.maxCheckpoints.label') }}</label>
           <input
             type="text"
-            :value="config.maxCheckpoints"
-            @input="(e: any) => { const v = parseInt(e.target.value); updateConfigField('maxCheckpoints', isNaN(v) ? -1 : v); }"
+            :value="maxCheckpointsDraft"
+            @input="(e: any) => handleMaxCheckpointsInput(e.target.value, v => updateConfigField('maxCheckpoints', v))"
             :disabled="!config.enabled"
             class="number-input"
             placeholder="-1"
@@ -489,8 +533,9 @@ onUnmounted(() => {
           <label>{{ t('components.settings.checkpoint.sections.exclusion.maxFileSize.label') }}</label>
           <input
             type="text"
-            :value="maxFileSizeMiB"
-            @change="saveMaxFileSize"
+            :value="maxFileSizeDraft"
+            @input="handleMaxFileSizeInput"
+            @change="handleMaxFileSizeChange"
             :disabled="!config.enabled"
             class="number-input"
             placeholder="50"

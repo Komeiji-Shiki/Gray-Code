@@ -16,7 +16,7 @@ const { t } = useI18n()
 
 const visible = ref(false)
 const phase = ref<'prompt' | 'downloading' | 'installed' | 'failed'>('prompt')
-const update = ref<{ version: string; name: string; body: string; vsixAssetUrl?: string } | null>(null)
+const update = ref<{ version: string; name: string; body: string; vsixAssetUrl?: string; channel?: string } | null>(null)
 const errorMsg = ref('')
 
 onMounted(async () => {
@@ -78,6 +78,7 @@ const formattedBody = computed(() => {
               <i class="codicon codicon-cloud-download"></i>
               <h2>{{ t('components.update.title') }}</h2>
               <span class="version-badge">v{{ update?.version }}</span>
+              <span v-if="update?.channel === 'nightly'" class="channel-badge">{{ t('components.update.nightlyBadge') }}</span>
             </div>
             <button class="close-btn" @click="close" :title="t('common.close')">
               <i class="codicon codicon-close"></i>
@@ -197,6 +198,16 @@ const formattedBody = computed(() => {
   border-radius: 10px;
   font-size: 11px;
   font-weight: 500;
+}
+
+.channel-badge {
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 193, 7, 0.2));
+  color: var(--vscode-inputValidation-warningForeground, #d4a72c);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
 }
 
 .close-btn {

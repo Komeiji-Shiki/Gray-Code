@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
+import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
 
 const { t } = useI18n()
 
@@ -69,6 +70,28 @@ const saveMessage = ref('')
 // 忽略模式输入框
 const newIgnorePattern = ref('')
 
+// 草稿模式：清空后不立即回填默认值；离开设置页时自动回填已保存值
+const {
+  draft: maxFileDepthDraft,
+  handleInput: handleMaxFileDepthInput,
+  syncFromStored: syncMaxFileDepthFromStored
+} = useDeferredNumberInput(() => config.maxFileDepth)
+const {
+  draft: maxOpenTabsDraft,
+  handleInput: handleMaxOpenTabsInput,
+  syncFromStored: syncMaxOpenTabsFromStored
+} = useDeferredNumberInput(() => config.maxOpenTabs)
+const {
+  draft: maxDiagnosticsPerFileDraft,
+  handleInput: handleMaxDiagnosticsPerFileInput,
+  syncFromStored: syncMaxDiagnosticsPerFileFromStored
+} = useDeferredNumberInput(() => config.diagnostics?.maxDiagnosticsPerFile ?? 10)
+const {
+  draft: maxFilesDraft,
+  handleInput: handleMaxFilesInput,
+  syncFromStored: syncMaxFilesFromStored
+} = useDeferredNumberInput(() => config.diagnostics?.maxFiles ?? 20)
+
 // 预览：打开的标签页
 const openTabs = ref<string[]>([])
 // 预览：当前活动编辑器
@@ -90,6 +113,10 @@ async function loadConfig() {
         response.diagnostics = { ...DEFAULT_DIAGNOSTICS_CONFIG }
       }
       Object.assign(config, response)
+      syncMaxFileDepthFromStored()
+      syncMaxOpenTabsFromStored()
+      syncMaxDiagnosticsPerFileFromStored()
+      syncMaxFilesFromStored()
     }
     
     // 加载预览数据
@@ -263,12 +290,12 @@ function stopAutoRefresh() {
             <div class="input-with-hint">
               <input
                 type="number"
-                :value="config.maxFileDepth"
+                :value="maxFileDepthDraft"
                 min="-1"
                 max="100"
                 :disabled="!config.includeWorkspaceFiles"
                 class="number-input"
-                @input="(e: any) => updateConfig('maxFileDepth', Number(e.target.value))"
+                @input="(e: any) => handleMaxFileDepthInput(e.target.value, v => updateConfig('maxFileDepth', v))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
@@ -300,12 +327,12 @@ function stopAutoRefresh() {
             <div class="input-with-hint">
               <input
                 type="number"
-                :value="config.maxOpenTabs"
+                :value="maxOpenTabsDraft"
                 min="-1"
                 max="100"
                 :disabled="!config.includeOpenTabs"
                 class="number-input"
-                @input="(e: any) => updateConfig('maxOpenTabs', Number(e.target.value))"
+                @input="(e: any) => handleMaxOpenTabsInput(e.target.value, v => updateConfig('maxOpenTabs', v))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
@@ -404,12 +431,12 @@ function stopAutoRefresh() {
             <div class="input-with-hint">
               <input
                 type="number"
-                :value="config.diagnostics?.maxDiagnosticsPerFile ?? 10"
+                :value="maxDiagnosticsPerFileDraft"
                 min="-1"
                 max="100"
                 :disabled="!config.diagnostics?.enabled"
                 class="number-input"
-                @input="(e: any) => updateDiagnosticsConfig('maxDiagnosticsPerFile', Number(e.target.value))"
+                @input="(e: any) => handleMaxDiagnosticsPerFileInput(e.target.value, v => updateDiagnosticsConfig('maxDiagnosticsPerFile', v))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
@@ -420,12 +447,12 @@ function stopAutoRefresh() {
             <div class="input-with-hint">
               <input
                 type="number"
-                :value="config.diagnostics?.maxFiles ?? 20"
+                :value="maxFilesDraft"
                 min="-1"
                 max="100"
                 :disabled="!config.diagnostics?.enabled"
                 class="number-input"
-                @input="(e: any) => updateDiagnosticsConfig('maxFiles', Number(e.target.value))"
+                @input="(e: any) => handleMaxFilesInput(e.target.value, v => updateDiagnosticsConfig('maxFiles', v))"
               />
               <span class="hint">{{ t('components.settings.contextSettings.workspaceFiles.unlimitedHint') }}</span>
             </div>
