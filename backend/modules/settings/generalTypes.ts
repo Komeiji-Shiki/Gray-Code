@@ -287,6 +287,26 @@ export interface GlobalSettings {
              * - false: 直接进入主界面
              */
             splashEnabled?: boolean;
+
+            /**
+             * 桌面端自定义背景图（本地图片文件绝对路径）
+             *
+             * - 空字符串/未设置: 不显示背景图
+             * - 其他: 以该图片作为应用窗口背景（覆盖铺满，结合 wallpaperOpacity 调节透明度）
+             *
+             * 注意：仅持久化路径，图片内容由渲染层启动时经 getWallpaperImage 读取；
+             * 路径与本机绑定（跨机器导出/导入时可能失效，失效则自动回退为纯色背景）。
+             */
+            wallpaperPath?: string;
+
+            /**
+             * 桌面端背景图不透明度（0-100 整数百分比）
+             *
+             * - 0: 完全透明（相当于不显示）
+             * - 100: 完全不透明（可能遮挡文字，建议配合深色纯色背景）
+             * 默认 30。
+             */
+            wallpaperOpacity?: number;
         };
 
         /**
@@ -408,7 +428,9 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
             loadingText: '',
             selectionContextEnabled: true,
             smoothStreaming: 'balanced',
-            splashEnabled: true
+            splashEnabled: true,
+            wallpaperPath: '',
+            wallpaperOpacity: 30
         },
         sound: {
             enabled: false,

@@ -2852,6 +2852,16 @@ const zhCN = {
                     title: '开屏动画',
                     description: '启动时播放 Gray logo 描线开场动画。关闭后直接进入主界面。'
                 },
+                wallpaper: {
+                    title: '桌面背景图',
+                    description: '选择一张本地图片作为应用窗口背景（支持 PNG/JPG/GIF/WebP/BMP，最大 10MB）。',
+                    pick: '选择图片',
+                    remove: '移除背景图',
+                    none: '未设置背景图',
+                    opacity: '图片不透明度',
+                    opacityHint: '透明度作用于图片本身，文字与界面保持清晰；0 等于不显示，100 为完全遮挡。',
+                    pickFailed: '加载背景图失败，请换一张图片重试'
+                },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'
             },

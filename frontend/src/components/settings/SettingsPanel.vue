@@ -667,6 +667,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     anchor: '[data-search-anchor="splash-animation"]'
   },
   {
+    key: 'appearance-wallpaper', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.wallpaper.title',
+    keywords: ['背景图', 'wallpaper', '壁纸', '背景', 'background', '图片', '透明度', 'opacity', '画像', '背景画像', '不透明度'],
+    anchor: '[data-search-anchor="wallpaper"]'
+  },
+  {
     key: 'memory', tab: 'memory',
     labelKey: 'components.settings.settingsPanel.sections.memory.title',
     keywords: ['记忆', 'memory', 'メモリ', '长期记忆', '向量', '检索', 'retrieval', '知识', '条目']

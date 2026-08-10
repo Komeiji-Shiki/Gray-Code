@@ -2851,6 +2851,16 @@ const ja: LanguageMessages = {
                     title: 'スプラッシュアニメーション',
                     description: '起動時にオープニングアニメーションを再生します。オフにするとすぐメイン画面に進みます。'
                 },
+                wallpaper: {
+                    title: 'ウィンドウ背景画像',
+                    description: 'ローカル画像をアプリウィンドウの背景に設定します（PNG/JPG/GIF/WebP/BMP 対応、最大 10MB）。',
+                    pick: '画像を選択',
+                    remove: '背景画像を削除',
+                    none: '背景画像は未設定です',
+                    opacity: '画像の不透明度',
+                    opacityHint: '不透明度は画像自体に適用され、文字と UI は鮮明なままです。0 で非表示、100 で完全に覆います。',
+                    pickFailed: '背景画像の読み込みに失敗しました。別の画像でお試しください。'
+                },
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'
             },

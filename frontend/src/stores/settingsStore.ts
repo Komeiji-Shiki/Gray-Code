@@ -58,6 +58,13 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
   const splashEnabled = ref(readInitialSplashEnabled())
+
+  // 外观设置：桌面端自定义背景图路径（空字符串 = 不使用）
+  const wallpaperPath = ref<string>('')
+  // 外观设置：桌面端背景图内容（data URL，运行时按 wallpaperPath 加载，不持久化）
+  const wallpaperImage = ref<string>('')
+  // 外观设置：桌面端背景图不透明度（0-100 整数百分比，默认 30）
+  const wallpaperOpacity = ref(30)
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
   // 渠道配置刷新计数器（聊天输入区快捷控件写渠道配置后，通知设置页重载最新数据）
@@ -152,6 +159,21 @@ export const useSettingsStore = defineStore('settings', () => {
       // ignore
     }
   }
+
+  // 设置外观：桌面端背景图路径（空 = 不使用）
+  function setWallpaperPath(p: string) {
+    wallpaperPath.value = p
+  }
+
+  // 设置外观：桌面端背景图内容（data URL，空 = 无背景图）
+  function setWallpaperImage(dataUrl: string) {
+    wallpaperImage.value = dataUrl
+  }
+
+  // 设置外观：桌面端背景图不透明度（0-100）
+  function setWallpaperOpacity(opacity: number) {
+    wallpaperOpacity.value = Math.min(100, Math.max(0, Math.round(opacity) || 0))
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -175,6 +197,9 @@ export const useSettingsStore = defineStore('settings', () => {
     monitorFocusRunId,
     tpsBarEnabled,
     splashEnabled,
+    wallpaperPath,
+    wallpaperImage,
+    wallpaperOpacity,
     promptModesVersion,
     configsVersion,
 
@@ -193,6 +218,9 @@ export const useSettingsStore = defineStore('settings', () => {
     toggleSubAgentMonitor,
     setTpsBarEnabled,
     setSplashEnabled,
+    setWallpaperPath,
+    setWallpaperImage,
+    setWallpaperOpacity,
     refreshPromptModes,
     refreshConfigs
   }

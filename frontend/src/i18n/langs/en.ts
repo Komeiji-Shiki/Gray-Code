@@ -2851,6 +2851,16 @@ const en: LanguageMessages = {
                     title: 'Splash Animation',
                     description: 'Play the Gray Code logo drawing animation on startup. Disable to go straight to the main view.'
                 },
+                wallpaper: {
+                    title: 'Window Background Image',
+                    description: 'Use a local image as the app window background (PNG/JPG/GIF/WebP/BMP supported, up to 10MB).',
+                    pick: 'Choose Image',
+                    remove: 'Remove Background Image',
+                    none: 'No background image set',
+                    opacity: 'Image Opacity',
+                    opacityHint: 'Opacity applies to the image itself, keeping text and UI crisp. 0 hides the image, 100 fully blocks the view.',
+                    pickFailed: 'Failed to load the background image. Try another image.'
+                },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
             },

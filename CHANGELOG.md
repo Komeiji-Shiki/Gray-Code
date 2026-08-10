@@ -22,7 +22,12 @@
 
 ## [Unreleased]
 
-（暂无未发布改动）
+### Added：[1.7.11dev] 桌面端自定义背景图——外观设置新增本地图片窗口背景 + 不透明度调节
+  - **外观设置新增「桌面背景图」**：选择本地图片（PNG/JPG/JPEG/GIF/WebP/BMP，上限 10MB）作为应用窗口背景，cover 铺满整窗；**不透明度滑块（0-100，默认 30）**实时作用于图片本身（透明度只影响图片层，文字与界面不受影响，调节所见即所得）；设置页提供与窗口同规格的 16:9 预览框、路径回显（超长省略中间）与「移除背景图」一键清除；设置搜索新增「背景图/壁纸/透明度」锚点；
+  - **数据流**：持久化仅存路径（ui.appearance.wallpaperPath / wallpaperOpacity，默认 '' / 30，updateUISettings 深合并链路无需改动）；图片内容经新增 IPC 处理器（pickWallpaper：原生对话框选图 + 扩展名白名单 + 大小校验后返回 data URL；getWallpaperImage：按已存路径重读）交给渲染层（webview CSP img-src 白名单已含 data:）；文件丢失/删除/格式失效时静默回退纯色背景，不打扰用户；**SVG 刻意排除**（避免脚本面/外部引用解析面）；
+  - **渲染**：App.vue 新增 .app-wallpaper 图层（position:fixed 覆盖整窗 + z-index:-1 + .app-container isolation 建立层叠上下文——置于容器纯色背景之上、全部内容之下；pointer-events:none 不拦截交互）；设置页选择/拖动滑块即时应用到窗口背景（保存前即可预览效果），保存时随外观设置一并持久化；
+  - **远控端不涉及**（移动端设置页为 schema 驱动，新增字段仅透传，不影响远控端行为）；
+  - 测试：新增 WallpaperHandlers 单元测试（选图全流程/扩展名白名单拒绝 SVG/大小上限/非文件拒绝/文件丢失回退/取消）+ DEFAULT_GLOBAL_SETTINGS 背景图默认值断言；三语言（zh-CN/en/ja）文案齐全。
 
 ### Fixed：[1.7.10dev] 远程控制 V7.1——模型管理列表刷新修复 + 图标渲染健壮性加固
   - **修复模型管理对话框列表不刷新**：`openModelsDialog` 此前依赖 `S.configModels` 缓存（`modelsLoaded` 短路），首次打开可能显示空列表/旧列表，添加/删除模型后调用 `loadConfigModels` 被缓存直接 return、列表永远不更新；现打开对话框即强制重拉（`reloadConfigModels`），添加/删除成功后强制重拉并重新渲染，删除后从最新渠道数据回填当前模型（不再悬挂已删模型的「当前」标记）；

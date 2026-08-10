@@ -26,6 +26,12 @@ const smoothStreamingMode = ref<SmoothMode>('balanced')
 const tpsBarEnabled = ref(true)
 const splashEnabled = ref(true)
 
+// 桌面端自定义背景图（路径 + 运行时 data URL 预览 + 不透明度 0-100）
+const isPicking = ref(false)
+const wallpaperPath = ref<string>('')
+const wallpaperPreview = ref<string>('')
+const wallpaperOpacity = ref(30)
+
 const defaultLoadingText = computed(() => t('common.loading'))
 
 function resolveSelectionContextEnabled(appearance: any): boolean {
@@ -58,11 +64,32 @@ async function loadConfig() {
     smoothStreamingMode.value = savedSmoothStreaming
     tpsBarEnabled.value = appearance?.tpsBarEnabled !== false
     splashEnabled.value = appearance?.splashEnabled !== false
+    wallpaperPath.value = typeof appearance?.wallpaperPath === 'string' ? appearance.wallpaperPath : ''
+    wallpaperOpacity.value = typeof appearance?.wallpaperOpacity === 'number' ? appearance.wallpaperOpacity : 30
     settingsStore.setAppearanceLoadingText(saved)
     settingsStore.setSelectionContextEnabled(savedSelectionContextEnabled)
     settingsStore.setSmoothStreaming(savedSmoothStreaming)
     settingsStore.setTpsBarEnabled(tpsBarEnabled.value)
     settingsStore.setSplashEnabled(splashEnabled.value)
+    settingsStore.setWallpaperPath(wallpaperPath.value)
+    settingsStore.setWallpaperOpacity(wallpaperOpacity.value)
+
+    // 已配置背景图：重新读取内容用于预览（同时校验文件是否仍存在；失败静默回退为空预览）
+    wallpaperPreview.value = ''
+    if (wallpaperPath.value) {
+      try {
+        const imageResult = await sendToExtension<any>('getWallpaperImage', { path: wallpaperPath.value })
+        if (imageResult?.dataUrl) {
+          wallpaperPreview.value = imageResult.dataUrl
+          settingsStore.setWallpaperImage(imageResult.dataUrl)
+        }
+      } catch {
+        // 读取失败：保持空预览（路径仍显示，保存时也不会改变）
+      }
+    } else {
+      // 未配置背景图：清空内存中的旧图，保持 store 状态自洽
+      settingsStore.setWallpaperImage('')
+    }
   } catch (error) {
     console.error('Failed to load appearance settings:', error)
   } finally {
@@ -85,7 +112,9 @@ async function saveConfig() {
           selectionContextEnabled: selectionContextEnabled.value,
           smoothStreaming: smoothStreamingMode.value,
           tpsBarEnabled: tpsBarEnabled.value,
-          splashEnabled: splashEnabled.value
+          splashEnabled: splashEnabled.value,
+          wallpaperPath: wallpaperPath.value,
+          wallpaperOpacity: wallpaperOpacity.value
         }
       }
     })
@@ -96,6 +125,7 @@ async function saveConfig() {
     settingsStore.setSmoothStreaming(smoothStreamingMode.value)
     settingsStore.setTpsBarEnabled(tpsBarEnabled.value)
     settingsStore.setSplashEnabled(splashEnabled.value)
+    applyWallpaperToStore()
 
     saveMessage.value = t('components.settings.appearanceSettings.saveSuccess')
     saveMessageType.value = 'success'
@@ -118,8 +148,54 @@ async function resetToDefault() {
   smoothStreamingMode.value = 'balanced'
   tpsBarEnabled.value = true
   splashEnabled.value = true
+  wallpaperPath.value = ''
+  wallpaperPreview.value = ''
+  wallpaperOpacity.value = 30
+  applyWallpaperToStore()
   await saveConfig()
 }
+
+// 选择背景图：弹系统对话框，选中后立即应用到窗口背景（预览），保存时才持久化
+async function pickWallpaperImage() {
+  isPicking.value = true
+  try {
+    const result = await sendToExtension<any>('pickWallpaper', {})
+    if (result?.cancelled || !result?.path || !result?.dataUrl) return
+
+    wallpaperPath.value = result.path
+    wallpaperPreview.value = result.dataUrl
+    applyWallpaperToStore()
+  } catch (error) {
+    console.error('Failed to pick wallpaper:', error)
+    saveMessage.value = t('components.settings.appearanceSettings.wallpaper.pickFailed')
+    saveMessageType.value = 'error'
+  } finally {
+    isPicking.value = false
+  }
+}
+
+// 移除背景图：清空路径与预览，窗口背景立即恢复纯色
+function removeWallpaper() {
+  wallpaperPath.value = ''
+  wallpaperPreview.value = ''
+  applyWallpaperToStore()
+}
+
+// 把当前暂存值同步到全局 store（背景图层即时生效，便于所见即所得）
+function applyWallpaperToStore() {
+  settingsStore.setWallpaperPath(wallpaperPath.value)
+  settingsStore.setWallpaperImage(wallpaperPreview.value)
+  settingsStore.setWallpaperOpacity(wallpaperOpacity.value)
+}
+
+// 预览框样式：与窗口背景一致（cover 铺满 + 当前不透明度）
+const wallpaperPreviewStyle = computed(() => {
+  if (!wallpaperPreview.value) return null
+  return {
+    backgroundImage: `url("${wallpaperPreview.value}")`,
+    opacity: wallpaperOpacity.value / 100
+  }
+})
 
 onMounted(() => {
   loadConfig()
@@ -234,6 +310,52 @@ onMounted(() => {
         </div>
       </div>
 
+      <div class="form-group" data-search-anchor="wallpaper">
+        <label class="group-label">
+          <i class="codicon codicon-color-mode"></i>
+          {{ t('components.settings.appearanceSettings.wallpaper.title') }}
+        </label>
+        <p class="field-description">{{ t('components.settings.appearanceSettings.wallpaper.description') }}</p>
+
+        <div v-if="wallpaperPreviewStyle" class="wallpaper-preview" :style="wallpaperPreviewStyle"></div>
+
+        <p v-if="wallpaperPath" class="field-hint wallpaper-path" :title="wallpaperPath">{{ wallpaperPath }}</p>
+        <p v-else class="field-hint">{{ t('components.settings.appearanceSettings.wallpaper.none') }}</p>
+
+        <div class="wallpaper-actions">
+          <button class="action-btn" @click="pickWallpaperImage" :disabled="isSaving || isPicking">
+            <i v-if="isPicking" class="codicon codicon-loading codicon-modifier-spin"></i>
+            <i v-else class="codicon codicon-folder-opened"></i>
+            {{ t('components.settings.appearanceSettings.wallpaper.pick') }}
+          </button>
+
+          <button
+            v-if="wallpaperPath"
+            class="action-btn"
+            @click="removeWallpaper"
+            :disabled="isSaving"
+          >
+            <i class="codicon codicon-trash"></i>
+            {{ t('components.settings.appearanceSettings.wallpaper.remove') }}
+          </button>
+        </div>
+
+        <div v-if="wallpaperPath" class="opacity-row">
+          <span class="opacity-label">{{ t('components.settings.appearanceSettings.wallpaper.opacity') }}：{{ wallpaperOpacity }}%</span>
+          <input
+            v-model.number="wallpaperOpacity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            class="opacity-slider"
+            :disabled="isSaving"
+            @input="applyWallpaperToStore"
+          />
+        </div>
+        <p class="field-hint">{{ t('components.settings.appearanceSettings.wallpaper.opacityHint') }}</p>
+      </div>
+
       <div class="actions">
         <button class="action-btn primary" @click="saveConfig" :disabled="isSaving">
           <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
@@ -340,6 +462,56 @@ onMounted(() => {
   margin: 0;
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* 背景图预览框：与窗口背景同规格（cover 铺满 + 当前不透明度） */
+.wallpaper-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  background-color: var(--vscode-editor-background);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* 路径过长时省略中间部分，完整路径悬浮可见 */
+.wallpaper-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallpaper-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.opacity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.opacity-label {
+  flex-shrink: 0;
+  min-width: 110px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.opacity-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+.opacity-slider:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .toggle-switch {

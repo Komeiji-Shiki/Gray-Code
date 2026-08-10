@@ -524,6 +524,32 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
     (appearance.selectionContextCodeActionEnabled ?? true)
 }
 
+// ============ 桌面端自定义背景图（外观设置） ============
+// 背景图内容以 data URL 保存在 settingsStore（不持久化，仅存路径），
+// 启动时/设置变更后按 wallpaperPath 经 IPC 读取；文件丢失时静默回退为纯色背景。
+async function loadWallpaperImage(filePath: string): Promise<void> {
+  if (!filePath) {
+    settingsStore.setWallpaperImage('')
+    return
+  }
+  try {
+    const result = await sendToExtension<any>('getWallpaperImage', { path: filePath })
+    const dataUrl = typeof result?.dataUrl === 'string' ? result.dataUrl : ''
+    settingsStore.setWallpaperImage(dataUrl)
+  } catch {
+    settingsStore.setWallpaperImage('')
+  }
+}
+
+// 背景图层样式：覆盖铺满 + 按不透明度渲染（透明度作用于图片层本身，文字层不受影响）
+const wallpaperStyle = computed(() => {
+  if (!settingsStore.wallpaperImage) return null
+  return {
+    backgroundImage: `url("${settingsStore.wallpaperImage}")`,
+    opacity: settingsStore.wallpaperOpacity / 100
+  }
+})
+
 // ============ 桌面版主题：仅 Electron 宿主生效 ============
 // VS Code 宿主的 vscode-dark/vscode-light class 由 VS Code 自行维护，
 // 这里只在独立桌面版按 ui.theme 设置（light/dark/auto）切换 body class。
@@ -598,6 +624,13 @@ async function loadLanguageSettings() {
       settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
       settingsStore.setTpsBarEnabled(appearance.tpsBarEnabled !== false)
       settingsStore.setSplashEnabled(appearance.splashEnabled !== false)
+      settingsStore.setWallpaperPath(typeof appearance.wallpaperPath === 'string' ? appearance.wallpaperPath : '')
+      settingsStore.setWallpaperOpacity(
+        typeof appearance.wallpaperOpacity === 'number' ? appearance.wallpaperOpacity : 30
+      )
+      if (settingsStore.wallpaperPath) {
+        loadWallpaperImage(settingsStore.wallpaperPath)
+      }
     }
 
     // 应用桌面版主题（light / dark / auto）
@@ -787,6 +820,13 @@ onBeforeUnmount(() => {
 <template>
   <SubAgentMonitor v-if="isSubAgentMonitor" />
   <div v-else class="app-container">
+    <!-- 桌面端自定义背景图（外观设置；透明度作用于图片层本身，内容层不受影响） -->
+    <div
+      v-if="settingsStore.wallpaperImage && settingsStore.wallpaperPath"
+      class="app-wallpaper"
+      :style="wallpaperStyle"
+    ></div>
+
     <!-- 关闭态占位与 Splash 从 HTML 首帧起就依据同一个同步快照严格互斥（桌面主窗口无注入快照时仅用响应式门控） -->
     <StartupBackdrop v-if="startupSplashInjected && !splashActive && !mainViewInitialized" />
 
@@ -967,6 +1007,19 @@ onBeforeUnmount(() => {
   height: 100vh;
   background: var(--vscode-editor-background);
   color: var(--vscode-foreground);
+  /* 建立层叠上下文：背景图层（z-index:-1）渲染在容器纯色背景之上、全部内容之下 */
+  isolation: isolate;
+}
+
+/* 桌面端自定义背景图图层：覆盖铺满整窗，不响应鼠标事件 */
+.app-wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
 }
 
 /* 聊天视图容器 */

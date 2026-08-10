@@ -9,6 +9,12 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+### Added（1.7.11dev：桌面端自定义背景图——外观设置新增本地图片窗口背景 + 不透明度调节）
+  - **外观设置新增「桌面背景图」**：选择本地图片（PNG/JPG/JPEG/GIF/WebP/BMP，上限 10MB）作为应用窗口背景，cover 铺满整窗；不透明度滑块（0-100，默认 30）实时作用于图片本身，文字与界面不受影响；设置页提供 16:9 预览框、路径回显与一键移除；设置搜索新增「背景图/壁纸/透明度」锚点；
+  - **数据流**：持久化仅存路径（ui.appearance.wallpaperPath/wallpaperOpacity），图片内容经新增 IPC 处理器（pickWallpaper 原生对话框选图 + 校验读取；getWallpaperImage 按已存路径重读）以 data URL 交给渲染层（webview CSP img-src 已含 data:）；文件丢失/失效静默回退纯色背景；SVG 刻意排除（防脚本面）；
+  - **渲染**：App.vue 新增 .app-wallpaper 图层（fixed 整窗 + z-index:-1 + isolation 层叠上下文），pointer-events:none 不拦截交互；选择/拖动滑块即时应用到窗口背景（保存前可见效果），保存时随外观设置持久化；远控端不涉及；
+  - 测试：WallpaperHandlers 单元测试（选图/白名单/大小上限/丢失回退/取消）+ 默认值断言；三语言文案齐全。
+
 ### Fixed：远程控制 V7.2——图标零面积路径修复（plus/close/check/chevronDown/folderUp）+ 渠道表单死控件 + 思考关闭开关 + 分页/竞态加固
   - **修复图标渲染缺失（用户报告：关闭对话 ✕、新建对话 ＋、关闭设置 ✕ 及其他图标不可见）**：根因是 ICONS 注册表中 plus/close（及 check/chevronDown/folderUp）使用零面积线段路径（如 M12 5v14M5 12h14），而全部 SVG 仅设 fill="currentColor" 无 stroke——fill 对零面积路径不产生任何像素，图标在所有配色模式下都不可见（真实 Chromium 像素级验证）。已全部改为 Material 实心闭合路径（plus/close 同时修正 remoteControlUi.ts 内 5 处静态内联 SVG），与其余 53 个填充型图标一致；新增回归断言（静态 ✕/＋ 与动态 tab-close/tab-add 路径必须含闭合 z）。
   - **浅色主题变量补齐**：@media (prefers-color-scheme: light) 的 :root 块此前缺失 --vscode-icon-foreground、--vscode-toolbar-hoverBackground、--vscode-toolbar-activeBackground、--vscode-focusBorder、--vscode-editor-selectionBackground、--vscode-scrollbarSlider-*、--vscode-button-foreground、--vscode-inputValidation-warningForeground、--vscode-tab-activeBorderTop 共 10 个变量（浅色下回退深色值导致图标/交互色与白色背景混淆）；同时补齐从未定义的 --vscode-textCodeBlock-background/--vscode-editorHoverWidget-background（此前仅靠 fallback）。
