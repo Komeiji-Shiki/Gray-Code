@@ -3099,7 +3099,7 @@ const zhCN = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
-                    effortHint: 'none: 完全不传递思考参数（请求缺省该段，API 默认思考）| minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义。关闭思考（Off）时请求强制携带 {"reasoning":{"effort":"none"}}',
+                    effortHint: 'none: 完全不传递思考参数（请求缺省该段，API 默认思考）| minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义。关闭思考（Off）时请求强制携带 {"thinking":{"type":"disabled"}}，不传递任何 effort',
                     effortNone: '无',
                     effortMinimal: '最少',
                     effortLow: '低',
@@ -3129,7 +3129,7 @@ const zhCN = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
-                    effortHint: 'none: 完全不传递思考参数（请求缺省该段，API 默认思考）| minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义。关闭思考（Off）时请求强制携带 {"reasoning":{"effort":"none"}}',
+                    effortHint: 'none: 完全不传递思考参数（请求缺省该段，API 默认思考）| minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义。关闭思考（Off）时请求强制携带 {"thinking":{"type":"disabled"}}，不传递任何 effort',
                     effortNone: '无 (none)',
                     effortMinimal: '最少 (minimal)',
                     effortLow: '低 (low)',

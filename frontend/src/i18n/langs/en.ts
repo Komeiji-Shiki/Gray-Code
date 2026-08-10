@@ -3098,7 +3098,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
-                    effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"reasoning":{"effort":"none"}}',
+                    effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"thinking":{"type":"disabled"}}, no effort passed',
                     effortNone: 'None',
                     effortMinimal: 'Minimal',
                     effortLow: 'Low',
@@ -3128,7 +3128,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
-                    effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"reasoning":{"effort":"none"}}',
+                    effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"thinking":{"type":"disabled"}}, no effort passed',
                     effortNone: 'None (none)',
                     effortMinimal: 'Minimal (minimal)',
                     effortLow: 'Low (low)',

@@ -3098,7 +3098,7 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考強度 (Effort)',
-                    effortHint: 'none: 思考パラメータを一切送信しない（セクション省略、API デフォルトの思考）| minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム。思考オフ時はリクエストに {"reasoning":{"effort":"none"}} を明示送信',
+                    effortHint: 'none: 思考パラメータを一切送信しない（セクション省略、API デフォルトの思考）| minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム。思考オフ時はリクエストに {"thinking":{"type":"disabled"}} を明示送信し、effort は送信しない',
                     effortNone: 'なし',
                     effortMinimal: '極小',
                     effortLow: '低',

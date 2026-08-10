@@ -288,22 +288,23 @@ export class GeminiFormatter extends BaseFormatter {
             const includeThoughts = thinkingConfig.includeThoughts !== false;
             if (includeThoughts) {
                 apiThinkingConfig.includeThoughts = true;
+                
+                // 根据模式设置思考等级或预算
+                const mode = thinkingConfig.mode || 'default';
+                if (mode === 'level' && thinkingConfig.thinkingLevel) {
+                    // 等级模式：发送思考等级
+                    apiThinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel;
+                } else if (mode === 'budget' && thinkingConfig.thinkingBudget !== undefined) {
+                    // 预算模式：发送思考预算
+                    apiThinkingConfig.thinkingBudget = thinkingConfig.thinkingBudget;
+                }
+                // default 模式：不发送等级或预算，使用 API 默认值
             } else {
                 // 显式关闭思考：请求显式携带 {"thinkingConfig": {"includeThoughts": false}}
-                // （思考强度快捷下拉 Off 档写入 includeThoughts=false，与省略字段的隐式关闭等价但更明确）
+                // （思考强度快捷下拉 Off 档写入 includeThoughts=false；此时不发送
+                // 等级/预算，避免与关闭状态互相矛盾）
                 apiThinkingConfig.includeThoughts = false;
             }
-            
-            // 根据模式设置思考等级或预算
-            const mode = thinkingConfig.mode || 'default';
-            if (mode === 'level' && thinkingConfig.thinkingLevel) {
-                // 等级模式：发送思考等级
-                apiThinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel;
-            } else if (mode === 'budget' && thinkingConfig.thinkingBudget !== undefined) {
-                // 预算模式：发送思考预算
-                apiThinkingConfig.thinkingBudget = thinkingConfig.thinkingBudget;
-            }
-            // default 模式：不发送等级或预算，使用 API 默认值
             
             // 只有当有配置项时才添加 thinkingConfig
             if (Object.keys(apiThinkingConfig).length > 0) {

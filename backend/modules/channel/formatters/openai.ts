@@ -630,38 +630,36 @@ export class OpenAIFormatter extends BaseFormatter {
         // 添加 reasoning 配置（如果启用）
         const reasoningEnabled = (config as any).optionsEnabled?.reasoning;
         const reasoning = config.options?.reasoning;
-
-        if (reasoning && (reasoningEnabled || reasoning.effort === 'none')) {
+        
+        if (reasoningEnabled && reasoning) {
             const reasoningConfig: any = {};
-
-            if (reasoningEnabled) {
-                // 思考强度 (effort): none, low, medium, high, xhigh, max, ultra, custom
-                let effort: string | undefined = reasoning.effort;
-                // 自定义模式：使用 effortCustom 的值原样透传
-                if (effort === 'custom') {
-                    effort = reasoning.effortCustom?.trim() || undefined;
-                }
-                // none 档位：不传递思考强度参数（请求缺省该段，模型按 API 默认行为思考）
-                if (effort && effort !== 'none') {
-                    reasoningConfig.effort = effort;
-                }
-
-                // 输出详细程度 (summary): auto, concise, detailed
-                // 只有当 summaryEnabled 为 true 时才发送
-                if (reasoning.summaryEnabled && reasoning.summary) {
-                    reasoningConfig.summary = reasoning.summary;
-                }
-            } else {
-                // Off（关闭思考）：闸门关闭且显式记录 effort='none' 时强制传递
-                // {"reasoning": {"effort": "none"}}——OpenAI 请求缺省 reasoning 段时
-                // 模型仍按默认强度思考，只有显式 effort='none' 才真正关闭思考。
-                reasoningConfig.effort = 'none';
+            
+            // 思考强度 (effort): none, low, medium, high, xhigh, max, ultra, custom
+            let effort: string | undefined = reasoning.effort;
+            // 自定义模式：使用 effortCustom 的值原样透传
+            if (effort === 'custom') {
+                effort = reasoning.effortCustom?.trim() || undefined;
             }
-
+            // none 档位：不传递思考强度参数（请求缺省该段，模型按 API 默认行为思考）
+            if (effort && effort !== 'none') {
+                reasoningConfig.effort = effort;
+            }
+            
+            // 输出详细程度 (summary): auto, concise, detailed
+            // 只有当 summaryEnabled 为 true 时才发送
+            if (reasoning.summaryEnabled && reasoning.summary) {
+                reasoningConfig.summary = reasoning.summary;
+            }
+            
             // 只有当有配置项时才添加 reasoning
             if (Object.keys(reasoningConfig).length > 0) {
                 genConfig.reasoning = reasoningConfig;
             }
+        } else if (reasoningEnabled === false) {
+            // Off（关闭思考）：请求显式携带 {"thinking": {"type": "disabled"}}
+            // 缺省 reasoning/thinking 段时模型仍按默认行为思考，必须显式禁用；
+            // 关闭状态与思考强度无关，不传递任何 effort。
+            genConfig.thinking = { type: 'disabled' };
         }
         
         return genConfig;

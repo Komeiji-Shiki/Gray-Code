@@ -14,15 +14,15 @@
  *   → options.thinkingConfig.mode + thinkingLevel（闸门 optionsEnabled.thinkingConfig）
  *
  * Off 语义（关闭思考）：
+ * - openai 系：只关闭闸门 optionsEnabled.reasoning = false，**不写任何 effort**
+ *   （关闭状态与思考强度无关），后端 formatter 对闸门关闭强制携带
+ *   {"thinking": {"type": "disabled"}}——缺省 reasoning/thinking 段时模型仍按
+ *   默认行为思考，必须显式禁用才真正关闭；
  * - anthropic：显式写 thinking.type = 'disabled'（闸门保持开启，后端请求显式携带
  *   {"thinking": {"type": "disabled"}}）；
  * - gemini：显式写 thinkingConfig.includeThoughts = false（闸门保持开启，后端请求
  *   显式携带 {"thinkingConfig": {"includeThoughts": false}}——Gemini 缺省即思考，
- *   必须显式传递 false 才真正关闭）；
- * - openai 系：关闭闸门并同步记录 effort = 'none'（重新开启时回到 none 而非默认
- *   high），后端 formatter 对「闸门关闭 + effort='none'」**强制透传**
- *   {"reasoning": {"effort": "none"}}——OpenAI 请求缺省 reasoning 段时模型仍按
- *   默认强度思考，只有显式 effort='none' 才真正关闭思考。
+ *   必须显式传递 false 才真正关闭）。
  *
  * none 语义（仅 openai 系）：思考保持开启（闸门 true），但 effort = 'none'
  * ——后端 formatter 对 'none' 不发送 reasoning.effort 参数（请求缺省该段，
@@ -147,18 +147,10 @@ export function buildThinkingLevelUpdates(config: any, level: string): Record<st
     const current = options.reasoning || {}
     const reasoningDefaults = { effort: 'high', summaryEnabled: false, summary: 'auto' }
     if (level === THINKING_OFF) {
-      // OpenAI 无独立 disabled 参数（请求缺省 reasoning 段即关闭思考）：
-      // 关闭闸门并记录 effort='none'，保证 Off 是「显式配置的关闭」而非只拨开关
+      // Off：只关闭闸门、不写任何 effort（关闭状态与思考强度无关；
+      // 后端 formatter 对闸门关闭强制携带 {"thinking":{"type":"disabled"}}）
       return {
-        optionsEnabled: { ...optionsEnabled, reasoning: false },
-        options: {
-          ...options,
-          reasoning: {
-            ...reasoningDefaults,
-            ...current,
-            effort: 'none'
-          }
-        }
+        optionsEnabled: { ...optionsEnabled, reasoning: false }
       }
     }
     return {

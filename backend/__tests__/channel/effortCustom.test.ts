@@ -210,7 +210,7 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
         expect(request.body.reasoning).toBeUndefined();
     });
 
-    it('Off（闸门关闭 + effort=none）强制传递 {"reasoning":{"effort":"none"}}——缺省段时模型仍按默认强度思考', () => {
+    it('Off（闸门关闭）请求显式携带 {"thinking":{"type":"disabled"}}，不传递任何 effort', () => {
         const request = formatter.buildRequest({
             configId: 'openai-test',
             history: createHistory()
@@ -221,20 +221,22 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
             }
         }));
 
-        expect(request.body.reasoning).toEqual({ effort: 'none' });
+        expect(request.body.thinking).toEqual({ type: 'disabled' });
+        expect(request.body.reasoning).toBeUndefined();
     });
 
-    it('闸门关闭但未记录 effort=none 时不强制传递（保持原行为）', () => {
+    it('闸门未定义（未配置 reasoning）时不强制传递（保持原行为）', () => {
         const request = formatter.buildRequest({
             configId: 'openai-test',
             history: createHistory()
         }, createConfig({
-            optionsEnabled: { reasoning: false },
+            optionsEnabled: {},
             options: {
                 reasoning: { effort: 'high' }
             }
         }));
 
+        expect(request.body.thinking).toBeUndefined();
         expect(request.body.reasoning).toBeUndefined();
     });
 
@@ -311,7 +313,7 @@ describe('思考强度 custom 档位（OpenAIResponsesFormatter）', () => {
         expect(request.body.reasoning).toEqual({ effort: 'max' });
     });
 
-    it('Off（闸门关闭 + effort=none）强制传递 {"reasoning":{"effort":"none"}}', () => {
+    it('Off（闸门关闭）请求显式携带 {"thinking":{"type":"disabled"}}，不传递任何 effort', () => {
         const request = formatter.buildRequest({
             configId: 'openai-responses-test',
             history: createHistory()
@@ -322,7 +324,8 @@ describe('思考强度 custom 档位（OpenAIResponsesFormatter）', () => {
             }
         }));
 
-        expect(request.body.reasoning).toEqual({ effort: 'none' });
+        expect(request.body.thinking).toEqual({ type: 'disabled' });
+        expect(request.body.reasoning).toBeUndefined();
     });
 });
 
