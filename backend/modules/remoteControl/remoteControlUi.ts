@@ -13,9 +13,12 @@
  * - 会话：左侧抽屉查看/切换/新建/重命名/删除会话，长按消息可编辑（分支重生成）、
  *   重新生成、重试、删除；发送/停止、流式输出（SSE）、工具确认（批准/拒绝）；
  * - 文件：工作区文件树浏览、文本文件查看与编辑（保存回真实工作区）、
- *   在桌面端打开文件（带行号跳转）、切换工作区、新增工作区（桌面端弹选择框）、
- *   移除收藏工作区；
- * - 设置：连接状态、局域网访问地址、渠道与模型切换、安全说明。
+ *   在桌面端打开文件（带行号跳转）、切换工作区、新增工作区（手机端目录浏览
+ *   自选或桌面端弹选择框）、移除收藏工作区；
+ * - 设置：连接状态、局域网访问地址、渠道与模型切换、全量设置项
+ *   （通用/界面/代理/工具/自动执行/文件工具/命令沙箱/提示词/上下文/记忆/
+ *   总结/检查点/Token 计数/图像生成/技能/子代理/固定文件/远程控制/存储/依赖）、
+ *   安全说明。
  *
  * 页面通过以下 API 与主进程通信（同一 origin，无 CORS）：
  *   GET  /api/status           运行状态 / 激活会话 / 工作区 / 语言
@@ -23,9 +26,10 @@
  *   GET  /api/messages         会话消息（role/parts 结构）
  *   GET  /api/workspace        当前工作区状态
  *   GET  /api/workspaces       工作区列表（当前打开 + 收藏）
- *   POST /api/workspace-switch 切换工作区
- *   POST /api/workspace-add    新增工作区（桌面端文件夹选择框）
+ *   POST /api/workspace-switch 切换工作区（已打开→固定；仅收藏→宿主打开）
+ *   POST /api/workspace-add    新增工作区（可携带 fsPath 直接打开，免桌面端弹窗）
  *   POST /api/workspace-remove 移除收藏工作区
+ *   GET  /api/fs               服务端目录浏览（移动端自选工作区文件夹）
  *   GET  /api/files            工作区目录列表
  *   GET  /api/file             读取工作区文本文件
  *   POST /api/file             写入工作区文本文件（影响真实工作区）
@@ -33,6 +37,12 @@
  *   GET  /api/configs          渠道配置列表
  *   GET  /api/config           渠道详情（模型列表）
  *   POST /api/model            切换激活模型
+ *   POST /api/channel-toggle   渠道启用/停用
+ *   POST /api/channel-active   设为当前渠道
+ *   GET  /api/settings         全量设置（密钥字段脱敏）
+ *   POST /api/settings         更新设置（深合并语义与桌面端一致）
+ *   GET  /api/tools            工具清单（启用状态）
+ *   GET  /api/dependencies     依赖安装状态
  *   POST /api/send             发送消息（chatStream）
  *   POST /api/cancel           停止生成
  *   POST /api/retry            重试（retryStream）
@@ -148,6 +158,142 @@ interface UiText {
   removeWorkspace: string;
   workspaceRemoved: string;
   openFolderDialog: string;
+  browseTitle: string;
+  browseSelect: string;
+  browseUp: string;
+  browseRootLabel: string;
+  browseDrivesLabel: string;
+  chooseThisFolder: string;
+  pickOnDesktop: string;
+  workspaceOpened: string;
+  workspaceNotFound: string;
+  /* 设置页全量设置项 */
+  secGeneral: string;
+  secUI: string;
+  secProxy: string;
+  secTools: string;
+  secAutoExec: string;
+  secFileTools: string;
+  secCommand: string;
+  secPrompt: string;
+  secContext: string;
+  secMemory: string;
+  secSummarize: string;
+  secCheckpoint: string;
+  secTokenCount: string;
+  secImageGen: string;
+  secSkills: string;
+  secSubagents: string;
+  secPinned: string;
+  secStorage: string;
+  secDeps: string;
+  fldCheckUpdates: string;
+  fldMaxToolIterations: string;
+  fldDefaultToolMode: string;
+  fldLanguage: string;
+  fldTheme: string;
+  fldWorkspaceBehavior: string;
+  fldLoadingText: string;
+  fldSmoothStreaming: string;
+  fldSoundEnabled: string;
+  fldSoundVolume: string;
+  fldSoundTheme: string;
+  fldProxyEnabled: string;
+  fldProxyUrl: string;
+  fldProxyInsecure: string;
+  fldReadOutside: string;
+  fldWriteOutside: string;
+  fldListIgnore: string;
+  fldFindExclude: string;
+  fldApplyFormat: string;
+  fldApplyAutoSave: string;
+  fldApplyAutoSaveDelay: string;
+  fldApplyGuard: string;
+  fldApplyAutoApply: string;
+  fldSearchExclude: string;
+  fldSearchMaxFind: string;
+  fldSearchCtxBefore: string;
+  fldSearchCtxAfter: string;
+  fldHistoryScope: string;
+  fldHistoryMax: string;
+  fldCmdShell: string;
+  fldCmdTimeout: string;
+  fldCmdMaxOutput: string;
+  fldSandboxEnabled: string;
+  fldSandboxLangs: string;
+  fldSandboxTimeout: string;
+  fldPromptMode: string;
+  fldPromptPrefix: string;
+  fldPromptSuffix: string;
+  fldPromptDynamicEnabled: string;
+  fldPromptDynamic: string;
+  fldCtxFiles: string;
+  fldCtxDepth: string;
+  fldCtxTabs: string;
+  fldCtxMaxTabs: string;
+  fldCtxEditor: string;
+  fldCtxIgnore: string;
+  fldCtxDiag: string;
+  fldMemEnabled: string;
+  fldMemWake: string;
+  fldMemChars: string;
+  fldSumRounds: string;
+  fldSumTokens: string;
+  fldSumSeparate: string;
+  fldSumChannel: string;
+  fldSumModel: string;
+  fldSumAttempts: string;
+  fldSumRatio: string;
+  fldCkptEnabled: string;
+  fldCkptMax: string;
+  fldTokUrl: string;
+  fldTokModel: string;
+  fldTokKey: string;
+  fldImgUrl: string;
+  fldImgModel: string;
+  fldImgAspect: string;
+  fldImgAspectDef: string;
+  fldImgSize: string;
+  fldImgSizeDef: string;
+  fldImgMaxBatch: string;
+  fldImgMaxPerTask: string;
+  fldImgReturn: string;
+  fldImgKey: string;
+  fldSubMaxConcurrent: string;
+  fldSubFailureMode: string;
+  fldSubGeneralWorker: string;
+  fldSubDefaultIterations: string;
+  fldSubDefaultRuntime: string;
+  fldSubTools: string;
+  fldPinnedAdd: string;
+  fldPinnedPath: string;
+  fldRcEnabled: string;
+  fldRcPort: string;
+  fldRcRestart: string;
+  fldRcStop: string;
+  fldRcDisconnectWarn: string;
+  fldStoragePath: string;
+  fldMigration: string;
+  fldDepName: string;
+  fldDepStatus: string;
+  on: string;
+  off: string;
+  apiKeySet: string;
+  keepBlank: string;
+  chipsHint: string;
+  settingsSaved: string;
+  settingsFailed: string;
+  noData: string;
+  enable: string;
+  disable: string;
+  activeChannel: string;
+  setActiveChannel: string;
+  depInstalled: string;
+  depMissing: string;
+  unlimited: string;
+  seconds: string;
+  chipAdd: string;
+  chipRemove: string;
 }
 
 export const UI_TEXTS: Record<UiLang, UiText> = {
@@ -248,7 +394,142 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     addWorkspace: '新增工作区',
     removeWorkspace: '移除收藏',
     workspaceRemoved: '已移除收藏',
-    openFolderDialog: '已弹出文件夹选择框，请在桌面端选择'
+    openFolderDialog: '已弹出文件夹选择框，请在桌面端选择',
+    browseTitle: '选择工作区文件夹',
+    browseSelect: '浏览目录',
+    browseUp: '上级目录',
+    browseRootLabel: '全部磁盘',
+    browseDrivesLabel: '盘符列表',
+    chooseThisFolder: '选择此文件夹为工作区',
+    pickOnDesktop: '或：在桌面端弹出选择框',
+    workspaceOpened: '工作区已打开',
+    workspaceNotFound: '工作区不存在：请先在桌面端打开或收藏该目录',
+    secGeneral: '通用',
+    secUI: '界面',
+    secProxy: '代理',
+    secTools: '工具启用',
+    secAutoExec: '自动执行',
+    secFileTools: '文件工具',
+    secCommand: '命令与沙箱',
+    secPrompt: '系统提示词',
+    secContext: '上下文感知',
+    secMemory: '记忆',
+    secSummarize: '对话总结',
+    secCheckpoint: '检查点',
+    secTokenCount: 'Token 计数',
+    secImageGen: '图像生成',
+    secSkills: '技能',
+    secSubagents: '子代理',
+    secPinned: '固定文件',
+    secStorage: '数据存储',
+    secDeps: '依赖环境',
+    fldCheckUpdates: '检查更新',
+    fldMaxToolIterations: '最大工具迭代',
+    fldDefaultToolMode: '默认工具模式',
+    fldLanguage: '界面语言',
+    fldTheme: '主题',
+    fldWorkspaceBehavior: '启动恢复工作区',
+    fldLoadingText: '加载文案',
+    fldSmoothStreaming: '平滑流式输出',
+    fldSoundEnabled: '启用提示音',
+    fldSoundVolume: '音量',
+    fldSoundTheme: '音效风格',
+    fldProxyEnabled: '启用代理',
+    fldProxyUrl: '代理地址',
+    fldProxyInsecure: '跳过 TLS 校验',
+    fldReadOutside: '读取工作区外文件',
+    fldWriteOutside: '写入工作区外文件',
+    fldListIgnore: '列表忽略模式',
+    fldFindExclude: '查找排除模式',
+    fldApplyFormat: '补丁格式',
+    fldApplyAutoSave: '自动保存编辑',
+    fldApplyAutoSaveDelay: '自动保存延迟(ms)',
+    fldApplyGuard: '差异保护',
+    fldApplyAutoApply: '免确认自动应用',
+    fldSearchExclude: '搜索排除模式',
+    fldSearchMaxFind: '最大查找文件数',
+    fldSearchCtxBefore: '上文行数',
+    fldSearchCtxAfter: '下文行数',
+    fldHistoryScope: '历史搜索范围',
+    fldHistoryMax: '最大匹配数',
+    fldCmdShell: '默认 Shell',
+    fldCmdTimeout: '默认超时(秒)',
+    fldCmdMaxOutput: '最大输出行数',
+    fldSandboxEnabled: '启用沙箱',
+    fldSandboxLangs: '允许的语言',
+    fldSandboxTimeout: '默认超时(秒)',
+    fldPromptMode: '提示词模式',
+    fldPromptPrefix: '自定义前缀',
+    fldPromptSuffix: '自定义后缀',
+    fldPromptDynamicEnabled: '启用动态上下文模板',
+    fldPromptDynamic: '动态上下文模板',
+    fldCtxFiles: '包含工作区文件树',
+    fldCtxDepth: '最大文件深度',
+    fldCtxTabs: '包含打开的标签页',
+    fldCtxMaxTabs: '最大标签页数',
+    fldCtxEditor: '包含活动编辑器',
+    fldCtxIgnore: '忽略模式',
+    fldCtxDiag: '包含诊断信息',
+    fldMemEnabled: '启用记忆',
+    fldMemWake: '唤醒行数',
+    fldMemChars: '条目字符上限',
+    fldSumRounds: '保留最近轮次',
+    fldSumTokens: '保留最近 token',
+    fldSumSeparate: '独立模型总结',
+    fldSumChannel: '总结渠道',
+    fldSumModel: '总结模型',
+    fldSumAttempts: '自动总结尝试次数',
+    fldSumRatio: '总结输入比例',
+    fldCkptEnabled: '启用检查点',
+    fldCkptMax: '最大检查点数',
+    fldTokUrl: '计数接口地址',
+    fldTokModel: '计数模型',
+    fldTokKey: 'API Key',
+    fldImgUrl: '服务地址',
+    fldImgModel: '模型',
+    fldImgAspect: '启用宽高比',
+    fldImgAspectDef: '默认宽高比',
+    fldImgSize: '启用尺寸',
+    fldImgSizeDef: '默认尺寸',
+    fldImgMaxBatch: '最大批量任务',
+    fldImgMaxPerTask: '单任务最大图片数',
+    fldImgReturn: '图片结果回传 AI',
+    fldImgKey: 'API Key',
+    fldSubMaxConcurrent: '最大并发数',
+    fldSubFailureMode: '失败后处理',
+    fldSubGeneralWorker: '启用通用子代理',
+    fldSubDefaultIterations: '默认最大迭代',
+    fldSubDefaultRuntime: '默认最长运行(秒)',
+    fldSubTools: '工具',
+    fldPinnedAdd: '添加固定文件',
+    fldPinnedPath: '相对路径',
+    fldRcEnabled: '启用远程控制',
+    fldRcPort: '端口',
+    fldRcRestart: '重启服务器',
+    fldRcStop: '停止服务器',
+    fldRcDisconnectWarn: '修改端口或关闭后本页面将断开连接',
+    fldStoragePath: '自定义数据目录',
+    fldMigration: '迁移状态',
+    fldDepName: '依赖',
+    fldDepStatus: '状态',
+    on: '开',
+    off: '关',
+    apiKeySet: '已设置（留空保持不变）',
+    keepBlank: '留空保持不变',
+    chipsHint: '输入后回车添加',
+    settingsSaved: '设置已保存',
+    settingsFailed: '保存失败',
+    noData: '暂无数据',
+    enable: '启用',
+    disable: '停用',
+    activeChannel: '当前渠道',
+    setActiveChannel: '设为当前渠道',
+    depInstalled: '可用',
+    depMissing: '未安装',
+    unlimited: '不限',
+    seconds: '秒',
+    chipAdd: '添加',
+    chipRemove: '移除'
   },
   en: {
     appTitle: 'GrayCode Remote',
@@ -348,7 +629,142 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     addWorkspace: 'Add workspace',
     removeWorkspace: 'Remove from saved',
     workspaceRemoved: 'Removed from saved',
-    openFolderDialog: 'Folder picker opened on desktop'
+    openFolderDialog: 'Folder picker opened on desktop',
+    browseTitle: 'Choose workspace folder',
+    browseSelect: 'Browse folders',
+    browseUp: 'Parent folder',
+    browseRootLabel: 'All drives',
+    browseDrivesLabel: 'Drives',
+    chooseThisFolder: 'Open this folder as workspace',
+    pickOnDesktop: 'or open the picker on desktop',
+    workspaceOpened: 'Workspace opened',
+    workspaceNotFound: 'Workspace not found: open or save the folder on the desktop first',
+    secGeneral: 'General',
+    secUI: 'Appearance',
+    secProxy: 'Proxy',
+    secTools: 'Tools',
+    secAutoExec: 'Auto-execute',
+    secFileTools: 'File tools',
+    secCommand: 'Command & sandbox',
+    secPrompt: 'System prompt',
+    secContext: 'Context awareness',
+    secMemory: 'Memory',
+    secSummarize: 'Summarize',
+    secCheckpoint: 'Checkpoint',
+    secTokenCount: 'Token count',
+    secImageGen: 'Image generation',
+    secSkills: 'Skills',
+    secSubagents: 'Subagents',
+    secPinned: 'Pinned files',
+    secStorage: 'Data storage',
+    secDeps: 'Dependencies',
+    fldCheckUpdates: 'Check for updates',
+    fldMaxToolIterations: 'Max tool iterations',
+    fldDefaultToolMode: 'Default tool mode',
+    fldLanguage: 'Language',
+    fldTheme: 'Theme',
+    fldWorkspaceBehavior: 'Restore workspace on start',
+    fldLoadingText: 'Loading text',
+    fldSmoothStreaming: 'Smooth streaming',
+    fldSoundEnabled: 'Enable sounds',
+    fldSoundVolume: 'Volume',
+    fldSoundTheme: 'Sound theme',
+    fldProxyEnabled: 'Enable proxy',
+    fldProxyUrl: 'Proxy URL',
+    fldProxyInsecure: 'Skip TLS verification',
+    fldReadOutside: 'Read outside workspace',
+    fldWriteOutside: 'Write outside workspace',
+    fldListIgnore: 'List ignore patterns',
+    fldFindExclude: 'Find exclude patterns',
+    fldApplyFormat: 'Patch format',
+    fldApplyAutoSave: 'Auto-save edits',
+    fldApplyAutoSaveDelay: 'Auto-save delay (ms)',
+    fldApplyGuard: 'Diff guard',
+    fldApplyAutoApply: 'Auto-apply without confirm',
+    fldSearchExclude: 'Search exclude patterns',
+    fldSearchMaxFind: 'Max files to search',
+    fldSearchCtxBefore: 'Context lines before',
+    fldSearchCtxAfter: 'Context lines after',
+    fldHistoryScope: 'History search scope',
+    fldHistoryMax: 'Max matches',
+    fldCmdShell: 'Default shell',
+    fldCmdTimeout: 'Default timeout (s)',
+    fldCmdMaxOutput: 'Max output lines',
+    fldSandboxEnabled: 'Enable sandbox',
+    fldSandboxLangs: 'Allowed languages',
+    fldSandboxTimeout: 'Default timeout (s)',
+    fldPromptMode: 'Prompt mode',
+    fldPromptPrefix: 'Custom prefix',
+    fldPromptSuffix: 'Custom suffix',
+    fldPromptDynamicEnabled: 'Enable dynamic context template',
+    fldPromptDynamic: 'Dynamic context template',
+    fldCtxFiles: 'Include workspace file tree',
+    fldCtxDepth: 'Max file depth',
+    fldCtxTabs: 'Include open tabs',
+    fldCtxMaxTabs: 'Max tabs',
+    fldCtxEditor: 'Include active editor',
+    fldCtxIgnore: 'Ignore patterns',
+    fldCtxDiag: 'Include diagnostics',
+    fldMemEnabled: 'Enable memory',
+    fldMemWake: 'Wake lines',
+    fldMemChars: 'Max chars per entry',
+    fldSumRounds: 'Keep recent rounds',
+    fldSumTokens: 'Keep recent tokens',
+    fldSumSeparate: 'Use separate model',
+    fldSumChannel: 'Summarize channel',
+    fldSumModel: 'Summarize model',
+    fldSumAttempts: 'Max auto-summarize attempts',
+    fldSumRatio: 'Summarize input ratio',
+    fldCkptEnabled: 'Enable checkpoint',
+    fldCkptMax: 'Max checkpoints',
+    fldTokUrl: 'Count API URL',
+    fldTokModel: 'Count model',
+    fldTokKey: 'API Key',
+    fldImgUrl: 'Server URL',
+    fldImgModel: 'Model',
+    fldImgAspect: 'Enable aspect ratio',
+    fldImgAspectDef: 'Default aspect ratio',
+    fldImgSize: 'Enable size',
+    fldImgSizeDef: 'Default size',
+    fldImgMaxBatch: 'Max batch tasks',
+    fldImgMaxPerTask: 'Max images per task',
+    fldImgReturn: 'Return images to AI',
+    fldImgKey: 'API Key',
+    fldSubMaxConcurrent: 'Max concurrent agents',
+    fldSubFailureMode: 'Failure mode',
+    fldSubGeneralWorker: 'Enable general worker',
+    fldSubDefaultIterations: 'Default max iterations',
+    fldSubDefaultRuntime: 'Default max runtime (s)',
+    fldSubTools: 'Tools',
+    fldPinnedAdd: 'Add pinned file',
+    fldPinnedPath: 'Relative path',
+    fldRcEnabled: 'Enable remote control',
+    fldRcPort: 'Port',
+    fldRcRestart: 'Restart server',
+    fldRcStop: 'Stop server',
+    fldRcDisconnectWarn: 'Changing the port or turning it off will disconnect this page',
+    fldStoragePath: 'Custom data path',
+    fldMigration: 'Migration status',
+    fldDepName: 'Dependency',
+    fldDepStatus: 'Status',
+    on: 'On',
+    off: 'Off',
+    apiKeySet: 'Set (leave blank to keep)',
+    keepBlank: 'Leave blank to keep',
+    chipsHint: 'Type and press Enter to add',
+    settingsSaved: 'Settings saved',
+    settingsFailed: 'Failed to save',
+    noData: 'No data',
+    enable: 'Enable',
+    disable: 'Disable',
+    activeChannel: 'Active channel',
+    setActiveChannel: 'Set as active channel',
+    depInstalled: 'Available',
+    depMissing: 'Not installed',
+    unlimited: 'Unlimited',
+    seconds: 's',
+    chipAdd: 'Add',
+    chipRemove: 'Remove'
   },
   ja: {
     appTitle: 'GrayCode リモート',
@@ -448,7 +864,142 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     addWorkspace: 'ワークスペースを追加',
     removeWorkspace: '保存済みから削除',
     workspaceRemoved: '保存済みから削除しました',
-    openFolderDialog: 'デスクトップでフォルダ選択ダイアログを開きました'
+    openFolderDialog: 'デスクトップでフォルダ選択ダイアログを開きました',
+    browseTitle: 'ワークスペースフォルダを選択',
+    browseSelect: 'フォルダを参照',
+    browseUp: '親フォルダ',
+    browseRootLabel: 'すべてのドライブ',
+    browseDrivesLabel: 'ドライブ一覧',
+    chooseThisFolder: 'このフォルダをワークスペースとして開く',
+    pickOnDesktop: 'またはデスクトップで選択ダイアログを開く',
+    workspaceOpened: 'ワークスペースを開きました',
+    workspaceNotFound: 'ワークスペースが見つかりません：先にデスクトップで開くか保存してください',
+    secGeneral: '一般',
+    secUI: '外観',
+    secProxy: 'プロキシ',
+    secTools: 'ツール',
+    secAutoExec: '自動実行',
+    secFileTools: 'ファイルツール',
+    secCommand: 'コマンドとサンドボックス',
+    secPrompt: 'システムプロンプト',
+    secContext: 'コンテキスト認識',
+    secMemory: 'メモリ',
+    secSummarize: '要約',
+    secCheckpoint: 'チェックポイント',
+    secTokenCount: 'トークンカウント',
+    secImageGen: '画像生成',
+    secSkills: 'スキル',
+    secSubagents: 'サブエージェント',
+    secPinned: '固定ファイル',
+    secStorage: 'データ保存',
+    secDeps: '依存環境',
+    fldCheckUpdates: '更新を確認',
+    fldMaxToolIterations: '最大ツール反復',
+    fldDefaultToolMode: 'デフォルトツールモード',
+    fldLanguage: '言語',
+    fldTheme: 'テーマ',
+    fldWorkspaceBehavior: '起動時にワークスペース復元',
+    fldLoadingText: 'ローディング文言',
+    fldSmoothStreaming: 'スムーズストリーミング',
+    fldSoundEnabled: 'サウンドを有効化',
+    fldSoundVolume: '音量',
+    fldSoundTheme: 'サウンドテーマ',
+    fldProxyEnabled: 'プロキシを有効化',
+    fldProxyUrl: 'プロキシURL',
+    fldProxyInsecure: 'TLS検証をスキップ',
+    fldReadOutside: 'ワークスペース外の読み取り',
+    fldWriteOutside: 'ワークスペース外の書き込み',
+    fldListIgnore: '一覧の無視パターン',
+    fldFindExclude: '検索の除外パターン',
+    fldApplyFormat: 'パッチ形式',
+    fldApplyAutoSave: '編集を自動保存',
+    fldApplyAutoSaveDelay: '自動保存遅延(ms)',
+    fldApplyGuard: '差分ガード',
+    fldApplyAutoApply: '確認なしで自動適用',
+    fldSearchExclude: '検索の除外パターン',
+    fldSearchMaxFind: '最大検索ファイル数',
+    fldSearchCtxBefore: '前のコンテキスト行数',
+    fldSearchCtxAfter: '後のコンテキスト行数',
+    fldHistoryScope: '履歴検索範囲',
+    fldHistoryMax: '最大一致数',
+    fldCmdShell: 'デフォルトシェル',
+    fldCmdTimeout: 'デフォルトタイムアウト(秒)',
+    fldCmdMaxOutput: '最大出力行数',
+    fldSandboxEnabled: 'サンドボックスを有効化',
+    fldSandboxLangs: '許可する言語',
+    fldSandboxTimeout: 'デフォルトタイムアウト(秒)',
+    fldPromptMode: 'プロンプトモード',
+    fldPromptPrefix: 'カスタムプレフィックス',
+    fldPromptSuffix: 'カスタムサフィックス',
+    fldPromptDynamicEnabled: '動的コンテキストテンプレートを有効化',
+    fldPromptDynamic: '動的コンテキストテンプレート',
+    fldCtxFiles: 'ワークスペースファイルツリーを含める',
+    fldCtxDepth: '最大ファイル深度',
+    fldCtxTabs: '開いているタブを含める',
+    fldCtxMaxTabs: '最大タブ数',
+    fldCtxEditor: 'アクティブエディタを含める',
+    fldCtxIgnore: '無視パターン',
+    fldCtxDiag: '診断情報を含める',
+    fldMemEnabled: 'メモリを有効化',
+    fldMemWake: 'ウェイク行数',
+    fldMemChars: 'エントリ最大文字数',
+    fldSumRounds: '保持する最近のラウンド',
+    fldSumTokens: '保持する最近のトークン',
+    fldSumSeparate: '別モデルで要約',
+    fldSumChannel: '要約チャネル',
+    fldSumModel: '要約モデル',
+    fldSumAttempts: '自動要約の最大試行回数',
+    fldSumRatio: '要約入力比率',
+    fldCkptEnabled: 'チェックポイントを有効化',
+    fldCkptMax: '最大チェックポイント数',
+    fldTokUrl: 'カウントAPI URL',
+    fldTokModel: 'カウントモデル',
+    fldTokKey: 'APIキー',
+    fldImgUrl: 'サーバーURL',
+    fldImgModel: 'モデル',
+    fldImgAspect: 'アスペクト比を有効化',
+    fldImgAspectDef: 'デフォルトのアスペクト比',
+    fldImgSize: 'サイズを有効化',
+    fldImgSizeDef: 'デフォルトサイズ',
+    fldImgMaxBatch: '最大バッチタスク',
+    fldImgMaxPerTask: 'タスクあたり最大画像数',
+    fldImgReturn: '画像をAIに返す',
+    fldImgKey: 'APIキー',
+    fldSubMaxConcurrent: '最大同時実行数',
+    fldSubFailureMode: '失敗時の処理',
+    fldSubGeneralWorker: '汎用ワーカーを有効化',
+    fldSubDefaultIterations: 'デフォルト最大反復',
+    fldSubDefaultRuntime: 'デフォルト最大実行時間(秒)',
+    fldSubTools: 'ツール',
+    fldPinnedAdd: '固定ファイルを追加',
+    fldPinnedPath: '相対パス',
+    fldRcEnabled: 'リモートコントロールを有効化',
+    fldRcPort: 'ポート',
+    fldRcRestart: 'サーバーを再起動',
+    fldRcStop: 'サーバーを停止',
+    fldRcDisconnectWarn: 'ポート変更または無効化でこのページの接続が切れます',
+    fldStoragePath: 'カスタムデータパス',
+    fldMigration: '移行状態',
+    fldDepName: '依存',
+    fldDepStatus: '状態',
+    on: 'オン',
+    off: 'オフ',
+    apiKeySet: '設定済み（空欄のまま保持）',
+    keepBlank: '空欄のまま保持',
+    chipsHint: '入力してEnterで追加',
+    settingsSaved: '設定を保存しました',
+    settingsFailed: '保存に失敗',
+    noData: 'データがありません',
+    enable: '有効化',
+    disable: '無効化',
+    activeChannel: 'アクティブチャネル',
+    setActiveChannel: 'アクティブチャネルに設定',
+    depInstalled: '利用可能',
+    depMissing: '未インストール',
+    unlimited: '無制限',
+    seconds: '秒',
+    chipAdd: '追加',
+    chipRemove: '削除'
   }
 };
 
@@ -1225,6 +1776,89 @@ footer.composer {
 .cfg-item .mchip:disabled { opacity: .5; }
 .info-text { font-size: 12px; color: var(--vscode-descriptionForeground); line-height: 1.6; }
 
+/* ---------- 设置页：全量设置项控件 ---------- */
+.settings-sec h3 {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  margin-bottom: 2px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.set-field { display: flex; align-items: center; gap: 8px; padding: 7px 0; font-size: 13px; flex-wrap: wrap; }
+.set-field .k { color: var(--vscode-descriptionForeground); flex: 1 1 42%; min-width: 120px; }
+.set-field .k .sub { display: block; font-size: 11px; opacity: .8; }
+.set-field .ctl { flex: 1 1 45%; min-width: 130px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.set-field input[type="text"], .set-field input[type="number"], .set-field input[type="password"],
+.set-field select, .set-field textarea {
+  width: 100%;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+  padding: 6px 8px;
+  outline: none;
+  min-width: 0;
+}
+.set-field textarea { min-height: 56px; resize: none; line-height: 1.5; }
+.set-field input:focus, .set-field select:focus, .set-field textarea:focus { border-color: var(--vscode-focusBorder); }
+.set-field select { -webkit-appearance: none; appearance: none; padding-right: 22px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--vscode-foreground) 50%),
+    linear-gradient(135deg, var(--vscode-foreground) 50%, transparent 50%);
+  background-position: calc(100% - 12px) 50%, calc(100% - 8px) 50%;
+  background-size: 4px 4px; background-repeat: no-repeat; }
+.tgl { position: relative; width: 38px; height: 20px; flex: none; }
+.tgl input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.tgl .tr { position: absolute; inset: 0; border-radius: 999px; background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border); transition: background .15s ease; pointer-events: none; }
+.tgl .tr::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--vscode-foreground); transition: transform .15s ease; }
+.tgl input:checked + .tr { background: var(--vscode-button-background); border-color: var(--vscode-button-background); }
+.tgl input:checked + .tr::after { transform: translateX(18px); background: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; width: 100%; }
+.chips .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  border: 1px solid var(--vscode-panel-border); border-radius: 999px;
+  background: var(--vscode-input-background); color: var(--vscode-foreground);
+  font-size: 12px; padding: 2px 9px; }
+.chips .chip button { border: none; background: transparent; color: var(--vscode-descriptionForeground);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 0 1px; }
+.chips .chip button:active { color: var(--vscode-charts-red); }
+.chips .chip-input { flex: 1 1 100%; display: flex; gap: 6px; }
+.chips .chip-input input { flex: 1; min-width: 0; }
+.chips .chip-input .mini-btn { flex: none; }
+.mini-btn {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  font: inherit; font-size: 12px;
+  padding: 5px 12px; cursor: pointer; white-space: nowrap;
+}
+.mini-btn:active { background: var(--vscode-button-secondaryHoverBackground); }
+.mini-btn.danger { background: transparent; color: var(--vscode-charts-red); border-color: var(--vscode-charts-red); }
+.item-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--vscode-widget-border); }
+.item-row:first-of-type { border-top: none; }
+.item-row .t { flex: 1; min-width: 0; font-size: 13px; }
+.item-row .t .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-row .t .sub { font-size: 11px; color: var(--vscode-descriptionForeground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-note { font-size: 11px; color: var(--vscode-descriptionForeground); line-height: 1.5; margin-top: 6px; }
+#settings-sections { display: flex; flex-direction: column; gap: 12px; }
+#settings-sections .card { padding-top: 8px; }
+
+/* ---------- 目录浏览 ---------- */
+#browse-list .dir-item { display: flex; align-items: center; gap: 8px; padding: 9px 6px;
+  border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+#browse-list .dir-item:active { background: var(--vscode-list-hoverBackground); }
+#browse-list .dir-item svg { width: 15px; height: 15px; fill: var(--vscode-charts-orange); flex: none; }
+#browse-list .dir-item .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#browse-list .dir-item.active { background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground); }
+#browse-list .dir-item.active svg { fill: var(--vscode-list-activeSelectionForeground); }
+#btn-browse-pick { width: 100%; justify-content: center; }
+#btn-browse-pick:disabled { opacity: .5; }
+
 /* ---------- 底部弹层 / 操作菜单 / 模态框：桌面端 widget 风格 ---------- */
 #sheet {
   position: fixed;
@@ -1469,6 +2103,7 @@ footer.composer {
           <h3 id="set-model-title"></h3>
           <div id="configs-list"></div>
         </div>
+        <div id="settings-sections"></div>
         <div class="card">
           <h3 id="set-sec-title"></h3>
           <div class="info-text" id="set-sec-text"></div>
@@ -1493,17 +2128,39 @@ footer.composer {
   </nav>
 </div>
 
-<!-- 底部弹层：工作区切换 -->
+<!-- 底部弹层：工作区切换 / 目录浏览 -->
 <div id="sheet">
   <div class="backdrop"></div>
   <div class="panel">
-    <div class="head">
-      <b id="sheet-title">&hellip;</b>
-      <button class="icon-btn" id="btn-sheet-add" title="addWorkspace" aria-label="addWorkspace">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
+    <div id="sheet-list-mode">
+      <div class="head">
+        <b id="sheet-title">&hellip;</b>
+        <span style="display:flex;gap:2px;">
+          <button class="icon-btn" id="btn-sheet-browse" title="browseSelect" aria-label="browseSelect">
+            <svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-sheet-add" title="addWorkspace" aria-label="addWorkspace">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </span>
+      </div>
+      <div class="list" id="sheet-list"></div>
     </div>
-    <div class="list" id="sheet-list"></div>
+    <div id="sheet-browse-mode" hidden>
+      <div class="head">
+        <button class="icon-btn" id="btn-browse-back" aria-label="browseUp">
+          <svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8V4z"/></svg>
+        </button>
+        <b id="browse-path" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">&hellip;</b>
+        <button class="icon-btn" id="btn-browse-root" aria-label="browseRootLabel">
+          <svg viewBox="0 0 24 24"><path d="M4 9l8-5 8 5v11a1 1 0 0 1-1 1h-5v-7h-4v7H5a1 1 0 0 1-1-1V9z"/></svg>
+        </button>
+      </div>
+      <div class="list" id="browse-list"></div>
+      <div class="head" style="border-top:1px solid var(--vscode-widget-border);padding-top:8px;">
+        <button class="mini-btn" id="btn-browse-pick"></button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1568,7 +2225,18 @@ var state = {
   configs: [],             /* [{id,name,model}] */
   configModels: {},        /* configId -> [{id,name}] */
   statusInfo: null,
-  serverStopped: false
+  serverStopped: false,
+  /* 设置页全量设置项 */
+  settings: null,          /* 脱敏后的完整设置 */
+  tools: [],               /* [{name,description,enabled,category}] */
+  autoExec: {},            /* toolName -> boolean */
+  deps: [],                /* [{name,installed,installedVersion}] */
+  settingsBusy: false,
+  /* 目录浏览 */
+  browsePath: '',
+  browseParent: null,
+  browseDrives: [],
+  browseBusy: false
 };
 
 var $ = function (id) { return document.getElementById(id); };
@@ -1600,6 +2268,10 @@ var drawerEl = $('drawer');
 var drawerListEl = $('drawer-list');
 var actionSheetEl = $('action-sheet');
 var actPanelEl = $('act-panel');
+var browseListEl = $('browse-list');
+var browsePathEl = $('browse-path');
+var browsePickBtn = $('btn-browse-pick');
+var settingsSectionsEl = $('settings-sections');
 
 var ICON_SEND = '<svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
 var ICON_STOP = '<svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>';
@@ -2068,7 +2740,7 @@ function openDrawer() {
 function closeDrawer() { drawerEl.classList.remove('open'); }
 
 /* 工作区切换弹层（sheet 仅用于工作区；会话切换走左侧抽屉） */
-function closeSheet() { sheetEl.classList.remove('open'); }
+function closeSheet() { sheetEl.classList.remove('open'); closeBrowseMode(); }
 
 /* ---------- rename ---------- */
 var renaming = null;
@@ -2439,6 +3111,11 @@ function switchTab(name) {
     loadFiles('', true);
   } else if (name === 'settings') {
     loadConfigs();
+    if (!state.settings) {
+      loadSettings();
+      loadToolsList();
+      loadDeps();
+    }
   }
 }
 function renderFileTree(path, entries) {
@@ -2693,6 +3370,29 @@ function loadConfigs() {
       item.innerHTML = '<div class="cname">' + esc(cfg.name || cfg.id || '') + '</div>' +
         '<div class="cmodel">' + esc(t('currentModel')) + ': ' + esc(cfg.model || '—') + '</div>' +
         '<div class="mchips"><span class="info-text" style="margin:2px 0">' + esc(t('loading')) + '</span></div>';
+      var ctrl = document.createElement('div');
+      ctrl.className = 'item-row';
+      ctrl.style.borderTop = '1px solid var(--vscode-widget-border)';
+      ctrl.style.marginTop = '6px';
+      var tag = document.createElement('span');
+      tag.className = 't';
+      tag.style.fontSize = '12px';
+      var isActive = state.statusInfo && state.statusInfo.activeChannelId === cfg.id;
+      tag.textContent = isActive ? t('activeChannel') : '';
+      tag.style.color = isActive ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-descriptionForeground)';
+      ctrl.appendChild(tag);
+      if (!isActive) {
+        var act = document.createElement('button');
+        act.className = 'mini-btn';
+        act.textContent = t('setActiveChannel');
+        act.addEventListener('click', function () { setChannelActive(cfg); });
+        ctrl.appendChild(act);
+      }
+      ctrl.appendChild(itemToggle(cfg.enabled !== false, function (v) {
+        cfg.enabled = v;
+        toggleChannelEnabled(cfg);
+      }));
+      item.appendChild(ctrl);
       listEl.appendChild(item);
       loadConfigModels(cfg.id, item.querySelector('.mchips'));
     });
@@ -2786,6 +3486,815 @@ function fallbackCopy(text, done) {
   done();
 }
 
+/* ============================================================
+   设置页全量设置项（schema 驱动 + 定制节）
+   ============================================================ */
+function getVal(obj, p) {
+  var cur = obj;
+  for (var i = 0; i < p.length; i++) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = cur[p[i]];
+  }
+  return cur;
+}
+function setVal(obj, p, v) {
+  var cur = obj;
+  for (var i = 0; i < p.length - 1; i++) {
+    if (cur[p[i]] == null || typeof cur[p[i]] !== 'object') cur[p[i]] = {};
+    cur = cur[p[i]];
+  }
+  cur[p[p.length - 1]] = v;
+}
+function saveSettingsPatch(patch, extra) {
+  state.settingsBusy = true;
+  api('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: patch })
+  }).then(function (data) {
+    state.settings = data.settings || state.settings;
+    if (extra) extra(data.settings);
+    // 重渲染使控件与后端钳制后的实际值一致（非法值被 SettingsManager 归一化时）
+    renderAllSettingsSections();
+    toast(t('settingsSaved'));
+  }).catch(function (err) {
+    renderAllSettingsSections();
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
+  }).then(function () {
+    state.settingsBusy = false;
+  });
+}
+function secCard(titleKey) {
+  var card = document.createElement('div');
+  card.className = 'card settings-sec';
+  var h = document.createElement('h3');
+  h.textContent = t(titleKey);
+  card.appendChild(h);
+  settingsSectionsEl.appendChild(card);
+  return card;
+}
+function fieldRow(sec, f) {
+  var row = document.createElement('div');
+  row.className = 'set-field';
+  var k = document.createElement('span');
+  k.className = 'k';
+  k.textContent = t(f.t);
+  row.appendChild(k);
+  var ctl = document.createElement('span');
+  ctl.className = 'ctl';
+  row.appendChild(ctl);
+  sec.appendChild(row);
+  return { row: row, ctl: ctl };
+}
+function renderField(sec, f) {
+  var el = fieldRow(sec, f);
+  var value = getVal(state.settings, f.p);
+  if (f.w === 'toggle') {
+    var wrap = document.createElement('label');
+    wrap.className = 'tgl';
+    var input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = value === true;
+    var tr = document.createElement('span');
+    tr.className = 'tr';
+    wrap.appendChild(input);
+    wrap.appendChild(tr);
+    el.ctl.appendChild(wrap);
+    input.addEventListener('change', function () {
+      saveSettingsPatch(patchFor(f.p, input.checked));
+    });
+  } else if (f.w === 'select' || f.w === 'promptMode') {
+    var sel = document.createElement('select');
+    var options = f.w === 'promptMode' ? promptModeOptions() : f.o;
+    (options || []).forEach(function (o) {
+      var opt = document.createElement('option');
+      opt.value = o;
+      opt.textContent = o;
+      sel.appendChild(opt);
+    });
+    sel.value = value != null ? String(value) : '';
+    if (sel.value === '' && options && options.length) sel.value = options[0];
+    el.ctl.appendChild(sel);
+    sel.addEventListener('change', function () {
+      saveSettingsPatch(patchFor(f.p, sel.value));
+    });
+  } else if (f.w === 'configSelect') {
+    var sel2 = document.createElement('select');
+    var noneOpt = document.createElement('option');
+    noneOpt.value = '';
+    noneOpt.textContent = '—';
+    sel2.appendChild(noneOpt);
+    (state.configs || []).forEach(function (c) {
+      var opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name || c.id;
+      sel2.appendChild(opt);
+    });
+    sel2.value = value != null ? String(value) : '';
+    el.ctl.appendChild(sel2);
+    sel2.addEventListener('change', function () {
+      saveSettingsPatch(patchFor(f.p, sel2.value || undefined));
+    });
+  } else if (f.w === 'number') {
+    var num = document.createElement('input');
+    num.type = 'number';
+    num.min = String(f.min != null ? f.min : 0);
+    num.max = String(f.max != null ? f.max : 1e9);
+    if (f.step) num.step = String(f.step);
+    num.value = value != null ? String(value) : '';
+    num.placeholder = f.min === -1 ? t('unlimited') : '';
+    el.ctl.appendChild(num);
+    num.addEventListener('change', function () {
+      var raw = num.value.trim();
+      if (raw === '' && f.min === -1) raw = '-1';
+      var v = Number(raw);
+      if (raw === '' || !isFinite(v)) { num.value = value != null ? String(value) : ''; toast(t('settingsFailed')); return; }
+      if (f.min != null && v < f.min) v = f.min;
+      if (f.max != null && v > f.max) v = f.max;
+      num.value = String(v);
+      saveSettingsPatch(patchFor(f.p, v));
+    });
+  } else if (f.w === 'textarea') {
+    var ta = document.createElement('textarea');
+    ta.spellcheck = false;
+    ta.placeholder = t('keepBlank');
+    ta.value = value != null ? String(value) : '';
+    el.ctl.appendChild(ta);
+    ta.addEventListener('change', function () {
+      saveSettingsPatch(patchFor(f.p, ta.value));
+    });
+  } else if (f.w === 'chips') {
+    renderChips(el.ctl, f.p, Array.isArray(value) ? value : []);
+  } else {
+    var inp = document.createElement('input');
+    if (f.w === 'password') {
+      inp.type = 'password';
+      inp.autocomplete = 'new-password';
+      inp.placeholder = value ? t('apiKeySet') : '';
+    } else {
+      inp.type = 'text';
+      inp.placeholder = f.w === 'password' ? t('keepBlank') : '';
+    }
+    inp.value = '';
+    el.ctl.appendChild(inp);
+    inp.addEventListener('change', function () {
+      if (f.w === 'password') {
+        if (!inp.value) { inp.value = ''; return; }
+        saveSettingsPatch(patchFor(f.p, inp.value), function () { inp.value = ''; });
+      } else {
+        saveSettingsPatch(patchFor(f.p, inp.value));
+      }
+    });
+  }
+}
+function patchFor(p, v) {
+  var patch = {};
+  setVal(patch, p, v);
+  return patch;
+}
+function renderChips(ctl, p, values) {
+  var wrap = document.createElement('div');
+  wrap.className = 'chips';
+  values.forEach(function (v, i) {
+    var chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.textContent = v;
+    var rm = document.createElement('button');
+    rm.type = 'button';
+    rm.textContent = '×';
+    rm.title = t('chipRemove');
+    rm.addEventListener('click', function () {
+      var next = values.slice();
+      next.splice(i, 1);
+      saveSettingsPatch(patchFor(p, next));
+    });
+    chip.appendChild(rm);
+    wrap.appendChild(chip);
+  });
+  var addRow = document.createElement('div');
+  addRow.className = 'chip-input';
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = t('chipsHint');
+  var btn = document.createElement('button');
+  btn.className = 'mini-btn';
+  btn.textContent = t('chipAdd');
+  btn.type = 'button';
+  function addChip() {
+    var v = input.value.trim();
+    if (!v) return;
+    if (values.indexOf(v) >= 0) { input.value = ''; return; }
+    saveSettingsPatch(patchFor(p, values.concat([v])));
+  }
+  btn.addEventListener('click', addChip);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addChip(); }
+  });
+  addRow.appendChild(input);
+  addRow.appendChild(btn);
+  wrap.appendChild(addRow);
+  ctl.appendChild(wrap);
+}
+function promptModeOptions() {
+  var modes = getVal(state.settings, ['toolsConfig', 'system_prompt', 'modes']);
+  if (!Array.isArray(modes)) return [];
+  return modes.map(function (m) { return m && m.id ? m.id : ''; }).filter(Boolean);
+}
+function itemToggle(checked, onChange) {
+  var wrap = document.createElement('label');
+  wrap.className = 'tgl';
+  var input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = checked;
+  var tr = document.createElement('span');
+  tr.className = 'tr';
+  wrap.appendChild(input);
+  wrap.appendChild(tr);
+  input.addEventListener('change', function () { onChange(input.checked); });
+  return wrap;
+}
+function renderSimpleSection(titleKey, fields) {
+  var card = secCard(titleKey);
+  fields.forEach(function (f) { renderField(card, f); });
+}
+function renderToolsSections() {
+  var tools = state.tools;
+  var card = secCard('secTools');
+  if (!tools || tools.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noData');
+    card.appendChild(none);
+  } else {
+    tools.forEach(function (tool) {
+      var row = document.createElement('div');
+      row.className = 'item-row';
+      var td = document.createElement('div');
+      td.className = 't';
+      var name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = tool.name;
+      var sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = tool.description || '';
+      td.appendChild(name);
+      td.appendChild(sub);
+      row.appendChild(td);
+      row.appendChild(itemToggle(tool.enabled, function (v) {
+        saveSettingsPatch(patchFor(['toolsEnabled', tool.name], v));
+      }));
+      card.appendChild(row);
+    });
+  }
+  var autoCard = secCard('secAutoExec');
+  if (!state.autoExec || Object.keys(state.autoExec).length === 0) {
+    var none2 = document.createElement('div');
+    none2.className = 'info-text';
+    none2.textContent = t('noData');
+    autoCard.appendChild(none2);
+  } else {
+    Object.keys(state.autoExec).forEach(function (name) {
+      var row = document.createElement('div');
+      row.className = 'item-row';
+      var td = document.createElement('div');
+      td.className = 't';
+      var nameEl = document.createElement('div');
+      nameEl.className = 'name';
+      nameEl.textContent = name;
+      td.appendChild(nameEl);
+      row.appendChild(td);
+      row.appendChild(itemToggle(state.autoExec[name] === true, function (v) {
+        saveSettingsPatch(patchFor(['toolAutoExec', name], v));
+      }));
+      autoCard.appendChild(row);
+    });
+  }
+}
+function renderTokenSection() {
+  var tc = getVal(state.settings, ['toolsConfig', 'token_count']);
+  if (!tc || typeof tc !== 'object' || Object.keys(tc).length === 0) return;
+  var card = secCard('secTokenCount');
+  Object.keys(tc).forEach(function (ch) {
+    var sub = document.createElement('div');
+    sub.className = 'set-note';
+    sub.textContent = ch;
+    sub.style.marginTop = '6px';
+    sub.style.fontWeight = '600';
+    sub.style.color = 'var(--vscode-foreground)';
+    card.appendChild(sub);
+    renderField(card, { t: 'fldTokUrl', p: ['toolsConfig', 'token_count', ch, 'baseUrl'], w: 'text' });
+    renderField(card, { t: 'fldTokModel', p: ['toolsConfig', 'token_count', ch, 'model'], w: 'text' });
+    renderField(card, { t: 'fldTokKey', p: ['toolsConfig', 'token_count', ch, 'apiKey'], w: 'password' });
+  });
+}
+function renderImageGenSection() {
+  var ig = getVal(state.settings, ['toolsConfig', 'generate_image']);
+  if (!ig || typeof ig !== 'object') return;
+  var card = secCard('secImageGen');
+  var fields = [
+    { t: 'fldImgUrl', p: ['toolsConfig', 'generate_image', 'url'], w: 'text' },
+    { t: 'fldImgModel', p: ['toolsConfig', 'generate_image', 'model'], w: 'text' },
+    { t: 'fldImgKey', p: ['toolsConfig', 'generate_image', 'apiKey'], w: 'password' },
+    { t: 'fldImgAspect', p: ['toolsConfig', 'generate_image', 'enableAspectRatio'], w: 'toggle' },
+    { t: 'fldImgAspectDef', p: ['toolsConfig', 'generate_image', 'defaultAspectRatio'], w: 'select', o: ['1:1', '16:9', '9:16', '4:3', '3:4'] },
+    { t: 'fldImgSize', p: ['toolsConfig', 'generate_image', 'enableImageSize'], w: 'toggle' },
+    { t: 'fldImgSizeDef', p: ['toolsConfig', 'generate_image', 'defaultImageSize'], w: 'text' },
+    { t: 'fldImgMaxBatch', p: ['toolsConfig', 'generate_image', 'maxBatchTasks'], w: 'number', min: 1 },
+    { t: 'fldImgMaxPerTask', p: ['toolsConfig', 'generate_image', 'maxImagesPerTask'], w: 'number', min: 1 },
+    { t: 'fldImgReturn', p: ['toolsConfig', 'generate_image', 'returnImageToAI'], w: 'toggle' }
+  ];
+  fields.forEach(function (f) { renderField(card, f); });
+}
+function renderSkillsSection() {
+  var skills = getVal(state.settings, ['toolsConfig', 'skills', 'skills']);
+  var card = secCard('secSkills');
+  if (!Array.isArray(skills) || skills.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noData');
+    card.appendChild(none);
+    return;
+  }
+  skills.forEach(function (sk, i) {
+    var row = document.createElement('div');
+    row.className = 'item-row';
+    var td = document.createElement('div');
+    td.className = 't';
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = sk.name || sk.id || '';
+    var sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = sk.description || sk.id || '';
+    td.appendChild(name);
+    td.appendChild(sub);
+    row.appendChild(td);
+    row.appendChild(itemToggle(sk.enabled !== false, function (v) {
+      var next = skills.slice();
+      next[i] = Object.assign({}, sk, { enabled: v });
+      saveSettingsPatch(patchFor(['toolsConfig', 'skills', 'skills'], next));
+    }));
+    var rm = document.createElement('button');
+    rm.className = 'mini-btn danger';
+    rm.textContent = '×';
+    rm.title = t('chipRemove');
+    rm.addEventListener('click', function () {
+      var next = skills.slice();
+      next.splice(i, 1);
+      saveSettingsPatch(patchFor(['toolsConfig', 'skills', 'skills'], next));
+    });
+    row.appendChild(rm);
+    card.appendChild(row);
+  });
+}
+function renderSubagentsSection() {
+  var sa = getVal(state.settings, ['toolsConfig', 'subagents']);
+  var card = secCard('secSubagents');
+  if (!sa || typeof sa !== 'object') {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noData');
+    card.appendChild(none);
+    return;
+  }
+  renderField(card, { t: 'fldSubMaxConcurrent', p: ['toolsConfig', 'subagents', 'maxConcurrentAgents'], w: 'number', min: 1 });
+  renderField(card, { t: 'fldSubFailureMode', p: ['toolsConfig', 'subagents', 'failureModeAfterRetries'], w: 'select', o: ['fail_parent_tool', 'wait_for_monitor_action'] });
+  renderField(card, { t: 'fldSubGeneralWorker', p: ['toolsConfig', 'subagents', 'generalWorkerEnabled'], w: 'toggle' });
+  renderField(card, { t: 'fldSubDefaultIterations', p: ['toolsConfig', 'subagents', 'defaultMaxIterations'], w: 'number', min: 1 });
+  renderField(card, { t: 'fldSubDefaultRuntime', p: ['toolsConfig', 'subagents', 'defaultMaxRuntime'], w: 'number', min: 1 });
+  var agents = Array.isArray(sa.agents) ? sa.agents : [];
+  agents.forEach(function (ag, i) {
+    var row = document.createElement('div');
+    row.className = 'item-row';
+    var td = document.createElement('div');
+    td.className = 't';
+    var name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = ag.name || ag.type || '';
+    var sub = document.createElement('div');
+    sub.className = 'sub';
+    sub.textContent = (ag.channel && ag.channel.channelId ? ag.channel.channelId + (ag.channel.modelId ? ' / ' + ag.channel.modelId : '') : '') + (ag.enabled === false ? ' · ' + t('off') : '');
+    td.appendChild(name);
+    td.appendChild(sub);
+    row.appendChild(td);
+    row.appendChild(itemToggle(ag.enabled !== false, function (v) {
+      var next = agents.slice();
+      next[i] = Object.assign({}, ag, { enabled: v });
+      saveSettingsPatch(patchFor(['toolsConfig', 'subagents', 'agents'], next));
+    }));
+    card.appendChild(row);
+  });
+}
+function renderPinnedSection() {
+  var pf = getVal(state.settings, ['toolsConfig', 'pinned_files']);
+  var files = pf && Array.isArray(pf.files) ? pf.files : [];
+  var card = secCard('secPinned');
+  if (files.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noData');
+    card.appendChild(none);
+  } else {
+    files.forEach(function (f, i) {
+      var row = document.createElement('div');
+      row.className = 'item-row';
+      var td = document.createElement('div');
+      td.className = 't';
+      var name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = f.path || '';
+      var sub = document.createElement('div');
+      sub.className = 'sub';
+      sub.textContent = f.workspaceUri || '';
+      td.appendChild(name);
+      td.appendChild(sub);
+      row.appendChild(td);
+      row.appendChild(itemToggle(f.enabled !== false, function (v) {
+        var next = files.slice();
+        next[i] = Object.assign({}, f, { enabled: v });
+        saveSettingsPatch(patchFor(['toolsConfig', 'pinned_files', 'files'], next));
+      }));
+      var rm = document.createElement('button');
+      rm.className = 'mini-btn danger';
+      rm.textContent = '×';
+      rm.title = t('chipRemove');
+      rm.addEventListener('click', function () {
+        var next = files.slice();
+        next.splice(i, 1);
+        saveSettingsPatch(patchFor(['toolsConfig', 'pinned_files', 'files'], next));
+      });
+      row.appendChild(rm);
+      card.appendChild(row);
+    });
+  }
+  var addRow = document.createElement('div');
+  addRow.className = 'set-field';
+  var k = document.createElement('span');
+  k.className = 'k';
+  k.textContent = t('fldPinnedAdd');
+  addRow.appendChild(k);
+  var ctl = document.createElement('span');
+  ctl.className = 'ctl';
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = t('fldPinnedPath');
+  var btn = document.createElement('button');
+  btn.className = 'mini-btn';
+  btn.textContent = t('chipAdd');
+  btn.type = 'button';
+  function addPinned() {
+    var p = input.value.trim();
+    if (!p || !state.workspaceUri) { toast(t('settingsFailed')); return; }
+    var next = files.concat([{ id: 'pf_' + Date.now(), path: p, workspaceUri: state.workspaceUri, enabled: true, addedAt: Date.now() }]);
+    saveSettingsPatch(patchFor(['toolsConfig', 'pinned_files', 'files'], next), function () { input.value = ''; });
+  }
+  btn.addEventListener('click', addPinned);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addPinned(); }
+  });
+  ctl.appendChild(input);
+  ctl.appendChild(btn);
+  addRow.appendChild(ctl);
+  card.appendChild(addRow);
+}
+function renderRemoteSection() {
+  var rc = getVal(state.settings, ['remoteControl']);
+  var card = secCard('secRemote');
+  if (!rc || typeof rc !== 'object') return;
+  renderField(card, { t: 'fldRcEnabled', p: ['remoteControl', 'enabled'], w: 'toggle' });
+  renderField(card, { t: 'fldRcPort', p: ['remoteControl', 'port'], w: 'number', min: 1, max: 65535 });
+  var warn = document.createElement('div');
+  warn.className = 'set-note';
+  warn.textContent = t('fldRcDisconnectWarn');
+  card.appendChild(warn);
+  var btns = document.createElement('div');
+  btns.className = 'set-field';
+  var restart = document.createElement('button');
+  restart.className = 'mini-btn';
+  restart.textContent = t('fldRcRestart');
+  restart.addEventListener('click', function () {
+    api('/api/remote-action', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'restart' })
+    }).then(function () { toast(t('settingsSaved')); }).catch(function (err) { toast(t('settingsFailed') + ': ' + (err.message || '')); });
+  });
+  var stop = document.createElement('button');
+  stop.className = 'mini-btn danger';
+  stop.textContent = t('fldRcStop');
+  stop.addEventListener('click', function () {
+    openModal(t('fldRcStop'), null, t('renameSave'), t('renameCancel'), 'danger', function () {
+      api('/api/remote-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'stop' })
+      }).then(function () { toast(t('settingsSaved')); }).catch(function (err) { toast(t('settingsFailed') + ': ' + (err.message || '')); });
+    });
+  });
+  btns.appendChild(restart);
+  btns.appendChild(stop);
+  card.appendChild(btns);
+}
+function renderStorageSection() {
+  var sp = getVal(state.settings, ['storagePath']);
+  var card = secCard('secStorage');
+  if (!sp || typeof sp !== 'object') {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('noData');
+    card.appendChild(none);
+    return;
+  }
+  var rows = [
+    { t: 'fldStoragePath', v: sp.customDataPath || '—' },
+    { t: 'fldMigration', v: sp.migrationStatus || '—' }
+  ];
+  rows.forEach(function (r) {
+    var row = document.createElement('div');
+    row.className = 'set-row';
+    var k = document.createElement('span');
+    k.className = 'k';
+    k.textContent = t(r.t);
+    var v = document.createElement('span');
+    v.className = 'v';
+    v.textContent = r.v;
+    row.appendChild(k);
+    row.appendChild(v);
+    card.appendChild(row);
+  });
+}
+function renderDepsSection() {
+  var card = secCard('secDeps');
+  if (state.deps.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'info-text';
+    none.textContent = t('loading');
+    card.appendChild(none);
+  } else {
+    state.deps.forEach(function (d) {
+      var row = document.createElement('div');
+      row.className = 'set-row';
+      var k = document.createElement('span');
+      k.className = 'k';
+      k.textContent = d.name || '';
+      var v = document.createElement('span');
+      v.className = 'v';
+      v.textContent = d.installed
+        ? (d.installedVersion || t('depInstalled'))
+        : t('depMissing');
+      v.style.color = d.installed ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-charts-red)';
+      row.appendChild(k);
+      row.appendChild(v);
+      card.appendChild(row);
+    });
+  }
+}
+function renderAllSettingsSections() {
+  settingsSectionsEl.innerHTML = '';
+  if (!state.settings) {
+    var p = document.createElement('div');
+    p.className = 'info-text';
+    p.textContent = t('loading');
+    settingsSectionsEl.appendChild(p);
+    return;
+  }
+  var secs = [
+    { key: 'secGeneral', f: [
+      { t: 'fldCheckUpdates', p: ['checkForUpdates'], w: 'toggle' },
+      { t: 'fldMaxToolIterations', p: ['maxToolIterations'], w: 'number', min: -1 },
+      { t: 'fldDefaultToolMode', p: ['defaultToolMode'], w: 'select', o: ['function_call', 'xml', 'json'] }
+    ]},
+    { key: 'secUI', f: [
+      { t: 'fldLanguage', p: ['ui', 'language'], w: 'select', o: ['auto', 'zh-CN', 'en', 'ja'] },
+      { t: 'fldTheme', p: ['ui', 'theme'], w: 'select', o: ['auto', 'light', 'dark'] },
+      { t: 'fldWorkspaceBehavior', p: ['ui', 'workspaceBehavior'], w: 'select', o: ['restore', 'none'] },
+      { t: 'fldLoadingText', p: ['ui', 'appearance', 'loadingText'], w: 'text' },
+      { t: 'fldSmoothStreaming', p: ['ui', 'appearance', 'smoothStreaming'], w: 'select', o: ['off', 'smooth', 'balanced', 'silky'] },
+      { t: 'fldSoundEnabled', p: ['ui', 'sound', 'enabled'], w: 'toggle' },
+      { t: 'fldSoundVolume', p: ['ui', 'sound', 'volume'], w: 'number', min: 0, max: 100 },
+      { t: 'fldSoundTheme', p: ['ui', 'sound', 'theme'], w: 'select', o: ['beep', 'soft'] }
+    ]},
+    { key: 'secProxy', f: [
+      { t: 'fldProxyEnabled', p: ['proxy', 'enabled'], w: 'toggle' },
+      { t: 'fldProxyUrl', p: ['proxy', 'url'], w: 'text' },
+      { t: 'fldProxyInsecure', p: ['proxy', 'insecureSkipVerify'], w: 'toggle' }
+    ]},
+    { key: 'secFileTools', f: [
+      { t: 'fldReadOutside', p: ['toolsConfig', 'read_file', 'outsideWorkspaceAccess'], w: 'select', o: ['deny', 'ask', 'allow'] },
+      { t: 'fldWriteOutside', p: ['toolsConfig', 'write_file', 'outsideWorkspaceAccess'], w: 'select', o: ['deny', 'ask'] },
+      { t: 'fldListIgnore', p: ['toolsConfig', 'list_files', 'ignorePatterns'], w: 'chips' },
+      { t: 'fldFindExclude', p: ['toolsConfig', 'find_files', 'excludePatterns'], w: 'chips' },
+      { t: 'fldApplyFormat', p: ['toolsConfig', 'apply_diff', 'format'], w: 'select', o: ['unified', 'search_replace'] },
+      { t: 'fldApplyAutoSave', p: ['toolsConfig', 'apply_diff', 'autoSave'], w: 'toggle' },
+      { t: 'fldApplyAutoSaveDelay', p: ['toolsConfig', 'apply_diff', 'autoSaveDelay'], w: 'number', min: 0 },
+      { t: 'fldApplyGuard', p: ['toolsConfig', 'apply_diff', 'diffGuardEnabled'], w: 'toggle' },
+      { t: 'fldApplyAutoApply', p: ['toolsConfig', 'apply_diff', 'autoApplyWithoutDiffView'], w: 'toggle' },
+      { t: 'fldSearchExclude', p: ['toolsConfig', 'search_in_files', 'excludePatterns'], w: 'chips' },
+      { t: 'fldSearchMaxFind', p: ['toolsConfig', 'search_in_files', 'maxFindFiles'], w: 'number', min: 1 },
+      { t: 'fldSearchCtxBefore', p: ['toolsConfig', 'search_in_files', 'contextLinesBefore'], w: 'number', min: 0 },
+      { t: 'fldSearchCtxAfter', p: ['toolsConfig', 'search_in_files', 'contextLinesAfter'], w: 'number', min: 0 },
+      { t: 'fldHistoryScope', p: ['toolsConfig', 'history_search', 'searchScope'], w: 'select', o: ['all', 'summarized'] },
+      { t: 'fldHistoryMax', p: ['toolsConfig', 'history_search', 'maxSearchMatches'], w: 'number', min: 1 }
+    ]},
+    { key: 'secCommand', f: [
+      { t: 'fldCmdTimeout', p: ['toolsConfig', 'execute_command', 'defaultTimeout'], w: 'number', min: 1 },
+      { t: 'fldCmdMaxOutput', p: ['toolsConfig', 'execute_command', 'maxOutputLines'], w: 'number', min: 1 },
+      { t: 'fldSandboxEnabled', p: ['toolsConfig', 'sandbox', 'enabled'], w: 'toggle' },
+      { t: 'fldSandboxTimeout', p: ['toolsConfig', 'sandbox', 'defaultTimeout'], w: 'number', min: 1 }
+    ]},
+    { key: 'secPrompt', f: [
+      { t: 'fldPromptMode', p: ['toolsConfig', 'system_prompt', 'currentModeId'], w: 'promptMode' },
+      { t: 'fldPromptPrefix', p: ['toolsConfig', 'system_prompt', 'customPrefix'], w: 'textarea' },
+      { t: 'fldPromptSuffix', p: ['toolsConfig', 'system_prompt', 'customSuffix'], w: 'textarea' },
+      { t: 'fldPromptDynamicEnabled', p: ['toolsConfig', 'system_prompt', 'dynamicTemplateEnabled'], w: 'toggle' },
+      { t: 'fldPromptDynamic', p: ['toolsConfig', 'system_prompt', 'dynamicTemplate'], w: 'textarea' }
+    ]},
+    { key: 'secContext', f: [
+      { t: 'fldCtxFiles', p: ['toolsConfig', 'context_awareness', 'includeWorkspaceFiles'], w: 'toggle' },
+      { t: 'fldCtxDepth', p: ['toolsConfig', 'context_awareness', 'maxFileDepth'], w: 'number', min: -1 },
+      { t: 'fldCtxTabs', p: ['toolsConfig', 'context_awareness', 'includeOpenTabs'], w: 'toggle' },
+      { t: 'fldCtxMaxTabs', p: ['toolsConfig', 'context_awareness', 'maxOpenTabs'], w: 'number', min: 0 },
+      { t: 'fldCtxEditor', p: ['toolsConfig', 'context_awareness', 'includeActiveEditor'], w: 'toggle' },
+      { t: 'fldCtxIgnore', p: ['toolsConfig', 'context_awareness', 'ignorePatterns'], w: 'chips' },
+      { t: 'fldCtxDiag', p: ['toolsConfig', 'context_awareness', 'diagnostics', 'enabled'], w: 'toggle' }
+    ]},
+    { key: 'secMemory', f: [
+      { t: 'fldMemEnabled', p: ['toolsConfig', 'memory', 'enabled'], w: 'toggle' },
+      { t: 'fldMemWake', p: ['toolsConfig', 'memory', 'wakeLines'], w: 'number', min: 0 },
+      { t: 'fldMemChars', p: ['toolsConfig', 'memory', 'entryChars'], w: 'number', min: 1 }
+    ]},
+    { key: 'secSummarize', f: [
+      { t: 'fldSumRounds', p: ['toolsConfig', 'summarize', 'keepRecentRounds'], w: 'number', min: 0 },
+      { t: 'fldSumTokens', p: ['toolsConfig', 'summarize', 'keepRecentTokens'], w: 'text' },
+      { t: 'fldSumSeparate', p: ['toolsConfig', 'summarize', 'useSeparateModel'], w: 'toggle' },
+      { t: 'fldSumChannel', p: ['toolsConfig', 'summarize', 'summarizeChannelId'], w: 'configSelect' },
+      { t: 'fldSumModel', p: ['toolsConfig', 'summarize', 'summarizeModelId'], w: 'text' },
+      { t: 'fldSumAttempts', p: ['toolsConfig', 'summarize', 'maxAutoSummarizeAttemptsPerTurn'], w: 'number', min: 1, max: 5 },
+      { t: 'fldSumRatio', p: ['toolsConfig', 'summarize', 'summarizeMaxInputRatio'], w: 'number', min: 0.05, max: 0.95, step: 0.05 }
+    ]},
+    { key: 'secCheckpoint', f: [
+      { t: 'fldCkptEnabled', p: ['toolsConfig', 'checkpoint', 'enabled'], w: 'toggle' },
+      { t: 'fldCkptMax', p: ['toolsConfig', 'checkpoint', 'maxCheckpoints'], w: 'number', min: -1 }
+    ]}
+  ];
+  secs.forEach(function (sec) { renderSimpleSection(sec.key, sec.f); });
+  renderToolsSections();
+  renderTokenSection();
+  renderImageGenSection();
+  renderSkillsSection();
+  renderSubagentsSection();
+  renderPinnedSection();
+  renderRemoteSection();
+  renderStorageSection();
+  renderDepsSection();
+}
+function loadSettings() {
+  api('/api/settings').then(function (data) {
+    state.settings = data.settings || null;
+    renderAllSettingsSections();
+  }).catch(function (err) {
+    settingsSectionsEl.innerHTML = '<div class="info-text" style="color:var(--vscode-charts-red)">' + esc(t('loadFailed')) + ': ' + esc(err.message || '') + '</div>';
+  });
+}
+function loadToolsList() {
+  api('/api/tools').then(function (data) {
+    state.tools = Array.isArray(data.tools) ? data.tools : [];
+    state.autoExec = (data.autoExec && typeof data.autoExec === 'object') ? data.autoExec : {};
+    renderAllSettingsSections();
+  }).catch(function () { /* 工具清单失败不阻断设置页 */ });
+}
+function loadDeps() {
+  api('/api/dependencies').then(function (data) {
+    var deps = data.dependencies;
+    state.deps = Array.isArray(deps) ? deps : (deps && Array.isArray(deps.dependencies) ? deps.dependencies : []);
+    renderAllSettingsSections();
+  }).catch(function () { /* 依赖展示失败静默 */ });
+}
+function toggleChannelEnabled(cfg) {
+  api('/api/channel-toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ configId: cfg.id, enabled: !cfg.enabled })
+  }).then(function () {
+    toast(t('settingsSaved'));
+    loadConfigs();
+  }).catch(function (err) {
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
+    loadConfigs(); // 失败回滚开关状态
+  });
+}
+function setChannelActive(cfg) {
+  api('/api/channel-active', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ configId: cfg.id })
+  }).then(function () {
+    toast(t('setActiveChannel') + ' ✓');
+    state.statusInfo = state.statusInfo || {};
+    state.statusInfo.activeChannelId = cfg.id;
+    loadConfigs();
+  }).catch(function (err) {
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
+  });
+}
+
+/* ============================================================
+   目录浏览（移动端自选工作区文件夹，免桌面端弹窗）
+   ============================================================ */
+function openBrowse() {
+  $('sheet-list-mode').hidden = true;
+  $('sheet-browse-mode').hidden = false;
+  sheetEl.classList.add('open');
+  browsePickBtn.textContent = t('chooseThisFolder');
+  loadFsDir('');
+}
+function closeBrowseMode() {
+  $('sheet-list-mode').hidden = false;
+  $('sheet-browse-mode').hidden = true;
+}
+function loadFsDir(dir) {
+  state.browseBusy = true;
+  browsePickBtn.disabled = true;
+  browseListEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-descriptionForeground)">' + esc(t('loading')) + '</div>';
+  api('/api/fs?path=' + encodeURIComponent(dir)).then(function (data) {
+    state.browsePath = data.path || '';
+    state.browseParent = data.parent || null;
+    state.browseDrives = Array.isArray(data.drives) ? data.drives : [];
+    renderBrowse(Array.isArray(data.entries) ? data.entries : []);
+  }).catch(function (err) {
+    browseListEl.innerHTML = '<div class="conv-item" style="color:var(--vscode-charts-red)">' + esc(err.message || '') + '</div>';
+  }).then(function () {
+    state.browseBusy = false;
+    browsePickBtn.disabled = !state.browsePath || state.browseBusy;
+  });
+}
+function renderBrowse(entries) {
+  browsePathEl.textContent = state.browsePath || t('browseDrivesLabel');
+  browseListEl.innerHTML = '';
+  if (!state.browsePath) {
+    state.browseDrives.forEach(function (d) {
+      var item = document.createElement('div');
+      item.className = 'dir-item';
+      item.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>' +
+        '<span class="n">' + esc(d) + '</span>';
+      item.addEventListener('click', function () { loadFsDir(d); });
+      browseListEl.appendChild(item);
+    });
+    return;
+  }
+  if (state.browseParent) {
+    var up = document.createElement('div');
+    up.className = 'dir-item';
+    up.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 4l-8 8 8 8V4z"/></svg>' +
+      '<span class="n">' + esc(t('browseUp')) + '</span>';
+    up.addEventListener('click', function () { loadFsDir(state.browseParent); });
+    browseListEl.appendChild(up);
+  }
+  if (entries.length === 0) {
+    var none = document.createElement('div');
+    none.className = 'conv-item';
+    none.style.color = 'var(--vscode-descriptionForeground)';
+    none.textContent = t('noData');
+    browseListEl.appendChild(none);
+  }
+  entries.forEach(function (e) {
+    var item = document.createElement('div');
+    item.className = 'dir-item';
+    item.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>' +
+      '<span class="n">' + esc(e.name || e.path || '') + '</span>';
+    item.addEventListener('click', function () { loadFsDir(e.path); });
+    browseListEl.appendChild(item);
+  });
+  var pickHint = document.createElement('div');
+  pickHint.className = 'set-note';
+  pickHint.style.cursor = 'pointer';
+  pickHint.style.textAlign = 'center';
+  pickHint.textContent = t('pickOnDesktop');
+  pickHint.addEventListener('click', function () { closeBrowseMode(); addWorkspace(); });
+  browseListEl.appendChild(pickHint);
+}
+function pickBrowseFolder() {
+  if (!state.browsePath || state.browseBusy) return;
+  api('/api/workspace-add', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fsPath: state.browsePath })
+  }).then(function (data) {
+    if (data && data.canceled) return;
+    toast(t('workspaceOpened'));
+    closeSheet();
+    state.currentFile = null;
+    state.fileDirs = {};
+    if (isTab('files')) {
+      fileViewerEl.hidden = true;
+      fileTreeEl.hidden = false;
+      loadFiles('', true);
+    }
+  }).catch(function (err) {
+    toast(t('loadFailed') + ': ' + (err.message || ''));
+  });
+}
+
 /* ---------- wiring ---------- */
 sendBtn.addEventListener('click', function () {
   if (state.streaming) { doStop(); } else { doSend(); }
@@ -2803,10 +4312,25 @@ inputEl.addEventListener('keydown', function (e) {
 });
 $('btn-drawer').addEventListener('click', openDrawer);
 $('btn-refresh').addEventListener('click', function () {
-  if (!isTab('chat')) return;
-  loadMessages(state.conversationId);
-  loadConversations();
-  toast(t('refresh') + ' ✓');
+  if (isTab('chat')) {
+    loadMessages(state.conversationId);
+    loadConversations();
+    toast(t('refresh') + ' ✓');
+    return;
+  }
+  if (isTab('settings')) {
+    loadConfigs();
+    loadSettings();
+    loadToolsList();
+    loadDeps();
+    toast(t('refresh') + ' ✓');
+    return;
+  }
+  if (isTab('files')) {
+    state.fileDirs = {};
+    loadFiles('', true);
+    toast(t('refresh') + ' ✓');
+  }
 });
 $('btn-new').addEventListener('click', function () {
   closeDrawer();
@@ -2827,8 +4351,14 @@ sheetEl.querySelector('.backdrop').addEventListener('click', closeSheet);
 $('act-backdrop').addEventListener('click', closeActionSheet);
 $('btn-ws-switch').textContent = t('switchWorkspace');
 $('btn-ws-switch').addEventListener('click', openWorkspaceSheet);
-$('btn-ws-add').addEventListener('click', addWorkspace);
+$('btn-ws-add').addEventListener('click', openBrowse);
 $('btn-sheet-add').addEventListener('click', addWorkspace);
+$('btn-sheet-browse').addEventListener('click', openBrowse);
+$('btn-browse-back').addEventListener('click', function () {
+  loadFsDir(state.browseParent || '');
+});
+$('btn-browse-root').addEventListener('click', function () { loadFsDir(''); });
+$('btn-browse-pick').addEventListener('click', pickBrowseFolder);
 $('btn-file-back').addEventListener('click', function () {
   if (state.currentFile && state.currentFile.dirty) {
     openModal(t('deleteMessage'), null, t('renameSave'), t('renameCancel'), 'danger', null);

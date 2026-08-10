@@ -41,6 +41,16 @@
   - **远程控制会话列表恒为空（移动端「看不到任何会话」）**：`handleListConversations` 读取 `meta.messageCount` 顶层字段——真实 `meta.json`（HIS-11 起）的 messageCount/preview 位于 `custom` 段，顶层恒为 undefined，再经 `messageCount > 0` 过滤后整个列表为空。已按桌面端 `getConversationMetadataBatch` 同口径读取 `custom.messageCount/custom.preview`，并取消按计数过滤（与桌面端历史列表一致）。
   - **远程控制工作区根目录无法浏览（文件树打不开）**：移动端文件页以空路径（`path=`）表示工作区根目录，但服务器白名单 `isSafeWorkspacePath('')` 拒绝空字符串（400 Invalid path），根目录列举整体不可用。新增 `isSafeWorkspaceDirPath`（仅目录列举允许空路径，读写仍拒绝），与 webview `FileHandlers.listWorkspaceDirectory` 的「空路径=根目录」语义对齐。
 
+### Added（1.7.10dev 补记：移动端自选工作区 + 设置页全量补齐）
+  - **移动端自选工作区目录（不再依赖桌面端弹窗）**：文件页/工作区弹层新增「浏览目录」模式——`GET /api/fs` 浏览服务端任意目录（仅目录项元数据：名称/路径，绝不读取文件内容；盘符列表 + 目录树 + 隐藏项过滤 + 500 条目上限），选中后 `POST /api/workspace-add` 携带 `fsPath` 直接打开（`workspace.openFolder` 免桌面端文件夹选择框），桌面端弹窗保留为兜底入口。绝对路径白名单：禁控制字符、禁 `..`/尾点段、长度上限 2048。
+  - **设置页全量补齐（此前仅「渠道」）**：`GET/POST /api/settings` 透传桌面端 `getSettings/updateSettings` 消息管道（深合并 + 危险键剥离与桌面端一致），移动端可读写全部设置项——通用（检查更新/最大工具迭代/默认工具模式）、界面（语言/主题/工作区行为/加载文案/平滑流式/提示音）、代理、工具启用、自动执行、文件工具（读/写工作区外访问、list/find/search 忽略与排除模式、apply_diff、history_search）、命令与沙箱、系统提示词（模式切换/自定义前后缀/动态模板）、上下文感知、记忆、对话总结、检查点、Token 计数、图像生成、技能（开关/移除）、子代理（全局配置 + 启用开关）、固定文件（开关/移除/添加）、远程控制（端口/启停）、数据存储与依赖环境（只读展示）；响应侧脱敏：apiKey 抹为占位串、base64 音频资产删除、代理 URL 内嵌凭据打码，敏感字段绝不回写桌面端。
+  - **渠道管理补齐**：渠道列表新增「设为当前渠道」（`settings.setActiveChannelId`）与启用/停用开关（`config.updateConfig`）；`/api/status` 携带 `activeChannelId` 供移动端标记当前渠道。
+  - **新增 REST 端点**（沿用既有 Host/Origin/JSON-only 安全基线 + 形状白名单）：`GET /api/fs|settings|tools|dependencies`、`POST /api/settings|channel-toggle|channel-active|remote-action`。
+
+### Fixed（1.7.10dev 补记）
+  - **远程控制切换工作区失效**：此前一律透传 `workspace.setActive`——对「仅收藏、未在当前窗口打开」的工作区，WorkspaceManager 会静默无操作（不匹配列表直接 return），手机上表现为点击无效。现按目标分流：已打开 → `workspace.setActive` 固定；仅收藏 → `workspace.openFolder { fsPath }` 由宿主直接打开并自动固定（与桌面端「打开收藏工作区」同路径）；两处都没有 → 404 明确提示。
+  - **远程控制设置项不完整（只有渠道）**：设置页仅含连接状态/渠道模型/安全说明，其余桌面端设置项无法在手机上查看或修改；已按上方 Added 补齐全部设置项（含密钥脱敏读写）。
+
 ## [1.7.9dev] - 2026-08-10
 
 ### Added

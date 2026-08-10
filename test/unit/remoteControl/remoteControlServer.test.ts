@@ -95,6 +95,35 @@ class FakeHost implements RemoteControlServerHost {
         return { activeWorkspaceUri: this.workspace.workspaceUri, workspaces: [{ name: 'work', uri: this.workspace.workspaceUri, index: 0 }] };
       case 'workspace.getSaved':
         return { saved: [{ name: 'saved-project', uri: 'file:///C%3A/saved', fsPath: 'C:\\saved' }] };
+      case 'getSettings':
+        return {
+          success: true,
+          settings: {
+            checkForUpdates: true,
+            maxToolIterations: 200,
+            activeChannelId: 'ch1',
+            ui: { language: 'zh-CN', theme: 'auto', sound: { enabled: true, volume: 80, assets: { warning: { dataBase64: 'AAAA' } } } },
+            proxy: { enabled: true, url: 'http://user:pass@127.0.0.1:7890' },
+            toolsConfig: {
+              generate_image: { apiKey: 'secret-img', model: 'flux' },
+              token_count: { gemini: { apiKey: 'secret-tok', baseUrl: '', model: '' } },
+              apply_diff: { format: 'unified', autoSave: false, autoSaveDelay: 3000, diffGuardEnabled: true, autoApplyWithoutDiffView: false }
+            },
+            remoteControl: { enabled: true, port: 17532 },
+            storagePath: { customDataPath: '', migrationStatus: 'none' }
+          }
+        };
+      case 'updateSettings':
+        return { success: true, settings: { ok: true } };
+      case 'settings.setActiveChannelId':
+      case 'config.updateConfig':
+        return { success: true };
+      case 'tools.getTools':
+        return { tools: [{ name: 'read_file', description: 'Read files', enabled: true, category: 'file' }] };
+      case 'tools.getAutoExecConfig':
+        return { config: { execute_command: false, read_file: true } };
+      case 'dependencies.list':
+        return { dependencies: [{ name: 'python', installed: true, installedVersion: '3.12' }, { name: 'node', installed: false }] };
       default:
         return {};
     }
@@ -580,18 +609,200 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.body.saved).toHaveLength(1);
   });
 
-  test('POST /api/workspace-switch routes workspace.setActive', async () => {
+  test('POST /api/workspace-switch: open workspace routes workspace.setActive (pin)', async () => {
+    host.calls = [];
+    const res = await post(port, `/api/workspace-switch`, { workspaceUri: 'file:///C%3A/work' });
+    expect(res.status).toBe(200);
+    expect(res.body.opened).toBe(false);
+    const call = host.calls.find((c) => c.type === 'workspace.setActive');
+    expect(call).toBeDefined();
+    expect(call!.data.workspaceUri).toBe('file:///C%3A/work');
+  });
+
+  test('POST /api/workspace-switch: saved-but-not-open workspace opens via workspace.openFolder with fsPath', async () => {
     host.calls = [];
     const res = await post(port, `/api/workspace-switch`, { workspaceUri: 'file:///C%3A/saved' });
     expect(res.status).toBe(200);
-    const call = host.calls.find((c) => c.type === 'workspace.setActive');
-    expect(call).toBeDefined();
-    expect(call!.data.workspaceUri).toBe('file:///C%3A/saved');
+    expect(res.body.opened).toBe(true);
+    const openCall = host.calls.find((c) => c.type === 'workspace.openFolder');
+    expect(openCall).toBeDefined();
+    expect(openCall!.data).toEqual({ fsPath: 'C:\\saved' });
+    // 未打开的收藏工作区不再静默走 setActive（此前 WorkspaceManager 直接 no-op）
+    expect(host.calls.some((c) => c.type === 'workspace.setActive')).toBe(false);
+  });
+
+  test('POST /api/workspace-switch: unknown workspace returns 404', async () => {
+    host.calls = [];
+    const res = await post(port, `/api/workspace-switch`, { workspaceUri: 'file:///C%3A/nowhere' });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/not found/i);
   });
 
   test('POST /api/workspace-switch rejects empty workspaceUri with 400', async () => {
     const res = await post(port, `/api/workspace-switch`, { workspaceUri: '' });
     expect(res.status).toBe(400);
+  });
+
+  test('POST /api/workspace-add with fsPath routes workspace.openFolder without desktop dialog', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/workspace-add', { fsPath: 'C:\\new-proj' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'workspace.openFolder');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ fsPath: 'C:\\new-proj' });
+  });
+
+  test('POST /api/workspace-add rejects relative fsPath with 400', async () => {
+    const res = await post(port, '/api/workspace-add', { fsPath: 'relative\\path' });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/workspace-add rejects traversal fsPath with 400', async () => {
+    const res = await post(port, '/api/workspace-add', { fsPath: 'C:\\..\\evil' });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/fs browses absolute directories (win32 drive root path)', async () => {
+    const res = await requestJson(port, 'GET', `/api/fs?path=${encodeURIComponent('C:\\Users')}`);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.path).toBe('C:\\Users');
+    expect(res.body.parent).toBe('C:\\');
+    expect(Array.isArray(res.body.entries)).toBe(true);
+  });
+
+  test('GET /api/fs with empty path returns drive list on win32', async () => {
+    const res = await requestJson(port, 'GET', '/api/fs?path=');
+    expect(res.status).toBe(200);
+    if (process.platform === 'win32') {
+      expect(Array.isArray(res.body.drives)).toBe(true);
+      expect(res.body.drives.length).toBeGreaterThan(0);
+      expect(res.body.drives[0]).toMatch(/^[A-Z]:\\$/);
+    } else {
+      expect(res.body.entries).toBeDefined();
+    }
+  });
+
+  test('GET /api/fs rejects relative paths with 400', async () => {
+    const res = await requestJson(port, 'GET', `/api/fs?path=${encodeURIComponent('relative/dir')}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/fs rejects traversal and control chars with 400', async () => {
+    const res1 = await requestJson(port, 'GET', `/api/fs?path=${encodeURIComponent('C:\\Users\\..\\x')}`);
+    expect(res1.status).toBe(400);
+    const res2 = await requestJson(port, 'GET', `/api/fs?path=${encodeURIComponent('C:\\x\u0000y')}`);
+    expect(res2.status).toBe(400);
+  });
+
+  test('GET /api/fs lists directory entries sorted with directories only', async () => {
+    const res = await requestJson(port, 'GET', `/api/fs?path=${encodeURIComponent('C:\\')}`);
+    expect(res.status).toBe(200);
+    expect(res.body.entries.every((e: any) => e.type === 'directory')).toBe(true);
+    expect(res.body.entries.every((e: any) => typeof e.name === 'string' && typeof e.path === 'string')).toBe(true);
+  });
+
+  test('GET /api/settings routes getSettings and redacts secrets', async () => {
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/settings');
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'getSettings');
+    expect(call).toBeDefined();
+    const s = res.body.settings;
+    expect(s.toolsConfig.generate_image.apiKey).toBe('********');
+    expect(s.toolsConfig.token_count.gemini.apiKey).toBe('********');
+    expect(s.ui.sound.assets.warning.dataBase64).toBeUndefined();
+    expect(s.proxy.url).not.toContain('user:pass');
+    expect(s.proxy.url).toContain('***@');
+    // 非敏感字段原样保留
+    expect(s.checkForUpdates).toBe(true);
+    expect(s.toolsConfig.apply_diff.format).toBe('unified');
+  });
+
+  test('POST /api/settings routes updateSettings with patch and returns sanitized settings', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/settings', { settings: { ui: { sound: { volume: 60 } } } });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'updateSettings');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ settings: { ui: { sound: { volume: 60 } } } });
+    expect(res.body.ok).toBe(true);
+  });
+
+  test('POST /api/settings rejects non-object settings with 400', async () => {
+    const res = await post(port, '/api/settings', { settings: 'nope' });
+    expect(res.status).toBe(400);
+    const res2 = await post(port, '/api/settings', { settings: [1, 2] });
+    expect(res2.status).toBe(400);
+  });
+
+  test('POST /api/settings rejects oversized patch with 413', async () => {
+    const res = await post(port, '/api/settings', { settings: { pad: 'x'.repeat(70 * 1024) } });
+    expect(res.status).toBe(413);
+  });
+
+  test('GET /api/tools routes tools.getTools and tools.getAutoExecConfig', async () => {
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/tools');
+    expect(res.status).toBe(200);
+    expect(res.body.tools).toHaveLength(1);
+    expect(res.body.tools[0].name).toBe('read_file');
+    expect(res.body.autoExec).toEqual({ execute_command: false, read_file: true });
+    expect(host.calls.some((c) => c.type === 'tools.getTools')).toBe(true);
+    expect(host.calls.some((c) => c.type === 'tools.getAutoExecConfig')).toBe(true);
+  });
+
+  test('GET /api/dependencies routes dependencies.list', async () => {
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/dependencies');
+    expect(res.status).toBe(200);
+    expect(res.body.dependencies.dependencies).toHaveLength(2);
+    expect(host.calls.some((c) => c.type === 'dependencies.list')).toBe(true);
+  });
+
+  test('POST /api/channel-toggle routes config.updateConfig with enabled flag', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/channel-toggle', { configId: 'ch2', enabled: false });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'config.updateConfig');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ configId: 'ch2', updates: { enabled: false } });
+  });
+
+  test('POST /api/channel-toggle rejects invalid configId with 400', async () => {
+    const res = await post(port, '/api/channel-toggle', { configId: '../x', enabled: true });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/channel-active routes settings.setActiveChannelId', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/channel-active', { configId: 'ch2' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'settings.setActiveChannelId');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ channelId: 'ch2' });
+  });
+
+  test('POST /api/remote-action routes remoteControl.apply restart/stop', async () => {
+    host.calls = [];
+    host.respondOverrides['remoteControl.apply'] = { ok: true };
+    const res = await post(port, '/api/remote-action', { type: 'restart' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'remoteControl.apply');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ type: 'restart' });
+    delete host.respondOverrides['remoteControl.apply'];
+  });
+
+  test('POST /api/remote-action rejects invalid type with 400', async () => {
+    const res = await post(port, '/api/remote-action', { type: 'explode' });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/status includes activeChannelId', async () => {
+    const res = await requestJson(port, 'GET', '/api/status');
+    expect(res.status).toBe(200);
+    expect(res.body.activeChannelId).toBe('ch1');
   });
 
   test('GET /api/files routes listWorkspaceDirectory with path whitelist', async () => {

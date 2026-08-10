@@ -16,6 +16,13 @@
  *   重新生成助手消息（rerollStream）、删除会话（conversation.deleteConversation）、
  *   新增/移除工作区（workspace.openFolder / workspace.removeSaved），
  *   均复用桌面端同一消息管道与校验；
+ * - 工作区新增支持移动端自选目录：GET /api/fs 浏览服务端任意目录（仅目录项，
+ *   不读文件内容），POST /api/workspace-add 携带 fsPath 直接打开（不再依赖
+ *   桌面端弹窗）；切换工作区对「已打开」走 workspace.setActive 固定、
+ *   对「仅收藏」走 workspace.openFolder 由宿主打开，两种场景均可生效；
+ * - 设置页全量补齐：GET/POST /api/settings 透传桌面端 getSettings/updateSettings
+ *   消息管道（深合并语义与桌面端一致），密钥字段（apiKey / base64 音频资产 /
+ *   代理 URL 内嵌凭据）在响应侧脱敏，移动端可读写桌面端全部设置项；
  * - 桌面端活动编辑器/工作区变化经 SSE workspace 事件实时镜像到手机；
  * - 设置页 remoteControl.enabled=false 或端口变更时，由 BackendHost 调用
  *   syncFromSettings() 启停/重启服务器；关闭时服务器完全不存在（零资源占用）。
@@ -29,6 +36,8 @@
  */
 
 import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { DEFAULT_REMOTE_CONTROL_PORT } from '../settings/generalTypes';
@@ -65,6 +74,15 @@ const MAX_FILE_CONTENT_BYTES = 1024 * 1024;
 /** 单次工具确认最多携带的工具响应数（防御异常批量确认） */
 const MAX_TOOL_RESPONSES = 20;
 
+/** 目录浏览单次返回条目上限（防御巨型目录拖垮移动端渲染） */
+const MAX_FS_LISTING_ENTRIES = 500;
+
+/** 目录浏览路径长度上限（配合绝对路径白名单的前置拦截） */
+const MAX_FS_PATH_LENGTH = 2048;
+
+/** 移动端设置补丁体大小上限（64KB；全量设置中仅密钥字段被脱敏后可达数十 KB） */
+const MAX_SETTINGS_PATCH_BYTES = 64 * 1024;
+
 function isValidPort(port: unknown): port is number {
   return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
@@ -93,6 +111,55 @@ function isSafeFsPath(path: unknown): path is string {
   if (typeof path !== 'string') return false;
   if (path.length === 0 || path.length > 4096) return false;
   return !/[\u0000-\u001f\u007f]/.test(path);
+}
+
+/**
+ * 绝对本地路径白名单（GET /api/fs 目录浏览、POST /api/workspace-add 的 fsPath 用）：
+ * 必须为绝对路径（Windows 盘符或 POSIX / 根），长度受限、禁控制字符、禁 `..` 段。
+ * 目录浏览只下发目录项元数据（名称/路径），不读取任何文件内容。
+ */
+function isSafeAbsolutePath(p: unknown): p is string {
+  if (typeof p !== 'string') return false;
+  if (p.length === 0 || p.length > MAX_FS_PATH_LENGTH) return false;
+  if (/[\u0000-\u001f\u007f]/.test(p)) return false;
+  const isWinAbs = /^[A-Za-z]:[\\/]/.test(p);
+  if (!isWinAbs && !p.startsWith('/')) return false;
+  for (const seg of p.split(/[\\/]/)) {
+    if (seg === '..' || /^\.+$/.test(seg)) return false;
+  }
+  return true;
+}
+
+/** 移动端设置响应脱敏：深拷贝后抹除密钥字段，仅影响下行数据，不回写桌面端 */
+function sanitizeSettingsForRemote(settings: unknown): unknown {
+  try {
+    const s: any = JSON.parse(JSON.stringify(settings));
+    // 图像生成 / Token 计数渠道的 apiKey：抹为占位串（UI 以此识别「已设置，留空保持不变」）
+    const maskKey = (obj: any): void => {
+      if (obj && typeof obj === 'object' && typeof obj.apiKey === 'string') {
+        obj.apiKey = obj.apiKey ? '********' : '';
+      }
+    };
+    maskKey(s?.toolsConfig?.generate_image);
+    const tokenCount = s?.toolsConfig?.token_count;
+    if (tokenCount && typeof tokenCount === 'object') {
+      for (const key of Object.keys(tokenCount)) maskKey(tokenCount[key]);
+    }
+    // 界面音效资产（base64，可达数百 KB）：移动端不需要原始载荷，直接删除
+    const assets = s?.ui?.sound?.assets;
+    if (assets && typeof assets === 'object') {
+      for (const key of Object.keys(assets)) {
+        if (assets[key] && typeof assets[key] === 'object') delete assets[key].dataBase64;
+      }
+    }
+    // 代理 URL 内嵌凭据（http://user:pass@host）：抹掉 userinfo，仅保留协议与主机
+    if (typeof s?.proxy?.url === 'string') {
+      s.proxy.url = s.proxy.url.replace(/^(\w+:\/\/)[^@/]+@/, '$1***@');
+    }
+    return s;
+  } catch {
+    return settings;
+  }
 }
 
 /** 工作区相对路径：非空字符串、长度受限、不含控制字符、不以绝对路径开头、无 `..` / 尾点段 */
@@ -669,6 +736,10 @@ export class RemoteControlServer {
       await this.handleListWorkspaces(res);
       return;
     }
+    if (req.method === 'GET' && pathname === '/api/fs') {
+      await this.handleListFs(res, url.searchParams.get('path') || '');
+      return;
+    }
     if (req.method === 'POST' && pathname === '/api/workspace-switch') {
       await this.handleWorkspaceSwitch(res, await this.readBody(req));
       return;
@@ -691,6 +762,34 @@ export class RemoteControlServer {
     }
     if (req.method === 'GET' && pathname === '/api/configs') {
       await this.handleListConfigs(res);
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/settings') {
+      await this.handleSettingsGet(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/settings') {
+      await this.handleSettingsUpdate(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/dependencies') {
+      await this.handleDependencies(res);
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/tools') {
+      await this.handleListTools(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/channel-toggle') {
+      await this.handleChannelToggle(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/channel-active') {
+      await this.handleChannelActive(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/remote-action') {
+      await this.handleRemoteAction(res, await this.readBody(req));
       return;
     }
     if (req.method === 'GET' && pathname === '/api/config') {
@@ -831,6 +930,7 @@ export class RemoteControlServer {
       running: this.running,
       error: this.error,
       urls: this.urls,
+      activeChannelId: this.host.getSettings().activeChannelId || null,
       activeConversationId: this.activeConversationId,
       activeConversationTitle,
       ...this.buildWorkspacePayload()
@@ -965,13 +1065,20 @@ export class RemoteControlServer {
   }
 
   /**
-   * 新增工作区：透传 workspace.openFolder（不传 fsPath），桌面端弹出文件夹选择
-   * 对话框；选中的文件夹自动加入收藏并设为活动工作区（与桌面端「打开工作区」同路径）。
+   * 新增工作区：
+   * - 携带 fsPath（移动端目录浏览选中）→ 透传 workspace.openFolder { fsPath }，
+   *   桌面端直接打开该目录（不弹窗），自动加入收藏并设为活动工作区；
+   * - 不传 fsPath → 桌面端弹出文件夹选择对话框（兜底路径）。
    * 返回与桌面端 handler 一致的结构（success/canceled/activeWorkspaceUri/workspaces/saved）。
    */
   private async handleWorkspaceAdd(res: http.ServerResponse, body: any): Promise<void> {
+    const fsPath = typeof body?.fsPath === 'string' ? body.fsPath : '';
+    if (fsPath && !isSafeAbsolutePath(fsPath)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid fsPath' });
+      return;
+    }
     try {
-      const result = await this.routeMessage('workspace.openFolder', {});
+      const result = await this.routeMessage('workspace.openFolder', fsPath ? { fsPath } : {});
       if (result?.canceled === true) {
         this.sendJson(res, 200, { ok: true, canceled: true });
         return;
@@ -1125,6 +1232,14 @@ export class RemoteControlServer {
     }
   }
 
+  /**
+   * 切换工作区：按目标 URI 是否已打开分派——
+   * - 目标在「当前打开的工作区」中：workspace.setActive 固定（立即生效）；
+   * - 目标仅存在于收藏列表：workspace.openFolder { fsPath }，由宿主打开该目录
+   *   并自动固定（此前一律走 workspace.setActive，对未打开的工作区会在
+   *   WorkspaceManager 里静默无操作，移动端表现为「切换失效」）；
+   * - 两处都没有：404，提示先在桌面端打开或收藏该目录。
+   */
   private async handleWorkspaceSwitch(res: http.ServerResponse, body: any): Promise<void> {
     const workspaceUri = typeof body?.workspaceUri === 'string' && body.workspaceUri.length <= 2048
       ? body.workspaceUri
@@ -1134,11 +1249,103 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('workspace.setActive', { workspaceUri });
-      this.sendJson(res, 200, { ok: true });
+      const [list, saved] = await Promise.all([
+        this.routeMessage('getWorkspaceList', {}),
+        this.routeMessage('workspace.getSaved', {}).catch(() => ({ saved: [] }))
+      ]);
+      const openList = Array.isArray(list?.workspaces) ? list.workspaces : [];
+      const savedList = Array.isArray(saved?.saved) ? saved.saved : [];
+      const norm = (u: string): string => u.replace(/\\/g, '/').toLowerCase();
+      const inOpen = openList.some((w: any) => !!w?.uri && norm(w.uri) === norm(workspaceUri));
+      if (inOpen) {
+        await this.routeMessage('workspace.setActive', { workspaceUri });
+        this.sendJson(res, 200, { ok: true, opened: false });
+        return;
+      }
+      const savedItem = savedList.find((w: any) => !!w?.uri && norm(w.uri) === norm(workspaceUri));
+      if (savedItem && typeof savedItem?.fsPath === 'string' && savedItem.fsPath) {
+        const result = await this.routeMessage('workspace.openFolder', { fsPath: savedItem.fsPath });
+        if (result?.success === false) {
+          const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+          this.sendJson(res, 400, { ok: false, error: msg || 'Failed to open workspace folder' });
+          return;
+        }
+        this.sendJson(res, 200, {
+          ok: true,
+          opened: true,
+          activeWorkspaceUri: result?.activeWorkspaceUri || null
+        });
+        return;
+      }
+      this.sendJson(res, 404, {
+        ok: false,
+        error: 'Workspace not found. Open or save the folder on the desktop first.'
+      });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to switch workspace' });
     }
+  }
+
+  /**
+   * 服务端目录浏览（移动端「选择工作区文件夹」用）：path 为空串时返回根入口
+   * （Windows 为盘符列表，POSIX 为 / 的一级目录），否则返回指定目录的子目录列表。
+   * 只下发目录项（名称 + 完整路径），绝不读取文件内容；条目按名称排序且截断上限。
+   */
+  private async handleListFs(res: http.ServerResponse, rawPath: string): Promise<void> {
+    if (rawPath !== '' && !isSafeAbsolutePath(rawPath)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid path' });
+      return;
+    }
+    try {
+      if (rawPath === '') {
+        if (process.platform === 'win32') {
+          const drives: string[] = [];
+          for (let c = 65; c <= 90; c++) {
+            const d = `${String.fromCharCode(c)}:\\`;
+            try {
+              if (fs.existsSync(d)) drives.push(d);
+            } catch {
+              // 不可访问的盘符跳过
+            }
+          }
+          this.sendJson(res, 200, { ok: true, path: '', drives, entries: [] });
+          return;
+        }
+        rawPath = '/';
+      }
+      const entries: Array<{ name: string; path: string; type: 'directory' }> = [];
+      let dirents: fs.Dirent[] = [];
+      try {
+        // withFileTypes 免逐项 stat：绝大多数条目可直接按 isDirectory 判定
+        dirents = fs.readdirSync(rawPath, { withFileTypes: true });
+      } catch {
+        this.sendJson(res, 400, { ok: false, error: 'Failed to list directory' });
+        return;
+      }
+      for (const dirent of dirents) {
+        if (entries.length >= MAX_FS_LISTING_ENTRIES) break;
+        if (dirent.name.startsWith('.')) continue; // 隐藏项（.git/.vscode 等）不展示
+        if (!dirent.isDirectory()) continue;
+        entries.push({ name: dirent.name, path: path.join(rawPath, dirent.name), type: 'directory' });
+      }
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      this.sendJson(res, 200, {
+        ok: true,
+        path: rawPath,
+        parent: this.computeParentDir(rawPath),
+        entries
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list directory' });
+    }
+  }
+
+  /** 计算目录浏览的父目录（盘符根/文件系统根返回 null，UI 不再提供「上一级」） */
+  private computeParentDir(dir: string): string | null {
+    const isRoot = /^[A-Za-z]:[\\/]$/.test(dir) || dir === '/';
+    if (isRoot) return null;
+    const parent = path.dirname(dir);
+    return parent === dir ? null : parent;
   }
 
   private async handleListFiles(res: http.ServerResponse, rawPath: string): Promise<void> {
@@ -1264,9 +1471,10 @@ export class RemoteControlServer {
             .then((cfg) => ({
               id,
               name: typeof cfg?.name === 'string' && cfg.name ? cfg.name : id,
-              model: typeof cfg?.model === 'string' ? cfg.model : ''
+              model: typeof cfg?.model === 'string' ? cfg.model : '',
+              enabled: cfg?.enabled !== false
             }))
-            .catch(() => ({ id, name: id, model: '' }))
+            .catch(() => ({ id, name: id, model: '', enabled: true }))
         )
       ));
       this.sendJson(res, 200, { ok: true, configs });
@@ -1325,6 +1533,143 @@ export class RemoteControlServer {
       this.sendJson(res, 200, { ok: true });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to set model' });
+    }
+  }
+
+  // ==========================================================================
+  // 设置（移动端全量设置页）：透传桌面端 getSettings / updateSettings 消息管道。
+  // 读侧脱敏（apiKey / base64 音频 / 代理 URL 凭据），写侧仅做形状白名单与大小
+  // 限制，具体校验/持久化与桌面端完全一致（SettingsCore 深合并 + 危险键剥离）。
+  // ==========================================================================
+
+  private async handleSettingsGet(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.routeMessage('getSettings', {});
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to load settings' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, settings: sanitizeSettingsForRemote(result?.settings) });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load settings' });
+    }
+  }
+
+  private async handleSettingsUpdate(res: http.ServerResponse, body: any): Promise<void> {
+    const patch = body?.settings;
+    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid settings patch' });
+      return;
+    }
+    if (Buffer.byteLength(JSON.stringify(patch), 'utf-8') > MAX_SETTINGS_PATCH_BYTES) {
+      this.sendJson(res, 413, { ok: false, error: 'Settings patch too large' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('updateSettings', { settings: patch });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to update settings' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, settings: sanitizeSettingsForRemote(result?.settings) });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to update settings' });
+    }
+  }
+
+  /** 依赖安装状态（只读展示：python/node/ffmpeg 安装路径与可用性） */
+  private async handleDependencies(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.routeMessage('dependencies.list', {});
+      this.sendJson(res, 200, { ok: true, dependencies: result });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list dependencies' });
+    }
+  }
+
+  /** 工具清单（启用状态 + 分类 + 自动执行配置；设置页「工具启用/自动执行」两节用） */
+  private async handleListTools(res: http.ServerResponse): Promise<void> {
+    try {
+      const [toolsResult, autoExecResult] = await Promise.all([
+        this.routeMessage('tools.getTools', {}),
+        this.routeMessage('tools.getAutoExecConfig', {}).catch(() => null)
+      ]);
+      const tools = Array.isArray(toolsResult?.tools)
+        ? toolsResult.tools.map((tool: any) => ({
+            name: typeof tool?.name === 'string' ? tool.name : '',
+            description: typeof tool?.description === 'string' ? tool.description : '',
+            enabled: tool?.enabled !== false,
+            category: typeof tool?.category === 'string' ? tool.category : ''
+          })).filter((tool: { name: string }) => !!tool.name)
+        : [];
+      const autoExec = (autoExecResult?.config && typeof autoExecResult.config === 'object')
+        ? autoExecResult.config
+        : {};
+      this.sendJson(res, 200, { ok: true, tools, autoExec });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list tools' });
+    }
+  }
+
+  /** 渠道启用/停用（透传 config.updateConfig { enabled }；桌面端渠道列表同路径） */
+  private async handleChannelToggle(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    const enabled = body?.enabled === true;
+    if (!isSafeConfigId(configId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('config.updateConfig', { configId, updates: { enabled } });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to update channel' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to update channel' });
+    }
+  }
+
+  /** 设为当前渠道（透传 settings.setActiveChannelId；发送消息默认使用该渠道） */
+  private async handleChannelActive(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    if (!isSafeConfigId(configId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('settings.setActiveChannelId', { channelId: configId });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to set active channel' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to set active channel' });
+    }
+  }
+
+  /** 远程控制服务器操作（restart/stop，透传 remoteControl.apply 既有桌面端逻辑） */
+  private async handleRemoteAction(res: http.ServerResponse, body: any): Promise<void> {
+    const type = body?.type;
+    if (type !== 'restart' && type !== 'stop') {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid action type' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('remoteControl.apply', { type });
+      if (result?.ok === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error || 'Failed to apply action' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to apply action' });
     }
   }
 

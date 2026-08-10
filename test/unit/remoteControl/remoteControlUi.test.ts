@@ -35,6 +35,13 @@ const SERVER_ENDPOINTS = new Set([
   '/api/conversation-delete',
   '/api/edit-message',
   '/api/reroll',
+  '/api/fs',
+  '/api/settings',
+  '/api/tools',
+  '/api/dependencies',
+  '/api/channel-toggle',
+  '/api/channel-active',
+  '/api/remote-action',
   '/api/stream'
 ]);
 

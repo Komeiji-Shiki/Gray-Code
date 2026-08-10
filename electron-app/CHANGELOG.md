@@ -39,6 +39,18 @@ are tracked in the root `CHANGELOG.md`.
   - **会话列表恒为空**：`handleListConversations` 改按 `custom.messageCount/custom.preview` 读取（与桌面端同口径），取消按计数过滤。
   - **工作区根目录无法浏览**：目录列举白名单允许空路径（`path=`=根目录），与 FileHandlers 语义对齐。
   - 详见根目录 CHANGELOG [1.7.10dev]。
+
+### Added（1.7.10dev 补记：移动端自选工作区 + 设置页全量补齐）
+  - **移动端自选工作区目录**：`GET /api/fs` 服务端目录浏览（仅目录元数据，不读文件内容；盘符列表 + 目录树 + 隐藏项过滤 + 500 条目上限）+ `POST /api/workspace-add` 支持 `fsPath` 直接打开（免桌面端文件夹选择框，桌面端弹窗保留为兜底）。
+  - **设置页全量补齐**：`GET/POST /api/settings` 透传桌面端 `getSettings/updateSettings` 管道（深合并语义一致，apiKey/音频资产/代理 URL 凭据响应侧脱敏），覆盖通用/界面/代理/工具启用/自动执行/文件工具/命令沙箱/提示词/上下文/记忆/总结/检查点/Token 计数/图像生成/技能/子代理/固定文件/远程控制/存储/依赖全部设置项；渠道列表新增启用/停用与「设为当前渠道」。
+  - **新增 REST 端点**（沿用既有安全基线）：`GET /api/fs|settings|tools|dependencies`、`POST /api/settings|channel-toggle|channel-active|remote-action`。
+  - 详见根目录 CHANGELOG [1.7.10dev]。
+
+### Fixed（1.7.10dev 补记）
+  - **切换工作区失效**：收藏但未打开的工作区此前 `workspace.setActive` 静默无操作；现按已打开/仅收藏分流（setActive 固定 / openFolder 宿主打开并自动固定），两处皆无时返回 404 明确提示。
+  - **设置项不完整（只有渠道）**：按上方 Added 补齐全部桌面端设置项。
+  - 详见根目录 CHANGELOG [1.7.10dev]。
+
 ## [1.7.9dev] - 2026-08-10
 
 ### Added
