@@ -15,6 +15,7 @@ import * as fs from 'fs';
 // 此处仅保留类型导入（编译期擦除，不产生运行时依赖）。
 import type { BackendHost } from './host/BackendHost.js';
 import { runNative, setPickWorkspaceHandler, setOpenWorkspaceHandler } from './native';
+import { backfillPortableExecutableDir, persistPortableHomePointer } from './portable-home.js';
 import { menuLabel, resolveMenuLang, type MenuLang } from './menu-i18n.js';
 import { Logger, LogLevel } from '../../backend/core/logger';
 // esbuild 把 vscode-shim 打成独立共享包（dist/vscode-shim.js，主进程壳与 BackendHost 共用同一实例）；
@@ -181,6 +182,14 @@ function resolveUserDataDir(): string {
   // 开发版（electron .）：数据目录在 electron-app/data（已加入 .gitignore）
   return path.join(path.resolve(__dirname, '..'), 'data');
 }
+// 任务栏固定等场景下 explorer 直接启动解压缓存里的内层 exe（拿不到启动器注入的
+// PORTABLE_EXECUTABLE_DIR），先从 gc-portable-home 指针找回外层目录再解析数据目录
+// （详见 portable-home.ts）；正常经启动器启动时环境变量已存在，本调用为空操作。
+const portableExeDir = path.dirname(app.getPath('exe'));
+if (backfillPortableExecutableDir(portableExeDir, process.env)) {
+  console.log(`[main] recovered portable home from cache: ${process.env.PORTABLE_EXECUTABLE_DIR}`);
+}
+persistPortableHomePointer(portableExeDir, process.env.PORTABLE_EXECUTABLE_DIR);
 app.setPath('userData', resolveUserDataDir());
 
 Logger.setLevel(LogLevel.INFO);

@@ -13,12 +13,15 @@ import { nextTick } from 'vue'
 import ChannelSettings from '../ChannelSettings.vue'
 import { ConfirmDialog } from '../../common'
 
-const { chatStoreMock } = vi.hoisted(() => ({
+const { chatStoreMock, settingsStoreMock } = vi.hoisted(() => ({
   chatStoreMock: {
     configId: '',
     loadCurrentConfig: vi.fn().mockResolvedValue(undefined),
     setSelectedModelId: vi.fn().mockResolvedValue(undefined),
     setConfigId: vi.fn().mockResolvedValue(undefined)
+  },
+  settingsStoreMock: {
+    configsVersion: 0
   }
 }))
 
@@ -27,7 +30,8 @@ vi.mock('@/utils/vscode', () => ({
 }))
 
 vi.mock('@/stores', () => ({
-  useChatStore: () => chatStoreMock
+  useChatStore: () => chatStoreMock,
+  useSettingsStore: () => settingsStoreMock
 }))
 
 import { sendToExtension } from '@/utils/vscode'

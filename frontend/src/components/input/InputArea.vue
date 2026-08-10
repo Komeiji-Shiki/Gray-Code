@@ -23,6 +23,7 @@ import { sendToExtension, showNotification, onExtensionCommand } from '../../uti
 import * as configService from '../../services/config'
 import * as contextService from '../../services/context'
 import { formatNumber, generateId } from '../../utils/format'
+import { getThinkingLevel, buildThinkingLevelUpdates, supportsThinkingLevel, type ThinkingLevel } from '../../utils/thinkingLevel'
 import { languageFromPath } from '../../utils/languageFromPath'
 import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { getFileType } from '../../utils/file'
@@ -155,6 +156,50 @@ async function handleModelChange(modelId: string) {
     await chatStore.setSelectedModelId(modelId)
   } catch (error) {
     console.error('Failed to change model:', error)
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
+  }
+}
+
+// ========== 思考强度快捷控制 ==========
+// 与设置页写入同一份渠道配置（config.updateConfig），下拉选择直接反映到设置页。
+const currentThinkingLevel = computed(() =>
+  currentConfig.value ? getThinkingLevel(currentConfig.value) : 'off'
+)
+
+const thinkingDisabled = computed(() =>
+  !chatStore.configId || !currentConfig.value || !supportsThinkingLevel(currentConfig.value) || isLoadingConfigs.value
+)
+
+async function handleThinkingChange(level: string) {
+  const config = currentConfig.value
+  if (!config || !chatStore.configId) return
+  const updates = buildThinkingLevelUpdates(config, level as ThinkingLevel)
+  if (!updates) return
+
+  // await 前捕获目标配置 id（与设置页 updateConfigFields 同策略，防止往返期间切渠道污染新渠道）
+  const configId = config.id
+  try {
+    const serializableUpdates: Record<string, any> = {}
+    for (const [field, value] of Object.entries(updates)) {
+      serializableUpdates[field] = JSON.parse(JSON.stringify(value))
+    }
+    await sendToExtension('config.updateConfig', {
+      configId,
+      updates: serializableUpdates
+    })
+
+    if (chatStore.configId !== configId) return
+    const configIndex = configs.value.findIndex(c => c.id === configId)
+    if (configIndex !== -1) {
+      configs.value[configIndex] = {
+        ...configs.value[configIndex],
+        ...serializableUpdates
+      }
+    }
+    // 通知设置页重载渠道配置（设置页保持挂载时也能看到最新值）
+    settingsStore.refreshConfigs()
+  } catch (error) {
+    console.error('Failed to update thinking level:', error)
     await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
   }
 }
@@ -727,10 +772,13 @@ watch(() => settingsStore.promptModesVersion, () => {
       :current-model-id="currentModel"
       :model-options="currentModels"
       :model-disabled="!chatStore.configId || isLoadingConfigs"
+      :thinking-level="currentThinkingLevel"
+      :thinking-disabled="thinkingDisabled"
       @mode-change="handleModeChange"
       @open-mode-settings="openModeSettings"
       @channel-change="handleChannelChange"
       @model-change="handleModelChange"
+      @thinking-change="handleThinkingChange"
     />
   </div>
 </template>

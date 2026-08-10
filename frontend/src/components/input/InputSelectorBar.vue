@@ -2,7 +2,9 @@
 import ChannelSelector from './ChannelSelector.vue'
 import ModelSelector from './ModelSelector.vue'
 import ModeSelector from './ModeSelector.vue'
+import ThinkingSelector from './ThinkingSelector.vue'
 import type { ChannelOption, PromptMode, ModelInfo } from './types'
+import type { ThinkingLevel } from '../../utils/thinkingLevel'
 
 import { useI18n } from '../../i18n'
 
@@ -19,6 +21,9 @@ const props = defineProps<{
   currentModelId: string
   modelOptions: ModelInfo[]
   modelDisabled: boolean
+
+  thinkingLevel: ThinkingLevel
+  thinkingDisabled: boolean
 }>()
 
 const emit = defineEmits<{
@@ -26,6 +31,7 @@ const emit = defineEmits<{
   (e: 'open-mode-settings'): void
   (e: 'channel-change', channelId: string): void
   (e: 'model-change', modelId: string): void
+  (e: 'thinking-change', level: ThinkingLevel): void
 }>()
 </script>
 
@@ -65,6 +71,16 @@ const emit = defineEmits<{
         @update:model-value="emit('model-change', $event)"
       />
     </div>
+
+    <span class="selector-separator"></span>
+
+    <div class="thinking-selector-wrapper">
+      <ThinkingSelector
+        :model-value="props.thinkingLevel"
+        :disabled="props.thinkingDisabled"
+        @update:model-value="emit('thinking-change', $event)"
+      />
+    </div>
   </div>
 </template>
 
@@ -75,7 +91,7 @@ const emit = defineEmits<{
   gap: var(--spacing-sm, 8px);
   padding-top: 4px;
   border-top: 1px solid var(--vscode-panel-border);
-  max-width: 420px;
+  max-width: 500px;
 }
 
 .mode-selector-wrapper {
@@ -105,6 +121,10 @@ const emit = defineEmits<{
 
 .model-selector-wrapper :deep(.model-selector) {
   width: 100%;
+}
+
+.thinking-selector-wrapper {
+  flex-shrink: 0;
 }
 
 .selector-separator {

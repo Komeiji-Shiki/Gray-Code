@@ -60,6 +60,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const splashEnabled = ref(readInitialSplashEnabled())
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
+  // 渠道配置刷新计数器（聊天输入区快捷控件写渠道配置后，通知设置页重载最新数据）
+  const configsVersion = ref(0)
 
   // 切换到聊天视图
   function showChat() {
@@ -156,6 +158,11 @@ export const useSettingsStore = defineStore('settings', () => {
     promptModesVersion.value++
   }
 
+  // 通知渠道配置刷新（外部写入渠道配置后调用，如输入区思考强度快捷选择）
+  function refreshConfigs() {
+    configsVersion.value++
+  }
+
   return {
     // 状态
     currentView,
@@ -169,6 +176,7 @@ export const useSettingsStore = defineStore('settings', () => {
     tpsBarEnabled,
     splashEnabled,
     promptModesVersion,
+    configsVersion,
 
     // 方法
     showChat,
@@ -185,6 +193,7 @@ export const useSettingsStore = defineStore('settings', () => {
     toggleSubAgentMonitor,
     setTpsBarEnabled,
     setSplashEnabled,
-    refreshPromptModes
+    refreshPromptModes,
+    refreshConfigs
   }
 })

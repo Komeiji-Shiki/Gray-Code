@@ -13,13 +13,14 @@ import {
   TokenCountMethodSettings
 } from './channels'
 import { sendToExtension } from '@/utils/vscode'
-import { useChatStore } from '@/stores'
+import { useChatStore, useSettingsStore } from '@/stores'
 import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
 import type { ModelInfo } from '@/types'
 import { t } from '@/i18n'
 
 // Chat Store - 用于同步配置状态
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
 
 // 配置列表
 const configs = ref<any[]>([])
@@ -652,6 +653,13 @@ watch(currentConfigId, (newId) => {
 watch(() => chatStore.configId, (newId) => {
   if (newId && newId !== currentConfigId.value && configs.value.some(c => c.id === newId)) {
     currentConfigId.value = newId
+  }
+})
+
+// 输入区快捷控件（思考强度等）写入渠道配置后重载最新数据，避免设置页停留在旧值
+watch(() => settingsStore.configsVersion, () => {
+  if (isInitialized.value) {
+    void loadConfigs()
   }
 })
 
