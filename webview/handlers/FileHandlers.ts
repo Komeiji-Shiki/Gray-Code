@@ -660,6 +660,59 @@ export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx
   }
 };
 
+// ========== 工作区文本文件写入（远程控制移动端编辑保存） ==========
+
+/**
+ * 写入工作区内文本文件（远程控制移动端「文件 → 编辑 → 保存」）。
+ *
+ * 安全约束（与 readWorkspaceTextFile 同口径）：
+ * - 相对路径必须位于工作区内（isUriInsideWorkspace 拦截 `..` 路径穿越）；
+ * - 内容大小上限与读取上限一致（10MB），防止超大体进入扩展进程；
+ * - 目标父目录不存在时自动创建（与 saveImageToPath 行为一致）。
+ */
+export const writeWorkspaceTextFile: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { path: relativePath, content } = data || {};
+    if (!relativePath || typeof relativePath !== 'string' || typeof content !== 'string') {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.invalidFileUri') });
+      return;
+    }
+
+    const workspaceFolder = resolveTargetWorkspaceFolder(ctx);
+    if (!workspaceFolder) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.noWorkspaceOpen') });
+      return;
+    }
+
+    const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
+    if (!isUriInsideWorkspace(fileUri)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
+    if (Buffer.byteLength(content, 'utf-8') > MAX_TEXT_FILE_SIZE_BYTES) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.readFileFailed') });
+      return;
+    }
+
+    // 父目录不存在时自动创建（写入新文件场景）
+    const dirUri = vscode.Uri.joinPath(fileUri, '..');
+    try {
+      await vscode.workspace.fs.createDirectory(dirUri);
+    } catch {
+      // 目录可能已存在或不可创建：写入时再抛错
+    }
+
+    await vscode.workspace.fs.writeFile(fileUri, Buffer.from(content, 'utf-8'));
+    ctx.sendResponse(requestId, { success: true, path: relativePath });
+  } catch (error: any) {
+    ctx.sendResponse(requestId, {
+      success: false,
+      error: error.message || t('webview.errors.readFileFailed')
+    });
+  }
+};
+
 // 读取工作区文件（文本返回 content，非文本返回附件数据）
 export const readWorkspaceFileForInput: MessageHandler = async (data, requestId, ctx) => {
   try {
@@ -1903,6 +1956,9 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('readWorkspaceTextFile', readWorkspaceTextFile);
   registry.set('readWorkspaceFileForInput', readWorkspaceFileForInput);
   registry.set('showContextContent', showContextContent);
+
+  // 工作区文本写入（远程控制移动端编辑保存）
+  registry.set('workspace.writeTextFile', writeWorkspaceTextFile);
   
   // 附件和图片
   registry.set('previewAttachment', previewAttachment);

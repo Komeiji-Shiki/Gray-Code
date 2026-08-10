@@ -9,19 +9,26 @@
  *   移动端发起的 chatStream 与桌面端行为完全一致（流式 chunk 经 SSE 回传）；
  * - 桌面端自身会话的流式输出（main-chat 客户端消息）也会镜像转发给移动端，
  *   手机上可以实时看到电脑上正在生成的回复；
+ * - 移动端可操作真实工作区：浏览目录、读写文本文件、在桌面端打开文件（带行号）、
+ *   切换工作区（文件操作全部经 webview FileHandlers 的既有工作区包含校验）；
+ * - 移动端可参与工具审批流（toolConfirmation）、重试（retryStream）、删除消息、
+ *   切换渠道模型（models.setActiveModel），均复用桌面端同一消息管道与校验；
+ * - 桌面端活动编辑器/工作区变化经 SSE workspace 事件实时镜像到手机；
  * - 设置页 remoteControl.enabled=false 或端口变更时，由 BackendHost 调用
  *   syncFromSettings() 启停/重启服务器；关闭时服务器完全不存在（零资源占用）。
  *
  * 安全边界（与项目既有策略一致）：
  * - 默认关闭，必须用户在设置页显式开启（opt-in），仅限局域网使用；
  * - 请求体大小限制（MAX_BODY_BYTES），会话 ID 复用 assertSafeId 约定；
- * - 不提供任何文件系统/命令执行能力，仅透传聊天消息（与桌面端同一管道与校验）。
+ * - 文件/路径操作只透传 webview FileHandlers 既有校验（工作区包含、大小上限、
+ *   文本嗅探），服务器侧再叠加长度/形状白名单，不做任何绕过；
+ * - 无鉴权：仅靠 Host/Origin 校验 + JSON-only 写操作约束（详见 handleRequest）。
  */
 
 import * as http from 'http';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
-import { DEFAULT_REMOTE_CONTROL_PORT } from '../../../backend/modules/settings/generalTypes';
+import { DEFAULT_REMOTE_CONTROL_PORT } from '../settings/generalTypes';
 import { renderRemoteControlUiHtml } from './remoteControlUi';
 import type { RemoteControlStatus } from '../../../webview/types';
 
@@ -46,12 +53,78 @@ const SSE_IDLE_TIMEOUT_MS = 90_000;
 /** 单条消息长度上限（与前端输入框限制对齐） */
 const MAX_MESSAGE_LENGTH = 20_000;
 
+/** 工作区相对路径长度上限（配合 FileHandlers 工作区包含校验的前置白名单） */
+const MAX_PATH_LENGTH = 1024;
+
+/** 手机端写入文本文件的内容大小上限（1MB；桌面端 10MB 读取上限对手机编辑过重） */
+const MAX_FILE_CONTENT_BYTES = 1024 * 1024;
+
+/** 单次工具确认最多携带的工具响应数（防御异常批量确认） */
+const MAX_TOOL_RESPONSES = 20;
+
 function isValidPort(port: unknown): port is number {
   return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 function isSafeConversationId(id: unknown): id is string {
   return typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+}
+
+/** 渠道 ID 白名单（configId 可含点，如 gemini-pro） */
+function isSafeConfigId(id: unknown): id is string {
+  return typeof id === 'string' && /^[A-Za-z0-9._-]{1,128}$/.test(id);
+}
+
+/** 模型 ID 形状白名单：ModelInfo.id 为自由字符串（可含 / @ 等），仅限长度与控制字符 */
+function isSafeModelId(id: unknown): id is string {
+  return typeof id === 'string' && id.length >= 1 && id.length <= 256 && !/[\u0000-\u001f\u007f]/.test(id);
+}
+
+/** 工作区相对路径：非空字符串、长度受限、不含控制字符、不以绝对路径开头、无 `..` / 尾点段 */
+function isSafeWorkspacePath(path: unknown): path is string {
+  if (typeof path !== 'string') return false;
+  if (path.length === 0 || path.length > MAX_PATH_LENGTH) return false;
+  if (/[\u0000-\u001f\u007f]/.test(path)) return false;
+  if (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith('/') || path.startsWith('\\\\')) return false;
+  for (const seg of path.split(/[\\/]/)) {
+    // 路径穿越前置拦截：`..` 段（含 `....` 等变体）与 Windows 尾点/尾空格
+    // 规范化陷阱（`..` 段 / 尾点段在 Win32 上可解析为父目录）一律拒绝，
+    // 与 FileHandlers 的 isUriInsideWorkspace 形成双重护栏
+    if (seg === '..' || /^\.+$/.test(seg) || /[. ]$/.test(seg)) return false;
+  }
+  return true;
+}
+
+/** 工具确认响应白名单：{id, name, confirmed} 各字段形状受限 */
+function isSafeToolResponse(value: unknown): value is { id: string; name: string; confirmed: boolean } {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.id === 'string' && v.id.length > 0 && v.id.length <= 128
+    && typeof v.name === 'string' && v.name.length <= 128
+    && typeof v.confirmed === 'boolean';
+}
+
+/**
+ * 剥离消息中的附件二进制载荷（inlineData/fileData base64），保留其余全部字段。
+ * 移动端历史加载只关心文本/思考/工具调用，数十 MB 级 base64 不应经局域网下发；
+ * 深拷贝仅发生在含附件字段的消息上（普通消息浅引用原数组，零额外开销）。
+ */
+function stripMessagePayloads(messages: any[]): any[] {
+  const hasBlob = (parts: any[] | undefined): boolean =>
+    !!parts && parts.some((p) => !!p?.inlineData || !!p?.fileData);
+  return messages.map((m) => {
+    if (!Array.isArray(m?.parts) || !hasBlob(m.parts)) return m;
+    return {
+      ...m,
+      parts: m.parts.map((p: any) => {
+        if (!p || (!p.inlineData && !p.fileData)) return p;
+        const copy = { ...p };
+        delete copy.inlineData;
+        delete copy.fileData;
+        return copy;
+      })
+    };
+  });
 }
 
 /** 私有网段（IPv4）：10/8、172.16/12、192.168/16、169.254/16（链路本地） */
@@ -86,6 +159,8 @@ export interface RemoteControlServerHost {
   /** 移动端 UI 语言（桌面端 ui.language） */
   getUiLanguage(): string;
   getAppVersion(): string;
+  /** 当前激活工作区与活动编辑器（桌面端实时快照，SSE workspace 事件与 hello 用） */
+  getWorkspaceSnapshot(): { workspaceUri: string | null; activeFilePath: string | null };
   /** 以指定 clientId 路由消息到 MessageRouter（响应经 clientRegistry 回调回传） */
   route(type: string, data: any, requestId: string, clientId: string): Promise<boolean>;
   conversationManager: {
@@ -189,6 +264,34 @@ export class RemoteControlServer {
     if (isSafeConversationId(conversationId)) {
       this.activeConversationId = conversationId;
     }
+  }
+
+  /** 桌面端活动编辑器/工作区变化（BackendHost 的 vscode 监听器调用）→ SSE workspace 事件 */
+  notifyWorkspaceChange(): void {
+    if (!this.running) return;
+    try {
+      this.broadcast('workspace', this.buildWorkspacePayload());
+    } catch {
+      // 快照构建失败静默：下次变化再推
+    }
+  }
+
+  private buildWorkspacePayload(): Record<string, unknown> {
+    const snap = this.host.getWorkspaceSnapshot?.() || { workspaceUri: null, activeFilePath: null };
+    const workspaceUri = snap.workspaceUri || null;
+    let workspaceName: string | null = null;
+    if (workspaceUri) {
+      try {
+        workspaceName = decodeURIComponent(workspaceUri.split('?')[0].split('/').filter(Boolean).pop() || '') || null;
+      } catch {
+        workspaceName = null;
+      }
+    }
+    return {
+      workspaceUri,
+      workspaceName,
+      activeFilePath: snap.activeFilePath || null
+    };
   }
 
   /** 设置页「重试/重启」按钮 */
@@ -527,10 +630,52 @@ export class RemoteControlServer {
           return;
         }
         const messages = await this.host.conversationManager.getMessages(conversationId, null);
-        this.sendJson(res, 200, { ok: true, messages });
+        // 移动端带宽优化：剥离附件二进制（inlineData/fileData base64，可达数十 MB），
+        // 移动端 UI 只渲染文本/思考/工具调用，附件载荷不应经局域网全量下发
+        this.sendJson(res, 200, { ok: true, messages: stripMessagePayloads(messages) });
       } catch (err: any) {
         this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load messages' });
       }
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/workspace') {
+      this.sendJson(res, 200, { ok: true, ...this.buildWorkspacePayload() });
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/workspaces') {
+      await this.handleListWorkspaces(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/workspace-switch') {
+      await this.handleWorkspaceSwitch(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/files') {
+      await this.handleListFiles(res, url.searchParams.get('path') || '');
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/file') {
+      await this.handleReadFile(res, url.searchParams.get('path') || '');
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/file') {
+      await this.handleWriteFile(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/open-file') {
+      await this.handleOpenFile(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/configs') {
+      await this.handleListConfigs(res);
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/config') {
+      await this.handleGetConfig(res, url.searchParams.get('configId') || '');
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/model') {
+      await this.handleSetModel(res, await this.readBody(req));
       return;
     }
     if (req.method === 'POST' && pathname === '/api/send') {
@@ -539,6 +684,18 @@ export class RemoteControlServer {
     }
     if (req.method === 'POST' && pathname === '/api/cancel') {
       await this.handleCancel(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/retry') {
+      await this.handleRetry(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/delete-message') {
+      await this.handleDeleteMessage(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/tool-confirm') {
+      await this.handleToolConfirm(res, await this.readBody(req));
       return;
     }
     if (req.method === 'POST' && pathname === '/api/rename') {
@@ -632,7 +789,8 @@ export class RemoteControlServer {
       error: this.error,
       urls: this.urls,
       activeConversationId: this.activeConversationId,
-      activeConversationTitle
+      activeConversationTitle,
+      ...this.buildWorkspacePayload()
     };
   }
 
@@ -757,6 +915,308 @@ export class RemoteControlServer {
     }
   }
 
+  // ==========================================================================
+  // 工作区：状态 / 列表 / 切换 / 文件浏览 / 读写 / 桌面端打开
+  // 文件操作全部经 MessageRouter 透传 webview FileHandlers（工作区包含校验、
+  // 大小上限、文本嗅探在 handler 侧执行），本层仅做形状白名单前置校验。
+  // ==========================================================================
+
+  private async handleListWorkspaces(res: http.ServerResponse): Promise<void> {
+    try {
+      const [list, saved] = await Promise.all([
+        this.routeMessage('getWorkspaceList', {}),
+        this.routeMessage('workspace.getSaved', {}).catch(() => ({ saved: [] }))
+      ]);
+      this.sendJson(res, 200, {
+        ok: true,
+        activeWorkspaceUri: list?.activeWorkspaceUri || null,
+        workspaces: Array.isArray(list?.workspaces) ? list.workspaces : [],
+        saved: Array.isArray(saved?.saved) ? saved.saved : []
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list workspaces' });
+    }
+  }
+
+  private async handleWorkspaceSwitch(res: http.ServerResponse, body: any): Promise<void> {
+    const workspaceUri = typeof body?.workspaceUri === 'string' && body.workspaceUri.length <= 2048
+      ? body.workspaceUri
+      : '';
+    if (!workspaceUri) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid workspaceUri' });
+      return;
+    }
+    try {
+      await this.routeMessage('workspace.setActive', { workspaceUri });
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to switch workspace' });
+    }
+  }
+
+  private async handleListFiles(res: http.ServerResponse, rawPath: string): Promise<void> {
+    // searchParams.get 已解码一次；不得再次 decode（否则文件名含 % 字面量的路径错乱）
+    const path = rawPath;
+    if (!isSafeWorkspacePath(path)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid path' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('listWorkspaceDirectory', { path });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to list directory' });
+        return;
+      }
+      this.sendJson(res, 200, {
+        ok: true,
+        path,
+        workspaceUri: result?.workspaceUri || null,
+        entries: Array.isArray(result?.entries) ? result.entries : []
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list directory' });
+    }
+  }
+
+  private async handleReadFile(res: http.ServerResponse, rawPath: string): Promise<void> {
+    const path = rawPath;
+    if (!isSafeWorkspacePath(path)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid path' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('readWorkspaceTextFile', { path });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to read file' });
+        return;
+      }
+      let content: string = typeof result?.content === 'string' ? result.content : '';
+      // 移动端带宽/渲染优化：超大文本只下发前 1M 字符并标记截断（UI 只读提示），
+      // 避免手机端经局域网拉取 10MB 级文本拖垮页面
+      let truncated = false;
+      if (content.length > MAX_FILE_CONTENT_BYTES) {
+        content = content.slice(0, MAX_FILE_CONTENT_BYTES);
+        truncated = true;
+      }
+      this.sendJson(res, 200, { ok: true, path: result?.path || path, content, truncated });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to read file' });
+    }
+  }
+
+  private async handleWriteFile(res: http.ServerResponse, body: any): Promise<void> {
+    const path = typeof body?.path === 'string' ? body.path : '';
+    const content = typeof body?.content === 'string' ? body.content : null;
+    if (!isSafeWorkspacePath(path)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid path' });
+      return;
+    }
+    if (content === null) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid content' });
+      return;
+    }
+    if (Buffer.byteLength(content, 'utf-8') > MAX_FILE_CONTENT_BYTES) {
+      this.sendJson(res, 413, { ok: false, error: 'Content too large' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('workspace.writeTextFile', { path, content });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to write file' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, path: result?.path || path });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to write file' });
+    }
+  }
+
+  private async handleOpenFile(res: http.ServerResponse, body: any): Promise<void> {
+    const path = typeof body?.path === 'string' ? body.path : '';
+    if (!isSafeWorkspacePath(path)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid path' });
+      return;
+    }
+    const startLine = typeof body?.startLine === 'number' && Number.isInteger(body.startLine) && body.startLine > 0
+      ? body.startLine
+      : undefined;
+    try {
+      const result = await this.routeMessage('openWorkspaceFileAt', {
+        path,
+        startLine,
+        highlight: true,
+        preview: true
+      });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to open file' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, path: result?.path || path });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to open file' });
+    }
+  }
+
+  // ==========================================================================
+  // 渠道 / 模型
+  // ==========================================================================
+
+  private async handleListConfigs(res: http.ServerResponse): Promise<void> {
+    try {
+      const ids: string[] = [];
+      const raw = await this.routeMessage('config.listConfigs', {});
+      if (Array.isArray(raw)) {
+        raw.forEach((id) => { if (typeof id === 'string') ids.push(id); });
+      }
+      // 并行取渠道元信息；单个失败不阻断整体（网络抖动渠道跳过）；
+      // 数量上限 20：实际用户渠道极少超此值，超限并行也会压垮消息队列
+      const configs = (await Promise.all(
+        ids.slice(0, 20).map((id) =>
+          this.routeMessage('config.getConfig', { configId: id })
+            .then((cfg) => ({
+              id,
+              name: typeof cfg?.name === 'string' && cfg.name ? cfg.name : id,
+              model: typeof cfg?.model === 'string' ? cfg.model : ''
+            }))
+            .catch(() => ({ id, name: id, model: '' }))
+        )
+      ));
+      this.sendJson(res, 200, { ok: true, configs });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list configs' });
+    }
+  }
+
+  private async handleGetConfig(res: http.ServerResponse, rawConfigId: string): Promise<void> {
+    const configId = rawConfigId;
+    if (!isSafeConfigId(configId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId' });
+      return;
+    }
+    try {
+      const cfg = await this.routeMessage('config.getConfig', { configId });
+      if (!cfg) {
+        this.sendJson(res, 404, { ok: false, error: 'Config not found' });
+        return;
+      }
+      // 模型列表裁剪字段：只下发移动端 UI 需要的 id/name，避免超大配置体
+      const models = Array.isArray(cfg.models)
+        ? cfg.models
+            .slice(0, 200)
+            .map((m: any) => ({ id: typeof m?.id === 'string' ? m.id : '', name: typeof m?.name === 'string' ? m.name : '' }))
+            .filter((m: { id: string }) => !!m.id)
+        : [];
+      this.sendJson(res, 200, {
+        ok: true,
+        config: {
+          id: cfg.id,
+          name: typeof cfg.name === 'string' ? cfg.name : '',
+          model: typeof cfg.model === 'string' ? cfg.model : '',
+          models
+        }
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to get config' });
+    }
+  }
+
+  private async handleSetModel(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    const modelId = typeof body?.modelId === 'string' ? body.modelId : '';
+    if (!isSafeConfigId(configId) || !isSafeModelId(modelId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId or modelId' });
+      return;
+    }
+    try {
+      const result = await this.routeMessage('models.setActiveModel', { configId, modelId });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to set model' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to set model' });
+    }
+  }
+
+  // ==========================================================================
+  // 消息操作：重试 / 删除 / 工具确认（全部复用桌面端消息管道）
+  // ==========================================================================
+
+  private async handleRetry(res: http.ServerResponse, body: any): Promise<void> {
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    if (!isSafeConversationId(conversationId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId' });
+      return;
+    }
+    const configId = await this.resolveConfigId();
+    if (!configId) {
+      this.sendJson(res, 400, {
+        ok: false,
+        error: 'No channel enabled. Configure a channel with a valid API key in settings first.'
+      });
+      return;
+    }
+    try {
+      await this.routeMessage('retryStream', {
+        conversationId,
+        configId,
+        streamId: `remote_${randomUUID()}`
+      });
+      this.sendJson(res, 200, { ok: true, started: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to retry' });
+    }
+  }
+
+  private async handleDeleteMessage(res: http.ServerResponse, body: any): Promise<void> {
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    const targetIndex = body?.targetIndex;
+    if (!isSafeConversationId(conversationId)
+        || typeof targetIndex !== 'number' || !Number.isInteger(targetIndex)
+        || targetIndex < 0 || targetIndex > 100_000) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId or targetIndex' });
+      return;
+    }
+    try {
+      await this.routeMessage('deleteSingleMessage', { conversationId, targetIndex });
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete message' });
+    }
+  }
+
+  private async handleToolConfirm(res: http.ServerResponse, body: any): Promise<void> {
+    const conversationId = typeof body?.conversationId === 'string' ? body.conversationId : '';
+    const toolResponses = Array.isArray(body?.toolResponses)
+      ? body.toolResponses.filter(isSafeToolResponse).slice(0, MAX_TOOL_RESPONSES)
+      : [];
+    if (!isSafeConversationId(conversationId) || toolResponses.length === 0) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId or toolResponses' });
+      return;
+    }
+    const configId = await this.resolveConfigId();
+    if (!configId) {
+      this.sendJson(res, 400, {
+        ok: false,
+        error: 'No channel enabled. Configure a channel with a valid API key in settings first.'
+      });
+      return;
+    }
+    try {
+      await this.routeMessage('toolConfirmation', {
+        conversationId,
+        configId,
+        toolResponses,
+        streamId: `remote_${randomUUID()}`
+      });
+      this.sendJson(res, 200, { ok: true, started: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to confirm tool' });
+    }
+  }
+
   private handleSse(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (this.sseClients.size >= MAX_SSE_CLIENTS) {
       this.sendJson(res, 503, { ok: false, error: 'Too many stream connections' });
@@ -797,7 +1257,7 @@ export class RemoteControlServer {
     });
   }
 
-  private broadcast(kind: 'message' | 'global', message: unknown): void {
+  private broadcast(kind: 'message' | 'global' | 'workspace', message: unknown): void {
     if (this.sseClients.size === 0) return;
     const payload = sseEvent(kind, message);
     for (const client of this.sseClients) {

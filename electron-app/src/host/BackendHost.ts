@@ -60,7 +60,7 @@ import { warmUpShellAvailabilityCache } from '../../../backend/tools/terminal/ex
 import { setGlobalStoragePath } from '../../../backend/core/settingsContext';
 import { ElectronContext } from './ElectronContext';
 import { SubAgentMonitorBridge } from './SubAgentMonitorBridge';
-import { RemoteControlServer, REMOTE_CONTROL_CLIENT_ID } from './RemoteControlServer';
+import { RemoteControlServer, REMOTE_CONTROL_CLIENT_ID } from '../../../backend/modules/remoteControl/RemoteControlServer';
 import {
   __setHostBridge,
   __setWorkspaceFolders,
@@ -471,8 +471,14 @@ export class BackendHost {
 
     // 多工作区支持：激活工作区/列表变化广播到渲染进程（列表广播携带文件系统
     // 大小写口径：列表为空时前端只有平台默认值，列表就绪后口径随探测完成可能变化）
+    // 激活工作区变化同时通知远程控制服务器：手机端切换工作区后必须立即收到
+    // SSE workspace 事件刷新文件页与工作区条（否则手机显示旧工作区但文件操作
+    // 已落到新工作区，状态与行为不一致）。
     this.workspaceManager = new WorkspaceManager({
-        onActiveWorkspaceChanged: (uri) => this.postToRenderer('message', 'workspaceUri', uri),
+        onActiveWorkspaceChanged: (uri) => {
+          this.postToRenderer('message', 'workspaceUri', uri);
+          this.remoteControlServer?.notifyWorkspaceChange();
+        },
         onWorkspaceListChanged: (list) => this.postToRenderer('message', 'workspaceList', {
             workspaces: list,
             fsCaseSensitive: this.workspaceManager.getFsCaseSensitivity()
@@ -660,6 +666,22 @@ export class BackendHost {
       getSettings: () => this.settingsManager.getSettings() as any,
       getUiLanguage: () => this.resolveToastLanguage(),
       getAppVersion: () => getProductVersion(),
+      getWorkspaceSnapshot: () => {
+        const workspaceUri = this.workspaceManager ? this.workspaceManager.getActiveWorkspaceUri() : null;
+        let activeFilePath: string | null = null;
+        try {
+          const editor = vscode.window.activeTextEditor;
+          if (editor && !editor.document.isUntitled) {
+            const folder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+            if (folder) {
+              activeFilePath = vscode.workspace.asRelativePath(editor.document.uri, false) || null;
+            }
+          }
+        } catch {
+          // 活动编辑器读取失败：快照降级为仅工作区
+        }
+        return { workspaceUri, activeFilePath };
+      },
       route: (type, data, requestId, clientId) => {
         const ctx = { ...this.createHandlerContext(requestId) };
         return this.messageRouter.route(type, data, requestId, ctx, clientId);
@@ -692,6 +714,18 @@ export class BackendHost {
       this.unsubscribers.push(() => this.settingsManager.removeChangeListener(listener));
     }
     this.remoteControlServer.syncFromSettings();
+
+    // 桌面端活动编辑器/工作区变化 → 手机端 SSE workspace 事件（远程控制开启时镜像）
+    {
+      const editorListener = vscode.window.onDidChangeActiveTextEditor(() => {
+        this.remoteControlServer?.notifyWorkspaceChange();
+      });
+      this.unsubscribers.push(() => editorListener.dispose());
+      const foldersListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.remoteControlServer?.notifyWorkspaceChange();
+      });
+      this.unsubscribers.push(() => foldersListener.dispose());
+    }
 
     // Sub-agents registry from persisted settings
     initializeSubAgentsFromSettings(this.createHandlerContext(''));

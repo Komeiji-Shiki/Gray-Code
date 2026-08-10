@@ -12,6 +12,20 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.10dev] - 2026-08-10
+
+### Added
+  - **远程控制大改版——「床上办公」移动端主界面**：控制页升级为三页签自包含 SPA（会话/文件/设置），可操作桌面端真实工作区：
+    - 会话页签新增工具确认条（`awaitingConfirmation` → 手机端批准/拒绝，`toolConfirmation` 复用桌面管道）、错误重试（`retryStream`）、删除消息（`deleteSingleMessage`）、Markdown 表格渲染；
+    - 文件页签：工作区文件树浏览 + 文本查看/编辑（保存写回真实工作区，`workspace.writeTextFile` 新增 webview handler 并复用工作区包含校验与 10MB 上限）+ 桌面端打开（`openWorkspaceFileAt`）+ 工作区切换（`workspace.setActive`）；
+    - 设置页签：连接状态/端口/版本、局域网地址点击复制、渠道模型切换（`models.setActiveModel`）；
+    - 桌面端活动编辑器/工作区变化经 SSE `workspace` 事件实时镜像到手机（BackendHost 挂接 vscode 监听器）；
+    - 新增 REST 端点（沿用既有 Host/Origin/JSON-only 安全基线 + 形状白名单）；`RemoteControlServer` 与 UI 模板迁入 `backend/modules/remoteControl/` 获得 jest 覆盖（HTTP 集成测试 + UI 模板测试）；
+  （详见根目录 CHANGELOG [1.7.10dev]）
+
+### Other
+  - **移除 fast-tavern-main 子项目**（81 文件）并清理相关引用；版本号升至 1.7.10dev（详见根目录 CHANGELOG [1.7.10dev]）。
+
 ## [1.7.9dev] - 2026-08-10
 
 ### Added

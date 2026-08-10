@@ -47,7 +47,7 @@ export type DynamicContextStrategy = 'single' | 'preserve';
  * 提示词组装方式。
  *
  * - legacy：使用传统 template / dynamicTemplate
- * - entries：使用 fast-tavern 风格 promptEntries，并由 chat_history 条目决定真实历史位置
+ * - entries：使用 SillyTavern 风格的有序 promptEntries（chat_history 条目决定真实历史位置）
  */
 export type PromptAssemblyMode = 'legacy' | 'entries';
 
@@ -159,7 +159,7 @@ export interface PromptMode {
     dynamicContextStrategy?: DynamicContextStrategy;
 
     /**
-     * fast-tavern 风格的有序预设条目。
+     * SillyTavern 风格的有序预设条目。
      *
      * 仅 promptAssemblyMode === 'entries' 时参与组装。
      */

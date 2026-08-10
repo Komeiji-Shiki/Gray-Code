@@ -10,6 +10,25 @@
 
 （暂无未发布改动）
 
+## [1.7.10dev] - 2026-08-10
+
+### Added
+  - **远程控制（桌面版）大改版——「床上办公」移动端主界面**：移动端控制页由单一对话窗口升级为三页签自包含 SPA（会话 / 文件 / 设置），可操作桌面端真实工作区：
+    - **会话页签**：会话列表/切换/新建/重命名、发送/停止/流式输出（SSE）、思考与工具调用展示、Markdown-lite 渲染（新增表格支持）；新增**工具确认条**——`awaitingConfirmation` 到达时手机端展示待批准工具（名称 + 参数预览）并可直接批准/拒绝（`toolConfirmation` 复用桌面端同一管道）；错误消息支持**重试**（`retryStream`）；支持删除消息（`deleteSingleMessage`）；
+    - **文件页签**：工作区文件树懒加载浏览（目录展开/收起，沿用统一忽略列表）、文本文件查看与**编辑保存（写入真实工作区）**、在桌面端打开文件（`openWorkspaceFileAt`，桌面端自动跳转高亮）、切换工作区（当前打开 + 收藏列表，`workspace.setActive`）；超过 1MB 内容仅只读预览防移动端卡顿；超大文件读取服务端截断（1M 字符 + `truncated` 标记）避免局域网拉取 10MB 级文本；
+    - **设置页签**：连接状态/端口/版本、局域网访问地址（点击复制）、渠道与模型列表（`models.setActiveModel` 切换激活模型，模型列表仅下发 id/name 裁剪字段）、安全说明；
+    - **工作区实时镜像**：桌面端活动编辑器/工作区变化经新增 SSE `workspace` 事件实时推送到手机（`BackendHost` 挂接 `onDidChangeActiveTextEditor` / `onDidChangeWorkspaceFolders`，激活工作区切换同样触发推送），`hello`/`status` 载荷同步携带工作区信息；手机端收到工作区变化自动清空文件缓存与未保存编辑（防把旧工作区相对路径保存到新工作区）；
+    - **新增 REST 端点**（全部沿用既有 Host/Origin/JSON-only 安全基线）：`GET /api/workspace|workspaces|files|file|configs|config`、`POST /api/workspace-switch|file|open-file|model|retry|delete-message|tool-confirm`；文件路径（拒绝 `..`/尾点段等 Windows 规范化陷阱）/工具响应/模型 ID 均新增形状白名单前置校验；`/api/messages` 剥离附件 base64 载荷（移动端不渲染附件，避免数十 MB 级历史下载）；
+    - **模块可测性重构**：`RemoteControlServer` 与移动端 UI 从 `electron-app/src/host` 迁入 `backend/modules/remoteControl/`（纯 Node 依赖，随根 tsconfig/jest 覆盖），新增 HTTP 集成测试（安全基线/端点行为/SSE）与 UI 模板完整性测试。
+
+### Fixed
+  - **远程控制模块测试盲区**：此前 `RemoteControlServer` 位于 electron-app（无测试运行器），HTTP 面零测试覆盖；迁入 backend 后新增 30+ 断言覆盖 403/404/413/415/400/200 全状态码与 Host/Origin/JSON-only 安全基线。
+  - **移动端 markdown 表格缺失**：旧 UI 的 markdown-lite 不解析表格（CSS 样式存在但无生成逻辑），已补基础表格解析（表头/分隔行/行渲染，横滚容器）。
+
+### Other
+  - **移除 fast-tavern-main 子项目**：仓库内附带的 `fast-tavern-main/`（npm/py 双实现参考子项目）与主项目功能无实际关联，整体移除（81 个文件）；同步清理 `.vscodeignore` 条目、README/README_EN 目录结构、KNOWN_ISSUES 相关条目，`promptTypes.ts` 注释中的「fast-tavern 风格」表述改为「SillyTavern 风格」。
+  - **版本号升至 1.7.10dev**（根与 electron-app package+lock 同步）。
+
 ## [1.7.9dev] - 2026-08-10
 
 ### Added

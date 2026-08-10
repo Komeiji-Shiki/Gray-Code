@@ -81,33 +81,29 @@
 7. **ChannelManager 手拼 `mcp__`**
    已符合 mcpToolNameCodec 的 `mcp__` 约定（与 `encodeMcpToolName` 输出逐字符相同），无需改动。
 
-8. **fast-tavern `_to_recursion_limit` 对 +Inf 返回 5**
-   刻意偏离 TS（Math.max(0, Infinity)=Infinity 会无限循环），属实用保护。
-
-9. **MemoryManager.loadConfig parseInt 静默回退**
+8. **MemoryManager.loadConfig parseInt 静默回退**
    启动期读本地配置文件，`parseInt(val) || cfg.xxx` 是防呆（解析失败/为 0 保持默认值），不会把越界值带进来；改为抛错会影响初始化流程。
 
-10. **jsonFormatter.parseJSONToolCall 保留**
+9. **jsonFormatter.parseJSONToolCall 保留**
     被 `backend/__tests__/tools/jsonFormatter.test.ts` 引用（其余 3 个死导出已删除）。
 
-11. **sanitizeHtml 对 srcset 内 data URL 含逗号的切分**
+10. **sanitizeHtml 对 srcset 内 data URL 含逗号的切分**
     data: URL 本身含逗号会被逗号拆分逻辑切分，但 base64 体无逗号且各段均通过白名单，重拼后 URL 语义不变；`data:image/svg+xml;utf8,<svg...>` 在 srcset 中极罕见且仅作属性值（浏览器不当作元素解析），无执行风险。
 
-12. **sanitizeHtml 放行 video/audio 元素**
+11. **sanitizeHtml 放行 video/audio 元素**
     现有放行语义，未扩大删除面（无 srcset 之外的属性注入面）。
 
-13. **SubAgentMonitorPanel resolveClientId / postRoutedMessage 不做跨面板校验**
+12. **SubAgentMonitorPanel resolveClientId / postRoutedMessage 不做跨面板校验**
     只影响 monitor 自身 lifecycle 消息（monitorReady / getRunWindow 等）的响应回发，走面板直发路径而非 MessageRouter；monitor 伪造 `main-chat` 也只会把响应发回自己面板，无越权。非 lifecycle 消息全部经 `routeSubAgentMonitorMessage` 走已修复的入口。
 
-14. **test/jest.setup.ts 空文件保留**
+13. **test/jest.setup.ts 空文件保留**
     已从 jest.backend.config.js 移除引用，文件无引用无害（删除可选）。
 
-15. **toolBatchCheckpoint 测试的 fire-and-forget 绑定等待**
+14. **toolBatchCheckpoint 测试的 fire-and-forget 绑定等待**
     已通过"轮询等待 after 最终绑定值"修复（`waitForBoundNode` 带 expectedId），不再是 flaky。
 
 ---
 
 ## 三、备注
 
-- 工作区中 `fast-tavern-main/py-fast-tavern/` 的 build 模块为目录形式（`core/modules/build/`），此前误判为"缺失"；npm build 与 pytest 均已恢复通过。
 - `backend/__tests__/tools/media/removeBackground.test.ts` 使用单工作区 mock + 相对路径（工作区外护栏修复后行为收紧为默认 deny）。

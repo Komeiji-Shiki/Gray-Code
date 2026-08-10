@@ -267,7 +267,6 @@ Gray-Code/
 ├── test/                    # 跨模块与前端工具函数测试
 ├── webview/                 # VS Code Webview 消息路由和处理器
 ├── resources/               # 图标、字体、音效等资源
-├── fast-tavern-main/        # 附带的 Fast Tavern 相关子项目
 ├── extension.ts             # VS Code 扩展入口
 ├── index.ts                 # 后端模块导出入口
 ├── package.json             # 扩展清单、命令、配置和脚本

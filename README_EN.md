@@ -275,7 +275,6 @@ Gray-Code/
 ├── test/                    # Cross-module and frontend utility tests
 ├── webview/                 # VS Code webview routing and message handlers
 ├── resources/               # Icons, fonts, sounds, and other resources
-├── fast-tavern-main/        # Bundled Fast Tavern-related subprojects
 ├── extension.ts             # VS Code extension entry point
 ├── index.ts                 # Backend module export entry
 ├── package.json             # Extension manifest, commands, configuration, and scripts
