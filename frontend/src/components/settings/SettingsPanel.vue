@@ -15,6 +15,7 @@ import TokenCountSettings from './TokenCountSettings.vue'
 import SubAgentsSettings from './SubAgentsSettings.vue'
 import MemorySettings from './MemorySettings.vue'
 import SandboxSettings from './SandboxSettings.vue'
+import RemoteControlSettings from './RemoteControlSettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
 import UsageTimeSection from '../usage/UsageTimeSection.vue'
@@ -61,6 +62,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
   { id: 'memory', label: t('components.settings.tabs.memory'), icon: 'codicon-database' },
   { id: 'sandbox', label: t('components.settings.tabs.sandbox'), icon: 'codicon-terminal' },
+  { id: 'remoteControl', label: t('components.settings.tabs.remoteControl'), icon: 'codicon-remote' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
   { id: 'usage', label: t('components.settings.tabs.usage'), icon: 'codicon-graph' },
 ])
@@ -733,6 +735,35 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     labelKey: 'components.settings.settingsPanel.sandbox.info.title',
     keywords: ['安全', 'security', 'セキュリティ', '隔离', '隔离级别', 'isolation', '限制', '沙箱安全'],
     anchor: '[data-search-anchor="sandbox-info"]'
+  },
+  {
+    key: 'remoteControl', tab: 'remoteControl',
+    labelKey: 'components.settings.settingsPanel.sections.remoteControl.title',
+    keywords: ['远程控制', 'remote control', 'リモートコントロール', '局域网', 'lan', '手机', 'mobile', '移动端', '端口', 'port', 'ポート', '控制']
+  },
+  {
+    key: 'remoteControl-enable', tab: 'remoteControl',
+    labelKey: 'components.settings.remoteControlSettings.enabled.label',
+    keywords: ['启用', 'enabled', '有効', '远程控制开关', '总开关', '开启'],
+    anchor: '[data-search-anchor="remote-control-enable"]'
+  },
+  {
+    key: 'remoteControl-port', tab: 'remoteControl',
+    labelKey: 'components.settings.remoteControlSettings.port.label',
+    keywords: ['端口', 'port', 'ポート', '端口号', '监听端口', '自定义端口'],
+    anchor: '[data-search-anchor="remote-control-port"]'
+  },
+  {
+    key: 'remoteControl-urls', tab: 'remoteControl',
+    labelKey: 'components.settings.remoteControlSettings.urls.title',
+    keywords: ['访问地址', 'url', '地址', '局域网地址', 'lan', 'ip', '手机访问', '扫码'],
+    anchor: '[data-search-anchor="remote-control-urls"]'
+  },
+  {
+    key: 'remoteControl-info', tab: 'remoteControl',
+    labelKey: 'components.settings.remoteControlSettings.info.title',
+    keywords: ['安全', 'security', 'セキュリティ', '局域网', '仅内网', '提示', '风险'],
+    anchor: '[data-search-anchor="remote-control-info"]'
   },
   {
     key: 'general', tab: 'general',
@@ -1702,6 +1733,14 @@ onMounted(() => {
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.sandbox.description') }}</p>
 
             <SandboxSettings />
+          </div>
+
+          <!-- 远程控制设置 -->
+          <div v-if="settingsStore.activeTab === 'remoteControl'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.remoteControl.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.remoteControl.description') }}</p>
+
+            <RemoteControlSettings />
           </div>
           
           <!-- 通用设置 -->

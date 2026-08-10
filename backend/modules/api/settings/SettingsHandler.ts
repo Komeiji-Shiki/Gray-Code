@@ -22,6 +22,7 @@ import type {
     SetDefaultToolModeRequest,
     UpdateUISettingsRequest,
     UpdateProxySettingsRequest,
+    UpdateRemoteControlSettingsRequest,
     ResetSettingsRequest,
     GetToolsListRequest,
     GetToolsListResponse,
@@ -250,6 +251,30 @@ export class SettingsHandler {
                 error: {
                     code: err.code || 'UNKNOWN_ERROR',
                     message: err.message || t('modules.api.settings.errors.updateProxySettingsFailed')
+                }
+            };
+        }
+    }
+    
+    /**
+     * 更新远程控制设置（桌面端局域网远程控制）
+     */
+    async updateRemoteControlSettings(request: UpdateRemoteControlSettingsRequest): Promise<UpdateSettingsResponse> {
+        try {
+            await this.settingsManager.updateRemoteControlSettings(request.remoteControlSettings);
+            const settings = this.settingsManager.getSettings();
+            
+            return {
+                success: true,
+                settings
+            };
+        } catch (error) {
+            const err = error as any;
+            return {
+                success: false,
+                error: {
+                    code: err.code || 'UNKNOWN_ERROR',
+                    message: err.message || t('modules.api.settings.errors.updateRemoteControlSettingsFailed')
                 }
             };
         }

@@ -234,6 +234,7 @@ const zhCN = {
                     setDefaultToolModeFailed: '设置默认工具模式失败',
                     updateUISettingsFailed: '更新 UI 设置失败',
                     updateProxySettingsFailed: '更新代理设置失败',
+                    updateRemoteControlSettingsFailed: '更新远程控制设置失败',
                     resetSettingsFailed: '重置设置失败',
                     toolRegistryNotAvailable: '工具注册器不可用',
                     getToolsListFailed: '获取工具列表失败',

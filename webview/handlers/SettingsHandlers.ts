@@ -644,6 +644,62 @@ export const countSystemPromptTokens: MessageHandler = async (data, requestId, c
 };
 
 /**
+ * 更新远程控制设置（桌面端局域网远程控制）
+ */
+export const updateRemoteControlSettings: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { remoteControlSettings } = data || {};
+    if (!remoteControlSettings || typeof remoteControlSettings !== 'object') {
+      ctx.sendError(requestId, 'UPDATE_REMOTE_CONTROL_INVALID_PARAMS', 'Invalid remote control settings');
+      return;
+    }
+    await ctx.settingsHandler.updateRemoteControlSettings({ remoteControlSettings });
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_REMOTE_CONTROL_ERROR', error?.message || 'Failed to update remote control settings');
+  }
+};
+
+/**
+ * 获取远程控制状态（服务器是否运行、LAN 地址等）
+ *
+ * 桌面端由 BackendHost 注入 ctx.remoteControlStatus；VS Code 宿主返回
+ * available:false，前端据此隐藏/提示桌面端专属能力。
+ */
+export const getRemoteControlStatus: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    if (ctx.remoteControlStatus) {
+      ctx.sendResponse(requestId, ctx.remoteControlStatus());
+      return;
+    }
+    ctx.sendResponse(requestId, {
+      available: false,
+      enabled: ctx.settingsManager.getSettings().remoteControl?.enabled === true,
+      port: ctx.settingsManager.getSettings().remoteControl?.port ?? 17532,
+      running: false
+    });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'REMOTE_CONTROL_STATUS_ERROR', error?.message || 'Failed to get remote control status');
+  }
+};
+
+/**
+ * 远程控制服务器操作（重试/停止；桌面端专用）
+ */
+export const applyRemoteControl: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    if (!ctx.remoteControlApply) {
+      ctx.sendResponse(requestId, { ok: false, error: 'Remote control is not available on this host' });
+      return;
+    }
+    const result = await ctx.remoteControlApply(data);
+    ctx.sendResponse(requestId, result || { ok: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'REMOTE_CONTROL_APPLY_ERROR', error?.message || 'Failed to apply remote control action');
+  }
+};
+
+/**
  * 注册设置管理处理器
  */
 export function registerSettingsHandlers(registry: Map<string, MessageHandler>): void {
@@ -651,6 +707,9 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getAppInfo', getAppInfo);
   registry.set('updateSettings', settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
   registry.set('updateProxySettings', settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
+  registry.set('updateRemoteControlSettings', settingsHandlerBoundary('UPDATE_REMOTE_CONTROL_SETTINGS_ERROR', 'Failed to update remote control settings', updateRemoteControlSettings));
+  registry.set('remoteControl.getStatus', getRemoteControlStatus);
+  registry.set('remoteControl.apply', applyRemoteControl);
   registry.set('updateUISettings', updateUISettings);
   registry.set('settings.getActiveChannelId', getActiveChannelId);
   registry.set('settings.setActiveChannelId', setActiveChannelId);

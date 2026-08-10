@@ -45,7 +45,8 @@ describe('VSCodeSettingsStorage 配置键注册校验', () => {
             'lastReadAnnouncementVersion',
             'checkForUpdates',
             'proxy',
-            'storagePath'
+            'storagePath',
+            'remoteControl'
         ]);
     });
 });

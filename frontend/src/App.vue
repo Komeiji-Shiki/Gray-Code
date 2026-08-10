@@ -86,6 +86,17 @@ const splashDone = ref(false)
 // 使用 Pinia Store
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
+
+// 桌面端远程控制：当前激活会话上报给主进程（移动端 UI 默认跟随电脑正在看的会话）。
+// fire-and-forget；VS Code 宿主/远程控制关闭时该消息被忽略或返回 unknown 错误，均无副作用。
+watch(
+  () => chatStore.currentConversationId,
+  (id) => {
+    if (id) {
+      void sendToExtension('remoteControl.reportActiveConversation', { conversationId: id }).catch(() => {})
+    }
+  }
+)
 const terminalStore = useTerminalStore()
 const diffStore = useDiffStore()
 const codeViewStore = useCodeViewStore()

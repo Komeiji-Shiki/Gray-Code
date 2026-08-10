@@ -12,6 +12,11 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.9dev] - 2026-08-10
+
+### Added
+  - **远程控制（RemoteControlServer）**：设置页新增「远程控制」页签——启用后在局域网监听自定义端口（默认 17532），提供移动端友好控制页（自包含 HTML，随服务器懒加载，关闭时零资源占用）；手机可查看/切换/重命名会话、发送消息、停止生成，流式输出经 SSE 实时回传，桌面端自身会话流式输出同步镜像到手机；移动端以 `remote-control` 客户端身份接入 MessageRouter 复用完整后端管道；安全基线：默认关闭、Host/Origin 校验防 DNS rebinding、POST 仅 application/json、会话读取限已存在会话、SSE 并发上限 + 空闲超时；端口/开关变更即时生效，监听失败可在设置页重试；设置搜索与三语言（en/zh-CN/ja）文案齐全（详见根目录 CHANGELOG [1.7.9dev]）。
+
 ## [1.7.8] - 2026-08-10
 
 ### Added

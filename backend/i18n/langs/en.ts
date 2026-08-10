@@ -233,6 +233,7 @@ const en: BackendLanguageMessages = {
                     setDefaultToolModeFailed: 'Failed to set default tool mode',
                     updateUISettingsFailed: 'Failed to update UI settings',
                     updateProxySettingsFailed: 'Failed to update proxy settings',
+                    updateRemoteControlSettingsFailed: 'Failed to update remote control settings',
                     resetSettingsFailed: 'Failed to reset settings',
                     toolRegistryNotAvailable: 'Tool registry not available',
                     getToolsListFailed: 'Failed to get tools list',

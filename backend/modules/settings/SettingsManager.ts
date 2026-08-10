@@ -67,9 +67,10 @@ import type {
     SubAgentConfigItem,
     HistorySearchToolConfig,
     MemoryToolConfig,
-    SandboxToolConfig
+    SandboxToolConfig,
+    RemoteControlSettings
 } from './types';
-import { DEFAULT_GLOBAL_SETTINGS } from './types';
+import { DEFAULT_GLOBAL_SETTINGS, DEFAULT_REMOTE_CONTROL_PORT } from './types';
 import {
     SettingsCore,
     type SettingsStorage
@@ -644,6 +645,31 @@ export class SettingsManager {
      */
     setProxyUrl(url: string | undefined): Promise<void> {
         return this.proxy.setProxyUrl(url);
+    }
+
+    // ========== 远程控制配置管理 ==========
+
+    /**
+     * 更新远程控制配置
+     */
+    async updateRemoteControlSettings(settings: Partial<RemoteControlSettings>): Promise<void> {
+        const oldValue = this.core.settings.remoteControl;
+        const next: RemoteControlSettings = {
+            enabled: settings.enabled === true,
+            port: typeof settings.port === 'number' && Number.isInteger(settings.port) && settings.port >= 1 && settings.port <= 65535
+                ? settings.port
+                : (oldValue?.port ?? DEFAULT_REMOTE_CONTROL_PORT)
+        };
+        this.core.settings.remoteControl = next;
+        this.core.settings.lastUpdated = Date.now();
+        await this.core.storage.save(this.core.settings);
+        this.core.notifyChange({
+            type: 'remoteControl',
+            path: 'remoteControl',
+            oldValue,
+            newValue: next,
+            settings: this.core.settings
+        });
     }
 
     // ========== 总结配置管理 ==========

@@ -4,7 +4,7 @@
  * 前后端交互的设置相关数据结构
  */
 
-import type { GlobalSettings, ToolsEnabledState, ProxySettings, ListFilesToolConfig, ApplyDiffToolConfig } from '../../settings/types';
+import type { GlobalSettings, ToolsEnabledState, ProxySettings, RemoteControlSettings, ListFilesToolConfig, ApplyDiffToolConfig } from '../../settings/types';
 
 /**
  * ========== 请求类型 ==========
@@ -74,6 +74,14 @@ export interface UpdateUISettingsRequest {
 export interface UpdateProxySettingsRequest {
     /** 代理设置（部分更新） */
     proxySettings: Partial<ProxySettings>;
+}
+
+/**
+ * 更新远程控制设置请求
+ */
+export interface UpdateRemoteControlSettingsRequest {
+    /** 远程控制设置（部分更新） */
+    remoteControlSettings: Partial<RemoteControlSettings>;
 }
 
 /**
@@ -153,7 +161,7 @@ export interface SettingsChangeNotification {
     type: 'settingsChanged';
     
     /** 变更类型 */
-    changeType: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'ui' | 'full';
+    changeType: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'remoteControl' | 'ui' | 'full';
     
     /** 变更的字段路径（如 'toolsEnabled.read_file'） */
     path?: string;

@@ -2,7 +2,7 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.7.8",
+  "version": "1.7.9dev",
   "publisher": "czocelot",
   "icon": "resources/icon.png",
   "engines": {
@@ -266,6 +266,15 @@
           },
           "scope": "machine",
           "description": "代理设置（按机器保存，不参与 Settings Sync）"
+        },
+        "graycode.remoteControl": {
+          "type": "object",
+          "default": {
+            "enabled": false,
+            "port": 17532
+          },
+          "scope": "machine",
+          "description": "远程控制设置（按机器保存，不参与 Settings Sync；仅桌面端生效）"
         },
         "graycode.storagePath": {
           "type": "object",

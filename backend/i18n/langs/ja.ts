@@ -233,6 +233,7 @@ const ja: BackendLanguageMessages = {
                     setDefaultToolModeFailed: 'デフォルトツールモードの設定に失敗しました',
                     updateUISettingsFailed: 'UI 設定の更新に失敗しました',
                     updateProxySettingsFailed: 'プロキシ設定の更新に失敗しました',
+                    updateRemoteControlSettingsFailed: 'リモートコントロール設定の更新に失敗しました',
                     resetSettingsFailed: '設定のリセットに失敗しました',
                     toolRegistryNotAvailable: 'ツールレジストリが利用できません',
                     getToolsListFailed: 'ツール一覧の取得に失敗しました',

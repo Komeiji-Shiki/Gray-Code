@@ -67,6 +67,39 @@ export interface HandlerContext {
   // 工具函数
   getCurrentWorkspaceUri: () => string | null;
   syncLanguageToBackend?: () => void;
+
+  // 远程控制（桌面端专用；VS Code 宿主不注入时为 undefined）
+  remoteControlStatus?: () => RemoteControlStatus;
+  remoteControlApply?: (action: RemoteControlApplyAction) => Promise<RemoteControlApplyResult> | RemoteControlApplyResult;
+}
+
+/** 远程控制状态（设置页与移动端 UI 共用） */
+export interface RemoteControlStatus {
+  /** 当前宿主是否支持远程控制（仅桌面端 true） */
+  available: boolean;
+  /** 配置是否启用 */
+  enabled: boolean;
+  /** 配置端口 */
+  port: number;
+  /** 服务器是否正在监听 */
+  running: boolean;
+  /** 监听失败等错误信息 */
+  error?: string;
+  /** 局域网访问地址（http://ip:port） */
+  urls?: string[];
+  /** 当前激活会话（前端上报或最近使用） */
+  activeConversationId?: string | null;
+}
+
+/** 远程控制服务器操作（apply 类） */
+export interface RemoteControlApplyAction {
+  type: 'restart' | 'stop';
+}
+
+/** 远程控制服务器操作结果 */
+export interface RemoteControlApplyResult {
+  ok: boolean;
+  error?: string;
 }
 
 /**

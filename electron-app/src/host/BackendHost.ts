@@ -38,6 +38,7 @@ import { createSkillsManager, getSkillsManager } from '../../../backend/modules/
 import { initMemoryManager } from '../../../backend/modules/memory';
 import { ActivityTracker, setGlobalActivityTracker } from '../../../backend/modules/activity';
 import { UpdateChecker } from '../../../backend/modules/update';
+import { getProductVersion } from '../../../backend/core/productMetadata';
 import { disposeActivityStatsCache } from '../../../webview/handlers/ActivityHandlers';
 import { WindowsAgentStopNotificationService } from '../../../backend/modules/notifications/WindowsAgentStopNotificationService';
 import {
@@ -59,6 +60,7 @@ import { warmUpShellAvailabilityCache } from '../../../backend/tools/terminal/ex
 import { setGlobalStoragePath } from '../../../backend/core/settingsContext';
 import { ElectronContext } from './ElectronContext';
 import { SubAgentMonitorBridge } from './SubAgentMonitorBridge';
+import { RemoteControlServer, REMOTE_CONTROL_CLIENT_ID } from './RemoteControlServer';
 import {
   __setHostBridge,
   __setWorkspaceFolders,
@@ -116,6 +118,10 @@ export class BackendHost {
   private clientRegistry = new WebviewClientRegistry();
   /** 子代理 Monitor 内嵌面板桥（事件推送 + monitor 协议消息处理） */
   private subAgentMonitorBridge?: SubAgentMonitorBridge;
+  /** 远程控制服务器（局域网 HTTP + 移动端 UI；设置开启时运行，否则不存在） */
+  private remoteControlServer?: RemoteControlServer;
+  /** 远程控制客户端的注册注销函数（clientRegistry.register 返回的 Disposable） */
+  private remoteControlClientDispose?: { dispose(): void };
   private messageHandlingQueue: Promise<void> = Promise.resolve();
   /**
    * 开场动画（Splash）完成信号：渲染层在动画淡出后（或用户关闭动画时立即）上报。
@@ -352,6 +358,15 @@ export class BackendHost {
     } catch {
       // ignore
     }
+    // 远程控制：关闭 HTTP 服务器并注销客户端（移动端 SSE 收到 bye 后自动重连失败）
+    this.remoteControlClientDispose?.dispose();
+    this.remoteControlClientDispose = undefined;
+    try {
+      await this.remoteControlServer?.dispose();
+    } catch {
+      // ignore
+    }
+    this.remoteControlServer = undefined;
     if (this.updateCheckTimer) {
       clearTimeout(this.updateCheckTimer);
       this.updateCheckTimer = undefined;
@@ -610,7 +625,18 @@ export class BackendHost {
       this.chatHandler,
       this.conversationManager,
       this.settingsManager,
-      () => ({ webview: this.fakeWebviewForClient(undefined) }),
+      // 流式 chunk 按 clientId 路由：注册表中有 webviewHost 的客户端（主聊天/远程控制）
+      // 直接投递；无 webviewHost 的客户端（monitor 等仅 postMessage 型）回退主聊天视图，
+      // 与历史行为一致。
+      (clientId) => {
+        if (clientId) {
+          const client = this.clientRegistry.get(clientId);
+          if (client && client.webviewHost) {
+            return client.webviewHost;
+          }
+        }
+        return { webview: this.fakeWebviewForClient(undefined) };
+      },
       (requestId, data) => this.postToRenderer('response', requestId, data),
       (requestId, code, message) => this.postToRenderer('error', requestId, code, message),
       this.clientRegistry
@@ -626,6 +652,46 @@ export class BackendHost {
     });
 
     this.registerMainChatClient();
+
+    // 远程控制服务器：以 'remote-control' 客户端身份接入 MessageRouter，
+    // 移动端发起的消息与桌面端同一管道（响应/流块经 clientRegistry 回传）。
+    // 设置开启才启动服务器（移动端 UI 随服务器懒加载），关闭时零资源占用。
+    this.remoteControlServer = new RemoteControlServer({
+      getSettings: () => this.settingsManager.getSettings() as any,
+      getUiLanguage: () => this.resolveToastLanguage(),
+      getAppVersion: () => getProductVersion(),
+      route: (type, data, requestId, clientId) => {
+        const ctx = { ...this.createHandlerContext(requestId) };
+        return this.messageRouter.route(type, data, requestId, ctx, clientId);
+      },
+      conversationManager: this.conversationManager as any,
+      configManager: this.configManager as any
+    });
+    this.remoteControlClientDispose = this.clientRegistry.register({
+      clientId: REMOTE_CONTROL_CLIENT_ID,
+      webviewHost: {
+        webview: {
+          postMessage: (message: any) => this.remoteControlServer?.onClientMessage(message) ?? true
+        }
+      } as any,
+      postMessage: (message: any) => {
+        this.remoteControlServer?.onClientMessage(message);
+        return true;
+      },
+      isAlive: () => this.remoteControlServer?.isRunning() === true
+    });
+    // 设置变更（开关/端口）→ 启停/重启服务器；初始化完成后再同步一次兜底。
+    // 监听器加入 unsubscribers：dispose 时退订，避免闭包引用 remoteControlServer 泄漏。
+    {
+      const listener = (event: any): void => {
+        if (event.type === 'remoteControl' || event.type === 'full') {
+          this.remoteControlServer?.syncFromSettings();
+        }
+      };
+      this.settingsManager.addChangeListener(listener);
+      this.unsubscribers.push(() => this.settingsManager.removeChangeListener(listener));
+    }
+    this.remoteControlServer.syncFromSettings();
 
     // Sub-agents registry from persisted settings
     initializeSubAgentsFromSettings(this.createHandlerContext(''));
@@ -725,7 +791,14 @@ export class BackendHost {
 
   private fakeWebviewForClient(_clientId?: string): any {
     return {
-      postMessage: (message: any) => this.postToRenderer('raw', message)
+      postMessage: (message: any) => {
+        this.postToRenderer('raw', message);
+        // 桌面端自身会话的流式输出镜像转发给移动端（远程控制开启时）。
+        // 放在 fakeWebviewForClient 而非 main-chat 客户端注册的 postMessage：
+        // 流式 chunk 由 StreamChunkProcessor 经 webviewHost.webview.postMessage
+        // 投递（不走注册表级 postMessage），挂在注册回调上是死代码。
+        this.remoteControlServer?.onGlobalMessage(message);
+      }
     };
   }
 
@@ -795,6 +868,19 @@ export class BackendHost {
           runId,
           conversationId
         });
+      },
+      remoteControlStatus: () => this.remoteControlServer?.getStatus() ?? {
+        available: false,
+        enabled: false,
+        port: 17532,
+        running: false
+      },
+      remoteControlApply: (action) => {
+        if (!this.remoteControlServer) {
+          return { ok: false, error: 'Remote control server not available' };
+        }
+        this.remoteControlServer.apply(action);
+        return { ok: true };
       }
     };
   }
@@ -889,6 +975,14 @@ export class BackendHost {
           console.error('[BackendHost] getSettings fast-path error:', err);
           this.postToRenderer('error', requestId || 'getSettings', 'GET_SETTINGS_ERROR', err?.message || String(err));
         });
+      return;
+    }
+
+    // 前端上报桌面端激活会话（远程控制移动端默认跟随电脑当前会话）
+    if (type === 'remoteControl.reportActiveConversation') {
+      const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : null;
+      this.remoteControlServer?.setActiveConversation(conversationId);
+      this.postToRenderer('response', requestId || 'remoteControl.reportActiveConversation', { success: true });
       return;
     }
 

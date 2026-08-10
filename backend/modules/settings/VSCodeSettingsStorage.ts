@@ -48,7 +48,7 @@ const SYNCABLE_KEYS = [
 ] as const;
 
 // 这些 key 应在 package.json 中声明 scope: "machine"
-const MACHINE_KEYS = ['proxy', 'storagePath'] as const;
+const MACHINE_KEYS = ['proxy', 'storagePath', 'remoteControl'] as const;
 
 type SyncableKey = typeof SYNCABLE_KEYS[number];
 type MachineKey = typeof MACHINE_KEYS[number];
@@ -245,6 +245,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         if (opts.includeMachine) {
             settings.proxy = config.get('proxy');
             settings.storagePath = config.get('storagePath');
+            settings.remoteControl = config.get('remoteControl');
         }
 
         // toolsEnabled 在类型上是必填字段（但这里可能为 undefined），兜底给空对象
@@ -320,7 +321,8 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             legacySettings = {
                 ...legacySettings,
                 proxy: current.proxy ?? legacySettings.proxy,
-                storagePath: current.storagePath ?? legacySettings.storagePath
+                storagePath: current.storagePath ?? legacySettings.storagePath,
+                remoteControl: current.remoteControl ?? legacySettings.remoteControl
             };
         }
 

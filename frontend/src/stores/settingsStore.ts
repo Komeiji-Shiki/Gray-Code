@@ -7,7 +7,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { SmoothMode } from '../utils/smoothStream'
 
-export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'memory' | 'sandbox' | 'general' | 'usage'
+export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'sound' | 'appearance' | 'memory' | 'sandbox' | 'remoteControl' | 'general' | 'usage'
 
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings' | 'usage'

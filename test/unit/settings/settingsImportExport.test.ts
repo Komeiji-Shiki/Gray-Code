@@ -112,13 +112,14 @@ describe('SkillsManager.validateSkillId (#20)', () => {
 // ---------------------------------------------------------------------------
 
 describe('MACHINE_SCOPE_KEYS (#18)', () => {
-    it('contains proxy and storagePath', () => {
+    it('contains proxy, storagePath and remoteControl', () => {
         expect(MACHINE_SCOPE_KEYS).toContain('proxy');
         expect(MACHINE_SCOPE_KEYS).toContain('storagePath');
+        expect(MACHINE_SCOPE_KEYS).toContain('remoteControl');
     });
 
-    it('is a readonly array of two entries', () => {
-        expect(MACHINE_SCOPE_KEYS.length).toBe(2);
+    it('is a readonly array of three entries', () => {
+        expect(MACHINE_SCOPE_KEYS.length).toBe(3);
     });
 });
 

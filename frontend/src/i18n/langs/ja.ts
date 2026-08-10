@@ -999,6 +999,7 @@ const ja: LanguageMessages = {
                 appearance: '外観',
                 memory: '記憶',
                 sandbox: 'サンドボックス',
+                remoteControl: 'リモートコントロール',
                 general: '一般',
                 usage: '使用量統計'
             },
@@ -2187,6 +2188,10 @@ const ja: LanguageMessages = {
                         title: 'サンドボックス',
                         description: '隔離された一時ディレクトリでコードを安全に実行'
                     },
+                    remoteControl: {
+                        title: 'リモートコントロール',
+                        description: 'ローカルネットワーク経由でスマホからデスクトップを操作'
+                    },
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
@@ -2355,6 +2360,37 @@ const ja: LanguageMessages = {
                     saveFailed: '保存に失敗しました',
                     loadFailed: 'サンドボックス設定の読み込みに失敗しました',
                     noLanguage: '少なくとも 1 つの言語を残してください。さもないとサンドボックスはコードを実行できません'
+                },
+                remoteControlSettings: {
+                    desktopOnly: 'リモートコントロールは GrayCode デスクトップ版でのみ利用できます。',
+                    enabled: {
+                        label: 'リモートコントロールを有効にする',
+                        description: 'ローカルネットワーク上でモバイル向けのコントロールページを公開し、スマホから会話の閲覧・メッセージ送信ができます。有効にしている間だけサーバーが動作します。'
+                    },
+                    port: {
+                        label: 'ポート番号',
+                        description: '待受ポート（1〜65535）。すべてのLANインターフェースで待ち受けます。',
+                        required: 'ポート番号を入力してください',
+                        invalid: 'ポートは 1〜65535 の整数で指定してください'
+                    },
+                    save: '保存',
+                    saveSuccess: '保存しました',
+                    saveFailed: '保存に失敗しました',
+                    status: {
+                        running: 'サーバー稼働中',
+                        stopped: 'サーバー停止中',
+                        retry: '再試行'
+                    },
+                    urls: {
+                        title: 'アクセス URL',
+                        description: 'スマホのブラウザで以下のいずれかを開いてください（同じ Wi-Fi に接続）。',
+                        copy: 'コピー',
+                        empty: 'サーバーを起動するとアクセス URL が表示されます。'
+                    },
+                    info: {
+                        title: 'セキュリティについて',
+                        text: 'リモートコントロールはローカルネットワーク（LAN）内でのみ待ち受けます。ポートをパブリックネットワークに公開しないでください。'
+                    }
                 },
 
             },

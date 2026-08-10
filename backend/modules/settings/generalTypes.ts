@@ -67,6 +67,30 @@ export interface ProxySettings {
 }
 
 /**
+ * 远程控制配置
+ *
+ * 桌面端在局域网内开放一个 HTTP 端口，手机等设备可通过移动端 UI
+ * 查看/发送消息（远程控制）。仅本机有效（machine scope）。
+ */
+export interface RemoteControlSettings {
+    /**
+     * 是否启用远程控制
+     *
+     * 启用后主进程会在局域网内监听 `port` 端口并提供移动端 UI；
+     * 关闭时服务器完全不启动（UI 也不加载，零资源占用）。
+     */
+    enabled: boolean;
+
+    /**
+     * 监听端口（1-65535）
+     */
+    port: number;
+}
+
+/** 远程控制默认端口 */
+export const DEFAULT_REMOTE_CONTROL_PORT = 17532;
+
+/**
  * 数据存储路径配置
  *
  * 允许用户自定义大文件的存储位置，避免占用 C 盘空间
@@ -193,6 +217,11 @@ export interface GlobalSettings {
     proxy?: ProxySettings;
     
     /**
+     * 远程控制配置（仅桌面端生效，machine scope）
+     */
+    remoteControl?: RemoteControlSettings;
+    
+    /**
      * UI 偏好设置
      */
     ui?: {
@@ -301,14 +330,14 @@ export interface GlobalSettings {
  * 这些键的值与特定机器绑定（如代理设置中的本地代理端口、
  * 数据存储路径等），跨机器导入会打断网络或数据目录。
  */
-export const MACHINE_SCOPE_KEYS: readonly string[] = ['proxy', 'storagePath'];
+export const MACHINE_SCOPE_KEYS: readonly string[] = ['proxy', 'storagePath', 'remoteControl'];
 
 /**
  * 设置变更事件
  */
 export interface SettingsChangeEvent {
     /** 变更类型 */
-    type: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'ui' | 'full';
+    type: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'remoteControl' | 'ui' | 'full';
     
     /** 变更的字段路径（如 'toolsEnabled.read_file'） */
     path?: string;
@@ -365,6 +394,10 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     proxy: {
         enabled: false,
         url: undefined
+    },
+    remoteControl: {
+        enabled: false,
+        port: DEFAULT_REMOTE_CONTROL_PORT
     },
     ui: {
         theme: 'auto',

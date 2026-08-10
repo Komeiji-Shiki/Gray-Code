@@ -999,6 +999,7 @@ const en: LanguageMessages = {
                 appearance: 'Appearance',
                 memory: 'Memory',
                 sandbox: 'Sandbox',
+                remoteControl: 'Remote Control',
                 general: 'General',
                 usage: 'Usage Statistics'
             },
@@ -2187,6 +2188,10 @@ const en: LanguageMessages = {
                         title: 'Sandbox',
                         description: 'Run code snippets safely in an isolated temporary directory'
                     },
+                    remoteControl: {
+                        title: 'Remote Control',
+                        description: 'Access this desktop from your phone over the local network (LAN)'
+                    },
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
@@ -2355,6 +2360,37 @@ const en: LanguageMessages = {
                     saveFailed: 'Failed to save',
                     loadFailed: 'Failed to load sandbox config',
                     noLanguage: 'Keep at least one language, otherwise the sandbox cannot run any code'
+                },
+                remoteControlSettings: {
+                    desktopOnly: 'Remote control is only available in the GrayCode desktop app.',
+                    enabled: {
+                        label: 'Enable Remote Control',
+                        description: 'Serve a mobile-friendly control page on your local network so you can view conversations and chat from your phone. The server only runs while this is enabled.'
+                    },
+                    port: {
+                        label: 'Port Number',
+                        description: 'Port to listen on (1-65535). The desktop app listens on all LAN interfaces so phones on the same Wi-Fi can connect.',
+                        required: 'Port number is required',
+                        invalid: 'Port must be an integer between 1 and 65535'
+                    },
+                    save: 'Save',
+                    saveSuccess: 'Saved successfully',
+                    saveFailed: 'Failed to save',
+                    status: {
+                        running: 'Server running',
+                        stopped: 'Server stopped',
+                        retry: 'Retry'
+                    },
+                    urls: {
+                        title: 'Access Addresses',
+                        description: 'Open any of these addresses in your phone browser (same Wi-Fi network).',
+                        copy: 'Copy',
+                        empty: 'Start the server to see the access addresses.'
+                    },
+                    info: {
+                        title: 'About Security',
+                        text: 'Remote control only listens on your local network (LAN) and is designed for use within the same Wi-Fi. Do not expose it to the public internet — anyone who can reach the port can read and send messages as you.'
+                    }
                 },
 
             },

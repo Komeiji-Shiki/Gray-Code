@@ -1000,6 +1000,7 @@ const zhCN = {
                 appearance: '外观',
                 memory: '记忆',
                 sandbox: '沙箱',
+                remoteControl: '远程控制',
                 general: '通用',
                 usage: '用量统计'
             },
@@ -2188,6 +2189,10 @@ const zhCN = {
                         title: '沙箱',
                         description: '在隔离的临时目录中安全运行代码片段'
                     },
+                    remoteControl: {
+                        title: '远程控制',
+                        description: '在局域网内用手机访问桌面端，查看对话与发送消息'
+                    },
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
@@ -2356,6 +2361,37 @@ const zhCN = {
                     saveFailed: '保存失败',
                     loadFailed: '加载沙箱配置失败',
                     noLanguage: '至少需要保留一种语言，否则沙箱将无法运行任何代码'
+                },
+                remoteControlSettings: {
+                    desktopOnly: '远程控制仅在 GrayCode 桌面版中可用。',
+                    enabled: {
+                        label: '启用远程控制',
+                        description: '在局域网内提供一个移动端友好的控制页面，用手机即可查看对话并发送消息。仅在开启时服务器才会运行。'
+                    },
+                    port: {
+                        label: '端口号',
+                        description: '监听端口（1-65535）。桌面端会监听所有局域网网卡，同一 Wi-Fi 下的手机可访问。',
+                        required: '请输入端口号',
+                        invalid: '端口必须为 1-65535 之间的整数'
+                    },
+                    save: '保存',
+                    saveSuccess: '保存成功',
+                    saveFailed: '保存失败',
+                    status: {
+                        running: '服务器运行中',
+                        stopped: '服务器已停止',
+                        retry: '重试'
+                    },
+                    urls: {
+                        title: '访问地址',
+                        description: '在手机浏览器中打开以下任一地址（需与电脑在同一 Wi-Fi）。',
+                        copy: '复制',
+                        empty: '启动服务器后即可看到访问地址。'
+                    },
+                    info: {
+                        title: '安全说明',
+                        text: '远程控制仅在局域网内监听，请勿将端口暴露到公网——任何能访问该端口的人都可以读取和发送消息。'
+                    }
                 },
 
             },
