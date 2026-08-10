@@ -142,6 +142,10 @@ export function getGlobalMcpManager(): McpManager | null {
 
 /**
  * 获取完整的全局上下文
+ *
+ * 快照语义说明：每次调用都返回一个新的浅冻结快照（字段值与调用时刻的全局状态一致），
+ * 不是全局对象的稳定引用——后续 setter 更新后，已取得的快照不会自动反映最新状态；
+ * 需要最新状态时请重新调用本函数。
  */
 export function getGlobalContext(): Readonly<GlobalContext> {
     // 返回浅冻结副本：调用方不能改写返回对象的内部字段，避免绕过 setter 篡改全局状态

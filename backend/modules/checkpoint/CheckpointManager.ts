@@ -368,6 +368,9 @@ export class CheckpointManager {
             'create',
             `checkpoint:${conversationId}:${checkpointId}`,
             async () => {
+                // C-13: 实例级告警计数在每次创建开始时复位——实例跨多次创建复用，
+                // 不复位会导致后续创建的复制失败被静默吞掉（计数超上限后不再逐文件告警）
+                this.copyFailureWarnCount = 0;
                 let backupDirCreated = false;
 
                 try {
@@ -546,17 +549,24 @@ export class CheckpointManager {
                     }
 
                     // 计算综合内容签名（基于实际备份成功的文件集合）
-                    const hashParts: string[] = [];
+                    // 增量哈希：逐项直接 update，避免为十万级文件构建大字符串数组
+                    //（字节流与旧实现 hashParts.join('\n') 完全一致：项间 '\n'、无尾部 '\n'）
+                    const contentHashBuilder = crypto.createHash('sha256');
+                    let hashFirstPart = true;
+                    const updateHashPart = (part: string): void => {
+                        if (!hashFirstPart) {
+                            contentHashBuilder.update('\n');
+                        }
+                        hashFirstPart = false;
+                        contentHashBuilder.update(part);
+                    };
                     for (const scopedPath of Object.keys(currentHashes).sort()) {
-                        hashParts.push(`${scopedPath}:${currentHashes[scopedPath]}`);
+                        updateHashPart(`${scopedPath}:${currentHashes[scopedPath]}`);
                     }
                     for (const scopedPath of snapshot.emptyDirs) {
-                        hashParts.push(`${scopedPath}:empty-dir`);
+                        updateHashPart(`${scopedPath}:empty-dir`);
                     }
-                    const contentHash = crypto.createHash('sha256')
-                        .update(hashParts.join('\n'))
-                        .digest('hex')
-                        .substring(0, 16);
+                    const contentHash = contentHashBuilder.digest('hex').substring(0, 16);
 
                     // CPF-01/EX-10: 完整数据（哈希/stat/空目录/变更/排除清单/规则快照）写入独立 manifest，
                     // 会话元数据只保留摘要（fileHashes/fileStats 不再写入记录）
@@ -674,6 +684,12 @@ export class CheckpointManager {
             // M4: 等待文件写锁期间被取消时 fileWriteLockManager.acquire 抛普通 Error，
             // 从 runExclusive 漏出到此处（任务内部 catch 接不到锁获取错误）；
             // 转换为取消结果，不冒泡到工具循环。
+            // C-2: 取消/异常路径同样清除「进行中 create」登记（与 finally 的清除互为兜底），
+            // 避免 creatingBackupDir 残留导致孤儿清理误判（取消发生在任务开始前/锁获取期间时
+            // 任务内 catch/finally 不可达）
+            if (createOperationRecord) {
+                createOperationRecord.creatingBackupDir = undefined;
+            }
             if (signal.aborted || this.isFileLockCancellationError(err)) {
                 reportProgress({ phase: 'cancelled', cancelled: true, message: 'cancelled by user' });
                 return null;
@@ -831,21 +847,6 @@ export class CheckpointManager {
             `checkpoint:${conversationId}:${checkpointId}:restore:${operationId}`,
             async () => {
                 try {
-                    // 在恢复前，取消所有 pending diffs（因为恢复后它们将无效），
-                    // 并拒绝所有未响应的工具调用（持久化「用户拒绝」占位）。
-                    // 校验类工作全部在 prepareRestore 内完成，无效恢复不会产生这些副作用。
-                    try {
-                        const diffManager = getDiffManager();
-                        await diffManager.cancelAllPending();
-                    } catch (err) {
-                        console.warn('[CheckpointManager] Failed to cancel pending diffs:', err);
-                    }
-                    try {
-                        await this.conversationManager.rejectAllPendingToolCalls(conversationId);
-                    } catch (err) {
-                        console.warn('[CheckpointManager] Failed to reject pending tool calls:', err);
-                    }
-
                     // CP-09: 校验/计算与 previewRestore 共用同一路径（prepareRestore），
                     // 保证「预览确认的删除清单」与「实际执行的删除」严格一致。
                     reportProgress({ phase: 'preparing' });
@@ -866,6 +867,21 @@ export class CheckpointManager {
                         protectedScopedPaths,
                         deletableScopedPaths
                     } = prepared.ctx;
+
+                    // 校验已通过（prepareRestore ok）：恢复前取消所有 pending diffs
+                    //（恢复后它们将无效），并拒绝所有未响应的工具调用（持久化「用户拒绝」占位）。
+                    // 副作用只对有效恢复生效——校验失败的恢复不会取消/拒绝任何东西。
+                    try {
+                        const diffManager = getDiffManager();
+                        await diffManager.cancelAllPending();
+                    } catch (err) {
+                        console.warn('[CheckpointManager] Failed to cancel pending diffs:', err);
+                    }
+                    try {
+                        await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+                    } catch (err) {
+                        console.warn('[CheckpointManager] Failed to reject pending tool calls:', err);
+                    }
 
                     // 旧版存档（无 fileHashes）：以备份目录内容为恢复目标，
                     // 且绝不删除当前工作区任何文件（旧记录没有“快照时可见”清单，无法安全判断归属）。
@@ -1129,9 +1145,14 @@ export class CheckpointManager {
                     console.warn(`[CheckpointManager] Refusing to delete checkpoint ${checkpointId}: unsafe backupDir ${checkpoint.backupDir}`);
                     return current;
                 }
-                // 被其他检查点引用为基快照时拒绝删除（返回原引用=无变更跳过写回），
-                // 否则会破坏增量链，恢复时 chainBroken 100% 失败
-                if (list.some(cp => cp.baseCheckpointId === checkpointId)) {
+                // CP-05: 被其他检查点引用为基快照时拒绝删除（返回原引用=无变更跳过写回），
+                // 否则会破坏增量链，恢复时 chainBroken 100% 失败。
+                // 口径与 deleteCheckpointsBatch / deleteCheckpointsByNodeIds 统一：
+                // computeForcedKeepIds 祖先闭包（含间接引用）——直接引用检查只覆盖一层，
+                // 链 A→B→C 删除 C 时 A 只被 B 间接依赖，闭包口径保证与批量删除的
+                // 强制保留集合一致。
+                const keepIds = new Set(list.filter(cp => cp.id !== checkpointId).map(cp => cp.id));
+                if (computeForcedKeepIds(list, keepIds).has(checkpointId)) {
                     return current;
                 }
                 backupDirToDelete = checkpoint.backupDir;

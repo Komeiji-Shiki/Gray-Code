@@ -54,6 +54,22 @@ export class StreamRequestHandler {
   }
 
   /**
+   * 只等待已退休旧流退出，不中止当前活跃流（与 awaitOldStreamCompletion 的区别）。
+   *
+   * 用途：工具确认（toolConfirmation）路径不可打断——若仍走 abortAndWaitForCompletion，
+   * 会在写入确认前把正在运行的活跃流 abort 掉（用户确认工具时不应中止当前回合）。
+   * 只等被 cancel/替换的旧流 finally 完成（带超时兜底），与后端 waitForOldStreamCompletion 同语义。
+   */
+  private async awaitRetiredStreamCompletion(conversationId: string): Promise<void> {
+    try {
+      await this.deps.abortManager.waitForOldStreamCompletion(conversationId, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+    } catch (error) {
+      // 等待失败不应阻断新流启动（等待内部已有超时兜底，此处仅防御性兜底）
+      console.warn('[StreamRequestHandler] Failed to wait for retired stream completion:', error);
+    }
+  }
+
+  /**
    * 规范化请求携带的 Prompt 模式 ID。
    */
   private normalizePromptModeId(promptModeId: unknown): string | undefined {
@@ -63,15 +79,19 @@ export class StreamRequestHandler {
   }
 
   private isAbortError(error: any): boolean {
-    const name = error?.name
-    const message = typeof error?.message === 'string' ? error.message : ''
-    return name === 'AbortError' || message.toLowerCase().includes('aborted') || message.toLowerCase().includes('cancelled')
+    // 只认结构化标识（DOMException name / Node code），不按 message 子串猜测：
+    // 业务错误消息里出现 “aborted/cancelled” 字样的场景不应被误判为网络中止。
+    return error?.name === 'AbortError' || error?.code === 'ABORT_ERR'
   }
 
   private reportCancelled(processor: StreamChunkProcessor): void {
     // 确保前端一定能收到 cancelled 事件以清理占位消息
-    processor.processChunk({ cancelled: true })
+    const delivered = processor.processChunk({ cancelled: true })
     processor.flush()
+    // 视图不可达（已销毁/重建）时 processChunk 返回 false：留痕便于排查占位消息残留
+    if (!delivered) {
+      console.warn('[StreamRequestHandler] Cancelled event not delivered: target view unreachable')
+    }
   }
 
   private reportNetworkAbort(error: any, processor: StreamChunkProcessor, requestId: string): void {
@@ -154,6 +174,14 @@ export class StreamRequestHandler {
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string, clientId?: string): Promise<void> {
+    // 入口统一校验（与 cancelStream 对齐）：参数缺失时直接回传 INVALID_DATA 并清理路由映射，
+    // 避免流启动后才失败、前端 await sendToExtension 永久挂起。
+    // message 只要求存在且为字符串：hiddenFunctionResponse 隐藏模式允许空串（不创建可见用户文本）。
+    if (!data || typeof data.conversationId !== 'string' || !data.conversationId || typeof data.message !== 'string') {
+      this.deps.sendError(requestId, 'INVALID_DATA', 'chatStream: missing conversationId or message');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
     const {
       conversationId,
       message,
@@ -201,17 +229,8 @@ export class StreamRequestHandler {
       // 流结束后刷新缓冲区，确保所有消息都已发送
       processor.flush();
     } catch (error: any) {
-      // AbortError 可能来自：用户点击中断 / 网络抖动 / 上游直接抛 abort
-      // 关键：无论哪种情况，都必须给前端一个明确的 stream 结尾事件，避免残留空占位消息。
-      if (controller?.signal.aborted) {
-        this.reportCancelled(processor)
-        return
-      }
-      if (this.isAbortError(error)) {
-        this.reportNetworkAbort(error, processor, requestId)
-        return
-      }
-      this.handleStreamError(error, processor, requestId);
+      // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
+      this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
     } finally {
       if (controller) this.deps.abortManager.delete(conversationId, controller);
       if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
@@ -223,6 +242,13 @@ export class StreamRequestHandler {
    * 处理重试流
    */
   async handleRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
+    // 入口统一校验（与 handleChatStream 对齐）：参数缺失时直接回传 INVALID_DATA 并清理路由映射，
+    // 避免流启动后才失败、前端 await sendToExtension 永久挂起。
+    if (!data || typeof data.conversationId !== 'string' || !data.conversationId) {
+      this.deps.sendError(requestId, 'INVALID_DATA', 'retryStream: missing conversationId');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
     const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -251,15 +277,8 @@ export class StreamRequestHandler {
       }
       processor.flush();
     } catch (error: any) {
-      if (controller?.signal.aborted) {
-        this.reportCancelled(processor)
-        return
-      }
-      if (this.isAbortError(error)) {
-        this.reportNetworkAbort(error, processor, requestId)
-        return
-      }
-      this.handleStreamError(error, processor, requestId);
+      // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
+      this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
     } finally {
       if (controller) this.deps.abortManager.delete(conversationId, controller);
       if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
@@ -271,6 +290,12 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
+    // 入口统一校验（与 handleChatStream 对齐）
+    if (!data || typeof data.conversationId !== 'string' || !data.conversationId) {
+      this.deps.sendError(requestId, 'INVALID_DATA', 'editAndRetryStream: missing conversationId');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
     const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, messageId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -305,15 +330,8 @@ export class StreamRequestHandler {
       }
       processor.flush();
     } catch (error: any) {
-      if (controller?.signal.aborted) {
-        this.reportCancelled(processor)
-        return
-      }
-      if (this.isAbortError(error)) {
-        this.reportNetworkAbort(error, processor, requestId)
-        return
-      }
-      this.handleStreamError(error, processor, requestId);
+      // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
+      this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
     } finally {
       if (controller) this.deps.abortManager.delete(conversationId, controller);
       if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
@@ -325,6 +343,12 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string, clientId?: string): Promise<void> {
+    // 入口统一校验（与 handleChatStream 对齐）
+    if (!data || typeof data.conversationId !== 'string' || !data.conversationId) {
+      this.deps.sendError(requestId, 'INVALID_DATA', 'toolConfirmation: missing conversationId');
+      this.deps.finalizeRequest(requestId);
+      return;
+    }
     const { conversationId, toolResponses, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -332,7 +356,8 @@ export class StreamRequestHandler {
     let summarizeController: AbortController | undefined;
 
     try {
-      await this.awaitOldStreamCompletion(conversationId);
+      // 工具确认路径不可打断：只等待已退休旧流退出，不 abort 当前活跃流
+      await this.awaitRetiredStreamCompletion(conversationId);
       controller = this.deps.abortManager.create(conversationId);
       summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleToolConfirmation({
@@ -354,15 +379,8 @@ export class StreamRequestHandler {
       }
       processor.flush();
     } catch (error: any) {
-      if (controller?.signal.aborted) {
-        this.reportCancelled(processor)
-        return
-      }
-      if (this.isAbortError(error)) {
-        this.reportNetworkAbort(error, processor, requestId)
-        return
-      }
-      this.handleStreamError(error, processor, requestId);
+      // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
+      this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
     } finally {
       if (controller) this.deps.abortManager.delete(conversationId, controller);
       if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
@@ -395,15 +413,33 @@ export class StreamRequestHandler {
   }
 
   /**
-   * 处理流式错误
+   * 统一处理流式错误：以「abort 信号已触发 + 错误类型」双条件判定取消语义。
+   *
+   * - 取消（signal.aborted 或底层 CANCELLED_ERROR，含非 ChannelError 包装）：透出 cancelled
+   *   结尾事件并回传 cancelled 响应（幂等），避免残留空占位消息、前端 await 永久挂起；
+   * - AbortError（name/code 命中但信号未触发）：按网络中止处理；
+   * - ChannelError：按类型透传 NETWORK_ERROR/TIMEOUT_ERROR 或通用错误码；
+   * - 其他错误：回传 STREAM_ERROR。
    */
-  private handleStreamError(error: any, processor: StreamChunkProcessor, requestId: string): void {
-    if (error instanceof ChannelError) {
-      if (error.type === ErrorType.CANCELLED_ERROR) {
-        this.reportCancelled(processor)
-        return
-      }
+  private handleStreamError(error: any, processor: StreamChunkProcessor, requestId: string, aborted: boolean): void {
+    // 统一取消判定：不再只认 ChannelError 的 CANCELLED_ERROR（instanceof 跨模块实例可能失配），
+    // signal.aborted 与错误 type 任一命中即视为用户取消。
+    if (aborted || error?.type === ErrorType.CANCELLED_ERROR) {
+      this.reportCancelled(processor)
+      // 幂等兜底：前端 await sendToExtension 需要收到明确的结尾响应
+      this.deps.sendResponse(requestId, { cancelled: true })
+      return
+    }
 
+    if (this.isAbortError(error)) {
+      this.reportNetworkAbort(error, processor, requestId)
+      return
+    }
+
+    if (error instanceof ChannelError) {
+      // CANCELLED_ERROR 已由上方统一取消判定（signal.aborted + 错误类型双条件）拦截，
+      // 能走到这里的 ChannelError 必然不是取消类型；无需再判 type——在类型收窄后
+      // 该比较已成为「无交集」的不可达比较（TS2367），删除以免误导后续维护。
       const details = this.serializeErrorDetails(error.details)
       const message = details ? `${error.message}\n${details}` : error.message
 

@@ -887,10 +887,11 @@ export class DiffManager {
             const evicted = this.pendingDiffs.get(oldest);
             // 淘汰会让工具链路的 getDiff 返回 undefined：被拒绝的必须留痕，
             // 否则 write_file 等会把"用户拒绝"误报为"写入成功"。
-            // 淘汰留痕只对“仍有活跃等待者”的 rejected diff 生效：
-            // 若 waitForDiffResolution 在被淘汰前已结算（如直接读到 rejected），
-            // 淘汰后留痕永远无人查询，集合随会话无界增长。
-            if (evicted && evicted.status === 'rejected' && this.activeDiffWaiters.has(oldest)) {
+            // 无条件留痕：waitForDiffResolution 可能在淘汰后才注册等待者
+            // （如用户拒绝发生在工具等待建立之前），此时没有活跃等待者，
+            // 不记录会让 getDiff 返回 undefined 后被误判为 accepted。
+            // 墓碑集合有容量上限（FIFO 淘汰最旧墓碑），不会随会话无界增长。
+            if (evicted && evicted.status === 'rejected') {
                 this.recordEvictedRejectedDiff(oldest);
             } else if (
                 evicted && evicted.status === 'accepted'
@@ -2201,7 +2202,7 @@ export class DiffManager {
 
     /**
      * 等待指定 pending diff 结算。
-     * 统一状态监听、轮询、用户中断与 AbortSignal；abort/user 中断都会主动 reject 当前 diff 并清理资源，
+     * 统一状态监听、用户中断与 AbortSignal；abort/user 中断都会主动 reject 当前 diff 并清理资源，
      * 避免文件已处理但工具 Promise 仍悬挂。
      */
     public waitForDiffResolution(id: string, abortSignal?: AbortSignal): Promise<DiffResolutionReason> {
@@ -2209,21 +2210,12 @@ export class DiffManager {
         this.activeDiffWaiters.add(id);
         return new Promise<DiffResolutionReason>((resolve) => {
             let resolved = false;
-            let pollTimer: ReturnType<typeof setTimeout> | undefined;
             let abortHandler: (() => void) | undefined;
             let statusListener: StatusChangeListener | undefined;
-
-            const clearPollTimer = () => {
-                if (pollTimer) {
-                    clearTimeout(pollTimer);
-                    pollTimer = undefined;
-                }
-            };
 
             const finish = (reason: DiffResolutionReason) => {
                 if (resolved) return;
                 resolved = true;
-                clearPollTimer();
                 this.activeDiffWaiters.delete(id);
 
                 if (statusListener) {
@@ -2250,16 +2242,6 @@ export class DiffManager {
                         console.error(`[DiffManager] rejectDiff failed while settling diff ${id}:`, error);
                     })
                     .then(() => finish(reason));
-            };
-
-            const scheduleNextCheck = () => {
-                // 已注册状态监听器时依赖事件驱动（状态变化即触发 checkStatus），
-                // 不再 100ms 轮询空转；仅监听器缺失的异常路径才轮询兜底
-                if (resolved || pollTimer || statusListener) return;
-                pollTimer = setTimeout(() => {
-                    pollTimer = undefined;
-                    checkStatus();
-                }, 100);
             };
 
             const checkStatus = () => {
@@ -2295,7 +2277,17 @@ export class DiffManager {
                     return;
                 }
 
-                scheduleNextCheck();
+                // 仍 pending：保持事件驱动等待，不轮询。旧的 100ms 轮询兜底已删除——
+                // 它实际会从首次 checkStatus 起每 100ms 重复轮询（与 statusListener 事件驱动
+                // 路径完全重复，是冗余代码而非不可达代码）。删除后安全性由以下不变式保证：
+                // - statusListener 恒在首次 checkStatus 之前注册（见下方），
+                //   不存在"注册前已结算"的竞态窗口；
+                // - 全部结算路径都广播 notifyStatusChange：finalizeAcceptedDiff /
+                //   finalizeRejectedDiff 直接调用；finalizeCancelledDiff 的唯一调用方
+                //   cancelAllPendingUnlocked 在取消循环后广播（markUserInterrupt 的
+                //   所有调用点均紧跟 cancelAllPending）；
+                // - 广播发生在 evictOldFinalizedDiffs 之后，等待者 checkStatus 时
+                //   getDiff 已能看到墓碑/undefined，走上方淘汰分支正确收敛。
             };
 
             abortHandler = () => {

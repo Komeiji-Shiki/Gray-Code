@@ -28,7 +28,7 @@ import {
   needsWorkspaceConfirm,
   BRANCH_BUSY_MESSAGE
 } from '../branchActions'
-import { pendingDirtyConfirm, clearPendingDirtyConfirm } from '../dirtyConfirmState'
+import { pendingDirtyConfirm, clearPendingDirtyConfirm, setPendingDirtyConfirm } from '../dirtyConfirmState'
 
 vi.mock('../../../utils/vscode', () => ({
   sendToExtension: vi.fn()
@@ -534,6 +534,24 @@ describe('switchBranchCandidate（TREE-07 切换后重建）', () => {
     expect(await switchBranchCandidate(state2, '')).toBe(false)
     expect(mockSend).not.toHaveBeenCalled()
   })
+
+  it('await 期间会话切换：validateSessionIdentity 失败后 finally 仍复位切换锁', async () => {
+    const state = createState({ currentConversationId: ref('c1') })
+    mockSend.mockImplementation(async () => {
+      // 模拟 await 期间用户切换到其它会话：锁复位不能依赖会话归属校验
+      state.currentConversationId.value = 'c2'
+      return Promise.resolve({ success: true })
+    })
+
+    const ok = await switchBranchCandidate(state, 'a2')
+
+    expect(ok).toBe(false)
+    // 无条件复位：切走会话后切换器锁不能永久卡 true（round2 修复点）
+    expect(state.isSwitchingBranch.value).toBe(false)
+    // 切换后不写错误到新会话、不重载历史
+    expect(state.error.value).toBeNull()
+    expect(mockSend.mock.calls.filter(c => c[0] === 'conversation.getMessagesPaged')).toHaveLength(0)
+  })
 })
 
 describe('deleteBranchCandidate（TREE-09 UI 入口）', () => {
@@ -898,6 +916,24 @@ describe('BCP-03/04/05 切换模式与 dirty 确认（branchActions）', () => {
       mode: 'chat-and-workspace',
       confirmedDiscardDirty: true
     })
+    expect(pendingDirtyConfirm.value).toBeNull()
+  })
+
+  it('dirty 确认归属校验：离开归属会话才清空（其它会话上下文不清）', () => {
+    setPendingDirtyConfirm('c1', { kind: 'switch', files: ['a.ts'], switch: { nodeId: 'n1' } })
+    expect(pendingDirtyConfirm.value?.conversationId).toBe('c1')
+
+    // 在其它会话上下文清空（归属不匹配）：保留，避免续作动作发到错误会话
+    clearPendingDirtyConfirm('c2')
+    expect(pendingDirtyConfirm.value).not.toBeNull()
+
+    // 离开归属会话：清空
+    clearPendingDirtyConfirm('c1')
+    expect(pendingDirtyConfirm.value).toBeNull()
+
+    // 无归属的旧写入方（直接写 value）：任意会话清空都生效（兼容语义）
+    pendingDirtyConfirm.value = { kind: 'switch', files: ['b.ts'], switch: { nodeId: 'n2' } }
+    clearPendingDirtyConfirm('c9')
     expect(pendingDirtyConfirm.value).toBeNull()
   })
 })

@@ -348,12 +348,26 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         // 修改原因：executor 在 pause 或 awaiting_monitor_action 时需要挂起主工具 Promise，而不是返回失败。
         // 修改方式：等待 resume/exit 事件；resume 返回 running，exit 返回 cancelled。
         // 修改目的：让 Monitor 顶部控制按钮可以决定同一个 run 的后续命运。
-        await new Promise<void>((resolve) => {
-            record.waiters.push(resolve);
+        // 修改原因（竞态）：「检查状态」与「注册 waiter」之间存在窗口——exit/resume 可能
+        //           在两次检查之间完成，notifyWaiters 已用旧（空）列表结算，随后才 push 的
+        //           waiter 永远不被唤醒，主工具 Promise 悬挂。
+        // 修改方式：push 之后在同一同步块内复查 record.status；已 cancelled 时移出 waiter
+        //           并直接结算，不再依赖后续事件唤醒。
+        return new Promise<'running' | 'cancelled' | 'inactive'>((resolve) => {
+            const waiter = () => {
+                const latest = this.activeRuns.get(runId);
+                resolve(latest ? (latest.status === 'cancelled' ? 'cancelled' : 'running') : 'inactive');
+            };
+            record.waiters.push(waiter);
+            if (record.status === 'cancelled') {
+                const index = record.waiters.indexOf(waiter);
+                if (index >= 0) {
+                    record.waiters.splice(index, 1);
+                }
+                resolve('cancelled');
+                return;
+            }
         });
-        const latest = this.activeRuns.get(runId);
-        if (!latest) return 'inactive';
-        return latest.status === 'cancelled' ? 'cancelled' : 'running';
     }
 
     /**

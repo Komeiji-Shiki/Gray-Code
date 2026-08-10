@@ -19,6 +19,7 @@ interface RemoveTask {
 
 registerTool('remove_background', {
   name: 'remove_background',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '抠图',
   icon: 'codicon-wand',
   expandable: true,

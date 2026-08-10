@@ -84,10 +84,11 @@ export const createConfig: MessageHandler = async (data, requestId, ctx) => {
 export const updateConfig: MessageHandler = async (data, requestId, ctx) => {
   const configId = data?.configId;
   const updates = data?.updates;
-  if (!requireString(configId, requestId, ctx, 'UPDATE_CONFIG_ERROR', 'configId') || !isRecord(updates)) {
-    if (!isRecord(updates) && typeof configId === 'string' && configId.trim()) {
-      ctx.sendError(requestId, 'UPDATE_CONFIG_ERROR', 'Invalid updates');
-    }
+  // 两个独立校验步骤（R2-08 复查：原嵌套分支晦涩，configId/updates 错误混在一起）：
+  // 1. configId 必须是非空字符串；2. updates 必须是普通对象——各自顺序 return 明确错误。
+  if (!requireString(configId, requestId, ctx, 'UPDATE_CONFIG_ERROR', 'configId')) return;
+  if (!isRecord(updates)) {
+    ctx.sendError(requestId, 'UPDATE_CONFIG_ERROR', 'Invalid updates');
     return;
   }
   try {

@@ -242,6 +242,42 @@ function splitHighlightedHtmlByNewline(highlightedHtml: string): string[] {
 const isZoomModalVisible = ref(false)
 const zoomedContent = ref('')
 const zoomTitle = ref('')
+// 放大浮层关闭按钮引用（用于打开时初始聚焦）
+const zoomFloatingCloseRef = ref<HTMLButtonElement | null>(null)
+// 打开浮层前的焦点元素（关闭后归还焦点）
+let zoomPreviousFocus: HTMLElement | null = null
+
+// 放大浮层：Esc 关闭 + 初始聚焦（键盘可达性）
+function handleZoomKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isZoomModalVisible.value) {
+    e.stopPropagation()
+    isZoomModalVisible.value = false
+  }
+}
+
+watch(isZoomModalVisible, (visible) => {
+  if (visible) {
+    // 记录打开前的焦点元素，浮层关闭后归还
+    zoomPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    document.addEventListener('keydown', handleZoomKeydown)
+    nextTick(() => {
+      // 初始聚焦：把焦点移入浮层关闭按钮，支持纯键盘关闭
+      zoomFloatingCloseRef.value?.focus()
+    })
+  } else {
+    document.removeEventListener('keydown', handleZoomKeydown)
+    // 关闭后把焦点归还给浮层打开前的元素（若仍存在；不可聚焦元素的 focus() 为 no-op，无害）
+    const previousFocus = zoomPreviousFocus
+    zoomPreviousFocus = null
+    if (previousFocus && previousFocus.isConnected) {
+      try {
+        previousFocus.focus()
+      } catch {
+        // 忽略：元素不可聚焦或已被移除
+      }
+    }
+  }
+})
 
 // 缩放与平移状态
 const zoomScale = ref(1)
@@ -1676,6 +1712,7 @@ watch(
 
 onUnmounted(()=> {
   clearRenderTimer()
+  document.removeEventListener('keydown', handleZoomKeydown)
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', handleCodeToolbarClick)
     containerRef.value.removeEventListener('click', handleWorkspaceFileLinkClick)
@@ -1700,7 +1737,7 @@ onUnmounted(()=> {
     <Transition name="fade">
       <div v-if="isZoomModalVisible" class="mermaid-zoom-overlay">
         <!-- 悬浮关闭按钮 -->
-        <button class="zoom-floating-close" @click="isZoomModalVisible = false" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
+        <button ref="zoomFloatingCloseRef" class="zoom-floating-close" @click="isZoomModalVisible = false" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
           <i class="codicon codicon-close"></i>
         </button>
 

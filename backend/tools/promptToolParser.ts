@@ -1,6 +1,6 @@
 import { XMLValidator } from 'fast-xml-parser';
 import type { ContentPart } from '../modules/conversation/types';
-import { parseJsonLenient, parseJSONToolCalls, TOOL_CALL_END, TOOL_CALL_START } from './jsonFormatter';
+import { parseJsonLenient, parseJSONToolCalls, findEndMarkerOutsideString, TOOL_CALL_END, TOOL_CALL_START, type JsonEndMarkerScanState } from './jsonFormatter';
 import { findToolUseEnd, parseXMLToolCalls } from './xmlFormatter';
 
 export type PromptToolMode = 'json' | 'xml';
@@ -176,7 +176,7 @@ export class IncrementalPromptToolParser {
      * 大块（几 MB 的 write_file 内容 × 上千 chunk）时累计成本 O(n²)。
      * 修改方式：记录安全的续扫位置与 CDATA 状态，累计成本降为 O(n)。
      */
-    private pendingScan: { pos: number; inCdata: boolean } | null = null;
+    private pendingScan: { pos: number; inCdata: boolean; jsonState?: JsonEndMarkerScanState } | null = null;
 
     constructor(private readonly mode: PromptToolMode) {
         const markers = getMarkers(mode);
@@ -208,20 +208,33 @@ export class IncrementalPromptToolParser {
     /**
      * 在 buffer 中查找结束标记。
      * XML 模式使用 CDATA 感知扫描（CDATA 内的 </tool_use> 不算块结束）；
-     * JSON 模式没有转义语法，退化为带游标的 indexOf。
+     * JSON 模式使用字符串感知扫描（复用 jsonFormatter 的 findEndMarkerOutsideString 状态机），
+     * 参数值内出现字面 <<<END_TOOL_CALL>>> 时不会被提前截断；
+     * 未找到时记录字符串状态（jsonState），供下一 chunk 续扫时保持 inString/escaped。
      */
-    private findEndMarker(from: number, inCdata: boolean): { endIndex: number; resumePos: number; inCdata: boolean } {
+    private findEndMarker(
+        from: number,
+        inCdata: boolean,
+        jsonState?: JsonEndMarkerScanState
+    ): { endIndex: number; resumePos: number; inCdata: boolean; jsonState?: JsonEndMarkerScanState } {
         if (this.mode === 'xml') {
             return findToolUseEnd(this.buffer, from, { inCdata });
         }
-        const endIndex = this.buffer.indexOf(this.endMarker, from);
-        if (endIndex !== -1) {
-            return { endIndex, resumePos: endIndex, inCdata: false };
+        const scan = findEndMarkerOutsideString(this.buffer, from, jsonState);
+        if (scan.endIndex !== -1) {
+            return { endIndex: scan.endIndex, resumePos: scan.endIndex, inCdata: false, jsonState: scan.state };
         }
         return {
             endIndex: -1,
-            resumePos: Math.max(from, this.buffer.length - (this.endMarker.length - 1)),
-            inCdata: false
+            // 续扫起点只回退到 buffer 尾部「可能成为结束标记前缀」的最长后缀处。
+            // 固定按 endMarker.length-1 回退的旧实现有缺陷：实际到达的标记前缀更短时
+            // （如只到 `<<<`），resumePos 会落在 JSON 内容中间；下一 chunk 以 buffer 末尾
+            // 的字符串状态（inString/escaped）从中间重启扫描，引号被重新解释（本应闭合的
+            // 引号被当成开启），状态机失步，被 chunk 边界劈开的结束标记从此再也找不到。
+            // 最长后缀前缀区不含引号，故续扫起点处的字符串状态与保存的 end 状态一致。
+            resumePos: this.buffer.length - longestSuffixPrefixLength(this.buffer, this.endMarker),
+            inCdata: false,
+            jsonState: scan.state
         };
     }
 
@@ -254,14 +267,14 @@ export class IncrementalPromptToolParser {
             }
 
             const scanFrom = Math.max(this.startMarker.length, this.pendingScan?.pos ?? 0);
-            const scan = this.findEndMarker(scanFrom, this.pendingScan?.inCdata ?? false);
+            const scan = this.findEndMarker(scanFrom, this.pendingScan?.inCdata ?? false, this.pendingScan?.jsonState);
             if (scan.endIndex === -1) {
                 if (flushIncompleteTailAsText) {
                     pushTextPart(parts, this.buffer);
                     this.buffer = '';
                     this.pendingScan = null;
                 } else {
-                    this.pendingScan = { pos: scan.resumePos, inCdata: scan.inCdata };
+                    this.pendingScan = { pos: scan.resumePos, inCdata: scan.inCdata, jsonState: scan.jsonState };
                 }
                 break;
             }

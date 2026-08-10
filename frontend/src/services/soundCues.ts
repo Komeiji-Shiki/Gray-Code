@@ -293,6 +293,20 @@ function pruneDecodedAudioCache(assets: NormalizedUISoundSettings['assets']): vo
       decodedAudioBufferCache.delete(key)
     }
   }
+
+  // 同步清理解码中/失败退避缓存，避免移除音效后残留占位（重复解码或永久退避）
+  for (const key of Array.from(decodingPromises.keys())) {
+    if (key.startsWith('url:')) continue
+    if (!keep.has(key)) {
+      decodingPromises.delete(key)
+    }
+  }
+  for (const key of Array.from(decodeFailureRetryAt.keys())) {
+    if (key.startsWith('url:')) continue
+    if (!keep.has(key)) {
+      decodeFailureRetryAt.delete(key)
+    }
+  }
 }
 
 export function normalizeUISoundSettings(input?: UISoundSettings | null): NormalizedUISoundSettings {
@@ -453,6 +467,10 @@ export function stopAllSounds(): void {
     }
   }
   activeOscillators.clear()
+
+  // 停止所有声音后清空冷却与播放占位：用户显式停止后立即重播不应被旧冷却拦截
+  lastPlayedAtByKey.clear()
+  inFlightPlayByKey.clear()
 }
 
 type Beep = {
@@ -691,8 +709,27 @@ function reservePlaybackSlot(cooldownKey: string, now: number): string | null {
   inFlightPlayByKey.set(cooldownKey, { token, reservedAt: now })
 
   if (inFlightPlayByKey.size > 200) {
-    const firstKey = inFlightPlayByKey.keys().next().value
-    if (firstKey) inFlightPlayByKey.delete(firstKey)
+    // FIFO 驱逐时优先踢掉超时（疑似悬挂/长期未释放）的旧占位：
+    // 踢掉进行中播放的占位会让并发播放穿透冷却，因此先只驱逐明显过期的项
+    const STALE_RESERVATION_MS = 10_000
+    const now = Date.now()
+    let evicted = false
+    for (const key of inFlightPlayByKey.keys()) {
+      const entry = inFlightPlayByKey.get(key)
+      if (entry && now - entry.reservedAt > STALE_RESERVATION_MS) {
+        inFlightPlayByKey.delete(key)
+        evicted = true
+        break
+      }
+    }
+    if (!evicted) {
+      // 无过期项（全部占位较新）：兜底驱逐最旧占位（Map 迭代序 = 插入序），
+      // 避免 map 无上限增长；被驱逐占位对应播放结束后 token 不匹配自然释放，无副作用
+      const oldestKey = inFlightPlayByKey.keys().next().value
+      if (oldestKey !== undefined) {
+        inFlightPlayByKey.delete(oldestKey)
+      }
+    }
   }
 
   return token
@@ -706,9 +743,12 @@ function releasePlaybackSlot(cooldownKey: string, token: string | null): void {
   }
 }
 
-function commitPlaybackSlot(cooldownKey: string, token: string | null, timestamp: number): void {
+function commitPlaybackSlot(cooldownKey: string, token: string | null, timestamp: number, updateCooldown = true): void {
   releasePlaybackSlot(cooldownKey, token)
-  setLastPlayedAt(cooldownKey, timestamp)
+  // bypassCooldown 播放（试听等）只释放占位、不写 lastPlayedAt，避免污染全局冷却
+  if (updateCooldown) {
+    setLastPlayedAt(cooldownKey, timestamp)
+  }
 }
 
 function setLastPlayedAt(cooldownKey: string, timestamp: number): void {
@@ -762,7 +802,7 @@ export async function playCue(
       if (asset) {
         const ok = await playSoundAsset(ctx, asset, options.abortSignal)
         if (ok) {
-          commitPlaybackSlot(cooldownKey, reservationToken, now)
+          commitPlaybackSlot(cooldownKey, reservationToken, now, !options.bypassCooldown)
           committed = true
           return true
         }
@@ -773,7 +813,7 @@ export async function playCue(
       if (builtin?.url) {
         const ok = await playSoundUrl(ctx, builtin.url, options.abortSignal)
         if (ok) {
-          commitPlaybackSlot(cooldownKey, reservationToken, now)
+          commitPlaybackSlot(cooldownKey, reservationToken, now, !options.bypassCooldown)
           committed = true
           return true
         }
@@ -827,7 +867,7 @@ export async function playCue(
         t = t + durationSec + (beep.gapMs ? beep.gapMs / 1000 : 0)
       }
 
-      commitPlaybackSlot(cooldownKey, reservationToken, now)
+      commitPlaybackSlot(cooldownKey, reservationToken, now, !options.bypassCooldown)
       committed = true
       return true
     } finally {

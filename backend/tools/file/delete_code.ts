@@ -139,11 +139,15 @@ async function deleteSingleFile(
             return { path: filePath, success: true, start_line: startLine, end_line: endLine, deletedLines: 0, status: 'accepted' };
         }
 
-        // 删除操作的 blocks：在新内容中标记被删除区域的前后交界处
+        // 删除操作的 blocks：在新内容中标记被删除区域的前后交界处。
+        // clamp 保证 endLine >= startLine：删除到文件末尾（或整文件删除）时
+        // totalLines - deletedCount 会小于 startLine，倒置区间会让 vscode.Range 抛 Illegal argument。
+        const blockStart = Math.max(1, startLine - 1);
+        const blockEnd = Math.min(startLine, totalLines - deletedCount);
         const blocks = [{
             index: 0,
-            startLine: Math.max(1, startLine - 1),
-            endLine: Math.min(startLine, totalLines - deletedCount)
+            startLine: blockStart,
+            endLine: Math.max(blockEnd, blockStart)
         }];
 
         // 创建 pending diff 等待用户确认
@@ -164,7 +168,10 @@ async function deleteSingleFile(
             diffManager, pendingDiff.id, abortSignal
         );
 
-        const wasInterrupted = interruptReason !== 'none';
+        // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
+        // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
+        const wasRejected = interruptReason === 'rejected';
+        const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
         // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
@@ -185,6 +192,21 @@ async function deleteSingleFile(
             } catch (e) {
                 console.warn('Failed to save diff content to storage:', e);
             }
+        }
+
+        if (wasRejected) {
+            // 用户显式拒绝：与取消区分，返回 status:'rejected' + 可读错误
+            return {
+                path: filePath,
+                success: false,
+                cancelled: false,
+                start_line: startLine,
+                end_line: endLine,
+                deletedLines: deletedCount,
+                status: 'rejected',
+                error: 'Diff was rejected by user',
+                diffContentId
+            };
         }
 
         if (wasInterrupted) {

@@ -1,4 +1,4 @@
-import fs = require('fs')
+import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { workspace } from '../__mocks__/vscode'
@@ -86,7 +86,9 @@ describe('fileTree buildFileTree', () => {
         const before = getIgnoreRegexCacheStats()
         getWorkspaceFileTree(10, customPatterns)
         const afterFirst = getIgnoreRegexCacheStats()
-        getWorkspaceFileTree(10, customPatterns)
+        // 文件树结果缓存（TTL 内同参数零磁盘 I/O）会短路第二次同参数调用、不触发任何
+        // shouldIgnore 求值——改用不同 maxDepth 绕过结果缓存，让正则缓存路径真正被执行
+        getWorkspaceFileTree(11, customPatterns)
         const afterSecond = getIgnoreRegexCacheStats()
 
         // 第一次调用完成全部编译（gitignore 2 条 + 自定义 2 条）

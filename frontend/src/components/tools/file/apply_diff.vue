@@ -8,12 +8,11 @@
  * - 每个 diff 块独立显示
  */
 
-import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
+import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
-import { onExtensionCommand } from '../../../utils/vscode'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -24,25 +23,6 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const { openFile } = useOpenWorkspaceFile()
-
-// 加载配置
-onMounted(async () => {
-  // 监听后端状态变化
-  const unregister = onExtensionCommand('diff.statusChanged', (data: any) => {
-    const myPendingDiffId = (props.result?.data as any)?.pendingDiffId
-    if (myPendingDiffId) {
-      // 检查我的这个 diff 是否在 pending 列表中
-      const isStillPending = data.pendingDiffs.some((d: any) => d.id === myPendingDiffId)
-      
-      // 如果不在 pending 列表了，说明被处理了（接受或拒绝）
-      if (!isStillPending) {
-        // 不需要操作
-      }
-    }
-  })
-
-  onBeforeUnmount(unregister)
-})
 
 // 展开状态
 const expanded = ref<Set<number>>(new Set())
@@ -354,15 +334,19 @@ const displayLinesByIndex = computed(() => {
     displayLinesCache.set(index, { expanded: isExpandedFlag, source, lines })
     map.set(index, lines)
   })
-  // 清理已消失的 index（renderedDiffList 缩短时）；同步修剪展开集合，
-  // 避免按 index 残留的展开标记在列表重新变长时让“新块默认展开”（A-L4）
+  return map
+})
+
+// 清理已消失的 index（renderedDiffList 缩短时）；同步修剪展开集合，
+// 避免按 index 残留的展开标记在列表重新变长时让“新块默认展开”（A-L4）。
+// 注意：这会修改 expanded（另一个 ref），属于副作用，必须放在 watch 中而不是 computed getter 内。
+watch(renderedDiffList, (list) => {
   for (const key of Array.from(displayLinesCache.keys())) {
-    if (key >= renderedDiffList.value.length) {
+    if (key >= list.length) {
       displayLinesCache.delete(key)
       expanded.value.delete(key)
     }
   }
-  return map
 })
 
 function needsExpand(diff: RenderedDiffBlock): boolean {

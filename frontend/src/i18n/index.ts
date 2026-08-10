@@ -42,9 +42,9 @@ const detectedLanguage = ref<string>(
 );
 
 /**
- * 获取实际使用的语言
+ * 获取实际使用的语言（导出供外部读取当前生效语言；useI18n() 同样返回该引用）
  */
-const actualLanguage = computed(() => {
+export const actualLanguage = computed(() => {
     if (currentLanguage.value === 'auto') {
         // 尝试匹配检测到的语言
         const detected = detectedLanguage.value;
@@ -63,8 +63,8 @@ const actualLanguage = computed(() => {
         if (detected && detected.startsWith('ja')) {
             return 'ja';
         }
-        // 默认使用中文
-        return 'zh-CN';
+        // 默认使用英文（未知语言的兜底；用户显式选择中文时走 currentLanguage 分支，不受影响）
+        return 'en';
     }
     return currentLanguage.value;
 });
@@ -79,9 +79,12 @@ const currentMessages = computed(() => {
 /**
  * 无参数翻译结果缓存：t() 在消息列表/工具卡渲染中是高频调用（key.split + 逐层属性访问），
  * 命中后直接返回。语言切换（setLanguage / setDetectedLanguage）时整体清空。
- * 缺失 key 不缓存——每次仍走 fallback 输出 console.warn，保持既有调试行为。
+ * 缺失 key 不缓存——console.warn 按 key 去重（warnedMissingKeys），同一缺失 key 只警告一次。
  */
 const translationCache = new Map<string, string>();
+
+/** 已输出过缺失警告的 key（防刷屏；语言切换时随 translationCache 一并清空） */
+const warnedMissingKeys = new Set<string>();
 
 /**
  * 设置语言
@@ -89,6 +92,7 @@ const translationCache = new Map<string, string>();
 export function setLanguage(lang: SupportedLanguage) {
     if (currentLanguage.value !== lang) {
         translationCache.clear();
+        warnedMissingKeys.clear();
     }
     currentLanguage.value = lang;
     if (typeof document !== 'undefined') {
@@ -104,11 +108,16 @@ export function getLanguage(): SupportedLanguage {
 }
 
 /**
- * 设置检测到的语言（由后端传入）
+ * 设置检测到的语言。
+ *
+ * 生产环境无调用方：语言探测在模块初始化时按 navigator.language 完成（见 detectedLanguage 初始值），
+ * 扩展侧偏好通过 setLanguage 注入。当前唯一调用方为测试环境（vitest.setup.ts 固定语言用），
+ * 保留导出以兼容该调用。
  */
 export function setDetectedLanguage(lang: string) {
     if (detectedLanguage.value !== lang) {
         translationCache.clear();
+        warnedMissingKeys.clear();
     }
     detectedLanguage.value = lang;
     if (currentLanguage.value === 'auto' && typeof document !== 'undefined') {
@@ -137,8 +146,11 @@ export function t(key: string, params?: Record<string, any>): string {
         if (result && typeof result === 'object' && k in result) {
             result = result[k];
         } else {
-            // 找不到翻译，返回 key 本身（不缓存，保留每次调用的缺失警告）
-            console.warn(`[i18n] Missing translation: ${key}`);
+            // 找不到翻译，返回 key 本身（不缓存；缺失警告按 key 去重，避免高频调用刷屏）
+            if (!warnedMissingKeys.has(key)) {
+                warnedMissingKeys.add(key);
+                console.warn(`[i18n] Missing translation: ${key}`);
+            }
             return key;
         }
     }

@@ -4,7 +4,7 @@
  * 提供处理消息 token 计数的工具函数
  */
 
-import type { Content } from './types';
+import type { Content, ContentPart } from './types';
 
 /**
  * 设置消息的 token 计数
@@ -66,7 +66,7 @@ export function setMessageTokens(
  */
 export function createMessageWithTokens(
     role: 'user' | 'model',
-    parts: any[],
+    parts: ContentPart[],
     thoughtsTokenCount?: number,
     candidatesTokenCount?: number
 ): Content {

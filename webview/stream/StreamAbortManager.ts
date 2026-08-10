@@ -44,20 +44,36 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 退出信号必须独立于 controllers 记录，由 delete() 按 controller 引用释放。
    * 链式叠加：连续多次 stop/重发时，新请求等待的是所有旧代退出后的总信号。
    */
-  private retiredExits: Map<string, { chain: Promise<void>; resolveTail: () => void }> = new Map();
+  private retiredExits: Map<string, { chain: Promise<void>; resolveTail: () => void; pending: number; resolvers: Set<() => void> }> = new Map();
   /** 已退休旧流 controller → 该代退出信号的 resolve（delete() 按引用释放） */
   private retiredResolvers: Map<AbortController, () => void> = new Map();
 
   /**
    * 记录一代已退休旧流的退出信号；其 finally 调用 delete() 时由 releaseRetiredExit 释放。
+   *
+   * pending：该会话尚未释放的退休代数。连续 stop/重发会叠加多代退休流，只有所有代都释放
+   * （pending 归零）才删除条目——避免「尾代先退」时提前删条目，让等待前代的调用方误判空闲。
+   * resolvers：该链上全部代的退出 resolver 快照（复制前代并追加本代），clearRetiredChain
+   * 超时清理时按此一并释放全部代（不只尾代）。
+   * 自清理定时器：旧流 finally 可能因工具挂死/网络挂起永不执行，条目会永久残留；超时后按
+   * identity 校验清理，不误清新代条目。
    */
   private trackRetiredExit(conversationId: string, controller: AbortController): void {
     const prev = this.retiredExits.get(conversationId);
     let resolveTail: () => void = () => {};
     const tail = new Promise<void>((resolve) => { resolveTail = resolve; });
     const chain = prev ? prev.chain.then(() => tail) : tail;
-    this.retiredExits.set(conversationId, { chain, resolveTail });
+    const resolvers = new Set(prev?.resolvers ?? []);
+    resolvers.add(resolveTail);
+    const entry = {
+      chain,
+      resolveTail,
+      pending: (prev?.pending ?? 0) + 1,
+      resolvers
+    };
+    this.retiredExits.set(conversationId, entry);
     this.retiredResolvers.set(controller, resolveTail);
+    setTimeout(() => this.clearRetiredChain(conversationId, entry), OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
   }
 
   /**
@@ -78,15 +94,23 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     for (const resolve of resolvers) resolve();
   }
 
-  private clearRetiredChain(conversationId: string, retired: { chain: Promise<void>; resolveTail: () => void }): void {
+  private clearRetiredChain(
+    conversationId: string,
+    retired: { chain: Promise<void>; resolveTail: () => void; pending: number; resolvers: Set<() => void> }
+  ): void {
+    // identity 校验：条目已被新代替换或已正常释放时，不误清新代状态
     if (this.retiredExits.get(conversationId) === retired) {
       this.retiredExits.delete(conversationId);
     }
+    // 释放该链上全部代的退出信号（而不只是尾代）：等待方可能已捕获 chain 引用，
+    // 任一代的 resolver 不释放都会让 chain 永不落定；同时清出 retiredResolvers 防残留。
     for (const [controller, resolve] of this.retiredResolvers) {
-      if (resolve === retired.resolveTail) {
+      if (retired.resolvers.has(resolve)) {
         this.retiredResolvers.delete(controller);
-        resolve();
       }
+    }
+    for (const resolve of retired.resolvers) {
+      resolve();
     }
   }
 
@@ -95,8 +119,12 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
     if (!resolver) return;
     this.retiredResolvers.delete(controller);
     const current = this.retiredExits.get(conversationId);
-    if (current && current.resolveTail === resolver) {
-      this.retiredExits.delete(conversationId);
+    if (current) {
+      // pending 归零才删条目：尾代先退时条目保留，等待方继续等前代退出
+      current.pending -= 1;
+      if (current.pending <= 0) {
+        this.retiredExits.delete(conversationId);
+      }
     }
     resolver();
   }
@@ -331,14 +359,20 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   async waitForIdle(conversationId: string): Promise<void> {
     while (true) {
       if (this.controllers.has(conversationId)) {
-        await new Promise<void>(resolve => {
-          let waiters = this.idleWaiters.get(conversationId);
-          if (!waiters) {
-            waiters = new Set();
-            this.idleWaiters.set(conversationId, waiters);
-          }
-          waiters.add(resolve);
-        });
+        // 活跃流分支同样需要超时兜底：流的 finally 可能因工具挂死/网络挂起长期不执行，
+        // 仅靠 delete() 唤醒会让等待方永久挂起。与 retired 分支同口径：
+        // 超时视同「已空闲」返回（而不是 continue 循环重试，避免每 6s 重试一次、永不返回）。
+        const timedOut = await this.raceWithTimeout([
+          new Promise<void>(resolve => {
+            let waiters = this.idleWaiters.get(conversationId);
+            if (!waiters) {
+              waiters = new Set();
+              this.idleWaiters.set(conversationId, waiters);
+            }
+            waiters.add(resolve);
+          })
+        ], OLD_STREAM_EXIT_WAIT_TIMEOUT_MS);
+        if (timedOut) return;
         continue;
       }
 

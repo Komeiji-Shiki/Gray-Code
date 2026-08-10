@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { useChatStore } from '../../stores/chatStore'
 import { useI18n } from '../../i18n'
 import { needsWorkspaceConfirm } from '../../stores/chat/branchActions'
@@ -25,6 +25,33 @@ const pendingWorkspaceSwitchNodeId = ref<string | null>(null)
 const showWorkspaceConfirm = ref(false)
 const renamingNodeId = ref<string | null>(null)
 const renameInput = ref('')
+// 面板容器引用（用于打开时初始聚焦）
+const panelBoxRef = ref<HTMLElement | null>(null)
+
+// Esc 关闭 + 初始聚焦（复用 Modal 的 keydown 处理思路）：
+// 面板打开时监听全局 Esc 关闭，并把焦点移入面板，键盘用户可直接操作
+function handlePanelKeydown(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !panelOpen.value) return
+  // 重命名输入框内的 Esc 由输入框自身处理（取消重命名），不冒泡关闭整个面板
+  const target = e.target as HTMLElement | null
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+    return
+  }
+  closePanel()
+}
+
+watch(panelOpen, (open) => {
+  if (open) {
+    document.addEventListener('keydown', handlePanelKeydown)
+    nextTick(() => panelBoxRef.value?.focus())
+  } else {
+    document.removeEventListener('keydown', handlePanelKeydown)
+  }
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handlePanelKeydown)
+})
 
 const triggerVisible = computed(() => {
   const graph = chatStore.branchGraph
@@ -174,7 +201,7 @@ function cancelRename(): void {
 
     <div v-if="panelOpen" class="branch-tree-overlay">
       <div class="branch-tree-backdrop" @click="closePanel"></div>
-      <section class="branch-tree-panel-box" role="dialog" :aria-label="t('components.message.branchTree.title')">
+      <section ref="panelBoxRef" tabindex="-1" class="branch-tree-panel-box" role="dialog" :aria-label="t('components.message.branchTree.title')">
         <header class="branch-tree-header">
           <span class="branch-tree-title">
             <i class="codicon codicon-git-branch"></i>

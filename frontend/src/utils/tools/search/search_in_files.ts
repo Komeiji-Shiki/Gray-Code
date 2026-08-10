@@ -4,18 +4,18 @@
 
 import { registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
+import { t } from '../../../i18n'
 import SearchInFilesComponent from '../../../components/tools/search/search_in_files.vue'
 
 // 注册 search_in_files 工具
 registerTool('search_in_files', {
   name: 'search_in_files',
-  label: '搜索内容',
   icon: 'codicon-search',
 
-  // 动态标签：根据 mode 显示不同标题
+  // 动态标签：根据 mode 显示不同标题（本地化文案）
   labelFormatter: (args: Record<string, unknown>) => {
     const mode = args.mode as string || 'search'
-    return mode === 'replace' ? '搜索替换' : '搜索内容'
+    return mode === 'replace' ? t('utils.tools.searchModeReplace') : t('utils.tools.searchModeSearch')
   },
 
   // 描述生成器：显示搜索关键词和替换信息

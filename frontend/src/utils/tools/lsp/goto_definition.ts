@@ -8,6 +8,7 @@ import GotoDefinitionComponent from '../../../components/tools/lsp/goto_definiti
 // 注册 goto_definition 工具
 registerTool('goto_definition', {
   name: 'goto_definition',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '跳转到定义',
   icon: 'codicon-go-to-file',
   

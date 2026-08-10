@@ -121,6 +121,8 @@ function resetDragState() {
 function handleWheel(e: WheelEvent) {
   const container = scrollbarRef.value?.getContainer?.()
   if (!container) return
+  // 仅当容器确实可横向滚动时才拦截滚轮（preventDefault 会阻断页面/父级滚动）
+  if (container.scrollWidth <= container.clientWidth + 1) return
   e.preventDefault()
   container.scrollLeft += e.deltaY || e.deltaX
   scrollbarRef.value?.update?.()

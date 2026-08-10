@@ -18,6 +18,7 @@
  */
 
 import { Logger } from '../../core/logger';
+import { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY } from './checkpointConcurrency';
 import type { BranchGraphReadResult } from '../conversation/branch/BranchGraphRepository';
 import type { ConversationBranchGraph } from '../conversation/branch/types';
 import type { BatchCheckpointDeleteResult } from './types';
@@ -47,9 +48,11 @@ export async function computeCheckpointReferenceCounts(
 ): Promise<Map<string, number>> {
     const ids = conversationIds ?? (await repo.listConversationIds());
     const counts = new Map<string, number>();
-    for (const conversationId of ids) {
-        // C-4: 逐会话 try/catch——repo.load 直接抛异常（IO/解析失败）时不再中止整个扫描，
-        // 记录后 continue，避免单会话损坏导致全部引用计数丢失。
+    // C-4: 逐会话 try/catch——repo.load 直接抛异常（IO/解析失败）时不再中止整个扫描，
+    // 记录后 continue，避免单会话损坏导致全部引用计数丢失。
+    // C-18: 有界并发（runBounded）替代逐会话串行 await——会话多时不串行放大扫描耗时；
+    // counts 是共享 Map，单线程环境下并发累加安全（worker 内 try/catch 语义与串行一致）
+    await runBounded(ids, DEFAULT_CHECKPOINT_CONCURRENCY, async conversationId => {
         let loaded: BranchGraphReadResult;
         try {
             loaded = await repo.load(conversationId);
@@ -58,7 +61,7 @@ export async function computeCheckpointReferenceCounts(
                 conversationId,
                 error: err instanceof Error ? err.message : String(err),
             });
-            continue;
+            return;
         }
         const graph: ConversationBranchGraph | null = loaded.graph;
         if (!graph || loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
@@ -68,7 +71,7 @@ export async function computeCheckpointReferenceCounts(
                     errorMessage: loaded.errorMessage ?? 'unknown',
                 });
             }
-            continue;
+            return;
         }
         for (const node of Object.values(graph.nodes)) {
             if (node.deleted) {
@@ -79,7 +82,7 @@ export async function computeCheckpointReferenceCounts(
                 counts.set(checkpointId, (counts.get(checkpointId) ?? 0) + 1);
             }
         }
-    }
+    });
     return counts;
 }
 

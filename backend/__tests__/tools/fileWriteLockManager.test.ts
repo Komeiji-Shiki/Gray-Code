@@ -16,9 +16,22 @@ const holderA: LockHolder = { kind: 'subagent', id: 'run_a', label: 'Agent A' };
 const holderB: LockHolder = { kind: 'subagent', id: 'run_b', label: 'Agent B' };
 const holderMain: LockHolder = { kind: 'main', id: 'conversation_1', label: 'main session' };
 
+// 大小写归一行为随文件系统区分大小写能力变化（win32 不区分，其余平台区分）：
+// 平台专属断言必须用 skip 门控，避免在另一平台误跑失败
+const isWin32 = process.platform === 'win32';
+const itOnWin32 = isWin32 ? it : it.skip;
+const itOnNonWin32 = isWin32 ? it.skip : it;
+
 describe('normalizeLockPath', () => {
-    it('统一反斜杠并小写化', () => {
-        expect(normalizeLockPath('Src\\Foo\\Bar.TS')).toBe('src/foo/bar.ts');
+    it('统一反斜杠（win32 小写化，其他平台保留大小写）', () => {
+        const normalized = normalizeLockPath('Src\\Foo\\Bar.TS');
+        if (process.platform === 'win32') {
+            // Windows 文件系统不区分大小写：锁 key 小写归一
+            expect(normalized).toBe('src/foo/bar.ts');
+        } else {
+            // 大小写敏感文件系统：只归一化分隔符，不改变大小写
+            expect(normalized).toBe('Src/Foo/Bar.TS');
+        }
     });
 
     it('去除 ./ 前缀与尾部斜杠', () => {
@@ -92,9 +105,20 @@ describe('FileWriteLockManager', () => {
         }
     });
 
-    it('路径大小写与分隔符差异仍视为同一文件', () => {
+    itOnWin32('win32：路径大小写与分隔符差异均视为同一文件', () => {
         manager.tryAcquire(['src/A.ts'], holderA);
         expect(manager.tryAcquire(['SRC\\a.TS'], holderB).acquired).toBe(false);
+    });
+
+    itOnNonWin32('非 win32：分隔符差异视为同一文件，大小写差异不冲突（大小写敏感文件系统）', () => {
+        // 反斜杠与斜杠写法归一为同一 key，互斥
+        manager.tryAcquire(['src/A.ts'], holderA);
+        expect(manager.tryAcquire(['src\\A.ts'], holderB).acquired).toBe(false);
+        manager.release(['src\\A.ts'], holderA);
+
+        // 仅大小写不同的路径是不同文件，不互斥
+        manager.tryAcquire(['src/A.ts'], holderA);
+        expect(manager.tryAcquire(['SRC/a.TS'], holderB).acquired).toBe(true);
     });
 
     it('同 holder 重入允许且按计数释放', () => {

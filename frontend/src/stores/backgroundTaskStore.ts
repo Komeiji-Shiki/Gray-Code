@@ -68,6 +68,12 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       // 只处理已登记的后台任务；前台任务的事件不入表
       if (!record || record.status !== 'running') return
       tasks.value = { ...tasks.value, [event.taskId]: applyCompletionEvent(record, event) }
+      if (flushing) {
+        // flush 进行中：本次直接调度会被 flushing 保护丢弃（任务已落表），
+        // 标记为“被丢弃的补发事件”，由 flush 结束后的重查补一轮
+        flushDroppedEvent = true
+        return
+      }
       void flushReports()
     }
   }
@@ -75,6 +81,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   // ============ 混合回流 ============
 
   let flushing = false
+  /** flush 进行中到达的 complete/cancelled/error 事件标记：结束后补一轮 flush（见 handleTaskEvent） */
+  let flushDroppedEvent = false
 
   /** 把一批任务乐观标记为已回流（不可变更新，保证响应性） */
   function markReported(records: BackgroundTaskRecord[]): void {
@@ -124,11 +132,21 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       // 前端 complete chunk 会先清理 isStreaming，但后端流此时可能还没走到 finally。
       // 必须等待后端运行控制器确认空闲，避免新回执流中止仍在收尾的旧流。
       if (currentId) {
+        let idleTimeoutId: ReturnType<typeof setTimeout> | undefined
         try {
-          await sendToExtension('chat.awaitConversationIdle', { conversationId: currentId })
+          // 等待后端空闲带超时（5s）：后端忙/挂起时不能让回执无限期卡住 flush 流程
+          await Promise.race([
+            sendToExtension('chat.awaitConversationIdle', { conversationId: currentId }),
+            new Promise<never>((_, reject) => {
+              idleTimeoutId = setTimeout(() => reject(new Error('awaitConversationIdle timed out after 5s')), 5000)
+            })
+          ])
         } catch (error) {
-          // idle 探测失败不中断回执流程：sendMessage 失败时会回滚 reported 等待下次补发
+          // idle 探测失败/超时不中断回执流程：sendMessage 失败时会回滚 reported 等待下次补发
           console.warn('[backgroundTaskStore] awaitConversationIdle failed:', error)
+        } finally {
+          // 竞速提前结算时清理悬空定时器（对已 settled 的 promise reject 是无害 no-op，但避免定时器残留）
+          if (idleTimeoutId !== undefined) clearTimeout(idleTimeoutId)
         }
       }
 
@@ -160,6 +178,14 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       }
     } finally {
       flushing = false
+      // flush 期间到达的 complete 事件被 flushing 保护丢弃（handleTaskEvent 只落表不调度）：
+      // 结束后重查挂起数，非零（且确实有被丢弃事件）则再调度一次 flushReports，避免回执永久滞留。
+      // 注意：不能只看 pendingReportCount——发送失败回滚也会使其非零，无条件重调度会形成
+      // 发送失败→回滚→重试 的热循环；因此必须叠加 flushDroppedEvent 标记（真实新完成事件）。
+      if (flushDroppedEvent && pendingReportCount.value > 0) {
+        flushDroppedEvent = false
+        void flushReports()
+      }
     }
   }
 

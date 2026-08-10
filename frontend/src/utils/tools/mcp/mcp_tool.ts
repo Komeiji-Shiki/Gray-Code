@@ -13,6 +13,7 @@ import { toolRegistry, type ToolConfig } from '../../toolRegistry'
 import McpToolComponent from '../../../components/tools/mcp/mcp_tool.vue'
 // WP12：统一使用 codec 编解码 MCP 工具名
 import { isMcpToolName, decodeMcpToolName } from './mcpToolNameCodec'
+import { t } from '../../../i18n'
 
 /**
  * 解析 MCP 工具名称
@@ -45,10 +46,15 @@ export function createMcpToolConfig(toolName: string): ToolConfig {
     icon: 'codicon-plug',
     
     // 描述生成器 - 显示 MCP 服务器信息
+    // TODO(i18n)：文案已接入 i18n（components.message.tool.paramCount /
+    // components.settings.toolsSettings.categories.mcp，zh-CN/en/ja 三种语言包均已存在），
+    // 后续新增展示文案一律走 t()，禁止再硬编码中文（"MCP: " 前缀为语言中立标识，无需翻译）
     descriptionFormatter: (args) => {
-      const serverInfo = mcpInfo ? `MCP: ${mcpInfo.serverId}` : 'MCP 工具'
+      const serverInfo = mcpInfo
+        ? `MCP: ${mcpInfo.serverId}`
+        : t('components.settings.toolsSettings.categories.mcp')
       const argCount = Object.keys(args || {}).length
-      return `${serverInfo} | ${argCount} 个参数`
+      return `${serverInfo} | ${t('components.message.tool.paramCount', { count: argCount })}`
     },
     
     // 使用自定义组件显示内容

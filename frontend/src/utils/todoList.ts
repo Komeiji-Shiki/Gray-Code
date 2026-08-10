@@ -9,6 +9,11 @@ export type TodoItem = {
   status: TodoStatus
 }
 
+/**
+ * 统一语义：非法/未知 status 一律归一为 'pending'。
+ * 注意与 todo_write 工具的“非法 status 丢弃”语义不同——前端展示侧选择保守归一，
+ * 避免模型返回异常 status 时整个 TODO 项被丢弃；后续如需对齐 todo_write 语义请同步两侧。
+ */
 export function normalizeTodoStatus(value: unknown): TodoStatus {
   if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value
   return 'pending'

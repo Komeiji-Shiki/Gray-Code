@@ -26,6 +26,7 @@ import {
     isImageFile,
     isPdfFile,
     normalizeLineEndingsToLF,
+    mapWithConcurrency,
     // WP13 去重：gcd、calculateAspectRatio、ImageDimensions 原来在 read_file.ts 中重复定义，
     // 现改为从 utils.ts 统一导入。
     gcd,
@@ -39,6 +40,9 @@ const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
 // 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）：
 // 超大文件全量读入并全量塞进模型上下文会导致内存与 token 爆炸。
 const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
+
+/** 批量读取并发上限（与 list_files 的行数统计一致，避免一次读大量文件时并发无界） */
+const BATCH_READ_CONCURRENCY = 8;
 
 const log = Logger.get('ReadFileTool');
 
@@ -614,7 +618,9 @@ export function createReadFileTool(
             let successCount = 0;
             let failCount = 0;
 
-            for (const fileReq of fileRequests) {
+            // 批量读取受控并发：替代逐文件串行 await（批量读大量文件时串行耗时线性增长）
+            // mapWithConcurrency 保持输入顺序，聚合结果与 fileRequests 一一对应
+            const batchOutcomes = await mapWithConcurrency(fileRequests, BATCH_READ_CONCURRENCY, async (fileReq) => {
                 // 行范围只对文本文件有意义；非文本/多模态文件即使误传也忽略。
                 let lineRange: LineRange | undefined;
                 if (!isBinaryFile(fileReq.path) && (fileReq.startLine !== undefined || fileReq.endLine !== undefined)) {
@@ -632,7 +638,7 @@ export function createReadFileTool(
                     contextKeys: debugContextKeys,
                     upstream: upstreamDebug
                 };
-                const { result, multimodal } = await readSingleFile(
+                return readSingleFile(
                     fileReq.path,
                     capability,
                     multimodalEnabled,
@@ -640,6 +646,9 @@ export function createReadFileTool(
                     lineRange,
                     debug
                 );
+            });
+
+            for (const { result, multimodal } of batchOutcomes) {
                 results.push(result);
 
                 if (result.success) {

@@ -7,7 +7,7 @@
  * - L-10: 取消失败时保留原进度状态并给出可见反馈
  */
 
-import { ref } from 'vue'
+import { ref, onBeforeUnmount } from 'vue'
 import { pollOperationProgress, cancelCheckpointOperation, type CheckpointOperationProgress } from '@/stores/chat/checkpointActions'
 import { t } from '@/i18n'
 
@@ -26,6 +26,8 @@ export function useCheckpointOperationProgress() {
   const POLL_ERROR_MAX = 5
   /** M4: 操作无进展（updatedAt 陈旧）阈值：超过后停止轮询，避免后端操作悬挂时永续 IPC */
   const POLL_STALE_THRESHOLD_MS = 120_000
+  /** M4: 大文件操作类（create/restore 涉及文件复制）stale 阈值：长任务放宽到 10 分钟，避免误判悬挂 */
+  const POLL_STALE_THRESHOLD_SLOW_MS = 600_000
 
   function isTerminalOperationProgress(progress: CheckpointOperationProgress): boolean {
     return progress.phase === 'done' || progress.phase === 'failed' || progress.phase === 'cancelled'
@@ -33,7 +35,12 @@ export function useCheckpointOperationProgress() {
 
   function isStaleOperationProgress(progress: CheckpointOperationProgress): boolean {
     const lastUpdate = progress.updatedAt || progress.startedAt
-    return Date.now() - lastUpdate > POLL_STALE_THRESHOLD_MS
+    // M4: 按操作类型分类阈值——create/restore（文件复制类）放宽到 10 分钟；
+    // delete 保持 2 分钟（删除通常很快，长时间无进展更可能是悬挂）
+    const threshold = progress.kind === 'create' || progress.kind === 'restore'
+      ? POLL_STALE_THRESHOLD_SLOW_MS
+      : POLL_STALE_THRESHOLD_MS
+    return Date.now() - lastUpdate > threshold
   }
 
   // 轮询后端最近更新的进行中存档操作；无进行中操作或已结束时停止轮询。
@@ -75,6 +82,9 @@ export function useCheckpointOperationProgress() {
   function startProgressPolling() {
     if (progressPollTimer) return
     operationStale.value = false
+    // M4: 新操作开始轮询时复位连续失败计数——
+    // 连续失败停止轮询（pollErrorCount 达上限）后再次启动必须能重新尝试
+    pollErrorCount = 0
     pollOperation()
     progressPollTimer = setInterval(pollOperation, 800)
   }
@@ -84,6 +94,16 @@ export function useCheckpointOperationProgress() {
       clearInterval(progressPollTimer)
       progressPollTimer = null
     }
+  }
+
+  // M7: 轮询自清理——组件卸载时停止轮询，不再依赖调用方手动调用 stopProgressPolling。
+  // composable 在 setup 上下文内使用；try 包裹以兼容非组件上下文（如 composable 级单测）
+  try {
+    onBeforeUnmount(() => {
+      stopProgressPolling()
+    })
+  } catch {
+    // 无组件实例（非 setup 上下文）：忽略，由调用方自行管理清理
   }
 
   // 取消进行中的存档操作（M7/CPF-11）

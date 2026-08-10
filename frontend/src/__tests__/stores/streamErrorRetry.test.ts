@@ -602,6 +602,30 @@ describe('sendMessage 清理失败残留', () => {
     const chatCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')
     expect(chatCall).toBeDefined()
   })
+
+  it('chatStream 发送失败：清理本次占位（user + 空 assistant），写错误条并复位流式状态', async () => {
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 0 } as any]),
+      isStreaming: ref(false)
+    })
+    vi.mocked(sendToExtension).mockRejectedValue(new Error('ipc down'))
+
+    const result = await sendMessage(state, createComputed(), '发送失败的问题')
+
+    expect(result).toBe(false)
+    // 失败清理：user 消息 + 空 assistant 占位都不残留（round2 修复点）
+    expect(state.allMessages.value).toHaveLength(0)
+    // 错误条写入（非取消路径）+ 流式状态完全复位
+    expect(state.error.value?.code).toBe('SEND_ERROR')
+    expect(state.isStreaming.value).toBe(false)
+    expect(state.isWaitingForResponse.value).toBe(false)
+    expect(state.streamingMessageId.value).toBeNull()
+    expect(state.activeStreamId.value).toBeNull()
+    expect(state.pendingModelOverride.value).toBeNull()
+    expect(state.pendingConfigIdOverride.value).toBeNull()
+  })
 })
 
 describe('retryFromMessage reroll 主流程（TREE-01）', () => {

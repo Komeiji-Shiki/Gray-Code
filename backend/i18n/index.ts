@@ -2,7 +2,7 @@
  * LimCode Backend - i18n 国际化模块
  * 
  * 支持语言切换和翻译
- * 与前端共享相同的语言配置
+ * 两套独立语言包（后端与前端），需同步维护
  */
 
 import type { SupportedLanguage, BackendLanguageMessages } from './types';
@@ -88,6 +88,10 @@ export function getMessagesForLanguage(lang?: SupportedLanguage | string): Backe
  */
 export function setLanguage(lang: SupportedLanguage): void {
     currentLanguage = lang;
+    // 语言变化后重置缺失 key 告警与翻译缓存（见 t() 顶部的缓存逻辑）
+    warnedMissingKeys.clear();
+    cachedLanguage = undefined;
+    translationCache.clear();
 }
 
 /**
@@ -102,6 +106,10 @@ export function getLanguage(): SupportedLanguage {
  */
 export function setDetectedLanguage(lang: string): void {
     detectedLanguage = lang;
+    // 检测语言变化同样重置告警与翻译缓存
+    warnedMissingKeys.clear();
+    cachedLanguage = undefined;
+    translationCache.clear();
 }
 
 /**
@@ -111,15 +119,34 @@ export function setDetectedLanguage(lang: string): void {
  * 例如：t('core.registry.moduleAlreadyRegistered', { moduleId: 'config' })
  * 支持参数替换：{paramName} 格式的占位符
  */
-/** 已告警过的缺失 key（节流，避免每次调用刷屏） */
+/** 已告警过的缺失 key（节流，避免每次调用刷屏；语言切换时清空） */
 const warnedMissingKeys = new Set<string>();
 
+/** 无参调用的翻译结果缓存（只缓存字符串结果；语言切换时清空） */
+let cachedLanguage: Exclude<SupportedLanguage, 'auto'> | undefined;
+const translationCache = new Map<string, string>();
+
 export function t(key: string, params?: Record<string, string | number | boolean>): string {
+    // 无参调用 + 语言未变化：命中缓存直接返回；语言切换后（缓存已清空）重新解析
+    if (!params) {
+        const lang = getActualLanguage();
+        if (cachedLanguage === lang) {
+            const cached = translationCache.get(key);
+            if (cached !== undefined) {
+                return cached;
+            }
+        } else {
+            cachedLanguage = lang;
+            translationCache.clear();
+        }
+    }
+
     const keys = key.split('.');
     let result: unknown = getCurrentMessages();
 
     for (const k of keys) {
-        if (result && typeof result === 'object' && k in result) {
+        // 用 hasOwnProperty 判断，避免 k 命中对象原型链属性（如 constructor/toString）被误当成翻译键
+        if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, k)) {
             result = (result as Record<string, unknown>)[k];
         } else {
             // 找不到翻译，返回 key 本身（同一 key 只告警一次）
@@ -132,16 +159,23 @@ export function t(key: string, params?: Record<string, string | number | boolean
     }
 
     if (typeof result === 'string') {
-        // 如果有参数，替换占位符（null/undefined 保留原占位符，避免输出字面量 "null"）
+        // 如果有参数，替换占位符（null/undefined 保留原占位符，避免输出字面量 "null"）；
+        // 带参数的结果不缓存（替换依赖每次传入的 params）
         if (params) {
             return result.replace(/\{([\w-]+)\}/g, (match, paramName: string) => {
                 const value = params[paramName];
                 return value != null ? String(value) : match;
             });
         }
+        translationCache.set(key, result);
         return result;
     }
 
+    // 路径解析结果不是字符串（指向对象/数组/数字等）：与缺失分支统一告警（节流）并返回 key 本身
+    if (!warnedMissingKeys.has(key)) {
+        warnedMissingKeys.add(key);
+        console.warn(`[i18n] Missing translation (non-string result): ${key}`);
+    }
     return key;
 }
 

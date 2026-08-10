@@ -18,6 +18,9 @@ export class MementoMcpStorageAdapter implements McpStorageAdapter {
         update(key: string, value: unknown): Thenable<void>;
     };
 
+    /** 读写串行队列：read-modify-write 不被并发 save/delete 交错覆盖（与 FileSystem 适配器同构） */
+    private queue: Promise<unknown> = Promise.resolve();
+
     constructor(memento: {
         get<T>(key: string, defaultValue: T): T;
         update(key: string, value: unknown): Thenable<void>;
@@ -25,32 +28,53 @@ export class MementoMcpStorageAdapter implements McpStorageAdapter {
         this.memento = memento;
     }
 
-    async getAllConfigs(): Promise<McpServerConfig[]> {
+    /** 将操作加入串行队列（防止并发 save/delete 的 read-modify-write 互相覆盖） */
+    private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this.queue.then(fn);
+        this.queue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
+    }
+
+    /** 读取全部配置（内部使用，不经过队列——调用方须已在队列中，避免嵌套入队死锁） */
+    private readConfigs(): McpServerConfig[] {
         return this.memento.get<McpServerConfig[]>(MementoMcpStorageAdapter.STORAGE_KEY, []);
     }
 
+    async getAllConfigs(): Promise<McpServerConfig[]> {
+        return this.enqueue(async () => this.readConfigs());
+    }
+
     async saveConfig(config: McpServerConfig): Promise<void> {
-        const configs = await this.getAllConfigs();
-        const index = configs.findIndex(c => c.id === config.id);
-        
-        if (index >= 0) {
-            configs[index] = config;
-        } else {
-            configs.push(config);
-        }
-        
-        await this.memento.update(MementoMcpStorageAdapter.STORAGE_KEY, configs);
+        return this.enqueue(async () => {
+            const configs = this.readConfigs();
+            const index = configs.findIndex(c => c.id === config.id);
+            
+            if (index >= 0) {
+                configs[index] = config;
+            } else {
+                configs.push(config);
+            }
+            
+            await this.memento.update(MementoMcpStorageAdapter.STORAGE_KEY, configs);
+        });
     }
 
     async deleteConfig(id: string): Promise<void> {
-        const configs = await this.getAllConfigs();
-        const filtered = configs.filter(c => c.id !== id);
-        await this.memento.update(MementoMcpStorageAdapter.STORAGE_KEY, filtered);
+        return this.enqueue(async () => {
+            const configs = this.readConfigs();
+            const filtered = configs.filter(c => c.id !== id);
+            await this.memento.update(MementoMcpStorageAdapter.STORAGE_KEY, filtered);
+        });
     }
 
     async getConfig(id: string): Promise<McpServerConfig | null> {
-        const configs = await this.getAllConfigs();
-        return configs.find(c => c.id === id) ?? null;
+        return this.enqueue(async () => {
+            const configs = this.readConfigs();
+            return configs.find(c => c.id === id) ?? null;
+        });
     }
 }
 
@@ -144,7 +168,11 @@ export class FileSystemMcpStorageAdapter implements McpStorageAdapter {
         await this.ensureDir();
         // 使用 mcpServers 格式
         const data = { mcpServers: configs };
-        await this.fs.writeFile(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
+        // tmp+rename 原子替换：先写临时文件再 rename，避免写入中途崩溃/断电
+        // 留下截断或半写的线上配置（调用方在 enqueue 队列内，tmp 文件名不会并发冲突）
+        const tmpPath = `${this.filePath}.tmp`;
+        await this.fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+        await this.fs.rename(tmpPath, this.filePath);
     }
 
     async getAllConfigs(): Promise<McpServerConfig[]> {
@@ -210,6 +238,8 @@ interface McpServerJsonEntry {
     autoConnect?: boolean;
     timeout?: number;
     cleanSchema?: boolean;
+    createdAt?: number;
+    updatedAt?: number;
 }
 
 interface McpServersJson {
@@ -310,8 +340,10 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
             autoConnect: json.autoConnect || false,
             timeout: json.timeout,
             cleanSchema: json.cleanSchema,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
+            // 时间戳从 JSON 读取（缺失时为旧格式配置，回退当前时间），
+            // 避免每次读取都重建为新的 Date.now() 导致时间戳漂移
+            createdAt: json.createdAt ?? Date.now(),
+            updatedAt: json.updatedAt ?? Date.now()
         };
     }
 
@@ -351,6 +383,10 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
         if (config.autoConnect) json.autoConnect = true;
         if (config.timeout) json.timeout = config.timeout;
         if (config.cleanSchema === false) json.cleanSchema = false;
+
+        // 持久化时间戳：jsonToConfig 才能还原原始的 createdAt/updatedAt（而非每次重建）
+        if (config.createdAt) json.createdAt = config.createdAt;
+        if (config.updatedAt) json.updatedAt = config.updatedAt;
 
         return json;
     }

@@ -220,9 +220,13 @@ function shouldHandleSoundForStreamChunk(chunk: StreamChunk): boolean {
   // 仅处理“当前会话”或“已打开标签页中的会话”
   if (!tab && convId !== currentConversationId) return false
 
-  const expectedStreamId = convId === currentConversationId
+  const isCurrentConversation = convId === currentConversationId
+  const snapshotStreamId = tab ? (chatStore.sessionSnapshots.get(tab.id)?.activeStreamId || null) : null
+  // 后台标签页：快照可能因标签页刚打开/流刚启动尚未绑定 streamId 而过期缺失。
+  // 快照缺失时回退到与 store 最新 activeStreamId 宽松匹配，避免漏掉后台标签页的声音提示。
+  const expectedStreamId = isCurrentConversation
     ? (chatStore.activeStreamId || null)
-    : (tab ? (chatStore.sessionSnapshots.get(tab.id)?.activeStreamId || null) : null)
+    : (snapshotStreamId || chatStore.activeStreamId || null)
 
   // 没有预期 streamId 时，不接收带 streamId 的 chunk（通常是迟到包）
   if (chunk.streamId && !expectedStreamId) return false
@@ -270,13 +274,19 @@ async function handleSend(content: string, messageAttachments: Attachment[], opt
     // 拒绝失败也继续发送（消息不丢，后端 prepareConversationForRequest 会兜底拒绝）
   }
 
-  // 正常发送消息：先立即清除附件，不需要等待响应完成
+  // 正常发送消息：先立即清除附件（发送失败时恢复，避免已上传附件丢失）
   clearAttachments()
 
+  let sent = false
   try {
-    await chatStore.sendMessage(content, messageAttachments, options)
+    sent = await chatStore.sendMessage(content, messageAttachments, options)
   } catch (err) {
     console.error('发送失败:', err)
+  }
+  // sendMessage 的失败路径不抛异常而是返回 false（见 messageActions.sendMessage 内部 catch），
+  // 这里依据返回值恢复附件：发送失败时把刚清除的附件放回输入区，避免用户已上传内容丢失
+  if (!sent && messageAttachments.length > 0) {
+    storeAttachmentsRef.value.push(...messageAttachments)
   }
 }
 
@@ -489,7 +499,7 @@ onMounted(async () => {
   console.log('GrayCode Chat 已加载')
   
   // Notify the extension that the webview is ready to receive command messages.
-    sendToExtension('webviewReady', {}).catch(error => {
+  sendToExtension('webviewReady', {}).catch(error => {
     console.error('[App] Failed to notify extension that webview is ready:', error)
   })
   

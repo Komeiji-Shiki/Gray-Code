@@ -8,6 +8,7 @@ import GetSymbolsComponent from '../../../components/tools/lsp/get_symbols.vue'
 // 注册 get_symbols 工具
 registerTool('get_symbols', {
   name: 'get_symbols',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '获取符号',
   icon: 'codicon-symbol-class',
   

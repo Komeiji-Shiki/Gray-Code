@@ -710,6 +710,23 @@ export function buildProgressValidationSummary(content: string): ProgressValidat
   return { isValid: false, formatVersion, issueCount: 1, errorCount: 1, warningCount: 0, issues };
 }
 
+function escapeRegExpForHeading(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 按「行首 ^ + 标题常量（自带 ## 前缀）+ 行尾」定位节标题。
+ *
+ * 修改原因：旧实现用全文 indexOf 检测节标题，正文/日志/清单中若出现与标题相同的文本
+ *          （例如某条日志以 "## 最近更新" 开头），会被误判为节标题，产生"标题乱序"误报。
+ * 修改方式：只接受独占一行的标题行（^## ... 行首匹配）。
+ */
+function findSectionHeadingIndex(content: string, title: string): number {
+  const re = new RegExp(`^${escapeRegExpForHeading(title)}\\s*$`, 'm');
+  const match = re.exec(content);
+  return match ? match.index : -1;
+}
+
 export function validateProgressDocument(
   content: string
 ): { success: true; metadata: ProgressDocumentMetadataV1 } | { success: false; error: string } {
@@ -726,7 +743,7 @@ export function validateProgressDocument(
 
   let lastIndex = -1;
   for (const heading of orderedHeadings) {
-    const headingIndex = normalized.indexOf(heading);
+    const headingIndex = findSectionHeadingIndex(normalized, heading);
     if (headingIndex < 0) {
       return { success: false, error: `Missing section heading: ${heading}` };
     }

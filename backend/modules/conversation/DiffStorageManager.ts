@@ -170,7 +170,7 @@ export class DiffStorageManager {
         };
         
         const filePath = this.getDiffFilePath(conversationId, id);
-        await fs.promises.writeFile(filePath, JSON.stringify(diffContent, null, 2), 'utf8');
+        await this.atomicWriteFile(filePath, JSON.stringify(diffContent, null, 2));
         
         log.debug('diff_saved', { diffId: id, conversationId });
         
@@ -251,8 +251,33 @@ export class DiffStorageManager {
         this.assertSafeDiffId(id);
         const diffsDir = path.join(this.basePath, 'diffs', '__global__');
         await this.ensureDir(diffsDir);
-        await fs.promises.writeFile(path.join(diffsDir, `${id}.json`), JSON.stringify(content), 'utf8');
+        await this.atomicWriteFile(path.join(diffsDir, `${id}.json`), JSON.stringify(content));
         log.debug('global_diff_saved', { diffId: id });
+    }
+
+    /**
+     * 原子写文件：先写 .tmp 再 rename 覆盖（与 storage.ts 同模式），
+     * 避免写入中途崩溃留下半截 JSON 被读取侧解析失败。
+     * Windows 的 rename 不覆盖已存在目标（EPERM/EEXIST）：先删旧文件再 rename；
+     * 其它错误（权限等）原样抛出，保留旧文件（残留 .tmp 由下次写入覆盖，读取侧只认 .json）。
+     */
+    private async atomicWriteFile(filePath: string, data: string): Promise<void> {
+        const tmpPath = `${filePath}.tmp`;
+        await fs.promises.writeFile(tmpPath, data, 'utf8');
+        try {
+            await fs.promises.rename(tmpPath, filePath);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException)?.code;
+            if (code !== 'EEXIST' && code !== 'EPERM') {
+                throw error;
+            }
+            try {
+                await fs.promises.unlink(filePath);
+            } catch {
+                // 目标不存在，无需删除
+            }
+            await fs.promises.rename(tmpPath, filePath);
+        }
     }
 
     private cacheGlobalDiff(id: string, content: DiffContent): void {
@@ -494,51 +519,55 @@ export class DiffStorageManager {
     ): Promise<void> {
         const oldDiffsDir = path.join(this.basePath, 'diffs');
         const newDiffsDir = path.join(newBasePath, 'diffs');
-        
+
+        // 1. 旧目录存在性检查：仅 ENOENT（旧目录不存在 = 无数据可迁移）时静默切换 basePath；
+        //    其它错误（权限等）原样抛出且不切换，避免把“复制失败”误当成“无需迁移”。
         try {
-            // 检查旧目录是否存在
             await fs.promises.access(oldDiffsDir);
-            
-            // 创建新目录
-            await fs.promises.mkdir(newDiffsDir, { recursive: true });
-            
-            // 复制所有 diff 数据
-            const convDirs = await fs.promises.readdir(oldDiffsDir);
-            const total = convDirs.length;
-            let processed = 0;
-            
-            for (const convDir of convDirs) {
-                const oldConvDir = path.join(oldDiffsDir, convDir);
-                const newConvDir = path.join(newDiffsDir, convDir);
-                
-                const stat = await fs.promises.stat(oldConvDir);
-                if (stat.isDirectory()) {
-                    await fs.promises.mkdir(newConvDir, { recursive: true });
-                    
-                    const files = await fs.promises.readdir(oldConvDir);
-                    for (const file of files) {
-                        await fs.promises.copyFile(
-                            path.join(oldConvDir, file),
-                            path.join(newConvDir, file)
-                        );
-                    }
-                }
-                
-                processed++;
-                progressCallback?.({
-                    phase: 'migrating_diffs',
-                    progress: processed / total
-                });
-            }
-            
-            // 更新基础路径
-            this.basePath = newBasePath;
-            
-            log.info('diffs_migrated', { processed, newBasePath });
         } catch (error) {
-            // 旧目录不存在，只需更新路径
-            this.basePath = newBasePath;
+            if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+                this.basePath = newBasePath;
+                log.info('diffs_migrated_noop', { newBasePath });
+                return;
+            }
+            throw error;
         }
+
+        // 2. 创建新目录
+        await fs.promises.mkdir(newDiffsDir, { recursive: true });
+
+        // 3. 全量复制：任何一步失败都向上抛且不切换 basePath（线上仍指向旧路径，数据完好）
+        const convDirs = await fs.promises.readdir(oldDiffsDir);
+        const total = convDirs.length;
+        let processed = 0;
+
+        for (const convDir of convDirs) {
+            const oldConvDir = path.join(oldDiffsDir, convDir);
+            const newConvDir = path.join(newDiffsDir, convDir);
+
+            const stat = await fs.promises.stat(oldConvDir);
+            if (stat.isDirectory()) {
+                await fs.promises.mkdir(newConvDir, { recursive: true });
+
+                const files = await fs.promises.readdir(oldConvDir);
+                for (const file of files) {
+                    await fs.promises.copyFile(
+                        path.join(oldConvDir, file),
+                        path.join(newConvDir, file)
+                    );
+                }
+            }
+
+            processed++;
+            progressCallback?.({
+                phase: 'migrating_diffs',
+                progress: processed / total
+            });
+        }
+
+        // 4. 全量复制成功后切换
+        this.basePath = newBasePath;
+        log.info('diffs_migrated', { processed, newBasePath });
     }
 }
 

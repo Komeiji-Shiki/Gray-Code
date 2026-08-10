@@ -25,7 +25,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { loadHistory, loadCheckpoints } from './conversationActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
-import { pendingDirtyConfirm } from './dirtyConfirmState'
+import { setPendingDirtyConfirm } from './dirtyConfirmState'
 
 /** 与后端 BranchHandlers.BRANCH_BUSY_STREAMING_MESSAGE 对齐的前端防护文案 */
 export const BRANCH_BUSY_MESSAGE = '会话正在流式生成中，请等待完成后再操作'
@@ -266,9 +266,9 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
     console.warn('[branchActions] Failed to load branch graph:', err)
     return state.branchGraph.value
   } finally {
-    if (validateSessionIdentity(state, conversationId)) {
-      state.branchGraphLoading.value = false
-    }
+    // 无条件复位：await 期间会话可能已切换，条件复位会让 branchGraphLoading 卡 true
+    // （加载指示器永久旋转），与 isSwitchingBranch 的无条件复位同款
+    state.branchGraphLoading.value = false
   }
 }
 
@@ -378,11 +378,12 @@ export async function switchBranchCandidate(
     // 不写错误条（确认框由 DirtyFilesConfirm.vue 弹出），本次切换未执行。
     // （已确认（confirmedDiscardDirty=true）时后端不会返回 dirtyFiles，此处再防御一次）
     if (options?.confirmedDiscardDirty !== true && result?.dirtyFiles && result.dirtyFiles.length > 0) {
-      pendingDirtyConfirm.value = {
+      // BCP-05：登记待确认动作并记录发起会话归属（切走该会话时清空，见 dirtyConfirmState）
+      setPendingDirtyConfirm(conversationId, {
         kind: 'switch',
         files: result.dirtyFiles,
         switch: { nodeId }
-      }
+      })
       return false
     }
 
@@ -417,9 +418,9 @@ export async function switchBranchCandidate(
     }
     return false
   } finally {
-    if (validateSessionIdentity(state, conversationId)) {
-      state.isSwitchingBranch.value = false
-    }
+    // 无条件复位：await 期间会话可能已切换（validateSessionIdentity 失败提前 return），
+    // 若这里仍按会话归属条件复位，切换器锁会永久卡在 true，后续所有分支操作被拦截。
+    state.isSwitchingBranch.value = false
   }
 }
 
@@ -463,9 +464,8 @@ export async function deleteBranchCandidate(state: ChatStoreState, nodeId: strin
     }
     return false
   } finally {
-    if (validateSessionIdentity(state, conversationId)) {
-      state.isSwitchingBranch.value = false
-    }
+    // 与 switchBranchCandidate 同款：无条件复位，会话切换后不能让切换器锁永久卡 true
+    state.isSwitchingBranch.value = false
   }
 }
 
@@ -507,9 +507,8 @@ export async function restoreBranchCandidate(state: ChatStoreState, nodeId: stri
     }
     return false
   } finally {
-    if (validateSessionIdentity(state, conversationId)) {
-      state.isSwitchingBranch.value = false
-    }
+    // 与 switchBranchCandidate 同款：无条件复位，会话切换后不能让切换器锁永久卡 true
+    state.isSwitchingBranch.value = false
   }
 }
 
@@ -556,8 +555,7 @@ export async function renameBranchCandidate(
     }
     return false
   } finally {
-    if (validateSessionIdentity(state, conversationId)) {
-      state.isSwitchingBranch.value = false
-    }
+    // 与 switchBranchCandidate 同款：无条件复位，会话切换后不能让切换器锁永久卡 true
+    state.isSwitchingBranch.value = false
   }
 }

@@ -34,7 +34,11 @@ function decodeContextAttribute(value: string): string {
 }
 
 function decodeContextContent(value: string): string {
-  return value.replace(/&lt;\/lim-context&gt;/gi, '</lim-context>')
+  // 与 editorNode.escapeContextContent 的转义一一对应：先还原闭标签，再还原开标签。
+  // 注意：旧版序列化只转义闭标签（且带 &gt;），此处开标签还原不会误伤旧格式。
+  return value
+    .replace(/&lt;\/lim-context&gt;/gi, '</lim-context>')
+    .replace(/&lt;lim-context/gi, '<lim-context')
 }
 
 /**

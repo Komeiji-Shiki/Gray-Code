@@ -733,7 +733,7 @@ export const importSettings: MessageHandler = async (data, requestId, ctx) => {
             return;
         }
 
-        const { overwrite } = data; // 前端传入的覆盖选项
+        const { overwrite } = data || {}; // 前端传入的覆盖选项
 
         // 弹出打开对话框
         const result = await vscode.window.showOpenDialog({

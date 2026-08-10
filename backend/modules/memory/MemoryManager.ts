@@ -70,6 +70,16 @@ function parse(line: string): LogEntry | null {
 const MAX_HEADER_BYTES = 1 + 10 + 1 + 10 + 1;
 
 /**
+ * 旧版 LOG 固定宽度记录大小（迁移前的 LOG_REC=320）。
+ * 旧格式文件（320B/条）在打开时由 repairLog 无损迁移到新格式（LOG_REC=1024B/条）；
+ * 迁移判定依赖该常量，勿与 LOG_REC 混淆。
+ */
+const OLD_LOG_REC = 320;
+
+/** 记录日期字段必须是 ISO 格式（YYYY-MM-DD），用于旧/新格式内容判别 */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
  * 校验「#id date text」整条固定宽度记录可容纳。
  *
  * 固定宽度记录为 LOG_REC 字节，头部 "#<id> <date> " 随 id 位数增长（约 13~23 字节）。
@@ -186,7 +196,7 @@ export class MemoryManager {
 
     // ─── 底层读写 ──────────────────────────────
 
-    /** 修复部分写入的尾部记录（crash recovery） */
+    /** 修复部分写入的尾部记录（crash recovery，用于 TREE 文件） */
     private async repair(filePath: string, rec: number): Promise<void> {
         try {
             const stat = await fs.stat(filePath);
@@ -200,6 +210,152 @@ export class MemoryManager {
             }
         } catch {
             // 文件不存在，忽略
+        }
+    }
+
+    /**
+     * 修复 LOG 文件（所有 LOG 访问的统一前置入口，必须在锁内调用）：
+     * 1. 旧格式（320B/条）无损迁移到新格式（LOG_REC=1024B/条）；
+     * 2. 撕裂的尾部半条记录按新宽度截断（与 repair() 语义一致）。
+     *
+     * 格式判定（按文件大小）：
+     * - size % LOG_REC === 0 且非 320 对齐 → 新格式，无需处理；
+     * - 其余（旧格式 320 对齐 / 撕裂尾巴 / 同时 320·1024 对齐的歧义尺寸）→ 先尝试严格迁移：
+     *   tryMigrateLog 要求「全部完整 320 切片均为合法记录（id 连续、日期 ISO）」才执行重写，
+     *   天然区分旧格式与新格式——新格式文件的第二个 320 切片必然落在第一条 1024 记录内部，
+     *   解析失败，因此歧义尺寸（lcm=5120 的倍数）无需额外判别；
+     * - 迁移未执行时保持现状（fail-open）：对齐文件不动（可能是损坏的旧/新格式，避免截断丢数据），
+     *   非对齐文件按 LOG_REC 截断撕裂尾（与旧 repair 行为一致）。
+     */
+    private async repairLog(): Promise<void> {
+        const logPath = this.logPath();
+        let size: number;
+        try {
+            size = (await fs.stat(logPath)).size;
+        } catch (e: any) {
+            if (e?.code !== 'ENOENT') throw e;
+            return; // 文件不存在，忽略（与 repair 同口径）
+        }
+        if (size === 0) return;
+
+        // 纯新格式（1024 对齐且非 320 对齐）：无需处理
+        if (size % LOG_REC === 0 && size % OLD_LOG_REC !== 0) return;
+
+        // 其余：先尝试严格迁移（旧格式 / 旧格式+撕裂尾 / 歧义尺寸中的旧格式）
+        if (await this.tryMigrateLog()) return;
+
+        // 迁移未执行：保持现状（fail-open，不丢数据）
+        if (size % LOG_REC === 0 || size % OLD_LOG_REC === 0) return; // 对齐文件不动
+        await this.truncateLogTail(logPath, size);                    // 撕裂尾巴按新宽度截断
+    }
+
+    /**
+     * 把 LOG 从旧格式（OLD_LOG_REC=320B/条）无损迁移到新格式（LOG_REC=1024B/条）：
+     * 按 320 逐条解析（复用 parse()），重新 pad 成 1024 写入 tmp，rename 原子替换。
+     *
+     * 判定/幂等：只有「全部完整 320 切片均为合法记录（id 连续、日期 ISO）」的文件才会被
+     * 迁移——新格式或损坏文件任一切片不合法即中止，原文件不动（fail-open，不丢数据）；
+     * 迁移成功后文件为 1024 对齐，后续调用直接返回 false。
+     * 撕裂尾巴：只迁移完整切片，尾部半条记录被丢弃（与 repair 截断语义一致）。
+     * 崩溃安全：写 LOG.txt.tmp 后 rename 原子替换；任何失败/中止都清理 tmp。
+     * 必须在锁内调用（写路径经 repairLog，读路径经 ensureLogMigrated）。
+     */
+    private async tryMigrateLog(): Promise<boolean> {
+        const logPath = this.logPath();
+        const tmpPath = `${logPath}.tmp`;
+        let migrated = false;
+        try {
+            const handle = await fs.open(logPath, 'r');
+            let valid = false;
+            try {
+                const stat = await handle.stat();
+                if (stat.size >= OLD_LOG_REC) {
+                    // 快速判别：前两条 320 记录必须都合法（id 0/1、ISO 日期），否则不是旧格式
+                    // ——新格式/损坏文件的第二个 320 切片必然落在第一条 1024 记录内部，解析失败。
+                    // 避免大文件每次访问都全量扫描（歧义尺寸下 1024 对齐的新文件也会走到这里）。
+                    const probe = Buffer.alloc(OLD_LOG_REC * 2);
+                    const { bytesRead: probeRead } = await handle.read(probe, 0, probe.length, 0);
+                    if (probeRead >= OLD_LOG_REC * 2) {
+                        const p0 = probe.subarray(0, OLD_LOG_REC).toString('utf-8').trimEnd();
+                        const p1 = probe.subarray(OLD_LOG_REC, OLD_LOG_REC * 2).toString('utf-8').trimEnd();
+                        const e0 = p0 ? parse(p0) : null;
+                        const e1 = p1 ? parse(p1) : null;
+                        if (!e0 || e0.id !== 0 || !ISO_DATE_RE.test(e0.date) ||
+                            !e1 || e1.id !== 1 || !ISO_DATE_RE.test(e1.date)) {
+                            return false; // 非旧格式
+                        }
+                    }
+                    const outHandle = await fs.open(tmpPath, 'w');
+                    try {
+                        valid = true;
+                        let outCount = 0;
+                        const CHUNK = 4096; // 每次最多处理的旧记录条数（≈1.3MB）
+                        for (let base = 0; base < stat.size; base += CHUNK * OLD_LOG_REC) {
+                            const bytes = Math.min(CHUNK * OLD_LOG_REC, stat.size - base);
+                            const buf = Buffer.alloc(bytes);
+                            const { bytesRead } = await handle.read(buf, 0, bytes, base);
+                            const effective = Math.floor(bytesRead / OLD_LOG_REC);
+                            const kept: Buffer[] = [];
+                            for (let i = 0; i < effective; i++) {
+                                const idx = base / OLD_LOG_REC + i; // 旧格式 id 连续，切片序号即期望 id
+                                const slice = buf.subarray(i * OLD_LOG_REC, (i + 1) * OLD_LOG_REC);
+                                const str = slice.toString('utf-8').trimEnd();
+                                const entry = str ? parse(str) : null;
+                                // 严格校验：任一完整切片不是合法记录（空/损坏/id 不连续/日期非 ISO）
+                                // 即中止迁移——防止把新格式或损坏文件误判为旧格式而重写损坏。
+                                if (!entry || entry.id !== idx || !ISO_DATE_RE.test(entry.date)) {
+                                    valid = false;
+                                    break;
+                                }
+                                kept.push(pad(`#${outCount} ${entry.date} ${entry.text}`, LOG_REC));
+                                outCount++;
+                            }
+                            if (!valid) break;
+                            if (kept.length > 0) await outHandle.write(Buffer.concat(kept));
+                        }
+                    } finally {
+                        await outHandle.close();
+                    }
+                }
+            } finally {
+                await handle.close();
+            }
+            if (valid) {
+                // 读写句柄都已关闭后再 rename（Windows 下目标被占用会 EPERM，与 deleteRange 同理）
+                await fs.rename(tmpPath, logPath);
+                migrated = true;
+            } else {
+                await fs.unlink(tmpPath).catch(() => { /* 无残留则忽略 */ });
+            }
+        } catch (e: any) {
+            // fail-open：迁移失败不影响正常读写——原文件不动，仅告警（残留 tmp 由下次尝试清理）
+            try { await fs.unlink(tmpPath); } catch { /* 忽略 */ }
+            console.warn(`[MemoryManager] LOG migration skipped (${e?.message ?? e}); the file is kept as-is.`);
+        }
+        return migrated;
+    }
+
+    /** 截断撕裂的尾部半条记录（与 repair(filePath, rec) 的截断语义一致，宽度为 LOG_REC） */
+    private async truncateLogTail(logPath: string, size: number): Promise<void> {
+        const handle = await fs.open(logPath, 'r+');
+        try {
+            await handle.truncate(size - (size % LOG_REC));
+        } finally {
+            await handle.close();
+        }
+    }
+
+    /**
+     * 确保 LOG 已迁移到新格式（读取路径的最早入口）。
+     * 只允许在未持锁的调用链中调用（wake/recall/compress/zoom/listEntries/totalEntries 等
+     * 公开读取入口）；持锁路径（写操作）直接调用 repairLog——本方法内部会取锁，不可重入。
+     */
+    private async ensureLogMigrated(): Promise<void> {
+        const release = await this.lock.acquire();
+        try {
+            await this.repairLog();
+        } finally {
+            release();
         }
     }
 
@@ -224,7 +380,7 @@ export class MemoryManager {
     private async logAppend(items: Array<{ date: string; text: string }>): Promise<number> {
         const release = await this.lock.acquire();
         try {
-            await this.repair(this.logPath(), LOG_REC);
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const base = await this.logLen();
             const chunks: Buffer[] = [];
             for (let k = 0; k < items.length; k++) {
@@ -315,7 +471,13 @@ export class MemoryManager {
             await this.repair(p, TREE_REC);
             const n = await this.count(p, TREE_REC);
             const targetIndex = lo / size;
-            if (n < targetIndex) return false;
+            if (n < targetIndex) {
+                // 缺槽原因：目标槽之前的块缺失（树被并发截断/越序压缩）。
+                // 不能静默 return false——compress() 会误报「已被其他会话压缩」；
+                // 给出可操作提示：按序执行 memory_compress 重建缺失块。
+                die(`Cannot write #${lo}-${hi - 1}: ${n} of ${targetIndex} tree blocks present, ` +
+                    `earlier blocks are missing. Run memory_compress to build pending blocks in order.`);
+            }
             if (n === targetIndex) {
                 await fs.appendFile(p, pad(text, TREE_REC));
                 return true;
@@ -344,6 +506,7 @@ export class MemoryManager {
         let size = hi - lo;
         const release = await this.lock.acquire();
         try {
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const T = await this.logLen();
             while (size <= T) {
                 const p = this.treePath(size);
@@ -493,7 +656,16 @@ export class MemoryManager {
         while (size <= T) {
             const have = await this.count(this.treePath(size), TREE_REC);
             const maxK = Math.floor(T / size);
-            for (let k = have; k < maxK; k++) {
+            // count 只反映「文件里有多少个槽位」，不能反映「哪些槽位有内容」：
+            // treeDrop 会把中间槽位写成空记录（保留索引供 treePut 复用），
+            // 空槽从未被压缩，必须重新进入待压缩队列。
+            // k >= have 的槽位从未写入，直接视为待压缩（保持原有 count 语义）；
+            // k < have 的槽位逐槽读内容判空，空槽同样视为待压缩。
+            for (let k = 0; k < maxK; k++) {
+                if (k < have) {
+                    const s = await this.treeGet(k * size, (k + 1) * size);
+                    if (s !== null) continue; // 已有摘要
+                }
                 todo.push([k * size, (k + 1) * size]);
                 if (limit && todo.length >= limit) return todo;
             }
@@ -506,7 +678,16 @@ export class MemoryManager {
     async pendingCount(T: number): Promise<number> {
         let n = 0, size = 2;
         while (size <= T) {
-            n += Math.max(0, Math.floor(T / size) - await this.count(this.treePath(size), TREE_REC));
+            const have = await this.count(this.treePath(size), TREE_REC);
+            const maxK = Math.floor(T / size);
+            // 与 pending() 同口径：[have, maxK) 从未写入全部待压缩；
+            // [0, have) 内 treeDrop 留下的空记录也算待压缩
+            let pendingBlocks = Math.max(0, maxK - have);
+            for (let k = 0; k < have && k < maxK; k++) {
+                const s = await this.treeGet(k * size, (k + 1) * size);
+                if (s === null) pendingBlocks++;
+            }
+            n += pendingBlocks;
             size *= 2;
         }
         return n;
@@ -535,7 +716,10 @@ export class MemoryManager {
             `\n${remaining} compressions remain after this one.`;
 
         const blockId = `${lo}-${hi - 1}`;
-        const prompt = `Compress memories #${lo}-${hi - 1} into one line of at most ${this.config.entryChars} characters.\n` +
+        // 修改原因：compress 的摘要预算已按树记录宽度钳制（min(entryChars, TREE_REC-1)，见 compress），
+        //          提示语必须使用同一预算并按字节计，否则模型按 entryChars 生成超长摘要必然被拒。
+        const summaryLimit = Math.min(this.config.entryChars, TREE_REC - 1);
+        const prompt = `Compress memories #${lo}-${hi - 1} into one line of at most ${summaryLimit} bytes.\n` +
             `Keep what has lasting effect, drop what does not. Invent nothing.\n\n${body}${tail}\n` +
             `Run: memory_compress "${blockId}" "<your line>"`;
 
@@ -579,6 +763,7 @@ export class MemoryManager {
      * @param T 快照时的记忆总数（不传则用当前总数）
      */
     async wake(part?: number, T?: number): Promise<WakeResult> {
+        await this.ensureLogMigrated();
         const now = await this.logLen();
         const snapshotT = T ?? now;
         if (snapshotT > now) {
@@ -710,6 +895,7 @@ export class MemoryManager {
      * recall: 正则搜索全部记忆。
      */
     async recall(regex: string): Promise<RecallResult> {
+        await this.ensureLogMigrated();
         // ReDoS 防护：长度上限 + 危险模式检测 + 构造异常捕获（共享 regexGuard）
         const guarded = validateRegexPattern(regex, 'i');
         if (!guarded.ok) {
@@ -758,6 +944,7 @@ export class MemoryManager {
      * @param summary 压缩后的摘要文本
      */
     async compress(blockId?: string, summary?: string): Promise<CompressResult> {
+        await this.ensureLogMigrated();
         const T = await this.logLen();
         let said = false;
 
@@ -787,8 +974,16 @@ export class MemoryManager {
                 const trimmed = (summary || '').trim();
                 if (!trimmed) die('Empty summary.');
                 const byteLen = Buffer.byteLength(trimmed, 'utf-8');
-                if (byteLen > this.config.entryChars) {
-                    die(`Too long: ${byteLen} bytes, limit ${this.config.entryChars}.`);
+                // 修改原因：树摘要写入 treePut 用 TREE_REC=288 的固定宽度记录，pad() 只容纳
+                //           TREE_REC-1=287 字节；entryChars 上限按 LOG 记录宽度（约 1000）校验，
+                //           配置调高后 288+ 字节的摘要能通过 entryChars 校验，却在 treePut 的
+                //           pad() 处抛晦涩的 "Too long"（拒绝而非损坏，但体验差）。
+                // 修改方式：compress 的摘要预算按树记录宽度钳制为 min(entryChars, TREE_REC-1)，
+                //           校验失败的错误信息与真实落盘容量一致，且与 napPrompt 提示同口径。
+                // 修改目的：配置调高后 compress 不再因记录宽度限制报错。
+                const summaryLimit = Math.min(this.config.entryChars, TREE_REC - 1);
+                if (byteLen > summaryLimit) {
+                    die(`Too long: ${byteLen} bytes, limit ${summaryLimit}.`);
                 }
                 const ok = await this.treePut(lo, hi, trimmed);
                 if (ok) {
@@ -812,6 +1007,7 @@ export class MemoryManager {
      * zoom: 展开树节点查看两半。
      */
     async zoom(blockId: string): Promise<ZoomResult> {
+        await this.ensureLogMigrated();
         const [lo, hi] = this.parseBlockId(blockId);
         const T = await this.logLen();
         if (lo >= T) {
@@ -852,11 +1048,12 @@ export class MemoryManager {
      *
      * 流式逐块扫描 LOG（logScan 每块最多 LOG_REC * 4096 字节），
      * 不再一次性分配 T * LOG_REC 字节的 Buffer 全量读入——记忆量大时
-     * （如 100 万条 ≈ 320MB）会显著抬高峰值内存。
+     * （如 100 万条 ≈ 1GB）会显著抬高峰值内存。
      *
      * @param limit 可选：最多返回的条目数（不传则返回全部）
      */
     async listEntries(limit?: number): Promise<LogEntry[]> {
+        await this.ensureLogMigrated();
         const entries: LogEntry[] = [];
         for await (const e of this.logScan()) {
             entries.push(e);
@@ -867,12 +1064,13 @@ export class MemoryManager {
 
     /** 当前原始记忆总数（O(1)，仅一次 stat；供设置页列表分页/截断展示） */
     async totalEntries(): Promise<number> {
+        await this.ensureLogMigrated();
         return this.logLen();
     }
 
     /**
      * updateEntry: 原地覆写单条原始记忆的文本。
-     * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 319 字节）。
+     * 新文本必须不超过固定宽度（LOG_REC - 1 字节，即 1023 字节）。
      */
     async updateEntry(id: number, text: string): Promise<void> {
         const trimmed = text.trim();
@@ -889,6 +1087,7 @@ export class MemoryManager {
         // 基于过期 id 的写入会越过 EOF，产生零填充垃圾记录。
         const release = await this.lock.acquire();
         try {
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const T = await this.logLen();
             if (id < 0 || id >= T) {
                 die(`No memory at index ${id}.`);
@@ -941,7 +1140,7 @@ export class MemoryManager {
                 die(`Invalid delete range: lo=${lo}, hi=${hi}.`);
             }
             const logPath = this.logPath();
-            await this.repair(logPath, LOG_REC);
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             T = await this.logLen();
             if (lo < 0 || lo >= T) {
                 die(`No memory at index ${lo}.`);
@@ -950,17 +1149,21 @@ export class MemoryManager {
                 die(`No memory at index ${hi}.`);
             }
 
-            const rebuilt: Buffer[] = [];
+            const tmpPath = `${logPath}.tmp`;
             const handle = await fs.open(logPath, 'r');
+            const outHandle = await fs.open(tmpPath, 'w');
+            let outCount = 0;
             try {
-                // B-6: 分块读取（每次至多 CHUNK 条），避免百万条记忆时逐条 320B read 的百万次系统调用。
+                // B-6: 分块读取（每次至多 CHUNK 条），避免百万条记忆时逐条 1KB read 的百万次系统调用。
                 // 物理索引对齐与空/损坏记录跳过语义与旧实现一致。
+                // 流式写 tmp：不再全量累积 rebuilt 数组，峰值内存从 O(T·LOG_REC) 降为 O(CHUNK·LOG_REC)。
                 const CHUNK = 4096;
                 for (let base = 0; base < T; base += CHUNK) {
                     const count = Math.min(CHUNK, T - base);
                     const buf = Buffer.alloc(count * LOG_REC);
                     const { bytesRead } = await handle.read(buf, 0, buf.length, base * LOG_REC);
                     const effective = Math.floor(bytesRead / LOG_REC);
+                    const kept: Buffer[] = [];
                     for (let i = 0; i < effective; i++) {
                         const idx = base + i;
                         const slice = buf.subarray(i * LOG_REC, (i + 1) * LOG_REC);
@@ -972,10 +1175,15 @@ export class MemoryManager {
                         if (!parsed) {
                             continue; // B-9: 损坏行跳过（不重建），与 records() 解析口径一致
                         }
-                        rebuilt.push(pad(`#${rebuilt.length} ${parsed.date} ${parsed.text}`, LOG_REC));
+                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, LOG_REC));
+                        outCount++;
+                    }
+                    if (kept.length > 0) {
+                        await outHandle.write(Buffer.concat(kept));
                     }
                 }
             } finally {
+                await outHandle.close();
                 await handle.close();
             }
 
@@ -999,10 +1207,8 @@ export class MemoryManager {
                 }
             }
 
-            // 读句柄已关闭后再写回：Windows 下目标文件被占用时 rename 会 EPERM。
+            // 读/写句柄已关闭后再 rename：Windows 下目标文件被占用时 rename 会 EPERM。
             // tmp+rename 原子替换，崩溃不损坏线上文件。
-            const tmpPath = `${logPath}.tmp`;
-            await fs.writeFile(tmpPath, Buffer.concat(rebuilt));
             await fs.rename(tmpPath, logPath);
         } finally {
             release();
@@ -1019,11 +1225,11 @@ export class MemoryManager {
     }
 
     /**
-     * deleteEntries: 批量删除多条原始记忆（按闭区间聚合）。
+     * deleteEntries: 批量删除多条原始记忆。
      *
-     * 接收非负整数 id 数组（可乱序、可重复），内部排序后合并相邻 id 为闭区间，
-     * 从大到小逐个 deleteRange（删除大 id 不影响小 id 的索引），
-     * 返回实际删除条数。删除后相关树摘要随 deleteRange 一并清空。
+     * 接收非负整数 id 数组（可乱序、可重复），内部排序去重后单次流式扫描 LOG：
+     * 按原始索引跳过目标 id、重编号写 tmp 后原子换回（等价于“从大到小逐个删除”，
+     * 但只扫描一次 LOG），返回实际删除条数。删除后相关树摘要一并清空。
      */
     async deleteEntries(ids: number[]): Promise<{ removed: number }> {
         if (!Array.isArray(ids)) {
@@ -1033,21 +1239,94 @@ export class MemoryManager {
         if (sorted.length === 0) {
             return { removed: 0 };
         }
-        // 防御：非负整数校验（调用方已校验，这里是 API 层兜底，防止 NaN/负数/浮点进入 deleteRange）
+        // 防御：非负整数校验（调用方已校验，这里是 API 层兜底，防止 NaN/负数/浮点进入删除逻辑）
         if (sorted.some(id => !Number.isInteger(id) || id < 0)) {
             die('deleteEntries: ids must be non-negative integers.');
         }
-        let removed = 0;
-        for (let i = sorted.length - 1; i >= 0; ) {
-            let j = i;
-            while (j > 0 && sorted[j] - sorted[j - 1] === 1) {
-                j--;
+
+        const release = await this.lock.acquire();
+        try {
+            const logPath = this.logPath();
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            const T = await this.logLen();
+            const maxId = sorted[sorted.length - 1];
+            if (maxId >= T) {
+                die(`No memory at index ${maxId}.`);
             }
-            const r = await this.deleteRange(sorted[j], sorted[i]);
-            removed += r.removed;
-            i = j - 1;
+
+            // 合并相邻 id 为闭区间（仅用于尾部判定，删除本身按 id 集合单次扫描）
+            const ranges: Array<[number, number]> = [];
+            for (const id of sorted) {
+                const last = ranges[ranges.length - 1];
+                if (last && id === last[1] + 1) {
+                    last[1] = id;
+                } else {
+                    ranges.push([id, id]);
+                }
+            }
+            const toDelete = new Set(sorted);
+
+            // 单次流式扫描 LOG：跳过分组内的 id、重编号后写 tmp，
+            // 替代原先对每个区间重复全量扫描（多个区间 = 多次 O(T) 扫描）。
+            const tmpPath = `${logPath}.tmp`;
+            const handle = await fs.open(logPath, 'r');
+            const outHandle = await fs.open(tmpPath, 'w');
+            let outCount = 0;
+            try {
+                const CHUNK = 4096;
+                for (let base = 0; base < T; base += CHUNK) {
+                    const count = Math.min(CHUNK, T - base);
+                    const buf = Buffer.alloc(count * LOG_REC);
+                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * LOG_REC);
+                    const effective = Math.floor(bytesRead / LOG_REC);
+                    const kept: Buffer[] = [];
+                    for (let i = 0; i < effective; i++) {
+                        const idx = base + i;
+                        const slice = buf.subarray(i * LOG_REC, (i + 1) * LOG_REC);
+                        const str = slice.toString('utf-8').trimEnd();
+                        // 空/损坏记录跳过语义与 deleteRange 一致
+                        if (!str) continue;
+                        if (toDelete.has(idx)) continue;
+                        const parsed = parse(str);
+                        if (!parsed) continue;
+                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, LOG_REC));
+                        outCount++;
+                    }
+                    if (kept.length > 0) {
+                        await outHandle.write(Buffer.concat(kept));
+                    }
+                }
+            } finally {
+                await outHandle.close();
+                await handle.close();
+            }
+
+            // 树摘要清理（与 deleteRange 多区间聚合后的最终语义一致）：
+            // 仅当删除恰好构成一个覆盖日志尾部的单区间时保留其前缀块，
+            // 否则全部清空——多区间/非尾部删除时任何块都可能因重编号而失效。
+            const newT = T - sorted.length;
+            const tailSingleRange = ranges.length === 1 && ranges[0][1] === T - 1;
+            for (let size = 2; size <= T; size *= 2) {
+                const p = this.treePath(size);
+                const keep = tailSingleRange ? Math.floor(newT / size) : 0;
+                const n = await this.count(p, TREE_REC);
+                if (n > keep) {
+                    await this.repair(p, TREE_REC);
+                    const th = await fs.open(p, 'r+');
+                    try {
+                        await th.truncate(keep * TREE_REC);
+                    } finally {
+                        await th.close();
+                    }
+                }
+            }
+
+            // 树清理完成后原子换 LOG（顺序与 deleteRange 一致：先清树、后换 LOG）
+            await fs.rename(tmpPath, logPath);
+            return { removed: sorted.length };
+        } finally {
+            release();
         }
-        return { removed };
     }
 
     /** 丢弃所有覆盖给定 ID 的树摘要（编辑记忆后调用） */
@@ -1089,7 +1368,7 @@ export class MemoryManager {
             }
             // 1. 截断 LOG 文件
             const logPath = this.logPath();
-            await this.repair(logPath, LOG_REC);
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const logHandle = await fs.open(logPath, 'r+');
             try {
                 await logHandle.truncate(keepId * LOG_REC);
@@ -1130,7 +1409,7 @@ export class MemoryManager {
 
     async updateConfig(updates: Partial<MemoryConfig>): Promise<MemoryConfig> {
         // 逐项校验：非法值直接抛错（与模块内 die() 的错误风格一致，工具层会转成失败结果），
-        // 避免 entryChars 被设为 >319 后所有 note/compress 都在 pad() 抛 Too long。
+        // 避免 entryChars 被设为 >1000 后所有 note/compress 都在 pad() 抛 Too long。
         const validated: Partial<MemoryConfig> = {};
         for (const [key, min, max] of MEMORY_CONFIG_BOUNDS) {
             const value = updates[key];
@@ -1178,6 +1457,14 @@ export class MemoryManager {
                 if (key === 'ENTRY_CHARS') cfg.entryChars = parseInt(val, 10) || cfg.entryChars;
                 if (key === 'PART_CHARS') cfg.partChars = parseInt(val, 10) || cfg.partChars;
                 if (key === 'PART_LINES') cfg.partLines = parseInt(val, 10) || cfg.partLines;
+            }
+            // 复用 MEMORY_CONFIG_BOUNDS 钳制非法值：配置文件可能被手工改出界
+            // （如 ENTRY_CHARS 超上限），未钳制会在 note/compress 的 pad() 处抛
+            // 晦涩 Too long——与 updateConfig 的校验口径保持一致（此处只钳制不抛错）。
+            for (const [key, min, max] of MEMORY_CONFIG_BOUNDS) {
+                const value = cfg[key];
+                if (value < min) cfg[key] = min;
+                else if (value > max) cfg[key] = max;
             }
             this.config = cfg;
             return cfg;

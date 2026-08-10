@@ -1111,8 +1111,13 @@ async function saveConfig() {
   }
 }
 
+// token 计数请求序号：丢弃过期响应，避免慢响应覆盖新结果（如切换渠道后旧响应迟到）
+let tokenCountRequestSeq = 0
+
 // 计算 token 数量（分别计算静态模板和动态上下文）
 async function countTokens() {
+  const seq = ++tokenCountRequestSeq
+
   if (!config.template) {
     staticTokenCount.value = null
     dynamicTokenCount.value = null
@@ -1134,6 +1139,9 @@ async function countTokens() {
       conversationId: chatStore.currentConversationId
     })
 
+    // 过期响应直接丢弃
+    if (seq !== tokenCountRequestSeq) return
+
     if (result?.success) {
       staticTokenCount.value = result.staticTokens ?? null
       dynamicTokenCount.value = result.dynamicTokens ?? null
@@ -1143,12 +1151,14 @@ async function countTokens() {
       tokenCountError.value = result?.error || 'Token count failed'
     }
   } catch (error: any) {
+    // 过期响应直接丢弃
+    if (seq !== tokenCountRequestSeq) return
     console.error('Failed to count tokens:', error)
     staticTokenCount.value = null
     dynamicTokenCount.value = null
     tokenCountError.value = error.message || 'Token count failed'
   } finally {
-    isCountingTokens.value = false
+    if (seq === tokenCountRequestSeq) isCountingTokens.value = false
   }
 }
 

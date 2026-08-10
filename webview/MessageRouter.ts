@@ -19,7 +19,6 @@ import type * as vscode from 'vscode';
 export const STREAM_MESSAGE_TYPES = [
   'chatStream',
   'retryStream',
-  'editAndRetryStream',
   'toolConfirmation',
   'cancelStream',
   // H2（R6a-FIX）：reroll/editBranch 长流与 chatStream/retryStream 同模式——
@@ -65,8 +64,11 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set([
   // 网络/下载类：耗时取决于网络状况，不应阻塞队列中的其它请求。
   'countSystemPromptTokens', // token 计数调用渠道 API
   'tokenizer.getResource',   // 首次下载 tokenizer 词表（分钟级）
-  // 目录统计类：大目录统计可达数十秒。
-  'storagePath.getStats'
+  // 更新检查/安装类（UpdateHandlers）：checkNow 含网络请求（checker.check），
+  // updateNow 除检查外还含下载+安装（分钟级）；若在串行队列中 await，期间
+  // cancelStream / deleteMessage 等取消类消息全部排队，webview 通道整体冻结。
+  'checkUpdateNow',
+  'updateNow'
 ]);
 
 /**
@@ -196,16 +198,22 @@ export class MessageRouter {
         if (!this.clientRegistry.sendResponse(clientId, requestId, data)) {
           ctx.sendResponse(requestId, data);
         }
-        this.requestClients.delete(requestId);
+        // 不在此处删除 requestClients：流式请求（chat.rerollStream / chat.editBranchStream）
+        // 的 started:true 之后流仍在进行，后续错误响应仍要靠 requestId → clientId 映射
+        // 路由回发起方；条目由 route() 的非阻塞/阻塞兜底与 runRegistryStreamHandler
+        // 成功回调统一清理（与 finalizeRequest 语义一致）。
       },
       sendError: (requestId, code, message) => {
         if (!this.clientRegistry.sendError(clientId, requestId, code, message)) {
           ctx.sendError(requestId, code, message);
         }
-        this.requestClients.delete(requestId);
       },
       postMessage: (message: any) => {
-        if (!this.clientRegistry.postMessage(clientId, message)) {
+        // 同步失败由返回值回退；异步投递失败（webview 已销毁/拒绝）经回调回退——
+        // 二者互斥，不会双重回退
+        if (!this.clientRegistry.postMessage(clientId, message, () => {
+          ctx.postMessage?.(message);
+        })) {
           ctx.postMessage?.(message);
         }
       }
@@ -251,6 +259,9 @@ export class MessageRouter {
   private runStreamTask(task: Promise<void>, requestId: string, type: string): void {
     task.catch((error: any) => {
       console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
+      // 空 requestId（如 cancelAllStreams 的 fire-and-forget 任务）没有可路由的发起方：
+      // 只记录日志，不回传错误（回传只会错投主聊天且无 requestId 可匹配）
+      if (!requestId) return;
       try {
         this.sendRoutedError(requestId, 'STREAM_HANDLER_ERROR', error?.message || String(error));
       } finally {
@@ -275,11 +286,7 @@ export class MessageRouter {
       case 'retryStream':
         this.runStreamTask(this.streamHandler.handleRetryStream(data, requestId, clientId), requestId, type);
         break;
-        
-      case 'editAndRetryStream':
-        this.runStreamTask(this.streamHandler.handleEditAndRetryStream(data, requestId, clientId), requestId, type);
-        break;
-        
+
       case 'toolConfirmation':
         this.runStreamTask(this.streamHandler.handleToolConfirmationStream(data, requestId, clientId), requestId, type);
         break;
@@ -335,16 +342,23 @@ export class MessageRouter {
       return;
     }
     const routedCtx = this.createRoutedContext(ctx, clientId);
-    Promise.resolve(handler(data, requestId, routedCtx)).catch((error: any) => {
-      console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
-      // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息
-      try {
-        this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
-      } catch {
-        // 发送错误失败则静默忽略
+    Promise.resolve(handler(data, requestId, routedCtx)).then(
+      () => {
+        // 流正常结束后统一清理路由映射（与 finalizeRequest 语义一致；
+        // 流期间错误由 handler 内经 routedCtx 回传，不依赖该映射）
+        this.requestClients.delete(requestId);
+      },
+      (error: any) => {
+        console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
+        // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息
+        try {
+          this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
+        } catch {
+          // 发送错误失败则静默忽略
+        }
+        this.requestClients.delete(requestId);
       }
-      this.requestClients.delete(requestId);
-    });
+    );
   }
 
   /**

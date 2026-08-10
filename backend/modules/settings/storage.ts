@@ -85,10 +85,13 @@ export class MemorySettingsStorage implements SettingsStorage {
     private settings: GlobalSettings | null = null;
     
     async load(): Promise<GlobalSettings | null> {
-        return this.settings ? { ...this.settings } : null;
+        // 深拷贝返回：浅展开只保护顶层，嵌套对象（toolsConfig 等）仍是活引用，
+        // 调用方原地修改会污染内存中的存储状态
+        return this.settings ? structuredClone(this.settings) : null;
     }
     
     async save(settings: GlobalSettings): Promise<void> {
-        this.settings = { ...settings };
+        // 深拷贝保存：与调用方对象解耦，后续原地修改不会影响已保存的状态
+        this.settings = structuredClone(settings);
     }
 }

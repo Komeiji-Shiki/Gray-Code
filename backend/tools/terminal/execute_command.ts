@@ -348,8 +348,30 @@ function getDefaultShellPath(shellType: string): string {
 
 /**
  * 检测单个 Shell 是否可用
+ *
+ * 修改原因：异步检测每次调用都会重新 execFile/execFile 外部进程，而同步版
+ *          checkShellAvailabilitySync 已有模块级缓存；同一 shell 在工具执行时被
+ *          重复检测浪费进程启动开销。
+ * 修改方式：入口先查 shellAvailabilityCache（与同步版共用、进程生命周期 TTL），
+ *          命中直接返回；未命中则执行检测并把布尔结果回写缓存，两种路径共享结果。
  */
 export async function checkShellAvailability(shellType: string, customPath?: string): Promise<{
+    available: boolean;
+    reason?: string;
+}> {
+    const cacheKey = getShellAvailabilityCacheKey(shellType, customPath);
+    const cached = shellAvailabilityCache.get(cacheKey);
+    if (cached !== undefined) {
+        // 缓存只存布尔值（与同步版一致），不可用时不再重构具体原因，由调用方回退兜底文案
+        return cached ? { available: true } : { available: false };
+    }
+    const result = await checkShellAvailabilityUncached(shellType, customPath);
+    shellAvailabilityCache.set(cacheKey, result.available);
+    return result;
+}
+
+/** 无缓存的原始异步检测逻辑（仅由 checkShellAvailability 调用） */
+async function checkShellAvailabilityUncached(shellType: string, customPath?: string): Promise<{
     available: boolean;
     reason?: string;
 }> {
@@ -474,6 +496,15 @@ function getLastLines(lines: string[], n: number): string[] {
 type StreamDecodeMode = 'utf8' | 'gbk';
 
 /**
+ * 模块级复用的 GBK 预览解码器（非流式，仅供 shouldFallbackToGbk 的预览判定使用）。
+ *
+ * 修改原因：decodeWithMode 每 chunk 都 new TextDecoder('gbk')，高频输出时反复构造解码器。
+ * 修改方式：提升为模块级实例复用；注意它与流式 gbkDecoder 互不共享，
+ *          本实例只做非流式 decode（不传 stream:true），状态互不污染。
+ */
+const gbkPreviewDecoder = new TextDecoder('gbk');
+
+/**
  * 统计 Unicode 替换字符数量
  *
  * 当字节流按错误编码解码时，通常会出现大量 U+FFFD（�）
@@ -524,7 +555,7 @@ function decodeWithMode(
         return utf8Text;
     }
 
-    const gbkPreview = new TextDecoder('gbk').decode(chunk);
+    const gbkPreview = gbkPreviewDecoder.decode(chunk);
     if (shouldFallbackToGbk(utf8Text, gbkPreview, chunk)) {
         modeRef.mode = 'gbk';
         return gbkDecoder.decode(chunk, { stream: true });

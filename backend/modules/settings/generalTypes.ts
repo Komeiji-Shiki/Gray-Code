@@ -151,7 +151,7 @@ export interface GlobalSettings {
      *
      * 防止 AI 无限循环调用工具
      * -1 表示无限制
-     * 默认: 50
+     * 默认: 200
      */
     maxToolIterations?: number;
     

@@ -1,6 +1,6 @@
 const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
 const mockReadFile = jest.fn()
-const mockStat = jest.fn().mockRejectedValue({ code: 'FileNotFound' })
+const mockStat = jest.fn()
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
 const mockResolveUriWithInfo = jest.fn()
@@ -42,6 +42,15 @@ describe('create_plan tool', () => {
       error: undefined
     }))
     mockReadFile.mockResolvedValue(new TextEncoder().encode('# Source Document'))
+    // stat 双角色：计划输出文件不存在（FileNotFound → 允许继续创建）；
+    // 源工件文档存在（buildTrackedPlanSourceArtifact 先 stat 查 size，2MB 大小护栏）
+    mockStat.mockImplementation((uri: any) => {
+      const fsPath = typeof uri?.fsPath === 'string' ? uri.fsPath : ''
+      if (fsPath.includes('.graycode/design/')) {
+        return Promise.resolve({ size: 256 })
+      }
+      return Promise.reject({ code: 'FileNotFound' })
+    })
   })
 
   it('writes a normalized plan markdown document with TODO section and requires confirmation', async () => {

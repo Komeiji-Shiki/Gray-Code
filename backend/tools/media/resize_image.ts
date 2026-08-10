@@ -115,13 +115,13 @@ async function executeResizeTask(
         return { index, success: false, error: `Task ${index + 1}: output_path is required` };
     }
 
-    // 验证目标尺寸
-    if (!width || width <= 0) {
-        return { index, success: false, error: `Task ${index + 1}: width must be a positive integer` };
+    // 验证目标尺寸（NaN/Infinity 会穿透 !width 与 width <= 0 检查，显式要求有限数）
+    if (typeof width !== 'number' || !Number.isFinite(width) || width <= 0) {
+        return { index, success: false, error: `Task ${index + 1}: width must be a positive finite number` };
     }
 
-    if (!height || height <= 0) {
-        return { index, success: false, error: `Task ${index + 1}: height must be a positive integer` };
+    if (typeof height !== 'number' || !Number.isFinite(height) || height <= 0) {
+        return { index, success: false, error: `Task ${index + 1}: height must be a positive finite number` };
     }
 
     // 验证尺寸范围（防止过大导致内存问题）

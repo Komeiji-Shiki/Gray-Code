@@ -4,7 +4,7 @@
  * 负责处理设置相关的所有请求
  */
 
-import { t } from '../../../i18n';
+import { t, setLanguage } from '../../../i18n';
 import type { SettingsManager } from '../../settings/SettingsManager';
 import type { CheckpointConfig, GenerateImageToolConfig, MemoryToolConfig, SummarizeConfig } from '../../settings/types';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
@@ -213,6 +213,13 @@ export class SettingsHandler {
     async updateUISettings(request: UpdateUISettingsRequest): Promise<UpdateSettingsResponse> {
         try {
             await this.settingsManager.updateUISettings(request.uiSettings);
+
+            // 前端保存 ui.language 时联动更新后端 i18n 语言（与 extension.ts 的 setDetectedLanguage 互补）
+            const language = request.uiSettings.language;
+            if (language === 'auto' || language === 'zh-CN' || language === 'en' || language === 'ja') {
+                setLanguage(language);
+            }
+
             const settings = this.settingsManager.getSettings();
             
             return {
@@ -877,6 +884,16 @@ export class SettingsHandler {
             let dynamicTokens = 0;
             if (dynamicResult?.success && dynamicResult.totalTokens !== undefined) {
                 dynamicTokens = dynamicResult.totalTokens;
+            } else if (dynamicResult) {
+                // C-x：动态上下文计数失败不再静默吞掉（旧实现悄悄当 0 返回成功）——
+                // 与静态计数失败同等对待，返回失败响应，让前端明确感知计数异常
+                return {
+                    success: false,
+                    error: {
+                        code: 'TOKEN_COUNT_FAILED',
+                        message: dynamicResult.error || t('modules.api.settings.errors.tokenCountFailed')
+                    }
+                };
             }
             
             if (staticResult.success) {

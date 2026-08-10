@@ -173,7 +173,12 @@ export class McpManager {
             }
         }
 
+        // 统一清空全部状态 map：dispose 后实例不再持有任何连接/代际/刷新链残留
         this.servers.clear();
+        this.clients.clear();
+        this.connectPromises.clear();
+        this.refreshChains.clear();
+        this.connectGenerations.clear();
         this.listeners.clear();
         this.initialized = false;
     }
@@ -1087,7 +1092,7 @@ export class McpManager {
             const result = await client.callTool(request.toolName, request.arguments, request.signal);
             return {
                 success: !result.isError,
-                content: result.content.map(c => ({
+                content: (result.content || []).map(c => ({
                     type: c.type as 'text' | 'image' | 'resource',
                     text: c.text,
                     data: c.data,
@@ -1116,16 +1121,20 @@ export class McpManager {
         }
         
         const result = await client.readResource(request.uri, request.signal);
-        const content = result.contents[0];
-        if (!content) {
+        const contents = result.contents || [];
+        if (contents.length === 0) {
             return null;
         }
         
+        // 返回全部内容：多段文本聚合为一段（按换行连接），避免只取 contents[0]
+        // 丢失服务器返回的其余内容；无文本内容（如纯 blob）时退回首个内容的原始字段
+        const first = contents[0];
+        const textContents = contents.filter(c => typeof c.text === 'string');
         return {
-            uri: content.uri,
-            mimeType: content.mimeType,
-            text: content.text,
-            blob: content.blob
+            uri: first.uri,
+            mimeType: first.mimeType,
+            text: textContents.length > 0 ? textContents.map(c => c.text as string).join('\n') : first.text,
+            blob: first.blob
         };
     }
 

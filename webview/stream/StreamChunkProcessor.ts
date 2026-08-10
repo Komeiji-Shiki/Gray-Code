@@ -53,19 +53,19 @@ export class StreamChunkProcessor {
 
   /**
    * 处理并发送 chunk
-   * @returns 是否为错误类型
+   * @returns true = 错误/取消等终结事件已送达（视图不可达时返回 false，调用方可留痕）；false = 其他
    */
   processChunk(chunk: any): boolean {
     if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) {
       return false;
     }
     if (!this.getView()) return false;
-    // 只有存在实际观看端时才把流式输出视为活跃，后台无视图流不应制造虚假在场时间。
-    markAiActive();
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
     } else if ('chunk' in chunk && chunk.chunk) {
+      // 只有真实内容增量才计入用户在场活跃（状态类事件不制造虚假在场时间）
+      markAiActive();
       this.enqueue('chunk', { chunk: chunk.chunk }, { scheduleImmediateFlush: false });
       // 修改原因：trace 显示 webview 侧卡顿集中在 postMessage / HandlePostMessage；chunk 热路径必须真正按 50ms 合并。
       // 修改方式：chunk 入队时关闭 setTimeout(0) 兜底，只使用节流 flush 发送 streamChunkBatch。
@@ -121,9 +121,14 @@ export class StreamChunkProcessor {
         // isSummarized 标记并插入总结；透传给前端同步标记本地消息。缺省/0 = 无消息被标记。
         removedCount: chunk.removedCount
       });
-    } else if ('content' in chunk && chunk.content && !('cancelled' in chunk)) {
+      // 状态提示需要即时更新（与 autoSummaryStatus 同口径：入队后显式 flush）
+      this.flush();
+    } else if ('content' in chunk && !('cancelled' in chunk) && !('error' in chunk)) {
+      // content 允许为空串（''）：模型返回空内容时 complete 同样要送达前端，
+      // 只要键存在且非 cancelled/error 即按完成处理
+      markAiActive();
       this.enqueue('complete', {
-        content: chunk.content,
+        content: chunk.content ?? undefined,
         checkpoints: chunk.checkpoints
       });
       // 终结事件立即刷新，确保前端立即收到完成信号
@@ -136,6 +141,8 @@ export class StreamChunkProcessor {
       }
       this.enqueue('cancelled', { content: chunk.content });
       this.flush();
+      // 终结事件：返回 true 表示已送达（视图不可达时上方早退返回 false，调用方据此留痕）
+      return true;
     } else if ('error' in chunk && chunk.error) {
       // 先 flush 缓冲的 chunk，确保前端先收到已有内容，
       // 避免 error 与 chunk 合并到同一 batch 导致空消息被误删
@@ -145,6 +152,9 @@ export class StreamChunkProcessor {
       this.enqueue('error', { error: chunk.error });
       this.flush();
       return true;
+    } else {
+      // 未知 chunk 类型：不静默丢弃，留痕便于排查后端协议演进
+      console.warn('[StreamChunkProcessor] Unknown chunk type dropped:', chunk);
     }
 
     return false;
@@ -175,8 +185,12 @@ export class StreamChunkProcessor {
   /**
    * 立即刷新缓冲区，将所有待发送消息发送到前端。
    * 单条消息保持原有 streamChunk 格式；多条合并为 streamChunkBatch。
+   *
+   * @param isChunkFlush 是否由 chunk 节流触发：只有 chunk flush 更新节流窗口锚点
+   *        lastChunkFlushTime；事件 flush（complete/cancelled/error/工具状态等）与节流窗口
+   *        解耦，避免事件 flush 重置窗口导致后续 chunk 被错误延迟。
    */
-  flush(): void {
+  flush(isChunkFlush: boolean = false): void {
     // 清除所有待执行的计时器
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
@@ -187,26 +201,41 @@ export class StreamChunkProcessor {
       this.throttleTimer = null;
     }
 
-    // 发送前实时获取 view（视图可能已重建）
-    const view = this.getView();
-    if (this.messageBuffer.length === 0 || !view) return;
-
+    // 先出队再取 view：缓冲区为空直接返回；视图不可达（已销毁/重建）时缓冲区同样清空，
+    // 避免旧消息被后续 flush 重复投递到新视图或永久滞留
+    if (this.messageBuffer.length === 0) return;
     const messages = this.messageBuffer;
     this.messageBuffer = [];
-    this.lastChunkFlushTime = Date.now();
+
+    // 发送前实时获取 view（视图可能已重建）
+    const view = this.getView();
+    if (!view) return;
+
+    if (isChunkFlush) {
+      this.lastChunkFlushTime = Date.now();
+    }
 
     if (messages.length === 1) {
       // 单条消息：保持原有格式，向前兼容
-      view.webview.postMessage({
-        type: 'streamChunk',
-        data: messages[0]
-      });
+      try {
+        view.webview.postMessage({
+          type: 'streamChunk',
+          data: messages[0]
+        });
+      } catch (err) {
+        // 投递失败仅留痕不中断：后续事件仍应继续发送
+        console.warn('[StreamChunkProcessor] Failed to post streamChunk:', err);
+      }
     } else {
       // 多条消息：批量发送，前端一次性同步处理以利用 Vue 响应式批量更新
-      view.webview.postMessage({
-        type: 'streamChunkBatch',
-        data: messages
-      });
+      try {
+        view.webview.postMessage({
+          type: 'streamChunkBatch',
+          data: messages
+        });
+      } catch (err) {
+        console.warn('[StreamChunkProcessor] Failed to post streamChunkBatch:', err);
+      }
     }
   }
 
@@ -223,14 +252,14 @@ export class StreamChunkProcessor {
     const elapsed = now - this.lastChunkFlushTime;
 
     if (elapsed >= CHUNK_THROTTLE_MS) {
-      // 距上次 flush 已足够久，立即发送（保证首个 chunk 低延迟）
-      this.flush();
+      // 距上次 chunk flush 已足够久，立即发送（保证首个 chunk 低延迟）
+      this.flush(true);
     } else if (this.throttleTimer === null) {
       // 设定节流定时器，合并后续高频 chunk
       const delay = CHUNK_THROTTLE_MS - elapsed;
       this.throttleTimer = setTimeout(() => {
         this.throttleTimer = null;
-        this.flush();
+        this.flush(true);
       }, delay);
     }
     // 如果 throttleTimer 已存在，说明已有待执行的 flush，新 chunk 会被合并

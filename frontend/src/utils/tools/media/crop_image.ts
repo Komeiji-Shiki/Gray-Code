@@ -21,6 +21,7 @@ interface CropTask {
 
 registerTool('crop_image', {
   name: 'crop_image',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '裁切图片',
   icon: 'codicon-selection',
   expandable: true,

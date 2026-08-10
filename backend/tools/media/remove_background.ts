@@ -372,20 +372,30 @@ async function executeRemoveTask(
 
         // 3. 保存遮罩图（如果指定了路径）
         // 语义特殊：按读路径处理（resolveFileToolPathWithInfo + read 策略审批）
+        // 保存失败不再静默跳过：返回可读 warning（随成功结果以 ⚠️ Warnings 回传模型）
+        let maskSaveWarning: string | undefined;
         if (mask_path) {
             const { uri: maskUri, isOutsideWorkspace: maskOutside } = resolveFileToolPathWithInfo(mask_path);
             const maskAccessError = maskOutside
                 ? ensureOutsideWorkspaceAccessApproved('read_file', { path: mask_path }, context)
                 : null;
-            if (maskUri && !maskAccessError) {
-                const maskDirUri = vscode.Uri.joinPath(maskUri, '..');
+            if (!maskUri) {
+                maskSaveWarning = `Task ${index + 1}: mask_path could not be resolved, mask image was NOT saved: ${mask_path}`;
+            } else if (maskAccessError) {
+                maskSaveWarning = `Task ${index + 1}: mask_path was rejected by access policy, mask image was NOT saved: ${maskAccessError}`;
+            } else {
                 try {
-                    await vscode.workspace.fs.createDirectory(maskDirUri);
-                } catch {
-                    // 目录可能已存在
+                    const maskDirUri = vscode.Uri.joinPath(maskUri, '..');
+                    try {
+                        await vscode.workspace.fs.createDirectory(maskDirUri);
+                    } catch {
+                        // 目录可能已存在
+                    }
+                    const maskBuffer = Buffer.from(maskImage.data, 'base64');
+                    await vscode.workspace.fs.writeFile(maskUri, maskBuffer);
+                } catch (writeError) {
+                    maskSaveWarning = `Task ${index + 1}: failed to save mask image: ${writeError instanceof Error ? writeError.message : String(writeError)}`;
                 }
-                const maskBuffer = Buffer.from(maskImage.data, 'base64');
-                await vscode.workspace.fs.writeFile(maskUri, maskBuffer);
             }
         }
 
@@ -488,9 +498,12 @@ async function executeRemoveTask(
             index,
             success: true,
             outputPath: output_path,
-            maskPath: mask_path,
+            // 遮罩未保存成功时不再宣称已保存（maskPath 由上层用于生成 Mask paths 列表）
+            maskPath: maskSaveWarning ? undefined : mask_path,
             dimensions: dimensions ?? undefined,
-            multimodal
+            multimodal,
+            // 成功结果携带 error 字段会被上层聚合为 ⚠️ Warnings（既有约定）
+            ...(maskSaveWarning ? { error: maskSaveWarning } : {})
         };
 
     } catch (error) {

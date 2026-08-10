@@ -16,7 +16,7 @@ import {
   processStreamingText,
   handleFunctionCallPart
 } from './streamHelpers'
-import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { appendMessage, buildToolResponseIndex, getMessageIndexById, insertMessageAt, removeMessageAt, replaceMessageAt } from './state'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 import type { StreamFunctionCall } from '../../utils/functionCallMerge'
@@ -406,9 +406,19 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
 
   const message = state.allMessages.value[messageIndex]
   if (chunk.chunk.delta) {
+    // 流式 delta 统一经 replaceMessageAt 写回数组（state.ts 层维护索引 / 可见缓存不变量）：
+    // 先在浅拷贝上做增量（parts/tools 数组复制、part 对象共享），结束时整体替换，
+    // 避免绕过 state.ts 写 API 的原地 mutate 造成引用漂移（UI 缓存持有旧对象时读到陈旧内容）。
+    const nextMessage: Message = {
+      ...message,
+      parts: message.parts ? [...message.parts] : undefined,
+      tools: message.tools ? [...message.tools] : undefined,
+      metadata: message.metadata ? { ...message.metadata } : undefined
+    }
+
     // 初始化 parts（如果不存在）
-    if (!message.parts) {
-      message.parts = []
+    if (!nextMessage.parts) {
+      nextMessage.parts = []
     }
     
     // 没有快照时，按增量追加；有快照时，以快照为准，跳过旧的本地文本猜测逻辑
@@ -424,12 +434,12 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
             typeof chunk.createdAt === 'number' ? chunk.createdAt : undefined
           )
           if (part.thought) {
-            addTextToMessage(message, part.text, true)
+            addTextToMessage(nextMessage, part.text, true)
           } else {
-            processStreamingText(message, part.text, state)
+            processStreamingText(nextMessage, part.text, state)
           }
           // 平滑显示层：真实内容已累加，这里驱动打字节奏（关闭时直通，无副作用）
-          pushSmoothTextForMessage(message, part.text, state)
+          pushSmoothTextForMessage(nextMessage, part.text, state)
         }
 
         // 处理工具调用（原生 function call format）
@@ -468,19 +478,19 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
             // 无稳定 call id（罕见）：按完整长度计一次
             recordTpsTokens(countBaseTokens(fcName, activeModelKey) + countBaseTokens(fcBody, activeModelKey), recordTs)
           }
-          handleFunctionCallPart(part, message)
+          handleFunctionCallPart(part, nextMessage)
         }
       }
     }
     
     // 更新 token 信息和计时信息
-    if (!message.metadata) {
-      message.metadata = {}
+    if (!nextMessage.metadata) {
+      nextMessage.metadata = {}
     }
     
     // 如果 chunk 包含 thinkingStartTime，更新 metadata（用于实时显示思考时间）
     if ((chunk.chunk as any).thinkingStartTime) {
-      message.metadata.thinkingStartTime = (chunk.chunk as any).thinkingStartTime
+      nextMessage.metadata.thinkingStartTime = (chunk.chunk as any).thinkingStartTime
     }
     
     // 如果是最后一个 chunk（done=true），更新 token 信息
@@ -504,14 +514,14 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
       }
       turnBaseTokens = 0
       // 兜底：AI 输出结束，所有 streaming 工具应已完成参数输出
-      if (message.tools) {
-        for (const tool of message.tools) {
+      if (nextMessage.tools) {
+        for (const tool of nextMessage.tools) {
           if (tool.status === 'streaming') {
             tool.status = 'queued'
             // 清理流式预览状态
             delete tool.partialArgs
             // 从 parts 同步最终 args
-            const matchingPart = message.parts?.find(
+            const matchingPart = nextMessage.parts?.find(
               p => p.functionCall && p.functionCall.id === tool.id
             )
             if (matchingPart?.functionCall?.args) {
@@ -522,11 +532,14 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
       }
 
       if (chunk.chunk.usage) {
-        message.metadata.usageMetadata = chunk.chunk.usage
-        message.metadata.thoughtsTokenCount = chunk.chunk.usage.thoughtsTokenCount
-        message.metadata.candidatesTokenCount = chunk.chunk.usage.candidatesTokenCount
+        nextMessage.metadata.usageMetadata = chunk.chunk.usage
+        nextMessage.metadata.thoughtsTokenCount = chunk.chunk.usage.thoughtsTokenCount
+        nextMessage.metadata.candidatesTokenCount = chunk.chunk.usage.candidatesTokenCount
       }
     }
+
+    // 写回数组：id 不变（不重建索引），replaceMessageAt 维护窗口可见缓存不变量
+    replaceMessageAt(state, messageIndex, nextMessage)
   }
 }
 
@@ -1198,6 +1211,9 @@ export function handleComplete(
   state.pendingConfigIdOverride.value = null
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
+  // 工具参数增量计数跟踪随流终结清空（与 cancelled/error 终结路径统一），
+  // 覆盖“无 done-delta 直接 complete”的场景，避免旧轮参数体污染下一轮流
+  fcSeenBodies.clear()
   
   // 流式完成后更新对话元数据
   updateConversationAfterMessage()
@@ -1278,26 +1294,12 @@ export function handleAutoSummary(
     ? summaryContent.id
     : undefined
   const exists = summaryContentId
-    ? state.allMessages.value.some(m => m.id === summaryContentId)
+    ? getMessageIndexById(state, summaryContentId) !== -1
     : state.allMessages.value.some(
         m => m.isSummary && typeof m.backendIndex === 'number' && m.backendIndex === insertIndex
       )
   if (exists) {
     return
-  }
-
-  // 标记被总结覆盖的本地消息（backendIndex ∈ [insertIndex - markedCount, insertIndex)），
-  // 原文保留在列表中，仅打标记（UI 以横线分隔已总结/未总结区域）。
-  // 下界钳制：markedCount 大于 insertIndex 时（如窗口起始即被总结覆盖）
-  // 负的 markStart 会让下方 `b >= markStart` 对全部消息恒真，误标记窗口之外的消息。
-  const markStart = Math.max(0, insertIndex - markedCount)
-  if (markedCount > 0) {
-    for (const msg of state.allMessages.value) {
-      const b = msg.backendIndex
-      if (typeof b === 'number' && b >= markStart && b < insertIndex) {
-        msg.isSummarized = true
-      }
-    }
   }
 
   // 如果插入位置在当前窗口之前，仅维护索引偏移即可（总结消息在窗口外不插入）
@@ -1312,10 +1314,21 @@ export function handleAutoSummary(
     return
   }
 
-  // 先将当前窗口中插入点及之后的 backendIndex 后移 1
+  // 单遍循环（标记区间与后移区间互斥，可安全合并）：
+  // ① 标记被总结覆盖的本地消息（backendIndex ∈ [insertIndex - markedCount, insertIndex)），
+  //    原文保留在列表中，仅打标记（UI 以横线分隔已总结/未总结区域）。
+  //    下界钳制：markedCount 大于 insertIndex 时（如窗口起始即被总结覆盖）负的 markStart
+  //    会让 `b >= markStart` 对全部消息恒真，误标记窗口之外的消息。
+  // ② 将当前窗口中插入点及之后的 backendIndex 后移 1。
+  const markStart = Math.max(0, insertIndex - markedCount)
   for (const msg of state.allMessages.value) {
-    if (typeof msg.backendIndex === 'number' && msg.backendIndex >= insertIndex) {
-      msg.backendIndex += 1
+    const b = msg.backendIndex
+    if (typeof b !== 'number') continue
+    if (markedCount > 0 && b >= markStart && b < insertIndex) {
+      msg.isSummarized = true
+    }
+    if (b >= insertIndex) {
+      msg.backendIndex = b + 1
     }
   }
 
@@ -1402,6 +1415,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     const hasPartsContent = message.parts && message.parts.some(p => p.text || p.functionCall || p.inlineData || p.fileData)
     if (!message.content && !message.tools && !hasPartsContent) {
       removeMessageAt(state, messageIndex)
+      // 删除空占位后回退 totalMessages（窗口推导），保持与窗口长度一致
+      setTotalMessagesFromWindow(state)
     } else {
       // 构建新的 metadata 对象
       const newMetadata = message.metadata ? { ...message.metadata } : {}
@@ -1480,6 +1495,8 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.isWaitingForResponse.value = false
   // 本轮 base 估算不参与下轮校准：被中止的流累计的字符混入下一次流的 realTokens 会拉偏因子
   turnBaseTokens = 0
+  // 工具参数增量计数跟踪随流终结清空（与 done 分支同款），避免残留跨流污染
+  fcSeenBodies.clear()
   state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state.pendingConfigIdOverride.value = null
@@ -1545,6 +1562,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
       const removeIndex = getMessageIndexById(state, state.streamingMessageId.value)
       removeMessageAt(state, removeIndex)
+      // 删除空占位后回退 totalMessages（窗口推导），保持与窗口长度一致
+      setTotalMessagesFromWindow(state)
       state._failedStreamMessageId.value = null
     } else if (messageToRemove) {
       // 有内容的半截消息：保留展示，但记录其 ID，
@@ -1571,6 +1590,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.pendingConfigIdOverride.value = null
   // 与 handleCancelled 一致：本轮 base 估算不参与下轮校准（中止流的字符混入会拉偏因子）
   turnBaseTokens = 0
+  // 工具参数增量计数跟踪随流终结清空（与 done 分支同款），避免残留跨流污染
+  fcSeenBodies.clear()
   state._lastApprovalGatedStreamId.value = null
   state._lastCancelledStreamId.value = null
 }

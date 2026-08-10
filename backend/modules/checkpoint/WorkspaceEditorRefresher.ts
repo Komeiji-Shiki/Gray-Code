@@ -11,6 +11,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import { restoreChatInputFocus, shouldRestoreChatInputFocus } from '../../core/chatFocusGuard';
+import { Logger } from '../../core/logger';
+
+const log = Logger.get('WorkspaceEditorRefresher');
 
 /**
  * 只刷新受影响的文档
@@ -63,7 +66,10 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
                     // applyEdit 失败时回退到 revert（可能弹框，作为最后手段）
                     await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
                 } catch (err) {
-                    console.warn(`[CheckpointManager] Failed to revert ${doc.uri.fsPath}:`, err);
+                    log.warn('refresh_document_revert_failed', {
+                        path: doc.uri.fsPath,
+                        error: err instanceof Error ? err.message : String(err)
+                    });
                 }
             }
             // 删除的文件不做任何处理，让 VSCode 自然显示"文件已删除"的状态
@@ -93,7 +99,9 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
             await restoreChatInputFocus(restoreFocus);
         }
     } catch (err) {
-        console.error('[CheckpointManager] Failed to refresh affected documents:', err);
+        log.error('refresh_affected_documents_failed', {
+            error: err instanceof Error ? err.message : String(err)
+        });
     }
 }
 

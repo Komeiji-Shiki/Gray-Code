@@ -28,6 +28,12 @@ import { getSharp } from '../../modules/dependencies';
 const TASK_TYPE_ROTATE = 'rotate_image';
 
 /**
+ * 旋转输出像素数上限（约 50MP，如 10000×5000）：任意角度旋转的最小包围矩形
+ * 可能远大于原图（45° 时约放大 2 倍），输出无上限时超大图会分配数百 MB 缓冲。
+ */
+const MAX_ROTATE_OUTPUT_PIXELS = 50 * 1024 * 1024;
+
+/**
  * 旋转图片工具配置（从 context.config 获取）
  */
 interface RotateImageConfig {
@@ -168,8 +174,9 @@ async function executeRotateTask(
         return { index, success: false, error: `Task ${index + 1}: output_path is required` };
     }
 
-    if (angle === undefined || angle === null || isNaN(angle)) {
-        return { index, success: false, error: `Task ${index + 1}: angle is required and must be a valid number` };
+    // angle 校验：仅接受有限数值（isNaN 不拦截 Infinity，Infinity 角度会让 sharp 行为异常）
+    if (angle === undefined || angle === null || typeof angle !== 'number' || !Number.isFinite(angle)) {
+        return { index, success: false, error: `Task ${index + 1}: angle is required and must be a finite number` };
     }
 
     try {
@@ -208,6 +215,25 @@ async function executeRotateTask(
             return { index, success: false, error: `Task ${index + 1}: User cancelled the rotate operation`, cancelled: true };
         }
 
+        // 输出像素数预检（在 .rotate() 执行前）：用旋转包围矩形公式估算旋转后画布尺寸
+        // （w' = |w·cosθ| + |h·sinθ|，h' = |w·sinθ| + |h·cosθ|，与 sharp 自动扩边的
+        // 最小包围矩形一致；cos/sin 的周期性天然覆盖任意角度与正负号，无需归一化）。
+        // 超限时在分配输出缓冲（超大图可达数百 MB）之前直接返回可读错误，避免先旋转再拒绝。
+        const angleRad = (angle * Math.PI) / 180;
+        const estimatedRotatedWidth = Math.ceil(
+            originalWidth * Math.abs(Math.cos(angleRad)) + originalHeight * Math.abs(Math.sin(angleRad))
+        );
+        const estimatedRotatedHeight = Math.ceil(
+            originalWidth * Math.abs(Math.sin(angleRad)) + originalHeight * Math.abs(Math.cos(angleRad))
+        );
+        if (estimatedRotatedWidth * estimatedRotatedHeight > MAX_ROTATE_OUTPUT_PIXELS) {
+            return {
+                index,
+                success: false,
+                error: `Task ${index + 1}: Rotated image would be too large (estimated ${estimatedRotatedWidth}x${estimatedRotatedHeight} = ${estimatedRotatedWidth * estimatedRotatedHeight} pixels, limit ${MAX_ROTATE_OUTPUT_PIXELS.toLocaleString()} ≈ 50MP). Resize the image first (e.g. resize_image) before rotating.`
+            };
+        }
+
         // sharp 的 rotate 是顺时针的，我们的 API 也使用顺时针
         // sharp 会自动计算最小包围矩形
         const rotatedBuffer = await sharp(imageFile.data)
@@ -220,6 +246,16 @@ async function executeRotateTask(
         const rotatedMetadata = await sharp(rotatedBuffer).metadata();
         const rotatedWidth = rotatedMetadata.width || originalWidth;
         const rotatedHeight = rotatedMetadata.height || originalHeight;
+
+        // 输出像素数护栏（兜底）：预检按包围矩形公式估算，sharp 实际输出尺寸可能略有出入，
+        // 旋转完成后仍复查一次，超限时给出可读错误并提示先缩放
+        if (rotatedWidth * rotatedHeight > MAX_ROTATE_OUTPUT_PIXELS) {
+            return {
+                index,
+                success: false,
+                error: `Task ${index + 1}: Rotated image would be too large (${rotatedWidth}x${rotatedHeight} = ${rotatedWidth * rotatedHeight} pixels, limit ${MAX_ROTATE_OUTPUT_PIXELS.toLocaleString()} ≈ 50MP). Resize the image first (e.g. resize_image) before rotating.`
+            };
+        }
 
         // 转换为目标格式
         let finalBuffer: Buffer;

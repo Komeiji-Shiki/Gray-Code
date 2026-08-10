@@ -22,7 +22,12 @@ export const listDependencies: MessageHandler = async (data, requestId, ctx) => 
  */
 export const installDependency: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { name } = data;
+    const { name } = data || {};
+    // 前置校验 name 非空字符串（R2-08 复查：缺失时后端会收到 undefined）
+    if (typeof name !== 'string' || !name.trim()) {
+      ctx.sendError(requestId, 'INSTALL_DEPENDENCY_ERROR', 'name is required');
+      return;
+    }
     const success = await ctx.dependencyManager.install(name);
     ctx.sendResponse(requestId, { success });
   } catch (error: any) {
@@ -35,7 +40,12 @@ export const installDependency: MessageHandler = async (data, requestId, ctx) =>
  */
 export const uninstallDependency: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { name } = data;
+    const { name } = data || {};
+    // 前置校验 name 非空字符串（R2-08 复查）
+    if (typeof name !== 'string' || !name.trim()) {
+      ctx.sendError(requestId, 'UNINSTALL_DEPENDENCY_ERROR', 'name is required');
+      return;
+    }
     const success = await ctx.dependencyManager.uninstall(name);
     ctx.sendResponse(requestId, { success });
   } catch (error: any) {

@@ -21,8 +21,8 @@ describe('MessageRouter non-blocking message types', () => {
 
     it('stream message types remain at the original count', () => {
         // 流式消息类型不应因非阻塞改动而变动
-        const STREAM_TYPES = ['chatStream', 'retryStream', 'editAndRetryStream', 'toolConfirmation', 'cancelStream'];
-        expect(STREAM_TYPES).toHaveLength(5);
+        const STREAM_TYPES = ['chatStream', 'retryStream', 'toolConfirmation', 'cancelStream'];
+        expect(STREAM_TYPES).toHaveLength(4);
         expect(STREAM_TYPES).toContain('cancelStream');
         // 生产导出的流式类型必须包含本地预期的全部关键条目
         for (const t of STREAM_TYPES) {
@@ -46,9 +46,11 @@ describe('MessageRouter non-blocking message types', () => {
             'storagePath.selectFolder',
             'countSystemPromptTokens',
             'tokenizer.getResource',
-            'storagePath.getStats'
+            // 更新检查/安装：checkNow 含网络请求，updateNow 含下载+安装（分钟级）
+            'checkUpdateNow',
+            'updateNow'
         ];
-        expect(EXPECTED_NON_BLOCKING).toHaveLength(14);
+        expect(EXPECTED_NON_BLOCKING).toHaveLength(15);
         // 生产导出的非阻塞类型必须包含本地预期的全部关键条目
         for (const t of EXPECTED_NON_BLOCKING) {
             expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);

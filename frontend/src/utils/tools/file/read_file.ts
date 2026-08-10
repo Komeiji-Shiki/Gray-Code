@@ -33,6 +33,7 @@ export function formatReadFileDescription(args: Record<string, unknown>): string
 // 注册 read_file 工具
 registerTool('read_file', {
   name: 'read_file',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '读取文件',
   icon: 'codicon-file-text',
   

@@ -54,6 +54,52 @@ export type UpdateCheckpointConfigField = (
   value: any
 ) => Promise<boolean>
 
+// 后端返回配置的归一化：按默认结构补齐缺失字段后再整体 assign。
+// Object.assign 是浅合并——若后端返回的 config 缺字段，乐观值会残留在本地（与后端权威值脱节）；
+// 补齐默认结构后 assign 保证本地状态与后端返回值一致。
+function normalizeConfigForMerge(input: CheckpointConfig): CheckpointConfig {
+  const exclusion = input.exclusion
+  return {
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : true,
+    beforeTools: Array.isArray(input.beforeTools) ? [...input.beforeTools] : [],
+    afterTools: Array.isArray(input.afterTools) ? [...input.afterTools] : [],
+    messageCheckpoint: input.messageCheckpoint
+      ? {
+          beforeMessages: Array.isArray(input.messageCheckpoint.beforeMessages)
+            ? [...input.messageCheckpoint.beforeMessages]
+            : [],
+          afterMessages: Array.isArray(input.messageCheckpoint.afterMessages)
+            ? [...input.messageCheckpoint.afterMessages]
+            : [],
+          modelOuterLayerOnly: typeof input.messageCheckpoint.modelOuterLayerOnly === 'boolean'
+            ? input.messageCheckpoint.modelOuterLayerOnly
+            : true,
+          mergeUnchangedCheckpoints: typeof input.messageCheckpoint.mergeUnchangedCheckpoints === 'boolean'
+            ? input.messageCheckpoint.mergeUnchangedCheckpoints
+            : true
+        }
+      : { beforeMessages: [], afterMessages: [], modelOuterLayerOnly: true, mergeUnchangedCheckpoints: true },
+    maxCheckpoints: typeof input.maxCheckpoints === 'number' ? input.maxCheckpoints : -1,
+    customIgnorePatterns: Array.isArray(input.customIgnorePatterns) ? [...input.customIgnorePatterns] : [],
+    exclusion: exclusion
+      ? {
+          enabledProfiles: exclusion.enabledProfiles && typeof exclusion.enabledProfiles === 'object'
+            ? { ...exclusion.enabledProfiles }
+            : {},
+          profilePatterns: exclusion.profilePatterns && typeof exclusion.profilePatterns === 'object'
+            ? Object.fromEntries(
+                Object.entries(exclusion.profilePatterns).map(([k, v]) => [k, Array.isArray(v) ? [...v] : []])
+              )
+            : undefined,
+          maxFileSizeBytes: typeof exclusion.maxFileSizeBytes === 'number'
+            ? exclusion.maxFileSizeBytes
+            : 50 * 1024 * 1024,
+          customPatterns: Array.isArray(exclusion.customPatterns) ? [...exclusion.customPatterns] : []
+        }
+      : { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
+  }
+}
+
 // 工具显示名/描述 i18n 辅助：统一复用 utils/toolLocalization 的实现（含 MCP 工具名解码），
 // 避免重复实现导致行为分叉（如 MCP 编码名被机械转换成 "Mcp Mcp ... Search"）。
 // 独立导出，供 CheckpointSettings / useCheckpointCleanup 复用。
@@ -183,13 +229,10 @@ export function useCheckpointConfig() {
         })
         configSaveError.value = null
         // R3-#9: 采纳后端归一化返回值（后端会合并默认启用类别、把非法值归零等），
-        // 避免本地 UI 与后端权威值长期脱节；后端未返回 config（含 null/空）时保留乐观值
+        // 避免本地 UI 与后端权威值长期脱节；后端未返回 config（含 null/空）时保留乐观值。
+        // 先按默认结构归一化补齐再整体 assign：浅合并会让乐观值残留在后端未返回的字段上
         if (result?.config && typeof result.config === 'object') {
-          Object.assign(config, result.config)
-          // 防御：旧后端/旧配置可能没有 exclusion 字段
-          if (!config.exclusion) {
-            config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }
-          }
+          Object.assign(config, normalizeConfigForMerge(result.config))
         }
         lastSavedConfig = cloneConfigSnapshot()
         return true

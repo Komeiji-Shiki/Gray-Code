@@ -95,9 +95,12 @@ function messageToSerialized(message: Content): SerializedPromptContextMessage |
 
     // 正文与思考分离保存：thought part 的文本进 thoughtText，
     // 反序列化时可恢复原始结构，保证回插路径与直发路径字节一致。
+    // 多条 text part 用 '\n' 连接（与 OpenAI formatter 的文本 part 连接符一致），
+    // 保留 part 边界：序列化后单条 text 仍能按 '\n' 还原出原始 part 序列，
+    // 避免无分隔 join 把相邻 part 的边界静默抹掉。
     const textParts = (message.parts ?? []).filter(part => part.text && part.thought !== true);
     const thoughtParts = (message.parts ?? []).filter(part => part.text && part.thought === true);
-    const text = textParts.map(part => part.text || '').join('').trim();
+    const text = textParts.map(part => part.text || '').join('\n').trim();
     const thoughtText = thoughtParts.map(part => part.text || '').join('\n').trim();
     if (!text && !thoughtText) {
         return null;

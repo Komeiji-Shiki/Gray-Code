@@ -597,7 +597,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
                     open: 'Open',
                     acceptedRisk: 'Accepted Risk',
                     fixed: 'Fixed',
-                    wontFix: "Won\'t Fix",
+                    wontFix: 'Won\'t Fix',
                     duplicate: 'Duplicate'
                 }
             },

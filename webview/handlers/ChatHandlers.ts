@@ -14,6 +14,10 @@ import {
     setGlobalBranchService,
 } from '../../backend/modules/conversation/branch';
 import { StreamChunkProcessor } from '../stream/StreamChunkProcessor';
+import {
+    isConversationStreaming,
+    BRANCH_BUSY_STREAMING_MESSAGE,
+} from './BranchHandlers';
 import type { HandlerContext, MessageHandler } from '../types';
 
 async function stopConversationStream(ctx: HandlerContext, conversationId: string): Promise<void> {
@@ -46,6 +50,14 @@ function resolveBranchService(ctx: HandlerContext): BranchService {
  */
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, targetIndex, preserveCheckpointId } = data || {};
+
+  // 入参校验优先于任何副作用（取消流）：非法参数直接返回明确错误码，不触发取消动作
+  // （与 deleteSingleMessage 的校验口径一致）
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || !Number.isInteger(targetIndex) || targetIndex < 0) {
+    ctx.sendError(requestId, 'DELETE_MESSAGE_ERROR', 'Invalid conversationId or targetIndex');
+    return;
+  }
 
   // 先取消该对话的流式请求（如果有）
   // 取消只是“尽力而为”的前置清理：取消失败不应阻断删除主流程，独立 try/catch 仅告警。
@@ -209,6 +221,14 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
 
+  // TREE-13 互斥：主流仍在生成时拒绝创建 reroll 候选（BRANCH_BUSY）。
+  // 不加此检查时 abortManager.create() 会静默中止主流，基于被截断的历史创建候选，
+  // 与 BranchHandlers 全部变更操作的流式互斥口径不一致。
+  if (isConversationStreaming(ctx, conversationId)) {
+    ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
+    return;
+  }
+
   // 确保分支服务已注册（懒初始化，与 BranchHandlers 同模式）
   try {
     resolveBranchService(ctx);
@@ -305,6 +325,13 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     return;
   }
   const resolvedMode = mode === 'keep' ? 'keep' : 'branch';
+
+  // TREE-13 互斥：主流仍在生成时拒绝创建编辑候选（BRANCH_BUSY），
+  // 避免 abortManager.create() 静默中止主流并基于被截断的历史创建候选。
+  if (isConversationStreaming(ctx, conversationId)) {
+    ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
+    return;
+  }
 
   // 确保分支服务已注册（懒初始化，与 BranchHandlers 同模式）
   try {

@@ -2092,7 +2092,7 @@ function buildReviewDocument(snapshotInput: ReviewSnapshotV4): string {
   return `${body.trimEnd()}\n\n${renderReviewSnapshotSection(finalSnapshot).trimEnd()}\n`;
 }
 
-function buildSummaryFromSnapshot(snapshot: ReviewSnapshotV4): ReviewDocumentSummarySnapshot {
+export function buildSummaryFromSnapshot(snapshot: ReviewSnapshotV4): ReviewDocumentSummarySnapshot {
   const locale = resolveReviewDocumentLocale(snapshot.render.locale, 'en');
 
   return {
@@ -2402,7 +2402,12 @@ export function ensureReviewDocumentSections(content: string): string {
 
 export function getNextReviewMilestoneId(content: string): string {
   const state = loadReviewDocumentState(content);
-  return `M${state.snapshot.milestones.length + 1}`;
+  // 修改原因：旧实现直接按 milestones.length + 1 生成，文档里已有非连续/手动编号
+  //          （如删过里程碑或存在 M3、M5）时会生成重复 id。
+  // 修改方式：复用 appendReviewMilestone 的 nextMilestoneId 查重逻辑，
+  //          从 indexHint 开始递增直到找到未占用编号。
+  const existingMilestoneIds = new Set(state.snapshot.milestones.map((item) => item.id));
+  return nextMilestoneId(existingMilestoneIds, state.snapshot.milestones.length + 1);
 }
 
 export function buildInitialReviewDocument(input: ReviewDocumentTemplateInput, locale: ReviewDocumentLocale = 'en'): string {

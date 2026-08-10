@@ -13,7 +13,7 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 import { loadCheckpoints, refreshCurrentConversationBuildSession, loadHistory } from './conversationActions'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
-import { pendingDirtyConfirm } from './dirtyConfirmState'
+import { setPendingDirtyConfirm } from './dirtyConfirmState'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
   const selected = (state.selectedModelId.value || '').trim()
@@ -222,7 +222,10 @@ export async function restoreCheckpoint(
   if (!state.currentConversationId.value) {
     return { success: false, restored: 0, error: 'No conversation selected' }
   }
-  
+  // BCP-05 归属：固化发起会话（await 前），IPC 目标与 dirty 确认归属使用同一值，
+  // 避免 checkpoint.restore 在途切换会话时把归属错记到新会话
+  const conversationId = state.currentConversationId.value
+
   try {
     const result = await sendToExtension<{
       success: boolean
@@ -238,7 +241,7 @@ export async function restoreCheckpoint(
     }>(
       'checkpoint.restore',
       {
-        conversationId: state.currentConversationId.value,
+        conversationId,
         checkpointId,
         deleteUntrackedFiles: deleteUntrackedFiles === true,
         ...(confirmedDiscardDirty === true ? { confirmedDiscardDirty: true } : {})
@@ -249,7 +252,9 @@ export async function restoreCheckpoint(
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，前端弹确认框
     // （已确认（confirmedDiscardDirty=true）时后端不会返回 dirtyFiles，此处再防御一次）
     if (confirmedDiscardDirty !== true && normalized.dirtyFiles && normalized.dirtyFiles.length > 0) {
-      pendingDirtyConfirm.value = {
+      // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（conversationId 在函数入口固化，
+      // 与 IPC 目标一致，避免 await 期间切换会话把归属错记到新会话）
+      setPendingDirtyConfirm(conversationId, {
         kind: 'restore',
         files: normalized.dirtyFiles,
         restore: {
@@ -257,7 +262,7 @@ export async function restoreCheckpoint(
           checkpointId,
           deleteUntrackedFiles: deleteUntrackedFiles === true
         }
-      }
+      })
       return normalized
     }
     if (normalized.success) {
@@ -330,7 +335,8 @@ export async function restoreAndRetry(
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作（含本入口参数），
     // 不写错误条（确认框由 DirtyFilesConfirm.vue 弹出），流程在此暂停等待确认。
     if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
-      pendingDirtyConfirm.value = {
+      // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（originConvId，await 前固化）
+      setPendingDirtyConfirm(originConvId, {
         kind: 'restore',
         files: restoreResult.dirtyFiles,
         restore: {
@@ -339,7 +345,7 @@ export async function restoreAndRetry(
           deleteUntrackedFiles: confirmedDeleteUntracked,
           messageId: targetMessageId
         }
-      }
+      })
       state.isLoading.value = false
       return
     }
@@ -491,7 +497,8 @@ export async function restoreAndDelete(
     const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，不写错误条
     if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
-      pendingDirtyConfirm.value = {
+      // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（originConvId，await 前固化）
+      setPendingDirtyConfirm(originConvId, {
         kind: 'restore',
         files: restoreResult.dirtyFiles,
         restore: {
@@ -500,7 +507,7 @@ export async function restoreAndDelete(
           deleteUntrackedFiles: confirmedDeleteUntracked,
           messageId: targetMessageId
         }
-      }
+      })
       state.isLoading.value = false
       return
     }
@@ -627,7 +634,8 @@ export async function restoreAndEdit(
     const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，不写错误条
     if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
-      pendingDirtyConfirm.value = {
+      // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（originConvId，await 前固化）
+      setPendingDirtyConfirm(originConvId, {
         kind: 'restore',
         files: restoreResult.dirtyFiles,
         restore: {
@@ -638,7 +646,7 @@ export async function restoreAndEdit(
           newContent,
           attachments
         }
-      }
+      })
       state.isLoading.value = false
       return
     }

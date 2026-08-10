@@ -35,6 +35,7 @@ import { agentMailbox } from '../../../../tools/subagents/agentMailbox';
 import { Logger } from '../../../../core/logger';
 import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
 import { beginAiWork, endAiWork } from '../../../activity';
+import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from './ToolIterationLoopService';
 
 /**
  * 工具执行完整结果
@@ -62,14 +63,19 @@ export interface ToolExecutionFullResult {
 }
 
 /**
- * 深拷贝工具响应，用于历史记录与前端展示的数据隔离。
+ * 浅拷贝工具响应，用于历史记录与前端展示的数据隔离。
  *
- * structuredClone 比 JSON 序列化往返快得多（大文本 / 多模态 base64 场景尤其明显）；
- * 遇到不可结构化克隆的值（如函数）时回退到 JSON 方式，保持与旧行为一致。
+ * 工具响应是扁平可序列化结构（success/error/result/parameterWarnings 等顶层标量字段），
+ * 浅拷贝即可隔离顶层字段的后续变更：finalizeToolResponse 的 parameterWarnings 注入与
+ * processMultimodalData 的 delete response.multimodal 都发生在拷贝之后，浅拷贝不受影响；
+ * 嵌套 result 对象与历史 functionResponse 共享引用——下游 cleanFunctionResponseForAPI /
+ * mergeResponseWithCleanup 均以解构/展开生成新对象，无就地深层变更，隔离语义保持。
+ * 遇到不可拷贝的异常值（如带抛错 getter 的代理）时回退 JSON 深拷贝；两者都失败时
+ * 返回失败结果，避免异常逃逸丢整批工具结果。
  */
 function cloneToolResponse(response: Record<string, unknown>): Record<string, unknown> {
     try {
-        return structuredClone(response);
+        return { ...response };
     } catch {
         try {
             return JSON.parse(JSON.stringify(response));
@@ -349,11 +355,58 @@ export class ToolExecutionService {
             modelOverride
         );
 
-        let next = await generator.next();
-        while (!next.done) {
-            next = await generator.next();
+        // abort-race（复用 ToolIterationLoopService 主循环 1433-1503 的模式）：
+        // 生成器核心对串行工具调用是裸 await（不响应 abort 且永不结束的工具会让
+        // gen.next() 永久挂起，裸泵循环会让整个请求——含停止按钮——卡死）。
+        // abort 先到时先给生成器一个收尾窗口：响应 abort 的工具会快速返回已完成部分的
+        // 真实结果（不能丢），窗口结束仍未返回则放弃，走下方取消路径。
+        let executionResult: ToolExecutionFullResult | undefined;
+        while (true) {
+            let onAbort: (() => void) | undefined;
+            // C-12：创建 abortPromise 前先检查信号已 aborted——
+            // 若已中止，立即 resolve 走取消路径，避免注册 listener 后信号永不触发导致挂起。
+            const abortPromise = abortSignal?.aborted
+                ? Promise.resolve()
+                : abortSignal
+                    ? new Promise<void>((resolve) => {
+                        onAbort = () => resolve();
+                        abortSignal.addEventListener('abort', onAbort, { once: true });
+                    })
+                    : undefined;
+            try {
+                const nextPromise = generator.next();
+                const winner = abortPromise
+                    ? await Promise.race([nextPromise, abortPromise])
+                    : await nextPromise;
+                if (winner === undefined) {
+                    // abort 先到：收尾窗口内等生成器返回已完成部分的真实结果；
+                    // 窗口结束仍未返回（工具不响应 abort 且永不结束）返回 undefined
+                    executionResult = await drainToolExecutionGeneratorAfterAbort(
+                        generator,
+                        nextPromise,
+                        MAIN_LOOP_ABORT_DRAIN_GRACE_MS
+                    );
+                    break;
+                }
+                if (winner.done) {
+                    executionResult = winner.value as ToolExecutionFullResult;
+                    break;
+                }
+                // 进度事件：本方法只消费最终结果，事件直接丢弃（与旧行为一致）
+            } finally {
+                if (onAbort && abortSignal) {
+                    abortSignal.removeEventListener('abort', onAbort);
+                }
+            }
         }
-        return next.value;
+
+        // 收尾窗口超时（工具不响应 abort 且永不结束）时 drain 返回 undefined：
+        // 以空结果结算（真实副作用已无法取回，调用方按既有取消路径处理）
+        return executionResult ?? {
+            responseParts: [],
+            toolResults: [],
+            checkpoints: []
+        };
     }
 
 

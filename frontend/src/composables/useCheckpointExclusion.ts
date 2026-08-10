@@ -101,11 +101,20 @@ export function useCheckpointExclusion(
     return translated === key ? profileId : translated
   }
 
+  // 后端默认模式清单索引（id → patterns）：避免 profilePatterns 每次 O(n) find
+  const profilePatternsByMeta = computed(() => {
+    const map = new Map<string, string[]>()
+    for (const p of exclusionProfileMeta.value) {
+      map.set(p.id, p.patterns)
+    }
+    return map
+  })
+
   // 类别生效模式清单（自定义覆盖优先，否则用后端元数据的默认清单）
   function profilePatterns(profileId: string): string[] {
     const custom = config.exclusion?.profilePatterns?.[profileId]
     if (custom && custom.length > 0) return custom
-    return exclusionProfileMeta.value.find(p => p.id === profileId)?.patterns || []
+    return profilePatternsByMeta.value.get(profileId) || []
   }
 
   // 单文件大小上限（MiB 显示，保留 1 位小数避免取整误差）
@@ -123,6 +132,12 @@ export function useCheckpointExclusion(
     const text = String(raw ?? '').trim()
     if (!text) {
       maxFileSizeError.value = null
+      return
+    }
+    // L-1: 与 useDeferredNumberInput 相同的严格数字格式校验（拒绝「2.」「.5」「1e3」等中间态），
+    // 避免 parseFloat 把非法输入解析成合法数字后静默保存
+    if (!/^-?\d+(\.\d+)?$/.test(text)) {
+      maxFileSizeError.value = t('components.settings.checkpoint.sections.exclusion.maxFileSize.invalid')
       return
     }
     const parsed = parseFloat(text)
@@ -150,6 +165,8 @@ export function useCheckpointExclusion(
 
   // 执行排除预览（EX-09）
   async function runPreview() {
+    // 防重入：预览进行中直接返回，避免并发请求相互覆盖
+    if (isPreviewing.value) return
     isPreviewing.value = true
     previewError.value = null
     try {

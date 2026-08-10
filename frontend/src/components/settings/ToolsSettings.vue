@@ -176,17 +176,15 @@ async function toggleTool(toolName: string, enabled: boolean) {
 // 全部启用
 async function enableAll() {
   const disabledTools = tools.value.filter(t => !t.enabled)
-  for (const tool of disabledTools) {
-    await toggleTool(tool.name, true)
-  }
+  // 并发执行，避免串行 await 逐个等待拖慢批量操作
+  await Promise.all(disabledTools.map(tool => toggleTool(tool.name, true)))
 }
 
 // 全部禁用
 async function disableAll() {
   const enabledTools = tools.value.filter(t => t.enabled)
-  for (const tool of enabledTools) {
-    await toggleTool(tool.name, false)
-  }
+  // 并发执行，避免串行 await 逐个等待拖慢批量操作
+  await Promise.all(enabledTools.map(tool => toggleTool(tool.name, false)))
 }
 
 // 加载最大工具调用次数配置

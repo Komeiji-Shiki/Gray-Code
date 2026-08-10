@@ -1,16 +1,23 @@
 /**
  * 轻量性能埋点工具（默认关闭）
  *
- * 启用方式（Webview DevTools 控制台执行其一）：
+ * 启用方式（Webview DevTools 控制台执行其一，之后需刷新 Webview 生效）：
  * - localStorage.setItem('graycode.perf', '1')
  * - localStorage.removeItem('graycode.perf')
  */
+
+// 首读后缓存布尔值：埋点路径高频调用 isPerfEnabled，避免每次都同步访问 localStorage
+let perfEnabledCache: boolean | null = null
+
 export function isPerfEnabled(): boolean {
-  try {
-    return localStorage.getItem('graycode.perf') === '1'
-  } catch {
-    return false
+  if (perfEnabledCache === null) {
+    try {
+      perfEnabledCache = localStorage.getItem('graycode.perf') === '1'
+    } catch {
+      perfEnabledCache = false
+    }
   }
+  return perfEnabledCache
 }
 
 export function perfNow(): number {

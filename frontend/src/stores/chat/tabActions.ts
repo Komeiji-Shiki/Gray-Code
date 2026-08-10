@@ -9,6 +9,8 @@ import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
+import { loadHistory } from './conversationActions'
+import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 import { clearAllSmoothForState } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
 
@@ -147,6 +149,12 @@ export function resetConversationState(state: ChatStoreState): void {
   state.currentPromptModeId.value = 'code'
   // TREE-12：新空白会话无分支图（等待 loadBranchGraph 拉取）
   state.branchGraph.value = null
+  // TREE-07：会话重置同时复位分支切换 / 分支图加载锁，避免残留 true 永久锁死切换器
+  state.isSwitchingBranch.value = false
+  state.branchGraphLoading.value = false
+  // BCP-05：整会话重置（新建空白对话）时清空 dirty 确认，
+  // 避免确认框残留到新对话并把续作动作发到错误会话（resetConversationState 为全量重置，无条件清空）
+  clearPendingDirtyConfirm()
 }
 
 /**
@@ -275,6 +283,10 @@ export function switchTab(
   const targetTab = state.openTabs.value.find(t => t.id === targetTabId)
   if (!targetTab) return
 
+  // BCP-05：切换标签页（离开当前会话）时按归属清空 dirty 确认，
+  // 避免确认框在新会话弹出并把续作动作发到错误会话（先确认目标标签页存在）
+  clearPendingDirtyConfirm(state.currentConversationId.value)
+
   // 1. 快照当前活跃标签页的状态
   if (currentTabId) {
     // 更新当前标签页的 conversationId（可能已通过发送消息创建了新对话）
@@ -308,6 +320,8 @@ export function switchTab(
     // 如果标签页关联了 conversationId 但没有快照，这意味着尚未加载
     if (targetTab.conversationId) {
       state.currentConversationId.value = targetTab.conversationId
+      // 无快照且带 conversationId：补一次历史加载（此前只设 id 不加载，窗口恒为空）
+      void loadHistory(state)
     }
   }
 

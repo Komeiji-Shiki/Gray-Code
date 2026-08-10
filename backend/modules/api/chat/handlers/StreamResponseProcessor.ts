@@ -40,15 +40,6 @@ export interface ProcessedChunkData {
 }
 
 /**
- * 取消数据（用于 yield）
- */
-export interface CancelledData {
-    conversationId: string;
-    cancelled: true;
-    content?: Content;
-}
-
-/**
  * 流式响应处理器
  *
  * 提供统一的流式响应处理逻辑，减少 ChatHandler 中的重复代码
@@ -149,27 +140,6 @@ export class StreamResponseProcessor {
      */
     isCancelled(): boolean {
         return this.cancelled;
-    }
-
-    /**
-     * 获取取消数据（用于 yield）
-     */
-    getCancelledData(): CancelledData {
-        const content = this.accumulator.getFinalContent();
-        if (content.parts.length > 0) {
-            // 取消流的内容 usage 是半截数据，标记以便统计端（usageStats/getStats）回退估算
-            content.usageMetadataPartial = true;
-            return {
-                conversationId: this.config.conversationId,
-                cancelled: true,
-                content
-            };
-        } else {
-            return {
-                conversationId: this.config.conversationId,
-                cancelled: true
-            };
-        }
     }
 
     /**

@@ -305,7 +305,13 @@ describe('UpdateChecker.check', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
         expect(fetchImpl).toHaveBeenCalledWith(
             'https://api.github.com/repos/Komeiji-Shiki/Gray-Code/releases/tags/nightly',
-            expect.objectContaining({ headers: { 'Accept': 'application/vnd.github+json' } })
+            expect.objectContaining({
+                // headers 子集匹配：除 GitHub API 要求的 Accept 外，还须携带显式 User-Agent
+                headers: expect.objectContaining({
+                    'Accept': 'application/vnd.github+json',
+                    'User-Agent': expect.stringContaining('graycode-updater/')
+                })
+            })
         );
         expect(status.state).toBe('updateAvailable');
         if (status.state === 'updateAvailable') {
@@ -367,7 +373,13 @@ describe('UpdateChecker.check', () => {
         expect(fetchImpl).toHaveBeenCalledTimes(1);
         expect(fetchImpl).toHaveBeenCalledWith(
             'https://api.github.com/repos/Komeiji-Shiki/Gray-Code/releases/latest',
-            expect.objectContaining({ headers: { 'Accept': 'application/vnd.github+json' } })
+            expect.objectContaining({
+                // headers 子集匹配：除 GitHub API 要求的 Accept 外，还须携带显式 User-Agent
+                headers: expect.objectContaining({
+                    'Accept': 'application/vnd.github+json',
+                    'User-Agent': expect.stringContaining('graycode-updater/')
+                })
+            })
         );
     });
 });

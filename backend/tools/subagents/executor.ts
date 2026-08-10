@@ -22,7 +22,7 @@ import { TODO_TOOL_NAMES } from '../todo';
 import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/chat/handlers';
 import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
 import type { Content, ContentPart } from '../../modules/conversation/types';
-import type { ToolExecutionResult } from '../../modules/api/chat/utils';
+import type { ToolExecutionResult, FunctionCallInfo } from '../../modules/api/chat/utils';
 import { ChannelError, ErrorType } from '../../modules/channel/types';
 import type { GenerateRequest } from '../../modules/channel/types';
 import type { BaseChannelConfig } from '../../modules/config/configs/base';
@@ -50,6 +50,11 @@ interface SubAgentExecutedToolCall {
     toolResults?: ToolExecutionResult[];
     multimodalAttachments?: ContentPart[];
 }
+
+/** 并行工具执行结果：earlyExit 表示该 call 在预检阶段因超时/取消早退（不执行工具、不产生结果） */
+type ToolExecutionOutcome =
+    | { earlyExit: true; timeoutCheck: { exceeded: boolean; elapsed: number } }
+    | { earlyExit: false; call: FunctionCallInfo; result: SubAgentExecutedToolCall; duration: number };
 
 /** 不响应 AbortSignal 的工具最多允许用于清理的时间；超时后 SubAgent 必须收敛终态。 */
 export const SUBAGENT_TOOL_ABORT_GRACE_MS = 500;
@@ -1091,7 +1096,13 @@ export function createDefaultExecutor(
         // 后续 createOperationSignal 不再组合父信号。后台模式（background:true）不注册——
         // 其 abort 信号本就独立于父轮，detach 不应影响 TaskManager 取消能力。
         let detachedFromParent = false;
-        let currentOperationHandle: { detachParent: () => void } | undefined;
+        // 修改原因：工具调用改为并行执行后，同一时刻可能存在多个进行中的操作（并行工具调用），
+        //          单槽位句柄只记录最后一个：detach 时只能摘除最后创建的 handle 的父 abort
+        //          监听，其余并行工具残留父监听，旧流 abort 仍会中止已转后台 run 的在飞工具。
+        // 修改方式：改为句柄数组——createOperationSignal 每次 push，release 时按句柄摘除，
+        //          detach 回调遍历数组逐个 detachParent。
+        // 修改目的：转后台（detach）语义对并行工具调用同样正确。
+        let currentOperationHandles: Array<{ detachParent: () => void }> = [];
         // 转后台（detach）后父 abort 信号对 run 不再有约束力——所有取消检查必须经由
         // 本 helper 读取父信号（detached 后视为无父信号），否则 detach 后旧流 abort
         // 仍会在下一轮迭代/工具执行前杀死 run（R7c E1）。
@@ -1103,7 +1114,9 @@ export function createDefaultExecutor(
             subAgentRunController.registerDetachListener(runId, () => {
                 detachedFromParent = true;
                 try {
-                    currentOperationHandle?.detachParent();
+                    for (const handle of currentOperationHandles) {
+                        handle.detachParent();
+                    }
                     releaseParentAcquireListener?.();
                     // 父 abort 还会通过超时桥接器（onParentAbort → timeoutController.abort）传播，
                     // 必须一并摘除，否则 detach 后旧流 abort 仍会中止当前操作。
@@ -1184,6 +1197,27 @@ export function createDefaultExecutor(
         };
 
         try {
+            // 嵌套死锁防护（容量=1）：maxConcurrentAgents=1 时父 run 持有唯一席位等待子 run，
+            // 子 run 又必须等父 run 释放席位——互相等待直到父 run 超时（默认 30 分钟）。
+            // 子 run 必然由父 run 执行期间派生（父 run 必已持席位），因此容量=1 且存在
+            // 父 run 时排队必然死锁，直接拒绝并给出明确错误，替代长时间挂起。
+            // 注意：容量的权威口径在 SubAgentConcurrencyLimiter.getCapacity（含测试注入的
+            // capacityProvider）；此处按同一归一化规则从 settingsManager 读取，生产环境两者
+            // 指向同一全局 SettingsManager 单例。更完整的修复应下沉到 limiter（感知父链，
+            // 覆盖容量>1 的兄弟节点死锁），此处仅覆盖最简单的容量=1 场景。
+            if (request.parentRunId) {
+                const rawCapacity = context.settingsManager?.getSubAgentsConfig?.()?.maxConcurrentAgents;
+                const capacity = (typeof rawCapacity !== 'number' || !Number.isFinite(rawCapacity) || rawCapacity === 0)
+                    ? (rawCapacity === 0 ? -1 : 3)
+                    : (rawCapacity < 0 ? -1 : Math.floor(rawCapacity));
+                if (capacity === 1) {
+                    throw new Error(
+                        'Nested sub-agent rejected: maxConcurrentAgents=1 would deadlock ' +
+                        '(the parent run holds the only slot while waiting for this run). ' +
+                        'Raise maxConcurrentAgents or avoid nested sub-agent calls.'
+                    );
+                }
+            }
             await subAgentConcurrencyLimiter.acquire(runId, acquireSignal);
         } catch (queueError) {
             subAgentRunController.unregister(runId);
@@ -1291,7 +1325,7 @@ export function createDefaultExecutor(
             const signals = [detachedFromParent ? undefined : abortSignal, timeoutController?.signal, subAgentRunController.getAbortSignal(runId)]
                 .filter((signal): signal is AbortSignal => !!signal);
             if (signals.length === 0) {
-                currentOperationHandle = undefined;
+                // 无任何信号可组合：不注册句柄（其他并行操作的在飞句柄保留在数组中，不受影响）
                 return { signal: undefined, release: () => undefined, detachParent: () => undefined };
             }
             const controller = new AbortController();
@@ -1314,7 +1348,8 @@ export function createDefaultExecutor(
                         signal.removeEventListener('abort', abort);
                     }
                     attached.length = 0;
-                    if (currentOperationHandle === handle) currentOperationHandle = undefined;
+                    const handleIdx = currentOperationHandles.indexOf(handle);
+                    if (handleIdx >= 0) currentOperationHandles.splice(handleIdx, 1);
                 },
                 detachParent: () => {
                     if (parentSignal && attached.includes(parentSignal)) {
@@ -1325,7 +1360,7 @@ export function createDefaultExecutor(
                     }
                 }
             };
-            currentOperationHandle = handle;
+            currentOperationHandles.push(handle);
             return handle;
         };
 
@@ -1670,9 +1705,14 @@ export function createDefaultExecutor(
                         llmCallRetryCount++;
                         const retryFailureMessage = e instanceof Error ? e.message : String(e);
                         const isQuota = isQuotaOrRateLimitError(e);
-                        const delayMs = isQuota
+                        const baseDelayMs = isQuota
                             ? (llmCallRetryCount === 1 ? 15000 : 45000)
                             : (llmCallRetryCount === 1 ? 10000 : 30000);
+                        // 修改原因：多个子代理同时触发 429 重试时会以相同间隔同步退避，
+                        //          恢复后再次同时请求，形成同步波峰反复触发限流。
+                        // 修改方式：退避间隔加 ±30% 随机抖动（0.7~1.3 倍），错开各 run 的重试时刻。
+                        const jitterRatio = 0.7 + Math.random() * 0.6;
+                        const delayMs = Math.round(baseDelayMs * jitterRatio);
                         subAgentRunEventBus.emit({
                             runId,
                             agentName: config.name,
@@ -1844,47 +1884,65 @@ export function createDefaultExecutor(
                 
                 // 执行工具调用
                 const toolResultParts: ContentPart[] = [];
-                
-                for (const call of currentToolCalls) {
-                    // 执行工具前检查超时
-                    const timeoutCheck = checkTimeout();
-                    if (timeoutCheck.exceeded || parentAbort()?.aborted || timeoutController?.signal.aborted) {
-                        return finalizeRun({
-                            success: false,
-                            response: lastResponse,
-                            modelVersion,
-                            steps,
-                            toolCalls,
-                            error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`,
-                            cancelled: !timeoutCheck.exceeded
-                        });
-                    }
 
-                    // 组合信号在早退检查之后创建，避免为不会执行的工具调用注册监听器
-                    const toolOperation = createOperationSignal();
-                    const toolStartTime = Date.now();
-                    let result: SubAgentExecutedToolCall;
-                    try {
-                        result = await executeToolCall(
-                            call.name,
-                            call.args,
-                            { ...context, promptModeSnapshot: currentPromptModeSnapshot },
-                            toolOperation.signal,
-                            allowedToolNames,
-                            config,
-                            call.id,
-                            runId,
-                            config.name,
-                            // A-COMM：子代理信箱会话使用本次调用的动态主会话 ID
-                            currentConversationId,
-                            // F2：把本 run 的嵌套深度随工具上下文透传，供内层 subagents 工具做深度校验
-                            depth
-                        );
-                    } finally {
-                        toolOperation.release();
+                // 修改原因：主会话 ToolExecutionService 已把同一响应中的多个工具调用收集为
+                //          「可并行段」并用 Promise.all 并行执行（信号量负责限流与排队）；
+                //          子代理 executor 这里仍是逐个 await 严格串行——即使
+                //          maxConcurrentAgents=-1，嵌套派生的多个子代理也 1 个 1 个跑，
+                //          与主会话并行语义不一致（实现遗漏，非刻意设计）。
+                // 修改方式：每个 call 的执行块映射为独立 Promise：块内「超时/取消预检」保持同步
+                //          （map 阶段按原序同步执行——任一 call 未通过预检时，其后的 call
+                //          同样同步返回早退标记、不会启动工具，与旧串行实现的早退净效果一致），
+                //          executeToolCall 由 Promise.all 并行执行，结果按原 call 顺序回填
+                //          toolCalls / toolResultParts（history push 顺序稳定）。
+                // 修改目的：嵌套子代理并行度与主会话一致；单工具调用场景行为完全不变。
+                const toolExecutionOutcomes = await Promise.all(
+                    currentToolCalls.map(async (call): Promise<ToolExecutionOutcome> => {
+
+                        // 执行工具前检查超时（同步预检：map 阶段按原序同步执行完毕，
+                        // 未通过预检的 call 返回早退标记，不创建组合信号、不执行工具）
+                        const timeoutCheck = checkTimeout();
+                        if (timeoutCheck.exceeded || parentAbort()?.aborted || timeoutController?.signal.aborted) {
+                            return { earlyExit: true as const, timeoutCheck };
+                        }
+
+                        // 组合信号在早退检查之后创建，避免为不会执行的工具调用注册监听器
+                        const toolOperation = createOperationSignal();
+                        const toolStartTime = Date.now();
+                        try {
+                            const result = await executeToolCall(
+                                call.name,
+                                call.args,
+                                { ...context, promptModeSnapshot: currentPromptModeSnapshot },
+                                toolOperation.signal,
+                                allowedToolNames,
+                                config,
+                                call.id,
+                                runId,
+                                config.name,
+                                // A-COMM：子代理信箱会话使用本次调用的动态主会话 ID
+                                currentConversationId,
+                                // F2：把本 run 的嵌套深度随工具上下文透传，供内层 subagents 工具做深度校验
+                                depth
+                            );
+                            return { earlyExit: false as const, call, result, duration: Date.now() - toolStartTime };
+                        } finally {
+                            toolOperation.release();
+                        }
+                    })
+                );
+
+                // 按原 call 顺序回填结果（toolCalls / toolResultParts 顺序与模型调用顺序一致，
+                // 保证 history push 顺序稳定）；早退标记不产生结果。
+                let firstEarlyExit: { timeoutCheck: { exceeded: boolean; elapsed: number } } | undefined;
+
+                for (const outcome of toolExecutionOutcomes) {
+                    if (outcome.earlyExit) {
+                        if (!firstEarlyExit) firstEarlyExit = outcome;
+                        continue;
                     }
-                    const duration = Date.now() - toolStartTime;
-                    
+                    const { call, result, duration } = outcome;
+
                     toolCalls.push({
                         tool: call.name,
                         args: call.args,
@@ -1892,7 +1950,7 @@ export function createDefaultExecutor(
                         success: result.success,
                         duration
                     });
-                    
+
                     if (result.responseParts && result.responseParts.length > 0) {
                         // 修改原因：主 ToolExecutionService 已经负责构造包含多模态 parts 的 functionResponse，SubAgent 不应再手写简化结果。
                         // 修改方式：优先写入 ToolExecutionService 返回的 responseParts，并在 prompt 模式下带上 multimodalAttachments。
@@ -1915,6 +1973,22 @@ export function createDefaultExecutor(
                             }
                         });
                     }
+                }
+
+                // 任一 call 未通过预检（超时/取消在工具执行前触发）：整体早退。已完成执行的
+                // call 结果已按原序回填（与旧串行实现「先执行、再在下一 call 的预检处 return」
+                // 的净效果一致）；此处不再 push history——旧实现同样在预检 return 处跳过
+                // history push。早退信息取首个早退标记的快照，与旧实现预检时刻的状态一致。
+                if (firstEarlyExit) {
+                    return finalizeRun({
+                        success: false,
+                        response: lastResponse,
+                        modelVersion,
+                        steps,
+                        toolCalls,
+                        error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${firstEarlyExit.timeoutCheck.elapsed}s`,
+                        cancelled: !firstEarlyExit.timeoutCheck.exceeded
+                    });
                 }
                 
                 // 将工具结果添加到历史（作为 user 消息）

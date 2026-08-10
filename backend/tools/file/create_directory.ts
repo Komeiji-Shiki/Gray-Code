@@ -5,7 +5,7 @@
  * 支持多工作区（Multi-root Workspaces）
  */
 
-import * as vscode from 'vscode';
+import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
@@ -33,7 +33,8 @@ async function createSingleDirectory(dirPath: string): Promise<CreateResult> {
     }
 
     try {
-        await vscode.workspace.fs.createDirectory(uri);
+        // 递归创建（父目录自动创建，与描述“parent directories will be created automatically”一致）
+        await fs.promises.mkdir(uri.fsPath, { recursive: true });
         return {
             path: dirPath,
             success: true

@@ -157,8 +157,17 @@ export function createRealFsVscodeShim(): VscodeShim {
 
     const Uri = {
         parse: (value: string): ShimUri => {
-            if (value.startsWith('file://')) {
-                return toUri(decodeURIComponent(value.replace(/^file:\/\//, '')));
+            // 与 backend/__tests__/__mocks__/vscode.ts 的 Uri.parse 保持一致的解析逻辑：
+            // 只去掉 scheme 的 `file://`（两个斜杠），`file:///abs/path` 中属于路径本身的前导
+            // 斜杠必须保留——否则 Linux 上绝对路径会被解析成相对路径；Windows 的
+            // `file://C:/` 形式只有两个斜杠恰好不触发，且盘符路径在非 Windows 上需补回前导斜杠。
+            if (/^file:\/\//i.test(value)) {
+                const decoded = decodeURIComponent(value);
+                let filePath = decoded.replace(/^file:\/\//i, '');
+                if (process.platform !== 'win32' && /^[a-zA-Z]:\//.test(filePath)) {
+                    filePath = `/${filePath}`;
+                }
+                return toUri(filePath);
             }
             return toUri(value);
         },

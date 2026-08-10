@@ -840,5 +840,7 @@ export const DEFAULT_ROTATE_IMAGE_CONFIG: RotateImageToolConfig = {
 
 /**
  * 默认单回合最大工具调用次数
+ *
+ * 与 generalTypes.ts 中 maxToolIterations 的注释保持一致：默认值 200，-1 表示无限制
  */
 export const DEFAULT_MAX_TOOL_ITERATIONS = 200;

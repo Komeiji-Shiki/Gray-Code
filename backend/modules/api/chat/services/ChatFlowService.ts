@@ -381,6 +381,13 @@ export class ChatFlowService {
   ) {}
 
   /**
+   * 设置 SettingsManager（热更新引用，避免整体重建 ChatFlowService）。
+   */
+  setSettingsManager(settingsManager: SettingsManager | undefined): void {
+    this.settingsManager = settingsManager;
+  }
+
+  /**
    * H1：等待旧流完全退出后再写用户消息/截断历史。
    *
    * 竞态：用户「停止后立即重发」时，旧流取消路径还要等工具结算窗口（约 3s）落盘、finally
@@ -1090,7 +1097,11 @@ export class ChatFlowService {
     if (retryTruncateIndex >= 0) {
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, retryTruncateIndex);
       await this.conversationManager.deleteMessagesInRange(conversationId, retryTruncateIndex, retryHistory.length - 1);
+      // 与 edit 路径（handleEditAndRetry 1229）对齐：截断后重建 todoList 元数据
+      await this.rebuildTodoListMetadataFromHistory(conversationId);
     }
+    // 与 edit 路径（handleEditAndRetry 1233）对齐：截断后清除裁剪状态，重新计算裁剪起点
+    await this.toolIterationLoopService.clearTrimState(conversationId);
 
     // 3. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -1210,9 +1221,10 @@ export class ChatFlowService {
     await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
-    // 4. 更新消息内容，并标记为动态提示词插入点
+    // 4. 更新消息内容（包含附件），并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
-      parts: [{ text: newMessage }],
+      // 与流式路径（handleEditAndRetryStream 2165）一致：保留 request.attachments
+      parts: this.messageBuilderService.buildUserMessageParts(newMessage, request.attachments),
       isUserInput: true,
       // 清除旧的 token 计数，强制重新计算
       tokenCountByChannel: {}
@@ -1481,7 +1493,11 @@ export class ChatFlowService {
     if (retryTruncateIndex >= 0) {
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, retryTruncateIndex);
       await this.conversationManager.deleteMessagesInRange(conversationId, retryTruncateIndex, retryHistory.length - 1);
+      // 与 edit 路径（handleEditAndRetryStream 2180）对齐：截断后重建 todoList 元数据
+      await this.rebuildTodoListMetadataFromHistory(conversationId);
     }
+    // 与 edit 路径（handleEditAndRetryStream 2184）对齐：截断后清除裁剪状态，重新计算裁剪起点
+    await this.toolIterationLoopService.clearTrimState(conversationId);
 
     // 6. 判断是否需要刷新动态系统提示词
     const retryHistoryCheck = await this.conversationManager.getHistoryRef(conversationId);
@@ -1599,6 +1615,10 @@ export class ChatFlowService {
       }
 
       rerollStarted = await branchService.startReroll(conversationId, request.assistantNodeId);
+
+      // 与 edit 路径对齐：startReroll 已截断主历史，重建 todoList 元数据并清除裁剪状态
+      await this.rebuildTodoListMetadataFromHistory(conversationId);
+      await this.toolIterationLoopService.clearTrimState(conversationId);
     } finally {
       // 4. 重置中断标记：中途任何 await 抛错都必须清理（与 handleRetryStream 的 finally 用法一致）
       this.diffInterruptService.resetUserInterrupt(conversationId);
@@ -1993,6 +2013,12 @@ export class ChatFlowService {
       this.diffInterruptService.resetUserInterrupt(conversationId);
     }
 
+    // 4.5 切分支重写主历史成功后重建 todoList 元数据（与 edit 路径 1229/2180 对齐）；
+    // keep 模式不重写历史（仅原地改写一条消息），无需重建。
+    if (request.mode !== 'keep') {
+      await this.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+    }
+
     // 5. 工具调用循环（branch 模式：编辑后用户消息内容变化 → 新回合语义；
     //    keep 模式为真·原地保存：不重新生成，流直接完成）
     if (request.mode !== 'keep') {
@@ -2334,28 +2360,10 @@ export class ChatFlowService {
 
     const messageIndex = modelMessageIndex;
 
-    // 队首待处理工具（按 AI 输出顺序）
-    const nextCall = allFunctionCalls.find(call => !respondedToolIds.has(call.id));
-    if (!nextCall) {
-      // 理论上不会发生，但为了健壮性，直接继续循环
-      for await (const output of this.toolIterationLoopService.runToolLoop({
-        conversationId,
-        configId,
-        config,
-        modelOverride,
-        abortSignal: request.abortSignal,
-        summarizeAbortSignal: request.summarizeAbortSignal,
-        isFirstMessage: false,
-        maxIterations: this.getMaxToolIterations(),
-        createBeforeModelCheckpoint: false,
-        isNewTurn: false,
-        promptModeSnapshot,
-        dynamicContextStrategy,
-      })) {
-        yield output as ChatStreamOutput;
-      }
-      return;
-    }
+    // 队首待处理工具（按 AI 输出顺序）。
+    // 走到这里时 pendingCalls.length > 0（为空则在 2311 已提前返回），相同谓词的
+    // find 必命中——原不可达的「继续循环」分支（旧 2339-2358）已删除，这里非空断言。
+    const nextCall = allFunctionCalls.find(call => !respondedToolIds.has(call.id))!;
 
     const nextDecision = toolResponses.find(r => r.id === nextCall.id);
     if (!nextDecision) {

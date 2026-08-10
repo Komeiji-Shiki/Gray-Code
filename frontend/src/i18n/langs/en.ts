@@ -3661,6 +3661,18 @@ const en: LanguageMessages = {
                 daysAgo: '{days}d ago'
             }
         }
+    },
+
+    utils: {
+        tools: {
+            noFile: 'No file',
+            changes: '{count} changes',
+            cwdLabel: 'Directory: {cwd}',
+            recursiveSuffix: ' (recursive)',
+            dirCount: '{count} directories',
+            searchModeSearch: 'Search',
+            searchModeReplace: 'Search & Replace'
+        }
     }
 };
 

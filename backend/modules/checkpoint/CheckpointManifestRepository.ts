@@ -103,7 +103,8 @@ export class CheckpointManifestRepository {
      */
     private static readonly FILES_CACHE_LIMIT = 8;
     private readonly metaCache = new Map<string, CheckpointManifestMeta>();
-    private readonly filesCache = new Map<string, CheckpointManifest['files']>();
+    /** files 缓存条目携带配对 revision（ATOMIC-PAIR）：命中时仍可校验与 manifest 的配对一致性 */
+    private readonly filesCache = new Map<string, { filesRevision?: string; files: CheckpointManifest['files'] }>();
     /**
      * per-checkpointId 写队列（single-flight）：同一存档的磁盘写入串行化。
      * 解决并发迁移/合并共享固定 tmp 文件名导致的 ENOENT 竞态，以及
@@ -158,6 +159,15 @@ export class CheckpointManifestRepository {
             }
             cache.delete(oldest);
         }
+    }
+
+    /**
+     * files 映射深拷贝：缓存写入与返回前各拷贝一次（CP-CACHE-2），
+     * 防止调用方原地修改（如链合并路径对 files 的直接写入）污染缓存。
+     * 10-20MB 级大对象在写入/返回边界各付一次拷贝成本，换取缓存不可变性。
+     */
+    private static cloneFiles(files: CheckpointManifest['files']): CheckpointManifest['files'] {
+        return structuredClone(files);
     }
 
     /**
@@ -290,7 +300,13 @@ export class CheckpointManifestRepository {
             throw err;
         }
         this.cacheSet(this.metaCache, checkpointId, writtenMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
-        this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+        // CP-CACHE-2: 存入深拷贝 + 记录配对 revision（与落盘 stampedMeta 的 filesRevision 一致）
+        this.cacheSet(
+            this.filesCache,
+            checkpointId,
+            { filesRevision: writtenMeta.filesRevision, files: CheckpointManifestRepository.cloneFiles(files) },
+            CheckpointManifestRepository.FILES_CACHE_LIMIT
+        );
     }
 
     /** manifest.json 磁盘内容是否为可接受的布局（版本已知、checkpointId 匹配、元数据字段形状合法） */
@@ -375,8 +391,14 @@ export class CheckpointManifestRepository {
                 const meta: CheckpointManifestMeta = metaRest;
                 this.cacheSet(this.metaCache, checkpointId, meta, CheckpointManifestRepository.META_CACHE_LIMIT);
                 if (inlineFiles) {
-                    // 旧格式：files 已随解析在手，进缓存（拆分落盘由完整读取路径触发）
-                    this.cacheSet(this.filesCache, checkpointId, inlineFiles, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+                    // 旧格式：files 已随解析在手，进缓存（拆分落盘由完整读取路径触发）；
+                    // 配对 revision 取 manifest 内联字段（v1 通常无 → undefined，命中时不校验）
+                    this.cacheSet(
+                        this.filesCache,
+                        checkpointId,
+                        { filesRevision: meta.filesRevision, files: CheckpointManifestRepository.cloneFiles(inlineFiles) },
+                        CheckpointManifestRepository.FILES_CACHE_LIMIT
+                    );
                 }
                 return meta;
             }
@@ -406,7 +428,14 @@ export class CheckpointManifestRepository {
             }
             const { meta, files } = CheckpointManifestRepository.splitManifest(migrated);
             this.cacheSet(this.metaCache, checkpointId, meta, CheckpointManifestRepository.META_CACHE_LIMIT);
-            this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+            // CP-CACHE-2: 迁移产物无 filesRevision（undefined）——缓存命中时不触发配对校验；
+            // 落盘路径（writeManifest）会 stamp 并更新缓存
+            this.cacheSet(
+                this.filesCache,
+                checkpointId,
+                { filesRevision: meta.filesRevision, files: CheckpointManifestRepository.cloneFiles(files) },
+                CheckpointManifestRepository.FILES_CACHE_LIMIT
+            );
             return meta;
         }
 
@@ -432,7 +461,16 @@ export class CheckpointManifestRepository {
         assertSafeCheckpointDirName(checkpointId);
         const cached = this.cacheGet(this.filesCache, checkpointId);
         if (cached) {
-            return cached;
+            // ATOMIC-PAIR: 缓存命中同样执行配对校验——缓存条目可能来自旧配对
+            //（v1 内联解析 / 先前加载的旧 files.json），与 manifest 的 filesRevision
+            // 不一致 = 崩溃窗口的未提交孤儿：作废该条目走磁盘路径（重新配对校验 / .prev 恢复），
+            // 避免缓存命中跳过配对校验而放行混合配对。
+            if (expectedRevision !== undefined && cached.filesRevision !== expectedRevision) {
+                this.filesCache.delete(checkpointId);
+            } else {
+                // CP-CACHE-2: 返回前拷贝，防止调用方原地修改污染缓存
+                return CheckpointManifestRepository.cloneFiles(cached.files);
+            }
         }
         const filesPath = this.getManifestFilesPath(checkpointId);
         const filesBackupPath = `${filesPath}.prev`;
@@ -458,8 +496,14 @@ export class CheckpointManifestRepository {
                 // 缺省（旧数据无该字段）时跳过校验保持兼容
                 (expectedRevision === undefined || parsed.filesRevision === expectedRevision)
             ) {
-                this.cacheSet(this.filesCache, checkpointId, parsed.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
-                return parsed.files;
+                const files = CheckpointManifestRepository.cloneFiles(parsed.files);
+                this.cacheSet(
+                    this.filesCache,
+                    checkpointId,
+                    { filesRevision: parsed.filesRevision, files },
+                    CheckpointManifestRepository.FILES_CACHE_LIMIT
+                );
+                return files;
             }
             // files.json 是未提交的孤儿或损坏文件：尝试从 .prev 恢复 manifest 对应配对
             const restored = await this.tryRestoreFilesBackup(checkpointId, filesBackupPath, expectedRevision);
@@ -485,8 +529,13 @@ export class CheckpointManifestRepository {
                 parsed.checkpointId === checkpointId &&
                 isFilesMapping(parsed.files)
             ) {
-                const files = parsed.files as CheckpointManifest['files'];
-                this.cacheSet(this.filesCache, checkpointId, files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
+                const files = CheckpointManifestRepository.cloneFiles(parsed.files as CheckpointManifest['files']);
+                this.cacheSet(
+                    this.filesCache,
+                    checkpointId,
+                    { filesRevision: (parsed as { filesRevision?: string }).filesRevision, files },
+                    CheckpointManifestRepository.FILES_CACHE_LIMIT
+                );
                 return files;
             }
         } catch {
@@ -545,8 +594,14 @@ export class CheckpointManifestRepository {
                 isFilesMapping(current.files) &&
                 (expectedRevision === undefined || current.filesRevision === expectedRevision)
             ) {
-                this.cacheSet(this.filesCache, checkpointId, current.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
-                return current.files;
+                const files = CheckpointManifestRepository.cloneFiles(current.files);
+                this.cacheSet(
+                    this.filesCache,
+                    checkpointId,
+                    { filesRevision: current.filesRevision, files },
+                    CheckpointManifestRepository.FILES_CACHE_LIMIT
+                );
+                return files;
             }
         } catch {
             // files.json 缺失/损坏：继续恢复
@@ -556,8 +611,14 @@ export class CheckpointManifestRepository {
         } catch {
             return null; // 恢复失败（只读介质等）：本次读取不采用
         }
-        this.cacheSet(this.filesCache, checkpointId, parsed.files, CheckpointManifestRepository.FILES_CACHE_LIMIT);
-        return parsed.files;
+        const files = CheckpointManifestRepository.cloneFiles(parsed.files);
+        this.cacheSet(
+            this.filesCache,
+            checkpointId,
+            { filesRevision: parsed.filesRevision, files },
+            CheckpointManifestRepository.FILES_CACHE_LIMIT
+        );
+        return files;
     }
 
     /**
@@ -617,6 +678,17 @@ export class CheckpointManifestRepository {
                 writtenMeta = await this.writeManifestFiles(checkpointId, stampedMeta, files);
             });
             this.cacheSet(this.metaCache, checkpointId, writtenMeta, CheckpointManifestRepository.META_CACHE_LIMIT);
+            // R3 复查：filesCache 必须同步 stamp 为 writtenMeta 的配对 revision——
+            // 否则迁移后 metaCache 为 v2（含 filesRevision）而 filesCache 仍持 v1 内联
+            // 条目（filesRevision=undefined），下一次 loadManifestFiles 的配对校验会把
+            // 这条内容仍有效的缓存误作废（多一次磁盘回读；files.json 缺失时还会误判
+            // 数据丢失）。与 writeManifest 的双缓存更新同一口径（内容相同，仅补全 revision）。
+            this.cacheSet(
+                this.filesCache,
+                checkpointId,
+                { filesRevision: writtenMeta.filesRevision, files: CheckpointManifestRepository.cloneFiles(files) },
+                CheckpointManifestRepository.FILES_CACHE_LIMIT
+            );
             return true;
         } catch {
             // best-effort：失败不影响本次读取（旧格式仍可继续被解析读取）

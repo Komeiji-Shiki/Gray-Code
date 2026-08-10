@@ -11,7 +11,8 @@ import type {
   PendingAgentActionType,
   WindowsAgentStopNotificationContentOverride,
   WindowsNotificationPreviewPayload,
-  WindowsToastAdapter
+  WindowsToastAdapter,
+  WindowsToastShowResult
 } from './types'
 import { Logger } from '../../core/logger'
 
@@ -169,7 +170,10 @@ export class WindowsAgentStopNotificationService {
   ): boolean {
     if (reason === 'error') return settings.cases.error
     if (reason === 'awaiting_user_action') return settings.cases.awaitingUserAction
-    return settings.cases.continueRequired
+    if (reason === 'continue_required') return settings.cases.continueRequired
+    // 未知 reason（运行时防御）：不再静默按 continueRequired，按 error 处理并告警
+    this.logger.warn(`[windows-agent-stop-notification] unknown reason "${String(reason)}", treating as error`)
+    return settings.cases.error
   }
 
   private isDuplicate(dedupeKey: string): boolean {
@@ -187,8 +191,11 @@ export class WindowsAgentStopNotificationService {
       case 'awaiting_user_action':
         return t('notifications.windowsAgentStop.reasonLabels.awaitingUserAction')
       case 'continue_required':
-      default:
         return t('notifications.windowsAgentStop.reasonLabels.continueRequired')
+      default:
+        // 未知 reason（运行时防御）：不再静默按 continueRequired，按 error 处理并告警
+        this.logger.warn(`[windows-agent-stop-notification] unknown reason "${String(reason)}", using error label`)
+        return t('notifications.windowsAgentStop.reasonLabels.error')
     }
   }
 
@@ -239,7 +246,10 @@ export class WindowsAgentStopNotificationService {
   ): string {
     if (reason === 'error') return content.bodyTemplates.error
     if (reason === 'awaiting_user_action') return content.bodyTemplates.awaitingUserAction
-    return content.bodyTemplates.continueRequired
+    if (reason === 'continue_required') return content.bodyTemplates.continueRequired
+    // 未知 reason（运行时防御）：不再静默按 continueRequired，按 error 模板处理并告警
+    this.logger.warn(`[windows-agent-stop-notification] unknown reason "${String(reason)}", using error template`)
+    return content.bodyTemplates.error
   }
 
   private buildRenderedNotification(
@@ -302,13 +312,21 @@ export class WindowsAgentStopNotificationService {
       windowFocused: this.windowFocused
     })
 
-    const toastResult = await this.adapter.show({
-      title,
-      message,
-      silent: true,
-      waitForAction: true,
-      onClick: () => this.handleNotificationClick()
-    })
+    let toastResult: WindowsToastShowResult
+    try {
+      toastResult = await this.adapter.show({
+        title,
+        message,
+        silent: true,
+        waitForAction: true,
+        onClick: () => this.handleNotificationClick()
+      })
+    } catch (error) {
+      // adapter.show() 抛异常（而非返回 {shown:false}）：同样按失败处理，
+      // notify 的失败路径会回滚去重键，避免异常路径下去重键滞留导致后续通知被误判为 duplicate
+      this.logger.warn('[windows-agent-stop-notification] showToast threw:', error)
+      return { shown: false, skipped: true, reason: 'adapter_error' }
+    }
 
     if (!toastResult.shown) {
       log.debug('toast_not_shown', { ...toastResult })

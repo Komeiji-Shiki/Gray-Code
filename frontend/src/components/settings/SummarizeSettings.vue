@@ -4,7 +4,7 @@
  * 配置上下文总结功能
  */
 
-import { reactive, ref, computed, onMounted, watch } from 'vue'
+import { reactive, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -233,12 +233,29 @@ async function loadDefaultConfig() {
   }
 }
 
-// 更新配置字段（即时保存）
+// 更新配置字段（即时更新本地值 + 防抖保存）
+// @input 每按键触发：统一 400ms 防抖提交，避免每按键全量写配置
+let configSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 async function updateConfigField(field: string, value: any) {
-  // 先更新本地值
-  (summarizeConfig as any)[field] = value
-  
-  // 保存到后端
+  // 先更新本地值（即时反馈）
+  ;(summarizeConfig as any)[field] = value
+  scheduleConfigSave()
+}
+
+// 防抖调度保存
+function scheduleConfigSave() {
+  if (configSaveDebounceTimer) {
+    clearTimeout(configSaveDebounceTimer)
+  }
+  configSaveDebounceTimer = setTimeout(() => {
+    configSaveDebounceTimer = null
+    void persistConfig()
+  }, 400)
+}
+
+// 保存到后端（快照当前配置）
+async function persistConfig() {
   try {
     await sendToExtension('updateSummarizeConfig', {
       config: { ...summarizeConfig }
@@ -281,9 +298,11 @@ async function updateModelId(modelId: string) {
 // 监听专用模型开关
 watch(() => summarizeConfig.useSeparateModel, (enabled) => {
   if (!enabled) {
-    // 关闭时清空渠道和模型选择
+    // 关闭时清空渠道和模型选择，并同步持久化
+    // （否则清空只停留在本地，重进设置页会回显旧值）
     summarizeConfig.summarizeChannelId = ''
     summarizeConfig.summarizeModelId = ''
+    void persistConfig()
   }
 })
 
@@ -291,6 +310,15 @@ watch(() => summarizeConfig.useSeparateModel, (enabled) => {
 onMounted(async () => {
   await loadDefaultConfig()
   await Promise.all([loadConfig(), loadChannels()])
+})
+
+onUnmounted(() => {
+  // 卸载时若有待触发的防抖保存，立即 flush 一次（写配置不依赖组件存活），避免最后一次编辑丢失
+  if (configSaveDebounceTimer) {
+    clearTimeout(configSaveDebounceTimer)
+    configSaveDebounceTimer = null
+    void persistConfig()
+  }
 })
 </script>
 

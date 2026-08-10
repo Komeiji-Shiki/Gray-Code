@@ -2,8 +2,8 @@
  * Design 工具路径辅助函数
  */
 
-import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { getAllWorkspaces } from '../utils';
 import { isDesignPathAllowed } from '../../modules/settings/modeToolsPolicy';
 
@@ -27,5 +27,6 @@ export function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
 
 export async function ensureParentDir(uriFsPath: string): Promise<void> {
   const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
+  // 递归创建父目录（mkdir recursive），避免多级目录缺失时静默失败
+  await fs.promises.mkdir(dir, { recursive: true });
 }

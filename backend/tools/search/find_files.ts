@@ -136,16 +136,15 @@ async function findWithPattern(
     }
     
     // 多工作区模式：在所有工作区中查找
-    const allFiles: string[] = [];
-    const allFileDetails: FoundFileDetail[] = [];
+    let allFiles: string[] = [];
+    let allFileDetails: FoundFileDetail[] = [];
     let truncated = false;
     
     for (const ws of workspaces) {
-        if (allFiles.length >= maxResults) {
-            truncated = true;
-            break;
-        }
-        
+        // 修改原因：前置 allFiles.length >= maxResults 判断会在「后续工作区可能根本没有匹配文件」
+        //           时误报 truncated（恰好累计到 maxResults 条但全库确实只有这么多）。
+        // 修改方式：删除前置判断，每个工作区都走 maxResults+1 探测精确判定截断；
+        //           remaining<=0 时探测仍能区分「该工作区还有文件（真截断）」与「没有文件（未截断）」。
         const remaining = maxResults - allFiles.length;
         const result = await findInWorkspace(ws, pattern, exclude, remaining, true);
         
@@ -164,13 +163,20 @@ async function findWithPattern(
     
     allFiles.sort();
     allFileDetails.sort((a, b) => a.path.localeCompare(b.path));
+    // 循环结束后统一封顶（防御性兜底）：正常情况下各工作区已按 remaining 精确封顶，
+    // 此处仅在极端输入下保证返回条数不超 maxResults
+    if (allFiles.length > maxResults) {
+        allFiles = allFiles.slice(0, maxResults);
+        allFileDetails = allFileDetails.slice(0, maxResults);
+        truncated = true;
+    }
     return {
         pattern,
         success: true,
         files: allFiles,
         fileDetails: allFileDetails,
         count: allFiles.length,
-        // 去掉原来的 allFiles.length >= maxResults 兜底：各工作区已精确判定截断，
+        // 去掉原来的 allFiles.length >= maxResults 兜底：各工作区已用 maxResults+1 探测精确判定截断，
         // 恰好等于 maxResults 时不再误报 truncated
         truncated
     };

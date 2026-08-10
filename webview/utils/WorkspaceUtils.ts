@@ -28,13 +28,20 @@ export function matchGlobPattern(filePath: string, pattern: string): boolean {
     const normalizedPattern = pattern.replace(/\\/g, '/');
     const GLOBSTAR = '\u0000';
     const STAR = '\u0001';
+    const QUESTION = '\u0002';
     const regexPattern = normalizedPattern
       .replace(/\*\*/g, GLOBSTAR)
       .replace(/\*/g, STAR)
+      // glob 规范：? 匹配单个非路径分隔符字符。先替换为占位符，
+      // 避免被后续特殊字符转义把 [^/] 变成字面量（F16）
+      .replace(/\?/g, QUESTION)
       .replace(/[.+^${}()|[\]\\?]/g, '\\$&')
       .replace(new RegExp(GLOBSTAR, 'g'), '.*')
-      .replace(new RegExp(STAR, 'g'), '[^/]*');
-    const regex = new RegExp(`(?:^|/)${regexPattern}(?:$|/)`, 'i');
+      .replace(new RegExp(STAR, 'g'), '[^/]*')
+      .replace(new RegExp(QUESTION, 'g'), '[^/]');
+    // 大小写敏感性按平台：仅 Windows 文件系统不区分大小写（F13）
+    const flags = process.platform === 'win32' ? 'i' : undefined;
+    const regex = new RegExp(`(?:^|/)${regexPattern}(?:$|/)`, flags);
     return regex.test(filePath.replace(/\\/g, '/'));
   } catch {
     return false;
@@ -54,8 +61,8 @@ export function getCurrentWorkspaceUri(): string | null {
  * 支持 file://, vscode-remote:// URI 格式以及 Windows 绝对路径格式
  */
 export function getRelativePathFromAbsolute(absolutePath: string): string {
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
     throw new Error(t('webview.errors.noWorkspaceOpen'));
   }
   
@@ -82,35 +89,43 @@ export function getRelativePathFromAbsolute(absolutePath: string): string {
     }
   }
   
-  // 对于远程工作区，使用 uri.path 进行比较
-  if (isRemote) {
-    const workspaceRoot = workspaceFolder.uri.path;
-    if (filePath.startsWith(workspaceRoot + '/')) {
-      return filePath.substring(workspaceRoot.length + 1);
-    } else if (filePath === workspaceRoot) {
+  // 遍历所有工作区根做前缀匹配：多根工作区中文件可能属于任一根（F15）
+  for (const workspaceFolder of workspaceFolders) {
+    // 对于远程工作区，使用 uri.path 进行比较
+    if (isRemote) {
+      const workspaceRoot = workspaceFolder.uri.path;
+      if (filePath.startsWith(workspaceRoot + '/')) {
+        return filePath.substring(workspaceRoot.length + 1);
+      } else if (filePath === workspaceRoot) {
+        return '';
+      }
+      continue;
+    }
+    
+    // 对于本地工作区，使用 fsPath 进行比较
+    const workspaceFsPath = workspaceFolder.uri.fsPath;
+    
+    // 规范化路径以便比较：仅 Windows 文件系统不区分大小写才做小写归一，
+    // 其余平台保持大小写敏感，避免把大小写不同的路径宽松误判为属于工作区
+    // （与 matchGlobPattern/validateFileInWorkspace 的平台判断口径一致）
+    const normalizeForCompare = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+    const normalizedFilePath = normalizeForCompare(filePath.replace(/\\/g, '/'));
+    const normalizedWorkspacePath = normalizeForCompare(workspaceFsPath.replace(/\\/g, '/'));
+    
+    // 计算相对路径
+    if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')) {
+      return filePath.substring(workspaceFsPath.length + 1).replace(/\\/g, '/');
+    } else if (normalizedFilePath === normalizedWorkspacePath) {
       return '';
     }
   }
   
-  // 对于本地工作区，使用 fsPath 进行比较
-  const workspaceFsPath = workspaceFolder.uri.fsPath;
-  
-  // 规范化路径以便比较（Windows 不区分大小写）
-  const normalizedFilePath = filePath.replace(/\\/g, '/').toLowerCase();
-  const normalizedWorkspacePath = workspaceFsPath.replace(/\\/g, '/').toLowerCase();
-  
-  // 计算相对路径
-  if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')) {
-    return filePath.substring(workspaceFsPath.length + 1).replace(/\\/g, '/');
-  } else if (normalizedFilePath === normalizedWorkspacePath) {
-    return '';
-  }
-  
-  // 回退到 node 的 path.relative（仅适用于本地路径）
+  // 回退到 node 的 path.relative（仅适用于本地路径，以第一个根为基准）
+  const workspaceFsPath = workspaceFolders[0].uri.fsPath;
   const relativePath = path.relative(workspaceFsPath, filePath);
   
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    // 文件不在工作区内，抛出错误防止调用方误用
+    // 文件不在任何工作区内，抛出错误防止调用方误用
     throw new Error(t('webview.errors.fileNotInAnyWorkspace'));
   }
   
@@ -200,11 +215,15 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
     // 例如：文件是 vscode-remote://ssh-remote+host/path 但工作区是 file:///path
     if (!belongingWorkspace) {
       const fileFsPath = fileUri.path;
-      const normalizedFilePath = fileFsPath.toLowerCase();
+      // 平台感知归一化（与 getRelativePathFromAbsolute/matchGlobPattern 口径一致）：
+      // 仅 Windows 文件系统不区分大小写才做小写归一，其余平台保持大小写敏感，
+      // 避免把大小写不同的路径宽松误判为属于工作区（F13/F15）
+      const normalizeForCompare = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p;
+      const normalizedFilePath = normalizeForCompare(fileFsPath);
       
       for (const folder of workspaceFolders) {
         const workspaceFsPath = folder.uri.path;
-        const normalizedWorkspacePath = workspaceFsPath.toLowerCase();
+        const normalizedWorkspacePath = normalizeForCompare(workspaceFsPath);
         if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')
             || normalizedFilePath === normalizedWorkspacePath) {
           belongingWorkspace = folder;
@@ -240,13 +259,18 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
         // 解析失败：跳过归属比对，不误杀合法文件
         providedWorkspacePath = belongingWorkspace.uri.path;
       }
-      if (providedWorkspacePath !== undefined && belongingWorkspace.uri.path !== providedWorkspacePath) {
-        const belongingWorkspaceName = belongingWorkspace.name;
-        return {
-          valid: false,
-          error: t('webview.errors.fileInOtherWorkspace', { workspaceName: belongingWorkspaceName }),
-          errorCode: 'NOT_IN_CURRENT_WORKSPACE'
-        };
+      if (providedWorkspacePath !== undefined) {
+        // 比对前统一规范化：Windows 文件系统大小写不敏感，直接比对 URI path
+        // 会把大小写不同的同一路径误判为“属于其他工作区”（F14）。
+        const normalizeForCompare = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p;
+        if (normalizeForCompare(belongingWorkspace.uri.path) !== normalizeForCompare(providedWorkspacePath)) {
+          const belongingWorkspaceName = belongingWorkspace.name;
+          return {
+            valid: false,
+            error: t('webview.errors.fileInOtherWorkspace', { workspaceName: belongingWorkspaceName }),
+            errorCode: 'NOT_IN_CURRENT_WORKSPACE'
+          };
+        }
       }
     }
     

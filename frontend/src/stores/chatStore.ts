@@ -21,6 +21,7 @@
  * - toolActions.ts: 工具操作
  * - checkpointActions.ts: 检查点操作
  * - configActions.ts: 配置操作
+ * - queueActions.ts: 消息队列编排
  * - parsers.ts: 解析器
  * - utils.ts: 工具函数
  */
@@ -29,10 +30,8 @@ import { defineStore } from 'pinia'
 import { computed as vueComputed, watch } from 'vue'
 import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
-import { generateId } from '../utils/format'
 import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
-import { useBackgroundTaskStore } from './backgroundTaskStore'
 
 // 导入模块
 import { createChatState } from './chat/state'
@@ -128,6 +127,18 @@ import {
   reorderTab as reorderTabAction
 } from './chat/tabActions'
 
+import {
+  enqueueMessage as enqueueMessageFn,
+  dequeueMessage as dequeueMessageFn,
+  removeQueuedMessage as removeQueuedMessageFn,
+  moveQueuedMessage as moveQueuedMessageFn,
+  updateQueuedMessage as updateQueuedMessageFn,
+  sendQueuedMessageNow as sendQueuedMessageNowFn,
+  processQueue as processQueueFn,
+  processQueueAfterAction as processQueueAfterActionFn,
+  type QueueActionDeps
+} from './chat/queueActions'
+
 import type { StreamHandlerContext } from './chat/streamHandler'
 import { useSettingsStore } from './settingsStore'
 
@@ -140,16 +151,21 @@ export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './ch
 // 重复调用时先注销旧监听再注册，保证任意时刻只有一份活跃订阅。
 let disposeChatStreamListener: (() => void) | null = null
 
+/**
+ * 已完成首次状态初始化的 store state 实例集合（按实例记录，WeakSet 不泄漏）。
+ * initialize() 的状态重置（清空会话/建空白标签页）只应在首次执行：
+ * HMR/App 重挂载导致的重复 initialize 不应清空用户当前会话。
+ */
+const initializedChatStates = new WeakSet<object>()
+
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
 
   // M1：平滑档位经 state 传递——streamChunkHandlers 每 chunk 只读 state.smoothMode，
   // 不内联 useSettingsStore()（高频调用 + try/catch 吞错）。
+  // watcher 在 initialize() 内创建并保存停止句柄（重复 initialize 先停旧句柄再重建）。
   const settingsStore = useSettingsStore()
-  watch(() => settingsStore.smoothStreaming, (v) => {
-    state.smoothMode.value = v
-  }, { immediate: true })
   
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
@@ -427,227 +443,29 @@ export const useChatStore = defineStore('chat', () => {
 
   // ============ 消息队列（候选区） ============
 
-  /**
-   * 将消息加入排队队列
-   */
-  function enqueueMessage(content: string, attachments: Attachment[] = [], sendOptions?: QueuedMessage['sendOptions']): void {
-    const item: QueuedMessage = {
-      id: generateId(),
-      content,
-      attachments: [...attachments],
-      timestamp: Date.now(),
-      sendOptions,
-      conversationId: state.currentConversationId.value
-    }
-    state.messageQueue.value = [...state.messageQueue.value, item]
-
-    // 用户在响应期间发话：若当前会话正有前台命令在等待，将其转入后台，
-    // 让本轮尽快结束、排队消息尽快送达（命令结果稍后以回执回流唤醒模型）。
-    // 空闲时无前台命令可转移，跳过无效 IPC。
-    if (state.isStreaming.value || state.isWaitingForResponse.value) {
-      void sendToExtension('terminal.detachToBackground', {
-        conversationId: state.currentConversationId.value
-      }).catch(() => {})
-    }
+  /** 队列编排依赖（sendMessage/cancelStream 为绑定 state/computed 的 store 层包装） */
+  const queueActionDeps: QueueActionDeps = {
+    sendMessage,
+    cancelStream
   }
 
-  /**
-   * 取出队列第一条消息
-   */
-  function dequeueMessage(): QueuedMessage | null {
-    const queue = state.messageQueue.value
-    if (queue.length === 0) return null
-    const first = queue[0]
-    state.messageQueue.value = queue.slice(1)
-    return first
-  }
+  const enqueueMessage = (content: string, attachments?: Attachment[], sendOptions?: QueuedMessage['sendOptions']) =>
+    enqueueMessageFn(state, content, attachments, sendOptions)
 
-  /**
-   * 取出队列中第一条属于指定会话的消息（无 conversationId 视为本会话消息）。
-   *
-   * 跨会话投递防护：跳过不属于当前会话的消息，取第一条属于当前会话的，
-   * 避免跨会话消息卡死队头阻塞后续消息。processQueue 与 processQueueAfterAction
-   * 共用此逻辑，返回剩余队列供调用方重新赋值。
-   */
-  function takeNextForConversation(
-    queue: QueuedMessage[],
-    conversationId: string | null
-  ): { next: QueuedMessage; rest: QueuedMessage[] } | null {
-    const matchIndex = queue.findIndex(m =>
-      typeof m.conversationId !== 'string' || m.conversationId === conversationId
-    )
-    if (matchIndex === -1) return null
-    const [next] = queue.splice(matchIndex, 1)
-    return { next, rest: queue }
-  }
+  const dequeueMessage = () => dequeueMessageFn(state)
 
-  /**
-   * 移除队列中指定消息
-   */
-  function removeQueuedMessage(id: string): void {
-    state.messageQueue.value = state.messageQueue.value.filter(m => m.id !== id)
-  }
+  const removeQueuedMessage = (id: string) => removeQueuedMessageFn(state, id)
 
-  /**
-   * 移动队列中的消息（拖拽排序）
-   */
-  function moveQueuedMessage(fromIndex: number, toIndex: number): void {
-    const queue = [...state.messageQueue.value]
-    if (fromIndex < 0 || fromIndex >= queue.length) return
-    if (toIndex < 0 || toIndex >= queue.length) return
-    if (fromIndex === toIndex) return
+  const moveQueuedMessage = (fromIndex: number, toIndex: number) => moveQueuedMessageFn(state, fromIndex, toIndex)
 
-    const [item] = queue.splice(fromIndex, 1)
-    queue.splice(toIndex, 0, item)
-    state.messageQueue.value = queue
-  }
+  const updateQueuedMessage = (id: string, content: string, attachments: Attachment[]) =>
+    updateQueuedMessageFn(state, id, content, attachments)
 
-  /**
-   * 更新队列中指定消息的内容和附件（编辑）
-   */
-  function updateQueuedMessage(id: string, content: string, attachments: Attachment[]): void {
-    state.messageQueue.value = state.messageQueue.value.map(m =>
-      m.id === id
-        ? { ...m, content, attachments: [...attachments] }
-        : m
-    )
-  }
+  const sendQueuedMessageNow = (id: string) => sendQueuedMessageNowFn(state, queueActionDeps, id)
 
-  /**
-   * 立即发送队列中指定消息。
-   * 正在响应时先把前台 SubAgent 转为后台，再取消旧回合并发送新消息。
-   */
-  async function sendQueuedMessageNow(id: string): Promise<void> {
-    const item = state.messageQueue.value.find(m => m.id === id)
-    if (!item) return
+  const processQueue = () => processQueueFn(state, queueActionDeps)
 
-    // 从队列中移除
-    removeQueuedMessage(id)
-
-    // “立即发送”会替换当前回合；先要求后端同步解除前台 SubAgent 的父信号绑定，
-    // 再取消旧流，避免子 Agent 在新流创建前已经被父级 abort 终止。
-    if (state.isWaitingForResponse.value) {
-      await cancelStream({ preserveSubAgents: true })
-    }
-
-    // 发送消息
-    const sent = await sendMessage(item.content, item.attachments, item.sendOptions)
-    // 发送失败（sendMessage 内部已 catch）：放回队首，等待下次动作边界/回合结束重试，
-    // 与 processQueue 的失败回退语义一致，避免消息被静默丢弃
-    if (!sent) {
-      console.error('[chatStore] Failed to send queued message immediately, put back to queue head')
-      state.messageQueue.value = [item, ...state.messageQueue.value]
-    }
-  }
-
-  /**
-   * 处理队列：AI 响应结束后自动取出下一条消息发送
-   *
-   * 在 handleComplete / handleCancelled / handleError 中被调用
-   */
-  async function processQueue(): Promise<void> {
-    // 如果仍在响应中，不处理
-    if (state.isWaitingForResponse.value) return
-
-    // 跨会话投递防护：只投递属于当前会话的消息（无 conversationId 视为本会话），
-    // 避免跨会话消息卡死队头阻塞后续消息
-    const taken = takeNextForConversation(state.messageQueue.value, state.currentConversationId.value)
-    if (!taken) return
-    const { next, rest } = taken
-    state.messageQueue.value = rest
-
-    // 发送下一条排队消息；发送失败（IPC 异常等）时放回队首保持原顺序，
-    // 由下一个投递时机再次尝试，不静默丢弃排队消息
-    const sent = await sendMessage(next.content, next.attachments, next.sendOptions)
-    if (!sent) {
-      state.messageQueue.value = [next, ...state.messageQueue.value]
-    }
-  }
-
-  /**
-   * 自动投递进行中标记：防止 toolIteration 边界的连续触发重入
-   * （cancelStream 的 IPC 往返是异步的，在 sendMessage 完成前禁止再次投递）。
-   */
-  let queueAfterActionDraining = false
-
-  /**
-   * 处理队列（动作边界，P1）：LLM 执行完当前动作（非终结 toolIteration，流继续）后
-   * 立即自动取出下一条排队消息发送，不再等待整个回合完整结束。
-   *
-   * 与 sendQueuedMessageNow 完全同构（取消旧流替换当前回合 + 发送新回合），
-   * 因此复用其全部安全保证：
-   * 1. 动作彻底结束：toolIteration 由后端在工具结果 settleFunctionResponses/addContent
-   *    全部落盘后才发出，当前动作已完整持久化，不存在半截动作；
-   * 2. 历史不丢序：cancelStream({ preserveSubAgents: true }) 替换当前回合后，新流由
-   *    webview 层 awaitOldStreamCompletion 与后端 waitForOldStreamExit 保证在旧流
-   *    finally 完全退出（含工具结算落盘）后才写入新用户消息（H1 写序竞态防护），
-   *    插入点之前的完整历史保持原样、不会丢失；
-   * 3. 发送失败时把消息放回队首（保持原顺序），避免排队消息静默丢失；
-   * 4. 跨会话防护与 processQueue 一致：只投递属于当前会话的消息；
-   * 5. 投递窗口（cancelStream/sendMessage 的 IPC 往返）内会话切换或并发发送者
-   *    抢先开启新流时，放弃本次投递并放回队列，杜绝「发错会话」与「排队消息
-   *    降级为 inbox 中断（乱序且可能滞留不被送达）」。
-   */
-  async function processQueueAfterAction(): Promise<void> {
-    // 投递进行中（cancelStream/sendMessage 未完成）不重入
-    if (queueAfterActionDraining) return
-
-    // 记录投递目标会话：cancelStream 往返期间用户可能切换会话，
-    // 用取消息时的会话 ID 做归属校验（跨会话跳过逻辑与 processQueue 一致）
-    const currentId = state.currentConversationId.value
-    const taken = takeNextForConversation(state.messageQueue.value, currentId)
-    if (!taken) {
-      // P2 回执完成即插入：无排队消息可投递时，动作边界提前投递已完成后台
-      // 任务（后台子代理/后台命令）的回执——与排队消息同构（cancelStream 替换
-      // 当前回合 + 新 chatStream），不再等待整个回合完整结束。
-      // 队列非空时排队消息优先，回执等下一个动作边界或回合结束补发。
-      // 回执投递窗口同样受 queueAfterActionDraining 保护（cancelStream 的 IPC
-      // 往返期间不与其他动作边界投递交叠），内部另有 flushing 防重复回流。
-      queueAfterActionDraining = true
-      try {
-        await useBackgroundTaskStore().flushReportsAfterAction()
-      } finally {
-        queueAfterActionDraining = false
-      }
-      return
-    }
-    const { next, rest } = taken
-    state.messageQueue.value = rest
-
-    queueAfterActionDraining = true
-    try {
-      // 当前回合仍在响应中（动作边界必然如此，防御性判断以兼容迟到的调度）：
-      // 替换当前回合前先把前台 SubAgent 转为后台，再取消旧流。
-      if (state.isWaitingForResponse.value) {
-        await cancelStream({ preserveSubAgents: true })
-      }
-
-      // 投递窗口内会话已切换（tab 切换）：放回队列——消息保留自身 conversationId，
-      // 由跨会话跳过逻辑保护，绝不投递到错误会话。
-      if (state.currentConversationId.value !== currentId) {
-        state.messageQueue.value = [next, ...state.messageQueue.value]
-        return
-      }
-
-      // 投递窗口内已有其他发送者（手动发送/后台任务回执/立即发送等）抢先开启新流：
-      // 放回队列等下一个动作边界或回合终结时再试——此时 sendMessage 的忙时分支会把
-      // 消息降级为 inbox 中断（乱序投递、4000 字符上限、回合无工具调用时可能滞留），
-      // 不符合排队消息「成为真实新回合」的语义。
-      if (state.isStreaming.value || state.isWaitingForResponse.value) {
-        state.messageQueue.value = [next, ...state.messageQueue.value]
-        return
-      }
-
-      const sent = await sendMessage(next.content, next.attachments, next.sendOptions)
-      if (!sent) {
-        // 发送未成功（IPC 失败 / 会话切换校验未过等）：放回队首保持原顺序，
-        // 由下一个动作边界或回合终结时再次尝试，不静默丢弃排队消息。
-        state.messageQueue.value = [next, ...state.messageQueue.value]
-      }
-    } finally {
-      queueAfterActionDraining = false
-    }
-  }
+  const processQueueAfterAction = () => processQueueAfterActionFn(state, queueActionDeps)
 
   // ============ Build（Plan 执行）============
 
@@ -801,11 +619,20 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // ============ 初始化 ============
+
+  /** 平滑档位同步 watcher 的停止句柄（重复 initialize 前先停止旧句柄，避免重复监听） */
+  let stopSmoothStreamingWatcher: (() => void) | null = null
   
   async function initialize(): Promise<void> {
     // 幂等保护：重复调用（HMR/App 重挂载）时先注销旧订阅再重新注册，
     // 避免每条 streamChunk 被重复处理（文本重复追加、checkpoint 重复写入、tps 计数翻倍）。
     disposeChatStreamListener?.()
+    stopSmoothStreamingWatcher?.()
+
+    // M1：平滑档位 watcher（句柄保存，重复 initialize 时先停旧句柄再重建）
+    stopSmoothStreamingWatcher = watch(() => settingsStore.smoothStreaming, (v) => {
+      state.smoothMode.value = v
+    }, { immediate: true })
 
     disposeChatStreamListener = onMessageFromExtension((message) => {
       if (message.type === 'streamChunk') {
@@ -834,19 +661,24 @@ export const useChatStore = defineStore('chat', () => {
     await loadCheckpointConfig(state)
     await loadConversations()
     
-    state.currentConversationId.value = null
-    state.allMessages.value = []
-    state.windowStartIndex.value = 0
-    state.totalMessages.value = 0
-    state.isLoadingMoreMessages.value = false
-    state.historyFolded.value = false
-    state.foldedMessageCount.value = 0
-    state.toolResponseCache.value = new Map()
+    // 仅首次执行状态重置：重复 initialize（HMR/重挂载）不应清空用户当前会话。
+    // 用 WeakSet 按 state 实例记录——store 重建（新 state 对象）时仍会正确完成首次初始化。
+    if (!initializedChatStates.has(state)) {
+      initializedChatStates.add(state)
+      state.currentConversationId.value = null
+      state.allMessages.value = []
+      state.windowStartIndex.value = 0
+      state.totalMessages.value = 0
+      state.isLoadingMoreMessages.value = false
+      state.historyFolded.value = false
+      state.foldedMessageCount.value = 0
+      state.toolResponseCache.value = new Map()
 
-    // 初始化标签页：创建第一个空白标签页
-    const initialTabId = createTabAction(state, { title: 'New Chat' })
-    if (initialTabId) {
-      state.activeTabId.value = initialTabId
+      // 初始化标签页：创建第一个空白标签页
+      const initialTabId = createTabAction(state, { title: 'New Chat' })
+      if (initialTabId) {
+        state.activeTabId.value = initialTabId
+      }
     }
   }
 
