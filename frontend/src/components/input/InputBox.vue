@@ -499,6 +499,11 @@ function handleInput() {
   atTrigger.onTextChanged(textContent, cursorPos)
 
   emit('update:nodes', newNodes)
+  // 输入路径 DOM 已由浏览器直接编辑，newNodes 即 DOM 的真实状态（props 将同步为相同值）：
+  // 必须在此同步指纹——watch(props.nodes) 触发时 isInputting 仍为 true 会被短路跳过，
+  // 指纹若长期停留在初始值，后续外部清空（发送）时 getNodesFingerprint([]) === '0'
+  // 与陈旧指纹碰撞，跳过 DOM 重建导致残留旧文本（placeholder 与文本叠放）。
+  lastRenderedNodesFingerprint = getNodesFingerprint(newNodes)
   pushHistory(newNodes, cursorPos)
 
   nextTick(() => {
@@ -832,11 +837,10 @@ watch(() => props.nodes, () => {
   if (!isInputting && editorRef.value) {
     // 轻量指纹相同（长度 + 首尾节点文本）说明 DOM 与 nodes 大概率已同步，
     // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM。
-    // 注意：lastRenderedNodesFingerprint 只在 renderNodesToDom 重建时更新；
-    // 用户直接编辑路径（DOM 由浏览器改，提取比对相等后不重建）会留下陈旧指纹，
-    // 发送清空（props.nodes → []，指纹恒为 '0'）时可能与旧值碰撞而跳过重建，
-    // 导致 DOM 残留旧内容、输入框发送后不清空。
-    if (getNodesFingerprint(props.nodes) !== lastRenderedNodesFingerprint) {
+    // 例外：props.nodes 为空（发送清空）时必须强制提取比对——空数组指纹恒为 '0'，
+    // 而 lastRenderedNodesFingerprint 在用户直接编辑路径下由 handleInput 维护，
+    // 若历史渲染从未发生（指纹仍为初始 '0'）会碰撞跳过重建，DOM 残留旧内容。
+    if (props.nodes.length === 0 || getNodesFingerprint(props.nodes) !== lastRenderedNodesFingerprint) {
       const domNodes = extractNodesFromEditor(editorRef.value, {
         knownNodes: props.nodes,
         transientContexts

@@ -1,7 +1,8 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import InputBox from '../../components/input/InputBox.vue'
+import type { EditorNode } from '../../types/editorNode'
 
 function createClipboardItem(kind: 'string' | 'file', file: File | null = null): DataTransferItem {
   return {
@@ -218,49 +219,66 @@ describe('InputBox 占位符', () => {
 })
 
 describe('InputBox 外部状态同步（发送后清空回归）', () => {
-  let wrapper: VueWrapper
-
-  beforeEach(() => {
-    wrapper = mount(InputBox, {
-      props: { nodes: [] }
-    })
-  })
-
   afterEach(() => {
-    wrapper.unmount()
     vi.restoreAllMocks()
   })
 
-  it('浏览器直接编辑 DOM（输入路径）后，外部清空 nodes 必须重建 DOM 清除残留内容', async () => {
-    // 等待 mount 的 nextTick：onMounted 里 renderNodesToDom 已执行，
-    // lastRenderedNodesFingerprint = '0'（空 nodes）
+  // 真实父组件包装：@update:nodes 回流写回 nodes，复现 Vue flush 时序
+  // （emit 触发父组件更新 → flushJobs 里 InputBox watch 执行时 isInputting 仍为 true）
+  function mountWithParent() {
+    const wrapper = mount({
+      components: { InputBox },
+      setup() {
+        const nodes = ref<EditorNode[]>([])
+        return { nodes }
+      },
+      template: '<InputBox :nodes="nodes" @update:nodes="nodes = $event" />'
+    })
+    return wrapper
+  }
+
+  it('真实输入路径（isInputting 窗口内跳过同步）后发送清空：DOM 重建、残留文本与 placeholder 不叠加', async () => {
+    const wrapper = mountWithParent()
     await nextTick()
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
 
-    // 模拟用户输入：DOM 由浏览器直接编辑，不经过 renderNodesToDom
+    // 模拟用户输入：DOM 由浏览器直接编辑并派发 input 事件（真实 handleInput 路径，
+    // 含 isInputting 置位/复位、emit 回流触发父组件 props 更新）
     editor.textContent = 'hello'
-
-    // 父组件收到 update:nodes 后回传新 props（输入路径的 store 同步）
-    await wrapper.setProps({ nodes: [{ type: 'text', text: 'hello' }] })
-    // 输入路径下 DOM 已同步：不应触发全量重建，但指纹应被同步
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    // flush：父组件 nodes 回写 → InputBox watch 在 isInputting 窗口内被短路跳过同步；
+    // handleInput 的 nextTick 随后复位 isInputting
+    await nextTick()
+    await nextTick()
     expect(editor.textContent).toContain('hello')
 
-    // 模拟发送清空：父组件把 nodes 置空（InputArea.handleSend）
-    await wrapper.setProps({ nodes: [] })
-    // 回归断言：DOM 必须被重建清空，不能残留 'hello'
+    // 模拟发送清空：父组件把 nodes 置空（InputArea.handleSend 语义）
+    ;(wrapper.vm as any).nodes = []
+    await nextTick()
+    await nextTick()
+
+    // 回归断言：DOM 必须被重建清空——旧文本残留即「placeholder 与文本叠放」现象
     expect(editor.textContent ?? '').not.toContain('hello')
+    expect(editor.classList.contains('is-empty')).toBe(true)
+    wrapper.unmount()
   })
 
-  it('外部替换节点内容时 DOM 同步刷新（中间内容变化不残留）', async () => {
+  it('外部替换节点内容时 DOM 同步刷新（renderNodesToDom 路径）', async () => {
+    const wrapper = mountWithParent()
     await nextTick()
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
 
     // 初始渲染有内容（renderNodesToDom 路径），指纹与 DOM 同步
-    await wrapper.setProps({ nodes: [{ type: 'text', text: 'aaa' }] })
+    ;(wrapper.vm as any).nodes = [{ type: 'text', text: 'aaa' }]
+    await nextTick()
+    await nextTick()
     expect(editor.textContent).toContain('aaa')
 
-    // 外部整体替换为相同首尾的新内容（指纹碰撞场景）
-    await wrapper.setProps({ nodes: [{ type: 'text', text: 'bbb' }] })
+    // 外部整体替换为新内容
+    ;(wrapper.vm as any).nodes = [{ type: 'text', text: 'bbb' }]
+    await nextTick()
+    await nextTick()
     expect(editor.textContent).toContain('bbb')
+    wrapper.unmount()
   })
 })
