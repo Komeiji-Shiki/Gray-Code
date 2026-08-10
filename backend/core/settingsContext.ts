@@ -45,9 +45,9 @@ const globalContext: GlobalContext = {
 // ========== 设置管理器 ==========
 
 /**
- * 设置全局设置管理器引用
+ * 设置全局设置管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalSettingsManager(manager: SettingsManager): void {
+export function setGlobalSettingsManager(manager: SettingsManager | null): void {
     globalContext.settingsManager = manager;
 }
 
@@ -61,9 +61,9 @@ export function getGlobalSettingsManager(): SettingsManager | null {
 // ========== 配置管理器 ==========
 
 /**
- * 设置全局配置管理器引用
+ * 设置全局配置管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalConfigManager(manager: ConfigManager): void {
+export function setGlobalConfigManager(manager: ConfigManager | null): void {
     globalContext.configManager = manager;
 }
 
@@ -77,9 +77,9 @@ export function getGlobalConfigManager(): ConfigManager | null {
 // ========== 渠道管理器 ==========
 
 /**
- * 设置全局渠道管理器引用
+ * 设置全局渠道管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalChannelManager(manager: ChannelManager): void {
+export function setGlobalChannelManager(manager: ChannelManager | null): void {
     globalContext.channelManager = manager;
 }
 
@@ -93,9 +93,9 @@ export function getGlobalChannelManager(): ChannelManager | null {
 // ========== 工具注册器 ==========
 
 /**
- * 设置全局工具注册器引用
+ * 设置全局工具注册器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalToolRegistry(registry: ToolRegistry): void {
+export function setGlobalToolRegistry(registry: ToolRegistry | null): void {
     globalContext.toolRegistry = registry;
 }
 
@@ -109,9 +109,9 @@ export function getGlobalToolRegistry(): ToolRegistry | null {
 // ========== Diff 存储管理器 ==========
 
 /**
- * 设置全局 Diff 存储管理器引用
+ * 设置全局 Diff 存储管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalDiffStorageManager(manager: DiffStorageManager): void {
+export function setGlobalDiffStorageManager(manager: DiffStorageManager | null): void {
     globalContext.diffStorageManager = manager;
 }
 
@@ -125,9 +125,9 @@ export function getGlobalDiffStorageManager(): DiffStorageManager | null {
 // ========== MCP 管理器 ==========
 
 /**
- * 设置全局 MCP 管理器引用
+ * 设置全局 MCP 管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalMcpManager(manager: McpManager): void {
+export function setGlobalMcpManager(manager: McpManager | null): void {
     globalContext.mcpManager = manager;
 }
 

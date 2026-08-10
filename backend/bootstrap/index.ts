@@ -74,11 +74,17 @@ import { ActivityTracker, setGlobalActivityTracker } from '../modules/activity';
 import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../modules/tokenizer';
 import {
     setGlobalSettingsManager,
+    getGlobalSettingsManager,
     setGlobalConfigManager,
+    getGlobalConfigManager,
     setGlobalChannelManager,
+    getGlobalChannelManager,
     setGlobalToolRegistry,
+    getGlobalToolRegistry,
     setGlobalDiffStorageManager,
-    setGlobalMcpManager
+    getGlobalDiffStorageManager,
+    setGlobalMcpManager,
+    getGlobalMcpManager
 } from '../core/settingsContext';
 import { WindowsAgentStopNotificationService } from '../modules/notifications';
 
@@ -358,6 +364,9 @@ export class BackendRuntime {
         // 注册所有工具到工具注册器（必须在 ChannelManager 之前）。
         // 先清空再注册：重试初始化（graycode.retryInit）会再次走到这里，
         // 避免同一工具被重复注册导致声明重复/覆盖异常（F11）。
+        // 09 批 M5 固化：clear() 的「全量重注册」假设仅适用于下方 registerAllTools 的
+        // 纯静态注册——任何未来新增的动态注册（不经过 registerAllTools）必须放在 clear()
+        // 之后执行，否则会被清掉；注册表内其余索引（alias/registrations）同步清空。
         toolRegistry.clear();
         registerAllTools(toolRegistry);
 
@@ -365,6 +374,10 @@ export class BackendRuntime {
         // 供 ToolDeclarationResolver 反向获取（modules 层不直接依赖工具工厂实现）。
         // 幂等：覆盖式注册，重试初始化重复调用安全；工厂懒创建，每次解析重建动态声明，
         // 语义与改造前直连 createXxxTool 一致。
+        // R7 固化：工厂注册必须先于任何 resolver 调用（当前 init 顺序 settings→skills→
+        // tools→channel 保证安全）。若未来有代码在 initTools 之前解析声明（import 期
+        // 副作用/测试），read_file 多模态描述与图片工具参数会**静默回退静态声明**
+        // （getToolDeclarationFactory 返回 undefined），表现为「某些配置下工具描述不更新」。
         registerToolDeclarationFactory('read_file', (args) => createReadFileTool(args.multimodalEnabled, args.channelType, args.toolMode));
         registerToolDeclarationFactory('generate_image', (args) => createGenerateImageTool(args.maxBatchTasks, args.maxImagesPerTask, args.paramsConfig));
         registerToolDeclarationFactory('remove_background', (args) => createRemoveBackgroundTool(args.maxBatchTasks));
@@ -485,7 +498,13 @@ export class BackendRuntime {
         const mcpConfigFile = vscode.Uri.joinPath(mcpConfigDir, 'servers.json');
         const mcpStorage = new VSCodeFileSystemMcpStorageAdapter(mcpConfigFile, vscode.workspace.fs);
         this.mcpManager = new McpManager(mcpStorage);
-        await this.mcpManager.initialize();
+        try {
+            await this.mcpManager.initialize();
+        } catch (error) {
+            // MCP 配置损坏/存储不可读（如 servers.json JSON 损坏）：不阻断扩展整体初始化——
+            // 告警后以空配置继续，用户可在设置页重写配置（下次保存原子写回修复文件）。
+            console.error('[bootstrap] MCP initialize failed, continuing with empty config:', error);
+        }
 
         // 将 MCP 管理器连接到 ChannelManager（用于工具声明）
         this.channelManager.setMcpManager(this.mcpManager);
@@ -654,6 +673,29 @@ export class BackendRuntime {
             setGlobalBranchService(undefined);
         }
         this.branchService = undefined;
+
+        // 09 批 M2：失败回滚（initialize 的 catch 复用 dispose）后必须清空全部核心全局引用——
+        // 否则 settings/config/channel/mcp/toolRegistry/diffStorage 仍指向半初始化对象，
+        // 未重试窗口内被读取会拿到残缺实例。按「当前全局 === 本实例」匹配清理，
+        // 避免误清后续实例已覆盖的引用；toolRegistry/tokenizer 为模块级单例/局部变量，
+        // 无条件清空（与 activityTracker 同口径）；重试路径重新 setGlobal 覆盖，幂等。
+        if (getGlobalSettingsManager() === this.settingsManager) {
+            setGlobalSettingsManager(null);
+        }
+        if (getGlobalConfigManager() === this.configManager) {
+            setGlobalConfigManager(null);
+        }
+        if (getGlobalChannelManager() === this.channelManager) {
+            setGlobalChannelManager(null);
+        }
+        setGlobalToolRegistry(null);
+        if (getGlobalDiffStorageManager() === this.diffStorageManager) {
+            setGlobalDiffStorageManager(null);
+        }
+        if (getGlobalMcpManager() === this.mcpManager) {
+            setGlobalMcpManager(null);
+        }
+        setGlobalTokenizerResourceManager(null);
 
         // 清理更新检查延迟任务
         this.clearUpdateCheckTimer();
