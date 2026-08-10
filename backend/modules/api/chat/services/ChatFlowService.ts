@@ -982,7 +982,8 @@ export class ChatFlowService {
         : await this.toolIterationLoopService.createTurnDynamicContext(
             conversationId,
             persistedMessageId,
-            promptModeSnapshot
+            promptModeSnapshot,
+            dynamicContextStrategy
           );
       await this.conversationManager.addMessage(conversationId, 'user', userParts, {
         isUserInput: request.source !== 'background_task',
@@ -1362,7 +1363,8 @@ export class ChatFlowService {
           : await this.toolIterationLoopService.createTurnDynamicContext(
               conversationId,
               persistedMessageId,
-              promptModeSnapshot
+              promptModeSnapshot,
+              dynamicContextStrategy
             );
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
           isUserInput: request.source !== 'background_task',

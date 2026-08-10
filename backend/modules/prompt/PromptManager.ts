@@ -66,6 +66,27 @@ export interface PromptContextBundle {
 
     /** entry 表示 chat_history 条目显式控制真实历史位置；legacy 表示沿用旧插入逻辑。 */
     historyPlacement: 'legacy' | 'entry'
+
+    /** 各动态 section 的完整渲染值（key → wrapSection 后的文本），用于下一轮差分基准。 */
+    sectionValues?: Record<string, string>
+
+    /** 动态模板/条目内容指纹；模板变化时强制全量发送一轮。 */
+    dynamicTemplateFingerprint?: string
+}
+
+/**
+ * 跨回合差分基准：上一轮（最近一个带 turnDynamicContext 的用户回合）缓存的
+ * 各动态 section 完整渲染值与模板指纹。
+ *
+ * 只有 preserve 策略会提供基准：它把历史快照回插到原位，模型能看到省略的 section，
+ * 差分才是安全的；single 策略下省略会导致模型丢失基线信息，必须全量发送。
+ */
+export interface DynamicContextDiffBase {
+    /** 上一轮各动态 section 的完整渲染值。缺失/空对象时视为无基准，全量发送。 */
+    sectionValues?: Record<string, string>
+
+    /** 上一轮的动态模板/条目内容指纹；与当前指纹不同时强制全量发送。 */
+    templateFingerprint?: string
 }
 
 const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
@@ -458,9 +479,16 @@ export class PromptManager {
      * - {{$PINNED_FILES}} - 固定文件内容
      * - {{$SKILLS}} - 当前会话启用的 Skills 列表
      */
-    private generateDynamicFromTemplate(template: string, contextConfig: any, runtime?: DynamicRuntimeContext): string {
+    private generateDynamicFromTemplate(
+        template: string,
+        contextConfig: any,
+        runtime?: DynamicRuntimeContext,
+        diffBase?: DynamicContextDiffBase
+    ): { content: string; sectionValues: Record<string, string>; templateFingerprint: string } {
         const referencedKeys = this.getReferencedPromptPlaceholders(template)
-        const modules = this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys)
+        const fullModules = this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys)
+        const templateFingerprint = fingerprint(template)
+        const modules = this.applySectionDiff(fullModules, diffBase, templateFingerprint)
         const templateModules: Record<string, string> = {
             'TODO_LIST': '',
             'WORKSPACE_FILES': '',
@@ -478,7 +506,15 @@ export class PromptManager {
             result = result.replace(regex, value)
         }
 
-        return this.cleanupEmptyLines(result)
+        // 全部 section 与上一轮相同（被差分剔除）：整条动态消息不发，
+        // 模型仍能从 preserve 回插的历史快照看到内容，请求前缀与上轮一致。
+        const allSectionsOmitted = !!diffBase?.sectionValues && Object.values(modules).every(value => !value)
+        return {
+            content: allSectionsOmitted ? '' : this.cleanupEmptyLines(result),
+            // 完整 section 值（未差分）供下一轮作为对比基准。
+            sectionValues: fullModules,
+            templateFingerprint
+        }
     }
 
     private buildDynamicPromptModules(contextConfig: any, runtime?: DynamicRuntimeContext, onlyKeys?: Set<string>): Record<string, string> {
@@ -567,6 +603,34 @@ export class PromptManager {
      */
     private cleanupEmptyLines(text: string): string {
         return text.replace(/\n{3,}/g, '\n\n').trim()
+    }
+
+    /**
+     * 对动态 section 模块做跨回合差分：与上一轮（diffBase）相同的 section 置空，
+     * 变化/新增的 section 保留。模板指纹不同（模板/条目内容被修改）时强制全量发送。
+     *
+     * 无基准（首轮、旧缓存、single 策略）时不做差分，保持原行为。
+     */
+    private applySectionDiff(
+        modules: Record<string, string>,
+        diffBase?: DynamicContextDiffBase,
+        currentTemplateFingerprint?: string
+    ): Record<string, string> {
+        if (!diffBase?.sectionValues) {
+            return modules
+        }
+        // 模板/条目内容变化：模型需要看到新说明，全量发送一轮（含未变化 section）。
+        if (
+            currentTemplateFingerprint &&
+            diffBase.templateFingerprint !== currentTemplateFingerprint
+        ) {
+            return modules
+        }
+        const result: Record<string, string> = {}
+        for (const [key, value] of Object.entries(modules)) {
+            result[key] = diffBase.sectionValues[key] === value ? '' : value
+        }
+        return result
     }
     
     /**
@@ -751,7 +815,12 @@ export class PromptManager {
         return keys
     }
 
-    private renderPromptTemplateContent(template: string, runtime?: DynamicRuntimeContext): string {
+    private renderPromptTemplateContent(
+        template: string,
+        runtime?: DynamicRuntimeContext,
+        diffBase?: DynamicContextDiffBase,
+        prebuiltModules?: Record<string, string>
+    ): string {
         const settingsManager = getGlobalSettingsManager()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
         const referencedKeys = this.getReferencedPromptPlaceholders(template)
@@ -779,7 +848,15 @@ export class PromptManager {
         if (referencedKeys.has('MEMORY')) {
             modules['MEMORY'] = this.generateMemorySection()
         }
-        Object.assign(modules, this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys))
+        // prebuiltModules 由 getPromptContextBundle 一次性生成并复用，避免每条 entry 重复渲染文件树/诊断。
+        Object.assign(
+            modules,
+            this.applySectionDiff(
+                prebuiltModules ?? this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys),
+                diffBase,
+                fingerprint(template)
+            )
+        )
 
         let result = template
         for (const [key, value] of Object.entries(modules)) {
@@ -790,8 +867,13 @@ export class PromptManager {
         return this.cleanupEmptyLines(result)
     }
 
-    private renderPromptEntryContent(content: string, runtime?: DynamicRuntimeContext): string {
-        return this.renderPromptTemplateContent(content, runtime)
+    private renderPromptEntryContent(
+        content: string,
+        runtime?: DynamicRuntimeContext,
+        diffBase?: DynamicContextDiffBase,
+        prebuiltModules?: Record<string, string>
+    ): string {
+        return this.renderPromptTemplateContent(content, runtime, diffBase, prebuiltModules)
     }
     
     /**
@@ -817,7 +899,11 @@ export class PromptManager {
         return this.getPromptContextBundle(modeSnapshot, runtime).messages
     }
 
-    getPromptContextBundle(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): PromptContextBundle {
+    getPromptContextBundle(
+        modeSnapshot?: ResolvedPromptModeSnapshot,
+        runtime?: DynamicRuntimeContext,
+        options?: { diffBase?: DynamicContextDiffBase }
+    ): PromptContextBundle {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
 
         if (this.usesPromptEntries(resolvedMode)) {
@@ -828,6 +914,35 @@ export class PromptManager {
             const entries = this.getEnabledPromptEntries(resolvedMode)
             const chatHistoryIndex = entries.findIndex(entry => entry.type === 'chat_history')
             const historyPlacement: PromptContextBundle['historyPlacement'] = chatHistoryIndex >= 0 ? 'entry' : 'legacy'
+
+            // 动态条目（非 system、含动态占位符）：收集引用的 section 并集并一次性渲染，
+            // 供所有条目差分渲染复用，避免每条 entry 重复生成文件树/诊断。
+            const dynamicEntryKeys = new Set<string>()
+            let dynamicEntryFingerprintSource = ''
+            for (const entry of entries) {
+                if ((entry.type || 'prompt') !== 'prompt' || entry.role === 'system') {
+                    continue
+                }
+                if (!this.hasDynamicPlaceholder(entry.content)) {
+                    continue
+                }
+                for (const key of this.getReferencedPromptPlaceholders(entry.content)) {
+                    if (DYNAMIC_PROMPT_PLACEHOLDERS.has(key)) {
+                        dynamicEntryKeys.add(key)
+                    }
+                }
+                dynamicEntryFingerprintSource += entry.content
+            }
+            const sectionValues = dynamicEntryKeys.size > 0
+                ? this.buildDynamicPromptModules(
+                    getGlobalSettingsManager()?.getContextAwarenessConfig(),
+                    runtime,
+                    dynamicEntryKeys
+                )
+                : {}
+            const dynamicTemplateFingerprint = dynamicEntryFingerprintSource
+                ? fingerprint(dynamicEntryFingerprintSource)
+                : undefined
 
             for (let index = 0; index < entries.length; index++) {
                 const entry = entries[index]
@@ -840,7 +955,7 @@ export class PromptManager {
                     continue
                 }
 
-                const text = this.renderPromptEntryContent(entry.content, runtime)
+                const text = this.renderPromptEntryContent(entry.content, runtime, options?.diffBase, sectionValues)
                 if (!text.trim()) {
                     continue
                 }
@@ -888,11 +1003,14 @@ export class PromptManager {
                 dynamicSnapshotMessages,
                 text: promptContextMessagesToText(messages),
                 dynamicSnapshotText: promptContextMessagesToText(dynamicSnapshotMessages),
-                historyPlacement
+                historyPlacement,
+                sectionValues,
+                dynamicTemplateFingerprint
             }
         }
 
-        const messages = this.getLegacyDynamicContextMessages(modeSnapshot, runtime)
+        const legacy = this.getLegacyDynamicContextMessages(modeSnapshot, runtime, options?.diffBase)
+        const messages = legacy.messages
         const text = promptContextMessagesToText(messages)
         return {
             beforeHistoryMessages: messages,
@@ -903,11 +1021,17 @@ export class PromptManager {
             dynamicSnapshotMessages: messages,
             text,
             dynamicSnapshotText: text,
-            historyPlacement: 'legacy'
+            historyPlacement: 'legacy',
+            sectionValues: legacy.sectionValues,
+            dynamicTemplateFingerprint: legacy.templateFingerprint
         }
     }
 
-    private getLegacyDynamicContextMessages(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): Content[] {
+    private getLegacyDynamicContextMessages(
+        modeSnapshot?: ResolvedPromptModeSnapshot,
+        runtime?: DynamicRuntimeContext,
+        diffBase?: DynamicContextDiffBase
+    ): { messages: Content[]; sectionValues: Record<string, string>; templateFingerprint?: string } {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
@@ -916,23 +1040,32 @@ export class PromptManager {
         // 检查是否启用动态上下文模板（使用本次请求的模式快照）
         const dynamicTemplateEnabled = resolvedMode?.dynamicTemplateEnabled ?? promptConfig?.dynamicTemplateEnabled ?? true
         if (!dynamicTemplateEnabled) {
-            return []
+            return { messages: [], sectionValues: {}, templateFingerprint: undefined }
         }
         
         const dynamicTemplate = resolvedMode?.dynamicTemplate || promptConfig?.dynamicTemplate || ''
         if (dynamicTemplate.trim()) {
-            const content = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig, runtime)
-            if (content) {
-                return [{
-                    role: 'user' as const,
-                    parts: [{ text: content }]
-                }]
+            const rendered = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig, runtime, diffBase)
+            if (rendered.content) {
+                return {
+                    messages: [{
+                        role: 'user' as const,
+                        parts: [{ text: rendered.content }]
+                    }],
+                    sectionValues: rendered.sectionValues,
+                    templateFingerprint: rendered.templateFingerprint
+                }
             }
-            return []
+            return {
+                messages: [],
+                sectionValues: rendered.sectionValues,
+                templateFingerprint: rendered.templateFingerprint
+            }
         }
         
         // 否则使用默认逻辑
         const sections: string[] = []
+        const sectionValues: Record<string, string> = {}
         
         // 前缀说明
         sections.push('This is the current turn\'s dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.')
@@ -944,7 +1077,8 @@ export class PromptManager {
         // TODO 列表（来自会话元数据）
         const todoText = formatTodoListText(runtime?.todoList)
         if (todoText) {
-            sections.push(this.wrapSection('TODO LIST', todoText))
+            sectionValues['TODO_LIST'] = this.wrapSection('TODO LIST', todoText)
+            sections.push(sectionValues['TODO_LIST'])
         }
 
         // 工作区文件树
@@ -954,7 +1088,8 @@ export class PromptManager {
                 contextConfig?.ignorePatterns ?? []
             )
             if (fileTreeContent) {
-                sections.push(this.wrapSection('WORKSPACE FILES', fileTreeContent))
+                sectionValues['WORKSPACE_FILES'] = this.wrapSection('WORKSPACE FILES', fileTreeContent)
+                sections.push(sectionValues['WORKSPACE_FILES'])
             }
         }
         
@@ -965,7 +1100,8 @@ export class PromptManager {
                 contextConfig.ignorePatterns || []
             )
             if (openTabsContent) {
-                sections.push(this.wrapSection('OPEN TABS', openTabsContent))
+                sectionValues['OPEN_TABS'] = this.wrapSection('OPEN TABS', openTabsContent)
+                sections.push(sectionValues['OPEN_TABS'])
             }
         }
         
@@ -975,29 +1111,54 @@ export class PromptManager {
                 contextConfig.ignorePatterns || []
             )
             if (activeEditorContent) {
-                sections.push(this.wrapSection('ACTIVE EDITOR', activeEditorContent))
+                sectionValues['ACTIVE_EDITOR'] = this.wrapSection('ACTIVE EDITOR', activeEditorContent)
+                sections.push(sectionValues['ACTIVE_EDITOR'])
             }
         }
         
         // 诊断信息
         const diagnosticsContent = this.generateDiagnosticsSection()
         if (diagnosticsContent) {
-            sections.push(this.wrapSection('DIAGNOSTICS', diagnosticsContent))
+            sectionValues['DIAGNOSTICS'] = this.wrapSection('DIAGNOSTICS', diagnosticsContent)
+            sections.push(sectionValues['DIAGNOSTICS'])
         }
         
         // 固定文件内容
         const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
         if (pinnedFilesContent) {
             const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
-            sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
+            sectionValues['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
+            sections.push(sectionValues['PINNED_FILES'])
+        }
+
+        // 跨回合差分：与上一轮相同的 section 不发（preserve 回插的历史快照中仍可见）。
+        // Current Time 不参与差分触发：有 section 变化时随消息一起发送，全部未变则整条省略。
+        const sectionKeys = Object.keys(sectionValues)
+        let anySectionChanged = false
+        for (const key of sectionKeys) {
+            if (diffBase?.sectionValues?.[key] === sectionValues[key]) {
+                const sectionIndex = sections.indexOf(sectionValues[key])
+                if (sectionIndex >= 0) {
+                    sections.splice(sectionIndex, 1)
+                }
+            } else {
+                anySectionChanged = true
+            }
+        }
+        if (sectionKeys.length > 0 && !anySectionChanged) {
+            return { messages: [], sectionValues, templateFingerprint: undefined }
         }
         
         // 返回单个动态上下文消息（清理多余空行）
         const content = this.cleanupEmptyLines(sections.join('\n\n'))
-        return [{
-            role: 'user' as const,
-            parts: [{ text: content }]
-        }]
+        return {
+            messages: [{
+                role: 'user' as const,
+                parts: [{ text: content }]
+            }],
+            sectionValues,
+            templateFingerprint: undefined
+        }
     }
     
     /**
