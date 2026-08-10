@@ -47,6 +47,11 @@ const thinkingTypeOptions = computed<SelectOption[]>(() => [
     value: 'enabled',
     label: t('components.channels.anthropic.thinking.typeEnabled'),
     description: t('components.channels.anthropic.thinking.typeEnabledHint')
+  },
+  {
+    value: 'disabled',
+    label: t('components.channels.anthropic.thinking.typeDisabled'),
+    description: t('components.channels.anthropic.thinking.typeDisabledHint')
   }
 ])
 

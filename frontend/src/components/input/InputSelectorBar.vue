@@ -4,7 +4,7 @@ import ModelSelector from './ModelSelector.vue'
 import ModeSelector from './ModeSelector.vue'
 import ThinkingSelector from './ThinkingSelector.vue'
 import type { ChannelOption, PromptMode, ModelInfo } from './types'
-import type { ThinkingLevel } from '../../utils/thinkingLevel'
+import type { ThinkingLevelOption } from '../../utils/thinkingLevel'
 
 import { useI18n } from '../../i18n'
 
@@ -22,7 +22,8 @@ const props = defineProps<{
   modelOptions: ModelInfo[]
   modelDisabled: boolean
 
-  thinkingLevel: ThinkingLevel
+  thinkingLevel: string
+  thinkingOptions: ThinkingLevelOption[]
   thinkingDisabled: boolean
 }>()
 
@@ -31,7 +32,7 @@ const emit = defineEmits<{
   (e: 'open-mode-settings'): void
   (e: 'channel-change', channelId: string): void
   (e: 'model-change', modelId: string): void
-  (e: 'thinking-change', level: ThinkingLevel): void
+  (e: 'thinking-change', level: string): void
 }>()
 </script>
 
@@ -77,6 +78,7 @@ const emit = defineEmits<{
     <div class="thinking-selector-wrapper">
       <ThinkingSelector
         :model-value="props.thinkingLevel"
+        :options="props.thinkingOptions"
         :disabled="props.thinkingDisabled"
         @update:model-value="emit('thinking-change', $event)"
       />

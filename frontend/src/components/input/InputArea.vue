@@ -23,7 +23,7 @@ import { sendToExtension, showNotification, onExtensionCommand } from '../../uti
 import * as configService from '../../services/config'
 import * as contextService from '../../services/context'
 import { formatNumber, generateId } from '../../utils/format'
-import { getThinkingLevel, buildThinkingLevelUpdates, supportsThinkingLevel, type ThinkingLevel } from '../../utils/thinkingLevel'
+import { getThinkingLevel, getThinkingLevelOptions, buildThinkingLevelUpdates, supportsThinkingLevel, type ThinkingLevelOption } from '../../utils/thinkingLevel'
 import { languageFromPath } from '../../utils/languageFromPath'
 import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { getFileType } from '../../utils/file'
@@ -161,9 +161,14 @@ async function handleModelChange(modelId: string) {
 }
 
 // ========== 思考强度快捷控制 ==========
-// 与设置页写入同一份渠道配置（config.updateConfig），下拉选择直接反映到设置页。
+// 与设置页写入同一份渠道配置（config.updateConfig），下拉选择直接反映到设置页；
+// 选项列表按渠道提供完整档位（与设置页一致，不裁剪）。
 const currentThinkingLevel = computed(() =>
   currentConfig.value ? getThinkingLevel(currentConfig.value) : 'off'
+)
+
+const thinkingOptions = computed<ThinkingLevelOption[]>(() =>
+  currentConfig.value ? getThinkingLevelOptions(currentConfig.value) : []
 )
 
 const thinkingDisabled = computed(() =>
@@ -173,7 +178,7 @@ const thinkingDisabled = computed(() =>
 async function handleThinkingChange(level: string) {
   const config = currentConfig.value
   if (!config || !chatStore.configId) return
-  const updates = buildThinkingLevelUpdates(config, level as ThinkingLevel)
+  const updates = buildThinkingLevelUpdates(config, level)
   if (!updates) return
 
   // await 前捕获目标配置 id（与设置页 updateConfigFields 同策略，防止往返期间切渠道污染新渠道）
@@ -773,6 +778,7 @@ watch(() => settingsStore.promptModesVersion, () => {
       :model-options="currentModels"
       :model-disabled="!chatStore.configId || isLoadingConfigs"
       :thinking-level="currentThinkingLevel"
+      :thinking-options="thinkingOptions"
       :thinking-disabled="thinkingDisabled"
       @mode-change="handleModeChange"
       @open-mode-settings="openModeSettings"

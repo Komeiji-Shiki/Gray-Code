@@ -1,65 +1,71 @@
 /**
- * 思考强度快速切换工具
+ * 思考强度快捷切换工具
  *
- * 聊天输入区「思考强度」下拉框使用统一的 Off / Low / Medium / High 四级，
- * 映射到各渠道已有的 thinking / reasoning 配置字段——与设置页写入的是同一份数据，
- * 下拉框的选择会直接反映到设置页（反之亦然）。
+ * 聊天输入区「思考强度」下拉框与设置页展示**同一套**渠道配置字段
+ * （config.updateConfig），选项覆盖设置页全部档位（不做裁剪、不做合并），
+ * 下拉选择直接反映到设置页（反之亦然）。
  *
- * 映射口径：
- * - openai / openai-responses: options.reasoning.effort（闸门 optionsEnabled.reasoning）
- * - anthropic: options.thinking.type + effort（闸门 optionsEnabled.thinking）
- * - gemini: options.thinkingConfig.mode + thinkingLevel（闸门 optionsEnabled.thinkingConfig）
+ * 档位口径（选项文案刻意保持英文不翻译，即各 API 的原始取值）：
+ * - openai / openai-responses：Off / none / minimal / low / medium / high / xhigh / max / ultra / custom
+ *   → options.reasoning.effort（闸门 optionsEnabled.reasoning）
+ * - anthropic：Off / low / medium / high / xhigh / max / ultra / custom
+ *   → options.thinking.type + effort（闸门 optionsEnabled.thinking）
+ * - gemini：Off / minimal / low / medium / high
+ *   → options.thinkingConfig.mode + thinkingLevel（闸门 optionsEnabled.thinkingConfig）
  *
- * 选项文案刻意保持英文（Off/Low/Medium/High）不做 i18n 翻译，
- * 便于用户直接对应各 API 的 effort / thinkingLevel 取值。
+ * Off 语义（关闭思考）：
+ * - openai 系 / gemini：关闭对应闸门（optionsEnabled.reasoning / thinkingConfig = false）；
+ * - anthropic：显式写 thinking.type = 'disabled'（闸门保持开启，后端请求显式携带
+ *   {"thinking": {"type": "disabled"}}）。
+ *
+ * none 语义（仅 openai 系）：思考保持开启（闸门 true），但 effort = 'none'
+ * ——后端 formatter 对 'none' 不发送 reasoning.effort 参数（不传递思考强度参数），
+ * 与 Off（整体关闭思考）严格区分。
  */
 
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high'
-
-export const THINKING_LEVELS: readonly ThinkingLevel[] = ['off', 'low', 'medium', 'high']
-
-export const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-  off: 'Off',
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High'
+export interface ThinkingLevelOption {
+  value: string
+  label: string
 }
+
+/** Off 档位值（各渠道通用） */
+export const THINKING_OFF = 'off'
+
+const OPENAI_THINKING_OPTIONS: ThinkingLevelOption[] = [
+  { value: THINKING_OFF, label: 'Off' },
+  { value: 'none', label: 'none' },
+  { value: 'minimal', label: 'minimal' },
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' },
+  { value: 'xhigh', label: 'xhigh' },
+  { value: 'max', label: 'max' },
+  { value: 'ultra', label: 'ultra' },
+  { value: 'custom', label: 'custom' }
+]
+
+const ANTHROPIC_THINKING_OPTIONS: ThinkingLevelOption[] = [
+  { value: THINKING_OFF, label: 'Off' },
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' },
+  { value: 'xhigh', label: 'xhigh' },
+  { value: 'max', label: 'max' },
+  { value: 'ultra', label: 'ultra' },
+  { value: 'custom', label: 'custom' }
+]
+
+const GEMINI_THINKING_OPTIONS: ThinkingLevelOption[] = [
+  { value: THINKING_OFF, label: 'Off' },
+  { value: 'minimal', label: 'minimal' },
+  { value: 'low', label: 'low' },
+  { value: 'medium', label: 'medium' },
+  { value: 'high', label: 'high' }
+]
 
 const OPENAI_THINKING_TYPES = new Set(['openai', 'openai-responses'])
 const ANTHROPIC_THINKING_TYPES = new Set(['anthropic'])
 const GEMINI_THINKING_TYPES = new Set(['gemini'])
-
-/** OpenAI 系 effort → 四级档位（xhigh/max/ultra/custom 统一归 high，none 即 off） */
-const OPENAI_EFFORT_RANK: Record<string, ThinkingLevel> = {
-  none: 'off',
-  minimal: 'low',
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  xhigh: 'high',
-  max: 'high',
-  ultra: 'high',
-  custom: 'high'
-}
-
-/** Anthropic effort → 四级档位（ultra/max/xhigh/custom 统一归 high） */
-const ANTHROPIC_EFFORT_RANK: Record<string, ThinkingLevel> = {
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  xhigh: 'high',
-  max: 'high',
-  ultra: 'high',
-  custom: 'high'
-}
-
-/** Gemini thinkingLevel → 四级档位（minimal 归 low） */
-const GEMINI_LEVEL_RANK: Record<string, ThinkingLevel> = {
-  minimal: 'low',
-  low: 'low',
-  medium: 'medium',
-  high: 'high'
-}
 
 /** 渠道类型是否支持思考强度快捷控制 */
 export function supportsThinkingLevel(config: any): boolean {
@@ -68,56 +74,64 @@ export function supportsThinkingLevel(config: any): boolean {
   return OPENAI_THINKING_TYPES.has(type) || ANTHROPIC_THINKING_TYPES.has(type) || GEMINI_THINKING_TYPES.has(type)
 }
 
+/** 渠道类型对应的完整档位列表（与设置页一致，不裁剪） */
+export function getThinkingLevelOptions(config: any): ThinkingLevelOption[] {
+  if (!supportsThinkingLevel(config)) return []
+  const type: string = config.type
+  if (OPENAI_THINKING_TYPES.has(type)) return OPENAI_THINKING_OPTIONS
+  if (ANTHROPIC_THINKING_TYPES.has(type)) return ANTHROPIC_THINKING_OPTIONS
+  if (GEMINI_THINKING_TYPES.has(type)) return GEMINI_THINKING_OPTIONS
+  return []
+}
+
 /**
- * 读取当前渠道配置对应的思考强度档位。
+ * 读取当前渠道配置对应的思考强度档位（精确值，不做档位归并）。
  *
- * 闸门语义与设置页一致：openai/anthropic 默认关闭（未开启视为 Off），
+ * 闸门语义与设置页一致：openai/anthropic 闸门默认关闭（显示 Off），
  * gemini 默认开启（thinkingConfig 默认思考）。
+ * gemini default / budget 模式没有档位概念，按中档（medium）展示。
  */
-export function getThinkingLevel(config: any): ThinkingLevel {
-  if (!supportsThinkingLevel(config)) return 'off'
+export function getThinkingLevel(config: any): string {
+  if (!supportsThinkingLevel(config)) return THINKING_OFF
   const type: string = config.type
   const options = config.options || {}
   const optionsEnabled = config.optionsEnabled || {}
 
   if (OPENAI_THINKING_TYPES.has(type)) {
-    if (!optionsEnabled.reasoning) return 'off'
-    const effort = options.reasoning?.effort
-    if (!effort) return 'high'
-    return OPENAI_EFFORT_RANK[effort] ?? 'high'
+    if (!optionsEnabled.reasoning) return THINKING_OFF
+    return options.reasoning?.effort || 'high'
   }
 
   if (ANTHROPIC_THINKING_TYPES.has(type)) {
-    if (!optionsEnabled.thinking) return 'off'
+    if (!optionsEnabled.thinking) return THINKING_OFF
     const thinking = options.thinking || {}
-    if (thinking.type === 'disabled') return 'off'
-    const effort = thinking.effort || 'high'
-    return ANTHROPIC_EFFORT_RANK[effort] ?? 'high'
+    if (thinking.type === 'disabled') return THINKING_OFF
+    return thinking.effort || 'high'
   }
 
   if (GEMINI_THINKING_TYPES.has(type)) {
-    if (optionsEnabled.thinkingConfig === false) return 'off'
+    if (optionsEnabled.thinkingConfig === false) return THINKING_OFF
     const thinkingConfig = options.thinkingConfig || {}
-    if (thinkingConfig.includeThoughts === false) return 'off'
-    if (thinkingConfig.mode === 'level') {
-      return GEMINI_LEVEL_RANK[thinkingConfig.thinkingLevel] ?? 'medium'
-    }
+    if (thinkingConfig.includeThoughts === false) return THINKING_OFF
+    if (thinkingConfig.mode === 'level') return thinkingConfig.thinkingLevel || 'medium'
     // default / budget 模式：使用 API 默认思考强度（按中档展示）
     return 'medium'
   }
 
-  return 'off'
+  return THINKING_OFF
 }
 
 /**
  * 构建写入渠道配置的 updates（config.updateConfig 的 updates 字段）。
  *
- * 写入字段与设置页完全一致：
- * - off：只关闭闸门（options 原样保留，避免副作用）；
- * - low/medium/high：开启闸门并写 effort / thinkingLevel，
- *   其余字段（summary/budget_tokens/display 等）保留当前值。
+ * - Off：openai 系 / gemini 只关闸门；anthropic 显式写 thinking.type='disabled'
+ *   （闸门保持开启，后端请求显式携带 {"thinking":{"type":"disabled"}}）；
+ * - 档位（none/minimal/low/medium/high/xhigh/max/ultra/custom）：开启闸门并写
+ *   effort / thinkingLevel 精确值，其余字段（summary/effortCustom/budget_tokens/
+ *   display 等）保留当前值；anthropic 档位写入强制 type='adaptive'（effort 仅该
+ *   模式经 output_config 生效）。
  */
-export function buildThinkingLevelUpdates(config: any, level: ThinkingLevel): Record<string, any> | null {
+export function buildThinkingLevelUpdates(config: any, level: string): Record<string, any> | null {
   if (!supportsThinkingLevel(config)) return null
   const type: string = config.type
   const options = config.options || {}
@@ -125,16 +139,17 @@ export function buildThinkingLevelUpdates(config: any, level: ThinkingLevel): Re
 
   if (OPENAI_THINKING_TYPES.has(type)) {
     const updates: Record<string, any> = {
-      optionsEnabled: { ...optionsEnabled, reasoning: level !== 'off' }
+      optionsEnabled: { ...optionsEnabled, reasoning: level !== THINKING_OFF }
     }
-    if (level !== 'off') {
+    if (level !== THINKING_OFF) {
       const current = options.reasoning || {}
+      const reasoningDefaults = { effort: 'high', summaryEnabled: false, summary: 'auto' }
       updates.options = {
         ...options,
         reasoning: {
-          effort: level,
-          summaryEnabled: current.summaryEnabled ?? false,
-          summary: current.summary ?? 'auto'
+          ...reasoningDefaults,
+          ...current,
+          effort: level
         }
       }
     }
@@ -142,15 +157,23 @@ export function buildThinkingLevelUpdates(config: any, level: ThinkingLevel): Re
   }
 
   if (ANTHROPIC_THINKING_TYPES.has(type)) {
-    const updates: Record<string, any> = {
-      optionsEnabled: { ...optionsEnabled, thinking: level !== 'off' }
+    const current = options.thinking || {}
+    if (level === THINKING_OFF) {
+      // 显式关闭思考：闸门保持开启，请求携带 thinking.type='disabled'
+      return {
+        optionsEnabled: { ...optionsEnabled, thinking: true },
+        options: {
+          ...options,
+          thinking: {
+            ...current,
+            type: 'disabled'
+          }
+        }
+      }
     }
-    if (level !== 'off') {
-      const current = options.thinking || {}
-      // Anthropic 的 effort 仅在 adaptive 模式经 output_config 生效（enabled 模式只看
-      // budget_tokens）——快捷档位要真正控制思考强度，必须落成 adaptive + effort；
-      // 其余字段（budget_tokens/display 等）保留当前值，设置页可见。
-      updates.options = {
+    return {
+      optionsEnabled: { ...optionsEnabled, thinking: true },
+      options: {
         ...options,
         thinking: {
           ...current,
@@ -159,14 +182,13 @@ export function buildThinkingLevelUpdates(config: any, level: ThinkingLevel): Re
         }
       }
     }
-    return updates
   }
 
   if (GEMINI_THINKING_TYPES.has(type)) {
     const updates: Record<string, any> = {
-      optionsEnabled: { ...optionsEnabled, thinkingConfig: level !== 'off' }
+      optionsEnabled: { ...optionsEnabled, thinkingConfig: level !== THINKING_OFF }
     }
-    if (level !== 'off') {
+    if (level !== THINKING_OFF) {
       const current = options.thinkingConfig || {}
       updates.options = {
         ...options,

@@ -13,13 +13,16 @@
 ## [1.7.8] - 2026-08-10
 
 ### Added
-  - **聊天输入区「思考强度」快捷下拉框（桌面版/插件公共前端）**：位于输入区左下角模型选择器旁，`Off / Low / Medium / High` 四档（档位文案刻意保持英文不翻译，直接对应各 API 的 effort / thinkingLevel 取值）。下拉框与设置页写**同一份**渠道配置（`config.updateConfig`），双向联动：
-    - openai / openai-responses → `options.reasoning.effort`（`none` 映射 Off，`minimal/low/medium/high` 逐档对应，`xhigh/max/ultra/custom` 归入 High），闸门 `optionsEnabled.reasoning` 同步开关；
-    - anthropic → `options.thinking.type = adaptive` + `effort`（effort 仅在该模式经 `output_config` 生效，故写档位时强制 adaptive，`budget_tokens/display` 等其余字段保留），闸门 `optionsEnabled.thinking` 同步开关；
-    - gemini → `options.thinkingConfig.mode = level` + `thinkingLevel`（default/budget 模式按中档展示），闸门 `optionsEnabled.thinkingConfig` 同步开关；
-    - 下拉选择后设置页即时刷新（新增 `settingsStore.configsVersion` 版本信号，ChannelSettings 监听重载）；新增 `utils/thinkingLevel.ts` 纯映射模块与 17 个单测（含闸门默认值语义、四类渠道映射、写入更新构建）。
+  - **聊天输入区「思考强度」快捷下拉框（桌面版/插件公共前端）**：位于输入区左下角模型选择器旁，选项**覆盖设置页全部档位、不做裁剪**（文案保持英文不翻译，即各 API 的原始取值）。下拉框与设置页写**同一份**渠道配置（`config.updateConfig`），双向联动：
+    - openai / openai-responses → `Off / none / minimal / low / medium / high / xhigh / max / ultra / custom`，映射 `options.reasoning.effort`（闸门 `optionsEnabled.reasoning` 同步开关）；
+    - anthropic → `Off / low / medium / high / xhigh / max / ultra / custom`，映射 `options.thinking.type + effort`（档位写入强制 type=adaptive——effort 仅该模式经 `output_config` 生效，`budget_tokens/display` 等其余字段保留）；
+    - gemini → `Off / minimal / low / medium / high`，映射 `options.thinkingConfig.mode=level + thinkingLevel`（default/budget 模式按中档展示）；
+    - **Off 语义（关闭思考）**：openai 系 / gemini 关闭对应闸门（`optionsEnabled.reasoning` / `thinkingConfig = false`）；anthropic 显式写 `thinking.type = 'disabled'`（闸门保持开启，后端请求显式携带 `{"thinking":{"type":"disabled"}}`，formatter 新增 disabled 分支，设置页思考模式选项同步新增「关闭 (Disabled)」，三语言文案齐全）；
+    - **none 语义（仅 openai 系）**：思考保持开启（闸门 true）但 `effort = 'none'`——后端 formatter 对 `'none'` 不发送 `reasoning.effort` 参数（不传递思考强度参数），与 Off（整体关闭思考）严格区分；
+    - 下拉选择后设置页即时刷新（新增 `settingsStore.configsVersion` 版本信号，ChannelSettings 监听重载）；新增 `utils/thinkingLevel.ts` 纯映射模块与 24 个单测（含全档位列表、Off/none 语义区分、精确读写映射、写入更新构建、文案不翻译断言）。
 
 ### Fixed
+  - **思考强度下拉框 1.7.8 初版修正**：初版仅提供 Off/Low/Medium/High 四档（档位被归并，设置页 none/minimal/xhigh/max/ultra/custom 等档位无法在快捷下拉中精确保留，选择一次即被覆盖），且 Off 与 openai `none` 语义混淆。已修正：按渠道提供与设置页一致的完整档位列表（精确读写、不归并）；anthropic Off 显式写 `thinking.type='disabled'`（请求携带 `{"thinking":{"type":"disabled"}}`）；openai `none` 保持「不传递 effort 参数」、与 Off 严格区分。
   - **任务栏固定图标启动丢失持久化（桌面便携版）**：任务栏「固定到任务栏」记录的是**运行中进程**的 exe 路径——便携版运行的是解压缓存里的内层 exe（`%TEMP%\GrayCode-Portable\GrayCode.exe`），explorer 直接启动它时拿不到 NSIS 启动器注入的 `PORTABLE_EXECUTABLE_DIR`，`resolveUserDataDir` 回退到 `%TEMP%\GrayCode-Portable\data`（临时目录，表现为全新应用、数据「丢失」）。修复：每次经启动器正常启动时，把外层便携 exe 所在目录写入解压缓存内的指针文件 `gc-portable-home`；内层 exe 被直接启动（固定图标等）时读取指针回填 `PORTABLE_EXECUTABLE_DIR`，userData 解析、安装形态判定（`getInstallerKind`）等下游逻辑与正常启动完全一致。设计约束不变：**不写** `%LOCALAPPDATA%` 等固定位置标记，数据仍在 `<便携 exe 目录>\data`（exe + data 可整体拷走）；多实例能力不变（经启动器启动的各副本仍以各自环境变量为准，指针仅服务内层 exe 被直接启动的兜底场景，且每次正常启动都会刷新）；安装版/zip 版无 `gc-cache-key` 标记不受影响；`--user-data-dir` / `GRAYCODE_USER_DATA_DIR` 显式覆盖优先级不变。新增 `portable-home.ts` 纯模块与 9 个单测。
   - **设置页草稿输入（合入上游 PR #31）**：
     - 数字输入清空后延迟回填默认值：编辑期间清空保持为空（不保存不回退），输入有效数字立即保存，离开设置页时仍为空的输入框自动回填最后保存的值（新组合式函数 `useDeferredNumberInput`，覆盖工具-最大调用次数/图像生成批量/上下文深度/存档点/总结/渠道超时与 token/重试/渠道选项数字/分支保留期/提示词条目名称等输入框）；

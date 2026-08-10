@@ -104,6 +104,52 @@ describe('思考强度 custom 档位（AnthropicFormatter）', () => {
     });
 });
 
+describe('思考显式关闭（AnthropicFormatter）', () => {
+    const formatter = new AnthropicFormatter();
+
+    function createConfig(overrides: Partial<AnthropicConfig> = {}): AnthropicConfig {
+        return {
+            id: 'anthropic-test',
+            name: 'Anthropic Test',
+            type: 'anthropic',
+            enabled: true,
+            url: 'https://api.anthropic.com/v1',
+            apiKey: 'test-key',
+            model: 'claude-opus-4-6',
+            preferStream: false,
+            timeout: 30000,
+            toolMode: 'function_call',
+            optionsEnabled: { thinking: true },
+            options: {
+                thinking: { type: 'disabled', effort: 'high' }
+            },
+            ...overrides
+        } as AnthropicConfig;
+    }
+
+    it('type=disabled 时请求显式携带 {"thinking": {"type": "disabled"}}，不发送 effort', () => {
+        const request = formatter.buildRequest({
+            configId: 'anthropic-test',
+            history: createHistory()
+        }, createConfig());
+
+        expect(request.body.thinking).toEqual({ type: 'disabled' });
+        expect(request.body.output_config).toBeUndefined();
+    });
+
+    it('type=disabled 时闸门关闭同样显式携带（不依赖闸门分支差异）', () => {
+        const request = formatter.buildRequest({
+            configId: 'anthropic-test',
+            history: createHistory()
+        }, createConfig({
+            optionsEnabled: { thinking: false },
+            options: { thinking: { type: 'disabled', effort: 'high' } }
+        }));
+
+        expect(request.body.thinking).toBeUndefined();
+    });
+});
+
 describe('思考强度 custom 档位（OpenAIFormatter）', () => {
     const formatter = new OpenAIFormatter();
 

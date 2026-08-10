@@ -1,46 +1,41 @@
 <script setup lang="ts">
 /**
  * ThinkingSelector - 思考强度选择器
- * 位于模型选择器旁，用统一的 Off/Low/Medium/High 四级快捷控制当前渠道的思考强度。
- * 档位文案刻意保持英文不翻译（见 utils/thinkingLevel.ts）。
+ * 位于模型选择器旁，按当前渠道提供完整档位列表（Off + 各 API 档位，
+ * 与设置页一致不裁剪）。档位文案保持英文不翻译（见 utils/thinkingLevel.ts）。
  */
 
 import { computed, ref } from 'vue'
 import { useSearchableDropdown } from '../../composables'
-import { THINKING_LEVELS, THINKING_LEVEL_LABELS, type ThinkingLevel } from '../../utils/thinkingLevel'
-
-interface ThinkingOption {
-  value: ThinkingLevel
-  label: string
-}
+import { THINKING_OFF, type ThinkingLevelOption } from '../../utils/thinkingLevel'
 
 const props = withDefaults(defineProps<{
-  modelValue: ThinkingLevel
+  modelValue: string
+  options: ThinkingLevelOption[]
   disabled?: boolean
 }>(), {
+  options: () => [],
   disabled: false
 })
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', level: ThinkingLevel): void
+  (e: 'update:modelValue', level: string): void
 }>()
-
-const items = computed<ThinkingOption[]>(() =>
-  THINKING_LEVELS.map(level => ({ value: level, label: THINKING_LEVEL_LABELS[level] }))
-)
 
 const containerRef = ref<HTMLElement>()
 
-const { isOpen, toggle, close, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<ThinkingOption>(containerRef, {
-  items: () => items.value,
+const { isOpen, toggle, close, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<ThinkingLevelOption>(containerRef, {
+  items: () => props.options,
   getKey: (opt) => opt.value,
   selectedKey: () => props.modelValue,
   disabled: () => !!props.disabled
 })
 
-const selectedLabel = computed(() => THINKING_LEVEL_LABELS[props.modelValue])
+const selectedLabel = computed(() =>
+  props.options.find(opt => opt.value === props.modelValue)?.label ?? THINKING_OFF
+)
 
-function selectLevel(option: ThinkingOption) {
+function selectLevel(option: ThinkingLevelOption) {
   emit('update:modelValue', option.value)
   close()
 }

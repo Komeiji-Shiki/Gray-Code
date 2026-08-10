@@ -1,13 +1,16 @@
 /**
  * thinkingLevel.test.ts - 思考强度档位映射回归测试
  *
- * 覆盖：四类渠道的读取映射（含默认值/闸门语义）、写入 updates 构建、
- * 不支持类型返回 null、档位文案保持英文不翻译。
+ * 覆盖：四类渠道的选项列表（与设置页完整对齐，不裁剪）、读取映射（精确值）、
+ * Off 语义（openai/gemini 关闸门；anthropic 显式 type=disabled）、
+ * none 语义（openai 系：闸门开启但 effort='none'，与 Off 严格区分）、
+ * 写入 updates 构建（保留其余字段）、不支持类型返回空/null、
+ * 档位文案保持英文不翻译。
  */
 
 import {
-  THINKING_LEVELS,
-  THINKING_LEVEL_LABELS,
+  THINKING_OFF,
+  getThinkingLevelOptions,
   supportsThinkingLevel,
   getThinkingLevel,
   buildThinkingLevelUpdates
@@ -28,27 +31,62 @@ describe('supportsThinkingLevel', () => {
   })
 })
 
+describe('getThinkingLevelOptions（与设置页完整对齐，不裁剪）', () => {
+  it('openai 系：Off + none/minimal/low/medium/high/xhigh/max/ultra/custom 全档位', () => {
+    for (const type of ['openai', 'openai-responses']) {
+      const options = getThinkingLevelOptions({ type })
+      expect(options.map(o => o.value)).toEqual([
+        'off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'custom'
+      ])
+    }
+  })
+
+  it('anthropic：Off + low/medium/high/xhigh/max/ultra/custom', () => {
+    const options = getThinkingLevelOptions({ type: 'anthropic' })
+    expect(options.map(o => o.value)).toEqual([
+      'off', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'custom'
+    ])
+  })
+
+  it('gemini：Off + minimal/low/medium/high', () => {
+    const options = getThinkingLevelOptions({ type: 'gemini' })
+    expect(options.map(o => o.value)).toEqual(['off', 'minimal', 'low', 'medium', 'high'])
+  })
+
+  it('不支持类型返回空列表', () => {
+    expect(getThinkingLevelOptions({ type: 'other' })).toEqual([])
+  })
+
+  it('档位文案为英文原文（不做翻译），Off 为唯一大写标签', () => {
+    for (const type of ['openai', 'anthropic', 'gemini']) {
+      const options = getThinkingLevelOptions({ type })
+      expect(options[0]).toEqual({ value: 'off', label: 'Off' })
+      for (const opt of options.slice(1)) {
+        expect(opt.label).toBe(opt.value)
+      }
+    }
+  })
+})
+
 describe('getThinkingLevel - openai / openai-responses', () => {
   const base = { type: 'openai' }
 
   it('闸门关闭（未开启）→ off', () => {
-    expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: false } })).toBe('off')
-    expect(getThinkingLevel({ ...base })).toBe('off')
+    expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: false } })).toBe(THINKING_OFF)
+    expect(getThinkingLevel({ ...base })).toBe(THINKING_OFF)
   })
 
-  it('effort 各档位正确映射', () => {
-    const enabled = { optionsEnabled: { reasoning: true }, options: { reasoning: { effort: 'none' } } }
-    expect(getThinkingLevel({ ...base, ...enabled })).toBe('off')
-    expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: true }, options: { reasoning: { effort: 'minimal' } } })).toBe('low')
-    expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: true }, options: { reasoning: { effort: 'low' } } })).toBe('low')
-    expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: true }, options: { reasoning: { effort: 'medium' } } })).toBe('medium')
-    expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: true }, options: { reasoning: { effort: 'high' } } })).toBe('high')
-  })
-
-  it('xhigh / max / ultra / custom 归入 high', () => {
-    for (const effort of ['xhigh', 'max', 'ultra', 'custom']) {
-      expect(getThinkingLevel({ ...base, optionsEnabled: { reasoning: true }, options: { reasoning: { effort } } })).toBe('high')
-    }
+  it('effort 各档位精确读取（none 不等于 off）', () => {
+    const enabled = { optionsEnabled: { reasoning: true } }
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'none' } } })).toBe('none')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'minimal' } } })).toBe('minimal')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'low' } } })).toBe('low')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'medium' } } })).toBe('medium')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'high' } } })).toBe('high')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'xhigh' } } })).toBe('xhigh')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'max' } } })).toBe('max')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'ultra' } } })).toBe('ultra')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { reasoning: { effort: 'custom', effortCustom: '0.9' } } })).toBe('custom')
   })
 
   it('开启但未配置 effort → 默认 high', () => {
@@ -60,16 +98,18 @@ describe('getThinkingLevel - anthropic', () => {
   const base = { type: 'anthropic' }
 
   it('闸门关闭或 type=disabled → off', () => {
-    expect(getThinkingLevel({ ...base, optionsEnabled: { thinking: false } })).toBe('off')
-    expect(getThinkingLevel({ ...base, optionsEnabled: { thinking: true }, options: { thinking: { type: 'disabled' } } })).toBe('off')
+    expect(getThinkingLevel({ ...base, optionsEnabled: { thinking: false } })).toBe(THINKING_OFF)
+    expect(getThinkingLevel({ ...base, optionsEnabled: { thinking: true }, options: { thinking: { type: 'disabled' } } })).toBe(THINKING_OFF)
   })
 
-  it('effort 各档位正确映射', () => {
+  it('effort 各档位精确读取', () => {
     const enabled = { optionsEnabled: { thinking: true } }
     expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'low' } } })).toBe('low')
     expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'medium' } } })).toBe('medium')
-    expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'enabled', effort: 'high' } } })).toBe('high')
-    expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'ultra' } } })).toBe('high')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'high' } } })).toBe('high')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'xhigh' } } })).toBe('xhigh')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'max' } } })).toBe('max')
+    expect(getThinkingLevel({ ...base, ...enabled, options: { thinking: { type: 'adaptive', effort: 'ultra' } } })).toBe('ultra')
   })
 })
 
@@ -77,19 +117,18 @@ describe('getThinkingLevel - gemini', () => {
   const base = { type: 'gemini' }
 
   it('闸门关闭或 includeThoughts=false → off', () => {
-    expect(getThinkingLevel({ ...base, optionsEnabled: { thinkingConfig: false } })).toBe('off')
-    expect(getThinkingLevel({ ...base, options: { thinkingConfig: { includeThoughts: false } } })).toBe('off')
+    expect(getThinkingLevel({ ...base, optionsEnabled: { thinkingConfig: false } })).toBe(THINKING_OFF)
+    expect(getThinkingLevel({ ...base, options: { thinkingConfig: { includeThoughts: false } } })).toBe(THINKING_OFF)
   })
 
   it('闸门未定义默认开启（gemini 默认思考）', () => {
     expect(getThinkingLevel({ ...base, options: {} })).toBe('medium')
   })
 
-  it('level 模式按 thinkingLevel 映射', () => {
-    const config = { ...base, options: { thinkingConfig: { mode: 'level', thinkingLevel: 'high' } } }
-    expect(getThinkingLevel(config)).toBe('high')
-    expect(getThinkingLevel({ ...base, options: { thinkingConfig: { mode: 'level', thinkingLevel: 'minimal' } } })).toBe('low')
-    expect(getThinkingLevel({ ...base, options: { thinkingConfig: { mode: 'level', thinkingLevel: 'low' } } })).toBe('low')
+  it('level 模式按 thinkingLevel 精确读取', () => {
+    for (const level of ['minimal', 'low', 'medium', 'high']) {
+      expect(getThinkingLevel({ ...base, options: { thinkingConfig: { mode: 'level', thinkingLevel: level } } })).toBe(level)
+    }
   })
 
   it('default / budget 模式 → medium', () => {
@@ -97,63 +136,86 @@ describe('getThinkingLevel - gemini', () => {
   })
 })
 
-describe('buildThinkingLevelUpdates', () => {
-  it('不支持的类型返回 null', () => {
-    expect(buildThinkingLevelUpdates({ type: 'other' }, 'high')).toBeNull()
-  })
+describe('buildThinkingLevelUpdates - openai / openai-responses', () => {
+  const config = {
+    type: 'openai',
+    optionsEnabled: { reasoning: true, temperature: true },
+    options: { reasoning: { effort: 'high', summaryEnabled: true, summary: 'concise', effortCustom: '0.7' }, temperature: 1.0 }
+  }
 
-  it('openai: off 只关闸门，其余写 effort 且保留 summary 字段', () => {
-    const config = {
-      type: 'openai',
-      optionsEnabled: { reasoning: true, temperature: true },
-      options: { reasoning: { effort: 'high', summaryEnabled: true, summary: 'concise' }, temperature: 1.0 }
-    }
+  it('off 只关闸门（关闭思考），不触碰 options', () => {
     expect(buildThinkingLevelUpdates(config, 'off')).toEqual({
       optionsEnabled: { reasoning: false, temperature: true }
     })
-    expect(buildThinkingLevelUpdates(config, 'low')).toEqual({
+  })
+
+  it('none：闸门保持开启、effort=none（不传递思考强度参数，≠ off）', () => {
+    expect(buildThinkingLevelUpdates(config, 'none')).toEqual({
       optionsEnabled: { reasoning: true, temperature: true },
-      options: { reasoning: { effort: 'low', summaryEnabled: true, summary: 'concise' }, temperature: 1.0 }
+      options: { reasoning: { effort: 'none', summaryEnabled: true, summary: 'concise', effortCustom: '0.7' }, temperature: 1.0 }
     })
   })
 
-  it('anthropic: 写档位强制 type=adaptive（effort 仅该模式生效），保留其它字段', () => {
-    const config = {
-      type: 'anthropic',
-      optionsEnabled: { thinking: true },
-      options: { thinking: { type: 'enabled', budget_tokens: 5000, effort: 'high', display: 'omitted' } }
+  it('xhigh / max / ultra / custom 精确写入且保留其余字段（custom 保留 effortCustom）', () => {
+    for (const level of ['xhigh', 'max', 'ultra']) {
+      const updates = buildThinkingLevelUpdates(config, level)!
+      expect(updates.options.reasoning.effort).toBe(level)
+      expect(updates.options.reasoning.summaryEnabled).toBe(true)
+      expect(updates.options.reasoning.summary).toBe('concise')
+      expect(updates.options.reasoning.effortCustom).toBe('0.7')
+      expect(updates.options.temperature).toBe(1.0)
+      expect(updates.optionsEnabled.reasoning).toBe(true)
     }
+    expect(buildThinkingLevelUpdates(config, 'custom')!.options.reasoning.effort).toBe('custom')
+  })
+})
+
+describe('buildThinkingLevelUpdates - anthropic', () => {
+  const config = {
+    type: 'anthropic',
+    optionsEnabled: { thinking: true },
+    options: { thinking: { type: 'adaptive', budget_tokens: 5000, effort: 'high', display: 'omitted' } }
+  }
+
+  it('off：闸门保持开启 + thinking.type=disabled（请求显式携带禁用参数）', () => {
+    expect(buildThinkingLevelUpdates(config, 'off')).toEqual({
+      optionsEnabled: { thinking: true },
+      options: { thinking: { type: 'disabled', budget_tokens: 5000, effort: 'high', display: 'omitted' } }
+    })
+  })
+
+  it('档位写入强制 type=adaptive（effort 仅该模式生效），保留其它字段', () => {
     expect(buildThinkingLevelUpdates(config, 'medium')).toEqual({
       optionsEnabled: { thinking: true },
       options: { thinking: { type: 'adaptive', budget_tokens: 5000, effort: 'medium', display: 'omitted' } }
     })
-    expect(buildThinkingLevelUpdates(config, 'off')).toEqual({
-      optionsEnabled: { thinking: false }
-    })
+    expect(buildThinkingLevelUpdates(config, 'ultra')!.options.thinking.effort).toBe('ultra')
   })
+})
 
-  it('gemini: 写 mode=level + thinkingLevel，保留 thinkingBudget', () => {
-    const config = {
-      type: 'gemini',
-      optionsEnabled: { thinkingConfig: true },
-      options: { thinkingConfig: { includeThoughts: true, mode: 'budget', thinkingLevel: 'low', thinkingBudget: 2048 } }
-    }
-    expect(buildThinkingLevelUpdates(config, 'high')).toEqual({
-      optionsEnabled: { thinkingConfig: true },
-      options: { thinkingConfig: { includeThoughts: true, mode: 'level', thinkingLevel: 'high', thinkingBudget: 2048 } }
-    })
+describe('buildThinkingLevelUpdates - gemini', () => {
+  const config = {
+    type: 'gemini',
+    optionsEnabled: { thinkingConfig: true },
+    options: { thinkingConfig: { includeThoughts: true, mode: 'budget', thinkingLevel: 'low', thinkingBudget: 2048 } }
+  }
+
+  it('off 关闸门（关闭思考）', () => {
     expect(buildThinkingLevelUpdates(config, 'off')).toEqual({
       optionsEnabled: { thinkingConfig: false }
     })
   })
+
+  it('档位写入 mode=level + thinkingLevel，保留 thinkingBudget', () => {
+    expect(buildThinkingLevelUpdates(config, 'high')).toEqual({
+      optionsEnabled: { thinkingConfig: true },
+      options: { thinkingConfig: { includeThoughts: true, mode: 'level', thinkingLevel: 'high', thinkingBudget: 2048 } }
+    })
+  })
 })
 
-describe('档位文案保持英文（不翻译）', () => {
-  it('四级档位标签为英文原文', () => {
-    expect(THINKING_LEVELS).toEqual(['off', 'low', 'medium', 'high'])
-    expect(THINKING_LEVEL_LABELS.off).toBe('Off')
-    expect(THINKING_LEVEL_LABELS.low).toBe('Low')
-    expect(THINKING_LEVEL_LABELS.medium).toBe('Medium')
-    expect(THINKING_LEVEL_LABELS.high).toBe('High')
+describe('buildThinkingLevelUpdates - 边界', () => {
+  it('不支持的类型返回 null', () => {
+    expect(buildThinkingLevelUpdates({ type: 'other' }, 'high')).toBeNull()
   })
 })

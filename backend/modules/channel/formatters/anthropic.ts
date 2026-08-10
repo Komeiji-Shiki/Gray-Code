@@ -681,6 +681,12 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 genConfig.thinking = thinkingConfig;
+            } else if (thinkingType === 'disabled') {
+                // 显式关闭思考：请求显式携带 {"thinking": {"type": "disabled"}}
+                // （思考强度快捷下拉 Off 档写入 type=disabled，与省略字段的隐式关闭等价但更明确）
+                genConfig.thinking = {
+                    type: 'disabled'
+                };
             }
         }
         
