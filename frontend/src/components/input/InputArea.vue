@@ -796,7 +796,8 @@ watch(() => settingsStore.promptModesVersion, () => {
   flex-direction: column;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
+  /* 透明：让桌面端背景图透出（输入框本体仍有 --vscode-input-background 保底） */
+  background: transparent;
   border-top: 1px solid var(--vscode-panel-border);
 }
 

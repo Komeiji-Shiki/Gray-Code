@@ -321,7 +321,8 @@ watch(() => props.tabs.length, () => {
   align-items: stretch;
   height: 32px;
   min-height: 32px;
-  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+  /* 透明：让桌面端背景图透出（页签项自身保留 hover/active 背景） */
+  background: transparent;
   border-bottom: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
   flex-shrink: 0;
   overflow: hidden;

@@ -26,6 +26,7 @@
   - **外观设置新增「桌面背景图」**：选择本地图片（PNG/JPG/JPEG/GIF/WebP/BMP，上限 10MB）作为应用窗口背景，cover 铺满整窗；**不透明度滑块（0-100，默认 30）**实时作用于图片本身（透明度只影响图片层，文字与界面不受影响，调节所见即所得）；设置页提供与窗口同规格的 16:9 预览框、路径回显（超长省略中间）与「移除背景图」一键清除；设置搜索新增「背景图/壁纸/透明度」锚点；
   - **数据流**：持久化仅存路径（ui.appearance.wallpaperPath / wallpaperOpacity，默认 '' / 30，updateUISettings 深合并链路无需改动）；图片内容经新增 IPC 处理器（pickWallpaper：原生对话框选图 + 扩展名白名单 + 大小校验后返回 data URL；getWallpaperImage：按已存路径重读）交给渲染层（webview CSP img-src 白名单已含 data:）；文件丢失/删除/格式失效时静默回退纯色背景，不打扰用户；**SVG 刻意排除**（避免脚本面/外部引用解析面）；
   - **渲染**：App.vue 新增 .app-wallpaper 图层（position:fixed 覆盖整窗 + z-index:-1 + .app-container isolation 建立层叠上下文——置于容器纯色背景之上、全部内容之下；pointer-events:none 不拦截交互）；设置页选择/拖动滑块即时应用到窗口背景（保存前即可预览效果），保存时随外观设置一并持久化；
+  - **聊天区放行背景**：聊天视图的四个全幅不透明容器（.message-list / .input-area / .welcome-panel / .tabs-bar）改为透明，背景图在会话页/空会话欢迎页/输入区持续可见（消息行/代码块/输入框/页签项自身背景保留，可读性不受影响；未设置背景图时透出的是同色 app-container 背景，VS Code 模式无感知差异）；
   - **远控端不涉及**（移动端设置页为 schema 驱动，新增字段仅透传，不影响远控端行为）；
   - 测试：新增 WallpaperHandlers 单元测试（选图全流程/扩展名白名单拒绝 SVG/大小上限/非文件拒绝/文件丢失回退/取消）+ DEFAULT_GLOBAL_SETTINGS 背景图默认值断言；三语言（zh-CN/en/ja）文案齐全。
 

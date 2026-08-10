@@ -111,7 +111,8 @@ async function handleDelete(id: string) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--vscode-editor-background);
+  /* 透明：让桌面端背景图透出（空会话欢迎页同样可见背景） */
+  background: transparent;
   overflow: hidden;
 }
 

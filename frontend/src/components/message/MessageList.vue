@@ -1733,7 +1733,8 @@ function formatCheckpointTime(timestamp: number): string {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  /* 透明：让桌面端背景图（.app-wallpaper）透出；未设置背景图时露出 app-container 同色背景 */
+  background: transparent;
 }
 
 .message-scroll-area {

@@ -12,7 +12,7 @@ are tracked in the root `CHANGELOG.md`.
 ### Added（1.7.11dev：桌面端自定义背景图——外观设置新增本地图片窗口背景 + 不透明度调节）
   - **外观设置新增「桌面背景图」**：选择本地图片（PNG/JPG/JPEG/GIF/WebP/BMP，上限 10MB）作为应用窗口背景，cover 铺满整窗；不透明度滑块（0-100，默认 30）实时作用于图片本身，文字与界面不受影响；设置页提供 16:9 预览框、路径回显与一键移除；设置搜索新增「背景图/壁纸/透明度」锚点；
   - **数据流**：持久化仅存路径（ui.appearance.wallpaperPath/wallpaperOpacity），图片内容经新增 IPC 处理器（pickWallpaper 原生对话框选图 + 校验读取；getWallpaperImage 按已存路径重读）以 data URL 交给渲染层（webview CSP img-src 已含 data:）；文件丢失/失效静默回退纯色背景；SVG 刻意排除（防脚本面）；
-  - **渲染**：App.vue 新增 .app-wallpaper 图层（fixed 整窗 + z-index:-1 + isolation 层叠上下文），pointer-events:none 不拦截交互；选择/拖动滑块即时应用到窗口背景（保存前可见效果），保存时随外观设置持久化；远控端不涉及；
+  - **渲染**：App.vue 新增 .app-wallpaper 图层（fixed 整窗 + z-index:-1 + isolation 层叠上下文），pointer-events:none 不拦截交互；选择/拖动滑块即时应用到窗口背景（保存前可见效果），保存时随外观设置持久化；聊天区四个全幅不透明容器（消息列表/输入区/欢迎页/页签栏）改为透明，背景图持续可见（消息行/输入框/页签自身背景保留）；远控端不涉及；
   - 测试：WallpaperHandlers 单元测试（选图/白名单/大小上限/丢失回退/取消）+ 默认值断言；三语言文案齐全。
 
 ### Fixed：远程控制 V7.2——图标零面积路径修复（plus/close/check/chevronDown/folderUp）+ 渠道表单死控件 + 思考关闭开关 + 分页/竞态加固
