@@ -17,7 +17,7 @@ import { StreamChunkProcessor } from '../stream/StreamChunkProcessor';
 import {
     isConversationStreaming,
     BRANCH_BUSY_STREAMING_MESSAGE,
-} from './BranchHandlers';
+} from './streamGuard';
 import type { HandlerContext, MessageHandler } from '../types';
 
 async function stopConversationStream(ctx: HandlerContext, conversationId: string): Promise<void> {

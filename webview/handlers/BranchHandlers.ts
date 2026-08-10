@@ -33,20 +33,11 @@ import {
     detectDirtyFilesInWorkspace,
 } from '../utils/WorkspaceRestoreGuard';
 import { enrichGraphWorkspaceInfo } from './branchWritePolicy';
+import { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
+// TREE-13 流式互斥守卫已拆到 streamGuard.ts（第三批模块化重构），此处 re-export 保持
+// 既有 import（ChatHandlers 已改走 streamGuard；测试仍可从 BranchHandlers 导入）不破坏。
+export { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
 import type { HandlerContext, MessageHandler } from '../types';
-
-/** TREE-13：流式生成期间变更类分支操作被拒时的固定文案 */
-export const BRANCH_BUSY_STREAMING_MESSAGE = '会话正在流式生成中，请等待完成后再操作';
-
-/**
- * TREE-13：判断会话是否处于流式生成中。
- *
- * HandlerContext 注入真实的 StreamAbortManager；isActive 只统计主流请求，
- * summary 请求不拦截分支操作。
- */
-export function isConversationStreaming(ctx: HandlerContext, conversationId: string): boolean {
-    return ctx.streamAbortControllers?.isActive(conversationId) ?? false;
-}
 
 /**
  * TREE-13：变更类分支操作的统一流式互斥前置检查。
