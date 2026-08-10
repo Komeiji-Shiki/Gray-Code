@@ -301,15 +301,29 @@ export class ToolIterationLoopService {
      * 新用户消息尚未落盘，历史里最近的缓存即上一轮；找不到（首轮 / 总结裁剪后）
      * 或上一轮是旧格式缓存（无 section 级数据）时返回 undefined，
      * 调用方退化为全量发送，保证信息不丢失。
+     *
+     * 总结感知：被总结覆盖的消息（isSummarized）原文虽留在历史但不再发送给模型，
+     * 差分基准必须基于模型实际可见的回合——可见历史从最近一条总结消息之后开始，
+     * 该起点之前（含被覆盖回合）一律不作为基准，否则与其相同的 section 会被差分省略，
+     * 而模型从未见过这些内容，造成上下文静默丢失。
      */
     private async loadPreviousTurnDiffBase(
         conversationId: string,
         currentTurnStartId: string
     ): Promise<DynamicContextDiffBase | undefined> {
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
+        // 可见历史起点：从最后一个总结消息之后开始（总结消息本身也可能携带动态上下文，一并排除）
+        let visibleStart = 0;
         for (let i = historyRef.length - 1; i >= 0; i--) {
             const message = historyRef[i];
-            if (message.role !== 'user' || !message.turnDynamicContext) {
+            if (message.isSummary) {
+                visibleStart = i + 1;
+                break;
+            }
+        }
+        for (let i = historyRef.length - 1; i >= visibleStart; i--) {
+            const message = historyRef[i];
+            if (message.role !== 'user' || message.isSummarized || !message.turnDynamicContext) {
                 continue;
             }
             if (typeof message.id === 'string' && message.id === currentTurnStartId) {
