@@ -88,8 +88,21 @@ export class McpManager {
     /** 是否已初始化 */
     private initialized: boolean = false;
 
+    /** 创建服务器串行队列：校验-保存非原子，并发同 customId 会互相覆盖（M4），整段串行避免 last-writer-wins */
+    private createQueue: Promise<unknown> = Promise.resolve();
+
     constructor(storageAdapter: McpStorageAdapter) {
         this.storageAdapter = storageAdapter;
+    }
+
+    /** 将创建操作加入串行队列（前一个完成后再执行下一个，错误不阻断后续） */
+    private enqueueCreate<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this.createQueue.then(fn);
+        this.createQueue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
     }
 
     /**
@@ -213,38 +226,42 @@ export class McpManager {
      * @param customId 自定义 ID（可选，不提供则自动生成）
      */
     async createServer(input: CreateMcpServerInput, customId?: string): Promise<string> {
-        const id = customId || await this.generateReadableId(input.name);
-        
-        // 验证 ID 是否可用
-        const validation = await this.validateServerId(id);
-        if (!validation.valid) {
-            throw new Error(validation.error);
-        }
-        
-        const now = Date.now();
-        const config: McpServerConfig = {
-            ...input,
-            id,
-            createdAt: now,
-            updatedAt: now
-        };
-
-        await this.storageAdapter.saveConfig(config);
-        
-        this.servers.set(config.id, {
-            config,
-            status: 'disconnected'
-        });
-        
-        // 如果启用了自动连接，立即尝试连接
-        if (config.enabled && config.autoConnect) {
-            // 异步连接，不阻塞创建流程；失败至少记录（serverId 与原因可观测）
-            this.connect(config.id).catch(e => {
-                console.warn(`[MCP] Auto-connect failed for ${config.id} after create:`, e);
+        // 校验-生成-保存非原子：并发同 customId 会互相通过校验、后者覆盖前者（last-writer-wins，M4）。
+        // 整段串行化后，后到的并发调用在前者保存完成后再校验，能发现 id 已存在并明确报错。
+        return this.enqueueCreate(async () => {
+            const id = customId || await this.generateReadableId(input.name);
+            
+            // 验证 ID 是否可用
+            const validation = await this.validateServerId(id);
+            if (!validation.valid) {
+                throw new Error(validation.error);
+            }
+            
+            const now = Date.now();
+            const config: McpServerConfig = {
+                ...input,
+                id,
+                createdAt: now,
+                updatedAt: now
+            };
+    
+            await this.storageAdapter.saveConfig(config);
+            
+            this.servers.set(config.id, {
+                config,
+                status: 'disconnected'
             });
-        }
-        
-        return config.id;
+            
+            // 如果启用了自动连接，立即尝试连接
+            if (config.enabled && config.autoConnect) {
+                // 异步连接，不阻塞创建流程；失败至少记录（serverId 与原因可观测）
+                this.connect(config.id).catch(e => {
+                    console.warn(`[MCP] Auto-connect failed for ${config.id} after create:`, e);
+                });
+            }
+            
+            return config.id;
+        });
     }
 
     /**
@@ -713,6 +730,28 @@ export class McpManager {
 
             // 连接成功清除过期错误，避免 UI 一直展示上次失败的 lastError
             info.lastError = undefined;
+
+            // MCP H-2：connect() 内部的能力列表（tools/resources/prompts）拉取失败会被 StdioClient
+            // 吞掉（列表保持空），此时进程/协议可能不稳定——不能无脑置 connected（假连接）。
+            // 区分「服务器真无工具」与「拉取失败」：拉取失败则置 error 并广播，等待用户重连/处理。
+            const client = this.clients.get(serverId);
+            const listFailed =
+                typeof (client as any)?.isListFetchFailed === 'function'
+                    ? (client as any).isListFetchFailed()
+                    : false;
+            if (listFailed) {
+                const errorMessage = 'MCP server connected, but capability list fetch failed (tools/resources/prompts).';
+                info.lastError = errorMessage;
+                this.updateServerStatus(serverId, 'error');
+                this.emitEvent({
+                    type: 'server:error',
+                    serverId,
+                    data: { error: errorMessage },
+                    timestamp: Date.now()
+                });
+                return;
+            }
+
             this.updateServerStatus(serverId, 'connected');
             info.connectedAt = Date.now();
 
@@ -790,6 +829,14 @@ export class McpManager {
                         this.clients.delete(info.config.id);
                     }
                     this.updateServerStatus(info.config.id, 'disconnected');
+                    // 进程意外退出（非用户显式 disconnect）：必须广播 disconnected 事件，
+                    // 下游（工具声明缓存等）依赖该事件失效已死服务器的能力列表；
+                    // 显式 disconnect() 路径会递增代际，此处代际校验已拦截，不会双发。
+                    this.emitEvent({
+                        type: 'server:disconnected',
+                        serverId: info.config.id,
+                        timestamp: Date.now()
+                    });
                 });
 
                 // 提前注册到管理 map，确保连接过程中的 delete/disable/disconnect 能找到它
