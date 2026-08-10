@@ -74,6 +74,35 @@ const SERVER_ENDPOINTS = new Set([
   '/api/channel-toggle',
   '/api/channel-active',
   '/api/remote-action',
+  '/api/mcp',
+  '/api/mcp-create',
+  '/api/mcp-update',
+  '/api/mcp-delete',
+  '/api/mcp-toggle',
+  '/api/subagents',
+  '/api/subagent-save',
+  '/api/subagent-delete',
+  '/api/subagent-toggle',
+  '/api/prompt-mode-save',
+  '/api/prompt-mode-rename',
+  '/api/prompt-mode-delete',
+  '/api/dependency-install',
+  '/api/dependency-uninstall',
+  '/api/usage',
+  '/api/memory-entries',
+  '/api/memory-scopes',
+  '/api/memory-add',
+  '/api/memory-update',
+  '/api/memory-delete',
+  '/api/mcp-connect',
+  '/api/mcp-disconnect',
+  '/api/update-check',
+  '/api/update-now',
+  '/api/settings-export',
+  '/api/settings-import',
+  '/api/storage-config',
+  '/api/storage-select',
+  '/api/storage-reset',
   '/api/stream'
 ]);
 
@@ -114,11 +143,15 @@ describe('remoteControlUi', () => {
     expect(parsed.approve).toBe('Approve');
   });
 
-  test('template contains all three tabs', () => {
+  test('template contains chat view and full-screen panels (desktop three-section layout)', () => {
     const html = renderRemoteControlUiHtml('en');
-    expect(html).toContain('data-tab="chat"');
-    expect(html).toContain('data-tab="files"');
-    expect(html).toContain('data-tab="settings"');
+    // 唯一常驻视图 = 会话；文件 / 设置改为全屏面板
+    expect(html).toContain('id="view-chat"');
+    expect(html).toContain('id="panel-files"');
+    expect(html).toContain('id="panel-settings"');
+    // 底部导航已删除（无 data-tab 三页签按钮）
+    expect(html).not.toContain('data-tab="files"');
+    expect(html).not.toContain('data-tab="settings"');
   });
 
   test('template contains conversation tab strip (multi-conversation) and settings pagination', () => {
@@ -129,14 +162,14 @@ describe('remoteControlUi', () => {
     expect(html).toContain('function renderTabsBar()');
     expect(html).toContain('function newChatTab()');
     expect(html).toContain('function closeTab(key)');
-    // 设置分页：分类页签条 + 20 个分类（对齐桌面端 SettingsPanel 侧栏）
-    expect(html).toContain('id="settings-tabs"');
-    expect(html).toContain('function renderSettingsTabs()');
+    // 设置面板：纵向分类导航 + 22 个分类（对齐桌面端 SettingsPanel 侧栏）
+    expect(html).toContain('id="settings-nav"');
+    expect(html).toContain("$('settings-nav')");
     expect(html).toContain('var SETTINGS_CATEGORIES');
-    expect(html).toContain("{ key: 'channel', labelKey: 'secChannel' }");
-    expect(html).toContain("{ key: 'remoteControl', labelKey: 'secRemote' }");
-    expect(html).toContain("{ key: 'dependencies', labelKey: 'secDeps' }");
-    expect((html.match(/\{ key: '[A-Za-z]+', labelKey: '/g) || []).length).toBe(20);
+    expect(html).toContain("{ key: 'channel', labelKey: 'secChannel'");
+    expect(html).toContain("{ key: 'remoteControl', labelKey: 'secRemote'");
+    expect(html).toContain("{ key: 'dependencies', labelKey: 'secDeps'");
+    expect((html.match(/\{ key: '[A-Za-z]+', labelKey: '[A-Za-z]+'(?:, icon: '[A-Za-z]+')? \}/g) || []).length).toBe(22);
     // 输入区渠道/模型选择（桌面端 ChannelSelector 同款）
     expect(html).toContain('id="composer-meta"');
     expect(html).toContain('function renderComposerMeta()');

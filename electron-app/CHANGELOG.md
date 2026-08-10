@@ -12,6 +12,32 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+### Added（1.7.10dev 补记：远程控制 V7——渠道页内联折叠菜单与桌面端 ChannelSettings 完全同构 + 提示词预设条目编辑器 + 工具页配置折叠 + 图标补全）
+  - **渠道页重构**：顶部渠道选择器（选中即当前）+ 当前渠道完整内联表单（全部折叠面板：上下文管理/工具配置/Token 计数方式/高级选项（含思考配置/思考回传/Prompt Caching 子分组）/自定义 Body/自定义标头/自动重试，均带 header toggle 与即时保存）+ 渠道列表卡片保留；
+  - **提示词预设条目编辑器**：组装方式二选一（传统模板/预设条目），entries 模式完整条目 CRUD（角色/内容/fakeThought/排序/复制/删除 + Chat History 固定条目 + 从传统模板转换）；
+  - **工具页**：最大工具调用次数 + 工具行配置折叠面板 + fileTools 逐工具折叠 + execute_command 逐 Shell 管理；
+  - **记忆页**：移除已废弃 partChars/partLines、新增全局/工作区作用域切换与条目行内编辑；
+  - **远程控制页**：enabled/port 可编辑；**用量页**：时间范围选择 + cacheCreationTokens/skippedConversations；
+  - **图标体系补全**：22 分类导航内嵌 SVG 图标、渠道按钮/chips/toast 图标化、退出按钮 i18n；
+  - 服务端：memory workspaceUri 透传、usage range→startTime；测试扩至 196 例。
+
+### Added（1.7.10dev 补记：远程控制 V6——布局重构为桌面版三段式 + 设置面板与桌面端 19 页签逐字段同步）
+  - **布局重构（V6）**：删除底部导航，改为桌面版三段式（顶栏含文件/设置入口 + 会话页签条 + 消息区 + 输入区）；文件与设置改为全屏右侧滑入面板，设置面板改为左侧 132px 纵向分类导航 + 右侧卡片表单；
+  - **渠道编辑改为桌面端同款 4 子菜单**（基本/上下文管理/工具配置/高级选项），strictToolsEnabled 字段名修正，补齐上下文管理/tokenCountMethod/高级选项约 40 字段（按渠道类型动态显示）；
+  - **设置逐字段同步桌面端**：记忆条目管理（增删改查）、用量统计同源数据（7 卡 + 明细 + 刷新）、sound 全字段、appearance 补全、tools 批量开关与工具面板全量、mcp 完整编辑表单与连接/断开、子代理完整 CRUD 表单、prompt 模式管理（新建/重命名/复制/删除 + 每模式字段路径修正）、checkpoint profilePatterns、storage 操作、general 更新/导入导出/应用信息；
+  - **服务端新增 14 端点**（mcp 连接/更新/导入导出/存储/记忆）；
+  - 测试扩至 182 例。
+
+### Added（1.7.10dev 补记：远程控制 V5——UI 对齐桌面版全量重写 + 设置项补全 + 消息渲染与服务端 schema 对齐）
+  - **UI 视觉对齐桌面版（V5）**：`remoteControlUiCss.ts` 按桌面端组件实测数值全量重写——VS Code Dark+ 令牌精确对齐、扁平化极小圆角（2-6px）、8pt 间距系统；消息列表对齐 MessageItem（用户淡蓝底 6%、助手扁平分隔、消息头模型名/时间）、工具卡对齐 ToolMessage（可展开 JSON 参数）、思考卡对齐 MessageRenderBlock（折叠/展开）、输入区对齐 InputArea/InputSelectorBar、页签栏对齐 ConversationTabs（32px + 2px 激活下划线）、设置面板对齐 SettingsPanel（卡片化表单）、会话抽屉对齐 ConversationList。
+  - **消息渲染与服务端 schema 对齐**：工具调用识别 `part.functionCall`、思考折叠卡、functionResponse 工具结果卡、附件元数据占位卡（服务端剥离 base64 保留 mimeType/displayName）、消息头 `modelVersion`/`timestamp` 真实键名、删除消息用绝对索引 `msg.index`、流式工具阶段内容实时展示——远控端消息与桌面端/服务端完全对应。
+  - **设置项补全**：新增「MCP 服务器」分类（列表/新增/编辑/删除/启用，透传 McpHandlers）与「用量统计」分类（usage.getStats）；渠道编辑补齐流式输出/多模态/严格工具/自动重试/自定义请求体与请求头；修复 5 个死字段（proxy.insecureSkipVerify、outsideWorkspaceAccess×2、execute_command.defaultTimeout、pinned_files.files[]）；补齐 imageGen 默认宽高比/尺寸、memory systemPrompt、apply_diff diffGuardThreshold、prompt 组装模式、smoothStreaming silky 档；依赖支持安装/卸载。
+  - **「无法打开新聊天」修复**：移除前端 activeChannelId 空值拦截（服务端 resolveConfigId 兜底）；孤儿流终结块竞态修复——POST 响应回填 conversationId 后立即重放 orphanStreams 缓冲，新页签不再永久卡「生成中」。
+  - **服务端**：`/api/send` 会话存在性校验（404 防已删除会话复活）；附件元数据保留。测试扩至 156 例（新端点路由/404 防护/附件元数据/22 分类）。
+
+### Fixed（1.7.10dev 补记：远程控制 V5）
+  - 消息渲染层与服务端 ContentPart schema 全面对齐，删除索引/流式工具状态/消息头字段名等历史错位全部修正。
+
 ### Added（1.7.10dev 补记：远程控制 V4 全量重写——移动端 UI 架构重构 + 设置字段与桌面端完全对齐 + 稳定性加固）
   - **客户端架构重构（V4）**：`remoteControlUiScript.ts` 整体重写为单一 IIFE + 明确模块分区（工具/API 客户端/内嵌 SVG 图标/状态/视图路由/会话页签/输入区四选择器/文件与工作区/schema 驱动设置页/SSE 看门狗/启动）；全部渲染函数幂等且经 `safe()` 错误边界包裹，任何异常只落 toast + 顶部错误横幅，杜绝"页面随机变空白"（含新增渠道后白屏、闲置白屏等历史故障）。
   - **稳定性加固**：SSE 看门狗（readyState 静默断连 15s 兜底重连、断线退避重连、回前台立即恢复）、服务器 bye/重启后 `probeServerRecovery` 周期性探活自动重连（此前 bye 后页面永久停摆）、全局 `window.onerror`/`unhandledrejection` 兜底；修复 `loadConfigModels` 重复拉取 + 设置页无限重渲染隐患（modelsLoaded 缓存）。

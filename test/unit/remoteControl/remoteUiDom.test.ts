@@ -205,6 +205,28 @@ class Fixture {
     { name: 'read_file', description: 'Read files', enabled: true, category: 'file' },
     { name: 'write_file', description: 'Write files', enabled: true, category: 'file' }
   ];
+  memoryEntries: any = {
+    ok: true,
+    entries: [
+      { id: 1, date: '2026-08-10', text: 'remember this' },
+      { id: 2, date: '2026-08-09', text: 'second memory' }
+    ],
+    total: 2
+  };
+  settingsState: any = buildSettings().settings;
+  usageStats: any = {
+    ok: true,
+    stats: {
+      promptTokens: 100, candidatesTokens: 200, thoughtsTokens: 50,
+      cacheReadTokens: 30, totalTokens: 350, conversations: 2, modelMessages: 5,
+      byModel: [
+        { modelVersion: 'gpt-4o', totalTokens: 200 },
+        { modelVersion: 'claude', totalTokens: 150 }
+      ],
+      byDay: [{ date: '2026-08-10', totalTokens: 350 }],
+      generatedAt: 1
+    }
+  };
 
   constructor() {
     const vc = new VirtualConsole();
@@ -243,8 +265,24 @@ class Fixture {
         return respond({ ok: true, modes: this.modes, currentModeId: this.currentModeId });
       case '/api/conversations':
         return respond({ ok: true, conversations: [], total: 0, hasMore: false, offset: 0, limit: 30 });
-      case '/api/settings':
-        return respond(buildSettings());
+      case '/api/settings': {
+        if (method === 'POST' && body && body.settings && typeof body.settings === 'object') {
+          // 模拟真实服务端深合并：settings patch 合并进状态并回读
+          this.settingsState = Object.assign({}, this.settingsState, body.settings);
+          if (body.settings.toolsConfig && typeof body.settings.toolsConfig === 'object') {
+            this.settingsState.toolsConfig = Object.assign({}, this.settingsState.toolsConfig, body.settings.toolsConfig);
+            const tc = this.settingsState.toolsConfig;
+            if (body.settings.toolsConfig.system_prompt && typeof body.settings.toolsConfig.system_prompt === 'object') {
+              tc.system_prompt = Object.assign({}, tc.system_prompt, body.settings.toolsConfig.system_prompt);
+              if (body.settings.toolsConfig.system_prompt.modes && typeof body.settings.toolsConfig.system_prompt.modes === 'object') {
+                tc.system_prompt.modes = Object.assign({}, tc.system_prompt.modes, body.settings.toolsConfig.system_prompt.modes);
+              }
+            }
+          }
+          return respond({ ok: true, settings: this.settingsState });
+        }
+        return respond({ ok: true, settings: this.settingsState });
+      }
       case '/api/tools':
         return respond({ ok: true, tools: this.tools, autoExec: {} });
       case '/api/dependencies':
@@ -253,6 +291,10 @@ class Fixture {
         const configId = new URL(String(url), 'http://localhost/').searchParams.get('configId') || '';
         return respond({ ok: true, config: this.configDetails[configId] || null });
       }
+      case '/api/memory-entries':
+        return respond(this.memoryEntries);
+      case '/api/usage':
+        return respond(this.usageStats);
       case '/api/messages':
         return respond({ ok: true, messages: [], total: 0, hasMore: false, offset: 0 });
       case '/api/config-create':
@@ -341,19 +383,19 @@ describe('remote UI DOM (jsdom)', () => {
     return f;
   }
 
-  /** 进入设置页并等待 settings/tools/configs 全部加载完毕 */
+  /** 进入设置面板并等待 settings/tools/configs 全部加载完毕 */
   async function openSettingsLoaded(f: Fixture): Promise<void> {
-    f.document.querySelector('[data-tab="settings"]').click();
+    f.document.querySelector('#btn-settings').click();
     await flush(10);
     await waitFor(() => f.fetches.some((x) => x.url === '/api/settings'));
     await flush(10);
   }
 
-  test('initial render: 4 sel-chips, 20 set-tabs, error banner wired, no uncaught errors', async () => {
+  test('initial render: 4 sel-chips, 22 set-tabs, error banner wired, no uncaught errors', async () => {
     const f = makeFixture();
     await flush();
     expect(f.document.querySelectorAll('.sel-chip').length).toBe(4);
-    expect(f.document.querySelectorAll('.set-tab').length).toBe(20);
+    expect(f.document.querySelectorAll('.set-tab').length).toBe(22);
     expect(f.document.querySelector('#error-banner')).not.toBeNull();
     expect(f.document.querySelector('#app').children.length).toBeGreaterThan(0);
     expect(f.document.querySelector('#empty-text').textContent.length).toBeGreaterThan(0);
@@ -416,12 +458,12 @@ describe('remote UI DOM (jsdom)', () => {
     expect(f.errors).toEqual([]);
   });
 
-  test('all 20 settings categories switch and render cards', async () => {
+  test('all 22 settings categories switch and render cards', async () => {
     const f = makeFixture();
     await openSettingsLoaded(f);
     const keys: string[] = [];
     f.document.querySelectorAll('.set-tab').forEach((b: any) => keys.push(b.getAttribute('data-set-tab')));
-    expect(keys.length).toBe(20);
+    expect(keys.length).toBe(22);
     for (const key of keys) {
       const btn = f.document.querySelector('.set-tab[data-set-tab="' + key + '"]');
       expect(btn).not.toBeNull();
@@ -560,10 +602,14 @@ describe('remote UI DOM (jsdom)', () => {
     expect(f.document.querySelector('#send').disabled).toBe(true);
     expect(f.document.querySelector('#status').textContent).toBe('远程控制已关闭');
 
-    // 页面不空白：顶栏/页签条/底部导航仍在
+    // 页面不空白：顶栏按钮 / 页签条 / 全屏面板仍在
     const app = f.document.querySelector('#app');
     expect(app.querySelectorAll('*').length).toBeGreaterThan(50);
-    expect(f.document.querySelectorAll('#tabbar button').length).toBe(3);
+    expect(f.document.querySelectorAll('header .icon-btn').length).toBe(4);
+    expect(f.document.querySelector('#btn-files')).not.toBeNull();
+    expect(f.document.querySelector('#btn-settings')).not.toBeNull();
+    expect(f.document.querySelector('#panel-files')).not.toBeNull();
+    expect(f.document.querySelector('#panel-settings')).not.toBeNull();
     expect(f.errors).toEqual([]);
   });
 
@@ -597,6 +643,236 @@ describe('remote UI DOM (jsdom)', () => {
       promptModeId: 'code',
       conversationId: 'conv1'
     });
+    expect(f.errors).toEqual([]);
+  });
+
+  test('memory category renders entries list, add row and delete posts /api/memory-delete', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    f.document.querySelector('.set-tab[data-set-tab="memory"]').click();
+    await flush(3);
+    await waitFor(() => f.fetches.some((x) => x.url.indexOf('/api/memory-entries') === 0));
+    await flush(5);
+    const items = f.document.querySelectorAll('#settings-sections .mem-item');
+    expect(items.length).toBe(2);
+    expect(items[0].querySelector('.mem-text').textContent).toBe('remember this');
+    expect(items[0].querySelector('.mem-date').textContent).toBe('2026-08-10');
+    expect(f.document.querySelectorAll('#settings-sections .mem-add-row').length).toBe(1);
+    expect(f.document.querySelector('#settings-sections .set-note').textContent).toContain('共 2');
+    // 删除按钮 → POST /api/memory-delete { id }
+    items[0].querySelector('.mem-del').click();
+    await flush(5);
+    const del = f.fetches.find((x) => x.url === '/api/memory-delete' && x.method === 'POST');
+    expect(del).toBeDefined();
+    expect(del!.body).toEqual({ id: 1 });
+    // 添加行 → POST /api/memory-add { text }
+    const addInput = f.document.querySelector('.mem-add-row input');
+    addInput.value = 'new memory';
+    f.document.querySelector('.mem-add-row .mini-btn').click();
+    await flush(5);
+    const add = f.fetches.find((x) => x.url === '/api/memory-add' && x.method === 'POST');
+    expect(add).toBeDefined();
+    expect(add!.body).toEqual({ text: 'new memory' });
+    expect(f.errors).toEqual([]);
+  });
+
+  test('usage category renders stat grid (7 cards) and byModel/byDay lists', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    f.document.querySelector('.set-tab[data-set-tab="usage"]').click();
+    await flush(3);
+    await waitFor(() => f.fetches.some((x) => x.url === '/api/usage'));
+    await flush(5);
+    const grid = f.document.querySelector('#settings-sections .stat-grid');
+    expect(grid).not.toBeNull();
+    expect(grid.querySelectorAll('.stat-card').length).toBe(8);
+    const nums = Array.from(grid.querySelectorAll('.stat-num')).map((el: any) => el.textContent);
+    expect(nums).toContain('350');
+    expect(nums).toContain('100');
+    expect(nums).toContain('200');
+    expect(nums).toContain('50');
+    expect(nums).toContain('30');
+    expect(nums).toContain('2');
+    expect(nums).toContain('5');
+    const labels = Array.from(f.document.querySelectorAll('#settings-sections .group-label')).map((el: any) => el.textContent);
+    expect(labels).toContain('按模型');
+    expect(labels).toContain('按日期');
+    const rows = Array.from(f.document.querySelectorAll('#settings-sections .set-row'));
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    // 刷新按钮存在
+    expect(f.document.querySelector('#settings-sections .btn').textContent).toBe('刷新');
+    expect(f.errors).toEqual([]);
+  });
+
+  test('channel edit modal has 4 sub-tabs (ch-tabs) and switching panes works', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    let editBtn: any = null;
+    f.document.querySelectorAll('.cfg-actions .mini-btn').forEach((b: any) => {
+      if (b.textContent === '编辑' && !editBtn) editBtn = b;
+    });
+    expect(editBtn).not.toBeNull();
+    editBtn.click();
+    await flush(5);
+    const chTabs = f.document.querySelectorAll('#modal .ch-tab');
+    expect(chTabs.length).toBe(4);
+    const panes = f.document.querySelectorAll('#modal .ch-pane');
+    expect(panes.length).toBe(4);
+    expect(panes[0].classList.contains('active')).toBe(true);
+    // 切到上下文管理
+    chTabs[1].click();
+    expect(panes[1].classList.contains('active')).toBe(true);
+    expect(panes[0].classList.contains('active')).toBe(false);
+    // 切到工具配置 / 高级选项
+    chTabs[2].click();
+    expect(panes[2].classList.contains('active')).toBe(true);
+    chTabs[3].click();
+    expect(panes[3].classList.contains('active')).toBe(true);
+    expect(f.document.querySelectorAll('#modal .ch-pane.active .set-field').length).toBeGreaterThan(0);
+    // 保存 → POST /api/config-update，strictToolsEnabled 字段名修正、options/optionsEnabled 合并
+    f.document.querySelector('#modal-ok').click();
+    await flush(10);
+    const upd = f.fetches.find((x) => x.url === '/api/config-update' && x.method === 'POST');
+    expect(upd).toBeDefined();
+    const body = upd!.body as any;
+    expect(body.configId).toBe('c1');
+    expect(typeof body.updates.strictToolsEnabled).toBe('boolean');
+    expect(body.updates.strictTools).toBeUndefined();
+    expect(body.updates.options).toBeDefined();
+    expect(body.updates.optionsEnabled).toBeDefined();
+    expect(f.errors).toEqual([]);
+  });
+
+  test('channel page renders desktop-style selector + collapsible sub-menus with instant save', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    // ① 渠道选择器（选中即当前）
+    const selRow = f.document.querySelector('#settings-sections .cfg-selector');
+    expect(selRow).not.toBeNull();
+    const sel = selRow.querySelector('select');
+    expect(sel).not.toBeNull();
+    expect(sel.value).toBe('c1');
+    expect(selRow.querySelectorAll('option').length).toBe(3); // 占位 + c1 + c2
+    // ② 折叠菜单（桌面端 ChannelSettings 同构：上下文管理/工具配置/Token计数/高级/自定义Body/自定义标头/自动重试）
+    const collaps = f.document.querySelectorAll('#settings-sections .ch-form .collap');
+    expect(collaps.length).toBe(7);
+    const titles = Array.from(collaps).map((c: any) => c.querySelector('.collap-title').textContent);
+    expect(titles).toEqual(['上下文管理', '工具配置', 'Token 计数方式', '高级选项', '自定义 Body', '自定义标头', '自动重试']);
+    // ③ 基础字段即存（修改 url → POST /api/config-update）
+    const urlRow: any = Array.from(f.document.querySelectorAll('#settings-sections .ch-form .set-field')).find((r: any) => r.querySelector('.k').textContent === '接口地址');
+    const urlInput = urlRow.querySelector('input');
+    urlInput.value = 'https://new.example.com/v1';
+    urlInput.dispatchEvent(new f.window.Event('change'));
+    await flush(5);
+    const upd = f.fetches.filter((x) => x.url === '/api/config-update' && x.method === 'POST');
+    expect(upd.length).toBeGreaterThan(0);
+    expect(upd[upd.length - 1].body).toEqual({ configId: 'c1', updates: { url: 'https://new.example.com/v1' } });
+    // ④ 折叠展开显示内部字段（上下文管理 → contextThreshold）
+    collaps[0].querySelector('.collap-head').click();
+    await flush();
+    const ctxRow = Array.from(collaps[0].querySelectorAll('.set-field')).find((r: any) => r.querySelector('.k').textContent === '阈值');
+    expect(ctxRow).not.toBeNull();
+    // ⑤ 高级选项展开后含子分组（openai → reasoning）
+    const adv = collaps[3];
+    adv.querySelector('.collap-head').click();
+    await flush();
+    expect(adv.querySelectorAll('.cfg-sub').length).toBeGreaterThanOrEqual(2); // 推理配置 + 思考回传配置
+    expect(f.errors).toEqual([]);
+  });
+
+  test('prompt mode entries editor: assembly switch renders entries with add/move/delete and silent save', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    f.document.querySelector('.set-tab[data-set-tab="prompt"]').click();
+    await flush(3);
+    // 展开第一个模式（Code）
+    f.document.querySelector('#settings-sections .tool-card-head').click();
+    await flush(3);
+    // 组装方式：传统模板 / 预设条目 两个按钮
+    const asmBtns: any[] = Array.from(f.document.querySelectorAll('#settings-sections .tool-card-body .set-field .ctl button'));
+    expect(asmBtns.length).toBe(2);
+    // 默认 legacy：显示 template textarea
+    expect(f.document.querySelectorAll('#settings-sections .tool-card-body textarea').length).toBeGreaterThan(0);
+    // 切到预设条目
+    asmBtns[1].click();
+    await flush(5);
+    // 条目编辑器出现（含 Chat History 占位条目 + 新增按钮）
+    const peItems = f.document.querySelectorAll('#settings-sections .pe-item');
+    expect(peItems.length).toBeGreaterThanOrEqual(1);
+    const chatPill = f.document.querySelector('#settings-sections .pe-chat-pill');
+    expect(chatPill).not.toBeNull();
+    const addBtn: any = Array.from(f.document.querySelectorAll('#settings-sections .pe-toolbar .mini-btn')).find((b: any) => b.textContent.includes('新增条目'));
+    expect(addBtn).not.toBeNull();
+    addBtn.click();
+    await flush(5);
+    expect(f.document.querySelectorAll('#settings-sections .pe-item').length).toBeGreaterThanOrEqual(2);
+    // 保存走 POST /api/settings（promptEntries 数组）
+    const save = f.fetches.filter((x) => x.url === '/api/settings' && x.method === 'POST');
+    expect(save.length).toBeGreaterThan(0);
+    const last = save[save.length - 1].body as any;
+    expect(last.settings.toolsConfig.system_prompt.modes.code.promptEntries).toBeDefined();
+    expect(Array.isArray(last.settings.toolsConfig.system_prompt.modes.code.promptEntries)).toBe(true);
+    expect(f.errors).toEqual([]);
+  });
+
+  test('memory category: scope selector + inline edit posts /api/memory-update', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    f.document.querySelector('.set-tab[data-set-tab="memory"]').click();
+    await flush(3);
+    // 作用域选择（全局/工作区）
+    const scopeRow = f.document.querySelector('#settings-sections .mem-scope-row select');
+    expect(scopeRow).not.toBeNull();
+    expect(scopeRow.querySelectorAll('option').length).toBe(2);
+    // 无 partChars/partLines（桌面端已删除）
+    const paths = fieldPaths(f.document);
+    expect(paths).not.toContain(JSON.stringify(['toolsConfig', 'memory', 'partChars']));
+    expect(paths).not.toContain(JSON.stringify(['toolsConfig', 'memory', 'partLines']));
+    // 条目行内编辑 → textarea → 保存 → POST /api/memory-update
+    const editBtns = f.document.querySelectorAll('#settings-sections .mem-edit-btn');
+    expect(editBtns.length).toBeGreaterThan(0);
+    editBtns[0].click();
+    await flush();
+    const ta = f.document.querySelector('#settings-sections .mem-item textarea');
+    expect(ta).not.toBeNull();
+    ta.value = 'updated memory';
+    f.document.querySelector('#settings-sections .mem-item .mini-btn').click();
+    await flush(5);
+    const upd = f.fetches.find((x) => x.url === '/api/memory-update' && x.method === 'POST');
+    expect(upd).toBeDefined();
+    expect(upd!.body).toEqual({ id: 1, text: 'updated memory' });
+    expect(f.errors).toEqual([]);
+  });
+
+  test('remoteControl category: enabled/port editable fields + usage range selector', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    f.document.querySelector('.set-tab[data-set-tab="remoteControl"]').click();
+    await flush(3);
+    const paths = fieldPaths(f.document);
+    expect(paths).toContain(JSON.stringify(['remoteControl', 'enabled']));
+    expect(paths).toContain(JSON.stringify(['remoteControl', 'port']));
+    // 用量时间范围选择器
+    f.document.querySelector('.set-tab[data-set-tab="usage"]').click();
+    await flush(3);
+    const rangeSel = f.document.querySelector('#settings-sections .usage-range-row select');
+    expect(rangeSel).not.toBeNull();
+    expect(rangeSel.querySelectorAll('option').length).toBe(4);
+    expect(f.errors).toEqual([]);
+  });
+
+  test('settings nav renders inline SVG icons for all 22 categories', async () => {
+    const f = makeFixture();
+    await openSettingsLoaded(f);
+    const tabs = f.document.querySelectorAll('.set-tab');
+    expect(tabs.length).toBe(22);
+    tabs.forEach((t: any) => {
+      expect(t.querySelector('svg')).not.toBeNull();
+    });
+    // chips 删除按钮为 SVG 图标（非 × 字符）
+    f.document.querySelector('.set-tab[data-set-tab="context"]').click();
+    await flush(3);
+    f.errors.length = 0;
     expect(f.errors).toEqual([]);
   });
 });

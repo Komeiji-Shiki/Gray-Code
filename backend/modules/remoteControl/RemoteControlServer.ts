@@ -108,6 +108,12 @@ const SUMMARY_PREVIEW_LENGTH = 50;
 /** 移动端设置补丁体大小上限（64KB；全量设置中仅密钥字段被脱敏后可达数十 KB） */
 const MAX_SETTINGS_PATCH_BYTES = 64 * 1024;
 
+/** 记忆条目文本长度上限（与桌面端设置页输入框对齐） */
+const MAX_MEMORY_TEXT_LENGTH = 20_000;
+
+/** 记忆条目列表单次返回上限（对齐桌面端 getMemoryEntries 的 MAX_MEMORY_ENTRIES_LIMIT） */
+const MAX_MEMORY_ENTRIES_LIMIT = 5000;
+
 function isValidPort(port: unknown): port is number {
   return typeof port === 'number' && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
@@ -227,10 +233,21 @@ function isSafeToolResponse(value: unknown): value is { id: string; name: string
     && typeof v.confirmed === 'boolean';
 }
 
+/** 记忆条目文本白名单：非空（trim 后）字符串，长度上限与桌面端设置页一致 */
+function isSafeMemoryText(text: unknown): text is string {
+  return typeof text === 'string' && text.trim().length > 0 && text.length <= MAX_MEMORY_TEXT_LENGTH;
+}
+
+/** 记忆条目 ID 白名单：非负整数（与 addMemoryEntry/updateMemoryEntry/deleteMemoryEntry 校验一致） */
+function isSafeMemoryId(id: unknown): id is number {
+  return typeof id === 'number' && Number.isInteger(id) && id >= 0;
+}
+
 /**
- * 剥离消息中的附件二进制载荷（inlineData/fileData base64），保留其余全部字段。
- * 移动端历史加载只关心文本/思考/工具调用，数十 MB 级 base64 不应经局域网下发；
- * 深拷贝仅发生在含附件字段的消息上（普通消息浅引用原数组，零额外开销）。
+ * 剥离消息中的附件二进制载荷（inlineData 的 base64 data / fileData 的 fileUri），
+ * 但保留附件元数据（mimeType/displayName/size 等），移动端据此渲染附件占位卡片，
+ * 与桌面端消息一一对应（不会出现「有附件但显示空白气泡」的消息数不一致）。
+ * 数十 MB 级 base64 不应经局域网下发；深拷贝仅发生在含附件字段的消息上。
  */
 function stripMessagePayloads(messages: any[]): any[] {
   const hasBlob = (parts: any[] | undefined): boolean =>
@@ -242,8 +259,20 @@ function stripMessagePayloads(messages: any[]): any[] {
       parts: m.parts.map((p: any) => {
         if (!p || (!p.inlineData && !p.fileData)) return p;
         const copy = { ...p };
-        delete copy.inlineData;
-        delete copy.fileData;
+        if (copy.inlineData) {
+          const meta: Record<string, unknown> = {
+            mimeType: typeof copy.inlineData.mimeType === 'string' ? copy.inlineData.mimeType : ''
+          };
+          if (typeof copy.inlineData.displayName === 'string') meta.displayName = copy.inlineData.displayName;
+          copy.inlineData = meta;
+        }
+        if (copy.fileData) {
+          const meta: Record<string, unknown> = {
+            mimeType: typeof copy.fileData.mimeType === 'string' ? copy.fileData.mimeType : ''
+          };
+          if (typeof copy.fileData.displayName === 'string') meta.displayName = copy.fileData.displayName;
+          copy.fileData = meta;
+        }
         return copy;
       })
     };
@@ -983,6 +1012,122 @@ export class RemoteControlServer {
       await this.handleReroll(res, await this.readBody(req));
       return;
     }
+    if (req.method === 'GET' && pathname === '/api/mcp') {
+      await this.handleMcpList(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/mcp-create') {
+      await this.handleMcpCreate(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/mcp-update') {
+      await this.handleMcpUpdate(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/mcp-delete') {
+      await this.handleMcpDelete(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/mcp-toggle') {
+      await this.handleMcpToggle(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/subagents') {
+      await this.handleSubagentsList(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/subagent-save') {
+      await this.handleSubagentSave(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/subagent-delete') {
+      await this.handleSubagentDelete(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/subagent-toggle') {
+      await this.handleSubagentToggle(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/prompt-mode-save') {
+      await this.handlePromptModeSave(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/prompt-mode-rename') {
+      await this.handlePromptModeRename(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/prompt-mode-delete') {
+      await this.handlePromptModeDelete(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/dependency-install') {
+      await this.handleDependencyInstall(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/dependency-uninstall') {
+      await this.handleDependencyUninstall(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/usage') {
+      await this.handleUsageStats(res, url.searchParams.get('range'));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/memory-entries') {
+      await this.handleMemoryEntries(res, url.searchParams.get('limit'), url.searchParams.get('workspaceUri'));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/memory-add') {
+      await this.handleMemoryAdd(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/memory-update') {
+      await this.handleMemoryUpdate(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/memory-delete') {
+      await this.handleMemoryDelete(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/memory-scopes') {
+      await this.handleMemoryScopes(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/mcp-connect') {
+      await this.handleMcpConnect(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/mcp-disconnect') {
+      await this.handleMcpDisconnect(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/update-check') {
+      await this.handleUpdateCheck(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/update-now') {
+      await this.handleUpdateNow(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/settings-export') {
+      await this.handleSettingsExport(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/settings-import') {
+      await this.handleSettingsImport(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/storage-config') {
+      await this.handleStorageConfig(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/storage-reset') {
+      await this.handleStorageReset(res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/storage-select') {
+      await this.handleStorageSelect(res);
+      return;
+    }
 
     this.sendJson(res, 404, { ok: false, error: 'Not found' });
   }
@@ -1150,6 +1295,19 @@ export class RemoteControlServer {
     if (requestedId) {
       if (!isSafeConversationId(requestedId)) {
         this.sendJson(res, 400, { ok: false, error: 'Invalid conversationId' });
+        return;
+      }
+      // 会话存在性校验：与 GET /api/messages 同口径——移动端对已删除/不存在
+      // 的会话 ID 发消息会在桌面端 loadHistory 读路径静默「复活」空会话，
+      // 这里前置 404 让远端明确感知并提示（防磁盘 DoS + 防误操作）。
+      try {
+        const meta = await this.host.conversationManager.getMetadata(requestedId);
+        if (!meta) {
+          this.sendJson(res, 404, { ok: false, error: 'Conversation not found' });
+          return;
+        }
+      } catch (err: any) {
+        this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to verify conversation' });
         return;
       }
       targetId = requestedId;
@@ -1394,6 +1552,590 @@ export class RemoteControlServer {
       this.sendJson(res, 200, { ok: true, started: true });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to reroll message' });
+    }
+  }
+
+  // ==========================================================================
+  // MCP 服务器管理（透传 webview McpHandlers：listServers/createServer/
+  // updateServer/deleteServer/setServerEnabled；配置读写与桌面端同一存储）
+  // ==========================================================================
+
+  private async handleMcpList(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('getMcpServers', {});
+      this.sendJson(res, 200, {
+        ok: true,
+        servers: Array.isArray(result?.servers) ? result.servers : []
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list MCP servers' });
+    }
+  }
+
+  /** MCP 服务器 ID 白名单（stdio/sse/streamable-http 配置 ID，与 McpManager 校验一致） */
+  private isSafeMcpServerId(id: unknown): id is string {
+    if (typeof id !== 'string') return false;
+    if (id.length < 1 || id.length > 128) return false;
+    if (/[\u0000-\u001f\u007f/\\]/.test(id)) return false;
+    for (const seg of id.split(/[.\-_]/)) {
+      if (seg === '..') return false;
+    }
+    return true;
+  }
+
+  private async handleMcpCreate(res: http.ServerResponse, body: any): Promise<void> {
+    const input = body?.input;
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid MCP server input' });
+      return;
+    }
+    const customId = typeof body?.customId === 'string' && body.customId ? body.customId : undefined;
+    if (customId !== undefined && !this.isSafeMcpServerId(customId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid serverId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('createMcpServer', { input, customId });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to create MCP server' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, serverId: result?.serverId || null });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to create MCP server' });
+    }
+  }
+
+  private async handleMcpUpdate(res: http.ServerResponse, body: any): Promise<void> {
+    const serverId = typeof body?.serverId === 'string' ? body.serverId : '';
+    const updates = body?.updates;
+    if (!this.isSafeMcpServerId(serverId) || typeof updates !== 'object' || updates === null || Array.isArray(updates)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid serverId or updates' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('updateMcpServer', { serverId, updates });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to update MCP server' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to update MCP server' });
+    }
+  }
+
+  private async handleMcpDelete(res: http.ServerResponse, body: any): Promise<void> {
+    const serverId = typeof body?.serverId === 'string' ? body.serverId : '';
+    if (!this.isSafeMcpServerId(serverId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid serverId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('deleteMcpServer', { serverId });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to delete MCP server' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete MCP server' });
+    }
+  }
+
+  private async handleMcpToggle(res: http.ServerResponse, body: any): Promise<void> {
+    const serverId = typeof body?.serverId === 'string' ? body.serverId : '';
+    const enabled = body?.enabled === true;
+    if (!this.isSafeMcpServerId(serverId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid serverId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('setMcpServerEnabled', { serverId, enabled });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to toggle MCP server' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to toggle MCP server' });
+    }
+  }
+
+  // ==========================================================================
+  // 子代理管理（透传 webview SubAgentsHandlers：list/create/update/delete/
+  // setEnabled；与桌面端 SettingsManager 同一持久化）
+  // ==========================================================================
+
+  private async handleSubagentsList(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('subagents.list', {});
+      this.sendJson(res, 200, {
+        ok: true,
+        agents: Array.isArray(result?.agents) ? result.agents : [],
+        maxConcurrentAgents: result?.maxConcurrentAgents ?? 3,
+        failureModeAfterRetries: result?.failureModeAfterRetries || 'fail_parent_tool',
+        generalWorkerEnabled: result?.generalWorkerEnabled !== false,
+        defaultMaxIterations: result?.defaultMaxIterations ?? 80
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list subagents' });
+    }
+  }
+
+  private async handleSubagentSave(res: http.ServerResponse, body: any): Promise<void> {
+    const type = typeof body?.type === 'string' ? body.type.trim() : '';
+    if (!type || type.length > 128 || /[\u0000-\u001f\u007f]/.test(type)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid subagent type' });
+      return;
+    }
+    const payload: Record<string, unknown> = {};
+    for (const key of ['type', 'name', 'description', 'systemPrompt', 'channel', 'tools', 'failureModeAfterRetries'] as const) {
+      if (body?.[key] !== undefined) payload[key] = body[key];
+    }
+    if (typeof body?.maxIterations === 'number') payload.maxIterations = body.maxIterations;
+    if (typeof body?.maxRuntime === 'number') payload.maxRuntime = body.maxRuntime;
+    if (typeof body?.enabled === 'boolean') payload.enabled = body.enabled;
+    try {
+      const result = await this.invokeHandler('subagents.create', payload);
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to save subagent' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      // 已存在（type 冲突）→ 走 update 分支（与桌面端编辑保存同语义）
+      const msg = err?.message || '';
+      if (typeof msg === 'string' && /already exists|已存在/i.test(msg)) {
+        try {
+          await this.invokeHandler('subagents.update', { type, updates: payload });
+          this.sendJson(res, 200, { ok: true, updated: true });
+          return;
+        } catch (err2: any) {
+          this.sendJson(res, 500, { ok: false, error: err2?.message || 'Failed to update subagent' });
+          return;
+        }
+      }
+      this.sendJson(res, 500, { ok: false, error: msg || 'Failed to save subagent' });
+    }
+  }
+
+  private async handleSubagentDelete(res: http.ServerResponse, body: any): Promise<void> {
+    const type = typeof body?.type === 'string' ? body.type.trim() : '';
+    if (!type || type.length > 128 || /[\u0000-\u001f\u007f]/.test(type)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid subagent type' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('subagents.delete', { type });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to delete subagent' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete subagent' });
+    }
+  }
+
+  private async handleSubagentToggle(res: http.ServerResponse, body: any): Promise<void> {
+    const type = typeof body?.type === 'string' ? body.type.trim() : '';
+    const enabled = body?.enabled === true;
+    if (!type || type.length > 128 || /[\u0000-\u001f\u007f]/.test(type)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid subagent type' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('subagents.setEnabled', { type, enabled });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to toggle subagent' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to toggle subagent' });
+    }
+  }
+
+  // ==========================================================================
+  // 系统提示词模式管理（透传 settings.savePromptMode/rename/delete）
+  // ==========================================================================
+
+  private async handlePromptModeSave(res: http.ServerResponse, body: any): Promise<void> {
+    const mode = body?.mode;
+    if (typeof mode !== 'object' || mode === null || Array.isArray(mode)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid prompt mode' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('savePromptMode', { mode });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to save prompt mode' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to save prompt mode' });
+    }
+  }
+
+  private async handlePromptModeRename(res: http.ServerResponse, body: any): Promise<void> {
+    const modeId = typeof body?.modeId === 'string' ? body.modeId.trim() : '';
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 100) : '';
+    if (!modeId || modeId.length > 128 || !name) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid modeId or name' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('renamePromptMode', { modeId, name });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to rename prompt mode' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, mode: result?.mode || null });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to rename prompt mode' });
+    }
+  }
+
+  private async handlePromptModeDelete(res: http.ServerResponse, body: any): Promise<void> {
+    const modeId = typeof body?.modeId === 'string' ? body.modeId.trim() : '';
+    if (!modeId || modeId.length > 128) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid modeId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('deletePromptMode', { modeId });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to delete prompt mode' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete prompt mode' });
+    }
+  }
+
+  // ==========================================================================
+  // 依赖安装 / 用量统计（透传 dependencies.install/uninstall、usage.getStats）
+  // ==========================================================================
+
+  /** 依赖名称白名单（安装脚本白名单校验前置；仅允许字母数字与 - _ .） */
+  private isSafeDependencyName(name: unknown): name is string {
+    return typeof name === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(name);
+  }
+
+  private async handleDependencyInstall(res: http.ServerResponse, body: any): Promise<void> {
+    const name = typeof body?.name === 'string' ? body.name : '';
+    if (!this.isSafeDependencyName(name)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid dependency name' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('dependencies.install', { name });
+      this.sendJson(res, 200, { ok: true, success: result?.success !== false });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to install dependency' });
+    }
+  }
+
+  private async handleDependencyUninstall(res: http.ServerResponse, body: any): Promise<void> {
+    const name = typeof body?.name === 'string' ? body.name : '';
+    if (!this.isSafeDependencyName(name)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid dependency name' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('dependencies.uninstall', { name });
+      this.sendJson(res, 200, { ok: true, success: result?.success !== false });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to uninstall dependency' });
+    }
+  }
+
+  /** 用量时间范围：all / today / 7d / 30d → startTime（毫秒），与桌面端 usage.getStats 语义一致 */
+  private usageStartTimeForRange(range: string | null | undefined): number | undefined {
+    if (range === 'today') {
+      const now = new Date();
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+    }
+    if (range === '7d' || range === '30d') {
+      const days = range === '7d' ? 7 : 30;
+      return Date.now() - days * 24 * 60 * 60 * 1000;
+    }
+    return undefined;
+  }
+
+  private async handleUsageStats(res: http.ServerResponse, range?: string | null): Promise<void> {
+    try {
+      const startTime = this.usageStartTimeForRange(range);
+      const result = await this.invokeHandler('usage.getStats', startTime != null ? { startTime } : {});
+      // usage.getStats 返回 { totals, byConversation, byModel, byDay, generatedAt }：
+      // 移动端需要扁平字段，把 totals 的计数平铺到 stats 顶层（保留各维度数组）。
+      const totals = (result && typeof result === 'object' && result.totals && typeof result.totals === 'object')
+        ? result.totals
+        : {};
+      const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+      const stats: Record<string, unknown> = {
+        promptTokens: num(totals.promptTokens),
+        candidatesTokens: num(totals.candidatesTokens),
+        thoughtsTokens: num(totals.thoughtsTokens),
+        cacheCreationTokens: num(totals.cacheCreationTokens),
+        cacheReadTokens: num(totals.cacheReadTokens),
+        totalTokens: num(totals.totalTokens),
+        conversations: num(totals.conversations),
+        modelMessages: num(totals.modelMessages),
+        skippedConversations: num(totals.skippedConversations),
+        byConversation: Array.isArray(result?.byConversation) ? result.byConversation : [],
+        byModel: Array.isArray(result?.byModel) ? result.byModel : [],
+        byDay: Array.isArray(result?.byDay) ? result.byDay : [],
+        generatedAt: typeof result?.generatedAt === 'number' ? result.generatedAt : Date.now()
+      };
+      this.sendJson(res, 200, { ok: true, stats });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load usage stats' });
+    }
+  }
+
+  // ==========================================================================
+  // 记忆管理（透传 webview SettingsHandlers：getMemoryEntries/addMemoryEntry/
+  // updateMemoryEntry/deleteMemoryEntry/listMemoryScopes；与桌面端同一存储）
+  // ==========================================================================
+
+  /** 工作区记忆 URI 白名单：可选，仅作透传（桌面端 memory 作用域切换语义） */
+  private isSafeWorkspaceUri(uri: string | null | undefined): uri is string {
+    if (typeof uri !== 'string') return false;
+    if (uri.length < 1 || uri.length > 4096) return false;
+    if (/[\u0000-\u001f\u007f]/.test(uri)) return false;
+    return true;
+  }
+
+  private async handleMemoryEntries(res: http.ServerResponse, rawLimit?: string | null, rawWorkspaceUri?: string | null): Promise<void> {
+    try {
+      const limit = clampInt(rawLimit, MAX_MEMORY_ENTRIES_LIMIT, 1, MAX_MEMORY_ENTRIES_LIMIT);
+      const params: Record<string, unknown> = { limit };
+      if (this.isSafeWorkspaceUri(rawWorkspaceUri)) params.workspaceUri = rawWorkspaceUri;
+      const result = await this.invokeHandler('getMemoryEntries', params);
+      this.sendJson(res, 200, {
+        ok: true,
+        entries: Array.isArray(result?.entries) ? result.entries : [],
+        total: typeof result?.total === 'number' ? result.total : 0
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load memory entries' });
+    }
+  }
+
+  private async handleMemoryAdd(res: http.ServerResponse, body: any): Promise<void> {
+    const text = typeof body?.text === 'string' ? body.text : '';
+    if (!isSafeMemoryText(text)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid text (non-empty string, max 20000 chars)' });
+      return;
+    }
+    try {
+      const params: Record<string, unknown> = { text };
+      if (this.isSafeWorkspaceUri(body?.workspaceUri)) params.workspaceUri = body.workspaceUri;
+      const result = await this.invokeHandler('addMemoryEntry', params);
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to add memory entry' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, id: typeof result?.id === 'number' ? result.id : null });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to add memory entry' });
+    }
+  }
+
+  private async handleMemoryUpdate(res: http.ServerResponse, body: any): Promise<void> {
+    const id = body?.id;
+    const text = typeof body?.text === 'string' ? body.text : '';
+    if (!isSafeMemoryId(id) || !isSafeMemoryText(text)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid id or text' });
+      return;
+    }
+    try {
+      const params: Record<string, unknown> = { id, text };
+      if (this.isSafeWorkspaceUri(body?.workspaceUri)) params.workspaceUri = body.workspaceUri;
+      const result = await this.invokeHandler('updateMemoryEntry', params);
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to update memory entry' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to update memory entry' });
+    }
+  }
+
+  private async handleMemoryDelete(res: http.ServerResponse, body: any): Promise<void> {
+    const id = body?.id;
+    if (!isSafeMemoryId(id)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid id (non-negative integer)' });
+      return;
+    }
+    try {
+      const params: Record<string, unknown> = { id };
+      if (this.isSafeWorkspaceUri(body?.workspaceUri)) params.workspaceUri = body.workspaceUri;
+      const result = await this.invokeHandler('deleteMemoryEntry', params);
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to delete memory entry' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete memory entry' });
+    }
+  }
+
+  private async handleMemoryScopes(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('listMemoryScopes', {});
+      this.sendJson(res, 200, {
+        ok: true,
+        scopes: Array.isArray(result?.scopes) ? result.scopes : []
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list memory scopes' });
+    }
+  }
+
+  // ==========================================================================
+  // MCP 连接 / 更新 / 设置导入导出 / 存储路径（透传 webview handlers：
+  // connectMcpServer/disconnectMcpServer、checkUpdateNow/updateNow、
+  // settings.export/import、storagePath.getConfig/reset/selectFolder；
+  // 后两者桌面端会弹系统对话框，cancelled 时如实透出）
+  // ==========================================================================
+
+  private async handleMcpConnect(res: http.ServerResponse, body: any): Promise<void> {
+    const serverId = typeof body?.serverId === 'string' ? body.serverId : '';
+    if (!this.isSafeMcpServerId(serverId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid serverId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('connectMcpServer', { serverId });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to connect MCP server' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to connect MCP server' });
+    }
+  }
+
+  private async handleMcpDisconnect(res: http.ServerResponse, body: any): Promise<void> {
+    const serverId = typeof body?.serverId === 'string' ? body.serverId : '';
+    if (!this.isSafeMcpServerId(serverId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid serverId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('disconnectMcpServer', { serverId });
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to disconnect MCP server' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to disconnect MCP server' });
+    }
+  }
+
+  private async handleUpdateCheck(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('checkUpdateNow', {});
+      this.sendJson(res, 200, { ok: true, success: result?.success !== false });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to check for updates' });
+    }
+  }
+
+  private async handleUpdateNow(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('updateNow', {});
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to update' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to update' });
+    }
+  }
+
+  private async handleSettingsExport(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('settings.export', {});
+      if (result?.success === false) {
+        if (result?.cancelled === true) {
+          this.sendJson(res, 200, { ok: true, cancelled: true });
+        } else {
+          this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to export settings' });
+        }
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, filePath: typeof result?.filePath === 'string' ? result.filePath : null });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to export settings' });
+    }
+  }
+
+  private async handleSettingsImport(res: http.ServerResponse, body: any): Promise<void> {
+    try {
+      const result = await this.invokeHandler('settings.import', { overwrite: body?.overwrite === true });
+      if (result?.success === false) {
+        if (result?.cancelled === true) {
+          this.sendJson(res, 200, { ok: true, cancelled: true });
+        } else {
+          this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to import settings' });
+        }
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to import settings' });
+    }
+  }
+
+  private async handleStorageConfig(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('storagePath.getConfig', {});
+      this.sendJson(res, 200, {
+        ok: true,
+        config: result && typeof result === 'object' ? result : null
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load storage config' });
+    }
+  }
+
+  private async handleStorageReset(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('storagePath.reset', {});
+      if (result?.success === false) {
+        this.sendJson(res, 400, { ok: false, error: result?.error?.message || 'Failed to reset storage path' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to reset storage path' });
+    }
+  }
+
+  private async handleStorageSelect(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('storagePath.selectFolder', {});
+      if (result?.success === false && result?.cancelled === true) {
+        this.sendJson(res, 200, { ok: true, cancelled: true });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to select storage folder' });
     }
   }
 

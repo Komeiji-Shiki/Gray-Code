@@ -10,6 +10,70 @@
 
 （暂无未发布改动）
 
+### Added：[1.7.10dev] 远程控制 V7——渠道页内联折叠菜单（桌面端 ChannelSettings 同构）+ 提示词预设条目编辑器 + 工具页配置折叠 + 图标体系补全
+  - **渠道页重构为桌面端同构**：顶部渠道选择器（选中即设为当前）+ 当前渠道完整内联表单（改即存，POST /api/config-update）+ 渠道列表卡片保留：
+    - 基础字段：启用此配置/接口地址/API 密钥（占位不回写）/useAuthorizationHeader（仅 gemini/anthropic）/模型列表入口/流式输出/渠道类型（切换弹确认）/工具模式/多模态/严格工具/超时/最大上下文；
+    - **上下文管理**（折叠 + header toggle，开启写 contextManagementMode=summarize + autoSummarizeEnabled，关闭清零旧字段，与桌面端 updateContextManagementEnabled 语义一致）；
+    - **工具配置**（折叠：toolOptions.cropImage.useNormalizedCoordinates）；
+    - **Token 计数方式**（折叠：tokenCountMethod 6 枚举 + 按方法显隐 tokenCountApiConfig url/apiKey/model）；
+    - **高级选项**（折叠 + 子分组）：gemini（temperature/maxOutputTokens/maxImages + 思考配置子分组 thinkingConfig.includeThoughts/mode/thinkingLevel/thinkingBudget）、anthropic（temperature/max_tokens/top_p/top_k + thinking 子分组 type/effort/budget_tokens/display）、openai（temperature/max_tokens/top_p/frequencyPenalty/presencePenalty + reasoning 子分组 effort 9 枚举/effortCustom/summaryEnabled/summary）、openai-responses（temperature/max_output_tokens + reasoning 子分组）、思考回传子分组（sendCurrentThought*/sendHistoryThought*/historyThinkingRounds）、Prompt Caching 子分组（gemini+anthropic：enabled/ttl/keepAlive）、anthropicUserIdEnabled、deepSeekUserIdEnabled、pdfAttachmentEnabled；
+    - **自定义 Body**（折叠 + header toggle：mode simple/advanced + items JSON + json 正文）；
+    - **自定义标头**（折叠 + header toggle：JSON 数组）；**自动重试**（折叠 + header toggle：retryCount/retryInterval）；
+    - 全部字段 options/optionsEnabled 成对合并、即改即存、无保存按钮（桌面端同款交互）。
+  - **提示词预设条目编辑器（桌面端 PromptEntriesEditor 同构）**：组装方式改为「传统模板/预设条目」二选一按钮；entries 模式下渲染条目列表（启用开关/名称/角色 system|user|assistant/内容 textarea/assistant 专属 fakeThought/上移下移复制删除）、Chat History 固定条目（不可删/禁/复制）、新增条目（entry_时间戳_随机 id）、从传统模板转换（template→system 条目、dynamicTemplate→user 条目、自动补 Chat History、切 entries 模式）；归一化对齐桌面端（chat-history 恰好一条、order 重排）；整数组静默保存 POST /api/settings。
+  - **工具页补齐**：tools 分类顶部新增「最大工具调用次数」（toolsConfig 全局 maxToolIterations）；工具行新增「配置」按钮展开内联配置面板（13 个有面板工具，与 fileTools 分区同源）；fileTools 分类改为逐工具折叠面板（read_file/write_file/apply_diff/list_files/find_files/search_in_files/execute_command/history_search + media 折叠组）；execute_command 新增逐 Shell 管理（shells[].enabled + path）。
+  - **记忆页**：移除 partChars/partLines 字段（桌面端已全链路删除，回写会导致 MemoryManager 校验报错）；新增**全局/工作区作用域切换**（GET /api/memory-scopes + workspaceUri 透传）；条目**行内编辑**（POST /api/memory-update）；删除/新增携带作用域。
+  - **远程控制页**：新增启用开关 + 端口输入（remoteControl.enabled/port 可编辑，POST /api/settings 深合并持久化，提示保存后重启生效）。
+  - **用量页**：新增时间范围选择（全部/今天/近 7 天/近 30 天，服务端 /api/usage?range= 换算 startTime 与桌面端 usage.getStats 同语义）；补 cacheCreationTokens 卡片 + skippedConversations 提示。
+  - **图标体系补全**：ICONS 表扩充至 48 个（plug/bolt/server/hubot/note/database/package/paintcan/bell/terminal/graph/remote/pin/star/hash/grid/globe/save/download/upload/eye/eyeClosed/arrowUp/arrowDown/checkAll/fold/list/network 等）；**设置页 22 个分类导航全部渲染内嵌 SVG 图标**；渠道卡片操作按钮（设为当前/模型管理/编辑/删除）补图标；chips 删除按钮由 × 字符改为 SVG close；toast 移除 ✓ 字符拼接；退出按钮与顶栏按钮 aria-label 改用 i18n 键（settingsClose/btnFiles/btnSettings）。
+  - **服务端**：GET /api/memory-entries 支持 workspaceUri 查询参数（白名单校验，控制字符剥离）；POST /api/memory-add|update|delete 支持 workspaceUri 透传；GET /api/usage 支持 range 参数（today/7d/30d → startTime，all/非法值不传）。
+  - **测试**：remoteControl 扩至 196 例——新增渠道页折叠菜单渲染与即存断言（7 个折叠面板/基础字段 POST 形状/子分组）、提示词条目编辑器全流程（组装切换/新增条目/Chat History 占位/静默保存 payload）、记忆作用域 + 行内编辑（POST /api/memory-update）、远程控制 enabled/port 字段、用量范围选择器、22 分类导航 SVG 图标、服务端 workspaceUri 透传与 range→startTime 换算（7d/30d 时间窗断言）；fixture 的 /api/settings POST 改为深合并回读（模拟真实服务端）。
+
+### Added（1.7.10dev 补记：远程控制 V6——布局重构为桌面版三段式 + 设置面板与桌面端 19 页签逐字段同步）
+  - **布局重构（V6，彻底告别移动端三页签+底部导航）**：删除底部导航 #tabbar，改为桌面版三段式——顶栏（会话抽屉/标题状态/文件/设置/刷新）+ 32px 会话页签条 + 消息区 + 底部输入区；文件与设置改为**全屏右侧滑入面板**（#panel-files/#panel-settings，桌面版整页切换语义），顶栏按钮开关；顶栏新增「文件」「设置」入口；
+  - **设置面板改为桌面版布局**：左侧 132px 纵向分类导航（#settings-nav，active 蓝底白字）+ 右侧卡片表单（#settings-scroll/#settings-sections），22 分类不变（channel/general/proxy/tools/autoExec/mcp/fileTools/sandbox/prompt/context/memory/summarize/checkpoint/tokenCount/imageGen/skills/subagents/pinned/remoteControl/storage/dependencies/usage）；
+  - **渠道编辑改为桌面端同款子菜单**（弹窗内 4 子 tab：基本设置/上下文管理/工具配置/高级选项）：
+    - 基本：name/url/apiKey/useAuthorizationHeader(新)/toolMode/timeout/maxContextTokens/streamOutput/multimodalToolsEnabled/strictToolsEnabled（**字段名修正**，此前误写 strictTools）/enabled；
+    - 上下文管理：contextManagementEnabled/contextManagementMode(summarize)/contextThreshold(默认 80%)/autoSummarizeEnabled；
+    - 工具配置：tokenCountMethod(6 枚举)+tokenCountApiConfig(url/apiKey/model)+toolOptions.cropImage.useNormalizedCoordinates；
+    - 高级选项（按渠道类型显示）：retry 3 字段/customBody/customHeaders/温度/最大输出(max_tokens|maxOutputTokens)/Top-P/Top-K(anthropic)/惩罚(openai 系)/reasoning(effort 9 档+effortCustom+summaryEnabled+summary)/thinking(type 3 档+effort+budget_tokens+display)/thinkingConfig(includeThoughts+mode 3 档+thinkingLevel+thinkingBudget)/回传 4 开关+historyThinkingRounds/promptCaching(enable+ttl+keepAlive)/anthropicUserIdEnabled/deepSeekUserIdEnabled/pdfAttachmentEnabled；
+  - **设置面板逐字段同步桌面端 19 页签**：
+    - memory 新增**记忆条目管理**（列表/添加/删除，GET /api/memory-entries、POST /api/memory-add|delete）——桌面端独有核心区块；
+    - usage 修正为桌面端同源统计（stat-grid 7 卡：总/输入/输出/思考/缓存读取/会话数/模型消息 + byModel/byDay 明细 + 刷新，数据来自 usage.getStats 平铺字段）；
+    - sound 补全（cooldownMs/cues 8 开关/Windows 通知全组/theme 枚举修正 beep|soft）、appearance 补 loadingText/splashEnabled；
+    - tools 补全部启用/禁用批量按钮 + 按分类分组；fileTools 全面补全（apply_diff.format 枚举修正 unified|search_replace、outsideWorkspaceAccess、autoSaveDelay 按钮组、diffGuardThreshold；list_files/find_files chips；execute_command timeout/maxOutputLines 枚举；history_search 6 字段；5 个 media 工具 returnImageToAI）；
+    - mcp 编辑补 description/args/env/headers/autoConnect/cleanSchema/timeout + 卡片连接/断开按钮与状态徽标；
+    - subagents 新建/编辑/删除完整表单（名称/描述/系统提示词/渠道/模型/工具模式与白黑名单/最大迭代/最大运行时间/启用，POST /api/subagent-save|delete）；
+    - prompt 模式管理（新建/重命名/复制/删除，POST /api/prompt-mode-save|rename|delete）+ 每模式 template/dynamicTemplate*/dynamicContextStrategy/promptAssemblyMode（**路径修正为 modes.<id> 每模式字段**）/toolPolicy；
+    - checkpoint 补每类别 profilePatterns；storage 补浏览文件夹/重置默认（storagePath.selectFolder/reset 透传）；general 补更新按钮（checkUpdateNow/updateNow）、导入导出（settings.export/import）、应用信息；
+  - **服务端新增 14 个端点**：/api/mcp-connect|mcp-disconnect、/api/update-check|update-now、/api/settings-export|settings-import、/api/storage-config|storage-select|storage-reset、/api/memory-entries|memory-add|memory-update|memory-delete|memory-scopes；
+  - **测试扩至 182 例**（remoteControl 套件）：新增渠道 4 子 tab 渲染与 strictToolsEnabled 保存断言、记忆条目增删、用量 stat-grid、14 个新端点路由测试、usage 平铺字段断言。
+
+### Added（1.7.10dev 补记：远程控制 V5——UI 对齐桌面版全量重写 + 设置项补全 + 消息渲染与服务端 schema 对齐）
+  - **UI 视觉对齐桌面版（V5）**：`remoteControlUiCss.ts` 按桌面端组件实测数值全量重写——VS Code Dark+ 令牌精确对齐（editor-background #1e1e1e / panel-border #454545 / 主题蓝 #3794ff / 选中蓝 #094771 / hover #2a2d2e）、扁平化极小圆角（2-6px）、8pt 间距系统；消息列表对齐 MessageItem（用户消息淡蓝底 `color-mix(6%)`、助手扁平分隔列表、消息头角色/模型名/时间）、工具卡对齐 ToolMessage（1px 边框 2px 圆角、蓝色工具图标、状态色、可展开 JSON 参数）、思考块对齐 MessageRenderBlock（1px 边框 + 折叠/展开 + 斜体灰字）、输入区对齐 InputArea/InputSelectorBar（选择器触发按钮 + 输入框聚焦蓝框 + 32px 发送按钮）、页签栏对齐 ConversationTabs（32px 高、2px 激活下划线）、设置面板对齐 SettingsPanel（卡片化表单 + toggle 开关）、会话抽屉对齐 ConversationList（标题/时间/消息数 + hover 操作）；
+  - **消息渲染与服务端 schema 对齐（修复「远控端消息和服务端不对应」）**：
+    - 工具调用识别改为真实形状 `part.functionCall.name`（此前 `type:'toolCall'` 死代码，工具调用全部不可见）；
+    - 思考部分 `part.thought` 折叠为思考卡（此前思考过程被摊开显示成正文）；
+    - `functionResponse` 消息渲染为工具结果卡（此前显示为空白用户气泡，消息数量与桌面端不一致）；
+    - 附件消息保留元数据渲染占位卡（服务端 stripMessagePayloads 不再整段删除 inlineData/fileData，改为剥离 base64 保留 mimeType/displayName，移动端消息数与桌面端一一对应）；
+    - 消息头字段改用真实键名（`modelVersion`/`timestamp`，此前 `model`/`createdAt` 永不显示）；
+    - 消息删除改用服务端绝对索引 `msg.index`（此前传页面下标，历史分页后删错消息）；
+    - 流式工具阶段内容不再丢弃（toolsExecuting/toolIteration/toolStatus 的 content 与工具名实时展示）；
+  - **设置项补全（对齐桌面端 SettingsPanel 19 页签）**：
+    - 新增「MCP 服务器」分类（GET /api/mcp 列表 + 新增/编辑/删除/启用停用，透传 webview McpHandlers）；
+    - 新增「用量统计」分类（GET /api/usage 透传 usage.getStats，总/输入/输出 Token + 总费用）；
+    - 子代理分类列出 agents 列表并支持启用/停用；
+    - 渠道编辑弹窗补齐桌面端字段：流式输出、多模态工具、严格工具、自动重试（次数/间隔）、自定义请求体/请求头（开关 + JSON 编辑）；
+    - 修复 5 个死字段（保存后对桌面端零效果）：`proxy.insecureSkipTlsVerify`→`insecureSkipVerify`、`read_file/write_file.allowOutsideWorkspace`→`outsideWorkspaceAccess`（deny/ask/allow 三态）、`execute_command.defaultTimeoutMs`→`defaultTimeout`、`pinned_files.pinnedFiles`→`files[]`（对象数组，列表 + 启用/移除）；
+    - 补齐 imageGen 默认宽高比/尺寸、memory systemPrompt、apply_diff diffGuardThreshold、execute_command maxOutputLines、sandbox、prompt 组装模式/动态上下文策略、smoothStreaming 四档（silky）；
+    - 依赖分类支持安装/卸载按钮（POST /api/dependency-install|uninstall）；
+  - **「无法打开新聊天」修复**：①前端不再以 `S.activeChannelId` 为空拦截发送（此前桌面端未显式设置当前渠道时新聊天首条消息被前端静默拦截，服务端本有 resolveConfigId 兜底）；②孤儿流终结块竞态修复——SSE 整条流（含 complete/error）早于 POST /api/send 响应到达时，终结块滞留 orphanStreams 永不重放导致新页签永久卡「生成中」，现在回填 conversationId 后立即重放孤儿缓冲（flushOrphanStream 挂载 + orphanStreamsHasConv 兜底）；
+  - **服务端**：`/api/send` 对已存在 conversationId 增加会话存在性校验（404，此前对已删除会话发消息会在桌面端 loadHistory 读路径静默「复活」空会话）；`stripMessagePayloads` 保留附件元数据。
+  - **测试**：远程控制测试扩至 156 例——新增 MCP/子代理/提示词模式/依赖安装/用量端点路由测试、/api/send 404 复活防护测试、附件元数据保留断言、22 分类渲染断言。
+
+### Fixed（1.7.10dev 补记：远程控制 V5）
+  - 消息渲染层与服务端 ContentPart schema 全面对齐（见上），删除消息索引、流式工具状态、消息头字段名等历史错位全部修正。
+
 ### Added（1.7.10dev 补记：远程控制 V4 全量重写——移动端 UI 架构重构 + 设置字段与桌面端完全对齐 + 稳定性加固）
   - **客户端架构重构（V4）**：`remoteControlUiScript.ts` 整体重写为单一 IIFE + 明确模块分区（工具/API 客户端/内嵌 SVG 图标/状态/视图路由/会话页签/输入区四选择器/文件与工作区/schema 驱动设置页/SSE 看门狗/启动）；全部渲染函数幂等且经 `safe()` 错误边界包裹，任何异常只落 toast + 顶部错误横幅，**杜绝"页面随机变空白"**（含新增渠道后白屏、闲置白屏等历史故障）；
   - **稳定性加固**：SSE 看门狗（readyState 静默断连 15s 兜底重连、断线退避重连、`visibilitychange` 回前台立即恢复）、服务器 bye/重启后 `probeServerRecovery` 周期性探活自动重连（此前 bye 后页面永久停摆）、全局 `window.onerror`/`unhandledrejection` 兜底；修复 `loadConfigModels` 对每个渠道重复拉取 + 触发设置页无限重渲染的隐患（新增 modelsLoaded 缓存）；

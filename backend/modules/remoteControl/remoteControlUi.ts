@@ -297,8 +297,7 @@ interface UiText {
   /* ---- V4 追加（与 UI_TEXTS 三语言字典键一致） ---- */
   activeModel: string;
   addModel: string;
-  assistant: string;
-  browseFolder: string;
+  assistant: string;  browseFolder: string;
   channelChanged: string;
   ckptAfterTools: string;
   ckptBeforeTools: string;
@@ -376,6 +375,229 @@ interface UiText {
   toolReject: string;
   toolUsed: string;
   you: string;
+  /* ---- V5 追加（设置补全 + 消息渲染对齐桌面端） ---- */
+  secMcp: string;
+  secUsage: string;
+  addMcpServer: string;
+  mcpTransport: string;
+  mcpCommand: string;
+  subAgentsList: string;
+  install: string;
+  uninstall: string;
+  installed: string;
+  rejected: string;
+  toolArgs: string;
+  usageTotalTokens: string;
+  usagePromptTokens: string;
+  usageCandidatesTokens: string;
+  usageTotalCost: string;
+  fldChStream: string;
+  fldChMultimodal: string;
+  fldChStrictTools: string;
+  fldChRetry: string;
+  fldChRetryCount: string;
+  fldChRetryInterval: string;
+  fldChCustomBodyEnabled: string;
+  fldChCustomBody: string;
+  fldChCustomHeadersEnabled: string;
+  fldChCustomHeaders: string;
+  fldApplyGuardThreshold: string;
+  fldMemSystemPrompt: string;
+  fldPromptAssembly: string;
+  promptAssemblyLegacy: string;
+  promptAssemblyEntries: string;
+  fldPromptStrategy: string;
+  /* ---- V6 追加（桌面版三段式布局：顶栏按钮 + 全屏面板 + 新设置字段） ---- */
+  btnFiles: string;
+  btnSettings: string;
+  settingsClose: string;
+  chBasic: string;
+  chContext: string;
+  chToolsCfg: string;
+  chAdvanced: string;
+  fldChUseAuth: string;
+  fldChContextMode: string;
+  fldChContextThreshold: string;
+  fldChAutoSummarize: string;
+  fldChToolCropNorm: string;
+  fldChTokenCountMethod: string;
+  fldChTemperature: string;
+  fldChMaxOutputTokens: string;
+  fldChMaxImages: string;
+  fldChTopP: string;
+  fldChTopK: string;
+  fldChFreqPenalty: string;
+  fldChPresencePenalty: string;
+  fldChReasoning: string;
+  fldChEffort: string;
+  fldChEffortCustom: string;
+  fldChSummary: string;
+  fldChThinkingType: string;
+  fldChThinkingBudget: string;
+  fldChThinkingDisplay: string;
+  fldChSendThoughts: string;
+  fldChHistoryRounds: string;
+  fldChPromptCaching: string;
+  fldChTtl: string;
+  fldChKeepAlive: string;
+  fldChDeepSeekUserId: string;
+  fldChPdfAttachment: string;
+  fldChAnthropicUserId: string;
+  fldChAutoRetry: string;
+  memEntries: string;
+  memAdd: string;
+  memAddPlaceholder: string;
+  memEmpty: string;
+  memTotal: string;
+  memScope: string;
+  memScopeGlobal: string;
+  memScopeWorkspace: string;
+  usageConversations: string;
+  usageByModel: string;
+  usageByDay: string;
+  usageRefresh: string;
+  usageThoughts: string;
+  usageCacheRead: string;
+  usageModelMessages: string;
+  mcpDescription: string;
+  mcpArgs: string;
+  mcpEnv: string;
+  mcpHeaders: string;
+  mcpAutoConnect: string;
+  mcpCleanSchema: string;
+  mcpTimeout: string;
+  mcpConnect: string;
+  mcpDisconnect: string;
+  mcpConnected: string;
+  mcpDisconnected: string;
+  subCreate: string;
+  subName: string;
+  subSystemPrompt: string;
+  subChannel: string;
+  subModel: string;
+  subToolsMode: string;
+  subWhitelist: string;
+  subBlacklist: string;
+  subMaxIterations: string;
+  subMaxRuntime: string;
+  fldPromptTemplate: string;
+  fldPromptEntries: string;
+  fldPromptToolPolicy: string;
+  modeNew: string;
+  modeRename: string;
+  modeCopy: string;
+  modeDelete: string;
+  modeName: string;
+  ckptProfilePatterns: string;
+  ckptBranchCleanup: string;
+  ckptRetentionDays: string;
+  fldSoundCooldown: string;
+  fldSoundCues: string;
+  fldSoundSubCues: string;
+  fldSoundWindowsNotify: string;
+  fldSoundOnlyUnfocused: string;
+  fldSoundCueWarning: string;
+  fldSoundCueError: string;
+  fldSoundCueComplete: string;
+  fldSoundCueFail: string;
+  fldSplashEnabled: string;
+  opExport: string;
+  opImport: string;
+  opCheckUpdate: string;
+  opUpdateNow: string;
+  opStorageReset: string;
+  opStorageOpen: string;
+  appInfo: string;
+  fldToolsAllEnable: string;
+  fldToolsAllDisable: string;
+  fldApplyOutside: string;
+  toolAllow: string;
+  toolAsk: string;
+  toolDeny: string;
+  /* 渠道页内联折叠菜单（桌面端 ChannelSettings 同构） */
+  chSelector: string;
+  chEnableSection: string;
+  chApiUrlSection: string;
+  chApiKeySection: string;
+  chModelsSection: string;
+  chStreamSection: string;
+  chTypeSection: string;
+  chToolModeSection: string;
+  chMultimodalSection: string;
+  chStrictSection: string;
+  chTimeoutSection: string;
+  chMaxCtxSection: string;
+  chContextMgmtSection: string;
+  chToolOptionsSection: string;
+  chTokenCountSection: string;
+  chAdvancedSection: string;
+  chCustomBodySection: string;
+  chCustomHeadersSection: string;
+  chRetrySection: string;
+  chThinkingGroup: string;
+  chThoughtGroup: string;
+  chCacheGroup: string;
+  chMaxImages: string;
+  chNoConfigSelected: string;
+  chCustomBodyMode: string;
+  chCustomBodyItems: string;
+  chCustomBodyJson: string;
+  chCustomHeadersList: string;
+  /* 提示词条目编辑器（桌面端 PromptEntriesEditor 同构） */
+  peEntriesLabel: string;
+  peName: string;
+  peRole: string;
+  peContent: string;
+  peFakeThought: string;
+  peAdd: string;
+  peConvertLegacy: string;
+  peMoveUp: string;
+  peMoveDown: string;
+  peDuplicate: string;
+  peDelete: string;
+  peChatHistory: string;
+  peChatHistoryHint: string;
+  peRoleSystem: string;
+  peRoleUser: string;
+  peRoleAssistant: string;
+  peEntriesHint: string;
+  peLegacySystem: string;
+  peLegacyDynamic: string;
+  confirmSwitchType: string;
+  /* 工具页 */
+  toolConfigBtn: string;
+  toolShellGroup: string;
+  toolShellEnabled: string;
+  toolShellPath: string;
+  toolShellDefault: string;
+  toolMaxIter: string;
+  toolSandboxGlobal: string;
+  /* 记忆 */
+  memScopeRow: string;
+  memEdit: string;
+  memSave: string;
+  memEditHint: string;
+  memNoScopes: string;
+  memWorkspaceLabel: string;
+  /* 远程控制 */
+  rcSaveHint: string;
+  /* 用量 */
+  usageRange: string;
+  usageRangeAll: string;
+  usageRangeToday: string;
+  usageRange7d: string;
+  usageRange30d: string;
+  usageCacheCreation: string;
+  usageSkipped: string;
+  /* MCP / 子代理补充 */
+  mcpTransportType: string;
+  mcpCapabilities: string;
+  mcpLastError: string;
+  mcpEnabledLabel: string;
+  subDescription: string;
+  subIncludeMcp: string;
+  subPresets: string;
+  subBlankPreset: string;
 }
 
 export const UI_TEXTS: Record<UiLang, UiText> = {
@@ -723,7 +945,222 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     fldDiagWorkspaceOnly: '仅工作区诊断',
     fldDiagOpenOnly: '仅打开文件诊断',
     fldDiagPerFile: '每文件最大诊断数',
-    fldDiagMaxFiles: '最大文件数'
+    fldDiagMaxFiles: '最大文件数',
+    secMcp: 'MCP 服务器',
+    secUsage: '用量统计',
+    addMcpServer: '新增 MCP 服务器',
+    mcpTransport: '传输方式',
+    mcpCommand: '启动命令',
+    subAgentsList: '子代理列表',
+    install: '安装',
+    uninstall: '卸载',
+    installed: '已安装',
+    rejected: '已拒绝',
+    toolArgs: '参数',
+    usageTotalTokens: '总 Token',
+    usagePromptTokens: '输入 Token',
+    usageCandidatesTokens: '输出 Token',
+    usageTotalCost: '总费用',
+    fldChStream: '流式输出',
+    fldChMultimodal: '多模态工具',
+    fldChStrictTools: '严格工具模式',
+    fldChRetry: '自动重试',
+    fldChRetryCount: '重试次数',
+    fldChRetryInterval: '重试间隔(ms)',
+    fldChCustomBodyEnabled: '自定义请求体',
+    fldChCustomBody: '自定义请求体(JSON)',
+    fldChCustomHeadersEnabled: '自定义请求头',
+    fldChCustomHeaders: '自定义请求头(JSON)',
+    fldApplyGuardThreshold: '差异保护阈值',
+    fldMemSystemPrompt: '记忆系统提示词',
+    fldPromptAssembly: '提示词组装模式',
+    promptAssemblyLegacy: '传统模板',
+    promptAssemblyEntries: '预设条目',
+    fldPromptStrategy: '动态上下文策略',
+    /* ---- V6 追加 ---- */
+    btnFiles: '文件',
+    btnSettings: '设置',
+    settingsClose: '关闭',
+    chBasic: '基本设置',
+    chContext: '上下文管理',
+    chToolsCfg: '工具配置',
+    chAdvanced: '高级选项',
+    fldChUseAuth: '使用 Authorization 头',
+    fldChContextMode: '管理模式',
+    fldChContextThreshold: '上下文阈值',
+    fldChAutoSummarize: '自动总结',
+    fldChToolCropNorm: '归一化坐标',
+    fldChTokenCountMethod: '计数方式',
+    fldChTemperature: '温度',
+    fldChMaxOutputTokens: '最大输出 Tokens',
+    fldChMaxImages: '最大图片数',
+    fldChTopP: 'Top-P',
+    fldChTopK: 'Top-K',
+    fldChFreqPenalty: '频率惩罚',
+    fldChPresencePenalty: '存在惩罚',
+    fldChReasoning: '思考配置',
+    fldChEffort: '思考强度',
+    fldChEffortCustom: '自定义强度',
+    fldChSummary: '输出详细程度',
+    fldChThinkingType: '思考类型',
+    fldChThinkingBudget: '思考预算',
+    fldChThinkingDisplay: '思考显示',
+    fldChSendThoughts: '回传思考',
+    fldChHistoryRounds: '历史思考回合',
+    fldChPromptCaching: 'Prompt 缓存',
+    fldChTtl: 'TTL',
+    fldChKeepAlive: '保活',
+    fldChDeepSeekUserId: 'DeepSeek user_id',
+    fldChPdfAttachment: 'PDF 附件',
+    fldChAnthropicUserId: 'anthropic user_id',
+    fldChAutoRetry: '自动重试',
+    memEntries: '记忆条目',
+    memAdd: '添加',
+    memAddPlaceholder: '输入记忆内容…',
+    memEmpty: '暂无记忆',
+    memTotal: '共',
+    memScope: '作用域',
+    memScopeGlobal: '全局',
+    memScopeWorkspace: '工作区',
+    usageConversations: '会话数',
+    usageByModel: '按模型',
+    usageByDay: '按日期',
+    usageRefresh: '刷新',
+    usageThoughts: '思考 Tokens',
+    usageCacheRead: '缓存读取',
+    usageModelMessages: '模型消息',
+    mcpDescription: '描述',
+    mcpArgs: '启动参数',
+    mcpEnv: '环境变量(JSON)',
+    mcpHeaders: '请求头(JSON)',
+    mcpAutoConnect: '自动连接',
+    mcpCleanSchema: '清理 Schema',
+    mcpTimeout: '超时(ms)',
+    mcpConnect: '连接',
+    mcpDisconnect: '断开',
+    mcpConnected: '已连接',
+    mcpDisconnected: '未连接',
+    subCreate: '新建子代理',
+    subName: '名称',
+    subSystemPrompt: '系统提示词',
+    subChannel: '渠道',
+    subModel: '模型',
+    subToolsMode: '工具模式',
+    subWhitelist: '白名单',
+    subBlacklist: '黑名单',
+    subMaxIterations: '最大迭代',
+    subMaxRuntime: '最长运行(秒)',
+    fldPromptTemplate: '系统提示词模板',
+    fldPromptEntries: '提示词条目',
+    fldPromptToolPolicy: '工具策略',
+    modeNew: '新建模式',
+    modeRename: '重命名',
+    modeCopy: '复制',
+    modeDelete: '删除',
+    modeName: '模式名称',
+    ckptProfilePatterns: '类别排除模式',
+    ckptBranchCleanup: '分支清理',
+    ckptRetentionDays: '保留天数',
+    fldSoundCooldown: '最小间隔(ms)',
+    fldSoundCues: '事件提示音',
+    fldSoundSubCues: '子代理提示音',
+    fldSoundWindowsNotify: 'Windows 通知',
+    fldSoundOnlyUnfocused: '仅窗口未聚焦',
+    fldSoundCueWarning: '警告',
+    fldSoundCueError: '错误',
+    fldSoundCueComplete: '任务完成',
+    fldSoundCueFail: '任务失败',
+    fldSplashEnabled: '启动画面',
+    opExport: '导出设置',
+    opImport: '导入设置',
+    opCheckUpdate: '立即检查更新',
+    opUpdateNow: '一键更新',
+    opStorageReset: '重置默认',
+    opStorageOpen: '在资源管理器中打开',
+    appInfo: '应用信息',
+    fldToolsAllEnable: '全部启用',
+    fldToolsAllDisable: '全部禁用',
+    fldApplyOutside: '工作区外写入权限',
+    toolAllow: '允许',
+    toolAsk: '询问',
+    toolDeny: '拒绝',
+    chSelector: '选择渠道',
+    chEnableSection: '启用此配置',
+    chApiUrlSection: '接口地址',
+    chApiKeySection: 'API 密钥',
+    chModelsSection: '模型列表',
+    chStreamSection: '流式输出',
+    chTypeSection: '渠道类型',
+    chToolModeSection: '工具模式',
+    chMultimodalSection: '多模态',
+    chStrictSection: '严格工具',
+    chTimeoutSection: '超时 (ms)',
+    chMaxCtxSection: '最大上下文 Tokens',
+    chContextMgmtSection: '上下文管理',
+    chToolOptionsSection: '工具配置',
+    chTokenCountSection: 'Token 计数方式',
+    chAdvancedSection: '高级选项',
+    chCustomBodySection: '自定义 Body',
+    chCustomHeadersSection: '自定义标头',
+    chRetrySection: '自动重试',
+    chThinkingGroup: '思考配置',
+    chThoughtGroup: '思考回传配置',
+    chCacheGroup: 'Prompt Caching',
+    chMaxImages: '最大图片数',
+    chNoConfigSelected: '请先选择或新建一个渠道',
+    chCustomBodyMode: '模式',
+    chCustomBodyItems: '键值对（JSON 数组）',
+    chCustomBodyJson: 'JSON 正文',
+    chCustomHeadersList: '标头列表（JSON 数组）',
+    peEntriesLabel: '预设提示词条目',
+    peName: '名称',
+    peRole: '角色',
+    peContent: '内容',
+    peFakeThought: '伪造思考过程',
+    peAdd: '新增条目',
+    peConvertLegacy: '从传统模板转换',
+    peMoveUp: '上移',
+    peMoveDown: '下移',
+    peDuplicate: '复制',
+    peDelete: '删除',
+    peChatHistory: 'Chat History',
+    peChatHistoryHint: '真实历史插入点（不可删除）',
+    peRoleSystem: 'system（合并进系统提示词）',
+    peRoleUser: 'user（临时用户上下文）',
+    peRoleAssistant: 'assistant（临时助手消息）',
+    peEntriesHint: 'system 合并进系统提示词，user/assistant 作为临时上下文，Chat History 为真实历史插入点。',
+    peLegacySystem: '系统提示词',
+    peLegacyDynamic: '动态上下文',
+    confirmSwitchType: '切换渠道类型将重置该类型特有参数，确定继续？',
+    toolConfigBtn: '配置',
+    toolShellGroup: '可用 Shell',
+    toolShellEnabled: '启用',
+    toolShellPath: '可执行文件路径',
+    toolShellDefault: '设为默认',
+    toolMaxIter: '最大工具调用次数',
+    toolSandboxGlobal: '沙箱总开关',
+    memScopeRow: '作用域',
+    memEdit: '编辑',
+    memSave: '保存',
+    memEditHint: '点击条目可编辑',
+    memNoScopes: '暂无工作区记忆作用域',
+    memWorkspaceLabel: '工作区记忆',
+    rcSaveHint: '保存后需重启远程控制服务生效',
+    usageRange: '时间范围',
+    usageRangeAll: '全部',
+    usageRangeToday: '今天',
+    usageRange7d: '近 7 天',
+    usageRange30d: '近 30 天',
+    usageCacheCreation: '缓存创建 Tokens',
+    usageSkipped: '跳过的会话',
+    mcpTransportType: '传输类型',
+    mcpCapabilities: '能力',
+    mcpLastError: '最近错误',
+    mcpEnabledLabel: '启用',
+    subDescription: '描述',
+    subIncludeMcp: '包含 MCP 工具',
+    subPresets: '预设模板',
+    subBlankPreset: '空白'
   },
   en: {
     appTitle: 'GrayCode Remote',
@@ -1069,7 +1506,222 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     fldDiagWorkspaceOnly: 'Workspace-only diagnostics',
     fldDiagOpenOnly: 'Open-files-only diagnostics',
     fldDiagPerFile: 'Max diagnostics per file',
-    fldDiagMaxFiles: 'Max files'
+    fldDiagMaxFiles: 'Max files',
+    secMcp: 'MCP servers',
+    secUsage: 'Usage stats',
+    addMcpServer: 'Add MCP server',
+    mcpTransport: 'Transport',
+    mcpCommand: 'Command',
+    subAgentsList: 'Sub-agents',
+    install: 'Install',
+    uninstall: 'Uninstall',
+    installed: 'Installed',
+    rejected: 'Rejected',
+    toolArgs: 'Arguments',
+    usageTotalTokens: 'Total tokens',
+    usagePromptTokens: 'Prompt tokens',
+    usageCandidatesTokens: 'Output tokens',
+    usageTotalCost: 'Total cost',
+    fldChStream: 'Stream output',
+    fldChMultimodal: 'Multimodal tools',
+    fldChStrictTools: 'Strict tools',
+    fldChRetry: 'Auto retry',
+    fldChRetryCount: 'Retry count',
+    fldChRetryInterval: 'Retry interval (ms)',
+    fldChCustomBodyEnabled: 'Custom request body',
+    fldChCustomBody: 'Custom request body (JSON)',
+    fldChCustomHeadersEnabled: 'Custom request headers',
+    fldChCustomHeaders: 'Custom request headers (JSON)',
+    fldApplyGuardThreshold: 'Diff guard threshold',
+    fldMemSystemPrompt: 'Memory system prompt',
+    fldPromptAssembly: 'Prompt assembly mode',
+    promptAssemblyLegacy: 'Legacy templates',
+    promptAssemblyEntries: 'Entries',
+    fldPromptStrategy: 'Dynamic context strategy',
+    /* ---- V6 additions ---- */
+    btnFiles: 'Files',
+    btnSettings: 'Settings',
+    settingsClose: 'Close',
+    chBasic: 'Basic',
+    chContext: 'Context',
+    chToolsCfg: 'Tools',
+    chAdvanced: 'Advanced',
+    fldChUseAuth: 'Use Authorization header',
+    fldChContextMode: 'Mode',
+    fldChContextThreshold: 'Context threshold',
+    fldChAutoSummarize: 'Auto summarize',
+    fldChToolCropNorm: 'Normalized coordinates',
+    fldChTokenCountMethod: 'Count method',
+    fldChTemperature: 'Temperature',
+    fldChMaxOutputTokens: 'Max output tokens',
+    fldChMaxImages: 'Max images',
+    fldChTopP: 'Top-P',
+    fldChTopK: 'Top-K',
+    fldChFreqPenalty: 'Frequency penalty',
+    fldChPresencePenalty: 'Presence penalty',
+    fldChReasoning: 'Reasoning',
+    fldChEffort: 'Effort',
+    fldChEffortCustom: 'Custom effort',
+    fldChSummary: 'Summary',
+    fldChThinkingType: 'Thinking type',
+    fldChThinkingBudget: 'Thinking budget',
+    fldChThinkingDisplay: 'Display',
+    fldChSendThoughts: 'Send thoughts',
+    fldChHistoryRounds: 'History rounds',
+    fldChPromptCaching: 'Prompt caching',
+    fldChTtl: 'TTL',
+    fldChKeepAlive: 'Keep alive',
+    fldChDeepSeekUserId: 'DeepSeek user_id',
+    fldChPdfAttachment: 'PDF attachment',
+    fldChAnthropicUserId: 'anthropic user_id',
+    fldChAutoRetry: 'Auto retry',
+    memEntries: 'Memory entries',
+    memAdd: 'Add',
+    memAddPlaceholder: 'Type a memory entry…',
+    memEmpty: 'No memories',
+    memTotal: 'Total',
+    memScope: 'Scope',
+    memScopeGlobal: 'Global',
+    memScopeWorkspace: 'Workspace',
+    usageConversations: 'Conversations',
+    usageByModel: 'By model',
+    usageByDay: 'By day',
+    usageRefresh: 'Refresh',
+    usageThoughts: 'Thoughts',
+    usageCacheRead: 'Cache read',
+    usageModelMessages: 'Model messages',
+    mcpDescription: 'Description',
+    mcpArgs: 'Args',
+    mcpEnv: 'Env (JSON)',
+    mcpHeaders: 'Headers (JSON)',
+    mcpAutoConnect: 'Auto connect',
+    mcpCleanSchema: 'Clean schema',
+    mcpTimeout: 'Timeout (ms)',
+    mcpConnect: 'Connect',
+    mcpDisconnect: 'Disconnect',
+    mcpConnected: 'Connected',
+    mcpDisconnected: 'Disconnected',
+    subCreate: 'New sub-agent',
+    subName: 'Name',
+    subSystemPrompt: 'System prompt',
+    subChannel: 'Channel',
+    subModel: 'Model',
+    subToolsMode: 'Tools mode',
+    subWhitelist: 'Whitelist',
+    subBlacklist: 'Blacklist',
+    subMaxIterations: 'Max iterations',
+    subMaxRuntime: 'Max runtime (s)',
+    fldPromptTemplate: 'Template',
+    fldPromptEntries: 'Entries',
+    fldPromptToolPolicy: 'Tool policy',
+    modeNew: 'New mode',
+    modeRename: 'Rename',
+    modeCopy: 'Duplicate',
+    modeDelete: 'Delete',
+    modeName: 'Mode name',
+    ckptProfilePatterns: 'Profile patterns',
+    ckptBranchCleanup: 'Branch cleanup',
+    ckptRetentionDays: 'Retention days',
+    fldSoundCooldown: 'Cooldown (ms)',
+    fldSoundCues: 'Event cues',
+    fldSoundSubCues: 'Sub-agent cues',
+    fldSoundWindowsNotify: 'Windows notifications',
+    fldSoundOnlyUnfocused: 'Only when unfocused',
+    fldSoundCueWarning: 'Warning',
+    fldSoundCueError: 'Error',
+    fldSoundCueComplete: 'Task complete',
+    fldSoundCueFail: 'Task failed',
+    fldSplashEnabled: 'Splash screen',
+    opExport: 'Export settings',
+    opImport: 'Import settings',
+    opCheckUpdate: 'Check for updates now',
+    opUpdateNow: 'Update now',
+    opStorageReset: 'Reset default',
+    opStorageOpen: 'Show in Explorer',
+    appInfo: 'App info',
+    fldToolsAllEnable: 'Enable all',
+    fldToolsAllDisable: 'Disable all',
+    fldApplyOutside: 'Outside workspace',
+    toolAllow: 'Allow',
+    toolAsk: 'Ask',
+    toolDeny: 'Deny',
+    chSelector: 'Select channel',
+    chEnableSection: 'Enable this config',
+    chApiUrlSection: 'API URL',
+    chApiKeySection: 'API Key',
+    chModelsSection: 'Model list',
+    chStreamSection: 'Stream output',
+    chTypeSection: 'Channel type',
+    chToolModeSection: 'Tool mode',
+    chMultimodalSection: 'Multimodal',
+    chStrictSection: 'Strict tools',
+    chTimeoutSection: 'Timeout (ms)',
+    chMaxCtxSection: 'Max context tokens',
+    chContextMgmtSection: 'Context management',
+    chToolOptionsSection: 'Tool options',
+    chTokenCountSection: 'Token count method',
+    chAdvancedSection: 'Advanced options',
+    chCustomBodySection: 'Custom body',
+    chCustomHeadersSection: 'Custom headers',
+    chRetrySection: 'Auto retry',
+    chThinkingGroup: 'Thinking config',
+    chThoughtGroup: 'Thoughts relay config',
+    chCacheGroup: 'Prompt Caching',
+    chMaxImages: 'Max images',
+    chNoConfigSelected: 'Select or create a channel first',
+    chCustomBodyMode: 'Mode',
+    chCustomBodyItems: 'Key-value items (JSON array)',
+    chCustomBodyJson: 'JSON body',
+    chCustomHeadersList: 'Header list (JSON array)',
+    peEntriesLabel: 'Prompt entries',
+    peName: 'Name',
+    peRole: 'Role',
+    peContent: 'Content',
+    peFakeThought: 'Fake thought',
+    peAdd: 'Add entry',
+    peConvertLegacy: 'Convert from legacy templates',
+    peMoveUp: 'Move up',
+    peMoveDown: 'Move down',
+    peDuplicate: 'Duplicate',
+    peDelete: 'Delete',
+    peChatHistory: 'Chat History',
+    peChatHistoryHint: 'Real history insertion point (not removable)',
+    peRoleSystem: 'system (merged into system prompt)',
+    peRoleUser: 'user (temporary user context)',
+    peRoleAssistant: 'assistant (temporary assistant message)',
+    peEntriesHint: 'system entries merge into the system prompt; user/assistant entries act as temporary context; Chat History is the real history insertion point.',
+    peLegacySystem: 'System prompt',
+    peLegacyDynamic: 'Dynamic context',
+    confirmSwitchType: 'Switching channel type resets its type-specific options. Continue?',
+    toolConfigBtn: 'Config',
+    toolShellGroup: 'Available shells',
+    toolShellEnabled: 'Enabled',
+    toolShellPath: 'Executable path',
+    toolShellDefault: 'Set default',
+    toolMaxIter: 'Max tool iterations',
+    toolSandboxGlobal: 'Sandbox master switch',
+    memScopeRow: 'Scope',
+    memEdit: 'Edit',
+    memSave: 'Save',
+    memEditHint: 'Click an entry to edit',
+    memNoScopes: 'No workspace memory scopes',
+    memWorkspaceLabel: 'Workspace memory',
+    rcSaveHint: 'Restart the remote control service after saving',
+    usageRange: 'Time range',
+    usageRangeAll: 'All',
+    usageRangeToday: 'Today',
+    usageRange7d: 'Last 7 days',
+    usageRange30d: 'Last 30 days',
+    usageCacheCreation: 'Cache creation tokens',
+    usageSkipped: 'Skipped conversations',
+    mcpTransportType: 'Transport type',
+    mcpCapabilities: 'Capabilities',
+    mcpLastError: 'Last error',
+    mcpEnabledLabel: 'Enabled',
+    subDescription: 'Description',
+    subIncludeMcp: 'Include MCP tools',
+    subPresets: 'Preset templates',
+    subBlankPreset: 'Blank'
   },
   ja: {
     appTitle: 'GrayCode リモート',
@@ -1415,7 +2067,222 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     fldDiagWorkspaceOnly: 'ワークスペースのみ',
     fldDiagOpenOnly: '開いているファイルのみ',
     fldDiagPerFile: 'ファイルあたりの最大診断数',
-    fldDiagMaxFiles: '最大ファイル数'
+    fldDiagMaxFiles: '最大ファイル数',
+    secMcp: 'MCP サーバー',
+    secUsage: '使用量統計',
+    addMcpServer: 'MCP サーバーを追加',
+    mcpTransport: 'トランスポート',
+    mcpCommand: '起動コマンド',
+    subAgentsList: 'サブエージェント一覧',
+    install: 'インストール',
+    uninstall: 'アンインストール',
+    installed: 'インストール済み',
+    rejected: '拒否済み',
+    toolArgs: '引数',
+    usageTotalTokens: '合計トークン',
+    usagePromptTokens: '入力トークン',
+    usageCandidatesTokens: '出力トークン',
+    usageTotalCost: '合計費用',
+    fldChStream: 'ストリーミング出力',
+    fldChMultimodal: 'マルチモーダルツール',
+    fldChStrictTools: '厳格ツールモード',
+    fldChRetry: '自動リトライ',
+    fldChRetryCount: 'リトライ回数',
+    fldChRetryInterval: 'リトライ間隔(ms)',
+    fldChCustomBodyEnabled: 'カスタムリクエストボディ',
+    fldChCustomBody: 'カスタムリクエストボディ(JSON)',
+    fldChCustomHeadersEnabled: 'カスタムリクエストヘッダー',
+    fldChCustomHeaders: 'カスタムリクエストヘッダー(JSON)',
+    fldApplyGuardThreshold: '差分ガード閾値',
+    fldMemSystemPrompt: 'メモリシステムプロンプト',
+    fldPromptAssembly: 'プロンプト組立モード',
+    promptAssemblyLegacy: '従来テンプレート',
+    promptAssemblyEntries: 'エントリ',
+    fldPromptStrategy: '動的コンテキスト戦略',
+    /* ---- V6 追加 ---- */
+    btnFiles: 'ファイル',
+    btnSettings: '設定',
+    settingsClose: '閉じる',
+    chBasic: '基本設定',
+    chContext: 'コンテキスト',
+    chToolsCfg: 'ツール',
+    chAdvanced: '詳細設定',
+    fldChUseAuth: 'Authorization ヘッダーを使用',
+    fldChContextMode: 'モード',
+    fldChContextThreshold: 'コンテキスト閾値',
+    fldChAutoSummarize: '自動要約',
+    fldChToolCropNorm: '正規化座標',
+    fldChTokenCountMethod: '計数方式',
+    fldChTemperature: '温度',
+    fldChMaxOutputTokens: '最大出力トークン',
+    fldChMaxImages: '最大画像数',
+    fldChTopP: 'Top-P',
+    fldChTopK: 'Top-K',
+    fldChFreqPenalty: '頻度ペナルティ',
+    fldChPresencePenalty: '存在ペナルティ',
+    fldChReasoning: '推論設定',
+    fldChEffort: '強度',
+    fldChEffortCustom: 'カスタム強度',
+    fldChSummary: '出力詳細度',
+    fldChThinkingType: '思考タイプ',
+    fldChThinkingBudget: '思考予算',
+    fldChThinkingDisplay: '表示',
+    fldChSendThoughts: '思考を送信',
+    fldChHistoryRounds: '履歴ラウンド',
+    fldChPromptCaching: 'プロンプトキャッシュ',
+    fldChTtl: 'TTL',
+    fldChKeepAlive: 'キープアライブ',
+    fldChDeepSeekUserId: 'DeepSeek user_id',
+    fldChPdfAttachment: 'PDF添付',
+    fldChAnthropicUserId: 'anthropic user_id',
+    fldChAutoRetry: '自動リトライ',
+    memEntries: 'メモリエントリ',
+    memAdd: '追加',
+    memAddPlaceholder: 'メモリを入力…',
+    memEmpty: 'メモリなし',
+    memTotal: '合計',
+    memScope: 'スコープ',
+    memScopeGlobal: 'グローバル',
+    memScopeWorkspace: 'ワークスペース',
+    usageConversations: '会話数',
+    usageByModel: 'モデル別',
+    usageByDay: '日別',
+    usageRefresh: '更新',
+    usageThoughts: '思考トークン',
+    usageCacheRead: 'キャッシュ読み取り',
+    usageModelMessages: 'モデルメッセージ',
+    mcpDescription: '説明',
+    mcpArgs: '引数',
+    mcpEnv: '環境変数(JSON)',
+    mcpHeaders: 'ヘッダー(JSON)',
+    mcpAutoConnect: '自動接続',
+    mcpCleanSchema: 'スキーマをクリーン',
+    mcpTimeout: 'タイムアウト(ms)',
+    mcpConnect: '接続',
+    mcpDisconnect: '切断',
+    mcpConnected: '接続済み',
+    mcpDisconnected: '未接続',
+    subCreate: 'サブエージェントを新規作成',
+    subName: '名前',
+    subSystemPrompt: 'システムプロンプト',
+    subChannel: 'チャンネル',
+    subModel: 'モデル',
+    subToolsMode: 'ツールモード',
+    subWhitelist: 'ホワイトリスト',
+    subBlacklist: 'ブラックリスト',
+    subMaxIterations: '最大反復',
+    subMaxRuntime: '最大実行時間(秒)',
+    fldPromptTemplate: 'テンプレート',
+    fldPromptEntries: 'エントリ',
+    fldPromptToolPolicy: 'ツールポリシー',
+    modeNew: 'モードを新規作成',
+    modeRename: '名前を変更',
+    modeCopy: '複製',
+    modeDelete: '削除',
+    modeName: 'モード名',
+    ckptProfilePatterns: 'プロファイルパターン',
+    ckptBranchCleanup: 'ブランチクリーンアップ',
+    ckptRetentionDays: '保持日数',
+    fldSoundCooldown: '最小間隔(ms)',
+    fldSoundCues: 'イベント音',
+    fldSoundSubCues: 'サブエージェント音',
+    fldSoundWindowsNotify: 'Windows通知',
+    fldSoundOnlyUnfocused: '未フォーカス時のみ',
+    fldSoundCueWarning: '警告',
+    fldSoundCueError: 'エラー',
+    fldSoundCueComplete: 'タスク完了',
+    fldSoundCueFail: 'タスク失敗',
+    fldSplashEnabled: 'スプラッシュ画面',
+    opExport: '設定をエクスポート',
+    opImport: '設定をインポート',
+    opCheckUpdate: '今すぐ更新を確認',
+    opUpdateNow: '今すぐ更新',
+    opStorageReset: 'デフォルトに戻す',
+    opStorageOpen: 'エクスプローラーで表示',
+    appInfo: 'アプリ情報',
+    fldToolsAllEnable: 'すべて有効',
+    fldToolsAllDisable: 'すべて無効',
+    fldApplyOutside: 'ワークスペース外書き込み',
+    toolAllow: '許可',
+    toolAsk: '確認',
+    toolDeny: '拒否',
+    chSelector: 'チャンネルを選択',
+    chEnableSection: 'この設定を有効化',
+    chApiUrlSection: 'API URL',
+    chApiKeySection: 'API キー',
+    chModelsSection: 'モデル一覧',
+    chStreamSection: 'ストリーム出力',
+    chTypeSection: 'チャンネルタイプ',
+    chToolModeSection: 'ツールモード',
+    chMultimodalSection: 'マルチモーダル',
+    chStrictSection: '厳格ツール',
+    chTimeoutSection: 'タイムアウト (ms)',
+    chMaxCtxSection: '最大コンテキスト Tokens',
+    chContextMgmtSection: 'コンテキスト管理',
+    chToolOptionsSection: 'ツール設定',
+    chTokenCountSection: 'トークン計数方法',
+    chAdvancedSection: '詳細オプション',
+    chCustomBodySection: 'カスタム Body',
+    chCustomHeadersSection: 'カスタムヘッダー',
+    chRetrySection: '自動リトライ',
+    chThinkingGroup: '思考設定',
+    chThoughtGroup: '思考送信設定',
+    chCacheGroup: 'Prompt Caching',
+    chMaxImages: '最大画像数',
+    chNoConfigSelected: 'チャンネルを選択または作成してください',
+    chCustomBodyMode: 'モード',
+    chCustomBodyItems: 'キーと値（JSON 配列）',
+    chCustomBodyJson: 'JSON ボディ',
+    chCustomHeadersList: 'ヘッダー一覧（JSON 配列）',
+    peEntriesLabel: 'プロンプトエントリ',
+    peName: '名前',
+    peRole: 'ロール',
+    peContent: '内容',
+    peFakeThought: '疑似思考',
+    peAdd: 'エントリを追加',
+    peConvertLegacy: '従来テンプレートから変換',
+    peMoveUp: '上へ',
+    peMoveDown: '下へ',
+    peDuplicate: '複製',
+    peDelete: '削除',
+    peChatHistory: 'Chat History',
+    peChatHistoryHint: '実際の履歴挿入位置（削除不可）',
+    peRoleSystem: 'system（システムプロンプトに統合）',
+    peRoleUser: 'user（一時的なユーザーコンテキスト）',
+    peRoleAssistant: 'assistant（一時的なアシスタントメッセージ）',
+    peEntriesHint: 'system はシステムプロンプトに統合され、user/assistant は一時コンテキスト、Chat History が実際の履歴挿入位置になります。',
+    peLegacySystem: 'システムプロンプト',
+    peLegacyDynamic: '動的コンテキスト',
+    confirmSwitchType: 'チャンネルタイプを切り替えると、そのタイプ固有の設定がリセットされます。続行しますか？',
+    toolConfigBtn: '設定',
+    toolShellGroup: '利用可能な Shell',
+    toolShellEnabled: '有効',
+    toolShellPath: '実行ファイルパス',
+    toolShellDefault: 'デフォルトに設定',
+    toolMaxIter: '最大ツール呼び出し回数',
+    toolSandboxGlobal: 'サンドボックス主スイッチ',
+    memScopeRow: 'スコープ',
+    memEdit: '編集',
+    memSave: '保存',
+    memEditHint: 'エントリをクリックして編集',
+    memNoScopes: 'ワークスペースメモリスコープなし',
+    memWorkspaceLabel: 'ワークスペースメモリ',
+    rcSaveHint: '保存後、リモートコントロールサービスの再起動が必要です',
+    usageRange: '期間',
+    usageRangeAll: 'すべて',
+    usageRangeToday: '今日',
+    usageRange7d: '過去 7 日',
+    usageRange30d: '過去 30 日',
+    usageCacheCreation: 'キャッシュ作成トークン',
+    usageSkipped: 'スキップされた会話',
+    mcpTransportType: 'トランスポートタイプ',
+    mcpCapabilities: '能力',
+    mcpLastError: '最近のエラー',
+    mcpEnabledLabel: '有効',
+    subDescription: '説明',
+    subIncludeMcp: 'MCP ツールを含める',
+    subPresets: 'プリセットテンプレート',
+    subBlankPreset: '空白'
   }
 };
 
@@ -1426,18 +2293,19 @@ function pickLang(lang: string | null | undefined): UiLang {
 }
 
 /**
- * 渲染远程控制移动端自包含页面。
+ * 渲染远程控制桌面版自包含页面。
  *
- * 页面结构（与桌面端 UI 对齐）：
- * - 顶栏：抽屉按钮 / 标题与连接状态 / 刷新；
+ * 页面结构（三段式，对齐桌面端 UI）：
+ * - 顶栏：抽屉按钮 / 标题与连接状态 / 文件 / 设置 / 刷新；
  * - 会话页签条：多会话并行，全部页签（含未落库新对话）可关闭；
- * - 主视图：会话（消息 + 四选择器输入区）/ 文件 / 设置（20 分类 + 渠道完整 CRUD）；
- * - 底部导航：会话 / 文件 / 设置；
+ * - 主视图：会话（消息 + 四选择器输入区）为唯一常驻视图；
+ * - 全屏面板：文件面板（工作区 + 文件树 + 编辑器）/ 设置面板（纵向分类导航 + 分类卡片）；
  * - 弹层：底部选择器 / 工作区浏览 / 操作菜单 / 对话框 / 轻提示。
  */
 export function renderRemoteControlUiHtml(lang: string | null | undefined): string {
   const uiLang = pickLang(lang);
   const texts = JSON.stringify(UI_TEXTS[uiLang]).replace(/</g, '\\u003c');
+  const t = (key: keyof UiText): string => UI_TEXTS[uiLang][key] ?? key;
 
   return `<!DOCTYPE html>
 <html lang="${uiLang}">
@@ -1457,6 +2325,8 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
       <h1 id="title">GrayCode</h1>
       <div class="sub"><span class="dot" id="dot"></span><span id="status">&hellip;</span><span class="ws" id="ws-name" hidden></span></div>
     </div>
+    <button class="icon-btn" id="btn-files" aria-label="${t('btnFiles')}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}</button>
+    <button class="icon-btn" id="btn-settings" aria-label="${t('btnSettings')}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.1-1.2l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.06-1.2L16.2 3h-4l-.6 2.54a7 7 0 0 0-2.06 1.2l-2.35-.95-2 3.46 2 1.55a7 7 0 0 0 0 2.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.06 1.2L12.2 21h4l.6-2.54a7 7 0 0 0 2.06-1.2l2.35.95 2-3.46-2-1.55c.06-.4.1-.8.1-1.2z"/></svg>'}</button>
     <button class="icon-btn" id="btn-refresh" aria-label="${uiLang === 'en' ? 'refresh' : '刷新'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>'}</button>
   </header>
 
@@ -1492,15 +2362,22 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
         </div>
       </footer>
     </section>
+  </div>
 
-    <section id="view-files" class="view" hidden>
+  <!-- 文件面板（全屏，替换主视图；自选工作区 / 文件树 / 编辑器） -->
+  <div id="panel-files" hidden>
+    <div class="panel-head">
+      <button class="icon-btn panel-back-btn" id="btn-files-back" aria-label="${uiLang === 'en' ? 'back' : '返回'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M15 4l-8 8 8 8V4z"/></svg>'}</button>
+      <span class="panel-title" data-i18n="tabFiles"></span>
+    </div>
+    <div class="panel-body" style="flex-direction:column;">
       <div id="ws-bar">
         <div style="flex:1;min-width:0;">
           <div class="ws-name" id="ws-bar-name">&mdash;</div>
           <div class="ws-sub" id="ws-bar-file"></div>
         </div>
-        <button class="ws-add-btn" id="btn-ws-add" aria-label="${uiLang === 'en' ? 'add workspace' : '新增工作区'}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}</button>
         <button class="mini-btn" id="btn-ws-switch"></button>
+        <button class="mini-btn" id="btn-ws-add">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5v14M5 12h14"/></svg>'}<span data-i18n="addWorkspace"></span></button>
       </div>
       <div id="file-tree"></div>
       <div id="file-viewer" hidden>
@@ -1515,21 +2392,22 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
           <button class="save-btn" id="btn-save-file"></button>
         </div>
       </div>
-    </section>
+    </div>
+  </div>
 
-    <section id="view-settings" class="view" hidden>
-      <div id="settings-tabs"></div>
+  <!-- 设置面板（全屏，替换主视图；纵向分类导航 + 分类卡片） -->
+  <div id="panel-settings" hidden>
+    <div class="panel-head">
+      <button class="icon-btn panel-back-btn" id="btn-settings-back" aria-label="${t('settingsClose')}">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l12 12M18 6L6 18"/></svg>'}</button>
+      <span class="panel-title" data-i18n="tabSettings"></span>
+    </div>
+    <div class="panel-body">
+      <div id="settings-nav"></div>
       <div id="settings-scroll">
         <div id="settings-sections"></div>
       </div>
-    </section>
+    </div>
   </div>
-
-  <nav id="tabbar">
-    <button data-tab="chat" class="active">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.5 3 2 7.03 2 12c0 2.6 1.27 4.9 3.27 6.47L4.3 21.6l3.6-1.2c1.3.39 2.7.6 4.1.6 5.5 0 10-4.03 10-9s-4.5-9-10-9zm-5 10a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm5 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm5 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg>'}<span data-i18n="tabChat"></span></button>
-    <button data-tab="files">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/></svg>'}<span data-i18n="tabFiles"></span></button>
-    <button data-tab="settings">${'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.1-1.2l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.06-1.2L16.2 3h-4l-.6 2.54a7 7 0 0 0-2.06 1.2l-2.35-.95-2 3.46 2 1.55a7 7 0 0 0 0 2.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.06 1.2L12.2 21h4l.6-2.54a7 7 0 0 0 2.06-1.2l2.35.95 2-3.46-2-1.55c.06-.4.1-.8.1-1.2z"/></svg>'}<span data-i18n="tabSettings"></span></button>
-  </nav>
 </div>
 
 <!-- 底部弹层：选择器 / 工作区切换 / 目录浏览 -->

@@ -264,9 +264,14 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.status).toBe(200);
     expect(res.body).toContain('<!DOCTYPE html>');
     expect(res.body).toContain('var T =');
-    expect(res.body).toContain('data-tab="chat"');
-    expect(res.body).toContain('data-tab="files"');
-    expect(res.body).toContain('data-tab="settings"');
+    // V6 三段式布局：底部三页签已删除，改为全屏面板（#panel-files / #panel-settings）
+    expect(res.body).toContain('id="view-chat"');
+    expect(res.body).toContain('id="panel-files"');
+    expect(res.body).toContain('id="panel-settings"');
+    expect(res.body).toContain('id="settings-nav"');
+    expect(res.body).not.toContain('data-tab="chat"');
+    expect(res.body).not.toContain('data-tab="files"');
+    expect(res.body).not.toContain('data-tab="settings"');
   });
 
   test('GET /favicon.ico returns 204', async () => {
@@ -594,13 +599,15 @@ describe('RemoteControlServer HTTP', () => {
     expect(res.body.messages[0].role).toBe('user');
   });
 
-  test('GET /api/messages strips attachment blobs but keeps text and tool calls', async () => {
+  test('GET /api/messages strips attachment blobs but keeps metadata, text and tool calls', async () => {
     const res = await requestJson(port, 'GET', '/api/messages?conversationId=conv_test_1');
     expect(res.status).toBe(200);
     const parts = res.body.messages[0].parts;
     expect(parts).toHaveLength(3);
     expect(parts[0].text).toBe('hi');
-    expect(parts[1].inlineData).toBeUndefined();
+    // base64 数据被剥离，但保留 mimeType 元数据（移动端据此渲染附件占位，消息数与桌面端一致）
+    expect(parts[1].inlineData).toEqual({ mimeType: 'image/png' });
+    expect(parts[1].inlineData.data).toBeUndefined();
     expect(parts[1].fileData).toBeUndefined();
     expect(parts[2].functionCall.name).toBe('read_file');
   });
@@ -642,6 +649,542 @@ describe('RemoteControlServer HTTP', () => {
     expect(created!.data.title).toBe('brand new chat');
     const stream = host.calls.find((c) => c.type === 'chatStream');
     expect(stream!.data.conversationId).toBe(res.body.conversationId);
+  });
+
+  test('POST /api/send rejects non-existent conversation with 404 (no zombie revival)', async () => {
+    host.calls = [];
+    const res = await post(port, `/api/send`, { conversationId: 'conv_deleted_1', text: 'hi' });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toContain('Conversation not found');
+    // 不得触发任何创建/流式调用（防已删除会话静默复活）
+    expect(host.calls.some((c) => c.type === 'conversation.createConversation')).toBe(false);
+    expect(host.calls.some((c) => c.type === 'chatStream')).toBe(false);
+  });
+
+  test('GET /api/mcp routes getMcpServers', async () => {
+    host.respondOverrides['getMcpServers'] = {
+      success: true,
+      servers: [{ id: 'mcp1', name: 'Local', transport: { type: 'stdio' }, enabled: true }]
+    };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/mcp');
+    expect(res.status).toBe(200);
+    expect(res.body.servers).toHaveLength(1);
+    expect(res.body.servers[0].id).toBe('mcp1');
+    delete host.respondOverrides['getMcpServers'];
+  });
+
+  test('POST /api/mcp-create routes createMcpServer with input', async () => {
+    host.respondOverrides['createMcpServer'] = { success: true, serverId: 'mcp_new' };
+    host.calls = [];
+    const res = await post(port, `/api/mcp-create`, {
+      input: { id: 'mcp_new', name: 'New', transport: { type: 'sse', url: 'http://localhost:3000' }, enabled: true, autoConnect: true }
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.serverId).toBe('mcp_new');
+    const call = host.calls.find((c) => c.type === 'createMcpServer');
+    expect(call).toBeDefined();
+    expect(call!.data.input.transport.type).toBe('sse');
+    delete host.respondOverrides['createMcpServer'];
+  });
+
+  test('POST /api/mcp-toggle routes setMcpServerEnabled', async () => {
+    host.respondOverrides['setMcpServerEnabled'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/mcp-toggle`, { serverId: 'mcp1', enabled: false });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'setMcpServerEnabled');
+    expect(call).toBeDefined();
+    expect(call!.data.enabled).toBe(false);
+    delete host.respondOverrides['setMcpServerEnabled'];
+  });
+
+  test('POST /api/mcp-delete rejects invalid serverId with 400', async () => {
+    const res = await post(port, `/api/mcp-delete`, { serverId: '../bad' });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/subagents routes subagents.list', async () => {
+    host.respondOverrides['subagents.list'] = {
+      agents: [{ type: 'coder', name: 'Coder', enabled: true }],
+      maxConcurrentAgents: 2,
+      failureModeAfterRetries: 'fail_parent_tool',
+      generalWorkerEnabled: true,
+      defaultMaxIterations: 80
+    };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/subagents');
+    expect(res.status).toBe(200);
+    expect(res.body.agents).toHaveLength(1);
+    expect(res.body.maxConcurrentAgents).toBe(2);
+    delete host.respondOverrides['subagents.list'];
+  });
+
+  test('POST /api/subagent-save routes subagents.create', async () => {
+    host.respondOverrides['subagents.create'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/subagent-save`, { type: 'coder', name: 'Coder', description: 'x' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'subagents.create');
+    expect(call).toBeDefined();
+    expect(call!.data.name).toBe('Coder');
+    delete host.respondOverrides['subagents.create'];
+  });
+
+  test('POST /api/subagent-toggle routes subagents.setEnabled', async () => {
+    host.respondOverrides['subagents.setEnabled'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/subagent-toggle`, { type: 'coder', enabled: false });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'subagents.setEnabled');
+    expect(call).toBeDefined();
+    expect(call!.data.enabled).toBe(false);
+    delete host.respondOverrides['subagents.setEnabled'];
+  });
+
+  test('POST /api/prompt-mode-rename routes renamePromptMode', async () => {
+    host.respondOverrides['renamePromptMode'] = { success: true, mode: { id: 'code', name: 'Code V2' } };
+    host.calls = [];
+    const res = await post(port, `/api/prompt-mode-rename`, { modeId: 'code', name: 'Code V2' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'renamePromptMode');
+    expect(call).toBeDefined();
+    expect(call!.data.name).toBe('Code V2');
+    delete host.respondOverrides['renamePromptMode'];
+  });
+
+  test('POST /api/prompt-mode-delete routes deletePromptMode', async () => {
+    host.respondOverrides['deletePromptMode'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/prompt-mode-delete`, { modeId: 'plan' });
+    expect(res.status).toBe(200);
+    expect(host.calls.some((c) => c.type === 'deletePromptMode')).toBe(true);
+    delete host.respondOverrides['deletePromptMode'];
+  });
+
+  test('POST /api/dependency-install routes dependencies.install', async () => {
+    host.respondOverrides['dependencies.install'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/dependency-install`, { name: 'python' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'dependencies.install');
+    expect(call).toBeDefined();
+    expect(call!.data.name).toBe('python');
+    delete host.respondOverrides['dependencies.install'];
+  });
+
+  test('POST /api/dependency-install rejects unsafe name with 400', async () => {
+    const res = await post(port, `/api/dependency-install`, { name: '../evil' });
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /api/usage routes usage.getStats and flattens totals to stats top level', async () => {
+    host.respondOverrides['usage.getStats'] = {
+      totals: { totalTokens: 100, promptTokens: 60, candidatesTokens: 40 },
+      byModel: [],
+      byDay: [],
+      byConversation: []
+    };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/usage');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    // totals 平铺到 stats 顶层（移动端需要的扁平结构）
+    expect(res.body.stats.totalTokens).toBe(100);
+    expect(res.body.stats.promptTokens).toBe(60);
+    expect(res.body.stats.candidatesTokens).toBe(40);
+    expect(res.body.stats.totals).toBeUndefined();
+    expect(res.body.stats.byConversation).toEqual([]);
+    expect(res.body.stats.byModel).toEqual([]);
+    expect(res.body.stats.byDay).toEqual([]);
+    expect(typeof res.body.stats.generatedAt).toBe('number');
+    expect(host.calls.some((c) => c.type === 'usage.getStats')).toBe(true);
+    delete host.respondOverrides['usage.getStats'];
+  });
+
+  test('GET /api/usage flattens all totals fields and tolerates missing ones', async () => {
+    host.respondOverrides['usage.getStats'] = {
+      totals: {
+        promptTokens: 60,
+        candidatesTokens: 40,
+        thoughtsTokens: 5,
+        cacheCreationTokens: 10,
+        cacheReadTokens: 20,
+        totalTokens: 100,
+        conversations: 3,
+        modelMessages: 7,
+        skippedConversations: 1
+      },
+      byModel: [{ modelVersion: 'gpt-4o', promptTokens: 60, candidatesTokens: 40, thoughtsTokens: 5, cacheCreationTokens: 10, cacheReadTokens: 20, totalTokens: 100, modelMessages: 7 }],
+      byDay: [{ date: '2026-08-10', promptTokens: 60, candidatesTokens: 40, thoughtsTokens: 5, cacheCreationTokens: 10, cacheReadTokens: 20, totalTokens: 100, modelMessages: 7 }],
+      byConversation: [{ conversationId: 'conv_1', title: 'A', updatedAt: 1, promptTokens: 60, candidatesTokens: 40, thoughtsTokens: 5, cacheCreationTokens: 10, cacheReadTokens: 20, totalTokens: 100, modelMessages: 7 }],
+      generatedAt: 123456789
+    };
+    try {
+      const res = await requestJson(port, 'GET', '/api/usage');
+      expect(res.status).toBe(200);
+      const s = res.body.stats;
+      expect(s.promptTokens).toBe(60);
+      expect(s.candidatesTokens).toBe(40);
+      expect(s.thoughtsTokens).toBe(5);
+      expect(s.cacheCreationTokens).toBe(10);
+      expect(s.cacheReadTokens).toBe(20);
+      expect(s.totalTokens).toBe(100);
+      expect(s.conversations).toBe(3);
+      expect(s.modelMessages).toBe(7);
+      expect(s.skippedConversations).toBe(1);
+      expect(s.generatedAt).toBe(123456789);
+      expect(s.byModel).toHaveLength(1);
+      expect(s.byDay).toHaveLength(1);
+      expect(s.byConversation).toHaveLength(1);
+      expect(s.totals).toBeUndefined();
+      // 防御空对象：totals 缺失时各计数回落 0，不抛错
+      host.respondOverrides['usage.getStats'] = {};
+      const res2 = await requestJson(port, 'GET', '/api/usage');
+      expect(res2.status).toBe(200);
+      expect(res2.body.stats.totalTokens).toBe(0);
+      expect(res2.body.stats.byConversation).toEqual([]);
+      expect(typeof res2.body.stats.generatedAt).toBe('number');
+    } finally {
+      delete host.respondOverrides['usage.getStats'];
+    }
+  });
+
+  test('GET /api/memory-entries routes getMemoryEntries with clamped limit', async () => {
+    host.respondOverrides['getMemoryEntries'] = {
+      entries: [{ id: 0, text: 'remember this' }, { id: 1, text: 'and that' }],
+      total: 2,
+      initialized: true
+    };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/memory-entries?limit=1');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.entries).toHaveLength(2);
+    expect(res.body.total).toBe(2);
+    const call = host.calls.find((c) => c.type === 'getMemoryEntries');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ limit: 1 });
+    // 非法 limit 收敛到默认 5000
+    host.calls = [];
+    await requestJson(port, 'GET', '/api/memory-entries?limit=0');
+    const call2 = host.calls.find((c) => c.type === 'getMemoryEntries');
+    expect(call2!.data).toEqual({ limit: 5000 });
+    host.calls = [];
+    await requestJson(port, 'GET', '/api/memory-entries?limit=99999');
+    const call3 = host.calls.find((c) => c.type === 'getMemoryEntries');
+    expect(call3!.data).toEqual({ limit: 5000 });
+    delete host.respondOverrides['getMemoryEntries'];
+  });
+
+  test('GET /api/memory-entries forwards workspaceUri scope parameter (workspace memory)', async () => {
+    host.respondOverrides['getMemoryEntries'] = { entries: [], total: 0, initialized: true };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/memory-entries?limit=100&workspaceUri=' + encodeURIComponent('file:///C:/ws'));
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'getMemoryEntries');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ limit: 100, workspaceUri: 'file:///C:/ws' });
+    // 非法 workspaceUri（含控制字符）被剥离，仅传 limit
+    host.calls = [];
+    await requestJson(port, 'GET', '/api/memory-entries?limit=50&workspaceUri=' + encodeURIComponent('file:///\u0000x'));
+    const call2 = host.calls.find((c) => c.type === 'getMemoryEntries');
+    expect(call2!.data).toEqual({ limit: 50 });
+    delete host.respondOverrides['getMemoryEntries'];
+  });
+
+  test('POST /api/memory-add/update/delete forward workspaceUri when present', async () => {
+    host.respondOverrides['addMemoryEntry'] = { success: true, id: 9 };
+    host.respondOverrides['updateMemoryEntry'] = { success: true };
+    host.respondOverrides['deleteMemoryEntry'] = { success: true, removed: 1 };
+    host.calls = [];
+    const uri = 'file:///C:/ws';
+    await post(port, '/api/memory-add', { text: 'hello', workspaceUri: uri });
+    await post(port, '/api/memory-update', { id: 3, text: 'edited', workspaceUri: uri });
+    await post(port, '/api/memory-delete', { id: 3, workspaceUri: uri });
+    expect(host.calls.find((c) => c.type === 'addMemoryEntry')!.data).toEqual({ text: 'hello', workspaceUri: uri });
+    expect(host.calls.find((c) => c.type === 'updateMemoryEntry')!.data).toEqual({ id: 3, text: 'edited', workspaceUri: uri });
+    expect(host.calls.find((c) => c.type === 'deleteMemoryEntry')!.data).toEqual({ id: 3, workspaceUri: uri });
+    // 无 workspaceUri 时保持原形状（全局记忆）
+    host.calls = [];
+    await post(port, '/api/memory-add', { text: 'global' });
+    expect(host.calls.find((c) => c.type === 'addMemoryEntry')!.data).toEqual({ text: 'global' });
+    delete host.respondOverrides['addMemoryEntry'];
+    delete host.respondOverrides['updateMemoryEntry'];
+    delete host.respondOverrides['deleteMemoryEntry'];
+  });
+
+  test('GET /api/usage forwards range parameter as startTime (7d/30d/today)', async () => {
+    host.respondOverrides['usage.getStats'] = { totals: { totalTokens: 1 }, byModel: [], byDay: [], byConversation: [] };
+    host.calls = [];
+    const before = Date.now();
+    await requestJson(port, 'GET', '/api/usage?range=7d');
+    const call7 = host.calls.find((c) => c.type === 'usage.getStats');
+    expect(call7).toBeDefined();
+    const start7 = call7!.data.startTime as number;
+    expect(typeof start7).toBe('number');
+    expect(start7).toBeGreaterThan(before - 8 * 86400000);
+    expect(start7).toBeLessThanOrEqual(before - 6 * 86400000);
+    host.calls = [];
+    await requestJson(port, 'GET', '/api/usage?range=30d');
+    const call30 = host.calls.find((c) => c.type === 'usage.getStats');
+    expect(call30!.data.startTime).toBeGreaterThan(before - 31 * 86400000);
+    expect(call30!.data.startTime).toBeLessThanOrEqual(before - 29 * 86400000);
+    // all / 非法 range → 不传 startTime
+    host.calls = [];
+    await requestJson(port, 'GET', '/api/usage?range=all');
+    const callAll = host.calls.find((c) => c.type === 'usage.getStats');
+    expect(callAll!.data).toEqual({});
+    host.calls = [];
+    await requestJson(port, 'GET', '/api/usage?range=bogus');
+    const callBogus = host.calls.find((c) => c.type === 'usage.getStats');
+    expect(callBogus!.data).toEqual({});
+    delete host.respondOverrides['usage.getStats'];
+  });
+
+  test('POST /api/memory-add routes addMemoryEntry with text', async () => {
+    host.respondOverrides['addMemoryEntry'] = { success: true, id: 42 };
+    host.calls = [];
+    const res = await post(port, '/api/memory-add', { text: 'remember this' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.id).toBe(42);
+    const call = host.calls.find((c) => c.type === 'addMemoryEntry');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ text: 'remember this' });
+    delete host.respondOverrides['addMemoryEntry'];
+  });
+
+  test('POST /api/memory-add rejects empty and over-length text with 400', async () => {
+    host.calls = [];
+    const res1 = await post(port, '/api/memory-add', { text: '   ' });
+    expect(res1.status).toBe(400);
+    const res2 = await post(port, '/api/memory-add', { text: 'x'.repeat(20001) });
+    expect(res2.status).toBe(400);
+    const res3 = await post(port, '/api/memory-add', { text: 123 });
+    expect(res3.status).toBe(400);
+    expect(host.calls.some((c) => c.type === 'addMemoryEntry')).toBe(false);
+  });
+
+  test('POST /api/memory-update routes updateMemoryEntry with id + text', async () => {
+    host.respondOverrides['updateMemoryEntry'] = { success: true };
+    host.calls = [];
+    const res = await post(port, '/api/memory-update', { id: 7, text: 'updated text' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'updateMemoryEntry');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ id: 7, text: 'updated text' });
+    delete host.respondOverrides['updateMemoryEntry'];
+  });
+
+  test('POST /api/memory-update rejects invalid id or text with 400', async () => {
+    host.calls = [];
+    const res1 = await post(port, '/api/memory-update', { id: -1, text: 'hi' });
+    expect(res1.status).toBe(400);
+    const res2 = await post(port, '/api/memory-update', { id: 1.5, text: 'hi' });
+    expect(res2.status).toBe(400);
+    const res3 = await post(port, '/api/memory-update', { id: '1', text: 'hi' });
+    expect(res3.status).toBe(400);
+    const res4 = await post(port, '/api/memory-update', { id: 1, text: '' });
+    expect(res4.status).toBe(400);
+    expect(host.calls.some((c) => c.type === 'updateMemoryEntry')).toBe(false);
+  });
+
+  test('POST /api/memory-delete routes deleteMemoryEntry with id', async () => {
+    host.respondOverrides['deleteMemoryEntry'] = { success: true, removed: 1 };
+    host.calls = [];
+    const res = await post(port, '/api/memory-delete', { id: 3 });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'deleteMemoryEntry');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ id: 3 });
+    delete host.respondOverrides['deleteMemoryEntry'];
+  });
+
+  test('POST /api/memory-delete rejects invalid id with 400', async () => {
+    host.calls = [];
+    const res1 = await post(port, '/api/memory-delete', { id: -2 });
+    expect(res1.status).toBe(400);
+    const res2 = await post(port, '/api/memory-delete', { id: null });
+    expect(res2.status).toBe(400);
+    const res3 = await post(port, '/api/memory-delete', { id: 1.5 });
+    expect(res3.status).toBe(400);
+    expect(host.calls.some((c) => c.type === 'deleteMemoryEntry')).toBe(false);
+  });
+
+  test('GET /api/memory-scopes routes listMemoryScopes', async () => {
+    host.respondOverrides['listMemoryScopes'] = {
+      scopes: [{ uri: 'file:///C%3A/work', name: 'work', fsPath: 'C:\\work', hasData: true }]
+    };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/memory-scopes');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.scopes).toHaveLength(1);
+    expect(res.body.scopes[0].name).toBe('work');
+    const call = host.calls.find((c) => c.type === 'listMemoryScopes');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['listMemoryScopes'];
+  });
+
+  test('POST /api/mcp-connect routes connectMcpServer with serverId', async () => {
+    host.respondOverrides['connectMcpServer'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/mcp-connect`, { serverId: 'mcp1' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'connectMcpServer');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ serverId: 'mcp1' });
+    delete host.respondOverrides['connectMcpServer'];
+  });
+
+  test('POST /api/mcp-connect rejects invalid serverId with 400', async () => {
+    host.calls = [];
+    const res = await post(port, `/api/mcp-connect`, { serverId: '../bad' });
+    expect(res.status).toBe(400);
+    expect(host.calls.some((c) => c.type === 'connectMcpServer')).toBe(false);
+  });
+
+  test('POST /api/mcp-disconnect routes disconnectMcpServer with serverId', async () => {
+    host.respondOverrides['disconnectMcpServer'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/mcp-disconnect`, { serverId: 'mcp1' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'disconnectMcpServer');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ serverId: 'mcp1' });
+    delete host.respondOverrides['disconnectMcpServer'];
+  });
+
+  test('POST /api/mcp-disconnect rejects invalid serverId with 400', async () => {
+    host.calls = [];
+    const res = await post(port, `/api/mcp-disconnect`, { serverId: 'a/b' });
+    expect(res.status).toBe(400);
+    expect(host.calls.some((c) => c.type === 'disconnectMcpServer')).toBe(false);
+  });
+
+  test('POST /api/update-check routes checkUpdateNow', async () => {
+    host.respondOverrides['checkUpdateNow'] = { success: true, updateAvailable: true };
+    host.calls = [];
+    const res = await post(port, `/api/update-check`, {});
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'checkUpdateNow');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['checkUpdateNow'];
+  });
+
+  test('POST /api/update-now routes updateNow', async () => {
+    host.respondOverrides['updateNow'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/update-now`, {});
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'updateNow');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['updateNow'];
+  });
+
+  test('POST /api/settings-export routes settings.export and returns filePath', async () => {
+    host.respondOverrides['settings.export'] = { success: true, filePath: 'C:\\backup\\settings.json' };
+    host.calls = [];
+    const res = await post(port, `/api/settings-export`, {});
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.filePath).toBe('C:\\backup\\settings.json');
+    const call = host.calls.find((c) => c.type === 'settings.export');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['settings.export'];
+  });
+
+  test('POST /api/settings-export returns cancelled when dialog dismissed', async () => {
+    host.respondOverrides['settings.export'] = { success: false, cancelled: true };
+    host.calls = [];
+    const res = await post(port, `/api/settings-export`, {});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, cancelled: true });
+    delete host.respondOverrides['settings.export'];
+  });
+
+  test('POST /api/settings-import routes settings.import with overwrite', async () => {
+    host.respondOverrides['settings.import'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/settings-import`, { overwrite: true });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'settings.import');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ overwrite: true });
+    delete host.respondOverrides['settings.import'];
+  });
+
+  test('POST /api/settings-import defaults overwrite to false', async () => {
+    host.respondOverrides['settings.import'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/settings-import`, {});
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'settings.import');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ overwrite: false });
+    delete host.respondOverrides['settings.import'];
+  });
+
+  test('GET /api/storage-config routes storagePath.getConfig', async () => {
+    host.respondOverrides['storagePath.getConfig'] = {
+      success: true,
+      customDataPath: '',
+      migrationStatus: 'none'
+    };
+    host.calls = [];
+    const res = await requestJson(port, 'GET', '/api/storage-config');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.config.migrationStatus).toBe('none');
+    const call = host.calls.find((c) => c.type === 'storagePath.getConfig');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['storagePath.getConfig'];
+  });
+
+  test('POST /api/storage-reset routes storagePath.reset', async () => {
+    host.respondOverrides['storagePath.reset'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/storage-reset`, {});
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'storagePath.reset');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['storagePath.reset'];
+  });
+
+  test('POST /api/storage-select routes storagePath.selectFolder', async () => {
+    host.respondOverrides['storagePath.selectFolder'] = { success: true };
+    host.calls = [];
+    const res = await post(port, `/api/storage-select`, {});
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    const call = host.calls.find((c) => c.type === 'storagePath.selectFolder');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({});
+    delete host.respondOverrides['storagePath.selectFolder'];
+  });
+
+  test('POST /api/storage-select returns cancelled when dialog dismissed', async () => {
+    host.respondOverrides['storagePath.selectFolder'] = { success: false, cancelled: true };
+    host.calls = [];
+    const res = await post(port, `/api/storage-select`, {});
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, cancelled: true });
+    delete host.respondOverrides['storagePath.selectFolder'];
   });
 
   test('POST /api/send rejects empty text with 400', async () => {
