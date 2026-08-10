@@ -3,31 +3,38 @@
 > 来源：2026-08-04 多轮全仓扫描（38+ 子代理，约 140 项发现）后仍存留的问题，
 > 以及有意保留的设计决定（供后续维护者参考，避免误改）。
 >
-> 清单已于 2026-08-10 按当前源码复核；本文件仅保留仍未修复或仍需决策的项目。
+> 清单状态：
+> - 2026-08-04 初始扫描建档
+> - 2026-08-10 首次按当前源码复核
+> - 2026-08-11 复核确认：「未修复问题」4 项均已解决/收敛（详见第一节），
+>   现无未决问题；本文件仅保留已解决记录（供追溯）与有意保留的设计决定（勿误改）。
 
 ---
 
-## 一、未修复问题（低危 / 需决策）
+## 一、已解决/已收敛（2026-08-11 复核确认）
 
-### 1. MarkdownRenderer 流式重复全量解析
-- **位置**：`frontend/src/components/common/MarkdownRenderer.vue:1067-1119`
-- **问题**：流式渲染对每条消息的完整累积内容反复 markdown-it 解析 + sanitize DOM 遍历（约每 120-180ms 一次），长消息总成本接近 O(n²)
-- **建议**：增量渲染（保留上次 HTML 尾部追加）或限制重建频率；前端渲染改动风险高，需配合基准验证
+### 1. MarkdownRenderer 流式重复全量解析 — 已解决
+- **原位置**：`frontend/src/components/common/MarkdownRenderer.vue`
+- **原问题**：流式渲染对每条消息的完整累积内容反复 markdown-it 解析 + sanitize DOM 遍历（约每 120-180ms 一次），长消息总成本接近 O(n²)
+- **解决方式**（多层缓解，非 MarkdownRenderer 内部增量渲染，而是上游架构演进 + 渲染层限频）：
+  - 上游「渐进 markdown 提升」：`smoothStreamManager.findPromoteCut`（fence/表格/html block/空行安全边界状态机 + markdown-it token map 校准）只把「已定型完整段落前缀」append-only 累积进渐进渲染器（`MessageItem.handleTailPromote` / `MessageRenderBlock.handleThoughtPromote` 维护的 tailRendered/thoughtRendered），未定型尾巴留在 CharFlow 逐字输出、不进入 markdown 渲染；段落切换/终结时清空累积，由 renderBlocks 稳定块完整接管
+  - 渲染层：流式节流（leading + trailing + max-wait，120ms/180ms）、已完成消息 LRU 缓存（128 条，含工作区文件存在性签名）、内容快照跳过无变化重渲染
+- **结论**：不再存在对完整累积内容的重复全量解析（渲染输入被限制为小得多的已定型前缀且周期性归零）；MarkdownRenderer 内部再做增量渲染不再必要
 
-### 2. activationEvents 使用 onStartupFinished
-- **位置**：`package.json:19-21`
-- **问题**：每次启动 VS Code 都会激活扩展并触发完整初始化（含后端初始化/历史迁移），未使用聊天面板的用户也承担启动开销
-- **建议**：改为按需激活（视图/命令触发）或将重初始化延后到 `resolveWebviewView` 首次调用；改动需验证激活时序
+### 2. activationEvents 使用 onStartupFinished — 已解决
+- **原位置**：`package.json:19-21`
+- **解决方式**：已移除 `activationEvents` 字段，改由 VS Code 对 `contributes.commands/views` 的默认按需激活；`extension.ts` 的 `activate` 已收敛为轻量初始化（Logger / productMetadata / ChatViewProvider 注册 / 基础命令），不再有每次启动触发的后端初始化与历史迁移
+- **结论**：未使用聊天面板的用户不再承担扩展启动开销
 
-### 3. jest / vitest 前端测试归属仍待收敛
-- **位置**：`test/unit/`（jest）与 `frontend/src/__tests__/`（vitest）
-- **现状**：CI 已通过根目录 `npm run ci` 同时执行两套测试，发布门禁不会再漏掉 Vitest；但前端相关用例仍分散在两套框架中，新增用例的归属和本地应运行的命令不够直观
-- **建议**：明确"前端测试统一走 vitest、test/unit 仅存后端/纯逻辑"约定，逐步迁移 test/unit/frontend
+### 3. jest / vitest 前端测试归属 — 已解决
+- **原位置**：`test/unit/`（jest）与 `frontend/src/__tests__/`（vitest）
+- **解决方式**：`test/unit` 整体归位删除（tools/settings → `backend/__tests__`，前端用例并入 frontend vitest 域）；`jest.backend.config.js` roots 仅扫描 `backend/__tests__` 与 `test/benchmark`；前端唯一测试域为 `frontend/src/__tests__/`（vitest）
+- **结论**：测试归属清晰，本地命令分工明确（`npm test` 后端 jest / `npm run test:frontend` vitest / `npm run ci` 全量门禁）
 
-### 4. design / plan pathUtils 收敛
-- **位置**：`backend/tools/design/pathUtils.ts`、`backend/tools/plan/pathUtils.ts`
-- **问题**：与 progress/review 同构的独立副本（仅 validator 与函数名不同），可统一指向 `progress/pathUtils.ts` 的 `isProgressArtifactPathAllowedWithMultiRoot('design' | 'plan', …)`
-- **性质**：纯重构零风险，随时可做（review 6 处已完成同类收敛）
+### 4. design / plan pathUtils 收敛 — 已解决
+- **原位置**：`backend/tools/design/pathUtils.ts`、`backend/tools/plan/pathUtils.ts`
+- **解决方式**：抽出更通用的共享模块 `backend/tools/shared/pathPolicy.ts`（`isScopedPathAllowedWithMultiRoot` + scope 文案 + 父目录创建），design/plan/progress 三处 pathUtils 均瘦身为薄封装委托同一实现；design 保留 `ensureParentDirWithFs`（fs.promises.mkdir）与 `ensureParentDir`（vscode.workspace.fs）的差异为有意为之（远程/虚拟工作区行为与测试 mock 依赖，注释有说明）
+- **结论**：收敛完成，纯重构零风险目标达成
 
 ---
 
@@ -72,10 +79,7 @@
 13. **SubAgentMonitorPanel resolveClientId / postRoutedMessage 不做跨面板校验**
     只影响 monitor 自身 lifecycle 消息（monitorReady / getRunWindow 等）的响应回发，走面板直发路径而非 MessageRouter；monitor 伪造 `main-chat` 也只会把响应发回自己面板，无越权。非 lifecycle 消息全部经 `routeSubAgentMonitorMessage` 走已修复的入口。
 
-14. **test/jest.setup.ts 空文件保留**
-    已从 jest.backend.config.js 移除引用，文件无引用无害（删除可选）。
-
-15. **toolBatchCheckpoint 测试的 fire-and-forget 绑定等待**
+14. **toolBatchCheckpoint 测试的 fire-and-forget 绑定等待**
     已通过"轮询等待 after 最终绑定值"修复（`waitForBoundNode` 带 expectedId），不再是 flaky。
 
 ---
@@ -84,3 +88,4 @@
 
 - 工作区中 `fast-tavern-main/py-fast-tavern/` 的 build 模块为目录形式（`core/modules/build/`），此前误判为"缺失"；npm build 与 pytest 均已恢复通过。
 - `backend/__tests__/tools/media/removeBackground.test.ts` 使用单工作区 mock + 相对路径（工作区外护栏修复后行为收紧为默认 deny）。
+- 原「未修复问题」清单中的 `test/jest.setup.ts` 空文件（曾列为设计决定）已随测试归位一并删除，相关说明不再保留。
