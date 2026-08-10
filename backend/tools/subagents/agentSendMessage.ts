@@ -11,6 +11,7 @@
  */
 
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
+import { TaskManager } from '../taskManager';
 import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessageResult } from './agentMailbox';
 
 /**
@@ -21,7 +22,7 @@ export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
         name: 'agent_send_message',
         aliases: ['agent.sendMessage'],
         category: 'agents',
-        description: `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. The message is delivered asynchronously: the recipient sees it appended to its most recent tool result, without waiting for the current stream/turn to end.
+        description: `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: if the recipient is running a tool, the message is inserted after that tool completes; if the main session is idle, it starts an internal message round immediately; an active sub-agent consumes the message before its next model call or before it can finish.
 
 **Addressing (choose exactly one):**
 - targetRunId: the runId of a sub-agent run that is currently active in this conversation. Only runs known in the current conversation can be addressed (prevents spoofing/injection).
@@ -32,7 +33,9 @@ export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
 
 **Usage notes:**
 - You are identified automatically; you cannot impersonate another agent.
-- Delivery is best-effort: if the recipient has no active tool loop, the message stays in its inbox until its next tool call in this conversation.`,
+- Delivery acknowledgement means the message is durably held by the in-process mailbox until a recipient boundary consumes it.
+- Main-session delivery can start an internal round while idle; do not poll or resend the same text.
+- Active sub-agents check their inbox after tools, before model calls, and atomically before completion.`,
         parameters: {
             type: 'object',
             properties: {
@@ -101,6 +104,20 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
 
     if (!result.success) {
         return { success: false, error: result.error };
+    }
+
+    // 主模型没有常驻执行循环：入队后发轻量通知，让前端沿用后台消息的
+    // “工具动作边界或空闲立即开启内部回合”调度；正文仍由 mailbox claim 接口领取。
+    if (result.data.toRunId === MAIN_SESSION_RUN_ID) {
+        TaskManager.emitEvent({
+            taskId: `agentmsg:${result.data.messageId}`,
+            taskType: 'agent_message',
+            type: 'progress',
+            data: {
+                conversationId: mailboxConversationId,
+                messageId: result.data.messageId
+            }
+        });
     }
 
     return {

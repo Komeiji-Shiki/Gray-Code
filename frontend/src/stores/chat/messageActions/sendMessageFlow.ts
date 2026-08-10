@@ -142,8 +142,10 @@ export interface SendMessageOptions {
   configIdOverride?: string
   hidden?: { functionResponse: HiddenFunctionResponsePayload }
   dynamicContextStrategyOverride?: 'single' | 'preserve'
-  /** 消息来源，'background_task' 时前端渲染为后台任务卡片而非普通用户消息 */
-  source?: 'user' | 'background_task'
+  /** 消息来源；内部回流不会被当作真实用户新回合 */
+  source?: 'user' | 'background_task' | 'agent_message'
+  /** agent_message 领取凭据；后端在内部消息落库后确认消费。 */
+  agentMessageClaimId?: string
 }
 
 /**
@@ -500,6 +502,7 @@ export async function sendMessage(
       promptModeId: state.currentPromptModeId.value,
       dynamicContextStrategyOverride: options?.dynamicContextStrategyOverride,
       source: options?.source,
+      agentMessageClaimId: options?.agentMessageClaimId,
       streamId
     })
     // 发送被后端明确拒绝（渠道/参数校验失败等）：走 catch 同款清理（移除空气泡与 user 占位）

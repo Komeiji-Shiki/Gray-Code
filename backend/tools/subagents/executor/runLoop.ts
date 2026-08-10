@@ -23,7 +23,7 @@ import type { SubAgentRunStatus } from '../runEventBus';
 import { subAgentRunController } from '../runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from '../concurrencyLimiter';
 import { fileWriteLockManager } from '../../../core/fileWriteLockManager';
-import { agentMailbox } from '../agentMailbox';
+import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../agentMailbox';
 import { markAiActive } from '../../../modules/activity';
 import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
@@ -190,6 +190,9 @@ export function createDefaultExecutor(
         // F2：注册时携带嵌套深度；若本 run 由另一个子 agent 派生，同时登记父子关系，
         // 供父 run 结束时级联清理（见最外层 finally 的 cascadeExitChildren）。
         subAgentRunController.register(runId, config.name, depth, !request.background);
+        // 信箱寻址从 run 创建后立即生效，而不是等并发队列 acquire 完成：排队中的 run
+        // 也是合法收件方，消息会在它获得席位后的第一次模型调用前送达。
+        agentMailbox.registerRun(currentConversationId, runId, config.name);
         if (request.parentRunId) {
             subAgentRunController.registerChild(request.parentRunId, runId);
         }
@@ -324,6 +327,7 @@ export function createDefaultExecutor(
             await subAgentConcurrencyLimiter.acquire(runId, acquireSignal);
         } catch (queueError) {
             subAgentRunController.unregister(runId);
+            agentMailbox.unregisterRun(currentConversationId, runId);
             // F2：排队被取消的早退路径也要从父 run 的派生列表里摘除，避免残留孤儿登记
             if (request.parentRunId) {
                 subAgentRunController.unregisterChild(request.parentRunId, runId);
@@ -348,10 +352,7 @@ export function createDefaultExecutor(
             type: 'run_started'
         });
 
-        // A-COMM：run 真正启动后注册为「本对话下已知」，agent_send_message 才能按 runId/名称寻址到它；
-        // 排队被取消/接续校验失败等未真正启动的早退路径不会留下“已知 run”残留；
-        // run 结束/取消时在最外层 finally 中注销并清理 inbox。
-        agentMailbox.registerRun(currentConversationId, runId, config.name);
+        // run 已在进入并发队列前注册信箱；取得席位后无需重复注册。
 
         // 修改原因：子代理设置界面新增「默认迭代次数」全局配置，未单独配置的 agent 应继承该默认值。
         // 修改方式：优先取 per-agent maxIterations，其次取全局 defaultMaxIterations，最后回退 50。
@@ -580,7 +581,40 @@ export function createDefaultExecutor(
                 ...baseContents,
                 { role: 'user', parts: [{ text: userPrompt }] }
             ];
-            
+
+            /** 收到信件后最多放宽 5 次模型迭代，足够执行工具并基于结果回复，同时保持总上限。 */
+            const MAX_MAILBOX_CONTINUATION_TURNS = 5;
+            let mailboxContinuationActivated = false;
+
+            const appendInboxMessages = async (messages: AgentMessage[]): Promise<void> => {
+                if (messages.length === 0) return;
+                const content: Content = {
+                    role: 'user',
+                    parts: [{ text: formatAgentMessagesForModel(messages) }],
+                    timestamp: Date.now()
+                } as Content;
+                history.push(content);
+                mailboxContinuationActivated = true;
+                try {
+                    await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(content);
+                } catch (error) {
+                    // 模型投递优先于 Monitor 落盘：仓储失败不能把已经领取的信件重新删掉或终止 run。
+                    console.warn(`[SubAgentExecutor] Failed to persist inbox messages for ${runId}:`, error);
+                }
+            };
+
+            const responsePartsContainInbox = (parts: ContentPart[] | undefined): boolean =>
+                !!parts?.some(part => {
+                    const response = part.functionResponse?.response;
+                    if (!response || typeof response !== 'object' || Array.isArray(response)) return false;
+                    const record = response as Record<string, unknown>;
+                    if (Array.isArray(record.agentInbox) && record.agentInbox.length > 0) return true;
+                    const data = record.data;
+                    return !!data && typeof data === 'object' && !Array.isArray(data)
+                        && Array.isArray((data as Record<string, unknown>).agentInbox)
+                        && ((data as Record<string, unknown>).agentInbox as unknown[]).length > 0;
+                });
+
             // 工具迭代循环
             // 本轮 LLM 调用的 run 级兜底重试计数（ChannelManager 内部重试之外的第二层；
             // 失败重试时累计，成功时重置——见下方 catch 与 reportUsage 后的重置点）
@@ -622,16 +656,29 @@ export function createDefaultExecutor(
                     });
                 }
 
-                // 检查迭代次数
+                // 工具调用结束和下一次模型生成之间的窄窗口也要消费信箱；过去只在
+                // ToolExecutionService 的“工具结果完成瞬间”drain，会漏掉这段时间到达的消息。
+                const boundaryMessages = agentMailbox.drainMessages(currentConversationId ?? '', runId);
+                if (boundaryMessages.length > 0) {
+                    await appendInboxMessages(boundaryMessages);
+                }
+
+                // 检查迭代次数。收到信件后允许固定最多 5 轮完成“理解→工具→回答”，
+                // 而不是只放宽一轮后在工具结果返回前失败。
                 if (checkIterations()) {
-                    return finalizeRun({
-                        success: false,
-                        response: lastResponse,
-                        modelVersion,
-                        steps,
-                        toolCalls,
-                        error: `Exceeded maximum iterations (${maxIterations})`
-                    });
+                    const mailboxLimit = maxIterations === -1
+                        ? Number.POSITIVE_INFINITY
+                        : maxIterations + MAX_MAILBOX_CONTINUATION_TURNS;
+                    if (!mailboxContinuationActivated || steps >= mailboxLimit) {
+                        return finalizeRun({
+                            success: false,
+                            response: lastResponse,
+                            modelVersion,
+                            steps,
+                            toolCalls,
+                            error: `Exceeded maximum iterations (${maxIterations})`
+                        });
+                    }
                 }
                 
                 steps++;
@@ -640,10 +687,9 @@ export function createDefaultExecutor(
                 const operation = createOperationSignal();
                 const operationSignal = operation.signal;
                 let retryFailedInThisCall = false;
-                // H1-4：剥离已投递的 agentInbox（只保留最后一条未投递消息的），
-                // 防止同 run 后续迭代 / continueFromRunId 续跑重放已 drain 的信箱消息。
-                // 剥离结果就是本轮实际发送给 provider 的请求历史，随后立即记录到事件总线
-                // （lastSentHistory），供 continueFromRunId 续跑精确复用前缀（见 baseContents 选取逻辑）。
+                // 请求历史归一化保持 agentInbox 字节稳定：一次性消费由 mailbox drain/claim 保证，
+                // 已经发给模型的内容不能在后续请求中删除，否则 provider 缓存前缀会失配。
+                // 归一化结果就是本轮实际发送的历史，随后写入 lastSentHistory 供续跑精确复用。
                 const sentHistory = stripReplayedAgentInboxForModel(history);
                 // 修改原因（SEC）：子代理 history 只增不减，长任务会撞上模型上下文上限直接失败。
                 // 修改方式：发送前做请求级上下文裁剪（保留首条任务消息与末尾配对，超长字符串截断），
@@ -973,8 +1019,14 @@ export function createDefaultExecutor(
                     }
                 }
                 
-                // 如果没有工具调用，说明代理已完成任务
+                // 如果没有工具调用，模型准备结束。先用同步原子操作检查并关闭信箱：
+                // 有消息则保持 run 注册、把消息加入 history 后继续；为空才真正注销。
                 if (currentToolCalls.length === 0) {
+                    const closeResult = agentMailbox.closeRunIfInboxEmpty(currentConversationId, runId);
+                    if (!closeResult.closed) {
+                        await appendInboxMessages(closeResult.messages);
+                        continue;
+                    }
                     return finalizeRun({
                         success: true,
                         response: lastResponse,
@@ -1055,6 +1107,9 @@ export function createDefaultExecutor(
                     });
 
                     if (result.responseParts && result.responseParts.length > 0) {
+                        if (responsePartsContainInbox(result.responseParts)) {
+                            mailboxContinuationActivated = true;
+                        }
                         // 修改原因：主 ToolExecutionService 已经负责构造包含多模态 parts 的 functionResponse，SubAgent 不应再手写简化结果。
                         // 修改方式：优先写入 ToolExecutionService 返回的 responseParts，并在 prompt 模式下带上 multimodalAttachments。
                         // 修改目的：确保图片/PDF/MCP 多模态结果在 SubAgent 内部能按主流程同样的格式回传给子模型。

@@ -55,6 +55,41 @@ export interface AgentMessage {
     createdAt: number;
 }
 
+/** 主模型空闲投递时领取的一批消息；确认前仍由信箱持有。 */
+export interface AgentMessageClaim {
+    claimId: string;
+    conversationId: string;
+    runId: string;
+    messages: AgentMessage[];
+}
+
+/**
+ * 把代理消息转成可直接作为 user content 注入模型的文本。
+ * 保留 runId / threadId / hopDepth，收件模型可以据此继续同一线程回复。
+ */
+export function formatAgentMessagesForModel(messages: AgentMessage[]): string {
+    const onlyUserMessages = messages.length > 0 && messages.every(message => message.fromAgentName === 'user');
+    const title = onlyUserMessages
+        ? (messages.length === 1 ? '[User message received]' : '[User messages received]')
+        : (messages.length === 1 ? '[Agent message received]' : '[Agent messages received]');
+    const sections = messages.map((message, index) => {
+        const sender = message.fromAgentName === 'user'
+            ? 'User'
+            : message.fromAgentName
+                ? `${message.fromAgentName} (${message.fromRunId})`
+                : message.fromRunId;
+        return [
+            messages.length > 1 ? `Message ${index + 1}:` : undefined,
+            `From: ${sender}`,
+            `Thread ID: ${message.threadId}`,
+            `Hop depth: ${message.hopDepth}`,
+            'Message:',
+            message.text
+        ].filter((line): line is string => typeof line === 'string').join('\n');
+    });
+    return `${title}\n\n${sections.join('\n\n---\n\n')}`;
+}
+
 /**
  * 发送消息的入参
  */
@@ -131,6 +166,8 @@ export type UserInterruptResult =
 export class AgentMailbox {
     /** conversationId -> runId -> 消息队列 */
     private inboxes = new Map<string, Map<string, AgentMessage[]>>();
+    /** 主模型空闲回流已领取但尚未确认的消息；同一收件方同时只允许一个 claim。 */
+    private messageClaims = new Map<string, Map<string, AgentMessageClaim>>();
     /** conversationId -> runId -> run 元信息（仅记录「本对话下已知的 run」） */
     private knownRuns = new Map<string, Map<string, KnownRun>>();
     /** conversationId -> threadId -> 最近一次投递的 hopDepth */
@@ -173,6 +210,10 @@ export class AgentMailbox {
             this.knownRuns.delete(conversationId);
         }
         this.inboxes.get(conversationId)?.delete(runId);
+        this.messageClaims.get(conversationId)?.delete(runId);
+        if (this.messageClaims.get(conversationId)?.size === 0) {
+            this.messageClaims.delete(conversationId);
+        }
         // 修改原因：lastUserInterruptAt 只增不删，长会话中残留旧时间戳。
         // 修改方式：本会话已无任何已知 run（且无残留 inbox）时一并清理防刷屏时间戳，
         //          下一轮用户打断从全新状态开始。
@@ -181,6 +222,26 @@ export class AgentMailbox {
         if ((!remainingRuns || remainingRuns.size === 0) && (!convInbox || convInbox.size === 0)) {
             this.lastUserInterruptAt.delete(conversationId);
         }
+    }
+
+    /**
+     * 正常完成边界的原子关闭：若收件箱已有消息则返回消息并保持 run 可寻址；
+     * 只有收件箱为空时才注销。sendMessage 与本方法都同步执行，因此不会出现
+     * “检查为空后又接受一封信、随后 unregister 删除”的竞态。
+     */
+    closeRunIfInboxEmpty(
+        conversationId: string | undefined,
+        runId: string | undefined
+    ): { closed: true; messages: [] } | { closed: false; messages: AgentMessage[] } {
+        if (!conversationId || !runId) {
+            return { closed: true, messages: [] };
+        }
+        const messages = this.drainMessages(conversationId, runId);
+        if (messages.length > 0) {
+            return { closed: false, messages };
+        }
+        this.unregisterRun(conversationId, runId);
+        return { closed: true, messages: [] };
     }
 
     /**
@@ -317,7 +378,8 @@ export class AgentMailbox {
             runInbox = [];
             convInbox.set(toRunId, runInbox);
         }
-        if (runInbox.length >= AGENT_INBOX_MAX_MESSAGES) {
+        const claimedCount = this.messageClaims.get(conversationId)?.get(toRunId)?.messages.length ?? 0;
+        if (runInbox.length + claimedCount >= AGENT_INBOX_MAX_MESSAGES) {
             return {
                 success: false,
                 error: `agent_send_message target inbox is full (max ${AGENT_INBOX_MAX_MESSAGES} pending messages). `
@@ -434,6 +496,96 @@ export class AgentMailbox {
     }
 
     /**
+     * 主模型空闲回流领取全部待处理消息（代理消息与用户忙时插话）。
+     *
+     * 领取后消息暂时离开 inbox，避免与活跃工具循环重复消费；只有 acknowledge 后才真正删除。
+     * 同一会话已有未确认 claim 时原样返回，Webview 重载或发送重试不会丢消息。
+     */
+    claimMainSessionAgentMessages(conversationId: string): AgentMessageClaim | undefined {
+        if (!conversationId) return undefined;
+
+        const existing = this.messageClaims.get(conversationId)?.get(MAIN_SESSION_RUN_ID);
+        if (existing) {
+            return {
+                ...existing,
+                messages: [...existing.messages]
+            };
+        }
+
+        const convInbox = this.inboxes.get(conversationId);
+        const runInbox = convInbox?.get(MAIN_SESSION_RUN_ID);
+        if (!runInbox?.length) return undefined;
+
+        const messages = runInbox.filter(message => message.fromAgentName !== 'user');
+        if (messages.length === 0) return undefined;
+
+        const remaining = runInbox.filter(message => message.fromAgentName === 'user');
+        if (remaining.length > 0) {
+            convInbox!.set(MAIN_SESSION_RUN_ID, remaining);
+        } else {
+            convInbox!.delete(MAIN_SESSION_RUN_ID);
+        }
+        if (convInbox!.size === 0) {
+            this.inboxes.delete(conversationId);
+        }
+
+        const claim: AgentMessageClaim = {
+            claimId: newUuid(),
+            conversationId,
+            runId: MAIN_SESSION_RUN_ID,
+            messages
+        };
+        let convClaims = this.messageClaims.get(conversationId);
+        if (!convClaims) {
+            convClaims = new Map();
+            this.messageClaims.set(conversationId, convClaims);
+        }
+        convClaims.set(MAIN_SESSION_RUN_ID, claim);
+        return { ...claim, messages: [...messages] };
+    }
+
+    /** 读取未确认 claim 的快照；调用方不能修改内部队列。 */
+    getMessageClaim(conversationId: string, runId: string, claimId: string): AgentMessageClaim | undefined {
+        const claim = this.messageClaims.get(conversationId)?.get(runId);
+        if (!claim || claim.claimId !== claimId) return undefined;
+        return { ...claim, messages: [...claim.messages] };
+    }
+
+    /** 判断指定 claim 是否仍有效（内部消息回合落库前校验，防重复消费）。 */
+    hasMessageClaim(conversationId: string, runId: string, claimId: string): boolean {
+        return this.messageClaims.get(conversationId)?.get(runId)?.claimId === claimId;
+    }
+
+    /** 确认空闲回流已经成功落库，永久删除对应 claim。 */
+    acknowledgeMessageClaim(conversationId: string, runId: string, claimId: string): boolean {
+        const convClaims = this.messageClaims.get(conversationId);
+        const claim = convClaims?.get(runId);
+        if (!claim || claim.claimId !== claimId) return false;
+        convClaims!.delete(runId);
+        if (convClaims!.size === 0) this.messageClaims.delete(conversationId);
+        return true;
+    }
+
+    /** 发送失败时把 claim 放回收件箱头部，保持原始消息顺序。 */
+    releaseMessageClaim(conversationId: string, runId: string, claimId: string): boolean {
+        const convClaims = this.messageClaims.get(conversationId);
+        const claim = convClaims?.get(runId);
+        if (!claim || claim.claimId !== claimId) return false;
+
+        convClaims!.delete(runId);
+        if (convClaims!.size === 0) this.messageClaims.delete(conversationId);
+
+        let convInbox = this.inboxes.get(conversationId);
+        if (!convInbox) {
+            convInbox = new Map();
+            this.inboxes.set(conversationId, convInbox);
+        }
+        const current = convInbox.get(runId) ?? [];
+        convInbox.set(runId, [...claim.messages, ...current]);
+        return true;
+    }
+
+    /**
      * 取走（drain）指定 run 在指定会话下的全部消息并清空队列。
      *
      * 由工具执行注入点在每次工具调用完成后调用；每条消息只会被取出一次。
@@ -458,6 +610,22 @@ export class AgentMailbox {
         return [...(this.inboxes.get(conversationId)?.get(runId) ?? [])];
     }
 
+    /** 返回当前有待处理 main-session 代理消息/claim 的会话 ID。 */
+    getMainSessionAgentMessageConversationIds(): string[] {
+        const ids = new Set<string>();
+        for (const [conversationId, convInbox] of this.inboxes) {
+            if (convInbox.get(MAIN_SESSION_RUN_ID)?.some(message => message.fromAgentName !== 'user')) {
+                ids.add(conversationId);
+            }
+        }
+        for (const [conversationId, convClaims] of this.messageClaims) {
+            if (convClaims.get(MAIN_SESSION_RUN_ID)?.messages.length) {
+                ids.add(conversationId);
+            }
+        }
+        return [...ids];
+    }
+
     /**
      * 当前 inbox 中的消息总数（供测试/监控使用）。
      */
@@ -468,25 +636,31 @@ export class AgentMailbox {
                 count += runInbox.length;
             }
         }
+        for (const convClaims of this.messageClaims.values()) {
+            for (const claim of convClaims.values()) {
+                count += claim.messages.length;
+            }
+        }
         return count;
     }
 
     /**
-     * MED-3：清空主会话（MAIN_SESSION_RUN_ID）在指定会话下的信箱。
-     *
-     * 轮次边界清理：主会话 run（一次工具循环回合）结束后，未消费的 agent→main / 用户打断
-     * 消息若不清空，会在下一回合被当作“当轮消息”过期投递。由 ConversationManager 在检测到
-     * 新的真实 user 消息（新回合开始）时调用；子代理 inbox 由各自的 unregisterRun 负责，
-     * 不受影响。
+     * 新真实用户回合开始时清理过期用户插话，但保留尚未投递的 agent → main 消息。
+     * 代理消息会由工具边界或空闲 claim/ack 唯一消费，不能再被新回合静默删除。
      */
     clearMainSessionInbox(conversationId: string): void {
-        if (!conversationId) {
-            return;
+        if (!conversationId) return;
+        const convInbox = this.inboxes.get(conversationId);
+        const mainInbox = convInbox?.get(MAIN_SESSION_RUN_ID);
+        if (mainInbox) {
+            const agentMessages = mainInbox.filter(message => message.fromAgentName !== 'user');
+            if (agentMessages.length > 0) {
+                convInbox!.set(MAIN_SESSION_RUN_ID, agentMessages);
+            } else {
+                convInbox!.delete(MAIN_SESSION_RUN_ID);
+            }
+            if (convInbox!.size === 0) this.inboxes.delete(conversationId);
         }
-        this.inboxes.get(conversationId)?.delete(MAIN_SESSION_RUN_ID);
-        // 修改原因：lastUserInterruptAt 只增不删；轮次边界（新的真实用户消息到来）后，
-        //          上一轮的防刷屏时间戳已无意义。
-        // 修改方式：随主会话 inbox 一并清理，避免旧记录残留下个轮次。
         this.lastUserInterruptAt.delete(conversationId);
     }
 
@@ -495,6 +669,7 @@ export class AgentMailbox {
      */
     clearConversation(conversationId: string): void {
         this.inboxes.delete(conversationId);
+        this.messageClaims.delete(conversationId);
         this.knownRuns.delete(conversationId);
         this.threadDepths.delete(conversationId);
         this.lastUserInterruptAt.delete(conversationId);
@@ -505,6 +680,7 @@ export class AgentMailbox {
      */
     clearAll(): void {
         this.inboxes.clear();
+        this.messageClaims.clear();
         this.knownRuns.clear();
         this.threadDepths.clear();
         this.lastUserInterruptAt.clear();

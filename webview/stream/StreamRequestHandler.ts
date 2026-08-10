@@ -195,6 +195,7 @@ export class StreamRequestHandler {
       promptModeId,
       dynamicContextStrategyOverride,
       source,
+      agentMessageClaimId,
       streamId: clientStreamId
     } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
@@ -217,6 +218,7 @@ export class StreamRequestHandler {
         promptModeId: this.normalizePromptModeId(promptModeId),
         dynamicContextStrategyOverride,
         source,
+        agentMessageClaimId,
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });

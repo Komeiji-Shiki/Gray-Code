@@ -75,8 +75,10 @@ const isTool = computed(() => props.message.role === 'tool')
 // 是否为总结消息
 const isSummary = computed(() => props.message.isSummary === true)
 
-// 是否为后台任务回流消息
-const isBackgroundTask = computed(() => props.message.source === 'background_task')
+// 是否为代理消息回流
+const isAgentMessage = computed(() => props.message.source === 'agent_message')
+// 内部回流消息共用紧凑卡片；代理消息使用独立标题。
+const isBackgroundTask = computed(() => props.message.source === 'background_task' || isAgentMessage.value)
 
 // 后台任务回流消息的三段式视图：折叠（默认） / 中展开（滚动查看） / 完全展开
 // R3-#5: 读写模块级 Map（按 messageId 持久化），组件实例重建后恢复
@@ -618,6 +620,7 @@ const modelVersion = computed(() => props.message.metadata?.modelVersion)
 
 // 角色显示名称
 const roleDisplayName = computed(() => {
+  if (isAgentMessage.value) return 'Agent message'
   if (isBackgroundTask.value) return t('components.backgroundTasks.completed')
   if (isUser.value) return t('components.message.roles.user')
   if (isTool.value) return t('components.message.roles.tool')
@@ -835,7 +838,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       <div v-else-if="isBackgroundTask" class="background-task-card">
         <div class="bg-task-header">
           <i class="codicon codicon-hubot bg-task-icon"></i>
-          <span class="bg-task-label">{{ t('components.backgroundTasks.completed') || 'Background task completed' }}</span>
+          <span class="bg-task-label">{{ isAgentMessage ? 'Agent message' : (t('components.backgroundTasks.completed') || 'Background task completed') }}</span>
           <!-- 三段式视图切换：折叠 / 中展开（滚动） / 完全展开 -->
           <div class="bg-task-view-controls">
             <button
