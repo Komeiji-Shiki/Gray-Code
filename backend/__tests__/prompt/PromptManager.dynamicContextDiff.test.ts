@@ -229,6 +229,56 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
     });
 
+        it('LOW-3：动态条目 role 翻转（content 不变）→ 指纹变化 → 强制全量发送', () => {
+            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
+            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
+
+            // content / section 值完全相同，仅 role 从 user 改为 assistant（entry 层；渲染为 model）
+            const entries = entriesMode.promptEntries ?? [];
+            const roleFlippedMode: ResolvedPromptModeSnapshot = {
+                ...entriesMode,
+                promptEntries: [
+                    ...entries.slice(0, 2),
+                    { ...entries[2]!, role: 'assistant' }
+                ]
+            };
+            const second = manager.getPromptContextBundle(roleFlippedMode, runtimeWithTodo('task A'), { diffBase: diffBaseFrom(first) });
+
+            // 指纹必须随 role 变化（否则差分按值比较全同 → 整条省略 → 模型持续看到旧 role）
+            expect(second.dynamicTemplateFingerprint).not.toBe(first.dynamicTemplateFingerprint);
+            const dynamicMessage = second.messages.find(message => message.parts?.[0]?.text?.includes('Dynamic context'));
+            expect(dynamicMessage).toBeDefined();
+            expect(dynamicMessage!.role).toBe('model');
+            expect(second.text).toContain('task A');
+        });
+
+        it('LOW-3：动态条目 fakeThought 增删（content 不变）→ 指纹变化 → 强制全量发送', () => {
+            setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
+            const manager = new PromptManager({ includeWorkspaceFiles: false });
+            const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
+
+            // content 不变，仅新增 fakeThought（伪造思考）
+            const entries = entriesMode.promptEntries ?? [];
+            const thoughtMode: ResolvedPromptModeSnapshot = {
+                ...entriesMode,
+                promptEntries: [
+                    ...entries.slice(0, 2),
+                    { ...entries[2]!, fakeThought: '（思考中）' }
+                ]
+            };
+            const second = manager.getPromptContextBundle(thoughtMode, runtimeWithTodo('task A'), { diffBase: diffBaseFrom(first) });
+
+            expect(second.dynamicTemplateFingerprint).not.toBe(first.dynamicTemplateFingerprint);
+            const dynamicMessage = second.messages.find(message => message.parts?.[0]?.text?.includes('Dynamic context'));
+            expect(dynamicMessage).toBeDefined();
+            expect(second.text).toContain('task A');
+
+            // 反向：删除 fakeThought 同样改变指纹（增删双向）
+            const third = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'), { diffBase: diffBaseFrom(second) });
+            expect(third.dynamicTemplateFingerprint).not.toBe(second.dynamicTemplateFingerprint);
+        });
+
     describe('promptContextCache 序列化', () => {
         it('sectionValues 与 dynamicTemplateFingerprint round-trip 保留', () => {
             const bundle: PromptContextBundle = {
