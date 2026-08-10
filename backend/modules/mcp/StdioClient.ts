@@ -8,6 +8,11 @@ import * as cp from 'child_process';
 import { EventEmitter } from 'events';
 import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
 
+// cross-spawn keeps argv boundaries on Windows while resolving PATHEXT commands
+// such as npx.cmd/npm.cmd. For .cmd/.bat launchers it invokes cmd.exe with each
+// argument escaped; regular .exe commands are spawned directly without a shell.
+const crossSpawn = require('cross-spawn') as typeof cp.spawn;
+
 // tree-kill 库，用于跨平台终止进程树
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;
@@ -152,15 +157,15 @@ export class StdioMcpClient extends EventEmitter {
         this.stderrOutput = '';
         this.stderrTruncated = false;
         
-        this.process = cp.spawn(this.command, this.args, {
+        this.process = crossSpawn(this.command, this.args, {
             env: processEnv,
             cwd: this.cwd,
             stdio: ['pipe', 'pipe', 'pipe'],
-            // Windows: 使用 ComSpec 或简短文件名 cmd.exe，
-            // 让 CreateProcessW 通过系统目录搜索来定位，避免硬编码路径导致 ENOENT。
-            shell: process.platform === 'win32'
-                ? (process.env.ComSpec || 'cmd.exe')
-                : false
+            // Never concatenate untrusted argv into a generic shell command.
+            // cross-spawn performs the narrowly-scoped .cmd/.bat adaptation on
+            // Windows and otherwise delegates to child_process.spawn directly.
+            shell: false,
+            windowsHide: true
         });
 
         // 设置 UTF-8 编码，避免逐 chunk .toString() 截断多字节字符

@@ -6,6 +6,7 @@
  * - stdin 写入同步抛错（流已销毁）立即拒绝，不产生未处理异常
  * - 进程退出时拒绝所有 pending 请求
  * - stderr 缓存 64KB 上限与截断标记
+ * - 参数边界保留、Windows .cmd/.bat/PATHEXT 命令转义与安全 spawn 配置
  * - 正常 connect 流程（真实子进程）
  */
 import * as cp from 'child_process';
@@ -72,6 +73,12 @@ function writeTempScript(content: string): string {
     return file;
 }
 
+function writeWindowsLauncher(scriptFile: string, extension: 'cmd' | 'bat'): string {
+    const launcher = path.join(path.dirname(scriptFile), `MCP launcher.${extension}`);
+    fs.writeFileSync(launcher, `@echo off\r\n"${process.execPath}" "${scriptFile}" %*\r\n`);
+    return launcher;
+}
+
 describe('StdioMcpClient', () => {
     let spawnSpy: jest.SpyInstance | undefined;
 
@@ -130,6 +137,109 @@ describe('StdioMcpClient', () => {
         // 进程已清理，后续请求立即失败（而不是挂起）
         await expect(client.callTool('t', {})).rejects.toThrow(/Process not started/);
     });
+
+    // ==================== 安全进程启动 ====================
+
+    it('should preserve executable argv boundaries with shell disabled', async () => {
+        const fake = createFakeProcessWithResponder();
+        spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
+        const args = [
+            'C:\\Program Files\\MCP server\\index.js',
+            '--label=a b',
+            'x&whoami',
+        ];
+
+        const client = new StdioMcpClient(process.execPath, args, undefined, undefined, 30000);
+        client.on('error', () => {});
+        await client.connect();
+
+        expect(spawnSpy).toHaveBeenCalledTimes(1);
+        const [spawnedCommand, spawnedArgs, options] = spawnSpy.mock.calls[0];
+        expect(path.resolve(spawnedCommand)).toBe(path.resolve(process.execPath));
+        expect(spawnedArgs).toEqual(args);
+        expect(options).toEqual(expect.objectContaining({
+            shell: false,
+            windowsHide: true,
+        }));
+    });
+
+    (process.platform === 'win32' ? it : it.skip)(
+        'should resolve an npx.cmd command and escape cmd metacharacters',
+        async () => {
+            const fake = createFakeProcessWithResponder();
+            spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-npx-path-'));
+            fs.writeFileSync(path.join(tempDir, 'npx.cmd'), '@echo off\r\n');
+            const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === 'PATH') || 'Path';
+            const args = ['value with spaces', 'x&whoami', '100%literal'];
+
+            try {
+                const client = new StdioMcpClient('npx', args, { [pathKey]: tempDir }, undefined, 30000);
+                client.on('error', () => {});
+                await client.connect();
+
+                expect(spawnSpy).toHaveBeenCalledTimes(1);
+                const [spawnedCommand, spawnedArgs, options] = spawnSpy.mock.calls[0];
+                expect(path.basename(spawnedCommand).toLowerCase()).toBe('cmd.exe');
+                expect(spawnedArgs.slice(0, 3)).toEqual(['/d', '/s', '/c']);
+                expect(spawnedArgs[3]).toContain('^"value^ with^ spaces^"');
+                expect(spawnedArgs[3]).toContain('x^&whoami');
+                expect(spawnedArgs[3]).toContain('100^%literal');
+                expect(options).toEqual(expect.objectContaining({
+                    shell: false,
+                    windowsVerbatimArguments: true,
+                }));
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        }
+    );
+
+    (process.platform === 'win32' ? it.each(['cmd', 'bat'] as const) : it.skip.each(['cmd', 'bat'] as const))(
+        'should preserve real argv semantics through a launcher with spaces (.%s)',
+        async (extension) => {
+            const script = `
+                const receivedArgs = process.argv.slice(2);
+                process.stdin.setEncoding('utf8');
+                let buf = '';
+                process.stdin.on('data', (d) => {
+                    buf += d;
+                    let idx;
+                    while ((idx = buf.indexOf('\\n')) !== -1) {
+                        const line = buf.slice(0, idx).trim();
+                        buf = buf.slice(idx + 1);
+                        if (!line) continue;
+                        let msg;
+                        try { msg = JSON.parse(line); } catch { continue; }
+                        if (msg.method === 'initialize') {
+                            process.stdout.write(JSON.stringify({
+                                jsonrpc: '2.0',
+                                id: msg.id,
+                                result: {
+                                    protocolVersion: '2024-11-05',
+                                    serverInfo: { name: JSON.stringify(receivedArgs), version: '1.0.0' },
+                                    capabilities: {}
+                                }
+                            }) + '\\n');
+                        }
+                    }
+                });
+            `;
+            const scriptFile = writeTempScript(script);
+            const launcher = writeWindowsLauncher(scriptFile, extension);
+            const args = ['value with spaces', 'x&echo INJECTED', 'plain-value'];
+
+            const client = new StdioMcpClient(launcher, args, undefined, undefined, 5000);
+            client.on('error', () => {});
+            try {
+                await client.connect();
+                expect(JSON.parse(client.getServerInfo()!.name)).toEqual(args);
+            } finally {
+                await client.disconnect();
+                fs.rmSync(path.dirname(scriptFile), { recursive: true, force: true });
+            }
+        }
+    );
 
     // ==================== stderr 64KB 上限 ====================
 

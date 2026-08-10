@@ -81,13 +81,11 @@ jobs:
 
       - name: Typecheck & test
         if: steps.should.outputs.build == 'true'
-        run: |
-          npm run typecheck
-          npm test
+        run: npm run ci
 
       # 注意：本步骤必须带 id: version——下方 Release name/body 通过 steps.version.outputs.nightly_version
-      # 引用本步骤输出；缺 id 时引用恒为空，Release 名会退化为 "Gray Code Nightly v"，
-      # 扩展 nightly 渠道无法从名称提取版本号（表现为永远提示已是最新）。
+      # 引用本步骤输出；缺 id 时引用恒为空，Release 名会退化为 "v"，
+      # 扩展 nightly 渠道将无法从名称提取版本号，导致更新检查失败。
       - name: Compute nightly version
         id: version
         # nightly 版本号 = 当前版本 + -nightly.<YYYYMMDD> 预发布段（如 1.4.6-nightly.20260809）：
@@ -128,8 +126,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
-          # name 内嵌真实版本号（如 v1.4.6-nightly.20260809），扩展 nightly 渠道据此解析版本
-          name: Nightly v${{ steps.version.outputs.nightly_version }}
+          # Release name 直接使用带 v 前缀的真实版本号，扩展 nightly 渠道据此解析更新版本
+          name: v${{ steps.version.outputs.nightly_version }}
           body: |
             自动构建：${{ steps.time.outputs.now }}
             Commit: `${{ github.sha }}`

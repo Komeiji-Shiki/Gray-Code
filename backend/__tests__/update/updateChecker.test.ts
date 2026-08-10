@@ -85,6 +85,10 @@ describe('shouldCheck', () => {
 });
 
 describe('extractNightlyVersionFromName', () => {
+    it('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
+        expect(extractNightlyVersionFromName('v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
+    });
+
     it('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
@@ -144,7 +148,7 @@ describe('parseReleaseResponse', () => {
     it('nightly 渠道从 Release name 提取版本号（tag 固定为 nightly）', () => {
         const info = parseReleaseResponse({
             tag_name: 'nightly',
-            name: 'Gray Code Nightly v1.4.6-nightly.20260809',
+            name: 'v1.4.6-nightly.20260809',
             body: 'auto build',
             published_at: '2026-08-09T00:00:00Z',
             assets: [{

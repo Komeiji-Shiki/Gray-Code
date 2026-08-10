@@ -124,7 +124,8 @@ const NIGHTLY_VERSION_RE = /(?<![\d.])(\d+\.\d+\.\d+-nightly\.\d{8})\b/i;
 
 /**
  * 从 nightly Release 名称中提取版本号。
- * 例如 "Gray Code Nightly v1.4.6-nightly.20260809" → "1.4.6-nightly.20260809"。
+ * 例如 "v1.4.6-nightly.20260809" → "1.4.6-nightly.20260809"；
+ * 同时兼容旧的 "Gray Code Nightly v..." 名称。
  * 提取失败返回 null。
  */
 export function extractNightlyVersionFromName(name: unknown): string | null {
@@ -153,7 +154,7 @@ export function parseReleaseResponse(data: unknown, channel: UpdateChannel = 'st
     let version = stripVersionPrefix(raw.tag_name);
     if (channel === 'nightly') {
         // nightly Release 的 tag 固定为 nightly，真实版本号写在 Release name 中
-        //（如 "Gray Code Nightly v1.4.6-nightly.20260809"），从 name 提取；
+        //（如 "v1.4.6-nightly.20260809"），从 name 提取；旧的装饰性名称仍兼容。
         // 提取失败视为响应格式异常（避免 version 退化为 'nightly' 导致静默判为已最新）
         const nameVersion = extractNightlyVersionFromName(raw.name);
         if (!nameVersion) return null;
