@@ -15,6 +15,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 import { Logger } from '../../../backend/core/logger';
 import {
@@ -51,6 +52,9 @@ import {
 } from '../../../backend/core/settingsContext';
 import { MessageRouter } from '../../../webview/MessageRouter';
 import { WebviewClientRegistry, WEBVIEW_CLIENT_IDS } from '../../../webview/runtime/WebviewClientRegistry';
+import { StreamRequestHandler } from '../../../webview/stream/StreamRequestHandler';
+import { createMessageHandlerRegistry } from '../../../webview/handlers';
+import type { MessageHandler } from '../../../webview/types';
 import { initializeSubAgentsFromSettings } from '../../../webview/handlers/SubAgentsHandlers';
 import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/WorkspaceManager';
 import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandlers';
@@ -120,8 +124,16 @@ export class BackendHost {
   private subAgentMonitorBridge?: SubAgentMonitorBridge;
   /** 远程控制服务器（局域网 HTTP + 移动端 UI；设置开启时运行，否则不存在） */
   private remoteControlServer?: RemoteControlServer;
-  /** 远程控制客户端的注册注销函数（clientRegistry.register 返回的 Disposable） */
-  private remoteControlClientDispose?: { dispose(): void };
+  /** 远程控制直连 handler 注册表（进程内直接调用，不经 MessageRouter） */
+  private remoteRegistry!: Map<string, MessageHandler>;
+  /** 远程控制专用流式处理器（与桌面端共享 StreamAbortManager；chunk 直投移动端 SSE） */
+  private remoteStreamHandler!: StreamRequestHandler;
+  /** 远程流式任务应答结算表（requestId → started/cancelled 应答） */
+  private remoteStreamSettlers = new Map<string, {
+    resolve: (data: any) => void;
+    reject: (error: Error) => void;
+    timer: NodeJS.Timeout;
+  }>();
   private messageHandlingQueue: Promise<void> = Promise.resolve();
   /**
    * 开场动画（Splash）完成信号：渲染层在动画淡出后（或用户关闭动画时立即）上报。
@@ -358,9 +370,12 @@ export class BackendHost {
     } catch {
       // ignore
     }
-    // 远程控制：关闭 HTTP 服务器并注销客户端（移动端 SSE 收到 bye 后自动重连失败）
-    this.remoteControlClientDispose?.dispose();
-    this.remoteControlClientDispose = undefined;
+    // 远程控制：关闭 HTTP 服务器并清空流式应答（移动端 SSE 收到 bye 后自动重连失败）
+    for (const entry of this.remoteStreamSettlers.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error('Backend host disposed'));
+    }
+    this.remoteStreamSettlers.clear();
     try {
       await this.remoteControlServer?.dispose();
     } catch {
@@ -647,6 +662,9 @@ export class BackendHost {
       (requestId, code, message) => this.postToRenderer('error', requestId, code, message),
       this.clientRegistry
     );
+    // 远程控制直连注册表：与 MessageRouter 同一批 handler 函数（同一业务逻辑），
+    // 但由远控端进程内直接调用，不经 MessageRouter 路由层（V2 去虚拟化）。
+    this.remoteRegistry = createMessageHandlerRegistry();
 
     // 子代理 Monitor 内嵌面板桥：订阅 run 事件总线并向主窗口渲染进程推送
     this.subAgentMonitorBridge = new SubAgentMonitorBridge({
@@ -659,9 +677,44 @@ export class BackendHost {
 
     this.registerMainChatClient();
 
-    // 远程控制服务器：以 'remote-control' 客户端身份接入 MessageRouter，
-    // 移动端发起的消息与桌面端同一管道（响应/流块经 clientRegistry 回传）。
-    // 设置开启才启动服务器（移动端 UI 随服务器懒加载），关闭时零资源占用。
+    // 远程控制服务器：V2 去虚拟化直连。
+    // - 非流式操作：invokeHandler 进程内直接调用 webview handler 函数（sendResponse/
+    //   sendError 直接 resolve/reject），不经 MessageRouter/虚拟客户端/序列化往返；
+    // - 流式操作：独立装配的远程流 StreamRequestHandler 直连执行（与桌面端共享同一
+    //   StreamAbortManager 实例，移动端停止与桌面端取消共用同一取消控制器），
+    //   chunk 经 getClientView 直投移动端 SSE；
+    // - 不再把远控端注册进 WebviewClientRegistry（无虚拟 webview 客户端）。
+    this.remoteStreamHandler = new StreamRequestHandler({
+      chatHandler: this.chatHandler,
+      abortManager: this.messageRouter.getAbortManager(),
+      conversationManager: this.conversationManager,
+      // chunk 直投移动端 SSE（onClientMessage → broadcast('message')）
+      getClientView: () => ({
+        webview: {
+          postMessage: (message: any) => this.remoteControlServer?.onClientMessage(message) ?? true
+        }
+      }) as any,
+      // started/cancelled 应答直接结算 runStream 的等待方
+      sendResponse: (requestId, data) => {
+        const entry = this.remoteStreamSettlers.get(requestId);
+        if (entry) {
+          clearTimeout(entry.timer);
+          this.remoteStreamSettlers.delete(requestId);
+          entry.resolve(data);
+        }
+      },
+      sendError: (requestId, code, message) => {
+        const entry = this.remoteStreamSettlers.get(requestId);
+        if (entry) {
+          clearTimeout(entry.timer);
+          this.remoteStreamSettlers.delete(requestId);
+          entry.reject(new Error(message || code));
+        }
+      },
+      finalizeRequest: () => {
+        // 流结束无需额外清理（settlers 已在 sendResponse/sendError 结算或超时摘除）
+      }
+    });
     this.remoteControlServer = new RemoteControlServer({
       getSettings: () => this.settingsManager.getSettings() as any,
       getUiLanguage: () => this.resolveToastLanguage(),
@@ -682,25 +735,107 @@ export class BackendHost {
         }
         return { workspaceUri, activeFilePath };
       },
-      route: (type, data, requestId, clientId) => {
-        const ctx = { ...this.createHandlerContext(requestId) };
-        return this.messageRouter.route(type, data, requestId, ctx, clientId);
+      // 直连非流式 handler：进程内执行，响应直接 resolve（无 pending 表/虚拟客户端）
+      invokeHandler: (type, data) => {
+        const requestId = `remote_${randomUUID()}`;
+        const handler = this.remoteRegistry.get(type);
+        if (!handler) {
+          return Promise.reject(new Error(`Unknown handler: ${type}`));
+        }
+        const ctx = {
+          ...this.createHandlerContext(requestId),
+          clientId: REMOTE_CONTROL_CLIENT_ID,
+          // 流式 handler（reroll/editBranch 等）经 ctx.postMessage 转发 chunk → SSE
+          postMessage: (message: any) => {
+            this.remoteControlServer?.onClientMessage(message);
+            return true;
+          }
+        };
+        return new Promise<any>((resolve, reject) => {
+          // 超时兜底：openFolder 等原生对话框请求可等待用户操作；60s 上限防移动端挂死
+          const timer = setTimeout(() => {
+            reject(new Error(`Request timed out: ${type}`));
+          }, 60_000);
+          const directCtx = {
+            ...ctx,
+            sendResponse: (id: string, respondData: any): void => {
+              clearTimeout(timer);
+              resolve(respondData);
+            },
+            sendError: (id: string, code: string, message: string): void => {
+              clearTimeout(timer);
+              reject(new Error(message || code));
+            }
+          };
+          Promise.resolve(handler(data, requestId, directCtx)).catch((err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+      },
+      // 直连流式任务：注册应答结算 → 启动远程流；chunk 经 remoteStreamHandler 直投 SSE
+      runStream: (type, data) => {
+        const requestId = `remote_${randomUUID()}`;
+        const payload = (data ?? {}) as Record<string, any>;
+        return new Promise<any>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.remoteStreamSettlers.delete(requestId);
+            reject(new Error(`Stream start timed out: ${type}`));
+          }, 20_000);
+          this.remoteStreamSettlers.set(requestId, { resolve, reject, timer });
+          try {
+            switch (type) {
+              case 'chatStream':
+                this.remoteStreamHandler.handleChatStream(payload, requestId, REMOTE_CONTROL_CLIENT_ID);
+                break;
+              case 'retryStream':
+                this.remoteStreamHandler.handleRetryStream(payload, requestId, REMOTE_CONTROL_CLIENT_ID);
+                break;
+              case 'toolConfirmation':
+                this.remoteStreamHandler.handleToolConfirmationStream(payload, requestId, REMOTE_CONTROL_CLIENT_ID);
+                break;
+              case 'cancelStream': {
+                const conversationId = typeof payload.conversationId === 'string' ? payload.conversationId : '';
+                // cancelStream 是 async：非法 conversationId 会抛错，需兜底结算（HTTP 面已前置校验，纯防御）
+                void Promise.resolve(
+                  this.remoteStreamHandler.cancelStream(conversationId, requestId, {
+                    preserveSubAgents: payload.preserveSubAgents === true
+                  })
+                ).catch((err) => {
+                  const entry = this.remoteStreamSettlers.get(requestId);
+                  if (entry) {
+                    clearTimeout(entry.timer);
+                    this.remoteStreamSettlers.delete(requestId);
+                    entry.reject(err instanceof Error ? err : new Error(String(err)));
+                  }
+                });
+                break;
+              }
+              default:
+                clearTimeout(timer);
+                this.remoteStreamSettlers.delete(requestId);
+                reject(new Error(`Unknown stream type: ${type}`));
+            }
+          } catch (err) {
+            const entry = this.remoteStreamSettlers.get(requestId);
+            if (entry) {
+              clearTimeout(entry.timer);
+              this.remoteStreamSettlers.delete(requestId);
+              entry.reject(err instanceof Error ? err : new Error(String(err)));
+            }
+          }
+        });
       },
       conversationManager: this.conversationManager as any,
-      configManager: this.configManager as any
-    });
-    this.remoteControlClientDispose = this.clientRegistry.register({
-      clientId: REMOTE_CONTROL_CLIENT_ID,
-      webviewHost: {
-        webview: {
-          postMessage: (message: any) => this.remoteControlServer?.onClientMessage(message) ?? true
+      configManager: this.configManager as any,
+      // 会话变更 → 桌面端最近对话列表实时刷新（远端创建/改名/删除后不再需要重启）
+      notifyConversationsChanged: () => {
+        try {
+          this.postToRenderer('message', 'conversationsChanged', { changed: true });
+        } catch (err) {
+          console.error('[BackendHost] conversationsChanged broadcast failed:', err);
         }
-      } as any,
-      postMessage: (message: any) => {
-        this.remoteControlServer?.onClientMessage(message);
-        return true;
-      },
-      isAlive: () => this.remoteControlServer?.isRunning() === true
+      }
     });
     // 设置变更（开关/端口）→ 启停/重启服务器；初始化完成后再同步一次兜底。
     // 监听器加入 unsubscribers：dispose 时退订，避免闭包引用 remoteControlServer 泄漏。

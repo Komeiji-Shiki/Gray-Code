@@ -10,6 +10,26 @@
 
 （暂无未发布改动）
 
+### Added（1.7.10dev 补记：远程控制 V2 去虚拟化直连 + 移动端 UI 彻底重构）
+  - **远程控制去虚拟化（V2 架构）**：远控端不再注册为 WebviewClientRegistry 的虚拟 webview 客户端、也不经 MessageRouter 路由——此前每次操作都要「HTTP → routeMessage → MessageRouter → handler → clientRegistry 回传 → pending 表」绕一整圈，落盘与响应多一层 JSON 序列化往返，延迟更高、链路更难维护。V2 起所有操作由 BackendHost 直连：
+    - 非流式操作 `invokeHandler()` 进程内直接执行 webview handler 函数（sendResponse/sendError 直接 resolve/reject Promise），校验与业务逻辑与桌面端完全一致（同一批 handler 函数），但零虚拟客户端开销、无 20s 路由超时；
+    - 流式操作（chatStream/retryStream/toolConfirmation/cancelStream）由远控端专用 StreamRequestHandler 直连执行（与桌面端共享同一 StreamAbortManager，移动端停止与桌面端取消共用同一取消控制器），chunk 经 getClientView 直投 SSE；
+    - 移除 `remote-control` 虚拟客户端注册、pending 应答表与路由超时机制。
+  - **会话列表实时双向同步**：会话变更（远端/桌面端新建、改名、删除、摘要更新）后：①移动端经 SSE `conversations` 事件实时刷新抽屉列表；②桌面端经新增 `conversationsChanged` 广播实时刷新最近对话列表——远端新建的对话不再需要重启应用才能出现在桌面端。
+  - **渠道完整管理（移动端设置页）**：新增渠道（名称 + 类型：gemini/openai/openai-responses/anthropic）、编辑渠道（名称/API 地址/API Key/工具模式/超时/最大上下文 token/思考强度）、删除渠道（确认后不可恢复）；`GET /api/config` 返回完整可编辑配置（apiKey 脱敏为占位串，更新时占位/空串不覆盖已存密钥）；新增端点 `POST /api/config-create|config-update|config-delete`。
+  - **模型管理（移动端）**：新增 `POST /api/models-add|models-remove|models-get`（对齐桌面端 models.addModels/removeModel/getModels），设置页可为渠道添加/移除模型、从提供商拉取模型列表。
+  - **输入区四选择器（桌面端 InputSelectorBar 同款）**：模型模式（`GET /api/prompt-modes`，随 `/api/send` 透传 promptModeId）/ 渠道 / 模型 / 思考强度（按渠道类型生成档位，写入渠道 options/optionsEnabled，语义与桌面端 buildThinkingLevelUpdates 完全一致）四个下拉选择器，以底部弹层呈现、尺寸正常（不再是被挤压变形的窄 select）。
+  - **移动端 UI 彻底重构（V3）**：由 5128 行单文件拆分为 `remoteControlUi.ts`（i18n + HTML 骨架）/ `remoteControlUiCss.ts`（样式）/ `remoteControlUiScript.ts`（脚本）三模块；会话页签全部可关闭（含未落库的新对话页签，修复「无法关闭新对话窗口」）；图标全部内嵌 SVG（无 emoji/字体依赖，杜绝移动端图标丢失）；设置页 20 分类（对齐桌面端 SettingsPanel 侧栏）；`.composer-row` 补上 flex 布局（修复输入框布局塌陷）。
+  - **发送参数透传**：`POST /api/send` 支持 `configId`（渠道）/ `modelId`（modelOverride）/ `promptModeId`（模型模式），与桌面端 chatStream 同一参数面。
+
+### Fixed（1.7.10dev 补记）
+  - **远程控制无法关闭新对话窗口**：`renderTabsBar` 只为已落库会话（tab.id 非空）渲染关闭按钮，未落库的新对话页签无「×」无法关闭；现已全部页签渲染关闭按钮。
+  - **远程控制输入区布局塌陷**：`.composer-row` 无任何 CSS（非 flex 容器），`#input` 的 `flex:1` 无从生效，输入框/发送键以默认 inline-block 排布；已补 flex 布局。
+  - **输入区缺少模型模式/思考强度下拉框**：此前移动端输入区只有渠道/模型胶囊；已按桌面端 InputSelectorBar 补齐四选择器。
+  - **设置页下拉框变形过小**：`.set-field select` 被挤至 130px 宽、自定义箭头错位；已修复为全宽控件 + 完整箭头（min-width 160px）。
+  - **设置页渠道无法新增/编辑高级设置**：此前只有渠道列表（启用/停用/设当前），无新增/编辑/删除端点与表单；已补齐渠道完整 CRUD 与高级设置字段。
+  - **远端会话不实时出现在桌面端最近对话**：桌面端仅在启动时加载一次会话列表且无推送事件；已新增 `conversationsChanged` 广播（前端白名单 + chatStore 监听刷新）。
+
 ### Added（1.7.10dev 补记：多会话并行 + 设置分页 + 流式/落盘修复）
   - **多会话并行工作（会话页签栏）**：移动端聊天视图新增顶部会话页签条（桌面端 ConversationTabs 同款）——可同时打开多个会话、各自独立流式状态（后台页签照常累积输出，切回即见完整进度）、互不阻塞发送（A 会话生成中仍可在 B 会话发消息）；「+」新建会话页签（发送后自动落库并回填标题）、页签可关闭；会话抽屉支持分页惰性加载（每页 30，加载更多按钮）。
   - **设置页分页化（对齐桌面端 SettingsPanel 19 类侧栏）**：设置页由单一超长滚动列表重构为「分类页签 + 当前分类渲染」——渠道/通用/代理/工具/文件工具/命令与沙箱/提示词/上下文/记忆/总结/检查点/Token 计数/图像生成/技能/子代理/固定文件/远程控制/存储/依赖 19 个分类，连接状态/访问地址/安全说明归入「远程控制」分类，渠道模型管理归入「渠道」分类。

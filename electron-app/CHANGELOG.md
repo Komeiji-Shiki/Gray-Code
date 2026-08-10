@@ -12,6 +12,16 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+### Added（1.7.10dev 补记：远程控制 V2 去虚拟化直连 + 移动端 UI 彻底重构）
+  - **远程控制去虚拟化（V2 架构）**：远控端不再注册为 WebviewClientRegistry 虚拟客户端、不再经 MessageRouter 路由——非流式操作由 `invokeHandler` 进程内直接执行 handler 函数（响应直接 resolve，零虚拟客户端开销）；流式操作由远控端专用 StreamRequestHandler 直连执行（与桌面端共享 StreamAbortManager，停止/取消跨端共用同一取消控制器）；移除 `remote-control` 客户端注册与 pending 应答表。
+  - **会话列表实时双向同步**：移动端经 SSE `conversations` 事件实时刷新；桌面端经 `conversationsChanged` 广播实时刷新最近对话（远端新建对话不再需要重启应用才出现）。
+  - **渠道完整管理（移动端）**：新增/编辑/删除渠道（`POST /api/config-create|config-update|config-delete`），`GET /api/config` 返回完整可编辑配置（apiKey 脱敏，占位串不覆盖已存密钥），含思考强度等高级设置。
+  - **模型管理（移动端）**：`POST /api/models-add|models-remove|models-get`。
+  - **输入区四选择器**：模型模式 / 渠道 / 模型 / 思考强度（桌面端 InputSelectorBar 同款，思考强度语义与桌面端 buildThinkingLevelUpdates 一致）；`POST /api/send` 支持 configId/modelId/promptModeId 透传。
+  - **移动端 UI 彻底重构（V3）**：单文件拆分三模块（i18n+HTML / CSS / Script）；页签全部可关闭（含新对话页签）；图标全部内嵌 SVG；设置页 20 分类；输入区布局修复。
+  - **测试**：remoteControl 测试扩至 125 例（渠道 CRUD/模型管理/提示词模式/发送透传/会话变更通知）。
+  （详见根目录 CHANGELOG [1.7.10dev]）
+
 ### Added（1.7.10dev 补记：多会话并行 + 设置分页 + 流式/落盘修复）
   - **多会话并行（会话页签栏）**：移动端聊天视图新增桌面端 ConversationTabs 同款页签条，多会话同时打开、独立流式状态互不阻塞；新建会话页签、页签可关闭；会话抽屉分页惰性加载（每页 30 + 加载更多）。
   - **设置页分页化**：对齐桌面端 SettingsPanel 19 类侧栏——渠道/通用/代理/工具/文件工具/命令与沙箱/提示词/上下文/记忆/总结/检查点/Token 计数/图像生成/技能/子代理/固定文件/远程控制/存储/依赖，连接状态与访问地址归入「远程控制」、渠道模型管理归入「渠道」。

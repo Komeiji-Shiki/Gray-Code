@@ -141,15 +141,20 @@ class FakeHost implements RemoteControlServerHost {
   configManager = {
     listConfigs: async () => (this.settings.activeChannelId ? [{ id: this.settings.activeChannelId, enabled: true }] : [])
   };
-  route = async (type: string, data: any, requestId: string, clientId: string): Promise<boolean> => {
-    this.calls.push({ type, data, requestId, clientId });
-    if (this.server) {
-      setImmediate(() => {
-        this.server?.onClientMessage({ type: 'response', requestId, data: this.respond(type, data) });
-      });
-    }
-    return true;
+  /** V2 去虚拟化：进程内直连 handler（响应直接返回，不再经 MessageRouter/虚拟客户端） */
+  invokeHandler = async (type: string, data: any): Promise<any> => {
+    this.calls.push({ type, data, requestId: '', clientId: 'remote-control' });
+    return this.respond(type, data);
   };
+  /** V2 去虚拟化：直连流式任务（started 应答直接返回） */
+  runStream = async (type: string, data: any): Promise<any> => {
+    this.calls.push({ type, data, requestId: '', clientId: 'remote-control' });
+    return this.respond(type, data);
+  };
+  /** 会话变更通知（桌面端列表实时刷新） */
+  notifyConversationsChanged(): void {
+    this.calls.push({ type: 'notifyConversationsChanged', data: {}, requestId: '', clientId: '' });
+  }
 }
 
 /** 在临时端口起服务（随机端口，EADDRINUSE 时换端口重试一次） */
@@ -1190,6 +1195,181 @@ describe('RemoteControlServer HTTP', () => {
   test('POST /api/model rejects control-char modelId with 400', async () => {
     const res = await post(port, '/api/model', { configId: 'ch1', modelId: 'bad\u0000model' });
     expect(res.status).toBe(400);
+  });
+
+  // ==========================================================================
+  // V2 渠道完整管理（新增/编辑/删除）+ 模型管理 + 模型模式 + 发送参数透传
+  // ==========================================================================
+
+  test('POST /api/config-create routes config.createConfig', async () => {
+    host.calls = [];
+    host.respondOverrides['config.createConfig'] = 'ch_new';
+    const res = await post(port, '/api/config-create', { type: 'gemini', name: 'My Channel' });
+    expect(res.status).toBe(200);
+    expect(res.body.configId).toBe('ch_new');
+    const call = host.calls.find((c) => c.type === 'config.createConfig');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ type: 'gemini', name: 'My Channel' });
+    delete host.respondOverrides['config.createConfig'];
+  });
+
+  test('POST /api/config-create rejects unknown type / missing name with 400', async () => {
+    const res1 = await post(port, '/api/config-create', { type: 'wat', name: 'X' });
+    expect(res1.status).toBe(400);
+    const res2 = await post(port, '/api/config-create', { type: 'gemini', name: '' });
+    expect(res2.status).toBe(400);
+  });
+
+  test('POST /api/config-update routes config.updateConfig and keeps masked apiKey untouched', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/config-update', {
+      configId: 'ch1',
+      updates: { name: 'Renamed', apiKey: '********', url: 'https://x' }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'config.updateConfig');
+    expect(call).toBeDefined();
+    // apiKey 占位串不落库（保持已设置的密钥不变）
+    expect(call!.data.updates.apiKey).toBeUndefined();
+    expect(call!.data.updates.name).toBe('Renamed');
+    expect(call!.data.updates.url).toBe('https://x');
+  });
+
+  test('POST /api/config-update writes real apiKey when provided', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/config-update', {
+      configId: 'ch1',
+      updates: { apiKey: 'sk-real-key' }
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'config.updateConfig');
+    expect(call).toBeDefined();
+    expect(call!.data.updates.apiKey).toBe('sk-real-key');
+  });
+
+  test('POST /api/config-update rejects invalid configId / oversized updates', async () => {
+    const res1 = await post(port, '/api/config-update', { configId: '../x', updates: {} });
+    expect(res1.status).toBe(400);
+    const res2 = await post(port, '/api/config-update', { configId: 'ch1', updates: { big: 'x'.repeat(70 * 1024) } });
+    expect(res2.status).toBe(413);
+  });
+
+  test('POST /api/config-delete routes config.deleteConfig', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/config-delete', { configId: 'ch2' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'config.deleteConfig');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ configId: 'ch2' });
+  });
+
+  test('GET /api/config returns full editable config with masked apiKey', async () => {
+    const res = await requestJson(port, 'GET', '/api/config?configId=ch1');
+    expect(res.status).toBe(200);
+    expect(res.body.config.id).toBe('ch1');
+    expect(res.body.config.name).toBe('Channel One');
+    expect(res.body.config.model).toBe('m1');
+    expect(res.body.config.type).toBeDefined();
+    expect(res.body.config.models).toHaveLength(2);
+  });
+
+  test('POST /api/models-add routes models.addModels', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/models-add', {
+      configId: 'ch1',
+      models: [{ id: 'm3', name: 'Model 3' }]
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'models.addModels');
+    expect(call).toBeDefined();
+    expect(call!.data.models).toEqual([{ id: 'm3', name: 'Model 3' }]);
+  });
+
+  test('POST /api/models-add rejects malformed models with 400', async () => {
+    const res = await post(port, '/api/models-add', { configId: 'ch1', models: [{ id: '', name: 'x' }] });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /api/models-remove routes models.removeModel', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/models-remove', { configId: 'ch1', modelId: 'm1' });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'models.removeModel');
+    expect(call).toBeDefined();
+    expect(call!.data).toEqual({ configId: 'ch1', modelId: 'm1' });
+  });
+
+  test('POST /api/models-get routes models.getModels and trims fields', async () => {
+    host.calls = [];
+    host.respondOverrides['models.getModels'] = {
+      success: true,
+      models: [{ id: 'g1', name: 'G1', description: 'desc' }, { id: 'g2', name: 'G2', description: 'desc2' }]
+    };
+    const res = await post(port, '/api/models-get', { configId: 'ch1' });
+    expect(res.status).toBe(200);
+    expect(res.body.models).toHaveLength(2);
+    expect(res.body.models[0]).toEqual({ id: 'g1', name: 'G1' });
+    delete host.respondOverrides['models.getModels'];
+  });
+
+  test('GET /api/prompt-modes returns modes with currentModeId', async () => {
+    host.respondOverrides['getPromptModes'] = {
+      modes: [
+        { id: 'code', name: 'Code', icon: 'symbol-method' },
+        { id: 'plan', name: 'Plan', icon: 'list-unordered' }
+      ],
+      currentModeId: 'code'
+    };
+    const res = await requestJson(port, 'GET', '/api/prompt-modes');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.currentModeId).toBe('code');
+    expect(res.body.modes).toHaveLength(2);
+    expect(res.body.modes[0]).toEqual({ id: 'code', name: 'Code', icon: 'symbol-method' });
+    delete host.respondOverrides['getPromptModes'];
+  });
+
+  test('POST /api/send passes promptModeId/configId/modelId through to chatStream', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/send', {
+      text: 'hello',
+      configId: 'ch2',
+      modelId: 'openai/gpt-4o',
+      promptModeId: 'plan'
+    });
+    expect(res.status).toBe(200);
+    const call = host.calls.find((c) => c.type === 'chatStream');
+    expect(call).toBeDefined();
+    expect(call!.data.configId).toBe('ch2');
+    expect(call!.data.modelOverride).toBe('openai/gpt-4o');
+    expect(call!.data.promptModeId).toBe('plan');
+  });
+
+  test('POST /api/send with explicit conversationId does not re-create conversation', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/send', { text: 'hello', conversationId: 'conv_test_1' });
+    expect(res.status).toBe(200);
+    expect(host.calls.some((c) => c.type === 'conversation.createConversation')).toBe(false);
+    const call = host.calls.find((c) => c.type === 'chatStream');
+    expect(call!.data.conversationId).toBe('conv_test_1');
+  });
+
+  test('POST /api/send with unknown conversationId creates it then notifies list refresh', async () => {
+    host.calls = [];
+    const res = await post(port, '/api/send', { text: 'brand new chat' });
+    expect(res.status).toBe(200);
+    expect(host.calls.some((c) => c.type === 'conversation.createConversation')).toBe(true);
+    // 新会话落库后通知列表刷新（桌面端最近对话实时出现）
+    expect(host.calls.some((c) => c.type === 'notifyConversationsChanged')).toBe(true);
+  });
+
+  test('rename / delete conversation notify list refresh', async () => {
+    host.calls = [];
+    await post(port, '/api/rename', { conversationId: 'conv_test_1', title: 'Renamed' });
+    expect(host.calls.some((c) => c.type === 'notifyConversationsChanged')).toBe(true);
+    host.calls = [];
+    await post(port, '/api/conversation-delete', { conversationId: 'conv_test_1' });
+    expect(host.calls.some((c) => c.type === 'notifyConversationsChanged')).toBe(true);
   });
 
   test('SSE: hello event then message + workspace events broadcast', async () => {

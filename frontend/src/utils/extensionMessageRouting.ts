@@ -40,7 +40,9 @@ const BROADCAST_MESSAGE_TYPES = new Set([
   'dependencyProgress',
   'storageMigrationProgress',
   'subagentMonitor.event',
-  'subagentMonitor.manifest'
+  'subagentMonitor.manifest',
+  // 远控端会话变更（创建/改名/删除/摘要更新）→ 桌面端最近对话列表实时刷新
+  'conversationsChanged'
 ])
 
 /**

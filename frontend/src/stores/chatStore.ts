@@ -1002,6 +1002,10 @@ export const useChatStore = defineStore('chat', () => {
         }
       } else if (message.type === 'retryStatus') {
         handleRetryStatus(state, message.data)
+      } else if (message.type === 'conversationsChanged') {
+        // 远控端会话变更（创建/改名/删除/摘要更新）：桌面端最近对话列表实时刷新，
+        // 不再需要重启应用才能看到远控端新建的对话
+        void loadConversations()
       }
     })
     

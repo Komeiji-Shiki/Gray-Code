@@ -3,25 +3,38 @@
  *
  * 远程控制模块（Electron 主进程，随 BackendHost 懒加载包一起加载）。
  *
- * 功能：
+ * 架构（V2 去虚拟化直连）：
  * - 在局域网内（0.0.0.0）监听用户自定义端口，提供移动端友好 UI 与 REST/SSE API；
- * - 通过 WebviewClientRegistry 以 'remote-control' 客户端身份接入现有 MessageRouter，
- *   移动端发起的 chatStream 与桌面端行为完全一致（流式 chunk 经 SSE 回传）；
- * - 桌面端自身会话的流式输出（main-chat 客户端消息）也会镜像转发给移动端，
+ * - 不再把远控端注册为 WebviewClientRegistry 的虚拟 webview 客户端、也不经
+ *   MessageRouter 路由（此前所有操作都要「HTTP → routeMessage → MessageRouter →
+ *   handler → clientRegistry 回传 → pending 表」绕一整圈，落盘与响应都多一层
+ *   序列化往返，延迟更高、链路更难维护）；
+ * - 现在所有操作由 BackendHost 提供的 `invoke()` 进程内直连：直接调用 webview
+ *   handler 函数本身（sendResponse/sendError 直接 resolve/reject Promise），
+ *   校验与业务逻辑与桌面端完全一致，但零虚拟客户端开销；
+ * - 流式任务（chatStream/retryStream/toolConfirmation/cancelStream）由 BackendHost
+ *   为远控端单独装配的 StreamRequestHandler 直连执行（共享全局 StreamAbortManager，
+ *   移动端停止按钮与桌面端取消共用同一取消控制器），chunk 经 getClientView
+ *   直投 SSE，同样不经过 MessageRouter；
+ * - 桌面端自身会话的流式输出（main-chat 客户端消息）仍镜像转发给移动端，
  *   手机上可以实时看到电脑上正在生成的回复；
+ * - 会话变更（创建/改名/删除/摘要更新）后调用 host.notifyConversationsChanged()
+ *   推送桌面端与移动端实时刷新会话列表（不再需要重启才能看到新对话）；
  * - 移动端可操作真实工作区：浏览目录、读写文本文件、在桌面端打开文件（带行号）、
  *   切换工作区（文件操作全部经 webview FileHandlers 的既有工作区包含校验）；
  * - 移动端可参与工具审批流（toolConfirmation）、重试（retryStream）、删除消息、
  *   切换渠道模型（models.setActiveModel）、编辑用户消息重新生成（editBranchStream）、
  *   重新生成助手消息（rerollStream）、删除会话（conversation.deleteConversation）、
- *   新增/移除工作区（workspace.openFolder / workspace.removeSaved），
- *   均复用桌面端同一消息管道与校验；
+ *   新增/移除工作区（workspace.openFolder / workspace.removeSaved）；
+ * - 渠道全量管理：新增（config.createConfig）/ 编辑（config.updateConfig）/
+ *   删除（config.deleteConfig）/ 模型获取与增删（models.getModels/addModels/
+ *   removeModel），设置页渠道管理与桌面端一致；
  * - 工作区新增支持移动端自选目录：GET /api/fs 浏览服务端任意目录（仅目录项，
  *   不读文件内容），POST /api/workspace-add 携带 fsPath 直接打开（不再依赖
  *   桌面端弹窗）；切换工作区对「已打开」走 workspace.setActive 固定、
  *   对「仅收藏」走 workspace.openFolder 由宿主打开，两种场景均可生效；
- * - 设置页全量补齐：GET/POST /api/settings 透传桌面端 getSettings/updateSettings
- *   消息管道（深合并语义与桌面端一致），密钥字段（apiKey / base64 音频资产 /
+ * - 设置页全量补齐：GET/POST /api/settings 直连桌面端 settingsHandler
+ *   （深合并语义与桌面端一致），密钥字段（apiKey / base64 音频资产 /
  *   代理 URL 内嵌凭据）在响应侧脱敏，移动端可读写桌面端全部设置项；
  * - 桌面端活动编辑器/工作区变化经 SSE workspace 事件实时镜像到手机；
  * - 设置页 remoteControl.enabled=false 或端口变更时，由 BackendHost 调用
@@ -44,14 +57,11 @@ import { DEFAULT_REMOTE_CONTROL_PORT } from '../settings/generalTypes';
 import { renderRemoteControlUiHtml } from './remoteControlUi';
 import type { RemoteControlStatus } from '../../../webview/types';
 
-/** 远程控制客户端的 WebviewClientId（响应/流块按此路由回移动端） */
+/** 远程控制客户端的 WebviewClientId（BackendHost 装配远程流时使用；V2 不再注册虚拟客户端） */
 export const REMOTE_CONTROL_CLIENT_ID = 'remote-control';
 
 /** 请求体上限（256KB；聊天消息远小于此，防御恶意超大 POST） */
 const MAX_BODY_BYTES = 256 * 1024;
-
-/** 单次消息路由等待响应超时（chatStream 的 started 应答一般在毫秒级） */
-const ROUTE_TIMEOUT_MS = 20_000;
 
 /** SSE 心跳间隔（代理/移动网络保活） */
 const SSE_HEARTBEAT_MS = 25_000;
@@ -258,7 +268,8 @@ function hostHeaderHostname(host: string | undefined): string {
   return host.split(':')[0].toLowerCase();
 }
 
-interface ConversationMeta {
+/** 会话列表直读元数据（移动端列表/分页/状态/摘要同步用） */
+export interface ConversationMeta {
   title?: string;
   updatedAt?: number;
   messageCount?: number;
@@ -275,8 +286,12 @@ export interface RemoteControlServerHost {
   getAppVersion(): string;
   /** 当前激活工作区与活动编辑器（桌面端实时快照，SSE workspace 事件与 hello 用） */
   getWorkspaceSnapshot(): { workspaceUri: string | null; activeFilePath: string | null };
-  /** 以指定 clientId 路由消息到 MessageRouter（响应经 clientRegistry 回调回传） */
-  route(type: string, data: any, requestId: string, clientId: string): Promise<boolean>;
+  /** 直连调用后端处理器（进程内直接执行 webview handler，无 MessageRouter/虚拟客户端往返） */
+  invokeHandler(type: string, data: unknown): Promise<any>;
+  /** 直连启动流式任务（chatStream/retryStream/toolConfirmation/cancelStream），
+   *  返回 started 应答；chunk 经 streamSink 回调实时回传 */
+  runStream(type: string, data: unknown): Promise<{ started?: boolean; cancelled?: boolean }>;
+  /** 会话列表/元数据直读（列表/分页/状态/摘要同步用） */
   conversationManager: {
     listConversations(): Promise<string[]>;
     getMetadata(conversationId: string): Promise<ConversationMeta | null | undefined>;
@@ -285,12 +300,8 @@ export interface RemoteControlServerHost {
   configManager: {
     listConfigs(): Promise<Array<{ id: string; enabled?: boolean }>>;
   };
-}
-
-interface PendingRequest {
-  resolve: (data: any) => void;
-  reject: (error: Error) => void;
-  timer: NodeJS.Timeout;
+  /** 会话变更（创建/改名/删除/摘要更新）通知：桌面端与移动端会话列表实时刷新 */
+  notifyConversationsChanged(): void;
 }
 
 function sseEvent(event: string, data: unknown): string {
@@ -352,7 +363,6 @@ export class RemoteControlServer {
   private urls: string[] = [];
   private sseClients = new Set<http.ServerResponse>();
   private sseHeartbeatTimer: NodeJS.Timeout | null = null;
-  private pending = new Map<string, PendingRequest>();
   private restartPromise: Promise<void> | null = null;
   private activeConversationId: string | null = null;
   /** 启动代次：stop/禁用抢占正在 listen 的 start 时递增，使迟到回调失效 */
@@ -372,9 +382,12 @@ export class RemoteControlServer {
     return this.settings.port;
   }
 
-  /** 前端上报桌面端激活会话（App.vue watcher，fire-and-forget） */
+  /** 前端上报桌面端激活会话（App.vue watcher，fire-and-forget）；null 清空跟踪 */
   setActiveConversation(conversationId: string | null): void {
-    if (conversationId === null) return;
+    if (conversationId === null) {
+      this.activeConversationId = null;
+      return;
+    }
     if (isSafeConversationId(conversationId)) {
       this.activeConversationId = conversationId;
     }
@@ -412,7 +425,6 @@ export class RemoteControlServer {
   apply(action: { type: 'restart' | 'stop' }): void {
     if (action?.type === 'stop') {
       // 仅停止服务器，不修改已持久化的配置（配置只由 syncFromSettings 跟随设置变化）
-      this.rejectAllPending(new Error('Remote control server stopped'));
       void this.stop();
       return;
     }
@@ -451,9 +463,10 @@ export class RemoteControlServer {
     void this.restart();
   }
 
-  /** 客户端注册表回传（响应/错误/流块）；BackendHost 注册 'remote-control' 客户端时挂接 */
+  /** 流式任务 sink：BackendHost 装配的远程流（chatStream 等）的 chunk 经此回调回传。
+   *  （桌面端 StreamChunkProcessor 投递 shape：streamChunk 单元素 / streamChunkBatch 数组，
+   *   conversationId/streamId 位于每个 chunk 元素上。） */
   onClientMessage(message: any): boolean {
-    this.resolvePending(message);
     const type = message?.type;
     if (type === 'streamChunk' || type === 'streamChunkBatch') {
       this.broadcast('message', message);
@@ -466,6 +479,20 @@ export class RemoteControlServer {
       }
     }
     return true;
+  }
+
+  /**
+   * 会话变更通知：推送给移动端 SSE（conversations 事件，移动端列表实时刷新），
+   * 并告知 BackendHost 让桌面端最近对话列表实时刷新（不再需要重启才能看到新对话）。
+   */
+  notifyConversationsChanged(): void {
+    if (!this.running) return;
+    try {
+      this.broadcast('conversations', { changed: true });
+      this.host.notifyConversationsChanged();
+    } catch {
+      // 通知失败静默：仅影响列表实时性，不阻断会话操作
+    }
   }
 
   /**
@@ -525,11 +552,13 @@ export class RemoteControlServer {
             break;
           }
         }
-        await this.routeMessage('conversation.updateSummary', {
+        await this.invokeHandler('conversation.updateSummary', {
           conversationId,
           messageCount: messages.length,
           preview: preview ?? undefined
         });
+        // 摘要已更新（计数/预览）：桌面端最近对话列表实时刷新
+        this.notifyConversationsChanged();
       } catch {
         // 摘要同步失败静默：仅影响对话列表的计数/预览展示，不阻断会话操作
       }
@@ -555,7 +584,6 @@ export class RemoteControlServer {
       }
     }
     await this.stop();
-    this.rejectAllPending(new Error('Remote control server disposed'));
   }
 
   // ==========================================================================
@@ -717,48 +745,19 @@ export class RemoteControlServer {
   }
 
   // ==========================================================================
-  // 消息路由（响应经 pending 表回传）
+  // 直连后端（V2 去虚拟化）：进程内直接执行 webview handler，无 MessageRouter/
+  // 虚拟客户端/序列化往返；校验与业务逻辑与桌面端完全一致（handler 函数复用）。
   // ==========================================================================
 
-  private routeMessage(type: string, data: unknown): Promise<any> {
-    const requestId = `remote_${randomUUID()}`;
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new Error(`Request timed out: ${type}`));
-      }, ROUTE_TIMEOUT_MS);
-      this.pending.set(requestId, { resolve, reject, timer });
-      this.host.route(type, data, requestId, REMOTE_CONTROL_CLIENT_ID).catch((err) => {
-        const entry = this.pending.get(requestId);
-        if (entry) {
-          clearTimeout(entry.timer);
-          this.pending.delete(requestId);
-        }
-        reject(err);
-      });
-    });
+  /** 非流式操作：直连调用后端 handler，返回 handler sendResponse 的数据 */
+  private invokeHandler(type: string, data: unknown): Promise<any> {
+    return Promise.resolve(this.host.invokeHandler(type, data));
   }
 
-  private resolvePending(message: any): void {
-    const requestId = message?.requestId;
-    if (!requestId) return;
-    const entry = this.pending.get(requestId);
-    if (!entry) return;
-    clearTimeout(entry.timer);
-    this.pending.delete(requestId);
-    if (message.type === 'response') {
-      entry.resolve(message.data);
-    } else {
-      entry.reject(new Error(message?.error?.message || message?.error?.code || 'Remote request failed'));
-    }
-  }
-
-  private rejectAllPending(error: Error): void {
-    for (const entry of this.pending.values()) {
-      clearTimeout(entry.timer);
-      entry.reject(error);
-    }
-    this.pending.clear();
+  /** 流式操作：直连启动（chatStream/retryStream/toolConfirmation/cancelStream），
+   *  返回 started 应答；chunk 经 host 装配的 streamSink 回传（onClientMessage） */
+  private runStream(type: string, data: unknown): Promise<{ started?: boolean; cancelled?: boolean }> {
+    return Promise.resolve(this.host.runStream(type, data));
   }
 
   // ==========================================================================
@@ -908,8 +907,36 @@ export class RemoteControlServer {
       await this.handleGetConfig(res, url.searchParams.get('configId') || '');
       return;
     }
+    if (req.method === 'POST' && pathname === '/api/config-create') {
+      await this.handleConfigCreate(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/config-update') {
+      await this.handleConfigUpdate(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/config-delete') {
+      await this.handleConfigDelete(res, await this.readBody(req));
+      return;
+    }
     if (req.method === 'POST' && pathname === '/api/model') {
       await this.handleSetModel(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/models-add') {
+      await this.handleModelsAdd(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/models-remove') {
+      await this.handleModelsRemove(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/models-get') {
+      await this.handleModelsGet(res, await this.readBody(req));
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/prompt-modes') {
+      await this.handlePromptModes(res);
       return;
     }
     if (req.method === 'POST' && pathname === '/api/send') {
@@ -1102,6 +1129,12 @@ export class RemoteControlServer {
     }
   }
 
+  /**
+   * 发送消息。支持按请求覆盖渠道/模型/模式：
+   * - configId：显式指定渠道（缺省回退当前激活渠道 → 第一个启用渠道）；
+   * - modelId：透传 modelOverride（桌面端 chatStream 同一参数）；
+   * - promptModeId：透传模型模式（桌面端 InputSelectorBar 模式选择同一参数）。
+   */
   private async handleSend(res: http.ServerResponse, body: any): Promise<void> {
     const text = typeof body?.text === 'string' ? body.text.trim() : '';
     if (!text) {
@@ -1125,7 +1158,7 @@ export class RemoteControlServer {
       targetId = `conv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const title = text.split('\n')[0].slice(0, 30) || 'New Chat';
       try {
-        await this.routeMessage('conversation.createConversation', {
+        await this.invokeHandler('conversation.createConversation', {
           conversationId: targetId,
           title
         });
@@ -1133,9 +1166,22 @@ export class RemoteControlServer {
         this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to create conversation' });
         return;
       }
+      // 新会话落库后实时通知列表刷新（桌面端最近对话 + 移动端抽屉）
+      this.notifyConversationsChanged();
     }
 
-    const configId = await this.resolveConfigId();
+    // 渠道：显式指定 > 当前激活 > 第一个启用渠道
+    const requestedConfigId = typeof body?.configId === 'string' && body.configId ? body.configId : '';
+    let configId: string | undefined;
+    if (requestedConfigId) {
+      if (!isSafeConfigId(requestedConfigId)) {
+        this.sendJson(res, 400, { ok: false, error: 'Invalid configId' });
+        return;
+      }
+      configId = requestedConfigId;
+    } else {
+      configId = await this.resolveConfigId();
+    }
     if (!configId) {
       this.sendJson(res, 400, {
         ok: false,
@@ -1144,14 +1190,24 @@ export class RemoteControlServer {
       return;
     }
 
+    // 模型覆盖（modelOverride）与模型模式（promptModeId）：透传桌面端 chatStream 同一参数
+    const modelOverride = typeof body?.modelId === 'string' && body.modelId
+      ? body.modelId.slice(0, 256)
+      : undefined;
+    const promptModeId = typeof body?.promptModeId === 'string' && body.promptModeId
+      ? body.promptModeId.slice(0, 64)
+      : undefined;
+
     this.activeConversationId = targetId;
     const streamId = `remote_${randomUUID()}`;
     try {
-      await this.routeMessage('chatStream', {
+      await this.runStream('chatStream', {
         conversationId: targetId,
         configId,
         message: text,
         messageId: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        modelOverride,
+        promptModeId,
         streamId
       });
       this.sendJson(res, 200, { ok: true, started: true, conversationId: targetId, streamId });
@@ -1167,7 +1223,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('cancelStream', { conversationId });
+      await this.runStream('cancelStream', { conversationId });
       this.sendJson(res, 200, { ok: true, cancelled: true });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to cancel stream' });
@@ -1182,8 +1238,10 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('conversation.setTitle', { conversationId, title });
+      await this.invokeHandler('conversation.setTitle', { conversationId, title });
       this.sendJson(res, 200, { ok: true });
+      // 改名后实时刷新会话列表（桌面端最近对话 + 移动端抽屉）
+      this.notifyConversationsChanged();
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to rename conversation' });
     }
@@ -1203,7 +1261,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('workspace.openFolder', fsPath ? { fsPath } : {});
+      const result = await this.invokeHandler('workspace.openFolder', fsPath ? { fsPath } : {});
       if (result?.canceled === true) {
         this.sendJson(res, 200, { ok: true, canceled: true });
         return;
@@ -1232,7 +1290,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('workspace.removeSaved', { fsPath });
+      const result = await this.invokeHandler('workspace.removeSaved', { fsPath });
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to remove saved workspace' });
@@ -1252,7 +1310,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('conversation.deleteConversation', { conversationId });
+      const result = await this.invokeHandler('conversation.deleteConversation', { conversationId });
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to delete conversation' });
@@ -1262,6 +1320,7 @@ export class RemoteControlServer {
         this.activeConversationId = null;
       }
       this.sendJson(res, 200, { ok: true });
+      this.notifyConversationsChanged();
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete conversation' });
     }
@@ -1290,7 +1349,9 @@ export class RemoteControlServer {
     }
     this.activeConversationId = conversationId;
     try {
-      await this.routeMessage('chat.editBranchStream', {
+      // chat.editBranchStream 是注册表流式 handler（chunk 经 ctx.postMessage → SSE），
+      // 由 invokeHandler 直连执行，started 应答经 sendResponse 结算
+      await this.invokeHandler('chat.editBranchStream', {
         conversationId,
         userNodeId: messageId,
         messageId,
@@ -1322,7 +1383,9 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('chat.rerollStream', {
+      // chat.rerollStream 是注册表流式 handler（chunk 经 ctx.postMessage → SSE），
+      // 由 invokeHandler 直连执行，started 应答经 sendResponse 结算
+      await this.invokeHandler('chat.rerollStream', {
         conversationId,
         assistantNodeId,
         configId,
@@ -1343,8 +1406,8 @@ export class RemoteControlServer {
   private async handleListWorkspaces(res: http.ServerResponse): Promise<void> {
     try {
       const [list, saved] = await Promise.all([
-        this.routeMessage('getWorkspaceList', {}),
-        this.routeMessage('workspace.getSaved', {}).catch(() => ({ saved: [] }))
+        this.invokeHandler('getWorkspaceList', {}),
+        this.invokeHandler('workspace.getSaved', {}).catch(() => ({ saved: [] }))
       ]);
       this.sendJson(res, 200, {
         ok: true,
@@ -1375,21 +1438,21 @@ export class RemoteControlServer {
     }
     try {
       const [list, saved] = await Promise.all([
-        this.routeMessage('getWorkspaceList', {}),
-        this.routeMessage('workspace.getSaved', {}).catch(() => ({ saved: [] }))
+        this.invokeHandler('getWorkspaceList', {}),
+        this.invokeHandler('workspace.getSaved', {}).catch(() => ({ saved: [] }))
       ]);
       const openList = Array.isArray(list?.workspaces) ? list.workspaces : [];
       const savedList = Array.isArray(saved?.saved) ? saved.saved : [];
       const norm = (u: string): string => u.replace(/\\/g, '/').toLowerCase();
       const inOpen = openList.some((w: any) => !!w?.uri && norm(w.uri) === norm(workspaceUri));
       if (inOpen) {
-        await this.routeMessage('workspace.setActive', { workspaceUri });
+        await this.invokeHandler('workspace.setActive', { workspaceUri });
         this.sendJson(res, 200, { ok: true, opened: false });
         return;
       }
       const savedItem = savedList.find((w: any) => !!w?.uri && norm(w.uri) === norm(workspaceUri));
       if (savedItem && typeof savedItem?.fsPath === 'string' && savedItem.fsPath) {
-        const result = await this.routeMessage('workspace.openFolder', { fsPath: savedItem.fsPath });
+        const result = await this.invokeHandler('workspace.openFolder', { fsPath: savedItem.fsPath });
         if (result?.success === false) {
           const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
           this.sendJson(res, 400, { ok: false, error: msg || 'Failed to open workspace folder' });
@@ -1482,7 +1545,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('listWorkspaceDirectory', { path });
+      const result = await this.invokeHandler('listWorkspaceDirectory', { path });
       if (result?.success === false) {
         this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to list directory' });
         return;
@@ -1505,7 +1568,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('readWorkspaceTextFile', { path });
+      const result = await this.invokeHandler('readWorkspaceTextFile', { path });
       if (result?.success === false) {
         this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to read file' });
         return;
@@ -1540,7 +1603,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('workspace.writeTextFile', { path, content });
+      const result = await this.invokeHandler('workspace.writeTextFile', { path, content });
       if (result?.success === false) {
         this.sendJson(res, 400, { ok: false, error: result.error || 'Failed to write file' });
         return;
@@ -1561,7 +1624,7 @@ export class RemoteControlServer {
       ? body.startLine
       : undefined;
     try {
-      const result = await this.routeMessage('openWorkspaceFileAt', {
+      const result = await this.invokeHandler('openWorkspaceFileAt', {
         path,
         startLine,
         highlight: true,
@@ -1584,7 +1647,7 @@ export class RemoteControlServer {
   private async handleListConfigs(res: http.ServerResponse): Promise<void> {
     try {
       const ids: string[] = [];
-      const raw = await this.routeMessage('config.listConfigs', {});
+      const raw = await this.invokeHandler('config.listConfigs', {});
       if (Array.isArray(raw)) {
         raw.forEach((id) => { if (typeof id === 'string') ids.push(id); });
       }
@@ -1592,14 +1655,18 @@ export class RemoteControlServer {
       // 数量上限 20：实际用户渠道极少超此值，超限并行也会压垮消息队列
       const configs = (await Promise.all(
         ids.slice(0, 20).map((id) =>
-          this.routeMessage('config.getConfig', { configId: id })
+          this.invokeHandler('config.getConfig', { configId: id })
             .then((cfg) => ({
               id,
               name: typeof cfg?.name === 'string' && cfg.name ? cfg.name : id,
               model: typeof cfg?.model === 'string' ? cfg.model : '',
-              enabled: cfg?.enabled !== false
+              enabled: cfg?.enabled !== false,
+              // 思考强度选择器依赖渠道类型与 options/optionsEnabled（与桌面端同源）
+              type: typeof cfg?.type === 'string' ? cfg.type : '',
+              options: cfg?.options && typeof cfg.options === 'object' ? cfg.options : undefined,
+              optionsEnabled: cfg?.optionsEnabled && typeof cfg.optionsEnabled === 'object' ? cfg.optionsEnabled : undefined
             }))
-            .catch(() => ({ id, name: id, model: '', enabled: true }))
+            .catch(() => ({ id, name: id, model: '', enabled: true, type: '' }))
         )
       ));
       this.sendJson(res, 200, { ok: true, configs });
@@ -1608,6 +1675,10 @@ export class RemoteControlServer {
     }
   }
 
+  /**
+   * 渠道详情（移动端设置页编辑用）：返回完整配置字段（apiKey 脱敏为占位串，
+   *  UI 据此识别「已设置，留空/占位串保持不变」），models 仅裁剪 id/name。
+   */
   private async handleGetConfig(res: http.ServerResponse, rawConfigId: string): Promise<void> {
     const configId = rawConfigId;
     if (!isSafeConfigId(configId)) {
@@ -1615,7 +1686,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const cfg = await this.routeMessage('config.getConfig', { configId });
+      const cfg = await this.invokeHandler('config.getConfig', { configId });
       if (!cfg) {
         this.sendJson(res, 404, { ok: false, error: 'Config not found' });
         return;
@@ -1633,11 +1704,99 @@ export class RemoteControlServer {
           id: cfg.id,
           name: typeof cfg.name === 'string' ? cfg.name : '',
           model: typeof cfg.model === 'string' ? cfg.model : '',
+          type: typeof cfg.type === 'string' ? cfg.type : '',
+          enabled: cfg?.enabled !== false,
+          url: typeof cfg.url === 'string' ? cfg.url : '',
+          apiKey: typeof cfg.apiKey === 'string' && cfg.apiKey ? '********' : '',
+          options: cfg?.options && typeof cfg.options === 'object' ? cfg.options : undefined,
+          optionsEnabled: cfg?.optionsEnabled && typeof cfg.optionsEnabled === 'object' ? cfg.optionsEnabled : undefined,
+          toolMode: typeof cfg.toolMode === 'string' ? cfg.toolMode : undefined,
+          timeout: typeof cfg.timeout === 'number' ? cfg.timeout : undefined,
+          maxContextTokens: typeof cfg.maxContextTokens === 'number' ? cfg.maxContextTokens : undefined,
+          contextManagementEnabled: cfg?.contextManagementEnabled,
+          contextManagement: cfg?.contextManagement && typeof cfg.contextManagement === 'object' ? cfg.contextManagement : undefined,
+          toolOptions: cfg?.toolOptions && typeof cfg.toolOptions === 'object' ? cfg.toolOptions : undefined,
+          customBody: cfg?.customBody ?? undefined,
+          customHeaders: Array.isArray(cfg.customHeaders) ? cfg.customHeaders : undefined,
+          retryEnabled: cfg?.retryEnabled,
+          retryCount: typeof cfg.retryCount === 'number' ? cfg.retryCount : undefined,
+          retryInterval: typeof cfg.retryInterval === 'number' ? cfg.retryInterval : undefined,
           models
         }
       });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to get config' });
+    }
+  }
+
+  /** 新增渠道（对齐桌面端 config.createConfig：{ type, name }） */
+  private async handleConfigCreate(res: http.ServerResponse, body: any): Promise<void> {
+    const type = typeof body?.type === 'string' ? body.type.trim() : '';
+    const name = typeof body?.name === 'string' ? body.name.trim().slice(0, 64) : '';
+    const ALLOWED_TYPES = new Set(['gemini', 'openai', 'openai-responses', 'anthropic']);
+    if (!ALLOWED_TYPES.has(type) || !name) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid type or name' });
+      return;
+    }
+    try {
+      const configId = await this.invokeHandler('config.createConfig', { type, name });
+      if (typeof configId !== 'string' || !configId) {
+        this.sendJson(res, 500, { ok: false, error: 'Failed to create config' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true, configId });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to create config' });
+    }
+  }
+
+  /** 更新渠道字段（对齐桌面端 config.updateConfig：{ configId, updates }）。
+   *  apiKey 占位串（********）/空串表示「保持不变」，不覆盖已有密钥。 */
+  private async handleConfigUpdate(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    const updates = body?.updates;
+    if (!isSafeConfigId(configId) || typeof updates !== 'object' || updates === null || Array.isArray(updates)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId or updates' });
+      return;
+    }
+    if (Buffer.byteLength(JSON.stringify(updates), 'utf-8') > MAX_SETTINGS_PATCH_BYTES) {
+      this.sendJson(res, 413, { ok: false, error: 'Config update too large' });
+      return;
+    }
+    // apiKey 占位/空串不落库（保持已设置的密钥不变）
+    if (typeof updates.apiKey === 'string' && (!updates.apiKey || updates.apiKey === '********')) {
+      delete updates.apiKey;
+    }
+    try {
+      const result = await this.invokeHandler('config.updateConfig', { configId, updates });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to update config' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to update config' });
+    }
+  }
+
+  /** 删除渠道（对齐桌面端 config.deleteConfig：{ configId }） */
+  private async handleConfigDelete(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    if (!isSafeConfigId(configId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('config.deleteConfig', { configId });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to delete config' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete config' });
     }
   }
 
@@ -1649,7 +1808,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('models.setActiveModel', { configId, modelId });
+      const result = await this.invokeHandler('models.setActiveModel', { configId, modelId });
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to set model' });
@@ -1661,6 +1820,101 @@ export class RemoteControlServer {
     }
   }
 
+  /** 向渠道追加模型（对齐桌面端 models.addModels：{ configId, models: [{ id, name }] }） */
+  private async handleModelsAdd(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    const models = Array.isArray(body?.models) ? body.models.slice(0, 50) : [];
+    if (!isSafeConfigId(configId) || models.length === 0
+        || !models.every((m: any) => m && typeof m === 'object'
+            && typeof m.id === 'string' && m.id.length > 0 && m.id.length <= 256
+            && (typeof m.name !== 'string' || m.name.length <= 256))) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId or models' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('models.addModels', { configId, models });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to add models' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to add models' });
+    }
+  }
+
+  /** 从渠道移除模型（对齐桌面端 models.removeModel：{ configId, modelId }） */
+  private async handleModelsRemove(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    const modelId = typeof body?.modelId === 'string' ? body.modelId : '';
+    if (!isSafeConfigId(configId) || !isSafeModelId(modelId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId or modelId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('models.removeModel', { configId, modelId });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to remove model' });
+        return;
+      }
+      this.sendJson(res, 200, { ok: true });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to remove model' });
+    }
+  }
+
+  /** 从提供商拉取模型列表（对齐桌面端 models.getModels：{ configId }） */
+  private async handleModelsGet(res: http.ServerResponse, body: any): Promise<void> {
+    const configId = typeof body?.configId === 'string' ? body.configId : '';
+    if (!isSafeConfigId(configId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid configId' });
+      return;
+    }
+    try {
+      const result = await this.invokeHandler('models.getModels', { configId });
+      if (result?.success === false) {
+        const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
+        this.sendJson(res, 400, { ok: false, error: msg || 'Failed to fetch models' });
+        return;
+      }
+      const models = Array.isArray(result?.models)
+        ? result.models
+            .slice(0, 200)
+            .map((m: any) => ({ id: typeof m?.id === 'string' ? m.id : '', name: typeof m?.name === 'string' ? m.name : '' }))
+            .filter((m: { id: string }) => !!m.id)
+        : [];
+      this.sendJson(res, 200, { ok: true, models });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to fetch models' });
+    }
+  }
+
+  /** 模型模式列表（移动端输入区模式下拉：与桌面端 InputSelectorBar 同源） */
+  private async handlePromptModes(res: http.ServerResponse): Promise<void> {
+    try {
+      const result = await this.invokeHandler('getPromptModes', {});
+      const modes = Array.isArray(result?.modes)
+        ? result.modes
+            .map((m: any) => ({
+              id: typeof m?.id === 'string' ? m.id : '',
+              name: typeof m?.name === 'string' ? m.name : '',
+              icon: typeof m?.icon === 'string' ? m.icon : '',
+              dynamicContextStrategy: typeof m?.dynamicContextStrategy === 'string' ? m.dynamicContextStrategy : undefined
+            }))
+            .filter((m: { id: string }) => !!m.id)
+        : [];
+      this.sendJson(res, 200, {
+        ok: true,
+        modes,
+        currentModeId: typeof result?.currentModeId === 'string' ? result.currentModeId : ''
+      });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to load prompt modes' });
+    }
+  }
+
   // ==========================================================================
   // 设置（移动端全量设置页）：透传桌面端 getSettings / updateSettings 消息管道。
   // 读侧脱敏（apiKey / base64 音频 / 代理 URL 凭据），写侧仅做形状白名单与大小
@@ -1669,7 +1923,7 @@ export class RemoteControlServer {
 
   private async handleSettingsGet(res: http.ServerResponse): Promise<void> {
     try {
-      const result = await this.routeMessage('getSettings', {});
+      const result = await this.invokeHandler('getSettings', {});
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to load settings' });
@@ -1692,7 +1946,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('updateSettings', { settings: patch });
+      const result = await this.invokeHandler('updateSettings', { settings: patch });
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to update settings' });
@@ -1707,7 +1961,7 @@ export class RemoteControlServer {
   /** 依赖安装状态（只读展示：python/node/ffmpeg 安装路径与可用性） */
   private async handleDependencies(res: http.ServerResponse): Promise<void> {
     try {
-      const result = await this.routeMessage('dependencies.list', {});
+      const result = await this.invokeHandler('dependencies.list', {});
       this.sendJson(res, 200, { ok: true, dependencies: result });
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to list dependencies' });
@@ -1718,8 +1972,8 @@ export class RemoteControlServer {
   private async handleListTools(res: http.ServerResponse): Promise<void> {
     try {
       const [toolsResult, autoExecResult] = await Promise.all([
-        this.routeMessage('tools.getTools', {}),
-        this.routeMessage('tools.getAutoExecConfig', {}).catch(() => null)
+        this.invokeHandler('tools.getTools', {}),
+        this.invokeHandler('tools.getAutoExecConfig', {}).catch(() => null)
       ]);
       const tools = Array.isArray(toolsResult?.tools)
         ? toolsResult.tools.map((tool: any) => ({
@@ -1747,7 +2001,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('config.updateConfig', { configId, updates: { enabled } });
+      const result = await this.invokeHandler('config.updateConfig', { configId, updates: { enabled } });
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to update channel' });
@@ -1767,7 +2021,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('settings.setActiveChannelId', { channelId: configId });
+      const result = await this.invokeHandler('settings.setActiveChannelId', { channelId: configId });
       if (result?.success === false) {
         const msg = typeof result?.error === 'string' ? result.error : result?.error?.message;
         this.sendJson(res, 400, { ok: false, error: msg || 'Failed to set active channel' });
@@ -1787,7 +2041,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      const result = await this.routeMessage('remoteControl.apply', { type });
+      const result = await this.invokeHandler('remoteControl.apply', { type });
       if (result?.ok === false) {
         this.sendJson(res, 400, { ok: false, error: result?.error || 'Failed to apply action' });
         return;
@@ -1817,7 +2071,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('retryStream', {
+      await this.runStream('retryStream', {
         conversationId,
         configId,
         streamId: `remote_${randomUUID()}`
@@ -1838,8 +2092,9 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('deleteSingleMessage', { conversationId, targetIndex });
+      await this.invokeHandler('deleteSingleMessage', { conversationId, targetIndex });
       this.sendJson(res, 200, { ok: true });
+      this.notifyConversationsChanged();
     } catch (err: any) {
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to delete message' });
     }
@@ -1863,7 +2118,7 @@ export class RemoteControlServer {
       return;
     }
     try {
-      await this.routeMessage('toolConfirmation', {
+      await this.runStream('toolConfirmation', {
         conversationId,
         configId,
         toolResponses,
@@ -1915,7 +2170,7 @@ export class RemoteControlServer {
     });
   }
 
-  private broadcast(kind: 'message' | 'global' | 'workspace', message: unknown): void {
+  private broadcast(kind: 'message' | 'global' | 'workspace' | 'conversations', message: unknown): void {
     if (this.sseClients.size === 0) return;
     const payload = sseEvent(kind, message);
     for (const client of this.sseClients) {

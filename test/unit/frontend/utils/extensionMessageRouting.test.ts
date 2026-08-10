@@ -98,4 +98,23 @@ describe('routeExtensionMessage', () => {
     expect(routeExtensionMessage({ data: 1 }, new Map(), sink)).toBe('ignored');
     expect(broadcasts).toHaveLength(0);
   });
+
+  it('broadcast whitelist includes conversationsChanged (remote list refresh)', () => {
+    const broadcasts: unknown[] = [];
+    const sink = (message: unknown) => broadcasts.push(message);
+
+    // V2: remote-created/renamed/deleted conversations refresh desktop recent list live
+    const result = routeExtensionMessage(
+      { type: 'conversationsChanged', data: { changed: true } },
+      new Map(),
+      sink
+    );
+    expect(result).toBe('broadcast');
+    expect((broadcasts[0] as { type?: unknown }).type).toBe('conversationsChanged');
+
+    // unknown push types stay ignored
+    const before = broadcasts.length;
+    expect(routeExtensionMessage({ type: 'someUnknownPush', data: {} }, new Map(), sink)).toBe('ignored');
+    expect(broadcasts.length).toBe(before);
+  });
 });
