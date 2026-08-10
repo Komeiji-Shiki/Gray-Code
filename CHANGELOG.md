@@ -21,6 +21,9 @@
     - 端口/开关变更即时生效（设置变更监听 → 启停/重启服务器），监听失败（端口占用等）在设置页提示并可一键重试；
     - 搜索覆盖：设置搜索索引新增远程控制条目（启用/端口/访问地址/安全说明 4 个锚点），三语言（en/zh-CN/ja）文案齐全。
 
+### Fixed
+  - **远程控制设置页 i18n 键路径错误**：组件文案键误写为 `components.settings.remoteControlSettings.*`，实际语言包层级为 `components.settings.settingsPanel.remoteControlSettings.*`——`t()` 找不到翻译时返回原始键名，设置页整页显示键名。已修正组件与设置搜索索引中的全部引用，并新增 `RemoteControlSettingsI18n` 回归测试（静态提取组件全部 `t()` 键，逐一校验 zh-CN/en/ja 三语言包存在且为字符串），防止再次出现「键名漏译」。
+
 ## [1.7.8] - 2026-08-10
 
 ### Added

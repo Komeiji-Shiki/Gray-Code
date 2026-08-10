@@ -35,10 +35,10 @@ const copiedUrl = ref('')
 
 const portError = computed(() => {
   const value = portInput.value.trim()
-  if (!value) return t('components.settings.remoteControlSettings.port.required')
+  if (!value) return t('components.settings.settingsPanel.remoteControlSettings.port.required')
   const n = Number(value)
   if (!Number.isInteger(n) || n < 1 || n > 65535) {
-    return t('components.settings.remoteControlSettings.port.invalid')
+    return t('components.settings.settingsPanel.remoteControlSettings.port.invalid')
   }
   return ''
 })
@@ -87,16 +87,16 @@ async function saveSettings() {
         port: Number(portInput.value.trim())
       }
     })
-    saveMessage.value = t('components.settings.remoteControlSettings.saveSuccess')
+    saveMessage.value = t('components.settings.settingsPanel.remoteControlSettings.saveSuccess')
     saveMessageType.value = 'success'
     // 保存后刷新服务器状态（开关/端口已由主进程应用）
     await loadStatus()
     // 覆盖 loadStatus 回读的旧值提示语，避免闪烁
-    saveMessage.value = t('components.settings.remoteControlSettings.saveSuccess')
+    saveMessage.value = t('components.settings.settingsPanel.remoteControlSettings.saveSuccess')
     setTimeout(() => { saveMessage.value = '' }, 3000)
   } catch (error: any) {
     console.error('Failed to save remote control settings:', error)
-    saveMessage.value = error?.message || t('components.settings.remoteControlSettings.saveFailed')
+    saveMessage.value = error?.message || t('components.settings.settingsPanel.remoteControlSettings.saveFailed')
     saveMessageType.value = 'error'
     setTimeout(() => { saveMessage.value = '' }, 5000)
   } finally {
@@ -131,7 +131,7 @@ onMounted(loadStatus)
   <div class="remote-control-settings">
     <p v-if="!status.available" class="desktop-only-hint">
       <i class="codicon codicon-info"></i>
-      {{ t('components.settings.remoteControlSettings.desktopOnly') }}
+      {{ t('components.settings.settingsPanel.remoteControlSettings.desktopOnly') }}
     </p>
 
     <template v-else>
@@ -139,26 +139,26 @@ onMounted(loadStatus)
       <div class="form-group" data-search-anchor="remote-control-enable">
         <label class="group-label">
           <i class="codicon codicon-remote"></i>
-          {{ t('components.settings.remoteControlSettings.enabled.label') }}
+          {{ t('components.settings.settingsPanel.remoteControlSettings.enabled.label') }}
         </label>
-        <p class="field-description">{{ t('components.settings.remoteControlSettings.enabled.description') }}</p>
+        <p class="field-description">{{ t('components.settings.settingsPanel.remoteControlSettings.enabled.description') }}</p>
         <div class="rc-enable">
           <CustomCheckbox
             v-model="enabled"
-            :label="t('components.settings.remoteControlSettings.enabled.label')"
+            :label="t('components.settings.settingsPanel.remoteControlSettings.enabled.label')"
           />
           <span class="rc-state" :class="{ running: status.running }">
             <i class="codicon" :class="status.running ? 'codicon-circle-filled' : 'codicon-circle-outline'"></i>
             {{ status.running
-              ? t('components.settings.remoteControlSettings.status.running')
-              : t('components.settings.remoteControlSettings.status.stopped') }}
+              ? t('components.settings.settingsPanel.remoteControlSettings.status.running')
+              : t('components.settings.settingsPanel.remoteControlSettings.status.stopped') }}
           </span>
         </div>
         <p v-if="status.error" class="error-hint">
           <i class="codicon codicon-error"></i>
           {{ status.error }}
           <button class="link-btn" @click="retryServer">
-            {{ t('components.settings.remoteControlSettings.status.retry') }}
+            {{ t('components.settings.settingsPanel.remoteControlSettings.status.retry') }}
           </button>
         </p>
       </div>
@@ -169,9 +169,9 @@ onMounted(loadStatus)
       <div class="form-group" data-search-anchor="remote-control-port">
         <label class="group-label">
           <i class="codicon codicon-ports"></i>
-          {{ t('components.settings.remoteControlSettings.port.label') }}
+          {{ t('components.settings.settingsPanel.remoteControlSettings.port.label') }}
         </label>
-        <p class="field-description">{{ t('components.settings.remoteControlSettings.port.description') }}</p>
+        <p class="field-description">{{ t('components.settings.settingsPanel.remoteControlSettings.port.description') }}</p>
         <div class="rc-port-row">
           <input
             v-model="portInput"
@@ -188,7 +188,7 @@ onMounted(loadStatus)
             @click="saveSettings"
           >
             <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.remoteControlSettings.save') }}</span>
+            <span v-else>{{ t('components.settings.settingsPanel.remoteControlSettings.save') }}</span>
           </button>
           <span v-if="saveMessage" class="save-message" :class="saveMessageType">
             {{ saveMessage }}
@@ -203,19 +203,19 @@ onMounted(loadStatus)
       <div class="form-group" data-search-anchor="remote-control-urls">
         <label class="group-label">
           <i class="codicon codicon-globe"></i>
-          {{ t('components.settings.remoteControlSettings.urls.title') }}
+          {{ t('components.settings.settingsPanel.remoteControlSettings.urls.title') }}
         </label>
-        <p class="field-description">{{ t('components.settings.remoteControlSettings.urls.description') }}</p>
+        <p class="field-description">{{ t('components.settings.settingsPanel.remoteControlSettings.urls.description') }}</p>
         <div v-if="status.running && status.urls && status.urls.length > 0" class="rc-url-list">
           <div v-for="url in status.urls" :key="url" class="rc-url-item">
             <span class="rc-url-text">{{ url }}</span>
-            <button class="icon-btn-mini" :title="t('components.settings.remoteControlSettings.urls.copy')" @click="copyUrl(url)">
+            <button class="icon-btn-mini" :title="t('components.settings.settingsPanel.remoteControlSettings.urls.copy')" @click="copyUrl(url)">
               <i class="codicon" :class="copiedUrl === url ? 'codicon-check' : 'codicon-copy'"></i>
             </button>
           </div>
         </div>
         <p v-else class="field-description muted">
-          {{ t('components.settings.remoteControlSettings.urls.empty') }}
+          {{ t('components.settings.settingsPanel.remoteControlSettings.urls.empty') }}
         </p>
       </div>
 
@@ -225,9 +225,9 @@ onMounted(loadStatus)
       <div class="form-group" data-search-anchor="remote-control-info">
         <label class="group-label">
           <i class="codicon codicon-shield"></i>
-          {{ t('components.settings.remoteControlSettings.info.title') }}
+          {{ t('components.settings.settingsPanel.remoteControlSettings.info.title') }}
         </label>
-        <p class="field-description">{{ t('components.settings.remoteControlSettings.info.text') }}</p>
+        <p class="field-description">{{ t('components.settings.settingsPanel.remoteControlSettings.info.text') }}</p>
       </div>
     </template>
   </div>

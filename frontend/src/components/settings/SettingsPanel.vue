@@ -743,25 +743,25 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   },
   {
     key: 'remoteControl-enable', tab: 'remoteControl',
-    labelKey: 'components.settings.remoteControlSettings.enabled.label',
+    labelKey: 'components.settings.settingsPanel.remoteControlSettings.enabled.label',
     keywords: ['启用', 'enabled', '有効', '远程控制开关', '总开关', '开启'],
     anchor: '[data-search-anchor="remote-control-enable"]'
   },
   {
     key: 'remoteControl-port', tab: 'remoteControl',
-    labelKey: 'components.settings.remoteControlSettings.port.label',
+    labelKey: 'components.settings.settingsPanel.remoteControlSettings.port.label',
     keywords: ['端口', 'port', 'ポート', '端口号', '监听端口', '自定义端口'],
     anchor: '[data-search-anchor="remote-control-port"]'
   },
   {
     key: 'remoteControl-urls', tab: 'remoteControl',
-    labelKey: 'components.settings.remoteControlSettings.urls.title',
+    labelKey: 'components.settings.settingsPanel.remoteControlSettings.urls.title',
     keywords: ['访问地址', 'url', '地址', '局域网地址', 'lan', 'ip', '手机访问', '扫码'],
     anchor: '[data-search-anchor="remote-control-urls"]'
   },
   {
     key: 'remoteControl-info', tab: 'remoteControl',
-    labelKey: 'components.settings.remoteControlSettings.info.title',
+    labelKey: 'components.settings.settingsPanel.remoteControlSettings.info.title',
     keywords: ['安全', 'security', 'セキュリティ', '局域网', '仅内网', '提示', '风险'],
     anchor: '[data-search-anchor="remote-control-info"]'
   },
