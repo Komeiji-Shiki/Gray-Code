@@ -108,8 +108,14 @@ function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
+/** 虚拟网卡名模式：Hyper-V/WSL/Docker/VMware/VirtualBox 等内部 bridge 的地址
+ *  局域网内不可达（如 vEthernet 的 172.x），不应作为访问地址展示给用户 */
+const VIRTUAL_ADAPTER_RE = /vEthernet|docker|wsl|hyper|vmnet|vmware|vbox|virtual/i;
+
 /**
  * 计算局域网访问地址（IPv4 非回环地址；无线/有线网卡都会列出）。
+ * 过滤虚拟网卡（Hyper-V 默认交换机、WSL、Docker 等内部 bridge）：这些地址
+ * 只对本机虚拟网络生效，手机等局域网设备无法访问，展示出来没有意义。
  * 仅用于展示给用户，不参与任何访问控制。
  */
 function computeLanUrls(port: number): string[] {
@@ -117,6 +123,7 @@ function computeLanUrls(port: number): string[] {
   try {
     const interfaces = os.networkInterfaces();
     for (const name of Object.keys(interfaces)) {
+      if (VIRTUAL_ADAPTER_RE.test(name)) continue;
       for (const entry of interfaces[name] || []) {
         if (entry.family === 'IPv4' && !entry.internal) {
           urls.push(`http://${entry.address}:${port}`);

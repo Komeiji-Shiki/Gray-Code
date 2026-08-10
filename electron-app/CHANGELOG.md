@@ -19,6 +19,7 @@ are tracked in the root `CHANGELOG.md`.
 
 ### Fixed
   - **远程控制设置页 i18n 键路径错误**：组件文案键误写为 `components.settings.remoteControlSettings.*`，实际语言包层级为 `components.settings.settingsPanel.remoteControlSettings.*`，导致设置页整页显示原始键名。已修正组件与设置搜索索引引用，新增 i18n 键完整性回归测试（详见根目录 CHANGELOG [1.7.9dev]）。
+  - **远程控制访问地址过滤虚拟网卡**：局域网地址列表不再展示 Hyper-V/WSL/Docker 等 vEthernet 内部 bridge 地址（172.x.x.x，局域网设备不可达），仅展示真实网卡地址（详见根目录 CHANGELOG [1.7.9dev]）。
 
 ## [1.7.8] - 2026-08-10
 

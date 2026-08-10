@@ -23,6 +23,7 @@
 
 ### Fixed
   - **远程控制设置页 i18n 键路径错误**：组件文案键误写为 `components.settings.remoteControlSettings.*`，实际语言包层级为 `components.settings.settingsPanel.remoteControlSettings.*`——`t()` 找不到翻译时返回原始键名，设置页整页显示键名。已修正组件与设置搜索索引中的全部引用，并新增 `RemoteControlSettingsI18n` 回归测试（静态提取组件全部 `t()` 键，逐一校验 zh-CN/en/ja 三语言包存在且为字符串），防止再次出现「键名漏译」。
+  - **远程控制访问地址过滤虚拟网卡**：局域网地址列表此前会展示 Hyper-V/WSL/Docker 等虚拟交换机（vEthernet）的内部 bridge 地址（如 172.x.x.x）——这些地址仅对本机虚拟网络生效，手机等局域网设备不可达，展示没有意义。`computeLanUrls` 现按网卡名过滤虚拟适配器（vEthernet/docker/wsl/hyper/vmnet/vmware/vbox/virtual），仅展示真实局域网网卡（WLAN/Ethernet 等）。
 
 ## [1.7.8] - 2026-08-10
 
