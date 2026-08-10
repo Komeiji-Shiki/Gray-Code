@@ -85,7 +85,20 @@ export interface DeserializedPromptContextCache {
 }
 
 function contentToText(message: Content): string {
-    return message.parts?.map(part => part.text || '').join('') || '';
+    // 指纹文本须体现消息身份与 part 结构：role 变化 / thought part 增删 /
+    // part 边界都影响前缀缓存命中（LOW-3）——纯 text 拼接会让 role 翻转、
+    // 伪造思考（fakeThought）增删不改变聚合文本，缓存误判「内容未变」。
+    // role 前缀 + thought 标记只影响指纹比对，不进入真实请求消息。
+    const role = message.role || 'unknown';
+    const parts = (message.parts ?? []).map(part => {
+        const text = part.text || '';
+        return part.thought === true ? `<thought>${text}</thought>` : text;
+    });
+    const body = parts.filter(p => p.trim()).join('\n');
+    if (!body) {
+        return '';
+    }
+    return `${role}: ${body}`;
 }
 
 function messageToSerialized(message: Content): SerializedPromptContextMessage | null {
