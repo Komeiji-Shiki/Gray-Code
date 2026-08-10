@@ -1,4 +1,4 @@
-import type { Content } from '../conversation/types';
+import type { Content } from '../conversation';
 
 export type HistoryIntegrityIssueKind =
     | 'orphan_function_response'

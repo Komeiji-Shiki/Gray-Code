@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import { t } from '../../i18n'
-import type { SettingsManager } from '../settings/SettingsManager'
+import type { SettingsManager } from '../settings'
 import { VSCodeNotificationAdapter } from './WindowsToastAdapter'
 import { renderWindowsAgentStopTemplate } from './templateRenderer'
 import { deriveWindowsAgentStopWindowTitle } from './windowTitle'

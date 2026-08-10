@@ -28,6 +28,7 @@ export { CheckpointQueryService } from './CheckpointQueryService';
 export { CheckpointRetentionService } from './CheckpointRetentionService';
 export { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY, CheckpointAbortError, throwIfAborted } from './checkpointConcurrency';
 export type { CheckpointManifest, CheckpointSummary, CheckpointOperationProgress } from './types';
+export type { CheckpointExclusionConfig } from './types';
 
 // 排除类别（EX-03~EX-06）与默认规则
 export {

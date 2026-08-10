@@ -19,8 +19,8 @@
 
 import { Logger } from '../../core/logger';
 import { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY } from './checkpointConcurrency';
-import type { BranchGraphReadResult } from '../conversation/branch/BranchGraphRepository';
-import type { ConversationBranchGraph } from '../conversation/branch/types';
+import type { BranchGraphReadResult } from '../conversation/branch';
+import type { ConversationBranchGraph } from '../conversation/branch';
 import type { BatchCheckpointDeleteResult } from './types';
 
 const log = Logger.get('checkpointRefCounts');

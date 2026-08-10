@@ -26,8 +26,8 @@ import {
     isFunctionResponseMessage,
     setGlobalBranchService,
 } from '../../backend/modules/conversation/branch';
-import { BranchError } from '../../backend/modules/conversation/branch/types';
-import { CheckpointService } from '../../backend/modules/api/chat/services/CheckpointService';
+import { BranchError } from '../../backend/modules/conversation/branch';
+import { CheckpointService } from '../../backend/modules/api';
 import {
     cancelStreamAndSubAgents,
     detectDirtyFilesInWorkspace,

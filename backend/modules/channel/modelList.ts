@@ -6,8 +6,8 @@
  */
 
 import { t } from '../../i18n';
-import type { ChannelConfig } from '../config/types';
-import type { CustomHeader } from '../config/configs/base';
+import type { ChannelConfig } from '../config';
+import type { CustomHeader } from '../config';
 import { createProxyFetch } from './proxyFetch';
 
 /**

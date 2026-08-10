@@ -41,3 +41,7 @@ export {
 
 // 核心管理器
 export { ConfigManager } from './ConfigManager';
+
+// 补充类型（configs/base 定义的渠道级类型）
+export type { TokenCountMethod, TokenCountApiConfig } from './types';
+export type { CustomHeader, ToolMode } from './configs/base';

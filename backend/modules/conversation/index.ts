@@ -47,6 +47,8 @@ export type {
 export type {
     Content,
     ContentPart,
+    UsageMetadata,
+    ThoughtSignatures,
     ConversationHistory,
     ConversationMetadata,
     ConversationData,
@@ -177,4 +179,5 @@ export type { UsageStatsResult } from './usageStats';
 export { UsageStatsCache, startUsageDirectoryWatcher } from './usageCache';
 
 // 待审批门（pending approval gate）
+export { getPendingApprovalGate, getPendingApprovalGateMismatchReason } from './pendingApprovalGate';
 export type { PendingApprovalGateExpectation } from './pendingApprovalGate';

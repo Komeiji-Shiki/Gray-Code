@@ -13,8 +13,8 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { Logger } from '../../core/logger';
-import type { CheckpointConfig } from '../settings/types';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { CheckpointConfig } from '../settings';
+import type { ConversationManager } from '../conversation';
 import type { CheckpointRecord } from './CheckpointManager';
 import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { isWorkspaceScopedKey } from './CheckpointRestoreEngine';

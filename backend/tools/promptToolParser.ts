@@ -1,5 +1,5 @@
 import { XMLValidator } from 'fast-xml-parser';
-import type { ContentPart } from '../modules/conversation/types';
+import type { ContentPart } from '../modules/conversation';
 import { parseJsonLenient, parseJSONToolCalls, findEndMarkerOutsideString, TOOL_CALL_END, TOOL_CALL_START, type JsonEndMarkerScanState } from './jsonFormatter';
 import { findToolUseEnd, parseXMLToolCalls } from './xmlFormatter';
 

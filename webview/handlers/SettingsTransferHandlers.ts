@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { SettingsExporter } from '../../backend/modules/settings/SettingsExporter';
+import { SettingsExporter } from '../../backend/modules/settings';
 import { getSkillsManager } from '../../backend/modules/skills';
 import { getExtensionVersion } from '../utils/extensionInfo';
 import type { HandlerContext, MessageHandler } from '../types';

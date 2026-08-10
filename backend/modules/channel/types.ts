@@ -4,8 +4,8 @@
  * 定义渠道调用相关的类型和接口
  */
 
-import type { Content, ContentPart } from '../conversation/types';
-import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../settings/types';
+import type { Content, ContentPart } from '../conversation';
+import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../settings';
 
 /**
  * 本次请求临时 prompt context。

@@ -71,3 +71,8 @@ export {
     isSearchInFilesReplaceForbidden,
     getReadonlyModeDangerousTools
 } from './modeToolsPolicy';
+
+// 聚合类型重导出（与 settings/types.ts 聚合入口保持一致，覆盖 PinnedFileItem、
+// SkillConfigItem、SubAgentConfigItem、PromptEntry、ResolvedPromptModeSnapshot、
+// DynamicContextStrategy、TokenCountChannelConfig/TokenCountConfig 等子域类型）
+export * from './types';

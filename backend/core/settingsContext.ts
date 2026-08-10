@@ -15,7 +15,7 @@ import type { SettingsManager } from '../modules/settings';
 import type { ConfigManager } from '../modules/config';
 import type { ChannelManager } from '../modules/channel';
 import type { ToolRegistry } from '../tools/ToolRegistry';
-import type { DiffStorageManager } from '../modules/conversation/DiffStorageManager';
+import type { DiffStorageManager } from '../modules/conversation';
 import type { McpManager } from '../modules/mcp';
 
 /**

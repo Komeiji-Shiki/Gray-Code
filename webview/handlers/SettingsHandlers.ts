@@ -10,7 +10,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
-import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
+import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings';
 import type { MessageHandler } from '../types';
 import { getProductMetadata } from '../../backend/core/productMetadata';
 

@@ -8,8 +8,8 @@ import type { HandlerContext, MessageHandlerRegistry } from './types';
 import { createMessageHandlerRegistry } from './handlers';
 import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
-import type { ConversationManager } from '../backend/modules/conversation/ConversationManager';
-import type { SettingsManager } from '../backend/modules/settings/SettingsManager';
+import type { ConversationManager } from '../backend/modules/conversation';
+import type { SettingsManager } from '../backend/modules/settings';
 import { WebviewClientRegistry, type WebviewClientId } from './runtime/WebviewClientRegistry';
 import type * as vscode from 'vscode';
 

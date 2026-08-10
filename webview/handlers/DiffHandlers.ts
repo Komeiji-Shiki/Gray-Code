@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
-import { getDiffManager } from '../../backend/tools/file/diffManager';
+import { getDiffManager } from '../../backend/tools';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**

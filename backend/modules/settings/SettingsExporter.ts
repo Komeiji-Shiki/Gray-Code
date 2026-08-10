@@ -12,11 +12,11 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import type { SettingsManager } from './SettingsManager';
-import type { ConfigManager } from '../config/ConfigManager';
-import type { ChannelConfig } from '../config/types';
-import type { McpManager } from '../mcp/McpManager';
-import type { McpServerConfig } from '../mcp/types';
-import { SkillsManager } from '../skills/SkillsManager';
+import type { ConfigManager } from '../config';
+import type { ChannelConfig } from '../config';
+import type { McpManager } from '../mcp';
+import type { McpServerConfig } from '../mcp';
+import { SkillsManager } from '../skills';
 import { ALL_CONFIG_KEYS } from './VSCodeSettingsStorage';
 import { MACHINE_SCOPE_KEYS } from './types';
 

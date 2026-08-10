@@ -49,15 +49,15 @@ import {
     setGlobalMcpManager
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
-import { getDiffManager } from '../backend/tools/file/diffManager';
-import { resolveMainChatDiffViewColumn } from '../backend/tools/file/diffViewColumn';
+import { getDiffManager } from '../backend/tools';
+import { resolveMainChatDiffViewColumn } from '../backend/tools';
 import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { MessageRouter } from './MessageRouter';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
-import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
+import { WindowsAgentStopNotificationService } from '../backend/modules/notifications';
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';

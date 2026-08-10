@@ -10,14 +10,14 @@
 
 import * as vscode from 'vscode';
 import type { HandlerContext, MessageHandler } from '../types';
-import { resolveUriWithInfo } from '../../backend/tools/utils';
-import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
-import { getPlanSourceStatusFromContent, type PlanSourceStatusResult } from '../../backend/tools/plan/sourceArtifactSection';
+import { resolveUriWithInfo } from '../../backend/tools';
+import { extractPlanTodoListFromContent } from '../../backend/tools/plan';
+import { getPlanSourceStatusFromContent, type PlanSourceStatusResult } from '../../backend/tools';
 import {
   getPendingApprovalGate,
   getPendingApprovalGateMismatchReason,
   type PendingApprovalGateExpectation
-} from '../../backend/modules/conversation/pendingApprovalGate';
+} from '../../backend/modules/conversation';
 
 // ========== Design 生成计划确认 ==========
 
