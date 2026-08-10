@@ -10,6 +10,26 @@
 
 （暂无未发布改动）
 
+## [1.7.8] - 2026-08-10
+
+### Added
+  - **聊天输入区「思考强度」快捷下拉框（桌面版/插件公共前端）**：位于输入区左下角模型选择器旁，`Off / Low / Medium / High` 四档（档位文案刻意保持英文不翻译，直接对应各 API 的 effort / thinkingLevel 取值）。下拉框与设置页写**同一份**渠道配置（`config.updateConfig`），双向联动：
+    - openai / openai-responses → `options.reasoning.effort`（`none` 映射 Off，`minimal/low/medium/high` 逐档对应，`xhigh/max/ultra/custom` 归入 High），闸门 `optionsEnabled.reasoning` 同步开关；
+    - anthropic → `options.thinking.type = adaptive` + `effort`（effort 仅在该模式经 `output_config` 生效，故写档位时强制 adaptive，`budget_tokens/display` 等其余字段保留），闸门 `optionsEnabled.thinking` 同步开关；
+    - gemini → `options.thinkingConfig.mode = level` + `thinkingLevel`（default/budget 模式按中档展示），闸门 `optionsEnabled.thinkingConfig` 同步开关；
+    - 下拉选择后设置页即时刷新（新增 `settingsStore.configsVersion` 版本信号，ChannelSettings 监听重载）；新增 `utils/thinkingLevel.ts` 纯映射模块与 17 个单测（含闸门默认值语义、四类渠道映射、写入更新构建）。
+
+### Fixed
+  - **任务栏固定图标启动丢失持久化（桌面便携版）**：任务栏「固定到任务栏」记录的是**运行中进程**的 exe 路径——便携版运行的是解压缓存里的内层 exe（`%TEMP%\GrayCode-Portable\GrayCode.exe`），explorer 直接启动它时拿不到 NSIS 启动器注入的 `PORTABLE_EXECUTABLE_DIR`，`resolveUserDataDir` 回退到 `%TEMP%\GrayCode-Portable\data`（临时目录，表现为全新应用、数据「丢失」）。修复：每次经启动器正常启动时，把外层便携 exe 所在目录写入解压缓存内的指针文件 `gc-portable-home`；内层 exe 被直接启动（固定图标等）时读取指针回填 `PORTABLE_EXECUTABLE_DIR`，userData 解析、安装形态判定（`getInstallerKind`）等下游逻辑与正常启动完全一致。设计约束不变：**不写** `%LOCALAPPDATA%` 等固定位置标记，数据仍在 `<便携 exe 目录>\data`（exe + data 可整体拷走）；多实例能力不变（经启动器启动的各副本仍以各自环境变量为准，指针仅服务内层 exe 被直接启动的兜底场景，且每次正常启动都会刷新）；安装版/zip 版无 `gc-cache-key` 标记不受影响；`--user-data-dir` / `GRAYCODE_USER_DATA_DIR` 显式覆盖优先级不变。新增 `portable-home.ts` 纯模块与 9 个单测。
+  - **设置页草稿输入（合入上游 PR #31）**：
+    - 数字输入清空后延迟回填默认值：编辑期间清空保持为空（不保存不回退），输入有效数字立即保存，离开设置页时仍为空的输入框自动回填最后保存的值（新组合式函数 `useDeferredNumberInput`，覆盖工具-最大调用次数/图像生成批量/上下文深度/存档点/总结/渠道超时与 token/重试/渠道选项数字/分支保留期/提示词条目名称等输入框）；
+    - 草稿输入边界修复：严格数字格式校验（拦截 `2.`/`.5`/`1e3` 等中间值提交）、`maxBatchTasks`/`maxImagesPerTask`/`maxCheckpoints` 校验器收紧、`keepRecentTokens` 清空恢复内置默认、`useBranchCleanup` 拦截空串误存 0、`ChannelSettings.updateConfigField(s)` await 前捕获 configId（防往返期间切渠道污染新渠道本地配置）、`PromptEntriesEditor` 清空自定义名称离开时回填最后提交值（忽略 IME 合成中间态）；
+    - 聊天输入框占位符由 `::before` 文档流实现改为绝对定位浮层（不占布局空间），清空输入后光标回到占位符文本之前。
+  - **deleteMessage / deleteSingleMessage 后端索引越界兜底（合入上游 332a5a6b）**：前端窗口可能包含后端并不存在的尾部消息（流式异常后 localOnly 标记丢失、数据文件被外部修改后前后端不一致），按前端索引走后端删除会命中 `INVALID_TARGET_INDEX` 直接拒绝。修复：`backendIndex >= totalMessages` 时降级为本地删除（与 localOnly 占位同一路径），不再请求后端；新增 4 用例回归测试。
+
+### Other
+  - **上游增量合并说明**：本次合入上游 `be43158..fc34ff0e` 中的 3 个通用修复（`f1f4f7ca` 数字输入草稿模式 + 占位符浮层、`b1cf5ad7` 草稿输入边界 + 渠道切换竞态防护、`332a5a6b` 删除索引越界兜底），均经逐文件语义核验（与本地既有改动比对，无重复实现/无破坏本地修复）；**nightly 更新渠道相关提交**（`71a7e893` nightly 渠道功能、`58a49f0e` nightly 渠道审查修复、`fc34ff0e` nightly-build.yml 注释同步）暂不引入——本地打包仍以「用户需自行准备 electron 环境」为准，nightly 渠道后续另行支持。
+
 ## [1.7.7] - 2026-08-09
 
 ### Fixed

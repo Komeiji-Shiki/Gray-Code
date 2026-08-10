@@ -12,6 +12,17 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.8] - 2026-08-10
+
+### Added
+  - **聊天输入区「思考强度」快捷下拉框**：位于模型选择器旁，`Off / Low / Medium / High` 四档（文案保持英文不翻译），与设置页写同一份渠道配置（`config.updateConfig`）双向联动；下拉选择后经 `settingsStore.configsVersion` 信号通知设置页重载（详见根目录 CHANGELOG [1.7.8]）。
+
+### Fixed
+  - **任务栏固定图标启动丢失持久化**：任务栏固定记录的是运行中进程（解压缓存内层 exe `%TEMP%\GrayCode-Portable\GrayCode.exe`）的路径，explorer 直接启动它时无 `PORTABLE_EXECUTABLE_DIR`，userData 回退到临时目录导致「数据丢失」。修复：新增 `portable-home.ts`——正常启动时把外层便携 exe 目录写入解压缓存指针文件 `gc-portable-home`，内层 exe 被直接启动时读取指针回填环境变量，数据解析与安装形态判定恢复一致；不写 `%LOCALAPPDATA%` 固定标记，数据仍在 `<便携 exe 目录>\data`，多实例与便携特性不变，安装版/zip 版不受影响；9 个单测覆盖（详见根目录 CHANGELOG [1.7.8]）。
+
+### Other
+  - **上游增量合并说明**：合入上游 3 个通用修复（设置页草稿输入、渠道切换竞态防护、删除索引越界兜底），nightly 渠道相关提交暂不引入（详见根目录 CHANGELOG [1.7.8]）。
+
 ## [1.7.7] - 2026-08-09
 
 ### Fixed
