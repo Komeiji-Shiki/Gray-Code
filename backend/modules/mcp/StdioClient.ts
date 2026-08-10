@@ -121,6 +121,10 @@ export class StdioMcpClient extends EventEmitter {
     private resources: McpResource[] = [];
     private prompts: McpPrompt[] = [];
 
+    // 能力列表（tools/resources/prompts）拉取是否失败过（失败被吞，列表保持空）。
+    // 供上层区分「服务器真的没有工具」与「拉取失败导致列表为空」。
+    private listFetchFailed: boolean = false;
+
     // stderr 输出（用于错误诊断）
     private stderrOutput: string = '';
 
@@ -234,7 +238,7 @@ export class StdioMcpClient extends EventEmitter {
                     const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
                     this.tools = toolsResult.tools || [];
                 } catch {
-                    // 忽略获取工具失败
+                    this.listFetchFailed = true; // tools/list 失败被吞：标记供上层判定连接质量
                 }
             }
             
@@ -244,7 +248,7 @@ export class StdioMcpClient extends EventEmitter {
                     const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
                     this.resources = resourcesResult.resources || [];
                 } catch {
-                    // 忽略获取资源失败
+                    this.listFetchFailed = true;
                 }
             }
             
@@ -254,15 +258,14 @@ export class StdioMcpClient extends EventEmitter {
                     const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
                     this.prompts = promptsResult.prompts || [];
                 } catch {
-                    // 忽略获取提示失败
+                    this.listFetchFailed = true;
                 }
             }
         } catch (error) {
             // 初始化失败（如 initialize 超时/进程退出）：进程可能仍在运行，
-            // 主动终止进程树并清理资源，避免子进程泄漏；cleanup 幂等，进程已死时无害
-            if (this.process && this.process.pid) {
-                try { treeKill(this.process.pid, 'SIGTERM'); } catch { /* ignore */ }
-            }
+            // 复用 disconnect 的 SIGTERM→SIGKILL→等待流程终止进程树——
+            // 单次 SIGTERM 未生效时可能残留子进程（M5）；cleanup 幂等，进程已死时无害。
+            await this.disconnect().catch(() => { /* 进程已死/已清理则忽略 */ });
             this.cleanup(`Connect failed: ${error instanceof Error ? error.message : String(error)}`);
             throw error;
         }
@@ -288,7 +291,7 @@ export class StdioMcpClient extends EventEmitter {
             const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
             treeKill(pid, 'SIGTERM', (err?: Error) => {
                 if (err) {
-                    try { treeKill(pid, 'SIGKILL'); } catch {}
+                    try { treeKill(pid, 'SIGKILL', () => {}); } catch {}
                 }
             });
             await Promise.race([exited, wait(5000)]);
@@ -296,7 +299,7 @@ export class StdioMcpClient extends EventEmitter {
             if (processAfterSigterm && processAfterSigterm.exitCode === null && processAfterSigterm.signalCode === null) {
                 // SIGTERM 未生效：SIGKILL 强制终止并再等待退出，仍超时则告警
                 await new Promise<void>((resolve) => {
-                    try { treeKill(pid, 'SIGKILL'); } catch {}
+                    try { treeKill(pid, 'SIGKILL', () => {}); } catch {}
                     const timer = setTimeout(resolve, 5000);
                     const activeProcess = this.process;
                     if (!activeProcess) {
@@ -336,6 +339,15 @@ export class StdioMcpClient extends EventEmitter {
      */
     getPrompts(): McpPrompt[] {
         return this.prompts;
+    }
+
+    /**
+     * 能力列表（tools/resources/prompts）拉取是否失败过。
+     * 拉取失败被吞且列表保持空——上层据此区分「服务器真无工具」与「拉取失败」，
+     * 避免把失败误报为正常空列表（假 connected）。
+     */
+    isListFetchFailed(): boolean {
+        return this.listFetchFailed;
     }
     
     /**
@@ -473,9 +485,13 @@ export class StdioMcpClient extends EventEmitter {
 
             // 统一清理：清超时、摘 exit 监听、摘外部 abort 监听
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            // M6：捕获请求发起时的进程引用——客户端级 cleanup 先置 this.process=null
+            // 再 reject pending，届时 this.process?.removeListener 拿不到引用、监听残留
+            // 至进程对象 GC；按发起时引用精确移除才能兑现「每请求监听精确摘除」承诺。
+            const proc = this.process;
             const cleanup = () => {
                 if (timeoutId) clearTimeout(timeoutId);
-                this.process?.removeListener('exit', onExit);
+                proc?.removeListener('exit', onExit);
                 signal?.removeEventListener('abort', onAbort);
             };
             
@@ -597,9 +613,10 @@ export class StdioMcpClient extends EventEmitter {
             console.error(`[MCP] stdout buffer exceeded ${StdioMcpClient.MAX_BUFFER} bytes; killing process and closing connection`);
             // 与 disconnect() 相同的进程树终止路径；handleData 是同步事件回调无法 await，
             // 直接 kill + 同步清理（cleanup 会拒绝全部 pending 请求并清空缓冲），
-            // 随后的 exit 事件会再次调用 cleanup，幂等无害
+            // 随后的 exit 事件会再次调用 cleanup，幂等无害。
+            // 必须传 callback：tree-kill 无 callback 时出错会异步 throw（uncaughtException）。
             if (this.process && this.process.pid) {
-                try { treeKill(this.process.pid, 'SIGTERM'); } catch { /* ignore */ }
+                try { treeKill(this.process.pid, 'SIGTERM', () => {}); } catch { /* ignore */ }
             }
             this.cleanup('Stdout buffer exceeded limit');
             return;
