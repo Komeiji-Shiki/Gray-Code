@@ -384,22 +384,22 @@ export class FileWriteLockManager {
 
     /**
      * 释放指定持有者的全部锁（run 结束/会话中止时的兜底清理）。
+     *
+     * 修改原因：旧实现只按 holder.id 匹配——不同 kind（main/subagent/checkpoint）可能
+     * 使用相同 id（如 conversationId 与 runId 撞车），会把其他 kind 的锁误释放（R2 M1）。
+     * 修改方式：与 tryAcquire/release 一致，按完整身份 `${kind}:${id}` 匹配。
      */
-    releaseAllByHolder(holderId: string): void {
+    releaseAllByHolder(holder: LockHolder): void {
+        const holderKey = holderIdentity(holder);
         let released = false;
         for (const [key, entry] of this.locks) {
-            if (entry.holder.id === holderId) {
+            if (holderIdentity(entry.holder) === holderKey) {
                 this.locks.delete(key);
                 released = true;
             }
         }
-        // 持有者锁已全部清理，一并删除其 path->key 记录
-        // （键为 `${kind}:${id}` 身份键；此处只有 id，删除所有 id 部分匹配的条目）
-        for (const key of this.acquiredKeysByHolder.keys()) {
-            if (key === holderId || key.endsWith(`:${holderId}`)) {
-                this.acquiredKeysByHolder.delete(key);
-            }
-        }
+        // 持有者锁已全部清理，一并删除其 path->key 记录（键为完整身份 `${kind}:${id}`）
+        this.acquiredKeysByHolder.delete(holderKey);
         if (released) {
             this.bumpLockGeneration();
         }
