@@ -6,7 +6,7 @@
   并保留一个空的 [Unreleased] 小节供后续使用。
 -->
 
-## [Unreleased]
+## [1.5.0] - 2026-08-11
 
 ### Refactored
   - 模块化摊平重构·第一批（纯重构，行为零变化；依据 .graycode/research/modularization/ 八份调研报告与 .graycode/plans/modularization-plan.md）：
@@ -64,13 +64,6 @@
 
 ### Fixed
   - 修复 ToolMessage.vue 在 formatter 返回类型容错化（try/catch 降级）后 `h()` children 传参的类型错误（TS2769）：content 断言为 any，运行时行为不变。
-
-### Added
-  - 通知系统-声音提示新增「子代理（SubAgent）提示音独立控制」：事件类型分区为「主代理 / 子代理」两组开关（警告、错误、任务完成、任务失败各四档，互不干扰，旧设置自动回退默认开启）；后台子代理任务（taskEvent）、子代理工具状态（streamChunk）、SubAgent Monitor 的 run 完成/失败/重试事件均按子代理开关门控，Monitor 面板补齐窗口焦点推送与音频解锁 hooks，与主窗口同一套「失焦才播」规则。
-  - 聊天输入框新增高度调整手柄：可向上/向下拖动以扩展超长内容的编辑空间，支持方向键微调，双击或按 Home 恢复按内容自动伸缩；手动高度限制在当前 Webview 可视区域内，并保留内部滚动与光标跟随。
-  - 关闭开屏动画时新增主题自适应的「石墨蚀刻光场」启动占位：以宿主编辑器背景、侧栏、浮层与前景色变量生成银黑/雾白灰阶渐变，叠加宽幅棱面、椭圆折射层和极淡拉丝纹理；中心光环低频呼吸并轻微偏转，斜向交界的灰银反光周期性掠过，明确表示仍在加载，同时不复刻正式 Splash 的 Logo 演出；不含 logo、文字或传统转圈图标，`prefers-reduced-motion` 下恢复静态画面。扩展生成 Webview HTML 时同步读取开屏偏好，关闭态从首帧立即显示并持续至主界面初始化结束。
-
-### Fixed
   - 修复 MCP stdio 参数与 Windows 启动链路：设置页改用 JSON `string[]` 无损保存参数（仍兼容旧空格分隔输入），带空格、引号、反斜杠及空字符串不再在编辑后损坏；后端改用 `cross-spawn` 且固定 `shell: false`，普通可执行文件直接启动，仅在 Windows `.cmd` / `.bat` / PATHEXT 命令确有需要时安全调用 `cmd.exe` 并逐参数转义，避免泛化 shell 拼接造成参数边界丢失与命令注入风险。
   - 修复 XML 工具历史中非法、空白、Unicode 或保留参数键导致整组参数丢失：新增 UTF-16 十六进制的逐键可逆承载格式，递归保留嵌套对象、数组和单元素数组结构；解析前过滤 `__proto__`、`constructor`、`prototype` 等危险键，并兼容既有未标记的合法标签。
   - 修复 Node 26 下 Vitest 的全局 `localStorage` 被 Node 内建访问器遮蔽而导致前端用例批量失败；新增统一 `typecheck:all`、`test:all` 与 `ci` 门禁，正式发布和 nightly 构建现在同时执行后端 Jest、前端 Vitest 及三套类型检查，不再漏跑前端回归。
@@ -93,23 +86,22 @@
   - 记忆条目长度上限放宽：`LOG_REC` 固定宽度记录 320 → 1024 字节，`entryChars` 配置上限从 296 提升到 1000（`memory_config` 工具可设置更大条目）；旧格式 LOG 文件（320 字节/条）在首次访问时自动无损迁移（严格内容校验判别新旧格式、tmp+rename 原子替换、幂等且 fail-open），迁移后追加/编辑/删除/唤醒/回忆均正常；`compress` 摘要长度按树记录宽度钳制（`min(entryChars, TREE_REC-1)`），配置调高后不再因树写入而报错。新增 `logMigration.test.ts`（8 用例：无损迁移/幂等/撕裂尾/新格式不动/歧义尺寸/fail-open/迁移后读写）。
   - 子代理工具调用并行化：子代理自身执行循环从逐个 `await` 串行改为并行执行 + 按原序回填结果（与主会话 ToolExecutionService 的分组并行语义对齐），同一轮模型输出的多个工具（含嵌套派发的多个子代理）不再 1 个 1 个排队；`currentOperationHandle` 升级为句柄数组，「转后台」时正确解绑全部在飞工具的父 abort 监听；`maxConcurrentAgents=1` 时的嵌套派发死锁改为立即明确拒绝（提示调整并发上限）。
   - 测试类型检查恢复：`tsconfig.test.json` 移除对 `backend/__tests__` 的排除，220 个测试文件重新纳入 `typecheck:test` 与 ts-jest 诊断（清理 2 处 `import = require` 旧语法、修复 ModelsHandler 的 Logger 相对路径错误、toolActions 的 parts 空值保护）。
+  - 修复「最近对话/历史对话无法删除」：删除确认框（ConfirmDialog）确认时先置 `visible=false`（同步 emit `update:modelValue:false`）再 emit `confirm`，`ConversationList.vue` 通过 `@update:model-value` 同步清空 `pendingDeleteId` 导致 `confirmDelete` 读到的恒为 null、`delete` 事件永不发出（点击删除只关框无任何动作、无报错、刷新后对话仍在）。改为仅由 `@cancel` 清理待删 id；同类竞态一并修复于 `DirtyFilesConfirm.vue`（v-model setter 同步清空待确认动作导致「丢弃更改并继续」只关框不执行续作）。
+  - 删除对话失败时给出可见错误提示（此前失败仅写 store error 与控制台日志，用户看到的是「点了没反应」）。
+  - 修复 `ActivityTracker.test.ts` 的午夜跨天脆弱性：测试累计推进约 30+ 分钟，真实运行时刻临近午夜时 `Date.now()` 跨天导致 `todaySamples()` 读取次日空文件而误报失败；现固定系统时间（beforeEach 重新设置，afterEach `useRealTimers` 自动恢复）。
+  - 修复 Plan 执行「临时切换渠道」实际是永久切换：`executePlan`（write_file 面板）与任务卡确认流（`withSelectedChannel`）此前通过临时调用 `setConfigId` 切换渠道，但 `setConfigId` 会写后端全局 `settings.setActiveChannelId` 并改写当前对话元数据 `inputModelConfig`（`persistConversationModelConfig`），且 write_file 面板捕获了原渠道却从不恢复——执行完 Plan 后渠道永久停留在 Plan 所选渠道，全局与对话级配置一并被改，与「one-off 仅本次使用」的预期不符。现 `sendMessage` 新增 `configIdOverride` 选项（配套 `pendingConfigIdOverride` 回合级状态）：只覆盖本次 `chatStream` 请求的 `configId`（后端 configId 本就是 per-request 纯值），不写全局设置、不写对话元数据；同一回合内的 `toolConfirmation`（工具确认 / 批量拒绝）沿用同一覆盖渠道，回合终结（complete/cancelled/error）时与 `pendingModelOverride` 一并清除；无全局渠道 + 有回合覆盖时工具确认不再因 `currentConfig` 为空而卡死。三个任务卡确认入口（executePlan / generatePlan / generatePlanFromReview）与 write_file 面板改为直接传 `configIdOverride`，移除 `setConfigId` 切换/恢复 hack（顺带消除执行期间用户手动切渠道被 finally 恢复覆盖的竞态）。新增 `oneOffChannelOverride.test.ts`（8 用例：chatStream 载荷用覆盖渠道且不写全局设置与对话元数据、未指定/空白覆盖保持原行为、发送失败不改全局渠道、toolConfirmation 沿用回合覆盖、无覆盖回退全局、无覆盖且无全局渠道不发送），并扩展终结清理、快照往返回归断言。
+  - 修复「并行工具调用 + 用户中途插话」竞态导致的 `API_ERROR: HTTP 400`（assistant 消息的 `tool_calls` 缺少配对的 tool 消息）与删除消息 `MESSAGE_CHANGED`：① 主路径 `formatHistoryForAPI`（BR-08）新增配对校验——`functionCall` 必须在其所属消息「紧随其后的连续 functionResponse 块」内存在配对响应，否则调用与配对响应一并剔除（覆盖无响应的孤儿调用与「响应被迟到结算追加到用户消息之后」的错位形态），并同步剔除被丢弃调用的 functionResponse，从根上杜绝 `[assistant(tool_calls), user, tool]` 非法交替顺序；② `settleFunctionResponses` 迟到结算不再追加到历史末尾，而是插回所属 functionCall 消息的 FR 块之后（正常路径位置不变，竞态路径下插回用户消息之前，保证 assistant 的 tool_calls 永远紧随其 tool 消息）；③ 工具主循环 `drain` 收尾窗口超时（工具不响应 abort 且永不结束）时不再整段跳过结算，改为为未完成调用写入 cancelled 占位（早启动工具的真实结果仍保留），不再留下无响应的孤儿 tool_calls；④ openai formatter 防御层同步剔除无配对响应的调用（覆盖不经 `formatHistoryForAPI` 的直传历史路径）。新增 `unrespondedToolCallFilter.test.ts`（6 用例）、`settleFunctionResponsesLateInsert.test.ts`（3 用例）与 toolIterationLoopCancel drain 超时占位用例，并补充前端「待确认工具时发送 = 中断当前回合」回归测试（`sendWhilePendingTools.test.ts`）。
+
+### Added
+  - 通知系统-声音提示新增「子代理（SubAgent）提示音独立控制」：事件类型分区为「主代理 / 子代理」两组开关（警告、错误、任务完成、任务失败各四档，互不干扰，旧设置自动回退默认开启）；后台子代理任务（taskEvent）、子代理工具状态（streamChunk）、SubAgent Monitor 的 run 完成/失败/重试事件均按子代理开关门控，Monitor 面板补齐窗口焦点推送与音频解锁 hooks，与主窗口同一套「失焦才播」规则。
+  - 聊天输入框新增高度调整手柄：可向上/向下拖动以扩展超长内容的编辑空间，支持方向键微调，双击或按 Home 恢复按内容自动伸缩；手动高度限制在当前 Webview 可视区域内，并保留内部滚动与光标跟随。
+  - 关闭开屏动画时新增主题自适应的「石墨蚀刻光场」启动占位：以宿主编辑器背景、侧栏、浮层与前景色变量生成银黑/雾白灰阶渐变，叠加宽幅棱面、椭圆折射层和极淡拉丝纹理；中心光环低频呼吸并轻微偏转，斜向交界的灰银反光周期性掠过，明确表示仍在加载，同时不复刻正式 Splash 的 Logo 演出；不含 logo、文字或传统转圈图标，`prefers-reduced-motion` 下恢复静态画面。扩展生成 Webview HTML 时同步读取开屏偏好，关闭态从首帧立即显示并持续至主界面初始化结束。
 
 ### Changed
   - plan/design/review 模式现可使用记忆指令（memory_wake/note/recall/compress/zoom/forget/config）：三个内置模式的 toolPolicy allowlist 统一追加 `MEMORY_TOOL_NAMES`，且各自系统提示词模板补充 `{{$MEMORY}}` 区块（记忆开关关闭时该区块自动留空，与 code 模式行为一致）；ask 模式保持纯问答只读定位，不授予记忆指令。前端「恢复默认模板」的 design/plan 模板同步补充 `{{$MEMORY}}` 占位符。
   - 移除首次启动自动预置的默认 Gemini 渠道（此前扩展激活时无条件创建 `gemini-pro` 渠道，含占位 API Key，易让用户误以为开箱即用）。现在首次打开显示「无渠道」空态，引导用户新建渠道并填写 API Key；设置页允许删除全部渠道（不再强制「至少保留一个」），删除当前聊天会话正在使用的渠道后自动切换到剩余渠道、删光则回到无渠道空态。
   - 切换渠道类型时保留自定义 API URL 与 API Key（API Key 此前已保留；自定义端点如中转站/代理对多种类型通用，无需重写）；若旧 URL 只是旧类型的默认端点（用户未自定义），则跟随新类型默认端点，避免残留旧默认值。模型列表、高级选项等类型特有字段仍重置为新类型默认值；相关确认框与提示文案同步更新。
-
-### Fixed
-  - 修复「最近对话/历史对话无法删除」：删除确认框（ConfirmDialog）确认时先置 `visible=false`（同步 emit `update:modelValue:false`）再 emit `confirm`，`ConversationList.vue` 通过 `@update:model-value` 同步清空 `pendingDeleteId` 导致 `confirmDelete` 读到的恒为 null、`delete` 事件永不发出（点击删除只关框无任何动作、无报错、刷新后对话仍在）。改为仅由 `@cancel` 清理待删 id；同类竞态一并修复于 `DirtyFilesConfirm.vue`（v-model setter 同步清空待确认动作导致「丢弃更改并继续」只关框不执行续作）。
-  - 删除对话失败时给出可见错误提示（此前失败仅写 store error 与控制台日志，用户看到的是「点了没反应」）。
-  - 修复 `ActivityTracker.test.ts` 的午夜跨天脆弱性：测试累计推进约 30+ 分钟，真实运行时刻临近午夜时 `Date.now()` 跨天导致 `todaySamples()` 读取次日空文件而误报失败；现固定系统时间（beforeEach 重新设置，afterEach `useRealTimers` 自动恢复）。
-
-### Changed
   - 移除「工具确认批注」功能：点击工具卡片的确认/拒绝按钮不再读取输入栏内容作为批注——此前输入栏有文字时点击「执行/确认」会把未发送的文字自动作为用户消息发出（插入聊天流、清空输入栏并随 `toolConfirmation` 发送），且前端本地乐观插入的批注消息 `backendIndex` 与后端真实索引错位（被拒工具的 functionResponse 插在其前），删除该消息时命中 `MESSAGE_CHANGED`。现在点击确认/拒绝只提交工具决策；用户在有待确认工具时发送消息改为「中断当前回合」语义：`App.vue handleSend` 先 `cancelStreamAndRejectTools`（拒绝待确认工具、本地与后端同步插入 functionResponse 占位、结束当前回合），再走正常 `sendMessage` 把文字作为新回合发出，不再有本地索引猜测。后端同步移除 `annotation`/`annotationMessageId` 契约字段。
-
-### Fixed
-  - 修复 Plan 执行「临时切换渠道」实际是永久切换：`executePlan`（write_file 面板）与任务卡确认流（`withSelectedChannel`）此前通过临时调用 `setConfigId` 切换渠道，但 `setConfigId` 会写后端全局 `settings.setActiveChannelId` 并改写当前对话元数据 `inputModelConfig`（`persistConversationModelConfig`），且 write_file 面板捕获了原渠道却从不恢复——执行完 Plan 后渠道永久停留在 Plan 所选渠道，全局与对话级配置一并被改，与「one-off 仅本次使用」的预期不符。现 `sendMessage` 新增 `configIdOverride` 选项（配套 `pendingConfigIdOverride` 回合级状态）：只覆盖本次 `chatStream` 请求的 `configId`（后端 configId 本就是 per-request 纯值），不写全局设置、不写对话元数据；同一回合内的 `toolConfirmation`（工具确认 / 批量拒绝）沿用同一覆盖渠道，回合终结（complete/cancelled/error）时与 `pendingModelOverride` 一并清除；无全局渠道 + 有回合覆盖时工具确认不再因 `currentConfig` 为空而卡死。三个任务卡确认入口（executePlan / generatePlan / generatePlanFromReview）与 write_file 面板改为直接传 `configIdOverride`，移除 `setConfigId` 切换/恢复 hack（顺带消除执行期间用户手动切渠道被 finally 恢复覆盖的竞态）。新增 `oneOffChannelOverride.test.ts`（8 用例：chatStream 载荷用覆盖渠道且不写全局设置与对话元数据、未指定/空白覆盖保持原行为、发送失败不改全局渠道、toolConfirmation 沿用回合覆盖、无覆盖回退全局、无覆盖且无全局渠道不发送），并扩展终结清理、快照往返回归断言。
-  - 修复「并行工具调用 + 用户中途插话」竞态导致的 `API_ERROR: HTTP 400`（assistant 消息的 `tool_calls` 缺少配对的 tool 消息）与删除消息 `MESSAGE_CHANGED`：① 主路径 `formatHistoryForAPI`（BR-08）新增配对校验——`functionCall` 必须在其所属消息「紧随其后的连续 functionResponse 块」内存在配对响应，否则调用与配对响应一并剔除（覆盖无响应的孤儿调用与「响应被迟到结算追加到用户消息之后」的错位形态），并同步剔除被丢弃调用的 functionResponse，从根上杜绝 `[assistant(tool_calls), user, tool]` 非法交替顺序；② `settleFunctionResponses` 迟到结算不再追加到历史末尾，而是插回所属 functionCall 消息的 FR 块之后（正常路径位置不变，竞态路径下插回用户消息之前，保证 assistant 的 tool_calls 永远紧随其 tool 消息）；③ 工具主循环 `drain` 收尾窗口超时（工具不响应 abort 且永不结束）时不再整段跳过结算，改为为未完成调用写入 cancelled 占位（早启动工具的真实结果仍保留），不再留下无响应的孤儿 tool_calls；④ openai formatter 防御层同步剔除无配对响应的调用（覆盖不经 `formatHistoryForAPI` 的直传历史路径）。新增 `unrespondedToolCallFilter.test.ts`（6 用例）、`settleFunctionResponsesLateInsert.test.ts`（3 用例）与 toolIterationLoopCancel drain 超时占位用例，并补充前端「待确认工具时发送 = 中断当前回合」回归测试（`sendWhilePendingTools.test.ts`）。
 
 ## [1.4.6] - 2026-08-08
 
