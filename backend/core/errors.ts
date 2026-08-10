@@ -11,7 +11,7 @@
  * 仅以注释"与 backend/core/errors.ts 同步维护"保持同步。
  */
 
-import { ErrorType } from '../modules/channel/types';
+import { ErrorType } from './errorTypes';
 
 /** 可重试的 ChannelError.type 白名单（以 ChannelManager 原判定为基准，勿随意增减） */
 export const RETRYABLE_ERROR_TYPES: ReadonlySet<ErrorType> = new Set([
