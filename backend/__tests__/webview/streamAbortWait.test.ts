@@ -151,3 +151,60 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         await expect(waiting).resolves.toBeUndefined();
     });
 });
+
+
+// ============ M6 补测：waitForIdle 两个超时分支（fake timers） ============
+describe('StreamAbortManager - waitForIdle 超时分支（M6 fake timers）', () => {
+    afterEach(() => {
+        StreamAbortManager.setGlobalInstance(undefined);
+        jest.useRealTimers();
+    });
+
+    it('活跃流分支：finally 永不执行 → 超时视同空闲返回，不循环重试', async () => {
+        jest.useFakeTimers();
+        const manager = new StreamAbortManager();
+        manager.create('conv-active-hang');
+
+        const waiting = manager.waitForIdle('conv-active-hang', 6000);
+        const probe = waiting.then(() => 'done', () => 'err');
+
+        // 未到超时：等待不返回（旧流挂死，delete 永不来）
+        await jest.advanceTimersByTimeAsync(5999);
+        await expect(Promise.race([probe, Promise.resolve('pending')])).resolves.toBe('pending');
+
+        // 超时到点：返回（视为已空闲），且不进入下一轮 while 循环
+        await jest.advanceTimersByTimeAsync(1);
+        await expect(probe).resolves.toBe('done');
+    });
+
+    it('退休分支：cancel 后 finally 永不执行 → 超时返回且 retired 条目被 clear', async () => {
+        jest.useFakeTimers();
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv-retired-hang');
+        manager.cancel('conv-retired-hang');
+
+        const waiting = manager.waitForIdle('conv-retired-hang', 6000);
+        await jest.advanceTimersByTimeAsync(6000);
+        await expect(waiting).resolves.toBeUndefined();
+
+        // 条目已 clear：后续 waitForIdle 立即返回，不再白等 6s
+        expect((manager as any).retiredChain.getEntry('conv-retired-hang')).toBeUndefined();
+        const second = manager.waitForIdle('conv-retired-hang', 6000);
+        await jest.advanceTimersByTimeAsync(10);
+        await expect(second).resolves.toBeUndefined();
+        expect(controller.signal.aborted).toBe(true);
+    });
+
+    it('M8 窗口：delete 先于等待者注册 → 等待者靠超时兜底返回（非挂死）', async () => {
+        jest.useFakeTimers();
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv-window');
+        // 模拟「isActive 检查之后、registerIdleWaiter 之前」delete 已发生：
+        // 此时删除不经过已注册等待者表，等待者只能靠超时兜底（6s 延迟边界，非错误）
+        manager.delete('conv-window', controller);
+
+        const waiting = manager.waitForIdle('conv-window', 6000);
+        await jest.advanceTimersByTimeAsync(6000);
+        await expect(waiting).resolves.toBeUndefined();
+    });
+});
