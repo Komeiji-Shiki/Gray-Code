@@ -21,7 +21,7 @@ import type { GenerateRequest } from '../../../modules/channel/types';
 import { subAgentRunEventBus } from '../runEventBus';
 import type { SubAgentRunStatus } from '../runEventBus';
 import { subAgentRunController } from '../runController';
-import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from '../concurrencyLimiter';
+import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError, SubAgentQueueTimeoutError } from '../concurrencyLimiter';
 import { fileWriteLockManager } from '../../../core/fileWriteLockManager';
 import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../../../core/services/agentMailbox';
 import { markAiActive } from '../../../modules/activity';
@@ -349,7 +349,14 @@ export function createDefaultExecutor(
                     );
                 }
             }
-            await subAgentConcurrencyLimiter.acquire(runId, acquireSignal);
+            // 排队超时（秒，-1 无限制，默认 600）：acquire 前读取全局设置并换算为毫秒传入。
+            // 0 按无限制处理（与 limiter 现有「0 视为配置错误」语义一致，limiter 内 timeoutMs<=0 不启动定时器）。
+            const queueTimeoutMs = (() => {
+                const raw = context.settingsManager?.getSubAgentsConfig?.()?.queueTimeoutSeconds;
+                if (raw === undefined || raw === null) return 600 * 1000;
+                return raw < 0 ? undefined : raw * 1000;
+            })();
+            await subAgentConcurrencyLimiter.acquire(runId, acquireSignal, queueTimeoutMs);
             // M-tsub：acquire 成功后 markStarted —— 此后 pause 恢复 abort 语义（运行中 run）。
             subAgentRunController.markStarted(runId);
         } catch (queueError) {
@@ -364,13 +371,18 @@ export function createDefaultExecutor(
                 subAgentRunController.releaseContinuation(runId);
                 continuationReserved = false;
             }
-            const message = queueError instanceof SubAgentQueueCancelledError
+            // 修改原因：排队超时（SubAgentQueueTimeoutError）是失败而非用户取消，终态事件与结果必须区分：
+            //          cancelled=true 会让 UI 显示「用户取消」，排队超时子代理应如实以失败结算（cancelled=false）。
+            const isQueueCancelled = queueError instanceof SubAgentQueueCancelledError;
+            const message = isQueueCancelled
                 ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
-                : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
+                : queueError instanceof SubAgentQueueTimeoutError
+                    ? `Sub-agent failed after waiting ${queueError.timeoutMs / 1000}s in the concurrency queue (queue timeout).`
+                    : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
             const finalized = finalizeRun({
                 success: false,
                 error: message,
-                cancelled: true
+                cancelled: isQueueCancelled
             });
             await subAgentRunEventBus.flushRun(runId);
             return finalized;

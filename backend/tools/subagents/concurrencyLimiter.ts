@@ -4,6 +4,9 @@
  * 修改原因：多个 subagents 调用过去只能串行执行，超出 maxConcurrentAgents 的调用会被直接拒绝。
  * 修改方式：提供全局 FIFO 信号量，执行前 acquire、结束后 release；容量每次动态读取设置，超限时排队等待。
  * 修改目的：让 maxConcurrentAgents 语义变为"同时运行的子代理数量上限"，超出的调用排队而不是被拒绝。
+ *
+ * 排队超时：acquire 可选第三参 timeoutMs（毫秒）。undefined / 负数 / 0 均表示无超时（排队可无限等待）；
+ * 正整数表示排队超过该毫秒数后该 run 以失败结算（SubAgentQueueTimeoutError），秒由调用方换算毫秒传入。
  */
 
 import { getGlobalSettingsManager } from '../../core/settingsContext';
@@ -20,12 +23,26 @@ export class SubAgentQueueCancelledError extends Error {
     }
 }
 
+/**
+ * 排队等待超时时抛出的错误。
+ *
+ * executor 捕获后应把 run 标记为 failed（而非 cancelled）——超时是失败，不是用户取消。
+ */
+export class SubAgentQueueTimeoutError extends Error {
+    constructor(readonly runId: string, readonly timeoutMs: number) {
+        super(`SubAgent run "${runId}" timed out after waiting ${timeoutMs}ms in the concurrency queue.`);
+        this.name = 'SubAgentQueueTimeoutError';
+    }
+}
+
 interface QueueEntry {
     runId: string;
     resolve: () => void;
     reject: (error: Error) => void;
-    /** 解除 abort 监听等清理动作 */
+    /** 解除 abort 监听、清除排队超时定时器等清理动作 */
     cleanup: () => void;
+    /** 排队超时定时器引用（出队时 clearTimeout，避免 open handle 残留） */
+    timeout?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -69,9 +86,11 @@ export class SubAgentConcurrencyLimiter {
     /**
      * 获取一个执行席位。
      *
-     * 有空位时立即返回；满员时按 FIFO 排队等待，直到有席位释放或被取消。
+     * 有空位时立即返回；满员时按 FIFO 排队等待，直到有席位释放、被取消或排队超时（timeoutMs）。
+     *
+     * @param timeoutMs 排队超时（毫秒）。undefined / 负数 / 0 表示无超时；正整数表示排队超过该毫秒数后以失败结算。
      */
-    async acquire(runId: string, abortSignal?: AbortSignal): Promise<void> {
+    async acquire(runId: string, abortSignal?: AbortSignal, timeoutMs?: number): Promise<void> {
         if (abortSignal?.aborted) {
             throw new SubAgentQueueCancelledError(runId);
         }
@@ -105,6 +124,11 @@ export class SubAgentConcurrencyLimiter {
                     if (abortSignal) {
                         abortSignal.removeEventListener('abort', onAbort);
                     }
+                    // 出队时统一清除排队超时定时器，避免 open handle 残留
+                    if (entry.timeout !== undefined) {
+                        clearTimeout(entry.timeout);
+                        entry.timeout = undefined;
+                    }
                 }
             };
             const onAbort = () => {
@@ -117,6 +141,19 @@ export class SubAgentConcurrencyLimiter {
             };
             if (abortSignal) {
                 abortSignal.addEventListener('abort', onAbort, { once: true });
+            }
+            // 排队超时：timeoutMs 为有限正整数时启动定时器，超时后该 run 以失败结算（非用户取消）。
+            // 定时器引用存入 entry.timeout，三处出队路径（drainQueue 唤醒 / abort 移除 / push 后重查 aborted 移除）
+            // 都经 entry.cleanup() 统一 clearTimeout，避免 open handle 残留。
+            if (timeoutMs !== undefined && timeoutMs > 0) {
+                entry.timeout = setTimeout(() => {
+                    const index = this.queue.indexOf(entry);
+                    if (index >= 0) {
+                        this.queue.splice(index, 1);
+                    }
+                    entry.cleanup();
+                    reject(new SubAgentQueueTimeoutError(runId, timeoutMs));
+                }, timeoutMs);
             }
             this.queue.push(entry);
 
