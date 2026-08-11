@@ -44,6 +44,7 @@
 - [项目结构](#项目结构)
 - [常见问题](#常见问题)
 - [贡献](#贡献)
+- [衍生项目](#衍生项目)
 - [许可证](#许可证)
 
 ---
@@ -257,6 +258,14 @@ Gray-Code/
 ## 贡献
 
 欢迎通过 [Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues) 提交问题，也欢迎提交 Pull Request。建议在提交前运行 `npm run typecheck`、`npm run build`、`npm test`、`npm run test:frontend`，确保类型检查、后端与前端构建、两套测试都通过。如果改动涉及前端交互，也建议确认 Webview 本地开发模式正常。
+
+## 衍生项目
+
+社区基于本仓库维护的衍生项目：
+
+- [**GrayCode Desktop**](https://github.com/czocelot/Gray-Code-Desktop) —— 独立桌面版（Electron），无需安装 VS Code，内置 `vscode-shim` 兼容层，功能与扩展版一致，支持 Windows / macOS / Linux，提供安装版与免安装便携版（[Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)）。桌面版与本仓库共享同一套 backend / frontend / webview 代码，并由社区成员持续同步上游更新。
+
+> 衍生项目由社区独立维护，其发布节奏与功能可能与本仓库不完全一致，具体以对应仓库为准。
 
 ## 许可证
 
