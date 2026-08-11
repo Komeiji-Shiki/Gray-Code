@@ -432,10 +432,12 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
   MESSAGE_NAMES['settings.export'],
   MESSAGE_NAMES['settings.import'],
   // installUpdate：下载 vsix + 安装为分钟级任务，超时会让前端误判失败而后端继续安装
-  MESSAGE_NAMES.installUpdate,
-  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
+  MESSAGE_NAMES.installUpdate,  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
   MESSAGE_NAMES['tokenizer.getResource'],
   MESSAGE_NAMES.countSystemPromptTokens,
+  // summarizeContext：总结是长上下文 LLM 调用（分钟级），180s 前端超时会让误判失败后
+  // 端继续总结，重试又叠加 token 消耗；与后端 stream 类请求同样豁免
+  MESSAGE_NAMES.summarizeContext,
 ]);
 
 /**
