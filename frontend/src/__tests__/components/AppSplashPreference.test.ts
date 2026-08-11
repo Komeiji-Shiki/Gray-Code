@@ -94,6 +94,11 @@ vi.mock('../../components/Splash.vue', () => ({
   }
 }))
 
+// 启动预加载渠道配置：测试环境不真实发起 IPC，mock 掉避免请求噪音
+vi.mock('../../services/channelConfigCache', () => ({
+  preloadChannelConfigs: runtime.preloadChannelConfigs
+}))
+
 vi.mock('../../composables', () => ({
   useAttachments: () => ({
     attachments: [],
@@ -216,6 +221,8 @@ describe('App 开屏动画启动偏好', () => {
     runtime.terminalStore = { initialize: vi.fn() }
     runtime.diffStore = { open: ref(false), openPanel: vi.fn(), close: vi.fn(), push: vi.fn(), syncStatuses: vi.fn() }
     runtime.codeViewStore = { open: ref(false), openEmpty: vi.fn(), close: vi.fn() }
+
+    runtime.preloadChannelConfigs.mockClear()
 
     runtime.sendToExtension.mockReset()
     runtime.sendToExtension.mockImplementation((type: string) => {
