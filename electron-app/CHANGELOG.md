@@ -9,6 +9,11 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+
+（暂无未发布改动）
+
+## [1.7.13] - 2026-08-11
+
 ### Fixed（1.7.13dev 补记：UI 不透明度仅背景半透明 + 消息区/四下拉框透出 + 移除 nightly 更新渠道）
   - **UI 不透明度不再影响文字**：改为全局表面变量（--gc-surface-*，color-mix 按 --gc-ui-opacity 混合透明）替换面板背景色，文字/图标始终全不透明；
   - **修复消息区背景不透明（上游合并回归）**：.message-list 等容器改回随滑块透出背景图（--gc-surface-editor-bg）；
@@ -118,6 +123,13 @@ are tracked in the root `CHANGELOG.md`.
   - **测试**：remoteControl 测试扩至 109 例（分页/摘要同步/真实 chunk 形状/UI 模板结构）。
   （详见根目录 CHANGELOG [1.7.10dev]）
 
+### Fixed（1.7.13 发布版：自动更新链路 + 桌面版修复）
+  - **修复自动更新「下载完成但安装器从未启动」**：native 层 openPath 拒绝 .exe 且 shim 静默吞掉失败——下载完成后系统从未打开安装包，UI 却提示「已下载并打开」。新增 update:launchInstaller 专用白名单通道（仅允许 <数据目录>/update 内的 .exe/.zip 启动，由 BackendHost 注册），启动失败抛错不再谎报成功；
+  - **修复自动更新提示永不出现**：后端启动检查延迟 10s、前端仅挂载时查询一次——新增检查状态推送（update.checkAvailable），发现新版本主动弹窗；已关闭的版本不再重复弹出；
+  - **便携版/安装版更新资产严格区分**：portable 形态只匹配便携版 exe / 免安装 zip，绝不回退 Setup 安装包（防止便携用户被拉进安装版污染系统环境）；安装版优先 Setup；
+  - **更新下载源信任校验（安全）**：installUpdate 只采用检查器自身解析的更新（版本一致）；下载地址必须是本仓库 GitHub Releases（UPDATE_URL_UNTRUSTED 拒绝），防渲染层 XSS 后任意 .exe 落盘启动；
+  - **其它修复**：second-instance 启动竞态崩溃、便携版数据目录只读回退（与安装版一致，回退目录独立）、错误日志 apiKey 脱敏、MCP 配置损坏不再阻断启动、子代理 token 消耗归集主会话用量统计、远端流失败后活动会话复位、超大文件 LSP 扫描上限、目录选择对话框超时豁免、错误码结构化透传（en/ja 用户不再看到中文报错）；
+  - 测试：后端 273 套件/3074 例 + 前端 101 文件/994 例 + e2e/smoke 全绿；版本 1.7.13
 ## [1.7.10dev] - 2026-08-10
 
 ### Added
