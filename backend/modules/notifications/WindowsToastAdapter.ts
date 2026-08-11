@@ -1,6 +1,8 @@
+import * as path from 'path'
 import * as vscode from 'vscode'
 import type { WindowsToastAdapter, WindowsToastRequest, WindowsToastShowResult } from './types'
 import { Logger } from '../../core/logger'
+import { getProductExtensionId } from '../../core/productMetadata'
 
 const log = Logger.get('WindowsToastAdapter')
 
@@ -15,6 +17,19 @@ function resolveVSCodeWindowsToastAppId(): string {
   }
 
   return DEFAULT_VSCODE_WINDOWS_APP_ID
+}
+
+/** 解析 GrayCode 扩展自带图标（resources/icon.png）的绝对路径，供 toast 显示 */
+function resolveWindowsToastIconPath(): string | undefined {
+  try {
+    const extension = vscode.extensions?.getExtension?.(getProductExtensionId())
+    if (extension?.extensionPath) {
+      return path.join(extension.extensionPath, 'resources', 'icon.png')
+    }
+  } catch {
+    // 测试/非 VS Code 环境拿不到扩展路径时返回 undefined，不阻塞通知
+  }
+  return undefined
 }
 
 type WindowsToasterLike = {
@@ -46,7 +61,8 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
     private readonly createWindowsToaster: WindowsToasterFactory = defaultCreateWindowsToaster,
     private readonly logger: Pick<Console, 'error'> = console,
     private readonly cleanupDelayMs = 5 * 60 * 1000,
-    private readonly appId: string = resolveVSCodeWindowsToastAppId()
+    private readonly appId: string = resolveVSCodeWindowsToastAppId(),
+    private readonly iconPath: string | undefined = resolveWindowsToastIconPath()
   ) {}
 
   async show(request: WindowsToastRequest): Promise<WindowsToastShowResult> {
@@ -137,7 +153,8 @@ export class NodeNotifierWindowsToastAdapter implements WindowsToastAdapter {
             message: request.message,
             sound: request.silent ? false : true,
             wait: request.waitForAction,
-            appID: this.appId
+            appID: this.appId,
+            icon: this.iconPath
           },
           (error, response, metadata) => {
             if (error) {
