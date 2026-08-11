@@ -669,6 +669,28 @@ export const useChatStore = defineStore('chat', () => {
   let stopSmoothStreamingWatcher: (() => void) | null = null
   
   async function initialize(): Promise<void> {
+    // 首次状态建立必须发生在任何 await 之前：启动加载期间界面或内部消息可能触发首条发送，
+    // 发送流程需要一个稳定的 activeTabId 来绑定懒创建的会话。旧实现把清空/建标签页放在
+    // 全部 IPC 完成之后，会把在途首条消息和会话 ID 整体覆盖，表现为消息闪现后消失。
+    // 先标记再初始化：即使后续加载失败，重试 initialize 也不得清空用户已经开始的会话。
+    if (!initializedChatStates.has(state)) {
+      initializedChatStates.add(state)
+      state.currentConversationId.value = null
+      state.allMessages.value = []
+      rebuildMessageIndexById(state)
+      state.windowStartIndex.value = 0
+      state.totalMessages.value = 0
+      state.isLoadingMoreMessages.value = false
+      state.historyFolded.value = false
+      state.foldedMessageCount.value = 0
+      state.toolResponseCache.value = new Map()
+
+      const initialTabId = createTabAction(state, { title: 'New Chat' })
+      if (initialTabId) {
+        state.activeTabId.value = initialTabId
+      }
+    }
+
     // 幂等保护：重复调用（HMR/App 重挂载）时先注销旧订阅再重新注册，
     // 避免每条 streamChunk 被重复处理（文本重复追加、checkpoint 重复写入、tps 计数翻倍）。
     disposeChatStreamListener?.()
@@ -705,27 +727,6 @@ export const useChatStore = defineStore('chat', () => {
     await loadCurrentConfig(state)
     await loadCheckpointConfig(state)
     await loadConversations()
-    
-    // 仅首次执行状态重置：重复 initialize（HMR/重挂载）不应清空用户当前会话。
-    // 用 WeakSet 按 state 实例记录——store 重建（新 state 对象）时仍会正确完成首次初始化。
-    if (!initializedChatStates.has(state)) {
-      initializedChatStates.add(state)
-      state.currentConversationId.value = null
-      state.allMessages.value = []
-      rebuildMessageIndexById(state)
-      state.windowStartIndex.value = 0
-      state.totalMessages.value = 0
-      state.isLoadingMoreMessages.value = false
-      state.historyFolded.value = false
-      state.foldedMessageCount.value = 0
-      state.toolResponseCache.value = new Map()
-
-      // 初始化标签页：创建第一个空白标签页
-      const initialTabId = createTabAction(state, { title: 'New Chat' })
-      if (initialTabId) {
-        state.activeTabId.value = initialTabId
-      }
-    }
   }
 
   // ============ 返回 ============
