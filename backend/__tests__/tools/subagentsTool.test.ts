@@ -80,6 +80,10 @@ describe('SubAgents 工具后台分支', () => {
         (subAgentRegistry.getByName as jest.Mock).mockReturnValue({ config: TEST_CONFIG, executor: undefined });
         // 声明生成需要非空配置列表，否则 description 走「未配置」短分支
         (subAgentRegistry.getAllConfigs as jest.Mock).mockReturnValue([TEST_CONFIG]);
+        // 复位设置管理器（防用例间 mockReturnValue 泄漏：旧全局开关兼容用例会写入 forceUseCurrentChannel）
+        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
+            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false })
+        });
     });
 
     test('工具声明暴露 background 参数', () => {
@@ -491,10 +495,11 @@ describe('SubAgents 工具后台分支', () => {
         expect(agentDesc).not.toContain('execute_command');
     });
 
-    test('强制使用当前渠道（全局开关）：executor 收到替换后的当前渠道/模型', async () => {
-        // 开启全局开关：所有子代理统一改用派发方当前渠道
-        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
-            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: true })
+    test('与当前模型同步（逐代理）：executor 收到替换后的当前渠道/模型', async () => {
+        // 子代理自身配置 syncWithCurrentModel: true：忽略自身固定渠道，改用派发方当前渠道
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: true } },
+            executor: undefined
         });
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_force', cancelled: false
@@ -526,9 +531,10 @@ describe('SubAgents 工具后台分支', () => {
         expect(result.data.modelId).toBe('model_current');
     });
 
-    test('强制使用当前渠道（全局开关）：channelModelId 缺省时 modelId 走渠道默认模型（undefined）', async () => {
-        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
-            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: true })
+    test('与当前模型同步（逐代理）：channelModelId 缺省时 modelId 走渠道默认模型（undefined）', async () => {
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: true } },
+            executor: undefined
         });
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_force_model', cancelled: false
@@ -552,9 +558,10 @@ describe('SubAgents 工具后台分支', () => {
         expect(executorConfig.channel.modelId).toBeUndefined();
     });
 
-    test('强制使用当前渠道（全局开关）：工具上下文缺少活动渠道时拒绝派发，不创建 executor', async () => {
-        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
-            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: true })
+    test('与当前模型同步（逐代理）：工具上下文缺少活动渠道时拒绝派发，不创建 executor', async () => {
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: true } },
+            executor: undefined
         });
         (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
 
@@ -565,16 +572,13 @@ describe('SubAgents 工具后台分支', () => {
         ) as any;
 
         expect(result.success).toBe(false);
-        expect(result.error).toContain('force use current channel');
+        expect(result.error).toContain('sync with the current model');
         expect(result.error).toContain('Test Agent');
         expect(createDefaultExecutor).not.toHaveBeenCalled();
     });
 
-    test('全局开关关闭时，executor 仍使用子代理自身配置的渠道', async () => {
-        // 显式复位全局开关（防用例间 mockReturnValue 泄漏）
-        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
-            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: false })
-        });
+    test('未勾选同步时，executor 仍使用子代理自身配置的渠道', async () => {
+        // 子代理未配置 syncWithCurrentModel（undefined），全局旧开关也未开启
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_own', cancelled: false
         }));
@@ -600,9 +604,68 @@ describe('SubAgents 工具后台分支', () => {
         expect(executorConfig.channel.channelId).not.toBe('channel_current');
     });
 
-    test('强制使用当前渠道（全局开关）：后台模式同样使用替换后的当前渠道', async () => {
+    test('旧全局开关兼容：forceUseCurrentChannel=true 且代理未显式设置时视同同步', async () => {
         (getGlobalSettingsManager as jest.Mock).mockReturnValue({
             getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: true })
+        });
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'subagent_run_legacy', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
+
+        const tool = getSubAgentsTool();
+        await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            {
+                toolId: 'tool_legacy',
+                conversationId: 'conv_1',
+                abortSignal: new AbortController().signal,
+                channelConfigId: 'channel_current',
+                channelModelId: 'model_current'
+            }
+        );
+
+        const executorConfig = (createDefaultExecutor as jest.Mock).mock.calls[0][0];
+        expect(executorConfig.channel.channelId).toBe('channel_current');
+        expect(executorConfig.channel.modelId).toBe('model_current');
+    });
+
+    test('旧全局开关兼容：代理显式设置 syncWithCurrentModel=false 时恢复自身固定渠道', async () => {
+        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
+            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: true })
+        });
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: false } },
+            executor: undefined
+        });
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'subagent_run_own_override', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
+
+        const tool = getSubAgentsTool();
+        await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x' },
+            {
+                toolId: 'tool_own_override',
+                conversationId: 'conv_1',
+                abortSignal: new AbortController().signal,
+                channelConfigId: 'channel_current',
+                channelModelId: 'model_current'
+            }
+        );
+
+        const executorConfig = (createDefaultExecutor as jest.Mock).mock.calls[0][0];
+        expect(executorConfig.channel.channelId).toBe('channel_1');
+        expect(executorConfig.channel.modelId).toBeUndefined();
+    });
+
+    test('与当前模型同步（逐代理）：后台模式同样使用替换后的当前渠道', async () => {
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: true } },
+            executor: undefined
         });
         const fakeExecutor = jest.fn(() => new Promise(() => { }));
         (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
@@ -627,9 +690,10 @@ describe('SubAgents 工具后台分支', () => {
         expect(executorConfig.channel.modelId).toBe('model_current');
     });
 
-    test('强制使用当前渠道（全局开关）：续跑沿用旧身份时同样替换渠道', async () => {
-        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
-            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: false, forceUseCurrentChannel: true })
+    test('与当前模型同步（逐代理）：续跑沿用旧身份时同样替换渠道', async () => {
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: true } },
+            executor: undefined
         });
         subAgentRunEventBus.createRun('cont_force_old', 'Test Agent', { agentType: 'tester', prompt: 'old' }, {
             conversationId: 'conv_1',
@@ -658,6 +722,71 @@ describe('SubAgents 工具后台分支', () => {
         // 身份沿用旧 run（agentType 不变），渠道替换为当前渠道
         const executorConfig = (createDefaultExecutor as jest.Mock).mock.calls[0][0];
         expect(executorConfig.type).toBe('tester');
+        expect(executorConfig.channel.channelId).toBe('channel_current');
+        expect(executorConfig.channel.modelId).toBe('model_current');
+    });
+
+    test('与当前模型同步（逐代理）：嵌套派发继承父 run 的当前渠道', async () => {
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({
+            config: { ...TEST_CONFIG, channel: { channelId: 'channel_1', syncWithCurrentModel: true } },
+            executor: undefined
+        });
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'subagent_run_nested_sync', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'nested' },
+            {
+                toolId: 'tool_nested_sync',
+                abortSignal: new AbortController().signal,
+                channelConfigId: 'parent_channel',
+                channelModelId: 'parent_model',
+                mailboxConversationId: 'conv_1',
+                mailboxRunId: 'parent_sync_run',
+                subagentDepth: 1
+            }
+        ) as any;
+
+        expect(result.success).toBe(true);
+        // 子代理配置 syncWithCurrentModel: true → 嵌套派发时使用父 run 的当前渠道
+        const executorConfig = (createDefaultExecutor as jest.Mock).mock.calls[0][0];
+        expect(executorConfig.channel.channelId).toBe('parent_channel');
+        expect(executorConfig.channel.modelId).toBe('parent_model');
+        // 深度/父子关系保持既有语义
+        const request = fakeExecutor.mock.calls[0][0];
+        expect(request.depth).toBe(2);
+        expect(request.parentRunId).toBe('parent_sync_run');
+    });
+
+    test('旧全局开关兼容：General Worker与 legacy 并存时正常派发且渠道幂等', async () => {
+        (getGlobalSettingsManager as jest.Mock).mockReturnValue({
+            getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 3, generalWorkerEnabled: true, forceUseCurrentChannel: true })
+        });
+        const fakeExecutor = jest.fn(async (_request: any) => ({
+            success: true, response: 'ok', steps: 1, runId: 'subagent_run_gw_legacy', cancelled: false
+        }));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+        (getSubAgentExecutorContext as jest.Mock).mockReturnValue({});
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'General Worker', prompt: 'x' },
+            {
+                toolId: 'tool_gw_legacy',
+                conversationId: 'conv_1',
+                abortSignal: new AbortController().signal,
+                channelConfigId: 'channel_current',
+                channelModelId: 'model_current'
+            }
+        ) as any;
+
+        expect(result.success).toBe(true);
+        // GW 动态配置的 channel 本就等于派发上下文渠道，legacy 重写幂等无副作用
+        const executorConfig = (createDefaultExecutor as jest.Mock).mock.calls[0][0];
         expect(executorConfig.channel.channelId).toBe('channel_current');
         expect(executorConfig.channel.modelId).toBe('model_current');
     });

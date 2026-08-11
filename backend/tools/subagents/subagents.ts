@@ -493,30 +493,41 @@ async function executeSubAgent(
     }
     // F2：父 runId（A-COMM 信箱身份），用于级联清理父子关系；主模型直接派发时缺省。
     const parentRunId = context?.mailboxRunId as string | undefined;
-    // 强制使用当前渠道（全局开关）：开启后所有已配置固定渠道的子代理忽略自身渠道，
-    // 运行时统一改用「派发方当前正在使用的渠道」（channelConfigId + channelModelId）——
-    // 主会话直接派发时为会话当前渠道；嵌套派发时为主 run 的渠道（与 General Worker
-    // 嵌套继承口径一致，父 run 非强制时嵌套子代理继承父 run 的固定渠道）。
+    // 渠道策略（原「强制使用当前渠道」全局开关已下放为每个子代理的逐代理开关）：
+    // - config.channel.syncWithCurrentModel === true：该子代理忽略自身固定渠道/模型，
+    //   运行时统一改用「派发方当前正在使用的渠道」（channelConfigId + channelModelId）——
+    //   主会话直接派发时为会话当前渠道；嵌套派发时为主 run 的渠道（与 General Worker
+    //   嵌套继承口径一致，父 run 未同步时嵌套子代理继承父 run 的固定渠道）。
+    // - 旧全局开关向后兼容：forceUseCurrentChannel === true 且该代理未显式设置
+    //   syncWithCurrentModel（undefined）时按旧语义视同同步，避免升级后行为突变；
+    //   代理显式设置 false 则恢复使用自身固定渠道。
     // 与 General Worker 的继承口径一致（含 modelId——只换渠道不换模型会落到渠道默认
     // 模型，默认模型配额/权限与主模型不同时报错）；替换发生在派发前，executor 内
     // 的 runLoop/工具声明/嵌套派发统一消费 effectiveConfig，无需感知该开关。
     // 注意：自定义 executor 不消费 effectiveConfig（request 不含 channel 字段），
     // 该开关仅对默认 executor 生效。
     let effectiveConfig = config;
-    if (getSubAgentsSettings().forceUseCurrentChannel === true) {
+    // 运行时旧全局开关兜底（正常路径 SettingsManager.initialize 已做一次性迁移清除该字段）：
+    // 仅当代理未显式设置 syncWithCurrentModel（=== undefined）时按旧语义视同同步，
+    // 显式 true/false 均以代理自身配置为准（null 等非布尔值不再被误判为同步）。
+    const legacyForceUseCurrentChannel = getSubAgentsSettings().forceUseCurrentChannel === true;
+    const syncWithCurrentModel = config.channel?.syncWithCurrentModel === true
+        || (legacyForceUseCurrentChannel && config.channel?.syncWithCurrentModel === undefined);
+    if (syncWithCurrentModel) {
         const channelConfigId = context?.channelConfigId as string | undefined;
         if (!channelConfigId) {
             return {
                 success: false,
-                error: `Global setting "force use current channel" is enabled, but no active channel `
-                    + `is available in the tool context for sub-agent "${agentName}".`
+                error: `Sub-agent "${agentName}" is set to sync with the current model, but no active channel `
+                    + `is available in the tool context.`
             };
         }
         effectiveConfig = {
             ...config,
             channel: {
                 channelId: channelConfigId,
-                modelId: context?.channelModelId || undefined
+                modelId: context?.channelModelId || undefined,
+                syncWithCurrentModel: true
             }
         };
     }
