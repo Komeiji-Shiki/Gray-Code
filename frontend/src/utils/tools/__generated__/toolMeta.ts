@@ -45,7 +45,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/subagents/agentSendMessage.ts",
   },
   'apply_diff': {
-    description: "对单个文件应用一个或多个结构化内容替换，并打开待确认 diff 预览。\r\n\r\n推荐输入格式：\r\n- path：目标文件路径。\r\n- hunks：结构化修改数组。每个 hunk 表示一个连续片段替换。\r\n- hunks[].oldContent：文件中要被替换的原始内容，必须和文件内容完全一致。\r\n- hunks[].newContent：替换后的目标内容。按 JSON 字符串规则填写；工具收到后会作为最终文件内容使用，不要加 + 前缀，也不要为了 diff 再额外转义双引号。\r\n- hunks[].startLine：可选，1-based，基于修改前原文件的行号。只有 oldContent 在当前文件中重复出现时才会用于定位；oldContent 唯一匹配时会忽略 startLine，避免陈旧行号导致失败。\r\n\r\n规则：\r\n- 一次调用只修改一个文件；多个不连续片段放在 hunks 数组中。\r\n- hunks 应按原文件中的出现顺序排列，这样前面修改造成的行号偏移可以被工具正确维护。\r\n- 不能让两个 hunk 修改同一段或互相覆盖的文本；如果要改同一个区块，应该合并成一个 hunk。\r\n- oldContent 必须能匹配；如果 oldContent 重复出现，请提供 startLine 或增加上下文让它唯一。\r\n- patch 字段仅作为兼容旧 unified diff hunk 字符串的 fallback；新调用优先使用 hunks。\r\n\r\n批量修改规则：\r\n- 本工具一次调用仍然只修改一个文件；如果计划要修改多个互不依赖的文件，应该在同一轮回复中连续输出多个 apply_diff 调用。\r\n- 不要在完成第一个文件的 apply_diff 后停止等待结果，除非后续修改依赖该工具结果或需要先确认上一处修改是否成功。\r\n- 对已经明确、互不依赖的多文件修改，应一次性输出所有 apply_diff 调用，以减少无意义的工具迭代。\r\n- 错误示例：修改 A 文件后停止，等下一轮再修改 B 文件。\r\n- 正确示例：同一轮依次输出 apply_diff(A)、apply_diff(B)、apply_diff(C)。\r\n\r\n示例：\r\n{\r\n  \"path\": \"src/example.ts\",\r\n  \"hunks\": [\r\n    {\r\n      \"oldContent\": \"content: old;\",\r\n      \"newContent\": \"content: \"\";\",\r\n      \"startLine\": 12\r\n    }\r\n  ]\r\n}\r\n",
+    description: "对单个文件应用一个或多个结构化内容替换，并打开待确认 diff 预览。\n\n推荐输入格式：\n- path：目标文件路径。\n- hunks：结构化修改数组。每个 hunk 表示一个连续片段替换。\n- hunks[].oldContent：文件中要被替换的原始内容，必须和文件内容完全一致。\n- hunks[].newContent：替换后的目标内容。按 JSON 字符串规则填写；工具收到后会作为最终文件内容使用，不要加 + 前缀，也不要为了 diff 再额外转义双引号。\n- hunks[].startLine：可选，1-based，基于修改前原文件的行号。只有 oldContent 在当前文件中重复出现时才会用于定位；oldContent 唯一匹配时会忽略 startLine，避免陈旧行号导致失败。\n\n规则：\n- 一次调用只修改一个文件；多个不连续片段放在 hunks 数组中。\n- hunks 应按原文件中的出现顺序排列，这样前面修改造成的行号偏移可以被工具正确维护。\n- 不能让两个 hunk 修改同一段或互相覆盖的文本；如果要改同一个区块，应该合并成一个 hunk。\n- oldContent 必须能匹配；如果 oldContent 重复出现，请提供 startLine 或增加上下文让它唯一。\n- patch 字段仅作为兼容旧 unified diff hunk 字符串的 fallback；新调用优先使用 hunks。\n\n批量修改规则：\n- 本工具一次调用仍然只修改一个文件；如果计划要修改多个互不依赖的文件，应该在同一轮回复中连续输出多个 apply_diff 调用。\n- 不要在完成第一个文件的 apply_diff 后停止等待结果，除非后续修改依赖该工具结果或需要先确认上一处修改是否成功。\n- 对已经明确、互不依赖的多文件修改，应一次性输出所有 apply_diff 调用，以减少无意义的工具迭代。\n- 错误示例：修改 A 文件后停止，等下一轮再修改 B 文件。\n- 正确示例：同一轮依次输出 apply_diff(A)、apply_diff(B)、apply_diff(C)。\n\n示例：\n{\n  \"path\": \"src/example.ts\",\n  \"hunks\": [\n    {\n      \"oldContent\": \"content: old;\",\n      \"newContent\": \"content: \"\";\",\n      \"startLine\": 12\n    }\n  ]\n}\n",
     parameters: {
       "path": {"type":"string","description":"文件路径，相对于当前工作区根目录。例如：src/example.ts。","required":true},
       "hunks": {"type":"array","description":"推荐格式。结构化 hunk 数组；每个 hunk 使用 oldContent/newContent 表示一次连续内容替换。","items":{"type":"object"}},
@@ -180,7 +180,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/search/find_files.ts",
   },
   'find_references': {
-    description: "Find all references to a symbol at a specific position in a file. This is useful for:\r\n- Understanding how a function/class/variable is used across the codebase\r\n- Finding all places that need to be updated when refactoring\r\n- Understanding the impact of changes\r\n\r\nReturns references grouped by file, with line numbers and code content.",
+    description: "Find all references to a symbol at a specific position in a file. This is useful for:\n- Understanding how a function/class/variable is used across the codebase\n- Finding all places that need to be updated when refactoring\n- Understanding the impact of changes\n\nReturns references grouped by file, with line numbers and code content.",
     parameters: {
       "path": {"type":"string","description":"File path (relative to workspace root)","required":true},
       "line": {"type":"number","description":"Line number (1-based) where the symbol is located","required":true},
@@ -208,14 +208,14 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/activity/activity_stats.ts",
   },
   'get_symbols': {
-    description: "Get all symbols (classes, functions, variables, etc.) in one or more files. This is useful for:\r\n- Understanding file structure before reading specific sections\r\n- Finding the line numbers of functions/classes you want to examine\r\n- Getting an overview of multiple files without reading all content\r\n\r\nReturns hierarchical symbol list with name, kind, and line numbers.\n\n**IMPORTANT**: The `paths` parameter MUST be an array, even for a single file. Example: `{\"paths\": [\"file.ts\"]}`, NOT `{\"path\": \"file.ts\"}`.",
+    description: "Get all symbols (classes, functions, variables, etc.) in one or more files. This is useful for:\n- Understanding file structure before reading specific sections\n- Finding the line numbers of functions/classes you want to examine\n- Getting an overview of multiple files without reading all content\n\nReturns hierarchical symbol list with name, kind, and line numbers.\n\n**IMPORTANT**: The `paths` parameter MUST be an array, even for a single file. Example: `{\"paths\": [\"file.ts\"]}`, NOT `{\"path\": \"file.ts\"}`.",
     parameters: {
       "paths": {"type":"array","description":"Array of file paths (relative to workspace root). MUST be an array even for single file, e.g., [\"file.ts\"]","items":{"type":"string"},"required":true},
     },
     source: "backend/tools/lsp/get_symbols.ts",
   },
   'goto_definition': {
-    description: "Go to the definition of a symbol and return the complete definition code. This is useful for:\r\n- Finding where a function/class/variable is defined and seeing its full implementation\r\n- Understanding how a symbol is implemented without additional read_file calls\r\n\r\nReturns the complete definition code with line numbers.",
+    description: "Go to the definition of a symbol and return the complete definition code. This is useful for:\n- Finding where a function/class/variable is defined and seeing its full implementation\n- Understanding how a symbol is implemented without additional read_file calls\n\nReturns the complete definition code with line numbers.",
     parameters: {
       "path": {"type":"string","description":"File path (relative to workspace root)","required":true},
       "line": {"type":"number","description":"Line number (1-based) where the symbol is located","required":true},
@@ -364,7 +364,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/review/record_review_milestone.ts",
   },
   'remove_background': {
-    description: "Remove background from images, generating transparent PNG. Supports single and batch modes.\r\n\r\n**Limits**:\r\n- Maximum 5 background removal tasks per call\r\n\r\n**Single Mode**: Use image_path + output_path parameters\r\n**Batch Mode**: Use images array parameter (max 5 tasks)\r\n\r\n**How it works**:\r\n1. Uses AI to generate a mask (subject=black, background=white)\r\n2. Sets background to transparent based on the mask\r\n3. Saves as transparent PNG\r\n\r\n**Use cases**:\r\n- Product image background removal\r\n- Portrait cutout\r\n- Object extraction\r\n- Creative composite material preparation",
+    description: "Remove background from images, generating transparent PNG. Supports single and batch modes.\n\n**Limits**:\n- Maximum 5 background removal tasks per call\n\n**Single Mode**: Use image_path + output_path parameters\n**Batch Mode**: Use images array parameter (max 5 tasks)\n\n**How it works**:\n1. Uses AI to generate a mask (subject=black, background=white)\n2. Sets background to transparent based on the mask\n3. Saves as transparent PNG\n\n**Use cases**:\n- Product image background removal\n- Portrait cutout\n- Object extraction\n- Creative composite material preparation",
     parameters: {
       "images": {"type":"array","description":"Batch mode: Background removal task array. Each task can independently configure input, output, and subject description. MUST be an array even for single task.","items":{"type":"object"}},
       "image_path": {"type":"string"},
@@ -383,7 +383,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/review/reopen_review.ts",
   },
   'resize_image': {
-    description: "Resize image tool. Resizes images to specified target dimensions.\r\n\r\n**Features**:\r\n- Resize image to specified width and height\r\n- Uses stretch fill mode (does not preserve aspect ratio)\r\n- Suitable for scenarios requiring exact dimensions\r\n\r\n**Parameters**:\r\n- width: Target width (pixels, required)\r\n- height: Target height (pixels, required)\r\n- image_path: Source image path (required)\r\n- output_path: Output file path (required)\r\n\r\n**Examples**:\r\n- Resize to 800x600: width=800, height=600\r\n- Resize to square 512x512: width=512, height=512\r\n- Resize to 1920x1080: width=1920, height=1080\r\n\r\n**Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)\r\n\r\n**Limits**:\r\n- Maximum 10 resize tasks per call\r\n- Target dimensions cannot exceed 16384x16384",
+    description: "Resize image tool. Resizes images to specified target dimensions.\n\n**Features**:\n- Resize image to specified width and height\n- Uses stretch fill mode (does not preserve aspect ratio)\n- Suitable for scenarios requiring exact dimensions\n\n**Parameters**:\n- width: Target width (pixels, required)\n- height: Target height (pixels, required)\n- image_path: Source image path (required)\n- output_path: Output file path (required)\n\n**Examples**:\n- Resize to 800x600: width=800, height=600\n- Resize to square 512x512: width=512, height=512\n- Resize to 1920x1080: width=1920, height=1080\n\n**Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)\n\n**Limits**:\n- Maximum 10 resize tasks per call\n- Target dimensions cannot exceed 16384x16384",
     parameters: {
       "images": {"type":"array","description":"Batch mode: Resize task array. Each task can independently configure input, output, and target dimensions. MUST be an array even for single task.","items":{"type":"object"}},
       "image_path": {"type":"string"},
@@ -395,7 +395,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/media/resize_image.ts",
   },
   'rotate_image': {
-    description: "Rotate image tool. Rotates images clockwise to specified angle.\r\n\r\n**Features**:\r\n- Supports any rotation angle (positive, negative, over 360 degrees)\r\n- Positive angles rotate clockwise\r\n- Negative angles rotate counter-clockwise\r\n- Automatically calculates minimum bounding rectangle canvas\r\n\r\n**Background Fill**:\r\n- PNG/WebP: Transparent background\r\n- JPEG: Black background\r\n\r\n**Parameters**:\r\n- angle: Rotation angle (required, positive for clockwise)\r\n- image_path: Source image path (required)\r\n- output_path: Output file path (required)\r\n- format: Output format (optional: png, jpg, webp. If not specified, uses original format or infers from output path)\r\n\r\n**Examples**:\r\n- Rotate 90° clockwise: angle=90\r\n- Rotate 45° counter-clockwise: angle=-45\r\n- Rotate 180° (flip): angle=180\r\n\r\n**Supported Formats**: PNG, JPEG, WebP (selected based on format parameter or output path extension)\r\n\r\n**Limits**:\r\n- Maximum 10 rotate tasks per call",
+    description: "Rotate image tool. Rotates images clockwise to specified angle.\n\n**Features**:\n- Supports any rotation angle (positive, negative, over 360 degrees)\n- Positive angles rotate clockwise\n- Negative angles rotate counter-clockwise\n- Automatically calculates minimum bounding rectangle canvas\n\n**Background Fill**:\n- PNG/WebP: Transparent background\n- JPEG: Black background\n\n**Parameters**:\n- angle: Rotation angle (required, positive for clockwise)\n- image_path: Source image path (required)\n- output_path: Output file path (required)\n- format: Output format (optional: png, jpg, webp. If not specified, uses original format or infers from output path)\n\n**Examples**:\n- Rotate 90° clockwise: angle=90\n- Rotate 45° counter-clockwise: angle=-45\n- Rotate 180° (flip): angle=180\n\n**Supported Formats**: PNG, JPEG, WebP (selected based on format parameter or output path extension)\n\n**Limits**:\n- Maximum 10 rotate tasks per call",
     parameters: {
       "images": {"type":"array","description":"Batch mode: Rotate task array. Each task can independently configure input, output, angle, and format. MUST be an array even for single task.","items":{"type":"object"}},
       "image_path": {"type":"string"},
@@ -514,7 +514,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/review/validate_review_document.ts",
   },
   'write_file': {
-    description: "写入内容到一个文件。若文件不存在则创建；若文件已存在则用 content 覆盖其完整内容。执行前会展示 Diff 预览并等待用户确认。\r\n\r\n适用场景：\r\n- 创建新文件\r\n- 重写一个已有文件的完整内容\r\n\r\n批量写入规则：\r\n- 本工具一次调用仍然只写入一个文件；如果计划要创建或重写多个互不依赖的文件，应该在同一轮回复中连续输出多个 write_file 调用。\r\n- 不要在完成第一个文件的 write_file 后停止等待结果，除非后续写入依赖该工具结果或需要先确认上一处写入是否成功。\r\n- 对已经明确、互不依赖的多文件写入，应一次性输出所有 write_file 调用，以减少无意义的工具迭代。\r\n- 错误示例：写入 A 文件后停止，等下一轮再写入 B 文件。\r\n- 正确示例：同一轮依次输出 write_file(A)、write_file(B)、write_file(C)。\r\n\r\n注意：path 是相对于工作区根目录的路径；content 必须是文件的完整目标内容。修改大文件时，优先考虑 apply_diff，避免整文件重写带来的误删风险。",
+    description: "写入内容到一个文件。若文件不存在则创建；若文件已存在则用 content 覆盖其完整内容。执行前会展示 Diff 预览并等待用户确认。\n\n适用场景：\n- 创建新文件\n- 重写一个已有文件的完整内容\n\n批量写入规则：\n- 本工具一次调用仍然只写入一个文件；如果计划要创建或重写多个互不依赖的文件，应该在同一轮回复中连续输出多个 write_file 调用。\n- 不要在完成第一个文件的 write_file 后停止等待结果，除非后续写入依赖该工具结果或需要先确认上一处写入是否成功。\n- 对已经明确、互不依赖的多文件写入，应一次性输出所有 write_file 调用，以减少无意义的工具迭代。\n- 错误示例：写入 A 文件后停止，等下一轮再写入 B 文件。\n- 正确示例：同一轮依次输出 write_file(A)、write_file(B)、write_file(C)。\n\n注意：path 是相对于工作区根目录的路径；content 必须是文件的完整目标内容。修改大文件时，优先考虑 apply_diff，避免整文件重写带来的误删风险。",
     parameters: {
       "path": {"type":"string","description":"文件路径，相对于当前工作区根目录。例如：docs/example.md。","required":true},
       "content": {"type":"string","description":"要写入文件的完整内容。已有文件会被该内容整体覆盖。","required":true},
