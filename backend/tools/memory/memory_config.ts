@@ -103,7 +103,7 @@ async function memoryConfigHandler(args: Record<string, unknown>, context?: Tool
         if (!globalMgr) {
             return { success: false, error: 'MemoryManager is not initialized.' };
         }
-        const config = globalMgr.getConfig();
+        const config = await globalMgr.loadConfig();
         return {
             success: true,
             data: {
@@ -125,7 +125,7 @@ async function memoryConfigHandler(args: Record<string, unknown>, context?: Tool
         if (Object.keys(updates).length > 0) {
             config = await mgr.updateConfig(updates);
         } else {
-            config = mgr.getConfig();
+            config = await mgr.loadConfig();
         }
 
         return {
