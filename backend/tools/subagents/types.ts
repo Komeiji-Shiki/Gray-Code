@@ -48,21 +48,6 @@ export interface SubAgentChannelConfig {
     
     /** 模型 ID（可选，使用渠道默认模型） */
     modelId?: string;
-
-    /**
-     * 强制使用当前会话渠道（忽略上方配置的渠道与模型）。
-     *
-     * 修改原因：已配置固定渠道的子代理在渠道切换（如备用 key/新供应商）后仍走旧渠道，
-     * 无法跟随主会话；勾选后运行时改用派发方当前正在使用的渠道（ToolContext 注入的
-     * channelConfigId + channelModelId），与 General Worker 的继承口径一致——
-     * 主会话直接派发时即当前会话渠道，嵌套派发时为主 run 的渠道。
-     * 修改方式：由 subagents handler 在派发前解析并替换 channel 后交给默认 executor，
-     * 运行期其余路径（runLoop/工具声明/嵌套派发）无需感知该开关。
-     * 修改目的：零配置迁移——已配置好的子代理一键改用当前 key，无需逐个改渠道。
-     * 注意：仅对默认 executor 生效；显式注册的自定义 executor 不消费该开关
-     * （SubAgentRequest 不携带替换后的 channel）。
-     */
-    forceUseCurrentChannel?: boolean;
 }
 
 /**
