@@ -60,8 +60,9 @@ function deepMergeInternal(target: any, source: any, seen: WeakSet<object>): any
         target = {};
     }
 
-    // 循环引用：source 或 target 已在本轮递归路径上，返回当前 target 引用停止合并，
-    // 保留既有结构，避免无限递归栈溢出。
+    // 循环引用兜底：target 已在本轮递归路径上（target 自引用）时返回当前 target 引用停止合并；
+    // source 循环（直接/间接自引用）已由调用点（见下方循环内 seen.has(sourceValue) 分支）
+    // 提前拦截，不会走到这里；保留该检查作为纵深防御，避免无限递归栈溢出。
     if (seen.has(source) || seen.has(target)) {
         return target;
     }
@@ -75,8 +76,18 @@ function deepMergeInternal(target: any, source: any, seen: WeakSet<object>): any
         if (!isSafeMergeKey(key)) {
             continue;
         }
+        const sourceValue = source[key];
+        // 循环引用：sourceValue 已在本轮递归链上（source 直接/间接自引用，如 merged.self = merged）。
+        // 直接递归会把该键替换成 undefined/{}（result[key] 尚未赋值时目标值为 undefined），
+        // 与上方「保留既有结构」注释不符；这里保留目标旧值，目标没有该键时保留源引用本身，
+        // 不再下钻——既避免栈溢出，也不破坏自引用结构。兄弟分支共享同一对象（DAG）不受影响：
+        // 回溯时 seen 已移除，互不误判。
+        if (seen.has(sourceValue)) {
+            result[key] = result[key] !== undefined ? result[key] : sourceValue;
+            continue;
+        }
         // 递归合并所有子节点
-        result[key] = deepMergeInternal(result[key], source[key], seen);
+        result[key] = deepMergeInternal(result[key], sourceValue, seen);
     }
 
     // 回溯：兄弟分支共享同一对象（DAG）不被误判为循环
