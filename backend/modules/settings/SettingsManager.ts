@@ -146,8 +146,11 @@ export class SettingsManager {
             // lastUpdated 需要使用最新的或当前时间
             this.core.settings.lastUpdated = stored.lastUpdated || Date.now();
 
-            // 显式迁移内置模式的 toolPolicy（幂等，仅未定制时填充默认值）
+            // 显式迁移内置模式的 toolPolicy（幂等仅未定制时填充默认值）
             await this.prompt.migratePromptModeToolPolicies();
+
+            // 一次性迁移子代理旧全局开关 forceUseCurrentChannel → 逐代理 syncWithCurrentModel（幂等）
+            await this.subagents.migrateForceUseCurrentChannel();
         }
     }
 
