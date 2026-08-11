@@ -40,6 +40,12 @@ export class StreamChunkProcessor {
   private throttleTimer: ReturnType<typeof setTimeout> | null = null;
   /** 上次 chunk flush 的时间戳 */
   private lastChunkFlushTime: number = 0;
+  /**
+   * 视图是否曾可达（H6 中止判定用）：processChunk 曾成功通过 getView() 检查即置位。
+   * 流启动时视图已不可达（从未有消费者）的场景保持既有继续消费语义，只有
+   * 「视图从可达变为不可达」（面板关闭/重载/目标 webview 销毁）才需要中止后端生成。
+   */
+  private viewEverReachable = false;
 
   constructor(
     /**
@@ -54,13 +60,20 @@ export class StreamChunkProcessor {
 
   /**
    * 处理并发送 chunk
-   * @returns true = 错误/取消等终结事件已送达（视图不可达时返回 false，调用方可留痕）；false = 其他
+   * @returns true = 错误/取消等终结事件已送达（视图不可达时返回 false，调用方可留痕）；
+   *          false = 其他（含视图不可达——消费方需配合 isViewUnreachable() 区分，见 H6）
    */
   processChunk(chunk: any): boolean {
     if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) {
       return false;
     }
-    if (!this.getView()) return false;
+    if (!this.getView()) {
+      // H6：视图不可达（面板关闭/重载/目标 webview 已销毁）——chunk 与终结事件都
+      // 无法投递，返回 false；消费方经 isViewUnreachable() 区分「普通非终结 chunk」
+      // 与「视图不可达」，后者应立即中止后端生成（见 StreamRequestHandler.consumeStream）
+      return false;
+    }
+    this.viewEverReachable = true;
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
@@ -159,6 +172,19 @@ export class StreamChunkProcessor {
     }
 
     return false;
+  }
+
+  /**
+   * 视图是否不可达（目标 webview 已销毁/面板关闭/重载）。
+   *
+   * H6：processChunk 在视图不可达时返回 false，与普通非终结 chunk 的 false 无法区分；
+   * 消费方在 processChunk 返回 false 后调用本方法判断是否需要中止流——视图不可达时
+   * 继续消费只会让后端在后台全量生成（消耗 token / 执行工具副作用）。
+   * getView 每次实时获取，因此本方法反映调用时刻的最新可达状态；viewEverReachable
+   * 保证「从未有视图」的流（后台任务/测试）保持既有继续消费语义。
+   */
+  isViewUnreachable(): boolean {
+    return this.viewEverReachable && !this.getView();
   }
 
   /**

@@ -419,6 +419,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
+        // dispose() 后 Monitor 在途消息不再路由（与 handleMessage 的 disposed 守卫对齐，F2）：
+        // 后端模块已开始释放，继续路由会访问已销毁的管理器
+        if (this.disposed) {
+            return true;
+        }
+
         await this.initPromise;
 
         const { type, data } = message || {};
@@ -553,6 +559,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             d.dispose();
         }
 
+        // M-web：视图重建时重置消息处理队列——上一轮视图残留的排队任务（如等待后端
+        // 初始化的挂起请求）可能仍在链上，若不清零会让新视图的首条消息被旧任务延迟
+        this.messageHandlingQueue = Promise.resolve();
+
         this._view = webviewView;
         this.webviewReady = false;
         this.mainChatClientDisposable?.dispose();
@@ -656,6 +666,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 // 属于旧 webview 会话，不能在新会话 ready 后被误 flush
                 this.pendingCommands = [];
                 this.clearPendingCommandsTimeout();
+                // M-web：消息处理队列同样属于旧 webview 会话——残留排队任务（挂起的
+                // 后端请求）不重置的话，会在下次 resolveWebviewView 后延迟新消息
+                this.messageHandlingQueue = Promise.resolve();
+                // H6：面板关闭后正在生成的流没有消费者（getView 实时返回 undefined），
+                // 若不中止，后端会在后台全量生成（消耗 token、工具副作用继续执行）。
+                // 立即中止所有活跃流；cancelled 终态事件因 _view 已置空而被 processChunk
+                // 丢弃，不会投递给重建后的新视图（无串扰）。仅当存在活跃流时才清理，
+                // 避免面板频繁开关时对无流会话做无意义的全局 diff/工具清理。
+                if (this.messageRouter && this.messageRouter.getAbortManager().size > 0) {
+                    this.cancelAllStreams();
+                }
             })
         );
     }
