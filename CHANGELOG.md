@@ -15,6 +15,8 @@
   - 修复 `auto.completed` 日志 `totalSummarizedCount` 用规划值（首条用户消息保护后实际标记数可能更小），改为以实际标记数为准。
   - 测试：`summarizeOverflowTrim` 单超大轮用例改为 NOT_ENOUGH_ROUNDS + 不调 AI；新增多轮 + 当前轮超预算钳制用例；`summarizeManualSingleRound` 多轮放行用例；`nonStreamAutoSummarizeTurn` 确定性失败不重试 / 瞬时错误仍有界重试用例；harness `identifyRounds` 按真实轮数计算（planner 放弃时错误码语义准确）。
   - 修复记忆配置按作用域各自独立导致的「改了没反应」困惑：现配置全局统一——`MemoryManager` 新增共享 config 路径（默认 `<dataPath>/memory/config`），全局与所有工作区实例读写同一份配置（记忆数据 LOG/TREE 仍按作用域隔离）；`initMemoryManager` 初始化时固定共享路径（测试可经 `setGlobalMemoryConfigPath` 注入），工作区实例 `init()` 遇已存在的共享配置不再覆盖重写（此前初始化会把用户改好的全局配置重置为默认值）；`memory_config` 工具读配置改 `loadConfig()` 实时读盘（不再读实例内存缓存，跨作用域即时可见），`memory_note` 的 Too long 错误补充提示可用 `memory_config` 调整 `entryChars` 上限。新增 `memoryConfigTool.test.ts` 双向同步用例（全局改 → 工作区实例读到；工作区改 → 全局实例读到）。
+  - 子代理排队超时可配置：新增全局配置 `queueTimeoutSeconds`（秒，-1 无限制，默认 600）——排队中的子代理超过该时间以失败结算（非用户取消），不再无限等待；前端子代理设置新增排队超时输入框（支持 -1）。
+  - 修复最大并发数无法填入 -1：前端「最大并发数」输入框 `min` 与校验放行 -1（-1 = 无并发上限，与后端信号量语义一致）。
 
 ## [1.5.1]
 
