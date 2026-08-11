@@ -1,0 +1,14 @@
+{
+    "extends": "../../tsconfig.test.json",
+    "compilerOptions": {
+        // 显式声明 jest 全局类型（父配置已含，此处重申意图：本目录测试文件使用 jest 全局）
+        "types": ["node", "jest"]
+    },
+    // 就近 tsconfig：让 VS Code 语言服务把 backend/__tests__ 下的文件挂到本配置
+    // （含 jest 全局类型），而不是回退到排除了该目录的根 tsconfig.json，
+    // 消除「找不到名称 jest」误报。
+    // 不影响 CLI：ts-jest（jest.backend.config.js）与 typecheck:test 都显式使用
+    // tsconfig.test.json，本文件仅服务于编辑器语言服务。
+    "include": ["./**/*.ts"],
+    "exclude": ["node_modules", "dist"]
+}
