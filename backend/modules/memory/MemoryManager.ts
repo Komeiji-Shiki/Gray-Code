@@ -1118,6 +1118,12 @@ export class MemoryManager {
             die('summary is required when blockId is provided.');
         }
 
+        // 反向缺参校验：提供了 summary 却没有 blockId（含空串——调用方按 truthy 归一化，
+        // 直接传 '' 与未传同口径）时，静默丢弃摘要等同数据丢失，明确报错。
+        if (!blockId && summary !== undefined) {
+            die('blockId is required when summary is provided.');
+        }
+
         if (blockId && summary !== undefined) {
             const [lo, hi] = this.parseBlockId(blockId);
             const todo = await this.pending(T, 1);
