@@ -1,5 +1,8 @@
 /* GrayCode Desktop theme - VS Code Dark+ compatible CSS variables. */
 :root {
+  /* 原生控件渲染基调：无此声明时 Chromium 按系统深浅色渲染原生 select 弹出层/
+     复选框/滚动条，系统为暗色时即使应用切到亮色主题它们仍按暗色绘制（亮色 bug 主因） */
+  color-scheme: dark;
   --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
   --vscode-font-size: 13px;
   --vscode-foreground: #cccccc;
@@ -114,9 +117,28 @@
   --vscode-testing-iconPassed: #73c991;
   --vscode-testing-iconFailed: #f14c4c;
   --vscode-testing-runAction: #3794ff;
+  /* 代码高亮语法色（VS Code Dark+ 默认值；组件 var() 引用缺省时曾回落硬编码暗色） */
+  --vscode-keywordForeground: #569cd6;
+  --vscode-string-foreground: #ce9178;
+  --vscode-comment-foreground: #6a9955;
+  --vscode-number-foreground: #b5cea8;
+  --vscode-variable-foreground: #9cdcfe;
+  --vscode-entity-foreground: #f14c4c;
+  --vscode-entity-name-tag: #569cd6;
+  --vscode-entityName-function: #dcdcaa;
+  --vscode-meta-foreground: #d4d4d4;
+  --vscode-notifications-background: #252526;
+  --vscode-notifications-border: #454545;
+  --vscode-notifications-foreground: #cccccc;
+  --vscode-warningForeground: #cca700;
+  --vscode-settings-headerForeground: #cccccc;
+  --vscode-settings-numberInputForeground: #cccccc;
+  --vscode-settings-rowHoverBackground: #2a2d2e;
+  --vscode-editor-font-size: 13px;
 }
 
 body.graycode-desktop-theme-light {
+  color-scheme: light;
   --vscode-foreground: #383a42;
   --vscode-disabledForeground: rgba(56, 58, 66, 0.45);
   --vscode-errorForeground: #d1242f;
@@ -228,4 +250,22 @@ body.graycode-desktop-theme-light {
   --vscode-testing-iconPassed: #1a7f37;
   --vscode-testing-iconFailed: #d1242f;
   --vscode-testing-runAction: #0066bf;
+  /* 代码高亮语法色（VS Code Light+ 默认值） */
+  --vscode-keywordForeground: #0000ff;
+  --vscode-string-foreground: #a31515;
+  --vscode-comment-foreground: #008000;
+  --vscode-number-foreground: #098658;
+  --vscode-variable-foreground: #001080;
+  --vscode-entity-foreground: #e36209;
+  --vscode-entity-name-tag: #267f99;
+  --vscode-entityName-function: #795e26;
+  --vscode-meta-foreground: #800000;
+  --vscode-notifications-background: #ffffff;
+  --vscode-notifications-border: #cccccc;
+  --vscode-notifications-foreground: #333333;
+  --vscode-warningForeground: #9a6700;
+  --vscode-settings-headerForeground: #444444;
+  --vscode-settings-numberInputForeground: #333333;
+  --vscode-settings-rowHoverBackground: #f2f2f2;
+  --vscode-editor-font-size: 13px;
 }

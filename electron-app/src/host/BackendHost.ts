@@ -139,6 +139,8 @@ export interface BackendHostOptions {
   onOpenDiffPreview: (payload: any) => void;
   /** 渲染层上报 UI 语言切换后回调（主进程据此重建应用菜单文案）。 */
   onMenuLanguageChange?: (lang: string) => void;
+  /** 渲染层上报主题生效后回调（主进程据此同步原生窗口背景色与 nativeTheme.themeSource）。 */
+  onThemeChange?: (theme: string) => void;
   /** 系统 locale（如 app.getLocale()），用于界面语言为 auto/未配置时的文案回退。 */
   systemLocale?: () => string;
 }
@@ -1215,6 +1217,20 @@ export class BackendHost {
         this.options.onMenuLanguageChange?.(typeof data?.lang === 'string' ? data.lang : '');
       } catch (err) {
         console.error('[BackendHost] menu language change callback error:', err);
+      }
+      return;
+    }
+
+    // 渲染层主题生效（含 auto 解析后）上报：主进程同步原生窗口背景色与
+    // nativeTheme.themeSource（系统对话框/原生控件/首帧启动画面随应用主题而非系统）。
+    // 设置页切换主题即时生效（App.vue applyDesktopTheme），启动路径由主进程
+    // 预读设置文件兜底（见 main.ts resolveSavedTheme）。
+    if (type === 'app.setTheme') {
+      this.postToRenderer('response', requestId || 'app.setTheme', { success: true });
+      try {
+        this.options.onThemeChange?.(typeof data?.theme === 'string' ? data.theme : 'auto');
+      } catch (err) {
+        console.error('[BackendHost] theme change callback error:', err);
       }
       return;
     }

@@ -594,6 +594,8 @@ function createBackend(): void {
       },
       // 渲染层 UI 语言生效后重建应用菜单（含 auto 解析后的实际语言）
       onMenuLanguageChange: (lang) => rebuildMenu(lang),
+      // 渲染层主题生效后同步原生窗口背景色与 nativeTheme（含 auto 解析后的实际主题）
+      onThemeChange: (theme) => applyDesktopThemeToWindow(theme),
       // 界面语言为 auto/未配置时的系统 locale 回退（app.getLocale）
       systemLocale: () => app.getLocale()
     });
@@ -808,6 +810,47 @@ function restoreWorkspace(): void {
   });
 }
 
+// ============================================================================
+// 主题（亮色/暗色/跟随系统）→ 原生窗口
+//
+// 渲染层 CSS 变量负责界面配色；这里负责原生部分：BrowserWindow 背景色
+// （启动/加载/resize 露出的边缘）与 nativeTheme.themeSource（系统对话框、
+// 原生菜单、渲染层 prefers-color-scheme——首帧启动画面与 auto 模式 matchMedia
+// 都依赖它）。设置持久化在 {userData}/graycode/settings/vscode-config.json
+// （BackendHost __initConfigStore 同路径），启动时同步预读，免首帧闪烁。
+// ============================================================================
+function resolveSavedTheme(): string {
+  try {
+    const raw = fs.readFileSync(
+      path.join(app.getPath('userData'), 'graycode', 'settings', 'vscode-config.json'),
+      'utf-8'
+    );
+    const parsed = JSON.parse(raw) as { ui?: { theme?: unknown } };
+    const theme = parsed?.ui?.theme;
+    if (theme === 'light' || theme === 'dark') return theme;
+  } catch {
+    // 文件不存在/损坏：回退 auto（跟随系统）
+  }
+  return 'auto';
+}
+
+/** 窗口背景色：与 theme.css 的 --vscode-editor-background（dark #1e1e1e / light #ffffff）一致 */
+function resolveWindowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff';
+}
+
+/**
+ * 应用主题 → nativeTheme.themeSource + 窗口背景色。
+ * themeSource 同步后渲染层 prefers-color-scheme 跟随（auto 模式下 matchMedia
+ * change 事件触发渲染层重新应用）；窗口背景色实时更新（页面加载中/重载瞬间生效）。
+ */
+function applyDesktopThemeToWindow(theme: string): void {
+  nativeTheme.themeSource = theme === 'light' || theme === 'dark' ? theme : 'system';
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBackgroundColor(resolveWindowBackgroundColor());
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -815,8 +858,9 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 620,
     show: false,
-    // 初始背景跟随系统深浅色，避免浅色系统下启动时深色闪烁（页面加载后由主题变量接管）
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
+    // 初始背景跟随应用主题（预读设置文件；读取失败时按系统深浅色兜底），
+    // 页面加载后由渲染层 app.setTheme 上报实时同步（见 applyDesktopThemeToWindow）
+    backgroundColor: resolveWindowBackgroundColor(),
     autoHideMenuBar: false,
     icon: path.join(REPO_ROOT, 'resources', 'icon.png'),
     title: 'GrayCode',
@@ -1428,6 +1472,9 @@ if (gotSingleInstanceLock) {
       registerCustomProtocol();
       registerNativeOps();
       buildMenu(resolveUiLanguage());
+      // 主题在窗口创建前落地：首帧启动画面（boot-splash 的 prefers-color-scheme
+      // 媒体查询）与 BrowserWindow 背景色随应用主题而非系统，避免亮色主题下深色首帧
+      applyDesktopThemeToWindow(resolveSavedTheme());
       createBackend();
       createWindow();
 

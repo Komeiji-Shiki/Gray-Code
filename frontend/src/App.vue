@@ -640,16 +640,22 @@ function applyDesktopTheme(theme?: string): void {
   document.body.classList.toggle('graycode-desktop-theme-light', isLight)
   document.body.classList.toggle('vscode-light', isLight)
   document.body.classList.toggle('vscode-dark', !isLight)
+  // 上报主进程：同步原生窗口背景色 + nativeTheme.themeSource（系统对话框、
+  // 原生控件、prefers-color-scheme 随应用主题而非系统；auto 时传 auto 由主进程解析）
+  sendToExtension('app.setTheme', { theme: theme ?? 'auto' }).catch(() => { /* 主进程无需应答，失败无害 */ })
 }
 
-// 外观设置变更 → 立即应用：主题（含 auto 跟随系统监听）与 UI 不透明度（CSS 变量）
+// 外观设置变更 → 立即应用：主题（含 auto 跟随系统监听）与 UI 不透明度（CSS 变量）。
+// immediate: 启动路径兜底——loadLanguageSettings 失败/缓慢时也至少按默认值应用一次，
+// 避免首帧停留在 :root 暗色（与 uiOpacity watch 的口径一致）
 watch(
   () => settingsStore.theme,
   (theme) => {
     if (!isElectronHost) return
     applyDesktopTheme(theme)
     watchDesktopThemeMedia(theme)
-  }
+  },
+  { immediate: true }
 )
 watch(
   () => settingsStore.uiOpacity,
