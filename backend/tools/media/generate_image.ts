@@ -618,15 +618,15 @@ async function executeImageTask(
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : '';
         
-        // 检测各种可能的取消错误
-        const isCancelled = abortSignal?.aborted ||
-            errorName === 'AbortError' ||
-            errorMessage.includes('aborted') ||
+        // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError
+        // （"The operation was aborted"）拒绝，仅凭 errorName/message 会把请求超时误判为用户取消。
+        // 修改方式：以用户 abortSignal 是否真的 aborted 为准（超时只中止内部 fetchSignal，
+        // 不会中止调用方的 abortSignal）；AbortError/消息检查仅作无信号时的后备。
+        const isCancelled = abortSignal?.aborted === true ||
+            (errorName === 'AbortError' && !abortSignal) ||
             errorMessage.includes('cancelled') ||
             errorMessage.includes('canceled') ||
-            errorMessage.includes('Request cancelled') ||
-            errorMessage.includes('The operation was aborted') ||
-            errorMessage.includes('signal is aborted');
+            errorMessage.includes('Request cancelled');
         
         return {
             index,
