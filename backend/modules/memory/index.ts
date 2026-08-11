@@ -5,9 +5,10 @@
  *
  * 记忆作用域：
  * - 全局记忆（<dataPath>/memory）：无工作区时的默认记忆，行为与旧版本一致。
- * - 工作区记忆（<dataPath>/memory-workspaces/<hash>/）：每个工作区一套独立
- *   的 LOG/TREE/config 存储，按工作区隔离；工具调用时经 ToolContext 注入的
- *   activeWorkspaceUri 路由，无工作区时回退全局记忆。
+ * - 工作区记忆（<dataPath>/memory-workspaces/<hash>/）：每个工作区一套独立的
+ *   LOG/TREE 数据存储，按工作区隔离；但配置（config 文件）全局共享一份
+ *   （<dataPath>/memory/config），全局与所有工作区实例读写同一份配置——
+ *   工具调用时经 ToolContext 注入的 activeWorkspaceUri 路由，无工作区时回退全局记忆。
  */
 
 import * as path from 'path';
@@ -66,6 +67,9 @@ export function getGlobalMemoryManager(): import('./MemoryManager').MemoryManage
  */
 export async function initMemoryManager(dataPath: string): Promise<import('./MemoryManager').MemoryManager> {
     const memoryPath = path.join(dataPath, 'memory');
+    // 配置全局统一：全局与所有工作区作用域共享 <dataPath>/memory/config
+    // （记忆数据 LOG/TREE 仍按作用域隔离，仅配置共享一份）
+    _globalMemoryConfigPath = path.join(memoryPath, 'config');
     const manager = new MemoryManager(memoryPath);
     await manager.init();
     await manager.loadConfig();
@@ -80,6 +84,9 @@ const WIN32 = process.platform === 'win32';
 
 /** 工作区记忆存储根目录（<dataPath>/memory-workspaces） */
 let _workspaceBaseDir: string | null = null;
+
+/** 全局共享 config 文件路径（<dataPath>/memory/config），全局与各工作区实例共用 */
+let _globalMemoryConfigPath: string | null = null;
 
 /** scopeKey -> MemoryManager 实例（含未就绪的初始化 Promise 兜底） */
 const _workspaceInstances = new Map<string, import('./MemoryManager').MemoryManager>();
@@ -99,6 +106,14 @@ export function setWorkspaceMemoryBaseDir(dir: string | null): void {
     _workspaceInitPromises.clear();
     _workspaceReadonlyInstances.clear();
     _workspaceReadonlyInitPromises.clear();
+}
+
+/**
+ * 设置全局共享 config 文件路径（initMemoryManager 内部设置；测试可注入）。
+ * 注意：不清理工作区实例缓存——实例创建时已固化 configPath，仅影响后续新建实例。
+ */
+export function setGlobalMemoryConfigPath(p: string | null): void {
+    _globalMemoryConfigPath = p;
 }
 
 /** 规范化工作区 key：Windows 大小写不敏感 + 统一正斜杠 */
@@ -189,7 +204,8 @@ export async function getMemoryManagerForWorkspace(
         // 只读实例不写入 _workspaceInstances 缓存：后续写路径（createIfMissing=true）
         // 会走完整初始化分支，避免缓存未初始化实例供写工具使用。
         if (!createIfMissing) {
-            const manager = new MemoryManager(dir);
+            // 只读实例同样共享全局 config：loadConfig 读同一份 <dataPath>/memory/config
+            const manager = new MemoryManager(dir, undefined, _globalMemoryConfigPath ?? undefined);
             await manager.loadConfig();
             // 并发写路径（createIfMissing=true）已完成完整初始化时直接复用其结果：
             // 避免只读实例与写实例并存（各自独立 AsyncLock 并发读写同一 LOG）
@@ -244,7 +260,7 @@ export async function getMemoryManagerForWorkspace(
         } catch {
             await fs.promises.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
         }
-        const manager = new MemoryManager(dir);
+        const manager = new MemoryManager(dir, undefined, _globalMemoryConfigPath ?? undefined);
         await manager.init();
         await manager.loadConfig();
         _workspaceInstances.set(scopeKey, manager);

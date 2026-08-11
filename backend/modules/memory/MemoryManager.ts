@@ -162,6 +162,12 @@ class AsyncLock {
 
 export class MemoryManager {
     private dir: string;
+    /**
+     * config 文件路径：默认 <dir>/config（各实例独立）；传入 sharedConfigPath
+     * （全局共享配置 <dataPath>/memory/config）时使用共享路径——全局与所有工作区
+     * 实例读写同一份 config，配置全局统一（记忆数据 LOG/TREE 仍按作用域隔离）。
+     */
+    private configPath: string;
     private config: MemoryConfig;
     private lock = new AsyncLock();
     /**
@@ -179,9 +185,10 @@ export class MemoryManager {
      */
     private treeSlotCache = new Map<number, { mtimeMs: number; fileSize: number; slots: boolean[] }>();
 
-    constructor(storagePath: string, config?: Partial<MemoryConfig>) {
+    constructor(storagePath: string, config?: Partial<MemoryConfig>, sharedConfigPath?: string) {
         this.dir = storagePath;
         this.config = { ...DEFAULT_MEMORY_CONFIG, ...config };
+        this.configPath = sharedConfigPath ?? path.join(this.dir, 'config');
     }
 
     /** 初始化存储目录结构 */
@@ -193,10 +200,11 @@ export class MemoryManager {
         } catch {
             await fs.writeFile(logPath, '');
         }
-        // 写入默认 config（如果不存在）
-        const configPath = path.join(this.dir, 'config');
+        // 写入默认 config（仅当文件不存在时）。共享全局 config 的工作区实例
+        // （configPath 指向已存在的全局配置）绝不可覆盖重写——否则工作区初始化会
+        // 把用户已改好的全局配置重置为默认值；只有首次初始化（文件不存在）才写默认。
         try {
-            await fs.access(configPath);
+            await fs.access(this.configPath);
         } catch {
             await this.writeConfig(this.config);
         }
@@ -1653,14 +1661,14 @@ export class MemoryManager {
             `PART_LINES   = ${cfg.partLines}   # max lines per output part`,
             '',
         ];
-        await fs.writeFile(path.join(this.dir, 'config'), lines.join('\n'), 'utf-8');
+        await fs.writeFile(this.configPath, lines.join('\n'), 'utf-8');
     }
 
     /**
      * 从存储目录读取已有配置。
      */
     async loadConfig(): Promise<MemoryConfig> {
-        const configPath = path.join(this.dir, 'config');
+        const configPath = this.configPath;
         try {
             const content = await fs.readFile(configPath, 'utf-8');
             const cfg = { ...DEFAULT_MEMORY_CONFIG };
