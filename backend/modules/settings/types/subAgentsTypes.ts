@@ -120,6 +120,16 @@ export interface SubAgentsConfig extends Record<string, unknown> {
      * 用户无需配置任何 agent。默认开启。
      */
     generalWorkerEnabled?: boolean;
+
+    /**
+     * 是否强制所有子代理使用当前会话渠道（全局开关）。
+     *
+     * 与 General Worker 的继承口径一致（channelConfigId + channelModelId）：
+     * 勾选后，已配置固定渠道的子代理运行时也统一改用派发方当前正在使用的渠道，
+     * 忽略各自配置的渠道与模型；未勾选（默认）时各子代理使用自己的固定渠道。
+     * 渠道切换（备用 key/新供应商）时无需逐个修改子代理。
+     */
+    forceUseCurrentChannel?: boolean;
 }
 
 /**
