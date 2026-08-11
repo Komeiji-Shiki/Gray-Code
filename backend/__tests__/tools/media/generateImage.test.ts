@@ -109,7 +109,7 @@ describe('generate_image isCancelled 判定', () => {
         });
         const tool = createGenerateImageTool();
         const handlerPromise = tool.handler(
-            { prompt: 'a cat', output_path: 'C:/out/cat.png' },
+            { prompt: 'a cat', output_path: 'C:/ws/out/cat.png' },
             { config: { apiKey: 'test-key' }, toolId: 't-abort', abortSignal: controller.signal } as any
         );
         // 等待 fetch 进入挂起状态后模拟用户取消

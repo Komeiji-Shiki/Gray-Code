@@ -36,7 +36,8 @@ jest.mock('child_process', () => ({
     spawn: jest.fn(),
     exec: jest.fn(),
     execFile: jest.fn(),
-    execSync: jest.fn()
+    execSync: jest.fn(),
+    execFileSync: jest.fn()
 }));
 
 // 保留真实 getShellConfig 等实现，仅隔离 shell 可用性检测（避免真实 where/which/execSync）

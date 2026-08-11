@@ -30,7 +30,8 @@ const runtime = vi.hoisted(() => ({
   setLanguage: vi.fn(),
   cleanupAudioHooks: vi.fn(),
   cleanupVisibilityHooks: vi.fn(),
-  disposeAgentStopController: vi.fn()
+  disposeAgentStopController: vi.fn(),
+  preloadChannelConfigs: vi.fn()
 }))
 
 vi.mock('pinia', () => ({

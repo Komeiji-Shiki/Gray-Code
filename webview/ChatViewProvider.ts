@@ -128,6 +128,10 @@ class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
 
+    // 是否已 dispose（F2）：dispose 后在途消息不再路由（Monitor 等），
+    // 避免访问已释放的后端模块
+    private disposed = false;
+
     // Commands may be sent before the webview JS is ready. Queue them until we get a ready handshake.
     private webviewReady = false;
     private pendingCommands: Array<{ command: string; data?: any }> = [];
@@ -1180,6 +1184,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 清理资源
      */
     public dispose(): void {
+        this.disposed = true;
         // 取消所有活跃的流式请求
         this.cancelAllStreams();
 
