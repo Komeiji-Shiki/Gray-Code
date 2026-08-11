@@ -55,6 +55,16 @@ interface ActiveRunRecord {
     pausedStartedAt?: number;
     inactiveDurationMs: number;
     exitReason?: string;
+    /**
+     * 是否仍在并发队列中等待席位（未开始执行）。
+     *
+     * 修改原因（M-tsub）：pause 对排队中 run 若走 abort，会经 runLoop 的 acquire 桥把
+     * 并发队列项移出并抛 SubAgentQueueCancelledError，pause 语义退化为取消。
+     * 修改方式：executor 注册后、acquire 前 markQueued(true)，acquire 成功后 markStarted(false)；
+     *           pause 对 queued=true 的 run 只置 paused 状态、不 abort 控制器。
+     * 修改目的：排队中 run 的 pause/resume/exit 语义与运行中 run 一致（exit 才真正取消）。
+     */
+    queued: boolean;
 }
 
 export class SubAgentRunController implements IRunController<SubAgentRunScope> {
@@ -69,6 +79,12 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
     private readonly children = new Map<string, Set<string>>();
     /** runId -> detach 回调（executor 注册；detachFromParent 时同步调用，用于解绑父 abort 信号） */
     private readonly detachListeners = new Map<string, () => void>();
+    /**
+     * continueFromRunId 续跑的去重预留（M-tsub 边缘）：同一 runId 并发续跑只允许一个在途。
+     * 续跑校验是「读-判定」无预留，两个 executor 都能通过终态检查并 resumeRun 同一个快照，
+     * 后到者覆盖先到者的 transcript/事件。executor 在续跑校验通过后预留、终态收敛时释放。
+     */
+    private readonly continuationInFlight = new Set<string>();
 
     register(runId: string, agentName?: string, depth?: number, attachedToParent = true): AbortSignal {
         // 修改原因：每次 SubAgent run 需要一个可由 Monitor 独立中止的控制信号，不能复用主聊天的 AbortController。
@@ -91,10 +107,58 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
             attachedToParent,
             detached: false,
             waiters: [],
-            inactiveDurationMs: 0
+            inactiveDurationMs: 0,
+            // 默认视为已开始执行（非排队）：pause 保持 abort 语义；executor 进入并发队列前
+            // 显式 markQueued 切换为「排队中」，acquire 成功后 markStarted 恢复。
+            queued: false
         };
         this.activeRuns.set(runId, record);
         return record.controller.signal;
+    }
+
+    /**
+     * 标记 run 处于并发队列等待（executor 注册后、acquire 并发信号量之前调用）。
+     *
+     * 修改原因（M-tsub）：排队中 run 被 pause 时不应 abort 控制器——abort 会经 runLoop 的
+     * acquire 桥把队列项移出并抛 SubAgentQueueCancelledError，pause 退化为取消。
+     * 修改方式：queued=true 期间 pause 只置 paused 状态、不 abort；run 保持队列项挂起，
+     *           resume 后继续排队，exit 才真正中止并取消队列项。
+     */
+    markQueued(runId: string): void {
+        const record = this.activeRuns.get(runId);
+        if (record) {
+            record.queued = true;
+        }
+    }
+
+    /** 标记 run 已取得并发席位、开始执行（executor acquire 成功后调用）；此后 pause 恢复 abort 语义。 */
+    markStarted(runId: string): void {
+        const record = this.activeRuns.get(runId);
+        if (record) {
+            record.queued = false;
+        }
+    }
+
+    /**
+     * 预留一次 continueFromRunId 续跑（并发去重）：已有续跑在途时返回 false，调用方拒绝该次续跑。
+     *
+     * 修改原因（M-tsub 边缘）：subagents.ts 的 resolveContinuationIdentity 与 executor 的续跑校验
+     * 都是「读-判定」无预留，同一 runId 被并发续跑两次时两个 executor 都能通过终态检查，后到者
+     * 覆盖先到者正在写入的 transcript。
+     * 修改方式：executor 在续跑校验通过后、resumeRun 前调用本方法做原子 check-and-set（同步无
+     *           await 间隙，不存在双写窗口）；run 终态收敛时由 releaseContinuation 释放。
+     */
+    tryReserveContinuation(runId: string): boolean {
+        if (this.continuationInFlight.has(runId)) {
+            return false;
+        }
+        this.continuationInFlight.add(runId);
+        return true;
+    }
+
+    /** 释放续跑预留（executor 终态收敛时调用，幂等）。 */
+    releaseContinuation(runId: string): void {
+        this.continuationInFlight.delete(runId);
     }
 
     /**
@@ -267,9 +331,15 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         // 修改原因：Monitor 的“中止”只暂停当前 SubAgent 内部推理，不能让主窗口 subagents 工具立即失败。
         // 修改方式：把状态置为 paused 并 abort 当前控制器；executor 捕获取消后根据控制器状态等待 resume 或 exit。
         // 修改目的：中止当前 API/工具等待，同时保留主工具调用的挂起语义。
+        // M-tsub：排队中（queued=true，未开始执行）的 run 不 abort 控制器——否则 abort 会经
+        //         runLoop 的 acquire 桥把并发队列项移出并抛 SubAgentQueueCancelledError，pause 退化为
+        //         取消。排队中 pause 只置 paused 状态，run 保持队列项挂起，resume 后继续排队等待席位；
+        //         exit 才真正 abort 并取消队列项（见 markQueued 的修改说明）。
         record.status = 'paused';
         record.pausedStartedAt = Date.now();
-        record.controller.abort();
+        if (!record.queued) {
+            record.controller.abort();
+        }
         subAgentRunEventBus.emit({
             runId,
             agentName: record.agentName,
@@ -302,10 +372,18 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         if (!record) return false;
         if (record.status !== 'paused' && record.status !== 'awaiting_monitor_action') return false;
 
-        // 修改原因：暂停时旧 AbortController 已经被 abort，继续执行必须使用新的 signal。
-        // 修改方式：重建 AbortController、恢复 running 状态，并唤醒 executor 中等待 resume 的 Promise。
-        // 修改目的：从暂停/等待位置继续同一个 runId，而不是创建新的 SubAgent run。
-        record.controller = new AbortController();
+        // 修改原因：暂停时旧 AbortController 可能已经被 abort（运行中 run 的 pause 会 abort），
+        //          继续执行必须使用新的 signal。
+        // 修改方式：仅在旧控制器已被 abort 时重建；排队中 run 的 pause 不 abort 控制器
+        //          （见 pause 的 queued 分支），此时继续沿用旧控制器——executor 的 acquire
+        //          桥在 acquire 前一次性读取 runControlSignal 并挂在旧控制器上，若这里无条件
+        //          重建，resume 后再 exit 中止的是新控制器，acquire 桥收不到 abort，已退出的
+        //          排队项仍会取得席位开始执行（M-tsub 修复）。
+        // 修改目的：从暂停/等待位置继续同一个 runId，而不是创建新的 SubAgent run；排队中
+        //          resume 后的 exit 语义与运行中一致。
+        if (record.controller.signal.aborted) {
+            record.controller = new AbortController();
+        }
         if (record.pausedStartedAt) {
             record.inactiveDurationMs += Date.now() - record.pausedStartedAt;
             record.pausedStartedAt = undefined;

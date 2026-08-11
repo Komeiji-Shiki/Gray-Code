@@ -530,11 +530,22 @@ async function executeSubAgent(
     if (background) {
         const backgroundAbortController = new AbortController();
         const taskId = TaskManager.generateTaskId('bgagent');
+        // L-tsub 修复：后台模式不 await executor，返回的 runId 必须与 executor 实际使用的
+        // runId 一致，否则 Monitor/任务记录里出现两条不同身份的 run（尤其 continueFromRunId
+        // 续跑时，executor 会用旧 runId 而这里曾返回预分配的新 runId）。executor 的规则是
+        // 「continueFromRunId 沿用旧 runId；否则 allocateRunId 判重（预分配或随机回退）」，
+        // 这里按同一规则同步预分配并原样传给 executor——executor 内部会再次 allocateRunId，
+        // 因预分配后尚无快照、且两处调用间无 await 间隙，结果与这里一致。
+        const effectiveRunId = continueFromRunId
+            ? continueFromRunId
+            : subAgentRunEventBus.allocateRunId(
+                runId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            );
 
         TaskManager.registerTask(taskId, 'background_subagent', backgroundAbortController, {
             conversationId,
             agentName,
-            runId,
+            runId: effectiveRunId,
             continueFromRunId,
             promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
         });
@@ -547,7 +558,7 @@ async function executeSubAgent(
             prompt,
             context: additionalContext,
             continueFromRunId,
-            runId,
+            runId: effectiveRunId,
             conversationId,
             conversationStore: context?.conversationStore as any,
             promptModeSnapshot: promptModeSnapshot,
@@ -571,7 +582,7 @@ async function executeSubAgent(
             });
         }).catch(error => {
             TaskManager.unregisterTask(taskId, 'error', {
-                runId,
+                runId: effectiveRunId,
                 agentName,
                 error: error instanceof Error ? error.message : String(error)
             });
@@ -582,7 +593,7 @@ async function executeSubAgent(
             data: {
                 background: true,
                 taskId,
-                runId,
+                runId: effectiveRunId,
                 agentName,
                 note: 'Started in background; the result will arrive as a [Background task completed] message. Do NOT wait or poll.'
             }
