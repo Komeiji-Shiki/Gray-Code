@@ -9,6 +9,7 @@
 
 ### Fixed
   - 子代理运行时长上限可配置：新增全局配置 `defaultMaxRuntimeSeconds`（秒，-1 表示无限制，默认1800 = 30 分钟）——per-agent 未单独配置 `maxRuntime` 时不再硬编码 30 分钟，而是继承该全局默认值（per-agent 已配置的 `maxRuntime` 仍优先）；前端子代理设置新增「默认最大运行时间（秒）」输入框（-1 或 >=1 合法，0 非法），长任务可设为 -1 无限制。
+  - 修复 `show_windows_notification` 只在 VS Code 右下角显示而非 Windows 系统通知：F-07 曾因 node-notifier 停更/传递依赖安全告警改用 VS Code 原生通知（`VSCodeNotificationAdapter`）；现按需求换回 node-notifier（`NodeNotifierWindowsToastAdapter`，系统 toast），`WindowsAgentStopNotificationService` 同步换回；esbuild 恢复 node-notifier 的 external 与 dist/node_modules 复制逻辑（snoretoast.exe 二进制随包分发）；测试重写为覆盖 `NodeNotifierWindowsToastAdapter`。
   - 修复自动总结在「切点深入当前回合」场景白烧总结模型调用：planner 对多轮 + 当前轮超预算时会把轮内切点扩进当前轮，锁内 STALE 检查在 AI 生成完成后才拒绝——每次尝试都完整消耗一次总结模型生成。现 `resolveSummarizeRange`（auto 模式）把切点钳制到最后一条真实用户消息（保留整个当前回合、总结更早内容），单超大轮直接放弃规划（NOT_ENOUGH_ROUNDS，不再调 AI）；planner 保持通用（granular fallback 仍可深入当前长轮裁剪）。
   - 修复自动总结收缩后只剩旧总结消息仍发起生成：`insertIndex <= historyStartIndex` 时直接返回 NO_MESSAGES_TO_SUMMARIZE，不再把无新增内容的请求发给总结模型。
   - 自动总结失败重试优化：STALE_RANGE / LOW_QUALITY_SUMMARY / EMPTY_SUMMARY / CONTEXT_OVERFLOW / NOT_ENOUGH_ROUNDS / NOT_ENOUGH_CONTENT / NO_MESSAGES_TO_SUMMARIZE / CONFIG_NOT_FOUND / CONFIG_DISABLED 等确定性失败不再重试（重试结果相同且重复消耗总结模型调用），直接走 granular fallback；仅瞬时错误（UNKNOWN_ERROR 等）保留有界重试（流式与非流式路径同步）。
