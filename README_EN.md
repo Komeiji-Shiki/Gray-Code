@@ -56,7 +56,7 @@ For larger work, GrayCode can turn requirements into a design document, generate
 
 ## Quick Start
 
-1. **Install the extension** — GrayCode is not published to the VS Code Marketplace, so it must be installed from a VSIX package:
+1. **Install the extension** — GrayCode is now published on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode); search for "Gray Code" in the Extensions view to install it directly. You can also install it from a VSIX package:
    - Download the `graycode-*.vsix` file for your version from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) (you can also build one locally; see “Installation and Updates”).
    - Open VS Code, open the Command Palette with `Ctrl+Shift+P` (macOS: `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the downloaded VSIX file in the file picker. Wait for the installation to finish.
    - Alternatively, click the Extensions icon in the Activity Bar (`Ctrl+Shift+X`), open the `...` menu at the top-right of the Extensions view, choose `Install from VSIX...`, and select the VSIX file.
@@ -189,7 +189,7 @@ Prompt entries can be reordered, enabled or disabled, duplicated, and converted 
 
 ## Installation and Updates
 
-VS Code `^1.84.0` or newer is required. Node.js 20 or newer is recommended for source builds and VSIX packaging. This extension is not published to the VS Code Marketplace; install it from a VSIX package or from source.
+VS Code `^1.84.0` or newer is required. Node.js 20 or newer is recommended for source builds and VSIX packaging. This extension is published on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode); you can also install it from a VSIX package or from source.
 
 **Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
 
