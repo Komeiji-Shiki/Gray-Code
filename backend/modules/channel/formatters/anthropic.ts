@@ -459,16 +459,21 @@ export class AnthropicFormatter extends BaseFormatter {
         redactedThinkingParts: ContentPart[],
         signatureParts: ContentPart[]
     ): void {
-        // 添加普通思考内容
-        if (thoughtParts.length > 0) {
-            const thinkingText = thoughtParts.map(p => p.text).join('\n');
+        // 添加普通思考内容：按「思考段 ↔ 签名」逐段生成 thinking 块。
+        // 修改原因：Anthropic 每个 thinking 内容块自带 signature（流式 signature_delta 紧跟
+        // 所属块的 thinking_delta，parseStreamChunk 按 思考段 → 签名段 顺序落 parts），
+        // 旧实现把所有思考文本合并成单块、只取第一个签名，多段思考回传时 signature 与
+        // 合并后的 thinking 文本失配 → Anthropic 400（signature mismatch）。
+        // 修改方式：逐段配对；单段思考（最常见形态）输出与旧实现完全一致。
+        for (const [index, part] of thoughtParts.entries()) {
             const thinkingBlock: any = {
                 type: 'thinking',
-                thinking: thinkingText
+                thinking: part.text ?? ''
             };
-            // 如果有签名，添加到思考块
-            if (signatureParts.length > 0) {
-                thinkingBlock.signature = (signatureParts[0] as any).signature;
+            // 签名与思考段一一对应；缺签名（如流被截断）时不挂 signature
+            const signature = (signatureParts[index] as any)?.signature;
+            if (signature) {
+                thinkingBlock.signature = signature;
             }
             contentArray.push(thinkingBlock);
         }
@@ -1066,6 +1071,10 @@ export class AnthropicFormatter extends BaseFormatter {
                     }
                 });
             }
+        } else if (chunk.type === 'content_block_stop') {
+            // 内容块结束：不产出增量，providerEvent 在返回前统一注入。
+            // StreamAccumulator 的 Anthropic 分支依赖它：forced tool use（content_block_start
+            // 预填 input）且流式增量从未到达时，在此恢复流式提前执行（见返回前 providerEvent 注释）。
         } else if (chunk.type === 'message_delta') {
             finishReason = chunk.delta?.stop_reason;
             if (chunk.usage) {
@@ -1110,6 +1119,20 @@ export class AnthropicFormatter extends BaseFormatter {
         // 而不是标准的 message_start.message.model。与 OpenAI formatter 对齐。
         if (!streamChunk.modelVersion && chunk.model) {
             streamChunk.modelVersion = chunk.model;
+        }
+
+        // Provider 事件级元数据（与 openai-responses.ts 的 providerEvent 形态对齐：{ type, contentIndex }）。
+        // StreamAccumulator 的 Anthropic 分支依赖它：
+        // - content_block_stop：forced tool use（预填 input）且流式增量从未到达（partialArgs 为空）时，
+        //   清除 prefilledArgs 标记、恢复 getNewCompletedFunctionCalls 的流式提前执行——否则该分支永不触发，
+        //   提前执行退化为等终态，并触发结构快照收束工具卡；
+        // - message_stop：触发结构快照统一收束前端工具卡。
+        if (chunk.type === 'content_block_stop' || chunk.type === 'message_stop') {
+            streamChunk.providerEvent = {
+                type: chunk.type,
+                // Anthropic 每个 content_block_* 事件顶层都带 index；message_stop 无 index
+                ...(typeof chunk.index === 'number' ? { contentIndex: chunk.index } : {})
+            };
         }
         
         return streamChunk;
