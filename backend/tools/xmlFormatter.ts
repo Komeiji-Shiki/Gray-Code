@@ -71,7 +71,7 @@ export function convertToolsToXML(tools: ToolDeclaration[]): string {
             return `  - ${name}${requiredTag} [${typeInfo}]: ${description}`;
         }).join('\n');
         
-        return `<tool name="${tool.name}">
+        return `<tool name="${escapeXmlAttribute(tool.name)}">
   <description>
 ${tool.description}
   </description>
@@ -180,7 +180,10 @@ function wrapXmlValue(value: string): string {
     return `<![CDATA[${value.replace(/\]\]>/g, ']]]]><![CDATA[>')}]]>`;
 }
 
-/** XML 属性值转义：属性不能像文本节点那样用 CDATA，必须实体化（上游 c0cf55f） */
+/**
+ * XML 属性值转义：属性不能使用 CDATA，必须做实体转义。
+ * 用于 <tool_result tool="..."> 等属性插值，防止工具名含引号/尖括号时破坏重放历史结构。
+ */
 function escapeXmlAttribute(value: string): string {
     return String(value)
         .replace(/&/g, '&amp;')
@@ -200,8 +203,61 @@ const XML_ELEMENT_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.\-]*$/;
  */
 const DANGEROUS_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+
+/** 空容器占位标记属性：XML 无法直接表达空数组/空对象（round-trip 后空元素会变成空字符串），
+ * 序列化端把空数组/空对象写成带标记的 <item/>，解析端据此还原为 [] / {}。 */
+const EMPTY_CONTAINER_ATTR = '__graycode_empty';
+const EMPTY_CONTAINER_ARRAY = 'array';
+const EMPTY_CONTAINER_OBJECT = 'object';
+/**
+ * 非法 XML 键名的可逆表示。
+ *
+ * 只对无法直接用作元素名的键、保留标签本身及危险键使用该包装；普通参数
+ * 继续保持原来的 `<key>value</key>` 格式。键名按 UTF-16 code unit 编成十六进制，
+ * 因而任意 JavaScript 字符串（包括空串与未配对代理项）都能安全、无损地放进
+ * XML 属性值，而不受 XML 名称和控制字符限制。
+ */
+const ENCODED_OBJECT_KEY_TAG = '__graycode_encoded_key__';
+const ENCODED_OBJECT_KEY_FORMAT = 'utf16-hex';
+
 function isValidXmlElementName(name: string): boolean {
     return XML_ELEMENT_NAME_RE.test(name);
+}
+
+function shouldEncodeObjectKey(name: string): boolean {
+    return !isValidXmlElementName(name)
+        || name === ENCODED_OBJECT_KEY_TAG
+        || DANGEROUS_OBJECT_KEYS.has(name);
+}
+
+function encodeObjectKey(name: string): string {
+    let encoded = '';
+    for (let i = 0; i < name.length; i++) {
+        encoded += name.charCodeAt(i).toString(16).padStart(4, '0');
+    }
+    return encoded;
+}
+
+function decodeObjectKey(encoded: string): string | null {
+    if (encoded.length % 4 !== 0 || !/^[0-9a-f]*$/i.test(encoded)) {
+        return null;
+    }
+
+    let decoded = '';
+    for (let i = 0; i < encoded.length; i += 4) {
+        decoded += String.fromCharCode(Number.parseInt(encoded.slice(i, i + 4), 16));
+    }
+    return decoded;
+}
+
+/** 序列化对象属性；非法键使用带编码元数据的保留元素包装。 */
+function serializeObjectProperty(key: string, value: unknown, indent: string): string {
+    if (!shouldEncodeObjectKey(key)) {
+        return `${indent}<${key}>${serializeParameterValue(value, indent)}</${key}>`;
+    }
+
+    const encodedKey = encodeObjectKey(key);
+    return `${indent}<${ENCODED_OBJECT_KEY_TAG} encoding="${ENCODED_OBJECT_KEY_FORMAT}" name="${encodedKey}">${serializeParameterValue(value, indent)}</${ENCODED_OBJECT_KEY_TAG}>`;
 }
 
 /**
@@ -210,7 +266,8 @@ function isValidXmlElementName(name: string): boolean {
  *
  * 修改原因：以前对象/数组参数被 JSON.stringify 成文本节点重放，与提示词
  * 教模型的嵌套元素格式不一致，模型会模仿历史里的 JSON-in-XML 错误格式。
- * 键名不是合法 XML 元素名时整体回退为 JSON 文本（CDATA 保护），保证输出合法。
+ * 键名不是合法 XML 元素名时使用带编码键名的保留元素，既保证 XML 合法，
+ * 也让解析器能无损还原对象结构，而不是把整层对象降级成 JSON 字符串。
  */
 function serializeParameterValue(value: unknown, indent: string): string {
     if (value === null || value === undefined) {
@@ -221,7 +278,9 @@ function serializeParameterValue(value: unknown, indent: string): string {
     }
     if (Array.isArray(value)) {
         if (value.length === 0) {
-            return '';
+            // 空数组占位：不加标记会被解析成空字符串，round-trip 后 [] 失真
+            const childIndent = `${indent}  `;
+            return `\n${childIndent}<item ${EMPTY_CONTAINER_ATTR}="${EMPTY_CONTAINER_ARRAY}"/>\n${indent}`;
         }
         const childIndent = `${indent}  `;
         const inner = value
@@ -231,14 +290,13 @@ function serializeParameterValue(value: unknown, indent: string): string {
     }
     const entries = Object.entries(value as Record<string, unknown>);
     if (entries.length === 0) {
-        return '';
-    }
-    if (!entries.every(([key]) => isValidXmlElementName(key))) {
-        return wrapXmlValue(JSON.stringify(value));
+        // 空对象占位：不加标记会被解析成空字符串，round-trip 后 {} 失真
+        const childIndent = `${indent}  `;
+        return `\n${childIndent}<item ${EMPTY_CONTAINER_ATTR}="${EMPTY_CONTAINER_OBJECT}"/>\n${indent}`;
     }
     const childIndent = `${indent}  `;
     const inner = entries
-        .map(([key, val]) => `${childIndent}<${key}>${serializeParameterValue(val, childIndent)}</${key}>`)
+        .map(([key, val]) => serializeObjectProperty(key, val, childIndent))
         .join('\n');
     return `\n${inner}\n${indent}`;
 }
@@ -255,14 +313,9 @@ function serializeParameterValue(value: unknown, indent: string): string {
  */
 export function convertFunctionCallToXML(name: string, args: Record<string, any>): string {
     const entries = Object.entries(args);
-
-    // 极端回退：顶层参数名不合法时无法生成合法元素，整体降级为 JSON 文本。
-    // 正常情况下参数名来自工具 schema，都是合法标识符，不会走到这里。
-    const params = entries.every(([key]) => isValidXmlElementName(key))
-        ? entries
-            .map(([key, value]) => `    <${key}>${serializeParameterValue(value, '    ')}</${key}>`)
-            .join('\n')
-        : `    ${wrapXmlValue(JSON.stringify(args))}`;
+    const params = entries
+        .map(([key, value]) => serializeObjectProperty(key, value, '    '))
+        .join('\n');
 
     return `<tool_use>
   <tool_name>${wrapXmlValue(name)}</tool_name>
@@ -306,29 +359,43 @@ function processParameterValue(value: any): any {
         return value;
     }
     
+    // 空容器占位标记还原：序列化端把空数组/空对象写成带标记的 <item/>，
+    // 解析端据此还原为 [] / {}（否则空容器 round-trip 后变成空字符串）。
+    // 必须在 item 数组判定之前检查，避免被“单元素数组退化形态”误吞成 [{}]。
+    if (value.item && typeof value.item === 'object' && !Array.isArray(value.item)) {
+        const marker = (value.item as Record<string, unknown>)['@___graycode_empty'];
+        if (marker === EMPTY_CONTAINER_ARRAY) {
+            return [];
+        }
+        if (marker === EMPTY_CONTAINER_OBJECT) {
+            return {};
+        }
+    }
+
     // 数组格式：fast-xml-parser 对重复标签生成数组、单标签生成标量/对象。
     // 只有当 item 为数组、或容器对象仅含 item 一个键（单元素数组的退化形态）
     // 时才按数组处理；普通对象的字段恰好叫 item（如 {item: {id: 1}, other: 2}）
-    // 不再被误判为数组结构（上游 c0cf55f）。
+    // 不再被误判为数组结构。
+    // item 判定前先排除标量：{item: 'x'} 这种“单键对象、值为标量”的结构应保持为对象，
+    // 不能被误判成单元素数组 ['x']（对象与单元素数组的 XML 序列化相同，无法区分，
+    // 优先保留对象语义；对象型单元素数组 [{...}] 仍可正确还原）。
     if (Array.isArray(value.item)) {
         // 递归处理数组中的每个元素
         return value.item.map((item: any) => processParameterValue(item));
     }
-    if (value.item !== undefined && Object.keys(value).every(k => k === 'item')) {
+    if (
+        value.item !== undefined
+        && value.item !== null
+        && typeof value.item === 'object'
+        && !Array.isArray(value.item)
+        && Object.keys(value).every(k => k === 'item')
+    ) {
         return [processParameterValue(value.item)];
     }
     
     // 对象：递归处理每个子元素，并统计真实子元素数量
     const result: Record<string, any> = {};
-    let childElementCount = 0;
-    for (const [key, val] of Object.entries(value)) {
-        // 跳过属性（@_前缀）、文本节点键与危险键名，防止原型污染
-        if (key.startsWith('@_') || key === '#text' || DANGEROUS_OBJECT_KEYS.has(key)) {
-            continue;
-        }
-        childElementCount++;
-        result[key] = processParameterValue(val);
-    }
+    const childElementCount = populateObjectFromXml(result, value);
 
     // 带属性的纯文本节点（如 <content lang="en">xxx</content>）会被解析为
     // { '#text': 'xxx', '@_lang': 'en' }。以前这里把 #text 一起跳过，
@@ -338,6 +405,84 @@ function processParameterValue(value: any): any {
     }
 
     return result;
+}
+
+/**
+ * 识别保留元素上的编码键名。缺少完整标记时返回 null，使历史中恰好使用该
+ * 合法标签名的 XML 仍按普通对象属性解析。
+ */
+function decodeEncodedKeyNode(node: unknown): string | null {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) {
+        return null;
+    }
+
+    const record = node as Record<string, unknown>;
+    if (record['@_encoding'] !== ENCODED_OBJECT_KEY_FORMAT || typeof record['@_name'] !== 'string') {
+        return null;
+    }
+    return decodeObjectKey(record['@_name']);
+}
+
+/** 去掉编码元数据后递归处理保留元素承载的真实值。 */
+function processEncodedKeyValue(node: Record<string, unknown>): any {
+    const payload: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node)) {
+        if (key === '@_encoding' || key === '@_name') {
+            continue;
+        }
+        payload[key] = value;
+    }
+
+    // 带属性的空元素只剩编码元数据；与普通空 XML 元素一致还原为空字符串。
+    if (Object.keys(payload).length === 0) {
+        return '';
+    }
+    return processParameterValue(payload);
+}
+
+/**
+ * 将 fast-xml-parser 产生的对象节点填充进普通参数对象。
+ * 编码键可能因重复保留标签而被解析为数组，因此逐个节点解码；危险键在写入
+ * 对象前即被拒绝，避免触发 `__proto__` setter 或覆盖 constructor/prototype。
+ */
+function populateObjectFromXml(target: Record<string, any>, value: Record<string, any>): number {
+    let childElementCount = 0;
+
+    for (const [key, val] of Object.entries(value)) {
+        // 跳过属性（@_前缀）、文本节点键与危险键名，防止原型污染
+        if (key.startsWith('@_') || key === '#text' || DANGEROUS_OBJECT_KEYS.has(key)) {
+            continue;
+        }
+        childElementCount++;
+
+        if (key !== ENCODED_OBJECT_KEY_TAG) {
+            target[key] = processParameterValue(val);
+            continue;
+        }
+
+        const nodes = Array.isArray(val) ? val : [val];
+        const unmarkedNodes: unknown[] = [];
+        for (const node of nodes) {
+            const decodedKey = decodeEncodedKeyNode(node);
+            if (decodedKey === null) {
+                unmarkedNodes.push(node);
+                continue;
+            }
+            if (DANGEROUS_OBJECT_KEYS.has(decodedKey)) {
+                continue;
+            }
+            target[decodedKey] = processEncodedKeyValue(node as Record<string, unknown>);
+        }
+
+        // 向后兼容：没有编码属性的同名标签仍是一个普通、合法的 XML 键。
+        if (unmarkedNodes.length === 1) {
+            target[key] = processParameterValue(unmarkedNodes[0]);
+        } else if (unmarkedNodes.length > 1) {
+            target[key] = unmarkedNodes.map(node => processParameterValue(node));
+        }
+    }
+
+    return childElementCount;
 }
 
 /**
@@ -382,15 +527,7 @@ function parseToolUseNode(toolUse: any): XMLToolCall | null {
     const parameters = toolUse.parameters;
     
     if (parameters && typeof parameters === 'object') {
-        // 遍历所有参数
-        for (const [key, value] of Object.entries(parameters)) {
-            // 跳过内部属性与危险键名（__proto__ 等），防止原型污染
-            if (key.startsWith('@_') || key === '#text' || DANGEROUS_OBJECT_KEYS.has(key)) {
-                continue;
-            }
-            // 递归处理参数值（处理数组和嵌套对象）
-            args[key] = processParameterValue(value);
-        }
+        populateObjectFromXml(args, parameters);
     }
     
     return { name, args };

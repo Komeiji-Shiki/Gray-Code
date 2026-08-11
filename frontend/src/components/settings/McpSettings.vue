@@ -4,10 +4,11 @@
  * 用于配置 Model Context Protocol 服务器
  */
 
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { useI18n } from '@/i18n'
+import { formatMcpArgsInput, parseMcpArgsInput } from '@/utils/mcpArgs'
 import type {
   McpServerInfo,
   McpServerConfig,
@@ -81,6 +82,24 @@ const idValidation = reactive<{
 
 // 防抖计时器
 let idCheckTimer: ReturnType<typeof setTimeout> | null = null
+// ID 校验请求序号：仅最新请求可写校验状态，慢响应（过期响应）不覆盖新结果
+let idCheckRequestSeq = 0
+
+// 连接/断开操作错误消息（列表页顶部展示）
+const connectionError = ref('')
+
+// 重置 ID 校验状态并清理在途防抖检查
+function resetIdValidation() {
+  if (idCheckTimer) {
+    clearTimeout(idCheckTimer)
+    idCheckTimer = null
+  }
+  // 使在途校验响应失效：取消/切换传输类型/重置表单后，旧请求不得回写校验状态
+  idCheckRequestSeq++
+  idValidation.checking = false
+  idValidation.valid = null
+  idValidation.error = ''
+}
 
 // 保存状态
 const isSaving = ref(false)
@@ -183,7 +202,7 @@ function loadFormFromConfig(config: McpServerConfig) {
   
   if (transport.type === 'stdio') {
     formData.command = transport.command
-    formData.args = transport.args?.join(' ') || ''
+    formData.args = formatMcpArgsInput(transport.args)
     formData.env = transport.env ? JSON.stringify(transport.env, null, 2) : ''
   } else {
     formData.url = transport.url
@@ -207,13 +226,13 @@ function resetForm() {
   formData.timeout = 30000
   formData.cleanSchema = true
   saveError.value = ''
-  idValidation.checking = false
-  idValidation.valid = null
-  idValidation.error = ''
+  resetIdValidation()
 }
 
 // 检查 ID 是否可用
 async function checkIdAvailability(id: string) {
+  // 请求序号：仅最新请求可写校验状态，慢响应（过期响应）不覆盖新结果
+  const requestSeq = ++idCheckRequestSeq
   if (!id.trim()) {
     idValidation.valid = null
     idValidation.error = ''
@@ -235,6 +254,9 @@ async function checkIdAvailability(id: string) {
       excludeId: editingServer.value?.id
     })
     
+    // 过期响应（期间有新输入/新请求/重置）：丢弃，不覆盖新结果
+    if (requestSeq !== idCheckRequestSeq) return
+    
     if (response?.success) {
       idValidation.valid = response.valid ?? true
       idValidation.error = response.error || ''
@@ -243,15 +265,25 @@ async function checkIdAvailability(id: string) {
       idValidation.error = ''
     }
   } catch (error) {
+    if (requestSeq !== idCheckRequestSeq) return
     idValidation.valid = null
     idValidation.error = ''
   } finally {
-    idValidation.checking = false
+    // 仅最新请求复位 checking（旧请求的 finally 不干扰新请求的校验中状态）
+    if (requestSeq === idCheckRequestSeq) {
+      idValidation.checking = false
+    }
   }
 }
 
 // ID 输入时防抖检查
 function onIdInput() {
+  // 输入新内容立即重置校验结果：避免防抖等待期（300ms）内点保存沿用上一个 ID 的校验状态
+  idValidation.checking = false
+  idValidation.valid = null
+  idValidation.error = ''
+  // 使上一次输入触发的在途校验响应失效（其响应返回时序号不匹配，不会回写状态）
+  idCheckRequestSeq++
   if (idCheckTimer) {
     clearTimeout(idCheckTimer)
   }
@@ -265,7 +297,14 @@ function cancelEdit() {
   viewMode.value = 'list'
   editingServer.value = null
   isCreating.value = false
+  resetIdValidation()
   resetForm()
+}
+
+// 切换传输类型：重置 ID 校验状态（校验与传输类型无关，避免残留状态误判）
+function selectTransportType(type: 'stdio' | 'sse' | 'streamable-http') {
+  formData.transportType = type
+  resetIdValidation()
 }
 
 // 构建传输配置；JSON 字段无效时抛错并阻止保存。
@@ -289,7 +328,11 @@ function buildTransportConfig(): McpTransportConfig {
       command: formData.command.trim()
     }
     if (formData.args.trim()) {
-      config.args = formData.args.trim().split(/\s+/)
+      try {
+        config.args = parseMcpArgsInput(formData.args)
+      } catch {
+        throw new Error(`args: ${t('components.settings.mcpSettings.validation.invalidArgsJsonArray')}`)
+      }
     }
     if (formData.env.trim()) {
       config.env = parseJsonObject(formData.env, 'env')
@@ -425,6 +468,7 @@ function getDisplayStatus(server: McpServerInfo): McpServerStatus {
 async function toggleConnection(server: McpServerInfo) {
   const serverId = server.config.id
   try {
+    connectionError.value = ''
     if (server.status === 'connected') {
       await sendToExtension('disconnectMcpServer', { serverId })
     } else {
@@ -433,8 +477,10 @@ async function toggleConnection(server: McpServerInfo) {
       await sendToExtension('connectMcpServer', { serverId })
     }
     await loadServers()
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to toggle connection:', error)
+    // 失败时展示错误消息（不再仅 console.error）
+    connectionError.value = t('errors.connectionFailed') + (error?.message ? `: ${error.message}` : '')
   } finally {
     // 移除连接中状态
     connectingServers.value.delete(serverId)
@@ -461,8 +507,6 @@ async function toggleEnabled(server: McpServerInfo) {
       }
     }
     
-    await loadServers()
-    
   } catch (error) {
     console.error('Failed to toggle enabled:', error)
   }
@@ -480,6 +524,11 @@ async function openConfigFile() {
 // 初始化
 onMounted(() => {
   loadServers()
+})
+
+onUnmounted(() => {
+  // 清理在途的 ID 校验防抖计时器
+  resetIdValidation()
 })
 </script>
 
@@ -500,6 +549,12 @@ onMounted(() => {
         <button class="toolbar-btn" @click="loadServers()" :disabled="isLoading" :title="t('components.settings.mcpSettings.toolbar.refresh')">
           <i class="codicon" :class="isLoading ? 'codicon-loading codicon-modifier-spin' : 'codicon-refresh'"></i>
         </button>
+      </div>
+      
+      <!-- 连接/断开操作错误提示 -->
+      <div v-if="connectionError" class="form-error" style="margin-bottom: 8px;">
+        <i class="codicon codicon-error"></i>
+        {{ connectionError }}
       </div>
       
       <!-- 服务器列表 -->
@@ -669,21 +724,21 @@ onMounted(() => {
           <div class="transport-tabs">
             <button
               :class="['transport-tab', { active: formData.transportType === 'stdio' }]"
-              @click="formData.transportType = 'stdio'"
+              @click="selectTransportType('stdio')"
             >
               <i class="codicon codicon-terminal"></i>
               Stdio
             </button>
             <button
               :class="['transport-tab', { active: formData.transportType === 'sse' }]"
-              @click="formData.transportType = 'sse'"
+              @click="selectTransportType('sse')"
             >
               <i class="codicon codicon-radio-tower"></i>
               SSE
             </button>
             <button
               :class="['transport-tab', { active: formData.transportType === 'streamable-http' }]"
-              @click="formData.transportType = 'streamable-http'"
+              @click="selectTransportType('streamable-http')"
             >
               <i class="codicon codicon-globe"></i>
               Streamable HTTP

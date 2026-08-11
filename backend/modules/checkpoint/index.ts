@@ -11,6 +11,10 @@
  *
  * CPF-01/CPF-12：完整存档数据（fileHashes/fileStats/excluded/ignoreSnapshot）写入
  * 独立 manifest（CheckpointManifestRepository），查询与保留策略拆分为独立服务。
+ *
+ * 模块纪律（E2 解环）：checkpoint 不得 import settings 的运行时值。
+ * settings → checkpoint 为单向运行时依赖（CheckpointSettingsService 读取排除规则常量）；
+ * checkpoint → settings 仅允许 type-only import 且一律走 settings 门面（'../settings'）。
  */
 
 export { CheckpointManager } from './CheckpointManager';
@@ -28,3 +32,98 @@ export { CheckpointQueryService } from './CheckpointQueryService';
 export { CheckpointRetentionService } from './CheckpointRetentionService';
 export { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY, CheckpointAbortError, throwIfAborted } from './checkpointConcurrency';
 export type { CheckpointManifest, CheckpointSummary, CheckpointOperationProgress } from './types';
+export type { CheckpointExclusionConfig } from './types';
+
+// 排除类别（EX-03~EX-06）与默认规则
+export {
+    CHECKPOINT_EXCLUSION_PROFILE_VERSION,
+    FORCED_RULES_VERSION,
+    CHECKPOINT_EXCLUSION_CONFIG_VERSION,
+    DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
+    DEFAULT_EXCLUSION_PROFILES,
+    DEFAULT_ENABLED_PROFILES,
+    getExclusionProfile,
+    resolveEnabledProfiles,
+    collectEnabledProfilePatterns,
+    buildIgnoreSnapshot,
+    validateCustomExclusionPatterns
+} from './CheckpointExclusionProfiles';
+export type {
+    CheckpointExclusionProfile,
+    CheckpointExclusionPatternIssueReason,
+    CheckpointExclusionPatternIssue
+} from './CheckpointExclusionProfiles';
+
+// 存档引用计数清理
+export {
+    computeCheckpointReferenceCounts,
+    setGlobalCheckpointRefCountCleaner,
+    getGlobalCheckpointRefCountCleaner
+} from './checkpointRefCounts';
+export type {
+    CheckpointRefCountGraphSource,
+    CheckpointRefCountCleaner
+} from './checkpointRefCounts';
+
+// 忽略解析器
+export { CheckpointIgnoreResolver } from './CheckpointIgnoreResolver';
+export type {
+    CheckpointIgnoreResult,
+    CheckpointIgnoreResolverOptions,
+    CheckpointResolverExcludedEntry,
+    CheckpointSnapshotEntries
+} from './CheckpointIgnoreResolver';
+
+// 恢复引擎
+export {
+    isProtectedScopedPath,
+    computeRestorePlan,
+    isWorkspaceScopedKey,
+    toScopedKey,
+    restoreWorkspaceSnapshot
+} from './CheckpointRestoreEngine';
+export type {
+    RestoreFailureReason,
+    RestoreFailure,
+    RestoreFileChangeType,
+    RestoreFileChange,
+    RestoreEngineResult,
+    RestoreChainEntry,
+    RestoreTargetState,
+    RestoreEngineOptions,
+    RestorePlan
+} from './CheckpointRestoreEngine';
+
+// 工作区根与 scoped 路径工具
+export {
+    CheckpointPathError,
+    createWorkspaceRootId,
+    createRuntimeWorkspaceRoots,
+    createWorkspaceSnapshot,
+    validateWorkspaceSnapshot,
+    normalizeSafeCheckpointPath,
+    createWorkspaceScopedPath,
+    parseWorkspaceScopedPath,
+    resolvePathInsideRoot,
+    resolveSafePathInsideRoot
+} from './CheckpointWorkspace';
+export type {
+    CheckpointWorkspaceRoot,
+    RuntimeWorkspaceRoot,
+    WorkspaceRootInput,
+    CheckpointWorkspaceSnapshot,
+    WorkspaceValidationResult
+} from './CheckpointWorkspace';
+
+// 快照构建与排除预览
+export {
+    buildWorkspaceSnapshot,
+    previewExclusions
+} from './CheckpointSnapshotBuilder';
+export type {
+    SnapshotFileStat,
+    SnapshotExcludedEntry,
+    SnapshotBuildOptions,
+    CheckpointSnapshotBuildResult,
+    ExclusionPreviewOptions
+} from './CheckpointSnapshotBuilder';

@@ -15,30 +15,26 @@ export {
 /**
  * MessageList - 消息列表容器
  * 扁平化设计，简洁加载动画
+ *
+ * S4 批次：todo 面板 / build 面板 / checkpoint 恢复确认流 / 虚拟窗口
+ * 已拆分到 useTodoPanel / useBuildPanel / useCheckpointRestoreFlow / useVirtualMessageWindow；
+ * 本文件仅保留编排与轻量直通逻辑（共享辅助 + 消息操作 + 忙时投递回显）。
  */
 
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { computed, watch } from 'vue'
 import { CustomScrollbar, DeleteDialog, Tooltip, ConfirmDialog } from '../common'
-import MessageItem, { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './MessageItem.vue'
-import { pruneMediumTrimmedByMessageId } from './MessageRenderBlock.vue'
+import MessageItem from './MessageItem.vue'
 import SummaryMessage from './SummaryMessage.vue'
-import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
-import { useChatStore } from '../../stores'
-import { formatTime } from '../../utils/format'
-import { useI18n } from '../../i18n'
-import type { Message, CheckpointRecord, Attachment } from '../../types'
-import { extractTodosFromPlan } from '../../utils/taskCards'
-import {
-  normalizeTodoStatus,
-  type TodoStatus as BuildTodoStatus
-} from '../../utils/todoList'
-import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
-import { mergeToolResult } from '../../utils/toolResult'
-import { resolveLoadedVisibleMessages } from './messageListUtils'
-import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
-import { clearLineDiffCache } from '../../utils/lineDiff'
-import { getAllMessageIndexBoundsCached } from '../../stores/chat/windowUtils'
 import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
+import { useChatStore } from '../../stores'
+import { useI18n } from '../../i18n'
+import type { Message, Attachment } from '../../types'
+import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
+import { getAllMessageIndexBoundsCached } from '../../stores/chat/windowUtils'
+import { useBuildPanel } from './useBuildPanel'
+import { useTodoPanel } from './useTodoPanel'
+import { useCheckpointRestoreFlow } from './useCheckpointRestoreFlow'
+import { useVirtualMessageWindow } from './useVirtualMessageWindow'
 
 const { t, actualLanguage } = useI18n()
 
@@ -51,90 +47,22 @@ const props = defineProps<{
 // 从 store 读取等待状态
 const chatStore = useChatStore()
 
-// ============ Build（Plan 执行）顶部卡片 ============
-type BuildTodoItem = { id: string; text: string; status: BuildTodoStatus }
-const isBuildExpanded = ref(false)
-
-
-
-const replayedBuildTodoState = computed(() => {
-  return chatStore.todoSnapshot
-})
-
-const replayedBuildTodoList = computed(() => {
-  return replayedBuildTodoState.value.todos
-})
-
-const todoBarItems = computed<BuildTodoItem[]>(() => {
-  const list = replayedBuildTodoList.value
-  if (!list || list.length === 0) return []
-
-  return list
-    .map(t => ({
-      id: String(t.id),
-      text: String(t.content || '').trim(),
-      status: normalizeTodoStatus(t.status)
-    }))
-    .filter(t => t.text.length > 0)
-})
-
-// M2-2：删除实例级 todoExpandedMap，统一走模块级 messageListUiStateByTab（按 tabId），
-// 避免与 uiStateByTab.todoExpanded 语义分叉（两个来源互相覆盖）。
-const isTodoExpanded = ref(false)
-
-
+/** 共享辅助：todo/build 两侧共用的工具结果合并（以参数注入两个 composable，不搞全局） */
 function getMergedToolResult(tool: any): Record<string, unknown> {
-  return mergeToolResult(tool as any, id => chatStore.getToolResponseById(id)) ?? {}
-}
-
-function hasConfirmedPlanExecution(tool: any): boolean {
-  if (!tool) return false
-  if (tool.name !== 'create_plan' && tool.name !== 'update_plan') return false
-  const fromTool = tool.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : undefined
-  const fromResponseRaw = typeof tool.id === 'string' && tool.id
+  const fromTool = tool?.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : {}
+  const fromResponseRaw = typeof tool?.id === 'string' && tool.id
     ? chatStore.getToolResponseById(tool.id)
     : undefined
   const fromResponse = fromResponseRaw && typeof fromResponseRaw === 'object'
     ? fromResponseRaw as Record<string, unknown>
-    : undefined
-  const merged = {
-    ...(fromTool || {}),
-    ...(fromResponse || {})
-  }
+    : {}
 
-  return getPlanExecutionPrompt(merged).length > 0
+  return { ...fromTool, ...fromResponse }
 }
 
-function isTodoInitToolForSticky(tool: any): boolean {
-  if (!tool) return false
-  if (tool.name === 'todo_write') return true
-  if (tool.name === 'create_plan') return hasConfirmedPlanExecution(tool)
-  if (tool.name === 'update_plan') {
-    return getPlanUpdateMode(getMergedToolResult(tool), tool.args) !== 'progress_sync' && hasConfirmedPlanExecution(tool)
-  }
-  return false
-}
-
-// 模块级常量：todo 相关工具名集合（todoStickyMeta 的轻量预过滤用，避免每次评估重建 Set）
-const TODO_TOOL_NAME_SET = new Set(['todo_write', 'create_plan', 'update_plan'])
-
-/**
- * activeBuildPlanSync 增量缓存：以 build 对象引用 + 前缀消息引用快照作指纹。
- * 指纹不变时仅扫描尾部新增消息（含旧尾消息——流式期间其 tools 会被原地改写），
- * 其余结构变更/build 变更自动回退全量扫描。chatStore 是单例，模块级缓存跨实例共享安全。
- */
-let activeBuildPlanSyncCache: {
-  build: unknown
-  scannedCount: number
-  messagesRef: Message[]
-  latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null
-} | null = null
-
-/**
- * allMessageIndexBounds 增量缓存（M-3）：走 windowUtils.getAllMessageIndexBoundsCached
- * （引用指纹 + 尾部增量模式），流式期间每个 chunk 的数组原地变更不再全量扫 800 条。
- * 中间位置同长度替换由 state.replaceMessageAt 的 L1 钩子清除缓存兜底。
- */
+/** 共享辅助：全量消息 backendIndex 边界（todo/build 锚点计算共用）。
+ * 走 windowUtils.getAllMessageIndexBoundsCached（引用指纹 + 尾部增量模式），
+ * 流式期间每个 chunk 的数组原地变更不再全量扫 800 条。 */
 const allMessageIndexBounds = computed(() => {
   const bounds = getAllMessageIndexBoundsCached(chatStore.allMessages, chatStore.windowStartIndex)
   return {
@@ -144,828 +72,92 @@ const allMessageIndexBounds = computed(() => {
   }
 })
 
-/**
- * todoStickyMeta 增量缓存（M-3）：与 activeBuildPlanSyncCache 同模式
- * （引用指纹 + 尾部增量 + 尾消息不纳入缓存）。只缓存 [0, scannedCount) 的扫描结果；
- * 尾消息在流式期间可能被原地改写（tools 追加），因此始终重新扫描尾消息，
- * 前缀元素引用逐一校验，任何结构变更（插入/删除/替换）回退全量扫描。
- * i18n 语言纳入缓存键：panelName 的回退文案随语言切换需要重算。
- */
-let todoStickyMetaCache: {
-  messagesRef: Message[]
-  scannedCount: number
-  language: string
-  meta: { hasTodoInitTool: boolean; anchorBackendIndex: number | null; panelName: string }
-} | null = null
-
-/** 由某条已确认的 todo 初始化消息构建 sticky meta（与原始内联逻辑逐项一致） */
-function buildTodoStickyMetaFromMessage(msg: Message, initTool: any, fallbackName: string) {
-  let panelName = fallbackName
-  if (initTool.name === 'create_plan' || initTool.name === 'update_plan') {
-    const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
-    if (title) {
-      panelName = title
-    } else {
-      const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
-      if (path) {
-        const normalized = path.replace(/\\/g, '/')
-        const name = normalized.split('/').filter(Boolean).pop() || path
-        panelName = name.replace(/\.md$/i, '')
-      } else {
-        panelName = t('components.message.tool.createPlan.fallbackTitle')
-      }
-    }
-  }
-
-  const anchorBackendIndex =
-    typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)
-      ? msg.backendIndex + 1
-      : null
-
-  return {
-    hasTodoInitTool: true,
-    anchorBackendIndex,
-    panelName
-  }
-}
-
-const todoStickyMeta = computed(() => {
-  const fallbackName = t('components.message.tool.todoWrite.label')
-  const language = actualLanguage.value
-  const messages = chatStore.allMessages
-  const len = messages.length
-
-  // 引用指纹 + 尾部增量：前缀 [0, scannedCount) 逐元素校验，命中时只扫新增尾部
-  const cache = todoStickyMetaCache
-  let latest = cache?.meta ?? null
-  let fromIndex = 0
-  let prefixOk = false
-  if (cache !== null && cache.language === language && cache.messagesRef.length <= len) {
-    prefixOk = true
-    for (let i = 0; i < cache.scannedCount; i++) {
-      if (messages[i] !== cache.messagesRef[i]) {
-        prefixOk = false
-        break
-      }
-    }
-    if (prefixOk) {
-      latest = cache.meta
-      fromIndex = cache.scannedCount
-    }
-  }
-
-  // 工具名先于昂贵的合并判定做轻量过滤：todo_write / create_plan / update_plan 之外的
-  // 消息直接跳过（isTodoInitToolForSticky 含 getMergedToolResult + 确认文案判定，仅对有
-  // 相关工具名的消息调用），窗口内没有任何相关工具名时直接返回空态
-  let found: { hasTodoInitTool: boolean; anchorBackendIndex: number | null; panelName: string } | null = null
-  for (let i = len - 1; i >= fromIndex; i--) {
-    const msg = messages[i]
-    if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    const hasTodoToolName = msg.tools.some(tool => TODO_TOOL_NAME_SET.has(tool.name))
-    if (!hasTodoToolName) continue
-    const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
-    if (!initTool) continue
-    found = buildTodoStickyMetaFromMessage(msg, initTool, fallbackName)
-    break
-  }
-
-  const meta = found ?? latest ?? {
-    hasTodoInitTool: false,
-    anchorBackendIndex: null,
-    panelName: fallbackName
-  }
-
-  // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
-  todoStickyMetaCache = {
-    messagesRef: messages,
-    scannedCount: Math.max(0, len - 1),
-    language,
-    meta
-  }
-
-  return meta
+// ============ 面板 / 恢复流 / 虚拟窗口 composable 编排（S4） ============
+const buildPanel = useBuildPanel({ chatStore, getMergedToolResult, allMessageIndexBounds })
+const todoPanel = useTodoPanel({
+  chatStore,
+  t,
+  props,
+  actualLanguage,
+  showBuildBar: buildPanel.showBuildBar,
+  replayedBuildTodoState: buildPanel.replayedBuildTodoState,
+  replayedBuildTodoList: buildPanel.replayedBuildTodoList,
+  allMessageIndexBounds,
+  getMergedToolResult
+})
+const checkpointFlow = useCheckpointRestoreFlow({ chatStore, t })
+const virtualWindow = useVirtualMessageWindow({
+  chatStore,
+  props,
+  checkpointsByMsgIndex: checkpointFlow.checkpointsByMsgIndex,
+  showBuildBar: buildPanel.showBuildBar,
+  showTodoBar: todoPanel.showTodoBar,
+  buildAnchorBackendIndex: buildPanel.buildAnchorBackendIndex,
+  todoAnchorBackendIndex: todoPanel.todoAnchorBackendIndex,
+  isBuildExpanded: buildPanel.isBuildExpanded,
+  isTodoExpanded: todoPanel.isTodoExpanded,
+  restoreNotice: checkpointFlow.restoreNotice,
+  restoreTodoExpandedState: todoPanel.restoreTodoExpandedState
 })
 
-const hasTodoInitTool = computed(() => todoStickyMeta.value.hasTodoInitTool)
-
-// 仅保留一个会话级 TODO 条；有 activeBuild 时沿用 Build 条展示，避免双条重叠。
-const showTodoBar = computed(() => {
-  return (
-    !showBuildBar.value &&
-    hasTodoInitTool.value &&
-    todoBarItems.value.length > 0
-  )
-})
-
-const todoInitAnchorBackendIndex = computed<number | null>(() => todoStickyMeta.value.anchorBackendIndex)
-
-const todoAnchorBackendIndex = computed<number | null>(() => {
-  if (!showTodoBar.value) return null
-
-  if (todoInitAnchorBackendIndex.value !== null) {
-    return todoInitAnchorBackendIndex.value
-  }
-
-  const anchor = replayedBuildTodoState.value.anchorBackendIndex
-  if (typeof anchor === 'number' && Number.isFinite(anchor)) return anchor
-
-  if (allMessageIndexBounds.value.firstIndexed !== null) {
-    return allMessageIndexBounds.value.firstIndexed
-  }
-
-  if (allMessageIndexBounds.value.lastIndexed !== null) {
-    return allMessageIndexBounds.value.lastIndexed + 1
-  }
-
-  return allMessageIndexBounds.value.nextFallbackIndex
-})
-
-const todoPanelName = computed(() => todoStickyMeta.value.panelName)
-
-const todoTotal = computed(() => todoBarItems.value.filter(t => t.status !== 'cancelled').length)
-const todoCompleted = computed(() => todoBarItems.value.filter(t => t.status === 'completed').length)
-const todoCurrentText = computed(() => {
-  const inProgress = todoBarItems.value.find(t => t.status === 'in_progress')
-  if (inProgress) return inProgress.text
-  const next = todoBarItems.value.find(t => t.status === 'pending')
-  if (next) return next.text
-  return ''
-})
-
-const buildTodoItems = computed<BuildTodoItem[]>(() => {
-  // 1) 优先显示“重放后”的 todo 列表（兼容 todo_write 精简 result + todo_update 增量更新）
-  if (replayedBuildTodoList.value && replayedBuildTodoList.value.length > 0) {
-    return replayedBuildTodoList.value
-      .map(t => ({
-        id: String(t.id),
-        text: String(t.content || '').trim(),
-        status: normalizeTodoStatus(t.status)
-      }))
-      .filter(t => t.text.length > 0)
-  }
-
-  // 2) 若确实没有任何 todo 工具轨迹，且仍处于 Build 运行中，则临时 fallback 到计划 markdown
-  // （避免刚启动执行时列表短暂为空）
-  if (chatStore.activeBuild?.status !== 'running') {
-    return []
-  }
-
-  const planContent = chatStore.activeBuild?.planContent || ''
-  const planTodos = extractTodosFromPlan(planContent)
-
-  return planTodos.map((t, idx) => ({
-    id: `plan:${idx}`,
-    text: t.text,
-    status: t.completed ? 'completed' : 'pending'
-  }))
-})
-
-const showBuildBar = computed(() => {
-  const build = chatStore.activeBuild
-  if (!build) return false
-
-  // 运行中始终展示；已结束时仅在存在可展示 TODO 时展示，
-  // 避免回退后出现“暂无 TODO”的空 Build 壳。
-  if (build.status === 'running') return true
-  return buildTodoItems.value.length > 0
-})
-
-const buildAnchorBackendIndex = computed<number | null>(() => {
-  const build = chatStore.activeBuild
-
-  if (!build) return null
-
-  if (typeof build.anchorBackendIndex === 'number' && Number.isFinite(build.anchorBackendIndex)) {
-    return build.anchorBackendIndex
-  }
-
-  const startedAt = typeof build.startedAt === 'number' ? build.startedAt : 0
-  const firstAfterStart = chatStore.allMessages.find(m =>
-    typeof m.backendIndex === 'number' &&
-    (startedAt <= 0 || (typeof m.timestamp === 'number' && m.timestamp >= startedAt))
-  )
-  if (typeof firstAfterStart?.backendIndex === 'number') return firstAfterStart.backendIndex
-
-  if (allMessageIndexBounds.value.lastIndexed !== null) {
-    return allMessageIndexBounds.value.lastIndexed + 1
-  }
-  return allMessageIndexBounds.value.nextFallbackIndex
-})
-
-const buildPanelLabel = computed(() => 'Build')
-const buildPanelName = computed(() => chatStore.activeBuild?.title || '')
-
-const buildTotal = computed(() => buildTodoItems.value.filter(t => t.status !== 'cancelled').length)
-const buildCompleted = computed(() => buildTodoItems.value.filter(t => t.status === 'completed').length)
-const buildCurrentText = computed(() => {
-  const list = buildTodoItems.value
-  const inProgress = list.find(t => t.status === 'in_progress')
-  if (inProgress) return inProgress.text
-  const next = list.find(t => t.status === 'pending')
-  if (next) return next.text
-  return ''
-})
-
-const activeBuildPlanSync = computed<null | {
-  kind: 'revision' | 'progress_sync'
-  content?: string
-  signature: string
-}>(() => {
-  const build = chatStore.activeBuild
-  if (!build?.planPath) {
-    activeBuildPlanSyncCache = null
-    return null
-  }
-
-  const buildAnchor = typeof build.anchorBackendIndex === 'number' ? build.anchorBackendIndex : null
-  let latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null = null
-
-  const messages = chatStore.allMessages
-  const len = messages.length
-  let fromIndex = 0
-
-  // 前缀引用校验：同一 build 且缓存窗口是当前窗口的前缀（含尾消息原地替换）时只扫尾部
-  const cache = activeBuildPlanSyncCache
-  if (cache !== null && cache.build === build && cache.messagesRef.length <= len) {
-    let prefixOk = true
-    for (let i = 0; i < cache.scannedCount; i++) {
-      if (messages[i] !== cache.messagesRef[i]) {
-        prefixOk = false
-        break
-      }
-    }
-    if (prefixOk) {
-      latest = cache.latest
-      fromIndex = cache.scannedCount
-    }
-  }
-
-  for (let i = fromIndex; i < len; i++) {
-    const msg = messages[i]
-    if (msg.role !== 'assistant' || !Array.isArray(msg.tools) || msg.tools.length === 0) continue
-
-    const isAfterBuildStart = (
-      typeof msg.backendIndex === 'number' && buildAnchor !== null
-        ? msg.backendIndex >= buildAnchor
-        : typeof msg.timestamp === 'number'
-          ? msg.timestamp >= build.startedAt
-          : false
-    )
-    if (!isAfterBuildStart) continue
-
-    for (const tool of msg.tools) {
-      if (tool.name !== 'update_plan') continue
-
-      const mergedResult = getMergedToolResult(tool)
-      if (tool.status === 'error' || mergedResult.success === false) continue
-
-      const toolPath = typeof (mergedResult as any)?.data?.path === 'string'
-        ? String((mergedResult as any).data.path).trim()
-        : typeof (tool.args as any)?.path === 'string'
-          ? String((tool.args as any).path).trim()
-          : ''
-      if (!toolPath || toolPath !== build.planPath) continue
-
-      const updateMode = getPlanUpdateMode(mergedResult, tool.args)
-      const order = typeof msg.backendIndex === 'number' ? msg.backendIndex : (msg.timestamp || 0)
-      if (updateMode === 'revision') {
-        latest = { kind: 'revision', order }
-        continue
-      }
-
-      const content = typeof (mergedResult as any)?.data?.content === 'string' ? String((mergedResult as any).data.content) : ''
-      if (!content) continue
-      latest = { kind: 'progress_sync', content, order }
-    }
-  }
-
-  // 尾消息可能在流式期间原地变更（tools 追加/状态改写），始终不纳入缓存
-  activeBuildPlanSyncCache = {
-    build,
-    scannedCount: Math.max(0, len - 1),
-    messagesRef: messages,
-    latest
-  }
-
-  if (!latest) return null
-  return latest.kind === 'revision'
-    ? { kind: 'revision', signature: `revision:${latest.order}` }
-    : { kind: 'progress_sync', content: latest.content, signature: `progress_sync:${latest.order}:${latest.content || ''}` }
-})
-
-watch(
-  () => chatStore.activeBuild?.id,
-  (id, prev) => {
-    if (id && id !== prev) {
-      isBuildExpanded.value = false
-    }
-  }
-)
-
-watch(
-  () => chatStore.isWaitingForResponse,
-  (waiting) => {
-    if (!waiting && chatStore.activeBuild && chatStore.activeBuild.status === 'running') {
-      void chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' }).catch(error => {
-        console.error('[MessageList] Failed to finalize active build:', error)
-      })
-    }
-  }
-)
-
-watch(
-  () => activeBuildPlanSync.value?.signature,
-  async () => {
-    const build = chatStore.activeBuild
-    const sync = activeBuildPlanSync.value
-    if (!build || !sync) return
-
-    try {
-      if (sync.kind === 'revision') {
-        await chatStore.setActiveBuild(null)
-        return
-      }
-
-      if (sync.kind === 'progress_sync' && sync.content && sync.content !== build.planContent) {
-        await chatStore.setActiveBuild({ ...build, planContent: sync.content })
-      }
-    } catch (error) {
-      console.error('[MessageList] Failed to synchronize active build:', error)
-    }
-  },
-  { immediate: true }
-)
-
-watch(showBuildBar, (visible) => {
-  if (!visible) isBuildExpanded.value = false
-})
-
-
-/** 根据当前标签页的模块级 UI 状态恢复 TODO 展开状态（M2-2：单一数据源） */
-function restoreTodoExpandedState() {
-  if (!showTodoBar.value) return
-  const saved = uiStateByTab.get(props.tabId)
-  if (saved) {
-    isTodoExpanded.value = saved.todoExpanded
-  }
-  // 无保存记录时保持当前 ref 值（组件实例生命周期内用户的选择不丢失）
-}
-
-// showTodoBar 变为可见时，恢复该对话记忆的展开状态
-watch(showTodoBar, (visible) => {
-  if (!visible) return
-  restoreTodoExpandedState()
-})
-
-/** 切换 TODO 展开/折叠（M2-2：只更新 ref；写回 uiStateByTab 由切换标签页时 saveCurrentUiState 完成） */
-function toggleTodoExpanded() {
-  isTodoExpanded.value = !isTodoExpanded.value
-  const saved = uiStateByTab.get(props.tabId)
-  if (saved) {
-    saved.todoExpanded = isTodoExpanded.value
-  }
-}
-
-// 消息分页显示逻辑：解决消息过多导致的输入卡顿
-const VISIBLE_INCREMENT = 40
-// 连续空页上限：后端返回 loaded=true 但无新增消息时停止继续拉取，避免死循环
-const MAX_EMPTY_LOAD_PAGES = 3
-const visibleCount = ref(VISIBLE_INCREMENT)
-
-// 是否还有更多“未加载到窗口”的历史消息
-const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
-// 顶部加载指示器：后端有更多消息 或 前端还有已加载但未渲染的消息
-const hasMore = computed(() => hasMoreHistory.value || visibleCount.value < props.messages.length)
-
-// 增强的消息对象接口
-interface EnhancedMessage {
-  message: Message
-  backendIndex: number
-  beforeCheckpoints: CheckpointRecord[]
-  afterCheckpoints: CheckpointRecord[]
-}
-
-// 预计算可见消息的增强信息，避免在模板中进行昂贵的计算
-const checkpointsByMsgIndex = computed(() => chatStore.checkpointsByMessageIndex)
-
-/**
- * mergeableCheckpointKeys 增量缓存（M-3）：checkpoints 数组会话内只原地 push
- * （checkpointActions.addCheckpoint 去重后追加）或整体替换，指纹 =（数组引用 + 长度 + 旧尾元素）。
- * 纯尾部追加时只对新增检查点所在的组增量合并（组可能同时新增 before/after，按组整体重新合并），
- * 其余变更回退全量重建。返回的 Set 在指纹未变时复用同一对象（消费者只读 .has）。
- */
-let mergeableCheckpointKeysCache: {
-  ref: CheckpointRecord[]
-  length: number
-  last: CheckpointRecord | undefined
-  keysSet: Set<string>
-} | null = null
-
-const EMPTY_MERGEABLE_KEYS = new Set<string>()
-
-const mergeableCheckpointKeys = computed(() => {
-  if (!chatStore.mergeUnchangedCheckpoints) return EMPTY_MERGEABLE_KEYS
-
-  const checkpoints = chatStore.checkpoints
-  const len = checkpoints.length
-  const lookup = chatStore.checkpointLookup
-
-  let cache = mergeableCheckpointKeysCache
-  if (
-    cache === null ||
-    cache.ref !== checkpoints ||
-    len < cache.length ||
-    (cache.length > 0 && checkpoints[cache.length - 1] !== cache.last)
-  ) {
-    cache = { ref: checkpoints, length: 0, last: undefined, keysSet: new Set() }
-    mergeableCheckpointKeysCache = cache
-  }
-
-  // 增量处理 [cache.length, len) 新增检查点所在的组：同组 before/after 成对判定
-  if (len > cache.length) {
-    const processedGroups = new Set<number>()
-    for (let i = cache.length; i < len; i++) {
-      const messageIndex = checkpoints[i].messageIndex
-      if (processedGroups.has(messageIndex)) continue
-      processedGroups.add(messageIndex)
-
-      const group = lookup.groups.get(messageIndex)
-      if (!group || group.length < 2) continue
-
-      const beforeHashes = new Map<string, string>()
-      let hasAfter = false
-      for (const cp of group) {
-        if (cp.phase === 'before') {
-          if (cp.contentHash) beforeHashes.set(cp.toolName, cp.contentHash)
-        } else {
-          hasAfter = true
-        }
-      }
-      if (!hasAfter) continue
-
-      for (const cp of group) {
-        if (cp.phase !== 'after') continue
-        const beforeHash = beforeHashes.get(cp.toolName)
-        if (beforeHash && cp.contentHash && beforeHash === cp.contentHash) {
-          cache.keysSet.add(`${messageIndex}:${cp.toolName}`)
-        }
-      }
-    }
-    cache.length = len
-    cache.last = checkpoints[len - 1]
-  }
-
-  return cache.keysSet
-})
-
-const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
-  const visibleMessages = resolveLoadedVisibleMessages(props.messages, visibleCount.value)
-
-  // 预先按消息索引对检查点进行分组
-  return visibleMessages.map(message => {
-    const backendIndex = typeof message.backendIndex === 'number' ? message.backendIndex : -1
-    const cpGroup = backendIndex !== -1 ? checkpointsByMsgIndex.value.get(backendIndex) : null
-    
-    return {
-      message,
-      backendIndex,
-      beforeCheckpoints: cpGroup?.before || [],
-      afterCheckpoints: cpGroup?.after || []
-    }
-  })
-})
-
-
-type RenderRow =
-  | { kind: 'build'; key: 'build-bar' }
-  | { kind: 'message'; key: string; item: EnhancedMessage }
-  | { kind: 'todo'; key: 'todo-bar' }
-  | { kind: 'summarize-divider'; key: string }
-
-function shouldInsertSticky(anchor: number | null, idx: number): boolean {
-  return anchor === null || (typeof idx === 'number' && idx >= 0 && idx >= anchor)
-}
-
-const messageRenderRows = computed<RenderRow[]>(() => {
-  const visible = enhancedVisibleMessages.value
-  const rows: RenderRow[] = []
-  const buildAnchor = buildAnchorBackendIndex.value
-  const todoAnchor = todoAnchorBackendIndex.value
-
-  let buildInserted = !showBuildBar.value
-  let todoInserted = !showTodoBar.value
-
-  // 逻辑截断：最后一个总结消息之后渲染横线，分隔「已总结区域」与「未总结区域」。
-  // 被总结消息（isSummarized）原文照常显示（不折叠），横线作为两者边界。
-  let lastSummaryBackendIndex: number | null = null
-  for (const item of visible) {
-    if (item.message.isSummary && typeof item.backendIndex === 'number') {
-      lastSummaryBackendIndex = item.backendIndex
-    }
-  }
-
-  for (const item of visible) {
-    const idx = item.backendIndex
-    if (!buildInserted && shouldInsertSticky(buildAnchor, idx)) {
-      rows.push({ kind: 'build', key: 'build-bar' })
-      buildInserted = true
-    }
-
-    if (!todoInserted && shouldInsertSticky(todoAnchor, idx)) {
-      rows.push({ kind: 'todo', key: 'todo-bar' })
-      todoInserted = true
-    }
-
-    rows.push({ kind: 'message', key: item.message.id, item })
-
-    // 在最后一个总结消息之后插入分隔线（已总结 / 未总结分界）
-    if (lastSummaryBackendIndex !== null && idx === lastSummaryBackendIndex) {
-      rows.push({ kind: 'summarize-divider', key: `summarize-divider:${idx}` })
-    }
-  }
-
-  if (!buildInserted && showBuildBar.value) {
-    rows.push({ kind: 'build', key: 'build-bar' })
-  }
-
-  if (!todoInserted && showTodoBar.value) {
-    rows.push({ kind: 'todo', key: 'todo-bar' })
-  }
-
-  return rows
-})
-
-// 是否正在加载更多（用于节流）
-const viewportHeight = ref(0)
-
-const isLoadingMore = ref(false)
-
-// 加载更多历史消息（先展示已加载的，再按需从后端拉更早一页）
-async function loadMore() {
-  if (isLoadingMore.value || !hasMore.value) return
-  if (!scrollbarRef.value) return
-  const container = scrollbarRef.value.getContainer()
-  if (!container) return
-
-  // 固化发起时的标签页与会话身份
-  const originTabId = props.tabId
-
-  isLoadingMore.value = true
-  const oldScrollHeight = container.scrollHeight
-  const oldScrollTop = container.scrollTop
-
-  try {
-    const needBackendLoad = hasMoreHistory.value
-    const needFrontendExpand = visibleCount.value < props.messages.length
-
-    // 优先展开前端已加载但未渲染的消息
-    if (needFrontendExpand) {
-      visibleCount.value += VISIBLE_INCREMENT
-    }
-
-    // 如果后端还有更多消息，再拉取
-    if (needBackendLoad) {
-      const prevLen = props.messages.length
-      await nextTick()
-
-      await chatStore.loadOlderMessagesPage()
-      await nextTick()
-
-      // 校验归属：await 期间可能已切换标签页或对话
-      if (props.tabId !== originTabId) return
-
-      if (props.messages.length <= prevLen) {
-        // 如果这一页没有新增可见消息，继续尝试下一页
-        // 连续空页上限：后端返回 loaded=true 但无新增（空页）时停止，避免死循环
-        let emptyPages = 0
-        while (hasMoreHistory.value && props.tabId === originTabId && emptyPages < MAX_EMPTY_LOAD_PAGES) {
-          const currentLen = props.messages.length
-          const loaded = await chatStore.loadOlderMessagesPage()
-          await nextTick()
-
-          if (props.tabId !== originTabId) break
-
-          if (!loaded || props.messages.length > currentLen) {
-            break
-          }
-          emptyPages++
-        }
-      }
-    }
-  } catch (error) {
-    // 拉取失败：记录日志，加载标记在 finally 中复位
-    console.error('[MessageList] Failed to load older messages:', error)
-  } finally {
-    // 无条件复位加载标记，避免切走标签页后该标签页上拉加载永久禁用（H4）
-    isLoadingMore.value = false
-    // 仅当标签页未切换时才修正滚动位置
-    if (props.tabId === originTabId) {
-      const newScrollHeight = container.scrollHeight
-      container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
-    }
-  }
-}
-
-// 滚动事件处理：实现自动加载
-function handleScroll(e: Event) {
-  const container = e.target as HTMLElement
-  if (!container) return
-  if (viewportHeight.value !== container.clientHeight) {
-    viewportHeight.value = container.clientHeight
-  }
-  
-  // 当滚动到距离顶部 100px 以内时自动加载
-  if (hasMore.value && !isLoadingMore.value && container.scrollTop < 100) {
-    loadMore()
-  }
-}
-
-// CustomScrollbar 引用
-const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
-
-// 标记是否需要滚动到底部（切换对话时设置）
-const needsScrollToBottom = ref(false)
-const suppressConversationReset = ref(false)
-
-// 使用模块级 Map（H5）：组件卸载后滚动位置/展开状态不丢失
-const uiStateByTab = messageListUiStateByTab
-
-/**
- * M1-1：收集「仍可能被渲染」的消息 ID 并集（当前窗口 + 各标签页快照），
- * 供 pruneBackgroundTaskViewModes 清理已删除/已关闭会话遗留的视图模式记录。
- */
-function collectActiveBackgroundTaskMessageIds(): Set<string> {
-  const ids = new Set<string>()
-  for (const msg of chatStore.allMessages) {
-    if (msg?.id) ids.add(msg.id)
-  }
-  for (const snapshot of chatStore.sessionSnapshots.values()) {
-    for (const msg of snapshot.allMessages) {
-      if (msg?.id) ids.add(msg.id)
-    }
-  }
-  return ids
-}
-
-function saveCurrentUiState(tabId?: string) {
-  if (!tabId) return
-  // M2-1：已关闭的标签页不再保存（closeTab 已清理其 UI 状态，
-  // 避免关闭活跃标签页后 watcher 又把旧记录写回造成泄漏）
-  if (!chatStore.openTabs.some(t => t.id === tabId)) return
-  const container = scrollbarRef.value?.getContainer()
-  uiStateByTab.set(tabId, {
-    scrollTop: container?.scrollTop || 0,
-    visibleCount: visibleCount.value,
-    buildExpanded: isBuildExpanded.value,
-    todoExpanded: isTodoExpanded.value,
-    restoreNotice: restoreNotice.value ? { ...restoreNotice.value } : null
-  })
-  // M2-1：容量上限兜底（优先淘汰最旧的非当前记录）
-  if (uiStateByTab.size > MESSAGE_LIST_UI_STATE_CAP) {
-    let overflow = uiStateByTab.size - MESSAGE_LIST_UI_STATE_CAP
-    for (const key of Array.from(uiStateByTab.keys())) {
-      if (key === tabId) continue
-      uiStateByTab.delete(key)
-      overflow--
-      if (overflow <= 0) break
-    }
-  }
-}
-
-function restoreUiState(tabId?: string) {
-  if (!tabId) return
-  const saved = uiStateByTab.get(tabId)
-  if (saved) {
-    visibleCount.value = saved.visibleCount
-    isBuildExpanded.value = saved.buildExpanded
-    isTodoExpanded.value = saved.todoExpanded
-    restoreNotice.value = saved.restoreNotice ?? null
-    needsScrollToBottom.value = false
-    nextTick(() => {
-      const container = scrollbarRef.value?.getContainer()
-      if (container) {
-        container.scrollTop = saved.scrollTop
-      }
-      suppressConversationReset.value = false
-    })
-    return
-  }
-
-  visibleCount.value = VISIBLE_INCREMENT
-  needsScrollToBottom.value = true
-  restoreTodoExpandedState()
-  nextTick(() => {
-    tryScrollToBottom({ instant: true })
-    suppressConversationReset.value = false
-  })
-}
-
-// ResizeObserver 引用
-let resizeObserver: ResizeObserver | null = null
-
-watch(() => props.tabId, (newTabId, oldTabId) => {
-  suppressConversationReset.value = true
-  if (oldTabId && oldTabId !== newTabId) {
-    saveCurrentUiState(oldTabId)
-    // M1-1：对话/标签页切换时清理已不存在的消息视图模式（非渲染热路径，仅切换时执行）
-    const activeIds = collectActiveBackgroundTaskMessageIds()
-    pruneBackgroundTaskViewModes(activeIds)
-    pruneThoughtViewModes(activeIds)
-    pruneMediumTrimmedByMessageId(activeIds)
-  }
-  restoreUiState(newTabId)
-}, { immediate: true })
-
-// 监听对话切换：当前活跃标签页内加载新对话时，重置分页并滚动到底部
-watch(() => chatStore.currentConversationId, (newId, oldId) => {
-  if (suppressConversationReset.value) return
-  if (newId === oldId) return
-
-  // 重置分页计数（新对话从最后一页开始显示）
-  visibleCount.value = VISIBLE_INCREMENT
-  // 标记需要滚动到底部
-  needsScrollToBottom.value = true
-  nextTick(() => tryScrollToBottom({ instant: true }))
-})
-
-// 监听消息变化，当消息加载完成时尝试滚动
-watch(() => props.messages, (newMessages) => {
-  // 当消息加载完成时，尝试滚动
-  // 如果容器还没有尺寸（display: none），ResizeObserver 会在可见时触发
-  if (needsScrollToBottom.value && newMessages.length > 0) {
-    tryScrollToBottom({ instant: true })
-  }
-}, { deep: false })
-
-// 尝试滚动到底部（会检查容器是否准备好）
-function tryScrollToBottom(options?: { instant?: boolean }) {
-  if (!scrollbarRef.value) return
-  
-  const container = scrollbarRef.value.getContainer()
-  if (!container) return
-  
-  // 检查容器是否有尺寸（可见状态）
-  if (container.scrollHeight > 0 && container.clientHeight > 0) {
-    if (needsScrollToBottom.value) {
-      needsScrollToBottom.value = false
-      scrollbarRef.value.scrollToBottom(options?.instant ? { instant: true } : undefined)
-    }
-  }
-  // 如果容器还没有尺寸，ResizeObserver 会在可见时触发
-}
-
-// 设置 ResizeObserver 监听容器尺寸变化
-onMounted(() => {
-  // 使用 nextTick 确保 scrollbarRef 已经绑定
-  nextTick(() => {
-    if (!scrollbarRef.value) return
-    
-    const container = scrollbarRef.value.getContainer()
-    if (!container) return
-    
-    // 添加滚动事件监听以支持自动加载
-    viewportHeight.value = container.clientHeight
-    container.addEventListener('scroll', handleScroll, { passive: true })
-    
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { height } = entry.contentRect
-        if (height > 0) {
-          viewportHeight.value = height
-        }
-        
-        // 当容器从 0 高度变为有高度时，尝试滚动
-        if (height > 0 && needsScrollToBottom.value) {
-          // 使用 requestAnimationFrame 确保布局完成
-          requestAnimationFrame(() => {
-            tryScrollToBottom({ instant: true })
-          })
-        }
-      }
-    })
-    
-    resizeObserver.observe(container)
-  })
-})
-
-// 清理监听器
-onBeforeUnmount(() => {
-  if (scrollbarRef.value) {
-    const container = scrollbarRef.value.getContainer()
-    if (container) {
-      container.removeEventListener('scroll', handleScroll)
-    }
-  }
-
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
-  saveCurrentUiState(props.tabId)
-
-  // A-M2：消息列表卸载后不再有 diff 面板消费方，主动释放模块级行级差分缓存
-  clearLineDiffCache()
-})
+// —— 供模板引用的解构（名称与拆分前一致，模板零改动）——
+const {
+  isBuildExpanded,
+  buildPanelLabel,
+  buildPanelName,
+  buildTotal,
+  buildCompleted,
+  buildCurrentText,
+  buildTodoItems
+} = buildPanel
+const {
+  isTodoExpanded,
+  toggleTodoExpanded,
+  todoPanelName,
+  todoTotal,
+  todoCompleted,
+  todoCurrentText,
+  todoBarItems
+} = todoPanel
+const {
+  showDeleteConfirm,
+  deleteCount,
+  deleteCheckpoints,
+  confirmDelete,
+  cancelDelete,
+  handleDelete,
+  handleRestoreAndDelete,
+  showRestoreConfirm,
+  restoreConfirmTitle,
+  restoreConfirmMessage,
+  confirmRestore,
+  cancelRestoreConfirm,
+  restoreDeletablePaths,
+  restoreHasUntrackedPaths,
+  restoreShownDeletablePaths,
+  restoreHiddenDeletableCount,
+  restoreUnbackedPaths,
+  isRestorePreviewing,
+  previewingCheckpointId,
+  restoreNotice,
+  showRestoreNotice,
+  restoreNoticeIconClass,
+  restoreNoticeTitle,
+  restoreCheckpoint,
+  handleRestoreCheckpoint,
+  handleRestoreAndRetry,
+  handleRestoreAndEdit,
+  shouldMergeForTool,
+  getCheckpointLabel,
+  getMergedLabel,
+  formatCheckpointTime
+} = checkpointFlow
+const {
+  scrollbarRef,
+  hasMore,
+  loadMore,
+  messageRenderRows
+} = virtualWindow
 
 const emit = defineEmits<{
   edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
@@ -976,59 +168,6 @@ const emit = defineEmits<{
   restoreAndRetry: [messageId: string, checkpointId: string]
   restoreAndEdit: [messageId: string, newContent: string, attachments: Attachment[], checkpointId: string]
 }>()
-
-// 删除确认对话框状态
-const showDeleteConfirm = ref(false)
-const pendingDeleteMessageId = ref<string | null>(null)
-const pendingDeleteBackendIndex = ref<number | null>(null)
-
-// 恢复检查点确认对话框状态
-// CP-09: 所有恢复入口（普通恢复 / 回档并重试 / 回档并删除 / 回档并编辑）
-// 先预览（计算待删除文件清单），确认框展示清单，用户确认后才真正执行恢复。
-interface PendingRestoreAction {
-  kind: 'restore' | 'retry' | 'delete' | 'edit'
-  /** M-8: 发起预览时固化的对话身份；确认时校验，避免恢复错误对话的存档 */
-  conversationId: string
-  checkpointId: string
-  messageId?: string
-  newContent?: string
-  attachments?: Attachment[]
-  preview: Awaited<ReturnType<typeof chatStore.previewRestore>>
-}
-const showRestoreConfirm = ref(false)
-const pendingRestoreAction = ref<PendingRestoreAction | null>(null)
-
-// 确认框展示的删除清单上限（超出显示省略计数）
-const RESTORE_DELETE_LIST_LIMIT = 30
-const isRestorePreviewing = computed(() => chatStore.isRestorePreviewing)
-// L-1: 当前正在预览的检查点 ID——只对发起预览的那个恢复按钮显示 spinner，避免全局转圈
-const previewingCheckpointId = ref<string | null>(null)
-
-// H-3: 恢复类结果（失败/部分失败/警告/成功）用独立提示样式展示，不再塞入 chatStore.error，
-// 避免错误条“重试”按钮误触发 retryAfterError → LLM 重新生成。
-const restoreNotice = ref<RestoreNoticeState | null>(null)
-
-function showRestoreNotice(kind: RestoreNoticeState['kind'], message: string) {
-  restoreNotice.value = { kind, message }
-}
-
-const restoreNoticeIconClass = computed(() => {
-  switch (restoreNotice.value?.kind) {
-    case 'partial': return 'codicon-warning'
-    case 'warning': return 'codicon-info'
-    case 'success': return 'codicon-check'
-    default: return 'codicon-error'
-  }
-})
-
-const restoreNoticeTitle = computed(() => {
-  switch (restoreNotice.value?.kind) {
-    case 'partial': return t('components.message.checkpoint.restoreResultPartialTitle')
-    case 'warning': return t('components.message.checkpoint.restoreResultWarningTitle')
-    case 'success': return t('components.message.checkpoint.restoreResultSuccessTitle')
-    default: return t('components.message.checkpoint.restoreResultErrorTitle')
-  }
-})
 
 // ============ U1 忙时投递（M3-1）轻量回显 ============
 // 忙时发送的用户消息改走 chat.sendInterruptMessage（主会话 inbox），窗口内无痕迹；
@@ -1051,73 +190,11 @@ watch(
   }
 )
 
-
-// 计算要删除的消息数量（使用 allMessages）
-const deleteCount = computed(() => {
-  if (pendingDeleteBackendIndex.value === null) return 0
-  // backendIndex 为绝对索引：删除数量 = total - index
-  const total = chatStore.totalMessages || 0
-  const idx = pendingDeleteBackendIndex.value
-  if (idx < 0) return 0
-  return Math.max(0, total - idx)
-})
-
+// ============ 消息操作（emit / store 直通，无重逻辑） ============
 
 // 处理编辑
 function handleEdit(messageId: string, newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch') {
   emit('edit', messageId, newContent, attachments, mode)
-}
-
-// 处理删除 - 显示确认对话框
-function handleDelete(messageId: string) {
-  pendingDeleteMessageId.value = messageId
-  const msg = chatStore.allMessages.find(m => m.id === messageId)
-  pendingDeleteBackendIndex.value = typeof msg?.backendIndex === 'number' ? msg.backendIndex : null
-  showDeleteConfirm.value = true
-}
-
-// 确认删除 - 使用 allMessages 中的真实索引
-function confirmDelete() {
-  if (!pendingDeleteMessageId.value) return
-  const actualIndex = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
-  if (actualIndex !== -1) {
-    chatStore.deleteMessage(actualIndex)
-  }
-  pendingDeleteMessageId.value = null
-  pendingDeleteBackendIndex.value = null
-}
-
-// 取消删除
-function cancelDelete() {
-  pendingDeleteMessageId.value = null
-  pendingDeleteBackendIndex.value = null
-}
-
-// 获取用于删除消息的最新检查点
-// 之前消息的存档点：包含所有阶段（before/after），因为这些代表已完成的操作状态
-// 当前消息的存档点：只包含 before 阶段，因为用户要撤销的是这条消息的效果
-// 与重试使用相同的策略
-const deleteCheckpoints = computed<CheckpointRecord[]>(() => {
-  if (pendingDeleteBackendIndex.value === null) return []
-  const messageIndex = pendingDeleteBackendIndex.value
-  
-  return chatStore.checkpoints
-    .filter(cp => {
-      if (cp.messageIndex < messageIndex) return true          // 之前的消息：包含所有阶段
-      if (cp.messageIndex === messageIndex && cp.phase === 'before') return true  // 当前消息：只包含 before
-      return false
-    })
-})
-
-// 处理回档并删除
-async function handleRestoreAndDelete(checkpointId: string) {
-  if (!pendingDeleteMessageId.value) return
-  
-  const actualIndex = chatStore.allMessages.findIndex(m => m.id === pendingDeleteMessageId.value)
-  if (actualIndex === -1) return
-  
-  // 先预览恢复（待删除文件清单），确认后才执行
-  await openRestoreConfirm({ kind: 'delete', checkpointId, messageId: pendingDeleteMessageId.value })
 }
 
 // 处理重试 - 直接调用 store 方法（确认已在 MessageItem 的 RetryDialog 中完成）
@@ -1155,241 +232,6 @@ function handleErrorRetry() {
 function handleContinue() {
   chatStore.retryAfterError()
 }
-
-// 处理恢复检查点
-function handleRestoreCheckpoint(checkpointId: string) {
-  const checkpoint = chatStore.checkpoints.find(cp => cp.id === checkpointId)
-  if (checkpoint) {
-    restoreCheckpoint(checkpoint)
-  }
-}
-
-// 处理回档并重试
-async function handleRestoreAndRetry(messageId: string, checkpointId: string) {
-  // 找到消息在 allMessages 中的索引
-  const actualIndex = chatStore.allMessages.findIndex(m => m.id === messageId)
-  if (actualIndex === -1) return
-  
-  // 先预览恢复（待删除文件清单），确认后才执行
-  await openRestoreConfirm({ kind: 'retry', checkpointId, messageId })
-}
-
-// 处理回档并编辑
-async function handleRestoreAndEdit(messageId: string, newContent: string, attachments: Attachment[], checkpointId: string) {
-  // 找到消息在 allMessages 中的索引
-  const actualIndex = chatStore.allMessages.findIndex(m => m.id === messageId)
-  if (actualIndex === -1) return
-  
-  // 先预览恢复（待删除文件清单），确认后才执行
-  await openRestoreConfirm({ kind: 'edit', checkpointId, messageId, newContent, attachments })
-}
-
-// 检查特定工具的检查点是否需要合并显示（前后内容一致时合并）
-function shouldMergeForTool(messageIndex: number, toolName: string): boolean {
-  if (!chatStore.mergeUnchangedCheckpoints) return false
-  return mergeableCheckpointKeys.value.has(`${messageIndex}:${toolName}`)
-}
-
-// 恢复检查点 - 先预览（计算待删除文件清单），确认框展示清单
-async function restoreCheckpoint(checkpoint: CheckpointRecord) {
-  await openRestoreConfirm({ kind: 'restore', checkpointId: checkpoint.id })
-}
-
-// 预览恢复并打开确认框；预览失败（链断裂/存档缺失等）时直接展示错误，不弹确认
-async function openRestoreConfirm(action: Omit<PendingRestoreAction, 'preview' | 'conversationId'>) {
-  if (chatStore.isRestorePreviewing) return
-  // M-8: 固化对话身份——预览与确认之间可能切换对话，确认时据此校验
-  const conversationId = chatStore.currentConversationId
-  if (!conversationId) return
-  restoreNotice.value = null
-  previewingCheckpointId.value = action.checkpointId
-  chatStore.isRestorePreviewing = true
-  try {
-    const preview = await chatStore.previewRestore(action.checkpointId)
-    if (!preview.success) {
-      showRestoreNotice('error', preview.error || t('components.message.checkpoint.restorePreviewFailed'))
-      return
-    }
-    pendingRestoreAction.value = { ...action, conversationId, preview }
-    showRestoreConfirm.value = true
-  } catch (err: any) {
-    showRestoreNotice('error', err?.message || t('components.message.checkpoint.restorePreviewFailed'))
-  } finally {
-    chatStore.isRestorePreviewing = false
-    previewingCheckpointId.value = null
-  }
-}
-
-// 确认恢复检查点：按入口类型执行真正的恢复 / 回档操作
-async function confirmRestore() {
-  const action = pendingRestoreAction.value
-  if (!action) return
-  showRestoreConfirm.value = false
-  pendingRestoreAction.value = null
-  restoreNotice.value = null
-
-  // M-8: 校验对话身份——预览/确认期间若用户切换对话，丢弃本次恢复，
-  // 避免把恢复/回档执行到错误对话上。
-  if (action.conversationId !== chatStore.currentConversationId) {
-    showRestoreNotice('error', t('components.message.checkpoint.restoreConversationChanged'))
-    return
-  }
-
-  const { kind, checkpointId } = action
-
-  try {
-    if (kind === 'restore') {
-      // 用户在确认框中已确认待删除文件清单（含快照后新建文件）→ deleteUntrackedFiles: true
-      const result = await chatStore.restoreCheckpoint(checkpointId, true)
-
-      // CP-10 / H-3: 恢复结果用独立提示分级展示（成功/部分成功/警告/失败），
-      // 不再塞入 chatStore.error，避免错误条“重试”误触发 LLM 重新生成。
-      if (result && !result.success) {
-        showRestoreNotice('error', result.error || t('components.message.checkpoint.restoreResultFailed'))
-      } else if (result?.failures && result.failures.length > 0) {
-        const shown = result.failures.slice(0, 5).map(f => `${f.path}: ${f.reason}`).join('；')
-        showRestoreNotice('partial', result.failures.length > 5
-          ? t('components.message.checkpoint.restoreResultPartialMore', { files: shown, count: result.failures.length })
-          : t('components.message.checkpoint.restoreResultPartial', { files: shown }))
-      } else if (result?.unbackedPaths && result.unbackedPaths.length > 0) {
-        // 快照时未备份（超限/不可读）的文件不会被本次恢复删除或恢复，明确告知
-        const shown = result.unbackedPaths.slice(0, 5).join('、')
-        showRestoreNotice('warning', result.unbackedPaths.length > 5
-          ? t('components.message.checkpoint.restoreResultUnbackedMore', { paths: shown, count: result.unbackedPaths.length })
-          : t('components.message.checkpoint.restoreResultUnbacked', { paths: shown }))
-      } else {
-        const pruned = result?.autoPrunedCheckpointCount || 0
-        showRestoreNotice('success', pruned > 0
-          ? t('components.message.checkpoint.restoreResultSuccessWithPrune', { count: result?.restored ?? 0, pruned })
-          : t('components.message.checkpoint.restoreResultSuccess', { count: result?.restored ?? 0 }))
-      }
-      return
-    }
-
-    if (action.messageId === undefined) return
-    const actualIndex = chatStore.allMessages.findIndex(m => m.id === action.messageId)
-    if (actualIndex === -1) return
-
-    if (kind === 'retry') {
-      // 用户在确认框中已确认待删除文件清单 → 允许删除快照后新建文件
-      await chatStore.restoreAndRetry(actualIndex, checkpointId, true)
-    } else if (kind === 'delete') {
-      await chatStore.restoreAndDelete(actualIndex, checkpointId, true)
-      pendingDeleteMessageId.value = null
-      pendingDeleteBackendIndex.value = null
-      // R3-#7: 回档并删除确认后关闭删除确认对话框（此前 DeleteDialog 残留打开）
-      showDeleteConfirm.value = false
-    } else if (kind === 'edit') {
-      await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true)
-    }
-  } catch (error) {
-    console.error('[MessageList] Restore operation failed:', error)
-    showRestoreNotice('error', error instanceof Error ? error.message : t('components.message.checkpoint.restoreResultFailed'))
-  }
-}
-
-// 取消恢复确认：清理暂存的预览/动作状态，避免残留旧清单
-function cancelRestoreConfirm() {
-  pendingRestoreAction.value = null
-}
-
-// 确认框动态文案（按入口类型）
-const restoreConfirmTitle = computed(() => {
-  if (!pendingRestoreAction.value) return ''
-  const kind = pendingRestoreAction.value.kind
-  if (kind === 'retry') return t('components.message.checkpoint.restoreConfirmRetryTitle')
-  if (kind === 'delete') return t('components.message.checkpoint.restoreConfirmDeleteTitle')
-  if (kind === 'edit') return t('components.message.checkpoint.restoreConfirmEditTitle')
-  return t('components.message.checkpoint.restoreConfirmTitle')
-})
-
-const restoreConfirmMessage = computed(() => {
-  const preview = pendingRestoreAction.value?.preview
-  if (!preview) return ''
-  // 旧版存档（无 fileHashes）：预览无法预知数量，恢复以备份目录内容为准
-  if (preview.legacy) {
-    return t('components.message.checkpoint.restorePreviewLegacy')
-  }
-  const parts: string[] = []
-  if (preview.restored > 0) parts.push(t('components.message.checkpoint.restorePreviewFilesUpdated', { count: preview.restored }))
-  if (preview.deleted > 0) parts.push(t('components.message.checkpoint.restorePreviewFilesDeleted', { count: preview.deleted }))
-  if (preview.skipped > 0) parts.push(t('components.message.checkpoint.restorePreviewFilesUnchanged', { count: preview.skipped }))
-  return parts.length > 0 ? parts.join('，') : t('components.message.checkpoint.restorePreviewNoChanges')
-})
-
-// 待删除文件清单：快照记录过的（deletablePaths）+ 快照后新建、需确认后删除的（untrackedPaths）
-const restoreDeletablePaths = computed(() => {
-  const preview = pendingRestoreAction.value?.preview
-  if (!preview) return []
-  return [...preview.deletablePaths, ...preview.untrackedPaths]
-})
-const restoreHasUntrackedPaths = computed(() => (pendingRestoreAction.value?.preview.untrackedPaths.length || 0) > 0)
-const restoreShownDeletablePaths = computed(() => restoreDeletablePaths.value.slice(0, RESTORE_DELETE_LIST_LIMIT))
-const restoreHiddenDeletableCount = computed(() => Math.max(0, restoreDeletablePaths.value.length - RESTORE_DELETE_LIST_LIMIT))
-
-const restoreUnbackedPaths = computed(() => pendingRestoreAction.value?.preview.unbackedPaths || [])
-
-// 获取检查点标签
-function getCheckpointLabel(cp: CheckpointRecord, phase: 'before' | 'after'): string {
-  if (cp.toolName === 'user_message') {
-    return phase === 'before' ? t('components.message.checkpoint.userMessageBefore') : t('components.message.checkpoint.userMessageAfter')
-  }
-  if (cp.toolName === 'model_message') {
-    return phase === 'before' ? t('components.message.checkpoint.assistantMessageBefore') : t('components.message.checkpoint.assistantMessageAfter')
-  }
-  if (cp.toolName === 'tool_batch') {
-    return phase === 'before' ? t('components.message.checkpoint.toolBatchBefore') : t('components.message.checkpoint.toolBatchAfter')
-  }
-  return phase === 'before' ? t('components.message.checkpoint.toolBatchBefore') : t('components.message.checkpoint.toolBatchAfter')
-}
-
-// 获取合并后的标签文案
-function getMergedLabel(cp: CheckpointRecord): string {
-  if (cp.toolName === 'user_message') {
-    return t('components.message.checkpoint.userMessageUnchanged')
-  }
-  if (cp.toolName === 'model_message') {
-    return t('components.message.checkpoint.assistantMessageUnchanged')
-  }
-  if (cp.toolName === 'tool_batch') {
-    return t('components.message.checkpoint.toolBatchUnchanged')
-  }
-  return t('components.message.checkpoint.toolExecutionUnchanged')
-}
-
-// 格式化检查点时间（精确到秒，支持友好显示）
-function formatCheckpointTime(timestamp: number): string {
-  const date = new Date(timestamp)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  
-  // 判断是否是今天
-  const isToday = date.toDateString() === now.toDateString()
-  
-  // 时间部分 HH:mm:ss
-  const timeStr = formatTime(timestamp, 'HH:mm:ss')
-  
-  if (isToday) {
-    // 今天：只显示时间
-    return timeStr
-  }
-  
-  // 计算天数差
-  const daysDiff = Math.floor(diff / (1000 * 60 * 60 * 24))
-  
-  if (daysDiff === 1) {
-    // 昨天
-    return `${t('components.message.checkpoint.yesterday')} ${timeStr}`
-  }
-  
-  if (daysDiff < 7) {
-    // 一周内
-    return `${t('components.message.checkpoint.daysAgo', { days: daysDiff })} ${timeStr}`
-  }
-  
-  // 超过一周：显示完整日期
-  return formatTime(timestamp, 'YYYY-MM-DD HH:mm:ss')
-}
 </script>
 
 <template>
@@ -1397,8 +239,8 @@ function formatCheckpointTime(timestamp: number): string {
     <div class="message-scroll-area">
       <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message, .summary-message" :width="10" :marker-height="10">
       <div class="messages-container">
-        <!-- 自动加载更多指示器 -->
-        <div v-if="hasMore" class="load-more-container">
+        <!-- 自动加载更多指示器：点击可手动触发加载（自动补载的兜底入口） -->
+        <div v-if="hasMore" class="load-more-container" @click="loadMore()">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
           <span v-if="chatStore.historyFolded" class="load-more-text">
             {{ t('components.message.historyFolded', { count: chatStore.foldedMessageCount }) }}
@@ -1733,8 +575,7 @@ function formatCheckpointTime(timestamp: number): string {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  /* 透明：让桌面端背景图（.app-wallpaper）透出；未设置背景图时露出 app-container 同色背景 */
-  background: transparent;
+  background: var(--vscode-editor-background);
 }
 
 .message-scroll-area {
@@ -1956,6 +797,8 @@ function formatCheckpointTime(timestamp: number): string {
   padding: 12px;
   color: var(--vscode-descriptionForeground);
   opacity: 0.7;
+  /* 点击可手动触发加载更多 */
+  cursor: pointer;
 }
 
 .load-more-container .codicon {

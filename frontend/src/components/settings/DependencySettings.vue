@@ -127,6 +127,16 @@ const installing = ref<string | null>(null);
 const uninstalling = ref<string | null>(null);
 const progressMessage = ref<string>('');
 const progressType = ref<'info' | 'success' | 'error'>('info');
+// 成功消息自动消失定时器（成功后 4s 自动清除，错误消息保留）
+let progressClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleProgressClear() {
+  if (progressClearTimer) clearTimeout(progressClearTimer);
+  progressClearTimer = setTimeout(() => {
+    progressMessage.value = '';
+    progressClearTimer = null;
+  }, 4000);
+}
 
 // 展开的面板（记住状态）
 const STORAGE_KEY = 'graycode.dependencyPanels.expanded';
@@ -250,6 +260,7 @@ async function installDependency(name: string) {
       progressType.value = 'success';
       progressMessage.value = t('components.settings.dependencySettings.progress.installSuccess', { name });
       await loadDependencies();
+      scheduleProgressClear();
     } else {
       progressType.value = 'error';
       progressMessage.value = t('components.settings.dependencySettings.progress.installFailed', { name });
@@ -274,6 +285,7 @@ async function uninstallDependency(name: string) {
       progressType.value = 'success';
       progressMessage.value = t('components.settings.dependencySettings.progress.uninstallSuccess', { name });
       await loadDependencies();
+      scheduleProgressClear();
     } else {
       progressType.value = 'error';
       progressMessage.value = t('components.settings.dependencySettings.progress.uninstallFailed', { name });
@@ -299,6 +311,7 @@ function handleProgressEvent(event: any) {
     case 'complete':
       progressType.value = 'success';
       progressMessage.value = message || t('components.settings.dependencySettings.progress.complete', { dependency });
+      scheduleProgressClear();
       break;
     case 'error':
       progressType.value = 'error';
@@ -324,6 +337,11 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('message', handleMessage);
+  // 清理成功消息自动消失定时器
+  if (progressClearTimer) {
+    clearTimeout(progressClearTimer);
+    progressClearTimer = null;
+  }
 });
 </script>
 

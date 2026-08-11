@@ -2,8 +2,7 @@
  * BranchHandlers 接口层单测（第五阶段 BR-06/07）。
  *
  * 覆盖：
- * - 注册表包含分支处理器（getBranchGraph / getBranchGraphMeta /
- *   createRerollCandidate / switchBranchCandidate / deleteBranchCandidate /
+ * - 注册表包含分支处理器（getBranchGraph / switchBranchCandidate / deleteBranchCandidate /
  *   restoreBranchCandidate / renameBranchCandidate / purgeBranchCandidate /
  *   getDeletedBranchCount / pruneDeletedBranches /
  *   getBranchRetentionConfig / updateBranchRetentionConfig）；
@@ -60,12 +59,10 @@ async function seedLinear(manager: ConversationManager, conversationId: string):
 }
 
 describe('BranchHandlers 注册', () => {
-    test('注册表包含十二个分支处理器', () => {
+    test('注册表包含十个分支处理器', () => {
         const registry = createMessageHandlerRegistry();
         for (const name of [
             'conversation.getBranchGraph',
-            'conversation.getBranchGraphMeta',
-            'conversation.createRerollCandidate',
             'conversation.switchBranchCandidate',
             'conversation.deleteBranchCandidate',
             'conversation.restoreBranchCandidate',
@@ -81,10 +78,10 @@ describe('BranchHandlers 注册', () => {
         }
     });
 
-    test('registerBranchHandlers 独立注册（空表也能注册十二项）', () => {
+    test('registerBranchHandlers 独立注册（空表也能注册十项）', () => {
         const registry = new Map<string, MessageHandler>();
         registerBranchHandlers(registry);
-        expect(registry.size).toBe(12);
+        expect(registry.size).toBe(10);
         expect(registry.get('conversation.getBranchGraph')).toBeDefined();
     });
 });
@@ -172,16 +169,16 @@ describe('BranchHandlers 行为', () => {
         expect(errors[0].message).toContain('no-such-node');
     });
 
-    test('缺失入参返回 BRANCH_OPERATION_CONFLICT', async () => {
+    test('缺失入参返回 BRANCH_INVALID_ARGS', async () => {
         await getBranchGraph({}, 'req-4', makeCtx());
         expect(errors).toHaveLength(1);
-        expect(errors[0].code).toBe('BRANCH_OPERATION_CONFLICT');
+        expect(errors[0].code).toBe('BRANCH_INVALID_ARGS');
     });
 
-    test('L-7：非 string 入参（数字等）按缺失处理，返回 BRANCH_OPERATION_CONFLICT', async () => {
+    test('L-7：非 string 入参（数字等）按缺失处理，返回 BRANCH_INVALID_ARGS', async () => {
         await getBranchGraph({ conversationId: 123 as unknown as string }, 'req-7', makeCtx());
         expect(errors).toHaveLength(1);
-        expect(errors[0].code).toBe('BRANCH_OPERATION_CONFLICT');
+        expect(errors[0].code).toBe('BRANCH_INVALID_ARGS');
         expect(errors[0].message).toContain('conversationId');
     });
 
@@ -252,7 +249,7 @@ describe('TREE-09 分支管理处理器（软删/恢复/重命名/修剪/保留�
         return (responses[responses.length - 1].data as any).graph as any;
     }
 
-    test('renameBranchCandidate：只改 label，返回成功；空 label → BRANCH_OPERATION_CONFLICT', async () => {
+    test('renameBranchCandidate：只改 label，返回成功；空 label → INVALID_BRANCH_RELATION', async () => {
         const ids = await seedWithCandidates('c1');
         await renameBranchCandidate({ conversationId: 'c1', nodeId: ids[2], label: '我的分支 A' }, 'req-t1', makeCtx());
         expect(errors).toHaveLength(0);
@@ -315,7 +312,7 @@ describe('TREE-09 分支管理处理器（软删/恢复/重命名/修剪/保留�
         expect(responses[responses.length - 1].data).toMatchObject({ conversationCount: 1, deletedNodeCount: 1 });
     });
 
-    test('pruneDeletedBranches：retentionDays=0 永不过期（不清理）；非法值 → BRANCH_OPERATION_CONFLICT', async () => {
+    test('pruneDeletedBranches：retentionDays=0 永不过期（不清理）；非法值 → BRANCH_INVALID_ARGS', async () => {
         const ids = await seedWithCandidates('c1');
         await deleteBranchCandidate({ conversationId: 'c1', nodeId: ids[2] }, 'req-t12', makeCtx());
 
@@ -325,7 +322,7 @@ describe('TREE-09 分支管理处理器（软删/恢复/重命名/修剪/保留�
 
         await pruneDeletedBranches({ retentionDays: -1 }, 'req-t14', makeCtx());
         expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-t14', code: 'BRANCH_OPERATION_CONFLICT' });
+        expect(errors[0]).toMatchObject({ requestId: 'req-t14', code: 'BRANCH_INVALID_ARGS' });
     });
 
     test('getBranchRetentionConfig：缺省返回 30；updateBranchRetentionConfig 持久化并回读', async () => {
@@ -341,7 +338,7 @@ describe('TREE-09 分支管理处理器（软删/恢复/重命名/修剪/保留�
 
         await updateBranchRetentionConfig({ retentionDays: 1.5 }, 'req-t18', makeCtx());
         expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-t18', code: 'BRANCH_OPERATION_CONFLICT' });
+        expect(errors[0]).toMatchObject({ requestId: 'req-t18', code: 'BRANCH_INVALID_ARGS' });
     });
 
     test('TREE-13 互斥覆盖新变更类处理器：流式中 rename/purge/restore 均 BRANCH_BUSY', async () => {
@@ -491,12 +488,12 @@ describe('TREE-13 流式期间分支互斥（StreamAbortManager.isActive）', ()
         expect(errors[0]).toMatchObject({ requestId: 'req-b8', code: 'BRANCH_BUSY' });
     });
 
-    test('入参校验优先：流式中缺失 conversationId 仍返回 BRANCH_OPERATION_CONFLICT（而非 BRANCH_BUSY）', async () => {
+    test('入参校验优先：流式中缺失 conversationId 仍返回 BRANCH_INVALID_ARGS（而非 BRANCH_BUSY）', async () => {
         abortManager.create('c1');
         await switchBranchCandidate({ nodeId: 'n1' }, 'req-b10', makeCtx());
 
         expect(errors).toHaveLength(1);
-        expect(errors[0]).toMatchObject({ requestId: 'req-b10', code: 'BRANCH_OPERATION_CONFLICT' });
+        expect(errors[0]).toMatchObject({ requestId: 'req-b10', code: 'BRANCH_INVALID_ARGS' });
     });
 
     // R6b-2.1①：生产「停止」按钮路径——cancel() 会 abort 并移除 controller，isActive 归 false，操作放行

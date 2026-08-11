@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { REVIEW_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import {
   getCurrentReviewDocumentLocale,
@@ -48,7 +49,7 @@ export function createReopenReviewTool(): Tool {
       }
 
       if (!isProgressArtifactPathAllowedWithMultiRoot('review', path)) {
-        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${path}` };
+        return { success: false, error: buildPathRejectedError('review', REVIEW_PATH_SCOPE_LABEL, path) };
       }
 
       const session = await loadReviewSessionState(context);

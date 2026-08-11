@@ -41,7 +41,7 @@ import {
 import {
     detectPromptToolMode,
     extractPromptToolParts
-} from '../../../tools/promptToolParser';
+} from '../../../core/parsers/promptToolParser';
 import { applyCustomBody, applyCustomHeaders } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
 import { serializeToolResultForLLM } from './toolResponseFormatter';
@@ -360,14 +360,20 @@ export class OpenAIFormatter extends BaseFormatter {
             // assistant 消息，并使后续 tool 消息不再紧跟 tool_calls（上游 80e9de7
             // 因此引入的回归；此处为修正版）。
             if (functionResponseParts.length > 0) {
-                // 工具响应用 role: tool 发送
-                for (const part of functionResponseParts) {
+                // 工具响应用 role: tool 发送；同消息的 textParts 并入首条 tool 消息的
+                // content（OpenAI tool 消息 content 可带文本），避免 text + functionResponse
+                // 混合形态把文本丢掉。
+                const textContent = textParts.map(p => p.text).join('\n');
+                for (const [index, part] of functionResponseParts.entries()) {
                     const resp = part.functionResponse!;
+                    const serialized = serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>);
                     messages.push({
                         role: 'tool',
-                        tool_call_id: resp.id || `call_${Date.now()}`,
+                        // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_result 不重复
+                        // （对齐 anthropic.ts tool_result 的 id 生成；裸 Date.now() 同毫秒会碰撞）
+                        tool_call_id: resp.id || `call_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
                         name: resp.name,  // 工具名称是 OpenAI API 必需的
-                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                        content: index === 0 && textContent ? `${textContent}\n\n${serialized}` : serialized
                     });
                 }
             } else if (functionCallParts.length === 0 && (textParts.length > 0 || thoughtParts.length > 0 || mediaParts.length > 0)) {
@@ -514,7 +520,17 @@ export class OpenAIFormatter extends BaseFormatter {
             if (functionResponseParts.length > 0) {
                 // functionResponse 作为 user 消息发送
                 // 如果同一消息中有多媒体附件，需要一起发送（工具调用返回的图片）
+                // 同消息的普通 text parts 一并并入（与 function_call 模式分支对齐：
+                // text → response 文本 → media 的顺序），避免 text + functionResponse
+                // 混合形态把文本丢掉。
                 const responseTextParts: ContentPart[] = [];
+
+                // 添加同消息的普通文本内容
+                for (const part of content.parts) {
+                    if ('text' in part && part.text && !part.thought) {
+                        responseTextParts.push({ text: part.text });
+                    }
+                }
                 
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;
@@ -964,11 +980,11 @@ export class OpenAIFormatter extends BaseFormatter {
         }
         
         // 检查是否完成
-        // 1. 有 choice 且有 finish_reason
-        // 2. 或者有 usage 数据（usage chunk）
+        // 只有 choice 的 finish_reason 才结束流；usage chunk（choices 为空）只更新统计，
+        // 不触发 done——否则 usage 先于内容到达时 done 会提前截断后续文本/tool_calls。
         const hasFinishReason = !!choice?.finish_reason;
         const hasUsage = !!chunk.usage;
-        const done = hasFinishReason || hasUsage;
+        const done = hasFinishReason;
         
         // 构建响应块
         const streamChunk: StreamChunk = {

@@ -52,9 +52,9 @@ function createControllableTool() {
 
 describe('SubAgent 写工具文件锁（P4）', () => {
     afterEach(() => {
-        fileWriteLockManager.releaseAllByHolder('run_a');
-        fileWriteLockManager.releaseAllByHolder('run_b');
-        fileWriteLockManager.releaseAllByHolder('conversation_conv_1');
+        fileWriteLockManager.releaseAllByHolder(holderA);
+        fileWriteLockManager.releaseAllByHolder(holderB);
+        fileWriteLockManager.releaseAllByHolder({ kind: 'main', id: 'conv_1', label: 'main' });
     });
 
     it('子代理写工具与主会话/其他子代理共用同一把锁，冲突返回明确信息', async () => {

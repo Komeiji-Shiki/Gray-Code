@@ -8,6 +8,7 @@ import FindFilesComponent from '../../../components/tools/search/find_files.vue'
 // 注册 find_files 工具
 registerTool('find_files', {
   name: 'find_files',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '查找文件',
   icon: 'codicon-search',
   

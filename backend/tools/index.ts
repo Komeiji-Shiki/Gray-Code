@@ -5,6 +5,7 @@
  */
 
 import type { Tool, ToolRegistration } from './types';
+import { DependencyManager } from '../modules/dependencies';
 import { getReadSkillToolRegistration } from './skills';
 
 // 导出设置上下文（从 core 模块重新导出）
@@ -44,6 +45,12 @@ export * from './sandbox';
 
 // 导出工具辅助函数
 export * from './utils';
+
+// 补充导出（这些符号未随对应目录 index 导出）
+export { getPlanSourceStatusFromContent } from './plan/sourceArtifactSection';
+export type { PlanSourceStatusResult } from './plan/sourceArtifactSection';
+export type { SubAgentRunConversationStore } from './subagents/runEventBus';
+export { resolveMainChatDiffViewColumn } from './file/diffViewColumn';
 
 // 导出格式化器
 export * from './xmlFormatter';
@@ -145,18 +152,27 @@ export function registerAllTools(
         ...getSubAgentsRegistrations()
     ];
 
-    // 注册所有工具（read_skill 除外，它需要特殊处理）。
-    // 修改原因：旧实现先 `probe = registration()` 仅为了判断工具名是否 read_skill，
-    // 等于把每个工具的工厂都多实例化一次（execute_command 等会重复构建声明并触发
-    // checkShellAvailabilitySync 的 execFileSync 探测），随后 registry.register 内部
-    // 还会再调用一次工厂。
-    // 修改方式：read_skill 不在 collectAllToolRegistrations 与 subagents 注册表中
-    //（collectAllToolRegistrations 明确排除，subagents 注册表无 read_skill），
-    // 无需探针即可保证不会重复注册；read_skill 由下方真实工厂单独注册。
+    // 注册所有工具。collectAllToolRegistrations 按约定不包含 read_skill
+    // （read_skill 在下方以真实工厂单独注册）；这里不再预执行工厂做探测，
+    // 避免「只为跳过 read_skill 而提前构建全部工具实例」的重复执行。
     for (const registration of registrations) {
         registry.register(registration);
     }
 
     // 用真正的工厂函数注册 read_skill，使 refreshTool('read_skill') 能重新生成声明
     registry.register(getReadSkillToolRegistration());
+}
+
+/**
+ * 刷新工具依赖状态
+ *
+ * 当依赖安装状态变化后调用此函数刷新
+ */
+export async function refreshToolDependencies(): Promise<void> {
+    try {
+        const depManager = DependencyManager.getInstance();
+        await depManager.refreshInstalledCache();
+    } catch {
+        // 忽略错误
+    }
 }

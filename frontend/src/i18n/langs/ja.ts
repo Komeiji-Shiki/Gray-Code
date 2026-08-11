@@ -1753,7 +1753,7 @@ const ja: LanguageMessages = {
                     command: 'コマンド',
                     commandPlaceholder: '例: npx, python, node',
                     args: '引数',
-                    argsPlaceholder: 'スペース区切り、例: -m mcp_server',
+                    argsPlaceholder: 'JSON 文字列配列（スペース区切りも利用可）、例: ["-m","mcp server"]',
                     env: '環境変数 (JSON)',
                     envPlaceholder: '{"KEY": "value"}',
                     url: 'URL',
@@ -1778,6 +1778,7 @@ const ja: LanguageMessages = {
                     commandRequired: 'コマンドを入力してください',
                     urlRequired: 'URL を入力してください',
                     invalidJson: '有効な JSON オブジェクトを入力してください',
+                    invalidArgsJsonArray: '文字列のみを含む有効な JSON 配列を入力してください',
                     createFailed: '作成に失敗しました',
                     updateFailed: '更新に失敗しました'
                 },
@@ -3816,6 +3817,18 @@ const ja: LanguageMessages = {
                 hoursAgo: '{hours}時間前',
                 daysAgo: '{days}日前'
             }
+        }
+    },
+
+    utils: {
+        tools: {
+            noFile: 'ファイルなし',
+            changes: '{count} 件の変更',
+            cwdLabel: 'ディレクトリ: {cwd}',
+            recursiveSuffix: ' (再帰)',
+            dirCount: '{count} 個のディレクトリ',
+            searchModeSearch: '検索',
+            searchModeReplace: '検索と置換'
         }
     }
 };

@@ -7,14 +7,11 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
+import { isTodoStatus, validateTodos } from '../shared/todoValidation';
+import type { TodoItem, TodoStatus } from '../shared/todoValidation';
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-
-export interface TodoItem {
-    id: string;
-    content: string;
-    status: TodoStatus;
-}
+// 保持对外类型导出（todo/index.ts 通过 export * 转发）
+export type { TodoItem, TodoStatus } from '../shared/todoValidation';
 
 export interface TodoWriteArgs {
     todos: TodoItem[];
@@ -22,43 +19,6 @@ export interface TodoWriteArgs {
 }
 
 const TODO_METADATA_KEY = 'todoList';
-
-function isTodoStatus(value: unknown): value is TodoStatus {
-    return value === 'pending' ||
-        value === 'in_progress' ||
-        value === 'completed' ||
-        value === 'cancelled';
-}
-
-function validateTodos(value: unknown): { ok: true; todos: TodoItem[] } | { ok: false; error: string } {
-    if (!Array.isArray(value)) {
-        return { ok: false, error: 'todos must be an array' };
-    }
-
-    const todos: TodoItem[] = [];
-    for (const item of value) {
-        if (!item || typeof item !== 'object') {
-            return { ok: false, error: 'each todo must be an object' };
-        }
-        const id = (item as Record<string, unknown>).id;
-        const content = (item as Record<string, unknown>).content;
-        const status = (item as Record<string, unknown>).status;
-
-        if (typeof id !== 'string' || !id.trim()) {
-            return { ok: false, error: 'todo.id must be a non-empty string' };
-        }
-        if (typeof content !== 'string') {
-            return { ok: false, error: 'todo.content must be a string' };
-        }
-        if (!isTodoStatus(status)) {
-            return { ok: false, error: 'todo.status must be one of: pending, in_progress, completed, cancelled' };
-        }
-
-        todos.push({ id, content, status });
-    }
-
-    return { ok: true, todos };
-}
 
 async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
     const store = context.conversationStore;

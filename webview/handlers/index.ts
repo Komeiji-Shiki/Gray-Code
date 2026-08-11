@@ -9,6 +9,8 @@ import { registerBranchHandlers } from './BranchHandlers';
 import { registerConfigHandlers } from './ConfigHandlers';
 import { registerSettingsHandlers } from './SettingsHandlers';
 import { registerWallpaperHandlers } from './WallpaperHandlers';
+import { registerMemoryHandlers } from './MemoryHandlers';
+import { registerSettingsTransferHandlers } from './SettingsTransferHandlers';
 import { registerCheckpointHandlers } from './CheckpointHandlers';
 import { registerToolHandlers } from './ToolHandlers';
 import { registerMcpHandlers } from './McpHandlers';
@@ -61,6 +63,10 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   registerConversationHandlers(registry);
   registerBranchHandlers(registry);
   registerConfigHandlers(registry);
+  // 上游拆分的记忆/导入导出注册在前：本地 SettingsHandlers 的内联实现（多工作区作用域）
+  // 后注册覆盖同名消息，保证本地语义生效。
+  registerMemoryHandlers(registry);
+  registerSettingsTransferHandlers(registry);
   registerSettingsHandlers(registry);
   registerWallpaperHandlers(registry);
   registerCheckpointHandlers(registry);
@@ -69,6 +75,7 @@ export function createMessageHandlerRegistry(): Map<string, MessageHandler> {
   registerDependencyHandlers(registry);
   registerStoragePathHandlers(registry);
   registerContextHandlers(registry);
+  // 本地 FileHandlers 为完整实现（含多工作区/安全加固/审批门），后注册覆盖上游拆分文件的同名消息。
   registerFileHandlers(registry);
   registerDiffHandlers(registry);
   registerChatHandlers(registry);

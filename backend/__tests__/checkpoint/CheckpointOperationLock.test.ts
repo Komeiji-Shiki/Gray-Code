@@ -17,7 +17,7 @@ import { CheckpointOperationLockManager } from '../../modules/checkpoint/Checkpo
 
 describe('CheckpointOperationLockManager', () => {
     afterEach(() => {
-        fileWriteLockManager.releaseAllByHolder('test-holder');
+        fileWriteLockManager.releaseAllByHolder({ kind: 'checkpoint', id: 'test-holder', label: 'checkpoint test' });
     });
 
     test('serializes operations on the same workspace', async () => {

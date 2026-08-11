@@ -15,10 +15,7 @@ import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from '../..
 import { isSafeCheckpointDirName } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointManifest } from '../../modules/checkpoint/types';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
-
-async function createTempDirectory(prefix: string): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), prefix));
-}
+import { createTempDirectory, makeRecord } from '../__fixtures__/checkpointFixtures';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -28,21 +25,6 @@ async function writeFile(rootDir: string, relativePath: string, content: string 
 
 function md5(content: string): string {
     return crypto.createHash('md5').update(content).digest('hex');
-}
-
-function makeRecord(overrides: Partial<CheckpointRecord> & { id: string }): CheckpointRecord {
-    return {
-        conversationId: 'conv',
-        messageIndex: 0,
-        toolName: 'write_file',
-        phase: 'after',
-        timestamp: 1000,
-        backupDir: overrides.id,
-        fileCount: 0,
-        contentHash: 'h',
-        type: 'full',
-        ...overrides
-    };
 }
 
 interface Harness {

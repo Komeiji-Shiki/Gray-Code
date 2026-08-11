@@ -15,6 +15,7 @@
 
 import { EventEmitter } from 'events';
 import { t } from '../i18n';
+import { generatePrefixedId } from './shared/idGen';
 
 /**
  * 任务类型
@@ -97,7 +98,7 @@ class TaskManagerClass {
      * 生成唯一任务 ID
      */
     generateTaskId(prefix: string = 'task'): string {
-        return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        return generatePrefixedId(prefix);
     }
     
     /**

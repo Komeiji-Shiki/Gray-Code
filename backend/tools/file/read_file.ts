@@ -26,6 +26,7 @@ import {
     isImageFile,
     isPdfFile,
     normalizeLineEndingsToLF,
+    mapWithConcurrency,
     // WP13 去重：gcd、calculateAspectRatio、ImageDimensions 原来在 read_file.ts 中重复定义，
     // 现改为从 utils.ts 统一导入。
     gcd,
@@ -45,6 +46,9 @@ const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
 // 防止一次批量读取把任意多个文件同时载入内存导致内存暴涨。
 const MAX_BATCH_FILE_COUNT = 20;
 const MAX_BATCH_TOTAL_BYTES = 50 * 1024 * 1024;
+
+/** 批量读取并发上限（与 list_files 的行数统计一致，避免一次读大量文件时并发无界） */
+const BATCH_READ_CONCURRENCY = 8;
 
 const log = Logger.get('ReadFileTool');
 
@@ -161,30 +165,6 @@ function getPathKind(filePath: string): ReadFileDebugInfo['pathKind'] {
     if (isBinaryFile(filePath)) return 'binary';
     return 'text';
 }
-
-function buildReadFileDebugInfo(
-    filePath: string,
-    multimodalEnabled: boolean,
-    capability: MultimodalCapability,
-    context?: ToolContext
-): ReadFileDebugInfo {
-    // 调试原因：read_file 的错误取决于工具执行上下文，而上下文由多个服务组装；需要保留上游快照。
-    // 调试方式：复制 ToolExecutionService 注入的 multimodalDebug，并记录 read_file 实际收到的能力值。
-    // 调试目的：当图片读取失败时，可以对比 upstream 与 handler 两层值，判断是上游漏传还是本工具判断错误。
-    const upstream = typeof context?.multimodalDebug === 'object' && context.multimodalDebug !== null
-        ? context.multimodalDebug as Record<string, unknown>
-        : undefined;
-
-    return {
-        source: 'read_file.handler',
-        pathKind: getPathKind(filePath),
-        handlerMultimodalEnabled: multimodalEnabled,
-        handlerCapability: capability,
-        contextKeys: Object.keys(context ?? {}).sort(),
-        upstream
-    };
-}
-
 
 /**
  * 读取单个文件
@@ -528,6 +508,12 @@ export function createReadFileTool(
             const workspaces = getAllWorkspaces();
             const isMultiRoot = workspaces.length > 1;
             
+            // 调试上下文与文件无关的部分在循环外预计算（避免批量读取时每文件重建）
+            const debugContextKeys = Object.keys(context ?? {}).sort();
+            const upstreamDebug = typeof context?.multimodalDebug === 'object' && context.multimodalDebug !== null
+                ? context.multimodalDebug as Record<string, unknown>
+                : undefined;
+            
             const hasSinglePath = typeof args.path === 'string' && args.path.trim() !== '';
             const batchFiles = Array.isArray(args.files) ? args.files : undefined;
             // 某些 function-calling 客户端会把未提供的可选数组补成 []。当 path 有值时，
@@ -594,7 +580,11 @@ export function createReadFileTool(
                         error: `Batch read total size (${formatFileSize(totalBatchBytes)}) exceeds the limit (${formatFileSize(MAX_BATCH_TOTAL_BYTES)}). Please read the files in smaller batches.`
                     };
                 }
+            }
 
+            // 批量读取受控并发：替代逐文件串行 await（批量读大量文件时串行耗时线性增长）
+            // mapWithConcurrency 保持输入顺序，聚合结果与 fileRequests 一一对应
+            const batchOutcomes = await mapWithConcurrency(fileRequests, BATCH_READ_CONCURRENCY, async (fileReq) => {
                 // 行范围只对文本文件有意义；非文本/多模态文件即使误传也忽略。
                 let lineRange: LineRange | undefined;
                 if (!isBinaryFile(fileReq.path) && (fileReq.startLine !== undefined || fileReq.endLine !== undefined)) {
@@ -604,8 +594,15 @@ export function createReadFileTool(
                     };
                 }
 
-                const debug = buildReadFileDebugInfo(fileReq.path, multimodalEnabled, capability, context);
-                const { result, multimodal } = await readSingleFile(
+                const debug: ReadFileDebugInfo = {
+                    source: 'read_file.handler',
+                    pathKind: getPathKind(fileReq.path),
+                    handlerMultimodalEnabled: multimodalEnabled,
+                    handlerCapability: capability,
+                    contextKeys: debugContextKeys,
+                    upstream: upstreamDebug
+                };
+                return readSingleFile(
                     fileReq.path,
                     capability,
                     multimodalEnabled,
@@ -614,6 +611,9 @@ export function createReadFileTool(
                     debug,
                     context?.activeWorkspaceUri
                 );
+            });
+
+            for (const { result, multimodal } of batchOutcomes) {
                 results.push(result);
 
                 if (result.success) {

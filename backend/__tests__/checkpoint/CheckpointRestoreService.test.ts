@@ -15,21 +15,7 @@ import type { ConversationManager } from '../../modules/conversation/Conversatio
 import type { CheckpointManifestRepository } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointQueryService } from '../../modules/checkpoint/CheckpointQueryService';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
-
-function makeRecord(partial: Partial<CheckpointRecord> & { id: string }): CheckpointRecord {
-    return {
-        conversationId: 'conv-1',
-        messageIndex: 0,
-        toolName: 'test',
-        phase: 'before',
-        timestamp: 1000,
-        backupDir: partial.id,
-        fileCount: 1,
-        contentHash: 'abc',
-        type: 'full',
-        ...partial
-    };
-}
+import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 /** 只测链构建/越界守卫，不触碰恢复引擎：其余依赖用空桩 */
 function createService(checkpointsDir: string): CheckpointRestoreService {

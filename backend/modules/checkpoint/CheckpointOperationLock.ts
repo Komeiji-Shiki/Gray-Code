@@ -23,6 +23,8 @@ export interface CheckpointRunExclusiveOptions {
 
 /** CP-LOCK-1: 排队等待工作区锁期间被取消时 reject 的错误消息（与文件写锁取消同语义） */
 export const CHECKPOINT_LOCK_CANCELLED_MESSAGE = 'Checkpoint operation was cancelled';
+/** CP-LOCK-4: pending 队列容量上限——超限时拒绝新请求（fail-fast），防止异常调用风暴下无界排队 */
+const MAX_PENDING_OPERATIONS = 100;
 
 interface PendingOperation {
     workspaceIds: string[];
@@ -147,6 +149,12 @@ export class CheckpointOperationLockManager {
             // 而不是等到锁授予后在任务内才失败（排队等待时间无上限）。
             if (abortSignal?.aborted) {
                 reject(new Error(CHECKPOINT_LOCK_CANCELLED_MESSAGE));
+                return;
+            }
+            // CP-LOCK-4: 队列容量上限——超过上限拒绝新请求（fail-fast），
+            // 异常调用风暴不会让 pending 无界增长（可重入/嵌套调用不经过此排队，不受影响）
+            if (this.pending.length >= MAX_PENDING_OPERATIONS) {
+                reject(new Error('Checkpoint operation queue is full'));
                 return;
             }
             const onAbort = (): void => {

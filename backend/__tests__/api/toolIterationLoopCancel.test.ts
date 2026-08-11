@@ -15,6 +15,7 @@ import { ToolIterationLoopService } from '../../modules/api/chat/services/ToolIt
 import { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
 import { agentMailbox } from '../../tools/subagents/agentMailbox';
 import type { Content } from '../../modules/conversation/types';
+import { createPromptManagerMock } from '../__fixtures__/mockFixtures';
 
 /** 挂起直到测试主动放行的工具（模拟流式期间启动、结果晚于 cancel 到达的早启动工具） */
 function makeGatedDesignTool() {
@@ -80,25 +81,6 @@ function makeAbortResponsiveTool() {
         }
     };
     return { tool, handlerStarted: started };
-}
-
-function createPromptManagerMock() {
-    const emptyBundle = {
-        beforeHistoryMessages: [],
-        afterHistoryMessages: [],
-        dynamicSnapshotBeforeHistoryMessages: [],
-        dynamicSnapshotAfterHistoryMessages: [],
-        messages: [],
-        dynamicSnapshotMessages: [],
-        text: '',
-        dynamicSnapshotText: '',
-        historyPlacement: 'legacy' as const
-    };
-    return {
-        getPromptContextBundle: jest.fn().mockReturnValue(emptyBundle),
-        refreshAndGetPrompt: jest.fn().mockReturnValue('sys'),
-        getSystemPrompt: jest.fn().mockReturnValue('sys')
-    };
 }
 
 function createHarness(channelManager: unknown, toolRegistry: unknown) {

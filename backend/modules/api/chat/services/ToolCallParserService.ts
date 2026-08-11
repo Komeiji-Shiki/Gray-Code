@@ -13,7 +13,7 @@ import {
     detectPromptToolMode,
     extractPromptToolParts,
     type PromptToolMode
-} from '../../../../tools/promptToolParser';
+} from '../../../../core/parsers/promptToolParser';
 import { generateToolCallId, type FunctionCallInfo } from '../utils';
 
 function assignFunctionCallIds(parts: ContentPart[]): ContentPart[] {

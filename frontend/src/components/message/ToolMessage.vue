@@ -161,6 +161,39 @@ function getPendingDiffSessions(toolOrId: ToolUsage | string): PendingDiffSessio
   return toolIdToPendingDiffs.value.get(toolId) ?? []
 }
 
+/**
+ * Pending diff 的增强视图：把进度/剩余时间/处理中/错误一次性展开，
+ * 模板只消费数组字段，避免同一渲染周期内重复调用 getPendingDiffSessions /
+ * getDiffActionError 与多次 Map.get / Set.has。
+ */
+interface PendingDiffView extends PendingDiffSession {
+  progress: number
+  timeLeft: number
+  isProcessing: boolean
+  error: string | undefined
+}
+
+// 按工具 ID 预计算 pending diff 增强视图（computed 数组，供模板消费）
+const pendingDiffViewsByToolId = computed<Map<string, PendingDiffView[]>>(() => {
+  // 显式读取这些 ref，使处理状态/错误/倒计时状态变化时 computed 重新求值
+  void processingDiffSessionIds.value
+  void diffActionErrors.value
+  void applyDiffTimeLeft.value
+  void applyDiffProgress.value
+
+  const views = new Map<string, PendingDiffView[]>()
+  for (const tool of enhancedTools.value) {
+    views.set(tool.id, getPendingDiffSessions(tool).map((session) => ({
+      ...session,
+      progress: applyDiffProgress.value.get(session.id) || 0,
+      timeLeft: applyDiffTimeLeft.value.get(session.id) || 0,
+      isProcessing: processingDiffSessionIds.value.has(session.id),
+      error: getDiffActionError(session.id)
+    })))
+  }
+  return views
+})
+
 function hasPendingDiffSession(sessionId: string): boolean {
   return getAllPendingDiffSessions().some((session) => session.id === sessionId)
 }
@@ -1185,27 +1218,32 @@ function renderToolContent(tool: ToolUsage) {
   
   // 如果有内容格式化器，使用格式化器
   if (config?.contentFormatter) {
-    const content = config.contentFormatter(tool.args, tool.result)
-    const children: any[] = []
+    let content: unknown = null
+    try {
+      content = config.contentFormatter(tool.args, tool.result)
+    } catch {
+      // formatter 崩溃时降级到默认 JSON 展示，避免整个工具块渲染失败
+      content = null
+    }
 
+    // formatter 正常返回非空内容：按原有结构展示；否则落到下方默认 JSON 展示
     if (content) {
-      children.push(h('div', { class: 'tool-content-text' }, content))
-    }
+      const children: any[] = []
 
-    if (tool.error) {
-      children.push(
-        h('div', { class: 'content-section error-section' }, [
-          h('div', { class: 'section-label' }, t('components.message.tool.error') + ':'),
-          h('div', { class: 'error-message' }, tool.error)
-        ])
-      )
-    }
+      // content 类型为 unknown（formatter 返回值容错化）；h() 的 children 参数要求 RawChildren，此处断言 any 保持运行时行为不变
+      children.push(h('div', { class: 'tool-content-text' }, content as any))
 
-    if (children.length === 0) {
-      return h('div', { class: 'tool-content-text' }, '')
-    }
+      if (tool.error) {
+        children.push(
+          h('div', { class: 'content-section error-section' }, [
+            h('div', { class: 'section-label' }, t('components.message.tool.error') + ':'),
+            h('div', { class: 'error-message' }, tool.error)
+          ])
+        )
+      }
 
-    return h('div', { class: 'tool-content-default' }, children)
+      return h('div', { class: 'tool-content-default' }, children)
+    }
   }
   
   // 默认显示：参数和结果的 JSON
@@ -1362,22 +1400,22 @@ const ToolContentHost = defineComponent({
       </div>
 
       <!-- Diff 工具确认操作栏（按独立 pending diff 渲染，不随展开面板隐藏） -->
-      <div v-if="getPendingDiffSessions(tool).length > 0" class="diff-action-list">
-        <div v-for="pendingDiff in getPendingDiffSessions(tool)" :key="pendingDiff.id" class="diff-action-footer">
+      <div v-if="(pendingDiffViewsByToolId.get(tool.id) || []).length > 0" class="diff-action-list">
+        <div v-for="pendingDiff in pendingDiffViewsByToolId.get(tool.id) || []" :key="pendingDiff.id" class="diff-action-footer">
           <div class="diff-action-file">
             <span class="codicon codicon-file-code"></span>
             <span class="diff-action-file-path">{{ pendingDiff.filePath }}</span>
           </div>
           <div class="footer-top" v-if="globalApplyDiffConfig.autoSave">
             <div class="timer-container">
-              <div class="timer-bar" :style="{ width: (applyDiffProgress.get(pendingDiff.id) || 0) + '%' }"></div>
+              <div class="timer-bar" :style="{ width: pendingDiff.progress + '%' }"></div>
             </div>
-            <span class="timer-text">{{ ((applyDiffTimeLeft.get(pendingDiff.id) || 0) / 1000).toFixed(1) }}s</span>
+            <span class="timer-text">{{ (pendingDiff.timeLeft / 1000).toFixed(1) }}s</span>
           </div>
           <div class="footer-buttons">
             <button
               class="confirm-btn-primary"
-              :disabled="processingDiffSessionIds.has(pendingDiff.id)"
+              :disabled="pendingDiff.isProcessing"
               @click.stop="confirmDiff(pendingDiff.id)"
             >
               <span class="codicon codicon-check"></span>
@@ -1385,20 +1423,20 @@ const ToolContentHost = defineComponent({
             </button>
             <button
               class="reject-btn-secondary"
-              :disabled="processingDiffSessionIds.has(pendingDiff.id)"
+              :disabled="pendingDiff.isProcessing"
               @click.stop="rejectDiff(pendingDiff.id)"
             >
               <span class="codicon codicon-close"></span>
               {{ t('components.message.tool.reject') }}
             </button>
           </div>
-          <div v-if="processingDiffSessionIds.has(pendingDiff.id)" class="diff-action-state">
+          <div v-if="pendingDiff.isProcessing" class="diff-action-state">
             <span class="codicon codicon-loading codicon-modifier-spin"></span>
             <span>{{ t('tools.executing') }}</span>
           </div>
-          <div v-else-if="getDiffActionError(pendingDiff.id)" class="diff-action-error">
+          <div v-else-if="pendingDiff.error" class="diff-action-error">
             <span class="codicon codicon-error"></span>
-            <span>{{ getDiffActionError(pendingDiff.id) }}</span>
+            <span>{{ pendingDiff.error }}</span>
           </div>
         </div>
       </div>

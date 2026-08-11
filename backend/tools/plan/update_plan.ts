@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { PLAN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { buildPlanDocument, extractPlanBodyContent } from './documentLayout';
 import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
 import {
@@ -16,6 +17,7 @@ import {
   type PlanSourceArtifactInput
 } from './sourceArtifactSection';
 import { syncProgressFromPlanArtifact } from '../progress/autoSync';
+import { withProgressWriteLock } from '../progress/progressWriteLock';
 
 export type PlanUpdateMode = 'revision' | 'progress_sync';
 
@@ -95,7 +97,7 @@ export function createUpdatePlanTool(): Tool {
   return {
     declaration: createUpdatePlanToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
-      // 意外字段校验（上游 171dc86）：防止模型幻觉字段静默混入
+      // 严格字段校验（对应上游 171dc86）：防止模型幻觉字段被静默忽略
       const allowedKeys = new Set([
         'path', 'plan', 'todos', 'title', 'overview', 'changeSummary', 'updateMode', 'sourceArtifact'
       ]);
@@ -122,7 +124,7 @@ export function createUpdatePlanTool(): Tool {
       }
 
       if (!isPlanModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid plan path. Only ".graycode/plans/**.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: buildPathRejectedError('plan', PLAN_PATH_SCOPE_LABEL, targetPath) };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);
@@ -130,52 +132,58 @@ export function createUpdatePlanTool(): Tool {
         return { success: false, error: error || 'No workspace folder open' };
       }
 
-      let existingContent = '';
-      try {
-        const existingBytes = await vscode.workspace.fs.readFile(uri);
-        existingContent = Buffer.from(existingBytes).toString('utf-8');
-      } catch (e: any) {
-        return { success: false, error: e?.message || `Plan document does not exist: ${targetPath}` };
-      }
+      // 修改原因：plan 文档的「读 → 改 → 写」无锁，并行子代理同时 update 同一 plan 会互相覆盖。
+      // 修改方式：与 create_plan 一致，把整段读改写放进 per-path 写锁（progressWriteLock），
+      //          后一个更新总是基于前一个写回后的盘面重新读取合并。
+      // 修改目的：同一 plan 文件的更新按调用顺序串行，互不覆盖。
+      return withProgressWriteLock(targetPath, async (): Promise<ToolResult> => {
+        let existingContent = '';
+        try {
+          const existingBytes = await vscode.workspace.fs.readFile(uri);
+          existingContent = Buffer.from(existingBytes).toString('utf-8');
+        } catch (e: any) {
+          return { success: false, error: e?.message || `Plan document does not exist: ${targetPath}` };
+        }
 
-      try {
-        await ensureParentDir(uri.fsPath);
+        try {
+          await ensureParentDir(uri.fsPath);
 
-        const existingSourceSection = extractPlanSourceArtifactSection(existingContent);
-        const sourceSection = nextSourceArtifact
-          ? renderPlanSourceArtifactSection(await buildTrackedPlanSourceArtifact(nextSourceArtifact, context?.activeWorkspaceUri))
-          : existingSourceSection;
+          const existingSourceSection = extractPlanSourceArtifactSection(existingContent);
+          const sourceSection = nextSourceArtifact
+            ? renderPlanSourceArtifactSection(await buildTrackedPlanSourceArtifact(nextSourceArtifact, context?.activeWorkspaceUri))
+            : existingSourceSection;
 
-        const bodyContent = updateMode === 'progress_sync'
-          ? extractPlanBodyContent(existingContent)
-          : normalizeLineEndingsToLF(plan);
+          const bodyContent = updateMode === 'progress_sync'
+            ? extractPlanBodyContent(existingContent)
+            : normalizeLineEndingsToLF(plan);
 
-        const { content, todos } = buildPlanDocument(bodyContent, args.todos, sourceSection);
-        const bytes = new TextEncoder().encode(content);
-        await vscode.workspace.fs.writeFile(uri, bytes);
-        const progressWarnings = await syncProgressFromPlanArtifact({
-          planPath: targetPath,
-          title: typeof args.title === 'string' ? args.title : undefined,
-          todos,
-          updateMode,
-        });
-        const mergedWarnings = [...warnings, ...progressWarnings];
-
-        return {
-          success: true,
-          requiresUserConfirmation: updateMode === 'revision',
-          data: {
-            path: targetPath,
-            content,
+          const { content, todos } = buildPlanDocument(bodyContent, args.todos, sourceSection);
+          const bytes = new TextEncoder().encode(content);
+          await vscode.workspace.fs.writeFile(uri, bytes);
+          const progressWarnings = await syncProgressFromPlanArtifact({
+            planPath: targetPath,
+            title: typeof args.title === 'string' ? args.title : undefined,
             todos,
             updateMode,
-            changeSummary: changeSummary || undefined,
-            warnings: mergedWarnings.length > 0 ? mergedWarnings : undefined
-          }
-        };
-      } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
-      }
+          });
+          const mergedWarnings = [...warnings, ...progressWarnings];
+
+          return {
+            success: true,
+            requiresUserConfirmation: updateMode === 'revision',
+            data: {
+              path: targetPath,
+              content,
+              todos,
+              updateMode,
+              changeSummary: changeSummary || undefined,
+              warnings: mergedWarnings.length > 0 ? mergedWarnings : undefined
+            }
+          };
+        } catch (e: any) {
+          return { success: false, error: e?.message || String(e) };
+        }
+      });
     }
   };
 }

@@ -122,6 +122,32 @@ interface SegmentIndexLike {
 }
 
 /**
+ * 段文件内容缓存：runIntegrityCheck 单次运行内，checkHistoryIntegrity 已读过的
+ * 段内容供 readHistoryIdsFromSegments 复用，避免同一会话的段文件被读两遍。
+ * 键为段文件绝对路径；runIntegrityCheck 入口清空，保证每次检查从磁盘读取。
+ */
+const segmentContentCache = new Map<string, string>();
+const MAX_SEGMENT_CONTENT_CACHE_ENTRIES = 2000;
+
+/**
+ * 统计非空行数：indexOf('\n') 跳跃扫描，避免逐字符循环（大段文件时更快）。
+ */
+function countNonEmptyLines(text: string): number {
+    let count = 0;
+    let lineStart = 0;
+    while (lineStart <= text.length) {
+        const nl = text.indexOf('\n', lineStart);
+        const lineEnd = nl === -1 ? text.length : nl;
+        let j = lineStart;
+        while (j < lineEnd && (text[j] === ' ' || text[j] === '\t' || text[j] === '\r')) j++;
+        if (j < lineEnd) count++;
+        if (nl === -1) break;
+        lineStart = nl + 1;
+    }
+    return count;
+}
+
+/**
  * 段文件名白名单校验（路径穿越防护）。
  * history.index.json 的 segment.file 来自磁盘索引，可能被手工编辑、损坏或恶意构造；
  * 在拼进 path.join(historyDir, file) 之前必须保证它是纯文件名，解析后必然落在
@@ -240,7 +266,12 @@ export async function checkHistoryIntegrity(
                 `索引引用的段文件不存在: ${file}`, { conversationId, detail: { file } }));
             continue;
         }
-        const lineCount = content.split('\n').filter(line => line.trim().length > 0).length;
+        // 缓存段内容：供同一次检查中的 readHistoryIdsFromSegments 复用（避免段文件读两遍）
+        if (segmentContentCache.size < MAX_SEGMENT_CONTENT_CACHE_ENTRIES) {
+            segmentContentCache.set(segmentPath, content);
+        }
+        // 非空行统计：单次遍历计数，避免 split 产生大量临时字符串（大段文件时更省内存）
+        const lineCount = countNonEmptyLines(content);
         if (lineCount !== segment.count) {
             issues.push(issue('history', 'error', 'HISTORY_SEGMENT_LINE_COUNT_MISMATCH',
                 `段 ${file} 实际行数 ${lineCount} !== count ${segment.count}`,
@@ -249,8 +280,7 @@ export async function checkHistoryIntegrity(
     }
 
     // 孤儿段文件（磁盘存在但索引未引用）
-    let filesOnDisk: string[] = [];
-    try {
+    let filesOnDisk: string[] = [];    try {
         filesOnDisk = (await fsp.readdir(historyDir)).filter(file => file.endsWith('.ndjson'));
     } catch {
         // 目录不存在：段文件缺失已由上面的 HISTORY_SEGMENT_FILE_MISSING 报告
@@ -594,11 +624,21 @@ export async function readHistoryIdsFromSegments(baseDir: string, conversationId
         if (!isSafeSegmentFileName(segment.file)) {
             continue;
         }
+        const segmentPath = path.join(historyDir, segment.file);
         let content: string;
-        try {
-            content = await fsp.readFile(path.join(historyDir, segment.file), 'utf8');
-        } catch {
-            continue;
+        const cached = segmentContentCache.get(segmentPath);
+        if (cached !== undefined) {
+            // checkHistoryIntegrity 已读过该段：直接复用，避免重复读盘
+            content = cached;
+        } else {
+            try {
+                content = await fsp.readFile(segmentPath, 'utf8');
+            } catch {
+                continue;
+            }
+            if (segmentContentCache.size < MAX_SEGMENT_CONTENT_CACHE_ENTRIES) {
+                segmentContentCache.set(segmentPath, content);
+            }
         }
         for (const line of content.split('\n')) {
             if (!line.trim()) {
@@ -620,6 +660,12 @@ export async function readHistoryIdsFromSegments(baseDir: string, conversationId
     return ids;
 }
 
+export interface IntegrityCheckProgress {
+    completed: number;
+    total: number;
+    conversationId: string;
+}
+
 export interface RunIntegrityCheckOptions {
     baseDir: string;
     checkpointsDir: string;
@@ -629,6 +675,8 @@ export interface RunIntegrityCheckOptions {
     getCheckpointRecords?: (conversationId: string) => Promise<CheckpointRecord[]>;
     /** 分支-主历史校验提供者（推荐传 BranchService.validateActivePathMatchesHistory 的包装） */
     branchValidator?: (conversationId: string) => Promise<BranchPathConsistencyResult>;
+    /** 每完成一个会话后报告进度；回调异常不会中断只读扫描 */
+    onProgress?: (progress: IntegrityCheckProgress) => void | Promise<void>;
 }
 
 /**
@@ -637,6 +685,9 @@ export interface RunIntegrityCheckOptions {
 export async function runIntegrityCheck(options: RunIntegrityCheckOptions): Promise<IntegrityReport> {
     const conversationIds = options.conversationIds ?? (await listConversationIds(options.baseDir));
 
+    // 清空段内容缓存：每次检查都从磁盘重新读取，避免跨运行读到过期内容
+    segmentContentCache.clear();
+
     const historyIssues: IntegrityIssue[] = [];
     const checkpointIssues: IntegrityIssue[] = [];
     const branchIssues: IntegrityIssue[] = [];
@@ -644,7 +695,8 @@ export async function runIntegrityCheck(options: RunIntegrityCheckOptions): Prom
     let checkpointChecked = 0;
     let branchChecked = 0;
 
-    for (const conversationId of conversationIds) {
+    for (let conversationIndex = 0; conversationIndex < conversationIds.length; conversationIndex++) {
+        const conversationId = conversationIds[conversationIndex];
         const historyResult = await checkHistoryIntegrity(options.baseDir, conversationId);
         historyChecked += historyResult.checked;
         historyIssues.push(...historyResult.issues);
@@ -666,6 +718,18 @@ export async function runIntegrityCheck(options: RunIntegrityCheckOptions): Prom
         });
         branchChecked += branchResult.checked;
         branchIssues.push(...branchResult.issues);
+
+        if (options.onProgress) {
+            try {
+                await options.onProgress({
+                    completed: conversationIndex + 1,
+                    total: conversationIds.length,
+                    conversationId,
+                });
+            } catch {
+                // 进度观察器不参与完整性判断，回调失败不能中断只读扫描。
+            }
+        }
     }
 
     const allIssues = [...historyIssues, ...checkpointIssues, ...branchIssues];

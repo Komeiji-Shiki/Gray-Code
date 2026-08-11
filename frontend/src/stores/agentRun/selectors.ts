@@ -69,13 +69,15 @@ export function selectSubAgentMonitorView(state: AgentRunState): SubAgentMonitor
 }
 
 function materializeMessages(state: AgentRunState): Message[] {
-  return state.messageOrder.map(messageId => materializeMessage(state, state.messagesById[messageId]))
+  return state.messageOrder.map(messageId => materializeMessage(state, messageId, state.messagesById[messageId]))
 }
 
-function materializeMessage(state: AgentRunState, message: Message | undefined): Message {
+function materializeMessage(state: AgentRunState, messageId: string, message: Message | undefined): Message {
   if (!message) {
+    // 缺失消息占位：用请求的 messageId 派生唯一占位 id，避免多条缺失消息共用
+    // 固定 id 'missing-message' 造成 key 冲突 / 选择器结果歧义
     return {
-      id: 'missing-message',
+      id: `missing-message:${messageId}`,
       role: 'assistant',
       content: '',
       timestamp: 0,

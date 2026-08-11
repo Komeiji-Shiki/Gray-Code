@@ -15,6 +15,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import AdmZip from 'adm-zip';
+import { t } from '../../i18n';
 
 import {
     cl100kTiktokenToJsTiktoken,
@@ -67,6 +68,10 @@ const RESOURCES: Record<TokenizerResourceName, ResourceSpec> = {
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 /** 下载体积上限（字节）：词表正常 ~2MB，超过 50MB 视为异常响应，拒绝载入内存 */
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
+/** 下载重试次数（首次尝试之外的额外尝试） */
+const DOWNLOAD_RETRIES = 2;
+/** 下载重试退避基数（毫秒）：第 n 次重试前等待 base * 2^(n-1) */
+const DOWNLOAD_RETRY_BASE_DELAY_MS = 500;
 
 export class TokenizerResourceManager {
     private inflight = new Map<TokenizerResourceName, Promise<TokenizerResource>>();
@@ -126,23 +131,9 @@ export class TokenizerResourceManager {
         }
     }
 
-    /** 下载原始资源并转换为 js-tiktoken 格式 */
+    /** 下载原始资源（带退避重试：网络抖动/HTTP 5xx 等瞬时失败可恢复），并转换为 js-tiktoken 格式 */
     private async downloadAndConvert(spec: ResourceSpec): Promise<TokenizerResource> {
-        const response = await fetch(spec.url, {
-            signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)
-        });
-        if (!response.ok) {
-            throw new Error(`Tokenizer download failed: ${spec.url} (HTTP ${response.status})`);
-        }
-        // 下载大小上限：Content-Length 已知时先拒绝；缺失时以实际大小兜底
-        const contentLength = Number(response.headers?.get('Content-Length') ?? 0);
-        if (contentLength > MAX_DOWNLOAD_BYTES) {
-            throw new Error(`Tokenizer download too large: ${contentLength} bytes (limit ${MAX_DOWNLOAD_BYTES})`);
-        }
-        const buf = Buffer.from(await response.arrayBuffer());
-        if (buf.length > MAX_DOWNLOAD_BYTES) {
-            throw new Error(`Tokenizer download too large: ${buf.length} bytes (limit ${MAX_DOWNLOAD_BYTES})`);
-        }
+        const buf = await this.downloadWithRetry(spec);
 
         if (spec.archive) {
             // DeepSeek：zip → tokenizer.json → 转换
@@ -169,6 +160,46 @@ export class TokenizerResourceManager {
             patStr: CL100K_PAT_STR,
             specialTokens: CL100K_SPECIAL_TOKENS
         };
+    }
+
+    /** 下载原始字节（带退避重试） */
+    private async downloadWithRetry(spec: ResourceSpec): Promise<Buffer> {
+        let lastError: Error | null = null;
+        for (let attempt = 0; attempt <= DOWNLOAD_RETRIES; attempt++) {
+            if (attempt > 0) {
+                const delayMs = DOWNLOAD_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+            try {
+                return await this.downloadOnce(spec);
+            } catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+                console.warn(
+                    `[TokenizerResourceManager] Download ${spec.name} failed (attempt ${attempt + 1}/${DOWNLOAD_RETRIES + 1}): ${lastError.message}`
+                );
+            }
+        }
+        throw lastError ?? new Error(`Tokenizer download failed: ${spec.url}`);
+    }
+
+    /** 单次下载：fetch + 状态/大小校验 + 读入内存 */
+    private async downloadOnce(spec: ResourceSpec): Promise<Buffer> {
+        const response = await fetch(spec.url, {
+            signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)
+        });
+        if (!response.ok) {
+            throw new Error(`${t('errors.networkError')}: ${spec.url} (HTTP ${response.status})`);
+        }
+        // 下载大小上限：Content-Length 已知时先拒绝；缺失时以实际大小兜底
+        const contentLength = Number(response.headers?.get('Content-Length') ?? 0);
+        if (contentLength > MAX_DOWNLOAD_BYTES) {
+            throw new Error(`Tokenizer download too large: ${contentLength} bytes (limit ${MAX_DOWNLOAD_BYTES})`);
+        }
+        const buf = Buffer.from(await response.arrayBuffer());
+        if (buf.length > MAX_DOWNLOAD_BYTES) {
+            throw new Error(`Tokenizer download too large: ${buf.length} bytes (limit ${MAX_DOWNLOAD_BYTES})`);
+        }
+        return buf;
     }
 
     /** 转换结果落盘缓存（下次启动直接读，不重新下载） */

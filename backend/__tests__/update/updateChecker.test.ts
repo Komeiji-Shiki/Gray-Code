@@ -13,10 +13,11 @@ import {
     compareVersions,
     shouldCheck,
     parseReleaseResponse,
+    extractNightlyVersionFromName,
     resolveReleaseChannel,
     pickInstallerAsset,
     UPDATE_CHECK_INTERVAL_MS,
-} from '../../modules/update';
+} from '../../modules/update/UpdateChecker';
 import * as vscode from 'vscode';
 
 // ─── 纯函数 ──────────────────────────────────────────
@@ -72,6 +73,14 @@ describe('compareVersions', () => {
         expect(compareVersions('1.0.0', '1.0.0-beta')).toBe(1);
         expect(compareVersions('1.0.0-alpha', '1.0.0-beta')).toBe(-1);
     });
+
+    it('nightly 预发布视为高于同主版本正式版，nightly 之间按日期比较', () => {
+        expect(compareVersions('1.4.6-nightly.20260810', '1.4.6')).toBe(1);
+        expect(compareVersions('1.4.6', '1.4.6-nightly.20260809')).toBe(-1);
+        expect(compareVersions('1.4.6-nightly.20260810', '1.4.6-nightly.20260809')).toBe(1);
+        expect(compareVersions('1.4.6-nightly.20260809', '1.4.6-nightly.20260809')).toBe(0);
+        expect(compareVersions('1.4.7', '1.4.6-nightly.20260810')).toBe(1);
+    });
 });
 
 describe('shouldCheck', () => {
@@ -92,6 +101,30 @@ describe('shouldCheck', () => {
 
     it('超过间隔检查', () => {
         expect(shouldCheck(now - UPDATE_CHECK_INTERVAL_MS, now, false)).toBe(true);
+    });
+});
+
+describe('extractNightlyVersionFromName', () => {
+    it('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
+        expect(extractNightlyVersionFromName('v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
+    });
+
+    it('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
+        expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
+    });
+
+    it('无 v 前缀同样可提取', () => {
+        expect(extractNightlyVersionFromName('Gray Code Nightly 1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
+    });
+
+    it('版本号后跟多余数字时不截断（锚定结尾）', () => {
+        expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.202608090')).toBeNull();
+    });
+
+    it('无版本号返回 null', () => {
+        expect(extractNightlyVersionFromName('Gray Code Nightly')).toBeNull();
+        expect(extractNightlyVersionFromName(undefined)).toBeNull();
+        expect(extractNightlyVersionFromName('')).toBeNull();
     });
 });
 
@@ -441,6 +474,36 @@ function release(tagName: string, assetNames: string[]): Record<string, unknown>
         })),
     };
 }
+
+describe('UpdateChecker.resetStatus', () => {
+    it('清除内存状态并重置节流时间戳（渠道切换时调用，避免旧渠道缓存残留）', async () => {
+        const update = jest.fn(async () => {});
+        const { checker } = createChecker({
+            storage: { get: () => undefined, update },
+            fetchImpl: async () => okResponse({
+                tag_name: 'v1.5.0',
+                name: 'v1.5.0',
+                assets: [{ name: 'GrayCode.Setup.1.5.0.exe', browser_download_url: 'https://example.com/GrayCode.Setup.1.5.0.exe' }],
+            }),
+            currentVersion: '1.4.4',
+        });
+        await checker.check();
+        expect(checker.getStatus().state).toBe('updateAvailable');
+
+        checker.resetStatus();
+        expect(checker.getStatus()).toEqual({ state: 'idle' });
+        expect(update).toHaveBeenCalledWith('lastUpdateCheckAt', 0);
+
+        // 重置后节流窗口已清除，再次 check（非 force）会重新发起请求
+        const fetchImpl = jest.fn(async () => okResponse({ tag_name: 'v1.4.4', assets: [] }));
+        const { checker: checker2 } = createChecker({ fetchImpl, currentVersion: '1.4.4' });
+        await checker2.check();
+        checker2.resetStatus();
+        const status = await checker2.check();
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(status.state).toBe('upToDate');
+    });
+});
 
 describe('UpdateChecker.downloadAndInstall', () => {
     let tmpDir: string;

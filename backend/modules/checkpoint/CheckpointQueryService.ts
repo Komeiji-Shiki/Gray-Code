@@ -13,7 +13,7 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { ConversationManager } from '../conversation';
 import { Logger } from '../../core/logger';
 import { isSafeRelativePath } from '../../core/idValidation';
 import type { CheckpointRecord } from './CheckpointManager';
@@ -381,6 +381,12 @@ export class CheckpointQueryService {
         const backupDirExists = new Map<string, boolean>();
         const missingBackupDirs: string[] = [];
         for (const checkpoint of checkpoints) {
+            // CP-PATH-1: 越界/损坏 backupDir 绝不静默删除记录——保留记录 + 告警，
+            // 不进入 missingBackupDirs（与删除路径「拒绝删除并告警」口径一致）
+            if (!isSafeCheckpointDirName(checkpoint.backupDir)) {
+                console.warn(`[CheckpointQueryService] Refusing to prune checkpoint ${checkpoint.id}: unsafe backupDir ${checkpoint.backupDir}`);
+                continue;
+            }
             if (!backupDirExists.has(checkpoint.backupDir)) {
                 const exists = await this.backupDirectoryExists(checkpoint.backupDir);
                 backupDirExists.set(checkpoint.backupDir, exists);
@@ -402,12 +408,15 @@ export class CheckpointQueryService {
                 const kept: CheckpointRecord[] = [];
                 const foundMissing: string[] = [];
                 for (const cp of list) {
-                    if (backupDirExists.get(cp.backupDir) === false) {
-                        foundMissing.push(cp.backupDir);
+                    // CP-PATH-1: unsafe backupDir 记录不删除（保留 + 告警，与预检同口径）
+                    if (!isSafeCheckpointDirName(cp.backupDir)) {
+                        console.warn(`[CheckpointQueryService] Refusing to prune checkpoint ${cp.id}: unsafe backupDir ${cp.backupDir}`);
+                        kept.push(cp);
                         continue;
                     }
-                    if (!backupDirExists.has(cp.backupDir)) {
-                        // 并发新增的检查点：现场核验，避免误删
+                    if (backupDirExists.get(cp.backupDir) !== true) {
+                        // TOCTOU 复核：预检时缺失/未知的目录在链内现场复核一次
+                        //（目录可能已被并发创建/恢复；与未知目录的现场核验对称）
                         const exists = await this.backupDirectoryExists(cp.backupDir);
                         backupDirExists.set(cp.backupDir, exists);
                         if (!exists) {
@@ -423,13 +432,17 @@ export class CheckpointQueryService {
             await this.removeOrphanBackupDirs(checkpoints);
 
             if (Array.isArray(pruned)) {
-                const prunedCount = checkpoints.length - pruned.length;
+                // Math.max 兜底：并发新增记录时 pruned.length 可能大于 checkpoints.length
+                const prunedCount = Math.max(0, checkpoints.length - pruned.length);
                 return { checkpoints: pruned, missingBackupDirs: uniqueMissing, prunedCount };
             }
-            return { checkpoints, missingBackupDirs: uniqueMissing, prunedCount: 0 };
+            // fail-closed：写回被拒（返回非数组）时未删除任何记录——不报告缺失目录，
+            // 避免调用方误以为记录已被裁剪（missingBackupDirs 清空）
+            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
         } catch (err) {
             console.warn('[CheckpointQueryService] Failed to prune checkpoint metadata:', err);
-            return { checkpoints, missingBackupDirs: uniqueMissing, prunedCount: 0 };
+            // fail-closed：异常时未删除任何记录——同样清空 missingBackupDirs
+            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
         }
     }
 }

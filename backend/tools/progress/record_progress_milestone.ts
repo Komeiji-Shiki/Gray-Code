@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo } from '../utils';
+import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import {
   buildProgressDocument,
   isProgressMilestoneStatus,
@@ -131,7 +132,7 @@ export function createRecordProgressMilestoneTool(): Tool {
       const summary = typeof args.summary === 'string' ? args.summary.trim() : '';
 
       if (!isProgressModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: buildPathRejectedError('progress', PROGRESS_PATH_SCOPE_LABEL, targetPath) };
       }
       if (!title) {
         return { success: false, error: 'title is required and must be a non-empty string' };

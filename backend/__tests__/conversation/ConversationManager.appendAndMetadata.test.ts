@@ -17,10 +17,7 @@ import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import type { UsageIndex, UsageIndexStore } from '../../modules/conversation/usageStats';
 import type { Content } from '../../modules/conversation/types';
 import { createAdapter } from './helpers/fakeVscodeFs';
-
-function makeContent(role: 'user' | 'model', text: string, extra: Record<string, unknown> = {}): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 describe('ConversationManager 会话创建并发', () => {
     test('同一 ID 的并发首次创建合并执行，不误报“对话已存在”', async () => {

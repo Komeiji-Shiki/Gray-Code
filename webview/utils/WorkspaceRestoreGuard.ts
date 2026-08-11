@@ -12,8 +12,8 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { subAgentRunController } from '../../backend/tools/subagents/runController';
-import { subAgentRunEventBus } from '../../backend/tools/subagents/runEventBus';
+import { subAgentRunController } from '../../backend/tools/subagents';
+import { subAgentRunEventBus } from '../../backend/tools/subagents';
 import type { HandlerContext } from '../types';
 
 /**
@@ -46,12 +46,15 @@ export function detectDirtyFilesInWorkspace(): string[] {
     return dirty;
 }
 
-/** 路径是否位于任一工作区根内（大小写不敏感前缀匹配，兼容 Windows） */
+/** 路径是否位于任一工作区根内（Windows 大小写不敏感前缀匹配，其余平台大小写敏感） */
 function isPathInsideRoots(fsPath: string, roots: string[]): boolean {
-    const normalized = path.normalize(fsPath).toLowerCase();
+    const caseInsensitive = process.platform === 'win32';
+    const normalized = path.normalize(fsPath);
+    const comparePath = caseInsensitive ? normalized.toLowerCase() : normalized;
     return roots.some(root => {
-        const normalizedRoot = path.normalize(root).toLowerCase();
-        return normalized === normalizedRoot || normalized.startsWith(normalizedRoot + path.sep);
+        const normalizedRoot = path.normalize(root);
+        const compareRoot = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+        return comparePath === compareRoot || comparePath.startsWith(compareRoot + path.sep);
     });
 }
 
@@ -73,10 +76,18 @@ export async function cancelStreamAndSubAgents(ctx: HandlerContext, conversation
 
     try {
         const snapshots = subAgentRunEventBus.getSnapshots();
+        const cancelledRunIds: string[] = [];
         for (const snapshot of snapshots) {
             if (snapshot.conversationId === conversationId && subAgentRunController.isActive(snapshot.runId)) {
                 subAgentRunController.cancel(snapshot.runId, 'checkpoint restore');
+                cancelledRunIds.push(snapshot.runId);
             }
+        }
+        if (cancelledRunIds.length > 0) {
+            // 修改原因：cancel 是 fire-and-forget，run 实际退出（主工具 Promise 结束）是异步的，
+            //          恢复/切换写入历史若与旧 run 结算交错会产生错位（F18）。
+            // 修改方式：等待所有被取消的 run 从活跃控制表注销（waitForInactive 内部带超时兜底）。
+            await subAgentRunController.waitForInactive(cancelledRunIds);
         }
     } catch (err) {
         console.warn('[WorkspaceRestoreGuard] Failed to cancel subagents before restore:', err);

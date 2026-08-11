@@ -62,6 +62,18 @@ export function useDeferredNumberInput(
     return parsed
   }
 
+  // touched 语义落地：外部配置刷新（getStored 返回值变化）且用户未手动输入时
+  // 自动重新对齐草稿；用户输入中（touched=true）不覆盖未提交的草稿。
+  // （GeminiOptions 等调用方另有同语义的外部 watch，重复执行结果一致、无副作用）
+  watch(
+    getStored,
+    () => {
+      if (!touched.value) {
+        syncFromStored()
+      }
+    }
+  )
+
   // 离开设置页时，仍为空/无效的输入框自动回填最后保存的值。
   // 仍在设置页（currentView 不变，含页内切换页签——此时组件被 v-if 卸载
   // 重挂载，草稿自然随挂载重置）时不自动补全。

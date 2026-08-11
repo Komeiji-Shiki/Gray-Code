@@ -153,7 +153,18 @@ export async function buildTrackedPlanSourceArtifact(input: unknown, activeWorks
     throw new Error(error || `Unable to resolve sourceArtifact path: ${path}`);
   }
 
+  // 大小护栏：源文档仅用于哈希对比，超大文件全文读入没有意义
+  // 修改原因：旧实现先全量 readFile 再检查 2MB 上限，超大文件已先被读入内存。
+  // 修改方式：先 stat 检查 size，超限立即报错；未超限再读（读后仍保留二次校验，防 TOCTOU）。
+  const MAX_SOURCE_ARTIFACT_BYTES = 2 * 1024 * 1024;
+  const stat = await vscode.workspace.fs.stat(uri);
+  if (stat.size > MAX_SOURCE_ARTIFACT_BYTES) {
+    throw new Error(`sourceArtifact file is too large (${stat.size} bytes, limit ${MAX_SOURCE_ARTIFACT_BYTES})`);
+  }
   const bytes = await vscode.workspace.fs.readFile(uri);
+  if (bytes.length > MAX_SOURCE_ARTIFACT_BYTES) {
+    throw new Error(`sourceArtifact file is too large (${bytes.length} bytes, limit ${MAX_SOURCE_ARTIFACT_BYTES})`);
+  }
   const content = Buffer.from(bytes).toString('utf-8');
 
   return {

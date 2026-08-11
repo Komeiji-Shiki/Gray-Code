@@ -14,18 +14,7 @@ import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import type { ConversationHistory, Content } from '../../modules/conversation/types';
 import { Uri } from 'vscode';
 import { createAdapter, normPath } from './helpers/fakeVscodeFs';
-
-function makeContent(role: 'user' | 'model', text: string): Content {
-    return { role, parts: [{ text }], timestamp: Date.now() } as Content;
-}
-
-function makeHistory(count: number, prefix = 'm'): ConversationHistory {
-    const history: ConversationHistory = [];
-    for (let i = 0; i < count; i++) {
-        history.push(makeContent('user', `${prefix}${i}`));
-    }
-    return history;
-}
+import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';
 
 describe('updateSummary M3 钳制轻量化（只读 index JSON，不逐段 stat）', () => {
     test('多段历史下钳制只读 index，不 stat 任何段文件', async () => {

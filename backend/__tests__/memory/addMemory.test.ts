@@ -10,6 +10,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
+import { LOG_REC } from '../../modules/memory/types';
 
 describe('MemoryManager.note 手动新增', () => {
     it('拒绝多行文本', async () => {
@@ -27,12 +28,13 @@ describe('MemoryManager.note 手动新增', () => {
     it('按整条固定宽度记录校验（头部 + 文本），拒绝超出记录预算的文本', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-note-'));
         try {
-            // entryChars 故意设到记录理论上限：仅校验文本长度会放行 310 字节，
-            // 但 "#<id> <date> " 头部吃掉空间后整条记录超出 LOG_REC，应在
-            // assertRecordFits 处以清晰的 budget 信息拒绝，而不是在 pad() 处报错。
-            const mm = new MemoryManager(dir, { entryChars: 319 } as any);
+            // entryChars 故意设到记录理论上限（LOG_REC - 1）：仅校验文本长度会放行
+            // LOG_REC - 13 字节的文本（id=0 时头部 "#0 <date> " 占 14 字节），
+            // 但整条记录超出 LOG_REC - 1，应在 assertRecordFits 处以清晰的 budget
+            // 信息拒绝，而不是在 pad() 处报错。
+            const mm = new MemoryManager(dir, { entryChars: LOG_REC - 1 } as any);
             await mm.init();
-            await expect(mm.note('x'.repeat(310))).rejects.toThrow(/Too long.*budget/);
+            await expect(mm.note('x'.repeat(LOG_REC - 13))).rejects.toThrow(/Too long.*budget/);
             expect(await mm.totalEntries()).toBe(0);
             // 预算内的文本正常写入
             await mm.note('x'.repeat(200));
@@ -47,10 +49,12 @@ describe('MemoryManager.updateEntry 容量校验', () => {
     it('拒绝使整条记录超宽的编辑', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-'));
         try {
-            const mm = new MemoryManager(dir, { entryChars: 319 } as any);
+            // 同 note 用例：entryChars 设到记录理论上限，文本取 LOG_REC - 13 字节
+            // （id=0 时头部 14 字节，整条记录超出 LOG_REC - 1 的容量预算）
+            const mm = new MemoryManager(dir, { entryChars: LOG_REC - 1 } as any);
             await mm.init();
             const { id } = await mm.note('short');
-            await expect(mm.updateEntry(id, 'y'.repeat(310))).rejects.toThrow(/Too long.*budget/);
+            await expect(mm.updateEntry(id, 'y'.repeat(LOG_REC - 13))).rejects.toThrow(/Too long.*budget/);
             // 失败后原内容保持不变
             const entries = await mm.listEntries();
             expect(entries[0].text).toBe('short');

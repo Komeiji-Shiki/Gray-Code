@@ -38,7 +38,7 @@ import {
     SANDBOX_LANGUAGES,
     DEFAULT_MAX_TOOL_ITERATIONS
 } from './types';
-import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory/types';
+import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory';
 import { SettingsCore } from './SettingsCore';
 import { MemorySettingsService } from './MemorySettingsService';
 
@@ -182,14 +182,18 @@ export class ToolsSettingsService {
      */
     async setToolsEnabled(states: ToolsEnabledState): Promise<void> {
         const oldValue = { ...this.core.settings.toolsEnabled };
-        const normalizedStates = { ...states };
+        // 语义与 setToolEnabled 保持一致：记忆功能关闭时不允许启用记忆工具，
+        // 统一抛错而不是静默丢弃（避免 UI 无感知地丢失用户操作）。
+        // 注意：错误信息保持与 setToolEnabled 相同的硬编码文案——i18n 化需要
+        // 在 backend/i18n 新增 key，超出本模块改动范围，故两者共用同一文案。
         if (!this.memory.isMemoryEnabled()) {
             for (const toolName of MEMORY_TOOL_NAMES) {
-                if (normalizedStates[toolName] === true) {
-                    delete normalizedStates[toolName];
+                if (states[toolName] === true) {
+                    throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
                 }
             }
         }
+        const normalizedStates = { ...states };
         this.core.settings.toolsEnabled = {
             ...this.core.settings.toolsEnabled,
             ...normalizedStates
@@ -312,7 +316,8 @@ export class ToolsSettingsService {
      * 获取工具配置
      */
     getToolsConfig(): Readonly<ToolsConfig> {
-        return this.core.settings.toolsConfig || {};
+        // 深拷贝返回：直接返回活引用会让调用方原地修改污染未保存的设置状态
+        return this.core.settings.toolsConfig ? this.core.cloneConfig(this.core.settings.toolsConfig) : {};
     }
 
     /**

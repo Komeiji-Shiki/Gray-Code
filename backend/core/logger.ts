@@ -37,6 +37,21 @@ const LEVEL_NAMES: Record<LogLevel, string> = {
     [LogLevel.SILENT]: 'SILENT'
 };
 
+/**
+ * JSON.stringify replacer：Error 实例默认序列化为 {}，这里提取 name/message/stack，
+ * 让日志中直接传入 Error 的字段可读。
+ */
+function errorReplacer(key: string, value: unknown): unknown {
+    if (value instanceof Error) {
+        return {
+            name: value.name,
+            message: value.message,
+            stack: value.stack
+        };
+    }
+    return value;
+}
+
 /** 全局配置 */
 let globalMinLevel: LogLevel = LogLevel.INFO;
 let outputChannelWriter: ((line: string) => void) | undefined;
@@ -137,7 +152,7 @@ export class Logger {
             // 安全序列化：防止循环引用等导致崩溃
             let jsonStr: string;
             try {
-                jsonStr = JSON.stringify(data);
+                jsonStr = JSON.stringify(data, errorReplacer);
             } catch {
                 jsonStr = '{"_serializeError": true}';
             }

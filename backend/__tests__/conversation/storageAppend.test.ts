@@ -12,6 +12,7 @@
 import { FileSystemStorageAdapter } from '../../modules/conversation/storage';
 import type { ConversationHistory, Content } from '../../modules/conversation/types';
 import { Uri, FileType } from 'vscode';
+import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';
 
 interface FakeFsStats {
     readCalls: string[];
@@ -180,17 +181,6 @@ function createAdapter(options: { failWriteMatching?: (p: string) => boolean } =
     return { adapter, fake };
 }
 
-function makeContent(role: 'user' | 'model', text: string): Content {
-    return { role, parts: [{ text }], timestamp: Date.now() } as Content;
-}
-
-function makeHistory(count: number, prefix = 'm'): ConversationHistory {
-    const history: ConversationHistory = [];
-    for (let i = 0; i < count; i++) {
-        history.push(makeContent('user', `${prefix}${i}`));
-    }
-    return history;
-}
 
 const SEGMENT_SIZE = (FileSystemStorageAdapter as any).HISTORY_SEGMENT_SIZE as number;
 

@@ -15,7 +15,7 @@ import type { SettingsManager } from '../modules/settings';
 import type { ConfigManager } from '../modules/config';
 import type { ChannelManager } from '../modules/channel';
 import type { ToolRegistry } from '../tools/ToolRegistry';
-import type { DiffStorageManager } from '../modules/conversation/DiffStorageManager';
+import type { DiffStorageManager } from '../modules/conversation';
 import type { McpManager } from '../modules/mcp';
 
 /**
@@ -45,9 +45,9 @@ const globalContext: GlobalContext = {
 // ========== 设置管理器 ==========
 
 /**
- * 设置全局设置管理器引用
+ * 设置全局设置管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalSettingsManager(manager: SettingsManager): void {
+export function setGlobalSettingsManager(manager: SettingsManager | null): void {
     globalContext.settingsManager = manager;
 }
 
@@ -61,9 +61,9 @@ export function getGlobalSettingsManager(): SettingsManager | null {
 // ========== 配置管理器 ==========
 
 /**
- * 设置全局配置管理器引用
+ * 设置全局配置管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalConfigManager(manager: ConfigManager): void {
+export function setGlobalConfigManager(manager: ConfigManager | null): void {
     globalContext.configManager = manager;
 }
 
@@ -77,9 +77,9 @@ export function getGlobalConfigManager(): ConfigManager | null {
 // ========== 渠道管理器 ==========
 
 /**
- * 设置全局渠道管理器引用
+ * 设置全局渠道管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalChannelManager(manager: ChannelManager): void {
+export function setGlobalChannelManager(manager: ChannelManager | null): void {
     globalContext.channelManager = manager;
 }
 
@@ -93,9 +93,9 @@ export function getGlobalChannelManager(): ChannelManager | null {
 // ========== 工具注册器 ==========
 
 /**
- * 设置全局工具注册器引用
+ * 设置全局工具注册器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalToolRegistry(registry: ToolRegistry): void {
+export function setGlobalToolRegistry(registry: ToolRegistry | null): void {
     globalContext.toolRegistry = registry;
 }
 
@@ -109,9 +109,9 @@ export function getGlobalToolRegistry(): ToolRegistry | null {
 // ========== Diff 存储管理器 ==========
 
 /**
- * 设置全局 Diff 存储管理器引用
+ * 设置全局 Diff 存储管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalDiffStorageManager(manager: DiffStorageManager): void {
+export function setGlobalDiffStorageManager(manager: DiffStorageManager | null): void {
     globalContext.diffStorageManager = manager;
 }
 
@@ -125,9 +125,9 @@ export function getGlobalDiffStorageManager(): DiffStorageManager | null {
 // ========== MCP 管理器 ==========
 
 /**
- * 设置全局 MCP 管理器引用
+ * 设置全局 MCP 管理器引用（失败回滚/释放时传 null 清空，见 dispose）
  */
-export function setGlobalMcpManager(manager: McpManager): void {
+export function setGlobalMcpManager(manager: McpManager | null): void {
     globalContext.mcpManager = manager;
 }
 
@@ -161,6 +161,10 @@ export function getGlobalStoragePath(): string | null {
 
 /**
  * 获取完整的全局上下文
+ *
+ * 快照语义说明：每次调用都返回一个新的浅冻结快照（字段值与调用时刻的全局状态一致），
+ * 不是全局对象的稳定引用——后续 setter 更新后，已取得的快照不会自动反映最新状态；
+ * 需要最新状态时请重新调用本函数。
  */
 export function getGlobalContext(): Readonly<GlobalContext> {
     // 返回浅冻结副本：调用方不能改写返回对象的内部字段，避免绕过 setter 篡改全局状态

@@ -139,6 +139,94 @@ function buildContinuingToolIteration(streamId = 'stream_1', conversationId = 'c
   }
 }
 
+describe('agent_message：空闲主模型领取并启动内部回合', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(sendToExtension).mockClear()
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) =>
+      type === 'getWorkspaceUri' ? null : { success: true }
+    )
+  })
+
+  it('收到唤醒事件后领取正文，并携带内部来源与 claim ID 发起 chatStream', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = false
+
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        return {
+          claimId: 'claim_idle_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nFrom: Helper (run_helper)\nMessage: inspect complete',
+          messageCount: 1
+        }
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    bgStore.handleTaskEvent({
+      taskId: 'agentmsg:m1',
+      taskType: 'agent_message',
+      type: 'progress',
+      data: { conversationId: 'conv_1', messageId: 'm1' },
+      createdAt: Date.now()
+    })
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(true)
+    })
+
+    const calls = vi.mocked(sendToExtension).mock.calls
+    const claimCall = calls.find(([type]) => type === 'chat.claimAgentMessages')
+    const streamCall = calls.find(([type]) => type === 'chatStream')
+    expect(claimCall?.[1]).toEqual({ conversationId: 'conv_1' })
+    expect(streamCall?.[1]).toMatchObject({
+      conversationId: 'conv_1',
+      source: 'agent_message',
+      agentMessageClaimId: 'claim_idle_1',
+      message: expect.stringContaining('inspect complete')
+    })
+    expect(calls.find(([type]) => type === 'cancelStream')).toBeUndefined()
+    expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')).toBeUndefined()
+  })
+
+  it('空闲领取期间切换会话时退回 claim，不把消息发进错误会话', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = false
+
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        store.currentConversationId = 'conv_other'
+        return {
+          claimId: 'claim_switch_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nMessage: keep me',
+          messageCount: 1
+        }
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    await bgStore.flushReports()
+
+    const calls = vi.mocked(sendToExtension).mock.calls
+    expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
+    expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')?.[1]).toEqual({
+      conversationId: 'conv_1',
+      claimId: 'claim_switch_1'
+    })
+  })
+})
+
+
 describe('flushReportsAfterAction：动作边界回执提前投递', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

@@ -124,6 +124,8 @@ export class StoragePathManager {
             path.join(basePath, 'mcp'),
             path.join(basePath, 'dependencies'),
             path.join(basePath, 'diffs'),
+            // skills 目录参与迁移/统计（STORAGE_SUBDIRS / getStorageStats），此处补齐创建
+            path.join(basePath, 'skills'),
             path.join(basePath, 'activity'),
             path.join(basePath, 'tokenizers'),
             // 记忆目录：全局记忆 memory/，工作区记忆 memory-workspaces/（各 <hash>/ 子目录惰性创建）
@@ -383,10 +385,39 @@ export class StoragePathManager {
         return totalCopied;
     }
 
-    private async removeStorageData(storagePath: string): Promise<void> {
+    private async removeStorageData(storagePath: string, preservedSubDirs: string[] = []): Promise<void> {
         for (const subDir of STORAGE_SUBDIRS) {
+            // 目标路径位于源路径内部（迁移到源路径的子目录）时，包含目标路径的源子目录
+            // 必须保留，否则清理源数据会连带删除刚迁移到目标路径的数据
+            if (preservedSubDirs.includes(subDir)) {
+                continue;
+            }
             await fs.rm(path.join(storagePath, subDir), { recursive: true, force: true });
         }
+    }
+
+    /**
+     * 找出源路径中「包含目标路径」的存储子目录。
+     * 目标位于源路径内部（staging 迁移）时，这些子目录在清理源数据时必须保留。
+     */
+    private async findPreservedSubDirs(storagePath: string, targetPath: string): Promise<string[]> {
+        const preserved: string[] = [];
+        for (const subDir of STORAGE_SUBDIRS) {
+            if (await this.isPathInsideOrEqual(path.join(storagePath, subDir), targetPath)) {
+                preserved.push(subDir);
+            }
+        }
+        return preserved;
+    }
+
+    /**
+     * childPath 是否等于或位于 parentPath 内部（解析符号链接后比较）
+     */
+    private async isPathInsideOrEqual(parentPath: string, childPath: string): Promise<boolean> {
+        const parent = await this.resolvePathForComparison(parentPath);
+        const child = await this.resolvePathForComparison(childPath);
+        const relative = path.relative(parent, child);
+        return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
     }
 
     /**
@@ -415,6 +446,7 @@ export class StoragePathManager {
         let stagingRoot: string | undefined;
         let sourceMutationStarted = false;
         let preserveStaging = false;
+        let preservedSubDirs: string[] = [];
 
         try {
             const validation = await this.validatePath(newPath);
@@ -431,21 +463,29 @@ export class StoragePathManager {
             let copiedFiles = 0;
 
             if (requiresStaging) {
+                // 目标在源路径内部（如迁移到默认路径下的子目录）时，清理源数据不能删除
+                // 包含目标路径的源子目录，否则会连带删除刚迁移到目标路径的数据
+                preservedSubDirs = await this.findPreservedSubDirs(sourcePath, destinationPath);
                 stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-storage-'));
                 copiedFiles = await this.copyStorageData(sourcePath, stagingRoot, 0, totalFiles, 'Copying', onProgress);
-                sourceMutationStarted = true;
-                await this.removeStorageData(sourcePath);
                 await this.copyStorageData(stagingRoot, destinationPath, 0, totalFiles, 'Copying', onProgress);
             } else {
                 copiedFiles = await this.copyStorageData(sourcePath, destinationPath, 0, totalFiles, 'Copying', onProgress);
             }
 
+            // 先持久化配置切换（指向新路径），再删除源数据：
+            // 旧顺序在删除源数据后、配置落盘前崩溃，配置仍指向源路径而数据已被删，造成数据丢失
             await this.settingsManager.updateStoragePathConfig({
                 customDataPath: newPath,
                 migrationStatus: 'completed',
                 lastMigrationAt: Date.now(),
                 migrationError: undefined
             });
+
+            if (requiresStaging) {
+                sourceMutationStarted = true;
+                await this.removeStorageData(sourcePath, preservedSubDirs);
+            }
 
             onProgress?.({ phase: 'Cleaning up old storage...', current: copiedFiles, total: copiedFiles });
 
@@ -463,7 +503,7 @@ export class StoragePathManager {
 
             if (stagingRoot && sourceMutationStarted) {
                 try {
-                    await this.removeStorageData(sourcePath);
+                    await this.removeStorageData(sourcePath, preservedSubDirs);
                     await this.copyStorageData(stagingRoot, sourcePath, 0, 0, 'Restoring');
                 } catch (rollbackError) {
                     preserveStaging = true;
@@ -549,6 +589,7 @@ export class StoragePathManager {
         let stagingRoot: string | undefined;
         let sourceMutationStarted = false;
         let preserveStaging = false;
+        let preservedSubDirs: string[] = [];
 
         try {
             const stats = await this.getStorageStats(customPath);
@@ -556,21 +597,29 @@ export class StoragePathManager {
             let copiedFiles = 0;
 
             if (requiresStaging) {
+                // 默认路径位于自定义路径内部时同理：清理自定义路径数据时保留包含默认路径的子目录
+                preservedSubDirs = await this.findPreservedSubDirs(customPath, this.defaultDataPath);
                 stagingRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'graycode-storage-'));
                 copiedFiles = await this.copyStorageData(customPath, stagingRoot, 0, stats.fileCount, 'Restoring', onProgress);
-                sourceMutationStarted = true;
-                await this.removeStorageData(customPath);
                 await this.copyStorageData(stagingRoot, this.defaultDataPath, 0, stats.fileCount, 'Restoring', onProgress);
             } else {
                 copiedFiles = await this.copyStorageData(customPath, this.defaultDataPath, 0, stats.fileCount, 'Restoring', onProgress);
             }
 
+            // 先持久化配置（回退到默认路径），再删除源数据：
+            // 与 migrateData 修复一致——旧顺序在删除源数据后、配置落盘前崩溃，
+            // 配置仍指向自定义路径而数据已被删，造成数据丢失
             await this.settingsManager.updateStoragePathConfig({
                 customDataPath: undefined,
                 migrationStatus: 'none',
                 lastMigrationAt: undefined,
                 migrationError: undefined
             });
+
+            if (requiresStaging) {
+                sourceMutationStarted = true;
+                await this.removeStorageData(customPath, preservedSubDirs);
+            }
 
             onProgress?.({ phase: 'Cleaning up custom storage...', current: copiedFiles, total: copiedFiles });
 

@@ -5,11 +5,11 @@
  */
 
 import { t } from '../../i18n';
-import type { ConfigManager } from '../config/ConfigManager';
+import type { ConfigManager } from '../config';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
-import type { SettingsManager } from '../settings/SettingsManager';
-import type { ResolvedPromptModeSnapshot } from '../settings/types';
-import type { McpManager } from '../mcp/McpManager';
+import type { SettingsManager } from '../settings';
+import type { ResolvedPromptModeSnapshot } from '../settings';
+import type { McpManager } from '../mcp';
 import { formatterRegistry } from './formatters';
 import { ToolDeclarationResolver } from './ToolDeclarationResolver';
 import type { ToolDeclaration } from '../../tools/types';
@@ -20,12 +20,24 @@ import type {
     HttpRequestOptions,
     HttpResponse
 } from './types';
-import type { Content } from '../conversation/types';
+import type { Content } from '../conversation';
 import { ChannelError, ErrorType } from './types';
+import { isRetryableError as isRetryableErrorType } from '../../core/errors';
 import { createProxyFetch, extractUpstreamErrorMessage, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
 import { parseStreamBuffer } from './streamBufferParser';
+
+/**
+ * 判断单个 part 是否携带内容（文本/思考/工具调用/多模态附件）。
+ * 流式与非流式两条路径共用同一口径，避免判定规则分叉。
+ */
+function partHasContent(part: any): boolean {
+    return (part.text && part.text.length > 0)
+        || !!part.functionCall
+        || !!part.inlineData
+        || !!part.fileData;
+}
 
 /**
  * 判断模型响应内容是否为空（无文本/思考/工具调用/附件）。
@@ -33,12 +45,7 @@ import { parseStreamBuffer } from './streamBufferParser';
  */
 function isResponseContentEmpty(content: Content | undefined): boolean {
     if (!content || !Array.isArray(content.parts) || content.parts.length === 0) return true;
-    return content.parts.every(part =>
-        !(part.text && part.text.length > 0)
-        && !part.functionCall
-        && !part.inlineData
-        && !part.fileData
-    );
+    return content.parts.every(part => !partHasContent(part));
 }
 
 /**
@@ -46,15 +53,11 @@ function isResponseContentEmpty(content: Content | undefined): boolean {
  *
  * 修改原因（SEC）：多模态流（Gemini inlineData/fileData）过去只查 text/functionCall，
  * 连接中断时已有图片/文件数据的流被误判为「空响应」→ 整条流从头重播，附件重复、重复计费。
- * 修改方式：与非流式 isResponseContentEmpty 同一口径，把 inlineData/fileData 纳入内容判定。
+ * 修改方式：与非流式 isResponseContentEmpty 同一口径（共用 partHasContent），
+ * 把 inlineData/fileData 纳入内容判定。
  */
 function streamChunkHasContent(chunk: StreamChunk): boolean {
-    return chunk.delta.some(part =>
-        (part.text && part.text.length > 0)
-        || !!part.functionCall
-        || !!part.inlineData
-        || !!part.fileData
-    );
+    return chunk.delta.some(part => partHasContent(part));
 }
 
 /**
@@ -232,17 +235,9 @@ export class ChannelManager {
     private isRetryableError(error: any): boolean {
         // API 错误（非 200 状态码）可重试
         if (error instanceof ChannelError) {
-            // 用户取消错误不应重试
-            if (error.type === ErrorType.CANCELLED_ERROR) {
-                return false;
-            }
-            // 空响应（模型返回空内容）：可重试（无副作用、无已显示内容）
-            if (error.type === ErrorType.EMPTY_RESPONSE_ERROR) {
-                return true;
-            }
-            return error.type === ErrorType.API_ERROR ||
-                   error.type === ErrorType.NETWORK_ERROR ||
-                   error.type === ErrorType.TIMEOUT_ERROR;
+            // ChannelError.type 判定统一委托 core/errors（白名单：
+            // API/NETWORK/TIMEOUT/EMPTY_RESPONSE，其余含 CANCELLED 均不可重试）
+            return isRetryableErrorType(error.type);
         }
         // 网络错误可重试
         return true;

@@ -30,6 +30,12 @@ function isSafeMergeKey(key: string): boolean {
  * 递归深合并纯对象（数组与原始值直接覆盖），用于工具配置与默认配置合并。
  * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
  * 其它子字段全部丢失），这里对纯对象逐层合并。
+ *
+ * 与 core/deepMerge.ts 的 deepMerge 语义差异（保留本地实现、不强制合一的原因）：
+ * - 覆盖值为 null/undefined 时本实现显式写入该值；core.deepMerge 保留目标值
+ *   （updateSettings 接收 webview 消息，null 清空字段语义依赖前者）；
+ * - 类型冲突（目标非纯对象、源为纯对象）时本实现直接复用源引用；
+ *   core.deepMerge 生成源对象副本（getToolsConfigEntry 已用 cloneConfig 兜底拷贝）。
  */
 export function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
@@ -240,7 +246,9 @@ export class SettingsCore {
      * 更新设置（部分更新）
      */
     async updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
-        const oldSettings = { ...this.settings };
+        // 深拷贝旧值快照：浅展开只保护顶层，嵌套对象（toolsConfig 等）仍是活引用，
+        // 事件监听器拿到 oldValue 后原地修改会污染更新后的 settings
+        const oldSettings = this.cloneConfig(this.settings);
 
         // 修改原因：旧实现为浅合并，传入嵌套部分对象（如 { toolsConfig: {...} }）会整体
         // 替换该键并抹掉同层其它配置，与 getToolsConfigEntry 的深合并行为不一致。
@@ -270,7 +278,7 @@ export class SettingsCore {
      * 事件形态与 updateSettings 一致，确保现有监听器能识别。
      */
     async reloadAndNotify(): Promise<void> {
-        const oldSettings = { ...this.settings };
+        const oldSettings = this.cloneConfig(this.settings);
         const stored = await this.storage.load();
         if (stored) {
             this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
@@ -288,7 +296,7 @@ export class SettingsCore {
      * 重置为默认设置
      */
     async reset(): Promise<void> {
-        const oldSettings = { ...this.settings };
+        const oldSettings = this.cloneConfig(this.settings);
         // 深拷贝默认配置：浅展开会让嵌套对象与模块级 DEFAULT_GLOBAL_SETTINGS 共享引用，
         // 后续对 this.settings 嵌套字段的修改会污染全局默认值（与构造器/import 路径一致）。
         this.settings = {

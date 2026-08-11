@@ -21,8 +21,8 @@ describe('MessageRouter non-blocking message types', () => {
 
     it('stream message types remain at the original count', () => {
         // 流式消息类型不应因非阻塞改动而变动
-        const STREAM_TYPES = ['chatStream', 'retryStream', 'editAndRetryStream', 'toolConfirmation', 'cancelStream'];
-        expect(STREAM_TYPES).toHaveLength(5);
+        const STREAM_TYPES = ['chatStream', 'retryStream', 'toolConfirmation', 'cancelStream', 'chat.rerollStream', 'chat.editBranchStream'];
+        expect(STREAM_TYPES).toHaveLength(6);
         expect(STREAM_TYPES).toContain('cancelStream');
         // 生产导出的流式类型必须包含本地预期的全部关键条目
         for (const t of STREAM_TYPES) {
@@ -37,20 +37,23 @@ describe('MessageRouter non-blocking message types', () => {
             'dependencies.install',
             'dependencies.uninstall',
             'storagePath.migrate',
+            'workspace.openFolder',
+            'storagePath.selectFolder',
+            'settings.import',
+            'settings.export',
+            'checkpoint.previewExclusions',
+            'checkpoint.getAllConversationsWithCheckpoints',
             'subagents.pauseRun',
             'subagents.resumeRun',
             'subagents.exitRun',
+            'chat.awaitConversationIdle',
             'exportPromptModes',
-            'settings.export',
-            'settings.import',
-            'storagePath.selectFolder',
             'countSystemPromptTokens',
             'tokenizer.getResource',
-            'storagePath.getStats',
-            'workspace.openFolder',
-            'chat.awaitConversationIdle'
+            'checkUpdateNow',
+            'updateNow'
         ];
-        expect(EXPECTED_NON_BLOCKING).toHaveLength(16);
+        expect(EXPECTED_NON_BLOCKING).toHaveLength(19);
         // 生产导出的非阻塞类型必须包含本地预期的全部关键条目
         for (const t of EXPECTED_NON_BLOCKING) {
             expect(NON_BLOCKING_MESSAGE_TYPES.has(t)).toBe(true);

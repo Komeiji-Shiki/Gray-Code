@@ -3,10 +3,8 @@
  *
  * 覆盖：
  * - HIGH-1：injectInboxMessages 注入的 agentInbox 随工具结果 addContent 落盘后，
- *   getHistoryForAPIFrom 在「当轮」与「跨轮」一致保留 agentInbox（主模型可见）——
- *   保留而非剥离，保证发给 LLM 的 tool_result 内容跨回合字节稳定，
- *   provider 前缀缓存（Anthropic cache_control / OpenAI prefix caching）持续命中；
- *   重放代价由 prompt cache 吸收（消息插入不再吃缓存）。
+ *   getHistoryForAPIFrom 在后续请求中保持原样；一次性消费由 mailbox 保证，历史不改写以
+ *   维持 provider 前缀缓存。
  * - MED-3：新的真实 user 消息（新回合边界）清空主会话信箱未消费消息（防跨轮过期投递）；
  *   回合内 functionResponse / 总结消息不清空。
  * - MED-2：deleteConversation 清理 A-COMM 信箱（clearConversation 接线），
@@ -19,10 +17,7 @@ import { ConversationManager } from '../../modules/conversation/ConversationMana
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
 import type { Content } from '../../modules/conversation/types';
-
-function makeContent(role: 'user' | 'model', text: string, extra: Record<string, unknown> = {}): Content {
-    return { role, parts: [{ text }], timestamp: Date.now(), ...extra } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 模拟 injectInboxMessages 注入后的工具结果（顶层 + data 双写，与实现一致） */
 function makeInjectedFunctionResponse(callId: string, inboxText: string): Content {
@@ -47,7 +42,7 @@ function makeInjectedFunctionResponse(callId: string, inboxText: string): Conten
     } as Content;
 }
 
-describe('HIGH-1：agentInbox 当轮与跨轮一致保留（端到端，缓存稳定性）', () => {
+describe('HIGH-1：agentInbox 历史保持字节稳定（端到端）', () => {
     let storage: MemoryStorageAdapter;
     let manager: ConversationManager;
     const convId = 'conv-g1-high1';
@@ -57,7 +52,7 @@ describe('HIGH-1：agentInbox 当轮与跨轮一致保留（端到端，缓存�
         manager = new ConversationManager(storage);
     });
 
-    test('注入 → addContent 落盘 → getHistoryForAPI：当轮与跨轮均含 agentInbox（内容稳定，缓存不失效）', async () => {
+    test('注入 → addContent 落盘 → getHistoryForAPI：当前与后续真实回合内容一致', async () => {
         await manager.createConversation(convId, 'G1');
         // 回合 1：真实 user 消息 → 模型 functionCall → 工具结果（含注入的 agentInbox）
         await manager.addMessage(convId, 'user', [{ text: 'do it' }], { isUserInput: true });
@@ -76,21 +71,20 @@ describe('HIGH-1：agentInbox 当轮与跨轮一致保留（端到端，缓存�
         // data 子对象同样保留（覆盖 formatter 的 JSON/文本两条序列化路径）
         expect(frPart?.functionResponse?.response?.data?.agentInbox).toHaveLength(1);
 
-        // 回合 2：新真实 user 消息 → 同一工具结果的 agentInbox 仍保留（字节一致 → 前缀缓存命中）
+        // 回合 2：只在历史末尾追加真实 user 消息，上一回合工具结果保持原样以命中缓存。
         await manager.addMessage(convId, 'user', [{ text: 'next round' }], { isUserInput: true });
         const nextRound = await manager.getHistoryForAPI(convId);
         const frPart2 = nextRound
             .find(m => m.role === 'user' && m.parts?.some(p => !!p.functionResponse))
             ?.parts?.[0] as any;
-        expect(frPart2?.functionResponse?.response?.agentInbox).toHaveLength(1);
         expect(frPart2?.functionResponse?.response?.agentInbox?.[0]?.text).toBe('agent says hello');
-        expect(frPart2?.functionResponse?.response?.data?.agentInbox).toHaveLength(1);
-        // 非信箱字段照常保留（不破坏既有清理逻辑）
+        expect(frPart2?.functionResponse?.response?.data?.agentInbox?.[0]?.text).toBe('agent says hello');
+        // 非信箱字段保留（不破坏既有清理逻辑）
         expect(frPart2?.functionResponse?.response?.success).toBe(true);
         expect(frPart2?.functionResponse?.response?.data?.applied).toBe(true);
     });
 
-    test('回合内多轮工具循环：agentInbox 在下一迭代仍可见（不剥离），直到新回合', async () => {
+    test('回合内多轮工具循环：所有已发送 agentInbox 保持不变', async () => {
         await manager.createConversation(convId, 'G1b');
         await manager.addMessage(convId, 'user', [{ text: 'start' }], { isUserInput: true });
         await manager.addContent(convId, makeContent('model', '', {
@@ -138,19 +132,18 @@ describe('HIGH-1：agentInbox 当轮与跨轮一致保留（端到端，缓存�
         expect(frPart?.functionResponse?.response?.agentInbox?.[0]?.text).toBe('in-round msg');
         expect(frPart?.functionResponse?.response?.data?.agentInbox?.[0]?.text).toBe('in-round msg');
 
-        // 新真实 user 消息 = 新回合 → 上一回合的 functionResponse 的 agentInbox 仍保留
-        // （内容跨回合一致，前缀缓存持续命中）
+        // 新真实 user 消息只追加尾部，旧 functionResponse 不被重写。
         await manager.addMessage(convId, 'user', [{ text: 'next round' }], { isUserInput: true });
         const nextRound = await manager.getHistoryForAPI(convId);
         const frPart2 = nextRound
             .find(m => m.role === 'user' && m.parts?.some(p => !!p.functionResponse))
             ?.parts?.[0] as any;
-        expect(frPart2?.functionResponse?.response?.agentInbox).toHaveLength(1);
-        expect(frPart2?.functionResponse?.response?.data?.agentInbox).toHaveLength(1);
+        expect(frPart2?.functionResponse?.response?.agentInbox?.[0]?.text).toBe('in-round msg');
+        expect(frPart2?.functionResponse?.response?.data?.agentInbox?.[0]?.text).toBe('in-round msg');
     });
 });
 
-describe('MED-3：新真实 user 消息 = 新回合边界，清空主会话信箱', () => {
+describe('新真实 user 消息不再删除尚未投递的主会话信箱', () => {
     let storage: MemoryStorageAdapter;
     let manager: ConversationManager;
     const convId = 'conv-g1-med3';
@@ -165,7 +158,7 @@ describe('MED-3：新真实 user 消息 = 新回合边界，清空主会话信�
         agentMailbox.clearAll();
     });
 
-    test('addMessage 追加真实 user 消息时清空主会话 inbox；model / functionResponse 不清空', async () => {
+    test('addMessage 的 model / functionResponse / 真实 user 消息都不删除未读 inbox', async () => {
         await manager.createConversation(convId, 'G1m3');
         agentMailbox.registerRun(convId, 'run_a', 'Agent A');
         // 上一回合滞留的 agent→main 消息
@@ -182,9 +175,9 @@ describe('MED-3：新真实 user 消息 = 新回合边界，清空主会话信�
         await manager.addContent(convId, makeContent('user', 'summary', { isSummary: true, isAutoSummary: true }));
         expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(1);
 
-        // 新回合真实 user 消息：清空滞留消息（防跨轮过期投递）
+        // 新回合真实 user 消息也是可投递边界，未读消息必须保留到实际消费。
         await manager.addMessage(convId, 'user', [{ text: 'new round' }], { isUserInput: true });
-        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(1);
 
         // 子代理 inbox 不受影响（各自 run 生命周期管理）
         agentMailbox.sendMessage({
@@ -192,10 +185,10 @@ describe('MED-3：新真实 user 消息 = 新回合边界，清空主会话信�
         });
         await manager.addMessage(convId, 'user', [{ text: 'another round' }], { isUserInput: true });
         expect(agentMailbox.peekMessages(convId, 'run_a')).toHaveLength(1);
-        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(1);
     });
 
-    test('addContent 追加真实 user 消息同样触发清空', async () => {
+    test('addContent 追加真实 user 消息同样保留未读消息', async () => {
         await manager.createConversation(convId, 'G1m3b');
         agentMailbox.registerRun(convId, 'run_a', 'Agent A');
         agentMailbox.sendMessage({
@@ -203,7 +196,7 @@ describe('MED-3：新真实 user 消息 = 新回合边界，清空主会话信�
         });
 
         await manager.addContent(convId, makeContent('user', 'round via addContent', { isUserInput: true }));
-        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(1);
     });
 
     test('H1-2：addMessage 追加 isSummary 总结消息不清空主会话 inbox（与 addContent/addBatch 同谓词）', async () => {
@@ -219,9 +212,9 @@ describe('MED-3：新真实 user 消息 = 新回合边界，清空主会话信�
         await manager.addMessage(convId, 'user', [{ text: 'summary' }], { isSummary: true });
         expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(1);
 
-        // 真实 user 消息仍触发清空（行为不回归）
+        // 真实 user 消息同样不删除未投递内容。
         await manager.addMessage(convId, 'user', [{ text: 'new round' }], { isUserInput: true });
-        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)).toHaveLength(1);
     });
 });
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { CustomSelect, ConfirmDialog, type SelectOption } from '../common'
 import ModelManager from './ModelManager.vue'
 import {
@@ -272,9 +272,10 @@ function syncChannelNumericDrafts() {
   syncRetryIntervalFromStored()
 }
 
-// 切换渠道配置时，草稿跟随新配置重置
+// 切换渠道配置时，草稿跟随新配置重置；同时清除上一渠道遗留的阈值输入错误状态（避免新渠道合法值被误标红）
 watch(currentConfigId, () => {
   syncChannelNumericDrafts()
+  contextThresholdError.value = false
 })
 
 // ==================== 工具配置 ====================
@@ -339,6 +340,9 @@ async function updateContextManagementEnabled(enabled: boolean) {
   }
 }
 
+// 上下文阈值输入错误状态（非法输入时标红；:value 绑定已保存值，重渲染时自动回填）
+const contextThresholdError = ref(false)
+
 // 更新上下文阈值
 async function updateContextThreshold(value: string) {
   // 验证格式：数值 或 百分比
@@ -346,11 +350,17 @@ async function updateContextThreshold(value: string) {
   if (value.endsWith('%')) {
     const percent = parseFloat(value.replace('%', ''))
     if (!isNaN(percent) && percent > 0 && percent <= 100) {
+      contextThresholdError.value = false
       await updateConfigField('contextThreshold', value)
+      return
     }
   } else if (!isNaN(numValue) && numValue > 0) {
+    contextThresholdError.value = false
     await updateConfigField('contextThreshold', numValue)
+    return
   }
+  // 非法输入：标红提示，输入框回填为已保存值
+  contextThresholdError.value = true
 }
 
 // 更新上下文管理模式
@@ -541,6 +551,34 @@ function onChangeType(newType: string) {
   )
 }
 
+// apiKey / url 输入防抖：@input 每按键全量写配置，300ms 防抖减少扩展往返
+// 输入时快照 configId 随防抖回调传递：回调触发时若渠道已切换则丢弃本次输入（避免旧渠道输入写入新渠道）
+let apiKeyUrlDebounceTimer: ReturnType<typeof setTimeout> | null = null
+// 待触发的防抖保存载荷（含输入时快照的 configId），供定时器回调与卸载 flush 共用
+let pendingApiKeyUrlSave: { configId: string; field: 'url' | 'apiKey'; value: string } | null = null
+
+// 执行待触发的防抖保存：渠道未切换才写入（写配置不依赖组件存活，卸载时也可调用）
+function flushApiKeyUrlSave() {
+  if (!pendingApiKeyUrlSave) return
+  const { configId, field, value } = pendingApiKeyUrlSave
+  pendingApiKeyUrlSave = null
+  // 防抖窗口内渠道已切换：丢弃本次输入，不保存
+  if (configId !== currentConfigId.value) return
+  void updateConfigField(field, value)
+}
+
+function handleApiKeyUrlInput(field: 'url' | 'apiKey', value: string) {
+  if (apiKeyUrlDebounceTimer) {
+    clearTimeout(apiKeyUrlDebounceTimer)
+  }
+  // 输入时快照渠道 ID：防抖窗口内用户可能切换渠道
+  pendingApiKeyUrlSave = { configId: currentConfigId.value, field, value }
+  apiKeyUrlDebounceTimer = setTimeout(() => {
+    apiKeyUrlDebounceTimer = null
+    flushApiKeyUrlSave()
+  }, 300)
+}
+
 // 更新多个配置字段（单个请求，避免竞态条件）
 async function updateConfigFields(updates: Record<string, any>) {
   if (!currentConfig.value) return
@@ -678,6 +716,15 @@ onMounted(async () => {
   // 标记初始化完成
   isInitialized.value = true
 })
+
+onUnmounted(() => {
+  // 卸载时若有待触发的 apiKey/url 防抖保存，立即 flush 一次（写配置不依赖组件存活），避免最后一次编辑丢失
+  if (apiKeyUrlDebounceTimer) {
+    clearTimeout(apiKeyUrlDebounceTimer)
+    apiKeyUrlDebounceTimer = null
+    flushApiKeyUrlSave()
+  }
+})
 </script>
 
 <template>
@@ -798,7 +845,7 @@ onMounted(async () => {
           :placeholder="currentConfig.type === 'openai-responses' 
             ? t('components.settings.channelSettings.form.apiUrl.placeholderResponses') 
             : t('components.settings.channelSettings.form.apiUrl.placeholder')"
-          @input="(e: any) => updateConfigField('url', e.target.value)"
+          @input="(e: any) => handleApiKeyUrlInput('url', e.target.value)"
         />
       </div>
       
@@ -809,7 +856,7 @@ onMounted(async () => {
             :type="showApiKey ? 'text' : 'password'"
             :value="currentConfig.apiKey"
             :placeholder="t('components.settings.channelSettings.form.apiKey.placeholder')"
-            @input="(e: any) => updateConfigField('apiKey', e.target.value)"
+            @input="(e: any) => handleApiKeyUrlInput('apiKey', e.target.value)"
           />
           <button
             class="input-action-btn"
@@ -1115,9 +1162,12 @@ onMounted(async () => {
                 :value="contextThreshold"
                 :placeholder="t('components.settings.channelSettings.form.contextManagement.threshold.placeholder')"
                 :disabled="!contextManagementEnabled"
-                :class="{ disabled: !contextManagementEnabled }"
+                :class="{ disabled: !contextManagementEnabled, error: contextThresholdError }"
                 @input="(e: any) => updateContextThreshold(e.target.value)"
               />
+              <span v-if="contextThresholdError" class="option-hint" style="color: var(--vscode-errorForeground)">
+                {{ t('components.settings.channelSettings.form.contextManagement.threshold.hint') }}（输入无效，已恢复为保存值）
+              </span>
               <span class="option-hint">
                 {{ t('components.settings.channelSettings.form.contextManagement.threshold.hint') }}
               </span>

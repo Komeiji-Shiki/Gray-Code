@@ -19,6 +19,7 @@ import {
 } from '../../tools/subagents/agentSendMessage';
 import { getSubAgentsToolRegistrations } from '../../tools/subagents';
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
+import { TaskManager, type TaskEvent } from '../../tools/taskManager';
 
 function makeStubTool(handler?: (args: Record<string, unknown>, context?: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>, readOnly = false, name = 'stub_tool') {
     return {
@@ -92,6 +93,36 @@ describe('agent_send_message - handler', () => {
         expect(drained[0].fromRunId).toBe('run_a');
         expect(drained[0].fromAgentName).toBe('Agent A');
         expect(drained[0].text).toBe('hello');
+    });
+
+    it('子代理发给空闲主模型时发出轻量唤醒事件，正文仍只保存在 mailbox', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        const events: TaskEvent[] = [];
+        const dispose = TaskManager.onTaskEvent(event => events.push(event));
+        try {
+            const result = await agentSendMessageHandler(
+                { targetAgentName: 'main', message: 'wake the main model' },
+                { mailboxConversationId: 'conv_1', mailboxRunId: 'run_a' }
+            );
+
+            expect(result.success).toBe(true);
+            if (!result.success) return;
+            expect(events).toContainEqual(expect.objectContaining({
+                taskId: `agentmsg:${result.data.messageId}`,
+                taskType: 'agent_message',
+                type: 'progress',
+                data: {
+                    conversationId: 'conv_1',
+                    messageId: result.data.messageId
+                }
+            }));
+            // 事件不广播正文；正文仍由主模型 claim 接口从 mailbox 领取。
+            // tsconfig.test.json lib 为 ES2020，不用 Array.prototype.at（ES2022）
+            expect(events[events.length - 1]?.data).not.toHaveProperty('message');
+            expect(agentMailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)[0].text).toBe('wake the main model');
+        } finally {
+            dispose();
+        }
     });
 
     it('主会话作为发送方：无 mailboxRunId 时回退为主会话保留 runId', async () => {
@@ -299,7 +330,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
     });
 });
 
-describe('agent_send_message - 注入可见性与历史稳定（缓存批次）', () => {
+describe('agent_send_message - 历史重放防护（FIX-B）', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });
@@ -333,7 +364,7 @@ describe('agent_send_message - 注入可见性与历史稳定（缓存批次）'
         expect(response.data.applied).toBe(true);
     });
 
-    it('历史中的 functionResponse 保留 agentInbox：cleanFunctionResponseForAPI 不清除顶层与 data（内容跨回合稳定）', async () => {
+    it('历史中的 functionResponse 保留 agentInbox：mailbox 保证一次消费，历史稳定保证缓存命中', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -341,7 +372,7 @@ describe('agent_send_message - 注入可见性与历史稳定（缓存批次）'
             fromRunId: 'run_a',
             fromAgentName: 'Agent A',
             targetRunId: 'run_b',
-            text: 'keep this'
+            text: 'do not replay'
         });
 
         const service = new ToolExecutionService({ getTool: () => makeStubTool() } as any, undefined, undefined);
@@ -352,14 +383,13 @@ describe('agent_send_message - 注入可见性与历史稳定（缓存批次）'
 
         // 模拟「历史中的 functionResponse 经 cleanFunctionResponseForAPI 后再发给模型」
         const injected = (result.responseParts[0] as any).functionResponse.response;
-        // 当轮可见（顶层 + data）
+        // 当轮确实可见（顶层 + data）
         expect(injected.agentInbox).toBeDefined();
         expect(injected.data.agentInbox).toBeDefined();
 
         const cleaned = cleanFunctionResponseForAPI(injected);
-        // 常驻保留：历史与当轮内容一致 → provider 前缀缓存持续命中
-        expect(cleaned?.agentInbox).toHaveLength(1);
-        expect((cleaned?.data as any)?.agentInbox).toHaveLength(1);
+        expect(cleaned?.agentInbox).toEqual(injected.agentInbox);
+        expect((cleaned?.data as any)?.agentInbox).toEqual(injected.data.agentInbox);
         // 非信箱字段保留（不破坏既有清理逻辑）
         expect(cleaned?.success).toBe(true);
         expect((cleaned?.data as any)?.applied).toBe(true);

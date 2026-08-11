@@ -1,67 +1,3 @@
-<script lang="ts">
-/**
- * R3-#5: 后台任务消息三段式视图模式的模块级持久化。
- * 组件实例会随列表滚动（虚拟化）、新增消息、重载等场景销毁重建；
- * 若折叠态只是组件实例级 ref，重建后会复位为 collapsed。
- * 仿照 MessageList 的 messageListUiStateByTab：以 messageId 为 key 存于模块级 Map，
- * 组件重建时按 id 恢复用户上次选择的视图模式。
- * 使用 reactive(Map) 以便 computed getter 追踪 key 访问、setter 触发更新。
- */
-import { reactive } from 'vue'
-import type { ThoughtViewMode } from './renderBlocks'
-
-export type BackgroundTaskViewMode = 'collapsed' | 'medium' | 'expanded'
-export const backgroundTaskViewModeByMessageId = reactive(new Map<string, BackgroundTaskViewMode>())
-
-/**
- * M1-1：视图模式 Map 容量上限（防御性兜底；正常路径由 pruneBackgroundTaskViewModes 定期清理）。
- * 消息删除/窗口裁剪/重试截断/对话关闭都会留下不再被渲染的 messageId 记录，
- * 该上限保证 Map 大小有界，避免无限增长。
- */
-export const BACKGROUND_TASK_VIEW_MODE_CAP = 500
-
-/**
- * M1-1：清理不再活跃（消息被删除/窗口裁剪/重试截断/对话关闭）的视图模式记录。
- *
- * @param activeIds 仍可能被渲染的消息 ID 集合（当前窗口 + 各标签页快照的并集）；
- *                  不在集合中的 messageId 记录会被删除。
- */
-export function pruneBackgroundTaskViewModes(activeIds: Set<string>): void {
-  for (const messageId of Array.from(backgroundTaskViewModeByMessageId.keys())) {
-    if (!activeIds.has(messageId)) {
-      backgroundTaskViewModeByMessageId.delete(messageId)
-    }
-  }
-}
-
-/**
- * H-1：渐进 markdown 分块的软上限。流式期间 promote 出的完整段落按 \n\n 边界切块渲染，
- * 块数随消息长度增长；正常流式（单条消息）不会触发，超限时丢弃最旧块（防御性兜底，
- * 避免极端长消息累积无界 DOM）。
- */
-export const TAIL_BLOCKS_CAP = 200
-
-/**
- * 思考块视图模式记录的同口径清理（与 pruneBackgroundTaskViewModes 一起由 MessageList
- * 在对话/标签页切换时调用）：消息删除/窗口裁剪/重试截断/对话关闭后移除不再渲染的 id。
- */
-export function pruneThoughtViewModes(activeIds: Set<string>): void {
-  for (const messageId of Array.from(thoughtViewModeByMessageId.keys())) {
-    if (!activeIds.has(messageId)) {
-      thoughtViewModeByMessageId.delete(messageId)
-    }
-  }
-}
-
-/**
- * 思考块三段式视图模式的模块级持久化（与 backgroundTaskViewModeByMessageId 同模式）：
- * 虚拟列表滚动回收 MessageItem 后，用户选择的折叠/完全展开不应复位为默认中展开。
- * 带容量上限（消息删除/窗口裁剪会留下不再渲染的 messageId 记录）。
- */
-export const thoughtViewModeByMessageId = reactive(new Map<string, ThoughtViewMode>())
-export const THOUGHT_VIEW_MODE_CAP = 500
-</script>
-
 <script setup lang="ts">
 /**
  * MessageItem - 单条消息组件
@@ -87,7 +23,14 @@ import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../u
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
-import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
+import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps, type ThoughtViewMode } from './renderBlocks'
+import {
+  type BackgroundTaskViewMode,
+  backgroundTaskViewModeByMessageId,
+  BACKGROUND_TASK_VIEW_MODE_CAP,
+  thoughtViewModeByMessageId,
+  THOUGHT_VIEW_MODE_CAP
+} from './messageViewModes'
 import type { SmoothDisplayText } from '../../stores/chat/types'
 import { registerSmoothDisplay, unregisterSmoothDisplay } from '../../stores/chat/smoothStreamManager'
 
@@ -132,8 +75,10 @@ const isTool = computed(() => props.message.role === 'tool')
 // 是否为总结消息
 const isSummary = computed(() => props.message.isSummary === true)
 
-// 是否为后台任务回流消息
-const isBackgroundTask = computed(() => props.message.source === 'background_task')
+// 是否为代理消息回流
+const isAgentMessage = computed(() => props.message.source === 'agent_message')
+// 内部回流消息共用紧凑卡片；代理消息使用独立标题。
+const isBackgroundTask = computed(() => props.message.source === 'background_task' || isAgentMessage.value)
 
 // 后台任务回流消息的三段式视图：折叠（默认） / 中展开（滚动查看） / 完全展开
 // R3-#5: 读写模块级 Map（按 messageId 持久化），组件实例重建后恢复
@@ -193,119 +138,58 @@ function isSmoothThoughtBlock(block: RenderBlock): boolean {
 const tailHostRef = ref<HTMLElement | null>(null)
 let registeredTextHost: HTMLElement | null = null
 let registeredTextMessageId: string | null = null
+let registeredTextPartKey: string | null = null
 
-// 渐进 markdown：流式期间已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
+// 渐进 markdown：流式期间已定型段落/完整表格行由 CharFlow promote 到这里，
 // 即时渲染格式；未完成尾巴仍在 tailHost 逐字流出。段落切换/终结时清空（稳定块完整接管）。
-//
-// 性能设计（H-1，根治流式 O(n²) 重渲染）：promote 文本按 \n\n 边界切块，每块一个
-// MarkdownRenderer 实例。已挂载旧块的 key 不变、props 不变，Vue 直接复用不重渲染；
-// 只有新块触发一次 markdown-it 解析，不再每帧把全部累计文本重新喂给渲染器。
-const tailBlocks = ref<Array<{ text: string }>>([])
+const tailRendered = ref('')
+const tailRenderGeneration = ref(0)
+let lastTailRenderedSource = ''
+interface PendingTailRender {
+  source: string
+  resolve: () => void
+}
+const pendingTailRenders: PendingTailRender[] = []
 
-// 分块状态机（非响应式，仅切块逻辑内部使用）：
-// - tailFullText：已接收的完整提升文本，作为增量切块基准（区分重建重放前缀与续写）；
-// - tailPending：尚未到达安全切块边界（$$ 数学块未闭合）的尾部文本，与下一次 delta 合并；
-// - tailMathOpen：行级扫描维护的 $$ 数学块开合状态，跨 promote 增量持续。fence 在
-//   promote 边界必然配对（findPromoteCut 保证），故 fence 状态只在单次扫描内维护。
-//   数学块不参与 promote 判定，切块必须跳过其内部 \n\n 边界——否则闭合后的整块公式
-//   会被拆成两段纯文本段落，与整段渲染结果不一致。
-let tailFullText = ''
-let tailPending = ''
-let tailMathOpen = false
+function handleTailPromote(text: string, kind: 'delta' | 'replay' = 'delta'): Promise<void> {
+  // re-register 会重放完整 promotedText；此时必须替换而不是追加，避免同 host/视图重建时重复。
+  tailRendered.value = kind === 'replay' ? text : tailRendered.value + text
+  const source = tailRendered.value
 
-/** 未闭合数学块防御上限：极端情况下数学块永不闭合时按文本块输出，避免内存无界 */
-const TAIL_PENDING_CAP = 4096
-
-function resetTailBlocks(): void {
-  tailBlocks.value = []
-  tailFullText = ''
-  tailPending = ''
-  tailMathOpen = false
+  if (lastTailRenderedSource.startsWith(source)) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    pendingTailRenders.push({ source, resolve })
+  })
 }
 
-function pushTailBlock(text: string): void {
-  // 软上限兜底：超限时丢弃最旧块（防御性；正常流式不会触发）
-  if (tailBlocks.value.length >= TAIL_BLOCKS_CAP) {
-    tailBlocks.value.shift()
-  }
-  tailBlocks.value.push({ text })
-}
-
-/**
- * 增量消费一段 promote 文本：按 \n\n 边界切块，数学块未闭合的边界暂不切（并入 pending，
- * 等闭合后的下一次 promote 一起成块，保证 markdown-it 对数学块/段落的解析与整段渲染等价）。
- */
-function consumeTailDelta(delta: string): void {
-  const work = tailPending + delta
-  tailPending = ''
-  if (!work) return
-
-  // fence 在 promote 边界必然配对，单次扫描内从闭合态开始
-  let fenceOpen = false
-  let chunkStart = 0
-  let i = 0
-  const len = work.length
-  while (i < len) {
-    const nl = work.indexOf('\n', i)
-    if (nl === -1) break
-    const line = work.slice(i, nl)
-
-    // 更新该行对数学块/fence 状态的影响（与 markdown-it mathBlock 规则的判定对齐）
-    if (tailMathOpen) {
-      // 数学块内：任意一行包含 $$ 即视为闭合（mathBlock 向下寻找首个含 $$ 的行）
-      if (line.includes('$$')) tailMathOpen = false
-    } else {
-      const stripped = line.replace(/^[^\S\n\r]+/, '')
-      if (/^(?:```|~~~)/.test(stripped)) {
-        // fence 行只翻转 fence 状态（fence 内的 $$ 是代码内容，不参与数学块判定）
-        fenceOpen = !fenceOpen
-      } else if (!fenceOpen && stripped.startsWith('$$') && !stripped.slice(2).trim().endsWith('$$')) {
-        // 行首 $$ 且非单行闭合（$$...$$）→ 开启数学块
-        tailMathOpen = true
-      }
-    }
-
-    // \n\n 空行边界：数学块闭合时切块；否则并入 pending 等待数学块闭合
-    if (work[nl + 1] === '\n' && !tailMathOpen) {
-      const cut = nl + 2
-      pushTailBlock(work.slice(chunkStart, cut))
-      chunkStart = cut
-      i = cut
-      continue
-    }
-    i = nl + 1
-  }
-
-  tailPending = work.slice(chunkStart)
-  if (tailPending.length > TAIL_PENDING_CAP) {
-    // 防御：数学块长时间不闭合时降级输出为文本块，避免渲染缺失/内存无界
-    pushTailBlock(tailPending)
-    tailPending = ''
+function handleTailMarkdownRendered(source: string): void {
+  lastTailRenderedSource = source
+  for (let i = pendingTailRenders.length - 1; i >= 0; i--) {
+    const pending = pendingTailRenders[i]
+    // debounce 可能跳过中间版本；一个较新的完整 source 可以确认多个旧 bridge。
+    if (!source.startsWith(pending.source)) continue
+    pendingTailRenders.splice(i, 1)
+    pending.resolve()
   }
 }
 
-function handleTailPromote(text: string): void {
-  if (!text) return
-  const full = tailFullText
-  if (text.length < full.length || !text.startsWith(full)) {
-    // 意外回退 / 前缀不匹配（理论不出现）：整体重置后重放
-    resetTailBlocks()
-    tailFullText = text
-    consumeTailDelta(text)
-    return
-  }
-  if (text === full) return
-  tailFullText = text
-  consumeTailDelta(text.slice(full.length))
+function resolvePendingTailRenders(): void {
+  for (const pending of pendingTailRenders.splice(0)) pending.resolve()
 }
 
 function releaseTextDisplay(): void {
-  if (!registeredTextHost || !registeredTextMessageId) return
-  unregisterSmoothDisplay(registeredTextMessageId, registeredTextHost)
+  if (registeredTextHost && registeredTextMessageId) {
+    unregisterSmoothDisplay(registeredTextMessageId, registeredTextHost)
+  }
   registeredTextHost = null
   registeredTextMessageId = null
+  registeredTextPartKey = null
+  resolvePendingTailRenders()
+  lastTailRenderedSource = ''
+  // 同一 tick 内 S → '' → replay(S) 会被 Vue 合并；换 key 强制新 renderer 发 rendered ack。
+  tailRenderGeneration.value++
   // 渐进渲染内容随显示层释放：旧段落由稳定块（renderBlocks）完整接管，避免重复显示
-  resetTailBlocks()
+  if (tailRendered.value) tailRendered.value = ''
 }
 
 watch(
@@ -317,7 +201,12 @@ watch(
   ([messageId, partKey, host]) => {
     if (
       registeredTextHost &&
-      (!partKey || registeredTextHost !== host || registeredTextMessageId !== messageId)
+      (
+        !partKey ||
+        registeredTextHost !== host ||
+        registeredTextMessageId !== messageId ||
+        registeredTextPartKey !== partKey
+      )
     ) {
       releaseTextDisplay()
     }
@@ -325,6 +214,7 @@ watch(
       registerSmoothDisplay(messageId, host, { onPromote: handleTailPromote })
       registeredTextHost = host
       registeredTextMessageId = messageId
+      registeredTextPartKey = partKey
     }
   },
   { immediate: true, flush: 'post' }
@@ -778,6 +668,7 @@ const modelVersion = computed(() => props.message.metadata?.modelVersion)
 
 // 角色显示名称
 const roleDisplayName = computed(() => {
+  if (isAgentMessage.value) return 'Agent message'
   if (isBackgroundTask.value) return t('components.backgroundTasks.completed')
   if (isUser.value) return t('components.message.roles.user')
   if (isTool.value) return t('components.message.roles.tool')
@@ -995,7 +886,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       <div v-else-if="isBackgroundTask" class="background-task-card">
         <div class="bg-task-header">
           <i class="codicon codicon-hubot bg-task-icon"></i>
-          <span class="bg-task-label">{{ t('components.backgroundTasks.completed') || 'Background task completed' }}</span>
+          <span class="bg-task-label">{{ isAgentMessage ? 'Agent message' : (t('components.backgroundTasks.completed') || 'Background task completed') }}</span>
           <!-- 三段式视图切换：折叠 / 中展开（滚动） / 完全展开 -->
           <div class="bg-task-view-controls">
             <button
@@ -1070,17 +961,15 @@ function handleRestoreAndRetry(checkpointId: string) {
 
         <!-- 活动正文尾块：已完成段落渐进 markdown + 活动尾巴 CharFlow 托管（批内错峰淡入流水） -->
         <div v-if="tailInfo?.type === 'text'" class="tail-stream">
-          <!-- H-1：按段落切块渲染。已挂载块 key/props 不变，Vue 复用不重渲染；
-               只有新块触发一次 markdown-it 解析（流式期间不再整段重喂累计文本） -->
-          <template v-for="(block, index) in tailBlocks" :key="index">
-            <MarkdownRenderer
-              :content="block.text"
-              :latex-only="false"
-              :is-streaming="true"
-              :data-tail-block-index="index"
-              class="content-text"
-            />
-          </template>
+          <MarkdownRenderer
+            v-if="tailRendered"
+            :key="tailRenderGeneration"
+            :content="tailRendered"
+            :latex-only="false"
+            :is-streaming="true"
+            class="content-text"
+            @rendered="handleTailMarkdownRendered"
+          />
           <div ref="tailHostRef" class="char-flow-host"></div>
         </div>
 
@@ -1544,6 +1433,11 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .message-header :deep(.message-actions.actions-visible) {
+  opacity: 1;
+}
+
+/* 键盘聚焦（Tab 导航到消息内任意可聚焦元素）时同样显示操作按钮，保证纯键盘可用 */
+.message-item:focus-within .message-header :deep(.message-actions) {
   opacity: 1;
 }
 

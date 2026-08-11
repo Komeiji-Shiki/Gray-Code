@@ -4,6 +4,11 @@
  * 所有渠道配置的基础接口和通用类型
  */
 
+import { deepMerge, isSafeMergeKey } from '../../../core/deepMerge';
+
+// deepMerge 实现已收敛至 core/deepMerge.ts（模块化重构第六批），此处 re-export 保持导出面
+export { deepMerge };
+
 /**
  * 支持的渠道类型
  */
@@ -448,62 +453,6 @@ export interface BaseChannelConfig {
     tokenCountApiConfig?: TokenCountApiConfig;
 }
 
-/**
- * 合并键黑名单：__proto__/constructor/prototype 键在 Object.entries 中会出现，
- * `result['__proto__'] = value` 会触发原型 setter 替换合并结果的原型链（原型污染）。
- * 与 SettingsCore 的 isSafeMergeKey 同思路（本地实现避免跨模块依赖）。
- */
-const UNSAFE_MERGE_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
-
-function isSafeMergeKey(key: string): boolean {
-    return !UNSAFE_MERGE_KEYS.has(key);
-}
-
-/**
- * 深度合并两个对象
- *
- * @param target 目标对象
- * @param source 源对象
- * @returns 合并后的对象
- */
-export function deepMerge(target: any, source: any): any {
-    if (source === null || source === undefined) {
-        return target;
-    }
-    
-    // 如果目标是数组，将源合并进去（如果是数组则拼接，否则作为单项追加）
-    // 这确保了 tools 等数组字段永远不会被自定义设置直接抹除，只会增加
-    if (Array.isArray(target)) {
-        const sourceItems = Array.isArray(source) ? source : [source];
-        return [...target, ...sourceItems];
-    }
-    
-    // 如果源是数组（但目标不是），由于类型冲突，采用覆盖策略
-    if (Array.isArray(source)) {
-        return source;
-    }
-    
-    // 如果源不是对象，直接覆盖
-    if (typeof source !== 'object') {
-        return source;
-    }
-    
-    // 如果目标不是对象，初始化为空对象
-    if (typeof target !== 'object' || target === null) {
-        target = {};
-    }
-    
-    const result = { ...target };
-    
-    for (const key of Object.keys(source)) {
-        // 跳过原型污染危险键
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
-        // 递归合并所有子节点
-        result[key] = deepMerge(result[key], source[key]);
-    }
-    
-    return result;
-}
 
 /**
  * 解析自定义 body 配置并与原始 body 合并
@@ -564,6 +513,13 @@ export function applyCustomBody(originalBody: any, customBody?: CustomBodyConfig
         // 复杂模式：解析完整 JSON 并深度合并
         try {
             const customData = JSON.parse(customBody.json);
+            // 校验解析结果：只接受纯对象。数组/原始值（如 "123"、"[1,2]"）无法作为
+            // 请求体字段合并，deepMerge 对非对象值直接覆盖会整体替换 originalBody，
+            // 破坏请求体结构；非纯对象时告警并跳过本次合并
+            if (customData === null || typeof customData !== 'object' || Array.isArray(customData)) {
+                console.warn('Failed to apply custom body JSON: expected a JSON object, got:', typeof customData);
+                return result;
+            }
             result = deepMerge(result, customData);
         } catch (error) {
             console.warn('Failed to parse custom body JSON:', error);

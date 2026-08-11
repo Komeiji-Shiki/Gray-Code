@@ -25,7 +25,6 @@ export interface SoundEventPayload {
 interface HiddenSoundAggregate {
   cue: SoundCue
   createdAt: number
-  count: number
   conversationId?: string
   role?: SoundAgentRole
 }
@@ -43,6 +42,8 @@ let hiddenAggregate: HiddenSoundAggregate | null = null
 let audioUnlockedThisSession = false
 let unlockInFlight: Promise<boolean> | null = null
 let unlockHooksCleanup: (() => void) | null = null
+/** 全局音频解锁 hooks 引用计数：多个调用方共享同一组监听器，计数归零才真正卸载 */
+let unlockHooksRefCount = 0
 let visibilityHooksCleanup: (() => void) | null = null
 
 /**
@@ -79,6 +80,7 @@ function getCuePriority(cue: SoundCue): number {
 }
 
 function clearUnlockHooks(): void {
+  unlockHooksRefCount = 0
   if (unlockHooksCleanup) {
     const cleanup = unlockHooksCleanup
     unlockHooksCleanup = null
@@ -110,7 +112,6 @@ function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | '
     hiddenAggregate = {
       cue: event.cue,
       createdAt: event.createdAt,
-      count: 1,
       conversationId: event.conversationId,
       role: event.role
     }
@@ -124,7 +125,6 @@ function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | '
     hiddenAggregate = {
       cue: event.cue,
       createdAt: event.createdAt,
-      count: hiddenAggregate.count + 1,
       conversationId: event.conversationId,
       role: event.role
     }
@@ -135,7 +135,6 @@ function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | '
     hiddenAggregate = {
       cue: hiddenAggregate.cue,
       createdAt: event.createdAt,
-      count: hiddenAggregate.count + 1,
       conversationId: event.conversationId ?? hiddenAggregate.conversationId,
       // 同优先级同 cue 事件聚合后按「先到者优先」保留 role：
       // 极端场景（3 秒窗口内主/子代理各一次同 cue 事件）补播时可能少覆盖一种开关，
@@ -145,10 +144,7 @@ function updateHiddenAggregate(event: Required<Pick<SoundEventPayload, 'cue' | '
     return
   }
 
-  hiddenAggregate = {
-    ...hiddenAggregate,
-    count: hiddenAggregate.count + 1
-  }
+  // 更低优先级事件：保留现有聚合（死字段 count 已删除——聚合数量从未被消费）
 }
 
 async function playSoundEvent(event: SoundEventPayload & { createdAt: number }): Promise<void> {
@@ -211,8 +207,12 @@ export function registerGlobalAudioUnlockHooks(): () => void {
     return () => {}
   }
 
+  // 引用计数 +1：任一调用方释放只减计数，全部释放（归零）才真正移除全局监听器
+  unlockHooksRefCount += 1
+
   if (unlockHooksCleanup) {
-    return unlockHooksCleanup
+    // 已有共享钩子：返回引用计数 cleanup，避免“任一调用方 cleanup 即全局卸载”
+    return createRefCountedUnlockCleanup()
   }
 
   const onUserGesture = () => {
@@ -231,7 +231,21 @@ export function registerGlobalAudioUnlockHooks(): () => void {
   }
 
   unlockHooksCleanup = cleanup
-  return cleanup
+  return createRefCountedUnlockCleanup()
+}
+
+/** 引用计数 cleanup：计数归零时才执行真正的全局卸载 */
+function createRefCountedUnlockCleanup(): () => void {
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    unlockHooksRefCount -= 1
+    if (unlockHooksRefCount <= 0) {
+      unlockHooksRefCount = 0
+      clearUnlockHooks()
+    }
+  }
 }
 
 export function registerVisibilityChangeHooks(): () => void {

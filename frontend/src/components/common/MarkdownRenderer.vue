@@ -132,6 +132,7 @@ import { sendToExtension, showNotification } from '@/utils/vscode'
 import { copyToClipboard } from '@/utils/format'
 import { useI18n } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from './markdownUtils'
+import { markdownItMathBlock } from '../../utils/markdownMathBlock'
 
 // 插件导入
 import footnote from 'markdown-it-footnote'
@@ -155,6 +156,11 @@ const props = withDefaults(defineProps<{
   renderProfile: 'default',
   isStreaming: false
 })
+
+const emit = defineEmits<{
+  /** 当前 source 对应的 v-html 已经完成 DOM patch。 */
+  rendered: [source: string]
+}>()
 
 const { t, actualLanguage } = useI18n()
 
@@ -236,6 +242,42 @@ function splitHighlightedHtmlByNewline(highlightedHtml: string): string[] {
 const isZoomModalVisible = ref(false)
 const zoomedContent = ref('')
 const zoomTitle = ref('')
+// 放大浮层关闭按钮引用（用于打开时初始聚焦）
+const zoomFloatingCloseRef = ref<HTMLButtonElement | null>(null)
+// 打开浮层前的焦点元素（关闭后归还焦点）
+let zoomPreviousFocus: HTMLElement | null = null
+
+// 放大浮层：Esc 关闭 + 初始聚焦（键盘可达性）
+function handleZoomKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isZoomModalVisible.value) {
+    e.stopPropagation()
+    isZoomModalVisible.value = false
+  }
+}
+
+watch(isZoomModalVisible, (visible) => {
+  if (visible) {
+    // 记录打开前的焦点元素，浮层关闭后归还
+    zoomPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    document.addEventListener('keydown', handleZoomKeydown)
+    nextTick(() => {
+      // 初始聚焦：把焦点移入浮层关闭按钮，支持纯键盘关闭
+      zoomFloatingCloseRef.value?.focus()
+    })
+  } else {
+    document.removeEventListener('keydown', handleZoomKeydown)
+    // 关闭后把焦点归还给浮层打开前的元素（若仍存在；不可聚焦元素的 focus() 为 no-op，无害）
+    const previousFocus = zoomPreviousFocus
+    zoomPreviousFocus = null
+    if (previousFocus && previousFocus.isConnected) {
+      try {
+        previousFocus.focus()
+      } catch {
+        // 忽略：元素不可聚焦或已被移除
+      }
+    }
+  }
+})
 
 // 缩放与平移状态
 const zoomScale = ref(1)
@@ -968,60 +1010,8 @@ function markdownItKatex(md: MarkdownIt) {
     return false
   }
 
-  // 块级公式：$$...$$
-  const mathBlock = (state: any, startLine: number, endLine: number, silent: boolean) => {
-    let pos = state.bMarks[startLine] + state.tShift[startLine]
-    let max = state.eMarks[startLine]
-
-    if (pos + 2 > max) return false
-    if (state.src.slice(pos, pos + 2) !== '$$') return false
-
-    if (silent) return true
-
-    // 同一行结束的 $$...$$
-    const firstLine = state.src.slice(pos + 2, max)
-    if (firstLine.trim().endsWith('$$')) {
-      const content = firstLine.trim().slice(0, -2)
-      const token = state.push('math_block', 'div', 0)
-      token.block = true
-      token.markup = '$$'
-      token.map = [startLine, startLine + 1]
-      token.content = content
-      state.line = startLine + 1
-      return true
-    }
-
-    // 多行块级公式：向下寻找结尾 $$
-    let nextLine = startLine + 1
-    let content = firstLine
-
-    while (nextLine < endLine) {
-      pos = state.bMarks[nextLine] + state.tShift[nextLine]
-      max = state.eMarks[nextLine]
-
-      const line = state.src.slice(pos, max)
-      const endPos = line.indexOf('$$')
-      if (endPos !== -1) {
-        content += `\n${line.slice(0, endPos)}`
-
-        const token = state.push('math_block', 'div', 0)
-        token.block = true
-        token.markup = '$$'
-        token.map = [startLine, nextLine + 1]
-        token.content = content
-        state.line = nextLine + 1
-        return true
-      }
-
-      content += `\n${line}`
-      nextLine += 1
-    }
-
-    return false
-  }
-
   md.inline.ruler.after('backticks', 'math_inline', mathInline)
-  md.block.ruler.after('fence', 'math_block', mathBlock, {
+  md.block.ruler.after('fence', 'math_block', markdownItMathBlock, {
     alt: ['paragraph', 'reference', 'blockquote', 'list']
   })
 
@@ -1215,9 +1205,19 @@ function clearRenderTimer() {
 
 async function applyPostRenderDomState(rendered: boolean, needsPostProcess = false): Promise<void> {
   if (rendered || needsPostProcess) {
+    // 捕获本次真正写入 renderedContent 的 source；await 期间 props 可能继续增长，
+    // 旧 render 不能误报为新 source 已经落地。
+    const renderedSource = rendered ? lastRenderedSource : null
     // Mermaid / workspace images 需要基于最新 DOM 执行；流式阶段只回填轻量代码块状态。
     await nextTick()
     applyCodeBlockWrapStates()
+
+    if (
+      renderedSource !== null &&
+      containerRef.value
+    ) {
+      emit('rendered', renderedSource)
+    }
   }
 }
 
@@ -1715,6 +1715,7 @@ watch(
 
 onUnmounted(()=> {
   clearRenderTimer()
+  document.removeEventListener('keydown', handleZoomKeydown)
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', handleCodeToolbarClick)
     containerRef.value.removeEventListener('click', handleWorkspaceFileLinkClick)
@@ -1739,7 +1740,7 @@ onUnmounted(()=> {
     <Transition name="fade">
       <div v-if="isZoomModalVisible" class="mermaid-zoom-overlay">
         <!-- 悬浮关闭按钮 -->
-        <button class="zoom-floating-close" @click="isZoomModalVisible = false" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
+        <button ref="zoomFloatingCloseRef" class="zoom-floating-close" @click="isZoomModalVisible = false" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
           <i class="codicon codicon-close"></i>
         </button>
 

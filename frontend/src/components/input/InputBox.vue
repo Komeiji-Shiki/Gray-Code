@@ -388,12 +388,12 @@ function handleContextMouseLeave() {
     clearTimeout(hoverTimer)
     hoverTimer = null
   }
-  // M-7：保存定时器句柄并在 onBeforeUnmount 清理，避免组件卸载后回调访问已卸载状态
-  if (leavePreviewTimer) {
-    clearTimeout(leavePreviewTimer)
+  // 先清除旧的隐藏定时器，避免连续进入/离开时旧定时器提前隐藏预览
+  if (hidePreviewTimer) {
+    clearTimeout(hidePreviewTimer)
+    hidePreviewTimer = null
   }
-  leavePreviewTimer = setTimeout(() => {
-    leavePreviewTimer = null
+  hidePreviewTimer = setTimeout(() => {
     if (!hoveredContextId.value) {
       previewContext.value = null
     }
@@ -435,6 +435,8 @@ function renderNodesToDom() {
       onClick: handleContextClick
     }
   })
+  // 记录本次渲染的 nodes 轻量指纹，供 watch 跳过无谓的全量 DOM 提取比对
+  lastRenderedNodesFingerprint = getNodesFingerprint(props.nodes)
 }
 
 // ========== input / key / IME ==========
@@ -447,12 +449,13 @@ function pushHistory(nodes: EditorNode[], caretOffset: number) {
   if (historyIndex.value < history.value.length - 1) {
     history.value = history.value.slice(0, historyIndex.value + 1)
   }
-  history.value.push({ nodes: JSON.parse(JSON.stringify(nodes)), caretOffset })
-  if (history.value.length > MAX_HISTORY) {
+  // 容量上限：追加前先淘汰最旧条目，避免 push 后溢出（shift 后 historyIndex 越界）
+  if (history.value.length >= MAX_HISTORY) {
     history.value.shift()
-  } else {
-    historyIndex.value++
   }
+  history.value.push({ nodes: JSON.parse(JSON.stringify(nodes)), caretOffset })
+  // 新条目总是栈顶，historyIndex 直接指向末尾，避免 shift 后索引漂移
+  historyIndex.value = history.value.length - 1
 }
 
 function undo() {
@@ -508,6 +511,11 @@ function handleInput(e?: InputEvent) {
   // IME 合成中间态（每个拼音键一次 input）不入撤销栈：合成结束由
   // handleCompositionEnd 补推最终态，避免历史被拼音中间态灌满且反复全量深拷贝。
   if (!e?.isComposing) pushHistory(newNodes, cursorPos)
+  // 输入路径 DOM 已由浏览器直接编辑，newNodes 即 DOM 的真实状态（props 将同步为相同值）：
+  // 必须在此同步指纹——watch(props.nodes) 触发时 isInputting 仍为 true 会被短路跳过，
+  // 指纹若长期停留在初始值，后续外部清空（发送）时 getNodesFingerprint([]) === '0'
+  // 与陈旧指纹碰撞，跳过 DOM 重建导致残留旧文本（placeholder 与文本叠放）。
+  lastRenderedNodesFingerprint = getNodesFingerprint(newNodes)
 
   nextTick(() => {
     isInputting = false
@@ -799,7 +807,19 @@ const placeholderText = computed(() => {
 const hoveredContextId = ref<string | null>(null)
 const previewContext = ref<PromptContextItem | null>(null)
 let hoverTimer: ReturnType<typeof setTimeout> | null = null
-let leavePreviewTimer: ReturnType<typeof setTimeout> | null = null
+// 离开后延迟隐藏预览的定时器（onBeforeUnmount 统一清理）
+let hidePreviewTimer: ReturnType<typeof setTimeout> | null = null
+
+// 上次渲染到 DOM 的 nodes 轻量指纹（数组长度 + 首尾节点文本）：
+// props.nodes 每键击都会更新，但 DOM 通常已同步（用户输入直接落 DOM），
+// 先用指纹判断「是否可能不同步」，相同则跳过全量 extractNodesFromEditor DOM 遍历。
+let lastRenderedNodesFingerprint = ''
+function getNodesFingerprint(nodes: EditorNode[]): string {
+  const len = nodes.length
+  if (len === 0) return '0'
+  const textOf = (n: EditorNode) => (n.type === 'text' ? n.text : `@${n.context.id}`)
+  return `${len}:${textOf(nodes[0])}:${textOf(nodes[len - 1])}`
+}
 
 function truncatePreview(content: string, maxLines = 10, maxChars = 500): string {
   const lines = content.split('\n').slice(0, maxLines)
@@ -835,14 +855,25 @@ watch(() => props.nodes, () => {
       history.value = []
       historyIndex.value = -1
     }
-    const domNodes = extractNodesFromEditor(editorRef.value, {
-      knownNodes: props.nodes,
-      transientContexts
-    })
-    // 受控 contenteditable 只有在外部状态确实不同步时才重建 DOM。
-    // 无意义的 innerHTML 重建会清空浏览器原生的复制、粘贴和撤销历史。
-    if (!editorNodesEqual(domNodes, props.nodes)) {
-      renderNodesToDom()
+    // 轻量指纹相同（长度 + 首尾节点文本）说明 DOM 与 nodes 大概率已同步，
+    // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM。
+    // 例外：props.nodes 为空（发送清空）时必须强制提取比对——空数组指纹恒为 '0'，
+    // 而 lastRenderedNodesFingerprint 在用户直接编辑路径下由 handleInput 维护，
+    // 若历史渲染从未发生（指纹仍为初始 '0'）会碰撞跳过重建，DOM 残留旧内容。
+    if (props.nodes.length === 0 || getNodesFingerprint(props.nodes) !== lastRenderedNodesFingerprint) {
+      const domNodes = extractNodesFromEditor(editorRef.value, {
+        knownNodes: props.nodes,
+        transientContexts
+      })
+      // 受控 contenteditable 只有在外部状态确实不同步时才重建 DOM。
+      // 无意义的 innerHTML 重建会清空浏览器原生的复制、粘贴和撤销历史。
+      if (!editorNodesEqual(domNodes, props.nodes)) {
+        renderNodesToDom()
+      } else {
+        // DOM 已与 nodes 同步（浏览器直接编辑路径）：同步指纹，
+        // 避免下次外部状态变化（如发送清空）时指纹碰撞而跳过必要重建。
+        lastRenderedNodesFingerprint = getNodesFingerprint(props.nodes)
+      }
     }
   }
 
@@ -872,10 +903,15 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', handleEditorResizeMouseUp)
   disposeRestoreFocusListener?.()
   disposeRestoreFocusListener = null
-  if (hoverTimer) clearTimeout(hoverTimer)
-  hoverTimer = null
-  if (leavePreviewTimer) clearTimeout(leavePreviewTimer)
-  leavePreviewTimer = null
+  // 清理隐藏预览定时器，避免组件卸载后仍写入状态
+  if (hoverTimer) {
+    clearTimeout(hoverTimer)
+    hoverTimer = null
+  }
+  if (hidePreviewTimer) {
+    clearTimeout(hidePreviewTimer)
+    hidePreviewTimer = null
+  }
 })
 
 defineExpose({

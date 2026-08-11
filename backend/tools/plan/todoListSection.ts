@@ -2,6 +2,9 @@
  * Plan 文档中的 TODO LIST 章节处理工具
  */
 
+import { escapeRegExp, normalizeSingleLineText } from '../shared/textUtils';
+import { isTodoStatus } from '../shared/todoValidation';
+
 export type PlanTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
 export interface PlanTodoItem {
@@ -15,17 +18,7 @@ const TODO_SECTION_START = '<!-- GRAYCODE_TODO_LIST_START -->';
 const TODO_SECTION_END = '<!-- GRAYCODE_TODO_LIST_END -->';
 
 function normalizeTodoStatus(value: unknown): PlanTodoStatus {
-  if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value;
-  return 'pending';
-}
-
-function normalizeSingleLineText(input: unknown): string {
-  if (typeof input !== 'string') return '';
-  return input.replace(/\s+/g, ' ').trim();
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return isTodoStatus(value) ? value : 'pending';
 }
 
 export function sortPlanTodoList(items: PlanTodoItem[]): PlanTodoItem[] {
@@ -86,8 +79,17 @@ export function stripPlanTodoListSection(content: string): string {
   }
 
   const removeFrom = (() => {
+    // 修改原因：lastIndexOf 定位标题可能命中正文里出现的 "## TODO LIST" 文本，
+    //          导致把标题与 START 标记之间的正文一并误删。
+    // 修改方式：仅当标题独占一行（行首）且与 START 标记之间只有空白时才回退删除标题行；
+    //          否则一律按标记块定位（从 START 标记开始删），正文不受影响。
     const headingIndex = content.lastIndexOf(TODO_SECTION_TITLE, start);
-    return headingIndex >= 0 ? headingIndex : start;
+    if (headingIndex < 0) return start;
+    const atLineStart = headingIndex === 0 || content[headingIndex - 1] === '\n';
+    if (!atLineStart) return start;
+    const between = content.slice(headingIndex + TODO_SECTION_TITLE.length, start);
+    if (!/^\s*$/.test(between)) return start;
+    return headingIndex;
   })();
   const removeTo = end + TODO_SECTION_END.length;
 

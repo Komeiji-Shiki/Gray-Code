@@ -22,6 +22,11 @@
 
 ## [Unreleased]
 
+### Merged：[1.7.12dev] 同步上游 main 至 0107c597（模块化摊平 1-9 批 + Bug Hunt 五轮 150+ 修复 + MCP/memory/prompt/子代理/输入框等修复）
+  - 合入上游 40+ commits：模块化摊平重构（registry 死系统删除、ChatFlowService/ConversationManager/CheckpointManager/ToolExecutionService/execute_command/search_in_files 等大文件拆分至 flow/、manager/、tool-execution/、terminal/、search/、subagents/executor|eventBus、tools/shared/ 等子目录，后端依赖方向清零）；
+  - 修复吸收：fileWriteLock 复合身份键 + acquire 参数化超时、MCP stdio 生命周期/串行队列/原子写、memory 迁移降级与 1000 上限、prompt 动态上下文差分加固、子代理并行段收尾 30s 兜底、输入框残留双机制（DOM 指纹同步 + 清空强制提取）、流式 Markdown 表格渐进渲染、恢复默认模板 {{$MEMORY}} 占位符、i18n 死键清理、ErrorType 下沉 core/errorTypes 等；
+  - 桌面版独有功能全量保留（远程控制 V7.2、桌面背景图、agentInbox、多工作区、安全加固）；**不采纳**上游 nightly 自动更新机制与 fast-tavern 子项目（桌面版更新快、用户自建简单，无需 nightly）；版本 1.7.12dev
+
 ### Added：[1.7.11dev] 桌面端自定义背景图——外观设置新增本地图片窗口背景 + 不透明度调节
   - **外观设置新增「桌面背景图」**：选择本地图片（PNG/JPG/JPEG/GIF/WebP/BMP，上限 10MB）作为应用窗口背景，cover 铺满整窗；**不透明度滑块（0-100，默认 30）**实时作用于图片本身（透明度只影响图片层，文字与界面不受影响，调节所见即所得）；设置页提供与窗口同规格的 16:9 预览框、路径回显（超长省略中间）与「移除背景图」一键清除；设置搜索新增「背景图/壁纸/透明度」锚点；
   - **数据流**：持久化仅存路径（ui.appearance.wallpaperPath / wallpaperOpacity，默认 '' / 30，updateUISettings 深合并链路无需改动）；图片内容经新增 IPC 处理器（pickWallpaper：原生对话框选图 + 扩展名白名单 + 大小校验后返回 data URL；getWallpaperImage：按已存路径重读）交给渲染层（webview CSP img-src 白名单已含 data:）；文件丢失/删除/格式失效时静默回退纯色背景，不打扰用户；**SVG 刻意排除**（避免脚本面/外部引用解析面）；

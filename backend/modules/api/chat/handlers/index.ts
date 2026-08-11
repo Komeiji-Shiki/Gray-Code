@@ -8,6 +8,5 @@ export {
     StreamResponseProcessor,
     isAsyncGenerator,
     type StreamProcessorConfig,
-    type ProcessedChunkData,
-    type CancelledData
+    type ProcessedChunkData
 } from './StreamResponseProcessor';

@@ -2,8 +2,8 @@
  * Review tool result projection helpers
  */
 
-import type { ReviewDocumentSummarySnapshot, ReviewToolDeltaV4, ReviewToolStructuredResultV4, ReviewValidationSummaryV4 } from './schema';
-import { summarizeReviewDocument, validateReviewDocument } from './reviewDocumentSection';
+import type { ReviewDocumentSummarySnapshot, ReviewToolDeltaV4, ReviewToolStructuredResultV4, ReviewValidationResult, ReviewValidationSummaryV4 } from './schema';
+import { buildSummaryFromSnapshot, summarizeReviewDocument, validateReviewDocument } from './reviewDocumentSection';
 
 export interface ProjectReviewToolResultOptions {
   path: string;
@@ -14,7 +14,11 @@ export interface ProjectReviewToolResultOptions {
 }
 
 export function buildReviewValidationSummary(content: string): ReviewValidationSummaryV4 {
-  const validation = validateReviewDocument(content);
+  return buildReviewValidationSummaryFromResult(validateReviewDocument(content));
+}
+
+/** 由已计算的校验结果构造摘要（供多处复用同一份 validation，避免重复解析文档） */
+export function buildReviewValidationSummaryFromResult(validation: ReviewValidationResult): ReviewValidationSummaryV4 {
   return {
     isValid: validation.isValid,
     detectedFormat: validation.detectedFormat,
@@ -28,9 +32,16 @@ export function buildReviewValidationSummary(content: string): ReviewValidationS
 }
 
 export function projectReviewToolResultData(options: ProjectReviewToolResultOptions): ReviewToolStructuredResultV4 {
+  // 修改原因：validateReviewDocument 过去被调用两次（此处 + buildReviewValidationSummary 内部），
+  //           加上 summarizeReviewDocument 各自重新解析文档，同一份 content 被重复解析三遍。
+  // 修改方式：一次校验的结果三处复用——validation 直接使用；reviewValidation 由该校验结果派生；
+  //           summary 优先用校验结果内嵌的 reviewSnapshot 构建（v3/v4 有效文档快照一致），
+  //           未知格式（无快照）才回退 summarizeReviewDocument（行为与旧实现一致）。
   const validation = validateReviewDocument(options.content);
-  const summary: ReviewDocumentSummarySnapshot = summarizeReviewDocument(options.content);
-  const reviewValidation = buildReviewValidationSummary(options.content);
+  const summary: ReviewDocumentSummarySnapshot = validation.reviewSnapshot
+    ? buildSummaryFromSnapshot(validation.reviewSnapshot)
+    : summarizeReviewDocument(options.content);
+  const reviewValidation = buildReviewValidationSummaryFromResult(validation);
 
   const data: ReviewToolStructuredResultV4 = {
     path: options.path,

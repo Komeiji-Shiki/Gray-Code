@@ -23,6 +23,9 @@
  * 不会出现"已渲染内容消失重打"的跳变。
  */
 
+import MarkdownIt from 'markdown-it'
+import deflist from 'markdown-it-deflist'
+import footnote from 'markdown-it-footnote'
 import {
   SmoothStreamer,
   SMOOTH_PRESETS,
@@ -30,6 +33,7 @@ import {
   type SmoothStreamerOptions
 } from '../../utils/smoothStream'
 import { CharFlow } from '../../utils/charFlow'
+import { markdownItMathBlock } from '../../utils/markdownMathBlock'
 
 interface SmoothEntry {
   /** 消息 id（随 migrate 更新，commit 回调据此查显示目标） */
@@ -43,6 +47,10 @@ interface SmoothEntry {
   committed: string
   /** 已提升（promote）给渐进 markdown 层的文本：CharFlow 当前显示 = baseText + committed - promotedText */
   promotedText: string
+  /** 已提升前缀末尾仍可继续接收数据行的 GFM 表格上下文；null 表示不在表格中。 */
+  tableContinuation: TableContinuation | null
+  /** 上次检查时 settled 的长度；只有新追加内容含换行时才需要重扫 Markdown 块边界。 */
+  lastPromoteObservedLength: number
   /** 上次快照时间（performance.now）；null 表示尚未生成首帧快照 */
   lastSnapshotAt: number | null
   /** 上次快照的显示文本；null 允许首帧显式发布空基线 */
@@ -51,8 +59,6 @@ interface SmoothEntry {
   lastSnapshotPartKey: string | null
   /** 快照回调：写入 store.smoothTexts（低频节流，由本模块控制频率） */
   onSnapshot: (messageId: string, partKey: string, displayText: string) => void
-  /** 增量 fence 配对扫描状态（见 FenceScanState；显示目标重建/段落切换时重置） */
-  fenceScan: FenceScanState
 }
 
 interface SmoothDisplay {
@@ -69,8 +75,8 @@ interface SmoothDisplay {
   stickBottom?: () => boolean
   /** 尾部窗口首次裁剪时回调（中展开裁剪提示） */
   onTrimmed?: () => void
-  /** 渐进 markdown：已定型文本到达安全段落边界时回调提升的文本 */
-  onPromote?: (text: string) => void
+  /** 渐进 markdown：回调可返回“真实 Markdown DOM 已落地”的 Promise。 */
+  onPromote?: (text: string, kind: 'delta' | 'replay') => unknown
 }
 
 export interface SmoothDisplayOptions {
@@ -93,9 +99,10 @@ export interface SmoothDisplayOptions {
   stickBottom?: () => boolean
   /** 尾部窗口首次裁剪时回调（中展开裁剪提示） */
   onTrimmed?: () => void
-  /** 渐进 markdown：已定型文本到达安全段落边界（\n\n + fence 配对）时回调提升的文本。
-   * 正文尾块与展开的思考块启用；折叠预览不启用 */
-  onPromote?: (text: string) => void
+  /** 渐进 markdown：已定型段落或完整表格行到达安全边界时回调提升的文本。
+   * 返回 Promise 时，CharFlow 会保留等价 raw bridge，直到真实 Markdown DOM 已落地；
+   * 正文尾块与展开的思考块启用，折叠预览不启用。 */
+  onPromote?: (text: string, kind: 'delta' | 'replay') => unknown
 }
 
 const entries = new Map<string, SmoothEntry>()
@@ -108,100 +115,323 @@ const hostToMessageId = new Map<HTMLElement, string>()
 /** smoothTexts 快照的最小间隔（ms）：组件判定/恢复用，不需要跟随每帧动画 */
 const SNAPSHOT_INTERVAL_MS = 120
 
-/**
- * 增量 fence 配对扫描状态（每个 SmoothStreamer 实例一份，多流并发互不干扰）。
- *
- * 背景：findPromoteCut 每帧从文本末尾向前找最后一个安全 \n\n 边界，原实现对每个候选
- * 边界都从文本开头全量扫一遍行首 fence（O(n) × 候选数），流式期间每帧重复。fence 行
- * 只增不删，因此改为增量：fenceEnds 保存已扫描区间内每条行首 fence 的结束位置
- * （m.index + m[0].length，与 FENCE_LINE_RE 全量扫描的计数语义一致），升序追加；
- * 查询某 cut 前的 fence 奇偶只需二分统计 ≤ cut 的条数（O(log n)），每次 commit 只
- * 扫描新增文本区间（O(delta)）。
- *
- * 归属：状态挂在 SmoothEntry（per messageId）上，随实例创建/重建/段落切换重置；
- * 显示目标重建（registerSmoothDisplay 换 host / restore 后缀文本）时文本坐标系变化，
- * 必须一并重置（见 registerSmoothDisplay / pushSmoothText）。
- */
-interface FenceScanState {
-  /** 已扫描的 settledText 前缀长度 */
-  scanLen: number
-  /** 升序排列的 fence 匹配结束位置（m.index + m[0].length，全部 ≤ scanLen） */
-  fenceEnds: number[]
+/** 只在发现疑似 delimiter 时懒创建；用于确认嵌套容器中的真实 table token。 */
+let boundaryMarkdown: MarkdownIt | null = null
+
+interface FenceState {
+  marker: '`' | '~'
+  length: number
 }
 
-function createFenceScanState(): FenceScanState {
-  return { scanLen: 0, fenceEnds: [] }
+interface PromoteCut {
+  cut: number
+  /** 提升到 cut 后，下一完整行可继续所属的表格上下文。 */
+  tableContinuation: TableContinuation | null
 }
 
-/** 行首 fence 匹配：fence 标记必须位于行首（允许前导空白），全扫描不逐行分配 */
-const FENCE_LINE_RE = /(?:^|\n|\r)[^\S\n\r]*(?:```|~~~)/g
+interface TableContinuation {
+  /** probePrefix 内 markdown-it token map 的起始行。 */
+  startLine: number
+  /** 到 delimiter 为止的固定解析前缀；后续逐行验证不重复解析已提升的 tbody。 */
+  probePrefix: string
+}
 
-/**
- * 增量扩展扫描：只处理 (scanLen, targetLen] 区间内新出现的 fence 行。
- * 从 scanLen - 1 处开始切片：fence 匹配包含行首换行符，可能跨旧边界
- * （fence 起始行的前一个字符是 \n）；只计入结束位置落在 (scanLen, targetLen]
- * 的匹配，保证每条 fence 行恰好计数一次。
- */
-function extendFenceScan(state: FenceScanState, text: string, targetLen: number): void {
-  if (targetLen <= state.scanLen) return
-  const sliceStart = Math.max(0, state.scanLen - 1)
-  const slice = text.slice(sliceStart, targetLen)
-  const ends = state.fenceEnds
-  FENCE_LINE_RE.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = FENCE_LINE_RE.exec(slice)) !== null) {
-    const end = sliceStart + m.index + m[0].length
-    if (end > state.scanLen && end <= targetLen) {
-      ends.push(end)
+interface ParsedTableRange {
+  startLine: number
+  endLine: number
+}
+
+interface CompleteLine {
+  text: string
+  start: number
+  end: number
+}
+
+interface HtmlBlockState {
+  /** null 对应 CommonMark type 6：直到空行才结束。 */
+  closePattern: RegExp | null
+}
+
+const HTML_BLOCK_TAGS = new Set([
+  'address', 'article', 'aside', 'base', 'basefont', 'blockquote', 'body', 'caption',
+  'center', 'col', 'colgroup', 'dd', 'details', 'dialog', 'dir', 'div', 'dl', 'dt',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form', 'frame', 'frameset', 'h1',
+  'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header', 'hr', 'html', 'iframe', 'legend',
+  'li', 'link', 'main', 'menu', 'menuitem', 'nav', 'noframes', 'ol', 'optgroup',
+  'option', 'p', 'param', 'search', 'section', 'summary', 'table', 'tbody', 'td',
+  'tfoot', 'th', 'thead', 'title', 'tr', 'track', 'ul'
+])
+
+/** 只返回已经收到换行符的行；末尾半行永远不能提升。 */
+function getCompleteLines(text: string): CompleteLine[] {
+  const lines: CompleteLine[] = []
+  let start = 0
+  let newline = text.indexOf('\n')
+  while (newline >= 0) {
+    const endWithoutCr = newline > start && text.charCodeAt(newline - 1) === 13 ? newline - 1 : newline
+    lines.push({ text: text.slice(start, endWithoutCr), start, end: newline + 1 })
+    start = newline + 1
+    newline = text.indexOf('\n', start)
+  }
+  return lines
+}
+
+function leadingIndent(line: string): number {
+  let width = 0
+  for (const ch of line) {
+    if (ch === ' ') width++
+    else if (ch === '\t') width += 4 - (width % 4)
+    else break
+  }
+  return width
+}
+
+/** 识别 CommonMark 风格的行首 fence；关闭 fence 必须同标记、长度不短于开启 fence。 */
+function parseFence(line: string): { marker: '`' | '~'; length: number; rest: string } | null {
+  if (leadingIndent(line) > 3) return null
+  const trimmed = line.trimStart()
+  const marker = trimmed[0]
+  if (marker !== '`' && marker !== '~') return null
+  let length = 0
+  while (trimmed[length] === marker) length++
+  if (length < 3) return null
+  const rest = trimmed.slice(length)
+  // markdown-it：反引号 fence 的 info string 不能再含反引号；tilde 没有此限制。
+  if (marker === '`' && rest.includes('`')) return null
+  return { marker, length, rest }
+}
+
+function countLineBreaks(text: string): number {
+  let count = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) count++
+  }
+  return count
+}
+
+/** 快速预筛 delimiter；最终结果始终以 markdown-it token map 为准。 */
+function looksLikeTableDelimiter(line: string): boolean {
+  // 这里只做宽松预筛：深层 list 内的 blockquote marker 前可有任意容器缩进。
+  // 假阳性由随后完整的 markdown-it token map 排除。
+  const text = line.trim()
+  return text.length >= 2 && text.includes('-') && /^[>|:\- \t]+$/.test(text)
+}
+
+function parseTableRanges(source: string): ParsedTableRange[] {
+  if (!boundaryMarkdown) {
+    boundaryMarkdown = new MarkdownIt({ html: true })
+    // 与 MarkdownRenderer 的 block 规则及注册顺序保持一致；task-list 是 core
+    // transform，workspace links 仅为 inline rule，不影响 table token map。
+    boundaryMarkdown.use(footnote)
+    boundaryMarkdown.use(deflist)
+    boundaryMarkdown.block.ruler.after('fence', 'math_block', markdownItMathBlock, {
+      alt: ['paragraph', 'reference', 'blockquote', 'list']
+    })
+  }
+  const ranges: ParsedTableRange[] = []
+  for (const token of boundaryMarkdown.parse(source, {})) {
+    const map = token.map
+    if (token.type === 'table_open' && map !== null) {
+      ranges.push({ startLine: map[0], endLine: map[1] })
     }
   }
-  state.scanLen = targetLen
+  return ranges
 }
 
-/** 统计 [0, cut) 前缀内完整 fence 行数量（与全量扫描 hasUnclosedFence 的计数语义一致） */
-function countFencesWithin(state: FenceScanState, cut: number): number {
-  const ends = state.fenceEnds
-  let lo = 0
-  let hi = ends.length
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (ends[mid] <= cut) lo = mid + 1
-    else hi = mid
+/** markdown-it html_block type 1-6；type 7 不能 interrupt table，故不在此识别。 */
+function parseHtmlBlockStart(line: string): HtmlBlockState | null {
+  if (leadingIndent(line) > 3) return null
+  const text = line.trimStart()
+  const rawTag = /^<(script|pre|style|textarea)(?=[\s>]|$)/i.exec(text)
+  if (rawTag) return { closePattern: new RegExp(`<\\/${rawTag[1]}>`, 'i') }
+  if (text.startsWith('<!--')) return { closePattern: /-->/ }
+  if (text.startsWith('<?')) return { closePattern: /\?>/ }
+  if (/^<![A-Z]/.test(text)) return { closePattern: />/ }
+  if (text.startsWith('<![CDATA[')) return { closePattern: /\]\]>/ }
+
+  const blockTag = /^<\/?([A-Za-z][A-Za-z0-9-]*)(?=[\s>]|\/>|$)/.exec(text)
+  if (blockTag && HTML_BLOCK_TAGS.has(blockTag[1].toLowerCase())) {
+    return { closePattern: null }
   }
-  return lo
+  return null
 }
 
 /**
- * 找最后一个安全的渐进渲染边界：以 \n\n 结尾、且该点之前行首 fence（```/~~~）配对。
- * fence 未配对时向前回退到更早的空行边界；找不到则返回 0（不提升，等段落完成）。
- * 行为与原 findPromoteCut 完全一致，但 fence 判定走增量扫描状态（O(delta) + O(log n)/候选）。
+ * 找最后一个安全的渐进渲染边界：
+ * - 普通 markdown 仍以 fence 外的空行作为段落边界；
+ * - GFM 表头 + delimiter 均完整且以换行结束后立即提升；
+ * - 已提升表格的完整数据行逐行提升，空行结束 continuation。
+ *
+ * 返回值同时携带「提升后仍在表格中」状态，使下一次调用只拿到 settled 尾巴时
+ * 仍能识别数据行；末尾半行和未闭合 fence 永远留在 CharFlow。
  */
-function findPromoteCut(state: FenceScanState, text: string): number {
-  if (text.length < 4) return 0
-  extendFenceScan(state, text, text.length)
-  let idx = text.lastIndexOf('\n\n')
-  while (idx > 0) {
-    const cut = idx + 2
-    if (countFencesWithin(state, cut) % 2 === 0) return cut
-    idx = text.lastIndexOf('\n\n', idx - 1)
+function findPromoteCut(
+  text: string,
+  promotedPrefix: string,
+  startsInTable: TableContinuation | null
+): PromoteCut {
+  const lines = getCompleteLines(text)
+  const completeEnd = lines[lines.length - 1]?.end ?? 0
+  const parserPrefix = startsInTable?.probePrefix ?? promotedPrefix
+  const prefixLineCount = countLineBreaks(parserPrefix)
+  const totalCompleteLines = prefixLineCount + lines.length
+  const shouldParseTables = startsInTable !== null || lines.some((line) => looksLikeTableDelimiter(line.text))
+  const tableRanges = shouldParseTables
+    ? parseTableRanges(parserPrefix + text.slice(0, completeEnd))
+    : []
+  const tableByStart = new Map(tableRanges.map((range) => [range.startLine, range]))
+
+  let cut = 0
+  let cutContinuesTable = startsInTable
+  let inTable = startsInTable
+  let fence: FenceState | null = null
+  let htmlBlock: HtmlBlockState | null = null
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex]
+    const globalLine = prefixLineCount + lineIndex
+    const blank = line.text.trim().length === 0
+
+    if (inTable) {
+      const activeRange = tableByStart.get(inTable.startLine)
+      if (activeRange && globalLine >= activeRange.startLine && globalLine < activeRange.endLine) {
+        cut = line.end
+        cutContinuesTable = activeRange.endLine === totalCompleteLines ? inTable : null
+        continue
+      }
+      // markdown-it 已确认当前完整行位于 table token 之外。
+      inTable = null
+      cutContinuesTable = null
+    }
+
+    if (htmlBlock) {
+      const closes = htmlBlock.closePattern === null
+        ? blank
+        : htmlBlock.closePattern.test(line.text)
+      if (closes) {
+        htmlBlock = null
+        if (blank) {
+          cut = line.end
+          cutContinuesTable = null
+        }
+      }
+      continue
+    }
+
+    // table 规则在 markdown-it 中优先于 fence/html；完整 token map 可消除这两类歧义。
+    const isKnownTableHeader = tableByStart.has(globalLine)
+    const fenceMarker = isKnownTableHeader ? null : parseFence(line.text)
+    if (fence) {
+      if (
+        fenceMarker?.marker === fence.marker &&
+        fenceMarker.length >= fence.length &&
+        fenceMarker.rest.trim().length === 0
+      ) {
+        fence = null
+      }
+      continue
+    }
+    if (fenceMarker) {
+      fence = { marker: fenceMarker.marker, length: fenceMarker.length }
+      continue
+    }
+
+    if (blank) {
+      // 保持旧行为：普通内容至少要有一行后再按空行提升；表格关闭分支不受此限制。
+      if (line.start > 0) {
+        cut = line.end
+        cutContinuesTable = null
+      }
+      continue
+    }
+
+    const startingRange = tableByStart.get(globalLine - 1)
+    if (startingRange && startingRange.endLine >= globalLine + 1) {
+      const tableStart: TableContinuation = {
+        startLine: startingRange.startLine,
+        probePrefix: parserPrefix + text.slice(0, line.end)
+      }
+      cut = line.end
+      cutContinuesTable = startingRange.endLine === totalCompleteLines ? tableStart : null
+      inTable = tableStart
+      continue
+    }
+
+    const htmlStart = isKnownTableHeader ? null : parseHtmlBlockStart(line.text)
+    if (htmlStart) {
+      if (!htmlStart.closePattern || !htmlStart.closePattern.test(line.text)) {
+        htmlBlock = htmlStart
+      }
+    }
   }
-  return 0
+
+  return { cut, tableContinuation: cutContinuesTable }
 }
 
 /**
  * 渐进 markdown 提升：已定型文本到达安全段落边界时，把该前缀从 CharFlow 剥离并回调给宿主
  * （MessageItem 累加进渐进 MarkdownRenderer 即时渲染）。每帧 commit 后调用一次；
- * settled 通常只有「未完成段落 + 已定型字符」，无 \n\n 时 lastIndexOf 立即返回，扫描成本可控。
+ * 已提升的段落/表格行会立即从 settled 移走，扫描范围通常只剩当前未完成块。
  */
 function maybePromote(entry: SmoothEntry): void {
   const display = displays.get(entry.messageId)
   if (!display || typeof display.onPromote !== 'function') return
-  const cut = findPromoteCut(entry.fenceScan, display.flow.settledText)
-  if (cut <= 0) return
-  const promoted = display.flow.promote(cut)
-  if (!promoted) return
-  entry.promotedText += promoted
-  display.onPromote(promoted)
+  const settledText = display.flow.settledText
+  const observedLength = entry.lastPromoteObservedLength
+  const appended = observedLength <= settledText.length
+    ? settledText.slice(observedLength)
+    : settledText
+  entry.lastPromoteObservedLength = settledText.length
+
+  // 表格/空行/fence 的安全边界都只会在收到新换行后成立。避免长代码块或
+  // 长单行输出的每个字符都重新拆分、扫描全部 settled 文本。
+  if (!appended.includes('\n')) return
+
+  const boundary = findPromoteCut(settledText, entry.promotedText, entry.tableContinuation)
+  if (boundary.cut <= 0) {
+    // 已收到完整 table terminator 时，即使本轮没有可提升文本，也要结束 continuation。
+    entry.tableContinuation = boundary.tableContinuation
+    return
+  }
+  const bridged = display.flow.promoteWithBridge(boundary.cut)
+  if (!bridged) return
+  entry.promotedText += bridged.text
+  entry.tableContinuation = boundary.tableContinuation
+  entry.lastPromoteObservedLength = display.flow.settledText.length
+  dispatchPromotion(display, bridged.text, 'delta', bridged.release)
+}
+
+/**
+ * 把提升文本交给宿主。异步回调只有在 MarkdownRenderer 确认 v-html 已 patch 后才完成；
+ * 期间 raw bridge 保持原内容可见。同步回调沿用旧契约并立即释放 bridge。
+ *
+ * 异常/reject 路径：生产回调（handleTailPromote / handleThoughtPromote）在返回前已同步
+ * 更新 tailRendered/thoughtRendered，markdown 层仍会渲染该文本；此时保留 bridge 只会
+ * 造成永久 DOM 残留（没有 pending 可被后续 rendered 事件确认），因此直接释放。
+ */
+function dispatchPromotion(
+  display: SmoothDisplay,
+  text: string,
+  kind: 'delta' | 'replay',
+  releaseBridge: () => void
+): void {
+  let ready: unknown
+  try {
+    ready = display.onPromote?.(text, kind)
+  } catch {
+    releaseBridge()
+    return
+  }
+
+  if (
+    ready !== null &&
+    (typeof ready === 'object' || typeof ready === 'function') &&
+    typeof (ready as PromiseLike<void>).then === 'function'
+  ) {
+    void Promise.resolve(ready as PromiseLike<void>).then(releaseBridge, releaseBridge)
+    return
+  }
+  releaseBridge()
 }
 
 function buildOptions(mode: SmoothMode): SmoothStreamerOptions {
@@ -258,22 +488,36 @@ export function registerSmoothDisplay(
     stickBottom,
     onTrimmed
   })
+  const display: SmoothDisplay = {
+    host,
+    flow,
+    followEnd,
+    noFade,
+    squashLineBreaks,
+    tailWindow,
+    restoreFull,
+    scrollContainer,
+    stickBottom,
+    onTrimmed,
+    onPromote
+  }
+  displays.set(messageId, display)
+  hostToMessageId.set(host, messageId)
+
   const entry = entries.get(messageId)
   if (entry) {
-    // 显示目标重建：新 flow 的 settledText 是（未提升部分的）后缀文本，与旧 flow 的
-    // 文本坐标系不同，fence 增量扫描状态必须重置，否则 end 位置错位导致配对误判
-    entry.fenceScan = createFenceScanState()
     // 渐进渲染：已提升部分不重复显示（由 onPromote 重放交给 markdown 层），
     // CharFlow 只恢复未提升的尾巴，保证组件重建（切标签页/虚拟列表）后显示连续。
     // 折叠预览（restoreFull）没有渐进渲染层，恢复完整累计文本供单行滚动预览。
     const fullText = entry.baseText + entry.committed
     flow.restore(restoreFull ? fullText : fullText.slice(entry.promotedText.length))
+    // 新 flow 的 settled 即使与旧 flow 等长，也必须完整扫描一次。
+    entry.lastPromoteObservedLength = 0
     if (entry.promotedText && onPromote) {
-      onPromote(entry.promotedText)
+      const releaseBridge = flow.bridgeText(entry.promotedText)
+      dispatchPromotion(display, entry.promotedText, 'replay', releaseBridge)
     }
   }
-  displays.set(messageId, { host, flow, followEnd, noFade, squashLineBreaks, tailWindow, restoreFull, scrollContainer, stickBottom, onTrimmed, onPromote })
-  hostToMessageId.set(host, messageId)
   if (entry && onPromote) {
     // 注册后立即尝试提升已定型完整段落：展开/重建后不用等下一个字符才出格式
     maybePromote(entry)
@@ -325,17 +569,21 @@ export function pushSmoothText(
     // 档位重建：旧实例先放完积压；promote 边界（promotedText）继承给新实例，
     // 使 CharFlow 尾巴与宿主渐进 markdown（tailRendered）保持连续，不重复不丢失。
     let inheritedPromoted = ''
+    let inheritedTableContinuation: TableContinuation | null = null
     if (entry) {
       entry.streamer.flush()
       maybeSnapshot(entry, true)
       inheritedPromoted = entry.promotedText
+      inheritedTableContinuation = entry.tableContinuation
       entry.streamer.dispose()
       entries.delete(messageId)
     }
     // 档位重建：显示目标切到新基线（真实文本），不丢已显示内容
     const display = displays.get(messageId)
     if (display) {
-      display.flow.restore(baseText.slice(inheritedPromoted.length))
+      display.flow.restore(
+        display.restoreFull ? baseText : baseText.slice(inheritedPromoted.length)
+      )
     }
     // 先建 entry 再建 streamer：commit 回调需要引用 entry（按引用读取，切换/迁移后仍取当前值）
     const created: SmoothEntry = {
@@ -346,19 +594,23 @@ export function pushSmoothText(
       baseText,
       committed: '',
       promotedText: inheritedPromoted,
+      tableContinuation: inheritedTableContinuation,
+      lastPromoteObservedLength: 0,
       lastSnapshotAt: null,
       lastSnapshotText: null,
       lastSnapshotPartKey: null,
-      onSnapshot,
-      fenceScan: createFenceScanState()
+      onSnapshot
     }
     created.streamer = new SmoothStreamer(
       (graphemes, frameDurMs, instant) => {
         created.committed += graphemes.join('')
         const target = displays.get(created.messageId)
         if (target) {
-          target.flow.append(graphemes, frameDurMs, instant)
+          // 顺序：先写入（延迟裁剪）→ promote 剥离完整段落/表格 → 最后才裁无法提升的尾巴。
+          // 修复：trim 若先于 promote 执行，flush/大 chunk 时会把尚未提升的完整表格结构裁掉。
+          target.flow.append(graphemes, frameDurMs, instant, true)
           maybePromote(created)
+          target.flow.trimNow()
         }
         maybeSnapshot(created)
       },
@@ -384,11 +636,13 @@ export function pushSmoothText(
       oldDisplay.flow.dispose()
       hostToMessageId.delete(oldDisplay.host)
       displays.delete(messageId)
+      hostToMessageId.delete(oldDisplay.host)
     }
     entry.baseText = baseText
     entry.committed = ''
     entry.promotedText = ''
-    entry.fenceScan = createFenceScanState()
+    entry.tableContinuation = null
+    entry.lastPromoteObservedLength = 0
     entry.partKey = partKey
     maybeSnapshot(entry, true)
   }

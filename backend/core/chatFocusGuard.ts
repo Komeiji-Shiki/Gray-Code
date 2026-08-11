@@ -77,7 +77,12 @@ export async function restoreChatInputFocus(shouldRestore: boolean): Promise<voi
     try {
         await vscode.commands.executeCommand(CHAT_VIEW_FOCUS_COMMAND);
         for (const notifier of focusRestoreNotifiers) {
-            notifier();
+            // 单个通知器异常不影响其他通知器与焦点归还主流程
+            try {
+                notifier();
+            } catch (error) {
+                console.warn('[chatFocusGuard] focus restore notifier failed', error);
+            }
         }
         // 记录强制归还时间：随后的 blur 上报会被视为「恢复动作的副作用」而非用户主动离开
         lastForcedRestoreAt = Date.now();

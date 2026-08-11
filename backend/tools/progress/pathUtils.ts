@@ -1,20 +1,23 @@
 /**
  * Progress 工具路径辅助函数
- *
- * 修改原因：isScopedPathAllowedWithMultiRoot 与 plan/design 的 pathUtils 同构，
- * 已收敛到 ../pathPolicy 统一实现，本文件保留原导出名与签名。
  */
 
-import {
-  isScopedPathAllowedWithMultiRoot,
-} from '../pathPolicy';
 import {
   isDesignPathAllowed,
   isPlanPathAllowed,
   isProgressPathAllowed,
   isReviewPathAllowed,
 } from '../../modules/settings/modeToolsPolicy';
+import {
+  DESIGN_PATH_SCOPE_LABEL,
+  PLAN_PATH_SCOPE_LABEL,
+  REVIEW_PATH_SCOPE_LABEL,
+  ensureParentDir,
+  isScopedPathAllowedWithMultiRoot,
+} from '../shared/pathPolicy';
 import type { ProgressArtifactRef } from './schema';
+
+export { ensureParentDir };
 
 const PROGRESS_ARTIFACT_KEYS = ['design', 'plan', 'review'] as const;
 type ProgressArtifactKey = typeof PROGRESS_ARTIFACT_KEYS[number];
@@ -26,9 +29,9 @@ function getArtifactPathValidator(kind: ProgressArtifactKey): (path: string) => 
 }
 
 function getArtifactScopeLabel(kind: ProgressArtifactKey): string {
-  if (kind === 'design') return '.graycode/design/**.md';
-  if (kind === 'plan') return '.graycode/plans/**.md';
-  return '.graycode/review/**.md';
+  if (kind === 'design') return DESIGN_PATH_SCOPE_LABEL;
+  if (kind === 'plan') return PLAN_PATH_SCOPE_LABEL;
+  return REVIEW_PATH_SCOPE_LABEL;
 }
 
 export function isProgressModePathAllowedWithMultiRoot(pathStr: string): boolean {
@@ -118,5 +121,3 @@ export function applyProgressArtifactPatch(
 
   return next;
 }
-
-export { ensureParentDir } from '../pathPolicy';

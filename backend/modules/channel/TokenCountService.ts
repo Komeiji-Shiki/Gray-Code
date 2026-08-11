@@ -6,10 +6,10 @@
  */
 
 import { createProxyFetch } from './proxyFetch';
-import type { TokenCountChannelConfig, TokenCountConfig } from '../settings/types';
-import type { Content } from '../conversation/types';
-import type { ChannelConfig, TokenCountMethod, TokenCountApiConfig } from '../config/types';
-import { cleanContentForAPI } from '../conversation/helpers';
+import type { TokenCountChannelConfig, TokenCountConfig } from '../settings';
+import type { Content } from '../conversation';
+import type { ChannelConfig, TokenCountMethod, TokenCountApiConfig } from '../config';
+import { cleanContentForAPI } from '../conversation';
 import {
     isImageMimeType,
     isTextMimeType,

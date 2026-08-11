@@ -126,7 +126,7 @@ export function parseConversationIdFromPath(filename: string): string | undefine
 /** 递归能力探测超时（毫秒） */
 const DEFAULT_PROBE_TIMEOUT_MS = 1500;
 /** 非递归降级时 mtime 快照扫描间隔（毫秒） */
-const DEFAULT_FALLBACK_SCAN_INTERVAL_MS = 60_000;
+const DEFAULT_FALLBACK_SCAN_INTERVAL_MS = 15_000;
 /** 探测探针目录名前缀（扫描器跳过，避免把探针文件计入 mtime 快照） */
 const PROBE_DIR_PREFIX = '.usage-watch-probe-';
 
@@ -269,8 +269,8 @@ export function startMtimeFallbackScanner(
                 scanning = false;
             });
     };
-    scan();
-    timer = setInterval(scan, intervalMs);
+    void scan();
+    timer = setInterval(() => { void scan(); }, intervalMs);
     return () => {
         stopped = true;
         if (timer) {

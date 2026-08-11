@@ -17,20 +17,13 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-jest.mock('../../tools/file/diffManager', () => ({
-    getDiffManager: () => ({
-        cancelAllPending: jest.fn().mockResolvedValue({ cancelled: [] })
-    })
-}));
+import '../__fixtures__/diffManagerMock';
+import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
 
 import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import { CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointManifest } from '../../modules/checkpoint/types';
 import { createWorkspaceRootId, createWorkspaceSnapshot } from '../../modules/checkpoint/CheckpointWorkspace';
-
-async function createTempDirectory(prefix: string): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), prefix));
-}
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);

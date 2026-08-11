@@ -15,7 +15,10 @@ export type {
     OpenAIConfig,
     AnthropicConfig,
     ChannelConfig,
-    
+
+    // 模型信息（定义于 configs/base，channel 侧经 modelList re-export 兼容）
+    ModelInfo,
+
     // 输入类型
     CreateConfigInput,
     UpdateConfigInput,
@@ -42,5 +45,6 @@ export {
 // 核心管理器
 export { ConfigManager } from './ConfigManager';
 
-// 模块注册
-export { registerConfigModule } from './register';
+// 补充类型（configs/base 定义的渠道级类型）
+export type { TokenCountMethod, TokenCountApiConfig } from './types';
+export type { CustomHeader, ToolMode } from './configs/base';

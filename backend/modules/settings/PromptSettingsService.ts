@@ -146,17 +146,23 @@ export class PromptSettingsService {
         }
         
         if (needsUpdate) {
-            return {
+            // 与 needsUpdate=false 分支同一约定：返回前整体深拷贝。
+            // 注意 modes 只是 {...config.modes} 的浅拷贝，未发生归一化的 mode 仍是存储活引用，
+            // 不深拷贝的话调用方原地修改同样会污染未保存的设置状态。
+            return this.core.cloneConfig({
                 ...config,
                 modes,
                 dynamicContextStrategy
-            };
+            });
         }
 
-        return {
+        // 修改原因：浅展开返回的 modes 内 mode 对象仍是存储活引用
+        // （this.core.settings.toolsConfig 直接持有），调用方原地修改会污染未保存的设置状态。
+        // 修改方式：返回前整体深拷贝，返回结构不变（与 getSettings 的深拷贝约定一致）。
+        return this.core.cloneConfig({
             ...config,
             dynamicContextStrategy
-        };
+        });
     }
 
     /**
@@ -412,11 +418,13 @@ export class PromptSettingsService {
         }
         const config = this.getSystemPromptConfig();
         // 用户显式保存模式时，若传入的 mode 包含 toolPolicy 字段，
-        // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值
-        if ('toolPolicy' in (mode as any)) {
-            (mode as PromptMode).toolPolicyCustomized = true;
+        // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值。
+        // 注意：先拷贝快照再设标记，避免原地修改调用方传入的 mode 对象
+        const modeSnapshot = { ...mode };
+        if ('toolPolicy' in (modeSnapshot as any)) {
+            modeSnapshot.toolPolicyCustomized = true;
         }
-        const snapshot = this.normalizePromptModeSnapshot(mode);
+        const snapshot = this.normalizePromptModeSnapshot(modeSnapshot);
         const modes = { ...config.modes, [mode.id]: snapshot };
         await this.updateSystemPromptConfig({ modes });
     }

@@ -1,25 +1,9 @@
 <script lang="ts">
 /**
- * 中展开裁剪提示按 messageId 记忆（模块级）：内容超长被裁是消息内容的属性，不是视图
- * 切换的状态。切到完全展开再切回中展开时 watch 重新注册、CharFlow restore 恢复的尾巴
- * 可能 ≤ 窗口、不再触发 onTrimmed——若无条件重置 mediumTrimmed，提示条会消失而内容
- * 仍被裁过。模块级 Map + 清理函数（与 MessageItem 的视图模式 Map 同模式）。
+ * 中展开裁剪提示按 messageId 记忆（模块级）——实现已外移 mediumTrimState.ts（S4 批次），
+ * 此处仅 re-export 保持 .vue 具名导出兼容。
  */
-export const mediumTrimmedByMessageId = new Map<string, boolean>()
-export const MEDIUM_TRIMMED_CAP = 500
-
-/**
- * 裁剪提示记录清理（与 MessageList 的 pruneBackgroundTaskViewModes 同口径调用）：
- * 消息删除/窗口裁剪后移除不再渲染的 messageId，避免 Map 只靠容量上限兜底淘汰
- * 仍在渲染的消息记录。
- */
-export function pruneMediumTrimmedByMessageId(activeIds: Set<string>): void {
-  for (const messageId of Array.from(mediumTrimmedByMessageId.keys())) {
-    if (!activeIds.has(messageId)) {
-      mediumTrimmedByMessageId.delete(messageId)
-    }
-  }
-}
+export { mediumTrimmedByMessageId, MEDIUM_TRIMMED_CAP, pruneMediumTrimmedByMessageId } from './mediumTrimState'
 </script>
 
 <script setup lang="ts">
@@ -30,6 +14,7 @@ export function pruneMediumTrimmedByMessageId(activeIds: Set<string>): void {
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { RenderBlock, ThoughtViewMode } from './renderBlocks'
+import { mediumTrimmedByMessageId, MEDIUM_TRIMMED_CAP } from './mediumTrimState'
 import { hasContextBlocks } from '../../types/contextParser'
 import { useI18n } from '../../i18n'
 import ToolMessage from './ToolMessage.vue'
@@ -168,11 +153,19 @@ async function scrollMediumToBottomIfStuck(): Promise<void> {
 }
 let registeredThoughtHost: HTMLElement | null = null
 let registeredThoughtMessageId: string | null = null
+let registeredThoughtPartKey: string | null = null
 
-// 渐进 markdown：展开/中展开态下已定型且完成段落（\n\n + fence 配对）由 CharFlow promote 到这里，
+// 渐进 markdown：展开/中展开态下已定型段落与完整表格行由 CharFlow promote 到这里，
 // 即时渲染格式（思维链分段渲染）；未完成尾巴仍在 CharFlow host 逐字淡出。
 // 折叠态不启用（无内容区）。
 const thoughtRendered = ref('')
+const thoughtRenderGeneration = ref(0)
+let lastThoughtRenderedSource = ''
+interface PendingThoughtRender {
+  source: string
+  resolve: () => void
+}
+const pendingThoughtRenders: PendingThoughtRender[] = []
 
 /** 折叠视图预览文本：思考内容第一行（非流式路径；流式路径由 CharFlow host 托管） */
 const collapsedPreview = computed(() => {
@@ -180,16 +173,45 @@ const collapsedPreview = computed(() => {
     return firstLine.trim()
 })
 
-function handleThoughtPromote(text: string): void {
-  thoughtRendered.value += text
-  scrollMediumToBottomIfStuck()
+function handleThoughtPromote(text: string, kind: 'delta' | 'replay' = 'delta'): Promise<void> {
+  thoughtRendered.value = kind === 'replay' ? text : thoughtRendered.value + text
+  const source = thoughtRendered.value
+
+  if (lastThoughtRenderedSource.startsWith(source)) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    pendingThoughtRenders.push({ source, resolve })
+  })
+}
+
+function handleThoughtMarkdownRendered(source: string): void {
+  lastThoughtRenderedSource = source
+  for (let i = pendingThoughtRenders.length - 1; i >= 0; i--) {
+    const pending = pendingThoughtRenders[i]
+    if (!source.startsWith(pending.source)) continue
+    pendingThoughtRenders.splice(i, 1)
+    pending.resolve()
+  }
+
+  // bridge 的 release 会排在上面的 Promise resolve 之后；现有滚动函数再等一个
+  // nextTick，最终按“Markdown 已落地且 raw bridge 已移除”的真实高度校正。
+  void scrollMediumToBottomIfStuck()
+}
+
+function resolvePendingThoughtRenders(): void {
+  for (const pending of pendingThoughtRenders.splice(0)) pending.resolve()
 }
 
 function releaseThoughtDisplay(): void {
-  if (!registeredThoughtHost || !registeredThoughtMessageId) return
-  unregisterSmoothDisplay(registeredThoughtMessageId, registeredThoughtHost)
+  if (registeredThoughtHost && registeredThoughtMessageId) {
+    unregisterSmoothDisplay(registeredThoughtMessageId, registeredThoughtHost)
+  }
   registeredThoughtHost = null
   registeredThoughtMessageId = null
+  registeredThoughtPartKey = null
+  resolvePendingThoughtRenders()
+  lastThoughtRenderedSource = ''
+  // 同一 tick 内 S → '' → replay(S) 会被 Vue 合并；换 key 强制新 renderer 发 rendered ack。
+  thoughtRenderGeneration.value++
   // 渐进渲染内容随显示层释放：稳定块（renderBlocks）完整接管，避免重复显示
   if (thoughtRendered.value) thoughtRendered.value = ''
 }
@@ -197,15 +219,21 @@ function releaseThoughtDisplay(): void {
 watch(
   [
     () => props.messageId,
+    () => props.block.partKey ?? null,
     () => props.smoothDisplayActive === true,
     () => props.thoughtViewMode,
     thoughtFlowHostRef,
     mediumScrollContainerRef
   ],
-  ([messageId, active, viewMode, host, scrollContainer]) => {
+  ([messageId, partKey, active, viewMode, host, scrollContainer]) => {
     if (
       registeredThoughtHost &&
-      (!active || registeredThoughtHost !== host || registeredThoughtMessageId !== messageId)
+      (
+        !active ||
+        registeredThoughtHost !== host ||
+        registeredThoughtMessageId !== messageId ||
+        registeredThoughtPartKey !== partKey
+      )
     ) {
       releaseThoughtDisplay()
     }
@@ -246,6 +274,7 @@ watch(
       }
       registeredThoughtHost = host
       registeredThoughtMessageId = messageId
+      registeredThoughtPartKey = partKey
     }
   },
   { immediate: true, flush: 'post' }
@@ -330,10 +359,12 @@ onUnmounted(releaseThoughtDisplay)
         <!-- 渐进 markdown：已定型完整段落即时渲染格式 + 未完成尾巴 CharFlow 逐字流出 -->
         <MarkdownRenderer
           v-if="thoughtRendered"
+          :key="thoughtRenderGeneration"
           :content="thoughtRendered"
           :latex-only="false"
           :is-streaming="true"
           class="thought-text"
+          @rendered="handleThoughtMarkdownRendered"
         />
         <div ref="thoughtFlowHostRef" class="thought-medium-text thought-flow-medium"></div>
       </template>
@@ -351,10 +382,12 @@ onUnmounted(releaseThoughtDisplay)
         <!-- 展开态流式：已定型完整段落渐进 markdown 即时渲染 + 未完成尾巴 CharFlow 逐字淡出 -->
         <MarkdownRenderer
           v-if="thoughtRendered"
+          :key="thoughtRenderGeneration"
           :content="thoughtRendered"
           :latex-only="false"
           :is-streaming="true"
           class="thought-text"
+          @rendered="handleThoughtMarkdownRendered"
         />
         <div ref="thoughtFlowHostRef" class="thought-text thought-flow-content"></div>
       </template>

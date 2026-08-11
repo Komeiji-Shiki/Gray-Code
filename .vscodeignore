@@ -11,6 +11,10 @@ tsconfig.json
 extension.ts
 index.ts
 
+# GitHub 工作流 / 发布脚本（开发用，不打包）
+.github/**
+scripts/**
+
 # 锁文件
 pnpm-lock.yaml
 package-lock.json

@@ -5,18 +5,6 @@
 import type { BackendLanguageMessages } from '../types';
 
 const ja: BackendLanguageMessages = {
-    core: {
-        registry: {
-            moduleAlreadyRegistered: 'モジュール "{moduleId}" は既に登録されています',
-            duplicateApiName: 'モジュール "{moduleId}" に重複した API 名があります: {apiName}',
-            registeringModule: '[ModuleRegistry] モジュールを登録中: {moduleId} ({moduleName} v{version})',
-            moduleNotRegistered: 'モジュールが登録されていません: {moduleId}',
-            unregisteringModule: '[ModuleRegistry] モジュールの登録を解除中: {moduleId}',
-            apiNotFound: 'API が見つかりません: {moduleId}.{apiName}',
-            missingRequiredParams: '必須パラメータが不足しています: {params}'
-        }
-    },
-
     modules: {
         config: {
             errors: {

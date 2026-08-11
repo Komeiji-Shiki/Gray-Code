@@ -26,7 +26,8 @@ export class UISettingsService {
      * 获取 UI 设置
      */
     getUISettings() {
-        return this.core.settings.ui || {};
+        // 深拷贝返回：直接返回活引用会让调用方原地修改污染未保存的设置状态
+        return this.core.settings.ui ? this.core.cloneConfig(this.core.settings.ui) : {};
     }
 
     /**

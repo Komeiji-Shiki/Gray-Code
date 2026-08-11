@@ -41,6 +41,12 @@ export class SkillsManager {
     
     /** 是否已初始化 */
     private initialized: boolean = false;
+    /** 进行中的初始化（幂等合并并发 initialize 调用） */
+    private initPromise: Promise<void> | null = null;
+    /** 进行中的 refresh（幂等合并并发 refresh 调用） */
+    private refreshPromise: Promise<void> | null = null;
+    /** name -> id 索引（getSkillByName 用，避免全量线性扫描） */
+    private nameToId: Map<string, string> = new Map();
     
     constructor(options: { workspacePath?: string; workspacePaths?: string[]; globalStoragePath: string }) {
         this.legacySkillsDir = path.join(options.globalStoragePath, 'skills');
@@ -206,8 +212,20 @@ ${content}
      * 刷新 skills 列表
      *
      * 重新扫描所有配置的目录并加载 skills
+     * 并发保护：复用 initPromise 的串行化模式——并发 refresh 共享同一个进行中的任务，
+     * 避免交错扫描导致 skills/enabledSkillIds 状态互相覆盖或重复通知监听器。
      */
     async refresh(): Promise<void> {
+        if (this.refreshPromise) {
+            return this.refreshPromise;
+        }
+        this.refreshPromise = this.doRefresh().finally(() => {
+            this.refreshPromise = null;
+        });
+        return this.refreshPromise;
+    }
+
+    private async doRefresh(): Promise<void> {
         this.skills.clear();
         
         for (const dirInfo of this.scanDirs) {

@@ -2,7 +2,7 @@
  * LimCode Backend - i18n 国际化模块
  * 
  * 支持语言切换和翻译
- * 与前端共享相同的语言配置
+ * 两套独立语言包（后端与前端），需同步维护
  */
 
 import type { SupportedLanguage, BackendLanguageMessages } from './types';
@@ -19,32 +19,12 @@ const messages: Record<Exclude<SupportedLanguage, 'auto'>, BackendLanguageMessag
     'ja': ja
 };
 
-/**
- * 拍平后的语言包：key 为点号连接的路径（如 'core.registry.moduleAlreadyRegistered'）。
- * 加载时一次性递归拍平，t() 直接 Map 查找，避免每次调用都逐层走对象属性访问。
- */
-const flattenedMessages: Record<string, Map<string, string>> = {};
-
-/** 递归拍平嵌套语言对象（仅收集字符串叶子；数组/其他类型与旧 t() 语义一致视为缺失返回 key） */
-function flattenMessages(obj: Record<string, unknown>, prefix: string, target: Map<string, string>): void {
-    for (const [key, value] of Object.entries(obj)) {
-        const fullKey = prefix ? `${prefix}.${key}` : key;
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-            flattenMessages(value as Record<string, unknown>, fullKey, target);
-        } else if (typeof value === 'string') {
-            target.set(fullKey, value);
-        }
-    }
-}
-
-for (const [lang, msgs] of Object.entries(messages)) {
-    const map = new Map<string, string>();
-    flattenMessages(msgs as unknown as Record<string, unknown>, '', map);
-    flattenedMessages[lang] = map;
-}
-
 /** 已告警过的缺失 key（去重：同一 key 只告警一次，避免缺失键在热路径每调刷屏） */
 const warnedMissingKeys = new Set<string>();
+
+/** 无参调用的翻译结果缓存（只缓存字符串结果；语言切换时清空） */
+let cachedLanguage: Exclude<SupportedLanguage, 'auto'> | undefined;
+const translationCache = new Map<string, string>();
 
 /**
  * 当前语言设置
@@ -77,8 +57,9 @@ export function getActualLanguage(): Exclude<SupportedLanguage, 'auto'> {
         if (detectedLanguage && detectedLanguage.startsWith('ja')) {
             return 'ja';
         }
-        // 默认使用中文
-        return 'zh-CN';
+        // 默认使用英文（未知语言的兜底；与前端 actualLanguage 一致，
+        // 避免 webview 英文、后端中文的割裂——R2 M2）
+        return 'en';
     }
     return currentLanguage;
 }
@@ -107,7 +88,7 @@ export function getMessagesForLanguage(lang?: SupportedLanguage | string): Backe
     if (typeof lang === 'string' && lang.startsWith('zh')) return messages['zh-CN'];
     if (typeof lang === 'string' && lang.startsWith('en')) return messages['en'];
     if (typeof lang === 'string' && lang.startsWith('ja')) return messages['ja'];
-    return messages['zh-CN'];
+    return messages['en']; // 未知语言兜底英文（与 getActualLanguage 一致）
 }
 
 /**
@@ -115,6 +96,10 @@ export function getMessagesForLanguage(lang?: SupportedLanguage | string): Backe
  */
 export function setLanguage(lang: SupportedLanguage): void {
     currentLanguage = lang;
+    // 语言变化后重置缺失 key 告警与翻译缓存（见 t() 顶部的缓存逻辑）
+    warnedMissingKeys.clear();
+    cachedLanguage = undefined;
+    translationCache.clear();
 }
 
 /**
@@ -129,6 +114,10 @@ export function getLanguage(): SupportedLanguage {
  */
 export function setDetectedLanguage(lang: string): void {
     detectedLanguage = lang;
+    // 检测语言变化同样重置告警与翻译缓存
+    warnedMissingKeys.clear();
+    cachedLanguage = undefined;
+    translationCache.clear();
 }
 
 /**
@@ -138,28 +127,57 @@ export function setDetectedLanguage(lang: string): void {
  * 例如：t('core.registry.moduleAlreadyRegistered', { moduleId: 'config' })
  * 支持参数替换：{paramName} 格式的占位符
  */
-export function t(key: string, params?: Record<string, any>): string {
-    const map = flattenedMessages[getActualLanguage()] || flattenedMessages['zh-CN'];
-    const result = map.get(key);
-    if (result === undefined) {
-        // 找不到翻译，返回 key 本身；同一 key 只告警一次（缺失键可能在热路径被高频调用）
-        if (!warnedMissingKeys.has(key)) {
-            warnedMissingKeys.add(key);
-            console.warn(`[i18n] Missing translation: ${key}`);
+export function t(key: string, params?: Record<string, string | number | boolean>): string {
+    // 无参调用 + 语言未变化：命中缓存直接返回；语言切换后（缓存已清空）重新解析
+    if (!params) {
+        const lang = getActualLanguage();
+        if (cachedLanguage === lang) {
+            const cached = translationCache.get(key);
+            if (cached !== undefined) {
+                return cached;
+            }
+        } else {
+            cachedLanguage = lang;
+            translationCache.clear();
         }
-        return key;
     }
 
-    // 如果有参数，替换占位符
-    if (params) {
-        return result.replace(/\{(\w+)\}/g, (match, paramName) => {
-            // hasOwnProperty 防护：{toString} 这类占位符不得访问原型链方法
-            return Object.prototype.hasOwnProperty.call(params, paramName)
-                ? String(params[paramName])
-                : match;
-        });
+    const keys = key.split('.');
+    let result: unknown = getCurrentMessages();
+
+    for (const k of keys) {
+        // 用 hasOwnProperty 判断，避免 k 命中对象原型链属性（如 constructor/toString）被误当成翻译键
+        if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, k)) {
+            result = (result as Record<string, unknown>)[k];
+        } else {
+            // 找不到翻译，返回 key 本身（同一 key 只告警一次）
+            if (!warnedMissingKeys.has(key)) {
+                warnedMissingKeys.add(key);
+                console.warn(`[i18n] Missing translation: ${key}`);
+            }
+            return key;
+        }
     }
-    return result;
+
+    if (typeof result === 'string') {
+        // 如果有参数，替换占位符（null/undefined 保留原占位符，避免输出字面量 "null"）；
+        // 带参数的结果不缓存（替换依赖每次传入的 params）
+        if (params) {
+            return result.replace(/\{([\w-]+)\}/g, (match, paramName: string) => {
+                const value = params[paramName];
+                return value != null ? String(value) : match;
+            });
+        }
+        translationCache.set(key, result);
+        return result;
+    }
+
+    // 路径解析结果不是字符串（指向对象/数组/数字等）：与缺失分支统一告警（节流）并返回 key 本身
+    if (!warnedMissingKeys.has(key)) {
+        warnedMissingKeys.add(key);
+        console.warn(`[i18n] Missing translation (non-string result): ${key}`);
+    }
+    return key;
 }
 
 // 导出类型

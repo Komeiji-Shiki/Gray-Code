@@ -72,8 +72,13 @@ function escapeContextAttribute(value: string): string {
 }
 
 function escapeContextContent(value: string): string {
-  // 正文会原样发送给模型，只处理会提前闭合当前徽章的标签序列，避免改变普通代码中的 <、>、&。
-  return value.replace(/<\/lim-context>/gi, '&lt;/lim-context&gt;')
+  // 正文会原样发送给模型，只处理会提前闭合当前徽章或开启新徽章的标签序列，避免改变普通代码中的 <、>、&。
+  // 开标签也要转义：仅转义闭标签时，正文里的 <lim-context ...> 会在解析侧被当作新的上下文块起点，
+  // 造成“序列化 → 解析 → 再序列化”漂移（解析侧 decodeContextContent 同步还原两种转义）。
+  // 开标签仅匹配后随空白或 > 的 <lim-context，避免误伤普通文本中的“<lim-context”字样。
+  return value
+    .replace(/<\/lim-context>/gi, '&lt;/lim-context&gt;')
+    .replace(/<lim-context(?=[\s>])/gi, '&lt;lim-context')
 }
 
 export function serializeNodes(nodes: EditorNode[]): string {

@@ -15,10 +15,8 @@ import type { Content, ContentPart } from './types';
  * 同时排除 isSummarized（已被总结覆盖的原始消息）：逻辑截断语义下它们不再参与回合识别、
  * 发送与统计，但原文仍保留在历史中。
  *
- * 谓词统一入口：ConversationManager.addMessage / addContent / addBatch 的清空主会话信箱
- * 判定，与 formatHistoryForAPI 的当轮边界（lastNonFunctionResponseUserIndex）和回合列表
- * （roundStartIndices）必须使用同一谓词，否则出现“信箱未清空但 agentInbox 被当历史剥离”
- * 的行为分叉。
+ * 谓词统一入口：ConversationManager.addMessage / addContent / addBatch 的新回合判定，
+ * 与 formatHistoryForAPI 的思考内容边界和回合列表使用同一语义。
  */
 export function isRealUserMessage(message: {
     role?: string;
@@ -27,10 +25,11 @@ export function isRealUserMessage(message: {
     isAutoSummary?: boolean;
     isSummarized?: boolean;
     isUserInput?: boolean;
-    source?: 'user' | 'background_task';
+    source?: 'user' | 'background_task' | 'agent_message';
 }): boolean {
     return message.role === 'user'
         && message.source !== 'background_task'
+        && message.source !== 'agent_message'
         && !message.isFunctionResponse
         && !message.isSummary
         && !message.isAutoSummary
@@ -361,24 +360,26 @@ export function createMultiTextMessage(
  * - data.results 数组中的：diffContentId, pendingDiffId
  *
  * 保留的字段：killed, duration（AI 需要知道命令执行状态）；
- *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）；
- *             agentInbox（A-COMM 信箱消息，顶层与 data 子对象均保留——injectInboxMessages 注入的
- *             agent→main 消息随工具结果落盘后常驻历史，保证发给 LLM 的 tool_result 内容跨回合
- *             字节稳定，Anthropic/OpenAI 前缀缓存才能持续命中；历史重放代价由 prompt cache 吸收）
+ *             subagents 的 steps / toolsUsed（告知主模型子代理是否调用过工具及调用数量，不参与剥离）
  *
  * @param response functionResponse.response 对象
+ * @param isHistoryMessage 保留的兼容参数。agentInbox 一旦被送入模型历史便保持不变：
+ *        一次性消费由 mailbox drain/claim 保证，后续请求保留相同历史字节才能维持 provider
+ *        前缀缓存；位于其后的模型消息表明该信件已经处理，不会构成新的投递。
  * @returns 清理后的 response 对象
  */
 export function cleanFunctionResponseForAPI(
-    response: Record<string, unknown> | undefined
+    response: Record<string, unknown> | undefined,
+    _isHistoryMessage = true
 ): Record<string, unknown> | undefined {
     // H1-3：数组也是 typeof 'object'，无法被上面拦截；数组没有内部字段语义，原样返回
     if (!response || typeof response !== 'object' || Array.isArray(response)) {
         return response;
     }
     
-    // 过滤顶层内部字段
-    // agentInbox 不在剥离清单内：随工具结果常驻历史，模型侧内容跨回合不变（缓存稳定性）
+    // agentInbox 是模型可见的真实历史内容：不能在后续请求中删除，否则已经发送过的
+    // provider 前缀会从该 functionResponse 起发生变化，破坏 KV/prompt cache 命中。
+    // 一次性语义由 AgentMailbox.drain/claim 保证，不靠改写历史实现。
     const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = response;
     
     // 检查 data 字段中是否也有这些字段
@@ -398,8 +399,8 @@ export function cleanFunctionResponseForAPI(
             // subagents 运行时元数据（仅供前端 UI 展示，不发给 AI）
             channelName: dataChannelName,
             modelId: dataModelId,
-            // steps / toolsUsed 保留给 AI：用于告知子代理是否调用过工具及调用数量
-            // （空数组 = 未调用任何工具），不参与剥离。
+            // steps / toolsUsed / agentInbox 保留给 AI：前两者描述工具使用，后者是已发生的
+            // 对话历史；均不得随历史轮次被改写。
             ...dataRest
         } = rest.data as Record<string, unknown>;
         

@@ -1,4 +1,4 @@
-import fs = require('fs')
+import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { workspace } from '../__mocks__/vscode'

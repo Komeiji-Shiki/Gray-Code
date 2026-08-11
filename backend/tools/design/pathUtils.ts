@@ -1,15 +1,14 @@
 /**
  * Design 工具路径辅助函数
- *
- * 修改原因：与 plan/progress 的 pathUtils 同构（多根工作区前缀校验 + 父目录创建），
- * 收敛到 ../pathPolicy 统一实现，本文件保留原导出名与签名。
  */
 
-import { isScopedPathAllowedWithMultiRoot, ensureParentDir } from '../pathPolicy';
 import { isDesignPathAllowed } from '../../modules/settings/modeToolsPolicy';
+import { ensureParentDirWithFs, isScopedPathAllowedWithMultiRoot } from '../shared/pathPolicy';
 
 export function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
   return isScopedPathAllowedWithMultiRoot(pathStr, isDesignPathAllowed);
 }
 
-export { ensureParentDir };
+// design 保留本地 fs.promises.mkdir 实现：远程/虚拟工作区下与 vscode.workspace.fs 行为
+// 有差异，且 create/update 测试基于 fs.promises.mkdir mock；详见 shared/pathPolicy.ts 说明。
+export { ensureParentDirWithFs as ensureParentDir };

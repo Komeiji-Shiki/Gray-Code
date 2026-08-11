@@ -20,6 +20,7 @@ import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
 import { findTabByConversationId, resetConversationState, updateTabTitle } from './tabActions'
+import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -583,10 +584,11 @@ export async function loadMoreConversations(
  */
 export async function loadHistory(state: ChatStoreState): Promise<void> {
   if (!state.currentConversationId.value) return
-  
-  try {
-    const conversationId = state.currentConversationId.value
 
+  // 固化会话标识：catch 中校验归属需要（await 失败期间当前会话可能已切换）
+  const conversationId = state.currentConversationId.value
+
+  try {
     // 重置折叠提示（重新加载最后一页）
     state.historyFolded.value = false
     state.foldedMessageCount.value = 0
@@ -612,9 +614,12 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
 
     void backfillInitialVisibleWindow(state, conversationId, page, total)
   } catch (err: any) {
-    state.error.value = {
-      code: err.code || 'LOAD_ERROR',
-      message: err.message || 'Failed to load history'
+    // 校验归属：加载失败期间当前会话可能已切换——迟到的旧会话失败不能覆盖新会话的全局错误
+    if (validateSessionIdentity(state, conversationId)) {
+      state.error.value = {
+        code: err.code || 'LOAD_ERROR',
+        message: err.message || 'Failed to load history'
+      }
     }
   }
 }
@@ -738,6 +743,7 @@ export async function switchConversation(
   
   // 清除状态
   state.activeBuild.value = null
+  const previousConversationId = state.currentConversationId.value
   state.currentConversationId.value = id
   state.allMessages.value = []
   rebuildMessageIndexById(state)  // 索引与消息窗口同步清空，避免残留旧会话条目
@@ -762,6 +768,12 @@ export async function switchConversation(
   state.editorNodes.value = []
 
   const requestedId = id
+
+  // BCP-05：切换到不同会话时按归属清空 dirty 确认（归属校验见 dirtyConfirmState），
+  // 避免确认框在新会话弹出并把续作动作发到错误会话；同会话重新加载保留待确认动作
+  if (previousConversationId !== id) {
+    clearPendingDirtyConfirm(previousConversationId)
+  }
 
   // 如果是已持久化的对话，从后端加载历史和检查点
   try {

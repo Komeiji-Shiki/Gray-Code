@@ -5,7 +5,7 @@
  * 以支持多条 user/model 临时上下文消息、chat-history 前后位置和 preserve 动态快照。
  */
 
-import type { Content } from '../conversation/types';
+import type { Content } from '../conversation';
 
 export type PromptContextCacheRole = 'user' | 'model';
 
@@ -46,6 +46,10 @@ export interface SerializedPromptContextCache {
     dynamicSnapshotText?: string;
     /** legacy 表示旧插入逻辑；entry 表示 chat_history 条目显式控制历史位置。 */
     historyPlacement?: 'legacy' | 'entry';
+    /** 各动态 section 的完整渲染值（key → wrapSection 后的文本），用于跨回合差分对比。 */
+    sectionValues?: Record<string, string>;
+    /** 动态模板/条目内容指纹；模板变化时强制全量发送一轮。 */
+    dynamicTemplateFingerprint?: string;
 }
 
 export interface PromptContextBundleLike {
@@ -58,6 +62,10 @@ export interface PromptContextBundleLike {
     text?: string;
     dynamicSnapshotText?: string;
     historyPlacement?: 'legacy' | 'entry';
+    /** 各动态 section 的完整渲染值，用于下一轮差分基准。 */
+    sectionValues?: Record<string, string>;
+    /** 动态模板/条目内容指纹；模板变化时强制全量发送。 */
+    dynamicTemplateFingerprint?: string;
 }
 
 export interface DeserializedPromptContextCache {
@@ -70,10 +78,27 @@ export interface DeserializedPromptContextCache {
     contextText: string;
     dynamicSnapshotText: string;
     historyPlacement: 'legacy' | 'entry';
+    /** 各动态 section 的完整渲染值（旧缓存可能缺失）。 */
+    sectionValues?: Record<string, string>;
+    /** 动态模板/条目内容指纹（旧缓存可能缺失）。 */
+    dynamicTemplateFingerprint?: string;
 }
 
 function contentToText(message: Content): string {
-    return message.parts?.map(part => part.text || '').join('') || '';
+    // 指纹文本须体现消息身份与 part 结构：role 变化 / thought part 增删 /
+    // part 边界都影响前缀缓存命中（LOW-3）——纯 text 拼接会让 role 翻转、
+    // 伪造思考（fakeThought）增删不改变聚合文本，缓存误判「内容未变」。
+    // role 前缀 + thought 标记只影响指纹比对，不进入真实请求消息。
+    const role = message.role || 'unknown';
+    const parts = (message.parts ?? []).map(part => {
+        const text = part.text || '';
+        return part.thought === true ? `<thought>${text}</thought>` : text;
+    });
+    const body = parts.filter(p => p.trim()).join('\n');
+    if (!body) {
+        return '';
+    }
+    return `${role}: ${body}`;
 }
 
 function messageToSerialized(message: Content): SerializedPromptContextMessage | null {
@@ -83,9 +108,12 @@ function messageToSerialized(message: Content): SerializedPromptContextMessage |
 
     // 正文与思考分离保存：thought part 的文本进 thoughtText，
     // 反序列化时可恢复原始结构，保证回插路径与直发路径字节一致。
+    // 多条 text part 用 '\n' 连接（与 OpenAI formatter 的文本 part 连接符一致），
+    // 保留 part 边界：序列化后单条 text 仍能按 '\n' 还原出原始 part 序列，
+    // 避免无分隔 join 把相邻 part 的边界静默抹掉。
     const textParts = (message.parts ?? []).filter(part => part.text && part.thought !== true);
     const thoughtParts = (message.parts ?? []).filter(part => part.text && part.thought === true);
-    const text = textParts.map(part => part.text || '').join('').trim();
+    const text = textParts.map(part => part.text || '').join('\n').trim();
     const thoughtText = thoughtParts.map(part => part.text || '').join('\n').trim();
     if (!text && !thoughtText) {
         return null;
@@ -186,7 +214,9 @@ export function serializePromptContextCache(bundle: PromptContextBundleLike): st
         dynamicSnapshotAfterHistoryMessages: contentMessagesToSerialized(dynamicSnapshotAfterHistoryMessages),
         contextText: bundle.text ?? promptContextMessagesToText(contextMessages),
         dynamicSnapshotText: bundle.dynamicSnapshotText ?? promptContextMessagesToText(dynamicSnapshotMessages),
-        historyPlacement: bundle.historyPlacement ?? 'legacy'
+        historyPlacement: bundle.historyPlacement ?? 'legacy',
+        ...(bundle.sectionValues ? { sectionValues: bundle.sectionValues } : {}),
+        ...(bundle.dynamicTemplateFingerprint ? { dynamicTemplateFingerprint: bundle.dynamicTemplateFingerprint } : {})
     };
 
     return JSON.stringify(cache);
@@ -230,7 +260,9 @@ function deserializeV2(parsed: Partial<SerializedPromptContextCache>): Deseriali
         dynamicSnapshotText: typeof parsed.dynamicSnapshotText === 'string'
             ? parsed.dynamicSnapshotText
             : promptContextMessagesToText(dynamicSnapshotMessages),
-        historyPlacement: parsed.historyPlacement === 'entry' ? 'entry' : 'legacy'
+        historyPlacement: parsed.historyPlacement === 'entry' ? 'entry' : 'legacy',
+        ...(parsed.sectionValues && typeof parsed.sectionValues === 'object' ? { sectionValues: parsed.sectionValues } : {}),
+        ...(typeof parsed.dynamicTemplateFingerprint === 'string' ? { dynamicTemplateFingerprint: parsed.dynamicTemplateFingerprint } : {})
     };
 }
 

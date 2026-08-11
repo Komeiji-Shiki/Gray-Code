@@ -147,6 +147,7 @@ describe('mtime 快照降级扫描（非递归 watcher 兜底）', () => {
         fs.mkdirSync(probeDir, { recursive: true });
         fs.writeFileSync(path.join(probeDir, 'probe.txt'), 'x');
 
+        // R3：scanConversationMtimes 已异步化（异步迭代，避免大目录同步阻塞事件循环），需 await
         const snapshot = await scanConversationMtimes(dir);
         expect([...snapshot.keys()].sort()).toEqual(['conv-a', 'conv-b']);
         expect(snapshot.get('conv-a')!).toBeGreaterThan(0);

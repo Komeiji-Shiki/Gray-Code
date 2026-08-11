@@ -288,8 +288,17 @@ export class ToolRegistry {
             return false;
         }
         
-        // 重新调用工厂函数，生成包含最新状态的 Tool 实例
-        const tool = registration();
+        // 重新调用工厂函数，生成包含最新状态的 Tool 实例。
+        // 修改原因：工厂函数抛错时旧实现会让 refreshTool 直接抛出，调用方拿不到返回值，
+        //          已注册的旧实例也可能已被 removeAliases 污染。
+        // 修改方式：try/catch 包裹工厂调用，失败时保留旧实例并返回 false + console.warn。
+        let tool: Tool;
+        try {
+            tool = registration();
+        } catch (error) {
+            console.warn(`[ToolRegistry] Failed to refresh tool "${name}":`, error);
+            return false;
+        }
         this.removeAliases(name);
         this.tools.set(name, tool);
         this.indexAliases(tool);

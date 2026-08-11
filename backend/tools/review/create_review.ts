@@ -8,6 +8,8 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { resolveUriWithInfo } from '../utils';
+import { slugify } from '../shared/slugify';
+import { REVIEW_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { ensureParentDir, isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
 import {
   buildInitialReviewDocument,
@@ -23,16 +25,6 @@ export interface CreateReviewArgs {
   overview?: string;
   review: string;
   path?: string;
-}
-
-function slugify(input: string): string {
-  const s = (input || '').trim().toLowerCase();
-  const slug = s
-    .replace(/[\s_]+/g, '-')
-    .replace(/[^a-z0-9\u4e00-\u9fa5-]+/g, '')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-  return slug || `review-${Date.now()}`;
 }
 
 export function createCreateReviewToolDeclaration(): ToolDeclaration {
@@ -69,11 +61,11 @@ export function createCreateReviewTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.graycode/review/${slugify(title || 'review')}.md`;
+      const defaultPath = `.graycode/review/${slugify(title || 'review', `review-${Date.now()}`)}.md`;
       const outPath = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : defaultPath;
 
       if (!isProgressArtifactPathAllowedWithMultiRoot('review', outPath)) {
-        return { success: false, error: `Invalid review path. Only ".graycode/review/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: buildPathRejectedError('review', REVIEW_PATH_SCOPE_LABEL, outPath) };
       }
 
       const sessionCheck = await ensureNoActiveReviewSession(context, outPath);

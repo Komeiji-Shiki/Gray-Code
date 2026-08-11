@@ -1,4 +1,4 @@
-import fs = require('fs')
+import fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { clearGlobalContext, setGlobalSettingsManager } from '../../core/settingsContext'

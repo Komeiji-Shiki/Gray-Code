@@ -32,6 +32,9 @@ const isSaving = ref(false)
 // 加载状态
 const isLoading = ref(false)
 
+// 首次加载回写标记：加载配置会触发 watch，跳过这一次自动保存（避免回声写入）
+let skipNextWatchSave = false
+
 // 加载配置
 async function loadConfig() {
   isLoading.value = true
@@ -40,6 +43,7 @@ async function loadConfig() {
       toolName: props.toolName
     })
     if (response?.config?.returnImageToAI !== undefined) {
+      skipNextWatchSave = true
       returnImageToAI.value = response.config.returnImageToAI
     }
   } catch (error) {
@@ -67,7 +71,12 @@ async function saveConfig() {
 }
 
 // 监听配置变化，自动保存
+// 首次加载回写（loadConfig 中设置标记）时跳过，避免把刚读到的值原样写回后端
 watch(returnImageToAI, () => {
+  if (skipNextWatchSave) {
+    skipNextWatchSave = false
+    return
+  }
   saveConfig()
 })
 

@@ -192,7 +192,8 @@ describe('HttpMcpClient', () => {
 
         await client.disconnect();
 
-        await expect(pending).rejects.toThrow(/(请求超时|timeout)/i);
+        // disconnect 触发的中止：以「已断开」文案拒绝（区别于请求超时）
+        await expect(pending).rejects.toThrow(/disconnected/i);
     });
 
     // ==================== 外部 abort 中止 ====================

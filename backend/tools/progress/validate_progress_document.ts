@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { isProgressModePathAllowedWithMultiRoot } from './pathUtils';
 import { buildProgressValidationSummary } from './documentLayout';
 import { projectProgressToolResultData } from './resultProjection';
@@ -46,7 +47,7 @@ export function createValidateProgressDocumentTool(): Tool {
         return { success: false, error: 'path is required and must be a non-empty string' };
       }
       if (!isProgressModePathAllowedWithMultiRoot(targetPath)) {
-        return { success: false, error: `Invalid progress path. Only ".graycode/progress.md" is allowed. Rejected path: ${targetPath}` };
+        return { success: false, error: buildPathRejectedError('progress', PROGRESS_PATH_SCOPE_LABEL, targetPath) };
       }
 
       const { uri, error } = resolveUriWithInfo(targetPath, context?.activeWorkspaceUri);

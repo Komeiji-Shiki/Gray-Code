@@ -161,8 +161,9 @@ let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null
 const tooltipRef = ref<HTMLElement | null>(null)
 let tooltipRafId: number | null = null
 
-let isDragging = false
-let isHDragging = false
+// 拖动状态用 ref：模板据此在拖动期间给 .scroll-thumb-v / .scroll-thumb-h 挂 'dragging' 类（仅拖动时启用 will-change）
+const isDragging = ref(false)
+const isHDragging = ref(false)
 let startY = 0
 let startX = 0
 let startScrollTop = 0
@@ -583,7 +584,7 @@ function handleThumbMouseDown(e: MouseEvent) {
   
   // 滚动条拖动也是用户滚动意图：标记冷静期，避免拖动中被贴底拉回
   lastUserScrollInputAt = performance.now()
-  isDragging = true
+  isDragging.value = true
   startY = e.clientY
   startScrollTop = scrollContainer.value.scrollTop
   
@@ -595,7 +596,7 @@ function handleThumbMouseDown(e: MouseEvent) {
 
 // 垂直滚动 - 鼠标移动
 function handleMouseMove(e: MouseEvent) {
-  if (!isDragging || !scrollContainer.value) return
+  if (!isDragging.value || !scrollContainer.value) return
   
   const container = scrollContainer.value
   const deltaY = e.clientY - startY
@@ -612,7 +613,7 @@ function handleMouseMove(e: MouseEvent) {
 
 // 垂直滚动 - 鼠标释放
 function handleMouseUp() {
-  isDragging = false
+  isDragging.value = false
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
 }
@@ -643,7 +644,7 @@ function handleTrackClick(e: MouseEvent) {
 function handleHThumbMouseDown(e: MouseEvent) {
   if (!scrollContainer.value) return
   
-  isHDragging = true
+  isHDragging.value = true
   startX = e.clientX
   startScrollLeft = scrollContainer.value.scrollLeft
   
@@ -655,7 +656,7 @@ function handleHThumbMouseDown(e: MouseEvent) {
 
 // 横向滚动 - 鼠标移动
 function handleHMouseMove(e: MouseEvent) {
-  if (!isHDragging || !scrollContainer.value) return
+  if (!isHDragging.value || !scrollContainer.value) return
   
   const container = scrollContainer.value
   const deltaX = e.clientX - startX
@@ -671,7 +672,7 @@ function handleHMouseMove(e: MouseEvent) {
 
 // 横向滚动 - 鼠标释放
 function handleHMouseUp() {
-  isHDragging = false
+  isHDragging.value = false
   document.removeEventListener('mousemove', handleHMouseMove)
   document.removeEventListener('mouseup', handleHMouseUp)
 }
@@ -755,16 +756,24 @@ const wrapperStyle = computed(() => {
 })
 
 // 组件挂载
+let initRafId: number | null = null
+let initFallbackTimer: ReturnType<typeof setTimeout> | null = null
+
 onMounted(() => {
   nextTick(() => {
-    setTimeout(() => {
+    // 首次更新：rAF 优先（下一帧布局完成后立即执行）；ResizeObserver 在尺寸变化时
+    // 持续驱动；setTimeout 保留为最后兜底（部分环境 rAF 可能被节流/暂停）。
+    // 多次执行幂等（updateScrollbar/updateMarkers 均为重算型函数）。
+    const runInitialUpdate = () => {
       updateScrollbar()
       // 初始化 marker（同步更新节流基准，避免紧随其后的首次变更触发重复扫描）
       if (props.markerSelector) {
         updateMarkers()
         lastMarkerScanAt = Date.now()
       }
-    }, 100)
+    }
+    initRafId = requestAnimationFrame(runInitialUpdate)
+    initFallbackTimer = setTimeout(runInitialUpdate, 100)
     
     if (scrollContainer.value) {
       scrollContainer.value.addEventListener('scroll', handleScroll, { passive: true })
@@ -846,6 +855,14 @@ onBeforeUnmount(() => {
     clearTimeout(pendingMarkerScanTimer)
     pendingMarkerScanTimer = null
   }
+  if (initRafId !== null) {
+    cancelAnimationFrame(initRafId)
+    initRafId = null
+  }
+  if (initFallbackTimer !== null) {
+    clearTimeout(initFallbackTimer)
+    initFallbackTimer = null
+  }
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
   document.removeEventListener('mousemove', handleHMouseMove)
@@ -924,8 +941,8 @@ defineExpose({
       >
         <!-- Marker 节点：渲染在轨道内，位于 thumb 之上 -->
         <div
-          v-for="(marker, idx) in markerPositions"
-          :key="idx"
+          v-for="marker in markerPositions"
+          :key="`${marker.index}:${marker.contentPreview}`"
           class="scroll-marker"
           :style="{
             top: `${marker.top}px`,
@@ -940,6 +957,7 @@ defineExpose({
 
         <div
           class="scroll-thumb scroll-thumb-v"
+          :class="{ 'dragging': isDragging }"
           :style="thumbStyle"
           @mousedown="handleThumbMouseDown"
         />
@@ -985,6 +1003,7 @@ defineExpose({
     >
       <div
         class="scroll-thumb scroll-thumb-h"
+        :class="{ 'dragging': isHDragging }"
         :style="hThumbStyle"
         @mousedown="handleHThumbMouseDown"
       />
@@ -1113,10 +1132,18 @@ defineExpose({
   border-radius: 0;
   cursor: grab;
   transition: background 0.18s ease, transform 0.06s linear;
-  will-change: transform;
+  /* will-change 不再常驻：仅在拖动期间通过 .dragging 类启用（见下方），
+     避免 transform 每帧更新导致长期驻留合成层 */
   background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
   /* thumb 位于 marker 之下 */
   z-index: 2;
+}
+
+/* 仅拖动时启用 will-change（垂直/横向一致）：拖动期间 transform 每帧更新，
+   提示浏览器为滑块单独建层；拖动结束（mouseup）移除，避免长期驻留的合成层开销 */
+.scroll-thumb-v.dragging,
+.scroll-thumb-h.dragging {
+  will-change: transform;
 }
 
 /* 横向滚动滑块 */
@@ -1127,7 +1154,7 @@ defineExpose({
   border-radius: 0;
   cursor: grab;
   transition: background 0.18s ease, transform 0.06s linear;
-  will-change: transform;
+  /* will-change 同垂直滑块：仅在拖动期间通过 .dragging 类启用（见上方） */
   background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
 }
 

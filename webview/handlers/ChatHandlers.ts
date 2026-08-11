@@ -7,7 +7,11 @@
 import { t } from '../../backend/i18n';
 import { setChatInputFocused } from '../../backend/core/chatFocusGuard';
 import { assertSafeId } from '../../backend/core/idValidation';
-import { agentMailbox } from '../../backend/tools/subagents/agentMailbox';
+import {
+  agentMailbox,
+  formatAgentMessagesForModel,
+  MAIN_SESSION_RUN_ID
+} from '../../backend/core/services/agentMailbox';
 import {
     BranchGraphRepository,
     BranchService,
@@ -15,6 +19,10 @@ import {
     setGlobalBranchService,
 } from '../../backend/modules/conversation/branch';
 import { StreamChunkProcessor } from '../stream/StreamChunkProcessor';
+import {
+    isConversationStreaming,
+    BRANCH_BUSY_STREAMING_MESSAGE,
+} from './streamGuard';
 import type { HandlerContext, MessageHandler } from '../types';
 
 async function stopConversationStream(ctx: HandlerContext, conversationId: string): Promise<void> {
@@ -48,6 +56,14 @@ function resolveBranchService(ctx: HandlerContext): BranchService {
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId: rawConversationId, targetIndex, preserveCheckpointId, messageId } = data || {};
   const conversationId = assertSafeId(rawConversationId, 'conversationId');
+
+  // 入参校验优先于任何副作用（取消流）：非法参数直接返回明确错误码，不触发取消动作
+  // （与 deleteSingleMessage 的校验口径一致）
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || !Number.isInteger(targetIndex) || targetIndex < 0) {
+    ctx.sendError(requestId, 'DELETE_MESSAGE_ERROR', 'Invalid conversationId or targetIndex');
+    return;
+  }
 
   // 先取消该对话的流式请求（如果有）
   // 取消只是“尽力而为”的前置清理：取消失败不应阻断删除主流程，独立 try/catch 仅告警。
@@ -201,6 +217,41 @@ export const sendInterruptMessage: MessageHandler = async (data, requestId, ctx)
   }
 };
 
+export const claimAgentMessages: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'AGENT_MESSAGE_INVALID_CONVERSATION', 'Invalid conversation ID');
+    return;
+  }
+
+  const metadata = await ctx.conversationManager.getMetadata(conversationId);
+  if (!metadata) {
+    ctx.sendError(requestId, 'AGENT_MESSAGE_CONVERSATION_NOT_FOUND', 'Conversation not found');
+    return;
+  }
+
+  const claim = agentMailbox.claimMainSessionAgentMessages(conversationId);
+  ctx.sendResponse(requestId, claim
+    ? {
+        claimId: claim.claimId,
+        conversationId,
+        message: formatAgentMessagesForModel(claim.messages),
+        messageCount: claim.messages.length
+      }
+    : { claimId: null, conversationId, message: null, messageCount: 0 });
+};
+
+export const releaseAgentMessages: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+  const claimId = typeof data?.claimId === 'string' ? data.claimId.trim() : '';
+  if (!conversationId || !claimId) {
+    ctx.sendError(requestId, 'AGENT_MESSAGE_RELEASE_INVALID_ARGS', 'conversationId and claimId are required');
+    return;
+  }
+  const released = agentMailbox.releaseMessageClaim(conversationId, MAIN_SESSION_RUN_ID, claimId);
+  ctx.sendResponse(requestId, { released });
+};
+
 /**
  * 聊天输入框焦点状态上报
  *
@@ -231,6 +282,14 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof configId !== 'string' || !configId.trim()) {
     ctx.sendError(requestId, 'REROLL_INVALID_ARGS', 'conversationId and configId are required');
+    return;
+  }
+
+  // TREE-13 互斥：主流仍在生成时拒绝创建 reroll 候选（BRANCH_BUSY）。
+  // 不加此检查时 abortManager.create() 会静默中止主流，基于被截断的历史创建候选，
+  // 与 BranchHandlers 全部变更操作的流式互斥口径不一致。
+  if (isConversationStreaming(ctx, conversationId)) {
+    ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
     return;
   }
 
@@ -331,6 +390,13 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
   }
   const resolvedMode = mode === 'keep' ? 'keep' : 'branch';
 
+  // TREE-13 互斥：主流仍在生成时拒绝创建编辑候选（BRANCH_BUSY），
+  // 避免 abortManager.create() 静默中止主流并基于被截断的历史创建候选。
+  if (isConversationStreaming(ctx, conversationId)) {
+    ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
+    return;
+  }
+
   // 确保分支服务已注册（懒初始化，与 BranchHandlers 同模式）
   try {
     resolveBranchService(ctx);
@@ -414,6 +480,8 @@ export function registerChatHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('chatInput.focusState', chatInputFocusState);
   registry.set('chat.awaitConversationIdle', awaitConversationIdle);
   registry.set('chat.sendInterruptMessage', sendInterruptMessage);
+  registry.set('chat.claimAgentMessages', claimAgentMessages);
+  registry.set('chat.releaseAgentMessages', releaseAgentMessages);
   registry.set('chat.rerollStream', rerollStream);
   registry.set('chat.editBranchStream', editBranchStream);
 }

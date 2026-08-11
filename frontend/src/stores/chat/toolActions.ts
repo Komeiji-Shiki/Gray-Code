@@ -10,8 +10,8 @@ import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
-import { rebuildMessageIndexById } from './state'
-import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { insertMessageAt, removeMessageAt, rebuildMessageIndexById } from './state'
 import { finishSmoothStreamForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 
 /**
@@ -32,19 +32,36 @@ export function getToolResponseById(
   // 2) 通过权威索引定位消息
   if (!state.toolResponseIndex?.value) return null
 
-  const messageIdx = state.toolResponseIndex.value.get(toolCallId)
-  if (typeof messageIdx !== 'number' || messageIdx < 0) return null
-
   const messages = state.allMessages.value
-  if (messageIdx >= messages.length) return null
+
+  // 索引可能因数组整体替换（未走 rebuildMessageIndexById）而失配：
+  // 仿 getMessageIndexById 校验索引指向的消息确实包含该 functionResponse，
+  // 失配时回退线性扫描（并重建索引），而不是直接返回 null。
+  const containsToolResponse = (message: Message | undefined): boolean =>
+    !!message?.isFunctionResponse &&
+    Array.isArray(message.parts) &&
+    message.parts.some(part => part.functionResponse?.id === toolCallId)
+
+  let messageIdx = state.toolResponseIndex.value.get(toolCallId)
+  if (
+    typeof messageIdx !== 'number' ||
+    messageIdx < 0 ||
+    messageIdx >= messages.length ||
+    !containsToolResponse(messages[messageIdx])
+  ) {
+    messageIdx = messages.findIndex(containsToolResponse)
+    if (messageIdx === -1) return null
+    // 索引失配：重建（messageIndexById + toolResponseIndex），后续查询恢复 O(1)
+    rebuildMessageIndexById(state)
+  }
 
   const message = messages[messageIdx]
-  if (!message?.isFunctionResponse || !Array.isArray(message.parts)) return null
 
   // 3) 在消息 parts 中查找匹配的 functionResponse（O(parts)，parts 数量通常很小）
   let latest: Record<string, unknown> | null = null
-  for (let j = message.parts.length - 1; j >= 0; j--) {
-    const part = message.parts[j]
+  const parts = message.parts ?? []
+  for (let j = parts.length - 1; j >= 0; j--) {
+    const part = parts[j]
     if (part.functionResponse?.id === toolCallId) {
       latest = part.functionResponse.response
       break
@@ -170,12 +187,9 @@ function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: stri
   const hasContent = !!(msg.content && msg.content.trim())
 
   if (!hasContent && !hasTools && !hasPartsContent) {
-    state.allMessages.value = [
-      ...all.slice(0, targetIndex),
-      ...all.slice(targetIndex + 1)
-    ]
-    // 删除中间元素会使后续消息下标前移，messageIndexById / toolResponseIndex 失效，必须重建
-    rebuildMessageIndexById(state)
+    // 删除占位后同步回退 totalMessages（窗口推导），并重建 messageIndexById / toolResponseIndex
+    removeMessageAt(state, targetIndex)
+    setTotalMessagesFromWindow(state)
   }
 }
 
@@ -296,6 +310,23 @@ function ensureFunctionResponseMessageForRejectedTools(
   }
 
   const responseBackendIndex = state.windowStartIndex.value + info.messageIndex + 1
+  // 先为每个 toolCallId 计算拒绝响应（插入消息与回填 toolResponseCache 共用同一份）
+  const responseByCallId = new Map<string, Record<string, unknown>>()
+  for (const call of missingCalls) {
+    responseByCallId.set(call.id, preserveDetachedSubAgents && call.name === 'subagents'
+      ? {
+          success: true,
+          detached: true,
+          background: true,
+          note: 'SubAgent continued in background after the parent turn was replaced.'
+        }
+      : {
+          success: false,
+          error: 'Cancelled by user',
+          rejected: true
+        })
+  }
+
   const responseMessage: Message = {
     id: generateId(),
     role: 'user',
@@ -307,27 +338,19 @@ function ensureFunctionResponseMessageForRejectedTools(
       functionResponse: {
         id: call.id,
         name: call.name,
-        response: preserveDetachedSubAgents && call.name === 'subagents'
-          ? {
-              success: true,
-              detached: true,
-              background: true,
-              note: 'SubAgent continued in background after the parent turn was replaced.'
-            }
-          : {
-              success: false,
-              error: 'Cancelled by user',
-              rejected: true
-            }
+        response: responseByCallId.get(call.id)!
       }
     }))
   }
 
-  state.allMessages.value = [
-    ...all.slice(0, info.messageIndex + 1),
-    responseMessage,
-    ...all.slice(info.messageIndex + 1)
-  ]
+  // 中间位置插入（insertMessageAt 内含 rebuildMessageIndexById，重建 messageIndexById / toolResponseIndex）
+  insertMessageAt(state, info.messageIndex + 1, responseMessage)
+
+  // 为本次插入的 functionResponse 回填值缓存，保持 getToolResponseById 的 O(1) 查询路径一致
+  for (const [callId, response] of responseByCallId) {
+    state.toolResponseCache.value.set(callId, response)
+  }
+  triggerRef(state.toolResponseCache)
 
   // 中间位置插入新消息会使后续消息下标整体后移，messageIndexById / toolResponseIndex
   // 全部失效（toolResponseIndex 无自愈逻辑，getToolResponseById 会持续 miss 返回 null）——

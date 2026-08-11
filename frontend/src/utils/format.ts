@@ -1,5 +1,9 @@
 /**
  * 格式化工具函数
+ *
+ * 时间格式化说明：本文件的 formatRelativeTime（相对时间）为硬编码中文输出、无 i18n，
+ * 仅保留作历史基准；与 stores/chat/utils.ts 的 formatTime（走 i18n 相对时间）并存、
+ * 用途不同，差异输出勿合并（行为变化）。
  */
 
 // 格式化时间戳（支持自定义格式）
@@ -43,8 +47,8 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 
   // 2) execCommand 回退：临时 textarea 选中后执行 copy 命令
+  const textarea = document.createElement('textarea')
   try {
-    const textarea = document.createElement('textarea')
     textarea.value = text
     // 移出可视区域（避免页面跳动），但保留可选中状态
     textarea.style.position = 'fixed'
@@ -62,21 +66,26 @@ export async function copyToClipboard(text: string): Promise<boolean> {
       selection.removeAllRanges()
       selection.addRange(prevRange)
     }
-    document.body.removeChild(textarea)
     if (ok) return true
   } catch (error) {
     console.error('execCommand 复制失败:', error)
+  } finally {
+    // 无论成功/抛错都清理临时 textarea，避免 execCommand 抛错时跳过清理造成 DOM 泄漏
+    if (textarea.parentNode) {
+      document.body.removeChild(textarea)
+    }
   }
 
   return false
 }
 
 // 生成唯一ID
+// 说明：substr 已废弃，统一使用 slice（等价截取：从下标 2 起 9 个字符）
 export function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
 }
 
-// 格式化数字（添加千分位分隔符，始终保留一位小数）
+// 格式化数字：千分位分隔；≥1000 缩写为 K、≥1000000 缩写为 M（缩写保留一位小数）
 export function formatNumber(num: number): string {
   if (!Number.isFinite(num)) return '0'
   if (num >= 1000000) {

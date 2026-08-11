@@ -319,6 +319,8 @@ export function rebaseActivePathFromHistory(
     }
 
     const historyPath = activePath(canonical);
+    // nodes 保持对象表（Record）而非 Map：全文件图变更/序列化路径（BranchGraphRepository、
+    // validate、childrenIndex）均按对象表遍历，改 Map 需同步改造所有调用点，收益不抵风险。
     const nodes: Record<string, ConversationBranchNode> = { ...graph.nodes };
     for (let index = 0; index < historyPath.length; index += 1) {
         const id = historyPath[index]!;
@@ -393,7 +395,9 @@ export function rebaseActivePathFromHistory(
     return next;
 }
 
-/** 浅拷贝图（nodes 记录复制，节点对象与 parts 共享引用——数据视为不可变） */
+/** 浅拷贝图（nodes 记录复制，节点对象与 parts 共享引用——数据视为不可变）。
+ * nodes 用对象表（Record）而非 Map：与全文件 Object.values/entries 遍历、
+ * JSON 序列化（BranchGraphRepository）直接兼容，保持现状不迁移。 */
 function cloneGraph(graph: ConversationBranchGraph): ConversationBranchGraph {
     return { ...graph, nodes: { ...graph.nodes } };
 }
@@ -1363,10 +1367,10 @@ function removeNodeSet(
     };
     if (next.rootNodeId !== null && toRemove.has(next.rootNodeId)) {
         next.rootNodeId = null;
-        next.activeTailNodeId = null;
-    } else if (next.activeTailNodeId !== null && toRemove.has(next.activeTailNodeId)) {
-        next.activeTailNodeId = null;
     }
+    // 尾指针不依赖调用方修补：删除后沿活跃链重算（根节点被移除时 deriveActiveTail 返回 null），
+    // 保证「尾指针 = 活跃路径最后一个节点」不变量始终成立（validate 读取侧依赖该不变量）。
+    next.activeTailNodeId = deriveActiveTail(next);
     if (next.exportedFrom && toRemove.has(next.exportedFrom.nodeId)) {
         next.exportedFrom = undefined;
     }

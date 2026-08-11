@@ -148,10 +148,10 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
     uploading.value = true
     uploadProgress.value = 0
 
-    const results: Attachment[] = []
-    const total = files.length
-
     try {
+      const results: Attachment[] = []
+      const total = files.length
+
       for (let i = 0; i < files.length; i++) {
         const attachment = await addAttachment(files[i])
         if (attachment) {
@@ -159,13 +159,13 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         }
         uploadProgress.value = Math.round(((i + 1) / total) * 100)
       }
+
+      return results
     } finally {
-      // 任何路径（含未捕获异常）都必须复位上传状态
+      // 无论成功/异常都复位上传状态，避免异常路径残留 uploading=true 卡住 UI
       uploading.value = false
       uploadProgress.value = 0
     }
-
-    return results
   }
 
   /**
@@ -348,7 +348,13 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
       reader.onload = () => {
         if (typeof reader.result === 'string') {
           // 移除 data URL 前缀
-          const base64 = reader.result.split(',')[1]
+          const parts = reader.result.split(',')
+          const base64 = parts[1]
+          // split 结果可能缺失（非 data URL 格式的 result）：缺失时按读取失败处理
+          if (base64 === undefined) {
+            reject(new Error(t('composables.useAttachments.errors.readResultNotString')))
+            return
+          }
           resolve(base64)
         } else {
           reject(new Error(t('composables.useAttachments.errors.readResultNotString')))

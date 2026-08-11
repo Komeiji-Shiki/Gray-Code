@@ -104,9 +104,10 @@ describe('computeLineDiff', () => {
   })
 
   it('clamps an oversized edit distance limit to bound trace memory', () => {
-    // 核心无公共行且 n+m 与 editDistanceLimit 都很大：若未钳制，limit = min(n+m, 100000) = 4200，
+    // 核心无公共行且 n+m 与 editDistanceLimit 都很大：若未钳制，limit = min(n+m, 100000) = 4202，
     // 不满足快速失败条件（n+m > limit 为假），Myers 会跑完并找到精确距离（degraded=false）。
-    // 钳制后 limit = 4096，n+m=4200 > 4096 触发快速失败退化——观测结果证明钳制生效。
+    // 钳制后 limit = 2048（MAX_EDIT_DISTANCE_LIMIT），n+m=4202 > 2048 触发退化——观测结果证明钳制生效。
+    // 注：核心有公共行（'shared'），不满足快速失败条件，实际走预算耗尽路径（Myers 在 2048 层内无解）。
     const coreOld = ['shared', ...Array.from({ length: 2100 }, (_, i) => `o-${i}`)]
     const coreNew = ['shared', ...Array.from({ length: 2100 }, (_, i) => `n-${i}`)]
     const result = computeLineDiff(coreOld.join('\n'), coreNew.join('\n'), { editDistanceLimit: 100000 })

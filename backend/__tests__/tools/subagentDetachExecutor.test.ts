@@ -9,6 +9,7 @@
 import { createDefaultExecutor } from '../../tools/subagents/executor';
 import { subAgentRunController } from '../../tools/subagents/runController';
 import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
+import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
 import type { SubAgentConfig, SubAgentExecutorContext, SubAgentRequest } from '../../tools/subagents/types';
 
 function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
@@ -105,11 +106,14 @@ describe('SubAgent executor - 转后台（detach）', () => {
         subAgentRunController.unregister('run_detach_tool');
         subAgentRunController.unregister('run_detach_queue');
         subAgentRunController.unregister('run_abort_hanging_tool');
+        subAgentRunController.unregister('run_agent_message_boundary');
+        agentMailbox.clearAll();
         subAgentConcurrencyLimiter.release('run_detach_exec');
         subAgentConcurrencyLimiter.release('run_detach_ctrl');
         subAgentConcurrencyLimiter.release('run_detach_tool');
         subAgentConcurrencyLimiter.release('run_detach_queue');
         subAgentConcurrencyLimiter.release('run_abort_hanging_tool');
+        subAgentConcurrencyLimiter.release('run_agent_message_boundary');
         subAgentConcurrencyLimiter.release('holder');
     });
 
@@ -142,6 +146,75 @@ describe('SubAgent executor - 转后台（detach）', () => {
         expect(result.cancelled).not.toBe(true);
         expect(result.success).toBe(true);
         expect(result.response).toContain('done');
+    });
+
+    it('主模型和其他子代理连续发信：收件子代理逐轮处理，所有 provider 请求保持严格前缀与稳定缓存域', async () => {
+        const { context, generateMock, release } = createGatedChannel();
+        const executor = createDefaultExecutor(createConfig({ maxIterations: 5 }), context);
+        const runPromise = executor({
+            agentType: 'tester',
+            prompt: 'initial task',
+            runId: 'run_agent_message_boundary',
+            conversationId: 'conv_messages'
+        });
+
+        await waitForCall(generateMock);
+        const firstRequest = generateMock.mock.calls[0][0];
+        const firstHistory = JSON.parse(JSON.stringify(firstRequest.history));
+        agentMailbox.registerRun('conv_messages', 'peer_sender', 'Peer Agent');
+        expect(agentMailbox.sendMessage({
+            conversationId: 'conv_messages',
+            fromRunId: MAIN_SESSION_RUN_ID,
+            targetRunId: 'run_agent_message_boundary',
+            text: 'message from main'
+        }).success).toBe(true);
+        expect(agentMailbox.sendMessage({
+            conversationId: 'conv_messages',
+            fromRunId: 'peer_sender',
+            targetRunId: 'run_agent_message_boundary',
+            text: 'message from peer'
+        }).success).toBe(true);
+
+        // 第一轮原本会以纯文本结束；原子完成边界发现来信后必须继续第二轮。
+        release({ content: { type: 'text', parts: [{ type: 'text', text: 'first answer' }] } });
+        await waitForCallCount(generateMock, 2);
+        const secondRequest = generateMock.mock.calls[1][0];
+        const secondHistorySnapshot = JSON.parse(JSON.stringify(secondRequest.history));
+        const secondHistory = JSON.stringify(secondHistorySnapshot);
+        expect(secondHistory).toContain('message from main');
+        expect(secondHistory).toContain('message from peer');
+        expect(secondHistory).toContain('[Agent messages received]');
+        // 新内容只能追加在尾部；第一轮实际发送字节必须是第二轮的严格前缀。
+        expect(secondHistorySnapshot.slice(0, firstHistory.length)).toEqual(firstHistory);
+        expect(secondHistorySnapshot.length).toBeGreaterThan(firstHistory.length);
+        expect(secondRequest.conversationId).toBe(firstRequest.conversationId);
+        expect(secondRequest.dynamicSystemPrompt).toBe(firstRequest.dynamicSystemPrompt);
+        expect(secondRequest.toolOverrides).toEqual(firstRequest.toolOverrides);
+
+        // 第二轮生成期间再到一封信，迫使执行器进入第三轮；验证前缀连续稳定。
+        expect(agentMailbox.sendMessage({
+            conversationId: 'conv_messages',
+            fromRunId: 'peer_sender',
+            targetRunId: 'run_agent_message_boundary',
+            text: 'second boundary follow-up'
+        }).success).toBe(true);
+        release({ content: { type: 'text', parts: [{ type: 'text', text: 'handled first batch' }] } });
+        await waitForCallCount(generateMock, 3);
+        const thirdRequest = generateMock.mock.calls[2][0];
+        const thirdHistorySnapshot = JSON.parse(JSON.stringify(thirdRequest.history));
+        expect(thirdHistorySnapshot.slice(0, secondHistorySnapshot.length)).toEqual(secondHistorySnapshot);
+        expect(thirdHistorySnapshot.length).toBeGreaterThan(secondHistorySnapshot.length);
+        expect(JSON.stringify(thirdHistorySnapshot)).toContain('second boundary follow-up');
+        expect(thirdRequest.conversationId).toBe(firstRequest.conversationId);
+        expect(thirdRequest.dynamicSystemPrompt).toBe(firstRequest.dynamicSystemPrompt);
+        expect(thirdRequest.toolOverrides).toEqual(firstRequest.toolOverrides);
+
+        release({ content: { type: 'text', parts: [{ type: 'text', text: 'handled all messages' }] } });
+        const result = await runPromise;
+        expect(result.success).toBe(true);
+        expect(result.response).toContain('handled all messages');
+        expect(generateMock).toHaveBeenCalledTimes(3);
+        expect(agentMailbox.isKnownRun('conv_messages', 'run_agent_message_boundary')).toBe(false);
     });
 
     it('对照组：未 detach 时父 abort 取消 run', async () => {

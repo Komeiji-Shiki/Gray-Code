@@ -2,6 +2,7 @@
  * 对话管理消息处理器
  */
 
+import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import { assertSafeId } from '../../backend/core/idValidation';
 import { Logger } from '../../backend/core/logger';
@@ -206,16 +207,22 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
 export const createBranchConversation: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { sourceConversationId, branchAtIndex, title, conversationId, workspaceUri } = data || {};
+    // 显式校验：Number() 强转会把 undefined/非数字变成 NaN 无校验传入后端（R2-08 复查）
     validateConversationId(sourceConversationId);
     if (conversationId !== undefined && conversationId !== null && conversationId !== '') {
       validateConversationId(conversationId);
+    }
+    if (!Number.isInteger(branchAtIndex) || branchAtIndex < 0) {
+      ctx.sendError(requestId, 'CREATE_BRANCH_CONVERSATION_ERROR',
+        'sourceConversationId and branchAtIndex (non-negative integer) are required');
+      return;
     }
     // 不在此兜底激活工作区：分支对话的 workspaceUri 由后端继承源对话（传入 undefined 时），
     // 用激活工作区兜底会把分支错误绑定到当前活动项目
     const resolvedWorkspaceUri = workspaceUri || undefined;
     const result = await ctx.conversationManager.createBranchConversation(
       sourceConversationId,
-      Number(branchAtIndex),
+      branchAtIndex,
       {
         conversationId,
         title,
@@ -311,6 +318,42 @@ export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
   }
 };
 
+// ========== 对话文件管理 ==========
+
+/**
+ * 在系统文件管理器中定位并显示对话文件（拆分自 FileHandlers.ts 域 G）
+ */
+const revealConversationInExplorer: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { conversationId } = data;
+    // 修改原因：segmented 存储格式下对话是 {id}/ 目录而非 {id}.json 单文件，
+    // 旧实现硬编码拼接 {id}.json 并 stat 校验，正常对话全部报“对话文件不存在”，
+    // 无法在文件管理器中显示。
+    // 修改方式：委托 ConversationManager → 存储适配器的 getConversationStorageLocation，
+    // 由适配器按 segmented index → legacy history → metadata 优先级返回真实存在的 URI。
+    // 修改目的：存储布局规则保持单一来源，handler 不再复制路径规则。
+    const location = await ctx.conversationManager.getConversationStorageLocation(conversationId);
+
+    if (!location || !location.revealUri) {
+      // 非文件系统存储（内存 / globalState）或无法定位：回退打开 conversations 根目录
+      const conversationsDir = ctx.storagePathManager.getConversationsPath();
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(conversationsDir));
+      ctx.sendResponse(requestId, { success: true, fallback: true });
+      return;
+    }
+
+    await vscode.commands.executeCommand('revealFileInOS', location.revealUri);
+    ctx.sendResponse(requestId, {
+      success: true,
+      exists: location.exists,
+      path: location.displayPath,
+      warning: location.warning
+    });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'REVEAL_IN_EXPLORER_ERROR', error.message || t('webview.errors.cannotRevealInExplorer'));
+  }
+};
+
 /**
  * 注册对话管理处理器
  */
@@ -332,4 +375,7 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   register('conversation.getMessagesPaged', getMessagesPaged);
   register('conversation.loadConversationForView', loadConversationForView);
   register('conversation.rejectToolCalls', rejectToolCalls);
+  // 直接注册（不经 withConversationBoundary）：保持拆分前（FileHandlers.ts 域 G）的
+  // 错误码 REVEAL_IN_EXPLORER_ERROR 与参数校验行为不变。
+  registry.set('conversation.revealInExplorer', revealConversationInExplorer);
 }

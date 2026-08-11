@@ -4,11 +4,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-jest.mock('../../tools/file/diffManager', () => ({
-    getDiffManager: () => ({
-        cancelAllPending: jest.fn().mockResolvedValue({ cancelled: [] })
-    })
-}));
+import '../__fixtures__/diffManagerMock';
+import { createTempDirectory, makeRecord } from '../__fixtures__/checkpointFixtures';
 // CP-PERF-2 测试用：包一层 jest.fn，默认仍走真实实现；单个用例可 mockResolvedValueOnce 注入快照
 jest.mock('../../modules/checkpoint/CheckpointSnapshotBuilder', () => {
     const actual = jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder');
@@ -27,10 +24,6 @@ import { createWorkspaceRootId } from '../../modules/checkpoint/CheckpointWorksp
  * - 恢复时必须服从“当前工作区”的 ignore 规则
  * - 该语义对新旧两类 checkpoint 记录都成立
  */
-async function createTempDirectory(prefix: string): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), prefix));
-}
-
 /**
  * 创建测试文件，自动补齐父目录。
  */
@@ -549,21 +542,6 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });
-
-    function makeRecord(overrides: Partial<CheckpointRecord> & { id: string }): CheckpointRecord {
-        return {
-            conversationId: 'conv',
-            messageIndex: 0,
-            toolName: 'write_file',
-            phase: 'after',
-            timestamp: 1000,
-            backupDir: overrides.id,
-            fileCount: 0,
-            contentHash: 'h',
-            type: 'full',
-            ...overrides
-        };
-    }
 
     test('saveCheckpointToConversation appends records via updateCustomMetadata', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');

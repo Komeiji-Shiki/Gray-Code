@@ -15,7 +15,7 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
             '查看或修改永久记忆系统的配置参数。\n' +
             '可配置项：\n' +
             '- wakeLines: wake 输出的行数预算（默认 96，≈8k tokens）\n' +
-            '- entryChars: 单条记忆最大字节数（默认 280）\n' +
+            '- entryChars: 单条记忆最大字节数（默认 280，上限 1000）\n' +
             '不传参数时显示当前配置。传参数时修改对应项。\n' +
             '修改只影响输出格式，不需要重新计算任何东西。',
         category: 'memory',
@@ -28,7 +28,7 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
                 },
                 entryChars: {
                     type: 'number',
-                    description: '单条记忆最大字节数。默认 280，上限受固定宽度记录约束（含记录头部开销）。',
+                    description: '单条记忆最大字节数。默认 280，上限 1000（固定宽度记录约束，含记录头部开销）。',
                 },
             },
         },
@@ -47,12 +47,28 @@ function formatConfig(config: MemoryConfig): string {
     return lines.join('\n');
 }
 
+const MEMORY_CONFIG_KEYS = ['wakeLines', 'entryChars'] as const;
+
 async function memoryConfigHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
+    // 修改原因：显式传入 0/负数/小数/NaN/非数字等非法配置值时，旧实现会静默走读分支
+    //          （hasUpdates=false），用户以为已修改但实际没生效；或把非法值带进 updateConfig 抛错。
+    // 修改方式：对「已显式传入但取值非法」的 key 直接返回明确错误，而不是静默忽略。
+    for (const key of MEMORY_CONFIG_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(args, key)) continue;
+        const v = args[key];
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+            return {
+                success: false,
+                error: `Invalid value for memory config "${key}": expected an integer >= 1, got ${JSON.stringify(v)}`
+            };
+        }
+    }
+
     // 纯读（无更新参数）时传 createIfMissing=false：不创建缺失的工作区记忆目录，
     // 与 wake/recall/zoom 的只读无副作用策略一致；有更新参数才允许创建。
     // 仅接受 >=1 的整数：0/负数/小数不是合法配置值（MemoryManager 边界为 min=1），
     // 不应被当作“更新意图”（否则会触发目录创建或走到 updateConfig 抛错）。
-    const hasUpdates = ['wakeLines', 'entryChars', 'partChars', 'partLines'].some(k => {
+    const hasUpdates = MEMORY_CONFIG_KEYS.some(k => {
         const v = args[k];
         return typeof v === 'number' && Number.isInteger(v) && v >= 1;
     });

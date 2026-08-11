@@ -7,7 +7,7 @@
  * - 构造异常：非法正则返回可读错误
  * - 合法正则正常构造并保留 flags
  */
-import { validateRegexPattern, MAX_REGEX_SOURCE_LENGTH } from '../../tools/search/regexGuard';
+import { validateRegexPattern, hasNestedQuantifiedGroups, MAX_REGEX_SOURCE_LENGTH } from '../../tools/search/regexGuard';
 
 describe('regexGuard 长度上限', () => {
     it('超长模式被拒绝并给出可读错误', () => {
@@ -116,3 +116,61 @@ describe('regexGuard 构造与 flags', () => {
         }
     });
 });
+
+// 以下用例由 test/unit/tools/regexGuard.test.ts 归位合并（断言/用例零改动）
+describe('regexGuard', () => {
+  describe('危险模式拦截', () => {
+    const dangerousPatterns = [
+      '(a+)+',
+      '(a*)*',
+      '(a|a)+',
+      '(a{2,})*',
+      '((a+)+)+',
+      '(?:a+|(?:ab))+',
+      '(a?)+',
+      '(a+){2,}',
+      '((a+)+){2}',
+      '(a|aa)+'
+    ]
+
+    it.each(dangerousPatterns)('拒绝 %s', (pattern) => {
+      const result = validateRegexPattern(pattern)
+      expect(result.ok).toBe(false)
+    })
+  })
+
+  describe('合法模式不误伤', () => {
+    const safePatterns = [
+      '(abc)+',
+      '(foo)*',
+      '(a{2}){2}',
+      '([a+])+',
+      '\\(a+\\\)+',
+      '[a|b]+',
+      '(abc)?',
+      '(a+)?',
+      '(?:ab)+',
+      '(?=a)b',
+      '(?!a)b',
+      '(?<=a)b',
+      'a{2,3}',
+      '(foo){2}',
+      '(ab|cd)'
+    ]
+
+    it.each(safePatterns)('接受 %s', (pattern) => {
+      const result = validateRegexPattern(pattern)
+      expect(result.ok).toBe(true)
+    })
+  })
+
+  describe('扫描式检测与正则启发式一致放行的安全边界', () => {
+    it('(?:ab)+ 不被扫描式检测拦截', () => {
+      expect(hasNestedQuantifiedGroups('(?:ab)+')).toBe(false)
+    })
+
+    it('(a+)+ 被扫描式检测拦截', () => {
+      expect(hasNestedQuantifiedGroups('(a+)+')).toBe(true)
+    })
+  })
+})

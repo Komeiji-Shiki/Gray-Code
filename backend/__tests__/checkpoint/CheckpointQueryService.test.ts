@@ -8,6 +8,7 @@ import {
 import type { ConversationManager } from '../../modules/conversation/ConversationManager';
 import type { CheckpointManifestRepository } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 /**
  * CheckpointQueryService 测试
@@ -17,22 +18,6 @@ import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManage
  * - CP-QUERY-2：getCheckpoints 区分「无记录」与「读取失败」（失败返回 error 标记）
  * - CP-QUERY-1：getAllConversationsWithCheckpoints 有界并发 + 轻量元数据读取
  */
-
-function makeRecord(partial: Partial<CheckpointRecord> & { id: string }): CheckpointRecord {
-    return {
-        conversationId: 'conv-1',
-        messageIndex: 0,
-        toolName: 'test',
-        phase: 'before',
-        timestamp: 1000,
-        backupDir: 'cp_x',
-        fileCount: 1,
-        contentHash: 'abc',
-        excludedCount: 2,
-        manifestVersion: 2,
-        ...partial
-    };
-}
 
 function createHarness(): {
     service: CheckpointQueryService;
@@ -266,7 +251,7 @@ describe('CheckpointQueryService', () => {
         }
     });
 
-    test('CP-PATH-1: pruneMissingBackupCheckpointRecords 裁剪越界 backupDir 的记录', async () => {
+    test('CP-PATH-1: pruneMissingBackupCheckpointRecords 拒绝裁剪越界 backupDir 的记录（保留 + 告警，与删除路径同口径）', async () => {
         const storageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'limcode-cp-query-path-'));
         try {
             const checkpointsDir = path.join(storageRoot, 'checkpoints');
@@ -302,10 +287,14 @@ describe('CheckpointQueryService', () => {
 
             const result = await service.pruneMissingBackupCheckpointRecords('conv-1', stored);
 
-            // 越界记录被裁剪（无法安全恢复），合法记录保留
-            expect(result.prunedCount).toBe(1);
-            expect(result.checkpoints.map(c => c.id)).toEqual(['cp-ok']);
-            expect(stored.map(c => c.id)).toEqual(['cp-ok']);
+            // R3：越界记录与删除路径（CP-DEL-1）同口径——拒绝裁剪、保留 + 告警，
+            // 绝不把未校验目录名交给路径扫描；缺备份目录的合法记录才被裁剪
+            expect(result.prunedCount).toBe(0);
+            expect(result.missingBackupDirs).toEqual([]);
+            expect(result.checkpoints.map(c => c.id)).toEqual(['cp-ok', 'cp-evil']);
+            expect(stored.map(c => c.id)).toEqual(['cp-ok', 'cp-evil']);
+            // 外部目录未被触碰
+            await expect(fs.readFile(path.join(victimDir, 'secret.txt'), 'utf-8')).resolves.toBe('secret');
         } finally {
             await fs.rm(storageRoot, { recursive: true, force: true });
         }

@@ -3,6 +3,7 @@
  */
 
 import { t } from '../../../i18n';
+import { Logger } from '../../../core/logger';
 import type { ConfigManager } from '../../config/ConfigManager';
 import type { SettingsManager } from '../../settings/SettingsManager';
 import { getModels, type ModelInfo } from '../../channel/modelList';
@@ -28,6 +29,8 @@ function errorResponse(code: string, message: string): { success: false; error: 
 }
 
 export class ModelsHandler {
+    private readonly log = Logger.get('ModelsHandler');
+
     constructor(
         private configManager: ConfigManager,
         private settingsManager: SettingsManager
@@ -51,10 +54,13 @@ export class ModelsHandler {
                 models
             };
         } catch (error: unknown) {
-            return errorResponse(
-                'GET_MODELS_FAILED',
-                error instanceof Error ? error.message : t('modules.api.models.errors.getModelsFailed')
-            );
+            // C-x：内部错误信息（可能含代理 URL/密钥片段等实现细节）不透传 UI，
+            // 打日志便于排查，返回 i18n 通用文案
+            this.log.error('models.get_failed', {
+                configId: request.configId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return errorResponse('GET_MODELS_FAILED', t('modules.api.models.errors.getModelsFailed'));
         }
     }
 
@@ -87,10 +93,13 @@ export class ModelsHandler {
                 success: true
             };
         } catch (error: unknown) {
-            return errorResponse(
-                'ADD_MODELS_FAILED',
-                error instanceof Error ? error.message : t('modules.api.models.errors.addModelsFailed')
-            );
+            // C-x：内部错误信息（可能含代理 URL/密钥片段等实现细节）不透传 UI，
+            // 打日志便于排查，返回 i18n 通用文案（与 getModels 一致）
+            this.log.error('models.add_failed', {
+                configId: request.configId,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return errorResponse('ADD_MODELS_FAILED', t('modules.api.models.errors.addModelsFailed'));
         }
     }
 
@@ -104,15 +113,15 @@ export class ModelsHandler {
                 return errorResponse('CONFIG_NOT_FOUND', t('modules.api.models.errors.configNotFound'));
             }
 
-            // 原子移除（基于最新缓存）；如果移除的是当前激活模型，随后清空 model 字段
-            const removedActive = config.models?.some(m => m.id === request.modelId)
-                && config.model === request.modelId;
-
-            await this.configManager.updateModels(request.configId, (current) =>
+            // 原子移除（基于最新缓存）；如果移除的是当前激活模型，随后清空 model 字段。
+            // 判定基于 updateModels 原子合并返回的最新配置，而非请求前的旧快照——
+            // 消除 check-then-act 竞态（旧实现先用旧快照判断 removedActive，期间
+            // setActiveModel 等并发变更会导致误清/漏清 model 字段）。
+            const updatedConfig = await this.configManager.updateModels(request.configId, (current) =>
                 current.filter(m => m.id !== request.modelId)
             );
 
-            if (removedActive) {
+            if (updatedConfig.model === request.modelId) {
                 await this.configManager.updateConfig(request.configId, {
                     model: ''
                 });

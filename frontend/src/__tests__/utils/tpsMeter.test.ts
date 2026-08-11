@@ -70,6 +70,18 @@ describe('采样窗口与速率', () => {
     expect(last.ema).toBeLessThan(300)
   })
 
+  it('乱序到达：旧时间戳事件后到也会被窗口修剪，不污染实时速率', () => {
+    const samples: TpsSample[] = []
+    subscribe((s) => samples.push(s))
+
+    tpsMeter.record(100) // t=now，正常事件
+    tpsMeter.record(200, Date.now() - 5000) // 乱序：时间戳更旧的事件后到
+    vi.advanceTimersByTime(200)
+
+    // 窗口内只有 t=now 的 100 token；乱序旧事件被扫描式修剪（不能按插入序 shift）
+    expect(samples[0].ema).toBeCloseTo(100, 5)
+  })
+
   it('EMA 平滑：首次=瞬时速率，之后 ema = ema×0.7 + rate×0.3', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
@@ -177,6 +189,21 @@ describe('events 容量上限', () => {
     vi.advanceTimersByTime(200)
 
     // 只保留最近 1000 条 → 窗口 total=1000 → 速率 1000（若未裁剪应为 1100）
+    expect(samples[0].ema).toBeCloseTo(1000, 5)
+  })
+
+  it('容量上限乱序修剪：丢弃时间戳最旧的事件（而非插入序最旧）', () => {
+    // 1100 条事件，最后插入的一条时间戳最旧（乱序后到）
+    tpsMeter.record(1) // t=now
+    for (let i = 0; i < 1098; i++) tpsMeter.record(1) // 连续 t=now
+    tpsMeter.record(1, Date.now() - 100000) // 最后插入但时间戳最旧
+
+    const samples: TpsSample[] = []
+    subscribe((s) => samples.push(s))
+    vi.advanceTimersByTime(200)
+
+    // 正确实现：超限时按时间戳扫描丢最旧 → 丢掉乱序旧事件，窗口 total=1000
+    // 若按插入序 shift：会保留乱序旧事件（随后被窗口修剪）→ total=999
     expect(samples[0].ema).toBeCloseTo(1000, 5)
   })
 })

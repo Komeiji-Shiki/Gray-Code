@@ -18,7 +18,9 @@ import type { ToolDeclaration } from './types';
 export const TOOL_CALL_START = '<<<TOOL_CALL>>>';
 export const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
 
-/** JSON 解析失败告警节流：一次调用内大量失败块时只记录前几次，避免刷屏（上游 c0cf55f） */
+/** JSON 解析失败告警节流：一次调用内大量失败块时只记录前几次，避免刷屏 */
+// 模块级计数在 parseJSONToolCalls 入口清零（按调用批次重置），
+// 否则跨调用累计后节流永久失效，后续所有失败块都不再告警。
 let jsonParseWarnCount = 0;
 const MAX_JSON_PARSE_WARNS = 5;
 
@@ -218,6 +220,9 @@ export function convertFunctionResponseToJSON(name: string, response: Record<str
  */
 export function parseJSONToolCalls(text: string): JSONToolCall[] {
     const results: JSONToolCall[] = [];
+
+    // 按调用批次重置告警节流计数：模块级计数不重置会让节流永久失效
+    jsonParseWarnCount = 0;
     
     // 匹配 <<<TOOL_CALL>>> ... <<<END_TOOL_CALL>>> 边界
     // 结束标记用状态机定位：跳过位于 JSON 字符串内部的 <<<END_TOOL_CALL>>>。
@@ -230,12 +235,13 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             break;
         }
         const blockStart = startIndex + TOOL_CALL_START.length;
-        const endIndex = findEndMarkerOutsideString(text, blockStart);
-        if (endIndex === -1) {
+        const endScan = findEndMarkerOutsideString(text, blockStart);
+        if (endScan.endIndex === -1) {
             // 该块没有闭合的结束标记，继续找下一个开始标记
             searchFrom = blockStart;
             continue;
         }
+        const endIndex = endScan.endIndex;
         try {
             const jsonStr = text.substring(blockStart, endIndex).trim();
             const parsed = parseJsonLenient(jsonStr);
@@ -244,7 +250,7 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             if (parsed && typeof parsed === 'object' && typeof (parsed as any).tool === 'string') {
                 const toolName = (parsed as any).tool as string;
                 if (!toolName.trim()) {
-                    // 空 tool 名：不再静默丢弃整块，构造带解析错误的调用反馈给模型（上游 c0cf55f）
+                    // 空 tool 名：不再静默丢弃整块，构造带解析错误的调用反馈给模型
                     results.push({
                         tool: 'malformed_tool_call',
                         parameters: {
@@ -260,7 +266,7 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             }
         } catch (error) {
             // JSON 解析失败，跳过这个块（上层 promptToolParser 会生成解析失败反馈）
-            // 节流：只记录前几次，避免批量失败块 console.warn 刷屏（上游 c0cf55f）
+            // 节流：只记录前几次，避免批量失败块 console.warn 刷屏
             if (jsonParseWarnCount < MAX_JSON_PARSE_WARNS) {
                 jsonParseWarnCount++;
                 console.warn(`Failed to parse JSON tool call (${jsonParseWarnCount}/${MAX_JSON_PARSE_WARNS}; further failures suppressed):`, error);
@@ -273,16 +279,39 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
 }
 
 /**
+ * 字符串感知扫描的增量状态：供流式分块续扫时保持字符串开关状态。
+ */
+export interface JsonEndMarkerScanState {
+    /** 扫描停止时是否处于 JSON 字符串内部 */
+    inString: boolean;
+    /** 字符串内最后一个字符是否为转义符（\） */
+    escaped: boolean;
+}
+
+export interface JsonEndMarkerScanResult {
+    /** <<<END_TOOL_CALL>>> 的起始下标；未找到为 -1 */
+    endIndex: number;
+    /** 扫描结束时的字符串状态（未找到时供下一 chunk 续扫） */
+    state: JsonEndMarkerScanState;
+}
+
+/**
  * 从 startIndex 起查找第一个位于 JSON 字符串之外的 <<<END_TOOL_CALL>>> 标记。
  *
  * 用简单状态机跟踪双引号字符串的开关（含 \" 转义）：字符串值内部出现的
  * 字面结束标记会被跳过，避免把工具调用块截断在字符串中间。
  *
- * @returns 结束标记的起始下标；未找到返回 -1
+ * @param initialState 增量续扫状态：上次扫描在字符串中途停止时传入
+ *        （inString=true），避免把字符串内部的引号当作新字符串边界。
+ * @returns 结束标记的起始下标与扫描结束状态；未找到时 endIndex 为 -1
  */
-function findEndMarkerOutsideString(text: string, startIndex: number): number {
-    let inString = false;
-    let escaped = false;
+export function findEndMarkerOutsideString(
+    text: string,
+    startIndex: number,
+    initialState?: JsonEndMarkerScanState
+): JsonEndMarkerScanResult {
+    let inString = initialState?.inString ?? false;
+    let escaped = initialState?.escaped ?? false;
 
     for (let i = startIndex; i < text.length; i++) {
         const ch = text[i];
@@ -301,10 +330,10 @@ function findEndMarkerOutsideString(text: string, startIndex: number): number {
             continue;
         }
         if (text.startsWith(TOOL_CALL_END, i)) {
-            return i;
+            return { endIndex: i, state: { inString, escaped } };
         }
     }
-    return -1;
+    return { endIndex: -1, state: { inString, escaped } };
 }
 
 /**

@@ -7,6 +7,22 @@ const log = Logger.get('VSCodeNotificationAdapter')
 /** 操作按钮文案（点击后打开 GrayCode 聊天面板） */
 const OPEN_CHAT_ACTION = 'Open Chat'
 
+/** 通知 detail 最大长度：超长时保留头部+尾部（中间省略），避免被系统截断丢失关键信息 */
+const MAX_DETAIL_LENGTH = 500
+/** 截断省略标记 */
+const DETAIL_ELLIPSIS = '\n…\n'
+
+/** 超长消息按「保留头部+尾部」截断（中间省略） */
+function truncateDetail(message: string): string {
+  if (message.length <= MAX_DETAIL_LENGTH) return message
+  const headLength = Math.floor(MAX_DETAIL_LENGTH * 0.6)
+  const tailLength = MAX_DETAIL_LENGTH - headLength - DETAIL_ELLIPSIS.length
+  if (tailLength <= 0) {
+    return `${message.slice(0, MAX_DETAIL_LENGTH)}…`
+  }
+  return `${message.slice(0, headLength)}${DETAIL_ELLIPSIS}${message.slice(-tailLength)}`
+}
+
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim()
   if (typeof error === 'string' && error.trim()) return error.trim()
@@ -43,7 +59,7 @@ export class VSCodeNotificationAdapter implements WindowsToastAdapter {
       const openAction = request.onClick ? OPEN_CHAT_ACTION : undefined
       const notificationPromise = vscode.window.showInformationMessage(
         request.title,
-        { detail: request.message, modal: false },
+        { detail: truncateDetail(request.message), modal: false },
         ...(openAction ? [openAction] : [])
       )
 

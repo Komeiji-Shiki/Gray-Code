@@ -3,8 +3,6 @@
  *
  * 注册（规划第七部分 L1687–1698 分支 API 的最小集）：
  * - conversation.getBranchGraph
- * - conversation.getBranchGraphMeta
- * - conversation.createRerollCandidate
  * - conversation.switchBranchCandidate
  * - conversation.deleteBranchCandidate
  * - conversation.restoreBranchCandidate（TREE-09：恢复软删候选）
@@ -28,159 +26,18 @@ import {
     isFunctionResponseMessage,
     setGlobalBranchService,
 } from '../../backend/modules/conversation/branch';
-import {
-    BranchError,
-    ConversationBranchGraph,
-    ConversationBranchNode,
-} from '../../backend/modules/conversation/branch/types';
-import type { ContentPart } from '../../backend/modules/conversation/types';
-import { CheckpointService } from '../../backend/modules/api/chat/services/CheckpointService';
-import { DEFAULT_CHECKPOINT_CONFIG } from '../../backend/modules/settings/checkpointTypes';
+import { BranchError } from '../../backend/modules/conversation/branch';
+import { CheckpointService } from '../../backend/modules/api';
 import {
     cancelStreamAndSubAgents,
     detectDirtyFilesInWorkspace,
 } from '../utils/WorkspaceRestoreGuard';
+import { enrichGraphWorkspaceInfo } from './branchWritePolicy';
+import { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
+// TREE-13 流式互斥守卫已拆到 streamGuard.ts（第三批模块化重构），此处 re-export 保持
+// 既有 import（ChatHandlers 已改走 streamGuard；测试仍可从 BranchHandlers 导入）不破坏。
+export { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
 import type { HandlerContext, MessageHandler } from '../types';
-
-// ==================== BCP-04：写工具判据（决策 1） ====================
-
-/**
- * 写工具名集合（BCP-04 判据来源）：默认 checkpoint 配置 beforeTools ∪ afterTools。
- * 与 ToolExecutionService 的「真实工具名 ∩ 配置集合」判定同源，保证
- * 「该分支是否可能产生存档」与「是否命中写工具」口径一致（配置缺失时回退默认列表）。
- * 注意：运行时 checkpoint 配置（settingsHandler.getCheckpointConfig）可能覆盖默认值，
- * 此处以默认列表为准（handler 读配置成本高且本判据只用于提示，见研究报告 R6）。
- */
-const WRITE_TOOL_NAMES = new Set<string>([
-    ...(DEFAULT_CHECKPOINT_CONFIG.beforeTools ?? []),
-    ...(DEFAULT_CHECKPOINT_CONFIG.afterTools ?? []),
-]);
-
-/**
- * 从节点 parts 提取工具名（与 BranchService.buildCandidateSummary 的提取口径一致）。
- * 抽公共纯函数（如 collectToolNamesFromParts 入 branch/BranchGraph）留待 BCP-02 批次
- * 完成后再做，本批次在 handler 层实现（BranchService 只读，禁止写）。
- */
-function collectToolNamesFromParts(parts: ContentPart[] | undefined): string[] {
-    return (parts ?? [])
-        .map(part => part.functionCall?.name)
-        .filter((name): name is string => typeof name === 'string');
-}
-
-/** 沿 parentId 链收集 root→node 路径上全部节点的工具名（防御环 / 悬空指针） */
-function collectPathToolNames(
-    graph: ConversationBranchGraph,
-    nodeId: string
-): string[] {
-    const names: string[] = [];
-    const seen = new Set<string>();
-    let cursor: string | null = nodeId;
-    while (cursor !== null && !seen.has(cursor)) {
-        seen.add(cursor);
-        const node = graph.nodes[cursor];
-        if (!node) {
-            break;
-        }
-        names.push(...collectToolNamesFromParts(node.parts));
-        cursor = node.parentId;
-    }
-    return names;
-}
-
-/**
- * BCP-04：为 getBranchGraph / switchBranchCandidate 响应的每个节点补充
- * hasWorkspaceState（workspaceCheckpointId 存在）与 wroteToWorkspace
- * （root→该节点路径上工具名 ∩ 写工具集非空），供前端弹「是否连工作区一起恢复」确认框。
- * 先浅拷贝（图 + 节点对象，parts 共享）再富化：BranchService 读路径现在返回缓存条目的
- * 共享引用（只读契约），原地富化会把富化字段写进缓存快照，并随下一次写盘持久化进 sidecar。
- * 返回富化后的新图（调用方用它替换响应中的 graph）。
- */
-function enrichGraphWorkspaceInfo(graph: ConversationBranchGraph): ConversationBranchGraph {
-    const nodes: Record<string, ConversationBranchNode> = {};
-    for (const [id, node] of Object.entries(graph.nodes)) {
-        nodes[id] = node ? { ...node } : node;
-    }
-    const target: ConversationBranchGraph = { ...graph, nodes };
-    // 自顶向下单次 DFS 累积 root→节点路径上的工具名集合（O(n)），
-    // 替代原实现对每个节点沿 parentId 链回溯到 root 的 O(n²) 方案。
-    // 预构建 parentId → 子节点 id 邻接表，避免 DFS 过程中反复全表扫描（保持整体 O(n)）。
-    const childrenByParent = new Map<string, string[]>();
-    for (const [id, node] of Object.entries(target.nodes)) {
-        if (!node?.parentId) continue;
-        const siblings = childrenByParent.get(node.parentId);
-        if (siblings) {
-            siblings.push(id);
-        } else {
-            childrenByParent.set(node.parentId, [id]);
-        }
-    }
-
-    const visited = new Set<string>();
-
-    const visit = (nodeId: string, pathToolNames: Set<string>): void => {
-        if (visited.has(nodeId)) {
-            return;
-        }
-        visited.add(nodeId);
-        const node = target.nodes[nodeId];
-        if (!node) {
-            return;
-        }
-        const enriched = node as ConversationBranchNode & {
-            hasWorkspaceState?: boolean;
-            wroteToWorkspace?: boolean;
-        };
-        enriched.hasWorkspaceState =
-            typeof node.workspaceCheckpointId === 'string' && node.workspaceCheckpointId.length > 0;
-        const ownToolNames = collectToolNamesFromParts(node.parts);
-        for (const name of ownToolNames) {
-            pathToolNames.add(name);
-        }
-        enriched.wroteToWorkspace = Array.from(pathToolNames).some(name => WRITE_TOOL_NAMES.has(name));
-        for (const childId of childrenByParent.get(nodeId) ?? []) {
-            visit(childId, pathToolNames);
-        }
-        // 回溯：移除本节点贡献的工具名，避免兄弟分支的路径集合互相污染
-        for (const name of ownToolNames) {
-            pathToolNames.delete(name);
-        }
-    };
-
-    // 根节点：无 parentId 或 parentId 悬空（父节点不存在）。一次 DFS 覆盖整棵正常树。
-    for (const [id, node] of Object.entries(target.nodes)) {
-        if (node && (!node.parentId || !target.nodes[node.parentId])) {
-            visit(id, new Set<string>());
-        }
-    }
-
-    // 兜底：环等异常结构下 DFS 覆盖不到的节点，沿用原回溯路径收集，保证全部被充实。
-    for (const [id, node] of Object.entries(target.nodes)) {
-        if (!node || visited.has(id)) {
-            continue;
-        }
-        const enriched = node as ConversationBranchNode & {
-            hasWorkspaceState?: boolean;
-            wroteToWorkspace?: boolean;
-        };
-        enriched.hasWorkspaceState =
-            typeof node.workspaceCheckpointId === 'string' && node.workspaceCheckpointId.length > 0;
-        enriched.wroteToWorkspace = collectPathToolNames(target, node.id).some(name => WRITE_TOOL_NAMES.has(name));
-    }
-    return target;
-}
-
-/** TREE-13：流式生成期间变更类分支操作被拒时的固定文案 */
-export const BRANCH_BUSY_STREAMING_MESSAGE = '会话正在流式生成中，请等待完成后再操作';
-
-/**
- * TREE-13：判断会话是否处于流式生成中。
- *
- * HandlerContext 注入真实的 StreamAbortManager；isActive 只统计主流请求，
- * summary 请求不拦截分支操作。
- */
-export function isConversationStreaming(ctx: HandlerContext, conversationId: string): boolean {
-    return ctx.streamAbortControllers?.isActive(conversationId) ?? false;
-}
 
 /**
  * TREE-13：变更类分支操作的统一流式互斥前置检查。
@@ -229,7 +86,7 @@ export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
     const { conversationId } = data || {};
     // L-7（R4 复查）：入参显式类型校验——非 string（数字/对象等）一律按缺失处理
     if (typeof conversationId !== 'string' || !conversationId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId is required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
       return;
     }
     const result = await resolveBranchService(ctx).getBranchGraph(conversationId);
@@ -247,13 +104,16 @@ export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
 /**
  * 获取分支图元信息（BR-06）：{ exists, rootNodeId, activeTailNodeId, nodeCount,
  * candidateCount, activePathLength, exportedFrom, exportedRefs }——免整图下发。
+ *
+ * 注意：conversation.getBranchGraphMeta 注册已移除（无前端调用方，bug-hunt 第二轮）；
+ * 函数保留供单元测试直接调用（branchHandlers.test.ts）。
  */
 export const getBranchGraphMeta: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { conversationId } = data || {};
     // L-7（R4 复查）：入参显式类型校验
     if (typeof conversationId !== 'string' || !conversationId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId is required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
       return;
     }
     const result = await resolveBranchService(ctx).getBranchGraphMeta(conversationId);
@@ -266,6 +126,9 @@ export const getBranchGraphMeta: MessageHandler = async (data, requestId, ctx) =
 /**
  * 创建 reroll 候选（TREE-01 底座）：同一父节点下新增候选并切换 activeChildId，旧候选保留。
  * 入参：{ conversationId, parentNodeId, parts, modelVersion?, usageMetadata?, createdAt? }
+ *
+ * 注意：conversation.createRerollCandidate 注册已移除（无前端调用方，bug-hunt 第二轮）；
+ * 函数保留供单元测试直接调用（branchHandlers.test.ts）。
  */
 export const createRerollCandidate: MessageHandler = async (data, requestId, ctx) => {
   try {
@@ -273,7 +136,7 @@ export const createRerollCandidate: MessageHandler = async (data, requestId, ctx
     // L-7（R4 复查）：入参显式类型校验——非 string 的 ID 一律按缺失处理
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof parentNodeId !== 'string' || !parentNodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and parentNodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and parentNodeId are required');
       return;
     }
     // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
@@ -330,7 +193,12 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
     // L-7（R4 复查）：入参显式类型校验
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
+      return;
+    }
+    // mode 显式校验：仅允许 'chat-only' | 'chat-and-workspace'，非法值报错而非静默降级为 chat-only
+    if (mode !== undefined && mode !== 'chat-only' && mode !== 'chat-and-workspace') {
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'mode must be "chat-only" or "chat-and-workspace"');
       return;
     }
     // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
@@ -397,6 +265,13 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
         throw new BranchError('WORKSPACE_CHECKPOINT_BROKEN', `工作区存档无法安全恢复：${reason}`);
       }
 
+      // 4.1 二次流式互斥检查（restoreCheckpoint 之前，preview 之后）：预览与恢复之间
+      //     可能有新流启动；命中时直接返回 BRANCH_BUSY——此时工作区文件尚未恢复，
+      //     拒绝路径零副作用（原实现把检查放在恢复之后，命中时恢复副作用无法回滚）。
+      if (rejectIfStreaming(ctx, conversationId, requestId)) {
+        return;
+      }
+
       // 5. 恢复（BCP-03：恢复可安全省略——目标存档与当前工作区一致/无变化时跳过实际恢复；
       //    legacy 存档 preview.restored === -1，不命中省略条件，仍执行恢复）
       if (preview.restored !== 0 || preview.deletedIfUnconfirmed !== 0) {
@@ -443,8 +318,8 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
       }
     }
 
-    // 6. 真正切图前再次检查。前面的预检到此处之间包含图校验、dirty 检测和工作区恢复，
-    // 新流可能在这些 await 期间启动；二次校验封闭该 TOCTOU 窗口，避免迟到 chunk 写入切换后的历史。
+    // 6. 真正切图前再次检查。恢复（await 期间可能启动新流）到切图之间仍有 TOCTOU 窗口，
+    //    二次校验封闭该窗口，避免迟到 chunk 写入切换后的历史。
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
       return;
     }
@@ -513,7 +388,7 @@ export const deleteBranchCandidate: MessageHandler = async (data, requestId, ctx
     // L-7（R4 复查）：入参显式类型校验
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
       return;
     }
     // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
@@ -536,7 +411,7 @@ export const restoreBranchCandidate: MessageHandler = async (data, requestId, ct
     const { conversationId, nodeId } = data || {};
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
       return;
     }
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
@@ -559,7 +434,7 @@ export const renameBranchCandidate: MessageHandler = async (data, requestId, ctx
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()
         || typeof label !== 'string') {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId, nodeId and label are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId, nodeId and label are required');
       return;
     }
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
@@ -581,7 +456,7 @@ export const purgeBranchCandidate: MessageHandler = async (data, requestId, ctx)
     const { conversationId, nodeId } = data || {};
     if (typeof conversationId !== 'string' || !conversationId.trim()
         || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId and nodeId are required');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
       return;
     }
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
@@ -602,7 +477,7 @@ export const getDeletedBranchCount: MessageHandler = async (data, requestId, ctx
   try {
     const { conversationId } = data || {};
     if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId must be a non-empty string when provided');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
       return;
     }
     const result = await resolveBranchService(ctx).getDeletedBranchCount(
@@ -622,11 +497,11 @@ export const pruneDeletedBranches: MessageHandler = async (data, requestId, ctx)
   try {
     const { conversationId, retentionDays } = data || {};
     if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'conversationId must be a non-empty string when provided');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
       return;
     }
     if (retentionDays !== undefined && (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0)) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'retentionDays must be a non-negative integer');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
       return;
     }
     const result = await resolveBranchService(ctx).pruneDeletedBranches({
@@ -658,7 +533,7 @@ export const updateBranchRetentionConfig: MessageHandler = async (data, requestI
   try {
     const { retentionDays } = data || {};
     if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
-      ctx.sendError(requestId, 'BRANCH_OPERATION_CONFLICT', 'retentionDays must be a non-negative integer');
+      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
       return;
     }
     const result = await resolveBranchService(ctx).updateBranchRetentionConfig(retentionDays);
@@ -673,8 +548,6 @@ export const updateBranchRetentionConfig: MessageHandler = async (data, requestI
  */
 export function registerBranchHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('conversation.getBranchGraph', getBranchGraph);
-  registry.set('conversation.getBranchGraphMeta', getBranchGraphMeta);
-  registry.set('conversation.createRerollCandidate', createRerollCandidate);
   registry.set('conversation.switchBranchCandidate', switchBranchCandidate);
   registry.set('conversation.deleteBranchCandidate', deleteBranchCandidate);
   registry.set('conversation.restoreBranchCandidate', restoreBranchCandidate);

@@ -141,10 +141,13 @@ export function useBranchCleanup() {
         'conversation.updateBranchRetentionConfig',
         { retentionDays: value }
       )
-      if (result && typeof result.retentionDays === 'number') {
-        retentionDays.value = result.retentionDays
-        retentionDraft.value = String(result.retentionDays)
+      // 无返回值（或响应缺少 retentionDays）时按失败处理，不再无条件 return true
+      if (!result || typeof result.retentionDays !== 'number') {
+        retentionError.value = 'Failed to save retention config'
+        return false
       }
+      retentionDays.value = result.retentionDays
+      retentionDraft.value = String(result.retentionDays)
       return true
     } catch (error: any) {
       retentionError.value = error?.message || String(error || 'Unknown error')

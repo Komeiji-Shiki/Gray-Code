@@ -49,6 +49,10 @@ export class SubAgentsSettingsService {
         // 读-改-写整体入队串行：并发调用基于同一旧列表写回时后写会覆盖先写
         await this.core.serializeMutation(async () => {
             const config = this.getSubAgentsConfig();
+            // type 判重：同类型子代理已存在时抛错，避免重复项静默入库（更新请走 updateSubAgent）
+            if (config.agents.some(a => a.type === agent.type)) {
+                throw new Error(`SubAgent with type "${agent.type}" already exists`);
+            }
             const agents = [...config.agents, agent];
             
             await this.updateSubAgentsConfig({ agents });
@@ -65,6 +69,13 @@ export class SubAgentsSettingsService {
             
             if (index === -1) {
                 return false;
+            }
+            
+            // 修改原因：updates 可把 type 改成已存在的其它子代理 type，静默产生重复项。
+            // 修改方式：更新前按新 type 查重（排除自身），已存在则抛错（与 addSubAgent 一致）。
+            const newType = updates.type;
+            if (newType !== undefined && config.agents.some((a, i) => i !== index && a.type === newType)) {
+                throw new Error(`SubAgent with type "${newType}" already exists`);
             }
             
             const agents = [...config.agents];

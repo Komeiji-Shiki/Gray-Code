@@ -118,8 +118,9 @@ Returns references grouped by file, with line numbers and code content.`;
             if (!filePath) {
                 return { success: false, error: 'path is required' };
             }
-            if (typeof line !== 'number' || line < 1) {
-                return { success: false, error: 'line must be a positive number' };
+            // line 校验：仅接受有限正整数（NaN/小数/Infinity 会穿透旧的 line < 1 检查）
+            if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
+                return { success: false, error: 'line must be a positive integer (1-based)' };
             }
             
             const uri = resolveUri(filePath, context?.activeWorkspaceUri);

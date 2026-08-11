@@ -53,8 +53,22 @@ function onScroll() {
   })
 }
 
-onMounted(updateViewport)
+// 容器尺寸变化（maxHeight 生效/父级布局变化）后 viewportHeight 会过期：
+// 用 ResizeObserver 持续同步，避免虚拟窗口的渲染范围错误
+let resizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  updateViewport()
+  if (container.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => updateViewport())
+    resizeObserver.observe(container.value)
+  }
+})
 onBeforeUnmount(() => {
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   if (scrollFrame) cancelAnimationFrame(scrollFrame)
   scrollFrame = 0
 })

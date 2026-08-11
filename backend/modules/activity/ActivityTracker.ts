@@ -34,8 +34,8 @@ export class ActivityTracker implements vscode.Disposable {
 
     /** 最近一次用户/AI 活动事件时间（毫秒） */
     private lastActivityAt = 0;
-    /** 最近一次采样时间（毫秒），用于事件驱动的去重 */
-    private lastSampleAt = 0;
+    /** 最近一次真正写入存储的采样时间（毫秒），用于事件驱动的去重 */
+    private lastAppendedAt = 0;
     /** 是否处于暂停状态（窗口失焦 / 空闲超时 / 已停止） */
     private paused = true;
     private disposed = false;
@@ -173,14 +173,21 @@ export class ActivityTracker implements vscode.Disposable {
         });
     }
 
-    /** 记录一个采样点（去重：与上次采样间隔小于去重窗口则跳过） */
+    /**
+     * 记录一个采样点。
+     * 去重基准是「上次实际写入的采样」（lastAppendedAt）：去重跳过时不得推进基准，
+     * 否则高频事件流（间隔 < 去重窗口）会不断推迟采样，导致采样被无限期延后。
+     */
     private sample(t: number): void {
-        if (t - this.lastSampleAt < ACTIVITY_SAMPLE_DEDUP_MS) {
-            this.lastSampleAt = t;
+        if (t - this.lastAppendedAt < ACTIVITY_SAMPLE_DEDUP_MS) {
             return;
         }
-        this.lastSampleAt = t;
-        this.store.appendSample(t).catch((error) => {
+        this.store.appendSample(t).then((appended) => {
+            // 仅在真正写入时更新去重基准；store 内与相邻采样去重失败（如时间回拨）时不推进
+            if (appended) {
+                this.lastAppendedAt = t;
+            }
+        }).catch((error) => {
             console.warn('[ActivityTracker] append sample failed:', error);
         });
     }
@@ -192,8 +199,12 @@ export class ActivityTracker implements vscode.Disposable {
 
     /**
      * 停止追踪并落盘。重复调用安全。
+     *
+     * 本方法为 async 并在内部 await 落盘：扩展停机（deactivate）路径应 await 它，
+     * 确保采样在退出前写入磁盘。当前调用方（ChatViewProvider.dispose）未 await 时
+     * 行为与之前一致——落盘仍会排队执行，只是不保证在进程退出前完成。
      */
-    dispose(): void {
+    async dispose(): Promise<void> {
         if (this.disposed) return;
         this.disposed = true;
 
@@ -212,8 +223,10 @@ export class ActivityTracker implements vscode.Disposable {
         this.aiWorkCount = 0;
 
         // 停用时立即落盘，尽量不丢数据
-        this.flush().catch((error) => {
+        try {
+            await this.flush();
+        } catch (error) {
             console.warn('[ActivityTracker] flush on dispose failed:', error);
-        });
+        }
     }
 }

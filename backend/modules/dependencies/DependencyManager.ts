@@ -23,7 +23,6 @@ const statAsync = promisify(fs.stat);
 const readFile = promisify(fs.readFile);
 const writeFile = promisify(fs.writeFile);
 const rm = promisify(fs.rm);
-const copyFile = promisify(fs.copyFile);
 
 /**
  * 依赖信息
@@ -76,6 +75,9 @@ export class DependencyManager {
     
     /** 进行中的安装任务（同依赖串行化：第二个调用复用其结果；不同依赖可并行） */
     private installsInFlight: Map<string, Promise<boolean>> = new Map();
+    
+    /** 复制阶段全局串行队列：不同依赖并行安装时共享同一个 depsDir，复制阶段必须互斥执行 */
+    private copyQueue: Promise<void> = Promise.resolve();
     
     /** 支持的可选依赖配置 */
     private readonly optionalDependencies: Record<string, { version: string; descriptionKey: string; estimatedSize: number }> = {
@@ -327,22 +329,35 @@ export class DependencyManager {
             
             // 获取 node_modules 下所有目录（包括主包和依赖包）
             const entries = await readdir(sourceNodeModules, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                if (!entry.isDirectory()) continue;
-                
-                const sourcePath = path.join(sourceNodeModules, entry.name);
-                const targetPath = path.join(this.depsDir, entry.name);
-                
-                // 删除旧的目标目录（如果存在）
-                try {
-                    await rm(targetPath, { recursive: true, force: true });
-                } catch {
-                    // 目录可能不存在
+
+            // 复制阶段全局串行化：不同依赖的并行安装共享同一个 depsDir，
+            // 若同时复制会互相 rm/覆盖对方刚写入的目录（尤其重叠的传递依赖），
+            // 这里把整个复制阶段排进全局队列（本依赖复制期间其它依赖的复制必须等待）。
+            const previousCopy = this.copyQueue;
+            let releaseCopy!: () => void;
+            this.copyQueue = new Promise<void>(resolve => {
+                releaseCopy = resolve;
+            });
+            await previousCopy;
+            try {
+                for (const entry of entries) {
+                    if (!entry.isDirectory()) continue;
+                    
+                    const sourcePath = path.join(sourceNodeModules, entry.name);
+                    const targetPath = path.join(this.depsDir, entry.name);
+                    
+                    // 删除旧的目标目录（如果存在）
+                    try {
+                        await rm(targetPath, { recursive: true, force: true });
+                    } catch {
+                        // 目录可能不存在
+                    }
+                    
+                    // 递归复制整个目录
+                    await this.copyDirectory(sourcePath, targetPath);
                 }
-                
-                // 递归复制整个目录
-                await this.copyDirectory(sourcePath, targetPath);
+            } finally {
+                releaseCopy();
             }
             
             // 清除缓存并更新安装状态
@@ -450,24 +465,13 @@ export class DependencyManager {
     
     /**
      * 递归复制目录
+     *
+     * 使用 fs.promises.cp 替代手写递归：verbatimSymlinks 把符号链接（如
+     * node_modules/.bin 下的链接）原样复制为链接，避免 copyFile 跟随目录符号链接
+     * 抛 EISDIR；force 覆盖同名已存在文件。
      */
     private async copyDirectory(source: string, target: string): Promise<void> {
-        // 创建目标目录
-        await mkdir(target, { recursive: true });
-        
-        // 读取源目录内容
-        const entries = await readdir(source, { withFileTypes: true });
-        
-        for (const entry of entries) {
-            const sourcePath = path.join(source, entry.name);
-            const targetPath = path.join(target, entry.name);
-            
-            if (entry.isDirectory()) {
-                await this.copyDirectory(sourcePath, targetPath);
-            } else {
-                await copyFile(sourcePath, targetPath);
-            }
-        }
+        await fs.promises.cp(source, target, { recursive: true, verbatimSymlinks: true, force: true });
     }
 }
 

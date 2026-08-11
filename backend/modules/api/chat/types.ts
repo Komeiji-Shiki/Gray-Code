@@ -110,7 +110,10 @@ export interface ChatRequestData {
     /**
      * 消息来源。background_task 是系统生成的异步任务回执，不应被当作真实用户新回合。
      */
-    source?: 'user' | 'background_task';
+    source?: 'user' | 'background_task' | 'agent_message';
+
+    /** agent_message 内部回合领取凭据；后端落库后原子确认，防重复/丢失。 */
+    agentMessageClaimId?: string;
 
     /**
      * 本次发送的动态上下文策略覆盖。

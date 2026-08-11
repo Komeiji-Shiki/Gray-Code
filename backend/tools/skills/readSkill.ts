@@ -26,10 +26,14 @@ function formatSkillSummariesAsYaml(summaries: Array<{ name: string; description
     let result = '';
     let truncatedCount = 0;
     
-    for (const summary of summaries) {
+    // 修改原因：旧实现用 summaries.indexOf(summary) 计算剩余条数，每次越界都做一次
+    //           O(n) 线性查找，整个循环退化为 O(n²)。
+    // 修改方式：改用索引遍历，剩余条数直接由数组长度减当前下标得到。
+    for (let i = 0; i < summaries.length; i++) {
+        const summary = summaries[i];
         const line = `- name: ${summary.name}\n  description: ${summary.description}\n`;
         if (result.length + line.length > SKILL_LIST_BUDGET) {
-            truncatedCount = summaries.length - summaries.indexOf(summary);
+            truncatedCount = summaries.length - i;
             break;
         }
         result += line;

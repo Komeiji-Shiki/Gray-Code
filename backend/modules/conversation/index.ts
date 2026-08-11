@@ -10,7 +10,6 @@
 
 export { ConversationManager } from './ConversationManager';
 export { FileUsageIndexStore } from './UsageIndexStore';
-export { createConversationModule } from './register';
 export {
     IStorageAdapter,
     MemoryStorageAdapter,
@@ -48,6 +47,8 @@ export type {
 export type {
     Content,
     ContentPart,
+    UsageMetadata,
+    ThoughtSignatures,
     ConversationHistory,
     ConversationMetadata,
     ConversationData,
@@ -90,8 +91,11 @@ export type {
 
 // 辅助工具函数
 export {
+    isRealUserMessage,
+    ensureBackgroundTaskSourceForDisplay,
     buildMessage,
     buildUserMessage,
+    buildSystemMessage,
     buildModelMessage,
     appendParts,
     prependParts,
@@ -104,7 +108,9 @@ export {
     mergeConsecutiveSameRole,
     countParts,
     createTextMessage,
-    createMultiTextMessage
+    createMultiTextMessage,
+    cleanFunctionResponseForAPI,
+    cleanContentForAPI
 } from './helpers';
 
 // 函数调用工具（支持并行调用）
@@ -166,3 +172,12 @@ export type {
     DiffContent,
     DiffReference
 } from './DiffStorageManager';
+
+// 用量统计与缓存（统计页聚合 + 目录监听增量失效）
+export { aggregateUsageStats } from './usageStats';
+export type { UsageStatsResult } from './usageStats';
+export { UsageStatsCache, startUsageDirectoryWatcher } from './usageCache';
+
+// 待审批门（pending approval gate）
+export { getPendingApprovalGate, getPendingApprovalGateMismatchReason } from './pendingApprovalGate';
+export type { PendingApprovalGateExpectation } from './pendingApprovalGate';

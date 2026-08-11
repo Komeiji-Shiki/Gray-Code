@@ -76,6 +76,10 @@ export class AgentStopNotificationController {
   private runningWatch?: WatchStopHandle
   private suppressNextStop = false
   private lastSentDedupeKey = ''
+  /** dispose 后置位：进行中的 handleAgentStopped 在发送前检查，避免已销毁控制器继续发通知 */
+  private disposed = false
+  /** 用户最近一次取消请求时刻：nextTick 窗口内的取消点击（agent 已停止时）也据此抑制通知 */
+  private lastUserCancelAt = 0
 
   constructor(options: AgentStopNotificationControllerOptions) {
     this.chatStore = options.chatStore
@@ -99,9 +103,10 @@ export class AgentStopNotificationController {
 
         if (isRunning) {
           this.lastSentDedupeKey = ''
-          // 新一轮开始：清除上一轮用户取消遗留的 suppressNextStop，
+          // 新一轮开始：清除上一轮用户取消遗留的 suppressNextStop 与取消时刻戳，
           // 避免“取消后立即发送新消息”时新一轮正常结束的 stop 被误判为用户取消而吞掉通知
           this.suppressNextStop = false
+          this.lastUserCancelAt = 0
           dbg( 'agent entered running state, reset last dedupe key')
           return
         }
@@ -119,6 +124,10 @@ export class AgentStopNotificationController {
   }
 
   markUserCancelled(): void {
+    // 无论 agent 是否仍在运行都记录取消时刻：handleAgentStopped 的 nextTick 窗口内
+    // 用户点击取消时 isAgentRunning() 可能已为 false（suppressNextStop 无法置位），
+    // 此时依据“取消时刻晚于本次 stop 周期起点”同样抑制通知（见 handleAgentStopped）
+    this.lastUserCancelAt = Date.now()
     if (!this.isAgentRunning()) {
       dbg( 'markUserCancelled ignored because agent is not running')
       return
@@ -134,10 +143,12 @@ export class AgentStopNotificationController {
   }
 
   dispose(): void {
+    this.disposed = true
     this.runningWatch?.()
     this.runningWatch = undefined
     this.suppressNextStop = false
     this.lastSentDedupeKey = ''
+    this.lastUserCancelAt = 0
     dbg( 'controller disposed')
   }
 
@@ -317,11 +328,16 @@ export class AgentStopNotificationController {
   }
 
   private async handleAgentStopped(): Promise<void> {
+    if (this.disposed) return
+    // 本次 stop 周期起点：nextTick 窗口内（用户取消点击晚于该时刻）用于取消竞态校验
+    const stopCycleStartedAt = Date.now()
     await nextTick()
     await Promise.resolve()
 
+    // dispose 后不再继续处理（不等待进行中任务）
+    if (this.disposed) return
+
     dbg( 'handling agent stopped event after state settled', {
-      isStreaming: this.chatStore.isStreaming,
       isWaitingForResponse: this.chatStore.isWaitingForResponse,
       hasError: !!this.chatStore.error,
       isRetrying: !!this.chatStore.retryStatus?.isRetrying,
@@ -334,7 +350,9 @@ export class AgentStopNotificationController {
       return
     }
 
-    if (this.suppressNextStop) {
+    // nextTick 窗口竞态再校验：窗口内用户点击取消时 markUserCancelled 可能因 agent 已停止
+    // 而未置位 suppressNextStop（仅记录了 lastUserCancelAt），此处按取消时刻一并抑制
+    if (this.suppressNextStop || this.lastUserCancelAt > stopCycleStartedAt) {
       this.suppressNextStop = false
       dbg( 'skip notification because stop was marked as user-cancelled')
       return
@@ -356,6 +374,8 @@ export class AgentStopNotificationController {
     this.lastSentDedupeKey = payload.dedupeKey
 
     try {
+      // 发送前再校验一次：dispose 后不再发起新的通知请求
+      if (this.disposed) return
       dbg( 'sending notification payload to extension', payload)
       const result = await this.sendToExtension('notifications.agentStop', payload)
       dbg( 'extension responded to notification payload', result)

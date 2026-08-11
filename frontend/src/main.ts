@@ -17,7 +17,8 @@ app.use(pinia);
 // 等样式 Promise 完成后才让 Vue 替换启动壳，避免出现无样式组件；浏览器预览直接挂载。
 async function mountApplication(): Promise<void> {
   try {
-    await (window.__GRAYCODE_FRONTEND_STYLES_READY ?? Promise.resolve())
+    // 样式 Promise 失败不阻塞挂载：catch 吞掉拒绝，避免 unhandled rejection（finally 保证 app.mount 执行）
+    await (window.__GRAYCODE_FRONTEND_STYLES_READY ?? Promise.resolve()).catch(() => {})
   } finally {
     app.mount('#app')
   }

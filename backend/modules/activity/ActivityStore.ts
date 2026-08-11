@@ -81,11 +81,13 @@ export class ActivityStore {
         try {
             const raw = await fs.readFile(this.dayFilePath(date), 'utf-8');
             const parsed = JSON.parse(raw) as Partial<DayActivityFile>;
-            if (parsed && Array.isArray(parsed.samples)) {
-                samples = parsed.samples
-                    .filter((t): t is number => typeof t === 'number' && Number.isFinite(t))
-                    .sort((a, b) => a - b);
+            if (!parsed || !Array.isArray(parsed.samples)) {
+                // 合法 JSON 但结构不符（samples 缺失/非数组）：同样视为坏文件，走下方删除重建路径
+                throw new Error('day activity file has invalid structure');
             }
+            samples = parsed.samples
+                .filter((t): t is number => typeof t === 'number' && Number.isFinite(t))
+                .sort((a, b) => a - b);
         } catch (error: unknown) {
             if ((error as { code?: string } | null)?.code !== 'ENOENT') {
                 // 文件损坏：删除坏文件，按无数据处理（下次写入时重建）
@@ -214,6 +216,12 @@ export class ActivityStore {
                     ? [...await this.loadDayUnlocked(date)]
                     : [];
                 result.push({ date, samples });
+            }
+            // 与 loadAllDays 一致：非今天的天用后即弃，避免 loadRecentDays(365) 把一整年驻留内存缓存
+            for (const date of dates) {
+                if (date !== today) {
+                    this.cache.delete(date);
+                }
             }
             return result;
         });

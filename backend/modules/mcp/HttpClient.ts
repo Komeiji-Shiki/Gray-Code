@@ -145,10 +145,15 @@ export class HttpMcpClient extends EventEmitter {
         this.serverInfo = initResult.serverInfo;
         this.protocolVersion = initResult.protocolVersion;
         this.capabilities = initResult.capabilities;
-        this.connected = true;
         
         // 发送 initialized 通知
         await this.sendNotification('notifications/initialized', {});
+        
+        // 初始化请求与 initialized 通知都成功后才标记已连接：
+        // 若此前任一步失败，connect() 抛错时 connected 仍为 false，
+        // 避免「连接失败却已标记 connected」的状态不一致
+        // （tools/list 等后续请求依赖 connected 放行，故须在列表拉取之前置位）
+        this.connected = true;
         
         // 获取工具列表（如果支持）
         if (this.capabilities?.tools) {
@@ -467,7 +472,8 @@ export class HttpMcpClient extends EventEmitter {
 
         this.activeReaders.add(reader);
         const decoder = new TextDecoder();
-        let buffer = '';
+        // 分块累积 SSE 文本：数组 push + 统一 join，避免逐 chunk 字符串拼接退化为 O(n²)
+        const bufferParts: string[] = [];
         let result: T | undefined;
         let matched = false;
 
@@ -513,18 +519,21 @@ export class HttpMcpClient extends EventEmitter {
 
                 resetIdleTimer();
 
-                buffer += decoder.decode(value, { stream: true });
+                bufferParts.push(decoder.decode(value, { stream: true }));
 
                 // 缓冲区大小上限，防止服务器发送无界数据导致内存 DoS
                 const MAX_BUFFER_SIZE = 16 * 1024 * 1024;
-                if (buffer.length > MAX_BUFFER_SIZE) {
+                if (bufferParts.length > MAX_BUFFER_SIZE) {
                     await reader.cancel();
                     throw new Error(`MCP HTTP server output exceeded buffer limit (${MAX_BUFFER_SIZE} bytes), connection closed`);
                 }
 
                 // 按 SSE 规范解析：data: 行累积，空行触发事件
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+                const chunkText = bufferParts.join('');
+                bufferParts.length = 0;
+                const lines = chunkText.split('\n');
+                // 末尾不完整的行保留到下一 chunk
+                bufferParts.push(lines.pop() || '');
 
                 let eventData: string[] | null = null;
                 const dispatchEvent = () => {
@@ -596,9 +605,14 @@ export class HttpMcpClient extends EventEmitter {
         }
 
         if (!matched) {
-            // 外部中止与超时/断开区分文案
+            // 外部中止、断开与超时区分文案
             if (isExternalAbort?.()) {
                 throw new Error('MCP tool call aborted');
+            }
+            // 流中断可能由 disconnect() 触发（reader.cancel 后 read 抛错/返回 done）：
+            // 先判断断开再报超时，避免误报 requestTimeout
+            if (this.disconnected) {
+                throw new Error('MCP client disconnected');
             }
             throw new Error(t('modules.mcp.errors.requestTimeout', { timeout: this.timeout }));
         }

@@ -59,6 +59,68 @@ export function getExtensionFromMime(mimeType: string): string {
   return mimeToExt[mimeType] || ''
 }
 
+/** 图片缩略图最长边上限（px）：超过时不再内嵌全量 base64 缩略图，UI 回退按 data 懒加载 */
+const MAX_THUMBNAIL_EDGE = 512
+
+/** 无法解析尺寸时按 base64 长度兜底（约 150KB 解码后），避免超大 payload 被复制进 thumbnail */
+const MAX_THUMBNAIL_BASE64_FALLBACK = 200 * 1024
+
+/**
+ * 从 base64 图像数据同步解析像素尺寸（PNG / JPEG / GIF；其它格式返回 null）。
+ * 用于限制内嵌缩略图体积：大图不再把全量 base64 复制一份进 thumbnail（内存 ×2）。
+ */
+function getImageSizeFromBase64(mimeType: string, base64: string): { width: number; height: number } | null {
+  try {
+    const raw = atob(base64)
+    const mime = (mimeType || '').toLowerCase()
+
+    // PNG：8 字节签名 + IHDR 块（长度 4 + 'IHDR' 4），随后 4 字节宽、4 字节高（大端）
+    if (mime === 'image/png' && raw.length >= 24) {
+      const view = new DataView(new ArrayBuffer(8))
+      for (let i = 0; i < 8; i++) view.setUint8(i, raw.charCodeAt(16 + i))
+      return { width: view.getUint32(0), height: view.getUint32(4) }
+    }
+
+    // JPEG：扫描段标记，SOFn（C0-CF 除 DHT C4 / JPG C8 / DAC CC）段内为 精度(1)+高(2)+宽(2)（大端）
+    if ((mime === 'image/jpeg' || mime === 'image/jpg') && raw.length >= 12) {
+      let offset = 2 // 跳过 SOI
+      while (offset + 9 <= raw.length) {
+        if (raw.charCodeAt(offset) !== 0xff) {
+          offset += 1
+          continue
+        }
+        const marker = raw.charCodeAt(offset + 1)
+        if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
+          offset += 2
+          continue
+        }
+        if (offset + 4 > raw.length) return null
+        const segLen = (raw.charCodeAt(offset + 2) << 8) + raw.charCodeAt(offset + 3)
+        if (segLen < 2) return null
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          if (offset + 9 > raw.length) return null
+          const height = (raw.charCodeAt(offset + 5) << 8) + raw.charCodeAt(offset + 6)
+          const width = (raw.charCodeAt(offset + 7) << 8) + raw.charCodeAt(offset + 8)
+          return { width, height }
+        }
+        offset += 2 + segLen
+      }
+      return null
+    }
+
+    // GIF：逻辑屏幕描述符，6-7 字节宽、8-9 字节高（小端 16 位）
+    if (mime === 'image/gif' && raw.length >= 10) {
+      const width = raw.charCodeAt(6) + (raw.charCodeAt(7) << 8)
+      const height = raw.charCodeAt(8) + (raw.charCodeAt(9) << 8)
+      return { width, height }
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
 /**
  * 检查 Content 是否只包含 functionResponse（工具执行结果）
  */
@@ -303,10 +365,19 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
       const base64Length = part.inlineData.data.length
       const size = Math.floor(base64Length * 0.75)
       
-      // 生成缩略图（对于图片，直接使用 data URL）
+      // 生成缩略图（对于图片，直接使用 data URL）。
+      // 限制：大图不内嵌全量 base64 缩略图（内存 ×2）——最长边超过 512px 时跳过 thumbnail，
+      // UI（AttachmentItem / MessageAttachments）回退按 data 懒加载渲染；
+      // 无法解析尺寸的格式（webp 等）按 base64 长度兜底。
       let thumbnail: string | undefined
       if (attType === 'image') {
-        thumbnail = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+        const imgSize = getImageSizeFromBase64(part.inlineData.mimeType, part.inlineData.data)
+        const withinLimit = imgSize
+          ? imgSize.width > 0 && imgSize.height > 0 && Math.max(imgSize.width, imgSize.height) <= MAX_THUMBNAIL_EDGE
+          : base64Length <= MAX_THUMBNAIL_BASE64_FALLBACK
+        if (withinLimit) {
+          thumbnail = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+        }
       }
       
       attachments.push({

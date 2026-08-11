@@ -1,4 +1,6 @@
 import { extractPreviewText, isReviewDocPath } from './taskCards'
+// WP14：统一 type guard —— asRecord/asString/asNumber/asBoolean 与本文件本地副本语义一致，直接复用
+import { asRecord, asString, asNumber, asBoolean } from './typeGuards'
 
 export type ReviewToolName =
   | 'create_review'
@@ -118,36 +120,11 @@ const REVIEW_TOOL_NAMES = new Set<ReviewToolName>([
   'compare_review_documents'
 ])
 
-function asRecord(value: unknown): LooseRecord | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as LooseRecord
-    : undefined
-}
-
 function asRecordArray(value: unknown): LooseRecord[] | undefined {
   if (!Array.isArray(value)) return undefined
   return value
     .map((item) => asRecord(item))
     .filter((item): item is LooseRecord => !!item)
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  return normalized || undefined
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
-  return undefined
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
 }
 
 function asStringArray(value: unknown): string[] {

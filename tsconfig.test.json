@@ -2,7 +2,13 @@
     "extends": "./tsconfig.json",
     "compilerOptions": {
         "types": ["node", "jest"],
-        "lib": ["ES2020", "DOM"]
+        "lib": ["ES2020", "DOM"],
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["frontend/src/*"]
+        }
     },
     "include": [
         "backend/**/*.ts",
@@ -10,5 +16,12 @@
         "frontend/src/**/*.ts",
         "test/**/*.ts",
         "extension.ts"
+    ],
+    // 显式覆盖父配置的 exclude：父级 exclude 含 "frontend"，会与上面 include 的 frontend/src 冲突导致其不被编译
+    // backend/__tests__ 必须参与类型检查（bug-hunt round2 修复：此前被 exclude 导致 220 个测试文件
+    // 完全无类型检查，接口/导出漂移被 as any 掩盖；移除后 typecheck:test 与 ts-jest 均恢复诊断）
+    "exclude": [
+        "node_modules",
+        "dist"
     ]
 }

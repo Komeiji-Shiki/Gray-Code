@@ -31,9 +31,6 @@ export type TryAcquireResult =
     | { acquired: true }
     | { acquired: false; conflicts: LockConflict[] };
 
-/** acquire 轮询等待锁的最大时限（60 秒）。 */
-export const FILE_LOCK_ACQUIRE_TIMEOUT_MS = 60 * 1000;
-
 interface LockEntry {
     holder: LockHolder;
     /** 原始（未归一化）路径，用于提示展示 */
@@ -43,12 +40,23 @@ interface LockEntry {
 }
 
 /**
+ * 持有者身份键：kind + id 组合。
+ *
+ * 修改原因：不同 kind（main/subagent/checkpoint）可能使用相同 id（如 conversationId 与 runId 撞车），
+ * 仅比较 id 会把不同 kind 的持有者误判为同一人，导致互斥失效或重入误判。
+ * 修改方式：所有身份比较与 acquiredKeysByHolder 的键统一使用 `${kind}:${id}`。
+ */
+function holderIdentity(holder: LockHolder): string {
+    return `${holder.kind}:${holder.id}`;
+}
+
+/**
  * 归一化路径为锁 key。
  *
  * - 反斜杠统一为斜杠；
  * - 去除开头 './' 与末尾 '/'；
  * - 折叠 `..` 段（`a/../b` 与 `b` 指向同一文件，必须命中同一把锁）；
- * - 小写化（Windows 文件系统不区分大小写；其他平台上保守地按不区分处理）；
+ * - Windows 平台小写化（文件系统不区分大小写）；其他平台保留原始大小写；
  * - '.'、'' 归一为 ''，表示整个 workspace 根（与所有路径冲突）。
  */
 export function normalizeLockPath(rawPath: string): string {
@@ -63,7 +71,8 @@ export function normalizeLockPath(rawPath: string): string {
     // 折叠重复分隔符与 .. 段（posix normalize 只做纯字符串折叠，
     // 不依赖进程 cwd，也不会触碰盘符前缀）
     p = path.posix.normalize(p);
-    return p.toLowerCase();
+    // 仅 Windows 文件系统不区分大小写时才小写；其他平台保留大小写，避免破坏大小写敏感文件系统的互斥语义
+    return process.platform === 'win32' ? p.toLowerCase() : p;
 }
 
 /**
@@ -195,7 +204,7 @@ export function getWritePathsForCall(toolName: string, args: Record<string, unkn
 export class FileWriteLockManager {
     private readonly locks = new Map<string, LockEntry>();
 
-    /** holderId -> (原始路径 -> acquire 时解析出的锁 key)；release 复用，避免工作区变化导致 key 漂移 */
+    /** holder 身份键（`${kind}:${id}`）-> (原始路径 -> acquire 时解析出的锁 key)；release 复用，避免工作区变化导致 key 漂移 */
     private readonly acquiredKeysByHolder = new Map<string, Map<string, string>>();
 
     /** 锁集合变化代际：release / releaseAllByHolder 真正释放锁时自增，用于唤醒等待 acquire 的调用方 */
@@ -223,11 +232,18 @@ export class FileWriteLockManager {
     tryAcquire(paths: string[], holder: LockHolder): TryAcquireResult {
         // 锁 key 使用绝对规范路径：同一物理文件的不同写法（.. / 相对 / 绝对 / file://）归一为同一 key
         const keys = paths.map(p => ({ key: normalizeLockPath(resolveLockPath(p)), display: p }));
+
+        // 无路径可锁（空/空白路径已被过滤）：直接成功返回，不记录 acquired keys
+        if (keys.length === 0) {
+            return { acquired: true };
+        }
+
         const conflicts: LockConflict[] = [];
 
         for (const { key } of keys) {
             for (const [existingKey, entry] of this.locks) {
-                if (entry.holder.id === holder.id) {
+                // 身份按 kind + id 组合比较：不同 kind 同 id 不算同一持有者
+                if (holderIdentity(entry.holder) === holderIdentity(holder)) {
                     continue;
                 }
                 if (keysConflict(key, existingKey)) {
@@ -240,7 +256,7 @@ export class FileWriteLockManager {
             // 去重（同一持有者/路径可能被多个请求路径命中）
             const seen = new Set<string>();
             const unique = conflicts.filter(c => {
-                const dedupeKey = `${c.holder.id}:${c.path}`;
+                const dedupeKey = `${holderIdentity(c.holder)}:${c.path}`;
                 if (seen.has(dedupeKey)) return false;
                 seen.add(dedupeKey);
                 return true;
@@ -250,18 +266,18 @@ export class FileWriteLockManager {
 
         for (const { key, display } of keys) {
             const existing = this.locks.get(key);
-            if (existing && existing.holder.id === holder.id) {
+            if (existing && holderIdentity(existing.holder) === holderIdentity(holder)) {
                 existing.count += 1;
             } else {
                 this.locks.set(key, { holder, displayPath: display, count: 1 });
             }
         }
-        // 记录本次 acquire 实际解析出的锁 key，供 release 复用
-        this.recordAcquiredKeys(holder.id, keys);
+        // 记录本次 acquire 实际解析出的锁 key，供 release 复用（键为 holder 身份 `${kind}:${id}`）
+        this.recordAcquiredKeys(holderIdentity(holder), keys);
         return { acquired: true };
     }
 
-    /** 记录持有者各原始路径对应的锁 key（release 时直接复用） */
+    /** 记录持有者各原始路径对应的锁 key（release 时直接复用）；holderId 为 `${kind}:${id}` 身份键 */
     private recordAcquiredKeys(holderId: string, keys: Array<{ key: string; display: string }>): void {
         let map = this.acquiredKeysByHolder.get(holderId);
         if (!map) {
@@ -273,27 +289,33 @@ export class FileWriteLockManager {
         }
     }
 
-    /** 持有者是否仍持有至少一把锁 */
+    /** 持有者是否仍持有至少一把锁；holderId 为 `${kind}:${id}` 身份键 */
     private holderHasLocks(holderId: string): boolean {
         for (const entry of this.locks.values()) {
-            if (entry.holder.id === holderId) {
+            if (holderIdentity(entry.holder) === holderId) {
                 return true;
             }
         }
         return false;
     }
 
-    async acquire(paths: string[], holder: LockHolder, abortSignal?: AbortSignal): Promise<void> {
-        // 修改原因：轮询等待锁的 while 循环无限进行，持有者异常时等待者永久挂起。
-        // 修改方式：加整体等待上限 60 秒，超时抛明确错误；abort 监听逻辑保持原样。
-        // 修改目的：锁等待有界，失败以明确错误收敛而不是无限轮询。
-        const deadline = Date.now() + FILE_LOCK_ACQUIRE_TIMEOUT_MS;
+    /**
+     * 等待获取全部路径锁（可被 abortSignal 取消）。
+     *
+     * @param maxWaitMs 整体等待上限，默认 30000ms；超时抛带锁路径信息的可辨识错误，
+     *                  传 Infinity 可禁用超时（仅靠 abortSignal 中断）。
+     */
+    async acquire(paths: string[], holder: LockHolder, abortSignal?: AbortSignal, maxWaitMs = 30000): Promise<void> {
+        const startTime = Date.now();
         while (true) {
             if (abortSignal?.aborted) {
                 throw new Error('File write lock acquisition was cancelled');
             }
-            if (Date.now() >= deadline) {
-                throw new Error('File lock acquisition timed out after 60s');
+            if (Date.now() - startTime >= maxWaitMs) {
+                throw new Error(
+                    `File write lock acquisition timed out after ${maxWaitMs}ms; ` +
+                    `waiting for paths: ${paths.join(', ')}`
+                );
             }
 
             const result = this.tryAcquire(paths, holder);
@@ -320,7 +342,7 @@ export class FileWriteLockManager {
                     this.removeGenerationWaiter(wake);
                     abortSignal?.removeEventListener('abort', onAbort);
                     resolve();
-                }, Math.min(50, Math.max(1, deadline - Date.now())));
+                }, 50);
                 const onAbort = () => {
                     if (settled) return;
                     settled = true;
@@ -339,22 +361,25 @@ export class FileWriteLockManager {
         let released = false;
         // 复用 tryAcquire 时记录的锁 key，release 不再重新 resolve：
         // 避免 acquire 之后工作区变化导致同一路径解析出不同 key 而无法释放。
-        const holderKeys = this.acquiredKeysByHolder.get(holder.id);
+        const holderKey = holderIdentity(holder);
+        const holderKeys = this.acquiredKeysByHolder.get(holderKey);
         for (const p of paths) {
             const key = holderKeys?.get(p) ?? normalizeLockPath(resolveLockPath(p));
             const entry = this.locks.get(key);
-            if (!entry || entry.holder.id !== holder.id) {
+            if (!entry || holderIdentity(entry.holder) !== holderKey) {
                 continue;
             }
             entry.count -= 1;
             if (entry.count <= 0) {
                 this.locks.delete(key);
+                // 锁真正释放时同步删除其 display->key 记录，避免 acquiredKeysByHolder 条目只增不减
+                holderKeys?.delete(p);
                 released = true;
             }
         }
         // 持有者已无任何锁时清掉其 path->key 记录，避免无界增长
-        if (!this.holderHasLocks(holder.id)) {
-            this.acquiredKeysByHolder.delete(holder.id);
+        if (!this.holderHasLocks(holderKey)) {
+            this.acquiredKeysByHolder.delete(holderKey);
         }
         // 只有锁被真正释放（从集合删除）才唤醒等待者：重入计数减少不产生新的获取机会
         if (released) {
@@ -364,17 +389,22 @@ export class FileWriteLockManager {
 
     /**
      * 释放指定持有者的全部锁（run 结束/会话中止时的兜底清理）。
+     *
+     * 修改原因：旧实现只按 holder.id 匹配——不同 kind（main/subagent/checkpoint）可能
+     * 使用相同 id（如 conversationId 与 runId 撞车），会把其他 kind 的锁误释放（R2 M1）。
+     * 修改方式：与 tryAcquire/release 一致，按完整身份 `${kind}:${id}` 匹配。
      */
-    releaseAllByHolder(holderId: string): void {
+    releaseAllByHolder(holder: LockHolder): void {
+        const holderKey = holderIdentity(holder);
         let released = false;
         for (const [key, entry] of this.locks) {
-            if (entry.holder.id === holderId) {
+            if (holderIdentity(entry.holder) === holderKey) {
                 this.locks.delete(key);
                 released = true;
             }
         }
-        // 持有者锁已全部清理，一并删除其 path->key 记录
-        this.acquiredKeysByHolder.delete(holderId);
+        // 持有者锁已全部清理，一并删除其 path->key 记录（键为完整身份 `${kind}:${id}`）
+        this.acquiredKeysByHolder.delete(holderKey);
         if (released) {
             this.bumpLockGeneration();
         }

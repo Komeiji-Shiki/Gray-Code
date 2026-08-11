@@ -9,27 +9,12 @@ import { t } from '../../i18n';
 import { createHash } from 'crypto';
 import type { ChannelConfig } from '../config/types';
 import { applyCustomHeaders } from '../config/configs/base';
+import type { ModelInfo } from '../config';
 import { createProxyFetch } from './proxyFetch';
 
-/**
- * 模型信息
- */
-export interface ModelInfo {
-  /** 模型 ID */
-  id: string;
-  
-  /** 模型名称 */
-  name?: string;
-  
-  /** 模型描述 */
-  description?: string;
-  
-  /** 上下文窗口大小 */
-  contextWindow?: number;
-  
-  /** 最大输出token */
-  maxOutputTokens?: number;
-}
+// ModelInfo 类型下沉至 config 域（config/configs/base.ts，经 config 门面 re-export）。
+// 此处保留 re-export 壳：channel/index.ts、api/models/* 等既有导入方零改动。
+export type { ModelInfo };
 
 // ==================== 模型列表进程内 TTL 缓存 ====================
 // 模型列表每次请求都重新发起网络请求（含多页分页遍历）；同一渠道配置下的列表在
@@ -129,6 +114,56 @@ function normalizeAnthropicModelsBaseUrl(rawUrl?: string): string {
 }
 
 /**
+ * 通用分页遍历：逐页拉取直到无更多数据 / 游标重复 / 到达页数上限。
+ *
+ * Gemini / OpenAI / Anthropic 三个平台的 /models 分页逻辑本质相同
+ * （拉页 → 取游标 → 防重复/防无限循环），抽成公共函数避免三份近似重复的实现。
+ *
+ * @param fetchPage 拉取一页：入参为当前游标（首轮 undefined）与页号（1-based）
+ * @param resolveNextCursor 从本页结果与原始响应中解析下一页游标；返回 undefined 表示没有更多页
+ */
+async function fetchAllPages<T>(
+    fetchPage: (cursor: string | undefined, pageNumber: number) => Promise<{ models: T[]; data: any }>,
+    resolveNextCursor: (pageModels: T[], rawData: any) => string | undefined,
+    options: { maxPages?: number; name: string } = { name: '' }
+): Promise<T[]> {
+    const { maxPages = 500, name } = options;
+    const all: T[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    let pageCount = 0;
+    let hasMore = true;
+
+    do {
+        pageCount += 1;
+        const { models, data } = await fetchPage(cursor, pageCount);
+        all.push(...models);
+
+        if (models.length === 0) {
+            hasMore = false;
+            break;
+        }
+
+        const nextCursor = resolveNextCursor(models, data);
+        if (!nextCursor) {
+            hasMore = false;
+        } else if (nextCursor === cursor || seenCursors.has(nextCursor)) {
+            console.warn(`[modelList] ${name} models pagination stopped: repeated cursor`, nextCursor);
+            hasMore = false;
+        } else if (pageCount >= maxPages) {
+            console.warn(`[modelList] ${name} models pagination stopped: reached max pages`, maxPages);
+            hasMore = false;
+        } else {
+            seenCursors.add(nextCursor);
+            cursor = nextCursor;
+            hasMore = true;
+        }
+    } while (hasMore);
+
+    return all;
+}
+
+/**
  * 获取 Gemini 模型列表
  * Gemini API 支持 pageSize 和 pageToken 分页参数
  */
@@ -148,61 +183,39 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
 
   try {
     const proxyFetch = createProxyFetch(proxyUrl);
-    const allModels: any[] = [];
-    const seenTokens = new Set<string>();
-    const MAX_PAGES = 500;
-    let pageToken: string | undefined;
 
-    // 循环拉取全部分页（与 OpenAI/Claude 分支同款守卫：页数上限 + cursor 去重，
-    // 防止上游/中转站异常重复返回 nextPageToken 时无限拉取）
-    let pageCount = 0;
-    do {
-      const params = new URLSearchParams({ pageSize: '1000' });
-      if (pageToken) {
-        params.set('pageToken', pageToken);
-      }
+    // 循环获取所有分页数据
+    const allModels = await fetchAllPages<any>(
+      async (pageToken, _pageCount) => {
+        const params = new URLSearchParams({ pageSize: '1000' });
+        if (pageToken) {
+          params.set('pageToken', pageToken);
+        }
 
-      const headers: Record<string, string> = {};
-      // 使用 useAuthorizationHeader 时，使用 Authorization Bearer 方式
-      if ((config as any).useAuthorizationHeader) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-      } else {
-        // 始终通过 header 传递密钥（x-goog-api-key），不允许 apiKey 在 URL query 中出现，
-        // 避免在代理/网关/服务端日志中泄露
-        headers['x-goog-api-key'] = apiKey;
-      }
-      // 应用自定义请求头
-      applyCustomHeadersFromConfig(headers, config);
+        const headers: Record<string, string> = {};
+        // 使用 useAuthorizationHeader 时，使用 Authorization Bearer 方式
+        if ((config as any).useAuthorizationHeader) {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        } else {
+          // 始终通过 header 传递密钥（x-goog-api-key），不允许 apiKey 在 URL query 中出现，
+          // 避免在代理/网关/服务端日志中泄露
+          headers['x-goog-api-key'] = apiKey;
+        }
+        // 应用自定义请求头
+        applyCustomHeadersFromConfig(headers, config);
 
-      const response = await proxyFetch(`${url}/models?${params.toString()}`, { headers });
+        const response = await proxyFetch(`${url}/models?${params.toString()}`, { headers });
 
-      if (!response.ok) {
-        throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
-      }
+        if (!response.ok) {
+          throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+        }
 
-      const data = await response.json() as any;
-      const models = data.models || [];
-      allModels.push(...models);
-      if (allModels.length === 0) {
-        break; // 空页：继续翻页没有意义
-      }
-
-      pageCount++;
-      if (pageCount >= MAX_PAGES) {
-        console.warn('[modelList] Gemini models pagination stopped: reached max pages', MAX_PAGES);
-        break;
-      }
-      const nextToken = data.nextPageToken;
-      if (!nextToken) {
-        break;
-      }
-      if (seenTokens.has(nextToken)) {
-        console.warn('[modelList] Gemini models pagination stopped: repeated page token', nextToken);
-        break;
-      }
-      seenTokens.add(nextToken);
-      pageToken = nextToken;
-    } while (pageToken);
+        const data = await response.json() as any;
+        return { models: data.models || [], data };
+      },
+      (_models, data) => data.nextPageToken as string | undefined,
+      { name: 'Gemini' }
+    );
 
     // 过滤出支持 generateContent 的模型（兼容第三方中转站未返回 supportedGenerationMethods 的情况）
     const models = allModels
@@ -254,65 +267,37 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
 
   try {
     const proxyFetch = createProxyFetch(proxyUrl);
-    const allModels: any[] = [];
-    let hasMore = true;
-    let afterCursor: string | undefined;
-    const seenCursors = new Set<string>();
-    const MAX_PAGES = 500;
-    let pageCount = 0;
 
     // 循环获取所有分页数据
     // OpenAI 官方 API 不分页，但第三方中转站可能支持 limit/after 分页
-    do {
-      const params = new URLSearchParams({ limit: '10000' });
-      if (afterCursor) {
-        params.set('after', afterCursor);
-      }
-
-      pageCount += 1;
-
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`
-      };
-      // 应用自定义标头
-      applyCustomHeadersFromConfig(headers, config);
-
-      const response = await proxyFetch(`${url}/models?${params.toString()}`, {
-        headers
-      });
-
-      if (!response.ok) {
-        throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
-      }
-
-      const data = await response.json() as any;
-      const models = data.data || [];
-      allModels.push(...models);
-
-      if (models.length === 0) {
-        break;
-      }
-
-      // 检查是否还有更多数据（OpenAI list API 支持 has_more 字段）
-      if (data.has_more) {
-        const nextCursor = models[models.length - 1]?.id;
-        if (!nextCursor) {
-          hasMore = false;
-        } else if (nextCursor === afterCursor || seenCursors.has(nextCursor)) {
-          console.warn('[modelList] OpenAI models pagination stopped: repeated cursor', nextCursor);
-          hasMore = false;
-        } else if (pageCount >= MAX_PAGES) {
-          console.warn('[modelList] OpenAI models pagination stopped: reached max pages', MAX_PAGES);
-          hasMore = false;
-        } else {
-          seenCursors.add(nextCursor);
-          afterCursor = nextCursor;
-          hasMore = true;
+    const allModels = await fetchAllPages<any>(
+      async (afterCursor, _pageCount) => {
+        const params = new URLSearchParams({ limit: '10000' });
+        if (afterCursor) {
+          params.set('after', afterCursor);
         }
-      } else {
-        hasMore = false;
-      }
-    } while (hasMore);
+
+        const headers: Record<string, string> = {
+          'Authorization': `Bearer ${apiKey}`
+        };
+        // 应用自定义标头
+        applyCustomHeadersFromConfig(headers, config);
+
+        const response = await proxyFetch(`${url}/models?${params.toString()}`, {
+          headers
+        });
+
+        if (!response.ok) {
+          throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+        }
+
+        const data = await response.json() as any;
+        return { models: data.data || [], data };
+      },
+      // has_more 为 true 时以本页最后一条 id 作为下一页游标
+      (models, data) => (data.has_more ? (models[models.length - 1]?.id as string | undefined) : undefined),
+      { name: 'OpenAI' }
+    );
 
     const uniqueModels = Array.from(
       new Map(
@@ -355,68 +340,44 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
 
   try {
     const proxyFetch = createProxyFetch(proxyUrl);
-    const allModels: any[] = [];
-    let afterId: string | undefined;
-    const seenAfterIds = new Set<string>();
-    const MAX_PAGES = 500;
-    let pageCount = 0;
 
     // 循环获取所有分页数据
-    do {
-      const params = new URLSearchParams({ limit: '1000' });
-      if (afterId) {
-        params.set('after_id', afterId);
-      }
-
-      pageCount += 1;
-
-      const headers: Record<string, string> = {
-        'anthropic-version': '2023-06-01'
-      };
-      // 根据 useAuthorizationHeader 选项决定认证方式
-      if ((config as any).useAuthorizationHeader) {
-        headers['Authorization'] = `Bearer ${apiKey}`;
-      } else {
-        headers['x-api-key'] = apiKey;
-      }
-      // 应用自定义标头
-      applyCustomHeadersFromConfig(headers, config);
-
-      const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, {
-        headers
-      });
-
-      if (!response.ok) {
-        throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
-      }
-
-      const data = await response.json() as any;
-      const models = data.data || [];
-      allModels.push(...models);
-
-      if (models.length === 0) {
-        break;
-      }
-
-      // Anthropic API 返回 has_more 和 last_id 用于分页
-      if (data.has_more) {
-        const nextAfterId = data.last_id || models[models.length - 1]?.id;
-        if (!nextAfterId) {
-          afterId = undefined;
-        } else if (nextAfterId === afterId || seenAfterIds.has(nextAfterId)) {
-          console.warn('[modelList] Anthropic models pagination stopped: repeated after_id', nextAfterId);
-          afterId = undefined;
-        } else if (pageCount >= MAX_PAGES) {
-          console.warn('[modelList] Anthropic models pagination stopped: reached max pages', MAX_PAGES);
-          afterId = undefined;
-        } else {
-          seenAfterIds.add(nextAfterId);
-          afterId = nextAfterId;
+    const allModels = await fetchAllPages<any>(
+      async (afterId, _pageCount) => {
+        const params = new URLSearchParams({ limit: '1000' });
+        if (afterId) {
+          params.set('after_id', afterId);
         }
-      } else {
-        afterId = undefined;
-      }
-    } while (afterId);
+
+        const headers: Record<string, string> = {
+          'anthropic-version': '2023-06-01'
+        };
+        // 根据 useAuthorizationHeader 选项决定认证方式
+        if ((config as any).useAuthorizationHeader) {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        } else {
+          headers['x-api-key'] = apiKey;
+        }
+        // 应用自定义标头
+        applyCustomHeadersFromConfig(headers, config);
+
+        const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, {
+          headers
+        });
+
+        if (!response.ok) {
+          throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+        }
+
+        const data = await response.json() as any;
+        return { models: data.data || [], data };
+      },
+      // has_more 为 true 时优先用 last_id，缺失时退回本页最后一条 id
+      (models, data) => (data.has_more
+        ? ((data.last_id as string | undefined) || (models[models.length - 1]?.id as string | undefined))
+        : undefined),
+      { name: 'Anthropic' }
+    );
 
     const uniqueModels = Array.from(
       new Map(

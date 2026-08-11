@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
-import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
-import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
+import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunManifest, type SubAgentRunSnapshot } from '../backend/tools/subagents';
+import type { SubAgentRunConversationStore } from '../backend/tools/subagents';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
 import { assertSafeId } from '../backend/core/idValidation';
 import type { RunScope } from '../backend/core/RunController';
@@ -87,6 +87,28 @@ function cloneJsonSafeValue(value: unknown): unknown {
     }
 }
 
+/** functionCall 参数字符串/对象超长时截断为首尾摘要，防止工具大参数经事件通道全量传输（F19） */
+function truncateFunctionCallArgs(value: unknown): unknown {
+    const MAX_ARGS_LENGTH = 2000;
+    const HEAD_LENGTH = 1200;
+    const TAIL_LENGTH = MAX_ARGS_LENGTH - HEAD_LENGTH - 1; // 1 个省略符
+    if (typeof value === 'string') {
+        if (value.length <= MAX_ARGS_LENGTH) return value;
+        return `${value.slice(0, HEAD_LENGTH)}…${value.slice(-TAIL_LENGTH)}`;
+    }
+    if (typeof value === 'object' && value !== null) {
+        try {
+            const json = JSON.stringify(value);
+            if (json.length > MAX_ARGS_LENGTH) {
+                return `${json.slice(0, HEAD_LENGTH)}…${json.slice(-TAIL_LENGTH)}`;
+            }
+        } catch {
+            // 序列化失败保持原值
+        }
+    }
+    return value;
+}
+
 function sanitizeLlmDeltaPart(part: unknown): Record<string, unknown> | undefined {
     if (!part || typeof part !== 'object') return undefined;
     const source = part as Record<string, any>;
@@ -102,8 +124,15 @@ function sanitizeLlmDeltaPart(part: unknown): Record<string, unknown> | undefine
         const safeFunctionCall: Record<string, unknown> = {};
         for (const key of ['id', 'name', 'args', 'partialArgs', 'index', 'itemId', 'finalArgs', 'rejected']) {
             if (!(key in fc)) continue;
-            const cloned = cloneJsonSafeValue(fc[key]);
-            if (cloned !== undefined) safeFunctionCall[key] = cloned;
+            let cloned = cloneJsonSafeValue(fc[key]);
+            if (cloned !== undefined) {
+                // args/partialArgs/finalArgs 是工具调用参数，可能携带完整大对象/长 JSON，
+                // 统一截断为摘要（F19）
+                if (key === 'args' || key === 'partialArgs' || key === 'finalArgs') {
+                    cloned = truncateFunctionCallArgs(cloned);
+                }
+                safeFunctionCall[key] = cloned;
+            }
         }
         return Object.keys(safeFunctionCall).length > 0
             ? { functionCall: safeFunctionCall }
@@ -201,6 +230,16 @@ export class SubAgentMonitorPanel {
      * 修改目的：订阅生命周期与面板实例严格对齐。
      */
     private panelDisposables: vscode.Disposable[] = [];
+
+    /**
+     * manifest 缓存：事件推送复用同一 manifest，直到对应 run 的 updatedAt 变化（F20）。
+     *
+     * 修改原因：每个事件都重新调用 getManifest/getActiveRunIds 会在高频 llm_delta 下
+     *          重复派生轻量 manifest 与拷贝活跃 id 数组。
+     * 修改方式：manifest 按 runId 缓存，updatedAt 未变化时直接复用。
+     * 修改目的：事件热路径只付出一次派生成本。
+     */
+    private readonly manifestCache = new Map<string, { manifest: SubAgentRunManifest; updatedAt: number }>();
 
     /**
      * llm_delta 节流合并队列。
@@ -336,6 +375,7 @@ export class SubAgentMonitorPanel {
     dispose(): void {
         this.unsubscribe();
         this.clearLlmDeltaQueue();
+        this.manifestCache.clear();
         this.clientRegistration?.dispose();
         this.clientRegistration = undefined;
         this.panel?.dispose();
@@ -458,6 +498,23 @@ export class SubAgentMonitorPanel {
         });
     }
 
+    /** 获取（并按需重建）指定 run 的轻量 manifest：updatedAt 未变化时直接复用缓存（F20） */
+    private getCachedManifest(runId: string): SubAgentRunManifest | undefined {
+        const manifest = subAgentRunEventBus.getManifest(runId);
+        // manifest 可能为 undefined（run 尚未加载/已被清理）：不走缓存，直接返回（F21）
+        if (!manifest) {
+            // 顺带清理可能残留的过期缓存条目，避免后续同一 runId 复用陈旧 updatedAt
+            this.manifestCache.delete(runId);
+            return undefined;
+        }
+        const cached = this.manifestCache.get(runId);
+        if (cached && cached.updatedAt === manifest.updatedAt) {
+            return cached.manifest;
+        }
+        this.manifestCache.set(runId, { manifest, updatedAt: manifest.updatedAt });
+        return manifest;
+    }
+
     private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
         // 修改原因：事件总线订阅在面板关闭后依然存在，旧实现对每个 llm_delta 都完整执行 payload 清洗、
         //          manifest 派生和 activeRunIds 收集，然后在 postRoutedMessage 里因为没有 panel 被整个丢弃。
@@ -487,7 +544,7 @@ export class SubAgentMonitorPanel {
                 // 修改原因：无论高频 llm_delta 还是低频 content_snapshot/run_completed，都不能再附完整 snapshot.contents。
                 // 修改方式：事件推送只携带轻量 manifest；当前聚焦 run 需要校准内容时由前端 getRunWindow 拉窗口。
                 // 修改目的：避免 Monitor 打开后任一低频事件再次把大 transcript 全量送入前端。
-                manifest: subAgentRunEventBus.getManifest(snapshot.runId),
+                manifest: this.getCachedManifest(snapshot.runId),
                 focusRunId: this.focusRunId,
                 focusConversationId: this.focusConversationId,
                 // 控制按钮可见性以后端活跃运行控制器为准，不让前端猜测 run 是否仍活跃。
@@ -548,7 +605,7 @@ export class SubAgentMonitorPanel {
                     // 修改原因：无论高频 llm_delta 还是低频 content_snapshot/run_completed，都不能再附完整 snapshot.contents。
                     // 修改方式：事件推送只携带轻量 manifest；当前聚焦 run 需要校准内容时由前端 getRunWindow 拉窗口。
                     // 修改目的：避免 Monitor 打开后任一低频事件再次把大 transcript 全量送入前端。
-                    manifest: subAgentRunEventBus.getManifest(runId),
+                    manifest: this.getCachedManifest(runId),
                     focusRunId: this.focusRunId,
                     focusConversationId: this.focusConversationId,
                     // 控制按钮可见性以后端活跃运行控制器为准，不让前端猜测 run 是否仍活跃。

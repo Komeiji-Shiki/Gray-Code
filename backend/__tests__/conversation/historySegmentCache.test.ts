@@ -10,10 +10,7 @@
 
 import { HistorySegmentCache, HISTORY_SEGMENT_CACHE_DEFAULT_MAX } from '../../modules/conversation/history/HistorySegmentCache';
 import type { Content } from '../../modules/conversation/types';
-
-function makeContent(role: 'user' | 'model', text: string): Content {
-    return { role, parts: [{ text }] } as Content;
-}
+import { makeContent } from '../__fixtures__/conversationFixtures';
 
 describe('HistorySegmentCache', () => {
     test('未命中返回 null，命中返回同一数组并刷新 LRU 顺序', () => {

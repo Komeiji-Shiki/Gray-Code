@@ -57,13 +57,14 @@ function makeSession(start: number, end: number): ActivitySession {
 export function hourlyHeatmap(sessions: ActivitySession[]): number[] {
     const hours = new Array<number>(24).fill(0);
     for (const session of sessions) {
-        // 会话起点所在整分钟开始，按小时边界切块累加（每块最多 60 分钟），
+        // 会话起点所在整分钟开始，按「本地时区」小时边界切块累加（每块最多 60 分钟），
         // 替代逐分钟展开：长会话从 O(分钟数) 降到 O(小时数)
         const startMinute = Math.floor(session.start / 60_000) * 60_000;
         const endMinute = Math.floor(session.end / 60_000) * 60_000;
         let m = startMinute;
         while (m <= endMinute) {
-            const hourStart = Math.floor(m / 3_600_000) * 3_600_000;
+            // 本地时区小时起点（setMinutes(0,0,0)），而非 UTC 整点边界
+            const hourStart = new Date(m).setMinutes(0, 0, 0);
             const hourEnd = hourStart + 3_600_000;
             // +1 分钟：endMinute 本身那一分钟也计入（与逐分钟展开语义一致）
             const blockEnd = Math.min(hourEnd, endMinute + 60_000);
@@ -77,7 +78,16 @@ export function hourlyHeatmap(sessions: ActivitySession[]): number[] {
 
 /** 单日统计（samples 应为该日升序采样；includeHourly=false 时惰性跳过热力计算） */
 export function dayStats(date: string, samples: number[], includeHourly: boolean = true): DayActivityStats {
-    const sessions = buildSessions(samples);
+    return dayStatsFromSessions(date, samples, buildSessions(samples), includeHourly);
+}
+
+/** dayStats 内部实现：复用已算好的 sessions，避免同一批采样重复 buildSessions */
+function dayStatsFromSessions(
+    date: string,
+    samples: number[],
+    sessions: ActivitySession[],
+    includeHourly: boolean
+): DayActivityStats {
     return {
         date,
         totalMinutes: sessions.reduce((sum, s) => sum + s.minutes, 0),
@@ -185,6 +195,7 @@ export async function getActivityStats(
     const includeHourly = query.includeHourly === true;
 
     const daily: DayActivityStats[] = [];
+    // 每天的 sessions 只算一次：daily 统计与 hourlyHeatmap 复用（避免同一批采样重复 buildSessions）
     for (const day of recent) {
         // daily 统计自身默认不需要热力，惰性跳过；includeHourly 时一并计算，
         // 下方 hourlyHeatmap 直接复用 daily 的热力（避免二次 buildSessions/hourlyHeatmap）
@@ -219,8 +230,18 @@ export async function getActivityStats(
 /** 把 DayActivityFile 列表转为统计（供存储无关的测试/工具使用） */
 export function statsFromFiles(files: DayActivityFile[], now: number = Date.now()): ActivityStatsResult {
     const recent = [...files].sort((a, b) => a.date.localeCompare(b.date));
-    const recentAll = recent.flatMap((f) => f.samples);
-    const daily = [...recent].reverse().map((f) => dayStats(f.date, f.samples));
+    // 与 getActivityStats 一致：当前会话只取最近 2 天采样拼接（跨午夜不中断），
+    // 不把全部历史采样全量复制进内存（历史数据可能长达数年）
+    const recentAll = recent.slice(-2).flatMap((f) => f.samples);
+    // 每天的 sessions 只算一次：daily 与 hourlyHeatmap 复用
+    const daily: DayActivityStats[] = [];
+    const hourlyRows: Array<{ date: string; hours: number[] }> = [];
+    for (const f of recent) {
+        const sessions = buildSessions(f.samples);
+        daily.push(dayStatsFromSessions(f.date, f.samples, sessions, true));
+        hourlyRows.push({ date: f.date, hours: hourlyHeatmap(sessions) });
+    }
+    daily.reverse();
     const todayStr = recent.length > 0 ? recent[recent.length - 1].date : '';
     const byDate = new Map(daily.map((d) => [d.date, d]));
 

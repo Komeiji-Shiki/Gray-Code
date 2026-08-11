@@ -198,6 +198,8 @@ async function toggleAutoExec(toolName: string, autoExec: boolean) {
     autoExecConfig.value[toolName] = autoExec
   } catch (error) {
     console.error(`Failed to toggle auto exec for ${toolName}:`, error)
+    // 保存失败：恢复原勾选状态（读当前派生值回写，强制受控勾选框回滚到保存前状态）
+    autoExecConfig.value[toolName] = isAutoExec(toolName)
   } finally {
     savingTools.value.delete(toolName)
   }

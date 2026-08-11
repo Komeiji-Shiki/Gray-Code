@@ -44,6 +44,9 @@ export type {
     DeleteToMessageErrorData
 } from './chat';
 
+// Chat 服务（api/chat/services 子门面聚合导出）
+export { CheckpointService } from './chat/services';
+
 // 设置模块
 export { SettingsHandler } from './settings';
 export type {

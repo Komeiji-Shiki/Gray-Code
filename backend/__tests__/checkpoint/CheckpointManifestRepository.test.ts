@@ -21,11 +21,7 @@ import {
 } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointManifest, CheckpointManifestMeta } from '../../modules/checkpoint/types';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
-
-async function createTempDirectory(prefix: string): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), prefix));
-}
-
+import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
 function makeLegacyRecord(overrides: Partial<CheckpointRecord> = {}): CheckpointRecord {
     return {
         id: 'cp-legacy',

@@ -21,21 +21,14 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-jest.mock('../../tools/file/diffManager', () => ({
-    getDiffManager: () => ({
-        cancelAllPending: jest.fn().mockResolvedValue({ cancelled: [] })
-    })
-}));
+import '../__fixtures__/diffManagerMock';
+import { createTempDirectory, makeRecord } from '../__fixtures__/checkpointFixtures';
 
 import {
     CheckpointManager,
     computeForcedKeepIds,
     type CheckpointRecord,
 } from '../../modules/checkpoint/CheckpointManager';
-
-async function createTempDirectory(prefix: string): Promise<string> {
-    return fs.mkdtemp(path.join(os.tmpdir(), prefix));
-}
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -50,21 +43,6 @@ async function pathExists(targetPath: string): Promise<boolean> {
     } catch {
         return false;
     }
-}
-
-/** 构造测试存档记录（默认带 messageNodeId） */
-function makeRecord(overrides: Partial<CheckpointRecord> & { id: string; conversationId: string }): CheckpointRecord {
-    return {
-        messageIndex: 0,
-        toolName: 'apply_diff',
-        phase: 'after',
-        timestamp: Date.now(),
-        backupDir: overrides.id,
-        fileCount: 1,
-        contentHash: 'hash',
-        type: 'full',
-        ...overrides,
-    };
 }
 
 interface Harness {

@@ -1528,7 +1528,7 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
 
 // ========== 通知 ==========
 
-export const showNotification: MessageHandler = async (data, requestId, ctx) => {
+const showNotification: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { message, type } = data;
     

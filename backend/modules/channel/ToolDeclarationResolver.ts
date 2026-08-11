@@ -8,13 +8,12 @@
 
 import type { ToolDeclaration } from '../../tools/types';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
-import type { SettingsManager } from '../settings/SettingsManager';
-import { isSearchInFilesReplaceForbidden } from '../settings/modeToolsPolicy';
-import type { ResolvedPromptModeSnapshot } from '../settings/types';
-import type { McpManager } from '../mcp/McpManager';
-import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
-import { createReadFileTool } from '../../tools/file/read_file';
-import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
+import type { SettingsManager } from '../settings';
+import { isSearchInFilesReplaceForbidden } from '../settings';
+import type { ResolvedPromptModeSnapshot } from '../settings';
+import type { McpManager } from '../mcp';
+import { encodeMcpToolName } from '../mcp';
+import { getToolDeclarationFactory } from '../../tools/toolDeclarationRegistry';
 import { hasAvailableSubAgent } from '../../tools/subagents';
 
 export type DeclarationChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
@@ -204,6 +203,11 @@ export class ToolDeclarationResolver {
         return declarations;
     }
 
+    /**
+     * 动态声明替换：优先使用组合根注册的工厂重建动态声明（read_file 多模态描述、
+     * 图片工具参数随解析选项/设置变化）。工厂未注册时保持静态声明（回退行为，
+     * 与工厂直连时代码路径等价：不替换任何字段）。
+     */
     private buildDynamicBuiltinDeclaration(
         tool: ToolDeclaration,
         options: ToolDeclarationResolveOptions
@@ -214,12 +218,15 @@ export class ToolDeclarationResolver {
         const toolMode = options.toolMode;
 
         if (tool.name === 'read_file') {
-            const dynamicTool = createReadFileTool(multimodalEnabled, channelType, toolMode);
-            declaration = {
-                ...declaration,
-                description: dynamicTool.declaration.description,
-                parameters: dynamicTool.declaration.parameters
-            };
+            const factory = getToolDeclarationFactory('read_file');
+            if (factory) {
+                const dynamicTool = factory({ multimodalEnabled, channelType, toolMode });
+                declaration = {
+                    ...declaration,
+                    description: dynamicTool.declaration.description,
+                    parameters: dynamicTool.declaration.parameters
+                };
+            }
         }
 
         if (tool.name === 'generate_image') {
@@ -227,21 +234,24 @@ export class ToolDeclarationResolver {
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const imageConfig = this.settingsManager?.getGenerateImageConfig();
-            const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
-            const maxImagesPerTask = imageConfig?.maxImagesPerTask || 1;
-            const paramsConfig = {
-                enableAspectRatio: imageConfig?.enableAspectRatio ?? false,
-                forcedAspectRatio: imageConfig?.defaultAspectRatio || undefined,
-                enableImageSize: imageConfig?.enableImageSize ?? false,
-                forcedImageSize: imageConfig?.defaultImageSize || undefined
-            };
-            const dynamicTool = createGenerateImageTool(maxBatchTasks, maxImagesPerTask, paramsConfig);
-            declaration = {
-                ...declaration,
-                description: dynamicTool.declaration.description,
-                parameters: dynamicTool.declaration.parameters
-            };
+            const factory = getToolDeclarationFactory('generate_image');
+            if (factory) {
+                const imageConfig = this.settingsManager?.getGenerateImageConfig();
+                const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
+                const maxImagesPerTask = imageConfig?.maxImagesPerTask || 1;
+                const paramsConfig = {
+                    enableAspectRatio: imageConfig?.enableAspectRatio ?? false,
+                    forcedAspectRatio: imageConfig?.defaultAspectRatio || undefined,
+                    enableImageSize: imageConfig?.enableImageSize ?? false,
+                    forcedImageSize: imageConfig?.defaultImageSize || undefined
+                };
+                const dynamicTool = factory({ maxBatchTasks, maxImagesPerTask, paramsConfig });
+                declaration = {
+                    ...declaration,
+                    description: dynamicTool.declaration.description,
+                    parameters: dynamicTool.declaration.parameters
+                };
+            }
         }
 
         if (tool.name === 'remove_background') {
@@ -249,10 +259,13 @@ export class ToolDeclarationResolver {
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const imageConfig = this.settingsManager?.getGenerateImageConfig();
-            const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
-            const dynamicTool = createRemoveBackgroundTool(maxBatchTasks);
-            declaration = { ...declaration, description: dynamicTool.declaration.description };
+            const factory = getToolDeclarationFactory('remove_background');
+            if (factory) {
+                const imageConfig = this.settingsManager?.getGenerateImageConfig();
+                const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
+                const dynamicTool = factory({ maxBatchTasks });
+                declaration = { ...declaration, description: dynamicTool.declaration.description };
+            }
         }
 
         if (tool.name === 'crop_image') {
@@ -260,10 +273,13 @@ export class ToolDeclarationResolver {
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const imageConfig = this.settingsManager?.getGenerateImageConfig();
-            const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-            const dynamicTool = createCropImageTool(maxBatchTasks);
-            declaration = { ...declaration, description: dynamicTool.declaration.description };
+            const factory = getToolDeclarationFactory('crop_image');
+            if (factory) {
+                const imageConfig = this.settingsManager?.getGenerateImageConfig();
+                const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
+                const dynamicTool = factory({ maxBatchTasks });
+                declaration = { ...declaration, description: dynamicTool.declaration.description };
+            }
         }
 
         if (tool.name === 'resize_image') {
@@ -271,10 +287,13 @@ export class ToolDeclarationResolver {
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const imageConfig = this.settingsManager?.getGenerateImageConfig();
-            const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-            const dynamicTool = createResizeImageTool(maxBatchTasks);
-            declaration = { ...declaration, description: dynamicTool.declaration.description };
+            const factory = getToolDeclarationFactory('resize_image');
+            if (factory) {
+                const imageConfig = this.settingsManager?.getGenerateImageConfig();
+                const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
+                const dynamicTool = factory({ maxBatchTasks });
+                declaration = { ...declaration, description: dynamicTool.declaration.description };
+            }
         }
 
         if (tool.name === 'rotate_image') {
@@ -282,10 +301,13 @@ export class ToolDeclarationResolver {
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const imageConfig = this.settingsManager?.getGenerateImageConfig();
-            const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-            const dynamicTool = createRotateImageTool(maxBatchTasks);
-            declaration = { ...declaration, description: dynamicTool.declaration.description };
+            const factory = getToolDeclarationFactory('rotate_image');
+            if (factory) {
+                const imageConfig = this.settingsManager?.getGenerateImageConfig();
+                const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
+                const dynamicTool = factory({ maxBatchTasks });
+                declaration = { ...declaration, description: dynamicTool.declaration.description };
+            }
         }
 
         if (tool.name === 'subagents' && !hasAvailableSubAgent()) {

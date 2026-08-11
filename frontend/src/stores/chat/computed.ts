@@ -202,6 +202,9 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     
     const lastMessage = state.allMessages.value[state.allMessages.value.length - 1]
     if (!lastMessage.isFunctionResponse) return false
+    // 本地占位/未终结的流式消息不算“已中断回合”：localOnly 占位可能马上被清理、
+    // streaming 消息仍在收尾，此时显示“继续对话”按钮会误导用户
+    if (lastMessage.localOnly || lastMessage.streaming) return false
 
     // 检查是否有工具要求暂停等待用户确认（如 create_plan / create_design）
     // 此时卡片会显示对应操作按钮，不需要额外的"继续"提示

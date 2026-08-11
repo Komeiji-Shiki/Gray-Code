@@ -11,6 +11,7 @@ import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, detectNonUtf8Encoding, formatFileSize } from '../utils';
 import { getDiffManager, type DiffResolutionReason } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
@@ -104,26 +105,27 @@ async function deleteSingleFile(
     }
 
     const absolutePath = uri.fsPath;
-    if (!fs.existsSync(absolutePath)) {
-        return { path: filePath, success: false, error: `File not found: ${filePath}` };
-    }
 
-    // 文件大小护栏：超大文件全量 readFileSync 会阻塞 extension host，先 stat 拦截。
+    // 文件存在性 + 大小护栏：单次 stat 即可（ENOENT 归为文件不存在）
+    let fileStat;
     try {
-        const stat = fs.statSync(absolutePath);
-        if (stat.size > MAX_EDIT_FILE_BYTES) {
-            return {
-                path: filePath,
-                success: false,
-                error: `File is too large (${formatFileSize(stat.size)}, limit ${formatFileSize(MAX_EDIT_FILE_BYTES)}). Editing files this large is not supported; use write_file to replace the whole file, or edit a smaller file.`
-            };
+        fileStat = await fs.promises.stat(absolutePath);
+    } catch (e: any) {
+        if (e?.code === 'ENOENT') {
+            return { path: filePath, success: false, error: `File not found: ${filePath}` };
         }
-    } catch (e) {
         return { path: filePath, success: false, error: `Failed to stat file: ${e instanceof Error ? e.message : String(e)}` };
     }
+    if (fileStat.size > MAX_EDIT_FILE_BYTES) {
+        return {
+            path: filePath,
+            success: false,
+            error: `File is too large (${formatFileSize(fileStat.size)}, limit ${formatFileSize(MAX_EDIT_FILE_BYTES)}). Editing files this large is not supported; use write_file to replace the whole file, or edit a smaller file.`
+        };
+    }
 
     try {
-        const rawBuffer = fs.readFileSync(absolutePath);
+        const rawBuffer = await fs.promises.readFile(absolutePath);
         // 编码防护：非 UTF-8 文件读-改-写会永久损坏原编码
         const encodingIssue = detectNonUtf8Encoding(rawBuffer);
         if (encodingIssue) {
@@ -161,13 +163,15 @@ async function deleteSingleFile(
             return { path: filePath, success: true, start_line: startLine, end_line: endLine, deletedLines: 0, status: 'accepted' };
         }
 
-        // 删除操作的 blocks：在新内容中标记被删除区域的前后交界处
+        // 删除操作的 blocks：在新内容中标记被删除区域的前后交界处。
+        // clamp 保证 endLine >= startLine：删除到文件末尾（或整文件删除）时
+        // totalLines - deletedCount 会小于 startLine，倒置区间会让 vscode.Range 抛 Illegal argument。
+        const blockStart = Math.max(1, startLine - 1);
+        const blockEnd = Math.min(startLine, totalLines - deletedCount);
         const blocks = [{
             index: 0,
-            startLine: Math.max(1, startLine - 1),
-            // 整文件删除（startLine=1 且全部删光）时 totalLines - deletedCount = 0，
-            // 下限钳到 1 避免产生 endLine < startLine 的非法块
-            endLine: Math.max(1, Math.min(startLine, totalLines - deletedCount))
+            startLine: blockStart,
+            endLine: Math.max(blockEnd, blockStart)
         }];
 
         // 创建 pending diff 等待用户确认
@@ -188,7 +192,10 @@ async function deleteSingleFile(
             diffManager, pendingDiff.id, abortSignal
         );
 
-        const wasInterrupted = interruptReason !== 'none';
+        // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
+        // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
+        const wasRejected = interruptReason === 'rejected';
+        const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
         // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
@@ -200,15 +207,30 @@ async function deleteSingleFile(
         let diffContentId: string | undefined;
         if (diffStorageManager) {
             try {
-                const diffRef = await diffStorageManager.saveGlobalDiff({
-                    originalContent,
-                    newContent,
-                    filePath
-                }, undefined, conversationId);
+        const diffRef = await diffStorageManager.saveGlobalDiff({
+            originalContent,
+            newContent,
+            filePath
+        }, undefined, conversationId);
                 diffContentId = diffRef.diffId;
             } catch (e) {
                 console.warn('Failed to save diff content to storage:', e);
             }
+        }
+
+        if (wasRejected) {
+            // 用户显式拒绝：与取消区分，返回 status:'rejected' + 可读错误
+            return {
+                path: filePath,
+                success: false,
+                cancelled: false,
+                start_line: startLine,
+                end_line: endLine,
+                deletedLines: deletedCount,
+                status: 'rejected',
+                error: 'Diff was rejected by user',
+                diffContentId
+            };
         }
 
         if (wasInterrupted) {
@@ -303,6 +325,12 @@ export function createDeleteCodeTool(): Tool {
             const fileList = args.files as DeleteCodeEntry[] | undefined;
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required and must be a non-empty array' };
+            }
+
+            // 越权防护：拒绝在工作区之外删除代码（子代理/直调工具链路同样生效）
+            const accessError = ensureOutsideWorkspaceAccessApproved('delete_code', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
             }
 
             const results: DeleteResult[] = [];

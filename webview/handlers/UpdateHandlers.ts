@@ -37,7 +37,10 @@ export const getUpdateStatus: MessageHandler = async (data, requestId, ctx) => {
     }
 };
 
-/** 手动立即检查（忽略 24h 节流） */
+/** 手动立即检查（忽略 24h 节流）
+ * 注意：本 handler 含网络请求（checker.check），耗时取决于网络状况，不应在阻塞队列中串行 await。
+ * 归属 MessageRouter.ts 的 NON_BLOCKING_MESSAGE_TYPES（该文件由其他 worker 维护，此处不改）；
+ * 若尚未纳入，请将 'checkUpdateNow' 与 'updateNow' 加入该集合，避免期间 cancelStream 等消息被冻结。 */
 export const checkUpdateNow: MessageHandler = async (data, requestId, ctx) => {
     try {
         const checker = getChecker(ctx);
@@ -78,6 +81,8 @@ export const installUpdate: MessageHandler = async (data, requestId, ctx) => {
 /**
  * 一键更新：立即检查（忽略 24h 节流），有新版本则自动下载并交给系统打开，
  * 用户完成安装后重启应用即可生效。
+ * 注意：本 handler 含网络请求（checker.check / downloadAndInstall），
+ * 归属 MessageRouter.ts 的 NON_BLOCKING_MESSAGE_TYPES（该文件由其他 worker 维护，此处不改）。
  */
 export const updateNow: MessageHandler = async (data, requestId, ctx) => {
     try {

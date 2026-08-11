@@ -14,22 +14,12 @@ import { FileSystemStorageAdapter } from '../../modules/conversation/storage';
 import type { ConversationHistory, Content } from '../../modules/conversation/types';
 import { Uri } from 'vscode';
 import { createAdapter, normPath } from './helpers/fakeVscodeFs';
+import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';
 
 const SEGMENT_SIZE = (FileSystemStorageAdapter as any).HISTORY_SEGMENT_SIZE as number;
 const BASE = 'file:///c%3A/data/graycode';
 const CONVERSATIONS_DIR = `${(Uri.parse(BASE) as any).fsPath}/conversations`;
 
-function makeContent(role: 'user' | 'model', text: string): Content {
-    return { role, parts: [{ text }], timestamp: Date.now() } as Content;
-}
-
-function makeHistory(count: number, prefix = 'm'): ConversationHistory {
-    const history: ConversationHistory = [];
-    for (let i = 0; i < count; i++) {
-        history.push(makeContent('user', `${prefix}${i}`));
-    }
-    return history;
-}
 
 describe('双 rename 提交窗口：读侧一致性校验（不静默返回错位历史）', () => {
     test('Σsegments.count !== totalMessages（新段+旧 index 错位/损坏 index）→ 重试后仍不一致时报 segment_missing', async () => {

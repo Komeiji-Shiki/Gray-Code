@@ -241,6 +241,33 @@ function moveEntry(id: string, direction: -1 | 1) {
   emitNormalized(ordered)
 }
 
+// 拖拽手柄键盘支持：方向键重排（Home/End 跳转首尾），弥补纯拖拽无键盘可达性
+function handleDragHandleKeydown(id: string, event: KeyboardEvent) {
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    moveEntry(id, -1)
+  } else if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    moveEntry(id, 1)
+  } else if (event.key === 'Home') {
+    event.preventDefault()
+    const ordered = [...entries.value]
+    const index = ordered.findIndex(entry => entry.id === id)
+    if (index <= 0) return
+    const [entry] = ordered.splice(index, 1)
+    ordered.unshift(entry)
+    emitNormalized(ordered)
+  } else if (event.key === 'End') {
+    event.preventDefault()
+    const ordered = [...entries.value]
+    const index = ordered.findIndex(entry => entry.id === id)
+    if (index < 0 || index === ordered.length - 1) return
+    const [entry] = ordered.splice(index, 1)
+    ordered.push(entry)
+    emitNormalized(ordered)
+  }
+}
+
 function updateEntry(id: string, patch: Partial<PromptEntry>) {
   emitNormalized(entries.value.map(entry => {
     if (entry.id !== id) return entry
@@ -432,6 +459,7 @@ function handleDragEnd() {
             aria-label="拖动排序"
             @dragstart="handleDragStart(entry.id, $event)"
             @dragend="handleDragEnd"
+            @keydown="handleDragHandleKeydown(entry.id, $event)"
           >
             <i class="codicon codicon-gripper"></i>
           </span>

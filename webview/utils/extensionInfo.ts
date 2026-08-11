@@ -27,6 +27,9 @@ export function getExtensionVersion(extensionPath: string): string {
     return version;
   } catch (error) {
     console.warn('[extensionInfo] Failed to read extension version from package.json:', error);
+    // 失败也缓存 '0.0.0'：package.json 在扩展生命周期内不变，
+    // 避免每次调用都重复同步读盘 + JSON.parse（F22）
+    versionCache.set(extensionPath, '0.0.0');
     return '0.0.0';
   }
 }

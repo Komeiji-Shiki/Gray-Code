@@ -8,6 +8,7 @@ import {
   MAX_VIDEO_ATTACHMENT_SIZE,
   SUPPORTED_DOCUMENT_TYPES
 } from '../types'
+import { generateId } from './format'
 
 /**
  * 根据文件扩展名推断 MIME 类型
@@ -121,12 +122,14 @@ export function inferMimeType(filename: string, browserMimeType: string): string
 }
 
 // 获取文件类型
+// 注意：application/json 与 text/plain 一样归入 code（JSON 本质是代码/结构化文本），
+// 避免同一文件类型因 MIME 表示不同而落入 document，造成展示分类不一致。
 export function getFileType(mimeType: string): AttachmentType {
   // 使用通用匹配，支持所有同类型文件
   if (mimeType.startsWith('image/')) return 'image'
   if (mimeType.startsWith('video/')) return 'video'
   if (mimeType.startsWith('audio/')) return 'audio'
-  if (mimeType.startsWith('text/')) return 'code'
+  if (mimeType.startsWith('text/') || mimeType === 'application/json') return 'code'
   if (SUPPORTED_DOCUMENT_TYPES.includes(mimeType)) return 'document'
   return 'document'
 }
@@ -285,10 +288,8 @@ export function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
-// 生成唯一ID
-function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-}
+// 生成唯一ID：统一复用 utils/format 的 generateId（避免重复实现）
+// 注意：createAttachment 内部使用，勿再本地定义同名函数
 
 // 下载文件
 export function downloadFile(data: string, filename: string, mimeType: string) {
@@ -308,11 +309,10 @@ export function downloadFile(data: string, filename: string, mimeType: string) {
 // Base64 转 Blob
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const byteCharacters = atob(base64)
-    const byteArrays: number[] = []
-  
+  // 预分配 Uint8Array 直接写入，避免逐字节 push 到 number[] 的中间数组开销
+  const byteArray = new Uint8Array(byteCharacters.length)
   for (let i = 0; i < byteCharacters.length; i++) {
-    byteArrays.push(byteCharacters.charCodeAt(i))
+    byteArray[i] = byteCharacters.charCodeAt(i)
   }
-  
-  return new Blob([new Uint8Array(byteArrays)], { type: mimeType })
+  return new Blob([byteArray], { type: mimeType })
 }

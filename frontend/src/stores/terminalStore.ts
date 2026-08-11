@@ -154,18 +154,26 @@ export const useTerminalStore = defineStore('terminal', () => {
     
     switch (type) {
       case 'start':
-        // 终端启动事件
-        terminal = {
-          id: terminalId,
-          output: '',
-          running: true,
-          startTime: now,
-          lastUpdate: now,
-          command,
-          cwd,
-          shell
+        // 终端启动事件：已存在（registerTerminal 已登记 / 重复 start 事件）时不整体覆盖，
+        // 只补齐命令 / 工作目录 / shell 元数据，保留已累积的输出与运行状态
+        if (terminal) {
+          if (command !== undefined) terminal.command = command
+          if (cwd !== undefined) terminal.cwd = cwd
+          if (shell !== undefined) terminal.shell = shell
+          terminal.lastUpdate = now
+        } else {
+          terminal = {
+            id: terminalId,
+            output: '',
+            running: true,
+            startTime: now,
+            lastUpdate: now,
+            command,
+            cwd,
+            shell
+          }
+          terminals.value.set(terminalId, terminal)
         }
-        terminals.value.set(terminalId, terminal)
         
         break
         
@@ -297,11 +305,15 @@ export const useTerminalStore = defineStore('terminal', () => {
   
   // ============ 初始化 ============
   
+  let terminalCleanup: (() => void) | undefined
+
   /**
    * 初始化 store，监听终端输出事件
+   *
+   * @returns 取消订阅的 cleanup 函数（重复调用返回当前 cleanup，不重复注册监听）
    */
-  function initialize(): void {
-    if (initialized.value) return
+  function initialize(): () => void {
+    if (terminalCleanup) return terminalCleanup
     
     // M-7：保存 onMessageFromExtension 返回的取消函数，dispose() 时注销，
     // 避免 HMR/重复初始化产生多份活跃订阅
@@ -315,6 +327,13 @@ export const useTerminalStore = defineStore('terminal', () => {
     })
     
     initialized.value = true
+    terminalCleanup = () => {
+      disposeTerminalOutputListener?.()
+      disposeTerminalOutputListener = null
+      initialized.value = false
+      terminalCleanup = undefined
+    }
+    return terminalCleanup
   }
   
   /**

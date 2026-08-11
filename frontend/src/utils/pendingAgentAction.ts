@@ -7,6 +7,9 @@ import {
   getPlanUpdateMode,
   isAwaitingToolUserConfirmation
 } from './toolContinuations'
+// WP14：统一 type guard —— 本文件的 asRecord 语义（返回 null、不排除数组）对应 asRecordOrNull；
+// normalizeString 与 asString 语义一致，直接复用
+import { asRecordOrNull as asRecord, asString } from './typeGuards'
 
 export type PendingAgentActionType = 'generate_plan' | 'execute_plan' | 'continue' | 'generic_confirmation'
 
@@ -24,16 +27,6 @@ export interface ResolvePendingAgentActionInput {
   hasPendingToolConfirmation?: boolean
   pendingToolCalls?: ToolUsage[]
   conversationId?: string | null
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : null
-}
-
-function normalizeString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed || undefined
 }
 
 function buildActionKey(
@@ -60,9 +53,9 @@ function resolvePathCandidates(tool: ToolUsage, result: Record<string, unknown> 
   const args = asRecord(tool.args)
   const data = asRecord(result?.data)
 
-  return normalizeString(data?.path)
-    || normalizeString(result?.path)
-    || normalizeString(args?.path)
+  return asString(data?.path)
+    || asString(result?.path)
+    || asString(args?.path)
 }
 
 function resolveToolAwaitingAction(

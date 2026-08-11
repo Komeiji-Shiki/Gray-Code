@@ -6,7 +6,7 @@
  * 1. 提示词 & 运行时参数配置
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除，支持全局记忆 / 工作区记忆双作用域）
  */
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -49,6 +49,8 @@ const isLoading = ref(true)
 const isSaving = ref(false)
 const statusMessage = ref('')
 const statusError = ref(false)
+// 状态消息自动消失定时器（组件卸载时统一清理）
+let statusMessageTimer: ReturnType<typeof setTimeout> | null = null
 const enabled = ref(true)
 // 配置是否已成功加载过至少一次（静默刷新失败时据此决定是否保留现有表单值）
 const configLoadedOnce = ref(false)
@@ -232,7 +234,8 @@ async function addEntry() {
     })
     statusError.value = false
     // 与 saveConfig/批量删除路径一致：成功提示 3s 后自动消失
-    setTimeout(() => { statusMessage.value = '' }, 3000)
+    if (statusMessageTimer) clearTimeout(statusMessageTimer)
+    statusMessageTimer = setTimeout(() => { statusMessage.value = '' }, 3000)
     await loadEntries()
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to add entry'
@@ -299,7 +302,8 @@ async function confirmDeleteSelected() {
     await sendToExtension('deleteMemoryEntries', { ids: [...selectedIds.value], ...scopeParams() })
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.deletedBatch', { count })
     statusError.value = false
-    setTimeout(() => { statusMessage.value = '' }, 3000)
+    if (statusMessageTimer) clearTimeout(statusMessageTimer)
+    statusMessageTimer = setTimeout(() => { statusMessage.value = '' }, 3000)
     selectedIds.value = new Set()
     showBatchDeleteConfirm.value = false
     await loadEntries()
@@ -435,11 +439,11 @@ async function loadEntries(showLoading = true) {
     selectedIds.value = new Set()
     editingId.value = null
     editingText.value = ''
-  } catch {
+  } catch (e: any) {
     if (seq !== entryLoadSeq) return
-    entries.value = []
-    entriesTotal.value = 0
-    entriesTruncated.value = false
+    // 失败时保留旧数据，避免列表被静默清空；显示错误提示
+    statusMessage.value = e?.message || 'Failed to load entries'
+    statusError.value = true
   } finally {
     if (seq === entryLoadSeq) entriesLoading.value = false
   }
@@ -515,7 +519,8 @@ async function saveConfig() {
     })
     statusMessage.value = t('components.settings.settingsPanel.memory.saved')
     statusError.value = false
-    setTimeout(() => { statusMessage.value = '' }, 3000)
+    if (statusMessageTimer) clearTimeout(statusMessageTimer)
+    statusMessageTimer = setTimeout(() => { statusMessage.value = '' }, 3000)
   } catch (e: any) {
     statusMessage.value = e?.message || 'Failed to save config'
     statusError.value = true
@@ -536,6 +541,14 @@ onMounted(() => {
   loadConfig()
   loadEntries()
   loadWorkspaceScopes()
+})
+
+onUnmounted(() => {
+  // 清理状态消息自动消失定时器，避免卸载后仍修改状态
+  if (statusMessageTimer) {
+    clearTimeout(statusMessageTimer)
+    statusMessageTimer = null
+  }
 })
 
 // 作用域或工作区切换：静默刷新配置并重新加载条目（含缓存即时渲染，避免闪烁）
@@ -630,7 +643,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
               {{ t('components.settings.settingsPanel.memory.runtime.entryChars.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" :disabled="!enabled" />
+              <input type="number" v-model.number="entryChars" min="1" max="1000" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
             </div>
           </div>

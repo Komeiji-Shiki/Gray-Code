@@ -16,8 +16,8 @@
 import { t } from '../../i18n';
 import * as vscode from 'vscode';
 import * as path from 'path';
-import type { SettingsManager } from '../settings/SettingsManager';
-import type { ConversationManager } from '../conversation/ConversationManager';
+import type { SettingsManager } from '../settings';
+import type { ConversationManager } from '../conversation';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
 import { DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES, DEFAULT_ENABLED_PROFILES, buildIgnoreSnapshot } from './CheckpointExclusionProfiles';
 import { CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME } from './CheckpointManifestRepository';
@@ -38,7 +38,7 @@ import {
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 import { hashFileStreaming } from './fileHashing';
 import { Logger } from '../../core/logger';
-import type { CheckpointConfig } from '../settings/types';
+import type { CheckpointConfig } from '../settings';
 import type { CheckpointManifestRepository } from './CheckpointManifestRepository';
 import { isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import type { CheckpointQueryService } from './CheckpointQueryService';
@@ -217,8 +217,16 @@ export class CheckpointRestoreService {
         // CP-PERF-3: 预构建 id → 记录 索引，每跳 O(1) 定位 base；
         // 长链下替代逐跳 checkpoints.find 的 O(n²) 线性扫描。
         const byId = new Map(checkpoints.map(cp => [cp.id, cp] as const));
+        // 环检测：损坏元数据（base 指向自身/成环）会让 while 无限循环——
+        // visited 集合截断，按链断裂处理（调用方显式报 chainBroken，fail-closed）
+        const visited = new Set<string>();
 
         while (current) {
+            if (visited.has(current.id)) {
+                broken = true;
+                break;
+            }
+            visited.add(current.id);
             chain.unshift(current);  // 添加到链的开头
 
             if (current.type !== 'incremental' || !current.baseCheckpointId) {

@@ -8,6 +8,11 @@ import * as cp from 'child_process';
 import { EventEmitter } from 'events';
 import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
 
+// cross-spawn keeps argv boundaries on Windows while resolving PATHEXT commands
+// such as npx.cmd/npm.cmd. For .cmd/.bat launchers it invokes cmd.exe with each
+// argument escaped; regular .exe commands are spawned directly without a shell.
+const crossSpawn = require('cross-spawn') as typeof cp.spawn;
+
 // tree-kill 库，用于跨平台终止进程树
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;
@@ -101,6 +106,12 @@ export class StdioMcpClient extends EventEmitter {
     }> = new Map();
     private buffer = '';
 
+    // 进程事件处理器引用（cleanup 时按引用精确移除，不影响 disconnect 等外部注册的 once 监听）
+    private processErrorHandler?: (err: Error) => void;
+    private processExitHandler?: (code: number | null, signal: NodeJS.Signals | null) => void;
+    private stdoutDataHandler?: (data: string) => void;
+    private stderrDataHandler?: (data: string) => void;
+
     // 服务器能力和信息
     private serverInfo?: { name: string; version: string };
     private protocolVersion?: string;
@@ -110,6 +121,10 @@ export class StdioMcpClient extends EventEmitter {
     private tools: McpTool[] = [];
     private resources: McpResource[] = [];
     private prompts: McpPrompt[] = [];
+
+    // 能力列表（tools/resources/prompts）拉取是否失败过（失败被吞，列表保持空）。
+    // 供上层区分「服务器真的没有工具」与「拉取失败导致列表为空」。
+    private listFetchFailed: boolean = false;
 
     // stderr 输出（用于错误诊断）
     private stderrOutput: string = '';
@@ -153,14 +168,15 @@ export class StdioMcpClient extends EventEmitter {
         this.stderrOutput = '';
         this.stderrTruncated = false;
         
-        this.process = cp.spawn(this.command, this.args, {
+        this.process = crossSpawn(this.command, this.args, {
             env: processEnv,
             cwd: this.cwd,
             stdio: ['pipe', 'pipe', 'pipe'],
-            // 不用 shell 包装：命令与参数直通子进程，避免 cmd.exe 对含
-            // & | 引号等字符的参数做二次解释（命令注入面）。含空格的
-            // 可执行文件路径由调用方自行拼接为单个 command 字符串处理。
-            shell: false
+            // Never concatenate untrusted argv into a generic shell command.
+            // cross-spawn performs the narrowly-scoped .cmd/.bat adaptation on
+            // Windows and otherwise delegates to child_process.spawn directly.
+            shell: false,
+            windowsHide: true
         });
         this.processExited = false;
 
@@ -182,18 +198,20 @@ export class StdioMcpClient extends EventEmitter {
         // 设置错误处理
         // spawn 失败（如命令不存在）只触发 'error' 不触发 'exit'，必须立即清理并拒绝所有 pending 请求，
         // 否则 connect 会一直挂到超时
-        this.process.on('error', (err) => {
+        // 处理器引用保存在字段中：cleanup() 时按引用精确移除，不影响 disconnect 等外部注册的 once 监听
+        this.processErrorHandler = (err) => {
             this.emit('error', err);
             // spawn 失败（ENOENT 等）时不会触发 'exit'，pending 请求会一直挂到超时；
             // 必须在这里立即清理并拒绝，让 connect() 尽快失败
             this.cleanup(`Process error: ${err.message}`);
-        });
+        };
+        this.process.on('error', this.processErrorHandler);
 
-        this.process.on('exit', (code, signal) => {
-            this.processExited = true;
+        this.processExitHandler = (code, signal) => {
             this.emit('exit', code, signal);
             this.cleanup();
-        });
+        };
+        this.process.on('exit', this.processExitHandler);
 
         // 为 stdout/stderr 流补 'error' 监听，避免对已死进程读取时产生未处理的 'error' 事件
         // （stdin 的 'error' 监听已在上面注册：进程存活时上报、退出竞态窗口内静默吞掉）
@@ -201,59 +219,70 @@ export class StdioMcpClient extends EventEmitter {
         this.process.stderr?.on('error', () => {});
 
         // 收集 stderr (已 setEncoding，data 为 string)，带 64KB 上限防止内存无限增长
-        this.process.stderr?.on('data', (data: string) => {
+        this.stderrDataHandler = (data: string) => {
             this.appendStderr(data);
-        });
+        };
+        this.process.stderr?.on('data', this.stderrDataHandler);
 
         // 读取 stdout (已 setEncoding，data 为 string)
-        this.process.stdout?.on('data', (data: string) => {
+        this.stdoutDataHandler = (data: string) => {
             this.handleData(data);
-        });
+        };
+        this.process.stdout?.on('data', this.stdoutDataHandler);
         
-        // 发送初始化请求（带超时和进程退出检测）
-        const initResult = await this.sendRequest<InitializeResult>('initialize', {
-            protocolVersion: '2024-11-05',
-            capabilities: {
-                roots: { listChanged: true }
-            },
-            clientInfo: createGrayCodeMcpClientInfo()
-        });
-        
-        this.serverInfo = initResult.serverInfo;
-        this.protocolVersion = initResult.protocolVersion;
-        this.capabilities = initResult.capabilities;
-        
-        // 发送 initialized 通知
-        this.sendNotification('notifications/initialized', {});
-        
-        // 获取工具列表（如果支持）
-        if (this.capabilities?.tools) {
-            try {
-                const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
-                this.tools = toolsResult.tools || [];
-            } catch {
-                // 忽略获取工具失败
+        try {
+            // 发送初始化请求（带超时和进程退出检测）
+            const initResult = await this.sendRequest<InitializeResult>('initialize', {
+                protocolVersion: '2024-11-05',
+                capabilities: {
+                    roots: { listChanged: true }
+                },
+                clientInfo: createGrayCodeMcpClientInfo()
+            });
+            
+            this.serverInfo = initResult.serverInfo;
+            this.protocolVersion = initResult.protocolVersion;
+            this.capabilities = initResult.capabilities;
+            
+            // 发送 initialized 通知
+            this.sendNotification('notifications/initialized', {});
+            
+            // 获取工具列表（如果支持）
+            if (this.capabilities?.tools) {
+                try {
+                    const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
+                    this.tools = toolsResult.tools || [];
+                } catch {
+                    this.listFetchFailed = true; // tools/list 失败被吞：标记供上层判定连接质量
+                }
             }
-        }
-        
-        // 获取资源列表（如果支持）
-        if (this.capabilities?.resources) {
-            try {
-                const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
-                this.resources = resourcesResult.resources || [];
-            } catch {
-                // 忽略获取资源失败
+            
+            // 获取资源列表（如果支持）
+            if (this.capabilities?.resources) {
+                try {
+                    const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
+                    this.resources = resourcesResult.resources || [];
+                } catch {
+                    this.listFetchFailed = true;
+                }
             }
-        }
-        
-        // 获取提示列表（如果支持）
-        if (this.capabilities?.prompts) {
-            try {
-                const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
-                this.prompts = promptsResult.prompts || [];
-            } catch {
-                // 忽略获取提示失败
+            
+            // 获取提示列表（如果支持）
+            if (this.capabilities?.prompts) {
+                try {
+                    const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
+                    this.prompts = promptsResult.prompts || [];
+                } catch {
+                    this.listFetchFailed = true;
+                }
             }
+        } catch (error) {
+            // 初始化失败（如 initialize 超时/进程退出）：进程可能仍在运行，
+            // 复用 disconnect 的 SIGTERM→SIGKILL→等待流程终止进程树——
+            // 单次 SIGTERM 未生效时可能残留子进程（M5）；cleanup 幂等，进程已死时无害。
+            await this.disconnect().catch(() => { /* 进程已死/已清理则忽略 */ });
+            this.cleanup(`Connect failed: ${error instanceof Error ? error.message : String(error)}`);
+            throw error;
         }
     }
     
@@ -312,7 +341,7 @@ export class StdioMcpClient extends EventEmitter {
             const processAfterSigterm = this.process;
             if (processAfterSigterm && processAfterSigterm.exitCode === null && processAfterSigterm.signalCode === null) {
                 await new Promise<void>((resolve) => {
-                    try { treeKill(pid, 'SIGKILL'); } catch {}
+                    try { treeKill(pid, 'SIGKILL', () => {}); } catch {}
                     const timer = setTimeout(resolve, 5000);
                     const activeProcess = this.process;
                     if (!activeProcess) {
@@ -352,6 +381,15 @@ export class StdioMcpClient extends EventEmitter {
      */
     getPrompts(): McpPrompt[] {
         return this.prompts;
+    }
+
+    /**
+     * 能力列表（tools/resources/prompts）拉取是否失败过。
+     * 拉取失败被吞且列表保持空——上层据此区分「服务器真无工具」与「拉取失败」，
+     * 避免把失败误报为正常空列表（假 connected）。
+     */
+    isListFetchFailed(): boolean {
+        return this.listFetchFailed;
     }
     
     /**
@@ -489,9 +527,13 @@ export class StdioMcpClient extends EventEmitter {
 
             // 统一清理：清超时、摘 exit 监听、摘外部 abort 监听
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            // M6：捕获请求发起时的进程引用——客户端级 cleanup 先置 this.process=null
+            // 再 reject pending，届时 this.process?.removeListener 拿不到引用、监听残留
+            // 至进程对象 GC；按发起时引用精确移除才能兑现「每请求监听精确摘除」承诺。
+            const proc = this.process;
             const cleanup = () => {
                 if (timeoutId) clearTimeout(timeoutId);
-                this.process?.removeListener('exit', onExit);
+                proc?.removeListener('exit', onExit);
                 signal?.removeEventListener('abort', onAbort);
             };
             
@@ -624,9 +666,10 @@ export class StdioMcpClient extends EventEmitter {
             console.error(`[MCP] stdout buffer exceeded ${StdioMcpClient.MAX_BUFFER} bytes; killing process and closing connection`);
             // 与 disconnect() 相同的进程树终止路径；handleData 是同步事件回调无法 await，
             // 直接 kill + 同步清理（cleanup 会拒绝全部 pending 请求并清空缓冲），
-            // 随后的 exit 事件会再次调用 cleanup，幂等无害
+            // 随后的 exit 事件会再次调用 cleanup，幂等无害。
+            // 必须传 callback：tree-kill 无 callback 时出错会异步 throw（uncaughtException）。
             if (this.process && this.process.pid) {
-                try { treeKill(this.process.pid, 'SIGTERM'); } catch { /* ignore */ }
+                try { treeKill(this.process.pid, 'SIGTERM', () => {}); } catch { /* ignore */ }
             }
             this.cleanup('Stdout buffer exceeded limit');
             return;
@@ -714,6 +757,26 @@ export class StdioMcpClient extends EventEmitter {
      * @param errorMessage 可选的自定义错误信息（如 spawn 失败），用于拒绝 pending 请求
      */
     private cleanup(errorMessage?: string): void {
+        // 移除本客户端注册的进程/流监听并 end stdin：进程对象弃用后，迟到的
+        // exit/error/data 事件不得再触发回调（否则已清理的 client 会再次 emit
+        // exit/error 影响上层状态）。按引用精确移除，保留 disconnect() 等外部
+        // 注册的 once('exit') 等待监听，避免断开流程失去退出通知而空等超时。
+        const proc = this.process;
+        if (proc) {
+            if (this.processErrorHandler) proc.removeListener('error', this.processErrorHandler);
+            if (this.processExitHandler) proc.removeListener('exit', this.processExitHandler);
+            if (this.stdoutDataHandler) proc.stdout?.removeListener('data', this.stdoutDataHandler);
+            if (this.stderrDataHandler) proc.stderr?.removeListener('data', this.stderrDataHandler);
+            // 兜底：进程再 emit 'error' 时若无任何监听会触发未处理异常，补一个空监听吞掉
+            if (proc.listenerCount('error') === 0) {
+                proc.on('error', () => {});
+            }
+            try {
+                proc.stdin?.end();
+            } catch {
+                // stdin 已销毁/关闭，忽略
+            }
+        }
         this.process = null;
         this.processExited = true;
         this.buffer = '';

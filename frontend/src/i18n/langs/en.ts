@@ -1753,7 +1753,7 @@ const en: LanguageMessages = {
                     command: 'Command',
                     commandPlaceholder: 'e.g.: npx, python, node',
                     args: 'Arguments',
-                    argsPlaceholder: 'Space separated, e.g.: -m mcp_server',
+                    argsPlaceholder: 'JSON string array (space-separated also accepted), e.g.: ["-m","mcp server"]',
                     env: 'Environment Variables (JSON)',
                     envPlaceholder: '{"KEY": "value"}',
                     url: 'URL',
@@ -1778,6 +1778,7 @@ const en: LanguageMessages = {
                     commandRequired: 'Please enter command',
                     urlRequired: 'Please enter URL',
                     invalidJson: 'Enter a valid JSON object',
+                    invalidArgsJsonArray: 'Enter a valid JSON array containing only strings',
                     createFailed: 'Create failed',
                     updateFailed: 'Update failed'
                 },
@@ -3816,6 +3817,18 @@ const en: LanguageMessages = {
                 hoursAgo: '{hours}h ago',
                 daysAgo: '{days}d ago'
             }
+        }
+    },
+
+    utils: {
+        tools: {
+            noFile: 'No file',
+            changes: '{count} changes',
+            cwdLabel: 'Directory: {cwd}',
+            recursiveSuffix: ' (recursive)',
+            dirCount: '{count} directories',
+            searchModeSearch: 'Search',
+            searchModeReplace: 'Search & Replace'
         }
     }
 };

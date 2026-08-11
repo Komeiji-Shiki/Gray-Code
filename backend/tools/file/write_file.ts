@@ -187,7 +187,10 @@ async function writeSingleFile(
         // 目的：让所有文件写入类 diff-review 工具在自动保存和用户中断场景下表现一致。
         const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
 
-        const wasInterrupted = interruptReason !== 'none';
+        // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
+        // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
+        const wasRejected = interruptReason === 'rejected';
+        const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
         
         const finalDiff = diffManager.getDiff(pendingDiff.id);
                 // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
@@ -212,6 +215,19 @@ async function writeSingleFile(
             }
         }
         
+        if (wasRejected) {
+            // 用户显式拒绝：与取消区分，返回 status:'rejected' + 可读错误
+            return {
+                path: filePath,
+                success: false,
+                cancelled: false,
+                action: fileExists ? 'modified' : 'created',
+                status: 'rejected',
+                error: 'Diff was rejected by user',
+                diffContentId
+            };
+        }
+
         if (wasInterrupted) {
             // 用户终止/中断，视为取消
             return {

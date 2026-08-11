@@ -181,11 +181,13 @@ export class VSCodeSettingsStorage implements SettingsStorage {
 
                 for (const key of ALL_CONFIG_KEYS) {
                     const value = source[key];
-                    // 快照存深拷贝：与活对象解耦，后续原地变更才能被 deepEqual 检出
-                    nextSnapshot[key] = deepCloneValue(value);
                     if (deepEqual(value, this.lastSavedSnapshot[key])) {
+                        // 未变更：快照沿用上次的深拷贝（已与活对象解耦），避免全量 structuredClone
+                        nextSnapshot[key] = this.lastSavedSnapshot[key];
                         continue;
                     }
+                    // 仅对变更键做深拷贝快照：与活对象解耦，后续原地变更才能被 deepEqual 检出
+                    nextSnapshot[key] = deepCloneValue(value);
                     updates.push(config.update(key, value, vscode.ConfigurationTarget.Global));
                 }
 

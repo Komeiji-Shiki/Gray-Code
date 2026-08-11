@@ -192,19 +192,8 @@ export class ChatHandler {
         this.summarizeService.setSettingsManager(settingsManager);
         // 更新 checkpointService 的设置管理器
         this.checkpointService.setSettingsManager(settingsManager);
-        // 更新 chatFlowService 的设置引用
-        this.chatFlowService = new ChatFlowService(
-            this.configManager,
-            this.conversationManager,
-            this.settingsManager,
-            this.messageBuilderService,
-            this.tokenEstimationService,
-            this.toolIterationLoopService,
-            this.checkpointService,
-            this.diffInterruptService,
-            this.toolExecutionService,
-            this.toolCallParserService
-        );
+        // 更新 chatFlowService 的设置引用（热更新，避免整体重建 ChatFlowService）
+        this.chatFlowService.setSettingsManager(settingsManager);
     }
     
     /**
@@ -266,6 +255,15 @@ export class ChatHandler {
             };
         }
         if (error instanceof ChannelError) {
+            // 非流式取消码归一：CANCELLED_ERROR 统一为 CANCELLED，
+            // 与 ChatFlowService 非流式路径（loopResult.cancelled → 'CANCELLED'）保持一致
+            if (error.type === ErrorType.CANCELLED_ERROR) {
+                return {
+                    code: 'CANCELLED',
+                    message: t('modules.api.chat.errors.requestCancelled')
+                };
+            }
+
             let message = error.message;
             
             // 如果有详细错误信息，直接 JSON 序列化追加（截断到 2000 字符，

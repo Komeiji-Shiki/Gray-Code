@@ -21,6 +21,7 @@ interface ImageTask {
 
 registerTool('generate_image', {
   name: 'generate_image',
+  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
   label: '生成图像',
   icon: 'codicon-file-media',
   expandable: true,

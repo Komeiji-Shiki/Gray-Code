@@ -186,8 +186,10 @@ async function listDirectoryRecursive(
         const relativePath = basePath ? `${basePath}/${name}` : name;
         
         if (type === vscode.FileType.Directory) {
-            // 跳过常见巨型目录，防止递归无界（不影响非递归的顶层显式列出）
-            if (RECURSIVE_SKIP_DIRS.includes(name)) {
+            // 跳过常见巨型目录，防止递归无界（不影响非递归的顶层显式列出）。
+            // 目录名比较转小写：Windows/macOS 文件系统大小写不敏感，
+            // 避免 NodeModules / Dist 等大小写变体漏网被整树遍历。
+            if (RECURSIVE_SKIP_DIRS.some(skipDir => skipDir.toLowerCase() === name.toLowerCase())) {
                 continue;
             }
             entries.push({ name: relativePath + '/', type: 'directory' });
@@ -325,6 +327,13 @@ export function createListFilesTool(): Tool {
                             // 跳过忽略的目录和文件
                             if (shouldIgnore(name, ignorePatterns)) {
                                 continue;
+                            }
+
+                            // 非递归模式条目上限：巨型目录顶层条目也可能无界，
+                            // 与递归模式共用预算，超出后停止收集并标记 truncated
+                            if (entries.length >= MAX_RECURSIVE_ENTRIES) {
+                                truncated = true;
+                                break;
                             }
                             
                             if (type === vscode.FileType.Directory) {

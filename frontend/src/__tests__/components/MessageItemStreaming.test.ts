@@ -1,11 +1,15 @@
 import { shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { defineComponent } from 'vue'
+import { defineComponent, nextTick, watch } from 'vue'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Message } from '../../types'
 import MessageItem from '../../components/message/MessageItem.vue'
 import { useChatStore } from '../../stores/chatStore'
-import { disposeAllSmoothStreams } from '../../stores/chat/smoothStreamManager'
+import {
+  disposeAllSmoothStreams,
+  finishSmoothStream,
+  pushSmoothText
+} from '../../stores/chat/smoothStreamManager'
 
 const MessageRenderBlockStub = defineComponent({
   name: 'MessageRenderBlock',
@@ -21,6 +25,18 @@ const MarkdownRendererStub = defineComponent({
   name: 'MarkdownRenderer',
   props: {
     content: { type: String, default: '' }
+  },
+  emits: ['rendered'],
+  setup(props, { emit }) {
+    watch(
+      () => props.content,
+      async (source) => {
+        await nextTick()
+        emit('rendered', source)
+      },
+      { immediate: true }
+    )
+    return {}
   },
   template: '<div class="markdown-stub">{{ content }}</div>'
 })
@@ -113,6 +129,84 @@ describe('MessageItem streaming render exclusivity', () => {
     expect(wrapper.find('.char-flow-host').exists()).toBe(true)
     expect(wrapper.findAll('.render-block-stub').map(block => block.text())).toContain('hello')
     expect(wrapper.findAll('.render-block-stub').map(block => block.text())).not.toContain('after')
+    wrapper.unmount()
+  })
+
+  it('renders a complete table prefix before the stream ends and keeps only the partial row in CharFlow', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const chatStore = useChatStore()
+    const messageId = 'streaming-table-message'
+    const tableHead = '| Name | Value |\n| --- | --- |\n'
+    const completeRow = '| alpha | 1 |\n'
+    const partialRow = '| beta | 2'
+    const content = tableHead + completeRow + partialRow
+
+    pushSmoothText(messageId, 'text:0', content, 'balanced', '', (id, partKey, text) => {
+      chatStore.smoothTexts.set(id, { partKey, text })
+    })
+
+    const wrapper = mountMessage({
+      id: messageId,
+      role: 'assistant',
+      content,
+      timestamp: Date.now(),
+      streaming: true,
+      parts: [{ text: content }]
+    } as Message, pinia)
+    await nextTick() // 挂载 CharFlow host 并注册显示目标
+
+    finishSmoothStream(messageId) // flush 积压，但消息仍保持 streaming=true 以验证流中 UI
+    const host = wrapper.get('.char-flow-host')
+    // Markdown DOM 尚未确认：bridge 维持完整原文，不出现“表格消失”空窗。
+    expect(host.element.textContent).toBe(content)
+
+    await nextTick()
+    await nextTick()
+    await Promise.resolve() // rendered waiter resolve 后释放 raw bridge
+    expect(wrapper.get('.markdown-stub').element.textContent).toBe(tableHead + completeRow)
+    expect(host.element.textContent).toBe(partialRow)
+
+    wrapper.unmount()
+  })
+
+  it('re-registers the reused text host when the active partKey changes after a tool call', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const chatStore = useChatStore()
+    const messageId = 'text-part-switch-message'
+    const onSnapshot = (id: string, partKey: string, text: string) => {
+      chatStore.smoothTexts.set(id, { partKey, text })
+    }
+    const initialMessage = {
+      id: messageId,
+      role: 'assistant',
+      content: 'first',
+      timestamp: Date.now(),
+      streaming: true,
+      parts: [{ text: 'first' }]
+    } as Message
+
+    pushSmoothText(messageId, 'text:0', '', 'balanced', 'first', onSnapshot)
+    const wrapper = mountMessage(initialMessage, pinia)
+    await nextTick()
+    expect(wrapper.get('.char-flow-host').element.textContent).toBe('first')
+
+    const functionCall = { id: 'tool-1', name: 'search', args: {} }
+    pushSmoothText(messageId, 'text:2', 'next', 'balanced', '', onSnapshot)
+    await wrapper.setProps({
+      message: {
+        ...initialMessage,
+        content: 'firstnext',
+        parts: [{ text: 'first' }, { functionCall }, { text: 'next' }]
+      } as Message
+    })
+    await nextTick()
+    finishSmoothStream(messageId)
+
+    expect(wrapper.get('.char-flow-host').element.textContent).toBe('next')
+    expect(wrapper.findAll('.render-block-stub').map(block => block.text())).toContain('first')
+
     wrapper.unmount()
   })
 

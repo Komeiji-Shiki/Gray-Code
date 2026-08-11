@@ -5,6 +5,8 @@
  * 定义工具的标准接口和类型
  */
 
+import type { MultimodalCapability } from './shared/multimodal';
+
 /**
  * 通用工具进度事件。
  *
@@ -122,16 +124,9 @@ export interface ToolArgs {
 }
 
 /**
- * 多模态能力（从 utils.ts 复制以避免循环依赖）
+ * 多模态能力（从 shared/multimodal 重新导出，避免重复定义）
  */
-export interface MultimodalCapability {
-    /** 是否支持图片 */
-    supportsImages: boolean;
-    /** 是否支持文档（PDF） */
-    supportsDocuments: boolean;
-    /** 是否支持回传多模态数据到历史记录 */
-    supportsHistoryMultimodal: boolean;
-}
+export { MultimodalCapability } from './shared/multimodal';
 
 /**
  * 裁切图片工具配置

@@ -2,17 +2,6 @@
  * LimCode Backend - 后端模块入口
  */
 
-// 核心注册系统
-export { ModuleRegistry, globalRegistry } from './core/registry';
-export type {
-    ApiParameter,
-    ApiDefinition,
-    ModuleDefinition,
-    ApiRequest,
-    ApiResponse,
-    IModuleRegistry
-} from './core/registry';
-
 // 核心公共件：业务代码仍可按需直连相对路径，此处提供统一导出入口（避免命名冲突，未做 export *）
 export { Logger, LogLevel } from './core/logger';
 export {
@@ -71,7 +60,6 @@ export type {
 // 对话管理模块
 export {
     ConversationManager,
-    createConversationModule,
     VSCodeStorageAdapter,
     FileSystemStorageAdapter
 } from './modules/conversation';
@@ -102,8 +90,7 @@ export type {
 export {
     ConfigManager,
     MementoStorageAdapter,
-    HybridStorageAdapter,
-    registerConfigModule
+    HybridStorageAdapter
 } from './modules/config';
 export type {
     ConfigStorageAdapter,

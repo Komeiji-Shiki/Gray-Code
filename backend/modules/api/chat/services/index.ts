@@ -8,7 +8,7 @@ export { ToolCallParserService } from './ToolCallParserService';
 export { MessageBuilderService } from './MessageBuilderService';
 export { TokenEstimationService, type NormalizedChannelType } from './TokenEstimationService';
 export { ContextTrimService } from './ContextTrimService';
-export { ToolExecutionService, type ToolExecutionFullResult } from './ToolExecutionService';
+export { ToolExecutionService, type ToolExecutionFullResult, type ToolExecutionProgressEvent } from './ToolExecutionService';
 export { SummarizeService } from './SummarizeService';
 export { CheckpointService } from './CheckpointService';
 export { DiffInterruptService } from './DiffInterruptService';

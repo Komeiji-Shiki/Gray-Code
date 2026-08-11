@@ -25,6 +25,9 @@ const isSaving = ref(false)
 
 const saveMessage = ref('')
 const saveMessageType = ref<'success' | 'error'>('success')
+// 保存/试听消息自动消失定时器（组件卸载时统一清理）
+let saveMessageTimer: ReturnType<typeof setTimeout> | null = null
+let testMessageTimer: ReturnType<typeof setTimeout> | null = null
 
 const testMessage = ref('')
 const testMessageType = ref<'success' | 'error'>('success')
@@ -354,7 +357,8 @@ async function saveConfig() {
       taskError: assetTaskError.value ?? undefined
     }
 
-    setTimeout(() => {
+    if (saveMessageTimer) clearTimeout(saveMessageTimer)
+    saveMessageTimer = setTimeout(() => {
       saveMessage.value = ''
     }, 2000)
   } catch (error) {
@@ -471,7 +475,8 @@ async function testCue(cue: SoundCue) {
     }, 800)
   }
 
-  setTimeout(() => {
+  if (testMessageTimer) clearTimeout(testMessageTimer)
+  testMessageTimer = setTimeout(() => {
     testMessage.value = ''
   }, 2500)
 }
@@ -486,6 +491,15 @@ onBeforeUnmount(() => {
   clearPendingTestRestore()
   cancelActiveTests()
   stopAllSounds()
+  // 清理消息自动消失定时器，避免卸载后仍修改状态
+  if (saveMessageTimer) {
+    clearTimeout(saveMessageTimer)
+    saveMessageTimer = null
+  }
+  if (testMessageTimer) {
+    clearTimeout(testMessageTimer)
+    testMessageTimer = null
+  }
 })
 </script>
 

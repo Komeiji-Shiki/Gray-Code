@@ -385,17 +385,30 @@ export function matchFunctionCallsAndResponses(
     extraResponses: string[];
 } {
     const calls = extractFunctionCalls(callMessage);
-    const responses = extractFunctionResponses(responseMessage);
-    
-    const callNames = calls.map(c => c.name);
-    const responseNames = responses.map(r => r.name);
-    
-    const missingResponses = callNames.filter(
-        name => !responseNames.includes(name)
-    );
-    const extraResponses = responseNames.filter(
-        name => !callNames.includes(name)
-    );
+    // extractFunctionResponses 的声明类型未含 id，但运行时对象携带 functionResponse.id（ContentPart 定义），
+    // 这里局部拓宽类型以支持 id 优先配对。
+    const responses = extractFunctionResponses(responseMessage) as Array<{
+        name: string;
+        response: Record<string, unknown>;
+        parts?: ContentPart[];
+        id?: string;
+    }>;
+
+    // 优先按 functionCall.id / functionResponse.id 配对：有 id 的调用/响应只与同 id 的对方配对
+    //（同名并行调用靠 id 区分，避免多对一误判）；无 id 的一侧回退按 name 配对（保持原存在性语义）。
+    const callIds = calls.filter(c => c.id !== undefined).map(c => c.id!);
+    const responseIds = responses.filter(r => r.id !== undefined).map(r => r.id!);
+    const callNames = calls.filter(c => c.id === undefined).map(c => c.name);
+    const responseNames = responses.filter(r => r.id === undefined).map(r => r.name);
+
+    const missingResponses = [
+        ...callIds.filter(id => !responseIds.includes(id)),
+        ...callNames.filter(name => !responseNames.includes(name)),
+    ];
+    const extraResponses = [
+        ...responseIds.filter(id => !callIds.includes(id)),
+        ...responseNames.filter(name => !callNames.includes(name)),
+    ];
     
     return {
         matched: missingResponses.length === 0 && extraResponses.length === 0,

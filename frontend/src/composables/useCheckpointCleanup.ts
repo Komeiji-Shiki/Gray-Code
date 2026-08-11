@@ -35,6 +35,11 @@ export interface DeleteConfirmState {
   size: number
   /** L-3: 单条删除取消时清空选中态 */
   single?: boolean
+  /** 快照：checkpoints 删除目标——确认弹窗期间展开/选中状态变化不影响删除目标 */
+  conversationId?: string
+  checkpointIds?: string[]
+  /** 快照：conversations 删除目标——确认弹窗期间选中状态变化不影响删除目标 */
+  conversationIds?: string[]
 }
 
 export function useCheckpointCleanup() {
@@ -114,20 +119,28 @@ export function useCheckpointCleanup() {
   )
 
   // 加载带有存档点的对话列表
+  // 防重入：请求序号——仅最新请求可写列表/复位加载态，过期响应不覆盖新结果
+  let conversationListRequestSeq = 0
+
   async function loadConversationsWithCheckpoints() {
+    const requestSeq = ++conversationListRequestSeq
     isCleanupLoading.value = true
     try {
       const response = await sendToExtension<{ conversations: ConversationWithCheckpoints[] }>(
         'checkpoint.getAllConversationsWithCheckpoints',
         {}
       )
-      if (response?.conversations) {
+      // 过期响应（序号落后）不覆盖列表，避免旧请求覆盖新请求结果
+      if (response?.conversations && requestSeq === conversationListRequestSeq) {
         conversationsWithCheckpoints.value = response.conversations
       }
     } catch (error) {
       console.error('Failed to load conversations with checkpoints:', error)
     } finally {
-      isCleanupLoading.value = false
+      // 仅最新请求复位加载态（旧请求的 finally 不干扰新请求的 loading 状态）
+      if (requestSeq === conversationListRequestSeq) {
+        isCleanupLoading.value = false
+      }
     }
   }
 
@@ -165,7 +178,11 @@ export function useCheckpointCleanup() {
   }
 
   // 加载展开对话的存档点列表（含磁盘占用）
+  // 请求序号：过期响应（收起/切换后返回）不复位 isExpandedLoading，仅最新请求管理加载态
+  let expandedLoadRequestSeq = 0
+
   async function loadExpandedCheckpoints(conversationId: string) {
+    const requestSeq = ++expandedLoadRequestSeq
     isExpandedLoading.value = true
     try {
       const response = await sendToExtension<{ checkpoints: Array<CheckpointRecord & { size?: number }> }>(
@@ -183,8 +200,9 @@ export function useCheckpointCleanup() {
       console.error('Failed to load checkpoints:', error)
       expandedCheckpoints.value = []
     } finally {
-      // 仅当仍展开同一对话时才复位加载态（新请求会自行管理）
-      if (expandedConversationId.value === conversationId) {
+      // M-5: 过期响应时 isExpandedLoading 不复位（旧实现导致收起后 loading 卡死）——
+      // 仅最新请求复位加载态，新请求进行中时旧请求的 finally 不误关 loading
+      if (requestSeq === expandedLoadRequestSeq) {
         isExpandedLoading.value = false
       }
     }
@@ -219,7 +237,9 @@ export function useCheckpointCleanup() {
         count: selectedConversations.value.length
       }),
       count: selectedConversationsCheckpointCount.value,
-      size: selectedConversationsSize.value
+      size: selectedConversationsSize.value,
+      // 快照删除目标：确认弹窗期间选中状态变化不影响删除目标
+      conversationIds: [...selectedConversationIds.value]
     }
   }
 
@@ -232,7 +252,10 @@ export function useCheckpointCleanup() {
         count: selectedCheckpointIds.value.size
       }),
       count: selectedCheckpointIds.value.size,
-      size: selectedCheckpointsSize.value
+      size: selectedCheckpointsSize.value,
+      // 快照删除目标：确认弹窗期间展开/选中状态变化不影响删除目标
+      conversationId: expandedConversationId.value || undefined,
+      checkpointIds: [...selectedCheckpointIds.value]
     }
   }
 
@@ -245,7 +268,10 @@ export function useCheckpointCleanup() {
       title: t('components.settings.checkpoint.sections.cleanup.confirmDelete.checkpointsMessage', { count: 1 }),
       count: 1,
       size: cp.size || 0,
-      single: true
+      single: true,
+      // 快照删除目标：确认弹窗期间展开状态变化不影响删除目标
+      conversationId: expandedConversationId.value || undefined,
+      checkpointIds: [cp.id]
     }
   }
 
@@ -257,15 +283,21 @@ export function useCheckpointCleanup() {
       kind: 'conversations',
       title: conversation.title || conversation.conversationId,
       count: conversation.checkpointCount,
-      size: conversation.totalSize || 0
+      size: conversation.totalSize || 0,
+      // L-3: 单条对话删除取消时同样清空残留选中态（见 cancelDelete）
+      single: true,
+      // 快照删除目标：确认弹窗期间选中状态变化不影响删除目标
+      conversationIds: [conversation.conversationId]
     }
   }
 
   // 取消删除
   function cancelDelete() {
-    // L-3: 单条删除取消后清空残留的选中态
+    // L-3: 单条删除取消后清空残留的选中态（存档点单选 / 对话单条删除均适用；
+    // 批量删除取消保留多选，便于用户调整选择后重试）
     if (deleteConfirmState.value?.single) {
       selectedCheckpointIds.value = new Set()
+      selectedConversationIds.value = new Set()
     }
     deleteConfirmState.value = null
   }
@@ -286,57 +318,77 @@ export function useCheckpointCleanup() {
       let totalFailed = 0
 
       if (state.kind === 'conversations') {
-        // 批量删除选中的对话（checkpointIds 为空 = 删除该对话全部）
-        const targets = selectedConversations.value
-        const items = targets.map(c => ({ conversationId: c.conversationId, checkpointIds: [] as string[] }))
-        const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
-        const results = Array.isArray(resp?.results) ? resp.results : []
-        totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
-        totalFailed = results.filter((r: any) => !r.success).length
-
-        // M-6: 只移除后端确认成功的对话；失败/被拒的对话保留在列表中（随后刷新权威计数）
-        const succeededIds = new Set(
-          results.filter((r: any) => r.success).map((r: any) => r.conversationId)
-        )
-        if (results.length === 0) {
-          // 后端未返回 results（异常响应）：保守处理，不删除任何对话
-          totalFailed = targets.length
-        }
-
-        targets.forEach(c => affectedConversationIds.add(c.conversationId))
-        const removedIds = new Set(
-          targets.filter(c => succeededIds.has(c.conversationId)).map(c => c.conversationId)
-        )
-        if (removedIds.size > 0) {
-          conversationsWithCheckpoints.value = conversationsWithCheckpoints.value.filter(
-            c => !removedIds.has(c.conversationId)
-          )
-        }
-        selectedConversationIds.value = new Set()
-
-        // 刷新列表，更新保留（失败/被拒）对话的权威存档计数
-        await loadConversationsWithCheckpoints()
-
-        // 若展开的对话被删除，收起展开面板
-        if (expandedConversationId.value && removedIds.has(expandedConversationId.value)) {
-          expandedConversationId.value = null
-          expandedCheckpoints.value = []
-          selectedCheckpointIds.value = new Set()
-        }
-      } else {
-        // 删除展开对话中的选中存档点
-        if (expandedConversationId.value) {
-          const conversationId = expandedConversationId.value
-          const items = [{ conversationId, checkpointIds: [...selectedCheckpointIds.value] }]
+        // 删除选中的对话（checkpointIds 为空 = 删除该对话全部）——
+        // 使用确认时快照（state.conversationIds），与 checkpoints 分支一致，
+        // 避免弹窗期间选中状态变化导致删错目标
+        const conversationIds = state.conversationIds
+        if (!conversationIds || conversationIds.length === 0) {
+          // 快照校验失败（正常流程不会出现）：按失败处理，不发送删除请求
+          totalFailed = 1
+        } else {
+          const items = conversationIds.map(conversationId => ({ conversationId, checkpointIds: [] as string[] }))
           const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
           const results = Array.isArray(resp?.results) ? resp.results : []
           totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
           totalFailed = results.filter((r: any) => !r.success).length
 
+          // M-6: 只移除后端确认成功的对话；失败/被拒的对话保留在列表中（随后刷新权威计数）
+          const succeededIds = new Set(
+            results.filter((r: any) => r.success).map((r: any) => r.conversationId)
+          )
+          if (results.length === 0) {
+            // 后端未返回 results（异常响应）：保守处理，不删除任何对话
+            totalFailed = conversationIds.length
+          }
+
+          conversationIds.forEach(id => affectedConversationIds.add(id))
+          const removedIds = new Set(
+            conversationIds.filter(id => succeededIds.has(id))
+          )
+          if (removedIds.size > 0) {
+            conversationsWithCheckpoints.value = conversationsWithCheckpoints.value.filter(
+              c => !removedIds.has(c.conversationId)
+            )
+          }
+          selectedConversationIds.value = new Set()
+
+          // 刷新列表，更新保留（失败/被拒）对话的权威存档计数
+          await loadConversationsWithCheckpoints()
+
+          // 若展开的对话被删除，收起展开面板
+          if (expandedConversationId.value && removedIds.has(expandedConversationId.value)) {
+            expandedConversationId.value = null
+            expandedCheckpoints.value = []
+            selectedCheckpointIds.value = new Set()
+          }
+        }
+      } else {
+        // 删除展开对话中的选中存档点——使用确认时快照（state.conversationId/checkpointIds），
+        // 避免弹窗期间用户收起/切换展开对话导致删错目标
+        const conversationId = state.conversationId
+        const checkpointIds = state.checkpointIds
+        if (!conversationId || !checkpointIds || checkpointIds.length === 0) {
+          // 快照校验失败（正常流程不会出现）：按失败处理，不发送删除请求
+          totalFailed = 1
+        } else {
+          const items = [{ conversationId, checkpointIds }]
+          const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
+          const results = Array.isArray(resp?.results) ? resp.results : []
+          totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
+          totalFailed = results.filter((r: any) => !r.success).length
+
+          // 后端未返回 results（异常响应）：保守处理，按全部失败反馈（与 conversations 分支一致）
+          if (results.length === 0) {
+            totalFailed = checkpointIds.length
+          }
+
           selectedCheckpointIds.value = new Set()
           affectedConversationIds.add(conversationId)
-          // 重载展开列表与对话列表：失败/被拒的存档仍保留可见（M-6）
-          await loadExpandedCheckpoints(conversationId)
+          // 重载展开列表与对话列表：失败/被拒的存档仍保留可见（M-6）；
+          // 仅当快照对话仍处于展开状态时才重载展开列表（已切换则跳过，避免无效请求）
+          if (expandedConversationId.value === conversationId) {
+            await loadExpandedCheckpoints(conversationId)
+          }
           await loadConversationsWithCheckpoints()
         }
       }
@@ -414,6 +466,8 @@ export function useCheckpointCleanup() {
   }
 
   // 格式化时间
+  // 本地实现（i18n 输出 + falsy 空值保护），与 utils/format.ts 的 formatRelativeTime
+  // （硬编码中文、必填 number）签名/行为不一致，保留本地副本不并入。
   function formatRelativeTime(timestamp?: number): string {
     if (!timestamp) return ''
     

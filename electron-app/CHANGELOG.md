@@ -9,6 +9,11 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+### Merged（1.7.12dev：同步上游 main 至 0107c597——模块化摊平 1-9 批 + Bug Hunt 五轮 150+ 修复 + MCP/memory/prompt/子代理/输入框等修复）
+  - 合入上游 40+ commits：模块化摊平重构（registry 死系统删除、ChatFlowService/ConversationManager/CheckpointManager/ToolExecutionService 等大文件拆分至 flow/、manager/、tool-execution/、subagents/executor|eventBus、tools/shared/ 等子目录，后端依赖方向清零）；
+  - 修复吸收：fileWriteLock 复合身份键 + acquire 参数化超时、MCP stdio 生命周期/串行队列/原子写、memory 迁移降级与 1000 上限、prompt 动态上下文差分加固、子代理并行段收尾 30s 兜底、输入框残留双机制、流式 Markdown 表格渐进渲染、恢复默认模板 {{$MEMORY}} 占位符等；
+  - 桌面版独有功能全量保留（远程控制 V7.2、桌面背景图、agentInbox、多工作区、安全加固）；不采纳上游 nightly 自动更新机制与 fast-tavern 子项目；版本 1.7.12dev
+
 ### Added（1.7.11dev：桌面端自定义背景图——外观设置新增本地图片窗口背景 + 不透明度调节）
   - **外观设置新增「桌面背景图」**：选择本地图片（PNG/JPG/JPEG/GIF/WebP/BMP，上限 10MB）作为应用窗口背景，cover 铺满整窗；不透明度滑块（0-100，默认 30）实时作用于图片本身，文字与界面不受影响；设置页提供 16:9 预览框、路径回显与一键移除；设置搜索新增「背景图/壁纸/透明度」锚点；
   - **数据流**：持久化仅存路径（ui.appearance.wallpaperPath/wallpaperOpacity），图片内容经新增 IPC 处理器（pickWallpaper 原生对话框选图 + 校验读取；getWallpaperImage 按已存路径重读）以 data URL 交给渲染层（webview CSP img-src 已含 data:）；文件丢失/失效静默回退纯色背景；SVG 刻意排除（防脚本面）；

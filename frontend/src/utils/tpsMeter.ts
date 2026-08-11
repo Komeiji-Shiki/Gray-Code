@@ -102,8 +102,15 @@ class TpsMeter {
   /** 入队单个事件并维持容量上限（摊薄后事件更多，上限检查在 push 时做） */
   private pushEvent(event: { t: number; n: number }): void {
     this.events.push(event)
-    // 容量上限：超限丢最旧（O(1) 均摊），保证 events 始终有界
-    if (this.events.length > MAX_EVENTS) this.events.shift()
+    // 容量上限：超限时丢弃时间戳最旧的事件，保证 events 始终有界。
+    // 注意：事件可能乱序到达（显式时间戳 + 突发摊薄回拨），不能按插入顺序 shift 最旧。
+    if (this.events.length > MAX_EVENTS) {
+      let oldestIndex = 0
+      for (let i = 1; i < this.events.length; i++) {
+        if (this.events[i].t < this.events[oldestIndex].t) oldestIndex = i
+      }
+      this.events.splice(oldestIndex, 1)
+    }
   }
 
   start(): void {
@@ -148,9 +155,9 @@ class TpsMeter {
   private sample(): void {
     const now = Date.now()
     const cutoff = now - WINDOW_MS
-    while (this.events.length > 0 && this.events[0].t < cutoff) {
-      this.events.shift()
-    }
+    // 窗口修剪：事件可能乱序到达（显式时间戳/突发摊薄回拨），不能用 while(events[0].t < cutoff)
+    // 假定升序；改为扫描式删除所有落在窗口外的事件。
+    this.events = this.events.filter(e => e.t >= cutoff)
     const total = this.events.reduce((sum, e) => sum + e.n, 0)
     // 速率硬上限：突发即使被摊薄也可能让窗口瞬时偏高，MAX_RATE 兜底防止异常尖峰
     const rate = Math.min(total / (WINDOW_MS / 1000), MAX_RATE)

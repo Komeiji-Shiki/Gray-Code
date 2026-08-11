@@ -186,16 +186,18 @@ async function executeCropTask(
         return { index, success: false, error: `Task ${index + 1}: output_path is required` };
     }
 
-    // 验证坐标范围（仅在归一化模式下检查）
+    // 验证坐标范围（NaN/Infinity 会穿透 < 0 / > max 比较，显式要求有限数；仅在归一化模式下检查范围）
     if (useNormalized) {
-        if (x1 < 0 || x1 > NORMALIZED_MAX || y1 < 0 || y1 > NORMALIZED_MAX ||
+        if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2) ||
+            x1 < 0 || x1 > NORMALIZED_MAX || y1 < 0 || y1 > NORMALIZED_MAX ||
             x2 < 0 || x2 > NORMALIZED_MAX || y2 < 0 || y2 > NORMALIZED_MAX) {
-            return { index, success: false, error: `Task ${index + 1}: Coordinates must be in range 0-${NORMALIZED_MAX}` };
+            return { index, success: false, error: `Task ${index + 1}: Coordinates must be finite numbers in range 0-${NORMALIZED_MAX}` };
         }
     } else {
-        // 像素模式：坐标必须为非负
-        if (x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0) {
-            return { index, success: false, error: `Task ${index + 1}: Coordinates must be non-negative` };
+        // 像素模式：坐标必须为有限非负数
+        if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2) ||
+            x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0) {
+            return { index, success: false, error: `Task ${index + 1}: Coordinates must be finite non-negative numbers` };
         }
     }
 

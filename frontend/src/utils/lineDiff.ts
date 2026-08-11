@@ -33,8 +33,10 @@ const DEFAULT_EDIT_DISTANCE_LIMIT = 768
 /**
  * Myers 主循环的编辑距离预算上限：trace 逐层保存 frontier，内存为 O(limit²)。
  * 调用方传入超大 editDistanceLimit 时钳制到此值，避免 trace 内存失控。
+ * 4096 → 2048：4096² 的 trace 峰值约 64MB，降到 2048 后约 16MB；
+ * 行数差超过 2048 的场景本就接近全量重写，退化输出（整段删+增）与精确结果差异可接受。
  */
-const MAX_EDIT_DISTANCE_LIMIT = 4096
+const MAX_EDIT_DISTANCE_LIMIT = 2048
 
 /**
  * 按 (oldContent, newContent, 起始行, 预算) 缓存最近一次行级差分结果。
@@ -287,14 +289,17 @@ export function computeLineDiff(
  * 与 FIFO 等价；文档化「32 条 FIFO」仅为行为下限，LRU 是超集）。
  *
  * 共享只读契约：返回的 LineDiffResult 及其 lines 数组为共享对象（命中缓存时同一引用），
- * 消费方只读使用，不得 mutate；需要修改时先复制。缓存键中的预算同样受
- * MAX_EDIT_DISTANCE_LIMIT 钳制，与 findMyersMatches 的实际执行预算保持一致。
+ * 消费方只读使用，不得 mutate（增删行/改字段都会污染缓存并影响其他消费方）；
+ * 需要修改时先复制（如 lines.slice() / 展开对象）。
+ * 返回类型标注为 Readonly<LineDiffResult>：顶层字段在类型层面禁止重新赋值；
+ * lines 数组元素仍可变（深度只读会破坏现有消费方类型），数组级修改依赖约定 + 本注释。
+ * 缓存键中的预算同样受 MAX_EDIT_DISTANCE_LIMIT 钳制，与 findMyersMatches 的实际执行预算保持一致。
  */
 export function computeLineDiffCached(
   oldContent: string,
   newContent: string,
   options?: LineDiffOptions
-): LineDiffResult {
+): Readonly<LineDiffResult> {
   const oldStartLine = options?.oldStartLine ?? 1
   const newStartLine = options?.newStartLine ?? oldStartLine
   const editDistanceLimit = Math.min(
