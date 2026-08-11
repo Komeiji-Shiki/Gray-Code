@@ -42,7 +42,7 @@
   - 顺带：MermaidZoomModal/overlay quick-pick hover 硬编码白字改主题感知（保持黑/白描边可读性）；boot-splash 首帧经 themeSource 的 prefers-color-scheme 正确取色。
 
 ### Fixed：扫描优化批次（安全/一致性/死代码）
-  - crop/rotate/resize 三工具 6 处 isCancelled 对齐新口径（API 请求超时 AbortError 不再误报用户取消，与 generate_image/remove_background 一致）；
+  - **亮色模式灰底灰字根因修复（color-mix 定义点解析）**：Chromium 对 color-mix 内的 var() 按「定义点」解析（非惰性），style.css `:root` 上定义的 `--gc-surface-*`（输入框/设置面板/消息区/下拉框背景）会锁死暗色 `--vscode-*` 值，body 亮色类覆盖不生效——亮色下这些面板仍是暗灰底。亮色块重定义 4 个 surface 变量（color-mix 在 body 层解析到亮色值）；亮色前景统一加深为近黑 `#1f1f1f`（此前 `#383a42` 偏灰），描述文字 `#4d4d4d`；  - crop/rotate/resize 三工具 6 处 isCancelled 对齐新口径（API 请求超时 AbortError 不再误报用户取消，与 generate_image/remove_background 一致）；
   - Unix which 检测改 execFileSync argv 传参（customPath 为用户可控配置，字符串拼接存在命令注入面；与 Windows/异步版同口径）；processRunner 优先级设置 exec → execFile；
   - compareVersions 版本段解析修正：语义预发布（-beta/-nightly.x）的 dash 段不再误并入版本段（此前 1.4.6-nightly.20260810 被 parseInt 误当第四版本段判为高于正式版）；nightly 用例改为 semver 预发布语义断言，补 beta.10 vs beta.2 逐段数值比较；
   - 工作区路径缓存加固：realpath 失败结果不再永久缓存（此前 fail-open 边缘）；路径自身改用 lstat 校验 mtime（符号链接重定向的缓存失效盲区）；

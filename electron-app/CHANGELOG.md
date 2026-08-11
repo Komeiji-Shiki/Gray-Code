@@ -25,6 +25,7 @@ are tracked in the root `CHANGELOG.md`.
   - 不采纳 fast-tavern 与 nightly 相关 commits（-x ours 消掉并保留来源标记）；本地独有功能全量保留（远程控制 V7.2/桌面背景图/agentInbox/多工作区/安全加固）。
 
 ### Fixed：扫描优化批次
+  - **亮色模式灰底灰字根因修复**：color-mix 内的 var() 在 Chromium 按定义点解析（非惰性），:root 定义的 --gc-surface-* 锁死暗色值导致亮色下输入框/设置面板/消息区/下拉框仍为暗灰底；亮色块重定义 4 个 surface 变量 + 亮色前景加深为近黑 #1f1f1f；
   - 媒体工具超时取消口径统一（3 工具 6 处）；Unix which argv 防注入；compareVersions 预发布解析修正（-nightly.x 不再误并入版本段）；realpath 缓存加固 + 远控端文件读写 realpath 复核；StreamChunkProcessor 死路径清理；shellConfig/UpdateChecker 死代码清理；
   - 测试：后端 273 套件/3088 例 + 前端 102 文件/1000 例 + typecheck 全绿；版本 1.7.14dev
 
