@@ -25,9 +25,10 @@ import { Logger } from '../../backend/core/logger';
 import { getDiffCodeLensProvider } from '../../backend/tools/file/DiffCodeLensProvider';
 import { getDiffEditorActionsProvider } from '../../backend/tools/file/DiffEditorActionsProvider';
 import { getDiffInlineProvider, DiffInlineProvider } from '../../backend/tools/file/DiffInlineProvider';
-import { getDiffManager } from '../../backend/tools/file/diffManager';
+import { getDiffManager } from '../../backend/core/services/diffManager';
 import { getSelectionContextProvider, SelectionContextProvider, type SelectionContextCommandArgs } from '../../backend/tools/file/SelectionContextProvider';
 import type { ChatViewProvider } from '../ChatViewProvider';
+import { PUSH_MESSAGE_NAMES } from '../../shared/protocol';
 
 const log = Logger.get('diff-ui');
 
@@ -156,7 +157,7 @@ export function registerDiffUi(
 
                 // Ensure chat view is visible, then send to webview.
                 await vscode.commands.executeCommand('graycode.openChat');
-                chatViewProvider?.sendCommand('input.addContext', { contextItem });
+                chatViewProvider?.sendCommand(PUSH_MESSAGE_NAMES['input.addContext'], { contextItem });
             } catch (err: any) {
                 log.error('Failed to add selection context:', err);
                 vscode.window.showErrorMessage(t('tools.file.selectionContext.failedToAddSelection', { error: err?.message || String(err) }));

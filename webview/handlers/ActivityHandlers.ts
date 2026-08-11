@@ -8,6 +8,7 @@
  * 仅做 30 秒结果缓存，切换页面/刷新即重新读取。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import type { MessageHandler } from '../types';
 import { getGlobalActivityTracker, getActivityStats } from '../../backend/modules/activity';
 import type { ActivityStatsQuery, ActivityStatsResult } from '../../backend/modules/activity';
@@ -74,5 +75,5 @@ export const getActivityStatsHandler: MessageHandler = async (data, requestId, c
  * 注册使用时间统计处理器
  */
 export function registerActivityHandlers(registry: Map<string, MessageHandler>): void {
-    registry.set('activity.getStats', getActivityStatsHandler);
+    registry.set(MESSAGE_NAMES['activity.getStats'], getActivityStatsHandler);
 }

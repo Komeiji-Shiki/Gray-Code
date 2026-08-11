@@ -53,7 +53,7 @@ describe('create_plan tool', () => {
     })
   })
 
-  it('writes a normalized plan markdown document with TODO section and requires confirmation', async () => {
+  test('writes a normalized plan markdown document with TODO section and requires confirmation', async () => {
     const tool = createCreatePlanTool()
     const result = await tool.handler({
       title: 'API Plan',
@@ -75,9 +75,9 @@ describe('create_plan tool', () => {
       ],
       sourceArtifact: undefined
     })
-    expect((result.data as any).content).toContain('## TODO LIST')
-    expect((result.data as any).content).toContain('`#api-1`')
-    expect((result.data as any).content).toContain('`#api-2`')
+    expect(result.data.content).toContain('## TODO LIST')
+    expect(result.data.content).toContain('`#api-1`')
+    expect(result.data.content).toContain('`#api-2`')
 
     expect(mockCreateDirectory).toHaveBeenCalledWith({
       fsPath: 'D:/workspace/.graycode/plans'
@@ -95,7 +95,7 @@ describe('create_plan tool', () => {
     })
   })
 
-  it('writes tracked source artifact metadata when sourceArtifact is provided', async () => {
+  test('writes tracked source artifact metadata when sourceArtifact is provided', async () => {
     const tool = createCreatePlanTool()
     const result = await tool.handler({
       title: 'Tracked Plan',
@@ -110,7 +110,7 @@ describe('create_plan tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).sourceArtifact).toEqual({
+    expect(result.data.sourceArtifact).toEqual({
       type: 'design',
       path: '.graycode/design/tracked.md',
       contentHash: expect.stringMatching(/^sha256:/)
@@ -121,7 +121,7 @@ describe('create_plan tool', () => {
     expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/tracked.md', undefined)
   })
 
-  it('rejects paths outside .graycode/plans', async () => {
+  test('rejects paths outside .graycode/plans', async () => {
     const tool = createCreatePlanTool()
     const result = await tool.handler({
       plan: '# Invalid',

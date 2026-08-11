@@ -1,5 +1,5 @@
 /**
- * LimCode - Memory 模块类型定义
+ * GrayCode - Memory 模块类型定义
  *
  * OptMem 风格的永久记忆系统：追加式日志 + 二叉树摘要
  */
@@ -126,3 +126,4 @@ export const TREE_REC = 288;
 
 /** 最多直接从原始日志压缩的记忆条数 */
 export const RAW_MAX = 16;
+

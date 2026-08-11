@@ -209,20 +209,32 @@ export class FileWriteLockManager {
 
     /** 锁集合变化代际：release / releaseAllByHolder 真正释放锁时自增，用于唤醒等待 acquire 的调用方 */
     private lockGeneration = 0;
-    /** 等待锁释放的 acquire 等待者（释放时 notify 唤醒；acquire 内 50ms 兜底轮询防唤醒丢失） */
-    private generationWaiters: Array<() => void> = [];
+    /** 等待锁释放的 acquire 等待者：记录其等待的锁 key，释放时仅定向唤醒与已释放 key 冲突的等待者 */
+    private generationWaiters: Array<{ keys: string[]; wake: () => void }> = [];
 
-    /** 锁被实际释放（从集合删除）时自增代际并唤醒全部等待者 */
-    private bumpLockGeneration(): void {
+    /**
+     * 锁被实际释放（从集合删除）时自增代际，并仅唤醒等待路径与已释放 key 冲突的等待者。
+     *
+     * 修改原因：旧实现唤醒全部等待者，每个等待者都会重做一次 O(锁数) 冲突扫描，
+     * N 个等待者 × M 次释放 = O(N·M) 次全量扫描（惊群）。
+     * 修改方式：等待者注册时携带其归一化锁 key，这里按 keysConflict 定向唤醒；
+     * 未命中的等待者继续留在队列，等待后续 release 定向唤醒；仅当注册期间检测到
+     * 「唤醒先于注册」竞态（代际已变化）时才启动 50ms 兜底 timer，不会永久睡死。
+     */
+    private bumpLockGeneration(releasedKeys: string[]): void {
         this.lockGeneration++;
         const waiters = this.generationWaiters;
         this.generationWaiters = [];
         for (const waiter of waiters) {
-            waiter();
+            if (releasedKeys.some(rk => waiter.keys.some(wk => keysConflict(rk, wk)))) {
+                waiter.wake();
+            } else {
+                this.generationWaiters.push(waiter);
+            }
         }
     }
 
-    private removeGenerationWaiter(waiter: () => void): void {
+    private removeGenerationWaiter(waiter: { keys: string[]; wake: () => void }): void {
         const idx = this.generationWaiters.indexOf(waiter);
         if (idx >= 0) {
             this.generationWaiters.splice(idx, 1);
@@ -321,37 +333,50 @@ export class FileWriteLockManager {
             const result = this.tryAcquire(paths, holder);
             if (result.acquired) return;
 
-            // 等待「锁被释放」的通知（release/releaseAllByHolder 会 bump 代际并唤醒），
-            // 而不是固定周期轮询——锁未释放时不再反复做 O(锁数) 冲突扫描空转；
-            // 50ms 兜底轮询补上「通知先于注册」的竞态/丢失窗口，保证不会永久睡死。
+            // 等待「锁被释放」的通知（release/releaseAllByHolder 会 bump 代际并只唤醒
+            // 与本等待者路径冲突的等待者），而不是固定周期轮询——锁未释放时不再反复做
+            // O(锁数) 冲突扫描空转。注册（入队）与代际快照同属一个同步 tick，不可能
+            // 出现「唤醒先于注册」竞态，无需 50ms 兜底；maxWaitMs 超时上限由独立
+            // 闹钟保证，不会永久睡死。
+            const waiterKeys = paths.map(p => normalizeLockPath(resolveLockPath(p)));
             await new Promise<void>((resolve, reject) => {
                 let settled = false;
-                const wake = () => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    abortSignal?.removeEventListener('abort', onAbort);
-                    resolve();
+                const entry = {
+                    keys: waiterKeys,
+                    wake: () => {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timeoutTimer);
+                        abortSignal?.removeEventListener('abort', onAbort);
+                        resolve();
+                    }
                 };
-                // 兜底轮询定时器：代际通知只覆盖「acquire 开始等待之后才发生的释放」，
-                // 通知先于注册的竞态窗口内可能丢失唤醒，50ms 上限的兜底保证不会永久睡死；
-                // 定时器触发时同样移除 wake（等待者已解决，不应再被代际通知唤醒）
-                const timer = setTimeout(() => {
-                    if (settled) return;
-                    settled = true;
-                    this.removeGenerationWaiter(wake);
-                    abortSignal?.removeEventListener('abort', onAbort);
-                    resolve();
-                }, 50);
+                // 快照读取与入队之间是同步原子块（Promise executor 同步执行）：注册期间
+                // 不可能被 release 打断，定向唤醒不会错过本等待者，不存在「唤醒先于注册」
+                // 竞态——后续冲突 release 必会定向唤醒本等待者，无需 50ms 兜底。
+                this.generationWaiters.push(entry);
+                // 超时闹钟：无任何唤醒时也准时触发 maxWaitMs 上限（Infinity 禁用超时则不设），
+                // 触发时同步清理等待者注册，避免残留。
+                const remaining = maxWaitMs - (Date.now() - startTime);
+                const timeoutTimer = Number.isFinite(remaining)
+                    ? setTimeout(() => {
+                        if (settled) return;
+                        settled = true;
+                        this.removeGenerationWaiter(entry);
+                        abortSignal?.removeEventListener('abort', onAbort);
+                        reject(new Error(
+                            `File write lock acquisition timed out after ${maxWaitMs}ms; ` +
+                            `waiting for paths: ${paths.join(', ')}`
+                        ));
+                    }, Math.max(remaining, 0))
+                    : undefined;
                 const onAbort = () => {
                     if (settled) return;
                     settled = true;
-                    clearTimeout(timer);
-                    this.removeGenerationWaiter(wake);
-                    abortSignal?.removeEventListener('abort', onAbort);
+                    clearTimeout(timeoutTimer);
+                    this.removeGenerationWaiter(entry);
                     reject(new Error('File write lock acquisition was cancelled'));
                 };
-                this.generationWaiters.push(wake);
                 abortSignal?.addEventListener('abort', onAbort, { once: true });
             });
         }
@@ -359,6 +384,7 @@ export class FileWriteLockManager {
 
     release(paths: string[], holder: LockHolder): void {
         let released = false;
+        const releasedKeys: string[] = [];
         // 复用 tryAcquire 时记录的锁 key，release 不再重新 resolve：
         // 避免 acquire 之后工作区变化导致同一路径解析出不同 key 而无法释放。
         const holderKey = holderIdentity(holder);
@@ -374,6 +400,7 @@ export class FileWriteLockManager {
                 this.locks.delete(key);
                 // 锁真正释放时同步删除其 display->key 记录，避免 acquiredKeysByHolder 条目只增不减
                 holderKeys?.delete(p);
+                releasedKeys.push(key);
                 released = true;
             }
         }
@@ -383,7 +410,7 @@ export class FileWriteLockManager {
         }
         // 只有锁被真正释放（从集合删除）才唤醒等待者：重入计数减少不产生新的获取机会
         if (released) {
-            this.bumpLockGeneration();
+            this.bumpLockGeneration(releasedKeys);
         }
     }
 
@@ -397,16 +424,18 @@ export class FileWriteLockManager {
     releaseAllByHolder(holder: LockHolder): void {
         const holderKey = holderIdentity(holder);
         let released = false;
+        const releasedKeys: string[] = [];
         for (const [key, entry] of this.locks) {
             if (holderIdentity(entry.holder) === holderKey) {
                 this.locks.delete(key);
+                releasedKeys.push(key);
                 released = true;
             }
         }
         // 持有者锁已全部清理，一并删除其 path->key 记录（键为完整身份 `${kind}:${id}`）
         this.acquiredKeysByHolder.delete(holderKey);
         if (released) {
-            this.bumpLockGeneration();
+            this.bumpLockGeneration(releasedKeys);
         }
     }
 

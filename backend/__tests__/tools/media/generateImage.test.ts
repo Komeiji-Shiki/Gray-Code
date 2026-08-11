@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 
 describe('generate_image 单张模式参数缺失', () => {
-    it('返回错误的同时注销任务，不残留 running 任务', async () => {
+    test('返回错误的同时注销任务，不残留 running 任务', async () => {
         const tool = createGenerateImageTool();
         const result = await tool.handler(
             {},
@@ -39,7 +39,7 @@ describe('generate_image 单张模式参数缺失', () => {
         expect(TaskManager.getTask('t-missing-args')).toBeUndefined();
     });
 
-    it('配置校验失败路径（无 API Key）同样注销任务', async () => {
+    test('配置校验失败路径（无 API Key）同样注销任务', async () => {
         const tool = createGenerateImageTool();
         const result = await tool.handler(
             { prompt: 'cat', output_path: 'C:/ws/out/cat.png' },
@@ -52,7 +52,7 @@ describe('generate_image 单张模式参数缺失', () => {
 });
 
 describe('generate_image isCancelled 判定', () => {
-    it("'fetch failed' 网络错误不再被误判为用户取消", async () => {
+    test("'fetch failed' 网络错误不再被误判为用户取消", async () => {
         mockCreateProxyFetch.mockReturnValue(async () => {
             throw new Error('fetch failed');
         });
@@ -68,7 +68,7 @@ describe('generate_image isCancelled 判定', () => {
         expect(TaskManager.getTask('t-fetch-fail')).toBeUndefined();
     });
 
-    it('AbortError 仍被识别为用户取消', async () => {
+    test('AbortError 仍被识别为用户取消', async () => {
         mockCreateProxyFetch.mockReturnValue(async () => {
             const err: any = new Error('The operation was aborted');
             err.name = 'AbortError';

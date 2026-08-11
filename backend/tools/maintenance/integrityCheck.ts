@@ -33,9 +33,11 @@
  * - 分支-主历史一致性默认走内置只读轻量比较（读分段文件消息 id）；也可注入
  *   branchValidator（即 BranchService.validateActivePathMatchesHistory）复用完整校验。
  *
- * 命令入口（后续接线）：在扩展注册一个 maintenance.runIntegrityCheck 命令，用
- * StoragePathManager.getEffectiveDataPath() 作为 baseDir、checkpointsDir 取
- * CheckpointManager 的 checkpointsDir，传入 BranchService 实例即可。
+ * 命令入口（已接线）：graycode.runIntegrityCheck 经 tools/maintenance/commands.ts 的
+ * registerMaintenanceCommands 注册（组合根 BackendRuntime.initMaintenanceCommands 调用），
+ * baseDir = StoragePathManager.getEffectiveDataPath()、checkpointsDir =
+ * CheckpointManager.checkpointsDir，branchValidator 注入
+ * BranchService.validateActivePathMatchesHistory（未就绪时退回内置轻量比较）。
  */
 
 import * as fsp from 'fs/promises';

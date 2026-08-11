@@ -23,16 +23,16 @@ describe('VSCodeSettingsStorage 配置键注册校验', () => {
         Object.keys(pkg?.contributes?.configuration?.properties ?? {})
     );
 
-    it('package.json 声明了 graycode.checkForUpdates（保存失败的根因键）', () => {
+    test('package.json 声明了 graycode.checkForUpdates（保存失败的根因键）', () => {
         expect(registered.has('graycode.checkForUpdates')).toBe(true);
     });
 
-    it('ALL_CONFIG_KEYS 中的每个键都已在 package.json 注册', () => {
+    test('ALL_CONFIG_KEYS 中的每个键都已在 package.json 注册', () => {
         const missing = ALL_CONFIG_KEYS.filter(key => !registered.has(`graycode.${key}`));
         expect(missing).toEqual([]);
     });
 
-    it('注册表包含全部 syncable + machine 键', () => {
+    test('注册表包含全部 syncable + machine 键', () => {
         // 防止 ALL_CONFIG_KEYS 被误改（少一个键会导致该键永不同步）
         expect(ALL_CONFIG_KEYS).toEqual([
             'toolsConfig',

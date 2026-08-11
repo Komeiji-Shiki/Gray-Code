@@ -9,7 +9,7 @@
  */
 import { ref, nextTick } from 'vue'
 import type { Ref } from 'vue'
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, expect, vi, afterEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
 import { handleStreamChunk, type StreamHandlerContext } from '../../stores/chat/streamHandler'
@@ -88,7 +88,7 @@ function createCtx(state: ChatStoreState, overrides: Partial<StreamHandlerContex
 }
 
 describe('streamHandler 终结事件状态复位', () => {
-  it('content-less complete 无条件复位流式状态并调度 processQueue', async () => {
+  test('content-less complete 无条件复位流式状态并调度 processQueue', async () => {
     const state = createState({
       isStreaming: ref(true),
       isWaitingForResponse: ref(true),
@@ -119,7 +119,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(processQueue).toHaveBeenCalled()
   })
 
-  it('content-less toolIteration 无条件复位流式状态并调度 processQueue', async () => {
+  test('content-less toolIteration 无条件复位流式状态并调度 processQueue', async () => {
     const state = createState({
       isStreaming: ref(true),
       isWaitingForResponse: ref(true),
@@ -142,7 +142,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(processQueue).toHaveBeenCalledOnce()
   })
 
-  it('content-less cancelled 无条件复位流式状态并清除回合覆盖', async () => {
+  test('content-less cancelled 无条件复位流式状态并清除回合覆盖', async () => {
     const state = createState({
       isStreaming: ref(true),
       isWaitingForResponse: ref(true),
@@ -163,7 +163,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
-  it('content-less error 复位流式状态并清除回合覆盖', async () => {
+  test('content-less error 复位流式状态并清除回合覆盖', async () => {
     const state = createState({
       isStreaming: ref(true),
       isWaitingForResponse: ref(true),
@@ -189,7 +189,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
-  it('携带 content 的 complete 保持原有行为（消息替换 + 状态复位）', async () => {
+  test('携带 content 的 complete 保持原有行为（消息替换 + 状态复位）', async () => {
     const state = createState({
       allMessages: ref<Message[]>([{
         id: 'msg_1',
@@ -231,7 +231,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(processQueue).toHaveBeenCalled()
   })
 
-  it('toolsExecuting finishes the model text CharFlow and clears migrated smooth state', () => {
+  test('toolsExecuting finishes the model text CharFlow and clears migrated smooth state', () => {
     const smoothTexts = new Map<string, { partKey: string; text: string }>()
     const state = createState({
       allMessages: ref<Message[]>([{
@@ -281,7 +281,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(state.isStreaming.value).toBe(true)
   })
 
-  it('contentSnapshot terminates the stale CharFlow baseline before applying authority', () => {
+  test('contentSnapshot terminates the stale CharFlow baseline before applying authority', () => {
     const smoothTexts = new Map<string, { partKey: string; text: string }>()
     const state = createState({
       allMessages: ref<Message[]>([{
@@ -322,7 +322,7 @@ describe('streamHandler 终结事件状态复位', () => {
     expect(state.allMessages.value[0].parts).toEqual([{ text: 'authoritative text' }])
   })
 
-  it('非当前会话/迟到流的 content-less complete 不触碰当前会话状态', () => {
+  test('非当前会话/迟到流的 content-less complete 不触碰当前会话状态', () => {
     const state = createState({
       isStreaming: ref(true),
       isWaitingForResponse: ref(true),
@@ -354,7 +354,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     vi.mocked(sendToExtension).mockResolvedValue({ success: true })
   })
 
-  it('complete 终结 chunk：消费 _pendingBranchRefreshAfterStream 并拉取分支图', async () => {
+  test('complete 终结 chunk：消费 _pendingBranchRefreshAfterStream 并拉取分支图', async () => {
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
       _pendingBranchReplayContext: ref({
@@ -381,7 +381,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(state._pendingBranchReplayContext.value).toBeNull()
   })
 
-  it('REROLL_ERROR 终结 chunk：把重放上下文写入错误对象后清理暂存状态', async () => {
+  test('REROLL_ERROR 终结 chunk：把重放上下文写入错误对象后清理暂存状态', async () => {
     const replayContext = {
       kind: 'reroll' as const,
       conversationId: 'conv_1',
@@ -412,7 +412,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(state.error.value?.branchReplayContext).toEqual(replayContext)
   })
 
-  it('cancelled 终结 chunk 消费标记（取消后新候选已建，刷新以便切回）', async () => {
+  test('cancelled 终结 chunk 消费标记（取消后新候选已建，刷新以便切回）', async () => {
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
       activeStreamId: ref('stream_1')
@@ -429,7 +429,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
   })
 
-  it('未置位标记时终结 chunk 不拉取分支图（普通流不受影响）', async () => {
+  test('未置位标记时终结 chunk 不拉取分支图（普通流不受影响）', async () => {
     const state = createState({ activeStreamId: ref('stream_1') })
     const ctx = createCtx(state)
 
@@ -442,7 +442,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getBranchGraph')).toBeUndefined()
   })
 
-  it('标记属于其他会话时不被当前会话的终结 chunk 消费（避免误刷其他会话分支图）', async () => {
+  test('标记属于其他会话时不被当前会话的终结 chunk 消费（避免误刷其他会话分支图）', async () => {
     const state = createState({
       currentConversationId: ref('conv_2'),
       _pendingBranchRefreshAfterStream: ref('conv_1'),
@@ -461,7 +461,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
 
-  it('toolIteration 带内容且流终结（需用户确认门闸）时消费标记', async () => {
+  test('toolIteration 带内容且流终结（需用户确认门闸）时消费标记', async () => {
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
       activeStreamId: ref('stream_1'),
@@ -497,7 +497,7 @@ describe('streamHandler reroll 终结后刷新分支图（TREE-01 前端接入�
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
   })
 
-  it('toolIteration 带内容但流继续（非终结）时提前刷新分支图但不消费标记', async () => {
+  test('toolIteration 带内容但流继续（非终结）时提前刷新分支图但不消费标记', async () => {
     const state = createState({
       _pendingBranchRefreshAfterStream: ref('conv_1'),
       activeStreamId: ref('stream_1'),

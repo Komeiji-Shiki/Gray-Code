@@ -4,6 +4,7 @@
  * 包含工具确认、取消、响应查询等操作
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed } from './types'
 import { triggerRef } from 'vue'
@@ -422,7 +423,7 @@ export async function cancelStreamAndRejectTools(
       const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
       if (backendIndex !== -1 && incompleteToolIds.length > 0) {
         try {
-          await sendToExtension('conversation.rejectToolCalls', {
+          await sendToExtension(MESSAGE_NAMES['conversation.rejectToolCalls'], {
             conversationId: state.currentConversationId.value,
             messageIndex: backendIndex,
             toolCallIds: incompleteToolIds
@@ -436,7 +437,7 @@ export async function cancelStreamAndRejectTools(
   
   if (hadActiveRequest) {
     try {
-      await sendToExtension('cancelStream', {
+      await sendToExtension(MESSAGE_NAMES.cancelStream, {
         conversationId: state.currentConversationId.value
       })
     } catch (err) {
@@ -508,7 +509,7 @@ export async function cancelStream(
   resetTurnBaseTokenEstimate()
 
   try {
-    await sendToExtension('cancelStream', cancelRequest)
+    await sendToExtension(MESSAGE_NAMES.cancelStream, cancelRequest)
   } catch (err) {
     // 本地状态已经完成取消，后端错误只记录，不把 UI 恢复成永久等待。
     console.error('取消请求失败:', err)

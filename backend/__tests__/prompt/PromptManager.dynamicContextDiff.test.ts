@@ -101,7 +101,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
     });
 
     describe('legacy 模板模式', () => {
-        it('无基准（首轮）时完整发送并带出 sectionValues 与模板指纹', () => {
+        test('无基准（首轮）时完整发送并带出 sectionValues 与模板指纹', () => {
             setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -114,7 +114,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(bundle.dynamicTemplateFingerprint).toBeDefined();
         });
 
-        it('全部 section 与上一轮相同 → 当前轮不发送动态消息', () => {
+        test('全部 section 与上一轮相同 → 当前轮不发送动态消息', () => {
             setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -128,7 +128,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(second.sectionValues?.['TODO_LIST']).toContain('task A');
         });
 
-        it('部分变化 → 只发送变化的 section，未变化的省略', () => {
+        test('部分变化 → 只发送变化的 section，未变化的省略', () => {
             setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -142,7 +142,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(second.text).toContain('This is the current turn dynamic context.');
         });
 
-        it('模板指纹变化 → 强制全量发送（模型需要看到新说明）', () => {
+        test('模板指纹变化 → 强制全量发送（模型需要看到新说明）', () => {
             setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -157,7 +157,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(second.text).toContain('task A');
         });
 
-        it('旧缓存（无 sectionValues）→ 无基准，全量发送', () => {
+        test('旧缓存（无 sectionValues）→ 无基准，全量发送', () => {
             setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -169,7 +169,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
     });
 
     describe('默认逻辑（无 dynamicTemplate）', () => {
-        it('全部 section 相同 → 整条动态消息省略（Current Time 不触发发送）', () => {
+        test('全部 section 相同 → 整条动态消息省略（Current Time 不触发发送）', () => {
             setGlobalSettingsManager(createSettingsManagerMock(defaultMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -182,7 +182,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(second.text).toBe('');
         });
 
-        it('部分变化 → 前缀说明 + Current Time + 变化的 section', () => {
+        test('部分变化 → 前缀说明 + Current Time + 变化的 section', () => {
             setGlobalSettingsManager(createSettingsManagerMock(defaultMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -197,7 +197,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
     });
 
     describe('entries 组装模式', () => {
-        it('差分后动态条目只保留静态外壳，sectionValues 与指纹照常缓存', () => {
+        test('差分后动态条目只保留静态外壳，sectionValues 与指纹照常缓存', () => {
             setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -215,7 +215,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(second.sectionValues?.['TODO_LIST']).toContain('task A');
         });
 
-        it('变化的 section 在 entries 模式下正常发送', () => {
+        test('变化的 section 在 entries 模式下正常发送', () => {
             setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
 
@@ -229,7 +229,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
     });
 
-        it('LOW-3：动态条目 role 翻转（content 不变）→ 指纹变化 → 强制全量发送', () => {
+        test('LOW-3：动态条目 role 翻转（content 不变）→ 指纹变化 → 强制全量发送', () => {
             setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
@@ -253,7 +253,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(second.text).toContain('task A');
         });
 
-        it('LOW-3：动态条目 fakeThought 增删（content 不变）→ 指纹变化 → 强制全量发送', () => {
+        test('LOW-3：动态条目 fakeThought 增删（content 不变）→ 指纹变化 → 强制全量发送', () => {
             setGlobalSettingsManager(createSettingsManagerMock(entriesMode));
             const manager = new PromptManager({ includeWorkspaceFiles: false });
             const first = manager.getPromptContextBundle(entriesMode, runtimeWithTodo('task A'));
@@ -280,7 +280,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
         });
 
     describe('promptContextCache 序列化', () => {
-        it('sectionValues 与 dynamicTemplateFingerprint round-trip 保留', () => {
+        test('sectionValues 与 dynamicTemplateFingerprint round-trip 保留', () => {
             const bundle: PromptContextBundle = {
                 beforeHistoryMessages: [{ role: 'user', parts: [{ text: 'ctx' }] }],
                 afterHistoryMessages: [],
@@ -301,7 +301,7 @@ describe('PromptManager 动态上下文跨回合差分', () => {
             expect(restored.dynamicTemplateFingerprint).toBe('fp-abc');
         });
 
-        it('旧缓存（无 section 字段）反序列化为 undefined，不抛错', () => {
+        test('旧缓存（无 section 字段）反序列化为 undefined，不抛错', () => {
             const legacy = JSON.stringify({
                 version: 2,
                 beforeHistoryMessages: [{ role: 'user', text: 'old ctx' }],
@@ -348,7 +348,7 @@ describe('ToolIterationLoopService.createTurnDynamicContext 差分基准', () =>
         return { service, conversationManager };
     }
 
-    it('preserve：以上一轮缓存为基准，全部相同 → 新回合动态消息为空', async () => {
+    test('preserve：以上一轮缓存为基准，全部相同 → 新回合动态消息为空', async () => {
         setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
         const manager = new PromptManager({ includeWorkspaceFiles: false });
         const firstBundle = manager.getPromptContextBundle(legacyTemplateMode, runtimeWithTodo('task A'));
@@ -374,7 +374,7 @@ describe('ToolIterationLoopService.createTurnDynamicContext 差分基准', () =>
         expect(restored.sectionValues?.['TODO_LIST']).toContain('task A');
     });
 
-    it('preserve：上一轮是旧缓存（无 sectionValues）→ 全量发送', async () => {
+    test('preserve：上一轮是旧缓存（无 sectionValues）→ 全量发送', async () => {
         setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
         const manager = new PromptManager({ includeWorkspaceFiles: false });
         const legacyCache = serializePromptContextCache({
@@ -404,7 +404,7 @@ describe('ToolIterationLoopService.createTurnDynamicContext 差分基准', () =>
         expect(restored.contextText).toContain('task A');
     });
 
-    it('single：不取历史基准，始终全量发送', async () => {
+    test('single：不取历史基准，始终全量发送', async () => {
         setGlobalSettingsManager(createSettingsManagerMock(legacyTemplateMode));
         const manager = new PromptManager({ includeWorkspaceFiles: false });
         const history: Content[] = [

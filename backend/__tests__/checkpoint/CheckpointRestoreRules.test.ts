@@ -18,9 +18,10 @@ import * as vscode from 'vscode';
 
 import '../__fixtures__/diffManagerMock';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
+import { createCheckpointManagerHarness } from '../__fixtures__/harnessFixtures';
 
-import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
-import type { CheckpointManifest } from '../../modules/checkpoint/types';
+import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint';
+import type { CheckpointManifest } from '../../modules/checkpoint';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -38,123 +39,6 @@ async function pathExists(targetPath: string): Promise<boolean> {
 }
 
 
-interface Harness {
-    manager: CheckpointManager;
-    storageRoot: string;
-    storedCheckpoints: () => CheckpointRecord[];
-    setCheckpointConfig: (config: Record<string, unknown>) => void;
-    readManifest: (checkpointId: string) => Promise<CheckpointManifest | null>;
-}
-
-async function createHarness(workspaceRoot: string, storageRoot: string): Promise<Harness> {
-    (vscode.workspace as any).workspaceFolders = [
-        {
-            name: 'root',
-            uri: { fsPath: workspaceRoot, scheme: 'file', path: workspaceRoot }
-        }
-    ];
-    (vscode.workspace as any).textDocuments = [];
-    (vscode as any).window = {
-        setStatusBarMessage: jest.fn(),
-        showTextDocument: jest.fn(),
-        tabGroups: { all: [], close: jest.fn() }
-    };
-    (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
-
-    const sharedMetadata: { custom: Record<string, unknown> } = {
-        custom: { checkpoints: [] }
-    };
-    const storedCheckpoints = (): CheckpointRecord[] =>
-        (sharedMetadata.custom.checkpoints as CheckpointRecord[]) || [];
-
-    const baseConfig = {
-        enabled: true,
-        beforeTools: [],
-        afterTools: ['write_file'],
-        messageCheckpoint: { beforeMessages: [], afterMessages: [] },
-        maxCheckpoints: -1,
-        customIgnorePatterns: [],
-        exclusion: {
-            // 空对象 = 全部默认类别按默认启用（全开）
-            enabledProfiles: {},
-            maxFileSizeBytes: 1024,
-            customPatterns: []
-        }
-    };
-    let configValue: Record<string, unknown> = { ...baseConfig };
-    const settingsManager = {
-        getCheckpointConfig: jest.fn().mockImplementation(() => configValue)
-    };
-
-    let metadataWriteChain: Promise<unknown> = Promise.resolve();
-    const conversationManager = {
-        getMetadata: jest.fn().mockImplementation(async () => sharedMetadata),
-        getCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string) => {
-            return (sharedMetadata.custom as Record<string, unknown>)[key];
-        }),
-        setCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string, value: unknown) => {
-            (sharedMetadata.custom as Record<string, unknown>)[key] = value;
-        }),
-        updateCustomMetadata: jest.fn().mockImplementation(
-            (_cid: string, key: string, updater: (current: unknown) => unknown | Promise<unknown>) => {
-                const run = metadataWriteChain.then(async () => {
-                    const current = (sharedMetadata.custom as Record<string, unknown>)[key];
-                    const next = await updater(current);
-                    if (next !== current) {
-                        (sharedMetadata.custom as Record<string, unknown>)[key] = next;
-                    }
-                    return next;
-                });
-                metadataWriteChain = run.catch(() => undefined);
-                return run;
-            }
-        ),
-        rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined),
-        listConversations: jest.fn().mockResolvedValue([])
-    };
-
-    const manager = new CheckpointManager(
-        settingsManager as any,
-        conversationManager as any,
-        { globalStorageUri: { fsPath: storageRoot } } as any
-    );
-    await manager.initialize();
-
-    const readManifest = async (checkpointId: string): Promise<CheckpointManifest | null> => {
-        try {
-            const metaRaw = await fs.readFile(
-                path.join(storageRoot, 'checkpoints', checkpointId, 'manifest.json'),
-                'utf-8'
-            );
-            const manifest = JSON.parse(metaRaw) as CheckpointManifest;
-            // CPF-LAZY-1: v2 拆分布局下 files 独立存放于 files.json，按需合并读取
-            if (!manifest.files) {
-                try {
-                    const filesRaw = await fs.readFile(
-                        path.join(storageRoot, 'checkpoints', checkpointId, 'files.json'),
-                        'utf-8'
-                    );
-                    manifest.files = (JSON.parse(filesRaw) as { files?: CheckpointManifest['files'] }).files ?? {};
-                } catch {
-                    manifest.files = {};
-                }
-            }
-            return manifest;
-        } catch {
-            return null;
-        }
-    };
-
-    return {
-        manager,
-        storageRoot,
-        storedCheckpoints,
-        setCheckpointConfig: (config: Record<string, unknown>) => {
-            configValue = { ...baseConfig, ...config };
-        },
-        readManifest
-    };
-}
 
 /** 全部默认类别显式关闭 */
 const ALL_PROFILES_DISABLED = {
@@ -168,7 +52,7 @@ const ALL_PROFILES_DISABLED = {
     archives: false
 };
 
-describe('FIX-G2: checkpoint restore rules (R5a)', () => {
+describe('checkpoint restore rules (R5a)', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });
@@ -177,7 +61,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
         const workspaceRoot = await createTempDirectory('limcode-g2-m1-workspace-');
         const storageRoot = await createTempDirectory('limcode-g2-m1-storage-');
         try {
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             // 清空工作区根：createCheckpoint 应在注册操作后早退
             (vscode.workspace as any).workspaceFolders = [];
 
@@ -216,7 +100,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
         try {
             // 快照时未配置类别覆盖 → data.bin 按默认 largeMedia 清单（不含 *.bin）被备份
             await writeFile(workspaceRoot, 'data.bin', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             const cp = await harness.manager.createCheckpoint('conv-m2', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();
             const manifest = await harness.readManifest(cp!.id);
@@ -257,7 +141,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
             await writeFile(workspaceRoot, '.gitignore', 'gitignored.tmp\n');
             await writeFile(workspaceRoot, 'gitignored.tmp', 'gitignore-excluded');
 
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             // 快照规则：custom 模式 *.log + 默认类别全开（largeMedia 命中 *.mp4）+ .gitignore
             harness.setCheckpointConfig({ customIgnorePatterns: ['*.log'] });
             const cp = await harness.manager.createCheckpoint('conv-m3', 0, 'write_file', 'after');
@@ -312,7 +196,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
         try {
             await writeFile(workspaceRoot, 'a.txt', 'hello');
             await writeFile(workspaceRoot, 'app.log', 'log'); // 触发 logs 类别排除 → excludedCount > 0
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             // 快照规则：logs 类别使用自定义覆盖 ['*.log']
             harness.setCheckpointConfig({
@@ -359,7 +243,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
         const storageRoot = await createTempDirectory('limcode-g2-l2-storage-');
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             const cp = await harness.manager.createCheckpoint('conv-l2', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();
 
@@ -386,7 +270,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
             await writeFile(workspaceRoot, 'dist/app.js', 'build');
             await writeFile(workspaceRoot, 'dist/sub/deep.js', 'build');
 
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             // 默认类别全开：dist/ 命中 buildArtifacts → 整目录排除
             const cp = await harness.manager.createCheckpoint('conv-m3dir', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();
@@ -442,7 +326,7 @@ describe('FIX-G2: checkpoint restore rules (R5a)', () => {
             await writeFile(workspaceRoot, 'keep.log', 'excluded-at-snapshot');
             await writeFile(workspaceRoot, 'src/main.ts', 'v1');
 
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             harness.setCheckpointConfig({ customIgnorePatterns: ['*.log'] });
             const cp = await harness.manager.createCheckpoint('conv-m3file', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();

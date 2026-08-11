@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   insertTextAtCaret,
   insertLineBreakAtCaret
@@ -34,7 +34,7 @@ function mockSelectionInEditor(editor: HTMLElement) {
 }
 
 describe('insertTextAtCaret', () => {
-  it('优先走 execCommand insertText，并标记 input 已由浏览器触发', () => {
+  test('优先走 execCommand insertText，并标记 input 已由浏览器触发', () => {
     const editor = document.createElement('div')
     mockSelectionInEditor(editor)
 
@@ -44,7 +44,7 @@ describe('insertTextAtCaret', () => {
     expect(result).toEqual({ ok: true, inputFired: true })
   })
 
-  it('execCommand 失败时回退手动插入，input 未触发，DOM 正确更新', () => {
+  test('execCommand 失败时回退手动插入，input 未触发，DOM 正确更新', () => {
     execCommandMock.mockReturnValue(false)
     const editor = document.createElement('div')
     editor.appendChild(document.createTextNode('ab'))
@@ -61,7 +61,7 @@ describe('insertTextAtCaret', () => {
 })
 
 describe('insertLineBreakAtCaret', () => {
-  it('优先走 execCommand insertHTML（BR + ZWSP 一次写入 undo 栈）', () => {
+  test('优先走 execCommand insertHTML（BR + ZWSP 一次写入 undo 栈）', () => {
     const editor = document.createElement('div')
     mockSelectionInEditor(editor)
 
@@ -75,7 +75,7 @@ describe('insertLineBreakAtCaret', () => {
     expect(result).toEqual({ ok: true, inputFired: true })
   })
 
-  it('execCommand 失败时回退手动插入 BR + ZWSP', () => {
+  test('execCommand 失败时回退手动插入 BR + ZWSP', () => {
     execCommandMock.mockReturnValue(false)
     const editor = document.createElement('div')
     mockSelectionInEditor(editor)

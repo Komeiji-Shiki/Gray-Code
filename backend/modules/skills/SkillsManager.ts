@@ -1,5 +1,5 @@
 /**
- * LimCode - Skills 管理器
+ * GrayCode - Skills 管理器
  *
  * 负责扫描、解析和管理所有 skills
  * Skills 现在支持从多个目录加载，包括项目级和用户级。
@@ -656,3 +656,4 @@ export async function createSkillsManager(options: {
     setSkillsManager(manager);
     return manager;
 }
+

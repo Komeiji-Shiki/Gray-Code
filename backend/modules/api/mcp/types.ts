@@ -1,5 +1,5 @@
 /**
- * LimCode - MCP API 类型定义
+ * GrayCode - MCP API 类型定义
  * 
  * 前后端交互的 MCP 配置相关数据结构
  */

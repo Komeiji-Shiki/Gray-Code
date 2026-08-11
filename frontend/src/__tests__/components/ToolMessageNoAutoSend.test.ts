@@ -1,6 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { ref } from 'vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import ToolMessage from '../../components/message/ToolMessage.vue'
 
 /**
@@ -112,7 +112,7 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     await flushPromises()
   }
 
-  it('输入栏有文字时点击“确认”，不把文字发出、不清空输入栏', async () => {
+  test('输入栏有文字时点击“确认”，不把文字发出、不清空输入栏', async () => {
     runtime.chatStore.inputValue.value = '这是我正在起草的下一条消息'
 
     await clickConfirm()
@@ -135,7 +135,7 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     expect(runtime.chatStore.allMessages.value).toHaveLength(0)
   })
 
-  it('输入栏有文字时点击“拒绝”，同样不发送、不清空', async () => {
+  test('输入栏有文字时点击“拒绝”，同样不发送、不清空', async () => {
     runtime.chatStore.inputValue.value = '待办草稿'
 
     await clickReject()
@@ -154,7 +154,7 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     expect(runtime.chatStore.allMessages.value).toHaveLength(0)
   })
 
-  it('确认提交携带正确渠道、流绑定与提示词模式', async () => {
+  test('确认提交携带正确渠道、流绑定与提示词模式', async () => {
     await clickConfirm()
 
     const payloads = runtime.sendToExtension.mock.calls
@@ -172,7 +172,7 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     expect(runtime.chatStore.isWaitingForResponse).toBe(true)
   })
 
-  it('PR #27 语义：回合级一次性渠道覆盖优先于全局渠道', async () => {
+  test('PR #27 语义：回合级一次性渠道覆盖优先于全局渠道', async () => {
     runtime.chatStore.pendingConfigIdOverride = 'oneoff_b'
     runtime.chatStore.pendingModelOverride = 'model-b'
 
@@ -189,7 +189,7 @@ describe('ToolMessage 工具确认/拒绝不消费输入栏文字', () => {
     expect(runtime.chatStore.currentConfig.id).toBe('cfg-1')
   })
 
-  it('无全局渠道但存在回合覆盖时仍可确认（不再卡死）', async () => {
+  test('无全局渠道但存在回合覆盖时仍可确认（不再卡死）', async () => {
     runtime.chatStore.currentConfig = null
     runtime.chatStore.pendingConfigIdOverride = 'oneoff_b'
 

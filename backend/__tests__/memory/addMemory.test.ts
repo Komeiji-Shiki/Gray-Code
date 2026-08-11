@@ -13,7 +13,7 @@ import { MemoryManager } from '../../modules/memory/MemoryManager';
 import { LOG_REC } from '../../modules/memory/types';
 
 describe('MemoryManager.note 手动新增', () => {
-    it('拒绝多行文本', async () => {
+    test('拒绝多行文本', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-note-'));
         try {
             const mm = new MemoryManager(dir, { entryChars: 280 } as any);
@@ -25,7 +25,7 @@ describe('MemoryManager.note 手动新增', () => {
         }
     });
 
-    it('按整条固定宽度记录校验（头部 + 文本），拒绝超出记录预算的文本', async () => {
+    test('按整条固定宽度记录校验（头部 + 文本），拒绝超出记录预算的文本', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-note-'));
         try {
             // entryChars 故意设到记录理论上限（LOG_REC - 1）：仅校验文本长度会放行
@@ -46,7 +46,7 @@ describe('MemoryManager.note 手动新增', () => {
 });
 
 describe('MemoryManager.updateEntry 容量校验', () => {
-    it('拒绝使整条记录超宽的编辑', async () => {
+    test('拒绝使整条记录超宽的编辑', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-'));
         try {
             // 同 note 用例：entryChars 设到记录理论上限，文本取 LOG_REC - 13 字节
@@ -65,7 +65,7 @@ describe('MemoryManager.updateEntry 容量校验', () => {
 });
 
 describe('MemoryManager.totalEntries / listEntries(limit)', () => {
-    it('listEntries(limit) 只返回前 N 条，totalEntries 给出全量计数', async () => {
+    test('listEntries(limit) 只返回前 N 条，totalEntries 给出全量计数', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-list-'));
         try {
             const mm = new MemoryManager(dir);
@@ -83,7 +83,7 @@ describe('MemoryManager.totalEntries / listEntries(limit)', () => {
 });
 
 describe('MemoryManager 撕裂尾部记录', () => {
-    it('崩溃残留的半条记录不被解析为有效条目，下一次追加时被 repair 修复', async () => {
+    test('崩溃残留的半条记录不被解析为有效条目，下一次追加时被 repair 修复', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-tail-'));
         try {
             const mm = new MemoryManager(dir);
@@ -108,7 +108,7 @@ describe('MemoryManager 撕裂尾部记录', () => {
 });
 
 describe('MemoryManager.wake 批量读取', () => {
-    it('连续原始块合并读取后输出与逐块读取一致（顺序与内容不变）', async () => {
+    test('连续原始块合并读取后输出与逐块读取一致（顺序与内容不变）', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-wake-batch-'));
         try {
             const mm = new MemoryManager(dir, { wakeLines: 100 } as any);

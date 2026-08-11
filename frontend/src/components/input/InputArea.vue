@@ -4,6 +4,7 @@
  * 负责把编辑器(InputBox)与外部能力(配置/模型/文件读取/VSCode预览)编排在一起。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
@@ -511,7 +512,7 @@ async function handleDropFileItems(
 async function handleOpenContext(ctx: PromptContextItem) {
   if (ctx.isTextContent === false && ctx.filePath) {
     try {
-      await sendToExtension('openWorkspaceFile', { path: ctx.filePath })
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: ctx.filePath })
     } catch (error) {
       console.error('Failed to open workspace file:', error)
     }

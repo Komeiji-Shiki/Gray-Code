@@ -37,6 +37,10 @@ function createMcpManagerMock() {
     };
 }
 
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：ToolDeclarationResolver 专用 harness（唯一），
+ * 形状与共享 fixtures 差异过大不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释「未收敛」清单。
+ */
 function createHarness() {
     const toolRegistry = {
         getDeclarationsBy: jest.fn((_predicate: (name: string) => boolean) => DECLARATIONS.map(d => ({ ...d })))
@@ -57,8 +61,8 @@ const BASE_OPTIONS = {
     multimodalEnabled: false
 };
 
-describe('M-1: ToolDeclarationResolver 声明缓存', () => {
-    it('相同输入命中缓存：第二次 resolve 不重复构建（getDeclarationsBy 只调用一次）', () => {
+describe('ToolDeclarationResolver 声明缓存', () => {
+    test('相同输入命中缓存：第二次 resolve 不重复构建（getDeclarationsBy 只调用一次）', () => {
         const { resolver, toolRegistry } = createHarness();
         const first = resolver.resolve(BASE_OPTIONS);
         const second = resolver.resolve(BASE_OPTIONS);
@@ -67,7 +71,7 @@ describe('M-1: ToolDeclarationResolver 声明缓存', () => {
         expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(1);
     });
 
-    it('options 变化（channelType / allowlist）→ 缓存键变化 → 重建', () => {
+    test('options 变化（channelType / allowlist）→ 缓存键变化 → 重建', () => {
         const { resolver, toolRegistry } = createHarness();
         resolver.resolve(BASE_OPTIONS);
         resolver.resolve({ ...BASE_OPTIONS, channelType: 'anthropic' });
@@ -75,7 +79,7 @@ describe('M-1: ToolDeclarationResolver 声明缓存', () => {
         expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(3);
     });
 
-    it('设置指纹变化（toolsEnabled）→ 重建', () => {
+    test('设置指纹变化（toolsEnabled）→ 重建', () => {
         const { resolver, toolRegistry, settingsManager } = createHarness();
         resolver.resolve(BASE_OPTIONS);
         settingsManager.getSettings.mockReturnValue({ toolsEnabled: { read_file: true }, toolAutoExec: {}, toolsConfig: {} });
@@ -83,7 +87,7 @@ describe('M-1: ToolDeclarationResolver 声明缓存', () => {
         expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(2);
     });
 
-    it('MCP 工具列表版本事件（connected/disconnected/capabilities_updated）→ 失效重建', () => {
+    test('MCP 工具列表版本事件（connected/disconnected/capabilities_updated）→ 失效重建', () => {
         const { resolver, toolRegistry, mcpManager } = createHarness();
         resolver.resolve(BASE_OPTIONS);
         resolver.resolve(BASE_OPTIONS);
@@ -100,7 +104,7 @@ describe('M-1: ToolDeclarationResolver 声明缓存', () => {
         expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(4);
     });
 
-    it('dispose() 移除全部 MCP 监听器（3 个事件类型各一次）', () => {
+    test('dispose() 移除全部 MCP 监听器（3 个事件类型各一次）', () => {
         const { resolver, mcpManager } = createHarness();
         resolver.dispose();
         expect(mcpManager.removeEventListener).toHaveBeenCalledTimes(3);

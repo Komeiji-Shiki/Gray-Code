@@ -1,5 +1,5 @@
 /**
- * LimCode 产品元数据。
+ * GrayCode 产品元数据。
  *
  * 修改原因：发布版本曾散落在 MCP clientInfo、模块注册、设置页文案和临时依赖 package 中，导致每次发版都要手工同步多处。
  * 修改方式：以 VS Code 扩展自身 packageJSON 为唯一运行时版本来源，activate 阶段初始化，其他模块只读取本模块提供的元数据。
@@ -85,3 +85,4 @@ export function createGrayCodeMcpClientInfo(): { name: string; version: string }
         version: getProductVersion()
     };
 }
+

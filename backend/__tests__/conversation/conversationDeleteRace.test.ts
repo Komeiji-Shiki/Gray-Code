@@ -9,9 +9,9 @@
  * 读路径（loadHistory 自动建会话）同样不复活；createConversation 同 ID 重建时撤销标记。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { Content } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { Content } from '../../modules/conversation';
 import { createAdapter } from './helpers/fakeVscodeFs';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
@@ -145,5 +145,69 @@ describe('deleteConversation 与流式写入的“删除后复活”竞态', () 
 
         // meta 未复活
         expect(await adapter.loadMetadata('conv-del-meta')).toBeNull();
+    });
+
+    test('删除后 getMessagesPaged 读取返回空页且不重建会话（含悬空工具调用的规范化写回被短路）', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-paged-del', 'PagedDel');
+        await manager.addContent('conv-paged-del', makeContent('user', 'before'));
+        // 悬空 functionCall：正常读取时 getMessagesPaged 首屏会触发规范化写回（插入 rejected FR）
+        await manager.addContent('conv-paged-del', {
+            role: 'model',
+            parts: [{ functionCall: { id: 'call_paged1', name: 'read_file', args: { path: 'a.txt' } } }]
+        } as Content);
+
+        await manager.deleteConversation('conv-paged-del');
+
+        // 删除短路：分页读取返回空页，且不写回（不复活历史目录）
+        const page = await manager.getMessagesPaged('conv-paged-del');
+        expect(page.total).toBe(0);
+        expect(page.messages).toHaveLength(0);
+
+        // 历史/目录/meta 均未复活
+        const result = await adapter.loadHistoryWithStatus('conv-paged-del');
+        expect(result.value).toBeNull();
+        const convDirs = [...fake.dirs].filter(d => d.endsWith('/conv-paged-del'));
+        expect(convDirs).toHaveLength(0);
+        expect(await adapter.loadMetadata('conv-paged-del')).toBeNull();
+    });
+
+    test('getMessagesPaged 规范化写回与 delete 并发：会话写锁串行，删除后无幽灵历史（R2 3.2）', async () => {
+        const { adapter, fake } = createAdapter();
+        const manager = new ConversationManager(adapter);
+        await manager.createConversation('conv-paged-race', 'PagedRace');
+        await manager.addContent('conv-paged-race', makeContent('user', 'one'));
+        // 悬空 functionCall：getMessagesPaged 首屏将触发 normalizeHistoryForDisplay 的写回
+        await manager.addContent('conv-paged-race', {
+            role: 'model',
+            parts: [{ functionCall: { id: 'call_paged2', name: 'read_file', args: { path: 'b.txt' } } }]
+        } as Content);
+
+        // 挂起规范化写回的 saveHistory：模拟「读取已完成、写回在途」窗口。
+        // 旧实现 delete 不入会话写锁，会滑入该窗口先删后写 → 历史目录被重新创建（幽灵）。
+        let releaseSave: () => void = () => {};
+        let saveStartedResolve: () => void = () => {};
+        const saveStarted = new Promise<void>(r => { saveStartedResolve = r; });
+        const originalSave = adapter.saveHistory.bind(adapter);
+        (adapter as any).saveHistory = async (id: string, contents: Content[]) => {
+            saveStartedResolve();
+            await new Promise<void>(r => { releaseSave = r; });
+            await originalSave(id, contents);
+        };
+
+        const pagedPromise = manager.getMessagesPaged('conv-paged-race');
+        await saveStarted; // 规范化写回已进入 storage 写（挂起在会话写锁任务内）
+        const deletePromise = manager.deleteConversation('conv-paged-race');
+        // delete 必须等待在途规范化写回完成（会话写锁串行），而不是先删后写复活
+        releaseSave();
+        await Promise.all([pagedPromise, deletePromise]);
+
+        // 会话被删除：无幽灵历史/目录/meta
+        const result = await adapter.loadHistoryWithStatus('conv-paged-race');
+        expect(result.value).toBeNull();
+        const convDirs = [...fake.dirs].filter(d => d.endsWith('/conv-paged-race'));
+        expect(convDirs).toHaveLength(0);
+        expect(await adapter.loadMetadata('conv-paged-race')).toBeNull();
     });
 });

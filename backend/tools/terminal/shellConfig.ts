@@ -332,8 +332,11 @@ export async function checkAllShellsAvailability(shells: Array<{ type: string; p
  * （which/where/wsl --status，各最多 3s），且 getAvailableShellsDescription /
  * getEnabledShellTypesForEnum / getUnavailableShellsDescription 会多次触发
  * getAvailableShells，一次工具创建可能重复执行多轮外部检测，阻塞 extension host。
- * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存。
- * 修改目的：工具创建只做一轮检测，避免重复 execSync 阻塞。
+ * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存；
+ *           缓存条目记录检测时间戳，超过 SHELL_AVAILABILITY_CACHE_TTL_MS 后视为过期
+ *           并重新检测（用户新装 shell / 修改 PATH 后能在 TTL 内自动反映）。
+ * 修改目的：保留「一次工具创建内重复检测直接命中」的去重收益，同时避免永久缓存
+ *           导致环境变化永远无法生效。
  */
 const SHELL_AVAILABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -442,7 +445,7 @@ function getShellAvailabilityCacheKey(shellType: string, customPath?: string): s
  * 同步检测 Shell 是否可用（带模块级 TTL 缓存：用户运行期间新装 shell 在 5 分钟内可被重新识别）
  */
 function checkShellAvailabilitySync(shellType: string, customPath?: string): boolean {
-    // 缓存命中直接返回，避免重复 execSync 阻塞
+    // 缓存命中直接返回，避免重复 execSync 阻塞（TTL 过期后重新检测）
     const cacheKey = getShellAvailabilityCacheKey(shellType, customPath);
     const cached = shellAvailabilityCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {

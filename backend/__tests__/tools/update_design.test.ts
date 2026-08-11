@@ -1,4 +1,5 @@
 const mockCreateDirectory = jest.fn().mockResolvedValue(undefined)
+const mockMkdir = jest.fn().mockResolvedValue(undefined)
 const mockReadFile = jest.fn()
 const mockWriteFile = jest.fn().mockResolvedValue(undefined)
 const mockGetAllWorkspaces = jest.fn()
@@ -18,6 +19,19 @@ jest.mock('vscode', () => ({
     file: (fsPath: string) => ({ fsPath })
   }
 }))
+
+// ensureParentDir 现使用 fs.promises.mkdir（backend/tools/design/pathUtils.ts），
+// 将真实 fs 的 mkdir 替换为 mock：避免测试在真实文件系统创建目录
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs')
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      mkdir: mockMkdir
+    }
+  }
+})
 
 jest.mock('../../../backend/tools/utils', () => ({
   getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
@@ -42,7 +56,7 @@ describe('update_design tool', () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode('# Existing Design'))
   })
 
-  it('rewrites an existing design document and returns requiresUserConfirmation', async () => {
+  test('rewrites an existing design document and returns requiresUserConfirmation', async () => {
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
       path: '.graycode/design/api-design.md',
@@ -65,7 +79,7 @@ describe('update_design tool', () => {
     })
   })
 
-  it('rejects update_design when the target design file does not exist', async () => {
+  test('rejects update_design when the target design file does not exist', async () => {
     mockReadFile.mockRejectedValue(new Error('File not found'))
 
     const tool = createUpdateDesignTool()
@@ -79,7 +93,7 @@ describe('update_design tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects paths outside .graycode/design', async () => {
+  test('rejects paths outside .graycode/design', async () => {
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
       path: '.graycode/plans/not-allowed.md',

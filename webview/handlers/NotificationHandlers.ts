@@ -1,3 +1,4 @@
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import type {
   AgentStopNotificationPayload,
   PendingAgentActionType,
@@ -248,7 +249,7 @@ export const showNotification: MessageHandler = async (data, requestId, ctx) => 
 }
 
 export function registerNotificationHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('notifications.agentStop', notifyAgentStop)
-  registry.set('notifications.preview', previewWindowsNotification)
-  registry.set('showNotification', showNotification)
+  registry.set(MESSAGE_NAMES['notifications.agentStop'], notifyAgentStop)
+  registry.set(MESSAGE_NAMES['notifications.preview'], previewWindowsNotification)
+  registry.set(MESSAGE_NAMES.showNotification, showNotification)
 }

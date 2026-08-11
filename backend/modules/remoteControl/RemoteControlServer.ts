@@ -53,7 +53,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { randomUUID } from 'crypto';
-import { DEFAULT_REMOTE_CONTROL_PORT } from '../settings/generalTypes';
+import { DEFAULT_REMOTE_CONTROL_PORT } from '../settings/types/generalTypes';
 import { renderRemoteControlUiHtml } from './remoteControlUi';
 import type { RemoteControlStatus } from '../../../webview/types';
 

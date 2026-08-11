@@ -33,22 +33,22 @@ describe('McpManager', () => {
     // ==================== #6: validateServerId 禁止双下划线 ====================
 
     describe('validateServerId', () => {
-        it('should accept valid IDs', async () => {
+        test('should accept valid IDs', async () => {
             const result = await manager.validateServerId('my_server');
             expect(result.valid).toBe(true);
         });
 
-        it('should accept IDs with hyphens', async () => {
+        test('should accept IDs with hyphens', async () => {
             const result = await manager.validateServerId('my-server');
             expect(result.valid).toBe(true);
         });
 
-        it('should reject IDs with double underscore', async () => {
+        test('should reject IDs with double underscore', async () => {
             const result = await manager.validateServerId('bad__id');
             expect(result.valid).toBe(false);
         });
 
-        it('should reject duplicate IDs', async () => {
+        test('should reject duplicate IDs', async () => {
             await manager.validateServerId('test'); // prime
             await storage.saveConfig({
                 id: 'test',
@@ -70,7 +70,7 @@ describe('McpManager', () => {
     // ==================== #7: cleanSchema 默认值 ====================
 
     describe('cleanSchema default', () => {
-        it('should default cleanSchema to true (undefined means clean)', async () => {
+        test('should default cleanSchema to true (undefined means clean)', async () => {
             await manager.initialize();
             const config = {
                 id: 'test_cs',
@@ -92,7 +92,7 @@ describe('McpManager', () => {
             expect(info!.config.cleanSchema !== false).toBe(true);
         });
 
-        it('should respect explicit cleanSchema: false', async () => {
+        test('should respect explicit cleanSchema: false', async () => {
             await manager.initialize();
             const config = {
                 id: 'test_cs_false',
@@ -116,7 +116,7 @@ describe('McpManager', () => {
     // ==================== #3: createServer 与 eager registration ====================
 
     describe('createServer', () => {
-        it('should create a server with disconnected status', async () => {
+        test('should create a server with disconnected status', async () => {
             await manager.initialize();
             const id = await manager.createServer(makeTestInput({ name: 'My Server' }), 'mysrv');
             expect(id).toBe('mysrv');
@@ -127,14 +127,14 @@ describe('McpManager', () => {
             expect(info!.config.name).toBe('My Server');
         });
 
-        it('should reject serverId with double underscore on creation', async () => {
+        test('should reject serverId with double underscore on creation', async () => {
             await manager.initialize();
             await expect(
                 manager.createServer(makeTestInput({ name: 'Bad' }), 'bad__id')
             ).rejects.toThrow();
         });
 
-        it('should generate readable ID from name when customId is omitted', async () => {
+        test('should generate readable ID from name when customId is omitted', async () => {
             await manager.initialize();
             const id = await manager.createServer(makeTestInput({ name: 'My Server' }));
             expect(id).toBe('my_server');
@@ -144,13 +144,13 @@ describe('McpManager', () => {
             expect(info!.config.name).toBe('My Server');
         });
 
-        it('should sanitize name into a valid slug (whitespace, special chars, double underscore)', async () => {
+        test('should sanitize name into a valid slug (whitespace, special chars, double underscore)', async () => {
             await manager.initialize();
             const id = await manager.createServer(makeTestInput({ name: '  Foo  Bar!!  ' }));
             expect(id).toBe('foo_bar');
         });
 
-        it('should append numeric suffix when slug is already taken', async () => {
+        test('should append numeric suffix when slug is already taken', async () => {
             await manager.initialize();
             const first = await manager.createServer(makeTestInput({ name: 'My Server' }));
             expect(first).toBe('my_server');
@@ -159,7 +159,7 @@ describe('McpManager', () => {
             expect(second).toBe('my_server_2');
         });
 
-        it('should fall back to random ID when name cannot be slugified', async () => {
+        test('should fall back to random ID when name cannot be slugified', async () => {
             await manager.initialize();
             const id = await manager.createServer(makeTestInput({ name: '我的服务器' }));
             expect(id).toMatch(/^mcp_\d+_[a-z0-9]+$/);
@@ -169,7 +169,7 @@ describe('McpManager', () => {
     // ==================== #1/#3: connect failure cleanup ====================
 
     describe('connect failure', () => {
-        it('should clean up after stdio connect failure', async () => {
+        test('should clean up after stdio connect failure', async () => {
             await manager.initialize();
             // 使用一个不存在的命令来触发 connect 失败
             const id = await manager.createServer(
@@ -199,7 +199,7 @@ describe('McpManager', () => {
     // ==================== disconnect ====================
 
     describe('disconnect', () => {
-        it('should no-op on already disconnected server', async () => {
+        test('should no-op on already disconnected server', async () => {
             await manager.initialize();
             const id = await manager.createServer(makeTestInput(), 'disc_srv');
 
@@ -209,7 +209,7 @@ describe('McpManager', () => {
             await expect(manager.disconnect('disc_srv')).resolves.toBeUndefined();
         });
 
-        it('should throw on unknown server', async () => {
+        test('should throw on unknown server', async () => {
             await manager.initialize();
             await expect(manager.disconnect('nonexistent')).rejects.toThrow();
         });
@@ -218,7 +218,7 @@ describe('McpManager', () => {
     // ==================== deleteServer ====================
 
     describe('deleteServer', () => {
-        it('should remove server from storage and memory', async () => {
+        test('should remove server from storage and memory', async () => {
             await manager.initialize();
             await manager.createServer(makeTestInput(), 'del_srv');
 
@@ -232,7 +232,7 @@ describe('McpManager', () => {
     // ==================== listServers ====================
 
     describe('listServers', () => {
-        it('should return all servers with their status', async () => {
+        test('should return all servers with their status', async () => {
             await manager.initialize();
             await manager.createServer(makeTestInput({ name: 'A' }), 'srv_a');
             await manager.createServer(makeTestInput({ name: 'B' }), 'srv_b');
@@ -247,7 +247,7 @@ describe('McpManager', () => {
     // ==================== setServerEnabled ====================
 
     describe('setServerEnabled', () => {
-        it('should update enabled status', async () => {
+        test('should update enabled status', async () => {
             await manager.initialize();
             await manager.createServer(makeTestInput({ enabled: true }), 'en_srv');
 
@@ -261,7 +261,7 @@ describe('McpManager', () => {
     // ==================== signal 透传 ====================
 
     describe('callTool signal passthrough', () => {
-        it('should pass the request signal to the underlying client callTool/readResource', async () => {
+        test('should pass the request signal to the underlying client callTool/readResource', async () => {
             const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
             const disconnectSpy = jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
             const callToolSpy = jest.spyOn(StdioMcpClient.prototype, 'callTool').mockResolvedValue({
@@ -302,7 +302,7 @@ describe('McpManager', () => {
             }
         });
 
-        it('should surface an aborted client rejection as an MCP failure result', async () => {
+        test('should surface an aborted client rejection as an MCP failure result', async () => {
             const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect').mockResolvedValue(undefined);
             const disconnectSpy = jest.spyOn(StdioMcpClient.prototype, 'disconnect').mockResolvedValue(undefined);
             const callToolSpy = jest.spyOn(StdioMcpClient.prototype, 'callTool')

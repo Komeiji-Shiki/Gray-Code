@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具声明解析器
+ * GrayCode - 工具声明解析器
  *
  * 修改原因：ChannelManager 和 SubAgent 过去各自生成工具声明，导致 read_file 多模态描述、图片工具过滤、MCP schema 清理等逻辑容易漏同步。
  * 修改方式：把原 ChannelManager.getFilteredTools 的核心逻辑抽成共享解析器，并提供工具来源、白名单、黑名单等通用过滤选项。
@@ -14,7 +14,7 @@ import type { ResolvedPromptModeSnapshot } from '../settings';
 import type { McpManager } from '../mcp';
 import { encodeMcpToolName } from '../mcp';
 import { getToolDeclarationFactory } from '../../tools/toolDeclarationRegistry';
-import { hasAvailableSubAgent } from '../../tools/subagents';
+import { hasAvailableSubAgentSafe } from '../../core/subAgentAvailabilityBridge';
 
 export type DeclarationChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
 export type DeclarationToolMode = 'function_call' | 'xml' | 'json';
@@ -150,7 +150,7 @@ export class ToolDeclarationResolver {
             toolPolicy ?? null,
             this.settingsFingerprint(),
             this.mcpToolsVersion,
-            hasAvailableSubAgent(),
+            hasAvailableSubAgentSafe(),
         ]);
     }
 
@@ -310,7 +310,7 @@ export class ToolDeclarationResolver {
             }
         }
 
-        if (tool.name === 'subagents' && !hasAvailableSubAgent()) {
+        if (tool.name === 'subagents' && !hasAvailableSubAgentSafe()) {
             return null;
         }
 
@@ -425,3 +425,4 @@ export class ToolDeclarationResolver {
         return cleaned;
     }
 }
+

@@ -1,5 +1,5 @@
 /**
- * LimCode Backend - i18n 国际化模块
+ * GrayCode Backend - i18n 国际化模块
  * 
  * 支持语言切换和翻译
  * 两套独立语言包（后端与前端），需同步维护
@@ -69,7 +69,8 @@ export function getActualLanguage(): Exclude<SupportedLanguage, 'auto'> {
  */
 function getCurrentMessages(): BackendLanguageMessages {
     const lang = getActualLanguage();
-    return messages[lang] || messages['zh-CN'];
+    // getActualLanguage 只返回 zh-CN/en/ja，messages 中三者必存在，无需兜底
+    return messages[lang];
 }
 
 /**

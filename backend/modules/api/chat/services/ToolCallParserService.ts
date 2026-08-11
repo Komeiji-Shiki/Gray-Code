@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具调用解析服务
+ * GrayCode - 工具调用解析服务
  *
  * 负责解析和转换各种格式的工具调用：
  * - Function Call 格式（Gemini/OpenAI 原生）
@@ -145,3 +145,4 @@ export class ToolCallParserService {
         return parts;
     }
 }
+

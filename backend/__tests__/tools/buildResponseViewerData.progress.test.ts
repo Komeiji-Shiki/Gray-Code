@@ -14,7 +14,7 @@ describe('buildResponseViewerData progress integration', () => {
     }
   }
 
-  it('builds progress card data from direct tool results', () => {
+  test('builds progress card data from direct tool results', () => {
     const tool: ToolUsage = {
       id: 'progress-tool-1',
       name: 'record_progress_milestone',
@@ -79,7 +79,7 @@ describe('buildResponseViewerData progress integration', () => {
     expect(progressTool.progressFallbackContent).toContain('已完成 schema 与工具骨架。')
   })
 
-  it('builds progress validation card data from hidden function response messages', () => {
+  test('builds progress validation card data from hidden function response messages', () => {
     const assistantMessage = createAssistantMessage({
       id: 'assistant-message-2',
       tools: [{

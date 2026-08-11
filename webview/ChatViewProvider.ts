@@ -55,6 +55,7 @@ import { warmUpShellAvailabilityCache } from '../backend/tools/terminal/execute_
 import { resolveMainChatDiffViewColumn } from '../backend/tools/file/diffViewColumn';
 import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { MessageRouter } from './MessageRouter';
+import { PUSH_MESSAGE_NAMES } from '../shared/protocol';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
@@ -65,6 +66,7 @@ import { Logger } from '../backend/core/logger';
 import { disposeUsageCache } from './handlers/UsageHandlers';
 import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { disposeFileHandlerResources } from './handlers/FileHandlers';
+import { clearExecCmdAvailabilityCache } from './handlers/ToolHandlers';
 import { getExtensionVersion } from './utils/extensionInfo';
 import { WorkspaceManager, setWorkspaceManager, type WorkspaceFolderInfo } from './utils/WorkspaceManager';
 import {
@@ -177,6 +179,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     
     // 初始化状态
     private initPromise: Promise<void>;
+
+    // 初始化失败时保存的错误（不 rethrow，供 handleMessage 读取并向 webview 展示根因，F1）
+    private initError?: Error;
 
     // 消息处理队列，用于确保消息按顺序处理（解决技能切换与对话请求的竞态问题）
     private messageHandlingQueue: Promise<void> = Promise.resolve();
@@ -344,7 +349,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 // 推送最新配置到前端（用于更新倒计时/自动确认 UI）
                 try {
                     const config = event.settings?.toolsConfig?.apply_diff || this.settingsManager.getApplyDiffConfig();
-                    this.sendCommand('tools.applyDiffConfigChanged', { config });
+                    this.sendCommand(PUSH_MESSAGE_NAMES['tools.applyDiffConfigChanged'], { config });
                 } catch {
                     // ignore
                 }
@@ -584,7 +589,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // start/exit 等低频事件：先冲刷该终端未决输出，再即时发送
         this.flushTerminalOutput(event.terminalId);
         this._view.webview.postMessage({
-            type: 'terminalOutput',
+            type: PUSH_MESSAGE_NAMES.terminalOutput,
             data: event
         });
     }
@@ -615,7 +620,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             if (!pending) return;
             this.terminalOutputPending.delete(terminalId);
             this._view.webview.postMessage({
-                type: 'terminalOutput',
+                type: PUSH_MESSAGE_NAMES.terminalOutput,
                 data: {
                     terminalId,
                     type: pending.type,
@@ -627,7 +632,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         for (const [id, pending] of this.terminalOutputPending) {
             this._view.webview.postMessage({
-                type: 'terminalOutput',
+                type: PUSH_MESSAGE_NAMES.terminalOutput,
                 data: {
                     terminalId: id,
                     type: pending.type,
@@ -645,7 +650,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (!this._view) return;
         
         this._view.webview.postMessage({
-            type: 'imageGenOutput',
+            type: PUSH_MESSAGE_NAMES.imageGenOutput,
             data: event
         });
     }
@@ -661,7 +666,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (!this._view) return;
         
         this._view.webview.postMessage({
-            type: 'taskEvent',
+            type: PUSH_MESSAGE_NAMES.taskEvent,
             data: event
         });
     }
@@ -673,7 +678,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (!this._view) return;
         
         this._view.webview.postMessage({
-            type: 'dependencyProgress',
+            type: PUSH_MESSAGE_NAMES.dependencyProgress,
             data: event
         });
     }
@@ -735,7 +740,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         const sendResponse = (id: string, responseData: any) => {
             this.postRoutedWebviewMessage(routedClientId, {
-                type: 'response',
+                type: PUSH_MESSAGE_NAMES.response,
                 requestId: id,
                 success: true,
                 data: responseData
@@ -744,7 +749,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         const sendError = (id: string, code: string, errorMessage: string) => {
             this.postRoutedWebviewMessage(routedClientId, {
-                type: 'error',
+                type: PUSH_MESSAGE_NAMES.error,
                 requestId: id,
                 success: false,
                 error: {
@@ -769,6 +774,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             },
             openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
+
+        // 初始化失败：messageRouter 等模块未初始化，继续路由会抛错。
+        // 与 handleMessage 对齐（F1）：回错误响应，避免 Monitor 面板请求永久挂起。
+        if (this.initError) {
+            const initErrorMessage = this.initError.message || String(this.initError);
+            sendError(requestId, 'INIT_FAILED', `Backend initialization failed: ${initErrorMessage}`);
+            return true;
+        }
 
         try {
             return await this.messageRouter.route(type, data, requestId, ctx, routedClientId);
@@ -826,7 +839,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         if (!this._view) return;
         
         this._view.webview.postMessage({
-            type: 'retryStatus',
+            type: PUSH_MESSAGE_NAMES.retryStatus,
             data: {
                 ...status
             }
@@ -925,7 +938,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // 简单的办法是发送所有 pending 的 ID 及其状态，或者直接通知整个列表。
             
             // 发送 diff 状态变化消息
-            this.sendCommand('diff.statusChanged', {
+            this.sendCommand(PUSH_MESSAGE_NAMES['diff.statusChanged'], {
                 pendingDiffs: pending.map(d => ({
                     id: d.id,
                     status: d.status,
@@ -948,7 +961,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 关闭 diff 标签归还 workbench 焦点后，通知前端把光标放回聊天输入框
         // （见 backend/core/chatFocusGuard.ts）
         const removeChatFocusRestoreNotifier = addChatFocusRestoreNotifier(() => {
-            this.sendCommand('chat.restoreInputFocus', {});
+            this.sendCommand(PUSH_MESSAGE_NAMES['chat.restoreInputFocus'], {});
         });
         this.viewDisposables.push({
             dispose: removeChatFocusRestoreNotifier
@@ -961,7 +974,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 焦点在 VSCode 窗口时用户看得见界面，不播；窗口失焦（切到其他应用）时才播提醒。
         // 未就绪时 sendCommand 自动入队，webview ready 后统一 flush。
         const pushWindowFocus = (focused: boolean) => {
-            this.sendCommand('windowFocusChanged', { focused: !!focused });
+            this.sendCommand(PUSH_MESSAGE_NAMES.windowFocusChanged, { focused: !!focused });
         };
         pushWindowFocus(vscode.window.state.focused);
         this.viewDisposables.push(
@@ -1043,7 +1056,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // Flush any queued commands.
             for (const cmd of this.pendingCommands) {
                 this.postRoutedWebviewMessage(routedClientId, {
-                    type: 'command',
+                    type: PUSH_MESSAGE_NAMES.command,
                     command: cmd.command,
                     data: cmd.data
                 }, this._view?.webview);
@@ -1052,7 +1065,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
             if (requestId) {
                 this.postRoutedWebviewMessage(routedClientId, {
-                    type: 'response',
+                    type: PUSH_MESSAGE_NAMES.response,
                     requestId,
                     success: true,
                     data: { success: true }
@@ -1064,6 +1077,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         try {
             // 等待初始化完成
             await this.initPromise;
+
+            // 初始化失败：messageRouter 等模块未初始化，继续路由会抛错。
+            // 向 webview 发送 startupFailed 命令展示根因，并回错误响应（F1）。
+            if (this.initError) {
+                const initErrorMessage = this.initError.message || String(this.initError);
+                this.sendCommand(PUSH_MESSAGE_NAMES.startupFailed, { message: initErrorMessage });
+                this.sendError(requestId, 'INIT_FAILED', `Backend initialization failed: ${initErrorMessage}`);
+                return;
+            }
             
             // 创建处理器上下文
             const ctx = {
@@ -1132,6 +1154,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             }
         }
         disposeFileHandlerResources();
+        clearExecCmdAvailabilityCache();
 
         // Drop queued commands.
         this.pendingCommands = [];
@@ -1209,7 +1232,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private sendResponse(requestId: string, data: any) {
         this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
-            type: 'response',
+            type: PUSH_MESSAGE_NAMES.response,
             requestId,
             success: true,
             data
@@ -1221,7 +1244,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private sendError(requestId: string, code: string, message: string) {
         this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
-            type: 'error',
+            type: PUSH_MESSAGE_NAMES.error,
             requestId,
             success: false,
             error: {
@@ -1246,7 +1269,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
-            type: 'command',
+            type: PUSH_MESSAGE_NAMES.command,
             command,
             data
         }, this._view.webview);
@@ -1309,7 +1332,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     public async importSettings(
         json: string,
-        options?: { overwriteChannelConfigs?: boolean; overwriteMcpServers?: boolean; overwriteSkills?: boolean }
+        options?: { overwriteChannelConfigs?: boolean; overwriteMcpServers?: boolean; overwriteSkills?: boolean; overwriteVscodeSettings?: boolean }
     ): Promise<{ success: boolean; imported: { vscodeSettings: boolean; channelConfigs: number; mcpServers: number; skills: number }; errors: string[] }> {
         await this.initPromise;
 

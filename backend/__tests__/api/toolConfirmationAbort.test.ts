@@ -18,6 +18,11 @@ import { ChatFlowService } from '../../modules/api/chat/services/ChatFlowService
 
 const config = { id: 'cfg-1', type: 'custom', toolMode: 'function_call', model: 'test-model' };
 
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：overrides.executeFunctionCallsWithProgress +
+ * rejectToolCalls/toolNeedsConfirmation/drainInboxIntoResults 接线（ChatFlowService 构造参数位不同），
+ * 与共享的 createChatFlowHarness 差异过大，不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
+ */
 function createHarness(overrides: { executeFunctionCallsWithProgress?: jest.Mock } = {}) {
     const conversationManager = {
         getHistory: jest.fn().mockResolvedValue([]),
@@ -70,8 +75,8 @@ function makeHangingGenerator() {
     };
 }
 
-describe('R7b：handleToolConfirmation 循环与 abort race', () => {
-    it('队首确认工具循环：不响应 abort 的生成器取消后不再挂起，输出 cancelled', async () => {
+describe('handleToolConfirmation 循环与 abort race', () => {
+    test('队首确认工具循环：不响应 abort 的生成器取消后不再挂起，输出 cancelled', async () => {
         const controller = new AbortController();
         const hangingGen = makeHangingGenerator();
         const { service } = createHarness({
@@ -102,7 +107,7 @@ describe('R7b：handleToolConfirmation 循环与 abort race', () => {
         expect(outputs.some(o => (o as { cancelled?: boolean })?.cancelled === true)).toBe(true);
     });
 
-    it('autoSuffix 循环：不响应 abort 的生成器取消后不再挂起，且已完成队首工具真实结果仍被结算', async () => {
+    test('autoSuffix 循环：不响应 abort 的生成器取消后不再挂起，且已完成队首工具真实结果仍被结算', async () => {
         const controller = new AbortController();
         const call1 = { id: 'call_1', name: 'stub_tool', args: {} };
         const call2 = { id: 'call_2', name: 'stub_tool2', args: {} };

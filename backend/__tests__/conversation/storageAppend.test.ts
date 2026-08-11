@@ -9,8 +9,8 @@
  * - getHistoryIndexInfo 只读 index，不解析段消息。
  */
 
-import { FileSystemStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, Content } from '../../modules/conversation/types';
+import { FileSystemStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory, Content } from '../../modules/conversation';
 import { Uri, FileType } from 'vscode';
 import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';
 

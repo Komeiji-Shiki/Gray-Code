@@ -4,6 +4,7 @@
  * 包含检查点的 CRUD 和恢复操作
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message, Attachment, CheckpointRecord, CheckpointManifest } from '../../types'
 import type { ChatStoreState, BranchStreamReplayContext } from './types'
 import { sendToExtension } from '../../utils/vscode'
@@ -71,7 +72,7 @@ export async function createManualCheckpoint(state: ChatStoreState): Promise<Che
       success?: boolean
       checkpoint?: CheckpointRecord
       error?: string
-    }>('checkpoint.createManual', { conversationId })
+    }>(MESSAGE_NAMES['checkpoint.createManual'], { conversationId })
     if (result?.success && result.checkpoint) {
       addCheckpoint(state, result.checkpoint)
       return result.checkpoint
@@ -127,7 +128,7 @@ export async function previewRestore(
       autoPrunedCheckpointCount?: number
       unbackedPaths?: string[]
     }>(
-      'checkpoint.previewRestore',
+      MESSAGE_NAMES['checkpoint.previewRestore'],
       {
         conversationId: state.currentConversationId.value,
         checkpointId
@@ -183,7 +184,7 @@ export interface ExclusionPreviewResult {
 
 export async function previewExclusions(): Promise<ExclusionPreviewResult | null> {
   try {
-    return await sendToExtension<ExclusionPreviewResult>('checkpoint.previewExclusions', {})
+    return await sendToExtension<ExclusionPreviewResult>(MESSAGE_NAMES['checkpoint.previewExclusions'], {})
   } catch (err: any) {
     console.error('[checkpointActions] Failed to preview exclusions:', err)
     return null
@@ -239,7 +240,7 @@ export async function restoreCheckpoint(
       failures?: Array<{ path: string; reason: string }>
       unbackedPaths?: string[]
     }>(
-      'checkpoint.restore',
+      MESSAGE_NAMES['checkpoint.restore'],
       {
         conversationId,
         checkpointId,
@@ -411,7 +412,7 @@ export async function restoreAndRetry(
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('chat.rerollStream', {
+    await sendToExtension(MESSAGE_NAMES['chat.rerollStream'], {
       conversationId: originConvId,
       // 目标 assistant 消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       assistantNodeId: targetMessageId,
@@ -534,7 +535,7 @@ export async function restoreAndDelete(
     // 4. 删除后端的消息；失败时明确提示，避免前端已截断而后端历史残留的静默不一致（CP-11）
     let deleteFailed = false
     try {
-      const resp = await sendToExtension<any>('deleteMessage', {
+      const resp = await sendToExtension<any>(MESSAGE_NAMES.deleteMessage, {
         conversationId: originConvId,
         targetIndex: backendIndex,
         preserveCheckpointId: checkpointId
@@ -734,7 +735,7 @@ export async function restoreAndEdit(
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('chat.editBranchStream', {
+    await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,
@@ -809,7 +810,7 @@ export async function pollOperationProgress(
 ): Promise<CheckpointOperationProgress | null> {
   try {
     const result = await sendToExtension<{ progress: CheckpointOperationProgress | null }>(
-      'checkpoint.getOperationProgress',
+      MESSAGE_NAMES['checkpoint.getOperationProgress'],
       { operationId }
     )
     return result?.progress ?? null
@@ -828,7 +829,7 @@ export async function pollOperationProgress(
 export async function cancelCheckpointOperation(operationId: string): Promise<boolean> {
   try {
     const result = await sendToExtension<{ cancelled: boolean }>(
-      'checkpoint.cancelOperation',
+      MESSAGE_NAMES['checkpoint.cancelOperation'],
       { operationId }
     )
     return result?.cancelled === true
@@ -849,7 +850,7 @@ export async function getCheckpointManifest(
 ): Promise<{ manifest: CheckpointManifest | null; error?: string }> {
   try {
     const result = await sendToExtension<{ manifest: CheckpointManifest | null }>(
-      'checkpoint.getManifest',
+      MESSAGE_NAMES['checkpoint.getManifest'],
       { checkpointId }
     )
     return { manifest: result?.manifest ?? null }

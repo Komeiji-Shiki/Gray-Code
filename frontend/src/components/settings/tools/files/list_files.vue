@@ -6,6 +6,7 @@
  * 1. 配置忽略列表（支持通配符）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
@@ -26,7 +27,7 @@ const isLoading = ref(false)
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ config: { ignorePatterns: string[] } }>('tools.getToolConfig', {
+    const response = await sendToExtension<{ config: { ignorePatterns: string[] } }>(MESSAGE_NAMES['tools.getToolConfig'], {
       toolName: 'list_files'
     })
     if (response?.config?.ignorePatterns) {
@@ -44,7 +45,7 @@ async function saveConfig() {
   isSaving.value = true
   try {
     // 将响应式数组转换为普通数组以便序列化
-    await sendToExtension('tools.updateListFilesConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateListFilesConfig'], {
       config: {
         ignorePatterns: [...ignorePatterns.value]
       }

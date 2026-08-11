@@ -1,5 +1,5 @@
 /**
- * LimCode - Chat 模块工具函数
+ * GrayCode - Chat 模块工具函数
  *
  * 提供 ChatHandler 及其服务类使用的通用工具函数和接口定义
  */
@@ -83,3 +83,4 @@ export interface ToolExecutionResult {
     /** 工具调用参数快照，用于流式状态事件即时补齐前端工具卡 */
     args?: Record<string, unknown>;
 }
+

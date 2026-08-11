@@ -17,7 +17,7 @@ function schema(properties: Record<string, SchemaProperty>, required?: string[])
 describe('coerceToolArgs', () => {
     // ==================== 基础守卫 ====================
 
-    it('在没有 schema 时保持原值', () => {
+    test('在没有 schema 时保持原值', () => {
         const args = { files: '[{"path":"a.txt"}]' };
 
         expect(coerceToolArgs(args, undefined as any)).toBe(args);
@@ -25,7 +25,7 @@ describe('coerceToolArgs', () => {
 
     // ==================== array 容错 ====================
 
-    it('对已经是数组的参数不做处理', () => {
+    test('对已经是数组的参数不做处理', () => {
         const args = { files: [{ path: 'a.txt', content: 'hello' }] };
         const s = schema({
             files: {
@@ -43,7 +43,7 @@ describe('coerceToolArgs', () => {
         expect(coerceToolArgs(args, s)).toBe(args);
     });
 
-    it('顶层 array 参数收到字符串时尝试解析为数组', () => {
+    test('顶层 array 参数收到字符串时尝试解析为数组', () => {
         const args = { files: '[{"path":"a.txt","content":"hello"}]' };
         const s = schema({
             files: {
@@ -66,7 +66,7 @@ describe('coerceToolArgs', () => {
         expect(Array.isArray(result.files)).toBe(true);
     });
 
-    it('递归修正数组元素内部的字段类型', () => {
+    test('递归修正数组元素内部的字段类型', () => {
         const args = {
             files: '[{"path":"a.txt","startLine":"10","endLine":"20"}]'
         };
@@ -96,7 +96,7 @@ describe('coerceToolArgs', () => {
         ]);
     });
 
-    it('递归修正已是数组的参数中嵌套的类型错误', () => {
+    test('递归修正已是数组的参数中嵌套的类型错误', () => {
         const args = {
             files: [{ path: 'a.txt', line: '5' }]
         };
@@ -118,7 +118,7 @@ describe('coerceToolArgs', () => {
         expect(result.files).toEqual([{ path: 'a.txt', line: 5 }]);
     });
 
-    it('递归修正嵌套 object 属性的类型错误', () => {
+    test('递归修正嵌套 object 属性的类型错误', () => {
         const args = {
             options: { recursive: 'true', depth: '3' }
         };
@@ -137,7 +137,7 @@ describe('coerceToolArgs', () => {
         expect(result.options).toEqual({ recursive: true, depth: 3 });
     });
 
-    it('不递归解析双层字符串数组', () => {
+    test('不递归解析双层字符串数组', () => {
         const single = JSON.stringify([{ path: 'a.txt', content: 'hello' }]);
         const double = JSON.stringify(single);
         const args = { files: double };
@@ -161,7 +161,7 @@ describe('coerceToolArgs', () => {
         expect(result.files).toBe(double);
     });
 
-    it('object 参数收到 JSON 字符串时解析为对象（双重编码容错）', () => {
+    test('object 参数收到 JSON 字符串时解析为对象（双重编码容错）', () => {
         const args = { config: '{"key":"foo","value":"bar"}' };
         const s = schema({
             config: {
@@ -178,7 +178,7 @@ describe('coerceToolArgs', () => {
         expect(result.config).toEqual({ key: 'foo', value: 'bar' });
     });
 
-    it('object 参数的 JSON 字符串解析后继续递归修正类型', () => {
+    test('object 参数的 JSON 字符串解析后继续递归修正类型', () => {
         const args = { options: '{"recursive":"true","depth":"3"}' };
         const s = schema({
             options: {
@@ -195,7 +195,7 @@ describe('coerceToolArgs', () => {
         expect(result.options).toEqual({ recursive: true, depth: 3 });
     });
 
-    it('object 参数收到无法解析或非对象的字符串时保持原样', () => {
+    test('object 参数收到无法解析或非对象的字符串时保持原样', () => {
         const s = schema({
             config: { type: 'object', properties: { key: { type: 'string' } } }
         });
@@ -206,7 +206,7 @@ describe('coerceToolArgs', () => {
 
     // ==================== boolean 容错 ====================
 
-    it('将 "true" 字符串转为 true', () => {
+    test('将 "true" 字符串转为 true', () => {
         const args = { recursive: 'true' };
         const s = schema({ recursive: { type: 'boolean' } });
 
@@ -216,7 +216,7 @@ describe('coerceToolArgs', () => {
         expect(typeof result.recursive).toBe('boolean');
     });
 
-    it('将 "false" 字符串转为 false', () => {
+    test('将 "false" 字符串转为 false', () => {
         const args = { recursive: 'false' };
         const s = schema({ recursive: { type: 'boolean' } });
 
@@ -226,7 +226,7 @@ describe('coerceToolArgs', () => {
         expect(typeof result.recursive).toBe('boolean');
     });
 
-    it('兼容 Python 风格的 "True"/"False"', () => {
+    test('兼容 Python 风格的 "True"/"False"', () => {
         const s = schema({ recursive: { type: 'boolean' } });
 
         expect(coerceToolArgs({ recursive: 'True' }, s).recursive).toBe(true);
@@ -234,7 +234,7 @@ describe('coerceToolArgs', () => {
         expect(coerceToolArgs({ recursive: 'TRUE' }, s).recursive).toBe(true);
     });
 
-    it('对已经是 boolean 的值不做处理', () => {
+    test('对已经是 boolean 的值不做处理', () => {
         const args = { recursive: true };
         const s = schema({ recursive: { type: 'boolean' } });
 
@@ -242,7 +242,7 @@ describe('coerceToolArgs', () => {
         expect(coerceToolArgs(args, s)).toBe(args);
     });
 
-    it('不转换非 "true"/"false" 的 boolean 字符串（如 "yes"、"1"）', () => {
+    test('不转换非 "true"/"false" 的 boolean 字符串（如 "yes"、"1"）', () => {
         const args = { recursive: 'yes' };
         const s = schema({ recursive: { type: 'boolean' } });
 
@@ -253,7 +253,7 @@ describe('coerceToolArgs', () => {
 
     // ==================== number 容错 ====================
 
-    it('将 "60000" 字符串转为 60000', () => {
+    test('将 "60000" 字符串转为 60000', () => {
         const args = { timeout: '60000' };
         const s = schema({ timeout: { type: 'number' } });
 
@@ -263,7 +263,7 @@ describe('coerceToolArgs', () => {
         expect(typeof result.timeout).toBe('number');
     });
 
-    it('将 "-5" 字符串转为 -5', () => {
+    test('将 "-5" 字符串转为 -5', () => {
         const args = { offset: '-5' };
         const s = schema({ offset: { type: 'number' } });
 
@@ -272,7 +272,7 @@ describe('coerceToolArgs', () => {
         expect(result.offset).toBe(-5);
     });
 
-    it('将 "3.14" 字符串转为 3.14', () => {
+    test('将 "3.14" 字符串转为 3.14', () => {
         const args = { ratio: '3.14' };
         const s = schema({ ratio: { type: 'number' } });
 
@@ -281,7 +281,7 @@ describe('coerceToolArgs', () => {
         expect(result.ratio).toBe(3.14);
     });
 
-    it('对 integer 类型同样生效', () => {
+    test('对 integer 类型同样生效', () => {
         const args = { count: '42' };
         const s = schema({ count: { type: 'integer' } });
 
@@ -290,14 +290,14 @@ describe('coerceToolArgs', () => {
         expect(result.count).toBe(42);
     });
 
-    it('对已经是 number 的值不做处理', () => {
+    test('对已经是 number 的值不做处理', () => {
         const args = { timeout: 60000 };
         const s = schema({ timeout: { type: 'number' } });
 
         expect(coerceToolArgs(args, s)).toBe(args);
     });
 
-    it('不转换非法数字字符串（如 "abc"、"12px"）', () => {
+    test('不转换非法数字字符串（如 "abc"、"12px"）', () => {
         const args = { timeout: '12px' };
         const s = schema({ timeout: { type: 'number' } });
 
@@ -305,7 +305,7 @@ describe('coerceToolArgs', () => {
         expect(result.timeout).toBe('12px');
     });
 
-    it('不转换空字符串', () => {
+    test('不转换空字符串', () => {
         const args = { timeout: '' };
         const s = schema({ timeout: { type: 'number' } });
 
@@ -315,7 +315,7 @@ describe('coerceToolArgs', () => {
 
     // ==================== 混合场景 ====================
 
-    it('同时处理多个不同类型的参数', () => {
+    test('同时处理多个不同类型的参数', () => {
         const args = {
             recursive: 'true',
             timeout: '60000',
@@ -340,7 +340,7 @@ describe('coerceToolArgs', () => {
         expect(result.query).toBe('hello');
     });
 
-    it('所有值都已是正确类型时返回原始对象引用', () => {
+    test('所有值都已是正确类型时返回原始对象引用', () => {
         const args = {
             recursive: true,
             timeout: 60000,
@@ -360,7 +360,7 @@ describe('coerceToolArgs', () => {
 describe('normalizeToolArgs', () => {
     // ==================== 单数别名提升 ====================
 
-    it('将 path（字符串）提升为 paths（数组）并生成警告', () => {
+    test('将 path（字符串）提升为 paths（数组）并生成警告', () => {
         const s = schema({
             paths: { type: 'array', items: { type: 'string' } }
         }, ['paths']);
@@ -373,7 +373,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings[0]).toContain('`paths`');
     });
 
-    it('单数别名的值已是数组时仅改名', () => {
+    test('单数别名的值已是数组时仅改名', () => {
         const s = schema({
             patterns: { type: 'array', items: { type: 'string' } }
         }, ['patterns']);
@@ -384,7 +384,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings).toHaveLength(1);
     });
 
-    it('单数名本身是合法参数时不做提升', () => {
+    test('单数名本身是合法参数时不做提升', () => {
         // 模拟 search_in_files：path 和 pattern 都是真实参数
         const s = schema({
             query: { type: 'string' },
@@ -399,7 +399,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings).toHaveLength(0);
     });
 
-    it('复数参数已提供时不理会单数别名（单数键会被当作未知参数剥离）', () => {
+    test('复数参数已提供时不理会单数别名（单数键会被当作未知参数剥离）', () => {
         const s = schema({
             paths: { type: 'array', items: { type: 'string' } }
         }, ['paths']);
@@ -416,7 +416,7 @@ describe('normalizeToolArgs', () => {
 
     // ==================== 未知参数剥离 ====================
 
-    it('剥离 schema 中未声明的参数并生成警告，而不是失败', () => {
+    test('剥离 schema 中未声明的参数并生成警告，而不是失败', () => {
         const s = schema({ path: { type: 'string' } }, ['path']);
 
         const { args, warnings } = normalizeToolArgs(
@@ -431,7 +431,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings[0]).toContain('read_file');
     });
 
-    it('剥离 update_plan 的 carry-over 字段（通用规则覆盖原硬编码特例）', () => {
+    test('剥离 update_plan 的 carry-over 字段（通用规则覆盖原硬编码特例）', () => {
         const s = schema({
             path: { type: 'string' },
             todos: { type: 'array', items: { type: 'object' } }
@@ -455,7 +455,7 @@ describe('normalizeToolArgs', () => {
 
     // ==================== 组合行为 ====================
 
-    it('别名提升 + 类型容错 + 未知参数剥离可以在一次调用中同时发生', () => {
+    test('别名提升 + 类型容错 + 未知参数剥离可以在一次调用中同时发生', () => {
         const s = schema({
             paths: { type: 'array', items: { type: 'string' } },
             recursive: { type: 'boolean' }
@@ -471,7 +471,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings).toHaveLength(2);
     });
 
-    it('无需任何纠正时返回原始引用且无警告', () => {
+    test('无需任何纠正时返回原始引用且无警告', () => {
         const s = schema({
             paths: { type: 'array', items: { type: 'string' } }
         }, ['paths']);
@@ -483,7 +483,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings).toHaveLength(0);
     });
 
-    it('没有 schema 时原样返回', () => {
+    test('没有 schema 时原样返回', () => {
         const input = { anything: 1 };
         const { args, warnings } = normalizeToolArgs('unknown_tool', input, undefined);
 
@@ -493,7 +493,7 @@ describe('normalizeToolArgs', () => {
 
     // ==================== ies 复数的单数提升 ====================
 
-    it('支持 ies 复数：query 提升为 queries', () => {
+    test('支持 ies 复数：query 提升为 queries', () => {
         const s = schema({
             queries: { type: 'array', items: { type: 'string' } }
         }, ['queries']);
@@ -508,7 +508,7 @@ describe('normalizeToolArgs', () => {
 
     // ==================== paramAliases 参数改名 ====================
 
-    it('paramAliases：别名自动改名为规范参数并生成警告', () => {
+    test('paramAliases：别名自动改名为规范参数并生成警告', () => {
         const s = schema({
             path: { type: 'string' },
             endLine: { type: 'integer' }
@@ -525,7 +525,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings.some(w => w.includes('`maxLine`') && w.includes('`endLine`'))).toBe(true);
     });
 
-    it('paramAliases：规范参数已提供时丢弃别名并警告', () => {
+    test('paramAliases：规范参数已提供时丢弃别名并警告', () => {
         const s = schema({
             path: { type: 'string' },
             endLine: { type: 'integer' }
@@ -542,7 +542,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings.some(w => w.includes('Ignored parameter `maxLine`'))).toBe(true);
     });
 
-    it('paramAliases：别名与 schema 真实参数同名时不处理（防御声明错误）', () => {
+    test('paramAliases：别名与 schema 真实参数同名时不处理（防御声明错误）', () => {
         const s = schema({
             path: { type: 'string' },
             line: { type: 'integer' }
@@ -560,7 +560,7 @@ describe('normalizeToolArgs', () => {
 
     // ==================== compatParams 兼容透传 ====================
 
-    it('compatParams：兼容参数不被剥离并附温和提示', () => {
+    test('compatParams：兼容参数不被剥离并附温和提示', () => {
         const s = schema({
             path: { type: 'string' },
             startLine: { type: 'integer' },
@@ -578,7 +578,7 @@ describe('normalizeToolArgs', () => {
         expect(warnings.some(w => w.includes('`limit`') && w.includes('compatibility'))).toBe(true);
     });
 
-    it('compatParams 之外的未知参数仍然剥离', () => {
+    test('compatParams 之外的未知参数仍然剥离', () => {
         const s = schema({ path: { type: 'string' } }, ['path']);
 
         const { args, warnings } = normalizeToolArgs(

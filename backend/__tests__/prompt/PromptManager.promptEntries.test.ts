@@ -99,7 +99,7 @@ describe('PromptManager prompt entries', () => {
         clearGlobalContext();
     });
 
-    it('builds system prompt and splits non-system prompt context around chat history entry', () => {
+    test('builds system prompt and splits non-system prompt context around chat history entry', () => {
         setGlobalSettingsManager(createSettingsManagerMock());
         const manager = new PromptManager({ includeWorkspaceFiles: false });
         const runtime = {
@@ -136,7 +136,7 @@ describe('PromptManager prompt entries', () => {
         expect(bundle.dynamicSnapshotText).not.toContain('Static user context');
     });
 
-    it('attaches fakeThought as a thought part on assistant entries', () => {
+    test('attaches fakeThought as a thought part on assistant entries', () => {
         const fakeThoughtMode: ResolvedPromptModeSnapshot = {
             ...mode,
             promptEntries: mode.promptEntries!.map(entry =>
@@ -157,7 +157,7 @@ describe('PromptManager prompt entries', () => {
         expect(assistantMessage!.parts[1]).toEqual({ text: 'Assistant prelude' });
     });
 
-    it('ignores fakeThought on non-assistant entries', () => {
+    test('ignores fakeThought on non-assistant entries', () => {
         const fakeThoughtOnUser: ResolvedPromptModeSnapshot = {
             ...mode,
             promptEntries: mode.promptEntries!.map(entry =>
@@ -176,7 +176,7 @@ describe('PromptManager prompt entries', () => {
         expect(userMessage!.parts[0]).toEqual({ text: 'Static user context' });
     });
 
-    it('keeps fakeThought in dynamic snapshots for preserve re-injection', () => {
+    test('keeps fakeThought in dynamic snapshots for preserve re-injection', () => {
         const dynamicAssistantMode: ResolvedPromptModeSnapshot = {
             ...mode,
             promptEntries: mode.promptEntries!.map(entry =>
@@ -207,7 +207,7 @@ describe('PromptManager prompt entries', () => {
         expect(snapshotAssistantMessage!.parts[1].text).toContain('Assistant prelude');
     });
 
-    it('keeps legacy mode on traditional templates even when promptEntries exists', () => {
+    test('keeps legacy mode on traditional templates even when promptEntries exists', () => {
         const legacyMode: ResolvedPromptModeSnapshot = {
             ...mode,
             promptAssemblyMode: 'legacy',

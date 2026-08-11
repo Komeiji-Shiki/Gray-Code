@@ -9,8 +9,8 @@
  * 本测试锁定：saveHistory 传给 workspace.fs 的所有路径参数都必须是 Uri 对象。
  */
 
-import { FileSystemStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+import { FileSystemStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory } from '../../modules/conversation';
 import { Uri, workspace } from 'vscode';
 
 describe('FileSystemStorageAdapter 分段历史写入 - tmp 路径必须是 Uri 对象', () => {
@@ -24,7 +24,7 @@ describe('FileSystemStorageAdapter 分段历史写入 - tmp 路径必须是 Uri 
         (fs.rename as jest.Mock).mockClear();
     });
 
-    it('saveHistory 传给 workspace.fs 的所有路径参数必须是 Uri 对象，不能是字符串', async () => {
+    test('saveHistory 传给 workspace.fs 的所有路径参数必须是 Uri 对象，不能是字符串', async () => {
         const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
         const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
 
@@ -59,7 +59,7 @@ describe('FileSystemStorageAdapter 分段历史写入 - tmp 路径必须是 Uri 
         expect(tmpCreate[0].fsPath).toContain('conv_1');
     });
 
-    it('写空历史（新建对话）不抛错且临时 index 也是 Uri 对象', async () => {
+    test('写空历史（新建对话）不抛错且临时 index 也是 Uri 对象', async () => {
         const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
         const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
 
@@ -83,7 +83,7 @@ describe('FileSystemStorageAdapter 子代理 transcript 独立文件', () => {
         (fs.rename as jest.Mock).mockClear();
     });
 
-    it('按 run 写入紧凑 JSON 到 conversation/subagents，并使用原子 rename', async () => {
+    test('按 run 写入紧凑 JSON 到 conversation/subagents，并使用原子 rename', async () => {
         const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
         const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
         const ref = await adapter.saveSubAgentTranscript('conv_1', 'run/a', {
@@ -98,7 +98,7 @@ describe('FileSystemStorageAdapter 子代理 transcript 独立文件', () => {
         expect(fs.rename).toHaveBeenCalledTimes(1);
     });
 
-    it('删除整个会话时 transcript 目录随 conversation 目录递归删除', async () => {
+    test('删除整个会话时 transcript 目录随 conversation 目录递归删除', async () => {
         const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
         const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
         await adapter.deleteHistory('conv_delete');

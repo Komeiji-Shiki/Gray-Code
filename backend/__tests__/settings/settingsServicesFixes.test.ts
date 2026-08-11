@@ -13,7 +13,7 @@ import { FileSettingsStorage, MemorySettingsStorage } from '../../modules/settin
 import { PromptSettingsService } from '../../modules/settings/PromptSettingsService';
 
 describe('ProxySettingsService.updateProxySettings', () => {
-    it('首次只设置 URL 不会隐式启用代理', async () => {
+    test('首次只设置 URL 不会隐式启用代理', async () => {
         const core = new SettingsCore(new MemorySettingsStorage());
         const svc = new ProxySettingsService(core);
 
@@ -24,7 +24,7 @@ describe('ProxySettingsService.updateProxySettings', () => {
         expect(svc.getEffectiveProxyUrl()).toBeUndefined();
     });
 
-    it('已启用后更新 URL 保留 enabled 状态', async () => {
+    test('已启用后更新 URL 保留 enabled 状态', async () => {
         const core = new SettingsCore(new MemorySettingsStorage());
         const svc = new ProxySettingsService(core);
 
@@ -35,7 +35,7 @@ describe('ProxySettingsService.updateProxySettings', () => {
         expect(svc.getEffectiveProxyUrl()).toBe('http://127.0.0.1:7890');
     });
 
-    it('显式传入 enabled 时以传入值为准', async () => {
+    test('显式传入 enabled 时以传入值为准', async () => {
         const core = new SettingsCore(new MemorySettingsStorage());
         const svc = new ProxySettingsService(core);
 
@@ -59,18 +59,18 @@ describe('FileSettingsStorage.load', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    it('文件不存在返回 null（全新安装）', async () => {
+    test('文件不存在返回 null（全新安装）', async () => {
         const storage = new FileSettingsStorage(dir);
         await expect(storage.load()).resolves.toBeNull();
     });
 
-    it('有效 JSON 正常解析', async () => {
+    test('有效 JSON 正常解析', async () => {
         fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ lastUpdated: 123 }));
         const storage = new FileSettingsStorage(dir);
         await expect(storage.load()).resolves.toEqual({ lastUpdated: 123 });
     });
 
-    it('损坏 JSON 抛错并包含文件路径，坏文件不被覆盖', async () => {
+    test('损坏 JSON 抛错并包含文件路径，坏文件不被覆盖', async () => {
         const filePath = path.join(dir, 'settings.json');
         fs.writeFileSync(filePath, '{broken json');
         const storage = new FileSettingsStorage(dir);
@@ -94,7 +94,7 @@ describe('PromptSettingsService.savePromptMode', () => {
         dynamicTemplate: '',
     };
 
-    it('空/纯空白/缺失 id 拒绝保存并抛错', async () => {
+    test('空/纯空白/缺失 id 拒绝保存并抛错', async () => {
         const { svc } = createService();
         await expect(svc.savePromptMode({ id: '', ...validModeBase } as any)).rejects.toThrow('Mode id is required');
         await expect(svc.savePromptMode({ id: '   ', ...validModeBase } as any)).rejects.toThrow('Mode id is required');
@@ -105,7 +105,7 @@ describe('PromptSettingsService.savePromptMode', () => {
         expect(config.modes?.['undefined']).toBeUndefined();
     });
 
-    it('合法 id 正常保存', async () => {
+    test('合法 id 正常保存', async () => {
         const { svc } = createService();
         await svc.savePromptMode({ id: 'custom', ...validModeBase } as any);
 

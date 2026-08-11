@@ -8,9 +8,11 @@
  * - openUpdatePage   打开 GitHub Releases 页面（安装失败/无安装包资产时的兜底入口）
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import type { MessageHandler, HandlerContext } from '../types';
 import { UpdateChecker, type UpdateInfo } from '../../backend/modules/update';
+import { getExtensionVersion } from '../utils/extensionInfo';
 
 function getChecker(ctx: HandlerContext): UpdateChecker {
     if (!ctx.updateChecker) {
@@ -19,9 +21,8 @@ function getChecker(ctx: HandlerContext): UpdateChecker {
     return ctx.updateChecker;
 }
 
-function getCurrentVersion(): string {
-    const ext = vscode.extensions.getExtension('czocelot.graycode');
-    return ext?.packageJSON?.version || '';
+function getCurrentVersion(ctx: HandlerContext): string {
+    return ctx.context ? getExtensionVersion(ctx.context.extensionPath) : '';
 }
 
 /** 查询当前检查状态（不触发新检查） */
@@ -30,7 +31,7 @@ export const getUpdateStatus: MessageHandler = async (data, requestId, ctx) => {
         const checker = getChecker(ctx);
         ctx.sendResponse(requestId, {
             status: checker.getStatus(),
-            currentVersion: getCurrentVersion(),
+            currentVersion: getCurrentVersion(ctx),
         });
     } catch (error: any) {
         ctx.sendError(requestId, 'GET_UPDATE_STATUS_ERROR', error?.message || 'Failed to get update status');
@@ -38,9 +39,8 @@ export const getUpdateStatus: MessageHandler = async (data, requestId, ctx) => {
 };
 
 /** 手动立即检查（忽略 24h 节流）
- * 注意：本 handler 含网络请求（checker.check），耗时取决于网络状况，不应在阻塞队列中串行 await。
- * 归属 MessageRouter.ts 的 NON_BLOCKING_MESSAGE_TYPES（该文件由其他 worker 维护，此处不改）；
- * 若尚未纳入，请将 'checkUpdateNow' 与 'updateNow' 加入该集合，避免期间 cancelStream 等消息被冻结。 */
+ * 注意：本 handler 含网络请求（checker.check），耗时取决于网络状况，不应在阻塞队列中串行 await；
+ * 已归属 shared/protocol.ts 的 NON_BLOCKING_MESSAGE_TYPES（'checkUpdateNow' / 'updateNow' / 'installUpdate'）。 */
 export const checkUpdateNow: MessageHandler = async (data, requestId, ctx) => {
     try {
         const checker = getChecker(ctx);
@@ -82,7 +82,7 @@ export const installUpdate: MessageHandler = async (data, requestId, ctx) => {
  * 一键更新：立即检查（忽略 24h 节流），有新版本则自动下载并交给系统打开，
  * 用户完成安装后重启应用即可生效。
  * 注意：本 handler 含网络请求（checker.check / downloadAndInstall），
- * 归属 MessageRouter.ts 的 NON_BLOCKING_MESSAGE_TYPES（该文件由其他 worker 维护，此处不改）。
+ * 已归属 shared/protocol.ts 的 NON_BLOCKING_MESSAGE_TYPES（'checkUpdateNow' / 'updateNow' / 'installUpdate'）。
  */
 export const updateNow: MessageHandler = async (data, requestId, ctx) => {
     try {
@@ -123,9 +123,9 @@ export const openUpdatePage: MessageHandler = async (data, requestId, ctx) => {
 
 /** 注册更新处理器 */
 export function registerUpdateHandlers(registry: Map<string, MessageHandler>): void {
-    registry.set('getUpdateStatus', getUpdateStatus);
-    registry.set('checkUpdateNow', checkUpdateNow);
-    registry.set('installUpdate', installUpdate);
-    registry.set('updateNow', updateNow);
-    registry.set('openUpdatePage', openUpdatePage);
+    registry.set(MESSAGE_NAMES.getUpdateStatus, getUpdateStatus);
+    registry.set(MESSAGE_NAMES.checkUpdateNow, checkUpdateNow);
+    registry.set(MESSAGE_NAMES.installUpdate, installUpdate);
+    registry.set(MESSAGE_NAMES.updateNow, updateNow);
+    registry.set(MESSAGE_NAMES.openUpdatePage, openUpdatePage);
 }

@@ -8,7 +8,7 @@
  * - 无助手 usage 消息 → 返回 0；
  * - 总结消息出现在助手消息之后（数组靠后）且 timestamp 更大 → 仍取该总结估算。
  */
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import { ref } from 'vue'
 import type { Message } from '../../../types'
 import type { ChatStoreState } from '../types'
@@ -39,7 +39,7 @@ function makeSummaryStats(tokens: number) {
 }
 
 describe('usedTokens', () => {
-  it('最后一条带 usage 的助手消息：返回 totalTokenCount', () => {
+  test('最后一条带 usage 的助手消息：返回 totalTokenCount', () => {
     const usedTokens = makeComputed([
       makeMessage('u1'),
       makeMessage('a1', {
@@ -50,7 +50,7 @@ describe('usedTokens', () => {
     expect(usedTokens.value).toBe(123)
   })
 
-  it('总结估算 timestamp 晚于最后一条 usage：返回估算', () => {
+  test('总结估算 timestamp 晚于最后一条 usage：返回估算', () => {
     const usedTokens = makeComputed([
       makeMessage('u1'),
       makeMessage('a1', {
@@ -68,7 +68,7 @@ describe('usedTokens', () => {
     expect(usedTokens.value).toBe(500)
   })
 
-  it('总结估算 timestamp 早于最后一条 usage：返回 usage', () => {
+  test('总结估算 timestamp 早于最后一条 usage：返回 usage', () => {
     const usedTokens = makeComputed([
       makeMessage('u1'),
       makeMessage('s1', {
@@ -86,7 +86,7 @@ describe('usedTokens', () => {
     expect(usedTokens.value).toBe(123)
   })
 
-  it('无助手 usage 消息：返回 0（即使存在总结估算）', () => {
+  test('无助手 usage 消息：返回 0（即使存在总结估算）', () => {
     const usedTokens = makeComputed([
       makeMessage('u1'),
       makeMessage('s1', {
@@ -98,7 +98,7 @@ describe('usedTokens', () => {
     expect(usedTokens.value).toBe(0)
   })
 
-  it('多条总结取 timestamp 最大者（数组靠后的总结在助手消息之后也计入）', () => {
+  test('多条总结取 timestamp 最大者（数组靠后的总结在助手消息之后也计入）', () => {
     const usedTokens = makeComputed([
       makeMessage('s1', {
         role: 'assistant',
@@ -121,7 +121,7 @@ describe('usedTokens', () => {
     expect(usedTokens.value).toBe(700)
   })
 
-  it('消息同时是总结且带 usage：估算优先', () => {
+  test('消息同时是总结且带 usage：估算优先', () => {
     const usedTokens = makeComputed([
       makeMessage('u1'),
       makeMessage('a1', {
@@ -150,7 +150,7 @@ describe('usedTokens 增量缓存（M-1）', () => {
     }
   }
 
-  it('流式追加：尾部新增助手消息后增量扫描返回新的 usage', () => {
+  test('流式追加：尾部新增助手消息后增量扫描返回新的 usage', () => {
     const { usedTokens, replace } = makeComputedWithState([
       makeMessage('a1', {
         role: 'assistant',
@@ -173,7 +173,7 @@ describe('usedTokens 增量缓存（M-1）', () => {
     expect(usedTokens.value).toBe(250)
   })
 
-  it('尾消息原地写入 usageMetadata（流式 done 分支）：下次求值可见', () => {
+  test('尾消息原地写入 usageMetadata（流式 done 分支）：下次求值可见', () => {
     const messages = [
       makeMessage('a1', { role: 'assistant' })
     ]
@@ -187,7 +187,7 @@ describe('usedTokens 增量缓存（M-1）', () => {
     expect(usedTokens.value).toBe(77)
   })
 
-  it('前缀消息被替换（结构变更）→ 回退全量扫描，结果与全量一致', () => {
+  test('前缀消息被替换（结构变更）→ 回退全量扫描，结果与全量一致', () => {
     const messages = [
       makeMessage('a1', {
         role: 'assistant',
@@ -223,7 +223,7 @@ describe('usedTokens 增量缓存（M-1）', () => {
     expect(usedTokens.value).toBe(555)
   })
 
-  it('数组缩短（消息删除）→ 回退全量扫描', () => {
+  test('数组缩短（消息删除）→ 回退全量扫描', () => {
     const { usedTokens, replace } = makeComputedWithState([
       makeMessage('a1', {
         role: 'assistant',
@@ -245,7 +245,7 @@ describe('usedTokens 增量缓存（M-1）', () => {
     expect(usedTokens.value).toBe(100)
   })
 
-  it('增量追加总结消息：估算优先级与全量一致', () => {
+  test('增量追加总结消息：估算优先级与全量一致', () => {
     const first = makeMessage('a1', {
       role: 'assistant',
       timestamp: 1000,

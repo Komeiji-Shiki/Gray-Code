@@ -11,11 +11,8 @@
  *    已完成部分的真实结果仍被结算（防回归：abort 分支的 settle 不能被 race 架空）。
  */
 
-import { ToolIterationLoopService } from '../../modules/api/chat/services/ToolIterationLoopService';
-import { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
-import { agentMailbox } from '../../tools/subagents/agentMailbox';
-import type { Content } from '../../modules/conversation/types';
-import { createPromptManagerMock } from '../__fixtures__/mockFixtures';
+import { agentMailbox } from '../../core/services/agentMailbox';
+import { createToolLoopHarness } from '../__fixtures__/harnessFixtures';
 
 /** 挂起直到测试主动放行的工具（模拟流式期间启动、结果晚于 cancel 到达的早启动工具） */
 function makeGatedDesignTool() {
@@ -83,66 +80,15 @@ function makeAbortResponsiveTool() {
     return { tool, handlerStarted: started };
 }
 
-function createHarness(channelManager: unknown, toolRegistry: unknown) {
-    const conversationManager = {
-        getHistoryRef: jest.fn().mockResolvedValue([]),
-        getCustomMetadata: jest.fn().mockResolvedValue(undefined),
-        setCustomMetadata: jest.fn().mockResolvedValue(undefined),
-        addContent: jest.fn().mockResolvedValue(undefined),
-        settleFunctionResponses: jest.fn().mockResolvedValue(undefined),
-        updateMessage: jest.fn().mockResolvedValue(undefined),
-        updateMessagesBatch: jest.fn().mockResolvedValue(undefined),
-        getMessageNodeIdAt: jest.fn().mockResolvedValue(undefined)
-    };
-    const toolExecutionService = new ToolExecutionService(toolRegistry as never);
-    const checkpointService = {
-        createModelMessageCheckpoint: jest.fn().mockResolvedValue(null),
-        createToolExecutionCheckpoint: jest.fn().mockResolvedValue(null)
-    };
-    const messageBuilderService = { buildHistoryOptions: jest.fn().mockReturnValue({}) };
-    const contextTrimService = {
-        getHistoryWithContextTrimInfo: jest.fn().mockResolvedValue({
-            history: [],
-            trimStartIndex: 0,
-            needsAutoSummarize: false
-        })
-    };
-    const toolCallParserService = {
-        convertPromptModeToolCallsToFunctionCalls: jest.fn(),
-        ensureFunctionCallIds: jest.fn(),
-        extractFunctionCalls: jest.fn().mockImplementation((content: Content) =>
-            content.parts
-                .filter(p => !!p.functionCall)
-                .map(p => ({
-                    id: p.functionCall!.id,
-                    name: p.functionCall!.name,
-                    args: p.functionCall!.args
-                }))
-        )
-    };
-    const service = new ToolIterationLoopService(
-        channelManager as never,
-        conversationManager as never,
-        toolCallParserService as never,
-        messageBuilderService as never,
-        {} as never,
-        contextTrimService as never,
-        toolExecutionService as never,
-        checkpointService as never
-    );
-    const promptManager = createPromptManagerMock();
-    service.setPromptManager(promptManager as never);
-    return { service, conversationManager, toolExecutionService, checkpointService, promptManager };
-}
 
 const config = { type: 'custom', toolMode: 'function_call', model: 'test-model' } as never;
 
-describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
+describe('流式取消路径的工具结果结算与 abort-race', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });
 
-    it('fix 1+3：流式取消时延迟落定的早启动工具用真实结果结算，并结算 stop state', async () => {
+    test('fix 1+3：流式取消时延迟落定的早启动工具用真实结果结算，并结算 stop state', async () => {
         const convId = 'conv-cancel-settle';
         const gated = makeGatedDesignTool();
         const controller = new AbortController();
@@ -158,7 +104,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
             yield { delta: [{ text: 'tail' }] };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager } = createHarness(channelManager, { getTool: () => gated.tool });
+        const { service, conversationManager } = createToolLoopHarness(channelManager, { getTool: () => gated.tool });
 
         const outputs: unknown[] = [];
         const loopPromise = (async () => {
@@ -203,7 +149,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
         expect((gateCall![2] as { kind?: string })?.kind).toBe('generate_plan');
     });
 
-    it('fix 2：主循环不响应 abort 且永不结束的工具不再让取消挂起', async () => {
+    test('fix 2：主循环不响应 abort 且永不结束的工具不再让取消挂起', async () => {
         const convId = 'conv-main-hang';
         const hanging = makeHangingTool();
         const controller = new AbortController();
@@ -214,7 +160,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
             yield { delta: [], done: true };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service } = createHarness(channelManager, { getTool: () => hanging.tool });
+        const { service } = createToolLoopHarness(channelManager, { getTool: () => hanging.tool });
 
         const outputs: unknown[] = [];
         const start = Date.now();
@@ -241,7 +187,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
         expect(outputs.some(o => (o as { cancelled?: boolean })?.cancelled === true)).toBe(true);
     });
 
-    it('fix 2 收尾：abort 后响应 abort 的工具在收尾窗口内返回时，真实结果仍被结算', async () => {
+    test('fix 2 收尾：abort 后响应 abort 的工具在收尾窗口内返回时，真实结果仍被结算', async () => {
         const convId = 'conv-main-drain';
         const responsive = makeAbortResponsiveTool();
         const controller = new AbortController();
@@ -251,7 +197,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
             yield { delta: [], done: true };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager } = createHarness(channelManager, { getTool: () => responsive.tool });
+        const { service, conversationManager } = createToolLoopHarness(channelManager, { getTool: () => responsive.tool });
 
         const outputs: unknown[] = [];
         const loopPromise = (async () => {
@@ -286,7 +232,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
         expect(found).toBe(true);
     });
 
-    it('BR-08：drain 收尾超时（不响应 abort 且永不结束的工具）仍结算 cancelled 占位，不留孤儿调用', async () => {
+    test('BR-08：drain 收尾超时（不响应 abort 且永不结束的工具）仍结算 cancelled 占位，不留孤儿调用', async () => {
         const convId = 'conv-main-drain-timeout';
         const hanging = makeHangingTool();
         const controller = new AbortController();
@@ -296,7 +242,7 @@ describe('R7b：流式取消路径的工具结果结算与 abort-race', () => {
             yield { delta: [], done: true };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager } = createHarness(channelManager, { getTool: () => hanging.tool });
+        const { service, conversationManager } = createToolLoopHarness(channelManager, { getTool: () => hanging.tool });
 
         const outputs: unknown[] = [];
         const loopPromise = (async () => {

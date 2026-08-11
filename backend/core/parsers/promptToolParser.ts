@@ -158,10 +158,34 @@ export function detectPromptToolMode(text: string): PromptToolMode | null {
     if (jsonIndex === -1 && xmlIndex === -1) {
         return null;
     }
-    if (jsonIndex !== -1 && (xmlIndex === -1 || jsonIndex <= xmlIndex)) {
+    if (jsonIndex === -1) {
+        return 'xml';
+    }
+    if (xmlIndex === -1) {
         return 'json';
     }
-    return 'xml';
+
+    // 混合流（两种标记共存）：仅按"首个出现的标记"判定会误判——模型可能先在正文里
+    // 提及另一种格式的标记（如解释 JSON 标记写法后改用 XML 发真实调用），
+    // 真实工具调用块反而被当成普通文本漏掉。
+    // 增强：优先选择"存在成对结束标记"的模式——真实调用块必有结束标记，
+    // 而正文顺带提及的标记通常只有孤立的开始标记（无配对结束标记）；
+    // 两种都完整/都不完整时（如流式未闭合、或确为混合调用），回退到首个标记（保持原行为）。
+    const jsonClosed = findEndMarkerOutsideString(
+        text,
+        jsonIndex + TOOL_CALL_START.length,
+        undefined
+    ).endIndex !== -1;
+    const xmlClosed = findToolUseEnd(
+        text,
+        xmlIndex + XML_TOOL_START.length,
+        { inCdata: false }
+    ).endIndex !== -1;
+
+    if (jsonClosed !== xmlClosed) {
+        return jsonClosed ? 'json' : 'xml';
+    }
+    return jsonIndex <= xmlIndex ? 'json' : 'xml';
 }
 
 export class IncrementalPromptToolParser {

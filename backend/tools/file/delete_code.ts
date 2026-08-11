@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, detectNonUtf8Encoding, formatFileSize } from '../utils';
-import { getDiffManager, type DiffResolutionReason } from './diffManager';
+import { getDiffManager, type DiffResolutionReason } from '../../core/services/diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import type { LockHolder } from '../../core/fileWriteLockManager';

@@ -13,33 +13,9 @@
 import { ContextTrimService } from '../../modules/api/chat/services/ContextTrimService';
 import { validateHistoryIntegrity } from '../../modules/channel/HistoryIntegrityValidator';
 import type { Content } from '../../modules/conversation/types';
+import { createContextTrimHarness } from '../__fixtures__/harnessFixtures';
 
-describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价', () => {
-    function createHarness() {
-        const conversationManager = {
-            getHistoryRef: jest.fn(),
-            getHistoryForAPIFrom: jest.fn(),
-            getCustomMetadata: jest.fn().mockResolvedValue(undefined),
-            setCustomMetadata: jest.fn(),
-            invalidateContextManagementState: jest.fn()
-        };
-        const promptManager = {
-            getSystemPrompt: jest.fn(() => ''),
-            getDynamicContextText: jest.fn(() => '')
-        };
-        const tokenEstimationService = {
-            countTextTokensBatch: jest.fn().mockResolvedValue([0, 0]),
-            preCountUserMessageTokensBatch: jest.fn().mockResolvedValue(undefined),
-            estimateMessageTokens: jest.fn(() => 100)
-        };
-        const service = new ContextTrimService(
-            conversationManager as any,
-            promptManager as any,
-            tokenEstimationService as any,
-            {} as any
-        );
-        return service;
-    }
+describe('computeValidSuffixMap 与 validateHistoryIntegrity 语义等价', () => {
 
     function callPart(id: string) {
         return { functionCall: { id, name: 'tool', args: {} } };
@@ -64,8 +40,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         expect(map).toEqual(expected);
     }
 
-    it('正常跨消息配对：call 在左、response 在右', () => {
-        const service = createHarness();
+    test('正常跨消息配对：call 在左、response 在右', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('model', [callPart('x')]),
             msg('user', [responsePart('x')]),
@@ -75,8 +51,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         assertEquivalent(service, history);
     });
 
-    it('跨消息乱序配对：response 在左、call 在右（正向判孤儿，旧实现误判 valid）', () => {
-        const service = createHarness();
+    test('跨消息乱序配对：response 在左、call 在右（正向判孤儿，旧实现误判 valid）', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('user', [responsePart('x')]),
             msg('model', [callPart('x')])
@@ -89,8 +65,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         expect(map[1]).toBe(true);
     });
 
-    it('同消息正常配对：同一消息内 call part 在 response part 之前', () => {
-        const service = createHarness();
+    test('同消息正常配对：同一消息内 call part 在 response part 之前', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('model', [callPart('x'), responsePart('x')]),
             msg('model', [textPart('done')])
@@ -100,8 +76,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         expect(map[0]).toBe(true);
     });
 
-    it('同消息乱序配对：同一消息内 response part 在 call part 之前（正向判孤儿）', () => {
-        const service = createHarness();
+    test('同消息乱序配对：同一消息内 response part 在 call part 之前（正向判孤儿）', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('model', [responsePart('x'), callPart('x')]),
             msg('model', [textPart('done')])
@@ -111,8 +87,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         expect(map[0]).toBe(false);
     });
 
-    it('重复 functionCall id', () => {
-        const service = createHarness();
+    test('重复 functionCall id', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('model', [callPart('x')]),
             msg('model', [callPart('x')]),
@@ -125,8 +101,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         expect(map[0]).toBe(false);
     });
 
-    it('重复 functionResponse id', () => {
-        const service = createHarness();
+    test('重复 functionResponse id', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('model', [callPart('x')]),
             msg('user', [responsePart('x')]),
@@ -137,8 +113,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         expect(map[0]).toBe(false);
     });
 
-    it('多轮工具循环 + 尾部孤儿 response + 中间普通文本', () => {
-        const service = createHarness();
+    test('多轮工具循环 + 尾部孤儿 response + 中间普通文本', () => {
+        const { service } = createContextTrimHarness();
         const history = [
             msg('user', [textPart('hi')]),
             msg('model', [callPart('a')]),
@@ -151,8 +127,8 @@ describe('L-5: computeValidSuffixMap 与 validateHistoryIntegrity 语义等价',
         assertEquivalent(service, history);
     });
 
-    it('随机模糊对比（固定 seed，覆盖随机 call/response 顺序与 id 复用）', () => {
-        const service = createHarness();
+    test('随机模糊对比（固定 seed，覆盖随机 call/response 顺序与 id 复用）', () => {
+        const { service } = createContextTrimHarness();
         // 简单 LCG 伪随机（固定 seed 保证可复现）
         let seed = 42;
         const rand = () => {

@@ -11,7 +11,7 @@ describe('file tool path resolution', () => {
         }];
     });
 
-    it('marks normal relative paths as inside workspace', () => {
+    test('marks normal relative paths as inside workspace', () => {
         const resolved = resolveFileToolPathWithInfo('src/index.ts');
 
         expect(resolved.uri?.fsPath).toBe(path.join(path.resolve('/workspace/project'), 'src/index.ts'));
@@ -19,7 +19,7 @@ describe('file tool path resolution', () => {
         expect(resolved.workspace?.name).toBe('project');
     });
 
-    it('marks relative paths escaping the workspace as outside workspace', () => {
+    test('marks relative paths escaping the workspace as outside workspace', () => {
         const resolved = resolveFileToolPathWithInfo('../secret.txt');
 
         expect(resolved.uri?.fsPath).toBe(path.resolve('/workspace/secret.txt'));
@@ -27,7 +27,7 @@ describe('file tool path resolution', () => {
         expect(resolved.workspace).toBeUndefined();
     });
 
-    it('marks absolute paths outside workspace as outside workspace', () => {
+    test('marks absolute paths outside workspace as outside workspace', () => {
         const resolved = resolveFileToolPathWithInfo(path.resolve('/tmp/outside.txt'));
 
         expect(resolved.uri?.fsPath).toBe(path.resolve('/tmp/outside.txt'));
@@ -35,7 +35,7 @@ describe('file tool path resolution', () => {
         expect(resolved.workspace).toBeUndefined();
     });
 
-    it('treats absolute paths inside workspace as workspace files', () => {
+    test('treats absolute paths inside workspace as workspace files', () => {
         const absolutePath = path.join(path.resolve('/workspace/project'), 'README.md');
         const resolved = resolveFileToolPathWithInfo(absolutePath);
 

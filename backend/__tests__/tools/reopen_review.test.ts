@@ -41,7 +41,7 @@ describe('reopen_review tool', () => {
     })
   })
 
-  it('reopens a completed V4 review document and updates reviewSession state', async () => {
+  test('reopens a completed V4 review document and updates reviewSession state', async () => {
     const initialContent = buildInitialReviewDocument({
       title: 'Workspace Review',
       overview: 'End-to-end review',
@@ -79,13 +79,13 @@ describe('reopen_review tool', () => {
     } as any)
 
     expect(result.success).toBe(true)
-    expect((result.data as any).reviewSnapshot.status).toBe('in_progress')
-    expect((result.data as any).reviewSnapshot.finalizedAt).toBeNull()
-    expect((result.data as any).reviewSnapshot.render.locale).toBe('zh-CN')
-    expect((result.data as any).overallDecision).toBeNull()
-    expect((result.data as any).reviewDelta).toMatchObject({ type: 'reopened' })
-    expect((result.data as any).content).toContain('- 状态: 进行中')
-    expect((result.data as any).content).toContain('- 总体结论: 待定')
+    expect(result.data.reviewSnapshot.status).toBe('in_progress')
+    expect(result.data.reviewSnapshot.finalizedAt).toBeNull()
+    expect(result.data.reviewSnapshot.render.locale).toBe('zh-CN')
+    expect(result.data.overallDecision).toBeNull()
+    expect(result.data.reviewDelta).toMatchObject({ type: 'reopened' })
+    expect(result.data.content).toContain('- 状态: 进行中')
+    expect(result.data.content).toContain('- 总体结论: 待定')
 
     expect(setCustomMetadata).toHaveBeenCalledWith(
       'conversation-1',
@@ -103,7 +103,7 @@ describe('reopen_review tool', () => {
     })
   })
 
-  it('rejects reopen when another active review session already exists', async () => {
+  test('rejects reopen when another active review session already exists', async () => {
     const tool = createReopenReviewTool()
     const result = await tool.handler({
       path: '.graycode/review/workspace-review.md'
@@ -126,7 +126,7 @@ describe('reopen_review tool', () => {
     expect(mockReadFile).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid review paths', async () => {
+  test('rejects invalid review paths', async () => {
     const tool = createReopenReviewTool()
     const result = await tool.handler({
       path: '.graycode/design/not-allowed.md'

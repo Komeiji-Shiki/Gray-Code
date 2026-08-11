@@ -5,6 +5,7 @@
  * updateMemoryEntry / deleteMemoryEntry / deleteMemoryEntries / listMemoryScopes。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { getGlobalMemoryManager, getMemoryManagerForWorkspace, listWorkspaceMemoryScopes } from '../../backend/modules/memory';
 import type { MessageHandler } from '../types';
@@ -292,12 +293,12 @@ export const listMemoryScopes: MessageHandler = async (_data, requestId, ctx) =>
  * 注册记忆子域处理器
  */
 export function registerMemoryHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('getMemoryConfig', getMemoryConfig);
-  registry.set('updateMemoryConfig', updateMemoryConfig);
-  registry.set('getMemoryEntries', getMemoryEntries);
-  registry.set('addMemoryEntry', addMemoryEntry);
-  registry.set('updateMemoryEntry', updateMemoryEntry);
-  registry.set('deleteMemoryEntry', deleteMemoryEntry);
-  registry.set('deleteMemoryEntries', deleteMemoryEntries);
-  registry.set('listMemoryScopes', listMemoryScopes);
+  registry.set(MESSAGE_NAMES.getMemoryConfig, getMemoryConfig);
+  registry.set(MESSAGE_NAMES.updateMemoryConfig, updateMemoryConfig);
+  registry.set(MESSAGE_NAMES.getMemoryEntries, getMemoryEntries);
+  registry.set(MESSAGE_NAMES.addMemoryEntry, addMemoryEntry);
+  registry.set(MESSAGE_NAMES.updateMemoryEntry, updateMemoryEntry);
+  registry.set(MESSAGE_NAMES.deleteMemoryEntry, deleteMemoryEntry);
+  registry.set(MESSAGE_NAMES.deleteMemoryEntries, deleteMemoryEntries);
+  registry.set(MESSAGE_NAMES.listMemoryScopes, listMemoryScopes);
 }

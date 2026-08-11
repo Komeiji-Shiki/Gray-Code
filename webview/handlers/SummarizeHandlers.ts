@@ -6,6 +6,7 @@
  * restoreSummarizedMessages（恢复总结覆盖的原文）。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import type { MessageHandler } from '../types';
 
@@ -69,7 +70,7 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
  */
 export function registerSummarizeHandlers(registry: Map<string, MessageHandler>): void {
   // 上下文总结
-  registry.set('summarizeContext', summarizeContext);
+  registry.set(MESSAGE_NAMES.summarizeContext, summarizeContext);
   // 恢复总结覆盖的原文（逻辑截断反向操作）
-  registry.set('restoreSummarizedMessages', restoreSummarizedMessages);
+  registry.set(MESSAGE_NAMES.restoreSummarizedMessages, restoreSummarizedMessages);
 }

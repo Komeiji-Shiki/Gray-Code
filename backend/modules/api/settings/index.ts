@@ -1,5 +1,5 @@
 /**
- * LimCode - 设置 API 模块
+ * GrayCode - 设置 API 模块
  * 
  * 导出设置相关的所有接口和实现
  */

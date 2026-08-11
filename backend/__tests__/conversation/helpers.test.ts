@@ -14,11 +14,11 @@ import {
     cleanContentForAPI,
     ensureBackgroundTaskSourceForDisplay,
     isRealUserMessage
-} from '../../modules/conversation/helpers';
-import type { Content, ContentPart } from '../../modules/conversation/types';
+} from '../../modules/conversation';
+import type { Content, ContentPart } from '../../modules/conversation';
 
 describe('isRealUserMessage', () => {
-    it('保留新旧真实用户消息语义，但排除后台任务回执', () => {
+    test('保留新旧真实用户消息语义，但排除后台任务回执', () => {
         expect(isRealUserMessage({ role: 'user', isUserInput: true })).toBe(true);
         expect(isRealUserMessage({ role: 'user' })).toBe(true);
         expect(isRealUserMessage({ role: 'user', source: 'background_task' })).toBe(false);
@@ -38,35 +38,35 @@ describe('ensureBackgroundTaskSourceForDisplay', () => {
         ...extra
     });
 
-    it('旧数据缺 source 的回执消息补 source=background_task（不写盘，仅内存）', () => {
+    test('旧数据缺 source 的回执消息补 source=background_task（不写盘，仅内存）', () => {
         const result = ensureBackgroundTaskSourceForDisplay(receipt());
         expect(result.source).toBe('background_task');
         // 原对象不被修改（纯函数）
         expect(receipt().source).toBeUndefined();
     });
 
-    it('已有 source 的消息保持原值，不重复覆盖', () => {
+    test('已有 source 的消息保持原值，不重复覆盖', () => {
         expect(ensureBackgroundTaskSourceForDisplay(receipt({ source: 'background_task' })).source).toBe('background_task');
         expect(ensureBackgroundTaskSourceForDisplay(receipt({ source: 'user' })).source).toBe('user');
     });
 
-    it('普通用户消息（非回执前缀）不被误判', () => {
+    test('普通用户消息（非回执前缀）不被误判', () => {
         const normal = receipt({ parts: [{ text: '帮我看看这段代码' }] });
         expect(ensureBackgroundTaskSourceForDisplay(normal).source).toBeUndefined();
     });
 
-    it('functionResponse / model 消息不被误判', () => {
+    test('functionResponse / model 消息不被误判', () => {
         expect(ensureBackgroundTaskSourceForDisplay(receipt({ isFunctionResponse: true })).source).toBeUndefined();
         expect(ensureBackgroundTaskSourceForDisplay({ role: 'model', parts: [{ text: '[Background task completed] xxx' }] }).source).toBeUndefined();
     });
 
-    it('无 parts 的消息安全跳过（不抛错）', () => {
+    test('无 parts 的消息安全跳过（不抛错）', () => {
         expect(ensureBackgroundTaskSourceForDisplay({ role: 'user' } as Content)).toEqual({ role: 'user' } as Content);
     });
 });
 
 describe('cleanFunctionResponseForAPI', () => {
-    it('保留顶层 agentInbox，避免历史前缀在后续请求中被改写', () => {
+    test('保留顶层 agentInbox，避免历史前缀在后续请求中被改写', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             agentInbox: [{ fromRunId: 'run_a', text: 'hi', threadId: 't1', hopDepth: 1, createdAt: 1 }],
@@ -77,7 +77,7 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(cleaned?.duration).toBe(123);
     });
 
-    it('保留 data 子对象中的 agentInbox', () => {
+    test('保留 data 子对象中的 agentInbox', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             data: {
@@ -89,7 +89,7 @@ describe('cleanFunctionResponseForAPI', () => {
         expect((cleaned?.data as any)?.applied).toBe(true);
     });
 
-    it('同时保留顶层与 data 的 agentInbox，其余内部字段仍正常清理', () => {
+    test('同时保留顶层与 data 的 agentInbox，其余内部字段仍正常清理', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             agentInbox: [{ fromRunId: 'run_a', text: 'top' }],
@@ -110,7 +110,7 @@ describe('cleanFunctionResponseForAPI', () => {
         });
     });
 
-    it('既有剥离行为不回归：顶层 diffContentId / diffId / diffs / pendingDiffId 被剥离', () => {
+    test('既有剥离行为不回归：顶层 diffContentId / diffId / diffs / pendingDiffId 被剥离', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             diffContentId: 'd1',
@@ -125,7 +125,7 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(cleaned?.success).toBe(true);
     });
 
-    it('保留子代理工具使用信息：data.steps / data.toolsUsed 不被剥离（含非空列表）', () => {
+    test('保留子代理工具使用信息：data.steps / data.toolsUsed 不被剥离（含非空列表）', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             data: {
@@ -150,7 +150,7 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(data.response).toBe('分析内容…');
     });
 
-    it('既有剥离行为不回归：data 中 subagents/命令元数据被剥离，results 内容保留', () => {
+    test('既有剥离行为不回归：data 中 subagents/命令元数据被剥离，results 内容保留', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             data: {
@@ -185,7 +185,7 @@ describe('cleanFunctionResponseForAPI', () => {
         expect(data.results[1]).toEqual({ path: 'b.ts', success: false });
     });
 
-    it('保留模型需要的字段：killed / duration / data.output / data.message', () => {
+    test('保留模型需要的字段：killed / duration / data.output / data.message', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: false,
             error: 'boom',
@@ -202,19 +202,19 @@ describe('cleanFunctionResponseForAPI', () => {
         });
     });
 
-    it('非对象输入原样返回（undefined / 字符串）', () => {
+    test('非对象输入原样返回（undefined / 字符串）', () => {
         expect(cleanFunctionResponseForAPI(undefined)).toBeUndefined();
         expect(cleanFunctionResponseForAPI('raw' as any)).toBe('raw');
     });
 
-    it('H1-3：数组输入原样返回（typeof \'object\' 无法拦截数组，直接透传不改写）', () => {
+    test('H1-3：数组输入原样返回（typeof \'object\' 无法拦截数组，直接透传不改写）', () => {
         const arr = [{ success: true, agentInbox: [{ fromRunId: 'run_a', text: 'x' }] }];
         const cleaned = cleanFunctionResponseForAPI(arr as any);
         // 数组没有内部字段剥离语义：原引用原样返回，不做任何改写
         expect(cleaned).toBe(arr);
     });
 
-    it('HIGH-1：当轮（isHistoryMessage=false）保留顶层与 data 的 agentInbox，仍剥离其它内部字段', () => {
+    test('HIGH-1：当轮（isHistoryMessage=false）保留顶层与 data 的 agentInbox，仍剥离其它内部字段', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             agentInbox: [{ fromRunId: 'run_a', text: 'hi' }],
@@ -238,7 +238,7 @@ describe('cleanFunctionResponseForAPI', () => {
         expect((cleaned?.data as any)?.applied).toBe(true);
     });
 
-    it('HIGH-1：当轮无 agentInbox 时输出与默认一致（不凭空引入字段）', () => {
+    test('HIGH-1：当轮无 agentInbox 时输出与默认一致（不凭空引入字段）', () => {
         const cleaned = cleanFunctionResponseForAPI({
             success: true,
             data: { applied: true }
@@ -282,7 +282,7 @@ describe('cleanFunctionResponseForAPI', () => {
 });
 
 describe('cleanContentForAPI', () => {
-    it('functionResponse part 保留 agentInbox 并剥离其它内部字段，保留 id/name 与展示字段', () => {
+    test('functionResponse part 保留 agentInbox 并剥离其它内部字段，保留 id/name 与展示字段', () => {
         const content: Content = {
             role: 'model',
             parts: [

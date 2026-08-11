@@ -9,7 +9,6 @@ import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { rebuildMessageIndexById } from './state'
-import { loadHistory } from './conversationActions'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 import { clearAllSmoothForState } from './streamChunkHandlers'
 import { pruneMessageListUiStateByTab } from '../../components/message/messageListUiState'
@@ -343,14 +342,23 @@ export function switchTab(
   if (targetSnapshot) {
     restoreSessionFromSnapshot(state, targetSnapshot)
     state.sessionSnapshots.value.delete(targetTabId)
+    // P1-兜底复位 isLoading / isLoadingMoreMessages：快照可能保存于会话加载中途
+    // （空消息 + isLoading=true / 上拉加载中 isLoadingMoreMessages=true），
+    // 且原加载的 finally 在会话已切换时跳过复位（见 switchConversation 的
+    // validateSessionIdentity 守卫），切回后会出现空白会话 + loading 卡死，
+    // 或 isLoadingMoreMessages 永久为 true 导致上拉加载被拦截 + spinner 卡死。
+    // 恢复时强制复位：若加载仍在进行，其 finally 完成后会再次复位（幂等），无副作用。
+    state.isLoading.value = false
+    state.isLoadingMoreMessages.value = false
   } else {
     // 新标签页 - 重置为空白状态
     resetConversationState(state)
-    // 如果标签页关联了 conversationId 但没有快照，这意味着尚未加载
+    // 如果标签页关联了 conversationId 但没有快照，这意味着尚未加载：
+    // 这里只绑定会话 id，历史加载由调用方统一完成（openConversationInTab /
+    // branchFromMessage 在 switchTab 后 await switchConvAction 做权威加载），
+    // 避免同一会话被并发加载两次（loadHistory 与 switchConvAction 竞态）
     if (targetTab.conversationId) {
       state.currentConversationId.value = targetTab.conversationId
-      // 无快照且带 conversationId：补一次历史加载（此前只设 id 不加载，窗口恒为空）
-      void loadHistory(state)
     }
   }
 

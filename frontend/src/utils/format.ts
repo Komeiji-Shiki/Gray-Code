@@ -1,12 +1,13 @@
 /**
  * 格式化工具函数
  *
- * 时间格式化说明：本文件的 formatRelativeTime（相对时间）为硬编码中文输出、无 i18n，
- * 仅保留作历史基准；与 stores/chat/utils.ts 的 formatTime（走 i18n 相对时间）并存、
- * 用途不同，差异输出勿合并（行为变化）。
+ * 时间格式化说明：本文件的 formatTime（绝对时间戳格式化，如 'YYYY-MM-DD HH:mm:ss'）
+ * 与 stores/chat/utils.ts 的 formatTime（i18n 相对时间，如「3分钟前」）同名但语义不同：
+ * 两者均有调用方，签名/输出不同，勿合并（行为变化）。
  */
 
 // 格式化时间戳（支持自定义格式）
+// 注意：与 stores/chat/utils.ts 的 formatTime（i18n 相对时间）同名不同语义，勿合并
 export function formatTime(timestamp: number, format = 'YYYY-MM-DD HH:mm:ss'): string {
   const date = new Date(timestamp)
   
@@ -17,15 +18,15 @@ export function formatTime(timestamp: number, format = 'YYYY-MM-DD HH:mm:ss'): s
   const minutes = String(date.getMinutes()).padStart(2, '0')
   const seconds = String(date.getSeconds()).padStart(2, '0')
   
+  // 全局替换（/g）：format 中同一占位符出现多次时全部替换，而非只替换首个匹配
   return format
-    .replace('YYYY', String(year))
-    .replace('MM', month)
-    .replace('DD', day)
-    .replace('HH', hours)
-    .replace('mm', minutes)
-    .replace('ss', seconds)
+    .replace(/YYYY/g, String(year))
+    .replace(/MM/g, month)
+    .replace(/DD/g, day)
+    .replace(/HH/g, hours)
+    .replace(/mm/g, minutes)
+    .replace(/ss/g, seconds)
 }
-
 // 截断文本
 // 转义正则表达式特殊字符
 export function escapeRegExp(str: string): string {

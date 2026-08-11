@@ -37,7 +37,7 @@ describe('record_review_milestone tool', () => {
     })
   })
 
-  it('appends milestones to a V4 review document and returns snapshot-driven result fields', async () => {
+  test('appends milestones to a V4 review document and returns snapshot-driven result fields', async () => {
     const initialContent = buildInitialReviewDocument({
       title: 'Workspace Review',
       overview: 'End-to-end review',
@@ -80,23 +80,23 @@ describe('record_review_milestone tool', () => {
     } as any)
 
     expect(result.success).toBe(true)
-    expect((result.data as any).milestoneId).toBe('M1')
-    expect((result.data as any).reviewSnapshot.formatVersion).toBe(4)
-    expect((result.data as any).reviewDelta).toMatchObject({
+    expect(result.data.milestoneId).toBe('M1')
+    expect(result.data.reviewSnapshot.formatVersion).toBe(4)
+    expect(result.data.reviewDelta).toMatchObject({
       type: 'milestone_recorded',
       milestoneId: 'M1'
     })
-    expect((result.data as any).totalMilestones).toBe(1)
-    expect((result.data as any).completedMilestones).toBe(1)
-    expect((result.data as any).totalFindings).toBe(2)
-    expect((result.data as any).findingsBySeverity).toEqual({ high: 0, medium: 1, low: 1 })
-    expect((result.data as any).reviewedModules).toEqual(['settings'])
-    expect((result.data as any).reviewSnapshot.render.locale).toBe('zh-CN')
-    expect((result.data as any).content).toContain('## 评审快照')
-    expect((result.data as any).content).toContain('### M1 · Review settings module')
-    expect((result.data as any).content).toContain('### Review mode is missing.')
-    expect((result.data as any).content).toContain('- ID: F-review-mode-is-missing')
-    expect((result.data as any).content).toContain('frontend/src/App.vue:10-12#renderApp')
+    expect(result.data.totalMilestones).toBe(1)
+    expect(result.data.completedMilestones).toBe(1)
+    expect(result.data.totalFindings).toBe(2)
+    expect(result.data.findingsBySeverity).toEqual({ high: 0, medium: 1, low: 1 })
+    expect(result.data.reviewedModules).toEqual(['settings'])
+    expect(result.data.reviewSnapshot.render.locale).toBe('zh-CN')
+    expect(result.data.content).toContain('## 评审快照')
+    expect(result.data.content).toContain('### M1 · Review settings module')
+    expect(result.data.content).toContain('### Review mode is missing.')
+    expect(result.data.content).toContain('- ID: F-review-mode-is-missing')
+    expect(result.data.content).toContain('frontend/src/App.vue:10-12#renderApp')
 
     expect(setCustomMetadata).toHaveBeenCalledWith(
       'conversation-1',
@@ -115,7 +115,7 @@ describe('record_review_milestone tool', () => {
     })
   })
 
-  it('upgrades legacy review documents to V4 before writing milestones', async () => {
+  test('upgrades legacy review documents to V4 before writing milestones', async () => {
     mockReadFile.mockResolvedValueOnce(new TextEncoder().encode([
       '# Review',
       '- Date: 2025-01-01',
@@ -138,15 +138,15 @@ describe('record_review_milestone tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).reviewSnapshot.formatVersion).toBe(4)
-    expect((result.data as any).reviewValidation.detectedFormat).toBe('v4')
-    expect((result.data as any).content).toContain('## 评审范围')
-    expect((result.data as any).content).toContain('Inspect frontend output.')
-    expect((result.data as any).content).toContain('## 评审快照')
-    expect((result.data as any).content).not.toContain('## Review Plan')
+    expect(result.data.reviewSnapshot.formatVersion).toBe(4)
+    expect(result.data.reviewValidation.detectedFormat).toBe('v4')
+    expect(result.data.content).toContain('## 评审范围')
+    expect(result.data.content).toContain('Inspect frontend output.')
+    expect(result.data.content).toContain('## 评审快照')
+    expect(result.data.content).not.toContain('## Review Plan')
   })
 
-  it('rejects writes to finalized review documents', async () => {
+  test('rejects writes to finalized review documents', async () => {
     const finalizedContent = buildInitialReviewDocument({
       title: 'Workspace Review',
       overview: 'End-to-end review',
@@ -171,7 +171,7 @@ describe('record_review_milestone tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects path mismatches against the active review session', async () => {
+  test('rejects path mismatches against the active review session', async () => {
     const tool = createRecordReviewMilestoneTool()
     const result = await tool.handler({
       path: '.graycode/review/workspace-review.md',

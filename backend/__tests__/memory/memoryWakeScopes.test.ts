@@ -61,7 +61,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         }
     });
 
-    it('无工作区：wake 只输出全局段（行为与旧版一致）', async () => {
+    test('无工作区：wake 只输出全局段（行为与旧版一致）', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
         setGlobalMemoryManager(globalMm);
@@ -74,7 +74,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.totalMemories).toBe(1);
     });
 
-    it('有工作区且工作区有记忆：输出包含全局段 + 工作区段（带标注）', async () => {
+    test('有工作区且工作区有记忆：输出包含全局段 + 工作区段（带标注）', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
         setGlobalMemoryManager(globalMm);
@@ -91,7 +91,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.workspace).toEqual({ uri: uriOf(wsDir), totalMemories: 1 });
     });
 
-    it('有工作区但工作区无记忆：只输出全局段', async () => {
+    test('有工作区但工作区无记忆：只输出全局段', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
         setGlobalMemoryManager(globalMm);
@@ -108,7 +108,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.workspace).toEqual({ uri: uriOf(wsDir), totalMemories: 0 });
     });
 
-    it('全局与工作区记忆互不干扰：wake 两段各含自己的内容', async () => {
+    test('全局与工作区记忆互不干扰：wake 两段各含自己的内容', async () => {
         await globalMm.init();
         await globalMm.note('global-memory-alpha');
         setGlobalMemoryManager(globalMm);
@@ -127,7 +127,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(wsSection).not.toContain('global-memory-alpha');
     });
 
-    it('双作用域都为空：输出 No memories yet', async () => {
+    test('双作用域都为空：输出 No memories yet', async () => {
         await globalMm.init();
         setGlobalMemoryManager(globalMm);
 
@@ -137,7 +137,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.text).toContain('You are awake.');
     });
 
-    it('memory_recall 合并全局与工作区命中并标注来源', async () => {
+    test('memory_recall 合并全局与工作区命中并标注来源', async () => {
         await globalMm.init();
         await globalMm.note('shared-topic-aaa');
         setGlobalMemoryManager(globalMm);
@@ -181,7 +181,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.totalParts).toBeUndefined();
     });
 
-    it('压缩提示带作用域标注（[Global]/[Workspace]）', async () => {
+    test('压缩提示带作用域标注（[Global]/[Workspace]）', async () => {
         await globalMm.init();
         await globalMm.note('g-alpha');
         await globalMm.note('g-beta');
@@ -201,7 +201,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.pendingCompression?.prompt).toContain('[Workspace] Compress:');
     });
 
-    it('只读 wake 不创建工作区记忆目录（createIfMissing=false）', async () => {
+    test('只读 wake 不创建工作区记忆目录（createIfMissing=false）', async () => {
         await globalMm.init();
         await globalMm.note('global-only');
         setGlobalMemoryManager(globalMm);

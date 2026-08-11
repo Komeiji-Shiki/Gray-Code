@@ -4,6 +4,7 @@
  * 用于检查和管理工具所需的外部依赖
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, type Ref } from 'vue'
 import { sendToExtension } from '../utils/vscode'
 
@@ -87,7 +88,7 @@ export function useDependency(options: UseDependencyOptions): UseDependencyRetur
   async function checkDependencies(): Promise<void> {
     loading.value = true
     try {
-      const result = await sendToExtension<{ dependencies: DependencyInfo[] }>('dependencies.list', {})
+      const result = await sendToExtension<{ dependencies: DependencyInfo[] }>(MESSAGE_NAMES['dependencies.list'], {})
       dependencyStatus.value.clear()
       for (const dep of result.dependencies || []) {
         dependencyStatus.value.set(dep.name, dep.installed)

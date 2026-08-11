@@ -26,27 +26,27 @@ function mockStateWithConvId(conversationId: string | null): ChatStoreState {
 // ============ validateSessionIdentity ============
 
 describe('validateSessionIdentity', () => {
-  it('returns true when current conversation matches expected', () => {
+  test('returns true when current conversation matches expected', () => {
     const state = mockStateWithConvId('conv_A')
     expect(validateSessionIdentity(state, 'conv_A')).toBe(true)
   })
 
-  it('returns false when current conversation differs', () => {
+  test('returns false when current conversation differs', () => {
     const state = mockStateWithConvId('conv_B')
     expect(validateSessionIdentity(state, 'conv_A')).toBe(false)
   })
 
-  it('handles null expected ID vs non-null current', () => {
+  test('handles null expected ID vs non-null current', () => {
     const state = mockStateWithConvId('conv_A')
     expect(validateSessionIdentity(state, null)).toBe(false)
   })
 
-  it('returns true when both are null', () => {
+  test('returns true when both are null', () => {
     const state = mockStateWithConvId(null)
     expect(validateSessionIdentity(state, null)).toBe(true)
   })
 
-  it('returns false when expected is non-null but current is null', () => {
+  test('returns false when expected is non-null but current is null', () => {
     const state = mockStateWithConvId(null)
     expect(validateSessionIdentity(state, 'conv_X')).toBe(false)
   })
@@ -57,35 +57,35 @@ describe('validateSessionIdentity', () => {
 describe('resolveLoadedVisibleMessages', () => {
   const msgs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-  it('returns all messages when visibleCount >= messages.length', () => {
+  test('returns all messages when visibleCount >= messages.length', () => {
     const result = resolveLoadedVisibleMessages(msgs, 100)
     expect(result).toEqual(msgs)
   })
 
-  it('returns tail window when visibleCount < messages.length', () => {
+  test('returns tail window when visibleCount < messages.length', () => {
     const result = resolveLoadedVisibleMessages(msgs, 3)
     expect(result).toEqual([8, 9, 10])
   })
 
-  it('returns empty array for empty input', () => {
+  test('returns empty array for empty input', () => {
     expect(resolveLoadedVisibleMessages([], 10)).toEqual([])
   })
 
-  it('returns empty array for non-array input', () => {
+  test('returns empty array for non-array input', () => {
     expect(resolveLoadedVisibleMessages(null as unknown as number[], 5)).toEqual([])
   })
 
-  it('returns at least 1 message when visibleCount is 0 or negative', () => {
+  test('returns at least 1 message when visibleCount is 0 or negative', () => {
     const result = resolveLoadedVisibleMessages(msgs, 0)
     expect(result).toEqual([10])
   })
 
-  it('handles NaN visibleCount gracefully', () => {
+  test('handles NaN visibleCount gracefully', () => {
     const result = resolveLoadedVisibleMessages(msgs, NaN)
     expect(result).toEqual([10])
   })
 
-  it('preserves order of tail messages', () => {
+  test('preserves order of tail messages', () => {
     const ordered = ['a', 'b', 'c', 'd', 'e']
     const result = resolveLoadedVisibleMessages(ordered, 2)
     expect(result).toEqual(['d', 'e'])
@@ -97,7 +97,7 @@ describe('resolveLoadedVisibleMessages', () => {
 describe('computeVirtualRows', () => {
   const rows = Array.from({ length: 5 }, (_, i) => `msg_${i}`)
 
-  it('returns all rows when below threshold', () => {
+  test('returns all rows when below threshold', () => {
     const result = computeVirtualRows(rows, {
       threshold: 10,
       estimatedRowHeight: 80,
@@ -110,7 +110,7 @@ describe('computeVirtualRows', () => {
     expect(result.rows).toEqual(rows)
   })
 
-  it('returns fallback for invalid estimate', () => {
+  test('returns fallback for invalid estimate', () => {
     const result = computeVirtualRows(rows, {
       threshold: 3,
       estimatedRowHeight: 0,
@@ -122,7 +122,7 @@ describe('computeVirtualRows', () => {
     expect(result.reason).toBe('invalid_estimate')
   })
 
-  it('virtualizes when rows exceed threshold', () => {
+  test('virtualizes when rows exceed threshold', () => {
     const manyRows = Array.from({ length: 50 }, (_, i) => `msg_${i}`)
     const result = computeVirtualRows(manyRows, {
       threshold: 10,
@@ -136,7 +136,7 @@ describe('computeVirtualRows', () => {
     expect(result.rows.length).toBeGreaterThan(0)
   })
 
-  it('returns all rows for empty input', () => {
+  test('returns all rows for empty input', () => {
     const result = computeVirtualRows([], {
       threshold: 5,
       estimatedRowHeight: 80,
@@ -152,7 +152,7 @@ describe('computeVirtualRows', () => {
 // ============ QueuedMessage type ============
 
 describe('QueuedMessage', () => {
-  it('has conversationId field', () => {
+  test('has conversationId field', () => {
     const msg: QueuedMessage = {
       id: 'q1',
       content: 'test',
@@ -163,7 +163,7 @@ describe('QueuedMessage', () => {
     expect(msg.conversationId).toBe('conv_A')
   })
 
-  it('allows null conversationId for legacy items', () => {
+  test('allows null conversationId for legacy items', () => {
     const msg: QueuedMessage = {
       id: 'q1',
       content: 'test',
@@ -178,7 +178,7 @@ describe('QueuedMessage', () => {
 // ============ processQueue cross-conversation guard (logic test) ============
 
 describe('processQueue cross-conversation guard', () => {
-  it('should skip queued messages from a different conversation', () => {
+  test('should skip queued messages from a different conversation', () => {
     const itemA: QueuedMessage = {
       id: 'qA',
       content: 'message for A',
@@ -195,7 +195,7 @@ describe('processQueue cross-conversation guard', () => {
     expect(shouldSkip).toBe(true)
   })
 
-  it('should allow messages for current conversation', () => {
+  test('should allow messages for current conversation', () => {
     const item: QueuedMessage = {
       id: 'qA',
       content: 'message for A',
@@ -212,7 +212,7 @@ describe('processQueue cross-conversation guard', () => {
     expect(shouldSend).toBe(true)
   })
 
-  it('should allow messages with null conversationId (legacy)', () => {
+  test('should allow messages with null conversationId (legacy)', () => {
     const item: QueuedMessage = {
       id: 'q_legacy',
       content: 'legacy message',
@@ -233,7 +233,7 @@ describe('processQueue cross-conversation guard', () => {
 // ============ ConversationSessionSnapshot toolResponseCache ============
 
 describe('ConversationSessionSnapshot toolResponseCache', () => {
-  it('supports Array<[string, Record]> entries for snapshot', () => {
+  test('supports Array<[string, Record]> entries for snapshot', () => {
     const entries: Array<[string, Record<string, unknown>]> = [
       ['tool_1', { status: 'success' }],
       ['tool_2', { status: 'error' }]
@@ -245,7 +245,7 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
     expect(restored.get('tool_2')).toEqual({ status: 'error' })
   })
 
-  it('falls back to empty Map for snapshots without toolResponseCache', () => {
+  test('falls back to empty Map for snapshots without toolResponseCache', () => {
     // Old snapshot missing the field
     const oldCache = undefined as
       | Array<[string, Record<string, unknown>]>
@@ -258,7 +258,7 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
     expect(restored.size).toBe(0)
   })
 
-  it('restores empty Map when toolResponseCache is empty array', () => {
+  test('restores empty Map when toolResponseCache is empty array', () => {
     const snapshot: ConversationSessionSnapshot = {
       conversationId: 'conv_A',
       allMessages: [],
@@ -299,7 +299,7 @@ describe('ConversationSessionSnapshot toolResponseCache', () => {
 // ============ sendMessage targetConvId guard logic ============
 
 describe('sendMessage targetConvId guard', () => {
-  it('should abort when session identity changes during await', () => {
+  test('should abort when session identity changes during await', () => {
     const state = mockStateWithConvId('conv_switched')
     const targetConvId = 'conv_original'
 
@@ -307,7 +307,7 @@ describe('sendMessage targetConvId guard', () => {
     expect(shouldAbort).toBe(true)
   })
 
-  it('should proceed when session identity unchanged', () => {
+  test('should proceed when session identity unchanged', () => {
     const state = mockStateWithConvId('conv_stable')
     const targetConvId = 'conv_stable'
 

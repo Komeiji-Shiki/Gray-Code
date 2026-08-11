@@ -4,7 +4,7 @@ import {
 } from '../../../frontend/src/utils/progressCards'
 
 describe('progressCards utility', () => {
-  it('extracts create_progress card data from progressSnapshot first', () => {
+  test('extracts create_progress card data from progressSnapshot first', () => {
     const card = extractProgressCardData(
       'create_progress',
       { projectName: 'Workspace' },
@@ -63,7 +63,7 @@ describe('progressCards utility', () => {
     })
   })
 
-  it('extracts record_progress_milestone card data from milestone snapshot', () => {
+  test('extracts record_progress_milestone card data from milestone snapshot', () => {
     const card = extractProgressCardData(
       'record_progress_milestone',
       { title: '完成后端基础层' },
@@ -129,7 +129,7 @@ describe('progressCards utility', () => {
     expect(card?.latestConclusionPreview).toContain('后端基础层已经完成。')
   })
 
-  it('extracts validate_progress_document card data from validation summary', () => {
+  test('extracts validate_progress_document card data from validation summary', () => {
     const card = extractProgressCardData(
       'validate_progress_document',
       { path: '.graycode/progress.md' },
@@ -178,7 +178,7 @@ describe('progressCards utility', () => {
     ])
   })
 
-  it('formats progress fallback content from snapshot or args', () => {
+  test('formats progress fallback content from snapshot or args', () => {
     expect(formatProgressToolFallbackContent(
       'update_progress',
       {},

@@ -27,7 +27,7 @@ describe('memory_forget 工具', () => {
         setGlobalMemoryManager(null as any);
     });
 
-    it('单 ID：只删除这一条，其余保留并重编号', async () => {
+    test('单 ID：只删除这一条，其余保留并重编号', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -49,7 +49,7 @@ describe('memory_forget 工具', () => {
         }
     });
 
-    it('闭区间：删除 1 到 3 的所有记忆（含端点）', async () => {
+    test('闭区间：删除 1 到 3 的所有记忆（含端点）', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -69,7 +69,7 @@ describe('memory_forget 工具', () => {
         }
     });
 
-    it('块 ID：只丢弃树摘要，原始记忆不被触碰', async () => {
+    test('块 ID：只丢弃树摘要，原始记忆不被触碰', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -92,13 +92,13 @@ describe('memory_forget 工具', () => {
         }
     });
 
-    it('未初始化返回失败结果', async () => {
+    test('未初始化返回失败结果', async () => {
         const result = await runTool('1');
         expect(result.success).toBe(false);
         expect(result.error).toBeTruthy();
     });
 
-    it('越界 ID 返回失败结果而非抛异常', async () => {
+    test('越界 ID 返回失败结果而非抛异常', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -113,7 +113,7 @@ describe('memory_forget 工具', () => {
         }
     });
 
-    it('非法区间 lo > hi：返回明确失败结果而非误导性错误', async () => {
+    test('非法区间 lo > hi：返回明确失败结果而非误导性错误', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -132,7 +132,7 @@ describe('memory_forget 工具', () => {
         }
     });
 
-    it('删除成功消息提示后续 id 可能重编号', async () => {
+    test('删除成功消息提示后续 id 可能重编号', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();

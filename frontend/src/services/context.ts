@@ -1,9 +1,10 @@
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Attachment } from '../types'
 import { sendToExtension } from '../utils/vscode'
 
 export async function previewAttachment(att: Attachment) {
   if (!att.data) return
-  await sendToExtension('previewAttachment', {
+  await sendToExtension(MESSAGE_NAMES.previewAttachment, {
     name: att.name,
     mimeType: att.mimeType,
     data: att.data
@@ -27,18 +28,18 @@ export interface ReadWorkspaceFileForInputResult {
 }
 
 export async function readWorkspaceFileForInput(path: string) {
-  return await sendToExtension<ReadWorkspaceFileForInputResult>('readWorkspaceFileForInput', {
+  return await sendToExtension<ReadWorkspaceFileForInputResult>(MESSAGE_NAMES.readWorkspaceFileForInput, {
     path
   })
 }
 
 export async function readWorkspaceTextFile(path: string) {
   return await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
-    'readWorkspaceTextFile',
+    MESSAGE_NAMES.readWorkspaceTextFile,
     { path }
   )
 }
 
 export async function showContextContent(payload: { title: string; content: string; language: string }) {
-  return await sendToExtension('showContextContent', payload)
+  return await sendToExtension(MESSAGE_NAMES.showContextContent, payload)
 }

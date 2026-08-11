@@ -2,6 +2,7 @@
  * SubAgents 子代理管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgentRunEventBus, subAgentConcurrencyLimiter, SUB_AGENT_PRESETS } from '../../backend/tools/subagents';
 import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation';
@@ -487,16 +488,16 @@ export function initializeSubAgentsFromSettings(ctx: HandlerContext): void {
  * 注册 SubAgents 处理器
  */
 export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('subagents.list', listSubAgents);
-  registry.set('subagents.getPresets', getSubAgentPresets);
-  registry.set('subagents.create', createSubAgent);
-  registry.set('subagents.update', updateSubAgent);
-  registry.set('subagents.delete', deleteSubAgent);
-  registry.set('subagents.updateGlobalConfig', updateGlobalConfig);
-  registry.set('subagents.openMonitor', openSubAgentMonitor);
-  registry.set('subagents.pauseRun', pauseRun);
-  registry.set('subagents.resumeRun', resumeRun);
-  registry.set('subagents.exitRun', exitRun);
-  registry.set('subagents.deleteRunMessage', deleteRunMessage);
-  registry.set('subagents.retryRunFromMessage', retryRunFromMessage);
+  registry.set(MESSAGE_NAMES['subagents.list'], listSubAgents);
+  registry.set(MESSAGE_NAMES['subagents.getPresets'], getSubAgentPresets);
+  registry.set(MESSAGE_NAMES['subagents.create'], createSubAgent);
+  registry.set(MESSAGE_NAMES['subagents.update'], updateSubAgent);
+  registry.set(MESSAGE_NAMES['subagents.delete'], deleteSubAgent);
+  registry.set(MESSAGE_NAMES['subagents.updateGlobalConfig'], updateGlobalConfig);
+  registry.set(MESSAGE_NAMES['subagents.openMonitor'], openSubAgentMonitor);
+  registry.set(MESSAGE_NAMES['subagents.pauseRun'], pauseRun);
+  registry.set(MESSAGE_NAMES['subagents.resumeRun'], resumeRun);
+  registry.set(MESSAGE_NAMES['subagents.exitRun'], exitRun);
+  registry.set(MESSAGE_NAMES['subagents.deleteRunMessage'], deleteRunMessage);
+  registry.set(MESSAGE_NAMES['subagents.retryRunFromMessage'], retryRunFromMessage);
 }

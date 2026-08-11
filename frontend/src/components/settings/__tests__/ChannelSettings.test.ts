@@ -8,7 +8,7 @@
  * - 删除非最后一个渠道：自动选中剩余渠道
  */
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
 import ChannelSettings from '../ChannelSettings.vue'
 import { ConfirmDialog } from '../../common'
@@ -100,7 +100,7 @@ describe('ChannelSettings 无渠道空态', () => {
     wrapper?.unmount()
   })
 
-  it('首次打开无任何渠道：显示空态引导，不渲染配置表单', async () => {
+  test('首次打开无任何渠道：显示空态引导，不渲染配置表单', async () => {
     wrapper = mountSettings()
     await flushPromises()
 
@@ -109,7 +109,7 @@ describe('ChannelSettings 无渠道空态', () => {
     expect(wrapper.find('.config-empty-text').text()).toBeTruthy()
   })
 
-  it('空态下点击「新建渠道」打开新建对话框', async () => {
+  test('空态下点击「新建渠道」打开新建对话框', async () => {
     wrapper = mountSettings()
     await flushPromises()
 
@@ -118,7 +118,7 @@ describe('ChannelSettings 无渠道空态', () => {
     expect(wrapper.find('.config-dialog').exists()).toBe(true)
   })
 
-  it('删除最后一个渠道后回到空态，并复位 chatStore 为无渠道', async () => {
+  test('删除最后一个渠道后回到空态，并复位 chatStore 为无渠道', async () => {
     configs = [makeConfig('cfg-1')]
     chatStoreMock.configId = 'cfg-1'
     wrapper = mountSettings()
@@ -139,7 +139,7 @@ describe('ChannelSettings 无渠道空态', () => {
     expect(chatStoreMock.setConfigId).toHaveBeenCalledWith('')
   })
 
-  it('删除非最后一个渠道：自动选中剩余渠道，不清空 chatStore 选择', async () => {
+  test('删除非最后一个渠道：自动选中剩余渠道，不清空 chatStore 选择', async () => {
     configs = [makeConfig('cfg-1'), makeConfig('cfg-2')]
     chatStoreMock.configId = 'cfg-1'
     wrapper = mountSettings()

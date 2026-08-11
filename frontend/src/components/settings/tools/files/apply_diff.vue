@@ -9,6 +9,7 @@
  * 4. 配置 diff 警戒值（删除行数阈值警告）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted, computed } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomCheckbox } from '../../../common'
@@ -74,7 +75,7 @@ async function loadConfig() {
       diffGuardEnabled?: boolean;
       diffGuardThreshold?: number;
     } }>(
-      'tools.getToolConfig',
+      MESSAGE_NAMES['tools.getToolConfig'],
       {
         toolName: 'apply_diff'
       }
@@ -99,7 +100,7 @@ async function loadConfig() {
 async function saveConfig() {
   isSaving.value = true
   try {
-    await sendToExtension('tools.updateApplyDiffConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateApplyDiffConfig'], {
       config: {
         format: format.value,
         outsideWorkspaceAccess: outsideWorkspaceAccess.value,

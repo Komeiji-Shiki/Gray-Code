@@ -2,123 +2,17 @@
  * GrayCode 前端类型定义
  */
 
+// B1/T16：跨端共享类型迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导出路径
+import type { CheckpointSummary, ContentPart, SummaryTokenStats, UsageMetadata } from '@shared/protocol'
+export type { CheckpointSummary, CheckpointSummaryWithSize, ContentPart, OpenAIResponsesReasoningMetadata, SummaryTokenStats, ThoughtSignatures, TokenDetailsEntry, UsageMetadata } from '@shared/protocol'
+
 // ============ 消息相关类型 ============
 
 /**
- * ContentPart - Gemini API 内容片段
- */
-export interface ContentPart {
-  text?: string
-  inlineData?: {
-    mimeType: string
-    data: string  // Base64
-  }
-  fileData?: {
-    mimeType: string
-    fileUri: string
-    displayName?: string
-  }
-  functionCall?: {
-    name: string
-    args: Record<string, unknown>
-    id?: string
-    /**
-     * 是否已被用户拒绝执行
-     *
-     * 当用户在工具等待确认时点击终止按钮，此字段会被设置为 true
-     * 用于在重新加载对话时正确显示工具状态
-     */
-    rejected?: boolean
-    /**
-     * 流式响应中的索引 (OpenAI 格式)
-     */
-    index?: number
-    /**
-     * Responses API 的 output item 内部 ID。
-     *
-     * 前端只把 itemId 当作同一轮流式工具调用的内部合并键，不把它当作最终工具调用 ID。
-     */
-    itemId?: string
-    /**
-     * 标记 partialArgs 是完整 arguments，而不是 delta。
-     *
-     * arguments.done/output_item.done 给的是完整 JSON，合并时看到 finalArgs 就覆盖已有 partialArgs。
-     */
-    finalArgs?: boolean
-    /**
-     * 流式响应中的原始参数片段
-     */
-    partialArgs?: string
-  }
-  functionResponse?: {
-    name: string
-    response: Record<string, unknown>
-    id?: string  // 用于匹配工具调用请求
-    parts?: ContentPart[]
-  }
-  thoughtSignature?: string
-  thoughtSignatures?: Record<string, string | undefined>
-  openaiResponsesReasoning?: {
-    id?: string
-    status?: 'in_progress' | 'completed' | 'incomplete'
-    summary?: Array<{ type: 'summary_text'; text: string }>
-    content?: Array<{ type: 'reasoning_text'; text: string }>
-  }
-  thought?: boolean
-}
-
-/**
- * Token 详情条目
- */
-export interface TokenDetailsEntry {
-  /** 模态类型: "TEXT" | "IMAGE" | "AUDIO" | "VIDEO" */
-  modality: string
-  /** Token 数量 */
-  tokenCount: number
-}
-
-/**
- * Token 使用统计（Gemini usageMetadata 格式）
- */
-export interface UsageMetadata {
-  /** 输入 prompt 的 token 数量 */
-  promptTokenCount?: number
-  
-  /** 提供商报告的总输出 token；reasoning/thinking token 已包含在内 */
-  candidatesTokenCount?: number
-  
-  /** 总 token 数量 */
-  totalTokenCount?: number
-  
-  /** 缓存内容的 token 数量（写入缓存 + 命中缓存） */
-  cachedContentTokenCount?: number
-
-  /** 缓存写入的 token 数量（Anthropic cache_creation_input_tokens） */
-  cacheCreationTokenCount?: number
-
-  /** 缓存命中的 token 数量（Anthropic cache_read_input_tokens / OpenAI cached_tokens / Gemini cachedContentTokenCount） */
-  cacheReadTokenCount?: number
-  
-  /** 思考部分的 token 数量 */
-  thoughtsTokenCount?: number
-  
-  /** Prompt token 详情（按模态分类） */
-  promptTokensDetails?: TokenDetailsEntry[]
-  
-  /** 候选输出 token 详情（按模态分类，如 IMAGE、TEXT 等） */
-  candidatesTokensDetails?: TokenDetailsEntry[]
-}
-
-export interface SummaryTokenStats {
-  sourceTokenCount: number
-  summaryTokenCount: number
-  estimatedTokensSaved: number
-  contextTokenCountBefore?: number
-  estimatedContextTokenCountAfter?: number
-}
-
-/**
  * Content - Gemini API 消息格式
+ *
+ * 与后端 backend/modules/conversation/types.ts 的 Content 双维护（历史/流式契约）；
+ * 统一迁入 shared/protocol.ts 需跨端同步，暂保持双维护。
  */
 export interface Content {
   role: 'user' | 'model'
@@ -324,11 +218,17 @@ export interface MessageMetadata {
    * 由后端记录，用于判断是否只有一个块
    */
   chunkCount?: number
+  /**
+   * 首字延迟（毫秒）
+   *
+   * 从请求发出到收到第一个流式块的时间（TTFT）；
+   * Token 速率计算会从响应耗时中剥离该窗口
+   */
+  ttft?: number
   /** @deprecated 使用 usageMetadata.thoughtsTokenCount */
   thoughtsTokenCount?: number
   /** @deprecated 使用 usageMetadata.candidatesTokenCount */
   candidatesTokenCount?: number
-  [key: string]: any
 }
 
 // ============ 工具相关类型 ============
@@ -463,13 +363,6 @@ export interface VSCodeMessage<T = any> {
   type: string
   requestId?: string
   data: T
-}
-
-export interface VSCodeRequest {
-  type: 'chat' | 'chatStream' | 'retry' | 'retryStream' | 'editAndRetry' | 'editAndRetryStream' |
-        'chat.rerollStream' | 'chat.editBranchStream' | 'deleteMessage' | 'getHistory' | 'getConfig' | 'updateConfig'
-  data: any
-  requestId: string
 }
 
 export interface VSCodeResponse<T = any> {
@@ -706,99 +599,39 @@ export const SUPPORTED_AUDIO_TYPES = ['audio/mp3', 'audio/wav', 'audio/ogg']
 // ============ 检查点相关类型 ============
 
 /**
- * 检查点轻量摘要（CPF-02/CPF-03）
+ * 检查点记录（T16：本地扩展 = 契约摘要 + 旧存档兼容字段）
  *
- * 与后端 backend/modules/checkpoint/types.ts 的 CheckpointSummary 对齐：
- * 会话元数据只保留摘要，完整 fileHashes/fileStats/excluded 存于独立 manifest，
- * 前端列表/展示只接收此结构。
- *
- * 注意：前端历史代码（checkpointActions / tabActions / 设置页）仍以 CheckpointRecord
- * 消费同一批对象，因此这里定义为 CheckpointRecord 的结构别名——后端 getCheckpoints
- * 只下发摘要字段（不含 fileHashes/fileStats），类型上保持兼容。
+ * 契约摘要字段（id/conversationId/messageIndex/toolName/phase/timestamp/type/
+ * baseCheckpointId/contentHash/fileCount/backupBytes/excludedCount/manifestVersion）
+ * 由 shared/protocol.ts 的 CheckpointSummary 提供（T16 起单一来源，本文件顶部 re-export）；
+ * 以下为旧存档兼容字段：后端新格式存档不再在元数据中保存 fileHashes/fileStats（已迁入
+ * manifest），前端只应消费 CheckpointSummary 字段；backupDir 等旧字段仅用于兼容旧存档数据
+ * （新格式存档恒缺省）。
  */
-export type CheckpointSummary = CheckpointRecord
+export type CheckpointRecord = CheckpointSummary & {
+  /** 备份目录名（旧存档字段；新格式存档恒缺省） */
+  backupDir?: string
 
-/**
- * 检查点记录
- *
- * 与对话消息索引关联的代码库快照记录。
- * 注意：后端新格式存档不再在元数据中保存 fileHashes/fileStats（已迁入 manifest），
- * 前端只应消费 CheckpointSummary 字段；以下旧字段仅用于兼容旧存档数据。
- */
-export interface CheckpointRecord {
-  /** 检查点唯一 ID */
-  id: string
-  
-  /** 关联的对话 ID */
-  conversationId: string
-  
-  /**
-   * 关联的消息索引
-   *
-   * 表示此检查点是在处理该索引消息时创建的
-   */
-  messageIndex: number
-  
-  /** 触发备份的工具名称 */
-  toolName: string
-  
-  /**
-   * 备份阶段
-   * - before: 工具执行前
-   * - after: 工具执行后
-   */
-  phase: 'before' | 'after'
-  
-  /** 创建时间戳 */
-  timestamp: number
-  
-  /** 备份目录名 */
-  backupDir: string
-  
-  /** 备份的文件数量 */
-  fileCount: number
-  
-  /** 内容签名（用于比较两个检查点是否内容一致） */
-  contentHash: string
-  
   /** 描述信息 */
   description?: string
-  
-  /** 备份类型：full=完整备份，incremental=增量备份 */
-  type?: 'full' | 'incremental'
-  
-  /** 增量备份基于的检查点 ID（仅增量备份有效） */
-  baseCheckpointId?: string
-  
+
   /** 变更的文件列表（仅增量备份有效） */
   changes?: Array<{ path: string; type: 'added' | 'modified' | 'deleted'; hash?: string }>
-  
+
   /** 所有文件的哈希映射（仅包含真正备份成功的文件；新格式存档不存，见 manifest） */
   fileHashes?: Record<string, string>
-  
+
   /** 快照时的文件 stat 信息 */
   fileStats?: Record<string, { mtimeMs: number; size: number; mtimeNs?: string }>
-  
+
   /** 快照时的自定义忽略模式 */
   ignorePatterns?: string[]
-  
+
   /** 快照时可见但备份复制失败的文件 */
   unbackedPaths?: string[]
-  
+
   /** 空目录列表（相对路径） */
   emptyDirs?: string[]
-
-  /** 关联的消息节点 ID */
-  messageNodeId?: string
-
-  /** CPF-09: 备份目录磁盘占用（字节） */
-  backupBytes?: number
-
-  /** 该存档创建时按当时规则排除的文件数 */
-  excludedCount?: number
-
-  /** 存档 manifest 的 schema 版本 */
-  manifestVersion?: number
 }
 
 // ============ 检查点 manifest 相关类型（EX-11 查看存档排除清单） ============

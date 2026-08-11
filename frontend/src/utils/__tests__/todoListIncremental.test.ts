@@ -10,7 +10,7 @@
  * 正确应用、initialTouched=false 语义。
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import { replayTodoStateFromMessages } from '../todoList'
 import type { TodoItem } from '../todoList'
 import type { Message } from '../../types'
@@ -33,8 +33,8 @@ const PLAN_TODOS: TodoItem[] = [
   { id: 'b', content: 'B', status: 'pending' }
 ]
 
-describe('M-1: replayTodoStateFromMessages 增量重放', () => {
-  it('分段重放：全量结果 == 前缀状态 + 增量重放尾部', () => {
+describe('replayTodoStateFromMessages 增量重放', () => {
+  test('分段重放：全量结果 == 前缀状态 + 增量重放尾部', () => {
     const messages = [
       assistantMsg(0, [planTool('t1', 'create_plan', PLAN_TODOS)]),
       assistantMsg(1, [
@@ -64,7 +64,7 @@ describe('M-1: replayTodoStateFromMessages 增量重放', () => {
     ])
   })
 
-  it('流式追加场景：缓存前缀状态 + 增量重放尾部 == 全量重放', () => {
+  test('流式追加场景：缓存前缀状态 + 增量重放尾部 == 全量重放', () => {
     const base = [assistantMsg(0, [planTool('t1', 'create_plan', PLAN_TODOS)])]
     const first = replayTodoStateFromMessages(base)
 
@@ -92,7 +92,7 @@ describe('M-1: replayTodoStateFromMessages 增量重放', () => {
     expect(incremental.anchorBackendIndex).toBe(1)
   })
 
-  it('fromIndex 超过消息长度：直接返回 initial 状态（不新增 todo 时保持原样）', () => {
+  test('fromIndex 超过消息长度：直接返回 initial 状态（不新增 todo 时保持原样）', () => {
     const messages = [assistantMsg(0, [planTool('t1', 'create_plan', PLAN_TODOS)])]
     const full = replayTodoStateFromMessages(messages)
 
@@ -107,7 +107,7 @@ describe('M-1: replayTodoStateFromMessages 增量重放', () => {
     expect(incremental.anchorBackendIndex).toBe(full.anchorBackendIndex)
   })
 
-  it('todo_update 增量操作正确应用在 initial 列表上（含 add 与 update）', () => {
+  test('todo_update 增量操作正确应用在 initial 列表上（含 add 与 update）', () => {
     const initialTodos: TodoItem[] = [
       { id: 'a', content: 'A', status: 'pending' },
       { id: 'b', content: 'B', status: 'pending' }
@@ -137,7 +137,7 @@ describe('M-1: replayTodoStateFromMessages 增量重放', () => {
     ])
   })
 
-  it('initialTouched=false 且尾部无 todo 工具调用：todos 保持 null', () => {
+  test('initialTouched=false 且尾部无 todo 工具调用：todos 保持 null', () => {
     const messages = [assistantMsg(0, [tool('t9', 'read_file', { path: 'x.txt' })])]
     const result = replayTodoStateFromMessages(messages, {
       fromIndex: 0,
@@ -149,7 +149,7 @@ describe('M-1: replayTodoStateFromMessages 增量重放', () => {
     expect(result.anchorBackendIndex).toBeNull()
   })
 
-  it('initialTouched=true 且尾部无 todo 工具：保留 initial 列表', () => {
+  test('initialTouched=true 且尾部无 todo 工具：保留 initial 列表', () => {
     const messages = [assistantMsg(0, [tool('t9', 'read_file', { path: 'x.txt' })])]
     const result = replayTodoStateFromMessages(messages, {
       fromIndex: 0,

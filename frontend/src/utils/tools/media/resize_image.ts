@@ -6,6 +6,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import ResizeImagePanel from '../../../components/tools/media/resize_image.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 /**
  * 单个任务类型
@@ -47,6 +48,7 @@ registerTool('resize_image', {
       return `${shortInput} → ${width}x${height}`
     }
     
-    return '缩放图片'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('resize_image') ?? '缩放图片'
   }
 })

@@ -2,6 +2,7 @@
  * MCP 服务器管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
@@ -184,13 +185,13 @@ export const setMcpServerEnabled: MessageHandler = async (data, requestId, ctx) 
  * 注册 MCP 处理器
  */
 export function registerMcpHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('openMcpConfigFile', openMcpConfigFile);
-  registry.set('getMcpServers', getMcpServers);
-  registry.set('validateMcpServerId', validateMcpServerId);
-  registry.set('createMcpServer', createMcpServer);
-  registry.set('updateMcpServer', updateMcpServer);
-  registry.set('deleteMcpServer', deleteMcpServer);
-  registry.set('connectMcpServer', connectMcpServer);
-  registry.set('disconnectMcpServer', disconnectMcpServer);
-  registry.set('setMcpServerEnabled', setMcpServerEnabled);
+  registry.set(MESSAGE_NAMES.openMcpConfigFile, openMcpConfigFile);
+  registry.set(MESSAGE_NAMES.getMcpServers, getMcpServers);
+  registry.set(MESSAGE_NAMES.validateMcpServerId, validateMcpServerId);
+  registry.set(MESSAGE_NAMES.createMcpServer, createMcpServer);
+  registry.set(MESSAGE_NAMES.updateMcpServer, updateMcpServer);
+  registry.set(MESSAGE_NAMES.deleteMcpServer, deleteMcpServer);
+  registry.set(MESSAGE_NAMES.connectMcpServer, connectMcpServer);
+  registry.set(MESSAGE_NAMES.disconnectMcpServer, disconnectMcpServer);
+  registry.set(MESSAGE_NAMES.setMcpServerEnabled, setMcpServerEnabled);
 }

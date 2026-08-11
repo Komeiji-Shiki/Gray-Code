@@ -35,9 +35,6 @@ import {
     type ImageDimensions
 } from '../utils';
 
-const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
-    'Line ranges (startLine/endLine) are only supported for text files. Do not provide them for binary/multimodal files (PDF/images/audio/video).';
-
 // 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）：
 // 超大文件全量读入并全量塞进模型上下文会导致内存与 token 爆炸。
 const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
@@ -193,19 +190,6 @@ async function readSingleFile(
                 path: filePath,
                 success: false,
                 error: error || 'No workspace folder open'
-            }
-        };
-    }
-
-    // 非文本（binary）文件不支持行号范围
-    // 注意：这是安全网。正常情况下 handler 会在调用 readSingleFile 之前拦截。
-    if (lineRange && isBinaryFile(filePath)) {
-        return {
-            result: {
-                path: filePath,
-                workspace: isMultiRoot ? workspace?.name : undefined,
-                success: false,
-                error: LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR
             }
         };
     }

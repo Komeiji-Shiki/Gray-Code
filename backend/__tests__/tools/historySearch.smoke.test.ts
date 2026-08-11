@@ -34,7 +34,7 @@ function modelMsg(parts: Content['parts'], extra: Partial<Content> = {}): Conten
 }
 
 describe('virtualDocument：虚拟文档格式化', () => {
-    it('单回合生成 Round 标题且行号范围覆盖整个文档', () => {
+    test('单回合生成 Round 标题且行号范围覆盖整个文档', () => {
         const doc = formatToDocument([
             userMsg('你好'),
             modelMsg([{ text: '好的' }])
@@ -47,7 +47,7 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(doc).toContain('你好');
     });
 
-    it('多回合生成 Round 1/2 标题与正确范围、回合间空行', () => {
+    test('多回合生成 Round 1/2 标题与正确范围、回合间空行', () => {
         const doc = formatToDocument([
             userMsg('a'),
             modelMsg([{ text: 'b' }]),
@@ -61,7 +61,7 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(doc[8]).toContain('L9-L12');
     });
 
-    it('functionCall part 输出 [tool_call] 标签与 name(args) 行', () => {
+    test('functionCall part 输出 [tool_call] 标签与 name(args) 行', () => {
         const doc = formatToDocument([
             modelMsg([{ functionCall: { name: 'read_file', args: { path: 'a.ts' } } }])
         ]);
@@ -70,7 +70,7 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(doc).toContain('read_file({"path":"a.ts"})');
     });
 
-    it('functionResponse part 输出 [tool_result] 标签，thought part 被跳过', () => {
+    test('functionResponse part 输出 [tool_result] 标签，thought part 被跳过', () => {
         const doc = formatToDocument([
             modelMsg([
                 { text: 'thinking...', thought: true },
@@ -85,7 +85,7 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(doc.some(line => line.includes('thinking'))).toBe(false);
     });
 
-    it('getSummarizedMessages 只返回 isSummarized 标记的消息', () => {
+    test('getSummarizedMessages 只返回 isSummarized 标记的消息', () => {
         const history = [
             userMsg('原始内容', { isSummarized: true }),
             userMsg('未总结')
@@ -95,7 +95,7 @@ describe('virtualDocument：虚拟文档格式化', () => {
         expect(summarized[0].parts[0]).toEqual({ text: '原始内容' });
     });
 
-    it('addLineNumbers 对齐 + truncateLineForDisplay 超长行截断', () => {
+    test('addLineNumbers 对齐 + truncateLineForDisplay 超长行截断', () => {
         const lines = Array.from({ length: 10 }, (_, i) => `line-${i + 1}`);
         const formatted = addLineNumbers(lines, 1);
         expect(formatted).toContain(' 1 | line-1');
@@ -111,7 +111,7 @@ describe('virtualDocument：虚拟文档格式化', () => {
 describe('handleSearch：关键词/正则搜索', () => {
     const docLines = ['line one', 'websocket connected', 'line three', 'websocket again'];
 
-    it('关键词命中：返回匹配行（> 标记）与行号', () => {
+    test('关键词命中：返回匹配行（> 标记）与行号', () => {
         const result = handleSearch(docLines, 'websocket', false, DEFAULT_CFG);
         expect(result.success).toBe(true);
         const data = String(result.data);
@@ -120,32 +120,32 @@ describe('handleSearch：关键词/正则搜索', () => {
         expect((data.match(/>/g) || [])).toHaveLength(2);
     });
 
-    it('无匹配：success 且提示中包含查询词', () => {
+    test('无匹配：success 且提示中包含查询词', () => {
         const result = handleSearch(docLines, 'not-there', false, DEFAULT_CFG);
         expect(result.success).toBe(true);
         expect(String(result.data)).toContain('not-there');
     });
 
-    it('疑似正则语法（is_regex=false 且无匹配）给出 suspected_regex 提示', () => {
+    test('疑似正则语法（is_regex=false 且无匹配）给出 suspected_regex 提示', () => {
         const result = handleSearch(['foo bar'], 'ws.*', false, DEFAULT_CFG);
         expect(result.success).toBe(true);
         expect(String(result.data)).toContain('suspected_regex');
     });
 
-    it('非法正则（is_regex=true）返回失败', () => {
+    test('非法正则（is_regex=true）返回失败', () => {
         const result = handleSearch(docLines, '[', true, DEFAULT_CFG);
         expect(result.success).toBe(false);
         expect(result.error).toBeTruthy();
     });
 
-    it('完整短语无匹配时回退为空格分隔关键词搜索并提示', () => {
+    test('完整短语无匹配时回退为空格分隔关键词搜索并提示', () => {
         const lines = ['hello foo', 'bar world'];
         const result = handleSearch(lines, 'hello world', false, DEFAULT_CFG);
         expect(result.success).toBe(true);
         expect(String(result.data)).toContain('hello, world');
     });
 
-    it('匹配数达到 maxSearchMatches 上限时输出限制提示', () => {
+    test('匹配数达到 maxSearchMatches 上限时输出限制提示', () => {
         const lines = ['x1', 'x2', 'x3', 'x4', 'x5'];
         const cfg = { ...DEFAULT_CFG, maxSearchMatches: 2 };
         const result = handleSearch(lines, 'x', false, cfg);
@@ -160,7 +160,7 @@ describe('handleRead：按行号读取', () => {
     const longLine = 'y'.repeat(600);
     const docLines = ['a', 'b', longLine, 'd', 'e'];
 
-    it('单行读取不截断长行；多行读取超过 maxReadLines 时截断并提示', () => {
+    test('单行读取不截断长行；多行读取超过 maxReadLines 时截断并提示', () => {
         const single = handleRead(docLines, 3, 3, DEFAULT_CFG);
         expect(single.success).toBe(true);
         expect(String(single.data)).toContain(longLine);
@@ -173,7 +173,7 @@ describe('handleRead：按行号读取', () => {
 });
 
 describe('history_search 壳：工具装配', () => {
-    it('工具声明与 handler：search 模式基于 mock 对话历史返回结果', async () => {
+    test('工具声明与 handler：search 模式基于 mock 对话历史返回结果', async () => {
         const tool = createHistorySearchTool();
         expect(tool.declaration.name).toBe('history_search');
         expect(tool.declaration.parameters.properties).toHaveProperty('mode');

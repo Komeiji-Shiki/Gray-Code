@@ -1,5 +1,5 @@
 /**
- * LimCode - Skills 类型定义
+ * GrayCode - Skills 类型定义
  *
  * Skills 是用户自定义的知识模块，可以动态加载到 AI 上下文中
  */
@@ -78,3 +78,4 @@ export interface SkillsChangeEvent {
  * Skills 变更监听器
  */
 export type SkillsChangeListener = (event: SkillsChangeEvent) => void;
+

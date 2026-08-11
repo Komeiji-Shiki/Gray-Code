@@ -11,6 +11,7 @@
  * 索引 fresh 的对话不读历史文件，缺失/过期的对话读历史并重建索引（一次性成本）。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import type { MessageHandler, HandlerContext } from '../types';
 import { aggregateUsageStats, type UsageStatsResult } from '../../backend/modules/conversation';
 import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modules/conversation';
@@ -121,5 +122,5 @@ export const getUsageStats: MessageHandler = async (data, requestId, ctx) => {
  * 注册用量统计处理器
  */
 export function registerUsageHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('usage.getStats', getUsageStats);
+  registry.set(MESSAGE_NAMES['usage.getStats'], getUsageStats);
 }

@@ -20,7 +20,7 @@ import {
 import { UsageStatsCache, type UsageConversationEntry } from '../../modules/conversation/usageCache';
 import { createEmptyBranchGraph, importLinearHistory, insertNode, rerollCandidate } from '../../modules/conversation/branch/BranchGraph';
 import type { ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
-import type { Content, ConversationMetadata } from '../../modules/conversation/types';
+import type { Content, ConversationMetadata } from '../../modules/conversation';
 
 /** 构造一条带用量的 model 消息 */
 function modelMessage(overrides: {

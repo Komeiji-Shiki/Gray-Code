@@ -69,6 +69,7 @@ function sseResponse(events: string[]): Response {
 }
 
 const CONTENT_CHUNK = '{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}';
+const FINISH_CHUNK = '{"choices":[{"delta":{},"finish_reason":"stop"}]}';
 const USAGE_CHUNK = '{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}';
 
 function collect(stream: AsyncGenerator<StreamChunk>): Promise<StreamChunk[]> {
@@ -98,7 +99,7 @@ describe('ChannelManager 重试链路', () => {
             if (fetchCount === 1) {
                 throw new TypeError('fetch failed');  // 首次请求网络失败
             }
-            return sseResponse([CONTENT_CHUNK, USAGE_CHUNK, '[DONE]']);
+            return sseResponse([CONTENT_CHUNK, FINISH_CHUNK, USAGE_CHUNK, '[DONE]']);
         }) as unknown as typeof fetch;
 
         const manager = new ChannelManager(makeConfigManager(makeConfig()));
@@ -121,7 +122,7 @@ describe('ChannelManager 重试链路', () => {
         // 3. 重试成功后内容完整产出
         const text = chunks.map(c => (c.delta[0] as any)?.text).filter(Boolean).join('');
         expect(text).toBe('hi');
-        expect(chunks[chunks.length - 1]?.done).toBe(true);
+        expect(chunks.some(c => c.done)).toBe(true);
     });
 
     it('suppressRetryNotification 只抑制全局回调，请求级回调仍收到事件（SubAgent → Monitor 路由）', async () => {
@@ -131,7 +132,7 @@ describe('ChannelManager 重试链路', () => {
             if (fetchCount === 1) {
                 throw new TypeError('fetch failed');
             }
-            return sseResponse([CONTENT_CHUNK, USAGE_CHUNK, '[DONE]']);
+            return sseResponse([CONTENT_CHUNK, FINISH_CHUNK, USAGE_CHUNK, '[DONE]']);
         }) as unknown as typeof fetch;
 
         const globalCallback = jest.fn();

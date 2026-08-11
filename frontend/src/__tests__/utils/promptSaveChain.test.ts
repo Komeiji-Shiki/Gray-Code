@@ -4,11 +4,12 @@
  * 目标：模拟 PromptSettings.vue saveConfig 的真实数据流——
  *  1. modes 数组（reactive）里 find 出当前模式（Proxy）
  *  2. 展开构造 updatedMode（嵌套字段仍是 Proxy）
- *  3. sendToExtension('savePromptMode', { mode: updatedMode })
+ *  3. sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: updatedMode })
  *  4. webview 端保存成功并回响应
  *  5. 验证前端 promise 能正常 resolve（而非 DataCloneError / 序列化失败）
  */
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { MESSAGE_NAMES } from '@shared/protocol'
+import { describe, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { sendToExtension, onMessageFromExtension } from '../../utils/vscode'
 
@@ -90,7 +91,7 @@ describe('savePromptMode 完整链路（Proxy 数据）', () => {
     vi.restoreAllMocks()
   })
 
-  it('reactive modes 构造的 updatedMode 发送后能收到成功响应', async () => {
+  test('reactive modes 构造的 updatedMode 发送后能收到成功响应', async () => {
     // 模拟 loadConfig 后 modes.value = Object.values(result.modes)
     const modes = ref<PromptMode[]>([])
     modes.value = [
@@ -109,8 +110,8 @@ describe('savePromptMode 完整链路（Proxy 数据）', () => {
 
     const updatedMode = buildUpdatedMode(modes, 'default')
 
-    // 与 saveConfig 相同：sendToExtension('savePromptMode', { mode: updatedMode })
-    const pending = sendToExtension('savePromptMode', { mode: updatedMode })
+    // 与 saveConfig 相同：sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: updatedMode })
+    const pending = sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: updatedMode })
 
     // 验证消息确实发出去了（没有被 DataCloneError 或 JSON 序列化错误拦截）
     expect(capturedMessages.length).toBe(1)
@@ -132,13 +133,13 @@ describe('savePromptMode 完整链路（Proxy 数据）', () => {
     expect(result).toEqual({ success: true })
   })
 
-  it('响应丢失时（webview 未就绪）promise 不会立即 resolve，但超时后会 reject', async () => {
+  test('响应丢失时（webview 未就绪）promise 不会立即 resolve，但超时后会 reject', async () => {
     const modes = ref<PromptMode[]>([])
     modes.value = [{ id: 'default', name: '默认', icon: 'x', template: 'tpl', promptAssemblyMode: 'template', dynamicTemplateEnabled: true, dynamicTemplate: 'dtpl' }]
     const updatedMode = buildUpdatedMode(modes, 'default')
 
     // 不模拟响应 → 验证最终会 reject（避免真实等待 180s，传短超时）
-    const pending = sendToExtension('savePromptMode', { mode: updatedMode }, { timeoutMs: 50 })
+    const pending = sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: updatedMode }, { timeoutMs: 50 })
     await expect(pending).rejects.toThrow(/timed out/)
   })
 })

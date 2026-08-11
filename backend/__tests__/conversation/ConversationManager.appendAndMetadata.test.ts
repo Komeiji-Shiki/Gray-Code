@@ -12,10 +12,10 @@
  * - getMetadata 完整性检查只读 index，不解析末段消息（HIS-11）。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { UsageIndex, UsageIndexStore } from '../../modules/conversation/usageStats';
-import type { Content } from '../../modules/conversation/types';
+import type { Content } from '../../modules/conversation';
 import { createAdapter } from './helpers/fakeVscodeFs';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 

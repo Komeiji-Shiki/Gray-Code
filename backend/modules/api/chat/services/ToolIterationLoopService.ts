@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具迭代循环服务
+ * GrayCode - 工具迭代循环服务
  *
  * 封装工具调用循环的核心逻辑，统一处理：
  * - handleChatStream
@@ -51,7 +51,7 @@ import { isDiffReviewToolCall } from './diffReviewTools';
 import { deserializePromptContextCache, serializePromptContextCache } from '../../../prompt/promptContextCache';
 import type { DynamicContextDiffBase, DynamicRuntimeContext } from '../../../prompt/PromptManager';
 import { MAIN_SESSION_RUN_ID } from '../../../../core/services/agentMailbox';
-import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/summarizeTypes';
+import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/types/summarizeTypes';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -1354,6 +1354,11 @@ export class ToolIterationLoopService {
             // 流式提前执行的工具产生的多模态附件（xml/json prompt 模式）。
             // 以前这些附件被完全忽略，提前执行的 generate_image / MCP 图片结果会静默丢失。
             const earlyMultimodalAttachments = earlyFullResults.flatMap(result => result.multimodalAttachments ?? []);
+            // 流式提前执行的工具创建的检查点（挂在 earlyCheckpointIndex 上，与
+            // createModelMessageCheckpoint 的 before 语义一致）。主循环路径透传
+            // executionResult.checkpoints，此分支无主循环执行，透传提前执行结果
+            // 汇总的真实检查点（此前恒下发 checkpoints:[]，前端无检查点可回档）。
+            const earlyCheckpoints = earlyFullResults.flatMap(result => result.checkpoints ?? []);
 
             // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
             // 但 earlyResponseParts 中有结果需要写入历史。
@@ -1404,7 +1409,7 @@ export class ToolIterationLoopService {
                         content: finalContent,
                         awaitingConfirmation: true as const,
                         toolResults: earlyToolResults,
-                        checkpoints: []
+                        checkpoints: earlyCheckpoints
                     } satisfies ChatStreamToolConfirmationData;
 
                     return;
@@ -1415,7 +1420,7 @@ export class ToolIterationLoopService {
                     content: finalContent,
                     toolIteration: true as const,
                     toolResults: earlyToolResults,
-                    checkpoints: [],
+                    checkpoints: earlyCheckpoints,
                 };
 
                 if (earlyStopState.shouldStop) {
@@ -1428,11 +1433,14 @@ export class ToolIterationLoopService {
             if (autoPrefix.length > 0) {
                 // 在执行循环开始前，立即发送包含所有待执行工具的初始 toolsExecuting
                 // 让前端尽早看到完整的工具队列（第一个为 executing，其余为 queued）
+                // 先过一次同参数重复失败护栏：快照与真实执行共用同一份 guarded 列表，
+                // 避免前端看到未护栏的原始 args（与护栏替换后的实际执行不一致）。
+                const guardedAutoPrefix = repeatedCallGuard.guardCalls(autoPrefix);
                 yield {
                     conversationId,
                     content: finalContent,
                     toolsExecuting: true as const,
-                    pendingToolCalls: autoPrefix.map(c => ({
+                    pendingToolCalls: guardedAutoPrefix.map(c => ({
                         id: c.id,
                         name: c.name,
                         args: c.args
@@ -1445,7 +1453,7 @@ export class ToolIterationLoopService {
                 // 执行工具调用（按顺序），并实时发送每个工具的开始/结束状态；
                 // 达到连续失败阈值的重复调用会被护栏替换为短路错误调用
                 const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
-                    repeatedCallGuard.guardCalls(autoPrefix),
+                    guardedAutoPrefix,
                     conversationId,
                     messageIndex,
                     config,
@@ -1507,7 +1515,7 @@ export class ToolIterationLoopService {
                         if (event.type === 'start') {
                             // 计算当前工具及所有剩余待执行工具（O(1) 查表，替代逐次 findIndex）
                             const currentIndex = autoPrefixIndexById.get(event.call.id) ?? -1;
-                            const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
+                            const remaining = currentIndex !== -1 ? guardedAutoPrefix.slice(currentIndex) : [event.call];
 
                             // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
                             yield {
@@ -1530,6 +1538,40 @@ export class ToolIterationLoopService {
                                 tool: createChatToolStatusUpdate(event.toolResult)
                             } satisfies ChatStreamToolStatusData;
                         }
+                    } catch (error) {
+                        // 主循环泵 gen.next() reject（工具执行异常/内部错误，如 checkpoint 落盘失败）：
+                        // 与 execution.ts 非流式主循环的 catch 同构——已无法取回真实结果，为每个调用
+                        // 构造带 error 的 responsePart/toolResult，保证 assistant 的每个 tool_use 都有
+                        // 配对 tool_result，不让异常穿透为 error chunk，也不留下孤儿 tool_calls（否则
+                        // 下一轮 generate 触发 Anthropic/OpenAI 400）。按普通工具失败语义落盘，模型
+                        // 继续处理；与 abort 收尾窗口超时的空结果（取消语义）区分：此处是失败语义。
+                        this.log.warn('tool_gen_next_rejected', {
+                            conversationId,
+                            messageIndex,
+                            iteration,
+                            error: (error as Error)?.message ?? String(error),
+                        });
+                        const errorResponse: Record<string, unknown> = {
+                            success: false,
+                            error: (error as Error)?.message ?? String(error),
+                        };
+                        executionResult = {
+                            responseParts: guardedAutoPrefix.map(call => ({
+                                functionResponse: {
+                                    id: call.id,
+                                    name: call.name,
+                                    response: errorResponse
+                                }
+                            })),
+                            toolResults: guardedAutoPrefix.map(call => ({
+                                id: call.id,
+                                name: call.name,
+                                args: call.args,
+                                result: errorResponse
+                            })),
+                            checkpoints: []
+                        };
+                        break;
                     } finally {
                         if (onAbort && abortSignal) {
                             abortSignal.removeEventListener('abort', onAbort);
@@ -2021,12 +2063,16 @@ export class ToolIterationLoopService {
                 ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
                 : executionResult.responseParts;
 
-            // 将函数响应添加到历史（作为 user 消息，标记为函数响应）
-            await this.conversationManager.addContent(conversationId, {
-                role: 'user',
-                parts: functionResponseParts,
-                isFunctionResponse: true
-            });
+            // 将函数响应添加到历史（作为 user 消息，标记为函数响应）。
+            // abort 收尾窗口超时（工具不响应 abort 且永不结束）时 executeFunctionCallsWithResults
+            // 返回空结果：无真实函数响应可写，跳过落盘，避免历史出现 parts:[] 的空 user 消息。
+            if (functionResponseParts.length > 0) {
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: functionResponseParts,
+                    isFunctionResponse: true
+                });
+            }
 
             const postToolStopState = await resolveAndPersistPostToolStopState(
                 this.conversationManager,

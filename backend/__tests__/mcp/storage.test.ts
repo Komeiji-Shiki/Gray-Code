@@ -27,7 +27,7 @@ describe('InMemoryMcpStorageAdapter', () => {
     });
 
     describe('basic CRUD', () => {
-        it('should save and retrieve a config', async () => {
+        test('should save and retrieve a config', async () => {
             const config = makeConfig();
             await storage.saveConfig(config);
 
@@ -37,12 +37,12 @@ describe('InMemoryMcpStorageAdapter', () => {
             expect(retrieved!.transport.type).toBe('stdio');
         });
 
-        it('should return null for non-existent config', async () => {
+        test('should return null for non-existent config', async () => {
             const result = await storage.getConfig('nope');
             expect(result).toBeNull();
         });
 
-        it('should list all configs', async () => {
+        test('should list all configs', async () => {
             await storage.saveConfig(makeConfig({ id: 'a', name: 'A' }));
             await storage.saveConfig(makeConfig({ id: 'b', name: 'B' }));
 
@@ -51,7 +51,7 @@ describe('InMemoryMcpStorageAdapter', () => {
             expect(all.map(c => c.name).sort()).toEqual(['A', 'B']);
         });
 
-        it('should update an existing config', async () => {
+        test('should update an existing config', async () => {
             await storage.saveConfig(makeConfig({ id: 'x', name: 'Original' }));
             await storage.saveConfig(makeConfig({ id: 'x', name: 'Updated' }));
 
@@ -59,7 +59,7 @@ describe('InMemoryMcpStorageAdapter', () => {
             expect(result!.name).toBe('Updated');
         });
 
-        it('should delete a config', async () => {
+        test('should delete a config', async () => {
             await storage.saveConfig(makeConfig({ id: 'to_delete' }));
             await storage.deleteConfig('to_delete');
 
@@ -69,7 +69,7 @@ describe('InMemoryMcpStorageAdapter', () => {
     });
 
     describe('#7: cleanSchema persistence', () => {
-        it('should persist cleanSchema: false', async () => {
+        test('should persist cleanSchema: false', async () => {
             const config = makeConfig({ id: 'cs_test', cleanSchema: false });
             await storage.saveConfig(config);
 
@@ -77,7 +77,7 @@ describe('InMemoryMcpStorageAdapter', () => {
             expect(retrieved!.cleanSchema).toBe(false);
         });
 
-        it('should persist cleanSchema: true', async () => {
+        test('should persist cleanSchema: true', async () => {
             const config = makeConfig({ id: 'cs_true', cleanSchema: true });
             await storage.saveConfig(config);
 
@@ -85,7 +85,7 @@ describe('InMemoryMcpStorageAdapter', () => {
             expect(retrieved!.cleanSchema).toBe(true);
         });
 
-        it('should treat undefined cleanSchema as undefined (not coerced)', async () => {
+        test('should treat undefined cleanSchema as undefined (not coerced)', async () => {
             const config = makeConfig({ id: 'cs_undef' });
             delete (config as any).cleanSchema;
             await storage.saveConfig(config);
@@ -96,7 +96,7 @@ describe('InMemoryMcpStorageAdapter', () => {
     });
 
     describe('timeout persistence', () => {
-        it('should persist timeout', async () => {
+        test('should persist timeout', async () => {
             const config = makeConfig({ id: 't_test', timeout: 60000 });
             await storage.saveConfig(config);
 
@@ -104,7 +104,7 @@ describe('InMemoryMcpStorageAdapter', () => {
             expect(retrieved!.timeout).toBe(60000);
         });
 
-        it('should handle undefined timeout', async () => {
+        test('should handle undefined timeout', async () => {
             const config = makeConfig({ id: 't_undef' });
             delete (config as any).timeout;
             await storage.saveConfig(config);
@@ -139,7 +139,7 @@ function makeMemento(initial: Record<string, unknown> = {}) {
 }
 
 describe('MementoMcpStorageAdapter（MCP M3 补测：串行队列）', () => {
-    it('并发 save 同一 id：read-modify-write 不交错，最终为最后一次写入', async () => {
+    test('并发 save 同一 id：read-modify-write 不交错，最终为最后一次写入', async () => {
         const memento = makeMemento();
         const storage = new MementoMcpStorageAdapter(memento as any);
 
@@ -157,14 +157,14 @@ describe('MementoMcpStorageAdapter（MCP M3 补测：串行队列）', () => {
         expect(all[0].name).toBe('N5');
     });
 
-    it('并发 save 不同 id：全部保留', async () => {
+    test('并发 save 不同 id：全部保留', async () => {
         const storage = new MementoMcpStorageAdapter(makeMemento() as any);
         await Promise.all(['a', 'b', 'c'].map(id => storage.saveConfig(makeConfig({ id }))));
         const all = await storage.getAllConfigs();
         expect(all.map(c => c.id).sort()).toEqual(['a', 'b', 'c']);
     });
 
-    it('save + delete 并发交错不复活已删配置', async () => {
+    test('save + delete 并发交错不复活已删配置', async () => {
         const storage = new MementoMcpStorageAdapter(makeMemento() as any);
         await storage.saveConfig(makeConfig({ id: 'd' }));
         await Promise.all([
@@ -191,21 +191,21 @@ describe('FileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename 原子写 / �
         await fs.rm(dir, { recursive: true, force: true });
     });
 
-    it('save 后主文件存在且无 .tmp 残留（原子写落盘）', async () => {
+    test('save 后主文件存在且无 .tmp 残留（原子写落盘）', async () => {
         await storage.saveConfig(makeConfig({ id: 's1' }));
         const content = await fs.readFile(file, 'utf-8');
         expect(JSON.parse(content).mcpServers).toHaveLength(1);
         await expect(fs.access(file + '.tmp')).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('并发 save 同一 id 不丢更新（串行队列）', async () => {
+    test('并发 save 同一 id 不丢更新（串行队列）', async () => {
         await Promise.all(['A', 'B', 'C'].map(name => storage.saveConfig(makeConfig({ id: 'dup', name }))));
         const all = await storage.getAllConfigs();
         expect(all).toHaveLength(1);
         expect(all[0].name).toBe('C');
     });
 
-    it('损坏 JSON：getAllConfigs 抛 corrupted，且不被静默覆盖', async () => {
+    test('损坏 JSON：getAllConfigs 抛 corrupted，且不被静默覆盖', async () => {
         await fs.writeFile(file, '{ broken json !!', 'utf-8');
         await expect(storage.getAllConfigs()).rejects.toThrow(/corrupted/);
         // 读取失败后磁盘原文保持原样（saveConfig 前先读，读到损坏抛错，不写）
@@ -213,11 +213,11 @@ describe('FileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename 原子写 / �
         expect(await fs.readFile(file, 'utf-8')).toBe('{ broken json !!');
     });
 
-    it('文件不存在视为无配置（ENOENT 不抛错）', async () => {
+    test('文件不存在视为无配置（ENOENT 不抛错）', async () => {
         expect(await storage.getAllConfigs()).toEqual([]);
     });
 
-    it('deleteConfig 从 mcpServers 移除目标', async () => {
+    test('deleteConfig 从 mcpServers 移除目标', async () => {
         await storage.saveConfig(makeConfig({ id: 'k1' }));
         await storage.saveConfig(makeConfig({ id: 'k2' }));
         await storage.deleteConfig('k1');
@@ -265,7 +265,7 @@ describe('VSCodeFileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename / EPERM
         };
     }
 
-    it('save 走 tmp 写入 → rename(tmp, file, { overwrite: true })', async () => {
+    test('save 走 tmp 写入 → rename(tmp, file, { overwrite: true })', async () => {
         const vfs = makeVscodeFs();
         const uri = makeUri(path.join(os.tmpdir(), 'vs-servers.json'));
         const storage = new VSCodeFileSystemMcpStorageAdapter(uri as any, vfs as any);
@@ -288,7 +288,7 @@ describe('VSCodeFileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename / EPERM
         expect(vfs.store.has(tmpUri.fsPath)).toBe(false);
     });
 
-    it('rename EPERM（Windows 占用）时回退直接写主文件', async () => {
+    test('rename EPERM（Windows 占用）时回退直接写主文件', async () => {
         const vfs = makeVscodeFs({
             rename: jest.fn(async () => {
                 const err = new Error('EPERM') as NodeJS.ErrnoException;
@@ -304,7 +304,7 @@ describe('VSCodeFileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename / EPERM
         expect(vfs.writeFile).toHaveBeenCalledWith(uri, expect.any(Uint8Array));
     });
 
-    it('损坏 JSON：抛 corrupted 且不覆盖原内容', async () => {
+    test('损坏 JSON：抛 corrupted 且不覆盖原内容', async () => {
         const vfs = makeVscodeFs();
         const uri = makeUri(path.join(os.tmpdir(), 'vs-servers-broken.json'));
         vfs.store.set(uri.fsPath, '{ nope }');
@@ -314,7 +314,7 @@ describe('VSCodeFileSystemMcpStorageAdapter（MCP M3 补测：tmp+rename / EPERM
         expect(vfs.store.get(uri.fsPath)).toBe('{ nope }');
     });
 
-    it('文件不存在（EntryNotFound）视为无配置', async () => {
+    test('文件不存在（EntryNotFound）视为无配置', async () => {
         const vfs = makeVscodeFs();
         const uri = makeUri(path.join(os.tmpdir(), 'vs-servers-missing.json'));
         const storage = new VSCodeFileSystemMcpStorageAdapter(uri as any, vfs as any);

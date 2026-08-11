@@ -1,5 +1,5 @@
 /**
- * LimCode MCP 模块 - 存储适配器
+ * GrayCode MCP 模块 - 存储适配器
  */
 
 import type { McpStorageAdapter, McpServerConfig } from './types';

@@ -60,7 +60,7 @@ describe('McpManager tools list changed notification', () => {
         return client;
     }
 
-    it('should refresh tools and update capabilities on tools/list_changed', async () => {
+    test('should refresh tools and update capabilities on tools/list_changed', async () => {
         const initialTools = [{ name: 'old_tool', description: 'old', inputSchema: { type: 'object' as const } }];
         const refreshedTools = [
             { name: 'old_tool', description: 'old', inputSchema: { type: 'object' as const } },
@@ -97,7 +97,7 @@ describe('McpManager tools list changed notification', () => {
         });
     });
 
-    it('should refresh resources and prompts on their list_changed notifications', async () => {
+    test('should refresh resources and prompts on their list_changed notifications', async () => {
         const initialResources = [{ uri: 'file:///a.txt', name: 'a' }];
         const initialPrompts = [{ name: 'p1', description: 'd1' }];
         let currentResources = initialResources;
@@ -127,7 +127,7 @@ describe('McpManager tools list changed notification', () => {
         expect(updatedEvents).toHaveLength(2);
     });
 
-    it('should not reconnect and only log when refresh fails', async () => {
+    test('should not reconnect and only log when refresh fails', async () => {
         jest.spyOn(StdioMcpClient.prototype, 'getTools').mockReturnValue([
             { name: 'stale_tool', description: 'stale', inputSchema: { type: 'object' as const } },
         ]);
@@ -163,7 +163,7 @@ describe('McpManager tools list changed notification', () => {
         errorSpy.mockRestore();
     });
 
-    it('should ignore unrelated notification methods', async () => {
+    test('should ignore unrelated notification methods', async () => {
         jest.spyOn(StdioMcpClient.prototype, 'getTools').mockReturnValue([
             { name: 't1', description: 'd', inputSchema: { type: 'object' as const } },
         ]);

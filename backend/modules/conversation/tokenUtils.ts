@@ -1,5 +1,5 @@
 /**
- * LimCode - Token 工具函数
+ * GrayCode - Token 工具函数
  * 
  * 提供处理消息 token 计数的工具函数
  */

@@ -1,5 +1,5 @@
 /**
- * LimCode - 配置管理器
+ * GrayCode - 配置管理器
  *
  * 核心配置管理类，提供完整的 CRUD 和管理功能
  */
@@ -748,6 +748,17 @@ export class ConfigManager {
             case 'anthropic':
                 this.validateAnthropicConfig(config as AnthropicConfig, errors, warnings);
                 break;
+
+            default:
+                // 未知/非法 type：显式报错（此前无 default 分支时静默通过，非法 type 不被拦截）。
+                // 注意：switch 穷尽 ChannelType 后此处 config 被收窄为 never，但运行时仍可能收到
+                // webview/导入来源的非法 type，故通过断言访问原始 type 字符串。
+                // type 为空时上方 typeRequired 已报错，这里避免重复
+                const rawType = (config as { type?: string }).type;
+                if (rawType) {
+                    errors.push(t('modules.config.validation.unsupportedType', { type: rawType }));
+                }
+                break;
         }
         
         return {
@@ -1128,3 +1139,4 @@ export class ConfigManager {
         }
     }
 }
+

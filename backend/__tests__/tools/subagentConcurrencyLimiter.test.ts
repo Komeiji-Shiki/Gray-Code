@@ -8,13 +8,13 @@
 import {
     SubAgentConcurrencyLimiter,
     SubAgentQueueCancelledError
-} from '../../tools/subagents/concurrencyLimiter';
+} from '../../tools/subagents';
 
 /** 让微任务队列排空，用于断言"仍在排队" */
 const flushMicrotasks = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 
 describe('SubAgentConcurrencyLimiter', () => {
-    it('容量内立即放行', async () => {
+    test('容量内立即放行', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => 2);
         await limiter.acquire('r1');
         await limiter.acquire('r2');
@@ -22,7 +22,7 @@ describe('SubAgentConcurrencyLimiter', () => {
         expect(limiter.getQueueLength()).toBe(0);
     });
 
-    it('满员时排队，release 后按 FIFO 唤醒', async () => {
+    test('满员时排队，release 后按 FIFO 唤醒', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => 1);
         await limiter.acquire('r1');
 
@@ -41,7 +41,7 @@ describe('SubAgentConcurrencyLimiter', () => {
         expect(order).toEqual(['r2', 'r3']);
     });
 
-    it('容量 -1 表示无限制', async () => {
+    test('容量 -1 表示无限制', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => -1);
         for (let i = 0; i < 10; i++) {
             await limiter.acquire(`r${i}`);
@@ -49,13 +49,13 @@ describe('SubAgentConcurrencyLimiter', () => {
         expect(limiter.getRunningCount()).toBe(10);
     });
 
-    it('容量 0 视为配置错误，按无限制处理避免死锁', async () => {
+    test('容量 0 视为配置错误，按无限制处理避免死锁', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => 0);
         await limiter.acquire('r1');
         expect(limiter.getRunningCount()).toBe(1);
     });
 
-    it('未配置容量时默认 3', async () => {
+    test('未配置容量时默认 3', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => undefined);
         await limiter.acquire('r1');
         await limiter.acquire('r2');
@@ -67,7 +67,7 @@ describe('SubAgentConcurrencyLimiter', () => {
         await pending;
     });
 
-    it('排队中被取消时移出队列并抛出取消错误', async () => {
+    test('排队中被取消时移出队列并抛出取消错误', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => 1);
         await limiter.acquire('r1');
 
@@ -85,7 +85,7 @@ describe('SubAgentConcurrencyLimiter', () => {
         expect(limiter.getRunningCount()).toBe(0);
     });
 
-    it('已取消的信号直接拒绝', async () => {
+    test('已取消的信号直接拒绝', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => 1);
         const controller = new AbortController();
         controller.abort();
@@ -93,7 +93,7 @@ describe('SubAgentConcurrencyLimiter', () => {
             .rejects.toBeInstanceOf(SubAgentQueueCancelledError);
     });
 
-    it('release 幂等：重复释放不产生多余席位', async () => {
+    test('release 幂等：重复释放不产生多余席位', async () => {
         const limiter = new SubAgentConcurrencyLimiter(() => 1);
         await limiter.acquire('r1');
         limiter.release('r1');
@@ -101,7 +101,7 @@ describe('SubAgentConcurrencyLimiter', () => {
         expect(limiter.getRunningCount()).toBe(0);
     });
 
-    it('容量动态调大后一次 release 唤醒多个等待者', async () => {
+    test('容量动态调大后一次 release 唤醒多个等待者', async () => {
         let capacity = 1;
         const limiter = new SubAgentConcurrencyLimiter(() => capacity);
         await limiter.acquire('r1');

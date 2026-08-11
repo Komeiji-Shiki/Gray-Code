@@ -21,12 +21,12 @@ describe('getExtensionVersion', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('读取 package.json 中的版本号', () => {
+  test('读取 package.json 中的版本号', () => {
     fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'graycode', version: '1.2.3' }));
     expect(getExtensionVersion(tmpDir)).toBe('1.2.3');
   });
 
-  it('package.json 缺失时回退 0.0.0', () => {
+  test('package.json 缺失时回退 0.0.0', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       expect(getExtensionVersion(tmpDir)).toBe('0.0.0');
@@ -35,12 +35,12 @@ describe('getExtensionVersion', () => {
     }
   });
 
-  it('package.json 无 version 字段时回退 0.0.0', () => {
+  test('package.json 无 version 字段时回退 0.0.0', () => {
     fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ name: 'graycode' }));
     expect(getExtensionVersion(tmpDir)).toBe('0.0.0');
   });
 
-  it('package.json 损坏时回退 0.0.0', () => {
+  test('package.json 损坏时回退 0.0.0', () => {
     fs.writeFileSync(path.join(tmpDir, 'package.json'), '{ invalid json');
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {

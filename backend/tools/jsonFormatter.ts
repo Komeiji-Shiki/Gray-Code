@@ -237,7 +237,20 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
         const blockStart = startIndex + TOOL_CALL_START.length;
         const endScan = findEndMarkerOutsideString(text, blockStart);
         if (endScan.endIndex === -1) {
-            // 该块没有闭合的结束标记，继续找下一个开始标记
+            // 该块没有闭合的结束标记。
+            // 修改原因：旧实现静默跳过，模型收不到失败反馈，可能反复输出同样的未闭合块。
+            // 修改方式：对齐 promptToolParser.buildParseFailurePart 语义——块内容为空时视为
+            //          非调用意图（如流式刚发出开始标记）静默跳过；有内容时构造解析失败
+            //          反馈（malformed_tool_call + __toolCallParseError），让模型补全结束标记重发。
+            const unclosedContent = text.substring(blockStart).trim();
+            if (unclosedContent.length > 0) {
+                results.push({
+                    tool: 'malformed_tool_call',
+                    parameters: {
+                        __toolCallParseError: 'The tool call block is missing the closing marker (<<<END_TOOL_CALL>>>). Fix it and send the tool call again.'
+                    }
+                });
+            }
             searchFrom = blockStart;
             continue;
         }

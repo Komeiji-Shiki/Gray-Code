@@ -18,9 +18,9 @@
 import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, Content } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory, Content } from '../../modules/conversation';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import {
     BranchService,
@@ -35,7 +35,7 @@ import type {
     ConversationBranchGraph,
     ConversationBranchNode,
 } from '../../modules/conversation/branch/types';
-import { ChatFlowService } from '../../modules/api/chat/services/ChatFlowService';
+import { createChatFlowHarness } from '../__fixtures__/harnessFixtures';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -373,6 +373,50 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             const result = await service.syncGraphAfterHistoryDelete('c1', null);
             expect(result.graphUpdated).toBe(false);
         });
+
+        test('forceResetToEmpty：整体清空无条件重置为空图（不依赖锚点）；图已空时再次调用幂等', async () => {
+            const ids = await seedConversation('c1');
+            const graph = makeChainGraph([
+                { id: ids[0], role: 'user', activeChildId: ids[1] },
+                { id: ids[1], role: 'model' },
+            ]);
+            await repo.save('c1', graph);
+
+            // 首次：非空图整体清空；锚点传 null 亦可（forceResetToEmpty 不依赖锚点）
+            const first = await service.syncGraphAfterHistoryDelete('c1', null, { forceResetToEmpty: true });
+            expect(first).toMatchObject({ graphUpdated: true, resetToEmpty: true, activeTailAdjusted: true });
+            expect(first.deletedNodeIds.sort()).toEqual([ids[0], ids[1]].sort());
+            const afterFirst = (await service.getBranchGraph('c1')).graph!;
+            expect(afterFirst.rootNodeId).toBeNull();
+            expect(Object.keys(afterFirst.nodes)).toHaveLength(0);
+            expect(validate(afterFirst).valid).toBe(true);
+
+            // 再次调用（图已空）：幂等短路——重置为空图是无操作，不写盘、返回空结果
+            // （与软删路径 outcome.graph === graph 短路同语义；deletedNodeIds 为空、图保持空、不抛错）
+            const second = await service.syncGraphAfterHistoryDelete('c1', null, { forceResetToEmpty: true });
+            expect(second).toEqual({
+                graphUpdated: false,
+                deletedNodeIds: [],
+                resetToEmpty: false,
+                activeTailAdjusted: false,
+            });
+            const afterSecond = (await service.getBranchGraph('c1')).graph!;
+            expect(afterSecond.rootNodeId).toBeNull();
+            expect(Object.keys(afterSecond.nodes)).toHaveLength(0);
+            expect(validate(afterSecond).valid).toBe(true);
+
+            // 无分支图（线性会话未建图）：forceResetToEmpty no-op，不建图不落盘
+            await seedConversation('c2');
+            expect(await repo.exists('c2')).toBe(false);
+            const noGraph = await service.syncGraphAfterHistoryDelete('c2', null, { forceResetToEmpty: true });
+            expect(noGraph).toEqual({
+                graphUpdated: false,
+                deletedNodeIds: [],
+                resetToEmpty: false,
+                activeTailAdjusted: false,
+            });
+            expect(await repo.exists('c2')).toBe(false);
+        });
     });
 
     describe('deleteToMessage 端到端（模拟 ChatFlowService 接线顺序）', () => {
@@ -482,50 +526,6 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
     });
 
     describe('ChatFlowService.handleDeleteToMessage 接线', () => {
-        function createHarness() {
-            const conversationManager = {
-                getHistory: jest.fn().mockResolvedValue([]),
-                getMessagesRaw: jest.fn().mockResolvedValue([]),
-                getHistoryRef: jest.fn().mockResolvedValue([]),
-                getCustomMetadata: jest.fn().mockResolvedValue(undefined),
-                setCustomMetadata: jest.fn().mockResolvedValue(undefined),
-                rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined),
-                deleteToMessage: jest.fn().mockResolvedValue(0),
-            };
-            const diffInterruptService = {
-                markUserInterrupt: jest.fn(),
-                cancelAllPending: jest.fn().mockResolvedValue(undefined),
-                resetUserInterrupt: jest.fn(),
-            };
-            const checkpointService = {
-                deleteCheckpointsFromIndex: jest.fn().mockResolvedValue(undefined),
-            };
-            const toolIterationLoopService = {
-                clearTrimState: jest.fn().mockResolvedValue(undefined),
-            };
-            const branchService = {
-                syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
-                    graphUpdated: true,
-                    deletedNodeIds: [],
-                    resetToEmpty: false,
-                    activeTailAdjusted: false,
-                }),
-            };
-            const flowService = new ChatFlowService(
-                { getConfig: jest.fn() } as never,
-                conversationManager as never,
-                undefined as never,
-                {} as never,
-                {} as never,
-                toolIterationLoopService as never,
-                checkpointService as never,
-                diffInterruptService as never,
-                {} as never,
-                {} as never,
-            );
-            setGlobalBranchService(branchService as never);
-            return { flowService, conversationManager, branchService };
-        }
 
         const fourMessageHistory = [
             { id: 'u1', role: 'user', parts: [{ text: 'q1' }] },
@@ -535,7 +535,16 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
         ] as Content[];
 
         test('删除成功后同步软删分支图：锚点 = 第一个被删消息 id，保留点 = 前一条消息 id', async () => {
-            const { flowService, conversationManager, branchService } = createHarness();
+            const { flowService, conversationManager, branchService } = createChatFlowHarness({
+                branchService: {
+                    syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
+                        graphUpdated: true,
+                        deletedNodeIds: [],
+                        resetToEmpty: false,
+                        activeTailAdjusted: false,
+                    }),
+                },
+            });
             conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
             conversationManager.deleteToMessage.mockResolvedValue(2);
             conversationManager.getHistoryRef.mockResolvedValue(fourMessageHistory.slice(0, 2));
@@ -550,7 +559,16 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
         });
 
         test('图同步失败仅告警，不阻断硬删除', async () => {
-            const { flowService, conversationManager, branchService } = createHarness();
+            const { flowService, conversationManager, branchService } = createChatFlowHarness({
+                branchService: {
+                    syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
+                        graphUpdated: true,
+                        deletedNodeIds: [],
+                        resetToEmpty: false,
+                        activeTailAdjusted: false,
+                    }),
+                },
+            });
             conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
             conversationManager.deleteToMessage.mockResolvedValue(2);
             conversationManager.getHistoryRef.mockResolvedValue(fourMessageHistory.slice(0, 2));
@@ -561,7 +579,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
         });
 
         test('无全局 BranchService 时不影响原有删除行为', async () => {
-            const { flowService, conversationManager } = createHarness();
+            const { flowService, conversationManager } = createChatFlowHarness();
             setGlobalBranchService(undefined);
             conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
             conversationManager.deleteToMessage.mockResolvedValue(2);
@@ -572,7 +590,16 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
         });
 
         test('删除到对话开头（targetIndex=0）：锚点 = 根消息 id，保留点 = null', async () => {
-            const { flowService, conversationManager, branchService } = createHarness();
+            const { flowService, conversationManager, branchService } = createChatFlowHarness({
+                branchService: {
+                    syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
+                        graphUpdated: true,
+                        deletedNodeIds: [],
+                        resetToEmpty: false,
+                        activeTailAdjusted: false,
+                    }),
+                },
+            });
             conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
             conversationManager.deleteToMessage.mockResolvedValue(4);
             conversationManager.getHistoryRef.mockResolvedValue([]);

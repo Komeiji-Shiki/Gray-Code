@@ -1,12 +1,26 @@
 /**
- * LimCode - 工具系统主导出
+ * GrayCode - 工具系统主导出
  *
  * VSCode 扩展工具管理
  */
 
-import type { Tool, ToolRegistration } from './types';
-import { DependencyManager } from '../modules/dependencies';
+import type { ToolRegistration } from './types';
 import { getReadSkillToolRegistration } from './skills';
+import { getActivityToolRegistrations } from './activity';
+import { getDesignToolRegistrations } from './design';
+import { getFileToolRegistrations } from './file';
+import { getHistoryToolRegistrations } from './history';
+import { getLspToolRegistrations } from './lsp';
+import { getMediaToolRegistrations } from './media';
+import { getMemoryToolRegistrations } from './memory';
+import { getNotificationToolRegistrations } from './notification';
+import { getPlanToolRegistrations } from './plan';
+import { getProgressToolRegistrations } from './progress';
+import { getReviewToolRegistrations } from './review';
+import { getSearchToolRegistrations } from './search';
+import { getSubAgentsToolRegistrations } from './subagents';
+import { getTerminalToolRegistrations } from './terminal';
+import { getTodoToolRegistrations } from './todo';
 
 // 导出设置上下文（从 core 模块重新导出）
 export { setGlobalSettingsManager, getGlobalSettingsManager } from '../core/settingsContext';
@@ -49,7 +63,7 @@ export * from './utils';
 // 补充导出（这些符号未随对应目录 index 导出）
 export { getPlanSourceStatusFromContent } from './plan/sourceArtifactSection';
 export type { PlanSourceStatusResult } from './plan/sourceArtifactSection';
-export type { SubAgentRunConversationStore } from './subagents/runEventBus';
+// 注：SubAgentRunConversationStore 已随 export * from './subagents' 导出，此处不再重复导出
 export { resolveMainChatDiffViewColumn } from './file/diffViewColumn';
 
 // 导出格式化器
@@ -69,8 +83,6 @@ export {
 
 /**
  * 收集所有内置工具的注册函数（真实工厂函数，不含 read_skill 与 subagents 工具）。
- *
- * getAllTools 与 registerAllTools 共用同一收集逻辑，保证两者工具集合一致。
  */
 function collectAllToolRegistrations(): ToolRegistration[] {
     const { getFileToolRegistrations } = require('./file');
@@ -88,6 +100,7 @@ function collectAllToolRegistrations(): ToolRegistration[] {
     const { getMemoryToolRegistrations } = require('./memory');
     const { getActivityToolRegistrations } = require('./activity');
     const { getSandboxToolRegistrations } = require('./sandbox');
+
 
     return [
         ...getFileToolRegistrations(),
@@ -109,29 +122,10 @@ function collectAllToolRegistrations(): ToolRegistration[] {
 }
 
 /**
- * 收集 subagents 工具的注册函数（经 require 访问，与 collectAllToolRegistrations 一致）。
+ * 收集 subagents 工具的注册函数（经静态 import 访问，与 collectAllToolRegistrations 一致）。
  */
 function getSubAgentsRegistrations(): ToolRegistration[] {
-    const { getSubAgentsToolRegistrations } = require('./subagents');
     return getSubAgentsToolRegistrations();
-}
-
-/**
- * 获取所有 VSCode 工具
- *
- * @returns 所有工具的数组
- */
-export function getAllTools(): Tool[] {
-    const tools = collectAllToolRegistrations().map(reg => reg());
-
-    // 始终添加 read_skill 工具（工具描述中会动态反映当前启用的 Skill 列表）
-    tools.push(getReadSkillToolRegistration()());
-
-    // 始终添加 subagents 工具（工具内部会动态判断是否有可用的子代理）
-    const subAgentRegistrations = getSubAgentsRegistrations();
-    tools.push(...subAgentRegistrations.map((reg: () => Tool) => reg()));
-
-    return tools;
 }
 
 /**
@@ -161,18 +155,4 @@ export function registerAllTools(
 
     // 用真正的工厂函数注册 read_skill，使 refreshTool('read_skill') 能重新生成声明
     registry.register(getReadSkillToolRegistration());
-}
-
-/**
- * 刷新工具依赖状态
- *
- * 当依赖安装状态变化后调用此函数刷新
- */
-export async function refreshToolDependencies(): Promise<void> {
-    try {
-        const depManager = DependencyManager.getInstance();
-        await depManager.refreshInstalledCache();
-    } catch {
-        // 忽略错误
-    }
 }

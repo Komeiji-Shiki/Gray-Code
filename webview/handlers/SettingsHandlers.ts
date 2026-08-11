@@ -2,6 +2,7 @@
  * 设置管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -703,46 +704,47 @@ export const applyRemoteControl: MessageHandler = async (data, requestId, ctx) =
  * 注册设置管理处理器
  */
 export function registerSettingsHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('getSettings', settingsHandlerBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
-  registry.set('getAppInfo', getAppInfo);
-  registry.set('updateSettings', settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
-  registry.set('updateProxySettings', settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
+  registry.set(MESSAGE_NAMES.getSettings, settingsHandlerBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
+  registry.set(MESSAGE_NAMES.getAppInfo, getAppInfo);
+  registry.set(MESSAGE_NAMES.updateSettings, settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
+  registry.set(MESSAGE_NAMES.updateProxySettings, settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
   registry.set('updateRemoteControlSettings', settingsHandlerBoundary('UPDATE_REMOTE_CONTROL_SETTINGS_ERROR', 'Failed to update remote control settings', updateRemoteControlSettings));
   registry.set('remoteControl.getStatus', getRemoteControlStatus);
   registry.set('remoteControl.apply', applyRemoteControl);
-  registry.set('updateUISettings', updateUISettings);
-  registry.set('settings.getActiveChannelId', getActiveChannelId);
-  registry.set('settings.setActiveChannelId', setActiveChannelId);
-  registry.set('getSummarizeConfig', getSummarizeConfig);
-  registry.set('getDefaultSummarizeConfig', getDefaultSummarizeConfig);
-  registry.set('updateSummarizeConfig', updateSummarizeConfig);
+  registry.set(MESSAGE_NAMES.updateUISettings, updateUISettings);
+  registry.set(MESSAGE_NAMES['settings.getActiveChannelId'], getActiveChannelId);
+  registry.set(MESSAGE_NAMES['settings.setActiveChannelId'], setActiveChannelId);
+  registry.set(MESSAGE_NAMES.getSummarizeConfig, getSummarizeConfig);
+  registry.set(MESSAGE_NAMES.getDefaultSummarizeConfig, getDefaultSummarizeConfig);
+  registry.set(MESSAGE_NAMES.updateSummarizeConfig, updateSummarizeConfig);
   registry.set('getSandboxConfig', getSandboxConfig);
   registry.set('getDefaultSandboxConfig', getDefaultSandboxConfigHandler);
   registry.set('updateSandboxConfig', updateSandboxConfig);
-  registry.set('getMemoryConfig', getMemoryConfig);
-  registry.set('updateMemoryConfig', updateMemoryConfig);
-  registry.set('getMemoryEntries', getMemoryEntries);
-  registry.set('addMemoryEntry', addMemoryEntry);
-  registry.set('updateMemoryEntry', updateMemoryEntry);
-  registry.set('deleteMemoryEntry', deleteMemoryEntry);
-  registry.set('deleteMemoryEntries', deleteMemoryEntries);
-  registry.set('listMemoryScopes', listMemoryScopes);
-  registry.set('getGenerateImageConfig', getGenerateImageConfig);
-  registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
-  registry.set('getSystemPromptConfig', getSystemPromptConfig);
-  registry.set('updateSystemPromptConfig', updateSystemPromptConfig);
+  registry.set(MESSAGE_NAMES.getMemoryConfig, getMemoryConfig);
+  registry.set(MESSAGE_NAMES.updateMemoryConfig, updateMemoryConfig);
+  registry.set(MESSAGE_NAMES.getMemoryEntries, getMemoryEntries);
+  registry.set(MESSAGE_NAMES.addMemoryEntry, addMemoryEntry);
+  registry.set(MESSAGE_NAMES.updateMemoryEntry, updateMemoryEntry);
+  registry.set(MESSAGE_NAMES.deleteMemoryEntry, deleteMemoryEntry);
+  registry.set(MESSAGE_NAMES.deleteMemoryEntries, deleteMemoryEntries);
+  registry.set(MESSAGE_NAMES.listMemoryScopes, listMemoryScopes);
+  registry.set(MESSAGE_NAMES.getGenerateImageConfig, getGenerateImageConfig);
+  registry.set(MESSAGE_NAMES.updateGenerateImageConfig, updateGenerateImageConfig);
+  registry.set(MESSAGE_NAMES.getSystemPromptConfig, getSystemPromptConfig);
+  registry.set(MESSAGE_NAMES.updateSystemPromptConfig, updateSystemPromptConfig);
   // 模式管理
-  registry.set('getPromptModes', getPromptModes);
-  registry.set('setCurrentPromptMode', setCurrentPromptMode);
-  registry.set('savePromptMode', savePromptMode);
-  registry.set('renamePromptMode', renamePromptMode);
-  registry.set('deletePromptMode', deletePromptMode);
-  registry.set('countSystemPromptTokens', countSystemPromptTokens);
-  registry.set('checkAnnouncement', checkAnnouncement);
-  registry.set('markAnnouncementRead', markAnnouncementRead);
+  registry.set(MESSAGE_NAMES.getPromptModes, getPromptModes);
+  registry.set(MESSAGE_NAMES.setCurrentPromptMode, setCurrentPromptMode);
+  registry.set(MESSAGE_NAMES.savePromptMode, savePromptMode);
+  registry.set(MESSAGE_NAMES.exportPromptModes, exportPromptModes);
+  registry.set(MESSAGE_NAMES.renamePromptMode, renamePromptMode);
+  registry.set(MESSAGE_NAMES.deletePromptMode, deletePromptMode);
+  registry.set(MESSAGE_NAMES.countSystemPromptTokens, countSystemPromptTokens);
+  registry.set(MESSAGE_NAMES.checkAnnouncement, checkAnnouncement);
+  registry.set(MESSAGE_NAMES.markAnnouncementRead, markAnnouncementRead);
   // 设置导出/导入
-  registry.set('settings.export', exportSettings);
-  registry.set('settings.import', importSettings);
+  registry.set(MESSAGE_NAMES['settings.export'], exportSettings);
+  registry.set(MESSAGE_NAMES['settings.import'], importSettings);
 }
 
 /**

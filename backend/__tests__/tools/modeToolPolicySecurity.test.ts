@@ -67,7 +67,7 @@ function createResolverHarness() {
 }
 
 describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', () => {
-    it('受限模式下 search_in_files 声明移除 replace 枚举与 replace 专属参数', () => {
+    test('受限模式下 search_in_files 声明移除 replace 枚举与 replace 专属参数', () => {
         const { resolver } = createResolverHarness();
         const mode = makeMode('ask', READONLY_LIKE_POLICY);
         const declarations = resolver.resolve({
@@ -85,7 +85,7 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
         expect((search.parameters as any).properties.query).toBeDefined();
     });
 
-    it('受限模式下其他工具声明不受影响', () => {
+    test('受限模式下其他工具声明不受影响', () => {
         const { resolver } = createResolverHarness();
         const mode = makeMode('review', [...READONLY_LIKE_POLICY, 'create_review']);
         const declarations = resolver.resolve({
@@ -104,7 +104,7 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
         expect(readFile.parameters).toEqual(baselineReadFile.parameters);
     });
 
-    it('code 模式（无 toolPolicy）与授予写工具的模式：声明保持完整 replace 能力', () => {
+    test('code 模式（无 toolPolicy）与授予写工具的模式：声明保持完整 replace 能力', () => {
         const { resolver } = createResolverHarness();
         const codeDecls = resolver.resolve({
             channelType: 'openai',
@@ -126,7 +126,7 @@ describe('ToolDeclarationResolver 声明收敛（search_in_files 只读化）', 
         expect((writeSearch.parameters as any).properties.replace).toBeDefined();
     });
 
-    it('声明缓存：不同 toolPolicy 的模式互不污染（受限模式 → 完整模式）', () => {
+    test('声明缓存：不同 toolPolicy 的模式互不污染（受限模式 → 完整模式）', () => {
         const { resolver } = createResolverHarness();
         const restricted = resolver.resolve({
             channelType: 'openai',
@@ -182,30 +182,30 @@ async function runCall(service: ToolExecutionService, call: FunctionCallInfo, mo
 }
 
 describe('plan/design/review 模式记忆指令', () => {
-    it('design 模式 toolPolicy 包含全部记忆工具', () => {
+    test('design 模式 toolPolicy 包含全部记忆工具', () => {
         for (const name of MEMORY_TOOL_NAMES) {
             expect(DESIGN_PROMPT_MODE.toolPolicy).toContain(name);
         }
     });
 
-    it('plan 模式 toolPolicy 包含全部记忆工具', () => {
+    test('plan 模式 toolPolicy 包含全部记忆工具', () => {
         for (const name of MEMORY_TOOL_NAMES) {
             expect(PLAN_PROMPT_MODE.toolPolicy).toContain(name);
         }
     });
 
-    it('review 模式 toolPolicy 包含全部记忆工具', () => {
+    test('review 模式 toolPolicy 包含全部记忆工具', () => {
         for (const name of MEMORY_TOOL_NAMES) {
             expect(REVIEW_PROMPT_MODE.toolPolicy).toContain(name);
         }
     });
 
-    it('ask 模式保持只读定位：不包含记忆写工具', () => {
+    test('ask 模式保持只读定位：不包含记忆写工具', () => {
         // ask 是纯问答模式，未被授予记忆指令（用户仅要求 plan/design/review）
         expect(ASK_PROMPT_MODE.toolPolicy).not.toContain('memory_note');
     });
 
-    it('内置模式仍包含 search_in_files 搜索能力（只封 replace、不封搜索）', () => {
+    test('内置模式仍包含 search_in_files 搜索能力（只封 replace、不封搜索）', () => {
         expect(DESIGN_PROMPT_MODE.toolPolicy).toContain('search_in_files');
         expect(PLAN_PROMPT_MODE.toolPolicy).toContain('search_in_files');
         expect(REVIEW_PROMPT_MODE.toolPolicy).toContain('search_in_files');
@@ -214,27 +214,27 @@ describe('plan/design/review 模式记忆指令', () => {
 });
 
 describe('isSearchInFilesReplaceForbidden 判定口径', () => {
-    it('allowlist 含 search_in_files 但无通用写工具：禁止 replace', () => {
+    test('allowlist 含 search_in_files 但无通用写工具：禁止 replace', () => {
         expect(isSearchInFilesReplaceForbidden(['search_in_files', 'read_file'])).toBe(true);
         expect(isSearchInFilesReplaceForbidden(['search_in_files'])).toBe(true);
     });
 
-    it('allowlist 含 search_in_files 且含任一通用写工具：允许 replace（无权限逃逸）', () => {
+    test('allowlist 含 search_in_files 且含任一通用写工具：允许 replace（无权限逃逸）', () => {
         expect(isSearchInFilesReplaceForbidden(['search_in_files', 'write_file'])).toBe(false);
         expect(isSearchInFilesReplaceForbidden(['search_in_files', 'apply_diff'])).toBe(false);
         expect(isSearchInFilesReplaceForbidden(['search_in_files', 'delete_file'])).toBe(false);
     });
 
-    it('allowlist 不含 search_in_files：不限制（由 allowlist 本身拒绝工具）', () => {
+    test('allowlist 不含 search_in_files：不限制（由 allowlist 本身拒绝工具）', () => {
         expect(isSearchInFilesReplaceForbidden(['read_file'])).toBe(false);
         expect(isSearchInFilesReplaceForbidden([])).toBe(false);
     });
 
-    it('无 toolPolicy（code 模式）：不受限制', () => {
+    test('无 toolPolicy（code 模式）：不受限制', () => {
         expect(isSearchInFilesReplaceForbidden(undefined)).toBe(false);
     });
 
-    it('GENERAL_FILE_WRITE_TOOLS 覆盖全部通用写工具', () => {
+    test('GENERAL_FILE_WRITE_TOOLS 覆盖全部通用写工具', () => {
         for (const name of ['write_file', 'apply_diff', 'insert_code', 'delete_code', 'delete_file', 'create_directory']) {
             expect(GENERAL_FILE_WRITE_TOOLS.has(name)).toBe(true);
         }
@@ -248,7 +248,7 @@ describe('ToolExecutionService 运行时门（search_in_files replace 权限漏�
         service = await createService();
     });
 
-    it.each([
+    test.each([
         ['ask', makeMode('ask', READONLY_LIKE_POLICY)],
         ['plan', makeMode('plan', [...READONLY_LIKE_POLICY, 'create_plan', 'update_plan'])],
         ['design', makeMode('design', [...READONLY_LIKE_POLICY, 'create_design', 'update_design'])],
@@ -259,7 +259,7 @@ describe('ToolExecutionService 运行时门（search_in_files replace 权限漏�
         expect((result.error as string) || '').toContain('mode "replace" is not allowed');
     });
 
-    it.each([
+    test.each([
         ['ask', makeMode('ask', READONLY_LIKE_POLICY)],
         ['plan', makeMode('plan', [...READONLY_LIKE_POLICY, 'create_plan', 'update_plan'])],
         ['design', makeMode('design', [...READONLY_LIKE_POLICY, 'create_design', 'update_design'])],
@@ -271,20 +271,20 @@ describe('ToolExecutionService 运行时门（search_in_files replace 权限漏�
         expect((result.error as string) || '').not.toContain('not allowed');
     });
 
-    it('code 模式（无 toolPolicy）：replace 模式不受限', async () => {
+    test('code 模式（无 toolPolicy）：replace 模式不受限', async () => {
         const result = await runCall(service, makeCall('search_in_files', { query: 'a', mode: 'replace', replace: 'b' }), makeMode('code', []));
         expect(result.rejected).toBeFalsy();
         expect((result.error as string) || '').not.toContain('not allowed');
     });
 
-    it('自定义模式显式授予 write_file：replace 模式不误伤', async () => {
+    test('自定义模式显式授予 write_file：replace 模式不误伤', async () => {
         const mode = makeMode('custom', ['search_in_files', 'write_file']);
         const result = await runCall(service, makeCall('search_in_files', { query: 'a', mode: 'replace', replace: 'b' }), mode);
         expect(result.rejected).toBeFalsy();
         expect((result.error as string) || '').not.toContain('not allowed');
     });
 
-    it('未被 allowlist 收录的工具仍被拒绝（既有行为不回归）', async () => {
+    test('未被 allowlist 收录的工具仍被拒绝（既有行为不回归）', async () => {
         const mode = makeMode('ask', ['read_file']);
         const result = await runCall(service, makeCall('execute_command', { command: 'x' }), mode);
         expect(result.rejected).toBe(true);

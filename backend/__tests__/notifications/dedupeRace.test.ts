@@ -70,7 +70,7 @@ function makeService(adapter: WindowsToastAdapter, dedupeTtlMs = 5000): WindowsA
 }
 
 describe('WindowsAgentStopNotificationService dedupe race', () => {
-  it('并发相同 dedupeKey 的 notify 只弹一次 toast', async () => {
+  test('并发相同 dedupeKey 的 notify 只弹一次 toast', async () => {
     const adapter = new ControlledToastAdapter()
     const service = makeService(adapter)
 
@@ -96,7 +96,7 @@ describe('WindowsAgentStopNotificationService dedupe race', () => {
     service.dispose()
   })
 
-  it('弹窗完成后的相同 dedupeKey 仍被去重拦截', async () => {
+  test('弹窗完成后的相同 dedupeKey 仍被去重拦截', async () => {
     const adapter = new ControlledToastAdapter()
     const service = makeService(adapter)
 
@@ -113,7 +113,7 @@ describe('WindowsAgentStopNotificationService dedupe race', () => {
     service.dispose()
   })
 
-  it('TTL 过期后去重键被清理，可再次弹窗', async () => {
+  test('TTL 过期后去重键被清理，可再次弹窗', async () => {
     const adapter = new ControlledToastAdapter()
     // TTL 1ms：下一次 notify 时过期清理生效
     const service = makeService(adapter, 1)

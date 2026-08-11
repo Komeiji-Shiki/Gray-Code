@@ -11,20 +11,7 @@ import { createDefaultExecutor } from '../../tools/subagents/executor';
 import { subAgentRunController } from '../../tools/subagents/runController';
 import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
 import type { SubAgentConfig, SubAgentExecutorContext, SubAgentRequest, SubAgentResult } from '../../tools/subagents/types';
-
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5,
-        maxRuntime: 300,
-        ...overrides
-    };
-}
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -174,13 +161,13 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         jest.useRealTimers();
     });
 
-    it('M4：maxConcurrentAgents=1 + parentRunId → 立即拒绝而非排队死锁', async () => {
+    test('M4：maxConcurrentAgents=1 + parentRunId → 立即拒绝而非排队死锁', async () => {
         const context = createContext({
             settingsManager: {
                 getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 1, generalWorkerEnabled: false })
             } as any
         });
-        const executor = createDefaultExecutor(createConfig(), context);
+        const executor = createDefaultExecutor(createSubAgentConfig(), context);
         // runLoop 排队失败路径返回 finalized（success:false）而非 reject
         const result = await executor({
             agentType: 'tester',
@@ -194,13 +181,13 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         expect(subAgentRunController.isActive('m4_nested')).toBe(false);
     });
 
-    it('对照组：maxConcurrentAgents=1 无 parentRunId 仍可正常执行', async () => {
+    test('对照组：maxConcurrentAgents=1 无 parentRunId 仍可正常执行', async () => {
         const context = createContext({
             settingsManager: {
                 getSubAgentsConfig: () => ({ agents: [], maxConcurrentAgents: 1, generalWorkerEnabled: false })
             } as any
         });
-        const executor = createDefaultExecutor(createConfig(), context);
+        const executor = createDefaultExecutor(createSubAgentConfig(), context);
         const result = await executor({
             agentType: 'tester',
             prompt: 'top level',
@@ -212,7 +199,7 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         expect(result.success).toBe(true);
     });
 
-    it('M10：并行工具 in-flight 时 detach + 父 abort → 所有在飞工具不被取消，run 完成', async () => {
+    test('M10：并行工具 in-flight 时 detach + 父 abort → 所有在飞工具不被取消，run 完成', async () => {
         const { context, generateMock, release } = createGatedChannel();
         // 两个并行 call 各自的 resolve 收集到数组：共享单变量会被后赋值覆盖，只放行一个
         const releaseTools: Array<() => void> = [];
@@ -224,7 +211,7 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
             }));
         }));
         mockToolService(context, executeToolMock);
-        const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 30 }), context);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 30 }), context);
         const parentAbort = new AbortController();
         const runPromise = executor({
             agentType: 'tester',
@@ -258,7 +245,7 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         expect(executeToolMock).toHaveBeenCalledTimes(2);
     });
 
-    it('M5：并行工具挂死（无 abort 可响应）→ 收尾窗口超时兜底终止 run（非永久挂起）', async () => {
+    test('M5：并行工具挂死（无 abort 可响应）→ 收尾窗口超时兜底终止 run（非永久挂起）', async () => {
         jest.useFakeTimers();
         const { context, generateMock, release } = createGatedChannel();
         // 工具永不 settle 且无 abort 触发（组合信号未 abort 时收尾窗口才是唯一兜底；
@@ -266,7 +253,7 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         const executeToolMock = jest.fn(() => new Promise(() => undefined));
         mockToolService(context, executeToolMock);
         // maxRuntime 设 60s > 收尾窗口 30s，确保先由收尾窗口触发
-        const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 60 }), context);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 60 }), context);
         const runPromise = executor({
             agentType: 'tester',
             prompt: 'hanging parallel tools',

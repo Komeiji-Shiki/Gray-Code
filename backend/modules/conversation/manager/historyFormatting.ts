@@ -63,6 +63,27 @@ export function formatHistoryForAPI(
     // 历史思考回合数，默认 -1 表示全部
     const historyThinkingRounds = opts.historyThinkingRounds ?? -1;
     
+    // redactedThinking 是 Anthropic 渠道专有字段（openai-responses 规范同样支持
+    // redacted_thinking 回传）；其他渠道（gemini/openai/custom/未知）不识别该字段，
+    // 原样透传会作为未知字段进入请求体（Anthropic 历史切到 Gemini 续聊可能 400）。
+    // 按渠道白名单剥除：仅 anthropic / openai-responses 保留，其余一律剔除；
+    // 剥空后的 part 由下方空 part 过滤兜底（keys.length === 0 → 丢弃）。
+    const keepRedactedThinking = channelType === 'anthropic' || channelType === 'openai-responses';
+
+    /**
+     * 剔除 part 中的 redactedThinking 字段（非 anthropic/openai-responses 渠道）。
+     *
+     * redactedThinking 是 Anthropic 加密思考（redacted_thinking）的 Base64 存储形态，
+     * 仅 Anthropic / openai-responses API 要求回传；Gemini / OpenAI 等渠道不认识该字段。
+     */
+    const cleanRedactedThinking = (part: ContentPart): ContentPart => {
+        if (keepRedactedThinking || !part.redactedThinking) {
+            return part;
+        }
+        const { redactedThinking, ...rest } = part;
+        return rest;
+    };
+    
     // 找到最后一个真实 user 消息的索引（H1-1：与回合识别同谓词；总结与内部回流
     // 不构成真实用户边界）。该索引仅控制历史思考内容，不改写 agentInbox。
     let lastNonFunctionResponseUserIndex = -1;
@@ -422,6 +443,7 @@ export function formatHistoryForAPI(
         // 当前轮次的工具响应始终保留多模态数据
         parts = parts
             .map(part => processThoughtSignatures(part, isHistoryMessage, index))
+            .map(part => cleanRedactedThinking(part))
             .map(part => cleanInlineData(part, isFunctionResponse, isHistoryMessage))
             .map(part => part ? cleanFunctionCall(part) : part)
             .map(part => part ? processFunctionResponse(part, isHistoryMessage) : part)

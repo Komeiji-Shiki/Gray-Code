@@ -32,8 +32,10 @@ function isSafeMergeKey(key: string): boolean {
  * 其它子字段全部丢失），这里对纯对象逐层合并。
  *
  * 与 core/deepMerge.ts 的 deepMerge 语义差异（保留本地实现、不强制合一的原因）：
- * - 覆盖值为 null/undefined 时本实现显式写入该值；core.deepMerge 保留目标值
- *   （updateSettings 接收 webview 消息，null 清空字段语义依赖前者）；
+ * - 覆盖值为 undefined 时保留目标旧值（对齐 deepMergeConfig 语义：显式 undefined 不应把
+ *   顶层键整体置空，如 toolsConfig: undefined 会删掉全部工具配置）；
+ * - 覆盖值为 null 时本实现显式写入 null（updateSettings 接收 webview 消息，null 清空字段
+ *   语义依赖前者；core.deepMerge 保留目标值）；
  * - 类型冲突（目标非纯对象、源为纯对象）时本实现直接复用源引用；
  *   core.deepMerge 生成源对象副本（getToolsConfigEntry 已用 cloneConfig 兜底拷贝）。
  */
@@ -41,6 +43,11 @@ export function deepMergeToolsConfig<T extends object>(base: T, override: Partia
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
     for (const [key, value] of Object.entries(override)) {
         if (!isSafeMergeKey(key)) {
+            continue;
+        }
+        if (value === undefined) {
+            // 显式 undefined 保留旧值（对齐 deepMergeConfig 语义），
+            // 避免 toolsConfig: undefined 等顶层键整体置空删除全部配置
             continue;
         }
         const baseValue = (base as Record<string, unknown>)[key];

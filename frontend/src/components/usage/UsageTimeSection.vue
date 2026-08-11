@@ -10,6 +10,7 @@
  * - 作息热力网格（最近 7 天 × 24 小时，悬停查看该小时活跃分钟数）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useSettingsStore } from '@/stores'
@@ -82,7 +83,7 @@ async function loadStats(force = false) {
       includeMonthly: true
     }
     if (force) query.force = true
-    const result = await sendToExtension<ActivityStatsResult>('activity.getStats', query)
+    const result = await sendToExtension<ActivityStatsResult>(MESSAGE_NAMES['activity.getStats'], query)
     if (requestId === loadRequestId) stats.value = result
   } catch (error) {
     if (requestId === loadRequestId) {

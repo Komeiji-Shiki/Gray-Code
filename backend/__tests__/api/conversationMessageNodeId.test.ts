@@ -29,7 +29,7 @@ function makeMessage(role: 'user' | 'model', text: string, index: number, withId
     };
 }
 
-describe('BCP-01: ConversationManager.getMessageNodeIdAt', () => {
+describe('ConversationManager.getMessageNodeIdAt 反查辅助', () => {
     test('历史已带 id：按索引返回稳定节点 ID', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
@@ -122,5 +122,66 @@ describe('BCP-01: ConversationManager.getMessageNodeIdAt', () => {
 
         await manager.deleteConversation('conv-node-del');
         await expect(manager.getMessageNodeIdAt('conv-node-del', 0)).resolves.toBeUndefined();
+    });
+
+    test('BCP-01 写路径失效：addContent 追加后反查命中新消息 id（append-only 失效 nodeIdCache）', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await manager.createConversation('conv-node-append', 'Append');
+
+        await storage.saveHistory('conv-node-append', [makeMessage('user', 'hi', 0, true)]);
+        // 首次反查填充 nodeIdCache（300ms TTL 窗口内）
+        await expect(manager.getMessageNodeIdAt('conv-node-append', 0)).resolves.toBe('id-0');
+
+        // 追加新消息：缓存若未失效会命中旧数组（新索引返回 undefined）
+        await manager.addContent('conv-node-append', { role: 'user', parts: [{ text: 'more' }] });
+
+        const appended = (await manager.getMessagesRaw('conv-node-append'))[1];
+        expect(appended.id).toBeDefined();
+        // 追加委托 ensureNodeId 生成的稳定 id 可被反查，且幂等
+        await expect(manager.getMessageNodeIdAt('conv-node-append', 1)).resolves.toBe(appended.id);
+        await expect(manager.getMessageNodeIdAt('conv-node-append', 1)).resolves.toBe(appended.id);
+        // 旧消息 id 不变
+        await expect(manager.getMessageNodeIdAt('conv-node-append', 0)).resolves.toBe('id-0');
+    });
+
+    test('BCP-01 写路径失效：updateMessagesBatch 改写消息后反查返回新内容（不命中陈旧缓存）', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await manager.createConversation('conv-node-batch', 'Batch');
+
+        await storage.saveHistory('conv-node-batch', [makeMessage('user', 'hi', 0, true)]);
+        manager.clearCaches();
+        await expect(manager.getMessageNodeIdAt('conv-node-batch', 0)).resolves.toBe('id-0');
+
+        // 批量更新路径整体改写消息（模拟编辑重写；陈旧缓存会命中旧数组返回 id-0）
+        await manager.updateMessagesBatch('conv-node-batch', [
+            { messageIndex: 0, updates: { id: 'id-rewritten', parts: [{ text: 'rewritten' }] } }
+        ]);
+
+        await expect(manager.getMessageNodeIdAt('conv-node-batch', 0)).resolves.toBe('id-rewritten');
+        const current = await manager.getMessagesRaw('conv-node-batch');
+        expect(current[0].id).toBe('id-rewritten');
+    });
+
+    test('BCP-01 写路径失效：deleteMessage 后反查跟随新历史（索引位移，不命中陈旧缓存）', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        await manager.createConversation('conv-node-delmsg', 'DelMsg');
+
+        await storage.saveHistory('conv-node-delmsg', [
+            makeMessage('user', 'hi', 0, true),
+            makeMessage('model', 'hello', 1, true)
+        ]);
+        manager.clearCaches();
+        await expect(manager.getMessageNodeIdAt('conv-node-delmsg', 1)).resolves.toBe('id-1');
+
+        // 删除 index 0：剩余 [model] → 反查 index 0 应返回 id-1（陈旧缓存会命中旧数组返回 id-0）
+        await manager.deleteMessage('conv-node-delmsg', 0);
+
+        await expect(manager.getMessageNodeIdAt('conv-node-delmsg', 0)).resolves.toBe('id-1');
+        await expect(manager.getMessageNodeIdAt('conv-node-delmsg', 1)).resolves.toBeUndefined();
+        const current = await manager.getMessagesRaw('conv-node-delmsg');
+        expect(current).toHaveLength(1);
     });
 });

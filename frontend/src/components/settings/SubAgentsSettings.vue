@@ -9,6 +9,7 @@
  * 4. 配置子代理可用的工具列表
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, onMounted } from 'vue'
 import { CustomSelect, CustomCheckbox, ConfirmDialog, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -308,7 +309,7 @@ function isMcpTool(tool: ToolInfo): boolean {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number }>('subagents.list', {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number }>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -342,7 +343,7 @@ function errorText(error: unknown): string {
 // 更新全局配置
 async function updateGlobalConfig(key: string, value: unknown) {
   try {
-    await sendToExtension('subagents.updateGlobalConfig', { [key]: value })
+    await sendToExtension(MESSAGE_NAMES['subagents.updateGlobalConfig'], { [key]: value })
     saveError.value = ''
   } catch (error) {
     console.error('Failed to update global config:', error)
@@ -354,11 +355,11 @@ async function updateGlobalConfig(key: string, value: unknown) {
 async function loadChannels() {
   isLoadingChannels.value = true
   try {
-    const ids = await sendToExtension<string[]>('config.listConfigs', {})
+    const ids = await sendToExtension<string[]>(MESSAGE_NAMES['config.listConfigs'], {})
     const loadedChannels: ChannelConfig[] = []
     
     for (const id of ids || []) {
-      const config = await sendToExtension<ChannelConfig>('config.getConfig', { configId: id })
+      const config = await sendToExtension<ChannelConfig>(MESSAGE_NAMES['config.getConfig'], { configId: id })
       if (config) {
         loadedChannels.push(config)
       }
@@ -377,14 +378,14 @@ async function loadTools() {
   isLoadingTools.value = true
   try {
     // 加载内置工具
-    const builtinResponse = await sendToExtension<{ tools: any[] }>('tools.getTools', {})
+    const builtinResponse = await sendToExtension<{ tools: any[] }>(MESSAGE_NAMES['tools.getTools'], {})
     const builtinTools: ToolInfo[] = (builtinResponse?.tools || []).map(t => ({
       ...t,
       source: 'builtin' as const
     }))
     
     // 加载 MCP 工具
-    const mcpResponse = await sendToExtension<{ tools: any[] }>('tools.getMcpTools', {})
+    const mcpResponse = await sendToExtension<{ tools: any[] }>(MESSAGE_NAMES['tools.getMcpTools'], {})
     const mcpTools: ToolInfo[] = (mcpResponse?.tools || []).map(t => ({
       name: t.name,
       description: t.description || '',
@@ -422,7 +423,7 @@ async function updateAgentField(field: string, value: any): Promise<{ ok: boolea
   const agentType = currentAgentType.value
 
   try {
-    await sendToExtension('subagents.update', {
+    await sendToExtension(MESSAGE_NAMES['subagents.update'], {
       type: agentType,
       updates: { [field]: value }
     })
@@ -483,7 +484,7 @@ function openCreateDialog() {
 // 加载预设模板列表
 async function loadPresets() {
   try {
-    const response = await sendToExtension<{ presets: SubAgentPreset[] }>('subagents.getPresets', {})
+    const response = await sendToExtension<{ presets: SubAgentPreset[] }>(MESSAGE_NAMES['subagents.getPresets'], {})
     presets.value = response?.presets || []
   } catch (error) {
     console.error('Failed to load subagent presets:', error)
@@ -574,7 +575,7 @@ async function createAgent() {
       maxRuntime: preset?.maxRuntime,
       enabled: true
     }))
-    await sendToExtension('subagents.create', payload)
+    await sendToExtension(MESSAGE_NAMES['subagents.create'], payload)
     
     // 重新加载并选中新创建的
     await loadSubAgents()
@@ -648,7 +649,7 @@ async function deleteAgent() {
   if (!deleteAgentType.value) return
   
   try {
-    await sendToExtension('subagents.delete', { type: deleteAgentType.value })
+    await sendToExtension(MESSAGE_NAMES['subagents.delete'], { type: deleteAgentType.value })
 
     // 从列表中移除
     subAgents.value = subAgents.value.filter(a => a.type !== deleteAgentType.value)

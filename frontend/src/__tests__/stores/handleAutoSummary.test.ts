@@ -7,7 +7,7 @@
  * 前端同步：标记窗口内对应消息（原文保留不删除）、插入总结消息（后续 backendIndex +1）、totalMessages +1。
  */
 import { ref } from 'vue'
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
 import { handleAutoSummary } from '../../stores/chat/streamChunkHandlers'
@@ -85,7 +85,7 @@ const summaryChunk = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('handleAutoSummary - 逻辑截断同步', () => {
-  it('标记被总结区间 + 插入总结 + 后续消息索引后移', () => {
+  test('标记被总结区间 + 插入总结 + 后续消息索引后移', () => {
     const state = createState({
       allMessages: ref([
         msg('m0', 0), // 首条用户消息（不标记）
@@ -119,7 +119,7 @@ describe('handleAutoSummary - 逻辑截断同步', () => {
     expect(state.totalMessages.value).toBe(5)
   })
 
-  it('removedCount 为 0（首条保护导致空标记区间）时仅插入总结', () => {
+  test('removedCount 为 0（首条保护导致空标记区间）时仅插入总结', () => {
     const state = createState({
       allMessages: ref([msg('m0', 0), msg('m1', 1)]),
       totalMessages: ref(2)
@@ -138,7 +138,7 @@ describe('handleAutoSummary - 逻辑截断同步', () => {
     expect(state.totalMessages.value).toBe(3)
   })
 
-  it('已存在同 id 总结消息时去重，不重复处理', () => {
+  test('已存在同 id 总结消息时去重，不重复处理', () => {
     const state = createState({
       allMessages: ref([msg('m0', 0), msg('summary-1', 3, { isSummary: true }), msg('m3', 4)]),
       totalMessages: ref(3)
@@ -152,7 +152,7 @@ describe('handleAutoSummary - 逻辑截断同步', () => {
     expect(state.totalMessages.value).toBe(3)
   })
 
-  it('插入位置在当前窗口之前时仅维护索引偏移', () => {
+  test('插入位置在当前窗口之前时仅维护索引偏移', () => {
     const state = createState({
       allMessages: ref([msg('m5', 5), msg('m6', 6)]),
       windowStartIndex: ref(5),

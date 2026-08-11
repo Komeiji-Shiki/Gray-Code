@@ -1,5 +1,5 @@
 /**
- * LimCode - OpenAI Responses 格式转换器
+ * GrayCode - OpenAI Responses 格式转换器
  *
  * 将统一格式转换为 OpenAI Responses API 格式
  * 详情参考: https://api.openai.com/v1/responses
@@ -734,3 +734,4 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         return 'openai-responses';
     }
 }
+

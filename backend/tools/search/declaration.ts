@@ -17,7 +17,7 @@ import {
     resolveFileToolPathWithInfo
 } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { validateRegexPattern } from './regexGuard';
+import { validateRegexPattern } from '../../core/services/regexGuard';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 import {
     searchInDirectory,

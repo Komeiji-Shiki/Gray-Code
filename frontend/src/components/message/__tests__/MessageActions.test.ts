@@ -4,7 +4,7 @@
  * 覆盖：用户/AI 消息下操作按钮的组合与 tooltip 一致性
  * （四个按钮：编辑、复制、分支、删除 / 复制、查看回复、重试、删除）
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MessageActions from '../MessageActions.vue'
 import type { Message } from '../../../types'
@@ -43,7 +43,7 @@ function mountActions(props: Record<string, unknown>) {
 }
 
 describe('MessageActions 按钮排列', () => {
-  it('用户消息：编辑 / 复制 / 分支 / 删除 四个按钮，tooltip 齐全', () => {
+  test('用户消息：编辑 / 复制 / 分支 / 删除 四个按钮，tooltip 齐全', () => {
     const wrapper = mountActions({ canEdit: true, canBranch: true })
     const buttons = wrapper.findAll('.icon-button')
     expect(buttons).toHaveLength(4)
@@ -58,7 +58,7 @@ describe('MessageActions 按钮排列', () => {
     expect(titles[3]).toBe('删除消息')
   })
 
-  it('AI 消息：复制 / 查看回复 / 重试 / 删除，重试按钮有提示', () => {
+  test('AI 消息：复制 / 查看回复 / 重试 / 删除，重试按钮有提示', () => {
     const wrapper = mountActions({
       message: createMessage('assistant'),
       canRetry: true,
@@ -77,12 +77,12 @@ describe('MessageActions 按钮排列', () => {
     expect(buttons[2].attributes('title')).toBe('重新生成')
   })
 
-  it('无分支权限时用户消息为 3 个按钮（编辑 / 复制 / 删除）', () => {
+  test('无分支权限时用户消息为 3 个按钮（编辑 / 复制 / 删除）', () => {
     const wrapper = mountActions({ canEdit: true, canBranch: false })
     expect(wrapper.findAll('.icon-button')).toHaveLength(3)
   })
 
-  it('复制后按钮切换为勾选图标并恢复', async () => {
+  test('复制后按钮切换为勾选图标并恢复', async () => {
     vi.useFakeTimers()
     try {
       const wrapper = mountActions({ canEdit: true, canBranch: true })

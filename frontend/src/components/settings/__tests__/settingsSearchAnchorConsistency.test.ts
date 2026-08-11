@@ -9,7 +9,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 
 const SETTINGS_DIR = path.resolve(process.cwd(), 'src/components/settings')
 
@@ -35,10 +35,10 @@ function readSettingsComponentSources(): { fileName: string; source: string }[] 
   }))
 }
 
-describe('L-3: 设置搜索 SEARCH_INDEX 锚点一致性', () => {
+describe('设置搜索 SEARCH_INDEX 锚点一致性', () => {
   const sources = readSettingsComponentSources()
 
-  it('SEARCH_INDEX 中每个带 anchor 的条目，目标锚点都存在（跨组件反重构漂移）', () => {
+  test('SEARCH_INDEX 中每个带 anchor 的条目，目标锚点都存在（跨组件反重构漂移）', () => {
     const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
     // 从 SettingsPanel.vue 提取 SEARCH_INDEX 条目中所有 anchor 选择器
     // 形如：anchor: '[data-search-anchor="api-url"]'

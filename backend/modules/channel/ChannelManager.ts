@@ -1,5 +1,5 @@
 /**
- * LimCode - 渠道管理器
+ * GrayCode - 渠道管理器
  *
  * 核心渠道调用管理器，协调配置和格式转换器
  */
@@ -615,9 +615,31 @@ export class ChannelManager {
             let yieldedContent = false;
             
             try {
-                const stream = await this.executeStreamRequest(httpRequest, request.abortSignal, idleTimeoutHandle);
+                // executeStreamRequest 是惰性 async generator：函数体（含发起 HTTP 请求）在
+                // 首次 next() 时才真正执行。此前 retrySuccess 在请求建立前就回调——若该次重试
+                // 在建立阶段即失败（网络错误等），前端会误收「重试成功」。先消费首个 chunk 确认
+                // 请求实际建立（失败时错误在此抛出，走下方重试逻辑且不误报），再回调；首个
+                // chunk 通过包装生成器回填，消费语义与直接 for-await 完全一致。
+                const stream = this.executeStreamRequest(httpRequest, request.abortSignal, idleTimeoutHandle);
+                const firstResult = await stream.next();
+                const replayStream: AsyncGenerator<any> = firstResult.done
+                    // 请求已建立但未产出任何块（空流）：仍按「已建立」处理并回调，空响应由下方
+                    // 完整性检测抛 EMPTY_RESPONSE_ERROR 走重试。
+                    ? (async function* () { /* 空流：不产出任何块 */ })()
+                    : (async function* () { yield firstResult.value; yield* stream; })();
+
+                // 如果是重试成功，通知前端（请求已实际建立）
+                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
+                    this.retryStatusCallback({
+                        type: 'retrySuccess',
+                        attempt: attempt - 1,
+                        maxAttempts: maxRetries,
+                        createdAt: Date.now(),
+                        conversationId: request.conversationId
+                    });
+                }
                 
-                // 启动缓存保活调度（缓存 TTL 5 分钟，保活节奏为每 4 分 30 秒一次）
+                // 启动缓存保活循环定时器（每 4 分 30 秒 = 270000ms 发一次保活请求）
                 const requestStartTime = Date.now();
                 let keepAliveFiredCount = 0;
                 let hasToolUse = false;
@@ -669,7 +691,7 @@ export class ChannelManager {
 
                 // 逐块解析和产出
                 let sawDone = false;
-                for await (const rawChunk of stream) {
+                for await (const rawChunk of replayStream) {
                     try {
                         const chunk = formatter.parseStreamChunk(rawChunk);
                         // 检测是否有工具调用（用于决定流结束时是否需要退出保活）

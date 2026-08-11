@@ -42,7 +42,7 @@ describe('StoragePathManager', () => {
         jest.restoreAllMocks();
     });
 
-    it('migrates safely into a subdirectory of the current storage path', async () => {
+    test('migrates safely into a subdirectory of the current storage path', async () => {
         await fs.mkdir(path.join(defaultPath, 'conversations'), { recursive: true });
         await fs.mkdir(path.join(defaultPath, 'mcp'), { recursive: true });
         await fs.writeFile(path.join(defaultPath, 'conversations', 'chat.json'), 'chat');
@@ -67,7 +67,7 @@ describe('StoragePathManager', () => {
         });
     });
 
-    it('restores a nested custom path back to the default path', async () => {
+    test('restores a nested custom path back to the default path', async () => {
         await fs.mkdir(path.join(defaultPath, 'conversations'), { recursive: true });
         await fs.mkdir(path.join(defaultPath, 'mcp'), { recursive: true });
         await fs.writeFile(path.join(defaultPath, 'conversations', 'chat.json'), 'chat');
@@ -92,7 +92,7 @@ describe('StoragePathManager', () => {
         });
     });
 
-    it('does not overwrite an existing validation marker file', async () => {
+    test('does not overwrite an existing validation marker file', async () => {
         const marker = path.join(defaultPath, '.limcode-test');
         await fs.writeFile(marker, 'keep me');
 
@@ -108,7 +108,7 @@ describe('StoragePathManager', () => {
         await expect(fs.readFile(marker, 'utf8')).resolves.toBe('keep me');
     });
 
-    it('does not create a missing path while validating it', async () => {
+    test('does not create a missing path while validating it', async () => {
         const targetPath = path.join(tempRoot, 'missing', 'nested');
         const settingsManager = createSettingsManager();
         const manager = new StoragePathManager(
@@ -122,7 +122,7 @@ describe('StoragePathManager', () => {
         await expect(fs.access(path.join(tempRoot, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('keeps the source and configuration when copying fails', async () => {
+    test('keeps the source and configuration when copying fails', async () => {
         await fs.mkdir(path.join(defaultPath, 'conversations'), { recursive: true });
         const sourceFile = path.join(defaultPath, 'conversations', 'chat.json');
         await fs.writeFile(sourceFile, 'chat');
@@ -143,7 +143,7 @@ describe('StoragePathManager', () => {
         expect(settingsManager.getStoragePathConfig().migrationError).toBe('copy failed');
     });
 
-    it('keeps an active custom path when a later migration fails', async () => {
+    test('keeps an active custom path when a later migration fails', async () => {
         const customPath = path.join(tempRoot, 'custom');
         await fs.mkdir(path.join(customPath, 'conversations'), { recursive: true });
         const sourceFile = path.join(customPath, 'conversations', 'chat.json');

@@ -3,7 +3,7 @@ import {
     IncrementalPromptToolParser,
     MALFORMED_TOOL_CALL_NAME,
     TOOL_CALL_PARSE_ERROR_ARG_KEY
-} from '../../tools/promptToolParser';
+} from '../../core/parsers/promptToolParser';
 import { TOOL_CALL_END, TOOL_CALL_START } from '../../tools/jsonFormatter';
 import { XMLValidator } from 'fast-xml-parser';
 
@@ -12,7 +12,7 @@ function jsonBlock(inner: string): string {
 }
 
 describe('extractPromptToolParts - JSON 模式', () => {
-    it('解析合法的 JSON 工具调用', () => {
+    test('解析合法的 JSON 工具调用', () => {
         const text = jsonBlock('{"tool": "read_file", "parameters": {"path": "a.txt"}}');
 
         const { parts } = extractPromptToolParts(text, 'json');
@@ -24,7 +24,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
         });
     });
 
-    it('宽松解析：容忍尾逗号', () => {
+    test('宽松解析：容忍尾逗号', () => {
         const text = jsonBlock('{"tool": "read_file", "parameters": {"path": "a.txt",},}');
 
         const { parts } = extractPromptToolParts(text, 'json');
@@ -33,7 +33,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
         expect(parts[0].functionCall?.name).toBe('read_file');
     });
 
-    it('宽松解析：容忍字符串值内的裸换行', () => {
+    test('宽松解析：容忍字符串值内的裸换行', () => {
         const text = jsonBlock(
             '{"tool": "write_file", "parameters": {"path": "a.txt", "content": "line1\nline2"}}'
         );
@@ -45,7 +45,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
         expect(parts[0].functionCall?.args.content).toBe('line1\nline2');
     });
 
-    it('解析失败的非空块生成携带解析错误的合成 functionCall', () => {
+    test('解析失败的非空块生成携带解析错误的合成 functionCall', () => {
         // 单引号 JSON：宽松解析也修不了
         const text = jsonBlock("{'tool': 'read_file', 'parameters': {}}");
 
@@ -56,7 +56,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toContain('could not be parsed');
     });
 
-    it('解析失败时尽力提取意图工具名', () => {
+    test('解析失败时尽力提取意图工具名', () => {
         // JSON 语法错误（缺右括号）但 tool 字段可辨认
         const text = jsonBlock('{"tool": "delete_file", "parameters": {"path": "a.txt"');
 
@@ -67,7 +67,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toBeDefined();
     });
 
-    it('提取不到工具名时使用占位名称', () => {
+    test('提取不到工具名时使用占位名称', () => {
         const text = jsonBlock('this is not json at all');
 
         const { parts } = extractPromptToolParts(text, 'json');
@@ -86,7 +86,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
         expect(parts[0].functionCall).toBeUndefined();
     });
 
-    it('JSON 有效但缺 tool 字段时给出针对性错误', () => {
+    test('JSON 有效但缺 tool 字段时给出针对性错误', () => {
         const text = jsonBlock('{"parameters": {"path": "a.txt"}}');
 
         const { parts } = extractPromptToolParts(text, 'json');
@@ -97,7 +97,7 @@ describe('extractPromptToolParts - JSON 模式', () => {
 });
 
 describe('extractPromptToolParts - XML 模式', () => {
-    it('解析包含 CDATA 代码内容的工具调用', () => {
+    test('解析包含 CDATA 代码内容的工具调用', () => {
         const text = `<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -113,7 +113,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args.content).toBe('<html>if (a < b && c > d) {}</html>');
     });
 
-    it('数字字符串参数不被 XML 解析器自动转换破坏', () => {
+    test('数字字符串参数不被 XML 解析器自动转换破坏', () => {
         const text = `<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -129,7 +129,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args.content).toBe('1.10');
     });
 
-    it('缺少 tool_name 的块生成解析失败反馈', () => {
+    test('缺少 tool_name 的块生成解析失败反馈', () => {
         const text = `<tool_use>
   <parameters>
     <path>a.txt</path>
@@ -143,7 +143,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toBeDefined();
     });
 
-    it('对象数组参数（read_file.files）通过 item 元素解析', () => {
+    test('对象数组参数（read_file.files）通过 item 元素解析', () => {
         const text = `<tool_use>
   <tool_name>read_file</tool_name>
   <parameters>
@@ -166,7 +166,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         ]);
     });
 
-    it('解析器拒绝的块仍生成可读失败反馈（意图工具名保留）', () => {
+    test('解析器拒绝的块仍生成可读失败反馈（意图工具名保留）', () => {
         // __proto__ 危险键名会让 fast-xml-parser 5.x 直接拒绝整个块（[SECURITY] 错误），
         // 链路必须把解析失败转成携带意图工具名的失败反馈，而不是静默丢弃
         const text = `<tool_use>
@@ -185,7 +185,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toContain('could not be parsed');
     });
 
-    it('DOCTYPE 自定义实体不被展开（processEntities: false 链路保护）', () => {
+    test('DOCTYPE 自定义实体不被展开（processEntities: false 链路保护）', () => {
         const text = `<!DOCTYPE tool_use [
   <!ENTITY secret "expanded-value">
 ]>
@@ -206,7 +206,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(fnPart?.functionCall?.args.content).toBe('&secret;');
     });
 
-    it('超深嵌套输入被拒绝并转为可读失败反馈，不抛异常不执行', () => {
+    test('超深嵌套输入被拒绝并转为可读失败反馈，不抛异常不执行', () => {
         const depth = 150;
         const nested = '<a>'.repeat(depth) + '</a>'.repeat(depth);
         const text = `<tool_use>
@@ -224,7 +224,7 @@ describe('extractPromptToolParts - XML 模式', () => {
         expect(parts[0].functionCall?.args[TOOL_CALL_PARSE_ERROR_ARG_KEY]).toBeDefined();
     });
 
-    it('XMLValidator.validate 错误对象仍包含 err.msg 和 err.line（5.10.1 API 回归）', () => {
+    test('XMLValidator.validate 错误对象仍包含 err.msg 和 err.line（5.10.1 API 回归）', () => {
         // 失败诊断路径依赖 validator 的报错形状；XMLParser 5.x 对语法错误很宽容，
         // 所以直接针对 validator API 锁定 err.msg / err.line 结构
         const result = XMLValidator.validate('<tool_use><parameters><path>a.txt</parameters></tool_use>');
@@ -238,7 +238,7 @@ describe('extractPromptToolParts - XML 模式', () => {
 });
 
 describe('IncrementalPromptToolParser - 增量解析与 CDATA 边界', () => {
-    it('XML 模式：CDATA 内的 </tool_use> 不结束块（整体输入）', () => {
+    test('XML 模式：CDATA 内的 </tool_use> 不结束块（整体输入）', () => {
         const text = `<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -253,7 +253,7 @@ describe('IncrementalPromptToolParser - 增量解析与 CDATA 边界', () => {
         expect(parts[0].functionCall?.args.content).toBe('fake </tool_use> marker');
     });
 
-    it('XML 模式：跨 chunk 劈开的 CDATA 与结束标记仍正确解析', () => {
+    test('XML 模式：跨 chunk 劈开的 CDATA 与结束标记仍正确解析', () => {
         const text = '<tool_use><tool_name>write_file</tool_name><parameters>'
             + '<path>a.md</path><content><![CDATA[fake </tool_use> here]]></content>'
             + '</parameters></tool_use>tail text';
@@ -275,7 +275,7 @@ describe('IncrementalPromptToolParser - 增量解析与 CDATA 边界', () => {
         }
     });
 
-    it('JSON 模式：结束标记被 chunk 边界劈开仍正确解析', () => {
+    test('JSON 模式：结束标记被 chunk 边界劈开仍正确解析', () => {
         const text = `${TOOL_CALL_START}\n{"tool": "read_file", "parameters": {"path": "a.txt"}}\n${TOOL_CALL_END}after`;
 
         for (const chunkSize of [1, 5, 11]) {

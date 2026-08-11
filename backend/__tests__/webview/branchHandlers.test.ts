@@ -1,5 +1,5 @@
 /**
- * BranchHandlers 接口层单测（第五阶段 BR-06/07）。
+ * BranchHandlers 接口层单测（第五阶段 BR-06/07；另覆盖 TREE-09/13、BCP-03/04/05 行为）。
  *
  * 覆盖：
  * - 注册表包含分支处理器（getBranchGraph / switchBranchCandidate / deleteBranchCandidate /
@@ -196,7 +196,7 @@ describe('BranchHandlers 行为', () => {
     });
 });
 
-describe('TREE-09 分支管理处理器（软删/恢复/重命名/修剪/保留期）', () => {
+describe('分支管理处理器（软删/恢复/重命名/修剪/保留期）', () => {
     let tempDir: string;
     let manager: ConversationManager;
     let responses: Array<{ requestId: string; data: unknown }>;
@@ -356,7 +356,7 @@ describe('TREE-09 分支管理处理器（软删/恢复/重命名/修剪/保留�
     });
 });
 
-describe('TREE-13 流式期间分支互斥（StreamAbortManager.isActive）', () => {
+describe('流式期间分支互斥（StreamAbortManager.isActive）', () => {
     let tempDir: string;
     let manager: ConversationManager;
     let abortManager: StreamAbortManager;
@@ -559,7 +559,7 @@ describe('TREE-13 流式期间分支互斥（StreamAbortManager.isActive）', ()
 });
 
 
-describe('BCP-03/04/05 切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支）', () => {
+describe('切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支）', () => {
     let tempDir: string;
     let manager: ConversationManager;
     let service: BranchService;

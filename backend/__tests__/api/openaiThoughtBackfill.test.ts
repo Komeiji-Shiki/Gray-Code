@@ -3,6 +3,13 @@ import { ConversationManager } from '../../modules/conversation/ConversationMana
 import type { BaseChannelConfig } from '../../modules/config/configs/base';
 import type { Content } from '../../modules/conversation/types';
 
+/**
+ * 保持本地的 createConfig（createConfig 收敛批次）：
+ * 唯一的位置参数形态（type / sendHistoryThoughts / sendCurrentThoughts 三个必填参数），
+ * 返回 BaseChannelConfig（createdAt/updatedAt/timeout 60000，无 toolMode），与共享的
+ * channelFixtures（createOpenAIConfig / createAnthropicConfig / createOpenAIResponsesConfig）
+ * 形状差异过大，不收敛（见 ../__fixtures__/channelFixtures.ts 头注释）。
+ */
 function createConfig(
     type: BaseChannelConfig['type'],
     sendHistoryThoughts: boolean,
@@ -65,7 +72,7 @@ describe('OpenAI thought backfill policy', () => {
     const messageBuilder = new MessageBuilderService();
     const conversationManager = new ConversationManager({} as any);
 
-    it('uses the history setting for both current and historical OAI thought content', () => {
+    test('uses the history setting for both current and historical OAI thought content', () => {
         const disabledOptions = messageBuilder.buildHistoryOptions(
             createConfig('openai', false, true)
         );
@@ -89,7 +96,7 @@ describe('OpenAI thought backfill policy', () => {
         )).toEqual(['First reasoning', 'Second reasoning']);
     });
 
-    it('keeps current and historical thought settings independent for other channel types', () => {
+    test('keeps current and historical thought settings independent for other channel types', () => {
         const options = messageBuilder.buildHistoryOptions(
             createConfig('anthropic', false, true)
         );
@@ -100,5 +107,36 @@ describe('OpenAI thought backfill policy', () => {
         expect(thoughtTexts(
             conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), options)
         )).toEqual(['Second reasoning']);
+    });
+
+    test('openai-responses 渠道：历史/当前思考开关保持独立（不回退 openai 的合并语义）', () => {
+        // openai-responses 的 reasoning item 回传统一遍历，不区分当前/历史轮次：
+        // sendCurrentThoughts 不随 sendHistoryThoughts 合并（与 openai 渠道不同），
+        // 但 sendCurrentThoughtSignatures 合并到 sendHistoryThoughtSignatures。
+        const historyDisabled = messageBuilder.buildHistoryOptions(
+            createConfig('openai-responses', false, true)
+        );
+        expect(historyDisabled).toMatchObject({
+            sendHistoryThoughts: false,
+            sendCurrentThoughts: true
+        });
+        expect(thoughtTexts(
+            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), historyDisabled)
+        )).toEqual(['Second reasoning']);
+
+        const historyEnabled = messageBuilder.buildHistoryOptions(
+            createConfig('openai-responses', true, false)
+        );
+        expect(historyEnabled).toMatchObject({
+            sendHistoryThoughts: true,
+            sendCurrentThoughts: false
+        });
+        expect(thoughtTexts(
+            conversationManager.getHistoryForAPIFrom(createTwoRoundHistory(), historyEnabled)
+        )).toEqual(['First reasoning']);
+
+        // 签名开关：Responses 渠道 current 与 history 共用 sendHistoryThoughtSignatures
+        expect(historyDisabled.sendCurrentThoughtSignatures).toBe(historyDisabled.sendHistoryThoughtSignatures);
+        expect(historyEnabled.sendCurrentThoughtSignatures).toBe(historyEnabled.sendHistoryThoughtSignatures);
     });
 });

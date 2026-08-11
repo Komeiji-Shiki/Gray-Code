@@ -1,6 +1,6 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick, reactive, ref } from 'vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -227,7 +227,7 @@ describe('App 开屏动画启动偏好', () => {
     delete window.__GRAYCODE_STARTUP_SPLASH_ENABLED
   })
 
-  it('同步偏好开启时首帧立即挂载 Splash，不等待配置请求返回', async () => {
+  test('同步偏好开启时首帧立即挂载 Splash，不等待配置请求返回', async () => {
     wrapper = mount(App)
     await nextTick()
 
@@ -235,7 +235,7 @@ describe('App 开屏动画启动偏好', () => {
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
   })
 
-  it('同步偏好关闭时首帧立即显示关闭态占位，从始至终不挂载 Splash', async () => {
+  test('同步偏好关闭时首帧立即显示关闭态占位，从始至终不挂载 Splash', async () => {
     window.__GRAYCODE_STARTUP_SPLASH_ENABLED = false
     const chatInitialization = deferred<void>()
     runtime.chatStore.initialize.mockReturnValueOnce(chatInitialization.promise)
@@ -262,7 +262,7 @@ describe('App 开屏动画启动偏好', () => {
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
-  it('同步偏好开启时启动全程只显示 Splash，异步配置不会切入关闭态占位', async () => {
+  test('同步偏好开启时启动全程只显示 Splash，异步配置不会切入关闭态占位', async () => {
     wrapper = mount(App)
     await nextTick()
 
@@ -284,7 +284,7 @@ describe('App 开屏动画启动偏好', () => {
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(false)
   })
 
-  it('本次启动关闭后，运行中重新开启只影响下次启动，不会突然补播', async () => {
+  test('本次启动关闭后，运行中重新开启只影响下次启动，不会突然补播', async () => {
     window.__GRAYCODE_STARTUP_SPLASH_ENABLED = false
     wrapper = mount(App)
     settingsRequest.resolve(makeSettingsResponse(false))

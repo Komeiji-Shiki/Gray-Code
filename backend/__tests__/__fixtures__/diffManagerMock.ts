@@ -9,9 +9,9 @@
  * - 用法：在被测模块 import 之前以副作用方式引入（须排在文件最前）：
  *     import '../../__fixtures__/diffManagerMock';
  * - jest.mock 路径相对本文件解析，与消费方原内联写法解析到同一模块
- *   （backend/tools/file/diffManager）。
+ *   （backend/core/services/diffManager）。
  */
-jest.mock('../../tools/file/diffManager', () => ({
+jest.mock('../../core/services/diffManager', () => ({
     getDiffManager: () => ({
         cancelAllPending: jest.fn().mockResolvedValue({ cancelled: [] })
     })

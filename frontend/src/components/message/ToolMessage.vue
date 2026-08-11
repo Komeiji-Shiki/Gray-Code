@@ -10,6 +10,7 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, defineComponent, type PropType, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage } from '../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
@@ -382,7 +383,7 @@ async function confirmDiff(sessionId: string) {
   addProcessingDiffSessionId(sessionId)
   
   try {
-    await sendToExtension('diff.accept', { sessionId })
+    await sendToExtension(MESSAGE_NAMES['diff.accept'], { sessionId })
   } catch (err) {
     // 良性终态：diff 已被自动保存/其他入口接受或取消，UI 尚未收到
     // diff.statusChanged 广播而已。不弹错误提示（用户痛点：自动应用后
@@ -417,7 +418,7 @@ async function rejectDiff(sessionId: string) {
   addProcessingDiffSessionId(sessionId)
   
   try {
-    await sendToExtension('diff.reject', { sessionId })
+    await sendToExtension(MESSAGE_NAMES['diff.reject'], { sessionId })
   } catch (err) {
     // 同上：diff 已不在 pending（自动保存/其他入口已结算），良性终态，
     // 不弹错误提示，本地结算 UI。
@@ -602,7 +603,7 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   mountedToolMessageInstances += 1
   try {
-    const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>('tools.getToolConfig', {
+    const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>(MESSAGE_NAMES['tools.getToolConfig'], {
       toolName: 'apply_diff'
     })
     if (response?.config) {
@@ -921,7 +922,7 @@ async function sendToolConfirmation(
     chatStore.activeStreamId = streamId
     chatStore.isWaitingForResponse = true
 
-    await sendToExtension('toolConfirmation', {
+    await sendToExtension(MESSAGE_NAMES.toolConfirmation, {
       conversationId: currentConversationId,
       configId: confirmationConfigId,
       modelOverride: chatStore.pendingModelOverride || undefined,
@@ -1432,7 +1433,7 @@ const ToolContentHost = defineComponent({
           </div>
           <div v-if="pendingDiff.isProcessing" class="diff-action-state">
             <span class="codicon codicon-loading codicon-modifier-spin"></span>
-            <span>{{ t('tools.executing') }}</span>
+            <span>{{ t('components.tools.executing') }}</span>
           </div>
           <div v-else-if="pendingDiff.error" class="diff-action-error">
             <span class="codicon codicon-error"></span>

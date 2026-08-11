@@ -20,6 +20,7 @@
  * 大输入时合并缓存的非线性退化。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension } from './vscode'
 
 /** 分批阈值：超过后按片计数，规避 tokenizer 合并缓存的非线性退化 */
@@ -87,7 +88,7 @@ function baseEstimateByCharClass(text: string): number {
 async function loadTokenizer(kind: TokenizerKind): Promise<void> {
   const name = kind === 'deepseek' ? 'deepseek-v3' : 'cl100k'
   const resource = await sendToExtension<TokenizerResource>(
-    'tokenizer.getResource',
+    MESSAGE_NAMES['tokenizer.getResource'],
     { name },
     { timeoutMs: 120_000 }
   )

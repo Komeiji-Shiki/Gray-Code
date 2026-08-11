@@ -6,7 +6,7 @@
  * confirmDiscard 读到的恒为 null，「丢弃更改并继续」只关框不执行续作（与
  * ConversationList 删除竞态同根因）。修复后确认必须按 kind 分发续作。
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import DirtyFilesConfirm from '../DirtyFilesConfirm.vue'
@@ -50,11 +50,11 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     document.body.innerHTML = ''
   })
 
-  it('无待确认动作时不渲染对话框', () => {
+  test('无待确认动作时不渲染对话框', () => {
     expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
-  it('确认「丢弃更改并继续」后按 kind=switch 分发续作（回归：确认后动作不再丢失）', async () => {
+  test('确认「丢弃更改并继续」后按 kind=switch 分发续作（回归：确认后动作不再丢失）', async () => {
     pendingDirtyConfirm.value = {
       kind: 'switch',
       files: ['/ws/unsaved.txt'],
@@ -75,7 +75,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
-  it('确认后按 kind=restore 的 entry=restore 分发续作', async () => {
+  test('确认后按 kind=restore 的 entry=restore 分发续作', async () => {
     pendingDirtyConfirm.value = {
       kind: 'restore',
       files: ['/ws/a.txt'],
@@ -89,7 +89,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     expect(chatStoreMock.switchBranchCandidate).not.toHaveBeenCalled()
   })
 
-  it('确认后按 kind=restore 的 entry=delete 分发续作（含消息定位）', async () => {
+  test('确认后按 kind=restore 的 entry=delete 分发续作（含消息定位）', async () => {
     chatStoreMock.allMessages = [{ id: 'msg-3' }, { id: 'msg-7' }, { id: 'msg-9' }]
     pendingDirtyConfirm.value = {
       kind: 'restore',
@@ -103,7 +103,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     expect(chatStoreMock.restoreAndDelete).toHaveBeenCalledWith(1, 'cp-2', true, true)
   })
 
-  it('取消按钮清空待确认动作且不执行任何续作', async () => {
+  test('取消按钮清空待确认动作且不执行任何续作', async () => {
     pendingDirtyConfirm.value = {
       kind: 'switch',
       files: ['/ws/unsaved.txt'],
@@ -118,7 +118,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     expect(pendingDirtyConfirm.value).toBeNull()
   })
 
-  it('展示文件列表（最多 10 条）与隐藏计数', async () => {
+  test('展示文件列表（最多 10 条）与隐藏计数', async () => {
     const files = Array.from({ length: 12 }, (_, i) => `/ws/f${i}.txt`)
     pendingDirtyConfirm.value = {
       kind: 'switch',

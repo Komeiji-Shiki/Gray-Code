@@ -1,5 +1,5 @@
-﻿/**
- * LimCode Backend - 中文语言包
+/**
+ * GrayCode Backend - 中文语言包
  *
  * 注意：本文件是基准语言包，BackendLanguageMessages 类型由此文件自动推导，
  * 因此这里不做类型标注（避免循环定义）。修改结构后 en/ja 会自动受到类型约束。
@@ -29,7 +29,8 @@ const zhCN = {
                 maxTokensMin: 'max_tokens 必须大于 0',
                 topPRange: 'top_p 必须在 0.0 - 1.0 之间',
                 topKMin: 'top_k 必须大于等于 0',
-                thinkingBudgetMin: 'thinking.budget_tokens 不能小于 1024'
+                thinkingBudgetMin: 'thinking.budget_tokens 不能小于 1024',
+                unsupportedType: '不支持的渠道类型: {type}'
             }
         },
 
@@ -426,7 +427,9 @@ const zhCN = {
         common: {
             taskNotFound: '任务 {id} 未找到或已完成',
             cancelTaskFailed: '取消任务失败: {error}',
-            toolAlreadyExists: '工具已存在: {name}'
+            toolAlreadyExists: '工具已存在: {name}',
+            show: '显示',
+            hide: '隐藏'
         },
         
         skills: {
@@ -783,6 +786,28 @@ description: "简要描述该技能的功能及使用场景"
             selectStorageFolder: '选择存储文件夹',
             selectFolder: '选择文件夹',
             openWorkspaceFolder: '打开工作区文件夹'
+        },
+
+        promptSettings: {
+            dynamicSection: {
+                strategyTitle: '动态上下文策略',
+                strategySingle: '单份动态上下文',
+                strategyPreserve: '保留旧动态上下文原位',
+                strategyDescription: '单份模式保持现有行为；保留模式会把已缓存的旧动态上下文固定插回原回合位置，新回合上下文插入到新消息前。',
+                strategyPreserveWarning: '保留模式会增加请求 token；旧动态上下文越多，越容易触发上下文裁剪或总结。',
+                strategyVarsPrefix: '当预设条目或传统模板中包含',
+                strategyVarsSeparator: '、',
+                strategyVarsSuffix: '等会变化变量时，此设置决定旧回合快照是否保留。',
+                strategyVarsWarning: '保留旧动态上下文原位 会把旧回合的动态快照固定插回原位，并在当前回合插入当前上下文，适合长上下文和多历史回合。'
+            },
+            assemblyMode: {
+                title: '提示词组装方式',
+                description: '每个模式只能选择一种组装方式：传统模板或预设条目。',
+                legacyLabel: '传统模板',
+                legacyDescription: '使用系统提示词模板和动态上下文模板。',
+                entriesLabel: '预设条目',
+                entriesDescription: '使用可排序条目，并通过 Chat History 控制真实历史位置。'
+            }
         }
     },
 

@@ -20,7 +20,7 @@ import {
     registerWallpaperHandlers,
     MAX_WALLPAPER_BYTES
 } from '../../../webview/handlers/WallpaperHandlers';
-import { DEFAULT_GLOBAL_SETTINGS } from '../../../backend/modules/settings/generalTypes';
+import { DEFAULT_GLOBAL_SETTINGS } from '../../../backend/modules/settings/types/generalTypes';
 
 /** 1x1 透明 PNG（真实魔数，仅用于字节内容，校验不依赖内容） */
 const TINY_PNG = Buffer.from(

@@ -7,6 +7,7 @@
  * - 支持杀死终端
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
@@ -228,7 +229,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function killTerminal(terminalId: string): Promise<{ success: boolean; output?: string; error?: string }> {
     const { t } = useI18n()
     try {
-      const result = await sendToExtension<{ success: boolean; output?: string; error?: string }>('terminal.kill', {
+      const result = await sendToExtension<{ success: boolean; output?: string; error?: string }>(MESSAGE_NAMES['terminal.kill'], {
         terminalId
       })
       
@@ -257,7 +258,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function refreshOutput(terminalId: string): Promise<void> {
     const { t } = useI18n()
     try {
-      const result = await sendToExtension<{ success: boolean; output?: string; running?: boolean; error?: string }>('terminal.getOutput', {
+      const result = await sendToExtension<{ success: boolean; output?: string; running?: boolean; error?: string }>(MESSAGE_NAMES['terminal.getOutput'], {
         terminalId
       })
       

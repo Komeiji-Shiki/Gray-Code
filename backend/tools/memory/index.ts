@@ -4,7 +4,7 @@
  * OptMem 风格永久记忆系统的工具集。
  */
 
-import type { Tool, ToolRegistration } from '../types';
+import type { ToolRegistration } from '../types';
 import { registerMemoryWake } from './memory_wake';
 import { registerMemoryNote } from './memory_note';
 import { registerMemoryRecall } from './memory_recall';
@@ -33,8 +33,4 @@ export function getMemoryToolRegistrations(): ToolRegistration[] {
         registerMemoryForget,
         registerMemoryConfig,
     ];
-}
-
-export function getAllMemoryTools(): Tool[] {
-    return getMemoryToolRegistrations().map(reg => reg());
 }

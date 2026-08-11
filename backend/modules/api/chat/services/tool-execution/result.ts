@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具执行服务：单工具执行 / 结果加工 / 多模态 / 活动统计
+ * GrayCode - 工具执行服务：单工具执行 / 结果加工 / 多模态 / 活动统计
  *
  * ToolExecutionService.ts 职责拆分（第二批）的 ResultCore 基类。
  * 继承链：ToolExecutionService → ExecutionCore → ResultCore → PreflightCore → MailboxCore。
@@ -610,3 +610,4 @@ export class ResultCore extends PreflightCore {
         }
     }
 }
+

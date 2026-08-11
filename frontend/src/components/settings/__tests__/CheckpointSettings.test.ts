@@ -1,5 +1,5 @@
 /**
- * CheckpointSettings 设置页测试（B6 批次）
+ * CheckpointSettings 设置页测试（B6 批次 + R3-#9/#10/#11）
  *
  * 覆盖：
  * - H-1: updateConfigField 保存失败回滚该字段；后续成功保存不携带“失败的改动”
@@ -10,7 +10,7 @@
  */
 import { defineComponent } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import CheckpointSettings from '../CheckpointSettings.vue'
 import { useCheckpointConfig } from '@/composables/useCheckpointConfig'
 import { useCheckpointOperationProgress } from '@/composables/useCheckpointOperationProgress'
@@ -137,8 +137,8 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('H-1: updateConfigField 保存失败回滚', () => {
-  it('保存失败回滚该字段并展示错误；后续成功保存不携带失败改动', async () => {
+describe('updateConfigField 保存失败回滚', () => {
+  test('保存失败回滚该字段并展示错误；后续成功保存不携带失败改动', async () => {
     defaultSendImplementation([
       () => Promise.reject(new Error('backend rejected')),
       () => Promise.resolve({})
@@ -168,7 +168,7 @@ describe('H-1: updateConfigField 保存失败回滚', () => {
     expect(updateConfigCalls[1].messageCheckpoint.mergeUnchangedCheckpoints).toBe(false)
   })
 
-  it('同一字段在失败后被再次编辑时，不回滚掉更新值', async () => {
+  test('同一字段在失败后被再次编辑时，不回滚掉更新值', async () => {
     const { updateConfigCalls } = defaultSendImplementation([
       () => Promise.reject(new Error('boom')),
       () => Promise.resolve({})
@@ -188,8 +188,8 @@ describe('H-1: updateConfigField 保存失败回滚', () => {
   })
 })
 
-describe('H-2: loadConfig 失败禁用表单', () => {
-  it('getConfig 失败时展示错误横幅并隐藏表单，重试成功后恢复', async () => {
+describe('loadConfig 失败禁用表单', () => {
+  test('getConfig 失败时展示错误横幅并隐藏表单，重试成功后恢复', async () => {
     let configFails = true
     mockSend.mockImplementation((type: string) => {
       if (type === 'checkpoint.getConfig') {
@@ -219,8 +219,8 @@ describe('H-2: loadConfig 失败禁用表单', () => {
   })
 })
 
-describe('M-7: mergeUnchanged 保存失败不同步 chatStore', () => {
-  it('保存失败时不调用 setMergeUnchangedCheckpoints 且回滚', async () => {
+describe('mergeUnchanged 保存失败不同步 chatStore', () => {
+  test('保存失败时不调用 setMergeUnchangedCheckpoints 且回滚', async () => {
     defaultSendImplementation([() => Promise.reject(new Error('boom'))])
     const wrapper = await mountSettings()
 
@@ -232,7 +232,7 @@ describe('M-7: mergeUnchanged 保存失败不同步 chatStore', () => {
     expect(checkboxValue(wrapper, '.advanced-option')).toBe(true) // 回滚
   })
 
-  it('保存成功时同步 chatStore', async () => {
+  test('保存成功时同步 chatStore', async () => {
     defaultSendImplementation([() => Promise.resolve({})])
     const wrapper = await mountSettings()
 
@@ -245,8 +245,8 @@ describe('M-7: mergeUnchanged 保存失败不同步 chatStore', () => {
   })
 })
 
-describe('M-6: confirmDelete 失败保留列表', () => {
-  it('部分失败时仅移除成功对话，失败对话保留（随后刷新权威计数）', async () => {
+describe('confirmDelete 失败保留列表', () => {
+  test('部分失败时仅移除成功对话，失败对话保留（随后刷新权威计数）', async () => {
     const conversations = [
       { conversationId: 'convA', title: 'Alpha', checkpointCount: 2, totalSize: 100 },
       { conversationId: 'convB', title: 'Beta', checkpointCount: 1, totalSize: 50 }
@@ -300,7 +300,7 @@ describe('M-6: confirmDelete 失败保留列表', () => {
     expect(mockSend.mock.calls.filter(c => c[0] === 'checkpoint.deleteBatch')).toHaveLength(1)
   })
 
-  it('后端未返回 results 时不删除任何对话（保守处理）', async () => {
+  test('后端未返回 results 时不删除任何对话（保守处理）', async () => {
     const conversations = [
       { conversationId: 'convA', title: 'Alpha', checkpointCount: 1, totalSize: 10 }
     ]
@@ -332,8 +332,8 @@ describe('M-6: confirmDelete 失败保留列表', () => {
   })
 })
 
-describe('M-4: 进度轮询容错', () => {
-  it('瞬时错误不停止轮询；连续多次失败后才停止', async () => {
+describe('进度轮询容错', () => {
+  test('瞬时错误不停止轮询；连续多次失败后才停止', async () => {
     vi.useFakeTimers()
     pollProgressMock.mockRejectedValue(new Error('ipc down'))
 
@@ -353,7 +353,7 @@ describe('M-4: 进度轮询容错', () => {
     wrapper.unmount()
   })
 
-  it('updatedAt 陈旧时停止轮询并标记 stale', async () => {
+  test('updatedAt 陈旧时停止轮询并标记 stale', async () => {
     vi.useFakeTimers()
     pollProgressMock.mockResolvedValue({
       operationId: 'op_1',
@@ -381,7 +381,7 @@ describe('M-4: 进度轮询容错', () => {
     wrapper.unmount()
   })
 
-  it('连续失败放弃轮询时若进度非终态则标记 stale（R3-#10）', async () => {
+  test('连续失败放弃轮询时若进度非终态则标记 stale（R3-#10）', async () => {
     vi.useFakeTimers()
     const running = {
       operationId: 'op_1',
@@ -418,8 +418,8 @@ describe('M-4: 进度轮询容错', () => {
   })
 })
 
-describe('R3-#10: 轮询恢复时 stale 复位（composable 级）', () => {
-  it('startProgressPolling 复位 stale；后端无进行中操作时停止轮询', async () => {
+describe('轮询恢复时 stale 复位（composable 级）', () => {
+  test('startProgressPolling 复位 stale；后端无进行中操作时停止轮询', async () => {
     vi.useFakeTimers()
     const { operationProgress, operationStale, startProgressPolling, stopProgressPolling } =
       useCheckpointOperationProgress()
@@ -464,8 +464,8 @@ describe('R3-#10: 轮询恢复时 stale 复位（composable 级）', () => {
   })
 })
 
-describe('R3-#9: updateConfigField 采纳后端归一化返回值', () => {
-  it('保存成功时用后端返回的 config 回填本地并更新快照', async () => {
+describe('updateConfigField 采纳后端归一化返回值', () => {
+  test('保存成功时用后端返回的 config 回填本地并更新快照', async () => {
     const { config, loadConfig, updateConfigField } = useCheckpointConfig()
     mockSend.mockImplementation((type: string) => {
       if (type === 'checkpoint.getConfig') {
@@ -482,7 +482,7 @@ describe('R3-#9: updateConfigField 采纳后端归一化返回值', () => {
     expect(config.maxCheckpoints).toBe(42)
   })
 
-  it('后端未返回 config（null）时保留乐观值', async () => {
+  test('后端未返回 config（null）时保留乐观值', async () => {
     const { config, loadConfig, updateConfigField } = useCheckpointConfig()
     mockSend.mockImplementation((type: string) => {
       if (type === 'checkpoint.getConfig') {
@@ -499,8 +499,8 @@ describe('R3-#9: updateConfigField 采纳后端归一化返回值', () => {
   })
 })
 
-describe('R3-#11: loadConfig 防重入', () => {
-  it('加载进行中时再次调用直接返回，不发起并发请求', async () => {
+describe('loadConfig 防重入', () => {
+  test('加载进行中时再次调用直接返回，不发起并发请求', async () => {
     const { loadConfig, isLoading } = useCheckpointConfig()
     let resolveGet: ((value: any) => void) | undefined
     mockSend.mockImplementation((type: string) => {

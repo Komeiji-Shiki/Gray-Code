@@ -6,6 +6,7 @@
  * MESSAGE_CHANGED 索引漂移校验等已修 bug 注释原样保留，一行未改。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Content } from '../../../types'
 import type { ChatStoreState } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
@@ -81,7 +82,7 @@ export async function deleteMessage(
   }
 
   try {
-    const response = await sendToExtension<any>('deleteMessage', {
+    const response = await sendToExtension<any>(MESSAGE_NAMES.deleteMessage, {
       conversationId: originConvId,
       targetIndex: backendIndex,
       // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
@@ -165,7 +166,7 @@ export async function deleteSingleMessage(
   }
 
   try {
-    const response = await sendToExtension<{ success: boolean }>('deleteSingleMessage', {
+    const response = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES.deleteSingleMessage, {
       conversationId: originConvId,
       targetIndex: backendIndex
     })
@@ -175,7 +176,7 @@ export async function deleteSingleMessage(
 
     if (response.success) {
       // 重新加载最后一页，确保 backendIndex 与 checkpoints 的 messageIndex 不错位
-      const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
         conversationId: originConvId,
         limit: MESSAGES_PAGE_SIZE
       })
@@ -215,6 +216,7 @@ export function clearMessages(state: ChatStoreState): void {
   // H1/M6：清空前清理所有平滑条目（销毁实例 + 删除显示文本），UI 立即切回真实 content
   clearAllSmoothForState(state)
   state.allMessages.value = []
+  rebuildMessageIndexById(state)
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false

@@ -7,6 +7,7 @@
  * - 用户确认后自动下载安装包并交给系统打开（installUpdate 消息，后端下载完成提示安装）
  * - 安装失败可一键前往 GitHub 下载页兜底
  */
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from '@/i18n'
 import { sendToExtension } from '@/utils/vscode'
@@ -21,7 +22,7 @@ const errorMsg = ref('')
 
 onMounted(async () => {
   try {
-    const res = await sendToExtension<{ status: { state: string; update?: typeof update.value } }>('getUpdateStatus', {})
+    const res = await sendToExtension<{ status: { state: string; update?: typeof update.value } }>(MESSAGE_NAMES.getUpdateStatus, {})
     if (res?.status?.state === 'updateAvailable' && res.status.update) {
       update.value = res.status.update
       phase.value = 'prompt'
@@ -36,7 +37,7 @@ async function install() {
   if (!update.value) return
   phase.value = 'downloading'
   try {
-    await sendToExtension('installUpdate', { update: update.value })
+    await sendToExtension(MESSAGE_NAMES.installUpdate, { update: update.value })
     phase.value = 'installed'
   } catch (e: any) {
     phase.value = 'failed'
@@ -49,7 +50,7 @@ function close() {
 }
 
 function openReleasePage() {
-  void sendToExtension('openUpdatePage', {})
+  void sendToExtension(MESSAGE_NAMES.openUpdatePage, {})
 }
 
 // Release 说明渲染：先整体转义再替换 markdown 标记（防注入，与 AnnouncementModal 同策略）

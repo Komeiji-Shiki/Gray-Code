@@ -7,6 +7,7 @@
  * - openWorkspaceFileAt（行号解析 + 定位 + 临时高亮）、saveImageToPath。
  */
 
+import { MESSAGE_NAMES } from '../../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../../backend/i18n';
@@ -267,6 +268,6 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
  */
 export function registerFileOpenHandlers(registry: Map<string, MessageHandler>): void {
   // 工作区文件跳转与保存
-  registry.set('openWorkspaceFileAt', openWorkspaceFileAt);
-  registry.set('saveImageToPath', saveImageToPath);
+  registry.set(MESSAGE_NAMES.openWorkspaceFileAt, openWorkspaceFileAt);
+  registry.set(MESSAGE_NAMES.saveImageToPath, saveImageToPath);
 }

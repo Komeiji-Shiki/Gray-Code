@@ -3,11 +3,12 @@ import * as os from 'os';
 import * as path from 'path';
 import {
     CheckpointQueryService,
-    type CheckpointQueryResult
+    type CheckpointQueryResult,
+    type CheckpointSummaryWithSize
 } from '../../modules/checkpoint/CheckpointQueryService';
 import type { ConversationManager } from '../../modules/conversation/ConversationManager';
-import type { CheckpointManifestRepository } from '../../modules/checkpoint/CheckpointManifestRepository';
-import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import type { CheckpointManifestRepository } from '../../modules/checkpoint';
+import type { CheckpointRecord } from '../../modules/checkpoint';
 import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 /**
@@ -19,6 +20,11 @@ import { makeRecord } from '../__fixtures__/checkpointFixtures';
  * - CP-QUERY-1：getAllConversationsWithCheckpoints 有界并发 + 轻量元数据读取
  */
 
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：被测服务为 CheckpointQueryService
+ * （manager/manifestRepository mock + tmpdir 路径），与共享 checkpoint harness 被测服务不同，
+ * 不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
+ */
 function createHarness(): {
     service: CheckpointQueryService;
     manager: {
@@ -207,10 +213,11 @@ describe('CheckpointQueryService', () => {
             const result = await service.getCheckpoints('conv-1', { withSize: true });
 
             // 记录保留（与删除路径“拒绝但保留记录”一致），但绝不扫描越界目录：大小按 0 计
+            // （T16：getCheckpoints 返回 CheckpointSummary | CheckpointSummaryWithSize 联合，withSize 分支需收窄）
             expect(result).toHaveLength(1);
             expect(result[0].id).toBe('cp-1');
             expect(result[0].backupBytes).toBe(0);
-            expect(result[0].size).toBe(0);
+            expect((result[0] as CheckpointSummaryWithSize).size).toBe(0);
             // 不写回摘要缓存（越界目录不存在可写回的合法大小）
             expect(manager.updateCustomMetadata).not.toHaveBeenCalled();
         } finally {

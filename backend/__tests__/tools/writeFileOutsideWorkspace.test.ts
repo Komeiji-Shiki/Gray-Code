@@ -24,7 +24,7 @@ const mockDiffManager = {
     waitForDiffResolution: jest.fn()
 };
 
-jest.mock('../../tools/file/diffManager', () => ({
+jest.mock('../../core/services/diffManager', () => ({
     getDiffManager: () => mockDiffManager
 }));
 
@@ -59,7 +59,7 @@ describe('write_file outside-workspace flow', () => {
         setGlobalSettingsManager(settingsManager);
     });
 
-    it('uses the real outside-workspace target file for new-file diff review', async () => {
+    test('uses the real outside-workspace target file for new-file diff review', async () => {
         const outsidePath = path.resolve('/tmp/outside-new.txt');
         const expectedAbsolutePath = vscode.Uri.file(outsidePath).fsPath;
         const tool = registerWriteFile();
@@ -85,7 +85,7 @@ describe('write_file outside-workspace flow', () => {
         expect(options).toEqual({ confirmedByToolConfirmation: false, newFile: true });
     });
 
-    it('marks confirmed write calls so auto-save does not wait for a second confirmation', async () => {
+    test('marks confirmed write calls so auto-save does not wait for a second confirmation', async () => {
         const outsidePath = path.resolve('/tmp/outside-confirmed.txt');
         const tool = registerWriteFile();
 

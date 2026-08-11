@@ -10,11 +10,11 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { CheckpointRetentionService } from '../../modules/checkpoint/CheckpointRetentionService';
-import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint/CheckpointManifestRepository';
+import { CheckpointRetentionService } from '../../modules/checkpoint';
+import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint';
 import { isSafeCheckpointDirName } from '../../modules/checkpoint/CheckpointManifestRepository';
-import type { CheckpointManifest } from '../../modules/checkpoint/types';
-import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import type { CheckpointManifest } from '../../modules/checkpoint';
+import type { CheckpointRecord } from '../../modules/checkpoint';
 import { createTempDirectory, makeRecord } from '../__fixtures__/checkpointFixtures';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
@@ -41,6 +41,11 @@ interface Harness {
  *
  * deleteCheckpointInternal 模拟 CheckpointManager 的真实语义：backupDir 越界（CP-DEL-1）
  * 时拒绝删除并返回 false，其余情况移除记录并返回 true。
+ */
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：被测服务为 CheckpointRetentionService
+ * （含 deleteCheckpointInternal 模拟与 manifestRepository），与共享 checkpoint harness 被测服务不同，
+ * 不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
  */
 async function createHarness(seed: CheckpointRecord[], maxCheckpoints: number): Promise<Harness> {
     const storageRoot = await createTempDirectory('limcode-retention-');

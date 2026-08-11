@@ -4,7 +4,7 @@
  * jsdom 不实现 window.matchMedia；CharFlow 的 reducedMotion 通过构造参数显式传入，
  * 默认探测路径单独用 stub 覆盖。
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { CharFlow } from '../../utils/charFlow'
 
 function makeHost(): HTMLElement {
@@ -41,7 +41,7 @@ describe('CharFlow', () => {
     document.body.innerHTML = ''
   })
 
-  it('append creates one span per grapheme with staggered animation delays', () => {
+  test('append creates one span per grapheme with staggered animation delays', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b', 'c'], 30, false)
@@ -55,7 +55,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('step is clamped to fadeMs for huge single-frame durations', () => {
+  test('step is clamped to fadeMs for huge single-frame durations', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 100, reducedMotion: false })
     flow.append(['a', 'b'], 500, false)
@@ -64,7 +64,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('instant append goes straight into the settled text node (no spans)', () => {
+  test('instant append goes straight into the settled text node (no spans)', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['h', 'i'], 16, true)
@@ -73,7 +73,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('noFade appends directly without spans (collapsed preview mode)', () => {
+  test('noFade appends directly without spans (collapsed preview mode)', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true })
     flow.append(['a', 'b', 'c'], 30, false)
@@ -82,7 +82,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('squashLineBreaks converts line breaks to zero-width spaces', () => {
+  test('squashLineBreaks converts line breaks to zero-width spaces', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, squashLineBreaks: true })
     flow.append(['前', '段', '\n', '\n', '后', '段'], 30, false)
@@ -90,7 +90,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('squashLineBreaks also applies to the staggered chip path', () => {
+  test('squashLineBreaks also applies to the staggered chip path', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, squashLineBreaks: true })
     flow.append(['a', '\n', 'b'], 30, false)
@@ -100,7 +100,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('tailWindow keeps only the latest characters on append', () => {
+  test('tailWindow keeps only the latest characters on append', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
     flow.append(['1', '2', '3'], 30, false)
@@ -110,7 +110,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('deferTrim delays trimming until trimNow() is called', () => {
+  test('deferTrim delays trimming until trimNow() is called', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
     flow.append(['1', '2', '3'], 30, false, true)
@@ -124,7 +124,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('append without deferTrim keeps legacy immediate trimming', () => {
+  test('append without deferTrim keeps legacy immediate trimming', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
     flow.append(['1', '2', '3'], 30, false)
@@ -133,7 +133,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('tailWindow trims restore and finish too', () => {
+  test('tailWindow trims restore and finish too', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false, noFade: true, tailWindow: 4 })
     flow.restore('abcdefgh')
@@ -146,7 +146,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('collapse merges finished chips back into the settled text node', () => {
+  test('collapse merges finished chips back into the settled text node', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b', 'c'], 30, false)
@@ -162,7 +162,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('finish settles everything and leaves no spans', () => {
+  test('finish settles everything and leaves no spans', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b'], 30, false)
@@ -173,7 +173,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('idle reflects pending animation state', () => {
+  test('idle reflects pending animation state', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     expect(flow.idle()).toBe(true)
@@ -185,7 +185,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('restore clears existing content and writes settled text directly', () => {
+  test('restore clears existing content and writes settled text directly', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a'], 30, false)
@@ -195,7 +195,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('reduced-motion appends directly without spans', () => {
+  test('reduced-motion appends directly without spans', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: true })
     flow.append(['a', 'b'], 30, false)
@@ -204,7 +204,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('detects reduced motion from matchMedia by default', () => {
+  test('detects reduced motion from matchMedia by default', () => {
     stubMatchMedia(true)
     const host = makeHost()
     const flow = new CharFlow(host)
@@ -214,7 +214,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('dispose clears the host entirely', () => {
+  test('dispose clears the host entirely', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a'], 30, false)
@@ -227,7 +227,7 @@ describe('CharFlow', () => {
     expect(host.textContent).toBe('')
   })
 
-  it('followEnd keeps a single-line preview scrolled to the latest character', () => {
+  test('followEnd keeps a single-line preview scrolled to the latest character', () => {
     const host = makeHost()
     Object.defineProperty(host, 'scrollWidth', { configurable: true, value: 240 })
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: true, followEnd: true })
@@ -241,14 +241,14 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('host gets the char-flow class (white-space: pre-wrap)', () => {
+  test('host gets the char-flow class (white-space: pre-wrap)', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     expect(host.classList.contains('char-flow')).toBe(true)
     flow.dispose()
   })
 
-  it('settledText returns the settled prefix (animated chips excluded)', () => {
+  test('settledText returns the settled prefix (animated chips excluded)', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.append(['a', 'b'], 30, false) // 全在动画中
@@ -260,7 +260,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('promote strips a prefix from settled text and returns it', () => {
+  test('promote strips a prefix from settled text and returns it', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.restore('para one\n\npara two\n\npara three')
@@ -272,7 +272,7 @@ describe('CharFlow', () => {
     flow.dispose()
   })
 
-  it('promoteWithBridge keeps promoted prefixes visible until each bridge is released', () => {
+  test('promoteWithBridge keeps promoted prefixes visible until each bridge is released', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.restore('first\nsecond\ntail')
@@ -294,7 +294,7 @@ describe('CharFlow', () => {
     second?.release() // dispose 后晚到 ack 也是 no-op
   })
 
-  it('promote after dispose and non-positive n are no-ops', () => {
+  test('promote after dispose and non-positive n are no-ops', () => {
     const host = makeHost()
     const flow = new CharFlow(host, { fadeMs: 110, reducedMotion: false })
     flow.restore('abc')

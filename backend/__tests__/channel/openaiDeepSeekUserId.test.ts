@@ -1,24 +1,8 @@
 import { createHash } from 'crypto';
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
-import type { OpenAIConfig } from '../../modules/config/types';
+import { OpenAIFormatter } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
+import { createOpenAIConfig } from '../__fixtures__/channelFixtures';
 
-function createConfig(overrides: Partial<OpenAIConfig> = {}): OpenAIConfig {
-    return {
-        id: 'openai-compatible-test',
-        name: 'OpenAI Compatible Test',
-        type: 'openai',
-        enabled: true,
-        url: 'https://api.deepseek.com/v1',
-        apiKey: 'test-key',
-        model: 'deepseek-chat',
-        preferStream: false,
-        timeout: 30000,
-        toolMode: 'function_call',
-        deepSeekUserIdEnabled: false,
-        ...overrides
-    } as OpenAIConfig;
-}
 
 function createHistory(text = 'hello'): Content[] {
     return [
@@ -34,9 +18,9 @@ function expectedDeepSeekUserId(conversationId: string): string {
 }
 
 describe('OpenAIFormatter DeepSeek user_id', () => {
-    it('does not add user_id by default even when endpoint and model are DeepSeek', () => {
+    test('does not add user_id by default even when endpoint and model are DeepSeek', () => {
         const formatter = new OpenAIFormatter();
-        const config = createConfig();
+        const config = createOpenAIConfig({ id: 'openai-compatible-test', name: 'OpenAI Compatible Test', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat' });
 
         const request = formatter.buildRequest({
             configId: config.id,
@@ -47,9 +31,9 @@ describe('OpenAIFormatter DeepSeek user_id', () => {
         expect(request.body.user_id).toBeUndefined();
     });
 
-    it('adds a stable DeepSeek user_id derived from conversationId when the channel option is enabled', () => {
+    test('adds a stable DeepSeek user_id derived from conversationId when the channel option is enabled', () => {
         const formatter = new OpenAIFormatter();
-        const config = createConfig({ deepSeekUserIdEnabled: true });
+        const config = createOpenAIConfig({ id: 'openai-compatible-test', name: 'OpenAI Compatible Test', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', deepSeekUserIdEnabled: true });
         const conversationId = 'conv_1700000000000_abc123';
 
         const firstRequest = formatter.buildRequest({
@@ -69,9 +53,9 @@ describe('OpenAIFormatter DeepSeek user_id', () => {
         expect(firstRequest.body.user_id.length).toBeLessThanOrEqual(512);
     });
 
-    it('uses a different DeepSeek user_id for different conversations when enabled', () => {
+    test('uses a different DeepSeek user_id for different conversations when enabled', () => {
         const formatter = new OpenAIFormatter();
-        const config = createConfig({ deepSeekUserIdEnabled: true });
+        const config = createOpenAIConfig({ id: 'openai-compatible-test', name: 'OpenAI Compatible Test', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', deepSeekUserIdEnabled: true });
 
         const firstRequest = formatter.buildRequest({
             configId: config.id,
@@ -87,9 +71,11 @@ describe('OpenAIFormatter DeepSeek user_id', () => {
         expect(firstRequest.body.user_id).not.toBe(secondRequest.body.user_id);
     });
 
-    it('can add user_id for OpenAI-compatible proxies when the user explicitly enables the option', () => {
+    test('can add user_id for OpenAI-compatible proxies when the user explicitly enables the option', () => {
         const formatter = new OpenAIFormatter();
-        const config = createConfig({
+        const config = createOpenAIConfig({
+            id: 'openai-compatible-test',
+            name: 'OpenAI Compatible Test',
             url: 'https://proxy.example.com/v1',
             model: 'custom-model-name',
             deepSeekUserIdEnabled: true
@@ -105,9 +91,9 @@ describe('OpenAIFormatter DeepSeek user_id', () => {
         expect(request.body.user_id).toBe(expectedDeepSeekUserId(conversationId));
     });
 
-    it('does not add user_id when conversationId is absent, even if the channel option is enabled', () => {
+    test('does not add user_id when conversationId is absent, even if the channel option is enabled', () => {
         const formatter = new OpenAIFormatter();
-        const config = createConfig({ deepSeekUserIdEnabled: true });
+        const config = createOpenAIConfig({ id: 'openai-compatible-test', name: 'OpenAI Compatible Test', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', deepSeekUserIdEnabled: true });
 
         const request = formatter.buildRequest({
             configId: config.id,
@@ -117,9 +103,9 @@ describe('OpenAIFormatter DeepSeek user_id', () => {
         expect(request.body.user_id).toBeUndefined();
     });
 
-    it('uses the conversationId passed by caller as the user_id domain (续跑时 executor 传旧 runId，天然同域)', () => {
+    test('uses the conversationId passed by caller as the user_id domain (续跑时 executor 传旧 runId，天然同域)', () => {
         const formatter = new OpenAIFormatter();
-        const config = createConfig({ deepSeekUserIdEnabled: true });
+        const config = createOpenAIConfig({ id: 'openai-compatible-test', name: 'OpenAI Compatible Test', url: 'https://api.deepseek.com/v1', model: 'deepseek-chat', deepSeekUserIdEnabled: true });
 
         // 模拟续跑：executor 会把 conversationId 沿用旧 runId
         const request = formatter.buildRequest({

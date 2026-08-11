@@ -18,7 +18,7 @@ import * as vscode from 'vscode';
 import '../__fixtures__/diffManagerMock';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
 
-import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {

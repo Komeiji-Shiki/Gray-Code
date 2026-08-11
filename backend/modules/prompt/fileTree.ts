@@ -185,7 +185,11 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
 
     // 无否定规则：保持原有早退快速路径（最常见的场景，避免逐条全量求值）
     for (const pattern of patterns) {
-        if (matchesGitignorePattern(relativePath, pattern, isDirectory)) {
+        // 转义的 \! 视为字面 ! 开头的模式（与否定分支处理一致）：
+        // 快路径不按 gitignore 否定语义求值，但 \! 转义仍须还原，否则
+        // 模式里的反斜杠与已归一化路径（不含 \）永不匹配，字面 ! 文件被误排除
+        const normalized = pattern.startsWith('\\!') ? pattern.slice(1) : pattern
+        if (matchesGitignorePattern(relativePath, normalized, isDirectory)) {
             return true
         }
     }

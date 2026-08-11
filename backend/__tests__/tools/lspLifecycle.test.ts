@@ -50,7 +50,7 @@ describe('lspLifecycle 共享模块', () => {
     });
 
     describe('withTimeoutAndAbort', () => {
-        it('正常完成时 resolve 请求结果并清理 timer 与 listener', async () => {
+        test('正常完成时 resolve 请求结果并清理 timer 与 listener', async () => {
             const controller = new AbortController();
             const { added, removed } = trackSignalListeners(controller.signal);
 
@@ -62,7 +62,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(removed).toEqual(added);
         });
 
-        it('请求 reject 时透传原始错误并清理 timer 与 listener', async () => {
+        test('请求 reject 时透传原始错误并清理 timer 与 listener', async () => {
             const controller = new AbortController();
             const { added, removed } = trackSignalListeners(controller.signal);
 
@@ -74,7 +74,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(removed).toEqual(added);
         });
 
-        it('请求挂起超过 timeoutMs 时以 LspRequestTimeoutError 拒绝且 timer 已清理', async () => {
+        test('请求挂起超过 timeoutMs 时以 LspRequestTimeoutError 拒绝且 timer 已清理', async () => {
             jest.useFakeTimers();
             const request = withTimeoutAndAbort(new Promise<string>(() => undefined), 5000);
 
@@ -85,7 +85,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(jest.getTimerCount()).toBe(0);
         });
 
-        it('超时错误文案包含 timed out after Nms', async () => {
+        test('超时错误文案包含 timed out after Nms', async () => {
             jest.useFakeTimers();
             const request = withTimeoutAndAbort(new Promise(() => undefined), 1234);
 
@@ -94,7 +94,7 @@ describe('lspLifecycle 共享模块', () => {
             await assertion;
         });
 
-        it('已中止的 signal 立即以 LspRequestAbortedError 拒绝', async () => {
+        test('已中止的 signal 立即以 LspRequestAbortedError 拒绝', async () => {
             const controller = new AbortController();
             controller.abort();
 
@@ -103,7 +103,7 @@ describe('lspLifecycle 共享模块', () => {
             ).rejects.toBeInstanceOf(LspRequestAbortedError);
         });
 
-        it('请求挂起期间中止时以 LspRequestAbortedError 拒绝并摘除 listener', async () => {
+        test('请求挂起期间中止时以 LspRequestAbortedError 拒绝并摘除 listener', async () => {
             jest.useFakeTimers();
             const controller = new AbortController();
             const { added, removed } = trackSignalListeners(controller.signal);
@@ -121,7 +121,7 @@ describe('lspLifecycle 共享模块', () => {
     });
 
     describe('waitWithAbort', () => {
-        it('延时后 resolve 并清理 timer 与 listener', async () => {
+        test('延时后 resolve 并清理 timer 与 listener', async () => {
             jest.useFakeTimers();
             const controller = new AbortController();
             const { added, removed } = trackSignalListeners(controller.signal);
@@ -135,7 +135,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(jest.getTimerCount()).toBe(0);
         });
 
-        it('已中止的 signal 立即拒绝', async () => {
+        test('已中止的 signal 立即拒绝', async () => {
             const controller = new AbortController();
             controller.abort();
 
@@ -143,7 +143,7 @@ describe('lspLifecycle 共享模块', () => {
                 .rejects.toBeInstanceOf(LspRequestAbortedError);
         });
 
-        it('等待期间中止时以 LspRequestAbortedError 拒绝并摘除 listener', async () => {
+        test('等待期间中止时以 LspRequestAbortedError 拒绝并摘除 listener', async () => {
             jest.useFakeTimers();
             const controller = new AbortController();
             const { added, removed } = trackSignalListeners(controller.signal);
@@ -161,7 +161,7 @@ describe('lspLifecycle 共享模块', () => {
     });
 
     describe('executeLspCommandWithRetry', () => {
-        it('瞬时 reject 时等待 LSP_RETRY_DELAY_MS 后重试一次并成功', async () => {
+        test('瞬时 reject 时等待 LSP_RETRY_DELAY_MS 后重试一次并成功', async () => {
             jest.useFakeTimers();
             executeCommandMock
                 .mockRejectedValueOnce(new Error('TypeScript language service is not ready'))
@@ -174,7 +174,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(executeCommandMock).toHaveBeenCalledTimes(2);
         });
 
-        it('持续 reject 时最多尝试 LSP_MAX_ATTEMPTS 次并抛出最后一次错误', async () => {
+        test('持续 reject 时最多尝试 LSP_MAX_ATTEMPTS 次并抛出最后一次错误', async () => {
             jest.useFakeTimers();
             executeCommandMock.mockRejectedValue(new Error('tsserver crashed'));
 
@@ -186,7 +186,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(executeCommandMock).toHaveBeenCalledTimes(LSP_MAX_ATTEMPTS);
         });
 
-        it('超时不重试：仅发起一次请求并以 LspRequestTimeoutError 拒绝', async () => {
+        test('超时不重试：仅发起一次请求并以 LspRequestTimeoutError 拒绝', async () => {
             jest.useFakeTimers();
             executeCommandMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -198,7 +198,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(executeCommandMock).toHaveBeenCalledTimes(1);
         });
 
-        it('挂起期间中止不重试：仅发起一次请求并以 LspRequestAbortedError 拒绝', async () => {
+        test('挂起期间中止不重试：仅发起一次请求并以 LspRequestAbortedError 拒绝', async () => {
             jest.useFakeTimers();
             const controller = new AbortController();
             executeCommandMock.mockImplementation(() => new Promise(() => undefined));
@@ -212,7 +212,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(executeCommandMock).toHaveBeenCalledTimes(1);
         });
 
-        it('已中止的 signal 直接拒绝且不发起任何请求', async () => {
+        test('已中止的 signal 直接拒绝且不发起任何请求', async () => {
             const controller = new AbortController();
             controller.abort();
 
@@ -223,14 +223,14 @@ describe('lspLifecycle 共享模块', () => {
             expect(executeCommandMock).not.toHaveBeenCalled();
         });
 
-        it('透传 command 与 args 给 executeCommand', async () => {
+        test('透传 command 与 args 给 executeCommand', async () => {
             executeCommandMock.mockResolvedValue('ok');
             await executeLspCommandWithRetry('vscode.executeDefinitionProvider', ['uri', 'pos']);
 
             expect(executeCommandMock).toHaveBeenCalledWith('vscode.executeDefinitionProvider', 'uri', 'pos');
         });
 
-        it('支持自定义 timeoutMs / maxAttempts 选项', async () => {
+        test('支持自定义 timeoutMs / maxAttempts 选项', async () => {
             jest.useFakeTimers();
             executeCommandMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -244,7 +244,7 @@ describe('lspLifecycle 共享模块', () => {
     });
 
     describe('openDocumentWithGuard', () => {
-        it('openTextDocument 正常完成时 resolve', async () => {
+        test('openTextDocument 正常完成时 resolve', async () => {
             openTextDocumentMock.mockResolvedValue({});
             const uri = { fsPath: '/a.ts' } as any;
 
@@ -252,7 +252,7 @@ describe('lspLifecycle 共享模块', () => {
             expect(openTextDocumentMock).toHaveBeenCalledWith(uri);
         });
 
-        it('文档打开挂起时在 LSP_TIMEOUT_MS 后以超时拒绝', async () => {
+        test('文档打开挂起时在 LSP_TIMEOUT_MS 后以超时拒绝', async () => {
             jest.useFakeTimers();
             openTextDocumentMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -262,7 +262,7 @@ describe('lspLifecycle 共享模块', () => {
             await assertion;
         });
 
-        it('已中止的 signal 立即拒绝且不打开文档', async () => {
+        test('已中止的 signal 立即拒绝且不打开文档', async () => {
             const controller = new AbortController();
             controller.abort();
 

@@ -2,6 +2,7 @@
  * subagents 工具注册
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { registerTool } from '../../toolRegistry'
 import type { ToolUsage } from '../../../types'
 import { t } from '../../../i18n'
@@ -70,7 +71,7 @@ registerTool('subagents', {
       async run(tool, context) {
         const runId = getSubAgentRunId(tool)
         if (!runId) return
-        await sendToExtension('subagents.openMonitor', {
+        await sendToExtension(MESSAGE_NAMES['subagents.openMonitor'], {
           runId,
           conversationId: context.conversationId || undefined
         })

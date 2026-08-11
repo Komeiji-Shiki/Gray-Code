@@ -14,8 +14,8 @@
  *    后续写路径（updateSummary/loadMetadataForWrite）恢复正常覆盖。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import type { ConversationMetadata, Content } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import type { ConversationMetadata, Content } from '../../modules/conversation';
 import { Uri } from 'vscode';
 import { createAdapter, normPath } from './helpers/fakeVscodeFs';
 import { makeContent } from '../__fixtures__/conversationFixtures';

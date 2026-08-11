@@ -1,27 +1,16 @@
-import { SettingsManager, type SettingsStorage } from '../../../backend/modules/settings/SettingsManager'
+import { SettingsManager } from '../../../backend/modules/settings/SettingsManager'
 import {
   ASK_PROMPT_MODE,
   DESIGN_PROMPT_MODE,
   PLAN_PROMPT_MODE,
   REVIEW_PROMPT_MODE,
 } from '../../../backend/modules/settings/types'
-
-class MemorySettingsStorage implements SettingsStorage {
-  constructor(private readonly loaded: any = null) {}
-
-  async load() {
-    return this.loaded
-  }
-
-  async save() {
-    return undefined
-  }
-}
+import { createMemorySettingsStorage } from '../__fixtures__/settingsFixtures'
 
 const PROGRESS_TOOLS = ['create_progress', 'update_progress', 'record_progress_milestone', 'validate_progress_document']
 
 describe('progress tool mode config', () => {
-  it('adds progress tools to design, plan, and review modes but not ask mode', () => {
+  test('adds progress tools to design, plan, and review modes but not ask mode', () => {
     expect(DESIGN_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
     expect(PLAN_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
     expect(REVIEW_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
@@ -31,8 +20,8 @@ describe('progress tool mode config', () => {
     }
   })
 
-  it('SettingsManager synchronizes built-in mode toolPolicy updates for progress tools', async () => {
-    const storage = new MemorySettingsStorage({
+  test('SettingsManager synchronizes built-in mode toolPolicy updates for progress tools', async () => {
+    const storage = createMemorySettingsStorage({
       toolsConfig: {
         system_prompt: {
           currentModeId: 'code',

@@ -5,7 +5,7 @@
  * - 未知检测语言回退英文（en 兜底），不会落入缺失 key
  * - 缺失翻译 key 的 console.warn 按 key 去重（高频调用不刷屏）
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, vi } from 'vitest'
 import { t, actualLanguage, setDetectedLanguage, setLanguage } from '../index'
 
 describe('i18n 未知语言兜底', () => {
@@ -15,7 +15,7 @@ describe('i18n 未知语言兜底', () => {
     setLanguage('auto')
   })
 
-  it('未知检测语言（非 zh/en/ja 前缀）回退英文，而不是返回 key 本身', () => {
+  test('未知检测语言（非 zh/en/ja 前缀）回退英文，而不是返回 key 本身', () => {
     setDetectedLanguage('fr-FR')
 
     expect(actualLanguage.value).toBe('en')
@@ -23,7 +23,7 @@ describe('i18n 未知语言兜底', () => {
     expect(t('app.retryPanel.title')).toBe('Request failed, retrying automatically')
   })
 
-  it('zh 前缀（如 zh-TW）归一为中文，en 前缀归一为英文', () => {
+  test('zh 前缀（如 zh-TW）归一为中文，en 前缀归一为英文', () => {
     setDetectedLanguage('zh-TW')
     expect(actualLanguage.value).toBe('zh-CN')
 
@@ -38,7 +38,7 @@ describe('i18n 缺失 key 警告去重', () => {
     setLanguage('auto')
   })
 
-  it('同一缺失 key 只警告一次；不同 key 各自警告一次', () => {
+  test('同一缺失 key 只警告一次；不同 key 各自警告一次', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     const keyA = 'missing.warnDedup.keyA'

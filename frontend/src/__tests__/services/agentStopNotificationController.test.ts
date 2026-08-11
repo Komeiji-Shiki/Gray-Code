@@ -8,7 +8,8 @@
  *
  * 修复：markUserCancelled 后，在下一次 isAgentRunning() 转 true（新一轮开始）时复位 suppressNextStop。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { MESSAGE_NAMES } from '@shared/protocol'
+import { describe, expect, vi, beforeEach } from 'vitest'
 import { nextTick, reactive } from 'vue'
 import {
   AgentStopNotificationController,
@@ -69,7 +70,7 @@ describe('AgentStopNotificationController suppressNextStop', () => {
     sendToExtension = vi.fn().mockResolvedValue({ success: true })
   })
 
-  it('取消后新一轮开始会复位 suppressNextStop，新一轮正常结束的 stop 正常通知', async () => {
+  test('取消后新一轮开始会复位 suppressNextStop，新一轮正常结束的 stop 正常通知', async () => {
     const store = createStore({ isStreaming: true, isWaitingForResponse: true })
     const controller = createController(store, sendToExtension)
 
@@ -94,12 +95,12 @@ describe('AgentStopNotificationController suppressNextStop', () => {
     await flushWatcher()
 
     expect(sendToExtension).toHaveBeenCalledWith(
-      'notifications.agentStop',
+      MESSAGE_NAMES['notifications.agentStop'],
       expect.objectContaining({ reason: 'continue_required' })
     )
   })
 
-  it('正常取消流程不受影响：取消后的 stop 被抑制，且不产生误通知', async () => {
+  test('正常取消流程不受影响：取消后的 stop 被抑制，且不产生误通知', async () => {
     const store = createStore({ isStreaming: true, isWaitingForResponse: true })
     const controller = createController(store, sendToExtension)
 
@@ -123,12 +124,12 @@ describe('AgentStopNotificationController suppressNextStop', () => {
     await flushWatcher()
 
     expect(sendToExtension).toHaveBeenCalledWith(
-      'notifications.agentStop',
+      MESSAGE_NAMES['notifications.agentStop'],
       expect.objectContaining({ reason: 'continue_required' })
     )
   })
 
-  it('agent 未运行时 markUserCancelled 被忽略，后续 stop 正常通知', async () => {
+  test('agent 未运行时 markUserCancelled 被忽略，后续 stop 正常通知', async () => {
     const store = createStore()
     const controller = createController(store, sendToExtension)
 
@@ -145,12 +146,12 @@ describe('AgentStopNotificationController suppressNextStop', () => {
     await flushWatcher()
 
     expect(sendToExtension).toHaveBeenCalledWith(
-      'notifications.agentStop',
+      MESSAGE_NAMES['notifications.agentStop'],
       expect.objectContaining({ reason: 'continue_required' })
     )
   })
 
-  it('dispose 后不再响应状态变化', async () => {
+  test('dispose 后不再响应状态变化', async () => {
     const store = createStore({ isStreaming: true, isWaitingForResponse: true })
     const controller = createController(store, sendToExtension)
     controller.dispose()

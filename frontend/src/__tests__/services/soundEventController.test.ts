@@ -7,7 +7,7 @@
  * - VSCode 窗口失焦（切到其他应用）→ 播放提醒
  * - 焦点状态由扩展侧 windowFocusChanged 命令经 setVscodeWindowFocused 更新
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // mock soundCues：避免真实 AudioContext，只验证「播放是否被触发」
 vi.mock('../../services/soundCues', () => ({
@@ -49,18 +49,18 @@ describe('soundEventController 窗口焦点感知', () => {
     resetSoundEventControllerForTests()
   })
 
-  it('默认状态（未收到 windowFocusChanged）视为窗口聚焦 → 不播', async () => {
+  test('默认状态（未收到 windowFocusChanged）视为窗口聚焦 → 不播', async () => {
     await handleSoundEvent(makeEvent())
     expect(mockedPlayCue).not.toHaveBeenCalled()
   })
 
-  it('VSCode 窗口聚焦（setVscodeWindowFocused(true)）→ 不播（用户正看着界面）', async () => {
+  test('VSCode 窗口聚焦（setVscodeWindowFocused(true)）→ 不播（用户正看着界面）', async () => {
     setVscodeWindowFocused(true)
     await handleSoundEvent(makeEvent())
     expect(mockedPlayCue).not.toHaveBeenCalled()
   })
 
-  it('VSCode 窗口失焦（setVscodeWindowFocused(false)）→ 播放提醒', async () => {
+  test('VSCode 窗口失焦（setVscodeWindowFocused(false)）→ 播放提醒', async () => {
     setVscodeWindowFocused(false)
     await handleSoundEvent(makeEvent())
 
@@ -68,7 +68,7 @@ describe('soundEventController 窗口焦点感知', () => {
     expect(mockedPlayCue).toHaveBeenCalledWith('taskComplete', expect.any(Object))
   })
 
-  it('窗口失焦后重新聚焦：聚焦期间事件不播', async () => {
+  test('窗口失焦后重新聚焦：聚焦期间事件不播', async () => {
     setVscodeWindowFocused(false)
     await handleSoundEvent(makeEvent())
     expect(mockedPlayCue).toHaveBeenCalledTimes(1)
@@ -79,7 +79,7 @@ describe('soundEventController 窗口焦点感知', () => {
     expect(mockedPlayCue).toHaveBeenCalledTimes(1)
   })
 
-  it('文档隐藏 → 聚合不播放，恢复可见时补播一次（无论焦点状态，用户刚回到窗口）', async () => {
+  test('文档隐藏 → 聚合不播放，恢复可见时补播一次（无论焦点状态，用户刚回到窗口）', async () => {
     setVscodeWindowFocused(true)
     setDocumentHidden(true)
     await handleSoundEvent(makeEvent())
@@ -90,7 +90,7 @@ describe('soundEventController 窗口焦点感知', () => {
     expect(mockedPlayCue).toHaveBeenCalledTimes(1)
   })
 
-  it('visibilitychange 恢复可见时补播聚合事件（hooks 集成）', async () => {
+  test('visibilitychange 恢复可见时补播聚合事件（hooks 集成）', async () => {
     const cleanup = registerVisibilityChangeHooks()
 
     // 隐藏期间收到事件 → 聚合
@@ -106,13 +106,13 @@ describe('soundEventController 窗口焦点感知', () => {
     cleanup()
   })
 
-  it('事件过期（超过 3 秒）不播放也不聚合', async () => {
+  test('事件过期（超过 3 秒）不播放也不聚合', async () => {
     const stale = Date.now() - 4000
     await handleSoundEvent(makeEvent('taskComplete', stale))
     expect(mockedPlayCue).not.toHaveBeenCalled()
   })
 
-  it('子代理事件（role: subagent）把角色透传给 playCue，由 soundCues 按子代理开关门控', async () => {
+  test('子代理事件（role: subagent）把角色透传给 playCue，由 soundCues 按子代理开关门控', async () => {
     setVscodeWindowFocused(false)
     await handleSoundEvent({
       cue: 'taskComplete',
@@ -127,7 +127,7 @@ describe('soundEventController 窗口焦点感知', () => {
     )
   })
 
-  it('未标注角色的事件按主代理处理（不携带 role，向后兼容）', async () => {
+  test('未标注角色的事件按主代理处理（不携带 role，向后兼容）', async () => {
     setVscodeWindowFocused(false)
     await handleSoundEvent(makeEvent())
 
@@ -137,7 +137,7 @@ describe('soundEventController 窗口焦点感知', () => {
     )
   })
 
-  it('文档隐藏期间聚合的子代理事件：补播时保留 role', async () => {
+  test('文档隐藏期间聚合的子代理事件：补播时保留 role', async () => {
     setVscodeWindowFocused(false)
     setDocumentHidden(true)
     await handleSoundEvent({

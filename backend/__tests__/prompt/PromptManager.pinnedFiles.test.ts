@@ -89,7 +89,7 @@ describe('PromptManager generatePinnedFilesSection（热路径性能修复）', 
         }
     }
 
-    it('单文件超过字节上限时截断并标记 truncated（不读入整文件）', () => {
+    test('单文件超过字节上限时截断并标记 truncated（不读入整文件）', () => {
         fs.writeFileSync(
             path.join(root, 'big.txt'),
             'A'.repeat(PINNED_FILE_MAX_BYTES + 2000) + 'TAIL_SENTINEL'
@@ -106,7 +106,7 @@ describe('PromptManager generatePinnedFilesSection（热路径性能修复）', 
         expect(text.length).toBeLessThan(PINNED_FILE_MAX_BYTES + 1024)
     })
 
-    it('累计读取超过总字节预算时跳过剩余固定文件', () => {
+    test('累计读取超过总字节预算时跳过剩余固定文件', () => {
         const chunk = 'B'.repeat(PINNED_FILE_MAX_BYTES + 100)
         fs.writeFileSync(path.join(root, 'one.txt'), chunk)
         fs.writeFileSync(path.join(root, 'two.txt'), chunk)
@@ -127,7 +127,7 @@ describe('PromptManager generatePinnedFilesSection（热路径性能修复）', 
         expect(PINNED_FILE_MAX_TOTAL_BYTES).toBe(PINNED_FILE_MAX_BYTES * 2)
     })
 
-    it('TTL 内复用缓存零磁盘读；mtime 变更后越过 TTL 才重读', () => {
+    test('TTL 内复用缓存零磁盘读；mtime 变更后越过 TTL 才重读', () => {
         jest.useFakeTimers()
         const file = path.join(root, 'cache.txt')
         fs.writeFileSync(file, 'version-1')
@@ -165,7 +165,7 @@ describe('PromptManager generatePinnedFilesSection（热路径性能修复）', 
         expect(readSpy).toHaveBeenCalledTimes(readsBefore)
     })
 
-    it('忽略模式正则按模式缓存复用（第二次生成零编译）', () => {
+    test('忽略模式正则按模式缓存复用（第二次生成零编译）', () => {
         workspace.getWorkspaceFolder = jest.fn(() => workspace.workspaceFolders?.[0])
         workspace.asRelativePath = jest.fn((uri: any) => {
             const parts = String(uri?.path ?? uri?.fsPath ?? '').split('/')

@@ -8,7 +8,7 @@
  * - 移除/换新数组回退全量重建；
  * - 缓存结果与 filterVisibleChatMessages 一致。
  */
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import { ref } from 'vue'
 import type { Message } from '../../../types'
 import type { ChatStoreState } from '../types'
@@ -33,7 +33,7 @@ function makeState(messages: Message[] = []): ChatStoreState {
 }
 
 describe('getVisibleChatMessagesCached（HIS-12）', () => {
-  it('首次读取等于全量过滤结果', () => {
+  test('首次读取等于全量过滤结果', () => {
     const state = makeState([
       makeMessage('m1'),
       makeMessage('fr1', { isFunctionResponse: true }),
@@ -44,7 +44,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(visible.map(m => m.id)).toEqual(['m1', 'm2'])
   })
 
-  it('尾部追加可见消息：增量加入缓存', () => {
+  test('尾部追加可见消息：增量加入缓存', () => {
     const state = makeState([makeMessage('m1')])
     const first = getVisibleChatMessagesCached(state)
 
@@ -55,7 +55,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[0]).toBe(first[0])
   })
 
-  it('尾部追加 functionResponse（不可见）：可见列表不变且不新增元素', () => {
+  test('尾部追加 functionResponse（不可见）：可见列表不变且不新增元素', () => {
     const state = makeState([makeMessage('m1')])
     const first = getVisibleChatMessagesCached(state)
 
@@ -65,7 +65,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[0]).toBe(first[0])
   })
 
-  it('同长度尾部替换：缓存尾元素指向新对象（流式原地更新）', () => {
+  test('同长度尾部替换：缓存尾元素指向新对象（流式原地更新）', () => {
     const state = makeState([makeMessage('m1'), makeMessage('m2', { content: 'old' })])
     const first = getVisibleChatMessagesCached(state)
 
@@ -81,7 +81,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[0]).toBe(first[0])
   })
 
-  it('同长度尾部替换为 functionResponse：回退全量重建', () => {
+  test('同长度尾部替换为 functionResponse：回退全量重建', () => {
     const state = makeState([makeMessage('m1'), makeMessage('m2')])
     getVisibleChatMessagesCached(state)
 
@@ -91,7 +91,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[0].id).toBe('m1')
   })
 
-  it('移除消息（长度变小）：回退全量重建', () => {
+  test('移除消息（长度变小）：回退全量重建', () => {
     const state = makeState([makeMessage('m1'), makeMessage('fr1', { isFunctionResponse: true }), makeMessage('m2')])
     const first = getVisibleChatMessagesCached(state)
     expect(first).toHaveLength(2)
@@ -101,7 +101,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second.map(m => m.id)).toEqual(['m2'])
   })
 
-  it('整体替换数组（新引用）：全量重建', () => {
+  test('整体替换数组（新引用）：全量重建', () => {
     const state = makeState([makeMessage('m1')])
     getVisibleChatMessagesCached(state)
 
@@ -110,7 +110,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(visible.map(m => m.id)).toEqual(['a', 'b'])
   })
 
-  it('clearVisibleChatMessagesCache 后全量重建', () => {
+  test('clearVisibleChatMessagesCache 后全量重建', () => {
     const state = makeState([makeMessage('m1')])
     getVisibleChatMessagesCached(state)
     clearVisibleChatMessagesCache(state)
@@ -120,7 +120,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(visible.map(m => m.id)).toEqual(['m1', 'm2'])
   })
 
-  it('中间位置同长度替换（replaceMessageAt index !== length-1）：清除缓存后全量重建（L1）', () => {
+  test('中间位置同长度替换（replaceMessageAt index !== length-1）：清除缓存后全量重建（L1）', () => {
     // 场景：迟到的旧请求 cancelled chunk 清理中间消息元数据（同 id 同长度，首尾引用不变）
     const state = makeState([makeMessage('m1'), makeMessage('m2'), makeMessage('m3')])
     const first = getVisibleChatMessagesCached(state)
@@ -134,7 +134,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[0].content).toBe('m1-edited')
   })
 
-  it('尾元素同长度替换（index === length-1）：仍走增量原地更新，不清缓存', () => {
+  test('尾元素同长度替换（index === length-1）：仍走增量原地更新，不清缓存', () => {
     const state = makeState([makeMessage('m1'), makeMessage('m2')])
     const first = getVisibleChatMessagesCached(state)
 
@@ -147,7 +147,7 @@ describe('getVisibleChatMessagesCached（HIS-12）', () => {
     expect(second[0]).toBe(first[0])
   })
 
-  it('中间位置插入（insertMessageAt splice）：清除缓存后全量重建，不重复、不漏插（回归）', () => {
+  test('中间位置插入（insertMessageAt splice）：清除缓存后全量重建，不重复、不漏插（回归）', () => {
     // 场景：handleAutoSummary 把总结消息插到窗口中间。若不清除缓存，指纹（首尾元素不变）
     // 命中「纯尾部追加」增量路径——被插入的总结消息不可见，且旧尾元素被重复 concat 一次。
     const state = makeState([makeMessage('m1'), makeMessage('fr', { isFunctionResponse: true }), makeMessage('m2')])

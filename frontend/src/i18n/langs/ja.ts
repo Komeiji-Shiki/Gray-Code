@@ -4,12 +4,13 @@
  */
 
 import type { LanguageMessages } from '../types';
+import sharedJa from './_shared/ja';
 
 const ja: LanguageMessages = {
     common: {
         save: '保存',
         cancel: 'キャンセル',
-        confirm: '確認',
+        confirm: sharedJa.common.confirm,
         delete: '削除',
         edit: '編集',
         add: '追加',
@@ -19,7 +20,8 @@ const ja: LanguageMessages = {
         enabled: '有効',
         disabled: '無効',
         loading: '読み込み中...',
-        error: 'エラー',
+        error: sharedJa.common.error,
+        unknownError: sharedJa.common.unknownError,
         success: '成功',
         warning: '警告',
         info: '情報',
@@ -50,18 +52,20 @@ const ja: LanguageMessages = {
         about: 'について',
         version: 'バージョン',
         name: '名前',
-        description: '説明',
-        status: 'ステータス',
+        description: sharedJa.common.description,
+        status: sharedJa.common.status,
         type: 'タイプ',
         size: 'サイズ',
         path: 'パス',
         time: '時間',
-        date: '日付',
+        date: sharedJa.common.date,
         actions: '操作',
         more: 'もっと見る',
         less: '折りたたむ',
         expand: '展開',
         collapse: '折りたたむ',
+        show: sharedJa.common.show,
+        hide: sharedJa.common.hide,
         preview: 'プレビュー',
         download: 'ダウンロード',
         upload: 'アップロード',
@@ -75,12 +79,12 @@ const ja: LanguageMessages = {
         start: '開始',
         stop: '停止',
         pause: '一時停止',
-        resume: '再開',
+        resume: sharedJa.common.resume,
         running: '実行中',
         stopped: '停止済み',
         pending: '保留中',
-        completed: '完了',
-        failed: '失敗',
+        completed: sharedJa.common.completed,
+        failed: sharedJa.common.failed,
         unknown: '不明'
     },
 
@@ -115,9 +119,9 @@ const ja: LanguageMessages = {
 
         common: {
             confirmDialog: {
-                title: '確認',
+                title: sharedJa.components.common.confirmDialog.title,
                 message: 'この操作を実行してもよろしいですか？',
-                confirm: '確認',
+                confirm: sharedJa.components.common.confirmDialog.confirm,
                 cancel: 'キャンセル'
             },
             inputDialog: {
@@ -368,7 +372,7 @@ const ja: LanguageMessages = {
             remove: '削除',
             tokenUsage: '使用量',
             context: 'コンテキスト',
-            fileNotExists: 'ファイルが存在しません',
+            fileNotExists: sharedJa.components.input.fileNotExists,
             queue: {
                 title: 'キューメッセージ',
                 sendNow: '今すぐ送信',
@@ -429,7 +433,7 @@ const ja: LanguageMessages = {
                 hint: '内容は <context> タグで囲まれて AI に送信されます',
                 dropHint: 'ファイル内容を追加するにはマウスを離してください',
                 fileAdded: 'ファイル内容を追加しました: {path}',
-                readFailed: 'ファイルの読み取りに失敗しました',
+                readFailed: sharedJa.components.input.promptContext.readFailed,
                 addFailed: '追加に失敗しました: {error}'
             },
             filePicker: {
@@ -451,8 +455,8 @@ const ja: LanguageMessages = {
                 checkpointCreateError: 'チェックポイントの作成に失敗しました: {error}',
                 holdShiftToDrag: 'Shift キーを押しながらファイルをドラッグしてください',
                 fileNotInWorkspace: 'ファイルがワークスペース内にありません',
-                fileNotInAnyWorkspace: 'ファイルが開いているワークスペースにありません',
-                fileInOtherWorkspace: 'ファイルは別のワークスペースに属しています: {workspaceName}',
+                fileNotInAnyWorkspace: sharedJa.components.input.notifications.fileNotInAnyWorkspace,
+                fileInOtherWorkspace: sharedJa.components.input.notifications.fileInOtherWorkspace,
                 fileAdded: 'ピン留めファイルを追加しました: {path}',
                 addFailed: '追加に失敗しました: {error}',
                 cannotGetFilePath: 'ファイルパスを取得できません。VSCode エクスプローラーまたはタブからドラッグしてください',
@@ -561,7 +565,7 @@ const ja: LanguageMessages = {
                 mimeType: 'MIME タイプ',
                 size: 'サイズ',
                 fileUri: 'ファイル URI',
-                status: '状態',
+                status: sharedJa.components.message.responseViewer.status,
                 duration: '所要時間',
                 moreMetadata: '追加のメタデータ',
                 attachmentType: '添付ファイル種別',
@@ -595,7 +599,7 @@ const ja: LanguageMessages = {
                     executing: '実行中',
                     awaitingApply: '適用待ち',
                     success: '成功',
-                    error: '失敗',
+                    error: sharedJa.components.message.responseViewer.toolStatuses.error,
                     warning: '警告',
                     unknown: '不明'
                 }
@@ -669,7 +673,7 @@ const ja: LanguageMessages = {
                 restoreResultPartialTitle: '復元は部分的に完了しました',
                 restoreResultWarningTitle: '未バックアップのファイル',
                 restoreResultSuccessTitle: '復元が完了しました',
-                restoreResultFailed: 'チェックポイントの復元に失敗しました',
+                restoreResultFailed: sharedJa.components.message.checkpoint.restoreResultFailed,
                 restoreResultPartial: '復元は部分的に完了しました。次のファイルが失敗しました：{files}',
                 restoreResultPartialMore: '復元は部分的に完了しました。次のファイルが失敗しました：{files} ほか {count} 個のファイル',
                 restoreResultUnbacked: '次のファイルはチェックポイント作成時にバックアップされていません（サイズ超過または読み取り不能）。今回の復元では処理されません：{paths}',
@@ -686,7 +690,7 @@ const ja: LanguageMessages = {
             continue: {
                 title: '会話が一時停止中',
                 description: 'ツールの実行が完了しました。新しいメッセージを送信するか、「続行」をクリックして AI の応答を続けることができます',
-                button: '続行'
+                button: sharedJa.components.message.continue.button
             },
             error: {
                 title: 'リクエストに失敗しました',
@@ -700,19 +704,19 @@ const ja: LanguageMessages = {
             tool: {
                 parameters: 'パラメータ',
                 result: '結果',
-                error: 'エラー',
+                error: sharedJa.components.message.tool.error,
                 paramCount: '{count} 個のパラメータ',
                 streamingArgs: 'パラメータを生成中...',
                 confirmExecution: 'クリックして実行を確認',
                 confirm: '実行を確認',
                 saveAll: 'すべて保存',
-                rejectAll: 'すべて拒否',
-                reject: '拒否',
+                rejectAll: sharedJa.components.message.tool.rejectAll,
+                reject: sharedJa.components.message.tool.reject,
                 confirmed: '確認済み',
                 rejected: '拒否済み',
                 viewDiff: '差分を表示',
                 viewDiffInVSCode: 'VSCode で差分を表示',
-                openDiffFailed: 'diff プレビューを開くのに失敗しました',
+                openDiffFailed: sharedJa.components.message.tool.openDiffFailed,
                 pendingDiffNotFound: '保留中の差分が見つかりません。ステータス同期後に再試行してください。',
                 acceptDiffFailed: '差分の受け入れに失敗しました。再試行してください。',
                 rejectDiffFailed: '差分の拒否に失敗しました。再試行してください。',
@@ -800,8 +804,8 @@ const ja: LanguageMessages = {
                     sourceCurrentInput: '今回のツール入力',
                     sourceSnapshot: '当時のスナップショット',
                     statusPending: '未着手',
-                    statusInProgress: '進行中',
-                    statusCompleted: '完了',
+                    statusInProgress: sharedJa.components.message.tool.todoPanel.statusInProgress,
+                    statusCompleted: sharedJa.components.message.tool.todoPanel.statusCompleted,
                     statusCancelled: 'キャンセル',
                     totalItems: '合計 {count} 件',
                     copyAsMarkdown: 'Markdown としてコピー',
@@ -817,12 +821,12 @@ const ja: LanguageMessages = {
                     executeLabel: '実行:',
                     executed: '実行済み',
                     executing: '実行中...',
-                    executePlan: 'プランを実行',
+                    executePlan: sharedJa.components.message.tool.planCard.executePlan,
                     openFile: 'ファイルを開く',
                     loadChannelsFailed: 'チャンネルの読み込みに失敗しました',
                     loadModelsFailed: 'モデルの読み込みに失敗しました',
                     executePlanFailed: 'プランの実行に失敗しました',
-                    openFileFailed: 'ファイルを開くのに失敗しました',
+                    openFileFailed: sharedJa.components.message.tool.planCard.openFileFailed,
                     promptPrefix: '以下のプランに従って実行してください:\n\n{plan}',
                     sourceUpToDate: 'ソース: 最新',
                     sourceUntracked: 'ソース: 未追跡',
@@ -836,62 +840,35 @@ const ja: LanguageMessages = {
                     generateLabel: 'プラン生成:',
                     generated: 'プラン生成済み',
                     generating: 'プランを生成中...',
-                    generatePlan: 'プランを生成',
+                    generatePlan: sharedJa.components.message.tool.designCard.generatePlan,
                     openFile: 'ファイルを開く',
                     loadChannelsFailed: 'チャンネルの読み込みに失敗しました',
                     loadModelsFailed: 'モデルの読み込みに失敗しました',
                     generatePlanFailed: 'プランの生成に失敗しました',
-                    openFileFailed: 'ファイルを開くのに失敗しました'
+                    openFileFailed: sharedJa.components.message.tool.designCard.openFileFailed
                 },
                 reviewCard: {
+                    ...sharedJa.components.message.tool.reviewCard,
                     sourceCreate: '作成',
                     sourceMilestone: 'マイルストーン',
                     sourceFinalize: '完了',
                     sourceReopen: '再開',
                     sourceValidate: '検証',
                     sourceCompare: '比較',
-                    statusCompleted: '完了',
-                    statusInProgress: '進行中',
-                    decisionAccepted: '承認',
-                    decisionConditionallyAccepted: '条件付き承認',
-                    decisionRejected: '却下',
+                    statusCompleted: sharedJa.components.message.tool.reviewCard.statusCompleted,
                     decisionNeedsFollowUp: '追加フォローが必要',
                     validationAutoUpgrade: '旧文書をアップグレード可能',
                     validationInvalid: '無効',
                     validationWarning: '警告あり',
                     validationValid: '正常',
-                    issueError: 'エラー',
+                    issueError: sharedJa.components.message.tool.reviewCard.issueError,
                     issueWarning: '警告',
-                    severityHigh: '高',
-                    severityMedium: '中',
-                    severityLow: '低',
                     milestonesChip: '{completed}/{total} マイルストーン',
                     findingsChip: '問題 {total} · 高{high} 中{medium} 低{low}',
                     modulesChip: 'モジュール {count}',
                     formatChip: '形式 {format}',
-                    status: '状態',
-                    decision: '結論',
                     milestones: 'マイルストーン',
-                    findings: '指摘',
                     format: '形式',
-                    latestConclusion: '最新の結論',
-                    recommendedNextAction: '次の対応',
-                    tracking: '追跡状態',
-                    trackingOpen: 'オープン',
-                    trackingAcceptedRisk: 'リスク受容',
-                    trackingFixed: '修正済み',
-                    trackingWontFix: '修正しない',
-                    trackingDuplicate: '重複',
-                    categoryHtml: 'HTML',
-                    categoryCss: 'CSS',
-                    categoryJavascript: 'JavaScript',
-                    categoryAccessibility: 'アクセシビリティ',
-                    categoryPerformance: 'パフォーマンス',
-                    categoryMaintainability: '保守性',
-                    categoryDocs: 'ドキュメント',
-                    categoryTest: 'テスト',
-                    categoryOther: 'その他',
-                    evidence: '証拠',
                     findingDetails: '問題詳細',
                     compareBase: '基準文書',
                     compareTarget: '比較対象文書',
@@ -903,16 +880,9 @@ const ja: LanguageMessages = {
                     compareEvidenceChanged: '証拠の変化',
                     compareRelatedMilestonesChanged: '関連マイルストーンの変化',
                     compareChanges: '変更項目',
-                    changeSeverity: '重大度',
-                    changeTrackingStatus: '追跡状態',
                     changeTitle: 'タイトル',
-                    changeDescription: '説明',
-                    changeRecommendation: '提案',
-                    changeEvidence: '証拠',
-                    changeRelatedMilestoneIds: '関連マイルストーン',
                     validation: '検証情報',
                     progress: '進捗',
-                    modules: 'レビュー済みモジュール',
                     noIssues: '問題なし',
                     issueSummary: '{count} 件の問題 · エラー {errors} · 警告 {warnings}',
                     openFile: '文書を開く',
@@ -921,12 +891,12 @@ const ja: LanguageMessages = {
                     copyPath: 'パスをコピー',
                     copied: 'コピー済み',
                     rawResult: '完全な結果',
-                    generatePlan: 'プランを生成',
                     generatingPlan: 'プランを生成中...',
                     planGenerated: 'プラン生成済み',
                     generatePlanFailed: 'プラン生成に失敗しました'
                 },
                 progressCard: {
+                    ...sharedJa.components.message.tool.progressCard,
                     sourceCreate: '作成',
                     sourceUpdate: '更新',
                     sourceMilestone: 'マイルストーン',
@@ -936,25 +906,19 @@ const ja: LanguageMessages = {
                     validationInvalid: '無効',
                     validationWarning: '警告あり',
                     validationValid: '正常',
-                    issueError: 'エラー',
+                    issueError: sharedJa.components.message.tool.progressCard.issueError,
                     issueWarning: '警告',
                     issueSummary: '{count} 件の問題 · エラー {errors} · 警告 {warnings}',
-                    status: '状態',
                     phase: '段階',
-                    statusActive: '進行中',
                     statusBlocked: 'ブロック中',
-                    statusCompleted: '完了',
+                    statusCompleted: sharedJa.components.message.tool.progressCard.statusCompleted,
                     statusArchived: 'アーカイブ済み',
                     phaseDesign: '設計',
                     phasePlan: '計画',
                     phaseImplementation: '実装',
                     phaseReview: 'レビュー',
                     phaseMaintenance: '保守',
-                    milestoneStatusCompleted: '完了',
-                    milestoneStatusInProgress: '進行中',
                     currentFocus: '現在の焦点',
-                    currentProgress: '現在の進捗',
-                    latestConclusion: '最新の結論',
                     currentBlocker: '現在のブロッカー',
                     nextAction: '次の対応',
                     updatedAt: '更新日時',
@@ -1010,7 +974,7 @@ const ja: LanguageMessages = {
                     add: '新規設定',
                     delete: '設定を削除',
                     inputPlaceholder: '設定名を入力',
-                    confirm: '確認',
+                    confirm: sharedJa.components.settings.channelSettings.selector.confirm,
                     cancel: 'キャンセル'
                 },
                 empty: {
@@ -1033,7 +997,7 @@ const ja: LanguageMessages = {
                         title: '設定を削除',
                         message: '設定 "{name}" を削除してもよろしいですか？この操作は元に戻せません。',
                         cancel: 'キャンセル',
-                        confirm: '確認'
+                        confirm: sharedJa.components.settings.channelSettings.dialog.delete.confirm,
                     },
                     changeType: {
                         title: 'チャンネルタイプの変更',
@@ -1093,7 +1057,7 @@ const ja: LanguageMessages = {
                         supportedTypes: 'サポートされるファイル形式：',
                         image: '画像',
                         imageFormats: 'PNG、JPEG、WebP',
-                        document: 'ドキュメント',
+                        document: sharedJa.components.settings.channelSettings.form.multimodal.document,
                         documentFormats: 'PDF',
                         capabilities: 'マルチモーダルツールの機能：',
                         table: {
@@ -1242,7 +1206,7 @@ const ja: LanguageMessages = {
                     agents: 'エージェント',
                     activity: '使用時間',
                     sandbox: 'サンドボックス',
-                    other: 'その他'
+                    other: sharedJa.components.settings.autoExec.categories.other
                 },
                 badges: {
                     dangerous: '危険'
@@ -1274,9 +1238,9 @@ const ja: LanguageMessages = {
                 serverEnv: '環境変数',
                 serverStatus: 'サーバーステータス',
                 connecting: '接続中',
-                connected: '接続済み',
-                disconnected: '切断済み',
-                error: 'エラー'
+                connected: sharedJa.components.settings.mcp.connected,
+                disconnected: sharedJa.components.settings.mcp.disconnected,
+                error: sharedJa.components.settings.mcp.error
             },
             checkpoint: {
                 title: 'チェックポイント設定',
@@ -1317,8 +1281,8 @@ const ja: LanguageMessages = {
                     tools: {
                         title: 'ツールバックアップ設定',
                         description: '実行前後にバックアップが必要なツールを選択',
-                        beforeLabel: '実行前',
-                        afterLabel: '実行後',
+                        beforeLabel: sharedJa.components.settings.checkpoint.sections.tools.beforeLabel,
+                        afterLabel: sharedJa.components.settings.checkpoint.sections.tools.afterLabel,
                         empty: '利用可能なツールがありません'
                     },
                     other: {
@@ -1403,8 +1367,8 @@ const ja: LanguageMessages = {
                         deleteSelected: '選択を削除',
                         noCheckpointsInConversation: 'この会話にチェックポイントはありません',
                         checkpointFiles: '{count} ファイル',
-                        phaseBefore: '実行前',
-                        phaseAfter: '実行後',
+                        phaseBefore: sharedJa.components.settings.checkpoint.sections.cleanup.phaseBefore,
+                        phaseAfter: sharedJa.components.settings.checkpoint.sections.cleanup.phaseAfter,
                         typeFull: 'フル',
                         typeIncremental: '差分',
                         toolUserMessage: 'ユーザーメッセージ',
@@ -1429,7 +1393,7 @@ const ja: LanguageMessages = {
                         manifestLoadFailed: '除外マニフェストの読み込みに失敗しました',
                         manifestUnavailable: 'このチェックポイントは旧形式のため、除外マニフェストを表示できません',
                         manifestExcludedCount: '除外ファイル数',
-                        manifestNote: 'このチェックポイントは作成時の除外ルールで {count} 個のファイルを除外しました',
+                        manifestNote: sharedJa.components.settings.checkpoint.sections.cleanup.manifestNote,
                         manifestRulesChanged: '現在の除外ルールは変更されています。復元は現在のルールに従います',
                         manifestIgnoreSnapshot: '除外ルールのスナップショット',
                         manifestRuleVersion: 'ルールバージョン',
@@ -1449,7 +1413,7 @@ const ja: LanguageMessages = {
                             restoring: '復元中',
                             deleting: '削除中',
                             done: '完了',
-                            failed: '失敗',
+                            failed: sharedJa.components.settings.checkpoint.sections.cleanup.progress.failed,
                             cancelled: 'キャンセル済み',
                             cancel: 'キャンセル',
                             cancelFailed: 'キャンセルに失敗しました。再試行してください',
@@ -1582,7 +1546,7 @@ const ja: LanguageMessages = {
                     enableDiagnostics: '診断情報を有効化',
                     severityTypes: '問題の種類',
                     severity: {
-                        error: 'エラー',
+                        error: sharedJa.components.settings.contextSettings.diagnostics.severity.error,
                         warning: '警告',
                         information: '情報',
                         hint: 'ヒント'
@@ -1633,11 +1597,11 @@ const ja: LanguageMessages = {
                     processing: '{dependency} を処理中...',
                     complete: '{dependency} の処理が完了しました',
                     failed: '{dependency} の処理に失敗しました',
-                    installSuccess: '{name} のインストールが成功しました！',
+                    installSuccess: sharedJa.components.settings.dependencySettings.progress.installSuccess,
                     installFailed: '{name} のインストールに失敗しました',
                     uninstallSuccess: '{name} がアンインストールされました',
                     uninstallFailed: '{name} のアンインストールに失敗しました',
-                    unknownError: '不明なエラー'
+                    unknownError: sharedJa.components.settings.dependencySettings.progress.unknownError
                 },
                 panel: {
                     installedCount: '{installed}/{total}'
@@ -1724,7 +1688,7 @@ const ja: LanguageMessages = {
                 serverCard: {
                     connect: '接続',
                     disconnect: '切断',
-                    connecting: '接続中...',
+                    connecting: sharedJa.components.settings.mcpSettings.serverCard.connecting,
                     edit: '編集',
                     delete: '削除',
                     tools: 'ツール',
@@ -1732,8 +1696,8 @@ const ja: LanguageMessages = {
                     prompts: 'プロンプト'
                 },
                 status: {
-                    connected: '接続済み',
-                    connecting: '接続中...',
+                    connected: sharedJa.components.settings.mcpSettings.status.connected,
+                    connecting: sharedJa.components.settings.mcpSettings.status.connecting,
                     error: '接続エラー',
                     disconnected: '未接続'
                 },
@@ -1743,10 +1707,10 @@ const ja: LanguageMessages = {
                     serverId: 'サーバー ID',
                     serverIdPlaceholder: 'オプション、空白の場合は自動生成',
                     serverIdHint: '英数字、アンダースコア、ハイフンのみ使用可能、JSON 設定でサーバーを識別するために使用',
-                    serverIdError: 'ID には英数字、アンダースコア、ハイフンのみ使用できます',
+                    serverIdError: sharedJa.components.settings.mcpSettings.form.serverIdError,
                     serverName: 'サーバー名',
                     serverNamePlaceholder: '例: マイ MCP サーバー',
-                    description: '説明',
+                    description: sharedJa.components.settings.mcpSettings.form.description,
                     descriptionPlaceholder: 'オプションの説明',
                     required: '*',
                     transportType: 'トランスポートタイプ',
@@ -1806,7 +1770,7 @@ const ja: LanguageMessages = {
                 generalWorker: '汎用ワーカーを有効化（お手軽モード）',
                 generalWorkerHint: 'メインモデルが設定不要の "General Worker" を直接派遣できます。現在のチャンネルと全ツール権限を継承し、数はモデルが自分で決定。エージェントの手動設定は不要です',
                 basicInfo: '基本情報',
-                description: '説明',
+                description: sharedJa.components.settings.subagents.description,
                 descriptionPlaceholder: 'メイン AI がこのサブエージェントを使用すべき状況を説明',
                 maxIterations: '最大イテレーション数',
                 maxIterationsHint: 'このサブエージェントの最大ツール呼び出し回数（-1 で無制限）',
@@ -1889,9 +1853,9 @@ const ja: LanguageMessages = {
                     cancel: 'キャンセル'
                 },
                 errors: {
-                    addFailed: 'モデルの追加に失敗しました',
-                    removeFailed: 'モデルの削除に失敗しました',
-                    setActiveFailed: 'アクティブモデルの設定に失敗しました'
+                    addFailed: sharedJa.components.settings.modelManager.errors.addFailed,
+                    removeFailed: sharedJa.components.settings.modelManager.errors.removeFailed,
+                    setActiveFailed: sharedJa.components.settings.modelManager.errors.setActiveFailed
                 }
             },
             modelSelectionDialog: {
@@ -1962,11 +1926,23 @@ const ja: LanguageMessages = {
                     placeholder: '動的コンテキストテンプレートを入力、{{$WORKSPACE_FILES}}、{{$OPEN_TABS}} などの変数を使用できます...',
                     enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
                     disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。',
-                    strategyTitle: '動的コンテキスト戦略',
-                    strategySingle: '単一の動的コンテキスト（現在の動作）',
-                    strategyPreserve: '古い動的コンテキストを元の位置に保持',
-                    strategyDescription: '単一モードは既存の動作を維持します。保持モードでは、キャッシュ済みの古い動的コンテキストを元のターン位置に戻し、新しいコンテキストを新しいメッセージの前に挿入します。',
-                    strategyPreserveWarning: '保持モードはリクエストのトークン数を増やします。保持するコンテキストが多いほど、コンテキスト裁剪や要約が発生しやすくなります。'
+                    strategyTitle: sharedJa.components.settings.promptSettings.dynamicSection.strategyTitle,
+                    strategySingle: sharedJa.components.settings.promptSettings.dynamicSection.strategySingle,
+                    strategyPreserve: sharedJa.components.settings.promptSettings.dynamicSection.strategyPreserve,
+                    strategyDescription: sharedJa.components.settings.promptSettings.dynamicSection.strategyDescription,
+                    strategyPreserveWarning: sharedJa.components.settings.promptSettings.dynamicSection.strategyPreserveWarning,
+                    strategyVarsPrefix: sharedJa.components.settings.promptSettings.dynamicSection.strategyVarsPrefix,
+                    strategyVarsSeparator: sharedJa.components.settings.promptSettings.dynamicSection.strategyVarsSeparator,
+                    strategyVarsSuffix: sharedJa.components.settings.promptSettings.dynamicSection.strategyVarsSuffix,
+                    strategyVarsWarning: sharedJa.components.settings.promptSettings.dynamicSection.strategyVarsWarning
+                },
+                assemblyMode: {
+                    title: sharedJa.components.settings.promptSettings.assemblyMode.title,
+                    description: sharedJa.components.settings.promptSettings.assemblyMode.description,
+                    legacyLabel: sharedJa.components.settings.promptSettings.assemblyMode.legacyLabel,
+                    legacyDescription: sharedJa.components.settings.promptSettings.assemblyMode.legacyDescription,
+                    entriesLabel: sharedJa.components.settings.promptSettings.assemblyMode.entriesLabel,
+                    entriesDescription: sharedJa.components.settings.promptSettings.assemblyMode.entriesDescription
                 },
                 toolPolicy: {
                     title: 'ツールポリシー',
@@ -2427,7 +2403,7 @@ const ja: LanguageMessages = {
                         enableDiffGuardDesc: '一度に削除される行数がファイル全体の指定割合を超えた場合に警告を表示します',
                         diffGuardThreshold: 'ガード閾値',
                         diffGuardThresholdDesc: '削除行数がファイル全体の行数に対するこの割合を超えた場合に警告をトリガーします',
-                        diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。',
+                        diffGuardWarning: sharedJa.components.settings.toolSettings.files.applyDiff.diffGuardWarning,
                         outsideWorkspaceAccess: 'ワークスペース外の書き込み',
                         outsideWorkspaceDesc: 'apply_diff がワークスペース外の既存ファイルを変更できるかを制御します。',
                         outsideWorkspaceDenyDesc: 'apply_diff はワークスペース内のファイルのみ変更できます。',
@@ -2504,7 +2480,7 @@ const ja: LanguageMessages = {
                         setDefaultTooltip: 'デフォルトに設定',
                         executablePath: '実行ファイルパス（オプション）：',
                         executablePathPlaceholder: '空白の場合、システム PATH のパスを使用',
-                        execTimeout: '実行タイムアウト',
+                        execTimeout: sharedJa.components.settings.toolSettings.terminal.executeCommand.execTimeout,
                         timeoutHint: 'この時間を超えるコマンドは自動的に終了されます',
                         timeout30s: '30 秒',
                         timeout1m: '1 分',
@@ -2556,7 +2532,7 @@ const ja: LanguageMessages = {
                     loading: '読み込み中...',
                     loadingConfig: '設定を読み込み中...',
                     saving: '保存中...',
-                    error: 'エラー',
+                    error: sharedJa.components.settings.toolSettings.common.error,
                     retry: '再試行'
                 }
             },
@@ -2593,7 +2569,7 @@ const ja: LanguageMessages = {
                     mcp: 'MCP ツール',
                     activity: '使用時間',
                     sandbox: 'サンドボックス',
-                    other: 'その他'
+                    other: sharedJa.components.settings.toolsSettings.categories.other
                 },
                 dependency: {
                     required: '依存関係が必要',
@@ -2910,8 +2886,8 @@ const ja: LanguageMessages = {
 
         backgroundTasks: {
             running: '実行中',
-            completed: '完了',
-            failed: '失敗',
+            completed: sharedJa.components.backgroundTasks.completed,
+            failed: sharedJa.components.backgroundTasks.failed,
             cancelled: 'キャンセル済み',
             cancel: 'タスクをキャンセル',
             dismiss: '削除',
@@ -2939,7 +2915,7 @@ const ja: LanguageMessages = {
                 loadOlder: '以前のメッセージを読み込む',
                 loadingOlder: '読み込み中…',
                 pause: '一時停止',
-                resume: '再開',
+                resume: sharedJa.components.subagents.monitor.resume,
                 exit: '終了して親ツールを失敗させる',
                 retrying: '自動リトライ {attempt}/{maxAttempts}',
                 retrySuccess: '自動リトライ成功',
@@ -2951,8 +2927,8 @@ const ja: LanguageMessages = {
                     running: '実行中',
                     paused: '一時停止中',
                     awaitingMonitorAction: '操作待ち',
-                    completed: '完了',
-                    failed: '失敗',
+                    completed: sharedJa.components.subagents.monitor.status.completed,
+                    failed: sharedJa.components.subagents.monitor.status.failed,
                     cancelled: 'キャンセル済み',
                     interrupted: '中断'
                 }
@@ -3062,8 +3038,8 @@ const ja: LanguageMessages = {
                     effortMax: '最大',
                     effortXHigh: '超高（Opus 4.7+）',
                     effortHigh: '高（デフォルト）',
-                    effortMedium: '中',
-                    effortLow: '低',
+                    effortMedium: sharedJa.components.channels.anthropic.thinking.effortMedium,
+                    effortLow: sharedJa.components.channels.anthropic.thinking.effortLow,
                     effortCustom: 'カスタム（手動入力）',
                     effortCustomPlaceholder: 'カスタム effort 値を入力（例: max、ultra）',
                     effortHint: 'Claude の思考の深さを制御。レベルが高いほど深く思考しますが、トークン消費が増えます。custom を選択すると任意の effort 値を入力できます',
@@ -3071,7 +3047,7 @@ const ja: LanguageMessages = {
                     displayHint: 'Opus 4.7+ ではデフォルトで思考内容が非表示。「要約」を選択すると可視化された推論出力が復元されます',
                     displayOmitted: '非表示',
                     displayOmittedHint: '思考内容は返されず、後続の会話用の署名のみ保持（Opus 4.7+ のデフォルト）',
-                    displaySummarized: '要約',
+                    displaySummarized: sharedJa.components.channels.anthropic.thinking.displaySummarized,
                     displaySummarizedHint: '思考プロセスの要約が返され、チャットパネルでモデルの推論を確認できます'
                 },
                 promptCaching: {
@@ -3111,9 +3087,9 @@ const ja: LanguageMessages = {
                     levelLabel: '思考レベル',
                     levelHint: 'minimal: 最小限の思考 | low: 少ない思考 | medium: 中程度 | high: 深い思考',
                     levelMinimal: '最小',
-                    levelLow: '低',
-                    levelMedium: '中',
-                    levelHigh: '高',
+                    levelLow: sharedJa.components.channels.gemini.thinking.levelLow,
+                    levelMedium: sharedJa.components.channels.gemini.thinking.levelMedium,
+                    levelHigh: sharedJa.components.channels.gemini.thinking.levelHigh,
                     budgetLabel: '思考バジェット (Token)',
                     budgetPlaceholder: '1024',
                     budgetHint: '思考プロセスに許可されるカスタムトークン数'
@@ -3148,9 +3124,9 @@ const ja: LanguageMessages = {
                     effortHint: 'none: 思考パラメータを一切送信しない（セクション省略、API デフォルトの思考）| minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム。思考オフ時はリクエストに {"thinking":{"type":"disabled"}} を明示送信し、effort は送信しない',
                     effortNone: 'なし',
                     effortMinimal: '極小',
-                    effortLow: '低',
-                    effortMedium: '中',
-                    effortHigh: '高',
+                    effortLow: sharedJa.components.channels.openai.thinking.effortLow,
+                    effortMedium: sharedJa.components.channels.openai.thinking.effortMedium,
+                    effortHigh: sharedJa.components.channels.openai.thinking.effortHigh,
                     effortXHigh: '最高',
                     effortMax: '最大',
                     effortUltra: '究極',
@@ -3275,7 +3251,7 @@ const ja: LanguageMessages = {
             failed: '実行失敗',
             cancelled: 'キャンセル済み',
             approve: '承認',
-            reject: '拒否',
+            reject: sharedJa.components.tools.reject,
             autoExecuted: '自動実行',
             terminate: '終了',
             saveToPath: 'パスに保存',
@@ -3285,7 +3261,7 @@ const ja: LanguageMessages = {
             hideDetails: '詳細を非表示',
             parameters: 'パラメータ',
             result: '結果',
-            error: 'エラー',
+            error: sharedJa.components.tools.error,
             duration: '所要時間',
             file: {
                 readFile: 'ファイルを読み取り',
@@ -3324,14 +3300,14 @@ const ja: LanguageMessages = {
                     total: '合計 {count} 個',
                     noDirectories: '作成するディレクトリがありません',
                     success: '成功',
-                    failed: '失敗'
+                    failed: sharedJa.components.tools.file.createDirectoryPanel.failed,
                 },
                 deleteFilePanel: {
                     title: 'ファイルを削除',
                     total: '合計 {count} 個',
                     noFiles: '削除するファイルがありません',
                     success: '成功',
-                    failed: '失敗'
+                    failed: sharedJa.components.tools.file.deleteFilePanel.failed,
                 },
                 listFilesPanel: {
                     title: 'ファイル一覧',
@@ -3451,7 +3427,7 @@ const ja: LanguageMessages = {
                 executeCommandPanel: {
                     title: 'ターミナル',
                     status: {
-                        failed: '失敗',
+                        failed: sharedJa.components.tools.terminal.executeCommandPanel.status.failed,
                         terminated: '終了',
                         success: '成功',
                         exitCode: '終了コード: {code}',
@@ -3519,7 +3495,7 @@ const ja: LanguageMessages = {
                 title: 'サブエージェント',
                 task: 'タスク',
                 context: 'コンテキスト',
-                completed: '完了',
+                completed: sharedJa.components.tools.subagents.completed,
                 failed: '失敗',
                 executing: '実行中...',
                 partialResponse: '部分レスポンス',
@@ -3549,9 +3525,9 @@ const ja: LanguageMessages = {
                     status: {
                         needDependency: '依存関係が必要',
                         cancelled: 'キャンセル済み',
-                        failed: '失敗',
+                        failed: sharedJa.components.tools.media.cropImagePanel.status.failed,
                         success: '成功',
-                        error: 'エラー',
+                        error: sharedJa.components.tools.media.cropImagePanel.status.error,
                         processing: '処理中...',
                         waiting: '待機中'
                     },
@@ -3581,9 +3557,9 @@ const ja: LanguageMessages = {
                     status: {
                         needDependency: '依存関係が必要',
                         cancelled: 'キャンセル済み',
-                        failed: '失敗',
+                        failed: sharedJa.components.tools.media.generateImagePanel.status.failed,
                         success: '成功',
-                        error: 'エラー',
+                        error: sharedJa.components.tools.media.generateImagePanel.status.error,
                         generating: '生成中...',
                         waiting: '待機中'
                     },
@@ -3612,9 +3588,9 @@ const ja: LanguageMessages = {
                     status: {
                         needDependency: '依存関係が必要',
                         cancelled: 'キャンセル済み',
-                        failed: '失敗',
+                        failed: sharedJa.components.tools.media.removeBackgroundPanel.status.failed,
                         success: '成功',
-                        error: 'エラー',
+                        error: sharedJa.components.tools.media.removeBackgroundPanel.status.error,
                         processing: '処理中...',
                         waiting: '待機中',
                         disabled: '無効'
@@ -3652,9 +3628,9 @@ const ja: LanguageMessages = {
                     status: {
                         needDependency: '依存関係が必要',
                         cancelled: 'キャンセル済み',
-                        failed: '失敗',
+                        failed: sharedJa.components.tools.media.resizeImagePanel.status.failed,
                         success: '成功',
-                        error: 'エラー',
+                        error: sharedJa.components.tools.media.resizeImagePanel.status.error,
                         processing: '処理中...',
                         waiting: '待機中'
                     },
@@ -3687,9 +3663,9 @@ const ja: LanguageMessages = {
                     status: {
                         needDependency: '依存関係が必要',
                         cancelled: 'キャンセル済み',
-                        failed: '失敗',
+                        failed: sharedJa.components.tools.media.rotateImagePanel.status.failed,
                         success: '成功',
-                        error: 'エラー',
+                        error: sharedJa.components.tools.media.rotateImagePanel.status.error,
                         processing: '処理中...',
                         waiting: '待機中'
                     },
@@ -3744,9 +3720,9 @@ const ja: LanguageMessages = {
             continueRequiredMessage: '現在の会話は続行が必要です。通知をクリックすると元のウィンドウに戻れます。',
             continueRequiredMessageWithConversation: '会話「{title}」は続行が必要です。通知をクリックすると元のウィンドウに戻れます。',
             actions: {
-                generatePlan: 'プランを生成',
-                executePlan: 'プランを実行',
-                continue: '続行',
+                generatePlan: sharedJa.app.agentStopNotification.actions.generatePlan,
+                executePlan: sharedJa.app.agentStopNotification.actions.executePlan,
+                continue: sharedJa.app.agentStopNotification.actions.continue,
                 genericConfirmation: 'GrayCode に戻って続行'
             }
         }
@@ -3759,13 +3735,13 @@ const ja: LanguageMessages = {
         invalidConfig: '無効な設定です',
         fileNotFound: 'ファイルが見つかりません',
         permissionDenied: '権限が拒否されました',
-        unknown: '不明なエラー',
+        unknown: sharedJa.errors.unknown,
         connectionFailed: '接続に失敗しました',
         authFailed: '認証に失敗しました',
         rateLimited: 'リクエストが多すぎます。後でもう一度お試しください',
         serverError: 'サーバーエラー',
         invalidResponse: '無効なレスポンス形式です',
-        cancelled: '操作がキャンセルされました'
+        cancelled: sharedJa.errors.cancelled
     },
 
     composables: {
@@ -3774,7 +3750,7 @@ const ja: LanguageMessages = {
                 validationFailed: '添付ファイルの検証に失敗しました',
                 createThumbnailFailed: 'サムネイルの作成に失敗しました',
                 createVideoThumbnailFailed: '動画サムネイルの作成に失敗しました',
-                readFileFailed: 'ファイルの読み取りに失敗しました',
+                readFileFailed: sharedJa.composables.useAttachments.errors.readFileFailed,
                 loadVideoFailed: '動画の読み込みに失敗しました',
                 readResultNotString: '読み取り結果が文字列ではありません'
             }
@@ -3784,7 +3760,7 @@ const ja: LanguageMessages = {
     stores: {
         terminalStore: {
             errors: {
-                killTerminalFailed: 'ターミナルの終了に失敗しました',
+                killTerminalFailed: sharedJa.stores.terminalStore.errors.killTerminalFailed,
                 refreshOutputFailed: 'ターミナル出力の更新に失敗しました'
             }
         },
@@ -3801,9 +3777,9 @@ const ja: LanguageMessages = {
                 editRetryFailed: '編集再試行に失敗しました',
                 deleteFailed: '削除に失敗しました',
                 noConversationSelected: '会話が選択されていません',
-                unknownError: '不明なエラー',
+                unknownError: sharedJa.stores.chatStore.errors.unknownError,
                 restoreFailed: '復元に失敗しました',
-                restoreCheckpointFailed: 'チェックポイントの復元に失敗しました',
+                restoreCheckpointFailed: sharedJa.stores.chatStore.errors.restoreCheckpointFailed,
                 restoreRetryFailed: '復元して再試行に失敗しました',
                 restoreDeleteFailed: '復元して削除に失敗しました',
                 noConfigSelected: '設定が選択されていません',

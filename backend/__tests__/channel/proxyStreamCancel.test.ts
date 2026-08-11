@@ -14,10 +14,10 @@
  * 且正常完成的流不受影响。
  */
 
-import { ChannelManager } from '../../modules/channel/ChannelManager';
+import { ChannelManager } from '../../modules/channel';
 import { proxyStreamFetch } from '../../modules/channel/proxyFetch';
-import { ChannelError, ErrorType } from '../../modules/channel/types';
-import type { GenerateRequest, StreamChunk } from '../../modules/channel/types';
+import { ChannelError, ErrorType } from '../../modules/channel';
+import type { GenerateRequest, StreamChunk } from '../../modules/channel';
 
 // mock 代理 fetch 模块：ChannelManager 只用 createProxyFetch / proxyStreamFetch 两个导出
 jest.mock('../../modules/channel/proxyFetch', () => ({
@@ -94,7 +94,7 @@ beforeEach(() => {
 });
 
 describe('executeStreamRequest（代理模式）取消行为', () => {
-    it('流中途 abort → 抛 CANCELLED_ERROR（不再被吞掉当成正常结束）', async () => {
+    test('流中途 abort → 抛 CANCELLED_ERROR（不再被吞掉当成正常结束）', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
             'data: {"id":"1"}\n\n',
             'data: {"id":"2'  // 半截事件：取消时残留在内部 buffer 的未完成内容
@@ -130,7 +130,7 @@ describe('executeStreamRequest（代理模式）取消行为', () => {
         expect(mockProxyStreamFetch.mock.calls[0][2]).toBe(PROXY_URL);
     });
 
-    it('正常完成：产出所有 chunk 并正常结束，不受影响', async () => {
+    test('正常完成：产出所有 chunk 并正常结束，不受影响', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
             'data: {"id":"1"}\n\n',
             'data: {"id":"2"}\n\n'
@@ -152,7 +152,7 @@ describe('executeStreamRequest（代理模式）取消行为', () => {
         expect(mockProxyStreamFetch.mock.calls[0][2]).toBe(PROXY_URL);
     });
 
-    it('超时（非用户取消）仍抛 TIMEOUT_ERROR', async () => {
+    test('超时（非用户取消）仍抛 TIMEOUT_ERROR', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([], { waitForAbort: true }));
 
         const manager = createManager();
@@ -176,7 +176,7 @@ describe('generateStream（代理模式）取消行为（端到端）', () => {
     const openaiDone = () =>
         `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`;
 
-    it('流中途 abort → 生成器抛 CANCELLED_ERROR（不会把半截流当正常结束）', async () => {
+    test('流中途 abort → 生成器抛 CANCELLED_ERROR（不会把半截流当正常结束）', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
             openaiChunk('Hello')
         ]));
@@ -209,7 +209,7 @@ describe('generateStream（代理模式）取消行为（端到端）', () => {
         });
     });
 
-    it('正常完成：生成器正常结束、所有 chunk 被解析产出', async () => {
+    test('正常完成：生成器正常结束、所有 chunk 被解析产出', async () => {
         mockProxyStreamFetch.mockImplementation(createGracefulProxyStream([
             openaiChunk('Hello'),
             openaiChunk(' world'),

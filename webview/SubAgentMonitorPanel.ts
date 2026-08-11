@@ -6,6 +6,7 @@ import type { SubAgentRunConversationStore } from '../backend/tools/subagents';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
 import { assertSafeId } from '../backend/core/idValidation';
 import type { RunScope } from '../backend/core/RunController';
+import { PUSH_MESSAGE_NAMES } from '../shared/protocol';
 
 /**
  * Monitor 事件 payload 瘦身字段配置。
@@ -238,7 +239,11 @@ export class SubAgentMonitorPanel {
      *          重复派生轻量 manifest 与拷贝活跃 id 数组。
      * 修改方式：manifest 按 runId 缓存，updatedAt 未变化时直接复用。
      * 修改目的：事件热路径只付出一次派生成本。
+     *
+     * 容量上限：run 结束后条目长期驻留（仅 run 被清理 / 面板 dispose 时才删除），
+     *           长时间运行下面板缓存无界增长；超上限按插入序 FIFO 淘汰最旧条目。
      */
+    private static readonly MANIFEST_CACHE_MAX = 64;
     private readonly manifestCache = new Map<string, { manifest: SubAgentRunManifest; updatedAt: number }>();
 
     /**
@@ -323,7 +328,7 @@ export class SubAgentMonitorPanel {
                 const requestId = typeof message?.requestId === 'string' ? message.requestId : '';
                 if (!requestId) return;
                 this.postRoutedMessage({
-                    type: 'error',
+                    type: PUSH_MESSAGE_NAMES.error,
                     requestId,
                     success: false,
                     error: {
@@ -349,8 +354,8 @@ export class SubAgentMonitorPanel {
         // 焦点在 VSCode 窗口时用户看得见界面，不播；窗口失焦（切到其他应用）时才播提醒。
         const pushWindowFocus = (focused: boolean) => {
             this.postRoutedMessage({
-                type: 'command',
-                command: 'windowFocusChanged',
+                type: PUSH_MESSAGE_NAMES.command,
+                command: PUSH_MESSAGE_NAMES.windowFocusChanged,
                 data: { focused: !!focused }
             });
         };
@@ -401,7 +406,7 @@ export class SubAgentMonitorPanel {
             // 修改目的：大输出不会在首屏阶段进入 stringify/postMessage/deserialize/Vue state/Markdown 渲染链路。
             await this.loadConversationSnapshotsIfPossible(this.focusConversationId);
             this.postRoutedMessage({
-                type: 'response',
+                type: PUSH_MESSAGE_NAMES.response,
                 requestId: message.requestId,
                 success: true,
                 data: this.createManifestPayload(true)
@@ -409,8 +414,8 @@ export class SubAgentMonitorPanel {
             // 补推一次窗口焦点：open() 时的推送可能早于前端监听器注册（面板无 ready 队列），
             // 前端若停在默认 focused=true，失焦场景的提示音会失效直到下次焦点变化。
             this.postRoutedMessage({
-                type: 'command',
-                command: 'windowFocusChanged',
+                type: PUSH_MESSAGE_NAMES.command,
+                command: PUSH_MESSAGE_NAMES.windowFocusChanged,
                 data: { focused: !!vscode.window.state.focused }
             });
             return;
@@ -420,7 +425,7 @@ export class SubAgentMonitorPanel {
             const runId = typeof message.data?.runId === 'string' ? message.data.runId.trim() : '';
             if (!runId) {
                 this.postRoutedMessage({
-                    type: 'error',
+                    type: PUSH_MESSAGE_NAMES.error,
                     requestId: message.requestId,
                     success: false,
                     error: { code: 'SUBAGENT_MONITOR_WINDOW_INVALID_INPUT', message: 'runId is required' }
@@ -438,7 +443,7 @@ export class SubAgentMonitorPanel {
             const contentWindow = subAgentRunEventBus.getContentWindow(runId, message.data?.options || {});
             if (!contentWindow) {
                 this.postRoutedMessage({
-                    type: 'error',
+                    type: PUSH_MESSAGE_NAMES.error,
                     requestId: message.requestId,
                     success: false,
                     error: { code: 'SUBAGENT_RUN_NOT_FOUND', message: `SubAgent run not found: ${runId}` }
@@ -446,7 +451,7 @@ export class SubAgentMonitorPanel {
                 return;
             }
             this.postRoutedMessage({
-                type: 'response',
+                type: PUSH_MESSAGE_NAMES.response,
                 requestId: message.requestId,
                 success: true,
                 data: {
@@ -478,7 +483,7 @@ export class SubAgentMonitorPanel {
             const handled = await this.routeMessage(message, this.panel.webview);
             if (!handled && message.requestId) {
                 this.postRoutedMessage({
-                    type: 'error',
+                    type: PUSH_MESSAGE_NAMES.error,
                     requestId: message.requestId,
                     success: false,
                     error: {
@@ -512,6 +517,13 @@ export class SubAgentMonitorPanel {
             return cached.manifest;
         }
         this.manifestCache.set(runId, { manifest, updatedAt: manifest.updatedAt });
+        // 容量上限：超出时按插入序淘汰最旧条目（Map 迭代序 = 插入序）
+        if (this.manifestCache.size > SubAgentMonitorPanel.MANIFEST_CACHE_MAX) {
+            const oldestRunId = this.manifestCache.keys().next().value;
+            if (oldestRunId !== undefined) {
+                this.manifestCache.delete(oldestRunId);
+            }
+        }
         return manifest;
     }
 
@@ -538,7 +550,7 @@ export class SubAgentMonitorPanel {
             return;
         }
         this.postRoutedMessage({
-            type: 'subagentMonitor.event',
+            type: PUSH_MESSAGE_NAMES['subagentMonitor.event'],
             data: {
                 event: createMonitorEventPayload(event, snapshot),
                 // 修改原因：无论高频 llm_delta 还是低频 content_snapshot/run_completed，都不能再附完整 snapshot.contents。
@@ -599,7 +611,7 @@ export class SubAgentMonitorPanel {
                 payload: mergedPayload
             };
             this.postRoutedMessage({
-                type: 'subagentMonitor.event',
+                type: PUSH_MESSAGE_NAMES['subagentMonitor.event'],
                 data: {
                     event: createMonitorEventPayload(mergedEvent, snapshot),
                     // 修改原因：无论高频 llm_delta 还是低频 content_snapshot/run_completed，都不能再附完整 snapshot.contents。
@@ -651,7 +663,7 @@ export class SubAgentMonitorPanel {
 
     private postManifest(options: { navigate: boolean } = { navigate: true }): void {
         this.postRoutedMessage({
-            type: 'subagentMonitor.manifest',
+            type: PUSH_MESSAGE_NAMES['subagentMonitor.manifest'],
             data: this.createManifestPayload(options.navigate)
         });
     }

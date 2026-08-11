@@ -3,9 +3,26 @@ import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore, useChatStore } from '@/stores'
-import { CustomSelect, InputDialog, ConfirmDialog, type SelectOption } from '../common'
+import { InputDialog, ConfirmDialog, type SelectOption } from '../common'
 import { copyToClipboard } from '@/utils/format'
+import { MESSAGE_NAMES } from '@shared/protocol'
 import PromptEntriesEditor from './PromptEntriesEditor.vue'
+import ModeSelectorBar from './prompt/ModeSelectorBar.vue'
+import AssemblyModeSelector from './prompt/AssemblyModeSelector.vue'
+import StaticTemplateSection from './prompt/StaticTemplateSection.vue'
+import DynamicTemplateSection from './prompt/DynamicTemplateSection.vue'
+import ModulesReference from './prompt/ModulesReference.vue'
+import ToolPolicySection from './prompt/ToolPolicySection.vue'
+import TokenCountSection from './prompt/TokenCountSection.vue'
+import ImportModesDialog from './prompt/ImportModesDialog.vue'
+import type {
+  PromptModule,
+  DynamicContextStrategy,
+  PromptAssemblyMode,
+  PromptEntry,
+  ToolInfo,
+  ToolPolicyMode
+} from './prompt/types'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -13,32 +30,6 @@ const chatStore = useChatStore()
 
 // 渠道类型
 type ChannelType = 'gemini' | 'openai' | 'anthropic'
-
-// 提示词模块定义
-interface PromptModule {
-  id: string
-  name: string
-  description: string
-  example?: string
-  requiresConfig?: string
-}
-
-type DynamicContextStrategy = 'single' | 'preserve'
-type PromptEntryRole = 'system' | 'user' | 'assistant'
-type PromptAssemblyMode = 'legacy' | 'entries'
-type PromptEntryType = 'prompt' | 'chat_history'
-
-interface PromptEntry {
-  id: string
-  name: string
-  type?: PromptEntryType
-  enabled: boolean
-  role: PromptEntryRole
-  content: string
-  /** 伪造思考内容（仅 assistant 角色生效，随临时消息以 thought part 回传） */
-  fakeThought?: string
-  order: number
-}
 
 // 提示词模式
 interface PromptMode {
@@ -53,17 +44,6 @@ interface PromptMode {
   promptEntries?: PromptEntry[]
   toolPolicy?: string[]
 }
-
-interface ToolInfo {
-  name: string
-  description: string
-  enabled: boolean
-  category?: string
-  // MCP tools may include extra fields; ignore them here.
-  [key: string]: any
-}
-
-type ToolPolicyMode = 'inherit' | 'custom'
 
 // 系统提示词配置（支持多模式）
 interface SystemPromptConfig {
@@ -468,9 +448,8 @@ const renamingModeId = ref('')
 const renamingModeName = ref('')
 const importPayloadText = ref('')
 const importErrorMessage = ref('')
-const importFileInputRef = ref<HTMLInputElement | null>(null)
 
-// 模式选项（用于 CustomSelect）
+// 模式选项（用于模式下拉选择）
 const modeOptions = computed<SelectOption[]>(() => {
   return modes.value.map(m => ({
     value: m.id,
@@ -766,7 +745,7 @@ async function persistImportedModes(importedModes: PromptMode[]) {
       delete (mode as any).promptEntries
     }
 
-    await sendToExtension('savePromptMode', { mode })
+    await sendToExtension(MESSAGE_NAMES.savePromptMode, { mode })
     savedModes.push(mode)
   }
 
@@ -876,8 +855,8 @@ async function loadAvailableTools() {
   isLoadingTools.value = true
   try {
     const [builtin, mcp] = await Promise.all([
-      sendToExtension<{ tools: ToolInfo[] }>('tools.getTools', {}),
-      sendToExtension<{ tools: ToolInfo[] }>('tools.getMcpTools', {})
+      sendToExtension<{ tools: ToolInfo[] }>(MESSAGE_NAMES['tools.getTools'], {}),
+      sendToExtension<{ tools: ToolInfo[] }>(MESSAGE_NAMES['tools.getMcpTools'], {})
     ])
 
     const merged: ToolInfo[] = [
@@ -929,6 +908,17 @@ const hasChanges = computed(() => {
 const isLoading = ref(true)
 const isSaving = ref(false)
 const saveMessage = ref('')
+const toastVisible = ref(false)
+const toastMessage = ref('')
+const toastSuccess = ref(true)
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+function showToast(message: string, success: boolean) {
+  toastMessage.value = message
+  toastSuccess.value = success
+  toastVisible.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toastVisible.value = false }, 2500)
+}
 const isFirstLoad = ref(true)  // 标记是否首次加载
 
 // Token 计数状态
@@ -952,7 +942,7 @@ const expandedModule = ref<string | null>(null)
 async function loadConfig() {
   isLoading.value = true
   try {
-    const result = await sendToExtension<SystemPromptConfig>('getSystemPromptConfig', {})
+    const result = await sendToExtension<SystemPromptConfig>(MESSAGE_NAMES.getSystemPromptConfig, {})
     if (result) {
       // 加载模式列表
       modes.value = Object.values(result.modes || {})
@@ -1070,9 +1060,8 @@ async function saveConfig() {
     if (toolPolicyMode.value !== 'custom') {
       delete (updatedMode as any).toolPolicy
     }
-    
-    await sendToExtension('savePromptMode', { mode: updatedMode })
-    
+    await sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: updatedMode })
+
     // 更新本地配置为清理后的版本
     config.template = cleanedTemplate
     config.dynamicTemplate = cleanedDynamicTemplate
@@ -1093,6 +1082,7 @@ async function saveConfig() {
     // 通知 InputArea 刷新模式列表，避免保存动态上下文策略后输入区仍显示旧模式数据
     settingsStore.refreshPromptModes()
     saveMessage.value = t('components.settings.promptSettings.saveSuccess')
+    showToast(t('components.settings.promptSettings.saveSuccess'), true)
     setTimeout(() => { saveMessage.value = '' }, 2000)
     
     // 保存成功后自动更新 token 计数（辅助操作：不阻塞保存成功反馈，
@@ -1101,6 +1091,7 @@ async function saveConfig() {
   } catch (error) {
     console.error('Failed to save system prompt config:', error)
     saveMessage.value = t('components.settings.promptSettings.saveFailed')
+    showToast(t('components.settings.promptSettings.saveFailed'), false)
   } finally {
     isSaving.value = false
   }
@@ -1116,6 +1107,7 @@ async function countTokens() {
   if (!config.template) {
     staticTokenCount.value = null
     dynamicTokenCount.value = null
+    isCountingTokens.value = false
     return
   }
   
@@ -1128,7 +1120,7 @@ async function countTokens() {
       staticTokens?: number
       dynamicTokens?: number
       error?: string
-    }>('countSystemPromptTokens', {
+    }>(MESSAGE_NAMES.countSystemPromptTokens, {
       staticText: config.template,
       channelType: selectedChannel.value,
       conversationId: chatStore.currentConversationId
@@ -1272,7 +1264,7 @@ async function confirmAddMode(name: string) {
   const id = createModeId()
   const newMode: PromptMode = {
     id,
-    name,
+    name: getUniqueModeName(name),
     icon: 'symbol-method',
     template: DEFAULT_TEMPLATE,
     promptAssemblyMode: DEFAULT_PROMPT_ASSEMBLY_MODE,
@@ -1282,7 +1274,7 @@ async function confirmAddMode(name: string) {
   }
   
   try {
-    await sendToExtension('savePromptMode', { mode: newMode })
+    await sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: newMode })
     modes.value.push(newMode)
     selectedModeId.value = id
     loadModeConfig(id)
@@ -1327,7 +1319,7 @@ async function confirmDuplicateMode(name: string) {
   }
 
   try {
-    await sendToExtension('savePromptMode', { mode: duplicatedMode })
+    await sendToExtension(MESSAGE_NAMES.savePromptMode, { mode: duplicatedMode })
     modes.value.push(duplicatedMode)
     selectedModeId.value = duplicatedMode.id
     loadModeConfig(duplicatedMode.id)
@@ -1356,10 +1348,6 @@ async function confirmImportModes() {
     console.error('Failed to import prompt modes:', error)
     importErrorMessage.value = error?.message || t('components.settings.promptSettings.modes.importFailed')
   }
-}
-
-function triggerImportFilePicker() {
-  importFileInputRef.value?.click()
 }
 
 async function handleImportFileChange(event: Event) {
@@ -1394,7 +1382,7 @@ async function confirmRenameMode(newName: string) {
   if (!mode || !normalizedName || normalizedName === mode.name) return
   
   try {
-    const result = await sendToExtension<{ mode?: PromptMode }>('renamePromptMode', {
+    const result = await sendToExtension<{ mode?: PromptMode }>(MESSAGE_NAMES.renamePromptMode, {
       modeId: renamingModeId.value,
       name: normalizedName
     })
@@ -1425,7 +1413,7 @@ async function confirmDeleteMode() {
   if (modes.value.length <= 1) return
   
   try {
-    await sendToExtension('deletePromptMode', { modeId })
+    await sendToExtension(MESSAGE_NAMES.deletePromptMode, { modeId })
     modes.value = modes.value.filter(m => m.id !== modeId)
     // 切换到第一个可用的模式
     const firstMode = modes.value[0]
@@ -1464,108 +1452,26 @@ watch(selectedChannel, () => {
     
     <template v-else>
       <!-- 模式选择栏 -->
-      <div class="mode-selector-bar" data-search-anchor="prompt-mode-selector">
-        <div class="mode-selector-left">
-          <label class="mode-label">
-            <i class="codicon codicon-symbol-method"></i>
-            <span class="mode-label-text">{{ t('components.settings.promptSettings.modes.label') }}</span>
-          </label>
-          <CustomSelect
-            :model-value="selectedModeId"
-            :options="modeOptions"
-            :placeholder="t('components.settings.promptSettings.modes.label')"
-            :searchable="true"
-            class="mode-select-dropdown"
-            @update:model-value="handleModeChange"
-          />
-        </div>
-        <div class="mode-actions">
-          <button
-            class="mode-action-btn save-action-btn"
-            @click="saveConfig"
-            :disabled="isSaving"
-            :title="t('components.settings.promptSettings.saveButton')"
-          >
-            <i :class="['codicon', isSaving ? 'codicon-loading codicon-modifier-spin' : 'codicon-save']"></i>
-            <span class="save-action-text">{{ t('components.settings.promptSettings.saveButton') }}</span>
-          </button>
-          <span class="mode-actions-divider"></span>
-          <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
-            <i class="codicon codicon-add"></i>
-          </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openDuplicateModeDialog" 
-            :title="t('components.settings.promptSettings.modes.duplicate')"
-          >
-            <i class="codicon codicon-copy"></i>
-          </button>
-          <button 
-            class="mode-action-btn" 
-            @click="exportPromptModes('current')" 
-            :title="t('components.settings.promptSettings.modes.exportCurrent')"
-          >
-            <i class="codicon codicon-export"></i>
-          </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openImportModeDialog" 
-            :title="t('components.settings.promptSettings.modes.import')"
-          >
-            <i class="codicon codicon-cloud-upload"></i>
-          </button>
-          <button 
-            class="mode-action-btn" 
-            @click="openRenameModeDialog(selectedModeId)" 
-            :title="t('components.settings.promptSettings.modes.rename')"
-          >
-            <i class="codicon codicon-edit"></i>
-          </button>
-          <button 
-            class="mode-action-btn danger" 
-            @click="openDeleteConfirm()" 
-            :title="t('components.settings.promptSettings.modes.delete')"
-            :disabled="modes.length <= 1"
-          >
-            <i class="codicon codicon-trash"></i>
-          </button>
-        </div>
-      </div>
+      <ModeSelectorBar
+        :selected-mode-id="selectedModeId"
+        :mode-options="modeOptions"
+        :is-saving="isSaving"
+        :can-delete="modes.length > 1"
+        @update:model-value="handleModeChange"
+        @save="saveConfig"
+        @add="openAddModeDialog"
+        @duplicate="openDuplicateModeDialog"
+        @export-current="exportPromptModes('current')"
+        @import="openImportModeDialog"
+        @rename="openRenameModeDialog(selectedModeId)"
+        @delete="openDeleteConfirm()"
+      />
 
       <!-- 提示词组装方式 -->
-      <div class="template-section assembly-section" data-search-anchor="prompt-assembly">
-        <div class="section-header">
-          <label class="section-label">
-            <i class="codicon codicon-settings-gear"></i>
-            提示词组装方式
-          </label>
-        </div>
-        <p class="section-description">
-          每个模式只能选择一种组装方式：传统模板或预设条目。
-        </p>
-        <div class="assembly-options">
-          <label class="radio-option assembly-option">
-            <input
-              type="radio"
-              value="legacy"
-              :checked="promptAssemblyMode === 'legacy'"
-              @change="handlePromptAssemblyModeChange('legacy')"
-            />
-            <span class="radio-text">传统模板</span>
-            <span class="assembly-option-desc">使用系统提示词模板和动态上下文模板。</span>
-          </label>
-          <label class="radio-option assembly-option">
-            <input
-              type="radio"
-              value="entries"
-              :checked="promptAssemblyMode === 'entries'"
-              @change="handlePromptAssemblyModeChange('entries')"
-            />
-            <span class="radio-text">预设条目</span>
-            <span class="assembly-option-desc">使用可排序条目，并通过 Chat History 控制真实历史位置。</span>
-          </label>
-        </div>
-      </div>
+      <AssemblyModeSelector
+        :model-value="promptAssemblyMode"
+        @update:model-value="handlePromptAssemblyModeChange"
+      />
 
       <!-- 动态上下文保留策略：传统模板和预设条目都生效 -->
       <div class="template-section dynamic-strategy-section" data-search-anchor="prompt-dynamic-strategy">
@@ -1625,399 +1531,72 @@ watch(selectedChannel, () => {
       
       <template v-else>
         <!-- 静态系统提示词编辑区 -->
-        <div class="template-section" data-search-anchor="static-prompt">
-        <div class="section-header">
-          <label class="section-label">
-            <i class="codicon codicon-file-code"></i>
-            {{ t('components.settings.promptSettings.staticSection.title') }}
-            <span class="section-badge cacheable">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
-          </label>
-          <button class="reset-btn" @click="showResetStaticConfirm = true">
-            <i class="codicon codicon-discard"></i>
-            {{ t('components.settings.promptSettings.templateSection.resetButton') }}
-          </button>
-        </div>
-        
-        <p class="section-description">
-          {{ t('components.settings.promptSettings.staticSection.description') }}
-        </p>
-        
-        <textarea
-          v-model="config.template"
-          class="template-textarea"
-          :placeholder="t('components.settings.promptSettings.staticSection.placeholder')"
-          rows="12"
-        ></textarea>
-        </div>
-      
+        <StaticTemplateSection v-model="config.template" @reset="showResetStaticConfirm = true" />
+
         <!-- 动态上下文模板编辑区 -->
-        <div class="template-section dynamic-section" data-search-anchor="dynamic-context">
-        <div class="section-header">
-          <label class="section-label">
-            <i class="codicon codicon-sync"></i>
-            {{ t('components.settings.promptSettings.dynamicSection.title') }}
-            <span class="section-badge realtime">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
-          </label>
-          <div class="section-header-actions">
-            <!-- 启用开关 -->
-            <label class="toggle-switch" :title="t('components.settings.promptSettings.dynamicSection.enableTooltip')">
-              <input 
-                type="checkbox" 
-                v-model="config.dynamicTemplateEnabled"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-            <button class="reset-btn" @click="showResetDynamicConfirm = true" :disabled="!config.dynamicTemplateEnabled">
-              <i class="codicon codicon-discard"></i>
-              {{ t('components.settings.promptSettings.templateSection.resetButton') }}
-            </button>
-          </div>
-        </div>
-        
-        <p class="section-description">
-          {{ t('components.settings.promptSettings.dynamicSection.description') }}
-        </p>
-        
-        <!-- 禁用时显示提示 -->
-        <div v-if="!config.dynamicTemplateEnabled" class="disabled-notice">
-          <i class="codicon codicon-info"></i>
-          <span>{{ t('components.settings.promptSettings.dynamicSection.disabledNotice') }}</span>
-        </div>
-        
-        <textarea
-          v-else
+        <DynamicTemplateSection
           v-model="config.dynamicTemplate"
-          class="template-textarea"
-          :placeholder="t('components.settings.promptSettings.dynamicSection.placeholder')"
-          rows="10"
-        ></textarea>
-        </div>
+          v-model:enabled="config.dynamicTemplateEnabled"
+          v-model:strategy="config.dynamicContextStrategy"
+          :format-module-id="formatModuleId"
+          @reset="showResetDynamicConfirm = true"
+        />
       </template>
 
       <!-- 可用变量参考（可收缩，默认收起） -->
-      <div class="modules-reference collapsible" data-search-anchor="prompt-modules">
-        <button
-          type="button"
-          class="reference-header"
-          :aria-expanded="!collapsedReference"
-          aria-controls="prompt-modules-reference-content"
-          @click="collapsedReference = !collapsedReference"
-        >
-          <span class="reference-title">
-            <i class="codicon codicon-references"></i>
-            {{ t('components.settings.promptSettings.modulesReference.title') }}
-          </span>
-          <i class="codicon" :class="collapsedReference ? 'codicon-chevron-right' : 'codicon-chevron-down'"></i>
-        </button>
+      <ModulesReference
+        v-model:collapsed="collapsedReference"
+        :expanded-module="expandedModule"
+        :static-modules="STATIC_PROMPT_MODULES"
+        :dynamic-modules="DYNAMIC_CONTEXT_MODULES"
+        :format-module-id="formatModuleId"
+        @toggle-module="toggleModule"
+        @insert-static="insertStaticModule"
+        @insert-dynamic="insertDynamicModule"
+      />
+      <!-- 模式工具策略 -->
+      <ToolPolicySection
+        v-model="toolPolicyMode"
+        v-model:search-query="toolSearchQuery"
+        :is-loading-tools="isLoadingTools"
+        :available-tools="availableTools"
+        :grouped-tools="groupedTools"
+        :get-category-display-name="getCategoryDisplayName"
+        :is-tool-selected="isToolSelected"
+        :tool-policy="toolPolicy"
+        @select-all="selectAllTools"
+        @clear="clearAllTools"
+        @toggle-tool="toggleTool"
+      />
 
-        <div v-if="!collapsedReference" id="prompt-modules-reference-content">
-          <!-- 静态变量组 -->
-          <div class="modules-group">
-            <div class="group-header">
-              <i class="codicon codicon-lock"></i>
-              <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
-              <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
-            </div>
-            <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
-
-            <div class="modules-list">
-              <div
-                v-for="module in STATIC_PROMPT_MODULES"
-                :key="module.id"
-                class="module-item"
-                :class="{ expanded: expandedModule === module.id }"
-              >
-                <div class="module-header" @click="toggleModule(module.id)">
-                  <div class="module-info">
-                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                  </div>
-                  <button
-                    class="insert-btn"
-                    @click.stop="insertStaticModule(module.id)"
-                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                  >
-                    <i class="codicon codicon-add"></i>
-                  </button>
-                </div>
-
-                <div v-if="expandedModule === module.id" class="module-details">
-                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-
-                  <div v-if="module.requiresConfig" class="module-requires">
-                    <i class="codicon codicon-info"></i>
-                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                  </div>
-
-                  <div v-if="module.example" class="module-example">
-                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                    <pre>{{ module.example }}</pre>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 动态变量组 -->
-          <div class="modules-group">
-            <div class="group-header">
-              <i class="codicon codicon-sync"></i>
-              <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
-              <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
-            </div>
-            <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
-
-            <div class="modules-list">
-              <div
-                v-for="module in DYNAMIC_CONTEXT_MODULES"
-                :key="module.id"
-                class="module-item"
-                :class="{ expanded: expandedModule === module.id }"
-              >
-                <div class="module-header" @click="toggleModule(module.id)">
-                  <div class="module-info">
-                    <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                    <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-                  </div>
-                  <button
-                    class="insert-btn"
-                    @click.stop="insertDynamicModule(module.id)"
-                    :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-                  >
-                    <i class="codicon codicon-add"></i>
-                  </button>
-                </div>
-
-                <div v-if="expandedModule === module.id" class="module-details">
-                  <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-
-                  <div v-if="module.requiresConfig" class="module-requires">
-                    <i class="codicon codicon-info"></i>
-                    <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
-                  </div>
-
-                  <div v-if="module.example" class="module-example">
-                    <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                    <pre>{{ module.example }}</pre>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="template-section tool-policy-section" data-search-anchor="tool-policy">
-        <div class="section-header">
-          <label class="section-label">
-            <i class="codicon codicon-tools"></i>
-            {{ t('components.settings.promptSettings.toolPolicy.title') }}
-          </label>
-        </div>
-
-        <p class="section-description">
-          {{ t('components.settings.promptSettings.toolPolicy.description') }}
-        </p>
-
-        <div class="tool-policy-mode-row">
-          <label class="radio-option">
-            <input type="radio" value="inherit" v-model="toolPolicyMode" />
-            <span class="radio-text">{{ t('components.settings.promptSettings.toolPolicy.inherit') }}</span>
-          </label>
-          <label class="radio-option">
-            <input type="radio" value="custom" v-model="toolPolicyMode" />
-            <span class="radio-text">{{ t('components.settings.promptSettings.toolPolicy.custom') }}</span>
-          </label>
-        </div>
-
-        <div v-if="toolPolicyMode === 'inherit'" class="tool-policy-notice">
-          <i class="codicon codicon-info"></i>
-          <span>{{ t('components.settings.promptSettings.toolPolicy.inheritHint') }}</span>
-        </div>
-
-        <div v-else class="tool-policy-custom">
-          <div class="tool-policy-toolbar">
-            <div class="tool-search">
-              <i class="codicon codicon-search"></i>
-              <input
-                v-model="toolSearchQuery"
-                type="text"
-                class="tool-search-input"
-                :placeholder="t('components.settings.promptSettings.toolPolicy.searchPlaceholder')"
-              />
-            </div>
-
-            <div class="tool-policy-buttons">
-              <button
-                class="small-btn"
-                @click="selectAllTools"
-                :disabled="isLoadingTools || availableTools.length === 0"
-              >
-                {{ t('components.settings.promptSettings.toolPolicy.selectAll') }}
-              </button>
-              <button
-                class="small-btn"
-                @click="clearAllTools"
-                :disabled="toolPolicy.length === 0"
-              >
-                {{ t('components.settings.promptSettings.toolPolicy.clear') }}
-              </button>
-            </div>
-          </div>
-
-          <div v-if="isLoadingTools" class="tool-policy-loading">
-            <i class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span>{{ t('components.settings.promptSettings.toolPolicy.loadingTools') }}</span>
-          </div>
-
-          <div v-else class="tool-policy-list">
-            <div v-if="availableTools.length === 0" class="tool-policy-empty">
-              {{ t('components.settings.promptSettings.toolPolicy.noTools') }}
-            </div>
-            <template v-else>
-              <div v-for="(tools, category) in groupedTools" :key="category" class="tool-category">
-                <div class="tool-category-header">
-                  <span class="tool-category-name">{{ getCategoryDisplayName(category) }}</span>
-                  <span class="tool-category-count">{{ tools.length }}</span>
-                </div>
-                <div class="tool-items">
-                  <label v-for="tool in tools" :key="tool.name" class="tool-item">
-                    <input
-                      type="checkbox"
-                      :checked="isToolSelected(tool.name)"
-                      @change="toggleTool(tool.name, ($event.target as HTMLInputElement).checked)"
-                    />
-                    <span class="tool-item-main">
-                      <span class="tool-name">{{ tool.name }}</span>
-                      <span v-if="tool.description" class="tool-desc">{{ tool.description }}</span>
-                    </span>
-                    <span v-if="tool.enabled === false" class="tool-disabled-badge">
-                      {{ t('components.settings.promptSettings.toolPolicy.disabledBadge') }}
-                    </span>
-                  </label>
-                </div>
-              </div>
-            </template>
-          </div>
-
-          <div v-if="toolPolicy.length === 0" class="tool-policy-warning">
-            <i class="codicon codicon-warning"></i>
-            <span>{{ t('components.settings.promptSettings.toolPolicy.emptyWarning') }}</span>
-          </div>
-        </div>
-      </div>
-      
-      <!-- 保存按钮和 Token 计数 -->
-      <div class="save-section">
-        <div class="save-row">
-          <button
-            class="save-btn"
-            @click="saveConfig"
-            :disabled="isSaving"
-          >
-            <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-            <span v-else>{{ t('components.settings.promptSettings.saveButton') }}</span>
-          </button>
-          <span v-if="saveMessage" class="save-message" :class="{ success: saveMessage === t('components.settings.promptSettings.saveSuccess') }">
-            {{ saveMessage }}
-          </span>
-        </div>
-        
-        <!-- Token 计数显示 -->
-        <div class="token-count-section" data-search-anchor="prompt-token-count">
-          <div class="token-count-header">
-            <label class="token-label">
-              <i class="codicon codicon-symbol-numeric"></i>
-              {{ t('components.settings.promptSettings.tokenCount.label') }}
-            </label>
-            
-            <select
-              v-model="selectedChannel"
-              class="channel-select"
-              :title="t('components.settings.promptSettings.tokenCount.channelTooltip')"
-            >
-              <option v-for="opt in channelOptions" :key="opt.value" :value="opt.value">
-                {{ opt.label }}
-              </option>
-            </select>
-            
-            <button
-              class="refresh-btn"
-              @click="countTokens"
-              :disabled="isCountingTokens"
-              :title="t('components.settings.promptSettings.tokenCount.refreshTooltip')"
-            >
-              <i :class="['codicon', isCountingTokens ? 'codicon-loading codicon-modifier-spin' : 'codicon-refresh']"></i>
-            </button>
-          </div>
-          
-          <!-- 分别显示静态和动态 token 数 -->
-          <div class="token-count-details">
-            <!-- 静态模板 token -->
-            <div class="token-count-item">
-              <span 
-                class="token-item-label static-label" 
-                :title="t('components.settings.promptSettings.tokenCount.staticTooltip')"
-              >
-                <i class="codicon codicon-lock"></i>
-                {{ t('components.settings.promptSettings.tokenCount.staticLabel') }}
-              </span>
-              <div class="token-value">
-                <template v-if="isCountingTokens">
-                  <i class="codicon codicon-loading codicon-modifier-spin"></i>
-                </template>
-                <template v-else-if="staticTokenCount !== null">
-                  <span class="token-number static">{{ formatTokenCount(staticTokenCount) }}</span>
-                  <span class="token-unit">tokens</span>
-                </template>
-                <template v-else-if="tokenCountError">
-                  <span class="token-error" :title="tokenCountError">
-                    <i class="codicon codicon-warning"></i>
-                    {{ t('components.settings.promptSettings.tokenCount.failed') }}
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="token-na">--</span>
-                </template>
-              </div>
-            </div>
-            
-            <!-- 动态上下文 token -->
-            <div class="token-count-item">
-              <span 
-                class="token-item-label dynamic-label" 
-                :title="t('components.settings.promptSettings.tokenCount.dynamicTooltip')"
-              >
-                <i class="codicon codicon-sync"></i>
-                {{ t('components.settings.promptSettings.tokenCount.dynamicLabel') }}
-              </span>
-              <div class="token-value">
-                <template v-if="isCountingTokens">
-                  <i class="codicon codicon-loading codicon-modifier-spin"></i>
-                </template>
-                <template v-else-if="dynamicTokenCount !== null">
-                  <span class="token-number dynamic">{{ formatTokenCount(dynamicTokenCount) }}</span>
-                  <span class="token-unit">tokens</span>
-                </template>
-                <template v-else-if="tokenCountError">
-                  <span class="token-error" :title="tokenCountError">
-                    <i class="codicon codicon-warning"></i>
-                    {{ t('components.settings.promptSettings.tokenCount.failed') }}
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="token-na">--</span>
-                </template>
-              </div>
-            </div>
-          </div>
-          
-          <p class="token-hint">
-            {{ t('components.settings.promptSettings.tokenCount.hint') }}
-          </p>
-        </div>
-      </div>
+      <!-- Token 计数 -->
+      <TokenCountSection
+        v-model:selected-channel="selectedChannel"
+        :is-counting-tokens="isCountingTokens"
+        :static-token-count="staticTokenCount"
+        :dynamic-token-count="dynamicTokenCount"
+        :token-count-error="tokenCountError"
+        :channel-options="channelOptions"
+        :format-token-count="formatTokenCount"
+        @refresh="countTokens"
+      />
     </template>
-    
+
+    <!-- 保存浮窗提示 -->
+    <Transition name="toast-fade">
+      <div
+        v-if="toastVisible"
+        class="save-toast"
+        :class="{ success: toastSuccess }"
+        :role="toastSuccess ? 'status' : 'alert'"
+        :aria-live="toastSuccess ? 'polite' : 'assertive'"
+        aria-atomic="true"
+      >
+        <i :class="['codicon', toastSuccess ? 'codicon-check' : 'codicon-error']" aria-hidden="true"></i>
+        {{ toastMessage }}
+      </div>
+    </Transition>
+
     <!-- 添加模式对话框 -->
     <InputDialog
       v-model="showAddModeDialog"
@@ -2037,59 +1616,18 @@ watch(selectedChannel, () => {
     />
 
     <!-- 导入模式对话框 -->
-    <Teleport to="body">
-      <Transition name="dialog-fade">
-        <div v-if="showImportModeDialog" class="import-dialog-overlay" @click.self="showImportModeDialog = false">
-          <div class="import-dialog">
-            <div class="import-dialog-header">
-              <i class="codicon codicon-cloud-upload"></i>
-              <span>{{ t('components.settings.promptSettings.modes.import') }}</span>
-            </div>
-            <div class="import-dialog-body">
-              <p class="import-dialog-description">
-                {{ t('components.settings.promptSettings.modes.importDescription') }}
-              </p>
-              <div class="import-dialog-toolbar">
-                <button class="small-btn" type="button" @click="triggerImportFilePicker">
-                  <i class="codicon codicon-folder-opened"></i>
-                  {{ t('components.settings.promptSettings.modes.importFromFile') }}
-                </button>
-                <button class="small-btn" type="button" @click="exportPromptModes('all')">
-                  <i class="codicon codicon-export"></i>
-                  {{ t('components.settings.promptSettings.modes.exportAll') }}
-                </button>
-              </div>
-              <input
-                ref="importFileInputRef"
-                type="file"
-                accept="application/json,.json"
-                class="hidden-file-input"
-                @change="handleImportFileChange"
-              />
-              <textarea
-                v-model="importPayloadText"
-                class="import-textarea"
-                :placeholder="t('components.settings.promptSettings.modes.importPlaceholder')"
-                rows="12"
-              ></textarea>
-              <p v-if="importErrorMessage" class="import-error">
-                <i class="codicon codicon-warning"></i>
-                {{ importErrorMessage }}
-              </p>
-            </div>
-            <div class="import-dialog-footer">
-              <button class="small-btn" type="button" @click="showImportModeDialog = false">
-                {{ t('common.cancel') }}
-              </button>
-              <button class="save-btn" type="button" :disabled="!importPayloadText.trim()" @click="confirmImportModes">
-                {{ t('components.settings.promptSettings.modes.importConfirm') }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-    
+    <ImportModesDialog
+      v-if="showImportModeDialog"
+      :payload-text="importPayloadText"
+      :error-message="importErrorMessage"
+      @update:payload-text="importPayloadText = $event"
+      @update:error-message="importErrorMessage = $event"
+      @close="showImportModeDialog = false"
+      @confirm="confirmImportModes"
+      @export-all="exportPromptModes('all')"
+      @file-change="handleImportFileChange"
+    />
+
     <!-- 重命名模式对话框 -->
     <InputDialog
       v-model="showRenameModeDialog"
@@ -2150,154 +1688,6 @@ watch(selectedChannel, () => {
   color: var(--vscode-descriptionForeground);
 }
 
-/* 模式选择栏 */
-.mode-selector-bar {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  padding: 10px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-}
-
-.mode-selector-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1 1 240px;
-  min-width: 0;
-}
-
-.mode-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.mode-label-text {
-  white-space: nowrap;
-}
-
-/* 模式选择下拉框固定宽度 */
-.mode-select-dropdown {
-  width: auto;
-  min-width: 150px;
-  max-width: 260px;
-  flex: 1 1 160px;
-}
-
-.mode-select-dropdown :deep(.select-trigger) {
-  width: 100%;
-}
-
-.mode-select-dropdown :deep(.selected-label) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 展开时列表项自动换行 */
-.mode-select-dropdown :deep(.select-dropdown) {
-  min-width: 200px;
-  width: auto;
-  max-width: 300px;
-}
-
-.mode-select-dropdown :deep(.option-label) {
-  white-space: normal;
-  word-break: break-word;
-}
-
-.mode-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-.mode-action-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  border: none;
-  border-radius: 4px;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  transition: background 0.1s ease;
-}
-
-.mode-action-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.mode-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.mode-action-btn.danger:hover:not(:disabled) {
-  color: var(--vscode-errorForeground);
-}
-
-.mode-action-btn .codicon {
-  font-size: 14px;
-}
-
-.mode-action-btn .mode-action-icon {
-  width: 18px;
-  height: 18px;
-}
-
-.save-action-btn {
-  width: auto; /* 覆盖 .mode-action-btn 的 width: 24px（保存按钮按内容撑开） */
-  min-width: 88px;
-  flex-shrink: 0; /* 不被 flex 压缩，避免「保存配置」文字被挤成两行 */
-  height: 28px;
-  padding: 0 12px;
-  gap: 6px;
-  color: var(--vscode-button-foreground);
-  background: var(--vscode-button-background);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.save-action-text {
-  white-space: nowrap; /* 文字强制单行，窄窗口下不再按字符断行 */
-}
-
-.save-action-btn .codicon {
-  font-size: 15px;
-}
-
-.save-action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.save-action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.mode-actions-divider {
-  width: 1px;
-  align-self: stretch;
-  margin: 3px 4px;
-  background: var(--vscode-panel-border);
-}
-
 /* 保存浮窗提示 */
 .save-toast {
   position: fixed;
@@ -2335,138 +1725,6 @@ watch(selectedChannel, () => {
   transform: translateY(-6px);
 }
 
-@media (max-width: 520px) {
-  .mode-selector-left {
-    flex-basis: 100%;
-  }
-
-  .mode-actions {
-    width: 100%;
-  }
-}
-
-@media (max-width: 380px) {
-  .mode-label-text {
-    display: none;
-  }
-
-  .mode-selector-left {
-    flex-basis: 100%;
-  }
-}
-
-
-.import-dialog-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.5);
-}
-
-.import-dialog {
-  width: min(720px, 92vw);
-  max-height: 88vh;
-  display: flex;
-  flex-direction: column;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
-}
-
-.import-dialog-header,
-.import-dialog-footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-}
-
-.import-dialog-header {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.import-dialog-header .codicon {
-  color: var(--vscode-editorInfo-foreground);
-}
-
-.import-dialog-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-  padding: 14px 16px;
-  overflow: auto;
-}
-
-.import-dialog-description {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
-}
-
-.import-dialog-toolbar {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.import-dialog-footer {
-  justify-content: flex-end;
-  border-top: 1px solid var(--vscode-panel-border);
-  border-bottom: none;
-}
-
-.import-textarea {
-  width: 100%;
-  min-height: 240px;
-  padding: 8px 10px;
-  font-size: 12px;
-  line-height: 1.5;
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-input-foreground);
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  resize: vertical;
-  outline: none;
-}
-
-.import-textarea:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.hidden-file-input {
-  display: none;
-}
-
-.import-error {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--vscode-errorForeground);
-}
-
-.dialog-fade-enter-active,
-.dialog-fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-
-.dialog-fade-enter-from,
-.dialog-fade-leave-to {
-  opacity: 0;
-}
-
 .template-section {
   display: flex;
   flex-direction: column;
@@ -2477,21 +1735,10 @@ watch(selectedChannel, () => {
   border-radius: 6px;
 }
 
-.template-section.dynamic-section {
-  border-color: var(--vscode-charts-blue);
-  border-style: dashed;
-}
-
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-
-.section-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .section-label {
@@ -2509,415 +1756,15 @@ watch(selectedChannel, () => {
   font-weight: 500;
 }
 
-.section-badge.cacheable {
-  background: var(--vscode-charts-green);
-  color: var(--vscode-editor-background);
-}
-
-.section-badge.realtime {
-  background: var(--vscode-charts-blue);
-  color: var(--vscode-editor-background);
-}
-
 .section-badge.entries-badge {
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
-}
-
-.section-label code {
-  font-size: 11px;
-  padding: 2px 4px;
-  background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
-  color: var(--vscode-textPreformat-foreground);
 }
 
 .section-description {
   margin: 0;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
-}
-
-.section-description code {
-  font-size: 11px;
-  padding: 1px 4px;
-  background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
-}
-
-.reset-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  font-size: 11px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.reset-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.reset-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.template-textarea,
-.custom-textarea {
-  width: 100%;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
-  line-height: 1.5;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  resize: vertical;
-  outline: none;
-}
-
-.template-textarea:focus,
-.custom-textarea:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.template-textarea:disabled,
-.custom-textarea:disabled {
-  opacity: 0.6;
-}
-
-.save-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-top: 8px;
-}
-
-.save-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.save-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 80px;
-  padding: 8px 16px;
-  font-size: 13px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.save-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.save-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.save-message {
-  font-size: 12px;
-  color: var(--vscode-errorForeground);
-}
-
-.save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
-}
-
-/* Token 计数区域 */
-.token-count-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-}
-
-.token-count-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.token-count-details {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.token-count-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  background: var(--vscode-sideBar-background);
-  border-radius: 4px;
-  min-width: 150px;
-}
-
-.token-item-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  cursor: help;
-}
-
-.token-item-label.static-label .codicon {
-  color: var(--vscode-charts-green);
-}
-
-.token-item-label.dynamic-label .codicon {
-  color: var(--vscode-charts-blue);
-}
-
-.token-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.channel-select {
-  padding: 4px 8px;
-  font-size: 11px;
-  background: var(--vscode-dropdown-background);
-  color: var(--vscode-dropdown-foreground);
-  border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
-  outline: none;
-  cursor: pointer;
-}
-
-.channel-select:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.refresh-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.refresh-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.refresh-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.token-value {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.token-count-header .token-value {
-  margin-left: auto;
-}
-
-.token-number {
-  font-weight: 600;
-}
-
-.token-number.static {
-  color: var(--vscode-charts-green);
-}
-
-.token-number.dynamic {
-  color: var(--vscode-charts-blue);
-}
-
-.token-unit {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.token-error {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--vscode-errorForeground);
-  cursor: help;
-}
-
-.token-na {
-  color: var(--vscode-descriptionForeground);
-}
-
-.token-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-/* 模块参考 */
-.modules-reference {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--vscode-panel-border);
-}
-
-.reference-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 12px 0;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.modules-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.module-item {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.module-item.expanded {
-  border-color: var(--vscode-focusBorder);
-}
-
-.module-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.module-header:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.module-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.module-id {
-  font-size: 11px;
-  padding: 2px 6px;
-  background: var(--vscode-textCodeBlock-background);
-  border-radius: 3px;
-  color: var(--vscode-textPreformat-foreground);
-}
-
-.module-name {
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.insert-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.insert-btn:hover:not(:disabled) {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
-}
-
-.insert-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.module-details {
-  padding: 10px 12px;
-  background: var(--vscode-sideBar-background);
-  border-top: 1px solid var(--vscode-panel-border);
-}
-
-.module-description {
-  margin: 0 0 8px 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.module-requires {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
-  font-size: 11px;
-  color: var(--vscode-notificationsInfoIcon-foreground);
-}
-
-.module-example {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.module-example label {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.module-example pre {
-  margin: 0;
-  padding: 8px;
-  font-size: 11px;
-  font-family: var(--vscode-editor-font-family), monospace;
-  line-height: 1.4;
-  background: var(--vscode-textCodeBlock-background);
-  border-radius: 4px;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 /* Loading 动画 */
@@ -2930,421 +1777,8 @@ watch(selectedChannel, () => {
   to { transform: rotate(360deg); }
 }
 
-/* 变量分组样式 */
-.modules-group {
-  margin-bottom: 16px;
-  padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-}
-
-.modules-group:last-child {
-  margin-bottom: 0;
-}
-
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.group-header .codicon {
-  font-size: 14px;
-  color: var(--vscode-foreground);
-}
-
-.group-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-}
-
-.group-badge {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  font-weight: 500;
-}
-
-.static-badge {
-  background: var(--vscode-charts-green);
-  color: var(--vscode-editor-background);
-}
-
-.dynamic-badge {
-  background: var(--vscode-charts-blue);
-  color: var(--vscode-editor-background);
-}
-
-.group-description {
-  margin: 0 0 12px 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  line-height: 1.5;
-}
-
-/* 开关样式 */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 36px;
-  height: 20px;
-  cursor: pointer;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 10px;
-  transition: 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 14px;
-  width: 14px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--vscode-foreground);
-  border-radius: 50%;
-  transition: 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--vscode-button-foreground);
-}
-
-.toggle-switch input:focus + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
-}
-
-.assembly-section {
-  border-color: var(--vscode-button-background);
-}
-
-.assembly-options {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 4px 0;
-}
-
-.assembly-option {
-  align-items: flex-start;
-  padding: 10px 12px;
-  background: var(--vscode-sideBar-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-}
-
-.assembly-option .radio-text {
-  font-weight: 600;
-}
-
-.assembly-option-desc {
-  color: var(--vscode-descriptionForeground);
-  line-height: 1.45;
-}
-
 .entries-section {
   border-color: var(--vscode-focusBorder);
 }
 
-.dynamic-strategy-block {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  margin: 10px 0;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 4px;
-}
-
-.dynamic-strategy-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
-}
-
-.dynamic-strategy-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-}
-
-.dynamic-strategy-description,
-.dynamic-strategy-warning {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--vscode-descriptionForeground);
-}
-
-.dynamic-strategy-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  color: var(--vscode-editorWarning-foreground, var(--vscode-descriptionForeground));
-}
-
-
-/* 禁用提示 */
-.disabled-notice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px;
-  background: var(--vscode-inputValidation-infoBackground);
-  border: 1px solid var(--vscode-inputValidation-infoBorder);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.disabled-notice .codicon {
-  color: var(--vscode-notificationsInfoIcon-foreground);
-}
-
-/* 工具策略 */
-.tool-policy-mode-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 2px;
-}
-
-.radio-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.radio-option input {
-  margin: 0;
-}
-
-.tool-policy-notice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--vscode-inputValidation-infoBackground);
-  border: 1px solid var(--vscode-inputValidation-infoBorder);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.tool-policy-notice .codicon {
-  color: var(--vscode-notificationsInfoIcon-foreground);
-}
-
-.tool-policy-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.tool-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 220px;
-  padding: 6px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 6px;
-}
-
-.tool-search .codicon {
-  font-size: 14px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.tool-search-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--vscode-input-foreground);
-  font-size: 12px;
-}
-
-.tool-policy-buttons {
-  display: flex;
-  gap: 8px;
-}
-
-.small-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px 10px;
-  font-size: 11px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s;
-}
-
-.small-btn:hover:not(:disabled) {
-  background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder);
-}
-
-.small-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.tool-policy-loading,
-.tool-policy-empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.tool-policy-list {
-  margin-top: 8px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-  background: var(--vscode-sideBar-background);
-  overflow: auto;
-  max-height: 260px;
-}
-
-.tool-category + .tool-category {
-  border-top: 1px solid var(--vscode-panel-border);
-}
-
-.tool-category-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--vscode-editor-background);
-}
-
-.tool-category-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
-}
-
-.tool-category-count {
-  font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-}
-
-.tool-items {
-  display: flex;
-  flex-direction: column;
-}
-
-.tool-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  cursor: pointer;
-  border-top: 1px solid var(--vscode-panel-border);
-}
-
-.tool-item:first-child {
-  border-top: none;
-}
-
-.tool-item:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.tool-item input[type="checkbox"] {
-  margin-top: 2px;
-}
-
-.tool-item-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-
-.tool-name {
-  font-size: 12px;
-  font-family: var(--vscode-editor-font-family), monospace;
-  color: var(--vscode-foreground);
-  word-break: break-word;
-}
-
-.tool-desc {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  line-height: 1.35;
-  word-break: break-word;
-}
-
-.tool-disabled-badge {
-  flex-shrink: 0;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
-  color: var(--vscode-foreground);
-  white-space: nowrap;
-}
-
-.tool-policy-warning {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-top: 8px;
-  background: var(--vscode-inputValidation-warningBackground);
-  border: 1px solid var(--vscode-inputValidation-warningBorder);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.tool-policy-warning .codicon {
-  color: var(--vscode-notificationsWarningIcon-foreground);
-}
 </style>

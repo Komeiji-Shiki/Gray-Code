@@ -17,7 +17,7 @@ function successResult(name: string, args: Record<string, any>) {
 }
 
 describe('RepeatedCallGuard', () => {
-    it('未达到连续失败阈值时不拦截', () => {
+    test('未达到连续失败阈值时不拦截', () => {
         const guard = new RepeatedCallGuard();
         const args = { paths: ['a.txt'] };
 
@@ -27,7 +27,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args).toBe(args);
     });
 
-    it('连续失败 2 次后第 3 次相同调用被短路', () => {
+    test('连续失败 2 次后第 3 次相同调用被短路', () => {
         const guard = new RepeatedCallGuard();
         const args = { paths: ['a.txt'] };
 
@@ -43,7 +43,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args.paths).toBeUndefined();
     });
 
-    it('成功一次即清零失败计数', () => {
+    test('成功一次即清零失败计数', () => {
         const guard = new RepeatedCallGuard();
         const args = { paths: ['a.txt'] };
 
@@ -55,7 +55,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args).toBe(args);
     });
 
-    it('重复的成功调用完全不拦截（重跑测试等合法工作流）', () => {
+    test('重复的成功调用完全不拦截（重跑测试等合法工作流）', () => {
         const guard = new RepeatedCallGuard();
         const args = { command: 'npm test' };
 
@@ -67,7 +67,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args).toBe(args);
     });
 
-    it('中间成功修改文件后允许重跑相同命令', () => {
+    test('中间成功修改文件后允许重跑相同命令', () => {
         const guard = new RepeatedCallGuard();
         const commandArgs = { command: 'npm test' };
 
@@ -81,7 +81,7 @@ describe('RepeatedCallGuard', () => {
         expect(retry.args).toBe(commandArgs);
     });
 
-    it('不同的真实调用会结束原调用的连续失败序列', () => {
+    test('不同的真实调用会结束原调用的连续失败序列', () => {
         const guard = new RepeatedCallGuard();
         const commandArgs = { command: 'npm test' };
 
@@ -93,7 +93,7 @@ describe('RepeatedCallGuard', () => {
         expect(retry.args).toBe(commandArgs);
     });
 
-    it('不同参数的调用互不影响计数', () => {
+    test('不同参数的调用互不影响计数', () => {
         const guard = new RepeatedCallGuard();
 
         guard.recordResults([failedResult('read_file', { paths: ['a.txt'] })]);
@@ -103,7 +103,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeUndefined();
     });
 
-    it('被护栏替换的合成调用不参与失败统计', () => {
+    test('被护栏替换的合成调用不参与失败统计', () => {
         const guard = new RepeatedCallGuard();
         const syntheticArgs = { [REPEATED_CALL_GUARD_ARG_KEY]: 'blocked message' };
 
@@ -117,7 +117,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args).toBe(syntheticArgs);
     });
 
-    it('guardCalls 批量处理保持顺序', () => {
+    test('guardCalls 批量处理保持顺序', () => {
         const guard = new RepeatedCallGuard();
         const badArgs = { paths: ['bad.txt'] };
 
@@ -134,7 +134,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded[1].args).toBe(calls[1].args);
     });
 
-    it('键顺序不同的语义等价参数命中同一签名', () => {
+    test('键顺序不同的语义等价参数命中同一签名', () => {
         const guard = new RepeatedCallGuard();
 
         guard.recordResults([failedResult('search_in_files', { query: 'foo', path: 'src/' })]);
@@ -144,7 +144,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
     });
 
-    it('嵌套对象的键顺序同样不影响签名', () => {
+    test('嵌套对象的键顺序同样不影响签名', () => {
         const guard = new RepeatedCallGuard();
 
         guard.recordResults([failedResult('apply_diff', { path: 'a.ts', hunks: [{ oldContent: 'x', newContent: 'y' }] })]);
@@ -154,7 +154,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
     });
 
-    it('被策略拒绝的调用（rejected:true）不计入失败', () => {
+    test('被策略拒绝的调用（rejected:true）不计入失败', () => {
         const guard = new RepeatedCallGuard();
         const args = { task: 'do something' };
 
@@ -166,7 +166,7 @@ describe('RepeatedCallGuard', () => {
         expect(guarded.args).toBe(args);
     });
 
-    it('rejected 结果不清零已有的连续失败计数', () => {
+    test('rejected 结果不清零已有的连续失败计数', () => {
         const guard = new RepeatedCallGuard();
         const args = { paths: ['a.txt'] };
 
@@ -184,7 +184,7 @@ describe('RepeatedCallGuard - 超长字符串参数签名', () => {
     const bigContentA = 'a'.repeat(70 * 1024);
     const bigContentB = 'a'.repeat(70 * 1024 - 1) + 'b';
 
-    it('相同超长内容命中同一签名并触发护栏', () => {
+    test('相同超长内容命中同一签名并触发护栏', () => {
         const guard = new RepeatedCallGuard();
         const args = { path: 'x.txt', content: bigContentA };
 
@@ -195,7 +195,7 @@ describe('RepeatedCallGuard - 超长字符串参数签名', () => {
         expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
     });
 
-    it('不同超长内容不互相误伤', () => {
+    test('不同超长内容不互相误伤', () => {
         const guard = new RepeatedCallGuard();
         const argsA = { path: 'x.txt', content: bigContentA };
         const argsB = { path: 'x.txt', content: bigContentB };
@@ -206,5 +206,63 @@ describe('RepeatedCallGuard - 超长字符串参数签名', () => {
         const guarded = guard.guardCall(call('t2', 'write_file', argsB));
         expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeUndefined();
         expect(guarded.args).toBe(argsB);
+    });
+});
+
+
+describe('RepeatedCallGuard - 不可序列化参数', () => {
+    test('参数含 BigInt 时签名回退为 <unserializable>，相同调用仍被拦截', () => {
+        const guard = new RepeatedCallGuard();
+        const args = { count: 1n, path: 'x.txt' };
+
+        guard.recordResults([failedResult('write_file', args)]);
+        guard.recordResults([failedResult('write_file', args)]);
+
+        const guarded = guard.guardCall(call('t1', 'write_file', args));
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
+    });
+
+    test('参数含循环引用时签名回退为 <unserializable>，相同调用仍被拦截', () => {
+        const guard = new RepeatedCallGuard();
+        const circular: Record<string, any> = { path: 'x.txt' };
+        circular.self = circular;
+
+        guard.recordResults([failedResult('write_file', circular)]);
+        guard.recordResults([failedResult('write_file', circular)]);
+
+        const guarded = guard.guardCall(call('t2', 'write_file', circular));
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
+    });
+
+    test('不同结构的不可序列化参数共享同一 <unserializable> 签名', () => {
+        const guard = new RepeatedCallGuard();
+        const circular: Record<string, any> = {};
+        circular.self = circular;
+
+        guard.recordResults([failedResult('write_file', { count: 1n })]);
+        guard.recordResults([failedResult('write_file', circular)]);
+
+        const guarded = guard.guardCall(call('t3', 'write_file', { count: 2n }));
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
+    });
+
+    test('<unserializable> 与可序列化参数签名不同，互不累计', () => {
+        const guard = new RepeatedCallGuard();
+
+        guard.recordResults([failedResult('write_file', { count: 1n })]);
+        guard.recordResults([failedResult('write_file', { count: 1 })]);
+
+        const guarded = guard.guardCall(call('t4', 'write_file', { count: 1 }));
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeUndefined();
+    });
+
+    test('undefined 值参数不落入 <unserializable>，与缺失该键命中同一签名', () => {
+        const guard = new RepeatedCallGuard();
+
+        guard.recordResults([failedResult('write_file', { path: 'a.ts', content: undefined })]);
+        guard.recordResults([failedResult('write_file', { path: 'a.ts' })]);
+
+        const guarded = guard.guardCall(call('t5', 'write_file', { path: 'a.ts' }));
+        expect(guarded.args[REPEATED_CALL_GUARD_ARG_KEY]).toBeDefined();
     });
 });

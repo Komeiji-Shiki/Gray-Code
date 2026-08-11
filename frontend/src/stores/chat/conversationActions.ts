@@ -4,6 +4,7 @@
  * 包含对话的 CRUD 操作
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { ChatStoreState, Conversation, CheckpointSummary, BuildSession } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
@@ -19,7 +20,7 @@ import {
 import { countVisibleChatMessages } from './visibilityUtils'
 import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
-import { findTabByConversationId, resetConversationState, updateTabTitle } from './tabActions'
+import { findTabByConversationId, resetConversationState, updateTabTitle, createTab } from './tabActions'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
 
 // ============ 对话列表分页加载配置 ============
@@ -143,7 +144,7 @@ function fetchOlderPageFor(
   beforeIndex: number
 ): Promise<{ total: number; messages: Content[] } | null | undefined> {
   return perfMeasureAsync('conversation.loadHistoryPaged.backfill', () =>
-    sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+    sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
       conversationId,
       beforeIndex,
       limit: MESSAGES_PAGE_SIZE
@@ -264,7 +265,7 @@ export async function buildInitialVisibleMessageWindow(
 
 export async function loadConversationBuildSession(conversationId: string): Promise<BuildSession | null> {
   try {
-    const metadata = await sendToExtension<any>('conversation.getConversationMetadata', {
+    const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], {
       conversationId
     })
     return parsePersistedBuildSession(metadata?.custom?.activeBuild, conversationId)
@@ -302,7 +303,7 @@ export async function syncConversationWorkspaceUri(
 
   let workspaceUri = state.currentWorkspaceUri.value
   try {
-    const latestWorkspaceUri = await sendToExtension<string | null>('getWorkspaceUri', {})
+    const latestWorkspaceUri = await sendToExtension<string | null>(MESSAGE_NAMES.getWorkspaceUri, {})
     if (latestWorkspaceUri) {
       workspaceUri = latestWorkspaceUri
     }
@@ -327,7 +328,7 @@ export async function syncConversationWorkspaceUri(
   state.currentWorkspaceUri.value = workspaceUri
 
   try {
-    await sendToExtension('conversation.setWorkspaceUri', {
+    await sendToExtension(MESSAGE_NAMES['conversation.setWorkspaceUri'], {
       conversationId,
       workspaceUri
     })
@@ -388,7 +389,7 @@ export async function createAndPersistConversation(
   
   try {
     // 创建对话时传递工作区 URI
-    await sendToExtension('conversation.createConversation', {
+    await sendToExtension(MESSAGE_NAMES['conversation.createConversation'], {
       conversationId: id,
       title: title,
       workspaceUri: state.currentWorkspaceUri.value || undefined
@@ -406,7 +407,13 @@ export async function createAndPersistConversation(
     }
     
     state.conversations.value.unshift(newConversation)
-    state.currentConversationId.value = id
+    // P1-竞态：创建 await 期间用户可能已切换标签页/会话，currentConversationId 可能已被
+    // 其他会话接管——仅当仍为 null（未被接管）时才写回，避免覆盖切换后的会话导致
+    // 消息发往错误会话、窗口混入他人会话内容（sendMessageFlow 创建分支以固化的
+    // newId 为准，不依赖本赋值；正常路径下 currentConversationId 仍为 null，行为不变）
+    if (state.currentConversationId.value === null) {
+      state.currentConversationId.value = id
+    }
 
     // 同步分页列表（避免后续滚动加载重复 / 丢失）
     if (!state.persistedConversationIds.value.includes(id)) {
@@ -448,7 +455,7 @@ export async function createBranchConversation(
   options: { title?: string } = {}
 ): Promise<Conversation | null> {
   try {
-    const result = await sendToExtension<BranchConversationResult>('conversation.createBranchConversation', {
+    const result = await sendToExtension<BranchConversationResult>(MESSAGE_NAMES['conversation.createBranchConversation'], {
       sourceConversationId,
       branchAtIndex,
       title: options.title,
@@ -504,7 +511,7 @@ export async function loadConversations(state: ChatStoreState): Promise<void> {
 
   try {
     // 仅获取全部 ID（一次请求），实际元数据采用分页加载
-    const ids = await sendToExtension<string[]>('conversation.listConversations', {})
+    const ids = await sendToExtension<string[]>(MESSAGE_NAMES['conversation.listConversations'], {})
 
     // 重置分页游标
     state.persistedConversationIds.value = sortConversationIds(ids)
@@ -552,7 +559,7 @@ export async function loadMoreConversations(
 
   try {
     // HIS-10：一次 IPC 批量拉取一页摘要，避免每个对话一次 getConversationMetadata
-    const rawSummaries = await sendToExtension<Array<Record<string, unknown>>>('conversation.getConversationMetadataBatch', {
+    const rawSummaries = await sendToExtension<Array<Record<string, unknown>>>(MESSAGE_NAMES['conversation.getConversationMetadataBatch'], {
       conversationIds: idsToLoad
     })
     const summaries = (Array.isArray(rawSummaries) ? rawSummaries : [])
@@ -594,7 +601,7 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
     state.foldedMessageCount.value = 0
 
     const result = await perfMeasureAsync('conversation.loadHistoryPaged', () =>
-      sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
         conversationId,
         limit: MESSAGES_PAGE_SIZE
       })
@@ -647,7 +654,7 @@ export async function loadOlderMessagesPage(
 
   try {
     const result = await perfMeasureAsync('conversation.loadOlderMessagesPage', () =>
-      sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+      sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
         conversationId: originConversationId,
         beforeIndex: originWindowStart,
         limit: pageSize
@@ -700,16 +707,21 @@ export async function loadOlderMessagesPage(
  * 加载当前对话的检查点
  */
 export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
-  if (!state.currentConversationId.value) {
+  // 固化会话标识：await 后当前会话可能已切换，迟到的旧会话响应不能覆盖新会话列表
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) {
     state.checkpoints.value = []
     return
   }
   
   try {
-    const result = await sendToExtension<{ checkpoints: CheckpointSummary[] }>('checkpoint.getCheckpoints', {
-      conversationId: state.currentConversationId.value
+    const result = await sendToExtension<{ checkpoints: CheckpointSummary[] }>(MESSAGE_NAMES['checkpoint.getCheckpoints'], {
+      conversationId
     })
     
+    // 校验归属：await 期间会话已切换时丢弃迟到响应，避免旧会话检查点覆盖当前会话
+    if (!validateSessionIdentity(state, conversationId)) return
+
     if (result?.checkpoints) {
       state.checkpoints.value = result.checkpoints
     } else {
@@ -766,6 +778,11 @@ export async function switchConversation(
   state.isWaitingForResponse.value = false
   state.attachments.value = []
   state.editorNodes.value = []
+  // TREE-12：切换会话清空分支图与分支锁（与 resetConversationState 对齐），
+  // 避免旧会话分支图/切换锁残留到新会话（loadBranchGraph 会重新拉取）
+  state.branchGraph.value = null
+  state.isSwitchingBranch.value = false
+  state.branchGraphLoading.value = false
 
   const requestedId = id
 
@@ -780,7 +797,7 @@ export async function switchConversation(
     if (conv.isPersisted) {
       state.isLoading.value = true
       const view = await perfMeasureAsync('conversation.loadConversationForView', () =>
-        sendToExtension<ConversationViewPayload>('conversation.loadConversationForView', {
+        sendToExtension<ConversationViewPayload>(MESSAGE_NAMES['conversation.loadConversationForView'], {
           conversationId: requestedId,
           limit: MESSAGES_PAGE_SIZE
         })
@@ -882,7 +899,7 @@ export async function deleteConversation(
   try {
     // 如果是已持久化的，需要从后端删除
     if (conv.isPersisted) {
-      await sendToExtension('conversation.deleteConversation', { conversationId: id })
+      await sendToExtension(MESSAGE_NAMES['conversation.deleteConversation'], { conversationId: id })
     }
     
     // 后端删除成功后，再从前端移除
@@ -898,9 +915,31 @@ export async function deleteConversation(
         }
       }
     }
-    
+
+    // 清理 openTabs 中引用已删会话的标签页（快照与后台流缓冲一并清理），
+    // 避免孤儿标签页残留（删除后仍可点击切换/恢复已删会话）
+    const deletedConvTabs = state.openTabs.value.filter(t => t.conversationId === id)
+    for (const tab of deletedConvTabs) {
+      state.sessionSnapshots.value.delete(tab.id)
+    }
+    state.backgroundStreamBuffers.value.delete(id)
+    state.openTabs.value = state.openTabs.value.filter(t => t.conversationId !== id)
+
+    // 已删会话占用当前激活标签页（常规即「删除的是当前对话」）：激活标签页已随上方移除，
+    // 先复位会话状态并补建空白标签页，交给下方「删除的是当前对话」分支复用
+    // （switchConversation/createNewConversation 会把新会话绑定到该空白标签页）
+    const wasCurrentConversationDeleted = state.currentConversationId.value === id
+    if (deletedConvTabs.some(t => t.id === state.activeTabId.value)) {
+      state.activeTabId.value = null
+      resetConversationState(state)
+      const replacementTabId = createTab(state, { title: 'New Chat', switchTo: false })
+      if (replacementTabId) {
+        state.activeTabId.value = replacementTabId
+      }
+    }
+
     // 如果删除的是当前对话，切换或创建新对话
-    if (state.currentConversationId.value === id) {
+    if (wasCurrentConversationDeleted) {
       if (state.conversations.value.length > 0) {
         await switchConversationFn(state.conversations.value[0].id)
       } else {
@@ -992,7 +1031,7 @@ export async function updateConversationAfterMessage(state: ChatStoreState): Pro
   try {
     // HIS-09：updatedAt / messageCount / preview 合并为一次 IPC 写入
     // （updatedAt 由后端历史提交统一维护，不再前端分别 setCustomMetadata 三次）
-    await sendToExtension('conversation.updateSummary', {
+    await sendToExtension(MESSAGE_NAMES['conversation.updateSummary'], {
       conversationId: state.currentConversationId.value,
       messageCount,
       preview

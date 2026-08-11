@@ -28,7 +28,7 @@ async function createGeminiManager(overrides: Record<string, unknown> = {}): Pro
 }
 
 describe('ConfigManager.importConfig（R2 M5 补测）', () => {
-    it('新建导入：保留原始 id，createdAt 写入', async () => {
+    test('新建导入：保留原始 id，createdAt 写入', async () => {
         const { manager } = await createGeminiManager();
         const importedId = await manager.importConfig({
             id: 'imported_1',
@@ -44,12 +44,12 @@ describe('ConfigManager.importConfig（R2 M5 补测）', () => {
         expect(config.createdAt).toBeGreaterThan(0);
     });
 
-    it('同 id 已存在且未开 overwrite：抛 configExists', async () => {
+    test('同 id 已存在且未开 overwrite：抛 configExists', async () => {
         const { manager, id } = await createGeminiManager();
         await expect(manager.importConfig({ id, name: 'Dup' } as any)).rejects.toThrow(/exists|已存在/);
     });
 
-    it('overwrite 导入：整体替换——旧配置多余子字段/数组项被清空（replaceConfig 语义）', async () => {
+    test('overwrite 导入：整体替换——旧配置多余子字段/数组项被清空（replaceConfig 语义）', async () => {
         const { manager, id } = await createGeminiManager({
             customHeaders: [
                 { key: 'X-User', value: 'alice', enabled: true },
@@ -83,7 +83,7 @@ describe('ConfigManager.importConfig（R2 M5 补测）', () => {
         expect(after.id).toBe(id);
     });
 
-    it('replaceConfig 保留 id 与 createdAt，updatedAt 更新', async () => {
+    test('replaceConfig 保留 id 与 createdAt，updatedAt 更新', async () => {
         const { manager, id } = await createGeminiManager();
         const before = await manager.getConfig(id) as any;
 
@@ -101,7 +101,7 @@ describe('ConfigManager.importConfig（R2 M5 补测）', () => {
         expect(after.name).toBe('Replaced Direct');
     });
 
-    it('replaceConfig 未知 id：抛 configNotFound', async () => {
+    test('replaceConfig 未知 id：抛 configNotFound', async () => {
         const { manager } = await createGeminiManager();
         await expect(manager.replaceConfig('nope', { id: 'nope', name: 'x', type: 'openai' } as any))
             .rejects.toThrow(/not found|不存在/);
@@ -109,7 +109,7 @@ describe('ConfigManager.importConfig（R2 M5 补测）', () => {
 });
 
 describe('ConfigManager.updateModels（R2 M5 补测）', () => {
-    it('基于最新列表合并后写回（mergeFn 输入为当前 models）', async () => {
+    test('基于最新列表合并后写回（mergeFn 输入为当前 models）', async () => {
         const { manager, id } = await createGeminiManager({
             models: [
                 { id: 'gemini-2.5-flash', name: 'Flash', contextWindow: 128000 },
@@ -129,7 +129,7 @@ describe('ConfigManager.updateModels（R2 M5 补测）', () => {
         expect(reread.models).toHaveLength(2);
     });
 
-    it('无 models 的配置：mergeFn 收到空数组', async () => {
+    test('无 models 的配置：mergeFn 收到空数组', async () => {
         const { manager, id } = await createGeminiManager();
         const updated = await manager.updateModels(id, (current) => {
             expect(current).toEqual([]);
@@ -138,7 +138,7 @@ describe('ConfigManager.updateModels（R2 M5 补测）', () => {
         expect((updated.models as any[])).toHaveLength(1);
     });
 
-    it('未知 id：抛 configNotFound', async () => {
+    test('未知 id：抛 configNotFound', async () => {
         const { manager } = await createGeminiManager();
         await expect(manager.updateModels('nope', (c) => c)).rejects.toThrow(/not found|不存在/);
     });

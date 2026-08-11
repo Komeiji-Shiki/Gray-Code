@@ -1,5 +1,5 @@
 /**
- * LimCode - Diff 中断管理服务
+ * GrayCode - Diff 中断管理服务
  *
  * 对 getDiffManager().markUserInterrupt/resetUserInterrupt 做一层封装，
  * 让 ChatHandler 只依赖此服务，而不直接依赖底层工具模块。
@@ -39,3 +39,4 @@ export class DiffInterruptService {
     }
   }
 }
+

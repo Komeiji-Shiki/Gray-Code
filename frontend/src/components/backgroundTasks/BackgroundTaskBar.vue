@@ -8,6 +8,7 @@
  * - 运行中任务可取消；已结束任务可清除
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
 import { useTerminalStore } from '../../stores/terminalStore'
@@ -120,7 +121,7 @@ function statusTitle(task: BackgroundTaskRecord): string {
 async function openDetails(task: BackgroundTaskRecord): Promise<void> {
   if (task.kind === 'subagent' && task.runId) {
     try {
-      await sendToExtension('subagents.openMonitor', {
+      await sendToExtension(MESSAGE_NAMES['subagents.openMonitor'], {
         runId: task.runId,
         conversationId: task.conversationId
       })

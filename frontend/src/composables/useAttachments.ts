@@ -304,7 +304,10 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         if (brightness < 10 && currentTimeIndex < timePoints.length - 1) {
           currentTimeIndex++
           const nextTime = Math.min(timePoints[currentTimeIndex], Math.max(0, video.duration - 0.1))
-          if (nextTime <= video.currentTime && video.currentTime >= video.duration) {
+          // nextTime 无法再前进（超短视频 duration<0.1 时所有时间点被钳到 0/首帧）：
+          // 继续 seek 只会原地打转（currentTime 不变时不再触发 onseeked）或重复已试过的帧，
+          // 直接以当前帧收尾，避免挂起直到 10s 超时。
+          if (nextTime <= video.currentTime) {
             settled = true
             cleanup()
             resolve(canvas.toDataURL('image/jpeg', 0.8))

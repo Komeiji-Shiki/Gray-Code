@@ -38,7 +38,7 @@ describe('create_progress tool', () => {
     mockReadFile.mockRejectedValue(new Error('File not found'))
   })
 
-  it('creates the progress document and returns a lightweight snapshot', async () => {
+  test('creates the progress document and returns a lightweight snapshot', async () => {
     const tool = createCreateProgressTool()
     const result = await tool.handler({
       projectName: 'Workspace',
@@ -67,7 +67,7 @@ describe('create_progress tool', () => {
       latestConclusion: '已确认需要新增 Progress 能力。',
       nextAction: '开始实现后端基础结构。'
     })
-    expect((result.data as any).progressSnapshot).toMatchObject({
+    expect(result.data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       projectName: 'Workspace',
       status: 'active',
@@ -92,7 +92,7 @@ describe('create_progress tool', () => {
     expect(writtenContent).toContain('<!-- GRAYCODE_PROGRESS_METADATA_START -->')
   })
 
-  it('returns the existing snapshot when the progress document already exists and is valid', async () => {
+  test('returns the existing snapshot when the progress document already exists and is valid', async () => {
     const existing = buildProgressDocument({
       projectId: 'workspace',
       projectName: 'Workspace',
@@ -112,14 +112,14 @@ describe('create_progress tool', () => {
     const result = await tool.handler({ projectName: 'Workspace' })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).progressSnapshot).toMatchObject({ path: '.graycode/progress.md', projectName: 'Workspace' })
-    expect((result.data as any).warnings).toEqual([
+    expect(result.data.progressSnapshot).toMatchObject({ path: '.graycode/progress.md', projectName: 'Workspace' })
+    expect(result.data.warnings).toEqual([
       'Progress document already exists at .graycode/progress.md. Returned the existing snapshot instead of creating a second file.'
     ])
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid paths outside .graycode/progress.md', async () => {
+  test('rejects invalid paths outside .graycode/progress.md', async () => {
     const tool = createCreateProgressTool()
     const result = await tool.handler({
       path: '.graycode/review/not-allowed.md'

@@ -9,39 +9,10 @@
  * 时才重新规划。
  */
 
-import { ContextTrimService } from '../../modules/api/chat/services/ContextTrimService';
 import type { Content } from '../../modules/conversation/types';
+import { createContextTrimHarness } from '../__fixtures__/harnessFixtures';
 
 describe('ContextTrimService.getHistoryWithGranularFallback - stable start index', () => {
-    function createHarness(historyRef: () => Content[]) {
-        const conversationManager = {
-            getHistoryRef: jest.fn(() => Promise.resolve(historyRef())),
-            getHistoryForAPIFrom: jest.fn((contents: Content[], options: { startIndex: number }) => (
-                contents.slice(options.startIndex)
-            )),
-            getCustomMetadata: jest.fn().mockResolvedValue(undefined),
-            setCustomMetadata: jest.fn(),
-            invalidateContextManagementState: jest.fn()
-        };
-        const promptManager = {
-            getSystemPrompt: jest.fn(() => ''),
-            getDynamicContextText: jest.fn(() => '')
-        };
-        const tokenEstimationService = {
-            countTextTokensBatch: jest.fn().mockResolvedValue([0, 0]),
-            preCountUserMessageTokensBatch: jest.fn().mockResolvedValue(undefined),
-            estimateMessageTokens: jest.fn((message: Content) =>
-                message.tokenCountByChannel?.custom ?? 100
-            )
-        };
-        const service = new ContextTrimService(
-            conversationManager as any,
-            promptManager as any,
-            tokenEstimationService as any,
-            {} as any
-        );
-        return { service, conversationManager, tokenEstimationService };
-    }
 
     /** 工具循环历史：从 index 3（fc-a）开始的 suffix 恰好 700 tokens（+ preserved 100 ≤ 预算 936） */
     function buildToolLoopHistory(): Content[] {
@@ -66,9 +37,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
     } as any;
     // threshold/input limit = 1040；provider reserve = 104；history budget = 936；总历史 1050（超预算触发裁剪）
 
-    it('工具结果增长时复用 stableStartIndex，retainedHistory 前缀保持稳定', async () => {
+    test('工具结果增长时复用 stableStartIndex，retainedHistory 前缀保持稳定', async () => {
         let history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         // 首次调用（回合内第一次评估，无稳定起点）：规划出切点 3
         const first = await service.getHistoryWithGranularFallback('c1', config, {});
@@ -95,9 +66,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(second.history[second.history.length - 1].parts[0].functionResponse?.id).toBe('c');
     });
 
-    it('稳定起点超过优先预算但最小合法请求恰好等于完整窗口时仍继续', async () => {
+    test('稳定起点超过优先预算但最小合法请求恰好等于完整窗口时仍继续', async () => {
         let history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         const first = await service.getHistoryWithGranularFallback('c1', config, {});
         expect(first.trimStartIndex).toBe(3);
@@ -115,9 +86,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(result.trimStartIndex).toBe(8);
     });
 
-    it('稳定起点越界或早于总结起点时忽略并重新规划', async () => {
+    test('稳定起点越界或早于总结起点时忽略并重新规划', async () => {
         const history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         // 越界起点：忽略，正常规划出 3
         const outOfBounds = await service.getHistoryWithGranularFallback('c1', config, {}, undefined, 'single', 999);
@@ -133,7 +104,7 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
             { role: 'user', parts: [{ text: 'new' }], isUserInput: true, tokenCountByChannel: { custom: 200 } },
             { role: 'model', parts: [{ text: 'new answer' }], tokenCountByChannel: { custom: 200 } }
         ];
-        const { service: s2 } = createHarness(() => summarizedHistory);
+        const { service: s2 } = createContextTrimHarness(() => summarizedHistory);
         const result = await s2.getHistoryWithGranularFallback('c2', config, {}, undefined, 'single', 1);
         expect(result.trimStartIndex).toBe(2);
         // history[0] 是首条用户消息（任务锚点），history[1] 是 preserved 用户输入档案（goal），history[2] 才是总结消息
@@ -141,9 +112,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(result.history[2].parts[0].text).toContain('summary');
     });
 
-    it('稳定起点落在 model 消息上时同样补临时 user 占位保证角色顺序', async () => {
+    test('稳定起点落在 model 消息上时同样补临时 user 占位保证角色顺序', async () => {
         let history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         // 先规划出起点 3（model/fc-a），历史增长后仍以 3 为稳定起点
         const first = await service.getHistoryWithGranularFallback('c1', config, {});
@@ -163,9 +134,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(second.trimStartIndex).toBe(3);
     });
 
-    it('固定系统提示词和动态上下文会从 fallback 历史预算中扣除', async () => {
+    test('固定系统提示词和动态上下文会从 fallback 历史预算中扣除', async () => {
         const history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         // input limit 1040 - provider reserve 104 - fixed prompt 400 = history budget 536。
         // 起点 3 的最终历史约 800，必须继续推进到起点 5（约 500）。
@@ -183,9 +154,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(result.contextManagementDecision?.action).toBe('fallback_trim_applied');
     });
 
-    it('超过总结软阈值但仍低于模型硬窗口时继续请求，不把总结阈值当硬上限', async () => {
+    test('超过总结软阈值但仍低于模型硬窗口时继续请求，不把总结阈值当硬上限', async () => {
         const history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         // 软预算只剩 36 tokens，任何候选都无法达到；模型硬窗口仍给 history 留有 335 tokens。
         // 应选择硬窗口内最早的合法候选继续请求，而不是报 CONTEXT_OVERFLOW。
@@ -203,9 +174,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         expect(result.history.length).toBeGreaterThan(0);
     });
 
-    it('只有连最小合法请求也装不进模型硬窗口时才报 CONTEXT_OVERFLOW', async () => {
+    test('只有连最小合法请求也装不进模型硬窗口时才报 CONTEXT_OVERFLOW', async () => {
         const history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
 
         await expect(
             service.getHistoryWithGranularFallback(
@@ -224,9 +195,9 @@ describe('ContextTrimService.getHistoryWithGranularFallback - stable start index
         });
     });
 
-    it('模型未声明 contextWindow 时不把渠道 maxContextTokens 当硬拒绝边界', async () => {
+    test('模型未声明 contextWindow 时不把渠道 maxContextTokens 当硬拒绝边界', async () => {
         const history = buildToolLoopHistory();
-        const { service } = createHarness(() => history);
+        const { service } = createContextTrimHarness(() => history);
         const configWithoutKnownWindow = {
             type: 'custom',
             maxContextTokens: 1_300,

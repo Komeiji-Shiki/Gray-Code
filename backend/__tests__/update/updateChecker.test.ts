@@ -23,36 +23,36 @@ import * as vscode from 'vscode';
 // ─── 纯函数 ──────────────────────────────────────────
 
 describe('stripVersionPrefix', () => {
-    it('剥离 v 前缀', () => {
+    test('剥离 v 前缀', () => {
         expect(stripVersionPrefix('v1.2.3')).toBe('1.2.3');
         expect(stripVersionPrefix('V1.2.3')).toBe('1.2.3');
     });
 
-    it('无前缀原样返回', () => {
+    test('无前缀原样返回', () => {
         expect(stripVersionPrefix('1.2.3')).toBe('1.2.3');
         expect(stripVersionPrefix('')).toBe('');
     });
 });
 
 describe('compareVersions', () => {
-    it('相等返回 0（含 v 前缀差异）', () => {
+    test('相等返回 0（含 v 前缀差异）', () => {
         expect(compareVersions('1.4.4', 'v1.4.4')).toBe(0);
         expect(compareVersions('1.4.4', '1.4.4')).toBe(0);
     });
 
-    it('常规大小比较', () => {
+    test('常规大小比较', () => {
         expect(compareVersions('1.4.5', '1.4.4')).toBe(1);
         expect(compareVersions('1.3.9', '1.4.0')).toBe(-1);
         expect(compareVersions('2.0.0', '1.9.9')).toBe(1);
     });
 
-    it('段数不足按 0 补齐', () => {
+    test('段数不足按 0 补齐', () => {
         expect(compareVersions('1.4', '1.4.0')).toBe(0);
         expect(compareVersions('1.4.1', '1.4')).toBe(1);
         expect(compareVersions('1.4', '1.4.1')).toBe(-1);
     });
 
-    it('非数字段按 0 处理', () => {
+    test('非数字段按 0 处理', () => {
         expect(compareVersions('1.4.x', '1.4.0')).toBe(0);
     });
 
@@ -86,42 +86,42 @@ describe('compareVersions', () => {
 describe('shouldCheck', () => {
     const now = 1_000_000;
 
-    it('force 总是检查', () => {
+    test('force 总是检查', () => {
         expect(shouldCheck(now, now + 1, true)).toBe(true);
     });
 
-    it('无上次记录时检查', () => {
+    test('无上次记录时检查', () => {
         expect(shouldCheck(undefined, now, false)).toBe(true);
     });
 
-    it('间隔内不检查', () => {
+    test('间隔内不检查', () => {
         expect(shouldCheck(now - UPDATE_CHECK_INTERVAL_MS + 1, now, false)).toBe(false);
         expect(shouldCheck(now, now, false)).toBe(false);
     });
 
-    it('超过间隔检查', () => {
+    test('超过间隔检查', () => {
         expect(shouldCheck(now - UPDATE_CHECK_INTERVAL_MS, now, false)).toBe(true);
     });
 });
 
 describe('extractNightlyVersionFromName', () => {
-    it('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
+    test('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
         expect(extractNightlyVersionFromName('v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
 
-    it('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
+    test('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
 
-    it('无 v 前缀同样可提取', () => {
+    test('无 v 前缀同样可提取', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly 1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
 
-    it('版本号后跟多余数字时不截断（锚定结尾）', () => {
+    test('版本号后跟多余数字时不截断（锚定结尾）', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.202608090')).toBeNull();
     });
 
-    it('无版本号返回 null', () => {
+    test('无版本号返回 null', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly')).toBeNull();
         expect(extractNightlyVersionFromName(undefined)).toBeNull();
         expect(extractNightlyVersionFromName('')).toBeNull();
@@ -181,7 +181,7 @@ describe('parseReleaseResponse', () => {
         expect(info!.installerAssetUrl).toBeUndefined();
     });
 
-    it('响应格式异常返回 null', () => {
+    test('响应格式异常返回 null', () => {
         expect(parseReleaseResponse(null)).toBeNull();
         expect(parseReleaseResponse('oops')).toBeNull();
         expect(parseReleaseResponse({})).toBeNull();
@@ -281,7 +281,7 @@ function okResponse(body: unknown, status = 200): Response {
 }
 
 describe('UpdateChecker.check', () => {
-    it('关闭自动检查时状态为 disabled 且不发请求', async () => {
+    test('关闭自动检查时状态为 disabled 且不发请求', async () => {
         const fetchImpl = jest.fn();
         const { checker } = createChecker({ isCheckEnabled: () => false, fetchImpl });
         const status = await checker.check();
@@ -320,7 +320,7 @@ describe('UpdateChecker.check', () => {
         expect(status).toEqual({ state: 'idle' });
     });
 
-    it('有新版本时返回 updateAvailable 并记录检查时间', async () => {
+    test('有新版本时返回 updateAvailable 并记录检查时间', async () => {
         const update = jest.fn(async () => {});
         const { checker, storage } = createChecker({
             storage: { get: () => undefined, update },
@@ -343,7 +343,7 @@ describe('UpdateChecker.check', () => {
         expect(checker.getStatus()).toEqual(status);
     });
 
-    it('已是最新版本时返回 upToDate', async () => {
+    test('已是最新版本时返回 upToDate', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => okResponse({ tag_name: 'v1.4.4', assets: [] }),
             currentVersion: '1.4.4',
@@ -352,7 +352,7 @@ describe('UpdateChecker.check', () => {
         expect(status).toEqual({ state: 'upToDate', checkedAt: 2_000_000 });
     });
 
-    it('fetch 失败时状态为 error（不抛出）且仍记录时间戳', async () => {
+    test('fetch 失败时状态为 error（不抛出）且仍记录时间戳', async () => {
         const update = jest.fn(async () => {});
         const { checker } = createChecker({
             storage: { get: () => undefined, update },
@@ -366,7 +366,7 @@ describe('UpdateChecker.check', () => {
         expect(update).toHaveBeenCalled();
     });
 
-    it('API 返回非 2xx 时状态为 error', async () => {
+    test('API 返回非 2xx 时状态为 error', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => okResponse({ message: 'rate limited' }, 403),
         });
@@ -377,7 +377,7 @@ describe('UpdateChecker.check', () => {
         }
     });
 
-    it('API 响应格式异常时状态为 error', async () => {
+    test('API 响应格式异常时状态为 error', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => okResponse({ unexpected: true }),
         });
@@ -476,7 +476,7 @@ function release(tagName: string, assetNames: string[]): Record<string, unknown>
 }
 
 describe('UpdateChecker.resetStatus', () => {
-    it('清除内存状态并重置节流时间戳（渠道切换时调用，避免旧渠道缓存残留）', async () => {
+    test('清除内存状态并重置节流时间戳（渠道切换时调用，避免旧渠道缓存残留）', async () => {
         const update = jest.fn(async () => {});
         const { checker } = createChecker({
             storage: { get: () => undefined, update },

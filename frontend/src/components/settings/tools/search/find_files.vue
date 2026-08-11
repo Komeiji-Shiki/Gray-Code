@@ -6,6 +6,7 @@
  * 1. 配置排除模式列表（glob 格式）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
@@ -26,7 +27,7 @@ const isLoading = ref(false)
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ config: { excludePatterns: string[] } }>('tools.getFindFilesConfig', {})
+    const response = await sendToExtension<{ config: { excludePatterns: string[] } }>(MESSAGE_NAMES['tools.getFindFilesConfig'], {})
     if (response?.config?.excludePatterns) {
       excludePatterns.value = response.config.excludePatterns
     }
@@ -41,7 +42,7 @@ async function loadConfig() {
 async function saveConfig() {
   isSaving.value = true
   try {
-    await sendToExtension('tools.updateFindFilesConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateFindFilesConfig'], {
       config: {
         excludePatterns: [...excludePatterns.value]
       }

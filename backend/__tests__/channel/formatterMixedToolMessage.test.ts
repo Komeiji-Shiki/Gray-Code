@@ -9,8 +9,8 @@
  * 修复：functionResponse 改为独立分支生成，混合形态也能拆分出 tool 消息。
  */
 
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
-import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { OpenAIFormatter } from '../../modules/channel';
+import { AnthropicFormatter } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
 import type { OpenAIConfig, AnthropicConfig } from '../../modules/config/types';
 
@@ -59,7 +59,7 @@ function buildMixedModelMessage(): Content {
 }
 
 describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', () => {
-    it('拆分出 assistant(tool_calls) + 每条 tool 消息，tool_call_id 与 call 一一对应', () => {
+    test('拆分出 assistant(tool_calls) + 每条 tool 消息，tool_call_id 与 call 一一对应', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -128,7 +128,7 @@ describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', (
 });
 
 describe('AnthropicFormatter: 混合形态消息（call + response 同消息）', () => {
-    it('拆分出 assistant(tool_use) + user(tool_result)，tool_use_id 与 call 一一对应', () => {
+    test('拆分出 assistant(tool_use) + user(tool_result)，tool_use_id 与 call 一一对应', () => {
         const formatter = new AnthropicFormatter();
         const request = formatter.buildRequest({
             configId: 'anthropic-test',

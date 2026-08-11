@@ -58,7 +58,7 @@ describe('record_progress_milestone tool', () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode(existing))
   })
 
-  it('records a project milestone and returns the latest milestone snapshot', async () => {
+  test('records a project milestone and returns the latest milestone snapshot', async () => {
     const tool = createRecordProgressMilestoneTool()
     const result = await tool.handler({
       title: '完成后端基础层',
@@ -70,11 +70,11 @@ describe('record_progress_milestone tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).progressDelta).toMatchObject({
+    expect(result.data.progressDelta).toMatchObject({
       type: 'milestone_recorded',
       milestoneId: 'PG1'
     })
-    expect((result.data as any).progressSnapshot).toMatchObject({
+    expect(result.data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       currentProgress: '1/1 个里程碑已完成；最新：PG1',
       latestConclusion: '后端基础层已经完成。',
@@ -92,7 +92,7 @@ describe('record_progress_milestone tool', () => {
     expect(writtenContent).toContain('后端基础层已经完成。')
   })
 
-  it('rejects duplicate milestone ids', async () => {
+  test('rejects duplicate milestone ids', async () => {
     const existing = buildProgressDocument({
       projectId: 'workspace',
       projectName: 'Workspace',
@@ -129,7 +129,7 @@ describe('record_progress_milestone tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid progress path values', async () => {
+  test('rejects invalid progress path values', async () => {
     const tool = createRecordProgressMilestoneTool()
     const result = await tool.handler({
       path: '.graycode/review/not-allowed.md',

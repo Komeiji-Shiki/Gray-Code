@@ -6,12 +6,12 @@ import {
     buildWorkspaceSnapshot,
     previewExclusions,
     type SnapshotBuildOptions
-} from '../../modules/checkpoint/CheckpointSnapshotBuilder';
+} from '../../modules/checkpoint';
 import { hashFileStreaming } from '../../modules/checkpoint/fileHashing';
 import {
     createRuntimeWorkspaceRoots,
     createWorkspaceScopedPath
-} from '../../modules/checkpoint/CheckpointWorkspace';
+} from '../../modules/checkpoint';
 import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
 
 // L-1: 让 bad.txt 的流式哈希失败，构造“真实不可读文件”（跨平台确定，不依赖 chmod）

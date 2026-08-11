@@ -1,10 +1,6 @@
 /**
- * Diff 管理器（已下沉 backend/core/services/diffManager.ts）
- *
- * 本文件为兼容壳（模块化重构第五批）：实现已迁移至 core 层，全部导出符号
- * 经 `export *` 转发。保留本路径仅供既有消费方（modules/checkpoint、
- * tools/search/search_in_files、webview、测试等）过渡使用，避免一次性改动
- * 全部 import；新代码应直接引用 core 实现。
- */
+ * Diff 绠＄悊鍣紙宸蹭笅娌?backend/core/services/diffManager.ts锛? *
+ * 鏈枃浠朵负鍏煎澹筹紙妯″潡鍖栭噸鏋勭浜旀壒锛夛細瀹炵幇宸茶縼绉昏嚦 core 灞傦紝鍏ㄩ儴瀵煎嚭绗﹀彿
+ * 缁?`export *` 杞彂銆備繚鐣欐湰璺緞浠呬緵鏃㈡湁娑堣垂鏂癸紙modules/checkpoint銆? * tools/search/search_in_files銆亀ebview銆佹祴璇曠瓑锛夎繃娓′娇鐢紝閬垮厤涓€娆℃€ф敼鍔? * 鍏ㄩ儴 import锛涙柊浠ｇ爜搴旂洿鎺ュ紩鐢?core 瀹炵幇銆? */
 
 export * from '../../core/services/diffManager';

@@ -1581,10 +1581,10 @@ export class PromptManager {
                 let bytesRead: number
 
                 if (cached && now - cached.checkedAt < PINNED_FILE_CACHE_TTL_MS) {
-                    // TTL 内：零磁盘 I/O，直接复用缓存
+                    // TTL 内：零磁盘 I/O，直接复用缓存；未实际读取，不累计总字节预算
                     content = cached.content
                     truncated = cached.truncated
-                    bytesRead = cached.bytesRead
+                    bytesRead = 0
                     touchPinnedFileCache(fullPath)
                 } else {
                     let stat: fs.Stats
@@ -1597,11 +1597,11 @@ export class PromptManager {
                     }
 
                     if (cached && cached.mtimeMs === stat.mtimeMs) {
-                        // 未变更：只刷新检查时间，不重读磁盘
+                        // 未变更：只刷新检查时间，不重读磁盘；未实际读取，不累计总字节预算
                         cached.checkedAt = now
                         content = cached.content
                         truncated = cached.truncated
-                        bytesRead = cached.bytesRead
+                        bytesRead = 0
                         touchPinnedFileCache(fullPath)
                     } else {
                         const read = readPinnedFileCapped(fullPath, stat.size)

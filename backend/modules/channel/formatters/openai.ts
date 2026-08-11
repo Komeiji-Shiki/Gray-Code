@@ -1,5 +1,5 @@
-﻿/**
- * LimCode - OpenAI 格式转换器
+/**
+ * GrayCode - OpenAI 格式转换器
  *
  * 将统一格式转换为 OpenAI API 格式（兼容 DeepSeek 等）
  *

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, onMounted, onUnmounted, watch, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -108,7 +109,7 @@ const REFRESH_INTERVAL = 2000
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<ContextAwarenessConfig>('getContextAwarenessConfig', {})
+    const response = await sendToExtension<ContextAwarenessConfig>(MESSAGE_NAMES.getContextAwarenessConfig, {})
     if (response) {
       // 确保 diagnostics 配置存在
       if (!response.diagnostics) {
@@ -134,13 +135,13 @@ async function loadConfig() {
 async function loadPreview() {
   try {
     // 获取打开的标签页
-    const tabsResponse = await sendToExtension<{ tabs: string[] }>('getOpenTabs', {})
+    const tabsResponse = await sendToExtension<{ tabs: string[] }>(MESSAGE_NAMES.getOpenTabs, {})
     if (tabsResponse?.tabs) {
       openTabs.value = tabsResponse.tabs
     }
     
     // 获取当前活动编辑器
-    const editorResponse = await sendToExtension<{ path: string | null }>('getActiveEditor', {})
+    const editorResponse = await sendToExtension<{ path: string | null }>(MESSAGE_NAMES.getActiveEditor, {})
     if (editorResponse) {
       activeEditor.value = editorResponse.path
     }
@@ -164,7 +165,7 @@ async function doSaveConfig() {
   try {
     // 使用 toRaw 将 reactive 对象转换为普通对象，避免 postMessage 克隆错误
     const plainConfig = { ...toRaw(config) }
-    await sendToExtension('updateContextAwarenessConfig', { config: plainConfig })
+    await sendToExtension(MESSAGE_NAMES.updateContextAwarenessConfig, { config: plainConfig })
     saveMessage.value = t('components.settings.contextSettings.saveSuccess')
     if (saveMessageTimer) {
       clearTimeout(saveMessageTimer)

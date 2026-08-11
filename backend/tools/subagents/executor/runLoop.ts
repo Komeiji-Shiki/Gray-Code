@@ -23,7 +23,7 @@ import type { SubAgentRunStatus } from '../runEventBus';
 import { subAgentRunController } from '../runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from '../concurrencyLimiter';
 import { fileWriteLockManager } from '../../../core/fileWriteLockManager';
-import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../agentMailbox';
+import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../../../core/services/agentMailbox';
 import { markAiActive } from '../../../modules/activity';
 import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
@@ -208,7 +208,9 @@ export function createDefaultExecutor(
         // 修改方式：改为句柄数组——createOperationSignal 每次 push，release 时按句柄摘除，
         //          detach 回调遍历数组逐个 detachParent。
         // 修改目的：转后台（detach）语义对并行工具调用同样正确。
-        let currentOperationHandles: Array<{ detachParent: () => void }> = [];
+        // M5 收尾窗口超时中止在飞工具需要遍历句柄调用 abort，数组元素类型与
+        // createOperationSignal 返回的 OperationSignalHandle 保持一致（含 detachParent 与 abort）。
+        let currentOperationHandles: Array<OperationSignalHandle> = [];
         // 转后台（detach）后父 abort 信号对 run 不再有约束力——所有取消检查必须经由
         // 本 helper 读取父信号（detached 后视为无父信号），否则 detach 后旧流 abort
         // 仍会在下一轮迭代/工具执行前杀死 run（R7c E1）。
@@ -421,6 +423,8 @@ export function createDefaultExecutor(
             release: () => void;
             /** 只解绑父 abort 信号的监听（转后台 detach 用），超时与 controller 信号保持绑定 */
             detachParent: () => void;
+            /** 主动中止本操作：触发组合 controller 的 abort（M5 收尾窗口超时中止在飞工具用） */
+            abort: () => void;
         }
 
         const createOperationSignal = (): OperationSignalHandle => {
@@ -430,7 +434,7 @@ export function createDefaultExecutor(
                 .filter((signal): signal is AbortSignal => !!signal);
             if (signals.length === 0) {
                 // 无任何信号可组合：不注册句柄（其他并行操作的在飞句柄保留在数组中，不受影响）
-                return { signal: undefined, release: () => undefined, detachParent: () => undefined };
+                return { signal: undefined, release: () => undefined, detachParent: () => undefined, abort: () => undefined };
             }
             const controller = new AbortController();
             const abort = () => controller.abort();
@@ -447,6 +451,7 @@ export function createDefaultExecutor(
             }
             const handle: OperationSignalHandle = {
                 signal: controller.signal,
+                abort: () => controller.abort(),
                 release: () => {
                     for (const signal of attached) {
                         signal.removeEventListener('abort', abort);
@@ -749,8 +754,11 @@ export function createDefaultExecutor(
                 
                 let response: any;
                 try {
-                    const result = await context.channelManager.generate(generateRequest);
+                    // 修改原因：requestStartTime 在 await generate() 之后才取值，非流式请求的耗时统计
+                    //          只覆盖响应处理时间，遗漏完整请求时长。
+                    // 修改方式：generate 前取值，让耗时统计覆盖完整请求周期。
                     const requestStartTime = Date.now();
+                    const result = await context.channelManager.generate(generateRequest);
                     const streamProcessor = new StreamResponseProcessor({
                         requestStartTime,
                         providerType,
@@ -1094,9 +1102,22 @@ export function createDefaultExecutor(
                         })
                     ),
                     new Promise<never>((_, reject) => {
-                        finishTimer = setTimeout(() => reject(new Error(
-                            `Parallel tool execution did not finish within ${PARALLEL_TOOL_FINISH_WINDOW_MS / 1000}s; run aborted (M5)`
-                        )), PARALLEL_TOOL_FINISH_WINDOW_MS);
+                        finishTimer = setTimeout(() => {
+                            // 修改原因：收尾窗口超时后旧逻辑仅 fail run，在飞工具 Promise 仍继续执行，
+                            //          其 tool_started/tool_completed 事件仍发往已注销 run（emit 会对
+                            //          未知 runId 自动重建 snapshot，形成僵尸记录），agentMailbox 已
+                            //          unregisterRun，工具侧 agent_send_message 投递失败。
+                            // 修改方式：超时分支对快照中的所有在飞操作句柄调用 abort（组合 controller
+                            //          中止各工具的 operationSignal；响应 abort 的工具在宽限期内收敛，
+                            //          不响应 abort 的挂死工具保持原行为，但 run 已进入终态收敛路径）。
+                            // 修改目的：收尾窗口超时后工具侧事件与信箱投递尽快收敛，不再污染已注销 run。
+                            for (const handle of [...currentOperationHandles]) {
+                                handle.abort();
+                            }
+                            reject(new Error(
+                                `Parallel tool execution did not finish within ${PARALLEL_TOOL_FINISH_WINDOW_MS / 1000}s; run aborted (M5)`
+                            ));
+                        }, PARALLEL_TOOL_FINISH_WINDOW_MS);
                     })
                 ]).finally(() => {
                     if (finishTimer) clearTimeout(finishTimer);

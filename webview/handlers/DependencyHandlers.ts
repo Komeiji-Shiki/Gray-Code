@@ -2,6 +2,7 @@
  * 依赖管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import { assertSafeId } from '../../backend/core/idValidation';
 import type { HandlerContext, MessageHandler } from '../types';
@@ -81,8 +82,8 @@ export const getInstallPath: MessageHandler = async (data, requestId, ctx) => {
  * 注册依赖管理处理器
  */
 export function registerDependencyHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('dependencies.list', listDependencies);
-  registry.set('dependencies.install', installDependency);
-  registry.set('dependencies.uninstall', uninstallDependency);
-  registry.set('dependencies.getInstallPath', getInstallPath);
+  registry.set(MESSAGE_NAMES['dependencies.list'], listDependencies);
+  registry.set(MESSAGE_NAMES['dependencies.install'], installDependency);
+  registry.set(MESSAGE_NAMES['dependencies.uninstall'], uninstallDependency);
+  registry.set(MESSAGE_NAMES['dependencies.getInstallPath'], getInstallPath);
 }

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -272,7 +273,7 @@ function clearAsset(cue: SoundCue) {
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<any>('getSettings', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
     const normalized = normalizeUISoundSettings(response?.settings?.ui?.sound)
 
     enabled.value = normalized.enabled
@@ -328,7 +329,7 @@ async function saveConfig() {
   try {
     const settings = buildCurrentSettings()
 
-    await sendToExtension('updateUISettings', {
+    await sendToExtension(MESSAGE_NAMES.updateUISettings, {
       ui: {
         sound: settings
       }
@@ -416,7 +417,7 @@ async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreview
       content: buildWindowsAgentStopNotificationContentDraft()
     }
 
-    await sendToExtension('notifications.preview', payload)
+    await sendToExtension(MESSAGE_NAMES['notifications.preview'], payload)
   } catch (error) {
     console.error('Failed to trigger Windows notification preview:', error)
   }

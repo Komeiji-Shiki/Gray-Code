@@ -1,4 +1,4 @@
-import { SettingsManager, type SettingsStorage } from '../../../backend/modules/settings/SettingsManager'
+import { SettingsManager } from '../../../backend/modules/settings/SettingsManager'
 import {
   DEFAULT_SYSTEM_PROMPT_CONFIG,
   REVIEW_MODE_ID,
@@ -6,21 +6,10 @@ import {
   REVIEW_MODE_TOOL_POLICY,
   REVIEW_PROMPT_MODE
 } from '../../../backend/modules/settings/types'
-
-class MemorySettingsStorage implements SettingsStorage {
-  constructor(private readonly loaded: any = null) {}
-
-  async load() {
-    return this.loaded
-  }
-
-  async save() {
-    return undefined
-  }
-}
+import { createMemorySettingsStorage } from '../__fixtures__/settingsFixtures'
 
 describe('review mode config', () => {
-  it('adds review mode to the default system prompt config', () => {
+  test('adds review mode to the default system prompt config', () => {
     expect(DEFAULT_SYSTEM_PROMPT_CONFIG.modes[REVIEW_MODE_ID]).toEqual(REVIEW_PROMPT_MODE)
     expect(REVIEW_PROMPT_MODE.toolPolicy).toEqual([
       'read_file',
@@ -60,8 +49,8 @@ describe('review mode config', () => {
     expect(REVIEW_PROMPT_MODE.template).toContain('Do not batch many completed modules into one delayed update.')
   })
 
-  it('SettingsManager fills missing review mode and synchronizes toolPolicy', async () => {
-    const storage = new MemorySettingsStorage({
+  test('SettingsManager fills missing review mode and synchronizes toolPolicy', async () => {
+    const storage = createMemorySettingsStorage({
       toolsConfig: {
         system_prompt: {
           currentModeId: 'code',
@@ -87,8 +76,8 @@ describe('review mode config', () => {
     expect(config.modes.review.toolPolicy).toEqual(REVIEW_PROMPT_MODE.toolPolicy)
   })
 
-  it('SettingsManager migrates old configs by adding review mode', async () => {
-    const storage = new MemorySettingsStorage({
+  test('SettingsManager migrates old configs by adding review mode', async () => {
+    const storage = createMemorySettingsStorage({
       toolsConfig: {
         system_prompt: {
           template: 'legacy'

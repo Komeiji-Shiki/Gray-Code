@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具循环 abort 收尾公共模块（第五批解环：E4）
+ * GrayCode - 工具循环 abort 收尾公共模块（第五批解环：E4）
  *
  * MAIN_LOOP_ABORT_DRAIN_GRACE_MS / drainToolExecutionGeneratorAfterAbort（含其内部使用的
  * GEN_RETURN_RECOVERY_GRACE_MS 与 drainLog）从 ToolIterationLoopService 迁出：
@@ -66,10 +66,27 @@ export async function drainToolExecutionGeneratorAfterAbort(
         return Promise.race([promise, timeoutPromise]);
     };
 
+    // 收尾窗口内生成器抛错（initialNext / gen.next() reject）：已无法取回真实结果，
+    // 按「drain 失败」处理（返回 undefined，调用方走既有取消路径 → cancelled 语义），
+    // 不让异常穿透为 error chunk。
+    const settleDrainStep = async (
+        step: Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult>>
+    ): Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult> | undefined> => {
+        try {
+            return await step;
+        } catch (error) {
+            drainLog.warn('drain_next_rejected', {
+                graceMs,
+                error: (error as Error)?.message ?? String(error),
+            });
+            return undefined;
+        }
+    };
+
     const drainDeadline = Date.now() + graceMs;
-    let drained = await raceWithTimeout(initialNext, drainDeadline - Date.now());
+    let drained = await raceWithTimeout(settleDrainStep(initialNext), drainDeadline - Date.now());
     while (drained !== undefined && !drained.done && Date.now() < drainDeadline) {
-        drained = await raceWithTimeout(gen.next(), drainDeadline - Date.now());
+        drained = await raceWithTimeout(settleDrainStep(gen.next()), drainDeadline - Date.now());
     }
 
     if (drained !== undefined && drained.done) {
@@ -102,3 +119,4 @@ export async function drainToolExecutionGeneratorAfterAbort(
     }
     return undefined;
 }
+

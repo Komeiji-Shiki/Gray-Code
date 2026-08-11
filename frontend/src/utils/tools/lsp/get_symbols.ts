@@ -4,6 +4,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import GetSymbolsComponent from '../../../components/tools/lsp/get_symbols.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 // 注册 get_symbols 工具
 registerTool('get_symbols', {
@@ -20,7 +21,8 @@ registerTool('get_symbols', {
     if (args.path) {
       return args.path as string
     }
-    return '获取文件符号'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('get_symbols') ?? '获取文件符号'
   },
   
   // 使用自定义组件显示内容

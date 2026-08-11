@@ -16,9 +16,9 @@ import {
     agentSendMessageHandler,
     getAgentSendMessageTool,
     getAgentSendMessageToolDeclaration
-} from '../../tools/subagents/agentSendMessage';
+} from '../../tools/subagents';
 import { getSubAgentsToolRegistrations } from '../../tools/subagents';
-import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
+import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
 import { TaskManager, type TaskEvent } from '../../tools/taskManager';
 
 function makeStubTool(handler?: (args: Record<string, unknown>, context?: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>, readOnly = false, name = 'stub_tool') {
@@ -43,7 +43,7 @@ function makeCall(id: string, name = 'stub_tool') {
 }
 
 describe('agent_send_message - 工具声明', () => {
-    it('声明名称与参数结构正确，message 必填', () => {
+    test('声明名称与参数结构正确，message 必填', () => {
         const decl = getAgentSendMessageToolDeclaration();
         expect(decl.name).toBe('agent_send_message');
         // 兼容旧对话历史：agent.sendMessage 注册为别名（API 工具名不允许点号）
@@ -56,14 +56,14 @@ describe('agent_send_message - 工具声明', () => {
         expect(decl.parameters.required).toContain('message');
     });
 
-    it('已注册进 SubAgents 工具注册函数（随 getAllTools 进入 ToolRegistry）', () => {
+    test('已注册进 SubAgents 工具注册函数（随 getAllTools 进入 ToolRegistry）', () => {
         const registrations = getSubAgentsToolRegistrations();
         const names = registrations.map(reg => reg().declaration.name);
         expect(names).toContain('agent_send_message');
         expect(names).toContain('subagents');
     });
 
-    it('getAgentSendMessageTool 返回单例工具对象', () => {
+    test('getAgentSendMessageTool 返回单例工具对象', () => {
         const tool = getAgentSendMessageTool();
         expect(tool.declaration.name).toBe('agent_send_message');
         expect(getAgentSendMessageTool()).toBe(tool);
@@ -75,7 +75,7 @@ describe('agent_send_message - handler', () => {
         agentMailbox.clearAll();
     });
 
-    it('子代理发送成功：身份来自 mailboxRunId/mailboxConversationId，返回 threadId', async () => {
+    test('子代理发送成功：身份来自 mailboxRunId/mailboxConversationId，返回 threadId', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -95,7 +95,7 @@ describe('agent_send_message - handler', () => {
         expect(drained[0].text).toBe('hello');
     });
 
-    it('子代理发给空闲主模型时发出轻量唤醒事件，正文仍只保存在 mailbox', async () => {
+    test('子代理发给空闲主模型时发出轻量唤醒事件，正文仍只保存在 mailbox', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         const events: TaskEvent[] = [];
         const dispose = TaskManager.onTaskEvent(event => events.push(event));
@@ -125,7 +125,7 @@ describe('agent_send_message - handler', () => {
         }
     });
 
-    it('主会话作为发送方：无 mailboxRunId 时回退为主会话保留 runId', async () => {
+    test('主会话作为发送方：无 mailboxRunId 时回退为主会话保留 runId', async () => {
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
         const result = await agentSendMessageHandler(
@@ -139,14 +139,14 @@ describe('agent_send_message - handler', () => {
         expect(drained[0].fromAgentName).toBe('main');
     });
 
-    it('缺少会话上下文时拒绝', async () => {
+    test('缺少会话上下文时拒绝', async () => {
         const result = await agentSendMessageHandler({ targetRunId: 'run_b', message: 'hi' }, {});
         expect(result.success).toBe(false);
         if (result.success) return;
         expect(result.error).toContain('conversation');
     });
 
-    it('未知目标 runId 时拒绝并返回明确错误', async () => {
+    test('未知目标 runId 时拒绝并返回明确错误', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         const result = await agentSendMessageHandler(
             { targetRunId: 'ghost_run', message: 'hi' },
@@ -157,7 +157,7 @@ describe('agent_send_message - handler', () => {
         expect(result.error).toContain('Unknown targetRunId');
     });
 
-    it('消息为空时拒绝', async () => {
+    test('消息为空时拒绝', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         const result = await agentSendMessageHandler(
@@ -169,7 +169,7 @@ describe('agent_send_message - handler', () => {
         expect(result.error).toContain('message');
     });
 
-    it('按 agent 名称寻址（含 main）', async () => {
+    test('按 agent 名称寻址（含 main）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_coder', 'coder');
 
@@ -196,7 +196,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
         agentMailbox.clearAll();
     });
 
-    it('工具调用完成后 inbox 消息与工具结果一起返回（responseParts + toolResults 均携带）', async () => {
+    test('工具调用完成后 inbox 消息与工具结果一起返回（responseParts + toolResults 均携带）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -240,7 +240,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
         expect(toolResult.agentInbox[0].text).toBe('please check the file');
     });
 
-    it('drain 一次性语义：下一条工具调用不再携带已投递消息', async () => {
+    test('drain 一次性语义：下一条工具调用不再携带已投递消息', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'one-shot' });
@@ -259,7 +259,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
         expect((second.responseParts[0] as any).functionResponse.response.agentInbox).toBeUndefined();
     });
 
-    it('主会话信箱接入：子代理发给主模型的信在主流工具循环中被带出', async () => {
+    test('主会话信箱接入：子代理发给主模型的信在主流工具循环中被带出', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.sendMessage({
             conversationId: 'conv_1',
@@ -282,7 +282,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
         expect(inbox[0]).toMatchObject({ fromRunId: 'run_a', text: 'task finished, summary: ok' });
     });
 
-    it('并行工具批：消息挂在“最近一次完成”的工具结果之后（仅一次）', async () => {
+    test('并行工具批：消息挂在“最近一次完成”的工具结果之后（仅一次）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'mid-batch' });
@@ -298,7 +298,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
         expect((withInbox[0] as any).functionResponse.response.agentInbox[0].text).toBe('mid-batch');
     });
 
-    it('未传 mailbox 身份时不注入（既有行为不回归）', async () => {
+    test('未传 mailbox 身份时不注入（既有行为不回归）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'undelivered' });
@@ -311,7 +311,7 @@ describe('agent_send_message - 注入点（ToolExecutionService 工具循环）'
         expect(agentMailbox.peekMessages('conv_1', 'run_b')).toHaveLength(1);
     });
 
-    it('工具上下文注入 mailbox 身份（agent_send_message 借此识别发送方）', async () => {
+    test('工具上下文注入 mailbox 身份（agent_send_message 借此识别发送方）', async () => {
         let capturedContext: Record<string, unknown> | undefined;
         const service = new ToolExecutionService({
             getTool: () => makeStubTool((_args, ctx) => {
@@ -335,7 +335,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         agentMailbox.clearAll();
     });
 
-    it('当轮注入仍可见：functionResponse.response 顶层与 data 子对象均携带 agentInbox', async () => {
+    test('当轮注入仍可见：functionResponse.response 顶层与 data 子对象均携带 agentInbox', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -364,7 +364,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect(response.data.applied).toBe(true);
     });
 
-    it('历史中的 functionResponse 保留 agentInbox：mailbox 保证一次消费，历史稳定保证缓存命中', async () => {
+    test('历史中的 functionResponse 保留 agentInbox：mailbox 保证一次消费，历史稳定保证缓存命中', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -389,13 +389,13 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
 
         const cleaned = cleanFunctionResponseForAPI(injected);
         expect(cleaned?.agentInbox).toEqual(injected.agentInbox);
-        expect((cleaned?.data as any)?.agentInbox).toEqual(injected.data.agentInbox);
+        expect((cleaned?.data as Record<string, unknown>)?.agentInbox).toEqual(injected.data.agentInbox);
         // 非信箱字段保留（不破坏既有清理逻辑）
         expect(cleaned?.success).toBe(true);
-        expect((cleaned?.data as any)?.applied).toBe(true);
+        expect((cleaned?.data as Record<string, unknown>)?.applied).toBe(true);
     });
 
-    it('无注入目标（最近一次 part 非 functionResponse）时不 drain inbox，消息保留（FIX-B 5.2）', async () => {
+    test('无注入目标（最近一次 part 非 functionResponse）时不 drain inbox，消息保留（FIX-B 5.2）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'keep me' });
@@ -429,7 +429,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect((toolResult.result as any).agentInbox).toHaveLength(1);
     });
 
-    it('MED-1：共享 mailbox 身份的并发执行循环只允许最新启动者 drain（早启动只执行不 drain）', async () => {
+    test('MED-1：共享 mailbox 身份的并发执行循环只允许最新启动者 drain（早启动只执行不 drain）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -480,7 +480,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect(agentMailbox.peekMessages('conv_1', 'run_b')).toHaveLength(0);
     });
 
-    it('E-1：drainInboxIntoResults 显式 drain 并注入（无主循环路径的最终投递点）', async () => {
+    test('E-1：drainInboxIntoResults 显式 drain 并注入（无主循环路径的最终投递点）', async () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -512,7 +512,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect((toolResult.result as any).agentInbox).toHaveLength(1);
     });
 
-    it('E-1：drainInboxIntoResults 无注入目标（非 functionResponse part）时不消费 inbox（消息保留）', () => {
+    test('E-1：drainInboxIntoResults 无注入目标（非 functionResponse part）时不消费 inbox（消息保留）', () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         agentMailbox.sendMessage({
@@ -525,7 +525,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect(agentMailbox.peekMessages('conv_1', 'run_b')).toHaveLength(1);
     });
 
-    it('E-2：正常完成路径释放 drain epoch（mailboxDrainEpochs 不残留）', async () => {
+    test('E-2：正常完成路径释放 drain epoch（mailboxDrainEpochs 不残留）', async () => {
         const service = new ToolExecutionService({ getTool: () => makeStubTool() } as any, undefined, undefined) as any;
         const gen = service.executeFunctionCallsWithProgress(
             [makeCall('call_1')], 'conv_1', 0, undefined, undefined, undefined,
@@ -539,7 +539,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect((service as any).mailboxDrainEpochs.size).toBe(0);
     });
 
-    it('E-2：生成器异常路径 finally 兜底释放 drain epoch（不残留 Map 条目）', async () => {
+    test('E-2：生成器异常路径 finally 兜底释放 drain epoch（不残留 Map 条目）', async () => {
         const checkpointService = {
             createToolExecutionCheckpoint: jest.fn().mockRejectedValue(new Error('checkpoint boom'))
         };
@@ -553,7 +553,7 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         expect((service as any).mailboxDrainEpochs.size).toBe(0);
     });
 
-    it('E-2：clearMailboxDrainEpochsForConversation 只清理指定会话的 epoch 条目', () => {
+    test('E-2：clearMailboxDrainEpochsForConversation 只清理指定会话的 epoch 条目', () => {
         const service = new ToolExecutionService({ getTool: () => makeStubTool() } as any, undefined, undefined) as any;
         service.claimMailboxDrainEpoch('conv_a', 'run_1');
         service.claimMailboxDrainEpoch('conv_a', 'run_2');

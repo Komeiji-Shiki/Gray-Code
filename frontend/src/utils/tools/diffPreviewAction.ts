@@ -1,3 +1,4 @@
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { ToolActionConfig } from '../toolRegistry'
 import type { ToolUsage } from '../../types'
 import { t } from '../../i18n'
@@ -38,7 +39,7 @@ export function createDiffPreviewAction(resolver: DiffFilePathResolver): ToolAct
       const serializedArgs = JSON.parse(JSON.stringify(tool.args || {}))
       const serializedResult = tool.result ? JSON.parse(JSON.stringify(tool.result)) : undefined
 
-      await sendToExtension('diff.openPreview', {
+      await sendToExtension(MESSAGE_NAMES['diff.openPreview'], {
         toolId: tool.id,
         toolName: tool.name,
         filePaths: paths,

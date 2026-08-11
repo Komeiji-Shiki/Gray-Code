@@ -50,8 +50,8 @@ async function runFind(patterns: string[], maxResults?: number) {
         args.maxResults = maxResults;
     }
     const result = await tool.handler(args);
-    const data = result.data as any;
-    return { result, findResult: data?.results?.[0] as any };
+    const data = result.data;
+    return { result, findResult: data?.results?.[0] };
 }
 
 beforeEach(() => {
@@ -66,7 +66,7 @@ describe('find_files maxResults 规范化', () => {
         mockFindFiles({ 'C:/gc-test-repo1': 600 });
     });
 
-    it('maxResults=0 回退默认 500，且 +1 探测请求 501', async () => {
+    test('maxResults=0 回退默认 500，且 +1 探测请求 501', async () => {
         const { result, findResult } = await runFind(['**/*.ts'], 0);
         expect(result.success).toBe(true);
         expect(findFilesMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), 501);
@@ -74,14 +74,14 @@ describe('find_files maxResults 规范化', () => {
         expect(findResult.truncated).toBe(true);
     });
 
-    it('maxResults 为负值回退默认 500，不再把负值传入 findFiles', async () => {
+    test('maxResults 为负值回退默认 500，不再把负值传入 findFiles', async () => {
         const { result, findResult } = await runFind(['**/*.ts'], -5);
         expect(result.success).toBe(true);
         expect(findFilesMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), 501);
         expect(findResult.files).toHaveLength(500);
     });
 
-    it('maxResults 浮点数向下取整', async () => {
+    test('maxResults 浮点数向下取整', async () => {
         const { result, findResult } = await runFind(['**/*.ts'], 7.9);
         expect(result.success).toBe(true);
         expect(findFilesMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), 8);
@@ -89,7 +89,7 @@ describe('find_files maxResults 规范化', () => {
         expect(findResult.truncated).toBe(true);
     });
 
-    it('未传 maxResults 时使用默认 500', async () => {
+    test('未传 maxResults 时使用默认 500', async () => {
         const { result, findResult } = await runFind(['**/*.ts']);
         expect(result.success).toBe(true);
         expect(findFilesMock).toHaveBeenCalledWith(expect.anything(), expect.anything(), 501);
@@ -103,7 +103,7 @@ describe('find_files truncated 判定（单工作区）', () => {
         setWorkspaces([{ name: 'ws1', fsPath: 'C:/gc-test-repo1' }]);
     });
 
-    it('恰好等于 maxResults 时不误报 truncated', async () => {
+    test('恰好等于 maxResults 时不误报 truncated', async () => {
         mockFindFiles({ 'C:/gc-test-repo1': 10 });
         const { result, findResult } = await runFind(['**/*.ts'], 10);
         expect(result.success).toBe(true);
@@ -112,7 +112,7 @@ describe('find_files truncated 判定（单工作区）', () => {
         expect(findResult.truncated).toBe(false);
     });
 
-    it('超过 maxResults 时报告 truncated 并截断到 maxResults', async () => {
+    test('超过 maxResults 时报告 truncated 并截断到 maxResults', async () => {
         mockFindFiles({ 'C:/gc-test-repo1': 20 });
         const { result, findResult } = await runFind(['**/*.ts'], 10);
         expect(result.success).toBe(true);
@@ -122,7 +122,7 @@ describe('find_files truncated 判定（单工作区）', () => {
 });
 
 describe('find_files truncated 判定（多工作区聚合）', () => {
-    it('各工作区合计恰好达到 maxResults 时不误报 truncated', async () => {
+    test('各工作区合计恰好达到 maxResults 时不误报 truncated', async () => {
         setWorkspaces([
             { name: 'ws1', fsPath: 'C:/gc-test-repo1' },
             { name: 'ws2', fsPath: 'C:/gc-test-repo2' }
@@ -134,7 +134,7 @@ describe('find_files truncated 判定（多工作区聚合）', () => {
         expect(findResult.truncated).toBe(false);
     });
 
-    it('某个工作区超出剩余配额时报告 truncated', async () => {
+    test('某个工作区超出剩余配额时报告 truncated', async () => {
         setWorkspaces([
             { name: 'ws1', fsPath: 'C:/gc-test-repo1' },
             { name: 'ws2', fsPath: 'C:/gc-test-repo2' }

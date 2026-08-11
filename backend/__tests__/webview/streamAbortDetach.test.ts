@@ -20,7 +20,7 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         }
     });
 
-    it('create 新流时把该会话活跃前台 SubAgent detach：旧流被 abort 但 run 继续活跃', () => {
+    test('create 新流时把该会话活跃前台 SubAgent detach：旧流被 abort 但 run 继续活跃', () => {
         subAgentRunEventBus.createRun('detach_fg', 'Agent', undefined, { conversationId: 'conv_a' });
         subAgentRunController.register('detach_fg', 'Agent', 0, true);
 
@@ -34,7 +34,7 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(subAgentRunController.getState('detach_fg')?.status).toBe('running');
     });
 
-    it('后台 SubAgent 不受 detach 影响（保留 TaskManager 取消能力）', () => {
+    test('后台 SubAgent 不受 detach 影响（保留 TaskManager 取消能力）', () => {
         subAgentRunEventBus.createRun('detach_bg', 'Agent', undefined, { conversationId: 'conv_a' });
         subAgentRunController.register('detach_bg', 'Agent', 0, false);
 
@@ -44,7 +44,7 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(subAgentRunController.isDetached('detach_bg')).toBe(false);
     });
 
-    it('其他会话的活跃 SubAgent 不受影响', () => {
+    test('其他会话的活跃 SubAgent 不受影响', () => {
         subAgentRunEventBus.createRun('detach_other', 'Agent', undefined, { conversationId: 'conv_b' });
         subAgentRunController.register('detach_other', 'Agent', 0, true);
 
@@ -54,13 +54,13 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(subAgentRunController.isDetached('detach_other')).toBe(false);
     });
 
-    it('无活跃 SubAgent 时 create 正常工作', () => {
+    test('无活跃 SubAgent 时 create 正常工作', () => {
         const manager = new StreamAbortManager();
         const controller = manager.create('conv_c');
         expect(controller.signal.aborted).toBe(false);
     });
 
-    it('立即发送新回合的取消先 detach 前台 SubAgent，再 abort 旧流', () => {
+    test('立即发送新回合的取消先 detach 前台 SubAgent，再 abort 旧流', () => {
         const manager = new StreamAbortManager();
         const oldStream = manager.create('conv_replace');
         subAgentRunEventBus.createRun('detach_replace', 'Agent', undefined, { conversationId: 'conv_replace' });
@@ -95,7 +95,7 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(TaskManager.getAllTasks().find(item => item.metadata?.runId === 'detach_report')).toBeUndefined();
     });
 
-    it('普通 cancel 保持显式停止语义，不会把前台 SubAgent 转后台', () => {
+    test('普通 cancel 保持显式停止语义，不会把前台 SubAgent 转后台', () => {
         const manager = new StreamAbortManager();
         const oldStream = manager.create('conv_stop');
         subAgentRunEventBus.createRun('detach_stop', 'Agent', undefined, { conversationId: 'conv_stop' });
@@ -107,7 +107,7 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(subAgentRunController.isDetached('detach_stop')).toBe(false);
     });
 
-    it('waitForIdle 只在匹配控制器被 delete 后释放', async () => {
+    test('waitForIdle 只在匹配控制器被 delete 后释放', async () => {
         const manager = new StreamAbortManager();
         const controller = manager.create('conv_idle');
         let settled = false;
@@ -122,7 +122,7 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
         expect(settled).toBe(true);
     });
 
-    it('waitForIdle 在会话原本空闲时立即完成，cancelAll 也会释放等待者', async () => {
+    test('waitForIdle 在会话原本空闲时立即完成，cancelAll 也会释放等待者', async () => {
         const manager = new StreamAbortManager();
         await expect(manager.waitForIdle('conv_free')).resolves.toBeUndefined();
 

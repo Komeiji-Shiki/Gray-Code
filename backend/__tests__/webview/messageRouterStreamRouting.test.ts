@@ -13,64 +13,18 @@
 // （与 backend/__tests__/tools/diffManager.test.ts 同约定）。
 // 屏蔽真实 DiffManager（cancelStream 清理路径会触碰 vscode 依赖），聚焦路由行为。
 const cancelAllPendingMock = jest.fn().mockResolvedValue({ cancelled: [] });
-jest.mock('../../../backend/tools/file/diffManager', () => ({
+jest.mock('../../../backend/core/services/diffManager', () => ({
   getDiffManager: () => ({
     cancelAllPending: cancelAllPendingMock
   })
 }));
 
-import { MessageRouter } from '../../../webview/MessageRouter';
-import { WebviewClientRegistry } from '../../../webview/runtime/WebviewClientRegistry';
 import { subAgentRunEventBus } from '../../../backend/tools/subagents/runEventBus';
 import { subAgentRunController } from '../../../backend/tools/subagents/runController';
+import { createMessageRouterHarness } from '../__fixtures__/harnessFixtures';
 
 function flushAsync(ms = 20): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function createHarness() {
-  const clientRegistry = new WebviewClientRegistry();
-  const monitorMessages: any[] = [];
-  clientRegistry.register({
-    clientId: 'subagent-monitor',
-    postMessage: (message: Record<string, unknown>) => {
-      monitorMessages.push(message);
-      return true;
-    }
-  });
-
-  const chatHandler = {
-    handleChatStream: jest.fn(),
-    handleRetryStream: jest.fn(),
-    handleToolConfirmation: jest.fn()
-  };
-  const conversationManager = {
-    rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined)
-  };
-  const rawSendResponse = jest.fn();
-  const rawSendError = jest.fn();
-
-  const router = new MessageRouter(
-    chatHandler as any,
-    conversationManager as any,
-    {} as any,
-    () => undefined,
-    rawSendResponse,
-    rawSendError,
-    clientRegistry
-  );
-
-  const ctx = { clientId: 'subagent-monitor' } as any;
-
-  return {
-    router,
-    ctx,
-    monitorMessages,
-    chatHandler,
-    conversationManager,
-    rawSendResponse,
-    rawSendError
-  };
 }
 
 describe('MessageRouter 流式请求路由生命周期', () => {
@@ -80,8 +34,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     jest.restoreAllMocks();
   });
 
-  it('cancelStream 缺少 data：不抛 TypeError，错误路由到发起方，requestClients 无残留', async () => {
-    const h = createHarness();
+  test('cancelStream 缺少 data：不抛 TypeError，错误路由到发起方，requestClients 无残留', async () => {
+    const h = createMessageRouterHarness();
     const handled = await h.router.route('cancelStream', undefined, 'req_cancel_1', h.ctx, 'subagent-monitor');
     expect(handled).toBe(true);
 
@@ -93,8 +47,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect((h.router as any).requestClients.size).toBe(0);
   });
 
-  it('cancelStream data 缺少 conversationId：错误路由到发起方，requestClients 无残留', async () => {
-    const h = createHarness();
+  test('cancelStream data 缺少 conversationId：错误路由到发起方，requestClients 无残留', async () => {
+    const h = createMessageRouterHarness();
     const handled = await h.router.route('cancelStream', { foo: 'bar' }, 'req_cancel_2', h.ctx, 'subagent-monitor');
     expect(handled).toBe(true);
 
@@ -105,8 +59,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect((h.router as any).requestClients.size).toBe(0);
   });
 
-  it('cancelStream 正常路径：cancelled 响应路由到发起方，映射由流结束清理', async () => {
-    const h = createHarness();
+  test('cancelStream 正常路径：cancelled 响应路由到发起方，映射由流结束清理', async () => {
+    const h = createMessageRouterHarness();
     const handled = await h.router.route('cancelStream', { conversationId: 'conv_cancel_1' }, 'req_cancel_3', h.ctx, 'subagent-monitor');
     expect(handled).toBe(true);
 
@@ -124,8 +78,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect((h.router as any).requestClients.size).toBe(0);
   });
 
-  it('cancelAllStreams 使用全局 diff 清理，同时逐会话拒绝待确认工具', async () => {
-    const h = createHarness();
+  test('cancelAllStreams 使用全局 diff 清理，同时逐会话拒绝待确认工具', async () => {
+    const h = createMessageRouterHarness();
     const abortManager = h.router.getAbortManager();
     abortManager.create('conv_all_1');
     abortManager.create('conv_all_2');
@@ -139,8 +93,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect(h.conversationManager.rejectAllPendingToolCalls).toHaveBeenCalledWith('conv_all_2');
   });
 
-  it('cancelStream 保留子 Agent 时先转后台再取消旧流', async () => {
-    const h = createHarness();
+  test('cancelStream 保留子 Agent 时先转后台再取消旧流', async () => {
+    const h = createMessageRouterHarness();
     const abortManager = h.router.getAbortManager();
     const oldStream = abortManager.create('conv_replace');
     subAgentRunEventBus.createRun('router_detach_fg', 'Agent', undefined, { conversationId: 'conv_replace' });
@@ -167,8 +121,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect(subAgentRunController.isActive('router_detach_fg')).toBe(true);
   });
 
-  it('chatStream started:true 后出错：错误仍路由到发起方而非主聊天（回归）', async () => {
-    const h = createHarness();
+  test('chatStream started:true 后出错：错误仍路由到发起方而非主聊天（回归）', async () => {
+    const h = createMessageRouterHarness();
     h.chatHandler.handleChatStream.mockReturnValue((async function* () {
       yield { content: 'partial' };
       throw new Error('stream boom');
@@ -194,8 +148,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect((h.router as any).requestClients.size).toBe(0);
   });
 
-  it('retryStream started:true 后出错：错误仍路由到发起方而非主聊天（回归）', async () => {
-    const h = createHarness();
+  test('retryStream started:true 后出错：错误仍路由到发起方而非主聊天（回归）', async () => {
+    const h = createMessageRouterHarness();
     h.chatHandler.handleRetryStream.mockReturnValue((async function* () {
       yield { content: 'partial' };
       throw new Error('retry boom');
@@ -215,8 +169,8 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect((h.router as any).requestClients.size).toBe(0);
   });
 
-  it('chatStream 正常结束：started 响应路由到发起方，映射由 finally 清理', async () => {
-    const h = createHarness();
+  test('chatStream 正常结束：started 响应路由到发起方，映射由 finally 清理', async () => {
+    const h = createMessageRouterHarness();
     h.chatHandler.handleChatStream.mockReturnValue((async function* () {
       yield { content: 'done' };
     })());

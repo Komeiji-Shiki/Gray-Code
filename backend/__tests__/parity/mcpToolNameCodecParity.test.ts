@@ -1,34 +1,39 @@
 /**
  * 跨端 parity：MCP 工具名编解码器
  *
- * 同步点：backend/modules/mcp/mcpToolNameCodec.ts（99 行）
- *         vs frontend/src/utils/tools/mcp/mcpToolNameCodec.ts（64 行）
+ * 同步点：backend/modules/mcp/mcpToolNameCodec.ts（re-export）
+ *         vs frontend/src/utils/tools/mcp/mcpToolNameCodec.ts（re-export）
+ *         vs shared/mcpToolNameCodec.ts（唯一事实源）
  *
- * 语义比对结论：一致（行数差异来自注释与后端独有导出，共享逻辑逐字相同）。
- * - 共享导出 5 个：MCP_TOOL_PREFIX / MCP_TOOL_SEPARATOR / encodeMcpToolName /
- *   decodeMcpToolName / isMcpToolName，实现逐字一致（仅注释/格式差异）。
- * - 有意差异：MCP_SERVER_ID_PATTERN 仅后端导出——serverId 合法性校验只在后端
- *   （McpManager.validateServerId）执行，前端是消费方、不需要校验。
+ * 09 批合并结论：两端 codec 逻辑已合并进 shared 包（唯一事实源），两端改为 re-export；
+ * 本 parity 退化为「验证 re-export 一致性」——两端命名空间与 shared 为同一实例
+ * （=== 相等），并继续守护全部编解码行为语义（常量/编码/解码/isMcpToolName/往返）。
+ * 原「MCP_SERVER_ID_PATTERN 仅后端导出」的有意差异已随合并消除：前端 re-export
+ * 同样暴露该符号，且与后端为同一正则实例。
  *
- * 测试方式：backend jest 直接 import 两端源码（前端 codec 无任何依赖，可被 ts-jest 编译），
- * 表驱动行为比对 + 常量比对 + 导出面关系比对（前端导出 ⊆ 后端导出）。
+ * 测试方式：backend jest 直接 import 两端 codec 文件 + shared 源文件，
+ * 断言两端 === shared 同一实例、导出面与 shared 完全一致；行为断言保留防语义漂移。
  *
- * 09 批 M4 约束：本测试直接 import 前端文件路径（含重命名/迁移时同步更新）；
- * 前端 codec 必须保持零依赖（不 import store/utils 链），否则 backend jest 无法编译。
+ * 09 批 M4 约束：前端 codec 现 re-export '@shared/mcpToolNameCodec'，backend jest
+ * 运行时解析该别名依赖 jest.backend.config.js 的 moduleNameMapper 映射
+ * '^@shared/(.*)$' → '<rootDir>/shared/$1'（与既有 '^@/(.*)$' → frontend/src 同一机制）。
  */
 
+import * as sharedCodec from '../../../shared/mcpToolNameCodec';
 import * as backendCodec from '../../modules/mcp/mcpToolNameCodec';
 import * as frontendCodec from '../../../frontend/src/utils/tools/mcp/mcpToolNameCodec';
 
-describe('跨端 parity：MCP 工具名编解码器（backend vs frontend）', () => {
-    it('常量一致：MCP_TOOL_PREFIX / MCP_TOOL_SEPARATOR', () => {
+describe('跨端 parity：MCP 工具名编解码器（backend vs frontend，统一来自 shared）', () => {
+    test('常量一致：MCP_TOOL_PREFIX / MCP_TOOL_SEPARATOR', () => {
         expect(frontendCodec.MCP_TOOL_PREFIX).toBe(backendCodec.MCP_TOOL_PREFIX);
         expect(frontendCodec.MCP_TOOL_SEPARATOR).toBe(backendCodec.MCP_TOOL_SEPARATOR);
         expect(backendCodec.MCP_TOOL_PREFIX).toBe('mcp__');
         expect(backendCodec.MCP_TOOL_SEPARATOR).toBe('__');
+        expect(backendCodec.MCP_TOOL_PREFIX).toBe(sharedCodec.MCP_TOOL_PREFIX);
+        expect(backendCodec.MCP_TOOL_SEPARATOR).toBe(sharedCodec.MCP_TOOL_SEPARATOR);
     });
 
-    it('encodeMcpToolName 两端行为一致', () => {
+    test('encodeMcpToolName 两端行为一致', () => {
         const pairs: Array<[string, string]> = [
             ['exa', 'web_search'],
             ['my_server', 'do_thing'],
@@ -44,7 +49,7 @@ describe('跨端 parity：MCP 工具名编解码器（backend vs frontend）', (
         }
     });
 
-    it('decodeMcpToolName 两端行为一致（含 null 分支）', () => {
+    test('decodeMcpToolName 两端行为一致（含 null 分支）', () => {
         const inputs = [
             'mcp__exa__web_search',
             'mcp__srv__tool__with__underscores', // toolName 含双下划线
@@ -77,7 +82,7 @@ describe('跨端 parity：MCP 工具名编解码器（backend vs frontend）', (
         expect(backendCodec.decodeMcpToolName('mcp__incomplete')).toBeNull();
     });
 
-    it('isMcpToolName 两端行为一致', () => {
+    test('isMcpToolName 两端行为一致', () => {
         const inputs = ['mcp__exa__web_search', 'mcp__', 'mcp__srv__tool', 'regular_tool', 'mcp_exa_tool', ''];
         for (const input of inputs) {
             expect(frontendCodec.isMcpToolName(input)).toBe(backendCodec.isMcpToolName(input));
@@ -86,7 +91,7 @@ describe('跨端 parity：MCP 工具名编解码器（backend vs frontend）', (
         expect(backendCodec.isMcpToolName('regular_tool')).toBe(false);
     });
 
-    it('encode→decode 往返两端一致', () => {
+    test('encode→decode 往返两端一致', () => {
         const pairs: Array<[string, string]> = [
             ['exa', 'web_search'],
             ['my_server', 'do_thing'],
@@ -105,11 +110,24 @@ describe('跨端 parity：MCP 工具名编解码器（backend vs frontend）', (
         }
     });
 
-    it('前端导出符号 ⊆ 后端导出符号；MCP_SERVER_ID_PATTERN 仅后端提供（有意差异）', () => {
+    test('两端 codec 与 shared 为同一实例（=== 相等，re-export 直接转发）', () => {
+        expect(frontendCodec.encodeMcpToolName).toBe(backendCodec.encodeMcpToolName);
+        expect(frontendCodec.decodeMcpToolName).toBe(backendCodec.decodeMcpToolName);
+        expect(frontendCodec.isMcpToolName).toBe(backendCodec.isMcpToolName);
+        expect(backendCodec.encodeMcpToolName).toBe(sharedCodec.encodeMcpToolName);
+        expect(backendCodec.decodeMcpToolName).toBe(sharedCodec.decodeMcpToolName);
+        expect(backendCodec.isMcpToolName).toBe(sharedCodec.isMcpToolName);
+    });
+
+    test('两端导出面与 shared 完全一致（MCP_SERVER_ID_PATTERN 原「仅后端」差异已随合并消除）', () => {
+        const sharedExports = Object.keys(sharedCodec).sort();
         const backendExports = Object.keys(backendCodec).sort();
         const frontendExports = Object.keys(frontendCodec).sort();
-        expect(backendExports).toEqual(expect.arrayContaining(frontendExports));
-        expect(backendCodec).toHaveProperty('MCP_SERVER_ID_PATTERN');
-        expect(frontendExports).not.toContain('MCP_SERVER_ID_PATTERN');
+        expect(backendExports).toEqual(sharedExports);
+        expect(frontendExports).toEqual(sharedExports);
+        // 两端 === shared 同一实例（re-export 直接转发，而非复制）
+        expect(backendCodec.MCP_SERVER_ID_PATTERN).toBe(sharedCodec.MCP_SERVER_ID_PATTERN);
+        expect(frontendCodec.MCP_SERVER_ID_PATTERN).toBe(sharedCodec.MCP_SERVER_ID_PATTERN);
+        expect(frontendCodec.MCP_SERVER_ID_PATTERN).toBe(backendCodec.MCP_SERVER_ID_PATTERN);
     });
 });

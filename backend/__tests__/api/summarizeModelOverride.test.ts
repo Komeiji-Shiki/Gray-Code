@@ -10,6 +10,11 @@ const history: Content[] = [
     { role: 'model', parts: [{ text: 'answer 3' }] }
 ];
 
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：useSeparateModel/summarizeModelId 位置参数 +
+ * main/dedicated 双配置 map，形状与共享的 createSummarizeHarness 差异过大，不收敛，
+ * 见 ../__fixtures__/harnessFixtures.ts 头注释。
+ */
 function createHarness(
     useSeparateModel = false,
     summarizeModelId = 'summary-model',
@@ -40,7 +45,9 @@ function createHarness(
     const generate = jest.fn().mockResolvedValue({
         content: {
             role: 'model',
-            parts: [{ text: 'summary' }],
+            // 总结文本必须 >= MIN_SUMMARY_LENGTH（50 字符），否则会被 LOW_QUALITY_SUMMARY 拒绝
+            // （与共享 fixture 的 SUCCESS_SUMMARY 同语义，见 harnessFixtures.ts）
+            parts: [{ text: '已完成总结。这是足够长的总结正文：目标已记录、已完成步骤与当前进度、下一步计划与关键约束均已覆盖，供后续对话继续使用。' }],
             usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 10 }
         }
     });
@@ -93,7 +100,7 @@ function createHarness(
 }
 
 describe('SummarizeService current conversation model override', () => {
-    it('手动总结使用当前对话实际选中的模型', async () => {
+    test('手动总结使用当前对话实际选中的模型', async () => {
         const { service, generate } = createHarness(false);
 
         const result = await service.handleSummarizeContext({
@@ -109,7 +116,7 @@ describe('SummarizeService current conversation model override', () => {
         }));
     });
 
-    it('独立总结模型优先于当前对话模型', async () => {
+    test('独立总结模型优先于当前对话模型', async () => {
         const { service, generate } = createHarness(true);
 
         const result = await service.handleSummarizeContext({
@@ -125,7 +132,7 @@ describe('SummarizeService current conversation model override', () => {
         }));
     });
 
-    it('独立渠道未指定模型时不错误继承主对话模型', async () => {
+    test('独立渠道未指定模型时不错误继承主对话模型', async () => {
         const { service, generate } = createHarness(true, '');
 
         const result = await service.handleSummarizeContext({
@@ -140,7 +147,7 @@ describe('SummarizeService current conversation model override', () => {
         expect(generateOptions.modelOverride).toBeUndefined();
     });
 
-    it('未配置渠道级窗口时按当前对话 modelOverride 的 contextWindow 做总结预检', async () => {
+    test('未配置渠道级窗口时按当前对话 modelOverride 的 contextWindow 做总结预检', async () => {
         const configOverride = {
             models: [
                 { id: 'tiny-model', contextWindow: 200 },
@@ -169,7 +176,7 @@ describe('SummarizeService current conversation model override', () => {
         expect(large.generate).toHaveBeenCalledWith(expect.objectContaining({ modelOverride: 'large-model' }));
     });
 
-    it('手动总结预检计入总结提示词开销，超限时不发送必败 API 请求', async () => {
+    test('手动总结预检计入总结提示词开销，超限时不发送必败 API 请求', async () => {
         const { service, generate } = createHarness(false, 'summary-model', {
             mainConfig: { maxContextTokens: 1_000 },
             summarizePrompt: 'very-long-summary-instruction '.repeat(200)

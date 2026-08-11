@@ -67,6 +67,11 @@
         "category": "GrayCode"
       },
       {
+        "command": "graycode.runIntegrityCheck",
+        "title": "运行存档完整性检查",
+        "category": "GrayCode"
+      },
+      {
         "command": "graycode.diff.acceptAll",
         "title": "Accept All Changes",
         "icon": "$(check-all)",
@@ -298,7 +303,8 @@
     "test:coverage": "jest --config jest.backend.config.js --coverage",
     "test:frontend": "npm --prefix frontend test",
     "test:all": "npm test && npm run test:frontend",
-    "ci": "npm run typecheck:all && npm run test:all",
+    "ci": "npm run typecheck:all && npm run test:all && npm run i18n:check",
+    "i18n:check": "node scripts/i18n-sync.mjs --check",
     "benchmark": "jest --config jest.backend.config.js --testMatch \"**/*.benchmark.ts\" --runInBand --testTimeout 600000"
   },
   "dependencies": {

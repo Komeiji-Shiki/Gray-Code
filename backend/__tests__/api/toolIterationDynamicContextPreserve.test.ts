@@ -53,7 +53,7 @@ function createService(history: Content[]) {
 }
 
 describe('ToolIterationLoopService preserve 策略差分基准（createTurnDynamicContext）', () => {
-    it('preserve：从历史读取上一回合缓存作为 diffBase，且不修改任何历史消息或持久化字段', async () => {
+    test('preserve：从历史读取上一回合缓存作为 diffBase，且不修改任何历史消息或持久化字段', async () => {
         const history: Content[] = [
             {
                 id: 'user-1',
@@ -90,7 +90,7 @@ describe('ToolIterationLoopService preserve 策略差分基准（createTurnDynam
         expect(conversationManager.updateMessagesBatch).not.toHaveBeenCalled();
     });
 
-    it('preserve：历史缓存无 sectionValues（旧缓存）时 diffBase 为 undefined，退化为全量发送', async () => {
+    test('preserve：历史缓存无 sectionValues（旧缓存）时 diffBase 为 undefined，退化为全量发送', async () => {
         const history: Content[] = [
             {
                 id: 'user-1',
@@ -122,7 +122,7 @@ describe('ToolIterationLoopService preserve 策略差分基准（createTurnDynam
         expect(conversationManager.updateMessagesBatch).not.toHaveBeenCalled();
     });
 
-    it('single：不读取历史基准（getHistoryRef 不被调用），始终全量生成', async () => {
+    test('single：不读取历史基准（getHistoryRef 不被调用），始终全量生成', async () => {
         const history: Content[] = [
             {
                 id: 'user-1',

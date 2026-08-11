@@ -7,7 +7,7 @@ import { ChatViewProvider } from './webview/ChatViewProvider';
 import { setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
 import { Logger } from './backend/core/logger';
 import { initializeProductMetadata } from './backend/core/productMetadata';
-import { getDiffManager } from './backend/tools/file/diffManager';
+import { getDiffManager } from './backend/core/services/diffManager';
 import { registerSettingsCommands } from './webview/commands/settingsCommands';
 import { registerDiffUi } from './webview/commands/diffUi';
 

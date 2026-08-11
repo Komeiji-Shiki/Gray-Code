@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import { t } from '../../i18n';
 import { getDiffCodeLensProvider, type PendingDiffSession, type DiffBlockInfo } from './DiffCodeLensProvider';
-import { getDiffManager } from './diffManager';
+import { getDiffManager } from '../../core/services/diffManager';
 
 /**
  * Diff 编辑器操作提供者

@@ -15,9 +15,9 @@ import {
     deleteLogicalMessage,
     repairParentChainAfterDelete
 } from '../../modules/conversation/TranscriptMutation';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { Content } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { Content } from '../../modules/conversation';
 
 interface ChainNode {
     id: string;

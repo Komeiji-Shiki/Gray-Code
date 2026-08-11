@@ -14,6 +14,7 @@
 
 import type * as vscode from 'vscode';
 import { markAiActive } from '../../backend/modules/activity';
+import { PUSH_MESSAGE_NAMES } from '../../shared/protocol';
 
 /** chunk 类型消息的节流间隔（毫秒） */
 const CHUNK_THROTTLE_MS = 50;
@@ -241,12 +242,12 @@ export class StreamChunkProcessor {
       this.pendingTerminalBuffer = [];
       if (pending.length === 1) {
         view.webview.postMessage({
-          type: 'streamChunk',
+          type: PUSH_MESSAGE_NAMES.streamChunk,
           data: pending[0]
         });
       } else {
         view.webview.postMessage({
-          type: 'streamChunkBatch',
+          type: PUSH_MESSAGE_NAMES.streamChunkBatch,
           data: pending
         });
       }
@@ -269,7 +270,7 @@ export class StreamChunkProcessor {
       // 单条消息：保持原有格式，向前兼容
       try {
         currentView.webview.postMessage({
-          type: 'streamChunk',
+          type: PUSH_MESSAGE_NAMES.streamChunk,
           data: messages[0]
         });
       } catch (err) {
@@ -280,7 +281,7 @@ export class StreamChunkProcessor {
       // 多条消息：批量发送，前端一次性同步处理以利用 Vue 响应式批量更新
       try {
         currentView.webview.postMessage({
-          type: 'streamChunkBatch',
+          type: PUSH_MESSAGE_NAMES.streamChunkBatch,
           data: messages
         });
       } catch (err) {

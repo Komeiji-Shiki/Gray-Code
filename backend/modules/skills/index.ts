@@ -1,5 +1,5 @@
 /**
- * LimCode - Skills 模块导出
+ * GrayCode - Skills 模块导出
  *
  * Skills 是用户自定义的知识模块，可以动态加载到 AI 上下文中
  */
@@ -21,3 +21,4 @@ export {
     setSkillsManager,
     createSkillsManager
 } from './SkillsManager';
+

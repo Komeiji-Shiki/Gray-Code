@@ -1,5 +1,5 @@
 /**
- * LimCode - Token 计数服务
+ * GrayCode - Token 计数服务
  *
  * 提供通过 API 精确计算 token 数量的功能
  * 支持 Gemini、OpenAI、Anthropic 三种渠道

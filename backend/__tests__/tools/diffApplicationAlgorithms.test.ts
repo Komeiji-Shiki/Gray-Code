@@ -2,7 +2,7 @@ import { applyStructuredDiffHunksBestEffort, normalizeLineEndings } from '../../
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff } from '../../tools/file/unifiedDiff';
 
 describe('diff application algorithms', () => {
-    it('applies multiple ordered structured hunks and preserves reported output ranges', () => {
+    test('applies multiple ordered structured hunks and preserves reported output ranges', () => {
         const original = [
             'const first = 1;',
             'middle',
@@ -29,7 +29,7 @@ describe('diff application algorithms', () => {
         ]);
     });
 
-    it('keeps sequential semantics when a later structured hunk targets earlier replacement content', () => {
+    test('keeps sequential semantics when a later structured hunk targets earlier replacement content', () => {
         const result = applyStructuredDiffHunksBestEffort('alpha\nbeta', [
             { oldContent: 'alpha', newContent: 'gamma' },
             { oldContent: 'gamma', newContent: 'delta' }
@@ -39,7 +39,7 @@ describe('diff application algorithms', () => {
         expect(result.newContent).toBe('delta\nbeta');
     });
 
-    it('applies a unified hunk with mixed context, deletes, and additions', () => {
+    test('applies a unified hunk with mixed context, deletes, and additions', () => {
         const parsed = parseUnifiedDiff([
             '--- a/file.txt',
             '+++ b/file.txt',
@@ -57,7 +57,7 @@ describe('diff application algorithms', () => {
         expect(result.newContent).toBe('alpha\nbravo\ngamma\ntail');
     });
 
-    it('finds a uniquely relocated unified hunk through fallback search', () => {
+    test('finds a uniquely relocated unified hunk through fallback search', () => {
         const parsed = parseUnifiedDiff([
             '@@ -1,2 +1,2 @@',
             ' target',
@@ -71,7 +71,7 @@ describe('diff application algorithms', () => {
         expect(result.newContent).toBe('prefix\ntarget\nnew\nsuffix');
     });
 
-    it('returns a reusable plan from the fast path and replays any hunk subset identically to rescanning', () => {
+    test('returns a reusable plan from the fast path and replays any hunk subset identically to rescanning', () => {
         const original = [
             'const first = 1;',
             'middle',
@@ -116,7 +116,7 @@ describe('diff application algorithms', () => {
         }
     });
 
-    it('reuses a plan produced with a subset of applyIndices', () => {
+    test('reuses a plan produced with a subset of applyIndices', () => {
         const original = 'a\nb\nc\n';
         const hunks = [
             { oldContent: 'a', newContent: 'A' },
@@ -137,7 +137,7 @@ describe('diff application algorithms', () => {
         expect(replay.newContent).toBe('A\nb\nC\n');
     });
 
-    it('ignores a stale plan when the original content no longer matches', () => {
+    test('ignores a stale plan when the original content no longer matches', () => {
         const original = 'alpha\nbeta';
         const changed = 'ALPHA\nbeta';
         const hunks = [{ oldContent: 'alpha', newContent: 'gamma' }];
@@ -155,7 +155,7 @@ describe('diff application algorithms', () => {
         expect(withStalePlan.failedCount).toBe(1);
     });
 
-    it('falls back to rescanning when the plan does not cover the required applyIndices', () => {
+    test('falls back to rescanning when the plan does not cover the required applyIndices', () => {
         // 顺序语义 hunk（第二个 hunk 依赖第一个 hunk 的替换产物）使 fast path 无法产出全量计划
         const original = 'alpha\nbeta';
         const hunks = [

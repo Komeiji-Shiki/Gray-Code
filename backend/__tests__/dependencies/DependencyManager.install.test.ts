@@ -64,7 +64,7 @@ describe('DependencyManager.install', () => {
         });
     }
 
-    it('并发安装同一依赖：第二个调用复用第一个，exec 只执行一次', async () => {
+    test('并发安装同一依赖：第二个调用复用第一个，exec 只执行一次', async () => {
         mockNpmSuccess(100);
         const mgr = createManager();
 
@@ -82,7 +82,7 @@ describe('DependencyManager.install', () => {
         expect(leftovers).toEqual([]);
     });
 
-    it('安装完成后再调用会触发新的安装（不缓存结果）', async () => {
+    test('安装完成后再调用会触发新的安装（不缓存结果）', async () => {
         mockNpmSuccess(0);
         const mgr = createManager();
 
@@ -104,7 +104,7 @@ describe('DependencyManager.install', () => {
         expect(leftovers).toEqual([]);
     });
 
-    it('未知依赖直接返回 false，不触发 exec', async () => {
+    test('未知依赖直接返回 false，不触发 exec', async () => {
         mockNpmSuccess(0);
         const mgr = createManager();
 

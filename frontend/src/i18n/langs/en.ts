@@ -4,12 +4,13 @@
  */
 
 import type { LanguageMessages } from '../types';
+import sharedEn from './_shared/en';
 
 const en: LanguageMessages = {
     common: {
         save: 'Save',
         cancel: 'Cancel',
-        confirm: 'Confirm',
+        confirm: sharedEn.common.confirm,
         delete: 'Delete',
         edit: 'Edit',
         add: 'Add',
@@ -19,7 +20,8 @@ const en: LanguageMessages = {
         enabled: 'Enabled',
         disabled: 'Disabled',
         loading: 'Loading...',
-        error: 'Error',
+        error: sharedEn.common.error,
+        unknownError: sharedEn.common.unknownError,
         success: 'Success',
         warning: 'Warning',
         info: 'Info',
@@ -50,18 +52,20 @@ const en: LanguageMessages = {
         about: 'About',
         version: 'Version',
         name: 'Name',
-        description: 'Description',
-        status: 'Status',
+        description: sharedEn.common.description,
+        status: sharedEn.common.status,
         type: 'Type',
         size: 'Size',
         path: 'Path',
         time: 'Time',
-        date: 'Date',
+        date: sharedEn.common.date,
         actions: 'Actions',
         more: 'More',
         less: 'Less',
         expand: 'Expand',
         collapse: 'Collapse',
+        show: sharedEn.common.show,
+        hide: sharedEn.common.hide,
         preview: 'Preview',
         download: 'Download',
         upload: 'Upload',
@@ -75,12 +79,12 @@ const en: LanguageMessages = {
         start: 'Start',
         stop: 'Stop',
         pause: 'Pause',
-        resume: 'Resume',
+        resume: sharedEn.common.resume,
         running: 'Running',
         stopped: 'Stopped',
         pending: 'Pending',
-        completed: 'Completed',
-        failed: 'Failed',
+        completed: sharedEn.common.completed,
+        failed: sharedEn.common.failed,
         unknown: 'Unknown'
     },
 
@@ -115,9 +119,9 @@ const en: LanguageMessages = {
 
         common: {
             confirmDialog: {
-                title: 'Confirm',
+                title: sharedEn.components.common.confirmDialog.title,
                 message: 'Are you sure you want to proceed?',
-                confirm: 'Confirm',
+                confirm: sharedEn.components.common.confirmDialog.confirm,
                 cancel: 'Cancel'
             },
             inputDialog: {
@@ -368,7 +372,7 @@ const en: LanguageMessages = {
             remove: 'Remove',
             tokenUsage: 'Usage',
             context: 'Context',
-            fileNotExists: 'File does not exist',
+            fileNotExists: sharedEn.components.input.fileNotExists,
             queue: {
                 title: 'Queued Messages',
                 sendNow: 'Send now',
@@ -429,7 +433,7 @@ const en: LanguageMessages = {
                 hint: 'Content will be sent to AI wrapped in <context> tags',
                 dropHint: 'Release to add file content',
                 fileAdded: 'Added file content: {path}',
-                readFailed: 'Failed to read file',
+                readFailed: sharedEn.components.input.promptContext.readFailed,
                 addFailed: 'Add failed: {error}'
             },
             filePicker: {
@@ -451,8 +455,8 @@ const en: LanguageMessages = {
                 checkpointCreateError: 'Failed to create checkpoint: {error}',
                 holdShiftToDrag: 'Please hold Shift key to drag files',
                 fileNotInWorkspace: 'File is not in workspace',
-                fileNotInAnyWorkspace: 'File is not in any open workspace',
-                fileInOtherWorkspace: 'File belongs to another workspace: {workspaceName}',
+                fileNotInAnyWorkspace: sharedEn.components.input.notifications.fileNotInAnyWorkspace,
+                fileInOtherWorkspace: sharedEn.components.input.notifications.fileInOtherWorkspace,
                 fileAdded: 'Added pinned file: {path}',
                 addFailed: 'Add failed: {error}',
                 cannotGetFilePath: 'Cannot get file path, please drag from VSCode Explorer or tab',
@@ -561,7 +565,7 @@ const en: LanguageMessages = {
                 mimeType: 'MIME type',
                 size: 'Size',
                 fileUri: 'File URI',
-                status: 'Status',
+                status: sharedEn.components.message.responseViewer.status,
                 duration: 'Duration',
                 moreMetadata: 'More metadata',
                 attachmentType: 'Attachment type',
@@ -595,7 +599,7 @@ const en: LanguageMessages = {
                     executing: 'Executing',
                     awaitingApply: 'Awaiting apply',
                     success: 'Success',
-                    error: 'Error',
+                    error: sharedEn.components.message.responseViewer.toolStatuses.error,
                     warning: 'Warning',
                     unknown: 'Unknown'
                 }
@@ -669,7 +673,7 @@ const en: LanguageMessages = {
                 restoreResultPartialTitle: 'Restore Partially Completed',
                 restoreResultWarningTitle: 'Unbacked Files Notice',
                 restoreResultSuccessTitle: 'Restore Completed',
-                restoreResultFailed: 'Failed to restore checkpoint',
+                restoreResultFailed: sharedEn.components.message.checkpoint.restoreResultFailed,
                 restoreResultPartial: 'Restore partially completed. The following files failed: {files}',
                 restoreResultPartialMore: 'Restore partially completed. The following files failed: {files} and {count} more files',
                 restoreResultUnbacked: 'The following files were not backed up when the checkpoint was created (too large or unreadable) and were not processed by this restore: {paths}',
@@ -686,7 +690,7 @@ const en: LanguageMessages = {
             continue: {
                 title: 'Conversation Paused',
                 description: 'Tool execution completed. You can send a new message or click "Continue" to let AI continue responding',
-                button: 'Continue'
+                button: sharedEn.components.message.continue.button
             },
             error: {
                 title: 'Request Failed',
@@ -700,19 +704,19 @@ const en: LanguageMessages = {
             tool: {
                 parameters: 'Parameters',
                 result: 'Result',
-                error: 'Error',
+                error: sharedEn.components.message.tool.error,
                 paramCount: '{count} parameters',
                 streamingArgs: 'Generating arguments...',
                 confirmExecution: 'Click to confirm execution',
                 confirm: 'Confirm Execution',
                 saveAll: 'Save All',
-                rejectAll: 'Reject All',
-                reject: 'Reject',
+                rejectAll: sharedEn.components.message.tool.rejectAll,
+                reject: sharedEn.components.message.tool.reject,
                 confirmed: 'Confirmed',
                 rejected: 'Rejected',
                 viewDiff: 'View Diff',
                 viewDiffInVSCode: 'View diff in VSCode',
-                openDiffFailed: 'Failed to open diff preview',
+                openDiffFailed: sharedEn.components.message.tool.openDiffFailed,
                 pendingDiffNotFound: 'Pending diff not found. Please retry after status sync.',
                 acceptDiffFailed: 'Failed to accept diff. Please retry.',
                 rejectDiffFailed: 'Failed to reject diff. Please retry.',
@@ -800,8 +804,8 @@ const en: LanguageMessages = {
                     sourceCurrentInput: 'Current tool input',
                     sourceSnapshot: 'Snapshot at that time',
                     statusPending: 'Pending',
-                    statusInProgress: 'In Progress',
-                    statusCompleted: 'Completed',
+                    statusInProgress: sharedEn.components.message.tool.todoPanel.statusInProgress,
+                    statusCompleted: sharedEn.components.message.tool.todoPanel.statusCompleted,
                     statusCancelled: 'Cancelled',
                     totalItems: '{count} items',
                     copyAsMarkdown: 'Copy as Markdown',
@@ -817,12 +821,12 @@ const en: LanguageMessages = {
                     executeLabel: 'Execute:',
                     executed: 'Executed',
                     executing: 'Executing...',
-                    executePlan: 'Execute Plan',
+                    executePlan: sharedEn.components.message.tool.planCard.executePlan,
                     openFile: 'Open File',
                     loadChannelsFailed: 'Failed to load channels',
                     loadModelsFailed: 'Failed to load models',
                     executePlanFailed: 'Failed to execute plan',
-                    openFileFailed: 'Failed to open file',
+                    openFileFailed: sharedEn.components.message.tool.planCard.openFileFailed,
                     promptPrefix: 'Please execute the following plan:\n\n{plan}',
                     sourceUpToDate: 'Source: up to date',
                     sourceUntracked: 'Source: untracked',
@@ -836,62 +840,35 @@ const en: LanguageMessages = {
                     generateLabel: 'Plan:',
                     generated: 'Plan Generated',
                     generating: 'Generating Plan...',
-                    generatePlan: 'Generate Plan',
+                    generatePlan: sharedEn.components.message.tool.designCard.generatePlan,
                     openFile: 'Open File',
                     loadChannelsFailed: 'Failed to load channels',
                     loadModelsFailed: 'Failed to load models',
                     generatePlanFailed: 'Failed to generate plan',
-                    openFileFailed: 'Failed to open file'
+                    openFileFailed: sharedEn.components.message.tool.designCard.openFileFailed
                 },
                 reviewCard: {
+                    ...sharedEn.components.message.tool.reviewCard,
                     sourceCreate: 'Create',
                     sourceMilestone: 'Milestone',
                     sourceFinalize: 'Finalize',
                     sourceReopen: 'Reopen',
                     sourceValidate: 'Validate',
                     sourceCompare: 'Compare',
-                    statusCompleted: 'Completed',
-                    statusInProgress: 'In Progress',
-                    decisionAccepted: 'Accepted',
-                    decisionConditionallyAccepted: 'Conditionally Accepted',
-                    decisionRejected: 'Rejected',
+                    statusCompleted: sharedEn.components.message.tool.reviewCard.statusCompleted,
                     decisionNeedsFollowUp: 'Needs Follow-Up',
                     validationAutoUpgrade: 'Upgradeable Legacy Doc',
                     validationInvalid: 'Invalid',
                     validationWarning: 'Warnings',
                     validationValid: 'Valid',
-                    issueError: 'Error',
+                    issueError: sharedEn.components.message.tool.reviewCard.issueError,
                     issueWarning: 'Warning',
-                    severityHigh: 'High',
-                    severityMedium: 'Medium',
-                    severityLow: 'Low',
                     milestonesChip: '{completed}/{total} milestones',
                     findingsChip: '{total} findings · H{high} M{medium} L{low}',
                     modulesChip: '{count} modules',
                     formatChip: 'Format {format}',
-                    status: 'Status',
-                    decision: 'Decision',
                     milestones: 'Milestones',
-                    findings: 'Findings',
                     format: 'Format',
-                    latestConclusion: 'Latest Conclusion',
-                    recommendedNextAction: 'Recommended Next Action',
-                    tracking: 'Tracking Status',
-                    trackingOpen: 'Open',
-                    trackingAcceptedRisk: 'Accepted Risk',
-                    trackingFixed: 'Fixed',
-                    trackingWontFix: "Won't Fix",
-                    trackingDuplicate: 'Duplicate',
-                    categoryHtml: 'HTML',
-                    categoryCss: 'CSS',
-                    categoryJavascript: 'JavaScript',
-                    categoryAccessibility: 'Accessibility',
-                    categoryPerformance: 'Performance',
-                    categoryMaintainability: 'Maintainability',
-                    categoryDocs: 'Docs',
-                    categoryTest: 'Test',
-                    categoryOther: 'Other',
-                    evidence: 'Evidence',
                     findingDetails: 'Finding Details',
                     compareBase: 'Base Review',
                     compareTarget: 'Target Review',
@@ -903,16 +880,9 @@ const en: LanguageMessages = {
                     compareEvidenceChanged: 'Evidence Changed',
                     compareRelatedMilestonesChanged: 'Related Milestones Changed',
                     compareChanges: 'Changes',
-                    changeSeverity: 'Severity',
-                    changeTrackingStatus: 'Tracking Status',
                     changeTitle: 'Title',
-                    changeDescription: 'Description',
-                    changeRecommendation: 'Recommendation',
-                    changeEvidence: 'Evidence',
-                    changeRelatedMilestoneIds: 'Related Milestones',
                     validation: 'Validation',
                     progress: 'Progress',
-                    modules: 'Reviewed Modules',
                     noIssues: 'No issues',
                     issueSummary: '{count} issues · {errors} errors · {warnings} warnings',
                     openFile: 'Open Document',
@@ -921,12 +891,12 @@ const en: LanguageMessages = {
                     copyPath: 'Copy Path',
                     copied: 'Copied',
                     rawResult: 'Full Result',
-                    generatePlan: 'Generate Plan',
                     generatingPlan: 'Generating Plan...',
                     planGenerated: 'Plan Generated',
                     generatePlanFailed: 'Failed to generate plan'
                 },
                 progressCard: {
+                    ...sharedEn.components.message.tool.progressCard,
                     sourceCreate: 'Create',
                     sourceUpdate: 'Update',
                     sourceMilestone: 'Milestone',
@@ -936,25 +906,19 @@ const en: LanguageMessages = {
                     validationInvalid: 'Invalid',
                     validationWarning: 'Warnings',
                     validationValid: 'Valid',
-                    issueError: 'Error',
+                    issueError: sharedEn.components.message.tool.progressCard.issueError,
                     issueWarning: 'Warning',
                     issueSummary: '{count} issues · {errors} errors · {warnings} warnings',
-                    status: 'Status',
                     phase: 'Phase',
-                    statusActive: 'Active',
                     statusBlocked: 'Blocked',
-                    statusCompleted: 'Completed',
+                    statusCompleted: sharedEn.components.message.tool.progressCard.statusCompleted,
                     statusArchived: 'Archived',
                     phaseDesign: 'Design',
                     phasePlan: 'Plan',
                     phaseImplementation: 'Implementation',
                     phaseReview: 'Review',
                     phaseMaintenance: 'Maintenance',
-                    milestoneStatusCompleted: 'Completed',
-                    milestoneStatusInProgress: 'In Progress',
                     currentFocus: 'Current Focus',
-                    currentProgress: 'Current Progress',
-                    latestConclusion: 'Latest Conclusion',
                     currentBlocker: 'Current Blocker',
                     nextAction: 'Next Action',
                     updatedAt: 'Updated At',
@@ -1010,7 +974,7 @@ const en: LanguageMessages = {
                     add: 'New Config',
                     delete: 'Delete Config',
                     inputPlaceholder: 'Enter config name',
-                    confirm: 'Confirm',
+                    confirm: sharedEn.components.settings.channelSettings.selector.confirm,
                     cancel: 'Cancel'
                 },
                 empty: {
@@ -1033,7 +997,7 @@ const en: LanguageMessages = {
                         title: 'Delete Configuration',
                         message: 'Are you sure you want to delete config "{name}"? This action cannot be undone.',
                         cancel: 'Cancel',
-                        confirm: 'Confirm'
+                        confirm: sharedEn.components.settings.channelSettings.dialog.delete.confirm,
                     },
                     changeType: {
                         title: 'Change Channel Type',
@@ -1093,7 +1057,7 @@ const en: LanguageMessages = {
                         supportedTypes: 'Supported file types:',
                         image: 'Image',
                         imageFormats: 'PNG, JPEG, WebP',
-                        document: 'Document',
+                        document: sharedEn.components.settings.channelSettings.form.multimodal.document,
                         documentFormats: 'PDF',
                         capabilities: 'Multimodal Tool Capabilities:',
                         table: {
@@ -1242,7 +1206,7 @@ const en: LanguageMessages = {
                     agents: 'Agents',
                     activity: 'Usage Time',
                     sandbox: 'Sandbox',
-                    other: 'Other'
+                    other: sharedEn.components.settings.autoExec.categories.other
                 },
                 badges: {
                     dangerous: 'Dangerous'
@@ -1274,9 +1238,9 @@ const en: LanguageMessages = {
                 serverEnv: 'Environment Variables',
                 serverStatus: 'Server Status',
                 connecting: 'Connecting',
-                connected: 'Connected',
-                disconnected: 'Disconnected',
-                error: 'Error'
+                connected: sharedEn.components.settings.mcp.connected,
+                disconnected: sharedEn.components.settings.mcp.disconnected,
+                error: sharedEn.components.settings.mcp.error
             },
             checkpoint: {
                 title: 'Checkpoint Settings',
@@ -1317,8 +1281,8 @@ const en: LanguageMessages = {
                     tools: {
                         title: 'Tool Backup Configuration',
                         description: 'Select tools that need backups before and after execution',
-                        beforeLabel: 'Before Execution',
-                        afterLabel: 'After Execution',
+                        beforeLabel: sharedEn.components.settings.checkpoint.sections.tools.beforeLabel,
+                        afterLabel: sharedEn.components.settings.checkpoint.sections.tools.afterLabel,
                         empty: 'No tools available'
                     },
                     other: {
@@ -1403,8 +1367,8 @@ const en: LanguageMessages = {
                         deleteSelected: 'Delete Selected',
                         noCheckpointsInConversation: 'No checkpoints in this conversation',
                         checkpointFiles: '{count} files',
-                        phaseBefore: 'Before',
-                        phaseAfter: 'After',
+                        phaseBefore: sharedEn.components.settings.checkpoint.sections.cleanup.phaseBefore,
+                        phaseAfter: sharedEn.components.settings.checkpoint.sections.cleanup.phaseAfter,
                         typeFull: 'Full',
                         typeIncremental: 'Incremental',
                         toolUserMessage: 'User Message',
@@ -1429,7 +1393,7 @@ const en: LanguageMessages = {
                         manifestLoadFailed: 'Failed to load exclusion manifest',
                         manifestUnavailable: 'This checkpoint is in legacy format; no exclusion manifest is available',
                         manifestExcludedCount: 'Excluded files',
-                        manifestNote: 'This checkpoint excluded {count} files using the exclusion rules at creation time',
+                        manifestNote: sharedEn.components.settings.checkpoint.sections.cleanup.manifestNote,
                         manifestRulesChanged: 'Current exclusion rules have changed; restore will follow current rules',
                         manifestIgnoreSnapshot: 'Exclusion Rules Snapshot',
                         manifestRuleVersion: 'Rules version',
@@ -1449,7 +1413,7 @@ const en: LanguageMessages = {
                             restoring: 'Restoring',
                             deleting: 'Deleting',
                             done: 'Done',
-                            failed: 'Failed',
+                            failed: sharedEn.components.settings.checkpoint.sections.cleanup.progress.failed,
                             cancelled: 'Cancelled',
                             cancel: 'Cancel',
                             cancelFailed: 'Cancel failed, please retry',
@@ -1582,7 +1546,7 @@ const en: LanguageMessages = {
                     enableDiagnostics: 'Enable diagnostics',
                     severityTypes: 'Problem types',
                     severity: {
-                        error: 'Error',
+                        error: sharedEn.components.settings.contextSettings.diagnostics.severity.error,
                         warning: 'Warning',
                         information: 'Info',
                         hint: 'Hint'
@@ -1633,11 +1597,11 @@ const en: LanguageMessages = {
                     processing: 'Processing {dependency}...',
                     complete: '{dependency} processing complete',
                     failed: '{dependency} processing failed',
-                    installSuccess: '{name} installed successfully!',
+                    installSuccess: sharedEn.components.settings.dependencySettings.progress.installSuccess,
                     installFailed: '{name} installation failed',
                     uninstallSuccess: '{name} uninstalled',
                     uninstallFailed: '{name} uninstallation failed',
-                    unknownError: 'Unknown error'
+                    unknownError: sharedEn.components.settings.dependencySettings.progress.unknownError
                 },
                 panel: {
                     installedCount: '{installed}/{total}'
@@ -1724,7 +1688,7 @@ const en: LanguageMessages = {
                 serverCard: {
                     connect: 'Connect',
                     disconnect: 'Disconnect',
-                    connecting: 'Connecting...',
+                    connecting: sharedEn.components.settings.mcpSettings.serverCard.connecting,
                     edit: 'Edit',
                     delete: 'Delete',
                     tools: 'Tools',
@@ -1732,8 +1696,8 @@ const en: LanguageMessages = {
                     prompts: 'Prompts'
                 },
                 status: {
-                    connected: 'Connected',
-                    connecting: 'Connecting...',
+                    connected: sharedEn.components.settings.mcpSettings.status.connected,
+                    connecting: sharedEn.components.settings.mcpSettings.status.connecting,
                     error: 'Connection Error',
                     disconnected: 'Disconnected'
                 },
@@ -1743,10 +1707,10 @@ const en: LanguageMessages = {
                     serverId: 'Server ID',
                     serverIdPlaceholder: 'Optional, leave blank to auto-generate',
                     serverIdHint: 'Can only contain letters, numbers, underscores and hyphens, used to identify server in JSON config',
-                    serverIdError: 'ID can only contain letters, numbers, underscores and hyphens',
+                    serverIdError: sharedEn.components.settings.mcpSettings.form.serverIdError,
                     serverName: 'Server Name',
                     serverNamePlaceholder: 'e.g.: My MCP Server',
-                    description: 'Description',
+                    description: sharedEn.components.settings.mcpSettings.form.description,
                     descriptionPlaceholder: 'Optional description',
                     required: '*',
                     transportType: 'Transport Type',
@@ -1806,7 +1770,7 @@ const en: LanguageMessages = {
                 generalWorker: 'Enable General Worker (easy mode)',
                 generalWorkerHint: 'Lets the main model dispatch zero-config "General Worker" agents that inherit the current channel and full tool permissions; the model decides how many to use, no manual agent setup needed',
                 basicInfo: 'Basic Info',
-                description: 'Description',
+                description: sharedEn.components.settings.subagents.description,
                 descriptionPlaceholder: 'Describe when the main AI should use this sub-agent',
                 maxIterations: 'Max Iterations',
                 maxIterationsHint: 'Maximum tool call rounds for this sub-agent (-1 for unlimited)',
@@ -1889,9 +1853,9 @@ const en: LanguageMessages = {
                     cancel: 'Cancel'
                 },
                 errors: {
-                    addFailed: 'Failed to add model',
-                    removeFailed: 'Failed to remove model',
-                    setActiveFailed: 'Failed to set active model'
+                    addFailed: sharedEn.components.settings.modelManager.errors.addFailed,
+                    removeFailed: sharedEn.components.settings.modelManager.errors.removeFailed,
+                    setActiveFailed: sharedEn.components.settings.modelManager.errors.setActiveFailed
                 }
             },
             modelSelectionDialog: {
@@ -1962,11 +1926,23 @@ const en: LanguageMessages = {
                     placeholder: 'Enter dynamic context template, you can use {{$WORKSPACE_FILES}}, {{$OPEN_TABS}} and other variables...',
                     enableTooltip: 'Enable/disable dynamic context template',
                     disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.',
-                    strategyTitle: 'Dynamic context strategy',
-                    strategySingle: 'Single dynamic context (current behavior)',
-                    strategyPreserve: 'Preserve old dynamic context in place',
-                    strategyDescription: 'Single mode keeps existing behavior. Preserve mode inserts cached old dynamic contexts back at their original turns and inserts the new context before the new message.',
-                    strategyPreserveWarning: 'Preserve mode increases request tokens. More preserved contexts make context trimming or summarization more likely.'
+                    strategyTitle: sharedEn.components.settings.promptSettings.dynamicSection.strategyTitle,
+                    strategySingle: sharedEn.components.settings.promptSettings.dynamicSection.strategySingle,
+                    strategyPreserve: sharedEn.components.settings.promptSettings.dynamicSection.strategyPreserve,
+                    strategyDescription: sharedEn.components.settings.promptSettings.dynamicSection.strategyDescription,
+                    strategyPreserveWarning: sharedEn.components.settings.promptSettings.dynamicSection.strategyPreserveWarning,
+                    strategyVarsPrefix: sharedEn.components.settings.promptSettings.dynamicSection.strategyVarsPrefix,
+                    strategyVarsSeparator: sharedEn.components.settings.promptSettings.dynamicSection.strategyVarsSeparator,
+                    strategyVarsSuffix: sharedEn.components.settings.promptSettings.dynamicSection.strategyVarsSuffix,
+                    strategyVarsWarning: sharedEn.components.settings.promptSettings.dynamicSection.strategyVarsWarning
+                },
+                assemblyMode: {
+                    title: sharedEn.components.settings.promptSettings.assemblyMode.title,
+                    description: sharedEn.components.settings.promptSettings.assemblyMode.description,
+                    legacyLabel: sharedEn.components.settings.promptSettings.assemblyMode.legacyLabel,
+                    legacyDescription: sharedEn.components.settings.promptSettings.assemblyMode.legacyDescription,
+                    entriesLabel: sharedEn.components.settings.promptSettings.assemblyMode.entriesLabel,
+                    entriesDescription: sharedEn.components.settings.promptSettings.assemblyMode.entriesDescription
                 },
                 toolPolicy: {
                     title: 'Tool Policy',
@@ -2427,7 +2403,7 @@ const en: LanguageMessages = {
                         enableDiffGuardDesc: 'Show a warning when the number of deleted lines exceeds a specified percentage of the total file lines',
                         diffGuardThreshold: 'Guard Threshold',
                         diffGuardThresholdDesc: 'Trigger a warning when deleted lines exceed this percentage of total file lines',
-                        diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.',
+                        diffGuardWarning: sharedEn.components.settings.toolSettings.files.applyDiff.diffGuardWarning,
                         outsideWorkspaceAccess: 'Write outside workspace',
                         outsideWorkspaceDesc: 'Control whether apply_diff can modify existing files outside the workspace.',
                         outsideWorkspaceDenyDesc: 'apply_diff can only modify files inside the workspace.',
@@ -2504,7 +2480,7 @@ const en: LanguageMessages = {
                         setDefaultTooltip: 'Set as default',
                         executablePath: 'Executable Path (optional):',
                         executablePathPlaceholder: 'Leave empty to use path from system PATH',
-                        execTimeout: 'Execution Timeout',
+                        execTimeout: sharedEn.components.settings.toolSettings.terminal.executeCommand.execTimeout,
                         timeoutHint: 'Commands exceeding this time will be automatically terminated',
                         timeout30s: '30 seconds',
                         timeout1m: '1 minute',
@@ -2556,7 +2532,7 @@ const en: LanguageMessages = {
                     loading: 'Loading...',
                     loadingConfig: 'Loading config...',
                     saving: 'Saving...',
-                    error: 'Error',
+                    error: sharedEn.components.settings.toolSettings.common.error,
                     retry: 'Retry'
                 }
             },
@@ -2593,7 +2569,7 @@ const en: LanguageMessages = {
                     mcp: 'MCP Tools',
                     activity: 'Usage Time',
                     sandbox: 'Sandbox',
-                    other: 'Other'
+                    other: sharedEn.components.settings.toolsSettings.categories.other
                 },
                 dependency: {
                     required: 'Dependencies Required',
@@ -2910,8 +2886,8 @@ const en: LanguageMessages = {
 
         backgroundTasks: {
             running: 'Running',
-            completed: 'Completed',
-            failed: 'Failed',
+            completed: sharedEn.components.backgroundTasks.completed,
+            failed: sharedEn.components.backgroundTasks.failed,
             cancelled: 'Cancelled',
             cancel: 'Cancel task',
             dismiss: 'Dismiss',
@@ -2939,7 +2915,7 @@ const en: LanguageMessages = {
                 loadOlder: 'Load earlier messages',
                 loadingOlder: 'Loading…',
                 pause: 'Pause',
-                resume: 'Resume',
+                resume: sharedEn.components.subagents.monitor.resume,
                 exit: 'Exit and fail the parent tool',
                 retrying: 'Auto-retry {attempt}/{maxAttempts}',
                 retrySuccess: 'Auto-retry succeeded',
@@ -2951,8 +2927,8 @@ const en: LanguageMessages = {
                     running: 'Running',
                     paused: 'Paused',
                     awaitingMonitorAction: 'Awaiting action',
-                    completed: 'Completed',
-                    failed: 'Failed',
+                    completed: sharedEn.components.subagents.monitor.status.completed,
+                    failed: sharedEn.components.subagents.monitor.status.failed,
                     cancelled: 'Cancelled',
                     interrupted: 'Interrupted'
                 }
@@ -3062,8 +3038,8 @@ const en: LanguageMessages = {
                     effortMax: 'Maximum',
                     effortXHigh: 'Extra High (Opus 4.7+)',
                     effortHigh: 'High (default)',
-                    effortMedium: 'Medium',
-                    effortLow: 'Low',
+                    effortMedium: sharedEn.components.channels.anthropic.thinking.effortMedium,
+                    effortLow: sharedEn.components.channels.anthropic.thinking.effortLow,
                     effortCustom: 'Custom (manual input)',
                     effortCustomPlaceholder: 'Enter custom effort value (e.g. max, ultra)',
                     effortHint: 'Controls Claude thinking depth. Higher levels think deeper but consume more tokens; choose custom to enter any effort value',
@@ -3071,7 +3047,7 @@ const en: LanguageMessages = {
                     displayHint: 'Opus 4.7+ hides thinking by default. Choose "Summarized" to restore visible reasoning output',
                     displayOmitted: 'Omitted',
                     displayOmittedHint: 'No visible thinking content, only signature retained for follow-up turns (Opus 4.7+ default)',
-                    displaySummarized: 'Summarized',
+                    displaySummarized: sharedEn.components.channels.anthropic.thinking.displaySummarized,
                     displaySummarizedHint: 'Returns a thinking summary visible in the chat panel'
                 },
                 promptCaching: {
@@ -3111,9 +3087,9 @@ const en: LanguageMessages = {
                     levelLabel: 'Thinking Level',
                     levelHint: 'minimal: Minimal thinking | low: Less thinking | medium: Moderate | high: Deep thinking',
                     levelMinimal: 'Minimal',
-                    levelLow: 'Low',
-                    levelMedium: 'Medium',
-                    levelHigh: 'High',
+                    levelLow: sharedEn.components.channels.gemini.thinking.levelLow,
+                    levelMedium: sharedEn.components.channels.gemini.thinking.levelMedium,
+                    levelHigh: sharedEn.components.channels.gemini.thinking.levelHigh,
                     budgetLabel: 'Thinking Budget (Token)',
                     budgetPlaceholder: '1024',
                     budgetHint: 'Custom token count allowed for thinking process'
@@ -3148,9 +3124,9 @@ const en: LanguageMessages = {
                     effortHint: 'none: send no reasoning params at all (section omitted, API default thinking) | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom. Off (thinking disabled) force-carries {"thinking":{"type":"disabled"}}, no effort passed',
                     effortNone: 'None',
                     effortMinimal: 'Minimal',
-                    effortLow: 'Low',
-                    effortMedium: 'Medium',
-                    effortHigh: 'High',
+                    effortLow: sharedEn.components.channels.openai.thinking.effortLow,
+                    effortMedium: sharedEn.components.channels.openai.thinking.effortMedium,
+                    effortHigh: sharedEn.components.channels.openai.thinking.effortHigh,
                     effortXHigh: 'Extra High',
                     effortMax: 'Maximum',
                     effortUltra: 'Ultra',
@@ -3275,7 +3251,7 @@ const en: LanguageMessages = {
             failed: 'Execution Failed',
             cancelled: 'Cancelled',
             approve: 'Approve',
-            reject: 'Reject',
+            reject: sharedEn.components.tools.reject,
             autoExecuted: 'Auto Executed',
             terminate: 'Terminate',
             saveToPath: 'Save to path',
@@ -3285,7 +3261,7 @@ const en: LanguageMessages = {
             hideDetails: 'Hide Details',
             parameters: 'Parameters',
             result: 'Result',
-            error: 'Error',
+            error: sharedEn.components.tools.error,
             duration: 'Duration',
             file: {
                 readFile: 'Read File',
@@ -3324,14 +3300,14 @@ const en: LanguageMessages = {
                     total: 'Total {count}',
                     noDirectories: 'No directories to create',
                     success: 'Success',
-                    failed: 'Failed'
+                    failed: sharedEn.components.tools.file.createDirectoryPanel.failed,
                 },
                 deleteFilePanel: {
                     title: 'Delete File',
                     total: 'Total {count}',
                     noFiles: 'No files to delete',
                     success: 'Success',
-                    failed: 'Failed'
+                    failed: sharedEn.components.tools.file.deleteFilePanel.failed,
                 },
                 listFilesPanel: {
                     title: 'List Files',
@@ -3451,7 +3427,7 @@ const en: LanguageMessages = {
                 executeCommandPanel: {
                     title: 'Terminal',
                     status: {
-                        failed: 'Failed',
+                        failed: sharedEn.components.tools.terminal.executeCommandPanel.status.failed,
                         terminated: 'Terminated',
                         success: 'Success',
                         exitCode: 'Exit Code: {code}',
@@ -3519,7 +3495,7 @@ const en: LanguageMessages = {
                 title: 'Sub-Agent',
                 task: 'Task',
                 context: 'Context',
-                completed: 'Completed',
+                completed: sharedEn.components.tools.subagents.completed,
                 failed: 'Failed',
                 executing: 'Executing...',
                 partialResponse: 'Partial Response',
@@ -3549,9 +3525,9 @@ const en: LanguageMessages = {
                     status: {
                         needDependency: 'Needs Dependency',
                         cancelled: 'Cancelled',
-                        failed: 'Failed',
+                        failed: sharedEn.components.tools.media.cropImagePanel.status.failed,
                         success: 'Success',
-                        error: 'Error',
+                        error: sharedEn.components.tools.media.cropImagePanel.status.error,
                         processing: 'Processing...',
                         waiting: 'Waiting'
                     },
@@ -3581,9 +3557,9 @@ const en: LanguageMessages = {
                     status: {
                         needDependency: 'Needs Dependency',
                         cancelled: 'Cancelled',
-                        failed: 'Failed',
+                        failed: sharedEn.components.tools.media.generateImagePanel.status.failed,
                         success: 'Success',
-                        error: 'Error',
+                        error: sharedEn.components.tools.media.generateImagePanel.status.error,
                         generating: 'Generating...',
                         waiting: 'Waiting'
                     },
@@ -3612,9 +3588,9 @@ const en: LanguageMessages = {
                     status: {
                         needDependency: 'Needs Dependency',
                         cancelled: 'Cancelled',
-                        failed: 'Failed',
+                        failed: sharedEn.components.tools.media.removeBackgroundPanel.status.failed,
                         success: 'Success',
-                        error: 'Error',
+                        error: sharedEn.components.tools.media.removeBackgroundPanel.status.error,
                         processing: 'Processing...',
                         waiting: 'Waiting',
                         disabled: 'Disabled'
@@ -3652,9 +3628,9 @@ const en: LanguageMessages = {
                     status: {
                         needDependency: 'Needs Dependency',
                         cancelled: 'Cancelled',
-                        failed: 'Failed',
+                        failed: sharedEn.components.tools.media.resizeImagePanel.status.failed,
                         success: 'Success',
-                        error: 'Error',
+                        error: sharedEn.components.tools.media.resizeImagePanel.status.error,
                         processing: 'Processing...',
                         waiting: 'Waiting'
                     },
@@ -3687,9 +3663,9 @@ const en: LanguageMessages = {
                     status: {
                         needDependency: 'Needs Dependency',
                         cancelled: 'Cancelled',
-                        failed: 'Failed',
+                        failed: sharedEn.components.tools.media.rotateImagePanel.status.failed,
                         success: 'Success',
-                        error: 'Error',
+                        error: sharedEn.components.tools.media.rotateImagePanel.status.error,
                         processing: 'Processing...',
                         waiting: 'Waiting'
                     },
@@ -3744,9 +3720,9 @@ const en: LanguageMessages = {
             continueRequiredMessage: 'The current conversation needs to continue. Click the notification to return to the originating window.',
             continueRequiredMessageWithConversation: 'Conversation "{title}" needs to continue. Click the notification to return to the originating window.',
             actions: {
-                generatePlan: 'Generate Plan',
-                executePlan: 'Execute Plan',
-                continue: 'Continue',
+                generatePlan: sharedEn.app.agentStopNotification.actions.generatePlan,
+                executePlan: sharedEn.app.agentStopNotification.actions.executePlan,
+                continue: sharedEn.app.agentStopNotification.actions.continue,
                 genericConfirmation: 'Return to GrayCode and continue'
             }
         }
@@ -3759,13 +3735,13 @@ const en: LanguageMessages = {
         invalidConfig: 'Invalid configuration',
         fileNotFound: 'File not found',
         permissionDenied: 'Permission denied',
-        unknown: 'Unknown error',
+        unknown: sharedEn.errors.unknown,
         connectionFailed: 'Connection failed',
         authFailed: 'Authentication failed',
         rateLimited: 'Rate limited, please try again later',
         serverError: 'Server error',
         invalidResponse: 'Invalid response format',
-        cancelled: 'Operation cancelled'
+        cancelled: sharedEn.errors.cancelled
     },
 
     composables: {
@@ -3774,7 +3750,7 @@ const en: LanguageMessages = {
                 validationFailed: 'Attachment validation failed',
                 createThumbnailFailed: 'Failed to create thumbnail',
                 createVideoThumbnailFailed: 'Failed to create video thumbnail',
-                readFileFailed: 'Failed to read file',
+                readFileFailed: sharedEn.composables.useAttachments.errors.readFileFailed,
                 loadVideoFailed: 'Failed to load video',
                 readResultNotString: 'Read result is not a string'
             }
@@ -3784,7 +3760,7 @@ const en: LanguageMessages = {
     stores: {
         terminalStore: {
             errors: {
-                killTerminalFailed: 'Failed to kill terminal',
+                killTerminalFailed: sharedEn.stores.terminalStore.errors.killTerminalFailed,
                 refreshOutputFailed: 'Failed to refresh terminal output'
             }
         },
@@ -3801,9 +3777,9 @@ const en: LanguageMessages = {
                 editRetryFailed: 'Edit retry failed',
                 deleteFailed: 'Delete failed',
                 noConversationSelected: 'No conversation selected',
-                unknownError: 'Unknown error',
+                unknownError: sharedEn.stores.chatStore.errors.unknownError,
                 restoreFailed: 'Restore failed',
-                restoreCheckpointFailed: 'Failed to restore checkpoint',
+                restoreCheckpointFailed: sharedEn.stores.chatStore.errors.restoreCheckpointFailed,
                 restoreRetryFailed: 'Restore and retry failed',
                 restoreDeleteFailed: 'Restore and delete failed',
                 noConfigSelected: 'No config selected',

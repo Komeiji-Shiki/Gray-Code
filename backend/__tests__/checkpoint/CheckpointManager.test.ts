@@ -12,13 +12,18 @@ jest.mock('../../modules/checkpoint/CheckpointSnapshotBuilder', () => {
     return { ...actual, buildWorkspaceSnapshot: jest.fn(actual.buildWorkspaceSnapshot) };
 });
 
-import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import { CheckpointManager, CheckpointRecord } from '../../modules/checkpoint';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 import * as snapshotBuilderModule from '../../modules/checkpoint/CheckpointSnapshotBuilder';
-import { createWorkspaceRootId } from '../../modules/checkpoint/CheckpointWorkspace';
+import { createWorkspaceRootId } from '../../modules/checkpoint';
 
 /**
  * CheckpointManager restore 测试
+ *
+ * 覆盖代号：BCP-01（createCheckpoint messageNodeId 关联）、
+ * CP-DEL-1 / CP-IDX-1 / CP-PREV-1（删除路径安全与链完整性）、
+ * A2（metadata RMW migration：updateCustomMetadata 追加保存）、
+ * MIG-05（checkpointsDir getter 暴露存储根下目录）。
  *
  * 这些用例专门保护引入的 restore 边界：
  * - 恢复时必须服从“当前工作区”的 ignore 规则
@@ -538,7 +543,7 @@ describe('CheckpointManager restore ignore semantics', () => {
         }
     });
 
-describe('CheckpointManager metadata RMW migration (A2)', () => {
+describe('CheckpointManager metadata RMW migration', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });
@@ -1041,7 +1046,7 @@ describe('CheckpointManager metadata RMW migration (A2)', () => {
     });
 
 
-    describe('CP-DEL-1 / CP-IDX-1 / CP-PREV-1（删除路径安全与链完整性）', () => {
+    describe('删除路径安全与链完整性', () => {
         test('deleteCheckpoint refuses unsafe backupDir without touching out-of-bounds path', async () => {
             const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
             const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
@@ -1677,7 +1682,7 @@ describe('CheckpointManager path safety regressions', () => {
 
     // ==================== BCP-01：createCheckpoint 关联 messageNodeId ====================
 
-    describe('BCP-01: createCheckpoint messageNodeId 关联', () => {
+    describe('createCheckpoint messageNodeId 关联', () => {
         beforeEach(() => {
             jest.clearAllMocks();
         });
@@ -1821,5 +1826,21 @@ describe('CheckpointManager path safety regressions', () => {
                 await fs.rm(storageRoot, { recursive: true, force: true });
             }
         });
+    });
+});
+
+
+describe('CheckpointManager.checkpointsDir getter', () => {
+    test('exposes the checkpoints dir under the storage root', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-getter-ws-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-getter-storage-');
+        try {
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, []);
+            // getter 与构造时确定的目录一致：{storageRoot}/checkpoints
+            expect(manager.checkpointsDir).toBe(path.join(storageRoot, 'checkpoints'));
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
     });
 });

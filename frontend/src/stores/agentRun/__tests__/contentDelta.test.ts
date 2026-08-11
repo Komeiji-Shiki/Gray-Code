@@ -7,7 +7,7 @@
  *   不得覆盖上一轮模型消息（回归：实时视图“运行中的内容突然换掉”）。
  * - delta 路径：尾部是非 model 楼层时新建 model 楼层（ensureLastModelContent）。
  */
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import type { Content } from '../../../types'
 import { applyStreamChunkToContents } from '../contentDelta'
 
@@ -43,7 +43,7 @@ function makeSnapshot(text: string, index?: number): Record<string, unknown> {
 }
 
 describe('applyStreamChunkToContents contentSnapshot', () => {
-  it('尾部就是 model 消息时原位替换（结构校准）', () => {
+  test('尾部就是 model 消息时原位替换（结构校准）', () => {
     const contents: Content[] = [
       { role: 'user', parts: [{ text: 'task' }], index: 0, timestamp: 1000 } as Content,
       makeModelContent(1, 'tool call')
@@ -55,7 +55,7 @@ describe('applyStreamChunkToContents contentSnapshot', () => {
     expect((next[1] as any).index).toBe(1)
   })
 
-  it('尾部是工具结果时追加新的 model 楼层，不覆盖上一轮模型消息（回归）', () => {
+  test('尾部是工具结果时追加新的 model 楼层，不覆盖上一轮模型消息（回归）', () => {
     const contents: Content[] = [
       { role: 'user', parts: [{ text: 'task' }], index: 0, timestamp: 1000 } as Content,
       makeModelContent(1, 'tool call'),
@@ -72,7 +72,7 @@ describe('applyStreamChunkToContents contentSnapshot', () => {
     expect((next[3] as any).index).toBe(3)
   })
 
-  it('baseIndex 非零时新楼层 index 与窗口起始对齐', () => {
+  test('baseIndex 非零时新楼层 index 与窗口起始对齐', () => {
     const contents: Content[] = [
       makeModelContent(10, 'tool call'),
       makeToolResultContent(11)
@@ -82,7 +82,7 @@ describe('applyStreamChunkToContents contentSnapshot', () => {
     expect((next[2] as any).index).toBe(12)
   })
 
-  it('没有 model 楼层时追加（与旧行为一致）', () => {
+  test('没有 model 楼层时追加（与旧行为一致）', () => {
     const contents: Content[] = [
       { role: 'user', parts: [{ text: 'task' }], index: 0, timestamp: 1000 } as Content,
       makeToolResultContent(1)
@@ -95,7 +95,7 @@ describe('applyStreamChunkToContents contentSnapshot', () => {
 })
 
 describe('applyStreamChunkToContents delta', () => {
-  it('尾部是工具结果时 delta 新建 model 楼层并追加文本', () => {
+  test('尾部是工具结果时 delta 新建 model 楼层并追加文本', () => {
     const contents: Content[] = [
       { role: 'user', parts: [{ text: 'task' }], index: 0, timestamp: 1000 } as Content,
       makeModelContent(1, 'tool call'),

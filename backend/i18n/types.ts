@@ -1,5 +1,5 @@
 /**
- * LimCode Backend - i18n 类型定义
+ * GrayCode Backend - i18n 类型定义
  * 两套独立语言包（后端与前端），需同步维护
  *
  * BackendLanguageMessages 由简体中文语言包（基准语言）自动推导。
@@ -19,3 +19,4 @@ export type SupportedLanguage = 'auto' | 'zh-CN' | 'en' | 'ja';
  * 以 zh-CN 语言包结构为准自动推导
  */
 export type BackendLanguageMessages = typeof zhCN;
+

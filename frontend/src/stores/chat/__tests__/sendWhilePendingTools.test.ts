@@ -15,7 +15,7 @@
  *    （与后端 rejectToolCalls 的插入位置一致，不再索引错位）。
  */
 import { ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { ChatStoreState, ChatStoreComputed } from '../types'
 
 vi.mock('../../../utils/vscode', () => ({
@@ -189,7 +189,7 @@ describe('待确认工具时发送消息 = 中断当前回合', () => {
     mockSend.mockResolvedValue(undefined)
   })
 
-  it('先拒绝待确认工具并复位忙碌状态，再正常发送新消息', async () => {
+  test('先拒绝待确认工具并复位忙碌状态，再正常发送新消息', async () => {
     const state = pendingState()
 
     // App.vue handleSend 编排：有待确认工具 → cancelStreamAndRejectTools
@@ -232,7 +232,7 @@ describe('待确认工具时发送消息 = 中断当前回合', () => {
     expect(frIdx).toBeLessThan(lastVisibleUserIdx)
   })
 
-  it('拒绝待确认工具失败时仍继续发送（消息不丢）', async () => {
+  test('拒绝待确认工具失败时仍继续发送（消息不丢）', async () => {
     const state = pendingState()
     mockSend.mockImplementation((type: string) => {
       if (type === 'conversation.rejectToolCalls' || type === 'cancelStream') {

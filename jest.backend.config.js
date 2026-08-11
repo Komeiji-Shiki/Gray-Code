@@ -10,6 +10,9 @@ module.exports = {
     moduleNameMapper: {
         '^vscode$': '<rootDir>/backend/__tests__/__mocks__/vscode.ts',
         '^@/(.*)$': '<rootDir>/frontend/src/$1',
+        // 与 tsconfig.test.json 的 '@shared/*' paths 对应：前端 codec re-export '@shared/mcpToolNameCodec'，
+        // backend jest 运行时需经此映射解析到 shared/ 目录（同 '@/' 映射机制）
+        '^@shared/(.*)$': '<rootDir>/shared/$1',
     },
     // 全局超时：大量测试套件做真实磁盘 IO，默认 5s 在慢 CI 上会随机失败
     testTimeout: 20000,

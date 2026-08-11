@@ -42,7 +42,7 @@ describe('UsageHandlers disposeUsageCache', () => {
     jest.restoreAllMocks();
   });
 
-  it('未 dispose 时结果缓存命中（同参数只聚合一次）', async () => {
+  test('未 dispose 时结果缓存命中（同参数只聚合一次）', async () => {
     const ctx = createCtx();
     await getUsageStats({ startTime: 1000, endTime: 2000 }, 'req_a', ctx);
     await getUsageStats({ startTime: 1000, endTime: 2000 }, 'req_b', ctx);
@@ -52,7 +52,7 @@ describe('UsageHandlers disposeUsageCache', () => {
     expect(ctx.sendError).not.toHaveBeenCalled();
   });
 
-  it('dispose 后 statsCache 清空：同参数再次查询重新聚合而非命中旧缓存', async () => {
+  test('dispose 后 statsCache 清空：同参数再次查询重新聚合而非命中旧缓存', async () => {
     const ctx = createCtx();
 
     await getUsageStats({ startTime: 1000, endTime: 2000 }, 'req_1', ctx);

@@ -46,7 +46,7 @@ describe('get_activity_stats tool', () => {
         await fs.rm(dir, { recursive: true, force: true });
     });
 
-    it('returns error when tracker is not initialized', async () => {
+    test('returns error when tracker is not initialized', async () => {
         setGlobalActivityTracker(null);
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({});
@@ -54,12 +54,12 @@ describe('get_activity_stats tool', () => {
         expect(result.error).toContain('not initialized');
     });
 
-    it('returns daily stats with readable local times by default (7d range)', async () => {
+    test('returns daily stats with readable local times by default (7d range)', async () => {
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({});
         expect(result.success).toBe(true);
 
-        const data = result.data as any;
+        const data = result.data;
         expect(data.today).not.toBeNull();
         expect(data.today.date).toBe(toDateStr(Date.now()));
         expect(data.today.totalMinutes).toBe(2);
@@ -81,22 +81,22 @@ describe('get_activity_stats tool', () => {
         expect(data.hourlyHeatmap).toEqual([]);
     });
 
-    it('returns hourly heatmap when includeHourly is true', async () => {
+    test('returns hourly heatmap when includeHourly is true', async () => {
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({ includeHourly: true });
         expect(result.success).toBe(true);
-        const data = result.data as any;
+        const data = result.data;
         expect(data.hourlyHeatmap.length).toBe(7);
         // 今天 10 点应至少 2 分钟
         const todayRow = data.hourlyHeatmap[data.hourlyHeatmap.length - 1];
         expect(todayRow.hours[10]).toBeGreaterThanOrEqual(2);
     });
 
-    it('returns monthly aggregates when includeMonthly is true', async () => {
+    test('returns monthly aggregates when includeMonthly is true', async () => {
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({ includeMonthly: true });
         expect(result.success).toBe(true);
-        const data = result.data as any;
+        const data = result.data;
         // 今天与昨天同月时只有 1 条月度，跨月则 2 条
         expect(data.monthly.length).toBeGreaterThanOrEqual(1);
         const totalMonthly = data.monthly.reduce((s: number, m: any) => s + m.totalMinutes, 0);
@@ -104,30 +104,30 @@ describe('get_activity_stats tool', () => {
         expect(totalMonthly).toBe(totalDaily);
     });
 
-    it('respects range=today', async () => {
+    test('respects range=today', async () => {
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({ range: 'today' });
         expect(result.success).toBe(true);
-        const data = result.data as any;
+        const data = result.data;
         expect(data.daily).toHaveLength(1);
         expect(data.daily[0].date).toBe(toDateStr(Date.now()));
     });
 
-    it('respects range=30d', async () => {
+    test('respects range=30d', async () => {
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({ range: '30d' });
         expect(result.success).toBe(true);
-        expect((result.data as any).daily).toHaveLength(30);
+        expect(result.data.daily).toHaveLength(30);
     });
 
-    it('falls back to 7d for invalid range', async () => {
+    test('falls back to 7d for invalid range', async () => {
         const tool = createGetActivityStatsTool();
         const result = await tool.handler({ range: 'invalid' });
         expect(result.success).toBe(true);
-        expect((result.data as any).daily).toHaveLength(7);
+        expect(result.data.daily).toHaveLength(7);
     });
 
-    it('global tracker accessor works', () => {
+    test('global tracker accessor works', () => {
         expect(getGlobalActivityTracker()).not.toBeNull();
     });
 });

@@ -7,10 +7,10 @@
  */
 
 import { SubAgentRunController } from '../../tools/subagents/runController';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
+import { subAgentRunEventBus } from '../../tools/subagents';
 
 describe('SubAgentRunController - 暂停/继续/退出', () => {
-    it('暂停后 waitUntilRunnable 挂起，继续后返回 running', async () => {
+    test('暂停后 waitUntilRunnable 挂起，继续后返回 running', async () => {
         const controller = new SubAgentRunController();
         controller.register('run_pause', 'Agent');
 
@@ -26,7 +26,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         await expect(waiting).resolves.toBe('running');
     });
 
-    it('退出会唤醒等待者并返回 cancelled', async () => {
+    test('退出会唤醒等待者并返回 cancelled', async () => {
         const controller = new SubAgentRunController();
         controller.register('run_exit', 'Agent');
         controller.pause('run_exit');
@@ -38,7 +38,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         expect(controller.getExitReason('run_exit')).toBe('用户退出');
     });
 
-    it('反复暂停/继续不会累积唤醒器，最后一次退出仍只唤醒当前等待者', async () => {
+    test('反复暂停/继续不会累积唤醒器，最后一次退出仍只唤醒当前等待者', async () => {
         const controller = new SubAgentRunController();
         controller.register('run_cycle', 'Agent');
 
@@ -61,7 +61,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         await expect(finalWait).resolves.toBe('cancelled');
     });
 
-    it('resume 会重建 AbortController，让继续后的操作使用未中止的信号', () => {
+    test('resume 会重建 AbortController，让继续后的操作使用未中止的信号', () => {
         const controller = new SubAgentRunController();
         controller.register('run_signal', 'Agent');
 
@@ -72,7 +72,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         expect(controller.getAbortSignal('run_signal')!.aborted).toBe(false);
     });
 
-    it('暂停期间的时长不计入活跃运行时间', async () => {
+    test('暂停期间的时长不计入活跃运行时间', async () => {
         const controller = new SubAgentRunController();
         controller.register('run_inactive', 'Agent');
         expect(controller.getInactiveDurationMs('run_inactive')).toBe(0);
@@ -89,7 +89,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         expect(controller.getInactiveDurationMs('run_inactive')).toBe(accumulated);
     });
 
-    it('非活跃 run 的控制操作一律失败，不会伪造可控状态', () => {
+    test('非活跃 run 的控制操作一律失败，不会伪造可控状态', () => {
         const controller = new SubAgentRunController();
         expect(controller.pause('missing')).toBe(false);
         expect(controller.resume('missing')).toBe(false);
@@ -97,7 +97,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
         expect(controller.getState('missing')).toBeUndefined();
     });
 
-    it('运行中的 run 不能被 resume（状态机不允许的转换返回 false）', () => {
+    test('运行中的 run 不能被 resume（状态机不允许的转换返回 false）', () => {
         const controller = new SubAgentRunController();
         controller.register('run_running', 'Agent');
         expect(controller.resume('run_running')).toBe(false);
@@ -106,7 +106,7 @@ describe('SubAgentRunController - 暂停/继续/退出', () => {
 
 
 describe('SubAgentRunController - 转后台（detach）', () => {
-    it('detachFromParent 解除父信号绑定：标记 detached、同步调用 listener、广播 run_detached', () => {
+    test('detachFromParent 解除父信号绑定：标记 detached、同步调用 listener、广播 run_detached', () => {
         const controller = new SubAgentRunController();
         controller.register('run_detach', 'Agent', 0, true);
         let listenerCalled = false;
@@ -126,7 +126,7 @@ describe('SubAgentRunController - 转后台（detach）', () => {
         }
     });
 
-    it('重复 detach 返回 false（幂等）', () => {
+    test('重复 detach 返回 false（幂等）', () => {
         const controller = new SubAgentRunController();
         controller.register('run_detach2', 'Agent', 0, true);
         expect(controller.detachFromParent('run_detach2')).toBe(true);
@@ -134,7 +134,7 @@ describe('SubAgentRunController - 转后台（detach）', () => {
         controller.unregister('run_detach2');
     });
 
-    it('后台 run（attachedToParent=false）不被 detach，保留 TaskManager 取消能力', () => {
+    test('后台 run（attachedToParent=false）不被 detach，保留 TaskManager 取消能力', () => {
         const controller = new SubAgentRunController();
         controller.register('run_detach_bg', 'Agent', 0, false);
         expect(controller.detachFromParent('run_detach_bg')).toBe(false);
@@ -142,12 +142,12 @@ describe('SubAgentRunController - 转后台（detach）', () => {
         controller.unregister('run_detach_bg');
     });
 
-    it('未注册的 run detach 返回 false', () => {
+    test('未注册的 run detach 返回 false', () => {
         const controller = new SubAgentRunController();
         expect(controller.detachFromParent('run_missing')).toBe(false);
     });
 
-    it('unregister 清理 detach listener，detach 不再触发回调', () => {
+    test('unregister 清理 detach listener，detach 不再触发回调', () => {
         const controller = new SubAgentRunController();
         controller.register('run_detach3', 'Agent', 0, true);
         let calls = 0;

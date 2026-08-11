@@ -14,7 +14,7 @@ function makeContext(signal?: AbortSignal): ToolContext {
 }
 
 describe('withLinkedAbort', () => {
-    it('父信号中止时同步中止注入的子控制器', async () => {
+    test('父信号中止时同步中止注入的子控制器', async () => {
         const parent = new AbortController();
         let observed: AbortSignal | undefined;
 
@@ -28,7 +28,7 @@ describe('withLinkedAbort', () => {
         expect(observed?.aborted).toBe(true);
     });
 
-    it('父信号在调用前已中止时，子控制器进入 handler 就是中止态', async () => {
+    test('父信号在调用前已中止时，子控制器进入 handler 就是中止态', async () => {
         const parent = new AbortController();
         parent.abort();
 
@@ -42,7 +42,7 @@ describe('withLinkedAbort', () => {
         expect(abortedOnEntry).toBe(true);
     });
 
-    it('handler 正常返回后摘除监听器，反复调用不累积', async () => {
+    test('handler 正常返回后摘除监听器，反复调用不累积', async () => {
         const parent = new AbortController();
         const added: unknown[] = [];
         const removed: unknown[] = [];
@@ -68,7 +68,7 @@ describe('withLinkedAbort', () => {
         expect(removed).toEqual(added);
     });
 
-    it('handler 抛出时同样摘除监听器', async () => {
+    test('handler 抛出时同样摘除监听器', async () => {
         const parent = new AbortController();
         const removed: unknown[] = [];
         const realRemove = parent.signal.removeEventListener.bind(parent.signal);
@@ -85,7 +85,7 @@ describe('withLinkedAbort', () => {
         expect(removed).toHaveLength(1);
     });
 
-    it('没有父信号时也能拿到可用的子控制器', async () => {
+    test('没有父信号时也能拿到可用的子控制器', async () => {
         let controllerSeen: AbortController | undefined;
         const handler = withLinkedAbort(async (_args, _ctx, controller) => {
             controllerSeen = controller;

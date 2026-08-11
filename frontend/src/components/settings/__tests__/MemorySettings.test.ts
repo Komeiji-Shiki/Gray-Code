@@ -10,7 +10,7 @@
  */
 import { defineComponent } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, expect, vi, beforeEach } from 'vitest'
 import MemorySettings from '../MemorySettings.vue'
 
 const { sendMock } = vi.hoisted(() => ({
@@ -118,7 +118,7 @@ beforeEach(() => {
 })
 
 describe('记忆作用域切换（全局 / 工作区）', () => {
-  it('切换到工作区：加载该工作区条目并带 workspaceUri 请求', async () => {
+  test('切换到工作区：加载该工作区条目并带 workspaceUri 请求', async () => {
     defaultSendImplementation()
     const wrapper = await mountSettings()
 
@@ -136,7 +136,7 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
     expect(entryCalls.some(c => !c[1]?.workspaceUri && c[1]?.limit)).toBe(true)
   })
 
-  it('切回已加载过的作用域：条目立即渲染（缓存直出，无加载占位中间帧）', async () => {
+  test('切回已加载过的作用域：条目立即渲染（缓存直出，无加载占位中间帧）', async () => {
     defaultSendImplementation()
     const wrapper = await mountSettings()
 
@@ -156,7 +156,7 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
     expect(entryTexts(wrapper)).toEqual(['global-memory-alpha', 'global-memory-beta'])
   })
 
-  it('工作区 tab 刚打开、scope 列表未就绪：不误拉全局数据，展示空态', async () => {
+  test('工作区 tab 刚打开、scope 列表未就绪：不误拉全局数据，展示空态', async () => {
     const calls = defaultSendImplementation({ listScopesDelay: true })
     const wrapper = await mountSettings()
     // mount 时的合法全局加载（limit 不带 workspaceUri）
@@ -174,7 +174,7 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
     expect(entryCallsAfterClick.length).toBe(0)
   })
 
-  it('快速切换作用域：过期响应不覆盖当前作用域（seq 竞态守卫）', async () => {
+  test('快速切换作用域：过期响应不覆盖当前作用域（seq 竞态守卫）', async () => {
     // 真正构造乱序：工作区条目响应慢（30ms），后发起的工作区请求晚于全局请求返回
     mockSend.mockImplementation((type: string, payload: any) => {
       switch (type) {
@@ -211,7 +211,7 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
     expect(entryTexts(wrapper)).toEqual(['global-memory-alpha', 'global-memory-beta'])
   })
 
-  it('工作区 tab 未选工作区：在途全局条目响应被丢弃（loadEntries 空 key 早退递增序号）', async () => {
+  test('工作区 tab 未选工作区：在途全局条目响应被丢弃（loadEntries 空 key 早退递增序号）', async () => {
     // 全局条目响应延迟：mount 时的全局请求在用户切到工作区 tab（无选中）之后才返回
     mockSend.mockImplementation((type: string) => {
       switch (type) {
@@ -241,7 +241,7 @@ describe('记忆作用域切换（全局 / 工作区）', () => {
     expect(wrapper.find('.entries-loading').exists()).toBe(false)
   })
 
-  it('工作区作用域：新增 / 删除记忆请求携带正确的 workspaceUri（作用域路由）', async () => {
+  test('工作区作用域：新增 / 删除记忆请求携带正确的 workspaceUri（作用域路由）', async () => {
     defaultSendImplementation()
     const wrapper = await mountSettings()
 

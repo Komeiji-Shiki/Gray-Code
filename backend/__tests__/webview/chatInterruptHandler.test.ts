@@ -5,7 +5,7 @@
  *      会话不存在拒绝；频率限制；超长文本；异常路径返回明确错误码。
  */
 
-import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
+import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
 import {
     awaitConversationIdle,
     claimAgentMessages,
@@ -38,7 +38,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         jest.restoreAllMocks();
     });
 
-    it('已注册进消息处理器注册表', () => {
+    test('已注册进消息处理器注册表', () => {
         const registry = createMessageHandlerRegistry();
         expect(registry.has('chat.sendInterruptMessage')).toBe(true);
         expect(registry.has('chat.awaitConversationIdle')).toBe(true);
@@ -46,7 +46,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(registry.has('chat.releaseAgentMessages')).toBe(true);
     });
 
-    it('awaitConversationIdle 等待后端运行控制器真正空闲后才响应', async () => {
+    test('awaitConversationIdle 等待后端运行控制器真正空闲后才响应', async () => {
         let release!: () => void;
         const waitForIdle = jest.fn(() => new Promise<void>(resolve => { release = resolve; }));
         const ctx = createCtx({ streamAbortControllers: { waitForIdle } });
@@ -61,7 +61,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(ctx.sendResponse).toHaveBeenCalledWith('req_idle', { idle: true });
     });
 
-    it('成功：投递到主会话 inbox 并返回 { success: true }', async () => {
+    test('成功：投递到主会话 inbox 并返回 { success: true }', async () => {
         const ctx = createCtx();
         await sendInterruptMessage({ conversationId: 'conv_1', text: '快点处理' }, 'req_1', ctx);
 
@@ -75,7 +75,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(drained[0].text).toBe('快点处理');
     });
 
-    it('空闲主模型领取消息后可确认；发送失败可退回并再次领取', async () => {
+    test('空闲主模型领取消息后可确认；发送失败可退回并再次领取', async () => {
         agentMailbox.registerRun('conv_1', 'sender', 'Sender');
         agentMailbox.sendMessage({
             conversationId: 'conv_1',
@@ -102,7 +102,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('缺会话 ID → INTERRUPT_MESSAGE_INVALID_CONVERSATION，不访问信箱', async () => {
+    test('缺会话 ID → INTERRUPT_MESSAGE_INVALID_CONVERSATION，不访问信箱', async () => {
         const ctx = createCtx();
         await sendInterruptMessage({ text: 'hello' }, 'req_1', ctx);
 
@@ -111,7 +111,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('空文本 → INTERRUPT_MESSAGE_EMPTY_TEXT', async () => {
+    test('空文本 → INTERRUPT_MESSAGE_EMPTY_TEXT', async () => {
         const ctx = createCtx();
         await sendInterruptMessage({ conversationId: 'conv_1', text: '   ' }, 'req_1', ctx);
 
@@ -119,7 +119,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('会话不存在（getMetadata 返回 null）→ INTERRUPT_MESSAGE_CONVERSATION_NOT_FOUND', async () => {
+    test('会话不存在（getMetadata 返回 null）→ INTERRUPT_MESSAGE_CONVERSATION_NOT_FOUND', async () => {
         const ctx = createCtx({
             conversationManager: { getMetadata: jest.fn().mockResolvedValue(null) }
         });
@@ -129,7 +129,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('频率限制：10 秒内第二条 → INTERRUPT_MESSAGE_RATE_LIMITED', async () => {
+    test('频率限制：10 秒内第二条 → INTERRUPT_MESSAGE_RATE_LIMITED', async () => {
         const ctx = createCtx();
         await sendInterruptMessage({ conversationId: 'conv_1', text: 'first' }, 'req_1', ctx);
         await sendInterruptMessage({ conversationId: 'conv_1', text: 'second' }, 'req_2', ctx);
@@ -141,7 +141,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(drained).toHaveLength(1); // 只有第一条
     });
 
-    it('超长文本 → INTERRUPT_MESSAGE_TEXT_TOO_LONG', async () => {
+    test('超长文本 → INTERRUPT_MESSAGE_TEXT_TOO_LONG', async () => {
         const ctx = createCtx();
         await sendInterruptMessage({ conversationId: 'conv_1', text: 'x'.repeat(4001) }, 'req_1', ctx);
 
@@ -149,7 +149,7 @@ describe('chat.sendInterruptMessage 处理器', () => {
         expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('getMetadata 抛异常 → INTERRUPT_MESSAGE_ERROR', async () => {
+    test('getMetadata 抛异常 → INTERRUPT_MESSAGE_ERROR', async () => {
         const ctx = createCtx({
             conversationManager: { getMetadata: jest.fn().mockRejectedValue(new Error('storage boom')) }
         });

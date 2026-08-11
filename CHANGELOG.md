@@ -22,6 +22,9 @@
 
 ## [Unreleased]
 
+### Merged：合入上游 Bug Hunt 分支（5a3d7d39 150+ 修复 + i18n 全量统一 + 第九批模块化）
+  - i18n 全量统一（shared 提取 + i18n-sync 脚本）、双撤销栈回归、token 计数守卫、updateChecker 修复、第九批模块化、Bug Hunt 五轮 150+ 修复
+
 ### Merged：[1.7.12dev] 同步上游 main 至 0107c597（模块化摊平 1-9 批 + Bug Hunt 五轮 150+ 修复 + MCP/memory/prompt/子代理/输入框等修复）
   - 合入上游 40+ commits：模块化摊平重构（registry 死系统删除、ChatFlowService/ConversationManager/CheckpointManager/ToolExecutionService/execute_command/search_in_files 等大文件拆分至 flow/、manager/、tool-execution/、terminal/、search/、subagents/executor|eventBus、tools/shared/ 等子目录，后端依赖方向清零）；
   - 修复吸收：fileWriteLock 复合身份键 + acquire 参数化超时、MCP stdio 生命周期/串行队列/原子写、memory 迁移降级与 1000 上限、prompt 动态上下文差分加固、子代理并行段收尾 30s 兜底、输入框残留双机制（DOM 指纹同步 + 清空强制提取）、流式 Markdown 表格渐进渲染、恢复默认模板 {{$MEMORY}} 占位符、i18n 死键清理、ErrorType 下沉 core/errorTypes 等；

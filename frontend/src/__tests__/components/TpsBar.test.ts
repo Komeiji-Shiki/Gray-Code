@@ -8,7 +8,7 @@
  * - 流活跃停顿（agent 思考/工具执行）冻结真实曲线：不清空、保持活跃外观
  */
 import { mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import TpsBar from '../../components/input/TpsBar.vue'
 import { tpsMeter } from '../../utils/tpsMeter'
@@ -57,7 +57,7 @@ describe('TpsBar', () => {
     vi.useRealTimers()
   })
 
-  it('初始空闲：is-idle（整条淡出）且无来源标记', async () => {
+  test('初始空闲：is-idle（整条淡出）且无来源标记', async () => {
     const wrapper = mountBar()
     await nextTick()
     expect(wrapper.get('.tps-bar').classes()).toContain('is-idle')
@@ -65,7 +65,7 @@ describe('TpsBar', () => {
     wrapper.unmount()
   })
 
-  it('真实 tokenizer 计数：显示绿色来源标记且不淡出', async () => {
+  test('真实 tokenizer 计数：显示绿色来源标记且不淡出', async () => {
     const wrapper = mountBar()
 
     tpsMeter.record(100, undefined, 'tokenizer')
@@ -79,7 +79,7 @@ describe('TpsBar', () => {
     wrapper.unmount()
   })
 
-  it('估算计数：显示估算来源标记', async () => {
+  test('估算计数：显示估算来源标记', async () => {
     const wrapper = mountBar()
 
     tpsMeter.record(100, undefined, 'estimate')
@@ -92,7 +92,7 @@ describe('TpsBar', () => {
     wrapper.unmount()
   })
 
-  it('流结束后自然衰减：归零前保持活跃（不强制清空），完全归零后淡出', async () => {
+  test('流结束后自然衰减：归零前保持活跃（不强制清空），完全归零后淡出', async () => {
     const wrapper = mountBar()
 
     tpsMeter.record(100)
@@ -116,7 +116,7 @@ describe('TpsBar', () => {
     wrapper.unmount()
   })
 
-  it('流活跃停顿（agent 思考/工具执行）：冻结真实曲线，保持活跃外观', async () => {
+  test('流活跃停顿（agent 思考/工具执行）：冻结真实曲线，保持活跃外观', async () => {
     const wrapper = mountBar()
 
     tpsMeter.record(100)

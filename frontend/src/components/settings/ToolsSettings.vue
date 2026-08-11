@@ -10,6 +10,7 @@
  * 5. 检查工具依赖并显示安装提示
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, watch } from 'vue'
 import { CustomCheckbox, DependencyWarning } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -153,7 +154,7 @@ async function loadTools() {
   isLoading.value = true
   
   try {
-    const response = await sendToExtension<{ tools: ToolInfo[] }>('tools.getTools', {})
+    const response = await sendToExtension<{ tools: ToolInfo[] }>(MESSAGE_NAMES['tools.getTools'], {})
     if (response?.tools) {
       tools.value = response.tools
     }
@@ -179,7 +180,7 @@ async function toggleTool(toolName: string, enabled: boolean) {
         tool.enabled = enabled
       }
     } else {
-      await sendToExtension('tools.setToolEnabled', {
+      await sendToExtension(MESSAGE_NAMES['tools.setToolEnabled'], {
         toolName,
         enabled
       })
@@ -220,7 +221,7 @@ async function disableAll() {
 async function loadMaxToolIterations() {
   isLoadingMaxIterations.value = true
   try {
-    const response = await sendToExtension<{ maxIterations: number }>('tools.getMaxToolIterations', {})
+    const response = await sendToExtension<{ maxIterations: number }>(MESSAGE_NAMES['tools.getMaxToolIterations'], {})
     if (response?.maxIterations !== undefined) {
       maxToolIterations.value = response.maxIterations
       syncMaxIterationsFromStored()
@@ -236,7 +237,7 @@ async function loadMaxToolIterations() {
 async function saveMaxToolIterations(value: number) {
   isSavingMaxIterations.value = true
   try {
-    await sendToExtension('tools.updateMaxToolIterations', { maxIterations: value })
+    await sendToExtension(MESSAGE_NAMES['tools.updateMaxToolIterations'], { maxIterations: value })
     maxToolIterations.value = value
   } catch (error) {
     console.error('Failed to save maxToolIterations:', error)

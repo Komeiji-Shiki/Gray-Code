@@ -1,4 +1,4 @@
-import type { Tool, ToolRegistration } from '../types'
+import type { ToolRegistration } from '../types'
 import { registerShowWindowsNotification } from './show_windows_notification'
 
 export { createShowWindowsNotificationTool, createShowWindowsNotificationToolDeclaration, registerShowWindowsNotification } from './show_windows_notification'
@@ -9,8 +9,4 @@ export { createShowWindowsNotificationTool, createShowWindowsNotificationToolDec
 
 export function getNotificationToolRegistrations(): ToolRegistration[] {
   return [registerShowWindowsNotification]
-}
-
-export function getAllNotificationTools(): Tool[] {
-  return [registerShowWindowsNotification()]
 }

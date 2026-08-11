@@ -67,7 +67,7 @@ export class PinnedFilesSettingsService {
             }
             
             const newFile: PinnedFileItem = {
-                id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                id: `pinned_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
                 path,
                 workspaceUri,
                 enabled: true,

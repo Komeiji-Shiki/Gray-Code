@@ -79,6 +79,14 @@
 13. **toolBatchCheckpoint 测试的 fire-and-forget 绑定等待**
     已通过"轮询等待 after 最终绑定值"修复（`waitForBoundNode` 带 expectedId），不再是 flaky。
 
+15. **后台 SubAgent 完成时双通道通知（Monitor 协议 + 任务条/回执）**
+    后台 subagent（显式 `background=true`，或前台 detach 转后台）完成时，两处 UI 各收一份通知：
+    Monitor（runEventBus 的 `subagentMonitor.event` / `manifest` 协议）与任务条/回执（TaskManager
+    的 `taskEvent` 协议）。这是两系统分工的预期结果，非缺陷：runEventBus 是运行级/内容级协议
+    （状态机 + transcript + 持久化），TaskManager 是任务级 UI/回执契约（无持久化），二者互不感知，
+    由 `detachedTaskBridge` 订阅 runEventBus 终态事件后手动同步注销 TaskManager 任务
+    （分工边界详见 `backend/tools/taskManager.ts` 头注释）。
+
 ---
 
 ## 三、备注

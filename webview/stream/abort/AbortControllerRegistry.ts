@@ -16,6 +16,11 @@ export class AbortControllerRegistry {
   private summaryControllers: Map<string, AbortController> = new Map();
   /** 会话主流真正退出时唤醒等待者；由 delete() 在控制器引用仍匹配时统一释放。 */
   private idleWaiters: Map<string, Set<() => void>> = new Map();
+  /**
+   * 取消代次（P1 TOCTOU 修复）：每次 cancel() 自增。流式入口在等待旧流退出前快照、
+   * create() 后复查——代次变化说明等待窗口内到达过「停止」，应取消刚创建的控制器。
+   */
+  private cancelEpochs: Map<string, number> = new Map();
 
   constructor(
     private readonly retiredChain: RetiredStreamChain,
@@ -62,6 +67,10 @@ export class AbortControllerRegistry {
    * 取消指定对话的流式请求
    */
   cancel(conversationId: string): boolean {
+    // P1（TOCTOU）：无条件推进取消代次——即使此刻无活跃控制器（旧流已在中止/退出中），
+    // 「停止」意图也必须被等待窗口后的流式入口复查捕获；否则 create() 照常启动新流，
+    // 用户停止操作丢失。新发起的消息流会先快照到新代次，不会误杀。
+    this.cancelEpochs.set(conversationId, (this.cancelEpochs.get(conversationId) ?? 0) + 1);
     const controller = this.controllers.get(conversationId);
     const summaryController = this.summaryControllers.get(conversationId);
     let cancelled = false;
@@ -111,6 +120,14 @@ export class AbortControllerRegistry {
    */
   isActive(conversationId: string): boolean {
     return this.controllers.has(conversationId);
+  }
+
+  /**
+   * 获取指定会话的取消代次（P1 TOCTOU 复查用，见 cancel()）。
+   * 无任何取消记录时返回 0。
+   */
+  getCancelEpoch(conversationId: string): number {
+    return this.cancelEpochs.get(conversationId) ?? 0;
   }
 
   /**
@@ -213,9 +230,15 @@ export class AbortControllerRegistry {
   /**
    * 会话主流仍活跃时注册等待者（waitForIdle 调用）：空闲时由 delete()/cancel()/create()
    * 替换路径统一释放，避免漏唤醒。
+   *
+   * 返回 { promise, unregister }：promise 供等待；unregister 供超时分支主动从
+   * idleWaiters Set 摘除——否则「会话持续活跃 + 多次超时」下 resolve 滞留 Set 无界增长（P2）。
+   * releaseIdleWaiters 已整体删除 Set 条目时 unregister 为无害 no-op。
    */
-  registerIdleWaiter(conversationId: string): Promise<void> {
-    return new Promise<void>(resolve => {
+  registerIdleWaiter(conversationId: string): { promise: Promise<void>; unregister: () => void } {
+    let resolveFn: () => void = () => {};
+    const promise = new Promise<void>(resolve => {
+      resolveFn = resolve;
       let waiters = this.idleWaiters.get(conversationId);
       if (!waiters) {
         waiters = new Set();
@@ -223,6 +246,17 @@ export class AbortControllerRegistry {
       }
       waiters.add(resolve);
     });
+    return {
+      promise,
+      unregister: () => {
+        const waiters = this.idleWaiters.get(conversationId);
+        if (!waiters) return;
+        waiters.delete(resolveFn);
+        if (waiters.size === 0) {
+          this.idleWaiters.delete(conversationId);
+        }
+      }
+    };
   }
 
   private releaseIdleWaiters(conversationId: string): void {

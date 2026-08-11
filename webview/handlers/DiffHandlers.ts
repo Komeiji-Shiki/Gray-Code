@@ -2,6 +2,7 @@
  * Diff 预览消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools';
@@ -510,8 +511,8 @@ export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
  * 注册 Diff 处理器
  */
 export function registerDiffHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('diff.openPreview', openDiffPreview);
-  registry.set('diff.loadContent', loadDiffContent);
-  registry.set('diff.accept', acceptDiff);
-  registry.set('diff.reject', rejectDiff);
+  registry.set(MESSAGE_NAMES['diff.openPreview'], openDiffPreview);
+  registry.set(MESSAGE_NAMES['diff.loadContent'], loadDiffContent);
+  registry.set(MESSAGE_NAMES['diff.accept'], acceptDiff);
+  registry.set(MESSAGE_NAMES['diff.reject'], rejectDiff);
 }

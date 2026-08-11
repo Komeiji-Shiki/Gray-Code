@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
@@ -53,7 +54,7 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<any>('getSettings', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
     const appearance = response?.settings?.ui?.appearance
     const saved = appearance?.loadingText ?? ''
     const savedSelectionContextEnabled = resolveSelectionContextEnabled(appearance)
@@ -104,7 +105,7 @@ async function saveConfig() {
   try {
     const normalized = loadingText.value.trim()
 
-    await sendToExtension('updateUISettings', {
+    await sendToExtension(MESSAGE_NAMES.updateUISettings, {
       ui: {
         appearance: {
           // 空字符串表示使用默认值

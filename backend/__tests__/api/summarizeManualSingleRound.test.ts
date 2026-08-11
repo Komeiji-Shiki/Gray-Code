@@ -17,8 +17,8 @@
  * - 多轮历史（realUserCount > 1）仍 STALE
  */
 
-import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
 import type { Content } from '../../modules/conversation/types';
+import { createSummarizeHarness } from '../__fixtures__/harnessFixtures';
 
 // ==================== 消息构造工具 ====================
 
@@ -59,98 +59,12 @@ const msgLabel = (m: Content): string =>
     ?? m.parts[0]?.text
     ?? '';
 
-/** 总结文本必须 >= MIN_SUMMARY_LENGTH（50 字符），否则会被 LOW_QUALITY_SUMMARY 拒绝 */
-const SUCCESS_SUMMARY: Content = {
-    role: 'model',
-    parts: [{ text: '已完成总结。这是足够长的总结正文：目标已记录、已完成步骤与当前进度、下一步计划与关键约束均已覆盖，供后续对话继续使用。' }],
-    usageMetadata: { promptTokenCount: 500, candidatesTokenCount: 100 }
-};
 
-// ==================== 测试脚手架 ====================
-
-interface HarnessOptions {
-    fullHistory: Content[];
-    /** 可选：getHistoryRef 返回的「规划快照」（默认 deep copy of fullHistory） */
-    historyRef?: Content[];
-    /** 可选：mutateContents 读写的「落盘」历史（默认与 historyRef 同一引用） */
-    liveHistory?: Content[];
-    maxContextTokens?: number;
-    keepRecentTokens?: number | string;
-    keepRecentRounds?: number;
-}
-
-interface Harness {
-    service: SummarizeService;
-    generate: jest.Mock;
-    liveHistory: Content[];
-}
-
-function createHarness(options: HarnessOptions): Harness {
-    const {
-        fullHistory,
-        maxContextTokens = 1000,
-        keepRecentTokens = '10%',
-        keepRecentRounds = 1
-    } = options;
-    // 规划快照与落盘历史分离：模拟「规划后、写入前历史被并发写入」
-    const planningHistory = options.historyRef ?? JSON.parse(JSON.stringify(fullHistory));
-    const mutableHistory = options.liveHistory ?? planningHistory;
-
-    const configs: Record<string, any> = {
-        cfg1: { id: 'cfg1', type: 'openai', enabled: true, maxContextTokens }
-    };
-
-    const generate = jest.fn().mockResolvedValue({ content: SUCCESS_SUMMARY });
-
-    const conversationManager = {
-        getHistory: jest.fn().mockResolvedValue(planningHistory),
-        getHistoryRef: jest.fn().mockResolvedValue(planningHistory),
-        getTranscriptRepository: jest.fn(() => ({
-            mutateContents: jest.fn(async (mutator: (history: Content[]) => Content[]) => {
-                const copy = JSON.parse(JSON.stringify(mutableHistory)) as Content[];
-                const next = mutator(copy);
-                if (next !== copy) {
-                    const persisted = JSON.parse(JSON.stringify(next)) as Content[];
-                    mutableHistory.splice(0, mutableHistory.length, ...persisted);
-                    return persisted;
-                }
-                return copy;
-            })
-        }))
-    };
-
-    const contextTrimService = {
-        findLastSummaryIndex: jest.fn().mockReturnValue(-1),
-        identifyRounds: jest.fn().mockReturnValue([])
-    };
-
-    const settingsManager = {
-        getSummarizeConfig: jest.fn().mockReturnValue({
-            keepRecentRounds,
-            keepRecentTokens,
-            useSeparateModel: false,
-            summarizeChannelId: '',
-            summarizeModelId: '',
-            summarizePrompt: '',
-            summarizeMaxInputRatio: 0.5
-        })
-    };
-
-    const service = new SummarizeService(
-        { getConfig: jest.fn(async (id: string) => configs[id]) } as any,
-        { generate } as any,
-        conversationManager as any,
-        contextTrimService as any,
-        settingsManager as any
-    );
-
-    return { service, generate, liveHistory: mutableHistory };
-}
 
 // ==================== 测试用例 ====================
 
 describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户消息）放行', () => {
-    it('单超大轮轮内截断：不再 STALE，成功总结这一轮的前半部分', async () => {
+    test('单超大轮轮内截断：不再 STALE，成功总结这一轮的前半部分', async () => {
         // 单轮 240 token > 预算 100（10% of 1000）→ intra_round 轮内截断，
         // 切点落在最后一个满足预算的 model 消息（done，index 5）→ insertIndex=5。
         const singleOversizedRound: Content[] = [
@@ -158,7 +72,7 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
             fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
         ];
 
-        const { service, liveHistory } = createHarness({ fullHistory: singleOversizedRound });
+        const { service, liveHistory } = createSummarizeHarness({ fullHistory: singleOversizedRound });
 
         const result = await service.handleSummarizeContext({ conversationId: 'conv1', configId: 'cfg1' });
 
@@ -183,7 +97,7 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
         expect(msgLabel(liveHistory[6])).toBe('done');
     });
 
-    it('总结期间历史并发变长（追加非真实用户消息）：仍成功，不因 insertIndex > 最后用户消息而放弃', async () => {
+    test('总结期间历史并发变长（追加非真实用户消息）：仍成功，不因 insertIndex > 最后用户消息而放弃', async () => {
         const planningSnapshot: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
@@ -194,7 +108,7 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
             modelMsg('more', 10)
         ];
 
-        const { service, liveHistory } = createHarness({
+        const { service, liveHistory } = createSummarizeHarness({
             fullHistory: planningSnapshot,
             historyRef: planningSnapshot,
             liveHistory: concurrentGrownHistory
@@ -214,7 +128,7 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
         expect(msgLabel(liveHistory[7])).toBe('more');
     });
 
-    it('总结期间历史被并发缩短导致 insertIndex 越界：仍 STALE_RANGE，不落盘', async () => {
+    test('总结期间历史被并发缩短导致 insertIndex 越界：仍 STALE_RANGE，不落盘', async () => {
         const planningSnapshot: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
@@ -224,7 +138,7 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40)
         ];
 
-        const { service, liveHistory } = createHarness({
+        const { service, liveHistory } = createSummarizeHarness({
             fullHistory: planningSnapshot,
             historyRef: planningSnapshot,
             liveHistory: concurrentShrunkenHistory
@@ -242,7 +156,7 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
 });
 
 describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生效）', () => {
-    it('多轮历史（realUserCount > 1）范围覆盖第二轮用户消息：仍 STALE_RANGE', async () => {
+    test('多轮历史（realUserCount > 1）范围覆盖第二轮用户消息：仍 STALE_RANGE', async () => {
         // 两轮：规划预算 100 装不下任何保留后缀，切点被迫深入轮内（done，index 6）
         // → insertIndex=6 > lastRealUserMessageIndex=3（user1），但真实用户消息有 2 条，
         // 不属于「唯一真实用户回合」放行范围，保持 STALE。
@@ -252,7 +166,7 @@ describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生�
             modelMsg('done', 40)
         ];
 
-        const { service, liveHistory } = createHarness({ fullHistory: twoRounds });
+        const { service, liveHistory } = createSummarizeHarness({ fullHistory: twoRounds });
 
         const result = await service.handleSummarizeContext({ conversationId: 'conv1', configId: 'cfg1' });
 
@@ -265,7 +179,7 @@ describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生�
         expect(liveHistory.some(m => m.isSummary)).toBe(false);
     });
 
-    it('多轮 + 预算充足（正常路径）：照常成功，放行逻辑不介入', async () => {
+    test('多轮 + 预算充足（正常路径）：照常成功，放行逻辑不介入', async () => {
         // 预算 300（绝对数）：最早满足保留预算的候选切点是 fc1（index 1，suffix 240 <= 300）
         // → cutIndex=1。insertIndex=1 <= lastRealUserMessageIndex=3，不触发 STALE 分支，走正常路径。
         const twoRounds: Content[] = [
@@ -274,7 +188,7 @@ describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生�
             modelMsg('done', 40)
         ];
 
-        const { service, liveHistory } = createHarness({
+        const { service, liveHistory } = createSummarizeHarness({
             fullHistory: twoRounds,
             keepRecentTokens: 300 // 绝对预算：保留 suffix <= 300 的最早切点（fc1）
         });

@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import { computeLineDiff, computeLineDiffCached, clearLineDiffCache, formatDiffLineNumber } from '../../utils/lineDiff'
 
 describe('computeLineDiff', () => {
-  it('preserves unchanged lines and reports inserted and deleted lines', () => {
+  test('preserves unchanged lines and reports inserted and deleted lines', () => {
     const result = computeLineDiff(
       ['alpha', 'beta', 'gamma'].join('\n'),
       ['alpha', 'delta', 'gamma', 'omega'].join('\n')
@@ -20,7 +20,7 @@ describe('computeLineDiff', () => {
     expect(result.degraded).toBe(false)
   })
 
-  it('uses caller-provided line number origins', () => {
+  test('uses caller-provided line number origins', () => {
     const result = computeLineDiff('old', 'new', { oldStartLine: 10, newStartLine: 20 })
 
     expect(result.lines).toEqual([
@@ -30,7 +30,7 @@ describe('computeLineDiff', () => {
     expect(result.lineNumberWidth).toBe(2)
   })
 
-  it('falls back to a bounded whole-core replacement when edit distance exceeds the budget', () => {
+  test('falls back to a bounded whole-core replacement when edit distance exceeds the budget', () => {
     const oldContent = Array.from({ length: 100 }, (_, index) => `old-${index}`).join('\n')
     const newContent = Array.from({ length: 100 }, (_, index) => `new-${index}`).join('\n')
     const result = computeLineDiff(oldContent, newContent, { editDistanceLimit: 8 })
@@ -41,7 +41,7 @@ describe('computeLineDiff', () => {
     expect(result.lines).toHaveLength(200)
   })
 
-  it('keeps the default algorithm bounded for completely different large files', () => {
+  test('keeps the default algorithm bounded for completely different large files', () => {
     const oldContent = Array.from({ length: 5000 }, (_, index) => `old-${index}`).join('\n')
     const newContent = Array.from({ length: 5000 }, (_, index) => `new-${index}`).join('\n')
     const result = computeLineDiff(oldContent, newContent)
@@ -52,7 +52,7 @@ describe('computeLineDiff', () => {
     expect(result.lines).toHaveLength(10000)
   })
 
-  it('trims large common edges before running the bounded core diff', () => {
+  test('trims large common edges before running the bounded core diff', () => {
     const prefix = Array.from({ length: 1000 }, (_, index) => `prefix-${index}`)
     const suffix = Array.from({ length: 1000 }, (_, index) => `suffix-${index}`)
     const result = computeLineDiff(
@@ -68,7 +68,7 @@ describe('computeLineDiff', () => {
     expect(result.lines[1001]).toEqual({ type: 'added', content: 'new', newLineNum: 1001 })
   })
 
-  it('fast-fails to degraded when the core shares no common lines and the distance exceeds the budget', () => {
+  test('fast-fails to degraded when the core shares no common lines and the distance exceeds the budget', () => {
     // 大文件整体重写：核心区域无任何公共行，且 n+m 超出编辑距离预算，直接退化
     const oldContent = Array.from({ length: 2000 }, (_, index) => `old-${index}`).join('\n')
     const newContent = Array.from({ length: 2000 }, (_, index) => `new-${index}`).join('\n')
@@ -80,7 +80,7 @@ describe('computeLineDiff', () => {
     expect(result.lines).toHaveLength(4000)
   })
 
-  it('does not fast-fail when the no-common-line distance stays within the budget', () => {
+  test('does not fast-fail when the no-common-line distance stays within the budget', () => {
     // 无公共行但 n+m 未超预算：走 Myers 得到精确结果，degraded 仍为 false（语义不变）
     const result = computeLineDiff('old', 'new', { editDistanceLimit: 768 })
     expect(result.degraded).toBe(false)
@@ -88,7 +88,7 @@ describe('computeLineDiff', () => {
     expect(result.added).toBe(1)
   })
 
-  it('does not fast-fail when n + m exactly equals the budget', () => {
+  test('does not fast-fail when n + m exactly equals the budget', () => {
     // 边界：n+m === limit 不满足快速失败条件（n+m > limit），走 Myers 得到精确结果。
     // 若误判为“超出预算”会错误退化，且输出与精确结果不一致。
     const result = computeLineDiff('a\nb', 'c\nd', { editDistanceLimit: 4 })
@@ -103,7 +103,7 @@ describe('computeLineDiff', () => {
     ])
   })
 
-  it('clamps an oversized edit distance limit to bound trace memory', () => {
+  test('clamps an oversized edit distance limit to bound trace memory', () => {
     // 核心无公共行且 n+m 与 editDistanceLimit 都很大：若未钳制，limit = min(n+m, 100000) = 4202，
     // 不满足快速失败条件（n+m > limit 为假），Myers 会跑完并找到精确距离（degraded=false）。
     // 钳制后 limit = 2048（MAX_EDIT_DISTANCE_LIMIT），n+m=4202 > 2048 触发退化——观测结果证明钳制生效。
@@ -117,7 +117,7 @@ describe('computeLineDiff', () => {
     expect(result.added).toBe(2100)
   })
 
-  it('fast-fail output matches the exhausted-budget fallback', () => {
+  test('fast-fail output matches the exhausted-budget fallback', () => {
     // 无公共行且超预算（快速失败）与有小公共行但距离超预算（预算耗尽退化）的输出语义一致：
     // 均为整段核心标记为删除 + 新增，无 unchanged 行混入
     const noCommon = computeLineDiff(
@@ -140,7 +140,7 @@ describe('computeLineDiff', () => {
 })
 
 describe('computeLineDiffCached', () => {
-  it('returns the identical result object for the same content pair', () => {
+  test('returns the identical result object for the same content pair', () => {
     const oldContent = ['alpha', 'beta', 'gamma'].join('\n')
     const newContent = ['alpha', 'delta', 'gamma', 'omega'].join('\n')
     const first = computeLineDiffCached(oldContent, newContent)
@@ -148,7 +148,7 @@ describe('computeLineDiffCached', () => {
     expect(second).toBe(first)
   })
 
-  it('enforces the shared read-only contract: same reference and stable content across calls', () => {
+  test('enforces the shared read-only contract: same reference and stable content across calls', () => {
     // 契约守卫（A-M3）：命中缓存返回同一引用（结果对象与其 lines 数组均共享），
     // 且在不 mutate 的前提下多次调用内容稳定。消费方不得修改共享对象。
     const oldContent = ['alpha', 'beta', 'gamma', 'delta'].join('\n')
@@ -170,7 +170,7 @@ describe('computeLineDiffCached', () => {
     expect(third.lines).toEqual(first.lines)
   })
 
-  it('normalizes oversized edit distance limits in the cache key', () => {
+  test('normalizes oversized edit distance limits in the cache key', () => {
     // 钳制后的预算参与缓存键：传入超限预算与钳制预算应命中同一结果（引用一致）
     const oldContent = ['alpha', 'beta'].join('\n')
     const newContent = ['alpha', 'gamma'].join('\n')
@@ -179,7 +179,7 @@ describe('computeLineDiffCached', () => {
     expect(capped).toBe(clamped)
   })
 
-  it('honors start line / edit distance in the cache key', () => {
+  test('honors start line / edit distance in the cache key', () => {
     const oldContent = 'a\nb'
     const newContent = 'a\nc'
     const plain = computeLineDiffCached(oldContent, newContent)
@@ -192,7 +192,7 @@ describe('computeLineDiffCached', () => {
     expect(limited).not.toBe(plain)
   })
 
-  it('cache keys on content value: same text built differently still hits', () => {
+  test('cache keys on content value: same text built differently still hits', () => {
     const oldContent = ['alpha', 'beta'].join('\n')
     const newContent = ['alpha', 'gamma'].join('\n')
     const first = computeLineDiffCached(oldContent, newContent)
@@ -202,7 +202,7 @@ describe('computeLineDiffCached', () => {
     expect(second).toBe(first)
   })
 
-  it('returns a fresh result when the content differs', () => {
+  test('returns a fresh result when the content differs', () => {
     const oldContent = ['alpha', 'beta'].join('\n')
     const first = computeLineDiffCached(oldContent, ['alpha', 'gamma'].join('\n'))
     const second = computeLineDiffCached(oldContent, ['alpha', 'delta'].join('\n'))
@@ -214,7 +214,7 @@ describe('computeLineDiffCached', () => {
     ])
   })
 
-  it('cache hit keeps results equivalent to the plain function', () => {
+  test('cache hit keeps results equivalent to the plain function', () => {
     const oldContent = ['x', 'y', 'z'].join('\n')
     const newContent = ['x', 'y2', 'z'].join('\n')
     const cached = computeLineDiffCached(oldContent, newContent)
@@ -223,14 +223,14 @@ describe('computeLineDiffCached', () => {
     expect(cached.degraded).toBe(plain.degraded)
   })
 
-  it('stays exact with zero budget when the core already matches', () => {
+  test('stays exact with zero budget when the core already matches', () => {
     // editDistanceLimit=0：核心区域相同（trim 后为空）时不退化，走 Myers 得到精确结果
     const result = computeLineDiff('a\nb', 'a\nb', { editDistanceLimit: 0 })
     expect(result.degraded).toBe(false)
     expect(result.lines.every(line => line.type === 'unchanged')).toBe(true)
   })
 
-  it('degrades when edit distance limit is zero and content differs', () => {
+  test('degrades when edit distance limit is zero and content differs', () => {
     // 无公共行且 n+m > 0（limit 为 0）→ 快速失败退化
     const result = computeLineDiff('a', 'b', { editDistanceLimit: 0 })
     expect(result.degraded).toBe(true)
@@ -238,13 +238,13 @@ describe('computeLineDiffCached', () => {
     expect(result.added).toBe(1)
   })
 
-  it('degrades on negative edit distance limit', () => {
+  test('degrades on negative edit distance limit', () => {
     // 负预算不可能完成：主循环不执行，直接退化输出
     const result = computeLineDiff('a\nb', 'a\nc', { editDistanceLimit: -1 })
     expect(result.degraded).toBe(true)
   })
 
-  it('evicts the oldest entry after the FIFO cache reaches 32 entries', () => {
+  test('evicts the oldest entry after the FIFO cache reaches 32 entries', () => {
     clearLineDiffCache()
     const oldContent = ['seed'].join('\n')
     const first = computeLineDiffCached(oldContent, 'v0')
@@ -260,7 +260,7 @@ describe('computeLineDiffCached', () => {
     expect(lastHit).toBe(lastFirst)
   })
 
-  it('clearLineDiffCache forces recomputation', () => {
+  test('clearLineDiffCache forces recomputation', () => {
     const oldContent = ['alpha', 'beta'].join('\n')
     const newContent = ['alpha', 'gamma'].join('\n')
     const before = computeLineDiffCached(oldContent, newContent)
@@ -272,7 +272,7 @@ describe('computeLineDiffCached', () => {
 })
 
 describe('formatDiffLineNumber', () => {
-  it('pads present and absent line numbers consistently', () => {
+  test('pads present and absent line numbers consistently', () => {
     expect(formatDiffLineNumber(7, 3)).toBe('  7')
     expect(formatDiffLineNumber(undefined, 3)).toBe('   ')
   })

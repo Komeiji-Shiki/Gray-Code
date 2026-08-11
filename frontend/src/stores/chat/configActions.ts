@@ -4,6 +4,7 @@
  * 包含配置的加载和切换
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { ChatStoreState, WorkspaceFolderInfo } from './types'
 import { sendToExtension, showNotification } from '../../utils/vscode'
 
@@ -33,7 +34,7 @@ export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
     return
   }
   try {
-    const config = await sendToExtension<any>('config.getConfig', { configId: state.configId.value })
+    const config = await sendToExtension<any>(MESSAGE_NAMES['config.getConfig'], { configId: state.configId.value })
     if (config) {
       // 模型回退：model 为空时使用 models 列表第一个模型（后端 getConfig 已解析，这里兜底）
       const resolvedModel = config.model || config.models?.[0]?.id || ''
@@ -67,7 +68,7 @@ export async function persistConversationModelConfig(state: ChatStoreState): Pro
   }
 
   try {
-    await sendToExtension('conversation.setCustomMetadata', {
+    await sendToExtension(MESSAGE_NAMES['conversation.setCustomMetadata'], {
       conversationId,
       key: CONVERSATION_MODEL_CONFIG_KEY,
       value: payload
@@ -87,7 +88,7 @@ export async function applyConversationModelConfig(
 ): Promise<void> {
   try {
     const stored = storedOverride || await (async () => {
-      const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId })
+      const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
       return metadata?.custom?.[CONVERSATION_MODEL_CONFIG_KEY] as ConversationModelConfig | undefined
     })()
 
@@ -130,7 +131,7 @@ export async function persistConversationPromptMode(state: ChatStoreState): Prom
   if (!conversationId) return
 
   try {
-    await sendToExtension('conversation.setCustomMetadata', {
+    await sendToExtension(MESSAGE_NAMES['conversation.setCustomMetadata'], {
       conversationId,
       key: CONVERSATION_PROMPT_MODE_KEY,
       value: { modeId: state.currentPromptModeId.value }
@@ -153,7 +154,7 @@ export async function applyConversationPromptMode(
 ): Promise<void> {
   try {
     const stored = storedOverride || await (async () => {
-      const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId })
+      const metadata = await sendToExtension<any>(MESSAGE_NAMES['conversation.getConversationMetadata'], { conversationId })
       return metadata?.custom?.[CONVERSATION_PROMPT_MODE_KEY] as ConversationPromptModeConfig | undefined
     })()
     const modeId = typeof stored?.modeId === 'string' ? stored.modeId.trim() : ''
@@ -186,7 +187,7 @@ export async function setConfigId(state: ChatStoreState, newConfigId: string): P
   
   // 保存到后端
   try {
-    await sendToExtension('settings.setActiveChannelId', { channelId: newConfigId })
+    await sendToExtension(MESSAGE_NAMES['settings.setActiveChannelId'], { channelId: newConfigId })
   } catch (error) {
     console.error('Failed to save active channel ID:', error)
   }
@@ -199,7 +200,7 @@ export async function setConfigId(state: ChatStoreState, newConfigId: string): P
  */
 export async function loadSavedConfigId(state: ChatStoreState): Promise<void> {
   try {
-    const response = await sendToExtension<{ channelId?: string }>('settings.getActiveChannelId', {})
+    const response = await sendToExtension<{ channelId?: string }>(MESSAGE_NAMES['settings.getActiveChannelId'], {})
     if (response?.channelId) {
       state.configId.value = response.channelId
     }
@@ -216,7 +217,7 @@ export async function loadSavedConfigId(state: ChatStoreState): Promise<void> {
  */
 export async function loadCheckpointConfig(state: ChatStoreState): Promise<void> {
   try {
-    const response = await sendToExtension<{ config: any }>('checkpoint.getConfig', {})
+    const response = await sendToExtension<{ config: any }>(MESSAGE_NAMES['checkpoint.getConfig'], {})
     if (response?.config?.messageCheckpoint) {
       state.mergeUnchangedCheckpoints.value = response.config.messageCheckpoint.mergeUnchangedCheckpoints ?? true
     }

@@ -10,7 +10,7 @@
  * - 无 Pinia 环境（组件单测）不抛错：由不安装 Pinia 的组件测试
  *   （BranchCleanupSettings / ChannelSettings / PromptSettings 等）间接覆盖
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { useDeferredNumberInput, getSettingsView } from '../../composables/useDeferredNumberInput'
@@ -25,17 +25,17 @@ describe('useDeferredNumberInput', () => {
     vi.restoreAllMocks()
   })
 
-  it('初始化草稿为已保存值', () => {
+  test('初始化草稿为已保存值', () => {
     const { draft } = useDeferredNumberInput(() => 30)
     expect(draft.value).toBe('30')
   })
 
-  it('未保存过时草稿为空（显示占位符）', () => {
+  test('未保存过时草稿为空（显示占位符）', () => {
     const { draft } = useDeferredNumberInput(() => undefined)
     expect(draft.value).toBe('')
   })
 
-  it('输入有效数字立即提交，草稿跟随原始输入', () => {
+  test('输入有效数字立即提交，草稿跟随原始输入', () => {
     const commit = vi.fn()
     const { draft, handleInput } = useDeferredNumberInput(() => 30)
     const committed = handleInput('50', commit)
@@ -45,7 +45,7 @@ describe('useDeferredNumberInput', () => {
     expect(draft.value).toBe('50')
   })
 
-  it('清空输入：不提交、不回填默认值（编辑期间保持为空）', () => {
+  test('清空输入：不提交、不回填默认值（编辑期间保持为空）', () => {
     const commit = vi.fn()
     const { draft, handleInput } = useDeferredNumberInput(() => 30)
     const committed = handleInput('', commit)
@@ -54,7 +54,7 @@ describe('useDeferredNumberInput', () => {
     expect(draft.value).toBe('')
   })
 
-  it('校验器拦截非法值（如 0 对「-1 或 ≥1」无效），合法值正常提交', () => {
+  test('校验器拦截非法值（如 0 对「-1 或 ≥1」无效），合法值正常提交', () => {
     const commit = vi.fn()
     const { handleInput } = useDeferredNumberInput(() => 30, v => v === -1 || v >= 1)
     expect(handleInput('0', commit)).toBeNull()
@@ -65,14 +65,14 @@ describe('useDeferredNumberInput', () => {
     expect(commit).toHaveBeenLastCalledWith(5)
   })
 
-  it('非有限值（如 1e999）不提交', () => {
+  test('非有限值（如 1e999）不提交', () => {
     const commit = vi.fn()
     const { handleInput } = useDeferredNumberInput(() => 30)
     expect(handleInput('1e999', commit)).toBeNull()
     expect(commit).not.toHaveBeenCalled()
   })
 
-  it('小数中间值（如 2. / .5 / 1e3）不提交，完整小数正常提交', () => {
+  test('小数中间值（如 2. / .5 / 1e3）不提交，完整小数正常提交', () => {
     const commit = vi.fn()
     const { draft, handleInput } = useDeferredNumberInput(() => 30)
     // Number('2.') === 2：若不拦截会在输入过程中提交中间值
@@ -90,7 +90,7 @@ describe('useDeferredNumberInput', () => {
     expect(commit).toHaveBeenCalledWith(2.5)
   })
 
-  it('在设置页时切换到其他视图：空输入框自动回填已保存值', async () => {
+  test('在设置页时切换到其他视图：空输入框自动回填已保存值', async () => {
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()
 
@@ -108,7 +108,7 @@ describe('useDeferredNumberInput', () => {
     expect(draft.value).toBe('30')
   })
 
-  it('离开设置页时有效草稿不回填（保留用户输入）', async () => {
+  test('离开设置页时有效草稿不回填（保留用户输入）', async () => {
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()
 
@@ -120,7 +120,7 @@ describe('useDeferredNumberInput', () => {
     expect(draft.value).toBe('50')
   })
 
-  it('syncFromStored 重新对齐草稿（loadConfig 完成后调用）', () => {
+  test('syncFromStored 重新对齐草稿（loadConfig 完成后调用）', () => {
     const stored = { value: 5 }
     const { draft, syncFromStored } = useDeferredNumberInput(() => stored.value)
     draft.value = ''
@@ -129,7 +129,7 @@ describe('useDeferredNumberInput', () => {
     expect(draft.value).toBe('7')
   })
 
-  it('getSettingsView 返回当前视图', () => {
+  test('getSettingsView 返回当前视图', () => {
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()
     expect(getSettingsView()).toBe('settings')

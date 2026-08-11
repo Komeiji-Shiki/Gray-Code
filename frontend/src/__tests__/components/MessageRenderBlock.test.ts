@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { defineComponent, nextTick, watch } from 'vue'
 import MessageRenderBlock from '../../components/message/MessageRenderBlock.vue'
 import {
@@ -71,7 +71,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     document.body.innerHTML = ''
   })
 
-  it('collapsed 完全折叠：只保留头部，无内容区与流式预览 host', async () => {
+  test('collapsed 完全折叠：只保留头部，无内容区与流式预览 host', async () => {
     pushSmoothText('thought-message', 'thought:0', 'thinking', 'balanced', 'base ', () => {})
 
     const wrapper = mountBlock()
@@ -89,7 +89,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('medium 中展开：完整段落提升到渐进 markdown，未完成尾巴留在 CharFlow', async () => {
+  test('medium 中展开：完整段落提升到渐进 markdown，未完成尾巴留在 CharFlow', async () => {
     pushSmoothText('thought-message', 'thought:0', '续', 'balanced', '前段\n\n', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -108,7 +108,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('medium 切到 expanded 时 CharFlow 重新注册为展开态（渐进 markdown）', async () => {
+  test('medium 切到 expanded 时 CharFlow 重新注册为展开态（渐进 markdown）', async () => {
     pushSmoothText('thought-message', 'thought:0', 'para one\n\npara two', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -134,7 +134,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('medium 切到 expanded 并 replay 相同 source 时会重新确认 Markdown DOM', async () => {
+  test('medium 切到 expanded 并 replay 相同 source 时会重新确认 Markdown DOM', async () => {
     const source = 'para one\n\n'
     const tail = 'para two'
     pushSmoothText('thought-message', 'thought:0', '', 'balanced', source + tail, () => {})
@@ -157,7 +157,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('expanded 完全展开：非流式完整 markdown 渲染', async () => {
+  test('expanded 完全展开：非流式完整 markdown 渲染', async () => {
     const wrapper = mountBlock({
       thoughtViewMode: 'expanded',
       isStreaming: false,
@@ -172,7 +172,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('非流式中展开：markdown 渲染 + 固定高度滚动区', async () => {
+  test('非流式中展开：markdown 渲染 + 固定高度滚动区', async () => {
     const wrapper = mountBlock({
       thoughtViewMode: 'medium',
       isStreaming: false,
@@ -187,7 +187,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('头部单击循环切换三段式：collapsed → medium → expanded → collapsed', async () => {
+  test('头部单击循环切换三段式：collapsed → medium → expanded → collapsed', async () => {
     const setThoughtViewMode = vi.fn()
     const wrapper = mountBlock({ setThoughtViewMode })
 
@@ -205,7 +205,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：尾部窗口裁剪后显示「内容过长」提示条', async () => {
+  test('中展开：尾部窗口裁剪后显示「内容过长」提示条', async () => {
     // 单段超长内容（无 \n\n 边界不提升），超过 tailWindow 4096 触发裁剪
     pushSmoothText('thought-message', 'thought:0', 'x'.repeat(5000), 'balanced', '', () => {})
 
@@ -222,7 +222,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：用户滚离底部后内容更新不再强制贴底', async () => {
+  test('中展开：用户滚离底部后内容更新不再强制贴底', async () => {
     pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -242,7 +242,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：用户滚回底部附近后恢复自动贴底', async () => {
+  test('中展开：用户滚回底部附近后恢复自动贴底', async () => {
     pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -264,7 +264,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：scroll 事件滞后时内容更新按当前位置复验，不误拉回', async () => {
+  test('中展开：scroll 事件滞后时内容更新按当前位置复验，不误拉回', async () => {
     pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -287,7 +287,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：promote 后等 Vue 渲染完成（nextTick）按最终高度贴底', async () => {
+  test('中展开：promote 后等 Vue 渲染完成（nextTick）按最终高度贴底', async () => {
     pushSmoothText('thought-message', 'thought:0', 'tail', 'balanced', '前段\n\n', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -305,7 +305,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：用户滚回底部后内容大段增长不丢吸底', async () => {
+  test('中展开：用户滚回底部后内容大段增长不丢吸底', async () => {
     pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -330,7 +330,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：wheel 滚动期间内容增长不拉回（高 tps 抵消滚动距离）', async () => {
+  test('中展开：wheel 滚动期间内容增长不拉回（高 tps 抵消滚动距离）', async () => {
     pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })
@@ -355,7 +355,7 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     wrapper.unmount()
   })
 
-  it('中展开：贴底写入后代码块异步渲染高度骤增不丢吸底', async () => {
+  test('中展开：贴底写入后代码块异步渲染高度骤增不丢吸底', async () => {
     pushSmoothText('thought-message', 'thought:0', 'abc', 'balanced', '', () => {})
 
     const wrapper = mountBlock({ thoughtViewMode: 'medium' })

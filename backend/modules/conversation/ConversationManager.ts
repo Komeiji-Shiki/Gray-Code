@@ -1,5 +1,5 @@
 /**
- * LimCode - 对话历史管理器
+ * GrayCode - 对话历史管理器
  *
  * 核心职责:
  * - 管理 Gemini 格式的对话历史
@@ -1335,14 +1335,28 @@ export class ConversationManager {
         }
 
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            let changed = false;
             for (const item of updates) {
                 const { messageIndex, updates: patch } = item;
                 if (messageIndex < 0 || messageIndex >= history.length) {
                     throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
                 }
-                Object.assign(history[messageIndex], patch);
+                // 仅当 patch 确实改变了目标消息时才写回：patch 为空或各字段值相同（===）时
+                // 跳过，避免无意义的整体落盘覆盖（mutateContents 契约：返回原引用=跳过写回）。
+                const target = history[messageIndex];
+                let patchChangesTarget = false;
+                for (const key of Object.keys(patch)) {
+                    if (target[key] !== patch[key]) {
+                        patchChangesTarget = true;
+                        break;
+                    }
+                }
+                if (patchChangesTarget) {
+                    Object.assign(target, patch);
+                    changed = true;
+                }
             }
-            return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
+            return changed ? history.slice() : history;
         });
 
         if (updates.some(item => shouldInvalidateContextManagementStateForUpdate(item.updates))) {
@@ -1357,12 +1371,13 @@ export class ConversationManager {
         const repository = this.getTranscriptRepository(conversationId);
         let deletedMessageId: string | null = null;
         let deletedWasSummary = false;
+        let deletedWasTailDelete = false;
         const nextHistory = await repository.mutateContents(contents => {
             if (messageIndex < 0 || messageIndex >= contents.length) {
                 throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
             }
-            // 在实际持锁快照内捕获删除锚点与总结类型，避免 getContents 与 mutateContents 之间
-            // 并发插入/删除导致按旧下标走错分支同步策略。
+            // 在实际持锁快照内捕获删除锚点、总结类型与「是否尾部删除」，避免 getContents 与
+            // mutateContents 之间并发插入/删除导致按旧下标走错分支同步策略。
             deletedMessageId = contents[messageIndex]?.id ?? null;
             deletedWasSummary = contents[messageIndex]?.isSummary === true;
             let next = contents;
@@ -1372,7 +1387,11 @@ export class ConversationManager {
                 const restored = restoreSummarizedRange(next, messageIndex);
                 next = restored.contents;
             }
-            return deleteLogicalMessage(next, messageIndex);
+            const deleted = deleteLogicalMessage(next, messageIndex);
+            // 尾部删除 = 删除后锚点及其后（含其 functionResponse 级联删除）没有任何幸存消息：
+            // 只有此时「整棵子树软删 + 回退活跃尾」才与主历史一致；中间删除必须走 rebase（见下）。
+            deletedWasTailDelete = deleted.length <= messageIndex;
+            return deleted;
         });
         // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
@@ -1394,8 +1413,18 @@ export class ConversationManager {
                         // 删除总结会同时恢复其覆盖原文的 isSummarized 标记，不是普通子树删除；
                         // 必须按当前主历史重建活跃路径与消息元数据，不能把总结后的全部后继软删。
                         await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
-                    } else {
+                    } else if (deletedWasTailDelete) {
+                        // 尾部删除：锚点及其后续整棵子树整体软删，活跃尾回退到锚点父节点
+                        // （TREE-09；主历史在锚点后已无幸存消息，与软删范围一致）。
                         await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                    } else {
+                        // 中间消息删除：主历史保留锚点后的幸存消息，整棵子树软删会把仍在主历史中的
+                        // 后继消息在图中标记 deleted 且活跃尾错误回退——后续 append 挂到旧父节点、
+                        // 切分支时消息"复活"。与 deletedWasSummary 分支一致，按当前主历史 rebase
+                        // 保留后继（被删节点退化为非活跃候选，不软删）。头部删除（index 0 且非尾删）
+                        // 导致主历史根前移时，rebase 以 allowRootChange 走根变更重链（新根挂图、
+                        // 旧根专属子树清理，BranchService 内告警），避免图根永久陈旧（round4 复查 P1）。
+                        await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
                     }
                 } catch (error) {
                     log.warn('branch_delete_sync_failed', {
@@ -1493,9 +1522,29 @@ export class ConversationManager {
                     summaryIndices.push(i);
                 }
             }
-            for (let i = summaryIndices.length - 1; i >= 0; i--) {
-                const restored = restoreSummarizedRange(next, summaryIndices[i]);
-                next = restored.contents;
+            if (summaryIndices.length > 0) {
+                // 性能：restoreSummarizedRange 每次调用全量 JSON 深拷贝（O(n)），k 个总结即
+                // O(k·n)；先克隆一次，循环内仅原地清除 isSummarized 标记（纯字段变更，不改变
+                // 数组长度与 parentId 链，与 restoreSummarizedRange 语义一致）。
+                next = JSON.parse(JSON.stringify(history)) as Content[];
+                for (let i = summaryIndices.length - 1; i >= 0; i--) {
+                    const summaryIndex = summaryIndices[i];
+                    // 覆盖区间起点 = 该总结之前最近的总结消息之后（无更早总结则从 0 开始）
+                    let rangeStart = 0;
+                    for (let j = summaryIndex - 1; j >= 0; j--) {
+                        if (next[j]?.isSummary) {
+                            rangeStart = j + 1;
+                            break;
+                        }
+                    }
+                    for (let j = rangeStart; j < summaryIndex; j++) {
+                        const message = next[j];
+                        if (message?.isSummarized) {
+                            const { isSummarized: _removed, ...rest } = message;
+                            next[j] = rest as Content;
+                        }
+                    }
+                }
             }
             const deleted = next.slice(start, end);
             next.splice(start, end - start);
@@ -1531,20 +1580,20 @@ export class ConversationManager {
         targetIndex: number
     ): Promise<number> {
         const repository = this.getTranscriptRepository(conversationId);
-        const history = await repository.getContents();
-        
-        if (targetIndex < 0 || targetIndex >= history.length) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
-        }
-        
         // 修改原因：重试/删除到指定消息的语义是从目标索引开始截断，不能在主对话和 SubAgent 子对话各写一套实现。
         // 修改方式：通过 TranscriptRepository.mutateContents 委托 TranscriptMutation.truncateFrom 统一处理截断和 index 规范化。
         // 修改目的：保证后续工具配对规则升级时，主窗口和 Monitor 同步继承。
         // deleteCount 必须在 mutateContents 回调内基于同一份锁内快照计算：
         // 此前用外部 history.length 减 nextHistory.length，两次读取之间若有并发追加，
         // 删除数会失真（甚至为负）。
+        // targetIndex 校验同样移入锁内基于当前快照进行：锁外 getContents 快照校验后，并发
+        // 删除可能让 targetIndex 越界（truncateFrom 抛原始 Error）或指向错误消息，锁内重校验
+        // 保证边界判定与截断基于同一份数据。
         let deleteCount = 0;
         const nextHistory = await repository.mutateContents(currentHistory => {
+            if (targetIndex < 0 || targetIndex >= currentHistory.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
+            }
             const next = truncateFrom(currentHistory, targetIndex);
             deleteCount = currentHistory.length - next.length;
             return next;
@@ -1565,10 +1614,29 @@ export class ConversationManager {
         // 修改原因：清空 transcript 属于 replace 整体快照的典型场景，应直接走统一 replace 入口。
         // 修改方式：委托 repository.replaceContents([]) 保存空 transcript。
         // 修改目的：主聊天 clear 与 SubAgent replace 拥有同一仓储操作语义。
-        const nextHistory = await this.getTranscriptRepository(conversationId).replaceContents([]);
+        const repository = this.getTranscriptRepository(conversationId);
+        // 决策 6：清空前捕获首条消息 id 作为分支图同步锚点（forceResetToEmpty 时仅作语义传参，
+        // 不依赖锚点是否图根/是否存在）。
+        const historyBeforeClear = await repository.getContents();
+        const firstMessageId = historyBeforeClear[0]?.id ?? null;
+        const nextHistory = await repository.replaceContents([]);
         // HIS-11：结构性清空后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
         await this.invalidateContextManagementState(conversationId, 'history_cleared');
+        // 图同步：主历史已整体清空，无条件重置分支图为空（forceResetToEmpty，round4 复查 P1）——
+        // 锚点非图根（图根陈旧）时仅软删子树会残留旧根/旧活跃尾，清空后 append 挂旧尾；
+        // 无分支图时幂等 no-op；失败仅告警不阻断——主历史为唯一真源，图侧由下次读图/写图自校验兜底。
+        const branchService = getGlobalBranchService();
+        if (branchService) {
+            try {
+                await branchService.syncGraphAfterHistoryDelete(conversationId, firstMessageId, { forceResetToEmpty: true });
+            } catch (error) {
+                log.warn('branch_clear_history_sync_failed', {
+                    conversationId,
+                    error: (error as Error)?.message ?? String(error),
+                });
+            }
+        }
     }
 
     // ==================== 查询和过滤 ====================
@@ -1631,8 +1699,42 @@ export class ConversationManager {
             throw new Error(t('modules.conversation.errors.snapshotNotBelongToConversation'));
         }
         
-        await this.getTranscriptRepository(conversationId).replaceContents(snapshot.history);
+        const repository = this.getTranscriptRepository(conversationId);
+        // 恢复为空历史时等价 clearHistory，需要首条旧消息 id 作为分支图重置锚点。
+        const historyBeforeRestore = snapshot.history.length === 0
+            ? await repository.getContents()
+            : [];
+        const firstMessageId = historyBeforeRestore[0]?.id ?? null;
+
+        await repository.replaceContents(snapshot.history);
+        // HIS-11：整体重写后同步 custom.messageCount（防对话列表 messageCount 漂移）
+        await this.syncMessageCountAfterStructuralChange(conversationId, snapshot.history.length);
         await this.invalidateContextManagementState(conversationId, 'snapshot_restored');
+
+        // 决策 6：整体重写主历史后同步分支图（此前 restoreSnapshot 只改主历史，branches.json
+        // 仍含旧节点与旧活跃尾，后续 append 挂旧尾、切分支时消息"复活"）。
+        // - 恢复为空历史：等价清空，按删除路径整体重置图（rebase 无法处理「空历史 + 非空图」）；
+        // - 其余：按恢复后的主历史重建活跃路径（对齐 delete 路径 deletedWasSummary 分支的
+        //   rebase 保留逻辑——旧候选保留为归档，活跃路径以主历史为准）。
+        // 无分支图 / 无锚点幂等 no-op；失败仅告警不阻断（主历史为唯一真源）。
+        const branchService = getGlobalBranchService();
+        if (branchService) {
+            try {
+                if (snapshot.history.length === 0) {
+                    // 恢复为空历史 = 等价清空：无条件重置空图（forceResetToEmpty 不依赖锚点
+                    // 是否图根/是否存在——历史早空但图残留旧根的陈旧场景同样重置）
+                    await branchService.syncGraphAfterHistoryDelete(conversationId, firstMessageId, { forceResetToEmpty: true });
+                } else {
+                    await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_restored');
+                }
+            } catch (error) {
+                log.warn('branch_snapshot_restore_sync_failed', {
+                    conversationId,
+                    snapshotId,
+                    error: (error as Error)?.message ?? String(error),
+                });
+            }
+        }
     }
 
     /**
@@ -2241,4 +2343,5 @@ export class ConversationManager {
         return await this.toolCalls.settleFunctionResponses(conversationId, parts);
     }
 }
+
 

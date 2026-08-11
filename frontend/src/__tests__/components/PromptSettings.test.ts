@@ -1,5 +1,5 @@
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 
 const { sendToExtension } = vi.hoisted(() => ({ sendToExtension: vi.fn() }))
 
@@ -85,7 +85,7 @@ describe('PromptSettings fakeThought 持久化', () => {
     wrapper?.unmount()
   })
 
-  it('加载配置时把 fakeThought 回填到 assistant 条目的伪造思考输入框', async () => {
+  test('加载配置时把 fakeThought 回填到 assistant 条目的伪造思考输入框', async () => {
     wrapper = mount(PromptSettings)
     await flushPromises()
 
@@ -94,7 +94,7 @@ describe('PromptSettings fakeThought 持久化', () => {
     expect((textarea.element as HTMLTextAreaElement).value).toBe('fake reasoning trace')
   })
 
-  it('保存模式时 fakeThought 随 promptEntries 一起提交，不丢失', async () => {
+  test('保存模式时 fakeThought 随 promptEntries 一起提交，不丢失', async () => {
     wrapper = mount(PromptSettings)
     await flushPromises()
 
@@ -110,7 +110,7 @@ describe('PromptSettings fakeThought 持久化', () => {
     expect(assistantEntry.fakeThought).toBe('updated fake reasoning')
   })
 
-  it('修改 fakeThought 后保存，提交的是最新内容', async () => {
+  test('修改 fakeThought 后保存，提交的是最新内容', async () => {
     wrapper = mount(PromptSettings)
     await flushPromises()
 

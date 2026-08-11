@@ -7,17 +7,17 @@
  *   累加器才会"覆盖"而非"追加"到已累积的半截增量 JSON 上。
  */
 
-import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { AnthropicFormatter } from '../../modules/channel';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
-import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
+import { StreamAccumulator } from '../../modules/channel';
 
 function makeIdFactory(): () => string {
     let n = 0;
     return () => `test_fc_${++n}`;
 }
 
-describe('H2: Anthropic 并行工具调用参数透传', () => {
-    it('两个并行工具的参数增量按 index 各自合并，不丢失不串味', () => {
+describe('Anthropic 并行工具调用参数透传', () => {
+    test('两个并行工具的参数增量按 index 各自合并，不丢失不串味', () => {
         const formatter = new AnthropicFormatter();
         const acc = new StreamAccumulator('function_call', makeIdFactory());
         acc.setProviderType('anthropic');
@@ -41,7 +41,7 @@ describe('H2: Anthropic 并行工具调用参数透传', () => {
         expect(write?.args).toEqual({ path: 'b.txt', content: 'hi' });
     });
 
-    it('分片到达的增量 JSON 也能正确拼接（index 稳定）', () => {
+    test('分片到达的增量 JSON 也能正确拼接（index 稳定）', () => {
         const formatter = new AnthropicFormatter();
         const acc = new StreamAccumulator('function_call', makeIdFactory());
         acc.setProviderType('anthropic');
@@ -61,8 +61,8 @@ describe('H2: Anthropic 并行工具调用参数透传', () => {
     });
 });
 
-describe('H3: OpenAI Responses 参数完整覆盖', () => {
-    it('done 事件携带完整 arguments 时覆盖增量而非追加', () => {
+describe('OpenAI Responses 参数完整覆盖', () => {
+    test('done 事件携带完整 arguments 时覆盖增量而非追加', () => {
         const formatter = new OpenAIResponsesFormatter();
         const acc = new StreamAccumulator('function_call', makeIdFactory());
         acc.setProviderType('openai-responses');

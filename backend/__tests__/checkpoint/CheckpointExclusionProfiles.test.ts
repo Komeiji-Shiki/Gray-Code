@@ -7,7 +7,7 @@ import {
     buildIgnoreSnapshot,
     validateCustomExclusionPatterns,
     getExclusionProfile
-} from '../../modules/checkpoint/CheckpointExclusionProfiles';
+} from '../../modules/checkpoint';
 
 /**
  * CheckpointExclusionProfiles 测试（EX-03~EX-06 / EX-12）

@@ -50,6 +50,7 @@ import {
     activePath,
     childrenIndex,
     collectDeletedNodes,
+    createEmptyBranchGraph,
     editCandidate,
     extractBranchContentMetadata,
     findUnsyncedFunctionResponses,
@@ -720,7 +721,19 @@ export class BranchService {
             }
 
             const history = await this.conversationManager.getMessagesRaw(conversationId);
-            let next = rebaseActivePathFromHistory(graph, history);
+            // 删头部（主历史根前移）等根变更场景：rebase 默认拒绝（单根模型无法保留旧根为候选）。
+            // 主历史已变更的调用方允许重链——新根挂到图、旧根专属子树清理，避免图根永久陈旧、
+            // 后续 append 挂旧根（round4 复查 P1）；实际发生重链时显式告警便于观测。
+            const historyRootId = history.length > 0 ? (history[0]?.id ?? null) : null;
+            let next = rebaseActivePathFromHistory(graph, history, { allowRootChange: true });
+            if (historyRootId !== null && graph.rootNodeId !== null && graph.rootNodeId !== historyRootId) {
+                log.warn('branch_root_relinked_after_structural_mutation', {
+                    conversationId,
+                    reason,
+                    oldRootNodeId: graph.rootNodeId,
+                    newRootNodeId: historyRootId,
+                });
+            }
             // 收敛被移出活跃路径的空占位幽灵（超龄占位经 isActiveEmptyPlaceholder 放行后
             // rebase 会把它们降级为非活跃节点）：空内容、非软删的 reroll/edit 节点没有其它
             // 回收路径，会永久占用候选上限（每父节点 10 个）并在面板显示空条目。软删后可被
@@ -1904,6 +1917,9 @@ export class BranchService {
      *   并入所属节点的消息 / 图未覆盖被删段）→ 退化用 lastKeptMessageId（最后保留消息）
      *   软删其**之后**的所有后代（保留点自身不清除）；两者都不在图中 → 幂等 no-op；
      * - 锚定根节点（删除到对话开头）→ 整图重置为空图（createEmptyBranchGraph）；
+     * - options.forceResetToEmpty（主历史整体清空，clearHistory / 恢复空快照）→ 无条件重置为
+     *   空图，不依赖锚点是否图根/是否存在——锚点非图根（图根陈旧）时仅软删子树会残留旧根/旧尾，
+     *   「空历史 + 非空图」无法由 rebase 处理（round4 复查 P1）；
      * - 活跃尾若落在被删子树内（截断场景的常态）→ 回退到保留锚点，并清空指向被删节点的
      *   activeChildId（validate 不变量）；
      * - sidecar 损坏（解析 / 语义）→ 抛 BRANCH_STORAGE_CORRUPT（与其它写路径一致：不覆盖）。
@@ -1914,11 +1930,12 @@ export class BranchService {
      *
      * @param deletedFromMessageId 第一个被删除消息的 id（删除前捕获；null = 无锚点防御）
      * @param options.lastKeptMessageId 最后保留消息的 id（锚点不在图内时的退化锚）
+     * @param options.forceResetToEmpty 主历史整体清空时无条件重置为空图（不依赖锚点）
      */
     async syncGraphAfterHistoryDelete(
         conversationId: string,
         deletedFromMessageId: string | null,
-        options: { deletedAt?: number; lastKeptMessageId?: string | null } = {}
+        options: { deletedAt?: number; lastKeptMessageId?: string | null; forceResetToEmpty?: boolean } = {}
     ): Promise<BranchHistoryDeleteSyncResult> {
         const empty: BranchHistoryDeleteSyncResult = {
             graphUpdated: false,
@@ -1926,8 +1943,9 @@ export class BranchService {
             resetToEmpty: false,
             activeTailAdjusted: false,
         };
-        if (!deletedFromMessageId) {
-            // 无锚点（历史消息缺 id 的防御路径）：不做任何图变更（不臆测删除范围）
+        if (!deletedFromMessageId && !options.forceResetToEmpty) {
+            // 无锚点（历史消息缺 id 的防御路径）：不做任何图变更（不臆测删除范围）。
+            // forceResetToEmpty（整体清空）时无锚点同样重置——历史早已为空但图残留旧根的陈旧场景。
             return empty;
         }
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
@@ -1936,6 +1954,29 @@ export class BranchService {
             const graph = await this.loadGraphCached(conversationId);
             if (!graph) {
                 // 线性对话未建图：删除不同步（主历史为唯一真源，不强制建图）
+                return empty;
+            }
+            if (options.forceResetToEmpty) {
+                // 主历史整体清空：无条件重置为空图（不依赖锚点是否图根/是否存在）。
+                // 锚点非图根（图根陈旧）时 softDeleteSubtreeFrom 仅软删锚点子树，图根/旧活跃尾
+                // 残留，清空后 append 挂旧尾（round4 复查 P1）；「空历史 + 非空图」唯一有效形态
+                // 即空图，旧内容已随主历史整体清空，等价于重新开始。
+                if (Object.keys(graph.nodes).length === 0) {
+                    // 幂等短路（round5 复查）：图已为空时重置为空图是无操作——不再空转
+                    // validateAndSave 写盘，也不误报 graphUpdated:true（与软删路径
+                    // outcome.graph === graph 短路同语义；此时 deletedNodeIds 本就为空）。
+                    return empty;
+                }
+                await this.validateAndSave(conversationId, createEmptyBranchGraph());
+                return {
+                    graphUpdated: true,
+                    deletedNodeIds: Object.keys(graph.nodes),
+                    resetToEmpty: true,
+                    activeTailAdjusted: true,
+                };
+            }
+            if (deletedFromMessageId === null) {
+                // 防御：forceResetToEmpty 分支已提前返回；无锚点时不臆测删除范围（类型收窄）
                 return empty;
             }
             let anchorNodeId: string | null = graph.nodes[deletedFromMessageId] ? deletedFromMessageId : null;

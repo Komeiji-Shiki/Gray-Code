@@ -14,7 +14,7 @@ function makeTool(name: string, aliases?: string[]): Tool {
 }
 
 describe('ToolRegistry 别名索引', () => {
-    it('通过主名称查找不受影响', () => {
+    test('通过主名称查找不受影响', () => {
         const registry = new ToolRegistry();
         registry.register(() => makeTool('my_tool'));
 
@@ -22,7 +22,7 @@ describe('ToolRegistry 别名索引', () => {
         expect(registry.getTool('nonexistent')).toBeUndefined();
     });
 
-    it('通过别名可以找到工具', () => {
+    test('通过别名可以找到工具', () => {
         const registry = new ToolRegistry();
         registry.register(() => makeTool('new_name', ['old_name', 'legacy_name']));
 
@@ -30,7 +30,7 @@ describe('ToolRegistry 别名索引', () => {
         expect(registry.getTool('legacy_name')?.declaration.name).toBe('new_name');
     });
 
-    it('先注册的工具优先占用别名', () => {
+    test('先注册的工具优先占用别名', () => {
         const registry = new ToolRegistry();
         registry.register(() => makeTool('first_tool', ['shared_alias']));
         registry.register(() => makeTool('second_tool', ['shared_alias']));
@@ -38,7 +38,7 @@ describe('ToolRegistry 别名索引', () => {
         expect(registry.getTool('shared_alias')?.declaration.name).toBe('first_tool');
     });
 
-    it('注销工具后其别名同时失效', () => {
+    test('注销工具后其别名同时失效', () => {
         const registry = new ToolRegistry();
         registry.register(() => makeTool('my_tool', ['old_name']));
 
@@ -46,7 +46,7 @@ describe('ToolRegistry 别名索引', () => {
         expect(registry.getTool('old_name')).toBeUndefined();
     });
 
-    it('refreshTool 后使用新声明的别名', () => {
+    test('refreshTool 后使用新声明的别名', () => {
         const registry = new ToolRegistry();
         let currentAliases = ['old_name'];
         registry.register(() => makeTool('my_tool', currentAliases));
@@ -60,7 +60,7 @@ describe('ToolRegistry 别名索引', () => {
         expect(registry.getTool('renamed_alias')?.declaration.name).toBe('my_tool');
     });
 
-    it('clear 清空别名索引', () => {
+    test('clear 清空别名索引', () => {
         const registry = new ToolRegistry();
         registry.register(() => makeTool('my_tool', ['old_name']));
 

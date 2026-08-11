@@ -4,6 +4,7 @@
  *
  * 当前同时承载 design、plan、review 与 progress 的结果摘要展示。
  */
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref, onMounted, watch } from 'vue'
 import { sendToExtension, loadState, saveState, showNotification } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
@@ -323,7 +324,7 @@ function getOpenFileFailedMessage(kind: TaskCardKind): string {
 async function openDocFile(card: TaskCardItem) {
   if (!card?.path) return
   try {
-    await sendToExtension('openWorkspaceFileAt', {
+    await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
       path: card.path,
       highlight: false,
       preview: false
@@ -387,7 +388,7 @@ async function refreshPlanSourceStatuses(cards: TaskCardItem[]) {
 
   for (const [path, card] of uniquePlanCards.entries()) {
     try {
-      const result = await sendToExtension<unknown>('plan.getSourceStatus', {
+      const result = await sendToExtension<unknown>(MESSAGE_NAMES['plan.getSourceStatus'], {
         path,
         originalContent: card.content
       })
@@ -467,7 +468,7 @@ async function executePlan(card: TaskCardItem) {
         content: string
         status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
       }>
-    }>('plan.confirmExecution', {
+    }>(MESSAGE_NAMES['plan.confirmExecution'], {
       path: card.path,
       originalContent: card.content,
       toolId: card.toolId,
@@ -559,7 +560,7 @@ async function generatePlan(card: TaskCardItem) {
       designContent: string
       designPath: string
       error?: string
-    }>('design.confirmPlanGeneration', {
+    }>(MESSAGE_NAMES['design.confirmPlanGeneration'], {
       path: card.path,
       originalContent: card.content,
       toolId: card.toolId,
@@ -635,7 +636,7 @@ async function generatePlanFromReview(card: TaskCardItem) {
       reviewContent: string
       reviewPath: string
       error?: string
-    }>('review.confirmPlanGeneration', {
+    }>(MESSAGE_NAMES['review.confirmPlanGeneration'], {
       path: card.path,
       originalContent: card.content,
       toolId: card.toolId,
@@ -714,7 +715,7 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
 
     autoOpenedCardKeys.value.add(card.key)
     try {
-      await sendToExtension('openWorkspaceFileAt', {
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
         path: card.path,
         highlight: false
       })

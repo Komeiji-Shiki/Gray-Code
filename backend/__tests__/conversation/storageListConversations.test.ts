@@ -11,7 +11,7 @@
  * 历史 bug 增殖出的假对话目录（{id}.usage/）。
  */
 
-import { FileSystemStorageAdapter } from '../../modules/conversation/storage';
+import { FileSystemStorageAdapter } from '../../modules/conversation';
 import { Uri, workspace } from 'vscode';
 
 describe('FileSystemStorageAdapter.listConversations - 只识别对话历史文件', () => {
@@ -21,7 +21,7 @@ describe('FileSystemStorageAdapter.listConversations - 只识别对话历史文�
         fs.readDirectory = jest.fn();
     });
 
-    it('排除 meta.json 与 usage.json，只返回真实对话 ID', async () => {
+    test('排除 meta.json 与 usage.json，只返回真实对话 ID', async () => {
         const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
         const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
 
@@ -40,7 +40,7 @@ describe('FileSystemStorageAdapter.listConversations - 只识别对话历史文�
         expect(ids).not.toContain('conv_b.meta');
     });
 
-    it('排除假对话目录（{id}.usage/），只返回真实对话目录', async () => {
+    test('排除假对话目录（{id}.usage/），只返回真实对话目录', async () => {
         const vscode = { Uri, workspace, FileType: { File: 1, Directory: 2 } };
         const adapter = new FileSystemStorageAdapter(vscode as any, 'file:///c%3A/data/graycode');
 

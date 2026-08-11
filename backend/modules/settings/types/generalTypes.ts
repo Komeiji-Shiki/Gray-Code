@@ -36,7 +36,7 @@ import { DEFAULT_SUMMARIZE_CONFIG } from './summarizeTypes';
 import { DEFAULT_TOKEN_COUNT_CONFIG } from './tokenCountTypes';
 import { DEFAULT_CONTEXT_AWARENESS_CONFIG } from './contextTypes';
 import { DEFAULT_PINNED_FILES_CONFIG } from './pinnedFilesTypes';
-import { DEFAULT_SYSTEM_PROMPT_CONFIG } from './promptModes';
+import { DEFAULT_SYSTEM_PROMPT_CONFIG } from '../promptModes';
 
 /**
  * 代理配置
@@ -146,9 +146,15 @@ export interface StorageStats {
     subDirs: {
         conversations: { size: number; count: number };
         checkpoints: { size: number; count: number };
+        snapshots: { size: number; count: number };
         mcp: { size: number; count: number };
         dependencies: { size: number; count: number };
         diffs: { size: number; count: number };
+        skills: { size: number; count: number };
+        activity: { size: number; count: number };
+        tokenizers: { size: number; count: number };
+        memory: { size: number; count: number };
+        memoryWorkspaces: { size: number; count: number };
     };
 }
 

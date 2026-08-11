@@ -4,6 +4,7 @@
  * 处理删除消息等非流式操作
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import { setChatInputFocused } from '../../backend/core/chatFocusGuard';
 import { assertSafeId } from '../../backend/core/idValidation';
@@ -474,14 +475,14 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
  * 注册聊天处理器
  */
 export function registerChatHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('deleteMessage', deleteMessage);
-  registry.set('deleteSingleMessage', deleteSingleMessage);
-  registry.set('cancelSummarizeRequest', cancelSummarizeRequest);
-  registry.set('chatInput.focusState', chatInputFocusState);
-  registry.set('chat.awaitConversationIdle', awaitConversationIdle);
-  registry.set('chat.sendInterruptMessage', sendInterruptMessage);
-  registry.set('chat.claimAgentMessages', claimAgentMessages);
-  registry.set('chat.releaseAgentMessages', releaseAgentMessages);
-  registry.set('chat.rerollStream', rerollStream);
-  registry.set('chat.editBranchStream', editBranchStream);
+  registry.set(MESSAGE_NAMES.deleteMessage, deleteMessage);
+  registry.set(MESSAGE_NAMES.deleteSingleMessage, deleteSingleMessage);
+  registry.set(MESSAGE_NAMES.cancelSummarizeRequest, cancelSummarizeRequest);
+  registry.set(MESSAGE_NAMES['chatInput.focusState'], chatInputFocusState);
+  registry.set(MESSAGE_NAMES['chat.awaitConversationIdle'], awaitConversationIdle);
+  registry.set(MESSAGE_NAMES['chat.sendInterruptMessage'], sendInterruptMessage);
+  registry.set(MESSAGE_NAMES['chat.claimAgentMessages'], claimAgentMessages);
+  registry.set(MESSAGE_NAMES['chat.releaseAgentMessages'], releaseAgentMessages);
+  registry.set(MESSAGE_NAMES['chat.rerollStream'], rerollStream);
+  registry.set(MESSAGE_NAMES['chat.editBranchStream'], editBranchStream);
 }

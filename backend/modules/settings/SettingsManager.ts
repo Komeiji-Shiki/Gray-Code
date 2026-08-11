@@ -1,5 +1,5 @@
 /**
- * LimCode - 设置管理器（门面）
+ * GrayCode - 设置管理器（门面）
  *
  * 负责全局设置的管理、持久化和通知。
  *
@@ -1370,3 +1370,4 @@ export class SettingsManager {
         return this.subagents.updateSubAgentsConfig(config);
     }
 }
+

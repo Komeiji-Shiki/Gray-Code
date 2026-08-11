@@ -5,7 +5,7 @@ import {
 import type { Content } from '../../modules/conversation/types';
 
 describe('ContextTrimService preserved user input archive budget', () => {
-    it('keeps the complete archive at or below the hard character budget', () => {
+    test('keeps the complete archive at or below the hard character budget', () => {
         const service = new ContextTrimService({} as any, {} as any, {} as any, {} as any);
         const history: Content[] = Array.from({ length: 20 }, (_, index) => ({
             role: 'user',

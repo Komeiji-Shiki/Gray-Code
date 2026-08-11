@@ -1,5 +1,5 @@
 /**
- * LimCode - 对话用量统计聚合
+ * GrayCode - 对话用量统计聚合
  *
  * 从已落盘的对话历史中回溯聚合 token 用量，
  * 数据来源为 model 消息上的 usageMetadata（含向后兼容的旧字段）：
@@ -872,3 +872,4 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
         generatedAt: Date.now()
     };
 }
+

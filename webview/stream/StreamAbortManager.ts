@@ -91,7 +91,7 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   /**
    * 中止当前活跃流并等待其完全退出（含已退休旧流的收尾），带超时兜底。
    *
-   * 用途：流式入口（chatStream / retryStream / editAndRetryStream / toolConfirmationStream）
+   * 用途：流式入口（chatStream / retryStream / toolConfirmationStream）
    * 在 create() 之前调用，保证写入用户消息/截断历史时旧流已完全退出——
    * 旧流的工具结算 addContent 不会再落在新用户消息之后（H1 写序竞态）。
    * 无旧流时立即返回；有活跃流时先 abort 再等其 finally（delete 唤醒 waitForIdle）。
@@ -159,6 +159,17 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   }
 
   /**
+   * 获取指定会话的取消代次（P1 TOCTOU 修复用）。
+   *
+   * 流式入口（handleChatStream / handleRetryStream / handleToolConfirmationStream）在
+   * awaitOldStreamCompletion 等待前快照、create() 后复查：代次变化说明等待窗口内到达过
+   * cancelStream（「停止」），应立即取消刚创建的控制器、不启动新流，避免停止操作丢失。
+   */
+  getCancelEpoch(conversationId: string): number {
+    return this.registry.getCancelEpoch(conversationId);
+  }
+
+  /**
    * 获取当前仍有活跃主流请求的对话 ID 列表
    */
   listConversationIds(): string[] {
@@ -221,10 +232,15 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         // 活跃流分支同样需要超时兜底：流的 finally 可能因工具挂死/网络挂起长期不执行，
         // 仅靠 delete() 唤醒会让等待方永久挂起。与 retired 分支同口径：
         // 超时视同「已空闲」返回（而不是 continue 循环重试，避免每 6s 重试一次、永不返回）。
-        const timedOut = await this.raceWithTimeout([
-          this.registry.registerIdleWaiter(conversationId)
-        ], timeoutMs);
-        if (timedOut) return;
+        const waiter = this.registry.registerIdleWaiter(conversationId);
+        const timedOut = await this.raceWithTimeout([waiter.promise], timeoutMs);
+        if (timedOut) {
+          // P2：超时分支从 idleWaiters Set 摘除本等待者——resolve 已随超时返回失去意义，
+          // 滞留会让「会话持续活跃 + 多次超时」下 idleWaiters 无界增长。
+          // 已由 releaseIdleWaiters 整体释放时 unregister 为无害 no-op。
+          waiter.unregister();
+          return;
+        }
         continue;
       }
 

@@ -1,5 +1,5 @@
 /**
- * LimCode - 设置处理器
+ * GrayCode - 设置处理器
  *
  * 负责处理设置相关的所有请求
  */
@@ -1175,3 +1175,4 @@ export class SettingsHandler {
         return versions;
     }
 }
+

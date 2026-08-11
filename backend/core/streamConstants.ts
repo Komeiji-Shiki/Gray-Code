@@ -1,5 +1,5 @@
 /**
- * LimCode - 流式请求公共常量（backend/core 层）
+ * GrayCode - 流式请求公共常量（backend/core 层）
  *
  * OLD_STREAM_EXIT_WAIT_TIMEOUT_MS 从 webview/stream/abort/RetiredStreamChain 下沉
  * （第五批层反转修复）：backend/modules/api/chat/services/ChatFlowService 不再依赖
@@ -16,3 +16,4 @@
  * 超时兜底保证旧流异常挂死时也不会阻塞新流启动太久。
  */
 export const OLD_STREAM_EXIT_WAIT_TIMEOUT_MS = 6000;
+

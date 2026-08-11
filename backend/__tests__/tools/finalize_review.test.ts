@@ -37,7 +37,7 @@ describe('finalize_review tool', () => {
     })
   })
 
-  it('finalizes a V4 review document and updates reviewSession state', async () => {
+  test('finalizes a V4 review document and updates reviewSession state', async () => {
     const initialContent = buildInitialReviewDocument({
       title: 'Workspace Review',
       overview: 'End-to-end review',
@@ -82,18 +82,18 @@ describe('finalize_review tool', () => {
     } as any)
 
     expect(result.success).toBe(true)
-    expect((result.data as any).reviewSnapshot.status).toBe('completed')
-    expect((result.data as any).reviewSnapshot.finalizedAt).toBeTruthy()
-    expect((result.data as any).reviewSnapshot.render.locale).toBe('zh-CN')
-    expect((result.data as any).reviewDelta).toMatchObject({ type: 'finalized' })
-    expect((result.data as any).status).toBe('completed')
-    expect((result.data as any).overallDecision).toBe('conditionally_accepted')
-    expect((result.data as any).totalMilestones).toBe(1)
-    expect((result.data as any).totalFindings).toBe(1)
-    expect((result.data as any).reviewedModules).toEqual(['tools', 'integration'])
-    expect((result.data as any).content).toContain('## 最终结论')
-    expect((result.data as any).content).toContain('Static review passed with one medium-risk follow-up item.')
-    expect((result.data as any).content).toContain('## 评审快照')
+    expect(result.data.reviewSnapshot.status).toBe('completed')
+    expect(result.data.reviewSnapshot.finalizedAt).toBeTruthy()
+    expect(result.data.reviewSnapshot.render.locale).toBe('zh-CN')
+    expect(result.data.reviewDelta).toMatchObject({ type: 'finalized' })
+    expect(result.data.status).toBe('completed')
+    expect(result.data.overallDecision).toBe('conditionally_accepted')
+    expect(result.data.totalMilestones).toBe(1)
+    expect(result.data.totalFindings).toBe(1)
+    expect(result.data.reviewedModules).toEqual(['tools', 'integration'])
+    expect(result.data.content).toContain('## 最终结论')
+    expect(result.data.content).toContain('Static review passed with one medium-risk follow-up item.')
+    expect(result.data.content).toContain('## 评审快照')
 
     expect(setCustomMetadata).toHaveBeenCalledWith(
       'conversation-1',
@@ -112,7 +112,7 @@ describe('finalize_review tool', () => {
     })
   })
 
-  it('rejects invalid review paths', async () => {
+  test('rejects invalid review paths', async () => {
     const tool = createFinalizeReviewTool()
     const result = await tool.handler({
       path: '.graycode/design/not-allowed.md',

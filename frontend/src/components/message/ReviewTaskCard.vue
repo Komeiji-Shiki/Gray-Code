@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useI18n } from '../../i18n'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../common'
@@ -530,7 +531,7 @@ async function openReviewFile(): Promise<void> {
   if (!props.card.path) return
 
   try {
-    await sendToExtension('openWorkspaceFileAt', {
+    await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
       path: props.card.path,
       highlight: false,
       preview: false

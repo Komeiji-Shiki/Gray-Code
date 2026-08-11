@@ -1,6 +1,8 @@
 /**
  * checkpointActions 测试
  *
+ * 覆盖代号：BCP-05（决策 11：dirty 拦截与确认）。
+ *
  * 覆盖：
  * - previewRestore 成功透传 / 异常返回错误
  * - restoreCheckpoint 透传 deleteUntrackedFiles（默认 false，#29 保护）
@@ -10,7 +12,7 @@
  * - restoreAndEdit 成功 / 失败重载兜底 / 附件仅更新本地窗口（chat.editBranchStream 无附件字段）
  */
 import { ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState } from '../types'
 import {
@@ -97,7 +99,7 @@ describe('previewRestore', () => {
     vi.clearAllMocks()
   })
 
-  it('透传后端预览结果（含两类删除清单）', async () => {
+  test('透传后端预览结果（含两类删除清单）', async () => {
     mockSend.mockResolvedValue({
       success: true,
       restored: 2,
@@ -118,7 +120,7 @@ describe('previewRestore', () => {
     })
   })
 
-  it('后端异常时返回错误结果', async () => {
+  test('后端异常时返回错误结果', async () => {
     mockSend.mockRejectedValue(new Error('boom'))
     const state = createState()
     const result = await previewRestore(state, 'cp_1')
@@ -134,7 +136,7 @@ describe('restoreCheckpoint', () => {
     vi.clearAllMocks()
   })
 
-  it('确认后透传 deleteUntrackedFiles=true', async () => {
+  test('确认后透传 deleteUntrackedFiles=true', async () => {
     mockSend.mockResolvedValue({ success: true, restored: 1, deleted: 0, skipped: 0 })
     const state = createState()
     await restoreCheckpoint(state, 'cp_1', true)
@@ -146,7 +148,7 @@ describe('restoreCheckpoint', () => {
     })
   })
 
-  it('未确认时默认 deleteUntrackedFiles=false（#29 保护）', async () => {
+  test('未确认时默认 deleteUntrackedFiles=false（#29 保护）', async () => {
     mockSend.mockResolvedValue({ success: true, restored: 1, deleted: 0, skipped: 0 })
     const state = createState()
     await restoreCheckpoint(state, 'cp_1')
@@ -158,7 +160,7 @@ describe('restoreCheckpoint', () => {
     })
   })
 
-  it('恢复成功后无条件刷新检查点列表（R3-#14，即使无 autoPrune）', async () => {
+  test('恢复成功后无条件刷新检查点列表（R3-#14，即使无 autoPrune）', async () => {
     mockSend.mockResolvedValue({ success: true, restored: 1, deleted: 0, skipped: 0 })
     const state = createState()
     await restoreCheckpoint(state, 'cp_1', true)
@@ -166,7 +168,7 @@ describe('restoreCheckpoint', () => {
     expect(loadCheckpointsMock).toHaveBeenCalled()
   })
 
-  it('恢复失败时不刷新检查点列表（R3-#14）', async () => {
+  test('恢复失败时不刷新检查点列表（R3-#14）', async () => {
     mockSend.mockResolvedValue({ success: false, restored: 0, error: 'boom' })
     const state = createState()
     await restoreCheckpoint(state, 'cp_1', true)
@@ -182,7 +184,7 @@ describe('restoreAndRetry（决策 7：回档后走 reroll，旧分支保留）'
     mockSend.mockReset()
   })
 
-  it('rerollStream IPC 抛异常时中止、设置错误并重载历史', async () => {
+  test('rerollStream IPC 抛异常时中止、设置错误并重载历史', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockRejectedValueOnce(new Error('ipc boom')) // chat.rerollStream
@@ -210,7 +212,7 @@ describe('restoreAndRetry（决策 7：回档后走 reroll，旧分支保留）'
     expect(state._pendingBranchRefreshAfterStream.value).toBeNull()
   })
 
-  it('cancel 期间对话切换后不写入错误（M-8 身份隔离）', async () => {
+  test('cancel 期间对话切换后不写入错误（M-8 身份隔离）', async () => {
     mockSend.mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 })
 
     const state = createState({
@@ -231,7 +233,7 @@ describe('restoreAndRetry（决策 7：回档后走 reroll，旧分支保留）'
     expect(mockSend.mock.calls.find(c => c[0] === 'retryStream')).toBeUndefined()
   })
 
-  it('reroll 成功发起：调用 chat.rerollStream 携带 assistantNodeId，不 deleteMessage/retryStream', async () => {
+  test('reroll 成功发起：调用 chat.rerollStream 携带 assistantNodeId，不 deleteMessage/retryStream', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: true }) // chat.rerollStream
@@ -258,7 +260,7 @@ describe('restoreAndRetry（决策 7：回档后走 reroll，旧分支保留）'
     expect(loadHistoryMock).not.toHaveBeenCalled()
   })
 
-  it('未确认时不向 restoreCheckpoint 传递删除快照后新建文件', async () => {
+  test('未确认时不向 restoreCheckpoint 传递删除快照后新建文件', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 })
       .mockResolvedValueOnce({ success: true })
@@ -277,7 +279,7 @@ describe('restoreAndRetry（决策 7：回档后走 reroll，旧分支保留）'
     expect(restoreCall![1]).toMatchObject({ checkpointId: 'cp_1', deleteUntrackedFiles: false })
   })
 
-  it('确认后向 restoreCheckpoint 传递删除快照后新建文件', async () => {
+  test('确认后向 restoreCheckpoint 传递删除快照后新建文件', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 })
       .mockResolvedValueOnce({ success: true })
@@ -303,7 +305,7 @@ describe('restoreAndDelete', () => {
     mockSend.mockReset()
   })
 
-  it('deleteMessage 失败时设置错误并重载历史', async () => {
+  test('deleteMessage 失败时设置错误并重载历史', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: false }) // deleteMessage
@@ -331,7 +333,7 @@ describe('restoreAndRetry（R3-#13：按 id 定位重算索引）', () => {
     mockSend.mockReset()
   })
 
-  it('cancel 期间数组前插消息后按 id 定位目标并重算索引', async () => {
+  test('cancel 期间数组前插消息后按 id 定位目标并重算索引', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: true }) // chat.rerollStream
@@ -361,7 +363,7 @@ describe('restoreAndRetry（R3-#13：按 id 定位重算索引）', () => {
     expect(state.allMessages.value[2].streaming).toBe(true)
   })
 
-  it('目标消息已不在数组中时中止（不发送删除/reroll）', async () => {
+  test('目标消息已不在数组中时中止（不发送删除/reroll）', async () => {
     // 用基础实现（非 Once）：本测试不触发任何 IPC，避免未消费的 Once 泄漏到后续测试
     mockSend.mockResolvedValue({ success: true, restored: 1, deleted: 0, skipped: 0 })
 
@@ -391,7 +393,7 @@ describe('restoreAndDelete（R3-#13：按 id 定位重算索引）', () => {
     mockSend.mockReset()
   })
 
-  it('cancel 期间数组前插消息后按 id 定位目标并重算索引', async () => {
+  test('cancel 期间数组前插消息后按 id 定位目标并重算索引', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: true }) // deleteMessage
@@ -423,7 +425,7 @@ describe('summarizeContext（L-2：实现已迁至 messageActions，checkpointAc
     vi.clearAllMocks()
   })
 
-  it('成功后调用后端并重载历史', async () => {
+  test('成功后调用后端并重载历史', async () => {
     mockSend.mockResolvedValue({ success: true, summaryContent: '...', summarizedMessageCount: 5 })
     const loadHistoryFn = vi.fn().mockResolvedValue(undefined)
     const state = createState()
@@ -441,7 +443,7 @@ describe('summarizeContext（L-2：实现已迁至 messageActions，checkpointAc
     expect(state.autoSummaryStatus.value).toBeNull()
   })
 
-  it('使用当前对话模型时透传界面选中的模型', async () => {
+  test('使用当前对话模型时透传界面选中的模型', async () => {
     mockSend.mockResolvedValue({ success: true, summaryContent: '...', summarizedMessageCount: 5 })
     const state = createState({
       selectedModelId: ref('deepseek-v4-flash'),
@@ -455,20 +457,20 @@ describe('summarizeContext（L-2：实现已迁至 messageActions，checkpointAc
     }))
   })
 
-  it('后端返回失败时透传错误码与信息', async () => {
+  test('后端返回失败时透传错误码与信息', async () => {
     mockSend.mockResolvedValue({ success: false, error: { code: 'SUMMARIZE_BUSY', message: 'boom' } })
     const result = await summarizeContext(createState(), async () => {})
     expect(result).toEqual({ success: false, errorCode: 'SUMMARIZE_BUSY', error: 'boom' })
   })
 
-  it('无对话时直接返回 NO_CONVERSATION', async () => {
+  test('无对话时直接返回 NO_CONVERSATION', async () => {
     const state = createState({ currentConversationId: ref(null) })
     const result = await summarizeContext(state, async () => {})
     expect(result).toEqual({ success: false, errorCode: 'NO_CONVERSATION', error: 'No conversation selected' })
     expect(mockSend).not.toHaveBeenCalled()
   })
 
-  it('对话切换后清理写入原对话标签页快照（跨对话隔离）', async () => {
+  test('对话切换后清理写入原对话标签页快照（跨对话隔离）', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       openTabs: ref([{ id: 'tab_1', conversationId: 'conv_1' } as any]),
@@ -491,17 +493,17 @@ describe('cancelSummarizeRequest（L-2：re-export 路径）', () => {
     vi.clearAllMocks()
   })
 
-  it('调用后端取消接口', async () => {
+  test('调用后端取消接口', async () => {
     await cancelSummarizeRequest(createState())
     expect(mockSend).toHaveBeenCalledWith('cancelSummarizeRequest', { conversationId: 'conv_1' })
   })
 
-  it('无对话时直接返回', async () => {
+  test('无对话时直接返回', async () => {
     await cancelSummarizeRequest(createState({ currentConversationId: ref(null) }))
     expect(mockSend).not.toHaveBeenCalled()
   })
 
-  it('后端异常时静默吞掉（不抛出）', async () => {
+  test('后端异常时静默吞掉（不抛出）', async () => {
     mockSend.mockRejectedValue(new Error('boom'))
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(cancelSummarizeRequest(createState())).resolves.toBeUndefined()
@@ -514,7 +516,7 @@ describe('getCheckpointManifest（EX-11 / L-9）', () => {
     vi.clearAllMocks()
   })
 
-  it('透传后端 manifest（含排除统计与规则快照）', async () => {
+  test('透传后端 manifest（含排除统计与规则快照）', async () => {
     const manifest = {
       version: 2,
       checkpointId: 'cp_1',
@@ -535,13 +537,13 @@ describe('getCheckpointManifest（EX-11 / L-9）', () => {
     expect(mockSend).toHaveBeenCalledWith('checkpoint.getManifest', { checkpointId: 'cp_1' })
   })
 
-  it('旧存档（后端返回 manifest null）原样透传，提示不可用', async () => {
+  test('旧存档（后端返回 manifest null）原样透传，提示不可用', async () => {
     mockSend.mockResolvedValue({ manifest: null })
     const result = await getCheckpointManifest('cp_legacy')
     expect(result).toEqual({ manifest: null })
   })
 
-  it('后端异常时返回错误信息（不抛出）', async () => {
+  test('后端异常时返回错误信息（不抛出）', async () => {
     mockSend.mockRejectedValue(new Error('ipc down'))
     const result = await getCheckpointManifest('cp_1')
     expect(result.manifest).toBeNull()
@@ -556,7 +558,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     mockSend.mockReset()
   })
 
-  it('成功后改写本地消息并调用 chat.editBranchStream（无附件）', async () => {
+  test('成功后改写本地消息并调用 chat.editBranchStream（无附件）', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: true }) // chat.editBranchStream
@@ -589,7 +591,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
 
-  it('附件仅更新本地窗口（chat.editBranchStream 无附件字段，不随 IPC 上送）', async () => {
+  test('附件仅更新本地窗口（chat.editBranchStream 无附件字段，不随 IPC 上送）', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: true }) // chat.editBranchStream
@@ -611,7 +613,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     expect(state.allMessages.value[1].attachments).toEqual(attachments)
   })
 
-  it('chat.editBranchStream 调用失败时设置错误、复位分支图标记并重载历史 + 检查点', async () => {
+  test('chat.editBranchStream 调用失败时设置错误、复位分支图标记并重载历史 + 检查点', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockRejectedValueOnce(new Error('edit backend failed')) // chat.editBranchStream
@@ -636,7 +638,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     expect(loadCheckpointsMock).toHaveBeenCalled()
   })
 
-  it('await restoreCheckpoint 期间数组前插消息后按 id 重定位目标（R3-#13 编辑同款）', async () => {
+  test('await restoreCheckpoint 期间数组前插消息后按 id 重定位目标（R3-#13 编辑同款）', async () => {
     mockSend
       .mockImplementationOnce(async () => {
         // 模拟 restore 的 await 期间用户发送了新消息（数组前插）：目标 m1 下标从 1 变为 2
@@ -671,7 +673,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
 })
 
 
-describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', () => {
+describe('dirty 拦截与确认（checkpointActions）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // 清空未消费的 mockResolvedValueOnce，避免 Once 泄漏到后续测试
@@ -679,7 +681,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     clearPendingDirtyConfirm()
   })
 
-  it('restoreCheckpoint：后端返回 dirtyFiles → 透传 + 登记待确认（entry=restore），不发确认参数', async () => {
+  test('restoreCheckpoint：后端返回 dirtyFiles → 透传 + 登记待确认（entry=restore），不发确认参数', async () => {
     mockSend.mockResolvedValue({ success: false, restored: 0, deleted: 0, skipped: 0, dirtyFiles: ['C:/ws/a.ts'] })
     const state = createState()
 
@@ -701,7 +703,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     expect(loadCheckpointsMock).not.toHaveBeenCalled()
   })
 
-  it('restoreCheckpoint：confirmedDiscardDirty=true → IPC 携带确认参数，dirty 响应不再登记待确认', async () => {
+  test('restoreCheckpoint：confirmedDiscardDirty=true → IPC 携带确认参数，dirty 响应不再登记待确认', async () => {
     mockSend.mockResolvedValue({ success: true, restored: 0, deleted: 0, skipped: 0 })
     const state = createState()
 
@@ -716,7 +718,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     expect(pendingDirtyConfirm.value).toBeNull()
   })
 
-  it('restoreAndRetry：恢复被 dirty 拦截 → 登记待确认（entry=retry + messageId），不写错误、不删消息', async () => {
+  test('restoreAndRetry：恢复被 dirty 拦截 → 登记待确认（entry=retry + messageId），不写错误、不删消息', async () => {
     const message = createMessage({ id: 'msg_target', content: 'hi' })
     const state = createState({ allMessages: ref([message] as Message[]) })
     mockSend.mockResolvedValue({ success: false, restored: 0, dirtyFiles: ['C:/ws/a.ts'] })
@@ -734,7 +736,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     expect(mockSend.mock.calls[0][0]).toBe('checkpoint.restore')
   })
 
-  it('restoreAndDelete：恢复被 dirty 拦截 → 登记待确认（entry=delete）', async () => {
+  test('restoreAndDelete：恢复被 dirty 拦截 → 登记待确认（entry=delete）', async () => {
     const message = createMessage({ id: 'msg_target', content: 'hi' })
     const state = createState({ allMessages: ref([message] as Message[]) })
     mockSend.mockResolvedValue({ success: false, restored: 0, dirtyFiles: ['C:/ws/a.ts'] })
@@ -749,7 +751,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     expect(mockSend).toHaveBeenCalledTimes(1)
   })
 
-  it('restoreAndEdit：恢复被 dirty 拦截 → 登记待确认（entry=edit + newContent）', async () => {
+  test('restoreAndEdit：恢复被 dirty 拦截 → 登记待确认（entry=edit + newContent）', async () => {
     const message = createMessage({ id: 'msg_target', content: 'old' })
     const state = createState({ allMessages: ref([message] as Message[]) })
     mockSend.mockResolvedValue({ success: false, restored: 0, dirtyFiles: ['C:/ws/a.ts'] })
@@ -764,7 +766,7 @@ describe('BCP-05（决策 11）dirty 拦截与确认（checkpointActions）', ()
     expect(mockSend).toHaveBeenCalledTimes(1)
   })
 
-  it('restoreAndRetry：confirmedDiscardDirty=true → 内部恢复调用携带确认参数并继续流程', async () => {
+  test('restoreAndRetry：confirmedDiscardDirty=true → 内部恢复调用携带确认参数并继续流程', async () => {
     const message = createMessage({ id: 'msg_target', content: 'hi' })
     const state = createState({ allMessages: ref([message] as Message[]) })
     mockSend.mockImplementation((command: string) => {
@@ -795,7 +797,7 @@ describe('createManualCheckpoint', () => {
     vi.clearAllMocks()
   })
 
-  it('成功创建：调用 checkpoint.createManual 并把新存档加入列表', async () => {
+  test('成功创建：调用 checkpoint.createManual 并把新存档加入列表', async () => {
     const checkpoint = { id: 'cp_manual_1', messageIndex: 3, toolName: 'manual' }
     mockSend.mockResolvedValue({ success: true, checkpoint })
     const state = createState()
@@ -807,7 +809,7 @@ describe('createManualCheckpoint', () => {
     expect(state.checkpoints.value).toContainEqual(checkpoint)
   })
 
-  it('后端拒绝（success=false）：返回 null 且不污染检查点列表', async () => {
+  test('后端拒绝（success=false）：返回 null 且不污染检查点列表', async () => {
     mockSend.mockResolvedValue({ success: false, error: 'rejected' })
     const state = createState()
 
@@ -817,7 +819,7 @@ describe('createManualCheckpoint', () => {
     expect(state.checkpoints.value).toHaveLength(0)
   })
 
-  it('无当前会话：直接返回 null 不发起请求', async () => {
+  test('无当前会话：直接返回 null 不发起请求', async () => {
     const state = createState({ currentConversationId: ref(null) })
 
     const result = await createManualCheckpoint(state)
@@ -826,7 +828,7 @@ describe('createManualCheckpoint', () => {
     expect(mockSend).not.toHaveBeenCalled()
   })
 
-  it('IPC 异常：返回 null 并记录 warn（不向上抛）', async () => {
+  test('IPC 异常：返回 null 并记录 warn（不向上抛）', async () => {
     mockSend.mockRejectedValue(new Error('ipc down'))
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const state = createState()

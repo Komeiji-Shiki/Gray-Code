@@ -42,7 +42,7 @@ function createContext(): any {
 describe('conversation.deleteConversation 生命周期', () => {
     beforeEach(() => lifecycle.splice(0));
 
-    it('先停止并排空主流与子代理，再删除检查点和会话', async () => {
+    test('先停止并排空主流与子代理，再删除检查点和会话', async () => {
         const ctx = createContext();
         await deleteConversation({ conversationId: 'conv-1' }, 'req-1', ctx);
 
@@ -59,7 +59,7 @@ describe('conversation.deleteConversation 生命周期', () => {
         expect(ctx.sendResponse).toHaveBeenCalledWith('req-1', { success: true });
     });
 
-    it('拒绝空会话 ID，且不执行删除', async () => {
+    test('拒绝空会话 ID，且不执行删除', async () => {
         const ctx = createContext();
         await deleteConversation({ conversationId: '  ' }, 'req-2', ctx);
 
@@ -67,7 +67,7 @@ describe('conversation.deleteConversation 生命周期', () => {
         expect(lifecycle).toEqual([]);
     });
 
-    it('检查点清理失败时明确报错且不删除会话或遗忘 SubAgent 记录', async () => {
+    test('检查点清理失败时明确报错且不删除会话或遗忘 SubAgent 记录', async () => {
         const ctx = createContext();
         ctx.checkpointManager.deleteAllCheckpoints.mockImplementationOnce(async () => {
             lifecycle.push('delete-checkpoints');

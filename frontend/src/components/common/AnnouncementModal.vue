@@ -5,6 +5,7 @@
  * 当用户更新版本后首次打开时显示更新内容
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from '@/i18n'
 import { sendToExtension } from '@/utils/vscode'
@@ -31,7 +32,7 @@ onMounted(async () => {
       shouldShow: boolean
       version: string
       changelog: string
-    }>('checkAnnouncement', {})
+    }>(MESSAGE_NAMES.checkAnnouncement, {})
     
     if (result.shouldShow) {
       currentVersion.value = result.version
@@ -49,7 +50,7 @@ onMounted(async () => {
 async function close() {
   visible.value = false
   try {
-    await sendToExtension('markAnnouncementRead', {
+    await sendToExtension(MESSAGE_NAMES.markAnnouncementRead, {
       version: currentVersion.value
     })
   } catch (error) {

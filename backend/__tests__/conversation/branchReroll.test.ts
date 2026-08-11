@@ -19,9 +19,9 @@
 import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory } from '../../modules/conversation';
 import {
     BranchService,
     MAX_CANDIDATES_PER_PARENT,
@@ -70,7 +70,7 @@ async function simulateToolLoopOutput(manager: ConversationManager, conversation
     return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
 }
 
-describe('TREE-01/02 BranchService reroll', () => {
+describe('BranchService reroll', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -96,7 +96,7 @@ describe('TREE-01/02 BranchService reroll', () => {
         return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
     }
 
-    describe('TREE-01 startReroll：旧候选保留 + 新候选激活 + 主历史切换', () => {
+    describe('startReroll：旧候选保留 + 新候选激活 + 主历史切换', () => {
         test('旧候选保留进 sidecar、新候选激活、主历史截断到父节点之后', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
             const result = await service.startReroll('c1', modelNodeId);
@@ -268,7 +268,7 @@ describe('TREE-01/02 BranchService reroll', () => {
         });
     });
 
-    describe('TREE-01 finishReroll：流式结果写入新节点 + 摘要', () => {
+    describe('finishReroll：流式结果写入新节点 + 摘要', () => {
         test('内容回填：候选重命名对齐消息 id、functionResponse 合并、续接节点、摘要更新', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
             const started = await service.startReroll('c1', modelNodeId);
@@ -482,7 +482,7 @@ describe('TREE-01/02 BranchService reroll', () => {
         });
     });
 
-    describe('TREE-02 多候选与上限', () => {
+    describe('多候选与上限', () => {
         test('多次 reroll 形成多个兄弟候选（含 reroll 新候选后再 reroll）', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
 
@@ -648,7 +648,7 @@ describe('TREE-01/02 BranchService reroll', () => {
     });
 });
 
-describe('TREE-01 webview handler：chat.rerollStream（R6a-FIX H1 取消接线）', () => {
+describe('webview handler：chat.rerollStream（R6a-FIX H1 取消接线）', () => {
     let tempDir: string;
     let manager: ConversationManager;
     let responses: Array<{ requestId: string; data: unknown }>;

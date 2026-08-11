@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 
 const { sendToExtension } = vi.hoisted(() => ({ sendToExtension: vi.fn() }))
 
@@ -61,7 +61,7 @@ describe('McpSettings stdio arguments', () => {
     wrapper?.unmount()
   })
 
-  it('loads and saves a lossless JSON argument array', async () => {
+  test('loads and saves a lossless JSON argument array', async () => {
     wrapper = mount(McpSettings)
     await flushPromises()
 
@@ -84,7 +84,7 @@ describe('McpSettings stdio arguments', () => {
     })
   })
 
-  it('shows the string-array validation message for invalid argument JSON', async () => {
+  test('shows the string-array validation message for invalid argument JSON', async () => {
     wrapper = mount(McpSettings)
     await flushPromises()
 

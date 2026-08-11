@@ -59,7 +59,7 @@ describe('update_progress tool', () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode(existing))
   })
 
-  it('updates summary fields, artifact snapshot, and recent logs', async () => {
+  test('updates summary fields, artifact snapshot, and recent logs', async () => {
     const tool = createUpdateProgressTool()
     const result = await tool.handler({
       phase: 'implementation',
@@ -72,14 +72,14 @@ describe('update_progress tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).progressSnapshot).toMatchObject({
+    expect(result.data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       phase: 'implementation',
       currentFocus: '实现后端 Progress 工具',
       latestConclusion: '后端结构已经开始实现。',
       nextAction: '继续补齐路径校验与工具注册。'
     })
-    expect((result.data as any).progressDelta).toMatchObject({
+    expect(result.data.progressDelta).toMatchObject({
       type: 'updated'
     })
 
@@ -90,7 +90,7 @@ describe('update_progress tool', () => {
     expect(writtenContent).toContain('切换到实现阶段')
   })
 
-  it('rejects when the target progress file does not exist', async () => {
+  test('rejects when the target progress file does not exist', async () => {
     mockReadFile.mockRejectedValue(new Error('File not found'))
 
     const tool = createUpdateProgressTool()
@@ -103,7 +103,7 @@ describe('update_progress tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid progress path values', async () => {
+  test('rejects invalid progress path values', async () => {
     const tool = createUpdateProgressTool()
     const result = await tool.handler({
       path: '.graycode/plans/not-allowed.md',

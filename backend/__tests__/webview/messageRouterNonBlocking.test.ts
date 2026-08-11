@@ -12,14 +12,14 @@ import {
 } from '../../../webview/MessageRouter';
 
 describe('MessageRouter non-blocking message types', () => {
-    it('summarizeContext is recognized as a long-running handler', async () => {
+    test('summarizeContext is recognized as a long-running handler', async () => {
         // 该消息的 handler 可能执行 LLM 请求（数十秒到数分钟），
         // 必须非阻塞以避免阻塞取消类消息
         expect(typeof MessageRouter).toBe('function');
         expect(NON_BLOCKING_MESSAGE_TYPES.has('summarizeContext')).toBe(true);
     });
 
-    it('stream message types remain at the original count', () => {
+    test('stream message types remain at the original count', () => {
         // 流式消息类型不应因非阻塞改动而变动
         const STREAM_TYPES = ['chatStream', 'retryStream', 'toolConfirmation', 'cancelStream', 'chat.rerollStream', 'chat.editBranchStream'];
         expect(STREAM_TYPES).toHaveLength(6);
@@ -30,7 +30,7 @@ describe('MessageRouter non-blocking message types', () => {
         }
     });
 
-    it('non-blocking long-task types are documented', () => {
+    test('non-blocking long-task types are documented', () => {
         // 确保新增非阻塞类型时有对应测试覆盖
         const EXPECTED_NON_BLOCKING = [
             'summarizeContext',

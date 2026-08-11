@@ -156,8 +156,9 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
             return [singlePath];
         }
 
-        // read_file 的实际 schema 是 paths 数组；以前只认 path/files，
-        // paths 形式的工作区外读取会绕过策略检查
+        // read_file 的规范 schema 是顶层 path（单文件）与 files（批量）数组；
+        // 这里再兼容历史/第三方客户端可能传入的 paths 数组形式，
+        // 避免 paths 形式的工作区外读取绕过策略检查
         const fromPathsArray = extractNonEmptyStrings((args as any).paths);
         if (fromPathsArray.length > 0) {
             return fromPathsArray;

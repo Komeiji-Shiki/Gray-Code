@@ -1,25 +1,11 @@
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
+import { OpenAIFormatter } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
-import type { OpenAIConfig } from '../../modules/config/types';
 import { serializePromptContextCache } from '../../modules/prompt/promptContextCache';
+import { createOpenAIConfig } from '../__fixtures__/channelFixtures';
 
-function createConfig(): OpenAIConfig {
-    return {
-        id: 'openai-test',
-        name: 'OpenAI Test',
-        type: 'openai',
-        enabled: true,
-        url: 'https://example.test/v1',
-        apiKey: 'test-key',
-        model: 'test-model',
-        preferStream: false,
-        timeout: 30000,
-        toolMode: 'function_call'
-    } as OpenAIConfig;
-}
 
 describe('OpenAIFormatter dynamic context preserve', () => {
-    it('keeps preserved turnDynamicContext after thought-signature conversion', () => {
+    test('keeps preserved turnDynamicContext after thought-signature conversion', () => {
         const formatter = new OpenAIFormatter();
         const oldCache = serializePromptContextCache({
             messages: [{ role: 'user', parts: [{ text: 'old cached full ctx' }] }],
@@ -56,7 +42,7 @@ describe('OpenAIFormatter dynamic context preserve', () => {
                 historyPlacement: 'legacy'
             },
             dynamicContextStrategy: 'preserve'
-        }, createConfig());
+        }, createOpenAIConfig({ url: 'https://example.test/v1', model: 'test-model' }));
 
         expect(request.body.messages.map((message: any) => ({
             role: message.role,

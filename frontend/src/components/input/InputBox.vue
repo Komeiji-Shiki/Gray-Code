@@ -5,6 +5,7 @@
  * 使用 contenteditable div 实现
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, watch, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useI18n } from '../../i18n'
 import type { PromptContextItem } from '../../types/promptContext'
@@ -686,7 +687,7 @@ function handleDrop(e: DragEvent) {
 // 这里收到命令后把光标放回输入框，用户可以无缝继续打字。
 
 function postChatInputFocusState(focused: boolean) {
-  sendToExtension('chatInput.focusState', { focused }).catch(() => {
+  sendToExtension(MESSAGE_NAMES['chatInput.focusState'], { focused }).catch(() => {
     // 状态上报失败不影响输入功能
   })
 }

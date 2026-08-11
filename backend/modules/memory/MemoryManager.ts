@@ -1,5 +1,5 @@
 /**
- * LimCode - MemoryManager
+ * GrayCode - MemoryManager
  *
  * OptMem 风格永久记忆系统的核心引擎。
  * 负责 LOG（追加式日志）和 TREE（二叉树摘要缓存）的读写，
@@ -1296,22 +1296,25 @@ export class MemoryManager {
             let outCount = 0;
             try {
                 const CHUNK = 4096;
+                // 对齐必须按当前记录宽度（旧格式降级 320B/条）进行：按 LOG_REC=1024 对齐
+                // 会读错偏移，重编号后 tmp 近乎全空，rename 会用空文件覆盖 LOG.txt → 全量记忆丢失
+                const rec = this.logRecMode;
                 for (let base = 0; base < T; base += CHUNK) {
                     const count = Math.min(CHUNK, T - base);
-                    const buf = Buffer.alloc(count * LOG_REC);
-                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * LOG_REC);
-                    const effective = Math.floor(bytesRead / LOG_REC);
+                    const buf = Buffer.alloc(count * rec);
+                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * rec);
+                    const effective = Math.floor(bytesRead / rec);
                     const kept: Buffer[] = [];
                     for (let i = 0; i < effective; i++) {
                         const idx = base + i;
-                        const slice = buf.subarray(i * LOG_REC, (i + 1) * LOG_REC);
+                        const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
                         // 空/损坏记录跳过语义与 deleteRange 一致
                         if (!str) continue;
                         if (toDelete.has(idx)) continue;
                         const parsed = parse(str);
                         if (!parsed) continue;
-                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, LOG_REC));
+                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, rec));
                         outCount++;
                     }
                     if (kept.length > 0) {
@@ -1393,7 +1396,7 @@ export class MemoryManager {
             await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const logHandle = await fs.open(logPath, 'r+');
             try {
-                await logHandle.truncate(keepId * LOG_REC);
+                await logHandle.truncate(keepId * this.logRecMode);
             } finally {
                 await logHandle.close();
             }
@@ -1509,3 +1512,4 @@ export class MemoryManager {
         return this.dir;
     }
 }
+

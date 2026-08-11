@@ -1,5 +1,5 @@
 /**
- * LimCode - StreamAbortManager 依赖反转桥接（backend/core 层）
+ * GrayCode - StreamAbortManager 依赖反转桥接（backend/core 层）
  *
  * 第六批层反转修复：backend/modules/api/chat/services/ChatFlowService 不再直接 import
  * webview/stream/StreamAbortManager 类（此前经其静态 getGlobalInstance() 读取全局实例，
@@ -44,3 +44,4 @@ export function setStreamAbortManager(manager: StreamAbortManagerPort | undefine
 export function getStreamAbortManager(): StreamAbortManagerPort | undefined {
   return globalAbortManager;
 }
+

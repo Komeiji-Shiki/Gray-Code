@@ -1,5 +1,5 @@
 /**
- * LimCode - Chat 流程服务（应用服务层）
+ * GrayCode - Chat 流程服务（应用服务层）
  *
  * 负责编排单次 Chat 调用的核心业务逻辑：
  * - 配置校验
@@ -224,3 +224,4 @@ export class ChatFlowService {
     yield* this.editBranchFlow.handleEditAndRetryStream(request);
   }
 }
+

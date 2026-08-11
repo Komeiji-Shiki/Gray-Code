@@ -4,7 +4,7 @@
  * 从 types.ts 拆分而来：types.ts 通过 `export *` 重导出，旧引用路径保持兼容。
  */
 
-import { DEFAULT_MAX_RUNTIME_S } from '../../tools/subagents/types';
+import { DEFAULT_MAX_RUNTIME_S } from '../../../tools/subagents/types';
 
 /**
  * 子代理工具配置

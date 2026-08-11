@@ -44,7 +44,7 @@ describe('ConfigManager.exportConfig 脱敏', () => {
         return { manager, id };
     }
 
-    it('includeSensitive=false：递归脱敏所有敏感字段，保留非敏感字段', async () => {
+    test('includeSensitive=false：递归脱敏所有敏感字段，保留非敏感字段', async () => {
         const { manager, id } = await createManagerWithSensitiveConfig();
         const exported = await manager.exportConfig(id);
 
@@ -72,7 +72,7 @@ describe('ConfigManager.exportConfig 脱敏', () => {
         expect(exported.tokenCountApiConfig.model).toBe('gpt-4o-mini');
     });
 
-    it('includeSensitive=false：advanced 模式的 customBody.json 被脱敏', async () => {
+    test('includeSensitive=false：advanced 模式的 customBody.json 被脱敏', async () => {
         const manager = new ConfigManager(new MemoryStorageAdapter());
         const id = await manager.createConfig({
             name: 'Advanced Body',
@@ -87,7 +87,7 @@ describe('ConfigManager.exportConfig 脱敏', () => {
         expect(exported.customBody.json).toBe('***REDACTED***');
     });
 
-    it('includeSensitive=true：原样导出，不脱敏', async () => {
+    test('includeSensitive=true：原样导出，不脱敏', async () => {
         const { manager, id } = await createManagerWithSensitiveConfig();
         const exported = await manager.exportConfig(id, { includeSensitive: true });
 
@@ -97,7 +97,7 @@ describe('ConfigManager.exportConfig 脱敏', () => {
         expect(exported.tokenCountApiConfig.apiKey).toBe('tok-key-777');
     });
 
-    it('脱敏导出不修改缓存中的原始配置', async () => {
+    test('脱敏导出不修改缓存中的原始配置', async () => {
         const { manager, id } = await createManagerWithSensitiveConfig();
         await manager.exportConfig(id);
 

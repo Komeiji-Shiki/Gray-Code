@@ -53,7 +53,7 @@ describe('find_references LSP lifecycle', () => {
         jest.useRealTimers();
     });
 
-    it('正常路径按文件分组返回引用与代码内容', async () => {
+    test('正常路径按文件分组返回引用与代码内容', async () => {
         const refUri = vscode.Uri.file(path.resolve('workspace/project/src/use.ts'));
         executeCommandMock.mockResolvedValue([
             reference(refUri, 4, 2),
@@ -97,7 +97,7 @@ describe('find_references LSP lifecycle', () => {
         expect(openTextDocumentMock).toHaveBeenCalledTimes(2);
     });
 
-    it('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
+    test('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
         jest.useFakeTimers();
         executeCommandMock
             .mockRejectedValueOnce(new Error('TypeScript language service is not ready'))
@@ -115,7 +115,7 @@ describe('find_references LSP lifecycle', () => {
         expect(executeCommandMock).toHaveBeenCalledTimes(2);
     });
 
-    it('provider 挂起时在 LSP_TIMEOUT_MS 后返回失败而不是无限等待', async () => {
+    test('provider 挂起时在 LSP_TIMEOUT_MS 后返回失败而不是无限等待', async () => {
         jest.useFakeTimers();
         executeCommandMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -132,7 +132,7 @@ describe('find_references LSP lifecycle', () => {
         expect(executeCommandMock).toHaveBeenCalledTimes(1);
     });
 
-    it('已中止的 signal 立即失败且不发起 provider 请求', async () => {
+    test('已中止的 signal 立即失败且不发起 provider 请求', async () => {
         const controller = new AbortController();
         controller.abort();
 

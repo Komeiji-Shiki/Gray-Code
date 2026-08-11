@@ -2,7 +2,7 @@ import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import * as zlib from 'zlib';
-import { DiffStorageManager } from '../../modules/conversation/DiffStorageManager';
+import { DiffStorageManager } from '../../modules/conversation';
 
 /** 读取 diff 文件：识别 gzip 魔数，兼容明文 JSON */
 async function readDiffFile(filePath: string): Promise<any> {

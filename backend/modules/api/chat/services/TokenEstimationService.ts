@@ -200,7 +200,11 @@ export class TokenEstimationService {
             }
             
             // 检查是否已经有 token 数（除非强制重新计算）
-            if (!forceRecount && message.tokenCountByChannel?.[channelType || ''] !== undefined) {
+            // 缓存键与单条版 preCountUserMessageTokens 统一（channelType 原样作键，不补 ''），
+            // 避免两端键不一致导致已计数的消息被重复计数/重复写回。
+            // channelType 为 undefined/空串时写入侧不落键（见下方 if (channelType)），
+            // 缓存中不存在对应键，直接跳过缓存检查，保持与单条版一致的空值语义。
+            if (!forceRecount && channelType && message.tokenCountByChannel?.[channelType] !== undefined) {
                 continue;
             }
             
@@ -494,6 +498,15 @@ export class TokenEstimationService {
                         if (responsePart.inlineData) {
                             tokens += this.estimateMultimodalTokens(responsePart.inlineData);
                         }
+                    }
+                }
+            }
+            // 思考签名（thoughtSignatures）随请求原样回传，同样占用输入 token：
+            // 按各格式签名文本长度估算（与 text 同口径：每 4 字符约 1 token）
+            if (part.thoughtSignatures) {
+                for (const signature of Object.values(part.thoughtSignatures)) {
+                    if (typeof signature === 'string' && signature.length > 0) {
+                        tokens += Math.ceil(signature.length / 4);
                     }
                 }
             }

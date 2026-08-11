@@ -46,7 +46,8 @@ export function formatTime(timestamp: number): string {
     const days = Math.floor(diff / day)
     return translate(lang, 'stores.chatStore.relativeTime.daysAgo', { days })
   } else {
-    return new Date(timestamp).toLocaleDateString()
+    // 超过一周显示完整日期；传当前语言，避免日期格式与界面语言不一致
+    return new Date(timestamp).toLocaleDateString(lang)
   }
 }
 

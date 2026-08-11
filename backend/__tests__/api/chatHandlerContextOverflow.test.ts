@@ -1,4 +1,4 @@
-import { ChatHandler } from '../../modules/api/chat/ChatHandler';
+import { ChatHandler } from '../../modules/api';
 import { ContextBudgetExceededError } from '../../modules/api/chat/services/ContextTrimService';
 
 function createHandler(): ChatHandler {
@@ -11,7 +11,7 @@ function createHandler(): ChatHandler {
 }
 
 describe('ChatHandler ContextBudgetExceededError 友好化', () => {
-    it('formatError 把 CONTEXT_OVERFLOW 转成 i18n 消息（含估算参数）', () => {
+    test('formatError 把 CONTEXT_OVERFLOW 转成 i18n 消息（含估算参数）', () => {
         const handler = createHandler();
         const formatted = (handler as any).formatError(new ContextBudgetExceededError(1301, 1300));
 
@@ -23,7 +23,7 @@ describe('ChatHandler ContextBudgetExceededError 友好化', () => {
         expect(formatted.message).toContain('上下文窗口');
     });
 
-    it('非流式 handleChat 传播 ContextBudgetExceededError 时返回结构化错误', async () => {
+    test('非流式 handleChat 传播 ContextBudgetExceededError 时返回结构化错误', async () => {
         const handler = createHandler();
         (handler as any).chatFlowService = {
             handleChat: jest.fn().mockRejectedValue(new ContextBudgetExceededError(1301, 1300))
@@ -43,7 +43,7 @@ describe('ChatHandler ContextBudgetExceededError 友好化', () => {
         expect((result as any).error.message).not.toContain('Unable to build');
     });
 
-    it('流式 handleChatStream 传播 ContextBudgetExceededError 时 yield 结构化 error chunk', async () => {
+    test('流式 handleChatStream 传播 ContextBudgetExceededError 时 yield 结构化 error chunk', async () => {
         const handler = createHandler();
         (handler as any).chatFlowService = {
             handleChatStream: async function* () {
@@ -69,7 +69,7 @@ describe('ChatHandler ContextBudgetExceededError 友好化', () => {
         expect(chunks[0].error.message).not.toContain('Unable to build');
     });
 
-    it('其他未知错误仍走 UNKNOWN_ERROR 兜底，不受影响', () => {
+    test('其他未知错误仍走 UNKNOWN_ERROR 兜底，不受影响', () => {
         const handler = createHandler();
         const formatted = (handler as any).formatError(new Error('boom'));
 

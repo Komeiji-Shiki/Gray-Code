@@ -1,6 +1,6 @@
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, ConversationMetadata, ContentPart } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory, ConversationMetadata, ContentPart } from '../../modules/conversation';
 
 describe('ConversationManager createBranchConversation', () => {
     test('copies history through target message and only carries stable metadata', async () => {

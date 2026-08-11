@@ -7,7 +7,7 @@
  *   没有前缀时退化为纯 replace；
  * - 过期校准窗口不会覆盖新窗口（freshness 判断）。
  */
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import type { Content } from '../../../types'
 import {
   createPreviousRunWindowRequestOptions,
@@ -43,7 +43,7 @@ function makeWindow(overrides: Partial<SubAgentRunContentWindowState>): SubAgent
 }
 
 describe('prependRunContentWindow（加载更早消息）', () => {
-  it('只前置尚未覆盖的更早内容，尾部对象引用保持不变', () => {
+  test('只前置尚未覆盖的更早内容，尾部对象引用保持不变', () => {
     const tail = makeWindow({
       contents: [makeContent(0), makeContent(1)],
       startIndex: 0,
@@ -75,7 +75,7 @@ describe('prependRunContentWindow（加载更早消息）', () => {
 })
 
 describe('replaceRunContentWindowPreservingPrefix（P3 尾部刷新保持窗口）', () => {
-  it('用户已加载更早历史后，新的尾部校准窗口保留前缀', () => {
+  test('用户已加载更早历史后，新的尾部校准窗口保留前缀', () => {
     // 当前窗口：前缀（用户 prepend 的更早消息）+ 旧尾部
     const current = makeWindow({
       contents: [makeContent(-2), makeContent(-1), makeContent(0), makeContent(1)],
@@ -112,7 +112,7 @@ describe('replaceRunContentWindowPreservingPrefix（P3 尾部刷新保持窗口�
     expect(merged.hasMoreBefore).toBe(true)
   })
 
-  it('没有前缀时退化为纯 replace（不制造重复）', () => {
+  test('没有前缀时退化为纯 replace（不制造重复）', () => {
     const current = makeWindow({
       contents: [makeContent(0), makeContent(1)],
       startIndex: 0,
@@ -134,7 +134,7 @@ describe('replaceRunContentWindowPreservingPrefix（P3 尾部刷新保持窗口�
     expect(merged.startIndex).toBe(0)
   })
 
-  it('过期校准窗口不能覆盖新窗口（freshness 判断仍生效）', () => {
+  test('过期校准窗口不能覆盖新窗口（freshness 判断仍生效）', () => {
     const current = makeWindow({
       contents: [makeContent(-2), makeContent(-1), makeContent(0), makeContent(1)],
       startIndex: -2,
@@ -154,7 +154,7 @@ describe('replaceRunContentWindowPreservingPrefix（P3 尾部刷新保持窗口�
     expect(replaceRunContentWindow(stale, current)).toBe(current)
   })
 
-  it('旧版本纯 replace 语义仍会清掉前缀（回归对照：证明 preserve 版本必要）', () => {
+  test('旧版本纯 replace 语义仍会清掉前缀（回归对照：证明 preserve 版本必要）', () => {
     const current = makeWindow({
       contents: [makeContent(-2), makeContent(-1), makeContent(0), makeContent(1)],
       startIndex: -2,
@@ -177,7 +177,7 @@ describe('replaceRunContentWindowPreservingPrefix（P3 尾部刷新保持窗口�
 })
 
 describe('createPreviousRunWindowRequestOptions', () => {
-  it('以当前窗口 startIndex 为锚点向前取一页', () => {
+  test('以当前窗口 startIndex 为锚点向前取一页', () => {
     const current = makeWindow({ startIndex: -5 })
     expect(createPreviousRunWindowRequestOptions(current, 20)).toEqual({
       limit: 20,
@@ -203,37 +203,37 @@ function windowState(overrides: Partial<SubAgentRunContentWindowState> = {}): Su
 }
 
 describe('isRunContentWindowStale', () => {
-  it('没有窗口时必须拉取', () => {
+  test('没有窗口时必须拉取', () => {
     expect(isRunContentWindowStale(undefined, { contentRevision: 1, contentCount: 1 })).toBe(true)
   })
 
-  it('没有 manifest 时不主动拉取（没有任何证据表明窗口已过期）', () => {
+  test('没有 manifest 时不主动拉取（没有任何证据表明窗口已过期）', () => {
     expect(isRunContentWindowStale(windowState(), undefined)).toBe(false)
   })
 
-  it('manifest 修订号领先时判定为过期', () => {
+  test('manifest 修订号领先时判定为过期', () => {
     expect(isRunContentWindowStale(windowState({ contentRevision: 3 }), { contentRevision: 4 })).toBe(true)
   })
 
-  it('修订号相同则不拉取——tool_started 这类纯状态事件不会触发窗口请求', () => {
+  test('修订号相同则不拉取——tool_started 这类纯状态事件不会触发窗口请求', () => {
     expect(isRunContentWindowStale(
       windowState({ contentRevision: 7, totalCount: 12 }),
       { contentRevision: 7, contentCount: 12 }
     )).toBe(false)
   })
 
-  it('本地 live delta 让窗口修订号领先于 manifest 时，不回头拉旧窗口', () => {
+  test('本地 live delta 让窗口修订号领先于 manifest 时，不回头拉旧窗口', () => {
     expect(isRunContentWindowStale(windowState({ contentRevision: 9 }), { contentRevision: 8 })).toBe(false)
   })
 
-  it('修订号相同但后端条数更多时仍判定为过期', () => {
+  test('修订号相同但后端条数更多时仍判定为过期', () => {
     expect(isRunContentWindowStale(
       windowState({ contentRevision: 5, totalCount: 20 }),
       { contentRevision: 5, contentCount: 21 }
     )).toBe(true)
   })
 
-  it('缺失协议字段按 0 处理，不会把新窗口误判为过期', () => {
+  test('缺失协议字段按 0 处理，不会把新窗口误判为过期', () => {
     expect(isRunContentWindowStale(
       windowState({ contentRevision: undefined, totalCount: 3 }),
       { contentCount: 3 }

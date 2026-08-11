@@ -12,7 +12,6 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { StringDecoder } from 'string_decoder';
 import { TextDecoder } from 'util';
 import type { Tool, ToolResult, ToolContext } from '../types';
 
@@ -37,7 +36,8 @@ import {
     getLastLines,
     getMaxOutputLines,
     decodeWithMode,
-    type StreamDecodeMode
+    flushDecodeState,
+    type StreamDecodeState
 } from './outputDecoder';
 import {
     getAllWorkspaceRoots,
@@ -67,6 +67,8 @@ function isWithinWorkspace(resolvedPath: string, workspaceRoot: string): boolean
     return resolvedPath.startsWith(rootWithSep);
 }
 
+/** killTerminalProcess 等待进程 close 的超时（毫秒）：超时后 SIGKILL 强杀；强杀后继续等真实 close（SIGKILL 必达），同阈值再作最终兜底，保证等待不永久挂起 */
+const KILL_WAIT_CLOSE_TIMEOUT_MS = 10_000;
 /**
  * 终端进程信息
  */
@@ -460,7 +462,8 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     {
                         const taskAbortHandler = () => {
                             // 通过 TaskManager 取消时，终止进程树
-                            killTerminalProcess(terminalId);
+                            // killTerminalProcess 现在等待进程 close 后才返回，此处不阻塞 abort 流程
+                            void killTerminalProcess(terminalId);
                         };
                         
                         taskAbortController.signal.addEventListener('abort', taskAbortHandler, { once: true });
@@ -475,6 +478,12 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         command,
                         cwd: workingDir,
                         shell,
+                        // 修改原因：TaskManager.cleanup() 的 30 分钟兜底依据 metadata.timeout 判定
+                        //          「显式无超时」任务，不写入则前台 timeout=0 或 >30min 的长命令
+                        //          会被兜底误杀。
+                        // 修改方式：与 background 一起写入注册元数据（detach 转后台时保留该值）。
+                        // 修改目的：清理逻辑与任务事实使用同一份元数据。
+                        timeout,
                         background,
                         conversationId: context?.conversationId,
                         // 子代理归属标记：子代理内部执行命令时 mailboxRunId 存在（主会话为 undefined）。
@@ -489,7 +498,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     if (externalAbortSignal && !background) {
                         const abortHandler = () => {
                             // 调用 killTerminalProcess 终止进程
-                            killTerminalProcess(terminalId);
+                            void killTerminalProcess(terminalId);
                         };
 
                         externalAbortSignal.addEventListener('abort', abortHandler, { once: true });
@@ -514,21 +523,22 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         shell
                     });
 
-                    // 默认按 UTF-8 解码；Windows 上所有 shell 均支持自动降级到 GBK
+                    // 默认按 UTF-8 解码；Windows 上所有 shell 均支持自动降级到 GBK。
+                    // 跨 chunk 前缀缓冲由 outputDecoder 内部自管（StreamDecodeState.pendingBytes），
+                    // 不再依赖 StringDecoder 的隐藏缓冲状态，GBK 中途切换不再丢字节。
                     const canUseGbkFallback = isWindows;
-                    const stdoutUtf8Decoder = new StringDecoder('utf8');
-                    const stderrUtf8Decoder = new StringDecoder('utf8');
                     const stdoutGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
                     const stderrGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
-                    const stdoutDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
-                    const stderrDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
+                    const stdoutDecodeModeRef: StreamDecodeState = { mode: 'utf8' };
+                    const stderrDecodeModeRef: StreamDecodeState = { mode: 'utf8' };
 
                     let stdoutRemaining = '';
                     let stderrRemaining = '';
 
                     // 收集输出并实时推送
                     proc.stdout?.on('data', (data: Buffer) => {
-                        const text = decodeWithMode(data, stdoutDecodeModeRef, stdoutUtf8Decoder, stdoutGbkDecoder);
+                        // 第 3 参（utf8Decoder）为兼容保留参数，本实现不再使用
+                        const text = decodeWithMode(data, stdoutDecodeModeRef, undefined, stdoutGbkDecoder);
                         const content = stdoutRemaining + text;
                         const lines = content.split(/\r?\n/);
                         stdoutRemaining = lines.pop() || '';
@@ -552,7 +562,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     });
 
                     proc.stderr?.on('data', (data: Buffer) => {
-                        const text = decodeWithMode(data, stderrDecodeModeRef, stderrUtf8Decoder, stderrGbkDecoder);
+                        const text = decodeWithMode(data, stderrDecodeModeRef, undefined, stderrGbkDecoder);
                         const content = stderrRemaining + text;
                         const lines = content.split(/\r?\n/);
                         stderrRemaining = lines.pop() || '';
@@ -576,9 +586,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
 
                     // 进程结束时处理剩余的输出
                     proc.on('close', () => {
-                        const stdoutTail = (stdoutDecodeModeRef.mode === 'gbk' && stdoutGbkDecoder)
-                            ? stdoutGbkDecoder.decode()
-                            : stdoutUtf8Decoder.end();
+                        // 冲刷流式解码状态：gbk 模式 flush 解码器流缓冲；
+                        // utf8 模式冲刷跨 chunk 扣下的未完成前缀（未完成序列 → 替换字符）
+                        const stdoutTail = flushDecodeState(stdoutDecodeModeRef, stdoutGbkDecoder);
 
                         if (stdoutTail) {
                             const content = stdoutRemaining + stdoutTail;
@@ -589,9 +599,7 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             }
                         }
 
-                        const stderrTail = (stderrDecodeModeRef.mode === 'gbk' && stderrGbkDecoder)
-                            ? stderrGbkDecoder.decode()
-                            : stderrUtf8Decoder.end();
+                        const stderrTail = flushDecodeState(stderrDecodeModeRef, stderrGbkDecoder);
 
                         if (stderrTail) {
                             const content = stderrRemaining + stderrTail;
@@ -913,14 +921,21 @@ function setTerminalProcessPriority(pid: number | undefined, background: boolean
  *
  * 使用 tree-kill 库来跨平台终止进程树（包括所有子进程）
  * tree-kill 在 Windows 上使用 taskkill /T，在 Unix 上使用 SIGTERM/SIGKILL
+ *
+ * 修改原因：旧实现 treeKill 发出信号后立即返回，进程树尚未退出，返回的 output 是
+ *          杀进程瞬间的中间态，exitCode 也还未落定（close 处理器稍后才写）。
+ * 修改方式：标记 killed 后等待进程 close 事件（输出与 exitCode 由 close 处理器落定）
+ *          再返回；SIGTERM 可能被进程忽略，超时后 SIGKILL 强杀，保证等待不永久挂起。
+ * 修改目的：调用方（前端 kill 按钮、TaskManager 取消）拿到的输出/exitCode 反映最终状态。
  */
-export function killTerminalProcess(terminalId: string): {
+export async function killTerminalProcess(terminalId: string): Promise<{
     success: boolean;
     output?: string;
+    exitCode?: number;
     error?: string;
-} {
+}> {
     const terminalProcess = activeProcesses.get(terminalId);
-    
+
     if (!terminalProcess) {
         // 尝试通过 TaskManager 取消（可能任务存在但进程已结束）
         const taskResult = TaskManager.cancelTask(terminalId);
@@ -935,41 +950,80 @@ export function killTerminalProcess(terminalId: string): {
 
     try {
         const pid = terminalProcess.process.pid;
-        
-        if (pid) {
-            // 使用 tree-kill 终止进程树
-            // tree-kill 会自动处理不同平台的差异：
-            // - Windows: 使用 taskkill /F /T /PID
-            // - Unix: 使用 ps 查找子进程并发送信号
-            treeKill(pid, 'SIGTERM', (err) => {
-                if (err) {
-                    // 如果 tree-kill 失败，回退到直接终止进程
-                    try {
-                        terminalProcess.process.kill('SIGKILL');
-                    } catch {
-                        // 忽略错误，进程可能已经退出
-                    }
-                }
-            });
-        } else {
-            // 没有 PID，使用默认方式
-            terminalProcess.process.kill('SIGTERM');
-        }
-        
-        terminalProcess.killed = true;
-        terminalProcess.endTime = Date.now();
 
-        const killMaxLines = getMaxOutputLines();
-        const lastOutput = killMaxLines === -1
-            ? terminalProcess.output
-            : getLastLines(terminalProcess.output, killMaxLines);
-        
-        // TaskManager 会在 proc.on('close') 事件中自动注销
-        
-        return {
-            success: true,
-            output: lastOutput.join('\n')
-        };
+        // 进程已结束（close/error 处理器已落定 endTime 与 exitCode）：
+        // close 事件不会再触发，直接返回最终输出与退出码
+        if (terminalProcess.endTime !== undefined || terminalProcess.process.exitCode !== null) {
+            return buildKillTerminalResult(terminalProcess);
+        }
+
+        // 标记为被终止：close 处理器据此把任务终态判定为 cancelled（而非超时失败）
+        terminalProcess.killed = true;
+
+        // 等待进程树真正退出：先注册 close 监听再发信号，避免进程在两者之间退出导致漏监听；
+        // 超时后 SIGKILL 强杀（SIGKILL 不可捕获，close 必达），等待不会永久挂起。
+        await new Promise<void>((resolveClose) => {
+            let settled = false;
+            let forceKillTimer: NodeJS.Timeout | undefined;
+
+            const onClose = (): void => {
+                if (settled) return;
+                settled = true;
+                if (forceKillTimer) clearTimeout(forceKillTimer);
+                resolveClose();
+            };
+
+            terminalProcess.process.once('close', onClose);
+
+            // 注册监听后再检查：进程可能在注册前已退出，close 不会再触发
+            if (terminalProcess.process.exitCode !== null) {
+                onClose();
+                return;
+            }
+
+            forceKillTimer = setTimeout(() => {
+                try {
+                    terminalProcess.process.kill('SIGKILL');
+                } catch {
+                    // 进程可能已退出，忽略
+                }
+                // 修改原因：旧实现发 SIGKILL 后立即 onClose()，close 处理器（落定
+                //          endTime/exitCode/output）尚未执行就返回，10s 强杀路径
+                //          返回 stale 结果（exitCode=undefined、输出缺尾部）。
+                // 修改方式：SIGKILL 不可捕获、close 必达——发完信号不再 resolve，
+                //          继续等真实 close 让 close 处理器落定终态；本定时器仅负责
+                //          强杀，若 close 异常迟迟未达（极端情况），由最终兜底定时器
+                //          resolve，保证等待不会永久挂起。
+                forceKillTimer = setTimeout(() => onClose(), KILL_WAIT_CLOSE_TIMEOUT_MS);
+            }, KILL_WAIT_CLOSE_TIMEOUT_MS);
+
+            if (pid) {
+                // 使用 tree-kill 终止进程树
+                // tree-kill 会自动处理不同平台的差异：
+                // - Windows: 使用 taskkill /F /T /PID
+                // - Unix: 使用 ps 查找子进程并发送信号
+                treeKill(pid, 'SIGTERM', (err) => {
+                    if (err) {
+                        // 如果 tree-kill 失败，回退到直接终止进程
+                        try {
+                            terminalProcess.process.kill('SIGKILL');
+                        } catch {
+                            // 忽略错误，进程可能已经退出
+                        }
+                    }
+                });
+            } else {
+                // 没有 PID，使用默认方式
+                try {
+                    terminalProcess.process.kill('SIGTERM');
+                } catch {
+                    // 忽略错误，进程可能已经退出
+                }
+            }
+        });
+
+        // close 处理器已把 endTime/exitCode/output 落定并注销任务
+        return buildKillTerminalResult(terminalProcess);
     } catch (error) {
         return {
             success: false,
@@ -978,20 +1032,38 @@ export function killTerminalProcess(terminalId: string): {
     }
 }
 
+/** 从已落定的进程状态构建 kill 返回结果（输出截断规则与 close 处理器一致） */
+function buildKillTerminalResult(terminalProcess: TerminalProcess): {
+    success: boolean;
+    output?: string;
+    exitCode?: number;
+} {
+    const killMaxLines = getMaxOutputLines();
+    const lastOutput = killMaxLines === -1
+        ? terminalProcess.output
+        : getLastLines(terminalProcess.output, killMaxLines);
+
+    return {
+        success: true,
+        output: lastOutput.join('\n'),
+        exitCode: terminalProcess.exitCode
+    };
+}
+
 /**
  * 通过 TaskManager 取消终端任务
  * 这是统一的取消接口
  */
-export function cancelTerminalTask(terminalId: string): {
+export async function cancelTerminalTask(terminalId: string): Promise<{
     success: boolean;
     error?: string;
-} {
-    // 先尝试杀掉进程
-    const killResult = killTerminalProcess(terminalId);
+}> {
+    // 先尝试杀掉进程（等待 close，输出/exitCode 落定后返回）
+    const killResult = await killTerminalProcess(terminalId);
     if (killResult.success) {
         return { success: true };
     }
-    
+
     // 如果进程不存在，尝试通过 TaskManager 取消
     return TaskManager.cancelTask(terminalId);
 }

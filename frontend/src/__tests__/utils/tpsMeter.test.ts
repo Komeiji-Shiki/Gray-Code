@@ -15,7 +15,7 @@
  * - 回放/积压：record(500, 过去时间戳) 后事件立即被窗口修剪，不产生尖峰
  * - API 兼容：record(n) 单参数调用不受影响
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { tpsMeter, type TpsSample } from '../../utils/tpsMeter'
 
 const unsubs: (() => void)[] = []
@@ -39,7 +39,7 @@ afterEach(() => {
 })
 
 describe('采样窗口与速率', () => {
-  it('1s 窗口累计 token → 瞬时速率（total / 1s）', () => {
+  test('1s 窗口累计 token → 瞬时速率（total / 1s）', () => {
     tpsMeter.record(40)
     tpsMeter.record(60)
     const samples: TpsSample[] = []
@@ -54,7 +54,7 @@ describe('采样窗口与速率', () => {
     expect(samples[0].live).toBe(true)
   })
 
-  it('1s 窗口修剪：过期事件不再计入', () => {
+  test('1s 窗口修剪：过期事件不再计入', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -70,7 +70,7 @@ describe('采样窗口与速率', () => {
     expect(last.ema).toBeLessThan(300)
   })
 
-  it('乱序到达：旧时间戳事件后到也会被窗口修剪，不污染实时速率', () => {
+  test('乱序到达：旧时间戳事件后到也会被窗口修剪，不污染实时速率', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -82,7 +82,7 @@ describe('采样窗口与速率', () => {
     expect(samples[0].ema).toBeCloseTo(100, 5)
   })
 
-  it('EMA 平滑：首次=瞬时速率，之后 ema = ema×0.7 + rate×0.3', () => {
+  test('EMA 平滑：首次=瞬时速率，之后 ema = ema×0.7 + rate×0.3', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -98,7 +98,7 @@ describe('采样窗口与速率', () => {
     expect(samples[2].ema).toBeCloseTo(151, 5)
   })
 
-  it('ring 定长：超过 30 点只保留最近 30 点', () => {
+  test('ring 定长：超过 30 点只保留最近 30 点', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -114,7 +114,7 @@ describe('采样窗口与速率', () => {
 })
 
 describe('突发摊薄与速率上限', () => {
-  it('record(3000) 摊薄后单次采样速率受限（硬上限生效）且非零', () => {
+  test('record(3000) 摊薄后单次采样速率受限（硬上限生效）且非零', () => {
     // 3000 > 250 → 摊薄为 12 个小事件（各 ~250 token），时间均匀分布在 [-1000, 0]
     tpsMeter.record(3000) // t=0
     const samples: TpsSample[] = []
@@ -134,7 +134,7 @@ describe('突发摊薄与速率上限', () => {
     }
   })
 
-  it('突发摊薄总量守恒：拆分后小事件之和等于原始输入', () => {
+  test('突发摊薄总量守恒：拆分后小事件之和等于原始输入', () => {
     // 用显式未来时间戳使全部摊薄小事件落在同一个 1s 采样窗口内（fake timers 下确定）：
     // 260 > 250 → 拆成 2 个事件（130 + 130），散布在 [t-1000, t]，t = now + 1000
     tpsMeter.record(260, Date.now() + 1000)
@@ -147,7 +147,7 @@ describe('突发摊薄与速率上限', () => {
     expect(samples[0].ema).toBeCloseTo(260, 5)
   })
 
-  it('回放/积压：record(500, 过去时间戳) 后事件立即被修剪，不产生尖峰', () => {
+  test('回放/积压：record(500, 过去时间戳) 后事件立即被修剪，不产生尖峰', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -162,7 +162,7 @@ describe('突发摊薄与速率上限', () => {
 })
 
 describe('live 判定', () => {
-  it('2s 内有真实 record → live=true，超过 2s → live=false', () => {
+  test('2s 内有真实 record → live=true，超过 2s → live=false', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -180,7 +180,7 @@ describe('live 判定', () => {
 })
 
 describe('events 容量上限', () => {
-  it('无订阅（停表）时 record 超 1000 条仍受控：丢最旧', () => {
+  test('无订阅（停表）时 record 超 1000 条仍受控：丢最旧', () => {
     // 停表状态（无订阅）：事件缓冲不应无界增长
     for (let i = 0; i < 1100; i++) tpsMeter.record(1)
 
@@ -192,7 +192,7 @@ describe('events 容量上限', () => {
     expect(samples[0].ema).toBeCloseTo(1000, 5)
   })
 
-  it('容量上限乱序修剪：丢弃时间戳最旧的事件（而非插入序最旧）', () => {
+  test('容量上限乱序修剪：丢弃时间戳最旧的事件（而非插入序最旧）', () => {
     // 1100 条事件，最后插入的一条时间戳最旧（乱序后到）
     tpsMeter.record(1) // t=now
     for (let i = 0; i < 1098; i++) tpsMeter.record(1) // 连续 t=now
@@ -209,7 +209,7 @@ describe('events 容量上限', () => {
 })
 
 describe('自然归零', () => {
-  it('无事件时 EMA 指数衰减到阈值以下 → 精确归零（UI 可稳定判定）', () => {
+  test('无事件时 EMA 指数衰减到阈值以下 → 精确归零（UI 可稳定判定）', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -228,7 +228,7 @@ describe('自然归零', () => {
 })
 
 describe('退订与状态清理', () => {
-  it('最后一个订阅者取消后停表：不再采样', () => {
+  test('最后一个订阅者取消后停表：不再采样', () => {
     const samples: TpsSample[] = []
     const un = subscribe((s) => samples.push(s))
 
@@ -241,7 +241,7 @@ describe('退订与状态清理', () => {
     expect(samples).toHaveLength(count)
   })
 
-  it('停表后状态清理：快照 live 强制 false、无过期曲线', () => {
+  test('停表后状态清理：快照 live 强制 false、无过期曲线', () => {
     const un = subscribe(() => {})
     tpsMeter.record(10)
     vi.advanceTimersByTime(200)
@@ -262,7 +262,7 @@ describe('退订与状态清理', () => {
 
 
 describe('计数来源标记', () => {
-  it('record 带 source 后快照携带来源；不带 source 保持 null（旧调用兼容）', () => {
+  test('record 带 source 后快照携带来源；不带 source 保持 null（旧调用兼容）', () => {
     const samples: TpsSample[] = []
     subscribe((s) => samples.push(s))
 
@@ -286,7 +286,7 @@ describe('计数来源标记', () => {
     expect(samples[samples.length - 1].source).toBe('estimate')
   })
 
-  it('停表清空后 source 归 null', () => {
+  test('停表清空后 source 归 null', () => {
     const un = subscribe(() => {})
     tpsMeter.record(10, undefined, 'estimate')
     vi.advanceTimersByTime(200)

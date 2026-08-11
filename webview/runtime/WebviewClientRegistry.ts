@@ -1,5 +1,6 @@
 import type * as vscode from 'vscode';
 import type { RunScope } from '../../backend/core/RunController';
+import { PUSH_MESSAGE_NAMES } from '../../shared/protocol';
 
 /**
  * WebviewRuntime 边界的稳定 transport client id。
@@ -145,7 +146,7 @@ export class WebviewClientRegistry {
 
   sendResponse(clientId: unknown, requestId: string, data: unknown): boolean {
     return this.postMessage(clientId, {
-      type: 'response',
+      type: PUSH_MESSAGE_NAMES.response,
       requestId,
       success: true,
       data
@@ -154,7 +155,7 @@ export class WebviewClientRegistry {
 
   sendError(clientId: unknown, requestId: string, code: string, message: string): boolean {
     return this.postMessage(clientId, {
-      type: 'error',
+      type: PUSH_MESSAGE_NAMES.error,
       requestId,
       success: false,
       error: { code, message }

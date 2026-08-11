@@ -13,6 +13,7 @@
  * isLocalOnlyAssistant）。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message, Content, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, ErrorInfo, BranchStreamReplayContext } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
@@ -83,7 +84,7 @@ async function recoverAfterStreamStartFailure(
   state._pendingBranchReplayContext.value = null
   // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
   try {
-    const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+    const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
       conversationId: originConvId,
       limit: MESSAGES_PAGE_SIZE
     })
@@ -185,7 +186,7 @@ export async function retryFromMessage(
       const streamId = generateId()
       state.activeStreamId.value = streamId
       state._lastCancelledStreamId.value = null
-      await sendToExtension('retryStream', {
+      await sendToExtension(MESSAGE_NAMES.retryStream, {
         conversationId: state.currentConversationId.value,
         configId: state.configId.value,
         modelOverride,
@@ -263,7 +264,7 @@ export async function retryFromMessage(
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('chat.rerollStream', {
+    await sendToExtension(MESSAGE_NAMES['chat.rerollStream'], {
       conversationId: originConvId,
       // 目标 assistant 消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       assistantNodeId: targetMessageId,
@@ -314,9 +315,12 @@ export function dismissError(state: ChatStoreState): void {
  *
  * FIX-C-1：后端流式错误 chunk 的 code 来自 backend/modules/channel/types.ts 的
  * ChannelError.type（CONFIG_ERROR/NETWORK_ERROR/API_ERROR/PARSE_ERROR/VALIDATION_ERROR/
- * TIMEOUT_ERROR/CANCELLED_ERROR）或 UNKNOWN_ERROR——真实流式失败（余额不足/断网/5xx）
- * 以此到达前端。并入可重试集合（修复 B7 引入的功能回归）：
- * - API_ERROR / NETWORK_ERROR / TIMEOUT_ERROR / PARSE_ERROR：可重试（重试有意义）
+ * TIMEOUT_ERROR/CANCELLED_ERROR/EMPTY_RESPONSE_ERROR）或 UNKNOWN_ERROR——真实流式失败
+ * （余额不足/断网/5xx）以此到达前端。并入可重试集合（修复 B7 引入的功能回归）：
+ * - API_ERROR / NETWORK_ERROR / TIMEOUT_ERROR / EMPTY_RESPONSE_ERROR：可重试（重试有意义；
+ *   EMPTY_RESPONSE_ERROR 与后端 core/errors.ts 白名单一致——后端自动重试同样放行空响应）。
+ * - PARSE_ERROR 与后端 core/errors.ts 有意差异：后端自动重试不放行 PARSE_ERROR，
+ *   前端手动重试按钮放行；同步维护请见 backend/__tests__/parity/retryableErrorCodesParity.test.ts。
  * - CANCELLED_ERROR（用户主动取消）、CONFIG_ERROR / VALIDATION_ERROR（配置/参数问题，
  *   重试无意义）、UNKNOWN_ERROR（语义不明，保守不重试）不在此列。
  *
@@ -330,6 +334,7 @@ export const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
   'API_ERROR',
   'NETWORK_ERROR',
   'TIMEOUT_ERROR',
+  'EMPTY_RESPONSE_ERROR',
   'PARSE_ERROR'
 ])
 
@@ -443,7 +448,7 @@ async function replayBranchStreamAfterError(
     state._lastCancelledStreamId.value = null
 
     if (context.kind === 'reroll') {
-      await sendToExtension('chat.rerollStream', {
+      await sendToExtension(MESSAGE_NAMES['chat.rerollStream'], {
         conversationId: originConvId,
         // 流式失败后原目标已离开活跃路径；省略 ID 让后端选择当前活跃 model 尾节点。
         ...(isStreamLevelFailure ? {} : { assistantNodeId: context.assistantNodeId }),
@@ -453,7 +458,7 @@ async function replayBranchStreamAfterError(
         promptModeId: context.promptModeId
       })
     } else {
-      await sendToExtension('chat.editBranchStream', {
+      await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
         conversationId: originConvId,
         // 流式失败后编辑候选仍在活跃路径；省略 ID 让后端选择当前活跃 user 尾节点。
         ...(isStreamLevelFailure ? {} : { userNodeId: context.userNodeId }),
@@ -527,7 +532,7 @@ export async function retryAfterError(
   // 同步删除后端对应消息，避免重试后历史残留。
   if (backendIndex !== -1 && failedMessage && !failedMessage.localOnly && typeof failedMessage.backendIndex === 'number') {
     try {
-      await sendToExtension<any>('deleteMessage', {
+      await sendToExtension<any>(MESSAGE_NAMES.deleteMessage, {
         conversationId: originConvId,
         targetIndex: backendIndex
       })
@@ -569,7 +574,7 @@ export async function retryAfterError(
     const streamId = generateId()
     state.activeStreamId.value = streamId
     state._lastCancelledStreamId.value = null
-    await sendToExtension('retryStream', {
+    await sendToExtension(MESSAGE_NAMES.retryStream, {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       modelOverride,
@@ -706,7 +711,7 @@ export async function editAndRetry(
     // 原消息及其子树保留进分支图 sidecar（决策 7/10：不覆盖原消息、失败可切回）。
     // 注意：编辑分支接口无附件字段（后端 EditBranchRequestData 仅文本 parts），
     // 附件只更新本地窗口（targetMessage.attachments 已在上方处理）。
-    await sendToExtension('chat.editBranchStream', {
+    await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,

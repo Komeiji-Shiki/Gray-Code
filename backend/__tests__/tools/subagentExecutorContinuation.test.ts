@@ -6,25 +6,13 @@
  * F-09：内存快照缺失（重载/淘汰）时，只从当前对话的持久化元数据恢复 run 再接续。
  */
 
-import { createDefaultExecutor } from '../../tools/subagents/executor';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { createDefaultExecutor } from '../../tools/subagents';
+import { subAgentRunEventBus } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { Content } from '../../modules/conversation/types';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 0, // 立即触发「超出最大迭代次数」早退，不触碰 channelManager
-        maxRuntime: 300,
-        ...overrides
-    };
-}
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -64,9 +52,9 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
         subAgentConcurrencyLimiter.release('cont_restored');
     });
 
-    it('同一 conversationId 的终态 run 可以接续（runId 复用旧 run，同一条记录继续）', async () => {
+    test('同一 conversationId 的终态 run 可以接续（runId 复用旧 run，同一条记录继续）', async () => {
         createCompletedRun('cont_same', 'conv_1', [MARKER_CONTENT]);
-        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({ conversationId: 'conv_1' }));
 
         const result = await executor({
             agentType: 'tester',
@@ -92,9 +80,9 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
         expect(snapshot.status).toBe('failed');
     });
 
-    it('不同 conversationId 的 run 被拒绝，且不泄漏旧对话信息', async () => {
+    test('不同 conversationId 的 run 被拒绝，且不泄漏旧对话信息', async () => {
         createCompletedRun('cont_other', 'conv_other', [MARKER_CONTENT]);
-        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({ conversationId: 'conv_1' }));
 
         const result = await executor({
             agentType: 'tester',
@@ -117,10 +105,10 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
         expect(oldSnapshot.contents).toHaveLength(1);
     });
 
-    it('正在运行的 run 仍然不能接续', async () => {
+    test('正在运行的 run 仍然不能接续', async () => {
         subAgentRunEventBus.createRun('cont_running', 'Tester', undefined, { conversationId: 'conv_1' });
         // 不发终态事件，保持 running
-        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({ conversationId: 'conv_1' }));
 
         const result = await executor({
             agentType: 'tester',
@@ -134,8 +122,8 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
         expect(result.error).toContain('still running');
     });
 
-    it('不存在的 run 返回明确错误', async () => {
-        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
+    test('不存在的 run 返回明确错误', async () => {
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({ conversationId: 'conv_1' }));
 
         const result = await executor({
             agentType: 'tester',
@@ -155,7 +143,7 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
         subAgentConcurrencyLimiter.release('cont_lsh_old');
     });
 
-    it('updateLastSentHistory 深拷贝存入快照，不污染 Monitor contents 与 contentRevision，不发 content_snapshot', () => {
+    test('updateLastSentHistory 深拷贝存入快照，不污染 Monitor contents 与 contentRevision，不发 content_snapshot', () => {
         subAgentRunEventBus.createRun('hist_only', 'Tester', undefined, { conversationId: 'conv_1' });
         const snapshot = subAgentRunEventBus.getSnapshot('hist_only')!;
         const revisionBefore = snapshot.contentRevision;
@@ -182,7 +170,7 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
         subAgentRunEventBus.emit({ runId: 'hist_only', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
     });
 
-    it('续跑 baseContents 优先取 lastSentHistory（而不是 contents 卡片），历史逐条一致', async () => {
+    test('续跑 baseContents 优先取 lastSentHistory（而不是 contents 卡片），历史逐条一致', async () => {
         // 模拟旧 run：contents 首条是 # SubAgent Invocation 卡片，lastSentHistory 是实际发送的 history
         subAgentRunEventBus.createRun('cont_lsh_old', 'Tester', { agentType: 'tester', prompt: 'old' }, {
             conversationId: 'conv_1',
@@ -197,7 +185,7 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
         ]);
         subAgentRunEventBus.emit({ runId: 'cont_lsh_old', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
 
-        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_1' }));
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({ conversationId: 'conv_1' }));
         const result = await executor({
             agentType: 'tester',
             prompt: 'continue',
@@ -229,7 +217,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         subAgentConcurrencyLimiter.release('cont_legacy');
     });
 
-    it('内存无快照时，从当前对话持久化记录恢复并接续', async () => {
+    test('内存无快照时，从当前对话持久化记录恢复并接续', async () => {
         const persisted: Record<string, unknown> = {
             cont_restored: {
                 runId: 'cont_restored',
@@ -247,7 +235,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
             setCustomMetadata: jest.fn(async () => {})
         };
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({
             conversationId: 'conv_1',
             conversationStore: store as any
         }));
@@ -271,7 +259,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         expect(JSON.stringify(snapshot.contents[1])).toContain('SubAgent Invocation');
     });
 
-    it('持久化记录带 lastSentHistory 时，恢复后接续以它为前缀（而非卡片 contents）', async () => {
+    test('持久化记录带 lastSentHistory 时，恢复后接续以它为前缀（而非卡片 contents）', async () => {
         const persisted: Record<string, unknown> = {
             cont_restored_lsh: {
                 runId: 'cont_restored_lsh',
@@ -296,7 +284,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
             setCustomMetadata: jest.fn(async () => {})
         };
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({
             conversationId: 'conv_1',
             conversationStore: store as any
         }));
@@ -327,7 +315,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         expect(JSON.stringify(snapshot.contents[2])).toContain('SubAgent Invocation');
     });
 
-    it('旧记录缺 lastSentHistory 时降级：过滤掉 # SubAgent Invocation 卡片，其余保留', async () => {
+    test('旧记录缺 lastSentHistory 时降级：过滤掉 # SubAgent Invocation 卡片，其余保留', async () => {
         const persisted: Record<string, unknown> = {
             cont_legacy: {
                 runId: 'cont_legacy',
@@ -350,7 +338,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
             setCustomMetadata: jest.fn(async () => {})
         };
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({
             conversationId: 'conv_1',
             conversationStore: store as any
         }));
@@ -373,7 +361,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         expect(JSON.stringify(snapshot.contents[3])).toContain('SubAgent Invocation');
     });
 
-    it('恢复出的快照仍执行会话归属校验（归属不同时拒绝）', async () => {
+    test('恢复出的快照仍执行会话归属校验（归属不同时拒绝）', async () => {
         // 持久化记录里没有 conversationId 字段，恢复时会被标记为当前对话
         const persisted: Record<string, unknown> = {
             cont_foreign: {
@@ -396,7 +384,7 @@ describe('SubAgent 接续 - 持久化快照恢复（F-09）', () => {
         await subAgentRunEventBus.loadConversationSnapshots('conv_A', store as any);
 
         // 再用 conv_B 接续同一 run：内存快照已存在（conversationId=conv_A），必须被拒绝
-        const executor = createDefaultExecutor(createConfig(), createContext({ conversationId: 'conv_B' }));
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext({ conversationId: 'conv_B' }));
         const result = await executor({
             agentType: 'tester',
             prompt: 'x',
