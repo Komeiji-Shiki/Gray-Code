@@ -387,8 +387,9 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
                 // 绝对路径检查文件存在
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
-                // 使用 where 检查 PATH
-                cp.execSync(`where ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+                // 使用 where 检查 PATH：参数必须通过 argv 传递，不能拼进 shell 命令——
+                // customPath 属于用户可控配置，字符串拼接存在命令注入风险（与异步版 276 行同口径）
+                cp.execFileSync('where.exe', [shellPath], { timeout: 3000, stdio: 'ignore' });
             }
         } else {
             // 绝对路径检查文件存在
