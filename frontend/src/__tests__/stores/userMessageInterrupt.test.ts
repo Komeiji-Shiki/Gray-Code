@@ -132,6 +132,42 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(state.allMessages.value.map(m => m.role)).toEqual(['user', 'assistant'])
   })
 
+  test('chatStream 回执时目标标签页已消失：回收本次占位与等待状态', async () => {
+    let resolveStream!: (value: { success: boolean }) => void
+    const streamResponse = new Promise<{ success: boolean }>(resolve => {
+      resolveStream = resolve
+    })
+    vi.mocked(sendToExtension).mockImplementation((type: string) => {
+      if (type === 'chatStream') return streamResponse
+      if (type === 'getWorkspaceUri') return Promise.resolve(null)
+      return Promise.resolve({ success: true })
+    })
+
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 0 } as any]),
+      openTabs: ref([{ id: 'tab_1', conversationId: 'conv_1', title: 't', isStreaming: false }])
+    })
+
+    const sending = sendMessage(state, createComputed(), '首条消息')
+    await vi.waitFor(() => {
+      expect(vi.mocked(sendToExtension).mock.calls.some(call => call[0] === 'chatStream')).toBe(true)
+    })
+
+    // 模拟启动重置/标签页关闭竞态：当前状态仍持有本次流标记，但已没有标签页接收终结 chunk。
+    state.currentConversationId.value = null
+    state.openTabs.value = []
+    resolveStream({ success: true })
+
+    expect(await sending).toBe(false)
+    expect(state.allMessages.value).toEqual([])
+    expect(state.streamingMessageId.value).toBeNull()
+    expect(state.activeStreamId.value).toBeNull()
+    expect(state.isStreaming.value).toBe(false)
+    expect(state.isWaitingForResponse.value).toBe(false)
+  })
+
   test('后台任务回执来源随 chatStream 请求传给后端', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
@@ -172,7 +208,9 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
       isStreaming: ref(true),
-      isWaitingForResponse: ref(true)
+      isWaitingForResponse: ref(true),
+      // activeStreamId 非空才表示主流仍在活跃输出；null 是审批门闸暂停态，隐藏确认应放行。
+      activeStreamId: ref('stream_active')
     })
 
     const result = await sendMessage(state, createComputed(), '', undefined, {

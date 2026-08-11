@@ -46,9 +46,9 @@ const languageLoaded = ref(false)
 const startupSplashEnabled = window.__GRAYCODE_STARTUP_SPLASH_ENABLED !== false
 // 主界面启动数据是否已完成初始化；关闭开屏动画时据此结束专属占位画面。
 const mainViewInitialized = ref(false)
-// Splash/初始化期间到达的 newChat 命令：initialize 的首次状态重置（清空会话/建空白标签页）
-// 会覆盖先执行的 createNewConversation 结果，先挂起、初始化完成后补执行（见 onMounted finally）。
-// 用计数器而非布尔：初始化期间可能连续到达多个 newChat 命令（扩展侧多次触发），逐个补执行不丢失
+// Splash/初始化期间到达的 newChat 命令：命令监听器早于 chatStore.initialize 注册，
+// 因而命令可能在首次空白标签页尚未同步建立前到达。先挂起，关键聊天初始化完成后逐个补执行；
+// 用计数器而非布尔，避免初始化期间连续到达多个 newChat 命令时合并丢失。
 let pendingNewChat = 0
 // 开始动画是否已完成（Splash 淡出后置 true，移除组件）
 const splashDone = ref(false)
@@ -550,9 +550,8 @@ onMounted(async () => {
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
 
-  // 启动时预加载渠道配置列表（幂等、静默失败）：首次打开「设置 → 渠道」页直接复用缓存，无需等待加载
-  void preloadChannelConfigs()
-
+  // 渠道列表预加载属于非关键启动任务：必须等聊天状态初始化结束后再启动。
+  // 否则逐渠道 config.getConfig 会占用扩展端串行消息队列，推迟空白标签页建立与首条发送。
   disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
   disposeVisibilityHooks = registerVisibilityChangeHooks()
   
@@ -564,8 +563,8 @@ onMounted(async () => {
       switch (message.command) {
         case 'newChat':
           if (!mainViewInitialized.value) {
-            // 初始化完成前挂起：chatStore.initialize 的首次状态重置（清空会话/建空白标签页）
-            // 会覆盖先执行的 createNewConversation，待 onMounted finally 初始化完成后补执行。
+            // 初始化完成前挂起：监听器可能早于 chatStore.initialize 收到命令，
+            // 此时首次空白标签页尚未建立；待关键聊天状态就绪后逐个补执行。
             // 计数器累加：初始化期间的多个 newChat 命令全部补执行，不合并丢失
             pendingNewChat++
           } else {
@@ -648,6 +647,8 @@ onMounted(async () => {
   } catch (err) {
     console.error('[App] chatStore.initialize failed', err)
   } finally {
+    // 关键聊天状态已就绪后再启动渠道预加载；InputArea 挂载时复用同一在途缓存，不重复请求。
+    void preloadChannelConfigs()
     mainViewInitialized.value = true
     // 补执行初始化期间挂起的 newChat 命令（首次状态重置已完成，不会再被覆盖）；
     // 挂起计数可能 >1（初始化期间多个 newChat 命令），循环逐个补执行
@@ -684,7 +685,7 @@ onBeforeUnmount(() => {
 
     <Splash
       v-if="!splashDone && startupSplashEnabled"
-      :ready="languageLoaded"
+      :ready="languageLoaded && mainViewInitialized"
       @done="splashDone = true"
     />
     
@@ -772,8 +773,9 @@ onBeforeUnmount(() => {
       <!-- 后台任务状态条（有任务时显示） -->
       <BackgroundTaskBar />
 
-      <!-- 输入区域（始终显示） -->
+      <!-- 输入区域（关键聊天初始化完成后挂载，避免启动 IPC 在途时触发首条发送竞态） -->
       <InputArea
+        v-if="mainViewInitialized"
         :attachments="attachments"
         :uploading="uploading"
         @send="handleSend"

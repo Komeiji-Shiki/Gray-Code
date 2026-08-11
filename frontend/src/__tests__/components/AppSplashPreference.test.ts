@@ -28,7 +28,8 @@ const runtime = vi.hoisted(() => ({
   setLanguage: vi.fn(),
   cleanupAudioHooks: vi.fn(),
   cleanupVisibilityHooks: vi.fn(),
-  disposeAgentStopController: vi.fn()
+  disposeAgentStopController: vi.fn(),
+  preloadChannelConfigs: vi.fn().mockResolvedValue(undefined)
 }))
 
 vi.mock('pinia', () => ({
@@ -129,6 +130,10 @@ vi.mock('../../services/agentStopNotificationController', () => ({
   }))
 }))
 
+vi.mock('../../services/channelConfigCache', () => ({
+  preloadChannelConfigs: runtime.preloadChannelConfigs
+}))
+
 vi.mock('../../stores/chat/smoothStreamManager', () => ({
   disposeAllSmoothStreams: vi.fn()
 }))
@@ -212,6 +217,8 @@ describe('App 开屏动画启动偏好', () => {
     runtime.onMessageFromExtension.mockClear()
     runtime.configureSoundSettings.mockClear()
     runtime.setLanguage.mockClear()
+    runtime.preloadChannelConfigs.mockClear()
+    runtime.preloadChannelConfigs.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -226,6 +233,25 @@ describe('App 开屏动画启动偏好', () => {
 
     expect(wrapper.find('.startup-backdrop').exists()).toBe(false)
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
+  })
+
+  test('语言已加载但聊天初始化未完成时保持 Splash，且不提前挂载输入区', async () => {
+    const chatInitialization = deferred<void>()
+    runtime.chatStore.initialize.mockReturnValueOnce(chatInitialization.promise)
+
+    wrapper = mount(App)
+    settingsRequest.resolve(makeSettingsResponse(true))
+    await flushPromises()
+
+    expect(wrapper.getComponent({ name: 'Splash' }).props('ready')).toBe(false)
+    expect(wrapper.findComponent({ name: 'InputArea' }).exists()).toBe(false)
+
+    chatInitialization.resolve()
+    await flushPromises()
+
+    expect(wrapper.getComponent({ name: 'Splash' }).props('ready')).toBe(true)
+    expect(wrapper.findComponent({ name: 'InputArea' }).exists()).toBe(true)
+    expect(runtime.preloadChannelConfigs).toHaveBeenCalledTimes(1)
   })
 
   test('同步偏好关闭时首帧立即显示关闭态占位，从始至终不挂载 Splash', async () => {
