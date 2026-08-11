@@ -10,10 +10,9 @@
 
 import type { Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../../types'
 import type { ChatStoreState, CheckpointRecord } from '../types'
-import { triggerRef } from 'vue'
 import { generateId } from '../../../utils/format'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
-import { appendMessage, buildToolResponseIndex, getMessageIndexById, replaceMessageAt } from '../state'
+import { appendMessage, buildToolResponseIndex, getMessageIndexById, replaceMessageAt, setToolResponseCacheEntries } from '../state'
 import { getToolApprovalStopKind } from '../../../utils/toolContinuations'
 import {
   contentToPersistedMessage,
@@ -385,16 +384,14 @@ export function handleAwaitingConfirmation(
       trimWindowFromTop(state)
 
       // 同步填充工具响应缓存，加速后续 getToolResponseById 查询
+      // （批量写入末尾统一 triggerRef 一次，带容量上限淘汰，见 state.ts setToolResponseCacheEntries）
+      const cacheEntries: Array<[string, Record<string, unknown>]> = []
       for (const p of newParts) {
         if (p.functionResponse.id && p.functionResponse.response) {
-          state.toolResponseCache.value.set(
-            p.functionResponse.id,
-            p.functionResponse.response as Record<string, unknown>
-          )
+          cacheEntries.push([p.functionResponse.id, p.functionResponse.response as Record<string, unknown>])
         }
       }
-      // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
-      triggerRef(state.toolResponseCache)
+      setToolResponseCacheEntries(state, cacheEntries)
     }
   }
 
@@ -551,17 +548,14 @@ export function handleToolIteration(
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
 
-      // 同步填充工具响应缓存
+      // 同步填充工具响应缓存（批量写入末尾统一 triggerRef 一次，带容量上限淘汰，见 state.ts setToolResponseCacheEntries）
+      const cacheEntries: Array<[string, Record<string, unknown>]> = []
       for (const p of parts) {
         if (p.functionResponse.id && p.functionResponse.response) {
-          state.toolResponseCache.value.set(
-            p.functionResponse.id,
-            p.functionResponse.response as Record<string, unknown>
-          )
+          cacheEntries.push([p.functionResponse.id, p.functionResponse.response as Record<string, unknown>])
         }
       }
-      // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
-      triggerRef(state.toolResponseCache)
+      setToolResponseCacheEntries(state, cacheEntries)
     }
   }
   

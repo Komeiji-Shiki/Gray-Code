@@ -126,6 +126,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     /** pendingCommands 超时兜底定时器：webview 长时间未 ready 时清空队列并告警（F7） */
     private pendingCommandsFlushTimer?: NodeJS.Timeout;
     private static readonly PENDING_COMMANDS_TIMEOUT_MS = 30_000;
+
+    // 终端输出事件节流批处理（50ms 窗口合并高频 stdout/stderr data 事件为一条数组消息，
+    // 降低扩展宿主序列化成本；参考 StreamChunkProcessor 的节流模式：leading + trailing）
+    private static readonly TERMINAL_OUTPUT_THROTTLE_MS = 50;
+    private terminalOutputBuffer: TerminalOutputEvent[] = [];
+    private terminalOutputThrottleTimer?: NodeJS.Timeout;
+    private lastTerminalOutputFlush = 0;
     
     // Diff 预览内容提供者
     private diffPreviewProvider: DiffPreviewContentProvider;
@@ -319,12 +326,53 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     
     /**
      * 处理终端输出事件，推送到前端
+     *
+     * 50ms 节流批处理：processRunner 的 stdout/stderr data 事件逐 chunk 高频到达
+     * （npm 进度/日志流），直发 webview 时序列化成本全量压到扩展宿主。短窗口内的
+     * 多条事件合并为一条数组消息（leading 首个事件低延迟 + trailing 窗口末尾补发），
+     * 前端按顺序逐条处理，语义与逐条发送一致。
      */
     private handleTerminalOutputEvent(event: TerminalOutputEvent): void {
         if (!this._view) return;
         // R2-07 注释修正：无视图时事件直接丢弃（不排队）；视图存在但未 ready 时
         // 由 sendCommand 自动入队、ready 后 flush（F4）
-        this.sendCommand(PUSH_MESSAGE_NAMES.terminalOutput, event);
+        this.terminalOutputBuffer.push(event);
+        this.scheduleTerminalOutputFlush();
+    }
+
+    /** 调度终端输出节流 flush（leading + trailing，参考 StreamChunkProcessor） */
+    private scheduleTerminalOutputFlush(): void {
+        const now = Date.now();
+        const elapsed = now - this.lastTerminalOutputFlush;
+        if (elapsed >= ChatViewProvider.TERMINAL_OUTPUT_THROTTLE_MS) {
+            // 距上次 flush 已足够久：立即发送（首个事件低延迟）
+            this.flushTerminalOutput();
+            return;
+        }
+        if (this.terminalOutputThrottleTimer === undefined) {
+            // 同一时间只有一个节流定时器，新事件会被合并进同一批
+            this.terminalOutputThrottleTimer = setTimeout(() => {
+                this.terminalOutputThrottleTimer = undefined;
+                this.flushTerminalOutput();
+            }, ChatViewProvider.TERMINAL_OUTPUT_THROTTLE_MS - elapsed);
+            (this.terminalOutputThrottleTimer as { unref?: () => void }).unref?.();
+        }
+    }
+
+    /** 立即发送缓冲的终端输出事件（单条保持原结构，多条合并为数组消息） */
+    private flushTerminalOutput(): void {
+        if (this.terminalOutputThrottleTimer !== undefined) {
+            clearTimeout(this.terminalOutputThrottleTimer);
+            this.terminalOutputThrottleTimer = undefined;
+        }
+        if (this.terminalOutputBuffer.length === 0) {
+            return;
+        }
+        const batch = this.terminalOutputBuffer;
+        this.terminalOutputBuffer = [];
+        this.lastTerminalOutputFlush = Date.now();
+        // 单条保持原消息结构（向前兼容）；多条合并为一条数组消息，前端按顺序逐条处理
+        this.sendCommand(PUSH_MESSAGE_NAMES.terminalOutput, batch.length === 1 ? batch[0] : batch);
     }
     
     /**
@@ -874,6 +922,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 取消 pendingCommands 超时兜底定时器（F7）
         this.clearPendingCommandsTimeout();
+
+        // 清除终端输出节流定时器与未发送缓冲（dispose 后不再 flush）
+        if (this.terminalOutputThrottleTimer !== undefined) {
+            clearTimeout(this.terminalOutputThrottleTimer);
+            this.terminalOutputThrottleTimer = undefined;
+        }
+        this.terminalOutputBuffer = [];
 
         // 显式释放 Diff 预览内容提供者（内容缓存 + emitter；F3）
         this.diffPreviewProvider.dispose();

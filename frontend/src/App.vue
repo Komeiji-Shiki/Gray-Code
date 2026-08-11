@@ -261,8 +261,11 @@ function handleNewTab() {
 }
 
 // 处理发送消息
-async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }) {
-  if (!content.trim() && messageAttachments.length === 0) return
+async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }, onSendResult?: (ok: boolean) => void) {
+  if (!content.trim() && messageAttachments.length === 0) {
+    onSendResult?.(false)
+    return
+  }
 
   // 有待确认工具时：发送即中断——先拒绝待确认工具并结束当前回合，
   // 再走正常发送路径把消息作为新回合发出。此前的"批注+批量拒绝"语义
@@ -290,6 +293,9 @@ async function handleSend(content: string, messageAttachments: Attachment[], opt
   if (!sent && messageAttachments.length > 0) {
     storeAttachmentsRef.value.push(...messageAttachments)
   }
+  // 把发送结果回报给 InputArea：失败时由 InputArea 恢复正文（editorNodes + inputValue），
+  // 与附件恢复一起保证“发送失败不丢用户输入”
+  onSendResult?.(sent)
 }
 
 // 处理取消请求

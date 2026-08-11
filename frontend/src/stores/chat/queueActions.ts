@@ -149,8 +149,16 @@ export async function sendQueuedMessageNow(
 
   // “立即发送”会替换当前回合；先要求后端同步解除前台 SubAgent 的父信号绑定，
   // 再取消旧流，避免子 Agent 在新流创建前已经被父级 abort 终止。
+  // cancelStream 抛错（本地状态机异常/IPC 意外失败）时本次投递中止：把消息放回队首
+  // 保持原顺序，等待下次动作边界/回合结束重试，保证任何路径下排队消息不静默丢失。
   if (state.isWaitingForResponse.value) {
-    await deps.cancelStream({ preserveSubAgents: true })
+    try {
+      await deps.cancelStream({ preserveSubAgents: true })
+    } catch (err) {
+      console.error('[chatStore] cancelStream failed during immediate send, put back to queue head:', err)
+      state.messageQueue.value = [item, ...state.messageQueue.value]
+      throw err
+    }
   }
 
   // 发送消息

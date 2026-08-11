@@ -99,6 +99,21 @@ export function parseStreamBuffer(buffer: string, final = false): StreamBufferPa
             }
         }
 
+        // 修复：chunk 末尾被网络包切开的半行（"data:" 前缀的一部分，如 "da" / "data"，
+        // 或恰好切在冒号后的 "data:"）既进不了 currentData（不以 data: 开头的行被忽略，
+        // 空内容的 data: 行也不会累积），下一包的 "ta: {...}" 又因不以 data: 开头被忽略
+        // → SSE JSON 事件静默丢失且不报错。
+        // 只要 buffer 未以换行结尾，最后一行就是半行：无论是否以 data: 开头都并入 remaining
+        // 等下一包拼接。完整 JSON 已进 chunks、累积进 currentData 的半行已由上方重建进
+        // remaining，二者都不再重复追加（否则下一包会重复解析）；流结束时无需保留，直接丢弃。
+        if (!final && !/\r?\n$/.test(buffer)) {
+            const lastLine = lines[lines.length - 1];
+            if (lastLine.length > 0
+                && (!lastLine.startsWith('data:') || lastLine.slice(5).trim() === '')) {
+                remaining = remaining ? `${remaining}\n${lastLine}` : lastLine;
+            }
+        }
+
         return { chunks, remaining };
     }
 

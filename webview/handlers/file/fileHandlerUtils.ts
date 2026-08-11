@@ -4,6 +4,9 @@
  * 拆分 FileHandlers.ts 时提取的公共部分（域 A）：
  * - 附件大小上限常量：FileReadHandlers / FilePreviewHandlers / FileOpenHandlers 共用
  * - isUriInsideWorkspace：纯路径工作区包含性校验（不 stat，可用于未创建的新文件）
+ * - isUriInsideWorkspaceRealpath：realpath 感知的工作区包含性校验（由 workspaceRealpath.ts
+ *   提供，FileReadHandlers / FilePreviewHandlers / FileOpenHandlers / PinnedFileHandlers
+ *   的 workspace 校验统一走它，防止工作区内 symlink 指向工作区外文件时被放行）
  * - getWorkspaceUri / getRelativePath：工作区信息消息处理器
  */
 
@@ -13,6 +16,9 @@ import * as path from 'path';
 import { t } from '../../../backend/i18n';
 import type { MessageHandler } from '../../types';
 import { getRelativePathFromAbsolute } from '../../utils/WorkspaceUtils';
+
+// realpath 感知的工作区包含性校验（实现见 webview/utils/workspaceRealpath.ts）
+export { isUriInsideWorkspaceRealpath } from '../../utils/workspaceRealpath';
 
 // ========== 附件大小上限 ==========
 
@@ -31,7 +37,10 @@ export const MAX_BASE64_ATTACHMENT_LENGTH = Math.ceil(MAX_ATTACHMENT_SIZE_BYTES 
  * 纯路径包含性校验：判断 URI 是否位于任意已打开的工作区内。
  *
  * 与 validateFileInWorkspace 不同：该函数不访问文件系统（不 stat），
- * 因此可用于尚未创建的新文件场景（如 saveImageToPath）。
+ * 因此可用于尚未创建的新文件场景（如 saveImageToPath 的目录侧预检）。
+ *
+ * 注意：该函数只做词法前缀匹配，不解析符号链接；涉及真实文件读写的
+ * workspace 校验请使用 isUriInsideWorkspaceRealpath（realpath 感知）。
  */
 export function isUriInsideWorkspace(uri: vscode.Uri): boolean {
   // 优先使用 VSCode API

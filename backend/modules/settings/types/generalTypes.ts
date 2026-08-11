@@ -374,7 +374,11 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     },
     ui: {
         theme: 'auto',
-        language: 'zh-CN',
+        // 默认 'auto'：跟随 VS Code 语言环境（PromptManager.getUserLanguage 的 'auto'
+        // 分支返回 vscode.env.language）。旧默认 'zh-CN' 会让 initialize() 深合并后恒为
+        // 中文，非中文用户被强制下发中文回复指示；且 VSCodeSettingsStorage 首次 save 会
+        // 把 'zh-CN' 固化并随 Settings Sync 扩散。'auto' 是合法值，固化无副作用。
+        language: 'auto',
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）
             loadingText: '',

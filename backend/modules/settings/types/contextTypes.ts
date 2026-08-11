@@ -123,7 +123,7 @@ export interface ContextAwarenessConfig {
  * 默认诊断信息配置
  */
 export const DEFAULT_DIAGNOSTICS_CONFIG: DiagnosticsConfig = {
-    enabled: true,
+    enabled: false,
     includeSeverities: ['error', 'warning'],
     workspaceOnly: true,
     openFilesOnly: false,

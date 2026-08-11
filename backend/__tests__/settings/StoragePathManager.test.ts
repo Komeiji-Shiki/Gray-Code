@@ -1,7 +1,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import { StoragePathManager } from '../../modules/settings/StoragePathManager';
+import { StoragePathManager, isSameStoragePath } from '../../modules/settings/StoragePathManager';
 
 interface TestStorageConfig {
     customDataPath?: string;
@@ -171,5 +171,44 @@ describe('StoragePathManager', () => {
             lastMigrationAt: 123,
             migrationError: 'copy failed'
         });
+    });
+
+    // ===== Windows 大小写不敏感路径（同路径判定） =====
+
+    test('isSameStoragePath: Windows 下大小写变体视为同一路径', () => {
+        expect(isSameStoragePath('D:\\GrayCode', 'd:\\graycode', 'win32')).toBe(true);
+        expect(isSameStoragePath('d:/graycode', 'D:\\GrayCode', 'win32')).toBe(true);
+    });
+
+    test('isSameStoragePath: 非 Windows 保持大小写敏感', () => {
+        expect(isSameStoragePath('/data/GrayCode', '/data/graycode', 'linux')).toBe(false);
+        expect(isSameStoragePath('/data/GrayCode', '/data/GrayCode', 'linux')).toBe(true);
+    });
+
+    test('migrateData: Windows 大小写变体目标路径直接短路（同路径），不触发迁移', async () => {
+        const originalPlatform = process.platform;
+        Object.defineProperty(process, 'platform', { value: 'win32' });
+        try {
+            // 大小写变体与当前存储路径指向同一目录：必须短路返回，
+            // 否则 staging 复制到同一目录后 removeStorageData 会清空全部存储子目录（数据全丢）
+            const settingsManager = createSettingsManager();
+            const manager = new StoragePathManager(
+                settingsManager as any,
+                { globalStorageUri: { fsPath: defaultPath } } as any
+            );
+            const caseVariant = path.join(
+                path.dirname(defaultPath),
+                path.basename(defaultPath).toUpperCase()
+            );
+
+            const result = await manager.migrateData(caseVariant);
+
+            expect(result).toEqual({ success: true, copiedFiles: 0 });
+            // 短路：未进入任何迁移/标记/清理流程
+            expect(settingsManager.markMigrationStarted).not.toHaveBeenCalled();
+            expect(settingsManager.updateStoragePathConfig).not.toHaveBeenCalled();
+        } finally {
+            Object.defineProperty(process, 'platform', { value: originalPlatform });
+        }
     });
 });
