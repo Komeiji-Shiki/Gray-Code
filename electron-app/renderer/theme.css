@@ -139,13 +139,21 @@
 
 body.graycode-desktop-theme-light {
   color-scheme: light;
-  --vscode-foreground: #383a42;
-  --vscode-disabledForeground: rgba(56, 58, 66, 0.45);
+  /* color-mix 内的 var() 在 Chromium 按「定义点」解析（非惰性）：style.css 的 :root
+     定义会锁死暗色 --vscode-* 值（亮色下输入框/面板/消息区仍为暗灰底），
+     亮色块必须重定义 surface 变量，让 color-mix 在 body 层解析到亮色值。 */
+  --gc-surface-editor-bg: color-mix(in srgb, var(--vscode-editor-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  --gc-surface-input-bg: color-mix(in srgb, var(--vscode-input-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  --gc-surface-sidebar-bg: color-mix(in srgb, var(--vscode-sideBar-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  --gc-surface-dropdown-bg: color-mix(in srgb, var(--vscode-dropdown-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  /* 亮色前景统一加深为近黑（#1f1f1f），保证可读性（此前 #383a42 偏灰） */
+  --vscode-foreground: #1f1f1f;
+  --vscode-disabledForeground: rgba(31, 31, 31, 0.45);
   --vscode-errorForeground: #d1242f;
-  --vscode-descriptionForeground: #6e6e6e;
-  --vscode-icon-foreground: #424242;
+  --vscode-descriptionForeground: #4d4d4d;
+  --vscode-icon-foreground: #1f1f1f;
   --vscode-editor-background: #ffffff;
-  --vscode-editor-foreground: #383a42;
+  --vscode-editor-foreground: #1f1f1f;
   --vscode-editor-selectionBackground: #add6ff;
   --vscode-editor-inactiveSelectionBackground: #e5ebf1;
   --vscode-editor-findMatchHighlightBackground: rgba(234, 92, 0, 0.2);
@@ -160,12 +168,12 @@ body.graycode-desktop-theme-light {
   --vscode-button-hoverBackground: #1177bb;
   --vscode-button-border: rgba(0, 0, 0, 0.1);
   --vscode-button-secondaryBackground: #e4e4e4;
-  --vscode-button-secondaryForeground: #383a42;
+  --vscode-button-secondaryForeground: #1f1f1f;
   --vscode-button-secondaryHoverBackground: #d6d6d6;
   --vscode-input-background: #ffffff;
-  --vscode-input-foreground: #383a42;
+  --vscode-input-foreground: #1f1f1f;
   --vscode-input-border: #cecece;
-  --vscode-input-placeholderForeground: #6e6e6e;
+  --vscode-input-placeholderForeground: #7a7a7a;
   --vscode-inputValidation-errorBackground: #f8d7da;
   --vscode-inputValidation-errorForeground: #d1242f;
   --vscode-inputValidation-errorBorder: #d1242f;
@@ -176,17 +184,17 @@ body.graycode-desktop-theme-light {
   --vscode-inputValidation-infoForeground: #0066bf;
   --vscode-inputValidation-infoBorder: #0090f1;
   --vscode-dropdown-background: #ffffff;
-  --vscode-dropdown-foreground: #383a42;
+  --vscode-dropdown-foreground: #1f1f1f;
   --vscode-dropdown-border: #cecece;
   --vscode-checkbox-background: #ffffff;
   --vscode-checkbox-border: #a0a0a0;
-  --vscode-checkbox-foreground: #383a42;
+  --vscode-checkbox-foreground: #1f1f1f;
   --vscode-list-activeSelectionBackground: #0060c0;
   --vscode-list-activeSelectionForeground: #ffffff;
   --vscode-list-hoverBackground: #e8e8e8;
   --vscode-list-warningForeground: #9a6700;
   --vscode-tab-activeBackground: #ffffff;
-  --vscode-tab-activeForeground: #333333;
+  --vscode-tab-activeForeground: #1f1f1f;
   --vscode-tab-inactiveForeground: #666666;
   --vscode-tab-hoverBackground: #f2f2f2;
   --vscode-tab-activeBorderTop: #0066bf;
@@ -197,13 +205,13 @@ body.graycode-desktop-theme-light {
   --vscode-editorWidget-border: #c8c8c8;
   --vscode-editorHoverWidget-background: #f3f3f3;
   --vscode-editorHoverWidget-border: #c8c8c8;
-  --vscode-editorHoverWidget-foreground: #383a42;
+  --vscode-editorHoverWidget-foreground: #1f1f1f;
   --vscode-editorHoverWidget-statusBarBackground: #0060c0;
   --vscode-panel-border: #e0e0e0;
   --vscode-widget-border: #c8c8c8;
   --vscode-widget-shadow: rgba(0, 0, 0, 0.18);
   --vscode-badge-background: #c4c4c4;
-  --vscode-badge-foreground: #333333;
+  --vscode-badge-foreground: #1f1f1f;
   --vscode-progressBar-background: #0e70c0;
   --vscode-statusBarItem-prominentBackground: #388a34;
   --vscode-statusBarItem-prominentForeground: #ffffff;
@@ -219,7 +227,7 @@ body.graycode-desktop-theme-light {
   --vscode-keybindingLabel-border: rgba(0, 0, 0, 0.2);
   --vscode-keybindingLabel-bottomBorder: rgba(0, 0, 0, 0.25);
   --vscode-terminal-background: #ffffff;
-  --vscode-terminal-foreground: #333333;
+  --vscode-terminal-foreground: #1f1f1f;
   --vscode-terminal-ansiRed: #d1242f;
   --vscode-terminal-ansiGreen: #1a7f37;
   --vscode-terminal-ansiYellow: #9a6700;
@@ -262,10 +270,10 @@ body.graycode-desktop-theme-light {
   --vscode-meta-foreground: #800000;
   --vscode-notifications-background: #ffffff;
   --vscode-notifications-border: #cccccc;
-  --vscode-notifications-foreground: #333333;
+  --vscode-notifications-foreground: #1f1f1f;
   --vscode-warningForeground: #9a6700;
-  --vscode-settings-headerForeground: #444444;
-  --vscode-settings-numberInputForeground: #333333;
+  --vscode-settings-headerForeground: #1f1f1f;
+  --vscode-settings-numberInputForeground: #1f1f1f;
   --vscode-settings-rowHoverBackground: #f2f2f2;
   --vscode-editor-font-size: 13px;
 }
