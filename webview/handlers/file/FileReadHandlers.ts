@@ -12,7 +12,7 @@ import * as path from 'path';
 import { t } from '../../../backend/i18n';
 import type { MessageHandler } from '../../types';
 import {
-  isUriInsideWorkspace,
+  isUriInsideWorkspaceRealpath,
   MAX_TEXT_FILE_SIZE_BYTES,
   MAX_ATTACHMENT_SIZE_BYTES
 } from './fileHandlerUtils';
@@ -176,7 +176,8 @@ export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx
 
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
 
-    if (!isUriInsideWorkspace(fileUri)) {
+    // realpath 感知校验：防止工作区内 symlink 指向工作区外文件时被词法前缀匹配放行
+    if (!(await isUriInsideWorkspaceRealpath(fileUri))) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
       return;
     }
@@ -229,7 +230,8 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
 
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
 
-    if (!isUriInsideWorkspace(fileUri)) {
+    // realpath 感知校验：防止工作区内 symlink 指向工作区外文件时被词法前缀匹配放行
+    if (!(await isUriInsideWorkspaceRealpath(fileUri))) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
       return;
     }

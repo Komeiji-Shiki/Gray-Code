@@ -13,7 +13,6 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
-import { triggerRef } from 'vue'
 import { sendToExtension } from '../../../utils/vscode'
 import { generateId } from '../../../utils/format'
 import { createAndPersistConversation, syncConversationWorkspaceUri } from '../conversationActions'
@@ -21,7 +20,7 @@ import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt } from '../state'
+import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt, setToolResponseCacheEntry } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
 
@@ -299,8 +298,8 @@ function upsertHiddenFunctionResponseMessage(
             .find(p => p.functionResponse?.id === payload.id)
             ?.functionResponse?.response as Record<string, unknown> | undefined
           if (mergedResponse) {
-            state.toolResponseCache.value.set(payload.id, mergedResponse)
-            triggerRef(state.toolResponseCache)
+            // 带容量上限写入（超限淘汰最旧条目），见 state.ts setToolResponseCacheEntry
+            setToolResponseCacheEntry(state, payload.id, mergedResponse)
           }
         }
         return

@@ -12,6 +12,11 @@ import { URL } from 'url';
 import { ChannelError, ErrorType } from './types';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
+/** chunked 结束标记（'0\r\n\r\n' 与 '\r\n0\r\n' 均为 4 字节）：增量扫描保留末 3 字节用于跨包检测 */
+const CHUNKED_END_MARKER = Buffer.from('0\r\n\r\n');
+const CHUNKED_END_MARKER_ALT = '\r\n0\r\n';
+const CHUNKED_END_MARKER_LEN = 4;
+
 /**
  * 解析是否跳过 TLS 证书校验。
  *
@@ -464,6 +469,11 @@ function sendRequestOverSocket(
     let isChunked = false;
     let headerEndIndex = -1;
     let responseHeaders: Record<string, string> = {};
+    // chunked 结束标记的增量扫描状态（#38 修复：逐 data 事件对整段累积体做
+    // Buffer.concat + includes 探测结束标记是 O(n²)；改为只探测新增尾部，跨包标记靠
+    // 保留上一探测末尾 CHUNKED_END_MARKER_LEN-1 字节兜住，探测结果语义与全量扫描一致）
+    let chunkedBodyScanOffset = 0;
+    let chunkedBodyScanTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
     // 流式响应体状态（bodySink 提供时启用）：头解析完成后立即 resolve（status/headers 可用），
     // body 字节经 bodySink 逐包转交 ReadableStream；连接异常/中止经 bodySink.error 传播。
@@ -585,6 +595,56 @@ function sendRequestOverSocket(
         return true;
     };
 
+    /**
+     * 提取「尚未探测过的 body 新增字节」（相对 header 之后的 body 区）。
+     *
+     * 常规路径（后续 data 事件）新字节落在最新 chunk 尾部，零拷贝 subarray 直接取；
+     * 仅首次探测（header 与 body 同包）才需要跨 chunk 收集，且只发生一次。
+     */
+    const collectNewBodyBytes = (): Buffer => {
+        const bodyStart = headerEndIndex + 4;
+        const newStart = bodyStart + chunkedBodyScanOffset;
+        if (newStart >= receivedLength) {
+            return Buffer.alloc(0);
+        }
+        const lastChunk = chunks[chunks.length - 1];
+        const lastChunkStart = receivedLength - lastChunk.length;
+        if (newStart >= lastChunkStart) {
+            // 新字节全在最新 chunk 内（后续 data 事件的常规路径）
+            return lastChunk.subarray(newStart - lastChunkStart);
+        }
+        // 首次探测：从 header 所在 chunk 的中部开始，跨到后续 chunk
+        const parts: Buffer[] = [];
+        let offset = 0;
+        for (const chunk of chunks) {
+            const chunkEnd = offset + chunk.length;
+            if (chunkEnd <= newStart) {
+                offset = chunkEnd;
+                continue;
+            }
+            parts.push(chunk.subarray(Math.max(0, newStart - offset)));
+            offset = chunkEnd;
+        }
+        return Buffer.concat(parts);
+    };
+
+    /** chunked body 结束标记探测（增量版）：只扫「新增尾部 + 上一探测保留的 3 字节」 */
+    const hasChunkedEndMarker = (): boolean => {
+        const bodyReceived = receivedLength - headerEndIndex - 4;
+        if (bodyReceived <= chunkedBodyScanOffset) {
+            // 无新增字节（end/close 重复调用）：此前未命中即仍未命中
+            return false;
+        }
+        const newBytes = collectNewBodyBytes();
+        chunkedBodyScanOffset = bodyReceived;
+        const window = chunkedBodyScanTail.length > 0
+            ? Buffer.concat([chunkedBodyScanTail, newBytes])
+            : newBytes;
+        // 只保留窗口末尾 3 字节：下一包探测时与新增字节拼接，跨包结束标记也能命中
+        chunkedBodyScanTail = window.subarray(Math.max(0, window.length - (CHUNKED_END_MARKER_LEN - 1)));
+        return window.includes(CHUNKED_END_MARKER) || window.toString('utf8').includes(CHUNKED_END_MARKER_ALT);
+    };
+
     const isResponseComplete = (): boolean => {
         if (!headersParsed) {
             return false;
@@ -595,12 +655,7 @@ function sendRequestOverSocket(
         }
 
         if (isChunked) {
-            const fullBuffer = Buffer.concat(chunks);
-            const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
-            const endMarker = Buffer.from('0\r\n\r\n');
-            const hasEnd = bodyBuffer.includes(endMarker);
-            const hasEndAlt = bodyBuffer.toString('utf8').includes('\r\n0\r\n');
-            return hasEnd || hasEndAlt;
+            return hasChunkedEndMarker();
         }
 
         return false;
@@ -619,10 +674,7 @@ function sendRequestOverSocket(
         }
 
         if (isChunked) {
-            const fullBuffer = Buffer.concat(chunks);
-            const bodyBuffer = fullBuffer.subarray(headerEndIndex + 4);
-            const endMarker = Buffer.from('0\r\n\r\n');
-            return bodyBuffer.includes(endMarker) || bodyBuffer.toString('utf8').includes('\r\n0\r\n');
+            return hasChunkedEndMarker();
         }
 
         // 未声明 content-length 也非 chunked —— 假定连接断开时即为完整
@@ -1151,6 +1203,12 @@ export async function* proxyStreamFetch(
                 let errorBodyBytes: Buffer[] = [];
                 let errorContentLength = -1;
                 let errorIsChunked = false;
+                // 错误体结束标记的增量扫描状态（与 sendRequestOverSocket 的
+                // hasChunkedEndMarker 同思路：避免逐 data 事件对 errorBodyBytes 整段
+                // Buffer.concat + includes 的 O(n²) 探测；跨包标记靠保留上一探测末尾
+                // CHUNKED_END_MARKER_LEN-1 字节兜住，探测结果语义与全量扫描一致）
+                let errorBodyScanTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+                let errorBodyScanOffset = 0;
 
                 const isErrorBodyComplete = (): boolean => {
                     const totalBytes = errorBodyBytes.reduce((sum, b) => sum + b.length, 0);
@@ -1158,9 +1216,30 @@ export async function* proxyStreamFetch(
                         return totalBytes >= errorContentLength;
                     }
                     if (errorIsChunked) {
-                        const fullBody = Buffer.concat(errorBodyBytes);
-                        const endMarker = Buffer.from('0\r\n\r\n');
-                        return fullBody.includes(endMarker) || fullBody.toString('utf8').includes('\r\n0\r\n');
+                        // 只对新增尾部做探测（无新增字节时沿用上次结果）
+                        if (totalBytes <= errorBodyScanOffset) {
+                            return false;
+                        }
+                        const newStart = errorBodyScanOffset;
+                        const newParts: Buffer[] = [];
+                        let offset = 0;
+                        for (const part of errorBodyBytes) {
+                            const partEnd = offset + part.length;
+                            if (partEnd <= newStart) {
+                                offset = partEnd;
+                                continue;
+                            }
+                            newParts.push(part.subarray(Math.max(0, newStart - offset)));
+                            offset = partEnd;
+                        }
+                        const newBytes = newParts.length === 0 ? Buffer.alloc(0) : Buffer.concat(newParts);
+                        errorBodyScanOffset = totalBytes;
+                        const window = errorBodyScanTail.length > 0
+                            ? Buffer.concat([errorBodyScanTail, newBytes])
+                            : newBytes;
+                        // 只保留窗口末尾 3 字节：下一包探测时与新增字节拼接，跨包标记也能命中
+                        errorBodyScanTail = window.subarray(Math.max(0, window.length - (CHUNKED_END_MARKER_LEN - 1)));
+                        return window.includes(CHUNKED_END_MARKER) || window.toString('utf8').includes(CHUNKED_END_MARKER_ALT);
                     }
                     // 未声明 content-length 也非 chunked → 连接关闭判定
                     return false;

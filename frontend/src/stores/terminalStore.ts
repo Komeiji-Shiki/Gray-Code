@@ -310,8 +310,17 @@ export const useTerminalStore = defineStore('terminal', () => {
   function initialize(): () => void {
     if (terminalCleanup) return terminalCleanup
     
-    const unsubscribe = onExtensionCommand<TerminalOutputEvent>('terminalOutput', (event) => {
-      // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）
+    const unsubscribe = onExtensionCommand<TerminalOutputEvent | TerminalOutputEvent[]>('terminalOutput', (event) => {
+      // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）。
+      // 扩展端 50ms 节流批处理会把短窗口内多条事件合并为数组消息：逐条按原语义处理
+      // （数组内顺序即产生顺序，start/output/error/exit 的相对次序保持不变）。
+      if (Array.isArray(event)) {
+        for (const item of event) {
+          if (!item || typeof item.terminalId !== 'string' || typeof item.type !== 'string') continue
+          handleTerminalOutput(item)
+        }
+        return
+      }
       if (!event || typeof event.terminalId !== 'string' || typeof event.type !== 'string') return
       handleTerminalOutput(event)
     })

@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
+import { isPathInsideOrEqual } from './workspaceRealpath';
 
 /**
  * 检查路径是否应该被忽略
@@ -208,27 +209,15 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
       return { valid: false, error: t('webview.errors.fileNotExists'), errorCode: 'FILE_NOT_EXISTS' };
     }
     
-    // 尝试使用 VSCode API 获取工作区
-    let belongingWorkspace = vscode.workspace.getWorkspaceFolder(fileUri);
-    
-    // 如果 API 返回 null，手动通过路径匹配（解决远程 SSH scheme 不一致问题）
-    // 例如：文件是 vscode-remote://ssh-remote+host/path 但工作区是 file:///path
-    if (!belongingWorkspace) {
-      const fileFsPath = fileUri.path;
-      // 平台感知归一化（与 getRelativePathFromAbsolute/matchGlobPattern 口径一致）：
-      // 仅 Windows 文件系统不区分大小写才做小写归一，其余平台保持大小写敏感，
-      // 避免把大小写不同的路径宽松误判为属于工作区（F13/F15）
-      const normalizeForCompare = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p;
-      const normalizedFilePath = normalizeForCompare(fileFsPath);
-      
-      for (const folder of workspaceFolders) {
-        const workspaceFsPath = folder.uri.path;
-        const normalizedWorkspacePath = normalizeForCompare(workspaceFsPath);
-        if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')
-            || normalizedFilePath === normalizedWorkspacePath) {
-          belongingWorkspace = folder;
-          break;
-        }
+    // realpath 感知的归属判定：先解析符号链接再做前缀比较，防止工作区内 symlink 指向
+    // 工作区外文件时被词法前缀匹配误判为属于工作区（与 workspaceRealpath.ts 的
+    // isUriInsideWorkspaceRealpath 同一实现口径）。realpath 不可用（如测试 mock 掉 fs）
+    // 或路径不可解析（远程 scheme/不存在路径）时内部自动降级为词法比较，保持既有行为。
+    let belongingWorkspace: vscode.WorkspaceFolder | undefined;
+    for (const folder of workspaceFolders) {
+      if (await isPathInsideOrEqual(fileUri.fsPath, folder.uri.fsPath)) {
+        belongingWorkspace = folder;
+        break;
       }
     }
     

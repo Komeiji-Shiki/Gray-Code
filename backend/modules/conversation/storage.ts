@@ -822,19 +822,89 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     /**
-     * 原子覆盖：优先 overwrite rename（无窗口）；平台不支持时回退“删旧 + rename”。
+     * 带 EPERM/EACCES/EBUSY 重试的 rename（与 BranchGraphRepository.renameWithRetry 同风格）：
+     * Windows 上 rename 偶发 EPERM（文件锁/杀软竞态），短暂退避重试后仍失败才抛出。
+     * 仅重试「可恢复」错误码（EPERM/EACCES/EBUSY，及 vscode FileSystemError 对应的
+     * NoPermissions/Unavailable）；其他错误（ENOENT 等）立即抛出。
+     */
+    private async renameWithRetry(src: any, dest: any, overwrite: boolean, attempts = 4, delayMs = 30): Promise<void> {
+        for (let attempt = 1; ; attempt += 1) {
+            try {
+                await this.vscode.workspace.fs.rename(src, dest, { overwrite });
+                return;
+            } catch (error: any) {
+                const code = String(error?.code ?? '');
+                const retryable =
+                    code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+                    || code === 'NoPermissions' || code === 'Unavailable';
+                if (!retryable || attempt >= attempts) {
+                    throw error;
+                }
+                await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+            }
+        }
+    }
+
+    /**
+     * 原子覆盖：优先 overwrite rename（无窗口，并发读始终看到完整旧状态或完整新状态）；
+     * 平台不支持 overwrite 或瞬态重试耗尽时回退「旧目标改名备份 → rename 到位 → 清理备份」
+     * （与 DependencyManager 目录替换同模式）。第二次 rename 失败时把备份恢复回去，避免
+     * 「已删旧、新未落位」的不可恢复状态：例如 writeSegmentedHistory 中若在线 history 目录
+     * 被删后 rename 再失败，分段历史不可读且 appendHistory 的 H5/M4 自愈只能从目录残留段
+     * 文件/legacy 快照重建，二者都已不在时无法重建（只能抛错，不静默丢）。
      * 调用方必须已保证写写串行（runSegmentedHistoryWriteSerialized 或单写者）。
      */
     private async renameOverwrite(src: any, dest: any): Promise<void> {
         try {
-            await this.vscode.workspace.fs.rename(src, dest, { overwrite: true });
+            await this.renameWithRetry(src, dest, true);
+            return;
         } catch {
+            // 平台不支持 overwrite（rename 覆盖目标抛 FileExists 等）或瞬态重试耗尽：
+            // 进入「删旧 + rename」回退，但删旧改为「改名备份」，第二次 rename 失败可恢复。
+            const destBasename = String(dest?.path ?? '').split('/').filter(Boolean).pop() ?? 'dest';
+            const backup = this.vscode.Uri.joinPath(
+                dest,
+                '..',
+                `${destBasename}.rename-backup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            );
+            let backupMoved = false;
             try {
-                await this.vscode.workspace.fs.delete(dest, { useTrash: false });
+                await this.renameWithRetry(dest, backup, false);
+                backupMoved = true;
             } catch {
-                // ignore
+                // 旧目标改名备份失败（目标已被并发删除等罕见情况）：退回「删旧目标后重试」
+                try {
+                    await this.vscode.workspace.fs.delete(dest, { useTrash: false });
+                } catch {
+                    // ignore（目标不存在）
+                }
+                await this.renameWithRetry(src, dest, false);
+                return;
             }
-            await this.vscode.workspace.fs.rename(src, dest, { overwrite: true });
+            if (backupMoved) {
+                try {
+                    await this.renameWithRetry(src, dest, false);
+                } catch (error) {
+                    // 第二次 rename 失败：恢复备份，尽量保留旧目标（恢复也失败时抛原错误、
+                    // 不静默——旧目标仍在备份路径，可人工恢复，不会「删旧后丢失」）。
+                    try {
+                        await this.renameWithRetry(backup, dest, false);
+                    } catch (restoreError) {
+                        log.warn('renameOverwriteRestoreFailed', {
+                            backup: backup?.fsPath ?? String(backup),
+                            dest: dest?.fsPath ?? String(dest),
+                            error: String((restoreError as Error)?.message ?? restoreError)
+                        });
+                    }
+                    throw error;
+                }
+                // rename 成功：清理备份（recursive 对文件同样有效，目录也覆盖）
+                try {
+                    await this.vscode.workspace.fs.delete(backup, { recursive: true, useTrash: false });
+                } catch {
+                    // 备份清理失败忽略（不影响已完成的替换）
+                }
+            }
         }
     }
 
@@ -1207,27 +1277,12 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         await this.vscode.workspace.fs.writeFile(tmpIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
 
         // 2. 原子切换：优先 overwrite rename（无窗口，并发读始终看到完整旧状态或完整新状态）；
-        //    平台不支持 overwrite 时回退到“删旧 + rename”（调用方已保证写写串行，窗口只剩毫秒级崩溃场景）。
-        try {
-            await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
-        } catch {
-            try {
-                await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
-            } catch {
-                // ignore
-            }
-            await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
-        }
-        try {
-            await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
-        } catch {
-            try {
-                await this.vscode.workspace.fs.delete(historyIndexPath, { useTrash: false });
-            } catch {
-                // ignore
-            }
-            await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
-        }
+        //    平台不支持 overwrite 或瞬态 EPERM 重试耗尽时，renameOverwrite 内部回退
+        //    「旧目标改名备份 → rename 到位 → 清理备份」，第二次 rename 失败时恢复备份，
+        //    不会留下「在线 history 目录已删、新目录未落位」的不可恢复状态（H5/M4 自愈依赖
+        //    目录残留段文件或 legacy 快照，两者都被清掉时无法重建，只能抛错不静默丢）。
+        await this.renameOverwrite(tmpDir, historyDir);
+        await this.renameOverwrite(tmpIndexPath, historyIndexPath);
 
         // 3. 删除遗留的 legacy 历史文件
         try {
@@ -2001,11 +2056,23 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async loadSnapshot(snapshotId: string): Promise<HistorySnapshot | null> {
+        let content: Uint8Array;
         try {
             const uri = this.getSnapshotPath(snapshotId);
-            const content = await this.vscode.workspace.fs.readFile(uri);
-            return JSON.parse(Buffer.from(content).toString('utf8'));
+            content = await this.vscode.workspace.fs.readFile(uri);
+        } catch (error) {
+            // 文件不存在视为「快照不存在」（返回 null，restoreSnapshot 报 snapshotNotFound）；
+            // 真实 IO 错误（EACCES/EIO 等）向上抛——参考 loadMetadataWithStatus 的
+            // not_found / io_error 分级，避免真实存储故障被静默当作「快照不存在」。
+            if (this.isNotFoundError(error)) {
+                return null;
+            }
+            throw error;
+        }
+        try {
+            return JSON.parse(Buffer.from(content).toString('utf8')) as HistorySnapshot;
         } catch {
+            // 损坏快照（JSON 解析失败）：与 loadMetadata 的 parse_error→null 语义一致（保留旧行为）
             return null;
         }
     }

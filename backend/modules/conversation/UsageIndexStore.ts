@@ -41,11 +41,16 @@ import { isBranchGraphShape } from './branch/types';
 /**
  * 用量索引条目的去重键（用于重建写回时合并并发到达的 subagent 条目）。
  *
- * subagent 条目由 executor 归集生成：timestamp + modelVersion + 各 token 字段完全相同
- * 即视为同一条（同一毫秒内产生完全一致 token 计数的概率可忽略，误合并风险低于
- * 重复计数的代价）。
+ * 优先用条目稳定 id：id 唯一标识一条消息，同一毫秒内 token 完全相同的两条不同消息
+ * （如并行子代理归集）不会被误判为同一条而丢弃；旧数据无 id 时回退现有复合键
+ * （source/timestamp/modelVersion/各 token 计数），保持向后兼容。
+ * subagent 条目由 executor 归集生成（无 id，走复合键）：timestamp + modelVersion +
+ * 各 token 字段完全相同即视为同一条（同一毫秒内产生完全一致 token 计数的概率可忽略）。
  */
 function usageMessageKey(m: UsageIndexMessage): string {
+    if (typeof m.id === 'string' && m.id.length > 0) {
+        return `id:${m.id}`;
+    }
     return JSON.stringify([
         m.source ?? 'main',
         m.timestamp ?? 0,
