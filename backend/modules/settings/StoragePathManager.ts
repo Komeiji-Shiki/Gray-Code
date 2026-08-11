@@ -272,10 +272,32 @@ export class StoragePathManager {
     /**
      * 复制目录（递归）
      */
-    private async copyDirectory(src: string, dest: string, onProgress?: (copied: number, total: number) => void): Promise<number> {
+    private async copyDirectory(
+        src: string,
+        dest: string,
+        onProgress?: (copied: number, total: number) => void,
+        visited: Set<string> = new Set()
+    ): Promise<number> {
         if (await this.isPathInside(src, dest)) {
             throw new Error('Cannot copy a directory into its own subdirectory');
         }
+
+        // 符号链接循环防护：fs.stat 跟随符号链接后按真实类型复制，若符号链接指向祖先目录
+        // （循环引用），递归会无限展开直到栈溢出、迁移中断。以真实路径为链去重：每个子目录
+        // 只携带自己的祖先链（兄弟目录互不可见），指向祖先的循环随即被截断，而同一真实目录
+        // 经多个符号链接复制时仍各自复制，不丢数据。
+        let srcRealPath = src;
+        try {
+            srcRealPath = await fs.realpath(src);
+        } catch {
+            // realpath 失败（目录刚被删除等竞态）：退化为未解析路径，交由后续 readdir 处理
+        }
+        if (visited.has(srcRealPath)) {
+            console.warn(`[StoragePathManager] Skipping symlink loop: ${src}`);
+            return 0;
+        }
+        const childVisited = new Set(visited);
+        childVisited.add(srcRealPath);
 
         let copiedCount = 0;
         await fs.mkdir(dest, { recursive: true });
@@ -302,7 +324,7 @@ export class StoragePathManager {
             }
 
             if (isDir) {
-                copiedCount += await this.copyDirectory(srcPath, destPath, onProgress);
+                copiedCount += await this.copyDirectory(srcPath, destPath, onProgress, childVisited);
             } else if (isFile) {
                 await fs.copyFile(srcPath, destPath);
                 copiedCount++;
