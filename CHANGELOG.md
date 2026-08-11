@@ -8,12 +8,33 @@
 
 ## [Unreleased]
 
+### Added
+  - 子代理渠道策略：新增逐代理「与当前模型同步」（`syncWithCurrentModel`）开关——勾选后该子代理忽略自身固定的渠道/模型，派发前统一改用当前会话渠道与模型（`channelConfigId` + `channelModelId`），与 General Worker 继承口径一致，渠道切换（备用 key/新供应商）时无需逐个修改子代理；无活动渠道时拒绝派发并返回明确错误；勾选后渠道/模型下拉禁用并显示激活提示；旧「强制使用当前渠道」全局开关已废弃，启动时自动一次性迁移为逐代理配置（幂等，显式 `false` 的代理保持固定渠道），新 UI 不再提供全局入口。
+  - fast-tavern 子项目：实现 build 模块（H1）——`buildPrompt`/`buildPromptFromSillyTavern` 重构（阶段视图/深度注入/worldbook 静态条目排序/视图过滤），替换插值转义（H7）与正则/数值边界加固；TS 与 Python 双实现同步更新。
+
 ### Fixed
   - 启动/新对话：彻底修复 `308c79d4` 引入的 1.5.0 回归——扩展端 `webviewReady` 现在真正绕过等待 BackendHost 的串行消息队列，前端先注册 command 监听并同步启动聊天状态准备，再发送 ready 握手，积压的 `newChat` 不会被配置请求堵住或在监听建立前丢失；`newChat` 不再挂起等待完整 `initialize()`，语言设置与聊天初始化并行启动且在首个异步等待前建立空白标签页。InputArea 只等语言就绪、不等完整历史加载；对话列表落地保留加载期间刚创建的会话，无标签页承接的迟到流回收等待状态。
   - 启动/渠道：恢复 App 启动期渠道配置预加载（1.5.0 引入、0f712a53 曾因消息队列竞争移除）——config 请求为纯本地文件读取、不依赖 BackendHost，且 webviewReady 握手已绕过串行队列，预加载不再阻塞 newChat 与首条发送；开屏动画期间完成 listConfigs + 逐条 getConfig，首次打开「设置 → 渠道」页直接命中缓存。
   - 后端：修复 1.5.0 批次遗留的 TypeScript/运行缺陷——总结流生成器回收显式传入 `undefined`；共享 `ContentPart.functionCall` 补齐 Anthropic forced-tool 预填参数标记；未响应工具调用扫描固化 `callId` 后再深拷贝标记；legacy 历史五条读取路径先等待文件读取再执行数组校验，恢复 legacy 历史读取、追加、完整性检查与迁移。
   - 后端：修复动态上下文占位符正则合并时未分组导致 `{{$TODO_LIST}}/{{$MEMORY}}/{{$PINNED_FILES}}` 等占位符完全不展开；修复设置导出 `SETTINGS_EXPORT_KEYS` 未过滤 machine 键（proxy/storagePath 随导出泄漏，循环依赖下 `new Set(undefined)` 掩盖了过滤失效）；前端 `NodeList` 迭代补 `Array.from` 修复测试代码类型检查。
   - 后端：回归测试对齐 1.5.0 已收敛的架构与语义——分支图删除同步以 `ConversationManager` 为唯一责任方（移除 orchestrator 重复调用的旧断言，补 manager 内图同步失败不阻断硬删除用例）；MCP 流被服务器提前关闭断言为 `MCP SSE stream closed`（不再误报超时）；CMD 不再预包外层引号（模型按 cmd 语法自带引号）；进度卡回退文案测试固定英文断言（i18n 隔离）。
+  - 后端 core：修复 regexGuard 定长量词误拦（`{m}` 合法正则放行）、deepMerge 循环引用保留（不再丢弃引用语义）、diffManager 锁冲突恢复缓冲区（锁被抢占时写操作自动恢复，不再卡死）。
+  - 后端 settings：修复 `toolAutoExec` 缺键回落默认值、JSON 非对象损坏自愈、reset 保留 storagePath、配置迁移符号链接循环防护。
+  - 后端 checkpoint：修复元数据残留精确匹配（H3，分支/代理残留不再误命中）、retention 假 manifest 防护（损坏的 manifest 不再引发异常）。
+  - 后端 conversation：修复 `appendHistory` 索引不可读自愈重建（H5）、插入消息同步分支图、`rejectToolCalls` 空数组语义（空数组不再误判）。
+  - 后端 channel：修复 providerEvent 激活时 Anthropic 提前执行、`count_tokens` 完整计数（多段文本不再漏计）、多段 thinking 签名配对。
+  - 后端 chat：修复 `usageMetadataPartial` 回退估算、JSON.stringify 兜底、editBranch 检查点对齐、trim 预算计入首条消息、`repeatedCallGuard` 失败判定。
+  - 后端 mcp/memory：修复 uri 透传、`timeout: 0` 无超时语义、error 状态 stale client 清理、compress 缺参校验。
+  - 后端 prompt：修复 frontmatter 反转义校验、fileTree 逃逸/gitignore 转义/尾斜杠处理、动态 section vanished 检测。
+  - 后端 deps/update/activity：修复 require.cache 失效清理（重装后不再加载旧模块）、install/uninstall 互斥、预发布版本逐段比较、endAiWork 空闲误判。
+  - 后端 tools/file：修复 realpath 符号链接防 outside 绕过（安全加固）、read_file 幻影空行、write_file 存在保护。
+  - 后端 tools/media：修复 generate_image 超时误报用户取消（对齐外层口径）。
+  - 后端 tools/terminal：修复 where 检测命令注入（改 argv 传参，安全加固）。
+  - 后端 subagents：修复排队 pause 不取消、resume 重建缺口、续跑预留互斥、mailbox hop 防绕过、退避监听控制信号。
+  - 后端 shared：summarizeContext 加入超时豁免名单。
+  - 前端：修复取消标记按会话隔离、JsonViewer DAG 误标、阈值钳制/引用复用/输入指纹、声音聚焦、i18n 同步。
+  - webview：修复面板关闭未中止活跃流（H6）、消息队列重置、Monitor 路由守卫。
+  - 测试/CI：backend/__tests__ 就近 tsconfig 挂载 jest 类型（消除 IDE「找不到名称 jest」误报）、tsconfig.test.json 补 DOM.Iterable（防御性）。
 
 ## [1.5.0] - 2026-08-11
 
