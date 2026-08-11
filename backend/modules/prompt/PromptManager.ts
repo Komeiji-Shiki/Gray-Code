@@ -1022,18 +1022,32 @@ export class PromptManager {
         // prebuiltModules 由 getPromptContextBundle 一次性生成并复用，避免每条 entry 重复渲染文件树/诊断。
         // 差分指纹：entries 模式下传聚合指纹（全部动态条目内容拼接后的指纹），与上一轮缓存基准一致；
         // 否则对单条模板内容算指纹（legacy 等路径的原有行为）。
+        const fullModules = prebuiltModules ?? this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys)
+        // vanished 检测：基准存在但当前消失的 section（清空，如 TODO 清空/标签全关）必须让
+        // 本条条目发送——否则差分后渲染结果为空串时调用方（getPromptContextBundle）按
+        // `if (!text.trim()) continue` 跳过，模型持续持有过期快照。与 template 路径
+        // （generateDynamicFromTemplate）和 legacy 路径（getLegacyDynamicContextMessages）
+        // 的 vanished 口径一致；范围收窄到本条模板实际引用的动态占位符。
+        const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
+        const vanishedSection = baseKeys.some(key =>
+            DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) && !(key in fullModules)
+        )
         Object.assign(
             modules,
-            this.applySectionDiff(
-                prebuiltModules ?? this.buildDynamicPromptModules(contextConfig, runtime, referencedKeys),
-                diffBase,
-                templateFingerprintOverride ?? fingerprint(template)
-            )
+            this.applySectionDiff(fullModules, diffBase, templateFingerprintOverride ?? fingerprint(template))
         )
 
         const result = this.replacePromptPlaceholders(template, modules)
-
-        return this.cleanupEmptyLines(result)
+        let output = this.cleanupEmptyLines(result)
+        if (vanishedSection && !output) {
+            // 模板仅引用已消失的占位符（无静态外壳）时渲染结果为空串：发送最小非空标记
+            // （复用 wrapSection 标题格式），让模型感知 section「不再存在」。
+            const vanished = baseKeys.filter(key =>
+                DYNAMIC_PROMPT_PLACEHOLDERS.has(key) && referencedKeys.has(key) && !(key in fullModules)
+            )
+            output = this.wrapSection('DYNAMIC CONTEXT', `The following dynamic sections are now empty: ${vanished.join(', ')}`)
+        }
+        return output
     }
 
     private renderPromptEntryContent(

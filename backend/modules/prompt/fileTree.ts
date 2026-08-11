@@ -86,7 +86,10 @@ function parseGitignore(gitignorePath: string): string[] {
         if (!trimmed || trimmed.startsWith('#')) {
             continue
         }
-        patterns.push(trimmed)
+        // gitignore 转义：行首 \# 是转义的字面 #（用于忽略以 # 开头的文件/目录），
+        // 还原为 # 前缀后参与匹配（git 语义）；否则反斜杠留在模式里永不匹配
+        // 已归一化为 / 分隔的路径。
+        patterns.push(trimmed.startsWith('\\#') ? trimmed.slice(1) : trimmed)
     }
 
     if (gitignoreCache.size >= 64) {
@@ -149,15 +152,23 @@ function shouldIgnore(relativePath: string, patterns: string[], isDirectory: boo
     
     // 检查是否在自定义忽略列表中（从配置中获取；配置为明确排除，不支持否定）
     for (const ignore of customIgnorePatterns) {
-        if (ignore.includes('*')) {
+        // 目录模式（尾斜杠）：仅匹配目录条目；子文件在遍历时因父目录被忽略而不进入。
+        // 旧实现不剥尾斜杠，build/ 永不命中目录 build（gitignore 路径已由
+        // matchesGitignorePattern 处理尾斜杠，此处为自定义忽略补齐同语义）。
+        const isDirPattern = ignore.endsWith('/')
+        if (isDirPattern && !isDirectory) {
+            continue
+        }
+        const normalizedIgnore = isDirPattern ? ignore.slice(0, -1) : ignore
+        if (normalizedIgnore.includes('*')) {
             // 通配符模式 - 支持 ** 匹配任意目录层级（gitignore 式：**/x 也匹配根级 x，* 不跨目录段）
-            const regexStr = globPatternToRegExp(ignore)
+            const regexStr = globPatternToRegExp(normalizedIgnore)
             
             const regex = getCachedIgnoreRegex(`^${regexStr}$|/${regexStr}$|^${regexStr}/|/${regexStr}/`, 'i')
             if (regex.test(relativePath.replace(/\\/g, '/')) || regex.test(baseName)) {
                 return true
             }
-        } else if (baseName === ignore || relativePath === ignore) {
+        } else if (baseName === normalizedIgnore || relativePath === normalizedIgnore) {
             return true
         }
     }
@@ -263,7 +274,9 @@ function buildFileTree(
             // 直接跳过，避免文件树泄漏工作区外路径（04 批 LOW）。
             // 纵深防御：跨盘（Windows 不同驱动器）时 path.relative 返回绝对路径
             // （如 D:/...），不以 .. 开头也不含 /../ 段，需 isAbsolute 兜底。
-            if (relativePath.startsWith('..') || relativePath.includes('/../') || path.isAbsolute(relativePath)) {
+            // 精确判逃逸（relativePath 已归一化为 / 分隔）：仅 .. 或 ../ 前缀才算，
+            // startsWith('..') 会把名为 ..foo、... 的合法文件/目录误排除。
+            if (/^\.\.($|\/)/.test(relativePath) || relativePath.includes('/../') || path.isAbsolute(relativePath)) {
                 continue
             }
             
