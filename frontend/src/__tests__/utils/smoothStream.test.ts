@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SmoothStreamer, SMOOTH_PRESETS } from '../../utils/smoothStream'
 
 interface Commit {
@@ -19,7 +19,7 @@ function collect() {
 const joined = (commits: Commit[]) => commits.map((c) => c.graphemes.join('')).join('')
 
 describe('SmoothStreamer', () => {
-  it('flush outputs the entire backlog synchronously with instant=true (no tail loss)', () => {
+  test('flush outputs the entire backlog synchronously with instant=true (no tail loss)', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 1, maxCps: 10 })
     s.push('hello world')
@@ -28,14 +28,14 @@ describe('SmoothStreamer', () => {
     expect(commits.every((c) => c.instant)).toBe(true)
   })
 
-  it('flush on empty queue emits nothing', () => {
+  test('flush on empty queue emits nothing', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit)
     s.flush()
     expect(commits).toEqual([])
   })
 
-  it('switchPart flushes previous segment then starts fresh', () => {
+  test('switchPart flushes previous segment then starts fresh', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 1, maxCps: 10 })
     s.push('abc')
@@ -45,7 +45,7 @@ describe('SmoothStreamer', () => {
     expect(joined(commits)).toBe('abcdef')
   })
 
-  it('panic fast-forwards excess backlog as instant commit', () => {
+  test('panic fast-forwards excess backlog as instant commit', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 1, maxCps: 10, panic: 5 })
     // 10 字符超过 panic 5：超出部分立即直通提交（instant），剩余进入匀速队列
@@ -56,7 +56,7 @@ describe('SmoothStreamer', () => {
     expect(joined(commits)).toBe('0123456789')
   })
 
-  it('dispose clears internal state without emitting', () => {
+  test('dispose clears internal state without emitting', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 1, maxCps: 10 })
     s.push('abc')
@@ -64,7 +64,7 @@ describe('SmoothStreamer', () => {
     expect(commits).toEqual([])
   })
 
-  it('presets expose ordered lookahead tiers', () => {
+  test('presets expose ordered lookahead tiers', () => {
     expect(SMOOTH_PRESETS.smooth.lookahead).toBeLessThan(SMOOTH_PRESETS.balanced.lookahead)
     expect(SMOOTH_PRESETS.balanced.lookahead).toBeLessThan(SMOOTH_PRESETS.silky.lookahead)
   })
@@ -103,7 +103,7 @@ describe('SmoothStreamer tick path (rAF)', () => {
     cb?.(performance.now())
   }
 
-  it('速率累积：每秒放字数按积压自适应，逐帧匀速输出（30 字符 3 帧放完）', () => {
+  test('速率累积：每秒放字数按积压自适应，逐帧匀速输出（30 字符 3 帧放完）', () => {
     const { commits, onCommit } = collect()
     // cps 恒为 100（min=max）：lookahead=1000ms 时每 100ms 帧输出 10 字符
     const s = new SmoothStreamer(onCommit, { minCps: 100, maxCps: 100, lookahead: 1000 })
@@ -116,7 +116,7 @@ describe('SmoothStreamer tick path (rAF)', () => {
     expect(commits.every((c) => c.frameDurMs === 100)).toBe(true)
   })
 
-  it('高帧率（180Hz 模拟）：每帧少量输出，frameDurMs 传实测 dt', () => {
+  test('高帧率（180Hz 模拟）：每帧少量输出，frameDurMs 传实测 dt', () => {
     const { commits, onCommit } = collect()
     // cps 恒为 180：5.56ms 帧 → 每帧约 1 字符；20 字符约 20 帧放完
     const s = new SmoothStreamer(onCommit, { minCps: 180, maxCps: 180, lookahead: 1000 })
@@ -132,7 +132,7 @@ describe('SmoothStreamer tick path (rAF)', () => {
     expect(commits[0].frameDurMs).toBeCloseTo(5.56, 1)
   })
 
-  it('dt 钳 100ms：rAF 长时间停顿后单帧只按 100ms 计算', () => {
+  test('dt 钳 100ms：rAF 长时间停顿后单帧只按 100ms 计算', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 100, maxCps: 100, lookahead: 1000 })
     s.push('x'.repeat(50))
@@ -143,7 +143,7 @@ describe('SmoothStreamer tick path (rAF)', () => {
     s.flush()
   })
 
-  it('panic 快进：超长 chunk 超出部分同步直通提交，剩余入队按帧放完', () => {
+  test('panic 快进：超长 chunk 超出部分同步直通提交，剩余入队按帧放完', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 1000, maxCps: 1000, lookahead: 1000, panic: 5 })
     s.push('0123456789')
@@ -155,7 +155,7 @@ describe('SmoothStreamer tick path (rAF)', () => {
     expect(scheduled).toBeNull()
   })
 
-  it('积压放完时队列清空、停止调度（不丢尾巴）', () => {
+  test('积压放完时队列清空、停止调度（不丢尾巴）', () => {
     const { commits, onCommit } = collect()
     const s = new SmoothStreamer(onCommit, { minCps: 1000, maxCps: 1000, lookahead: 1000 })
     s.push('abc')

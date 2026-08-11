@@ -13,28 +13,28 @@ describe('progress tool frontend registration', () => {
     toolRegistry.unregister('validate_progress_document')
   })
 
-  it('registers create_progress for frontend display', () => {
+  test('registers create_progress for frontend display', () => {
     const config = getToolConfig('create_progress')
     expect(config).toBeDefined()
     expect(config?.name).toBe('create_progress')
     expect(config?.descriptionFormatter({ projectName: 'Workspace' })).toBe('Workspace')
   })
 
-  it('registers update_progress for frontend display', () => {
+  test('registers update_progress for frontend display', () => {
     const config = getToolConfig('update_progress')
     expect(config).toBeDefined()
     expect(config?.name).toBe('update_progress')
     expect(config?.descriptionFormatter({ currentFocus: '实现前端卡片' })).toBe('实现前端卡片')
   })
 
-  it('registers record_progress_milestone for frontend display', () => {
+  test('registers record_progress_milestone for frontend display', () => {
     const config = getToolConfig('record_progress_milestone')
     expect(config).toBeDefined()
     expect(config?.name).toBe('record_progress_milestone')
     expect(config?.descriptionFormatter({ title: '完成后端基础层' })).toBe('完成后端基础层')
   })
 
-  it('registers validate_progress_document for frontend display', () => {
+  test('registers validate_progress_document for frontend display', () => {
     const config = getToolConfig('validate_progress_document')
     expect(config).toBeDefined()
     expect(config?.name).toBe('validate_progress_document')

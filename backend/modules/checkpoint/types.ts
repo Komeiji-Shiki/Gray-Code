@@ -11,6 +11,9 @@
  * - 「第三部分」manifest 独立存储（CheckpointManifest / CheckpointSummary）
  */
 import type { CheckpointWorkspaceRoot } from './CheckpointWorkspace';
+// T16：CheckpointSummary 迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导入方不破
+// （CheckpointRecord 等存储记录类型仍留在本文件，含 backupDir/fileHashes/ignoreSnapshot 等旧存档字段）
+export type { CheckpointSummary, CheckpointSummaryWithSize } from '../../../shared/protocol';
 
 /** 文件被排除的原因分类 */
 export type CheckpointExcludeReason =
@@ -128,28 +131,6 @@ export interface CheckpointManifest extends CheckpointManifestMeta {
         /** 增量节点中该文件实际备份所在的前置节点（缺省 = 本节点） */
         backupSourceCheckpointId?: string;
     }>;
-}
-
-/**
- * 轻量存档摘要（CPF-02/CPF-03）。
- *
- * 会话元数据只保留此摘要，前端列表也只接收此结构，不再下发完整哈希映射。
- */
-export interface CheckpointSummary {
-    id: string;
-    conversationId: string;
-    messageNodeId?: string;
-    messageIndex: number;
-    toolName: string;
-    phase: 'before' | 'after';
-    timestamp: number;
-    type: 'full' | 'incremental';
-    baseCheckpointId?: string;
-    contentHash: string;
-    fileCount: number;
-    backupBytes: number;
-    excludedCount: number;
-    manifestVersion: number;
 }
 
 /** checkpoint.previewExclusions 的返回结构（EX-09） */

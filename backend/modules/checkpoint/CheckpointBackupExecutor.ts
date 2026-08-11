@@ -187,6 +187,9 @@ export class CheckpointBackupExecutor {
             let fileCount = 0;
             let backupBytes = 0;
             let copiedCount = 0;
+            // 本次复制任务总数（增量 = 变更文件数，全量 = 快照文件数）：done 上报沿用该值，
+            // 避免用 copiedCount 覆盖 total 造成进度条在结束阶段跳变
+            let copyTotal = 0;
 
             if (lastCheckpoint && lastCheckpoint.fileHashes) {
                 // 旧存档（相对路径键）与当前 scoped 键统一后比较，兼容旧增量链
@@ -214,7 +217,8 @@ export class CheckpointBackupExecutor {
                 // 备份布局：backupDir/ws_xxx/relative（多根安全；旧存档为 backupDir/relative）
                 // CPF-06/CPF-11: 有界并发复制 + 取消检查 + 进度上报
                 const copyTargets = changes.filter(c => c.type !== 'deleted').map(c => c.path);
-                reportProgress({ phase: 'copying', processed: 0, total: copyTargets.length });
+                copyTotal = copyTargets.length;
+                reportProgress({ phase: 'copying', processed: 0, total: copyTotal });
                 await runBounded(copyTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async scopedPath => {
                     throwIfAborted(signal);
                     const result = await this.copyFileToBackup(scopedPath, backupDir, roots);
@@ -243,7 +247,8 @@ export class CheckpointBackupExecutor {
             if (!isIncremental) {
                 // CPF-06/CPF-11: 有界并发复制 + 取消检查 + 进度上报
                 const fullTargets = Object.keys(currentHashes).sort();
-                reportProgress({ phase: 'copying', processed: 0, total: fullTargets.length });
+                copyTotal = fullTargets.length;
+                reportProgress({ phase: 'copying', processed: 0, total: copyTotal });
                 await runBounded(fullTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async scopedPath => {
                     throwIfAborted(signal);
                     const result = await this.copyFileToBackup(scopedPath, backupDir, roots);
@@ -379,7 +384,7 @@ export class CheckpointBackupExecutor {
 
             // M5: done 上报前检查取消——cancelOperation 已把进度置为 cancelled，
             // 这里不能再被 done 覆盖（取消尾窗竞态）
-            reportProgress({ phase: signal.aborted ? 'cancelled' : 'done', cancelled: signal.aborted, processed: copiedCount, total: copiedCount });
+            reportProgress({ phase: signal.aborted ? 'cancelled' : 'done', cancelled: signal.aborted, processed: copiedCount, total: copyTotal });
 
             // 返回带完整哈希的记录（兼容调用方/测试）；元数据已按 CPF-01 精简
             return { ...checkpoint, fileHashes: currentHashes, fileStats: currentStats };

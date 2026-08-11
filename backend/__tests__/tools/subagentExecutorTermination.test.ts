@@ -8,25 +8,13 @@
  *       同时超时轮询 setInterval 只在父信号 abort 时才清理，正常结束的 run 会泄漏定时器。
  */
 
-import { createDefaultExecutor } from '../../tools/subagents/executor';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
-import { subAgentRunController } from '../../tools/subagents/runController';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { createDefaultExecutor } from '../../tools/subagents';
+import { subAgentRunEventBus } from '../../tools/subagents';
+import { subAgentRunController } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 0, // 立即触发「超出最大迭代次数」早退路径
-        maxRuntime: 300,
-        ...overrides
-    };
-}
 
 function createContext(): SubAgentExecutorContext {
     return {
@@ -65,10 +53,10 @@ describe('SubAgent executor 终态收敛', () => {
         subAgentConcurrencyLimiter.release('queue_holder_3');
     });
 
-    it('超出最大迭代次数时发出 run_failed 并返回 runId', async () => {
+    test('超出最大迭代次数时发出 run_failed 并返回 runId', async () => {
         const { types, dispose } = collectEvents('run_iterations');
         try {
-            const executor = createDefaultExecutor(createConfig(), createContext());
+            const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext());
             const result = await executor({
                 agentType: 'tester',
                 prompt: 'do something',
@@ -88,7 +76,7 @@ describe('SubAgent executor 终态收敛', () => {
         }
     });
 
-    it('排队被取消时经 finalizeRun 收敛终态：发 run_cancelled、快照 cancelled、结果带 runId', async () => {
+    test('排队被取消时经 finalizeRun 收敛终态：发 run_cancelled、快照 cancelled、结果带 runId', async () => {
         const { types, dispose } = collectEvents('run_queue_cancelled');
         try {
             // 占满默认并发容量（3），让 run 进入排队
@@ -97,7 +85,7 @@ describe('SubAgent executor 终态收敛', () => {
             await subAgentConcurrencyLimiter.acquire('queue_holder_3', undefined);
 
             const controller = new AbortController();
-            const executor = createDefaultExecutor(createConfig(), createContext());
+            const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext());
             const runPromise = executor(
                 { agentType: 'tester', prompt: 'x', runId: 'run_queue_cancelled' },
                 controller.signal
@@ -126,28 +114,28 @@ describe('SubAgent executor 终态收敛', () => {
         }
     });
 
-    it('run 结束后从活跃控制器注销，不再显示控制按钮', async () => {
-        const executor = createDefaultExecutor(createConfig(), createContext());
+    test('run 结束后从活跃控制器注销，不再显示控制按钮', async () => {
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext());
         await executor({ agentType: 'tester', prompt: 'x', runId: 'run_cancelled' });
 
         expect(subAgentRunController.isActive('run_cancelled')).toBe(false);
         expect(subAgentRunController.getActiveRunIds()).not.toContain('run_cancelled');
     });
 
-    it('run 结束后释放并发席位', async () => {
+    test('run 结束后释放并发席位', async () => {
         const before = subAgentConcurrencyLimiter.getRunningCount();
-        const executor = createDefaultExecutor(createConfig(), createContext());
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0 }), createContext());
         await executor({ agentType: 'tester', prompt: 'x', runId: 'run_iterations' });
 
         expect(subAgentConcurrencyLimiter.getRunningCount()).toBe(before);
         expect(subAgentConcurrencyLimiter.getQueueLength()).toBe(0);
     });
 
-    it('run 结束后清理超时轮询定时器，不留下常驻 interval', async () => {
+    test('run 结束后清理超时轮询定时器，不留下常驻 interval', async () => {
         jest.useFakeTimers();
         try {
             const timersBefore = jest.getTimerCount();
-            const executor = createDefaultExecutor(createConfig({ maxRuntime: 300 }), createContext());
+            const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 0, maxRuntime: 300 }), createContext());
             const result = await executor({
                 agentType: 'tester',
                 prompt: 'x',

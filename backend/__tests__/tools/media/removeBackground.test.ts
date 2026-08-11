@@ -84,7 +84,7 @@ beforeEach(() => {
 });
 
 describe('remove_background mask 缩放', () => {
-    it('mask resize 显式传入 fit: fill（不被 cover 裁切）', async () => {
+    test('mask resize 显式传入 fit: fill（不被 cover 裁切）', async () => {
         const { factory, resizeCalls } = createSharpMock();
         mockGetSharp.mockResolvedValue(factory);
         mockMaskApiResponse();

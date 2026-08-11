@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具执行服务：plan 模式写路径策略 / checkpoint 绑定 / 策略过滤
+ * GrayCode - 工具执行服务：plan 模式写路径策略 / checkpoint 绑定 / 策略过滤
  *
  * ToolExecutionService.ts 职责拆分（第二批）的 PreflightCore 基类。
  * 继承链：ToolExecutionService → ExecutionCore → ResultCore → PreflightCore → MailboxCore。
@@ -201,3 +201,4 @@ export class PreflightCore extends MailboxCore {
         return isPlanPathAllowed(withoutWorkspacePrefix);
     }
 }
+

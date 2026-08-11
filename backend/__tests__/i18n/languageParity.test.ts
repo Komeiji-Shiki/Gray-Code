@@ -78,12 +78,12 @@ describe('backend i18n language packs', () => {
     const ja = collectLeaves(backendJa as unknown as MessageTree);
     const zh = collectLeaves(backendZh as unknown as MessageTree);
 
-    it('en/ja/zh-CN have identical key sets', () => {
+    test('en/ja/zh-CN have identical key sets', () => {
         expectSameKeys('backend en vs ja', en, ja);
         expectSameKeys('backend en vs zh-CN', en, zh);
     });
 
-    it('placeholders are consistent across languages', () => {
+    test('placeholders are consistent across languages', () => {
         expectSamePlaceholders('backend en vs ja', en, ja);
         expectSamePlaceholders('backend en vs zh-CN', en, zh);
     });
@@ -94,12 +94,12 @@ describe('frontend i18n language packs', () => {
     const ja = collectLeaves(frontendJa as unknown as MessageTree);
     const zh = collectLeaves(frontendZh as unknown as MessageTree);
 
-    it('en/ja/zh-CN have identical key sets', () => {
+    test('en/ja/zh-CN have identical key sets', () => {
         expectSameKeys('frontend en vs ja', en, ja);
         expectSameKeys('frontend en vs zh-CN', en, zh);
     });
 
-    it('placeholders are consistent across languages', () => {
+    test('placeholders are consistent across languages', () => {
         expectSamePlaceholders('frontend en vs ja', en, ja);
         expectSamePlaceholders('frontend en vs zh-CN', en, zh);
     });

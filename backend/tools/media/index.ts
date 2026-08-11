@@ -4,14 +4,19 @@
  * 导出所有多媒体相关的工具
  */
 
-import type { Tool } from '../types';
-
 // 导出各个工具的创建函数
 export { registerGenerateImage, createGenerateImageTool } from './generate_image';
 export { registerRemoveBackground, createRemoveBackgroundTool } from './remove_background';
 export { registerCropImage, createCropImageTool } from './crop_image';
 export { registerResizeImage, createResizeImageTool } from './resize_image';
 export { registerRotateImage, createRotateImageTool } from './rotate_image';
+
+// 静态导入注册函数（与上方 re-export 共用同一模块实例，替代原函数内 require）
+import { registerGenerateImage } from './generate_image';
+import { registerRemoveBackground } from './remove_background';
+import { registerCropImage } from './crop_image';
+import { registerResizeImage } from './resize_image';
+import { registerRotateImage } from './rotate_image';
 
 // 导出图像生成管理函数（类似终端管理）
 export {
@@ -51,36 +56,10 @@ export {
 export type { RotateImageOutputEvent } from './rotate_image';
 
 /**
- * 获取所有多媒体工具
- * @returns 所有多媒体工具的数组
- */
-export function getAllMediaTools(): Tool[] {
-    const { registerGenerateImage } = require('./generate_image');
-    const { registerRemoveBackground } = require('./remove_background');
-    const { registerCropImage } = require('./crop_image');
-    const { registerResizeImage } = require('./resize_image');
-    const { registerRotateImage } = require('./rotate_image');
-    
-    return [
-        registerGenerateImage(),
-        registerRemoveBackground(),
-        registerCropImage(),
-        registerResizeImage(),
-        registerRotateImage()
-    ];
-}
-
-/**
  * 获取所有多媒体工具的注册函数
  * @returns 注册函数数组
  */
 export function getMediaToolRegistrations() {
-    const { registerGenerateImage } = require('./generate_image');
-    const { registerRemoveBackground } = require('./remove_background');
-    const { registerCropImage } = require('./crop_image');
-    const { registerResizeImage } = require('./resize_image');
-    const { registerRotateImage } = require('./rotate_image');
-    
     return [
         registerGenerateImage,
         registerRemoveBackground,

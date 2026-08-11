@@ -1,5 +1,5 @@
 /**
- * LimCode - 同参数重复失败调用护栏（turn 级别）
+ * GrayCode - 同参数重复失败调用护栏（turn 级别）
  *
  * 解决的问题：模型（尤其是较小的模型）会陷入"用完全相同的参数反复调用
  * 同一个工具"的失败循环，每次都得到相同的错误，直到烧完 maxIterations。
@@ -176,3 +176,4 @@ function sortKeysDeep(value: unknown): unknown {
     }
     return value;
 }
+

@@ -1,7 +1,7 @@
 import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { DiffStorageManager } from '../../modules/conversation/DiffStorageManager';
+import { DiffStorageManager } from '../../modules/conversation';
 
 describe('DiffStorageManager deferred global diff persistence', () => {
     let tempDir: string;

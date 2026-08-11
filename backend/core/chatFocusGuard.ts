@@ -1,5 +1,5 @@
 /**
- * LimCode - 聊天输入框焦点守卫
+ * GrayCode - 聊天输入框焦点守卫
  *
  * 解决的问题：关闭活动的 diff 标签页时，即使 `tabGroups.close(tab, true)`
  * 传了 preserveFocus，VSCode 仍会在激活相邻编辑器的过程中把键盘焦点从
@@ -90,3 +90,4 @@ export async function restoreChatInputFocus(shouldRestore: boolean): Promise<voi
         // 聊天视图未注册/不可见等场景：静默忽略，不影响 diff 主流程
     }
 }
+

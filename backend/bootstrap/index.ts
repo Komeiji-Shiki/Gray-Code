@@ -21,6 +21,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { PUSH_MESSAGE_NAMES } from '../../shared/protocol';
 import { Logger } from '../core/logger';
 import {
     ConversationManager,
@@ -55,7 +56,8 @@ import {
     onImageGenOutput,
     TaskManager,
     setSubAgentExecutorContext,
-    getDiffManager
+    getDiffManager,
+    hasAvailableSubAgent
 } from '../tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../tools';
 import { registerToolDeclarationFactory } from '../tools/toolDeclarationRegistry';
@@ -69,18 +71,26 @@ import {
 } from '../tools/media';
 import { createSkillsManager, getSkillsManager } from '../modules/skills';
 import { initMemoryManager } from '../modules/memory';
+import { registerMaintenanceCommands } from '../tools/maintenance/commands';
 import { UpdateChecker } from '../modules/update';
 import { ActivityTracker, setGlobalActivityTracker } from '../modules/activity';
 import { TokenizerResourceManager, setGlobalTokenizerResourceManager } from '../modules/tokenizer';
 import {
     setGlobalSettingsManager,
+    getGlobalSettingsManager,
     setGlobalConfigManager,
+    getGlobalConfigManager,
     setGlobalChannelManager,
+    getGlobalChannelManager,
     setGlobalToolRegistry,
+    getGlobalToolRegistry,
     setGlobalDiffStorageManager,
-    setGlobalMcpManager
+    getGlobalDiffStorageManager,
+    setGlobalMcpManager,
+    getGlobalMcpManager
 } from '../core/settingsContext';
 import { WindowsAgentStopNotificationService } from '../modules/notifications';
+import { setSubAgentAvailabilityQuery } from '../core/subAgentAvailabilityBridge';
 
 const log = Logger.get('backend/bootstrap');
 const UPDATE_CHECK_DELAY_MS = 10_000;
@@ -147,6 +157,10 @@ export class BackendRuntime {
     private readonly cleanupFns: Array<() => void> = [];
     /** 延迟更新检查定时器（重试/回滚/dispose 时清理） */
     private updateCheckTimer?: NodeJS.Timeout;
+    /** graycode.runIntegrityCheck 命令注册 disposable（重试初始化前先注销旧注册） */
+    private maintenanceCommandDisposable?: vscode.Disposable;
+    /** 完整性检查输出通道（VSCode createOutputChannel 同名复用，重试不重建） */
+    private integrityOutputChannel?: vscode.OutputChannel;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -190,6 +204,7 @@ export class BackendRuntime {
                 this.conversationManager,
                 this.storagePathManager
             );
+            this.initMaintenanceCommands();                      // MIG-05：手动完整性检查诊断命令
             this.initHandlers(                                  // 17-22
                 this.configManager,
                 this.channelManager,
@@ -318,7 +333,7 @@ export class BackendRuntime {
                 try {
                     this.updateChecker?.resetStatus();
                 } catch (e) {
-                    console.warn('[ChatViewProvider] Failed to reset update checker status:', e);
+                    console.warn('[bootstrap] Failed to reset update checker status:', e);
                 }
             }
             if (event.type === 'tools' && event.path === 'toolsConfig.apply_diff') {
@@ -326,13 +341,13 @@ export class BackendRuntime {
                     // 对已存在的 pending diff 重新调度/取消自动保存
                     getDiffManager().refreshAutoSaveTimers();
                 } catch (e) {
-                    console.warn('[ChatViewProvider] Failed to refresh diff autoSave timers:', e);
+                    console.warn('[bootstrap] Failed to refresh diff autoSave timers:', e);
                 }
 
                 // 推送最新配置到前端（用于更新倒计时/自动确认 UI）
                 try {
                     const config = event.settings?.toolsConfig?.apply_diff || settingsManager.getApplyDiffConfig();
-                    this.hooks.sendCommand('tools.applyDiffConfigChanged', { config });
+                    this.hooks.sendCommand(PUSH_MESSAGE_NAMES['tools.applyDiffConfigChanged'], { config });
                 } catch {
                     // ignore
                 }
@@ -358,6 +373,9 @@ export class BackendRuntime {
         // 注册所有工具到工具注册器（必须在 ChannelManager 之前）。
         // 先清空再注册：重试初始化（graycode.retryInit）会再次走到这里，
         // 避免同一工具被重复注册导致声明重复/覆盖异常（F11）。
+        // 09 批 M5 固化：clear() 的「全量重注册」假设仅适用于下方 registerAllTools 的
+        // 纯静态注册——任何未来新增的动态注册（不经过 registerAllTools）必须放在 clear()
+        // 之后执行，否则会被清掉；注册表内其余索引（alias/registrations）同步清空。
         toolRegistry.clear();
         registerAllTools(toolRegistry);
 
@@ -365,12 +383,21 @@ export class BackendRuntime {
         // 供 ToolDeclarationResolver 反向获取（modules 层不直接依赖工具工厂实现）。
         // 幂等：覆盖式注册，重试初始化重复调用安全；工厂懒创建，每次解析重建动态声明，
         // 语义与改造前直连 createXxxTool 一致。
+        // R7 固化：工厂注册必须先于任何 resolver 调用（当前 init 顺序 settings→skills→
+        // tools→channel 保证安全）。若未来有代码在 initTools 之前解析声明（import 期
+        // 副作用/测试），read_file 多模态描述与图片工具参数会**静默回退静态声明**
+        // （getToolDeclarationFactory 返回 undefined），表现为「某些配置下工具描述不更新」。
         registerToolDeclarationFactory('read_file', (args) => createReadFileTool(args.multimodalEnabled, args.channelType, args.toolMode));
         registerToolDeclarationFactory('generate_image', (args) => createGenerateImageTool(args.maxBatchTasks, args.maxImagesPerTask, args.paramsConfig));
         registerToolDeclarationFactory('remove_background', (args) => createRemoveBackgroundTool(args.maxBatchTasks));
         registerToolDeclarationFactory('crop_image', (args) => createCropImageTool(args.maxBatchTasks));
         registerToolDeclarationFactory('resize_image', (args) => createResizeImageTool(args.maxBatchTasks));
         registerToolDeclarationFactory('rotate_image', (args) => createRotateImageTool(args.maxBatchTasks));
+
+        // 注册 SubAgent 可用性查询（A1：modules 层经 core 桥读取，tools 层实现在组合根注入）。
+        // 幂等：覆盖式注册，重试初始化重复调用安全；查询函数在工具声明解析时才执行，
+        // 语义与改造前 ToolDeclarationResolver 直连 hasAvailableSubAgent 一致。
+        setSubAgentAvailabilityQuery(hasAvailableSubAgent);
     }
 
     /** 11.1. 同步 skills 启用状态（settings 无记录的新 Skill 默认启用） */
@@ -402,7 +429,7 @@ export class BackendRuntime {
                 }
             }
         } catch (error) {
-            console.error('[ChatViewProvider] Failed to sync skills state:', error);
+            console.error('[bootstrap] Failed to sync skills state:', error);
         }
     }
 
@@ -431,6 +458,30 @@ export class BackendRuntime {
             storagePathManager.getEffectiveDataPath()
         );
         await this.checkpointManager.initialize();
+    }
+
+    /** 16.1 MIG-05：注册手动完整性检查诊断命令（graycode.runIntegrityCheck，前置：storagePathManager/checkpointManager/branchService） */
+    private initMaintenanceCommands(): void {
+        // 重试安全：重复 initialize 前先注销旧注册，避免同 id 命令叠加
+        this.maintenanceCommandDisposable?.dispose();
+        this.maintenanceCommandDisposable = undefined;
+        const outputChannel = this.integrityOutputChannel ?? vscode.window.createOutputChannel('GrayCode: Integrity Check');
+        this.integrityOutputChannel = outputChannel;
+        this.maintenanceCommandDisposable = registerMaintenanceCommands({
+            getStoragePath: () => this.storagePathManager.getEffectiveDataPath(),
+            getCheckpointsDir: () => this.checkpointManager.checkpointsDir,
+            getBranchValidator: () => {
+                const service = getGlobalBranchService();
+                return service
+                    ? (conversationId: string) => service.validateActivePathMatchesHistory(conversationId)
+                    : undefined;
+            },
+            outputChannel
+        });
+        this.trackCleanup(() => {
+            this.maintenanceCommandDisposable?.dispose();
+            this.maintenanceCommandDisposable = undefined;
+        });
     }
 
     /** 17-22. API 处理器（Chat/Models/Settings）+ 工具事件订阅（前置：channelManager/checkpointManager 等） */
@@ -485,7 +536,13 @@ export class BackendRuntime {
         const mcpConfigFile = vscode.Uri.joinPath(mcpConfigDir, 'servers.json');
         const mcpStorage = new VSCodeFileSystemMcpStorageAdapter(mcpConfigFile, vscode.workspace.fs);
         this.mcpManager = new McpManager(mcpStorage);
-        await this.mcpManager.initialize();
+        try {
+            await this.mcpManager.initialize();
+        } catch (error) {
+            // MCP 配置损坏/存储不可读（如 servers.json JSON 损坏）：不阻断扩展整体初始化——
+            // 告警后以空配置继续，用户可在设置页重写配置（下次保存原子写回修复文件）。
+            console.error('[bootstrap] MCP initialize failed, continuing with empty config:', error);
+        }
 
         // 将 MCP 管理器连接到 ChannelManager（用于工具声明）
         this.channelManager.setMcpManager(this.mcpManager);
@@ -643,6 +700,11 @@ export class BackendRuntime {
         // 取消所有活跃任务
         TaskManager.cancelAllTasks();
 
+        // 清扫泄漏任务：cancelAllTasks 仅触发 abort 不删除条目，这里把已 abort 却未走
+        // unregisterTask 注销（泄漏）的任务补发 cancelled 终态事件后移除，activeTasks 不留残项。
+        // 幂等：unregisterTask 后续对已清理 ID 是安全 no-op；dispose 同时被失败回滚复用，重试安全。
+        TaskManager.cleanup();
+
         // 释放 MCP 管理器资源（断开所有连接）
         this.mcpManager?.dispose();
 
@@ -654,6 +716,35 @@ export class BackendRuntime {
             setGlobalBranchService(undefined);
         }
         this.branchService = undefined;
+
+        // 09 批 M2：失败回滚（initialize 的 catch 复用 dispose）后必须清空全部核心全局引用——
+        // 否则 settings/config/channel/mcp/toolRegistry/diffStorage 仍指向半初始化对象，
+        // 未重试窗口内被读取会拿到残缺实例。按「当前全局 === 本实例」匹配清理，
+        // 避免误清后续实例已覆盖的引用；toolRegistry/tokenizer 为模块级单例/局部变量，
+        // 无条件清空（与 activityTracker 同口径）；重试路径重新 setGlobal 覆盖，幂等。
+        if (getGlobalSettingsManager() === this.settingsManager) {
+            setGlobalSettingsManager(null);
+        }
+        if (getGlobalConfigManager() === this.configManager) {
+            setGlobalConfigManager(null);
+        }
+        if (getGlobalChannelManager() === this.channelManager) {
+            setGlobalChannelManager(null);
+        }
+        setGlobalToolRegistry(null);
+        if (getGlobalDiffStorageManager() === this.diffStorageManager) {
+            setGlobalDiffStorageManager(null);
+        }
+        if (getGlobalMcpManager() === this.mcpManager) {
+            setGlobalMcpManager(null);
+        }
+        setGlobalTokenizerResourceManager(null);
+
+        // 09 批 A1 桥：SubAgent 可用性查询全局引用（模块级单例，与 toolRegistry/tokenizer
+        // 同口径无条件清空）。查询函数无状态、残留虽无害，但为与 M2 全局引用清理口径一致
+        // 一并清空；清理后 hasAvailableSubAgentSafe() 回退 true（与未注册一致，宽松不隐藏
+        // subagents 工具）；重试路径 initTools 重新注册，幂等。
+        setSubAgentAvailabilityQuery(undefined);
 
         // 清理更新检查延迟任务
         this.clearUpdateCheckTimer();

@@ -1,5 +1,5 @@
 /**
- * LimCode MCP (Model Context Protocol) 模块
+ * GrayCode MCP (Model Context Protocol) 模块
  * 
  * 提供 MCP 服务器配置管理和客户端连接功能
  */

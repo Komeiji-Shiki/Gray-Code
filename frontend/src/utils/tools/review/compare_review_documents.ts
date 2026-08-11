@@ -4,6 +4,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 function formatCompareResult(args: Record<string, unknown>, result?: Record<string, unknown>): string {
   const data = ((result as any)?.data || {}) as Record<string, any>
@@ -35,7 +36,8 @@ registerTool('compare_review_documents', {
     const basePath = (args as any)?.basePath as string | undefined
     const targetPath = (args as any)?.targetPath as string | undefined
     if (basePath && targetPath) return `${basePath} → ${targetPath}`
-    return t('components.message.tool.compareReviewDocuments.fallbackTitle')
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化标题
+    return getToolMetaDescription('compare_review_documents') ?? t('components.message.tool.compareReviewDocuments.fallbackTitle')
   },
   contentFormatter: (args, result) => formatCompareResult(args, result)
 })

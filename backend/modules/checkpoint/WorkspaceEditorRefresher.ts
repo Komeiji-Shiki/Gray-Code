@@ -1,5 +1,5 @@
 /**
- * LimCode - 工作区文档刷新器（CPF-12：从 CheckpointManager 拆分）
+ * GrayCode - 工作区文档刷新器（CPF-12：从 CheckpointManager 拆分）
  *
  * 恢复检查点后刷新 VSCode 中被修改/删除的打开文档（把文档 buffer 替换为磁盘内容后
  * 静默保存，applyEdit 失败时回退 revert），并关闭涉及受影响文件的 diff 视图
@@ -104,4 +104,5 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
         });
     }
 }
+
 

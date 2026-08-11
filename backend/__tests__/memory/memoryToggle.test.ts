@@ -47,7 +47,7 @@ describe('permanent memory toggle', () => {
         clearGlobalContext();
     });
 
-    it('defaults to enabled and disables every memory tool as one group', async () => {
+    test('defaults to enabled and disables every memory tool as one group', async () => {
         const manager = new SettingsManager(new TestSettingsStorage());
         await manager.initialize();
 
@@ -71,7 +71,7 @@ describe('permanent memory toggle', () => {
         }
     });
 
-    it.each([legacyMode, entriesMode])('removes the memory prompt when disabled in $promptAssemblyMode mode', async mode => {
+    test.each([legacyMode, entriesMode])('removes the memory prompt when disabled in $promptAssemblyMode mode', async mode => {
         const manager = new SettingsManager(new TestSettingsStorage());
         await manager.initialize();
         await manager.updateMemoryConfig({ enabled: true, systemPrompt: 'CUSTOM MEMORY INSTRUCTIONS' });

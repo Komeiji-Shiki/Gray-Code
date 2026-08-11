@@ -38,13 +38,13 @@ function createPromptContext(): RequestPromptContext {
 }
 
 describe('applyPromptContextThoughtPolicy', () => {
-    it('keeps fake thought parts only when sendHistoryThoughts is explicitly enabled', () => {
+    test('keeps fake thought parts only when sendHistoryThoughts is explicitly enabled', () => {
         const result = applyPromptContextThoughtPolicy(createPromptContext(), { sendHistoryThoughts: true });
         expect(result.beforeHistoryMessages[1].parts).toHaveLength(2);
         expect(result.beforeHistoryMessages[1].parts[0]).toEqual({ text: 'Fake reasoning trace', thought: true });
     });
 
-    it('strips fake thought parts when sendHistoryThoughts is unset or explicitly disabled', () => {
+    test('strips fake thought parts when sendHistoryThoughts is unset or explicitly disabled', () => {
         for (const sendHistoryThoughts of [undefined, false]) {
             const result = applyPromptContextThoughtPolicy(createPromptContext(), { sendHistoryThoughts });
 
@@ -57,7 +57,7 @@ describe('applyPromptContextThoughtPolicy', () => {
         }
     });
 
-    it('does not mutate the input prompt context', () => {
+    test('does not mutate the input prompt context', () => {
         const context = createPromptContext();
         applyPromptContextThoughtPolicy(context, { sendHistoryThoughts: false });
 

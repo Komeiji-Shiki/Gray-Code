@@ -10,9 +10,10 @@
  * 修改目的：等待期间用户可继续互动；任务结果以透明的用户消息进入对话历史。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { sendToExtension, onExtensionCommand } from '../utils/vscode'
 import {
   isBackgroundStartEvent,
   taskRecordFromStartEvent,
@@ -36,7 +37,9 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   /**
    * 同步读取会话状态（桥未注册时按空闲/无会话兜底）：
    * 生产环境 chatStore 实例在 App.vue setup 中先于本 store 创建，桥必然已注册；
-   * 兜底值仅用于极端时序，watch 在桥注册前保持惰性，注册后自动恢复响应式追踪。
+   * 兜底值仅用于极端时序。watch getter 读 getChatBridge()（内部为 Vue ref）——
+   * 即使 watch 创建时桥尚未注册，getter 也已对桥注册本身建立响应式依赖：
+   * 桥注册/替换（含 HMR 重建）时会重新求值并顺带追踪底层 chat ref，不会永久失效。
    */
   function chatStateSync(): { isStreaming: boolean; isWaitingForResponse: boolean; currentConversationId: string | null } {
     const bridge = getChatBridge()
@@ -115,7 +118,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
   /** 领取当前会话的 agent→main 消息；没有消息时返回 null。 */
   async function claimAgentMessages(conversationId: string): Promise<AgentMessageClaimPayload | null> {
-    const claim = await sendToExtension<AgentMessageClaimPayload>('chat.claimAgentMessages', { conversationId })
+    const claim = await sendToExtension<AgentMessageClaimPayload>(MESSAGE_NAMES['chat.claimAgentMessages'], { conversationId })
     return claim?.claimId && claim.message ? claim : null
   }
 
@@ -123,7 +126,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   async function releaseAgentMessages(claim: AgentMessageClaimPayload): Promise<void> {
     if (!claim.claimId) return
     try {
-      await sendToExtension('chat.releaseAgentMessages', {
+      await sendToExtension(MESSAGE_NAMES['chat.releaseAgentMessages'], {
         conversationId: claim.conversationId,
         claimId: claim.claimId
       })
@@ -228,7 +231,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         try {
           // 等待后端空闲带超时（5s）：后端忙/挂起时不能让回执无限期卡住 flush 流程
           await Promise.race([
-            sendToExtension('chat.awaitConversationIdle', { conversationId: currentId }),
+            sendToExtension(MESSAGE_NAMES['chat.awaitConversationIdle'], { conversationId: currentId }),
             new Promise<never>((_, reject) => {
               idleTimeoutId = setTimeout(() => reject(new Error('awaitConversationIdle timed out after 5s')), 5000)
             })
@@ -392,7 +395,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   /** 取消运行中的后台任务 */
   async function cancelTask(taskId: string): Promise<void> {
     try {
-      await sendToExtension('task.cancel', { taskId })
+      await sendToExtension(MESSAGE_NAMES['task.cancel'], { taskId })
     } catch (error) {
       console.error('Failed to cancel background task:', error)
     }
@@ -429,7 +432,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     try {
       const response = await sendToExtension<{
         tasks: Array<{ id: string; type: string; startTime: number; metadata?: Record<string, unknown> }>
-      }>('task.getAll', {})
+      }>(MESSAGE_NAMES['task.getAll'], {})
 
       for (const task of response?.tasks || []) {
         if (tasks.value[task.id]) continue
@@ -457,10 +460,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     if (cleanup) return cleanup
     initialized.value = true
 
-    const unsubscribeMessages = onMessageFromExtension(message => {
-      if (message.type === 'taskEvent') {
-        handleTaskEvent(message.data as TaskEventLike)
-      }
+    const unsubscribeMessages = onExtensionCommand<TaskEventLike>('taskEvent', event => {
+      handleTaskEvent(event)
     })
 
     // 流结束 → 补发挂起回执（混合语义的"忙时暂存，闲时补发"）

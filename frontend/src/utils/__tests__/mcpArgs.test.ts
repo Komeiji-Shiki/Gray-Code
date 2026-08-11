@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import { formatMcpArgsInput, parseMcpArgsInput } from '../mcpArgs'
 
 describe('MCP stdio argument input', () => {
-  it('round-trips arguments without losing spaces, quotes, backslashes, or empty values', () => {
+  test('round-trips arguments without losing spaces, quotes, backslashes, or empty values', () => {
     const args = [
       '-m',
       'C:\\Program Files\\MCP server',
@@ -14,7 +14,7 @@ describe('MCP stdio argument input', () => {
     expect(parseMcpArgsInput(formatMcpArgsInput(args))).toEqual(args)
   })
 
-  it('continues to accept the legacy whitespace-separated syntax', () => {
+  test('continues to accept the legacy whitespace-separated syntax', () => {
     expect(parseMcpArgsInput('  -m   mcp_server  --verbose ')).toEqual([
       '-m',
       'mcp_server',
@@ -22,11 +22,11 @@ describe('MCP stdio argument input', () => {
     ])
   })
 
-  it('keeps legacy bracket and glob arguments that are not valid JSON arrays', () => {
+  test('keeps legacy bracket and glob arguments that are not valid JSON arrays', () => {
     expect(parseMcpArgsInput('[pattern]  [A-Z]*')).toEqual(['[pattern]', '[A-Z]*'])
   })
 
-  it.each([
+  test.each([
     '["valid", 123]',
     '["unterminated"'
   ])('rejects an invalid JSON argument array: %s', (input) => {

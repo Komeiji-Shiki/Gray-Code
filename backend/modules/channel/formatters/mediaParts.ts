@@ -1,5 +1,5 @@
 /**
- * LimCode - 附件 MIME 分类与转换工具
+ * GrayCode - 附件 MIME 分类与转换工具
  *
  * 不同 API 对附件（inlineData）的支持格式不同：
  * - OpenAI Chat Completions：图片 → image_url，文本 → text，其余不支持
@@ -84,3 +84,4 @@ export function buildUnsupportedAttachmentText(mimeType: string): string {
 export function buildTextAttachmentContent(base64: string): string {
     return `[附件内容]\n\n${decodeBase64Text(base64)}`;
 }
+

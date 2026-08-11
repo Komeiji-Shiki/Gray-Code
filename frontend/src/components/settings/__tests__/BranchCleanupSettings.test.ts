@@ -8,7 +8,7 @@
  * - 保留期配置：非法输入禁用保存、保存成功回读后端归一化值、失败展示错误
  */
 import { mount, flushPromises } from '@vue/test-utils'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import BranchCleanupSettings from '../BranchCleanupSettings.vue'
 
 vi.mock('@/utils/vscode', () => ({
@@ -47,7 +47,7 @@ describe('BranchCleanupSettings', () => {
     mockSend.mockReset()
   })
 
-  it('挂载时加载软删分支数量与保留期配置', async () => {
+  test('挂载时加载软删分支数量与保留期配置', async () => {
     const wrapper = await mountSettings()
 
     expect(mockSend).toHaveBeenCalledWith('conversation.getDeletedBranchCount', {})
@@ -60,7 +60,7 @@ describe('BranchCleanupSettings', () => {
     expect(input.value).toBe('30')
   })
 
-  it('软删数量为 0 时展示空态文案', async () => {
+  test('软删数量为 0 时展示空态文案', async () => {
     mockSend.mockImplementation((type: string) => {
       if (type === 'conversation.getDeletedBranchCount') {
         return Promise.resolve({ conversationCount: 0, deletedNodeCount: 0 })
@@ -74,7 +74,7 @@ describe('BranchCleanupSettings', () => {
     expect(wrapper.find('.deleted-count-value').exists()).toBe(false)
   })
 
-  it('一键清理：调用 prune API，成功后刷新数量并展示清理结果', async () => {
+  test('一键清理：调用 prune API，成功后刷新数量并展示清理结果', async () => {
     const calls: string[] = []
     mockSend.mockImplementation((type: string) => {
       calls.push(type)
@@ -106,7 +106,7 @@ describe('BranchCleanupSettings', () => {
     expect(calls.filter(c => c === 'conversation.getDeletedBranchCount').length).toBe(2)
   })
 
-  it('一键清理失败：展示错误文案', async () => {
+  test('一键清理失败：展示错误文案', async () => {
     mockSend.mockImplementation((type: string) => {
       if (type === 'conversation.pruneDeletedBranches') {
         return Promise.reject(new Error('prune boom'))
@@ -127,7 +127,7 @@ describe('BranchCleanupSettings', () => {
     expect(wrapper.text()).toContain('prune boom')
   })
 
-  it('R8c-P4：清理结果含 skippedConversations 时展示提示文案（会话已不存在）', async () => {
+  test('R8c-P4：清理结果含 skippedConversations 时展示提示文案（会话已不存在）', async () => {
     mockSend.mockImplementation((type: string) => {
       switch (type) {
         case 'conversation.getDeletedBranchCount':
@@ -156,7 +156,7 @@ describe('BranchCleanupSettings', () => {
     expect(wrapper.text()).toContain('2 个对话的分支数据未清理')
   })
 
-  it('保留期：非法输入（负数/小数）禁用保存按钮并提示', async () => {
+  test('保留期：非法输入（负数/小数）禁用保存按钮并提示', async () => {
     const wrapper = await mountSettings()
     const input = wrapper.find('input.number-input')
     await input.setValue('-1')
@@ -167,7 +167,7 @@ describe('BranchCleanupSettings', () => {
     expect(wrapper.find('button.retention-save-btn').attributes('disabled')).toBeDefined()
   })
 
-  it('保留期：保存成功回读后端归一化值', async () => {
+  test('保留期：保存成功回读后端归一化值', async () => {
     mockSend.mockImplementation((type: string) => {
       switch (type) {
         case 'conversation.getDeletedBranchCount':
@@ -192,7 +192,7 @@ describe('BranchCleanupSettings', () => {
     expect((input.element as HTMLInputElement).value).toBe('7')
   })
 
-  it('保留期：保存失败展示错误且不更新输入', async () => {
+  test('保留期：保存失败展示错误且不更新输入', async () => {
     mockSend.mockImplementation((type: string) => {
       if (type === 'conversation.updateBranchRetentionConfig') {
         return Promise.reject(new Error('retention boom'))

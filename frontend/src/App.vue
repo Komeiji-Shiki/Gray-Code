@@ -4,6 +4,7 @@
  * 使用Pinia store管理状态
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { onMounted, onBeforeUnmount, ref, watch, reactive } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
@@ -454,7 +455,7 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 
 async function loadLanguageSettings() {
   try {
-    const response = await sendToExtension<any>('getSettings', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
     if (response?.settings?.ui?.language) {
       settingsStore.setLanguage(response.settings.ui.language)
       setLanguage(response.settings.ui.language)
@@ -499,7 +500,7 @@ onMounted(async () => {
   console.log('GrayCode Chat 已加载')
   
   // Notify the extension that the webview is ready to receive command messages.
-  sendToExtension('webviewReady', {}).catch(error => {
+  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
     console.error('[App] Failed to notify extension that webview is ready:', error)
   })
   

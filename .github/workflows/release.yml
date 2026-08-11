@@ -30,10 +30,14 @@ jobs:
         run: |
           npm ci
           # 前端有独立 package.json（非 workspaces），需单独安装其依赖
-          npm --prefix frontend ci
+          # 用 install 而非 ci：frontend lock 与 package.json 可能不同步（残留 graycode file:.. 条目），ci 会因同步检查失败
+          npm --prefix frontend install --no-audit --no-fund
 
       - name: Typecheck & test
         run: npm run ci
+
+      - name: i18n parity check
+        run: npm run i18n:check
 
       - name: Package vsix
         # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤

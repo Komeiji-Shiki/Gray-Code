@@ -7,6 +7,7 @@
  * - getWorkspaceUri / getRelativePath：工作区信息消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../../backend/i18n';
@@ -89,6 +90,6 @@ export const getRelativePath: MessageHandler = async (data, requestId, ctx) => {
  */
 export function registerFileUtilsHandlers(registry: Map<string, MessageHandler>): void {
   // 工作区信息
-  registry.set('getWorkspaceUri', getWorkspaceUri);
-  registry.set('getRelativePath', getRelativePath);
+  registry.set(MESSAGE_NAMES.getWorkspaceUri, getWorkspaceUri);
+  registry.set(MESSAGE_NAMES.getRelativePath, getRelativePath);
 }

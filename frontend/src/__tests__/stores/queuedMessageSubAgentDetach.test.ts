@@ -4,7 +4,7 @@
  * 覆盖：当前回合仍在运行时，右侧发送箭头必须通过 preserveSubAgents 取消旧流，
  * 让后端先把前台 SubAgent 转为后台；随后才启动新消息流。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('../../utils/vscode', () => ({
@@ -23,7 +23,7 @@ describe('sendQueuedMessageNow', () => {
     vi.mocked(sendToExtension).mockClear()
   })
 
-  it('先以 preserveSubAgents 取消旧流，再发送排队消息', async () => {
+  test('先以 preserveSubAgents 取消旧流，再发送排队消息', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_queue'
     store.isStreaming = true

@@ -21,9 +21,9 @@
 import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, ConversationMetadata } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory, ConversationMetadata } from '../../modules/conversation';
 import {
     BranchService,
     setGlobalBranchService,
@@ -101,7 +101,7 @@ class FailingMetadataStorage extends MemoryStorageAdapter {
     }
 }
 
-describe('TREE-04/06 候选切换全链（handler 编排）', () => {
+describe('候选切换全链（handler 编排）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -550,7 +550,7 @@ describe('TREE-04/06 候选切换全链（handler 编排）', () => {
     });
 });
 
-describe('TREE-06 ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => {
+describe('ConversationManager.rewriteHistoryFromBranchGraph（直调）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -645,7 +645,7 @@ describe('TREE-06 ConversationManager.rewriteHistoryFromBranchGraph（直调）'
     });
 });
 
-describe('TREE-04/06 切换失败语义（handler 回滚）', () => {
+describe('切换失败语义（handler 回滚）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;

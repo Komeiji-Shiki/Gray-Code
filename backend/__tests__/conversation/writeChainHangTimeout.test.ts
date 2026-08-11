@@ -12,7 +12,7 @@ describe('写队列挂起超时语义（SEC）', () => {
         jest.useRealTimers();
     });
 
-    it('withMetadataWriteSerialized：超时后链不前进，后续写等待底层任务真正结束后才执行', async () => {
+    test('withMetadataWriteSerialized：超时后链不前进，后续写等待底层任务真正结束后才执行', async () => {
         jest.useFakeTimers();
         let releaseFirst: () => void = () => undefined;
         const firstTask = () => new Promise<void>(resolve => {
@@ -42,7 +42,7 @@ describe('写队列挂起超时语义（SEC）', () => {
         expect(secondRan).toBe(true);
     });
 
-    it('withHangTimeout 本身仍保留 fail-fast 语义（调用方不无限等待）', async () => {
+    test('withHangTimeout 本身仍保留 fail-fast 语义（调用方不无限等待）', async () => {
         jest.useFakeTimers();
         const never = new Promise<void>(() => undefined);
         const raced = withHangTimeout(never, 'label-test', 1000);
@@ -51,7 +51,7 @@ describe('写队列挂起超时语义（SEC）', () => {
         await rejection;
     });
 
-    it('正常完成的任务：队列按序执行，后续写在前一个完成后才开始', async () => {
+    test('正常完成的任务：队列按序执行，后续写在前一个完成后才开始', async () => {
         const order: string[] = [];
         const first = withMetadataWriteSerialized('conv-ok', async () => {
             order.push('first-start');

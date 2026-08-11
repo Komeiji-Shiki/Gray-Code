@@ -9,7 +9,7 @@
  */
 import { ref } from 'vue'
 import type { Ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, CheckpointRecord } from '../../stores/chat/types'
 import { sendMessage, INTERRUPT_MESSAGE_MAX_LENGTH, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
@@ -70,7 +70,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     recentInterruptDeliveries.value = []
   })
 
-  it('isStreaming 时改走 chat.sendInterruptMessage，不乐观插入窗口', async () => {
+  test('isStreaming 时改走 chat.sendInterruptMessage，不乐观插入窗口', async () => {
     const history = { id: 'm1', role: 'user', content: '旧问题', timestamp: 1 } as Message
     const state = createState({
       currentConversationId: ref('conv_1'),
@@ -95,7 +95,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeUndefined()
   })
 
-  it('isWaitingForResponse（未流式）同样走 interrupt 路径', async () => {
+  test('isWaitingForResponse（未流式）同样走 interrupt 路径', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -109,7 +109,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeDefined()
   })
 
-  it('空闲时保持原有发送路径（chatStream + 乐观插入）', async () => {
+  test('空闲时保持原有发送路径（chatStream + 乐观插入）', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -132,7 +132,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(state.allMessages.value.map(m => m.role)).toEqual(['user', 'assistant'])
   })
 
-  it('后台任务回执来源随 chatStream 请求传给后端', async () => {
+  test('后台任务回执来源随 chatStream 请求传给后端', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -151,7 +151,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(state.allMessages.value[0].source).toBe('background_task')
   })
 
-  it('忙时带附件 → 不回退插入路径（返回 false，不投递）', async () => {
+  test('忙时带附件 → 不回退插入路径（返回 false，不投递）', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -167,7 +167,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeUndefined()
   })
 
-  it('忙时隐藏发送（functionResponse）不走 interrupt 路径', async () => {
+  test('忙时隐藏发送（functionResponse）不走 interrupt 路径', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -184,7 +184,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeUndefined()
   })
 
-  it('忙时超长文本不回退插入路径（返回 false）', async () => {
+  test('忙时超长文本不回退插入路径（返回 false）', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -198,7 +198,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeUndefined()
   })
 
-  it('忙时无会话 → 返回 false 不投递', async () => {
+  test('忙时无会话 → 返回 false 不投递', async () => {
     const state = createState({
       currentConversationId: ref(null),
       allMessages: ref([]),
@@ -212,7 +212,7 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeUndefined()
   })
 
-  it('投递被后端拒绝（如频率限制）→ 返回 false，不打断进行中的回合', async () => {
+  test('投递被后端拒绝（如频率限制）→ 返回 false，不打断进行中的回合', async () => {
     vi.mocked(sendToExtension).mockResolvedValue({
       success: false,
       error: { code: 'INTERRUPT_MESSAGE_RATE_LIMITED', message: 'too fast' }
@@ -240,7 +240,7 @@ describe('忙时投递轻量回显（M3-1）', () => {
     recentInterruptDeliveries.value = []
   })
 
-  it('投递成功记录 delivered 提示（conversationId + 文本）', async () => {
+  test('投递成功记录 delivered 提示（conversationId + 文本）', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -260,7 +260,7 @@ describe('忙时投递轻量回显（M3-1）', () => {
     expect(state.error.value).toBeNull()
   })
 
-  it('投递被拒绝（INTERRUPT_MESSAGE_RATE_LIMITED）记录 error 提示且不写错误条', async () => {
+  test('投递被拒绝（INTERRUPT_MESSAGE_RATE_LIMITED）记录 error 提示且不写错误条', async () => {
     vi.mocked(sendToExtension).mockResolvedValue({
       success: false,
       error: { code: 'INTERRUPT_MESSAGE_RATE_LIMITED', message: 'too fast' }
@@ -284,7 +284,7 @@ describe('忙时投递轻量回显（M3-1）', () => {
     expect(state.isStreaming.value).toBe(true)
   })
 
-  it('同会话同类型提示只保留最新一条（去重）', async () => {
+  test('同会话同类型提示只保留最新一条（去重）', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -300,7 +300,7 @@ describe('忙时投递轻量回显（M3-1）', () => {
     expect(delivered[0].text).toBe('第二条')
   })
 
-  it('忙时带附件/超长文本/无会话不回退插入，也不记录投递提示', async () => {
+  test('忙时带附件/超长文本/无会话不回退插入，也不记录投递提示', async () => {
     const att = { id: 'att_1', name: 'x.png', type: 'image', size: 1, mimeType: 'image/png', data: '' } as any
     const state = createState({
       currentConversationId: ref('conv_1'),
@@ -325,7 +325,7 @@ describe('忙时投递轻量回显（M3-1）', () => {
     expect(recentInterruptDeliveries.value).toHaveLength(0)
   })
 
-  it('clearInterruptDeliveries 只清除指定会话的提示', async () => {
+  test('clearInterruptDeliveries 只清除指定会话的提示', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
@@ -366,7 +366,7 @@ describe('upsertHiddenFunctionResponseMessage 索引重建（M3-2）', () => {
     })
   }
 
-  it('隐藏发送追加 functionResponse 后 messageIndexById/toolResponseIndex 同步更新', async () => {
+  test('隐藏发送追加 functionResponse 后 messageIndexById/toolResponseIndex 同步更新', async () => {
     const state = createStateWithIndex()
 
     const result = await sendMessage(state, createComputed(), '', undefined, {
@@ -380,7 +380,7 @@ describe('upsertHiddenFunctionResponseMessage 索引重建（M3-2）', () => {
     expect(state.toolResponseIndex.value.get('fr_1')).toBe(0)
   })
 
-  it('隐藏发送命中已有同 id functionResponse 时原地合并并重建索引', async () => {
+  test('隐藏发送命中已有同 id functionResponse 时原地合并并重建索引', async () => {
     const existing = {
       id: 'msg_fr',
       role: 'user',

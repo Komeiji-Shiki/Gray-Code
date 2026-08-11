@@ -6,7 +6,7 @@
  * confirmDelete 读到的恒为 null，delete 事件永远不会发出，导致「最近对话无法删除」。
  * 修复后删除事件必须正常发出；取消路径（取消按钮 / Esc / 遮罩）不得触发删除。
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, type VueWrapper } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ConversationList from '../ConversationList.vue'
@@ -68,7 +68,7 @@ describe('ConversationList 删除确认流程', () => {
     document.body.innerHTML = ''
   })
 
-  it('点击垃圾桶弹出确认框，确认后发出 delete 事件（回归：确认后 delete 不再丢失）', async () => {
+  test('点击垃圾桶弹出确认框，确认后发出 delete 事件（回归：确认后 delete 不再丢失）', async () => {
     await clickTrash(wrapper)
 
     const dialog = wrapper.find('.dialog')
@@ -84,7 +84,7 @@ describe('ConversationList 删除确认流程', () => {
     expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
-  it('取消按钮关闭确认框且不发出 delete 事件', async () => {
+  test('取消按钮关闭确认框且不发出 delete 事件', async () => {
     await clickTrash(wrapper)
     expect(wrapper.find('.dialog').exists()).toBe(true)
 
@@ -95,7 +95,7 @@ describe('ConversationList 删除确认流程', () => {
     expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
-  it('Esc 关闭确认框且不发出 delete 事件', async () => {
+  test('Esc 关闭确认框且不发出 delete 事件', async () => {
     await clickTrash(wrapper)
     await wrapper.find('.dialog').trigger('keydown', { key: 'Escape' })
 
@@ -104,7 +104,7 @@ describe('ConversationList 删除确认流程', () => {
     expect(wrapper.find('.dialog').exists()).toBe(false)
   })
 
-  it('确认框确认后再次点击垃圾桶可再次删除（pendingDeleteId 已被清理）', async () => {
+  test('确认框确认后再次点击垃圾桶可再次删除（pendingDeleteId 已被清理）', async () => {
     await clickTrash(wrapper)
     await wrapper.find('.dialog-btn.confirm').trigger('click')
     expect(wrapper.emitted('delete')).toEqual([['c1']])
@@ -114,7 +114,7 @@ describe('ConversationList 删除确认流程', () => {
     expect(wrapper.emitted('delete')).toEqual([['c1'], ['c1']])
   })
 
-  it('删除进行中显示 spinner 且不再渲染垃圾桶按钮', async () => {
+  test('删除进行中显示 spinner 且不再渲染垃圾桶按钮', async () => {
     chatStoreMock.isDeletingConversation.mockImplementation((id: string) => id === 'c1')
     wrapper = mountList()
 
@@ -122,7 +122,7 @@ describe('ConversationList 删除确认流程', () => {
     expect(wrapper.find('.deleting-indicator').exists()).toBe(true)
   })
 
-  it('多条对话删除互不干扰：删除 c2 只发出对应 id', async () => {
+  test('多条对话删除互不干扰：删除 c2 只发出对应 id', async () => {
     wrapper = mountList([makeConversation('c1'), makeConversation('c2')])
 
     const buttons = wrapper.findAll('.icon-button').filter(b => b.find('.codicon-trash').exists())

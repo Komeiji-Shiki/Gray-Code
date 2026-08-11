@@ -15,7 +15,7 @@ describe('exportPromptModes', () => {
         jest.clearAllMocks();
     });
 
-    it('does not write a file when the save dialog is cancelled', async () => {
+    test('does not write a file when the save dialog is cancelled', async () => {
         (vscode.window.showSaveDialog as jest.Mock).mockResolvedValue(undefined);
 
         await exportPromptModes(
@@ -29,7 +29,7 @@ describe('exportPromptModes', () => {
         expect(sendError).not.toHaveBeenCalled();
     });
 
-    it('reports success only after the selected file is written', async () => {
+    test('reports success only after the selected file is written', async () => {
         const target = vscode.Uri.file('/tmp/mode.json');
         (vscode.window.showSaveDialog as jest.Mock).mockResolvedValue(target);
         (fs.writeFile as jest.Mock).mockResolvedValue(undefined);

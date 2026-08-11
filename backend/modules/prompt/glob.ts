@@ -2,8 +2,9 @@
  * glob 模式转正则的公共实现（gitignore 式语义）
  *
  * - `*` 不跨目录段（`[^/]*`）
- * - `**` 跨任意段（`.*`）；`**` 后紧跟分隔符时零段可选——模式 `**` + 分隔符 + `x`
- *   匹配根级 `x`，模式 `a` + `/**` + 分隔符 + `b` 匹配 `a/b`（gitignore 语义）
+ * - 仅「独立段」的 `**`（整段为 `**`）跨任意段（`.*`），后紧跟分隔符时零段可选——
+ *   模式 `**` + 分隔符 + `x` 匹配根级 `x`，模式 `a` + `/**` + 分隔符 + `b` 匹配 `a/b`
+ * - 中缀 `**`（`a**b`、`**x`、`a**`）按普通 `*` 处理，不跨目录段（gitignore 语义）
  *
  * 为什么这里不需要 `[\\/]` 字符类：
  * 调用方在 test 前统一把路径归一化为 `/`（`path.replace(/\\/g, '/')`），
@@ -27,8 +28,12 @@ function escapeRegExp(s: string): string {
  */
 export function globPatternToRegExp(pattern: string): string {
     return escapeRegExp(pattern.replace(/\\/g, '/'))
-        .replace(/\\\*\\\*/g, '<<<GLOBSTAR>>>')   // 转义后的 **
-        .replace(/\\\*/g, '[^/]*')                // 转义后的 *
-        .replace(/<<<GLOBSTAR>>>\//g, '(?:.*/)?') // ** 后跟分隔符：零段可选
-        .replace(/<<<GLOBSTAR>>>/g, '.*')         // 裸 ** 跨任意段
+        .replace(/\\\*\\\*/g, '<<<GLOBSTAR>>>')        // 转义后的 **
+        .replace(/\\\*/g, '[^/]*')                     // 转义后的 *
+        // 仅「独立段」的 **（段首/段尾或 / 边界）才保留 globstar 语义；
+        // 中缀 **（a**b、**x、a**）按普通 * 处理，不跨目录段
+        .replace(/(^|\/)<<<GLOBSTAR>>>(?=\/|$)/g, '$1<<<GLOBSTAR_SEG>>>')
+        .replace(/<<<GLOBSTAR>>>/g, '[^/]*')
+        .replace(/<<<GLOBSTAR_SEG>>>\//g, '(?:.*/)?')  // ** 后跟分隔符：零段可选
+        .replace(/<<<GLOBSTAR_SEG>>>/g, '.*')          // 裸 ** 跨任意段
 }

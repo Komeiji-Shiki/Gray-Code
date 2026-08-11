@@ -8,7 +8,7 @@
  * 修复：整体超时（10s）、onerror/onabort 分支、settle 兜底；
  * duration 非法（NaN/Infinity/<=0）时放弃截帧；img 加载补 onerror。
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useAttachments } from '../../composables/useAttachments'
 
 vi.mock('../../composables/useI18n', () => ({
@@ -104,7 +104,7 @@ describe('useAttachments 视频缩略图', () => {
     vi.useRealTimers()
   })
 
-  it('duration 为 NaN 时不再挂起：附件正常添加、uploading 复位', async () => {
+  test('duration 为 NaN 时不再挂起：附件正常添加、uploading 复位', async () => {
     videoStub.duration = NaN
     const promise = attachments.addAttachments([videoFile()])
     // 模拟浏览器触发 onloadedmetadata（duration 非法 → 放弃截帧）
@@ -117,7 +117,7 @@ describe('useAttachments 视频缩略图', () => {
     expect(attachments.attachments.value).toHaveLength(1)
   })
 
-  it('duration 为 Infinity/0 时同样放弃截帧不挂起', async () => {
+  test('duration 为 Infinity/0 时同样放弃截帧不挂起', async () => {
     for (const badDuration of [Infinity, 0]) {
       videoStub.duration = badDuration
       const promise = attachments.addAttachments([videoFile()])
@@ -130,7 +130,7 @@ describe('useAttachments 视频缩略图', () => {
     }
   })
 
-  it('视频加载失败（onerror）不挂起', async () => {
+  test('视频加载失败（onerror）不挂起', async () => {
     videoStub.duration = 10
     const promise = attachments.addAttachments([videoFile()])
     videoStub.onerror!()
@@ -141,7 +141,7 @@ describe('useAttachments 视频缩略图', () => {
     expect(attachments.uploading.value).toBe(false)
   })
 
-  it('10 秒超时兜底：无任何事件时 Promise 仍然 settle', async () => {
+  test('10 秒超时兜底：无任何事件时 Promise 仍然 settle', async () => {
     vi.useFakeTimers()
     const promise = attachments.addAttachments([videoFile()])
     // 不触发任何视频事件，仅推进时间触发整体超时
@@ -152,7 +152,7 @@ describe('useAttachments 视频缩略图', () => {
     expect(attachments.uploading.value).toBe(false)
   })
 
-  it('正常路径：loadedmetadata + seeked 生成缩略图', async () => {
+  test('正常路径：loadedmetadata + seeked 生成缩略图', async () => {
     videoStub.duration = 10
     const promise = attachments.addAttachments([videoFile()])
     videoStub.onloadedmetadata!()

@@ -21,40 +21,40 @@ import * as vscode from 'vscode';
 // ─── 纯函数 ──────────────────────────────────────────
 
 describe('stripVersionPrefix', () => {
-    it('剥离 v 前缀', () => {
+    test('剥离 v 前缀', () => {
         expect(stripVersionPrefix('v1.2.3')).toBe('1.2.3');
         expect(stripVersionPrefix('V1.2.3')).toBe('1.2.3');
     });
 
-    it('无前缀原样返回', () => {
+    test('无前缀原样返回', () => {
         expect(stripVersionPrefix('1.2.3')).toBe('1.2.3');
         expect(stripVersionPrefix('')).toBe('');
     });
 });
 
 describe('compareVersions', () => {
-    it('相等返回 0（含 v 前缀差异）', () => {
+    test('相等返回 0（含 v 前缀差异）', () => {
         expect(compareVersions('1.4.4', 'v1.4.4')).toBe(0);
         expect(compareVersions('1.4.4', '1.4.4')).toBe(0);
     });
 
-    it('常规大小比较', () => {
+    test('常规大小比较', () => {
         expect(compareVersions('1.4.5', '1.4.4')).toBe(1);
         expect(compareVersions('1.3.9', '1.4.0')).toBe(-1);
         expect(compareVersions('2.0.0', '1.9.9')).toBe(1);
     });
 
-    it('段数不足按 0 补齐', () => {
+    test('段数不足按 0 补齐', () => {
         expect(compareVersions('1.4', '1.4.0')).toBe(0);
         expect(compareVersions('1.4.1', '1.4')).toBe(1);
         expect(compareVersions('1.4', '1.4.1')).toBe(-1);
     });
 
-    it('非数字段按 0 处理', () => {
+    test('非数字段按 0 处理', () => {
         expect(compareVersions('1.4.x', '1.4.0')).toBe(0);
     });
 
-    it('nightly 预发布视为高于同主版本正式版，nightly 之间按日期比较', () => {
+    test('nightly 预发布视为高于同主版本正式版，nightly 之间按日期比较', () => {
         expect(compareVersions('1.4.6-nightly.20260810', '1.4.6')).toBe(1);
         expect(compareVersions('1.4.6', '1.4.6-nightly.20260809')).toBe(-1);
         expect(compareVersions('1.4.6-nightly.20260810', '1.4.6-nightly.20260809')).toBe(1);
@@ -66,42 +66,42 @@ describe('compareVersions', () => {
 describe('shouldCheck', () => {
     const now = 1_000_000;
 
-    it('force 总是检查', () => {
+    test('force 总是检查', () => {
         expect(shouldCheck(now, now + 1, true)).toBe(true);
     });
 
-    it('无上次记录时检查', () => {
+    test('无上次记录时检查', () => {
         expect(shouldCheck(undefined, now, false)).toBe(true);
     });
 
-    it('间隔内不检查', () => {
+    test('间隔内不检查', () => {
         expect(shouldCheck(now - UPDATE_CHECK_INTERVAL_MS + 1, now, false)).toBe(false);
         expect(shouldCheck(now, now, false)).toBe(false);
     });
 
-    it('超过间隔检查', () => {
+    test('超过间隔检查', () => {
         expect(shouldCheck(now - UPDATE_CHECK_INTERVAL_MS, now, false)).toBe(true);
     });
 });
 
 describe('extractNightlyVersionFromName', () => {
-    it('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
+    test('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
         expect(extractNightlyVersionFromName('v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
 
-    it('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
+    test('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
 
-    it('无 v 前缀同样可提取', () => {
+    test('无 v 前缀同样可提取', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly 1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
     });
 
-    it('版本号后跟多余数字时不截断（锚定结尾）', () => {
+    test('版本号后跟多余数字时不截断（锚定结尾）', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.202608090')).toBeNull();
     });
 
-    it('无版本号返回 null', () => {
+    test('无版本号返回 null', () => {
         expect(extractNightlyVersionFromName('Gray Code Nightly')).toBeNull();
         expect(extractNightlyVersionFromName(undefined)).toBeNull();
         expect(extractNightlyVersionFromName('')).toBeNull();
@@ -109,7 +109,7 @@ describe('extractNightlyVersionFromName', () => {
 });
 
 describe('parseReleaseResponse', () => {
-    it('解析正常响应（含 vsix 资产）', () => {
+    test('解析正常响应（含 vsix 资产）', () => {
         const info = parseReleaseResponse({
             tag_name: 'v1.4.5',
             name: 'Gray Code 1.4.5',
@@ -129,7 +129,7 @@ describe('parseReleaseResponse', () => {
         expect(info!.publishedAt).toBe('2026-08-08T00:00:00Z');
     });
 
-    it('无 vsix 资产时 vsixAssetUrl 为 undefined', () => {
+    test('无 vsix 资产时 vsixAssetUrl 为 undefined', () => {
         const info = parseReleaseResponse({
             tag_name: 'v1.4.5',
             assets: [{ name: 'source.zip', browser_download_url: 'https://example.com/source.zip' }],
@@ -138,14 +138,14 @@ describe('parseReleaseResponse', () => {
         expect(info!.vsixAssetUrl).toBeUndefined();
     });
 
-    it('响应格式异常返回 null', () => {
+    test('响应格式异常返回 null', () => {
         expect(parseReleaseResponse(null)).toBeNull();
         expect(parseReleaseResponse('oops')).toBeNull();
         expect(parseReleaseResponse({})).toBeNull();
         expect(parseReleaseResponse({ tag_name: 123 })).toBeNull();
     });
 
-    it('nightly 渠道从 Release name 提取版本号（tag 固定为 nightly）', () => {
+    test('nightly 渠道从 Release name 提取版本号（tag 固定为 nightly）', () => {
         const info = parseReleaseResponse({
             tag_name: 'nightly',
             name: 'v1.4.6-nightly.20260809',
@@ -163,7 +163,7 @@ describe('parseReleaseResponse', () => {
         expect(info!.vsixAssetUrl).toContain('graycode-nightly.vsix');
     });
 
-    it('stable 渠道默认使用 tag_name 作为版本号且标记渠道', () => {
+    test('stable 渠道默认使用 tag_name 作为版本号且标记渠道', () => {
         const info = parseReleaseResponse({ tag_name: 'v1.4.5', assets: [] });
         expect(info!.version).toBe('1.4.5');
         expect(info!.channel).toBe('stable');
@@ -201,7 +201,7 @@ function okResponse(body: unknown, status = 200): Response {
 }
 
 describe('UpdateChecker.check', () => {
-    it('关闭自动检查时状态为 disabled 且不发请求', async () => {
+    test('关闭自动检查时状态为 disabled 且不发请求', async () => {
         const fetchImpl = jest.fn();
         const { checker } = createChecker({ isCheckEnabled: () => false, fetchImpl });
         const status = await checker.check();
@@ -209,7 +209,7 @@ describe('UpdateChecker.check', () => {
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
-    it('24h 节流窗口内不重复请求', async () => {
+    test('24h 节流窗口内不重复请求', async () => {
         const fetchImpl = jest.fn();
         const { checker } = createChecker({
             storage: { get: () => 2_000_000 - 3_600_000, update: jest.fn(async () => {}) },
@@ -221,7 +221,7 @@ describe('UpdateChecker.check', () => {
         expect(status).toEqual({ state: 'idle' });
     });
 
-    it('有新版本时返回 updateAvailable 并记录检查时间', async () => {
+    test('有新版本时返回 updateAvailable 并记录检查时间', async () => {
         const update = jest.fn(async () => {});
         const { checker, storage } = createChecker({
             storage: { get: () => undefined, update },
@@ -244,7 +244,7 @@ describe('UpdateChecker.check', () => {
         expect(checker.getStatus()).toEqual(status);
     });
 
-    it('已是最新版本时返回 upToDate', async () => {
+    test('已是最新版本时返回 upToDate', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => okResponse({ tag_name: 'v1.4.4', assets: [] }),
             currentVersion: '1.4.4',
@@ -253,7 +253,7 @@ describe('UpdateChecker.check', () => {
         expect(status).toEqual({ state: 'upToDate', checkedAt: 2_000_000 });
     });
 
-    it('fetch 失败时状态为 error（不抛出）且仍记录时间戳', async () => {
+    test('fetch 失败时状态为 error（不抛出）且仍记录时间戳', async () => {
         const update = jest.fn(async () => {});
         const { checker } = createChecker({
             storage: { get: () => undefined, update },
@@ -267,7 +267,7 @@ describe('UpdateChecker.check', () => {
         expect(update).toHaveBeenCalled();
     });
 
-    it('API 返回非 2xx 时状态为 error', async () => {
+    test('API 返回非 2xx 时状态为 error', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => okResponse({ message: 'rate limited' }, 403),
         });
@@ -278,7 +278,7 @@ describe('UpdateChecker.check', () => {
         }
     });
 
-    it('API 响应格式异常时状态为 error', async () => {
+    test('API 响应格式异常时状态为 error', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => okResponse({ unexpected: true }),
         });
@@ -286,7 +286,7 @@ describe('UpdateChecker.check', () => {
         expect(status.state).toBe('error');
     });
 
-    it('nightly 渠道请求 /releases/tags/nightly 且 -nightly.<date> 版本高于当前时提示更新', async () => {
+    test('nightly 渠道请求 /releases/tags/nightly 且 -nightly.<date> 版本高于当前时提示更新', async () => {
         const fetchImpl = jest.fn(async () => okResponse({
             tag_name: 'nightly',
             name: 'Gray Code Nightly v1.4.6-nightly.20260810',
@@ -320,7 +320,7 @@ describe('UpdateChecker.check', () => {
         }
     });
 
-    it('nightly 渠道：当前已是同日期构建时不提示更新', async () => {
+    test('nightly 渠道：当前已是同日期构建时不提示更新', async () => {
         const fetchImpl = jest.fn(async () => okResponse({
             tag_name: 'nightly',
             name: 'Gray Code Nightly v1.4.6-nightly.20260809',
@@ -338,7 +338,7 @@ describe('UpdateChecker.check', () => {
         expect(status).toEqual({ state: 'upToDate', checkedAt: 2_000_000 });
     });
 
-    it('nightly 渠道：nightly 版本高于当前正式版时提示更新', async () => {
+    test('nightly 渠道：nightly 版本高于当前正式版时提示更新', async () => {
         const fetchImpl = jest.fn(async () => okResponse({
             tag_name: 'nightly',
             name: 'Gray Code Nightly v1.4.6-nightly.20260809',
@@ -356,7 +356,7 @@ describe('UpdateChecker.check', () => {
         expect(status.state).toBe('updateAvailable');
     });
 
-    it('nightly 渠道：nightly 请求 404 时状态为 error（不降级到正式版）', async () => {
+    test('nightly 渠道：nightly 请求 404 时状态为 error（不降级到正式版）', async () => {
         const fetchImpl = jest.fn(async () => okResponse({ message: 'Not Found' }, 404));
         const { checker } = createChecker({ getUpdateChannel: () => 'nightly', fetchImpl });
         const status = await checker.check();
@@ -366,7 +366,7 @@ describe('UpdateChecker.check', () => {
         }
     });
 
-    it('stable 渠道（默认）仅请求 /releases/latest', async () => {
+    test('stable 渠道（默认）仅请求 /releases/latest', async () => {
         const fetchImpl = jest.fn(async () => okResponse({ tag_name: 'v1.4.4', assets: [] }));
         const { checker } = createChecker({ fetchImpl, currentVersion: '1.4.4' });
         await checker.check();
@@ -385,7 +385,7 @@ describe('UpdateChecker.check', () => {
 });
 
 describe('UpdateChecker.resetStatus', () => {
-    it('清除内存状态并重置节流时间戳（渠道切换时调用，避免旧渠道缓存残留）', async () => {
+    test('清除内存状态并重置节流时间戳（渠道切换时调用，避免旧渠道缓存残留）', async () => {
         const update = jest.fn(async () => {});
         const { checker } = createChecker({
             storage: { get: () => undefined, update },
@@ -419,14 +419,14 @@ describe('UpdateChecker.downloadAndInstall', () => {
     beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-install-')); });
     afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
-    it('无 vsix 资产时抛错', async () => {
+    test('无 vsix 资产时抛错', async () => {
         const { checker } = createChecker();
         await expect(checker.downloadAndInstall({
             version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '',
         })).rejects.toThrow(/非法下载地址/);
     });
 
-    it('下载成功并调用 installExtension 命令', async () => {
+    test('下载成功并调用 installExtension 命令', async () => {
         (vscode.commands.executeCommand as jest.Mock).mockResolvedValueOnce(undefined);
         const { checker } = createChecker({
             fetchImpl: async () => new Response(Buffer.from('VSIX-CONTENT'), { status: 200 }),
@@ -448,7 +448,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
         );
     });
 
-    it('下载 HTTP 失败时抛错且不安装', async () => {
+    test('下载 HTTP 失败时抛错且不安装', async () => {
         (vscode.commands.executeCommand as jest.Mock).mockClear();
         const { checker } = createChecker({
             fetchImpl: async () => new Response('Not Found', { status: 404 }),
@@ -459,7 +459,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
         expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
     });
 
-    it('下载内容为空时抛错且不安装', async () => {
+    test('下载内容为空时抛错且不安装', async () => {
         (vscode.commands.executeCommand as jest.Mock).mockClear();
         const { checker } = createChecker({
             fetchImpl: async () => new Response('', { status: 200 }),

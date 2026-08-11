@@ -1,5 +1,5 @@
 /**
- * LimCode - Anthropic 格式转换器
+ * GrayCode - Anthropic 格式转换器
  *
  * 将统一格式转换为 Anthropic Claude API 格式
  *

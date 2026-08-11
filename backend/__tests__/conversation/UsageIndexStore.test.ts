@@ -9,9 +9,9 @@
  * - 写临时文件失败：线上保持旧版、抛错；rename 失败：抛错、tmp 清理（自愈为 missing）。
  */
 
-import { FileUsageIndexStore } from '../../modules/conversation/UsageIndexStore';
+import { FileUsageIndexStore } from '../../modules/conversation';
 import type { UsageIndex, UsageIndexMessage } from '../../modules/conversation/usageStats';
-import type { Content } from '../../modules/conversation/types';
+import type { Content } from '../../modules/conversation';
 import { Uri } from 'vscode';
 
 const BASE_DIR = 'file:///c%3A/data/graycode';

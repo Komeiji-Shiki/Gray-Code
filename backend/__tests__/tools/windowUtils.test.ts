@@ -28,7 +28,7 @@ function createWindowState(startIndex: number, count: number): ChatStoreState {
 }
 
 describe('windowUtils history folding hints', () => {
-  it('syncs folded count from current window start instead of accumulating trims', () => {
+  test('syncs folded count from current window start instead of accumulating trims', () => {
     const state = createWindowState(120, 920)
 
     const removed = trimWindowFromTop(state, 800)
@@ -39,7 +39,7 @@ describe('windowUtils history folding hints', () => {
     expect(state.foldedMessageCount.value).toBe(state.windowStartIndex.value)
   })
 
-  it('keeps older messages loaded by upward paging and refreshes hint without trimming them again', () => {
+  test('keeps older messages loaded by upward paging and refreshes hint without trimming them again', () => {
     const state = createWindowState(120, 800)
     const olderMessages = Array.from({ length: 120 }, (_, i) => makeMessage(i))
 

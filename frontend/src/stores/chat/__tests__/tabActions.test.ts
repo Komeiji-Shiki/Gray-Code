@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import { ref } from 'vue'
 import {
   closeTab,
@@ -84,7 +84,7 @@ function makeQueuedMessage(id: string, conversationId: string | null) {
 }
 
 describe('tabActions snapshot lifecycle', () => {
-  it('closeTab of the active tab does not leave an orphan snapshot', () => {
+  test('closeTab of the active tab does not leave an orphan snapshot', () => {
     const state = mockState()
     state.openTabs.value = [
       { id: 'tab-1', conversationId: 'conv-1', title: 'A', isStreaming: false },
@@ -107,7 +107,7 @@ describe('tabActions snapshot lifecycle', () => {
     expect(state.currentConversationId.value).toBe('conv-2')
   })
 
-  it('switchTab snapshots the active tab state with its queue', () => {
+  test('switchTab snapshots the active tab state with its queue', () => {
     const state = mockState()
     state.openTabs.value = [
       { id: 'tab-1', conversationId: 'conv-1', title: 'A', isStreaming: false },
@@ -128,7 +128,7 @@ describe('tabActions snapshot lifecycle', () => {
     expect(state.messageQueue.value).toEqual([])
   })
 
-  it('closeTab of an inactive tab does not disturb the active tab', () => {
+  test('closeTab of an inactive tab does not disturb the active tab', () => {
     const state = mockState()
     state.openTabs.value = [
       { id: 'tab-1', conversationId: 'conv-1', title: 'A', isStreaming: false },
@@ -147,7 +147,7 @@ describe('tabActions snapshot lifecycle', () => {
 
 
 describe('tabActions branchGraph snapshot（TREE-12）', () => {
-  it('snapshotCurrentSession 保存 branchGraph 快照', () => {
+  test('snapshotCurrentSession 保存 branchGraph 快照', () => {
     const state = mockState()
     const graph = makeGraph(
       { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
@@ -161,7 +161,7 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(snapshot.branchGraph).toEqual(graph)
   })
 
-  it('snapshotCurrentSession 保存分支流刷新标记与重放上下文', () => {
+  test('snapshotCurrentSession 保存分支流刷新标记与重放上下文', () => {
     const state = mockState()
     state.currentConversationId.value = 'conv-1'
     state._pendingBranchRefreshAfterStream.value = 'conv-1'
@@ -188,7 +188,7 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     })
   })
 
-  it('snapshotCurrentSession 保存并恢复一次性渠道覆盖（pendingConfigIdOverride）', () => {
+  test('snapshotCurrentSession 保存并恢复一次性渠道覆盖（pendingConfigIdOverride）', () => {
     const state = mockState()
     state.currentConversationId.value = 'conv-1'
     state.pendingConfigIdOverride.value = 'oneoff_b'
@@ -201,7 +201,7 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(state.pendingConfigIdOverride.value).toBe('oneoff_b')
   })
 
-  it('resetConversationState 清除一次性渠道覆盖', () => {
+  test('resetConversationState 清除一次性渠道覆盖', () => {
     const state = mockState()
     state.pendingConfigIdOverride.value = 'oneoff_b'
 
@@ -210,7 +210,7 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
-  it('switchTab 快照当前标签页分支图，切回后恢复分支视图状态', () => {
+  test('switchTab 快照当前标签页分支图，切回后恢复分支视图状态', () => {
     const state = mockState()
     const graphA = makeGraph(
       { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },
@@ -241,7 +241,7 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(state.currentConversationId.value).toBe('conv-1')
   })
 
-  it('restoreSessionFromSnapshot：旧快照无 branchGraph 字段时回退 null', () => {
+  test('restoreSessionFromSnapshot：旧快照无 branchGraph 字段时回退 null', () => {
     const state = mockState()
     const snapshot = snapshotCurrentSession(state)
     const legacy = { ...snapshot } as any
@@ -268,7 +268,7 @@ describe('tabActions branchGraph snapshot（TREE-12）', () => {
     expect(state._pendingBranchReplayContext.value).toBeNull()
   })
 
-  it('resetConversationState 清空 branchGraph 与分支流暂存状态（新空白标签页无分支状态）', () => {
+  test('resetConversationState 清空 branchGraph 与分支流暂存状态（新空白标签页无分支状态）', () => {
     const state = mockState()
     state.branchGraph.value = makeGraph(
       { u1: makeNode('u1', null, { role: 'user' }), a1: makeNode('a1', 'u1') },

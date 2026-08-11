@@ -1,5 +1,5 @@
 /**
- * CheckpointManifestRepository 单元测试（CPF-01 / CPF-02 / EX-10 / MIG-02 / CPF-LAZY-1）
+ * CheckpointManifestRepository 单元测试（CPF-01 / CPF-02 / EX-10 / MIG-02 / CPF-LAZY-1 / CP-PATH-1 / CP-CACHE-1）
  *
  * 覆盖：
  * - 原子写入（tmp + rename）：manifest.json（轻量）+ files.json（重量映射）拆分存储
@@ -20,7 +20,7 @@ import {
     CHECKPOINT_MANIFEST_FILES_FILENAME
 } from '../../modules/checkpoint/CheckpointManifestRepository';
 import type { CheckpointManifest, CheckpointManifestMeta } from '../../modules/checkpoint/types';
-import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import type { CheckpointRecord } from '../../modules/checkpoint';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
 function makeLegacyRecord(overrides: Partial<CheckpointRecord> = {}): CheckpointRecord {
     return {
@@ -545,7 +545,7 @@ describe('CheckpointManifestRepository', () => {
         expect(repo['filesCache'].has('cp-fail')).toBe(false);
     });
 
-    describe('CP-PATH-1 / CP-CACHE-1 / CPF-LAZY-1（路径校验与 LRU 缓存）', () => {
+    describe('路径校验与 LRU 缓存', () => {
         test('getManifestPath / getManifestFilesPath 拒绝越界/绝对路径/盘符等非法 checkpointId（CP-PATH-1）', () => {
             for (const evil of [
                 '../evil',

@@ -16,11 +16,8 @@
  * - 主循环接管：早启动不 drain，消息由主循环执行结果投递。
  */
 
-import { ToolIterationLoopService } from '../../modules/api/chat/services/ToolIterationLoopService';
-import { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
-import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
-import type { Content } from '../../modules/conversation/types';
-import { createPromptManagerMock } from '../__fixtures__/mockFixtures';
+import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
+import { createToolLoopHarness } from '../__fixtures__/harnessFixtures';
 
 /** 挂起直到测试主动放行的工具（模拟流式期间启动、结果晚于 cancel 到达的工具） */
 function makeGatedTool() {
@@ -43,65 +40,15 @@ function makeGatedTool() {
     return { tool, releaseGate, handlerStarted };
 }
 
-function createHarness(channelManager: unknown, toolRegistry: unknown) {
-    const conversationManager = {
-        getHistoryRef: jest.fn().mockResolvedValue([]),
-        getCustomMetadata: jest.fn().mockResolvedValue(undefined),
-        addContent: jest.fn().mockResolvedValue(undefined),
-        settleFunctionResponses: jest.fn().mockResolvedValue(undefined),
-        updateMessage: jest.fn().mockResolvedValue(undefined),
-        updateMessagesBatch: jest.fn().mockResolvedValue(undefined),
-        getMessageNodeIdAt: jest.fn().mockResolvedValue(undefined)
-    };
-    const toolExecutionService = new ToolExecutionService(toolRegistry as never);
-    const checkpointService = {
-        createModelMessageCheckpoint: jest.fn().mockResolvedValue(null),
-        createToolExecutionCheckpoint: jest.fn().mockResolvedValue(null)
-    };
-    const messageBuilderService = { buildHistoryOptions: jest.fn().mockReturnValue({}) };
-    const contextTrimService = {
-        getHistoryWithContextTrimInfo: jest.fn().mockResolvedValue({
-            history: [],
-            trimStartIndex: 0,
-            needsAutoSummarize: false
-        })
-    };
-    const toolCallParserService = {
-        convertPromptModeToolCallsToFunctionCalls: jest.fn(),
-        ensureFunctionCallIds: jest.fn(),
-        extractFunctionCalls: jest.fn().mockImplementation((content: Content) =>
-            content.parts
-                .filter(p => !!p.functionCall)
-                .map(p => ({
-                    id: p.functionCall!.id,
-                    name: p.functionCall!.name,
-                    args: p.functionCall!.args
-                }))
-        )
-    };
-    const service = new ToolIterationLoopService(
-        channelManager as never,
-        conversationManager as never,
-        toolCallParserService as never,
-        messageBuilderService as never,
-        {} as never,
-        contextTrimService as never,
-        toolExecutionService as never,
-        checkpointService as never
-    );
-    const promptManager = createPromptManagerMock();
-    service.setPromptManager(promptManager as never);
-    return { service, conversationManager, contextTrimService, toolExecutionService, checkpointService, promptManager };
-}
 
 const config = { type: 'custom', toolMode: 'function_call', model: 'test-model' } as never;
 
-describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消息不丢', () => {
+describe('早启动生成器不 drain——abort 边角主会话 inbox 消息不丢', () => {
     afterEach(() => {
         agentMailbox.clearAll();
     });
 
-    it('流中途 cancel：早启动工具不消费 inbox，消息保留（不丢失）', async () => {
+    test('流中途 cancel：早启动工具不消费 inbox，消息保留（不丢失）', async () => {
         const convId = 'conv-e1-abort';
         agentMailbox.registerRun(convId, 'run_a', 'Agent A');
         agentMailbox.sendMessage({
@@ -121,7 +68,7 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
             yield { delta: [{ text: 'tail' }] };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service } = createHarness(channelManager, { getTool: () => gated.tool });
+        const { service } = createToolLoopHarness(channelManager, { getTool: () => gated.tool });
 
         const outputs: unknown[] = [];
         const loopPromise = (async () => {
@@ -153,7 +100,7 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
         expect(agentMailbox.peekMessages(convId, MAIN_SESSION_RUN_ID)[0].text).toBe('keep-me');
     });
 
-    it('无主循环（全部工具已早启动）：落盘前显式 drain → 消息随最终 functionResponse 投递', async () => {
+    test('无主循环（全部工具已早启动）：落盘前显式 drain → 消息随最终 functionResponse 投递', async () => {
         const convId = 'conv-e1-drain';
         agentMailbox.registerRun(convId, 'run_a', 'Agent A');
         agentMailbox.sendMessage({
@@ -168,7 +115,7 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
             yield { delta: [], done: true };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager } = createHarness(channelManager, { getTool: () => gated.tool });
+        const { service, conversationManager } = createToolLoopHarness(channelManager, { getTool: () => gated.tool });
 
         const outputs: unknown[] = [];
         const loopPromise = (async () => {
@@ -204,7 +151,7 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
         expect((frPart.functionResponse!.response as any).data.agentInbox).toHaveLength(1);
     });
 
-    it('主循环接管：早启动不 drain，消息由主循环执行结果投递', async () => {
+    test('主循环接管：早启动不 drain，消息由主循环执行结果投递', async () => {
         const convId = 'conv-e1-main';
         agentMailbox.registerRun(convId, 'run_a', 'Agent A');
         agentMailbox.sendMessage({
@@ -227,7 +174,7 @@ describe('E-1：早启动生成器不 drain——abort 边角主会话 inbox 消
             yield { delta: [], done: true };
         }
         const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
-        const { service, conversationManager, contextTrimService } = createHarness(channelManager, {
+        const { service, conversationManager, contextTrimService } = createToolLoopHarness(channelManager, {
             getTool: (name?: string) => (name === 'gated_tool' ? gated.tool : stubTool)
         });
 

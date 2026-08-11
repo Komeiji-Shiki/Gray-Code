@@ -6,6 +6,7 @@
  * 本文件保留其余子域，并在文件尾 re-export 两个新模块（保持既有导入路径可用）。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -313,30 +314,30 @@ export const countSystemPromptTokens: MessageHandler = async (data, requestId, c
  * 设置导入/导出由 ./SettingsTransferHandlers 的 registerSettingsTransferHandlers 注册。
  */
 export function registerSettingsHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('getSettings', settingsHandlerBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
-  registry.set('getAppInfo', getAppInfo);
-  registry.set('updateSettings', settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
-  registry.set('updateProxySettings', settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
-  registry.set('updateUISettings', updateUISettings);
-  registry.set('settings.getActiveChannelId', getActiveChannelId);
-  registry.set('settings.setActiveChannelId', setActiveChannelId);
-  registry.set('getSummarizeConfig', getSummarizeConfig);
-  registry.set('getDefaultSummarizeConfig', getDefaultSummarizeConfig);
-  registry.set('updateSummarizeConfig', updateSummarizeConfig);
-  registry.set('getGenerateImageConfig', getGenerateImageConfig);
-  registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
-  registry.set('getSystemPromptConfig', getSystemPromptConfig);
-  registry.set('updateSystemPromptConfig', updateSystemPromptConfig);
+  registry.set(MESSAGE_NAMES.getSettings, settingsHandlerBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
+  registry.set(MESSAGE_NAMES.getAppInfo, getAppInfo);
+  registry.set(MESSAGE_NAMES.updateSettings, settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
+  registry.set(MESSAGE_NAMES.updateProxySettings, settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
+  registry.set(MESSAGE_NAMES.updateUISettings, updateUISettings);
+  registry.set(MESSAGE_NAMES['settings.getActiveChannelId'], getActiveChannelId);
+  registry.set(MESSAGE_NAMES['settings.setActiveChannelId'], setActiveChannelId);
+  registry.set(MESSAGE_NAMES.getSummarizeConfig, getSummarizeConfig);
+  registry.set(MESSAGE_NAMES.getDefaultSummarizeConfig, getDefaultSummarizeConfig);
+  registry.set(MESSAGE_NAMES.updateSummarizeConfig, updateSummarizeConfig);
+  registry.set(MESSAGE_NAMES.getGenerateImageConfig, getGenerateImageConfig);
+  registry.set(MESSAGE_NAMES.updateGenerateImageConfig, updateGenerateImageConfig);
+  registry.set(MESSAGE_NAMES.getSystemPromptConfig, getSystemPromptConfig);
+  registry.set(MESSAGE_NAMES.updateSystemPromptConfig, updateSystemPromptConfig);
   // 模式管理
-  registry.set('getPromptModes', getPromptModes);
-  registry.set('setCurrentPromptMode', setCurrentPromptMode);
-  registry.set('savePromptMode', savePromptMode);
-  registry.set('exportPromptModes', exportPromptModes);
-  registry.set('renamePromptMode', renamePromptMode);
-  registry.set('deletePromptMode', deletePromptMode);
-  registry.set('countSystemPromptTokens', countSystemPromptTokens);
-  registry.set('checkAnnouncement', checkAnnouncement);
-  registry.set('markAnnouncementRead', markAnnouncementRead);
+  registry.set(MESSAGE_NAMES.getPromptModes, getPromptModes);
+  registry.set(MESSAGE_NAMES.setCurrentPromptMode, setCurrentPromptMode);
+  registry.set(MESSAGE_NAMES.savePromptMode, savePromptMode);
+  registry.set(MESSAGE_NAMES.exportPromptModes, exportPromptModes);
+  registry.set(MESSAGE_NAMES.renamePromptMode, renamePromptMode);
+  registry.set(MESSAGE_NAMES.deletePromptMode, deletePromptMode);
+  registry.set(MESSAGE_NAMES.countSystemPromptTokens, countSystemPromptTokens);
+  registry.set(MESSAGE_NAMES.checkAnnouncement, checkAnnouncement);
+  registry.set(MESSAGE_NAMES.markAnnouncementRead, markAnnouncementRead);
 }
 
 /**

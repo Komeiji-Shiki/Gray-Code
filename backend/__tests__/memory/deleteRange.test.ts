@@ -19,7 +19,7 @@ function setup(): { mm: MemoryManager; dir: string } {
 }
 
 describe('MemoryManager.deleteRange', () => {
-    it('闭区间删除：仅移除 [lo, hi]，其后记录 id 前移、文本与日期保留', async () => {
+    test('闭区间删除：仅移除 [lo, hi]，其后记录 id 前移、文本与日期保留', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -39,7 +39,7 @@ describe('MemoryManager.deleteRange', () => {
         }
     });
 
-    it('单点区间（lo === hi）等价单条删除', async () => {
+    test('单点区间（lo === hi）等价单条删除', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -55,7 +55,7 @@ describe('MemoryManager.deleteRange', () => {
         }
     });
 
-    it('删除首部整段后追加：新记录 id 连续无冲突', async () => {
+    test('删除首部整段后追加：新记录 id 连续无冲突', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -73,7 +73,7 @@ describe('MemoryManager.deleteRange', () => {
         }
     });
 
-    it('非法区间：越界 / lo > hi 抛错且不改变数据', async () => {
+    test('非法区间：越界 / lo > hi 抛错且不改变数据', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -91,7 +91,7 @@ describe('MemoryManager.deleteRange', () => {
         }
     });
 
-    it('删除覆盖块的树摘要被清空（中间删除全清）', async () => {
+    test('删除覆盖块的树摘要被清空（中间删除全清）', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -108,7 +108,7 @@ describe('MemoryManager.deleteRange', () => {
         }
     });
 
-    it('非法参数：非整数 / NaN 抛错且不改变数据', async () => {
+    test('非法参数：非整数 / NaN 抛错且不改变数据', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -125,7 +125,7 @@ describe('MemoryManager.deleteRange', () => {
         }
     });
 
-    it('deleteEntries：非数组 / 非法 id 抛错且不改变数据', async () => {
+    test('deleteEntries：非数组 / 非法 id 抛错且不改变数据', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -145,7 +145,7 @@ describe('MemoryManager.deleteRange', () => {
 });
 
 describe('MemoryManager.deleteEntries', () => {
-    it('乱序/重复 id：全部移除，其余记录重编号', async () => {
+    test('乱序/重复 id：全部移除，其余记录重编号', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -163,7 +163,7 @@ describe('MemoryManager.deleteEntries', () => {
         }
     });
 
-    it('相邻 id 聚合为闭区间删除', async () => {
+    test('相邻 id 聚合为闭区间删除', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -180,7 +180,7 @@ describe('MemoryManager.deleteEntries', () => {
         }
     });
 
-    it('空数组返回 removed 0 且不改变数据', async () => {
+    test('空数组返回 removed 0 且不改变数据', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -193,7 +193,7 @@ describe('MemoryManager.deleteEntries', () => {
         }
     });
 
-    it('删除后继续追加：id 连续无冲突', async () => {
+    test('删除后继续追加：id 连续无冲突', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();

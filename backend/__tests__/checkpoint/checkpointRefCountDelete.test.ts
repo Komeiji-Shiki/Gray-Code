@@ -30,6 +30,24 @@ import {
     type CheckpointRecord,
 } from '../../modules/checkpoint/CheckpointManager';
 
+// jest 环境中 fs/promises 的导出经 TS interop（__importStar/__createBinding）复制后是
+// configurable:false 的 getter，jest.spyOn(fs, 'rm') 无法重定义（Cannot redefine property: rm）；
+// 与 CheckpointIgnoreResolver.test.ts 的 M-6 哨兵一致：模块级 mock 的 rm 默认走真实实现，
+// rmFailTarget 命中时定向抛错，用例内通过置位/复位哨兵控制。
+let rmFailTarget: string | null = null;
+jest.mock('fs/promises', () => {
+    const actual = jest.requireActual('fs/promises') as typeof import('fs/promises');
+    return {
+        ...actual,
+        rm: jest.fn((target: unknown, ...args: unknown[]) => {
+            if (rmFailTarget && String(target).includes(rmFailTarget)) {
+                return Promise.reject(new Error('EACCES: permission denied'));
+            }
+            return (actual.rm as unknown as (...a: unknown[]) => Promise<unknown>)(target, ...args);
+        }),
+    };
+});
+
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
     await fs.mkdir(path.dirname(fullPath), { recursive: true });
@@ -52,6 +70,11 @@ interface Harness {
 }
 
 /** 多对话模式的 CheckpointManager harness（与 CheckpointManager.test.ts 同模式） */
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：多对话元数据 Map 形态（seed 为
+ * Record<string, CheckpointRecord[]>），与共享的 createCheckpointManagerHarness（单共享元数据）
+ * 差异过大，不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释。
+ */
 async function createHarness(seed: Record<string, CheckpointRecord[]>): Promise<Harness> {
     const workspaceRoot = await createTempDirectory('bcp06-delete-workspace-');
     const storageRoot = await createTempDirectory('bcp06-delete-storage-');
@@ -346,5 +369,42 @@ describe('CheckpointManager.deleteCheckpointsByNodeIds（BCP-06 引用计数删�
         expect(noMatch.deletedIds).toEqual([]);
         expect(harness.records(CONV).map(r => r.id)).toEqual(['cp-1']);
         await fs.rm(harness.storageRoot, { recursive: true, force: true });
+    });
+    test('fs.rm 抛错被捕获：元数据删除成功，备份目录留孤儿，console.warn 上报', async () => {
+        const harness = await createHarness({
+            [CONV]: [
+                makeRecord({ id: 'cp-rm-fail', conversationId: CONV, messageNodeId: 'node-del' }),
+            ],
+        });
+        await seedBackupDirs(harness.storageRoot, ['cp-rm-fail']);
+
+        // 只让 cp-rm-fail 备份目录的 fs.rm 失败；其余（含测试清理）走真实实现（模块级 mock 哨兵）
+        rmFailTarget = 'cp-rm-fail';
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        try {
+            const result = await harness.manager.deleteCheckpointsByNodeIds(
+                CONV,
+                ['node-del'],
+                { referenceCounts: new Map([['cp-rm-fail', 0]]) }
+            );
+
+            // 错误被捕获不冒泡：调用成功返回，deletedIds 照常上报
+            expect(result.success).toBe(true);
+            expect(result.deletedIds).toEqual(['cp-rm-fail']);
+            // 元数据已写回（先写回后删盘），记录移除
+            expect(harness.records(CONV)).toEqual([]);
+            // 备份目录保留为孤儿（fs.rm 失败仅告警，不影响增量链正确性）
+            await expect(pathExists(path.join(harness.storageRoot, 'checkpoints', 'cp-rm-fail'))).resolves.toBe(true);
+            // 按预期上报：console.warn 含 backupDir 与原始错误
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringContaining('Failed to remove backup dir cp-rm-fail'),
+                expect.any(Error)
+            );
+        } finally {
+            rmFailTarget = null;
+            warnSpy.mockRestore();
+            await fs.rm(harness.storageRoot, { recursive: true, force: true });
+        }
     });
 });

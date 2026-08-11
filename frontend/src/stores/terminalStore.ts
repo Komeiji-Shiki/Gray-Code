@@ -7,9 +7,10 @@
  * - 支持杀死终端
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { sendToExtension, onExtensionCommand } from '../utils/vscode'
 import { useI18n } from '../composables/useI18n'
 
 /**
@@ -222,7 +223,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function killTerminal(terminalId: string): Promise<{ success: boolean; output?: string; error?: string }> {
     const { t } = useI18n()
     try {
-      const result = await sendToExtension<{ success: boolean; output?: string; error?: string }>('terminal.kill', {
+      const result = await sendToExtension<{ success: boolean; output?: string; error?: string }>(MESSAGE_NAMES['terminal.kill'], {
         terminalId
       })
       
@@ -251,7 +252,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function refreshOutput(terminalId: string): Promise<void> {
     const { t } = useI18n()
     try {
-      const result = await sendToExtension<{ success: boolean; output?: string; running?: boolean; error?: string }>('terminal.getOutput', {
+      const result = await sendToExtension<{ success: boolean; output?: string; running?: boolean; error?: string }>(MESSAGE_NAMES['terminal.getOutput'], {
         terminalId
       })
       
@@ -309,13 +310,10 @@ export const useTerminalStore = defineStore('terminal', () => {
   function initialize(): () => void {
     if (terminalCleanup) return terminalCleanup
     
-    const unsubscribe = onMessageFromExtension((message) => {
-      if (message.type === 'terminalOutput') {
-        const event = message.data as TerminalOutputEvent | undefined
-        // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）
-        if (!event || typeof event.terminalId !== 'string' || typeof event.type !== 'string') return
-        handleTerminalOutput(event)
-      }
+    const unsubscribe = onExtensionCommand<TerminalOutputEvent>('terminalOutput', (event) => {
+      // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）
+      if (!event || typeof event.terminalId !== 'string' || typeof event.type !== 'string') return
+      handleTerminalOutput(event)
     })
     
     initialized.value = true

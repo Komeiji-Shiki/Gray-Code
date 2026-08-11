@@ -6,25 +6,13 @@
  * 对照组证明「未 detach 时父 abort 确实取消 run」，防止 mock 未接对导致假绿。
  */
 
-import { createDefaultExecutor } from '../../tools/subagents/executor';
-import { subAgentRunController } from '../../tools/subagents/runController';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
-import type { SubAgentConfig, SubAgentExecutorContext, SubAgentRequest } from '../../tools/subagents/types';
+import { createDefaultExecutor } from '../../tools/subagents';
+import { subAgentRunController } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
+import type { SubAgentConfig, SubAgentExecutorContext, SubAgentRequest } from '../../tools/subagents';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5,
-        maxRuntime: 300,
-        ...overrides
-    };
-}
 
 /** channelManager.generate 挂起直到显式 release（支持多轮，按调用顺序）；监听请求 abortSignal 模拟真实渠道取消 */
 function createGatedChannel(): {
@@ -117,9 +105,9 @@ describe('SubAgent executor - 转后台（detach）', () => {
         subAgentConcurrencyLimiter.release('holder');
     });
 
-    it('detach 后父 abort 不再取消 run：run 继续执行至完成', async () => {
+    test('detach 后父 abort 不再取消 run：run 继续执行至完成', async () => {
         const { context, generateMock, release } = createGatedChannel();
-        const executor = createDefaultExecutor(createConfig(), context);
+        const executor = createDefaultExecutor(createSubAgentConfig(), context);
         const parentAbort = new AbortController();
         const request: SubAgentRequest = {
             agentType: 'tester',
@@ -148,9 +136,9 @@ describe('SubAgent executor - 转后台（detach）', () => {
         expect(result.response).toContain('done');
     });
 
-    it('主模型和其他子代理连续发信：收件子代理逐轮处理，所有 provider 请求保持严格前缀与稳定缓存域', async () => {
+    test('主模型和其他子代理连续发信：收件子代理逐轮处理，所有 provider 请求保持严格前缀与稳定缓存域', async () => {
         const { context, generateMock, release } = createGatedChannel();
-        const executor = createDefaultExecutor(createConfig({ maxIterations: 5 }), context);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5 }), context);
         const runPromise = executor({
             agentType: 'tester',
             prompt: 'initial task',
@@ -217,9 +205,9 @@ describe('SubAgent executor - 转后台（detach）', () => {
         expect(agentMailbox.isKnownRun('conv_messages', 'run_agent_message_boundary')).toBe(false);
     });
 
-    it('对照组：未 detach 时父 abort 取消 run', async () => {
+    test('对照组：未 detach 时父 abort 取消 run', async () => {
         const { context, generateMock } = createGatedChannel();
-        const executor = createDefaultExecutor(createConfig(), context);
+        const executor = createDefaultExecutor(createSubAgentConfig(), context);
         const parentAbort = new AbortController();
         const request: SubAgentRequest = {
             agentType: 'tester',
@@ -238,7 +226,7 @@ describe('SubAgent executor - 转后台（detach）', () => {
         expect(subAgentRunController.isActive('run_detach_ctrl')).toBe(false);
     });
 
-    it('E1 回归：detach 后 run 在后续迭代（工具调用 + 下一轮 generate）中继续执行，不被旧流 abort 杀死', async () => {
+    test('E1 回归：detach 后 run 在后续迭代（工具调用 + 下一轮 generate）中继续执行，不被旧流 abort 杀死', async () => {
         const { context, generateMock, release } = createGatedChannel();
         // 工具执行走 ToolExecutionService（共享执行路径），mock 成功返回
         (context as any).toolExecutionService = {
@@ -250,7 +238,7 @@ describe('SubAgent executor - 转后台（detach）', () => {
             // SEC：executor 现在会先查询确认门（确认需求返回 false = 直接放行）
             toolNeedsConfirmation: () => false
         };
-        const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 30 }), context);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 30 }), context);
         const parentAbort = new AbortController();
         const request: SubAgentRequest = {
             agentType: 'tester',
@@ -288,7 +276,7 @@ describe('SubAgent executor - 转后台（detach）', () => {
         expect(result.success).toBe(true);
     });
 
-    it('exit 可终止卡在不响应 AbortSignal 的工具，并在有界时间内释放 run', async () => {
+    test('exit 可终止卡在不响应 AbortSignal 的工具，并在有界时间内释放 run', async () => {
         const { context, generateMock, release } = createGatedChannel();
         const executeToolMock = jest.fn(() => new Promise(() => undefined));
         (context as any).toolRegistry = {
@@ -303,7 +291,7 @@ describe('SubAgent executor - 转后台（detach）', () => {
             // SEC：executor 现在会先查询确认门（确认需求返回 false = 直接放行）
             toolNeedsConfirmation: () => false
         };
-        const executor = createDefaultExecutor(createConfig({ maxIterations: 5, maxRuntime: 30 }), context);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 30 }), context);
         const runPromise = executor({
             agentType: 'tester',
             prompt: 'run a hanging tool',
@@ -337,11 +325,11 @@ describe('SubAgent executor - 转后台（detach）', () => {
         expect(subAgentRunController.isActive('run_abort_hanging_tool')).toBe(false);
     });
 
-    it('E2 回归：排队期间 detach 后 run 继续执行（席位释放后不因父 abort 而死）', async () => {
+    test('E2 回归：排队期间 detach 后 run 继续执行（席位释放后不因父 abort 而死）', async () => {
         // 占满并发席位，让 run 排队
         await subAgentConcurrencyLimiter.acquire('holder', undefined);
         const { context, generateMock, release } = createGatedChannel();
-        const executor = createDefaultExecutor(createConfig({ maxRuntime: 30 }), context);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxRuntime: 30 }), context);
         const parentAbort = new AbortController();
         const request: SubAgentRequest = {
             agentType: 'tester',

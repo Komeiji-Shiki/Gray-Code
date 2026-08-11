@@ -11,56 +11,11 @@
  */
 
 import { MessageRouter, NON_BLOCKING_MESSAGE_TYPES } from '../../../webview/MessageRouter';
-import { WebviewClientRegistry } from '../../../webview/runtime/WebviewClientRegistry';
+import { createMessageRouterHarness } from '../__fixtures__/harnessFixtures';
 import { subAgentRunController } from '../../../backend/tools/subagents/runController';
 
 function flushAsync(ms = 20): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function createHarness() {
-  const clientRegistry = new WebviewClientRegistry();
-  const monitorMessages: any[] = [];
-  clientRegistry.register({
-    clientId: 'subagent-monitor',
-    postMessage: (message: Record<string, unknown>) => {
-      monitorMessages.push(message);
-      return true;
-    }
-  });
-
-  const chatHandler = {
-    handleChatStream: jest.fn(),
-    handleRetryStream: jest.fn(),
-    handleToolConfirmation: jest.fn()
-  };
-  const conversationManager = {
-    rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined)
-  };
-  const rawSendResponse = jest.fn();
-  const rawSendError = jest.fn();
-
-  const router = new MessageRouter(
-    chatHandler as any,
-    conversationManager as any,
-    {} as any,
-    () => undefined,
-    rawSendResponse,
-    rawSendError,
-    clientRegistry
-  );
-
-  const ctx = { clientId: 'subagent-monitor' } as any;
-
-  return {
-    router,
-    ctx,
-    monitorMessages,
-    chatHandler,
-    conversationManager,
-    rawSendResponse,
-    rawSendError
-  };
 }
 
 describe('MessageRouter 非阻塞行为', () => {
@@ -70,8 +25,8 @@ describe('MessageRouter 非阻塞行为', () => {
     jest.restoreAllMocks();
   });
 
-  it('non-blocking handler：route 不等 handler 完成立即返回，后续消息不被阻塞', async () => {
-    const h = createHarness();
+  test('non-blocking handler：route 不等 handler 完成立即返回，后续消息不被阻塞', async () => {
+    const h = createMessageRouterHarness();
     NON_BLOCKING_MESSAGE_TYPES.add('test.slowOp');
 
     let releaseSlow!: () => void;
@@ -111,8 +66,8 @@ describe('MessageRouter 非阻塞行为', () => {
     expect(slowResp.success).toBe(true);
   });
 
-  it('对照组：普通 handler 会等待完成，route 挂起（证明修复必要性）', async () => {
-    const h = createHarness();
+  test('对照组：普通 handler 会等待完成，route 挂起（证明修复必要性）', async () => {
+    const h = createMessageRouterHarness();
 
     let releaseBlock!: () => void;
     const gate = new Promise<void>(resolve => { releaseBlock = resolve; });

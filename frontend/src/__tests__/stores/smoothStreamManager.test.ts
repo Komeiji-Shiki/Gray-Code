@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   pushSmoothText,
   finishSmoothStream,
@@ -31,7 +31,7 @@ describe('smoothStreamManager', () => {
     document.body.innerHTML = ''
   })
 
-  it('keeps one streamer per message id and flushes all on finish', () => {
+  test('keeps one streamer per message id and flushes all on finish', () => {
     const { snapshots, onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'hello ', 'balanced', '', onSnapshot)
     pushSmoothText('m1', 'text:0', 'world', 'balanced', '', onSnapshot)
@@ -43,7 +43,7 @@ describe('smoothStreamManager', () => {
     expect(hasSmoothStream('m1')).toBe(false)
   })
 
-  it('switchPart flushes the previous segment before starting a new one', () => {
+  test('switchPart flushes the previous segment before starting a new one', () => {
     const { snapshots, onSnapshot } = collect()
     pushSmoothText('m1', 'thought:0', 'thinking ', 'balanced', 'T', onSnapshot)
     // partKey 变化（thought → text）：上一段积压立即输出（旧 partKey/基线），
@@ -58,7 +58,7 @@ describe('smoothStreamManager', () => {
     ])
   })
 
-  it('switchPart publishes a new partKey even when the new baseline text is unchanged', () => {
+  test('switchPart publishes a new partKey even when the new baseline text is unchanged', () => {
     const { snapshots, onSnapshot } = collect()
     pushSmoothText('m1', 'thought:0', 'A', 'balanced', '', onSnapshot)
     pushSmoothText('m1', 'text:1', 'B', 'balanced', 'A', onSnapshot)
@@ -69,7 +69,7 @@ describe('smoothStreamManager', () => {
     expect(snapshots[snapshots.length - 1]).toEqual({ partKey: 'text:1', text: 'AB' })
   })
 
-  it('separate messages have isolated streamers', () => {
+  test('separate messages have isolated streamers', () => {
     const a: Snapshot[] = []
     const b: Snapshot[] = []
     const onA = (_messageId: string, partKey: string, text: string) => a.push({ partKey, text })
@@ -82,7 +82,7 @@ describe('smoothStreamManager', () => {
     expect(hasSmoothStream('m2')).toBe(true)
   })
 
-  it('mode change recreates the streamer for the same message', () => {
+  test('mode change recreates the streamer for the same message', () => {
     const { snapshots, onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'aaa', 'smooth', '', onSnapshot)
     // 模式从 smooth 切到 silky：旧实例先 flush 再销毁，新实例接管
@@ -92,7 +92,7 @@ describe('smoothStreamManager', () => {
     expect(hasSmoothStream('m1')).toBe(false)
   })
 
-  it('baseText baseline: display text = baseText + committed deltas (H3)', () => {
+  test('baseText baseline: display text = baseText + committed deltas (H3)', () => {
     const { snapshots, onSnapshot } = collect()
     // 档位 off→on 或实例重建：baseText 为当前 part 已累计真实文本（不含本次 delta）
     pushSmoothText('m1', 'text:0', 'c', 'balanced', 'AB', onSnapshot)
@@ -103,7 +103,7 @@ describe('smoothStreamManager', () => {
     ])
   })
 
-  it('migrateSmoothStream renames the entry key (H1 placeholder id -> persisted id)', () => {
+  test('migrateSmoothStream renames the entry key (H1 placeholder id -> persisted id)', () => {
     const { snapshots, onSnapshot } = collect()
     pushSmoothText('m_placeholder', 'text:0', 'hello ', 'balanced', '', onSnapshot)
     migrateSmoothStream('m_placeholder', 'm_persisted')
@@ -116,7 +116,7 @@ describe('smoothStreamManager', () => {
     expect(hasSmoothStream('m_persisted')).toBe(false)
   })
 
-  it('registerSmoothDisplay restores accumulated text into the CharFlow host', () => {
+  test('registerSmoothDisplay restores accumulated text into the CharFlow host', () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'hello', 'balanced', '', onSnapshot)
@@ -128,7 +128,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('hello')
   })
 
-  it('unregisterSmoothDisplay releases the owned host without affecting snapshots', () => {
+  test('unregisterSmoothDisplay releases the owned host without affecting snapshots', () => {
     const host = document.createElement('div')
     const { snapshots, onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'hello', 'balanced', '', onSnapshot)
@@ -139,7 +139,7 @@ describe('smoothStreamManager', () => {
     expect(snapshots[snapshots.length - 1]?.text).toBe('hello') // 快照不受影响
   })
 
-  it('same-host registration is idempotent and stale hosts cannot unregister the current display', () => {
+  test('same-host registration is idempotent and stale hosts cannot unregister the current display', () => {
     const staleHost = document.createElement('div')
     const currentHost = document.createElement('div')
     const { onSnapshot } = collect()
@@ -156,7 +156,7 @@ describe('smoothStreamManager', () => {
     expect(currentHost.childNodes).toHaveLength(1)
   })
 
-  it('part switch disposes the display; re-register restores the new baseline', () => {
+  test('part switch disposes the display; re-register restores the new baseline', () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'aaa', 'balanced', '', onSnapshot)
@@ -171,7 +171,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('Bbbb')
   })
 
-  it('migrateSmoothStream also renames the display key', () => {
+  test('migrateSmoothStream also renames the display key', () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     pushSmoothText('m_placeholder', 'text:0', 'hello', 'balanced', '', onSnapshot)
@@ -182,7 +182,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('hello')
   })
 
-  it('snapshot is throttled to ~120ms between commits', () => {
+  test('snapshot is throttled to ~120ms between commits', () => {
     vi.useFakeTimers({ toFake: ['performance'] })
     let scheduled: FrameRequestCallback | null = null
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -207,7 +207,7 @@ describe('smoothStreamManager', () => {
     expect(snapshots.length).toBe(2)
   })
 
-  it('disposeAllSmoothStreams clears entries and displays', () => {
+  test('disposeAllSmoothStreams clears entries and displays', () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'hello', 'balanced', '', onSnapshot)
@@ -220,7 +220,7 @@ describe('smoothStreamManager', () => {
     expect(hasSmoothStream('m1')).toBe(true)
   })
 
-  it('noFade display appends text directly without spans', () => {
+  test('noFade display appends text directly without spans', () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     pushSmoothText('m1', 'text:0', 'hello', 'balanced', '', onSnapshot)
@@ -230,7 +230,7 @@ describe('smoothStreamManager', () => {
     expect(host.querySelectorAll('span').length).toBe(0)
   })
 
-  it('onPromote lifts completed paragraphs out of the CharFlow host', () => {
+  test('onPromote lifts completed paragraphs out of the CharFlow host', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -242,7 +242,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('para three')
   })
 
-  it('keeps a raw bridge visible until an async Markdown render acknowledgement resolves', async () => {
+  test('keeps a raw bridge visible until an async Markdown render acknowledgement resolves', async () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -268,7 +268,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('para two')
   })
 
-  it('re-registration bridges replayed Markdown until the new renderer is ready', async () => {
+  test('re-registration bridges replayed Markdown until the new renderer is ready', async () => {
     const hostA = document.createElement('div')
     const hostB = document.createElement('div')
     const { onSnapshot } = collect()
@@ -301,7 +301,7 @@ describe('smoothStreamManager', () => {
   })
 
 
-  it('releases the bridge when onPromote throws synchronously', () => {
+  test('releases the bridge when onPromote throws synchronously', () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
 
@@ -316,7 +316,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('para two')
   })
 
-  it('releases the bridge when onPromote rejects', async () => {
+  test('releases the bridge when onPromote rejects', async () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
 
@@ -331,7 +331,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('para two')
   })
 
-  it('flush with tailWindow promotes the whole table before trimming (order fix)', () => {
+  test('flush with tailWindow promotes the whole table before trimming (order fix)', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -350,7 +350,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent.length).toBeLessThanOrEqual(4096)
     expect(host.textContent.startsWith('|')).toBe(false)
   })
-  it('preserves a pending bridge across a smooth-mode rebuild', async () => {
+  test('preserves a pending bridge across a smooth-mode rebuild', async () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     const baseText = 'para one\n\npara two'
@@ -371,7 +371,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('para two')
   })
 
-  it('keeps the promoted prefix in a restoreFull display across a smooth-mode rebuild', () => {
+  test('keeps the promoted prefix in a restoreFull display across a smooth-mode rebuild', () => {
     const expandedHost = document.createElement('div')
     const collapsedHost = document.createElement('div')
     const { onSnapshot } = collect()
@@ -391,7 +391,7 @@ describe('smoothStreamManager', () => {
     expect(collapsedHost.textContent).toBe(baseText)
   })
 
-  it('releases multiple ordered table bridges from one coalesced render acknowledgement', async () => {
+  test('releases multiple ordered table bridges from one coalesced render acknowledgement', async () => {
     const host = document.createElement('div')
     const { onSnapshot } = collect()
     const tableHead = '| Name | Value |\n| --- | --- |\n'
@@ -420,7 +420,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partialRow)
   })
 
-  it('promotes a complete GFM table header and each complete data row without waiting for a blank line', () => {
+  test('promotes a complete GFM table header and each complete data row without waiting for a blank line', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -436,7 +436,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partialRow)
   })
 
-  it('does not promote a table until the delimiter is complete and newline-terminated', () => {
+  test('does not promote a table until the delimiter is complete and newline-terminated', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -450,7 +450,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(incompleteTable)
   })
 
-  it('allows a paragraph to be interrupted by a table without requiring a blank line', () => {
+  test('allows a paragraph to be interrupted by a table without requiring a blank line', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -464,7 +464,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('')
   })
 
-  it.each([
+  test.each([
     ['list', '- item\n| Name | Value |\n| --- | --- |\n'],
     ['ordered list', '1. item\n| Name | Value |\n| --- | --- |\n'],
     ['blockquote', '> quote\n| Name | Value |\n| --- | --- |\n']
@@ -481,7 +481,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(text)
   })
 
-  it.each([
+  test.each([
     ['escaped pipe in a one-column header', 'plain \\| text\n---\n'],
     ['code span pipe', '`plain | code`\n--- | ---\n'],
     ['list-marker header', '- A | B\n--- | ---\n'],
@@ -499,7 +499,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('')
   })
 
-  it('does not mistake a list-like incomplete delimiter for a table', () => {
+  test('does not mistake a list-like incomplete delimiter for a table', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -513,7 +513,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(text)
   })
 
-  it.each([
+  test.each([
     ['plain single-cell row', 'plain\n'],
     ['escaped-only row', 'plain \\| value\n'],
     ['code-span row', '`plain | code`\n']
@@ -533,7 +533,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it.each([
+  test.each([
     ['ATX heading', '# heading\n'],
     ['thematic break', '---\n'],
     ['list', '- item\n'],
@@ -555,7 +555,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(tail)
   })
 
-  it.each([
+  test.each([
     ['list followed by a heading', '- item\n# heading\n'],
     ['blockquote followed by a heading', '> quote\n# heading\n'],
     ['list followed by a thematic break', '- item\n---\n'],
@@ -576,7 +576,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('')
   })
 
-  it('does not enter fence mode for a backtick info string containing a backtick', () => {
+  test('does not enter fence mode for a backtick info string containing a backtick', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -590,7 +590,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('')
   })
 
-  it('promotes a table inside a blockquote while preserving the quote markers', () => {
+  test('promotes a table inside a blockquote while preserving the quote markers', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -605,7 +605,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it('allows a blockquote paragraph to be interrupted by a nested table', () => {
+  test('allows a blockquote paragraph to be interrupted by a nested table', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -620,7 +620,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it('promotes a normally-indented table inside a list item', () => {
+  test('promotes a normally-indented table inside a list item', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -635,7 +635,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it('uses promoted context to keep a deeply-indented ordered-list table parseable', () => {
+  test('uses promoted context to keep a deeply-indented ordered-list table parseable', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -655,7 +655,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it('detects a blockquote table nested in a deeply-indented list across chunks', () => {
+  test('detects a blockquote table nested in a deeply-indented list across chunks', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -674,7 +674,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it('uses renderer footnote rules to promote a table nested in a footnote definition', () => {
+  test('uses renderer footnote rules to promote a table nested in a footnote definition', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -693,7 +693,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it('preserves CRLF bytes while promoting an aligned table without outer pipes', () => {
+  test('preserves CRLF bytes while promoting an aligned table without outer pipes', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -708,7 +708,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(partial)
   })
 
-  it.each([
+  test.each([
     ['blockquote fence', '> ```md\n> A | B\n> --- | ---\n> ```\n'],
     ['HTML block', '<div>\nA | B\n--- | ---\n</div>\n'],
     ['HTML comment', '<!--\nA | B\n--- | ---\n-->\n']
@@ -725,7 +725,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(text)
   })
 
-  it('does not promote table-shaped lines inside an unclosed fenced code block', () => {
+  test('does not promote table-shaped lines inside an unclosed fenced code block', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -739,7 +739,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(code)
   })
 
-  it('stops table continuation before a list block instead of promoting it as a data row', () => {
+  test('stops table continuation before a list block instead of promoting it as a data row', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -754,7 +754,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe(tail)
   })
 
-  it('preserves table continuation across mode rebuilds and display re-registration', () => {
+  test('preserves table continuation across mode rebuilds and display re-registration', () => {
     const hostA = document.createElement('div')
     const hostB = document.createElement('div')
     const promotedA: string[] = []
@@ -786,7 +786,7 @@ describe('smoothStreamManager', () => {
     expect(hostA.textContent).toBe('')
   })
 
-  it('promote skips boundaries inside unclosed fenced code blocks', () => {
+  test('promote skips boundaries inside unclosed fenced code blocks', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -805,7 +805,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('```js\nconst a = 1\n\nconst b = 2')
   })
 
-  it('promote lifts a complete fenced code block as one unit', () => {
+  test('promote lifts a complete fenced code block as one unit', () => {
     const host = document.createElement('div')
     const promoted: string[] = []
     const { onSnapshot } = collect()
@@ -817,7 +817,7 @@ describe('smoothStreamManager', () => {
     expect(host.textContent).toBe('tail')
   })
 
-  it('re-register during streaming replays promoted text and restores only the tail', () => {
+  test('re-register during streaming replays promoted text and restores only the tail', () => {
     vi.useFakeTimers({ toFake: ['performance'] })
     let scheduled: FrameRequestCallback | null = null
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {

@@ -47,7 +47,7 @@ function makeNode(id: string, parentId: string | null, role: 'user' | 'model', k
     };
 }
 
-describe('MIG-09 基准 ③ 大量分支（100 候选）', () => {
+describe('基准 ③ 大量分支（100 候选）', () => {
     test('100 候选：建图 / reroll / activePath / validate / switch + 深链', async () => {
         printHarnessBanner();
         printSection('MIG-09 基准 ③ 分支图（基线 20 节点 + 100 候选，纯 CPU）');

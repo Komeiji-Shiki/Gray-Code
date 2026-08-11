@@ -1,5 +1,5 @@
 /**
- * LimCode - Memory 模块
+ * GrayCode - Memory 模块
  *
  * OptMem 风格永久记忆系统。
  *
@@ -188,6 +188,18 @@ export async function getMemoryManagerForWorkspace(
             _workspaceReadonlyInstances.set(scopeKey, manager);
             return manager;
         }
+        // 写路径优先复用已缓存的只读实例（同一目录只保留一个实例）：只读实例与写实例
+        // 各自持有独立 AsyncLock 会并发读写同一 LOG（deleteRange/deleteEntries 的
+        // tmp+rename 与只读扫描互斥缺失），且只读实例未 repairLog，320B 降级模式下
+        // logRecMode 不同步、按 1024 错位读旧文件。复用后单实例 = 单锁 + 单一文件视图。
+        const cachedReadonly = _workspaceReadonlyInstances.get(scopeKey);
+        if (cachedReadonly) {
+            _workspaceReadonlyInstances.delete(scopeKey);
+            await cachedReadonly.init();
+            await cachedReadonly.loadConfig();
+            _workspaceInstances.set(scopeKey, cachedReadonly);
+            return cachedReadonly;
+        }
         await fs.promises.mkdir(dir, { recursive: true });
         // 持久化 scope 元信息：供设置页枚举工作区记忆时展示名称。
         const metaPath = path.join(dir, 'scope.json');
@@ -335,3 +347,4 @@ function uriFromFsPath(fsPath: string): string {
     const encoded = withSlashes.split('/').map(seg => encodeURIComponent(seg)).join('/');
     return `file://${encoded.startsWith('/') ? encoded : '/' + encoded}`;
 }
+

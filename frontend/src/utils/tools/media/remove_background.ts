@@ -6,6 +6,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import RemoveBackgroundPanel from '../../../components/tools/media/remove_background.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 /**
  * 单个任务类型
@@ -47,6 +48,7 @@ registerTool('remove_background', {
       return `${shortInput} → ${shortOutput}`
     }
     
-    return '移除图片背景'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('remove_background') ?? '移除图片背景'
   }
 })

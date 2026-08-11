@@ -14,7 +14,7 @@
  * 不发起真实网络请求（CI 安全）。
  */
 
-import { TokenCountService } from '../../modules/channel/TokenCountService';
+import { TokenCountService } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
 
 jest.mock('../../modules/channel/proxyFetch', () => ({
@@ -58,20 +58,20 @@ describe('TokenCountService smoke', () => {
         service = new TokenCountService('http://proxy:1');
     });
 
-    it('countTokens：渠道未启用返回错误', async () => {
+    test('countTokens：渠道未启用返回错误', async () => {
         const result = await service.countTokens('gemini', {}, [makeContent('hi')]);
         expect(result.success).toBe(false);
         expect(result.error).toContain('Token count not enabled for gemini');
     });
 
-    it('countTokens：启用但缺 apiKey 返回错误', async () => {
+    test('countTokens：启用但缺 apiKey 返回错误', async () => {
         const config = { openai: { enabled: true, baseUrl: 'https://x', model: 'm', apiKey: '' } };
         const result = await service.countTokens('openai', config as any, [makeContent('hi')]);
         expect(result.success).toBe(false);
         expect(result.error).toContain('API key not configured for openai');
     });
 
-    it('countTokensWithChannelConfig：local 估算（约 4 字符 1 token × 1.5 安全系数）', async () => {
+    test('countTokensWithChannelConfig：local 估算（约 4 字符 1 token × 1.5 安全系数）', async () => {
         const result = await service.countTokensWithChannelConfig(
             { type: 'openai', tokenCountMethod: 'local' } as any,
             [makeContent('12345678')] // 8 字符 → ceil(8/4)=2 → ceil(2*1.5)=3
@@ -81,7 +81,7 @@ describe('TokenCountService smoke', () => {
         expect(createProxyFetchMock).not.toHaveBeenCalled();
     });
 
-    it('countTokensWithChannelConfig：channel_default + openai 路由到 local（不发起请求）', async () => {
+    test('countTokensWithChannelConfig：channel_default + openai 路由到 local（不发起请求）', async () => {
         const result = await service.countTokensWithChannelConfig(
             { type: 'openai' } as any,
             [makeContent('hi')]
@@ -91,7 +91,7 @@ describe('TokenCountService smoke', () => {
         expect(createProxyFetchMock).not.toHaveBeenCalled();
     });
 
-    it('countTokensWithChannelConfig：未知 method 返回错误', async () => {
+    test('countTokensWithChannelConfig：未知 method 返回错误', async () => {
         const result = await service.countTokensWithChannelConfig(
             { type: 'openai', tokenCountMethod: 'nope' } as any,
             [makeContent('hi')]
@@ -100,7 +100,7 @@ describe('TokenCountService smoke', () => {
         expect(result.error).toContain('Unknown token count method: nope');
     });
 
-    it('openai_custom：成功路径（URL、Authorization 头、代理 URL 透传）', async () => {
+    test('openai_custom：成功路径（URL、Authorization 头、代理 URL 透传）', async () => {
         const fetch = mockFetchReturning({ total_tokens: 42 });
         const result = await service.countTokensWithChannelConfig(
             {
@@ -125,7 +125,7 @@ describe('TokenCountService smoke', () => {
         );
     });
 
-    it('openai_custom：HTTP 非 2xx 返回服务端错误体', async () => {
+    test('openai_custom：HTTP 非 2xx 返回服务端错误体', async () => {
         mockFetchReturning('rate limited', false, 429);
         const result = await service.countTokensWithChannelConfig(
             { type: 'openai', apiKey: 'sk-test', tokenCountMethod: 'openai_custom', tokenCountApiConfig: { url: 'http://custom' } } as any,
@@ -135,7 +135,7 @@ describe('TokenCountService smoke', () => {
         expect(result.error).toContain('OpenAI compatible API error: rate limited');
     });
 
-    it('openai_custom：响应缺 total_tokens 字段报错', async () => {
+    test('openai_custom：响应缺 total_tokens 字段报错', async () => {
         mockFetchReturning({});
         const result = await service.countTokensWithChannelConfig(
             { type: 'openai', apiKey: 'sk-test', tokenCountMethod: 'openai_custom', tokenCountApiConfig: { url: 'http://custom' } } as any,
@@ -145,7 +145,7 @@ describe('TokenCountService smoke', () => {
         expect(result.error).toContain('Response missing total_tokens field');
     });
 
-    it('fetch 抛错时包装为失败结果而非抛出', async () => {
+    test('fetch 抛错时包装为失败结果而非抛出', async () => {
         createProxyFetchMock.mockReturnValue((async () => {
             throw new Error('network down');
         }) as any);
@@ -157,7 +157,7 @@ describe('TokenCountService smoke', () => {
         expect(result.error).toBe('network down');
     });
 
-    it('countTokens 全局配置路径：OpenAI 渠道请求体携带 model', async () => {
+    test('countTokens 全局配置路径：OpenAI 渠道请求体携带 model', async () => {
         const fetch = mockFetchReturning({ total_tokens: 5 });
         const config = {
             openai: { enabled: true, apiKey: 'sk-test', baseUrl: 'https://api.openai.com/v1/chat/completions', model: 'gpt-5' }
@@ -174,7 +174,7 @@ describe('TokenCountService smoke', () => {
         );
     });
 
-    it('countTokensBatch：并行结果与输入顺序一致（全部失败时按序返回）', async () => {
+    test('countTokensBatch：并行结果与输入顺序一致（全部失败时按序返回）', async () => {
         const results = await service.countTokensBatch('gemini', {}, [
             [makeContent('a')],
             [makeContent('b')]
@@ -185,7 +185,7 @@ describe('TokenCountService smoke', () => {
         expect(results[1].error).toContain('gemini');
     });
 
-    it('buildAnthropicCountUrl：默认 URL、尾斜杠、/complete 剥离、/v1/models 规整', () => {
+    test('buildAnthropicCountUrl：默认 URL、尾斜杠、/complete 剥离、/v1/models 规整', () => {
         const build = (service as any).buildAnthropicCountUrl.bind(service);
         expect(build(undefined)).toBe('https://api.anthropic.com/v1/messages/count_tokens');
         expect(build('https://api.anthropic.com/v1/messages/count_tokens/')).toBe('https://api.anthropic.com/v1/messages/count_tokens');
@@ -195,7 +195,7 @@ describe('TokenCountService smoke', () => {
         expect(build('https://x')).toBe('https://x/v1/messages/count_tokens');
     });
 
-    it('buildOpenAIResponsesCountUrl：/v1、/responses、完整端点兼容', () => {
+    test('buildOpenAIResponsesCountUrl：/v1、/responses、完整端点兼容', () => {
         const build = (service as any).buildOpenAIResponsesCountUrl.bind(service);
         expect(build('https://api.openai.com/v1')).toBe('https://api.openai.com/v1/responses/input_tokens');
         expect(build('https://api.openai.com/v1/responses')).toBe('https://api.openai.com/v1/responses/input_tokens');

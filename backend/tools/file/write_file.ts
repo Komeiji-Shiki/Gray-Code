@@ -10,7 +10,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
-import { getDiffManager } from './diffManager';
+import { getDiffManager } from '../../core/services/diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import { fileWriteLockManager, type LockHolder } from '../../core/fileWriteLockManager';
@@ -65,7 +65,12 @@ async function writeSingleFile(
     checkpointReady?: Promise<unknown>,
     lockHolder?: LockHolder
 ): Promise<WriteResult> {
-    const { path: filePath, content } = entry;
+    const { path: filePath, content: rawContent } = entry;
+    // 修改原因：originalContent 已做 LF 归一化而 content 未归一化——模型给出 CRLF 内容时
+    //          unchanged 判定失效（实际相同的内容被误报 modified），diff 预览出现双重换行。
+    // 修改方式：content 与 originalContent 使用同一 LF 归一化规则（diff 与落盘内容保持一致）。
+    // 修改目的：换行符差异不再产生虚假 diff。
+    const content = normalizeLineEndingsToLF(rawContent);
     
     const { uri, workspace, error } = resolveFileToolPathWithInfo(filePath);
     if (!uri) {

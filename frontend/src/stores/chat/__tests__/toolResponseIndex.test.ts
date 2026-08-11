@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, expect, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import {
   buildToolResponseIndex,
@@ -93,16 +93,16 @@ function mockState(messages: Message[] = []): ChatStoreState {
 }
 
 describe('buildToolResponseIndex', () => {
-  it('returns empty map for empty messages', () => {
+  test('returns empty map for empty messages', () => {
     expect(buildToolResponseIndex([]).size).toBe(0)
   })
 
-  it('ignores non-functionResponse messages', () => {
+  test('ignores non-functionResponse messages', () => {
     const messages = [makeNormalMessage('msg-1'), makeNormalMessage('msg-2')]
     expect(buildToolResponseIndex(messages).size).toBe(0)
   })
 
-  it('indexes functionResponse ids to message positions', () => {
+  test('indexes functionResponse ids to message positions', () => {
     const messages = [
       makeNormalMessage('msg-0'),
       makeFunctionResponseMessage('fr-msg', [
@@ -113,7 +113,7 @@ describe('buildToolResponseIndex', () => {
     expect(index.get('tool-a')).toBe(1)
   })
 
-  it('maps first occurrence only (duplicate functionResponse ids)', () => {
+  test('maps first occurrence only (duplicate functionResponse ids)', () => {
     const messages = [
       makeFunctionResponseMessage('fr-1', [
         { id: 'dup', name: 'tool', response: { first: true } }
@@ -126,7 +126,7 @@ describe('buildToolResponseIndex', () => {
     expect(index.get('dup')).toBe(0)
   })
 
-  it('indexes multiple functionResponse parts in a single message', () => {
+  test('indexes multiple functionResponse parts in a single message', () => {
     const messages = [
       makeFunctionResponseMessage('multi-fr', [
         { id: 'tool-1', name: 'a', response: {} },
@@ -138,7 +138,7 @@ describe('buildToolResponseIndex', () => {
     expect(index.get('tool-2')).toBe(0)
   })
 
-  it('ignores functionResponse parts without id', () => {
+  test('ignores functionResponse parts without id', () => {
     const messages = [
       makeFunctionResponseMessage('fr-msg', [
         { id: '', name: 'bad', response: {} }
@@ -152,7 +152,7 @@ describe('buildToolResponseIndex', () => {
 })
 
 describe('rebuildMessageIndexById with toolResponseIndex', () => {
-  it('rebuilds toolResponseIndex alongside messageIndexById', () => {
+  test('rebuilds toolResponseIndex alongside messageIndexById', () => {
     const messages = [
       makeNormalMessage('msg-1'),
       makeFunctionResponseMessage('fr-1', [
@@ -174,7 +174,7 @@ describe('appendMessage with toolResponseIndex', () => {
     rebuildMessageIndexById(state)
   })
 
-  it('updates toolResponseIndex when appending a functionResponse message', () => {
+  test('updates toolResponseIndex when appending a functionResponse message', () => {
     appendMessage(state, makeNormalMessage('msg-1'))
     appendMessage(state, makeFunctionResponseMessage('fr-1', [
       { id: 'tool-y', name: 'y', response: { done: true } }
@@ -183,7 +183,7 @@ describe('appendMessage with toolResponseIndex', () => {
     expect(state.toolResponseIndex.value.get('tool-y')).toBe(1)
   })
 
-  it('does not register duplicate functionResponse ids', () => {
+  test('does not register duplicate functionResponse ids', () => {
     appendMessage(state, makeFunctionResponseMessage('fr-1', [
       { id: 'dup', name: 'a', response: {} }
     ]))

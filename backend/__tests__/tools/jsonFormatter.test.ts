@@ -16,7 +16,7 @@ import {
 } from '../../tools/jsonFormatter';
 
 describe('parseJSONToolCalls - 基础回归', () => {
-    it('单个工具调用正常解析', () => {
+    test('单个工具调用正常解析', () => {
         const calls = parseJSONToolCalls(`${TOOL_CALL_START}
 {"tool": "read_file", "parameters": {"path": "a.txt"}}
 ${TOOL_CALL_END}`);
@@ -26,7 +26,7 @@ ${TOOL_CALL_END}`);
         expect(calls[0].parameters).toEqual({ path: 'a.txt' });
     });
 
-    it('多个工具调用按顺序解析', () => {
+    test('多个工具调用按顺序解析', () => {
         const calls = parseJSONToolCalls(`${TOOL_CALL_START}
 {"tool": "read_file", "parameters": {"path": "a.txt"}}
 ${TOOL_CALL_END}
@@ -39,7 +39,7 @@ ${TOOL_CALL_END}`);
         expect(calls[1].tool).toBe('write_file');
     });
 
-    it('parseJSONToolCall 单调用变体返回第一个结果', () => {
+    test('parseJSONToolCall 单调用变体返回第一个结果', () => {
         const call = parseJSONToolCall(`${TOOL_CALL_START}
 {"tool": "read_file", "parameters": {"path": "a.txt"}}
 ${TOOL_CALL_END}`);
@@ -50,7 +50,7 @@ ${TOOL_CALL_END}`);
 });
 
 describe('parseJSONToolCalls - 字符串内结束标记', () => {
-    it('字符串值包含字面 <<<END_TOOL_CALL>>> 时不提前截断', () => {
+    test('字符串值包含字面 <<<END_TOOL_CALL>>> 时不提前截断', () => {
         const text = `${TOOL_CALL_START}
 {"tool": "write_file", "parameters": {"path": "a.txt", "content": "prefix ${TOOL_CALL_END} suffix"}}
 ${TOOL_CALL_END}`;
@@ -62,7 +62,7 @@ ${TOOL_CALL_END}`;
         expect(calls[0].parameters.content).toBe(`prefix ${TOOL_CALL_END} suffix`);
     });
 
-    it('多行字符串内容（含真实换行）内嵌结束标记时完整解析', () => {
+    test('多行字符串内容（含真实换行）内嵌结束标记时完整解析', () => {
         const text = `${TOOL_CALL_START}
 {"tool": "write_file", "parameters": {"path": "a.txt", "content": "line1
 ${TOOL_CALL_END}
@@ -77,7 +77,7 @@ ${TOOL_CALL_END}
 line3`);
     });
 
-    it('字符串内 \\" 转义不影响字符串开关状态，标记仍被跳过', () => {
+    test('字符串内 \\" 转义不影响字符串开关状态，标记仍被跳过', () => {
         const text = `${TOOL_CALL_START}
 {"tool": "write_file", "parameters": {"path": "a.txt", "content": "say \\" ${TOOL_CALL_END} inside"}}
 ${TOOL_CALL_END}`;
@@ -88,7 +88,7 @@ ${TOOL_CALL_END}`;
         expect(calls[0].parameters.content).toBe(`say " ${TOOL_CALL_END} inside`);
     });
 
-    it('字符串内标记不影响后续工具调用块的解析', () => {
+    test('字符串内标记不影响后续工具调用块的解析', () => {
         const text = `${TOOL_CALL_START}
 {"tool": "write_file", "parameters": {"path": "a.txt", "content": "x ${TOOL_CALL_END} y"}}
 ${TOOL_CALL_END}
@@ -105,7 +105,7 @@ ${TOOL_CALL_END}`;
         expect(calls[1].parameters).toEqual({ path: 'b.txt' });
     });
 
-    it('convertFunctionCallToJSON 输出含标记内容可被解析读回', () => {
+    test('convertFunctionCallToJSON 输出含标记内容可被解析读回', () => {
         const json = convertFunctionCallToJSON('write_file', {
             path: 'a.txt',
             content: `hello ${TOOL_CALL_END} world`

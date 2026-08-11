@@ -1,5 +1,5 @@
 /**
- * LimCode - 系统提示词类型定义
+ * GrayCode - 系统提示词类型定义
  */
 
 /**
@@ -52,3 +52,4 @@ export interface PromptSection {
     /** 优先级（数字越小优先级越高） */
     priority?: number
 }
+

@@ -14,7 +14,7 @@ import type { ToolResult } from '../types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
 import { t } from '../../i18n';
 import { createSuspectedRegexSuggestion, detectSuspectedRegexIntent, escapeRegExp } from '../utils';
-import { validateRegexPattern } from '../search/regexGuard';
+import { validateRegexPattern } from '../../core/services/regexGuard';
 import { addLineNumbers, truncateLineForDisplay } from './virtualDocument';
 
 // ─── 默认常量（当 settingsManager 不可用时的 fallback） ───

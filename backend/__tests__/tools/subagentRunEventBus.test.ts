@@ -6,7 +6,7 @@
  */
 
 import { SubAgentRunEventBus, SUBAGENT_RUNS_METADATA_KEY } from '../../tools/subagents/runEventBus';
-import type { SubAgentRunConversationStore } from '../../tools/subagents/runEventBus';
+import type { SubAgentRunConversationStore } from '../../tools/subagents';
 import type { Content } from '../../modules/conversation/types';
 import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
 
@@ -40,7 +40,7 @@ function textContent(role: Content['role'], text: string): Content {
 }
 
 describe('SubAgentRunEventBus - manifest 预览', () => {
-    it('预览按上限截断，且超长单条消息不会被完整拼接', () => {
+    test('预览按上限截断，且超长单条消息不会被完整拼接', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_preview', 'Agent');
         bus.appendContent('run_preview', textContent('model', 'x'.repeat(10000)));
@@ -52,7 +52,7 @@ describe('SubAgentRunEventBus - manifest 预览', () => {
         expect(manifest!.preview!.endsWith('…')).toBe(true);
     });
 
-    it('多个 part 拼接后仍按上限截断', () => {
+    test('多个 part 拼接后仍按上限截断', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_preview_parts', 'Agent');
         bus.appendContent('run_preview_parts', {
@@ -65,14 +65,14 @@ describe('SubAgentRunEventBus - manifest 预览', () => {
         expect(preview.startsWith('a')).toBe(true);
     });
 
-    it('没有可预览文本时返回 undefined', () => {
+    test('没有可预览文本时返回 undefined', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_preview_empty', 'Agent');
         bus.appendContent('run_preview_empty', { role: 'model', parts: [] } as unknown as Content);
         expect(bus.getManifest('run_preview_empty')!.preview).toBeUndefined();
     });
 
-    it('functionCall / functionResponse 也能生成预览', () => {
+    test('functionCall / functionResponse 也能生成预览', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_preview_tool', 'Agent');
         bus.appendContent('run_preview_tool', {
@@ -84,7 +84,7 @@ describe('SubAgentRunEventBus - manifest 预览', () => {
 });
 
 describe('SubAgentRunEventBus - 事件 journal 有界', () => {
-    it('事件数量超过上限后丢弃最旧事件', () => {
+    test('事件数量超过上限后丢弃最旧事件', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_events', 'Agent');
 
@@ -99,7 +99,7 @@ describe('SubAgentRunEventBus - 事件 journal 有界', () => {
         expect((last.payload as any).toolName).toBe('t699');
     });
 
-    it('llm_delta 不进入持久事件 journal', () => {
+    test('llm_delta 不进入持久事件 journal', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_delta', 'Agent');
         const before = bus.getSnapshot('run_delta')!.events.length;
@@ -113,7 +113,7 @@ describe('SubAgentRunEventBus - 事件 journal 有界', () => {
 });
 
 describe('SubAgentRunEventBus - 持久化', () => {
-    it('updateLastModelContent 也会落盘（与 append/replace 一致）', async () => {
+    test('updateLastModelContent 也会落盘（与 append/replace 一致）', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, read } = createStore();
         bus.createRun('run_persist', 'Agent', undefined, {
@@ -133,7 +133,7 @@ describe('SubAgentRunEventBus - 持久化', () => {
         expect(lastPart.parts?.[0]?.text).toBe('final answer');
     });
 
-    it('持久化写入的 contentRevision 与内存快照一致', async () => {
+    test('持久化写入的 contentRevision 与内存快照一致', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, read } = createStore();
         bus.createRun('run_rev', 'Agent', undefined, {
@@ -152,7 +152,7 @@ describe('SubAgentRunEventBus - 持久化', () => {
         expect(persisted.contentRevision).toBe(bus.getSnapshot('run_rev')!.contentRevision);
     });
 
-    it('连续写入被合并，不会每次变更都触发一次落盘', async () => {
+    test('连续写入被合并，不会每次变更都触发一次落盘', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, writes } = createStore();
         bus.createRun('run_coalesce', 'Agent', undefined, {
@@ -172,7 +172,7 @@ describe('SubAgentRunEventBus - 持久化', () => {
         expect(writes.length).toBeLessThan(10);
     });
 
-    it('合并不会丢内容：最终落盘包含全部变更', async () => {
+    test('合并不会丢内容：最终落盘包含全部变更', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, read } = createStore();
         bus.createRun('run_coalesce_2', 'Agent', undefined, {
@@ -195,7 +195,7 @@ describe('SubAgentRunEventBus - 持久化', () => {
 });
 
 describe('SubAgentRunEventBus - 事件载荷瘦身', () => {
-    it('content_snapshot 只携带计数，不再把整份 contents 塞进事件', () => {
+    test('content_snapshot 只携带计数，不再把整份 contents 塞进事件', () => {
         const bus = new SubAgentRunEventBus();
         const events: Array<{ type: string; payload?: any }> = [];
         bus.subscribe(event => events.push({ type: event.type, payload: event.payload }));
@@ -213,7 +213,7 @@ describe('SubAgentRunEventBus - 事件载荷瘦身', () => {
         }
     });
 
-    it('journal 里的历史事件不会长期引用被替换掉的 contents 数组', () => {
+    test('journal 里的历史事件不会长期引用被替换掉的 contents 数组', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('run_journal_ref', 'Agent');
         bus.appendContent('run_journal_ref', textContent('user', 'first'));
@@ -226,7 +226,7 @@ describe('SubAgentRunEventBus - 事件载荷瘦身', () => {
 });
 
 describe('SubAgentRunEventBus - 落盘节流', () => {
-    it('节流窗口内的连续内容变更只发起一次落盘', async () => {
+    test('节流窗口内的连续内容变更只发起一次落盘', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, writes } = createStore();
         bus.createRun('run_throttle', 'Agent', undefined, {
@@ -246,7 +246,7 @@ describe('SubAgentRunEventBus - 落盘节流', () => {
         expect(writes.length - afterCreate).toBeLessThanOrEqual(1);
     });
 
-    it('终态事件跳过节流窗口立即落盘，且写入的是最新全量内容', async () => {
+    test('终态事件跳过节流窗口立即落盘，且写入的是最新全量内容', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, read } = createStore();
         bus.createRun('run_terminal_persist', 'Agent', undefined, {
@@ -283,7 +283,7 @@ describe('SubAgentRunEventBus - 快照淘汰', () => {
         bus.emit({ runId, type: 'run_completed' } as any);
     }
 
-    it('超过上限时淘汰最旧的已终态 run', async () => {
+    test('超过上限时淘汰最旧的已终态 run', async () => {
         const bus = new SubAgentRunEventBus();
         const { store } = createStore();
 
@@ -301,7 +301,7 @@ describe('SubAgentRunEventBus - 快照淘汰', () => {
         expect(bus.getSnapshot('run_evict_last')).toBeDefined();
     });
 
-    it('运行中的 run 永不被淘汰', async () => {
+    test('运行中的 run 永不被淘汰', async () => {
         const bus = new SubAgentRunEventBus();
         const { store } = createStore();
 
@@ -322,7 +322,7 @@ describe('SubAgentRunEventBus - 快照淘汰', () => {
         expect(bus.getSnapshot('run_alive')!.status).toBe('running');
     });
 
-    it('没有持久化归属的 run 永不被淘汰（否则内容无法恢复）', async () => {
+    test('没有持久化归属的 run 永不被淘汰（否则内容无法恢复）', async () => {
         const bus = new SubAgentRunEventBus();
         const { store } = createStore();
 
@@ -363,7 +363,7 @@ describe('SubAgentRunEventBus - 同会话并发落盘', () => {
         return { store, metadata };
     }
 
-    it('同一会话两个 run 并发 flush 不互相覆盖（按 conversationId 串行）', async () => {
+    test('同一会话两个 run 并发 flush 不互相覆盖（按 conversationId 串行）', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, metadata } = createSlowStore();
 
@@ -403,7 +403,7 @@ describe('SubAgentRunEventBus - 同会话并发落盘', () => {
         expect(persisted!['run_conv_b'].contents[0].parts?.[0]?.text).toBe('b1');
     });
 
-    it('同一会话连续多次 flush 仍保留两个 run 的完整记录', async () => {
+    test('同一会话连续多次 flush 仍保留两个 run 的完整记录', async () => {
         const bus = new SubAgentRunEventBus();
         const { store, metadata } = createSlowStore();
 
@@ -436,7 +436,7 @@ describe('SubAgentRunEventBus - 同会话并发落盘', () => {
         expect(persisted!['run_conv_d'].contents[1].parts?.[0]?.text).toBe('d1');
     });
 
-    it('不同会话的落盘互不阻塞（串行化只按会话隔离）', async () => {
+    test('不同会话的落盘互不阻塞（串行化只按会话隔离）', async () => {
         const bus = new SubAgentRunEventBus();
         const metadata = new Map<string, unknown>();
         let readCount = 0;
@@ -507,7 +507,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         };
     }
 
-    it('正式新路径只在元数据保存轻量索引，完整内容写入独立 transcript', async () => {
+    test('正式新路径只在元数据保存轻量索引，完整内容写入独立 transcript', async () => {
         const bus = new SubAgentRunEventBus();
         const external = createExternalStore();
         bus.createRun('run_external', 'Agent', undefined, {
@@ -529,7 +529,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         });
     });
 
-    it('读取旧内嵌格式时迁移到独立 transcript 并清除元数据大字段', async () => {
+    test('读取旧内嵌格式时迁移到独立 transcript 并清除元数据大字段', async () => {
         const legacyContents = [textContent('user', 'legacy')];
         const legacyHistory = [textContent('model', 'history')];
         const external = createExternalStore({
@@ -548,7 +548,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         expect(external.readMetadata().legacy_run.transcriptRef).toBe('subagents/legacy_run.json');
     });
 
-    it('首次加载时把上次宿主进程遗留的非终态 run 标记为 interrupted', async () => {
+    test('首次加载时把上次宿主进程遗留的非终态 run 标记为 interrupted', async () => {
         const external = createExternalStore({
             stale_run: {
                 runId: 'stale_run', agentName: 'Agent', status: 'running', createdAt: 1, updatedAt: 2,
@@ -564,7 +564,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         expect(external.readMetadata().stale_run.transcriptRef).toBe('subagents/stale_run.json');
     });
 
-    it('重复加载同会话时不把当前进程的活跃 run 误标为 interrupted', async () => {
+    test('重复加载同会话时不把当前进程的活跃 run 误标为 interrupted', async () => {
         const external = createExternalStore();
         const bus = new SubAgentRunEventBus();
         bus.createRun('active_run', 'Agent', undefined, {
@@ -580,7 +580,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         expect(external.readMetadata().active_run.status).toBe('running');
     });
 
-    it('恢复会话时只加载轻量 metadata，聚焦单个 run 后才读取它的 transcript', async () => {
+    test('恢复会话时只加载轻量 metadata，聚焦单个 run 后才读取它的 transcript', async () => {
         const external = createExternalStore({
             lazy_run: {
                 runId: 'lazy_run', agentName: 'Agent', status: 'completed', createdAt: 1, updatedAt: 2,
@@ -610,7 +610,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         expect(bus.getContentWindow('lazy_run')?.contents).toHaveLength(2);
     });
 
-    it('终态 transcript 用 contents 索引去重 provider history，并可在惰性加载时还原', async () => {
+    test('终态 transcript 用 contents 索引去重 provider history，并可在惰性加载时还原', async () => {
         const external = createExternalStore();
         const bus = new SubAgentRunEventBus();
         const largeToolResult = textContent('model', `image:${'x'.repeat(20_000)}`);
@@ -642,7 +642,7 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         ]);
     });
 
-    it('flushRun 会等待终态 metadata 写入完成', async () => {
+    test('flushRun 会等待终态 metadata 写入完成', async () => {
         let metadata: unknown;
         let releaseWrite: () => void = () => undefined;
         const writeGate = new Promise<void>(resolve => { releaseWrite = resolve; });
@@ -671,12 +671,12 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
     });
 });
 describe('SubAgentRunEventBus - runId 分配', () => {
-    it('runId 未被占用时原样返回', () => {
+    test('runId 未被占用时原样返回', () => {
         const bus = new SubAgentRunEventBus();
         expect(bus.allocateRunId('subagent_run_tool_1')).toBe('subagent_run_tool_1');
     });
 
-    it('旧 run 已终态时沿用同名（前端按 toolId 推导 runId 关联工具卡）', () => {
+    test('旧 run 已终态时沿用同名（前端按 toolId 推导 runId 关联工具卡）', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('subagent_run_tool_1', 'Agent');
         bus.emit({ runId: 'subagent_run_tool_1', type: 'run_completed' } as any);
@@ -684,7 +684,7 @@ describe('SubAgentRunEventBus - runId 分配', () => {
         expect(bus.allocateRunId('subagent_run_tool_1')).toBe('subagent_run_tool_1');
     });
 
-    it('旧 run 仍活跃时改名，避免覆盖快照与共用 AbortController', () => {
+    test('旧 run 仍活跃时改名，避免覆盖快照与共用 AbortController', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('subagent_run_tool_1', 'Agent');
 
@@ -696,7 +696,7 @@ describe('SubAgentRunEventBus - runId 分配', () => {
         expect(bus.getSnapshot(allocated)).toBeDefined();
     });
 
-    it('连续冲突时后缀继续递增', () => {
+    test('连续冲突时后缀继续递增', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('subagent_run_tool_1', 'Agent');
         bus.createRun(bus.allocateRunId('subagent_run_tool_1'), 'Agent');
@@ -705,7 +705,7 @@ describe('SubAgentRunEventBus - runId 分配', () => {
     });
 });
 describe('SubAgentRunEventBus - resumeRun（续跑复用快照）', () => {
-    it('快照存在时保留 contents/events/lastSentHistory，状态切回 running 并广播 run_resumed', () => {
+    test('快照存在时保留 contents/events/lastSentHistory，状态切回 running 并广播 run_resumed', () => {
         const bus = new SubAgentRunEventBus();
         bus.createRun('resume_old', 'Tester', undefined, {
             conversationId: 'conv_1',
@@ -743,7 +743,7 @@ describe('SubAgentRunEventBus - resumeRun（续跑复用快照）', () => {
         expect(resumed.eventSequence).toBeGreaterThan(seqBefore);
     });
 
-    it('快照不存在时防御性回退 createRun', () => {
+    test('快照不存在时防御性回退 createRun', () => {
         const bus = new SubAgentRunEventBus();
         const snapshot = bus.resumeRun('resume_fallback', 'Tester', undefined, {
             initialContents: [textContent('user', 'x')]

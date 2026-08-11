@@ -2,6 +2,7 @@
  * 检查点管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
@@ -378,17 +379,17 @@ export const createManualCheckpoint: MessageHandler = async (data, requestId, ct
  * 注册检查点管理处理器
  */
 export function registerCheckpointHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('checkpoint.getConfig', getCheckpointConfig);
-  registry.set('checkpoint.updateConfig', updateCheckpointConfig);
-  registry.set('checkpoint.getExclusionProfiles', getExclusionProfiles);
-  registry.set('checkpoint.previewExclusions', previewExclusions);
-  registry.set('checkpoint.getCheckpoints', getCheckpoints);
-  registry.set('checkpoint.createManual', createManualCheckpoint);
-  registry.set('checkpoint.previewRestore', previewRestore);
-  registry.set('checkpoint.restore', restoreCheckpoint);
-  registry.set('checkpoint.deleteBatch', deleteCheckpointsBatch);
-  registry.set('checkpoint.getAllConversationsWithCheckpoints', getAllConversationsWithCheckpoints);
-  registry.set('checkpoint.getManifest', getManifest);
-  registry.set('checkpoint.getOperationProgress', getOperationProgress);
-  registry.set('checkpoint.cancelOperation', cancelOperation);
+  registry.set(MESSAGE_NAMES['checkpoint.getConfig'], getCheckpointConfig);
+  registry.set(MESSAGE_NAMES['checkpoint.updateConfig'], updateCheckpointConfig);
+  registry.set(MESSAGE_NAMES['checkpoint.getExclusionProfiles'], getExclusionProfiles);
+  registry.set(MESSAGE_NAMES['checkpoint.previewExclusions'], previewExclusions);
+  registry.set(MESSAGE_NAMES['checkpoint.getCheckpoints'], getCheckpoints);
+  registry.set(MESSAGE_NAMES['checkpoint.createManual'], createManualCheckpoint);
+  registry.set(MESSAGE_NAMES['checkpoint.previewRestore'], previewRestore);
+  registry.set(MESSAGE_NAMES['checkpoint.restore'], restoreCheckpoint);
+  registry.set(MESSAGE_NAMES['checkpoint.deleteBatch'], deleteCheckpointsBatch);
+  registry.set(MESSAGE_NAMES['checkpoint.getAllConversationsWithCheckpoints'], getAllConversationsWithCheckpoints);
+  registry.set(MESSAGE_NAMES['checkpoint.getManifest'], getManifest);
+  registry.set(MESSAGE_NAMES['checkpoint.getOperationProgress'], getOperationProgress);
+  registry.set(MESSAGE_NAMES['checkpoint.cancelOperation'], cancelOperation);
 }

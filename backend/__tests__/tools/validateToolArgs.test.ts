@@ -11,11 +11,11 @@ function schema(
 describe('validateToolArgs', () => {
     // ==================== 基础守卫 ====================
 
-    it('没有 schema 时返回 null', () => {
+    test('没有 schema 时返回 null', () => {
         expect(validateToolArgs('test', { a: 1 }, undefined)).toBeNull();
     });
 
-    it('参数完全符合 schema 时返回 null', () => {
+    test('参数完全符合 schema 时返回 null', () => {
         const s = schema(
             {
                 path: { type: 'string' },
@@ -29,7 +29,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 必需字段缺失 ====================
 
-    it('缺少必需参数时返回可读错误', () => {
+    test('缺少必需参数时返回可读错误', () => {
         const s = schema(
             {
                 path: { type: 'string' },
@@ -45,7 +45,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('The required parameter `content` is missing');
     });
 
-    it('缺少多个必需参数时列出所有缺失项', () => {
+    test('缺少多个必需参数时列出所有缺失项', () => {
         const s = schema(
             {
                 path: { type: 'string' },
@@ -63,7 +63,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 类型不匹配 ====================
 
-    it('类型不匹配时返回可读错误', () => {
+    test('类型不匹配时返回可读错误', () => {
         const s = schema(
             { timeout: { type: 'number' } },
             ['timeout']
@@ -77,7 +77,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('provided as `string`');
     });
 
-    it('期望 array 但收到 object 时报错', () => {
+    test('期望 array 但收到 object 时报错', () => {
         const s = schema(
             { files: { type: 'array' } },
             ['files']
@@ -89,7 +89,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('provided as `object`');
     });
 
-    it('期望 boolean 但收到 string 时报错', () => {
+    test('期望 boolean 但收到 string 时报错', () => {
         const s = schema(
             { recursive: { type: 'boolean' } },
             ['recursive']
@@ -103,7 +103,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('provided as `string`');
     });
 
-    it('integer 类型收到浮点数时报错', () => {
+    test('integer 类型收到浮点数时报错', () => {
         const s = schema(
             { line: { type: 'integer' } },
             ['line']
@@ -114,7 +114,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('expected as `integer`');
     });
 
-    it('integer 类型收到整数时通过', () => {
+    test('integer 类型收到整数时通过', () => {
         const s = schema(
             { line: { type: 'integer' } },
             ['line']
@@ -125,7 +125,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 多余字段 ====================
 
-    it('schema 中未定义的参数不再导致报错（由 normalizeToolArgs 剥离+警告）', () => {
+    test('schema 中未定义的参数不再导致报错（由 normalizeToolArgs 剥离+警告）', () => {
         const s = schema(
             { path: { type: 'string' } },
             ['path']
@@ -136,7 +136,7 @@ describe('validateToolArgs', () => {
 
     // ==================== array 参数的详细指引 ====================
 
-    it('array 参数收到无法解析的字符串时给出具体指引', () => {
+    test('array 参数收到无法解析的字符串时给出具体指引', () => {
         const s = schema(
             { files: { type: 'array' } },
             ['files']
@@ -151,7 +151,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 混合场景 ====================
 
-    it('同时存在多种错误时全部列出', () => {
+    test('同时存在多种错误时全部列出', () => {
         const s = schema(
             {
                 path: { type: 'string' },
@@ -171,7 +171,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 边界情况 ====================
 
-    it('可选参数缺失时不报错', () => {
+    test('可选参数缺失时不报错', () => {
         const s = schema(
             {
                 path: { type: 'string' },
@@ -183,7 +183,7 @@ describe('validateToolArgs', () => {
         expect(validateToolArgs('read_file', { path: 'a.txt' }, s)).toBeNull();
     });
 
-    it('参数值为 null 时跳过类型检查', () => {
+    test('参数值为 null 时跳过类型检查', () => {
         const s = schema(
             { path: { type: 'string' } },
             []
@@ -192,7 +192,7 @@ describe('validateToolArgs', () => {
         expect(validateToolArgs('read_file', { path: null }, s)).toBeNull();
     });
 
-    it('schema 没有 required 字段时不检查必需性', () => {
+    test('schema 没有 required 字段时不检查必需性', () => {
         const s = schema(
             { path: { type: 'string' } }
             // 没有 required
@@ -203,7 +203,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 嵌套结构递归校验 ====================
 
-    it('数组元素缺少必需字段时报出带路径的错误', () => {
+    test('数组元素缺少必需字段时报出带路径的错误', () => {
         const s = schema(
             {
                 files: {
@@ -229,7 +229,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('The required parameter `files[0].line` is missing');
     });
 
-    it('数组元素字段类型不匹配时报出带路径的错误', () => {
+    test('数组元素字段类型不匹配时报出带路径的错误', () => {
         const s = schema(
             {
                 hunks: {
@@ -259,7 +259,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('expected as `number`');
     });
 
-    it('嵌套 object 的必需字段缺失时报出带路径的错误', () => {
+    test('嵌套 object 的必需字段缺失时报出带路径的错误', () => {
         const s = schema(
             {
                 sourceArtifact: {
@@ -281,7 +281,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('The required parameter `sourceArtifact.path` is missing');
     });
 
-    it('嵌套结构完全正确时通过', () => {
+    test('嵌套结构完全正确时通过', () => {
         const s = schema(
             {
                 files: {
@@ -305,7 +305,7 @@ describe('validateToolArgs', () => {
         }, s)).toBeNull();
     });
 
-    it('类型错误的值不再深入检查（避免误导性的连锁错误）', () => {
+    test('类型错误的值不再深入检查（避免误导性的连锁错误）', () => {
         const s = schema(
             {
                 files: {
@@ -329,7 +329,7 @@ describe('validateToolArgs', () => {
 
     // ==================== enum 校验 ====================
 
-    it('enum 值不合法时报错并列出全部可选值', () => {
+    test('enum 值不合法时报错并列出全部可选值', () => {
         const s = schema(
             { updateMode: { type: 'string', enum: ['revision', 'progress_sync'] } },
             []
@@ -342,7 +342,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('`rewrite`');
     });
 
-    it('嵌套数组元素的 enum 值不合法时报出带路径的错误', () => {
+    test('嵌套数组元素的 enum 值不合法时报出带路径的错误', () => {
         const s = schema(
             {
                 todos: {
@@ -369,7 +369,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('`done`');
     });
 
-    it('enum 值合法时通过', () => {
+    test('enum 值合法时通过', () => {
         const s = schema(
             { updateMode: { type: 'string', enum: ['revision', 'progress_sync'] } },
             []
@@ -380,7 +380,7 @@ describe('validateToolArgs', () => {
 
     // ==================== 参数签名回显 ====================
 
-    it('校验失败时附带 Expected parameters 参数签名', () => {
+    test('校验失败时附带 Expected parameters 参数签名', () => {
         const s = schema(
             {
                 path: { type: 'string' },
@@ -396,7 +396,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('- startLine: integer (optional)');
     });
 
-    it('签名内联展开嵌套数组元素形状与 enum 联合', () => {
+    test('签名内联展开嵌套数组元素形状与 enum 联合', () => {
         const s = schema(
             {
                 todos: {
@@ -419,7 +419,7 @@ describe('validateToolArgs', () => {
         expect(error).toContain('todos: Array<{ id: string; status: "pending" | "completed" }> (required)');
     });
 
-    it('问题条数过多时截断并提示剩余数量', () => {
+    test('问题条数过多时截断并提示剩余数量', () => {
         const s = schema(
             {
                 files: {
@@ -449,14 +449,14 @@ describe('validateToolArgs', () => {
 
     // ==================== 非对象参数守卫 ====================
 
-    it('args 为 null 时返回可读错误而非抛异常', () => {
+    test('args 为 null 时返回可读错误而非抛异常', () => {
         const s = schema({ path: { type: 'string' } }, ['path']);
 
         expect(() => validateToolArgs('write_file', null as any, s)).not.toThrow();
         expect(validateToolArgs('write_file', null as any, s)).toContain('parameters must be a JSON object, got null');
     });
 
-    it('args 为字符串/数字/布尔时返回可读错误而非抛异常', () => {
+    test('args 为字符串/数字/布尔时返回可读错误而非抛异常', () => {
         const s = schema({ path: { type: 'string' } }, ['path']);
 
         expect(() => validateToolArgs('write_file', 'oops' as any, s)).not.toThrow();
@@ -465,14 +465,14 @@ describe('validateToolArgs', () => {
         expect(validateToolArgs('write_file', true as any, s)).toContain('got boolean');
     });
 
-    it('args 为数组时返回可读错误而非抛异常', () => {
+    test('args 为数组时返回可读错误而非抛异常', () => {
         const s = schema({ files: { type: 'array' } }, ['files']);
 
         expect(() => validateToolArgs('insert_code', ['a'] as any, s)).not.toThrow();
         expect(validateToolArgs('insert_code', ['a'] as any, s)).toContain('parameters must be a JSON object, got object');
     });
 
-    it('args 为 undefined 时返回可读错误', () => {
+    test('args 为 undefined 时返回可读错误', () => {
         const s = schema({ path: { type: 'string' } }, ['path']);
 
         expect(() => validateToolArgs('write_file', undefined as any, s)).not.toThrow();

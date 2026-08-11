@@ -7,6 +7,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import GenerateImagePanel from '../../../components/tools/media/generate_image.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 /**
  * 单个任务类型
@@ -50,6 +51,7 @@ registerTool('generate_image', {
       return outputPath ? `${shortPrompt} → ${outputPath}` : shortPrompt
     }
     
-    return '图像生成'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('generate_image') ?? '图像生成'
   }
 })

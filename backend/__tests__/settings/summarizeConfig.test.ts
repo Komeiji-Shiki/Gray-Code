@@ -13,7 +13,7 @@ import {
     DEFAULT_SUMMARIZE_MAX_INPUT_RATIO,
     clampMaxAutoSummarizeAttempts,
     clampSummarizeMaxInputRatio
-} from '../../modules/settings/summarizeTypes';
+} from '../../modules/settings/types/summarizeTypes';
 
 describe('DEFAULT_SUMMARIZE_CONFIG', () => {
     test('包含两个新字段的默认值', () => {

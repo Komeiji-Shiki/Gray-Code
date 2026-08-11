@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具执行服务：执行编排核心（executeFunctionCalls 系列 + 主循环控制）
+ * GrayCode - 工具执行服务：执行编排核心（executeFunctionCalls 系列 + 主循环控制）
  *
  * ToolExecutionService.ts 职责拆分（第二批）的 ExecutionCore 基类。
  * 继承链：ToolExecutionService → ExecutionCore → ResultCore → PreflightCore → MailboxCore。
@@ -220,6 +220,42 @@ export class ExecutionCore extends ResultCore {
                     break;
                 }
                 // 进度事件：本方法只消费最终结果，事件直接丢弃（与旧行为一致）
+            } catch (error) {
+                // 生成器抛错（工具执行异常/内部错误）：已无法取回真实结果，把失败转换为
+                // 每个调用的错误响应（对齐流式早启动路径 .catch 的错误转换模式），保证
+                // assistant 的每个 tool_use 都有配对的 tool_result：
+                // - 非流式主循环：错误函数响应照常落盘，下一轮 generate 不会因孤儿
+                //   tool_calls 触发 Anthropic 400，模型按普通工具错误继续处理；
+                // - 流式早启动：错误结果写入 streamingToolResults，tool_use 配对完整，
+                //   不再静默丢失 responsePart/toolResult。
+                // 注意与 abort 收尾窗口超时的空结果路径区分：那是取消语义（下方兜底保留），
+                // 此处是失败语义，必须给调用方可落盘的错误结果。不让异常穿透为 error chunk。
+                this.log.warn('tool_gen_next_rejected', {
+                    conversationId,
+                    messageIndex,
+                    error: (error as Error)?.message ?? String(error),
+                });
+                const errorResponse: Record<string, unknown> = {
+                    success: false,
+                    error: (error as Error)?.message ?? String(error),
+                };
+                executionResult = {
+                    responseParts: calls.map(call => ({
+                        functionResponse: {
+                            id: call.id,
+                            name: call.name,
+                            response: errorResponse
+                        }
+                    })),
+                    toolResults: calls.map(call => ({
+                        id: call.id,
+                        name: call.name,
+                        args: call.args,
+                        result: errorResponse
+                    })),
+                    checkpoints: []
+                };
+                break;
             } finally {
                 if (onAbort && abortSignal) {
                     abortSignal.removeEventListener('abort', onAbort);
@@ -738,3 +774,4 @@ export class ExecutionCore extends ResultCore {
         };
     }
 }
+

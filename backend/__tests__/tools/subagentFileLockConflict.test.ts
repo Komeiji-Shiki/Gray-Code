@@ -52,12 +52,12 @@ function createControllableTool() {
 
 describe('SubAgent 写工具文件锁（P4）', () => {
     afterEach(() => {
-        fileWriteLockManager.releaseAllByHolder('run_a');
-        fileWriteLockManager.releaseAllByHolder('run_b');
-        fileWriteLockManager.releaseAllByHolder('conversation_conv_1');
+        fileWriteLockManager.releaseAllByHolder(holderA);
+        fileWriteLockManager.releaseAllByHolder(holderB);
+        fileWriteLockManager.releaseAllByHolder({ kind: 'main', id: 'conv_1', label: 'main' });
     });
 
-    it('子代理写工具与主会话/其他子代理共用同一把锁，冲突返回明确信息', async () => {
+    test('子代理写工具与主会话/其他子代理共用同一把锁，冲突返回明确信息', async () => {
         // Agent A 先占用 src/a.md（模拟其写工具正在执行）
         fileWriteLockManager.tryAcquire(['src/a.md'], holderA);
 
@@ -93,7 +93,7 @@ describe('SubAgent 写工具文件锁（P4）', () => {
         expect(responsePart.functionResponse?.response?.lockConflict).toBe(true);
     });
 
-    it('同一子代理 run 并发重入同一文件不冲突（同 holder 可重入，无死锁）', async () => {
+    test('同一子代理 run 并发重入同一文件不冲突（同 holder 可重入，无死锁）', async () => {
         const { tool, release } = createControllableTool();
         const service = new ToolExecutionService({ getTool: () => tool } as any, undefined, undefined);
 
@@ -124,7 +124,7 @@ describe('SubAgent 写工具文件锁（P4）', () => {
         expect(secondResult.toolResults[0].result.success).toBe(true);
     });
 
-    it('未传 attribution 时默认以主会话身份加锁', async () => {
+    test('未传 attribution 时默认以主会话身份加锁', async () => {
         const { tool, release } = createControllableTool();
         const service = new ToolExecutionService({ getTool: () => tool } as any, undefined, undefined);
 

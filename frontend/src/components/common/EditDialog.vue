@@ -5,6 +5,7 @@
  * 支持附件管理和提示词上下文管理（内联徽章）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, nextTick } from 'vue'
 import type { CheckpointRecord, Attachment } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
@@ -267,7 +268,7 @@ async function addFileContextByPath(path: string, options?: { autoUploadBinaryAt
       attachment?: { name: string; size: number; mimeType: string; data: string }
       error?: string
     }>(
-      'readWorkspaceFileForInput',
+      MESSAGE_NAMES.readWorkspaceFileForInput,
       { path }
     )
 
@@ -343,7 +344,7 @@ async function handleDropFileItems(items: string[], insertAsTextPath: boolean, d
 async function handleOpenContext(ctx: PromptContextItem) {
   if (ctx.isTextContent === false && ctx.filePath) {
     try {
-      await sendToExtension('openWorkspaceFile', { path: ctx.filePath })
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: ctx.filePath })
     } catch (error) {
       console.error('Failed to open workspace file:', error)
     }
@@ -351,7 +352,7 @@ async function handleOpenContext(ctx: PromptContextItem) {
   }
 
   try {
-    await sendToExtension('showContextContent', {
+    await sendToExtension(MESSAGE_NAMES.showContextContent, {
       title: ctx.title,
       content: ctx.content,
       language: ctx.language || languageFromPath(ctx.filePath) || 'plaintext'

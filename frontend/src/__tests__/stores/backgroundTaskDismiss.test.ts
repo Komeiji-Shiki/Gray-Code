@@ -4,7 +4,7 @@
  * 覆盖：一键清除所有「已结束且已回流（reported）」的后台任务 chip；
  * 运行中任务与未回流任务（回执尚未进入对话历史）必须保留。
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, expect, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 const mockChat = {
@@ -16,7 +16,8 @@ const mockChat = {
 
 vi.mock('../../utils/vscode', () => ({
   sendToExtension: vi.fn().mockResolvedValue({ success: true }),
-  onMessageFromExtension: vi.fn()
+  onMessageFromExtension: vi.fn(),
+  onExtensionCommand: vi.fn(() => () => {})
 }))
 
 vi.mock('../../stores/chatStore', () => ({
@@ -60,7 +61,7 @@ describe('backgroundTaskStore.dismissCompletedTasks', () => {
     setActivePinia(createPinia())
   })
 
-  it('一键清除所有已结束任务（含未回流），仅保留运行中', async () => {
+  test('一键清除所有已结束任务（含未回流），仅保留运行中', async () => {
     const store = useBackgroundTaskStore()
 
     // t1、t2：完成并成功回流（reported=true）
@@ -95,7 +96,7 @@ describe('backgroundTaskStore.dismissCompletedTasks', () => {
     expect(store.taskList.find(t => t.taskId === 't3')?.status).toBe('running')
   })
 
-  it('无可清除任务时不改动任务表', () => {
+  test('无可清除任务时不改动任务表', () => {
     const store = useBackgroundTaskStore()
     store.handleTaskEvent(startEvent('t1', 'terminal', { background: true, command: 'sleep' }))
 

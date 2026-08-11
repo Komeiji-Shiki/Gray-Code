@@ -8,10 +8,10 @@
  * - 索引写失败静默降级，不影响对话保存主流程
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { UsageIndex, UsageIndexMessage, UsageIndexStore } from '../../modules/conversation/usageStats';
-import type { Content } from '../../modules/conversation/types';
+import type { Content } from '../../modules/conversation';
 
 describe('ConversationManager 用量索引挂接', () => {
     test('消息落盘时维护用量索引（含 token 提取），删除对话时清理索引', async () => {

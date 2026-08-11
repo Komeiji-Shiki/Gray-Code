@@ -7,9 +7,9 @@
  * 3. 无效响应的报错行为
  */
 
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
-import { GeminiFormatter } from '../../modules/channel/formatters/gemini';
-import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { OpenAIFormatter } from '../../modules/channel';
+import { GeminiFormatter } from '../../modules/channel';
+import { AnthropicFormatter } from '../../modules/channel';
 
 const sampleTools = [
     {
@@ -28,7 +28,7 @@ const sampleTools = [
 describe('OpenAIFormatter.parseResponse', () => {
     const formatter = new OpenAIFormatter();
 
-    it('parses a plain text response with usage conversion', () => {
+    test('parses a plain text response with usage conversion', () => {
         const result = formatter.parseResponse({
             model: 'gpt-4o',
             choices: [
@@ -61,7 +61,7 @@ describe('OpenAIFormatter.parseResponse', () => {
         });
     });
 
-    it('parses reasoning_content as a thought part', () => {
+    test('parses reasoning_content as a thought part', () => {
         const result = formatter.parseResponse({
             model: 'deepseek-reasoner',
             choices: [
@@ -80,7 +80,7 @@ describe('OpenAIFormatter.parseResponse', () => {
         expect(result.content.parts[1]).toEqual({ text: 'Answer' });
     });
 
-    it('parses native tool_calls into functionCall parts', () => {
+    test('parses native tool_calls into functionCall parts', () => {
         const result = formatter.parseResponse({
             model: 'gpt-4o',
             choices: [
@@ -111,12 +111,12 @@ describe('OpenAIFormatter.parseResponse', () => {
         expect(fcPart.functionCall.id).toBe('call_1');
     });
 
-    it('throws on an invalid response', () => {
+    test('throws on an invalid response', () => {
         expect(() => formatter.parseResponse({})).toThrow();
         expect(() => formatter.parseResponse({ choices: [] })).toThrow();
     });
 
-    it('converts tool declarations to OpenAI function format', () => {
+    test('converts tool declarations to OpenAI function format', () => {
         const converted = formatter.convertTools(sampleTools) as any[];
         expect(converted).toHaveLength(1);
         expect(converted[0].type).toBe('function');
@@ -129,7 +129,7 @@ describe('OpenAIFormatter.parseResponse', () => {
 describe('GeminiFormatter.parseResponse', () => {
     const formatter = new GeminiFormatter();
 
-    it('parses a standard candidate response and keeps usage metadata', () => {
+    test('parses a standard candidate response and keeps usage metadata', () => {
         const result = formatter.parseResponse({
             modelVersion: 'gemini-2.0-flash',
             candidates: [
@@ -157,7 +157,7 @@ describe('GeminiFormatter.parseResponse', () => {
         expect(result.content.usageMetadata?.thoughtsTokenCount).toBe(5);
     });
 
-    it('normalizes thoughtSignature into multi-provider thoughtSignatures', () => {
+    test('normalizes thoughtSignature into multi-provider thoughtSignatures', () => {
         const result = formatter.parseResponse({
             candidates: [
                 {
@@ -175,12 +175,12 @@ describe('GeminiFormatter.parseResponse', () => {
         expect(part.thoughtSignatures).toEqual({ gemini: 'sig-abc' });
     });
 
-    it('throws on an invalid response', () => {
+    test('throws on an invalid response', () => {
         expect(() => formatter.parseResponse({})).toThrow();
         expect(() => formatter.parseResponse({ candidates: [] })).toThrow();
     });
 
-    it('converts tool declarations to Gemini function_declarations format', () => {
+    test('converts tool declarations to Gemini function_declarations format', () => {
         const converted = formatter.convertTools(sampleTools) as any;
         expect(converted).toHaveLength(1);
         expect(converted[0].function_declarations).toHaveLength(1);
@@ -191,7 +191,7 @@ describe('GeminiFormatter.parseResponse', () => {
 describe('AnthropicFormatter.parseResponse', () => {
     const formatter = new AnthropicFormatter();
 
-    it('parses text + thinking + tool_use blocks and converts usage', () => {
+    test('parses text + thinking + tool_use blocks and converts usage', () => {
         const result = formatter.parseResponse({
             model: 'claude-sonnet-4-20250514',
             stop_reason: 'tool_use',
@@ -231,7 +231,7 @@ describe('AnthropicFormatter.parseResponse', () => {
         });
     });
 
-    it('keeps redacted_thinking data for later turns', () => {
+    test('keeps redacted_thinking data for later turns', () => {
         const redactedBlob = 'encrypted-blob';
         const redactedBlock: any = { type: 'redacted_thinking' };
         redactedBlock['data'] = redactedBlob;
@@ -247,12 +247,12 @@ describe('AnthropicFormatter.parseResponse', () => {
         expect(result.content.parts).toContainEqual({ redactedThinking: redactedBlob });
     });
 
-    it('throws on an invalid response', () => {
+    test('throws on an invalid response', () => {
         expect(() => formatter.parseResponse(null)).toThrow();
         expect(() => formatter.parseResponse({})).toThrow();
     });
 
-    it('converts tool declarations to Anthropic input_schema format', () => {
+    test('converts tool declarations to Anthropic input_schema format', () => {
         const converted = formatter.convertTools(sampleTools) as any[];
         expect(converted).toHaveLength(1);
         expect(converted[0].name).toBe('read_file');

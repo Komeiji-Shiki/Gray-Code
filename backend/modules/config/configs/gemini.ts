@@ -1,5 +1,5 @@
 /**
- * LimCode - Gemini 配置类型
+ * GrayCode - Gemini 配置类型
  * 
  * Google Gemini API 的完整配置支持
  */
@@ -113,3 +113,4 @@ export interface GeminiConfig extends BaseChannelConfig {
      */
     optionsEnabled?: GeminiOptionsEnabled;
 }
+

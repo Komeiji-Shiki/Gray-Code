@@ -34,18 +34,29 @@ import { registerActivityHandlers } from './ActivityHandlers';
 import { registerTokenizerHandlers } from './TokenizerHandlers';
 import { registerUpdateHandlers } from './UpdateHandlers';
 
-// 重新导出各个模块
+// 重新导出各个模块（对照 handlers/ 目录实际文件，与上方 import 列表一一对应；
+// FileHandlers 为兼容壳，其内容已由下方 file/*、PlanApprovalHandlers、SummarizeHandlers
+// 与 NotificationHandlers/ConversationHandlers 的 export * 完整覆盖）
 export * from './ConversationHandlers';
 export * from './BranchHandlers';
 export * from './ConfigHandlers';
 export * from './SettingsHandlers';
+export * from './MemoryHandlers';
+export * from './SettingsTransferHandlers';
 export * from './CheckpointHandlers';
 export * from './ToolHandlers';
 export * from './McpHandlers';
 export * from './DependencyHandlers';
 export * from './StoragePathHandlers';
 export * from './ContextHandlers';
-export * from './FileHandlers';
+export * from './file/fileHandlerUtils';
+export * from './file/PinnedFileHandlers';
+export * from './file/FileReadHandlers';
+export * from './file/FilePreviewHandlers';
+export * from './file/FileOpenHandlers';
+export * from './file/FileSearchHandlers';
+export * from './PlanApprovalHandlers';
+export * from './SummarizeHandlers';
 export * from './DiffHandlers';
 export * from './ChatHandlers';
 export * from './SkillsHandlers';

@@ -1,5 +1,5 @@
 /**
- * LimCode - 设置模块
+ * GrayCode - 设置模块
  *
  * 导出设置相关的所有接口和实现
  */
@@ -48,18 +48,18 @@ export {
     clampMaxAutoSummarizeAttempts,
     clampSummarizeMaxInputRatio,
     DEFAULT_SUMMARIZE_CONFIG
-} from './summarizeTypes';
-export type { SummarizeConfig } from './summarizeTypes';
+} from './types/summarizeTypes';
+export type { SummarizeConfig } from './types/summarizeTypes';
 
 // 检查点设置类型与默认值
 export {
     DEFAULT_MESSAGE_CHECKPOINT_CONFIG,
     DEFAULT_CHECKPOINT_CONFIG
-} from './checkpointTypes';
+} from './types/checkpointTypes';
 export type {
     MessageCheckpointConfig,
     CheckpointConfig
-} from './checkpointTypes';
+} from './types/checkpointTypes';
 
 // 模式工具策略
 export {

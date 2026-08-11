@@ -1,5 +1,5 @@
 /**
- * LimCode - MCP 工具适配器
+ * GrayCode - MCP 工具适配器
  *
  * 将 MCP 工具转换为内置工具格式，支持 XML/JSON/Function Call
  *
@@ -139,4 +139,5 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
         multimodal: multimodalData.length > 0 ? multimodalData : undefined
     };
 }
+
 

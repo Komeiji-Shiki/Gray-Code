@@ -16,25 +16,13 @@
 
 /// <reference types="jest" />
 
-import { createDefaultExecutor } from '../../tools/subagents/executor';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { createDefaultExecutor } from '../../tools/subagents';
+import { subAgentRunEventBus } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { GenerateResponse } from '../../modules/channel/types';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5,
-        maxRuntime: 300,
-        ...overrides
-    };
-}
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -107,7 +95,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(subAgentConcurrencyLimiter.getRunningCount()).toBe(0);
     });
 
-    it('第一轮幻觉文本+工具调用、第二轮空响应失败时，partialResponse 不包含第一轮幻觉文本', async () => {
+    test('第一轮幻觉文本+工具调用、第二轮空响应失败时，partialResponse 不包含第一轮幻觉文本', async () => {
         // 构造：第一轮返回"幻觉文本+工具调用"；第二轮返回空内容（上游抽风）
         const generateMock = jest.fn()
             .mockImplementationOnce(async () => hallucinationTurnResponse())
@@ -115,7 +103,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
             // 本用例需要模拟重试耗尽，避免 mock 队列耗尽后返回 undefined 被误判成成功。
             .mockImplementation(async () => emptyResponseError());
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -140,7 +128,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(result.response).toBe('');
     });
 
-    it('工具调用后的尾巴文本被剥离不进 history；工具调用前的分析文本保留', async () => {
+    test('工具调用后的尾巴文本被剥离不进 history；工具调用前的分析文本保留', async () => {
         // 第一轮：分析文本 + read_file 工具调用 + 工具调用后的尾巴文本（无依据，应剥离）
         // 第二轮：真实工具结果返回后，模型输出正确分析（无工具调用）→ 正常完成
         const generateMock = jest.fn()
@@ -163,7 +151,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
                 model: 'model-x'
             }));
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -189,7 +177,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(JSON.stringify(modelMsg)).toContain('read_file');
     });
 
-    it('已有工具结果后的"文本+工具调用"轮不剥离（可能是基于真实结果的中间分析）', async () => {
+    test('已有工具结果后的"文本+工具调用"轮不剥离（可能是基于真实结果的中间分析）', async () => {
         // 第一轮：纯工具调用（无文本）→ 执行
         // 第二轮：带文本 + 新工具调用（此时已有工具结果，属于合法中间分析）→ 不剥离
         const generateMock = jest.fn()
@@ -219,7 +207,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
                 model: 'model-x'
             }));
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -236,7 +224,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(JSON.stringify(thirdRequest.history)).toContain('第一张图分析完成，继续读第二张。');
     });
 
-    it('正常完成路径不受影响：最终无工具调用轮文本仍作为 response 返回', async () => {
+    test('正常完成路径不受影响：最终无工具调用轮文本仍作为 response 返回', async () => {
         // 第一轮：工具调用；第二轮：最终回答（无工具调用）→ 正常完成
         const generateMock = jest.fn()
             .mockImplementationOnce(async () => hallucinationTurnResponse())
@@ -248,7 +236,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
                 model: 'model-x'
             }));
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -265,7 +253,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
         expect(result.response).not.toContain('こんな風に');
     });
 
-    it('多轮工具调用后失败：保留基于真实工具结果的中间分析，仍排除首个工具结果前的幻觉', async () => {
+    test('多轮工具调用后失败：保留基于真实工具结果的中间分析，仍排除首个工具结果前的幻觉', async () => {
         const generateMock = jest.fn()
             .mockImplementationOnce(async () => hallucinationTurnResponse())
             .mockImplementationOnce(async () => ({
@@ -281,7 +269,7 @@ describe('SubAgent executor - 工具调用轮预生成幻觉不进入 partialRes
             // 第三轮及其两次 run 级重试全部失败，确保走“重试耗尽”终态。
             .mockRejectedValue(new Error('AI call failed: upstream error'));
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 

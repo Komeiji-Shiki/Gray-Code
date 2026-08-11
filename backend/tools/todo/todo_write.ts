@@ -7,7 +7,7 @@
  */
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
-import { isTodoStatus, validateTodos } from '../shared/todoValidation';
+import { validateTodos } from '../shared/todoValidation';
 import type { TodoItem, TodoStatus } from '../shared/todoValidation';
 
 // 保持对外类型导出（todo/index.ts 通过 export * 转发）
@@ -19,33 +19,6 @@ export interface TodoWriteArgs {
 }
 
 const TODO_METADATA_KEY = 'todoList';
-
-async function loadExistingTodos(context: ToolContext): Promise<TodoItem[]> {
-    const store = context.conversationStore;
-    const conversationId = context.conversationId;
-
-    if (!store || !conversationId) {
-        return [];
-    }
-
-    const raw = await store.getCustomMetadata(conversationId, TODO_METADATA_KEY);
-    if (!Array.isArray(raw)) {
-        return [];
-    }
-
-    // Best-effort normalize
-    const normalized: TodoItem[] = [];
-    for (const item of raw) {
-        if (!item || typeof item !== 'object') continue;
-        const id = (item as Record<string, unknown>).id;
-        const content = (item as Record<string, unknown>).content;
-        const status = (item as Record<string, unknown>).status;
-        if (typeof id === 'string' && typeof content === 'string' && isTodoStatus(status)) {
-            normalized.push({ id, content, status });
-        }
-    }
-    return normalized;
-}
 
 async function saveTodos(context: ToolContext, todos: TodoItem[]): Promise<void> {
     const store = context.conversationStore;

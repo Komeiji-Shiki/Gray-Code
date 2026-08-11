@@ -723,9 +723,14 @@ const wrapperStyle = computed(() => {
 // 组件挂载
 let initRafId: number | null = null
 let initFallbackTimer: ReturnType<typeof setTimeout> | null = null
+// 卸载标记：nextTick 回调可能晚于卸载执行（如 mounted 后立即销毁），
+// 此时不能再新建 rAF / 100ms 兜底定时器与事件监听，否则没有清理时机
+let isUnmounted = false
 
 onMounted(() => {
   nextTick(() => {
+    // 组件可能在本回调执行前已卸载：直接跳过初始化，避免新建定时器/监听后无清理时机
+    if (isUnmounted) return
     // 首次更新：rAF 优先（下一帧布局完成后立即执行）；ResizeObserver 在尺寸变化时
     // 持续驱动；setTimeout 保留为最后兜底（部分环境 rAF 可能被节流/暂停）。
     // 多次执行幂等（updateScrollbar/updateMarkers 均为重算型函数）。
@@ -779,6 +784,7 @@ onMounted(() => {
 
 // 组件卸载
 onBeforeUnmount(() => {
+  isUnmounted = true
   if (scrollContainer.value) {
     scrollContainer.value.removeEventListener('scroll', handleScroll)
     scrollContainer.value.removeEventListener('wheel', handleUserScrollInput)

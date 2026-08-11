@@ -76,13 +76,13 @@ function expectNoOrphanResponses(history: Content[]): void {
 }
 
 describe('trimSubAgentHistoryForContext（SEC）', () => {
-    it('未超预算：返回原引用（零开销，不复制不修改）', () => {
+    test('未超预算：返回原引用（零开销，不复制不修改）', () => {
         const history = [userMsg('task'), modelCallMsg('c1', 'read_file'), toolResultMsg('c1'), modelTextMsg('answer')];
         const result = trimSubAgentHistoryForContext(history, channelConfig(128000));
         expect(result).toBe(history);
     });
 
-    it('超预算：从最旧开始整轮丢弃，首条用户任务消息与配对完整性保留', () => {
+    test('超预算：从最旧开始整轮丢弃，首条用户任务消息与配对完整性保留', () => {
         // 3 轮工具调用 + 终答；预算 80 token ≈ 不足 1 轮 → 丢弃最旧的 2 轮
         const history: Content[] = [
             userMsg('task'),
@@ -102,7 +102,7 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         expectNoOrphanResponses(result);
     });
 
-    it('预算极小：整轮丢弃到预算内（保底首条任务 + 末尾内容）', () => {
+    test('预算极小：整轮丢弃到预算内（保底首条任务 + 末尾内容）', () => {
         const history: Content[] = [
             userMsg('task'),
             modelCallMsg('c1'), toolResultMsg('c1'),
@@ -125,7 +125,7 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         expectNoOrphanResponses(result);
     });
 
-    it('单条超大文本：截断并标记，且不修改调用方持有的原 history', () => {
+    test('单条超大文本：截断并标记，且不修改调用方持有的原 history', () => {
         const huge = 'x'.repeat(300000); // ≈ 75000 token
         const history = [userMsg('task'), modelTextMsg(huge)];
         // 预算 = 50000 × 0.8 = 40000 < 75000 → 触发裁剪
@@ -138,7 +138,7 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         expect(trimmedText).toContain('sub-agent context trim');
     });
 
-    it('单条超大工具结果：functionResponse 内的字符串被截断且配对保留', () => {
+    test('单条超大工具结果：functionResponse 内的字符串被截断且配对保留', () => {
         const history = [
             userMsg('task'),
             modelCallMsg('c1', 'read_file', 10),
@@ -152,7 +152,7 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         expectNoOrphanResponses(result);
     });
 
-    it('预算按渠道 maxContextTokens 的 80% 计算（缺省 128000）', () => {
+    test('预算按渠道 maxContextTokens 的 80% 计算（缺省 128000）', () => {
         // 无 maxContextTokens：预算 = 128000 * 0.8 = 102400 token
         const history = [
             userMsg('task'),

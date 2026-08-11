@@ -85,7 +85,20 @@ export interface DeserializedPromptContextCache {
 }
 
 function contentToText(message: Content): string {
-    return message.parts?.map(part => part.text || '').join('') || '';
+    // 指纹文本须体现消息身份与 part 结构：role 变化 / thought part 增删 /
+    // part 边界都影响前缀缓存命中（LOW-3）——纯 text 拼接会让 role 翻转、
+    // 伪造思考（fakeThought）增删不改变聚合文本，缓存误判「内容未变」。
+    // role 前缀 + thought 标记只影响指纹比对，不进入真实请求消息。
+    const role = message.role || 'unknown';
+    const parts = (message.parts ?? []).map(part => {
+        const text = part.text || '';
+        return part.thought === true ? `<thought>${text}</thought>` : text;
+    });
+    const body = parts.filter(p => p.trim()).join('\n');
+    if (!body) {
+        return '';
+    }
+    return `${role}: ${body}`;
 }
 
 function messageToSerialized(message: Content): SerializedPromptContextMessage | null {
@@ -93,11 +106,14 @@ function messageToSerialized(message: Content): SerializedPromptContextMessage |
         return null;
     }
 
-    // 正文与思考分离保存：thought part 的文本进 thoughtText，
-    // 反序列化时可恢复原始结构，保证回插路径与直发路径字节一致。
-    // 多条 text part 用 '\n' 连接（与 OpenAI formatter 的文本 part 连接符一致），
-    // 保留 part 边界：序列化后单条 text 仍能按 '\n' 还原出原始 part 序列，
-    // 避免无分隔 join 把相邻 part 的边界静默抹掉。
+    // 正文与思考分离保存：thought part 的文本进 thoughtText，反序列化时恢复为
+    // 「单 thought part + 单 text part」，保证回插路径与直发路径字节一致。
+    // 多条 text part 用 '\n' 连接（与 OpenAI formatter 的 textParts.join('\n') 一致），
+    // 多条 thought part 合并为单条 thoughtText（与 formatter 的 thoughtParts.join('\n') 一致）；
+    // 用 '\n' 而非无分隔 join，避免相邻 part 边界被静默抹掉。
+    // 反序列化不再按 '\n' 拆分：动态上下文消息实际至多一个 text part，而单 part 内嵌换行
+    // （模板多行内容）按 '\n' 拆分会在 Anthropic 侧拆成多个文本块，破坏前缀缓存字节稳定。
+    // 非文本 part（media/functionCall/functionResponse 等）不进入动态上下文缓存，序列化不保留。
     const textParts = (message.parts ?? []).filter(part => part.text && part.thought !== true);
     const thoughtParts = (message.parts ?? []).filter(part => part.text && part.thought === true);
     const text = textParts.map(part => part.text || '').join('\n').trim();
@@ -124,6 +140,9 @@ function serializedToContent(message: SerializedPromptContextMessage): Content |
         return null;
     }
 
+    // 恢复为「单 thought part + 单 text part」（thought 在前，与构造侧 parts.unshift 顺序一致）。
+    // 不做 '\n' 拆分：单 text part 内嵌换行（模板多行内容）拆分后 Anthropic 会发出多个
+    // 文本块，与直发路径字节不一致，破坏前缀缓存。
     const parts: Content['parts'] = [];
     if (thoughtText) {
         parts.push({ text: thoughtText, thought: true });

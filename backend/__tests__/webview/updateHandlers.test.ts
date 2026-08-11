@@ -46,7 +46,7 @@ beforeEach(() => {
 });
 
 describe('UpdateHandlers updateNow', () => {
-    it('有新版本：自动下载安装 + 提示 reload + 回复成功', async () => {
+    test('有新版本：自动下载安装 + 提示 reload + 回复成功', async () => {
         const downloadImpl = jest.fn(async () => '/tmp/graycode-1.5.0.vsix');
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE }, downloadImpl);
         const ctx = createCtx(checker);
@@ -66,7 +66,7 @@ describe('UpdateHandlers updateNow', () => {
         });
     });
 
-    it('已是最新版本：回复 alreadyUpToDate，不触发下载', async () => {
+    test('已是最新版本：回复 alreadyUpToDate，不触发下载', async () => {
         const downloadImpl = jest.fn();
         const checker = createChecker({ state: 'upToDate', checkedAt: 1 }, downloadImpl);
         const ctx = createCtx(checker);
@@ -77,7 +77,7 @@ describe('UpdateHandlers updateNow', () => {
         expect(ctx.sendError).not.toHaveBeenCalled();
     });
 
-    it('自动检查关闭：报错', async () => {
+    test('自动检查关闭：报错', async () => {
         const checker = createChecker({ state: 'disabled' });
         const ctx = createCtx(checker);
         await updateNow({}, 'req_3', ctx);
@@ -86,7 +86,7 @@ describe('UpdateHandlers updateNow', () => {
         expect(ctx.sendError).toHaveBeenCalledWith('req_3', 'UPDATE_NOW_ERROR', expect.stringContaining('关闭'));
     });
 
-    it('检查失败：报错', async () => {
+    test('检查失败：报错', async () => {
         const checker = createChecker({ state: 'error', checkedAt: 1, message: 'network down' });
         const ctx = createCtx(checker);
         await updateNow({}, 'req_4', ctx);
@@ -94,7 +94,7 @@ describe('UpdateHandlers updateNow', () => {
         expect(ctx.sendError).toHaveBeenCalledWith('req_4', 'UPDATE_NOW_ERROR', expect.stringContaining('network down'));
     });
 
-    it('安装失败：报错', async () => {
+    test('安装失败：报错', async () => {
         const downloadImpl = jest.fn(async () => { throw new Error('下载失败：HTTP 500'); });
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE }, downloadImpl);
         const ctx = createCtx(checker);
@@ -104,7 +104,7 @@ describe('UpdateHandlers updateNow', () => {
         expect(ctx.sendError).toHaveBeenCalledWith('req_5', 'UPDATE_NOW_ERROR', expect.stringContaining('500'));
     });
 
-    it('用户点「立即重新加载」：执行 reloadWindow 命令', async () => {
+    test('用户点「立即重新加载」：执行 reloadWindow 命令', async () => {
         (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue('立即重新加载');
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE });
         const ctx = createCtx(checker);
@@ -115,7 +115,7 @@ describe('UpdateHandlers updateNow', () => {
 });
 
 describe('UpdateHandlers installUpdate', () => {
-    it('无 vsix 资产：报错', async () => {
+    test('无 vsix 资产：报错', async () => {
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE });
         const ctx = createCtx(checker);
         await installUpdate({ update: { ...FAKE_UPDATE, vsixAssetUrl: undefined } }, 'req_7', ctx);
@@ -124,7 +124,7 @@ describe('UpdateHandlers installUpdate', () => {
         expect(ctx.sendError).toHaveBeenCalledWith('req_7', 'INSTALL_UPDATE_ERROR', expect.any(String));
     });
 
-    it('正常下载安装并回复成功', async () => {
+    test('正常下载安装并回复成功', async () => {
         const downloadImpl = jest.fn(async () => '/tmp/graycode-1.5.0.vsix');
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE }, downloadImpl);
         const ctx = createCtx(checker);
@@ -140,7 +140,7 @@ describe('UpdateHandlers installUpdate', () => {
 });
 
 describe('UpdateHandlers 公共', () => {
-    it('updateChecker 未初始化：报错', async () => {
+    test('updateChecker 未初始化：报错', async () => {
         const ctx = createCtx(undefined);
         await updateNow({}, 'req_9', ctx);
         expect(ctx.sendResponse).not.toHaveBeenCalled();

@@ -30,7 +30,7 @@ function frContent(callId: string, inboxText: string): Content {
 }
 
 describe('stripReplayedAgentInboxForModel - 缓存前缀稳定', () => {
-    it('同 run 后续迭代不改写任何已发送 agentInbox，并返回原数组引用', () => {
+    test('同 run 后续迭代不改写任何已发送 agentInbox，并返回原数组引用', () => {
         const history: Content[] = [
             { role: 'user', parts: [{ text: 'task' }] },
             { role: 'model', parts: [{ functionCall: { id: 'call_1', name: 'stub_tool', args: {} } }] },
@@ -53,7 +53,7 @@ describe('stripReplayedAgentInboxForModel - 缓存前缀稳定', () => {
         expect(responses[1].data.agentInbox[0].text).toBe('msg-2');
     });
 
-    it('continueFromRunId 只在 lastSentHistory 尾部追加新消息，旧请求保持严格前缀', () => {
+    test('continueFromRunId 只在 lastSentHistory 尾部追加新消息，旧请求保持严格前缀', () => {
         const lastSentHistory: Content[] = [
             { role: 'user', parts: [{ text: 'old task' }] },
             { role: 'model', parts: [{ functionCall: { id: 'call_old', name: 'stub_tool', args: {} } }] },
@@ -74,7 +74,7 @@ describe('stripReplayedAgentInboxForModel - 缓存前缀稳定', () => {
         expect(JSON.stringify(normalized)).toContain('old-msg');
     });
 
-    it('空历史、普通文本与非对象 response 均原样返回', () => {
+    test('空历史、普通文本与非对象 response 均原样返回', () => {
         const history: Content[] = [
             { role: 'user', parts: [{ text: 'only text' }] },
             { role: 'model', parts: [{ text: 'reply' }] }

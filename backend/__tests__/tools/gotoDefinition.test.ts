@@ -53,7 +53,7 @@ describe('goto_definition LSP lifecycle', () => {
         jest.useRealTimers();
     });
 
-    it('正常路径返回定义位置与完整代码', async () => {
+    test('正常路径返回定义位置与完整代码', async () => {
         const targetUri = vscode.Uri.file(path.resolve('workspace/project/src/target.ts'));
         executeCommandMock.mockResolvedValue([
             location(targetUri, 9, 11)
@@ -90,7 +90,7 @@ describe('goto_definition LSP lifecycle', () => {
         expect(openTextDocumentMock).toHaveBeenCalledTimes(2);
     });
 
-    it('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
+    test('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
         jest.useFakeTimers();
         const targetUri = vscode.Uri.file(path.resolve('workspace/project/src/target.ts'));
         executeCommandMock
@@ -109,7 +109,7 @@ describe('goto_definition LSP lifecycle', () => {
         expect(executeCommandMock).toHaveBeenCalledTimes(2);
     });
 
-    it('provider 挂起时在 LSP_TIMEOUT_MS 后返回失败而不是无限等待', async () => {
+    test('provider 挂起时在 LSP_TIMEOUT_MS 后返回失败而不是无限等待', async () => {
         jest.useFakeTimers();
         executeCommandMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -126,7 +126,7 @@ describe('goto_definition LSP lifecycle', () => {
         expect(executeCommandMock).toHaveBeenCalledTimes(1);
     });
 
-    it('已中止的 signal 立即失败且不发起 provider 请求', async () => {
+    test('已中止的 signal 立即失败且不发起 provider 请求', async () => {
         const controller = new AbortController();
         controller.abort();
 

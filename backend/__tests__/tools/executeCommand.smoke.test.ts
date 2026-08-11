@@ -112,7 +112,7 @@ beforeEach(() => {
 });
 
 describe('outputDecoder：GBK 回退与输出护栏', () => {
-    it('GBK 字节触发 utf8 → gbk 自动降级，输出中文', () => {
+    test('GBK 字节触发 utf8 → gbk 自动降级，输出中文', () => {
         const modeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
         const utf8Decoder = new StringDecoder('utf8');
         const gbkDecoder = new TextDecoder('gbk');
@@ -124,7 +124,7 @@ describe('outputDecoder：GBK 回退与输出护栏', () => {
         expect(modeRef.mode).toBe('gbk');
     });
 
-    it('纯 ASCII 内容保持 utf8 不降级', () => {
+    test('纯 ASCII 内容保持 utf8 不降级', () => {
         const modeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
         const text = decodeWithMode(
             Buffer.from('hello'),
@@ -136,7 +136,7 @@ describe('outputDecoder：GBK 回退与输出护栏', () => {
         expect(modeRef.mode).toBe('utf8');
     });
 
-    it('pushOutputLines 超过 50000 行丢弃旧行并计数', () => {
+    test('pushOutputLines 超过 50000 行丢弃旧行并计数', () => {
         const tp: TerminalProcess = {
             id: 't1', command: 'x', cwd: '/', shell: 'cmd',
             process: {} as any, output: [], startTime: 0
@@ -162,14 +162,14 @@ describe('shellConfig：Windows shell 选择', () => {
         platformSpy.mockRestore();
     });
 
-    it('powershell：powershell.exe + -NoProfile/-ExecutionPolicy/-Command + UTF8 前置命令', () => {
+    test('powershell：powershell.exe + -NoProfile/-ExecutionPolicy/-Command + UTF8 前置命令', () => {
         const cfg = getShellConfig('powershell');
         expect(cfg.shell).toBe('powershell.exe');
         expect(cfg.shellArgs).toEqual(['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command']);
         expect(cfg.prependCommand).toContain('$OutputEncoding');
     });
 
-    it('cmd：优先 ComSpec 路径 + /s /c + chcp 65001 前置命令', () => {
+    test('cmd：优先 ComSpec 路径 + /s /c + chcp 65001 前置命令', () => {
         const prev = process.env.ComSpec;
         process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe';
         try {
@@ -186,7 +186,7 @@ describe('shellConfig：Windows shell 选择', () => {
         }
     });
 
-    it('cmd 自定义路径优先于默认解析', () => {
+    test('cmd 自定义路径优先于默认解析', () => {
         mockSettingsManager = {
             getExecuteCommandConfig: () => ({
                 ...WINDOWS_EXEC_CONFIG,
@@ -197,13 +197,13 @@ describe('shellConfig：Windows shell 选择', () => {
         expect(cfg.shell).toBe('C:\\tools\\cmd.exe');
     });
 
-    it('default 解析为配置的默认 shell（powershell）', () => {
+    test('default 解析为配置的默认 shell（powershell）', () => {
         const cfg = getShellConfig('default');
         expect(cfg.shell).toBe('powershell.exe');
         expect(cfg.shellArgs).toEqual(expect.arrayContaining(['-Command']));
     });
 
-    it('wsl：wsl.exe -- bash -c', () => {
+    test('wsl：wsl.exe -- bash -c', () => {
         const cfg = getShellConfig('wsl');
         expect(cfg.shell).toBe('wsl.exe');
         expect(cfg.shellArgs).toEqual(['--', 'bash', '-c']);
@@ -230,14 +230,14 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         return handler(args, { toolId: `tool-${toolIdSeq}`, conversationId: 'conv-1' } as any);
     }
 
-    it('空 command 返回校验错误，不 spawn', async () => {
+    test('空 command 返回校验错误，不 spawn', async () => {
         const result = await runCommand({});
         expect(result.success).toBe(false);
         expect(result.error).toContain('command is required');
         expect(spawnMock).not.toHaveBeenCalled();
     });
 
-    it('无工作区时返回错误，不 spawn', async () => {
+    test('无工作区时返回错误，不 spawn', async () => {
         (vscode.workspace as any).workspaceFolders = [];
         try {
             const result = await runCommand({ command: 'echo hi' });
@@ -251,7 +251,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(spawnMock).not.toHaveBeenCalled();
     });
 
-    it('cmd /s /c：带引号空格路径的命令整体包裹，windowsVerbatimArguments=true', async () => {
+    test('cmd /s /c：带引号空格路径的命令整体包裹，windowsVerbatimArguments=true', async () => {
         const prev = process.env.ComSpec;
         process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe';
         try {
@@ -281,7 +281,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         }
     });
 
-    it('powershell：prependCommand 与命令拼接为单个 -Command 参数', async () => {
+    test('powershell：prependCommand 与命令拼接为单个 -Command 参数', async () => {
         const proc = makeFakeProc();
         const promise = runCommand({ command: 'echo hi', cwd: tmpDir, shell: 'powershell', timeout: 0 });
         await flush();
@@ -298,7 +298,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         await promise;
     });
 
-    it('完整执行流：stdout/stderr 数据收集 → close(0) → success + output + exitCode', async () => {
+    test('完整执行流：stdout/stderr 数据收集 → close(0) → success + output + exitCode', async () => {
         const proc = makeFakeProc();
         const promise = runCommand({ command: 'echo hello', cwd: tmpDir, shell: 'powershell', timeout: 0 });
         await flush();
@@ -309,11 +309,11 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
 
         const result = await promise;
         expect(result.success).toBe(true);
-        expect((result as any).data.output).toBe('hello\nwarn');
-        expect((result as any).data.exitCode).toBe(0);
+        expect(result.data.output).toBe('hello\nwarn');
+        expect(result.data.exitCode).toBe(0);
     });
 
-    it('Windows 下 GBK 输出经 handler 解码为中文', async () => {
+    test('Windows 下 GBK 输出经 handler 解码为中文', async () => {
         const proc = makeFakeProc();
         const promise = runCommand({ command: 'chcp 65001', cwd: tmpDir, shell: 'cmd', timeout: 0 });
         await flush();
@@ -324,10 +324,10 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
 
         const result = await promise;
         expect(result.success).toBe(true);
-        expect((result as any).data.output).toBe('中文');
+        expect(result.data.output).toBe('中文');
     });
 
-    it('background=true 时立即返回任务信息，不等待进程结束', async () => {
+    test('background=true 时立即返回任务信息，不等待进程结束', async () => {
         const proc = makeFakeProc();
         const promise = runCommand({
             command: 'sleep 1', cwd: tmpDir, shell: 'powershell', timeout: 0, background: true
@@ -336,8 +336,8 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
 
         const result = await promise;
         expect(result.success).toBe(true);
-        expect((result as any).data.background).toBe(true);
-        expect((result as any).data.taskId).toBeDefined();
+        expect(result.data.background).toBe(true);
+        expect(result.data.taskId).toBeDefined();
 
         proc.emit('close', 0); // 清理 TaskManager 注册
     });

@@ -13,10 +13,10 @@
  *   不会复活 usage.json。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../tools/subagents/agentMailbox';
-import type { Content } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
+import type { Content } from '../../modules/conversation';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 模拟 injectInboxMessages 注入后的工具结果（顶层 + data 双写，与实现一致） */
@@ -42,7 +42,7 @@ function makeInjectedFunctionResponse(callId: string, inboxText: string): Conten
     } as Content;
 }
 
-describe('HIGH-1：agentInbox 历史保持字节稳定（端到端）', () => {
+describe('agentInbox 历史保持字节稳定（端到端）', () => {
     let storage: MemoryStorageAdapter;
     let manager: ConversationManager;
     const convId = 'conv-g1-high1';
@@ -218,7 +218,7 @@ describe('新真实 user 消息不再删除尚未投递的主会话信箱', () =
     });
 });
 
-describe('MED-2：deleteConversation 清理 A-COMM 信箱', () => {
+describe('deleteConversation 清理 A-COMM 信箱', () => {
     let storage: MemoryStorageAdapter;
     let manager: ConversationManager;
 
@@ -266,7 +266,7 @@ describe('MED-2：deleteConversation 清理 A-COMM 信箱', () => {
     });
 });
 
-describe('R5b-1.3：删除对话后 usage 写被短路（usage.json 不复活）', () => {
+describe('删除对话后 usage 写被短路（usage.json 不复活）', () => {
     test('deleteConversation 后新发起的 append 不产生 usage 写', async () => {
         const storage = new MemoryStorageAdapter();
         const writes: string[] = [];

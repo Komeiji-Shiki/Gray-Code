@@ -34,7 +34,7 @@ jest.mock('../../tools/file/unifiedDiff', () => ({
     applyUnifiedDiffHunks: jest.fn()
 }));
 
-import { myersDiffLines, countDeletedLines, type DiffOp } from '../../tools/file/diffManager';
+import { myersDiffLines, countDeletedLines, type DiffOp } from '../../core/services/diffManager';
 
 /** 用 ops 重建原始行序列（equal + delete） */
 function rebuildOriginal(ops: DiffOp[]): string[] {
@@ -51,20 +51,20 @@ function countDeletes(ops: DiffOp[]): number {
 }
 
 describe('myersDiffLines', () => {
-    it('相同输入返回全 equal', () => {
+    test('相同输入返回全 equal', () => {
         const lines = ['a', 'b', 'c'];
         const ops = myersDiffLines(lines, lines);
         expect(ops).toHaveLength(3);
         expect(ops.every(op => op.type === 'equal')).toBe(true);
     });
 
-    it('空输入', () => {
+    test('空输入', () => {
         expect(myersDiffLines([], [])).toEqual([]);
         expect(myersDiffLines(['a'], [])).toEqual([{ type: 'delete', line: 'a' }]);
         expect(myersDiffLines([], ['b'])).toEqual([{ type: 'insert', line: 'b' }]);
     });
 
-    it('中间替换保持前后缀 equal', () => {
+    test('中间替换保持前后缀 equal', () => {
         const a = ['head', 'x', 'tail'];
         const b = ['head', 'y', 'tail'];
         const ops = myersDiffLines(a, b);
@@ -76,7 +76,7 @@ describe('myersDiffLines', () => {
         expect(countDeletes(ops)).toBe(1);
     });
 
-    it('多处分散修改可正确重建两侧内容', () => {
+    test('多处分散修改可正确重建两侧内容', () => {
         const a = Array.from({ length: 50 }, (_, i) => `line-${i}`);
         const b = [...a];
         b[5] = 'changed-5';
@@ -88,7 +88,7 @@ describe('myersDiffLines', () => {
         expect(rebuildNew(ops)).toEqual(b);
     });
 
-    it('重复行内容不会混淆（行 id 化正确性）', () => {
+    test('重复行内容不会混淆（行 id 化正确性）', () => {
         const a = ['dup', 'dup', 'unique', 'dup'];
         const b = ['dup', 'other', 'dup'];
         const ops = myersDiffLines(a, b);
@@ -96,7 +96,7 @@ describe('myersDiffLines', () => {
         expect(rebuildNew(ops)).toEqual(b);
     });
 
-    it('超大全量重写走降级路径且不超时', () => {
+    test('超大全量重写走降级路径且不超时', () => {
         const a = Array.from({ length: 5000 }, (_, i) => `old-${i}`);
         const b = Array.from({ length: 5000 }, (_, i) => `new-${i}`);
 
@@ -112,7 +112,7 @@ describe('myersDiffLines', () => {
         expect(elapsed).toBeLessThan(3000);
     });
 
-    it('大文件小改动走精确路径且快速', () => {
+    test('大文件小改动走精确路径且快速', () => {
         const a = Array.from({ length: 20000 }, (_, i) => `line-${i}`);
         const b = [...a];
         b[10000] = 'modified';
@@ -129,28 +129,28 @@ describe('myersDiffLines', () => {
 });
 
 describe('countDeletedLines', () => {
-    it('无变化返回 0', () => {
+    test('无变化返回 0', () => {
         const lines = ['a', 'b', 'c'];
         expect(countDeletedLines(lines, lines)).toBe(0);
         expect(countDeletedLines([], [])).toBe(0);
     });
 
-    it('纯删除返回删除行数', () => {
+    test('纯删除返回删除行数', () => {
         expect(countDeletedLines(['a', 'b', 'c'], ['a'])).toBe(2);
         expect(countDeletedLines(['a', 'b'], [])).toBe(2);
     });
 
-    it('纯插入返回 0', () => {
+    test('纯插入返回 0', () => {
         expect(countDeletedLines(['a'], ['a', 'b', 'c'])).toBe(0);
     });
 
-    it('替换计为真实删除行数而非净变化（3 删 1 插 = 3）', () => {
+    test('替换计为真实删除行数而非净变化（3 删 1 插 = 3）', () => {
         const a = ['keep', 'del-1', 'del-2', 'del-3', 'keep-2'];
         const b = ['keep', 'ins-1', 'keep-2'];
         expect(countDeletedLines(a, b)).toBe(3);
     });
 
-    it('与 myersDiffLines 的 delete 计数一致（随机样例）', () => {
+    test('与 myersDiffLines 的 delete 计数一致（随机样例）', () => {
         // 固定种子的伪随机，保证测试可复现
         let seed = 42;
         const rand = () => {
@@ -171,7 +171,7 @@ describe('countDeletedLines', () => {
         }
     });
 
-    it('超大全量重写走 multiset 估算且不超时', () => {
+    test('超大全量重写走 multiset 估算且不超时', () => {
         const a = Array.from({ length: 10000 }, (_, i) => `old-${i}`);
         const b = Array.from({ length: 10000 }, (_, i) => `new-${i}`);
 
@@ -184,7 +184,7 @@ describe('countDeletedLines', () => {
         expect(elapsed).toBeLessThan(3000);
     });
 
-    it('大文件小改动精确且快速', () => {
+    test('大文件小改动精确且快速', () => {
         const a = Array.from({ length: 50000 }, (_, i) => `line-${i}`);
         const b = [...a];
         b.splice(25000, 3, 'x');

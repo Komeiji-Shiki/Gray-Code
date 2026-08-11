@@ -204,8 +204,19 @@ export class StreamRequestHandler {
     let summarizeController: AbortController | undefined;
 
     try {
+      // P1（TOCTOU）：快照取消代次——等待窗口（最长 6s）内到达的 cancelStream 只会中止
+      // 旧流；若 create() 后不复查，「停止」操作会丢失（新流照常启动）。
+      const cancelEpoch = this.deps.abortManager.getCancelEpoch(conversationId);
       await this.awaitOldStreamCompletion(conversationId);
       controller = this.deps.abortManager.create(conversationId);
+      // P1 复查：等待期间有取消 → 立即取消刚创建的控制器、不启动新流。
+      // 汇报协议与 handleStreamError 的取消路径一致（cancelled 结尾事件 + cancelled 响应）。
+      if (this.deps.abortManager.getCancelEpoch(conversationId) !== cancelEpoch) {
+        controller.abort();
+        this.reportCancelled(processor);
+        this.deps.sendResponse(requestId, { cancelled: true });
+        return;
+      }
       summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleChatStream({
         conversationId,
@@ -260,66 +271,22 @@ export class StreamRequestHandler {
     let summarizeController: AbortController | undefined;
 
     try {
+      // P1（TOCTOU）：快照取消代次并复查（同 handleChatStream）——等待窗口内到达的
+      // cancelStream 不得丢失：已取消则不启动新流。
+      const cancelEpoch = this.deps.abortManager.getCancelEpoch(conversationId);
       await this.awaitOldStreamCompletion(conversationId);
       controller = this.deps.abortManager.create(conversationId);
+      if (this.deps.abortManager.getCancelEpoch(conversationId) !== cancelEpoch) {
+        controller.abort();
+        this.reportCancelled(processor);
+        this.deps.sendResponse(requestId, { cancelled: true });
+        return;
+      }
       summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleRetryStream({
         conversationId,
         configId,
         modelOverride,
-        promptModeId: this.normalizePromptModeId(promptModeId),
-        abortSignal: controller.signal,
-        summarizeAbortSignal: summarizeController.signal
-      });
-      
-      // 发送响应，通知前端请求已接收并开始
-      this.deps.sendResponse(requestId, { started: true });
-      
-      for await (const chunk of stream) {
-        const isError = processor.processChunk(chunk);
-        if (isError) break;
-      }
-      processor.flush();
-    } catch (error: any) {
-      // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
-      this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
-    } finally {
-      if (controller) this.deps.abortManager.delete(conversationId, controller);
-      if (summarizeController) this.deps.abortManager.deleteSummary(conversationId, summarizeController);
-      this.deps.finalizeRequest(requestId);
-    }
-  }
-
-  /**
-   * 处理编辑并重试流
-   */
-  async handleEditAndRetryStream(data: any, requestId: string, clientId?: string): Promise<void> {
-    // 入口统一校验（与 handleChatStream 对齐）
-    if (!data || typeof data.conversationId !== 'string' || !data.conversationId) {
-      this.deps.sendError(requestId, 'INVALID_DATA', 'editAndRetryStream: missing conversationId');
-      this.deps.finalizeRequest(requestId);
-      return;
-    }
-    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, preserveCheckpointId, messageId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
-    const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
-    let controller: AbortController | undefined;
-    let summarizeController: AbortController | undefined;
-
-    try {
-      await this.awaitOldStreamCompletion(conversationId);
-      controller = this.deps.abortManager.create(conversationId);
-      summarizeController = this.deps.abortManager.createSummary(conversationId);
-      const stream = this.deps.chatHandler.handleEditAndRetryStream({
-        conversationId,
-        messageIndex,
-        newMessage,
-        configId,
-        modelOverride,
-        attachments,
-        preserveCheckpointId,
-        // M1：透传消息 id 供后端做防索引漂移校验（可选；旧前端不传时保持旧行为）
-        messageId,
         promptModeId: this.normalizePromptModeId(promptModeId),
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
@@ -361,8 +328,16 @@ export class StreamRequestHandler {
 
     try {
       // 工具确认路径不可打断：只等待已退休旧流退出，不 abort 当前活跃流
+      // P1（TOCTOU）：快照取消代次并复查——等待窗口内用户点过「停止」则不启动确认流。
+      const cancelEpoch = this.deps.abortManager.getCancelEpoch(conversationId);
       await this.awaitRetiredStreamCompletion(conversationId);
       controller = this.deps.abortManager.create(conversationId);
+      if (this.deps.abortManager.getCancelEpoch(conversationId) !== cancelEpoch) {
+        controller.abort();
+        this.reportCancelled(processor);
+        this.deps.sendResponse(requestId, { cancelled: true });
+        return;
+      }
       summarizeController = this.deps.abortManager.createSummary(conversationId);
       const stream = this.deps.chatHandler.handleToolConfirmation({
         conversationId,

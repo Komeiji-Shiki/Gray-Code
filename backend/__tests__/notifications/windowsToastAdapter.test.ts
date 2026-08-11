@@ -25,7 +25,7 @@ describe('VSCodeNotificationAdapter', () => {
     jest.clearAllMocks()
   })
 
-  it('调用 VS Code 原生通知 API 并立即返回 shown: true（不等待用户关闭）', async () => {
+  test('调用 VS Code 原生通知 API 并立即返回 shown: true（不等待用户关闭）', async () => {
     // 挂起的 Promise 模拟「用户尚未关闭通知」
     showInformationMessage.mockReturnValue(new Promise(() => {}))
     const adapter = new VSCodeNotificationAdapter()
@@ -46,7 +46,7 @@ describe('VSCodeNotificationAdapter', () => {
     expect(result).toEqual({ shown: true })
   })
 
-  it('选择 Open Chat 操作按钮后执行 onClick', async () => {
+  test('选择 Open Chat 操作按钮后执行 onClick', async () => {
     showInformationMessage.mockResolvedValue('Open Chat')
     const onClick = jest.fn()
     const adapter = new VSCodeNotificationAdapter()
@@ -63,7 +63,7 @@ describe('VSCodeNotificationAdapter', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 
-  it('没有 onClick 时不添加操作按钮', async () => {
+  test('没有 onClick 时不添加操作按钮', async () => {
     showInformationMessage.mockResolvedValue(undefined)
     const adapter = new VSCodeNotificationAdapter()
 
@@ -78,7 +78,7 @@ describe('VSCodeNotificationAdapter', () => {
     expect(result).toEqual({ shown: true })
   })
 
-  it('通知 API 抛错时返回 shown: false 和错误信息', async () => {
+  test('通知 API 抛错时返回 shown: false 和错误信息', async () => {
     showInformationMessage.mockImplementation(() => {
       throw new Error('notification api unavailable')
     })

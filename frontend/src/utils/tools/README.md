@@ -372,3 +372,22 @@ app.mount('#app')
 - 等等...
 
 完整变量列表请参考 VSCode 主题文档。
+
+## 工具元数据单一来源（toolMeta）
+
+`frontend/src/utils/tools/__generated__/toolMeta.ts` 由 `scripts/generate-tool-meta.mjs` 从
+后端工具声明（`backend/tools/**` 的 ToolDeclaration）生成，是工具名 / description / 参数摘要的
+单一来源镜像：
+
+- **生成**：`node scripts/generate-tool-meta.mjs`（幂等，重复运行结果一致）
+- **校验**：`node scripts/generate-tool-meta.mjs --check`（防漂移，CI / backend jest parity 测试调用）
+- **覆盖报告**：`node scripts/generate-tool-meta.mjs --report`
+
+约定：
+
+- `label` / `icon` / `contentComponent` 等前端特有展示元数据仍手写保留在各工具注册文件。
+- `descriptionFormatter` 的**兜底描述**（参数为空时展示的文案）改从 `getToolMetaDescription('toolName')`
+  （见 `toolMetaLookup.ts`）取后端声明描述；toolMeta 缺失/动态时回退原手写文案（带 `TODO(meta)` 注释）。
+- 后端声明中运行时动态构造（多根工作区、多模态配置、OS/Shell 环境等）的 description/参数不会写入生成物，
+  而是置 `descriptionDynamic` / `parametersDynamic` 标记，前端据此回退手写文案。
+- 修改后端工具声明后，请运行生成脚本并提交生成物变更；否则 parity 测试会失败。

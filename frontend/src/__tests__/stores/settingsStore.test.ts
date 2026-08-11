@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useSettingsStore } from '../../stores/settingsStore'
 
@@ -7,7 +7,7 @@ describe('settingsStore appearance', () => {
     setActivePinia(createPinia())
   })
 
-  it('tpsBarEnabled defaults to true and can be toggled', () => {
+  test('tpsBarEnabled defaults to true and can be toggled', () => {
     const store = useSettingsStore()
     expect(store.tpsBarEnabled).toBe(true)
     store.setTpsBarEnabled(false)
@@ -16,7 +16,7 @@ describe('settingsStore appearance', () => {
     expect(store.tpsBarEnabled).toBe(true)
   })
 
-  it('splashEnabled defaults to true and can be toggled', () => {
+  test('splashEnabled defaults to true and can be toggled', () => {
     const store = useSettingsStore()
     expect(store.splashEnabled).toBe(true)
     store.setSplashEnabled(false)
@@ -25,7 +25,7 @@ describe('settingsStore appearance', () => {
     expect(store.splashEnabled).toBe(true)
   })
 
-  it('appearance fields coexist independently (tpsBar toggle does not touch others)', () => {
+  test('appearance fields coexist independently (tpsBar toggle does not touch others)', () => {
     const store = useSettingsStore()
     store.setSmoothStreaming('silky')
     store.setSelectionContextEnabled(false)

@@ -6,31 +6,18 @@
  * 自动执行的工具不受影响。
  */
 
-import { createDefaultExecutor } from '../../tools/subagents/executor';
+import { createDefaultExecutor } from '../../tools/subagents';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { GenerateResponse } from '../../modules/channel/types';
 import type { Content } from '../../modules/conversation/types';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
 jest.mock('../../modules/channel/ToolDeclarationResolver', () => ({
     ToolDeclarationResolver: jest.fn()
 }));
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5,
-        maxRuntime: 300,
-        enabled: true,
-        ...overrides
-    };
-}
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -97,7 +84,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         jest.clearAllMocks();
     });
 
-    it('需要确认的工具（toolNeedsConfirmation=true）被拒绝执行：不绕过确认门、不执行工具', async () => {
+    test('需要确认的工具（toolNeedsConfirmation=true）被拒绝执行：不绕过确认门、不执行工具', async () => {
         mockResolveTools(['read_file', 'delete_file', 'execute_command']);
         const executeMock = jest.fn().mockResolvedValue({
             toolResults: [{ result: { success: true, result: 'ok' } }],
@@ -107,7 +94,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         const generateMock = jest.fn()
             .mockResolvedValueOnce(toolCallResponse('delete_file', { path: 'C:/tmp/secret.txt' }))
             .mockResolvedValueOnce(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any,
             toolExecutionService: {
                 // 确认门：delete_file 需要用户确认
@@ -140,7 +127,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         expect(result.success).toBe(true);
     });
 
-    it('自动执行的工具（toolNeedsConfirmation=false）不受影响，正常执行', async () => {
+    test('自动执行的工具（toolNeedsConfirmation=false）不受影响，正常执行', async () => {
         mockResolveTools(['read_file', 'delete_file']);
         const executeMock = jest.fn().mockResolvedValue({
             toolResults: [{ result: { success: true, result: 'file content' } }],
@@ -150,7 +137,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         const generateMock = jest.fn()
             .mockResolvedValueOnce(toolCallResponse('read_file', { path: 'a.txt' }))
             .mockResolvedValueOnce(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any,
             toolExecutionService: {
                 toolNeedsConfirmation: jest.fn().mockReturnValue(false),
@@ -171,7 +158,7 @@ describe('子代理危险工具确认门（SEC）', () => {
     });
 
 
-    it('共享执行服务缺少确认门（fail-closed）：工具被拒绝执行，不静默放行', async () => {
+    test('共享执行服务缺少确认门（fail-closed）：工具被拒绝执行，不静默放行', async () => {
         mockResolveTools(['delete_file']);
         const executeMock = jest.fn().mockResolvedValue({
             toolResults: [{ result: { success: true, result: 'ok' } }],
@@ -181,7 +168,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         const generateMock = jest.fn()
             .mockResolvedValueOnce(toolCallResponse('delete_file', { path: 'C:/tmp/secret.txt' }))
             .mockResolvedValueOnce(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any,
             toolExecutionService: {
                 // 不提供 toolNeedsConfirmation：安全门缺失 → fail-closed 拒绝
@@ -207,7 +194,7 @@ describe('子代理危险工具确认门（SEC）', () => {
         expect(result.success).toBe(true);
     });
 
-    it('确认门方法依赖 this（真实 ToolExecutionService 形态）：不因解构丢失绑定而 TypeError', async () => {
+    test('确认门方法依赖 this（真实 ToolExecutionService 形态）：不因解构丢失绑定而 TypeError', async () => {
         // 回归测试：修复前 executor 把 toolNeedsConfirmation 解构为独立函数调用，
         // 方法内部依赖 this（真实实现调用 this.getToolRejectionReason）时抛出
         // "Cannot read properties of undefined (reading 'getToolRejectionReason')"，
@@ -233,7 +220,7 @@ describe('子代理危险工具确认门（SEC）', () => {
             }
         }
 
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any,
             toolExecutionService: new FakeToolExecutionService() as any
         }));

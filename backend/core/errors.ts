@@ -8,10 +8,11 @@
  *
  * 前端注意：frontend/src/stores/chat/messageActions/retryFlows.ts 的
  * RETRYABLE_ERROR_CODES 与后端同名集合受 tsconfig 跨端限制无法共享代码，
- * 仅以注释"与 backend/core/errors.ts 同步维护"保持同步。
+ * 仅以注释"与 backend/core/errors.ts 同步维护"保持同步；两端已知偏差
+ * （PARSE_ERROR 有意差异）由 backend/__tests__/parity/retryableErrorCodesParity.test.ts 钉住。
  */
 
-import { ErrorType } from '../modules/channel/types';
+import { ErrorType } from './errorTypes';
 
 /** 可重试的 ChannelError.type 白名单（以 ChannelManager 原判定为基准，勿随意增减） */
 export const RETRYABLE_ERROR_TYPES: ReadonlySet<ErrorType> = new Set([
@@ -22,10 +23,14 @@ export const RETRYABLE_ERROR_TYPES: ReadonlySet<ErrorType> = new Set([
 ]);
 
 /**
- * 按 ChannelError.type 判定是否可重试。
+ * 按 ChannelError.type 判定是否可重试（ChannelManager 自动重试口径）。
  *
- * CANCELLED_ERROR（用户取消）/ CONFIG_ERROR / PARSE_ERROR / VALIDATION_ERROR
- * 不在白名单内，均不可重试。
+ * CANCELLED_ERROR（用户取消）/ CONFIG_ERROR / VALIDATION_ERROR 不在白名单内，均不可重试。
+ *
+ * PARSE_ERROR 不在白名单内属有意差异而非遗漏：前端 retryFlows.ts 的 RETRYABLE_ERROR_CODES
+ * 将 PARSE_ERROR 判为可重试（错误条手动重试按钮放行）；本函数为后端自动重试口径，不放行
+ * PARSE_ERROR（手动重试由用户显式触发，语义不同）。同步维护请见
+ * backend/__tests__/parity/retryableErrorCodesParity.test.ts。
  */
 export function isRetryableError(type: ErrorType): boolean {
     return RETRYABLE_ERROR_TYPES.has(type);

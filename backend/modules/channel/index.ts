@@ -1,5 +1,5 @@
 /**
- * LimCode - 渠道调用模块
+ * GrayCode - 渠道调用模块
  * 
  * 统一导出所有类型、类和函数
  */
@@ -50,3 +50,4 @@ export {
     proxyStreamFetch
 } from './proxyFetch';
 export type { FetchOptions, FetchResponse } from './proxyFetch';
+

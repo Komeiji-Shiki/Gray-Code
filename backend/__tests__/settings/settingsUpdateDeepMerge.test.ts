@@ -14,7 +14,7 @@ function makeCore(): SettingsCore {
 }
 
 describe('SettingsCore.updateSettings 深合并', () => {
-    it('嵌套部分对象保留同层其它配置', async () => {
+    test('嵌套部分对象保留同层其它配置', async () => {
         const core = makeCore();
         (core.settings as any).toolsConfig = {
             write_file: { maxSizeKB: 1024, allowBinary: true },
@@ -31,7 +31,7 @@ describe('SettingsCore.updateSettings 深合并', () => {
         expect((core.settings as any).ui.theme).toBe('dark'); // 未涉及的顶层键不受影响
     });
 
-    it('数组直接替换而非合并', async () => {
+    test('数组直接替换而非合并', async () => {
         const core = makeCore();
         (core.settings as any).toolsConfig = { mytool: { names: ['a', 'b'] } };
 
@@ -40,7 +40,7 @@ describe('SettingsCore.updateSettings 深合并', () => {
         expect((core.settings as any).toolsConfig.mytool.names).toEqual(['c']);
     });
 
-    it('顶层标量更新仍直接覆盖', async () => {
+    test('顶层标量更新仍直接覆盖', async () => {
         const core = makeCore();
         core.settings.maxToolIterations = 10;
 
@@ -49,7 +49,7 @@ describe('SettingsCore.updateSettings 深合并', () => {
         expect(core.settings.maxToolIterations).toBe(20);
     });
 
-    it('proxy 部分更新保留已有字段', async () => {
+    test('proxy 部分更新保留已有字段', async () => {
         const core = makeCore();
         (core.settings as any).proxy = { enabled: true, url: 'http://127.0.0.1:7890' };
 
@@ -59,7 +59,7 @@ describe('SettingsCore.updateSettings 深合并', () => {
         expect((core.settings as any).proxy.url).toBe('http://127.0.0.1:1080');
     });
 
-    it('存储中保存的也是合并后的完整设置', async () => {
+    test('存储中保存的也是合并后的完整设置', async () => {
         const storage = new MemorySettingsStorage();
         const core = new SettingsCore(storage);
         (core.settings as any).toolsConfig = { write_file: { maxSizeKB: 1024, allowBinary: true } };

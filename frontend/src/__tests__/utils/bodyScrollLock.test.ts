@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect } from 'vitest'
 import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
 
 describe('bodyScrollLock', () => {
@@ -8,7 +8,7 @@ describe('bodyScrollLock', () => {
     document.body.style.overflow = ''
   })
 
-  it('keeps scrolling locked until every overlay releases its lock', () => {
+  test('keeps scrolling locked until every overlay releases its lock', () => {
     document.body.style.overflow = 'auto'
     lockBodyScroll()
     lockBodyScroll()

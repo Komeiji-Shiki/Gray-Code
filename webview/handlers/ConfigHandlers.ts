@@ -2,6 +2,7 @@
  * 配置管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import type { CreateConfigInput, UpdateConfigInput } from '../../backend/modules/config';
@@ -169,13 +170,13 @@ export const setActiveModel: MessageHandler = async (data, requestId, ctx) => {
 };
 
 export function registerConfigHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('config.listConfigs', listConfigs);
-  registry.set('config.getConfig', getConfig);
-  registry.set('config.createConfig', createConfig);
-  registry.set('config.updateConfig', updateConfig);
-  registry.set('config.deleteConfig', deleteConfig);
-  registry.set('models.getModels', getModels);
-  registry.set('models.addModels', addModels);
-  registry.set('models.removeModel', removeModel);
-  registry.set('models.setActiveModel', setActiveModel);
+  registry.set(MESSAGE_NAMES['config.listConfigs'], listConfigs);
+  registry.set(MESSAGE_NAMES['config.getConfig'], getConfig);
+  registry.set(MESSAGE_NAMES['config.createConfig'], createConfig);
+  registry.set(MESSAGE_NAMES['config.updateConfig'], updateConfig);
+  registry.set(MESSAGE_NAMES['config.deleteConfig'], deleteConfig);
+  registry.set(MESSAGE_NAMES['models.getModels'], getModels);
+  registry.set(MESSAGE_NAMES['models.addModels'], addModels);
+  registry.set(MESSAGE_NAMES['models.removeModel'], removeModel);
+  registry.set(MESSAGE_NAMES['models.setActiveModel'], setActiveModel);
 }

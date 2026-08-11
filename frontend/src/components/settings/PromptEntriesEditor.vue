@@ -1,29 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { getSettingsView } from '@/composables/useDeferredNumberInput'
-
-interface PromptModule {
-  id: string
-  name: string
-  description: string
-  example?: string
-  requiresConfig?: string
-}
-
-type PromptEntryRole = 'system' | 'user' | 'assistant'
-type PromptEntryType = 'prompt' | 'chat_history'
-
-interface PromptEntry {
-  id: string
-  name: string
-  type?: PromptEntryType
-  enabled: boolean
-  role: PromptEntryRole
-  content: string
-  /** 伪造思考内容（仅 assistant 角色生效，随临时消息以 thought part 回传） */
-  fakeThought?: string
-  order: number
-}
+import type { PromptModule, PromptEntryRole, PromptEntry } from './prompt/types'
 
 const CHAT_HISTORY_PROMPT_ENTRY_ID = 'chat-history'
 

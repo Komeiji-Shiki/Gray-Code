@@ -1,5 +1,5 @@
 /**
- * LimCode - 对话 API 模块导出
+ * GrayCode - 对话 API 模块导出
  */
 
 export { ChatHandler } from './ChatHandler';

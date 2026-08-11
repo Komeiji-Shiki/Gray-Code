@@ -6,7 +6,7 @@
  * - isCueEnabled：同一类提示音按角色（main/subagent）分别门控
  * - 旧版设置（无 subagent 分组）归一化后默认开启子代理开关（向后兼容）
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, expect, beforeEach } from 'vitest'
 import {
   DEFAULT_UI_SOUND_SETTINGS,
   normalizeUISoundSettings,
@@ -21,7 +21,7 @@ describe('soundCues 子代理提示音设置', () => {
   })
 
   describe('normalizeUISoundSettings', () => {
-    it('缺省输入：子代理分组与主代理一致，全部开启', () => {
+    test('缺省输入：子代理分组与主代理一致，全部开启', () => {
       const normalized = normalizeUISoundSettings(undefined)
 
       expect(normalized.cues.subagent).toEqual({
@@ -32,7 +32,7 @@ describe('soundCues 子代理提示音设置', () => {
       })
     })
 
-    it('旧版设置（无 cues.subagent 分组）：归一化后子代理分组回退默认开启，不破坏旧配置', () => {
+    test('旧版设置（无 cues.subagent 分组）：归一化后子代理分组回退默认开启，不破坏旧配置', () => {
       const normalized = normalizeUISoundSettings({
         enabled: true,
         cues: {
@@ -53,7 +53,7 @@ describe('soundCues 子代理提示音设置', () => {
       })
     })
 
-    it('显式子代理分组：逐项归一化，非布尔值回退默认', () => {
+    test('显式子代理分组：逐项归一化，非布尔值回退默认', () => {
       const normalized = normalizeUISoundSettings({
         cues: {
           subagent: {
@@ -73,7 +73,7 @@ describe('soundCues 子代理提示音设置', () => {
   })
 
   describe('isCueEnabled 角色感知门控', () => {
-    it('主代理与子代理的同一类提示音可分别开关', () => {
+    test('主代理与子代理的同一类提示音可分别开关', () => {
       configureSoundSettings({
         cues: {
           warning: false,
@@ -87,7 +87,7 @@ describe('soundCues 子代理提示音设置', () => {
       expect(isCueEnabled('warning', 'subagent')).toBe(true)
     })
 
-    it('反向：子代理关闭、主代理开启', () => {
+    test('反向：子代理关闭、主代理开启', () => {
       configureSoundSettings({
         cues: {
           taskComplete: true,
@@ -101,7 +101,7 @@ describe('soundCues 子代理提示音设置', () => {
       expect(isCueEnabled('taskComplete', 'subagent')).toBe(false)
     })
 
-    it('缺省角色按主代理处理（向后兼容）', () => {
+    test('缺省角色按主代理处理（向后兼容）', () => {
       configureSoundSettings({
         cues: {
           taskError: false
@@ -112,7 +112,7 @@ describe('soundCues 子代理提示音设置', () => {
       expect(isCueEnabled('taskError', 'main')).toBe(false)
     })
 
-    it('四种提示音类型均按角色独立门控', () => {
+    test('四种提示音类型均按角色独立门控', () => {
       configureSoundSettings({
         cues: {
           warning: true,

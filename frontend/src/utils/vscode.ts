@@ -2,9 +2,11 @@
  * VSCode API 通信工具
  */
 
-import type { VSCodeMessage, VSCodeRequest } from '../types'
+import type { VSCodeMessage } from '../types'
 import { handleSoundEvent } from '../services/soundEventController'
 import { routeExtensionMessage, type PendingRequestHandler } from './extensionMessageRouting'
+// B1：超时豁免名单迁入 shared/protocol.ts 单一来源（与 NON_BLOCKING_MESSAGE_TYPES 语义不同，勿合并）
+import { MESSAGE_NAMES, UNBOUNDED_REQUEST_TYPES } from '@shared/protocol'
 
 // 获取 VSCode API
 declare function acquireVsCodeApi(): any
@@ -23,43 +25,6 @@ let requestIdCounter = 0
 export function generateRequestId(): string {
   return `req_${Date.now()}_${++requestIdCounter}`
 }
-
-/**
- * 不设通用超时的请求类型。
- *
- * - 流式对话：响应要等整轮工具循环跑完才回，时长由模型和工具决定
- * - 依赖安装 / 存储迁移：本身就是分钟级的长任务
- * - checkpoint.restore / deleteBatch / previewRestore：大工作区恢复/批量删除/预览可能超过 180s，
- *   超时会让前端误判失败而后端在互斥锁内继续执行，导致重复恢复/删除（checkpoint-frontend-review M-1）
- * - deleteMessage：删除会话消息可能在后端互斥锁内等待其他回合收尾而超过 180s；
- *   超时误判删除失败会触发前端重载/中止重试路径，而删除实际已生效，造成窗口与历史错位（FIX-C-2）
- */
-const UNBOUNDED_REQUEST_TYPES = new Set([
-  'chatStream',
-  'retryStream',
-  'chat.rerollStream',
-  'chat.editBranchStream',
-  'toolConfirmation',
-  'cancelStream',
-  'deleteMessage',
-  'dependencies.install',
-  'dependencies.uninstall',
-  'storagePath.migrate',
-  'storagePath.selectFolder',
-  'checkpoint.restore',
-  'checkpoint.deleteBatch',
-  'checkpoint.previewRestore',
-  // deleteMemoryEntries：批量删除记忆可能对交错 id 触发多次全量 LOG 重建（O(n·T)），
-  // 大选择量下可能超过 180s；超时会让前端误判失败而后端已删，重试又因 id 失效报错（memory-review）
-  'deleteMemoryEntries',
-  // 模态对话框类：对话框打开期间 promise 一直挂起，超时会让前端误报失败而对话框关闭后操作实际生效
-  'exportPromptModes',
-  'settings.export',
-  'settings.import',
-  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
-  'tokenizer.getResource',
-  'countSystemPromptTokens',
-])
 
 /**
  * 其余请求的兜底超时。
@@ -196,7 +161,7 @@ export function sendToExtension<T = any>(type: string, data: any, options?: { ti
           type,
           requestId,
           data: safeData
-        } as VSCodeRequest)
+        })
       } catch (postErr: any) {
         // 已 JSON 化仍失败（如 payload 超限）→ 直接抛出，由外层统一处理
         if (safeData !== data) throw postErr
@@ -206,7 +171,7 @@ export function sendToExtension<T = any>(type: string, data: any, options?: { ti
           type,
           requestId,
           data: safeData
-        } as VSCodeRequest)
+        })
       }
     } catch (err: any) {
       // 例如：payload 过大导致 structured clone / postMessage 失败
@@ -332,7 +297,7 @@ export async function showNotification(
       })
     }
 
-    await sendToExtension('showNotification', { message, type })
+    await sendToExtension(MESSAGE_NAMES.showNotification, { message, type })
   } catch (err) {
     console.error('Failed to show notification:', err)
   }
@@ -356,7 +321,7 @@ export async function loadDiffContent(diffContentId: string): Promise<{
       newContent?: string
       filePath?: string
       error?: string
-    }>('diff.loadContent', { diffContentId })
+    }>(MESSAGE_NAMES['diff.loadContent'], { diffContentId })
     
     if (result.success && result.originalContent && result.newContent) {
       return {

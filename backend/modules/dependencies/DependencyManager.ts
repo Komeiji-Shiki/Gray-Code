@@ -57,10 +57,10 @@ export interface InstallProgressEvent {
 export class DependencyManager {
     private static instance: DependencyManager;
     
-    /** LimCode 根目录（默认 ~/.limcode 或自定义路径下的 dependencies） */
-    private limcodeDir: string;
+    /** GrayCode 依赖根目录（默认 ~/.graycode 或自定义路径下的 dependencies） */
+    private graycodeDir: string;
     
-    /** 依赖安装目录（limcodeDir/node_modules） */
+    /** 依赖安装目录（graycodeDir/node_modules） */
     private depsDir: string;
     
     /** 进度事件监听器 */
@@ -89,9 +89,9 @@ export class DependencyManager {
     
     private constructor(private context: vscode.ExtensionContext, customDepsPath?: string) {
         // 如果提供了自定义路径，使用自定义路径
-        // 否则使用用户主目录下的 .limcode 文件夹
-        this.limcodeDir = customDepsPath || path.join(os.homedir(), '.limcode');
-        this.depsDir = path.join(this.limcodeDir, 'node_modules');
+        // 否则使用用户主目录下的 .graycode 文件夹
+        this.graycodeDir = customDepsPath || path.join(os.homedir(), '.graycode');
+        this.depsDir = path.join(this.graycodeDir, 'node_modules');
     }
     
     /**
@@ -114,7 +114,7 @@ export class DependencyManager {
      * 获取安装目录路径
      */
     getInstallPath(): string {
-        return this.limcodeDir;
+        return this.graycodeDir;
     }
     
     /**
@@ -122,7 +122,7 @@ export class DependencyManager {
      */
     async initialize(): Promise<void> {
         try {
-            await mkdir(this.limcodeDir, { recursive: true });
+            await mkdir(this.graycodeDir, { recursive: true });
             await mkdir(this.depsDir, { recursive: true });
         } catch {
             // 目录可能已存在
@@ -258,7 +258,7 @@ export class DependencyManager {
         
         // 每次安装使用独立临时目录，避免并发安装（不同依赖）互相删除/覆盖
         const tempDir = path.join(
-            this.limcodeDir,
+            this.graycodeDir,
             `deps-temp-${name}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
         );
         
@@ -268,7 +268,7 @@ export class DependencyManager {
             
             // 创建临时 package.json
             const tempPackageJson = {
-                name: 'limcode-deps',
+                name: 'graycode-deps',
                 version: '1.0.5',
                 dependencies: {
                     [name]: config.version

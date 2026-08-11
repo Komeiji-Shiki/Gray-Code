@@ -14,7 +14,7 @@ import { MemoryManager } from '../../modules/memory/MemoryManager';
 const fsPromises = require('fs/promises') as typeof import('fs/promises');
 
 describe('MemoryManager.truncateLog', () => {
-    it('在锁内读取长度：并发 note 追加的新记录被截断时计入 removed', async () => {
+    test('在锁内读取长度：并发 note 追加的新记录被截断时计入 removed', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-truncate-'));
 
         let gateEnabled = false;
@@ -73,7 +73,7 @@ describe('MemoryManager.compress', () => {
         return { mm, dir };
     }
 
-    it('块已存在（非下一个待压缩块）时 done=0，不误报已写入', async () => {
+    test('块已存在（非下一个待压缩块）时 done=0，不误报已写入', async () => {
         const { mm, dir } = await setup8();
         try {
             expect((await mm.compress('0-1', 'ab')).done).toBe(1);
@@ -92,7 +92,7 @@ describe('MemoryManager.compress', () => {
         }
     });
 
-    it('只传 blockId 时明确拒绝缺失的 summary', async () => {
+    test('只传 blockId 时明确拒绝缺失的 summary', async () => {
         const { mm, dir } = await setup8();
         try {
             await expect(mm.compress('0-1')).rejects.toThrow('summary is required');
@@ -101,7 +101,7 @@ describe('MemoryManager.compress', () => {
         }
     });
 
-    it('treePut 返回 false（并行会话已处理）时 done=0', async () => {
+    test('treePut 返回 false（并行会话已处理）时 done=0', async () => {
         const { mm, dir } = await setup8();
         try {
             jest.spyOn(mm as any, 'treePut').mockResolvedValue(false);
@@ -115,7 +115,7 @@ describe('MemoryManager.compress', () => {
 });
 
 describe('MemoryManager.wake', () => {
-    it('缺失摘要时提示基于实际缺失的块构造（而非第一个待压缩块）', async () => {
+    test('缺失摘要时提示基于实际缺失的块构造（而非第一个待压缩块）', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-wake-'));
         try {
             const mm = new MemoryManager(dir, { entryChars: 280, wakeLines: 2 } as any);

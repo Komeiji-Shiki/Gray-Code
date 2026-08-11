@@ -59,7 +59,7 @@ describe('HttpMcpClient', () => {
 
     // ==================== JSON 响应 ====================
 
-    it('should return result for a JSON response', async () => {
+    test('should return result for a JSON response', async () => {
         fetchMock.mockResolvedValue(jsonResponse({ jsonrpc: '2.0', id: 1, result: { ok: true } }));
         const client = makeClient();
         await expect(client.callTool('t', { a: 1 })).resolves.toEqual({ ok: true });
@@ -69,7 +69,7 @@ describe('HttpMcpClient', () => {
         expect(JSON.parse(init.body)).toMatchObject({ method: 'tools/call' });
     });
 
-    it('should throw the JSON-RPC error message', async () => {
+    test('should throw the JSON-RPC error message', async () => {
         fetchMock.mockResolvedValue(jsonResponse({
             jsonrpc: '2.0',
             id: 1,
@@ -79,7 +79,7 @@ describe('HttpMcpClient', () => {
         await expect(client.callTool('t', {})).rejects.toThrow('rpc boom');
     });
 
-    it('should throw on non-OK HTTP status', async () => {
+    test('should throw on non-OK HTTP status', async () => {
         fetchMock.mockResolvedValue(jsonResponse({}, 500));
         const client = makeClient();
         await expect(client.callTool('t', {})).rejects.toThrow(/HTTP error: 500/);
@@ -87,7 +87,7 @@ describe('HttpMcpClient', () => {
 
     // ==================== SSE 响应 ====================
 
-    it('should return the result from SSE matching the request id', async () => {
+    test('should return the result from SSE matching the request id', async () => {
         fetchMock.mockResolvedValue(sseResponse([
             'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n',
         ]));
@@ -96,7 +96,7 @@ describe('HttpMcpClient', () => {
         await expect(client.callTool('t', {})).resolves.toEqual({ ok: true });
     });
 
-    it('should NOT consume server notifications (id null) as the response', async () => {
+    test('should NOT consume server notifications (id null) as the response', async () => {
         // 流只包含一个带 result 的通知（id:null）后关闭：不能当作请求结果
         fetchMock.mockResolvedValue(sseResponse([
             'data: {"jsonrpc":"2.0","id":null,"result":{"hacked":true}}\n\n',
@@ -105,7 +105,7 @@ describe('HttpMcpClient', () => {
         await expect(client.callTool('t', {})).rejects.toThrow(/(请求超时|timeout)/i);
     });
 
-    it('should pick the response matching the request id even when a notification arrives first', async () => {
+    test('should pick the response matching the request id even when a notification arrives first', async () => {
         fetchMock.mockResolvedValue(sseResponse([
             'data: {"jsonrpc":"2.0","id":null,"result":{"hacked":true}}\n\n',
             'data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n',
@@ -114,7 +114,7 @@ describe('HttpMcpClient', () => {
         await expect(client.callTool('t', {})).resolves.toEqual({ ok: true });
     });
 
-    it('should merge multi-line SSE data fields per spec', async () => {
+    test('should merge multi-line SSE data fields per spec', async () => {
         fetchMock.mockResolvedValue(sseResponse([
             'data: {"jsonrpc":"2.0",\ndata: "id":1,\ndata: "result":{"ok":true}}\n\n',
         ]));
@@ -122,7 +122,7 @@ describe('HttpMcpClient', () => {
         await expect(client.callTool('t', {})).resolves.toEqual({ ok: true });
     });
 
-    it('should propagate JSON-RPC error from SSE response', async () => {
+    test('should propagate JSON-RPC error from SSE response', async () => {
         fetchMock.mockResolvedValue(sseResponse([
             'data: {"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"sse boom"}}\n\n',
         ]));
@@ -132,7 +132,7 @@ describe('HttpMcpClient', () => {
 
     // ==================== 超时 ====================
 
-    it('should time out while reading the JSON body (not just headers)', async () => {
+    test('should time out while reading the JSON body (not just headers)', async () => {
         // body 永不产生数据；AbortController 超时中止时应拒绝 body 读取（模拟真实 fetch 的 signal 传播）
         fetchMock.mockImplementation((_url: string, init: any) => {
             const stream = new ReadableStream<Uint8Array>({
@@ -153,7 +153,7 @@ describe('HttpMcpClient', () => {
         await expect(client.callTool('t', {})).rejects.toThrow(/(请求超时|timeout)/i);
     });
 
-    it('should time out sendNotification', async () => {
+    test('should time out sendNotification', async () => {
         fetchMock.mockImplementation((_url: string, init: any) => new Promise((_resolve, reject) => {
             init.signal.addEventListener('abort', () =>
                 reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
@@ -165,7 +165,7 @@ describe('HttpMcpClient', () => {
 
     // ==================== disconnect 中止 ====================
 
-    it('should abort an in-flight fetch on disconnect', async () => {
+    test('should abort an in-flight fetch on disconnect', async () => {
         let signal: AbortSignal | undefined;
         fetchMock.mockImplementation((_url: string, init: any) => new Promise((_resolve, reject) => {
             signal = init.signal;
@@ -183,7 +183,7 @@ describe('HttpMcpClient', () => {
         await expect(pending).rejects.toThrow(/disconnected/i);
     });
 
-    it('should cancel an in-flight SSE read stream on disconnect', async () => {
+    test('should cancel an in-flight SSE read stream on disconnect', async () => {
         // SSE 流永不关闭
         fetchMock.mockResolvedValue(sseResponse([], true));
         const client = makeClient(30000);
@@ -198,7 +198,7 @@ describe('HttpMcpClient', () => {
 
     // ==================== 外部 abort 中止 ====================
 
-    it('should abort the fetch when the external signal aborts', async () => {
+    test('should abort the fetch when the external signal aborts', async () => {
         let fetchSignal: AbortSignal | undefined;
         fetchMock.mockImplementation((_url: string, init: any) => new Promise((_resolve, reject) => {
             fetchSignal = init.signal;
@@ -219,7 +219,7 @@ describe('HttpMcpClient', () => {
         await expect(pending).rejects.toThrow(/aborted/i);
     });
 
-    it('should reject immediately (without fetch) when the signal is already aborted', async () => {
+    test('should reject immediately (without fetch) when the signal is already aborted', async () => {
         const controller = new AbortController();
         controller.abort();
         const client = makeClient(30000);
@@ -228,7 +228,7 @@ describe('HttpMcpClient', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('should reject with the external abort text when aborting during JSON body read', async () => {
+    test('should reject with the external abort text when aborting during JSON body read', async () => {
         // body 永不产生数据；外部 abort 经内部 controller 传播时按「外部中止」处理
         fetchMock.mockImplementation((_url: string, init: any) => {
             const stream = new ReadableStream<Uint8Array>({
@@ -256,7 +256,7 @@ describe('HttpMcpClient', () => {
         await expect(pending).rejects.toThrow(/aborted/i);
     });
 
-    it('should remove the external abort listener after the request settles', async () => {
+    test('should remove the external abort listener after the request settles', async () => {
         fetchMock.mockResolvedValue(jsonResponse({ jsonrpc: '2.0', id: 1, result: { ok: true } }));
         const signal = new AbortController().signal;
         const addSpy = jest.spyOn(signal, 'addEventListener');
@@ -271,7 +271,7 @@ describe('HttpMcpClient', () => {
         expect(removed).toBe(added);
     });
 
-    it('should not accumulate abort listeners after an external abort', async () => {
+    test('should not accumulate abort listeners after an external abort', async () => {
         fetchMock.mockImplementation((_url: string, init: any) => new Promise((_resolve, reject) => {
             init.signal.addEventListener('abort', () =>
                 reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
@@ -296,7 +296,7 @@ describe('HttpMcpClient', () => {
         expect(added).toBe(removed);
     });
 
-    it('should cancel the SSE reader and reject on external abort', async () => {
+    test('should cancel the SSE reader and reject on external abort', async () => {
         const cancelSpy = jest.fn();
         const stream = new ReadableStream<Uint8Array>({
             // 永不产生数据、永不关闭，模拟长任务 SSE 流

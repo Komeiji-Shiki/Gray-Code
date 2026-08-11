@@ -6,6 +6,7 @@
  * 以及文本/二进制类型推断（扩展名表、MIME 推断、字节采样嗅探）。
  */
 
+import { MESSAGE_NAMES } from '../../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../../backend/i18n';
@@ -289,7 +290,7 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
  */
 export function registerFileReadHandlers(registry: Map<string, MessageHandler>): void {
   // 提示词上下文
-  registry.set('readFileForContext', readFileForContext);
-  registry.set('readWorkspaceTextFile', readWorkspaceTextFile);
-  registry.set('readWorkspaceFileForInput', readWorkspaceFileForInput);
+  registry.set(MESSAGE_NAMES.readFileForContext, readFileForContext);
+  registry.set(MESSAGE_NAMES.readWorkspaceTextFile, readWorkspaceTextFile);
+  registry.set(MESSAGE_NAMES.readWorkspaceFileForInput, readWorkspaceFileForInput);
 }

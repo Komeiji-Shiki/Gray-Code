@@ -9,9 +9,9 @@
  * - getConversationMetadataBatch 超过 200 条时返回 truncated 标志（数组主体不变，前端兼容）。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, Content } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory, Content } from '../../modules/conversation';
 import { Uri } from 'vscode';
 import { createAdapter, normPath } from './helpers/fakeVscodeFs';
 import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';

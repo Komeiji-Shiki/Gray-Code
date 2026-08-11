@@ -6,6 +6,7 @@
  * 本处理器负责把就绪的词表内容回传给前端（首次需要时触发下载，可等待较长时间）。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import type { MessageHandler } from '../types';
 import {
     getGlobalTokenizerResourceManager,
@@ -54,5 +55,5 @@ export const getTokenizerResourceHandler: MessageHandler = async (data, requestI
 
 /** 注册 tokenizer 资源处理器 */
 export function registerTokenizerHandlers(registry: Map<string, MessageHandler>): void {
-    registry.set('tokenizer.getResource', getTokenizerResourceHandler);
+    registry.set(MESSAGE_NAMES['tokenizer.getResource'], getTokenizerResourceHandler);
 }

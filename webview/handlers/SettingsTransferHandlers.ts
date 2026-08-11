@@ -4,6 +4,7 @@
  * 消息 key：settings.export / settings.import。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -156,6 +157,6 @@ export const importSettings: MessageHandler = async (data, requestId, ctx) => {
  */
 export function registerSettingsTransferHandlers(registry: Map<string, MessageHandler>): void {
   // 设置导出/导入
-  registry.set('settings.export', exportSettings);
-  registry.set('settings.import', importSettings);
+  registry.set(MESSAGE_NAMES['settings.export'], exportSettings);
+  registry.set(MESSAGE_NAMES['settings.import'], importSettings);
 }

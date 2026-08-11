@@ -10,6 +10,7 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, defineComponent, type PropType, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage } from '../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
@@ -325,7 +326,7 @@ async function confirmDiff(sessionId: string) {
   addProcessingDiffSessionId(sessionId)
   
   try {
-    await sendToExtension('diff.accept', { sessionId })
+    await sendToExtension(MESSAGE_NAMES['diff.accept'], { sessionId })
   } catch (err) {
     removeProcessingDiffSessionId(sessionId)
     const message = getActionErrorMessage(err, 'Failed to accept diff. Please retry.')
@@ -352,7 +353,7 @@ async function rejectDiff(sessionId: string) {
   addProcessingDiffSessionId(sessionId)
   
   try {
-    await sendToExtension('diff.reject', { sessionId })
+    await sendToExtension(MESSAGE_NAMES['diff.reject'], { sessionId })
   } catch (err) {
     removeProcessingDiffSessionId(sessionId)
     const message = getActionErrorMessage(err, 'Failed to reject diff. Please retry.')
@@ -503,7 +504,7 @@ onBeforeUnmount(() => {
 // 异步初始化：获取 diff 工具配置（仅此一步需要 await，留在 onMounted 内）
 onMounted(async () => {
   try {
-    const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>('tools.getToolConfig', {
+    const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>(MESSAGE_NAMES['tools.getToolConfig'], {
       toolName: 'apply_diff'
     })
     if (response?.config) {
@@ -822,7 +823,7 @@ async function sendToolConfirmation(
     chatStore.activeStreamId = streamId
     chatStore.isWaitingForResponse = true
 
-    await sendToExtension('toolConfirmation', {
+    await sendToExtension(MESSAGE_NAMES.toolConfirmation, {
       conversationId: currentConversationId,
       configId: confirmationConfigId,
       modelOverride: chatStore.pendingModelOverride || undefined,
@@ -1333,7 +1334,7 @@ const ToolContentHost = defineComponent({
           </div>
           <div v-if="pendingDiff.isProcessing" class="diff-action-state">
             <span class="codicon codicon-loading codicon-modifier-spin"></span>
-            <span>{{ t('tools.executing') }}</span>
+            <span>{{ t('components.tools.executing') }}</span>
           </div>
           <div v-else-if="pendingDiff.error" class="diff-action-error">
             <span class="codicon codicon-error"></span>

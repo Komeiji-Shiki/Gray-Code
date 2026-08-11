@@ -12,7 +12,7 @@
 
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
 import { TaskManager } from '../taskManager';
-import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessageResult } from './agentMailbox';
+import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessageResult } from '../../core/services/agentMailbox';
 
 /**
  * 动态获取工具声明

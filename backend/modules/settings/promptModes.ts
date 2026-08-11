@@ -1,5 +1,5 @@
 /**
- * LimCode - 内置提示词模板与内置提示词模式定义
+ * GrayCode - 内置提示词模板与内置提示词模式定义
  *
  * 从 types.ts 拆分而来：types.ts 只保留类型与配置默认值，
  * 大段提示词文本（数据）集中在本文件维护。
@@ -470,3 +470,4 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
     customPrefix: '',
     customSuffix: ''
 };
+

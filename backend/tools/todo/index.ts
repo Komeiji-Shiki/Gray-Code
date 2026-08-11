@@ -4,7 +4,7 @@
  * 导出所有 Todo 相关的工具
  */
 
-import type { Tool, ToolRegistration } from '../types';
+import type { ToolRegistration } from '../types';
 import { registerTodoWrite } from './todo_write';
 import { registerTodoUpdate } from './todo_update';
 
@@ -30,11 +30,4 @@ export const TODO_TOOL_NAMES = ['todo_write', 'todo_update'] as const;
  */
 export function getTodoToolRegistrations(): ToolRegistration[] {
     return [registerTodoWrite, registerTodoUpdate];
-}
-
-/**
- * 获取所有 Todo 工具
- */
-export function getAllTodoTools(): Tool[] {
-    return [registerTodoWrite(), registerTodoUpdate()];
 }

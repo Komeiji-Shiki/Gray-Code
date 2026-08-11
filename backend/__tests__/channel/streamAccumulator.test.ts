@@ -13,8 +13,8 @@
  *      （与 ToolCallParserService 跳过 thought part 的语义一致）。
  */
 
-import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
-import type { StreamChunk } from '../../modules/channel/types';
+import { StreamAccumulator } from '../../modules/channel';
+import type { StreamChunk } from '../../modules/channel';
 
 function makeIdFactory(): () => string {
     let n = 0;
@@ -26,7 +26,7 @@ function chunkOf(parts: unknown[], extra: Partial<StreamChunk> = {}): StreamChun
 }
 
 describe('StreamAccumulator - contentRevision', () => {
-    it('纯文本追加不递增修订号（前端可由 delta 还原）', () => {
+    test('纯文本追加不递增修订号（前端可由 delta 还原）', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
 
         acc.add(chunkOf([{ text: 'hello ' }]));
@@ -39,7 +39,7 @@ describe('StreamAccumulator - contentRevision', () => {
         expect(acc.getFinalContent().parts[0].text).toBe('hello world!');
     });
 
-    it('新 part 入列递增修订号', () => {
+    test('新 part 入列递增修订号', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
 
         acc.add(chunkOf([{ text: 'normal' }]));
@@ -50,7 +50,7 @@ describe('StreamAccumulator - contentRevision', () => {
         expect(acc.getContentRevision()).toBeGreaterThan(r1);
     });
 
-    it('functionCall 参数增量不递增，args 解析成功时递增', () => {
+    test('functionCall 参数增量不递增，args 解析成功时递增', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
 
         acc.add(chunkOf([{ functionCall: { name: 'read_file', index: 0, args: {} } }]));
@@ -71,7 +71,7 @@ describe('StreamAccumulator - contentRevision', () => {
 });
 
 describe('StreamAccumulator - getNewCompletedFunctionCalls', () => {
-    it('空参数占位壳不上报，参数完成后仅上报一次', () => {
+    test('空参数占位壳不上报，参数完成后仅上报一次', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
 
         acc.add(chunkOf([{ functionCall: { name: 'read_file', index: 0, args: {} } }]));
@@ -91,7 +91,7 @@ describe('StreamAccumulator - getNewCompletedFunctionCalls', () => {
         expect(acc.getNewCompletedFunctionCalls()).toHaveLength(0);
     });
 
-    it('多个并行调用各自上报一次', () => {
+    test('多个并行调用各自上报一次', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
 
         acc.add(chunkOf([{ functionCall: { name: 'tool_a', index: 0, args: {} } }]));
@@ -110,7 +110,7 @@ describe('StreamAccumulator - getNewCompletedFunctionCalls', () => {
 });
 
 describe('StreamAccumulator - prompt 模式工具块解析', () => {
-    it('json 模式：普通文本中的完整工具块转换为 functionCall（回归保护）', () => {
+    test('json 模式：普通文本中的完整工具块转换为 functionCall（回归保护）', () => {
         const acc = new StreamAccumulator('json', makeIdFactory());
 
         acc.add(chunkOf([{ text: 'before ' }]));
@@ -124,7 +124,7 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
         expect(fcPart?.functionCall?.id).toBeTruthy();
     });
 
-    it('xml 模式：分片到达的工具块也能正确转换', () => {
+    test('xml 模式：分片到达的工具块也能正确转换', () => {
         const acc = new StreamAccumulator('xml', makeIdFactory());
 
         acc.add(chunkOf([{ text: '<tool_use>\n  <tool_name>read_' }]));
@@ -136,7 +136,7 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
         expect(fcPart?.functionCall?.args).toEqual({ path: 'a.txt' });
     });
 
-    it('思考（thought）文本中的工具标记不被当作真实调用', () => {
+    test('思考（thought）文本中的工具标记不被当作真实调用', () => {
         const acc = new StreamAccumulator('json', makeIdFactory());
 
         const thoughtText = '我打算调用 <<<TOOL_CALL>>>{"tool": "delete_file", "parameters": {"paths": ["a.txt"]}}<<<END_TOOL_CALL>>> 试试';
@@ -149,7 +149,7 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
         expect(acc.getNewCompletedFunctionCalls()).toHaveLength(0);
     });
 
-    it('done 时未闭合的工具块 flush 为文本，不产生 functionCall', () => {
+    test('done 时未闭合的工具块 flush 为文本，不产生 functionCall', () => {
         const acc = new StreamAccumulator('json', makeIdFactory());
 
         acc.add(chunkOf([{ text: '<<<TOOL_CALL>>>\n{"tool": "read_file"' }]));
@@ -163,7 +163,7 @@ describe('StreamAccumulator - prompt 模式工具块解析', () => {
 
 
 describe('StreamAccumulator - ttft（首字延迟）', () => {
-    it('buildContent 计算 ttft = 首块时间 - 请求开始时间', () => {
+    test('buildContent 计算 ttft = 首块时间 - 请求开始时间', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
         const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
         try {
@@ -182,7 +182,7 @@ describe('StreamAccumulator - ttft（首字延迟）', () => {
         }
     });
 
-    it('未设置请求开始时间时不输出 ttft', () => {
+    test('未设置请求开始时间时不输出 ttft', () => {
         const acc = new StreamAccumulator('function_call', makeIdFactory());
         const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1000);
         try {

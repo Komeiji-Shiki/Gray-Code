@@ -1,5 +1,5 @@
 /**
- * LimCode - 对话 API 类型定义
+ * GrayCode - 对话 API 类型定义
  * 
  * 定义对话相关的请求和响应类型
  */
@@ -591,3 +591,4 @@ export interface SummarizeContextErrorData {
         message: string;
     };
 }
+

@@ -9,13 +9,13 @@
  * - runController 父子登记 / 摘除 / 级联退出（级联清理）
  */
 
-import { getSubAgentsTool } from '../../tools/subagents/subagents';
+import { getSubAgentsTool } from '../../tools/subagents';
 import { subAgentRegistry } from '../../tools/subagents/registry';
 import { createDefaultExecutor, getSubAgentExecutorContext } from '../../tools/subagents/executor';
 import { SubAgentRunController } from '../../tools/subagents/runController';
 import { TaskManager } from '../../tools/taskManager';
-import { MAX_SUBAGENT_NESTING_DEPTH } from '../../tools/subagents/types';
-import type { SubAgentConfig } from '../../tools/subagents/types';
+import { MAX_SUBAGENT_NESTING_DEPTH } from '../../tools/subagents';
+import type { SubAgentConfig } from '../../tools/subagents';
 
 jest.mock('../../tools/subagents/registry', () => ({
     subAgentRegistry: {
@@ -86,7 +86,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
         (subAgentRegistry.getAllConfigs as jest.Mock).mockReturnValue([TEST_CONFIG]);
     });
 
-    it('子代理工具描述不再排除 subagents，todo/memory 仍排除', () => {
+    test('子代理工具描述不再排除 subagents，todo/memory 仍排除', () => {
         const decl = getSubAgentsTool().declaration as any;
         const agentDesc = decl.parameters.properties.agentName.description as string;
         // 子代理可用工具列表现在包含 subagents（允许嵌套）
@@ -97,7 +97,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
         expect(agentDesc).not.toContain('memory_wake');
     });
 
-    it('主模型直接派发：depth=1，parentRunId 缺省，conversationId 透传', async () => {
+    test('主模型直接派发：depth=1，parentRunId 缺省，conversationId 透传', async () => {
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_tool_a', cancelled: false
         }));
@@ -116,7 +116,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
         expect(request.conversationId).toBe('conv_1');
     });
 
-    it('子 agent 派发：depth=2（子子），parentRunId=mailboxRunId，conversationId 回退主会话', async () => {
+    test('子 agent 派发：depth=2（子子），parentRunId=mailboxRunId，conversationId 回退主会话', async () => {
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_tool_b', cancelled: false
         }));
@@ -143,7 +143,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
         expect(request.conversationId).toBe('conv_1');
     });
 
-    it('超限拒绝：subagentDepth=2（子子）再派发时返回明确错误，executor 不被调用', async () => {
+    test('超限拒绝：subagentDepth=2（子子）再派发时返回明确错误，executor 不被调用', async () => {
         const fakeExecutor = jest.fn((..._args: any[]) => undefined);
         (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
 
@@ -167,7 +167,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
         expect(createDefaultExecutor).not.toHaveBeenCalled();
     });
 
-    it('超限拒绝同样拦截后台模式，不注册后台任务', async () => {
+    test('超限拒绝同样拦截后台模式，不注册后台任务', async () => {
         const tool = getSubAgentsTool();
         const result = await tool.handler(
             { agentName: 'Test Agent', prompt: 'go deeper', background: true },
@@ -185,7 +185,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
         expect(TaskManager.registerTask).not.toHaveBeenCalled();
     });
 
-    it('深度边界：subagentDepth=1 派发 depth=2 合法（不触发拒绝）', async () => {
+    test('深度边界：subagentDepth=1 派发 depth=2 合法（不触发拒绝）', async () => {
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_tool_e', cancelled: false
         }));
@@ -210,7 +210,7 @@ describe('SubAgents 嵌套 - 工具集与深度限制（handler 层）', () => {
 });
 
 describe('SubAgents 嵌套 - runController 父子登记与级联清理', () => {
-    it('registerChild/getChildren/unregisterChild 维护派生关系', () => {
+    test('registerChild/getChildren/unregisterChild 维护派生关系', () => {
         const controller = new SubAgentRunController();
         controller.register('parent_run', 'Parent', 1);
         controller.registerChild('parent_run', 'child_a');
@@ -228,7 +228,7 @@ describe('SubAgents 嵌套 - runController 父子登记与级联清理', () => {
         expect(controller.getChildren('parent_run')).toEqual([]);
     });
 
-    it('cascadeExitChildren 把全部子 run 置为 cancelled 并携带退出原因，重复调用幂等', () => {
+    test('cascadeExitChildren 把全部子 run 置为 cancelled 并携带退出原因，重复调用幂等', () => {
         const controller = new SubAgentRunController();
         controller.register('parent_run', 'Parent', 1);
         controller.register('child_a', 'ChildA', 2);
@@ -246,7 +246,7 @@ describe('SubAgents 嵌套 - runController 父子登记与级联清理', () => {
         expect(controller.cascadeExitChildren('parent_run')).toEqual([]);
     });
 
-    it('cascadeExitChildren 对已结束/未注册的子 run 是 no-op（幂等安全）', () => {
+    test('cascadeExitChildren 对已结束/未注册的子 run 是 no-op（幂等安全）', () => {
         const controller = new SubAgentRunController();
         controller.register('parent_run', 'Parent', 1);
         controller.register('child_a', 'ChildA', 2);
@@ -261,7 +261,7 @@ describe('SubAgents 嵌套 - runController 父子登记与级联清理', () => {
         expect(controller.getState('ghost_child')).toBeUndefined();
     });
 
-    it('register 携带嵌套深度，getDepth 可读（供 Monitor 元数据）', () => {
+    test('register 携带嵌套深度，getDepth 可读（供 Monitor 元数据）', () => {
         const controller = new SubAgentRunController();
         controller.register('depth_run', 'Agent', 2);
         expect(controller.getDepth('depth_run')).toBe(2);

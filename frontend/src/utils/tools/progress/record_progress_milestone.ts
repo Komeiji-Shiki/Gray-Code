@@ -4,6 +4,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
+import { getToolMetaDescription } from '../toolMetaLookup'
 import { formatProgressToolFallbackContent } from '../../progressCards'
 
 registerTool('record_progress_milestone', {
@@ -15,7 +16,8 @@ registerTool('record_progress_milestone', {
     const path = (args as any)?.path as string | undefined
     if (title && title.trim()) return title.trim()
     if (path && path.trim()) return path.trim()
-    return t('components.message.tool.recordProgressMilestone.fallbackTitle')
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化标题
+    return getToolMetaDescription('record_progress_milestone') ?? t('components.message.tool.recordProgressMilestone.fallbackTitle')
   },
   contentFormatter: (args, result) => formatProgressToolFallbackContent('record_progress_milestone', args, result)
 })

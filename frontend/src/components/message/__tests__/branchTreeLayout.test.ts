@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import type { BranchGraphData, BranchNodeData } from '../../../stores/chat/types'
 import {
   buildFullBranchRows,
@@ -27,14 +27,14 @@ function linearGraph(length: number): BranchGraphData {
 }
 
 describe('branchTreeLayout', () => {
-  it('完整模式的线性长对话始终使用同一轨道', () => {
+  test('完整模式的线性长对话始终使用同一轨道', () => {
     const rows = buildFullBranchRows(linearGraph(20))
 
     expect(rows).toHaveLength(20)
     expect(new Set(rows.map(row => row.lane))).toEqual(new Set([0]))
   })
 
-  it('只有兄弟候选才分配额外轨道，候选后续沿用自己的轨道', () => {
+  test('只有兄弟候选才分配额外轨道，候选后续沿用自己的轨道', () => {
     const graph: BranchGraphData = {
       version: 1,
       rootNodeId: 'u1',
@@ -58,7 +58,7 @@ describe('branchTreeLayout', () => {
     expect(laneById.get('u4')).toBe(1)
   })
 
-  it('导航模式折叠线性中段但保留根节点和当前尾节点', () => {
+  test('导航模式折叠线性中段但保留根节点和当前尾节点', () => {
     const rows = buildNavigationBranchRows(linearGraph(8))
 
     expect(rows.map(row => row.type)).toEqual(['node', 'collapsed', 'node'])
@@ -67,7 +67,7 @@ describe('branchTreeLayout', () => {
     expect(rows[2].id).toBe('n7')
   })
 
-  it('导航模式保留分支点、候选根、命名节点和软删节点', () => {
+  test('导航模式保留分支点、候选根、命名节点和软删节点', () => {
     const graph: BranchGraphData = {
       version: 1,
       rootNodeId: 'root',
@@ -96,7 +96,7 @@ describe('buildTrackGraphRows 轨道式完整消息图', () => {
     return row
   }
 
-  it('线性长对话始终单轨道且无跨轨线', () => {
+  test('线性长对话始终单轨道且无跨轨线', () => {
     const graph = buildTrackGraphRows(linearGraph(20), true)
 
     expect(graph.laneCount).toBe(1)
@@ -104,7 +104,7 @@ describe('buildTrackGraphRows 轨道式完整消息图', () => {
     expect(graph.rows.every(row => row.kind === 'node' && row.lane === 0)).toBe(true)
   })
 
-  it('兄弟候选各占新轨道，候选结束后轨道释放可复用', () => {
+  test('兄弟候选各占新轨道，候选结束后轨道释放可复用', () => {
     const graph: BranchGraphData = {
       version: 1,
       rootNodeId: 'root',
@@ -137,7 +137,7 @@ describe('buildTrackGraphRows 轨道式完整消息图', () => {
     expect(result.laneCount).toBe(2)
   })
 
-  it('分叉点行绘制跨轨横线，同轨延续绘制竖线', () => {
+  test('分叉点行绘制跨轨横线，同轨延续绘制竖线', () => {
     const graph: BranchGraphData = {
       version: 1,
       rootNodeId: 'u1',
@@ -169,7 +169,7 @@ describe('buildTrackGraphRows 轨道式完整消息图', () => {
     expect(a2Row.lines.find(line => line.lane === 0)?.active).toBe(true)
   })
 
-  it('折叠线性中段，保留根节点与当前尾节点', () => {
+  test('折叠线性中段，保留根节点与当前尾节点', () => {
     const result = buildTrackGraphRows(linearGraph(8), false)
 
     expect(result.rows.map(row => row.kind)).toEqual(['node', 'collapsed', 'node'])
@@ -178,7 +178,7 @@ describe('buildTrackGraphRows 轨道式完整消息图', () => {
     expect(result.rows[2].id).toBe('n7')
   })
 
-  it('展开完整消息显示全部节点', () => {
+  test('展开完整消息显示全部节点', () => {
     const result = buildTrackGraphRows(linearGraph(8), true)
 
     expect(result.rows).toHaveLength(8)

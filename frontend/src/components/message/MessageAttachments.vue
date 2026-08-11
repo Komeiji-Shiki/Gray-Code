@@ -5,6 +5,7 @@
  * 复用输入框的附件样式，支持点击预览
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension } from '../../utils/vscode'
 import { formatFileSize } from '../../utils/file'
 import { useI18n } from '../../i18n'
@@ -47,7 +48,7 @@ async function previewAttachment(attachment: Attachment) {
   if (!attachment.data) return
   
   try {
-    await sendToExtension('previewAttachment', {
+    await sendToExtension(MESSAGE_NAMES.previewAttachment, {
       name: attachment.name,
       mimeType: attachment.mimeType,
       data: attachment.data

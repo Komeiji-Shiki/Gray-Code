@@ -7,6 +7,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import ActivityStatsResult from '../../../components/tools/activity/ActivityStatsResult.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 registerTool('get_activity_stats', {
   name: 'get_activity_stats',
@@ -15,7 +16,8 @@ registerTool('get_activity_stats', {
 
   descriptionFormatter: (args) => {
     const range = args?.range
-    return range ? `Stats: ${range}` : 'Activity stats'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return range ? `Stats: ${range}` : getToolMetaDescription('get_activity_stats') ?? 'Activity stats'
   },
 
   // 使用自定义组件显示内容

@@ -7,7 +7,7 @@
  * - 离开设置页时，空名称自动回填并随数据提交
  */
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, expect, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import PromptEntriesEditor from '../PromptEntriesEditor.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -60,7 +60,7 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     wrapper?.unmount()
   })
 
-  it('清空条目名称后保持为空，不再自动回填「Prompt N」', async () => {
+  test('清空条目名称后保持为空，不再自动回填「Prompt N」', async () => {
     const w = await mountEditor()
     const nameInput = w.find('.entry-name-input')
     expect((nameInput.element as HTMLInputElement).value).toBe('我的工具')
@@ -71,7 +71,7 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     expect((nameInput.element as HTMLInputElement).value).toBe('')
   })
 
-  it('新建条目：名称输入框为空（不自动补全）', async () => {
+  test('新建条目：名称输入框为空（不自动补全）', async () => {
     const w = await mountEditor()
     await w.findAll('button').find(b => b.text().includes('新增条目'))!.trigger('click')
     await flushPromises()
@@ -87,7 +87,7 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     expect(lastInput.value).toBe('')
   })
 
-  it('离开设置页时，被清空的自定义名称回填「最后一次提交的名称」而非 Prompt N', async () => {
+  test('离开设置页时，被清空的自定义名称回填「最后一次提交的名称」而非 Prompt N', async () => {
     const w = await mountEditor()
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()
@@ -106,7 +106,7 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     expect(emitted ?? []).toHaveLength(0)
   })
 
-  it('离开设置页时，新建条目空名称回填「Prompt N」', async () => {
+  test('离开设置页时，新建条目空名称回填「Prompt N」', async () => {
     const w = await mountEditor()
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()
@@ -128,7 +128,7 @@ describe('PromptEntriesEditor 条目名称草稿', () => {
     expect(entries.find(e => e.name === 'Prompt 3')?.name).toBe('Prompt 3')
   })
 
-  it('离开设置页时，非空名称保持用户输入', async () => {
+  test('离开设置页时，非空名称保持用户输入', async () => {
     const w = await mountEditor()
     const settingsStore = useSettingsStore()
     settingsStore.showSettings()

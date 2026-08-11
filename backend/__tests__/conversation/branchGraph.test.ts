@@ -1,5 +1,5 @@
 /**
- * BranchGraph 纯函数单测（第五阶段 BR-08）。
+ * BranchGraph 纯函数单测（第五阶段 BR-08 + TREE-09）。
  *
  * 覆盖：insertNode / rerollCandidate / editCandidate / activateChild / switchActivePath /
  * activePath / rebuildActivePath / childrenIndex / validate / 候选摘要。
@@ -784,6 +784,54 @@ describe('rebaseActivePathFromHistory（旧 sidecar 安全追平主历史）', (
         ] as any)).toThrow(/cannot safely reconcile branch graph root/);
         expect(graph).toEqual(snapshot);
     });
+
+    test('删头部消息（根前移）：allowRootChange 重链——新根挂图、旧根专属子树物理移除（候选摘要/导出引用清理），validate 通过', () => {
+        // 图：旧根 root → u → a（活跃）；root 下候选 alt（旧根专属子树）、u 下候选 u-alt
+        let g = importLinearHistory([
+            { role: 'user', parts: [{ text: 'q1' }], id: 'root', timestamp: 1 },
+            { role: 'user', parts: [{ text: 'q2' }], id: 'u', parentId: 'root', timestamp: 2 },
+            { role: 'model', parts: [{ text: 'a1' }], id: 'a', parentId: 'u', timestamp: 3 },
+        ] as any);
+        g = rerollCandidate(g, 'root', node('alt', 'root', { role: 'model', kind: 'reroll', createdAt: 4 }));
+        g = rerollCandidate(g, 'u', node('u-alt', 'u', { role: 'model', kind: 'reroll', createdAt: 5 }));
+        g = activateChild(g, 'u', 'a'); // 活跃路径回到 root → u → a
+        g = upsertCandidateSummary(g, { nodeId: 'alt', parentId: 'root', kind: 'reroll', createdAt: 4, preview: 'alt' });
+        g = upsertCandidateSummary(g, { nodeId: 'u-alt', parentId: 'u', kind: 'reroll', createdAt: 5, preview: 'u-alt' });
+        g = {
+            ...g,
+            exportedFrom: { conversationId: 'src', nodeId: 'alt' },
+            exportedRefs: [
+                { targetConversationId: 't1', nodeId: 'alt', exportedAt: 1 },
+                { targetConversationId: 't2', nodeId: 'a', exportedAt: 2 },
+            ],
+        };
+
+        // 主历史删除 index 0：新根 = u（原第二条消息）
+        const history = [
+            { role: 'user', parts: [{ text: 'q2' }], id: 'u', timestamp: 2 },
+            { role: 'model', parts: [{ text: 'a1' }], id: 'a', parentId: 'u', timestamp: 3 },
+        ] as any;
+        const next = rebaseActivePathFromHistory(g, history, { allowRootChange: true });
+
+        // 新根挂图：rootNodeId / 活跃路径 / 尾指针全部指向新根路径
+        expect(next.rootNodeId).toBe('u');
+        expect(activePath(next)).toEqual(['u', 'a']);
+        expect(next.activeTailNodeId).toBe('a');
+        expect(next.nodes['u']!.parentId).toBeNull();
+        expect(next.nodes['u']!.parts).toEqual([{ text: 'q2' }]); // 正文以主历史为准
+        // 旧根及其专属子树物理移除（单根不变量：旧根无法退化为非活跃候选）
+        expect(next.nodes['root']).toBeUndefined();
+        expect(next.nodes['alt']).toBeUndefined();
+        // 挂在新历史节点下的旧候选保留为非活跃候选
+        expect(next.nodes['u-alt']).toMatchObject({ parentId: 'u', kind: 'reroll' });
+        expect(next.nodes['u']!.activeChildId).toBe('a');
+        // 候选摘要 / 导出引用同步清理
+        expect(next.candidateSummaries!.find(s => s.nodeId === 'alt')).toBeUndefined();
+        expect(next.candidateSummaries!.find(s => s.nodeId === 'u-alt')).toMatchObject({ parentId: 'u', preview: 'u-alt' });
+        expect(next.exportedFrom).toBeUndefined();
+        expect(next.exportedRefs).toEqual([{ targetConversationId: 't2', nodeId: 'a', exportedAt: 2 }]);
+        expect(validate(next).valid).toBe(true);
+    });
 });
 
 describe('findUnsyncedFunctionResponses（R8a-M2：FR 内容同步校验）', () => {
@@ -905,7 +953,7 @@ describe('findUnsyncedFunctionResponses（R8a-M2：FR 内容同步校验）', ()
     });
 });
 
-describe('TREE-09 软删除 / 恢复 / 重命名 / 修剪（纯函数）', () => {
+describe('软删除 / 恢复 / 重命名 / 修剪（纯函数）', () => {
     /** 线性图：root → u → a（活跃），并在 u 下追加非活跃候选 b 与 b 的子树 b2 */
     function branchedGraph(): ConversationBranchGraph {
         let g = linearGraph(); // root → u → a

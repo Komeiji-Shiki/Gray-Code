@@ -8,7 +8,7 @@
  *   反查不到（旧历史/越界索引）时 manager 收到空 options（无 messageNodeId 键，兼容旧行为）。
  */
 
-import { CheckpointService } from '../../modules/api/chat/services/CheckpointService';
+import { CheckpointService } from '../../modules/api';
 import type { CheckpointManager } from '../../modules/checkpoint/CheckpointManager';
 import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import type { ConversationManager } from '../../modules/conversation/ConversationManager';
@@ -23,6 +23,10 @@ interface Harness {
     };
 }
 
+/**
+ * 保持本地的 createHarness（createHarness 收敛批次）：CheckpointService 专用 harness（唯一），
+ * 形状与共享 fixtures 差异过大不收敛，见 ../__fixtures__/harnessFixtures.ts 头注释「未收敛」清单。
+ */
 function createHarness(): Harness {
     const checkpointManager = {
         createCheckpoint: jest.fn().mockImplementation(
@@ -55,7 +59,7 @@ function createHarness(): Harness {
     return { service, checkpointManager, conversationManager };
 }
 
-describe('BCP-01: CheckpointService 反查并透传 messageNodeId', () => {
+describe('CheckpointService 反查并透传 messageNodeId', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });

@@ -13,7 +13,7 @@
  * 不依赖任何共享 fixture。
  */
 
-import { SettingsHandler } from '../../modules/api/settings/SettingsHandler';
+import { SettingsHandler } from '../../modules/api';
 import type { SettingsManager } from '../../modules/settings/SettingsManager';
 
 function createSettingsManagerMock(settings: any = { theme: 'dark', language: 'en' }): SettingsManager {
@@ -48,7 +48,7 @@ function createToolRegistryMock() {
 }
 
 describe('SettingsHandler smoke', () => {
-    it('构造函数读取 proxy 设置并成功创建实例（含代理 URL 分支）', () => {
+    test('构造函数读取 proxy 设置并成功创建实例（含代理 URL 分支）', () => {
         const sm = createSettingsManagerMock();
         (sm.getProxySettings as jest.Mock).mockReturnValue({ enabled: true, url: 'http://127.0.0.1:7890' });
         const handler = new SettingsHandler(sm);
@@ -56,7 +56,7 @@ describe('SettingsHandler smoke', () => {
         expect(sm.getProxySettings).toHaveBeenCalled();
     });
 
-    it('getSettings 成功返回 settings', async () => {
+    test('getSettings 成功返回 settings', async () => {
         const sm = createSettingsManagerMock({ theme: 'dark' });
         const handler = new SettingsHandler(sm);
 
@@ -66,7 +66,7 @@ describe('SettingsHandler smoke', () => {
         expect((result as any).settings).toEqual({ theme: 'dark' });
     });
 
-    it('getSettings 异常包装为 { success:false, error:{ code, message } }，自定义 code 透传', async () => {
+    test('getSettings 异常包装为 { success:false, error:{ code, message } }，自定义 code 透传', async () => {
         const sm = createSettingsManagerMock();
         (sm.getSettings as jest.Mock).mockImplementation(() => {
             const err: any = new Error('storage broken');
@@ -81,7 +81,7 @@ describe('SettingsHandler smoke', () => {
         expect((result as any).error).toEqual({ code: 'STORAGE_READ_FAILED', message: 'storage broken' });
     });
 
-    it('updateSettings 成功：调用 updateSettings 并返回最新 settings', async () => {
+    test('updateSettings 成功：调用 updateSettings 并返回最新 settings', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -92,7 +92,7 @@ describe('SettingsHandler smoke', () => {
         expect((result as any).settings).toEqual({ theme: 'dark', language: 'en' });
     });
 
-    it('updateSettings 异常无 code 时回退 UNKNOWN_ERROR', async () => {
+    test('updateSettings 异常无 code 时回退 UNKNOWN_ERROR', async () => {
         const sm = createSettingsManagerMock();
         (sm.updateSettings as jest.Mock).mockRejectedValue(new Error('boom'));
         const handler = new SettingsHandler(sm);
@@ -104,7 +104,7 @@ describe('SettingsHandler smoke', () => {
         expect((result as any).error.message).toBe('boom');
     });
 
-    it('setActiveChannel 成功且透传 channelId', async () => {
+    test('setActiveChannel 成功且透传 channelId', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -114,7 +114,7 @@ describe('SettingsHandler smoke', () => {
         expect(result.success).toBe(true);
     });
 
-    it('setToolEnabled 成功且透传参数', async () => {
+    test('setToolEnabled 成功且透传参数', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -124,7 +124,7 @@ describe('SettingsHandler smoke', () => {
         expect(result.success).toBe(true);
     });
 
-    it('setToolsEnabled / setDefaultToolMode 成功', async () => {
+    test('setToolsEnabled / setDefaultToolMode 成功', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -137,7 +137,7 @@ describe('SettingsHandler smoke', () => {
         expect(mode.success).toBe(true);
     });
 
-    it('updateUISettings 成功并联动语言设置（不抛错）', async () => {
+    test('updateUISettings 成功并联动语言设置（不抛错）', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -147,7 +147,7 @@ describe('SettingsHandler smoke', () => {
         expect(result.success).toBe(true);
     });
 
-    it('updateProxySettings / resetSettings 成功', async () => {
+    test('updateProxySettings / resetSettings 成功', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -160,7 +160,7 @@ describe('SettingsHandler smoke', () => {
         expect(reset.success).toBe(true);
     });
 
-    it('getToolsList：无 toolRegistry 返回 TOOL_REGISTRY_NOT_AVAILABLE', async () => {
+    test('getToolsList：无 toolRegistry 返回 TOOL_REGISTRY_NOT_AVAILABLE', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 
@@ -170,7 +170,7 @@ describe('SettingsHandler smoke', () => {
         expect((result as any).error.code).toBe('TOOL_REGISTRY_NOT_AVAILABLE');
     });
 
-    it('getToolsList：有 toolRegistry 时返回工具列表与 enabled 标志', async () => {
+    test('getToolsList：有 toolRegistry 时返回工具列表与 enabled 标志', async () => {
         const sm = createSettingsManagerMock();
         const registry = createToolRegistryMock();
         const handler = new SettingsHandler(sm, registry as any);
@@ -185,7 +185,7 @@ describe('SettingsHandler smoke', () => {
         expect(sm.isToolEnabled).toHaveBeenCalledWith('read_file');
     });
 
-    it('getToolConfig：list_files 走专用分支，未知工具返回 TOOL_NOT_FOUND', async () => {
+    test('getToolConfig：list_files 走专用分支，未知工具返回 TOOL_NOT_FOUND', async () => {
         const sm = createSettingsManagerMock();
         const registry = createToolRegistryMock();
         const handler = new SettingsHandler(sm, registry as any);
@@ -199,7 +199,7 @@ describe('SettingsHandler smoke', () => {
         expect((unknown as any).error.code).toBe('TOOL_NOT_FOUND');
     });
 
-    it('updateToolConfig：专用方法分发与通用分发，异常统一包装', async () => {
+    test('updateToolConfig：专用方法分发与通用分发，异常统一包装', async () => {
         const sm = createSettingsManagerMock();
         const handler = new SettingsHandler(sm);
 

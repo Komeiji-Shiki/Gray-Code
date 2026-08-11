@@ -1,5 +1,5 @@
 /**
- * LimCode - MCP API 模块
+ * GrayCode - MCP API 模块
  * 
  * 导出 MCP 相关的所有接口和实现
  */

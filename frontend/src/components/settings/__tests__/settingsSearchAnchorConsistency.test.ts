@@ -9,23 +9,31 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 
 const SETTINGS_DIR = path.resolve(process.cwd(), 'src/components/settings')
 
-/** 读取 settings 目录下所有 .vue 文件内容（含 SettingsPanel.vue 本身） */
+/** 读取 settings 目录下所有 .vue 文件内容（含子目录 checkpoint/，含 SettingsPanel.vue 本身） */
 function readSettingsComponentSources(): { fileName: string; source: string }[] {
-  const entries = readdirSync(SETTINGS_DIR).filter(line => line.endsWith('.vue'))
-  return entries.map(fileName => ({
-    fileName,
-    source: readFileSync(path.join(SETTINGS_DIR, fileName), 'utf8')
-  }))
+  const results: { fileName: string; source: string }[] = []
+  const collect = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        collect(fullPath)
+      } else if (entry.name.endsWith('.vue')) {
+        results.push({ fileName: entry.name, source: readFileSync(fullPath, 'utf8') })
+      }
+    }
+  }
+  collect(SETTINGS_DIR)
+  return results
 }
 
-describe('L-3: 设置搜索 SEARCH_INDEX 锚点一致性', () => {
+describe('设置搜索 SEARCH_INDEX 锚点一致性', () => {
   const sources = readSettingsComponentSources()
 
-  it('SEARCH_INDEX 中每个带 anchor 的条目，目标锚点都存在（跨组件反重构漂移）', () => {
+  test('SEARCH_INDEX 中每个带 anchor 的条目，目标锚点都存在（跨组件反重构漂移）', () => {
     const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
     // 从 SettingsPanel.vue 提取 SEARCH_INDEX 条目中所有 anchor 选择器
     // 形如：anchor: '[data-search-anchor="api-url"]'
@@ -48,7 +56,7 @@ describe('L-3: 设置搜索 SEARCH_INDEX 锚点一致性', () => {
     expect(missing).toEqual([])
   })
 
-  it('锚点值不重复（同一选择器只应在索引中出现一次）', () => {
+  test('锚点值不重复（同一选择器只应在索引中出现一次）', () => {
     const panelSource = sources.find(s => s.fileName === 'SettingsPanel.vue')?.source ?? ''
     const indexedAnchors = Array.from(
       panelSource.matchAll(/anchor:\s*'\[data-search-anchor="([^"]+)"\]'/g),

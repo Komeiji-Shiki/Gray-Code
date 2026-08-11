@@ -69,7 +69,7 @@ describe('McpManager connect lifecycle races', () => {
 
     // ==================== 并发 connect 复用 in-flight promise ====================
 
-    it('should reuse the same in-flight connect promise for concurrent connect calls', async () => {
+    test('should reuse the same in-flight connect promise for concurrent connect calls', async () => {
         const id = await createStdioServer('dedupe_srv');
 
         const connectSpy = jest.spyOn(StdioMcpClient.prototype, 'connect')
@@ -83,7 +83,7 @@ describe('McpManager connect lifecycle races', () => {
         expect(manager.getServerStatus(id)).toBe('connected');
     });
 
-    it('should propagate connect failure to all concurrent callers (no fake success)', async () => {
+    test('should propagate connect failure to all concurrent callers (no fake success)', async () => {
         const id = await createStdioServer('fail_shared_srv');
 
         jest.spyOn(StdioMcpClient.prototype, 'connect')
@@ -99,7 +99,7 @@ describe('McpManager connect lifecycle races', () => {
 
     // ==================== disconnect 期间旧连接失败不覆盖新连接 ====================
 
-    it('should not let an old failed connect clobber a newer successful connection', async () => {
+    test('should not let an old failed connect clobber a newer successful connection', async () => {
         const id = await createStdioServer('gen_srv');
 
         let rejectOld!: (e: Error) => void;
@@ -129,7 +129,7 @@ describe('McpManager connect lifecycle races', () => {
         expect(manager.getServerStatus(id)).toBe('connected');
     });
 
-    it('should ignore late exit/error events from an old client (must not delete the new client)', async () => {
+    test('should ignore late exit/error events from an old client (must not delete the new client)', async () => {
         const id = await createStdioServer('late_exit_srv');
 
         let resolveNew!: () => void;

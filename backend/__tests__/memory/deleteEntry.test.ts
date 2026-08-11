@@ -19,7 +19,7 @@ function setup(): { mm: MemoryManager; dir: string } {
 }
 
 describe('MemoryManager.deleteEntry', () => {
-    it('删除中间条目：仅该条被移除，其后记录 id 前移、文本与日期保留', async () => {
+    test('删除中间条目：仅该条被移除，其后记录 id 前移、文本与日期保留', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -43,7 +43,7 @@ describe('MemoryManager.deleteEntry', () => {
         }
     });
 
-    it('删除最后一条：后续 id 不变', async () => {
+    test('删除最后一条：后续 id 不变', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -60,7 +60,7 @@ describe('MemoryManager.deleteEntry', () => {
         }
     });
 
-    it('删除唯一一条：LOG 清空', async () => {
+    test('删除唯一一条：LOG 清空', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -74,7 +74,7 @@ describe('MemoryManager.deleteEntry', () => {
         }
     });
 
-    it('非法 id：负数 / 越界抛错且不改变数据', async () => {
+    test('非法 id：负数 / 越界抛错且不改变数据', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -90,7 +90,7 @@ describe('MemoryManager.deleteEntry', () => {
         }
     });
 
-    it('删除后继续追加：新记录 id 连续无冲突', async () => {
+    test('删除后继续追加：新记录 id 连续无冲突', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -110,7 +110,7 @@ describe('MemoryManager.deleteEntry', () => {
         }
     });
 
-    it('删除中间条目后树摘要被清空（覆盖块的树文件被截断）', async () => {
+    test('删除中间条目后树摘要被清空（覆盖块的树文件被截断）', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();
@@ -129,7 +129,7 @@ describe('MemoryManager.deleteEntry', () => {
         }
     });
 
-    it('删除最后一条时覆盖被删记录的尾部树摘要被截断、未覆盖块的摘要保留', async () => {
+    test('删除最后一条时覆盖被删记录的尾部树摘要被截断、未覆盖块的摘要保留', async () => {
         const { mm, dir } = setup();
         try {
             await mm.init();

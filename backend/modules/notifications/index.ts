@@ -1,5 +1,5 @@
 /**
- * LimCode - Windows 通知模块
+ * GrayCode - Windows 通知模块
  *
  * 提供 Windows Agent 停止通知（toast）相关能力：
  * - WindowsToastAdapter：toast 适配器接口（types.ts）与 VS Code 原生通知实现（VSCodeNotificationAdapter）
@@ -34,3 +34,4 @@ export type { WindowsAgentStopNotificationTemplateContext } from './templateRend
 // 窗口标题推导
 export { deriveWindowsAgentStopWindowTitle } from './windowTitle';
 export type { DeriveWindowsAgentStopWindowTitleOptions } from './windowTitle';
+

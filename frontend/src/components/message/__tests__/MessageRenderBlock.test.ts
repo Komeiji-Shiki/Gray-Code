@@ -10,7 +10,7 @@
  * - 非流式时思考块 MarkdownRenderer 收到 is-streaming=false
  * - 思考文本内容正确透传给 MarkdownRenderer
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import MessageRenderBlock from '../MessageRenderBlock.vue'
@@ -65,7 +65,7 @@ function mountThoughtBlock(isStreaming: boolean, text = 'thinking...') {
 }
 
 describe('MessageRenderBlock 思考块流式透传', () => {
-  it('流式时思考块 MarkdownRenderer 收到 is-streaming=true 且内容透传', () => {
+  test('流式时思考块 MarkdownRenderer 收到 is-streaming=true 且内容透传', () => {
     const wrapper = mountThoughtBlock(true, '```ts\nconst x = 1;\n```')
     const md = wrapper.findComponent(MarkdownRendererStub)
     expect(md.exists()).toBe(true)
@@ -74,7 +74,7 @@ describe('MessageRenderBlock 思考块流式透传', () => {
     wrapper.unmount()
   })
 
-  it('非流式时思考块 MarkdownRenderer 收到 is-streaming=false', () => {
+  test('非流式时思考块 MarkdownRenderer 收到 is-streaming=false', () => {
     const wrapper = mountThoughtBlock(false)
     const md = wrapper.findComponent(MarkdownRendererStub)
     expect(md.exists()).toBe(true)
@@ -107,7 +107,7 @@ describe('MessageRenderBlock 思考块折叠预览', () => {
     })
   }
 
-  it('折叠模式显示思考内容第一行作为预览（多行文本只取第一行）', () => {
+  test('折叠模式显示思考内容第一行作为预览（多行文本只取第一行）', () => {
     const wrapper = mountCollapsed('第一行思考内容\n第二行\n第三行')
     expect(wrapper.find('.thought-collapsed-text').text()).toBe('第一行思考内容')
     // 折叠模式不渲染中展开/完全展开内容区
@@ -116,7 +116,7 @@ describe('MessageRenderBlock 思考块折叠预览', () => {
     wrapper.unmount()
   })
 
-  it('折叠模式跳过空行，取首个非空行；空文本预览为空', () => {
+  test('折叠模式跳过空行，取首个非空行；空文本预览为空', () => {
     const wrapper = mountCollapsed('\n  \n第二行')
     expect(wrapper.find('.thought-collapsed-text').text()).toBe('第二行')
     wrapper.unmount()

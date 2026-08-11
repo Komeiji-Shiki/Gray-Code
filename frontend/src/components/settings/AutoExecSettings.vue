@@ -8,6 +8,7 @@
  * 3. 默认情况下，危险工具（如 delete_file, execute_command）需要确认
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -90,7 +91,7 @@ async function loadData() {
   
   try {
     // 获取内置工具列表
-    const toolsResponse = await sendToExtension<{ tools: ToolInfo[] }>('tools.getTools', {})
+    const toolsResponse = await sendToExtension<{ tools: ToolInfo[] }>(MESSAGE_NAMES['tools.getTools'], {})
     let allTools: ToolInfo[] = []
     if (toolsResponse?.tools) {
       allTools = toolsResponse.tools
@@ -98,7 +99,7 @@ async function loadData() {
     
     // 获取 MCP 工具列表
     try {
-      const mcpToolsResponse = await sendToExtension<{ tools: ToolInfo[] }>('tools.getMcpTools', {})
+      const mcpToolsResponse = await sendToExtension<{ tools: ToolInfo[] }>(MESSAGE_NAMES['tools.getMcpTools'], {})
       if (mcpToolsResponse?.tools) {
         allTools = [...allTools, ...mcpToolsResponse.tools]
       }
@@ -109,7 +110,7 @@ async function loadData() {
     tools.value = allTools
     
     // 获取自动执行配置
-    const configResponse = await sendToExtension<{ config: ToolAutoExecConfig }>('tools.getAutoExecConfig', {})
+    const configResponse = await sendToExtension<{ config: ToolAutoExecConfig }>(MESSAGE_NAMES['tools.getAutoExecConfig'], {})
     if (configResponse?.config) {
       autoExecConfig.value = configResponse.config
     }
@@ -134,7 +135,7 @@ async function toggleAutoExec(toolName: string, autoExec: boolean) {
   savingTools.value.add(toolName)
   
   try {
-    await sendToExtension('tools.setToolAutoExec', {
+    await sendToExtension(MESSAGE_NAMES['tools.setToolAutoExec'], {
       toolName,
       autoExec
     })

@@ -1,7 +1,7 @@
 import { shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, nextTick, watch } from 'vue'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect } from 'vitest'
 import type { Message } from '../../types'
 import MessageItem from '../../components/message/MessageItem.vue'
 import { useChatStore } from '../../stores/chatStore'
@@ -71,7 +71,7 @@ describe('MessageItem streaming render exclusivity', () => {
     document.body.innerHTML = ''
   })
 
-  it('renders completed parts once without also rendering the content fallback', () => {
+  test('renders completed parts once without also rendering the content fallback', () => {
     const wrapper = mountMessage({
       id: 'answer-message',
       role: 'assistant',
@@ -87,7 +87,7 @@ describe('MessageItem streaming render exclusivity', () => {
     wrapper.unmount()
   })
 
-  it('keeps the previous text visible while a function call is the current tail', async () => {
+  test('keeps the previous text visible while a function call is the current tail', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const chatStore = useChatStore()
@@ -132,7 +132,7 @@ describe('MessageItem streaming render exclusivity', () => {
     wrapper.unmount()
   })
 
-  it('renders a complete table prefix before the stream ends and keeps only the partial row in CharFlow', async () => {
+  test('renders a complete table prefix before the stream ends and keeps only the partial row in CharFlow', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const chatStore = useChatStore()
@@ -170,7 +170,7 @@ describe('MessageItem streaming render exclusivity', () => {
     wrapper.unmount()
   })
 
-  it('re-registers the reused text host when the active partKey changes after a tool call', async () => {
+  test('re-registers the reused text host when the active partKey changes after a tool call', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const chatStore = useChatStore()
@@ -210,7 +210,7 @@ describe('MessageItem streaming render exclusivity', () => {
     wrapper.unmount()
   })
 
-  it('marks the active thought tail for CharFlow instead of mounting the text tail host', () => {
+  test('marks the active thought tail for CharFlow instead of mounting the text tail host', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const chatStore = useChatStore()

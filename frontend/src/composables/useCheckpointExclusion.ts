@@ -10,6 +10,7 @@
  * 依赖注入：config（reactive 整包配置）、updateConfigField（保存链路），均由 useCheckpointConfig 提供
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { previewExclusions, type ExclusionPreviewResult } from '@/stores/chat/checkpointActions'
@@ -36,7 +37,7 @@ export function useCheckpointExclusion(
   async function loadExclusionProfiles() {
     try {
       // 加载默认排除类别元数据
-      const profilesResponse = await sendToExtension<{ profiles: Array<{ id: string; patterns: string[]; defaultEnabled: boolean }> }>('checkpoint.getExclusionProfiles', {})
+      const profilesResponse = await sendToExtension<{ profiles: Array<{ id: string; patterns: string[]; defaultEnabled: boolean }> }>(MESSAGE_NAMES['checkpoint.getExclusionProfiles'], {})
       if (profilesResponse?.profiles) {
         exclusionProfileMeta.value = profilesResponse.profiles
       }

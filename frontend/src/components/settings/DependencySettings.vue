@@ -98,6 +98,7 @@
 </template>
 
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { sendToExtension } from '../../utils/vscode';
 import { TOOL_DEPENDENCIES } from '../../composables/useDependency';
@@ -232,7 +233,7 @@ const progressIcon = computed(() => {
 // 加载依赖列表
 async function loadDependencies() {
   try {
-    const result = await sendToExtension<{ dependencies: DependencyInfo[] }>('dependencies.list', {});
+    const result = await sendToExtension<{ dependencies: DependencyInfo[] }>(MESSAGE_NAMES['dependencies.list'], {});
     dependencies.value = result.dependencies || [];
   } catch (error) {
     console.error('Failed to load dependencies:', error);
@@ -242,7 +243,7 @@ async function loadDependencies() {
 // 获取安装路径
 async function getInstallPath() {
   try {
-    const result = await sendToExtension<{ path: string }>('dependencies.getInstallPath', {});
+    const result = await sendToExtension<{ path: string }>(MESSAGE_NAMES['dependencies.getInstallPath'], {});
     installPath.value = result.path || '';
   } catch (error) {
     console.error('Failed to get install path:', error);
@@ -255,7 +256,7 @@ async function installDependency(name: string) {
   progressMessage.value = '';
   
   try {
-    const result = await sendToExtension<{ success: boolean }>('dependencies.install', { name });
+    const result = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES['dependencies.install'], { name });
     
     if (result.success) {
       progressType.value = 'success';
@@ -280,7 +281,7 @@ async function uninstallDependency(name: string) {
   progressMessage.value = '';
   
   try {
-    const result = await sendToExtension<{ success: boolean }>('dependencies.uninstall', { name });
+    const result = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES['dependencies.uninstall'], { name });
     
     if (result.success) {
       progressType.value = 'success';
@@ -324,7 +325,7 @@ function handleProgressEvent(event: any) {
 // 消息处理器
 function handleMessage(event: MessageEvent) {
   const message = event.data;
-  if (message.type === 'dependencyProgress') {
+  if (message.type === 'command' && message.command === 'dependencyProgress') {
     handleProgressEvent(message.data);
   }
 }

@@ -6,13 +6,13 @@
  *      独立取消——父轮 abortSignal 已中止时后台任务仍启动，不被连带取消。
  */
 
-import { getSubAgentsTool } from '../../tools/subagents/subagents';
+import { getSubAgentsTool } from '../../tools/subagents';
 import { subAgentRegistry } from '../../tools/subagents/registry';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
+import { subAgentRunEventBus } from '../../tools/subagents';
 import { createDefaultExecutor, getSubAgentExecutorContext, getRunAllowedTools } from '../../tools/subagents/executor';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { TaskManager } from '../../tools/taskManager';
-import type { SubAgentConfig } from '../../tools/subagents/types';
+import type { SubAgentConfig } from '../../tools/subagents';
 
 jest.mock('../../tools/subagents/registry', () => ({
     subAgentRegistry: {
@@ -82,14 +82,14 @@ describe('SubAgents 工具后台分支', () => {
         (subAgentRegistry.getAllConfigs as jest.Mock).mockReturnValue([TEST_CONFIG]);
     });
 
-    it('工具声明暴露 background 参数', () => {
+    test('工具声明暴露 background 参数', () => {
         const decl = getSubAgentsTool().declaration as any;
         expect(decl.parameters.properties.background).toBeDefined();
         expect(decl.parameters.properties.background.type).toBe('boolean');
         expect(decl.description).toContain('background: true');
     });
 
-    it('后台调用立即返回 stub，不等待 executor，并注册 background_subagent 任务', async () => {
+    test('后台调用立即返回 stub，不等待 executor，并注册 background_subagent 任务', async () => {
         let resolveExecutor: (v: unknown) => void = () => { };
         const fakeExecutor = jest.fn(() => new Promise(r => { resolveExecutor = r; }));
         (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
@@ -133,7 +133,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.unregisterTask).toHaveBeenCalledTimes(1);
     });
 
-    it('executor 成功后注销任务并携带完整结果载荷（含 toolsUsed）', async () => {
+    test('executor 成功后注销任务并携带完整结果载荷（含 toolsUsed）', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: true,
             response: 'final report body',
@@ -167,7 +167,7 @@ describe('SubAgents 工具后台分支', () => {
         );
     });
 
-    it('executor 失败时注销为 error 并携带错误信息', async () => {
+    test('executor 失败时注销为 error 并携带错误信息', async () => {
         const fakeExecutor = jest.fn(() => Promise.reject(new Error('boom')));
         (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
 
@@ -185,7 +185,7 @@ describe('SubAgents 工具后台分支', () => {
         );
     });
 
-    it('executor 被取消时注销为 cancelled', async () => {
+    test('executor 被取消时注销为 cancelled', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: false,
             cancelled: true,
@@ -206,7 +206,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.unregisterTask).toHaveBeenCalledWith('bgagent_test_1', 'cancelled', expect.any(Object));
     });
 
-    it('父轮 abortSignal 已中止时后台任务仍启动（独立取消，不被连带取消）', async () => {
+    test('父轮 abortSignal 已中止时后台任务仍启动（独立取消，不被连带取消）', async () => {
         const fakeExecutor = jest.fn(() => new Promise(() => { }));
         (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
         const aborted = new AbortController();
@@ -224,7 +224,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(fakeExecutor).toHaveBeenCalledTimes(1);
     });
 
-    it('前台模式 + 父 signal 已中止时仍返回 cancelled（回归：不改变现有行为）', async () => {
+    test('前台模式 + 父 signal 已中止时仍返回 cancelled（回归：不改变现有行为）', async () => {
         const aborted = new AbortController();
         aborted.abort();
 
@@ -239,7 +239,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(TaskManager.registerTask).not.toHaveBeenCalled();
     });
 
-    it('前台模式 executor 运行后被取消时返回 cancelled 并携带工具使用信息（MED-1）', async () => {
+    test('前台模式 executor 运行后被取消时返回 cancelled 并携带工具使用信息（MED-1）', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: false,
             cancelled: true,
@@ -267,7 +267,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(result.data.partialResponse).toBe('部分分析结果');
     });
 
-    it('默认 background 缺省为前台行为（不注册任务、正常 await executor）', async () => {
+    test('默认 background 缺省为前台行为（不注册任务、正常 await executor）', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: true,
             response: 'done',
@@ -290,7 +290,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(result.data.background).toBeUndefined();
     });
 
-    it('前台成功返回时 data 携带 toolsUsed 工具名列表（幻觉检测）', async () => {
+    test('前台成功返回时 data 携带 toolsUsed 工具名列表（幻觉检测）', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: true,
             response: 'done',
@@ -317,7 +317,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(result.data.steps).toBe(2);
     });
 
-    it('前台成功返回且子代理未调用任何工具时 toolsUsed 为空数组', async () => {
+    test('前台成功返回且子代理未调用任何工具时 toolsUsed 为空数组', async () => {
         const fakeExecutor = jest.fn(() => Promise.resolve({
             success: true,
             response: '完整分析……',
@@ -341,7 +341,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(result.data.steps).toBe(0);
     });
 
-    it('显式注册的自定义 executor 被正式调用路径使用并收到会话上下文（F-08）', async () => {
+    test('显式注册的自定义 executor 被正式调用路径使用并收到会话上下文（F-08）', async () => {
         const customExecutor = jest.fn(async (request: any) => ({
             success: true,
             response: 'custom result',
@@ -368,7 +368,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(requestArg.agentType).toBe('tester');
     });
 
-    it('续跑时沿用旧 run 的 agent 身份（忽略本次传入的 agentName），以旧身份解析配置', async () => {
+    test('续跑时沿用旧 run 的 agent 身份（忽略本次传入的 agentName），以旧身份解析配置', async () => {
         // 旧 run 属于静态注册的 'Test Agent'（tester 类型）
         subAgentRunEventBus.createRun('cont_ident_old', 'Test Agent', { agentType: 'tester', prompt: 'old' }, {
             conversationId: 'conv_1',
@@ -397,7 +397,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(result.data.agentName).toBe('Test Agent');
     });
 
-    it('续跑目标旧 agent 已不存在时拒绝，不派发 executor', async () => {
+    test('续跑目标旧 agent 已不存在时拒绝，不派发 executor', async () => {
         // 旧 run 属于一个已被删除的 agent（registry 中查不到）
         subAgentRunEventBus.createRun('cont_ghost_old', 'Ghost Agent', { agentType: 'ghost', prompt: 'old' }, {
             conversationId: 'conv_1'
@@ -418,7 +418,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(createDefaultExecutor).not.toHaveBeenCalled();
     });
 
-    it('H-1：嵌套派发 General Worker 时，request 携带继承自父 run 的工具限制（inheritedToolFilter）', async () => {
+    test('H-1：嵌套派发 General Worker 时，request 携带继承自父 run 的工具限制（inheritedToolFilter）', async () => {
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_gw', cancelled: false
         }));
@@ -452,7 +452,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(request.conversationId).toBe('conv_1');
     });
 
-    it('H-1：主模型直接派发（无 mailboxRunId）时不携带 inheritedToolFilter', async () => {
+    test('H-1：主模型直接派发（无 mailboxRunId）时不携带 inheritedToolFilter', async () => {
         const fakeExecutor = jest.fn(async (_request: any) => ({
             success: true, response: 'ok', steps: 1, runId: 'subagent_run_direct', cancelled: false
         }));
@@ -471,7 +471,7 @@ describe('SubAgents 工具后台分支', () => {
         expect(getRunAllowedTools).not.toHaveBeenCalled();
     });
 
-    it('H-1：blacklist 预设（deep-researcher）在工具声明描述中不暴露 subagents（无法派发嵌套）', () => {
+    test('H-1：blacklist 预设（deep-researcher）在工具声明描述中不暴露 subagents（无法派发嵌套）', () => {
         const blacklistConfig: SubAgentConfig = {
             ...TEST_CONFIG,
             type: 'deep-researcher',

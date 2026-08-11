@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomScrollbar } from '../common'
@@ -104,7 +105,7 @@ async function loadModels() {
   selectedModelIds.value.clear()
   
   try {
-    const models = await sendToExtension<ModelInfo[]>('models.getModels', {
+    const models = await sendToExtension<ModelInfo[]>(MESSAGE_NAMES['models.getModels'], {
       configId: props.configId
     })
     availableModels.value = models || []

@@ -9,7 +9,7 @@
  */
 
 import { HistorySegmentCache, HISTORY_SEGMENT_CACHE_DEFAULT_MAX } from '../../modules/conversation/history/HistorySegmentCache';
-import type { Content } from '../../modules/conversation/types';
+import type { Content } from '../../modules/conversation';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
 describe('HistorySegmentCache', () => {

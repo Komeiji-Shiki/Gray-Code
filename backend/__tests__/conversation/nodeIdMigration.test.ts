@@ -13,9 +13,9 @@
  */
 
 import { ConversationManager, deterministicNodeId } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { StorageHistoryPage, StorageReadResult } from '../../modules/conversation/storage';
-import type { Content, ConversationHistory } from '../../modules/conversation/types';
+import type { Content, ConversationHistory } from '../../modules/conversation';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 典型旧历史：所有消息都没有 id/parentId */
@@ -54,7 +54,7 @@ class FailingSaveStorageAdapter extends MemoryStorageAdapter {
 }
 
 describe('deterministicNodeId（BR-02 确定性生成）', () => {
-    it('同一 (namespace, seed) 产出同一 ID，不同 seed 产出不同 ID', () => {
+    test('同一 (namespace, seed) 产出同一 ID，不同 seed 产出不同 ID', () => {
         const a1 = deterministicNodeId('conv-1', 'user|0|1000');
         const a2 = deterministicNodeId('conv-1', 'user|0|1000');
         expect(a1).toBe(a2);
@@ -67,7 +67,7 @@ describe('deterministicNodeId（BR-02 确定性生成）', () => {
 });
 
 describe('写入路径统一补 ID（BR-01）', () => {
-    it('addMessage 生成 id 且首条 parentId 为 null，追加链式 parentId', async () => {
+    test('addMessage 生成 id 且首条 parentId 为 null，追加链式 parentId', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-w1', 'W1');
@@ -83,7 +83,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
         expect(history[1].parentId).toBe(history[0].id);
     });
 
-    it('addContent / addBatch 同样补 id + 线性 parentId', async () => {
+    test('addContent / addBatch 同样补 id + 线性 parentId', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-w2', 'W2');
@@ -100,7 +100,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
         expect(history[2].parentId).toBe(history[1].id);
     });
 
-    it('addContent functionResponse 补 id 且 parentId 指向工具调用消息', async () => {
+    test('addContent functionResponse 补 id 且 parentId 指向工具调用消息', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-w3', 'W3');
@@ -120,7 +120,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
         expect(fr.parentId).toBe(history[0].id);
     });
 
-    it('insertContent / insertMessage 补 id 且 parentId 指向插入位置前一条', async () => {
+    test('insertContent / insertMessage 补 id 且 parentId 指向插入位置前一条', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-w4', 'W4');
@@ -139,7 +139,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
         expect(history[3].parentId).toBe(history[2].id);
     });
 
-    it('settleFunctionResponses 新追加的 functionResponse 补 id + parentId', async () => {
+    test('settleFunctionResponses 新追加的 functionResponse 补 id + parentId', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-w5', 'W5');
@@ -158,7 +158,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
         expect(history[1].parentId).toBe(history[0].id);
     });
 
-    it('normalizeHistoryForDisplay 插入的 rejected functionResponse 补 id + parentId', async () => {
+    test('normalizeHistoryForDisplay 插入的 rejected functionResponse 补 id + parentId', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-w6', [
@@ -182,7 +182,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
         expect(persistedFr!.id).toBe(inserted!.id);
     });
 
-    it('rejectToolCalls 插入的 functionResponse 补 id + parentId', async () => {
+    test('rejectToolCalls 插入的 functionResponse 补 id + parentId', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-w7', [
@@ -204,7 +204,7 @@ describe('写入路径统一补 ID（BR-01）', () => {
 });
 
 describe('读取路径透出 id（BR-01）', () => {
-    it('getMessages 返回的每条消息带 id', async () => {
+    test('getMessages 返回的每条消息带 id', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-r1', 'R1');
@@ -217,7 +217,7 @@ describe('读取路径透出 id（BR-01）', () => {
         expect(messages[1].parentId).toBe(messages[0].id);
     });
 
-    it('getMessagesPaged 返回的每条消息带 id（内存适配器）', async () => {
+    test('getMessagesPaged 返回的每条消息带 id（内存适配器）', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-r2', 'R2');
@@ -228,7 +228,7 @@ describe('读取路径透出 id（BR-01）', () => {
         expect(page.messages[1].parentId).toBe(page.messages[0].id);
     });
 
-    it('getMessagesPaged 返回的每条消息带 id（分段存储快路径）', async () => {
+    test('getMessagesPaged 返回的每条消息带 id（分段存储快路径）', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-r3', 'R3');
@@ -240,7 +240,7 @@ describe('读取路径透出 id（BR-01）', () => {
 });
 
 describe('formatHistoryForAPI 不发送 id/parentId（BR-01）', () => {
-    it('API 历史中不包含 id/parentId，常规字段保留', async () => {
+    test('API 历史中不包含 id/parentId，常规字段保留', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await manager.createConversation('conv-api', 'API');
@@ -257,7 +257,7 @@ describe('formatHistoryForAPI 不发送 id/parentId（BR-01）', () => {
         expect(forApi[0].parts[0]).toEqual({ text: 'hello' });
     });
 
-    it('getHistoryForAPIFrom 同样不包含 id/parentId', () => {
+    test('getHistoryForAPIFrom 同样不包含 id/parentId', () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         const withIds: ConversationHistory = [
@@ -274,7 +274,7 @@ describe('formatHistoryForAPI 不发送 id/parentId（BR-01）', () => {
 });
 
 describe('旧历史惰性补 ID（BR-02）', () => {
-    it('getMessagesPaged 首次加载触发迁移：确定性 ID + 线性 parentId，total 不变', async () => {
+    test('getMessagesPaged 首次加载触发迁移：确定性 ID + 线性 parentId，total 不变', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m1', legacyHistory());
@@ -293,7 +293,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(persisted!.every(m => typeof m.id === 'string' && m.id.length > 0)).toBe(true);
     });
 
-    it('幂等硬要求：同一历史多次迁移产出同一 ID 集合', async () => {
+    test('幂等硬要求：同一历史多次迁移产出同一 ID 集合', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m2', legacyHistory());
@@ -312,7 +312,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(migrated2!.map(m => m.parentId)).toEqual(migrated1!.map(m => m.parentId));
     });
 
-    it('迁移后不再重写：第二次读取不调用 saveHistory（自判定幂等）', async () => {
+    test('迁移后不再重写：第二次读取不调用 saveHistory（自判定幂等）', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m3', legacyHistory());
@@ -328,7 +328,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(saveSpy).not.toHaveBeenCalled();
     });
 
-    it('getHistory / getMessages 入口同样触发惰性迁移', async () => {
+    test('getHistory / getMessages 入口同样触发惰性迁移', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m4', legacyHistory());
@@ -345,7 +345,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(messages[2].parentId).toBe(messages[1].id);
     });
 
-    it('部分迁移的历史：已有 id 保留、缺 id 确定性补齐、parentId 统一补线性链', async () => {
+    test('部分迁移的历史：已有 id 保留、缺 id 确定性补齐、parentId 统一补线性链', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m6', [
@@ -369,7 +369,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(again).toBe(false);
     });
 
-    it('分段存储快路径（format=paged）也触发迁移', async () => {
+    test('分段存储快路径（format=paged）也触发迁移', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m7', legacyHistory());
@@ -380,7 +380,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(page.messages[1].parentId).toBe(page.messages[0].id);
     });
 
-    it('悬空工具调用 + 缺 id 并存：先补 functionResponse（带 id），再迁移', async () => {
+    test('悬空工具调用 + 缺 id 并存：先补 functionResponse（带 id），再迁移', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m8', [
@@ -400,7 +400,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(inserted.parentId).toBe(page.messages[1].id);
     });
 
-    it('迁移失败抛错且不留下部分迁移状态（原子性/回滚）', async () => {
+    test('迁移失败抛错且不留下部分迁移状态（原子性/回滚）', async () => {
         const storage = new FailingSaveStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-m9', legacyHistory());
@@ -414,7 +414,7 @@ describe('旧历史惰性补 ID（BR-02）', () => {
         expect(persisted!.every(m => m.id === undefined)).toBe(true);
     });
 
-    it('createBranchConversation 先迁移源历史，分支复制内容带 id', async () => {
+    test('createBranchConversation 先迁移源历史，分支复制内容带 id', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv-src', legacyHistory());

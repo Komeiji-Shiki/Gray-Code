@@ -91,7 +91,7 @@ describe('StdioMcpClient', () => {
 
     // ==================== spawn 失败立即失败（不再挂满超时） ====================
 
-    it('should reject connect immediately when spawn emits error (ENOENT)', async () => {
+    test('should reject connect immediately when spawn emits error (ENOENT)', async () => {
         const fake = createFakeProcess();
         spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
 
@@ -108,7 +108,7 @@ describe('StdioMcpClient', () => {
         expect(Date.now() - startedAt).toBeLessThan(5000);
     });
 
-    it('should reject connect when stdin.write throws synchronously (dead process)', async () => {
+    test('should reject connect when stdin.write throws synchronously (dead process)', async () => {
         const fake = createFakeProcess({
             stdinWrite: () => {
                 throw new Error('write after destroy');
@@ -122,7 +122,7 @@ describe('StdioMcpClient', () => {
         await expect(client.connect()).rejects.toThrow('write after destroy');
     });
 
-    it('should reject pending requests when the process exits', async () => {
+    test('should reject pending requests when the process exits', async () => {
         const fake = createFakeProcess();
         spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
 
@@ -140,7 +140,7 @@ describe('StdioMcpClient', () => {
 
     // ==================== 安全进程启动 ====================
 
-    it('should preserve executable argv boundaries with shell disabled', async () => {
+    test('should preserve executable argv boundaries with shell disabled', async () => {
         const fake = createFakeProcessWithResponder();
         spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
         const args = [
@@ -195,7 +195,7 @@ describe('StdioMcpClient', () => {
         }
     );
 
-    (process.platform === 'win32' ? it.each(['cmd', 'bat'] as const) : it.skip.each(['cmd', 'bat'] as const))(
+    (process.platform === 'win32' ? test.each(['cmd', 'bat'] as const) : test.skip.each(['cmd', 'bat'] as const))(
         'should preserve real argv semantics through a launcher with spaces (.%s)',
         async (extension) => {
             const script = `
@@ -243,7 +243,7 @@ describe('StdioMcpClient', () => {
 
     // ==================== stderr 64KB 上限 ====================
 
-    it('should cap stderr output at 64KB and mark truncated', async () => {
+    test('should cap stderr output at 64KB and mark truncated', async () => {
         const script = `
             process.stderr.write('A'.repeat(200 * 1024));
             setInterval(() => { process.stderr.write('B'.repeat(1024)); }, 5);
@@ -293,7 +293,7 @@ describe('StdioMcpClient', () => {
 
     // ==================== 正常 connect（真实子进程） ====================
 
-    it('should connect, initialize and list tools with a real child process', async () => {
+    test('should connect, initialize and list tools with a real child process', async () => {
         const script = `
             process.stdin.setEncoding('utf8');
             let buf = '';
@@ -344,7 +344,7 @@ describe('StdioMcpClient', () => {
 
     // ==================== 外部 abort 中止 ====================
 
-    it('should reject the pending request and clean up on external abort', async () => {
+    test('should reject the pending request and clean up on external abort', async () => {
         // tools/call 不响应，让请求保持 pending 直到外部中止
         const fake = createFakeProcessWithResponder(false);
         spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
@@ -373,7 +373,7 @@ describe('StdioMcpClient', () => {
         expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
     });
 
-    it('should reject immediately without writing to stdin when the signal is already aborted', async () => {
+    test('should reject immediately without writing to stdin when the signal is already aborted', async () => {
         const fake = createFakeProcessWithResponder();
         spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
 
@@ -394,7 +394,7 @@ describe('StdioMcpClient', () => {
         expect((client as any).pendingRequests.size).toBe(0);
     });
 
-    it('should remove abort/exit listeners after a successful resolve (no leak)', async () => {
+    test('should remove abort/exit listeners after a successful resolve (no leak)', async () => {
         const fake = createFakeProcessWithResponder();
         spawnSpy = jest.spyOn(childProcess, 'spawn').mockReturnValue(fake as any);
 

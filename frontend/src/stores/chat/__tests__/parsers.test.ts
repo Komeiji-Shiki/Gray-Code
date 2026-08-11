@@ -4,7 +4,7 @@
  * content.id → Message.id（不再每次加载重新生成）；无 id 时回退 generateId（向后兼容）；
  * 流式替换路径的显式 id 参数优先级最高。
  */
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import { contentToMessage, contentToMessageEnhanced, isOnlyFunctionResponse } from '../parsers'
 import type { Content } from '../../../types'
 
@@ -17,20 +17,20 @@ function content(partial: Partial<Content> & { id?: string }): Content {
   } as Content
 }
 
-describe('parsers - BR-01 content.id 透传', () => {
-  it('contentToMessage 使用 content.id 作为 Message.id（不再每次加载重新生成）', () => {
+describe('parsers content.id 透传', () => {
+  test('contentToMessage 使用 content.id 作为 Message.id（不再每次加载重新生成）', () => {
     const msg = contentToMessage(content({ role: 'model', id: 'node-123' }))
     expect(msg.id).toBe('node-123')
     expect(msg.backendIndex).toBeUndefined()
   })
 
-  it('contentToMessageEnhanced 使用 content.id', () => {
+  test('contentToMessageEnhanced 使用 content.id', () => {
     const msg = contentToMessageEnhanced(content({ id: 'node-456', index: 2 }))
     expect(msg.id).toBe('node-456')
     expect(msg.backendIndex).toBe(2)
   })
 
-  it('显式 id 参数优先于 content.id（流式替换路径保持消息身份）', () => {
+  test('显式 id 参数优先于 content.id（流式替换路径保持消息身份）', () => {
     const msg = contentToMessage(content({ role: 'model', id: 'node-1' }), 'stream-msg-1')
     expect(msg.id).toBe('stream-msg-1')
 
@@ -38,7 +38,7 @@ describe('parsers - BR-01 content.id 透传', () => {
     expect(enhanced.id).toBe('stream-msg-2')
   })
 
-  it('无 content.id 时回退 generateId（向后兼容，两次加载生成不同 id）', () => {
+  test('无 content.id 时回退 generateId（向后兼容，两次加载生成不同 id）', () => {
     const a = contentToMessage(content({ role: 'model' }))
     const b = contentToMessage(content({ role: 'model' }))
     expect(a.id).toBeTruthy()
@@ -49,19 +49,19 @@ describe('parsers - BR-01 content.id 透传', () => {
     expect(enhanced.id).toBeTruthy()
   })
 
-  it('后台任务来源在普通与增强转换中都被保留', () => {
+  test('后台任务来源在普通与增强转换中都被保留', () => {
     const background = content({ source: 'background_task' })
     expect(contentToMessage(background).source).toBe('background_task')
     expect(contentToMessageEnhanced(background).source).toBe('background_task')
   })
 
-  it('空字符串 id 视为缺失，回退 generateId', () => {
+  test('空字符串 id 视为缺失，回退 generateId', () => {
     const msg = contentToMessage(content({ role: 'model', id: '' }))
     expect(msg.id).toBeTruthy()
     expect(msg.id).not.toBe('')
   })
 
-  it('透传 content.parentId（首条消息为 null，前端据此识别根节点）', () => {
+  test('透传 content.parentId（首条消息为 null，前端据此识别根节点）', () => {
     const root = contentToMessage(content({ role: 'user', parentId: null }))
     expect(root.parentId).toBeNull()
 
@@ -76,7 +76,7 @@ describe('parsers - BR-01 content.id 透传', () => {
 
 // 以下用例由 test/unit/stores/chat/parsers.test.ts 归位合并（断言/用例零改动）
 describe('chat parsers function response visibility', () => {
-  it('does not treat empty parts as a pure functionResponse message', () => {
+  test('does not treat empty parts as a pure functionResponse message', () => {
     const content: Content = {
       role: 'model',
       parts: []
@@ -86,7 +86,7 @@ describe('chat parsers function response visibility', () => {
     expect(contentToMessageEnhanced(content).isFunctionResponse).toBe(false)
   })
 
-  it('treats non-empty pure functionResponse parts as hidden function responses', () => {
+  test('treats non-empty pure functionResponse parts as hidden function responses', () => {
     const content: Content = {
       role: 'model',
       parts: [
@@ -104,7 +104,7 @@ describe('chat parsers function response visibility', () => {
     expect(contentToMessageEnhanced(content).isFunctionResponse).toBe(true)
   })
 
-  it('keeps mixed text and functionResponse parts visible', () => {
+  test('keeps mixed text and functionResponse parts visible', () => {
     const content: Content = {
       role: 'model',
       parts: [
@@ -123,7 +123,7 @@ describe('chat parsers function response visibility', () => {
     expect(contentToMessageEnhanced(content).isFunctionResponse).toBe(false)
   })
 
-  it('still respects an explicit backend isFunctionResponse flag', () => {
+  test('still respects an explicit backend isFunctionResponse flag', () => {
     const content: Content = {
       role: 'model',
       parts: [],

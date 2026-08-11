@@ -22,43 +22,43 @@ const BASE_TOKENS = 100000;
 const FALLBACK_BUDGET = resolveKeepRecentTokenBudget(DEFAULT_KEEP_RECENT_TOKENS, BASE_TOKENS);
 
 describe('resolveKeepRecentTokenBudget', () => {
-    it('内置默认值 DEFAULT_KEEP_RECENT_TOKENS 恒可解析且非退化', () => {
+    test('内置默认值 DEFAULT_KEEP_RECENT_TOKENS 恒可解析且非退化', () => {
         expect(FALLBACK_BUDGET).toBeGreaterThan(0);
         expect(FALLBACK_BUDGET).toBeLessThanOrEqual(BASE_TOKENS);
     });
 
-    it('未配置时回落到内置默认值', () => {
+    test('未配置时回落到内置默认值', () => {
         expect(resolveKeepRecentTokenBudget(undefined, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 
-    it('正数直接使用（向下取整）', () => {
+    test('正数直接使用（向下取整）', () => {
         expect(resolveKeepRecentTokenBudget(30000, BASE_TOKENS)).toBe(30000);
         expect(resolveKeepRecentTokenBudget(1234.7, BASE_TOKENS)).toBe(1234);
     });
 
-    it('非法数字回落默认', () => {
+    test('非法数字回落默认', () => {
         expect(resolveKeepRecentTokenBudget(0, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
         expect(resolveKeepRecentTokenBudget(-100, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
         expect(resolveKeepRecentTokenBudget(Number.NaN, BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 
-    it('百分比字符串按活跃历史总量换算（50% = 截断一半）', () => {
+    test('百分比字符串按活跃历史总量换算（50% = 截断一半）', () => {
         expect(resolveKeepRecentTokenBudget('25%', BASE_TOKENS)).toBe(25000);
         expect(resolveKeepRecentTokenBudget('50%', BASE_TOKENS)).toBe(50000);
         expect(resolveKeepRecentTokenBudget(' 10% ', BASE_TOKENS)).toBe(10000);
     });
 
-    it('非法百分比回落默认', () => {
+    test('非法百分比回落默认', () => {
         expect(resolveKeepRecentTokenBudget('0%', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
         expect(resolveKeepRecentTokenBudget('150%', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
         expect(resolveKeepRecentTokenBudget('abc%', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
     });
 
-    it('数字字符串作为绝对 token 数', () => {
+    test('数字字符串作为绝对 token 数', () => {
         expect(resolveKeepRecentTokenBudget('30000', BASE_TOKENS)).toBe(30000);
     });
 
-    it('空串与无法解析的字符串回落默认', () => {
+    test('空串与无法解析的字符串回落默认', () => {
         expect(resolveKeepRecentTokenBudget('', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
         expect(resolveKeepRecentTokenBudget('   ', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
         expect(resolveKeepRecentTokenBudget('abc', BASE_TOKENS)).toBe(FALLBACK_BUDGET);
@@ -66,7 +66,7 @@ describe('resolveKeepRecentTokenBudget', () => {
 });
 
 describe('planSummarizeRounds', () => {
-    it('没有任何轮时返回 no_rounds', () => {
+    test('没有任何轮时返回 no_rounds', () => {
         expect(planSummarizeRounds({
             roundTokens: [],
             keepBudgetTokens: 10000,
@@ -75,7 +75,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'none', reason: 'no_rounds' });
     });
 
-    it('常规场景：按预算从后往前保留，超出预算的更早轮次被总结', () => {
+    test('常规场景：按预算从后往前保留，超出预算的更早轮次被总结', () => {
         // 尾部累计：1000 -> 2000 -> 3000（超出 2500 停止），保留最后 2 轮
         expect(planSummarizeRounds({
             roundTokens: [1000, 1000, 1000, 1000],
@@ -85,7 +85,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'rounds', keepFromRound: 2 });
     });
 
-    it('预算更大时保留更多轮', () => {
+    test('预算更大时保留更多轮', () => {
         expect(planSummarizeRounds({
             roundTokens: [1000, 1000, 1000, 1000],
             keepBudgetTokens: 3500,
@@ -94,7 +94,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'rounds', keepFromRound: 1 });
     });
 
-    it('minKeepRounds 作为下限保护可以扩大保留范围（优先于预算）', () => {
+    test('minKeepRounds 作为下限保护可以扩大保留范围（优先于预算）', () => {
         // 预算只够留最后 1 轮，但 minKeep=3 强制保留最近 3 轮
         expect(planSummarizeRounds({
             roundTokens: [1000, 1000, 1000, 1000],
@@ -104,7 +104,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'rounds', keepFromRound: 1 });
     });
 
-    it('肥尾轮 + minKeep 挡住总结：auto 防死锁回退到纯预算结果', () => {
+    test('肥尾轮 + minKeep 挡住总结：auto 防死锁回退到纯预算结果', () => {
         // 预算只装得下最后一轮，minKeep=2 会挡住任何总结
         expect(planSummarizeRounds({
             roundTokens: [30000, 30000],
@@ -114,7 +114,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'rounds', keepFromRound: 1 });
     });
 
-    it('肥尾轮 + minKeep 挡住总结：manual 尊重配置返回轮数不足', () => {
+    test('肥尾轮 + minKeep 挡住总结：manual 尊重配置返回轮数不足', () => {
         expect(planSummarizeRounds({
             roundTokens: [30000, 30000],
             keepBudgetTokens: 2000,
@@ -123,7 +123,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'none', reason: 'not_enough_rounds' });
     });
 
-    it('预算装得下全部轮且有可总结轮：退化为旧行为（保留 minKeep 轮）', () => {
+    test('预算装得下全部轮且有可总结轮：退化为旧行为（保留 minKeep 轮）', () => {
         const expected = { type: 'rounds', keepFromRound: 1 };
         expect(planSummarizeRounds({
             roundTokens: [100, 100, 100],
@@ -139,7 +139,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual(expected);
     });
 
-    it('预算装得下全部轮且轮数不足 minKeep：auto 只保留当前轮，manual 报错', () => {
+    test('预算装得下全部轮且轮数不足 minKeep：auto 只保留当前轮，manual 报错', () => {
         expect(planSummarizeRounds({
             roundTokens: [100, 100],
             keepBudgetTokens: 10000,
@@ -154,7 +154,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'none', reason: 'not_enough_rounds' });
     });
 
-    it('单个小轮：没有可总结内容', () => {
+    test('单个小轮：没有可总结内容', () => {
         expect(planSummarizeRounds({
             roundTokens: [100],
             keepBudgetTokens: 10000,
@@ -163,7 +163,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'none', reason: 'not_enough_rounds' });
     });
 
-    it('单个超大轮：请求轮内截断', () => {
+    test('单个超大轮：请求轮内截断', () => {
         expect(planSummarizeRounds({
             roundTokens: [50000],
             keepBudgetTokens: 10000,
@@ -178,7 +178,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'intra_round' });
     });
 
-    it('minKeepRounds 非法值按 1 处理', () => {
+    test('minKeepRounds 非法值按 1 处理', () => {
         expect(planSummarizeRounds({
             roundTokens: [1000, 1000],
             keepBudgetTokens: 5000,
@@ -201,7 +201,7 @@ describe('planIntraRoundSplit', () => {
         parts: [{ functionResponse: { name: 'tool', response: {}, id } }]
     });
 
-    it('典型工具轮：选择最早的满足预算的 model 切点（保留最多）', () => {
+    test('典型工具轮：选择最早的满足预算的 model 切点（保留最多）', () => {
         // 索引:      0     1        2        3        4        5        6        7
         const messages = [user('q'), fc('a'), fr('a'), fc('b'), fr('b'), fc('c'), fr('c'), modelText('done')];
         const messageTokens = [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000];
@@ -211,14 +211,14 @@ describe('planIntraRoundSplit', () => {
         expect(result).toEqual({ cutIndex: 5 });
     });
 
-    it('所有候选都超预算时取最后一个切点（保留最少，防死锁）', () => {
+    test('所有候选都超预算时取最后一个切点（保留最少，防死锁）', () => {
         const messages = [user('q'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('done')];
         const messageTokens = [10000, 10000, 10000, 10000, 10000, 10000];
         const result = planIntraRoundSplit({ messages, messageTokens, keepBudgetTokens: 500 });
         expect(result).toEqual({ cutIndex: 5 });
     });
 
-    it('轮内没有 model 消息时无法截断', () => {
+    test('轮内没有 model 消息时无法截断', () => {
         const messages = [user('q'), fr('a')];
         expect(planIntraRoundSplit({
             messages,
@@ -227,7 +227,7 @@ describe('planIntraRoundSplit', () => {
         })).toBeNull();
     });
 
-    it('切点会导致孤儿 functionResponse 时向后寻找完整切点', () => {
+    test('切点会导致孤儿 functionResponse 时向后寻找完整切点', () => {
         // 异常结构：fr('a') 与其 fc('a') 之间隔了一条 model 文本
         // 索引:      0     1        2             3        4        5
         const messages = [user('q'), fc('a'), modelText('m'), fr('a'), fc('b'), fr('b')];
@@ -238,7 +238,7 @@ describe('planIntraRoundSplit', () => {
         expect(result).toEqual({ cutIndex: 4 });
     });
 
-    it('预算充足时选择最早的 model 切点（总结掉的内容最少）', () => {
+    test('预算充足时选择最早的 model 切点（总结掉的内容最少）', () => {
         const messages = [user('q'), fc('a'), fr('a'), modelText('done')];
         const messageTokens = [100, 100, 100, 100];
         const result = planIntraRoundSplit({ messages, messageTokens, keepBudgetTokens: 10000 });
@@ -259,7 +259,7 @@ describe('planSummarizeMessages', () => {
         parts: [{ functionResponse: { name: 'tool', response: {}, id } }]
     });
 
-    it('多轮历史中的肥工具轮按安全 model 边界细分，而不是整轮总结', () => {
+    test('多轮历史中的肥工具轮按安全 model 边界细分，而不是整轮总结', () => {
         const messages = [
             user('old'), modelText('old answer'),
             user('fat'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('fat done'),
@@ -280,7 +280,7 @@ describe('planSummarizeMessages', () => {
         expect(validateHistoryIntegrityForTest(messages.slice(plan!.cutIndex))).toBe(true);
     });
 
-    it('候选切点会拆散 functionCall/functionResponse 时继续寻找后续安全边界', () => {
+    test('候选切点会拆散 functionCall/functionResponse 时继续寻找后续安全边界', () => {
         const messages = [
             user('q'),
             fc('a'),
@@ -303,7 +303,7 @@ describe('planSummarizeMessages', () => {
         expect(plan).toEqual({ cutIndex: 4, boundary: 'intra_round' });
     });
 
-    it('多轮历史的当前长轮自身超预算时也允许轮内切分', () => {
+    test('多轮历史的当前长轮自身超预算时也允许轮内切分', () => {
         const messages = [
             user('old'), modelText('old answer'),
             user('current'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('done')

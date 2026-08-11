@@ -51,7 +51,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         return { manager, id };
     }
 
-    it('类型变更成功：type 更新，ID / createdAt 保持不变，updatedAt 更新', async () => {
+    test('类型变更成功：type 更新，ID / createdAt 保持不变，updatedAt 更新', async () => {
         const { manager, id } = await createGeminiManager();
         const before = await manager.getConfig(id) as any;
 
@@ -64,7 +64,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.updatedAt).toBeGreaterThanOrEqual(before.updatedAt);
     });
 
-    it('类型变更后类型特有字段重置为新类型默认值，旧类型字段不残留', async () => {
+    test('类型变更后类型特有字段重置为新类型默认值，旧类型字段不残留', async () => {
         const { manager, id } = await createGeminiManager();
 
         await manager.updateConfig(id, { type: 'anthropic' });
@@ -83,7 +83,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.models).toEqual([]);
     });
 
-    it('类型变更后跨类型通用字段保留', async () => {
+    test('类型变更后跨类型通用字段保留', async () => {
         const { manager, id } = await createGeminiManager();
 
         await manager.updateConfig(id, { type: 'openai' });
@@ -104,7 +104,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.tokenCountMethod).toBe('gemini');
     });
 
-    it('类型变更时显式传入的 updates 覆盖新类型默认值', async () => {
+    test('类型变更时显式传入的 updates 覆盖新类型默认值', async () => {
         const { manager, id } = await createGeminiManager();
 
         await manager.updateConfig(id, {
@@ -121,7 +121,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.max_output_tokens).toBe(65535);
     });
 
-    it('类型变更时自定义 URL 与 API Key 保留（无需用户重写端点/密钥）', async () => {
+    test('类型变更时自定义 URL 与 API Key 保留（无需用户重写端点/密钥）', async () => {
         const { manager, id } = await createGeminiManager();
 
         // 用户自定义端点（中转站/代理），非 gemini 默认端点
@@ -140,7 +140,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.thinkingConfig).toBeUndefined();
     });
 
-    it('openai -> openai-responses 互转：默认 URL 与选项同步切换', async () => {
+    test('openai -> openai-responses 互转：默认 URL 与选项同步切换', async () => {
         const manager = new ConfigManager(new MemoryStorageAdapter());
         const id = await manager.createConfig({
             name: 'OpenAI',
@@ -155,7 +155,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.reasoning.effort).toBe('medium');
     });
 
-    it('普通更新深合并 options，保留未更新的兄弟字段且 type 不变', async () => {
+    test('普通更新深合并 options，保留未更新的兄弟字段且 type 不变', async () => {
         const { manager, id } = await createGeminiManager();
 
         await manager.updateConfig(id, { name: '改名后', options: { stream: false } });
@@ -171,7 +171,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.thinkingConfig).toBeDefined();
     });
 
-    it('显式传相同 type 不触发重建，类型特有字段保留', async () => {
+    test('显式传相同 type 不触发重建，类型特有字段保留', async () => {
         const { manager, id } = await createGeminiManager();
 
         await manager.updateConfig(id, { type: 'gemini', name: '还是 Gemini' });
@@ -184,7 +184,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.thinkingConfig).toBeDefined();
     });
 
-    it('openai -> anthropic：openai 特有字段（deepSeekUserIdEnabled/pdfAttachmentEnabled）重置', async () => {
+    test('openai -> anthropic：openai 特有字段（deepSeekUserIdEnabled/pdfAttachmentEnabled）重置', async () => {
         const manager = new ConfigManager(new MemoryStorageAdapter());
         const id = await manager.createConfig({
             name: 'DeepSeek',
@@ -220,12 +220,12 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.optionsEnabled.thinking).toBe(false);
     });
 
-    it('配置不存在时抛错（与类型变更无关）', async () => {
+    test('配置不存在时抛错（与类型变更无关）', async () => {
         const manager = new ConfigManager(new MemoryStorageAdapter());
         await expect(manager.updateConfig('non-existent', { type: 'openai' })).rejects.toThrow();
     });
 
-    it('类型变更传非法 type 时拒绝，且原配置保持不变', async () => {
+    test('类型变更传非法 type 时拒绝，且原配置保持不变', async () => {
         const { manager, id } = await createGeminiManager();
 
         await expect(manager.updateConfig(id, { type: 'unknown-type' as any })).rejects.toThrow(
@@ -237,7 +237,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.url).toBe('https://generativelanguage.googleapis.com/v1beta');
     });
 
-    it('createConfig 传非法 type 时拒绝（导入等非 webview 来源）', async () => {
+    test('createConfig 传非法 type 时拒绝（导入等非 webview 来源）', async () => {
         const manager = new ConfigManager(new MemoryStorageAdapter());
         await expect(manager.createConfig({
             name: 'Bad',

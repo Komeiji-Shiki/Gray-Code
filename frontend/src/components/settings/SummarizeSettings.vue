@@ -4,6 +4,7 @@
  * 配置上下文总结功能
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { reactive, ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -156,11 +157,11 @@ const modelOptions = computed<SelectOption[]>(() => {
 async function loadChannels() {
   isLoadingChannels.value = true
   try {
-    const ids = await sendToExtension<string[]>('config.listConfigs', {})
+    const ids = await sendToExtension<string[]>(MESSAGE_NAMES['config.listConfigs'], {})
     const loadedChannels: ChannelConfig[] = []
     
     for (const id of ids) {
-      const config = await sendToExtension<ChannelConfig>('config.getConfig', { configId: id })
+      const config = await sendToExtension<ChannelConfig>(MESSAGE_NAMES['config.getConfig'], { configId: id })
       if (config) {
         loadedChannels.push(config)
       }
@@ -177,7 +178,7 @@ async function loadChannels() {
 // 加载配置
 async function loadConfig() {
   try {
-    const response = await sendToExtension<any>('getSummarizeConfig', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSummarizeConfig, {})
     if (response) {
       const merged = { ...response }
 
@@ -203,7 +204,7 @@ async function loadConfig() {
 // 加载内置默认配置（用于恢复按钮）
 async function loadDefaultConfig() {
   try {
-    const response = await sendToExtension<any>('getDefaultSummarizeConfig', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getDefaultSummarizeConfig, {})
     if (response) {
       defaultSummarizeConfig.value = {
         summarizePrompt:
@@ -257,7 +258,7 @@ function scheduleConfigSave() {
 // 保存到后端（快照当前配置）
 async function persistConfig() {
   try {
-    await sendToExtension('updateSummarizeConfig', {
+    await sendToExtension(MESSAGE_NAMES.updateSummarizeConfig, {
       config: { ...summarizeConfig }
     })
   } catch (error) {
@@ -273,7 +274,7 @@ async function updateChannelId(channelId: string) {
   
   // 保存到后端
   try {
-    await sendToExtension('updateSummarizeConfig', {
+    await sendToExtension(MESSAGE_NAMES.updateSummarizeConfig, {
       config: { ...summarizeConfig }
     })
   } catch (error) {
@@ -287,7 +288,7 @@ async function updateModelId(modelId: string) {
   
   // 保存到后端
   try {
-    await sendToExtension('updateSummarizeConfig', {
+    await sendToExtension(MESSAGE_NAMES.updateSummarizeConfig, {
       config: { ...summarizeConfig }
     })
   } catch (error) {

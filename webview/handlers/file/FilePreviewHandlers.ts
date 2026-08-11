@@ -6,6 +6,7 @@
  * openWorkspaceFile，以及 scheduleTempFileCleanup / TEMP_PREVIEW_TTL_MS。
  */
 
+import { MESSAGE_NAMES } from '../../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -230,8 +231,8 @@ export const openWorkspaceFile: MessageHandler = async (data, requestId, ctx) =>
  */
 export function registerFilePreviewHandlers(registry: Map<string, MessageHandler>): void {
   // 预览展示
-  registry.set('showContextContent', showContextContent);
-  registry.set('previewAttachment', previewAttachment);
-  registry.set('readWorkspaceImage', readWorkspaceImage);
-  registry.set('openWorkspaceFile', openWorkspaceFile);
+  registry.set(MESSAGE_NAMES.showContextContent, showContextContent);
+  registry.set(MESSAGE_NAMES.previewAttachment, previewAttachment);
+  registry.set(MESSAGE_NAMES.readWorkspaceImage, readWorkspaceImage);
+  registry.set(MESSAGE_NAMES.openWorkspaceFile, openWorkspaceFile);
 }

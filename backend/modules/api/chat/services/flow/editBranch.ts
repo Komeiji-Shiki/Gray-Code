@@ -65,8 +65,10 @@ export interface EditTargetResolution {
   /** 被编辑的旧用户节点 id */
   nodeId: string;
   /**
-   * 新编辑候选的父节点 id（旧用户节点的父节点；null 即根节点，不可编辑）。
-   * keep 模式（原地改写）编辑根节点时为 null（该模式不创建候选，不使用父节点）。
+   * 新编辑候选的父节点 id（旧用户节点的父节点）。
+   * 根节点（无父节点）时为 null：keep 模式原地改写根节点（不创建候选、不使用父节点）；
+   * branch 模式按 TREE-03-R 同样原地改写根节点 + 截断其后 + 新建模型候选重新生成
+   * （也无父节点可挂「新 user 编辑节点」，parentNodeId 同为 null）。
    */
   parentNodeId: string | null;
 }
@@ -78,9 +80,10 @@ export interface EditTargetResolution {
  *   线性模式（graph 为 null）以主历史为活跃路径，父节点取前一个非 functionResponse 消息
  *   （与 importLinearHistory 的线性链接规则一致，决策 8）；
  * - keep 模式（mode='keep'，原地改写）放行根节点：不创建候选、不需要父节点；
- *   branch 模式（默认）仍拒绝根节点（BranchGraph 单根模型，根节点无父节点可挂编辑候选）。
+ *   branch 模式（默认）编辑根节点同样放行（TREE-03-R）：根节点无父节点可挂「新 user 编辑节点」，
+ *   改为原地改写根节点文本 + 截断其后 + 新建模型候选重新生成（parentNodeId 同为 null）。
  * - 省略 userNodeId：取活跃路径上最后一条可编辑用户消息；
- * - 错误码：节点缺失 NODE_NOT_FOUND；非 user / 不在活跃路径 / branch 模式编辑根节点 → INVALID_BRANCH_RELATION。
+ * - 错误码：节点缺失 NODE_NOT_FOUND；非 user / 不在活跃路径 → INVALID_BRANCH_RELATION（根节点不拒绝，见上）。
  */
 export function resolveEditTargetNode(
   graph: ConversationBranchGraph | null,

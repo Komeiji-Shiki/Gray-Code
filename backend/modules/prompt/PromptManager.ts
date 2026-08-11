@@ -551,7 +551,14 @@ export class PromptManager {
 
         // 全部 section 与上一轮相同（被差分剔除）：整条动态消息不发，
         // 模型仍能从 preserve 回插的历史快照看到内容，请求前缀与上轮一致。
-        const allSectionsOmitted = !!diffBase?.sectionValues && Object.values(modules).every(value => !value)
+        // 例外：基准存在的 section 在当前消失（清空，如 TODO 清空/标签全关）时
+        // 必须发送——否则模型持续持有过期快照（MEDIUM-2：消失的 section 不出现在
+        // 当前 modules 里，Object.values().every 恒真导致整条消息持续被省略）。
+        const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
+        const vanishedSection = baseKeys.some(key => !(key in modules))
+        const allSectionsOmitted = !!diffBase?.sectionValues &&
+            Object.values(modules).every(value => !value) &&
+            !vanishedSection
         return {
             content: allSectionsOmitted ? '' : this.cleanupEmptyLines(result),
             // 完整 section 值（未差分）供下一轮作为对比基准。
@@ -981,7 +988,10 @@ export class PromptManager {
                 // 用不可见分隔符（'\u0000'）连接各条内容：无分隔符时 ['AB','C'] 与 ['A','BC']
                 // 拼接结果相同，指纹无法捕获条目边界变化；分隔符保证内容重新分布
                 // （新增/删除/合并条目）也会改变聚合指纹。
-                dynamicEntryFingerprintSource += entry.content + '\u0000'
+                // LOW-3：role / fakeThought 也必须纳入指纹源——差分按值比较只覆盖 content，
+                // 动态条目 role 从 user 改为 model、或伪造思考增删修改而 content 不变时，
+                // 指纹不变 → 全部未变判定省略 → 模型持续看到旧 role/旧伪造思考。
+                dynamicEntryFingerprintSource += `${entry.role}\u0000${entry.fakeThought ?? ''}\u0000${entry.content}\u0000`
             }
             const sectionValues = dynamicEntryKeys.size > 0
                 ? this.buildDynamicPromptModules(
@@ -1186,7 +1196,12 @@ export class PromptManager {
 
         // 跨回合差分：与上一轮相同的 section 不发（preserve 回插的历史快照中仍可见）。
         // Current Time 不参与差分触发：有 section 变化时随消息一起发送，全部未变则整条省略。
+        // 关键：对比「基准 key 集合 vs 当前 key 集合」——基准存在的 section 在当前消失
+        // （清空，如 TODO 清空/标签全关/诊断清除）时必须发送，模型才能感知「不再存在」；
+        // 否则剩余 section 未变时整条省略，模型持续持有过期快照（MEDIUM-2）。
         const sectionKeys = Object.keys(sectionValues)
+        const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
+        const vanishedSection = baseKeys.some(key => !(key in sectionValues))
         let anySectionChanged = false
         for (const key of sectionKeys) {
             if (diffBase?.sectionValues?.[key] === sectionValues[key]) {
@@ -1197,6 +1212,9 @@ export class PromptManager {
             } else {
                 anySectionChanged = true
             }
+        }
+        if (vanishedSection) {
+            anySectionChanged = true // section 消失本身即变化信号，不得整体省略
         }
         if (sectionKeys.length > 0 && !anySectionChanged) {
             return { messages: [], sectionValues, templateFingerprint: undefined }
@@ -1508,10 +1526,10 @@ export class PromptManager {
                 let bytesRead: number
 
                 if (cached && now - cached.checkedAt < PINNED_FILE_CACHE_TTL_MS) {
-                    // TTL 内：零磁盘 I/O，直接复用缓存
+                    // TTL 内：零磁盘 I/O，直接复用缓存；未实际读取，不累计总字节预算
                     content = cached.content
                     truncated = cached.truncated
-                    bytesRead = cached.bytesRead
+                    bytesRead = 0
                     touchPinnedFileCache(fullPath)
                 } else {
                     let stat: fs.Stats
@@ -1524,11 +1542,11 @@ export class PromptManager {
                     }
 
                     if (cached && cached.mtimeMs === stat.mtimeMs) {
-                        // 未变更：只刷新检查时间，不重读磁盘
+                        // 未变更：只刷新检查时间，不重读磁盘；未实际读取，不累计总字节预算
                         cached.checkedAt = now
                         content = cached.content
                         truncated = cached.truncated
-                        bytesRead = cached.bytesRead
+                        bytesRead = 0
                         touchPinnedFileCache(fullPath)
                     } else {
                         const read = readPinnedFileCapped(fullPath, stat.size)

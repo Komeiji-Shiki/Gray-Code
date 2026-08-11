@@ -39,7 +39,7 @@ describe('create_review tool', () => {
     })
   })
 
-  it('writes a V4 review markdown document and returns snapshot-driven summary fields', async () => {
+  test('writes a V4 review markdown document and returns snapshot-driven summary fields', async () => {
     const tool = createCreateReviewTool()
     const setCustomMetadata = jest.fn().mockResolvedValue(undefined)
     const result = await tool.handler({
@@ -56,19 +56,19 @@ describe('create_review tool', () => {
 
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBeUndefined()
-    expect((result.data as any).path).toBe('.graycode/review/workspace-review.md')
-    expect((result.data as any).content).toContain('# Workspace Review')
-    expect((result.data as any).content).toContain('## 评审快照')
-    expect((result.data as any).content).toContain('```json')
-    expect((result.data as any).content).toContain('"formatVersion": 4')
-    expect((result.data as any).reviewSnapshot.formatVersion).toBe(4)
-    expect((result.data as any).reviewSnapshot.render.locale).toBe('zh-CN')
-    expect((result.data as any).reviewValidation.detectedFormat).toBe('v4')
-    expect((result.data as any).reviewDelta).toMatchObject({ type: 'created' })
-    expect((result.data as any).title).toBe('Workspace Review')
-    expect((result.data as any).status).toBe('in_progress')
-    expect((result.data as any).totalMilestones).toBe(0)
-    expect((result.data as any).totalFindings).toBe(0)
+    expect(result.data.path).toBe('.graycode/review/workspace-review.md')
+    expect(result.data.content).toContain('# Workspace Review')
+    expect(result.data.content).toContain('## 评审快照')
+    expect(result.data.content).toContain('```json')
+    expect(result.data.content).toContain('"formatVersion": 4')
+    expect(result.data.reviewSnapshot.formatVersion).toBe(4)
+    expect(result.data.reviewSnapshot.render.locale).toBe('zh-CN')
+    expect(result.data.reviewValidation.detectedFormat).toBe('v4')
+    expect(result.data.reviewDelta).toMatchObject({ type: 'created' })
+    expect(result.data.title).toBe('Workspace Review')
+    expect(result.data.status).toBe('in_progress')
+    expect(result.data.totalMilestones).toBe(0)
+    expect(result.data.totalFindings).toBe(0)
 
     expect(setCustomMetadata).toHaveBeenCalledWith(
       'conversation-1',
@@ -90,7 +90,7 @@ describe('create_review tool', () => {
     })
   })
 
-  it('rejects create_review when the conversation already has an active review session', async () => {
+  test('rejects create_review when the conversation already has an active review session', async () => {
     const tool = createCreateReviewTool()
     const result = await tool.handler({
       review: '# Review'
@@ -113,7 +113,7 @@ describe('create_review tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects paths outside .graycode/review', async () => {
+  test('rejects paths outside .graycode/review', async () => {
     const tool = createCreateReviewTool()
     const result = await tool.handler({
       review: '# Invalid',

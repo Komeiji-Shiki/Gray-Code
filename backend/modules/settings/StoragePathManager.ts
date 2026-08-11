@@ -1,5 +1,5 @@
 /**
- * LimCode - 存储路径管理器
+ * GrayCode - 存储路径管理器
  *
  * 负责管理自定义数据存储路径和数据迁移
  * 支持将大文件（对话历史、检查点、依赖等）存储到用户自定义目录
@@ -256,9 +256,15 @@ export class StoragePathManager {
             subDirs: {
                 conversations: conversations,
                 checkpoints: checkpoints,
+                snapshots: snapshots,
                 mcp: mcp,
                 dependencies: dependencies,
-                diffs: diffs
+                diffs: diffs,
+                skills: skills,
+                activity: activity,
+                tokenizers: tokenizers,
+                memory: memory,
+                memoryWorkspaces: memoryWorkspaces
             }
         };
     }
@@ -389,6 +395,12 @@ export class StoragePathManager {
             // 目标路径位于源路径内部（迁移到源路径的子目录）时，包含目标路径的源子目录
             // 必须保留，否则清理源数据会连带删除刚迁移到目标路径的数据
             if (preservedSubDirs.includes(subDir)) {
+                continue;
+            }
+            // skills 目录始终保留：SkillsManager/SettingsExporter 在启动时以当时的
+            // effectiveDataPath 固定扫描/写入路径，运行中迁移后仍指向旧路径——
+            // 清理旧路径删除 skills 会让当前实例技能消失、新导入落点与新路径不一致
+            if (subDir === 'skills') {
                 continue;
             }
             await fs.rm(path.join(storagePath, subDir), { recursive: true, force: true });
@@ -545,8 +557,12 @@ export class StoragePathManager {
             
             // settings 仅保存在默认路径，不参与清理。
             await this.removeStorageData(oldPath);
+
+            // skills 目录始终保留（removeStorageData 跳过它），其大小不计入实际释放量；
+            // 目录不存在时 getDirectorySize 返回 0，不受影响。
+            const preservedSkillsSize = stats.subDirs.skills.size;
             
-            return { success: true, freedBytes: stats.totalSize };
+            return { success: true, freedBytes: Math.max(0, stats.totalSize - preservedSkillsSize) };
         } catch (error) {
             console.error('[StoragePathManager] Failed to cleanup old storage:', error);
             return { success: false, freedBytes: 0 };
@@ -653,3 +669,4 @@ export class StoragePathManager {
         }
     }
 }
+

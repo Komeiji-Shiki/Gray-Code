@@ -19,6 +19,7 @@
  * 与 FileSystemStorageAdapter 使用同一存储布局（conversations/{id}/branches.json）。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import {
     BranchGraphRepository,
     BranchService,
@@ -547,14 +548,14 @@ export const updateBranchRetentionConfig: MessageHandler = async (data, requestI
  * 注册分支处理器
  */
 export function registerBranchHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('conversation.getBranchGraph', getBranchGraph);
-  registry.set('conversation.switchBranchCandidate', switchBranchCandidate);
-  registry.set('conversation.deleteBranchCandidate', deleteBranchCandidate);
-  registry.set('conversation.restoreBranchCandidate', restoreBranchCandidate);
-  registry.set('conversation.renameBranchCandidate', renameBranchCandidate);
-  registry.set('conversation.purgeBranchCandidate', purgeBranchCandidate);
-  registry.set('conversation.getDeletedBranchCount', getDeletedBranchCount);
-  registry.set('conversation.pruneDeletedBranches', pruneDeletedBranches);
-  registry.set('conversation.getBranchRetentionConfig', getBranchRetentionConfig);
-  registry.set('conversation.updateBranchRetentionConfig', updateBranchRetentionConfig);
+  registry.set(MESSAGE_NAMES['conversation.getBranchGraph'], getBranchGraph);
+  registry.set(MESSAGE_NAMES['conversation.switchBranchCandidate'], switchBranchCandidate);
+  registry.set(MESSAGE_NAMES['conversation.deleteBranchCandidate'], deleteBranchCandidate);
+  registry.set(MESSAGE_NAMES['conversation.restoreBranchCandidate'], restoreBranchCandidate);
+  registry.set(MESSAGE_NAMES['conversation.renameBranchCandidate'], renameBranchCandidate);
+  registry.set(MESSAGE_NAMES['conversation.purgeBranchCandidate'], purgeBranchCandidate);
+  registry.set(MESSAGE_NAMES['conversation.getDeletedBranchCount'], getDeletedBranchCount);
+  registry.set(MESSAGE_NAMES['conversation.pruneDeletedBranches'], pruneDeletedBranches);
+  registry.set(MESSAGE_NAMES['conversation.getBranchRetentionConfig'], getBranchRetentionConfig);
+  registry.set(MESSAGE_NAMES['conversation.updateBranchRetentionConfig'], updateBranchRetentionConfig);
 }

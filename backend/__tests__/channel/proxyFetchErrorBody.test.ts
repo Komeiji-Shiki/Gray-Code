@@ -5,8 +5,8 @@
  * 上游给出的真实错误正文进入错误信息（修复前 json() 消费响应体后 text() 返回空串）。
  */
 
-import { proxyStreamFetch } from '../../modules/channel/proxyFetch';
-import { ChannelError, ErrorType } from '../../modules/channel/types';
+import { proxyStreamFetch } from '../../modules/channel';
+import { ChannelError, ErrorType } from '../../modules/channel';
 
 async function collectError(gen: AsyncGenerator<string>): Promise<ChannelError> {
     try {
@@ -22,7 +22,7 @@ describe('proxyStreamFetch 非 2xx 错误体（SEC）', () => {
         jest.restoreAllMocks();
     });
 
-    it('纯文本错误体（无代理分支）被保留并进入错误信息', async () => {
+    test('纯文本错误体（无代理分支）被保留并进入错误信息', async () => {
         const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
             ok: false,
             status: 502,
@@ -41,7 +41,7 @@ describe('proxyStreamFetch 非 2xx 错误体（SEC）', () => {
         expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('JSON 错误体仍按 JSON 解析（提取 error.message 字段）', async () => {
+    test('JSON 错误体仍按 JSON 解析（提取 error.message 字段）', async () => {
         const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
             ok: false,
             status: 429,

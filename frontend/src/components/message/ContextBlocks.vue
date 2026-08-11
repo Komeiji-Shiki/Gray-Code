@@ -4,6 +4,7 @@
  * 用于在用户消息中显示解析出的 context 块为小标签
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onUnmounted } from 'vue'
 import type { PromptContextItem } from '../../types/promptContext'
 import { sendToExtension } from '../../utils/vscode'
@@ -106,7 +107,7 @@ onUnmounted(() => {
 async function handleClick(item: PromptContextItem) {
   try {
     // 使用 VSCode 的虚拟文档显示内容
-    await sendToExtension('showContextContent', {
+    await sendToExtension(MESSAGE_NAMES.showContextContent, {
       title: item.title,
       content: item.content,
       language: item.language || languageFromPath(item.filePath)

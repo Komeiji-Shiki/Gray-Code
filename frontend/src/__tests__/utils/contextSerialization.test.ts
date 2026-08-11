@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import { createContextNode } from '../../types/editorNode'
 import { serializeNodes } from '../../types/editorNode'
 import { parseMessageToNodes } from '../../types/contextParser'
@@ -19,7 +19,7 @@ function context(overrides: Partial<Parameters<typeof createContextNode>[0]> = {
 }
 
 describe('context node serialization', () => {
-  it('escapes attributes and closing-tag-like content, then decodes it on parse', () => {
+  test('escapes attributes and closing-tag-like content, then decodes it on parse', () => {
     const serialized = serializeNodes([context()])
 
     expect(serialized).toContain('title="a &quot;quoted&quot; &lt;title&gt;"')
@@ -32,7 +32,7 @@ describe('context node serialization', () => {
     expect(parsed.contexts[0].filePath).toBe('dir/a&b.ts')
   })
 
-  it('escapes opening lim-context tags in content to avoid parse drift, then decodes them back', () => {
+  test('escapes opening lim-context tags in content to avoid parse drift, then decodes them back', () => {
     // 开标签转义：正文中的 <lim-context ...>（后随空白或 >）若原样保留，解析侧会把它当作
     // 新的上下文块起点，造成“序列化 → 解析 → 再序列化”漂移。此处验证转义与还原的往返一致性。
     const serialized = serializeNodes([context({ content: 'see <lim-context type="file"> below' })])
@@ -47,7 +47,7 @@ describe('context node serialization', () => {
     expect(parsed.contexts[0].content).toBe('see <lim-context type="file"> below')
   })
 
-  it('parses binary attribute case-insensitively', () => {
+  test('parses binary attribute case-insensitively', () => {
     const parsed = parseMessageToNodes('<lim-context type="file" title="image" binary="TRUE">ignored</lim-context>')
 
     expect(parsed.contexts[0].isTextContent).toBe(false)

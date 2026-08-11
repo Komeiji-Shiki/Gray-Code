@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
 import CustomScrollbar from '../../components/common/CustomScrollbar.vue'
 
@@ -44,7 +44,7 @@ describe('CustomScrollbar sticky-bottom', () => {
     document.body.innerHTML = ''
   })
 
-  it('位于底部时内容增长自动贴底', async () => {
+  test('位于底部时内容增长自动贴底', async () => {
     const wrapper = mountSticky()
     await nextTick()
     const container = wrapper.get('.scroll-container').element as HTMLElement
@@ -64,7 +64,7 @@ describe('CustomScrollbar sticky-bottom', () => {
     wrapper.unmount()
   })
 
-  it('用户滚离底部后内容增长不再贴底（不打扰）', async () => {
+  test('用户滚离底部后内容增长不再贴底（不打扰）', async () => {
     const wrapper = mountSticky()
     await nextTick()
     const container = wrapper.get('.scroll-container').element as HTMLElement
@@ -89,7 +89,7 @@ describe('CustomScrollbar sticky-bottom', () => {
     wrapper.unmount()
   })
 
-  it('贴底写入后 scrollHeight 继续增长不丢吸底（md 异步解析场景）', async () => {
+  test('贴底写入后 scrollHeight 继续增长不丢吸底（md 异步解析场景）', async () => {
     const wrapper = mountSticky()
     await nextTick()
     const container = wrapper.get('.scroll-container').element as HTMLElement
@@ -120,7 +120,7 @@ describe('CustomScrollbar sticky-bottom', () => {
     wrapper.unmount()
   })
 
-  it('wheel 滚动后冷静期内内容增长不拉回（高 tps 抵消滚动距离）', async () => {
+  test('wheel 滚动后冷静期内内容增长不拉回（高 tps 抵消滚动距离）', async () => {
     const wrapper = mountSticky()
     await nextTick()
     const container = wrapper.get('.scroll-container').element as HTMLElement
@@ -146,7 +146,7 @@ describe('CustomScrollbar sticky-bottom', () => {
     wrapper.unmount()
   })
 
-  it('冷静期过后恢复贴底', async () => {
+  test('冷静期过后恢复贴底', async () => {
     // 冷静期判断用 performance.now()：必须把 performance 也纳入 fake 范围
     // （默认 toFake 不含 performance，advanceTimersByTimeAsync 推不动真实时钟）
     vi.useFakeTimers({

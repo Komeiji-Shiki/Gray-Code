@@ -5,17 +5,17 @@
  * 保持原有 `from '../settings/types'` 导入路径完全兼容。
  */
 
-export * from './checkpointTypes';
-export * from './toolsTypes';
-export * from './promptTypes';
-export * from './contextTypes';
-export * from './pinnedFilesTypes';
-export * from './skillsTypes';
-export * from './summarizeTypes';
-export * from './tokenCountTypes';
-export * from './subAgentsTypes';
-export * from './uiTypes';
-export * from './generalTypes';
+export * from './types/checkpointTypes';
+export * from './types/toolsTypes';
+export * from './types/promptTypes';
+export * from './types/contextTypes';
+export * from './types/pinnedFilesTypes';
+export * from './types/skillsTypes';
+export * from './types/summarizeTypes';
+export * from './types/tokenCountTypes';
+export * from './types/subAgentsTypes';
+export * from './types/uiTypes';
+export * from './types/generalTypes';
 
 /**
  * 内置提示词模板与内置模式定义已拆分到 promptModes.ts。

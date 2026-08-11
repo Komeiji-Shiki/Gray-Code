@@ -40,7 +40,7 @@ describe('validate_progress_document tool', () => {
     })
   })
 
-  it('returns validation summary and progress snapshot for a valid progress document', async () => {
+  test('returns validation summary and progress snapshot for a valid progress document', async () => {
     const progressDoc = buildProgressDocument({
       projectId: 'workspace',
       projectName: 'Workspace',
@@ -70,14 +70,14 @@ describe('validate_progress_document tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).progressValidation).toMatchObject({
+    expect(result.data.progressValidation).toMatchObject({
       isValid: true,
       issueCount: 0,
       errorCount: 0,
       warningCount: 0,
       formatVersion: 1
     })
-    expect((result.data as any).progressSnapshot).toMatchObject({
+    expect(result.data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       projectName: 'Workspace',
       status: 'active',
@@ -85,7 +85,7 @@ describe('validate_progress_document tool', () => {
     })
   })
 
-  it('reports validation failure for an invalid progress document', async () => {
+  test('reports validation failure for an invalid progress document', async () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode('# invalid progress doc'))
 
     const tool = createValidateProgressDocumentTool()
@@ -94,13 +94,13 @@ describe('validate_progress_document tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect((result.data as any).progressValidation).toMatchObject({
+    expect(result.data.progressValidation).toMatchObject({
       isValid: false,
       issueCount: 1,
       errorCount: 1,
       warningCount: 0
     })
-    expect((result.data as any).issues).toEqual([
+    expect(result.data.issues).toEqual([
       expect.objectContaining({ severity: 'error' })
     ])
   })

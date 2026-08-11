@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import { MemoryManager } from '../../modules/memory/MemoryManager';
 
 describe('MemoryManager updateEntry (H1)', () => {
-    it('≥2 条记忆时编辑第一条能正常完成（不死锁）', async () => {
+    test('≥2 条记忆时编辑第一条能正常完成（不死锁）', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'h1-deadlock-'));
         try {
             const mm = new MemoryManager(dir, { entryChars: 280 } as any);

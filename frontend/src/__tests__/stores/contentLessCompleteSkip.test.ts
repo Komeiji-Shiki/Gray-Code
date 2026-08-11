@@ -11,7 +11,7 @@
  */
 import { ref } from 'vue'
 import type { Ref } from 'vue'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
 import { handleStreamChunkBatch, type StreamHandlerContext } from '../../stores/chat/streamHandler'
@@ -90,7 +90,7 @@ function createStreamingPlaceholder(id: string): Message {
 }
 
 describe('content-less complete 不跳过前序增量（H3）', () => {
-  it('content-less complete + 前序文本增量：增量保留，消息不空白', () => {
+  test('content-less complete + 前序文本增量：增量保留，消息不空白', () => {
     const placeholder = createStreamingPlaceholder('msg_1')
     const state = createState({
       allMessages: ref<Message[]>([placeholder]),
@@ -125,7 +125,7 @@ describe('content-less complete 不跳过前序增量（H3）', () => {
     expect(state.isWaitingForResponse.value).toBe(false)
   })
 
-  it('content-less complete + 前序 functionCall 增量：工具调用保留', () => {
+  test('content-less complete + 前序 functionCall 增量：工具调用保留', () => {
     const placeholder = createStreamingPlaceholder('msg_1')
     const state = createState({
       allMessages: ref<Message[]>([placeholder]),
@@ -159,7 +159,7 @@ describe('content-less complete 不跳过前序增量（H3）', () => {
     expect(state.allMessages.value[0].parts?.some(p => p.functionCall)).toBe(true)
   })
 
-  it('content-less toolIteration 同样不跳过前序增量', () => {
+  test('content-less toolIteration 同样不跳过前序增量', () => {
     const placeholder = createStreamingPlaceholder('msg_1')
     const state = createState({
       allMessages: ref<Message[]>([placeholder]),
@@ -189,7 +189,7 @@ describe('content-less complete 不跳过前序增量（H3）', () => {
     expect(state.isStreaming.value).toBe(false)
   })
 
-  it('携带 content 的 complete 仍跳过前序增量（原优化语义保持）', () => {
+  test('携带 content 的 complete 仍跳过前序增量（原优化语义保持）', () => {
     const placeholder = createStreamingPlaceholder('msg_1')
     const state = createState({
       allMessages: ref<Message[]>([placeholder]),
@@ -220,7 +220,7 @@ describe('content-less complete 不跳过前序增量（H3）', () => {
     expect(state.allMessages.value[0].streaming).toBe(false)
   })
 
-  it('content-less complete 位于批尾且前序存在多条增量时全部保留', () => {
+  test('content-less complete 位于批尾且前序存在多条增量时全部保留', () => {
     const placeholder = createStreamingPlaceholder('msg_1')
     const state = createState({
       allMessages: ref<Message[]>([placeholder]),

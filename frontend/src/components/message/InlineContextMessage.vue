@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref, onUnmounted } from 'vue'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import type { EditorNode } from '../../types/editorNode'
@@ -97,7 +98,7 @@ function truncatePreview(content: string, maxLines = 10, maxChars = 500): string
 async function handleContextClick(ctx: PromptContextItem) {
   if (ctx.isTextContent === false && ctx.filePath) {
     try {
-      await sendToExtension('openWorkspaceFile', { path: ctx.filePath })
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: ctx.filePath })
     } catch (error) {
       console.error('Failed to open workspace file:', error)
     }
@@ -105,7 +106,7 @@ async function handleContextClick(ctx: PromptContextItem) {
   }
 
   try {
-    await sendToExtension('showContextContent', {
+    await sendToExtension(MESSAGE_NAMES.showContextContent, {
       title: ctx.title,
       content: ctx.content,
       language: ctx.language || languageFromPath(ctx.filePath)

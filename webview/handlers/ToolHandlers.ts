@@ -2,6 +2,7 @@
  * 工具管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
 import type { HandlerContext, MessageHandler } from '../types';
@@ -204,6 +205,15 @@ let execCmdAvailabilityCache: {
   map: Map<string, { available: boolean; reason?: string }>;
 } | null = null;
 
+/**
+ * 释放 execCmdAvailabilityCache（扩展 dispose 时调用）。
+ * 与 disposeUsageCache / disposeActivityStatsCache / disposeFileHandlerResources 同族，
+ * 由 ChatViewProvider.dispose 统一调用。
+ */
+export function clearExecCmdAvailabilityCache(): void {
+  execCmdAvailabilityCache = null;
+}
+
 export const getExecuteCommandConfig: MessageHandler = async (_data, requestId, ctx) => {
   try {
     const config = ctx.settingsManager.getExecuteCommandConfig();
@@ -247,6 +257,9 @@ export const updateExecuteCommandConfig: MessageHandler = async (data, requestId
       }))
     };
     await ctx.settingsManager.updateExecuteCommandConfig(configToSave);
+    // shell 配置已变更：清空可用性探测缓存，避免 30s TTL 内 getExecuteCommandConfig
+    // 仍返回旧 shell 配置的可用性结果（R2-08 复查）
+    clearExecCmdAvailabilityCache();
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'UPDATE_EXECUTE_COMMAND_CONFIG_ERROR', error.message || t('webview.errors.updateExecuteCommandConfigFailed'));
@@ -277,7 +290,7 @@ export const updateHistorySearchConfig: MessageHandler = async (data, requestId,
 export const terminalKill: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { terminalId } = data;
-    const result = killTerminalProcess(terminalId);
+    const result = await killTerminalProcess(terminalId);
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'KILL_TERMINAL_ERROR', error.message || t('webview.errors.killTerminalFailed'));
@@ -355,37 +368,37 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
     registry.set(name, withToolBoundary(errorCode, fallback, handler));
   };
   // 工具列表和配置
-  register('tools.getTools', 'GET_TOOLS_ERROR', t('webview.errors.getToolsFailed'), getTools);
-  register('tools.setToolEnabled', 'SET_TOOL_ENABLED_ERROR', t('webview.errors.setToolEnabledFailed'), setToolEnabled);
-  register('tools.getToolConfig', 'GET_TOOL_CONFIG_ERROR', t('webview.errors.getToolConfigFailed'), getToolConfig);
-  register('tools.updateToolConfig', 'UPDATE_TOOL_CONFIG_ERROR', t('webview.errors.updateToolConfigFailed'), updateToolConfig);
-  registry.set('tools.getAutoExecConfig', getAutoExecConfig);
-  registry.set('tools.getMcpTools', getMcpTools);
-  registry.set('tools.setToolAutoExec', setToolAutoExec);
-  registry.set('tools.getMaxToolIterations', getMaxToolIterations);
-  registry.set('tools.updateMaxToolIterations', updateMaxToolIterations);
+  register(MESSAGE_NAMES['tools.getTools'], 'GET_TOOLS_ERROR', t('webview.errors.getToolsFailed'), getTools);
+  register(MESSAGE_NAMES['tools.setToolEnabled'], 'SET_TOOL_ENABLED_ERROR', t('webview.errors.setToolEnabledFailed'), setToolEnabled);
+  register(MESSAGE_NAMES['tools.getToolConfig'], 'GET_TOOL_CONFIG_ERROR', t('webview.errors.getToolConfigFailed'), getToolConfig);
+  register(MESSAGE_NAMES['tools.updateToolConfig'], 'UPDATE_TOOL_CONFIG_ERROR', t('webview.errors.updateToolConfigFailed'), updateToolConfig);
+  registry.set(MESSAGE_NAMES['tools.getAutoExecConfig'], getAutoExecConfig);
+  registry.set(MESSAGE_NAMES['tools.getMcpTools'], getMcpTools);
+  registry.set(MESSAGE_NAMES['tools.setToolAutoExec'], setToolAutoExec);
+  registry.set(MESSAGE_NAMES['tools.getMaxToolIterations'], getMaxToolIterations);
+  registry.set(MESSAGE_NAMES['tools.updateMaxToolIterations'], updateMaxToolIterations);
   
   // 工具特定配置
-  register('tools.updateListFilesConfig', 'UPDATE_LIST_FILES_CONFIG_ERROR', t('webview.errors.updateListFilesConfigFailed'), updateListFilesConfig);
-  registry.set('tools.getFindFilesConfig', getFindFilesConfig);
-  registry.set('tools.updateFindFilesConfig', updateFindFilesConfig);
-  registry.set('tools.getSearchInFilesConfig', getSearchInFilesConfig);
-  registry.set('tools.updateSearchInFilesConfig', updateSearchInFilesConfig);
-  register('tools.updateApplyDiffConfig', 'UPDATE_APPLY_DIFF_CONFIG_ERROR', t('webview.errors.updateApplyDiffConfigFailed'), updateApplyDiffConfig);
-  register('tools.getExecuteCommandConfig', 'GET_EXECUTE_COMMAND_CONFIG_ERROR', 'Failed to get execute command config', getExecuteCommandConfig);
-  registry.set('tools.updateExecuteCommandConfig', updateExecuteCommandConfig);
-  registry.set('tools.getHistorySearchConfig', getHistorySearchConfig);
-  registry.set('tools.updateHistorySearchConfig', updateHistorySearchConfig);
+  register(MESSAGE_NAMES['tools.updateListFilesConfig'], 'UPDATE_LIST_FILES_CONFIG_ERROR', t('webview.errors.updateListFilesConfigFailed'), updateListFilesConfig);
+  registry.set(MESSAGE_NAMES['tools.getFindFilesConfig'], getFindFilesConfig);
+  registry.set(MESSAGE_NAMES['tools.updateFindFilesConfig'], updateFindFilesConfig);
+  registry.set(MESSAGE_NAMES['tools.getSearchInFilesConfig'], getSearchInFilesConfig);
+  registry.set(MESSAGE_NAMES['tools.updateSearchInFilesConfig'], updateSearchInFilesConfig);
+  register(MESSAGE_NAMES['tools.updateApplyDiffConfig'], 'UPDATE_APPLY_DIFF_CONFIG_ERROR', t('webview.errors.updateApplyDiffConfigFailed'), updateApplyDiffConfig);
+  register(MESSAGE_NAMES['tools.getExecuteCommandConfig'], 'GET_EXECUTE_COMMAND_CONFIG_ERROR', 'Failed to get execute command config', getExecuteCommandConfig);
+  registry.set(MESSAGE_NAMES['tools.updateExecuteCommandConfig'], updateExecuteCommandConfig);
+  registry.set(MESSAGE_NAMES['tools.getHistorySearchConfig'], getHistorySearchConfig);
+  registry.set(MESSAGE_NAMES['tools.updateHistorySearchConfig'], updateHistorySearchConfig);
   
   // 终端管理
-  registry.set('terminal.kill', terminalKill);
-  registry.set('terminal.getOutput', terminalGetOutput);
-  registry.set('terminal.detachToBackground', terminalDetachToBackground);
+  registry.set(MESSAGE_NAMES['terminal.kill'], terminalKill);
+  registry.set(MESSAGE_NAMES['terminal.getOutput'], terminalGetOutput);
+  registry.set(MESSAGE_NAMES['terminal.detachToBackground'], terminalDetachToBackground);
   
   // 图像生成
-  registry.set('imageGeneration.cancel', imageGenerationCancel);
+  registry.set(MESSAGE_NAMES['imageGeneration.cancel'], imageGenerationCancel);
   
   // 任务管理
-  registry.set('task.cancel', taskCancel);
-  registry.set('task.getAll', taskGetAll);
+  registry.set(MESSAGE_NAMES['task.cancel'], taskCancel);
+  registry.set(MESSAGE_NAMES['task.getAll'], taskGetAll);
 }

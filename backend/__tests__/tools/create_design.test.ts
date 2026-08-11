@@ -53,7 +53,7 @@ describe('create_design tool', () => {
     })
   })
 
-  it('writes design markdown under .graycode/design and returns requiresUserConfirmation', async () => {
+  test('writes design markdown under .graycode/design and returns requiresUserConfirmation', async () => {
     const tool = createCreateDesignTool()
     const result = await tool.handler({
       title: 'API Design',
@@ -79,7 +79,7 @@ describe('create_design tool', () => {
     expect(new TextDecoder().decode(writtenBytes)).toBe('# API Design\n\n- scope')
   })
 
-  it('rejects paths outside .graycode/design', async () => {
+  test('rejects paths outside .graycode/design', async () => {
     const tool = createCreateDesignTool()
     const result = await tool.handler({
       design: '# Invalid',

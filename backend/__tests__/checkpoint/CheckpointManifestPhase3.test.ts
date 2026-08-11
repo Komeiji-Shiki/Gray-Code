@@ -15,15 +15,15 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import * as vscode from 'vscode';
 
 import '../__fixtures__/diffManagerMock';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
+import { createCheckpointManagerHarness } from '../__fixtures__/harnessFixtures';
 
-import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
-import { CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint/CheckpointManifestRepository';
-import type { CheckpointManifest } from '../../modules/checkpoint/types';
-import { createWorkspaceRootId, createWorkspaceSnapshot } from '../../modules/checkpoint/CheckpointWorkspace';
+import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint';
+import { CHECKPOINT_MANIFEST_VERSION } from '../../modules/checkpoint';
+import type { CheckpointManifest } from '../../modules/checkpoint';
+import { createWorkspaceRootId, createWorkspaceSnapshot } from '../../modules/checkpoint';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -35,128 +35,6 @@ function md5(content: string): string {
     return crypto.createHash('md5').update(content).digest('hex');
 }
 
-interface Harness {
-    manager: CheckpointManager;
-    storageRoot: string;
-    /** 元数据中的存档记录（不含 fileHashes/fileStats 等重字段） */
-    storedCheckpoints: () => CheckpointRecord[];
-    /** 最近一次 getCheckpointConfig 返回值（测试可替换） */
-    setCheckpointConfig: (config: Record<string, unknown>) => void;
-    readManifest: (checkpointId: string) => Promise<CheckpointManifest | null>;
-}
-
-async function createHarness(
-    workspaceRoot: string,
-    storageRoot: string,
-    seedCheckpoints: CheckpointRecord[] = []
-): Promise<Harness> {
-    (vscode.workspace as any).workspaceFolders = [
-        {
-            name: 'root',
-            uri: { fsPath: workspaceRoot, scheme: 'file', path: workspaceRoot }
-        }
-    ];
-    (vscode.workspace as any).textDocuments = [];
-    (vscode as any).window = {
-        setStatusBarMessage: jest.fn(),
-        showTextDocument: jest.fn(),
-        tabGroups: { all: [], close: jest.fn() }
-    };
-    (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
-
-    const sharedMetadata: { custom: Record<string, unknown> } = {
-        custom: { checkpoints: [...seedCheckpoints] }
-    };
-    const storedCheckpoints = (): CheckpointRecord[] =>
-        (sharedMetadata.custom.checkpoints as CheckpointRecord[]) || [];
-
-    const baseConfig = {
-        enabled: true,
-        beforeTools: [],
-        afterTools: ['write_file'],
-        messageCheckpoint: { beforeMessages: [], afterMessages: [] },
-        maxCheckpoints: -1,
-        customIgnorePatterns: [],
-        exclusion: {
-            enabledProfiles: {}, // 空对象 = 全部默认类别按默认启用（全开）；测试文件（a.txt/b.txt 等）不匹配默认类别模式
-            maxFileSizeBytes: 1024,
-            customPatterns: []
-        }
-    };
-    let configValue: Record<string, unknown> = { ...baseConfig };
-    const settingsManager = {
-        getCheckpointConfig: jest.fn().mockImplementation(() => configValue)
-    };
-
-    let metadataWriteChain: Promise<unknown> = Promise.resolve();
-    const conversationManager = {
-        getMetadata: jest.fn().mockImplementation(async () => sharedMetadata),
-        getCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string) => {
-            return (sharedMetadata.custom as Record<string, unknown>)[key];
-        }),
-        setCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string, value: unknown) => {
-            (sharedMetadata.custom as Record<string, unknown>)[key] = value;
-        }),
-        updateCustomMetadata: jest.fn().mockImplementation(
-            (_cid: string, key: string, updater: (current: unknown) => unknown | Promise<unknown>) => {
-                const run = metadataWriteChain.then(async () => {
-                    const current = (sharedMetadata.custom as Record<string, unknown>)[key];
-                    const next = await updater(current);
-                    if (next !== current) {
-                        (sharedMetadata.custom as Record<string, unknown>)[key] = next;
-                    }
-                    return next;
-                });
-                metadataWriteChain = run.catch(() => undefined);
-                return run;
-            }
-        ),
-        rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined),
-        listConversations: jest.fn().mockResolvedValue([])
-    };
-
-    const manager = new CheckpointManager(
-        settingsManager as any,
-        conversationManager as any,
-        { globalStorageUri: { fsPath: storageRoot } } as any
-    );
-    await manager.initialize();
-
-    const readManifest = async (checkpointId: string): Promise<CheckpointManifest | null> => {
-        try {
-            const metaRaw = await fs.readFile(
-                path.join(storageRoot, 'checkpoints', checkpointId, 'manifest.json'),
-                'utf-8'
-            );
-            const manifest = JSON.parse(metaRaw) as CheckpointManifest;
-            // CPF-LAZY-1: v2 拆分布局下 files 独立存放于 files.json，按需合并读取
-            if (!manifest.files) {
-                try {
-                    const filesRaw = await fs.readFile(
-                        path.join(storageRoot, 'checkpoints', checkpointId, 'files.json'),
-                        'utf-8'
-                    );
-                    manifest.files = (JSON.parse(filesRaw) as { files?: CheckpointManifest['files'] }).files ?? {};
-                } catch {
-                    manifest.files = {};
-                }
-            }
-            return manifest;
-        } catch {
-            return null;
-        }
-    };
-
-    return {
-        manager,
-        storageRoot,
-        storedCheckpoints,
-        setCheckpointConfig: (config: Record<string, unknown>) => {
-            configValue = { ...baseConfig, ...config };
-        },
-        readManifest
-    };
-}
 
 describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
     beforeEach(() => {
@@ -170,7 +48,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             await writeFile(workspaceRoot, 'a.txt', 'hello');
             await writeFile(workspaceRoot, 'b.txt', 'world');
 
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             const cp = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();
 
@@ -206,7 +84,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
         const storageRoot = await createTempDirectory('limcode-cp3-storage-');
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             const cp1 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
             expect(cp1).not.toBeNull();
@@ -264,7 +142,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             };
             await writeFile(path.join(storageRoot, 'checkpoints', 'cp-legacy-size'), 'a.txt', 'hello');
 
-            const harness = await createHarness(workspaceRoot, storageRoot, [legacy]);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot, [legacy]);
 
             const plain = await harness.manager.getCheckpoints('conv-1');
             expect(plain).toHaveLength(1);
@@ -296,7 +174,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             await writeFile(workspaceRoot, 'a.txt', 'hello');
             await writeFile(workspaceRoot, 'big.bin', 'x'.repeat(5000)); // 超过 1024 上限
 
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             const cp = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();
 
@@ -361,7 +239,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
                 await writeFile(workspaceRoot, `f${i}.txt`, `content-${i}`);
             }
 
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             // 进度回调：记录收到的 progress；复制进行中触发一次取消
             const phases: string[] = [];
@@ -400,7 +278,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
         const workspaceRoot = await createTempDirectory('limcode-cp3-workspace-');
         const storageRoot = await createTempDirectory('limcode-cp3-storage-');
         try {
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             expect(harness.manager.getOperationProgress('op-nonexistent')).toBeNull();
             expect(harness.manager.cancelOperation('op-nonexistent')).toBe(false);
         } finally {
@@ -441,7 +319,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
                 baseCheckpointId: 'cp-a'
             };
 
-            const harness = await createHarness(workspaceRoot, storageRoot, [withBytes, withoutBytes]);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot, [withBytes, withoutBytes]);
             // mock listConversations 返回该对话
             (harness.manager as any).conversationManager.listConversations.mockResolvedValue(['conv-1']);
             (harness.manager as any).conversationManager.getMetadata.mockResolvedValue({
@@ -469,7 +347,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
         const storageRoot = await createTempDirectory('limcode-cp3-storage-');
         try {
             await writeFile(workspaceRoot, 'a.txt', 'hello');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
             const cp = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
             expect(cp).not.toBeNull();
 
@@ -493,7 +371,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
         const storageRoot = await createTempDirectory('limcode-cp3-storage-');
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             // cp1 = 完整备份（a.txt=v1）
             const cp1 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
@@ -609,7 +487,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             await writeFile(checkpointsDir, `cp_B/${scoped('b.txt')}`, 'new');
             await writeFile(checkpointsDir, 'cp_B/manifest.json', JSON.stringify(manifestB, null, 2));
 
-            const harness = await createHarness(workspaceRoot, storageRoot, [legacyM, recordB]);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot, [legacyM, recordB]);
             // 容量=2：创建 C 后触发 cleanup，把最旧的 legacy M 合并进 B 再删除
             harness.setCheckpointConfig({ maxCheckpoints: 2 });
             const cpC = await harness.manager.createCheckpoint('conv-1', 2, 'write_file', 'after');
@@ -672,7 +550,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             // 备份目录存在但无 manifest.json
             await fs.mkdir(path.join(storageRoot, 'checkpoints', 'cp-orphan'), { recursive: true });
 
-            const harness = await createHarness(workspaceRoot, storageRoot, [orphan]);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot, [orphan]);
             const restore = await harness.manager.restoreCheckpoint('conv-1', 'cp-orphan');
             expect(restore.success).toBe(false);
             // CP-I18N-1: 错误串统一走 t()，文案随语言包变化，这里只断言“给出显式错误”

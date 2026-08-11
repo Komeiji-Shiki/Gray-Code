@@ -1,5 +1,5 @@
 /**
- * LimCode - 渠道调用模块类型定义
+ * GrayCode - 渠道调用模块类型定义
  * 
  * 定义渠道调用相关的类型和接口
  */
@@ -309,33 +309,11 @@ export interface HttpResponse {
 }
 
 /**
- * 错误类型
+ * 错误类型（定义下沉至 core/errorTypes，本文件 re-export 保持导出面兼容；
+ * 模块内使用处经下方 import 引入，见 core/errorTypes 头部注释）
  */
-export enum ErrorType {
-    /** 配置错误 */
-    CONFIG_ERROR = 'CONFIG_ERROR',
-    
-    /** 网络错误 */
-    NETWORK_ERROR = 'NETWORK_ERROR',
-    
-    /** API 错误 */
-    API_ERROR = 'API_ERROR',
-    
-    /** 解析错误 */
-    PARSE_ERROR = 'PARSE_ERROR',
-    
-    /** 验证错误 */
-    VALIDATION_ERROR = 'VALIDATION_ERROR',
-    
-    /** 超时错误 */
-    TIMEOUT_ERROR = 'TIMEOUT_ERROR',
-    
-    /** 用户取消错误（不应重试） */
-    CANCELLED_ERROR = 'CANCELLED_ERROR',
-
-    /** 空响应错误（HTTP 成功但模型返回空内容；应重试） */
-    EMPTY_RESPONSE_ERROR = 'EMPTY_RESPONSE_ERROR'
-}
+import { ErrorType } from '../../core/errorTypes';
+export { ErrorType } from '../../core/errorTypes';
 
 /**
  * 渠道错误

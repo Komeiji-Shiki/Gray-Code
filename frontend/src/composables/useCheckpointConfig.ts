@@ -8,6 +8,7 @@
  * - 工具显示名/描述 i18n 辅助（独立导出，供清理模块复用）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, computed } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useChatStore } from '@/stores'
@@ -224,7 +225,7 @@ export function useCheckpointConfig() {
     const run = async (): Promise<boolean> => {
       try {
         // 在发送时构建整包配置（含所有已提交的乐观更新），避免串行队列中发送过期快照
-        const result = await sendToExtension<{ config?: CheckpointConfig | null }>('checkpoint.updateConfig', {
+        const result = await sendToExtension<{ config?: CheckpointConfig | null }>(MESSAGE_NAMES['checkpoint.updateConfig'], {
           config: buildConfigToSave()
         })
         configSaveError.value = null
@@ -264,7 +265,7 @@ export function useCheckpointConfig() {
     // H-2: getConfig 失败时展示错误横幅并禁用表单（不把默认值暴露为可编辑配置），直到重试成功
     try {
       // 加载存档点配置
-      const response = await sendToExtension<{ config: CheckpointConfig }>('checkpoint.getConfig', {})
+      const response = await sendToExtension<{ config: CheckpointConfig }>(MESSAGE_NAMES['checkpoint.getConfig'], {})
       if (response?.config) {
         Object.assign(config, response.config)
         // 防御：旧后端/旧配置可能没有 exclusion 字段
@@ -289,7 +290,7 @@ export function useCheckpointConfig() {
   async function loadTools() {
     try {
       // 加载工具列表
-      const toolsResponse = await sendToExtension<{ tools: ToolInfo[] }>('tools.getTools', {})
+      const toolsResponse = await sendToExtension<{ tools: ToolInfo[] }>(MESSAGE_NAMES['tools.getTools'], {})
       if (toolsResponse?.tools) {
         allTools.value = toolsResponse.tools
       }

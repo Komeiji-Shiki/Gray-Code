@@ -20,7 +20,8 @@
   "include": [
     "extension.ts",
     "webview/**/*.ts",
-    "backend/**/*.ts"
+    "backend/**/*.ts",
+    "shared/**/*.ts"
   ],
   "exclude": [
     "node_modules",

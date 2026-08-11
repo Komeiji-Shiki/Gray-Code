@@ -51,7 +51,7 @@ function readNewFormat(dir: string): Array<{ id: number; date: string; text: str
 }
 
 describe('MemoryManager LOG 旧格式迁移', () => {
-    it('旧格式文件：打开后数据无损（含多字节文本），文件被重写为新格式', async () => {
+    test('旧格式文件：打开后数据无损（含多字节文本），文件被重写为新格式', async () => {
         const texts = ['alpha', 'x'.repeat(270), '记忆-β'];
         const dir = makeOldLog(texts);
         try {
@@ -74,7 +74,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('迁移幂等：首次访问触发一次原子替换，再次访问不重复重写', async () => {
+    test('迁移幂等：首次访问触发一次原子替换，再次访问不重复重写', async () => {
         const dir = makeOldLog(['a', 'b']);
         try {
             // 通过 require 拿到底层 CJS 模块对象（与 memoryManagerFixes.test.ts 同法）
@@ -101,7 +101,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('旧格式 + 撕裂尾巴：完整记录无损迁移，撕裂尾巴被丢弃', async () => {
+    test('旧格式 + 撕裂尾巴：完整记录无损迁移，撕裂尾巴被丢弃', async () => {
         const dir = makeOldLog(['a', 'b'], Buffer.from('partial-garbage-tail'));
         try {
             const mm = new MemoryManager(dir);
@@ -116,7 +116,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('新格式文件不受影响（不触发重写，字节不变）', async () => {
+    test('新格式文件不受影响（不触发重写，字节不变）', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-migrate-'));
         try {
             const fsPromises = require('fs/promises') as typeof import('fs/promises');
@@ -142,7 +142,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('歧义尺寸（5120 = 16×320 = 5×1024）：内容判别，旧格式正确迁移', async () => {
+    test('歧义尺寸（5120 = 16×320 = 5×1024）：内容判别，旧格式正确迁移', async () => {
         const texts = Array.from({ length: 16 }, (_, i) => `memory-${i}`);
         const dir = makeOldLog(texts); // 16 条 × 320 = 5120，同时是 320 与 1024 的倍数
         try {
@@ -158,7 +158,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('320 对齐但内容非旧格式（垃圾）：不迁移、不抛错（fail-open）', async () => {
+    test('320 对齐但内容非旧格式（垃圾）：不迁移、不抛错（fail-open）', async () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-migrate-'));
         try {
             const garbage = Buffer.alloc(320, 0x58); // 'X' × 320
@@ -174,7 +174,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('迁移后 wake/recall 输出完整', async () => {
+    test('迁移后 wake/recall 输出完整', async () => {
         const dir = makeOldLog(['alpha-1', 'beta-2', 'alpha-3']);
         try {
             const mm = new MemoryManager(dir);
@@ -190,7 +190,7 @@ describe('MemoryManager LOG 旧格式迁移', () => {
         }
     });
 
-    it('迁移后可正常追加/编辑/删除', async () => {
+    test('迁移后可正常追加/编辑/删除', async () => {
         const dir = makeOldLog(['a', 'b', 'c']);
         try {
             const mm = new MemoryManager(dir);

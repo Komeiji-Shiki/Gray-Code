@@ -32,7 +32,7 @@ describe('fileTree buildFileTree', () => {
         fs.writeFileSync(p, content)
     }
 
-    it('截断：节点数量预算耗尽时截断文件树并标记 truncated', () => {
+    test('截断：节点数量预算耗尽时截断文件树并标记 truncated', () => {
         for (let i = 0; i < 8; i++) {
             write(`f${i}.txt`, `content ${i}`)
         }
@@ -50,7 +50,7 @@ describe('fileTree buildFileTree', () => {
         expect(FILE_TREE_MAX_NODES).toBeGreaterThan(0)
     })
 
-    it('! 否定：.gitignore 的 !keep.log 重新包含被排除的文件', () => {
+    test('! 否定：.gitignore 的 !keep.log 重新包含被排除的文件', () => {
         write('.gitignore', '*.log\n!keep.log\n')
         write('a.log', 'a')
         write('keep.log', 'keep')
@@ -63,7 +63,7 @@ describe('fileTree buildFileTree', () => {
         expect(tree).toContain('other.txt')
     })
 
-    it('! 否定：被排除目录下的文件不能被重新包含（git 语义）', () => {
+    test('! 否定：被排除目录下的文件不能被重新包含（git 语义）', () => {
         write('.gitignore', 'build/\n!build/keep.txt\n')
         write('build/keep.txt', 'x')
         write('src/main.txt', 'y')
@@ -75,7 +75,7 @@ describe('fileTree buildFileTree', () => {
         expect(tree).toContain('main.txt')
     })
 
-    it('正则缓存复用：相同模式第二次调用零编译、有命中', () => {
+    test('正则缓存复用：相同模式第二次调用零编译、有命中', () => {
         write('.gitignore', '*.zz1\n*.zz2\n')
         write('a.zz1', 'a')
         write('b.zz2', 'b')

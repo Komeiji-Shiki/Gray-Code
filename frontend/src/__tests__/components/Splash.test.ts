@@ -15,7 +15,7 @@
  * - SVG 装饰性图：保留 aria-hidden、无 role（避免与 aria-hidden 矛盾）
  */
 import { mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
 import Splash from '../../components/Splash.vue'
 
@@ -56,7 +56,7 @@ afterEach(() => {
 })
 
 describe('Splash 状态机', () => {
-  it('ready 早到也需等最短展示时长', async () => {
+  test('ready 早到也需等最短展示时长', async () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 5000 } })
 
     // drawDone 在 2300ms 才完成，此前不淡出
@@ -81,7 +81,7 @@ describe('Splash 状态机', () => {
     expect(wrapper.emitted('done')).toHaveLength(1)
   })
 
-  it('drawDone 前不淡出（即使 ready 且已过最短时长）', async () => {
+  test('drawDone 前不淡出（即使 ready 且已过最短时长）', async () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 0 } })
 
     vi.advanceTimersByTime(1000) // 已过最短时长，但 drawDone 未完成
@@ -108,7 +108,7 @@ describe('Splash 状态机', () => {
     expect(wrapper.emitted('done')).toHaveLength(1)
   })
 
-  it('done 只触发一次', () => {
+  test('done 只触发一次', () => {
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 0 } })
 
     vi.advanceTimersByTime(GRAY_LINE_END_MS + MERGE_MS + FADE_MS)
@@ -118,7 +118,7 @@ describe('Splash 状态机', () => {
     expect(wrapper.emitted('done')).toHaveLength(1)
   })
 
-  it('卸载清理定时器：不再触发 done', () => {
+  test('卸载清理定时器：不再触发 done', () => {
     const wrapper = mount(Splash, { props: { ready: true } })
     wrapper.unmount()
 
@@ -126,7 +126,7 @@ describe('Splash 状态机', () => {
     expect(wrapper.emitted('done')).toBeUndefined()
   })
 
-  it('ready 未到时保持展示，ready 到达后才淡出', async () => {
+  test('ready 未到时保持展示，ready 到达后才淡出', async () => {
     const wrapper = mount(Splash, { props: { ready: false, minDisplayMs: 100 } })
 
     vi.advanceTimersByTime(GRAY_LINE_END_MS + 100) // 已过 drawDone、最短时长与格雷码一轮
@@ -146,7 +146,7 @@ describe('Splash 状态机', () => {
     expect(wrapper.emitted('done')).toHaveLength(1)
   })
 
-  it('reduced-motion：无 50ms 静态等待，按最短时长直接 done（跳过淡出）', () => {
+  test('reduced-motion：无 50ms 静态等待，按最短时长直接 done（跳过淡出）', () => {
     stubMatchMedia(true)
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 1000 } })
 
@@ -159,7 +159,7 @@ describe('Splash 状态机', () => {
     expect(wrapper.emitted('done')).toHaveLength(1)
   })
 
-  it('reduced-motion + ready + minDisplayMs=0：挂载即 done（同步）', () => {
+  test('reduced-motion + ready + minDisplayMs=0：挂载即 done（同步）', () => {
     stubMatchMedia(true)
     const wrapper = mount(Splash, { props: { ready: true, minDisplayMs: 0 } })
     expect(wrapper.emitted('done')).toHaveLength(1)
@@ -167,7 +167,7 @@ describe('Splash 状态机', () => {
 })
 
 describe('Splash 可访问性', () => {
-  it('SVG 装饰性图：保留 aria-hidden、无 role（与 aria-hidden 不矛盾）', () => {
+  test('SVG 装饰性图：保留 aria-hidden、无 role（与 aria-hidden 不矛盾）', () => {
     const wrapper = mount(Splash)
     const svg = wrapper.get('svg')
     expect(svg.attributes('aria-hidden')).toBe('true')

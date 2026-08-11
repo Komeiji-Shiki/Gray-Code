@@ -1,32 +1,8 @@
 /**
- * LimCode - API 模块导出
+ * GrayCode - API 模块导出
  * 
  * 统一导出前后端通信相关的所有类型和处理器
  */
-
-// 类型定义
-export type {
-    ChatRequest,
-    ChatStreamRequest,
-    RetryRequest,
-    RetryStreamRequest,
-    EditAndRetryRequest,
-    EditAndRetryStreamRequest,
-    DeleteToMessageRequest,
-    APIRequest,
-    ChatSuccessResponse,
-    ChatErrorResponse,
-    ChatResponse,
-    ChatStreamChunkResponse,
-    ChatStreamCompleteResponse,
-    ChatStreamErrorResponse,
-    DeleteToMessageSuccessResponse,
-    DeleteToMessageErrorResponse,
-    DeleteToMessageResponse,
-    APIResponse
-} from './types';
-
-export { APIErrorCode, APIError } from './types';
 
 // 对话模块
 export { ChatHandler } from './chat';
