@@ -54,6 +54,16 @@ export interface SubAgentConfigItem {
     channel: {
         channelId: string;
         modelId?: string;
+
+        /**
+         * 是否与该子代理派发时当前会话的渠道/模型同步（逐代理开关）。
+         *
+         * 勾选后该子代理忽略自身固定的 channelId/modelId，运行时统一改用
+         * 派发方当前正在使用的渠道与模型（channelConfigId + channelModelId），
+         * 与 General Worker 的继承口径一致；渠道切换（备用 key/新供应商）时
+         * 无需逐个修改子代理。未勾选（默认）时使用自身固定渠道与模型。
+         */
+        syncWithCurrentModel?: boolean;
     };
     
     /**
@@ -122,12 +132,12 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     generalWorkerEnabled?: boolean;
 
     /**
-     * 是否强制所有子代理使用当前会话渠道（全局开关）。
+     * （已废弃）是否强制所有子代理使用当前会话渠道（全局开关）。
      *
-     * 与 General Worker 的继承口径一致（channelConfigId + channelModelId）：
-     * 勾选后，已配置固定渠道的子代理运行时也统一改用派发方当前正在使用的渠道，
-     * 忽略各自配置的渠道与模型；未勾选（默认）时各子代理使用自己的固定渠道。
-     * 渠道切换（备用 key/新供应商）时无需逐个修改子代理。
+     * 该全局开关已下放为每个子代理渠道配置上的 syncWithCurrentModel 逐代理开关。
+     * 本字段仅保留用于旧配置向后兼容迁移：为 true 且某代理未显式设置
+     * syncWithCurrentModel 时，运行时按旧语义视同该代理与当前渠道同步；
+     * 新 UI 不再写入/展示该字段，代理显式设置 false 后即恢复固定渠道。
      */
     forceUseCurrentChannel?: boolean;
 }

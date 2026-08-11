@@ -48,6 +48,16 @@ export interface SubAgentChannelConfig {
     
     /** 模型 ID（可选，使用渠道默认模型） */
     modelId?: string;
+
+    /**
+     * 是否与派发时当前会话的渠道/模型同步（逐代理开关）。
+     *
+     * 勾选后该子代理忽略自身固定的 channelId/modelId，运行时统一改用派发方当前
+     * 正在使用的渠道与模型（channelConfigId + channelModelId），与 General Worker
+     * 的继承口径一致（含 modelId——只换渠道不换模型会落到渠道默认模型，默认模型
+     * 配额/权限与主模型不同时报错）。未勾选（默认）时使用自身固定渠道与模型。
+     */
+    syncWithCurrentModel?: boolean;
 }
 
 /**

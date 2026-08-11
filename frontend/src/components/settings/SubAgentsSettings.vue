@@ -40,6 +40,7 @@ interface SubAgentConfig {
   channel: {
     channelId: string
     modelId?: string
+    syncWithCurrentModel?: boolean
   }
   tools: SubAgentToolsConfig
   maxIterations?: number
@@ -87,8 +88,6 @@ const maxConcurrentAgents = ref(3)
 const generalWorkerEnabled = ref(true)
 // 全局默认迭代次数（未单独配置的 agent 与 General Worker 继承，默认 80）
 const defaultMaxIterations = ref(80)
-// 强制使用当前会话渠道（全局开关）：开启后所有子代理忽略自身固定渠道，统一改用当前会话渠道
-const forceUseCurrentChannel = ref(false)
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -168,6 +167,11 @@ const modelOptions = computed<SelectOption[]>(() => {
   }))
 })
 
+// 当前代理是否勾选「与当前模型同步」：勾选后忽略自身固定渠道/模型，运行时使用当前会话渠道与模型
+const currentAgentSyncsWithCurrent = computed(() =>
+  currentAgent.value?.channel.syncWithCurrentModel === true
+)
+
 // 工具模式选项
 const toolModeOptions = computed<SelectOption[]>(() => [
   { value: 'all', label: t('components.settings.subagents.toolMode.all') },
@@ -232,7 +236,7 @@ function isMcpTool(tool: ToolInfo): boolean {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number, forceUseCurrentChannel?: boolean }>(MESSAGE_NAMES['subagents.list'], {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number }>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -243,7 +247,6 @@ async function loadSubAgents() {
       if (response.defaultMaxIterations !== undefined) {
         defaultMaxIterations.value = response.defaultMaxIterations
       }
-      forceUseCurrentChannel.value = response.forceUseCurrentChannel === true
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
         currentAgentType.value = subAgents.value[0].type
@@ -338,13 +341,25 @@ function selectAgent(agentType: string) {
  * 返回保存结果而不是抛出：模板里的 @change / @update:modelValue 都不接 catch，
  * 抛出会变成 unhandled rejection；而原先直接吞掉错误则让 saveRename 的失败分支成了死代码，
  * 后端拒绝保存时编辑框照常关闭，用户看到的是「改成功了但值没变」。
+ *
+ * 乐观更新：先合并到本地再发请求，避免保存往返窗口内连续编辑互相覆盖（对象字段做字段级
+ * 合并，不整体替换，防止丢 channel.modelId/syncWithCurrentModel）；保存失败时回滚本地。
  */
 async function updateAgentField(field: string, value: any): Promise<{ ok: boolean; error?: unknown }> {
   if (!currentAgent.value) return { ok: false }
 
-  // await 前捕获代理类型：请求往返期间用户可能切换代理，
-  // await 后重新读 currentAgentType.value 会把旧代理的更新合并进新代理（跨代理污染）
+  // await 前捕获代理类型并按 agentType 定位本地对象：往返期间用户可能切换代理，
+  // 本地合并始终落到捕获的旧代理上，不会污染新选中的代理
   const agentType = currentAgentType.value
+  const agent = subAgents.value.find(a => a.type === agentType)
+  const previous = agent ? (agent as any)[field] : undefined
+
+  if (agent) {
+    const next = isPlainObject(previous) && isPlainObject(value)
+      ? { ...previous, ...value }
+      : value
+    ;(agent as any)[field] = next
+  }
 
   try {
     await sendToExtension(MESSAGE_NAMES['subagents.update'], {
@@ -352,21 +367,32 @@ async function updateAgentField(field: string, value: any): Promise<{ ok: boolea
       updates: { [field]: value }
     })
 
-    // 代理已切换：跳过本地合并（后端已写入旧代理，切回旧代理时会重新加载）
-    if (currentAgentType.value !== agentType) return { ok: true }
-
-    // 更新本地状态
-    const agent = subAgents.value.find(a => a.type === agentType)
-    if (agent) {
-      (agent as any)[field] = value
-    }
     saveError.value = ''
     return { ok: true }
   } catch (error) {
+    // 保存失败：回滚本地状态，避免 UI 显示已保存而实际未写入
+    const rollbackTarget = subAgents.value.find(a => a.type === agentType)
+    if (rollbackTarget) {
+      ;(rollbackTarget as any)[field] = previous
+    }
     console.error('Failed to update subagent:', error)
     saveError.value = errorText(error)
     return { ok: false, error }
   }
+}
+
+// 判断是否为普通对象（用于 updateAgentField 的对象字段级合并）
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+// 切换「与当前模型同步」：勾选后该代理忽略自身固定渠道/模型，运行时使用当前会话渠道与模型
+async function toggleSyncWithCurrentModel(value: boolean) {
+  if (!currentAgent.value) return
+  await updateAgentField('channel', {
+    ...currentAgent.value.channel,
+    syncWithCurrentModel: value
+  })
 }
 
 // 全局数字输入非法提示（就地校验并提示，不再静默回退默认值）
@@ -655,14 +681,6 @@ onMounted(async () => {
           />
           <span class="field-hint">{{ t('components.settings.subagents.generalWorkerHint') }}</span>
         </div>
-        <div class="form-group">
-          <CustomCheckbox
-            :modelValue="forceUseCurrentChannel"
-            :label="t('components.settings.subagents.forceUseCurrentChannel')"
-            :hint="t('components.settings.subagents.forceUseCurrentChannelHint')"
-            @update:modelValue="(v: boolean) => { forceUseCurrentChannel = v; updateGlobalConfig('forceUseCurrentChannel', v) }"
-          />
-        </div>
       </div>
       
       <!-- 子代理选择器 -->
@@ -766,7 +784,16 @@ onMounted(async () => {
         <!-- 渠道和模型 -->
         <div class="config-section" data-search-anchor="subagents-channel-model">
           <h5>{{ t('components.settings.subagents.channelModel') }}</h5>
-          <p v-if="forceUseCurrentChannel" class="field-hint">{{ t('components.settings.subagents.forceUseCurrentChannelActiveHint') }}</p>
+
+          <div class="form-group">
+            <CustomCheckbox
+              :modelValue="currentAgentSyncsWithCurrent"
+              :label="t('components.settings.subagents.syncWithCurrentModel')"
+              :hint="currentAgentSyncsWithCurrent ? '' : t('components.settings.subagents.syncWithCurrentModelHint')"
+              @update:modelValue="toggleSyncWithCurrentModel"
+            />
+          </div>
+          <p v-if="currentAgentSyncsWithCurrent" class="field-hint">{{ t('components.settings.subagents.syncWithCurrentModelActiveHint') }}</p>
           
           <div class="form-row">
             <div class="form-group flex-1">
@@ -775,7 +802,7 @@ onMounted(async () => {
                 :modelValue="currentAgent.channel.channelId"
                 :options="channelOptions"
                 :placeholder="t('components.settings.subagents.selectChannel')"
-                :disabled="forceUseCurrentChannel"
+                :disabled="currentAgentSyncsWithCurrent"
                 @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, channelId: $event, modelId: '' })"
               />
             </div>
@@ -786,7 +813,7 @@ onMounted(async () => {
                 :modelValue="currentAgent.channel.modelId || ''"
                 :options="modelOptions"
                 :placeholder="t('components.settings.subagents.selectModel')"
-                :disabled="forceUseCurrentChannel || !selectedChannel"
+                :disabled="currentAgentSyncsWithCurrent || !selectedChannel"
                 @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, modelId: $event })"
               />
             </div>
