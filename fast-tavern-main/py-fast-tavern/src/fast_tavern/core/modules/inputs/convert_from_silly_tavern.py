@@ -440,7 +440,16 @@ def convert_worldbook_entry_from_silly_tavern(raw_entry: Any, fallback_index: in
 
     ext = raw_entry.get("extensions") if _is_object(raw_entry.get("extensions")) else {}
 
-    index = int(_to_num(raw_entry.get("index", raw_entry.get("uid", raw_entry.get("id", fallback_index))), fallback_index))
+    # 对齐 TS rawEntry.index ?? rawEntry.uid ?? rawEntry.id：显式 None 视为缺失
+    index_raw = raw_entry.get("index")
+    if index_raw is None:
+        index_raw = raw_entry.get("uid")
+    if index_raw is None:
+        index_raw = raw_entry.get("id")
+    if index_raw is None:
+        index_raw = fallback_index
+    # 保持浮点不 int 截断（对齐 TS toNum number）
+    index = _to_num(index_raw, fallback_index)
     position = _normalize_worldbook_position(raw_entry.get("position"), ext.get("position"))
 
     selective_logic = _normalize_worldbook_selective_logic(
@@ -510,8 +519,8 @@ def convert_worldbook_entry_from_silly_tavern(raw_entry: Any, fallback_index: in
             raw_entry.get("secondaryKey") if raw_entry.get("secondaryKey") is not None else raw_entry.get("keysecondary") if raw_entry.get("keysecondary") is not None else raw_entry.get("secondary_keys")
         )],
         "selectiveLogic": selective_logic,  # type: ignore[typeddict-item]
-        "order": int(_to_num(raw_entry.get("order") if raw_entry.get("order") is not None else raw_entry.get("insertion_order"), 100)),
-        "depth": int(_to_num(depth_source, 4)),
+        "order": _to_num(raw_entry.get("order") if raw_entry.get("order") is not None else raw_entry.get("insertion_order"), 100),
+        "depth": _to_num(depth_source, 4),
         "position": position,
         "role": role,  # type: ignore[typeddict-item]
         "caseSensitive": case_sensitive,
@@ -523,7 +532,7 @@ def convert_worldbook_entry_from_silly_tavern(raw_entry: Any, fallback_index: in
             raw_entry.get("preventRecursion") if raw_entry.get("preventRecursion") is not None else ext.get("preventRecursion", ext.get("prevent_recursion")),
             False,
         ),
-        "probability": int(_to_num(raw_entry.get("probability") if raw_entry.get("probability") is not None else ext.get("probability"), 100)),
+        "probability": _to_num(raw_entry.get("probability") if raw_entry.get("probability") is not None else ext.get("probability"), 100),
         "other": other,
     }
 
@@ -652,16 +661,17 @@ def _convert_prompt_from_silly_tavern(
         "enabled": bool(order_item.get("enabled")) if order_item else (False if len(order_map) > 0 else _to_bool(rest.get("enabled"), True)),
         "role": role,
         "content": _to_str(rest.get("content"), ""),
-        "depth": int(_to_num(injection_depth if injection_depth is not None else rest.get("depth"), 0)),
-        "order": int(_to_num(injection_order if injection_order is not None else rest.get("order"), 100)),
+        "depth": _to_num(injection_depth if injection_depth is not None else rest.get("depth"), 0),
+        "order": _to_num(injection_order if injection_order is not None else rest.get("order"), 100),
         "trigger": (injection_trigger if isinstance(injection_trigger, list) else rest.get("trigger") if isinstance(rest.get("trigger"), list) else []),
         "position": position,  # type: ignore[typeddict-item]
     }
 
     if order_item:
-        out["index"] = int(order_item.get("index"))
+        out["index"] = order_item.get("index")
     elif isinstance(rest.get("index"), (int, float)):
-        out["index"] = int(rest.get("index"))
+        # 保持浮点不 int 截断（对齐 TS：typeof rest.index === 'number' 时原样保留）
+        out["index"] = rest.get("index")
 
     return out
 
@@ -851,7 +861,7 @@ def convert_history_message_from_silly_tavern(raw_message: Any) -> ChatMessage |
         return {
             "role": role,
             **({"name": name} if name else {}),
-            **({"swipeId": int(swipe_id)} if isinstance(swipe_id, (int, float)) else {}),
+            **({"swipeId": swipe_id} if isinstance(swipe_id, (int, float)) else {}),
             "parts": _clone_json(raw_message.get("parts")),
             **({"swipes": part_swipes} if part_swipes is not None else {}),
         }
@@ -862,7 +872,7 @@ def convert_history_message_from_silly_tavern(raw_message: Any) -> ChatMessage |
     return {
         "role": role,
         **({"name": name} if name else {}),
-        **({"swipeId": int(swipe_id)} if isinstance(swipe_id, (int, float)) else {}),
+        **({"swipeId": swipe_id} if isinstance(swipe_id, (int, float)) else {}),
         "content": content,
         **({"swipes": swipes} if swipes is not None else {}),
     }

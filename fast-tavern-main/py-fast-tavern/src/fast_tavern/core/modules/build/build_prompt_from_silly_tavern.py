@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...types import BuildPromptFromSillyTavernParams, BuildPromptResult
 from ..inputs import (
     convert_character_from_silly_tavern,
     convert_history_from_silly_tavern,
@@ -10,58 +9,65 @@ from ..inputs import (
     convert_regexes_from_silly_tavern,
     convert_worldbooks_from_silly_tavern,
 )
-from .build_prompt import build_prompt
+from .build_prompt import _is_params_object, build_prompt
 
-
-# 旧酒馆（SillyTavern 原始结构）包装入口：
-# 1) 先把旧结构转换为 st-api-wrapper 新格式
-# 2) 再执行 build_prompt
 
 def build_prompt_from_silly_tavern(
-    params: BuildPromptFromSillyTavernParams | dict[str, Any] | None = None,
+    preset: Any = None,
+    character: Any = None,
+    globals: dict[str, Any] | None = None,
+    history: list[Any] | None = None,
+    view: str = "model",
+    output_format: str = "gemini",
+    system_role_policy: str = "keep",
+    macros: dict[str, str] | None = None,
+    variables: dict[str, Any] | None = None,
+    global_variables: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
     **kwargs: Any,
-) -> BuildPromptResult:
-    params = {**(params or {}), **kwargs}
+) -> dict[str, Any]:
+    """
+    旧酒馆（SillyTavern 原始结构）包装入口：
+    先转换为新格式，再执行 build_prompt。
+    """
+    # 兼容 TS 风格：传入单个 params 对象（含 preset/history/view 等键）
+    if _is_params_object(preset):
+        params = preset
+        preset = params.get("preset")
+        character = params.get("character")
+        globals = params.get("globals")
+        history = params.get("history")
+        view = params.get("view", "model")
+        output_format = params.get("outputFormat", params.get("output_format", "gemini"))
+        system_role_policy = params.get("systemRolePolicy", params.get("system_role_policy", "keep"))
+        macros = params.get("macros")
+        variables = params.get("variables")
+        global_variables = params.get("globalVariables", params.get("global_variables"))
+        options = params.get("options")
 
-    preset = convert_preset_from_silly_tavern(params.get("preset"))
+    output_format = kwargs.pop("outputFormat", output_format)
+    system_role_policy = kwargs.pop("systemRolePolicy", system_role_policy)
+    global_variables = kwargs.pop("globalVariables", global_variables)
 
-    character = convert_character_from_silly_tavern(params.get("character")) if params.get("character") is not None else None
-
-    globals_raw = params.get("globals") if isinstance(params.get("globals"), dict) else {}
-    world_books = (
-        convert_worldbooks_from_silly_tavern(globals_raw.get("worldBooks"))
-        if "worldBooks" in globals_raw
-        else None
-    )
-    regex_scripts = (
-        convert_regexes_from_silly_tavern(globals_raw.get("regexScripts"))
-        if "regexScripts" in globals_raw
-        else None
-    )
-
-    history = convert_history_from_silly_tavern(params.get("history"))
+    globals = globals or {}
 
     return build_prompt(
-        {
-            "preset": preset,
-            "character": character,
-            "globals": {
-                "worldBooks": world_books,
-                "regexScripts": regex_scripts,
-            },
-            "history": history,
-            "view": params.get("view"),
-            "outputFormat": params.get("outputFormat") if params.get("outputFormat") is not None else params.get("output_format"),
-            "systemRolePolicy": params.get("systemRolePolicy") if params.get("systemRolePolicy") is not None else params.get("system_role_policy"),
-            "macros": params.get("macros"),
-            "variables": params.get("variables"),
-            "globalVariables": params.get("globalVariables") if params.get("globalVariables") is not None else params.get("global_variables"),
-            "options": params.get("options"),
-        }
+        preset=convert_preset_from_silly_tavern(preset),
+        character=convert_character_from_silly_tavern(character) if character is not None else None,
+        globals={
+            "worldBooks": convert_worldbooks_from_silly_tavern(globals.get("worldBooks")),
+            "regexScripts": convert_regexes_from_silly_tavern(globals.get("regexScripts")),
+        },
+        history=convert_history_from_silly_tavern(history),
+        view=view,
+        output_format=output_format,
+        system_role_policy=system_role_policy,
+        macros=macros,
+        variables=variables,
+        global_variables=global_variables,
+        options=options,
     )
 
 
 # TS-style alias
 buildPromptFromSillyTavern = build_prompt_from_silly_tavern
-
-__all__ = ["build_prompt_from_silly_tavern", "buildPromptFromSillyTavern"]

@@ -20,7 +20,10 @@ def _normalize_probability(p: Any) -> float:
 
 
 def _is_number(v: Any) -> bool:
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    """对齐 TS typeof number + Number.isFinite：排除 bool/NaN/±Inf（NaN 与自身不等；±Inf 无排序语义）"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    return v == v and v not in (float("inf"), float("-inf"))
 
 
 def _to_recursion_limit(v: Any) -> int:

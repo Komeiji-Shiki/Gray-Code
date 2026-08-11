@@ -13,10 +13,17 @@ def _is_finite_number(value: Any) -> bool:
     return math.isfinite(value)
 
 
-def _to_finite_int(value: Any) -> int:
+def _to_finite_number(value: Any) -> float:
+    """解析为有限数值（含数字字符串，如 '10' 与 '9' 按数值比较），非法 → 0.0。"""
     if _is_finite_number(value):
-        return int(value)
-    return 0
+        return float(value)
+    if isinstance(value, str):
+        try:
+            n = float(value)
+        except Exception:
+            return 0.0
+        return n if math.isfinite(n) else 0.0
+    return 0.0
 
 
 def _normalize_role(raw: Any, fallback: Role = "system") -> Role:
@@ -60,7 +67,7 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
             and (not _is_fixed_worldbook_entry(e))
             and (position_map.get(str(e.get("position"))) or str(e.get("position"))) == str(prompt.get("identifier"))
         ]
-        slot_entries.sort(key=lambda x: _to_finite_int(x.get("order")))
+        slot_entries.sort(key=lambda x: _to_finite_number(x.get("order")))
 
         for entry in slot_entries:
             result.append(
@@ -92,7 +99,8 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
                     "text": text,
                 }
                 if node.get("historyDepth") is not None:
-                    item["historyDepth"] = int(node.get("historyDepth"))
+                    # 保持原值不 int 截断（对齐 TS：historyDepth 原样透传）
+                    item["historyDepth"] = node.get("historyDepth")
                 dialogue_list.append(item)
 
             preset_injections = [
@@ -119,8 +127,8 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
                         "target": "slashCommands",
                         "role": _normalize_role(p.get("role"), "system"),
                         "text": p.get("content") or "",
-                        "depth": int(p.get("depth")),
-                        "order": int(p.get("order")),
+                        "depth": p.get("depth"),
+                        "order": p.get("order"),
                         "idx": idx,
                     }
                 )
@@ -131,8 +139,8 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
                         "target": "worldBook",
                         "role": _normalize_role(e.get("role") if e.get("role") is not None else "system", "system"),
                         "text": e.get("content") or "",
-                        "depth": int(e.get("depth")),
-                        "order": int(e.get("order")),
+                        "depth": e.get("depth"),
+                        "order": e.get("order"),
                         "idx": 10_000 + idx,
                     }
                 )
@@ -143,7 +151,9 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
 
             original_count = len(dialogue_list)
             for item in all_injections:
-                target_index = max(0, original_count - int(item["depth"]))
+                # 对齐 TS splice(ToInteger(max(0, originalCount - depth)))：深度保持浮点，
+                # 仅在索引计算处向零截断，避免提前 int() 让 2.5 与 2 行为不一致
+                target_index = int(max(0, original_count - item["depth"]))
                 dialogue_list.insert(
                     target_index,
                     {
@@ -157,7 +167,8 @@ def assemble_tagged_prompt_list(params: dict[str, Any]) -> list[TaggedContent]:
             result.extend(dialogue_list)
             continue
 
-        if prompt.get("content"):
+        # 空串也是合法内容（与 `?? ''` 语义统一）：仅 None 视为缺失
+        if prompt.get("content") is not None:
             result.append(
                 {
                     "tag": f"Preset: {prompt.get('name')}",
