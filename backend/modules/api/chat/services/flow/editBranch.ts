@@ -281,6 +281,13 @@ export class ChatFlowEditBranch extends ChatFlowContext {
     await this.waitForOldStreamExit(conversationId);
     await this.prepareConversationForRequest(conversationId);
 
+    // 3.6 为编辑前的用户消息创建存档点（执行前）：与流式路径 handleEditAndRetryStream 的
+    // before 检查点（843-858）一致。必须在 updateMessage 之前创建——检查点快照读持久化历史，
+    // 先更新再存档会存成新内容，丢失「编辑前旧内容」的回档语义。
+    // 非流式响应无 checkpoints 通道（ChatSuccessData），仅创建并落库（createUserMessageCheckpoint
+    // 内部经 checkpointManager.createCheckpoint 持久化，前端可稍后经存档列表读取）。
+    await this.checkpointService.createUserMessageCheckpoint(conversationId, 'before', messageIndex);
+
     // 4. 更新消息内容（包含附件），并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       // 与流式路径（handleEditAndRetryStream 2165）一致：保留 request.attachments
@@ -303,6 +310,11 @@ export class ChatFlowEditBranch extends ChatFlowContext {
     
     // 5.5 清除裁剪状态（编辑后应重新计算裁剪）
     await this.toolIterationLoopService.clearTrimState(conversationId);
+
+    // 5.6 为编辑后的用户消息创建存档点（执行后）：与流式路径 handleEditAndRetryStream 的
+    // after 检查点（883-894）一致——在 updateMessage + 截断成功之后、工具循环之前创建，
+    // 捕获「编辑后、生成前」状态；若后续循环失败，用户仍可回滚到编辑后的消息状态。
+    await this.checkpointService.createUserMessageCheckpoint(conversationId, 'after', messageIndex);
 
     // 6. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
