@@ -292,13 +292,20 @@ export class StdioMcpClient extends EventEmitter {
             const exited = new Promise<void>((resolve) => { resolveExited = resolve; });
             const onExitOnce = () => resolveExited();
             proc.once('exit', onExitOnce);
-            const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+            // 可取消的等待定时器：race 由 exited 先行结束时必须取消 5s 兜底定时器——
+            // 残留定时器会持有闭包并让事件循环空转至超时，快速退出路径上多次
+            // disconnect 后逐个堆积（disconnect wait 定时器残留）。
+            let waitTimer: ReturnType<typeof setTimeout> | null = null;
+            const wait = (ms: number): Promise<void> => new Promise(resolve => {
+                waitTimer = setTimeout(resolve, ms);
+            });
             treeKill(pid, 'SIGTERM', (err?: Error) => {
                 if (err) {
                     try { treeKill(pid, 'SIGKILL', () => {}); } catch {}
                 }
             });
             await Promise.race([exited, wait(5000)]);
+            if (waitTimer) clearTimeout(waitTimer);
             // 超时路径：进程未在 5s 内退出，once('exit') 尚未触发——显式移除，避免监听泄漏
             //（进程随后退出时该监听已无意义；若进程已退出，once 已自移除，removeListener 为无害空操作）
             proc.removeListener('exit', onExitOnce);
@@ -444,7 +451,7 @@ export class StdioMcpClient extends EventEmitter {
      * @param signal 外部取消信号（可选）；中止时拒绝 pending 并清理监听
      */
     async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{
-        content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+        content: Array<{ type: string; text?: string; data?: string; mimeType?: string; uri?: string }>;
         isError?: boolean;
     }> {
         return await this.sendRequest('tools/call', {
@@ -526,15 +533,19 @@ export class StdioMcpClient extends EventEmitter {
                 signal?.removeEventListener('abort', onAbort);
             };
             
-            // 超时处理
-            timeoutId = setTimeout(() => {
-                if (!resolved) {
-                    resolved = true;
-                    cleanup();
-                    this.pendingRequests.delete(id);
-                    reject(new Error(`Request "${method}" timeout (${effectiveTimeout / 1000}s)${this.getStderrInfo()}`));
-                }
-            }, effectiveTimeout);
+            // 超时处理；timeout<=0 = 无超时（与 HttpMcpClient 同语义）：不调度超时定时器，
+            // 请求完全依赖进程退出检测/外部取消/disconnect 兜底（setTimeout(0) 会立即触发，
+            // 与「无超时」语义冲突）。
+            if (effectiveTimeout > 0) {
+                timeoutId = setTimeout(() => {
+                    if (!resolved) {
+                        resolved = true;
+                        cleanup();
+                        this.pendingRequests.delete(id);
+                        reject(new Error(`Request "${method}" timeout (${effectiveTimeout / 1000}s)${this.getStderrInfo()}`));
+                    }
+                }, effectiveTimeout);
+            }
             
             // 进程退出检测
             const onExit = () => {

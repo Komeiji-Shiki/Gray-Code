@@ -354,7 +354,7 @@ export class HttpMcpClient extends EventEmitter {
      * @param signal 外部取消信号（可选）；中止时立即拒绝，无需等待内部超时
      */
     async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{
-        content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+        content: Array<{ type: string; text?: string; data?: string; mimeType?: string; uri?: string }>;
         isError?: boolean;
     }> {
         return await this.sendRequest('tools/call', {
@@ -444,9 +444,14 @@ export class HttpMcpClient extends EventEmitter {
         signal?.addEventListener('abort', onExternalAbort);
 
         try {
-            timeoutId = setTimeout(() => {
-                controller.abort();
-            }, this.timeout);
+            // timeout<=0 = 无超时：setTimeout(0) 会立即触发、等同永久超时，与配置
+            // 显式传 0 的「无超时」语义冲突（与 StdioClient 的 0=无超时同口径）。
+            // 不调度超时定时器，请求完全依赖外部取消/disconnect 兜底。
+            if (this.timeout > 0) {
+                timeoutId = setTimeout(() => {
+                    controller.abort();
+                }, this.timeout);
+            }
             
             let response: Response;
             try {
@@ -566,17 +571,24 @@ export class HttpMcpClient extends EventEmitter {
         let idleTimer: ReturnType<typeof setTimeout> | null = null;
         const resetIdleTimer = () => {
             if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = null;
+            // timeout<=0 = 无超时（与 sendRequest 同语义）：不调度空闲超时
+            if (this.timeout <= 0) return;
             idleTimer = setTimeout(() => {
                 timeoutTriggered = true;
                 reader.cancel().catch(() => {});
             }, this.timeout);
         };
 
-        // 总 deadline：不随数据重置——服务器持续推无关事件时，tools/call 不能无限等待
-        const absoluteDeadline = setTimeout(() => {
-            timeoutTriggered = true;
-            reader.cancel().catch(() => {});
-        }, Math.max(this.timeout * 3, 120_000));
+        // 总 deadline：不随数据重置——服务器持续推无关事件时，tools/call 不能无限等待。
+        // timeout<=0 = 无超时：同样不设总 deadline，避免 setTimeout(0) 立即触发
+        let absoluteDeadline: ReturnType<typeof setTimeout> | null = null;
+        if (this.timeout > 0) {
+            absoluteDeadline = setTimeout(() => {
+                timeoutTriggered = true;
+                reader.cancel().catch(() => {});
+            }, Math.max(this.timeout * 3, 120_000));
+        }
 
         // 外部中止：取消读流，让 read() 快速结束（中止标记由 sendRequest 的 listener 置位）
         const onExternalAbort = () => {
@@ -727,7 +739,7 @@ export class HttpMcpClient extends EventEmitter {
             }
         } finally {
             if (idleTimer) clearTimeout(idleTimer);
-            clearTimeout(absoluteDeadline);
+            if (absoluteDeadline) clearTimeout(absoluteDeadline);
             signal?.removeEventListener('abort', onExternalAbort);
             try {
                 reader.releaseLock();
@@ -783,9 +795,13 @@ export class HttpMcpClient extends EventEmitter {
         
         const controller = new AbortController();
         this.activeControllers.add(controller);
-        const timeoutId = setTimeout(() => {
-            controller.abort();
-        }, this.timeout);
+        // timeout<=0 = 无超时（与 sendRequest 同语义）：不调度超时定时器
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        if (this.timeout > 0) {
+            timeoutId = setTimeout(() => {
+                controller.abort();
+            }, this.timeout);
+        }
         
         try {
             const response = await fetch(this.url, {
@@ -808,7 +824,7 @@ export class HttpMcpClient extends EventEmitter {
             }
             throw error;
         } finally {
-            clearTimeout(timeoutId);
+            if (timeoutId) clearTimeout(timeoutId);
             this.activeControllers.delete(controller);
         }
     }
