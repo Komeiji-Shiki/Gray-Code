@@ -779,7 +779,7 @@ function isLargeText(text: string): boolean {
 function sanitizeForViewer(
   value: unknown,
   depth = 0,
-  seen = new WeakSet<object>(),
+  seen = new Set<object>(),
   parentKey = ''
 ): unknown {
   if (typeof value === 'bigint') {
@@ -814,8 +814,12 @@ function sanitizeForViewer(
     if (seen.has(value)) {
       return '[Circular]'
     }
+    // L-fcomp：路径集合——递归完成即退出当前节点，DAG 中共享（非环）对象不会因
+    // 整树 WeakSet 残留被误标 [Circular]
     seen.add(value)
-    return value.map(item => sanitizeForViewer(item, depth + 1, seen, parentKey))
+    const mapped = value.map(item => sanitizeForViewer(item, depth + 1, seen, parentKey))
+    seen.delete(value)
+    return mapped
   }
 
   if (typeof value === 'object') {
@@ -848,6 +852,8 @@ function sanitizeForViewer(
       result[key] = sanitizeForViewer(item, depth + 1, seen, key)
     }
 
+    // L-fcomp：退出当前节点（路径集合），DAG 共享对象在其它分支可正常展开
+    seen.delete(target)
     return result
   }
 

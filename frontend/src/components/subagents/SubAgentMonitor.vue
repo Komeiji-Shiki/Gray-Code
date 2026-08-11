@@ -597,7 +597,7 @@ function flushPendingLlmDeltas() {
       createdAt: existingManifest?.createdAt || timestamp,
       updatedAt: timestamp,
       conversationId: existingManifest?.conversationId,
-      contentCount: lastEvent.payload?.contentCount || existingManifest?.contentCount || windowsByRunId.value[runId]?.totalCount || 0,
+      contentCount: lastEvent.payload?.contentCount ?? existingManifest?.contentCount ?? windowsByRunId.value[runId]?.totalCount ?? 0,
       eventCount: existingManifest?.eventCount || 0,
       contentRevision: lastEvent.contentRevision ?? lastEvent.payload?.contentRevision ?? existingManifest?.contentRevision,
       eventSequence: lastEvent.eventSequence ?? lastEvent.payload?.eventSequence ?? existingManifest?.eventSequence,

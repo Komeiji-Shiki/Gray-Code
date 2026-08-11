@@ -79,8 +79,8 @@ describe('soundEventController 窗口焦点感知', () => {
     expect(mockedPlayCue).toHaveBeenCalledTimes(1)
   })
 
-  test('文档隐藏 → 聚合不播放，恢复可见时补播一次（无论焦点状态，用户刚回到窗口）', async () => {
-    setVscodeWindowFocused(true)
+  test('文档隐藏 → 聚合不播放，恢复可见时补播一次（窗口失焦：结果发生在离开期间）', async () => {
+    setVscodeWindowFocused(false)
     setDocumentHidden(true)
     await handleSoundEvent(makeEvent())
     expect(mockedPlayCue).not.toHaveBeenCalled()
@@ -90,8 +90,21 @@ describe('soundEventController 窗口焦点感知', () => {
     expect(mockedPlayCue).toHaveBeenCalledTimes(1)
   })
 
-  test('visibilitychange 恢复可见时补播聚合事件（hooks 集成）', async () => {
+  test('文档隐藏期间聚合，恢复可见但窗口已聚焦 → 不补播（与 handleSoundEvent 对齐：结果已可见）', async () => {
+    setVscodeWindowFocused(true)
+    setDocumentHidden(true)
+    await handleSoundEvent(makeEvent())
+    expect(mockedPlayCue).not.toHaveBeenCalled()
+
+    setDocumentHidden(false)
+    await flushHiddenSoundEvent()
+    // flush 头部与 handleSoundEvent 同款焦点门禁：窗口聚焦时结果已可见，不再补播隐藏期间聚合的提示音
+    expect(mockedPlayCue).not.toHaveBeenCalled()
+  })
+
+  test('visibilitychange 恢复可见时补播聚合事件（hooks 集成，窗口失焦）', async () => {
     const cleanup = registerVisibilityChangeHooks()
+    setVscodeWindowFocused(false)
 
     // 隐藏期间收到事件 → 聚合
     setDocumentHidden(true)

@@ -181,6 +181,9 @@ export async function handleSoundEvent(event: SoundEventPayload): Promise<void> 
 }
 
 export async function flushHiddenSoundEvent(): Promise<void> {
+  // 与 handleSoundEvent 对齐：VSCode 窗口已聚焦时事件结果可见，不再补播隐藏期间聚合的提示音
+  if (vscodeWindowFocused) return
+
   const pending = hiddenAggregate
   hiddenAggregate = null
 
