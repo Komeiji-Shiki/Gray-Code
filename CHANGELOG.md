@@ -24,6 +24,32 @@
 
 （暂无未发布改动）
 
+## [1.7.14dev] - 2026-08-11
+
+### Merged：同步上游 main 至 bb8d0b16（发布前修复批次 H3-H6 + 子代理「与当前模型同步」+ settings/core 加固，25 commits）
+  - 合入上游 1f4f0020..bb8d0b16 全部 25 个 commits：
+    - **子代理「与当前模型同步」**（上游「强制使用当前渠道」下放为逐代理勾选）：勾选后子代理忽略自身固定渠道/模型，运行时使用当前会话渠道与模型（channelId + modelId 一并继承）；旧全局开关启动时自动迁移（migrateForceUseCurrentChannel，显式 false 保留），运行期兜底兼容；嵌套派发继承父 run 渠道；设置页勾选 UI + 三语言文案 + 后端/前端测试齐全；
+    - **发布前修复批次**：checkpoint 元数据残留精确匹配（H3）+ retention 假 manifest 防护；conversation appendHistory 分段索引不可读自愈重建（H5，不再静默全量重写丢历史）+ 插入同步分支图 + rejectToolCalls 空数组语义；webview 面板关闭中止活跃流（H6）+ 消息队列重置 + Monitor 路由守卫；channel providerEvent 激活 Anthropic 提前执行 + count_tokens 完整计数 + 多段 thinking 签名配对；chat usageMetadataPartial 回退估算 + editBranch 检查点对齐 + trim 预算计入首条消息 + repeatedCallGuard 失败判定；mcp/memory uri 透传 + timeout:0 无超时语义 + stale client 清理 + compress 缺参校验；prompt frontmatter 反转义校验 + fileTree 逃逸/尾斜杠 + 动态 section vanished 补发 marker；settings toolAutoExec 缺键回落默认（delete_file 确认保护）+ JSON 损坏自愈 + reset 保留 storagePath + 符号链接循环防护；deps require.cache 失效清理 + install/uninstall 互斥 + 预发布版本逐段比较 + endAiWork 空闲误判；tools realpath 防符号链接绕过 + read_file 幻影空行 + write_file 存在保护 + terminal where argv 防注入 + media 超时取消口径；subagents 排队 pause/resume 缺口/续跑互斥/mailbox hop/退避监听 5 项；前端取消标记按会话隔离 + JsonViewer DAG 误标 + 输入指纹/引用复用 + 声音聚焦等 15 文件；
+    - **不采纳**：fast-tavern 子项目（b9e8f29d 等，-x ours 消掉并保留来源标记）与 nightly 相关 commit（gitignore/CHANGELOG 结构均按本地保持）；
+  - 冲突解决要点：diffManager 锁冲突恢复（H4）与本地 rejectingDiffIds 机制共存；StdioClient disconnect 采用本地更强实现（treeKill 错误即时 resolve + 悬空 handle 清理）；UpdateChecker 保留本地 normalizeVersion（-2dev 构建号并入第四段）+ 上游预发布逐段比较；workspacePaths realpath 比较复用本地缓存解析器（统一解析链 + 缓存 + Windows 长路径前缀剥离）；子代理设置保留本地 handleChannelChange（渠道默认模型预填）；
+  - 合并回归修复：ToolContext 补 channelModelId 类型字段（syncWithCurrentModel 模型继承）、ChatViewProvider 补 disposed 守卫字段、会话快照 lastCancelledStreamId 类型对齐会话隔离形态、child_process 测试 mock 补 execFileSync、generateImage 测试路径对齐本地 pathGuard、toolMeta/i18n 共享映射重新生成；
+  - 测试：后端 273 套件/3087 例 + 前端 102 文件/1000 例全绿。
+
+### Fixed：亮色模式 UI 仍为暗色风格 + 窗口背景色/原生控件跟随主题（1.7.13 主题模式落地修复）
+  - **color-scheme 修复（主因）**：桌面端 CSS 从未声明 color-scheme，系统为暗色时原生 select 弹出层/复选框/滚动条按暗色渲染（即使应用已切到亮色）。theme.css 暗色块补 `color-scheme: dark`、亮色块补 `color-scheme: light`；
+  - **补全 17 个缺失 --vscode-* 变量**（暗/亮两套）：代码高亮语法色（keyword/string/comment/number/variable/entity/meta/entityName-function）、notifications-*、settings-*、warningForeground、editor-font-size——此前组件 var() 引用回落到硬编码暗色 fallback，亮色下对比度崩坏；
+  - **窗口背景色与原生控件跟随主题**：新增 app.setTheme 上报链（App.vue → BackendHost → 主进程），主进程同步 BrowserWindow.setBackgroundColor + nativeTheme.themeSource（系统对话框/原生菜单/首帧启动画面/prefers-color-scheme 随应用主题而非系统）；启动时同步预读设置文件（resolveSavedTheme）免首帧闪烁；主题 watch 补 immediate 启动兜底；设置加载完成前不上报（避免 clobber 主进程预读主题）；
+  - 顺带：MermaidZoomModal/overlay quick-pick hover 硬编码白字改主题感知（保持黑/白描边可读性）；boot-splash 首帧经 themeSource 的 prefers-color-scheme 正确取色。
+
+### Fixed：扫描优化批次（安全/一致性/死代码）
+  - crop/rotate/resize 三工具 6 处 isCancelled 对齐新口径（API 请求超时 AbortError 不再误报用户取消，与 generate_image/remove_background 一致）；
+  - Unix which 检测改 execFileSync argv 传参（customPath 为用户可控配置，字符串拼接存在命令注入面；与 Windows/异步版同口径）；processRunner 优先级设置 exec → execFile；
+  - compareVersions 版本段解析修正：语义预发布（-beta/-nightly.x）的 dash 段不再误并入版本段（此前 1.4.6-nightly.20260810 被 parseInt 误当第四版本段判为高于正式版）；nightly 用例改为 semver 预发布语义断言，补 beta.10 vs beta.2 逐段数值比较；
+  - 工作区路径缓存加固：realpath 失败结果不再永久缓存（此前 fail-open 边缘）；路径自身改用 lstat 校验 mtime（符号链接重定向的缓存失效盲区）；
+  - 远控端文件读写/输入读取补 isPathInsideOrEqualReal realpath 复核（词法护栏之外的符号链接逃逸，与桌面工具链同口径）；
+  - StreamChunkProcessor 移除与 H6 中止互斥的终结事件暂存死路径（测试改写为 H6 语义）；reportCancelled 视图不可达日志降级 debug；清理 shellConfig 局部 require/getEnabledShellTypes 死代码/processRunner 未用 import/UpdateChecker 死注释；
+  - 测试：后端 273 套件/3088 例 + 前端 102 文件/1000 例 + typecheck 全绿；版本 1.7.14dev
+
 ## [1.7.13] - 2026-08-11
 
 ### Fixed（1.7.13dev 补记：UI 不透明度不再影响文字 + 消息区/四个下拉框背景透出 + 移除上游 nightly 更新渠道）

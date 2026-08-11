@@ -12,6 +12,22 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.14dev] - 2026-08-11
+
+### Fixed：亮色模式真正亮色 + 窗口背景色/原生控件跟随主题（1.7.13 主题模式落地修复）
+  - **color-scheme 修复（亮色仍暗主因）**：原生 select 弹出层/复选框/滚动条此前按系统暗色渲染（系统暗色 + 应用亮色时），theme.css 暗色块补 `color-scheme: dark`、亮色块补 `color-scheme: light`；
+  - **补全 17 个缺失 --vscode-* 变量**（语法高亮/通知/设置类，暗/亮两套），消除组件 var() 引用回落到硬编码暗色 fallback 的亮色对比度崩坏；
+  - **窗口背景色与原生控件跟随主题**：新增 app.setTheme 上报链（App.vue → BackendHost → 主进程）同步 BrowserWindow.setBackgroundColor + nativeTheme.themeSource；启动时同步预读设置文件（resolveSavedTheme）免首帧闪烁（首帧启动画面/prefers-color-scheme 一并正确）；主题 watch 补 immediate；设置加载完成前不上报（防 clobber 预读主题）；
+  - MermaidZoomModal/overlay 硬编码白字改主题感知；版本 1.7.14dev
+
+### Merged：同步上游 main 至 bb8d0b16（25 commits，详见根 CHANGELOG）
+  - 子代理「与当前模型同步」逐代理开关（旧全局开关启动自动迁移）；发布前修复批次 H3-H6（checkpoint 精确匹配/conversation 分段自愈/webview 流中止/channel 计数/settings 加固等）；
+  - 不采纳 fast-tavern 与 nightly 相关 commits（-x ours 消掉并保留来源标记）；本地独有功能全量保留（远程控制 V7.2/桌面背景图/agentInbox/多工作区/安全加固）。
+
+### Fixed：扫描优化批次
+  - 媒体工具超时取消口径统一（3 工具 6 处）；Unix which argv 防注入；compareVersions 预发布解析修正（-nightly.x 不再误并入版本段）；realpath 缓存加固 + 远控端文件读写 realpath 复核；StreamChunkProcessor 死路径清理；shellConfig/UpdateChecker 死代码清理；
+  - 测试：后端 273 套件/3088 例 + 前端 102 文件/1000 例 + typecheck 全绿；版本 1.7.14dev
+
 ## [1.7.13] - 2026-08-11
 
 ### Fixed（1.7.13dev 补记：UI 不透明度仅背景半透明 + 消息区/四下拉框透出 + 移除 nightly 更新渠道）
