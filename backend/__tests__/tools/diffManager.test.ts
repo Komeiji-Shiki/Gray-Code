@@ -1149,3 +1149,87 @@ describe('DiffManager PERF-CP deferred write lock', () => {
         fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
     });
 });
+
+describe('DiffManager document prewarm (PERF)', () => {
+    beforeEach(() => {
+        jest.restoreAllMocks();
+        resetDiffManagerSingleton();
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        (vscode as any).EventEmitter = class { public event = jest.fn(); };
+        (vscode as any).WorkspaceEdit = MockWorkspaceEdit;
+        (vscode as any).Range = jest.fn().mockImplementation();
+        (vscode as any).TextEdit = { replace: jest.fn() };
+        (vscode.Uri as any).parse = (v: string) => ({ fsPath: v });
+        (vscode.Uri as any).file = (v: string) => ({ fsPath: v });
+        (vscode.workspace as any).textDocuments = [];
+        (vscode.workspace as any).registerTextDocumentContentProvider = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).openTextDocument = jest.fn();
+        (vscode.workspace as any).applyEdit = jest.fn(async () => true);
+        (vscode.workspace as any).onDidSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onWillSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onDidCloseTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
+        (vscode as any).window = {
+            showTextDocument: jest.fn(),
+            setStatusBarMessage: jest.fn(),
+            showErrorMessage: jest.fn(),
+            tabGroups: { all: [], close: jest.fn(async () => undefined) }
+        };
+        (fs.readFileSync as jest.Mock).mockReturnValue('original');
+        (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
+        (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        resetDiffManagerSingleton();
+    });
+
+    test('createPendingDiff 自动预热目标文档：showDiffView 复用预热结果，openTextDocument 仅调用一次', async () => {
+        const manager = getManager();
+        const openMock = vscode.workspace.openTextDocument as jest.Mock;
+
+        // openTextDocument 返回模拟文档（模拟真实读盘成功）
+        createDocument({ filePath: 'C:/tmp/prewarm.ts', initialContent: 'original' });
+
+        const pending = await manager.createPendingDiff(
+            'src/prewarm.ts',
+            'C:/tmp/prewarm.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            {}
+        );
+        await flushMicrotasks();
+
+        // 预热 + 视图打开共只调用一次 openTextDocument（而非两次）：
+        // 首次调用在 createPendingDiff 开头（prewarm），showDiffView 复用其结果
+        expect(openMock).toHaveBeenCalledTimes(1);
+        expect(openMock).toHaveBeenCalledWith({ fsPath: 'C:/tmp/prewarm.ts' });
+        expect(pending.status).toBe('pending');
+    });
+
+    test('prewarm 打开失败时 showDiffView fallback 重新打开文档', async () => {
+        const manager = getManager();
+        const openMock = vscode.workspace.openTextDocument as jest.Mock;
+
+        // 预热（第一次调用）reject → 缓存被清理；第二次（fallback）成功
+        openMock.mockRejectedValueOnce(new Error('boom'));
+        createDocument({ filePath: 'C:/tmp/prewarm-fail.ts', initialContent: 'original' });
+
+        const pending = await manager.createPendingDiff(
+            'src/prewarm-fail.ts',
+            'C:/tmp/prewarm-fail.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            {}
+        );
+        await flushMicrotasks();
+
+        // 预热失败后 fallback 重试 = 共 2 次调用，且 diff 仍正常进入 pending 审阅
+        expect(openMock).toHaveBeenCalledTimes(2);
+        expect(pending.status).toBe('pending');
+    });
+});

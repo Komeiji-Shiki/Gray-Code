@@ -174,6 +174,9 @@ async function writeSingleFile(
 
         // 使用 DiffManager 创建待审阅的 diff
         const diffManager = getDiffManager();
+        // PERF：预热目标文档（openTextDocument），与 blocks 计算 / checkDiffGuard 并行，
+        // 首次打开 diff 视图时读盘 + 语言服务初始化不再阻塞 UI。
+        diffManager.prewarmDocument?.(uri);
         
         // 计算新内容的行数，作为一个完整的 block
         const newContentLines = content.split('\n').length;

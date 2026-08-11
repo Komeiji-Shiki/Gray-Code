@@ -47,6 +47,7 @@
   - webview：修复面板关闭未中止活跃流（H6）、消息队列重置、Monitor 路由守卫。
   - 测试/CI：backend/__tests__ 就近 tsconfig 挂载 jest 类型（消除 IDE「找不到名称 jest」误报）、tsconfig.test.json 补 DOM.Iterable（防御性）。
   - 测试/CI：修复 toolMeta 生成物跨平台行尾漂移——`generate-tool-meta.mjs` 读取 backend/tools 声明时规范化真实换行（CRLF/CR → LF），避免 Windows 工作区（autocrlf 转 CRLF）下生成的 `toolMeta.ts` 在 description 字符串内残留 `\r`，导致 Linux CI 的 toolMetaParity 校验失败（v1.5.1 release 构建失败根因）；重新生成 `toolMeta.ts` 清除既有 `\r\n` 污染（显式 `\r\n` 转义序列语义不变）。
+  - 性能：修复 apply_diff/insert_code/delete_code/write_file 首次打开 diff 预览时 UI 卡顿——`DiffManager` 新增目标文档预热（`prewarmDocument`），在工具 handler 读取文件后与 hunk 应用/解析并行发起 `openTextDocument`（读盘 + 语言服务初始化），`showDiffView` 优先复用预热结果（文档被关闭或预热失败时 fallback 重新打开，使用后即弃防 stale 引用）；所有 diff 入口统一生效，连续多次 diff 只有首次卡的问题消失。新增预热复用/失败回退回归测试。
 
 ## [1.5.0] - 2026-08-11
 
