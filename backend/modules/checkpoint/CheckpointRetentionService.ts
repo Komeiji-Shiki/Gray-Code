@@ -16,7 +16,7 @@ import { Logger } from '../../core/logger';
 import type { CheckpointConfig } from '../settings';
 import type { ConversationManager } from '../conversation';
 import type { CheckpointRecord } from './CheckpointManager';
-import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, isSafeCheckpointDirName, isCheckpointMetadataEntryName } from './CheckpointManifestRepository';
 import { isWorkspaceScopedKey } from './CheckpointRestoreEngine';
 import { hashFileStreaming } from './fileHashing';
 
@@ -244,6 +244,16 @@ export class CheckpointRetentionService {
                 console.warn(`[CheckpointRetentionService] Failed to update manifest of ${successor.backupDir}:`, err);
                 throw err;
             }
+        } else {
+            // M-CP-2: 后继 manifest 无法加载（manifest.json / files.json 缺失或损坏）→ 跳过
+            // manifest 合并，但文件复制/链重挂继续。此时后继已是数据缺失状态：新格式恢复会
+            // 显式报错（不静默错恢复），legacy 按备份目录扫描仍能还原本次合并进来的文件——
+            // 不产生新的静默数据丢失。记录告警便于排查（与 C-3 写失败抛错中止删除不同：
+            // 无 manifest 可写，抛错只会把删除中止在没有修复价值的节点上）。
+            console.warn(
+                `[CheckpointRetentionService] Successor ${successor.backupDir} manifest unavailable; ` +
+                `skip manifest merge (chain re-link continues)`
+            );
         }
 
         // 5. 持久化更新后的后继元数据（deleteCheckpoint 随后会基于最新列表删除被删项）
@@ -317,9 +327,10 @@ export class CheckpointRetentionService {
             }
             for (const entry of entries) {
                 // CPF-LAZY-1: manifest.json 与 files.json 均为元数据文件，不属备份内容；
-                // ATOMIC-PAIR: files.json.prev 是崩溃窗口的旧配对备份，同样不属备份内容
-                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME
-                    || entry.name.endsWith('.tmp') || entry.name.endsWith('.prev')) {
+                // ATOMIC-PAIR: files.json.prev 是崩溃窗口的旧配对备份，同样不属备份内容；
+                // H3: 只精确跳过已知元数据残留名（manifest.json.tmp / files.json.tmp / files.json.prev），
+                // 不再用宽泛的 .tmp/.prev 后缀，避免保留合并误跳过用户真实备份文件
+                if (isCheckpointMetadataEntryName(entry.name)) {
                     continue;
                 }
                 const relative = prefix ? `${prefix}/${entry.name}` : entry.name;

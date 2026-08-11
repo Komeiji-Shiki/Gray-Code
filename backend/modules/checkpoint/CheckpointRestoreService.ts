@@ -20,7 +20,7 @@ import type { SettingsManager } from '../settings';
 import type { ConversationManager } from '../conversation';
 import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
 import { DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES, DEFAULT_ENABLED_PROFILES, buildIgnoreSnapshot } from './CheckpointExclusionProfiles';
-import { CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME } from './CheckpointManifestRepository';
+import { isCheckpointMetadataEntryName } from './CheckpointManifestRepository';
 import type { CheckpointIgnoreSnapshot, CheckpointManifestMeta } from './types';
 import {
     isWorkspaceScopedKey,
@@ -590,15 +590,14 @@ export class CheckpointRestoreService {
         }
 
         // CPF-LAZY-1 / ATOMIC-PAIR: 备份目录内的元数据文件（manifest.json / files.json /
-        // *.tmp / files.json.prev）不是备份内容——崩溃窗口（files.json 已 rename、manifest.json
-        // 未 rename）或写失败残留时会留在目录里，legacy 恢复不得把它们当作用户文件恢复进工作区
-        // （与目录遍历/大小统计的跳过清单同一口径）。
+        // manifest.json.tmp / files.json.tmp / files.json.prev）不是备份内容——崩溃窗口
+        // （files.json 已 rename、manifest.json 未 rename）或写失败残留时会留在目录里，
+        // legacy 恢复不得把它们当作用户文件恢复进工作区（与目录遍历/大小统计的跳过清单同一口径）。
+        // H3: 只精确匹配已知元数据残留名，不再用宽泛的 .tmp/.prev 后缀，避免误伤备份目录内
+        // 用户的真实 .tmp/.prev 文件（恢复不还原/保留合并跳过/大小统计低估）。
         const isCheckpointMetadataPath = (p: string): boolean => {
             const name = path.basename(p);
-            return name === CHECKPOINT_MANIFEST_FILENAME
-                || name === CHECKPOINT_MANIFEST_FILES_FILENAME
-                || name.endsWith('.tmp')
-                || name.endsWith('.prev');
+            return isCheckpointMetadataEntryName(name);
         };
         backupFiles = backupFiles.filter(f => !isCheckpointMetadataPath(path.relative(backupPath, f)));
         backupDirs = backupDirs.filter(d => !isCheckpointMetadataPath(path.relative(backupPath, d)));
