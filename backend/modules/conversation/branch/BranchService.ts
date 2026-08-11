@@ -722,7 +722,7 @@ export class BranchService {
      */
     async syncMainHistoryAfterStructuralMutation(
         conversationId: string,
-        reason: 'summary_inserted' | 'summary_restored' | 'summary_deleted' | 'message_deleted_middle' | 'branch_finished'
+        reason: 'summary_inserted' | 'summary_restored' | 'summary_deleted' | 'message_deleted_middle' | 'branch_finished' | 'message_inserted'
     ): Promise<BranchStructuralSyncResult> {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
         return await this.conversationManager.runExclusive(conversationId, async () => {

@@ -1065,6 +1065,98 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         return await this.readJsonFile<FileHistoryIndex>(this.getHistoryIndexPath(conversationId));
     }
 
+    /**
+     * 枚举 history 目录下的段文件（*.ndjson），按文件名升序返回。
+     * 目录不存在/不可读时返回空数组（调用方按「无段文件」处理，H5）。
+     */
+    private async enumerateHistorySegmentFiles(historyDir: any): Promise<string[]> {
+        try {
+            const entries = await this.vscode.workspace.fs.readDirectory(historyDir);
+            return entries
+                .filter(([name, type]) => type === FS_ENTRY_TYPE_FILE && /^\d{6}\.ndjson$/.test(name))
+                .map(([name]) => name)
+                .sort();
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * H5：index 不可读（parse_error/io_error）或缺失但目录残留段文件时的自愈恢复。
+     *
+     * 与 M4 尾段自愈同口径，返回可重建的 existing 历史（不含待追加的 pending）：
+     * - 目录中存在段文件且全部可读：按文件名顺序合并全部段内容；
+     * - 部分段可读、部分不可读：抛错（跳过会静默丢消息，与 M4「任一段不可读抛错」一致）；
+     * - 全部段不可读 / 目录无段文件：回退 legacy 快照（legacy 在分段完成后才删除，崩溃窗口内
+     *   它是旧快照）；legacy 也不可用时：
+     *   - not_found 且目录无段文件：全新对话 → 空历史（旧语义，保证 createConversation 后首次 append）；
+     *   - 其它（parse_error/io_error，或有段文件但全部不可读）：抛错，不静默写空历史覆盖。
+     *
+     * 注意 at-most-once（H1）：正常路径按 index.count 截断尾段残留；此处 index 不可读，
+     * 无法恢复已提交计数，只能按段文件实际内容全量读取——崩溃残留的未提交行会随全量重写
+     * 一并提交（在「丢历史」与「可能多收一条未提交消息」之间选择前者，宁可多不可少）。
+     */
+    private async recoverHistoryForAppend(
+        conversationId: string,
+        historyDir: any,
+        indexResult: StorageReadResult<FileHistoryIndex>
+    ): Promise<ConversationHistory> {
+        const files = await this.enumerateHistorySegmentFiles(historyDir);
+        if (files.length === 0) {
+            // 目录没有段文件：回退 legacy（与旧 not_found 语义一致，区别见抛错分支）
+            const legacyResult = this.asHistoryReadResult(
+                await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+            );
+            if (legacyResult.value !== null) {
+                return legacyResult.value;
+            }
+            if (indexResult.errorCode === 'not_found') {
+                // not_found 且目录无段文件、无 legacy：全新对话 → 空历史
+                return [];
+            }
+            throw new Error(
+                `appendHistory: cannot self-heal, index unreadable and no readable history for `
+                + `${conversationId} (${indexResult.errorCode ?? 'unknown'}: `
+                + `${indexResult.errorMessage ?? 'no segments and no legacy history'})`
+            );
+        }
+
+        let readableSegmentCount = 0;
+        const readable: ConversationHistory = [];
+        const unreadableSegments: string[] = [];
+        for (const file of files) {
+            const segResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, file));
+            if (!segResult.value) {
+                unreadableSegments.push(file);
+                continue;
+            }
+            readableSegmentCount += 1;
+            readable.push(...segResult.value);
+        }
+        if (readableSegmentCount > 0 && unreadableSegments.length > 0) {
+            // 部分段可读、部分不可读：无法安全重建（跳过会静默丢消息），抛错
+            throw new Error(
+                `appendHistory: cannot self-heal, unreadable history segment(s) `
+                + `${unreadableSegments.join(', ')} for ${conversationId}`
+            );
+        }
+        if (readableSegmentCount === 0) {
+            // 全部段不可读：回退 legacy；legacy 也没有 → 抛错（不静默丢）
+            const legacyResult = this.asHistoryReadResult(
+                await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+            );
+            if (legacyResult.value !== null) {
+                return legacyResult.value;
+            }
+            throw new Error(
+                `appendHistory: cannot self-heal, all history segments unreadable and no legacy `
+                + `history for ${conversationId} (${indexResult.errorCode ?? 'unknown'}: `
+                + `${indexResult.errorMessage ?? 'unreadable segments and no legacy history'})`
+            );
+        }
+        return readable;
+    }
+
     private async writeSegmentedHistory(conversationId: string, history: ConversationHistory): Promise<void> {
         const conversationDir = this.getConversationDir(conversationId);
         const historyDir = this.getHistoryDir(conversationId);
@@ -1170,11 +1262,14 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             const tmpIndexPath = this.vscode.Uri.joinPath(conversationDir, 'history.index.json.tmp');
 
             if (!indexResult.value) {
-                // 尚无分段索引：legacy 或全新对话 → 合并后全量重写（罕见路径，保证语义正确）
-                const legacyResult = this.asHistoryReadResult(
-                    await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
-                );
-                const existing = legacyResult.value ?? [];
+                // H5：index 不可读时不再静默回退 legacy 全量重写。旧行为把 parse_error/io_error
+                // 也当成「尚无分段索引」处理：此时 legacy 已在分段完成后删除（读得 null），
+                // existing = legacy ?? [] = [] → writeSegmentedHistory([] + pending)，整段分段历史
+                // 被覆盖丢失。现在与 M4 尾段自愈同口径：优先从目录枚举段文件读取合并；
+                // 任一段不可读抛错（不静默丢）；全部不可读才回退 legacy；都没有才抛错。
+                // not_found 且目录无段文件才是「尚无分段索引」的正常形态（legacy 或全新对话），
+                // 保留旧回退语义（legacy ?? []）；目录实际残留段文件（index 被外部删除）时同样走自愈。
+                const existing = await this.recoverHistoryForAppend(conversationId, historyDir, indexResult);
                 await this.writeSegmentedHistory(conversationId, existing.concat(pending));
                 await this.refreshUpdatedAt(conversationId);
                 return;
