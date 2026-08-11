@@ -4,13 +4,14 @@
 
 import { registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
+import { getToolDisplayName } from '../../toolLocalization'
 
 // 注册 delete_file 工具
 // 只在外部显示删除的文件路径，不需要展开面板
 registerTool('delete_file', {
   name: 'delete_file',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '删除',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('delete_file'),
   icon: 'codicon-trash',
   
   // 不可展开 - 只显示删除的路径列表
@@ -24,7 +25,7 @@ registerTool('delete_file', {
     if (args.path) {
       return args.path as string
     }
-    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
-    return getToolMetaDescription('delete_file') ?? '删除'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化显示名
+    return getToolMetaDescription('delete_file') ?? getToolDisplayName('delete_file')
   }
 })

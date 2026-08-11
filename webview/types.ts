@@ -56,7 +56,9 @@ export interface HandlerContext {
   // 响应函数
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
-  postMessage?: (message: any) => void;
+  // R2-08：返回投递结果（true=已送达或已进入异步投递，不保证最终送达；false=完全未送达：
+  // registry 丢弃且回退不可用/失败），供调用方留痕，不再吞掉 clientRegistry.postMessage 的返回值
+  postMessage?: (message: any) => boolean;
   openSubAgentMonitor?: (runId?: string, conversationId?: string) => Promise<void> | void;
   // 修改原因：Monitor 路由上下文把 view 覆盖为 undefined（流按 clientId 路由、storage 进度不能发到 Monitor），
   //          但 vscode.diff 默认在“当前活动组”打开——焦点在 Monitor 面板时 diff 会开在 Monitor 列而不是主聊天侧。

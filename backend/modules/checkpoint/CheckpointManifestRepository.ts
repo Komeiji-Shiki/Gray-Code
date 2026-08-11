@@ -366,12 +366,14 @@ export class CheckpointManifestRepository {
      *   （见 loadManifestFiles 内联兜底），避免列表加载为每条旧存档付出
      *   10-20MB 级磁盘写放大；
      * - 磁盘不存在但提供了旧记录（fallbackRecord）→ 从记录生成 manifest（迁移），
-     *   写入缓存并 best-effort 落盘；
+     *   写入缓存；**默认 best-effort 落盘**（供恢复/增量等重量级路径持久化迁移产物），
+     *   轻量列表路径传 persistMigration:false 只缓存不落盘（CPF-LAZY-1 列表写放大修复）；
      * - 都没有 → 返回 null。
      */
     async loadManifest(
         checkpointId: string,
-        fallbackRecord?: CheckpointRecord
+        fallbackRecord?: CheckpointRecord,
+        options?: { persistMigration?: boolean }
     ): Promise<CheckpointManifestMeta | null> {
         // CP-PATH-1: 非法 checkpointId 直接抛错，不允许落入缓存/磁盘/迁移回退路径
         assertSafeCheckpointDirName(checkpointId);
@@ -421,10 +423,15 @@ export class CheckpointManifestRepository {
             ) {
                 return null;
             }
-            try {
-                await this.writeManifest(checkpointId, migrated);
-            } catch {
-                // 迁移落盘失败（只读介质等）不影响本次使用：缓存仍生效
+            // CPF-LAZY-1: 迁移落盘可选——重量级路径（恢复/增量/合并）默认持久化迁移产物，
+            // 轻量列表路径（toSummary）传 persistMigration:false 只缓存不落盘，避免列表加载
+            // 为每条缺失 manifest 的旧记录付出 10-20MB 级全量迁移写盘（列表写放大）。
+            if (options?.persistMigration !== false) {
+                try {
+                    await this.writeManifest(checkpointId, migrated);
+                } catch {
+                    // 迁移落盘失败（只读介质等）不影响本次使用：缓存仍生效
+                }
             }
             const { meta, files } = CheckpointManifestRepository.splitManifest(migrated);
             this.cacheSet(this.metaCache, checkpointId, meta, CheckpointManifestRepository.META_CACHE_LIMIT);

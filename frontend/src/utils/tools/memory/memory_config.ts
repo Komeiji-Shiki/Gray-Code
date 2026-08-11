@@ -2,12 +2,14 @@
  * memory_config 工具注册
  */
 import { registerTool } from '../../toolRegistry'
+import { getToolDisplayName } from '../../toolLocalization'
 import MemoryResult from '../../../components/tools/memory/MemoryResult.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
 
 registerTool('memory_config', {
   name: 'memory_config',
-  label: 'Memory Config',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('memory_config'),
   icon: 'codicon-settings-gear',
   descriptionFormatter: (args) => {
     const keys = Object.keys(args).filter(k => k !== 'toolName')

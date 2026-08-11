@@ -7,6 +7,7 @@
 
 import { computed } from 'vue'
 import { useI18n } from '../../../composables/useI18n'
+import { truncateText } from '../../../utils/format'
 import MediaToolPanel from './MediaToolPanel.vue'
 import type {
   MediaInfoSegment,
@@ -69,12 +70,6 @@ const taskList = computed<CropTask[]>(() => {
   }
   return []
 })
-
-// 截断文本
-function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength) + '...'
-}
 
 // 格式化坐标
 function formatCoords(x1: number, y1: number, x2: number, y2: number): string {

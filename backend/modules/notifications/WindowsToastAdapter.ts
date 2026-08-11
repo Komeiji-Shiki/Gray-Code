@@ -76,6 +76,8 @@ export class VSCodeNotificationAdapter implements WindowsToastAdapter {
         })
         .catch(error => {
           log.error('notification_api_failed', { error: toErrorMessage(error) })
+          // 异步失败回调：通知 API 已异步 reject，调用方（服务侧）据此回滚去重键等状态
+          request.onError?.(error)
         })
 
       return { shown: true }

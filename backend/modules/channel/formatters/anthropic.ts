@@ -1046,11 +1046,20 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
             } else if (block?.type === 'tool_use') {
                 const args = block.input || {};
+                // input 已显式提供即视为预填（含空对象 {} / 空串：上游 forced tool use
+                // 可能预填空参数）；累加器按「预填 + 增量 / 增量自身」语义解析时，
+                // 空对象预填同样参与片段拼接（'{}' 去尾闭合符后为 '{' + delta）
+                const hasPrefilledArgs = block.input !== undefined;
                 parts.push({
                     functionCall: {
                         name: block.name,
                         args: args,
-                        partialArgs: Object.keys(args).length > 0 ? JSON.stringify(args) : '',
+                        // 预填 input（forced tool use）时 partialArgs 置空并标记 prefilledArgs：
+                        // 后续 input_json_delta 是与预填相对的剩余片段（或完整重放），把预填
+                        // JSON.stringify 直接拼进 partialArgs 会破坏 JSON（{"a":1} + ,"b":2}）。
+                        // 累加器对「预填 JSON + delta 累积 / delta 自身」两种语义重新解析合并。
+                        partialArgs: '',
+                        prefilledArgs: hasPrefilledArgs,
                         id: block.id,
                         // 透传事件级 index（同 input_json_delta），保证与参数增量按同一 index 合并
                         index: chunk.index

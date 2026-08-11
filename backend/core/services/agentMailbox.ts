@@ -33,6 +33,9 @@ export const AGENT_MESSAGE_MAX_LENGTH = 16000;
 /** 单个收件方 inbox 允许积压的消息条数上限（防上下文洪泛） */
 export const AGENT_INBOX_MAX_MESSAGES = 50;
 
+/** 单会话 threadDepths 允许的最大线程条目数（超过按 FIFO 淘汰最旧条目，防长会话线性增长） */
+export const THREAD_DEPTH_MAX_ENTRIES = 512;
+
 /**
  * 一条投递到收件方 inbox 的消息
  */
@@ -210,9 +213,27 @@ export class AgentMailbox {
             this.knownRuns.delete(conversationId);
         }
         this.inboxes.get(conversationId)?.delete(runId);
-        this.messageClaims.get(conversationId)?.delete(runId);
-        if (this.messageClaims.get(conversationId)?.size === 0) {
-            this.messageClaims.delete(conversationId);
+        // 收尾 claim 语义：run 结束（无论正常/异常）时，若该 run 仍有未确认消费的
+        // 已领取消息（closeRunIfInboxEmpty drain 后挂的 claim，调用方注入完成前 run
+        // 终止），放回收件箱保留投递机会，避免“先删后注入、注入失败消息永久丢失”；
+        // 正常收尾路径已在再次 closeRunIfInboxEmpty 时确认（acknowledge）删除，不会走到这里。
+        // 注（已接受的行为）：恢复后的消息驻留在「已注销 run」的 inbox 中——run 已从
+        // knownRuns 删除，正常情况下无人再消费该 inbox。保留而非清理是有意为之：
+        // run 重新注册（同一 runId 重启/重试）时消息仍可投递；驻留量受「收尾时 drain
+        // 出的消息数」上界约束，且对话删除时由 clearConversation 一并清理。
+        const pendingClaim = this.messageClaims.get(conversationId)?.get(runId);
+        if (pendingClaim) {
+            this.messageClaims.get(conversationId)!.delete(runId);
+            if (this.messageClaims.get(conversationId)!.size === 0) {
+                this.messageClaims.delete(conversationId);
+            }
+            let convInbox = this.inboxes.get(conversationId);
+            if (!convInbox) {
+                convInbox = new Map();
+                this.inboxes.set(conversationId, convInbox);
+            }
+            const current = convInbox.get(runId) ?? [];
+            convInbox.set(runId, [...pendingClaim.messages, ...current]);
         }
         // 修改原因：lastUserInterruptAt 只增不删，长会话中残留旧时间戳。
         // 修改方式：本会话已无任何已知 run（且无残留 inbox）时一并清理防刷屏时间戳，
@@ -228,6 +249,10 @@ export class AgentMailbox {
      * 正常完成边界的原子关闭：若收件箱已有消息则返回消息并保持 run 可寻址；
      * 只有收件箱为空时才注销。sendMessage 与本方法都同步执行，因此不会出现
      * “检查为空后又接受一封信、随后 unregister 删除”的竞态。
+     *
+     * 收尾路径复用 claim 语义：drain 出的消息先挂 claim（副本仍由信箱持有），
+     * 调用方注入成功并再次进入收尾检查时确认（acknowledge）删除；run 异常结束且
+     * 未确认时由 unregisterRun 把消息放回收件箱，避免“先删后注入、注入失败消息永久丢失”。
      */
     closeRunIfInboxEmpty(
         conversationId: string | undefined,
@@ -236,12 +261,43 @@ export class AgentMailbox {
         if (!conversationId || !runId) {
             return { closed: true, messages: [] };
         }
+        // 调用方再次进入收尾检查 = 上一批已领取的消息已处理完毕（注入成功或
+        // run 即将结束），确认删除对应 claim，避免 unregisterRun 误恢复已注入消息。
+        this.confirmRunClaim(conversationId, runId);
         const messages = this.drainMessages(conversationId, runId);
         if (messages.length > 0) {
+            // drain 后挂 claim：消息副本由信箱持有，注入失败（run 异常终止）时
+            // unregisterRun 可恢复，消息不因“先删后注入”而永久丢失。
+            this.holdRunClaim(conversationId, runId, messages);
             return { closed: false, messages };
         }
         this.unregisterRun(conversationId, runId);
         return { closed: true, messages: [] };
+    }
+
+    /** 确认该 run 已领取的消息已处理完毕并删除对应 claim（幂等）。 */
+    private confirmRunClaim(conversationId: string, runId: string): void {
+        const convClaims = this.messageClaims.get(conversationId);
+        if (!convClaims?.has(runId)) return;
+        convClaims.delete(runId);
+        if (convClaims.size === 0) {
+            this.messageClaims.delete(conversationId);
+        }
+    }
+
+    /** 把已 drain 的消息挂到该 run 的 claim（副本由信箱持有，可恢复）。 */
+    private holdRunClaim(conversationId: string, runId: string, messages: AgentMessage[]): void {
+        let convClaims = this.messageClaims.get(conversationId);
+        if (!convClaims) {
+            convClaims = new Map();
+            this.messageClaims.set(conversationId, convClaims);
+        }
+        convClaims.set(runId, {
+            claimId: newUuid(),
+            conversationId,
+            runId,
+            messages
+        });
     }
 
     /**
@@ -411,6 +467,16 @@ export class AgentMailbox {
         if (!convDepths) {
             convDepths = new Map();
             this.threadDepths.set(conversationId, convDepths);
+        }
+        // 有界：单会话线程深度记录超过上限时按 FIFO 淘汰最旧条目（Map 迭代序 = 插入序）。
+        // 单跳线程永不超限也永不删除（removeThreadDepth 只在 hop 超限时触发），长会话中
+        // 线程会无限累积；淘汰最旧记录后该线程深度归零重新计——仅放宽防循环上限，
+        // 512 个活跃线程才会触发，实际互回链远低于此。
+        if (convDepths.size >= THREAD_DEPTH_MAX_ENTRIES && !convDepths.has(threadId)) {
+            const oldestKey = convDepths.keys().next().value as string | undefined;
+            if (oldestKey !== undefined) {
+                convDepths.delete(oldestKey);
+            }
         }
         const nextDepth = (convDepths.get(threadId) ?? 0) + 1;
         convDepths.set(threadId, nextDepth);
@@ -645,22 +711,16 @@ export class AgentMailbox {
     }
 
     /**
-     * 新真实用户回合开始时清理过期用户插话，但保留尚未投递的 agent → main 消息。
-     * 代理消息会由工具边界或空闲 claim/ack 唯一消费，不能再被新回合静默删除。
+     * 新真实用户回合开始时重置回合频率状态，但保留主会话信箱尚未投递的消息。
+     * 代理消息会由工具边界或空闲 claim/ack 唯一消费；用户打断（U1）若发生在回合
+     * 最后一次工具调用之后，既不 drain 也不 claim——旧实现在这里被静默丢弃，用户
+     * 插话永久丢失。保留后由下一次工具边界 drain 注入（与回合内插话同路径）；
+     * 频率限制（USER_INTERRUPT_MIN_INTERVAL_MS）防刷屏，对话删除时 clearConversation 清理。
      */
     clearMainSessionInbox(conversationId: string): void {
         if (!conversationId) return;
-        const convInbox = this.inboxes.get(conversationId);
-        const mainInbox = convInbox?.get(MAIN_SESSION_RUN_ID);
-        if (mainInbox) {
-            const agentMessages = mainInbox.filter(message => message.fromAgentName !== 'user');
-            if (agentMessages.length > 0) {
-                convInbox!.set(MAIN_SESSION_RUN_ID, agentMessages);
-            } else {
-                convInbox!.delete(MAIN_SESSION_RUN_ID);
-            }
-            if (convInbox!.size === 0) this.inboxes.delete(conversationId);
-        }
+        // 不再删除 main inbox 中的任何消息（agent→main 与用户打断均保留投递），
+        // 仅清理防刷屏时间戳，让新回合的打断从全新频率状态开始。
         this.lastUserInterruptAt.delete(conversationId);
     }
 

@@ -29,6 +29,15 @@ export class ActivityStore {
     /** 已加载的按天数据缓存：date -> samples（仅缓存最近读写过的天） */
     private readonly cache = new Map<string, number[]>();
 
+    /**
+     * 内存中有未落盘修改的日期集合（appendSample 标记，flushDay 落盘后清除）。
+     * 解决跨午夜采样丢失：所有落盘路径只 flush 今天，某天最后一次 flush 之后追加的
+     * 采样没有任何代码路径为其落盘——脏日期集合保证任意一天的未落盘采样都会在
+     * 下次 flush 时一并持久化；loadRecentDays/loadAllDays 清理缓存时也跳过脏日期，
+     * 避免未落盘采样随缓存一起丢失。
+     */
+    private readonly dirtyDates = new Set<string>();
+
     /** 串行锁链：公开方法排队执行；错误不中断链 */
     private chain: Promise<unknown> = Promise.resolve();
 
@@ -85,6 +94,15 @@ export class ActivityStore {
             samples = parsed.samples
                 .filter((t): t is number => typeof t === 'number' && Number.isFinite(t))
                 .sort((a, b) => a - b);
+            // 加载时按 DEDUP 窗口去重：磁盘文件可能来自并发写/手工编辑，
+            // 间隔 < 1000ms 的重复采样会高估时长，与 appendSample 的窗口语义一致
+            const deduped: number[] = [];
+            for (const t of samples) {
+                if (deduped.length === 0 || t - deduped[deduped.length - 1] >= ACTIVITY_SAMPLE_DEDUP_MS) {
+                    deduped.push(t);
+                }
+            }
+            samples = deduped;
         } catch (error: unknown) {
             if ((error as { code?: string } | null)?.code !== 'ENOENT') {
                 // 文件损坏：删除坏文件，按无数据处理（下次写入时重建）
@@ -127,6 +145,7 @@ export class ActivityStore {
 
         samples.splice(i, 0, t);
         this.cache.set(date, samples);
+        this.dirtyDates.add(date);
         return true;
     }
 
@@ -142,24 +161,42 @@ export class ActivityStore {
     private readonly lastFlushedSignatures = new Map<string, string>();
 
     private async flushDayUnlocked(targetDate: string): Promise<void> {
-        const samples = await this.loadDayUnlocked(targetDate);
-        if (samples.length === 0) {
-            return;
-        }
+        // 目标日期 + 所有脏日期一并落盘：跨午夜后「昨天」的采样不再有专属 flush 路径，
+        // 若只写今天，昨天最后一次 flush（最多 2 分钟前）之后追加的采样将永久丢失。
+        const dates = new Set<string>(this.dirtyDates);
+        dates.add(targetDate);
+        for (const date of dates) {
+            const samples = await this.loadDayUnlocked(date);
+            if (samples.length === 0) {
+                this.dirtyDates.delete(date);
+                continue;
+            }
 
-        // 无变化跳过写盘：采样未变时每 2 分钟的定时 flush 不应重复全量写文件
-        const signature = samples.join(',');
-        if (this.lastFlushedSignatures.get(targetDate) === signature) {
-            return;
-        }
+            // 无变化跳过写盘：采样未变时每 2 分钟的定时 flush 不应重复全量写文件
+            const signature = samples.join(',');
+            if (this.lastFlushedSignatures.get(date) === signature) {
+                this.dirtyDates.delete(date);
+                continue;
+            }
 
-        await fs.mkdir(this.dir, { recursive: true });
-        const filePath = this.dayFilePath(targetDate);
-        const tmpPath = `${filePath}.tmp`;
-        const content = JSON.stringify({ date: targetDate, samples });
-        await fs.writeFile(tmpPath, content, 'utf-8');
-        await fs.rename(tmpPath, filePath);
-        this.lastFlushedSignatures.set(targetDate, signature);
+            await fs.mkdir(this.dir, { recursive: true });
+            const filePath = this.dayFilePath(date);
+            const tmpPath = `${filePath}.tmp`;
+            const content = JSON.stringify({ date, samples });
+            await fs.writeFile(tmpPath, content, 'utf-8');
+            await fs.rename(tmpPath, filePath);
+            this.lastFlushedSignatures.set(date, signature);
+            this.dirtyDates.delete(date);
+        }
+        // lastFlushedSignatures 只保留「将来还可能落盘」的日期签名：采样仅经
+        // appendSample 追加（会标记 dirtyDates），既不在脏日期集合、也不是目标日期
+        // 的旧条目（跨午夜后的前一天等）不再有任何 flush 路径会用到其签名——
+        // 删除，避免 Map 随运行时长无界增长。
+        for (const date of this.lastFlushedSignatures.keys()) {
+            if (date !== targetDate && !this.dirtyDates.has(date)) {
+                this.lastFlushedSignatures.delete(date);
+            }
+        }
     }
 
     /**
@@ -184,13 +221,14 @@ export class ActivityStore {
     /**
      * 读取最近 count 天（含今天，即使今天还没有文件）。
      * 返回按日期升序的采样列表。
+     * @param now 基准时间（测试注入；默认 Date.now()），与 getActivityStats 的 now 一致
      */
-    loadRecentDays(count: number): Promise<Array<{ date: string; samples: number[] }>> {
+    loadRecentDays(count: number, now: number = Date.now()): Promise<Array<{ date: string; samples: number[] }>> {
         return this.runExclusive(async () => {
-            const today = toDateStr(Date.now());
+            const today = toDateStr(now);
             const dates: string[] = [];
             // 从今天往前推 count 天
-            const cursor = new Date();
+            const cursor = new Date(now);
             cursor.setHours(0, 0, 0, 0);
             for (let i = 0; i < count; i++) {
                 dates.push(toDateStr(cursor.getTime()));
@@ -201,14 +239,16 @@ export class ActivityStore {
             const stored = new Set(await this.listDaysUnlocked());
             const result: Array<{ date: string; samples: number[] }> = [];
             for (const date of dates) {
-                const samples = stored.has(date) || date === today
+                // 脏日期（未落盘）也应从内存读取，否则统计会漏掉跨午夜后未落盘的采样
+                const samples = stored.has(date) || date === today || this.dirtyDates.has(date)
                     ? [...await this.loadDayUnlocked(date)]
                     : [];
                 result.push({ date, samples });
             }
-            // 与 loadAllDays 一致：非今天的天用后即弃，避免 loadRecentDays(365) 把一整年驻留内存缓存
+            // 与 loadAllDays 一致：非今天的天用后即弃，避免 loadRecentDays(365) 把一整年驻留内存缓存；
+            // 脏日期（内存有未落盘修改）保留缓存直到 flush 落盘——否则未落盘采样随缓存一起丢失
             for (const date of dates) {
-                if (date !== today) {
+                if (date !== today && !this.dirtyDates.has(date)) {
                     this.cache.delete(date);
                 }
             }
@@ -217,25 +257,34 @@ export class ActivityStore {
     }
 
     /**
-     * 读取存储中的全部日期（含今天），按日期升序。
+     * 读取存储中的全部日期（含今天与内存中未落盘的脏日期），按日期升序。
      * 仅当查询全部历史时使用（每次读盘，勿在热路径调用）。
+     * @param now 基准时间（测试注入；默认 Date.now()），与 getActivityStats 的 now 一致
      */
-    loadAllDays(): Promise<Array<{ date: string; samples: number[] }>> {
+    loadAllDays(now: number = Date.now()): Promise<Array<{ date: string; samples: number[] }>> {
         return this.runExclusive(async () => {
             const dates = await this.listDaysUnlocked();
             // 与 loadRecentDays 一致：全量范围也含今天（今天尚未落盘时内存有采样）
-            const today = toDateStr(Date.now());
+            const today = toDateStr(now);
             if (!dates.includes(today)) {
                 dates.push(today);
                 dates.sort();
+            }
+            // 合并内存中未落盘的脏日期：range='all' 统计不应漏掉它们
+            for (const date of this.dirtyDates) {
+                if (!dates.includes(date)) {
+                    dates.push(date);
+                    dates.sort();
+                }
             }
             const result: Array<{ date: string; samples: number[] }> = [];
             for (const date of dates) {
                 result.push({ date, samples: [...await this.loadDayUnlocked(date)] });
             }
-            // 全量扫描用后即弃：range='all' 会读数年天文件，不把它们长期滞留内存缓存
+            // 全量扫描用后即弃：range='all' 会读数年天文件，不把它们长期滞留内存缓存；
+            // 脏日期保留缓存直到 flush 落盘（理由同 loadRecentDays）
             for (const date of dates) {
-                if (date !== today) {
+                if (date !== today && !this.dirtyDates.has(date)) {
                     this.cache.delete(date);
                 }
             }

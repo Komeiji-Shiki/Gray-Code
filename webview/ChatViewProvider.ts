@@ -305,6 +305,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
         this.initError = undefined;
         this.sendCommand(PUSH_MESSAGE_NAMES.startupRetrying, {});
+        // R2-07：initializeBackend 会重建 SubAgentMonitorPanel；先释放旧实例的事件总线
+        // 订阅（dispose 内部 unsubscribe + 销毁面板），避免重试后旧实例继续收事件泄漏
+        this.subAgentMonitorPanel?.dispose();
+        this.subAgentMonitorPanel = undefined;
         this.initPromise = this.initializeBackend().catch(err => {
             console.error('Failed to initialize backend (retry):', err);
             this.initError = err instanceof Error ? err : new Error(String(err));
@@ -317,7 +321,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private handleTerminalOutputEvent(event: TerminalOutputEvent): void {
         if (!this._view) return;
-        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        // R2-07 注释修正：无视图时事件直接丢弃（不排队）；视图存在但未 ready 时
+        // 由 sendCommand 自动入队、ready 后 flush（F4）
         this.sendCommand(PUSH_MESSAGE_NAMES.terminalOutput, event);
     }
     
@@ -326,7 +331,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private handleImageGenOutputEvent(event: ImageGenOutputEvent): void {
         if (!this._view) return;
-        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        // R2-07 注释修正：无视图时事件直接丢弃（不排队）；视图存在但未 ready 时
+        // 由 sendCommand 自动入队、ready 后 flush（F4）
         this.sendCommand(PUSH_MESSAGE_NAMES.imageGenOutput, event);
     }
     
@@ -339,7 +345,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.activityTracker?.markAiActive();
 
         if (!this._view) return;
-        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        // R2-07 注释修正：无视图时事件直接丢弃（不排队）；视图存在但未 ready 时
+        // 由 sendCommand 自动入队、ready 后 flush（F4）
         this.sendCommand(PUSH_MESSAGE_NAMES.taskEvent, event);
     }
     
@@ -348,7 +355,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private handleDependencyProgressEvent(event: InstallProgressEvent): void {
         if (!this._view) return;
-        // 统一走 sendCommand 队列：webview 未 ready 时自动入队、ready 后 flush（F4）
+        // R2-07 注释修正：无视图时事件直接丢弃（不排队）；视图存在但未 ready 时
+        // 由 sendCommand 自动入队、ready 后 flush（F4）
         this.sendCommand(PUSH_MESSAGE_NAMES.dependencyProgress, event);
     }
 
@@ -370,12 +378,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.subAgentMonitorPanel.open(runId, conversationId);
     }
 
-    private postRoutedWebviewMessage(clientId: string, message: Record<string, any>, fallbackWebview?: vscode.Webview): void {
+    // R2-09：返回投递结果（true=已送达或已进入异步投递：registry 命中（同步送达或进入
+    // 异步投递，异步失败经 onDeliveryFailed 回调回退——本方法未传回调，无回退动作）或
+    // 回退投递成功；false=完全未送达：registry 丢弃且无回退 webview）。其余调用点忽略
+    // 返回值，行为不变。
+    private postRoutedWebviewMessage(clientId: string, message: Record<string, any>, fallbackWebview?: vscode.Webview): boolean {
         const routedMessage = { ...message, clientId };
         if (this.webviewClientRegistry.postMessage(clientId, routedMessage)) {
-            return;
+            return true;
         }
-        fallbackWebview?.postMessage(routedMessage);
+        if (!fallbackWebview) {
+            return false;
+        }
+        fallbackWebview.postMessage(routedMessage);
+        return true;
     }
 
     private registerWebviewClient(
@@ -442,8 +458,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             diffViewColumn: resolveMainChatDiffViewColumn() ?? vscode.ViewColumn.One,
             sendResponse,
             sendError,
-            postMessage: (outgoing: any) => {
-                this.postRoutedWebviewMessage(routedClientId, outgoing, webview);
+            postMessage: (outgoing: any): boolean => {
+                // R2-08：透出真实投递结果——registry 命中或回退成功返回 true；
+                // registry 丢弃且回退 webview 不存在时返回 false（完全未送达）
+                return this.postRoutedWebviewMessage(routedClientId, outgoing, webview);
             },
             openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
@@ -495,8 +513,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
-            postMessage: (message: any) => {
-                this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, message, this._view?.webview);
+            postMessage: (message: any): boolean => {
+                // R2-08：与路由上下文同语义，透出真实投递结果（主聊天视图不存在时
+                // registry 丢弃且无回退 → false，完全未送达）
+                return this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, message, this._view?.webview);
             },
             openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
@@ -628,6 +648,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 this.webviewReady = false;
                 this.mainChatClientDisposable?.dispose();
                 this.mainChatClientDisposable = undefined;
+                // R2-07：关闭面板时清空 pendingCommands 并取消超时兜底定时器——队列中的命令
+                // 属于旧 webview 会话，不能在新会话 ready 后被误 flush
+                this.pendingCommands = [];
+                this.clearPendingCommandsTimeout();
             })
         );
     }

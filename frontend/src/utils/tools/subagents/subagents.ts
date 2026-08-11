@@ -4,6 +4,7 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { registerTool } from '../../toolRegistry'
+import { getToolDisplayName } from '../../toolLocalization'
 import type { ToolUsage } from '../../../types'
 import { t } from '../../../i18n'
 import { sendToExtension } from '../../../utils/vscode'
@@ -43,13 +44,13 @@ function getSubAgentRunId(tool: ToolUsage): string {
 // 注册 subagents 工具
 registerTool('subagents', {
   name: 'subagents',
-  label: 'Sub-Agent',
   icon: 'codicon-hubot',
   
-  // 动态标签 - 显示代理名称
+  // 动态标签 - 显示代理名称（静态前缀走本地化显示名）
   labelFormatter: (args) => {
     const agentName = args.agentName as string
-    return agentName ? `Sub-Agent: ${agentName}` : 'Sub-Agent'
+    const displayName = getToolDisplayName('subagents')
+    return agentName ? `${displayName}: ${agentName}` : displayName
   },
   
   // 描述生成器 - 显示任务提示

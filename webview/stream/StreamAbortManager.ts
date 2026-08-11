@@ -14,7 +14,6 @@
  * 全局实例注册；通过组合（new AbortControllerRegistry + new RetiredStreamChain）对外行为完全一致。
  */
 
-import type * as vscode from 'vscode';
 import type { ConversationRunScope, IRunController, RunControllerSnapshot } from '../../backend/core/RunController';
 import { subAgentRunController } from '../../backend/tools/subagents';
 import { subAgentRunEventBus } from '../../backend/tools/subagents';
@@ -328,10 +327,17 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
   }
 
   /**
-   * 取消所有活跃的流式请求
+   * 取消所有活跃的流式请求（R2-07：移除从未使用的 _view 参数）
    */
-  cancelAll(_view?: { webview: vscode.Webview }): void {
-    this.registry.cancelAll(_view);
+  cancelAll(): void {
+    this.registry.cancelAll();
+  }
+
+  /**
+   * 会话删除路径的注册表清理（R2-07）：移除取消代次等会话级残留状态。
+   */
+  removeConversation(conversationId: string): void {
+    this.registry.removeConversation(conversationId);
   }
 
   /**

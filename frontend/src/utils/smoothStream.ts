@@ -126,7 +126,12 @@ export class SmoothStreamer {
   /** 直通提交：整个增量一次给出，不做字素错峰（panic / flush） */
   private emitDirect(text: string): void {
     if (!text) return
-    this.commit(Array.from(text), 0, true)
+    // 复用 seg 字素切分：panic/flush 直通路径同样按字素输出，避免代理对/ZWJ emoji 被拆散
+    this.commit(
+      seg ? Array.from(seg.segment(text), item => item.segment) : Array.from(text),
+      0,
+      true
+    )
   }
 
   private stop(): void {

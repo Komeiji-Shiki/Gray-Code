@@ -1975,19 +1975,28 @@ export class DiffManager {
             }
         }
 
+        let sampledRestoreFocus = false;
+        let restoreFocus = false;
         for (const tabGroup of vscode.window.tabGroups.all) {
             for (const tab of tabGroup.tabs) {
                 if (tab.input instanceof vscode.TabInputTextDiff) {
                     const diffInput = tab.input as vscode.TabInputTextDiff;
                     if (sameFsPath(diffInput.modified.fsPath, filePath)) {
-                        // 采样必须在关闭前：关闭动作本身就是抓焦点的来源
-                        const restoreFocus = shouldRestoreChatInputFocus();
+                        // 采样必须在关闭前：关闭动作本身就是抓焦点的来源；
+                        // 同一文件可能存在多个 diff tab（多次编辑产生多个预览），
+                        // 全部关闭避免残留——只在首个匹配 tab 关闭前采样一次，
+                        // 后续 tab 复用同一结果（此时输入框已失焦，重复采样会误判）。
+                        if (!sampledRestoreFocus) {
+                            restoreFocus = shouldRestoreChatInputFocus();
+                            sampledRestoreFocus = true;
+                        }
                         await vscode.window.tabGroups.close(tab, true);
-                        await restoreChatInputFocus(restoreFocus);
-                        return;
                     }
                 }
             }
+        }
+        if (sampledRestoreFocus) {
+            await restoreChatInputFocus(restoreFocus);
         }
     }
 

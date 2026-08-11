@@ -151,8 +151,20 @@ export class CheckpointDeletionService {
 
     /**
      * 无锁版 deleteCheckpointsFromIndex（调用方必须已持有工作区级存档锁）。
+     *
+     * @param lineageNodeIds BCP-08 分支隔离：当前编辑分支（主历史活跃路径）在 fromIndex 之后的
+     *   节点 id 集合。提供时，带 messageNodeId 的候选必须属于该 lineage 才删除——分支 A 编辑消息
+     *   时，分支 B 中 messageIndex >= fromIndex 的存档（messageNodeId 指向 B 的节点）不被误删；
+     *   缺省（undefined）时跳过分支过滤闸门，保持按索引删除的旧语义（与 deleteCheckpointsByNodeIds
+     *   缺省 referenceCounts 跳过引用计数闸门同模式）。无 messageNodeId 的旧存档（无法判断分支归属）
+     *   始终按索引删除。
      */
-    async deleteCheckpointsFromIndexInternal(conversationId: string, fromIndex: number, excludeCheckpointId?: string): Promise<number> {
+    async deleteCheckpointsFromIndexInternal(
+        conversationId: string,
+        fromIndex: number,
+        excludeCheckpointId?: string,
+        lineageNodeIds?: Set<string>
+    ): Promise<number> {
         try {
             // 计算与写回在链内原子完成（基于最新列表），磁盘删除放在写回成功之后
             let toDelete: CheckpointRecord[] = [];
@@ -188,6 +200,12 @@ export class CheckpointDeletionService {
                 // 筛选出需要删除的检查点（消息索引 >= fromIndex、不在保留闭包中、backupDir 安全）
                 toDelete = checkpoints.filter(cp => {
                     if (cp.messageIndex < fromIndex || forcedKeep.has(cp.id)) {
+                        return false;
+                    }
+                    // BCP-08 分支隔离：提供 lineage 时，带 messageNodeId 的候选必须属于当前分支
+                    // lineage（主历史活跃路径节点）——其他分支共享 messageIndex 的存档保留；
+                    // 无 messageNodeId 的旧存档无法判断分支归属，保持按索引删除的旧语义。
+                    if (lineageNodeIds && cp.messageNodeId && !lineageNodeIds.has(cp.messageNodeId)) {
                         return false;
                     }
                     // CP-DEL-1: 未校验目录名绝不删除（记录保留 + 告警）
@@ -291,7 +309,11 @@ export class CheckpointDeletionService {
                             }
 
                             result.rejectedIds = [...rejectedIds];
-                            const safeToDelete = toDelete.filter(id => !rejectedIds.has(id));
+                            // CP-BATCH-1: 请求中不存在的 checkpointId（记录已被并发删除/从未来过）不计入
+                            // deletedIds——safeToDelete 先过滤 list 中存在性，避免虚报删除成功。
+                            const safeToDelete = toDelete.filter(
+                                id => !rejectedIds.has(id) && list.some(cp => cp.id === id)
+                            );
                             if (safeToDelete.length === 0) {
                                 return current; // 无变更，跳过写回
                             }

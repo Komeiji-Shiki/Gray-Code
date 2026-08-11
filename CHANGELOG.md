@@ -8,11 +8,48 @@
 
 ## [Unreleased]
 
-（空段：未发布改动收容区，见文件头维护提醒）
-
 ## [1.5.0] - 2026-08-11
 
+### Added
+  - 启动预加载渠道设置：新增 `frontend/src/services/channelConfigCache.ts` 预加载缓存模块——App.vue 启动时（开屏动画期间）fire-and-forget 触发 `preloadChannelConfigs()`（幂等、在途请求复用、30s 超时、代际作废、逐条容错、resetChannelConfigsCache 测试隔离）；ChannelSettings 挂载命中缓存直接采用、缓存为 null 时同挂载兜底重试，渠道设置页首开延迟被开屏动画隐藏。
+
+### Fixed
+  - 后端：
+    - 修复非流式工具循环 abort 时不给剩余调用结算（孤儿 tool_calls + 后台副作用工具结果丢失）：`ToolIterationLoopService` 新增 `settleCancelledNonStreamToolCalls`（已执行调用保持真实结果、未配对调用补 cancelled 占位，经 `settleFunctionResponses` 幂等落盘），循环顶部 abort 分支与收尾 finally 均结算，不再残留无响应的孤儿调用（重试误标"用户拒绝"/API 400）。
+    - 修复 review 文档校验对正文 ```` ```json ```` 代码块误判：`reviewDocumentSection.ts` 的 json 围栏统计限定在 Snapshot 区段内且行首锚定（countJsonFenceLines/extractV4SnapshotJson/findLastSnapshotSectionRange），正文 "## 标题 + ```json" 块不再干扰格式判定与解析，record_review_milestone/finalize_review/reopen_review 不再误失败。
+    - 修复 checkpoint 删除未按分支隔离：`deleteCheckpointsFromIndex` 新增 lineageNodeIds（当前分支主历史节点集合），带 messageNodeId 的候选必须属于该分支才删除，分支 A 编辑时分支 B 的存档不再被误删；另修复跨工作区增量链逐节点身份证同、legacy 无哈希节点合并现场流式哈希（不再写 hash:''）、快照哈希与复制间 TOCTOU 落盘复验、跨进程 `.creating-` lockfile 孤儿清理守卫、恢复把"快照时被工具删除的文件"归入 deletedInSnapshot、批量删除不再虚报 id、列表路径迁移产物只缓存不落盘。
+    - 修复分支图同步并发乱序竞态：`ConversationManager` 新增会话级图同步串行队列 `graphSyncQueues`（appendContents/clearHistory/deleteMessage/restoreSnapshot/deleteToMessage 的图同步统一入队，挂起超时 fail-fast），图活跃路径与主历史严格一致，杜绝清空/删除/恢复后幻影节点"复活"；deleteToMessage 图同步从 orchestrator 收敛进 manager（编辑分支截断路径自动获得软删同步）。
+    - 修复 config 并发丢更新：`ConfigManager` 新增按 configId 分队列的 `configWriteQueues`（updateConfig/updateModels/createConfig/replaceConfig/deleteConfig 读-改-写整段入队串行）；`SettingsCore` 写入口统一 serializeMutation（重入保护防嵌套死锁），24+ 处服务级 update*Config 读-改-写整体入队，变更事件负载统一深拷贝不再泄漏活引用。
+    - 修复 SSE 缓冲上限失效与代理下载崩溃：流式缓冲上限改为「解析无进展」判定（SSE remaining 为重建字符串导致 64MB 上限永不触发）；`proxyFetch` 新增流式响应体（bodySink + 增量 chunked 解码），vsix 下载不再整包读入内存（修复 UTF-8 往返损坏与 RangeError 崩溃）。
+    - 修复 MCP 连接生命周期：HttpClient/StdioClient 断线经 `server:error` 广播（连接中不双广播）、SSE 读流加 16MB/64MB 缓冲上限（合法大事件不误杀）、4xx（除 401/403）不再把服务器永久置 error、HTTP 分支重连前先断开旧 client、stdio 缓冲超限杀进程前先发 exit、JSON-RPC 错误码不再丢失、error 状态下修改 transport 触发重连。
+    - 修复 PromptManager 占位符替换与缓存：模板占位符改单次预编译交替正则 + 回调查表替换（规避 `$&`/`$'`/`$$` 特殊序列展开）；entries 静态缓存键纳入 ENVIRONMENT/MEMORY/语言指纹（getUserLanguage）；固定文件预算按实际发出字节计数；SkillsManager 多根扫描、扫描窗口内原子替换、符号链接逃逸校验。
+    - 修复工具工作区外策略覆盖不全：list_files（读策略）/ LSP 三工具（get_symbols/goto_definition/find_references）/ apply_diff / read_file 全部接入 `ensureOutsideWorkspaceAccessApproved`（deny/ask/allow 与既有读策略一致）。
+    - 修复工具细节：cmd /s /c 不再预包外层双引号（引号由模型负责）、xmlFormatter 工具/参数描述统一转义、write_file 空内容新文件走创建路径、todo_update 加 per-conversation 写队列、媒体五工具重复输出路径拒绝 + fetch 120s 超时 + 按 returnImageToAI 条件构造 base64、coerceToolArgs 数字容错（科学计数法/前导 +）、ToolRegistry revision 失效 subagents 工具名缓存。
+    - 修复 memory/activity：truncateLog 顺序缺陷（先 repair 再 logLen，旧格式 320B 记忆不再"复活"）、compress 换行校验、treeSlot 位图缓存替代逐槽 IO、跨午夜未落盘采样脏日期集合兜底、hourlyHeatmap 边界分钟口径统一。
+    - 修复流式/渠道：abort 后空内容区分 CANCELLED/EMPTY_RESPONSE、EMPTY_RESPONSE 独立文案（不再误显"请求已取消"）、缺失 i18n 键修正、Anthropic content_block_start 预填参数合并（prefilledArgs/partialArgs 语义）、StreamAccumulator.reset 重置 providerType、非流式响应体 64MB 上限、模型列表空结果不再缓存 5 分钟。
+    - 修复依赖/通知：DependencyManager 安装改 tmp+rename 原子替换（备份-恢复-回滚）、卸载按 .deps-manifest.json 清理传递依赖（@scope 目录探测防误删）、manifest 读写串行化；Windows 通知异步失败回调（去重键回滚）。
+    - 修复 mailbox/稳定性：用户打断消息在回合未经过工具边界时不再被静默丢弃（clearMainSessionInbox 保留投递）、threadDepths 上限 512 FIFO 淘汰、收尾 drain 先挂 claim 注入失败消息不永久丢失、deferred checkpoint 失败不再把已执行工具真实结果整体替换为错误占位（降级为警告）、chatFocusGuard 按 viewId 索引 + 条目淘汰、deepMerge 循环引用检测、ChannelHandler 并发创建竞态收敛、非流式返回路径空内容不再透传 success。
+  - 前端：
+    - 修复 useCheckpointConfig 保存回写竞态：保存成功后改为逐字段条件合并（仅自发送后未被再次编辑的字段采纳后端归一化值），保存期间的新乐观编辑不再被整包 Object.assign 回写抹掉；lastSavedConfig 改用后端权威数据重建回滚基准。
+    - 修复消息缓存结构变更失效：消息数组新增结构版本号（WeakMap 按 state 隔离），todoSnapshot/usedTokens 增量缓存校验版本，中间插入/删除/替换、窗口外总结、upsert 替换等路径显式递增，不再返回陈旧缓存。
+    - 修复 i18n 双实现不一致（界面中英文混杂）：useI18n 统一 re-export i18n 模块、translate 统一 `{(\w+)}` 占位符语义（auto 归一化 actualLanguage）；14+10 个工具注册 label 全部改 labelFormatter、progressCards/reviewCards/delete_code/file 等硬编码中文全部走 t()。
+    - 修复 Modal/Drawer 焦点陷阱与 Esc：Modal 加焦点陷阱（Tab/Shift+Tab 循环、焦点逃逸拉回、打开记录/关闭归还）、嵌套弹层顶层判定（Esc 只关最上层）、Drawer 同款判定、MermaidZoomModal 浮层补 role="dialog" + stopImmediatePropagation。
+    - 修复 hidden 发送（计划确认）被静默丢弃：等待态放行 + 活跃流式守卫，MessageTaskCards 三处捕获 sendMessage 返回值、失败可见提示并回收 Build 卡片。
+    - 修复 App.vue 启动竞态：消息监听器注册前移（语言设置往返窗口不丢消息）、pendingNewChat 挂起补执行（Splash 期间 newChat 不丢）、文件选择 input 清理不再置空 onchange（blur 早于 change 竞态）。
+    - 修复 CustomScrollbar 无障碍：滑块 role="slider"/tabindex/方向键滚动 + 轴向过滤 + aria-label 走 i18n；MessageList 加载更多改 button。
+    - 修复 stores 杂项：loadCurrentConfig 标签页竞态（configId 归属校验）、createNewConversation 保留输入状态、deleteConversation 错误归属校验、清空路径重建 messageIndexById、checkpointActions 占位改 appendMessage、hidden 发送 upsert 替换改 replaceMessageAt。
+    - 修复 utils/composables 杂项：readFileAsBase64 失败 reject、smoothStream 字素切分（代理对/ZWJ emoji 不拆散）、useAttachments 图片尺寸 10s 超时、useBranchCleanup 输入严格校验、SettingsPanel 搜索跳转 rAF 卸载守卫 + 用量统计请求序号竞态、updateLanguage/saveCheckUpdates 失败回滚。
+    - 修复 ChannelSettings 预加载缓存赋值类型错误：onMounted 中 `getChannelConfigsCache()` 返回 `any[] | null`，改用局部变量窄化后赋值，vue-tsc 类型检查通过（此前 `configs.value = getChannelConfigsCache()` 直接赋可能为 null 的值导致构建失败）。
+  - webview：
+    - 修复 awaitConversationIdle 阻塞队列（10s 总超时兜底）、reroll/editBranch 取消判定统一 + cancelled 响应、switchBranchCandidate 恢复后二次检查（workspaceActuallyRestored）、retryInitialization 释放 Monitor 订阅、deleteConversation 清理 cancelEpochs（removeConversation）、postMessage 投递结果 boolean 语义统一、onDidDispose 清 pendingCommands、UsageHandlers watcher 失败退避重试（含迁移目录复位）。
+  - shared/scripts/benchmark：
+    - 修复 scripts（i18n-sync 求值失败显式退出、run-fast-tavern-py python 探测 + 超时、generate-tool-meta 转义链与越界收敛、extract-release-notes 排除 Unreleased）与 benchmark（checkpoint 备份 8 并发 + 失败中止 + allSettled 收拢、branchGraph JIT 预热）；frontend 版本号与根包同步 1.5.0；esbuild sourcemap 条件开启。
+
+### Performance
+  - SummarizeService 自动收缩游标化 O(k·n)→O(n)；ContextTrimService 批量 token 计数消除二次全量读；PromptManager 占位符单次扫描；checkpoint 列表路径迁移不落盘、legacy 恢复免重复哈希；memory treeSlot 位图缓存；前端 InputArea deep watch 改引用级、ChannelSettings 循环逐字段解包改整对象 structuredClone；SSE 流式解析热路径梳理。
+
 ### Refactored
+  - i18n 双实现合一与工具注册收敛：useI18n 改 re-export、translate 单一实现；工具 label 统一 labelFormatter 展示层收敛（行为等价）。
   - 模块化摊平重构·第一批（纯重构，行为零变化；依据 .graycode/research/modularization/ 八份调研报告与 .graycode/plans/modularization-plan.md）：
     - 删除 LimCode 时代遗留的死系统 `backend/core/registry`（ModuleRegistry 注册表）及 conversation/config/mcp/channel 四个 `register.ts`（合计约 1,650 行，全仓库零调用方）；同步清理 backend/index.ts 与 config/mcp/conversation 门面的对应 re-export，并补全 conversation 门面导出（helpers/pendingApprovalGate/TranscriptMutation/usageStats/usageCache）。
     - `backend/tools/utils.ts`（1,030 行）按职责拆分为 `tools/shared/` 六个模块（workspacePaths/multimodal/textUtils/fileStats/concurrency/imageMath），utils.ts 保留为 re-export 壳，全部导出符号兼容；消除 utils.ts 与 types.ts 的 MultimodalCapability 重复定义；tools/index.ts 补导出 plan/sourceArtifactSection、subagents/runEventBus、file/diffViewColumn。

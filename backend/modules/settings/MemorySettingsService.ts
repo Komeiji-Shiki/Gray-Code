@@ -40,7 +40,11 @@ export class MemorySettingsService {
      * 更新记忆工具配置
      */
     async updateMemoryConfig(config: Partial<MemoryToolConfig>): Promise<void> {
-        const oldConfig = this.getMemoryConfig();
-        await this.core.saveToolsConfigEntry('memory', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
+        // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getMemoryConfig();
+            await this.core.saveToolsConfigEntry('memory', oldConfig, { ...oldConfig, ...config });
+        });
     }
 }

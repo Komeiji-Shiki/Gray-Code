@@ -531,7 +531,13 @@ export class BackendRuntime {
         try {
             await vscode.workspace.fs.stat(mcpConfigDir);
         } catch {
-            await vscode.workspace.fs.createDirectory(mcpConfigDir);
+            try {
+                await vscode.workspace.fs.createDirectory(mcpConfigDir);
+            } catch (error) {
+                // 目录创建失败（只读/权限/路径非法）：不阻断扩展初始化，
+                // MCP 管理器 initialize 自身有失败兜底（告警后以空配置继续）。
+                console.error('[bootstrap] MCP config dir create failed:', error);
+            }
         }
         const mcpConfigFile = vscode.Uri.joinPath(mcpConfigDir, 'servers.json');
         const mcpStorage = new VSCodeFileSystemMcpStorageAdapter(mcpConfigFile, vscode.workspace.fs);
@@ -567,8 +573,9 @@ export class BackendRuntime {
         activityTracker.start();
         this.activityTracker = activityTracker;
         setGlobalActivityTracker(activityTracker);
+        // dispose 末尾（释放段 25.65）统一执行 activityTracker.dispose()，这里只清理全局引用，
+        // 避免同一 tracker 被 trackCleanup 与 dispose 末尾双重 dispose。
         this.trackCleanup(() => {
-            activityTracker.dispose();
             setGlobalActivityTracker(null);
         });
     }

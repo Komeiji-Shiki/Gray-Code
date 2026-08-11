@@ -732,6 +732,7 @@ export async function switchConversation(
   const previousConversationId = state.currentConversationId.value
   state.currentConversationId.value = id
   state.allMessages.value = []
+  rebuildMessageIndexById(state)
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false
@@ -909,9 +910,13 @@ export async function deleteConversation(
     
     return true
   } catch (err: any) {
-    state.error.value = {
-      code: err.code || 'DELETE_ERROR',
-      message: err.message || 'Failed to delete conversation'
+    // 归属校验：await 后端删除期间用户可能已切换会话，错误只写回发起删除的会话
+    // （避免 A 会话删除失败却污染当前 B 会话的错误面板）
+    if (state.currentConversationId.value === id) {
+      state.error.value = {
+        code: err.code || 'DELETE_ERROR',
+        message: err.message || 'Failed to delete conversation'
+      }
     }
     return false
   } finally {

@@ -151,8 +151,12 @@ export class CheckpointSettingsService {
 
         // EX-CFG-1: 保存前对嵌套字段（exclusion / messageCheckpoint）深合并，
         // 避免部分 exclusion 负载整体覆盖已保存的 profilePatterns / maxFileSizeBytes 等字段
-        const oldConfig = this.getCheckpointConfig();
-        await this.core.saveToolsConfigEntry('checkpoint', oldConfig, deepMergeToolsConfig(oldConfig, configToSave));
+        // 读-改-写整体入队串行：oldConfig 读取必须与写回在同一 mutator 内，否则并发
+        // updateCheckpointConfig 基于队列外旧快照合并后整体写回会覆盖先写（静默丢更新）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getCheckpointConfig();
+            await this.core.saveToolsConfigEntry('checkpoint', oldConfig, deepMergeToolsConfig(oldConfig, configToSave));
+        });
     }
 
     /** 排除模式校验失败的局部原因文案（EX-12） */

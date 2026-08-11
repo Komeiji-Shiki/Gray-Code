@@ -34,8 +34,12 @@ export class ContextSettingsService {
      * 更新上下文感知配置
      */
     async updateContextAwarenessConfig(config: Partial<ContextAwarenessConfig>): Promise<void> {
-        const oldConfig = this.getContextAwarenessConfig();
-        await this.core.saveToolsConfigEntry('context_awareness', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
+        // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getContextAwarenessConfig();
+            await this.core.saveToolsConfigEntry('context_awareness', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -88,23 +92,31 @@ export class ContextSettingsService {
      * 获取诊断信息配置
      */
     getDiagnosticsConfig(): Readonly<DiagnosticsConfig> {
-        return this.getContextAwarenessConfig().diagnostics || DEFAULT_DIAGNOSTICS_CONFIG;
+        // 未配置时返回深拷贝而非模块级 DEFAULT_DIAGNOSTICS_CONFIG 活引用（浅展开的
+        // { ...DEFAULT_DIAGNOSTICS_CONFIG } 仍共享嵌套数组 includeSeverities，调用方
+        // 原地修改数组会污染全局默认值；cloneConfig 递归深拷贝，与 getToolsConfigEntry
+        // 的深拷贝约定一致）；已配置分支来自 getToolsConfigEntry，本身已深拷贝
+        return this.getContextAwarenessConfig().diagnostics || this.core.cloneConfig(DEFAULT_DIAGNOSTICS_CONFIG);
     }
 
     /**
      * 更新诊断信息配置
      */
     async updateDiagnosticsConfig(config: Partial<DiagnosticsConfig>): Promise<void> {
-        const contextConfig = this.getContextAwarenessConfig();
-        const oldConfig = this.getDiagnosticsConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        await this.updateContextAwarenessConfig({
-            ...contextConfig,
-            diagnostics: newConfig
+        // 读-改-写整体入队串行：contextConfig/oldConfig 读取与 newConfig 构造必须在
+        // mutator 内，否则并发 updateDiagnosticsConfig 基于队列外旧快照写回会覆盖先写
+        await this.core.serializeMutation(async () => {
+            const contextConfig = this.getContextAwarenessConfig();
+            const oldConfig = this.getDiagnosticsConfig();
+            const newConfig = {
+                ...oldConfig,
+                ...config
+            };
+            
+            await this.updateContextAwarenessConfig({
+                ...contextConfig,
+                diagnostics: newConfig
+            });
         });
     }
 

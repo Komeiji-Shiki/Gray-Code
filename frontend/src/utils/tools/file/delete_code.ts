@@ -4,6 +4,8 @@
 
 import { registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 import DeleteCodeComponent from '../../../components/tools/file/delete_code.vue'
 
 // 单个删除条目类型
@@ -16,15 +18,15 @@ interface DeleteEntry {
 // 注册 delete_code 工具
 registerTool('delete_code', {
   name: 'delete_code',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '删除代码',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('delete_code'),
   icon: 'codicon-diff-removed',
   
   // 描述生成器 - 显示文件路径列表（每行一个）
   descriptionFormatter: (args) => {
     const files = args.files as DeleteEntry[] | undefined
-    if (!files || !Array.isArray(files) || files.length === 0) return '无文件'
-    return files.map(f => `${f.path} (第 ${f.start_line ?? '?'}~${f.end_line ?? '?'} 行)`).join('\n')
+    if (!files || !Array.isArray(files) || files.length === 0) return t('utils.tools.noFile')
+    return files.map(f => `${f.path} ${t('utils.tools.lineRange', { start: f.start_line ?? '?', end: f.end_line ?? '?' })}`).join('\n')
   },
   
   // 使用自定义组件显示内容

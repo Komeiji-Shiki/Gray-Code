@@ -224,18 +224,31 @@ export function useCheckpointConfig() {
 
     const run = async (): Promise<boolean> => {
       try {
-        // 在发送时构建整包配置（含所有已提交的乐观更新），避免串行队列中发送过期快照
+        // 在发送时构建整包配置快照（含所有已提交的乐观更新），避免串行队列中发送过期快照
+        const sentSnapshot = buildConfigToSave()
         const result = await sendToExtension<{ config?: CheckpointConfig | null }>(MESSAGE_NAMES['checkpoint.updateConfig'], {
-          config: buildConfigToSave()
+          config: sentSnapshot
         })
         configSaveError.value = null
         // R3-#9: 采纳后端归一化返回值（后端会合并默认启用类别、把非法值归零等），
         // 避免本地 UI 与后端权威值长期脱节；后端未返回 config（含 null/空）时保留乐观值。
-        // 先按默认结构归一化补齐再整体 assign：浅合并会让乐观值残留在后端未返回的字段上
+        // 逐字段条件合并：仅当该字段自发送以来未被用户再次编辑（仍等于发送快照）时才采纳后端值，
+        // 避免保存期间的新乐观编辑被旧响应整包覆盖（旧响应只反映发送时刻的状态，队列后序 run 会再次持久化新值）
         if (result?.config && typeof result.config === 'object') {
-          Object.assign(config, normalizeConfigForMerge(result.config))
+          const merged = normalizeConfigForMerge(result.config)
+          for (const field of Object.keys(merged) as (keyof CheckpointConfig)[]) {
+            if (configFieldEquals((config as any)[field], (sentSnapshot as any)[field])) {
+              ;(config as any)[field] = (merged as any)[field]
+            }
+          }
+          // 回滚基准重建：后端已持久化的是发送快照，merged 是其后端归一化结果。
+          // 不能克隆当前 config——保存期间被继续编辑、未采纳到 config 的字段仍是
+          // 未持久化的乐观值，混入 lastSavedConfig 会让后续失败回滚到一个从未持久化的状态。
+          lastSavedConfig = JSON.parse(JSON.stringify(merged))
+        } else {
+          // 后端未返回归一化配置（含 null/空）：已持久化的即发送快照本身
+          lastSavedConfig = JSON.parse(JSON.stringify(sentSnapshot))
         }
-        lastSavedConfig = cloneConfigSnapshot()
         return true
       } catch (error: any) {
         configSaveError.value = error?.message || String(error || 'Unknown error')
@@ -267,7 +280,9 @@ export function useCheckpointConfig() {
       // 加载存档点配置
       const response = await sendToExtension<{ config: CheckpointConfig }>(MESSAGE_NAMES['checkpoint.getConfig'], {})
       if (response?.config) {
-        Object.assign(config, response.config)
+        // 加载路径复用 normalizeConfigForMerge：按默认结构补齐缺失字段后再 assign，
+        // 避免浅合并残留本地陈旧字段（乐观值/旧配置）与后端权威值脱节
+        Object.assign(config, normalizeConfigForMerge(response.config))
         // 防御：旧后端/旧配置可能没有 exclusion 字段
         if (!config.exclusion) {
           config.exclusion = { enabledProfiles: {}, maxFileSizeBytes: 50 * 1024 * 1024, customPatterns: [] }

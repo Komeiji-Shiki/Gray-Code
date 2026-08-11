@@ -2,12 +2,14 @@
  * memory_note 工具注册
  */
 import { registerTool } from '../../toolRegistry'
+import { getToolDisplayName } from '../../toolLocalization'
 import MemoryResult from '../../../components/tools/memory/MemoryResult.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
 
 registerTool('memory_note', {
   name: 'memory_note',
-  label: 'Memory Note',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('memory_note'),
   icon: 'codicon-edit',
   descriptionFormatter: (args) => {
     const text = typeof args.text === 'string' ? args.text : ''

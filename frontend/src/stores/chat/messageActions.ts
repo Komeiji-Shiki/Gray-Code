@@ -4,7 +4,7 @@
  * 实现已按生命周期拆入 messageActions/ 子目录：
  * - sendMessageFlow.ts：发送主流程（sendMessage + 私有辅助，含共享工具）
  * - retryFlows.ts：重试家族（retryLastMessage / retryFromMessage / retryAfterError / editAndRetry）
- * - deleteFlows.ts：删除流程（deleteMessage / deleteSingleMessage / clearMessages）
+ * - deleteFlows.ts：删除流程（deleteMessage / deleteSingleMessage）
  * - summaryFlows.ts：上下文总结（summarizeContext / cancelSummarizeRequest / restoreSummarizedMessages）
  * - interruptNotices.ts：忙时投递（U1）模块级 TTL 通知
  *
@@ -36,7 +36,7 @@ export {
 } from './messageActions/retryFlows'
 
 // ---- 删除流程 ----
-export { deleteMessage, deleteSingleMessage, clearMessages } from './messageActions/deleteFlows'
+export { deleteMessage, deleteSingleMessage } from './messageActions/deleteFlows'
 
 // ---- 上下文总结 ----
 export { summarizeContext, cancelSummarizeRequest, restoreSummarizedMessages } from './messageActions/summaryFlows'

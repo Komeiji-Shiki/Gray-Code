@@ -60,7 +60,13 @@ export function hourlyHeatmap(sessions: ActivitySession[]): number[] {
         // 会话起点所在整分钟开始，按「本地时区」小时边界切块累加（每块最多 60 分钟），
         // 替代逐分钟展开：长会话从 O(分钟数) 降到 O(小时数)
         const startMinute = Math.floor(session.start / 60_000) * 60_000;
-        const endMinute = Math.floor(session.end / 60_000) * 60_000;
+        // 会话 [start, end] 覆盖的最后一分钟：end 恰在整分钟时该分钟不覆盖
+        // （与 buildSessions 的 ceil((end-start)/60000) 口径一致），
+        // 修复原实现把 endMinute 本身多计 1 分钟的问题。
+        // 单采样会话（start === end）恰落在整分钟上时 floor((end-1)/60000) 会退回
+        // 上一分钟（endMinute < startMinute），while 循环整体跳过 → 热力 0 分钟而
+        // totalMinutes=1。以 startMinute 作兜底下限：单采样整分钟会话至少计 1 分钟。
+        const endMinute = Math.max(startMinute, Math.floor((session.end - 1) / 60_000) * 60_000);
         let m = startMinute;
         while (m <= endMinute) {
             // 本地时区小时起点（setMinutes(0,0,0)），而非 UTC 整点边界
@@ -184,8 +190,8 @@ export async function getActivityStats(
     const days = rangeToDays(range);
 
     const recent = days === Infinity
-        ? await store.loadAllDays()
-        : await store.loadRecentDays(days);
+        ? await store.loadAllDays(now)
+        : await store.loadRecentDays(days, now);
     const todayStr = recent.length > 0 ? recent[recent.length - 1].date : '';
 
     // 当前连续会话判断只取最近 2 天采样拼接（跨午夜不中断）；

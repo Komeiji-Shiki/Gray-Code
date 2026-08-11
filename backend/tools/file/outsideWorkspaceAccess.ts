@@ -25,6 +25,7 @@ export type OutsideWorkspaceAccessAction = 'read' | 'write';
  */
 export type OutsideWorkspaceAwareToolName =
     | 'read_file'
+    | 'list_files'
     | 'write_file'
     | 'apply_diff'
     | 'delete_file'
@@ -35,6 +36,7 @@ export type OutsideWorkspaceAwareToolName =
 
 const OUTSIDE_WORKSPACE_AWARE_TOOLS = new Set<string>([
     'read_file',
+    'list_files',
     'write_file',
     'apply_diff',
     'delete_file',
@@ -90,7 +92,8 @@ function getPolicy(
     settingsManager?: SettingsManager,
     args?: Record<string, unknown>
 ): OutsideWorkspaceReadAccess | OutsideWorkspaceWriteAccess {
-    if (toolName === 'read_file') {
+    // list_files 是只读枚举工具，与 read_file 一样沿用读策略（deny/ask/allow）
+    if (toolName === 'read_file' || toolName === 'list_files') {
         return getReadPolicy(settingsManager);
     }
 
@@ -116,8 +119,8 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
         return [];
     }
 
-    // delete_file/create_directory：paths 字符串数组
-    if (toolName === 'delete_file' || toolName === 'create_directory') {
+    // delete_file/create_directory/list_files：paths 字符串数组（list_files 另兼容单 path）
+    if (toolName === 'delete_file' || toolName === 'create_directory' || toolName === 'list_files') {
         const fromArray = extractNonEmptyStrings((args as any).paths);
         if (fromArray.length > 0) {
             return fromArray;
@@ -166,13 +169,13 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
 }
 
 function getDeniedBySettingsMessage(toolName: OutsideWorkspaceAwareToolName, filePaths: string[]): string {
-    const action = toolName === 'read_file' ? 'Reading' : 'Writing';
+    const action = (toolName === 'read_file' || toolName === 'list_files') ? 'Reading' : 'Writing';
     const target = filePaths.length > 0 ? filePaths.join(', ') : 'outside-workspace path';
     return `${action} files outside the workspace is disabled in settings for ${toolName}: ${target}`;
 }
 
 function getRequiresConfirmationMessage(toolName: OutsideWorkspaceAwareToolName, filePaths: string[]): string {
-    const action = toolName === 'read_file' ? 'read' : 'write';
+    const action = (toolName === 'read_file' || toolName === 'list_files') ? 'read' : 'write';
     const target = filePaths.length > 0 ? filePaths.join(', ') : 'outside-workspace path';
     return `${toolName} needs user confirmation before it can ${action} outside-workspace files: ${target}`;
 }

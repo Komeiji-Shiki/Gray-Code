@@ -229,6 +229,17 @@ export class McpManager {
         
         // 添加新服务器
         for (const [serverId, config] of configMap) {
+            // storage 直载路径校验（encodeMcpToolName 的调用面在 channel/tools 模块）：
+            // 手动编辑的配置文件可能含非法 serverId（含连续 __ 等），直接纳入会让下游
+            // encodeMcpToolName 抛错、工具声明重建整体失败。不合法则跳过并告警，
+            // 不污染服务器集合（调用面 fail-soft 双保险见 ToolDeclarationResolver）。
+            if (typeof serverId !== 'string' || !MCP_SERVER_ID_PATTERN.test(serverId)) {
+                console.warn(
+                    `[MCP] Skipping server "${serverId}" from storage: invalid serverId ` +
+                    `(must match ${MCP_SERVER_ID_PATTERN.source})`
+                );
+                continue;
+            }
             this.servers.set(serverId, {
                 config,
                 status: 'disconnected'
@@ -388,7 +399,28 @@ export class McpManager {
     async updateServer(serverId: string, updates: UpdateMcpServerInput): Promise<void> {
         const info = this.servers.get(serverId);
         if (!info) {
-            throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
+            // this.servers 未命中：回退查存储——reloadFromStorage 跳过的非法 serverId 配置
+            // 仍留在存储中（listServers 直读存储仍显示），直接抛 serverNotFound 会使其成为
+            // 不可更新的孤儿配置。存储中存在则允许覆盖保存（不重建运行时连接）。
+            const storedConfig = await this.storageAdapter.getConfig(serverId);
+            if (!storedConfig) {
+                throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
+            }
+            const updatedConfig: McpServerConfig = {
+                ...storedConfig,
+                ...updates,
+                updatedAt: Date.now()
+            };
+            await this.storageAdapter.saveConfig(updatedConfig);
+            // serverId 合法时纳入运行时集合（保持后续操作一致）；非法 serverId 维持由
+            // reloadFromStorage 跳过，避免把非法 id 引入 servers 集合（下游 encode 校验）。
+            if (typeof serverId === 'string' && MCP_SERVER_ID_PATTERN.test(serverId)) {
+                this.servers.set(serverId, {
+                    config: updatedConfig,
+                    status: 'disconnected'
+                });
+            }
+            return;
         }
 
         const previousTransport = info.config.transport;
@@ -403,11 +435,12 @@ export class McpManager {
 
         // transport 实质变化（type/命令/参数/URL/请求头/env 等连接参数变更）时，已连接/连接中的
         // 客户端仍按旧参数运行：需按新配置重连，否则新 transport 不生效（旧连接继续服务）。
-        // 仅比较关键连接字段而非 JSON.stringify 整串：键序变化（env/headers）会误判为变化
-        // 触发无谓重连，连续两次相同 updateServer 也会双重连。异步重连，
-        // 不阻塞配置保存返回（与 initialize 自动连接同口径；失败仅记日志，状态由事件感知）。
+        // error 状态（旧参数连接失败/服务器死亡）同样需按新配置重连，否则修改配置后服务器
+        // 永远停留在 error 状态。仅比较关键连接字段而非 JSON.stringify 整串：键序变化
+        //（env/headers）会误判为变化触发无谓重连，连续两次相同 updateServer 也会双重连。
+        // 异步重连，不阻塞配置保存返回（与 initialize 自动连接同口径；失败仅记日志，状态由事件感知）。
         if (transportConfigChanged(previousTransport, updatedConfig.transport)
-            && (info.status === 'connected' || info.status === 'connecting')) {
+            && (info.status === 'connected' || info.status === 'connecting' || info.status === 'error')) {
             this.reconnect(serverId).catch(e => {
                 console.error(`[MCP] Reconnect after updateServer failed for ${serverId}:`, e);
             });
@@ -420,7 +453,15 @@ export class McpManager {
     async deleteServer(serverId: string): Promise<void> {
         const info = this.servers.get(serverId);
         if (!info) {
-            throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
+            // this.servers 未命中：回退查存储——reloadFromStorage 跳过的非法 serverId 配置
+            // 仍留在存储中（listServers 直读存储仍显示），直接抛 serverNotFound 会使其成为
+            // 不可删除的孤儿配置。存储中存在则允许删除配置本身（无运行时状态可清理）。
+            const storedConfig = await this.storageAdapter.getConfig(serverId);
+            if (!storedConfig) {
+                throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
+            }
+            await this.storageAdapter.deleteConfig(serverId);
+            return;
         }
 
         // 先断开连接
@@ -490,6 +531,16 @@ export class McpManager {
         // 不再全量 reloadFromStorage（多服务器时避免每次连接都枚举全部配置）
         const storedConfig = await this.storageAdapter.getConfig(serverId);
         if (storedConfig) {
+            // storage 直载路径校验（同 reloadFromStorage）：手动编辑的配置文件可能含非法
+            // serverId（含连续 __ 等），直接纳入会让下游 encodeMcpToolName 抛错。
+            // 不合法则拒绝本次连接并告警，不污染服务器集合。
+            if (typeof serverId !== 'string' || !MCP_SERVER_ID_PATTERN.test(serverId)) {
+                console.warn(
+                    `[MCP] Rejecting connect for "${serverId}": invalid serverId ` +
+                    `(must match ${MCP_SERVER_ID_PATTERN.source})`
+                );
+                throw new Error(t('modules.mcp.errors.invalidServerId'));
+            }
             const existing = this.servers.get(serverId);
             if (existing) {
                 existing.config = storedConfig;
@@ -893,8 +944,15 @@ export class McpManager {
                     if (!this.isCurrentGeneration(info.config.id, generation)) {
                         return;
                     }
+                    // 连接中（connect 尚未返回）的错误统一由 runConnect catch 置状态并广播，
+                    // 此处只记 lastError，避免 server:error 双重广播；连接完成后的运行期
+                    // 错误才在此广播（与 runConnect catch 同口径）。
+                    const wasConnecting = info.status === 'connecting';
                     info.lastError = err.message;
                     this.updateServerStatus(info.config.id, 'error');
+                    if (wasConnecting) {
+                        return;
+                    }
                     // 与 runConnect 失败路径对齐：广播 server:error，供 UI/能力缓存等下游感知
                     this.emitEvent({
                         type: 'server:error',
@@ -985,12 +1043,48 @@ export class McpManager {
             }
 
             case 'sse': {
+                // 与 stdio 分支对齐：error 状态下旧 HttpMcpClient 可能仍持有进行中的
+                // fetch/读流，直接覆盖 clients 条目会把旧 client 孤儿化（activeControllers/
+                // activeReaders 永不释放，session 悬挂）。先断开旧 client 再建新连接。
+                const previousSseClient = this.clients.get(info.config.id);
+                if (previousSseClient) {
+                    try {
+                        await previousSseClient.disconnect();
+                    } catch {
+                        // 忽略，继续建新连接
+                    }
+                }
+
                 const sseClient = new HttpMcpClient(
                     transport.url,
                     'sse',
                     transport.headers || {},
                     info.config.timeout || 30000
                 );
+
+                // 设置错误处理（带代际校验）：HTTP 服务器死亡/网络错误/SSE 流意外结束时
+                // 广播错误并置 error 状态——否则服务器死后状态永久 connected
+                //（与 stdio 分支的 error 处理同口径）
+                sseClient.on('error', (err: Error) => {
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
+                    // 连接中（connect 尚未返回）的错误统一由 runConnect catch 置状态并广播，
+                    // 此处只记 lastError，避免 server:error 双重广播；连接完成后的运行期
+                    // 错误才在此广播（与 runConnect catch 同口径）。
+                    const wasConnecting = info.status === 'connecting';
+                    info.lastError = err.message;
+                    this.updateServerStatus(info.config.id, 'error');
+                    if (wasConnecting) {
+                        return;
+                    }
+                    this.emitEvent({
+                        type: 'server:error',
+                        serverId: info.config.id,
+                        data: { error: err.message },
+                        timestamp: Date.now()
+                    });
+                });
 
                 // 提前注册到管理 map
                 this.clients.set(info.config.id, sseClient);
@@ -1045,12 +1139,48 @@ export class McpManager {
             }
 
             case 'streamable-http': {
+                // 与 stdio 分支对齐：error 状态下旧 HttpMcpClient 可能仍持有进行中的
+                // fetch/读流，直接覆盖 clients 条目会把旧 client 孤儿化（activeControllers/
+                // activeReaders 永不释放，session 悬挂）。先断开旧 client 再建新连接。
+                const previousHttpClient = this.clients.get(info.config.id);
+                if (previousHttpClient) {
+                    try {
+                        await previousHttpClient.disconnect();
+                    } catch {
+                        // 忽略，继续建新连接
+                    }
+                }
+
                 const httpClient = new HttpMcpClient(
                     transport.url,
                     'streamable-http',
                     transport.headers || {},
                     info.config.timeout || 30000
                 );
+
+                // 设置错误处理（带代际校验）：HTTP 服务器死亡/网络错误/SSE 流意外结束时
+                // 广播错误并置 error 状态——否则服务器死后状态永久 connected
+                //（与 stdio 分支的 error 处理同口径）
+                httpClient.on('error', (err: Error) => {
+                    if (!this.isCurrentGeneration(info.config.id, generation)) {
+                        return;
+                    }
+                    // 连接中（connect 尚未返回）的错误统一由 runConnect catch 置状态并广播，
+                    // 此处只记 lastError，避免 server:error 双重广播；连接完成后的运行期
+                    // 错误才在此广播（与 runConnect catch 同口径）。
+                    const wasConnecting = info.status === 'connecting';
+                    info.lastError = err.message;
+                    this.updateServerStatus(info.config.id, 'error');
+                    if (wasConnecting) {
+                        return;
+                    }
+                    this.emitEvent({
+                        type: 'server:error',
+                        serverId: info.config.id,
+                        data: { error: err.message },
+                        timestamp: Date.now()
+                    });
+                });
 
                 // 提前注册到管理 map
                 this.clients.set(info.config.id, httpClient);
@@ -1266,6 +1396,19 @@ export class McpManager {
                 success: false,
                 error: t('modules.mcp.errors.clientNotConnected')
             };
+        }
+
+        // 调用前校验工具存在性：服务器声明了工具列表（非空）时，未知工具名直接失败，
+        // 避免把过期缓存/拼写错误中的工具名发给服务器（服务器端错误文案通常不直观）。
+        // 列表为空（未声明或未拉到）时不拦截，保持原有透传行为。
+        if (Array.isArray(info.capabilities?.tools) && info.capabilities.tools.length > 0) {
+            const tool = info.capabilities.tools.find(t => t.name === request.toolName);
+            if (!tool) {
+                return {
+                    success: false,
+                    error: `Tool "${request.toolName}" not found on MCP server "${info.config.name}"`
+                };
+            }
         }
         
         try {

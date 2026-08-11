@@ -139,7 +139,14 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cf-chip {
+  .cf-chip,
+  .chat-view {
     animation: none;
+  }
+  /* 组件 scoped 的 .spin[data-v-x]（0,2,0）优先级高于全局 .spin（0,1,0），
+   * 必须 !important 才能压过约 20 个组件内的转圈动画规则（codicon 加载图标同）。 */
+  .spin,
+  .codicon-modifier-spin {
+    animation: none !important;
   }
 }

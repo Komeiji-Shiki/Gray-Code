@@ -13,7 +13,7 @@ import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { loadCheckpoints, refreshCurrentConversationBuildSession, loadHistory } from './conversationActions'
 import { validateSessionIdentity } from './utils'
-import { rebuildMessageIndexById } from './state'
+import { rebuildMessageIndexById, appendMessage } from './state'
 import { setPendingDirtyConfirm } from './dirtyConfirmState'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
@@ -390,7 +390,10 @@ export async function restoreAndRetry(
         modelVersion: currentModelName
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    // 改走 appendMessage：raw push 绕过消息索引登记（messageIndexById / toolResponseIndex），
+    // 后续按 id 定位会退化为 findIndex 并触发整表重建；appendMessage 增量登记 + 不递增结构版本
+    // （纯尾部追加，todoSnapshot / usedTokens 增量缓存可继续走增量路径）
+    appendMessage(state, assistantMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
@@ -706,7 +709,8 @@ export async function restoreAndEdit(
         modelVersion: currentModelName
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    // 同 reroll 路径：改走 appendMessage 登记消息索引（见上）
+    appendMessage(state, assistantMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId

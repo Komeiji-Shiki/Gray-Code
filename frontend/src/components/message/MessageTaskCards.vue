@@ -516,7 +516,7 @@ async function executePlan(card: TaskCardItem) {
     })
 
     // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
-    await chatStore.sendMessage('', undefined, {
+    const ok = await chatStore.sendMessage('', undefined, {
       configIdOverride: selectedChannelId.value || undefined,
       modelOverride: selectedModelId.value || undefined,
       hidden: {
@@ -539,6 +539,16 @@ async function executePlan(card: TaskCardItem) {
           }
         }
       })
+
+    // 隐藏发送被拒绝（如主会话流仍活跃）时提示用户，确认未被投递
+    if (!ok) {
+      await showNotification(t('components.message.tool.planCard.executePlanFailed'), 'warning')
+      // 发送被拒绝说明 Build 从未真正启动：回收 activeBuild（setActiveBuild(null) 清除卡片），
+      // 避免残留 running 状态的 Build 卡片被 useBuildPanel 的 isWaitingForResponse 定稿 watcher
+      // 误标为 done（Build 未执行却显示已完成）
+      await chatStore.setActiveBuild(null)
+      return
+    }
   } catch (error) {
     console.error(t('components.message.tool.planCard.executePlanFailed'), error)
   } finally {
@@ -593,7 +603,7 @@ async function generatePlan(card: TaskCardItem) {
     }
 
     // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
-    await chatStore.sendMessage('', undefined, {
+    const ok = await chatStore.sendMessage('', undefined, {
       configIdOverride: selectedChannelId.value || undefined,
       modelOverride: selectedModelId.value || undefined,
       hidden: {
@@ -615,6 +625,12 @@ async function generatePlan(card: TaskCardItem) {
           }
         }
       })
+
+    // 隐藏发送被拒绝（如主会话流仍活跃）时提示用户，确认未被投递
+    if (!ok) {
+      await showNotification(t('components.message.tool.designCard.generatePlanFailed'), 'warning')
+      return
+    }
   } catch (error) {
     console.error(t('components.message.tool.designCard.generatePlanFailed'), error)
   } finally {
@@ -666,7 +682,7 @@ async function generatePlanFromReview(card: TaskCardItem) {
       console.error('[review] Failed to switch prompt mode before plan generation:', modeError)
     }
 
-    await chatStore.sendMessage('', undefined, {
+    const ok = await chatStore.sendMessage('', undefined, {
       configIdOverride: selectedChannelId.value || undefined,
       modelOverride: selectedModelId.value || undefined,
       hidden: {
@@ -688,6 +704,12 @@ async function generatePlanFromReview(card: TaskCardItem) {
           }
         }
       })
+
+    // 隐藏发送被拒绝（如主会话流仍活跃）时提示用户，确认未被投递
+    if (!ok) {
+      await showNotification(t('components.message.tool.reviewCard.generatePlanFailed'), 'warning')
+      return
+    }
   } catch (error) {
     console.error(t('components.message.tool.reviewCard.generatePlanFailed'), error)
   } finally {

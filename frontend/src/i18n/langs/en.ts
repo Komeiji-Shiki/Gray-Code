@@ -216,7 +216,9 @@ const en: LanguageMessages = {
                 }
             },
             scrollToTop: 'Scroll to top',
-            scrollToBottom: 'Scroll to bottom'
+            scrollToBottom: 'Scroll to bottom',
+            scrollbar: 'Scrollbar',
+            horizontalScrollbar: 'Horizontal scrollbar'
         },
 
         header: {
@@ -853,6 +855,15 @@ const en: LanguageMessages = {
                     comparePersisted: 'Persisted Findings',
                     compareSeverityChanged: 'Severity Changed',
                     compareTrackingChanged: 'Tracking Changed',
+                    compareBaseLine: 'Base: {path}',
+                    compareTargetLine: 'Target: {path}',
+                    compareAddedLine: 'Added findings: {count}',
+                    compareRemovedLine: 'Removed findings: {count}',
+                    comparePersistedLine: 'Persisted findings: {count}',
+                    compareSeverityChangedLine: 'Severity changed: {count}',
+                    compareTrackingChangedLine: 'Tracking changed: {count}',
+                    milestonesRecordedNone: '0 milestones recorded',
+                    milestonesRecorded: '{count} milestones recorded; latest: {latest}',
                     compareEvidenceChanged: 'Evidence Changed',
                     compareRelatedMilestonesChanged: 'Related Milestones Changed',
                     compareChanges: 'Changes',
@@ -897,6 +908,12 @@ const en: LanguageMessages = {
                     currentFocus: 'Current Focus',
                     currentBlocker: 'Current Blocker',
                     nextAction: 'Next Action',
+                    milestonesCompleted: '{completed}/{total} milestones completed',
+                    milestonesLatestSuffix: '; latest: {latest}',
+                    validationValidLine: 'Valid: {state}',
+                    validationIssuesLine: 'Issues: {count}',
+                    validationErrorsLine: 'Errors: {count}',
+                    validationWarningsLine: 'Warnings: {count}',
                     updatedAt: 'Updated At',
                     milestones: 'Milestones',
                     todos: 'TODOs',
@@ -912,6 +929,13 @@ const en: LanguageMessages = {
                     copyPath: 'Copy Path',
                     copied: 'Copied',
                     rawResult: 'Full Result'
+                },
+                deleteCode: {
+                    totalFiles: '{count} files total',
+                    badge: 'Delete lines {start}-{end}',
+                    lineCount: '{count} lines',
+                    deletedCount: 'Deleted {count} lines',
+                    willDelete: 'Will delete lines {start} to {end} ({count} lines total)'
                 }
             },
             attachment: {
@@ -3640,6 +3664,15 @@ const en: LanguageMessages = {
     },
 
     utils: {
+        file: {
+            readFailed: 'Failed to read file',
+            sizeExceeded: 'File size exceeds the limit ({size})',
+            thumbnailCanvasFailed: 'Failed to create thumbnail canvas',
+            thumbnailTimeout: 'Thumbnail generation timed out',
+            thumbnailFailed: 'Failed to generate thumbnail',
+            thumbnailReadFailed: 'Failed to read thumbnail source file',
+            thumbnailReadAborted: 'Reading thumbnail source file was cancelled'
+        },
         tools: {
             noFile: 'No file',
             changes: '{count} changes',
@@ -3647,7 +3680,14 @@ const en: LanguageMessages = {
             recursiveSuffix: ' (recursive)',
             dirCount: '{count} directories',
             searchModeSearch: 'Search',
-            searchModeReplace: 'Search & Replace'
+            searchModeReplace: 'Search & Replace',
+            lineRange: '(lines {start}-{end})',
+            lineBefore: '(before line {line})',
+            batchCropCount: 'Crop {count} images',
+            batchGenerateCount: 'Generate {count} images: {prompt} etc.',
+            batchRemoveBackgroundCount: 'Remove background from {count} images',
+            batchResizeCount: 'Resize {count} images',
+            batchRotateCount: 'Rotate {count} images'
         }
     }
 };

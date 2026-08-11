@@ -35,6 +35,30 @@ export interface TodoUpdateArgs {
 
 const TODO_METADATA_KEY = 'todoList';
 
+/**
+ * per-conversation todoList 写队列：把「读 → 改 → 写」串行化。
+ * 修改原因：todo_update 先 loadExistingTodos 再 applyOps 再 saveTodos，无锁/队列时
+ *          并发 todo_update 基于同一份旧列表互相覆盖（对比 progress/plan 的写锁）。
+ * 修改方式：与 progressWriteLock 相同的 per-key Promise 队列，队列排空后清理条目。
+ */
+const todoWriteQueues = new Map<string, Promise<unknown>>();
+
+function withTodoWriteLock<T>(conversationId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = todoWriteQueues.get(conversationId) || Promise.resolve();
+    const next = previous
+        .catch(() => undefined)
+        .then(fn);
+    todoWriteQueues.set(conversationId, next);
+    next
+        .finally(() => {
+            if (todoWriteQueues.get(conversationId) === next) {
+                todoWriteQueues.delete(conversationId);
+            }
+        })
+        .catch(() => undefined);
+    return next;
+}
+
 function normalizeTodos(raw: unknown): TodoItem[] {
     if (!Array.isArray(raw)) return [];
     const out: TodoItem[] = [];
@@ -284,9 +308,13 @@ async function todoUpdateHandler(args: Record<string, unknown>, context?: ToolCo
     }
 
     try {
-        const existing = await loadExistingTodos(context);
-        const { todos, stats } = applyOps(existing, rawOps);
-        await saveTodos(context, todos);
+        // 整个「读 → 改 → 写」进 per-conversation 队列，并发 todo_update 不会互相覆盖
+        const { todos, stats } = await withTodoWriteLock(conversationId, async () => {
+            const existing = await loadExistingTodos(context);
+            const { todos: nextTodos, stats: nextStats } = applyOps(existing, rawOps);
+            await saveTodos(context, nextTodos);
+            return { todos: nextTodos, stats: nextStats };
+        });
 
         const counts = countByStatus(todos);
 

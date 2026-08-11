@@ -366,6 +366,24 @@ export class CheckpointRestoreService {
             return failResult(t('modules.checkpoint.restore.cannotBuildChain'));
         }
 
+        // CP-WS-CHAIN: 跨工作区混格式增量链校验——目标为新格式（已在上方证同当前工作区）时，
+        // 链上**所有带身份元数据**的节点必须同样可证同：新格式基节点（有 workspaceRoots）
+        // 逐一 validateWorkspaceSnapshot，任一不匹配 → fail-closed（跨工作区混链会把另一
+        // 工作区的备份内容恢复进当前工作区）。旧格式基节点（无 workspaceRoots/workspaceFingerprint）
+        // 无身份可证——保持既有 legacy 兼容（同一工作区的旧→新升级链是受支持场景，
+        // CheckpointManifestPhase3 M6 测试依赖该路径），由 hasLegacyKeys 单根检查兜底。
+        if (checkpoint.workspaceRoots?.length) {
+            for (const cp of chain) {
+                if (!cp.workspaceRoots?.length || !cp.workspaceFingerprint) {
+                    continue; // 旧格式节点：无身份元数据，兼容放行
+                }
+                const validation = validateWorkspaceSnapshot(cp.workspaceRoots, cp.workspaceFingerprint, roots);
+                if (!validation.valid) {
+                    return failResult(t('modules.checkpoint.restore.workspaceMismatch'), { failures: [] });
+                }
+            }
+        }
+
         // 验证链的完整性（确保所有备份目录都存在）；缺失记录在链内裁剪
         const chainMissingBackupDirs: string[] = [];
         for (const cp of chain) {
@@ -612,12 +630,15 @@ export class CheckpointRestoreService {
         const targetState = await this.filterRestoreTargetScoped(rawHashes, rawEmptyDirs, roots);
         const { currentHashes, currentEmptyDirs } = await this.collectCurrentWorkspaceState(roots);
 
-        // 引擎执行：白名单为空集 → 不删除任何文件
+        // 引擎执行：白名单为空集 → 不删除任何文件；
+        // CP-LEGACY-HASH-2: rawHashes 刚由本方法对备份目录逐文件流式哈希得到（与备份内容
+        // 必然一致），skipHashVerification=true 让引擎跳过重复哈希（恢复前不必每个文件哈希两次）
         const engineResult = await restoreWorkspaceSnapshot(
             {
                 checkpointsDir: this.checkpointsDir,
                 roots,
                 deletableScopedPaths: new Set<string>(),
+                skipHashVerification: true,
                 signal
             },
             [{

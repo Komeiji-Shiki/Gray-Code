@@ -29,6 +29,8 @@ import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_VERSION } from './Che
 import type { CheckpointQueryService } from './CheckpointQueryService';
 import type { CheckpointRetentionService } from './CheckpointRetentionService';
 import { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY, throwIfAborted, CheckpointAbortError } from './checkpointConcurrency';
+import { CHECKPOINT_CREATE_LOCK_PREFIX } from './checkpointPathUtils';
+import { hashFileStreaming } from './fileHashing';
 
 const log = Logger.get('CheckpointBackupExecutor');
 
@@ -102,11 +104,22 @@ export class CheckpointBackupExecutor {
         // 不复位会导致后续创建的复制失败被静默吞掉（计数超上限后不再逐文件告警）
         this.copyFailureWarnCount = 0;
         let backupDirCreated = false;
+        // CP-ORPHAN-3: 跨进程「创建中」lockfile（checkpointsDir/.creating-<checkpointId>）。
+        // 另一窗口（独立 extension host）的孤儿清理（removeOrphanBackupDirs）据此跳过正在创建
+        // 的备份目录——mkdir→writeManifest 可远超单进程 mtime 新鲜度窗口，仅靠进程内
+        // isBackupDirBeingCreated 守卫无法覆盖跨进程场景。成功/失败/取消路径统一删除。
+        const createLockPath = path.join(deps.checkpointsDir, `${CHECKPOINT_CREATE_LOCK_PREFIX}${checkpointId}`);
 
         try {
             // 创建备份目录
             await fs.mkdir(backupDir, { recursive: true });
             backupDirCreated = true;
+            // 跨进程创建中标记：孤儿清理（另一窗口）据此跳过本目录；写失败不阻塞创建（尽力而为）
+            try {
+                await fs.writeFile(createLockPath, String(process.pid ?? 0), 'utf-8');
+            } catch (lockErr) {
+                console.warn('[CheckpointBackupExecutor] Failed to write create-lock file (orphan cleanup may race):', lockErr);
+            }
 
             // 获取该对话的上一个检查点：增量备份与 stat 哈希复用都依赖它
             const existingCheckpoints = await this.readCheckpointListFromConversation(conversationId);
@@ -221,7 +234,7 @@ export class CheckpointBackupExecutor {
                 reportProgress({ phase: 'copying', processed: 0, total: copyTotal });
                 await runBounded(copyTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async scopedPath => {
                     throwIfAborted(signal);
-                    const result = await this.copyFileToBackup(scopedPath, backupDir, roots);
+                    const result = await this.copyFileToBackup(scopedPath, backupDir, roots, currentHashes[scopedPath]);
                     if (result.ok) {
                         fileCount++;
                         backupBytes += result.bytes;
@@ -251,7 +264,7 @@ export class CheckpointBackupExecutor {
                 reportProgress({ phase: 'copying', processed: 0, total: copyTotal });
                 await runBounded(fullTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async scopedPath => {
                     throwIfAborted(signal);
-                    const result = await this.copyFileToBackup(scopedPath, backupDir, roots);
+                    const result = await this.copyFileToBackup(scopedPath, backupDir, roots, currentHashes[scopedPath]);
                     if (result.ok) {
                         fileCount++;
                         backupBytes += result.bytes;
@@ -411,18 +424,33 @@ export class CheckpointBackupExecutor {
                 }
             }
             return null;
+        } finally {
+            // CP-ORPHAN-3: 成功/失败/取消路径统一删除跨进程创建 lockfile（崩溃残留由
+            // 孤儿清理的超龄兜底处理）
+            try {
+                await fs.rm(createLockPath, { force: true });
+            } catch (lockRmErr) {
+                // 清理失败不影响主流程
+            }
         }
     }
 
     /**
      * 把快照中的单个 scoped 路径复制进备份目录（scoped 布局：backupDir/ws_xxx/relative）。
      *
-     * @returns ok=复制成功并返回复制字节数（CPF-09 backupBytes 统计）；失败由调用方标记 unbacked。
+     * CP-TOCTOU-1: 快照哈希在 buildWorkspaceSnapshot 扫描时计算，复制发生在扫描之后——
+     * 扫描与复制之间源文件可能被并发写工具改写，复制得到的备份内容与 fileHashes 声称的
+     * 哈希不一致时，恢复会报 hash_mismatch 且不可自愈。因此复制成功后对落盘备份重新流式
+     * 哈希校验，不一致则返回失败，由调用方 markUnbacked 从 fileHashes 剔除（下次检查点重试）。
+     *
+     * @param expectedHash 扫描时记录的期望哈希（快照 fileHashes）；缺省时跳过校验（兼容旧调用）
+     * @returns ok=复制成功且（若提供 expectedHash）落盘备份哈希一致；失败由调用方标记 unbacked。
      */
     private async copyFileToBackup(
         scopedPath: string,
         backupDir: string,
-        roots: readonly RuntimeWorkspaceRoot[]
+        roots: readonly RuntimeWorkspaceRoot[],
+        expectedHash?: string
     ): Promise<{ ok: true; bytes: number } | { ok: false; bytes: 0 }> {
         try {
             const parsed = parseWorkspaceScopedPath(scopedPath, roots as RuntimeWorkspaceRoot[]);
@@ -431,6 +459,13 @@ export class CheckpointBackupExecutor {
             await fs.mkdir(path.dirname(destPath), { recursive: true });
             const stat = await fs.stat(srcPath);
             await fs.copyFile(srcPath, destPath);
+            // CP-TOCTOU-1: 复制后重新流式哈希校验落盘备份（源文件可能已变）
+            if (expectedHash) {
+                const backupHash = await hashFileStreaming(destPath);
+                if (backupHash !== expectedHash) {
+                    throw new Error(`backup content changed during copy (expected ${expectedHash}, got ${backupHash})`);
+                }
+            }
             return { ok: true, bytes: stat.size };
         } catch (err) {
             // C-13: 超大备份逐文件告警会刷屏——只打印前 MAX_COPY_FAILURE_WARN 条，

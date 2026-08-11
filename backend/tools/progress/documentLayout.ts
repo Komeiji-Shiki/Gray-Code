@@ -336,7 +336,9 @@ function normalizeProgressMetadataInput(
     createdAt: normalizeTimestamp(value.createdAt, now),
     updatedAt: normalizeTimestamp(value.updatedAt, now),
     status: isProgressStatus(value.status) ? value.status : 'active',
-    phase: isProgressPhase(value.phase) ? value.phase : 'implementation',
+    // 修改原因：默认 phase 与 create_progress / autoSync 的 'design' 不一致。
+    // 修改方式：统一为 'design'（项目创建初期处于设计阶段）。
+    phase: isProgressPhase(value.phase) ? value.phase : 'design',
     currentFocus: normalizeOptionalProgressSingleLineText(value.currentFocus),
     latestConclusion: normalizeOptionalProgressText(value.latestConclusion),
     currentBlocker: normalizeOptionalProgressText(value.currentBlocker),

@@ -103,6 +103,14 @@ export interface RestoreEngineOptions {
      * 实现 CP-09「撤销工具新建文件」语义。
      */
     deleteUntrackedFiles?: boolean;
+    /**
+     * 跳过备份内容哈希校验（CP-LEGACY-HASH-2）。
+     *
+     * legacy 恢复路径（restoreLegacyCheckpointViaEngine）在调用引擎前已对备份目录
+     * 逐文件流式哈希得到 rawHashes（fileHashes 的来源），引擎内再次哈希纯属重复；
+     * 新格式恢复（fileHashes 来自 manifest）必须保留校验，防止备份与索引不一致。
+     */
+    skipHashVerification?: boolean;
     /** 有界并发度（CPF-06），默认 8；恢复文件复制与删除循环使用 */
     concurrency?: number;
     /** 取消信号（CPF-11）：操作循环内检查，已取消时抛 CheckpointAbortError */
@@ -129,6 +137,11 @@ export interface RestorePlan {
     modified: string[];
     /** 需要删除的文件（scoped 键，已过滤受保护路径；白名单内路径，恢复时默认删除） */
     toDelete: string[];
+    /**
+     * 快照时被工具删除的文件（scoped 键）：当前存在、目标快照缺失、但增量链 base 中存在。
+     * 恢复目标快照语义下这些文件应被删除（快照时它们已不在），而非归入 untracked 默认保留。
+     */
+    deletedInSnapshot: string[];
     /**
      * 快照后新建的文件（scoped 键）：当前存在、目标没有、不在删除白名单、非受保护。
      * 默认不删除（#29 保护），用户确认清单后由恢复流程删除（CP-09）。
@@ -196,7 +209,6 @@ export function computeRestorePlan(
     currentEmptyDirs: string[]
 ): RestorePlan {
     const { roots, protectedScopedPaths = new Set(), deletableScopedPaths } = options;
-    void _chain; // 计划阶段不需要备份索引（恢复执行时才构建）
 
     const targetHashes: Record<string, string> = {};
     for (const [rawKey, hash] of Object.entries(target.fileHashes)) {
@@ -207,6 +219,22 @@ export function computeRestorePlan(
     const currentScopedHashes: Record<string, string> = {};
     for (const [rawKey, hash] of Object.entries(currentHashes)) {
         currentScopedHashes[toScopedKey(rawKey, roots)] = hash;
+    }
+
+    // CP-DEL-IN-SNAP: 收集增量链 base 中（非目标节点）出现过的路径（scoped 键）。
+    // 当前工作区存在、目标快照缺失、但 base 链中存在 → 快照时被工具删除的文件：
+    // 恢复目标快照语义下应删除（快照时它们已不在），不能归入 untracked 默认保留（否则
+    // 恢复后这些文件“复活”，与快照状态不符）。chain 最后一项为目标节点，其 fileHashes
+    // 即目标状态（targetHashes），不属于“base 中存在”的判据。
+    const baseChainKeys = new Set<string>();
+    for (let i = 0; i < _chain.length - 1; i++) {
+        const entry = _chain[i];
+        for (const rawKey of Object.keys(entry.fileHashes ?? {})) {
+            baseChainKeys.add(toScopedKey(rawKey, roots));
+        }
+        for (const change of entry.changes ?? []) {
+            baseChainKeys.add(toScopedKey(change.path, roots));
+        }
     }
 
     // 新增 / 修改
@@ -222,11 +250,17 @@ export function computeRestorePlan(
 
     // 删除（过滤受保护路径；白名单内的进入 toDelete，白名单外的进入 untrackedToDelete）
     const toDelete: string[] = [];
+    const deletedInSnapshot: string[] = [];
     const untrackedToDelete: string[] = [];
     for (const scopedKey of Object.keys(currentScopedHashes)) {
         if (scopedKey in targetHashes) continue;
         // M-3（R7b 补充）：目录级排除条目只记录目录自身，此处按前缀匹配保护目录内文件
         if (isProtectedScopedPath(scopedKey, protectedScopedPaths)) continue;
+        // 快照时被工具删除（base 链中存在、目标缺失）：恢复默认删除（目标状态无此文件）
+        if (baseChainKeys.has(scopedKey)) {
+            deletedInSnapshot.push(scopedKey);
+            continue;
+        }
         if (deletableScopedPaths && !deletableScopedPaths.has(scopedKey)) {
             // 快照后新建/未跟踪：默认保留，需用户确认后才删除（CP-09）
             untrackedToDelete.push(scopedKey);
@@ -246,7 +280,7 @@ export function computeRestorePlan(
 
     const skipped = Object.keys(targetHashes).length - added.length - modified.length;
 
-    return { added, modified, toDelete, untrackedToDelete, untrackedEmptyDirs, skipped, targetHashes, targetEmptyDirs, currentScopedHashes };
+    return { added, modified, toDelete, deletedInSnapshot, untrackedToDelete, untrackedEmptyDirs, skipped, targetHashes, targetEmptyDirs, currentScopedHashes };
 }
 
 /** 判断存档键是否为工作区作用域路径（`ws_xxx/relative`） */
@@ -391,11 +425,13 @@ export async function restoreWorkspaceSnapshot(
 
     // 恢复计划：与 previewRestore 共用同一纯计算逻辑，预览清单与实际删除严格一致
     const plan = computeRestorePlan(options, chain, target, currentHashes, currentEmptyDirs);
-    const { added, modified, toDelete, untrackedToDelete, skipped, targetEmptyDirs, untrackedEmptyDirs } = plan;
-    // 快照后新建的文件/空目录默认保留（#29）；用户确认删除清单后（CP-09）才一并清理
+    const { added, modified, toDelete, deletedInSnapshot, untrackedToDelete, skipped, targetEmptyDirs, untrackedEmptyDirs } = plan;
+    // 快照后新建的文件/空目录默认保留（#29）；用户确认删除清单后（CP-09）才一并清理。
+    // 快照时被工具删除的文件（deletedInSnapshot）是目标快照语义的一部分：快照状态中它们
+    // 已不存在，恢复应默认删除（不归入 untracked 保留，否则恢复后文件“复活”）。
     const deletionList = options.deleteUntrackedFiles
-        ? [...toDelete, ...untrackedToDelete]
-        : toDelete;
+        ? [...toDelete, ...deletedInSnapshot, ...untrackedToDelete]
+        : [...toDelete, ...deletedInSnapshot];
 
     // 1. 构建增量链文件索引（恢复执行时才需要）
     const fileIndex = buildFileIndex(chain, checkpointsDir, roots);
@@ -428,13 +464,18 @@ export async function restoreWorkspaceSnapshot(
         }
 
         try {
-            // 校验备份内容与目标哈希一致（共享流式哈希实现，CP-DUP-1）
-            const backupHash = await hashFileStreaming(indexEntry.backupPath);
-            if (backupHash !== indexEntry.hash) {
-                failures.push({ path: scopedKey, reason: 'hash_mismatch' });
-                processed += 1;
-                options.onProgress?.(processed, progressTotal);
-                return;
+            // 校验备份内容与目标哈希一致（共享流式哈希实现，CP-DUP-1）。
+            // CP-LEGACY-HASH-2: legacy 恢复（skipHashVerification=true）时，fileHashes 是
+            // 引擎外对备份目录逐文件流式哈希得到的 rawHashes，与备份内容必然一致——
+            // 跳过重复哈希，避免每个文件被扫描+校验两次。
+            if (!options.skipHashVerification) {
+                const backupHash = await hashFileStreaming(indexEntry.backupPath);
+                if (backupHash !== indexEntry.hash) {
+                    failures.push({ path: scopedKey, reason: 'hash_mismatch' });
+                    processed += 1;
+                    options.onProgress?.(processed, progressTotal);
+                    return;
+                }
             }
 
             await fs.mkdir(path.dirname(destination), { recursive: true });

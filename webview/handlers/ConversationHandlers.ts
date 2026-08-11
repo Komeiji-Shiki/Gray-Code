@@ -138,6 +138,12 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
     } catch (cleanupError) {
       console.warn('[ConversationHandlers] Failed to forget sub-agent conversation:', cleanupError);
     }
+    try {
+      // R2-07：清理取消注册表中的会话级残留（cancelEpochs 等），防止 Map 条目随会话增删无界增长
+      ctx.streamAbortControllers.removeConversation(conversationId);
+    } catch (cleanupError) {
+      console.warn('[ConversationHandlers] Failed to clear stream abort registry:', cleanupError);
+    }
     ctx.sendResponse(requestId, { success: true });
   } catch (error) {
     const message = error instanceof Error && error.message

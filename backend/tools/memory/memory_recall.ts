@@ -62,11 +62,16 @@ async function memoryRecallHandler(args: Record<string, unknown>, context?: Tool
 
         // 工作区记忆也执行同一次搜索（id 各自独立，无需去重）
         let wsResult: RecallResult | null = null;
+        // 修改原因：工作区记忆未初始化时静默跳过，模型会误以为工作区没有命中。
+        // 修改方式：记录未初始化状态并在结果中附加提示。
+        let workspaceNotInitialized = false;
         if (context?.activeWorkspaceUri) {
             // 只读工具：工作区目录不存在时不创建（createIfMissing=false），避免只读访问产生磁盘副作用
             const wsMgr = await getMemoryManagerForWorkspace(context.activeWorkspaceUri, false);
             if (wsMgr) {
                 wsResult = await wsMgr.recall(regex);
+            } else {
+                workspaceNotInitialized = true;
             }
         }
 
@@ -81,6 +86,9 @@ async function memoryRecallHandler(args: Record<string, unknown>, context?: Tool
         if (lines.length === 0) {
             lines.push('No match.');
         }
+        if (workspaceNotInitialized) {
+            lines.push('(Workspace memory is not initialized; only global memory was searched.)');
+        }
 
         return {
             success: true,
@@ -88,6 +96,7 @@ async function memoryRecallHandler(args: Record<string, unknown>, context?: Tool
                 text: lines.join('\n'),
                 totalHits: globalResult.totalHits + (wsResult?.totalHits ?? 0),
                 truncated: globalResult.truncated || !!wsResult?.truncated,
+                workspaceNotInitialized: workspaceNotInitialized || undefined,
             },
         };
     } catch (e: any) {

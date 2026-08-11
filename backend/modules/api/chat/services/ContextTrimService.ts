@@ -818,36 +818,42 @@ export class ContextTrimService {
      * @param channelType 渠道类型
      * @param messages 需要计算的消息列表；index 必须为原始存储历史下标——过滤 isSummarized 后
      *                 的下标与本方法内部 getHistoryRef 读到的原始数组错位，会导致计数错位
-     * @returns token 数数组
+     * @returns 与 messages 等长的 token 数数组；跳过条目（非用户消息/已有缓存）为 undefined 占位，
+     *          调用方按下标逐条对齐，undefined 条目保持粗估/走本地估算
      */
     private async countAndUpdateMessageTokens(
         conversationId: string,
         channelType: string,
         messages: Array<{ index: number; message: Content }>
-    ): Promise<number[]> {
+    ): Promise<Array<number | undefined>> {
         if (messages.length === 0) {
             return [];
         }
         
-        // 使用 TokenEstimationService 的批量方法
+        // 使用 TokenEstimationService 的批量方法；preCountUserMessageTokensBatch
+        // 逐条返回精确计数（失败条目内部已降级为本地估算），不再二次 getHistoryRef
+        // 全量读取——每轮裁剪此前合计 3 次全量历史读取（本方法自身 + 计数内部 + 调用方）。
         const messageIndices = messages.map(m => m.index);
-        await this.tokenEstimationService.preCountUserMessageTokensBatch(
+        const tokenCounts = await this.tokenEstimationService.preCountUserMessageTokensBatch(
             conversationId,
             channelType,
             messageIndices
         );
-        
-        // 返回计算后的 token 数（从更新后的消息中获取）
-        const updatedHistory = await this.conversationManager.getHistoryRef(conversationId);
-        return messages.map(({ index }) => {
-            const msg = updatedHistory[index];
-            // C-14：并发删除/裁剪后该索引处消息可能已不存在，缺失时按 0 计，
-            // 避免 estimateMessageTokens(undefined) 抛错中断整批计数。
-            if (!msg) {
-                return 0;
-            }
-            return msg.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
-        });
+        // 防御：测试替身或异常路径可能返回非数组（旧签名 Promise<void>），
+        // 此时回退为从消息自身读取已写回的计数（缺失按 0 计，与旧行为一致）。
+        if (!Array.isArray(tokenCounts)) {
+            const updatedHistory = await this.conversationManager.getHistoryRef(conversationId);
+            return messages.map(({ index }) => {
+                const msg = updatedHistory[index];
+                // C-14：并发删除/裁剪后该索引处消息可能已不存在，缺失时按 0 计，
+                // 避免 estimateMessageTokens(undefined) 抛错中断整批计数。
+                if (!msg) {
+                    return 0;
+                }
+                return msg.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
+            });
+        }
+        return tokenCounts;
     }
 
     /**
@@ -1524,6 +1530,8 @@ export class ContextTrimService {
         // 把精确计数结果回填到 fullHistory 快照，使 accumulateTokens 读到精确值而非粗估。
         // 计数结果已通过 preCountUserMessageTokensBatch 写回存储（下一轮生效），
         // 但本轮 accumulateTokens 读的是计数前的 fullHistory，需要就地修正。
+        // 返回数组与 missingTokenMessages 等长（跳过条目为 undefined 占位），逐条对齐
+        // 不会错位；undefined 条目保持粗估，下一轮裁剪时重新计数。
         if (messageTokenResults.length > 0) {
             for (let i = 0; i < missingTokenMessages.length; i++) {
                 const { index } = missingTokenMessages[i];

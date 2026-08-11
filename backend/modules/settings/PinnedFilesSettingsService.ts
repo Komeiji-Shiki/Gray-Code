@@ -32,8 +32,14 @@ export class PinnedFilesSettingsService {
      * 更新固定文件配置
      */
     async updatePinnedFilesConfig(config: Partial<PinnedFilesConfig>): Promise<void> {
-        const oldConfig = this.getPinnedFilesConfig();
-        await this.core.saveToolsConfigEntry('pinned_files', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
+        // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）；
+        // 本方法亦被 addPinnedFile/clearPinnedFiles 等已入队方法在 mutator 内调用，
+        // serializeMutation 重入保护（内联执行）保证不产生嵌套死锁
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getPinnedFilesConfig();
+            await this.core.saveToolsConfigEntry('pinned_files', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**

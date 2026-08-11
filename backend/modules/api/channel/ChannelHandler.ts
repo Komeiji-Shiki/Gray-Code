@@ -128,6 +128,19 @@ export class ChannelHandler {
             };
         } catch (error) {
             const err = error as any;
+            // 并发 check-then-create 竞态：预检查通过后 createConfig 入队时发现同 id
+            // 已被并发请求创建（createConfig 队列内幂等检查抛错），重查确认存在后返回
+            // 统一的 CHANNEL_ALREADY_EXISTS，而不是把竞态错误误报为 UNKNOWN_ERROR。
+            const recheck = await this.configManager.getConfig(request.config.id).catch(() => null);
+            if (recheck) {
+                return {
+                    success: false,
+                    error: {
+                        code: 'CHANNEL_ALREADY_EXISTS',
+                        message: t('modules.api.channel.errors.channelAlreadyExists', { channelId: request.config.id })
+                    }
+                };
+            }
             return {
                 success: false,
                 error: {

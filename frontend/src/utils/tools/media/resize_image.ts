@@ -7,6 +7,8 @@
 import { registerTool } from '../../toolRegistry'
 import ResizeImagePanel from '../../../components/tools/media/resize_image.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 
 /**
  * 单个任务类型
@@ -20,8 +22,8 @@ interface ResizeTask {
 
 registerTool('resize_image', {
   name: 'resize_image',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '缩放图片',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('resize_image'),
   icon: 'codicon-arrow-both',
   expandable: true,
   contentComponent: ResizeImagePanel,
@@ -39,7 +41,7 @@ registerTool('resize_image', {
         return `${shortInput} → ${task.width}x${task.height}`
       }
       // 多任务显示
-      return `批量缩放 ${images.length} 张`
+      return t('utils.tools.batchResizeCount', { count: images.length })
     }
     
     // 单张模式
@@ -48,7 +50,7 @@ registerTool('resize_image', {
       return `${shortInput} → ${width}x${height}`
     }
     
-    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
-    return getToolMetaDescription('resize_image') ?? '缩放图片'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化显示名
+    return getToolMetaDescription('resize_image') ?? getToolDisplayName('resize_image')
   }
 })

@@ -34,35 +34,9 @@ export function truncateText(text: string, maxLength: number): string {
   return text.substring(0, maxLength) + '...'
 }
 
-// 高亮搜索关键词
-export function highlightText(text: string, keyword: string): string {
-  if (!keyword) return text
-  
-  const regex = new RegExp(`(${escapeRegExp(keyword)})`, 'gi')
-  return text.replace(regex, '<mark>$1</mark>')
-}
-
 // 转义正则表达式特殊字符
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-// 计算文本哈希
-export function hashText(text: string): string {
-  let hash = 0
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash = hash & hash
-  }
-  return Math.abs(hash).toString(36)
-}
-
-// 生成随机颜色
-export function generateColor(seed: string): string {
-  const hash = hashText(seed)
-  const hue = parseInt(hash, 36) % 360
-  return `hsl(${hue}, 70%, 60%)`
 }
 
 // 复制到剪贴板
@@ -136,77 +110,10 @@ export function debounce<T extends (...args: any[]) => any>(
   return debounced
 }
 
-// 节流函数
-export function throttle<T extends (...args: any[]) => any>(
-  fn: T,
-  delay: number
-): (...args: Parameters<T>) => void {
-  let lastCall = 0
-  let trailingTimer: ReturnType<typeof setTimeout> | undefined
-  let trailingArgs: Parameters<T> | undefined
-
-  return function (...args: Parameters<T>) {
-    const now = Date.now()
-    const remaining = delay - (now - lastCall)
-
-    if (remaining <= 0) {
-      if (trailingTimer !== undefined) clearTimeout(trailingTimer)
-      trailingTimer = undefined
-      trailingArgs = undefined
-      lastCall = now
-      fn(...args)
-      return
-    }
-
-    trailingArgs = args
-    if (trailingTimer !== undefined) return
-    trailingTimer = setTimeout(() => {
-      trailingTimer = undefined
-      lastCall = Date.now()
-      const pending = trailingArgs
-      trailingArgs = undefined
-      if (pending) fn(...pending)
-    }, remaining)
-  }
-}
-
-// 延迟执行
-export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 // 生成唯一ID
 // 说明：substr 已废弃，统一使用 slice（等价截取：从下标 2 起 9 个字符）
 export function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
-}
-
-// 判断是否为空值
-export function isEmpty(value: any): boolean {
-  if (value === null || value === undefined) return true
-  if (typeof value === 'string') return value.trim() === ''
-  if (Array.isArray(value)) return value.length === 0
-  if (value instanceof Date) return false
-  if (value instanceof Map || value instanceof Set) return value.size === 0
-  if (typeof value === 'object') return Object.keys(value).length === 0
-  return false
-}
-
-// 深度克隆
-export function deepClone<T>(obj: T): T {
-  if (obj === null || typeof obj !== 'object') return obj
-  
-  if (obj instanceof Date) return new Date(obj.getTime()) as any
-  if (obj instanceof Array) return obj.map(item => deepClone(item)) as any
-  
-  const clonedObj = {} as T
-  for (const key in obj) {
-    if (obj.hasOwnProperty(key)) {
-      clonedObj[key] = deepClone(obj[key])
-    }
-  }
-  
-  return clonedObj
 }
 
 // 格式化数字：千分位分隔；≥1000 缩写为 K、≥1000000 缩写为 M（缩写保留一位小数）

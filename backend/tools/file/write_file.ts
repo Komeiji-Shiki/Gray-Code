@@ -100,8 +100,10 @@ async function writeSingleFile(
             originalContent = '';
         }
 
-        // 如果内容相同，无需修改
-        if (originalContent === content) {
+        // 如果内容相同且文件已存在，无需修改。
+        // 注意：目标是不存在的新文件且 content === '' 时不能走 unchanged 早退——
+        // 空内容新建文件必须落入下方 !fileExists 分支完成创建（mkdir + 预写空文件）。
+        if (fileExists && originalContent === content) {
             return {
                 path: filePath,
                 success: true,

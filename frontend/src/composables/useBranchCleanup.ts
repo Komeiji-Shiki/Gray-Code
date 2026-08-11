@@ -48,12 +48,15 @@ export function useBranchCleanup() {
   const retentionError = ref<string | null>(null)
 
   const retentionDaysValid = computed(() => {
-    const value = Number(retentionDraft.value)
+    const draft = String(retentionDraft.value).trim()
+    // 严格十进制校验：拒绝 '1e2' / '0x10' / '1_000' 等非十进制字面量（对齐 useCheckpointExclusion 的正则口径）
+    if (!/^\d+$/.test(draft)) return false
+    const value = Number(draft)
     return Number.isInteger(value) && value >= 0
   })
 
   // 离开设置页时，空/无效的保留期草稿自动回填最后一次保存的值
-  // （注意：Number('') === 0，空串会被 retentionDaysValid 判为有效，需显式排除；
+  // （retentionDaysValid 用 /^\d+$/ 严格校验：空串与 '1e2'/'0x10'/'1_000' 等非法字面量均判无效；
   //  且 v-model 绑 type=number 时 Vue 会把输入值转成 number，需 String() 归一化再 trim）
   watch(
     getSettingsView,
@@ -125,9 +128,8 @@ export function useBranchCleanup() {
 
   /** 保存保留期配置（0 = 不自动清理） */
   async function saveRetention(): Promise<boolean> {
-    // 空串显式拦截：Number('') === 0 会被 retentionDaysValid 判为有效，
-    // 用户清空输入框后误点「保存」会把保留期静默改为 0（关闭自动清理）。
-    // 此处回填最后一次保存的值并拒绝保存（与「离开设置页回填」行为一致）。
+    // 空串显式拦截：清空输入后误点「保存」会回填最后一次保存的值并拒绝保存
+    // （retentionDaysValid 对空串同样判无效；此处负责回填行为）
     // 注意 v-model 绑 type=number 时 value 可能是 number，需 String() 归一化。
     if (String(retentionDraft.value).trim() === '') {
       retentionDraft.value = String(retentionDays.value)

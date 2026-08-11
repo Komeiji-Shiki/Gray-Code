@@ -123,6 +123,12 @@ export interface FetchOptions {
     signal?: AbortSignal;
 }
 
+/** createProxyFetch 的请求选项：在标准 RequestInit 之上增加代理专用 timeout */
+export interface ProxyFetchInit extends RequestInit {
+    /** 代理请求超时（毫秒），缺省 120s */
+    timeout?: number;
+}
+
 /**
  * Fetch 响应
  */
@@ -137,18 +143,74 @@ export interface FetchResponse {
 }
 
 /**
+ * 流式响应体接收端：createProxyFetch 用它把代理响应的 body 字节逐包喂给 ReadableStream。
+ * 大文件下载（vsix 等）因此无需整包读入内存，也不会经 UTF-8 往返解码损坏二进制。
+ */
+export interface ProxyStreamSink {
+    stream: ReadableStream<Uint8Array>;
+    push(chunk: Buffer): void;
+    end(): void;
+    error(err: Error): void;
+}
+
+function createProxyStreamSink(): ProxyStreamSink {
+    let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let closed = false;
+    const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+            controller = c;
+        }
+    });
+    return {
+        stream,
+        push(chunk: Buffer) {
+            if (closed || !controller) return;
+            try {
+                // 与 Buffer 共享内存的零拷贝视图（调用方不修改缓冲区）
+                controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+            } catch {
+                // 流已被消费方关闭：忽略
+            }
+        },
+        end() {
+            if (closed) return;
+            closed = true;
+            try {
+                controller?.close();
+            } catch {
+                // 已关闭
+            }
+        },
+        error(err: Error) {
+            if (closed) return;
+            closed = true;
+            try {
+                controller?.error(err);
+            } catch {
+                // 已关闭
+            }
+        }
+    };
+}
+
+/**
  * 创建一个支持代理的 fetch 函数
+ *
+ * 响应体流式转发：成功响应在头解析完成后即返回，body 字节经 ReadableStream 逐包交付。
+ * 修复：此前先 await response.text() 整包读入内存再包新 Response——数百 MB 的 vsix 下载
+ * 内存双份、超 V8 字符串上限（~512MB）直接 RangeError 崩溃，且二进制经 UTF-8 往返解码
+ * 损坏（无效字节被替换为 U+FFFD）。错误响应（非 2xx）体通常很小，仍走整包文本构造。
  *
  * @param proxyUrl 代理地址（可选），如 http://127.0.0.1:7890
  * @returns fetch 函数
  */
-export function createProxyFetch(proxyUrl?: string) {
+export function createProxyFetch(proxyUrl?: string): (url: string | URL, init?: ProxyFetchInit) => Promise<Response> {
     if (!proxyUrl) {
-        // 无代理，使用原生 fetch
-        return fetch;
+        // 无代理，使用原生 fetch（原生 fetch 无 timeout 选项：调用方自行以 AbortSignal 控制超时）
+        return fetch as (url: string | URL, init?: ProxyFetchInit) => Promise<Response>;
     }
     
-    return async (url: string | URL, init?: RequestInit): Promise<Response> => {
+    return async (url: string | URL, init?: ProxyFetchInit): Promise<Response> => {
         const targetUrl = typeof url === 'string' ? new URL(url) : url;
         const options: FetchOptions = {
             method: init?.method || 'GET',
@@ -157,15 +219,34 @@ export function createProxyFetch(proxyUrl?: string) {
                 ...(init?.headers as Record<string, string> || {})
             },
             body: init?.body as string | undefined,
-            timeout: 120000,
+            // 修复：透传调用方指定的 timeout（此前硬编码 120s，调用方超时被忽略）
+            timeout: init?.timeout ?? 120000,
             signal: init?.signal ?? undefined  // 传递 abort signal，null→undefined
         };
         
-        const response = await fetchWithProxy(targetUrl, options, proxyUrl);
+        const sink = createProxyStreamSink();
+        const response = await fetchWithProxy(targetUrl, options, proxyUrl, undefined, sink);
         
-        // 转换为标准 Response 对象
+        if (response.body) {
+            // 流式模式：body 持续流入，消费方（UpdateChecker 等）边读边落盘
+            // 204/304 状态码禁止携带响应体：Response 构造器对「非 null body + 204/304」抛 TypeError
+            const isNullBodyStatus = response.status === 204 || response.status === 304;
+            if (isNullBodyStatus) {
+                // 弃用 sink 流前主动关闭：否则底层 socket 仍在读、body 字节持续推入无人
+                // 消费的 ReadableStream（无消费者时队列无界积压），连接直到服务器关闭才释放
+                sink.end();
+            }
+            return new Response(isNullBodyStatus ? null : response.body, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+            });
+        }
+        
+        // 非流式（错误响应等，体通常很小）：保持整包文本构造
         const responseText = await response.text();
-        return new Response(responseText, {
+        const isNullBodyStatus = response.status === 204 || response.status === 304;
+        return new Response(isNullBodyStatus ? null : responseText, {
             status: response.status,
             statusText: response.statusText,
             headers: response.headers
@@ -176,8 +257,15 @@ export function createProxyFetch(proxyUrl?: string) {
 /**
  * 创建标准 AbortError：ChannelManager 按 error.name === 'AbortError' 区分「用户取消/超时」
  * 与普通网络错误；普通 Error 会被 isRetryableError 误判为可重试，取消操作变成无谓重试。
+ *
+ * 文案按 signal.reason 区分：调用方以 Error 作为 abort 原因（如超时）时透传其 message；
+ * 无原因时保持默认 'Request cancelled'。
  */
-function createAbortError(message = 'Request cancelled'): Error {
+function createAbortError(signal?: AbortSignal): Error {
+    const reason = signal?.reason;
+    const message = reason instanceof Error && reason.message.trim()
+        ? reason.message
+        : 'Request cancelled';
     const error = new Error(message);
     error.name = 'AbortError';
     return error;
@@ -190,7 +278,8 @@ async function fetchWithProxy(
     targetUrl: URL,
     init: FetchOptions,
     proxyUrl: string,
-    insecureSkipVerify?: boolean
+    insecureSkipVerify?: boolean,
+    bodySink?: ProxyStreamSink
 ): Promise<FetchResponse> {
     const proxyLeg = parseProxyLeg(proxyUrl);
     const targetHost = targetUrl.hostname;
@@ -202,7 +291,7 @@ async function fetchWithProxy(
 
     // 检查是否已取消
     if (init.signal?.aborted) {
-        throw createAbortError();
+        throw createAbortError(init.signal);
     }
 
     return new Promise((resolve, reject) => {
@@ -235,7 +324,7 @@ async function fetchWithProxy(
             if (tunnelSocket) {
                 closeSocketGracefully(tunnelSocket);
             }
-            reject(createAbortError());
+            reject(createAbortError(init.signal));
         };
         if (init.signal) {
             init.signal.addEventListener('abort', onAbort, { once: true });
@@ -263,7 +352,7 @@ async function fetchWithProxy(
                     servername: targetHost,
                     ...(skipVerify ? { rejectUnauthorized: false } : {})
                 }, () => {
-                    sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject);
+                    sendRequestOverSocket(tlsSocket, targetUrl, init, resolve, reject, bodySink);
                 });
 
                 tlsSocket.on('error', (error: Error) => {
@@ -271,7 +360,7 @@ async function fetchWithProxy(
                 });
             } else {
                 // HTTP 请求直接通过隧道
-                sendRequestOverSocket(socket, targetUrl, init, resolve, reject);
+                sendRequestOverSocket(socket, targetUrl, init, resolve, reject, bodySink);
             }
         });
 
@@ -287,7 +376,12 @@ async function fetchWithProxy(
                 init.signal.removeEventListener('abort', onAbort);
             }
             proxyReq.destroy();
-            reject(new Error('Proxy request timeout'));
+            // CONNECT 握手超时以 AbortError 呈现：纳入统一超时文案（ChannelManager
+            // 判 TIMEOUT_ERROR / UpdateChecker 转「下载超时」），而非普通 Error 被
+            // isRetryableError 误判为可重试（代理不可达时无限重试）
+            const error = new Error('Proxy request timeout');
+            error.name = 'AbortError';
+            reject(error);
         });
 
         proxyReq.end();
@@ -295,19 +389,21 @@ async function fetchWithProxy(
 }
 
 /**
- * 通过 socket 发送 HTTP 请求（非流式路径）
+ * 通过 socket 发送 HTTP 请求（支持整包与流式响应体两种模式：
+ * 提供 bodySink 时头解析完成后即 resolve，body 字节逐包经 sink 转交）
  */
 function sendRequestOverSocket(
     socket: tls.TLSSocket | import('net').Socket,
     targetUrl: URL,
     init: FetchOptions,
     resolve: (response: FetchResponse) => void,
-    reject: (error: Error) => void
+    reject: (error: Error) => void,
+    bodySink?: ProxyStreamSink
 ): void {
     // 检查是否已取消
     if (init.signal?.aborted) {
         socket.destroy();
-        reject(createAbortError());
+        reject(createAbortError(init.signal));
         return;
     }
 
@@ -320,7 +416,12 @@ function sendRequestOverSocket(
         if (aborted) return;
         aborted = true;
         closeSocketGracefully(socket);
-        reject(createAbortError());
+        if (streamingActive()) {
+            // 流式模式：fetch 已提前 resolve，取消经 body 流传播（AbortError）
+            bodySink?.error(createAbortError(init.signal));
+            return;
+        }
+        reject(createAbortError(init.signal));
     };
     if (init.signal) {
         init.signal.addEventListener('abort', onAbort, { once: true });
@@ -364,6 +465,81 @@ function sendRequestOverSocket(
     let headerEndIndex = -1;
     let responseHeaders: Record<string, string> = {};
 
+    // 流式响应体状态（bodySink 提供时启用）：头解析完成后立即 resolve（status/headers 可用），
+    // body 字节经 bodySink 逐包转交 ReadableStream；连接异常/中止经 bodySink.error 传播。
+    let streamResolved = false;
+    let streamEmitted = 0;
+    let streamChunkedBuffer: Buffer = Buffer.alloc(0);
+    let streamChunkedOffset = 0;
+    let streamChunkedDone = false;
+
+    const streamingActive = (): boolean => !!bodySink && streamResolved && statusCode >= 200 && statusCode < 300;
+
+    const resolveStreamingResponse = () => {
+        if (streamResolved || !bodySink) return;
+        streamResolved = true;
+        resolve({
+            ok: statusCode >= 200 && statusCode < 300,
+            status: statusCode,
+            statusText,
+            headers: responseHeaders,
+            // 流式模式下 body 经 stream 交付，text/json 不再可用（createProxyFetch 只读 stream）
+            text: async () => { throw new Error('Streaming response: body delivered via stream'); },
+            json: async () => { throw new Error('Streaming response: body delivered via stream'); },
+            body: bodySink.stream
+        });
+    };
+
+    const emitBodyBytes = (bytes: Buffer) => {
+        if (!bodySink || aborted) return;
+        if (isChunked) {
+            // 增量解码：压缩已消费前缀（subarray 零拷贝视图）后拼接新字节，
+            // 只保留未消费尾部，避免整段累积的 O(n²) 复制
+            if (streamChunkedOffset > 0) {
+                streamChunkedBuffer = streamChunkedBuffer.subarray(streamChunkedOffset);
+                streamChunkedOffset = 0;
+            }
+            streamChunkedBuffer = Buffer.concat([streamChunkedBuffer, bytes]);
+            const { decoded, consumed, terminated } = decodeChunkedStreamIncremental(streamChunkedBuffer);
+            streamChunkedOffset = consumed;
+            if (terminated) streamChunkedDone = true;
+            if (decoded && decoded.length > 0) {
+                streamEmitted += decoded.length;
+                bodySink.push(decoded);
+            }
+            return;
+        }
+        let data = bytes;
+        if (contentLength >= 0) {
+            // 按 Content-Length 截断：防御服务器多发字节（Connection: close 下不应发生）
+            const remaining = contentLength - streamEmitted;
+            if (remaining <= 0) return;
+            if (data.length > remaining) data = data.subarray(0, remaining);
+        }
+        if (data.length === 0) return;
+        streamEmitted += data.length;
+        bodySink.push(data);
+    };
+
+    const isStreamComplete = (): boolean => {
+        if (isChunked) return streamChunkedDone;
+        if (contentLength >= 0) return streamEmitted >= contentLength;
+        return false; // 无长度信息：由 socket end/close 判定
+    };
+
+    const isStreamBodyComplete = (): boolean => {
+        if (isChunked) return streamChunkedDone;
+        if (contentLength >= 0) return streamEmitted >= contentLength;
+        return true; // 无长度信息：连接结束即 body 结束
+    };
+
+    const finishStreaming = () => {
+        if (responseFinished || aborted) return;
+        responseFinished = true;
+        cleanup();
+        bodySink?.end();
+    };
+
     const tryParseHeaders = (fullBuffer: Buffer): boolean => {
         const headerEndMarker = Buffer.from('\r\n\r\n');
         headerEndIndex = fullBuffer.indexOf(headerEndMarker);
@@ -376,9 +552,19 @@ function sendRequestOverSocket(
 
         const lines = headerPart.split('\r\n');
         const statusLine = lines[0];
-        const statusMatch = statusLine.match(/HTTP\/\d\.\d (\d+) (.+)/);
+        // reason phrase 可缺省（如 "HTTP/1.1 204"）：正则放宽为可选组，
+        // 避免无 reason phrase 的状态行匹配失败导致 statusCode 兜底为 0
+        const statusMatch = statusLine.match(/HTTP\/\d\.\d (\d+)(?: (.+))?/);
         statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
-        statusText = statusMatch ? statusMatch[2] : '';
+        statusText = statusMatch?.[2] ?? '';
+
+        if (statusCode === 0) {
+            // 状态行无法解析（状态码缺失/非法）：立即按协议错误终止。
+            // 不能让 statusCode=0 流入 Response 构造——new Response(body, { status: 0 }) 抛 RangeError
+            reject(new Error(`Invalid HTTP status line: ${statusLine || '(empty)'}`));
+            cleanup();
+            return false;
+        }
 
         for (const line of lines.slice(1)) {
             const colonIndex = line.indexOf(':');
@@ -485,29 +671,67 @@ function sendRequestOverSocket(
         // 检查是否已取消
         if (aborted) return;
 
-        // #38 修复：只累积，不做全量 concat
+        if (!headersParsed) {
+            // #38 修复：只累积，不做全量 concat
+            chunks.push(chunk);
+            receivedLength += chunk.length;
+
+            const fullBuffer = Buffer.concat(chunks);
+            if (tryParseHeaders(fullBuffer)) {
+                if (bodySink && statusCode >= 200 && statusCode < 300) {
+                    // 流式模式：头已解析立即 resolve，并把头部之后已到达的 body 字节转交流
+                    resolveStreamingResponse();
+                    emitBodyBytes(fullBuffer.subarray(headerEndIndex + 4));
+                    chunks.length = 0; // 流式模式不再需要整包累积
+                    if (isStreamComplete()) {
+                        // 使用 end() 进行优雅关闭，避免 ECONNRESET
+                        socket.end();
+                        finishStreaming();
+                    }
+                    return;
+                }
+                if (isResponseComplete()) {
+                    // 使用 end() 进行优雅关闭，避免 ECONNRESET
+                    socket.end();
+                    finishResponse();
+                }
+            }
+            return;
+        }
+
+        if (bodySink && statusCode >= 200 && statusCode < 300) {
+            // 流式模式：body 字节逐包转交
+            emitBodyBytes(chunk);
+            if (isStreamComplete()) {
+                // 使用 end() 进行优雅关闭，避免 ECONNRESET
+                socket.end();
+                finishStreaming();
+            }
+            return;
+        }
+
+        // 非流式 / 错误响应：#38 修复，只累积，不做全量 concat
         chunks.push(chunk);
         receivedLength += chunk.length;
-
-        if (!headersParsed) {
-            const fullBuffer = Buffer.concat(chunks);
-            if (tryParseHeaders(fullBuffer) && isResponseComplete()) {
-                // 使用 end() 进行优雅关闭，避免 ECONNRESET
-                socket.end();
-                finishResponse();
-            }
-        } else {
-            if (isResponseComplete()) {
-                // 使用 end() 进行优雅关闭，避免 ECONNRESET
-                socket.end();
-                finishResponse();
-            }
+        if (isResponseComplete()) {
+            // 使用 end() 进行优雅关闭，避免 ECONNRESET
+            socket.end();
+            finishResponse();
         }
     });
 
     socket.on('end', () => {
         if (aborted) return;
         cleanup();
+        if (streamingActive()) {
+            // 流式模式：连接结束即 body 结束（或完整性校验失败时经流报错）
+            if (isStreamBodyComplete()) {
+                finishStreaming();
+            } else {
+                bodySink?.error(new Error('Connection closed with incomplete response body'));
+            }
+            return;
+        }
         if (headersParsed) {
             // #40 修复：只有 body 完整才成功返回
             if (hasValidBody()) {
@@ -523,6 +747,14 @@ function sendRequestOverSocket(
     socket.on('close', () => {
         if (aborted) return;
         cleanup();
+        if (streamingActive()) {
+            if (isStreamBodyComplete()) {
+                finishStreaming();
+            } else {
+                bodySink?.error(new Error('Connection closed with incomplete response body'));
+            }
+            return;
+        }
         if (headersParsed && !responseFinished) {
             // #40 修复：只有 body 完整才成功返回
             if (hasValidBody()) {
@@ -536,6 +768,11 @@ function sendRequestOverSocket(
     socket.on('error', (err) => {
         if (aborted) return;
         cleanup();
+        if (streamingActive()) {
+            // 流式模式：错误经 body 流传播给消费方
+            bodySink?.error(err);
+            return;
+        }
         reject(err);
     });
 }
@@ -585,6 +822,71 @@ export function decodeChunkedBuffer(data: Buffer): string {
     }
     
     return Buffer.concat(resultChunks).toString('utf8');
+}
+
+/**
+ * 增量解码 chunked transfer encoding：只解码已完整到达的块。
+ * 返回已解码字节、已消费偏移与是否遇到终止块（chunkSize 0）。
+ * proxyStreamFetch 与 sendRequestOverSocket（流式响应体）共用，避免两份平行解码逻辑。
+ */
+function decodeChunkedStreamIncremental(data: Buffer): { decoded: Buffer | null; consumed: number; terminated: boolean } {
+    const pieces: Buffer[] = [];
+    let offset = 0;
+    let terminated = false;
+
+    while (offset < data.length) {
+        // 查找 chunk size 行的结束 (\r\n)
+        let sizeEnd = -1;
+        for (let i = offset; i < data.length - 1; i++) {
+            if (data[i] === 0x0d && data[i + 1] === 0x0a) {
+                sizeEnd = i;
+                break;
+            }
+        }
+
+        if (sizeEnd === -1) {
+            // 没找到完整的 size 行，保留剩余数据
+            break;
+        }
+
+        // 解析 chunk size（十六进制）
+        const sizeLine = data.subarray(offset, sizeEnd).toString('ascii').trim();
+        const chunkSize = parseInt(sizeLine, 16);
+
+        if (isNaN(chunkSize)) {
+            // 无效的 size，跳过这行
+            offset = sizeEnd + 2;
+            continue;
+        }
+
+        if (chunkSize === 0) {
+            // 结束标记
+            terminated = true;
+            offset = data.length;
+            break;
+        }
+
+        // 计算 chunk 数据的位置
+        const chunkDataStart = sizeEnd + 2;
+        const chunkDataEnd = chunkDataStart + chunkSize;
+
+        if (chunkDataEnd + 2 > data.length) {
+            // 数据不完整，保留从 offset 开始的所有数据
+            break;
+        }
+
+        // 提取 chunk 数据（原始字节，解码由调用方的流式 TextDecoder 完成）
+        pieces.push(data.subarray(chunkDataStart, chunkDataEnd));
+
+        // 移动到下一个 chunk（跳过 \r\n）
+        offset = chunkDataEnd + 2;
+    }
+
+    return {
+        decoded: pieces.length > 0 ? Buffer.concat(pieces) : null,
+        consumed: offset,
+        terminated
+    };
 }
 
 /**
@@ -668,7 +970,7 @@ export async function* proxyStreamFetch(
 
     // 检查是否已取消
     if (init.signal?.aborted) {
-        throw createAbortError();
+        throw createAbortError(init.signal);
     }
 
     const socket = await new Promise<tls.TLSSocket | import('net').Socket>((resolve, reject) => {
@@ -699,7 +1001,7 @@ export async function* proxyStreamFetch(
         // 监听取消信号
         const onAbort = () => {
             proxyReq?.destroy();
-            finishReject(createAbortError());
+            finishReject(createAbortError(init.signal));
         };
 
         if (init.signal) {
@@ -758,7 +1060,12 @@ export async function* proxyStreamFetch(
         
         proxyReq.on('timeout', () => {
             proxyReq?.destroy();
-            finishReject(new Error('Proxy request timeout'));
+            // 与 fetchWithProxy 的 CONNECT 握手超时同步：以 AbortError 呈现，纳入统一
+            // 超时文案（generateStream 的 AbortError 分支判 TIMEOUT_ERROR），而非普通
+            // Error 被 isRetryableError 误判为可重试
+            const error = new Error('Proxy request timeout');
+            error.name = 'AbortError';
+            finishReject(error);
         });
         
         proxyReq.end();
@@ -806,68 +1113,9 @@ export async function* proxyStreamFetch(
     }
     
     /**
-     * 实时解码 chunked 数据
-     * 返回已解码的数据和未消费数据的起始偏移（调用方用单一 buffer + offset 游标保留剩余，
-     * 避免每包对整段累积 Buffer.concat / Buffer.from 复制的 O(n²) 行为）
+     * 实时解码 chunked 数据（增量版见模块级 decodeChunkedStreamIncremental，
+     * 与 sendRequestOverSocket 的流式响应体共用同一实现，避免两份平行解码逻辑）
      */
-    const decodeChunkedStream = (data: Buffer): { decoded: Buffer | null, consumed: number } => {
-        // 只收集原始字节，不做字符串解码：被 TCP/chunk 边界切开的 UTF-8 多字节字符
-        // 若在第一个包就 toString('utf8') 会固化成 U+FFFD，中文内容损坏/流中断
-        const pieces: Buffer[] = [];
-        let offset = 0;
-        
-        while (offset < data.length) {
-            // 查找 chunk size 行的结束 (\r\n)
-            let sizeEnd = -1;
-            for (let i = offset; i < data.length - 1; i++) {
-                if (data[i] === 0x0d && data[i + 1] === 0x0a) {
-                    sizeEnd = i;
-                    break;
-                }
-            }
-            
-            if (sizeEnd === -1) {
-                // 没找到完整的 size 行，保留剩余数据
-                break;
-            }
-            
-            // 解析 chunk size（十六进制）
-            const sizeLine = data.subarray(offset, sizeEnd).toString('ascii').trim();
-            const chunkSize = parseInt(sizeLine, 16);
-            
-            if (isNaN(chunkSize)) {
-                // 无效的 size，跳过这行
-                offset = sizeEnd + 2;
-                continue;
-            }
-            
-            if (chunkSize === 0) {
-                // 结束标记
-                offset = data.length;
-                break;
-            }
-            
-            // 计算 chunk 数据的位置
-            const chunkDataStart = sizeEnd + 2;
-            const chunkDataEnd = chunkDataStart + chunkSize;
-            
-            if (chunkDataEnd + 2 > data.length) {
-                // 数据不完整，保留从 offset 开始的所有数据
-                break;
-            }
-            
-            // 提取 chunk 数据（原始字节，解码由调用方的流式 TextDecoder 完成）
-            pieces.push(data.subarray(chunkDataStart, chunkDataEnd));
-            
-            // 移动到下一个 chunk（跳过 \r\n）
-            offset = chunkDataEnd + 2;
-        }
-        
-        return {
-            decoded: pieces.length > 0 ? Buffer.concat(pieces) : null,
-            consumed: offset
-        };
-    };
     
     // 使用事件监听器代替 for await，避免提前中断时 socket 被自动销毁导致 RST
     // for await 在被提前终止时会销毁流，发送 RST 包而不是 FIN，导致 ECONNRESET
@@ -963,8 +1211,19 @@ export async function* proxyStreamFetch(
 
                         if (headerEnd !== -1) {
                             const headerPart = rawBuffer.subarray(0, headerEnd).toString('utf8');
-                            const statusMatch = headerPart.match(/HTTP\/\d\.\d (\d+)/);
+                            // 与 sendRequestOverSocket.tryParseHeaders 同步：状态行取首行，
+                            // reason phrase 可缺省（如 "HTTP/1.1 204"），正则放宽为可选组，
+                            // 避免无 reason phrase 的状态行匹配失败导致 statusCode 兜底为 0
+                            const statusLine = headerPart.split('\r\n')[0];
+                            const statusMatch = statusLine.match(/HTTP\/\d\.\d (\d+)(?: (.+))?/);
                             statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
+
+                            if (statusCode === 0) {
+                                // 状态行无法解析（状态码缺失/非法）：立即按协议错误终止，
+                                // 不再流入错误体累积/ChannelError 构造（与 tryParseHeaders 551-557 一致）
+                                finishReject(new Error(`Invalid HTTP status line: ${statusLine || '(empty)'}`));
+                                return;
+                            }
 
                             // 检查是否是 chunked 编码
                             if (headerPart.toLowerCase().includes('transfer-encoding: chunked')) {
@@ -1017,7 +1276,7 @@ export async function* proxyStreamFetch(
                             chunkedBuffer = Buffer.concat([chunkedBuffer, rawBuffer]);
                             rawBuffer = Buffer.alloc(0);
 
-                            const { decoded, consumed } = decodeChunkedStream(chunkedBuffer);
+                            const { decoded, consumed } = decodeChunkedStreamIncremental(chunkedBuffer);
                             chunkedOffset = consumed;
 
                             if (decoded) {
@@ -1146,7 +1405,8 @@ export async function* proxyStreamFetch(
         // 处理剩余数据
         if (!init.signal?.aborted) {
             if (isChunked && chunkedBuffer.length > 0) {
-                const { decoded } = decodeChunkedStream(chunkedBuffer.subarray(chunkedOffset));
+                // 流结束后的剩余缓冲：一次性增量解码（返回 { decoded, consumed, terminated }）
+                const { decoded } = decodeChunkedStreamIncremental(chunkedBuffer.subarray(chunkedOffset));
                 if (decoded) {
                     yield decoder.decode(decoded, { stream: true });
                 }

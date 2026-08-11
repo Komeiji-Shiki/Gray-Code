@@ -1,7 +1,7 @@
 /**
  * 删除流程（从 messageActions.ts 拆出）。
  *
- * 包含 deleteMessage / deleteSingleMessage / clearMessages。逻辑逐字迁移，
+ * 包含 deleteMessage / deleteSingleMessage。逻辑逐字迁移，
  * 越界兜底（本地占位 / 后端索引越界降级本地删除）、H1/M6 平滑条目清理、
  * MESSAGE_CHANGED 索引漂移校验等已修 bug 注释原样保留，一行未改。
  */
@@ -15,7 +15,7 @@ import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { contentToMessageEnhanced } from '../parsers'
 import { setTotalMessagesFromWindow } from '../windowUtils'
 import { rebuildMessageIndexById } from '../state'
-import { finishSmoothStreamForState, clearAllSmoothForState } from '../streamChunkHandlers'
+import { finishSmoothStreamForState } from '../streamChunkHandlers'
 import { translate } from '../../../composables/useI18n'
 import { useSettingsStore } from '../../settingsStore'
 import { safeSetError, calculateBackendIndex } from './sendMessageFlow'
@@ -203,26 +203,4 @@ export async function deleteSingleMessage(
       message: err.message || 'Delete failed'
     })
   }
-}
-
-/**
- * 清空当前对话的消息
- */
-export function clearMessages(state: ChatStoreState): void {
-  // H1/M6：清空前清理所有平滑条目（销毁实例 + 删除显示文本），UI 立即切回真实 content
-  clearAllSmoothForState(state)
-  state.allMessages.value = []
-  rebuildMessageIndexById(state)
-  state.windowStartIndex.value = 0
-  state.totalMessages.value = 0
-  state.isLoadingMoreMessages.value = false
-  state.toolResponseCache.value = new Map()
-  state.historyFolded.value = false
-  state.foldedMessageCount.value = 0
-  state.activeBuild.value = null
-  state.error.value = null
-  state.streamingMessageId.value = null
-  state.activeStreamId.value = null
-  state._lastCancelledStreamId.value = null
-  state.isWaitingForResponse.value = false
 }

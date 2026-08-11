@@ -40,23 +40,30 @@ export class StoragePathSettingsService {
      * 更新存储路径配置
      */
     async updateStoragePathConfig(config: Partial<StoragePathConfig>): Promise<void> {
-        const oldConfig = this.getStoragePathConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        
-        this.core.settings.storagePath = newConfig;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'storagePath',
-            path: 'storagePath',
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.core.settings
+        // 读-改-写-通知整体入队串行（与 SettingsCore 写队列共用）：并发调用（如迁移流程
+        // 与用户操作交错）基于同一旧 storagePath 合并后整体写回时后写会覆盖先写；
+        // oldConfig 必须在 mutator 内读取，保证排队后读到的是前一个变更的结果。
+        // 无嵌套 serializeMutation 调用方（StoragePathManager/SettingsManager 均顶层调用），
+        // 包队列不产生死锁
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getStoragePathConfig();
+            const newConfig = {
+                ...oldConfig,
+                ...config
+            };
+
+            this.core.settings.storagePath = newConfig;
+            this.core.settings.lastUpdated = Date.now();
+
+            await this.core.storage.save(this.core.settings);
+
+            this.core.notifyChange({
+                type: 'storagePath',
+                path: 'storagePath',
+                oldValue: oldConfig,
+                newValue: newConfig,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 

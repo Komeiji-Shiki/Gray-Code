@@ -9,7 +9,7 @@
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, formatFileSize } from '../utils';
-import { getDiffManager, type DiffResolutionReason } from '../../core/services/diffManager';
+import { getDiffManager } from '../../core/services/diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import type { LockHolder } from '../../core/fileWriteLockManager';
@@ -164,9 +164,8 @@ async function deleteSingleFile(
         );
 
         // 等待用户处理
-        const interruptReason = await waitForDiffResolution(
-            diffManager, pendingDiff.id, abortSignal
-        );
+        // 修改原因：本地 waitForDiffResolution 包装只是透传，删除重复包装直接调用。
+        const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
 
         // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
         // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
@@ -351,17 +350,6 @@ export function createDeleteCodeTool(): Tool {
             };
         }
     };
-}
-
-/**
- * 等待 DiffManager 中的 diff 被解决（接受/拒绝/中断）
- */
-function waitForDiffResolution(
-    diffManager: ReturnType<typeof getDiffManager>,
-    diffId: string,
-    abortSignal?: AbortSignal
-): Promise<DiffResolutionReason> {
-    return diffManager.waitForDiffResolution(diffId, abortSignal);
 }
 
 /**

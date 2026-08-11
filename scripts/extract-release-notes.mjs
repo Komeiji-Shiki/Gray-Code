@@ -51,9 +51,12 @@ export function selectSections(sections, version, latest) {
 
   let end = idx + 1 // 默认只带当前版本
   if (latest) {
-    // 向后扩展：带上所有「版本号大于 latest」的未发布小节（跳过版本补带）
+    // 向后扩展：带上所有「版本号大于 latest」的未发布小节（跳过版本补带）。
+    // 显式排除 [Unreleased]：其版本号不是语义化版本（parseVersion 会产出 NaN），
+    // 此前依赖 `NaN > 0 === false` 的隐式语义静默跳过；改为显式判断，避免
+    // compareVersions 行为变化时 Unreleased 被误带入发布说明。
     let i = idx + 1
-    while (i < sections.length && compareVersions(sections[i].version, latest) > 0) {
+    while (i < sections.length && sections[i].version !== 'Unreleased' && compareVersions(sections[i].version, latest) > 0) {
       end = i + 1
       i++
     }

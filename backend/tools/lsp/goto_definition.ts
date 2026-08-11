@@ -13,6 +13,7 @@ import {
     executeLspCommandWithRetry,
     withTimeoutAndAbort
 } from './lspLifecycle';
+import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
 
 /**
  * 定义位置信息
@@ -93,6 +94,13 @@ Returns the complete definition code with line numbers.`;
             // line 校验：仅接受有限正整数（NaN/小数/Infinity 会穿透旧的 line < 1 检查）
             if (typeof line !== 'number' || !Number.isInteger(line) || line < 1) {
                 return { success: false, error: 'line must be a positive integer (1-based)' };
+            }
+            
+            // 修改原因：goto_definition 接受绝对路径时可通过 LSP 读取工作区外文件内容，不受读策略管控。
+            // 修改方式：与 read_file 一致，入口处校验 outside-workspace 读策略（deny/ask/allow）。
+            const accessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: filePath }, context);
+            if (accessError) {
+                return { success: false, error: accessError };
             }
             
             const uri = resolveUri(filePath);

@@ -14,6 +14,7 @@ import {
   TokenCountMethodSettings
 } from './channels'
 import { sendToExtension } from '@/utils/vscode'
+import { preloadChannelConfigs, getChannelConfigsCache, setChannelConfigsCache } from '@/services/channelConfigCache'
 import { useChatStore } from '@/stores'
 import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
 import type { ModelInfo } from '@/types'
@@ -378,8 +379,16 @@ async function updateContextManagementMode(_mode: string) {
 async function loadConfigs() {
   isLoading.value = true
   try {
+    // 重新加载期间使预加载缓存失效：失败时不残留旧缓存（下次进入渠道页会重新加载）。
+    // 置于 await listConfigs 之前：避免等待期间（陈旧缓存窗口）预加载缓存仍返回旧列表
+    setChannelConfigsCache(null)
     const ids = await sendToExtension<string[]>(MESSAGE_NAMES['config.listConfigs'], {})
     configs.value = []
+    // 非数组响应按失败处理（TypeError 进 catch，整批失败语义）：与预加载失败语义对齐，
+    // 避免把非法响应当空列表展示
+    if (!Array.isArray(ids)) {
+      throw new TypeError('config.listConfigs returned non-array response')
+    }
     
     for (const id of ids) {
       const config = await sendToExtension(MESSAGE_NAMES['config.getConfig'], { configId: id })
@@ -387,6 +396,9 @@ async function loadConfigs() {
         configs.value.push(config)
       }
     }
+    
+    // 成功后同步预加载缓存：切回渠道 tab / 再次打开设置页直接复用，不再重复请求
+    setChannelConfigsCache(configs.value)
     
     // 不在这里自动选择配置，让 onMounted 统一处理
   } catch (error) {
@@ -587,11 +599,9 @@ async function updateConfigFields(updates: Record<string, any>) {
   const configId = currentConfig.value.id
   
   try {
-    // 确保数据可序列化（深拷贝移除响应式代理）
-    const serializableUpdates: Record<string, any> = {}
-    for (const [field, value] of Object.entries(updates)) {
-      serializableUpdates[field] = JSON.parse(JSON.stringify(value))
-    }
+    // 确保数据可序列化（structuredClone 一次性深拷贝移除响应式代理，
+    // 替代循环内逐字段 JSON.parse(JSON.stringify) 往返）
+    const serializableUpdates = structuredClone(updates)
     
     await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
       configId,
@@ -600,7 +610,11 @@ async function updateConfigFields(updates: Record<string, any>) {
     
     // 渠道已切换：跳过本地合并（后端已写入旧渠道，其数据在下次 loadConfigs 时正确；
     // 避免旧渠道的 updates 污染新渠道的本地显示）
-    if (currentConfig.value?.id !== configId) return
+    if (currentConfig.value?.id !== configId) {
+      // 后端已写入旧渠道但本地合并被跳过：共享缓存仍保留编辑前值，失效缓存避免下次挂载读到陈旧数据
+      setChannelConfigsCache(null)
+      return
+    }
     
     // 直接在本地更新配置值
     const configIndex = configs.value.findIndex(c => c.id === configId)
@@ -647,7 +661,11 @@ async function updateConfigField(field: string, value: any) {
     })
     
     // 渠道已切换：跳过本地合并
-    if (currentConfig.value?.id !== configId) return
+    if (currentConfig.value?.id !== configId) {
+      // 同上：失效共享缓存，避免下次挂载读到旧渠道编辑前的陈旧值
+      setChannelConfigsCache(null)
+      return
+    }
     
     // 直接在本地更新配置值，避免重新加载导致滚动位置丢失
     const configIndex = configs.value.findIndex(c => c.id === configId)
@@ -696,7 +714,22 @@ watch(() => chatStore.configId, (newId) => {
 
 // 初始化
 onMounted(async () => {
-  await loadConfigs()
+  // 复用启动时预加载的渠道配置缓存（幂等，加载中则复用同一请求）；
+  // 预加载失败/超时/未触发时（缓存保持 null）同一挂载内调用 loadConfigs() 兜底重试一次，
+  // 避免预加载失败直接显示误导性空态
+  // await 期间用 isLoading 抑制空态渲染，避免加载中误显示「无渠道」引导
+  isLoading.value = true
+  try {
+    await preloadChannelConfigs()
+    const cachedConfigs = getChannelConfigsCache()
+    if (cachedConfigs === null) {
+      await loadConfigs()
+    } else {
+      configs.value = cachedConfigs
+    }
+  } finally {
+    isLoading.value = false
+  }
   
   // 优先使用 chatStore 的配置 ID
   if (chatStore.configId && configs.value.some(c => c.id === chatStore.configId)) {
@@ -1377,8 +1410,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 无渠道空态：首次打开无默认渠道，引导用户新建 -->
-    <div v-else class="config-empty">
+    <!-- 无渠道空态：首次打开无默认渠道，引导用户新建（加载中不渲染，避免误引导） -->
+    <div v-else-if="!isLoading" class="config-empty">
       <i class="codicon codicon-plug channel-empty-icon"></i>
       <p class="config-empty-text">{{ t('components.settings.channelSettings.empty.title') }}</p>
       <p class="config-empty-hint">{{ t('components.settings.channelSettings.empty.hint') }}</p>

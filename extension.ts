@@ -53,27 +53,32 @@ export function activate(context: vscode.ExtensionContext) {
         console.error('[GrayCode] activate: core initialization failed:', error);
     }
 
-    // 注册基础命令：打开聊天面板 / 新建对话 / 显示历史 / 显示用量统计 / 显示设置
-    context.subscriptions.push(
-        vscode.commands.registerCommand('graycode.openChat', () => {
-            vscode.commands.executeCommand('graycode.chatView.focus');
-        }),
-        vscode.commands.registerCommand('graycode.newChat', () => {
-            chatViewProvider?.sendCommand('newChat');
-        }),
-        vscode.commands.registerCommand('graycode.showHistory', () => {
-            chatViewProvider?.sendCommand('showHistory');
-        }),
-        vscode.commands.registerCommand('graycode.showUsage', () => {
-            chatViewProvider?.sendCommand('showUsage');
-        }),
-        vscode.commands.registerCommand('graycode.showSettings', () => {
-            chatViewProvider?.sendCommand('showSettings');
-        })
-    );
+    // 注册基础命令与设置命令（分阶段保护：任一命令注册失败只记日志，不阻断后续 diff 提供者注册）
+    try {
+        // 打开聊天面板 / 新建对话 / 显示历史 / 显示用量统计 / 显示设置
+        context.subscriptions.push(
+            vscode.commands.registerCommand('graycode.openChat', () => {
+                vscode.commands.executeCommand('graycode.chatView.focus');
+            }),
+            vscode.commands.registerCommand('graycode.newChat', () => {
+                chatViewProvider?.sendCommand('newChat');
+            }),
+            vscode.commands.registerCommand('graycode.showHistory', () => {
+                chatViewProvider?.sendCommand('showHistory');
+            }),
+            vscode.commands.registerCommand('graycode.showUsage', () => {
+                chatViewProvider?.sendCommand('showUsage');
+            }),
+            vscode.commands.registerCommand('graycode.showSettings', () => {
+                chatViewProvider?.sendCommand('showSettings');
+            })
+        );
 
-    // 设置导入/导出/旧对话历史迁移命令（外移 webview/commands/settingsCommands.ts）
-    context.subscriptions.push(...registerSettingsCommands(context, chatViewProvider));
+        // 设置导入/导出/旧对话历史迁移命令（外移 webview/commands/settingsCommands.ts）
+        context.subscriptions.push(...registerSettingsCommands(context, chatViewProvider));
+    } catch (error) {
+        console.error('[GrayCode] activate: command registration failed:', error);
+    }
 
     // ====== Diff / Selection 提供者与命令注册（分阶段保护：失败仅记日志并继续） ======
     // 释放顺序（与旧 deactivate 手工配对一致，保持不变）：

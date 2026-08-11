@@ -41,6 +41,9 @@ export interface WindowsToastRequest {
   silent: boolean
   waitForAction: boolean
   onClick?: () => void | Promise<void>
+  /** 异步失败回调：通知 API 异步 reject（无法在 show() 返回前感知）时通知调用方，
+   *  供服务侧回滚去重键等状态。 */
+  onError?: (error: unknown) => void
 }
 
 export interface WindowsToastShowResult {

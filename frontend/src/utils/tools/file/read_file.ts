@@ -3,6 +3,7 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { getToolDisplayName } from '../../toolLocalization'
 import ReadFileComponent from '../../../components/tools/file/read_file.vue'
 
 export function formatReadFileDescription(args: Record<string, unknown>): string {
@@ -33,8 +34,8 @@ export function formatReadFileDescription(args: Record<string, unknown>): string
 // 注册 read_file 工具
 registerTool('read_file', {
   name: 'read_file',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '读取文件',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('read_file'),
   icon: 'codicon-file-text',
   
   // 描述生成器：批量读取逐行显示每个真实文件名，不再折叠成“首文件 +N”。

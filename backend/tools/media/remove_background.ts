@@ -16,7 +16,7 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio, formatFileSize } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { readImageFile, getImageDimensions } from './imageUtils';
+import { readImageFile, getImageDimensions, createFetchSignal } from './imageUtils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -27,6 +27,12 @@ const TASK_TYPE_REMOVE_BG = 'remove_background';
 
 /** 抠图输入文件大小上限：超过后先拦截，避免超大图全量读入内存并浪费 API 调用 */
 const MAX_REMOVE_BG_IMAGE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Gemini API 请求超时（毫秒）：网络挂起时不会无限期等待。
+ * 修改原因：remove_background 的 fetch 只有取消信号、无超时保护。
+ */
+const REMOVE_BG_API_REQUEST_TIMEOUT_MS = 120_000;
 /** 逐像素合成最大像素数（约 16MP，4096x4096 为边界值）：超过后在主线程逐像素循环会长时间阻塞并分配数百 MB 缓冲 */
 const MAX_REMOVE_BG_PIXELS = 16 * 1024 * 1024;
 
@@ -238,21 +244,27 @@ CRITICAL REQUIREMENTS:
 
     const fetchFn = createProxyFetch(config.proxyUrl);
 
-    const response = await fetchFn(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody),
-        signal: abortSignal
-    });
+    // 发送请求（传递取消信号 + 超时保护：网络挂起时不会无限期等待）
+    const { signal: fetchSignal, cleanup: cleanupFetchSignal } = createFetchSignal(abortSignal, REMOVE_BG_API_REQUEST_TIMEOUT_MS);
+    try {
+        const response = await fetchFn(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestBody),
+            signal: fetchSignal
+        });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API request failed: ${response.status} ${errorText}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API request failed: ${response.status} ${errorText}`);
+        }
+
+        return await response.json() as GeminiImageResponse;
+    } finally {
+        cleanupFetchSignal();
     }
-
-    return await response.json() as GeminiImageResponse;
 }
 
 /**
@@ -400,6 +412,8 @@ async function executeRemoveTask(
         }
 
         // 4. 使用 sharp 应用遮罩
+        // 任务级判定：仅当 returnImageToAI=true 时构造 base64 多模态数据（默认关闭以节省 token）
+        const shouldReturnImageToAI = config.returnImageToAI === true;
         const multimodal: MultimodalData[] = [];
         
         // 获取 sharp（工具依赖已在 ToolRegistry 层面检查，这里应该总是可用）
@@ -480,18 +494,20 @@ async function executeRemoveTask(
 
         await vscode.workspace.fs.writeFile(outputUri, resultBuffer);
 
-        multimodal.push({
-            mimeType: 'image/png',
-            data: resultBuffer.toString('base64'),
-            name: path.basename(output_path)
-        });
-
-        if (mask_path) {
+        if (shouldReturnImageToAI) {
             multimodal.push({
-                mimeType: maskImage.mimeType,
-                data: maskImage.data,
-                name: path.basename(mask_path)
+                mimeType: 'image/png',
+                data: resultBuffer.toString('base64'),
+                name: path.basename(output_path)
             });
+
+            if (mask_path) {
+                multimodal.push({
+                    mimeType: maskImage.mimeType,
+                    data: maskImage.data,
+                    name: path.basename(mask_path)
+                });
+            }
         }
 
         return {
@@ -510,9 +526,11 @@ async function executeRemoveTask(
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : '';
         
-        const isCancelled = abortSignal?.aborted ||
-            errorName === 'AbortError' ||
-            errorMessage.includes('aborted') ||
+        // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError 拒绝，
+        // 仅凭 errorName/message 会把请求超时误判为用户取消。
+        // 修改方式：以用户 abortSignal 是否真的 aborted 为准；AbortError/消息检查仅作无信号时的后备。
+        const isCancelled = abortSignal?.aborted === true ||
+            (errorName === 'AbortError' && !abortSignal) ||
             errorMessage.includes('cancelled') ||
             errorMessage.includes('Request cancelled');
         
@@ -679,6 +697,21 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
 
             try {
                 // 并发执行所有任务
+                // 修改原因：同一次调用的多个任务并发写同一 output_path 会互相覆盖（后写者胜出）。
+                // 修改方式：进入并发前检测重复输出路径并拒绝。
+                const seenOutputPaths = new Set<string>();
+                const duplicateOutputTask = tasks.find(task => {
+                    if (!task.output_path) return false;
+                    if (seenOutputPaths.has(task.output_path)) return true;
+                    seenOutputPaths.add(task.output_path);
+                    return false;
+                });
+                if (duplicateOutputTask) {
+                    // 与同文件其他早退分支保持一致：先注销任务再返回，避免任务管理器残留永久 running 任务
+                    TaskManager.unregisterTask(toolId, 'error', { error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` });
+                    return { success: false, error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` };
+                }
+
                 const results = await Promise.all(
                     tasks.map((task, index) => executeRemoveTask(task, index, config, abortSignal, context))
                 );
@@ -798,8 +831,9 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
 
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                const isCancelled = abortSignal.aborted ||
-                    errorMessage.includes('aborted') ||
+                // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError 拒绝，
+                // 仅凭 errorMessage 会把请求超时误判为用户取消。以用户 abortSignal 是否真的 aborted 为准。
+                const isCancelled = abortSignal.aborted === true ||
                     errorMessage.includes('cancelled');
 
                 TaskManager.unregisterTask(

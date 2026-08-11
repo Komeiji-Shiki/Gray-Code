@@ -45,8 +45,12 @@ export class ImageToolsSettingsService {
      * 更新图像生成工具配置
      */
     async updateGenerateImageConfig(config: Partial<GenerateImageToolConfig>): Promise<void> {
-        const oldConfig = this.getGenerateImageConfig();
-        await this.core.saveToolsConfigEntry('generate_image', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
+        // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getGenerateImageConfig();
+            await this.core.saveToolsConfigEntry('generate_image', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -60,8 +64,11 @@ export class ImageToolsSettingsService {
      * 更新抠图工具配置
      */
     async updateRemoveBackgroundConfig(config: Partial<RemoveBackgroundToolConfig>): Promise<void> {
-        const oldConfig = this.getRemoveBackgroundConfig();
-        await this.core.saveToolsConfigEntry('remove_background', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateGenerateImageConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getRemoveBackgroundConfig();
+            await this.core.saveToolsConfigEntry('remove_background', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -75,8 +82,11 @@ export class ImageToolsSettingsService {
      * 更新裁切图片工具配置
      */
     async updateCropImageConfig(config: Partial<CropImageToolConfig>): Promise<void> {
-        const oldConfig = this.getCropImageConfig();
-        await this.core.saveToolsConfigEntry('crop_image', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateGenerateImageConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getCropImageConfig();
+            await this.core.saveToolsConfigEntry('crop_image', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -90,8 +100,11 @@ export class ImageToolsSettingsService {
      * 更新缩放图片工具配置
      */
     async updateResizeImageConfig(config: Partial<ResizeImageToolConfig>): Promise<void> {
-        const oldConfig = this.getResizeImageConfig();
-        await this.core.saveToolsConfigEntry('resize_image', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateGenerateImageConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getResizeImageConfig();
+            await this.core.saveToolsConfigEntry('resize_image', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -105,7 +118,10 @@ export class ImageToolsSettingsService {
      * 更新旋转图片工具配置
      */
     async updateRotateImageConfig(config: Partial<RotateImageToolConfig>): Promise<void> {
-        const oldConfig = this.getRotateImageConfig();
-        await this.core.saveToolsConfigEntry('rotate_image', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateGenerateImageConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getRotateImageConfig();
+            await this.core.saveToolsConfigEntry('rotate_image', oldConfig, { ...oldConfig, ...config });
+        });
     }
 }

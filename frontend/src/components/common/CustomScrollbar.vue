@@ -128,11 +128,15 @@ const hScrollTrack = ref<HTMLElement | null>(null)
 const thumbHeight = ref(0)
 const thumbTop = ref(0)
 const showScrollbar = ref(false)
+/** 垂直滑块百分比位置（0-100，供 role="slider" 的 aria-valuenow 使用） */
+const vScrollRatio = ref(0)
 
 // 横向滚动条状态
 const thumbWidth = ref(0)
 const thumbLeft = ref(0)
 const showHScrollbar = ref(false)
+/** 横向滑块百分比位置（0-100，供 role="slider" 的 aria-valuenow 使用） */
+const hScrollRatio = ref(0)
 
 // ==================== Marker 状态 ====================
 const markerPositions = ref<MarkerItem[]>([])
@@ -273,6 +277,11 @@ function updateScrollbar() {
     if (thumbTop.value !== nextThumbTop) {
       thumbTop.value = nextThumbTop
     }
+    // 滑块百分比（aria-valuenow）
+    const nextVRatio = (scrollTop / maxScrollTop) * 100
+    if (vScrollRatio.value !== nextVRatio) {
+      vScrollRatio.value = nextVRatio
+    }
   }
   
   // 更新横向滚动条
@@ -297,6 +306,11 @@ function updateScrollbar() {
       const nextThumbLeft = (scrollLeft / maxScrollLeft) * maxThumbLeft
       if (thumbLeft.value !== nextThumbLeft) {
         thumbLeft.value = nextThumbLeft
+      }
+      // 滑块百分比（aria-valuenow）
+      const nextHRatio = (scrollLeft / maxScrollLeft) * 100
+      if (hScrollRatio.value !== nextHRatio) {
+        hScrollRatio.value = nextHRatio
       }
     }
   }
@@ -663,6 +677,80 @@ function handleHTrackClick(e: MouseEvent) {
   container.scrollLeft = ratio * maxScrollLeft
 }
 
+/**
+ * 键盘操作滑块（role="slider" 的可访问性支持）：
+ * 方向键步进 / PageUp·PageDown 翻页 / Home·End 跳转首尾
+ */
+function handleThumbKeydown(e: KeyboardEvent) {
+  const container = scrollContainer.value
+  if (!container) return
+  const isHorizontal = (e.currentTarget as HTMLElement).classList.contains('scroll-thumb-h')
+  const page = isHorizontal ? container.clientWidth : container.clientHeight
+  const step = Math.max(40, page * 0.1)
+  const current = isHorizontal ? container.scrollLeft : container.scrollTop
+  const max = Math.max(0, (isHorizontal ? container.scrollWidth - container.clientWidth : container.scrollHeight - container.clientHeight))
+
+  let next: number | null = null
+  switch (e.key) {
+    case 'ArrowUp':
+      // 方向键按滑块轴向过滤：水平滑块不响应垂直方向键。
+      // 过滤分支也要 preventDefault：滑块已获得焦点，按轴向外的方向键
+      // 不应触发浏览器默认滚动（页面/外层滚动容器），应无副作用
+      if (isHorizontal) {
+        e.preventDefault()
+        return
+      }
+      next = current - step
+      break
+    case 'ArrowDown':
+      if (isHorizontal) {
+        e.preventDefault()
+        return
+      }
+      next = current + step
+      break
+    case 'ArrowLeft':
+      // 垂直滑块不响应水平方向键（同样 preventDefault，见 ArrowUp 注释）
+      if (!isHorizontal) {
+        e.preventDefault()
+        return
+      }
+      next = current - step
+      break
+    case 'ArrowRight':
+      if (!isHorizontal) {
+        e.preventDefault()
+        return
+      }
+      next = current + step
+      break
+    case 'PageUp':
+      next = current - page
+      break
+    case 'PageDown':
+      next = current + page
+      break
+    case 'Home':
+      next = 0
+      break
+    case 'End':
+      next = max
+      break
+    default:
+      return
+  }
+  e.preventDefault()
+  const clamped = Math.max(0, Math.min(max, next))
+  if (clamped === current) return
+  if (isHorizontal) {
+    container.scrollLeft = clamped
+  } else {
+    container.scrollTop = clamped
+  }
+  // 键盘滚动同样是用户滚动意图：标记冷静期，避免被贴底跟随拉回
+  lastUserScrollInputAt = performance.now()
+}
+
 const trackStyle = computed(() => {
   const style: Record<string, string> = {
     width: `${props.width}px`,
@@ -922,7 +1010,15 @@ defineExpose({
           class="scroll-thumb scroll-thumb-v"
           :class="{ 'dragging': isDragging }"
           :style="thumbStyle"
+          role="slider"
+          tabindex="0"
+          aria-orientation="vertical"
+          :aria-label="t ? t('components.common.scrollbar') : 'Scrollbar'"
+          :aria-valuemin="0"
+          :aria-valuemax="100"
+          :aria-valuenow="Math.round(vScrollRatio)"
           @mousedown="handleThumbMouseDown"
+          @keydown="handleThumbKeydown"
         />
 
         <!-- Marker 悬浮预览气泡 -->
@@ -968,7 +1064,15 @@ defineExpose({
         class="scroll-thumb scroll-thumb-h"
         :class="{ 'dragging': isHDragging }"
         :style="hThumbStyle"
+        role="slider"
+        tabindex="0"
+        aria-orientation="horizontal"
+        :aria-label="t ? t('components.common.horizontalScrollbar') : 'Horizontal scrollbar'"
+        :aria-valuemin="0"
+        :aria-valuemax="100"
+        :aria-valuenow="Math.round(hScrollRatio)"
         @mousedown="handleHThumbMouseDown"
+        @keydown="handleThumbKeydown"
       />
     </div>
   </div>

@@ -271,6 +271,7 @@ class ValueParser {
     }
 
     parseString() {
+        const strStart = this.i; // 入口位置（开引号处）——非法转义分支据此跳过整个字符串
         const quote = this.src[this.i];
         this.i++;
         let out = '';
@@ -288,6 +289,28 @@ class ValueParser {
                 else if (esc === 'u' && /^[0-9a-fA-F]{4}/.test(this.src.slice(this.i + 2, this.i + 6))) {
                     out += String.fromCharCode(parseInt(this.src.slice(this.i + 2, this.i + 6), 16));
                     this.i += 4;
+                } else if (esc === 'x' && /^[0-9a-fA-F]{2}/.test(this.src.slice(this.i + 2, this.i + 4))) {
+                    // \xNN 转义（\x00-\xFF），与 JS 字符串语义一致；共消费 4 字符（\ x N N）
+                    out += String.fromCharCode(parseInt(this.src.slice(this.i + 2, this.i + 4), 16));
+                    this.i += 2;
+                } else if (esc === 'x' || esc === 'u') {
+                    // 非法 \x/\u 转义（hex 位数不足，如 '\x4'、'\u123'；含不支持的 \u{...} 码点形式）：
+                    // JS 中属语法错误或本求值器不支持，无法静态求值——显式标记 dynamic（宁缺毋滥），
+                    // 不再落入下方字面 fallback 输出 'x4'/'u123' 之类错误文本。
+                    // 恢复点须位于整个字符串结尾之后（与模板分支 skipTemplate 语义对齐）：
+                    // 若停留在字符串中间，调用方 skipDynamicValue 会把串内字符当顶层结构扫描，
+                    // 可能越过本字符串结尾误跳下一个字符串字面量。
+                    this.i = Math.min(skipString(this.src, strStart, quote) + 1, this.src.length);
+                    return { ok: false, i: this.i, dynamic: true };
+                } else if (esc === '0' || (esc >= '1' && esc <= '7')) {
+                    // \0 与遗留八进制转义（\1-\7、\01、\012…）：JS 中 \0 后随非数字为 NUL、
+                    // 其余为遗留八进制（严格模式/ESM 属语法错误），求值器不静态解码——与 \x/\u
+                    // 一致显式标记 dynamic（选 dynamic 方案），不再落入字面 fallback 输出 '0'/'1'
+                    // 之类错误文本；同样跳过整个字符串，恢复点在串尾之后。
+                    // 边界说明：\8/\9 在严格模式（本文件为 .mjs/ESM）下同为语法错误，此处未单独列出——
+                    // 合法源码不可达，落入下方字面 fallback（out += esc）无实际影响。
+                    this.i = Math.min(skipString(this.src, strStart, quote) + 1, this.src.length);
+                    return { ok: false, i: this.i, dynamic: true };
                 } else if (esc !== undefined) out += esc;
                 this.i += 2;
                 continue;

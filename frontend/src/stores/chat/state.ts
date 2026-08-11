@@ -120,9 +120,31 @@ export function rebuildMessageIndexById(state: MessageIndexLookupState): void {
   assertMessageIndexInvariant(state)
 }
 
+/**
+ * 消息数组「结构版本」：任何非纯尾部结构变更（中间插入/删除/中间替换/整体替换）都会递增。
+ *
+ * 背景：todoSnapshot / usedTokens 的增量缓存持有的是同一个响应式数组代理——逐元素引用比较
+ * 恒真，无法感知原地 splice 造成的中间插入/删除/替换；版本号作为补充指纹，让这两类缓存
+ * 在结构变更时自动回退全量重放（增量前提“前缀未被改写”由版本号担保）。
+ * 整体替换（replaceAllMessages）会换新代理，代理引用比较已能失效缓存，递增版本是防御性冗余。
+ *
+ * getMessagesStructuralVersion 供缓存读取校验；bumpMessagesStructuralVersion 供 state.ts 之外的
+ * 原地结构变更方显式递增（如 chunkSummary 窗口外 backendIndex 偏移）。
+ */
+const messagesStructuralVersions = new WeakMap<object, number>()
+
+export function getMessagesStructuralVersion(state: MessageIndexLookupState): number {
+  return messagesStructuralVersions.get(state) ?? 0
+}
+
+export function bumpMessagesStructuralVersion(state: MessageIndexLookupState): void {
+  messagesStructuralVersions.set(state, (messagesStructuralVersions.get(state) ?? 0) + 1)
+}
+
 export function replaceAllMessages(state: MessageIndexLookupState, messages: Message[]): void {
   state.allMessages.value = messages
   rebuildMessageIndexById(state)
+  bumpMessagesStructuralVersion(state)
 }
 
 export function appendMessage(state: MessageIndexLookupState, message: Message): void {
@@ -163,8 +185,11 @@ export function insertMessageAt(state: MessageIndexLookupState, index: number, m
   // 可见消息增量缓存——指纹只校验首尾元素，会把被插入的消息漏掉并把旧尾元素
   // 重复 concat 一次。与 replaceMessageAt 的中间替换处理对齐：非纯尾部追加一律
   // 清除缓存。典型场景：handleAutoSummary 在流式过程中把总结消息插到窗口中间。
+  // 同理递增结构版本：todoSnapshot / usedTokens 增量缓存持有同一数组代理，
+  // 逐元素比较恒真，必须显式失效才能回退全量重放。
   if (!isPureAppend) {
     clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+    bumpMessagesStructuralVersion(state)
   }
 }
 
@@ -176,14 +201,21 @@ export function replaceMessageAt(state: MessageIndexLookupState, index: number, 
 
   if (currentMessage?.id !== nextMessage.id) {
     rebuildMessageIndexById(state)
+    // id 变更（消息被替换）属于结构变更：windowUtils 的可见消息增量缓存（指纹只校验
+    // 首尾元素）可能继续返回旧消息对象，必须显式清除；
+    // todoSnapshot / usedTokens 增量缓存一并失效。
+    clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+    bumpMessagesStructuralVersion(state)
     return
   }
 
   // L1：中间位置的同长度替换（首尾元素不变）会命中 windowUtils 的可见消息增量缓存
   // （指纹只校验首尾元素）。典型场景：迟到的旧请求 cancelled chunk 清理旧消息元数据。
-  // 只有尾元素替换才是流式原地更新的安全模式，其余一律清除缓存。
+  // 只有尾元素替换才是流式原地更新的安全模式，其余一律清除缓存；
+  // 并递增结构版本失效 todoSnapshot / usedTokens 增量缓存（同长度替换无法被长度/代理感知）。
   if (index !== state.allMessages.value.length - 1) {
     clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
+    bumpMessagesStructuralVersion(state)
   }
 
   assertMessageIndexInvariant(state)
@@ -194,6 +226,10 @@ export function removeMessageAt(state: MessageIndexLookupState, index: number): 
 
   state.allMessages.value.splice(index, 1)
   rebuildMessageIndexById(state)
+  // 删除（含尾部删除）会改变后续消息位置，且缓存的 messagesRef 与当前数组是同一代理——
+  // 缓存时长度/前缀在删除后自动“同步”成最新值，逐元素比较恒真；必须递增结构版本
+  // 让 todoSnapshot / usedTokens 增量缓存回退全量重放（windowUtils 按长度减小自动重建）。
+  bumpMessagesStructuralVersion(state)
 }
 
 /**
