@@ -264,7 +264,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         );
     });
 
-    test('总结失败兜底可在当前长工具轮内部裁剪且不写持久 trimState', async () => {
+    test('总结失败兜底：预算够时优先在轮边界裁剪（保留当前用户消息原文），不写持久 trimState', async () => {
         const fallbackHistory: Content[] = [
             { role: 'user', parts: [{ text: 'old' }], isUserInput: true, tokenCountByChannel: { custom: 50 } },
             { role: 'model', parts: [{ text: 'old answer' }], tokenCountByChannel: { custom: 50 } },
@@ -296,6 +296,61 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         const result = await service.getHistoryWithGranularFallback(
             'conv-fallback',
             { type: 'custom', maxContextTokens: 1_250, contextThreshold: '80%' } as any,
+            {}
+        );
+
+        expect(result.contextManagementDecision?.action).toBe('fallback_trim_applied');
+        // 规划器（auto）不再把扫描起点推进到当前轮内部：切点停在 current 轮首（index 2），
+        // 预算装得下时把当前用户消息原文保留在后缀里（此前从轮内切点开始扫描会跳过它）。
+        expect(result.trimStartIndex).toBe(2);
+        // 首条用户消息永远发送（任务锚点）：history[0] = old，history[1] = preserved 档案
+        // （仅含 trim 起点之前的 old；current 已作为后缀首条原文保留在 history[2]）
+        expect(result.history[0]).toMatchObject({ role: 'user', parts: [{ text: 'old' }] });
+        expect(result.history[0]).not.toHaveProperty('isSummary');
+        expect(result.history[1]).toMatchObject({ role: 'user', isSummary: true });
+        expect(result.history[1].parts[0].text).toContain('old');
+        // current 用户消息原文保留在后缀中，工具交互紧随其后
+        expect(result.history[2]).toMatchObject({ role: 'user', parts: [{ text: 'current' }] });
+        expect(result.history[2]).not.toHaveProperty('isSummary');
+        expect(result.history[3].parts[0].functionCall?.id).toBe('a');
+        expect(result.history[4].parts[0].functionResponse?.id).toBe('a');
+        expect(conversationManager.setCustomMetadata).not.toHaveBeenCalled();
+    });
+
+    test('总结失败兜底：预算紧到轮边界装不下时仍可在当前长工具轮内部裁剪且不写持久 trimState', async () => {
+        const fallbackHistory: Content[] = [
+            { role: 'user', parts: [{ text: 'old' }], isUserInput: true, tokenCountByChannel: { custom: 50 } },
+            { role: 'model', parts: [{ text: 'old answer' }], tokenCountByChannel: { custom: 50 } },
+            { role: 'user', parts: [{ text: 'current' }], isUserInput: true, tokenCountByChannel: { custom: 100 } },
+            {
+                role: 'model',
+                parts: [{ functionCall: { id: 'a', name: 'tool', args: {} } }],
+                tokenCountByChannel: { custom: 200 }
+            },
+            {
+                role: 'user', isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'a', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 200 }
+            },
+            {
+                role: 'model',
+                parts: [{ functionCall: { id: 'b', name: 'tool', args: {} } }],
+                tokenCountByChannel: { custom: 200 }
+            },
+            {
+                role: 'user', isFunctionResponse: true,
+                parts: [{ functionResponse: { id: 'b', name: 'tool', response: { ok: true } } }],
+                tokenCountByChannel: { custom: 200 }
+            },
+            { role: 'model', parts: [{ text: 'done' }], tokenCountByChannel: { custom: 100 } }
+        ];
+        const { service, conversationManager } = createTurnScopedHarness(fallbackHistory);
+
+        // 1000 * 0.8 - reserve = 700：轮边界候选（锚点+档案+current 起 6 条 ≈ 800）装不下，
+        // 扫描继续深入当前轮内的安全 model 边界（fc a，index 3 ≈ 700 恰好装下）。
+        const result = await service.getHistoryWithGranularFallback(
+            'conv-fallback-tight',
+            { type: 'custom', maxContextTokens: 1_000, contextThreshold: '80%' } as any,
             {}
         );
 

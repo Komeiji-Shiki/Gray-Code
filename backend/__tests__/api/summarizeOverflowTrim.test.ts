@@ -340,6 +340,83 @@ describe('SummarizeService.handleAutoSummarize 并发安全（STALE_RANGE）', (
     });
 });
 
+describe('SummarizeService.handleAutoSummarize - 当前轮超预算（auto 不轮内截断）', () => {
+    test('生产级大窗口下末轮超预算：不再提必被拒的轮内切点，总结旧轮、保留当前轮整体', async () => {
+        // 末轮 r3 800/1200 超过 50% 预算；大窗口（100k）下溢出裁剪循环不介入。
+        // 旧行为：规划器在末轮内部选切点（insertIndex=9 > lastRealUserMessageIndex=6）
+        // → 自动总结必判 STALE_RANGE，白费一次总结请求后回退细粒度裁剪。
+        // 新行为：auto 不开放当前轮内部切点，切在 r3 轮首（index 6），总结 r1+r2 两轮。
+        const history: Content[] = [
+            userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
+            userMsg('r2', 40), fcMsg('fc2', 40), frMsg('fc2', 40),
+            userMsg('r3', 200), fcMsg('fc3', 200), frMsg('fc3', 200),
+            modelMsg('done', 200)
+        ];
+
+        const { service, generate, liveHistory } = createSummarizeHarness({
+            fullHistory: history,
+            maxContextTokens: 100000
+        });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            // 切点 = r3 轮首（当前回合不吞用户消息）；r1 受保护不标记 → [1, 6) 共 5 条
+            expect(result.insertIndex).toBe(6);
+            expect(result.removedCount).toBe(5);
+        }
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(liveHistory).toHaveLength(10 + 1);
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[0].isSummarized).toBeUndefined();
+        expect(liveHistory[6]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 6 });
+        expect(liveHistory.slice(7).map(msgLabel)).toEqual(['r3', 'fc3', 'fc3', 'done']);
+    });
+
+    test('当前轮超预算但仍有旧轮可总结：切点停在当前轮轮首，不吞当前用户消息', async () => {
+        const history: Content[] = [
+            userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
+            userMsg('r2', 40), fcMsg('fc2', 40), frMsg('fc2', 40),
+            userMsg('r3', 40), fcMsg('fc3', 40), frMsg('fc3', 40),
+            userMsg('r4', 300), fcMsg('fc4', 300), frMsg('fc4', 300),
+            modelMsg('done', 300)
+        ];
+
+        const { service } = createSummarizeHarness({ fullHistory: history, maxContextTokens: 100000 });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            // 末轮 900/1460 超预算，但 r4 轮首（index 9）不可越过：总结 r1-r3，保留 r4 轮整体
+            expect(result.insertIndex).toBe(9);
+            expect(result.removedCount).toBe(8);
+        }
+    });
+
+    test('单超大轮（auto）：仍 STALE_RANGE（当前轮即全部历史，无法在不吞用户消息的前提下总结）', async () => {
+        const singleOversizedRound: Content[] = [
+            userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
+            fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
+        ];
+
+        const { service, liveHistory } = createSummarizeHarness({
+            fullHistory: singleOversizedRound,
+            maxContextTokens: 100000
+        });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(false);
+        if (!result.success) {
+            expect(result.error.code).toBe('STALE_RANGE');
+        }
+        // 用户消息与工具交互原样保留，未做任何替换
+        expect(liveHistory.map(msgLabel)).toEqual(['r1', 'fc1', 'fc1', 'fc2', 'fc2', 'done']);
+    });
+});
+
 describe('SummarizeService.handleAutoSummarize - C 总结质量校验', () => {
     test('总结文本低于 MIN_SUMMARY_LENGTH：返回 LOW_QUALITY_SUMMARY，不替换历史', async () => {
         const history: Content[] = [
