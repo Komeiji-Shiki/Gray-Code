@@ -154,10 +154,10 @@ function coerceValueBySchema(
         return { value, modified: false };
     }
 
-    // number / integer 容错："30" → 30, "-5" → -5, "3.14" → 3.14
-    // 仅处理合法十进制数字字符串
+    // number / integer 容错："30" → 30, "-5" → -5, "+5" → 5, "3.14" → 3.14, "1e3" → 1000
+    // 仅处理合法十进制数字字符串（含正负号与科学计数法；用 Number.isFinite 校验最终值）
     if ((schemaType === 'number' || schemaType === 'integer') && typeof value === 'string') {
-        if (/^-?\d+(\.\d+)?$/.test(value)) {
+        if (/^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(value)) {
             const n = Number(value);
             if (Number.isFinite(n)) {
                 return { value: n, modified: true };

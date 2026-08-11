@@ -362,18 +362,16 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         ? `${shellConfig.prependCommand} ${command}`
                         : command;
 
-                    // CMD /s /c 特殊处理：需要将整个命令用双引号包裹
-                    // /s 参数会去除最外层引号，同时保留命令中的内层引号
-                    // 这解决了 FINDSTR 等命令中多个搜索词被错误解析的问题
+                    // CMD /s /c：不再预先用双引号包裹整条命令。
+                    // cmd /s 只在命令行恰好为两个引号时剥离最外层；命令内再含引号
+                    // （如 findstr "a b" file、echo "hi"）时整条命令解析失败。
+                    // 引号由模型按 cmd 语法负责（见 promptDescriptions 的 CMD 指引）。
                     // 注意：不能用 includes('cmd') 判断——自定义 shell 路径的目录名
                     // 含 "cmd"（如 /tools/cmd-bash/）会被误判；按文件名精确匹配。
                     const shellName = (shellConfig.shell.toLowerCase().split(/[\\/]/).pop() || '');
                     const isCmdWithS = (shellName === 'cmd' || shellName === 'cmd.exe') &&
                         shellConfig.shellArgs?.includes('/s');
                     const isWindows = os.platform() === 'win32';
-                    if (isCmdWithS) {
-                        finalCommand = `"${finalCommand}"`;
-                    }
 
                     // 构建命令参数
                     const spawnArgs = shellConfig.shellArgs
@@ -394,9 +392,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                         shell: false,
                         env,
                         windowsHide: true,
-                        // 在 Windows 上，如果是 cmd.exe 且使用了 /s 参数，
-                        // 我们需要使用 windowsVerbatimArguments 来防止 Node.js 转义引号。
-                        // 因为我们已经手动在 finalCommand 两边加上了引号。
+                        // windowsVerbatimArguments 用于原样传递模型提供的引号，
+                        // 避免 Node.js 二次转义；命令引号由模型按 cmd 语法负责
+                        // （本模块不再预包外层引号，见上方 CMD /s /c 注释）。
                         // @ts-ignore - windowsVerbatimArguments is a valid option on Windows
                         windowsVerbatimArguments: isWindows && isCmdWithS
                     });

@@ -395,6 +395,28 @@ export class BranchService {
     /** 活跃空候选期间被延迟的总结结构同步；候选终结后一次性收敛。 */
     private readonly deferredStructuralSyncConversationIds = new Set<string>();
 
+    /**
+     * 「切图 → 主历史重写」非原子窗口的预期状态（switchBranchCandidate 记录，重写消费）。
+     *
+     * switchBranchCandidate 只切图状态并在释放会话写锁后由调用方编排主历史重写；窗口期内
+     * 并发追加 / 其它切换会让重写基于陈旧快照覆盖并发写入。记录「切图瞬间」的主历史尾 id
+     * 与图活跃尾，rewriteHistoryFromBranchGraph 在锁内校验两者未变化；不一致则拒绝重写，
+     * 由调用方重试（重试无预期状态，由 R8a-M2 一致性检查继续兜底）。
+     */
+    private readonly pendingRewriteExpectations = new Map<
+        string,
+        { mainHistoryTailId: string | null; graphActiveTailNodeId: string | null }
+    >();
+
+    /** 取走（并清除）pending 的「切图→重写」预期状态；无预期返回 null（重写可独立调用） */
+    consumeRewriteExpectation(conversationId: string): { mainHistoryTailId: string | null; graphActiveTailNodeId: string | null } | null {
+        const expectation = this.pendingRewriteExpectations.get(conversationId);
+        if (expectation) {
+            this.pendingRewriteExpectations.delete(conversationId);
+        }
+        return expectation ?? null;
+    }
+
     constructor(
         private readonly conversationManager: ConversationManager,
         private readonly repository: BranchGraphRepository,
@@ -545,6 +567,7 @@ export class BranchService {
      */
     async deleteConversationBranch(conversationId: string): Promise<void> {
         this.deferredStructuralSyncConversationIds.delete(conversationId);
+        this.pendingRewriteExpectations.delete(conversationId);
         branchGraphCache.delete(getBranchGraphCacheKey(this.repository, conversationId));
         await this.conversationManager.runExclusive(conversationId, async () => {
             await this.repository.deleteConversation(conversationId);
@@ -700,7 +723,7 @@ export class BranchService {
      */
     async syncMainHistoryAfterStructuralMutation(
         conversationId: string,
-        reason: 'summary_inserted' | 'summary_restored' | 'summary_deleted' | 'branch_finished'
+        reason: 'summary_inserted' | 'summary_restored' | 'summary_deleted' | 'message_deleted_middle' | 'branch_finished'
     ): Promise<BranchStructuralSyncResult> {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
         return await this.conversationManager.runExclusive(conversationId, async () => {
@@ -1267,8 +1290,16 @@ export class BranchService {
      *
      * 注意（本阶段边界）：只切换图状态，**不重写主历史**（TREE-06 才执行 replaceContents 全量重写），
      * 因此切换后主历史与图活跃路径会暂时不一致，直到 TREE-06 落地。
+     *
+     * @param options.recordRewriteExpectation 默认 true：切换后记录「切图 → 重写」预期状态供
+     *        rewriteHistoryFromBranchGraph 消费校验。回滚式切换（主历史重写失败后切回旧活跃尾）
+     *        传 false——该切换没有对应的重写会消费预期，残留预期会被下一次重写误校验而误拒。
      */
-    async switchBranchCandidate(conversationId: string, nodeId: string): Promise<BranchSwitchResult> {
+    async switchBranchCandidate(
+        conversationId: string,
+        nodeId: string,
+        options: { recordRewriteExpectation?: boolean } = {}
+    ): Promise<BranchSwitchResult> {
         await this.conversationManager.ensureHistoryNodeIds(conversationId);
         return await this.conversationManager.runExclusive(conversationId, async () => {
             const graph = await this.loadGraphForWrite(conversationId);
@@ -1277,6 +1308,18 @@ export class BranchService {
             this.assertNoMainHistoryRepresentationGaps(history, graph);
             const next = switchActivePath(graph, nodeId);
             await this.validateAndSave(conversationId, next);
+            // 记录「切图 → 主历史重写」非原子窗口的预期状态：重写时锁内校验主历史尾 id /
+            // 图活跃尾未变化，避免窗口期内并发追加/其它切换让重写基于陈旧快照覆盖并发写入。
+            // recordRewriteExpectation=false（回滚式切换：主历史重写失败后切回旧活跃尾）不记录——
+            // 该切换没有对应的重写会消费预期，残留预期会被下一次重写误校验（陈旧快照下的尾 id
+            // 与当下不符 → 合法切换被误拒，分支切换整体不可用）。
+            if (options.recordRewriteExpectation !== false) {
+                const mainHistoryTailId = history.length > 0 ? (history[history.length - 1]?.id ?? null) : null;
+                this.pendingRewriteExpectations.set(conversationId, {
+                    mainHistoryTailId,
+                    graphActiveTailNodeId: next.activeTailNodeId,
+                });
+            }
             return {
                 nodeId,
                 activeTailNodeId: next.activeTailNodeId,

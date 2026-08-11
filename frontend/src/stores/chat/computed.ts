@@ -10,6 +10,7 @@ import {
   isAwaitingToolUserConfirmation
 } from '../../utils/toolContinuations'
 import { getVisibleChatMessagesCached } from './windowUtils'
+import { getMessagesStructuralVersion } from './state'
 
 /**
  * usedTokens 增量扫描的区间输出（供全量/增量两种路径共用，保证口径完全一致）
@@ -58,6 +59,8 @@ interface UsedTokensScanCache {
   messagesRef: Message[]
   lastAssistantUsage: { timestamp: number; totalTokenCount: number } | undefined
   latestSummaryEstimate: { timestamp: number; tokens: number } | undefined
+  /** 缓存时的消息数组结构版本（state.ts 维护）：非纯尾部 splice/删除/整体替换会递增 */
+  version: number
 }
 
 /**
@@ -127,10 +130,17 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
       return 0
     }
 
-    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量
+    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量。
+    // 注意：messagesRef 与 messages 是同一个响应式数组代理，原地 splice（中间插入/删除）
+    // 无法被逐元素引用比较感知；结构版本号（state.ts 在非纯尾部变更时递增）作为补充指纹，
+    // 版本不一致一律回退全量重扫。
     let scanCache = usedTokensScanCache
     let prefixOk = false
-    if (scanCache !== null && scanCache.messagesRef.length <= len) {
+    if (
+      scanCache !== null &&
+      scanCache.messagesRef.length <= len &&
+      scanCache.version === getMessagesStructuralVersion(state)
+    ) {
       prefixOk = true
       for (let i = 0; i < scanCache.scannedCount; i++) {
         if (messages[i] !== scanCache.messagesRef[i]) {
@@ -170,7 +180,8 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
       scannedCount: Math.max(0, len - 1),
       messagesRef: messages,
       lastAssistantUsage: out.lastAssistantUsage,
-      latestSummaryEstimate: out.latestSummaryEstimate
+      latestSummaryEstimate: out.latestSummaryEstimate,
+      version: getMessagesStructuralVersion(state)
     }
 
     if (!out.lastAssistantUsage) return 0

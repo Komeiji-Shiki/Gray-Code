@@ -14,7 +14,9 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
-import type { SettingsStorage } from './SettingsManager';
+// 从 SettingsCore 导入避免与 SettingsManager 形成循环依赖（与 storage.ts 口径一致；
+// SettingsStorage 接口定义在 SettingsCore.ts，SettingsManager 仅 re-export 该类型）
+import type { SettingsStorage } from './SettingsCore';
 import type { GlobalSettings } from './types';
 
 export interface VSCodeSettingsStorageOptions {

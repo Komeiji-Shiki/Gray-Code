@@ -491,9 +491,12 @@ export function applyLegacyDiffsBestEffort(
             error = `${error} ${options.errorSuffix}`;
         }
 
-        const replaceLines = normalizeLineEndings(diff.replace).split('\n').length;
+        // 修改原因：旧实现用未归一化的 replace 行数计算 endLine，CRLF 内容会多算。
+        // 修改方式：改用 countTextLines(normalizeLineEndings(...))，与结构化路径一致。
+        const replaceLines = countTextLines(normalizeLineEndings(diff.replace));
         const startLine = r.matchedLine;
-        const endLine = startLine !== undefined ? startLine + replaceLines - 1 : undefined;
+        // 空 replace 时行数为 0，endLine 会退化为 startLine - 1；用 Math.max 兜底为 startLine
+        const endLine = startLine !== undefined ? startLine + Math.max(replaceLines, 1) - 1 : undefined;
 
         results.push({
             index: i,

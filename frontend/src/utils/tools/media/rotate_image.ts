@@ -7,6 +7,8 @@
 import { registerTool } from '../../toolRegistry'
 import RotateImagePanel from '../../../components/tools/media/rotate_image.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 
 /**
  * 单个任务类型
@@ -20,8 +22,8 @@ interface RotateTask {
 
 registerTool('rotate_image', {
   name: 'rotate_image',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '旋转图片',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('rotate_image'),
   icon: 'codicon-sync',
   expandable: true,
   contentComponent: RotateImagePanel,
@@ -38,7 +40,7 @@ registerTool('rotate_image', {
         return `${shortInput} → ${task.angle}°`
       }
       // 多任务显示
-      return `批量旋转 ${images.length} 张`
+      return t('utils.tools.batchRotateCount', { count: images.length })
     }
     
     // 单张模式
@@ -47,7 +49,7 @@ registerTool('rotate_image', {
       return `${shortInput} → ${angle}°`
     }
     
-    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
-    return getToolMetaDescription('rotate_image') ?? '旋转图片'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化显示名
+    return getToolMetaDescription('rotate_image') ?? getToolDisplayName('rotate_image')
   }
 })

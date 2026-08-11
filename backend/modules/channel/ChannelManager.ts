@@ -83,6 +83,64 @@ function assertStreamBufferWithinLimit(buffer: string): void {
 }
 
 /**
+ * 带上限读取非流式响应体文本：Content-Length 预检 + 流式累积截断。
+ *
+ * 修复：executeRequest 此前整包 await response.text()，上游异常返回巨型 body（数百 MB
+ * HTML 错误页等）时内存耗尽 / 超 V8 字符串上限直接 RangeError 崩溃；现在超限即终止
+ * 并报 PARSE_ERROR（不可重试，避免无意义重试）。
+ */
+async function readBodyTextWithLimit(response: Response, limit: number): Promise<string> {
+    const contentLengthHeader = response.headers.get('content-length');
+    if (contentLengthHeader) {
+        const contentLength = Number(contentLengthHeader);
+        if (Number.isFinite(contentLength) && contentLength > limit) {
+            // 预检超限：先取消响应体（避免连接悬挂、body 数据继续流入），再报 PARSE_ERROR
+            await response.body?.cancel().catch(() => undefined);
+            throw new ChannelError(
+                ErrorType.PARSE_ERROR,
+                t('modules.channel.errors.streamBufferOverflow'),
+                { bufferLength: contentLength, maxBufferLength: limit }
+            );
+        }
+    }
+    if (!response.body) {
+        // 无流式体（极少见）：退化为整包读取后检查上限
+        const text = await response.text();
+        if (text.length > limit) {
+            throw new ChannelError(
+                ErrorType.PARSE_ERROR,
+                t('modules.channel.errors.streamBufferOverflow'),
+                { bufferLength: text.length, maxBufferLength: limit }
+            );
+        }
+        return text;
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let result = '';
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            result += decoder.decode(value, { stream: true });
+            if (result.length > limit) {
+                // 终止读取并取消剩余数据，避免连接悬挂
+                await reader.cancel().catch(() => undefined);
+                throw new ChannelError(
+                    ErrorType.PARSE_ERROR,
+                    t('modules.channel.errors.streamBufferOverflow'),
+                    { bufferLength: result.length, maxBufferLength: limit }
+                );
+            }
+        }
+        result += decoder.decode();
+    } finally {
+        reader.releaseLock();
+    }
+    return result;
+}
+
+/**
  * 重试状态回调类型
  */
 export type RetryStatusCallback = (status: {
@@ -238,6 +296,13 @@ export class ChannelManager {
             // ChannelError.type 判定统一委托 core/errors（白名单：
             // API/NETWORK/TIMEOUT/EMPTY_RESPONSE，其余含 CANCELLED 均不可重试）
             return isRetryableErrorType(error.type);
+        }
+        // 确定性编程错误不重试（重试只会重复失败）：
+        // RangeError（超大字符串/缓冲超限等）、SyntaxError（解析失败）。
+        // 注意 TypeError 不能一概排除——Node 原生 fetch 的网络失败（'fetch failed'）就是
+        // TypeError，全排除会破坏网络错误重试。
+        if (error instanceof RangeError || error instanceof SyntaxError) {
+            return false;
         }
         // 网络错误可重试
         return true;
@@ -956,7 +1021,9 @@ export class ChannelManager {
                 method,
                 headers,
                 body: body ? JSON.stringify(body) : undefined,
-                signal: controller.signal
+                signal: controller.signal,
+                // 透传超时：代理路径由 createProxyFetch 按此值设置请求超时（此前硬编码 120s）
+                timeout
             });
             
             // 先判状态再读体：代理网关常回 HTML/纯文本错误体（429/5xx），
@@ -984,8 +1051,9 @@ export class ChannelManager {
             }
             
             // 正常响应：先读 text() 再尝试解析 JSON（避免 json() 消费响应体后
-            // text() 只能拿到空串；text/plain 等非 JSON 正文原样保留）
-            const rawResponseBody = await response.text();
+            // text() 只能拿到空串；text/plain 等非 JSON 正文原样保留）。
+            // 带大小上限读取：上游异常返回巨型 body 时在内存耗尽前截断报 PARSE_ERROR。
+            const rawResponseBody = await readBodyTextWithLimit(response, MAX_STREAM_BUFFER_LENGTH);
             let responseBody: unknown = rawResponseBody;
             try {
                 responseBody = JSON.parse(rawResponseBody);
@@ -1096,8 +1164,9 @@ export class ChannelManager {
                 // 未知格式整段残留标记：parseStreamBuffer 无法识别流格式时把整段缓冲原样
                 // 作为 remaining 返回（同一引用），需要完整累积后才能识别格式——此时不清空、
                 // 不压缩，保持「完整累积后识别格式」的既有语义。
-                // 注意：与改动前行为一致，此处对未知格式的整段累积没有大小上限（异常上游
-                // 持续输出非 SSE/JSON 内容时会累积到流结束）；如需防护应在后续版本补充截断策略。
+                // 未知格式整段残留同样受 64MB 上限约束：pendingWholeBuffer 时 noProgress
+                // 判定恒成立，异常上游持续输出非 SSE/JSON 内容会在累积超限时被
+                // assertStreamBufferWithinLimit 终止（PARSE_ERROR），不会无界累积到流结束。
                 let pendingWholeBuffer = false;
                 
                 for await (const chunk of proxyStreamFetch(url, {
@@ -1123,10 +1192,15 @@ export class ChannelManager {
                     const result = parseStreamBuffer(buffer);
                     parsedChunkCount += result.chunks.length;
                     pendingWholeBuffer = result.remaining === buffer;
+                    // 「解析无进展」判定：SSE 分支的 remaining 是重建字符串（剥离了尾随空行、
+                    // chunked 大小行等），引用比较恒不相等，旧判定在上限检查处失效，垃圾 SSE
+                    // 数据可无界累积（内存耗尽）。补增量判定：本轮未产出 chunk 且未消费尾部比
+                    // 上轮更长 → 无进展累积，按当前缓冲执行上限检查。合法巨型单事件在完成前
+                    // 也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止。
+                    const noProgress = result.chunks.length === 0
+                        && (pendingWholeBuffer || result.remaining.length > lastRemaining.length);
                     lastRemaining = result.remaining;
-                    // 仅当解析无进展（整段缓冲无法消费）时检查上限：合法巨型单事件
-                    // 在完成前也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止
-                    if (pendingWholeBuffer) {
+                    if (noProgress) {
                         assertStreamBufferWithinLimit(buffer);
                     }
 
@@ -1207,6 +1281,8 @@ export class ChannelManager {
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
+                // 上一轮未消费尾部基准：SSE 分支 remaining 为重建字符串，用长度增量判定「无进展」
+                let lastRemaining = '';
                 
                 try {
                     while (true) {
@@ -1224,13 +1300,18 @@ export class ChannelManager {
 
                         // 处理流式响应
                         const result = parseStreamBuffer(buffer);
-                        const madeProgress = result.chunks.length > 0 || result.remaining !== buffer;
-                        // 仅当解析无进展（整段缓冲无法消费）时检查上限：合法巨型单事件
-                        // 在完成前也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止
-                        if (!madeProgress) {
+                        // 「解析无进展」判定：SSE 分支的 remaining 是重建字符串，恒不等于
+                        // buffer，旧判定（remaining !== buffer → 有进展）在上限检查处失效，
+                        // 垃圾 SSE 数据可无界累积（内存耗尽）。改为：未产出 chunk 且未消费
+                        // 尾部比上轮更长 → 无进展累积，按当前缓冲执行上限检查。合法巨型单事件
+                        // 在完成前也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止。
+                        const noProgress = result.chunks.length === 0
+                            && (result.remaining === buffer || result.remaining.length > lastRemaining.length);
+                        if (noProgress) {
                             assertStreamBufferWithinLimit(buffer);
                         }
                         buffer = result.remaining;
+                        lastRemaining = result.remaining;
                         parsedChunkCount += result.chunks.length;
 
                         
@@ -1361,9 +1442,16 @@ export class ChannelManager {
     }
     
     /**
-     * 清理资源（如果需要）
+     * 清理资源：释放 ToolDeclarationResolver 持有的 MCP 事件监听
+     * （一次性实例向 McpManager 单例无界累积监听器的防泄漏修复）
      */
     async dispose(): Promise<void> {
-        // 目前无需特殊清理
+        try {
+            this.toolResolver?.dispose();
+        } catch (error) {
+            this.log.warn('tool_resolver_dispose_failed', {
+                error: (error as Error)?.message ?? String(error),
+            });
+        }
     }
 }

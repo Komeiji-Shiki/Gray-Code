@@ -8,7 +8,7 @@ import type { Content, StreamChunk } from '../../../types'
 import type { ChatStoreState } from '../types'
 import { contentToMessageEnhanced } from '../parsers'
 import { syncTotalMessagesFromWindow, syncFoldedHistoryHint, trimWindowFromTop } from '../windowUtils'
-import { getMessageIndexById, insertMessageAt } from '../state'
+import { getMessageIndexById, insertMessageAt, bumpMessagesStructuralVersion } from '../state'
 
 /**
  * 处理 autoSummaryStatus 类型
@@ -86,6 +86,10 @@ export function handleAutoSummary(
         msg.backendIndex += 1
       }
     }
+    // 原地改写全部 backendIndex（本分支不经过 insertMessageAt，无自动 bump）同样属于
+    // 结构变更：todoSnapshot 增量重放依赖的 backendIndex 锚点会整体偏移，必须递增结构
+    // 版本强制回退全量重放，否则锚点永久 off-by-one。
+    bumpMessagesStructuralVersion(state)
     syncTotalMessagesFromWindow(state)
     // 窗口前插入会顶掉一条可见消息：同步折叠提示，否则 foldedMessageCount 虚高
     syncFoldedHistoryHint(state)

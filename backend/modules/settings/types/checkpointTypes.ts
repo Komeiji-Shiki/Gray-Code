@@ -8,7 +8,7 @@ import type { CheckpointExclusionConfig } from '../../checkpoint';
 import {
     DEFAULT_ENABLED_PROFILES,
     DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES
-} from '../../checkpoint';
+} from '../../checkpoint/CheckpointExclusionProfiles';
 
 /**
  * 消息类型存档点配置

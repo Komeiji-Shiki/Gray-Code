@@ -393,10 +393,12 @@ export class MemoryStorageAdapter implements IStorageAdapter {
         return { value: { total, startIndex, messages: JSON.parse(JSON.stringify(history.slice(startIndex, endExclusive))), format: 'legacy' } };
     }
 
-    /** 追加历史（append-only，HIS-01）：内存实现直接 push 后深拷贝保存 */
+    /** 追加历史（append-only，HIS-01）：内存实现直接 push 后单次深拷贝保存 */
     async appendHistory(conversationId: string, contents: ConversationHistory): Promise<void> {
         const existing = this.histories.get(conversationId) ?? [];
-        this.histories.set(conversationId, JSON.parse(JSON.stringify(existing.concat(contents))));
+        existing.push(...contents);
+        // 单次 structuredClone：避免 concat 新数组 + JSON 往返的双份全量拷贝（O(n²) 追加路径）
+        this.histories.set(conversationId, structuredClone(existing));
     }
 
     /** 索引结构信息（HIS-11）：内存实现只查存在性，不解析消息 */
@@ -878,9 +880,13 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         return results;
     }
 
-    /** 缓存 revision：任何历史提交都会改变 totalMessages，配合写后失效保证读到最新 */
+    /**
+     * 缓存 revision：任何历史提交都会改变 totalMessages 或段结构；把段结构（文件/区间/计数）
+     * 一并纳入 revision——FAT 2s 粒度下 totalMessages 未变但段被重排/重切时也能失效缓存
+     * （同尺寸段内原地编辑的极端边界仍由 readSegmentCached 的 mtime+size 双键兜底）。
+     */
     private buildSegmentCacheRevision(index: FileHistoryIndex): string {
-        return String(index.totalMessages);
+        return `${index.totalMessages}:${index.segments.map(s => `${s.file}:${s.startIndex}:${s.count}`).join('|')}`;
     }
 
     /**
@@ -978,6 +984,22 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                 errorMessage: error?.message || String(error),
             };
         }
+    }
+
+    /**
+     * legacy 历史解析结果校验：ConversationHistory 必须是数组。非数组 JSON（对象/标量，
+     * 手工编辑或旧版误写）视为不可读并返回 parse_error，避免读取路径对非数组调用
+     * .length/.filter 抛 TypeError（与 getHistoryIndexInfo 误报可读同源的问题）。
+     */
+    private asHistoryReadResult(result: StorageReadResult<ConversationHistory>): StorageReadResult<ConversationHistory> {
+        if (result.value !== null && !Array.isArray(result.value)) {
+            return {
+                value: null,
+                errorCode: 'parse_error',
+                errorMessage: 'Legacy history JSON is not an array; refusing to read as conversation history',
+            };
+        }
+        return result;
     }
 
     private buildPageRange(total: number, options: { beforeIndex?: number; offset?: number; limit?: number }) {
@@ -1149,7 +1171,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
 
             if (!indexResult.value) {
                 // 尚无分段索引：legacy 或全新对话 → 合并后全量重写（罕见路径，保证语义正确）
-                const legacyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+                const legacyResult = await this.asHistoryReadResult(await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
                 const existing = legacyResult.value ?? [];
                 await this.writeSegmentedHistory(conversationId, existing.concat(pending));
                 await this.refreshUpdatedAt(conversationId);
@@ -1212,7 +1234,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                             );
                         }
                         if (!anySegmentReadable) {
-                            const legacyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+                            const legacyResult = await this.asHistoryReadResult(await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
                             if (legacyResult.value && legacyResult.value.length > 0) {
                                 existing = legacyResult.value;
                             }
@@ -1305,8 +1327,8 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
         const legacyPath = this.getLegacyHistoryPath(conversationId);
         if (await this.exists(legacyPath)) {
-            // M1(a)：legacy 分支至少做一次 JSON.parse 探测，损坏 JSON 报不可读
-            const legacyResult = await this.readJsonFile<ConversationHistory>(legacyPath);
+            // M1(a)：legacy 分支至少做一次 JSON.parse 探测，损坏 JSON / 非数组 JSON 报不可读
+            const legacyResult = await this.asHistoryReadResult(await this.readJsonFile<ConversationHistory>(legacyPath));
             return {
                 exists: true,
                 readable: legacyResult.value !== null,
@@ -1357,6 +1379,8 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             // 以 index.count 为提交点：崩溃残留（段文件多于 index 计数）不进入完整历史
             // M2：返回前对元素做浅拷贝——缓存元素引用不再泄漏给调用方，
             // 调用方对消息顶层属性的原地赋值（如 tokenCountByChannel = {...}）不会污染缓存。
+            // 嵌套结构（parts 等）仍与缓存共享引用：需要原地修改嵌套内容的调用方必须先深拷贝
+            // 目标消息（约定见 manager/query.ts、manager/toolCalls.ts 的「先深拷贝再修改」）。
             history.push(...segmentResult.value.slice(0, index.segments[i].count).map(msg => ({ ...msg })));
         }
 
@@ -1526,7 +1550,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                     skipped++;
                     continue;
                 }
-                const historyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+                const historyResult = await this.asHistoryReadResult(await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
                 const legacyHistory = historyResult.value;
                 if (!legacyHistory) throw new Error(historyResult.errorMessage || historyResult.errorCode || 'Failed to read legacy history');
                 // 与 saveHistory 共用同一写队列：迁移与用户消息写入并发时，
@@ -1608,7 +1632,7 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             return await this.loadSegmentedHistory(conversationId);
         }
 
-        return await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+        return await this.asHistoryReadResult(await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
     }
 
     async loadHistoryPage(
@@ -1851,7 +1875,24 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     async saveSnapshot(snapshot: HistorySnapshot): Promise<void> {
         const uri = this.getSnapshotPath(snapshot.id);
         const content = JSON.stringify(snapshot, null, 2);
-        await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        // 与 saveMetadata 同模式：先写同目录临时文件再 rename 覆盖——快照含全量历史，
+        // 直接写线上文件在崩溃/被杀时留下截断的 snapshot JSON，loadSnapshot 读到 parse 异常。
+        // 注意：tmp 路径必须是 Uri 对象（字符串拼接会触发 UriError，见 writeSegmentedHistory 注释）
+        const snapshotsDir = this.vscode.Uri.joinPath(this.vscode.Uri.parse(this.baseDir), 'snapshots');
+        const tmpUri = this.vscode.Uri.joinPath(snapshotsDir, `${snapshot.id}.json.tmp`);
+        try {
+            await this.vscode.workspace.fs.createDirectory(snapshotsDir);
+            await this.vscode.workspace.fs.writeFile(tmpUri, Buffer.from(content, 'utf8'));
+            await this.renameOverwrite(tmpUri, uri);
+        } catch (error) {
+            // 写入失败：清理临时文件，不留垃圾；原快照保持完好（rename 未发生）
+            try {
+                await this.vscode.workspace.fs.delete(tmpUri, { useTrash: false });
+            } catch {
+                // 清理失败忽略
+            }
+            throw error;
+        }
     }
 
     async loadSnapshot(snapshotId: string): Promise<HistorySnapshot | null> {
@@ -1880,13 +1921,12 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                 'snapshots'
             );
             const entries = await this.vscode.workspace.fs.readDirectory(dirUri);
-            
+
             const snapshots: string[] = [];
             for (const [name, type] of entries) {
                 if (type === FS_ENTRY_TYPE_FILE && name.endsWith('.json')) {
                     const snapshotId = name.replace('.json', '');
-                    const snapshot = await this.loadSnapshot(snapshotId);
-                    if (snapshot && snapshot.conversationId === conversationId) {
+                    if (await this.snapshotBelongsToConversation(dirUri, name, conversationId)) {
                         snapshots.push(snapshotId);
                     }
                 }
@@ -1894,6 +1934,23 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             return snapshots;
         } catch {
             return [];
+        }
+    }
+
+    /**
+     * 轻量快照归属判定：只解析文件头部的 conversationId 字段，不解析内嵌的完整历史。
+     * 旧实现逐文件 loadSnapshot（全量 JSON.parse），快照含全量历史时列表读取是 O(总历史)；
+     * conversationId 是 HistorySnapshot 的第 2 个字段、固定出现在 history 数组之前
+     * （字段顺序由本模块写入保证），正则匹配头部前 64KB 即可确定性取到。解析失败视为不归属。
+     */
+    private async snapshotBelongsToConversation(dirUri: any, fileName: string, conversationId: string): Promise<boolean> {
+        try {
+            const content = await this.vscode.workspace.fs.readFile(this.vscode.Uri.joinPath(dirUri, fileName));
+            const head = Buffer.from(content).toString('utf8').slice(0, 64 * 1024);
+            const match = /"conversationId"\s*:\s*"([^"]*)"/.exec(head);
+            return match !== null && match[1] === conversationId;
+        } catch {
+            return false;
         }
     }
 }

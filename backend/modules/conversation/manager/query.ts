@@ -76,15 +76,19 @@ export class ConversationQueryService {
         // 只在首次加载（默认页）做一次全量补齐：上拉加载更早消息时跳过，避免每翻一页读一次全量。
         // 补齐会插入消息、改变 index，必须发生在分页取数之前。
         const isInitialPage = options.beforeIndex === undefined && options.offset === undefined;
+        // 初始页浅扫描结果提升到函数级：悬空调用写回路径与（非分段存储的）规范化回退路径
+        // 都复用同一份 scan——不再对同一份历史重复「全量读盘 + 双循环扫描」（双重扫描）。
+        let initialPageScan: { hasUnresolvedCalls: boolean; needsNodeIdMigration: boolean } | undefined;
         if (isInitialPage) {
             // 单次全量浅扫描（无深拷贝）：悬空工具调用 + 缺节点 ID 检测。
-            const scan = await scanHistoryForInitialPage(this.ctx.storage, conversationId);
-            if (scan.hasUnresolvedCalls) {
+            initialPageScan = await scanHistoryForInitialPage(this.ctx.storage, conversationId);
+            if (initialPageScan.hasUnresolvedCalls) {
                 // 只有浅扫描命中悬空工具调用时才走 mutate + 深拷贝写回路径；
                 // 正常历史跳过 normalizeHistoryForDisplay 的全量 JSON 深拷贝。
-                await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
+                // 传入 scan 复用扫描结果（normalizeHistoryForDisplay 内部不再二次全量扫描）。
+                await this.normalizeHistoryForDisplay(conversationId, workspaceUri, initialPageScan);
             }
-            if (scan.needsNodeIdMigration) {
+            if (initialPageScan.needsNodeIdMigration) {
                 // BR-02：首次加载检测到缺 id 时在写锁内补 ID（幂等，之后不再触发）
                 await this.ctx.ensureHistoryNodeIds(conversationId);
             }
@@ -102,7 +106,17 @@ export class ConversationQueryService {
             };
         }
 
-        const history = await this.normalizeHistoryForDisplay(conversationId, workspaceUri);
+        // 非分段回退路径：初始页若已在上方处理悬空调用（插入 rejected 响应），不能再复用
+        // 仍标记 hasUnresolvedCalls=true 的陈旧扫描——否则会重复进入 mutateContents（深拷贝 +
+        // 写锁）路径。降级为「悬空调用已处理，仅按 needsNodeIdMigration 决定是否补 ID（幂等）」；
+        // hasUnresolvedCalls 原本为 false 时该降级与原始扫描等价（行为不变）。
+        const history = await this.normalizeHistoryForDisplay(
+            conversationId,
+            workspaceUri,
+            initialPageScan
+                ? { hasUnresolvedCalls: false, needsNodeIdMigration: initialPageScan.needsNodeIdMigration }
+                : undefined
+        );
 
         const total = history.length;
         const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
@@ -221,10 +235,29 @@ export class ConversationQueryService {
      *
      * 注意：此过程会改变 history 的长度，从而改变消息 index。
      * 前端依赖 index 进行删除/重试等操作，因此必须在返回前完成该规范化。
-     * 整个读-改-写过程在仓储互斥执行器内完成；无未响应调用时不写回（返回原引用跳过），
-     * 避免基于旧快照的整体写回覆盖并发落盘的真实工具结果。
+     *
+     * 锁边界（读取路径不占用会话写锁）：先锁外浅扫描（无深拷贝）——绝大多数历史无悬空
+     * 工具调用，直接返回存储形态（调用方按只读使用），跳过全量 JSON 深拷贝与潜在写回；
+     * 仅当扫描发现悬空调用 / 缺 id 才进入读-改-写路径：缺 id 入写锁补写（BR-02 幂等迁移）
+     * 后锁外重读；悬空调用走 mutateContents 深拷贝 + 写回（无变更不写回，返回原引用跳过）。
+     *
+     * @param scan 可选：调用方已完成的全量浅扫描结果（getMessagesPaged 首屏路径传入复用，
+     *             避免同一份历史被「全量读盘 + 双循环」扫描两次）；未传时本方法自行扫描。
      */
-    async normalizeHistoryForDisplay(conversationId: string, workspaceUri?: string): Promise<ConversationHistory> {
+    async normalizeHistoryForDisplay(
+        conversationId: string,
+        workspaceUri?: string,
+        scan?: { hasUnresolvedCalls: boolean; needsNodeIdMigration: boolean }
+    ): Promise<ConversationHistory> {
+        const initialScan = scan ?? await scanHistoryForInitialPage(this.ctx.storage, conversationId);
+        if (!initialScan.hasUnresolvedCalls) {
+            if (initialScan.needsNodeIdMigration) {
+                // BR-02：缺 id 才在写锁内补 ID（幂等迁移），补写后锁外重读
+                await this.ctx.ensureHistoryNodeIds(conversationId);
+            }
+            return await this.ctx.loadHistory(conversationId, workspaceUri);
+        }
+
         return await this.ctx.getTranscriptRepository(conversationId, workspaceUri).mutateContents(history => {
             // 收集所有 functionResponse 的 ID
             const respondedToolCallIds = new Set<string>();
@@ -241,20 +274,32 @@ export class ConversationQueryService {
             // 收集未响应的工具调用，记录它们所在的消息索引
             const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
             for (let i = 0; i < history.length; i++) {
-                const message = history[i];
-                if (message.parts) {
-                    for (const part of message.parts) {
-                        if (part.functionCall && part.functionCall.id) {
-                            // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                            if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
-                                part.functionCall.rejected = true;
-                                const calls = unresolvedCallsByIndex.get(i) || [];
-                                calls.push({
-                                    id: part.functionCall.id,
-                                    name: part.functionCall.name || 'unknown'
-                                });
-                                unresolvedCallsByIndex.set(i, calls);
+                const original = history[i];
+                if (!original.parts) {
+                    continue;
+                }
+                let working = original;
+                for (const part of original.parts) {
+                    if (part.functionCall && part.functionCall.id) {
+                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                            // 先深拷贝目标消息再原地修改：防御存储层 M2 浅拷贝直读路径
+                            // （getMessagesRaw/loadHistory）共享缓存嵌套对象引用的窗口，
+                            // 避免 rejected 标记污染 HistorySegmentCache。
+                            if (working === original) {
+                                working = structuredClone(original);
+                                history[i] = working;
                             }
+                            const target = working.parts!.find(p => p.functionCall?.id === part.functionCall?.id);
+                            if (target?.functionCall) {
+                                target.functionCall.rejected = true;
+                            }
+                            const calls = unresolvedCallsByIndex.get(i) || [];
+                            calls.push({
+                                id: part.functionCall.id,
+                                name: part.functionCall.name || 'unknown'
+                            });
+                            unresolvedCallsByIndex.set(i, calls);
                         }
                     }
                 }

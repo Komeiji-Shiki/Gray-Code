@@ -34,20 +34,24 @@ export class UISettingsService {
      * 更新 UI 设置
      */
     async updateUISettings(uiSettings: Partial<NonNullable<GlobalSettings['ui']>>): Promise<void> {
-        const oldValue = this.core.settings.ui;
-        // 深合并：避免仅更新 ui.sound.cues 等子字段时覆盖整个对象
-        const currentUI = (this.core.settings.ui || {}) as NonNullable<GlobalSettings['ui']>;
-        this.core.settings.ui = this.core.deepMergeConfig(currentUI, uiSettings) as NonNullable<GlobalSettings['ui']>;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'ui',
-            path: 'ui',
-            oldValue,
-            newValue: this.core.settings.ui,
-            settings: this.core.settings
+        // 读-改-写-通知整体入队串行（与 SettingsCore 写队列共用）：并发调用基于同一
+        // 旧 ui 快照合并后整体写回时后写覆盖先写；oldValue 读取必须在 mutator 内
+        await this.core.serializeMutation(async () => {
+            const oldValue = this.core.settings.ui;
+            // 深合并：避免仅更新 ui.sound.cues 等子字段时覆盖整个对象
+            const currentUI = (this.core.settings.ui || {}) as NonNullable<GlobalSettings['ui']>;
+            this.core.settings.ui = this.core.deepMergeConfig(currentUI, uiSettings) as NonNullable<GlobalSettings['ui']>;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'ui',
+                path: 'ui',
+                oldValue,
+                newValue: this.core.settings.ui,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -64,18 +68,21 @@ export class UISettingsService {
      * 设置用户上次查看的公告版本
      */
     async setLastReadAnnouncementVersion(version: string): Promise<void> {
-        const oldValue = this.core.settings.lastReadAnnouncementVersion;
-        this.core.settings.lastReadAnnouncementVersion = version;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'full',
-            path: 'lastReadAnnouncementVersion',
-            oldValue: oldValue,
-            newValue: version,
-            settings: this.core.settings
+        // 读-改-写-通知整体入队串行（同 updateUISettings）
+        await this.core.serializeMutation(async () => {
+            const oldValue = this.core.settings.lastReadAnnouncementVersion;
+            this.core.settings.lastReadAnnouncementVersion = version;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'full',
+                path: 'lastReadAnnouncementVersion',
+                oldValue: oldValue,
+                newValue: version,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 }

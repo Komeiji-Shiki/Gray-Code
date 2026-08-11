@@ -264,8 +264,103 @@ function formatEvidenceRefText(ref: ReviewEvidenceRef): string {
   return `${path}${linePart}${symbolPart}`;
 }
 
+/**
+ * 返回代码围栏（行首 ``` 至行首 ``` 之间）之外的 H2 heading 匹配。
+ * 正文/代码块里出现的字面 "## ..." 行不计入，避免误报
+ * snapshot_section_count 或误定位 Snapshot 区。
+ * heading 语义与 parseH2Sections 一致（## 后空白 + 至少一个非空字符）。
+ */
+function findH2HeadingsOutsideFences(content: string): Array<{ index: number; heading: string }> {
+  const normalized = normalizeLineEndings(content);
+  const results: Array<{ index: number; heading: string }> = [];
+  let inFence = false;
+  let offset = 0;
+  for (const line of normalized.split('\n')) {
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+    } else if (!inFence) {
+      const headingMatch = /^##\s+(.+)$/.exec(line);
+      if (headingMatch) {
+        results.push({ index: offset, heading: normalizeSingleLineText(headingMatch[1]) });
+      }
+    }
+    offset += line.length + 1;
+  }
+  return results;
+}
+
 function countSnapshotSectionHeadings(content: string): number {
-  return parseH2Sections(content).filter((section) => isSnapshotHeading(section.heading)).length;
+  return findH2HeadingsOutsideFences(content).filter((match) => isSnapshotHeading(match.heading)).length;
+}
+
+interface SnapshotSectionLocation {
+  headingStart: number;
+  bodyStart: number;
+  end: number;
+  heading: string;
+  body: string;
+}
+
+/**
+ * 定位最后一个 Review Snapshot 区段（heading + body 在原文中的位置）。
+ * 用于把 json 围栏校验/解析限定在 Snapshot 区内，避免正文里出现的
+ * ```json 代码块干扰计数或导致正则提前命中。
+ * heading 匹配跳过代码围栏内的字面 "## Review Snapshot" 行
+ * （正文代码块中的示例文本不会误定位 Snapshot 区）。
+ */
+function findLastSnapshotSectionRange(content: string): SnapshotSectionLocation | null {
+  const normalized = normalizeLineEndings(content);
+  const matches = findH2HeadingsOutsideFences(normalized);
+  for (let i = matches.length - 1; i >= 0; i -= 1) {
+    const heading = matches[i].heading;
+    if (!isSnapshotHeading(heading)) continue;
+    const start = matches[i].index;
+    const nextMatch = matches[i + 1];
+    const end = nextMatch?.index ?? normalized.length;
+    const lineEnd = normalized.indexOf('\n', start);
+    const bodyStart = lineEnd >= 0 ? lineEnd + 1 : end;
+    return {
+      headingStart: start,
+      bodyStart,
+      end,
+      heading,
+      body: normalized.slice(bodyStart, end).trim()
+    };
+  }
+  return null;
+}
+
+/**
+ * 统计 Snapshot 区段内作为「行首围栏」出现的 ```json 行数。
+ * 不能用子串计数：Snapshot JSON blob 经 JSON.stringify 后，字符串值里的
+ * ```json 会随行内转义出现（不会位于行首），子串计数会把它们误算进去，
+ * 导致 finding 描述/里程碑摘要/结论含 ```json 时围栏计数 ≥2 误报。
+ * 围栏行尾显式锚定 \n（尾部空白仅 [ \t]）：U+2028/U+2029 行分隔符
+ * 不会被 \s 吞入而误判为围栏行（\s 含 U+2028/29）。
+ */
+function countJsonFenceLines(content: string): number {
+  return Array.from(content.matchAll(/(?:^|\n)```json[ \t]*(?=\n|$)/g)).length;
+}
+
+/**
+ * 从 Snapshot 区段 body 提取 json 围栏内容。
+ * 允许 heading 与开头围栏之间存在空白/说明文字（手工编辑场景）；
+ * 取最后一个行首 ```json 作为开头围栏（blob 内字符串值经 stringify 后
+ * ```json 不会位于行首），并要求区段以 ``` 收尾。
+ * 围栏行尾显式锚定 \n（尾部空白仅 [ \t]），与 countJsonFenceLines 一致，
+ * 避免 U+2028/U+2029 行分隔符假阳性。
+ */
+function extractV4SnapshotJson(sectionBody: string): string | undefined {
+  const body = normalizeLineEndings(sectionBody).trim();
+  if (!body.endsWith('```')) return undefined;
+  const fenceMatches = Array.from(body.matchAll(/(?:^|\n)```json[ \t]*(?=\n|$)/g));
+  const lastFence = fenceMatches[fenceMatches.length - 1];
+  if (!lastFence || lastFence.index === undefined) return undefined;
+  const rawJson = body
+    .slice(lastFence.index + lastFence[0].length)
+    .replace(/\n```[ \t]*$/, '')
+    .trim();
+  return rawJson || undefined;
 }
 
 function getV4BodySectionOrder(locale: ReviewDocumentLocale): string[] {
@@ -1009,10 +1104,6 @@ export function extractInitialReviewScope(content: string): string {
 
   const scope = scopeParts.filter(Boolean).join('\n\n').trim();
   return scope || DEFAULT_REVIEW_SCOPE;
-}
-
-function countOccurrences(content: string, token: string): number {
-  return Array.from(content.matchAll(new RegExp(escapeRegExp(token), 'g'))).length;
 }
 
 function detectSectionOrder(content: string, sectionTitles: string[]): boolean {
@@ -1831,15 +1922,15 @@ function convertV3StateToSnapshot(state: ReviewDocumentV3State): ReviewSnapshotV
 
 function parseV4SnapshotSection(content: string): { body: string; snapshot: ReviewSnapshotV4 } {
   const normalized = normalizeLineEndings(content).trim();
-  const regex = /(?:^|\n)(##\s+.+)\s*\n+```json\s*\n([\s\S]*?)\n```\s*$/m;
-  const match = regex.exec(normalized);
-  if (!match || typeof match.index !== 'number') {
+  const snapshotSection = findLastSnapshotSectionRange(normalized);
+  if (!snapshotSection) {
     throw new Error('Missing or invalid Review Snapshot section.');
   }
 
-  const sectionStart = match.index + (match[0].startsWith('\n') ? 1 : 0);
-  const body = normalized.slice(0, sectionStart).trimEnd();
-  const rawJson = match[2]?.trim();
+  // 解析范围限定在 Snapshot 区内；围栏按行匹配（行首 ```json + 结尾 ```），
+  // 避免正文中的 ```json 代码块干扰解析；heading 与围栏之间允许说明文字。
+  const body = normalized.slice(0, snapshotSection.headingStart).trimEnd();
+  const rawJson = extractV4SnapshotJson(snapshotSection.body);
   if (!rawJson) {
     throw new Error('Empty Review Snapshot json block.');
   }
@@ -1852,7 +1943,7 @@ function parseV4SnapshotSection(content: string): { body: string; snapshot: Revi
   }
 
   const bodyHeader = parseHeaderMetadata(body);
-  const localeFromHeading = inferReviewDocumentLocaleFromSnapshotHeading(match[1]?.replace(/^##\s+/, '') || '');
+  const localeFromHeading = inferReviewDocumentLocaleFromSnapshotHeading(snapshotSection.heading);
   const snapshot = normalizeReviewSnapshot(parsed, {
     title: bodyHeader.title,
     date: bodyHeader.date,
@@ -2158,7 +2249,15 @@ function validateV4Document(content: string): ReviewValidationResult {
     issues.push({ severity: 'error', code: 'snapshot_section_count', message: 'Review document must contain exactly one Review Snapshot section.' });
   }
 
-  const jsonFenceCount = countOccurrences(normalized, '```json');
+  // 只统计 Snapshot 区内的 json 围栏数量：正文（里程碑摘要、finding 描述等）
+  // 可能包含 ```json 代码块，全文计数会把它们误算进去。
+  // 按行统计行首围栏（围栏行尾显式锚定 \n，尾部空白仅 [ \t]，避免
+  // U+2028/U+2029 行分隔符假阳性）：Snapshot JSON blob 经 stringify 后
+  // 字符串值里的 ```json 不会位于行首，子串计数会把它们误算进去。
+  const snapshotSection = findLastSnapshotSectionRange(normalized);
+  const jsonFenceCount = snapshotSection
+    ? countJsonFenceLines(snapshotSection.body)
+    : 0;
   if (jsonFenceCount !== 1) {
     issues.push({ severity: 'error', code: 'snapshot_json_fence_count', message: 'Review document must contain exactly one trailing json code block for Review Snapshot.' });
   }
@@ -2280,10 +2379,16 @@ function createInitialSnapshot(input: ReviewDocumentTemplateInput, locale: Revie
 
 export function detectReviewDocumentFormat(content: string): ReviewDocumentFormat {
   const normalized = normalizeLineEndings(content);
-  const v4Match = /(?:^|\n)##\s+.+\s*\n+```json\s*\n([\s\S]*?)\n```\s*$/m.exec(normalized.trim());
-  if (v4Match?.[1]) {
+  // 只在 Snapshot 区内匹配末尾 json 围栏：围栏按行匹配（行首 ```json + 结尾 ```），
+  // 正文中的 "## 标题 + ```json" 块不会再导致格式误判；
+  // heading 与围栏之间允许空白/说明文字（手工编辑场景）。
+  const snapshotSection = findLastSnapshotSectionRange(normalized.trim());
+  const v4Json = snapshotSection
+    ? extractV4SnapshotJson(snapshotSection.body)
+    : undefined;
+  if (v4Json) {
     try {
-      const parsed = JSON.parse(v4Match[1].trim());
+      const parsed = JSON.parse(v4Json.trim());
       const record = asRecord(parsed);
       if (record?.kind === 'graycode.review' && record?.formatVersion === 4) {
         return 'v4';
@@ -2432,8 +2537,9 @@ export function appendReviewMilestone(content: string, input: ReviewMilestoneInp
 
   const milestoneTitle = normalizeSingleLineText(input.milestoneTitle) || milestoneId;
   const summaryMarkdown = normalizeMarkdownText(input.summary) || milestoneTitle;
+  // 无 conclusion 时直接回退到 summaryMarkdown，避免把多行 summary 压成单行
   const conclusionMarkdown = normalizeMarkdownText(input.conclusion)
-    || normalizeSingleLineText(summaryMarkdown)
+    || summaryMarkdown
     || milestoneTitle;
   const evidenceFiles = normalizeStringList(input.evidenceFiles);
   const evidence = mergeEvidenceRefs(normalizeEvidenceRefs(input.evidence), evidenceFilesToRefs(evidenceFiles));

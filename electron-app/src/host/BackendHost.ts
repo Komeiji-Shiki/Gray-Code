@@ -1032,7 +1032,10 @@ export class BackendHost {
       diffPreviewProvider: this.diffPreviewProvider,
       sendResponse: (id, data) => this.postToRenderer('response', id, data),
       sendError: (id, code, message) => this.postToRenderer('error', id, code, message),
-      postMessage: (message: any) => this.postToRenderer('raw', message),
+      postMessage: (message: any): boolean => {
+        this.postToRenderer('raw', message);
+        return true;
+      },
       getCurrentWorkspaceUri: () => {
         return this.workspaceManager ? this.workspaceManager.getActiveWorkspaceUri() : null;
       },

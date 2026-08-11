@@ -14,6 +14,7 @@ import {
     openDocumentWithGuard,
     executeLspCommandWithRetry
 } from './lspLifecycle';
+import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
 
 // 兼容别名：既有调用方与测试从 get_symbols 导入这两个常量
 // （超时/中止/瞬时重试的具体实现已上移到共享模块 lspLifecycle）
@@ -274,6 +275,13 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required and must be a non-empty array' };
+            }
+            
+            // 修改原因：get_symbols 接收绝对路径时可通过 LSP 读取工作区外文件内容，不受 outside-workspace 读策略管控。
+            // 修改方式：与 read_file 一致，入口处校验 outside-workspace 读策略（deny/ask/allow）。
+            const accessError = ensureOutsideWorkspaceAccessApproved('read_file', { paths: pathList }, context);
+            if (accessError) {
+                return { success: false, error: accessError };
             }
             
             const results: FileSymbolResult[] = [];

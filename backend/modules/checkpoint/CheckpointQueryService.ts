@@ -24,11 +24,14 @@ import type { CheckpointSummaryWithSize } from '../../../shared/protocol';
 export type { CheckpointSummaryWithSize };
 import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
+import { CHECKPOINT_CREATE_LOCK_PREFIX } from './checkpointPathUtils';
 
 const log = Logger.get('CheckpointQueryService');
 
 /** 无 manifest 目录的 mtime 新鲜度阈值：创建中窗口（目录已建、manifest 未写）内跳过 */
 const ORPHAN_MANIFEST_MISSING_FRESH_MS = 5 * 60 * 1000;
+/** 跨进程创建 lockfile 的超龄阈值（CP-ORPHAN-3）：超过该时长视为崩溃残留，允许清理 */
+const ORPHAN_CREATE_LOCK_STALE_MS = 60 * 60 * 1000;
 
 /** 对话级存档统计（设置页清理视图使用） */
 export interface ConversationCheckpointStats {
@@ -150,7 +153,9 @@ export class CheckpointQueryService {
     private async toSummary(record: CheckpointRecord): Promise<CheckpointSummary> {
         let excludedCount = (record as CheckpointRecord & { excludedCount?: number }).excludedCount;
         if (typeof excludedCount !== 'number') {
-            const manifest = await this.manifestRepository.loadManifest(record.id, record);
+            // CPF-LAZY-1: 列表读取路径只缓存迁移产物不落盘（persistMigration:false）——
+            // 避免列表加载为每条缺失 manifest 的旧记录触发 10-20MB 级全量迁移写盘（写放大）
+            const manifest = await this.manifestRepository.loadManifest(record.id, record, { persistMigration: false });
             excludedCount = manifest ? manifest.excluded.length : 0;
         }
         return {
@@ -333,17 +338,50 @@ export class CheckpointQueryService {
                 if (!entry.isDirectory()) continue;
                 if (knownDirs.has(entry.name)) continue;
                 if (!/^cp_[a-z0-9_]+$/i.test(entry.name)) continue;
-                // CP-ORPHAN-2（fail-closed）：目录内含 manifest.json 的存档绝不当作孤儿删除。
-                // getCustomMetadata 对元数据损坏/瞬时可读失败会降级返回 undefined（fail-open），
-                // 该对话的存档目录因此不在 knownDirs 中——manifest 是每个存档创建时必写的
-                // 身份文件，存在 manifest 即说明它属于某个（可能暂时无法枚举的）对话。
+                // CP-ORPHAN-3（跨进程创建中守卫）：创建流程在 mkdir 后写 `.creating-<id>` lockfile，
+                // 完成/失败后删除。lockfile 存在且未超龄 → 另一窗口（独立 extension host）正在创建该
+                // 备份目录（mkdir→writeManifest 可远超 5 分钟 mtime 窗口）→ 绝不能当孤儿删除。
+                // 超龄 lockfile = 崩溃残留（创建进程已死未清理），继续按孤儿判定。
+                const createLockPath = path.join(this.checkpointsDir, `${CHECKPOINT_CREATE_LOCK_PREFIX}${entry.name}`);
+                let createLockStale = false;
+                try {
+                    const lockStat = await fs.stat(createLockPath);
+                    if (Date.now() - lockStat.mtimeMs < ORPHAN_CREATE_LOCK_STALE_MS) {
+                        continue; // 创建中（跨进程）
+                    }
+                    createLockStale = true; // 超龄：崩溃残留，允许继续判定
+                } catch {
+                    // 无 lockfile：正常判定
+                }
+                let hasManifest = false;
                 try {
                     await fs.access(path.join(this.checkpointsDir, entry.name, 'manifest.json'));
-                    continue;
+                    hasManifest = true;
                 } catch {
-                    // 无 manifest：叠加 mtime 新鲜度守卫——「目录已建、manifest 未写」的
-                    // 创建中窗口内跳过（检查点创建流程先建目录后写 manifest），超龄无
-                    // manifest 目录才是真孤儿（创建中断残留/无 manifest 的旧格式）。
+                    // 无 manifest
+                }
+                if (hasManifest) {
+                    // CP-ORPHAN-2（fail-closed）：含 manifest 的存档默认视为属于某对话，不清理。
+                    // CP-ORPHAN-4：但崩溃窗口（manifest 已写、记录未追加）或记录已删/元数据损坏
+                    // 降级导致的“有 manifest 但全对话记录都不引用”目录会永久泄漏——二次确认：
+                    // 目录 mtime 超龄（创建窗口早已结束）才清理；新鲜（另一窗口正在创建、记录即将
+                    // 追加）则跳过。
+                    if (!createLockStale) {
+                        try {
+                            const stat = await fs.stat(path.join(this.checkpointsDir, entry.name));
+                            if (Date.now() - stat.mtimeMs < ORPHAN_MANIFEST_MISSING_FRESH_MS) {
+                                continue; // 新鲜：可能正在创建（manifest 刚写完、记录未写）
+                            }
+                        } catch {
+                            continue; // stat 失败：跳过
+                        }
+                    }
+                    // 超龄 + 全对话记录不引用 → 崩溃残留/泄漏，fallthrough 清理
+                } else {
+                    // CP-ORPHAN-2（fail-closed）：目录内含 manifest.json 的存档绝不当作孤儿删除。
+                    // getCustomMetadata 对元数据损坏/瞬时可读失败会降级返回 undefined（fail-open），
+                    // 该对话的存档目录因此不在 knownDirs 中——manifest 是每个存档创建时必写的
+                    // 身份文件，存在 manifest 即说明它属于某个（可能暂时无法枚举的）对话。
                     try {
                         const stat = await fs.stat(path.join(this.checkpointsDir, entry.name));
                         if (Date.now() - stat.mtimeMs < ORPHAN_MANIFEST_MISSING_FRESH_MS) {
@@ -361,6 +399,8 @@ export class CheckpointQueryService {
                 }
                 try {
                     await fs.rm(path.join(this.checkpointsDir, entry.name), { recursive: true, force: true });
+                    // 顺带清理崩溃残留的超龄 lockfile（若存在）
+                    await fs.rm(createLockPath, { force: true });
                     this.manifestRepository.clearCache(entry.name);
                     log.info('prune_orphan_backup_dir', { backupDir: entry.name });
                 } catch (err) {

@@ -31,22 +31,47 @@ const CHAT_VIEW_FOCUS_COMMAND = 'graycode.chatView.focus';
 /** blur 上报竞态宽限期（毫秒） */
 const RECENT_BLUR_GRACE_MS = 1500;
 
-let chatInputFocused = false;
-let lastBlurAt = 0;
+/** 单个聊天视图的焦点状态 */
+interface ChatViewFocusState {
+    focused: boolean;
+    lastBlurAt: number;
+}
+
+/**
+ * 按 viewId 索引的焦点状态：多窗口/多聊天视图互不覆盖——窗口 A 的 blur 只清除
+ * 窗口 A 自己的状态，窗口 B 仍持焦点时 shouldRestoreChatInputFocus() 依旧返回 true。
+ * 上报未携带 viewId 时统一落在默认键（当前 webview 上报路径未传 viewId，
+ * 单视图行为与旧实现一致；跨窗口精确区分需上报侧传 viewId）。
+ */
+const chatViewFocusStates = new Map<string, ChatViewFocusState>();
+const DEFAULT_VIEW_ID = 'default';
 /** 最近一次 restoreChatInputFocus 强制归还焦点的时间：用于消歧「主动 blur」与「恢复动作引发的 blur」 */
 let lastForcedRestoreAt = 0;
 /** 多窗口/多视图各自注册的焦点归还通知器：dispose 只移除自己的，互不覆盖 */
 const focusRestoreNotifiers = new Set<() => void>();
 
-/** 由 webview 消息处理器调用：更新聊天输入框的焦点状态 */
-export function setChatInputFocused(focused: boolean): void {
-    if (chatInputFocused && !focused) {
+/** 由 webview 消息处理器调用：更新指定聊天视图输入框的焦点状态（viewId 可选，缺省用默认键） */
+export function setChatInputFocused(focused: boolean, viewId?: string): void {
+    const key = viewId?.trim() ? viewId.trim() : DEFAULT_VIEW_ID;
+    const state = chatViewFocusStates.get(key) ?? { focused: false, lastBlurAt: 0 };
+    if (state.focused && !focused) {
         // 只有「距上次强制归还焦点很近」的 blur 才进入宽限期：
         // 用户主动 blur（点编辑器/终端）说明焦点是被用户拿走的，不应在宽限期内被强行拉回；
         // 同时把 lastBlurAt 清零，避免上一轮残留时间戳污染后续判断。
-        lastBlurAt = (Date.now() - lastForcedRestoreAt < RECENT_BLUR_GRACE_MS) ? Date.now() : 0;
+        state.lastBlurAt = (Date.now() - lastForcedRestoreAt < RECENT_BLUR_GRACE_MS) ? Date.now() : 0;
     }
-    chatInputFocused = focused;
+    state.focused = focused;
+    if (!focused && key !== DEFAULT_VIEW_ID && state.lastBlurAt === 0) {
+        // 非默认视图失焦且不在宽限期（用户主动 blur，非恢复动作引发）：
+        // 删除该键——Map 此前只 set 不删，长期不活跃视图的焦点状态无限驻留。
+        // 宽限期内的 blur（lastBlurAt 非 0）保留条目：删除会丢失
+        // shouldRestoreChatInputFocus 的「最近失焦也视为需要恢复」语义
+        // （关闭动作引发的 blur 可能先于下一次采样到达）；宽限期过期的条目
+        // 由 shouldRestoreChatInputFocus 扫描时惰性淘汰（否则永久驻留）。
+        chatViewFocusStates.delete(key);
+        return;
+    }
+    chatViewFocusStates.set(key, state);
 }
 
 /**
@@ -66,7 +91,22 @@ export function addChatFocusRestoreNotifier(notifier: () => void): () => void {
  * 必须在 tabGroups.close 之前采样，关闭后焦点状态已被破坏。
  */
 export function shouldRestoreChatInputFocus(): boolean {
-    return chatInputFocused || (Date.now() - lastBlurAt < RECENT_BLUR_GRACE_MS);
+    // 任一聊天视图持有焦点（或最近 blur 在宽限期内）都应恢复：多窗口下
+    // 窗口 A 的 blur 不再清掉窗口 B 的焦点状态。
+    const now = Date.now();
+    for (const [key, state] of chatViewFocusStates) {
+        // 惰性淘汰：非默认视图「宽限期内 blur」的条目（setChatInputFocused 为保留
+        // 恢复语义不删除）在宽限期过后不再有恢复语义，扫描时顺带删除——否则
+        // 失焦后无后续上报的条目会永久驻留 Map（focused 条目与默认键永不删除）。
+        if (!state.focused && key !== DEFAULT_VIEW_ID && now - state.lastBlurAt >= RECENT_BLUR_GRACE_MS) {
+            chatViewFocusStates.delete(key);
+            continue;
+        }
+        if (state.focused || (now - state.lastBlurAt < RECENT_BLUR_GRACE_MS)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /** 关闭 diff 标签后调用：按采样结果归还焦点 */

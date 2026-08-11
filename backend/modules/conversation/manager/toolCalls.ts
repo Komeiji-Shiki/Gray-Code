@@ -300,13 +300,15 @@ export class ConversationToolCallService {
                 const existingIdx = responseIdx.get(id);
 
                 if (existingIdx !== undefined && placeholderIds.has(id)) {
-                    // 占位 → 就地替换为真实结果
-                    const msg = history[existingIdx];
-                    const partIdx = msg.parts!.findIndex(
+                    // 占位 → 就地替换为真实结果（先深拷贝目标消息再原地修改：防御存储层
+                    // M2 浅拷贝直读路径共享缓存嵌套对象引用的窗口，避免污染 HistorySegmentCache）
+                    const copied = structuredClone(history[existingIdx]);
+                    history[existingIdx] = copied;
+                    const partIdx = copied.parts!.findIndex(
                         (p) => p.functionResponse?.id === id
                     );
                     if (partIdx !== -1) {
-                        msg.parts![partIdx] = part;
+                        copied.parts![partIdx] = part;
                         settledResponseIds.add(id);
                         placeholderIds.delete(id);
                         changed = true;

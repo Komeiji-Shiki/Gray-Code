@@ -215,7 +215,9 @@ const ja: LanguageMessages = {
                 }
             },
             scrollToTop: 'トップへ戻る',
-            scrollToBottom: '一番下へ戻る'
+            scrollToBottom: '一番下へ戻る',
+            scrollbar: 'スクロールバー',
+            horizontalScrollbar: '横スクロールバー'
         },
 
         header: {
@@ -877,6 +879,15 @@ const ja: LanguageMessages = {
                     comparePersisted: '継続中の問題',
                     compareSeverityChanged: '重大度の変化',
                     compareTrackingChanged: '追跡状態の変化',
+                    compareBaseLine: 'ベース: {path}',
+                    compareTargetLine: '比較対象: {path}',
+                    compareAddedLine: '追加された問題: {count}',
+                    compareRemovedLine: '解消された問題: {count}',
+                    comparePersistedLine: '継続中の問題: {count}',
+                    compareSeverityChangedLine: '重大度の変化: {count}',
+                    compareTrackingChangedLine: '追跡状態の変化: {count}',
+                    milestonesRecordedNone: 'マイルストーン未記録',
+                    milestonesRecorded: '{count} 件のマイルストーンを記録；最新: {latest}',
                     compareEvidenceChanged: '証拠の変化',
                     compareRelatedMilestonesChanged: '関連マイルストーンの変化',
                     compareChanges: '変更項目',
@@ -921,6 +932,12 @@ const ja: LanguageMessages = {
                     currentFocus: '現在の焦点',
                     currentBlocker: '現在のブロッカー',
                     nextAction: '次の対応',
+                    milestonesCompleted: '{completed}/{total} マイルストーン完了',
+                    milestonesLatestSuffix: '；最新: {latest}',
+                    validationValidLine: '検証: {state}',
+                    validationIssuesLine: '問題: {count}',
+                    validationErrorsLine: 'エラー: {count}',
+                    validationWarningsLine: '警告: {count}',
                     updatedAt: '更新日時',
                     milestones: 'マイルストーン',
                     todos: 'TODO',
@@ -936,6 +953,13 @@ const ja: LanguageMessages = {
                     copyPath: 'パスをコピー',
                     copied: 'コピー済み',
                     rawResult: '完全な結果'
+                },
+                deleteCode: {
+                    totalFiles: '合計 {count} ファイル',
+                    badge: '{start}〜{end} 行目を削除',
+                    lineCount: '{count} 行',
+                    deletedCount: '{count} 行を削除しました',
+                    willDelete: '{start} 行目から {end} 行目までを削除します（合計 {count} 行）'
                 }
             },
             attachment: {
@@ -3797,6 +3821,15 @@ const ja: LanguageMessages = {
     },
 
     utils: {
+        file: {
+            readFailed: 'ファイルの読み取りに失敗しました',
+            sizeExceeded: 'ファイルサイズが制限を超えています ({size})',
+            thumbnailCanvasFailed: 'サムネイル用キャンバスを作成できませんでした',
+            thumbnailTimeout: 'サムネイル生成がタイムアウトしました',
+            thumbnailFailed: 'サムネイルの生成に失敗しました',
+            thumbnailReadFailed: 'サムネイル元ファイルの読み取りに失敗しました',
+            thumbnailReadAborted: 'サムネイル元ファイルの読み取りがキャンセルされました'
+        },
         tools: {
             noFile: 'ファイルなし',
             changes: '{count} 件の変更',
@@ -3804,7 +3837,14 @@ const ja: LanguageMessages = {
             recursiveSuffix: ' (再帰)',
             dirCount: '{count} 個のディレクトリ',
             searchModeSearch: '検索',
-            searchModeReplace: '検索と置換'
+            searchModeReplace: '検索と置換',
+            lineRange: '({start}〜{end} 行目)',
+            lineBefore: '({line} 行目の前)',
+            batchCropCount: '{count} 枚を一括切り抜き',
+            batchGenerateCount: '{count} 枚を一括生成: {prompt} など',
+            batchRemoveBackgroundCount: '{count} 枚の背景を一括除去',
+            batchResizeCount: '{count} 枚を一括リサイズ',
+            batchRotateCount: '{count} 枚を一括回転'
         }
     }
 };

@@ -1,6 +1,7 @@
 import { extractPreviewText, isReviewDocPath } from './taskCards'
 // WP14：统一 type guard —— asRecord/asString/asNumber/asBoolean 与本文件本地副本语义一致，直接复用
 import { asRecord, asString, asNumber, asBoolean } from './typeGuards'
+import { t } from '@/i18n'
 
 export type ReviewToolName =
   | 'create_review'
@@ -361,21 +362,21 @@ function buildCompareFallbackContent(data: LooseRecord, args: Record<string, unk
   const base = asRecord(data.base)
   const target = asRecord(data.target)
   return [
-    `Base: ${asString(base?.path) || asString(args.basePath) || '-'}`,
-    `Target: ${asString(target?.path) || asString(args.targetPath) || '-'}`,
-    `Added findings: ${asNumber(summary?.addedFindings) || 0}`,
-    `Removed findings: ${asNumber(summary?.removedFindings) || 0}`,
-    `Persisted findings: ${asNumber(summary?.persistedFindings) || 0}`,
-    `Severity changed: ${asNumber(summary?.severityChanged) || 0}`,
-    `Tracking changed: ${asNumber(summary?.trackingChanged) || 0}`
+    t('components.message.tool.reviewCard.compareBaseLine', { path: asString(base?.path) || asString(args.basePath) || '-' }),
+    t('components.message.tool.reviewCard.compareTargetLine', { path: asString(target?.path) || asString(args.targetPath) || '-' }),
+    t('components.message.tool.reviewCard.compareAddedLine', { count: asNumber(summary?.addedFindings) || 0 }),
+    t('components.message.tool.reviewCard.compareRemovedLine', { count: asNumber(summary?.removedFindings) || 0 }),
+    t('components.message.tool.reviewCard.comparePersistedLine', { count: asNumber(summary?.persistedFindings) || 0 }),
+    t('components.message.tool.reviewCard.compareSeverityChangedLine', { count: asNumber(summary?.severityChanged) || 0 }),
+    t('components.message.tool.reviewCard.compareTrackingChangedLine', { count: asNumber(summary?.trackingChanged) || 0 })
   ].join('\n')
 }
 
 function buildCurrentProgressFromSnapshot(snapshot: LooseRecord): string | undefined {
   const milestones = asRecordArray(snapshot.milestones) || []
-  if (milestones.length === 0) return '0 milestones recorded'
+  if (milestones.length === 0) return t('components.message.tool.reviewCard.milestonesRecordedNone')
   const latestMilestoneId = asString(milestones[milestones.length - 1]?.id) || ''
-  return `${milestones.length} milestones recorded; latest: ${latestMilestoneId}`
+  return t('components.message.tool.reviewCard.milestonesRecorded', { count: milestones.length, latest: latestMilestoneId })
 }
 
 export function isReviewToolName(name: string): name is ReviewToolName {

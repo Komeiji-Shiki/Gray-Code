@@ -64,8 +64,13 @@ export function routeExtensionMessage(
   const payload = message as Record<string, any>
   const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
 
-  if (requestId && pendingRequests.has(requestId)) {
-    const handler = pendingRequests.get(requestId)!
+  if (requestId) {
+    const handler = pendingRequests.get(requestId)
+    if (!handler) {
+      // 迟到/失配响应（请求已超时移除、已被兑现或来源不明）：不广播给推送订阅者，
+      // 避免请求超时（180s）后迟到的响应被当作主动推送消息处理
+      return 'ignored'
+    }
     pendingRequests.delete(requestId)
 
     if (payload.success) {

@@ -22,6 +22,9 @@
 
 ## [Unreleased]
 
+### Merged：同步上游 308c79d4（渠道配置启动预加载 + 发布前修复批次：checkpoint 分支隔离/config 串行队列/MCP 生命周期/SSE 流式下载/memory 位图缓存）
+  - 合入上游发布前修复批次（207 文件、+6412/-2121）；不采纳上游 VS Code Marketplace 上架文档（桌面版非插件，README 保持本地版本）
+
 ### Merged：合入上游 Bug Hunt 分支（5a3d7d39 150+ 修复 + i18n 全量统一 + 第九批模块化）
   - i18n 全量统一（shared 提取 + i18n-sync 脚本）、双撤销栈回归、token 计数守卫、updateChecker 修复、第九批模块化、Bug Hunt 五轮 150+ 修复
 

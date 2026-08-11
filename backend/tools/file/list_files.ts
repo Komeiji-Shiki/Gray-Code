@@ -7,7 +7,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolResult, ToolContext } from '../types';
 import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines, mapWithConcurrency, getWorkspaceByUri } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
@@ -253,10 +253,9 @@ export function createListFilesTool(): Tool {
                 required: ['paths']
             }
         },
-        handler: async (args, context): Promise<ToolResult> => {
-            // 工作区外目录访问策略：与 read_file 相同的 deny/ask/allow 语义。
-            // resolveUriWithInfo 会解析工作区外的绝对路径，因此必须在 readDirectory 前拦截，
-            // 防止通过 list_files 枚举任意目录。
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
+            // 修改原因：list_files 接受绝对路径时可枚举工作区外目录内容，不受 outside-workspace 读策略管控。
+            // 修改方式：与 read_file 一致，入口处调用 ensureOutsideWorkspaceAccessApproved（读策略 deny/ask/allow）。
             const accessError = ensureOutsideWorkspaceAccessApproved('list_files', args, context);
             if (accessError) {
                 return { success: false, error: accessError };

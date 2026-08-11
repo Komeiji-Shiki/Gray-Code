@@ -87,13 +87,18 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
         const img = new Image()
         img.src = thumbnail
         await new Promise((resolve) => {
-          const timeoutId = setTimeout(() => {
-            img.onload = null
-            img.onerror = null
+          // 超时保护：onload/onerror 均不触发时（异常图片数据）10s 后放弃尺寸读取，
+          // 避免 Promise 永久挂起阻塞附件添加（对齐 createThumbnail 的超时策略）
+          let settled = false
+          const timeoutId = window.setTimeout(() => {
+            if (settled) return
+            settled = true
             resolve(null)
           }, 10000)
           img.onload = () => {
-            clearTimeout(timeoutId)
+            if (settled) return
+            settled = true
+            window.clearTimeout(timeoutId)
             attachment.metadata = {
               width: img.width,
               height: img.height
@@ -101,7 +106,10 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
             resolve(null)
           }
           img.onerror = () => {
-            clearTimeout(timeoutId)
+            if (settled) return
+            settled = true
+            window.clearTimeout(timeoutId)
+            // 缩略图加载失败：不阻塞附件添加，仅跳过尺寸元数据
             resolve(null)
           }
         })

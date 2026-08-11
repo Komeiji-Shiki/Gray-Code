@@ -33,6 +33,12 @@ let usageCache: UsageStatsCache | undefined;
 let disposeUsageWatcher: (() => void) | undefined;
 /** 当前 watcher 绑定的 conversations 目录（storagePath.migrate 后目录变化需重建） */
 let usageCacheDir: string | undefined;
+/** watcher 初始化失败时间戳（R2-07）：失败后 WATCHER_RETRY_BACKOFF_MS 内不再重试 */
+let watcherInitFailedAt = 0;
+/** watcher 初始化失败关联的 conversations 目录（R2-09）：目录迁移后旧失败退避不再适用 */
+let watcherInitFailedDir: string | undefined;
+/** watcher 初始化失败后的退避窗口（毫秒）：失败通常是目录/FS 权限问题，短时间重试只会重复报错 */
+const WATCHER_RETRY_BACKOFF_MS = 30_000;
 
 function cacheKey(startTime?: number, endTime?: number): string {
     return `${startTime ?? ''}:${endTime ?? ''}`;
@@ -47,24 +53,39 @@ function getOrInitUsageCache(ctx: HandlerContext): UsageStatsCache | undefined {
     if (!conversationsDir) return undefined;
     // 存储路径迁移后 conversations 目录变化：旧缓存与 watcher 仍绑定旧目录（R2-08 复查）。
     // StoragePathManager 无迁移事件，用「目录与缓存绑定目录不一致」检测迁移并重建。
-    if (usageCache && usageCacheDir !== conversationsDir) {
+    if (usageCacheDir !== conversationsDir) {
         disposeUsageWatcher?.();
         disposeUsageWatcher = undefined;
         usageCache = undefined;
         usageCacheDir = undefined;
     }
+    // R2-09：初始化失败（无 usageCache）后目录迁移——失败单独记录关联目录
+    // watcherInitFailedDir，与当前目录不一致时旧失败退避不再适用，复位以允许对新目录立即重试。
+    // （仅当存在失败记录时参与判断，避免成功/首次场景误触发。）
+    if (watcherInitFailedDir !== undefined && watcherInitFailedDir !== conversationsDir) {
+        watcherInitFailedAt = 0;
+        watcherInitFailedDir = undefined;
+    }
     if (usageCache) return usageCache;
+    // R2-07：watcher 初始化失败后进入退避窗口，避免每次统计请求都重试初始化
+    if (watcherInitFailedAt > 0 && Date.now() - watcherInitFailedAt < WATCHER_RETRY_BACKOFF_MS) {
+        return undefined;
+    }
     const candidate = new UsageStatsCache();
     try {
         const disposeWatcher = startUsageDirectoryWatcher(conversationsDir, candidate);
         usageCache = candidate;
         usageCacheDir = conversationsDir;
         disposeUsageWatcher = disposeWatcher;
+        watcherInitFailedAt = 0;
+        watcherInitFailedDir = undefined;
         return usageCache;
     } catch (error) {
         usageCache = undefined;
         disposeUsageWatcher = undefined;
         usageCacheDir = undefined;
+        watcherInitFailedAt = Date.now();
+        watcherInitFailedDir = conversationsDir;
         console.warn('[UsageHandlers] Failed to initialize usage directory watcher:', error);
         return undefined;
     }
@@ -76,7 +97,10 @@ export function disposeUsageCache(): void {
     disposeUsageWatcher = undefined;
     usageCache = undefined;
     usageCacheDir = undefined;
-    // 结果缓存同样要清空：宿主重载/存储路径迁移后 statsCache 仍会命中旧统计直到 TTL 过期
+    // R2-07：扩展重载后重新允许 watcher 初始化重试
+    watcherInitFailedAt = 0;
+    watcherInitFailedDir = undefined;
+    // 结果缓存同样要清空：扩展重载/存储路径迁移后 statsCache 仍会命中旧统计直到 TTL 过期
     statsCache.clear();
 }
 

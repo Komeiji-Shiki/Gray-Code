@@ -16,6 +16,9 @@ interface ToolConfig {
   /** 工具显示标签（可选，默认使用name） */
   label?: string
   
+  /** 动态标签生成器 - 根据参数生成标签文本（优先级高于 label） */
+  labelFormatter?: (args: Record<string, unknown>) => string
+  
   /** 图标 (codicon) */
   icon?: string
   
@@ -46,10 +49,12 @@ interface ToolConfig {
 
 ```typescript
 import { registerTool } from '../toolRegistry'
+import { getToolDisplayName } from '../toolLocalization'
 
 registerTool('read_file', {
   name: 'read_file',
-  label: '读取文件',
+  // 本地化显示名：渲染时按当前语言取词条（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('read_file'),
   icon: 'codicon-file-text',
   
   // 描述生成器 - 显示在消息列表中
@@ -99,11 +104,13 @@ const props = defineProps<{
 
 ```typescript
 import { registerTool } from '../toolRegistry'
+import { getToolDisplayName } from '../toolLocalization'
 import ReadFilePanel from './readFilePanel.vue'
 
 registerTool('read_file', {
   name: 'read_file',
-  label: '读取文件',
+  // 本地化显示名：渲染时按当前语言取词条（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('read_file'),
   icon: 'codicon-file-text',
   
   descriptionFormatter: (args) => {
@@ -149,10 +156,12 @@ const message: Message = {
 ```typescript
 // writeFile.ts
 import { registerTool } from '../toolRegistry'
+import { getToolDisplayName } from '../toolLocalization'
 
 registerTool('write_file', {
   name: 'write_file',
-  label: '写入文件',
+  // 本地化显示名：渲染时按当前语言取词条（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('write_file'),
   icon: 'codicon-save',
   
   descriptionFormatter: (args) => {
@@ -176,10 +185,12 @@ registerTool('write_file', {
 ```typescript
 // executeCommand.ts
 import { registerTool } from '../toolRegistry'
+import { getToolDisplayName } from '../toolLocalization'
 
 registerTool('execute_command', {
   name: 'execute_command',
-  label: '执行命令',
+  // 本地化显示名：渲染时按当前语言取词条（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('execute_command'),
   icon: 'codicon-terminal',
   
   descriptionFormatter: (args) => {
@@ -269,11 +280,13 @@ const matches = computed(() => {
 ```typescript
 // searchFiles.ts
 import { registerTool } from '../toolRegistry'
+import { getToolDisplayName } from '../toolLocalization'
 import SearchFilesPanel from './SearchFilesPanel.vue'
 
 registerTool('search_files', {
   name: 'search_files',
-  label: '搜索文件',
+  // 本地化显示名：渲染时按当前语言取词条（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('search_files'),
   icon: 'codicon-search',
   
   descriptionFormatter: (args) => {
@@ -385,7 +398,7 @@ app.mount('#app')
 
 约定：
 
-- `label` / `icon` / `contentComponent` 等前端特有展示元数据仍手写保留在各工具注册文件。
+- `labelFormatter`（本地化显示名，见上文示例）/ `icon` / `contentComponent` 等前端特有展示元数据仍手写保留在各工具注册文件。
 - `descriptionFormatter` 的**兜底描述**（参数为空时展示的文案）改从 `getToolMetaDescription('toolName')`
   （见 `toolMetaLookup.ts`）取后端声明描述；toolMeta 缺失/动态时回退原手写文案（带 `TODO(meta)` 注释）。
 - 后端声明中运行时动态构造（多根工作区、多模态配置、OS/Shell 环境等）的 description/参数不会写入生成物，

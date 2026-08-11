@@ -631,9 +631,11 @@ watch(() => chatStore.configId, () => {
   }
 })
 
+// 非深 watch：loadCurrentConfig 总是整体替换 currentConfig 引用（stores/chat/configActions.ts），
+// 深 watch 会在配置对象任何嵌套字段变化时触发全量 loadConfigs（串行 N 次 IPC），改为引用级监听即可
 watch(() => chatStore.currentConfig, () => {
   loadConfigs()
-}, { deep: true })
+})
 
 watch(() => settingsStore.promptModesVersion, () => {
   loadPromptModes()

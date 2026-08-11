@@ -64,6 +64,9 @@ export class DependencyManager {
     /** 依赖安装目录（graycodeDir/node_modules） */
     private depsDir: string;
     
+    /** 依赖清单文件路径（记录每个已安装包的传递依赖目录快照，卸载时据此清理残留） */
+    private manifestPath: string;
+    
     /** 进度事件监听器 */
     private progressListeners: Set<(event: InstallProgressEvent) => void> = new Set();
     
@@ -78,6 +81,9 @@ export class DependencyManager {
     
     /** 复制阶段全局串行队列：不同依赖并行安装时共享同一个 depsDir，复制阶段必须互斥执行 */
     private copyQueue: Promise<void> = Promise.resolve();
+
+    /** manifest 读-改-写串行队列：并发安装/卸载共享同一清单文件，读-改-写必须互斥执行 */
+    private manifestQueue: Promise<void> = Promise.resolve();
     
     /** 支持的可选依赖配置 */
     private readonly optionalDependencies: Record<string, { version: string; descriptionKey: string; estimatedSize: number }> = {
@@ -99,6 +105,7 @@ export class DependencyManager {
         }
         this.graycodeDir = customDepsPath || defaultDir;
         this.depsDir = path.join(this.graycodeDir, 'node_modules');
+        this.manifestPath = path.join(this.graycodeDir, '.deps-manifest.json');
     }
     
     /**
@@ -211,6 +218,50 @@ export class DependencyManager {
         } catch {
             return undefined;
         }
+    }
+    
+    /**
+     * 读取依赖清单（记录每个已安装包复制进 depsDir 的传递依赖目录；缺失/损坏视为空）
+     */
+    private async loadManifest(): Promise<Record<string, string[]>> {
+        try {
+            const content = await readFile(this.manifestPath, 'utf-8');
+            const data = JSON.parse(content);
+            return data && typeof data === 'object' ? data : {};
+        } catch {
+            return {};
+        }
+    }
+
+    /**
+     * 持久化依赖清单（失败仅记日志，不阻断安装/卸载主流程）
+     */
+    private async saveManifest(manifest: Record<string, string[]>): Promise<void> {
+        try {
+            await writeFile(this.manifestPath, JSON.stringify(manifest, null, 2));
+        } catch (error) {
+            console.error('[deps] failed to save dependency manifest:', error);
+        }
+    }
+
+    /**
+     * 串行执行 manifest 读-改-写（loadManifest → mutate → saveManifest 整段入队）：
+     * 并发安装/卸载若各自「读旧清单 → 改 → 写回」，后写者会基于过期清单覆盖先写者
+     *（丢条目）。与 copyQueue 同构的链式队列保证互斥。
+     */
+    private async updateManifest(
+        mutate: (manifest: Record<string, string[]>) => void | Promise<void>
+    ): Promise<void> {
+        const run = this.manifestQueue.then(async () => {
+            const manifest = await this.loadManifest();
+            await mutate(manifest);
+            await this.saveManifest(manifest);
+        });
+        this.manifestQueue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        await run;
     }
     
     /**
@@ -346,19 +397,80 @@ export class DependencyManager {
                     const sourcePath = path.join(sourceNodeModules, entry.name);
                     const targetPath = path.join(this.depsDir, entry.name);
                     
-                    // 删除旧的目标目录（如果存在）
+                    // 先复制到同目录临时名，再 rename 覆盖：避免「先删后拷」——复制中途失败时
+                    // 旧版本已被删除且无法回滚。rename 无法覆盖已存在的非空目录：先尝试直接
+                    // rename（目标不存在时成功），失败（目标已存在）再删旧目标重试；任一步失败
+                    // 都清理临时目录，旧目标在 rename 成功前始终保留。
+                    const tmpTarget = `${targetPath}.deps-install-tmp`;
                     try {
-                        await rm(targetPath, { recursive: true, force: true });
-                    } catch {
-                        // 目录可能不存在
+                        // 清理上次中断安装可能残留的临时目录
+                        try {
+                            await rm(tmpTarget, { recursive: true, force: true });
+                        } catch {
+                            // 忽略清理失败
+                        }
+                        await this.copyDirectory(sourcePath, tmpTarget);
+                        try {
+                            await fs.promises.rename(tmpTarget, targetPath);
+                        } catch {
+                            // 目标已存在（rename 无法覆盖非空目录）：先把旧目标改名为备份，
+                            // 再 rename 到位——第二次 rename 失败时恢复备份，旧目标不丢失
+                            //（「删旧目标后重试」在重试也失败时旧目标会永久丢失）。
+                            const backupPath = `${targetPath}.deps-install-backup`;
+                            let backupMoved = false;
+                            try {
+                                // 清理上次中断可能残留的备份目录
+                                await rm(backupPath, { recursive: true, force: true });
+                                await fs.promises.rename(targetPath, backupPath);
+                                backupMoved = true;
+                            } catch {
+                                // 旧目标改名备份失败（目标已被并发删除等罕见情况）：
+                                // 退回「删旧目标后重试」；此路径重试再失败时旧目标已丢失，
+                                // 与旧行为一致且概率极低（备份失败说明目标状态已异常）
+                                await rm(targetPath, { recursive: true, force: true });
+                                await fs.promises.rename(tmpTarget, targetPath);
+                            }
+                            if (backupMoved) {
+                                try {
+                                    await fs.promises.rename(tmpTarget, targetPath);
+                                } catch (error) {
+                                    // 第二次 rename 失败：恢复备份，尽量保留旧目标
+                                    try {
+                                        await fs.promises.rename(backupPath, targetPath);
+                                    } catch {
+                                        console.error(`[deps] failed to restore backup ${backupPath} -> ${targetPath}`);
+                                    }
+                                    throw error;
+                                }
+                                // rename 成功：清理备份目录
+                                try {
+                                    await rm(backupPath, { recursive: true, force: true });
+                                } catch {
+                                    // 忽略备份清理失败
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        // 复制/替换失败：清理未完成的临时目录，旧目标在 rename 成功前始终保留
+                        try {
+                            await rm(tmpTarget, { recursive: true, force: true });
+                        } catch {
+                            // 忽略清理失败
+                        }
+                        throw error;
                     }
-                    
-                    // 递归复制整个目录
-                    await this.copyDirectory(sourcePath, targetPath);
                 }
             } finally {
                 releaseCopy();
             }
+            
+            // 记录本次安装复制进 depsDir 的目录清单（主包 + 传递依赖），
+            // 卸载时据此清理不再被引用的残留目录
+            // 读-改-写整体入 manifest 串行队列：并发安装（不同依赖）不得交错覆盖
+            const installedDirs = entries.filter(e => e.isDirectory()).map(e => e.name);
+            await this.updateManifest(manifest => {
+                manifest[name] = installedDirs;
+            });
             
             // 清除缓存并更新安装状态
             this.loadedModules.delete(name);
@@ -400,6 +512,93 @@ export class DependencyManager {
             const targetDir = path.join(this.depsDir, name);
             await rm(targetDir, { recursive: true, force: true });
             
+            // 清理传递依赖残留：安装时已快照每个包的传递依赖目录清单（见 doInstall）。
+            // 卸载后删除不再被任何剩余已安装包引用的目录——只删顶层包会让传递依赖永久残留。
+            // 清理条件：清单完好（能读出被卸载包记录）或仍存在其他包记录；清单缺失/损坏时
+            // 无法区分残留与在用目录，保守跳过，避免误删仍被使用的目录（详见下方 mutate）。
+            // 整个「读清单 → 删记录 → 清理 → 写清单」入 manifest 串行队列，
+            // 避免与并发安装/卸载的读-改-写交错覆盖（见 updateManifest）。
+            await this.updateManifest(async manifest => {
+                // 被卸载包自身记录的传递依赖：其记录随本包删除，属「已知残留」可清理。
+                // manifestIntact 记录本包记录是否可读出：undefined 说明清单缺失/损坏或本包
+                // 从未被记录——仅在清单完好时才按 uninstalledDirs 清理已知残留；清单缺失/损坏
+                // 时无法区分残留与在用目录，保守跳过，避免误删仍被使用的目录。
+                const uninstalledDirs = manifest[name] ?? [];
+                const manifestIntact = manifest[name] !== undefined;
+                delete manifest[name];
+                const remainingNames = Object.keys(manifest);
+                // 清理条件：清单完好（能读出被卸载包记录）或仍有其他包记录。卸载最后一个包时
+                // remainingNames 为空，但清单完好仍应按 uninstalledDirs 清理已知残留——
+                // 只删顶层包会让传递依赖永久残留。
+                if (manifestIntact || remainingNames.length > 0) {
+                    const referenced = new Set<string>(remainingNames);
+                    for (const dirs of Object.values(manifest)) {
+                        for (const dir of dirs) referenced.add(dir);
+                    }
+                    try {
+                        const entries = await readdir(this.depsDir, { withFileTypes: true });
+                        // 第一遍：把「有 package.json 但从未被任何 manifest 记录（含被卸载包
+                        // 自身记录）」的顶层目录视为未知引用根保留——仅凭清单判定会把清单功能
+                        // 上线前安装/手动安装的包误删；被卸载包记录的传递依赖（uninstalledDirs）
+                        // 不在此列，仍按残留清理。
+                        for (const entry of entries) {
+                            if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+                            if (referenced.has(entry.name) || uninstalledDirs.includes(entry.name)) continue;
+                            try {
+                                await statAsync(path.join(this.depsDir, entry.name, 'package.json'));
+                                referenced.add(entry.name);
+                            } catch {
+                                // 无 package.json：scoped 目录（@scope）本身不含 package.json，
+                                // 但其中可能仍有在用包（@scope/pkg）。检查一层子目录——任一
+                                // 下级目录含 package.json 即视为引用根保留，避免第二遍误删。
+                                if (entry.name.startsWith('@')) {
+                                    try {
+                                        const subEntries = await readdir(
+                                            path.join(this.depsDir, entry.name),
+                                            { withFileTypes: true }
+                                        );
+                                        for (const sub of subEntries) {
+                                            if (!sub.isDirectory()) continue;
+                                            try {
+                                                await statAsync(
+                                                    path.join(this.depsDir, entry.name, sub.name, 'package.json')
+                                                );
+                                                referenced.add(entry.name);
+                                                break;
+                                            } catch {
+                                                // 该子目录无 package.json：继续检查其余子目录
+                                            }
+                                        }
+                                    } catch {
+                                        // 无法读取 scoped 目录（已被删等）：保持可清理状态
+                                    }
+                                }
+                            }
+                        }
+                        // 第二遍：删除仍未被引用的残留目录
+                        for (const entry of entries) {
+                            if (!entry.isDirectory()) continue;
+                            // 系统目录（.bin 等）与仍被引用的目录保留
+                            if (entry.name.startsWith('.')) continue;
+                            // 安装复制阶段的临时/备份目录（.deps-install-tmp/.deps-install-backup）：
+                            // 并发 install 正在写入，卸载清理跳过它们，避免删掉进行中安装的中间产物
+                            if (entry.name.endsWith('.deps-install-tmp')
+                                || entry.name.endsWith('.deps-install-backup')) {
+                                continue;
+                            }
+                            if (referenced.has(entry.name)) continue;
+                            try {
+                                await rm(path.join(this.depsDir, entry.name), { recursive: true, force: true });
+                            } catch {
+                                // 忽略单个残留清理失败
+                            }
+                        }
+                    } catch {
+                        // depsDir 不存在等，忽略
+                    }
+                }
+            });
+            
             // 清除缓存并更新安装状态
             this.loadedModules.delete(name);
             this.installedCache.set(name, false);
@@ -425,6 +624,9 @@ export class DependencyManager {
         
         // 检查是否已安装
         if (!await this.isInstalled(name)) {
+            // 未安装：同步更新安装状态缓存，避免 isInstalledSync（缓存）与磁盘状态不一致
+            //（与 require 失败路径同口径）
+            this.installedCache.set(name, false);
             return null;
         }
         
@@ -433,9 +635,13 @@ export class DependencyManager {
             // 使用 require 加载
             const mod = require(modulePath);
             this.loadedModules.set(name, mod);
+            // 加载成功：同步更新安装状态缓存，避免 isInstalledSync（缓存）与磁盘状态不一致
+            this.installedCache.set(name, true);
             return mod;
         } catch (error) {
             console.error(t('modules.dependencies.errors.loadFailed', { name }), error);
+            // require 失败（模块损坏/平台不兼容/安装被删除）：同步置 false，与磁盘状态对齐
+            this.installedCache.set(name, false);
             return null;
         }
     }

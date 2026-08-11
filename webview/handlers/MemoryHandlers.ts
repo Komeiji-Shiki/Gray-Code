@@ -73,7 +73,9 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
  */
 export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { config } = data;
+    // R2-07：data/config 防御——data 缺失时解构直接 TypeError，config 缺失时下方
+    // config.wakeLines 抛错；统一兜底为空对象（零更新，响应语义不变）
+    const { config = {} } = data || {};
     const wsUri = typeof data?.workspaceUri === 'string' && data.workspaceUri ? data.workspaceUri : '';
     if (wsUri) {
       // 工作区作用域：仅写该工作区 MemoryManager（数值项校验并持久化到其 config 文件）

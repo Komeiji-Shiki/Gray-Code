@@ -174,7 +174,8 @@ export class StreamRequestHandler {
 
   async cancelAllStreams(): Promise<void> {
     const conversationIds = this.deps.abortManager.listConversationIds();
-    this.deps.abortManager.cancelAll(this.deps.getClientView());
+    // R2-07：cancelAll 已移除未使用的 _view 参数
+    this.deps.abortManager.cancelAll();
     await this.cleanupAbortedConversations(conversationIds, { cancelAllPendingDiffs: true });
   }
 

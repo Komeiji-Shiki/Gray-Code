@@ -11,6 +11,7 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio, parseImageDimensionsFromBytes } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
+import { createFetchSignal } from '../utils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -25,6 +26,12 @@ const TASK_TYPE_IMAGE_GEN = 'image_generation';
  * 两个默认值不一致会让返回的 model 字段与真实调用模型不符，统一为同一常量。
  */
 const DEFAULT_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+
+/**
+ * Gemini API 请求超时（毫秒）：网络挂起时不会无限期等待。
+ * 修改原因：generate_image 的 fetch 只有取消信号、无超时保护。
+ */
+const GEMINI_API_REQUEST_TIMEOUT_MS = 120_000;
 
 /**
  * 图像生成输出事件类型（保持向后兼容）
@@ -326,23 +333,28 @@ async function callGeminiImageApi(
     // 创建 fetch 函数（支持代理）
     const fetchFn = createProxyFetch(config.proxyUrl);
 
-    // 发送请求（传递取消信号）
-    const response = await fetchFn(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey
-        },
-        body: JSON.stringify(requestBody),
-        signal: abortSignal
-    });
-    
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API request failed: ${response.status} ${errorText}`);
-    }
+    // 发送请求（传递取消信号 + 超时保护：网络挂起时不会无限期等待）
+    const { signal: fetchSignal, cleanup: cleanupFetchSignal } = createFetchSignal(abortSignal, GEMINI_API_REQUEST_TIMEOUT_MS);
+    try {
+        const response = await fetchFn(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey
+            },
+            body: JSON.stringify(requestBody),
+            signal: fetchSignal
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`API request failed: ${response.status} ${errorText}`);
+        }
 
-    return await response.json() as GeminiImageResponse;
+        return await response.json() as GeminiImageResponse;
+    } finally {
+        cleanupFetchSignal();
+    }
 }
 
 /**
@@ -943,6 +955,21 @@ Generated images will be saved to the specified path and returned for viewing.`;
 
             try {
                 // 并发执行所有任务（传递取消信号）
+                // 修改原因：同一次调用的多个任务并发写同一 output_path 会互相覆盖（后写者胜出）。
+                // 修改方式：进入并发前检测重复输出路径并拒绝。
+                const seenOutputPaths = new Set<string>();
+                const duplicateOutputTask = tasks.find(task => {
+                    if (!task.output_path) return false;
+                    if (seenOutputPaths.has(task.output_path)) return true;
+                    seenOutputPaths.add(task.output_path);
+                    return false;
+                });
+                if (duplicateOutputTask) {
+                    // 与上方早退分支保持一致：先注销任务再返回，避免任务管理器残留永久 running 任务
+                    TaskManager.unregisterTask(toolId, 'error', { error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` });
+                    return { success: false, error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` };
+                }
+
                 const results = await Promise.all(
                     tasks.map((task, index) => executeImageTask(task, index, config, configMaxImagesPerTask, abortSignal, context))
                 );
@@ -1061,9 +1088,11 @@ Generated images will be saved to the specified path and returned for viewing.`;
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 const errorName = error instanceof Error ? error.name : '';
                 
-                const isCancelled = abortSignal.aborted ||
-                    errorName === 'AbortError' ||
-                    errorMessage.includes('aborted') ||
+                // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError
+                // （"This operation was aborted"）拒绝，仅凭 errorName/message 会把请求超时误判为用户取消。
+                // 修改方式：以用户 abortSignal 是否真的 aborted 为准；AbortError/消息检查仅作无信号时的后备。
+                const isCancelled = abortSignal.aborted === true ||
+                    (errorName === 'AbortError' && !abortSignal) ||
                     errorMessage.includes('cancelled') ||
                     errorMessage.includes('canceled');
                 
@@ -1082,7 +1111,12 @@ Generated images will be saved to the specified path and returned for viewing.`;
                     };
                 }
                 
-                throw error;
+                // 修改原因：非取消错误直接 rethrow，与兄弟工具不一致（应返回错误 ToolResult 而非抛出）。
+                // 修改方式：与其余媒体工具一致 return { success: false, error }。
+                return {
+                    success: false,
+                    error: errorMessage
+                };
             }
         })
     };

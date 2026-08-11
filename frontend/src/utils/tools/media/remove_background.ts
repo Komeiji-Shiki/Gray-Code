@@ -7,6 +7,8 @@
 import { registerTool } from '../../toolRegistry'
 import RemoveBackgroundPanel from '../../../components/tools/media/remove_background.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 
 /**
  * 单个任务类型
@@ -20,8 +22,8 @@ interface RemoveTask {
 
 registerTool('remove_background', {
   name: 'remove_background',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '抠图',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('remove_background'),
   icon: 'codicon-wand',
   expandable: true,
   contentComponent: RemoveBackgroundPanel,
@@ -38,7 +40,7 @@ registerTool('remove_background', {
         return `${shortInput} → ${task.output_path}`
       }
       // 多任务显示
-      return `批量抠图 ${images.length} 张`
+      return t('utils.tools.batchRemoveBackgroundCount', { count: images.length })
     }
     
     // 单张模式
@@ -48,7 +50,7 @@ registerTool('remove_background', {
       return `${shortInput} → ${shortOutput}`
     }
     
-    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
-    return getToolMetaDescription('remove_background') ?? '移除图片背景'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化显示名
+    return getToolMetaDescription('remove_background') ?? getToolDisplayName('remove_background')
   }
 })

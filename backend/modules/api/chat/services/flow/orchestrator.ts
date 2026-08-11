@@ -28,7 +28,6 @@ import { RepeatedCallGuard } from '../repeatedCallGuard';
 import type { ToolExecutionFullResult, ToolExecutionProgressEvent } from '../ToolExecutionService';
 import type { Content, ContentPart } from '../../../../conversation/types';
 import type { CheckpointRecord } from '../../../../checkpoint';
-import { getGlobalBranchService } from '../../../../conversation/branch';
 import {
   agentMailbox,
   formatAgentMessagesForModel,
@@ -206,14 +205,28 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         success: false,
         error: {
           code: 'CANCELLED',
-          message: t('modules.api.chat.errors.requestCancelled'),
+          message: t('modules.channel.errors.requestCancelled'),
+        },
+      };
+    }
+
+    // content 为空（工具循环异常路径未产出内容）或 parts 为空时显式返回错误，
+    // 不再用非空断言透传 success:true + content:undefined（前端会把空响应当成功处理）。
+    // EMPTY_RESPONSE 使用独立文案（模型返回了空内容），不复用 requestCancelled 的
+    // 「请求已取消」——正常空输出与取消语义不同，避免误导用户。
+    if (!loopResult.content?.parts?.length) {
+      return {
+        success: false,
+        error: {
+          code: 'EMPTY_RESPONSE',
+          message: t('modules.channel.errors.emptyResponse'),
         },
       };
     }
 
     return {
       success: true,
-      content: loopResult.content!,
+      content: loopResult.content,
     };
   }
 
@@ -915,11 +928,13 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       // M1：请求带 messageId 时校验索引处消息 id 一致，防止索引漂移误删其他消息。
       // 旧前端不传时保持旧行为。
       const requestMessageId = request.messageId;
-      // 决策 6：删除前捕获锚点（第一个被删消息 id）与最后保留消息 id，供删除后同步软删分支图子树。
-      // 必须同时用于 M1 校验：在校验与删除之间不得有其他写入（rejectAllPendingToolCalls 只追加）。
+      // 决策 6：分支图同步已收敛进 ConversationManager.deleteToMessage（锁内捕获锚点、
+      // 锁外经 graphSyncQueues 串行队列执行，与 deleteMessage/clearHistory 同模式）；
+      // 这里仅保留删除前的历史快照用于 M1 校验（校验与删除之间不得有其他写入，
+      // rejectAllPendingToolCalls 只追加）。
       const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);
-      // C-3：校验 targetIndex 边界。负数/越界此前会让 deletedFromMessageId 变 null、删除语义错误，
-      // 这里在删除动作前显式拒绝，返回明确的 INVALID_TARGET_INDEX。
+      // C-3：校验 targetIndex 边界。负数/越界此前会让删除语义错误（deleteToMessage 锁内
+      // 会重新校验并抛错），这里在删除动作前显式拒绝，返回明确的 INVALID_TARGET_INDEX。
       if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= historyBeforeDelete.length) {
         return {
           success: false,
@@ -953,41 +968,13 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       // 5. 删除关联的检查点（回档场景下保留刚用于恢复的存档点，支持反复回档）
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex, preserveCheckpointId);
 
-      // 6. 删除消息
-      const deletedFromMessageId = historyBeforeDelete[targetIndex]?.id ?? null;
-      const lastKeptMessageId = targetIndex > 0 ? (historyBeforeDelete[targetIndex - 1]?.id ?? null) : null;
+      // 6. 删除消息（决策 6 分支图同步已收敛进 ConversationManager.deleteToMessage：锁内捕获
+      // deletedFromMessageId / lastKeptMessageId / deletedWasSummary，锁外经 withGraphSyncQueue
+      // 会话级串行队列同步软删「该点之后」的整棵子树，删除响应返回前图一致；失败仅告警不阻断，
+      // 主历史为唯一真源。此处不再直接调用 BranchService——避免与 manager 侧双同步，且与
+      // deleteMessage/clearHistory/restoreSnapshot 的队列互斥语义统一（先入队的 append 图同步
+      // 必须先完成，再执行本次软删）。
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);
-
-      // 6.2 决策 6：删除成功后同步软删分支图「该点之后」的整棵子树（TREE-09 软删语义：
-      // 节点标记 deleted + deletedAt，不物理移除 sidecar；活跃尾同步回退到保留锚点）。
-      // 锁取舍：deleteToMessage 的仓储互斥（会话写锁）已随方法返回释放，此处再取会话写锁
-      // 是顺序获取（非嵌套），故同步 await 而非 fire-and-forget——删除响应返回前保证分支图一致
-      // （避免响应后立即续写新消息时 appendHistoryToGraph 挂在已被硬删除的旧尾上）。
-      // 失败仅告警不阻断：主历史为唯一真源，硬删除已提交，图侧由下次读图/写图自校验兜底。
-      try {
-        const branchService = getGlobalBranchService();
-        if (branchService) {
-          // 截断区间内含总结消息：原文的 isSummarized 标记已恢复，必须按当前主历史重建
-          // 活跃路径与消息元数据（summary_deleted），否则切分支后已恢复的原文会被图中
-          // 陈旧的 isSummarized 元数据重新压缩；否则走常规「软删被删节点及其后续子树」。
-          const deletedWasSummary = historyBeforeDelete
-            .slice(targetIndex)
-            .some(message => message.isSummary === true);
-          if (deletedWasSummary) {
-            await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
-          } else {
-            await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
-              lastKeptMessageId,
-            });
-          }
-        }
-      } catch (error) {
-        this.log.warn('branch_delete_to_sync_failed', {
-          conversationId,
-          targetIndex,
-          error: (error as Error)?.message ?? String(error),
-        });
-      }
 
       // 6.5 根据剩余历史重放 todo 工具，修正 ConversationMetadata.custom.todoList
       await this.rebuildTodoListMetadataFromHistory(conversationId);

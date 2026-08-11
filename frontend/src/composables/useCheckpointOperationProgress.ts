@@ -9,7 +9,7 @@
 
 import { ref, onBeforeUnmount } from 'vue'
 import { pollOperationProgress, cancelCheckpointOperation, type CheckpointOperationProgress } from '@/stores/chat/checkpointActions'
-import { t } from '@/i18n'
+import { t, hasMessage } from '@/i18n'
 
 export function useCheckpointOperationProgress() {
   // M7: 进行中存档操作进度（create/restore/delete）轮询展示 + 取消按钮
@@ -133,8 +133,9 @@ export function useCheckpointOperationProgress() {
   // 机器可读 phase → 展示文案（与后端 CheckpointOperationProgress.phase 对齐）
   function operationPhaseLabel(phase: string): string {
     const key = `components.settings.checkpoint.sections.cleanup.progress.${phase}` as const
-    const label = t(key)
-    return label || phase
+    // hasMessage 预检：缺失 key 时 t() 返回 key 本身，会让 label || phase 一类回退逻辑失效
+    if (hasMessage(key)) return t(key)
+    return phase
   }
 
   return {

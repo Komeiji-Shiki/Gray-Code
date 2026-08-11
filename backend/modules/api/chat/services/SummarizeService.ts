@@ -439,17 +439,23 @@ export class SummarizeService {
                 const accumulator = new StreamAccumulator();
                 accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
 
-                for await (const chunk of response) {
-                    if (request.abortSignal?.aborted) {
-                        return {
-                            success: false,
-                            error: {
-                                code: 'ABORTED',
-                                message: t('modules.api.chat.errors.summarizeAborted')
-                            }
-                        };
+                try {
+                    for await (const chunk of response) {
+                        if (request.abortSignal?.aborted) {
+                            return {
+                                success: false,
+                                error: {
+                                    code: 'ABORTED',
+                                    message: t('modules.api.chat.errors.summarizeAborted')
+                                }
+                            };
+                        }
+                        accumulator.add(chunk);
                     }
-                    accumulator.add(chunk);
+                } finally {
+                    // 提前退出（abort）时回收流式响应生成器，避免底层流/连接资源悬挂；
+                    // 正常耗尽后调用是幂等 no-op。
+                    await response.return?.(undefined);
                 }
 
                 finalContent = accumulator.getContent();
@@ -890,11 +896,15 @@ export class SummarizeService {
             // C-15：token 总和与逐条数组均增量维护，循环内直接按 insertIndex 游标在 fullHistory
             // 上扫描（不再每轮 fullHistory.slice() 重切，O(k·n) → O(n)），循环结束后只切片一次。
             // 若该轮起点（真实用户消息）在总结范围内则整轮一起排除（保持语义完整，
-            // 避免把同一轮的工具交互拆散在总结消息两侧），轮首在范围之外时仅排除该工具交互
+            // 避免把同一轮的工具交互拆散在总结消息两侧），轮首在范围之外时仅排除该工具交互。
+            // C-16：维护"最后一个工具交互"扫描游标——每轮收缩后游标落在本次排除段之前
+            // （整轮排除时为轮首之前、仅排除工具交互时在该交互之前），下一轮从该游标
+            // 继续向前找即可，避免每轮从 insertIndex 全量回扫的 O(n²)。
+            let toolScanCursor = insertIndex - 1;
             while (estimatedTokens > summaryBudget.maxHistoryTokens) {
                 // 找到当前范围内最后一对 functionCall + functionResponse
                 let lastToolInteractionStart = -1;
-                for (let i = insertIndex - 1; i >= summarizeInputStartIndex; i--) {
+                for (let i = toolScanCursor; i >= summarizeInputStartIndex; i--) {
                     const msg = fullHistory[i];
                     if (msg.role === 'model' && msg.parts.some(p => p.functionCall)) {
                         lastToolInteractionStart = i;
@@ -915,6 +925,13 @@ export class SummarizeService {
                         break;
                     }
                 }
+
+                // 下一轮扫描游标必须落在本次排除段之前（整轮排除时在轮首之前、仅排除
+                // 工具交互时在该交互之前）。此前游标在算出 roundStart 前就设成
+                // lastToolInteractionStart - 1：整轮排除（roundStart < lastToolInteractionStart，
+                // 同轮含多次工具交互）后游标落在已排除段内，二次扫描命中同轮残留
+                // functionCall → cutIndex 不变 → 触发"范围没有缩小"防御 break 提前终止收缩。
+                toolScanCursor = (roundStart >= 0 ? roundStart : lastToolInteractionStart) - 1;
 
                 const cutIndex = (roundStart >= 0 ? roundStart : lastToolInteractionStart) - summarizeInputStartIndex;
                 if (cutIndex <= 0) {
@@ -1044,17 +1061,23 @@ export class SummarizeService {
                 const accumulator = new StreamAccumulator();
                 accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
 
-                for await (const chunk of response) {
-                    if (abortSignal?.aborted) {
-                        return {
-                            success: false,
-                            error: {
-                                code: 'ABORTED',
-                                message: t('modules.api.chat.errors.summarizeAborted')
-                            }
-                        };
+                try {
+                    for await (const chunk of response) {
+                        if (abortSignal?.aborted) {
+                            return {
+                                success: false,
+                                error: {
+                                    code: 'ABORTED',
+                                    message: t('modules.api.chat.errors.summarizeAborted')
+                                }
+                            };
+                        }
+                        accumulator.add(chunk);
                     }
-                    accumulator.add(chunk);
+                } finally {
+                    // 提前退出（abort）时回收流式响应生成器，避免底层流/连接资源悬挂；
+                    // 正常耗尽后调用是幂等 no-op。
+                    await response.return?.(undefined);
                 }
 
                 finalContent = accumulator.getContent();

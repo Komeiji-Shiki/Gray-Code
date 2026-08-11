@@ -7,7 +7,7 @@
 /**
  * Skill 来源
  */
-export type SkillSource = 'project-graycode' | 'project-agents' | 'legacy' | 'user-graycode' | 'user-agents';
+export type SkillSource = 'project-graycode' | 'project-limcode' | 'project-agents' | 'legacy' | 'user-graycode' | 'user-limcode' | 'user-agents';
 
 /**
  * Skill 定义

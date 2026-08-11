@@ -260,12 +260,14 @@ async function executeResizeTask(
 
         await vscode.workspace.fs.writeFile(outputUri, finalBuffer);
 
-        // 构建多模态数据
-        const multimodal: MultimodalData[] = [{
+        // 构建多模态数据（任务级判定：仅当 returnImageToAI=true 时构造 base64，默认关闭以节省 token）
+        const resizeConfig = (context?.config || {}) as ResizeImageConfig;
+        const shouldReturnImageToAI = resizeConfig.returnImageToAI === true;
+        const multimodal: MultimodalData[] = shouldReturnImageToAI ? [{
             mimeType: outputMimeType,
             data: finalBuffer.toString('base64'),
             name: path.basename(output_path)
-        }];
+        }] : [];
 
         return {
             index,
@@ -451,6 +453,21 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
 
             try {
                 // 并发执行所有任务
+                // 修改原因：同一次调用的多个任务并发写同一 output_path 会互相覆盖（后写者胜出）。
+                // 修改方式：进入并发前检测重复输出路径并拒绝。
+                const seenOutputPaths = new Set<string>();
+                const duplicateOutputTask = tasks.find(task => {
+                    if (!task.output_path) return false;
+                    if (seenOutputPaths.has(task.output_path)) return true;
+                    seenOutputPaths.add(task.output_path);
+                    return false;
+                });
+                if (duplicateOutputTask) {
+                    // 与同文件其他早退分支保持一致：先注销任务再返回，避免任务管理器残留永久 running 任务
+                    TaskManager.unregisterTask(toolId, 'error', { error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` });
+                    return { success: false, error: `Duplicate output_path detected: ${duplicateOutputTask.output_path}. Each task must write to a unique output path.` };
+                }
+
                 const results = await Promise.all(
                     tasks.map((task, index) => executeResizeTask(task, index, abortSignal, context))
                 );

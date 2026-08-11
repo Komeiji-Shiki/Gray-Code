@@ -50,6 +50,8 @@ const log = Logger.get('ConversationManager');
 
 /** 会话写锁任务挂起超时（与 usage 队列 60s / 分段历史 60s 对齐；元数据链 30s 更短因小文件） */
 const CONVERSATION_WRITE_LOCK_HANG_TIMEOUT_MS = 60000;
+/** 分支图同步队列任务挂起超时：图同步任务内部会再取会话写锁（顺序获取），阈值与会话写锁对齐 */
+const GRAPH_SYNC_QUEUE_HANG_TIMEOUT_MS = 60000;
 export type {
     MultimodalCapability,
     GetHistoryOptions,
@@ -241,6 +243,41 @@ export class ConversationManager {
     }
 
     /**
+     * 同一会话的分支图同步任务串行队列（BR-07 补充）。
+     *
+     * appendContents 每次追加后启动的「锁外读图 → 锁内 appendHistoryToGraph」异步同步
+     * 若不串行：两次快速连续追加会产生两个并发 IIFE，都读到同一份旧图，后发起的可能
+     * 先拿锁，图活跃路径顺序与主历史相反（rewriteHistoryFromBranchGraph 会用错误顺序
+     * 重建主历史）。与 conversationWriteQueues 同模式：任务链式排队、先到先执行；
+     * 单个任务失败仅告警（主历史为唯一真源），不阻断后续任务。
+     */
+    private readonly graphSyncQueues = new Map<string, Promise<void>>();
+
+    private async withGraphSyncQueue(conversationId: string, task: () => Promise<void>): Promise<void> {
+        const previous = this.graphSyncQueues.get(conversationId) ?? Promise.resolve();
+        const start = previous.catch(() => undefined);
+        // 队列链尾挂在底层任务（underlying）上（tail = underlying.then(...)，见下）：
+        // 挂起超时仅使当前调用方 fail-fast（withHangTimeout 包装的是 current 而非 tail）——
+        // 对真正永不 settle 的底层任务，链不前进、后续任务无限排队（有意取舍，与写锁
+        // R5b-2.1 一致：超时后旧图同步任务仍在读写同一会话的 sidecar，让新任务跳过它
+        // 并发启动会互相覆盖/挂错尾）；对慢而最终完成的健康任务，链正常前进、Map 条目
+        // 正常回收。挂起超时从任务真正启动时开始计时（排队等待时间不计入），仅使当前
+        // 调用方抛错（调用方各自 try/catch 告警）。
+        const underlying = start.then(() => task());
+        const current = start.then(() =>
+            withHangTimeout(underlying, `graphSyncQueue(${conversationId})`, GRAPH_SYNC_QUEUE_HANG_TIMEOUT_MS)
+        );
+        const tail = underlying.then(() => undefined, () => undefined);
+        this.graphSyncQueues.set(conversationId, tail);
+        void tail.then(() => {
+            if (this.graphSyncQueues.get(conversationId) === tail) {
+                this.graphSyncQueues.delete(conversationId);
+            }
+        });
+        await current;
+    }
+
+    /**
      * BR-07：公共会话写锁包装（供 BranchService 等外部模块把分支图读写放进会话写锁）。
      *
      * 锁序（从内到外，持内层锁时严禁获取外层锁，防止死锁）：
@@ -262,6 +299,18 @@ export class ConversationManager {
      */
     private readonly deletedConversationIds = new Set<string>();
     private static readonly MAX_DELETED_IDS = 10000;
+
+    /**
+     * 已确认「无需节点 ID 迁移」的会话集合（内存标记，BR-02 append 热路径优化）。
+     *
+     * ensureHistoryNodeIds 每次调用都全量读盘 + 全量迁移判据扫描；有分支图的会话每条
+     * 消息 append 都会经 appendHistoryToGraph 再触发一次（appendContents 已保证新消息带
+     * 稳定 id，迁移判据必然为否）。标记后跳过全量读盘：
+     * - 写入时机：确认无需迁移 / 迁移成功（含写回校验）时；
+     * - 失效时机：restoreSnapshot（可能写入旧格式无 id 历史）与 deleteConversation；
+     * - 跨进程直写存储的极端场景由标记失效 + 后续完整迁移路径兜底（与 metaCache 同取舍）。
+     */
+    private readonly nodeIdMigratedConversationIds = new Set<string>();
 
     /**
      * 同一会话 ID 的首次创建合并表。
@@ -396,7 +445,9 @@ export class ConversationManager {
                 if (withNodeIds.length > 0) {
                     const branchService = getGlobalBranchService();
                     if (branchService) {
-                        void (async () => {
+                        // 图同步任务进会话级串行队列：两次快速连续 append 的同步不得并发
+                        // （并发会读到同一份旧图、后发起的可能先拿锁，图活跃路径顺序与主历史相反）。
+                        void this.withGraphSyncQueue(conversationId, async () => {
                             try {
                                 // 会话删除竞态：闭包在写锁外执行，删除可滑入「断言 → 入队」的异步窗口。
                                 // 已删除会话直接 return，不再读/写分支图，防止幽灵 sidecar 复活。
@@ -434,7 +485,7 @@ export class ConversationManager {
                                     error: (error as Error)?.message ?? String(error),
                                 });
                             }
-                        })();
+                        });
                     }
                 }
             }
@@ -609,6 +660,25 @@ export class ConversationManager {
     }
 
     /**
+     * 轻量读取首条消息 id（清空/恢复空快照的分支图同步锚点；只读首段，避免全量历史深拷贝）。
+     * 会话不存在/不可读时回退仓储读取（保留按需自动创建语义），仅取首条 id。
+     */
+    private async getFirstMessageId(conversationId: string): Promise<string | null> {
+        const page = await this.storage.loadHistoryPage(conversationId, { offset: 0, limit: 1 });
+        const messages = page.value?.messages;
+        if (messages && messages.length > 0) {
+            const first = messages[0];
+            return typeof first?.id === 'string' && first.id.length > 0 ? first.id : null;
+        }
+        if (!page.value) {
+            const contents = await this.getTranscriptRepository(conversationId).getContents();
+            const first = contents[0];
+            return typeof first?.id === 'string' && first.id.length > 0 ? first.id : null;
+        }
+        return null;
+    }
+
+    /**
      * BR-02：旧历史惰性补 ID（幂等迁移）。
      *
      * 检测到历史存在无 id（或 parentId 未定义）的消息时，在会话写锁内按数组顺序生成
@@ -626,12 +696,25 @@ export class ConversationManager {
      * @returns 是否发生了迁移
      */
     async ensureHistoryNodeIds(conversationId: string): Promise<boolean> {
+        // 已迁移标记命中：直接跳过全量读盘 + 迁移判据扫描（append 热路径——有分支图的
+        // 会话每条消息 append 都会经 appendHistoryToGraph 触发一次本调用）。
+        // 标记由下方「确认无需迁移 / 迁移成功」写入；restoreSnapshot / deleteConversation 失效。
+        if (this.nodeIdMigratedConversationIds.has(conversationId)) {
+            return false;
+        }
         return await this.withConversationWriteLock(conversationId, async () => {
             const result = await this.storage.loadHistoryWithStatus(conversationId);
             const history = result.value;
-            if (!history || history.length === 0) return false;
+            if (!history || history.length === 0) {
+                // 空历史/不存在：无需迁移（后续写入均带稳定 id），标记后跳过后续全量读
+                this.nodeIdMigratedConversationIds.add(conversationId);
+                return false;
+            }
 
-            if (!needsNodeIdMigration(history)) return false;
+            if (!needsNodeIdMigration(history)) {
+                this.nodeIdMigratedConversationIds.add(conversationId);
+                return false;
+            }
 
             const beforeTotal = history.length;
             const beforeFingerprint = computeHistoryFingerprint(history);
@@ -654,6 +737,8 @@ export class ConversationManager {
                     `total ${beforeTotal}→${afterTotal}, fingerprint ${beforeFingerprint}→${afterFingerprint}`
                 );
             }
+            // 迁移成功（含写回校验通过）：标记已迁移，后续 append 不再全量读盘
+            this.nodeIdMigratedConversationIds.add(conversationId);
             return true;
         });
     }
@@ -795,7 +880,8 @@ export class ConversationManager {
         // 「已存在」按原语义报错（幂等保护）；先到者失败未落盘时后到者继续正常创建。
         const inFlight = this.branchCreations.get(targetConversationId);
         if (inFlight) {
-            await inFlight;
+            // 先到者失败（未落盘）时忽略其错误，后到者按「不存在」语义继续正常创建
+            await inFlight.catch(() => undefined);
             const recheck = await this.storage.loadHistoryWithStatus(targetConversationId);
             if (recheck.value) {
                 throw new Error(t('modules.conversation.errors.conversationExists', { conversationId: targetConversationId }));
@@ -956,6 +1042,8 @@ export class ConversationManager {
                 // 删除成功后统一失效元数据缓存：已删除会话的快照（含负缓存）不得泄漏给下一次读；
                 // 节点 ID 反查缓存一并清除（BCP-01：防 ID 复用后反查命中旧会话节点）
                 this.invalidateCaches(conversationId);
+                // 「已迁移」标记一并失效（会话 ID 可能被复用重建）
+                this.nodeIdMigratedConversationIds.delete(conversationId);
             });
             // 删除成功后统一失效内存缓存：已删除会话的历史/元数据快照不得再泄漏给下一次读取
             this.invalidateCaches(conversationId);
@@ -1105,7 +1193,8 @@ export class ConversationManager {
         conversationId: string,
         role: 'user' | 'model' | 'system',
         parts: ContentPart[],
-        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source' | 'turnDynamicContext' | 'turnDynamicContextStrategy'>>,        messageId?: string,
+        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source' | 'turnDynamicContext' | 'turnDynamicContextStrategy'>>,
+        messageId?: string,
     ): Promise<void> {
         // MED-3 / H1-2：新的真实 user 消息 = 新回合开始。清空主会话信箱未消费消息，
         // 防止上一回合滞留的 agent→main / 用户打断消息跨轮过期投递。
@@ -1311,7 +1400,12 @@ export class ConversationManager {
             if (messageIndex < 0 || messageIndex >= history.length) {
                 throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
             }
-            Object.assign(history[messageIndex], updates);
+            const patch = { ...updates };
+            if (patch.parts !== undefined) {
+                // parts 深拷贝：patch 可能被调用方复用/继续修改，避免与落盘历史共享嵌套引用
+                patch.parts = JSON.parse(JSON.stringify(patch.parts));
+            }
+            Object.assign(history[messageIndex], patch);
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         if (shouldInvalidateContextManagementStateForUpdate(updates)) {
@@ -1352,7 +1446,9 @@ export class ConversationManager {
                     }
                 }
                 if (patchChangesTarget) {
-                    Object.assign(target, patch);
+                    Object.assign(target, patch.parts !== undefined
+                        ? { ...patch, parts: JSON.parse(JSON.stringify(patch.parts)) }
+                        : patch);
                     changed = true;
                 }
             }
@@ -1405,27 +1501,33 @@ export class ConversationManager {
         // 硬删除的旧尾上）；这与 appendContents 的 fire-and-forget（彼处仍处于写锁内不可重入）
         // 场景不同。图同步失败仅告警（主历史为唯一真源，图侧由下次读图/写图自校验兜底），
         // 不阻断删除；无全局 BranchService（未注册/测试环境）时静默跳过。
+        // 图同步进会话级串行队列（graphSyncQueues，与 appendContents 同一队列）：删除前已入队的
+        // append 图同步必须先完成，再执行本次软删/重链——不经队列直接同步时，先入队的 append
+        // 任务会在删除同步完成后把已删消息挂回图（幻影节点，切分支时"复活"）。队列内按入队顺序
+        // 串行执行，图活跃路径与主历史严格一致。
         if (deletedMessageId) {
             const branchService = getGlobalBranchService();
             if (branchService) {
                 try {
-                    if (deletedWasSummary) {
-                        // 删除总结会同时恢复其覆盖原文的 isSummarized 标记，不是普通子树删除；
-                        // 必须按当前主历史重建活跃路径与消息元数据，不能把总结后的全部后继软删。
-                        await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
-                    } else if (deletedWasTailDelete) {
-                        // 尾部删除：锚点及其后续整棵子树整体软删，活跃尾回退到锚点父节点
-                        // （TREE-09；主历史在锚点后已无幸存消息，与软删范围一致）。
-                        await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
-                    } else {
-                        // 中间消息删除：主历史保留锚点后的幸存消息，整棵子树软删会把仍在主历史中的
-                        // 后继消息在图中标记 deleted 且活跃尾错误回退——后续 append 挂到旧父节点、
-                        // 切分支时消息"复活"。与 deletedWasSummary 分支一致，按当前主历史 rebase
-                        // 保留后继（被删节点退化为非活跃候选，不软删）。头部删除（index 0 且非尾删）
-                        // 导致主历史根前移时，rebase 以 allowRootChange 走根变更重链（新根挂图、
-                        // 旧根专属子树清理，BranchService 内告警），避免图根永久陈旧（round4 复查 P1）。
-                        await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
-                    }
+                    await this.withGraphSyncQueue(conversationId, async () => {
+                        if (deletedWasSummary) {
+                            // 删除总结会同时恢复其覆盖原文的 isSummarized 标记，不是普通子树删除；
+                            // 必须按当前主历史重建活跃路径与消息元数据，不能把总结后的全部后继软删。
+                            await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
+                        } else if (deletedWasTailDelete) {
+                            // 尾部删除：锚点及其后续整棵子树整体软删，活跃尾回退到锚点父节点
+                            // （TREE-09；主历史在锚点后已无幸存消息，与软删范围一致）。
+                            await branchService.syncGraphAfterHistoryDelete(conversationId, deletedMessageId);
+                        } else {
+                            // 中间消息删除：主历史保留锚点后的幸存消息，整棵子树软删会把仍在主历史中的
+                            // 后继消息在图中标记 deleted 且活跃尾错误回退——后续 append 挂到旧父节点、
+                            // 切分支时消息"复活"。与 deletedWasSummary 分支一致，按当前主历史 rebase
+                            // 保留后继（被删节点退化为非活跃候选，不软删）。头部删除（index 0 且非尾删）
+                            // 导致主历史根前移时，rebase 以 allowRootChange 走根变更重链（新根挂图、
+                            // 旧根专属子树清理，BranchService 内告警），避免图根永久陈旧（round4 复查 P1）。
+                            await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'message_deleted_middle');
+                        }
+                    });
                 } catch (error) {
                     log.warn('branch_delete_sync_failed', {
                         conversationId,
@@ -1590,10 +1692,19 @@ export class ConversationManager {
         // 删除可能让 targetIndex 越界（truncateFrom 抛原始 Error）或指向错误消息，锁内重校验
         // 保证边界判定与截断基于同一份数据。
         let deleteCount = 0;
+        // 决策 6：锁内捕获分支图同步锚点（与 deleteMessage 同模式）——删除区间首条消息 id、
+        // 最后保留消息 id、删除区间是否含总结消息；与 truncateFrom 基于同一份锁内快照计算，
+        // 避免锁外读取与 mutateContents 之间并发追加/删除导致锚点漂移。
+        let deletedFromMessageId: string | null = null;
+        let lastKeptMessageId: string | null = null;
+        let deletedWasSummary = false;
         const nextHistory = await repository.mutateContents(currentHistory => {
             if (targetIndex < 0 || targetIndex >= currentHistory.length) {
                 throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
             }
+            deletedFromMessageId = currentHistory[targetIndex]?.id ?? null;
+            lastKeptMessageId = targetIndex > 0 ? (currentHistory[targetIndex - 1]?.id ?? null) : null;
+            deletedWasSummary = currentHistory.slice(targetIndex).some(message => message.isSummary === true);
             const next = truncateFrom(currentHistory, targetIndex);
             deleteCount = currentHistory.length - next.length;
             return next;
@@ -1602,8 +1713,45 @@ export class ConversationManager {
             // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
             await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
             await this.invalidateContextManagementState(conversationId, 'history_truncated');
+
+            // 决策 6：删除成功后同步软删分支图「该点之后」的整棵子树（TREE-09 软删语义：
+            // 节点标记 deleted + deletedAt，不物理移除 sidecar；活跃尾同步回退到保留锚点）。
+            // 截断区间内含总结消息：原文的 isSummarized 标记已恢复，必须按当前主历史重建
+            // 活跃路径与消息元数据（summary_deleted），否则切分支后已恢复的原文会被图中
+            // 陈旧的 isSummarized 元数据重新压缩；否则走常规「软删被删节点及其后续子树」。
+            // 锁取舍：deleteToMessage 的仓储互斥（会话写锁）已随 mutateContents 返回释放，
+            // 此处再取会话写锁是顺序获取（非嵌套），故同步 await 而非 fire-and-forget——删除
+            // 响应返回前保证分支图一致（避免响应后立即续写新消息时 appendHistoryToGraph 挂在
+            // 已被硬删除的旧尾上）。失败仅告警不阻断：主历史为唯一真源，硬删除已提交，图侧由
+            // 下次读图/写图自校验兜底。
+            // 图同步进会话级串行队列（graphSyncQueues，与 appendContents/deleteMessage 同一队列）：
+            // 删除前已入队的 append 图同步必须先完成，再执行本次软删——不经队列直接同步时，
+            // 先入队的 append 任务会在删除同步完成后把已删消息挂回图（幻影节点，切分支时"复活"）。
+            // 队列内按入队顺序串行，图活跃路径与主历史严格一致。
+            if (deletedFromMessageId) {
+                const branchService = getGlobalBranchService();
+                if (branchService) {
+                    try {
+                        await this.withGraphSyncQueue(conversationId, async () => {
+                            if (deletedWasSummary) {
+                                await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
+                            } else {
+                                await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
+                                    lastKeptMessageId,
+                                });
+                            }
+                        });
+                    } catch (error) {
+                        log.warn('branch_delete_to_message_sync_failed', {
+                            conversationId,
+                            targetIndex,
+                            error: (error as Error)?.message ?? String(error),
+                        });
+                    }
+                }
+            }
         }
-        
+
         return deleteCount;
     }
 
@@ -1616,9 +1764,8 @@ export class ConversationManager {
         // 修改目的：主聊天 clear 与 SubAgent replace 拥有同一仓储操作语义。
         const repository = this.getTranscriptRepository(conversationId);
         // 决策 6：清空前捕获首条消息 id 作为分支图同步锚点（forceResetToEmpty 时仅作语义传参，
-        // 不依赖锚点是否图根/是否存在）。
-        const historyBeforeClear = await repository.getContents();
-        const firstMessageId = historyBeforeClear[0]?.id ?? null;
+        // 不依赖锚点是否图根/是否存在）。轻量读取（只读首段），避免 getContents 的全量深拷贝。
+        const firstMessageId = await this.getFirstMessageId(conversationId);
         const nextHistory = await repository.replaceContents([]);
         // HIS-11：结构性清空后同步 custom.messageCount（防对话列表 messageCount 漂移）
         await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
@@ -1626,10 +1773,16 @@ export class ConversationManager {
         // 图同步：主历史已整体清空，无条件重置分支图为空（forceResetToEmpty，round4 复查 P1）——
         // 锚点非图根（图根陈旧）时仅软删子树会残留旧根/旧活跃尾，清空后 append 挂旧尾；
         // 无分支图时幂等 no-op；失败仅告警不阻断——主历史为唯一真源，图侧由下次读图/写图自校验兜底。
+        // 图同步进会话级串行队列（graphSyncQueues，与 appendContents 同一队列）：清空前已入队的
+        // append 图同步必须先完成，再执行本次重置——不经队列直接同步时，先入队的 append 任务会在
+        // 重置完成后把已清空的消息挂回空图（幻影节点，切分支时"复活"）。队列内按入队顺序串行，
+        // 图活跃路径与主历史严格一致。
         const branchService = getGlobalBranchService();
         if (branchService) {
             try {
-                await branchService.syncGraphAfterHistoryDelete(conversationId, firstMessageId, { forceResetToEmpty: true });
+                await this.withGraphSyncQueue(conversationId, async () => {
+                    await branchService.syncGraphAfterHistoryDelete(conversationId, firstMessageId, { forceResetToEmpty: true });
+                });
             } catch (error) {
                 log.warn('branch_clear_history_sync_failed', {
                     conversationId,
@@ -1700,11 +1853,13 @@ export class ConversationManager {
         }
         
         const repository = this.getTranscriptRepository(conversationId);
-        // 恢复为空历史时等价 clearHistory，需要首条旧消息 id 作为分支图重置锚点。
-        const historyBeforeRestore = snapshot.history.length === 0
-            ? await repository.getContents()
-            : [];
-        const firstMessageId = historyBeforeRestore[0]?.id ?? null;
+        // 恢复为空历史时等价 clearHistory，需要首条旧消息 id 作为分支图重置锚点；
+        // 轻量读取（只读首段），避免 getContents 的全量深拷贝。
+        // 快照内容可能来自旧格式（无稳定 id）：先失效「已迁移」标记，写回后由惰性迁移兜底。
+        this.nodeIdMigratedConversationIds.delete(conversationId);
+        const firstMessageId = snapshot.history.length === 0
+            ? await this.getFirstMessageId(conversationId)
+            : null;
 
         await repository.replaceContents(snapshot.history);
         // HIS-11：整体重写后同步 custom.messageCount（防对话列表 messageCount 漂移）
@@ -1717,16 +1872,21 @@ export class ConversationManager {
         // - 其余：按恢复后的主历史重建活跃路径（对齐 delete 路径 deletedWasSummary 分支的
         //   rebase 保留逻辑——旧候选保留为归档，活跃路径以主历史为准）。
         // 无分支图 / 无锚点幂等 no-op；失败仅告警不阻断（主历史为唯一真源）。
+        // 图同步进会话级串行队列（graphSyncQueues，与 appendContents 同一队列）：恢复前已入队的
+        // append 图同步必须先完成，再执行本次重建/重置——不经队列直接同步时，先入队的 append
+        // 任务会把已恢复（清空/替换）的消息挂回图（幻影节点，切分支时"复活"）。
         const branchService = getGlobalBranchService();
         if (branchService) {
             try {
-                if (snapshot.history.length === 0) {
-                    // 恢复为空历史 = 等价清空：无条件重置空图（forceResetToEmpty 不依赖锚点
-                    // 是否图根/是否存在——历史早空但图残留旧根的陈旧场景同样重置）
-                    await branchService.syncGraphAfterHistoryDelete(conversationId, firstMessageId, { forceResetToEmpty: true });
-                } else {
-                    await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_restored');
-                }
+                await this.withGraphSyncQueue(conversationId, async () => {
+                    if (snapshot.history.length === 0) {
+                        // 恢复为空历史 = 等价清空：无条件重置空图（forceResetToEmpty 不依赖锚点
+                        // 是否图根/是否存在——历史早空但图残留旧根的陈旧场景同样重置）
+                        await branchService.syncGraphAfterHistoryDelete(conversationId, firstMessageId, { forceResetToEmpty: true });
+                    } else {
+                        await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_restored');
+                    }
+                });
             } catch (error) {
                 log.warn('branch_snapshot_restore_sync_failed', {
                     conversationId,

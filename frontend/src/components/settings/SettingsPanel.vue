@@ -901,6 +901,8 @@ function openSearchResult(entry: SearchIndexEntry) {
     const scrollContainer = scrollbarRef.value?.getContainer()
     // 等 v-if 渲染的节内容布局完成再滚动，避免滚动位置偏移
     requestAnimationFrame(() => {
+      // 卸载守卫：rAF 回调可能在组件卸载后才执行，此时直接跳过（不再触碰 DOM / 新建定时器）
+      if (isUnmounted) return
       if (scrollContainer) {
         // L-1：直接按目标元素相对滚动容器的偏移计算目标位置（含 12px 顶部间距），
         // 避免「scrollIntoView smooth 未推进时同步读 rect」的时序冲突，也不打断动画
@@ -1060,7 +1062,7 @@ async function pickStoragePath() {
       storageSettings.customPath = response.path
     }
   } catch (error: any) {
-    storageMessage.value = error?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', 'SELECT_FOLDER')
+    storageMessage.value = error?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', '')
     storageMessageType.value = 'error'
   }
 }
@@ -1289,10 +1291,18 @@ const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string
 
 // 保存自动检查开关
 async function saveCheckUpdates(value: boolean) {
+  const previous = checkUpdatesEnabled.value
   checkUpdatesEnabled.value = value
   try {
-    await sendToExtension(MESSAGE_NAMES.updateSettings, { settings: { checkForUpdates: value } })
+    const response = await sendToExtension<any>(MESSAGE_NAMES.updateSettings, { settings: { checkForUpdates: value } })
+    // SettingsHandler.updateSettings 失败时 resolve { success: false }（不抛错），
+    // 必须显式检查并回滚 UI 状态，否则界面显示已切换而实际未保存（对比 saveUpdateChannel）
+    if (response?.success === false) {
+      checkUpdatesEnabled.value = previous
+      console.error('Failed to save update check setting:', response?.error?.message || response?.error)
+    }
   } catch (error) {
+    checkUpdatesEnabled.value = previous
     console.error('Failed to save update check setting:', error)
   }
 }
@@ -1371,14 +1381,24 @@ async function updateNow() {
 
 // 更新语言设置
 async function updateLanguage(lang: string) {
+  const previous = languageSetting.value
   languageSetting.value = lang
   setLanguage(lang as any)
-  
+
   try {
-    await sendToExtension(MESSAGE_NAMES.updateUISettings, {
+    const response = await sendToExtension<any>(MESSAGE_NAMES.updateUISettings, {
       ui: { language: lang }
     })
+    // 失败时 resolve { success: false }（不抛错）：回滚语言选择与运行时语言，
+    // 否则界面显示已切换而实际未保存
+    if (response?.success === false) {
+      languageSetting.value = previous
+      setLanguage(previous as any)
+      console.error('Failed to save language setting:', response?.error?.message || response?.error)
+    }
   } catch (error) {
+    languageSetting.value = previous
+    setLanguage(previous as any)
     console.error('Failed to save language setting:', error)
   }
 }
@@ -1470,6 +1490,8 @@ const usageStats = ref<UsageStatsResult | null>(null)
 const usageRange = ref<UsageTimeRange>('all')
 const usageLoading = ref(false)
 const usageLoadError = ref('')
+// 用量统计请求序号：慢响应到达时若已被更新的请求取代，直接丢弃（仿 validateStoragePath 的 pathValidationRequestId）
+let usageStatsRequestId = 0
 
 /** 快捷范围 → 起始时间（本地 00:00 对齐；'all' 不限制） */
 function usageRangeToStartTime(range: UsageTimeRange): number | undefined {
@@ -1482,16 +1504,25 @@ function usageRangeToStartTime(range: UsageTimeRange): number | undefined {
 }
 
 async function loadUsageStats() {
+  const requestId = ++usageStatsRequestId
   usageLoading.value = true
   usageLoadError.value = ''
   try {
     const startTime = usageRangeToStartTime(usageRange.value)
     const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
-    usageStats.value = await sendToExtension<UsageStatsResult>(MESSAGE_NAMES['usage.getStats'], query)
+    const result = await sendToExtension<UsageStatsResult>(MESSAGE_NAMES['usage.getStats'], query)
+    // 仅采纳最新一次请求的响应：慢响应不得覆盖新范围/新页签触发的加载结果
+    if (requestId === usageStatsRequestId) {
+      usageStats.value = result
+    }
   } catch (error) {
-    usageLoadError.value = error instanceof Error ? error.message : String(error)
+    if (requestId === usageStatsRequestId) {
+      usageLoadError.value = error instanceof Error ? error.message : String(error)
+    }
   } finally {
-    usageLoading.value = false
+    if (requestId === usageStatsRequestId) {
+      usageLoading.value = false
+    }
   }
 }
 

@@ -44,8 +44,11 @@ function getCachedToolNameSnapshot(): { builtin: string[]; mcp: string[] } {
     const toolRegistry = getGlobalToolRegistry();
     const mcpManager = getGlobalMcpManager();
 
-    // 键：toolRegistry 工具数 + MCP 服务器/工具计数（计数均为 O(1)/O(服务器数) 可算）
+    // 键：toolRegistry 工具数 + 注册/注销版本号 + MCP 服务器/工具计数（计数均为 O(1)/O(服务器数) 可算）
+    // 修改原因：旧键只有工具数，同数量注册/注销（如注销后以同数量重新注册）时快照滞后；
+    //          纳入 getRevision() 后注册/注销即自然失效（见 ToolRegistry.revision）。
     const builtinCount = toolRegistry?.count?.() ?? -1;
+    const builtinRevision = toolRegistry?.getRevision?.() ?? -1;
     let mcpKeyPart = '-';
     if (mcpManager) {
         const mcpTools = mcpManager.getAllTools();
@@ -53,7 +56,7 @@ function getCachedToolNameSnapshot(): { builtin: string[]; mcp: string[] } {
             .map(serverTools => `${serverTools.serverId}:${serverTools.tools?.length ?? 0}`)
             .join('|') || '-';
     }
-    const key = `${builtinCount}|${mcpKeyPart}`;
+    const key = `${builtinCount}|${builtinRevision}|${mcpKeyPart}`;
     if (toolNameSnapshotCache && toolNameSnapshotCache.key === key) {
         return toolNameSnapshotCache;
     }

@@ -220,6 +220,8 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
     // 绑定的工作区存档，再执行切换——恢复失败**不切分支**（「不静默切换」硬约束）。
     const workspaceMode = mode === 'chat-and-workspace';
     let workspaceRestored = false;
+    /** R2-07：本次切换是否实际执行了工作区恢复（区别于「恢复被省略」的零文件变更路径） */
+    let workspaceActuallyRestored = false;
     let restoredSummary: { restored: number; deleted: number; skipped: number } | undefined;
 
     if (workspaceMode) {
@@ -291,6 +293,7 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
             `工作区恢复失败：${restored.error ?? 'unknown error'}`);
         }
         workspaceRestored = true;
+        workspaceActuallyRestored = true;
         restoredSummary = {
           restored: restored.restored,
           deleted: restored.deleted ?? 0,
@@ -321,8 +324,20 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
 
     // 6. 真正切图前再次检查。恢复（await 期间可能启动新流）到切图之间仍有 TOCTOU 窗口，
     //    二次校验封闭该窗口，避免迟到 chunk 写入切换后的历史。
-    if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    //    R2-07：恢复已实际执行（工作区文件已被改写）时不再拦截——命中 BRANCH_BUSY 会让
+    //    文件已恢复但分支/历史未切换，且错误信息不提示「文件已部分恢复」；
+    //    仅当恢复被省略（零文件变更）或纯聊天模式时才二次检查。
+    if (!workspaceActuallyRestored && rejectIfStreaming(ctx, conversationId, requestId)) {
       return;
+    }
+    // R2-08：恢复已实际执行时不再拦截，但若此刻确有新流在跑（恢复窗口内启动），留痕告警——
+    // 该流未被取消，其迟到 chunk 可能写入切换后的分支历史；错误信息不提示「文件已部分恢复」。
+    if (workspaceActuallyRestored && isConversationStreaming(ctx, conversationId)) {
+      console.warn(
+        '[BranchHandlers] switchBranchCandidate: workspace restored while a stream is still active for conversation',
+        conversationId,
+        '— proceeding with branch switch; late stream chunks may land in the switched branch history'
+      );
     }
 
     // 图状态切换（BranchService，会话写锁内）——恢复（工作区锁）已完成，锁不嵌套
@@ -336,7 +351,9 @@ export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx
       // 失败回滚图状态（尽力而为）：切回切换前的活跃尾，保持图/历史一致
       if (previousActiveTail) {
         try {
-          await service.switchBranchCandidate(conversationId, previousActiveTail);
+          // 回滚式切换不记录「切图→重写」预期状态（recordRewriteExpectation:false）：
+          // 该切换没有对应的主历史重写会消费它，残留预期会被下一次重写误校验而误拒切换。
+          await service.switchBranchCandidate(conversationId, previousActiveTail, { recordRewriteExpectation: false });
         } catch (rollbackError) {
           console.warn('[BranchHandlers] Failed to roll back branch graph after history rewrite failure:', rollbackError);
         }

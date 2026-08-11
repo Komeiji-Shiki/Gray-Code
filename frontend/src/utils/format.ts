@@ -28,6 +28,11 @@ export function formatTime(timestamp: number, format = 'YYYY-MM-DD HH:mm:ss'): s
     .replace(/ss/g, seconds)
 }
 // 截断文本
+export function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text
+  return text.substring(0, maxLength) + '...'
+}
+
 // 转义正则表达式特殊字符
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -78,6 +83,30 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 
   return false
+}
+
+type DebouncedFunction<T extends (...args: any[]) => any> = ((...args: Parameters<T>) => void) & { cancel: () => void }
+
+// 防抖函数
+export function debounce<T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number
+): DebouncedFunction<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+  const debounced = function (...args: Parameters<T>) {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => {
+      timeoutId = undefined
+      fn(...args)
+    }, delay)
+  } as DebouncedFunction<T>
+
+  debounced.cancel = () => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    timeoutId = undefined
+  }
+  return debounced
 }
 
 // 生成唯一ID

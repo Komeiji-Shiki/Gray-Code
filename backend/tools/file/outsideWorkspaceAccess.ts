@@ -119,18 +119,8 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
         return [];
     }
 
-    // delete_file/create_directory：paths 字符串数组
-    if (toolName === 'delete_file' || toolName === 'create_directory') {
-        const fromArray = extractNonEmptyStrings((args as any).paths);
-        if (fromArray.length > 0) {
-            return fromArray;
-        }
-        const single = (args as any).path;
-        return typeof single === 'string' && single.trim().length > 0 ? [single] : [];
-    }
-
-    // list_files：paths 字符串数组（兼容单个 path）
-    if (toolName === 'list_files') {
+    // delete_file/create_directory/list_files：paths 字符串数组（list_files 另兼容单 path）
+    if (toolName === 'delete_file' || toolName === 'create_directory' || toolName === 'list_files') {
         const fromArray = extractNonEmptyStrings((args as any).paths);
         if (fromArray.length > 0) {
             return fromArray;

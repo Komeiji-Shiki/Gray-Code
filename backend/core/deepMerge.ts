@@ -33,6 +33,17 @@ export function isSafeMergeKey(key: string): boolean {
  * @returns 合并后的对象
  */
 export function deepMerge(target: any, source: any): any {
+    return deepMergeInternal(target, source, new WeakSet());
+}
+
+/**
+ * 深度合并内部实现：带循环引用检测（访问路径 WeakSet）。
+ *
+ * source/target 直接或间接自引用（如 merged.self = merged）时，无保护的递归会
+ * 无限下钻直至栈溢出。路径检测只标记「当前递归链上」的对象，回溯时移除——
+ * 兄弟分支共享同一对象（DAG）不会被误判为循环，行为与旧实现一致。
+ */
+function deepMergeInternal(target: any, source: any, seen: WeakSet<object>): any {
     if (source === null || source === undefined) {
         return target;
     }
@@ -48,6 +59,14 @@ export function deepMerge(target: any, source: any): any {
     if (Array.isArray(target) || typeof target !== 'object' || target === null) {
         target = {};
     }
+
+    // 循环引用：source 或 target 已在本轮递归路径上，返回当前 target 引用停止合并，
+    // 保留既有结构，避免无限递归栈溢出。
+    if (seen.has(source) || seen.has(target)) {
+        return target;
+    }
+    seen.add(source);
+    seen.add(target);
     
     const result = { ...target };
     
@@ -57,8 +76,12 @@ export function deepMerge(target: any, source: any): any {
             continue;
         }
         // 递归合并所有子节点
-        result[key] = deepMerge(result[key], source[key]);
+        result[key] = deepMergeInternal(result[key], source[key], seen);
     }
+
+    // 回溯：兄弟分支共享同一对象（DAG）不被误判为循环
+    seen.delete(source);
+    seen.delete(target);
     
     return result;
 }

@@ -26,6 +26,7 @@ import type { SoundAgentRole } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
+import { preloadChannelConfigs } from './services/channelConfigCache'
 
 // 大面板懒加载：历史/用量/设置/Monitor/Diff/代码查看/更新弹窗都改为异步组件，
 // 保留既有 visitedViews + v-show 惰性挂载逻辑不变，仅把代码拆到独立 chunk、首次使用时才解析执行。
@@ -81,6 +82,13 @@ const splashActive = computed(() =>
 )
 // 主界面启动数据是否已完成初始化；关闭开屏动画时据此结束专属占位画面。
 const mainViewInitialized = ref(false)
+// 初始化兜底超时：chatStore.initialize 的 IPC 链异常卡死（如后端未就绪、180s 超时窗口）时，
+// 挂起的 newChat 必须强制补执行，否则用户点击「新建对话」无任何反馈（见 onMounted 末尾 flush 逻辑）
+const NEW_CHAT_FLUSH_TIMEOUT_MS = 60000
+// Splash/初始化期间到达的 newChat 命令：initialize 的首次状态重置（清空会话/建空白标签页）
+// 会覆盖先执行的 createNewConversation 结果，先挂起、初始化完成后补执行（见 onMounted finally）。
+// 用计数器而非布尔：初始化期间可能连续到达多个 newChat 命令（扩展侧多次触发），逐个补执行不丢失
+let pendingNewChat = 0
 // 开始动画是否已完成（Splash 淡出后置 true，移除组件）
 const splashDone = ref(false)
 
@@ -407,7 +415,29 @@ async function handleAttachFile() {
   input.type = 'file'
   input.multiple = true
   input.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt'
-  
+
+  // 动态 input 清理：onchange 正常路径在 finally 中执行；用户取消（Esc/取消按钮）时
+  // onchange 不会触发，依赖 'cancel' 事件与失焦定时兜底，避免 input 元素残留在 DOM。
+  // 注意：Chromium 中文件选择框打开瞬间输入框即失焦（blur 早于 change），0ms 定时清理
+  // 会在用户选择完成前执行——因此清理绝不能置空 input.onchange，否则 change 派发到
+  // 无 handler 的游离 input，所选文件被静默丢弃。这里用 cleaned 标志防重复处理；
+  // change 事件在已移除的 input 上仍会正常派发，handler 照常读取 e.target.files。
+  let cleanupTimer: ReturnType<typeof setTimeout> | null = null
+  let cleaned = false
+  const cleanupInput = () => {
+    if (cleaned) return
+    cleaned = true
+    if (cleanupTimer) {
+      clearTimeout(cleanupTimer)
+      cleanupTimer = null
+    }
+    input.remove()
+    // 保留 input.onchange：change 可能晚于失焦清理派发（用户仍在选择文件），
+    // 游离 input 上 change 事件仍会触发本 handler 取回文件；处理完由 handler 自清理。
+    input.oncancel = null
+    input.onblur = null
+  }
+
   input.onchange = async (e) => {
     try {
       const files = Array.from((e.target as HTMLInputElement).files || [])
@@ -419,14 +449,30 @@ async function handleAttachFile() {
         }
       }
     } finally {
-      input.remove()
-      // 清空闭包引用，避免动态 input 与 FileList 被长期保留
-      input.onchange = null
+      cleanupInput()
     }
   }
 
+  // 取消兜底：Chromium/Firefox 在用户取消文件选择时触发 'cancel'（onchange 不触发）
+  input.oncancel = cleanupInput
+  // 失焦兜底：部分环境不派发 'cancel'，对话框关闭后 input 失焦即清理；
+  // 延迟 0ms 确保同一任务内先执行 onchange（选择文件的路径不会漏处理）。
+  // Chromium 中 blur 在选择框打开瞬间即触发，此路径只移除 DOM 与 cancel/blur handler，
+  // 保留 onchange 供用户选择完成后取文件（见 cleanupInput 注释）。
+  input.onblur = () => {
+    if (cleaned) return
+    if (cleanupTimer) clearTimeout(cleanupTimer)
+    cleanupTimer = setTimeout(cleanupInput, 0)
+  }
+
   document.body.appendChild(input)
-  input.click()
+  try {
+    input.click()
+  } catch (err) {
+    // 非用户手势上下文调用 click() 可能被浏览器拒绝：清理并提示，避免 input 泄漏
+    console.error('打开文件选择器失败:', err)
+    cleanupInput()
+  }
 }
 
 // 处理移除附件
@@ -694,28 +740,32 @@ onMounted(async () => {
   disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
   disposeVisibilityHooks = registerVisibilityChangeHooks()
   
-  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
-  // 与语言/设置加载无数据依赖（各写独立 store），并行启动缩短开屏/占位时长：
-  // initialize 内部的 streamChunk/workspace 监听在调用瞬间同步注册，IPC 应答经
-  // sendToExtension 的 per-request 处理器送达，不受下方命令监听器注册顺序影响。
-  const chatInit = chatStore.initialize().catch((err) => {
-    console.error('[App] chatStore.initialize failed', err)
-  })
-
-  // 先加载语言设置，确保 UI 语言正确
-  await loadLanguageSettings()
-
-  agentStopNotificationController = createAgentStopNotificationController({
-    chatStore,
-    sendToExtension
-  })
-  
-  // 立即注册命令监听器，确保在初始化期间也能响应用户操作
+  // 立即注册命令监听器，确保在初始化期间也能响应用户操作。
+  // 注册必须早于 loadLanguageSettings() 的 await：语言设置加载的 IPC 往返窗口内，
+  // 扩展下发的 command / taskEvent / streamChunk / retryStatus 消息不会因监听器未注册而丢失。
   disposeMessageListener = onMessageFromExtension((message: any) => {
     if (message.type === 'command') {
       switch (message.command) {
         case 'newChat':
-          handleNewChat()
+          if (!mainViewInitialized.value) {
+            // 初始化完成前挂起：chatStore.initialize 的首次状态重置（清空会话/建空白标签页）
+            // 会覆盖先执行的 createNewConversation，待 onMounted finally 初始化完成后补执行。
+            // 计数器累加：初始化期间的多个 newChat 命令全部补执行，不合并丢失
+            pendingNewChat++
+            // 兜底：initialize 异常卡死（后端 IPC 超时/未就绪）时不允许挂起无限期吞掉新建命令，
+            // 超时后强制视为已初始化并立即补执行（首次状态重置可能未完成，handleNewChat 幂等）
+            setTimeout(() => {
+              if (pendingNewChat > 0 && !mainViewInitialized.value) {
+                mainViewInitialized.value = true
+                while (pendingNewChat > 0) {
+                  pendingNewChat--
+                  handleNewChat()
+                }
+              }
+            }, NEW_CHAT_FLUSH_TIMEOUT_MS)
+          } else {
+            handleNewChat()
+          }
           break
         case 'showHistory':
           handleShowHistory()
@@ -799,9 +849,34 @@ onMounted(async () => {
     }
   })
   
+  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
+  // 与语言/设置加载无数据依赖（各写独立 store），并行启动缩短开屏/占位时长：
+  // initialize 内部的 streamChunk/workspace 监听在调用瞬间同步注册，IPC 应答经
+  // sendToExtension 的 per-request 处理器送达，不受下方命令监听器注册顺序影响。
+  const chatInit = chatStore.initialize().catch((err) => {
+    console.error('[App] chatStore.initialize failed', err)
+  })
+
+  // 先加载语言设置，确保 UI 语言正确（监听器已注册，初始化期间的命令/事件不会丢失）
+  await loadLanguageSettings()
+
+  agentStopNotificationController = createAgentStopNotificationController({
+    chatStore,
+    sendToExtension
+  })
+  
   // 并行初始化完成（含失败兜底）后结束关闭态占位
   await chatInit
   mainViewInitialized.value = true
+  // 初始化完成后再预加载渠道配置列表：BackendHost 未就绪窗口内的预加载请求会与 initialize
+  // 的会话加载在扩展侧串行消息队列中互相排队（每次启动产生注定超时的请求），延后执行消除竞争
+  void preloadChannelConfigs()
+  // 补执行初始化期间挂起的 newChat 命令（首次状态重置已完成，不会再被覆盖）；
+  // 挂起计数可能 >1（初始化期间多个 newChat 命令），循环逐个补执行
+  while (pendingNewChat > 0) {
+    pendingNewChat--
+    handleNewChat()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -1292,4 +1367,11 @@ onBeforeUnmount(() => {
   border-color: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff) 50%, transparent);
 }
 
+/* prefers-reduced-motion：系统级减少动态效果时禁用旋转/淡入动画 */
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .chat-view {
+    animation: none;
+  }
+}
 </style>

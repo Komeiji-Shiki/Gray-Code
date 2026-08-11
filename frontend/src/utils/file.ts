@@ -9,6 +9,7 @@ import {
   SUPPORTED_DOCUMENT_TYPES
 } from '../types'
 import { generateId } from './format'
+import { t } from '@/i18n'
 
 /**
  * 根据文件扩展名推断 MIME 类型
@@ -142,7 +143,7 @@ export function validateFile(file: File): { valid: boolean; error?: string } {
   if (file.size > limit) {
     return {
       valid: false,
-      error: `文件大小超过限制 (${formatFileSize(limit)})`
+      error: t('utils.file.sizeExceeded', { size: formatFileSize(limit) })
     }
   }
   
@@ -156,14 +157,23 @@ export function readFileAsBase64(file: File): Promise<string> {
     const reader = new FileReader()
     
     reader.onload = () => {
-      const result = reader.result as string
+      const result = reader.result
+      if (typeof result !== 'string') {
+        reject(new Error(t('utils.file.readFailed')))
+        return
+      }
       // 移除 data URL 前缀，只保留 base64 数据
       const base64 = result.split(',')[1]
+      // split 结果可能缺失（非 data URL 格式的 result）：缺失时按读取失败处理，避免静默 resolve(undefined)
+      if (base64 === undefined) {
+        reject(new Error(t('utils.file.readFailed')))
+        return
+      }
       resolve(base64)
     }
     
     reader.onerror = () => {
-      reject(new Error('读取文件失败'))
+      reject(new Error(t('utils.file.readFailed')))
     }
     
     reader.readAsDataURL(file)
@@ -180,7 +190,7 @@ export function readFileAsText(file: File): Promise<string> {
     }
     
     reader.onerror = () => {
-      reject(new Error('读取文件失败'))
+      reject(new Error(t('utils.file.readFailed')))
     }
     
     reader.readAsText(file)
@@ -217,7 +227,7 @@ export function createThumbnail(file: File, maxSize = 200): Promise<string> {
     const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
     if (!ctx) {
-      reject(new Error('无法创建缩略图画布'))
+      reject(new Error(t('utils.file.thumbnailCanvasFailed')))
       return
     }
 
@@ -228,7 +238,7 @@ export function createThumbnail(file: File, maxSize = 200): Promise<string> {
       window.clearTimeout(timeoutId)
       reject(new Error(message))
     }
-    const timeoutId = window.setTimeout(() => finishReject('生成缩略图超时'), 10000)
+    const timeoutId = window.setTimeout(() => finishReject(t('utils.file.thumbnailTimeout')), 10000)
     const finishResolve = (value: string) => {
       if (settled) return
       settled = true
@@ -257,22 +267,22 @@ export function createThumbnail(file: File, maxSize = 200): Promise<string> {
         ctx.drawImage(img, 0, 0, width, height)
         finishResolve(canvas.toDataURL(file.type))
       } catch {
-        finishReject('生成缩略图失败')
+        finishReject(t('utils.file.thumbnailFailed'))
       }
     }
     
-    img.onerror = () => finishReject('生成缩略图失败')
+    img.onerror = () => finishReject(t('utils.file.thumbnailFailed'))
     
     const reader = new FileReader()
     reader.onload = () => {
       if (typeof reader.result !== 'string') {
-        finishReject('读取缩略图源文件失败')
+        finishReject(t('utils.file.thumbnailReadFailed'))
         return
       }
       img.src = reader.result
     }
-    reader.onerror = () => finishReject('读取缩略图源文件失败')
-    reader.onabort = () => finishReject('读取缩略图源文件已取消')
+    reader.onerror = () => finishReject(t('utils.file.thumbnailReadFailed'))
+    reader.onabort = () => finishReject(t('utils.file.thumbnailReadAborted'))
     reader.readAsDataURL(file)
   })
 }

@@ -167,11 +167,12 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeUndefined()
   })
 
-  test('忙时隐藏发送（functionResponse）不走 interrupt 路径', async () => {
+  test('真流式（isStreaming + activeStreamId）隐藏发送（functionResponse）被拒绝且不走 interrupt 路径', async () => {
     const state = createState({
       currentConversationId: ref('conv_1'),
       allMessages: ref([]),
       isStreaming: ref(true),
+      activeStreamId: ref('stream_1'),
       isWaitingForResponse: ref(true)
     })
 
@@ -182,6 +183,23 @@ describe('sendMessage 忙时走 interrupt 路径（U1）', () => {
     expect(result).toBe(false)
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeUndefined()
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeUndefined()
+  })
+
+  test('等待态（仅 isWaitingForResponse，无活跃流）隐藏发送（functionResponse）放行：计划确认不丢失', async () => {
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([]),
+      isStreaming: ref(true),
+      activeStreamId: ref(null),
+      isWaitingForResponse: ref(true)
+    })
+
+    const result = await sendMessage(state, createComputed(), '', undefined, {
+      hidden: { functionResponse: { id: 'fr_1', name: 'create_plan', response: {} } }
+    })
+
+    expect(result).toBe(true)
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeUndefined()
   })
 
   test('忙时超长文本不回退插入路径（返回 false）', async () => {

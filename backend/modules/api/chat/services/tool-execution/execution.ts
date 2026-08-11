@@ -444,12 +444,15 @@ export class ExecutionCore extends ResultCore {
                     'before',
                     resolvedMessageNodeId
                 ).catch((error) => {
-                    // 保留 reject 语义：写盘点 await 时收敛为失败，与「checkpoint 失败整批失败」对齐
+                    // deferred 模式下 checkpoint 失败不升级为整批失败：工具已并行执行完成、
+                    // 真实副作用结果已收集在 responses/toolResults，泵循环 catch 会把全部调用
+                    // 替换为 errorResponse 导致真实结果丢失。降级为警告：diffManager 写盘前
+                    // await checkpointReady 得到 null，放弃"写入前存档已完成"保证，结果照常结算。
                     this.log.warn('checkpoint.before_deferred_failed', {
                         conversationId,
                         error: (error as Error)?.message ?? String(error)
                     });
-                    throw error;
+                    return null;
                 });
             } else {
                 const beforeCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
@@ -717,12 +720,12 @@ export class ExecutionCore extends ResultCore {
         // PERF-CP：deferred 模式下统一收集 before-checkpoint 结果（工具已并行启动，
         // 写盘点由 diffManager await checkpointReady 保证「写入前存档已完成」）。
         // 返回顺序保持 before → after 与同步模式一致。
-        if (beforeCheckpointPromise) {
+        if (beforeCheckpointPromise && conversationId !== undefined) {
             const beforeCheckpoint = await beforeCheckpointPromise;
             if (beforeCheckpoint) {
                 checkpoints.push(beforeCheckpoint);
                 // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
-                void this.bindWorkspaceCheckpointBestEffort(conversationId!, resolvedMessageNodeId, beforeCheckpoint.id);
+                void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, beforeCheckpoint.id);
             }
         }
 
@@ -731,17 +734,32 @@ export class ExecutionCore extends ResultCore {
             // BCP-01: 复用 before 已反查的节点 ID（与 before 同消息，index 不变；
             // 工具执行只在其后追加 functionResponse，不影响该索引位置的节点），
             // 避免同一批次内第二次全量重读 transcript 文件。
-            const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
-                conversationId,
-                messageIndex,
-                toolNameForCheckpoint,
-                'after',
-                resolvedMessageNodeId
-            );
-            if (afterCheckpoint) {
-                checkpoints.push(afterCheckpoint);
-                // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
-                void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, afterCheckpoint.id);
+            try {
+                const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
+                    conversationId,
+                    messageIndex,
+                    toolNameForCheckpoint,
+                    'after',
+                    resolvedMessageNodeId
+                );
+                if (afterCheckpoint) {
+                    checkpoints.push(afterCheckpoint);
+                    // BCP-02：fire-and-forget 绑定（不阻塞工具循环；失败仅 warn）
+                    void this.bindWorkspaceCheckpointBestEffort(conversationId, resolvedMessageNodeId, afterCheckpoint.id);
+                }
+            } catch (error) {
+                if (isDiffReviewOnlyBatch) {
+                    // deferred 模式与 before-checkpoint 同构：after 存档失败仅 warn 降级——
+                    // 工具已并行执行完成、真实结果已收集在 responses/toolResults，若让异常
+                    // 冒泡到泵循环 catch 会把全部调用替换为 errorResponse，已发生副作用的
+                    // 真实结果全部丢失。同步模式保持抛错语义（与 before 同步路径一致）。
+                    this.log.warn('checkpoint.after_deferred_failed', {
+                        conversationId,
+                        error: (error as Error)?.message ?? String(error)
+                    });
+                } else {
+                    throw error;
+                }
             }
         }
 

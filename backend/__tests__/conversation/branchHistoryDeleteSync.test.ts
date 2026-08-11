@@ -6,9 +6,10 @@
  * 本测试覆盖：
  * - BranchGraph.softDeleteSubtreeFrom 纯函数（TREE-09 软删语义 + 活跃指针修正 + 根锚定重置）；
  * - BranchService.syncGraphAfterHistoryDelete（无图 no-op / FR 锚点退化 / 损坏拒绝覆盖）；
- * - deleteToMessage 端到端（模拟 ChatFlowService 接线顺序：删前捕获锚点 → 截断 → 同步软删）；
+ * - deleteToMessage 端到端（决策 6 同步收敛进 ConversationManager：锁内捕获锚点 → 截断 →
+ *   同步软删；失败仅告警不阻断硬删除）；
  * - ConversationManager.deleteMessage 接线（删除单条消息后同步软删被删节点及其子树）；
- * - ChatFlowService.handleDeleteToMessage 接线（锚点捕获 + 同步调用 + 失败不阻断）；
+ * - ChatFlowService.handleDeleteToMessage 接线（委托 deleteToMessage，不再重复调用 BranchService）；
  * - 无分支图 / 无全局 BranchService 时不影响原有行为。
  *
  * 存储组合：历史走 MemoryStorageAdapter，sidecar 走真实临时目录（注入 baseDir），
@@ -419,7 +420,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
         });
     });
 
-    describe('deleteToMessage 端到端（模拟 ChatFlowService 接线顺序）', () => {
+    describe('deleteToMessage 端到端（决策 6 同步收敛进 ConversationManager.deleteToMessage）', () => {
         test('deleteToMessage 后：该点之后的子树整体软删，活跃尾回退，可整体恢复', async () => {
             const [u1, m1] = await seedConversation('c1');
             const started = await service.startReroll('c1', m1);
@@ -431,14 +432,11 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             expect(historyBefore.length).toBe(4);
             const anchorId = historyBefore[1]!.id!; // 第一个被删消息（A，图节点）
             const lastKeptId = historyBefore[0]!.id!; // 最后保留消息（U）
+            // 决策 6：deleteToMessage 内部接线（锁内捕获锚点 → 截断 → graphSyncQueues 串行队列
+            // 同步软删「该点之后」的整棵子树；删除响应返回前图一致）
             const deletedCount = await manager.deleteToMessage('c1', 1);
             expect(deletedCount).toBe(3);
 
-            // 决策 6：删除成功后同步软删分支图（ChatFlowService 接线点）
-            const result = await service.syncGraphAfterHistoryDelete('c1', anchorId, { lastKeptMessageId: lastKeptId });
-
-            expect(result).toMatchObject({ graphUpdated: true, activeTailAdjusted: true, resetToEmpty: false });
-            expect(result.deletedNodeIds).toContain(anchorId);
             const graph = (await service.getBranchGraph('c1')).graph!;
             // 该点之后的子树（A、续接 B）整体软删；保留点 U 不受影响
             expect(graph.nodes[anchorId]).toMatchObject({ deleted: true });
@@ -456,6 +454,24 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             expect(afterRestore.nodes[anchorId]!.deleted).toBeUndefined();
             expect(afterRestore.nodes[historyBefore[3]!.id!]!.deleted).toBeUndefined();
             expect(validate(afterRestore).valid).toBe(true);
+        });
+
+        test('deleteToMessage 内部分支图同步失败仅告警，不阻断硬删除', async () => {
+            const ids = await seedConversation('c1');
+            const graph = makeChainGraph([
+                { id: ids[0], role: 'user', activeChildId: ids[1] },
+                { id: ids[1], role: 'model' },
+            ]);
+            await repo.save('c1', graph);
+            // sidecar 损坏：内部同步抛 BRANCH_STORAGE_CORRUPT，被 deleteToMessage 捕获告警
+            const filePath = repo.getBranchesFilePath('c1');
+            await fsp.mkdir(path.dirname(filePath), { recursive: true });
+            await fsp.writeFile(filePath, '{ broken json', 'utf8');
+
+            const deletedCount = await manager.deleteToMessage('c1', 1);
+            expect(deletedCount).toBe(1);
+            const history = await manager.getMessagesRaw('c1');
+            expect(history.map(m => m.id)).toEqual([ids[0]]);
         });
     });
 
@@ -534,7 +550,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             { id: 'm2', role: 'model', parts: [{ text: 'a2' }] },
         ] as Content[];
 
-        test('删除成功后同步软删分支图：锚点 = 第一个被删消息 id，保留点 = 前一条消息 id', async () => {
+        test('删除委托 ConversationManager.deleteToMessage（分支图同步已收敛进 manager，orchestrator 不重复调用）', async () => {
             const { flowService, conversationManager, branchService } = createChatFlowHarness({
                 branchService: {
                     syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
@@ -553,29 +569,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
 
             expect(result).toEqual({ success: true, deletedCount: 2 });
             expect(conversationManager.deleteToMessage).toHaveBeenCalledWith('c1', 2);
-            expect(branchService.syncGraphAfterHistoryDelete).toHaveBeenCalledWith('c1', 'u2', {
-                lastKeptMessageId: 'm1',
-            });
-        });
-
-        test('图同步失败仅告警，不阻断硬删除', async () => {
-            const { flowService, conversationManager, branchService } = createChatFlowHarness({
-                branchService: {
-                    syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
-                        graphUpdated: true,
-                        deletedNodeIds: [],
-                        resetToEmpty: false,
-                        activeTailAdjusted: false,
-                    }),
-                },
-            });
-            conversationManager.getMessagesRaw.mockResolvedValue(fourMessageHistory);
-            conversationManager.deleteToMessage.mockResolvedValue(2);
-            conversationManager.getHistoryRef.mockResolvedValue(fourMessageHistory.slice(0, 2));
-            branchService.syncGraphAfterHistoryDelete.mockRejectedValue(new Error('simulated graph failure'));
-
-            const result = await flowService.handleDeleteToMessage({ conversationId: 'c1', targetIndex: 2 });
-            expect(result).toEqual({ success: true, deletedCount: 2 });
+            expect(branchService.syncGraphAfterHistoryDelete).not.toHaveBeenCalled();
         });
 
         test('无全局 BranchService 时不影响原有删除行为', async () => {
@@ -589,7 +583,7 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             expect(result).toEqual({ success: true, deletedCount: 2 });
         });
 
-        test('删除到对话开头（targetIndex=0）：锚点 = 根消息 id，保留点 = null', async () => {
+        test('删除到对话开头（targetIndex=0）：透传索引 0，删除由 deleteToMessage 内部同步空图', async () => {
             const { flowService, conversationManager, branchService } = createChatFlowHarness({
                 branchService: {
                     syncGraphAfterHistoryDelete: jest.fn().mockResolvedValue({
@@ -607,9 +601,8 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             const result = await flowService.handleDeleteToMessage({ conversationId: 'c1', targetIndex: 0 });
 
             expect(result).toEqual({ success: true, deletedCount: 4 });
-            expect(branchService.syncGraphAfterHistoryDelete).toHaveBeenCalledWith('c1', 'u1', {
-                lastKeptMessageId: null,
-            });
+            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith('c1', 0);
+            expect(branchService.syncGraphAfterHistoryDelete).not.toHaveBeenCalled();
         });
     });
 

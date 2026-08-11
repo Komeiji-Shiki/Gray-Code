@@ -19,7 +19,7 @@ import type {
   ReviewFindingRecordV4,
   ReviewSnapshotV4
 } from './schema';
-import { buildReviewValidationSummary } from './resultProjection';
+import { buildReviewValidationSummaryFromResult } from './resultProjection';
 import { validateReviewDocument } from './reviewDocumentSection';
 
 export interface CompareReviewDocumentsArgs {
@@ -293,8 +293,10 @@ export function createCompareReviewDocumentsTool(): Tool {
           success: true,
           data: {
             ...compareResult,
-            baseValidation: buildReviewValidationSummary(baseContent),
-            targetValidation: buildReviewValidationSummary(targetContent)
+            // 修改原因：旧实现用 buildReviewValidationSummary(content) 对两份文档重复解析。
+            // 修改方式：复用上面已计算的 validation 结果（buildReviewValidationSummaryFromResult）。
+            baseValidation: buildReviewValidationSummaryFromResult(baseValidation),
+            targetValidation: buildReviewValidationSummaryFromResult(targetValidation)
           }
         };
       } catch (e: any) {

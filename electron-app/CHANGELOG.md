@@ -9,6 +9,9 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+### Merged（1.7.12dev：同步上游 308c79d4——渠道配置启动预加载 + 发布前修复批次：checkpoint 分支隔离/config 串行队列/MCP 生命周期/SSE 流式下载/memory 位图缓存）
+  - 合入上游发布前修复批次；不采纳上游 VS Code Marketplace 上架文档（桌面版非插件，README 保持本地版本）
+
 ### Merged（1.7.12dev：同步上游 main 至 0107c597——模块化摊平 1-9 批 + Bug Hunt 五轮 150+ 修复 + MCP/memory/prompt/子代理/输入框等修复）
   - 合入上游 40+ commits：模块化摊平重构（registry 死系统删除、ChatFlowService/ConversationManager/CheckpointManager/ToolExecutionService 等大文件拆分至 flow/、manager/、tool-execution/、subagents/executor|eventBus、tools/shared/ 等子目录，后端依赖方向清零）；
   - 修复吸收：fileWriteLock 复合身份键 + acquire 参数化超时、MCP stdio 生命周期/串行队列/原子写、memory 迁移降级与 1000 上限、prompt 动态上下文差分加固、子代理并行段收尾 30s 兜底、输入框残留双机制、流式 Markdown 表格渐进渲染、恢复默认模板 {{$MEMORY}} 占位符等；

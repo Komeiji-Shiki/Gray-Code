@@ -8,6 +8,7 @@
 
 import { computed } from 'vue'
 import { useI18n } from '../../../composables/useI18n'
+import { truncateText } from '../../../utils/format'
 import MediaToolPanel from './MediaToolPanel.vue'
 import type {
   MediaMetaItem,
@@ -54,12 +55,6 @@ const taskList = computed<RemoveTask[]>(() => {
   }
   return []
 })
-
-// 截断文本
-function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength) + '...'
-}
 
 // 是否需要安装 sharp（结果中的 needsSharp 标记）
 const needsSharp = computed(() => {

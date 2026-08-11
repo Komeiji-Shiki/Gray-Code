@@ -67,13 +67,17 @@ export function convertToolsToXML(tools: ToolDeclaration[]): string {
             const isRequired = required.includes(name);
             const requiredTag = isRequired ? ' (required)' : ' (optional)';
             const typeInfo = formatParameterType(schema);
-            const description = schema.description || '';
+            // 修改原因：schema.description 原样嵌入会携带 <、>、& 等字符，生成的工具指南是非法 XML。
+            // 修改方式：与 <description> 正文一致，统一走 wrapXmlValue（含特殊字符/换行时包 CDATA）。
+            const description = wrapXmlValue(schema.description || '');
             return `  - ${name}${requiredTag} [${typeInfo}]: ${description}`;
         }).join('\n');
         
+        // 修改原因：tool.description 原样嵌入，execute_command 等工具的 description 含 <、>、&、" 字符 → 畸形 XML。
+        // 修改方式：统一走 wrapXmlValue（含 XML 特殊字符或换行时包 CDATA）。
         return `<tool name="${escapeXmlAttribute(tool.name)}">
   <description>
-${tool.description}
+${wrapXmlValue(tool.description)}
   </description>
   <parameters>
 ${paramsList}

@@ -2,8 +2,13 @@ import {
   extractProgressCardData,
   formatProgressToolFallbackContent
 } from '../../../frontend/src/utils/progressCards'
+import { setLanguage } from '../../../frontend/src/i18n'
 
 describe('progressCards utility', () => {
+  beforeEach(() => {
+    setLanguage('en')
+  })
+
   test('extracts create_progress card data from progressSnapshot first', () => {
     const card = extractProgressCardData(
       'create_progress',

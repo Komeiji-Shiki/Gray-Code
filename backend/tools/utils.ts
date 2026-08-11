@@ -15,3 +15,4 @@ export * from './shared/textUtils';
 export * from './shared/fileStats';
 export * from './shared/concurrency';
 export * from './shared/imageMath';
+export * from './shared/fetchSignal';

@@ -21,7 +21,7 @@ import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, getMessageIndexById } from '../state'
+import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
 
@@ -288,13 +288,11 @@ function upsertHiddenFunctionResponseMessage(
       })
 
       if (matched) {
-        state.allMessages.value = [
-          ...all.slice(0, i),
-          { ...msg, parts: nextParts },
-          ...all.slice(i + 1)
-        ]
-        // M3-2：整数组替换后重建 message.id -> 下标 与 functionResponse.id -> 下标 索引
-        rebuildMessageIndexById(state)
+        // 走 replaceMessageAt 而非直写新数组：中间位置替换会自动清除 windowUtils 可见消息
+        // 增量缓存（指纹只校验首尾元素，直写数组会把旧消息对象留在可见缓存里）并递增结构
+        // 版本（todoSnapshot / usedTokens 增量缓存持有同一数组代理，逐元素比较恒真）；
+        // 尾部替换为流式安全模式，不递增。同 id 替换不改变消息位置，索引无需重建。
+        replaceMessageAt(state, i, { ...msg, parts: nextParts })
         // ★ 同步更新 toolResponseCache，避免 getToolResponseById 返回旧缓存
         // 导致 replayTodoStateFromMessages 看不到 planExecutionPrompt 等新合并字段
         if (payload.id) {
@@ -356,9 +354,19 @@ export async function sendMessage(
     return deliverInterruptMessage(state, messageText, attachments)
   }
 
+  // hidden 发送流式守卫：主会话流仍在活跃输出（isStreaming 与 activeStreamId 同时成立）时，
+  // 再发起一条新流会覆盖 activeStreamId，旧流后续 chunk 会被 streamHandler 按错流/迟到丢弃，
+  // 两条流互相踩踏。审批门闸暂停态不受影响——chunkTools 门闸处理会把 isStreaming /
+  // activeStreamId 置空（仅 isWaitingForResponse 可能保持 true），「等待态放行」语义保持不变。
+  if (isHiddenSend && state.isStreaming.value && state.activeStreamId.value) {
+    return false
+  }
+
   state.error.value = null
   state._pendingBranchReplayContext.value = null
-  if (state.isWaitingForResponse.value) return false
+  // hidden 发送（计划确认等 functionResponse）在等待态下放行：它不走忙时投递分支，
+  // 若在此被 isWaitingForResponse 拦截会静默返回 false 且无人消费，计划确认丢失。
+  if (state.isWaitingForResponse.value && !isHiddenSend) return false
 
   // 发送新消息 = 放弃上次失败的回答：回滚失败流保留的半截消息，
   // 避免窗口中出现后端不存在的幽灵消息。

@@ -4,7 +4,7 @@
  * 支持图片和视频的全屏预览
  */
 
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed } from 'vue'
 import { Modal, IconButton } from '../common'
 import type { Attachment } from '../../types'
 import { formatFileSize } from '../../utils/file'
@@ -42,21 +42,8 @@ function handleDownload() {
   emit('download', props.attachment)
 }
 
-// ESC 键关闭
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && props.visible) {
-    handleClose()
-  }
-}
-
-// 监听键盘事件
-onMounted(() => {
-  document.addEventListener('keydown', handleKeydown)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
-})
+// ESC 键关闭由 Modal 组件统一处理（Modal 已在 document 上注册 keydown 并 emit close），
+// 此处不再重复监听，避免同一 Esc 按键触发两次关闭（双重监听修复）。
 </script>
 
 <template>

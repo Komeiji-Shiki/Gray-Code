@@ -168,6 +168,10 @@ export class TokenEstimationService {
      * @param channelType 渠道类型
      * @param messageIndices 消息索引数组
      * @param forceRecount 是否强制重新计算
+     * @returns 与 messageIndices 等长的 token 数数组：跳过条目（非用户消息/已有缓存）
+     *          以 undefined 占位，计数条目为精确值（失败条目已内部降级为本地估算）。
+     *          调用方按下标逐条对齐即可，无需二次读取历史即可回填快照；
+     *          undefined 条目由调用方走本地估算或跳过回填。
      */
     async preCountUserMessageTokensBatch(
         conversationId: string,
@@ -175,25 +179,31 @@ export class TokenEstimationService {
         messageIndices: number[],
         forceRecount?: boolean,
         externalSignal?: AbortSignal
-    ): Promise<void> {
+    ): Promise<Array<number | undefined>> {
         if (!this.settingsManager || messageIndices.length === 0) {
-            return;
+            return [];
         }
         
         const history = await this.conversationManager.getHistoryRef(conversationId);
         
         if (history.length === 0) {
-            return;
+            // 历史为空时无任何条目可计数：返回等长占位数组（全 undefined），
+            // 保持「返回数组与 messageIndices 等长」的对齐契约。
+            return new Array(messageIndices.length).fill(undefined);
         }
         
         // 获取 Token 计数配置
         const tokenCountConfig = this.settingsManager.getTokenCountConfig();
         const normalizedChannelType = this.normalizeChannelType(channelType);
         
-        // 收集需要计数的消息
-        const messagesToCount: Array<{ index: number; message: Content }> = [];
+        // 收集需要计数的消息；position 记录该条目在 messageIndices 中的位置，
+        // 用于把计数结果写回与入参等长的返回数组（跳过条目以 undefined 占位）——
+        // 此前返回数组只含实际计数条目，与调用方逐条对齐时整体错位
+        // （如已缓存条目被跳过时，后续条目的计数全部前移一位）。
+        const messagesToCount: Array<{ index: number; position: number; message: Content }> = [];
         
-        for (const index of messageIndices) {
+        for (let position = 0; position < messageIndices.length; position++) {
+            const index = messageIndices[position];
             const message = history[index];
             if (!message || message.role !== 'user') {
                 continue;
@@ -208,11 +218,15 @@ export class TokenEstimationService {
                 continue;
             }
             
-            messagesToCount.push({ index, message: this.cleanMessageForTokenCount(message) });
+            messagesToCount.push({ index, position, message: this.cleanMessageForTokenCount(message) });
         }
         
+        // 返回数组与 messageIndices 等长：跳过条目保持 undefined 占位，调用方按
+        // undefined 走本地估算/跳过回填，不再出现「返回数组与调用方入参错位」。
+        const tokenCounts: Array<number | undefined> = new Array(messageIndices.length).fill(undefined);
+        
         if (messagesToCount.length === 0) {
-            return;
+            return tokenCounts;
         }
         
         // 更新代理设置
@@ -222,14 +236,16 @@ export class TokenEstimationService {
         const useApiCount = normalizedChannelType && tokenCountConfig[normalizedChannelType]?.enabled;
         
         if (useApiCount) {
-            // 并行调用 API 计数
+            // 并行调用 API 计数；逐条错误隔离——任一次计数抛错只让该条走本地估算，
+            // 不因单条失败让整轮上下文裁剪 reject（此前 Promise.all 无逐条 catch，
+            // 一次抛错会整轮失败，用户看到莫名 error chunk）。
             const countPromises = messagesToCount.map(({ message }) =>
                 this.tokenCountService.countTokens(
                     normalizedChannelType!,
                     tokenCountConfig,
                     [message],
                     externalSignal
-                )
+                ).catch(() => ({ success: false as const }))
             );
             
             const results = await Promise.all(countPromises);
@@ -238,7 +254,7 @@ export class TokenEstimationService {
             const batchUpdates: Array<{ messageIndex: number; updates: Partial<Content> }> = [];
 
             for (let i = 0; i < messagesToCount.length; i++) {
-                const { index, message } = messagesToCount[i];
+                const { index, position, message } = messagesToCount[i];
                 const result = results[i];
 
                 let tokenCount: number;
@@ -261,14 +277,16 @@ export class TokenEstimationService {
                         estimatedTokenCount: tokenCount
                     }
                 });
+                tokenCounts[position] = tokenCount;
             }
 
             await this.conversationManager.updateMessagesBatch(conversationId, batchUpdates);
+            return tokenCounts;
         } else {
             // 不使用 API，直接估算并批量更新（一次读写，避免并行 updateMessage 覆盖写）
             const batchUpdates: Array<{ messageIndex: number; updates: Partial<Content> }> = [];
 
-            for (const { index, message } of messagesToCount) {
+            for (const { index, position, message } of messagesToCount) {
                 const tokenCount = this.estimateMessageTokens(message);
 
                 const tokenCountByChannel: ChannelTokenCounts = { ...(message.tokenCountByChannel || {}) };
@@ -283,9 +301,11 @@ export class TokenEstimationService {
                         estimatedTokenCount: tokenCount
                     }
                 });
+                tokenCounts[position] = tokenCount;
             }
 
             await this.conversationManager.updateMessagesBatch(conversationId, batchUpdates);
+            return tokenCounts;
         }
     }
     

@@ -18,6 +18,7 @@ import type { ConversationManager } from '../conversation';
 import type { CheckpointRecord } from './CheckpointManager';
 import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { isWorkspaceScopedKey } from './CheckpointRestoreEngine';
+import { hashFileStreaming } from './fileHashing';
 
 const log = Logger.get('CheckpointRetentionService');
 
@@ -151,6 +152,10 @@ export class CheckpointRetentionService {
         // 1. 文件合并：后继目录优先，不覆盖已存在的更新版本。
         //    无法枚举 removed 文件（真正 legacy 无哈希）时同样逐文件复制
         //   （removedFilesByKey 缺失只影响 manifest 合并的 hash 来源，不影响文件复制）。
+        //    CP-RET-4: 复制成功后现场计算真实哈希——真 legacy 节点无哈希记录，若以 hash:''
+        //    占位写入 manifest.files，恢复引擎哈希校验必然失败（backupHash !== ''）→ 永久
+        //    hash_mismatch。复制成功即对 dest 文件现场哈希，写入合并后的 manifest.files。
+        const mergedFileHashes = new Map<string, { hash: string; size: number; mtimeMs: number }>();
         for (const relative of diskFiles) {
             const targetKey = rewriteKey(relative);
             const src = path.join(removedBackupPath, ...relative.split('/'));
@@ -160,6 +165,15 @@ export class CheckpointRetentionService {
             } catch {
                 try {
                     await fs.cp(src, dest, { force: false });
+                    // 现场计算真实哈希（复制成功即可读）：写入 mergedFileHashes 供 manifest 合并使用
+                    try {
+                        const hash = await hashFileStreaming(dest);
+                        const st = await fs.stat(dest);
+                        mergedFileHashes.set(targetKey, { hash, size: st.size, mtimeMs: st.mtimeMs });
+                    } catch (hashErr) {
+                        // 哈希失败（罕见）：该文件不写入 manifest.files（避免 hash:'' 占位）
+                        console.warn(`[CheckpointRetentionService] Failed to hash merged file ${targetKey}:`, hashErr);
+                    }
                 } catch (err) {
                     // 源文件缺失（manifest 声称有但磁盘没有）：跳过，恢复时按链上缺失处理
                     console.warn(`[CheckpointRetentionService] Skip merging ${relative} into ${successor.backupDir}:`, err);
@@ -205,14 +219,21 @@ export class CheckpointRetentionService {
                 successorManifest.changes = [...successorManifest.changes, change];
             }
             // M6: 合并进后继的文件（scoped 键）并入 manifest.files（hash 从 removed 节点
-            //     manifest/record 取）；后继快照已删除的路径不并入（恢复后继不应复活被删文件）。
+            //     manifest/record 取，真 legacy 无哈希时用复制后的现场哈希）；后继快照已删除的
+            //     路径不并入（恢复后继不应复活被删文件）。
+            //     CP-RET-4: 两者都不可得（复制/哈希失败）→ 不写占位条目（hash:'' 会让恢复
+            //     永久 hash_mismatch），该文件按链上缺失处理。
             for (const relative of diskFiles) {
                 const targetKey = rewriteKey(relative);
                 if (deletedInManifest.has(targetKey)) continue;
                 if (targetKey in successorManifest.files) continue;
-                // hash 优先取 removed 节点 manifest/record；真 legacy 无哈希时以 size 0 占位
-                //（枚举到的文件无条件并入 manifest.files，恢复引擎按 scoped 寻址需要该条目）
-                const entry = removedFilesByKey?.[relative] ?? { hash: '', size: 0, mtimeMs: 0 };
+                // 优先用复制后的现场哈希（真实磁盘内容）；其次 removed 节点 manifest/record 哈希
+                const liveEntry = mergedFileHashes.get(targetKey);
+                const entry = liveEntry ?? removedFilesByKey?.[relative];
+                if (!entry) {
+                    console.warn(`[CheckpointRetentionService] Skip manifest entry for merged file ${targetKey}: no hash available`);
+                    continue;
+                }
                 successorManifest.files[targetKey] = entry;
             }
             try {

@@ -618,6 +618,60 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * 非流式 abort 结算（与流式 settleCancelledToolCalls 同构）。
+     *
+     * runNonStreamLoop 主循环顶部发现 abort 时，最近一次 addContent 写入历史的
+     * assistant 消息可能已包含**完整**的 functionCall，但工具执行被 abort 中断
+     * （并行组收尾窗口超时返回空结果、executeFunctionCallsWithProgressCore 主循环
+     * 顶部 break 跳过未启动调用）导致部分调用没有配对 functionResponse。不补占位
+     * 会在历史留下悬空 tool_use：重试/新消息时 rejectAllPendingToolCalls 误标
+     * "用户拒绝"，或 formatter 原样发送孤儿调用触发 400。
+     *
+     * 与流式路径一致：已执行完的调用（settledResult 中有真实响应）保持原样，
+     * 其余补 cancelled 占位，经 settleFunctionResponses 幂等落盘（覆盖占位、
+     * 插入到所属 functionCall 消息之后，避免 addContent 去重丢弃或非法消息交替顺序）。
+     */
+    private async settleCancelledNonStreamToolCalls(
+        conversationId: string,
+        functionCalls: FunctionCallInfo[],
+        settledResult: ToolExecutionFullResult | undefined
+    ): Promise<void> {
+        if (functionCalls.length === 0) {
+            return;
+        }
+
+        const settledIds = new Set(
+            (settledResult?.responseParts ?? [])
+                .map(part => part.functionResponse?.id)
+                .filter((id): id is string => !!id)
+        );
+        const cancelledCalls = functionCalls.filter(call => !settledIds.has(call.id));
+        if (cancelledCalls.length === 0) {
+            return;
+        }
+
+        this.log.info('nonstream.abort_settle_cancelled', {
+            conversationId,
+            totalCalls: functionCalls.length,
+            cancelledCalls: cancelledCalls.length
+        });
+
+        const responseParts: ContentPart[] = cancelledCalls.map(call => ({
+            functionResponse: {
+                id: call.id,
+                name: call.name || 'unknown',
+                response: {
+                    success: false,
+                    error: t('modules.api.chat.errors.toolCallCancelled'),
+                    cancelled: true
+                }
+            }
+        }));
+
+        await this.conversationManager.settleFunctionResponses(conversationId, responseParts);
+    }
+
+    /**
      * 运行工具迭代循环（流式）
      *
      * 这是核心方法，封装了工具调用循环的完整逻辑
@@ -1775,6 +1829,10 @@ export class ToolIterationLoopService {
         summarizeAbortSignal?: AbortSignal
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
+        // 非流式 abort 结算状态：追踪「最近一次已落盘的 assistant 消息」的工具调用，
+        // 主循环顶部 abort 时对未配对调用补 cancelled 占位（与流式 settleCancelledToolCalls 同构）。
+        let lastFunctionCalls: FunctionCallInfo[] = [];
+        let lastSettledResult: ToolExecutionFullResult | undefined;
         // 与流式路径一致：非新回合从第一轮起就禁止推进裁剪；新回合只在首次实际模型请求前评估。
         let contextManagementEvaluatedForTurn = !isNewTurn;
         // 新回合不继承上一回合的 fallback 切点，重新规划。
@@ -1850,6 +1908,12 @@ export class ToolIterationLoopService {
             // D2：与流式路径（runToolLoop 循环顶部）对齐——主请求取消时立即返回，
             // 不再发起新一轮 API 请求（此前会继续调 generate，取消语义依赖 provider 侧）。
             if (abortSignal?.aborted) {
+                // 非流式 abort 结算（与流式 settleCancelledToolCalls 同构）：最近一次落盘的
+                // assistant 消息可能已包含完整 functionCall，但工具执行被 abort 中断（并行组
+                // 收尾窗口超时返回空结果、核心主循环顶部 break 跳过未启动调用），部分调用
+                // 没有配对 functionResponse。不补占位会在历史留下孤儿 tool_calls——重试/新消息
+                // 时被 rejectAllPendingToolCalls 误标"用户拒绝"，或 formatter 原样发送触发 400。
+                await this.settleCancelledNonStreamToolCalls(conversationId, lastFunctionCalls, lastSettledResult);
                 return { exceededMaxIterations: false, cancelled: true };
             }
 
@@ -2002,6 +2066,23 @@ export class ToolIterationLoopService {
             const generateResponse = response as GenerateResponse;
             let finalContent = generateResponse.content;
 
+            // 生成器返回空内容（content 缺失或 parts 为空——个别 provider 异常路径）时
+            // 直接按无内容返回：后续 convertPromptModeToolCallsToFunctionCalls /
+            // ensureFunctionCallIds / extractFunctionCalls / addContent 均直接访问 parts，
+            // 不判空会在落盘前抛 TypeError；下游 orchestrator/retry/editBranch 的空响应
+            // 检查（content?.parts?.length）会把该结果显式转成 EMPTY_RESPONSE。
+            // abort 后返回空内容优先按取消处理：cancelled:true → 下游映射 CANCELLED 错误码，
+            // 与正常空输出（EMPTY_RESPONSE）区分——取消与空响应不应共用同一错误码/文案。
+            if (abortSignal?.aborted) {
+                return { cancelled: true, exceededMaxIterations: false };
+            }
+            if (!finalContent?.parts?.length) {
+                return {
+                    content: finalContent,
+                    exceededMaxIterations: false
+                };
+            }
+
             // 转换 XML 工具调用为 functionCall 格式（如果有）
             this.toolCallParserService.convertPromptModeToolCallsToFunctionCalls(finalContent, config.toolMode || 'function_call');
             // 为没有 id 的 functionCall 添加唯一 id（Gemini 格式不返回 id）
@@ -2023,6 +2104,11 @@ export class ToolIterationLoopService {
 
             // 检查是否有工具调用
             const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent, config.toolMode || 'function_call');
+
+            // 非流式 abort 结算状态更新：记录本次已落盘的 assistant 消息的工具调用
+            // （落盘在上一段 addContent 完成；未落盘时 parts 为空，extractFunctionCalls 也为空）
+            lastFunctionCalls = functionCalls;
+            lastSettledResult = undefined;
 
             if (functionCalls.length === 0) {
                 // 没有工具调用，结束循环并返回
@@ -2058,6 +2144,9 @@ export class ToolIterationLoopService {
                 modelOverride
             );
             repeatedCallGuard.recordResults(executionResult.toolResults);
+            // 非流式 abort 结算状态更新：记录本次已结算（真实结果/cancelled 占位）的调用，
+            // abort 分支据此只补未配对调用的占位，已执行完的真实结果保持原样。
+            lastSettledResult = executionResult;
 
             const functionResponseParts = executionResult.multimodalAttachments
                 ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
@@ -2066,30 +2155,40 @@ export class ToolIterationLoopService {
             // 将函数响应添加到历史（作为 user 消息，标记为函数响应）。
             // abort 收尾窗口超时（工具不响应 abort 且永不结束）时 executeFunctionCallsWithResults
             // 返回空结果：无真实函数响应可写，跳过落盘，避免历史出现 parts:[] 的空 user 消息。
-            if (functionResponseParts.length > 0) {
-                await this.conversationManager.addContent(conversationId, {
-                    role: 'user',
-                    parts: functionResponseParts,
-                    isFunctionResponse: true
-                });
-            }
-
-            const postToolStopState = await resolveAndPersistPostToolStopState(
-                this.conversationManager,
-                conversationId,
-                functionCalls,
-                executionResult.toolResults,
-                {
-                    logger: this.log,
-                    logContext: { iteration, executionPath: 'non_stream' }
+            // try/finally：addContent / resolveAndPersistPostToolStopState 抛错时 abort 结算仍要执行
+            // ——结算只依赖 lastFunctionCalls/lastSettledResult（执行返回后已就绪），不会因异常
+            // 冒泡在历史残留未配对 tool_calls（重试误标"用户拒绝"/400）。未 abort 或调用已全部
+            // 结算时结算为幂等空操作。
+            try {
+                if (functionResponseParts.length > 0) {
+                    await this.conversationManager.addContent(conversationId, {
+                        role: 'user',
+                        parts: functionResponseParts,
+                        isFunctionResponse: true
+                    });
                 }
-            );
 
-            if (postToolStopState.shouldStop) {
-                return {
-                    content: finalContent,
-                    exceededMaxIterations: false
-                };
+                const postToolStopState = await resolveAndPersistPostToolStopState(
+                    this.conversationManager,
+                    conversationId,
+                    functionCalls,
+                    executionResult.toolResults,
+                    {
+                        logger: this.log,
+                        logContext: { iteration, executionPath: 'non_stream' }
+                    }
+                );
+
+                if (postToolStopState.shouldStop) {
+                    return {
+                        content: finalContent,
+                        exceededMaxIterations: false
+                    };
+                }
+            } finally {
+                if (abortSignal?.aborted) {
+                    await this.settleCancelledNonStreamToolCalls(conversationId, lastFunctionCalls, lastSettledResult);
+                }
             }
             
             // 注：工具响应消息的 token 计数将在下一次循环的 getHistoryWithContextTrimInfo 中

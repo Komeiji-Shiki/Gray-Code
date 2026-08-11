@@ -99,21 +99,30 @@ const DYNAMIC_PROMPT_PLACEHOLDERS = new Set([
     'SKILLS'
 ])
 
-// ========== 占位符正则缓存 ==========
-// 模板占位符 {{$KEY}} 的正则在每次生成静态/动态提示词时被逐键 new RegExp，
-// 键集合固定（ENVIRONMENT / TOOLS / TODO_LIST / WORKSPACE_FILES ...），
-// 每次提示词组装（工具循环每轮）都重复编译纯属浪费。这里按 key 缓存编译结果。
-// 注意：缓存的正则带 'g' 标志，String.replace 使用全局正则前会重置 lastIndex，可安全复用。
-const promptPlaceholderRegexCache = new Map<string, RegExp>()
+// ========== 模板占位符替换（单次扫描 + 回调查表） ==========
+// 三处替换（generateFromTemplate / generateDynamicFromTemplate / renderPromptTemplateContent）
+// 原先各自 for 循环逐键 new RegExp + replace，为 O(占位符数 × 模板长度) 的重复全串扫描；
+// 合并为单个交替正则单次扫描，正则源模块级预编译（键集合固定为全部已知占位符）。
+// 替换器用函数式 () => value 而非字符串替换值：JS replace 的替换字符串中
+// $&/$`/$'/$$/$n 是特殊序列，值含这些字符（工作区路径/shell 脚本/自定义记忆提示词等）
+// 会被静默改写（04 批 MEDIUM），函数式替换器天然规避。
+const PROMPT_PLACEHOLDER_KEYS = [
+    'ENVIRONMENT',
+    'CONTEXT_BADGE_FORMAT',
+    'TODO_LIST',
+    'WORKSPACE_FILES',
+    'OPEN_TABS',
+    'ACTIVE_EDITOR',
+    'DIAGNOSTICS',
+    'PINNED_FILES',
+    'SKILLS',
+    'MEMORY',
+    'TOOLS',
+    'MCP_TOOLS'
+] as const
 
-function getPromptPlaceholderRegex(key: string): RegExp {
-    let regex = promptPlaceholderRegexCache.get(key)
-    if (!regex) {
-        regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
-        promptPlaceholderRegexCache.set(key, regex)
-    }
-    return regex
-}
+/** 预编译的占位符交替正则：匹配 {{$KEY}}（KEY ∈ PROMPT_PLACEHOLDER_KEYS，均为 [A-Z_]+，无正则元字符） */
+const PROMPT_PLACEHOLDER_REGEX = new RegExp(`\\{\\{\\$(?:${PROMPT_PLACEHOLDER_KEYS.join('|')})\\}\\}`, 'g')
 
 // ========== 固定文件读取预算与缓存（热路径：每条消息都会组装动态上下文） ==========
 //
@@ -349,6 +358,10 @@ export class PromptManager {
     private cachedPromptValue: string | null = null
     private lastGeneratedAt: number = 0
     private cachedPromptKey: string | null = null
+    /** entries 模式下纯静态 system 提示词缓存（含动态占位符的 entry 不缓存，见 getSystemPrompt） */
+    private cachedEntriesPromptValue: string | null = null
+    private cachedEntriesPromptKey: string | null = null
+    private lastEntriesGeneratedAt: number = 0
     
     // 缓存有效期（毫秒）- 1分钟
     private static readonly CACHE_TTL = 60000
@@ -377,6 +390,9 @@ export class PromptManager {
         this.cachedPromptValue = null
         this.cachedPromptKey = null
         this.lastGeneratedAt = 0
+        this.cachedEntriesPromptValue = null
+        this.cachedEntriesPromptKey = null
+        this.lastEntriesGeneratedAt = 0
     }
 
     private resolvePromptModeSnapshot(modeSnapshot?: ResolvedPromptModeSnapshot): ResolvedPromptModeSnapshot | undefined {
@@ -406,10 +422,74 @@ export class PromptManager {
         const memoryConfig = settingsManager?.getMemoryConfig?.()
         const memoryEnabled = memoryConfig?.enabled !== false
         const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
-        // 工作区路径烘焙在 ENVIRONMENT 静态段落中：未纳入缓存键会导致会话 A 的
-        // 工作区泄漏进会话 B 的缓存提示词，这里按对话绑定的工作区 URI 区分缓存。
+        // 缓存键含工作区指纹：ENVIRONMENT 等内容依赖工作区/渲染语言，
+        // 切换工作区/语言后必须换键，60s TTL 内不会返回旧 ENVIRONMENT。
+        // 语言优先取用户设置（getUserLanguage() 解析 'auto' 为 vscode.env.language），
+        // 与渲染侧保持一致（两者不一致、TTL 内会返回旧语言提示词，修复 LOW 级）。
+        const workspaceFingerprint = fingerprint(
+            (vscode.workspace.workspaceFolders || [])
+                .map(f => f.uri.fsPath)
+                .sort()
+                .join('\u0000')
+        )
+        const language = this.getUserLanguage()
+        // 对话绑定工作区（fork 多工作区语义）：会话 A/B 绑不同工作区时 ENVIRONMENT
+        // 内容不同（Current Workspace 行），键必须含绑定 URI，否则共享缓存会把
+        // 会话 A 的提示词泄漏到会话 B 的缓存提示词。
         const workspacePart = runtime?.workspaceUri ?? ''
-        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspacePart}`
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}::template=${fingerprint(template)}::memory=${memoryEnabled}::${memoryPrompt}::ws=${workspaceFingerprint}::lang=${language}::wsUri=${workspacePart}`
+    }
+
+    /**
+     * entries 模式纯静态 system 提示词缓存键。
+     * 任一 system entry 含动态占位符（TODO_LIST 等）时返回 null（结果依赖 runtime，不可缓存）。
+     * 键覆盖：模式 id + 启用集合 + 顺序 + 内容指纹
+     * （getEnabledPromptEntries 已按 enabled 过滤、order 排序，指纹前带 order 保证顺序变化即失效）。
+     * ENVIRONMENT/MEMORY 的渲染值依赖 runtime 输入（工作区集合/渲染语言/记忆配置），
+     * 仅内容指纹无法捕获——切工作区/改语言/改记忆后旧缓存会在 TTL 内滞留（04 批 MEDIUM）。
+     * 与 buildPromptCacheKey（422-434）同款指纹逻辑：引用 {{$ENVIRONMENT}} 时键追加
+     * ws/lang 指纹（lang 用 this.getUserLanguage()，与渲染一致、显式设置优先——第五轮 LOW
+     * 修正：旧实现取 vscode.env.language，显式设置语言时键与渲染脱节），引用 {{$MEMORY}}
+     * 时追加 memoryConfig 指纹；两者都未引用时键保持原样。
+     */
+    private buildEntriesStaticCacheKey(mode?: ResolvedPromptModeSnapshot): string | null {
+        if (!this.usesPromptEntries(mode)) {
+            return null
+        }
+        const entries = this.getEnabledPromptEntries(mode)
+            .filter(entry => (entry.type || 'prompt') === 'prompt')
+            .filter(entry => entry.role === 'system')
+        if (entries.some(entry => this.hasDynamicPlaceholder(entry.content))) {
+            return null
+        }
+        const contentFingerprint = fingerprint(
+            entries.map(entry => `${entry.order ?? 0}\u0000${entry.content}`).join('\u0001')
+        )
+        let key = `${mode?.id || 'default'}::entries::${contentFingerprint}`
+        const referencesEnvironment = entries.some(entry => entry.content.includes('{{$ENVIRONMENT}}'))
+        const referencesMemory = entries.some(entry => entry.content.includes('{{$MEMORY}}'))
+        if (referencesEnvironment || referencesMemory) {
+            const settingsManager = getGlobalSettingsManager()
+            if (referencesEnvironment) {
+                const workspaceFingerprint = fingerprint(
+                    (vscode.workspace.workspaceFolders || [])
+                        .map(f => f.uri.fsPath)
+                        .sort()
+                        .join('\u0000')
+                )
+                // 与 buildPromptCacheKey 一致：语言用 this.getUserLanguage()（显式设置优先），
+                // 与 ENVIRONMENT 渲染一致，避免显式设置语言后键不变、TTL 内滞留旧提示词（第五轮 LOW）。
+                const language = this.getUserLanguage()
+                key += `::ws=${workspaceFingerprint}::lang=${language}`
+            }
+            if (referencesMemory) {
+                const memoryConfig = settingsManager?.getMemoryConfig?.()
+                const memoryEnabled = memoryConfig?.enabled !== false
+                const memoryPrompt = typeof memoryConfig?.systemPrompt === 'string' ? memoryConfig.systemPrompt : ''
+                key += `::memory=${memoryEnabled}::${memoryPrompt}`
+            }
+        }
+        return key
     }
     
     /**
@@ -419,6 +499,25 @@ export class PromptManager {
         const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         if (this.usesPromptEntries(resolvedMode)) {
             // 预设条目允许 system 条目引用动态占位符，不能复用旧静态缓存。
+            // 但全部 system entry 为纯静态（不含动态占位符）时，结果与 runtime 无关：
+            // 按「模式 id + 启用集合 + 顺序 + 内容指纹」做 TTL 缓存，避免每条消息全量重渲染
+            // （04 批 LOW：entries 组装模式下系统提示词完全不缓存）。
+            const entriesCacheKey = this.buildEntriesStaticCacheKey(resolvedMode)
+            if (entriesCacheKey) {
+                const now = Date.now()
+                if (!forceRefresh &&
+                    this.cachedEntriesPromptValue !== null &&
+                    this.cachedEntriesPromptKey === entriesCacheKey &&
+                    (now - this.lastEntriesGeneratedAt) < PromptManager.CACHE_TTL) {
+                    return this.cachedEntriesPromptValue
+                }
+                const value = this.generatePrompt(modeSnapshot, runtime)
+                this.cachedEntriesPromptValue = value
+                this.cachedEntriesPromptKey = entriesCacheKey
+                this.lastEntriesGeneratedAt = now
+                return value
+            }
+            // 含动态占位符：结果依赖 runtime，每次按请求重渲染
             return this.generatePrompt(modeSnapshot, runtime)
         }
 
@@ -509,12 +608,9 @@ export class PromptManager {
             'MEMORY': this.generateMemorySection()
         }
         
-        // 替换模板中的占位符（使用 {{$xxx}} 格式）
-        let result = template
-        for (const [key, value] of Object.entries(modules)) {
-            const regex = getPromptPlaceholderRegex(key)
-            result = result.replace(regex, value)
-        }
+        // 替换模板中的占位符（使用 {{$xxx}} 格式）：单次交替正则扫描 + 回调查表替换
+        // （旧实现逐键 new RegExp + replace 为 O(占位符数 × 模板长度)；且字符串替换值会展开 $ 特殊序列）
+        const result = this.replacePromptPlaceholders(template, modules)
         
         // 清理多余的空行
         return this.cleanupEmptyLines(result)
@@ -553,20 +649,21 @@ export class PromptManager {
             ...modules
         }
 
-        let result = template
-        for (const [key, value] of Object.entries(templateModules)) {
-            const regex = getPromptPlaceholderRegex(key)
-            result = result.replace(regex, value)
-        }
+        const result = this.replacePromptPlaceholders(template, templateModules)
 
         // 全部 section 与上一轮相同（被差分剔除）：整条动态消息不发，
         // 模型仍能从 preserve 回插的历史快照看到内容，请求前缀与上轮一致。
         // 例外：基准存在的 section 在当前消失（清空，如 TODO 清空/标签全关）时
         // 必须发送——否则模型持续持有过期快照（MEDIUM-2：消失的 section 不出现在
         // 当前 modules 里，Object.values().every 恒真导致整条消息持续被省略）。
+        // 前置条件：模板至少引用一个动态占位符键（[...referencedKeys].some(k =>
+        // DYNAMIC_PROMPT_PLACEHOLDERS.has(k))）。只引用非动态键（如 {{$ENVIRONMENT}}/
+        // {{$MEMORY}}）的模板 modules 恒为空，every 对空对象恒真——若仅用
+        // referencedKeys.size > 0 作前置条件，会误把含静态文本的整条消息省略（04 批 LOW）。
         const baseKeys = diffBase?.sectionValues ? Object.keys(diffBase.sectionValues) : []
         const vanishedSection = baseKeys.some(key => !(key in modules))
-        const allSectionsOmitted = !!diffBase?.sectionValues &&
+        const allSectionsOmitted = [...referencedKeys].some(key => DYNAMIC_PROMPT_PLACEHOLDERS.has(key)) &&
+            !!diffBase?.sectionValues &&
             Object.values(modules).every(value => !value) &&
             !vanishedSection
         return {
@@ -890,6 +987,20 @@ export class PromptManager {
         return keys
     }
 
+    /**
+     * 用查表替换模板中的 {{$KEY}} 占位符（单次交替正则扫描，见模块级 PROMPT_PLACEHOLDER_REGEX）。
+     * 函数式替换器 () => value 天然规避 JS replace 替换字符串的 $&/$`/$'/$$/$n 特殊序列展开
+     * （值可能来自工作区路径/固定文件内容/用户记忆提示词等不可信内容）。
+     * 查表未命中的占位符保持原样（与旧逐键替换行为一致）。
+     */
+    private replacePromptPlaceholders(template: string, modules: Record<string, string>): string {
+        return template.replace(PROMPT_PLACEHOLDER_REGEX, (placeholder) => {
+            const key = placeholder.slice(3, -2) // 去掉 '{{$' 前缀与 '}}' 后缀
+            const value = modules[key]
+            return typeof value === 'string' ? value : placeholder
+        })
+    }
+
     private renderPromptTemplateContent(
         template: string,
         runtime?: DynamicRuntimeContext,
@@ -936,11 +1047,7 @@ export class PromptManager {
             )
         )
 
-        let result = template
-        for (const [key, value] of Object.entries(modules)) {
-            const regex = getPromptPlaceholderRegex(key)
-            result = result.replace(regex, value)
-        }
+        const result = this.replacePromptPlaceholders(template, modules)
 
         return this.cleanupEmptyLines(result)
     }
@@ -1555,6 +1662,12 @@ export class PromptManager {
         let totalBytes = 0
         
         for (const pinnedFile of allPinnedFiles) {
+            // 预算已耗尽：剩余文件注定被跳过（emittedBytes > 0 时必超限），提前 break
+            // 退出循环，避免继续为它们做缓存命中检查/stat/read（04 批 LOW：预算检查
+            // 在读取之后执行，超限文件仍白做一次磁盘探测）。
+            if (totalBytes >= PINNED_FILE_MAX_TOTAL_BYTES) {
+                break
+            }
             let workspaceFolder = pinnedFile.workspaceUri
                 ? workspaceUriToFolder.get(pinnedFile.workspaceUri)
                 : undefined;
@@ -1578,13 +1691,11 @@ export class PromptManager {
                 const cached = pinnedFileCache.get(fullPath)
                 let content: string
                 let truncated: boolean
-                let bytesRead: number
 
                 if (cached && now - cached.checkedAt < PINNED_FILE_CACHE_TTL_MS) {
-                    // TTL 内：零磁盘 I/O，直接复用缓存；未实际读取，不累计总字节预算
+                    // TTL 内：零磁盘 I/O，直接复用缓存；不累计读取字节（发出字节仍计入总预算）
                     content = cached.content
                     truncated = cached.truncated
-                    bytesRead = 0
                     touchPinnedFileCache(fullPath)
                 } else {
                     let stat: fs.Stats
@@ -1597,11 +1708,10 @@ export class PromptManager {
                     }
 
                     if (cached && cached.mtimeMs === stat.mtimeMs) {
-                        // 未变更：只刷新检查时间，不重读磁盘；未实际读取，不累计总字节预算
+                        // 未变更：只刷新检查时间，不重读磁盘；不累计读取字节（发出字节仍计入总预算）
                         cached.checkedAt = now
                         content = cached.content
                         truncated = cached.truncated
-                        bytesRead = 0
                         touchPinnedFileCache(fullPath)
                     } else {
                         const read = readPinnedFileCapped(fullPath, stat.size)
@@ -1614,16 +1724,18 @@ export class PromptManager {
                         })
                         content = read.content
                         truncated = read.truncated
-                        bytesRead = read.bytesRead
                     }
                 }
 
-                // 总字节预算：累计读取超限则跳过剩余文件
-                if (totalBytes + bytesRead > PINNED_FILE_MAX_TOTAL_BYTES) {
+                // 总字节预算：约束本轮实际发出的内容字节（含 TTL 缓存命中——缓存只省磁盘 I/O，
+                // 发出内容仍占上下文预算），累计超限则跳过剩余文件。旧实现缓存命中不计字节，
+                // 全部文件缓存后每轮发出内容可远超 2MB，预算形同虚设（04 批 LOW）。
+                const emittedBytes = Buffer.byteLength(content, 'utf8')
+                if (totalBytes + emittedBytes > PINNED_FILE_MAX_TOTAL_BYTES) {
                     console.warn(`[PromptManager] Skipping pinned file ${pinnedFile.path}: total pinned file bytes would exceed ${PINNED_FILE_MAX_TOTAL_BYTES}`)
                     continue
                 }
-                totalBytes += bytesRead
+                totalBytes += emittedBytes
 
                 const displayPath = workspaceFolders.length > 1
                     ? `${workspaceFolder.name}/${pinnedFile.path}`

@@ -663,6 +663,7 @@ export interface ContentPart {
         args: Record<string, unknown>;
         /** 增量解析时的原始 JSON 字符串（用于流式输出） */
         partialArgs?: string;
+        prefilledArgs?: boolean;
         id?: string; // 可选的函数调用 ID
         /** 是否已被用户拒绝执行（重新加载对话时正确显示工具状态） */
         rejected?: boolean;

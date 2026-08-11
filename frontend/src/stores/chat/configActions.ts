@@ -26,15 +26,23 @@ function normalizeModelId(modelId: string | null | undefined): string { return (
 
 /**
  * 加载当前配置详情
+ *
+ * 竞态防护：入口固化 configId，await 后校验未变才写入。
+ * switchTabWrapped 会 fire-and-forget 调用本函数，快速切换标签页时旧请求的迟到响应
+ * 不得覆盖新标签页的 currentConfig / selectedModelId。
  */
 export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
-  if (!state.configId.value) {
+  const configIdAtStart = state.configId.value
+  if (!configIdAtStart) {
     state.currentConfig.value = null
     state.selectedModelId.value = ''
     return
   }
   try {
-    const config = await sendToExtension<any>(MESSAGE_NAMES['config.getConfig'], { configId: state.configId.value })
+    const config = await sendToExtension<any>(MESSAGE_NAMES['config.getConfig'], { configId: configIdAtStart })
+    // 归属校验：await 期间 configId 可能已切换（如快速切换标签页触发新的 loadCurrentConfig），
+    // 迟到的旧响应直接丢弃，避免把 A 标签页的配置写进 B 标签页
+    if (configIdAtStart !== state.configId.value) return
     if (config) {
       // 模型回退：model 为空时使用 models 列表第一个模型（后端 getConfig 已解析，这里兜底）
       const resolvedModel = config.model || config.models?.[0]?.id || ''

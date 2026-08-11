@@ -8,6 +8,7 @@
 
 import { computed } from 'vue'
 import { useI18n } from '../../../composables/useI18n'
+import { truncateText } from '../../../utils/format'
 import MediaToolPanel from './MediaToolPanel.vue'
 import type {
   MediaMetaItem,
@@ -56,12 +57,6 @@ const taskList = computed<ImageTask[]>(() => {
   }
   return []
 })
-
-// 截断文本
-function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength) + '...'
-}
 
 const taskTitle = (task: ImageTask) => truncateText(task.prompt, 80)
 

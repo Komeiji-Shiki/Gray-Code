@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as vscode from 'vscode';
 import { t } from '../../i18n';
 import { getActualLanguage } from '../../i18n/index';
 import type { Skill, SkillFrontmatter, SkillsChangeEvent, SkillsChangeListener, SkillSource } from './types';
@@ -33,8 +34,14 @@ export class SkillsManager {
     /** 变更监听器 */
     private listeners: Set<SkillsChangeListener> = new Set();
     
-    /** 待扫描的目录列表及来源 */
+    /** 待扫描的目录列表及来源（refresh 时按最新 workspaceFolders 实时构建） */
     private scanDirs: Array<{ path: string; source: SkillSource }> = [];
+
+    /** 构造时显式传入的工作区路径（测试/无 workspaceFolders 环境的兜底） */
+    private explicitWorkspacePaths: string[] = [];
+
+    /** vscode.workspace.onDidChangeWorkspaceFolders 订阅（initialize 时注册，dispose 释放） */
+    private workspaceChangeDisposable: { dispose(): void } | null = null;
 
     /** Legacy 目录（存放示例技能等） */
     private legacySkillsDir: string;
@@ -50,55 +57,92 @@ export class SkillsManager {
     
     constructor(options: { workspacePath?: string; workspacePaths?: string[]; globalStoragePath: string }) {
         this.legacySkillsDir = path.join(options.globalStoragePath, 'skills');
-        this.buildScanDirs(options);
+        this.explicitWorkspacePaths = options.workspacePath ? [options.workspacePath] : [];
+        this.scanDirs = this.buildScanDirsForPaths(this.explicitWorkspacePaths);
     }
 
     /**
-     * 构建待扫描的目录列表
-     * 按优先级排序（先扫到的优先）
+     * 当前用于扫描的工作区路径：真实 vscode 环境优先取 workspaceFolders
+     * （工作区切换/增删根后即为最新，多根全部纳入）；测试环境 mock 的
+     * workspaceFolders 恒为空数组，fallback 到构造时显式传入的 workspacePath。
      */
-    private buildScanDirs(options: { workspacePath?: string; workspacePaths?: string[]; globalStoragePath: string }) {
+    private getWorkspacePathsForScan(): string[] {
+        const folders = vscode.workspace?.workspaceFolders;
+        if (Array.isArray(folders) && folders.length > 0) {
+            return folders.map(folder => folder.uri.fsPath);
+        }
+        return this.explicitWorkspacePaths;
+    }
+
+    /**
+     * 构建待扫描的目录列表（按优先级排序，先扫到的优先）。
+     * 多根工作区：所有根的 .graycode/.limcode/.agents 项目目录都按 workspaceFolders 顺序加入。
+     */
+    private buildScanDirsForPaths(workspacePaths: string[]): Array<{ path: string; source: SkillSource }> {
+        const dirs: Array<{ path: string; source: SkillSource }> = [];
         // 1. 项目级目录 (优先级最高)
-        // 多工作区支持：收集全部已打开文件夹的项目级 skills 目录
-        // （workspacePaths 为数组形式；workspacePath 为兼容旧调用方的单路径形式）
-        const workspacePaths = options.workspacePaths && options.workspacePaths.length > 0
-            ? options.workspacePaths
-            : (options.workspacePath ? [options.workspacePath] : []);
         for (const workspacePath of workspacePaths) {
-            this.scanDirs.push({ 
+            if (!workspacePath) {
+                continue;
+            }
+            dirs.push({ 
                 path: path.join(workspacePath, '.graycode', 'skills'), 
                 source: 'project-graycode' 
             });
-            // fallback: 兼容旧 LimCode 项目技能目录
-            this.scanDirs.push({ 
+            // fallback: 兼容旧 LimCode 项目技能目录（独立 source，避免与 graycode 目录混淆）
+            dirs.push({ 
                 path: path.join(workspacePath, '.limcode', 'skills'), 
-                source: 'project-graycode' 
+                source: 'project-limcode' 
             });
-            this.scanDirs.push({ 
+            dirs.push({ 
                 path: path.join(workspacePath, '.agents', 'skills'), 
                 source: 'project-agents' 
             });
         }
 
-        // 2. Legacy 目录 (原有插件存储目录)
-        this.scanDirs.push({ 
+        // 2. 用户全局目录（用户自建 skill 优先于插件 legacy 目录，防止同名被遮蔽）
+        dirs.push({ 
+            path: path.join(os.homedir(), '.graycode', 'skills'), 
+            source: 'user-graycode' 
+        });
+        // fallback: 兼容旧 LimCode 用户技能目录（独立 source）
+        dirs.push({ 
+            path: path.join(os.homedir(), '.limcode', 'skills'), 
+            source: 'user-graycode' 
+        });
+        dirs.push({ 
+            path: path.join(os.homedir(), '.agents', 'skills'), 
+            source: 'user-agents' 
+        });
+
+        // 3. Legacy 目录 (原有插件存储目录)
+        dirs.push({ 
             path: this.legacySkillsDir, 
             source: 'legacy' 
         });
 
-        // 3. 用户全局目录
-        this.scanDirs.push({ 
-            path: path.join(os.homedir(), '.graycode', 'skills'), 
-            source: 'user-graycode' 
-        });
-        // fallback: 兼容旧 LimCode 用户技能目录
-        this.scanDirs.push({ 
-            path: path.join(os.homedir(), '.limcode', 'skills'), 
-            source: 'user-graycode' 
-        });
-        this.scanDirs.push({ 
-            path: path.join(os.homedir(), '.agents', 'skills'), 
-            source: 'user-agents' 
+        return dirs;
+    }
+
+    /**
+     * 注册 vscode.workspace.onDidChangeWorkspaceFolders 监听：工作区文件夹变更
+     * （切换/增删根）时立即重建扫描目录并刷新，不依赖下一次被动 refresh。
+     * 旧实现只在构造时固化 scanDirs，切换/新开工作区后项目级 skills 扫描陈旧（04 批 MEDIUM）；
+     * 即使本监听不可用（测试环境 mock 无此 API），doRefresh 的实时构建仍保证扫描目录新鲜。
+     */
+    private registerWorkspaceFoldersListener(): void {
+        if (this.workspaceChangeDisposable) {
+            return; // 幂等：重复 initialize 不叠加订阅
+        }
+        // 运行时防御：测试环境 vscode mock 未提供此 API（类型上必然存在，mock 缺字段）
+        const onDidChangeWorkspaceFolders = vscode.workspace?.onDidChangeWorkspaceFolders;
+        if (typeof onDidChangeWorkspaceFolders !== 'function') {
+            return;
+        }
+        this.workspaceChangeDisposable = onDidChangeWorkspaceFolders(() => {
+            void this.refresh().catch(error => {
+                console.error('[SkillsManager] Failed to refresh on workspace change:', error);
+            });
         });
     }
     
@@ -122,6 +166,9 @@ export class SkillsManager {
         await this.refresh();
         
         this.initialized = true;
+
+        // 工作区文件夹变更（切换/增删根）后即时重建扫描目录并刷新（04 批 MEDIUM）
+        this.registerWorkspaceFoldersListener();
     }
     
     /**
@@ -214,32 +261,82 @@ ${content}
      * 重新扫描所有配置的目录并加载 skills
      * 并发保护：复用 initPromise 的串行化模式——并发 refresh 共享同一个进行中的任务，
      * 避免交错扫描导致 skills/enabledSkillIds 状态互相覆盖或重复通知监听器。
+     * 合并语义复核：refresh 发起时快照扫描输入（workspaceFolders），完成时与当前快照
+     * 不一致（扫描窗口内切换/增删工作区根）则再触发一轮，避免变更被合并吞掉（04 批 LOW）。
      */
     async refresh(): Promise<void> {
         if (this.refreshPromise) {
             return this.refreshPromise;
         }
-        this.refreshPromise = this.doRefresh().finally(() => {
-            this.refreshPromise = null;
-        });
+        // 快照本轮 refresh 的扫描输入：doRefresh 用该快照构建 scanDirs（而非完成时的
+        // 最新值），保证「发起时 vs 当前」比对精确——扫描期间 folders 变化才触发补扫。
+        const foldersSnapshot = this.getWorkspacePathsForScan();
+        this.refreshPromise = this.doRefresh(foldersSnapshot)
+            .finally(() => {
+                this.refreshPromise = null;
+            })
+            .then(
+                () => this.refreshIfFoldersChanged(foldersSnapshot),
+                // 失败也要比对：doRefresh 抛错时旧实现跳过补扫，扫描窗口内的工作区变更
+                // 被吞掉（第五轮 LOW）。补扫完成后仍把原错误抛回给调用方——doInitialize
+                // 依赖 refresh 失败上抛（不标记 initialized），工作区变更监听自行 catch。
+                (error) => this.refreshIfFoldersChanged(foldersSnapshot).then(() => { throw error; })
+            );
         return this.refreshPromise;
     }
 
-    private async doRefresh(): Promise<void> {
-        this.skills.clear();
-        
+    /**
+     * 发起时快照与当前 workspaceFolders 一致则无事发生；不一致（扫描期间工作区
+     * 切换/增删根）则再触发一轮 refresh。必须在本轮 refreshPromise 置空后调用
+     * （由 refresh 链式 .then 触发，此时并发合并已结束），否则会复用进行中的任务。
+     */
+    private async refreshIfFoldersChanged(foldersSnapshot: string[]): Promise<void> {
+        if (!this.sameWorkspacePaths(foldersSnapshot, this.getWorkspacePathsForScan())) {
+            await this.refresh();
+        }
+    }
+
+    /** 按顺序逐项比较两条工作区路径列表（顺序影响扫描优先级，不做排序） */
+    private sameWorkspacePaths(a: string[], b: string[]): boolean {
+        if (a.length !== b.length) {
+            return false;
+        }
+        for (let i = 0; i < a.length; i++) {
+            if (a[i] !== b[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private async doRefresh(foldersSnapshot?: string[]): Promise<void> {
+        // 实时构建扫描目录：任何一次 refresh 都基于发起时快照的 workspaceFolders
+        // （切换/新开工作区后项目级 skills 不再陈旧；多根全部纳入，不只扫第一个根——04 批 MEDIUM）。
+        // 测试环境 vscode mock 的 workspaceFolders 恒为空数组，fallback 到构造时显式路径。
+        this.scanDirs = this.buildScanDirsForPaths(foldersSnapshot ?? this.getWorkspacePathsForScan());
+
+        // 扫描期间保留旧 skills/nameToId 快照：enableSkill/disableSkill 在扫描窗口内
+        // 仍作用于旧快照（不静默失败），新扫描完成后一次性原子替换（04 批 LOW）。
+        const nextSkills = new Map<string, Skill>();
+        const nextNameToId = new Map<string, string>();
+
         for (const dirInfo of this.scanDirs) {
-            await this.scanDirectory(dirInfo.path, dirInfo.source);
+            await this.scanDirectory(dirInfo.path, dirInfo.source, nextSkills, nextNameToId);
         }
         
         // 基于新扫描结果重建启用状态：磁盘上已删除的 skill 不再视为启用，
         // 仍存在的 skill 保留其启用状态。
-        const existingIds = new Set(this.skills.keys());
+        const existingIds = new Set(nextSkills.keys());
         for (const id of Array.from(this.enabledSkillIds)) {
             if (!existingIds.has(id)) {
                 this.enabledSkillIds.delete(id);
             }
         }
+        
+        // 原子替换新快照：扫描窗口内 enableSkill/disableSkill 对旧快照的修改，
+        // 若目标 skill 在新扫描中仍存在则其启用位被保留。
+        this.skills = nextSkills;
+        this.nameToId = nextNameToId;
         
         // 通知监听器
         this.notifyChange({
@@ -249,9 +346,14 @@ ${content}
     }
 
     /**
-     * 扫描单个目录并加载 skills
+     * 扫描单个目录并加载 skills（写入 target 集合，调用方负责原子替换）
      */
-    private async scanDirectory(dirPath: string, source: SkillSource): Promise<void> {
+    private async scanDirectory(
+        dirPath: string,
+        source: SkillSource,
+        targetSkills: Map<string, Skill>,
+        targetNameToId: Map<string, string>
+    ): Promise<void> {
         try {
             if (!fs.existsSync(dirPath)) {
                 return;
@@ -259,26 +361,61 @@ ${content}
             
             const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
             
+            // 收集目录条目：符号链接用 fs.stat 跟随判断是否指向目录，
+            // 否则 symlink 的 isDirectory() 恒为 false，符号链接 skill 目录永不被加载。
+            // 跟随符号链接目录后校验真实路径仍在扫描根内（仅接受扫描根内目标，见下），
+            // 防止 symlink 逃逸扫描根（04 批 LOW；第五轮确认接受「仅扫描根内」语义）。
+            const dirs: Array<{ name: string; fullPath: string }> = [];
             for (const entry of entries) {
                 if (entry.isDirectory()) {
-                    // 如果已存在同名 Skill (id 相同)，由于 scanDirs 顺序决定了优先级，后扫到的跳过
-                    if (this.skills.has(entry.name)) {
-                        continue;
-                    }
-
-                    const skillFile = path.join(dirPath, entry.name, 'SKILL.md');
-                    if (fs.existsSync(skillFile)) {
-                        try {
-                            const skill = await this.loadSkill(entry.name, skillFile, source);
-                            if (skill) {
-                                this.skills.set(skill.id, skill);
+                    dirs.push({ name: entry.name, fullPath: path.join(dirPath, entry.name) });
+                } else if (entry.isSymbolicLink()) {
+                    try {
+                        const fullPath = path.join(dirPath, entry.name);
+                        const st = await fs.promises.stat(fullPath);
+                        if (st.isDirectory()) {
+                            // 符号链接逃逸防护（有意保守）：校验基准为「当前扫描目录」，
+                            // 真实目标必须仍落在扫描根之内，否则 symlink 可把 skill 目录
+                            // 指向扫描根外任意位置。已知副作用（第五轮确认接受现状）：
+                            // 指向「工作区其他位置」但超出本扫描根的合法符号链接（如 symlink
+                            // 到工作区内另一根/上级目录）同样被拒绝——语义即「仅接受扫描根
+                            // 内目标」，不做跨根放行。
+                            const realDir = await fs.promises.realpath(dirPath);
+                            const realTarget = await fs.promises.realpath(fullPath);
+                            const rel = path.relative(realDir, realTarget);
+                            if (rel.startsWith('..') || path.isAbsolute(rel)) {
+                                continue;
                             }
-                        } catch (error) {
-                            console.warn(`[SkillsManager] Failed to load skill ${entry.name} from ${source}:`, error);
+                            dirs.push({ name: entry.name, fullPath });
                         }
+                    } catch {
+                        // 悬空符号链接：跳过
                     }
                 }
             }
+            
+            // 并发放置加载：readdir 收集后 Promise.all（同一目录内条目名唯一，
+            // has 检查 + set 无竞态；跨目录优先级由外层 scanDirs 串行顺序保证）
+            await Promise.all(dirs.map(async ({ name, fullPath }) => {
+                // 如果已存在同名 Skill (id 相同)，由于 scanDirs 顺序决定了优先级，后扫到的跳过
+                if (targetSkills.has(name)) {
+                    return;
+                }
+
+                const skillFile = path.join(fullPath, 'SKILL.md');
+                if (!fs.existsSync(skillFile)) {
+                    return;
+                }
+                try {
+                    const skill = await this.loadSkill(name, skillFile, source);
+                    if (skill) {
+                        targetSkills.set(skill.id, skill);
+                        targetNameToId.set(skill.name, skill.id);
+                    }
+                } catch (error) {
+                    console.warn(`[SkillsManager] Failed to load skill ${name} from ${source}:`, error);
+                }
+            }));
         } catch (error) {
             console.error(`[SkillsManager] Failed to scan directory ${dirPath}:`, error);
         }
@@ -620,6 +757,8 @@ ${content}
      * 释放资源
      */
     dispose(): void {
+        this.workspaceChangeDisposable?.dispose();
+        this.workspaceChangeDisposable = null;
         this.listeners.clear();
     }
 }

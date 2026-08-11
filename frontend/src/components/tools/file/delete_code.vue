@@ -10,13 +10,15 @@
  */
 
 import { computed } from 'vue'
-import { useOpenWorkspaceFile } from '@/composables'
+import { useI18n, useOpenWorkspaceFile } from '@/composables'
 
 const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
 }>()
+
+const { t } = useI18n()
 
 const { openFileAt } = useOpenWorkspaceFile()
 
@@ -117,7 +119,7 @@ function getFileNameWithoutExt(fp: string): string {
     <div class="panel-header">
       <div class="header-info">
         <span class="codicon codicon-diff-removed files-icon"></span>
-        <span class="title">删除代码</span>
+        <span class="title">{{ t('components.settings.toolsSettings.toolDisplayNames.delete_code') }}</span>
       </div>
       <div class="header-stats">
         <span v-if="successCount > 0" class="stat success">
@@ -128,7 +130,7 @@ function getFileNameWithoutExt(fp: string): string {
           <span class="codicon codicon-error"></span>
           {{ failCount }}
         </span>
-        <span class="stat total">共 {{ mergedFiles.length }} 个文件</span>
+        <span class="stat total">{{ t('components.message.tool.deleteCode.totalFiles', { count: mergedFiles.length }) }}</span>
       </div>
     </div>
 
@@ -151,8 +153,8 @@ function getFileNameWithoutExt(fp: string): string {
             <span class="codicon codicon-diff-removed file-icon"></span>
             <span class="file-name clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ getFileNameWithoutExt(file.path) }}</span>
             <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">.{{ getFileExtension(file.path) }}</span>
-            <span class="delete-badge">删除第 {{ file.start_line }}~{{ file.end_line }} 行</span>
-            <span class="line-count">{{ file.deletedCount }} 行</span>
+            <span class="delete-badge">{{ t('components.message.tool.deleteCode.badge', { start: file.start_line, end: file.end_line }) }}</span>
+            <span class="line-count">{{ t('components.message.tool.deleteCode.lineCount', { count: file.deletedCount }) }}</span>
           </div>
         </div>
 
@@ -166,11 +168,11 @@ function getFileNameWithoutExt(fp: string): string {
         </div>
         <div v-else-if="file.result?.status === 'accepted'" class="file-success">
           <span class="codicon codicon-check"></span>
-          已删除 {{ file.deletedCount }} 行
+          {{ t('components.message.tool.deleteCode.deletedCount', { count: file.deletedCount }) }}
         </div>
         <div v-else-if="!props.result" class="file-info-bar">
           <span class="codicon codicon-info"></span>
-          将删除第 {{ file.start_line }} 行到第 {{ file.end_line }} 行（共 {{ file.deletedCount }} 行）
+          {{ t('components.message.tool.deleteCode.willDelete', { start: file.start_line, end: file.end_line, count: file.deletedCount }) }}
         </div>
       </div>
     </div>

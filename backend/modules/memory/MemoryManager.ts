@@ -57,6 +57,11 @@ function parse(line: string): LogEntry | null {
     }
     const rest = line.substring(headEnd + 1);
     const dateEnd = rest.indexOf(' ');
+    // 缺 text 的损坏行（"#id date"）dateEnd=-1 时 substring 参数倒置会把整行
+    // 既当 date 又当 text 静默错解析——返回 null 由调用方跳过（与无空格头部同口径）。
+    if (dateEnd < 0) {
+        return null;
+    }
     const date = rest.substring(0, dateEnd);
     const text = rest.substring(dateEnd + 1);
     return { id, date, text };
@@ -75,6 +80,15 @@ const MAX_HEADER_BYTES = 1 + 10 + 1 + 10 + 1;
  * 迁移判定依赖该常量，勿与 LOG_REC 混淆。
  */
 const OLD_LOG_REC = 320;
+
+/**
+ * zoom 钳制后半区非 2 幂宽度时降级为原始条目的最大宽度上限：
+ * 压缩只写 2 幂对齐块，钳制产生的非 2 幂区间（旧 blockId 越过当前 T）永远不可能
+ * 作为整体被压缩，treeGet 必 null；宽度 ≤ 上限时直接 logSlice 展示真实条目。
+ * 上限用于防御人工构造的超大 blockId（避免一次性分配 width × LOG_REC 的超大缓冲），
+ * 超过上限仍回退摘要占位（与改造前行为一致）。
+ */
+const ZOOM_RAW_FALLBACK_MAX = 4096;
 
 /** 记录日期字段必须是 ISO 格式（YYYY-MM-DD），用于旧/新格式内容判别 */
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -157,6 +171,15 @@ export class MemoryManager {
      */
     private logRecMode: number = LOG_REC;
 
+    /**
+     * TREE 槽位占用位图缓存（size -> { mtimeMs, fileSize, slots }）：
+     * pending/pendingCount 逐槽 open/read 判断空槽在记忆量大时是 O(T) 次文件句柄循环，
+     * 缓存整文件位图后一次 stat 命中即可复用；slots[k] = true 表示槽位 k 有非空记录。
+     * 写路径（treePut/treeDrop/deleteRange/deleteEntries/truncateLog）在锁内主动失效，
+     * 读路径以 mtime+size 一致性兜底并发窗口，双保险避免陈旧位图。
+     */
+    private treeSlotCache = new Map<number, { mtimeMs: number; fileSize: number; slots: boolean[] }>();
+
     constructor(storagePath: string, config?: Partial<MemoryConfig>) {
         this.dir = storagePath;
         this.config = { ...DEFAULT_MEMORY_CONFIG, ...config };
@@ -177,16 +200,6 @@ export class MemoryManager {
             await fs.access(configPath);
         } catch {
             await this.writeConfig(this.config);
-        }
-    }
-
-    /** 检查存储是否已初始化 */
-    async isInitialized(): Promise<boolean> {
-        try {
-            await fs.access(this.logPath());
-            return true;
-        } catch {
-            return false;
         }
     }
 
@@ -480,6 +493,31 @@ export class MemoryManager {
         return entries[0];
     }
 
+    /**
+     * 读取位置 i 的原始固定宽度记录并返回其 id；记录缺失（日志被截断）或无法解析
+     * （损坏行）返回 null。仅用于 wake 末条「缺失 vs 损坏」的错误路径判别，
+     * 不参与正常读取（正常读取走 records() 跳过损坏行）。
+     */
+    private async rawEntryIdAt(i: number): Promise<number | null> {
+        const rec = this.logRecMode;
+        let handle: import('fs').promises.FileHandle;
+        try {
+            handle = await fs.open(this.logPath(), 'r');
+        } catch (e: any) {
+            if (e?.code === 'ENOENT') return null;
+            throw e;
+        }
+        try {
+            const buf = Buffer.alloc(rec);
+            const { bytesRead } = await handle.read(buf, 0, rec, i * rec);
+            if (bytesRead < rec) return null; // 记录缺失（日志被截断）
+            const entry = parse(buf.toString('utf-8').trimEnd());
+            return entry ? entry.id : null;
+        } finally {
+            await handle.close();
+        }
+    }
+
     /** 流式扫描全部日志 */
     private async *logScan(): AsyncGenerator<LogEntry> {
         const rec = this.logRecMode;
@@ -540,6 +578,7 @@ export class MemoryManager {
             }
             if (n === targetIndex) {
                 await fs.appendFile(p, pad(text, TREE_REC));
+                this.treeCacheInvalidate(size);
                 return true;
             }
 
@@ -551,6 +590,7 @@ export class MemoryManager {
                 if (buffer.toString('utf8').replace(/\0+$/g, '').trim()) return false;
                 const record = pad(text, TREE_REC);
                 await handle.write(record, 0, record.length, targetIndex * TREE_REC);
+                this.treeCacheInvalidate(size);
                 return true;
             } finally {
                 await handle.close();
@@ -558,6 +598,63 @@ export class MemoryManager {
         } finally {
             release();
         }
+    }
+
+    /** 使某 size 树文件的槽位位图缓存失效（树写路径在锁内调用） */
+    private treeCacheInvalidate(size: number): void {
+        this.treeSlotCache.delete(size);
+    }
+
+    /**
+     * 读取树文件槽位占用位图（pending/pendingCount 共享）：
+     * mtime+size 与缓存一致时直接复用，否则整文件一次读入构建位图并缓存——
+     * 替代逐槽 open/read/close（记忆量大时 O(T) 次文件句柄循环）。
+     * 文件不存在视为 0 槽；写路径已主动失效（treeCacheInvalidate），读路径以
+     * mtime+size 一致性 + cache.set 前二次 stat 双重兜底并发窗口。
+     */
+    private async treeSlotBitmap(size: number): Promise<{ have: number; slots: boolean[] }> {
+        const p = this.treePath(size);
+        let stat: import('fs').Stats;
+        try {
+            stat = await fs.stat(p);
+        } catch {
+            return { have: 0, slots: [] };
+        }
+        const cached = this.treeSlotCache.get(size);
+        if (cached && cached.mtimeMs === stat.mtimeMs && cached.fileSize === stat.size) {
+            return { have: Math.floor(stat.size / TREE_REC), slots: cached.slots };
+        }
+        const have = Math.floor(stat.size / TREE_REC);
+        const slots: boolean[] = [];
+        let cacheable = true;
+        if (have > 0) {
+            let buf: Buffer;
+            try {
+                buf = await fs.readFile(p);
+            } catch {
+                // 文件在 stat 后被删除/不可读：按无槽处理（与 stat 失败同款防御），
+                // 不缓存——下次调用按新 stat 重新构建。
+                return { have: 0, slots: [] };
+            }
+            // 二次 stat 校验：stat→readFile 窗口内写路径可能已改写文件并失效缓存，
+            // 若仍按写前 stat 值回填，会在失效后把陈旧位图写回缓存（陈旧位图窗口——
+            // 粗粒度 mtime 下后续读会长期命中错误位图）。读取期间文件变化 →
+            // 本次结果不缓存，下次调用按新 stat 重新构建。
+            try {
+                const stat2 = await fs.stat(p);
+                cacheable = stat2.mtimeMs === stat.mtimeMs && stat2.size === stat.size;
+            } catch {
+                cacheable = false; // 文件被删除/重命名：不缓存
+            }
+            for (let k = 0; k < have; k++) {
+                const slice = buf.subarray(k * TREE_REC, (k + 1) * TREE_REC);
+                slots.push(slice.toString('utf-8').trimEnd().length > 0);
+            }
+        }
+        if (cacheable) {
+            this.treeSlotCache.set(size, { mtimeMs: stat.mtimeMs, fileSize: stat.size, slots });
+        }
+        return { have, slots };
     }
 
     /** 丢弃树摘要及其上层 */
@@ -607,6 +704,7 @@ export class MemoryManager {
                         await handle.close();
                     }
                 }
+                this.treeCacheInvalidate(size);
                 size *= 2;
             }
             return gone;
@@ -714,18 +812,17 @@ export class MemoryManager {
         const todo: Array<[number, number]> = [];
         let size = 2;
         while (size <= T) {
-            const have = await this.count(this.treePath(size), TREE_REC);
+            // 整文件槽位位图一次读取 + 缓存复用（treeSlotBitmap），
+            // 替代逐槽 treeGet 的 O(T) 次 open/read/close 文件句柄循环
+            const { have, slots } = await this.treeSlotBitmap(size);
             const maxK = Math.floor(T / size);
             // count 只反映「文件里有多少个槽位」，不能反映「哪些槽位有内容」：
             // treeDrop 会把中间槽位写成空记录（保留索引供 treePut 复用），
             // 空槽从未被压缩，必须重新进入待压缩队列。
             // k >= have 的槽位从未写入，直接视为待压缩（保持原有 count 语义）；
-            // k < have 的槽位逐槽读内容判空，空槽同样视为待压缩。
+            // k < have 的槽位逐槽判空，空槽同样视为待压缩。
             for (let k = 0; k < maxK; k++) {
-                if (k < have) {
-                    const s = await this.treeGet(k * size, (k + 1) * size);
-                    if (s !== null) continue; // 已有摘要
-                }
+                if (k < have && slots[k]) continue; // 已有摘要
                 todo.push([k * size, (k + 1) * size]);
                 if (limit && todo.length >= limit) return todo;
             }
@@ -738,14 +835,13 @@ export class MemoryManager {
     async pendingCount(T: number): Promise<number> {
         let n = 0, size = 2;
         while (size <= T) {
-            const have = await this.count(this.treePath(size), TREE_REC);
+            const { have, slots } = await this.treeSlotBitmap(size);
             const maxK = Math.floor(T / size);
             // 与 pending() 同口径：[have, maxK) 从未写入全部待压缩；
             // [0, have) 内 treeDrop 留下的空记录也算待压缩
             let pendingBlocks = Math.max(0, maxK - have);
             for (let k = 0; k < have && k < maxK; k++) {
-                const s = await this.treeGet(k * size, (k + 1) * size);
-                if (s === null) pendingBlocks++;
+                if (!slots[k]) pendingBlocks++;
             }
             n += pendingBlocks;
             size *= 2;
@@ -819,10 +915,20 @@ export class MemoryManager {
         let runHi = -1;
         const flushRawRun = async (lo: number, hi: number): Promise<void> => {
             const entries = await this.logSlice(lo, hi);
-            if (entries.length !== hi - lo) {
-                // 读取期间日志被并发截断/改写：旧实现会在 logGet 处以
-                // "No memory at index" 报错，此处保持同等的严格提示。
-                die(`The log changed while reading #${lo}-${hi - 1}. Run memory_wake again.`);
+            // 按末条 id 校验日志未在读取期间被并发截断/改写：records() 会跳过损坏行，
+            // 中间条目不要求严格连续（损坏行跳过而非误报「日志变化」）。
+            // 末条 id !== hi-1 时区分「末条缺失」与「末条损坏」：
+            // - 末条缺失（并发截断，或 deleteRange 重编号使位置 hi-1 的记录 id 已变）
+            //   → 报「日志变化」；
+            // - 末条损坏（位置 hi-1 的记录仍在但无法解析）→ 日志并未变化，重跑 wake
+            //   仍会读到同一损坏记录，报「记录损坏」而非误报并发修改。
+            if (entries.length === 0 || entries[entries.length - 1].id !== hi - 1) {
+                const lastId = await this.rawEntryIdAt(hi - 1);
+                const truncated = lastId === null && (await this.logLen()) <= hi - 1;
+                if (lastId !== null || truncated) {
+                    die(`The log changed while reading #${lo}-${hi - 1}. Run memory_wake again.`);
+                }
+                die(`Record #${hi - 1} is corrupted. Run memory_wake again.`);
             }
             for (const e of entries) {
                 lines.push(`#${e.id} ${e.date} ${e.text}`);
@@ -993,6 +1099,11 @@ export class MemoryManager {
             } else {
                 const trimmed = (summary || '').trim();
                 if (!trimmed) die('Empty summary.');
+                if (trimmed.includes('\n') || trimmed.includes('\r')) {
+                    // 树摘要写入固定宽度记录，含换行会破坏「一行摘要」不变量；
+                    // 与 note/updateEntry 对记忆文本的校验口径一致。
+                    die('A summary is one line.');
+                }
                 const byteLen = Buffer.byteLength(trimmed, 'utf-8');
                 // 修改原因：树摘要写入 treePut 用 TREE_REC=288 的固定宽度记录，pad() 只容纳
                 //           TREE_REC-1=287 字节；entryChars 上限按 LOG 记录宽度（约 1000）校验，
@@ -1035,17 +1146,44 @@ export class MemoryManager {
         }
         const mid = (lo + hi) >> 1;
         const halves: WakeBlock[] = [];
-        for (const [a, b] of [[lo, mid], [mid, hi]] as Array<[number, number]>) {
-            if (a >= T) continue;
-            if (b - a === 1) {
-                const e = await this.logGet(a);
-                halves.push({ lo: a, hi: a, text: `${e.date} ${e.text}`, isRaw: true });
+        for (const [a0, b0] of [[lo, mid], [mid, hi]] as Array<[number, number]>) {
+            if (a0 >= T) continue;
+            // 钳制上界：旧 blockId 的半区可能越过当前 T（如块 0-7、T=5 时右半 [4,8)），
+            // 不钳制则 treeGet(4,8) 返回 {lo:4, hi:7}——hi 越出 T-1=4 的幻影摘要块。
+            // b = min(b0, T) 后摘要/原始块只覆盖真实存在的记忆；钳制后 b - a0 === 1
+            // 时降级为单条原始块，非 2 幂宽度（>1）时降级为原始条目（见下方分支）。
+            const b = Math.min(b0, T);
+            if (b - a0 === 1) {
+                const e = await this.logGet(a0);
+                halves.push({ lo: a0, hi: a0, text: `${e.date} ${e.text}`, isRaw: true });
+            } else if ((b - a0 & (b - a0 - 1)) !== 0 && b - a0 <= ZOOM_RAW_FALLBACK_MAX) {
+                // 钳制后的宽度非 2 的幂（如旧 blockId 的右半 [mid, T) 只剩 T-mid 条，
+                // 或 T < mid 时左半宽度 T-lo）：压缩只写 2 幂对齐块，该区间从未也不可能
+                // 作为整体被压缩，treeGet 必 null——显示 "not compressed yet" 会误导
+                // （再跑 memory_compress 也不会产出该块）。降级为原始条目展示真实内容
+                //（与 wake 的原始块同语义）；宽度超过 ZOOM_RAW_FALLBACK_MAX 时仍回退
+                // 摘要占位，避免超大缓冲一次性读入。
+                const entries = await this.logSlice(a0, b);
+                if (entries.length > 0) {
+                    halves.push({
+                        lo: a0,
+                        hi: b - 1,
+                        text: entries.map(e => `${e.date} ${e.text}`).join('\n'),
+                        isRaw: true,
+                    });
+                } else {
+                    halves.push({ lo: a0, hi: b - 1, text: 'not compressed yet', isRaw: false });
+                }
             } else {
-                const s = await this.treeGet(a, b);
-                halves.push({ lo: a, hi: b - 1, text: s || 'not compressed yet', isRaw: false });
+                const s = await this.treeGet(a0, b);
+                halves.push({ lo: a0, hi: b - 1, text: s || 'not compressed yet', isRaw: false });
             }
         }
-        return { left: halves[0], right: halves[1] || { lo: mid, hi: mid, text: '', isRaw: true } };
+        // 右半完全超出当前 T（mid >= T）时不返回幻影原始块（isRaw:true 的空块会被
+        // 当作真实原始记忆展示）：回退为空摘要块（isRaw:false），lo/hi 标注为
+        // [mid, T-1]（T 已知：右半未覆盖任何真实记忆，lo > hi 表示空区间，
+        // hi 取日志末索引 T-1 而非幻影索引 mid）。
+        return { left: halves[0], right: halves[1] || { lo: mid, hi: T - 1, text: '', isRaw: false } };
     }
 
     /**
@@ -1226,6 +1364,7 @@ export class MemoryManager {
                     } finally {
                         await th.close();
                     }
+                    this.treeCacheInvalidate(size);
                 }
             }
 
@@ -1343,6 +1482,7 @@ export class MemoryManager {
                     } finally {
                         await th.close();
                     }
+                    this.treeCacheInvalidate(size);
                 }
             }
 
@@ -1387,13 +1527,18 @@ export class MemoryManager {
         // logLen 不获取锁（仅 fs.stat），锁内调用不会死锁。
         const release = await this.lock.acquire();
         try {
+            // 必须先 repairLog 再 logLen：旧格式（OLD_LOG_REC=320B/条）文件在迁移前
+            // logLen 按当前 logRecMode（默认 LOG_REC=1024）计数会低估 T——keepId >= T
+            // 提前 return、removed 数值错误、树清理循环截不断旧摘要导致记忆「复活」。
+            // 其余写路径（logAppend/updateEntry/deleteRange/deleteEntries）均为
+            // repairLog 在前、logLen 在后，此处与之一致。
+            const logPath = this.logPath();
+            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const T = await this.logLen();
             if (keepId >= T) {
                 return { removed: 0 };
             }
             // 1. 截断 LOG 文件
-            const logPath = this.logPath();
-            await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const logHandle = await fs.open(logPath, 'r+');
             try {
                 await logHandle.truncate(keepId * this.logRecMode);
@@ -1415,6 +1560,7 @@ export class MemoryManager {
                     } finally {
                         await th.close();
                     }
+                    this.treeCacheInvalidate(size);
                 }
                 size *= 2;
             }
@@ -1507,9 +1653,5 @@ export class MemoryManager {
         return [lo, hi];
     }
 
-    /** 获取存储目录路径 */
-    getStoragePath(): string {
-        return this.dir;
-    }
 }
 

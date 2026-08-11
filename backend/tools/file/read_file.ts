@@ -27,13 +27,13 @@ import {
     isPdfFile,
     normalizeLineEndingsToLF,
     mapWithConcurrency,
-    // WP13 去重：gcd、calculateAspectRatio、ImageDimensions 原来在 read_file.ts 中重复定义，
-    // 现改为从 utils.ts 统一导入。
-    gcd,
+    // WP13 去重：calculateAspectRatio、ImageDimensions 原来在 read_file.ts 中重复定义，
+    // 现改为从 utils.ts 统一导入（gcd 仅被已删除的本地 parseImageDimensions 使用，不再导入）。
     calculateAspectRatio,
     parseImageDimensionsFromBytes,
     type ImageDimensions
 } from '../utils';
+import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
 // 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）：
 // 超大文件全量读入并全量塞进模型上下文会导致内存与 token 爆炸。
@@ -250,7 +250,7 @@ async function readSingleFile(
                 // 解析图片尺寸（仅对图片文件）
                 let dimensions: ImageDimensions | undefined;
                 if (isImageFile(filePath)) {
-                    dimensions = parseImageDimensions(content, mimeType);
+                    dimensions = parseImageDimensions(Buffer.from(content), mimeType);
                 }
                 
                 return {
@@ -480,6 +480,13 @@ export function createReadFileTool(
             }
         },
         handler: async (args, context): Promise<ToolResult> => {
+            // 修改原因：read_file handler 入口缺少工作区外策略兜底（绝对路径可读取工作区外文件）。
+            // 修改方式：与其余文件工具一致，入口处调用 ensureOutsideWorkspaceAccessApproved（读策略 deny/ask/allow）。
+            const accessError = ensureOutsideWorkspaceAccessApproved('read_file', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
+            }
+
             // 从 context 中获取多模态能力
             const multimodalEnabled = context?.multimodalEnabled === true;
             const capability = context?.capability as MultimodalCapability ?? {

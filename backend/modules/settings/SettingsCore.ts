@@ -100,6 +100,25 @@ export class SettingsCore {
      * 整体写回，并发调用时后写会覆盖先写，必须整段入队串行执行。
      */
     private writeQueue: Promise<void> = Promise.resolve();
+    /**
+     * serializeMutation 重入标志：mutator 执行期间为 true。
+     * mutator 内嵌套调用 serializeMutation（如服务级 update*Config 在 mutator 内调用
+     * 底层写入口 saveToolsConfigEntry，后者也整体入队）时据此内联执行，避免
+     * 「内层 run 链在外层 tail 之后才启动、外层 mutator 又 await 内层 run」的队列死锁。
+     *
+     * 已知边界：标志跨 await 保持——mutator 等待（storage.save/load 等）期间到达的
+     * 并发调用（另一事件循环任务）同样会走内联分支、与当前 mutator 交错执行（与嵌套
+     * 调用无法区分）。对「读-改-写」型 mutator，交错写仍基于最新内存状态合并，不丢
+     * 更新；唯一需要收口的是 reloadAndNotify 的「load → 整体替换」窄窗口——由
+     * mutationGeneration 代际校验 + 重读保护覆盖（见 reloadAndNotify）。
+     */
+    private inMutation = false;
+    /**
+     * 变更代际计数：mutator 实际执行（队列运行或内联执行）时递增。
+     * 供 reloadAndNotify 检测「load() 等待窗口内是否有并发变更交错」：
+     * 有交错则丢弃本次过期快照、重读最新存储，避免整体替换覆盖并发变更。
+     */
+    private mutationGeneration = 0;
 
     constructor(storage: SettingsStorage) {
         this.storage = storage;
@@ -188,27 +207,40 @@ export class SettingsCore {
      * 写回 toolsConfig.<key> 配置并广播变更事件。
      *
      * 所有 toolsConfig 下的配置保存/通知逻辑统一收口于此。
+     *
+     * 写-通知整体入队串行：serializeMutation 带重入保护（mutator 内嵌套调用内联执行），
+     * 服务级 update*Config 在自身 mutator 内调用本方法时不会死锁；未包 mutator 的直接
+     * 调用入口（如 ContextSettingsService.updateContextAwarenessConfig）也自动获得与其它
+     * 写操作互斥的串行化——「单次原子写，无并发覆盖风险」的旧注释不成立：直调入口与
+     * 入队方法并发时，写回仍可能基于过期旧值覆盖先写，必须统一走同一写队列。
+     * 注意：读-改（oldConfig 读取与 newConfig 构造）由调用方负责放入 mutator；本方法只
+     * 串行化「写入 + 保存 + 通知」段（见各服务 update*Config 的 serializeMutation 包裹）。
      */
     async saveToolsConfigEntry<T extends object>(key: string, oldConfig: Readonly<T>, newConfig: T): Promise<void> {
-        if (!this.settings.toolsConfig) {
-            this.settings.toolsConfig = {};
-        }
-        // 整体替换 toolsConfig 对象（而非原地改 toolsConfig[key]）：任何存储实现的
-        // diff 快照都不会因「同对象引用复用」而漏写嵌套配置（同 setToolsEnabled 约定）
-        this.settings.toolsConfig = {
-            ...this.settings.toolsConfig,
-            [key]: newConfig as unknown as Record<string, unknown>
-        };
-        this.settings.lastUpdated = Date.now();
+        await this.serializeMutation(async () => {
+            if (!this.settings.toolsConfig) {
+                this.settings.toolsConfig = {};
+            }
+            // 整体替换 toolsConfig 对象（而非原地改 toolsConfig[key]）：任何存储实现的
+            // diff 快照都不会因「同对象引用复用」而漏写嵌套配置（同 setToolsEnabled 约定）
+            this.settings.toolsConfig = {
+                ...this.settings.toolsConfig,
+                [key]: newConfig as unknown as Record<string, unknown>
+            };
+            this.settings.lastUpdated = Date.now();
 
-        await this.storage.save(this.settings);
+            await this.storage.save(this.settings);
 
-        this.notifyChange({
-            type: 'tools',
-            path: `toolsConfig.${key}`,
-            oldValue: oldConfig,
-            newValue: newConfig,
-            settings: this.settings
+            // 事件负载统一深拷贝：oldValue/newValue 可能与存储活对象共享嵌套引用
+            // （{ ...oldConfig, ...config } 浅展开），settings 是活对象——监听器原地修改
+            // 任一字段都会污染核心状态/未保存配置，统一与活对象解耦（同 full 事件口径）
+            this.notifyChange({
+                type: 'tools',
+                path: `toolsConfig.${key}`,
+                oldValue: this.cloneConfig(oldConfig),
+                newValue: this.cloneConfig(newConfig),
+                settings: this.cloneConfig(this.settings)
+            });
         });
     }
 
@@ -238,9 +270,32 @@ export class SettingsCore {
      * 多个主题服务的更新方法（addPinnedFile / setSkillEnabled 等）基于同一旧列表
      * 整体写回，并发调用基于同一旧快照写回时后写覆盖先写、静默丢更新。
      * 将 mutator 整体入队串行执行，保证每次「读 → 改 → 写」期间没有其它写操作交错。
+     *
+     * 重入保护：mutator 内嵌套调用本方法（如服务级 update*Config 在 mutator 内调用
+     * 底层写入口 saveToolsConfigEntry，后者也整体入队）时，若仍排入 writeQueue 会死锁
+     * ——内层 run 链在外层 tail 之后才启动，外层 mutator 又 await 内层 run。此时直接
+     * 内联执行 mutator：调用方 await 语义不变，内层与外层在同一执行栈内顺序完成，
+     * 等价于串行（项目内全部嵌套调用均为 await 形态，无 fire-and-forget 交错）。
+     *
+     * 注：标志跨 await 保持，mutator 等待期间到达的并发调用同样走内联分支（与嵌套调用
+     * 无法区分）；交错写基于最新内存状态合并不丢更新，唯一需要收口的是 reloadAndNotify
+     * 的 load 窗口（代际校验 + 重读，见 reloadAndNotify）。
      */
     serializeMutation<T>(mutator: () => T | Promise<T>): Promise<T> {
-        const run = this.writeQueue.then(async () => mutator());
+        if (this.inMutation) {
+            // 已在 mutator 执行栈内：内联执行（mutator 同步 throw 也转为 rejected promise）
+            this.mutationGeneration++;
+            return Promise.resolve().then(() => mutator());
+        }
+        const run = this.writeQueue.then(async () => {
+            this.inMutation = true;
+            this.mutationGeneration++;
+            try {
+                return await mutator();
+            } finally {
+                this.inMutation = false;
+            }
+        });
         // 链尾吞掉本次错误（调用方仍从 run 拿到真实结果），防止单次失败阻塞后续写
         this.writeQueue = run.then(
             () => undefined,
@@ -250,31 +305,89 @@ export class SettingsCore {
     }
 
     /**
+     * 深度比较两个值是否相等（用于判断 full 事件是否影响 system_prompt 缓存）。
+     * 仅比较可序列化数据（配置对象），不做类型收窄、不处理函数等非常规值。
+     */
+    private static deepEqual(a: unknown, b: unknown): boolean {
+        if (a === b) {
+            return true;
+        }
+        if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') {
+            return false;
+        }
+        if (Array.isArray(a) !== Array.isArray(b)) {
+            return false;
+        }
+        const aKeys = Object.keys(a as Record<string, unknown>);
+        const bKeys = Object.keys(b as Record<string, unknown>);
+        if (aKeys.length !== bKeys.length) {
+            return false;
+        }
+        return aKeys.every(key =>
+            SettingsCore.deepEqual(
+                (a as Record<string, unknown>)[key],
+                (b as Record<string, unknown>)[key]
+            )
+        );
+    }
+
+    /**
+     * 'full' 事件无 path，现有监听器（ChatHandler 的 PromptManager 缓存失效判定）只识别
+     * 'tools' 事件，且要求 newValue/oldValue 顶层含 system_prompt——full 事件里
+     * system_prompt 嵌套在 toolsConfig 下永远匹配不到。这里在 system_prompt 实际变化时
+     * 补发一条 'tools' 事件，让既有监听器无需改动即可使 PromptManager 缓存失效。
+     */
+    private notifySystemPromptChangeIfNeeded(oldSettings: GlobalSettings, newSettings: GlobalSettings): void {
+        const oldPrompt = oldSettings.toolsConfig?.system_prompt;
+        const newPrompt = newSettings.toolsConfig?.system_prompt;
+        if (SettingsCore.deepEqual(oldPrompt, newPrompt)) {
+            return;
+        }
+        // 事件负载深拷贝（同 full/tools 事件统一口径）：system_prompt 是存储活对象上的
+        // 嵌套引用，监听器原地修改会污染核心状态
+        this.notifyChange({
+            type: 'tools',
+            path: 'toolsConfig.system_prompt',
+            oldValue: this.cloneConfig(oldPrompt),
+            newValue: this.cloneConfig(newPrompt),
+            settings: this.cloneConfig(newSettings)
+        });
+    }
+
+    /**
      * 更新设置（部分更新）
      */
     async updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
-        // 深拷贝旧值快照：浅展开只保护顶层，嵌套对象（toolsConfig 等）仍是活引用，
-        // 事件监听器拿到 oldValue 后原地修改会污染更新后的 settings
-        const oldSettings = this.cloneConfig(this.settings);
+        // 读-改-写-通知整体入队串行（与各主题服务的 serializeMutation 共用同一写队列）：
+        // 并发调用（如 webview 连发部分更新）基于同一旧快照整体写回时后写会覆盖先写
+        await this.serializeMutation(async () => {
+            // 深拷贝旧值快照：浅展开只保护顶层，嵌套对象（toolsConfig 等）仍是活引用，
+            // 事件监听器拿到 oldValue 后原地修改会污染更新后的 settings
+            const oldSettings = this.cloneConfig(this.settings);
 
-        // 修改原因：旧实现为浅合并，传入嵌套部分对象（如 { toolsConfig: {...} }）会整体
-        // 替换该键并抹掉同层其它配置，与 getToolsConfigEntry 的深合并行为不一致。
-        // 修改方式：复用 deepMergeToolsConfig 做纯对象深合并（数组与原始值仍直接覆盖），
-        // 保持与其它服务方法一致的合并语义。
-        this.settings = {
-            ...deepMergeToolsConfig(this.settings, updates),
-            lastUpdated: Date.now()
-        };
-        
-        // 保存到存储
-        await this.storage.save(this.settings);
-        
-        // 通知变更
-        this.notifyChange({
-            type: 'full',
-            oldValue: oldSettings,
-            newValue: this.settings,
-            settings: this.settings
+            // 修改原因：旧实现为浅合并，传入嵌套部分对象（如 { toolsConfig: {...} }）会整体
+            // 替换该键并抹掉同层其它配置，与 getToolsConfigEntry 的深合并行为不一致。
+            // 修改方式：复用 deepMergeToolsConfig 做纯对象深合并（数组与原始值仍直接覆盖），
+            // 保持与其它服务方法一致的合并语义。
+            this.settings = {
+                ...deepMergeToolsConfig(this.settings, updates),
+                lastUpdated: Date.now()
+            };
+
+            // 保存到存储
+            await this.storage.save(this.settings);
+
+            // 通知变更（事件负载统一深拷贝：newValue/settings 若传活引用，监听器原地修改
+            // 会污染更新后的核心状态，与 reloadAndNotify/reset 的 full 事件口径一致）
+            const newSettings = this.cloneConfig(this.settings);
+            this.notifyChange({
+                type: 'full',
+                oldValue: oldSettings,
+                newValue: newSettings,
+                settings: newSettings
+            });
+            // full 事件本身无法触发 PromptManager 缓存失效（见 notifySystemPromptChangeIfNeeded）
+            this.notifySystemPromptChangeIfNeeded(oldSettings, this.settings);
         });
     }
 
@@ -285,17 +398,39 @@ export class SettingsCore {
      * 事件形态与 updateSettings 一致，确保现有监听器能识别。
      */
     async reloadAndNotify(): Promise<void> {
-        const oldSettings = this.cloneConfig(this.settings);
-        const stored = await this.storage.load();
-        if (stored) {
+        // 读-改-写-通知整体入队串行：与 updateSettings/reset 共用同一写队列，
+        // 避免导入流程的 reload 与并发写操作交错（如 reload 读到半旧状态后整体写回覆盖新变更）
+        await this.serializeMutation(async () => {
+            const oldSettings = this.cloneConfig(this.settings);
+            // 代际校验 + 重读：inMutation 标志跨 await 保持，load() 等待窗口内到达的并发
+            // 变更会经 serializeMutation 内联分支与本次 reload 交错执行（其变更已写入内存
+            // 与存储）。若直接用本次 load 的过期快照整体替换 this.settings，会覆盖该并发
+            // 变更（内存回退旧状态、与存储分叉）。比对代际：窗口内有交错则重读最新存储
+            // （并发变更的保存已完成，重读即拿到最新状态）；有界重试避免极端高频写入下
+            // 饿死，最终一次仍接受结果（与旧行为等价，仅收窄覆盖窗口）。
+            const generationBeforeLoad = this.mutationGeneration;
+            let stored = await this.storage.load();
+            for (let attempt = 0; attempt < 2 && this.mutationGeneration !== generationBeforeLoad; attempt++) {
+                stored = await this.storage.load();
+            }
+            if (!stored) {
+                // 存储为空：内存状态无需任何变化，广播 full 事件无意义（old/new 内容相同），
+                // 且 newValue 若传 this.settings 是活引用。直接返回，不广播不拷贝。
+                return;
+            }
             this.settings = this.deepMergeConfig(this.cloneConfig(DEFAULT_GLOBAL_SETTINGS), stored) as GlobalSettings;
             this.settings.lastUpdated = stored.lastUpdated || Date.now();
-        }
-        this.notifyChange({
-            type: 'full',
-            oldValue: oldSettings,
-            newValue: this.settings,
-            settings: this.settings
+            // 事件负载统一深拷贝：newValue/settings 若传活引用，监听器原地修改会污染核心状态
+            // （与 updateSettings/reset 的 full 事件口径一致）
+            const newSettings = this.cloneConfig(this.settings);
+            this.notifyChange({
+                type: 'full',
+                oldValue: oldSettings,
+                newValue: newSettings,
+                settings: newSettings
+            });
+            // 导入可能整体替换 toolsConfig（含 system_prompt）：补发 tools 事件使 PromptManager 缓存失效
+            this.notifySystemPromptChangeIfNeeded(oldSettings, this.settings);
         });
     }
 
@@ -303,21 +438,28 @@ export class SettingsCore {
      * 重置为默认设置
      */
     async reset(): Promise<void> {
-        const oldSettings = this.cloneConfig(this.settings);
-        // 深拷贝默认配置：浅展开会让嵌套对象与模块级 DEFAULT_GLOBAL_SETTINGS 共享引用，
-        // 后续对 this.settings 嵌套字段的修改会污染全局默认值（与构造器/import 路径一致）。
-        this.settings = {
-            ...this.cloneConfig(DEFAULT_GLOBAL_SETTINGS),
-            lastUpdated: Date.now()
-        };
-        
-        await this.storage.save(this.settings);
-        
-        this.notifyChange({
-            type: 'full',
-            oldValue: oldSettings,
-            newValue: this.settings,
-            settings: this.settings
+        // 读-改-写-通知整体入队串行：与 updateSettings/reloadAndNotify 共用同一写队列
+        await this.serializeMutation(async () => {
+            const oldSettings = this.cloneConfig(this.settings);
+            // 深拷贝默认配置：浅展开会让嵌套对象与模块级 DEFAULT_GLOBAL_SETTINGS 共享引用，
+            // 后续对 this.settings 嵌套字段的修改会污染全局默认值（与构造器/import 路径一致）。
+            this.settings = {
+                ...this.cloneConfig(DEFAULT_GLOBAL_SETTINGS),
+                lastUpdated: Date.now()
+            };
+
+            await this.storage.save(this.settings);
+
+            // 事件负载统一深拷贝（同 updateSettings/reloadAndNotify 的 full 事件口径）
+            const newSettings = this.cloneConfig(this.settings);
+            this.notifyChange({
+                type: 'full',
+                oldValue: oldSettings,
+                newValue: newSettings,
+                settings: newSettings
+            });
+            // 重置会整体替换 toolsConfig（含 system_prompt）：补发 tools 事件使 PromptManager 缓存失效
+            this.notifySystemPromptChangeIfNeeded(oldSettings, this.settings);
         });
     }
 

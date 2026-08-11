@@ -305,7 +305,11 @@ export class WindowsAgentStopNotificationService {
     }
   }
 
-  private async showToast(title: string, message: string): Promise<AgentStopNotificationDispatchResult> {
+  private async showToast(
+    title: string,
+    message: string,
+    onAsyncFailure?: () => void
+  ): Promise<AgentStopNotificationDispatchResult> {
     log.debug('show_toast_invoked', {
       title,
       message,
@@ -319,7 +323,9 @@ export class WindowsAgentStopNotificationService {
         message,
         silent: true,
         waitForAction: true,
-        onClick: () => this.handleNotificationClick()
+        onClick: () => this.handleNotificationClick(),
+        // 通知 API 异步 reject 无法在 show() 返回前感知：经回调通知服务侧（回滚去重键）
+        onError: () => onAsyncFailure?.()
       })
     } catch (error) {
       // adapter.show() 抛异常（而非返回 {shown:false}）：同样按失败处理，
@@ -447,7 +453,12 @@ export class WindowsAgentStopNotificationService {
       storedAt: now
     })
 
-    const result = await this.showToast(rendered.title, rendered.message)
+    const result = await this.showToast(rendered.title, rendered.message, () => {
+      // 异步推送失败（通知 API reject，同步路径感知不到）：同样回滚去重键，
+      // 避免滞留导致后续同 key 通知被误判为 duplicate 而收不到
+      this.dedupeByKey.delete(dedupeKey)
+      log.debug('dedupe_key_rolled_back_async', { dedupeKey })
+    })
     if (!result.shown) {
       // 回滚去重键：toast 未显示（权限/失败）时不应占住去重键，
       // 否则后续通知被误判为 duplicate，用户永远收不到

@@ -117,15 +117,38 @@ describe('基准 ① 大工作区 checkpoint', () => {
         });
 
         // ---- 2. 创建阶段落盘备份（把文件复制到存档目录，模拟 createCheckpoint 的备份步骤）----
+        // 2000 文件逐文件串行 copyFile 是纯 IO 等待：改为 8 并发 worker 池（共享游标取任务，
+        // 无重复无遗漏；mkdir recursive 幂等，并发创建父目录安全），与快照构建的 concurrency: 8 对齐。
+        const BACKUP_CONCURRENCY = 8;
         const backupRoot = path.join(checkpointsDir, BACKUP_DIR_NAME);
         const backup = await withTiming(async () => {
-            for (const scopedKey of Object.keys(snapshot.fileHashes)) {
-                const relative = scopedKey.slice(roots[0].id.length + 1); // 去掉 "<rootId>/" 前缀
-                const src = path.join(wsDir, relative);
-                const dest = path.join(backupRoot, scopedKey);
-                await fs.mkdir(path.dirname(dest), { recursive: true });
-                await fs.copyFile(src, dest);
-            }
+            const keys = Object.keys(snapshot.fileHashes);
+            let next = 0;
+            // 任一 worker 复制失败后置中止标志：其余 worker 在下一轮循环检查到标志后提前退出，
+            // 不再继续领取新任务后台复制（避免与 afterEach 的 removeTempDir 产生竞态）
+            let failed = false;
+            const workers = Array.from({ length: BACKUP_CONCURRENCY }, async () => {
+                while (next < keys.length && !failed) {
+                    const scopedKey = keys[next++];
+                    const relative = scopedKey.slice(roots[0].id.length + 1); // 去掉 "<rootId>/" 前缀
+                    const src = path.join(wsDir, relative);
+                    const dest = path.join(backupRoot, scopedKey);
+                    try {
+                        await fs.mkdir(path.dirname(dest), { recursive: true });
+                        await fs.copyFile(src, dest);
+                    } catch (err) {
+                        failed = true; // 首个失败即中止其余 worker；异常由下方 allSettled 收拢后统一抛出
+                        throw err;
+                    }
+                }
+            });
+            // 失败路径（与 afterEach removeTempDir 的残余竞态）：Promise.all 在首个 worker
+            // reject 时立即向上抛，其余 worker 的在途 copyFile 仍在后台进行——测试失败后
+            // afterEach 开始删除临时目录时可能仍有 worker 在写文件。改用 Promise.allSettled
+            // 等待全部 worker 退出（含在途 IO 完成）后再统一抛首个错误，清理前不再有在途写。
+            const results = await Promise.allSettled(workers);
+            const firstRejected = results.find((r) => r.status === 'rejected');
+            if (firstRejected) throw firstRejected.reason;
         });
         printMetric({
             label: '创建：文件备份到存档目录（copy）',

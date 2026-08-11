@@ -214,6 +214,17 @@ const pushMessageSubscribers = new Set<(message: VSCodeMessage) => void>()
 let dispatcherAttached = false
 
 function dispatchExtensionMessage(event: MessageEvent) {
+  // 重要：不要校验 event.source / event.origin。
+  // VS Code webview 本质是 iframe：扩展端经 webview.postMessage 投递消息时，
+  // VS Code 会转发为 iframe.contentWindow.postMessage，接收方（本 webview 的 window）
+  // 收到的 event.source 是父窗口（甚至可能是 null），而不是 webview 自己的 window——
+  // 校验 event.source === window 会拒绝全部合法扩展消息（请求 180s 超时、推送全失）。
+  // 消息可信度防线由 routeExtensionMessage 承担：requestId 关联保证响应只兑现给
+  // 对应的 pending 请求；携带 requestId 但不在 pendingRequests 中的迟到/失配消息
+  // 直接 ignored（不广播给推送订阅者）。
+  // 推送广播伪造残余提醒：当前广播给所有推送订阅者的消息仅经 requestId 关联过滤，
+  // 无消息白名单/签名校验。若未来 webview 内渲染第三方 iframe 内容（第三方可向本
+  // window 注入 postMessage），需重新引入消息白名单/签名机制后再放开广播。
   routeExtensionMessage(event.data, messageHandlers, message => {
     // Set 迭代语义：迭代中订阅者增删不影响当前轮，与复制快照行为一致，
     // 直接迭代避免每条广播（含每 50ms 的 streamChunkBatch）复制整个订阅者集合。

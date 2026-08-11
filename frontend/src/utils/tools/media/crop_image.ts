@@ -7,6 +7,8 @@
 import { registerTool } from '../../toolRegistry'
 import CropImagePanel from '../../../components/tools/media/crop_image.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 
 /**
  * 单个任务类型
@@ -22,8 +24,8 @@ interface CropTask {
 
 registerTool('crop_image', {
   name: 'crop_image',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '裁切图片',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('crop_image'),
   icon: 'codicon-selection',
   expandable: true,
   contentComponent: CropImagePanel,
@@ -43,7 +45,7 @@ registerTool('crop_image', {
         return `${shortInput} (${task.x1},${task.y1})-(${task.x2},${task.y2})`
       }
       // 多任务显示
-      return `批量裁切 ${images.length} 张`
+      return t('utils.tools.batchCropCount', { count: images.length })
     }
     
     // 单张模式
@@ -52,7 +54,7 @@ registerTool('crop_image', {
       return `${shortInput} (${x1},${y1})-(${x2},${y2})`
     }
     
-    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
-    return getToolMetaDescription('crop_image') ?? '裁切图片'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化显示名
+    return getToolMetaDescription('crop_image') ?? getToolDisplayName('crop_image')
   }
 })

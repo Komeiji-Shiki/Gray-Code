@@ -58,11 +58,21 @@ export const MCP_SERVER_ID_PATTERN = /^(?!.*__)[a-zA-Z0-9_-]+$/;
  *   这确保 decodeMcpToolName 可以用 indexOf('__') 无歧义定位分隔符。
  *   toolName 无此限制（可以是 MCP 服务端返回的任意合法工具名，可含下划线或双下划线）。
  *
- * @param serverId MCP 服务器 ID（由 validateServerId 保证不含 __）
+ * @param serverId MCP 服务器 ID（必须为字符串且匹配 MCP_SERVER_ID_PATTERN，否则 throw）
  * @param toolName 原始工具名（可含单下划线，如 web_search_exa）
  * @returns 完整的 MCP 工具名
+ * @throws 当 serverId 不匹配 MCP_SERVER_ID_PATTERN 时抛错——否则会静默产出
+ *         decodeMcpToolName 无法还原的歧义名（如含连续 __ 的 serverId 会让 indexOf 定位错位）
  */
 export function encodeMcpToolName(serverId: string, toolName: string): string {
+    // 非字符串 serverId（数字/对象等）会被 RegExp.test 隐式转字符串后通过校验，
+    // 先做 typeof 判空再 test——类型防线不得被绕过
+    if (typeof serverId !== 'string' || !MCP_SERVER_ID_PATTERN.test(serverId)) {
+        throw new Error(
+            `Invalid MCP serverId: "${serverId}" (must match ${MCP_SERVER_ID_PATTERN.source}; ` +
+            'letters/digits/underscore/hyphen only, no consecutive "__")'
+        );
+    }
     return `${MCP_TOOL_PREFIX}${serverId}${MCP_TOOL_SEPARATOR}${toolName}`;
 }
 
@@ -72,6 +82,10 @@ export function encodeMcpToolName(serverId: string, toolName: string): string {
  * 为什么用 indexOf 而非 split：
  *   toolName 可能包含双下划线（极端情况），split('__') 会把 toolName 切成多段，
  *   导致解析错误。indexOf 只找第一个分隔符，剩余部分完整保留为 toolName。
+ *
+ * 注意：decode 刻意保持宽松（只做结构切分：前缀 / 分隔符 / 两侧非空），不校验
+ * serverId 字符集与合法性，以兼容历史数据与外部传入名；格式严格性由 encode
+ * （MCP_SERVER_ID_PATTERN 校验）与 McpManager 三入口保证。
  *
  * @param fullName 完整的 MCP 工具名，如 "mcp__exa__web_search_exa"
  * @returns { serverId, toolName } 或 null（如果不是 MCP 工具名）
@@ -104,7 +118,12 @@ export function decodeMcpToolName(fullName: string): { serverId: string; toolNam
  * 判断给定名称是否为 MCP 工具名。
  *
  * 替代所有手写的 startsWith('mcp__') 调用点。
+ *
+ * 判定与 decodeMcpToolName 严格对齐（前缀 + 存在分隔符且两侧非空）：
+ * 直接复用 decode，保证「isMcpToolName 为 true 时 decodeMcpToolName 必不返回 null」
+ * 这一单一事实源——此前 `mcp__`、`mcp___x` 等畸形名 is 为 true 但 decode 为 null，
+ * 调用方需各自处理不一致。
  */
 export function isMcpToolName(name: string): boolean {
-    return name.startsWith(MCP_TOOL_PREFIX);
+    return decodeMcpToolName(name) !== null;
 }

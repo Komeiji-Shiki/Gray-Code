@@ -72,23 +72,25 @@ export class ToolsSettingsService {
      * @param value 最大次数，-1 表示无限制，正整数表示具体次数
      */
     async setMaxToolIterations(value: number): Promise<void> {
-        // -1 表示无限制，正整数表示具体次数，最小为 1
-        // NaN/Infinity 等非法输入回退默认值，避免 Math.max(1, NaN) = NaN 被持久化
-        const safeValue = value === -1
-            ? -1
-            : (Number.isFinite(value) ? Math.max(1, Math.floor(value)) : DEFAULT_MAX_TOOL_ITERATIONS);
-        const oldValue = this.core.settings.maxToolIterations;
-        this.core.settings.maxToolIterations = safeValue;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'tools',
-            path: 'maxToolIterations',
-            oldValue,
-            newValue: safeValue,
-            settings: this.core.settings
+        await this.core.serializeMutation(async () => {
+            // -1 表示无限制，正整数表示具体次数，最小为 1
+            // NaN/Infinity 等非法输入回退默认值，避免 Math.max(1, NaN) = NaN 被持久化
+            const safeValue = value === -1
+                ? -1
+                : (Number.isFinite(value) ? Math.max(1, Math.floor(value)) : DEFAULT_MAX_TOOL_ITERATIONS);
+            const oldValue = this.core.settings.maxToolIterations;
+            this.core.settings.maxToolIterations = safeValue;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'maxToolIterations',
+                oldValue,
+                newValue: safeValue,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -105,18 +107,20 @@ export class ToolsSettingsService {
      * 设置激活的渠道 ID
      */
     async setActiveChannelId(channelId: string): Promise<void> {
-        const oldValue = this.core.settings.activeChannelId;
-        this.core.settings.activeChannelId = channelId;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'channel',
-            path: 'activeChannelId',
-            oldValue,
-            newValue: channelId,
-            settings: this.core.settings
+        await this.core.serializeMutation(async () => {
+            const oldValue = this.core.settings.activeChannelId;
+            this.core.settings.activeChannelId = channelId;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'channel',
+                path: 'activeChannelId',
+                oldValue,
+                newValue: channelId,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -153,25 +157,27 @@ export class ToolsSettingsService {
      * @param enabled 是否启用
      */
     async setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
-        if (enabled && isMemoryToolName(toolName) && !this.memory.isMemoryEnabled()) {
-            throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
-        }
-        const oldValue = { ...this.core.settings.toolsEnabled };
-        // 整体替换对象（与 setToolsEnabled 一致）：任何存储实现都不会因对象引用复用而漏写
-        this.core.settings.toolsEnabled = {
-            ...this.core.settings.toolsEnabled,
-            [toolName]: enabled
-        };
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'tools',
-            path: 'toolsEnabled',
-            oldValue,
-            newValue: this.core.settings.toolsEnabled,
-            settings: this.core.settings
+        await this.core.serializeMutation(async () => {
+            if (enabled && isMemoryToolName(toolName) && !this.memory.isMemoryEnabled()) {
+                throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
+            }
+            const oldValue = { ...this.core.settings.toolsEnabled };
+            // 整体替换对象（与 setToolsEnabled 一致）：任何存储实现都不会因对象引用复用而漏写
+            this.core.settings.toolsEnabled = {
+                ...this.core.settings.toolsEnabled,
+                [toolName]: enabled
+            };
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'toolsEnabled',
+                oldValue,
+                newValue: this.core.settings.toolsEnabled,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -181,33 +187,35 @@ export class ToolsSettingsService {
      * @param states 工具名称到启用状态的映射
      */
     async setToolsEnabled(states: ToolsEnabledState): Promise<void> {
-        const oldValue = { ...this.core.settings.toolsEnabled };
-        // 语义与 setToolEnabled 保持一致：记忆功能关闭时不允许启用记忆工具，
-        // 统一抛错而不是静默丢弃（避免 UI 无感知地丢失用户操作）。
-        // 注意：错误信息保持与 setToolEnabled 相同的硬编码文案——i18n 化需要
-        // 在 backend/i18n 新增 key，超出本模块改动范围，故两者共用同一文案。
-        if (!this.memory.isMemoryEnabled()) {
-            for (const toolName of MEMORY_TOOL_NAMES) {
-                if (states[toolName] === true) {
-                    throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
+        await this.core.serializeMutation(async () => {
+            const oldValue = { ...this.core.settings.toolsEnabled };
+            // 语义与 setToolEnabled 保持一致：记忆功能关闭时不允许启用记忆工具，
+            // 统一抛错而不是静默丢弃（避免 UI 无感知地丢失用户操作）。
+            // 注意：错误信息保持与 setToolEnabled 相同的硬编码文案——i18n 化需要
+            // 在 backend/i18n 新增 key，超出本模块改动范围，故两者共用同一文案。
+            if (!this.memory.isMemoryEnabled()) {
+                for (const toolName of MEMORY_TOOL_NAMES) {
+                    if (states[toolName] === true) {
+                        throw new Error('Permanent memory is disabled. Enable it in Memory settings before enabling memory tools.');
+                    }
                 }
             }
-        }
-        const normalizedStates = { ...states };
-        this.core.settings.toolsEnabled = {
-            ...this.core.settings.toolsEnabled,
-            ...normalizedStates
-        };
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'tools',
-            path: 'toolsEnabled',
-            oldValue,
-            newValue: this.core.settings.toolsEnabled,
-            settings: this.core.settings
+            const normalizedStates = { ...states };
+            this.core.settings.toolsEnabled = {
+                ...this.core.settings.toolsEnabled,
+                ...normalizedStates
+            };
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'toolsEnabled',
+                oldValue,
+                newValue: this.core.settings.toolsEnabled,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -255,26 +263,27 @@ export class ToolsSettingsService {
      * @param autoExec true = 自动执行，false = 需要确认
      */
     async setToolAutoExec(toolName: string, autoExec: boolean): Promise<void> {
-        const oldConfig = { ...this.getToolAutoExecConfig() };
-        
-        if (!this.core.settings.toolAutoExec) {
-            this.core.settings.toolAutoExec = { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG };
-        }
-        // 整体替换对象：任何存储实现都不会因对象引用复用而漏写（同 setToolEnabled）
-        this.core.settings.toolAutoExec = {
-            ...this.core.settings.toolAutoExec,
-            [toolName]: autoExec
-        };
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'tools',
-            path: 'toolAutoExec', // 修正 path 为父对象路径或针对特定工具的正确结构
-            oldValue: oldConfig,
-            newValue: this.core.settings.toolAutoExec,
-            settings: this.core.settings
+        await this.core.serializeMutation(async () => {
+            const oldConfig = { ...this.getToolAutoExecConfig() };
+            
+            // 只写 [toolName]: autoExec 单键：不把 DEFAULT_TOOL_AUTO_EXEC_CONFIG 整体
+            // 持久化（首次写入时其余键保持 undefined，由 isToolAutoExec 的默认语义兜底）
+            // 整体替换对象：任何存储实现都不会因对象引用复用而漏写（同 setToolEnabled）
+            this.core.settings.toolAutoExec = {
+                ...(this.core.settings.toolAutoExec || {}),
+                [toolName]: autoExec
+            };
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'toolAutoExec',
+                oldValue: oldConfig,
+                newValue: this.core.settings.toolAutoExec,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -282,21 +291,23 @@ export class ToolsSettingsService {
      * 批量设置工具自动执行配置
      */
     async setToolAutoExecConfig(config: ToolAutoExecConfig): Promise<void> {
-        const oldConfig = this.getToolAutoExecConfig();
-        this.core.settings.toolAutoExec = {
-            ...this.core.settings.toolAutoExec,
-            ...config
-        };
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'tools',
-            path: 'toolAutoExec',
-            oldValue: oldConfig,
-            newValue: this.core.settings.toolAutoExec,
-            settings: this.core.settings
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getToolAutoExecConfig();
+            this.core.settings.toolAutoExec = {
+                ...this.core.settings.toolAutoExec,
+                ...config
+            };
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'toolAutoExec',
+                oldValue: oldConfig,
+                newValue: this.core.settings.toolAutoExec,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 
@@ -345,8 +356,12 @@ export class ToolsSettingsService {
      * 更新 list_files 工具配置
      */
     async updateListFilesConfig(config: Partial<ListFilesToolConfig>): Promise<void> {
-        const oldConfig = this.getListFilesConfig();
-        await this.core.saveToolsConfigEntry('list_files', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
+        // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getListFilesConfig();
+            await this.core.saveToolsConfigEntry('list_files', oldConfig, { ...oldConfig, ...config });
+        });
     }
     
     /**
@@ -360,8 +375,11 @@ export class ToolsSettingsService {
      * 更新 find_files 工具配置
      */
     async updateFindFilesConfig(config: Partial<FindFilesToolConfig>): Promise<void> {
-        const oldConfig = this.getFindFilesConfig();
-        await this.core.saveToolsConfigEntry('find_files', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getFindFilesConfig();
+            await this.core.saveToolsConfigEntry('find_files', oldConfig, { ...oldConfig, ...config });
+        });
     }
     
     /**
@@ -375,16 +393,22 @@ export class ToolsSettingsService {
      * 更新 search_in_files 工具配置
      */
     async updateSearchInFilesConfig(config: Partial<SearchInFilesToolConfig>): Promise<void> {
-        const oldConfig = this.getSearchInFilesConfig();
-        await this.core.saveToolsConfigEntry('search_in_files', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getSearchInFilesConfig();
+            await this.core.saveToolsConfigEntry('search_in_files', oldConfig, { ...oldConfig, ...config });
+        });
     }
     
     /**
      * 更新工具配置
      */
     async updateToolConfig(toolName: string, config: Record<string, unknown>): Promise<void> {
-        const oldConfig = this.core.settings.toolsConfig?.[toolName] || {};
-        await this.core.saveToolsConfigEntry(toolName, oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.core.settings.toolsConfig?.[toolName] || {};
+            await this.core.saveToolsConfigEntry(toolName, oldConfig, { ...oldConfig, ...config });
+        });
     }
     
     /**
@@ -398,15 +422,18 @@ export class ToolsSettingsService {
      * 更新 apply_diff 工具配置
      */
     async updateApplyDiffConfig(config: Partial<ApplyDiffToolConfig>): Promise<void> {
-        const oldConfig = this.getApplyDiffConfig();
-        const newConfig = {
-            ...oldConfig,
-            ...config
-        };
-        if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
-            newConfig.autoSaveDelay = Math.max(50, newConfig.autoSaveDelay);
-        }
-        await this.core.saveToolsConfigEntry('apply_diff', oldConfig, newConfig);
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getApplyDiffConfig();
+            const newConfig = {
+                ...oldConfig,
+                ...config
+            };
+            if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
+                newConfig.autoSaveDelay = Math.max(50, newConfig.autoSaveDelay);
+            }
+            await this.core.saveToolsConfigEntry('apply_diff', oldConfig, newConfig);
+        });
     }
 
     /**
@@ -420,8 +447,11 @@ export class ToolsSettingsService {
      * 更新 history_search 工具配置
      */
     async updateHistorySearchConfig(config: Partial<HistorySearchToolConfig>): Promise<void> {
-        const oldConfig = this.getHistorySearchConfig();
-        await this.core.saveToolsConfigEntry('history_search', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getHistorySearchConfig();
+            await this.core.saveToolsConfigEntry('history_search', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     
@@ -436,8 +466,11 @@ export class ToolsSettingsService {
      * 更新 delete_file 工具配置
      */
     async updateDeleteFileConfig(config: Partial<DeleteFileToolConfig>): Promise<void> {
-        const oldConfig = this.getDeleteFileConfig();
-        await this.core.saveToolsConfigEntry('delete_file', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getDeleteFileConfig();
+            await this.core.saveToolsConfigEntry('delete_file', oldConfig, { ...oldConfig, ...config });
+        });
     }
     
     /**
@@ -451,8 +484,11 @@ export class ToolsSettingsService {
      * 更新 execute_command 工具配置
      */
     async updateExecuteCommandConfig(config: Partial<ExecuteCommandToolConfig>): Promise<void> {
-        const oldConfig = this.getExecuteCommandConfig();
-        await this.core.saveToolsConfigEntry('execute_command', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行（同 updateListFilesConfig）
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getExecuteCommandConfig();
+            await this.core.saveToolsConfigEntry('execute_command', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -518,11 +554,15 @@ export class ToolsSettingsService {
      * 更新 Shell 配置
      */
     async updateShellConfig(shellType: string, updates: Partial<ShellConfig>): Promise<void> {
-        const config = this.getExecuteCommandConfig();
-        const shells = config.shells.map(shell =>
-            shell.type === shellType ? { ...shell, ...updates } : shell
-        );
-        await this.updateExecuteCommandConfig({ shells });
+        // 读-改-写整体入队串行：config 读取与 shells 构造必须在 mutator 内，
+        // 否则并发 updateShellConfig 基于队列外旧 shells 构造后写回会覆盖先写
+        await this.core.serializeMutation(async () => {
+            const config = this.getExecuteCommandConfig();
+            const shells = config.shells.map(shell =>
+                shell.type === shellType ? { ...shell, ...updates } : shell
+            );
+            await this.updateExecuteCommandConfig({ shells });
+        });
     }
     
     /**
@@ -545,18 +585,20 @@ export class ToolsSettingsService {
      * 设置默认工具模式
      */
     async setDefaultToolMode(mode: 'function_call' | 'xml' | 'json'): Promise<void> {
-        const oldValue = this.core.settings.defaultToolMode;
-        this.core.settings.defaultToolMode = mode;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'toolMode',
-            path: 'defaultToolMode',
-            oldValue,
-            newValue: mode,
-            settings: this.core.settings
+        await this.core.serializeMutation(async () => {
+            const oldValue = this.core.settings.defaultToolMode;
+            this.core.settings.defaultToolMode = mode;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'toolMode',
+                path: 'defaultToolMode',
+                oldValue,
+                newValue: mode,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 }

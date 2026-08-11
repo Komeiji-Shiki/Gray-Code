@@ -183,14 +183,18 @@ export class MessageRouter {
           ctx.sendError(requestId, code, message);
         }
       },
-      postMessage: (message: any) => {
-        // 同步失败由返回值回退；异步投递失败（webview 已销毁/拒绝）经回调回退——
-        // 二者互斥，不会双重回退
+      postMessage: (message: any): boolean => {
+        // 同步失败由返回值回退；异步投递失败（webview 已销毁/拒绝）经 onDeliveryFailed
+        // 回调回退（下方注册的回调执行 ctx.postMessage 兜底投递）——二者互斥，不会双重
+        // 回退。返回值透出投递结果（R2-09，统一语义）：true = 已送达或已进入异步投递
+        // （异步失败经回调回退，不保证最终送达）；false = 完全未送达（registry 丢弃且
+        // 回退不可用/失败），调用方可留痕。
         if (!this.clientRegistry.postMessage(clientId, message, () => {
           ctx.postMessage?.(message);
         })) {
-          ctx.postMessage?.(message);
+          return ctx.postMessage?.(message) ?? false;
         }
+        return true;
       }
     };
   }

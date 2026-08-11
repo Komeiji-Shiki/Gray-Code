@@ -400,6 +400,11 @@ export class SubAgentMonitorPanel {
         if (!message || typeof message !== 'object') return;
         const clientId = this.resolveClientId(message);
 
+        // R2-08：面板销毁窗口内的在途消息——this.panel 已不存在（用户关闭/扩展销毁）时
+        // 无需也**无法**回传：postRoutedMessage 基于 this.panel?.webview 投递，守卫成立时
+        // 整体 no-op，R2-07 回的 SUBAGENT_MONITOR_HANDLER_ERROR 根本发不出去（守卫已删除）。
+        // 前端随 webview 销毁自愈：await 的 promise 随页面销毁失效，不会永久挂起。
+
         if (message.type === 'subagents.monitorReady') {
             // 修改原因：monitorReady 是打开 Monitor 的首包，不能继续返回包含完整 contents 的 snapshots。
             // 修改方式：返回由事件总线从 snapshot 派生的 manifests；Content[] 仅通过 getRunWindow 按 run 拉取。

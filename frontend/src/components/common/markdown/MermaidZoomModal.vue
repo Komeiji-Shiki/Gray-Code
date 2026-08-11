@@ -32,7 +32,10 @@ let zoomPreviousFocus: HTMLElement | null = null
 // 放大浮层：Esc 关闭 + 初始聚焦（键盘可达性）
 function handleZoomKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && props.visible) {
-    e.stopPropagation()
+    // 浮层打开期间 Esc 完全归本浮层所有：stopImmediatePropagation 会同时阻止 document 上
+    // 其他 keydown 监听（如底层 Modal/Drawer 的全局 Esc 关闭）触发，避免「Esc 双关」；
+    // 本监听仅在浮层打开时挂载（watch visible 注册/移除），不会误伤其他场景
+    e.stopImmediatePropagation()
     emit('close')
   }
 }
@@ -134,7 +137,7 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <Transition name="fade">
-      <div v-if="visible" class="mermaid-zoom-overlay">
+      <div v-if="visible" role="dialog" aria-modal="true" class="mermaid-zoom-overlay">
         <!-- 悬浮关闭按钮 -->
         <button ref="zoomFloatingCloseRef" class="zoom-floating-close" @click="emit('close')" :title="t('components.common.markdownRenderer.mermaid.closePreview')">
           <i class="codicon codicon-close"></i>

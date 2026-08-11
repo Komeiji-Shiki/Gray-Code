@@ -424,6 +424,9 @@ export class SettingsExporter {
         options: { overwrite: boolean }
     ): Promise<number> {
         let imported = 0;
+        // 逐项 try/catch 收集失败继续（与 importVSCodeSettings 语义一致）：
+        // 首错即中止会让单条损坏的配置阻断其余配置导入，且已导入的无法回滚
+        const failures: string[] = [];
 
         for (const cfg of configs) {
             try {
@@ -446,8 +449,12 @@ export class SettingsExporter {
                 imported++;
             } catch (error: any) {
                 console.error(`[SettingsExporter] Failed to import channel config ${cfg.id}:`, error);
-                throw new Error(`导入渠道配置 "${cfg.name || cfg.id}" 失败：${error.message}`);
+                failures.push(`渠道配置 "${cfg.name || cfg.id}": ${error.message}`);
             }
+        }
+
+        if (failures.length > 0) {
+            throw new Error(`部分渠道配置导入失败：${failures.join('; ')}`);
         }
 
         return imported;
@@ -461,6 +468,8 @@ export class SettingsExporter {
         options: { overwrite: boolean }
     ): Promise<number> {
         let imported = 0;
+        // 逐项 try/catch 收集失败继续（同 importChannelConfigs / importVSCodeSettings）
+        const failures: string[] = [];
 
         for (const server of servers) {
             try {
@@ -499,8 +508,12 @@ export class SettingsExporter {
                 imported++;
             } catch (error: any) {
                 console.error(`[SettingsExporter] Failed to import MCP server ${server.id}:`, error);
-                throw new Error(`导入 MCP 服务器 "${server.name || server.id}" 失败：${error.message}`);
+                failures.push(`MCP 服务器 "${server.name || server.id}": ${error.message}`);
             }
+        }
+
+        if (failures.length > 0) {
+            throw new Error(`部分 MCP 服务器配置导入失败：${failures.join('; ')}`);
         }
 
         return imported;
@@ -533,6 +546,11 @@ export class SettingsExporter {
         options: { overwrite: boolean }
     ): Promise<number> {
         let imported = 0;
+        const importedIds: string[] = [];
+        // 导入主循环失败（写文件等）：汇总后抛错（部分计数随错误带出）
+        const failures: string[] = [];
+        // enabled 状态恢复失败：skill 文件已导入成功，仅恢复失败不阻断整体结果（只记录）
+        const restoreFailures: string[] = [];
         const skillsRoot = path.resolve(this.legacySkillsDir);
 
         for (const skillData of skills) {
@@ -565,15 +583,50 @@ export class SettingsExporter {
                 await fs.writeFile(skillFile, content, 'utf-8');
 
                 imported++;
+                importedIds.push(skillData.id);
             } catch (error: any) {
                 console.error(`[SettingsExporter] Failed to import skill ${skillData.id}:`, error);
-                throw new Error(`导入 Skill "${skillData.name || skillData.id}" 失败：${error.message}`);
+                failures.push(`Skill "${skillData.name || skillData.id}": ${error.message}`);
             }
         }
 
         // 刷新 SkillsManager 以加载新导入的 skills
         if (imported > 0) {
             await this.skillsManager.refresh();
+            // 导出包含 enabled 状态，导入成功后按导出值恢复：
+            // enableSkill/disableSkill 幂等，仅对本次实际导入且刷新后仍存在的 skill 生效
+            // （refresh 只清理已消失的 id，新导入的 skill 默认不启用，必须显式恢复）
+            // 逐项 try/catch：单条恢复失败（如刷新后 skill 消失等竞态）不阻断其余恢复，
+            // 失败汇总进 failures 随导入结果一并上报（与导入主循环语义一致）
+            for (const id of importedIds) {
+                const skillData = skills.find(s => s.id === id);
+                if (!skillData || !this.skillsManager.getSkill(id)) {
+                    continue;
+                }
+                try {
+                    if (skillData.enabled) {
+                        this.skillsManager.enableSkill(id);
+                    } else {
+                        this.skillsManager.disableSkill(id);
+                    }
+                } catch (error: any) {
+                    console.error(`[SettingsExporter] Failed to restore enabled state for skill ${id}:`, error);
+                    // 仅记录不阻断：导入本身已成功（imported 计数已含该项），整体误报
+                    // 「部分 Skill 导入失败」会让用户误以为 skill 未导入；幂等可重试
+                    restoreFailures.push(`Skill "${skillData.name || id}" 启用状态恢复：${error.message}`);
+                }
+            }
+        }
+
+        if (restoreFailures.length > 0) {
+            console.warn(`[SettingsExporter] ${restoreFailures.length} 个 Skill 启用状态恢复失败（文件已导入）：${restoreFailures.join('; ')}`);
+        }
+
+        if (failures.length > 0) {
+            // 部分计数随错误带出：调用方即使收到异常也能获知已成功导入的数量
+            const error = new Error(`部分 Skill 导入失败：${failures.join('; ')}`) as Error & { importedCount?: number };
+            error.importedCount = imported;
+            throw error;
         }
 
         return imported;

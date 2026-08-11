@@ -23,9 +23,11 @@ import {
     parseLooseUnifiedPatchToLegacyDiffs,
     convertUnifiedHunksToLegacyDiffs,
     countLineBreaks,
+    countTextLines,
     normalizeLineEndings
 } from './parse';
 import type { LegacyDiffBlock, StructuredDiffHunk, StructuredHunkPlan } from './types';
+import { ensureOutsideWorkspaceAccessApproved } from '../outsideWorkspaceAccess';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
 // 超大文件（如打包产物）全量 readFileSync 会阻塞 extension host 并全量读入内存。
@@ -217,6 +219,13 @@ ${descriptionSuffix}`,
         },
 
         handler: async (args, context): Promise<ToolResult> => {
+            // 修改原因：apply_diff 通过 resolveUriWithInfo 接受绝对路径，但入口缺少工作区外策略兜底。
+            // 修改方式：与其余文件工具一致，入口处调用 ensureOutsideWorkspaceAccessApproved（写策略 deny/ask）。
+            const accessError = ensureOutsideWorkspaceAccessApproved('apply_diff', args, context);
+            if (accessError) {
+                return { success: false, error: accessError };
+            }
+
             const filePath = args.path as string;
             const patch = args.patch as string | undefined;
             const structuredHunks = args.hunks as StructuredDiffHunk[] | undefined;
@@ -622,11 +631,14 @@ ${descriptionSuffix}`,
                 for (let i = 0; i < diffs.length; i++) {
                     const res = diffResults[i];
                     if (res.success && res.matchedLine !== undefined) {
-                        const replaceLines = diffs[i].replace.split('\n').length;
+                        // 修改原因：旧实现用未归一化的 replace 行数计算 endLine，CRLF 内容会多算。
+                        // 修改方式：与结构化路径一致，改用 countTextLines(normalizeLineEndings(...))。
+                        const replaceLines = countTextLines(normalizeLineEndings(diffs[i].replace));
                         blocks.push({
                             index: i,
                             startLine: res.matchedLine,
-                            endLine: res.matchedLine + replaceLines - 1
+                            // 空 replace 时行数为 0，endLine 会退化为 startLine - 1；用 Math.max 兜底为 startLine
+                            endLine: res.matchedLine + Math.max(replaceLines, 1) - 1
                         });
                     }
                 }

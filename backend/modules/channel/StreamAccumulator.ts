@@ -255,6 +255,20 @@ export class StreamAccumulator {
             chunk.providerEvent?.type === 'content_block_stop' &&
             typeof chunk.providerEvent.contentIndex === 'number' &&
             this.parts.some(part => part.functionCall && (part.functionCall as any).index === chunk.providerEvent?.contentIndex);
+        if (stoppedAnthropicFunctionCallBlock) {
+            // 预填 input（forced tool use）且流式增量从未到达（partialArgs 为空）时，
+            // content_block_stop 意味着预填参数即完整参数：清除 prefilledArgs 标记，
+            // 恢复 getNewCompletedFunctionCalls 的流式提前执行——否则该调用只能等终态
+            // buildContent 清理内部字段后才执行（forced tool use 提前执行退化）。
+            // partialArgs 非空（增量仍在合并中）时保持标记，由 tryParseFunctionCallArgs 继续合并。
+            for (const part of this.parts) {
+                const fc = part.functionCall as any;
+                if (fc && fc.index === chunk.providerEvent?.contentIndex && fc.prefilledArgs === true &&
+                    (!fc.partialArgs || !String(fc.partialArgs).trim())) {
+                    fc.prefilledArgs = false;
+                }
+            }
+        }
         const shouldEmitStructuralSnapshot =
             stoppedAnthropicFunctionCallBlock ||
             (this.providerType === 'anthropic' && chunk.providerEvent?.type === 'message_stop');
@@ -291,6 +305,50 @@ export class StreamAccumulator {
      */
     getProviderType(): 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom' {
         return this.providerType;
+    }
+
+    /**
+     * 解析工具调用参数增量：解析成功时更新 fc.args 并清除预填标记，返回是否成功。
+     *
+     * 预填 input（forced tool use，anthropic content_block_start 携带完整 input）场景：
+     * 后续 input_json_delta 存在两种语义——
+     * - 剩余片段：预填 JSON 去尾闭合符 + 累积片段 = 完整 JSON；
+     * - 完整重放（部分代理行为）：片段自身即完整 JSON。
+     * 两种候选都尝试，任一解析成功即采用，保证预填参数与流式增量不丢不破。
+     */
+    private tryParseFunctionCallArgs(fc: any): boolean {
+        if (!fc.partialArgs || !fc.partialArgs.trim()) {
+            return false;
+        }
+        // 预填 input 已显式提供即参与拼接（含空对象 {}：JSON.stringify({}) = '{}'，
+        // slice(0,-1) 后为 '{'，与剩余片段合并 {"b":2} → '{"b":2}'；空对象 + 完整重放
+        // 场景由候选 2（片段自身）兜底）
+        const prefillJson = fc.prefilledArgs === true
+            && fc.args && typeof fc.args === 'object'
+            ? JSON.stringify(fc.args)
+            : '';
+        // 候选 1（剩余片段）：prefillJson 是完整闭合 JSON（如 {"a":1}），直接拼接增量片段必非法
+        // （闭合 JSON + 片段）；预填参数为对象/数组时去掉尾闭合符再拼接：
+        // {"a":1} + ,"b":2} → {"a":1,"b":2}，数组同理。
+        // 候选 2（完整重放）：片段自身即完整 JSON。
+        const candidates = prefillJson
+            ? [prefillJson.slice(0, -1) + fc.partialArgs, fc.partialArgs]
+            : [fc.partialArgs];
+        for (const candidate of candidates) {
+            try {
+                fc.args = JSON.parse(candidate);
+                // 参数已并入流式增量：预填标记失效，后续按普通累积语义继续
+                fc.prefilledArgs = false;
+                // 清空已消费的增量片段（合并路径 555-568 / 新块路径 578-580 共用此成功点）：
+                // 参数已并入 fc.args，残留 partialArgs 会在下一次合并时追加到已闭合 JSON
+                // 之后（{"a":1} + ,"b":2} 必非法），导致后续增量永远无法解析并无限累积
+                fc.partialArgs = '';
+                return true;
+            } catch {
+                // JSON 尚未完整，继续等待更多增量
+            }
+        }
+        return false;
     }
 
     /**
@@ -508,14 +566,10 @@ export class StreamAccumulator {
                             // Responses 的arguments.delta 是半截JSON，避免在高频热路径逐片段JSON.parse。
                             const shouldParseNow = this.providerType !== 'openai-responses' || fc.finalArgs === true;
                             if (shouldParseNow && lastFc.partialArgs.trim()) {
-                                try {
-                                    const parsed = JSON.parse(lastFc.partialArgs);
-                                    lastFc.args = parsed;
-                                    // args 解析成功意味着工具调用“完成”，属于投影可见变化
+                                // 解析成功意味着工具调用“完成”，属于投影可见变化
+                                //（预填 input 场景按「预填 + 增量 / 增量自身」两种语义解析）
+                                if (this.tryParseFunctionCallArgs(lastFc)) {
                                     visibleFieldChanged = true;
-                                } catch (e) {
-                                    // 解析失败（JSON 不完整），继续等待更多增量。
-                                    // 此处不打日志——流式增量中 JSON 不完整是正常现象。
                                 }
                             }
                         }
@@ -529,11 +583,7 @@ export class StreamAccumulator {
 
                 // 找不到可合并块时作为新块添加；Responses 半截 JSON 只在 finalArgs 边界解析。
                 if (fc.partialArgs && (this.providerType !== 'openai-responses' || fc.finalArgs === true)) {
-                    try {
-                        fc.args = JSON.parse(fc.partialArgs);
-                    } catch {
-                        // Incomplete JSON during streaming is expected; keep partialArgs and wait for more chunks.
-                    }
+                    this.tryParseFunctionCallArgs(fc);
                 }
 
                 // 构建新Part，但排除 API 原始格式的thoughtSignature（单数）
@@ -641,15 +691,14 @@ export class StreamAccumulator {
                         typeof options.finalizeFunctionCallIndex === 'number' &&
                         typeof fc.index === 'number' &&
                         fc.index === options.finalizeFunctionCallIndex;
-                    if ((options.parsePartialArgs || shouldFinalizeFunctionCall) && fc.partialArgs && (!fc.args || Object.keys(fc.args).length === 0)) {
-                        try {
-                            fc.args = JSON.parse(fc.partialArgs);
-                        } catch (e) {
-                            if (options.warnOnParseFailure) {
-                                const fnName = fc.name || 'unknown';
-                                const preview = String(fc.partialArgs || '').slice(0, 200);
-                                console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
-                            }
+                    // 预填 input（prefilledArgs）时 args 非空但可能不完整（增量尚未并入），
+                    // 同样走「预填 + 增量 / 增量自身」语义解析（见 tryParseFunctionCallArgs）
+                    if ((options.parsePartialArgs || shouldFinalizeFunctionCall) && fc.partialArgs &&
+                        ((!fc.args || Object.keys(fc.args).length === 0) || fc.prefilledArgs === true)) {
+                        if (!this.tryParseFunctionCallArgs(fc) && options.warnOnParseFailure) {
+                            const fnName = fc.name || 'unknown';
+                            const preview = String(fc.partialArgs || '').slice(0, 200);
+                            console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
                         }
                     }
 
@@ -659,6 +708,7 @@ export class StreamAccumulator {
                         // itemId/finalArgs 只是流式合并字段，最终Content 只保留跨 provider 通用协议。
                         delete fc.itemId;
                         delete fc.finalArgs;
+                        delete fc.prefilledArgs;
                     }
                     part.functionCall = fc;
                 }
@@ -853,6 +903,9 @@ export class StreamAccumulator {
     reset(): void {
         this.parts = [];
         this.isDone = false;
+        // 恢复初始 providerType（构造默认 gemini）：reset 后累加器回到全新状态，
+        // 避免上一轮渠道的 provider 语义泄漏到下一轮
+        this.providerType = 'gemini';
         this.usageMetadata = undefined;
         this.hasProviderTotalTokenCount = false;
         this.finishReason = undefined;
@@ -1065,6 +1118,9 @@ export class StreamAccumulator {
             //   避免 id 后补时与提前执行结果对不上号导致重复执行。
             const hasStableToolCallId = typeof fc.id === 'string' && fc.id.trim().length > 0;
             if (!hasRealArgs || !fc.name || !hasStableToolCallId) continue;
+            // 预填 input（forced tool use）的调用：流式增量可能仍在到达（prefilledArgs
+            // 直到增量并入才清除），未完成前不提前上报执行，避免以预填的部分参数执行工具
+            if (fc.prefilledArgs === true) continue;
             if (this.reportedFunctionCallIds.has(fc.id)) continue;
 
             this.reportedFunctionCallIds.add(fc.id);
