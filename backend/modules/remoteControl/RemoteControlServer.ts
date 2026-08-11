@@ -243,6 +243,14 @@ function isSafeMemoryId(id: unknown): id is number {
   return typeof id === 'number' && Number.isInteger(id) && id >= 0;
 }
 
+/** diff 会话 ID 白名单：`diff-<timestamp>-<uuid>`（diffManager 生成格式） */
+function isSafeDiffId(id: unknown): id is string {
+  return typeof id === 'string' && /^diff-[A-Za-z0-9-]{1,128}$/.test(id);
+}
+
+/** 单侧 diff 预览内容下发上限：超出截断并标记（完整文件内容可能数百 KB，移动端无需全量） */
+const MAX_DIFF_PREVIEW_CONTENT_CHARS = 256 * 1024;
+
 /**
  * 剥离消息中的附件二进制载荷（inlineData 的 base64 data / fileData 的 fileUri），
  * 但保留附件元数据（mimeType/displayName/size 等），移动端据此渲染附件占位卡片，
@@ -331,6 +339,24 @@ export interface RemoteControlServerHost {
   };
   /** 会话变更（创建/改名/删除/摘要更新）通知：桌面端与移动端会话列表实时刷新 */
   notifyConversationsChanged(): void;
+  /** 当前待批准 diff 列表快照（移动端 diff-status / diff-preview 用；BackendHost 直读 diffManager） */
+  getPendingDiffList(): Array<{
+    id: string;
+    status: string;
+    filePath: string;
+    toolId?: string;
+    diffGuardWarning?: string;
+    diffGuardDeletePercent?: number;
+    timestamp: number;
+    conversationId?: string;
+  }>;
+  /** 按 ID 读取待批准 diff 全文（diff-preview 用；不存在返回 null） */
+  getPendingDiffContent(diffId: string): {
+    filePath: string;
+    originalContent: string;
+    newContent: string;
+    status: string;
+  } | null;
 }
 
 function sseEvent(event: string, data: unknown): string {
@@ -600,6 +626,46 @@ export class RemoteControlServer {
     const type = message?.type;
     if (type === 'streamChunk' || type === 'streamChunkBatch') {
       this.broadcast('global', message);
+    }
+  }
+
+  /**
+   * diff 状态变更（BackendHost 的 diffManager statusChanged 监听器转发）：
+   * 桌面端出现待批准 diff / diff 被批准或拒绝 / 全部处理完毕时推送移动端，
+   * 移动端据此显示「等待桌面批准」横幅（不再在工具执行状态里静默空转）。
+   */
+  broadcastDiffStatus(
+    pending: Array<{
+      id: string;
+      status: string;
+      filePath: string;
+      toolId?: string;
+      diffGuardWarning?: string;
+      diffGuardDeletePercent?: number;
+      timestamp: number;
+      conversationId?: string;
+    }>,
+    allProcessed: boolean,
+    finalized: Array<{ id: string; status: string }>
+  ): void {
+    if (!this.running) return;
+    try {
+      this.broadcast('diffStatus', {
+        pendingDiffs: pending.map((d) => ({
+          id: d.id,
+          status: d.status,
+          filePath: d.filePath,
+          toolId: d.toolId,
+          diffGuardWarning: d.diffGuardWarning,
+          diffGuardDeletePercent: d.diffGuardDeletePercent,
+          timestamp: d.timestamp,
+          conversationId: d.conversationId
+        })),
+        finalized: finalized.map((d) => ({ id: d.id, status: d.status })),
+        allProcessed
+      });
+    } catch {
+      // 广播失败静默：仅影响移动端 diff 横幅实时性，不阻断桌面端 diff 流程
     }
   }
 
@@ -1133,6 +1199,22 @@ export class RemoteControlServer {
     }
     if (req.method === 'POST' && pathname === '/api/storage-select') {
       await this.handleStorageSelect(res);
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/diff-status') {
+      this.sendJson(res, 200, { ok: true, ...this.buildDiffStatusPayload() });
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/diff-preview') {
+      await this.handleDiffPreview(res, url.searchParams.get('diffId') || '');
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/diff-accept') {
+      await this.handleDiffDecision(res, await this.readBody(req), 'accept');
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/api/diff-reject') {
+      await this.handleDiffDecision(res, await this.readBody(req), 'reject');
       return;
     }
 
@@ -2916,6 +2998,76 @@ export class RemoteControlServer {
     }
   }
 
+  // ========== diff 查看与批准（远控端） ==========
+
+  /** 当前待批准 diff 列表（GET /api/diff-status）：仅元数据，不含内容 */
+  private buildDiffStatusPayload(): Record<string, unknown> {
+    const pending = this.host.getPendingDiffList();
+    return {
+      pendingDiffs: pending.map((d) => ({
+        id: d.id,
+        status: d.status,
+        filePath: d.filePath,
+        toolId: d.toolId,
+        diffGuardWarning: d.diffGuardWarning,
+        diffGuardDeletePercent: d.diffGuardDeletePercent,
+        timestamp: d.timestamp,
+        conversationId: d.conversationId
+      })),
+      allProcessed: pending.length === 0
+    };
+  }
+
+  /** diff 全文预览（GET /api/diff-preview?diffId=）：原始/新内容双侧，超长截断 */
+  private async handleDiffPreview(res: http.ServerResponse, diffId: string): Promise<void> {
+    if (!isSafeDiffId(diffId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid diffId' });
+      return;
+    }
+    let diff: ReturnType<RemoteControlServerHost['getPendingDiffContent']>;
+    try {
+      diff = this.host.getPendingDiffContent(diffId);
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to read diff' });
+      return;
+    }
+    if (!diff || diff.status !== 'pending') {
+      this.sendJson(res, 404, { ok: false, error: 'Diff not found or already processed' });
+      return;
+    }
+    const cap = (s: string): string => {
+      if (typeof s !== 'string') return '';
+      return s.length > MAX_DIFF_PREVIEW_CONTENT_CHARS
+        ? s.slice(0, MAX_DIFF_PREVIEW_CONTENT_CHARS) + '\n…[truncated]'
+        : s;
+    };
+    this.sendJson(res, 200, {
+      ok: true,
+      diffId,
+      filePath: diff.filePath,
+      status: diff.status,
+      originalContent: cap(diff.originalContent),
+      newContent: cap(diff.newContent)
+    });
+  }
+
+  /** diff 批准/拒绝（POST /api/diff-accept|diff-reject）：直连桌面端 diff.accept/diff.reject handler */
+  private async handleDiffDecision(res: http.ServerResponse, body: any, action: 'accept' | 'reject'): Promise<void> {
+    const diffId = typeof body?.diffId === 'string' ? body.diffId : '';
+    if (!isSafeDiffId(diffId)) {
+      this.sendJson(res, 400, { ok: false, error: 'Invalid diffId' });
+      return;
+    }
+    try {
+      const result = await this.host.invokeHandler(action === 'accept' ? 'diff.accept' : 'diff.reject', {
+        sessionId: diffId
+      });
+      this.sendJson(res, 200, { ok: true, diffId, status: action === 'accept' ? 'accepted' : 'rejected', ...result });
+    } catch (err: any) {
+      this.sendJson(res, 500, { ok: false, error: err?.message || `Failed to ${action} diff` });
+    }
+  }
+
   private handleSse(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (this.sseClients.size >= MAX_SSE_CLIENTS) {
       this.sendJson(res, 503, { ok: false, error: 'Too many stream connections' });
@@ -2956,7 +3108,7 @@ export class RemoteControlServer {
     });
   }
 
-  private broadcast(kind: 'message' | 'global' | 'workspace' | 'conversations' | 'conversation-deleted', message: unknown): void {
+  private broadcast(kind: 'message' | 'global' | 'workspace' | 'conversations' | 'conversation-deleted' | 'diffStatus', message: unknown): void {
     if (this.sseClients.size === 0) return;
     const payload = sseEvent(kind, message);
     for (const client of this.sseClients) {

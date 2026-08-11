@@ -11,8 +11,15 @@ const settingsStore = useSettingsStore()
 
 const SMOOTH_STREAMING_MODES: SmoothMode[] = ['off', 'smooth', 'balanced', 'silky']
 
+type ThemeMode = 'light' | 'dark' | 'auto'
+const THEME_MODES: ThemeMode[] = ['light', 'dark', 'auto']
+
 function isSmoothMode(value: unknown): value is SmoothMode {
   return SMOOTH_STREAMING_MODES.includes(value as SmoothMode)
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return THEME_MODES.includes(value as ThemeMode)
 }
 
 const isLoading = ref(true)
@@ -32,6 +39,12 @@ const isPicking = ref(false)
 const wallpaperPath = ref<string>('')
 const wallpaperPreview = ref<string>('')
 const wallpaperOpacity = ref(30)
+
+// 桌面端主题模式（light / dark / auto，auto=跟随系统）
+const themeMode = ref<ThemeMode>('auto')
+
+// 桌面端 UI 不透明度（0-100，默认 100；输入框/设置面板等界面面板）
+const uiOpacity = ref(100)
 
 const defaultLoadingText = computed(() => t('common.loading'))
 
@@ -67,6 +80,8 @@ async function loadConfig() {
     splashEnabled.value = appearance?.splashEnabled !== false
     wallpaperPath.value = typeof appearance?.wallpaperPath === 'string' ? appearance.wallpaperPath : ''
     wallpaperOpacity.value = typeof appearance?.wallpaperOpacity === 'number' ? appearance.wallpaperOpacity : 30
+    themeMode.value = isThemeMode(response?.settings?.ui?.theme) ? response.settings.ui.theme : 'auto'
+    uiOpacity.value = typeof appearance?.uiOpacity === 'number' ? appearance.uiOpacity : 100
     settingsStore.setAppearanceLoadingText(saved)
     settingsStore.setSelectionContextEnabled(savedSelectionContextEnabled)
     settingsStore.setSmoothStreaming(savedSmoothStreaming)
@@ -74,6 +89,8 @@ async function loadConfig() {
     settingsStore.setSplashEnabled(splashEnabled.value)
     settingsStore.setWallpaperPath(wallpaperPath.value)
     settingsStore.setWallpaperOpacity(wallpaperOpacity.value)
+    settingsStore.setTheme(themeMode.value)
+    settingsStore.setUiOpacity(uiOpacity.value)
 
     // 已配置背景图：重新读取内容用于预览（同时校验文件是否仍存在；失败静默回退为空预览）
     wallpaperPreview.value = ''
@@ -107,6 +124,7 @@ async function saveConfig() {
 
     await sendToExtension(MESSAGE_NAMES.updateUISettings, {
       ui: {
+        theme: themeMode.value,
         appearance: {
           // 空字符串表示使用默认值
           loadingText: normalized,
@@ -115,7 +133,8 @@ async function saveConfig() {
           tpsBarEnabled: tpsBarEnabled.value,
           splashEnabled: splashEnabled.value,
           wallpaperPath: wallpaperPath.value,
-          wallpaperOpacity: wallpaperOpacity.value
+          wallpaperOpacity: wallpaperOpacity.value,
+          uiOpacity: uiOpacity.value
         }
       }
     })
@@ -126,6 +145,8 @@ async function saveConfig() {
     settingsStore.setSmoothStreaming(smoothStreamingMode.value)
     settingsStore.setTpsBarEnabled(tpsBarEnabled.value)
     settingsStore.setSplashEnabled(splashEnabled.value)
+    settingsStore.setTheme(themeMode.value)
+    settingsStore.setUiOpacity(uiOpacity.value)
     applyWallpaperToStore()
 
     saveMessage.value = t('components.settings.appearanceSettings.saveSuccess')
@@ -152,6 +173,8 @@ async function resetToDefault() {
   wallpaperPath.value = ''
   wallpaperPreview.value = ''
   wallpaperOpacity.value = 30
+  themeMode.value = 'auto'
+  uiOpacity.value = 100
   applyWallpaperToStore()
   await saveConfig()
 }
@@ -211,6 +234,21 @@ onMounted(() => {
     </div>
 
     <template v-else>
+      <div class="form-group" data-search-anchor="theme-mode">
+        <label class="group-label">
+          <i class="codicon codicon-color-mode"></i>
+          {{ t('components.settings.appearanceSettings.themeMode.title') }}
+        </label>
+        <p class="field-description">{{ t('components.settings.appearanceSettings.themeMode.description') }}</p>
+
+        <select v-model="themeMode" class="text-input select-input" :disabled="isSaving">
+          <option value="light">{{ t('components.settings.appearanceSettings.themeMode.light') }}</option>
+          <option value="dark">{{ t('components.settings.appearanceSettings.themeMode.dark') }}</option>
+          <option value="auto">{{ t('components.settings.appearanceSettings.themeMode.auto') }}</option>
+        </select>
+        <p class="field-hint">{{ t('components.settings.appearanceSettings.themeMode.hint') }}</p>
+      </div>
+
       <div class="form-group" data-search-anchor="loading-text">
         <label class="group-label">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
@@ -355,6 +393,29 @@ onMounted(() => {
           />
         </div>
         <p class="field-hint">{{ t('components.settings.appearanceSettings.wallpaper.opacityHint') }}</p>
+      </div>
+
+      <div class="form-group" data-search-anchor="ui-opacity">
+        <label class="group-label">
+          <i class="codicon codicon-eye"></i>
+          {{ t('components.settings.appearanceSettings.uiOpacity.title') }}
+        </label>
+        <p class="field-description">{{ t('components.settings.appearanceSettings.uiOpacity.description') }}</p>
+
+        <div class="opacity-row">
+          <span class="opacity-label">{{ t('components.settings.appearanceSettings.uiOpacity.opacity') }}：{{ uiOpacity }}%</span>
+          <input
+            v-model.number="uiOpacity"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            class="opacity-slider"
+            :disabled="isSaving"
+            @input="settingsStore.setUiOpacity(uiOpacity)"
+          />
+        </div>
+        <p class="field-hint">{{ t('components.settings.appearanceSettings.uiOpacity.hint') }}</p>
       </div>
 
       <div class="actions">

@@ -642,6 +642,25 @@ function applyDesktopTheme(theme?: string): void {
   document.body.classList.toggle('vscode-dark', !isLight)
 }
 
+// 外观设置变更 → 立即应用：主题（含 auto 跟随系统监听）与 UI 不透明度（CSS 变量）
+watch(
+  () => settingsStore.theme,
+  (theme) => {
+    if (!isElectronHost) return
+    applyDesktopTheme(theme)
+    watchDesktopThemeMedia(theme)
+  }
+)
+watch(
+  () => settingsStore.uiOpacity,
+  (opacity) => {
+    const normalized = typeof opacity === 'number' && Number.isFinite(opacity)
+      ? Math.min(100, Math.max(0, opacity)) / 100
+      : 1
+    document.documentElement.style.setProperty('--gc-ui-opacity', String(normalized))
+  }
+)
+
 let mediaQueryDispose: (() => void) | null = null
 
 function watchDesktopThemeMedia(theme?: string): void {
@@ -685,12 +704,19 @@ async function loadLanguageSettings() {
       settingsStore.setWallpaperOpacity(
         typeof appearance.wallpaperOpacity === 'number' ? appearance.wallpaperOpacity : 30
       )
+      settingsStore.setUiOpacity(
+        typeof appearance.uiOpacity === 'number' ? appearance.uiOpacity : 100
+      )
       if (settingsStore.wallpaperPath) {
         loadWallpaperImage(settingsStore.wallpaperPath)
       }
     }
 
-    // 应用桌面版主题（light / dark / auto）
+    // 应用桌面版主题（light / dark / auto），并同步到 store（watch 负责后续变更即时生效）
+    const savedTheme = response?.settings?.ui?.theme
+    settingsStore.setTheme(
+      savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto' ? savedTheme : 'auto'
+    )
     applyDesktopTheme(response?.settings?.ui?.theme)
     watchDesktopThemeMedia(response?.settings?.ui?.theme)
 

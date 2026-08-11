@@ -2826,6 +2826,14 @@ const ja: LanguageMessages = {
                 saveFailed: '保存に失敗しました'
             },
             appearanceSettings: {
+                themeMode: {
+                    title: 'テーマモード',
+                    description: 'インターフェースをライト / ダークの外観に切り替えるか、システムに自動で追従します。',
+                    light: 'ライト',
+                    dark: 'ダーク',
+                    auto: 'システムに追従',
+                    hint: '「システムに追従」を選択すると、システムのライト / ダークモードに合わせて自動で切り替わります。'
+                },
                 loadingText: {
                     title: 'ストリーミング Loading テキスト',
                     description: 'AI がストリーミング出力中に、メッセージ下部のアニメーション指示器に表示されるテキストです。',
@@ -2861,6 +2869,12 @@ const ja: LanguageMessages = {
                     opacity: '画像の不透明度',
                     opacityHint: '不透明度は画像自体に適用され、文字と UI は鮮明なままです。0 で非表示、100 で完全に覆います。',
                     pickFailed: '背景画像の読み込みに失敗しました。別の画像でお試しください。'
+                },
+                uiOpacity: {
+                    title: 'UI 不透明度',
+                    description: '入力欄や設定ページなどの UI パネルの全体の不透明度を調整し、ウィンドウ背景を透けさせます。',
+                    opacity: '不透明度',
+                    hint: '100 で完全不透明です。数値が低いほど UI が透明になります。メッセージ文字領域には影響せず、遠隔操作 UI も影響を受けません。'
                 },
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'

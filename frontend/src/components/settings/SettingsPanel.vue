@@ -627,7 +627,13 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
   {
     key: 'appearance', tab: 'appearance',
     labelKey: 'components.settings.settingsPanel.sections.appearance.title',
-    keywords: ['外观', 'appearance', '外観', '加载', 'loading', '流式', '平滑', '选中', 'tps', '启动画面']
+    keywords: ['外观', 'appearance', '外観', '加载', 'loading', '流式', '平滑', '选中', 'tps', '启动画面', '主题', 'theme', 'テーマ', '亮度', '亮色', '暗色', '不透明度', 'opacity', '透明度']
+  },
+  {
+    key: 'appearance-theme-mode', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.themeMode.title',
+    keywords: ['主题', 'theme', 'テーマ', '亮色', '暗色', '跟随系统', 'light', 'dark', 'auto', '模式'],
+    anchor: '[data-search-anchor="theme-mode"]'
   },
   {
     key: 'appearance-loading-text', tab: 'appearance',
@@ -664,6 +670,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     labelKey: 'components.settings.appearanceSettings.wallpaper.title',
     keywords: ['背景图', 'wallpaper', '壁纸', '背景', 'background', '图片', '透明度', 'opacity', '画像', '背景画像', '不透明度'],
     anchor: '[data-search-anchor="wallpaper"]'
+  },
+  {
+    key: 'appearance-ui-opacity', tab: 'appearance',
+    labelKey: 'components.settings.appearanceSettings.uiOpacity.title',
+    keywords: ['ui', '不透明度', 'opacity', '透明度', '透明', '半透明', '输入框', '面板'],
+    anchor: '[data-search-anchor="ui-opacity"]'
   },
   {
     key: 'memory', tab: 'memory',
@@ -1815,6 +1827,8 @@ onMounted(() => {
   z-index: 100;
   display: flex;
   flex-direction: column;
+  /* UI 不透明度（外观设置 0-100，CSS 变量由 App.vue 同步；默认 1 = 不透明） */
+  opacity: var(--gc-ui-opacity, 1);
 }
 
 .settings-header {

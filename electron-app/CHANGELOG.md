@@ -9,6 +9,13 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+### Added（1.7.13dev：外观设置主题模式切换 + UI 不透明度 + 远控端 diff 查看/批准）
+  - **外观设置新增「主题模式」**（亮色/暗色/跟随系统，ui.theme 补全 UI 入口，默认 auto 不变）：切换即时生效（watch 重挂 matchMedia），保存随 updateUISettings 持久化；三语言文案与设置搜索锚点齐全；
+  - **外观设置新增「UI 不透明度」**（0-100，默认 100）：输入框、设置面板等界面面板整体半透明透出窗口背景，App.vue 同步 CSS 变量 `--gc-ui-opacity`，滑块所见即所得；远控端 UI 独立自包含页面不受影响；
+  - **远控端 diff 查看与批准**：BackendHost 转推 diffStatus SSE（pending 元数据 + finalized，不含内容）；新增 GET /api/diff-status、GET /api/diff-preview（pending 态才可读，单侧 256KB 截断，只读 pending 快照不破坏工具链 partial 结算）、POST /api/diff-accept|diff-reject；移动端新增等待批准横幅（文件 + 倒计时 + 自动拒绝提示）与双栏 Diff 查看对话框，可远程批准/拒绝；进入页面经 /api/diff-status 兜底同步；
+  - **远控端流式等待提示**：首块到达前显示「等待桌面响应…」占位，消除空白消息假死感；逐块 SSE 增量渲染不变；
+  - 测试：remoteControl 扩至 199 例（diff 端点/SSE 广播/横幅全流程/增量流式回归）；后端 273 套件/3070 例 + 前端 101 文件/994 例全绿；三语言文案齐全；版本 1.7.13dev
+
 ### Merged（1.7.12dev：同步上游 308c79d4——渠道配置启动预加载 + 发布前修复批次：checkpoint 分支隔离/config 串行队列/MCP 生命周期/SSE 流式下载/memory 位图缓存）
   - 合入上游发布前修复批次；不采纳上游 VS Code Marketplace 上架文档（桌面版非插件，README 保持本地版本）
 

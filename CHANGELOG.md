@@ -22,6 +22,15 @@
 
 ## [Unreleased]
 
+### Added：[1.7.13dev] 外观设置新增主题模式切换（亮色/暗色/跟随系统）+ UI 不透明度调节；远控端 diff 查看/批准 + 流式等待提示
+  - **外观设置新增「主题模式」**：亮色 / 暗色 / 跟随系统三档切换（ui.theme 既有配置项补全 UI 入口，默认 auto 跟随系统不变）；切换即时生效（App.vue watch 监听 store 变更重挂 matchMedia 监听），保存随 updateUISettings 持久化，三语言文案与设置搜索锚点（theme-mode）齐全；
+  - **外观设置新增「UI 不透明度」**：滑块 0-100（默认 100，即完全不透明）调节输入框、设置面板等界面面板的整体不透明度，透出窗口背景；App.vue 同步为 CSS 变量 `--gc-ui-opacity`（InputArea 输入框容器与 SettingsPanel 面板应用，缺省回退 1）；拖动滑块所见即所得（无需先保存）；仅作用于桌面端主界面，**远控端 UI 为独立自包含页面不受影响**；三语言文案与设置搜索锚点（ui-opacity）齐全；
+  - **远控端 diff 查看与批准**（此前远控端对桌面端 pending diff 静默空转——桌面端未开自动批准时移动端只能干等，最长 5 分钟被自动拒绝）：
+    - 服务端：BackendHost 的 diffManager statusChanged 监听新增转推 `diffStatus` SSE 事件（携带 pending 元数据与终结结算 finalized，不含原文内容）；新增 `GET /api/diff-status`（待批准列表）、`GET /api/diff-preview`（原文/新内容双侧，单侧 256KB 截断，仅 pending 态可读，**只读 pending 快照不走消费型 getDiff 以免破坏工具链 partial 结算**）、`POST /api/diff-accept|diff-reject`（直连 diff.accept/diff.reject handler）；diffId 白名单 + 既有 Host/Origin/JSON-only 安全基线，SSE 关闭时广播静默；
+    - 移动端：流式消息区上方新增「桌面端等待 Diff 批准」横幅（文件路径 + 删除警戒 + 剩余秒数倒计时（5 分钟权威时限，到点停表）+ 自动拒绝提示），支持**查看 Diff（双栏原文/新内容对话框）/ 批准 / 拒绝 / 停止生成**；批准/拒绝成功后横幅即时结算、消息列表自动刷新，桌面端终结结算（finalized）仅提示本端曾跟踪的 diff（批量结算最多 3 条 toast 防风暴）；进入/重连页面时经 /api/diff-status 兜底同步；
+  - **远控端流式等待提示**：首块内容到达前（模型思考/工具执行期）流式消息显示「等待桌面响应…」占位（此前空白消息 + 光标，远控端看起来像卡住）；逐块 SSE 增量渲染保持不变；
+  - 测试：remoteControl 套件扩至 199 例（diff 四端点 HTTP 断言含非法 ID/不存在 404、diffStatus SSE 广播与 finalized 透传、移动端 diff 横幅全流程（渲染/查看/批准/拒绝 DOM 交互）、**增量流式回归**（chunk 逐块到达逐块渲染，不等 complete））；全部后端测试 273 套件/3070 例 + 前端 101 文件/994 例通过；三语言（zh-CN/en/ja）文案齐全。
+
 ### Merged：同步上游 308c79d4（渠道配置启动预加载 + 发布前修复批次：checkpoint 分支隔离/config 串行队列/MCP 生命周期/SSE 流式下载/memory 位图缓存）
   - 合入上游发布前修复批次（207 文件、+6412/-2121）；不采纳上游 VS Code Marketplace 上架文档（桌面版非插件，README 保持本地版本）
 

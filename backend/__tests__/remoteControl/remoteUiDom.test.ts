@@ -334,6 +334,19 @@ class Fixture {
       }
       case '/api/send':
         return respond({ ok: true, conversationId: (body && body.conversationId) || 'conv_new', streamId: 'remote_1' });
+      case '/api/diff-status':
+        return respond({ ok: true, pendingDiffs: [], allProcessed: true });
+      case '/api/diff-preview': {
+        const diffId = new URL(String(url), 'http://localhost/').searchParams.get('diffId') || '';
+        return respond({
+          ok: true, diffId, filePath: 'src/a.ts', status: 'pending',
+          originalContent: 'line1\nline2\n', newContent: 'line1\nchanged\nline3\n'
+        });
+      }
+      case '/api/diff-accept':
+        return respond({ ok: true, diffId: body && body.diffId, status: 'accepted' });
+      case '/api/diff-reject':
+        return respond({ ok: true, diffId: body && body.diffId, status: 'rejected' });
       default:
         return respond({ ok: true });
     }
@@ -629,6 +642,140 @@ describe('remote UI DOM (jsdom)', () => {
     expect(f.document.querySelector('#btn-settings')).not.toBeNull();
     expect(f.document.querySelector('#panel-files')).not.toBeNull();
     expect(f.document.querySelector('#panel-settings')).not.toBeNull();
+    expect(f.errors).toEqual([]);
+  });
+
+  test('incremental streaming: text appears chunk by chunk before complete', async () => {
+    const f = makeFixture();
+    await flush();
+    await waitFor(() => FakeEventSource.instances.length >= 1);
+    const es = FakeEventSource.instances[0];
+    es.emit('hello', {
+      ok: true, appVersion: '1.7.10dev', activeChannelId: 'c1',
+      activeConversationId: 'conv1', activeConversationTitle: 'Test',
+      workspaceUri: 'file:///C:/ws', workspaceName: 'ws', lang: 'zh-CN'
+    });
+    await flush(10);
+
+    const streamingContent = () => {
+      const holder = f.document.querySelector('.msg.assistant.streaming .msg-content');
+      return holder ? holder.textContent : '';
+    };
+    // 首块到达即出现流式占位消息（无需等待 complete）
+    es.emit('message', {
+      type: 'streamChunk',
+      conversationId: 'conv1',
+      streamId: 's1',
+      data: { conversationId: 'conv1', streamId: 's1', type: 'chunk', chunk: '你' }
+    });
+    await flush(5);
+    expect(streamingContent()).toContain('你');
+    expect(f.document.querySelector('#status').textContent).toContain('生成中');
+
+    // 逐块到达 → 内容逐步增长（增量渲染，非一次性整包）
+    es.emit('message', {
+      type: 'streamChunk',
+      conversationId: 'conv1',
+      streamId: 's1',
+      data: { conversationId: 'conv1', streamId: 's1', type: 'chunk', chunk: '好' }
+    });
+    await flush(5);
+    expect(streamingContent()).toContain('你好');
+    es.emit('message', {
+      type: 'streamChunk',
+      conversationId: 'conv1',
+      streamId: 's1',
+      data: { conversationId: 'conv1', streamId: 's1', type: 'chunk', chunk: '，世界' }
+    });
+    await flush(5);
+    expect(streamingContent()).toContain('你好，世界');
+
+    // 终结块到达 → 占位消息结束并重载历史
+    es.emit('message', {
+      type: 'streamChunk',
+      conversationId: 'conv1',
+      streamId: 's1',
+      data: { conversationId: 'conv1', streamId: 's1', type: 'complete', content: '你好，世界' }
+    });
+    await flush(10);
+    expect(f.document.querySelector('.msg.assistant.streaming')).toBeNull();
+    expect(f.errors).toEqual([]);
+  });
+
+  test('diffStatus SSE renders waiting bar; view preview modal; approve/reject posts endpoints', async () => {
+    const f = makeFixture();
+    await flush();
+    await waitFor(() => FakeEventSource.instances.length >= 1);
+    const es = FakeEventSource.instances[0];
+    es.emit('hello', {
+      ok: true, appVersion: '1.7.10dev', activeChannelId: 'c1',
+      activeConversationId: 'conv1', activeConversationTitle: 'Test',
+      workspaceUri: 'file:///C:/ws', workspaceName: 'ws', lang: 'zh-CN'
+    });
+    await flush(10);
+
+    // 桌面端出现待批准 diff → diffStatus 事件 → 横幅出现
+    es.emit('diffStatus', {
+      pendingDiffs: [
+        { id: 'diff-1', status: 'pending', filePath: 'src/a.ts', toolId: 'tool_1', timestamp: Date.now() - 1000, conversationId: 'conv1' }
+      ],
+      finalized: [],
+      allProcessed: false
+    });
+    await flush(5);
+    const bar = f.document.querySelector('#diff-bar');
+    expect(bar.querySelectorAll('.diff-bar-item').length).toBe(1);
+    expect(bar.textContent).toContain('src/a.ts');
+    expect(bar.textContent).toContain('桌面端等待 Diff 批准');
+
+    // 查看 Diff → 拉取 /api/diff-preview 并打开双栏对话框
+    const btns = bar.querySelectorAll('button');
+    expect(btns.length).toBeGreaterThanOrEqual(3);
+    const viewBtn = Array.from(btns).find((b) => String((b as any).textContent).indexOf('查看 Diff') >= 0) as any;
+    viewBtn.click();
+    await flush(10);
+    expect(f.fetches.some((x) => x.url === '/api/diff-preview?diffId=diff-1')).toBe(true);
+    expect(f.document.querySelector('#diff-modal').classList.contains('open')).toBe(true);
+    expect(f.document.querySelector('#diff-original .diff-code').textContent).toContain('line1');
+    expect(f.document.querySelector('#diff-new .diff-code').textContent).toContain('changed');
+
+    // 批准 → POST /api/diff-accept → 模态关闭 + 横幅清空
+    f.document.querySelector('#diff-approve-btn').click();
+    await flush(10);
+    const accept = f.fetches.find((x) => x.url === '/api/diff-accept' && x.method === 'POST');
+    expect(accept).toBeDefined();
+    expect(accept!.body).toEqual({ diffId: 'diff-1' });
+    expect(f.document.querySelector('#diff-modal').classList.contains('open')).toBe(false);
+    expect(f.document.querySelector('#diff-bar').children.length).toBe(0);
+
+    // 桌面端回传终结结算（finalized）→ toast 提示且横幅保持为空
+    es.emit('diffStatus', { pendingDiffs: [], finalized: [{ id: 'diff-1', status: 'accepted' }], allProcessed: true });
+    await flush(5);
+    expect(f.document.querySelector('#diff-bar').children.length).toBe(0);
+    expect(f.errors).toEqual([]);
+  });
+
+  test('diff waiting bar: reject path posts /api/diff-reject', async () => {
+    const f = makeFixture();
+    await flush();
+    await waitFor(() => FakeEventSource.instances.length >= 1);
+    const es = FakeEventSource.instances[0];
+    es.emit('diffStatus', {
+      pendingDiffs: [
+        { id: 'diff-2', status: 'pending', filePath: 'b.ts', toolId: 'tool_2', timestamp: Date.now() - 2000, conversationId: 'conv1' }
+      ],
+      finalized: [],
+      allProcessed: false
+    });
+    await flush(5);
+    const bar = f.document.querySelector('#diff-bar');
+    const rejectBtn = Array.from(bar.querySelectorAll('button')).find((b) => String((b as any).textContent).indexOf('拒绝') >= 0) as any;
+    rejectBtn.click();
+    await flush(10);
+    const rej = f.fetches.find((x) => x.url === '/api/diff-reject' && x.method === 'POST');
+    expect(rej).toBeDefined();
+    expect(rej!.body).toEqual({ diffId: 'diff-2' });
+    expect(f.document.querySelector('#diff-bar').children.length).toBe(0);
     expect(f.errors).toEqual([]);
   });
 

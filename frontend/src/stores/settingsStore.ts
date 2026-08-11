@@ -65,6 +65,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const wallpaperImage = ref<string>('')
   // 外观设置：桌面端背景图不透明度（0-100 整数百分比，默认 30）
   const wallpaperOpacity = ref(30)
+  // 外观设置：桌面端 UI 不透明度（0-100 整数百分比，默认 100；输入框/设置面板等界面面板）
+  const uiOpacity = ref(100)
+  // 外观设置：桌面主题模式（light=亮色 / dark=暗色 / auto=跟随系统，默认 auto）
+  const theme = ref<'light' | 'dark' | 'auto'>('auto')
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
   // 渠道配置刷新计数器（聊天输入区快捷控件写渠道配置后，通知设置页重载最新数据）
@@ -174,6 +178,16 @@ export const useSettingsStore = defineStore('settings', () => {
   function setWallpaperOpacity(opacity: number) {
     wallpaperOpacity.value = Math.min(100, Math.max(0, Math.round(opacity) || 0))
   }
+
+  // 设置外观：桌面端 UI 不透明度（0-100）
+  function setUiOpacity(opacity: number) {
+    uiOpacity.value = Math.min(100, Math.max(0, Math.round(opacity) || 0))
+  }
+
+  // 设置外观：桌面主题模式（light / dark / auto）
+  function setTheme(mode: 'light' | 'dark' | 'auto') {
+    theme.value = mode
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -200,6 +214,8 @@ export const useSettingsStore = defineStore('settings', () => {
     wallpaperPath,
     wallpaperImage,
     wallpaperOpacity,
+    uiOpacity,
+    theme,
     promptModesVersion,
     configsVersion,
 
@@ -221,6 +237,8 @@ export const useSettingsStore = defineStore('settings', () => {
     setWallpaperPath,
     setWallpaperImage,
     setWallpaperOpacity,
+    setUiOpacity,
+    setTheme,
     refreshPromptModes,
     refreshConfigs
   }

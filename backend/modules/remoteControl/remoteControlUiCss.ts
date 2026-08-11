@@ -623,6 +623,28 @@ header {
 .confirm-title { font-size: 12px; font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; color: var(--vscode-inputValidation-warningForeground); }
 .confirm-title svg { width: 14px; height: 14px; }
 .confirm-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* ---------- diff 等待批准条（桌面端 pending diff 推送） ---------- */
+#diff-bar { flex-shrink: 0; }
+.diff-bar-item {
+  margin: 6px 12px;
+  padding: 10px 12px;
+  background: var(--vscode-editorWidget-background);
+  border: 1px solid var(--vscode-inputValidation-infoBorder);
+  border-radius: var(--radius-md);
+}
+.diff-bar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.diff-bar-title { font-size: 12px; font-weight: 600; color: var(--vscode-inputValidation-infoForeground); }
+.diff-bar-guard { font-size: 11px; color: var(--vscode-inputValidation-warningForeground); }
+.diff-bar-file {
+  margin-top: 4px;
+  font-size: 12.5px;
+  font-family: var(--vscode-editor-font-family);
+  word-break: break-all;
+  color: var(--vscode-foreground);
+}
+.diff-bar-countdown { display: block; margin-top: 2px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.diff-bar-hint { display: block; margin-top: 2px; font-size: 11px; color: var(--vscode-descriptionForeground); }
 .btn {
   display: inline-flex;
   align-items: center;
@@ -1435,6 +1457,67 @@ footer.composer {
 #modal-input:focus { outline: none; border-color: var(--vscode-focusBorder); }
 #modal-actions { display: flex; gap: 10px; padding: 14px 16px calc(14px + var(--footer-safe)); }
 #modal-actions .btn { flex: 1; }
+
+/* ---------- diff 查看/批准对话框（双栏原文/新内容） ---------- */
+#diff-modal { position: fixed; inset: 0; z-index: 51; pointer-events: none; }
+#diff-modal .backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); opacity: 0; transition: opacity 0.18s; pointer-events: none; }
+#diff-modal .box {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  transform: translate(-50%, -50%) scale(0.95);
+  width: min(94vw, 760px);
+  max-height: 82dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transition: opacity 0.18s, transform 0.18s;
+  z-index: 1;
+}
+#diff-modal.open { pointer-events: auto; }
+#diff-modal.open .backdrop { opacity: 1; pointer-events: auto; }
+#diff-modal.open .box { opacity: 1; transform: translate(-50%, -50%); }
+#diff-modal-title { padding: 14px 16px 0; font-size: 14px; font-weight: 500; word-break: break-all; }
+#diff-modal-body {
+  padding: 10px 16px 0;
+  display: flex;
+  gap: 10px;
+  min-height: 0;
+  overflow: hidden;
+}
+.diff-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.diff-pane-head {
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--vscode-editorWidget-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+.diff-code {
+  margin: 0;
+  padding: 8px 10px;
+  flex: 1;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre;
+  color: var(--vscode-foreground);
+}
+#diff-modal-actions { display: flex; gap: 10px; padding: 14px 16px calc(14px + var(--footer-safe)); }
+#diff-modal-actions .btn { flex: 1; }
 
 /* ================= 轻提示 ================= */
 #toast {

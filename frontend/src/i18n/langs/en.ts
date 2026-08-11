@@ -2826,6 +2826,14 @@ const en: LanguageMessages = {
                 saveFailed: 'Save failed'
             },
             appearanceSettings: {
+                themeMode: {
+                    title: 'Theme Mode',
+                    description: 'Switch the interface between light / dark appearance, or follow the system automatically.',
+                    light: 'Light',
+                    dark: 'Dark',
+                    auto: 'Follow System',
+                    hint: 'When "Follow System" is selected, the interface automatically switches with the system light/dark mode.'
+                },
                 loadingText: {
                     title: 'Streaming Loading Text',
                     description: 'Text displayed in the animated indicator at the bottom of a message while the AI is streaming output.',
@@ -2861,6 +2869,12 @@ const en: LanguageMessages = {
                     opacity: 'Image Opacity',
                     opacityHint: 'Opacity applies to the image itself, keeping text and UI crisp. 0 hides the image, 100 fully blocks the view.',
                     pickFailed: 'Failed to load the background image. Try another image.'
+                },
+                uiOpacity: {
+                    title: 'UI Opacity',
+                    description: 'Adjust the overall opacity of interface panels such as the input box and settings page, letting the window background show through.',
+                    opacity: 'Opacity',
+                    hint: '100 is fully opaque; lower values make the UI more transparent. Message text areas are unaffected, and the remote control UI is not affected.'
                 },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'

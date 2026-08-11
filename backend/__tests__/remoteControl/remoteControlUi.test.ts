@@ -103,6 +103,10 @@ const SERVER_ENDPOINTS = new Set([
   '/api/storage-config',
   '/api/storage-select',
   '/api/storage-reset',
+  '/api/diff-status',
+  '/api/diff-preview',
+  '/api/diff-accept',
+  '/api/diff-reject',
   '/api/stream'
 ]);
 

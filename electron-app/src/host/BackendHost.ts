@@ -644,6 +644,8 @@ export class BackendHost {
         finalized: finalized.map((d) => ({ id: d.id, status: d.status })),
         allProcessed
       });
+      // 远控端：同一事件转推 SSE（移动端显示「等待桌面批准 diff」横幅 / 结算提示）
+      this.remoteControlServer?.broadcastDiffStatus(pendingDiffs, allProcessed, finalized);
     };
     getDiffManager().addStatusListener(diffStatusListener);
     this.unsubscribers.push(() => getDiffManager().removeStatusListener(diffStatusListener));
@@ -841,6 +843,29 @@ export class BackendHost {
         } catch (err) {
           console.error('[BackendHost] conversationsChanged broadcast failed:', err);
         }
+      },
+      // diff 快照/全文读取：直连 diffManager（移动端 diff-status / diff-preview 端点用）
+      getPendingDiffList: () => getDiffManager().getPendingDiffs().map((d) => ({
+        id: d.id,
+        status: d.status,
+        filePath: d.filePath,
+        toolId: d.toolId,
+        diffGuardWarning: d.diffGuardWarning,
+        diffGuardDeletePercent: d.diffGuardDeletePercent,
+        timestamp: d.timestamp,
+        conversationId: d.conversationId
+      })),
+      getPendingDiffContent: (diffId: string) => {
+        // 只读 pending 快照：getDiff(id) 是消费型读取（accepted+partial 墓碑读出即删，
+        // 会破坏工具链的 partial 结算），HTTP 预览路径必须走非消费型读。
+        const diff = getDiffManager().getPendingDiffs().find((d) => d.id === diffId);
+        if (!diff) return null;
+        return {
+          filePath: diff.filePath,
+          originalContent: diff.originalContent,
+          newContent: diff.newContent,
+          status: diff.status
+        };
       }
     });
     // 设置变更（开关/端口）→ 启停/重启服务器；初始化完成后再同步一次兜底。

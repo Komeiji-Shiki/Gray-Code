@@ -48,6 +48,49 @@ class FakeHost implements RemoteControlServerHost {
     { id: 'ch1', name: 'Channel One', model: 'm1', models: [{ id: 'm1', name: 'Model 1' }, { id: 'm2', name: 'Model 2' }] },
     { id: 'ch2', name: 'Channel Two', model: '', models: [] }
   ];
+  /** 模拟 diffManager 的 pending diff 快照（/api/diff-status、/api/diff-preview 数据源） */
+  pendingDiffs: Array<Record<string, any>> = [
+    {
+      id: 'diff-1234567890-abc',
+      status: 'pending',
+      filePath: 'src/a.ts',
+      toolId: 'tool_1',
+      diffGuardWarning: '',
+      diffGuardDeletePercent: 0,
+      timestamp: Date.now() - 60_000,
+      conversationId: 'conv_test_1',
+      originalContent: 'line1\nline2\n',
+      newContent: 'line1\nchanged\nline3\n'
+    }
+  ];
+
+  getPendingDiffList(): Array<{
+    id: string;
+    status: string;
+    filePath: string;
+    toolId?: string;
+    diffGuardWarning?: string;
+    diffGuardDeletePercent?: number;
+    timestamp: number;
+    conversationId?: string;
+  }> {
+    return this.pendingDiffs.map((d) => ({
+      id: d.id,
+      status: d.status,
+      filePath: d.filePath,
+      toolId: d.toolId,
+      diffGuardWarning: d.diffGuardWarning,
+      diffGuardDeletePercent: d.diffGuardDeletePercent,
+      timestamp: d.timestamp,
+      conversationId: d.conversationId
+    }));
+  }
+
+  getPendingDiffContent(diffId: string): { filePath: string; originalContent: string; newContent: string; status: string } | null {
+    const d = this.pendingDiffs.find((x) => x.id === diffId);
+    if (!d) return null;
+    return { filePath: d.filePath, originalContent: d.originalContent, newContent: d.newContent, status: d.status };
+  }
 
   private respond(type: string, data: any): unknown {
     if (Object.prototype.hasOwnProperty.call(this.respondOverrides, type)) {
@@ -118,6 +161,10 @@ class FakeHost implements RemoteControlServerHost {
       case 'settings.setActiveChannelId':
       case 'config.updateConfig':
         return { success: true };
+      case 'diff.accept':
+        return { success: true, sessionId: data?.sessionId, status: 'accepted' };
+      case 'diff.reject':
+        return { success: true, sessionId: data?.sessionId, status: 'rejected' };
       case 'tools.getTools':
         return { tools: [{ name: 'read_file', description: 'Read files', enabled: true, category: 'file' }] };
       case 'tools.getAutoExecConfig':
@@ -2072,6 +2119,143 @@ describe('RemoteControlServer HTTP', () => {
     } finally {
       conns.forEach((c) => c.destroy());
     }
+  });
+
+  test('diff endpoints: status list / preview content / accept / reject / input validation', async () => {
+    host.calls = [];
+    const statusRes = await requestJson(port, 'GET', '/api/diff-status');
+    expect(statusRes.status).toBe(200);
+    expect(statusRes.body.ok).toBe(true);
+    expect(statusRes.body.pendingDiffs.length).toBeGreaterThan(0);
+    expect(statusRes.body.pendingDiffs[0].id).toBe('diff-1234567890-abc');
+    expect(statusRes.body.pendingDiffs[0].filePath).toBe('src/a.ts');
+    expect(statusRes.body.pendingDiffs[0]).not.toHaveProperty('originalContent');
+
+    const preview = await requestJson(port, 'GET', '/api/diff-preview?diffId=diff-1234567890-abc');
+    expect(preview.status).toBe(200);
+    expect(preview.body.originalContent).toContain('line1');
+    expect(preview.body.newContent).toContain('changed');
+
+    // 非法 ID 400 / 不存在 404（不泄露内容）
+    expect((await requestJson(port, 'GET', '/api/diff-preview?diffId=%2E%2E%2Fetc')).status).toBe(400);
+    expect((await requestJson(port, 'GET', '/api/diff-preview?diffId=diff-0000-0000')).status).toBe(404);
+
+    const acc = await post(port, '/api/diff-accept', { diffId: 'diff-1234567890-abc' });
+    expect(acc.status).toBe(200);
+    expect(acc.body.status).toBe('accepted');
+    expect(host.calls.some((c) => c.type === 'diff.accept' && c.data.sessionId === 'diff-1234567890-abc')).toBe(true);
+
+    const rej = await post(port, '/api/diff-reject', { diffId: 'diff-1234567890-abc' });
+    expect(rej.status).toBe(200);
+    expect(rej.body.status).toBe('rejected');
+    expect(host.calls.some((c) => c.type === 'diff.reject' && c.data.sessionId === 'diff-1234567890-abc')).toBe(true);
+
+    expect((await post(port, '/api/diff-accept', { diffId: 'x' })).status).toBe(400);
+    expect((await post(port, '/api/diff-reject', {})).status).toBe(400);
+  });
+
+  test('SSE: diffStatus event broadcast carries pending diffs', async () => {
+    const events: Array<{ event: string; data: any }> = [];
+    const sse = new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        { host: 'localhost', port, path: '/api/stream', method: 'GET', agent: false, headers: { Host: `localhost:${port}` } },
+        (res) => {
+          let buf = '';
+          res.on('data', (c: Buffer) => {
+            buf += c.toString('utf-8');
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const lines = frame.split('\n');
+              let event = 'message';
+              const dataLines: string[] = [];
+              for (const line of lines) {
+                if (line.startsWith('event: ')) event = line.slice(7);
+                else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+              }
+              if (dataLines.length === 0) continue;
+              let parsed: any;
+              try { parsed = JSON.parse(dataLines.join('\n')); } catch { continue; }
+              events.push({ event, data: parsed });
+              if (events.some((e) => e.event === 'diffStatus')) {
+                req.destroy();
+                resolve();
+              }
+            }
+          });
+        }
+      );
+      req.on('error', (err) => {
+        if (events.some((e) => e.event === 'diffStatus')) resolve();
+        else reject(err);
+      });
+      req.end();
+    });
+
+    await new Promise((r) => setTimeout(r, 150));
+    server.broadcastDiffStatus(
+      [{
+        id: 'diff-1', status: 'pending', filePath: 'src/a.ts', toolId: 'tool_1',
+        timestamp: Date.now(), conversationId: 'conv_test_1'
+      }],
+      false,
+      []
+    );
+    await sse;
+
+    const ev = events.find((e) => e.event === 'diffStatus');
+    expect(ev).toBeDefined();
+    expect(ev!.data.pendingDiffs[0].id).toBe('diff-1');
+    expect(ev!.data.pendingDiffs[0]).not.toHaveProperty('originalContent');
+    expect(ev!.data.allProcessed).toBe(false);
+
+    // 终结结算推送（finalized 透传）
+    const events2: Array<{ event: string; data: any }> = [];
+    const sse2 = new Promise<void>((resolve2, reject2) => {
+      const req2 = http.request(
+        { host: 'localhost', port, path: '/api/stream', method: 'GET', agent: false, headers: { Host: `localhost:${port}` } },
+        (res) => {
+          let buf = '';
+          res.on('data', (c: Buffer) => {
+            buf += c.toString('utf-8');
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              const lines = frame.split('\n');
+              let event = 'message';
+              const dataLines: string[] = [];
+              for (const line of lines) {
+                if (line.startsWith('event: ')) event = line.slice(7);
+                else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+              }
+              if (dataLines.length === 0) continue;
+              let parsed: any;
+              try { parsed = JSON.parse(dataLines.join('\n')); } catch { continue; }
+              events2.push({ event, data: parsed });
+              const ds = events2.find((e) => e.event === 'diffStatus');
+              if (ds && ds.data.finalized && ds.data.finalized.length > 0) {
+                req2.destroy();
+                resolve2();
+              }
+            }
+          });
+        }
+      );
+      req2.on('error', (err) => {
+        if (events2.some((e) => e.event === 'diffStatus')) resolve2();
+        else reject2(err);
+      });
+      req2.end();
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    server.broadcastDiffStatus([], true, [{ id: 'diff-1', status: 'accepted' }]);
+    await sse2;
+    const ev2 = events2.find((e) => e.event === 'diffStatus');
+    expect(ev2).toBeDefined();
+    expect(ev2!.data.finalized).toEqual([{ id: 'diff-1', status: 'accepted' }]);
+    expect(ev2!.data.allProcessed).toBe(true);
   });
 
   test('dispose stops server cleanly', async () => {

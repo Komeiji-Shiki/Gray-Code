@@ -287,8 +287,12 @@ var S = {
   /* 目录浏览 */
   browsePath: '',
   browseParent: null,
-  browseBusy: false
+  browseBusy: false,
+  /* diff 查看与批准（桌面端 pending diff 经 SSE diffStatus 推送） */
+  pendingDiffs: [],
+  diffCountdownTimer: null
 };
+var DIFF_AUTO_REJECT_MS = 5 * 60 * 1000;
 var CONV_PAGE_SIZE = 30;
 var MSG_PAGE_SIZE = 120;
 var ORPHAN_STREAM_MAX = 12;
@@ -1205,6 +1209,141 @@ function toolConfirm(confirmed) {
   });
 }
 
+/* ---------- diff 查看与批准（远控端） ---------- */
+function handleDiffStatus(payload) {
+  if (!payload || !Array.isArray(payload.pendingDiffs)) return;
+  /* 终结结算只提示「本端曾跟踪」的 diff（避免桌面端批量自动结算时 toast 风暴） */
+  var prevIds = {};
+  S.pendingDiffs.forEach(function (d) { prevIds[d.id] = true; });
+  S.pendingDiffs = payload.pendingDiffs.filter(function (d) { return d && d.status === 'pending'; });
+  var finalized = Array.isArray(payload.finalized) ? payload.finalized : [];
+  var toastCount = 0;
+  finalized.forEach(function (f) {
+    if (!f || !prevIds[f.id] || toastCount >= 3) return;
+    toastCount++;
+    if (f.status === 'accepted') toast(t('diffAccepted'));
+    else if (f.status === 'rejected') toast(t('diffRejected'));
+  });
+  renderDiffBar();
+  /* pending 列表变空时同步刷新消息（工具结果已落盘，远控端内容与桌面端对齐） */
+  if (S.pendingDiffs.length === 0 && payload.allProcessed) {
+    var cur = activeTab();
+    if (cur && cur.id) loadMessages(cur, true);
+  }
+}
+function loadDiffStatus() {
+  api('/api/diff-status').then(function (data) {
+    if (data && Array.isArray(data.pendingDiffs)) {
+      S.pendingDiffs = data.pendingDiffs.filter(function (d) { return d && d.status === 'pending'; });
+      renderDiffBar();
+    }
+  }).catch(function () { /* 失败静默：SSE diffStatus 事件会兜底同步 */ });
+}
+function diffRemainingMs(d) {
+  var ts = typeof d.timestamp === 'number' ? d.timestamp : 0;
+  if (!ts) return null;
+  return Math.max(0, ts + DIFF_AUTO_REJECT_MS - Date.now());
+}
+function renderDiffBar() {
+  var bar = $('diff-bar');
+  if (!bar) return;
+  clearInterval(S.diffCountdownTimer);
+  S.diffCountdownTimer = null;
+  bar.innerHTML = '';
+  if (S.pendingDiffs.length === 0) return;
+  S.pendingDiffs.forEach(function (d) {
+    var box = el('div', { class: 'diff-bar-item' });
+    var head = el('div', { class: 'diff-bar-head' });
+    head.appendChild(el('span', { class: 'diff-bar-title', text: t('diffWaiting') }));
+    if (d.diffGuardWarning) {
+      head.appendChild(el('span', { class: 'diff-bar-guard', text: t('diffGuardTitle') + ': ' + d.diffGuardWarning }));
+    }
+    box.appendChild(head);
+    box.appendChild(el('div', { class: 'diff-bar-file', text: d.filePath || '?' }));
+    var cd = el('span', { class: 'diff-bar-countdown' });
+    box.appendChild(cd);
+    box.appendChild(el('div', { class: 'diff-bar-hint', text: t('diffAutoRejectHint') }));
+    var row = el('div', { class: 'confirm-actions' });
+    var viewBtn = el('button', { class: 'btn', text: t('diffView') });
+    viewBtn.addEventListener('click', function () { openDiffModal(d.id); });
+    var rejectBtn = el('button', { class: 'btn danger', text: t('diffReject') });
+    rejectBtn.addEventListener('click', function () { diffDecide(d.id, 'reject'); });
+    var approveBtn = el('button', { class: 'btn', text: t('diffApprove') });
+    approveBtn.addEventListener('click', function () { diffDecide(d.id, 'accept'); });
+    row.appendChild(viewBtn);
+    row.appendChild(rejectBtn);
+    row.appendChild(approveBtn);
+    box.appendChild(row);
+    bar.appendChild(box);
+  });
+  S.diffCountdownTimer = setInterval(safe(function () {
+    var changed = false;
+    S.pendingDiffs.forEach(function (d) {
+      var rem = diffRemainingMs(d);
+      if (rem === null) return;
+      if (rem <= 0) return; /* 后端定时器是权威：到点自动拒绝，倒计时停表 */
+      var cdEl = null;
+      var items = document.querySelectorAll('.diff-bar-item');
+      /* 按顺序找到对应的倒计时元素（与 S.pendingDiffs 索引一一对应） */
+      items.forEach(function (item, i) {
+        if (i < S.pendingDiffs.length && S.pendingDiffs[i] === d) {
+          cdEl = item.querySelector('.diff-bar-countdown');
+        }
+      });
+      if (cdEl) {
+        cdEl.textContent = t('diffWaitingFor') + ': ' + Math.ceil(rem / 1000) + 's';
+        changed = true;
+      }
+    });
+    if (!changed) clearInterval(S.diffCountdownTimer);
+  }), 1000);
+}
+function openDiffModal(diffId) {
+  var modalEl = $('diff-modal');
+  if (!modalEl || !diffId) return;
+  modalEl._diffId = diffId;
+  $('diff-modal-title').textContent = t('diffLoading');
+  $('diff-original').querySelector('.diff-pane-head').textContent = t('diffOriginal');
+  $('diff-new').querySelector('.diff-pane-head').textContent = t('diffNew');
+  $('diff-original').querySelector('.diff-code').textContent = '';
+  $('diff-new').querySelector('.diff-code').textContent = '';
+  $('diff-reject-btn').textContent = t('diffReject');
+  $('diff-approve-btn').textContent = t('diffApprove');
+  $('diff-close-btn').textContent = t('renameCancel');
+  $('diff-reject-btn').disabled = false;
+  $('diff-approve-btn').disabled = false;
+  modalEl.classList.add('open');
+  api('/api/diff-preview?diffId=' + encodeURIComponent(diffId)).then(function (data) {
+    if (!data || data.diffId !== diffId) return;
+    $('diff-modal-title').textContent = data.filePath || diffId;
+    $('diff-original').querySelector('.diff-code').textContent = data.originalContent || '';
+    $('diff-new').querySelector('.diff-code').textContent = data.newContent || '';
+  }).catch(function (err) {
+    $('diff-modal-title').textContent = t('loadFailed') + ': ' + (err.message || '');
+  });
+}
+function closeDiffModal() {
+  var modalEl = $('diff-modal');
+  if (modalEl) modalEl.classList.remove('open');
+}
+function diffDecide(diffId, action) {
+  var modalEl = $('diff-modal');
+  if (!diffId) return;
+  var endpoint = action === 'accept' ? '/api/diff-accept' : '/api/diff-reject';
+  post(endpoint, { diffId: diffId }).then(function () {
+    if (action === 'accept') toast(t('diffAccepted'));
+    else toast(t('diffRejected'));
+    S.pendingDiffs = S.pendingDiffs.filter(function (d) { return d.id !== diffId; });
+    renderDiffBar();
+    if (modalEl && modalEl.classList.contains('open')) closeDiffModal();
+    var cur = activeTab();
+    if (cur && cur.id) loadMessages(cur, true);
+  }).catch(function (err) {
+    toast(t('settingsFailed') + ': ' + (err.message || ''));
+    if (modalEl && modalEl.classList.contains('open')) closeDiffModal();
+  });
+}
+
 /* ---------- 发送 / 停止 ---------- */
 function renderSendIcon() {
   var btn = $('send');
@@ -1340,6 +1479,8 @@ function connectStream() {
       openConversationTab(info.activeConversationId, info.activeConversationTitle || '');
     }
     loadConversations(true);
+    /* 重连/进入页面时兜底拉取一次 diff 状态（SSE 建立前可能已有 pending diff） */
+    loadDiffStatus();
   }));
   es.addEventListener('message', safe(function (ev) { handleStreamMessage(ev.data); }));
   es.addEventListener('global', safe(function (ev) { handleStreamMessage(ev.data); }));
@@ -1348,6 +1489,11 @@ function connectStream() {
   }));
   es.addEventListener('conversations', safe(function () {
     loadConversations(true);
+  }));
+  es.addEventListener('diffStatus', safe(function (ev) {
+    var d = {};
+    try { d = JSON.parse(ev.data); } catch (e) { /* ignore */ }
+    handleDiffStatus(d);
   }));
   es.addEventListener('conversation-deleted', safe(function (ev) {
     // 会话被删除（桌面端删除后广播）：关闭对应页签，避免残留页签发送 404
@@ -1549,7 +1695,9 @@ function renderStreamingText() {
           return '<span class="tool-chip">' + esc(n) + '</span>';
         }).join('') + '</div>';
       }
-      contentEl.innerHTML = toolHtml + (tab.streamingText ? renderMarkdown(tab.streamingText) : '') + '<span class="caret"></span>';
+      /* 首块到达前（模型思考/工具执行期）显示等待提示，避免「空白消息 + 光标」的假死感 */
+      var bodyText = tab.streamingText || (tab.activeTools && tab.activeTools.length ? '' : t('streamingWait'));
+      contentEl.innerHTML = toolHtml + (bodyText ? renderMarkdown(bodyText) : '') + '<span class="caret"></span>';
     }
   }
   scrollToBottom();
@@ -5835,6 +5983,20 @@ $('btn-new').addEventListener('click', function () {
   newChatTab();
 });
 $('drawer-backdrop').addEventListener('click', closeDrawer);
+/* diff 查看/批准对话框按钮 */
+var diffModalEl = $('diff-modal');
+if (diffModalEl) {
+  diffModalEl.querySelector('.backdrop').addEventListener('click', closeDiffModal);
+  $('diff-close-btn').addEventListener('click', closeDiffModal);
+  $('diff-approve-btn').addEventListener('click', function () {
+    var id = diffModalEl._diffId;
+    if (id) diffDecide(id, 'accept');
+  });
+  $('diff-reject-btn').addEventListener('click', function () {
+    var id = diffModalEl._diffId;
+    if (id) diffDecide(id, 'reject');
+  });
+}
 var sheetEl = $('sheet');
 sheetEl.querySelector('.backdrop').addEventListener('click', closeSheet);
 $('act-backdrop').addEventListener('click', closeActionSheet);

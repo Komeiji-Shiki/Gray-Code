@@ -1,4 +1,4 @@
-﻿/**
+/**
  * remoteControlUi.ts
  *
  * 远程控制移动端 UI 入口（V3 重构版）。
@@ -598,6 +598,20 @@ interface UiText {
   subIncludeMcp: string;
   subPresets: string;
   subBlankPreset: string;
+  /* diff 查看与批准 */
+  diffWaiting: string;
+  diffWaitingFor: string;
+  diffView: string;
+  diffApprove: string;
+  diffReject: string;
+  diffOriginal: string;
+  diffNew: string;
+  diffLoading: string;
+  diffAccepted: string;
+  diffRejected: string;
+  diffGuardTitle: string;
+  diffAutoRejectHint: string;
+  streamingWait: string;
 }
 
 export const UI_TEXTS: Record<UiLang, UiText> = {
@@ -1160,7 +1174,20 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     subDescription: '描述',
     subIncludeMcp: '包含 MCP 工具',
     subPresets: '预设模板',
-    subBlankPreset: '空白'
+    subBlankPreset: '空白',
+    diffWaiting: '桌面端等待 Diff 批准',
+    diffWaitingFor: '等待批准',
+    diffView: '查看 Diff',
+    diffApprove: '批准',
+    diffReject: '拒绝',
+    diffOriginal: '原文',
+    diffNew: '新内容',
+    diffLoading: '加载 Diff…',
+    diffAccepted: 'Diff 已批准',
+    diffRejected: 'Diff 已拒绝',
+    diffGuardTitle: '删除警戒',
+    diffAutoRejectHint: '长时间未处理将自动拒绝（约 5 分钟）',
+    streamingWait: '等待桌面响应…'
   },
   en: {
     appTitle: 'GrayCode Remote',
@@ -1721,7 +1748,20 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     subDescription: 'Description',
     subIncludeMcp: 'Include MCP tools',
     subPresets: 'Preset templates',
-    subBlankPreset: 'Blank'
+    subBlankPreset: 'Blank',
+    diffWaiting: 'Desktop waiting for Diff approval',
+    diffWaitingFor: 'Waiting for approval',
+    diffView: 'View Diff',
+    diffApprove: 'Approve',
+    diffReject: 'Reject',
+    diffOriginal: 'Original',
+    diffNew: 'New',
+    diffLoading: 'Loading Diff…',
+    diffAccepted: 'Diff approved',
+    diffRejected: 'Diff rejected',
+    diffGuardTitle: 'Delete guard',
+    diffAutoRejectHint: 'Auto-rejected if not processed in time (about 5 minutes)',
+    streamingWait: 'Waiting for desktop response…'
   },
   ja: {
     appTitle: 'GrayCode リモート',
@@ -2282,7 +2322,20 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     subDescription: '説明',
     subIncludeMcp: 'MCP ツールを含める',
     subPresets: 'プリセットテンプレート',
-    subBlankPreset: '空白'
+    subBlankPreset: '空白',
+    diffWaiting: 'デスクトップが Diff の承認を待機中',
+    diffWaitingFor: '承認待ち',
+    diffView: 'Diff を表示',
+    diffApprove: '承認',
+    diffReject: '拒否',
+    diffOriginal: '元の内容',
+    diffNew: '新しい内容',
+    diffLoading: 'Diff を読み込み中…',
+    diffAccepted: 'Diff は承認されました',
+    diffRejected: 'Diff は拒否されました',
+    diffGuardTitle: '削除警戒',
+    diffAutoRejectHint: '長時間処理されない場合、自動的に拒否されます（約 5 分）',
+    streamingWait: 'デスクトップの応答を待機中…'
   }
 };
 
@@ -2353,6 +2406,7 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
         <div id="empty-text"></div>
       </div>
       <div id="confirm-bar"></div>
+      <div id="diff-bar"></div>
       <footer class="composer">
         <!-- 输入区选择器行：模型模式 / 渠道 / 模型 / 思考强度（桌面端 InputSelectorBar 同款） -->
         <div id="composer-meta"></div>
@@ -2466,6 +2520,20 @@ export function renderRemoteControlUiHtml(lang: string | null | undefined): stri
 </div>
 
 <div id="error-banner" hidden></div>
+
+<!-- Diff 查看/批准对话框 -->
+<div id="diff-modal">
+  <div class="backdrop"></div>
+  <div class="box">
+    <div id="diff-modal-title"></div>
+    <div id="diff-modal-body"><div class="diff-pane" id="diff-original"><div class="diff-pane-head"></div><pre class="diff-code"></pre></div><div class="diff-pane" id="diff-new"><div class="diff-pane-head"></div><pre class="diff-code"></pre></div></div>
+    <div id="diff-modal-actions">
+      <button class="btn secondary" id="diff-reject-btn"></button>
+      <button class="btn" id="diff-approve-btn"></button>
+      <button class="btn secondary" id="diff-close-btn"></button>
+    </div>
+  </div>
+</div>
 
 <div id="toast"></div>
 

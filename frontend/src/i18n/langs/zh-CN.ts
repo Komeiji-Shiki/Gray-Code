@@ -2828,6 +2828,14 @@ const zhCN = {
                 saveFailed: '保存失败'
             },
             appearanceSettings: {
+                themeMode: {
+                    title: '主题模式',
+                    description: '切换界面亮色 / 暗色外观，或跟随系统自动切换。',
+                    light: '亮色',
+                    dark: '暗色',
+                    auto: '跟随系统',
+                    hint: '选择“跟随系统”时，界面会随系统亮暗模式自动切换。'
+                },
                 loadingText: {
                     title: '流式 Loading 文本',
                     description: '在 AI 流式输出时，消息底部的逐字波动指示器显示的文本。',
@@ -2863,6 +2871,12 @@ const zhCN = {
                     opacity: '图片不透明度',
                     opacityHint: '图片不透明度作用于图片本身，文字与界面保持清晰；0 等于不显示，100 为完全遮挡。',
                     pickFailed: '加载背景图失败，请换一张图片重试'
+                },
+                uiOpacity: {
+                    title: 'UI 不透明度',
+                    description: '调节输入框、设置面板等界面面板的整体不透明度，透出窗口背景。',
+                    opacity: '不透明度',
+                    hint: '100 为完全不透明；数值越低界面越透明。不影响消息文字区，远控端界面不受影响。'
                 },
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败'

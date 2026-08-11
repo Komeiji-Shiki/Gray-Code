@@ -313,6 +313,18 @@ export interface GlobalSettings {
              * 默认 30。
              */
             wallpaperOpacity?: number;
+
+            /**
+             * 桌面端 UI 不透明度（0-100 整数百分比）
+             *
+             * - 100: 完全不透明（默认，界面面板不透明）
+             * - <100: 输入框、设置面板等界面面板整体半透明，透出窗口背景（背景图/纯色）
+             *
+             * 注意：仅作用于桌面端主界面（输入框/设置页等面板），
+             * 远控端 UI 为独立自包含页面，不受此设置影响。
+             * 默认 100。
+             */
+            uiOpacity?: number;
         };
 
         /**
@@ -436,7 +448,8 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
             smoothStreaming: 'balanced',
             splashEnabled: true,
             wallpaperPath: '',
-            wallpaperOpacity: 30
+            wallpaperOpacity: 30,
+            uiOpacity: 100
         },
         sound: {
             enabled: false,
