@@ -495,14 +495,18 @@ export class TokenEstimationService {
                 tokens += this.estimateMultimodalTokens(part.inlineData);
             }
             if (part.functionCall) {
-                const argsStr = JSON.stringify(part.functionCall.args);
+                // functionCall.args 可选（流式累加器/解析器可能产出仅含 name/index/partialArgs
+                // 的调用壳）：undefined 时 JSON.stringify 返回 undefined，.length 会抛 TypeError。
+                const argsStr = JSON.stringify(part.functionCall.args ?? {});
                 tokens += Math.ceil((part.functionCall.name.length + argsStr.length) / 4);
             }
             if (part.functionResponse) {
                 const cleanedResponse = cleanFunctionResponseForAPI(
                     part.functionResponse.response as Record<string, unknown>
                 );
-                const responseStr = JSON.stringify(cleanedResponse);
+                // cleanFunctionResponseForAPI 对 undefined response 原样返回 undefined（不抛错），
+                // 但 JSON.stringify(undefined) === undefined，.length 同样会抛 TypeError；空对象兜底。
+                const responseStr = JSON.stringify(cleanedResponse ?? {});
                 tokens += Math.ceil((part.functionResponse.name.length + responseStr.length) / 4);
                 // 如果有 parts（多模态数据）
                 if (part.functionResponse.parts) {

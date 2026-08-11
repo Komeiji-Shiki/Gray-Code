@@ -1568,6 +1568,14 @@ export class SummarizeService {
      * - model 消息优先 usageMetadata（输出 token 扣除思考部分），否则本地估算
      */
     private estimateMessageTokensForBudget(message: Content, channelType: string): number {
+        // 中断/取消流的 usageMetadata 只覆盖已收到的 chunk，token 数可能严重偏低：
+        // 若据此规划保留预算会低估实际占用、总结范围规划过大。
+        // 与 conversation/usageStats.ts extractMessageTokens 及 manager/stats.ts
+        // 的 usageMetadataPartial 回退口径一致——回退到本地估算而非信任半截 usage。
+        if (message.usageMetadataPartial) {
+            return this.estimateSingleMessageTokensLocally(message);
+        }
+
         if (message.role === 'user') {
             const byChannel = message.tokenCountByChannel?.[channelType];
             if (typeof byChannel === 'number') {

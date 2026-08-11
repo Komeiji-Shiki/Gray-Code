@@ -1943,6 +1943,19 @@ export class ContextTrimService {
             userTokensTotal: 0,
             modelTokensTotal: 0
         };
+
+        // 首条真实用户消息锚点（prependFirstUserMessage：任务锚点永远前置）token 计入预算：
+        // getNormalizedHistoryForStartIndex 在构建发送历史时把首条用户消息原样前置，其 token
+        // 不在 effectiveStartIndex 之后的切片内，本函数默认漏计——预算校验会低估实际发送量，
+        // 导致裁剪点偏浅、最终发送历史超出阈值。
+        // 与 prependFirstUserMessage 的判定条件对齐（起点在首条用户消息之后时才会前置）；
+        // 锚点 token 用注入估算器口径（与 fallback 路径 estimateCandidateTokens 一致）。
+        const firstUserIndex = fullHistory.findIndex(message => isRealUserMessage(message));
+        if (effectiveStartIndex > 0 && firstUserIndex >= 0 && firstUserIndex < effectiveStartIndex) {
+            const firstUserTokens = this.tokenEstimationService.estimateMessageTokens(fullHistory[firstUserIndex]);
+            estimatedTotalTokens += firstUserTokens;
+            usageStats.userTokensTotal += firstUserTokens;
+        }
         
         // 只累加 effectiveStartIndex 之后的消息
         for (let i = effectiveStartIndex; i < fullHistory.length; i++) {

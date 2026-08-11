@@ -92,7 +92,12 @@ export class RepeatedCallGuard {
             }
 
             const signature = signatureOf(r.name, r.args);
-            if (resultRecord?.success === false) {
+            // 失败判定与 streamingToolProgress.ts / orchestrator.ts 的工具状态口径一致：
+            // 工具错误统一结构为 success:false（ToolIterationLoopService 1007/1488 构造），
+            // 但软失败（非零退出码等）或部分工具直接返回 { error } 而无 success 字段时，
+            // 只认 success === false 会漏拦。补上显式 error 键判定（真值，与既有状态
+            // 判定一致）；不带 error 的成功结果（含参数规范化警告等提示）不会被误拦。
+            if (resultRecord?.success === false || resultRecord?.error) {
                 if (signature === this.lastFailureSignature) {
                     this.consecutiveFailureCount += 1;
                 } else {
