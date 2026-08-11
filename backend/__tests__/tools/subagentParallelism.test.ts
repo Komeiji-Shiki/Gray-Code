@@ -7,12 +7,11 @@
  *       run 继续执行至完成（currentOperationHandles 数组化后逐个解绑）；
  * - M5：并行工具不响应 abort 且挂死 → 收尾窗口超时兜底终止 run（非永久挂起）。
  */
-import { createDefaultExecutor } from '../../tools/subagents';
-import { subAgentRunController } from '../../tools/subagents';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents';
-import type { SubAgentConfig, SubAgentExecutorContext, SubAgentRequest, SubAgentResult } from '../../tools/subagents';
+import { createDefaultExecutor } from '../../tools/subagents/executor';
+import { subAgentRunController } from '../../tools/subagents/runController';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
+import type { SubAgentConfig, SubAgentExecutorContext, SubAgentRequest, SubAgentResult } from '../../tools/subagents/types';
 import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
-
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
