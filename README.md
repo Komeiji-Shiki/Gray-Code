@@ -54,7 +54,7 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 ## 快速开始
 
-1. **安装扩展** —— GrayCode 未上架 VS Code 插件市场，需要通过 VSIX 文件安装：
+1. **安装扩展** —— GrayCode 已上架 [VS Code 插件市场](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode)，可直接在扩展视图搜索 "Gray Code" 安装；也可以通过 VSIX 文件安装：
    - 前往 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 下载对应版本的 `graycode-*.vsix` 文件（也可以在本地自行打包，方法见「安装与更新」）。
    - 打开 VS Code，按 `Ctrl+Shift+P`（macOS 为 `Cmd+Shift+P`）打开命令面板，执行 `Extensions: Install from VSIX...`，在文件选择框中选中下载的 VSIX 文件，等待安装完成。
    - 也可以点击左侧活动栏的扩展图标（快捷键 `Ctrl+Shift+X`），在扩展视图右上角的 `...` 菜单中选择 `Install from VSIX...`，再选择 VSIX 文件。
@@ -181,7 +181,7 @@ GrayCode 是运行在 VS Code 里的 AI 编程助手，它能在聊天中理解�
 
 ## 安装与更新
 
-要求 VS Code `^1.84.0` 或更高版本。源码构建和 VSIX 打包建议使用 Node.js 20 或更高版本。本扩展未上架 VS Code 插件市场，请通过 VSIX 或源码方式安装。
+要求 VS Code `^1.84.0` 或更高版本。源码构建和 VSIX 打包建议使用 Node.js 20 或更高版本。本扩展已上架 [VS Code 插件市场](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode)，也可通过 VSIX 或源码方式安装。
 
 **从 VSIX 安装** —— 可以前往 [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases) 获取对应版本的 `graycode-*.vsix` 文件，也可以在本地自行打包。在 VS Code 中打开命令面板（`Ctrl+Shift+P` / `Cmd+Shift+P`），执行 `Extensions: Install from VSIX...`，选择下载的 VSIX 文件。
 
