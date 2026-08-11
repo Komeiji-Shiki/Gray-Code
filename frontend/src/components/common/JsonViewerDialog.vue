@@ -32,31 +32,59 @@ const visible = computed({
   set: (value: boolean) => emit('update:modelValue', value)
 })
 
-function safeStringify(value: unknown): string {
-  // 防止超大对象/循环引用导致 UI 卡死
-  const seen = new WeakSet<object>()
-  const MAX_STRING = 12_000
+// 超大字符串截断阈值
+const MAX_STRING = 12_000
 
-  const replacer = (_key: string, v: any) => {
-    if (typeof v === 'bigint') return v.toString()
+/**
+ * 整树去重（路径集合）：递归前标记、递归完成即退出当前节点。
+ * 与 buildResponseViewerData 的 sanitizeForViewer 同款修复：DAG 中共享（非环）对象
+ * 不会因整树 WeakSet 残留被误标 [Circular]；真正的环仍会被识别并替换为标记。
+ */
+function sanitizeForViewer(value: unknown, seen = new Set<object>()): unknown {
+  if (typeof value === 'bigint') return value.toString()
 
-    if (typeof v === 'string') {
-      if (v.length > MAX_STRING) {
-        return `${v.slice(0, MAX_STRING)}\n... (truncated, total=${v.length})`
-      }
-      return v
+  if (typeof value === 'string') {
+    if (value.length > MAX_STRING) {
+      return `${value.slice(0, MAX_STRING)}\n... (truncated, total=${value.length})`
     }
-
-    if (v && typeof v === 'object') {
-      if (seen.has(v)) return '[Circular]'
-      seen.add(v)
-    }
-
-    return v
+    return value
   }
 
+  if (value === null || value === undefined || typeof value === 'number' || typeof value === 'boolean') {
+    return value
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString()
+  }
+
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return '[Circular]'
+    seen.add(value)
+    const mapped = value.map(item => sanitizeForViewer(item, seen))
+    seen.delete(value)
+    return mapped
+  }
+
+  if (typeof value === 'object') {
+    const target = value as Record<string, unknown>
+    if (seen.has(target)) return '[Circular]'
+    seen.add(target)
+    const result: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(target)) {
+      result[key] = sanitizeForViewer(item, seen)
+    }
+    seen.delete(target)
+    return result
+  }
+
+  return String(value)
+}
+
+function safeStringify(value: unknown): string {
+  // 防止超大对象/循环引用导致 UI 卡死
   try {
-    return JSON.stringify(value, replacer, 2)
+    return JSON.stringify(sanitizeForViewer(value), null, 2)
   } catch (e: any) {
     try {
       return String(value)
