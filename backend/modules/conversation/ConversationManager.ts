@@ -485,6 +485,14 @@ export class ConversationManager {
                                     error: (error as Error)?.message ?? String(error),
                                 });
                             }
+                        }).catch((error: unknown) => {
+                            // withGraphSyncQueue 的挂起超时（withHangTimeout）会让返回的 current 在
+                            // 60s 后 reject；fire-and-forget 任务必须挂 rejection 处理，否则成为
+                            // unhandled rejection。任务体本身的失败已在上方 catch 记录，这里只兜超时。
+                            log.warn('branch_append_sync_hang_timeout', {
+                                conversationId,
+                                error: (error as Error)?.message ?? String(error),
+                            });
                         });
                     }
                 }
@@ -1564,6 +1572,26 @@ export class ConversationManager {
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, 'message_inserted');
+
+        // M-conv：插入是结构性变更（插入点后继 parentId 重链到新消息，活跃路径变化），与
+        // deleteMessage/deleteToMessage/clearHistory 同口径同步分支图——否则图缺插入消息，切分支时
+        // rewriteHistoryFromBranchGraph 会用图重建主历史、静默丢消息。走会话级串行队列
+        // （graphSyncQueues）：插入前已入队的 append 图同步必须先完成再 rebase。失败仅告警
+        // （主历史为唯一真源，图侧由下次读图/写图自校验兜底）；无全局 BranchService 时静默跳过。
+        const branchService = getGlobalBranchService();
+        if (branchService) {
+            try {
+                await this.withGraphSyncQueue(conversationId, async () => {
+                    await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'message_inserted');
+                });
+            } catch (error) {
+                log.warn('branch_insert_sync_failed', {
+                    conversationId,
+                    position,
+                    error: (error as Error)?.message ?? String(error),
+                });
+            }
+        }
     }
 
     /**
@@ -1591,6 +1619,25 @@ export class ConversationManager {
             return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
         });
         await this.invalidateContextManagementState(conversationId, contentCopy.isSummary ? 'summary_inserted' : 'content_inserted');
+
+        // M-conv：与 insertMessage 同口径，插入后同步分支图活跃路径（结构性变更，图缺插入消息
+        // 会在切分支重建主历史时静默丢消息）。走会话级串行队列；失败仅告警，无全局
+        // BranchService 时静默跳过。（总结插入的正常路径经 SummarizeService.markAndInsertSummarized
+        // 的原子 mutate + syncBranchGraphAfterSummaryMutation，不经过本方法，此处覆盖其它调用方。）
+        const branchService = getGlobalBranchService();
+        if (branchService) {
+            try {
+                await this.withGraphSyncQueue(conversationId, async () => {
+                    await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'message_inserted');
+                });
+            } catch (error) {
+                log.warn('branch_insert_sync_failed', {
+                    conversationId,
+                    position,
+                    error: (error as Error)?.message ?? String(error),
+                });
+            }
+        }
     }
 
     // ==================== 批量操作 ====================
