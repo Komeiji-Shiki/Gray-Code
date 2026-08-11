@@ -658,7 +658,8 @@ watch(
       ? Math.min(100, Math.max(0, opacity)) / 100
       : 1
     document.documentElement.style.setProperty('--gc-ui-opacity', String(normalized))
-  }
+  },
+  { immediate: true }
 )
 
 let mediaQueryDispose: (() => void) | null = null

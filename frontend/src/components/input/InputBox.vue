@@ -1039,7 +1039,8 @@ defineExpose({
   min-height: 0;
   max-height: 160px;
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-input-background);
+  /* UI 不透明度：仅背景半透明透出窗口背景，输入文字保持全不透明 */
+  background: var(--gc-surface-input-bg);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
   border-radius: var(--radius-sm, 2px);

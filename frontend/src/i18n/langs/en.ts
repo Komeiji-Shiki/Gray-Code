@@ -2872,9 +2872,9 @@ const en: LanguageMessages = {
                 },
                 uiOpacity: {
                     title: 'UI Opacity',
-                    description: 'Adjust the overall opacity of interface panels such as the input box and settings page, letting the window background show through.',
+                    description: 'Adjust the background opacity of interface panels such as the input box, settings page, and message area, letting the window background show through.',
                     opacity: 'Opacity',
-                    hint: '100 is fully opaque; lower values make the UI more transparent. Message text areas are unaffected, and the remote control UI is not affected.'
+                    hint: '100 is fully opaque; lower values make panel backgrounds more transparent while text and icons stay crisp. The remote control UI is not affected.'
                 },
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'

@@ -1546,7 +1546,7 @@ onUnmounted(() => {
   max-width: 420px;
   margin: 16px;
   padding: 16px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
@@ -1946,7 +1946,7 @@ input[type="text"].config-name-input.input-error {
 .option-section {
   margin-top: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
 }
@@ -2133,7 +2133,7 @@ input[type="text"].config-name-input.input-error {
 }
 
 .channel-row.header-row {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   font-weight: 500;
   color: var(--vscode-foreground);
   opacity: 0.8;

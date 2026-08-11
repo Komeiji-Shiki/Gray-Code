@@ -558,7 +558,7 @@ watch(
 .option-section {
   margin-top: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
 }

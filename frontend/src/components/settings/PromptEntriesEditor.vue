@@ -785,7 +785,7 @@ function handleDragEnd() {
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
 }
 
 .entry-content-textarea {
@@ -900,7 +900,7 @@ function handleDragEnd() {
   padding: 2px 7px;
   border-radius: 999px;
   border: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   color: var(--vscode-textPreformat-foreground);
   font-size: 11px;
   font-family: var(--vscode-editor-font-family), monospace;

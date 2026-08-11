@@ -125,7 +125,7 @@ defineEmits<{
 .manifest-dialog {
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 8px;
   width: 460px;

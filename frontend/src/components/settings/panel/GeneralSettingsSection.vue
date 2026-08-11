@@ -23,7 +23,6 @@ defineProps<{
   language: string
   // 更新设置
   checkUpdatesEnabled: boolean
-  updateChannel: 'stable' | 'nightly'
   isUpdateChecking: boolean
   isUpdating: boolean
   updateCheckResult: { type: 'success' | 'error' | 'info'; text: string } | null
@@ -56,7 +55,6 @@ const emit = defineEmits<{
   (e: 'saveProxy'): void
   (e: 'update:language', value: string): void
   (e: 'update:checkUpdatesEnabled', value: boolean): void
-  (e: 'update:updateChannel', value: string): void
   (e: 'checkUpdateNow'): void
   (e: 'updateNow'): void
   (e: 'update:customPath', value: string): void
@@ -75,12 +73,6 @@ const languageOptions = computed<SelectOption[]>(() => SUPPORTED_LANGUAGES.map(l
   label: lang.labelKey ? t(lang.labelKey) : lang.label,
   description: lang.value === 'auto' ? t('components.settings.settingsPanel.language.autoDescription') : lang.nativeLabel
 })))
-
-// 更新渠道选项（stable 正式版 / nightly 每日构建）
-const updateChannelOptions = computed<SelectOption[]>(() => [
-  { value: 'stable', label: t('components.settings.settingsPanel.update.channelStable') },
-  { value: 'nightly', label: t('components.settings.settingsPanel.update.channelNightly') },
-])
 
 // 验证代理 URL 格式
 function isValidProxyUrl(url: string): boolean {
@@ -189,16 +181,6 @@ function onCustomPathInput(event: Event) {
           :label="t('components.settings.settingsPanel.update.enableLabel')"
           @update:model-value="emit('update:checkUpdatesEnabled', $event)"
         />
-
-        <div class="update-channel-row">
-          <label class="field-label">{{ t('components.settings.settingsPanel.update.channelLabel') }}</label>
-          <CustomSelect
-            :model-value="updateChannel"
-            :options="updateChannelOptions"
-            @update:model-value="emit('update:updateChannel', $event)"
-          />
-          <p class="field-hint">{{ t('components.settings.settingsPanel.update.channelDescription') }}</p>
-        </div>
 
         <div class="update-check-row">
           <button class="save-btn" :disabled="isUpdateChecking || isUpdating" @click="emit('checkUpdateNow')">
@@ -397,7 +379,7 @@ function onCustomPathInput(event: Event) {
 
 .info-text {
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
 }
@@ -466,7 +448,7 @@ function onCustomPathInput(event: Event) {
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
 }
@@ -575,23 +557,6 @@ function onCustomPathInput(event: Event) {
   gap: 12px;
 }
 
-.update-channel-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.update-channel-row .field-label {
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.update-channel-row .field-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
 .update-check-row {
   display: flex;
   align-items: center;
@@ -646,7 +611,7 @@ function onCustomPathInput(event: Event) {
   flex-direction: column;
   gap: 16px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
 }

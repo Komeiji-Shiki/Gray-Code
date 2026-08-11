@@ -22,6 +22,14 @@
 
 ## [Unreleased]
 
+### Fixed（1.7.13dev 补记：UI 不透明度不再影响文字 + 消息区/四个下拉框背景透出 + 移除上游 nightly 更新渠道）
+  - **UI 不透明度改为「仅背景半透明，文字/图标始终全不透明」**：此前对输入框容器与设置面板直接应用 opacity 属性，会连文字一起变淡。现改为全局表面变量（--gc-surface-editor-bg / input-bg / sidebar-bg / dropdown-bg，color-mix 按 --gc-ui-opacity 混合透明），逐处替换面板背景色；App.vue 的 --gc-ui-opacity 同步 watch 加 immediate 保证首帧一致；
+  - **修复消息区背景不透明（合并回归）**：上游 308c79d4 合入把 1.7.11dev「聊天区容器透明化」的 .message-list 背景回退为不透明 editor-background（背景图被消息区整块盖住）。现 .message-list / build/todo 粘性壳 / build 卡片 / checkpoint 条统一改用 --gc-surface-editor-bg，随 UI 不透明度滑块实时透出背景图；
+  - **聊天区四个下拉框背景随不透明度调节**：模式/渠道/模型/思考强度选择器（trigger + 下拉面板 + 面板内搜索框）背景改走 --gc-surface-input-bg / --gc-surface-dropdown-bg；
+  - **设置页全面透出**：设置面板背景 + 全部 40 个设置组件（form-group 卡片/对话框等）的 editor-background 统一改用 --gc-surface-editor-bg；
+  - **移除上游 nightly 更新渠道**：设置-通用-自动更新中的「更新渠道（stable/nightly）」选择器为上游特有功能，且 i18n 键（channelLabel 等）在合并后丢失导致界面显示原始键名。已整体移除 UI（GeneralSettingsSection/SettingsPanel 相关代码与样式）；后端 UpdateChecker 的 UpdateChannel 类型 / getUpdateChannel 选项 / NIGHTLY_VERSION_RE / extractNightlyVersionFromName（上游兼容死面，本地 dev/stable 通道按版本号自动判定）一并删除及对应 5 例测试移除；
+  - 测试：后端 273 套件/3065 例 + 前端 101 文件/994 例 + e2e/smoke 全绿；三语言文案同步更新（UI 不透明度描述明确「文字与图标保持清晰」）。
+
 ### Added：[1.7.13dev] 外观设置新增主题模式切换（亮色/暗色/跟随系统）+ UI 不透明度调节；远控端 diff 查看/批准 + 流式等待提示
   - **外观设置新增「主题模式」**：亮色 / 暗色 / 跟随系统三档切换（ui.theme 既有配置项补全 UI 入口，默认 auto 跟随系统不变）；切换即时生效（App.vue watch 监听 store 变更重挂 matchMedia 监听），保存随 updateUISettings 持久化，三语言文案与设置搜索锚点（theme-mode）齐全；
   - **外观设置新增「UI 不透明度」**：滑块 0-100（默认 100，即完全不透明）调节输入框、设置面板等界面面板的整体不透明度，透出窗口背景；App.vue 同步为 CSS 变量 `--gc-ui-opacity`（InputArea 输入框容器与 SettingsPanel 面板应用，缺省回退 1）；拖动滑块所见即所得（无需先保存）；仅作用于桌面端主界面，**远控端 UI 为独立自包含页面不受影响**；三语言文案与设置搜索锚点（ui-opacity）齐全；

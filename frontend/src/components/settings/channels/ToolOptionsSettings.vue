@@ -109,7 +109,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 
 /* 工具分组 */
 .tool-section {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   overflow: hidden;
@@ -255,7 +255,7 @@ function updateCropImageOption<K extends keyof CropImageToolOptions>(
 
 .coord-examples code {
   padding: 1px 4px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border-radius: 2px;
   font-family: var(--vscode-editor-font-family);
   font-size: 10px;

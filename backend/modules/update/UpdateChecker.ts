@@ -152,25 +152,6 @@ export function pickInstallerAsset(
 }
 
 /**
- * nightly 版本号格式：<semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809）。
- * 合法 semver（vsce 打包校验要求）；compareVersions 把 nightly 预发布视为
- * 「高于同主版本正式版」的最新构建，nightly 之间按日期比较。
- */
-const NIGHTLY_VERSION_RE = /(?<![\d.])(\d+\.\d+\.\d+-nightly\.\d{8})\b/i;
-
-/**
- * 从 nightly Release 名称中提取版本号。
- * 例如 "v1.4.6-nightly.20260809" → "1.4.6-nightly.20260809"；
- * 同时兼容旧的 "Gray Code Nightly v..." 名称。
- * 提取失败返回 null。
- */
-export function extractNightlyVersionFromName(name: unknown): string | null {
-    if (typeof name !== 'string' || !name) return null;
-    const m = NIGHTLY_VERSION_RE.exec(name);
-    return m ? m[1] : null;
-}
-
-/**
  * 解析 GitHub Releases API 响应为 UpdateInfo。
  * 响应格式异常时返回 null（调用方按错误处理）。
  *
@@ -205,9 +186,6 @@ export function parseReleaseResponse(data: unknown, installerKind: InstallerKind
  */
 export type ReleaseChannel = 'stable' | 'dev';
 
-/** 更新渠道（上游 stable/nightly 语义；本地流程保留该类型用于兼容面） */
-export type UpdateChannel = 'stable' | 'nightly';
-
 export function resolveReleaseChannel(version: string): ReleaseChannel {
     return stripVersionPrefix(version).toLowerCase().includes('dev') ? 'dev' : 'stable';
 }
@@ -230,8 +208,6 @@ export interface UpdateCheckerOptions {
     getCurrentVersion?: () => string;
     /** 当前运行形态（缺省 installed）：便携版运行时注入 PORTABLE_EXECUTABLE_DIR */
     getInstallerKind?: () => InstallerKind;
-    /** 更新渠道（上游兼容面；本地 dev/stable 通道按版本号自动判定，不依赖本选项） */
-    getUpdateChannel?: () => UpdateChannel;
     /** fetch 实现（缺省按代理配置创建；测试注入） */
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
     /** 当前时间戳（测试注入） */

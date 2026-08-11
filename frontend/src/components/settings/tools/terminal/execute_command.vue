@@ -324,7 +324,7 @@ onMounted(() => {
 <style scoped>
 .execute-command-config {
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-top: none;
   border-radius: 0 0 4px 4px;

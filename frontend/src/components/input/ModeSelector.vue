@@ -150,7 +150,7 @@ function handleKeydown(event: KeyboardEvent) {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input-bg);
   border: 1px solid var(--vscode-input-border);
   border-radius: 4px;
   color: var(--vscode-input-foreground);
@@ -206,7 +206,7 @@ function handleKeydown(event: KeyboardEvent) {
   margin-top: 4px;
   min-width: 200px;
   width: 200px;
-  background: var(--vscode-dropdown-background);
+  background: var(--gc-surface-dropdown-bg);
   border: 1px solid var(--vscode-dropdown-border);
   border-radius: 6px;
   box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
@@ -236,7 +236,7 @@ function handleKeydown(event: KeyboardEvent) {
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  background: var(--vscode-input-background);
+  background: var(--gc-surface-input-bg);
   border: 1px solid var(--vscode-input-border);
   border-radius: 3px;
   padding: 4px 8px;

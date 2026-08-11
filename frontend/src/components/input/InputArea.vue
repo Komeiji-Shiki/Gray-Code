@@ -808,8 +808,6 @@ watch(() => settingsStore.promptModesVersion, () => {
 
 .input-box-container {
   position: relative;
-  /* UI 不透明度（外观设置 0-100，CSS 变量由 App.vue 同步；默认 1 = 不透明） */
-  opacity: var(--gc-ui-opacity, 1);
 }
 
 .bottom-toolbar {

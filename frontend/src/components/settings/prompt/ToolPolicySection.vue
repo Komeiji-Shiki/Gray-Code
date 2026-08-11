@@ -139,7 +139,7 @@ const emit = defineEmits<{
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
 }
@@ -293,7 +293,7 @@ const emit = defineEmits<{
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
 }
 
 .tool-category-name {

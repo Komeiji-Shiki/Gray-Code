@@ -132,7 +132,7 @@ defineProps<{
 .tools-table {
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
   overflow: hidden;

@@ -976,7 +976,7 @@ onUnmounted(() => {
 .server-card {
   display: flex;
   align-items: center;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 8px;
   padding: 12px 16px;

@@ -1397,7 +1397,7 @@ input[type="number"]::-webkit-inner-spin-button {
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   cursor: pointer;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
 }
 
 .preset-card:hover {
@@ -1435,7 +1435,7 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 .dialog {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-widget-border);
   border-radius: 8px;
   min-width: 400px;
@@ -1510,7 +1510,7 @@ input[type="number"]::-webkit-inner-spin-button {
   gap: 16px;
   margin-top: 12px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-widget-border);
   border-radius: 6px;
 }
@@ -1575,7 +1575,7 @@ input[type="number"]::-webkit-inner-spin-button {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   transition: background 0.15s;

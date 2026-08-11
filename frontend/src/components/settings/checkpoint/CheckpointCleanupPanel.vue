@@ -424,7 +424,7 @@ defineEmits<{
   height: 300px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   overflow: hidden;
 }
 
@@ -565,7 +565,7 @@ defineEmits<{
   margin: 4px 0 4px 26px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   overflow: hidden;
 }
 

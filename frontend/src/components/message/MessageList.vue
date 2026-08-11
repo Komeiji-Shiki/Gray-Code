@@ -575,7 +575,8 @@ function handleContinue() {
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  /* UI 不透明度：仅背景半透明透出窗口背景图，消息文字/内容保持全不透明 */
+  background: var(--gc-surface-editor-bg);
 }
 
 .message-scroll-area {
@@ -590,7 +591,7 @@ function handleContinue() {
   top: 0;
   z-index: 6;
   padding: 8px var(--spacing-md, 16px) 0;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
 }
 
 
@@ -599,7 +600,7 @@ function handleContinue() {
   top: 0;
   z-index: 5;
   padding: 8px var(--spacing-md, 16px) 0;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
 }
 
 .todo-snapshot-icon {
@@ -611,7 +612,7 @@ function handleContinue() {
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   flex-shrink: 0;
 }
 
@@ -698,7 +699,7 @@ function handleContinue() {
   padding: 4px 10px;
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border-top: 1px solid var(--vscode-panel-border);
   white-space: nowrap;
   overflow: hidden;
@@ -708,7 +709,7 @@ function handleContinue() {
 .build-body {
   max-height: min(40vh, 320px);
   padding: 8px 10px 10px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border-top: 1px solid var(--vscode-panel-border);
   overflow: auto;
   overscroll-behavior: contain;
@@ -1124,7 +1125,7 @@ function handleContinue() {
   gap: 8px;
   padding: 8px 16px;
   margin: 0;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border-left: 2px solid var(--vscode-charts-yellow, #ddb92f);
   font-size: 11px;
   color: var(--vscode-descriptionForeground);

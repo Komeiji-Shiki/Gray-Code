@@ -439,7 +439,7 @@ onMounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
 }
@@ -562,7 +562,7 @@ onMounted(() => {
   font-size: 11px;
   line-height: 1.4;
   color: var(--vscode-descriptionForeground);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
 }
 

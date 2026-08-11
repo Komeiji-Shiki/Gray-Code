@@ -26,6 +26,14 @@
   /* 过渡动画 */
   --transition-fast: 0.1s ease;
   --transition-normal: 0.15s ease;
+
+  /* UI 不透明度（外观设置 0-100 → App.vue 同步 --gc-ui-opacity 为 0-1）：
+     仅混合面板背景色（color-mix 叠透明），文字/图标始终全不透明；
+     --gc-ui-opacity 未设置时回退 1 = 完全不透明，与旧版行为一致。 */
+  --gc-surface-editor-bg: color-mix(in srgb, var(--vscode-editor-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  --gc-surface-input-bg: color-mix(in srgb, var(--vscode-input-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  --gc-surface-sidebar-bg: color-mix(in srgb, var(--vscode-sideBar-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
+  --gc-surface-dropdown-bg: color-mix(in srgb, var(--vscode-dropdown-background) calc(var(--gc-ui-opacity, 1) * 100%), transparent);
 }
 
 body {

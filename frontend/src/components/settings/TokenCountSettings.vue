@@ -508,7 +508,7 @@ Authorization: Bearer {apiKey}
 
 .settings-intro {
     padding: 12px;
-    background: var(--vscode-editor-background);
+    background: var(--gc-surface-editor-bg);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 6px;
 }
@@ -541,7 +541,7 @@ Authorization: Bearer {apiKey}
     align-items: center;
     justify-content: space-between;
     padding: 12px;
-    background: var(--vscode-editor-background);
+    background: var(--gc-surface-editor-bg);
     cursor: pointer;
     user-select: none;
 }
@@ -789,7 +789,7 @@ Authorization: Bearer {apiKey}
     align-items: center;
     gap: 8px;
     padding: 10px 12px;
-    background: var(--vscode-editor-background);
+    background: var(--gc-surface-editor-bg);
     font-size: 12px;
     font-weight: 500;
     color: var(--vscode-foreground);
@@ -833,7 +833,7 @@ Authorization: Bearer {apiKey}
     padding: 10px 12px;
     font-size: 11px;
     color: var(--vscode-descriptionForeground);
-    background: var(--vscode-editor-background);
+    background: var(--gc-surface-editor-bg);
     border-top: 1px solid var(--vscode-panel-border);
     line-height: 1.5;
 }

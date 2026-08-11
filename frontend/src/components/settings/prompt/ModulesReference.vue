@@ -193,7 +193,7 @@ const emit = defineEmits<{
 }
 
 .module-item {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   overflow: hidden;
@@ -310,7 +310,7 @@ const emit = defineEmits<{
 .modules-group {
   margin-bottom: 16px;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
 }

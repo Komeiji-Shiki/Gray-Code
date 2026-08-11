@@ -1296,7 +1296,6 @@ async function saveProxySettings() {
 // ========== 自动更新设置 ==========
 
 const checkUpdatesEnabled = ref(true)
-const updateChannel = ref<'stable' | 'nightly'>('stable')
 const isUpdateChecking = ref(false)
 const isUpdating = ref(false)
 const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
@@ -1316,25 +1315,6 @@ async function saveCheckUpdates(value: boolean) {
   } catch (error) {
     checkUpdatesEnabled.value = previous
     console.error('Failed to save update check setting:', error)
-  }
-}
-
-// 保存更新渠道（stable 正式版 / nightly 每日构建）
-async function saveUpdateChannel(value: string) {
-  const channel = value === 'nightly' ? 'nightly' : 'stable'
-  const previous = updateChannel.value
-  updateChannel.value = channel
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES.updateSettings, { settings: { updateChannel: channel } })
-    // SettingsHandler.updateSettings 失败时 resolve { success: false }（不抛错，内部 try/catch 捕获），
-    // 必须显式检查并回滚 UI 选择，否则界面显示已切换而实际未保存（静默丢失用户操作）。
-    if (response?.success === false) {
-      updateChannel.value = previous
-      console.error('Failed to save update channel setting:', response?.error?.message || response?.error)
-    }
-  } catch (error) {
-    updateChannel.value = previous
-    console.error('Failed to save update channel setting:', error)
   }
 }
 
@@ -1737,8 +1717,6 @@ onMounted(() => {
               @update:language="updateLanguage"
               v-model:check-updates-enabled="checkUpdatesEnabled"
               @update:check-updates-enabled="saveCheckUpdates"
-              :update-channel="updateChannel"
-              @update:update-channel="saveUpdateChannel"
               :is-update-checking="isUpdateChecking"
               :is-updating="isUpdating"
               :update-check-result="updateCheckResult"
@@ -1823,12 +1801,11 @@ onMounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--vscode-sideBar-background);
+  /* UI 不透明度（外观设置 0-100，CSS 变量由 App.vue 同步）：仅背景半透明，文字不受影响 */
+  background: var(--gc-surface-sidebar-bg);
   z-index: 100;
   display: flex;
   flex-direction: column;
-  /* UI 不透明度（外观设置 0-100，CSS 变量由 App.vue 同步；默认 1 = 不透明） */
-  opacity: var(--gc-ui-opacity, 1);
 }
 
 .settings-header {

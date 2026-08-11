@@ -954,7 +954,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
 
 /* 分区 */
 .section {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
   padding: 14px 16px;
@@ -1170,7 +1170,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
   gap: 4px;
   margin-bottom: 12px;
   padding: 3px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
 }
@@ -1340,7 +1340,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
   padding: 6px 8px;
   font-size: 12px;
   font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-focusBorder);
   border-radius: 3px;

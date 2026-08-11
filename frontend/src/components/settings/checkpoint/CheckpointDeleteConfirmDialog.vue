@@ -63,7 +63,7 @@ defineEmits<{
 }
 
 .delete-confirm-dialog {
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 8px;
   width: 400px;

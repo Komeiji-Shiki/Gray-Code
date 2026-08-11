@@ -397,7 +397,7 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
   transition: border-color 0.2s;
@@ -564,7 +564,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   cursor: pointer;
   transition: background-color 0.15s;
 }

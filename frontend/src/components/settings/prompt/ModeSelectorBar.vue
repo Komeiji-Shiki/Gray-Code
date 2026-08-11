@@ -116,7 +116,7 @@ const emit = defineEmits<{
   justify-content: flex-start;
   align-items: center;
   padding: 10px 12px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
   flex-wrap: wrap;

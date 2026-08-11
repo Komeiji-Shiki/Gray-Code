@@ -9,6 +9,14 @@ Changes to the shared plugin codebase (backend / webview / shared frontend)
 are tracked in the root `CHANGELOG.md`.
 
 ## [Unreleased]
+### Fixed（1.7.13dev 补记：UI 不透明度仅背景半透明 + 消息区/四下拉框透出 + 移除 nightly 更新渠道）
+  - **UI 不透明度不再影响文字**：改为全局表面变量（--gc-surface-*，color-mix 按 --gc-ui-opacity 混合透明）替换面板背景色，文字/图标始终全不透明；
+  - **修复消息区背景不透明（上游合并回归）**：.message-list 等容器改回随滑块透出背景图（--gc-surface-editor-bg）；
+  - **四个下拉框（模式/渠道/模型/思考强度）**：trigger/下拉面板/搜索框背景随不透明度调节；
+  - **设置页**：设置面板 + 40 个设置组件背景统一透出；
+  - **移除 nightly 更新渠道**：设置-通用-自动更新的渠道选择器（i18n 键丢失显示原始键名）与后端 UpdateChecker 的 nightly 兼容死面整体删除；本地 dev/stable 通道按版本号自动判定不变；
+  - 测试：后端 273 套件/3065 例 + 前端 101 文件/994 例 + e2e/smoke 全绿；版本 1.7.13dev
+
 ### Added（1.7.13dev：外观设置主题模式切换 + UI 不透明度 + 远控端 diff 查看/批准）
   - **外观设置新增「主题模式」**（亮色/暗色/跟随系统，ui.theme 补全 UI 入口，默认 auto 不变）：切换即时生效（watch 重挂 matchMedia），保存随 updateUISettings 持久化；三语言文案与设置搜索锚点齐全；
   - **外观设置新增「UI 不透明度」**（0-100，默认 100）：输入框、设置面板等界面面板整体半透明透出窗口背景，App.vue 同步 CSS 变量 `--gc-ui-opacity`，滑块所见即所得；远控端 UI 独立自包含页面不受影响；

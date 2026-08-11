@@ -277,7 +277,7 @@ watch(() => props.visible, (visible) => {
   width: 90%;
   max-width: 560px;
   max-height: 80vh;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 2px;
   display: flex;

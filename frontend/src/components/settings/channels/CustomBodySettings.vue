@@ -342,7 +342,7 @@ function saveJson() {
   align-items: flex-start;
   gap: 8px;
   padding: 8px;
-  background: var(--vscode-editor-background);
+  background: var(--gc-surface-editor-bg);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
 }

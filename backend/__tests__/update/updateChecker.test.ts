@@ -13,7 +13,6 @@ import {
     compareVersions,
     shouldCheck,
     parseReleaseResponse,
-    extractNightlyVersionFromName,
     resolveReleaseChannel,
     pickInstallerAsset,
     UPDATE_CHECK_INTERVAL_MS,
@@ -101,30 +100,6 @@ describe('shouldCheck', () => {
 
     test('超过间隔检查', () => {
         expect(shouldCheck(now - UPDATE_CHECK_INTERVAL_MS, now, false)).toBe(true);
-    });
-});
-
-describe('extractNightlyVersionFromName', () => {
-    test('直接使用带 v 前缀的 nightly 版本号作为 Release name', () => {
-        expect(extractNightlyVersionFromName('v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
-    });
-
-    test('从 Release name 提取 nightly 版本号（-nightly.<date> 预发布段，含 v 前缀）', () => {
-        expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
-    });
-
-    test('无 v 前缀同样可提取', () => {
-        expect(extractNightlyVersionFromName('Gray Code Nightly 1.4.6-nightly.20260809')).toBe('1.4.6-nightly.20260809');
-    });
-
-    test('版本号后跟多余数字时不截断（锚定结尾）', () => {
-        expect(extractNightlyVersionFromName('Gray Code Nightly v1.4.6-nightly.202608090')).toBeNull();
-    });
-
-    test('无版本号返回 null', () => {
-        expect(extractNightlyVersionFromName('Gray Code Nightly')).toBeNull();
-        expect(extractNightlyVersionFromName(undefined)).toBeNull();
-        expect(extractNightlyVersionFromName('')).toBeNull();
     });
 });
 
