@@ -648,6 +648,11 @@ export interface ContentPart {
         args: Record<string, unknown>;
         /** 增量解析时的原始 JSON 字符串（用于流式输出） */
         partialArgs?: string;
+        /**
+         * Anthropic forced tool use 的预填参数标记。仅用于流式累加器把初始 input
+         * 与后续 input_json_delta 合并；最终 Content 投影会删除该内部字段。
+         */
+        prefilledArgs?: boolean;
         id?: string; // 可选的函数调用 ID
         /** 是否已被用户拒绝执行（重新加载对话时正确显示工具状态） */
         rejected?: boolean;

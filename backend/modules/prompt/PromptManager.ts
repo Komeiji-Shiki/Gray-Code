@@ -122,7 +122,10 @@ const PROMPT_PLACEHOLDER_KEYS = [
 ] as const
 
 /** 预编译的占位符交替正则：匹配 {{$KEY}}（KEY ∈ PROMPT_PLACEHOLDER_KEYS，均为 [A-Z_]+，无正则元字符） */
-const PROMPT_PLACEHOLDER_REGEX = new RegExp(`\\{\\{\\$${PROMPT_PLACEHOLDER_KEYS.join('|')}\\}\\}`, 'g')
+const PROMPT_PLACEHOLDER_REGEX = new RegExp(
+    `\\{\\{\\$(?:${PROMPT_PLACEHOLDER_KEYS.join('|')})\\}\\}`,
+    'g'
+)
 
 // ========== 固定文件读取预算与缓存（热路径：每条消息都会组装动态上下文） ==========
 //
