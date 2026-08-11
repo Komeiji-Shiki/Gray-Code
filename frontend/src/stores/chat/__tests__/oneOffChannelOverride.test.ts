@@ -11,7 +11,7 @@
  * 让同一回合内的 toolConfirmation 沿用同一渠道；全程不写全局设置、不写对话元数据。
  */
 import { ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { ChatStoreState, ChatStoreComputed } from '../types'
 
 vi.mock('../../../utils/vscode', () => ({
@@ -141,7 +141,7 @@ describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
     vi.clearAllMocks()
   })
 
-  it('指定 configIdOverride 时 chatStream 使用覆盖渠道，且不写全局设置与对话元数据', async () => {
+  test('指定 configIdOverride 时 chatStream 使用覆盖渠道，且不写全局设置与对话元数据', async () => {
     const state = createState()
     mockSend.mockResolvedValue(undefined)
 
@@ -166,7 +166,7 @@ describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
     expect(state.pendingConfigIdOverride.value).toBe('oneoff_b')
   })
 
-  it('未指定 configIdOverride 时保持原行为（全局渠道 + 不设回合覆盖）', async () => {
+  test('未指定 configIdOverride 时保持原行为（全局渠道 + 不设回合覆盖）', async () => {
     const state = createState()
     mockSend.mockResolvedValue(undefined)
 
@@ -178,7 +178,7 @@ describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
     expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
-  it('空白 configIdOverride 视为未提供', async () => {
+  test('空白 configIdOverride 视为未提供', async () => {
     const state = createState()
     mockSend.mockResolvedValue(undefined)
 
@@ -190,7 +190,7 @@ describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
     expect(state.pendingConfigIdOverride.value).toBeNull()
   })
 
-  it('发送失败（IPC 抛异常）不改变全局渠道，且回合覆盖被清除', async () => {
+  test('发送失败（IPC 抛异常）不改变全局渠道，且回合覆盖被清除', async () => {
     const state = createState()
     mockSend.mockRejectedValue(new Error('ipc down'))
 
@@ -203,7 +203,7 @@ describe('sendMessage 一次性渠道覆盖（configIdOverride）', () => {
     expect(state.pendingModelOverride.value).toBeNull()
   })
 
-  it('新建对话 + 一次性渠道：chatStream 用覆盖渠道，但全局渠道不变（新对话元数据只记全局渠道）', async () => {
+  test('新建对话 + 一次性渠道：chatStream 用覆盖渠道，但全局渠道不变（新对话元数据只记全局渠道）', async () => {
     const state = createState({
       currentConversationId: ref(null),
       conversations: ref([])

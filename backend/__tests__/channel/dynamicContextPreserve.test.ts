@@ -44,7 +44,7 @@ function textOf(message: Content): string {
 }
 
 describe('BaseFormatter dynamic context insertion', () => {
-    it('inserts multi-role current context before the current user turn in legacy single mode', () => {
+    test('inserts multi-role current context before the current user turn in legacy single mode', () => {
         const formatter = new TestFormatter();
         const history: Content[] = [
             { role: 'user', isUserInput: true, parts: [{ text: 'hello' }] }
@@ -60,7 +60,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(message => message.role)).toEqual(['user', 'model', 'user']);
     });
 
-    it('places entry-mode prompt context around real history in single mode', () => {
+    test('places entry-mode prompt context around real history in single mode', () => {
         const formatter = new TestFormatter();
         const history: Content[] = [
             { role: 'user', isUserInput: true, parts: [{ text: 'current user' }] }
@@ -81,7 +81,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(message => message.role)).toEqual(['user', 'model', 'user', 'user']);
     });
 
-    it('keeps legacy dynamic context anchored to the original user turn after tool responses', () => {
+    test('keeps legacy dynamic context anchored to the original user turn after tool responses', () => {
         const formatter = new TestFormatter();
         const currentCache = serializePromptContextCache({
             messages: [
@@ -118,7 +118,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(textOf)).toEqual(['current ctx', 'current user', 'tool call', 'tool result']);
     });
 
-    it('keeps entry-mode after-history context next to the original user turn after tool responses', () => {
+    test('keeps entry-mode after-history context next to the original user turn after tool responses', () => {
         const formatter = new TestFormatter();
         const currentCache = serializePromptContextCache({
             beforeHistoryMessages: [{ role: 'user', parts: [{ text: 'cached before' }] }],
@@ -156,7 +156,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(textOf)).toEqual(['before', 'after', 'current user', 'tool call', 'tool result']);
     });
 
-    it('preserves old dynamic snapshots and wraps preserved history with current entry-mode context', () => {
+    test('preserves old dynamic snapshots and wraps preserved history with current entry-mode context', () => {
         const formatter = new TestFormatter();
         const oldCache = serializePromptContextCache({
             beforeHistoryMessages: [
@@ -232,7 +232,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         ]);
     });
 
-    it('preserves historical cached contexts even when old turns have not been explicitly marked preserve', () => {
+    test('preserves historical cached contexts even when old turns have not been explicitly marked preserve', () => {
         const formatter = new TestFormatter();
         const oldCache = serializePromptContextCache({
             messages: [
@@ -276,7 +276,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(textOf)).toEqual(['old cached dynamic ctx', 'old user', 'old answer', 'current ctx', 'current user']);
     });
 
-    it('preserves cached old context when the newly sent user turn has not been cached yet', () => {
+    test('preserves cached old context when the newly sent user turn has not been cached yet', () => {
         const formatter = new TestFormatter();
         const oldCache = serializePromptContextCache({
             messages: [
@@ -305,7 +305,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(result.map(textOf)).toEqual(['old cached dynamic ctx', 'old user', 'old answer', 'current ctx', 'current user']);
     });
 
-    it('applies the channel thought policy to preserved snapshots so bytes stay stable across paths', () => {
+    test('applies the channel thought policy to preserved snapshots so bytes stay stable across paths', () => {
         const formatter = new TestFormatter();
         const oldCache = serializePromptContextCache({
             beforeHistoryMessages: [
@@ -349,7 +349,7 @@ describe('BaseFormatter dynamic context insertion', () => {
         expect(defaulted[0].parts).toEqual([{ text: 'old dynamic body' }]);
     });
 
-    it('keeps legacy plain-text turnDynamicContext compatible in preserve mode', () => {
+    test('keeps legacy plain-text turnDynamicContext compatible in preserve mode', () => {
         const formatter = new TestFormatter();
         const history: Content[] = [
             {

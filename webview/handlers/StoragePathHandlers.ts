@@ -2,6 +2,7 @@
  * 存储路径管理消息处理器
  */
 
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
@@ -38,16 +39,27 @@ export const validateStoragePath: MessageHandler = async (data, requestId, ctx) 
 };
 
 /**
+ * 推送存储迁移进度：优先直推 ctx.view（主聊天 webview）；view 为 undefined
+ * （Monitor 路由上下文显式置空，见 ChatViewProvider.routeSubAgentMonitorMessage）时
+ * 降级走 ctx.postMessage 按 clientId 路由回发起方，避免进度静默丢失。
+ */
+function pushMigrationProgress(ctx: HandlerContext, status: unknown): void {
+  const message = { type: PUSH_MESSAGE_NAMES.storageMigrationProgress, data: status };
+  if (ctx.view) {
+    ctx.view.webview.postMessage(message);
+  } else {
+    ctx.postMessage?.(message);
+  }
+}
+
+/**
  * 迁移存储数据
  */
 export const migrateStorage: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { path: newPath } = data;
     const result = await ctx.storagePathManager.migrateData(newPath, (status) => {
-      ctx.view?.webview.postMessage({
-        type: 'storageMigrationProgress',
-        data: status
-      });
+      pushMigrationProgress(ctx, status);
     });
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
@@ -61,10 +73,7 @@ export const migrateStorage: MessageHandler = async (data, requestId, ctx) => {
 export const resetStoragePath: MessageHandler = async (data, requestId, ctx) => {
   try {
     const result = await ctx.storagePathManager.resetToDefault((status) => {
-      ctx.view?.webview.postMessage({
-        type: 'storageMigrationProgress',
-        data: status
-      });
+      pushMigrationProgress(ctx, status);
     });
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
@@ -128,11 +137,11 @@ export const reloadWindow: MessageHandler = async (_data, requestId, ctx) => {
  * 注册存储路径处理器
  */
 export function registerStoragePathHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('storagePath.getConfig', getStoragePathConfig);
-  registry.set('storagePath.validate', validateStoragePath);
-  registry.set('storagePath.migrate', migrateStorage);
-  registry.set('storagePath.reset', resetStoragePath);
-  registry.set('storagePath.selectFolder', selectFolder);
-  registry.set('storagePath.openInExplorer', openInExplorer);
-  registry.set('reloadWindow', reloadWindow);
+  registry.set(MESSAGE_NAMES['storagePath.getConfig'], getStoragePathConfig);
+  registry.set(MESSAGE_NAMES['storagePath.validate'], validateStoragePath);
+  registry.set(MESSAGE_NAMES['storagePath.migrate'], migrateStorage);
+  registry.set(MESSAGE_NAMES['storagePath.reset'], resetStoragePath);
+  registry.set(MESSAGE_NAMES['storagePath.selectFolder'], selectFolder);
+  registry.set(MESSAGE_NAMES['storagePath.openInExplorer'], openInExplorer);
+  registry.set(MESSAGE_NAMES.reloadWindow, reloadWindow);
 }

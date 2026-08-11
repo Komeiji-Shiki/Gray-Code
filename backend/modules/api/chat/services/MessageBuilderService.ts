@@ -1,5 +1,5 @@
 /**
- * LimCode - 消息构建服务
+ * GrayCode - 消息构建服务
  *
  * 负责构建各种消息和历史选项：
  * - 用户消息 Parts 构建
@@ -148,3 +148,4 @@ export class MessageBuilderService {
         return parts.some(part => part.thoughtSignatures);
     }
 }
+

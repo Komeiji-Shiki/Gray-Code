@@ -9,8 +9,8 @@
  * 修复：functionResponse 改为独立分支生成，混合形态也能拆分出 tool 消息。
  */
 
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
-import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { OpenAIFormatter } from '../../modules/channel';
+import { AnthropicFormatter } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
 import type { OpenAIConfig, AnthropicConfig } from '../../modules/config/types';
 
@@ -59,7 +59,7 @@ function buildMixedModelMessage(): Content {
 }
 
 describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', () => {
-    it('拆分出 assistant(tool_calls) + 每条 tool 消息，tool_call_id 与 call 一一对应', () => {
+    test('拆分出 assistant(tool_calls) + 每条 tool 消息，tool_call_id 与 call 一一对应', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -90,7 +90,7 @@ describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', (
         expect(messages[assistantIdx + 2]?.role).toBe('tool');
     });
 
-    it('回归：text + functionCall 同消息（无 response，最普通形态）不得重复输出文本', () => {
+    test('回归：text + functionCall 同消息（无 response，最普通形态）不得重复输出文本', () => {
         const formatter = new OpenAIFormatter();
         const history: Content[] = [
             {
@@ -132,7 +132,7 @@ describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', (
         expect(assistantTextMsgs).toHaveLength(0);
     });
 
-    it('回归：纯文本消息不受影响', () => {
+    test('回归：纯文本消息不受影响', () => {
         const formatter = new OpenAIFormatter();
         const history: Content[] = [
             { role: 'user', parts: [{ text: '你好' }] },
@@ -155,7 +155,7 @@ describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', (
         expect(messages.filter((m: any) => m.role === 'assistant')).toHaveLength(1);
     });
 
-    it('回归：独立消息形态（model: CALL / user isFR: RESP）行为不变', () => {
+    test('回归：独立消息形态（model: CALL / user isFR: RESP）行为不变', () => {
         const formatter = new OpenAIFormatter();
         const history: Content[] = [
             {
@@ -193,7 +193,7 @@ describe('OpenAIFormatter: 混合形态消息（call + response 同消息）', (
 });
 
 describe('AnthropicFormatter: 混合形态消息（call + response 同消息）', () => {
-    it('拆分出 assistant(tool_use) + user(tool_result)，tool_use_id 与 call 一一对应', () => {
+    test('拆分出 assistant(tool_use) + user(tool_result)，tool_use_id 与 call 一一对应', () => {
         const formatter = new AnthropicFormatter();
         const request = formatter.buildRequest({
             configId: 'anthropic-test',
@@ -222,7 +222,7 @@ describe('AnthropicFormatter: 混合形态消息（call + response 同消息）'
         expect(toolResults.map((t: any) => t.tool_use_id).sort()).toEqual(['call_1', 'call_2']);
     });
 
-    it('回归：text + functionCall 同消息（无 response）不重复输出文本、tool_result 紧跟 tool_use', () => {
+    test('回归：text + functionCall 同消息（无 response）不重复输出文本、tool_result 紧跟 tool_use', () => {
         const formatter = new AnthropicFormatter();
         const history: Content[] = [
             {

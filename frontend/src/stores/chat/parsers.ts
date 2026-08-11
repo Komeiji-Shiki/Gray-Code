@@ -356,10 +356,9 @@ export function contentToMessageEnhanced(content: Content, id?: string): Message
       const attType = getAttachmentTypeFromMime(part.inlineData.mimeType)
       const ext = getExtensionFromMime(part.inlineData.mimeType)
       
-      // 优先使用存储的 id 和 name，否则使用默认值
-      const inlineData = part.inlineData as { mimeType: string; data: string; id?: string; name?: string }
-      const attId = inlineData.id || generateId()
-      const attName = inlineData.name || `attachment${ext || ''}`
+      // 优先使用存储的 id 和 name，否则使用默认值（id/name 已入契约类型 ContentPart.inlineData，无需强转）
+      const attId = part.inlineData.id || generateId()
+      const attName = part.inlineData.name || `attachment${ext || ''}`
       
       // 计算大小（Base64 字符串解码后的大约大小）
       const base64Length = part.inlineData.data.length

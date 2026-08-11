@@ -20,6 +20,7 @@
  * - 所有 await 后经 validateSessionIdentity 校验会话归属，防止切换对话后写错状态。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { ChatStoreState, BranchGraphData, BranchNodeData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { loadHistory, loadCheckpoints } from './conversationActions'
@@ -245,7 +246,7 @@ export async function loadBranchGraph(state: ChatStoreState): Promise<BranchGrap
       graph?: BranchGraphData | null
       errorCode?: string
       errorMessage?: string
-    }>('conversation.getBranchGraph', { conversationId })
+    }>(MESSAGE_NAMES['conversation.getBranchGraph'], { conversationId })
 
     if (!validateSessionIdentity(state, conversationId)) return state.branchGraph.value
 
@@ -366,7 +367,7 @@ export async function switchBranchCandidate(
     const result = await sendToExtension<{
       success?: boolean
       dirtyFiles?: string[]
-    }>('conversation.switchBranchCandidate', {
+    }>(MESSAGE_NAMES['conversation.switchBranchCandidate'], {
       conversationId,
       nodeId,
       mode,
@@ -444,7 +445,7 @@ export async function deleteBranchCandidate(state: ChatStoreState, nodeId: strin
       success?: boolean
       deleted?: boolean
       clearedParentActiveChild?: boolean
-    }>('conversation.deleteBranchCandidate', { conversationId, nodeId })
+    }>(MESSAGE_NAMES['conversation.deleteBranchCandidate'], { conversationId, nodeId })
 
     if (!validateSessionIdentity(state, conversationId)) return false
 
@@ -485,7 +486,7 @@ export async function restoreBranchCandidate(state: ChatStoreState, nodeId: stri
 
   try {
     const result = await sendToExtension<{ success?: boolean }>(
-      'conversation.restoreBranchCandidate',
+      MESSAGE_NAMES['conversation.restoreBranchCandidate'],
       { conversationId, nodeId }
     )
 
@@ -533,7 +534,7 @@ export async function renameBranchCandidate(
 
   try {
     const result = await sendToExtension<{ success?: boolean }>(
-      'conversation.renameBranchCandidate',
+      MESSAGE_NAMES['conversation.renameBranchCandidate'],
       { conversationId, nodeId, label: normalizedLabel }
     )
 

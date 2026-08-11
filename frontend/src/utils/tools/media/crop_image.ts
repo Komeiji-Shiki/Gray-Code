@@ -6,6 +6,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import CropImagePanel from '../../../components/tools/media/crop_image.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 /**
  * 单个任务类型
@@ -51,6 +52,7 @@ registerTool('crop_image', {
       return `${shortInput} (${x1},${y1})-(${x2},${y2})`
     }
     
-    return '裁切图片'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('crop_image') ?? '裁切图片'
   }
 })

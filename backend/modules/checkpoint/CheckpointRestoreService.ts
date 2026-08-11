@@ -1,5 +1,5 @@
 /**
- * LimCode - 检查点恢复服务（CPF-12：从 CheckpointManager 拆分）
+ * GrayCode - 检查点恢复服务（CPF-12：从 CheckpointManager 拆分）
  *
  * 承载恢复侧的文件操作与辅助逻辑（纯重构：方法体自 CheckpointManager 原样平移，
  * 仅做依赖重定向，不改变任何行为）：
@@ -381,7 +381,8 @@ export class CheckpointRestoreService {
                 return remained.length === list.length ? current : remained;
             });
             if (Array.isArray(pruned)) {
-                autoPrunedCheckpointCount += checkpoints.length - pruned.length;
+                // Math.max 兜底：并发新增记录时 pruned.length 可能大于 checkpoints.length
+                autoPrunedCheckpointCount += Math.max(0, checkpoints.length - pruned.length);
             }
             const allMissingBackupDirs = Array.from(
                 new Set([...missingBackupDirs, ...chainMissingBackupDirs])
@@ -783,3 +784,4 @@ function serializeProfilePatterns(patterns: Record<string, string[]> | undefined
         .map(([id, list]) => `${id}:${list.join('\n')}`)
         .join('\u0000');
 }
+

@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getGlobalSettingsManager } from '../settingsContext';
 import { restoreChatInputFocus, shouldRestoreChatInputFocus } from '../chatFocusGuard';
+import { newUuid } from '../id';
 import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from '../../tools/file/DiffCodeLensProvider';
@@ -595,11 +596,11 @@ export class DiffManager {
      * 被 FIFO 淘汰的 accepted+partial diff 墓碑（仅存最小状态信息）。
      * 并发终结时，后终结的 diff 可能淘汰掉"已终结但等待者尚未 getDiff"的前一个 diff，
      * 若直接删除，工具链路 getDiff 返回 undefined 会把"部分接受"误报成"全部接受"。
-     * 只对仍有活跃等待者的 partial diff 留痕；容量上限同 rejected 墓碑。
+     * 无条件留痕（与 rejected 墓碑同口径）：waitForDiffResolution 可能在淘汰后才注册
+     * 等待者（如 autoApply 高积压时拒绝与工具等待建立交错），以"淘汰时已有活跃等待者"
+     * 为条件会漏记，getDiff 返回 undefined 后被误判为 accepted；容量上限同 rejected 墓碑。
      */
     private evictedAcceptedPartialInfo: Map<string, { partial: boolean; rejectedBlockIndices?: number[] }> = new Map();
-    /** 仍有活跃 waitForDiffResolution 等待者的 diff id：淘汰留痕只对它们生效 */
-    private activeDiffWaiters: Set<string> = new Set();
 
     /** 正在执行接受动作的diff */
     private acceptingDiffIds: Set<string> = new Set();
@@ -896,10 +897,11 @@ export class DiffManager {
             } else if (
                 evicted && evicted.status === 'accepted'
                 && (evicted.partial || (evicted.rejectedBlockIndices?.length ?? 0) > 0)
-                && this.activeDiffWaiters.has(oldest)
             ) {
-                // accepted+partial 留痕：并发终结时当前 diff 可能先被淘汰、等待者后 getDiff，
-                // 不记录会把"部分接受"误报为"全部接受"（与 rejected 墓碑同源问题）
+                // accepted+partial 无条件留痕（与 rejected 同口径）：并发终结时当前 diff
+                // 可能先被淘汰、等待者后 getDiff，或等待者在淘汰后才注册（autoApply 高积压时
+                // 工具链路的 waitForDiffResolution 可能尚未建立）；不记录会把"部分接受"
+                // 误报为"全部接受"（与 rejected 墓碑同源问题）
                 this.evictedAcceptedPartialInfo.set(oldest, {
                     partial: true,
                     rejectedBlockIndices: evicted.rejectedBlockIndices,
@@ -997,7 +999,7 @@ export class DiffManager {
         toolId?: string,
         options?: CreatePendingDiffOptions
     ): Promise<PendingDiff> {
-        const id = `diff-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const id = `diff-${Date.now()}-${newUuid()}`;
         const session = DiffReviewSession.create({
             id,
             filePath,
@@ -2206,8 +2208,6 @@ export class DiffManager {
      * 避免文件已处理但工具 Promise 仍悬挂。
      */
     public waitForDiffResolution(id: string, abortSignal?: AbortSignal): Promise<DiffResolutionReason> {
-        // 登记活跃等待者：evictOldFinalizedDiffs 据此决定是否为被淘汰的 rejected diff 留痕。
-        this.activeDiffWaiters.add(id);
         return new Promise<DiffResolutionReason>((resolve) => {
             let resolved = false;
             let abortHandler: (() => void) | undefined;
@@ -2216,7 +2216,6 @@ export class DiffManager {
             const finish = (reason: DiffResolutionReason) => {
                 if (resolved) return;
                 resolved = true;
-                this.activeDiffWaiters.delete(id);
 
                 if (statusListener) {
                     this.removeStatusListener(statusListener);
@@ -2247,7 +2246,11 @@ export class DiffManager {
             const checkStatus = () => {
                 if (resolved) return;
 
-                const diff = this.getDiff(id);
+                // 非消费 peek（不能调 getDiff）：accepted+partial 墓碑的消费点必须是
+                // 工具终态 getDiff（await waitForDiffResolution 之后的那次读取）。
+                // 若 checkStatus 用 getDiff 读后即删，会抢先消费墓碑，工具最终读取
+                // 只得 undefined，FIFO 淘汰场景把"部分接受"误报为"全部接受"（回归）。
+                const diff = this.peekDiff(id);
 
                 // 按会话隔离检查中断标记
                 if (this.isUserInterrupted(diff?.conversationId)) {
@@ -2448,28 +2451,57 @@ export class DiffManager {
     }
 
     /**
-     * 获取指定 ID 的diff
+     * 获取指定 ID 的diff（消费式读取，工具终态专用）
+     * 仅工具链路在 await waitForDiffResolution 落定后的最终读取应调用本方法：
+     * accepted+partial 墓碑在此消费（delete），避免陈旧 id 持续返回幻影 partial diff。
      */
     public getDiff(id: string): PendingDiff | undefined {
         const diff = this.pendingDiffs.get(id);
         if (diff) return diff;
         // 被淘汰的 accepted+partial 墓碑：还原最小状态，
-        // 避免工具链路把"部分接受"误报为"全部接受"
+        // 避免工具链路把"部分接受"误报为"全部接受"。
+        // 消费时机 = 工具终态读取（此处 delete）：waitForDiffResolution 内部只用
+        // 非消费 peekDiff 检查状态，不会抢先消费墓碑；若在这里提前删除，工具最终
+        // getDiff 只得 undefined，partial 会被误报为全部接受（FIFO 淘汰场景）。
         const tombstone = this.evictedAcceptedPartialInfo.get(id);
         if (tombstone) {
-            return {
-                id,
-                filePath: '',
-                absolutePath: '',
-                originalContent: '',
-                newContent: '',
-                timestamp: 0,
-                status: 'accepted',
-                partial: tombstone.partial,
-                rejectedBlockIndices: tombstone.rejectedBlockIndices,
-            };
+            this.evictedAcceptedPartialInfo.delete(id);
+            return this.reconstructTombstoneDiff(id, tombstone);
         }
         return undefined;
+    }
+
+    /**
+     * 非消费式读取（peek）：仅 waitForDiffResolution 内部状态检查使用。
+     * 读取墓碑但不删除——工具终态 getDiff 必在 await 之后执行，
+     * 若此处消费墓碑，工具最终读取会得到 undefined，
+     * 把"部分接受"误报为"全部接受"（FIFO 淘汰场景）。
+     */
+    private peekDiff(id: string): PendingDiff | undefined {
+        const diff = this.pendingDiffs.get(id);
+        if (diff) return diff;
+        const tombstone = this.evictedAcceptedPartialInfo.get(id);
+        if (tombstone) {
+            return this.reconstructTombstoneDiff(id, tombstone);
+        }
+        return undefined;
+    }
+
+    private reconstructTombstoneDiff(
+        id: string,
+        tombstone: { partial: boolean; rejectedBlockIndices?: number[] }
+    ): PendingDiff {
+        return {
+            id,
+            filePath: '',
+            absolutePath: '',
+            originalContent: '',
+            newContent: '',
+            timestamp: 0,
+            status: 'accepted',
+            partial: tombstone.partial,
+            rejectedBlockIndices: tombstone.rejectedBlockIndices,
+        };
     }
 
     /**

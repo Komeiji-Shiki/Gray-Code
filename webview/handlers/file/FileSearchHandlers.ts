@@ -5,6 +5,7 @@
  * EXCLUDED_DIRS / MAX_SEARCH_RESULTS / sanitizeGlobQuery / searchDirectories。
  */
 
+import { MESSAGE_NAMES } from '../../../shared/protocol';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../../backend/i18n';
@@ -233,5 +234,5 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
  */
 export function registerFileSearchHandlers(registry: Map<string, MessageHandler>): void {
   // 工作区文件搜索
-  registry.set('searchWorkspaceFiles', searchWorkspaceFiles);
+  registry.set(MESSAGE_NAMES.searchWorkspaceFiles, searchWorkspaceFiles);
 }

@@ -1,5 +1,5 @@
 /**
- * LimCode - OpenAI 配置类型
+ * GrayCode - OpenAI 配置类型
  * 
  * OpenAI API 格式的配置支持（兼容 DeepSeek 等）
  */

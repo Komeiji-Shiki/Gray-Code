@@ -41,7 +41,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         (vscode.workspace as any).getConfiguration = jest.fn(() => config);
     });
 
-    it('首次保存只写有值的键（快照为空时未定义键不写）', async () => {
+    test('首次保存只写有值的键（快照为空时未定义键不写）', async () => {
         const storage = new VSCodeSettingsStorage();
 
         await storage.save({ toolsEnabled: {}, maxToolIterations: 10 } as any);
@@ -52,7 +52,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         expect(config.update).toHaveBeenCalledWith('maxToolIterations', 10, vscode.ConfigurationTarget.Global);
     });
 
-    it('第二次保存只写变更的键', async () => {
+    test('第二次保存只写变更的键', async () => {
         const storage = new VSCodeSettingsStorage();
         await storage.save({ toolsEnabled: {}, maxToolIterations: 10, ui: { theme: 'dark' } } as any);
         config.update.mockClear();
@@ -63,7 +63,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         expect(config.update).toHaveBeenCalledWith('maxToolIterations', 20, vscode.ConfigurationTarget.Global);
     });
 
-    it('toolsConfig 深相等（新对象同内容）时不重复写', async () => {
+    test('toolsConfig 深相等（新对象同内容）时不重复写', async () => {
         const storage = new VSCodeSettingsStorage();
         const toolsConfig = { write_file: { maxSizeKB: 100 } };
         await storage.save({ toolsEnabled: {}, toolsConfig } as any);
@@ -74,7 +74,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         expect(config.update).not.toHaveBeenCalled();
     });
 
-    it('toolsConfig 内容变化时只写该键', async () => {
+    test('toolsConfig 内容变化时只写该键', async () => {
         const storage = new VSCodeSettingsStorage();
         await storage.save({ toolsEnabled: {}, toolsConfig: { write_file: { maxSizeKB: 100 } } } as any);
         config.update.mockClear();
@@ -89,7 +89,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         );
     });
 
-    it('load 后以加载值为基线，未变的键不再写', async () => {
+    test('load 后以加载值为基线，未变的键不再写', async () => {
         const loadedConfig = makeConfig({ maxToolIterations: 10, toolsEnabled: {} });
         (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
         const storage = new VSCodeSettingsStorage();
@@ -105,7 +105,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         expect(loadedConfig.update).toHaveBeenCalledWith('ui', { theme: 'dark' }, vscode.ConfigurationTarget.Global);
     });
 
-    it('键从有值变为 undefined 时仍写（删除语义保留）', async () => {
+    test('键从有值变为 undefined 时仍写（删除语义保留）', async () => {
         const storage = new VSCodeSettingsStorage();
         await storage.save({ toolsEnabled: {}, maxToolIterations: 10, activeChannelId: 'ch1' } as any);
         config.update.mockClear();
@@ -121,7 +121,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
     // deepEqual 的 a===b 短路误判为「无变化」而跳过写盘。以下用例必须先 load（拿到
     // 基线），再对同一 settings 引用做两次原地变更，断言每次都触发写盘。
 
-    it('回归：load 后原地改 toolAutoExec 两次，每次都写盘（自动执行开关持久化）', async () => {
+    test('回归：load 后原地改 toolAutoExec 两次，每次都写盘（自动执行开关持久化）', async () => {
         const loadedConfig = makeConfig({
             toolAutoExec: { delete_file: false },
             toolsEnabled: {},
@@ -159,7 +159,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         );
     });
 
-    it('回归：load 后原地改 toolsConfig 嵌套（toolPolicy / promptEntries.enabled），每次写盘', async () => {
+    test('回归：load 后原地改 toolsConfig 嵌套（toolPolicy / promptEntries.enabled），每次写盘', async () => {
         const initialToolsConfig = {
             system_prompt: {
                 modes: {
@@ -202,7 +202,7 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         );
     });
 
-    it('回归：重启模拟——新实例 load 读回原地变更后的最新值', async () => {
+    test('回归：重启模拟——新实例 load 读回原地变更后的最新值', async () => {
         const loadedConfig = makeConfig({
             toolAutoExec: { delete_file: false, execute_command: true },
             toolsEnabled: {},

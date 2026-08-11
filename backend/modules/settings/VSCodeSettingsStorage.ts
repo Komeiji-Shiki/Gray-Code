@@ -1,7 +1,7 @@
 /**
- * LimCode - VS Code Settings 存储实现
+ * GrayCode - VS Code Settings 存储实现
  *
- * 将 LimCode 的“设置类配置”存入 VS Code Settings（workspace.getConfiguration），
+ * 将 GrayCode 的“设置类配置”存入 VS Code Settings（workspace.getConfiguration），
  * 从而支持 Settings Sync。
  *
  * - 可同步配置：使用默认 scope（会参与 Settings Sync）
@@ -368,3 +368,4 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         }
     }
 }
+

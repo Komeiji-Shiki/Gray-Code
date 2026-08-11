@@ -7,7 +7,7 @@
  * 修复：每个会话缓冲设条目上限（2000），超出时丢弃最旧 chunk。
  */
 import { ref } from 'vue'
-import { describe, it, expect } from 'vitest'
+import { describe, expect } from 'vitest'
 import { bufferBackgroundChunk } from '../../stores/chat/tabActions'
 import type { ChatStoreState, ConversationSessionSnapshot, TabInfo } from '../../stores/chat/types'
 
@@ -89,7 +89,7 @@ function chunk(seq: number): any {
 }
 
 describe('bufferBackgroundChunk 缓冲上限', () => {
-  it('超过上限时丢弃最旧 chunk，缓冲区长度保持在上限内', () => {
+  test('超过上限时丢弃最旧 chunk，缓冲区长度保持在上限内', () => {
     const state = mockState()
     setupBackgroundTab(state)
 
@@ -105,7 +105,7 @@ describe('bufferBackgroundChunk 缓冲上限', () => {
     expect((buffer[buffer.length - 1] as any).seq).toBe(2499)
   })
 
-  it('未超上限时全部保留', () => {
+  test('未超上限时全部保留', () => {
     const state = mockState()
     setupBackgroundTab(state)
 

@@ -7,6 +7,7 @@
  * 2. 可以被各个 media 工具设置面板复用
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted, watch } from 'vue'
 import { CustomCheckbox } from '../../../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -39,7 +40,7 @@ let skipNextWatchSave = false
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ config: { returnImageToAI?: boolean } }>('tools.getToolConfig', {
+    const response = await sendToExtension<{ config: { returnImageToAI?: boolean } }>(MESSAGE_NAMES['tools.getToolConfig'], {
       toolName: props.toolName
     })
     if (response?.config?.returnImageToAI !== undefined) {
@@ -57,7 +58,7 @@ async function loadConfig() {
 async function saveConfig() {
   isSaving.value = true
   try {
-    await sendToExtension('tools.updateToolConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateToolConfig'], {
       toolName: props.toolName,
       config: {
         returnImageToAI: returnImageToAI.value

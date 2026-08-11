@@ -22,11 +22,11 @@ import * as os from 'os';
 import * as path from 'path';
 import {
     ConversationManager,
-} from '../../modules/conversation/ConversationManager';
+} from '../../modules/conversation';
 import {
     MemoryStorageAdapter,
-} from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+} from '../../modules/conversation';
+import type { ConversationHistory } from '../../modules/conversation';
 import {
     BranchService,
     setGlobalBranchService,
@@ -57,7 +57,7 @@ function linearHistory(): ConversationHistory {
     ];
 }
 
-describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
+describe('分支竞态（流式互斥 + 迟到 chunk 隔离）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -98,7 +98,7 @@ describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () =
         await fsp.rm(tempDir, { recursive: true, force: true });
     });
 
-    describe('TREE-13 守卫层：isConversationStreaming（真实 StreamAbortManager）', () => {
+    describe('守卫层：isConversationStreaming（真实 StreamAbortManager）', () => {
         let abortManager: StreamAbortManager;
 
         beforeEach(() => {
@@ -119,7 +119,7 @@ describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () =
 
     });
 
-    describe('TREE-13 流式期间互斥矩阵（集成：真实 BranchService + BranchHandlers）', () => {
+    describe('流式期间互斥矩阵（集成：真实 BranchService + BranchHandlers）', () => {
         let abortManager: StreamAbortManager;
         let ctx: HandlerContext;
 
@@ -198,7 +198,7 @@ describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () =
         });
     });
 
-    describe('TREE-14 服务层写锁互斥矩阵（BR-07 runExclusive 串行化）', () => {
+    describe('服务层写锁互斥矩阵（BR-07 runExclusive 串行化）', () => {
         test('并发 reroll + 删除非活跃候选：全部成功、图有效、无丢失更新', async () => {
             const ids = await seedConversation('c1');
             const r1 = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a1' }] });
@@ -244,7 +244,7 @@ describe('TREE-13/14 分支竞态（流式互斥 + 迟到 chunk 隔离）', () =
         });
     });
 
-    describe('TREE-14 迟到 chunk 不污染新分支（R6 基础用例）', () => {
+    describe('迟到 chunk 不污染新分支（R6 基础用例）', () => {
         test('reroll 后旧流迟到的 chunk 追加主历史：分支图不变、候选保留、后续操作可用', async () => {
             const ids = await seedConversation('c1');
             const reroll = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'new-candidate' }] });

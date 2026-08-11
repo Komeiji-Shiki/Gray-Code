@@ -1,5 +1,5 @@
 /**
- * LimCode MCP (Model Context Protocol) 模块 - 类型定义
+ * GrayCode MCP (Model Context Protocol) 模块 - 类型定义
  * 
  * MCP 是一个标准协议，允许 LLM 与外部工具和服务进行交互。
  */

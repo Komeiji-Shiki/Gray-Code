@@ -1,5 +1,5 @@
 /**
- * LimCode - 上下文裁剪服务
+ * GrayCode - 上下文裁剪服务
  *
  * 负责管理对话历史的上下文裁剪逻辑：
  * - 识别对话回合
@@ -48,6 +48,14 @@ const CONVERSATION_SKILLS_KEY = 'inputSkills';
 export const PRESERVED_USER_INPUT_MAX_CHARS = 64_000;
 const PRESERVED_USER_INPUT_OMISSION_MARKER =
     '\n\n[Some middle historical user inputs were omitted because the verbatim archive exceeded its safety budget.]\n\n';
+/** 保留用户输入档案的固定头部（createPreservedUserInputsMessage 与 getHistoryWithGranularFallback 增量预计算共用） */
+const PRESERVED_USER_INPUTS_HEADER = [
+    '## Preserved user inputs (verbatim)',
+    'These are earlier user messages retained verbatim from the trimmed/summarized part of the conversation.',
+    'They are historical inputs — NOT new messages the user just sent, so do not treat them as a brand-new task.',
+    'However, they remain part of the conversation: earlier user requirements still apply and should be honored as context.',
+    'If one conflicts with the latest user message in the active history, the latest message wins.'
+].join('\n');
 export const DEFAULT_MAX_CONTEXT_TOKENS = 256000;
 const FALLBACK_PROVIDER_RESERVE_RATIO = 0.1;
 const AUTO_SUMMARY_USEFUL_HISTORY_RATIO = 0.01;
@@ -473,6 +481,32 @@ export class ContextTrimService {
         };
     }
 
+    /**
+     * 构建保留用户输入档案的单条条目文本。
+     *
+     * 与 createPreservedUserInputsMessage 的条目生成逻辑完全同构（编号按全部真实用户消息
+     * 顺序递增；空条目返回 ''，由调用方过滤），供 getHistoryWithGranularFallback 的增量
+     * 预计算复用同一文本口径。
+     *
+     * @param message 真实用户消息
+     * @param userIndex 该消息在全部真实用户消息中的序号（0 起）
+     */
+    private buildPreservedUserInputEntry(message: Content, userIndex: number): string {
+        const parts = message.parts.flatMap(part => {
+            if (part.text && !part.thought) return [part.text];
+            if (part.inlineData) {
+                return [`[Attachment: ${part.inlineData.displayName || part.inlineData.mimeType}]`];
+            }
+            if (part.fileData) {
+                return [`[File: ${part.fileData.displayName || part.fileData.fileUri}]`];
+            }
+            return [];
+        });
+        return parts.length > 0
+            ? `### User input ${userIndex + 1} (historical — earlier user requirement, still valid context)\n${parts.join('\n')}`
+            : '';
+    }
+
     private createPreservedUserInputsMessage(
         fullHistory: Content[],
         beforeIndex: number
@@ -482,50 +516,40 @@ export class ContextTrimService {
         const entries = fullHistory
             .slice(0, beforeIndex)
             .filter(isRealUserMessage)
-            .map((message, index) => {
-                const parts = message.parts.flatMap(part => {
-                    if (part.text && !part.thought) return [part.text];
-                    if (part.inlineData) {
-                        return [`[Attachment: ${part.inlineData.displayName || part.inlineData.mimeType}]`];
-                    }
-                    if (part.fileData) {
-                        return [`[File: ${part.fileData.displayName || part.fileData.fileUri}]`];
-                    }
-                    return [];
-                });
-                return parts.length > 0 ? `### User input ${index + 1} (historical — earlier user requirement, still valid context)\n${parts.join('\n')}` : '';
-            })
+            .map((message, index) => this.buildPreservedUserInputEntry(message, index))
             .filter(Boolean);
         if (entries.length === 0) return undefined;
 
-        const header = [
-            '## Preserved user inputs (verbatim)',
-            'These are earlier user messages retained verbatim from the trimmed/summarized part of the conversation.',
-            'They are historical inputs — NOT new messages the user just sent, so do not treat them as a brand-new task.',
-            'However, they remain part of the conversation: earlier user requirements still apply and should be honored as context.',
-            'If one conflicts with the latest user message in the active history, the latest message wins.'
-        ].join('\n');
-        const fullText = `${header}\n\n${entries.join('\n\n')}`;
-        let preservedText = fullText;
-        if (fullText.length > PRESERVED_USER_INPUT_MAX_CHARS) {
-            const contentBudget = Math.max(
-                0,
-                PRESERVED_USER_INPUT_MAX_CHARS - PRESERVED_USER_INPUT_OMISSION_MARKER.length
-            );
-            const headBudget = Math.floor(contentBudget * 0.35);
-            const tailBudget = contentBudget - headBudget;
-            preservedText = [
-                fullText.slice(0, headBudget),
-                PRESERVED_USER_INPUT_OMISSION_MARKER,
-                fullText.slice(-tailBudget)
-            ].join('');
-        }
+        const fullText = `${PRESERVED_USER_INPUTS_HEADER}\n\n${entries.join('\n\n')}`;
+        const preservedText = this.applyPreservedInputTextBudget(fullText);
 
         return {
             role: 'user',
             parts: [{ text: preservedText }],
             isSummary: true
         };
+    }
+
+    /**
+     * 保留用户输入档案的有界截断（超 PRESERVED_USER_INPUT_MAX_CHARS 时保留头尾 + 省略标记）。
+     * createPreservedUserInputsMessage 与 getHistoryWithGranularFallback 的增量预计算共用同一规则，
+     * 保证精确路径与预筛路径构造的档案文本完全一致。
+     */
+    private applyPreservedInputTextBudget(fullText: string): string {
+        if (fullText.length <= PRESERVED_USER_INPUT_MAX_CHARS) {
+            return fullText;
+        }
+        const contentBudget = Math.max(
+            0,
+            PRESERVED_USER_INPUT_MAX_CHARS - PRESERVED_USER_INPUT_OMISSION_MARKER.length
+        );
+        const headBudget = Math.floor(contentBudget * 0.35);
+        const tailBudget = contentBudget - headBudget;
+        return [
+            fullText.slice(0, headBudget),
+            PRESERVED_USER_INPUT_OMISSION_MARKER,
+            fullText.slice(-tailBudget)
+        ].join('');
     }
 
     private prependPreservedUserInputs(
@@ -792,7 +816,8 @@ export class ContextTrimService {
      * 
      * @param conversationId 对话 ID
      * @param channelType 渠道类型
-     * @param messages 需要计算的消息列表
+     * @param messages 需要计算的消息列表；index 必须为原始存储历史下标——过滤 isSummarized 后
+     *                 的下标与本方法内部 getHistoryRef 读到的原始数组错位，会导致计数错位
      * @returns token 数数组
      */
     private async countAndUpdateMessageTokens(
@@ -864,6 +889,8 @@ export class ContextTrimService {
 
         // 逻辑截断：被总结消息（isSummarized）不参与发送与统计（与 getHistoryWithContextTrimInfo 一致）
         const fullHistory = rawHistory.filter(message => !message.isSummarized);
+        // 防御：全部消息均为 isSummarized（异常历史）时按空历史处理，避免后续候选评估越界
+        if (fullHistory.length === 0) return { history: [], trimStartIndex: 0 };
 
         const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
         const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
@@ -975,12 +1002,37 @@ export class ContextTrimService {
             }
         }
 
-        const messageTokens = messages.map(message => {
+        // —— O(n) 预计算：候选切点评估降为 O(1)/个，替代原「每候选全量格式化 + 校验 + 估算」的 O(n²) ——
+
+        type GranularFallbackCandidate = {
+            relativeStartIndex: number;
+            absoluteStartIndex: number;
+            history: Content[];
+            estimatedTokens: number;
+        };
+
+        // 1) 逐条消息 token（口径与 planSummarizeMessages 一致：优先渠道精确值，缺失才本地估算）
+        const tokenForMessage = (message: Content): number => {
             const byChannel = message.tokenCountByChannel?.[channelType];
             if (typeof byChannel === 'number') return byChannel;
             if (typeof message.estimatedTokenCount === 'number') return message.estimatedTokenCount;
             return this.tokenEstimationService.estimateMessageTokens(message);
-        });
+        };
+        const fullHistoryTokens = fullHistory.map(tokenForMessage);
+        // 2) 候选最终历史的增量估算必须与 buildExactCandidate 的 estimateFinalHistoryTokens 同口径
+        //    （一律走注入的 tokenEstimationService.estimateMessageTokens）：后缀、首条锚点、档案消息
+        //    都不能用硬编码公式或渠道 token 直接替代，否则预筛与精确复核口径漂移，会把本应通过预算
+        //    的候选误判为超限（过度裁剪、甚至误报 CONTEXT_OVERFLOW）。渠道精确值仍仅用于上方 planner。
+        const estimatedMessageTokens = fullHistory.map(message =>
+            this.tokenEstimationService.estimateMessageTokens(message)
+        );
+        // 后缀 token 累计和：estimatedSuffixTokensFrom[i] = Σ estimatedMessageTokens[i..]，候选 O(1) 取值
+        const estimatedSuffixTokensFrom = new Array<number>(fullHistory.length + 1);
+        estimatedSuffixTokensFrom[fullHistory.length] = 0;
+        for (let i = fullHistory.length - 1; i >= 0; i--) {
+            estimatedSuffixTokensFrom[i] = estimatedSuffixTokensFrom[i + 1] + estimatedMessageTokens[i];
+        }
+        const messageTokens = fullHistoryTokens.slice(historyStartIndex);
 
         const plan = planSummarizeMessages({
             messages,
@@ -998,12 +1050,85 @@ export class ContextTrimService {
             if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) candidateIndices.push(i);
         }
 
-        const evaluateCandidate = (relativeStartIndex: number): {
-            relativeStartIndex: number;
-            absoluteStartIndex: number;
-            history: Content[];
-            estimatedTokens: number;
-        } | undefined => {
+        // 3) 切点有效性：与 normalizeTrimStartIndex 同款 O(n) 后缀有效性预计算（重复 call/response
+        //    id、孤儿 response）。注意：原实现对「格式化后」切片做校验（formatter 会剔除孤儿
+        //    call/response），本预计算基于原始切片更严格——异常历史下候选会被跳过而选择更深切点，
+        //    但最终选中的候选仍经 buildExactCandidate 精确复核，绝不会返回未通过完整性校验的历史。
+        const validSuffix = this.computeValidSuffixMap(fullHistory);
+
+        // 4) 首条真实用户消息锚点（prependFirstUserMessage：任务锚点永远前置）；
+        //    token 用注入估算器口径（与 estimateFinalHistoryTokens 一致，见上方 2) 注释）
+        const firstUserIndex = fullHistory.findIndex(message => isRealUserMessage(message));
+
+        // 5) 保留用户输入档案（prependPreservedUserInputs）：条目文本按真实用户消息顺序一次性
+        //    生成（与 createPreservedUserInputsMessage 同构），累计文本长度按非空条目计数索引，
+        //    候选按前缀计数 O(1) 取长度，避免每候选重扫 fullHistory[0..beforeIndex)。
+        const preservedFullTextLen: number[] = [0];  // 前 k 条非空条目的档案文本总长（含 header 与分隔符）
+        const preservedEntryCountBefore = new Array<number>(fullHistory.length + 1);  // 下标 i 之前的非空条目数
+        preservedEntryCountBefore[0] = 0;
+        let preservedUserCount = 0;   // 全部真实用户消息计数（条目编号用，空条目也占号）
+        let preservedEntryCount = 0;  // 非空条目计数
+        let preservedTextLen = 0;
+        const preservedEntries: string[] = [];  // 按顺序收集非空条目（预计算档案消息 token 用）
+        for (let i = 0; i < fullHistory.length; i++) {
+            preservedEntryCountBefore[i + 1] = preservedEntryCount;
+            if (!isRealUserMessage(fullHistory[i])) continue;
+            const entry = this.buildPreservedUserInputEntry(fullHistory[i], preservedUserCount);
+            preservedUserCount++;
+            if (!entry) continue;
+            preservedEntries.push(entry);
+            preservedTextLen += preservedEntryCount === 0
+                ? PRESERVED_USER_INPUTS_HEADER.length + 2 + entry.length
+                : 2 + entry.length;
+            preservedEntryCount++;
+            preservedFullTextLen.push(preservedTextLen);
+        }
+        // 档案消息 token：对每个条目数 k 构造与 createPreservedUserInputsMessage 完全相同的文本
+        // （全量档案文本的前缀 + 同一截断规则），用注入估算器取值（与精确路径同口径）。
+        const preservedArchiveText = [PRESERVED_USER_INPUTS_HEADER, ...preservedEntries].join('\n\n');
+        const preservedMessageTokensByCount: number[] = [0];
+        for (let k = 1; k <= preservedEntryCount; k++) {
+            const preservedText = this.applyPreservedInputTextBudget(
+                preservedArchiveText.slice(0, preservedFullTextLen[k])
+            );
+            preservedMessageTokensByCount.push(
+                this.tokenEstimationService.estimateMessageTokens({
+                    role: 'user',
+                    parts: [{ text: preservedText }],
+                    isSummary: true
+                })
+            );
+        }
+        // normalizeFallbackHistoryStart 临时占位消息的 token（固定文本，一次计算）
+        const fallbackStartPlaceholderTokens = this.tokenEstimationService.estimateMessageTokens({
+            role: 'user' as const,
+            parts: [{ text: '[Earlier context was temporarily omitted after summarization failed.]' }],
+            isSummary: true
+        });
+
+        // 增量估算候选切点的最终历史 token 数（O(1)）：后缀累计 + 首条用户锚点 + 保留用户输入
+        // 档案 + model 开头时的临时占位。与旧实现「格式化后精确估算」的差异主要为被 formatter
+        // 过滤的思考内容（本地估算偏大、更保守），最终选中候选仍走 buildExactCandidate 精确复核。
+        const estimateCandidateTokens = (absoluteStartIndex: number): number => {
+            let tokens = estimatedSuffixTokensFrom[absoluteStartIndex];
+            const preservedCount = preservedEntryCountBefore[absoluteStartIndex];
+            const hasUserPrefix = preservedCount > 0
+                || (firstUserIndex >= 0 && firstUserIndex < absoluteStartIndex);
+            if (firstUserIndex >= 0 && firstUserIndex < absoluteStartIndex) {
+                tokens += estimatedMessageTokens[firstUserIndex];
+            }
+            if (preservedCount > 0) {
+                tokens += preservedMessageTokensByCount[preservedCount];
+            }
+            // normalizeFallbackHistoryStart：无任何 user 前置且切片以 model 开头时补临时占位
+            if (!hasUserPrefix && fullHistory[absoluteStartIndex]?.role === 'model') {
+                tokens += fallbackStartPlaceholderTokens;
+            }
+            return tokens;
+        };
+
+        // 精确评估单个候选（仅对通过增量预筛的候选执行一次：格式化 + 完整性校验 + 精确 token）
+        const buildExactCandidate = (relativeStartIndex: number): GranularFallbackCandidate | undefined => {
             const absoluteStartIndex = historyStartIndex + relativeStartIndex;
             const suffix = this.conversationManager.getHistoryForAPIFrom(fullHistory, {
                 ...historyOptions,
@@ -1025,11 +1150,23 @@ export class ContextTrimService {
             return { relativeStartIndex, absoluteStartIndex, history, estimatedTokens: estimatedFallbackTokens };
         };
 
-        const softCandidate = candidateIndices
-            .map(evaluateCandidate)
-            .find((candidate): candidate is NonNullable<ReturnType<typeof evaluateCandidate>> => (
-                !!candidate && candidate.estimatedTokens <= softHistoryBudgetTokens
-            ));
+        // 按候选顺序 O(1) 预筛（validSuffix + 增量 token），首个通过预筛的候选做一次精确评估；
+        // 精确评估失败/超预算则继续下一个。常见情况下仅 1 个候选被精确格式化（O(n) 总代价）。
+        const findFirstCandidate = (
+            indices: number[],
+            budget: number
+        ): GranularFallbackCandidate | undefined => {
+            for (const relativeStartIndex of indices) {
+                const absoluteStartIndex = historyStartIndex + relativeStartIndex;
+                if (!validSuffix[absoluteStartIndex]) continue;
+                if (estimateCandidateTokens(absoluteStartIndex) > budget) continue;
+                const exact = buildExactCandidate(relativeStartIndex);
+                if (exact && exact.estimatedTokens <= budget) return exact;
+            }
+            return undefined;
+        };
+
+        const softCandidate = findFirstCandidate(candidateIndices, softHistoryBudgetTokens);
         if (softCandidate) {
             this.log.warn('trim.fallback_granular_applied', {
                 conversationId,
@@ -1064,12 +1201,9 @@ export class ContextTrimService {
         for (let i = 1; i < messages.length; i++) {
             if (messages[i]?.role === 'model' || isRealUserMessage(messages[i])) hardCandidateIndices.push(i);
         }
-        const hardCandidates = hardCandidateIndices
-            .map(evaluateCandidate)
-            .filter((candidate): candidate is NonNullable<ReturnType<typeof evaluateCandidate>> => !!candidate);
         const hardCandidate = actualModelWindow === undefined
             ? undefined
-            : hardCandidates.find(candidate => candidate.estimatedTokens <= fallbackEnvelopeHistoryBudgetTokens);
+            : findFirstCandidate(hardCandidateIndices, fallbackEnvelopeHistoryBudgetTokens);
         if (hardCandidate) {
             this.log.warn('trim.fallback_hard_limit_applied', {
                 conversationId,
@@ -1095,39 +1229,54 @@ export class ContextTrimService {
             };
         }
 
-        if (actualModelWindow === undefined && hardCandidates.length > 0) {
+        if (actualModelWindow === undefined) {
             // 不知道 provider 的真实窗口时，选择 token 最少的合法候选尽力降低失败概率，
             // 但绝不把渠道显示/总结基准升级成 CONTEXT_OVERFLOW 拒绝。
-            const bestEffortCandidate = hardCandidates.reduce((best, candidate) => (
-                candidate.estimatedTokens < best.estimatedTokens ? candidate : best
-            ));
-            this.log.warn('trim.fallback_best_effort_applied', {
-                conversationId,
-                absoluteStartIndex: bestEffortCandidate.absoluteStartIndex,
-                relativeStartIndex: bestEffortCandidate.relativeStartIndex,
-                estimatedHistoryTokens: bestEffortCandidate.estimatedTokens,
-                softHistoryBudgetTokens,
-                fallbackEnvelopeHistoryBudgetTokens,
-                fixedPromptTokens: normalizedFixedPromptTokens,
-                originalHistoryLength: fullHistory.length,
-                fallbackHistoryLength: bestEffortCandidate.history.length
-            });
-            return {
-                history: bestEffortCandidate.history,
-                trimStartIndex: bestEffortCandidate.absoluteStartIndex,
-                contextManagementDecision: {
-                    enabled: true,
-                    mode: 'summarize',
-                    source: this.resolveContextManagementPolicy(config).source,
-                    action: 'fallback_best_effort_applied'
-                }
-            };
+            const bestEffortIndices = hardCandidateIndices
+                .filter(relativeStartIndex => validSuffix[historyStartIndex + relativeStartIndex])
+                .sort((a, b) => (
+                    estimateCandidateTokens(historyStartIndex + a) - estimateCandidateTokens(historyStartIndex + b)
+                ));
+            let bestEffortCandidate: GranularFallbackCandidate | undefined;
+            for (const relativeStartIndex of bestEffortIndices) {
+                bestEffortCandidate = buildExactCandidate(relativeStartIndex);
+                if (bestEffortCandidate) break;
+            }
+            if (bestEffortCandidate) {
+                this.log.warn('trim.fallback_best_effort_applied', {
+                    conversationId,
+                    absoluteStartIndex: bestEffortCandidate.absoluteStartIndex,
+                    relativeStartIndex: bestEffortCandidate.relativeStartIndex,
+                    estimatedHistoryTokens: bestEffortCandidate.estimatedTokens,
+                    softHistoryBudgetTokens,
+                    fallbackEnvelopeHistoryBudgetTokens,
+                    fixedPromptTokens: normalizedFixedPromptTokens,
+                    originalHistoryLength: fullHistory.length,
+                    fallbackHistoryLength: bestEffortCandidate.history.length
+                });
+                return {
+                    history: bestEffortCandidate.history,
+                    trimStartIndex: bestEffortCandidate.absoluteStartIndex,
+                    contextManagementDecision: {
+                        enabled: true,
+                        mode: 'summarize',
+                        source: this.resolveContextManagementPolicy(config).source,
+                        action: 'fallback_best_effort_applied'
+                    }
+                };
+            }
         }
 
-        const minimumLegalHistoryTokens = hardCandidates.reduce(
-            (minimum, candidate) => Math.min(minimum, candidate.estimatedTokens),
-            Number.POSITIVE_INFINITY
-        );
+        // 仅供错误日志/估算展示：无法构造合法请求时报告最小候选的近似 token（增量口径）
+        const minimumLegalHistoryTokens = hardCandidateIndices
+            .filter(relativeStartIndex => validSuffix[historyStartIndex + relativeStartIndex])
+            .reduce(
+                (minimum, relativeStartIndex) => Math.min(
+                    minimum,
+                    estimateCandidateTokens(historyStartIndex + relativeStartIndex)
+                ),
+                Number.POSITIVE_INFINITY
+            );
         return throwContextOverflow(Number.isFinite(minimumLegalHistoryTokens) ? minimumLegalHistoryTokens : 0);
     }
 
@@ -1168,7 +1317,15 @@ export class ContextTrimService {
         // 逻辑截断：被总结覆盖的消息（isSummarized）不参与发送与统计，但原文完整保留在存储中
         // （可显示、可搜索）。过滤后的历史与「物理删除后」的历史语义完全等价，
         // 下游所有索引 / token / 回合计算无需感知标记消息，也不会因残留历史死循环触发总结。
-        const fullHistory = rawHistory.filter(message => !message.isSummarized);
+        // 同时记录「过滤下标 → 原始存储下标」映射：计数回写 / 批量预计数按原始下标读写存储，
+        // 快照内就地回填按过滤下标（见下方 missingTokenMessages 调用处），避免计数错位。
+        const rawIndexByFilteredIndex: number[] = [];
+        const fullHistory: Content[] = [];
+        for (let i = 0; i < rawHistory.length; i++) {
+            if (rawHistory[i].isSummarized) continue;
+            rawIndexByFilteredIndex.push(i);
+            fullHistory.push(rawHistory[i]);
+        }
         
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
@@ -1347,11 +1504,18 @@ export class ContextTrimService {
         // 并行计算所有需要的 token 数
         const textsToCount = [systemPrompt, dynamicContextText];
 
-        // 并行执行文本计数和消息计数
+        // 并行执行文本计数和消息计数。
+        // C-16：missingTokenMessages 的 index 是过滤 isSummarized 后的下标，而
+        // countAndUpdateMessageTokens / preCountUserMessageTokensBatch 按原始存储下标读写，
+        // 必须先经 rawIndexByFilteredIndex 映射为原始下标，否则会更新/读取到错误消息（计数错位）。
         const [textTokenResults, messageTokenResults] = await Promise.all([
             this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType),
             missingTokenMessages.length > 0
-                ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages)
+                ? this.countAndUpdateMessageTokens(
+                    conversationId,
+                    channelType,
+                    missingTokenMessages.map(m => ({ ...m, index: rawIndexByFilteredIndex[m.index] }))
+                )
                 : Promise.resolve([] as number[])
         ]);
 
@@ -2076,3 +2240,4 @@ export class ContextTrimService {
         return result.history;
     }
 }
+

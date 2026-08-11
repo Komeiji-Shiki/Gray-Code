@@ -19,15 +19,15 @@ import * as os from 'os';
 import * as path from 'path';
 
 describe('buildSessions', () => {
-    it('returns empty for no samples', () => {
+    test('returns empty for no samples', () => {
         expect(buildSessions([])).toEqual([]);
     });
 
-    it('keeps a single sample as a one-minute session', () => {
+    test('keeps a single sample as a one-minute session', () => {
         expect(buildSessions([12345])).toEqual([{ start: 12345, end: 12345, minutes: 1 }]);
     });
 
-    it('merges consecutive samples into one session with ceil minutes', () => {
+    test('merges consecutive samples into one session with ceil minutes', () => {
         const base = Date.UTC(2026, 7, 6, 10, 0, 0);
         const samples = [base, base + 60_000, base + 120_000, base + 180_000];
         const sessions = buildSessions(samples);
@@ -35,7 +35,7 @@ describe('buildSessions', () => {
         expect(sessions[0]).toEqual({ start: base, end: base + 180_000, minutes: 3 });
     });
 
-    it('splits sessions when gap exceeds threshold', () => {
+    test('splits sessions when gap exceeds threshold', () => {
         const base = Date.UTC(2026, 7, 6, 10, 0, 0);
         const gap = ACTIVITY_SESSION_GAP_MS;
         // 间隔必须严格大于 gap 才断开（等于 gap 视为同一会话）
@@ -46,7 +46,7 @@ describe('buildSessions', () => {
         expect(sessions[1]).toEqual({ start: base + gap + 60_001, end: base + gap + 120_001, minutes: 1 });
     });
 
-    it('treats samples exactly at the gap as the same session', () => {
+    test('treats samples exactly at the gap as the same session', () => {
         const base = 1000;
         const samples = [base, base + ACTIVITY_SESSION_GAP_MS];
         expect(buildSessions(samples)).toHaveLength(1);
@@ -54,7 +54,7 @@ describe('buildSessions', () => {
 });
 
 describe('hourlyHeatmap', () => {
-    it('distributes session minutes across hour buckets (local time)', () => {
+    test('distributes session minutes across hour buckets (local time)', () => {
         // 10:59:30 → 11:01:30：覆盖 10 点 1 分钟 + 11 点 2 分钟
         const start = Date.UTC(2026, 7, 6, 10, 59, 30);
         const end = Date.UTC(2026, 7, 6, 11, 1, 30);
@@ -67,13 +67,13 @@ describe('hourlyHeatmap', () => {
         expect(hours[localEndHour]).toBe(2);
     });
 
-    it('returns 24 zero buckets for empty sessions', () => {
+    test('returns 24 zero buckets for empty sessions', () => {
         expect(hourlyHeatmap([])).toEqual(new Array(24).fill(0));
     });
 });
 
 describe('dayStats', () => {
-    it('aggregates totalMinutes / sessionCount / first-last / hourly', () => {
+    test('aggregates totalMinutes / sessionCount / first-last / hourly', () => {
         const base = Date.UTC(2026, 7, 6, 9, 0, 0);
         // 会话1：09:00-09:05（ceil(5min) = 5 分钟）；会话2：10:30-10:45（ceil(15min) = 15 分钟）
         const samples = [base, base + 60_000, base + 120_000, base + 300_000,
@@ -87,7 +87,7 @@ describe('dayStats', () => {
         expect(stats.hourly).toHaveLength(24);
     });
 
-    it('handles empty samples', () => {
+    test('handles empty samples', () => {
         const stats = dayStats('2026-08-06', []);
         expect(stats.totalMinutes).toBe(0);
         expect(stats.sessionCount).toBe(0);
@@ -97,17 +97,17 @@ describe('dayStats', () => {
 });
 
 describe('currentSessionInfo', () => {
-    it('returns inactive for no samples', () => {
+    test('returns inactive for no samples', () => {
         expect(currentSessionInfo([], Date.now())).toEqual({ active: false, startedAt: null, minutes: 0 });
     });
 
-    it('returns inactive when last sample is older than the gap', () => {
+    test('returns inactive when last sample is older than the gap', () => {
         const now = Date.UTC(2026, 7, 6, 12, 0, 0);
         const last = now - ACTIVITY_SESSION_GAP_MS - 60_000;
         expect(currentSessionInfo([last], now)).toEqual({ active: false, startedAt: null, minutes: 0 });
     });
 
-    it('reports active session with minutes from session start', () => {
+    test('reports active session with minutes from session start', () => {
         const now = Date.UTC(2026, 7, 6, 12, 0, 0);
         const start = now - 90 * 60_000;
         // 会话持续 90 分钟：采样 15 分钟一个点（间隔 < gap）
@@ -121,7 +121,7 @@ describe('currentSessionInfo', () => {
         expect(info.minutes).toBe(90);
     });
 
-    it('stops extending session at a gap (toilet break resets start)', () => {
+    test('stops extending session at a gap (toilet break resets start)', () => {
         const now = Date.UTC(2026, 7, 6, 12, 0, 0);
         const oldStart = now - 5 * 60 * 60_000; // 5 小时前（与后续间隔远超 gap，独立会话）
         const recentStart = now - 10 * 60_000;
@@ -135,7 +135,7 @@ describe('currentSessionInfo', () => {
 });
 
 describe('aggregateMonthly', () => {
-    it('groups daily stats by YYYY-MM and sums minutes/days/sessions (desc order)', () => {
+    test('groups daily stats by YYYY-MM and sums minutes/days/sessions (desc order)', () => {
         const base = Date.UTC(2026, 7, 6, 10, 0, 0);
         const daily = [
             dayStats('2026-08-06', [base, base + 60_000]),
@@ -151,7 +151,7 @@ describe('aggregateMonthly', () => {
         expect(monthly[1]).toEqual({ month: '2026-07', totalMinutes: 2, activeDays: 1, sessionCount: 1 });
     });
 
-    it('returns empty for no daily stats', () => {
+    test('returns empty for no daily stats', () => {
         expect(aggregateMonthly([])).toEqual([]);
     });
 });
@@ -185,26 +185,26 @@ describe('getActivityStats range handling', () => {
         await fs.rm(dir, { recursive: true, force: true });
     });
 
-    it('7d range only includes recent days', async () => {
+    test('7d range only includes recent days', async () => {
         const result = await getActivityStats(store, { range: '7d' });
         expect(result.daily).toHaveLength(7);
         const active = result.daily.filter((d) => d.totalMinutes > 0);
         expect(active).toHaveLength(1); // 只有今天
     });
 
-    it('90d range includes the 40-days-ago sample but not 400-days-ago', async () => {
+    test('90d range includes the 40-days-ago sample but not 400-days-ago', async () => {
         const result = await getActivityStats(store, { range: '90d' });
         const active = result.daily.filter((d) => d.totalMinutes > 0);
         expect(active).toHaveLength(2); // 今天 + 40 天前
     });
 
-    it('365d range excludes 400-days-ago sample', async () => {
+    test('365d range excludes 400-days-ago sample', async () => {
         const result = await getActivityStats(store, { range: '365d' });
         const active = result.daily.filter((d) => d.totalMinutes > 0);
         expect(active).toHaveLength(2);
     });
 
-    it('all range includes every stored day with monthly aggregation', async () => {
+    test('all range includes every stored day with monthly aggregation', async () => {
         const result = await getActivityStats(store, { range: 'all', includeMonthly: true });
         const active = result.daily.filter((d) => d.totalMinutes > 0);
         expect(active).toHaveLength(3);
@@ -215,7 +215,7 @@ describe('getActivityStats range handling', () => {
         expect(totalMonthly).toBe(totalDaily);
     });
 
-    it('includeMonthly=false returns empty monthly', async () => {
+    test('includeMonthly=false returns empty monthly', async () => {
         const result = await getActivityStats(store, { range: 'all' });
         expect(result.monthly).toEqual([]);
     });
@@ -232,7 +232,7 @@ describe('statsFromFiles', () => {
         return { date, samples };
     }
 
-    it('builds daily stats (desc) + heatmap (asc) + today/currentSession', () => {
+    test('builds daily stats (desc) + heatmap (asc) + today/currentSession', () => {
         const files = [
             makeFile('2026-08-04', 2 * 24 * 60, 30),
             makeFile('2026-08-05', 24 * 60, 60),
@@ -255,7 +255,7 @@ describe('statsFromFiles', () => {
         expect(result.currentSession.minutes).toBe(45);
     });
 
-    it('returns empty daily for no files', () => {
+    test('returns empty daily for no files', () => {
         const result = statsFromFiles([], base);
         expect(result.today).toBeNull();
         expect(result.daily).toEqual([]);

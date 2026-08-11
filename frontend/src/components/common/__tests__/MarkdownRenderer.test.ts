@@ -20,7 +20,7 @@
  * - 流式内容追加后 DOM 同步渲染新增行（渲染管线仍工作）
  * - CSS 静态断言：流式规则 / keep-expanded 规则 / is-nowrap 源码顺序
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import MarkdownRenderer from '../MarkdownRenderer.vue'
 import MarkdownRendererSource from '../MarkdownRenderer.vue?raw'
@@ -72,7 +72,7 @@ async function withFakeScrollHeight(run: () => Promise<void>): Promise<void> {
 }
 
 describe('MarkdownRenderer 流式代码块滚动修复', () => {
-  it('流式期间根节点带 is-streaming 类；流式结束后移除', async () => {
+  test('流式期间根节点带 is-streaming 类；流式结束后移除', async () => {
     const wrapper = mountRenderer({ content: LONG_CODE, isStreaming: true })
     await tick()
     await tick()
@@ -85,7 +85,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('非流式默认不带 is-streaming 类', async () => {
+  test('非流式默认不带 is-streaming 类', async () => {
     const wrapper = mountRenderer({ content: LONG_CODE })
     await tick()
     await tick()
@@ -93,7 +93,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('代码块结构完整：pre 滚动容器、工具栏容器、行号均保留', async () => {
+  test('代码块结构完整：pre 滚动容器、工具栏容器、行号均保留', async () => {
     const wrapper = mountRenderer({ content: LONG_CODE })
     await tick()
     await tick()
@@ -117,7 +117,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('fence 渲染器仍生成复制/换行按钮（artifactSafe 路径）', async () => {
+  test('fence 渲染器仍生成复制/换行按钮（artifactSafe 路径）', async () => {
     const wrapper = mountRenderer({ content: LONG_CODE, renderProfile: 'artifactSafe' })
     await tick()
     await tick()
@@ -130,7 +130,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('default 路径经 sanitizeHtml 后复制/换行按钮仍保留（sanitize 放行 code-tool-btn）', async () => {
+  test('default 路径经 sanitizeHtml 后复制/换行按钮仍保留（sanitize 放行 code-tool-btn）', async () => {
     // 回归：sanitizeHtml 黑名单含 button，会把代码块工具栏按钮一并移除，
     // 导致默认渲染路径下代码块无法复制。sanitize 需放行 class 受控的工具栏按钮。
     const wrapper = mountRenderer({ content: LONG_CODE })
@@ -149,7 +149,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('流式内容追加后 DOM 同步渲染新增行', async () => {
+  test('流式内容追加后 DOM 同步渲染新增行', async () => {
     // markdown-it fence 内容带尾部换行，splitHighlightedHtmlByNewline 会产生尾随空行
     const part1 = '```typescript\nconst a = 1;\n```'
     const part2 = '```typescript\nconst a = 1;\nconst b = 2;\n```'
@@ -170,7 +170,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('流式表格写入真实 DOM 后发出 rendered(source) 确认', async () => {
+  test('流式表格写入真实 DOM 后发出 rendered(source) 确认', async () => {
     const tableHead = '| Name | Value |\n| --- | --- |\n'
     const withRow = `${tableHead}| alpha | 1 |\n`
     const wrapper = mountRenderer({ content: tableHead, isStreaming: true })
@@ -191,7 +191,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     wrapper.unmount()
   })
 
-  it('流式结束后对超高代码块保留 keep-expanded 展开态（不塌缩回 400px）', async () => {
+  test('流式结束后对超高代码块保留 keep-expanded 展开态（不塌缩回 400px）', async () => {
     await withFakeScrollHeight(async () => {
       const wrapper = mountRenderer({ content: LONG_CODE, isStreaming: true })
       await tick()
@@ -208,7 +208,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     })
   })
 
-  it('用户点击换行按钮后移除 keep-expanded，恢复正常高度限制', async () => {
+  test('用户点击换行按钮后移除 keep-expanded，恢复正常高度限制', async () => {
     await withFakeScrollHeight(async () => {
       // artifactSafe 路径不经 sanitizeHtml，工具栏按钮保留在 DOM 中可触发点击
       const wrapper = mountRenderer({ content: LONG_CODE, renderProfile: 'artifactSafe', isStreaming: true })
@@ -226,7 +226,7 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     })
   })
 
-  it('CSS 静态断言：流式规则放开 pre 高度、keep-expanded 保留展开态、is-nowrap 在其后生效', () => {
+  test('CSS 静态断言：流式规则放开 pre 高度、keep-expanded 保留展开态、is-nowrap 在其后生效', () => {
     const source = MarkdownRendererSource
     // 流式规则存在且放开 max-height
     expect(source).toMatch(/\.markdown-content\.is-streaming[\s\S]*?\{[\s\S]*?max-height:\s*none/)

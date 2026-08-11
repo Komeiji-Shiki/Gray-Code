@@ -17,13 +17,13 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import * as vscode from 'vscode';
 
 import '../__fixtures__/diffManagerMock';
 import { createTempDirectory } from '../__fixtures__/checkpointFixtures';
+import { createCheckpointManagerHarness } from '../__fixtures__/harnessFixtures';
 
-import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
-import type { CheckpointManifest } from '../../modules/checkpoint/types';
+import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint';
+import type { CheckpointManifest } from '../../modules/checkpoint';
 
 async function writeFile(rootDir: string, relativePath: string, content: string = ''): Promise<void> {
     const fullPath = path.join(rootDir, relativePath);
@@ -45,117 +45,8 @@ function md5(content: string): string {
     return crypto.createHash('md5').update(content).digest('hex');
 }
 
-interface Harness {
-    manager: CheckpointManager;
-    storageRoot: string;
-    /** 元数据中的存档记录 */
-    storedCheckpoints: () => CheckpointRecord[];
-    readManifest: (checkpointId: string) => Promise<CheckpointManifest | null>;
-}
 
-/** 与 CheckpointManifestPhase3.test.ts 同构的 harness（单根工作区 + mock 元数据） */
-async function createHarness(workspaceRoot: string, storageRoot: string): Promise<Harness> {
-    (vscode.workspace as any).workspaceFolders = [
-        {
-            name: 'root',
-            uri: { fsPath: workspaceRoot, scheme: 'file', path: workspaceRoot }
-        }
-    ];
-    (vscode.workspace as any).textDocuments = [];
-    (vscode as any).window = {
-        setStatusBarMessage: jest.fn(),
-        showTextDocument: jest.fn(),
-        tabGroups: { all: [], close: jest.fn() }
-    };
-    (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
-
-    const sharedMetadata: { custom: Record<string, unknown> } = {
-        custom: { checkpoints: [] as CheckpointRecord[] }
-    };
-    const storedCheckpoints = (): CheckpointRecord[] =>
-        (sharedMetadata.custom.checkpoints as CheckpointRecord[]) || [];
-
-    const baseConfig = {
-        enabled: true,
-        beforeTools: [],
-        afterTools: ['write_file'],
-        messageCheckpoint: { beforeMessages: [], afterMessages: [] },
-        maxCheckpoints: -1,
-        customIgnorePatterns: [],
-        exclusion: {
-            enabledProfiles: {},
-            maxFileSizeBytes: 1024,
-            customPatterns: []
-        }
-    };
-    let configValue: Record<string, unknown> = { ...baseConfig };
-    const settingsManager = {
-        getCheckpointConfig: jest.fn().mockImplementation(() => configValue)
-    };
-
-    let metadataWriteChain: Promise<unknown> = Promise.resolve();
-    const conversationManager = {
-        getMetadata: jest.fn().mockImplementation(async () => sharedMetadata),
-        getCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string) => {
-            return (sharedMetadata.custom as Record<string, unknown>)[key];
-        }),
-        setCustomMetadata: jest.fn().mockImplementation(async (_cid: string, key: string, value: unknown) => {
-            (sharedMetadata.custom as Record<string, unknown>)[key] = value;
-        }),
-        updateCustomMetadata: jest.fn().mockImplementation(
-            (_cid: string, key: string, updater: (current: unknown) => unknown | Promise<unknown>) => {
-                const run = metadataWriteChain.then(async () => {
-                    const current = (sharedMetadata.custom as Record<string, unknown>)[key];
-                    const next = await updater(current);
-                    if (next !== current) {
-                        (sharedMetadata.custom as Record<string, unknown>)[key] = next;
-                    }
-                    return next;
-                });
-                metadataWriteChain = run.catch(() => undefined);
-                return run;
-            }
-        ),
-        rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined),
-        listConversations: jest.fn().mockResolvedValue([])
-    };
-
-    const manager = new CheckpointManager(
-        settingsManager as any,
-        conversationManager as any,
-        { globalStorageUri: { fsPath: storageRoot } } as any
-    );
-    await manager.initialize();
-
-    const readManifest = async (checkpointId: string): Promise<CheckpointManifest | null> => {
-        try {
-            const metaRaw = await fs.readFile(
-                path.join(storageRoot, 'checkpoints', checkpointId, 'manifest.json'),
-                'utf-8'
-            );
-            const manifest = JSON.parse(metaRaw) as CheckpointManifest;
-            // CPF-LAZY-1: v2 拆分布局下 files 独立存放于 files.json，按需合并读取
-            if (!manifest.files) {
-                try {
-                    const filesRaw = await fs.readFile(
-                        path.join(storageRoot, 'checkpoints', checkpointId, 'files.json'),
-                        'utf-8'
-                    );
-                    manifest.files = (JSON.parse(filesRaw) as { files?: CheckpointManifest['files'] }).files ?? {};
-                } catch {
-                    manifest.files = {};
-                }
-            }
-            return manifest;
-        } catch {
-            return null;
-        }
-    };
-
-    return { manager, storageRoot, storedCheckpoints, readManifest };
-}
-
-describe('BCP-07 增量链文件级共享 + base 引用恢复（决策 12 固化）', () => {
+describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });
@@ -166,7 +57,7 @@ describe('BCP-07 增量链文件级共享 + base 引用恢复（决策 12 固化
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
             await writeFile(workspaceRoot, 'b.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             // cp1 = 完整备份（a.txt + b.txt）
             const cp1 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
@@ -222,7 +113,7 @@ describe('BCP-07 增量链文件级共享 + base 引用恢复（决策 12 固化
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
             await writeFile(workspaceRoot, 'b.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             const cp1 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
             expect(cp1).not.toBeNull();
@@ -268,7 +159,7 @@ describe('BCP-07 增量链文件级共享 + base 引用恢复（决策 12 固化
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
             await writeFile(workspaceRoot, 'b.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             // cp1 完整：a.txt=v1, b.txt=v1
             const cp1 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
@@ -319,7 +210,7 @@ describe('BCP-07 增量链文件级共享 + base 引用恢复（决策 12 固化
         const storageRoot = await createTempDirectory('limcode-bcp07-storage-');
         try {
             await writeFile(workspaceRoot, 'a.txt', 'v1');
-            const harness = await createHarness(workspaceRoot, storageRoot);
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot);
 
             const cp1 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
             expect(cp1).not.toBeNull();

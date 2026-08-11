@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed } from 'vue'
 import ModelSelectionDialog from './ModelSelectionDialog.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
@@ -64,7 +65,7 @@ async function handleConfirm(selectedModels: ModelInfo[]) {
       maxOutputTokens: m.maxOutputTokens
     }))
     
-    await sendToExtension('models.addModels', {
+    await sendToExtension(MESSAGE_NAMES['models.addModels'], {
       configId: props.configId,
       models: serializableModels
     })
@@ -100,7 +101,7 @@ async function addCustomModel() {
   }
   
   try {
-    await sendToExtension('models.addModels', {
+    await sendToExtension(MESSAGE_NAMES['models.addModels'], {
       configId: props.configId,
       models: [model]
     })
@@ -117,7 +118,7 @@ async function addCustomModel() {
 // 移除模型
 async function removeModel(modelId: string) {
   try {
-    await sendToExtension('models.removeModel', {
+    await sendToExtension(MESSAGE_NAMES['models.removeModel'], {
       configId: props.configId,
       modelId
     })
@@ -150,7 +151,7 @@ async function confirmClearAllModels() {
   try {
     // 逐个删除模型
     for (const model of props.models) {
-      await sendToExtension('models.removeModel', {
+      await sendToExtension(MESSAGE_NAMES['models.removeModel'], {
         configId: props.configId,
         modelId: model.id
       })
@@ -171,7 +172,7 @@ async function confirmClearAllModels() {
 // 选择模型作为启用
 async function selectModel(modelId: string) {
   try {
-    await sendToExtension('models.setActiveModel', {
+    await sendToExtension(MESSAGE_NAMES['models.setActiveModel'], {
       configId: props.configId,
       modelId
     })

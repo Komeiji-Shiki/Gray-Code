@@ -24,6 +24,7 @@ import type {
   ChatStreamToolStatusData,
 } from '../../types';
 import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../abortDrain';
+import { RepeatedCallGuard } from '../repeatedCallGuard';
 import type { ToolExecutionFullResult, ToolExecutionProgressEvent } from '../ToolExecutionService';
 import type { Content, ContentPart } from '../../../../conversation/types';
 import type { CheckpointRecord } from '../../../../checkpoint';
@@ -385,6 +386,11 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
   ): AsyncGenerator<ChatStreamOutput> {
     const { conversationId, configId, toolResponses, modelOverride } = request;
 
+    // 同参数重复失败护栏（与主循环 runToolLoop 对齐）：本次确认回合内跨队首工具与
+    // autoSuffix 执行存活，拦截模型用相同参数反复调用失败工具；被替换的调用由
+    // ToolExecutionService 检测合成参数后直接返回短路错误结果，不进入真实执行。
+    const repeatedCallGuard = new RepeatedCallGuard();
+
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
 
@@ -512,6 +518,8 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
 
     const mergeExecutionResult = (res: ToolExecutionFullResult) => {
       toolResultsThisTurn.push(...res.toolResults);
+      // 与主循环一致：真实执行结果回灌护栏（rejected:true 的结果不计失败也不中断序列）
+      repeatedCallGuard.recordResults(res.toolResults);
       checkpointsThisTurn.push(...res.checkpoints);
       responseParts.push(...res.responseParts);
       if (res.multimodalAttachments && res.multimodalAttachments.length > 0) {
@@ -524,7 +532,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     // 4.1 先处理队首工具（该工具一定是“当前等待批准”的那个）
     if (nextDecision.confirmed) {
       const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
-        [nextCall],
+        repeatedCallGuard.guardCalls([nextCall]),
         conversationId,
         messageIndex,
         config,
@@ -670,7 +678,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
 
     if (autoSuffix.length > 0) {
       const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
-        autoSuffix,
+        repeatedCallGuard.guardCalls(autoSuffix),
         conversationId,
         messageIndex,
         config,

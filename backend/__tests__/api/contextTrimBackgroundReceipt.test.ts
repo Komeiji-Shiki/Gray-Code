@@ -13,7 +13,7 @@ function createService(): ContextTrimService {
 }
 
 describe('ContextTrimService.identifyRounds - background task receipt', () => {
-    it('后台任务回执是原任务的异步延续，不创建新的裁剪回合', () => {
+    test('后台任务回执是原任务的异步延续，不创建新的裁剪回合', () => {
         const history: Content[] = [
             {
                 role: 'user',
@@ -45,7 +45,7 @@ describe('ContextTrimService.identifyRounds - background task receipt', () => {
         ]);
     });
 
-    it('后续真实用户消息仍正常开始新回合，旧历史无 isUserInput 标记也兼容', () => {
+    test('后续真实用户消息仍正常开始新回合，旧历史无 isUserInput 标记也兼容', () => {
         const history: Content[] = [
             { role: 'user', parts: [{ text: '旧历史用户消息' }] },
             { role: 'model', parts: [{ text: '旧回答' }] },
@@ -124,7 +124,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         }
     ];
 
-    it('同一回合的 SubAgent 大结果接近上限时触发模型总结而不是推进整轮 trimState', async () => {
+    test('同一回合的 SubAgent 大结果接近上限时触发模型总结而不是推进整轮 trimState', async () => {
         const { service, conversationManager } = createTurnScopedHarness(largeSubAgentHistory);
 
         const result = await service.getHistoryWithContextTrimInfo(
@@ -148,7 +148,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         expect(conversationManager.setCustomMetadata).not.toHaveBeenCalled();
     });
 
-    it('总结起点之前的真实用户输入会按原文档案注入请求', async () => {
+    test('总结起点之前的真实用户输入会按原文档案注入请求', async () => {
         const summarizedHistory: Content[] = [
             { role: 'user', parts: [{ text: '最初目标必须保留' }], isUserInput: true },
             { role: 'model', parts: [{ text: '旧回答' }] },
@@ -174,7 +174,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         expect(result.history.slice(2)).toEqual(summarizedHistory.slice(2));
     });
 
-    it('自动上下文管理关闭时仍应用用户显式创建的手动总结边界', async () => {
+    test('自动上下文管理关闭时仍应用用户显式创建的手动总结边界', async () => {
         const summarizedHistory: Content[] = [
             { role: 'user', parts: [{ text: '最初目标' }], isUserInput: true },
             { role: 'model', parts: [{ text: '很长的旧回答' }] },
@@ -211,7 +211,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         });
     });
 
-    it.each([
+    test.each([
         ['显式总开关', { contextManagementEnabled: false }],
         ['旧版双开关', { contextThresholdEnabled: false, autoSummarizeEnabled: false }]
     ])('自动上下文管理关闭（%s）时不因总结阈值或配置窗口阻止主请求', async (_label, disabledConfig) => {
@@ -240,7 +240,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         });
     });
 
-    it('升级后清除可能在工具回合中途写入的旧裁剪状态', async () => {
+    test('升级后清除可能在工具回合中途写入的旧裁剪状态', async () => {
         const { service, conversationManager } = createTurnScopedHarness(largeSubAgentHistory, {
             trimStartIndex: 2
         });
@@ -264,7 +264,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         );
     });
 
-    it('总结失败兜底可在当前长工具轮内部裁剪且不写持久 trimState', async () => {
+    test('总结失败兜底可在当前长工具轮内部裁剪且不写持久 trimState', async () => {
         const fallbackHistory: Content[] = [
             { role: 'user', parts: [{ text: 'old' }], isUserInput: true, tokenCountByChannel: { custom: 50 } },
             { role: 'model', parts: [{ text: 'old answer' }], tokenCountByChannel: { custom: 50 } },
@@ -312,7 +312,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         expect(conversationManager.setCustomMetadata).not.toHaveBeenCalled();
     });
 
-    it('固定 prompt 已超软阈值且新增历史很少时跳过低收益自动总结并继续主请求', async () => {
+    test('固定 prompt 已超软阈值且新增历史很少时跳过低收益自动总结并继续主请求', async () => {
         const smallDelta: Content[] = [
             { role: 'user', parts: [{ text: 'small delta' }], isUserInput: true, tokenCountByChannel: { custom: 20 } },
             {
@@ -343,7 +343,7 @@ describe('ContextTrimService - turn-scoped trim state', () => {
         expect(result.contextManagementDecision?.action).toBe('auto_summarize_skipped_low_savings');
     });
 
-    it('低收益总结被跳过但总输入已越过硬窗口时仍进入请求级 fallback', async () => {
+    test('低收益总结被跳过但总输入已越过硬窗口时仍进入请求级 fallback', async () => {
         const smallDelta: Content[] = [
             { role: 'user', parts: [{ text: 'small delta' }], isUserInput: true, tokenCountByChannel: { custom: 60 } },
             {

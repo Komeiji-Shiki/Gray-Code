@@ -31,7 +31,7 @@ jest.mock('../../tools/file/unifiedDiff', () => ({
     applyUnifiedDiffHunks: jest.fn()
 }));
 
-import { DiffManager, getDiffManager, type PendingDiff } from '../../tools/file/diffManager';
+import { DiffManager, getDiffManager, type PendingDiff } from '../../core/services/diffManager';
 import { fileWriteLockManager } from '../../core/fileWriteLockManager';
 
 type MockTextDocument = {
@@ -207,7 +207,7 @@ describe('DiffManager lifecycle closure', () => {
         (provider.removeSession as jest.Mock).mockReset();
     });
 
-    it('opens native tool diff in the main chat column even when Monitor owns another group', async () => {
+    test('opens native tool diff in the main chat column even when Monitor owns another group', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         (vscode.window.tabGroups as any).all = [
@@ -240,7 +240,7 @@ describe('DiffManager lifecycle closure', () => {
         await manager.rejectDiff(pending.id);
     });
 
-    it('acceptDiff finalizes accepted state and disposes listeners only after persistence succeeds', async () => {
+    test('acceptDiff finalizes accepted state and disposes listeners only after persistence succeeds', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -271,7 +271,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
     });
 
-    it('acceptDiff keeps the diff pending and preserves listeners when persistence fails', async () => {
+    test('acceptDiff keeps the diff pending and preserves listeners when persistence fails', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: false });
         const diff = createPendingDiff(manager, {
@@ -307,7 +307,7 @@ describe('DiffManager lifecycle closure', () => {
         expect((vscode.window as any).showErrorMessage).toHaveBeenCalled();
     });
 
-    it('rejectDiff finalizes rejected state and disposes listeners on success', async () => {
+    test('rejectDiff finalizes rejected state and disposes listeners on success', async () => {
         const manager = getManager();
         const doc = createDocument({ initialContent: 'accepted', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -333,7 +333,7 @@ describe('DiffManager lifecycle closure', () => {
         expect((manager as any).closeListeners.has(diff.id)).toBe(false);
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
     });
-    it('acceptDiff records partial and rejectedBlockIndices on partial acceptance', async () => {
+    test('acceptDiff records partial and rejectedBlockIndices on partial acceptance', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -367,7 +367,7 @@ describe('DiffManager lifecycle closure', () => {
         expect((manager as any).saveListeners.has(diff.id)).toBe(false);
     });
 
-    it('acceptDiff without rejected blocks keeps partial unset', async () => {
+    test('acceptDiff without rejected blocks keeps partial unset', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -396,7 +396,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(diff.rejectedBlockIndices).toBeUndefined();
     });
 
-    it('acceptDiff with userEditedContent records partial even without rejected blocks', async () => {
+    test('acceptDiff with userEditedContent records partial even without rejected blocks', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -421,7 +421,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(diff.rejectedBlockIndices).toEqual([]);
     });
 
-    it('acceptDiff with partial but no lens session writes empty rejectedBlockIndices', async () => {
+    test('acceptDiff with partial but no lens session writes empty rejectedBlockIndices', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -443,7 +443,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(diff.rejectedBlockIndices).toEqual([]);
     });
 
-    it('createPendingDiff keeps the diff pending when opening the diff view fails', async () => {
+    test('createPendingDiff keeps the diff pending when opening the diff view fails', async () => {
         const manager = getManager();
         const statusListener = jest.fn();
         manager.addStatusListener(statusListener);
@@ -466,7 +466,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(console.warn).toHaveBeenCalled();
     });
 
-    it('directly saves confirmed tool diffs without scheduling auto-save confirmation', async () => {
+    test('directly saves confirmed tool diffs without scheduling auto-save confirmation', async () => {
         const manager = getManager();
         const statusListener = jest.fn();
         const saveListener = jest.fn();
@@ -497,7 +497,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(saveListener).toHaveBeenCalledWith(pendingDiff);
     });
 
-    it('directApplyAndSave syncs a dirty editor silently without files.revert', async () => {
+    test('directApplyAndSave syncs a dirty editor silently without files.revert', async () => {
         const manager = getManager();
         const doc = createDocument({ initialContent: 'original' });
         // 模拟用户在编辑器里的未保存修改（dirty）
@@ -528,7 +528,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(pendingDiff.status).toBe('accepted');
     });
 
-    it('directApplyAndSave still finalizes as accepted when editor sync fails', async () => {
+    test('directApplyAndSave still finalizes as accepted when editor sync fails', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original' });
         (vscode.workspace as any).applyEdit = jest.fn(async () => false);
@@ -550,7 +550,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(console.warn).toHaveBeenCalled();
     });
 
-    it('auto-save failure finalizes the diff as rejected to unblock tool execution', async () => {
+    test('auto-save failure finalizes the diff as rejected to unblock tool execution', async () => {
         jest.useFakeTimers();
 
         const manager = getManager();
@@ -582,7 +582,7 @@ describe('DiffManager lifecycle closure', () => {
         expect((vscode.window as any).showErrorMessage).toHaveBeenCalled();
     });
 
-    it('non-manual save lets auto-save flush to disk without triggering draft restore loop', async () => {
+    test('non-manual save lets auto-save flush to disk without triggering draft restore loop', async () => {
         const manager = getManager();
         const doc = createDocument({ initialContent: 'original', saveReturns: true });
         const diff = createPendingDiff(manager, {
@@ -649,7 +649,7 @@ describe('DiffManager lifecycle closure', () => {
         expect((manager as any).willSaveListeners.has(diff.id)).toBe(true);
     });
 
-    it('acceptDiff waits for checkpointReady before writing, then writes after resolve', async () => {
+    test('acceptDiff waits for checkpointReady before writing, then writes after resolve', async () => {
         (fs.writeFileSync as jest.Mock).mockClear();
         (fs.readFileSync as jest.Mock).mockClear();
         const manager = getManager();
@@ -683,7 +683,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
     });
 
-    it('rejecting checkpointReady blocks the write and converges the diff to rejected', async () => {
+    test('rejecting checkpointReady blocks the write and converges the diff to rejected', async () => {
         (fs.writeFileSync as jest.Mock).mockClear();
         (fs.readFileSync as jest.Mock).mockClear();
         jest.useFakeTimers();
@@ -714,7 +714,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
     });
 
-    it('rejectDiff waits for checkpointReady before restoring the original content', async () => {
+    test('rejectDiff waits for checkpointReady before restoring the original content', async () => {
         (fs.writeFileSync as jest.Mock).mockClear();
         (fs.readFileSync as jest.Mock).mockClear();
         const manager = getManager();
@@ -746,7 +746,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(diff.status).toBe('rejected');
     });
 
-    it('directApplyAndSave waits for checkpointReady before writing to disk', async () => {
+    test('directApplyAndSave waits for checkpointReady before writing to disk', async () => {
         (fs.writeFileSync as jest.Mock).mockClear();
         (fs.readFileSync as jest.Mock).mockClear();
         const manager = getManager();
@@ -778,7 +778,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(fs.writeFileSync).toHaveBeenCalledWith('C:/tmp/file.ts', 'accepted', 'utf8');
     });
 
-    it('willSaveListener waits for checkpointReady via event.waitUntil on manual and non-manual saves', async () => {
+    test('willSaveListener waits for checkpointReady via event.waitUntil on manual and non-manual saves', async () => {
         const manager = getManager();
         const doc = createDocument({ initialContent: 'original', saveReturns: true });
         let resolveCheckpoint!: () => void;
@@ -821,7 +821,7 @@ describe('DiffManager lifecycle closure', () => {
         resolveCheckpoint();
     });
 
-    it('createPendingDiff stores structuredHunkPlan and checkpointReady from options', async () => {
+    test('createPendingDiff stores structuredHunkPlan and checkpointReady from options', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         const plan = {
@@ -900,7 +900,7 @@ describe('DiffManager conversationId scoping (#48)', () => {
         resetDiffManagerSingleton();
     });
 
-    it('cancelAllPending with conversationId only cancels matching diffs', async () => {
+    test('cancelAllPending with conversationId only cancels matching diffs', async () => {
         const manager = getManager();
         const diffA = createPendingDiff(manager, { id: 'diff-A', conversationId: 'conv-A' });
         const diffB = createPendingDiff(manager, { id: 'diff-B', conversationId: 'conv-B' });
@@ -915,7 +915,7 @@ describe('DiffManager conversationId scoping (#48)', () => {
         expect(diffB.status).toBe('pending');
     });
 
-    it('cancelAllPending without conversationId cancels all diffs', async () => {
+    test('cancelAllPending without conversationId cancels all diffs', async () => {
         const manager = getManager();
         const diffA = createPendingDiff(manager, { id: 'diff-A', conversationId: 'conv-A' });
         const diffB = createPendingDiff(manager, { id: 'diff-B', conversationId: 'conv-B' });
@@ -927,7 +927,7 @@ describe('DiffManager conversationId scoping (#48)', () => {
         expect(diffB.status).toBe('rejected');
     });
 
-    it('markUserInterrupt scoped by conversationId', () => {
+    test('markUserInterrupt scoped by conversationId', () => {
         const manager = getManager();
         // No conversationId means global interrupt
         manager.markUserInterrupt();
@@ -992,7 +992,7 @@ describe('DiffManager fifo eviction (#10)', () => {
         resetDiffManagerSingleton();
     });
 
-    it('evicts oldest finalized diffs when queue exceeds MAX_FINALIZED_DIFFS', async () => {
+    test('evicts oldest finalized diffs when queue exceeds MAX_FINALIZED_DIFFS', async () => {
         const manager = getManager();
         const MAX = (DiffManager as any).MAX_FINALIZED_DIFFS;
 
@@ -1052,7 +1052,7 @@ describe('DiffManager newFile through CreatePendingDiffOptions (#14)', () => {
         resetDiffManagerSingleton();
     });
 
-    it('sets newFile flag during createPendingDiff, before showDiffView', async () => {
+    test('sets newFile flag during createPendingDiff, before showDiffView', async () => {
         const manager = getManager();
 
         const pendingDiff = await manager.createPendingDiff(
@@ -1098,7 +1098,7 @@ describe('DiffManager PERF-CP deferred write lock', () => {
         resetDiffManagerSingleton();
     });
 
-    it('预览显示后获取写盘锁并持有到 diff 终结（终结后其他写入者可获取）', async () => {
+    test('预览显示后获取写盘锁并持有到 diff 终结（终结后其他写入者可获取）', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
 
@@ -1123,7 +1123,7 @@ describe('DiffManager PERF-CP deferred write lock', () => {
         fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
     });
 
-    it('写盘锁冲突：createPendingDiff 收敛 rejected 并抛出冲突错误', async () => {
+    test('写盘锁冲突：createPendingDiff 收敛 rejected 并抛出冲突错误', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
         // 其他写入者先占锁

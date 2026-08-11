@@ -1,22 +1,10 @@
 /**
- * LimCode Backend - English Language Pack
+ * GrayCode Backend - English Language Pack
  */
 
 import type { BackendLanguageMessages } from '../types';
 
 const en: BackendLanguageMessages = {
-    core: {
-        registry: {
-            moduleAlreadyRegistered: 'Module "{moduleId}" is already registered',
-            duplicateApiName: 'Duplicate API name in module "{moduleId}": {apiName}',
-            registeringModule: '[ModuleRegistry] Registering module: {moduleId} ({moduleName} v{version})',
-            moduleNotRegistered: 'Module not registered: {moduleId}',
-            unregisteringModule: '[ModuleRegistry] Unregistering module: {moduleId}',
-            apiNotFound: 'API not found: {moduleId}.{apiName}',
-            missingRequiredParams: 'Missing required parameters: {params}'
-        }
-    },
-
     modules: {
         config: {
             errors: {
@@ -40,7 +28,8 @@ const en: BackendLanguageMessages = {
                 maxTokensMin: 'max_tokens must be greater than 0',
                 topPRange: 'top_p must be between 0.0 and 1.0',
                 topKMin: 'top_k must be greater than or equal to 0',
-                thinkingBudgetMin: 'thinking.budget_tokens must be at least 1024'
+                thinkingBudgetMin: 'thinking.budget_tokens must be at least 1024',
+                unsupportedType: 'Unsupported channel type: {type}'
             }
         },
 
@@ -345,7 +334,7 @@ Output content directly without any prefix.`
             toolNotFound: 'Tool not found: {toolName}',
             executionFailed: 'Tool execution failed: {error}',
             invalidParams: 'Invalid parameters',
-            timeout: 'Execution timeout'
+            timeout: 'Execution Timeout'
         },
 
         file: {
@@ -432,7 +421,9 @@ Output content directly without any prefix.`
         common: {
             taskNotFound: 'Task {id} not found or already completed',
             cancelTaskFailed: 'Failed to cancel task: {error}',
-            toolAlreadyExists: 'Tool already exists: {name}'
+            toolAlreadyExists: 'Tool already exists: {name}',
+            show: 'Show',
+            hide: 'Hide'
         },
         
         skills: {
@@ -535,33 +526,33 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             },
             summary: {
                 currentStatus: 'Current status',
-                reviewedModules: 'Reviewed modules',
-                currentProgress: 'Current progress',
+                reviewedModules: 'Reviewed Modules',
+                currentProgress: 'Current Progress',
                 totalMilestones: 'Total milestones',
                 completedMilestones: 'Completed milestones',
                 totalFindings: 'Total findings',
                 findingsBySeverity: 'Findings by severity',
-                latestConclusion: 'Latest conclusion',
-                recommendedNextAction: 'Recommended next action',
+                latestConclusion: 'Latest Conclusion',
+                recommendedNextAction: 'Recommended Next Action',
                 overallDecision: 'Overall decision'
             },
             finding: {
                 severity: 'Severity',
                 category: 'Category',
-                trackingStatus: 'Tracking status',
+                trackingStatus: 'Tracking Status',
                 description: 'Description',
                 recommendation: 'Recommendation',
-                relatedMilestones: 'Related milestones',
+                relatedMilestones: 'Related Milestones',
                 evidenceFiles: 'Evidence'
             },
             milestone: {
                 status: 'Status',
                 recordedAt: 'Recorded at',
-                reviewedModules: 'Reviewed modules',
+                reviewedModules: 'Reviewed Modules',
                 summary: 'Summary',
                 conclusion: 'Conclusion',
                 evidenceFiles: 'Evidence',
-                recommendedNextAction: 'Recommended next action',
+                recommendedNextAction: 'Recommended Next Action',
                 findings: 'Findings'
             },
             values: {
@@ -783,6 +774,28 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
         dialogs: {
             selectStorageFolder: 'Select Storage Folder',
             selectFolder: 'Select Folder'
+        },
+
+        promptSettings: {
+            dynamicSection: {
+                strategyTitle: 'Dynamic context strategy',
+                strategySingle: 'Single dynamic context',
+                strategyPreserve: 'Preserve old dynamic context in place',
+                strategyDescription: 'Single mode keeps existing behavior. Preserve mode inserts cached old dynamic contexts back at their original turns and inserts the new context before the new message.',
+                strategyPreserveWarning: 'Preserve mode increases request tokens. More preserved contexts make context trimming or summarization more likely.',
+                strategyVarsPrefix: 'When preset entries or legacy templates contain',
+                strategyVarsSeparator: ', ',
+                strategyVarsSuffix: 'or other changing variables, this setting determines whether old-turn snapshots are preserved.',
+                strategyVarsWarning: 'Preserving old dynamic context in place fixes old-turn dynamic snapshots back into their original positions and inserts the current context in the current turn, suitable for long contexts and many history turns.'
+            },
+            assemblyMode: {
+                title: 'Prompt assembly mode',
+                description: 'Each mode can only use one assembly method: legacy template or preset entries.',
+                legacyLabel: 'Legacy template',
+                legacyDescription: 'Uses the system prompt template and the dynamic context template.',
+                entriesLabel: 'Preset entries',
+                entriesDescription: 'Uses sortable entries, with Chat History controlling the actual history position.'
+            }
         }
     },
 

@@ -8,27 +8,15 @@
  *   归集到主会话用量索引（context.usageIndexAppend）；无主会话归属时跳过。
  */
 
-import { createDefaultExecutor } from '../../tools/subagents/executor';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { createDefaultExecutor } from '../../tools/subagents';
+import { subAgentRunEventBus } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { GenerateResponse } from '../../modules/channel/types';
 import type { UsageIndexMessage } from '../../modules/conversation/usageStats';
 import type { Content } from '../../modules/conversation/types';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5, // 允许至少一轮 LLM 调用
-        maxRuntime: 300,
-        ...overrides
-    };
-}
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -85,10 +73,10 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
         subAgentConcurrencyLimiter.release('cache_old_multi');
     });
 
-    it('continueFromRunId 续跑时 conversationId 沿用旧 runId（缓存域天然一致）', async () => {
+    test('continueFromRunId 续跑时 conversationId 沿用旧 runId（缓存域天然一致）', async () => {
         createCompletedRun('cache_old_run', 'conv_1');
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             conversationId: 'conv_1',
             channelManager: { generate: generateMock } as any
         }));
@@ -110,9 +98,9 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
         expect(result.runId).toBe('cache_old_run');
     });
 
-    it('普通新 run 仍用新 runId，行为不变', async () => {
+    test('普通新 run 仍用新 runId，行为不变', async () => {
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             conversationId: 'conv_1',
             channelManager: { generate: generateMock } as any
         }));
@@ -129,7 +117,7 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
         expect(request.conversationId).toBe('cache_plain_run');
     });
 
-    it('续跑请求 history 严格等于旧 run 最后一次实际发送的 history + 新 user 消息（深比较），且不含 Invocation 卡片', async () => {
+    test('续跑请求 history 严格等于旧 run 最后一次实际发送的 history + 新 user 消息（深比较），且不含 Invocation 卡片', async () => {
         // 旧 run：第 1 轮 generate 返回工具调用，第 2 轮返回纯文本（正常完成）
         const oldRunId = 'cache_old_multi';
         // 发送时立即深拷贝记录（executor 之后会原地 push 后续消息，不能持有引用）
@@ -153,7 +141,7 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
             getCustomMetadata: jest.fn(async () => ({})),
             setCustomMetadata: jest.fn(async (_conversationId: string, _key: string, _value: unknown) => {})
         };
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             conversationId: 'conv_1',
             conversationStore: store as any,
             channelManager: { generate: generateMock } as any
@@ -193,7 +181,7 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
             run2SentHistory = JSON.parse(JSON.stringify(req.history));
             return textResponse();
         });
-        const executor2 = createDefaultExecutor(createConfig(), createContext({
+        const executor2 = createDefaultExecutor(createSubAgentConfig(), createContext({
             conversationId: 'conv_1',
             channelManager: { generate: continueGenerateMock } as any
         }));
@@ -236,10 +224,10 @@ describe('SubAgent executor - 用量归集（任务2）', () => {
         subAgentConcurrencyLimiter.release('usage_no_usage_run');
     });
 
-    it('generate 返回 usageMetadata 时，以 source=subagent 归集到主会话索引', async () => {
+    test('generate 返回 usageMetadata 时，以 source=subagent 归集到主会话索引', async () => {
         const usageAppendMock = jest.fn(async (_conversationId: string, _messages: UsageIndexMessage[]) => {});
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             conversationId: 'conv_1',
             channelManager: { generate: generateMock } as any,
             usageIndexAppend: usageAppendMock
@@ -268,10 +256,10 @@ describe('SubAgent executor - 用量归集（任务2）', () => {
         expect(typeof entry.timestamp).toBe('number');
     });
 
-    it('无主会话归属（conversationId 为空）时跳过归集，不写索引', async () => {
+    test('无主会话归属（conversationId 为空）时跳过归集，不写索引', async () => {
         const usageAppendMock = jest.fn(async (_conversationId: string, _messages: UsageIndexMessage[]) => {});
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             // 不提供 conversationId
             channelManager: { generate: generateMock } as any,
             usageIndexAppend: usageAppendMock
@@ -289,10 +277,10 @@ describe('SubAgent executor - 用量归集（任务2）', () => {
         expect(usageAppendMock).not.toHaveBeenCalled();
     });
 
-    it('响应无 usageMetadata 时不写索引', async () => {
+    test('响应无 usageMetadata 时不写索引', async () => {
         const usageAppendMock = jest.fn(async (_conversationId: string, _messages: UsageIndexMessage[]) => {});
         const generateMock = jest.fn().mockResolvedValue(textResponse({ usageMetadata: undefined }));
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             conversationId: 'conv_1',
             channelManager: { generate: generateMock } as any,
             usageIndexAppend: usageAppendMock

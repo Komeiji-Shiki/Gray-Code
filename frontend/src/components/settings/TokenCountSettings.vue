@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, onMounted, onUnmounted, toRaw } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -77,7 +78,7 @@ const expandedPanels = reactive({
 async function loadConfig() {
     isLoading.value = true
     try {
-        const response = await sendToExtension<any>('getSettings', {})
+        const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
         if (response?.settings?.toolsConfig?.token_count) {
             const savedConfig = response.settings.toolsConfig.token_count
             
@@ -121,7 +122,7 @@ async function saveConfig() {
         // 将 reactive 对象转换为纯对象，避免 postMessage 序列化问题
         const rawConfig = JSON.parse(JSON.stringify(toRaw(config)))
         
-        await sendToExtension('tools.updateToolConfig', {
+        await sendToExtension(MESSAGE_NAMES['tools.updateToolConfig'], {
             toolName: 'token_count',
             config: {
                 gemini: rawConfig.gemini,

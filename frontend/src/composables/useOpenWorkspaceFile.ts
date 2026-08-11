@@ -9,6 +9,7 @@
  * 与现有调用方（MessageTaskCards / MarkdownRenderer 等）的行为保持一致。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension } from '../utils/vscode'
 
 export function useOpenWorkspaceFile() {
@@ -17,7 +18,7 @@ export function useOpenWorkspaceFile() {
     const target = (path || '').trim()
     if (!target) return
     try {
-      await sendToExtension('openWorkspaceFile', { path: target })
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: target })
     } catch {
       // 静默失败：文件不存在 / 不在工作区内
     }
@@ -46,7 +47,7 @@ export function useOpenWorkspaceFile() {
       : undefined
 
     try {
-      await sendToExtension('openWorkspaceFileAt', {
+      await sendToExtension(MESSAGE_NAMES.openWorkspaceFileAt, {
         path: target,
         startLine: start,
         ...(end !== undefined ? { endLine: end } : {})

@@ -6,6 +6,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import RotateImagePanel from '../../../components/tools/media/rotate_image.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 /**
  * 单个任务类型
@@ -46,6 +47,7 @@ registerTool('rotate_image', {
       return `${shortInput} → ${angle}°`
     }
     
-    return '旋转图片'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('rotate_image') ?? '旋转图片'
   }
 })

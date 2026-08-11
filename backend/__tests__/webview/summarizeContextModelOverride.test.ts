@@ -32,7 +32,7 @@ function createHandlerContext() {
 }
 
 describe('summarizeContext handler - modelOverride 透传', () => {
-    it('透传前端选择的当前对话模型给后端', async () => {
+    test('透传前端选择的当前对话模型给后端', async () => {
         const { ctx, handleSummarizeContext } = createHandlerContext();
 
         await summarizeContext(
@@ -48,7 +48,7 @@ describe('summarizeContext handler - modelOverride 透传', () => {
         }));
     });
 
-    it('未显式选择模型时不携带 modelOverride（后端回落渠道默认模型）', async () => {
+    test('未显式选择模型时不携带 modelOverride（后端回落渠道默认模型）', async () => {
         const { ctx, handleSummarizeContext } = createHandlerContext();
 
         await summarizeContext(
@@ -63,7 +63,7 @@ describe('summarizeContext handler - modelOverride 透传', () => {
         expect(request.modelOverride).toBeUndefined();
     });
 
-    it('成功结果经 sendResponse 回传前端', async () => {
+    test('成功结果经 sendResponse 回传前端', async () => {
         const { ctx } = createHandlerContext();
 
         await summarizeContext(

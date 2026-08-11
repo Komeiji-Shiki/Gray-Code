@@ -2,6 +2,7 @@
  * 上下文感知和诊断信息消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
@@ -104,8 +105,8 @@ export const getActiveEditor: MessageHandler = async (data, requestId, ctx) => {
  * 注册上下文处理器
  */
 export function registerContextHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('getContextAwarenessConfig', getContextAwarenessConfig);
-  registry.set('updateContextAwarenessConfig', updateContextAwarenessConfig);
-  registry.set('getOpenTabs', getOpenTabs);
-  registry.set('getActiveEditor', getActiveEditor);
+  registry.set(MESSAGE_NAMES.getContextAwarenessConfig, getContextAwarenessConfig);
+  registry.set(MESSAGE_NAMES.updateContextAwarenessConfig, updateContextAwarenessConfig);
+  registry.set(MESSAGE_NAMES.getOpenTabs, getOpenTabs);
+  registry.set(MESSAGE_NAMES.getActiveEditor, getActiveEditor);
 }

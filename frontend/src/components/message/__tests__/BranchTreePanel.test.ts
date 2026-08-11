@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BranchTreePanel from '../BranchTreePanel.vue'
 import type { BranchGraphData, BranchNodeData } from '../../../stores/chat/types'
@@ -54,7 +54,7 @@ async function mountOpen(): Promise<ReturnType<typeof mount>> {
 describe('BranchTreePanel 入口与双模式', () => {
   beforeEach(resetMock)
 
-  it('无分支或线性图时隐藏入口', () => {
+  test('无分支或线性图时隐藏入口', () => {
     expect(mount(BranchTreePanel).find('.branch-tree-trigger').exists()).toBe(false)
     chatStoreMock.branchGraph = {
       rootNodeId: 'u1',
@@ -67,7 +67,7 @@ describe('BranchTreePanel 入口与双模式', () => {
     expect(mount(BranchTreePanel).find('.branch-tree-trigger').exists()).toBe(false)
   })
 
-  it('有候选时显示入口，默认使用分支导航并可由背板关闭', async () => {
+  test('有候选时显示入口，默认使用分支导航并可由背板关闭', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
 
@@ -81,7 +81,7 @@ describe('BranchTreePanel 入口与双模式', () => {
     expect(wrapper.find('.branch-tree-panel-box').exists()).toBe(false)
   })
 
-  it('完整消息图默认折叠线性段，轨道列数由同时存在的候选分支决定', async () => {
+  test('完整消息图默认折叠线性段，轨道列数由同时存在的候选分支决定', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
     await wrapper.findAll('.branch-tree-view-tab')[1].trigger('click')
@@ -98,7 +98,7 @@ describe('BranchTreePanel 入口与双模式', () => {
     expect(wrapper.find('.branch-track-row .branch-track-cell').attributes('style')).toContain('--lane: 0')
   })
 
-  it('展开完整消息后显示全部节点，开关文案切换', async () => {
+  test('展开完整消息后显示全部节点，开关文案切换', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
     await wrapper.findAll('.branch-tree-view-tab')[1].trigger('click')
@@ -116,7 +116,7 @@ describe('BranchTreePanel 入口与双模式', () => {
 describe('BranchTreePanel 分支管理操作', () => {
   beforeEach(resetMock)
 
-  it('点击非活跃候选切换，活跃节点与软删节点不响应', async () => {
+  test('点击非活跃候选切换，活跃节点与软删节点不响应', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
     const rows = wrapper.findAll('.branch-tree-row')
@@ -132,7 +132,7 @@ describe('BranchTreePanel 分支管理操作', () => {
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
   })
 
-  it('保留删除二次确认与软删恢复', async () => {
+  test('保留删除二次确认与软删恢复', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     const wrapper = await mountOpen()
     const rows = wrapper.findAll('.branch-tree-row')
@@ -150,7 +150,7 @@ describe('BranchTreePanel 分支管理操作', () => {
     expect(chatStoreMock.restoreBranchCandidate).toHaveBeenCalledWith('aDel')
   })
 
-  it('支持行内重命名并在忙碌时禁用动作', async () => {
+  test('支持行内重命名并在忙碌时禁用动作', async () => {
     chatStoreMock.branchGraph = makeFixtureGraph()
     let wrapper = await mountOpen()
     let candidate = wrapper.findAll('.branch-tree-row').find(row => row.find('.branch-tree-preview').text() === '回答二')!

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { CustomSelect, ConfirmDialog, type SelectOption } from '../common'
 import ModelManager from './ModelManager.vue'
@@ -377,11 +378,11 @@ async function updateContextManagementMode(_mode: string) {
 async function loadConfigs() {
   isLoading.value = true
   try {
-    const ids = await sendToExtension<string[]>('config.listConfigs', {})
+    const ids = await sendToExtension<string[]>(MESSAGE_NAMES['config.listConfigs'], {})
     configs.value = []
     
     for (const id of ids) {
-      const config = await sendToExtension('config.getConfig', { configId: id })
+      const config = await sendToExtension(MESSAGE_NAMES['config.getConfig'], { configId: id })
       if (config) {
         configs.value.push(config)
       }
@@ -404,7 +405,7 @@ async function createConfig() {
   
   try {
     // 只传递必要参数，其他由后端提供默认值
-    const configId = await sendToExtension<string>('config.createConfig', {
+    const configId = await sendToExtension<string>(MESSAGE_NAMES['config.createConfig'], {
       type: newConfigType.value,
       name: newConfigName.value.trim()
     })
@@ -446,7 +447,7 @@ async function deleteCurrentConfig() {
     formatMessage(t('components.settings.channelSettings.dialog.delete.message'), currentConfig.value.name),
     async () => {
       try {
-        await sendToExtension('config.deleteConfig', {
+        await sendToExtension(MESSAGE_NAMES['config.deleteConfig'], {
           configId: currentConfig.value!.id
         })
         await loadConfigs()
@@ -487,7 +488,7 @@ async function saveEditing() {
   }
   
   try {
-    await sendToExtension('config.updateConfig', {
+    await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
       configId: currentConfig.value.id,
       updates: { name: editingName.value.trim() }
     })
@@ -532,7 +533,7 @@ function onChangeType(newType: string) {
     formatMessage(t('components.settings.channelSettings.dialog.changeType.message'), getTypeName(newType)),
     async () => {
       try {
-        await sendToExtension('config.updateConfig', {
+        await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
           configId,
           updates: { type: newType }
         })
@@ -592,7 +593,7 @@ async function updateConfigFields(updates: Record<string, any>) {
       serializableUpdates[field] = JSON.parse(JSON.stringify(value))
     }
     
-    await sendToExtension('config.updateConfig', {
+    await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
       configId,
       updates: serializableUpdates
     })
@@ -640,7 +641,7 @@ async function updateConfigField(field: string, value: any) {
       }))
     }
     
-    await sendToExtension('config.updateConfig', {
+    await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
       configId,
       updates: { [field]: serializableValue }
     })

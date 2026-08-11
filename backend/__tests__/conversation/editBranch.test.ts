@@ -22,9 +22,9 @@
 import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory } from '../../modules/conversation';
 import {
     BranchService,
     MAX_CANDIDATES_PER_PARENT,
@@ -158,7 +158,7 @@ function expectBranchError(fn: () => void, code: string, messagePattern?: RegExp
     }
 }
 
-describe('TREE-03 编辑用户消息分支（编排组合）', () => {
+describe('编辑用户消息分支（编排组合）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -561,7 +561,7 @@ describe('TREE-03 编辑用户消息分支（编排组合）', () => {
     });
 });
 
-describe('TREE-03 webview handler：chat.editBranchStream', () => {
+describe('webview handler：chat.editBranchStream', () => {
     let tempDir: string;
     let manager: ConversationManager;
     let responses: Array<{ requestId: string; data: unknown }>;
@@ -722,7 +722,7 @@ describe('TREE-03 webview handler：chat.editBranchStream', () => {
 });
 
 
-describe('TREE-03 keep 模式：原地编辑（保持当前分支）', () => {
+describe('keep 模式：原地编辑（保持当前分支）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;

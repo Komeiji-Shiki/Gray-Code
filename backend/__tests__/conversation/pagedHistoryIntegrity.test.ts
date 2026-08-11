@@ -6,10 +6,10 @@
  * 流式取消留下的悬空 tool_use 永远不会被补齐，下一次请求会被 provider 以 400 拒绝。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
 import type { StorageHistoryPage, StorageReadResult } from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+import type { ConversationHistory } from '../../modules/conversation';
 
 /** 模拟分段存储：走 getMessagesPaged 的 format === 'paged' 快路径 */
 class PagedMemoryStorageAdapter extends MemoryStorageAdapter {
@@ -44,7 +44,7 @@ function historyWithDanglingCall(): ConversationHistory {
 }
 
 describe('getMessagesPaged - 悬空工具调用补齐', () => {
-    it('分段存储首次加载会补齐悬空 functionCall', async () => {
+    test('分段存储首次加载会补齐悬空 functionCall', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv', historyWithDanglingCall());
@@ -63,7 +63,7 @@ describe('getMessagesPaged - 悬空工具调用补齐', () => {
         expect(persisted![1].parts[1].functionCall?.rejected).toBe(true);
     });
 
-    it('补齐是幂等的：已配对的历史不会被再次插入', async () => {
+    test('补齐是幂等的：已配对的历史不会被再次插入', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv', historyWithDanglingCall());
@@ -75,7 +75,7 @@ describe('getMessagesPaged - 悬空工具调用补齐', () => {
         expect(second.total).toBe(3);
     });
 
-    it('上拉加载更早消息不重复做全量补齐', async () => {
+    test('上拉加载更早消息不重复做全量补齐', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         await storage.saveHistory('conv', historyWithDanglingCall());
@@ -88,7 +88,7 @@ describe('getMessagesPaged - 悬空工具调用补齐', () => {
         expect(earlier.messages.map(m => m.index)).toEqual([0, 1]);
     });
 
-    it('本来就配对的历史保持原样', async () => {
+    test('本来就配对的历史保持原样', async () => {
         const storage = new PagedMemoryStorageAdapter();
         const manager = new ConversationManager(storage);
         const paired = [

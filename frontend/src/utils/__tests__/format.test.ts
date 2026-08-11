@@ -12,7 +12,7 @@
  * - 两条路径都失败：返回 false
  * - 回退路径清理临时 textarea 并恢复原选区
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { copyToClipboard, decodeUnicodeEscapes } from '../format'
 
 describe('copyToClipboard', () => {
@@ -39,7 +39,7 @@ describe('copyToClipboard', () => {
     })
   }
 
-  it('clipboard API 可用时优先走 writeText，不触发 execCommand', async () => {
+  test('clipboard API 可用时优先走 writeText，不触发 execCommand', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     mockClipboard({ writeText })
 
@@ -50,7 +50,7 @@ describe('copyToClipboard', () => {
     expect(execCommandMock).not.toHaveBeenCalled()
   })
 
-  it('clipboard API 缺失（Webview 非 secure context）时回退 execCommand', async () => {
+  test('clipboard API 缺失（Webview 非 secure context）时回退 execCommand', async () => {
     mockClipboard(undefined)
 
     const ok = await copyToClipboard('fallback text')
@@ -61,7 +61,7 @@ describe('copyToClipboard', () => {
     expect(execCommandMock).toHaveBeenCalledWith('copy')
   })
 
-  it('clipboard API 抛错时回退 execCommand', async () => {
+  test('clipboard API 抛错时回退 execCommand', async () => {
     mockClipboard({ writeText: vi.fn().mockRejectedValue(new Error('NotAllowedError')) })
 
     const ok = await copyToClipboard('retry text')
@@ -70,7 +70,7 @@ describe('copyToClipboard', () => {
     expect(execCommandMock).toHaveBeenCalled()
   })
 
-  it('两条路径都失败时返回 false', async () => {
+  test('两条路径都失败时返回 false', async () => {
     mockClipboard({ writeText: vi.fn().mockRejectedValue(new Error('denied')) })
     execCommandMock.mockReturnValue(false)
 
@@ -80,7 +80,7 @@ describe('copyToClipboard', () => {
     expect(document.querySelector('textarea')).toBeNull()
   })
 
-  it('回退路径恢复用户原有文本选区', async () => {
+  test('回退路径恢复用户原有文本选区', async () => {
     mockClipboard(undefined)
 
     // 先制造一个现有选区
@@ -104,44 +104,44 @@ describe('copyToClipboard', () => {
 
 // 以下用例由 test/unit/frontend/utils/format.test.ts 归位合并（断言/用例零改动）
 describe('decodeUnicodeEscapes', () => {
-    it('无转义序列时原样返回（引用不变，零开销短路）', () => {
+    test('无转义序列时原样返回（引用不变，零开销短路）', () => {
         const text = '{"path": "src/main.ts", "content": "hello 中文"}'
         expect(decodeUnicodeEscapes(text)).toBe(text)
     })
 
-    it('解码基本中文转义序列', () => {
+    test('解码基本中文转义序列', () => {
         expect(decodeUnicodeEscapes('\\u4e2d\\u6587')).toBe('中文')
     })
 
-    it('解码混合在 JSON 文本中的转义序列', () => {
+    test('解码混合在 JSON 文本中的转义序列', () => {
         const input = '{"oldContent": "\\u5468\\u56f4\\u5168\\u5728", "path": "a.ts"}'
         expect(decodeUnicodeEscapes(input)).toBe('{"oldContent": "周围全在", "path": "a.ts"}')
     })
 
-    it('支持大写十六进制', () => {
+    test('支持大写十六进制', () => {
         expect(decodeUnicodeEscapes('\\u4E2D')).toBe('中')
     })
 
-    it('流式截断的尾部保持原样，完整部分正常解码', () => {
+    test('流式截断的尾部保持原样，完整部分正常解码', () => {
         expect(decodeUnicodeEscapes('\\u4e2d\\u65')).toBe('中\\u65')
         expect(decodeUnicodeEscapes('\\u')).toBe('\\u')
     })
 
-    it('成对反斜杠后的 uXXXX 是字面量，不被解码', () => {
+    test('成对反斜杠后的 uXXXX 是字面量，不被解码', () => {
         // JSON 里的 "\\\\u0041" 表示字面文本 \\u0041，不是转义
         expect(decodeUnicodeEscapes('\\\\u0041')).toBe('\\\\u0041')
     })
 
-    it('奇数个反斜杠：前两个保留，剩余的 \\uXXXX 正常解码', () => {
+    test('奇数个反斜杠：前两个保留，剩余的 \\uXXXX 正常解码', () => {
         // \\\\u0041 = 字面反斜杠 + 字符 A
         expect(decodeUnicodeEscapes('\\\\\\u0041')).toBe('\\\\A')
     })
 
-    it('代理对解码为完整 emoji', () => {
+    test('代理对解码为完整 emoji', () => {
         expect(decodeUnicodeEscapes('\\ud83d\\ude00')).toBe('😀')
     })
 
-    it('非十六进制的 \\u 序列保持原样', () => {
+    test('非十六进制的 \\u 序列保持原样', () => {
         expect(decodeUnicodeEscapes('\\uzzzz')).toBe('\\uzzzz')
     })
 })

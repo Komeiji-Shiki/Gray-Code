@@ -8,31 +8,19 @@
  *   run_created payload 暴露 depth、run 结束后摘除父子关系
  */
 
-import { createDefaultExecutor, resolveSubAgentAvailableTools } from '../../tools/subagents/executor';
+import { createDefaultExecutor, resolveSubAgentAvailableTools } from '../../tools/subagents';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
-import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
-import { subAgentRunController } from '../../tools/subagents/runController';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { subAgentRunEventBus } from '../../tools/subagents';
+import { subAgentRunController } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { GenerateResponse } from '../../modules/channel/types';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
 jest.mock('../../modules/channel/ToolDeclarationResolver', () => ({
     ToolDeclarationResolver: jest.fn()
 }));
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5,
-        maxRuntime: 300,
-        ...overrides
-    };
-}
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -85,9 +73,9 @@ describe('SubAgents 嵌套 - 可用工具集（executor 层）', () => {
         jest.clearAllMocks();
     });
 
-    it('excludeToolNames 不再包含 subagents，todo/memory 仍被排除', async () => {
+    test('excludeToolNames 不再包含 subagents，todo/memory 仍被排除', async () => {
         const resolveMock = mockResolveTools([]);
-        await resolveSubAgentAvailableTools(createConfig(), createContext());
+        await resolveSubAgentAvailableTools(createSubAgentConfig(), createContext());
 
         expect(resolveMock).toHaveBeenCalledTimes(1);
         const options = resolveMock.mock.calls[0][0];
@@ -97,10 +85,10 @@ describe('SubAgents 嵌套 - 可用工具集（executor 层）', () => {
         expect(options.excludeToolNames).toEqual(expect.arrayContaining(['memory_wake']));
     });
 
-    it('工具集包含 subagents 时 systemPrompt 追加中文嵌套说明', async () => {
+    test('工具集包含 subagents 时 systemPrompt 追加中文嵌套说明', async () => {
         mockResolveTools([{ name: 'subagents' }, { name: 'read_file' }]);
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -122,10 +110,10 @@ describe('SubAgents 嵌套 - 可用工具集（executor 层）', () => {
         expect(request.dynamicSystemPrompt).toContain('you are a test agent');
     });
 
-    it('工具集不包含 subagents 时不追加嵌套说明（白名单只读 agent 不收到提示）', async () => {
+    test('工具集不包含 subagents 时不追加嵌套说明（白名单只读 agent 不收到提示）', async () => {
         mockResolveTools([{ name: 'read_file' }]);
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -148,11 +136,11 @@ describe('SubAgents 嵌套 - 深度与父子关系（executor 层）', () => {
         jest.clearAllMocks();
     });
 
-    it('depth/parentRunId 随请求生效：记录深度、登记父子关系、run_created 暴露 depth、结束后摘除', async () => {
+    test('depth/parentRunId 随请求生效：记录深度、登记父子关系、run_created 暴露 depth、结束后摘除', async () => {
         mockResolveTools([]);
         let resolveGenerate: (v: unknown) => void = () => { };
         const generateMock = jest.fn(() => new Promise(r => { resolveGenerate = r; }));
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -184,10 +172,10 @@ describe('SubAgents 嵌套 - 深度与父子关系（executor 层）', () => {
         expect(subAgentRunController.getChildren('nested_parent')).not.toContain('nested_child');
     });
 
-    it('depth 缺省按 0 处理（主模型直接派发），不登记父子关系', async () => {
+    test('depth 缺省按 0 处理（主模型直接派发），不登记父子关系', async () => {
         mockResolveTools([]);
         const generateMock = jest.fn().mockResolvedValue(textResponse());
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 

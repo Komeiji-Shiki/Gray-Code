@@ -20,7 +20,7 @@ function functionResponseMessage(response: Record<string, unknown>): Content {
 }
 
 describe('TokenEstimationService functionResponse API parity', () => {
-    it('不把不会发送给模型的 diff 与 SubAgent UI 元数据计入裁剪预算（steps/toolsUsed 保留）', () => {
+    test('不把不会发送给模型的 diff 与 SubAgent UI 元数据计入裁剪预算（steps/toolsUsed 保留）', () => {
         const service = createService();
         const visibleResponse = {
             success: true,
@@ -43,7 +43,7 @@ describe('TokenEstimationService functionResponse API parity', () => {
             .toBe(service.estimateMessageTokens(functionResponseMessage(visibleResponse)));
     });
 
-    it('steps / toolsUsed 保留给 AI 后计入裁剪预算', () => {
+    test('steps / toolsUsed 保留给 AI 后计入裁剪预算', () => {
         const service = createService();
         const base = {
             success: true,

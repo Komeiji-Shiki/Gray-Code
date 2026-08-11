@@ -15,7 +15,7 @@
  */
 import { ref, nextTick } from 'vue'
 import type { Ref } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
@@ -112,7 +112,7 @@ function buildContinuingToolIteration(streamId = 'stream_1', conversationId = 'c
 }
 
 describe('streamHandler：toolIteration 动作边界触发排队消息提前投递', () => {
-  it('非终结 toolIteration（流继续）后调度 processQueueAfterAction', async () => {
+  test('非终结 toolIteration（流继续）后调度 processQueueAfterAction', async () => {
     const state = createState({
       allMessages: ref<Message[]>([createStreamingPlaceholder('msg_1')]),
       streamingMessageId: ref('msg_1'),
@@ -130,7 +130,7 @@ describe('streamHandler：toolIteration 动作边界触发排队消息提前投�
     expect(processQueueAfterAction).toHaveBeenCalledTimes(1)
   })
 
-  it('终结性 toolIteration（需用户确认门闸）不触发提前投递', async () => {
+  test('终结性 toolIteration（需用户确认门闸）不触发提前投递', async () => {
     const state = createState({
       allMessages: ref<Message[]>([createStreamingPlaceholder('msg_1')]),
       streamingMessageId: ref('msg_1'),
@@ -157,7 +157,7 @@ describe('streamHandler：toolIteration 动作边界触发排队消息提前投�
     expect(processQueueAfterAction).not.toHaveBeenCalled()
   })
 
-  it('content-less 终结 toolIteration 调度普通队列而不触发提前投递', async () => {
+  test('content-less 终结 toolIteration 调度普通队列而不触发提前投递', async () => {
     const state = createState({
       streamingMessageId: ref('msg_1'),
       activeStreamId: ref('stream_1'),
@@ -179,7 +179,7 @@ describe('streamHandler：toolIteration 动作边界触发排队消息提前投�
     expect(processQueueAfterAction).not.toHaveBeenCalled()
   })
 
-  it('complete 仍只调度 processQueue（回合结束投递路径不受影响）', async () => {
+  test('complete 仍只调度 processQueue（回合结束投递路径不受影响）', async () => {
     const state = createState({
       allMessages: ref<Message[]>([createStreamingPlaceholder('msg_1')]),
       streamingMessageId: ref('msg_1'),
@@ -206,7 +206,7 @@ describe('streamHandler：toolIteration 动作边界触发排队消息提前投�
     expect(processQueueAfterAction).not.toHaveBeenCalled()
   })
 
-  it('非当前会话 / 迟到流的 toolIteration 不触发提前投递', async () => {
+  test('非当前会话 / 迟到流的 toolIteration 不触发提前投递', async () => {
     const state = createState({
       allMessages: ref<Message[]>([createStreamingPlaceholder('msg_1')]),
       streamingMessageId: ref('msg_1'),
@@ -234,7 +234,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     )
   })
 
-  it('当前回合仍在响应中：先以 preserveSubAgents 取消旧流，再发送排队消息', async () => {
+  test('当前回合仍在响应中：先以 preserveSubAgents 取消旧流，再发送排队消息', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -263,7 +263,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(store.messageQueue).toHaveLength(0)
   })
 
-  it('队列为空时不发起任何 IPC', async () => {
+  test('队列为空时不发起任何 IPC', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -277,7 +277,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
   })
 
-  it('跨会话排队消息被跳过，保留在队列中等待归属会话', async () => {
+  test('跨会话排队消息被跳过，保留在队列中等待归属会话', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -298,7 +298,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(store.messageQueue[0].conversationId).toBe('conv_other')
   })
 
-  it('投递窗口内会话切换：放弃投递并放回队列，不发到错误会话', async () => {
+  test('投递窗口内会话切换：放弃投递并放回队列，不发到错误会话', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -326,7 +326,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(store.messageQueue[0].conversationId).toBe('conv_1')
   })
 
-  it('投递窗口内并发发送者抢先开启新流：放回队列，不降级为 inbox 中断', async () => {
+  test('投递窗口内并发发送者抢先开启新流：放回队列，不降级为 inbox 中断', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -357,7 +357,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(store.messageQueue[0].content).toBe('排队中的消息')
   })
 
-  it('发送失败时把消息放回队首，不静默丢失', async () => {
+  test('发送失败时把消息放回队首，不静默丢失', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -378,7 +378,7 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(store.messageQueue[0].content).toBe('会失败的消息')
   })
 
-  it('投递进行中不重入：同一动作边界只发送一条排队消息', async () => {
+  test('投递进行中不重入：同一动作边界只发送一条排队消息', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true

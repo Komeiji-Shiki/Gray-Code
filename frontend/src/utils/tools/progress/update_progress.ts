@@ -4,6 +4,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
+import { getToolMetaDescription } from '../toolMetaLookup'
 import { formatProgressToolFallbackContent } from '../../progressCards'
 
 registerTool('update_progress', {
@@ -15,7 +16,8 @@ registerTool('update_progress', {
     const currentFocus = (args as any)?.currentFocus as string | undefined
     if (path && path.trim()) return path.trim()
     if (currentFocus && currentFocus.trim()) return currentFocus.trim()
-    return t('components.message.tool.updateProgress.fallbackTitle')
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化标题
+    return getToolMetaDescription('update_progress') ?? t('components.message.tool.updateProgress.fallbackTitle')
   },
   contentFormatter: (args, result) => formatProgressToolFallbackContent('update_progress', args, result)
 })

@@ -8,7 +8,7 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult } from '../../types';
-import { getDiffManager } from '../diffManager';
+import { getDiffManager } from '../../../core/services/diffManager';
 import { resolveUriWithInfo, getAllWorkspaces, formatFileSize } from '../../utils';
 import { getDiffStorageManager } from '../../../modules/conversation';
 import { getGlobalSettingsManager } from '../../../core/settingsContext';

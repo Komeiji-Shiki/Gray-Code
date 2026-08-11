@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
@@ -362,7 +363,7 @@ async function requestRunWindow(runId: string | undefined, force = false) {
       window?: SubAgentRunContentWindow
       manifest?: SubAgentRunManifest
       activeRunIds?: string[]
-    }>('subagents.monitor.getRunWindow', {
+    }>(MESSAGE_NAMES['subagents.monitor.getRunWindow'], {
       runId,
       conversationId: manifest?.conversationId,
       options: { limit: DEFAULT_RUN_WINDOW_LIMIT, fromTail: true }
@@ -421,7 +422,7 @@ async function loadOlderMessages() {
       window?: SubAgentRunContentWindow
       manifest?: SubAgentRunManifest
       activeRunIds?: string[]
-    }>('subagents.monitor.getRunWindow', {
+    }>(MESSAGE_NAMES['subagents.monitor.getRunWindow'], {
       runId: run.runId,
       conversationId: run.conversationId,
       options: createPreviousRunWindowRequestOptions(currentWindow, DEFAULT_RUN_WINDOW_LIMIT)
@@ -1138,7 +1139,7 @@ onMounted(async () => {
     detachScrollListener = () => container.removeEventListener('scroll', handleScroll)
   }
 
-  const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>('subagents.monitorReady', {})
+  const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>(MESSAGE_NAMES['subagents.monitorReady'], {})
   applyManifestPayload(initial)
   const initialFocus = initial?.focusRunId || focusedManifest.value?.runId
   if (initialFocus) {

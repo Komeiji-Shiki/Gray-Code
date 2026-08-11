@@ -1,37 +1,21 @@
-import { SettingsManager, type SettingsStorage } from '../../../backend/modules/settings/SettingsManager'
+import { SettingsManager } from '../../../backend/modules/settings/SettingsManager'
 import {
   CHAT_HISTORY_PROMPT_ENTRY_ID,
   DEFAULT_SYSTEM_PROMPT_CONFIG,
-  type GlobalSettings,
   type PromptMode
 } from '../../../backend/modules/settings/types'
-
-class MemorySettingsStorage implements SettingsStorage {
-  private value: any
-
-  constructor(loaded: any = null) {
-    this.value = loaded
-  }
-
-  async load() {
-    return this.value
-  }
-
-  async save(settings: GlobalSettings) {
-    this.value = settings
-  }
-}
+import { createSettingsManager } from '../__fixtures__/settingsFixtures'
 
 function createManager() {
-  return new SettingsManager(new MemorySettingsStorage({
+  return createSettingsManager({
     toolsConfig: {
       system_prompt: DEFAULT_SYSTEM_PROMPT_CONFIG
     }
-  }))
+  })
 }
 
 describe('prompt assembly mode settings', () => {
-  it('adds exactly one chat-history entry when saving entries mode without one', async () => {
+  test('adds exactly one chat-history entry when saving entries mode without one', async () => {
     const manager = createManager()
     await manager.initialize()
 
@@ -69,7 +53,7 @@ describe('prompt assembly mode settings', () => {
     })
   })
 
-  it('does not force chat-history into legacy mode', async () => {
+  test('does not force chat-history into legacy mode', async () => {
     const manager = createManager()
     await manager.initialize()
 
@@ -89,7 +73,7 @@ describe('prompt assembly mode settings', () => {
     expect(saved.promptEntries).toBeUndefined()
   })
 
-  it('renames a newly saved custom mode without overwriting its config', async () => {
+  test('renames a newly saved custom mode without overwriting its config', async () => {
     const manager = createManager()
     await manager.initialize()
 

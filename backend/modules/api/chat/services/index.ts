@@ -1,5 +1,5 @@
 /**
- * LimCode - Chat 服务模块导出
+ * GrayCode - Chat 服务模块导出
  *
  * 统一导出所有 Chat 相关的服务类
  */
@@ -12,10 +12,11 @@ export { ToolExecutionService, type ToolExecutionFullResult, type ToolExecutionP
 export { SummarizeService } from './SummarizeService';
 export { CheckpointService } from './CheckpointService';
 export { DiffInterruptService } from './DiffInterruptService';
-export { ChatFlowService, type ChatStreamOutput } from './ChatFlowService';
+export { ChatFlowService, type ChatStreamOutput, type ChatStreamCancelledData } from './ChatFlowService';
 export {
   ToolIterationLoopService,
   type ToolIterationLoopConfig,
   type ToolIterationLoopOutput,
   type NonStreamToolLoopResult
 } from './ToolIterationLoopService';
+

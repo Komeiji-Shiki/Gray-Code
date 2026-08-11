@@ -1,3 +1,4 @@
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { sendToExtension } from './vscode'
 
 export interface ResolvedWorkspaceItem {
@@ -15,7 +16,7 @@ export async function resolveWorkspaceItems(inputs: string[]): Promise<ResolvedW
     if (!input) return null
 
     try {
-      const r = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>('getRelativePath', {
+      const r = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>(MESSAGE_NAMES.getRelativePath, {
         absolutePath: input
       })
       if (r?.relativePath) {

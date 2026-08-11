@@ -5,6 +5,7 @@
  * 逻辑逐字迁移：对话级隔离（快照回写）、归属校验等已修 bug 注释原样保留，一行未改。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Content } from '../../../types'
 import type { ChatStoreState } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
@@ -74,7 +75,7 @@ export async function summarizeContext(
       summaryContent?: any
       summarizedMessageCount?: number
       error?: { code: string; message: string }
-    }>('summarizeContext', {
+    }>(MESSAGE_NAMES.summarizeContext, {
       conversationId: originConversationId,
       configId: state.configId.value,
       modelOverride: resolveConversationModelOverride(state)
@@ -115,7 +116,7 @@ export async function cancelSummarizeRequest(state: ChatStoreState): Promise<voi
   if (!conversationId) return
 
   try {
-    await sendToExtension('cancelSummarizeRequest', { conversationId })
+    await sendToExtension(MESSAGE_NAMES.cancelSummarizeRequest, { conversationId })
   } catch (error) {
     console.error('[messageActions] Failed to cancel summarize request:', error)
   }
@@ -137,7 +138,7 @@ export async function restoreSummarizedMessages(
   if (!originConvId || !summaryMessageId) return false
 
   try {
-    const response = await sendToExtension<{ success: boolean }>('restoreSummarizedMessages', {
+    const response = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES.restoreSummarizedMessages, {
       conversationId: originConvId,
       summaryMessageId
     })
@@ -147,7 +148,7 @@ export async function restoreSummarizedMessages(
     if (!response?.success) return false
 
     // 重新加载最后一页，确保 backendIndex 与消息列表不错位（总结消息已删除、原文恢复显示）
-    const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+    const result = await sendToExtension<{ total: number; messages: Content[] }>(MESSAGE_NAMES['conversation.getMessagesPaged'], {
       conversationId: originConvId,
       limit: MESSAGES_PAGE_SIZE
     })

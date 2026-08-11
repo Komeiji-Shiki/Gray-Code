@@ -8,7 +8,7 @@
 import { serializeToolResultForLLM } from '../../modules/channel/formatters/toolResponseFormatter';
 
 describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
-    it('read_file 一项成功一项失败时，成功内容与失败详情都可见', () => {
+    test('read_file 一项成功一项失败时，成功内容与失败详情都可见', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: false,
             error: '1 file failed to read',
@@ -31,7 +31,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).toContain('[missing.txt, FAILED | {"error":"ENOENT"}]');
     });
 
-    it('成功内容包含 Windows 路径反斜杠时不发生二次转义', () => {
+    test('成功内容包含 Windows 路径反斜杠时不发生二次转义', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: false,
             error: '1 file failed to read',
@@ -51,7 +51,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).not.toContain('C:\\\\temp\\\\x.txt');
     });
 
-    it('失败项的 ENOENT 详情对模型可见', () => {
+    test('失败项的 ENOENT 详情对模型可见', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: false,
             error: '1 file failed to read',
@@ -69,7 +69,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).toContain('ENOENT');
     });
 
-    it('保留 data.output 特殊处理（execute_command 失败输出原格式）', () => {
+    test('保留 data.output 特殊处理（execute_command 失败输出原格式）', () => {
         const result = serializeToolResultForLLM('execute_command', {
             success: false,
             error: 'Command exited with code 1',
@@ -81,7 +81,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).toBe('Error: Command exited with code 1\n\nOutput:\nError: module not found\n  at main.js:1:5');
     });
 
-    it('用户取消时仍显示取消标记', () => {
+    test('用户取消时仍显示取消标记', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: false,
             error: 'User cancelled',
@@ -100,7 +100,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).toContain('[cancelled by user]');
     });
 
-    it('data.message 不再丢失', () => {
+    test('data.message 不再丢失', () => {
         const result = serializeToolResultForLLM('delete_file', {
             success: false,
             error: '1 file failed to delete',
@@ -119,7 +119,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).toContain('Message: Deleted 2 of 3 files');
     });
 
-    it('子代理失败路径（partialResponse）保留 steps/toolsUsed（HIGH-1）', () => {
+    test('子代理失败路径（partialResponse）保留 steps/toolsUsed（HIGH-1）', () => {
         const result = serializeToolResultForLLM('subagents', {
             success: false,
             error: 'SubAgent execution failed',
@@ -138,7 +138,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
         expect(result).toContain('已读完 2 页，发现 3 处问题…');
     });
 
-    it('子代理失败且未调用工具时输出 toolsUsed=[]（中性陈述）', () => {
+    test('子代理失败且未调用工具时输出 toolsUsed=[]（中性陈述）', () => {
         const result = serializeToolResultForLLM('subagents', {
             success: false,
             error: 'SubAgent execution failed',
@@ -157,7 +157,7 @@ describe('serializeToolResultForLLM - 部分成功结果（F-02）', () => {
 });
 
 describe('serializeToolResultForLLM - 原有行为不回归', () => {
-    it('全成功文本数组输出不变（无 Partial results 前缀）', () => {
+    test('全成功文本数组输出不变（无 Partial results 前缀）', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: true,
             data: {
@@ -176,7 +176,7 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
         expect(result).toContain('BBB');
     });
 
-    it('全结构化数组仍输出格式化 JSON', () => {
+    test('全结构化数组仍输出格式化 JSON', () => {
         const result = serializeToolResultForLLM('list_files', {
             success: true,
             data: {
@@ -195,7 +195,7 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
         }, null, 2));
     });
 
-    it('没有 data 的普通错误仍只输出错误信息', () => {
+    test('没有 data 的普通错误仍只输出错误信息', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: false,
             error: 'File not found'
@@ -204,7 +204,7 @@ describe('serializeToolResultForLLM - 原有行为不回归', () => {
         expect(result).toBe('Error: File not found');
     });
 
-    it('混合数组（部分含文本）在无错误时也逐项格式化，不做整体 JSON', () => {
+    test('混合数组（部分含文本）在无错误时也逐项格式化，不做整体 JSON', () => {
         const result = serializeToolResultForLLM('read_file', {
             success: true,
             data: {

@@ -8,7 +8,7 @@
  * → loadBranchGraph → state.branchGraph 更新 → BranchSwitcherBar 显示候选切换器。
  */
 import { ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, CheckpointRecord, BranchGraphData, BranchNodeData } from '../../stores/chat/types'
 import { handleStreamChunk } from '../../stores/chat/streamHandler'
@@ -120,7 +120,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     vi.mocked(sendToExtension).mockResolvedValue({ success: true })
   })
 
-  it('complete 终结 chunk 消费刷新标记并拉取分支图（branchGraph 更新）', async () => {
+  test('complete 终结 chunk 消费刷新标记并拉取分支图（branchGraph 更新）', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -177,7 +177,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(state.branchGraph.value?.nodes['msg_u2']?.kind).toBe('edit')
   })
 
-  it('cancelled 终结 chunk 同样消费刷新标记', async () => {
+  test('cancelled 终结 chunk 同样消费刷新标记', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -215,7 +215,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getBranchGraph')).toBeDefined()
   })
 
-  it('工具迭代终结（审批门闸）消费刷新标记', async () => {
+  test('工具迭代终结（审批门闸）消费刷新标记', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -266,7 +266,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'conversation.getBranchGraph')).toBeDefined()
   })
 
-  it('awaitingConfirmation 终结（工具待确认）同样消费刷新标记（主人实测回归）', async () => {
+  test('awaitingConfirmation 终结（工具待确认）同样消费刷新标记（主人实测回归）', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -318,7 +318,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(state.branchGraph.value?.nodes['msg_u2']?.kind).toBe('edit')
   })
 
-  it('complete 后窗口被编辑的用户消息 id 对齐图活跃候选（BranchSwitcherBar 立即显示回归）', async () => {
+  test('complete 后窗口被编辑的用户消息 id 对齐图活跃候选（BranchSwitcherBar 立即显示回归）', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -379,7 +379,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(buildCandidateGroupForNode(state.branchGraph.value, 'msg_u1')).toBeNull()
   })
 
-  it('分支流第一个输出到达即提前刷新分支图（标记不消费），终结时再刷新一次（主人实测回归）', async () => {
+  test('分支流第一个输出到达即提前刷新分支图（标记不消费），终结时再刷新一次（主人实测回归）', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -446,7 +446,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(state.branchGraph.value?.nodes['msg_u2']?.kind).toBe('edit')
   })
 
-  it('终结后同一会话再次编辑：新流仍能触发提前刷新（streamId 隔离 + 重置）', async () => {
+  test('终结后同一会话再次编辑：新流仍能触发提前刷新（streamId 隔离 + 重置）', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({
@@ -497,7 +497,7 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
 
-  it('当前会话与标记会话不一致时不提前刷新（会话隔离）', async () => {
+  test('当前会话与标记会话不一致时不提前刷新（会话隔离）', async () => {
     const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
     const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
     const state = createState({

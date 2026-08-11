@@ -15,7 +15,7 @@ import {
     AGENT_MESSAGE_MAX_LENGTH,
     AGENT_INBOX_MAX_MESSAGES,
     type AgentMessage
-} from '../../tools/subagents/agentMailbox';
+} from '../../core/services/agentMailbox';
 
 describe('AgentMailbox - 投递与消费', () => {
     let mailbox: AgentMailbox;
@@ -24,7 +24,7 @@ describe('AgentMailbox - 投递与消费', () => {
         mailbox = new AgentMailbox();
     });
 
-    it('同一对话下已知 run 之间可投递，drain 一次性取出并清空', () => {
+    test('同一对话下已知 run 之间可投递，drain 一次性取出并清空', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -61,13 +61,13 @@ describe('AgentMailbox - 投递与消费', () => {
         expect(mailbox.drainMessages('conv_1', 'run_b')).toHaveLength(0);
     });
 
-    it('未投递消息不会丢：drain 前 peek 为空，发送后才出现', () => {
+    test('未投递消息不会丢：drain 前 peek 为空，发送后才出现', () => {
         mailbox.registerRun('conv_1', 'run_b');
         expect(mailbox.peekMessages('conv_1', 'run_b')).toHaveLength(0);
         expect(mailbox.drainMessages('conv_1', 'run_b')).toHaveLength(0);
     });
 
-    it('多条消息按发送顺序投递', () => {
+    test('多条消息按发送顺序投递', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
         mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'first' });
@@ -85,7 +85,7 @@ describe('AgentMailbox - 权限（防冒充/注入）', () => {
         mailbox = new AgentMailbox();
     });
 
-    it('未知 targetRunId 被拒绝，并给出明确错误', () => {
+    test('未知 targetRunId 被拒绝，并给出明确错误', () => {
         mailbox.registerRun('conv_1', 'run_a');
         const result = mailbox.sendMessage({
             conversationId: 'conv_1',
@@ -99,7 +99,7 @@ describe('AgentMailbox - 权限（防冒充/注入）', () => {
         expect(result.error).toContain('same conversation');
     });
 
-    it('跨对话隔离：另一对话的 run 不可作为目标，也不可作为发送方', () => {
+    test('跨对话隔离：另一对话的 run 不可作为目标，也不可作为发送方', () => {
         mailbox.registerRun('conv_1', 'run_a');
         mailbox.registerRun('conv_2', 'run_b');
 
@@ -126,7 +126,7 @@ describe('AgentMailbox - 权限（防冒充/注入）', () => {
         expect(fakeSender.error).toContain('not a known run');
     });
 
-    it('缺少 conversationId / message / 目标 时拒绝', () => {
+    test('缺少 conversationId / message / 目标 时拒绝', () => {
         mailbox.registerRun('conv_1', 'run_a');
         mailbox.registerRun('conv_1', 'run_b');
 
@@ -160,7 +160,7 @@ describe('AgentMailbox - 权限（防冒充/注入）', () => {
         expect(noTarget.error).toContain('targetRunId or targetAgentName');
     });
 
-    it('主会话（MAIN_SESSION_RUN_ID）隐式已知，可作目标与发送方', () => {
+    test('主会话（MAIN_SESSION_RUN_ID）隐式已知，可作目标与发送方', () => {
         mailbox.registerRun('conv_1', 'run_a');
 
         const toMain = mailbox.sendMessage({
@@ -196,7 +196,7 @@ describe('AgentMailbox - 按 agent 名称寻址', () => {
         mailbox = new AgentMailbox();
     });
 
-    it('targetAgentName 解析到本对话下已注册的同名 run', () => {
+    test('targetAgentName 解析到本对话下已注册的同名 run', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_coder', 'coder');
         mailbox.registerRun('conv_2', 'run_other_coder', 'coder');
@@ -212,7 +212,7 @@ describe('AgentMailbox - 按 agent 名称寻址', () => {
         expect(sent.data.toRunId).toBe('run_coder');
     });
 
-    it('同名多 run 并行时投给最近注册的 run', () => {
+    test('同名多 run 并行时投给最近注册的 run', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_coder_1', 'coder');
         mailbox.registerRun('conv_1', 'run_coder_2', 'coder');
@@ -228,7 +228,7 @@ describe('AgentMailbox - 按 agent 名称寻址', () => {
         expect(sent.data.toRunId).toBe('run_coder_2');
     });
 
-    it('未知 agent 名称被拒绝，且提示可用寻址方式', () => {
+    test('未知 agent 名称被拒绝，且提示可用寻址方式', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         const result = mailbox.sendMessage({
             conversationId: 'conv_1',
@@ -242,7 +242,7 @@ describe('AgentMailbox - 按 agent 名称寻址', () => {
         expect(result.error).toContain('"main"');
     });
 
-    it('targetAgentName = main 解析到主会话', () => {
+    test('targetAgentName = main 解析到主会话', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         const sent = mailbox.sendMessage({
             conversationId: 'conv_1',
@@ -263,7 +263,7 @@ describe('AgentMailbox - threadId + hopDepth 防循环', () => {
         mailbox = new AgentMailbox();
     });
 
-    it('同一线程回复 hopDepth 递增，新线程从 1 开始', () => {
+    test('同一线程回复 hopDepth 递增，新线程从 1 开始', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -286,7 +286,7 @@ describe('AgentMailbox - threadId + hopDepth 防循环', () => {
         expect(third.data.hopDepth).toBe(1);
     });
 
-    it(`超过 MAX_HOP_DEPTH(${MAX_HOP_DEPTH}) 时拒绝投递并返回明确错误`, () => {
+    test(`超过 MAX_HOP_DEPTH(${MAX_HOP_DEPTH}) 时拒绝投递并返回明确错误`, () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -325,7 +325,7 @@ describe('AgentMailbox - threadId + hopDepth 防循环', () => {
         expect(mailbox.getPendingMessageCount()).toBe(MAX_HOP_DEPTH);
     });
 
-    it('深度按线程独立：另一线程不受影响', () => {
+    test('深度按线程独立：另一线程不受影响', () => {
         mailbox.registerRun('conv_1', 'run_a');
         mailbox.registerRun('conv_1', 'run_b');
 
@@ -357,7 +357,7 @@ describe('AgentMailbox - 消息长度与 inbox 条数上限', () => {
         mailbox = new AgentMailbox();
     });
 
-    it(`text 超过 AGENT_MESSAGE_MAX_LENGTH(${AGENT_MESSAGE_MAX_LENGTH}) 时拒绝投递，错误信息含上限说明`, () => {
+    test(`text 超过 AGENT_MESSAGE_MAX_LENGTH(${AGENT_MESSAGE_MAX_LENGTH}) 时拒绝投递，错误信息含上限说明`, () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -376,7 +376,7 @@ describe('AgentMailbox - 消息长度与 inbox 条数上限', () => {
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it(`text 恰好等于 AGENT_MESSAGE_MAX_LENGTH 时正常投递`, () => {
+    test(`text 恰好等于 AGENT_MESSAGE_MAX_LENGTH 时正常投递`, () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
         const exact = 'x'.repeat(AGENT_MESSAGE_MAX_LENGTH);
@@ -390,7 +390,7 @@ describe('AgentMailbox - 消息长度与 inbox 条数上限', () => {
         expect(mailbox.drainMessages('conv_1', 'run_b')[0].text.length).toBe(AGENT_MESSAGE_MAX_LENGTH);
     });
 
-    it(`目标 inbox 达 AGENT_INBOX_MAX_MESSAGES(${AGENT_INBOX_MAX_MESSAGES}) 条时拒绝后续投递，drain 后可继续`, () => {
+    test(`目标 inbox 达 AGENT_INBOX_MAX_MESSAGES(${AGENT_INBOX_MAX_MESSAGES}) 条时拒绝后续投递，drain 后可继续`, () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
 
@@ -429,7 +429,7 @@ describe('AgentMailbox - 消息长度与 inbox 条数上限', () => {
         expect(after.success).toBe(true);
     });
 
-    it('inbox 上限按收件方独立统计，不影响其它收件方', () => {
+    test('inbox 上限按收件方独立统计，不影响其它收件方', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
         mailbox.registerRun('conv_1', 'run_c', 'Agent C');
@@ -452,7 +452,7 @@ describe('AgentMailbox - 清理', () => {
         mailbox = new AgentMailbox();
     });
 
-    it('unregisterRun 注销已知记录并清空该 run 的 inbox', () => {
+    test('unregisterRun 注销已知记录并清空该 run 的 inbox', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
         mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_b', text: 'hi' });
@@ -469,7 +469,7 @@ describe('AgentMailbox - 清理', () => {
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('clearConversation 清理该对话的全部信箱状态', () => {
+    test('clearConversation 清理该对话的全部信箱状态', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.registerRun('conv_1', 'run_b', 'Agent B');
         mailbox.registerRun('conv_2', 'run_c', 'Agent C');
@@ -484,7 +484,7 @@ describe('AgentMailbox - 清理', () => {
         expect(mailbox.isKnownRun('conv_2', 'run_c')).toBe(true);
     });
 
-    it('clearMainSessionInbox 只重置回合频率状态，不删除未读主会话/子代理消息', () => {
+    test('clearMainSessionInbox 只重置回合频率状态，不删除未读主会话/子代理消息', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: MAIN_SESSION_RUN_ID, text: 'to main' });
         mailbox.sendMessage({ conversationId: 'conv_1', fromRunId: 'run_a', targetRunId: 'run_a', text: 'self' });
@@ -505,7 +505,7 @@ describe('AgentMailbox - 清理', () => {
         expect(mailbox.peekMessages('conv_2', MAIN_SESSION_RUN_ID)).toHaveLength(1);
     });
 
-    it('主会话 claim 采用确认/退回语义，空闲投递失败不会丢消息', () => {
+    test('主会话 claim 采用确认/退回语义，空闲投递失败不会丢消息', () => {
         mailbox.registerRun('conv_1', 'run_a', 'Agent A');
         mailbox.sendMessage({
             conversationId: 'conv_1',
@@ -529,7 +529,7 @@ describe('AgentMailbox - 清理', () => {
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('正常完成边界原子关闭：有消息时保持 run，可消费完后再关闭', () => {
+    test('正常完成边界原子关闭：有消息时保持 run，可消费完后再关闭', () => {
         mailbox.registerRun('conv_1', 'run_target', 'Target');
         mailbox.sendMessage({
             conversationId: 'conv_1',
@@ -549,19 +549,19 @@ describe('AgentMailbox - 清理', () => {
         expect(mailbox.isKnownRun('conv_1', 'run_target')).toBe(false);
     });
 
-    it('clearMainSessionInbox 缺 conversationId 为 no-op 不抛错', () => {
+    test('clearMainSessionInbox 缺 conversationId 为 no-op 不抛错', () => {
         mailbox.clearMainSessionInbox('');
         mailbox.clearMainSessionInbox(undefined as any);
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('注册主会话 runId 为 no-op（主会话隐式已知）', () => {
+    test('注册主会话 runId 为 no-op（主会话隐式已知）', () => {
         mailbox.registerRun('conv_1', MAIN_SESSION_RUN_ID, 'whatever');
         expect(mailbox.isKnownRun('conv_1', MAIN_SESSION_RUN_ID)).toBe(true);
         expect(mailbox.getAgentName('conv_1', MAIN_SESSION_RUN_ID)).toBe(MAIN_AGENT_NAME);
     });
 
-    it('缺少 conversationId/runId 的注册与注销为 no-op 不抛错', () => {
+    test('缺少 conversationId/runId 的注册与注销为 no-op 不抛错', () => {
         mailbox.registerRun(undefined, 'run_x');
         mailbox.registerRun('conv_1', undefined);
         mailbox.unregisterRun(undefined, 'run_x');
@@ -575,7 +575,7 @@ describe('AgentMailbox - 全局单例', () => {
         agentMailbox.clearAll();
     });
 
-    it('全局单例可注册、投递并消费', () => {
+    test('全局单例可注册、投递并消费', () => {
         agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
         agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
         const sent = agentMailbox.sendMessage({

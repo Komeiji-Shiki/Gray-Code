@@ -1,3 +1,4 @@
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { nextTick, watch, type WatchStopHandle } from 'vue'
 import type { ErrorInfo, Message, ToolUsage } from '../types'
 import { getSoundSettings, type NormalizedUISoundSettings } from './soundCues'
@@ -371,7 +372,7 @@ export class AgentStopNotificationController {
       // 发送前再校验一次：dispose 后不再发起新的通知请求
       if (this.disposed) return
       console.debug(LOG_PREFIX, 'sending notification payload to extension', payload)
-      const result = await this.sendToExtension('notifications.agentStop', payload)
+      const result = await this.sendToExtension(MESSAGE_NAMES['notifications.agentStop'], payload)
       console.debug(LOG_PREFIX, 'extension responded to notification payload', result)
     } catch (error) {
       console.error('[agent-stop-notification] Failed to send notification payload:', error)

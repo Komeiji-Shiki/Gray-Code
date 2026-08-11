@@ -8,11 +8,12 @@
  * - 展示格式化辅助（时间/大小/数量/阶段/类型/工具名）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useChatStore } from '@/stores'
 import { t } from '@/i18n'
-import type { CheckpointRecord } from '@/types'
+import type { CheckpointRecord, CheckpointSummaryWithSize } from '@/types'
 import { getToolDisplayName } from './useCheckpointConfig'
 
 // 对话检查点信息
@@ -53,9 +54,9 @@ export function useCheckpointCleanup() {
   // 批量管理：对话多选
   const selectedConversationIds = ref<Set<string>>(new Set())
 
-  // 批量管理：展开对话的存档点列表
+  // 批量管理：展开对话的存档点列表（getCheckpoints withSize 响应：契约 CheckpointSummaryWithSize）
   const expandedConversationId = ref<string | null>(null)
-  const expandedCheckpoints = ref<Array<CheckpointRecord & { size?: number }>>([])
+  const expandedCheckpoints = ref<Array<CheckpointSummaryWithSize>>([])
   const selectedCheckpointIds = ref<Set<string>>(new Set())
   const isExpandedLoading = ref(false)
   const isBatchDeleting = ref(false)
@@ -127,7 +128,7 @@ export function useCheckpointCleanup() {
     isCleanupLoading.value = true
     try {
       const response = await sendToExtension<{ conversations: ConversationWithCheckpoints[] }>(
-        'checkpoint.getAllConversationsWithCheckpoints',
+        MESSAGE_NAMES['checkpoint.getAllConversationsWithCheckpoints'],
         {}
       )
       // 过期响应（序号落后）不覆盖列表，避免旧请求覆盖新请求结果
@@ -185,8 +186,8 @@ export function useCheckpointCleanup() {
     const requestSeq = ++expandedLoadRequestSeq
     isExpandedLoading.value = true
     try {
-      const response = await sendToExtension<{ checkpoints: Array<CheckpointRecord & { size?: number }> }>(
-        'checkpoint.getCheckpoints',
+      const response = await sendToExtension<{ checkpoints: CheckpointSummaryWithSize[] }>(
+        MESSAGE_NAMES['checkpoint.getCheckpoints'],
         { conversationId, withSize: true }
       )
       // M-5: 过期响应竞态防护——响应返回时仍展开同一对话才赋值，
@@ -260,7 +261,7 @@ export function useCheckpointCleanup() {
   }
 
   // 请求删除单个存档点
-  function requestDeleteSingleCheckpoint(cp: CheckpointRecord & { size?: number }) {
+  function requestDeleteSingleCheckpoint(cp: CheckpointSummaryWithSize) {
     if (isBatchDeleting.value) return
     selectedCheckpointIds.value = new Set([cp.id])
     deleteConfirmState.value = {
@@ -327,7 +328,7 @@ export function useCheckpointCleanup() {
           totalFailed = 1
         } else {
           const items = conversationIds.map(conversationId => ({ conversationId, checkpointIds: [] as string[] }))
-          const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
+          const resp = await sendToExtension<any>(MESSAGE_NAMES['checkpoint.deleteBatch'], { items })
           const results = Array.isArray(resp?.results) ? resp.results : []
           totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
           totalFailed = results.filter((r: any) => !r.success).length
@@ -372,7 +373,7 @@ export function useCheckpointCleanup() {
           totalFailed = 1
         } else {
           const items = [{ conversationId, checkpointIds }]
-          const resp = await sendToExtension<any>('checkpoint.deleteBatch', { items })
+          const resp = await sendToExtension<any>(MESSAGE_NAMES['checkpoint.deleteBatch'], { items })
           const results = Array.isArray(resp?.results) ? resp.results : []
           totalRejected = results.reduce((sum: number, r: any) => sum + (r.rejectedIds?.length || 0), 0)
           totalFailed = results.filter((r: any) => !r.success).length
@@ -454,7 +455,8 @@ export function useCheckpointCleanup() {
   }
 
   // 未备份文件的悬停提示：展示前 10 个路径（去掉工作区作用域前缀，展示相对路径）
-  function getUnbackedPathsTitle(cp: CheckpointRecord & { size?: number }): string {
+  // 注：getCheckpoints 只下发摘要（无 unbackedPaths），该字段仅旧存档兼容，恒缺省（防御读取）
+  function getUnbackedPathsTitle(cp: CheckpointRecord): string {
     const paths = (cp.unbackedPaths || []).map(toDisplayScopedPath)
     const shown = paths.slice(0, 10).join('\n')
     return paths.length > 10 ? `${shown}\n... 等 ${paths.length} 个文件` : shown

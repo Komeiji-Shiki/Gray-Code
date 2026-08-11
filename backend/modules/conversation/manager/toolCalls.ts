@@ -327,28 +327,61 @@ export class ConversationToolCallService {
                 // （用户消息已追加、旧流迟到结算）末尾追加会形成 [assistant(tool_calls), user,
                 // tool] 的非法交替顺序，触发 OpenAI/Anthropic 400。插回 FR 块保证 assistant
                 // 的 tool_calls 永远紧随其 tool 消息，且与前端窗口（按 FR 块顺序渲染）对齐。
-                let ownerMessageIndex = -1;
-                for (let i = 0; i < history.length; i++) {
-                    const msg = history[i];
-                    if (!msg.parts) continue;
-                    for (const part of msg.parts) {
-                        if (part.functionCall?.id && settledResponseIds.has(part.functionCall.id)) {
-                            ownerMessageIndex = i;
+                // 按「消息内 FR 块顺序」逐归属插入：同一批结算可能覆盖多个 functionCall 消息，
+                // 旧实现取「含已结算 id 的最后一条消息」整体插入，早先消息的响应会被插到其它
+                // 消息的 FR 块之后，与 functionCall 输出顺序错位。先按归属消息分组并预计算插入
+                // 位置（基于插入前的历史），再从后往前插入（避免先插入引起的下标偏移）；
+                // 同归属的多条响应仍合并为一条 FR 消息。
+                const partsByOwner = new Map<number, ContentPart[]>();
+                for (const part of newParts) {
+                    const id = part.functionResponse?.id;
+                    let ownerIndex = -1;
+                    if (id) {
+                        // 有 id：定位所属 functionCall 消息
+                        for (let i = 0; i < history.length; i++) {
+                            const msg = history[i];
+                            if (!msg.parts) {
+                                continue;
+                            }
+                            if (msg.parts.some(p => p.functionCall?.id === id)) {
+                                ownerIndex = i;
+                                break;
+                            }
                         }
                     }
+                    if (ownerIndex === -1) {
+                        // 无 id 的 part（如多模态附件）没有归属 functionCall，按上方注释承诺
+                        // 一律归入历史末尾追加；兼作防御：找不到归属消息（不应发生——上方已按
+                        // functionCallIds 过滤过无归属的迟到结果）时与旧行为一致归入末尾。
+                        ownerIndex = history.length;
+                    }
+                    const group = partsByOwner.get(ownerIndex) ?? [];
+                    group.push(part);
+                    partsByOwner.set(ownerIndex, group);
                 }
-                // 找不到归属消息时回退到历史末尾（保持与旧行为一致，不应实际发生：
-                // 上方已按 functionCallIds 过滤过无归属的迟到结果）
-                const insertAt = ownerMessageIndex !== -1
-                    ? findFunctionResponseInsertIndex(history, ownerMessageIndex)
-                    : history.length;
-                const parent = insertAt > 0 ? history[insertAt - 1] : null;
-                history.splice(insertAt, 0, ensureNodeId({
-                    role: 'user',
-                    parts: newParts,
-                    isFunctionResponse: true,
-                }, parent));
-                changed = true;
+                const ownerIndices = Array.from(partsByOwner.keys());
+                const insertAtByOwner = new Map<number, number>();
+                for (const ownerIndex of ownerIndices) {
+                    insertAtByOwner.set(ownerIndex, ownerIndex < history.length
+                        ? findFunctionResponseInsertIndex(history, ownerIndex)
+                        : history.length);
+                }
+                ownerIndices.sort((a, b) => b - a);
+                for (const ownerIndex of ownerIndices) {
+                    const groupParts = partsByOwner.get(ownerIndex)!;
+                    const insertAt = insertAtByOwner.get(ownerIndex)!;
+                    const parent = insertAt > 0 ? history[insertAt - 1] : null;
+                    history.splice(insertAt, 0, ensureNodeId({
+                        role: 'user',
+                        parts: groupParts,
+                        isFunctionResponse: true,
+                    }, parent));
+                }
+                // 每个 newPart 都会进入分组并被实际插入；仅在有真实插入时置 changed，
+                // 避免全部 part 被跳过时仍返回新引用触发空写回。
+                if (partsByOwner.size > 0) {
+                    changed = true;
+                }
             }
 
             // 只有真实响应已经存在或将在本次变更中追加时才清除 rejected。

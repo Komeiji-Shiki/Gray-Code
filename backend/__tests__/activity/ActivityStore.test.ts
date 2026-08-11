@@ -28,14 +28,14 @@ describe('ActivityStore', () => {
     });
 
     describe('toDateStr', () => {
-        it('formats local date as YYYY-MM-DD', () => {
+        test('formats local date as YYYY-MM-DD', () => {
             const t = localTime(new Date(2026, 7, 6), 10, 0);
             expect(toDateStr(t)).toBe('2026-08-06');
         });
     });
 
     describe('appendSample / loadDay', () => {
-        it('appends samples in order', async () => {
+        test('appends samples in order', async () => {
             const t = localTime(new Date(), 10, 0);
             expect(await store.appendSample(t)).toBe(true);
             expect(await store.appendSample(t + 60_000)).toBe(true);
@@ -43,7 +43,7 @@ describe('ActivityStore', () => {
             expect(samples).toEqual([t, t + 60_000]);
         });
 
-        it('deduplicates samples within the same second', async () => {
+        test('deduplicates samples within the same second', async () => {
             const t = localTime(new Date(), 10, 0);
             await store.appendSample(t);
             expect(await store.appendSample(t + 500)).toBe(false);
@@ -51,7 +51,7 @@ describe('ActivityStore', () => {
             expect(samples).toHaveLength(1);
         });
 
-        it('keeps samples sorted even when appended out of order', async () => {
+        test('keeps samples sorted even when appended out of order', async () => {
             const t = localTime(new Date(), 10, 0);
             await store.appendSample(t + 120_000);
             await store.appendSample(t + 60_000);
@@ -59,13 +59,13 @@ describe('ActivityStore', () => {
             expect(samples).toEqual([t + 60_000, t + 120_000]);
         });
 
-        it('returns empty array for missing day', async () => {
+        test('returns empty array for missing day', async () => {
             expect(await store.loadDay('2026-01-01')).toEqual([]);
         });
     });
 
     describe('flushDay', () => {
-        it('persists samples to disk (round-trip via new store instance)', async () => {
+        test('persists samples to disk (round-trip via new store instance)', async () => {
             const date = toDateStr(localTime(new Date(), 10, 0));
             const t = localTime(new Date(), 10, 0);
             await store.appendSample(t);
@@ -81,7 +81,7 @@ describe('ActivityStore', () => {
             expect(await fresh.loadDay(date)).toEqual([t, t + 60_000]);
         });
 
-        it('flushDay() without arg flushes today', async () => {
+        test('flushDay() without arg flushes today', async () => {
             const t = localTime(new Date(), 10, 0);
             await store.appendSample(t);
             await store.flushDay();
@@ -89,12 +89,12 @@ describe('ActivityStore', () => {
             await expect(fs.access(filePath)).resolves.toBeUndefined();
         });
 
-        it('does not create a file when there are no samples', async () => {
+        test('does not create a file when there are no samples', async () => {
             await store.flushDay('2026-01-01');
             await expect(fs.access(path.join(dir, '2026-01-01.json'))).rejects.toThrow();
         });
 
-        it('recovers from a corrupted file (returns empty and removes it)', async () => {
+        test('recovers from a corrupted file (returns empty and removes it)', async () => {
             const date = '2026-01-02';
             await fs.mkdir(dir, { recursive: true });
             await fs.writeFile(path.join(dir, `${date}.json`), '{ not valid json', 'utf-8');
@@ -107,7 +107,7 @@ describe('ActivityStore', () => {
     });
 
     describe('listDays / loadRecentDays', () => {
-        it('lists only YYYY-MM-DD.json files in ascending order', async () => {
+        test('lists only YYYY-MM-DD.json files in ascending order', async () => {
             await fs.mkdir(dir, { recursive: true });
             await fs.writeFile(path.join(dir, '2026-08-05.json'), '{}', 'utf-8');
             await fs.writeFile(path.join(dir, '2026-08-06.json'), '{}', 'utf-8');
@@ -115,7 +115,7 @@ describe('ActivityStore', () => {
             expect(await store.listDays()).toEqual(['2026-08-05', '2026-08-06']);
         });
 
-        it('loadRecentDays returns count days ending today, filling missing days with empty', async () => {
+        test('loadRecentDays returns count days ending today, filling missing days with empty', async () => {
             const today = new Date();
             const yesterday = new Date(today);
             yesterday.setDate(yesterday.getDate() - 1);

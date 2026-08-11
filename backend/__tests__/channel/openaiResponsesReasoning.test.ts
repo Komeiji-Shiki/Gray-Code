@@ -1,35 +1,11 @@
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
-import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
+import { StreamAccumulator } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
+import { createOpenAIResponsesConfig } from '../__fixtures__/channelFixtures';
 
-function createConfig(overrides: Record<string, any> = {}): any {
-    return {
-        id: 'responses-test',
-        name: 'Responses Test',
-        type: 'openai-responses',
-        enabled: true,
-        url: 'https://api.openai.com/v1',
-        apiKey: 'test-key',
-        model: 'gpt-5',
-        preferStream: true,
-        timeout: 30000,
-        toolMode: 'function_call',
-        sendHistoryThoughtSignatures: true,
-        optionsEnabled: { reasoning: true },
-        options: {
-            stream: true,
-            reasoning: {
-                effort: 'medium',
-                summaryEnabled: true,
-                summary: 'auto'
-            }
-        },
-        ...overrides
-    };
-}
 
 describe('OpenAI Responses reasoning 与 usage', () => {
-    it('非流式 candidatesTokenCount 使用含 reasoning 的总 output_tokens', () => {
+    test('非流式 candidatesTokenCount 使用含 reasoning 的总 output_tokens', () => {
         const formatter = new OpenAIResponsesFormatter();
         const response = formatter.parseResponse({
             model: 'gpt-5',
@@ -57,7 +33,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         });
     });
 
-    it('流式 completed usage 同样使用含 reasoning 的总 output_tokens', () => {
+    test('流式 completed usage 同样使用含 reasoning 的总 output_tokens', () => {
         const formatter = new OpenAIResponsesFormatter();
         const chunk = formatter.parseStreamChunk({
             type: 'response.completed',
@@ -82,7 +58,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         });
     });
 
-    it('流式摘要与 done reasoning item 合并为可回传的单一 part', () => {
+    test('流式摘要与 done reasoning item 合并为可回传的单一 part', () => {
         const formatter = new OpenAIResponsesFormatter();
         const accumulator = new StreamAccumulator('function_call', () => 'test_call');
         accumulator.setProviderType('openai-responses');
@@ -120,7 +96,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         });
     });
 
-    it('下一轮按官方 reasoning item 格式回传 id、summary 与 encrypted_content', () => {
+    test('下一轮按官方 reasoning item 格式回传 id、summary 与 encrypted_content', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -139,7 +115,20 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             { role: 'user', parts: [{ text: 'Continue.' }] }
         ];
 
-        const request = formatter.buildRequest({ configId: 'responses-test', history }, createConfig());
+        const request = formatter.buildRequest({ configId: 'responses-test', history }, createOpenAIResponsesConfig({
+            id: 'responses-test',
+            name: 'Responses Test',
+            preferStream: true,
+            sendHistoryThoughtSignatures: true,
+            options: {
+                stream: true,
+                reasoning: {
+                    effort: 'medium',
+                    summaryEnabled: true,
+                    summary: 'auto'
+                }
+            }
+        }));
         const reasoningItem = request.body.input.find((item: any) => item.type === 'reasoning');
 
         expect(request.body.include).toEqual(['reasoning.encrypted_content']);
@@ -154,7 +143,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(reasoningItem).not.toHaveProperty('content');
     });
 
-    it('关闭「发送思考签名」时不回传 reasoning item（兼容不支持 reasoning 输入的第三方端点）', () => {
+    test('关闭「发送思考签名」时不回传 reasoning item（兼容不支持 reasoning 输入的第三方端点）', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -175,7 +164,20 @@ describe('OpenAI Responses reasoning 与 usage', () => {
 
         const request = formatter.buildRequest(
             { configId: 'responses-test', history },
-            createConfig({ sendHistoryThoughtSignatures: false })
+            createOpenAIResponsesConfig({
+                id: 'responses-test',
+                name: 'Responses Test',
+                preferStream: true,
+                sendHistoryThoughtSignatures: false,
+                options: {
+                    stream: true,
+                    reasoning: {
+                        effort: 'medium',
+                        summaryEnabled: true,
+                        summary: 'auto'
+                    }
+                }
+            })
         );
         const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
         const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')

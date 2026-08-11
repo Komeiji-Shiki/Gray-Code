@@ -30,7 +30,7 @@ describe('outside workspace file access policy', () => {
         setGlobalSettingsManager(settingsManager);
     });
 
-    it('denies outside-workspace reads by default without showing VS Code modal', () => {
+    test('denies outside-workspace reads by default without showing VS Code modal', () => {
         const args = { files: [{ path: outsidePath }] };
         const result = getOutsideWorkspaceAccessCheck('read_file', args, settingsManager);
 
@@ -39,7 +39,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('allows outside-workspace reads directly when configured', async () => {
+    test('allows outside-workspace reads directly when configured', async () => {
         await settingsManager.updateToolConfig('read_file', { outsideWorkspaceAccess: 'allow' });
 
         const args = { files: [{ path: outsidePath }] };
@@ -51,7 +51,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('routes outside-workspace reads through the original tool confirmation when configured as ask', async () => {
+    test('routes outside-workspace reads through the original tool confirmation when configured as ask', async () => {
         await settingsManager.updateToolConfig('read_file', { outsideWorkspaceAccess: 'ask' });
 
         const args = { files: [{ path: outsidePath }] };
@@ -62,7 +62,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('denies outside-workspace writes by default', () => {
+    test('denies outside-workspace writes by default', () => {
         const args = { files: [{ path: outsidePath, content: 'x' }] };
         const error = getOutsideWorkspaceRejectionReason('write_file', args, settingsManager);
 
@@ -70,7 +70,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('uses manual diff review as the outside-workspace confirmation for writes when configured as ask', async () => {
+    test('uses manual diff review as the outside-workspace confirmation for writes when configured as ask', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
 
         const args = { files: [{ path: outsidePath, content: 'x' }] };
@@ -80,7 +80,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('skips generic tool confirmation for outside-workspace writes that use manual diff review', async () => {
+    test('skips generic tool confirmation for outside-workspace writes that use manual diff review', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
         await settingsManager.setToolAutoExec('write_file', false);
 
@@ -93,7 +93,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('skips generic tool confirmation for workspace writes that use manual diff review', async () => {
+    test('skips generic tool confirmation for workspace writes that use manual diff review', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
         await settingsManager.setToolAutoExec('write_file', false);
 
@@ -103,7 +103,7 @@ describe('outside workspace file access policy', () => {
         expect(service.toolNeedsConfirmation('write_file', args)).toBe(false);
     });
 
-    it('routes outside-workspace writes through tool confirmation when auto applying diffs', async () => {
+    test('routes outside-workspace writes through tool confirmation when auto applying diffs', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
         await settingsManager.updateApplyDiffConfig({ autoSave: true });
 
@@ -115,7 +115,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('uses manual diff review as the outside-workspace confirmation for apply_diff when configured as ask', async () => {
+    test('uses manual diff review as the outside-workspace confirmation for apply_diff when configured as ask', async () => {
         await settingsManager.updateApplyDiffConfig({ outsideWorkspaceAccess: 'ask' });
 
         const args = { path: outsidePath, patch: '@@ -1,1 +1,1 @@\n-old\n+new' };
@@ -125,7 +125,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('skips generic tool confirmation for outside-workspace apply_diff that uses manual diff review', async () => {
+    test('skips generic tool confirmation for outside-workspace apply_diff that uses manual diff review', async () => {
         await settingsManager.updateApplyDiffConfig({ outsideWorkspaceAccess: 'ask' });
         await settingsManager.setToolAutoExec('apply_diff', false);
 
@@ -138,7 +138,7 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('routes outside-workspace apply_diff through tool confirmation when auto applying diffs', async () => {
+    test('routes outside-workspace apply_diff through tool confirmation when auto applying diffs', async () => {
         await settingsManager.updateApplyDiffConfig({ outsideWorkspaceAccess: 'ask', autoSave: true });
 
         const args = { path: outsidePath, patch: '@@ -1,1 +1,1 @@\n-old\n+new' };
@@ -149,20 +149,20 @@ describe('outside workspace file access policy', () => {
         expect(vscode.window.showWarningMessage).not.toHaveBeenCalled();
     });
 
-    it('denies outside-workspace delete_file by default (previously bypassed policy entirely)', () => {
+    test('denies outside-workspace delete_file by default (previously bypassed policy entirely)', () => {
         const error = getOutsideWorkspaceRejectionReason('delete_file', { paths: [outsidePath] }, settingsManager);
 
         expect(error).toContain('disabled in settings');
     });
 
-    it('covers the read_file paths-array form (previously only path/files were checked)', () => {
+    test('covers the read_file paths-array form (previously only path/files were checked)', () => {
         const result = getOutsideWorkspaceAccessCheck('read_file', { paths: [outsidePath] }, settingsManager);
 
         expect(result.isOutsideWorkspace).toBe(true);
         expect(result.denied).toBe(true);
     });
 
-    it('uses manual diff review as the outside-workspace confirmation for insert_code when configured as ask', async () => {
+    test('uses manual diff review as the outside-workspace confirmation for insert_code when configured as ask', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
 
         const args = { files: [{ path: outsidePath, line: 1, content: 'x' }] };
@@ -171,7 +171,7 @@ describe('outside workspace file access policy', () => {
         expect(ensureOutsideWorkspaceAccessApproved('insert_code', args)).toBeNull();
     });
 
-    it('routes outside-workspace create_directory through tool confirmation when configured as ask', async () => {
+    test('routes outside-workspace create_directory through tool confirmation when configured as ask', async () => {
         await settingsManager.updateToolConfig('write_file', { outsideWorkspaceAccess: 'ask' });
 
         const args = { paths: [path.resolve('/tmp/newdir')] };

@@ -4,6 +4,7 @@
  * 输入 @ 时显示，支持搜索和键盘导航选择工作区文件
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
@@ -48,7 +49,7 @@ async function searchFiles(query: string, scrollToActive = false) {
   const requestId = ++searchRequestId
   isLoading.value = true
   try {
-    const result = await sendToExtension<{ files: FileItem[]; activeFilePath: string | null }>('searchWorkspaceFiles', {
+    const result = await sendToExtension<{ files: FileItem[]; activeFilePath: string | null }>(MESSAGE_NAMES.searchWorkspaceFiles, {
       query: query.trim(),
       limit: 50
     })

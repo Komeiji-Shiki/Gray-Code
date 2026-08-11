@@ -7,7 +7,7 @@
  * - loadHistory 首屏先渲染最后一页，再异步补拉更早历史（HIS-13）。
  */
 import { ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Content, CheckpointRecord } from '../../../types'
 import type { ChatStoreState } from '../types'
 import {
@@ -93,7 +93,7 @@ describe('loadMoreConversations（HIS-10）', () => {
     mockSend.mockReset()
   })
 
-  it('一次 IPC 批量拉取一页摘要并合并到列表', async () => {
+  test('一次 IPC 批量拉取一页摘要并合并到列表', async () => {
     const state = createState({
       persistedConversationIds: ref(['conv-a', 'conv-b']),
       persistedConversationsLoaded: ref(0)
@@ -126,7 +126,7 @@ describe('loadMoreConversations（HIS-10）', () => {
     expect(state.persistedConversationsLoaded.value).toBe(2)
   })
 
-  it('缺失字段回退默认值（title/messageCount），不抛错', async () => {
+  test('缺失字段回退默认值（title/messageCount），不抛错', async () => {
     const state = createState({
       persistedConversationIds: ref(['conv-x']),
       persistedConversationsLoaded: ref(0)
@@ -140,7 +140,7 @@ describe('loadMoreConversations（HIS-10）', () => {
     expect(conv.messageCount).toBe(0)
   })
 
-  it('批量结果少于请求（后端截断/部分返回）时游标按实际返回数量前进（L3）', async () => {
+  test('批量结果少于请求（后端截断/部分返回）时游标按实际返回数量前进（L3）', async () => {
     const state = createState({
       persistedConversationIds: ref(['conv-a', 'conv-b', 'conv-c']),
       persistedConversationsLoaded: ref(0)
@@ -164,7 +164,7 @@ describe('loadMoreConversations（HIS-10）', () => {
     expect(state.conversations.value.map(c => c.id).sort()).toEqual(['conv-a', 'conv-b', 'conv-c'])
   })
 
-  it('批量 IPC 返回非数组（异常）时不前进游标，可重试', async () => {
+  test('批量 IPC 返回非数组（异常）时不前进游标，可重试', async () => {
     const state = createState({
       persistedConversationIds: ref(['conv-a', 'conv-b']),
       persistedConversationsLoaded: ref(0)
@@ -183,7 +183,7 @@ describe('updateConversationAfterMessage（HIS-09）', () => {
     mockSend.mockReset()
   })
 
-  it('合并为一次 conversation.updateSummary 写入', async () => {
+  test('合并为一次 conversation.updateSummary 写入', async () => {
     const state = createState({
       currentConversationId: ref('conv-1'),
       conversations: ref([{ id: 'conv-1', title: 'T', isPersisted: true, createdAt: 1, updatedAt: 1, messageCount: 0 } as any]),
@@ -210,7 +210,7 @@ describe('updateConversationAfterMessage（HIS-09）', () => {
     expect(conv.messageCount).toBe(12)
   })
 
-  it('IPC 失败时不更新本地计数（M3）：避免与后端永久不一致', async () => {
+  test('IPC 失败时不更新本地计数（M3）：避免与后端永久不一致', async () => {
     const state = createState({
       currentConversationId: ref('conv-1'),
       conversations: ref([{ id: 'conv-1', title: 'T', isPersisted: true, createdAt: 1, updatedAt: 1, messageCount: 0 } as any]),
@@ -238,7 +238,7 @@ describe('loadHistory 首屏先渲染再异步补拉（HIS-13）', () => {
     mockSend.mockReset()
   })
 
-  it('loadHistory 返回时已渲染最后一页；随后异步补拉更早历史', async () => {
+  test('loadHistory 返回时已渲染最后一页；随后异步补拉更早历史', async () => {
     const state = createState({
       currentConversationId: ref('conv-1')
     })
@@ -274,7 +274,7 @@ describe('loadHistory 首屏先渲染再异步补拉（HIS-13）', () => {
     }, { timeout: 2000 })
   })
 
-  it('分页 IPC 使用 MESSAGES_PAGE_SIZE', async () => {
+  test('分页 IPC 使用 MESSAGES_PAGE_SIZE', async () => {
     const state = createState({ currentConversationId: ref('conv-1') })
     mockSend.mockImplementation((command: string) => {
       if (command === 'conversation.getMessagesPaged') {
@@ -293,7 +293,7 @@ describe('loadHistory 首屏先渲染再异步补拉（HIS-13）', () => {
     expect(pageCall![1].limit).toBe(MESSAGES_PAGE_SIZE)
   })
 
-  it('补拉失败（返回 null/undefined）不是“已到历史开头”：保留原窗口（L2）', async () => {
+  test('补拉失败（返回 null/undefined）不是“已到历史开头”：保留原窗口（L2）', async () => {
     const state = createState({ currentConversationId: ref('conv-1') })
     mockSend.mockImplementation((command: string, payload: any) => {
       if (command === 'conversation.getMessagesPaged') {
@@ -319,7 +319,7 @@ describe('loadHistory 首屏先渲染再异步补拉（HIS-13）', () => {
     expect(state.windowStartIndex.value).toBe(290)
   })
 
-  it('补拉期间窗口被新消息改动：放弃合并，保留新窗口（M6）', async () => {
+  test('补拉期间窗口被新消息改动：放弃合并，保留新窗口（M6）', async () => {
     const state = createState({ currentConversationId: ref('conv-1') })
     mockSend.mockImplementation((command: string, payload: any) => {
       if (command === 'conversation.getMessagesPaged') {
@@ -364,7 +364,7 @@ describe('loadCheckpoints（L-8）', () => {
     mockSend.mockReset()
   })
 
-  it('成功后写入后端检查点列表', async () => {
+  test('成功后写入后端检查点列表', async () => {
     mockSend.mockResolvedValue({
       checkpoints: [{ id: 'cp_1', messageIndex: 3, phase: 'before' }]
     })
@@ -376,7 +376,7 @@ describe('loadCheckpoints（L-8）', () => {
     expect(state.checkpoints.value).toEqual([{ id: 'cp_1', messageIndex: 3, phase: 'before' }])
   })
 
-  it('加载失败时保留旧值（不静默置空），避免检查点条消失', async () => {
+  test('加载失败时保留旧值（不静默置空），避免检查点条消失', async () => {
     const existing = [{ id: 'cp_old', messageIndex: 0, phase: 'before' }]
     const state = createState({
       currentConversationId: ref('conv-1'),
@@ -389,7 +389,7 @@ describe('loadCheckpoints（L-8）', () => {
     expect(state.checkpoints.value).toEqual(existing)
   })
 
-  it('无当前对话时清空检查点', async () => {
+  test('无当前对话时清空检查点', async () => {
     const state = createState({
       currentConversationId: ref(null),
       checkpoints: ref([{ id: 'cp_x', messageIndex: 0, phase: 'before' }] as CheckpointRecord[])

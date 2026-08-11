@@ -8,6 +8,7 @@
  * - plan.getSourceStatus：计划源工件状态查询
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import type { HandlerContext, MessageHandler } from '../types';
 import { resolveUriWithInfo } from '../../backend/tools';
@@ -405,12 +406,12 @@ export const planConfirmExecution: MessageHandler = async (data, requestId, ctx)
  */
 export function registerPlanApprovalHandlers(registry: Map<string, MessageHandler>): void {
   // Design 生成计划确认
-  registry.set('design.confirmPlanGeneration', designConfirmPlanGeneration);
+  registry.set(MESSAGE_NAMES['design.confirmPlanGeneration'], designConfirmPlanGeneration);
 
   // Review 生成计划确认
-  registry.set('review.confirmPlanGeneration', reviewConfirmPlanGeneration);
+  registry.set(MESSAGE_NAMES['review.confirmPlanGeneration'], reviewConfirmPlanGeneration);
 
   // Plan 执行确认
-  registry.set('plan.confirmExecution', planConfirmExecution);
-  registry.set('plan.getSourceStatus', planGetSourceStatus);
+  registry.set(MESSAGE_NAMES['plan.confirmExecution'], planConfirmExecution);
+  registry.set(MESSAGE_NAMES['plan.getSourceStatus'], planGetSourceStatus);
 }

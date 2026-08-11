@@ -5,15 +5,7 @@
  * 由 StreamAbortManager 壳通过组合持有；代际计数、尾代先退、等待超时语义与拆分前逐字一致。
  */
 
-/**
- * 旧流退出等待超时（毫秒）。
- *
- * 用户「停止后立即重发」时，新流必须在旧流完全退出（工具结算落盘、finally 注销控制器）
- * 后才能写入用户消息，否则旧流的结算 addContent 会落在新用户消息之后，历史出现半截旧回答/
- * 错位结算。旧流 abort 后通常在工具结算窗口（约 3s）+ 收尾窗口（约 2s）内退出，这里留出余量；
- * 超时兜底保证旧流异常挂死时也不会阻塞新流启动太久。
- */
-export const OLD_STREAM_EXIT_WAIT_TIMEOUT_MS = 6000;
+import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../../backend/core/streamConstants';
 
 /** 一代退休链条目：chain 为所有旧代退出后的总信号；resolvers 为链上全部代的 resolver 快照 */
 export interface RetiredChainEntry {

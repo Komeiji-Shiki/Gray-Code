@@ -42,7 +42,7 @@ describe('update_design tool', () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode('# Existing Design'))
   })
 
-  it('rewrites an existing design document and returns requiresUserConfirmation', async () => {
+  test('rewrites an existing design document and returns requiresUserConfirmation', async () => {
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
       path: '.graycode/design/api-design.md',
@@ -65,7 +65,7 @@ describe('update_design tool', () => {
     })
   })
 
-  it('rejects update_design when the target design file does not exist', async () => {
+  test('rejects update_design when the target design file does not exist', async () => {
     mockReadFile.mockRejectedValue(new Error('File not found'))
 
     const tool = createUpdateDesignTool()
@@ -79,7 +79,7 @@ describe('update_design tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects paths outside .graycode/design', async () => {
+  test('rejects paths outside .graycode/design', async () => {
     const tool = createUpdateDesignTool()
     const result = await tool.handler({
       path: '.graycode/plans/not-allowed.md',

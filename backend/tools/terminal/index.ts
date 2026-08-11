@@ -4,8 +4,6 @@
  * 导出所有终端相关的工具
  */
 
-import type { Tool } from '../types';
-
 // 导出执行命令工具
 export {
     registerExecuteCommand,
@@ -23,25 +21,14 @@ export {
 // 导出类型
 export type { TerminalOutputEvent } from './execute_command';
 
-/**
- * 获取所有终端工具
- * @returns 所有终端工具的数组
- */
-export function getAllTerminalTools(): Tool[] {
-    const { registerExecuteCommand } = require('./execute_command');
-    
-    return [
-        registerExecuteCommand()
-    ];
-}
+// 静态导入注册函数（与上方 re-export 共用同一模块实例，替代原函数内 require）
+import { registerExecuteCommand } from './execute_command';
 
 /**
  * 获取所有终端工具的注册函数
  * @returns 注册函数数组
  */
 export function getTerminalToolRegistrations() {
-    const { registerExecuteCommand } = require('./execute_command');
-    
     return [
         registerExecuteCommand
     ];

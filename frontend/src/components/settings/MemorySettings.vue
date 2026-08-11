@@ -6,6 +6,7 @@
  * 1. 提示词 & 运行时参数配置
  * 2. 原始记忆条目管理（查看 / 编辑 / 删除，支持全局记忆 / 工作区记忆双作用域）
  */
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { CustomCheckbox, ConfirmDialog } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -233,7 +234,7 @@ async function addEntry() {
   }
   addingEntry.value = true
   try {
-    const result = await sendToExtension<any>('addMemoryEntry', { text, ...scopeParams() })
+    const result = await sendToExtension<any>(MESSAGE_NAMES.addMemoryEntry, { text, ...scopeParams() })
     newEntryText.value = ''
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.added', {
       id: result?.id ?? '',
@@ -263,7 +264,7 @@ async function confirmDeleteEntry() {
   if (!entry) return
   deleteSaving.value = true
   try {
-    await sendToExtension('deleteMemoryEntry', { id: entry.id, ...scopeParams() })
+    await sendToExtension(MESSAGE_NAMES.deleteMemoryEntry, { id: entry.id, ...scopeParams() })
     deleteCandidate.value = null
     showDeleteConfirm.value = false
     // 删除后 id 重编号：整表重载（不能只按 id 过滤本地列表）
@@ -305,7 +306,7 @@ async function confirmDeleteSelected() {
   batchDeleteSaving.value = true
   const count = selectedIds.value.size
   try {
-    await sendToExtension('deleteMemoryEntries', { ids: [...selectedIds.value], ...scopeParams() })
+    await sendToExtension(MESSAGE_NAMES.deleteMemoryEntries, { ids: [...selectedIds.value], ...scopeParams() })
     statusMessage.value = t('components.settings.settingsPanel.memory.rawEntries.deletedBatch', { count })
     statusError.value = false
     if (statusMessageTimer) clearTimeout(statusMessageTimer)
@@ -329,7 +330,7 @@ function cancelDeleteSelected() {
 async function loadWorkspaceScopes() {
   scopesLoading.value = true
   try {
-    const resp = await sendToExtension<any>('listMemoryScopes', {})
+    const resp = await sendToExtension<any>(MESSAGE_NAMES.listMemoryScopes, {})
     if (Array.isArray(resp?.scopes)) {
       workspaceScopes.value = resp.scopes
       // 保持已选工作区有效；无效时默认选第一个（若有）
@@ -363,7 +364,7 @@ async function loadConfig(silent = false) {
     statusMessage.value = ''
   }
   try {
-    const config = await sendToExtension<any>('getMemoryConfig', scopeParams())
+    const config = await sendToExtension<any>(MESSAGE_NAMES.getMemoryConfig, scopeParams())
     // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域配置覆盖新作用域
     if (seq !== configLoadSeq) return
     if (config) {
@@ -427,7 +428,7 @@ async function loadEntries(showLoading = true) {
   const hasCache = scopeCache.get(key)?.entriesLoaded === true
   if (showLoading || !hasCache) entriesLoading.value = true
   try {
-    const result = await sendToExtension<any>('getMemoryEntries', { limit: ENTRIES_LIMIT, ...scopeParams() })
+    const result = await sendToExtension<any>(MESSAGE_NAMES.getMemoryEntries, { limit: ENTRIES_LIMIT, ...scopeParams() })
     // 过期响应（期间作用域又切换过）直接丢弃，避免旧作用域条目闪现/覆盖
     if (seq !== entryLoadSeq) return
     if (result?.entries) {
@@ -493,7 +494,7 @@ async function saveEdit() {
   }
   editSaving.value = true
   try {
-    await sendToExtension('updateMemoryEntry', {
+    await sendToExtension(MESSAGE_NAMES.updateMemoryEntry, {
       id: editingId.value,
       text: editingText.value,
       ...scopeParams(),
@@ -518,7 +519,7 @@ async function saveConfig() {
   statusMessage.value = ''
   try {
     const promptToSave = systemPrompt.value === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt.value
-    await sendToExtension('updateMemoryConfig', {
+    await sendToExtension(MESSAGE_NAMES.updateMemoryConfig, {
       config: {
         enabled: enabled.value,
         systemPrompt: promptToSave,
@@ -657,7 +658,7 @@ watch(selectedWorkspaceUri, (next, prev) => {
               {{ t('components.settings.settingsPanel.memory.runtime.entryChars.description') }}
             </p>
             <div class="number-input-row">
-              <input type="number" v-model.number="entryChars" min="1" max="280" class="form-input-number" :disabled="!enabled" />
+              <input type="number" v-model.number="entryChars" min="1" max="1000" class="form-input-number" :disabled="!enabled" />
               <span class="unit">{{ t('components.settings.settingsPanel.memory.runtime.entryChars.unit') }}</span>
             </div>
           </div>

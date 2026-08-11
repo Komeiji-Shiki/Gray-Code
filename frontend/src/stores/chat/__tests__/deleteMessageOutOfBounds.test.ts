@@ -12,7 +12,7 @@
  * - backendIndex 未越界时保持原有后端删除路径（不破坏正常删除）
  */
 import { ref } from 'vue'
-import { vi, describe, it, expect, beforeEach } from 'vitest'
+import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Message } from '../../../types'
 import type { ChatStoreState } from '../types'
 import { deleteMessage, deleteSingleMessage } from '../messageActions'
@@ -83,7 +83,7 @@ describe('deleteMessage 后端索引越界兜底', () => {
     vi.clearAllMocks()
   })
 
-  it('backendIndex >= totalMessages 时本地删除，不调用后端 deleteMessage', async () => {
+  test('backendIndex >= totalMessages 时本地删除，不调用后端 deleteMessage', async () => {
     const state = createState({
       totalMessages: ref(2),
       allMessages: ref([
@@ -101,7 +101,7 @@ describe('deleteMessage 后端索引越界兜底', () => {
     expect(state.allMessages.value.map(m => m.content)).toEqual(['a', 'b'])
   })
 
-  it('backendIndex 未越界时保持原有后端删除路径', async () => {
+  test('backendIndex 未越界时保持原有后端删除路径', async () => {
     mockSend.mockResolvedValue({ success: true })
     const state = createState({
       totalMessages: ref(3),
@@ -123,7 +123,7 @@ describe('deleteSingleMessage 后端索引越界兜底', () => {
     vi.clearAllMocks()
   })
 
-  it('targetIndex >= totalMessages 时仅本地移除，不调用后端 deleteSingleMessage', async () => {
+  test('targetIndex >= totalMessages 时仅本地移除，不调用后端 deleteSingleMessage', async () => {
     const state = createState({
       totalMessages: ref(2),
       allMessages: ref([
@@ -140,7 +140,7 @@ describe('deleteSingleMessage 后端索引越界兜底', () => {
     expect(state.allMessages.value.map(m => m.content)).toEqual(['a', 'b'])
   })
 
-  it('targetIndex 未越界时保持原有后端删除路径', async () => {
+  test('targetIndex 未越界时保持原有后端删除路径', async () => {
     mockSend.mockResolvedValue({ success: true })
     const state = createState({
       totalMessages: ref(3),

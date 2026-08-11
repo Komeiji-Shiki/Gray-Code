@@ -1,11 +1,11 @@
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import StartupBackdrop from '../../components/StartupBackdrop.vue'
 
 describe('StartupBackdrop 灰阶加载动效', () => {
-  it('只渲染装饰图层，不提供文字或传统进度控件', () => {
+  test('只渲染装饰图层，不提供文字或传统进度控件', () => {
     const wrapper = mount(StartupBackdrop)
     const root = wrapper.get('.startup-backdrop')
 
@@ -15,7 +15,7 @@ describe('StartupBackdrop 灰阶加载动效', () => {
     expect(root.find('.graphite-horizon').exists()).toBe(true)
   })
 
-  it('使用克制的灰阶动效表达加载，并尊重 reduced-motion', () => {
+  test('使用克制的灰阶动效表达加载，并尊重 reduced-motion', () => {
     const source = readFileSync(
       resolve(process.cwd(), 'src/components/StartupBackdrop.vue'),
       'utf8'

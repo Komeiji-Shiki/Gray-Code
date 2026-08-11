@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { MESSAGE_NAMES } from '@shared/protocol'
+import { beforeEach, describe, expect, vi } from 'vitest'
 
 vi.mock('../../utils/vscode', () => ({
   sendToExtension: vi.fn(async () => ({ success: true })),
@@ -15,7 +16,7 @@ describe('cancelStream immediate feedback', () => {
     vi.mocked(sendToExtension).mockReset()
   })
 
-  it('后端清理尚未返回时立即清除流式与等待状态', async () => {
+  test('后端清理尚未返回时立即清除流式与等待状态', async () => {
     let resolveCancel: ((value: unknown) => void) | undefined
     vi.mocked(sendToExtension).mockImplementation((type: string) => {
       if (type === 'cancelStream') {
@@ -56,7 +57,7 @@ describe('cancelStream immediate feedback', () => {
     await cancelPromise
   })
 
-  it('只有 isStreaming 为真时也会发送取消，不被 isWaitingForResponse 早退吞掉', async () => {
+  test('只有 isStreaming 为真时也会发送取消，不被 isWaitingForResponse 早退吞掉', async () => {
     vi.mocked(sendToExtension).mockResolvedValue({ cancelled: true })
     const state = createChatState()
     state.currentConversationId.value = 'conv_cancel_stream_only'
@@ -65,12 +66,12 @@ describe('cancelStream immediate feedback', () => {
 
     await cancelStream(state, {} as ChatStoreComputed)
 
-    expect(sendToExtension).toHaveBeenCalledWith('cancelStream', {
+    expect(sendToExtension).toHaveBeenCalledWith(MESSAGE_NAMES.cancelStream, {
       conversationId: 'conv_cancel_stream_only'
     })
   })
 
-  it('preserveSubAgents 将未完成子代理标记为后台，不显示错误状态', async () => {
+  test('preserveSubAgents 将未完成子代理标记为后台，不显示错误状态', async () => {
     vi.mocked(sendToExtension).mockResolvedValue({ cancelled: true })
     const state = createChatState()
     state.currentConversationId.value = 'conv_detach_subagent'
@@ -100,7 +101,7 @@ describe('cancelStream immediate feedback', () => {
       .find(part => part.functionResponse?.id === 'subagent_call_1')
       ?.functionResponse?.response
     expect(response).toMatchObject({ success: true, detached: true, background: true })
-    expect(sendToExtension).toHaveBeenCalledWith('cancelStream', {
+    expect(sendToExtension).toHaveBeenCalledWith(MESSAGE_NAMES.cancelStream, {
       conversationId: 'conv_detach_subagent',
       preserveSubAgents: true
     })

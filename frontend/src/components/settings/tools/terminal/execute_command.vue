@@ -9,6 +9,7 @@
  * 4. 设置默认超时时间
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted, computed } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomCheckbox, CustomSelect, type SelectOption } from '../../../common'
@@ -70,7 +71,7 @@ async function loadConfig() {
   
   try {
     const response = await sendToExtension<{ config: ExecuteCommandConfig }>(
-      'tools.getExecuteCommandConfig',
+      MESSAGE_NAMES['tools.getExecuteCommandConfig'],
       {}
     )
     if (response?.config) {
@@ -94,7 +95,7 @@ async function saveConfig() {
   try {
     // 将 Vue 响应式对象转换为纯 JSON 对象，避免 DataCloneError
     const plainConfig = JSON.parse(JSON.stringify(config.value))
-    await sendToExtension('tools.updateExecuteCommandConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateExecuteCommandConfig'], {
       config: plainConfig
     })
   } catch (err) {

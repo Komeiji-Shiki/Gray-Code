@@ -17,6 +17,10 @@ import type { ConversationManager } from '../conversation';
 import { Logger } from '../../core/logger';
 import type { CheckpointRecord } from './CheckpointManager';
 import type { CheckpointSummary } from './types';
+// T16：CheckpointSummaryWithSize 迁入 shared/protocol.ts 单一来源（size 为必填契约字段）；
+// 此处 re-export 保持既有导出名与导入路径不破。
+import type { CheckpointSummaryWithSize } from '../../../shared/protocol';
+export type { CheckpointSummaryWithSize };
 import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 
@@ -40,14 +44,15 @@ export interface ConversationCheckpointStats {
     sizeIncomplete?: boolean;
 }
 
-export type CheckpointSummaryWithSize = CheckpointSummary & { size?: number };
-
 /**
  * getCheckpoints 的返回类型：仍是数组（保持现有调用方兼容），
  * 读取失败时在数组上附带非枚举 `error` 标记（区别于“无记录”返回空数组）。
  * 前端可在 handler 中读取 `checkpoints.error` 并向用户展示错误。
+ *
+ * 元素为联合类型：withSize=false 时只含 CheckpointSummary（无 size），
+ * withSize=true 时含 CheckpointSummaryWithSize（size 必填）。
  */
-export type CheckpointQueryResult = CheckpointSummaryWithSize[] & { error?: string };
+export type CheckpointQueryResult = Array<CheckpointSummary | CheckpointSummaryWithSize> & { error?: string };
 
 /** 给返回数组附加非枚举 error 标记（不改变数组本身的相等性与序列化） */
 function attachError(result: CheckpointQueryResult, error: unknown): CheckpointQueryResult {

@@ -6,6 +6,10 @@
 
 import type { HandlerContext, MessageHandlerRegistry } from './types';
 import { createMessageHandlerRegistry } from './handlers';
+// B1：非阻塞名单迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导出路径
+// （backend/__tests__/webview/messageRouterNonBlockingBehavior.test.ts 直接 import 它）。
+import { NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
+export { NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
 import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
 import type { ConversationManager } from '../backend/modules/conversation';
@@ -29,47 +33,6 @@ export const STREAM_MESSAGE_TYPES = [
 ] as const;
 
 type StreamMessageType = typeof STREAM_MESSAGE_TYPES[number];
-
-/**
- * 非阻塞消息类型。
- *
- * 这些 handler 可能执行数秒到数分钟（LLM 请求、依赖安装等），
- * 若在 messageHandlingQueue 中串行 await 会阻塞取消类消息，
- * 导致 webview 消息通道整体冻结。
- *
- * 修改方式：route() 命中这些类型时采用 fire-and-forget，
- * 不 await handler，catch 中就地清理 requestClients 并回传错误。
- */
-export const NON_BLOCKING_MESSAGE_TYPES = new Set([
-  'summarizeContext',
-  'dependencies.install',
-  'dependencies.uninstall',
-  'storagePath.migrate',
-  // M-1: 检查点全量扫描/枚举可能耗时数秒到数分钟（大工作区），
-  // 若在串行队列中 await 会阻塞 cancelStream / checkpoint.cancelOperation / 消息删除等全部 IPC，
-  // 导致 webview 消息通道整体冻结；fire-and-forget 让取消类消息始终能及时送达。
-  'checkpoint.previewExclusions',
-  'checkpoint.getAllConversationsWithCheckpoints',
-  // Monitor 控制消息必须绕过普通 handler 队列；否则前面一次慢磁盘读取会让暂停/退出点击排队，
-  // 用户看到按钮可点却迟迟没有任何效果。
-  'subagents.pauseRun',
-  'subagents.resumeRun',
-  'subagents.exitRun',
-  // 模态对话框类（showSaveDialog/showOpenDialog/showQuickPick）：对话框打开期间 handler 一直 await，
-  // 若占住串行队列，后续保存/取消/新消息全部排队，前端 180s 超时误报失败（保存实际已生效）。
-  'exportPromptModes',
-  'settings.export',
-  'settings.import',
-  'storagePath.selectFolder',
-  // 网络/下载类：耗时取决于网络状况，不应阻塞队列中的其它请求。
-  'countSystemPromptTokens', // token 计数调用渠道 API
-  'tokenizer.getResource',   // 首次下载 tokenizer 词表（分钟级）
-  // 更新检查/安装类（UpdateHandlers）：checkNow 含网络请求（checker.check），
-  // updateNow 除检查外还含下载+安装（分钟级）；若在串行队列中 await，期间
-  // cancelStream / deleteMessage 等取消类消息全部排队，webview 通道整体冻结。
-  'checkUpdateNow',
-  'updateNow'
-]);
 
 /**
  * 消息路由器
@@ -149,8 +112,10 @@ export class MessageRouter {
         () => {
           // handler 成功但未调用 sendResponse/sendError（成功但不回复）时，
           // requestClients 条目会永久残留。createRoutedContext 的 sendResponse/sendError
-          // 会同步删除条目，因此这里用 has() 判断 handler 是否已回复过：
-          // 已回复则条目已被删，无需（也不应）再删；未回复则兜底删除防泄漏。
+          // 刻意不删除条目（流式请求的 started:true 之后流仍在进行，后续错误响应仍要靠
+          // requestId → clientId 映射路由回发起方，见 sendRoutedResponse 注释），因此
+          // 这里不能依赖「已回复则条目已被删」：非阻塞请求都是非流式 handler，resolve 后
+          // 映射不再被使用，统一用 has() 判断并兜底删除防泄漏。
           if (this.requestClients.has(requestId)) {
             this.requestClients.delete(requestId);
           }

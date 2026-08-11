@@ -1,5 +1,5 @@
 /**
- * LimCode - Gemini 格式转换器
+ * GrayCode - Gemini 格式转换器
  *
  * 将统一格式转换为 Gemini API 格式
  */
@@ -76,8 +76,15 @@ export class GeminiFormatter extends BaseFormatter {
         config: GeminiConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history: rawHistory } = request;
         const toolMode = config.toolMode || 'function_call';
+        
+        // Gemini API 不识别 redactedThinking（Anthropic 渠道专有字段，仅 anthropic /
+        // openai-responses 渠道按 API 要求回传 redacted_thinking）。Anthropic 历史切到
+        // Gemini 续聊时，该字段原样序列化会作为未知字段进入请求体（可能 400）；这里在
+        // 构建请求前统一剔除。主路径 formatHistoryForAPI 已按渠道白名单剥除，此处是
+        // 防御层，覆盖不经 formatHistoryForAPI 的直传历史（如子代理本地历史）。
+        const history = this.stripRedactedThinking(rawHistory);
         
         // 根据模式处理历史记录
         let processedHistory: Content[];
@@ -673,6 +680,29 @@ export class GeminiFormatter extends BaseFormatter {
     }
     
     /**
+     * 剔除历史 part 中的 redactedThinking 字段（Gemini API 不识别）。
+     *
+     * 同时过滤剥空后的 part 与消息，避免向 Gemini 发送空 parts 的 content；
+     * 与 convertThoughtSignatures / 各 toolMode 分支的空过滤口径一致。
+     */
+    private stripRedactedThinking(history: Content[]): Content[] {
+        return history
+            .map(content => ({
+                ...content,
+                parts: content.parts
+                    .map(part => {
+                        if (!part.redactedThinking) {
+                            return part;
+                        }
+                        const { redactedThinking, ...rest } = part;
+                        return rest;
+                    })
+                    .filter(part => Object.keys(part).length > 0)
+            }))
+            .filter(content => content.parts.length > 0);
+    }
+    
+    /**
      * 转换工具声明为 Gemini 格式
      *
      * Gemini 格式：
@@ -708,3 +738,4 @@ export class GeminiFormatter extends BaseFormatter {
         }];
     }
 }
+

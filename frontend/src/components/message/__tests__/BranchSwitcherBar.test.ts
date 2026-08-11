@@ -1,5 +1,5 @@
 /**
- * BranchSwitcherBar 组件测试（TREE-10 消息内联候选切换器）
+ * BranchSwitcherBar 组件测试（TREE-10 消息内联候选切换器 + BCP-04 工作区联动确认）
  *
  * 覆盖：
  * - 显隐：无分支图 / 单候选 / 未知父节点 / 无当前对话 → 隐藏；≥2 候选 → 显示「2 / 3」
@@ -7,7 +7,7 @@
  * - 删除交互：两步确认（第一次进入确认态，第二次才调用 deleteBranchCandidate）
  * - 忙碌态：isSwitchingBranch 时按钮禁用
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BranchSwitcherBar from '../BranchSwitcherBar.vue'
 import type { BranchGraphData, BranchNodeData } from '../../../stores/chat/types'
@@ -67,13 +67,13 @@ describe('BranchSwitcherBar 显隐', () => {
     chatStoreMock.deleteBranchCandidate.mockClear()
   })
 
-  it('无分支图 → 隐藏', () => {
+  test('无分支图 → 隐藏', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('单候选（即使消息在图中）→ 隐藏', () => {
+  test('单候选（即使消息在图中）→ 隐藏', () => {
     chatStoreMock.branchGraph = makeGraph(
       { u1: makeNode('u1', null, { role: 'user', activeChildId: 'a1' }), a1: makeNode('a1', 'u1') },
       'a1'
@@ -83,14 +83,14 @@ describe('BranchSwitcherBar 显隐', () => {
     wrapper.unmount()
   })
 
-  it('未知节点（消息不在图中）→ 隐藏', () => {
+  test('未知节点（消息不在图中）→ 隐藏', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'not_in_graph' } })
     expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('候选组的父节点（自己不是候选成员）→ 隐藏', () => {
+  test('候选组的父节点（自己不是候选成员）→ 隐藏', () => {
     // 切换器跟随活跃候选（a2），而不是挂在父节点 u1 上
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'u1' } })
@@ -98,14 +98,14 @@ describe('BranchSwitcherBar 显隐', () => {
     wrapper.unmount()
   })
 
-  it('非活跃候选 → 隐藏（旧候选不在主历史 UI，不渲染切换器）', () => {
+  test('非活跃候选 → 隐藏（旧候选不在主历史 UI，不渲染切换器）', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'a1' } })
     expect(wrapper.find('.branch-switcher-bar').exists()).toBe(false)
     wrapper.unmount()
   })
 
-  it('无当前对话 → 隐藏', () => {
+  test('无当前对话 → 隐藏', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     chatStoreMock.currentConversationId = null
     const wrapper = mountBar()
@@ -113,7 +113,7 @@ describe('BranchSwitcherBar 显隐', () => {
     wrapper.unmount()
   })
 
-  it('compact 模式用于消息操作栏：保留候选切换器但使用紧凑类', () => {
+  test('compact 模式用于消息操作栏：保留候选切换器但使用紧凑类', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mount(BranchSwitcherBar, { props: { nodeId: 'a2', compact: true } })
     expect(wrapper.find('.branch-switcher-bar').classes()).toContain('compact')
@@ -131,7 +131,7 @@ describe('BranchSwitcherBar 切换交互', () => {
     chatStoreMock.deleteBranchCandidate.mockClear()
   })
 
-  it('左箭头：从候选 2 切到候选 1', async () => {
+  test('左箭头：从候选 2 切到候选 1', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mountBar()
 
@@ -142,7 +142,7 @@ describe('BranchSwitcherBar 切换交互', () => {
     wrapper.unmount()
   })
 
-  it('右箭头：从候选 3 循环到候选 1', async () => {
+  test('右箭头：从候选 3 循环到候选 1', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a3')
     const wrapper = mountBar('a3')
 
@@ -152,7 +152,7 @@ describe('BranchSwitcherBar 切换交互', () => {
     wrapper.unmount()
   })
 
-  it('点击中间位置按钮展开候选列表，点击候选行切换', async () => {
+  test('点击中间位置按钮展开候选列表，点击候选行切换', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mountBar()
 
@@ -174,7 +174,7 @@ describe('BranchSwitcherBar 切换交互', () => {
     wrapper.unmount()
   })
 
-  it('活跃候选行标注「当前」且不显示删除按钮', async () => {
+  test('活跃候选行标注「当前」且不显示删除按钮', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mountBar()
 
@@ -191,7 +191,7 @@ describe('BranchSwitcherBar 切换交互', () => {
     wrapper.unmount()
   })
 
-  it('候选列表挂载到 body，并在靠近视口右侧时向左回退', async () => {
+  test('候选列表挂载到 body，并在靠近视口右侧时向左回退', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const originalWidth = window.innerWidth
     const originalHeight = window.innerHeight
@@ -236,7 +236,7 @@ describe('BranchSwitcherBar 删除交互（两步确认）', () => {
     chatStoreMock.deleteBranchCandidate.mockClear()
   })
 
-  it('第一次点击进入确认态（不删除），第二次点击才删除', async () => {
+  test('第一次点击进入确认态（不删除），第二次点击才删除', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mountBar()
 
@@ -254,7 +254,7 @@ describe('BranchSwitcherBar 删除交互（两步确认）', () => {
     wrapper.unmount()
   })
 
-  it('确认态点击其他候选的删除按钮会转移确认目标（防误删）', async () => {
+  test('确认态点击其他候选的删除按钮会转移确认目标（防误删）', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mountBar()
 
@@ -276,7 +276,7 @@ describe('BranchSwitcherBar 删除交互（两步确认）', () => {
 })
 
 
-describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
+describe('BranchSwitcherBar 工作区联动确认框', () => {
   beforeEach(() => {
     chatStoreMock.currentConversationId = 'c1'
     chatStoreMock.branchGraph = null
@@ -287,7 +287,7 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     document.body.innerHTML = ''
   })
 
-  it('目标候选写过工具（wroteToWorkspace）→ 点击先弹确认框，不直接切换', async () => {
+  test('目标候选写过工具（wroteToWorkspace）→ 点击先弹确认框，不直接切换', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     // a3 标记为写过写工具
     chatStoreMock.branchGraph.nodes.a3.wroteToWorkspace = true
@@ -302,7 +302,7 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     wrapper.unmount()
   })
 
-  it('确认框点「切换并恢复工作区」→ switchBranchCandidate(nodeId, { mode: chat-and-workspace })', async () => {
+  test('确认框点「切换并恢复工作区」→ switchBranchCandidate(nodeId, { mode: chat-and-workspace })', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     chatStoreMock.branchGraph.nodes.a3.wroteToWorkspace = true
     const wrapper = mountBar()
@@ -320,7 +320,7 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     wrapper.unmount()
   })
 
-  it('确认框点「仅切换聊天」（confirm）→ switchBranchCandidate(nodeId, { mode: chat-only })', async () => {
+  test('确认框点「仅切换聊天」（confirm）→ switchBranchCandidate(nodeId, { mode: chat-only })', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     chatStoreMock.branchGraph.nodes.a3.hasWorkspaceState = true
     const wrapper = mountBar()
@@ -338,7 +338,7 @@ describe('BranchSwitcherBar BCP-04 工作区联动确认框', () => {
     wrapper.unmount()
   })
 
-  it('无写工具 / 无存档的候选不弹确认框，直接切换', async () => {
+  test('无写工具 / 无存档的候选不弹确认框，直接切换', async () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     const wrapper = mountBar()
 
@@ -361,7 +361,7 @@ describe('BranchSwitcherBar 忙碌态', () => {
     chatStoreMock.deleteBranchCandidate.mockClear()
   })
 
-  it('isSwitchingBranch 时 ‹ / › 按钮禁用并显示加载图标', () => {
+  test('isSwitchingBranch 时 ‹ / › 按钮禁用并显示加载图标', () => {
     chatStoreMock.branchGraph = makeThreeCandidateGraph('a2')
     chatStoreMock.isSwitchingBranch = true
     const wrapper = mountBar()

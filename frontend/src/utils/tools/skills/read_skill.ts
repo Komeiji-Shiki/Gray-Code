@@ -7,6 +7,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import ReadSkillComponent from '../../../components/tools/skills/read_skill.vue'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 // 注册 read_skill 工具
 registerTool('read_skill', {
@@ -17,7 +18,8 @@ registerTool('read_skill', {
   // 描述生成器 - 显示加载的 skill 名称
   descriptionFormatter: (args) => {
     const name = args?.name
-    return name ? `Load: ${name}` : 'Read skill'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return name ? `Load: ${name}` : getToolMetaDescription('read_skill') ?? 'Read skill'
   },
   
   // 使用自定义组件显示内容
@@ -43,6 +45,6 @@ registerTool('toggle_skills', {
       parts.push(`Disable: ${disabling.join(', ')}`)
     }
     
-    return parts.length > 0 ? parts.join(' | ') : 'Toggle skills'
+    return parts.length > 0 ? parts.join(' | ') : getToolMetaDescription('toggle_skills') ?? 'Toggle skills'
   }
 })

@@ -1,5 +1,5 @@
 /**
- * LimCode - 检查点管理器
+ * GrayCode - 检查点管理器
  *
  * 负责工作区备份和恢复：
  * - 在工具执行前后创建工作区快照
@@ -81,7 +81,18 @@ const log = Logger.get('CheckpointManager');
  * 检查点管理器
  */
 export class CheckpointManager {
-    private checkpointsDir: string;
+    private _checkpointsDir: string;
+
+    /**
+     * 检查点存储目录（只读暴露）。
+     *
+     * MIG-05：完整性检查等只读诊断场景需要存档备份目录位置；构造时已确定
+     * （customDataPath 或 globalStorageUri 下 checkpoints 子目录），
+     * 本 getter 仅暴露该值，不改变任何行为。
+     */
+    get checkpointsDir(): string {
+        return this._checkpointsDir;
+    }
 
     private readonly manifestRepository: CheckpointManifestRepository;
     private readonly queryService: CheckpointQueryService;
@@ -104,12 +115,12 @@ export class CheckpointManager {
         // 如果提供了自定义路径，使用自定义路径下的 checkpoints 目录
         // 否则使用扩展存储目录
         const basePath = customDataPath || context.globalStorageUri.fsPath;
-        this.checkpointsDir = path.join(basePath, 'checkpoints');
+        this._checkpointsDir = path.join(basePath, 'checkpoints');
         // CPF-01/CPF-12: manifest 读写、查询与保留策略拆分为独立服务
-        this.manifestRepository = new CheckpointManifestRepository(this.checkpointsDir);
+        this.manifestRepository = new CheckpointManifestRepository(this._checkpointsDir);
         this.queryService = new CheckpointQueryService(
             conversationManager,
-            this.checkpointsDir,
+            this._checkpointsDir,
             this.manifestRepository,
             (conversationId: string) => t('modules.checkpoint.defaultConversationTitle', { conversationId: conversationId.slice(0, 8) }),
             // C-2: 孤儿清理前检查「进行中 create」——避免跨工作区清理删掉正在创建的备份目录
@@ -121,13 +132,13 @@ export class CheckpointManager {
                 deleteCheckpointInternal: (conversationId: string, checkpointId: string) => this.deleteCheckpointInternal(conversationId, checkpointId),
                 getCheckpointConfig: () => this.settingsManager.getCheckpointConfig()
             },
-            this.checkpointsDir,
+            this._checkpointsDir,
             this.manifestRepository,
             conversationManager
         );
         // CPF-12: 恢复准备/执行辅助拆分为独立服务（从 CheckpointManager 平移）
         this.restoreService = new CheckpointRestoreService(
-            this.checkpointsDir,
+            this._checkpointsDir,
             settingsManager,
             this.manifestRepository,
             this.queryService,
@@ -140,7 +151,7 @@ export class CheckpointManager {
         setGlobalCheckpointRefCountCleaner(this);
         // 第二批拆分: 创建/删除族辅助服务（依赖注入，避免反向引用本类造成循环依赖）
         this.backupExecutor = new CheckpointBackupExecutor({
-            checkpointsDir: this.checkpointsDir,
+            checkpointsDir: this._checkpointsDir,
             manifestRepository: this.manifestRepository,
             queryService: this.queryService,
             retentionService: this.retentionService,
@@ -149,7 +160,7 @@ export class CheckpointManager {
         this.deletionService = new CheckpointDeletionService({
             conversationManager,
             manifestRepository: this.manifestRepository,
-            checkpointsDir: this.checkpointsDir,
+            checkpointsDir: this._checkpointsDir,
             getDeletionLockIds: () => this.getCheckpointDeletionLockIds(),
             beginOperation: (kind, conversationId, checkpointId) => this.beginOperation(kind, conversationId, checkpointId),
             endOperation: operationId => this.endOperation(operationId),
@@ -162,7 +173,7 @@ export class CheckpointManager {
      */
     async initialize(): Promise<void> {
         // 确保检查点目录存在
-        await fs.mkdir(this.checkpointsDir, { recursive: true });
+        await fs.mkdir(this._checkpointsDir, { recursive: true });
     }
     
     /**
@@ -310,7 +321,7 @@ export class CheckpointManager {
         }
         
         const checkpointId = this.generateCheckpointId();
-        const backupDir = path.join(this.checkpointsDir, checkpointId);
+        const backupDir = path.join(this._checkpointsDir, checkpointId);
         // C-2: 登记「进行中 create」的目标备份目录，供孤儿清理（removeOrphanBackupDirs）
         // 避开跨工作区误删；在操作 finally 中注销（早退/失败路径同样覆盖）。
         const createOperationRecord = this.operations.get(operationId);
@@ -500,7 +511,7 @@ export class CheckpointManager {
                     reportProgress({ phase: 'restoring', processed: 0, total: 0 });
                     const engineResult = await restoreWorkspaceSnapshot(
                         {
-                            checkpointsDir: this.checkpointsDir,
+                            checkpointsDir: this._checkpointsDir,
                             roots,
                             protectedScopedPaths,
                             deletableScopedPaths,
@@ -649,7 +660,7 @@ export class CheckpointManager {
                     // 与 restoreWorkspaceSnapshot 共用 computeRestorePlan，清单与执行严格一致
                     const plan = computeRestorePlan(
                         {
-                            checkpointsDir: this.checkpointsDir,
+                            checkpointsDir: this._checkpointsDir,
                             roots,
                             protectedScopedPaths,
                             deletableScopedPaths
@@ -787,7 +798,7 @@ export class CheckpointManager {
                         throwIfAborted(signal);
                         // CPF-01: 目录删除后清掉 manifest 缓存
                         this.manifestRepository.clearCache(backupDir);
-                        const backupPath = path.join(this.checkpointsDir, backupDir);
+                        const backupPath = path.join(this._checkpointsDir, backupDir);
                         try {
                             await fs.rm(backupPath, { recursive: true, force: true });
                             deletedCount++;
@@ -898,8 +909,9 @@ export class CheckpointManager {
      */
     async getManifest(checkpointId: string): Promise<CheckpointManifestMeta | null> {
         const meta = await this.manifestRepository.loadManifest(checkpointId);
-        // L6: 返回浅拷贝，避免经 IPC 下发的对象被外部消费方意外写入污染缓存
-        return meta ? { ...meta } : null;
+        // L6: 返回深拷贝（excluded/changes/emptyDirs/workspaceRoots 数组及嵌套 ignoreSnapshot
+        // 一并复制），避免经 IPC 下发的对象被外部消费方意外写入污染 manifest 缓存
+        return meta ? structuredClone(meta) : null;
     }
 
     /**
@@ -1019,3 +1031,4 @@ export class CheckpointManager {
     }
 
 }
+

@@ -292,14 +292,17 @@ export function importLinearHistory(
  * 旧图只作为候选归档保留。
  *
  * 安全边界：
- * - 两边根节点必须一致；根已变化意味着无法在单根模型中无损合并，明确拒绝；
+ * - 两边根节点必须一致；根已变化意味着无法在单根模型中无损合并——默认明确拒绝（不修改原图）；
+ *   调用方确认主历史已变更（如删除头部消息导致根前移）时可传 options.allowRootChange=true
+ *   走根变更重链（rebaseWithRootChange：新根挂到图、旧根专属子树清理），避免图根永久陈旧；
  * - 当前历史节点复用同 id 的旧节点元数据（标签、工作区存档、kind），正文与父链以历史为准；
  * - 从旧活跃路径移出的节点仍留在 nodes 中，成为非活跃候选，不做物理删除；
  * - 返回前执行完整 validate，无法保持图不变量时拒绝修复。
  */
 export function rebaseActivePathFromHistory(
     graph: ConversationBranchGraph,
-    history: ReadonlyArray<Content>
+    history: ReadonlyArray<Content>,
+    options: { allowRootChange?: boolean } = {}
 ): ConversationBranchGraph {
     const canonical = importLinearHistory(history);
     if (graph.rootNodeId === null) {
@@ -312,12 +315,40 @@ export function rebaseActivePathFromHistory(
         );
     }
     if (graph.rootNodeId !== canonical.rootNodeId) {
-        throw new BranchError(
-            'BRANCH_OPERATION_CONFLICT',
-            `cannot safely reconcile branch graph root ${graph.rootNodeId} with main history root ${canonical.rootNodeId}`
-        );
+        if (!options.allowRootChange) {
+            throw new BranchError(
+                'BRANCH_OPERATION_CONFLICT',
+                `cannot safely reconcile branch graph root ${graph.rootNodeId} with main history root ${canonical.rootNodeId}`
+            );
+        }
+        return rebaseWithRootChange(graph, canonical);
     }
 
+    const next = mergeHistoryPath(graph, canonical);
+    const validation = validate(next);
+    if (!validation.valid) {
+        throw new BranchError(
+            'BRANCH_OPERATION_CONFLICT',
+            `cannot safely reconcile branch graph with main history: ${validation.issues.map(issue => issue.message).join('; ')}`
+        );
+    }
+    return next;
+}
+
+/**
+ * 以 canonical（主历史线性导入）的活跃路径重写图中活跃路径（rebase 根一致路径与根变更
+ * 重链共用；round4 复查后自 rebaseActivePathFromHistory 抽出）。
+ *
+ * 语义与既有 rebase 完全一致：
+ * - 复用同 id 旧节点元数据（标签、工作区存档、kind），正文与父链以主历史为准；
+ * - 主历史节点清除旧的软删除状态（属于当前活跃路径）；
+ * - 旧指针清理后重写活跃链指针，保证当前路径是唯一活跃链；
+ * - 从旧活跃路径移出的节点仍留在 nodes 中，成为非活跃候选，不做物理删除。
+ */
+function mergeHistoryPath(
+    graph: ConversationBranchGraph,
+    canonical: ConversationBranchGraph
+): ConversationBranchGraph {
     const historyPath = activePath(canonical);
     // nodes 保持对象表（Record）而非 Map：全文件图变更/序列化路径（BranchGraphRepository、
     // validate、childrenIndex）均按对象表遍历，改 Map 需同步改造所有调用点，收益不抵风险。
@@ -376,8 +407,16 @@ export function rebaseActivePathFromHistory(
         }
         return nextSummary;
     });
-    const root = nodes[canonical.rootNodeId]!;
-    const next: ConversationBranchGraph = {
+    const rootNodeId = canonical.rootNodeId;
+    if (rootNodeId === null) {
+        // 防御：调用方保证 canonical 非空（rebase 入口已拒绝空历史），此处仅满足类型收窄
+        throw new BranchError(
+            'BRANCH_OPERATION_CONFLICT',
+            'cannot merge an empty main history into a branch graph'
+        );
+    }
+    const root = nodes[rootNodeId]!;
+    return {
         ...graph,
         rootNodeId: canonical.rootNodeId,
         activeTailNodeId: canonical.activeTailNodeId,
@@ -385,11 +424,64 @@ export function rebaseActivePathFromHistory(
         activeChildId: root.activeChildId ?? null,
         candidateSummaries,
     };
+}
+
+/**
+ * 根变更重链（rebaseActivePathFromHistory 的 allowRootChange 路径）。
+ *
+ * 触发场景：主历史头部被删（deleteMessage index 0 且非尾删）等导致主历史根前移/替换。
+ *
+ * 单根模型约束：parentId=null 只允许 rootNodeId 一个，旧根无法像中间删除那样退化为非活跃
+ * 候选（软删节点同样受单根约束；重挂到新根下会造成父子关系倒置）。因此：
+ * - 新活跃路径（canonical）整体并入图、新根成为图根（mergeHistoryPath，复用同 id 旧节点
+ *   元数据，正文/父链以主历史为准）；
+ * - 「不沿任何新历史节点可达」的旧节点（旧根及其专属子树，如旧根下的其它候选分支）物理移除
+ *   （removeNodeSet 同步清理候选摘要 / exportedFrom / exportedRefs / activeChildId）——
+ *   主历史已删除且从新根不可达，保留会产生悬空父链/多根，违反单根不变量；物理移除与
+ *   softDeleteSubtreeFrom 的根锚定重置（resetToEmpty）语义一致，旧根无法以软删形态保留；
+ * - 挂在新历史节点下的旧候选（新根/后继节点的分支）原样保留为非活跃候选；
+ * - 返回前执行完整 validate，无法保持图不变量时拒绝修复（抛 BRANCH_OPERATION_CONFLICT）。
+ */
+function rebaseWithRootChange(
+    graph: ConversationBranchGraph,
+    canonical: ConversationBranchGraph
+): ConversationBranchGraph {
+    const merged = mergeHistoryPath(graph, canonical);
+    // 旧根专属子树清理：保留「新历史节点」及「沿 parentId 链可达任一新历史节点」的旧节点。
+    const canonicalIds = new Set(activePath(canonical));
+    const nodeCount = Object.keys(merged.nodes).length;
+    const toRemove = new Set<string>();
+    for (const [id, node] of Object.entries(merged.nodes)) {
+        if (canonicalIds.has(id)) {
+            continue;
+        }
+        let cursor = node.parentId;
+        let guard = 0;
+        let reachable = false;
+        while (cursor !== null) {
+            if (canonicalIds.has(cursor)) {
+                reachable = true;
+                break;
+            }
+            const parent = merged.nodes[cursor];
+            if (!parent) {
+                break; // 防御：悬空父链按不可达处理（并入移除集合）
+            }
+            if (++guard > nodeCount) {
+                break; // 防御：异常环时终止，按不可达处理
+            }
+            cursor = parent.parentId;
+        }
+        if (!reachable) {
+            toRemove.add(id);
+        }
+    }
+    const { graph: next } = removeNodeSet(merged, toRemove);
     const validation = validate(next);
     if (!validation.valid) {
         throw new BranchError(
             'BRANCH_OPERATION_CONFLICT',
-            `cannot safely reconcile branch graph with main history: ${validation.issues.map(issue => issue.message).join('; ')}`
+            `cannot safely reconcile branch graph root with main history: ${validation.issues.map(issue => issue.message).join('; ')}`
         );
     }
     return next;
@@ -979,6 +1071,20 @@ export function softDeleteNode(
 
     // 收集整棵子树（含自身）：分支头不在活跃路径 ⇒ 子孙必然也不在活跃路径
     // （活跃路径沿 parentId 链向上经过祖先），因此级联标记不会触碰活跃路径。
+    // 性能：预构建 parentId → children 邻接表，一次遍历收集子树，避免每个节点
+    // 一次 Object.values 全表扫描（O(n²)）。
+    const childrenByParent = new Map<string, string[]>();
+    for (const current of Object.values(nodes)) {
+        if (current.parentId === null) {
+            continue;
+        }
+        const siblings = childrenByParent.get(current.parentId);
+        if (siblings) {
+            siblings.push(current.id);
+        } else {
+            childrenByParent.set(current.parentId, [current.id]);
+        }
+    }
     const toDelete = new Set<string>();
     const stack = [nodeId];
     while (stack.length > 0) {
@@ -987,10 +1093,8 @@ export function softDeleteNode(
             continue;
         }
         toDelete.add(id);
-        for (const current of Object.values(nodes)) {
-            if (current.parentId === id) {
-                stack.push(current.id);
-            }
+        for (const childId of childrenByParent.get(id) ?? []) {
+            stack.push(childId);
         }
     }
 
@@ -1087,10 +1191,24 @@ export function softDeleteSubtreeFrom(
     }
     const deletedAt = options.deletedAt ?? Date.now();
 
-    // 收集目标子树（excludeNode 时 = 目标的所有后代，不含目标自身）
+    // 收集目标子树（excludeNode 时 = 目标的所有后代，不含目标自身）。
+    // 性能：预构建 parentId → children 邻接表，一次遍历收集子树，避免每个节点
+    // 一次 Object.values 全表扫描（O(n²)）。
+    const childrenByParent = new Map<string, string[]>();
+    for (const current of Object.values(graph.nodes)) {
+        if (current.parentId === null) {
+            continue;
+        }
+        const siblings = childrenByParent.get(current.parentId);
+        if (siblings) {
+            siblings.push(current.id);
+        } else {
+            childrenByParent.set(current.parentId, [current.id]);
+        }
+    }
     const toDelete = new Set<string>();
     const stack = excludeNode
-        ? Object.values(graph.nodes).filter(n => n.parentId === nodeId).map(n => n.id)
+        ? [...(childrenByParent.get(nodeId) ?? [])]
         : [nodeId];
     while (stack.length > 0) {
         const id = stack.pop()!;
@@ -1098,10 +1216,8 @@ export function softDeleteSubtreeFrom(
             continue;
         }
         toDelete.add(id);
-        for (const current of Object.values(graph.nodes)) {
-            if (current.parentId === id) {
-                stack.push(current.id);
-            }
+        for (const childId of childrenByParent.get(id) ?? []) {
+            stack.push(childId);
         }
     }
     if (toDelete.size === 0) {
@@ -1183,7 +1299,21 @@ export function restoreNode(
         return graph; // 幂等：未删除节点无需恢复
     }
     const nodes = { ...graph.nodes };
-    // 收集整棵子树（含自身）：软删是级联的，子孙必然也是软删（或遗留数据中未标记，一并清理标记）
+    // 收集整棵子树（含自身）：软删是级联的，子孙必然也是软删（或遗留数据中未标记，一并清理标记）。
+    // 性能：预构建 parentId → children 邻接表，一次遍历收集子树，避免每个节点
+    // 一次 Object.values 全表扫描（O(n²)）。
+    const childrenByParent = new Map<string, string[]>();
+    for (const current of Object.values(nodes)) {
+        if (current.parentId === null) {
+            continue;
+        }
+        const siblings = childrenByParent.get(current.parentId);
+        if (siblings) {
+            siblings.push(current.id);
+        } else {
+            childrenByParent.set(current.parentId, [current.id]);
+        }
+    }
     const toRestore = new Set<string>();
     const stack = [nodeId];
     while (stack.length > 0) {
@@ -1192,10 +1322,8 @@ export function restoreNode(
             continue;
         }
         toRestore.add(id);
-        for (const current of Object.values(nodes)) {
-            if (current.parentId === id) {
-                stack.push(current.id);
-            }
+        for (const childId of childrenByParent.get(id) ?? []) {
+            stack.push(childId);
         }
     }
     for (const id of toRestore) {
@@ -1339,7 +1467,19 @@ export function removeSubtree(
     return removeNodeSet(graph, toRemove);
 }
 
-/** 从图中移除节点集合并清理所有引用（pruneDeletedNodes / removeSubtree 共用） */
+/** 从图中移除节点集合并清理所有引用（pruneDeletedNodes / removeSubtree 共用）。
+ *
+ * BCP-06 存档清理说明（round5 复查，仅注释不联动）：
+ * - 本函数是纯图操作（无 repository 访问），物理移除节点后其 workspaceCheckpointId 绑定的
+ *   工作区存档不会在此触发 cleaner；图侧绑定随节点消失，存档回收依赖调用方联动或周期扫描；
+ * - 已联动路径：purgeBranchCandidate / pruneDeletedBranches 在 BranchService 侧收集
+ *   prunedNodeIds，会话写锁释放后调 cleanupZeroReferencedCheckpoints（引用计数重扫 + 全局清理器）；
+ * - 未联动路径：rebaseWithRootChange（rebaseActivePathFromHistory 的 allowRootChange 分支）
+ *   物理移除旧根专属子树时同样经本函数，但调用方不收集 prunedNodeIds——其绑定存档仅靠周期
+ *   refcount 扫描（computeCheckpointReferenceCounts 全量重扫）回收，作为 BCP-08 兜底可接受；
+ *   若未来需即时回收，应在 rebase 调用方（如 syncMainHistoryAfterStructuralMutation）收集
+ *   prunedNodeIds 并在写锁释放后调用 cleanupZeroReferencedCheckpoints（同 purge 路径模式）。
+ */
 function removeNodeSet(
     graph: ConversationBranchGraph,
     toRemove: Set<string>

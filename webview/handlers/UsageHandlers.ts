@@ -14,6 +14,7 @@
  * 目录监听在首次统计时懒初始化；拿不到目录（非文件存储）时退化为全量扫描。
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import type { MessageHandler, HandlerContext } from '../types';
 import { aggregateUsageStats, type UsageStatsResult } from '../../backend/modules/conversation';
 import { UsageStatsCache, startUsageDirectoryWatcher } from '../../backend/modules/conversation';
@@ -124,5 +125,5 @@ export const getUsageStats: MessageHandler = async (data, requestId, ctx) => {
  * 注册用量统计处理器
  */
 export function registerUsageHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set('usage.getStats', getUsageStats);
+  registry.set(MESSAGE_NAMES['usage.getStats'], getUsageStats);
 }

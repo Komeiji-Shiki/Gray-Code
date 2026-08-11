@@ -1,5 +1,5 @@
 /**
- * LimCode - 流式响应处理器
+ * GrayCode - 流式响应处理器
  *
  * 封装流式响应处理的公共逻辑，包括：
  * - 流式响应累积
@@ -177,3 +177,4 @@ export class StreamResponseProcessor {
 export function isAsyncGenerator<T = unknown>(obj: unknown): obj is AsyncGenerator<T> {
     return !!obj && typeof (obj as AsyncGenerator<T>)[Symbol.asyncIterator] === 'function';
 }
+

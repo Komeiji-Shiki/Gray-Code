@@ -26,6 +26,7 @@
  * - utils.ts: 工具函数
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
 import { computed as vueComputed, watch } from 'vue'
 import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
@@ -343,7 +344,17 @@ export const useChatStore = defineStore('chat', () => {
   const createNewConversation = async () => {
     // 如果当前标签页已经是空白的，直接在当前标签页创建
     if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
+      // 空白标签页可能已入队消息/附件/编辑器节点：resetConversationState 会清空它们，
+      // 先暂存再恢复，避免「新建对话」静默丢弃排队内容（P2）
+      const preserved = {
+        messageQueue: state.messageQueue.value,
+        attachments: state.attachments.value,
+        editorNodes: state.editorNodes.value
+      }
       await createNewConvAction(state, cancelStreamAndRejectTools)
+      state.messageQueue.value = preserved.messageQueue
+      state.attachments.value = preserved.attachments
+      state.editorNodes.value = preserved.editorNodes
       void loadBranchGraphAction(state)
       return
     }
@@ -518,7 +529,7 @@ export const useChatStore = defineStore('chat', () => {
     if (!conversationId) return
 
     try {
-      await sendToExtension('conversation.setCustomMetadata', {
+      await sendToExtension(MESSAGE_NAMES['conversation.setCustomMetadata'], {
         conversationId,
         key: 'activeBuild',
         value: normalizedBuild
@@ -587,7 +598,7 @@ export const useChatStore = defineStore('chat', () => {
       streamHandlerCtx,
       async (conversationId) => {
         try {
-          await sendToExtension('cancelStream', { conversationId })
+          await sendToExtension(MESSAGE_NAMES.cancelStream, { conversationId })
         } catch (error) {
           console.error('[chatStore] Failed to cancel stream on tab close:', error)
         }
@@ -668,7 +679,7 @@ export const useChatStore = defineStore('chat', () => {
     })
     
     try {
-      const uri = await sendToExtension<string | null>('getWorkspaceUri', {})
+      const uri = await sendToExtension<string | null>(MESSAGE_NAMES.getWorkspaceUri, {})
       setCurrentWorkspaceUri(state, uri)
     } catch (error) {
       // 获取工作区 URI 失败不影响主流程，但记录日志便于排查

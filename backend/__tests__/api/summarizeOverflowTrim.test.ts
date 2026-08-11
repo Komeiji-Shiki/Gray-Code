@@ -20,10 +20,10 @@
  * 会把 functionResponse.id 不在历史中出现的配对判为 orphan_function_response）。
  */
 
-import { SummarizeService } from '../../modules/api/chat/services/SummarizeService';
 import { ChannelError, ErrorType } from '../../modules/channel/types';
 import type { Content } from '../../modules/conversation/types';
 import { setGlobalBranchService } from '../../modules/conversation/branch/BranchService';
+import { createSummarizeHarness } from '../__fixtures__/harnessFixtures';
 
 afterEach(() => {
     setGlobalBranchService(undefined);
@@ -78,125 +78,13 @@ const msgLabel = (m: Content): string =>
 
 // ==================== 测试脚手架 ====================
 
-/** 总结文本必须 >= MIN_SUMMARY_LENGTH（50 字符），否则会被 LOW_QUALITY_SUMMARY 拒绝 */
-const SUCCESS_SUMMARY: Content = {
-    role: 'model',
-    parts: [{ text: '已完成总结。这是足够长的总结正文：目标已记录、已完成步骤与当前进度、下一步计划与关键约束均已覆盖，供后续对话继续使用。' }],
-    usageMetadata: { promptTokenCount: 500, candidatesTokenCount: 100 }
-};
 
-interface HarnessOptions {
-    fullHistory: Content[];
-    lastSummaryIndex?: number;
-    maxContextTokens?: number;
-    keepRecentTokens?: number | string;
-    keepRecentRounds?: number;
-    summarizeMaxInputRatio?: number;
-    generateContent?: Content;
-    generateError?: Error;
-    /**
-     * 可选：getHistoryRef 返回的「规划快照」（默认 deep copy of fullHistory）。
-     * 与 liveHistory 分离时模拟「规划后、替换前历史被并发写入」。
-     */
-    historyRef?: Content[];
-    /** 可选：mutateContents 读写的「落盘」历史（默认与 historyRef 同一引用） */
-    liveHistory?: Content[];
-}
-
-interface Harness {
-    service: SummarizeService;
-    generate: jest.Mock;
-    getHistoryRef: jest.Mock;
-    mutateContents: jest.Mock;
-    liveHistory: Content[];
-}
-
-function createHarness(options: HarnessOptions): Harness {
-    const {
-        fullHistory,
-        lastSummaryIndex = -1,
-        maxContextTokens = 1000,
-        keepRecentTokens = '10%',
-        keepRecentRounds = 1,
-        summarizeMaxInputRatio = 0.5,
-        generateContent = SUCCESS_SUMMARY,
-        generateError,
-        historyRef,
-        liveHistory
-    } = options;
-
-    // 模拟 ConversationManager 的仓储：getHistoryRef 读「规划快照」，
-    // mutateContents 在「落盘历史」的深拷贝上执行 mutator，返回新引用则写回。
-    const planningHistory = historyRef ?? JSON.parse(JSON.stringify(fullHistory));
-    const mutableHistory = liveHistory ?? planningHistory;
-
-    const configManager = {
-        getConfig: jest.fn(async () => ({
-            id: 'cfg1',
-            type: 'openai',
-            enabled: true,
-            maxContextTokens
-        }))
-    };
-
-    const generate = jest.fn(async () => {
-        if (generateError) {
-            throw generateError;
-        }
-        return { content: generateContent };
-    });
-
-    const getHistoryRef = jest.fn(async () => planningHistory);
-    const mutateContents = jest.fn(async (mutator: (history: Content[]) => Content[]) => {
-        const copy = JSON.parse(JSON.stringify(mutableHistory)) as Content[];
-        const next = mutator(copy);
-        if (next !== copy) {
-            // 有变更：写回（与仓储 saveAndReload 语义一致）
-            const persisted = JSON.parse(JSON.stringify(next)) as Content[];
-            mutableHistory.splice(0, mutableHistory.length, ...persisted);
-            return persisted;
-        }
-        // 无变更：返回原引用，模拟仓储「跳过写回」
-        return copy;
-    });
-    const conversationManager = {
-        getHistoryRef,
-        getTranscriptRepository: jest.fn(() => ({ mutateContents }))
-    };
-
-    const contextTrimService = {
-        findLastSummaryIndex: jest.fn(() => lastSummaryIndex),
-        identifyRounds: jest.fn(() => [])
-    };
-
-    const settingsManager = {
-        getSummarizeConfig: jest.fn(() => ({
-            keepRecentRounds,
-            keepRecentTokens,
-            useSeparateModel: false,
-            summarizeChannelId: '',
-            summarizeModelId: '',
-            summarizeMaxInputRatio,
-            autoSummarizePrompt: ''
-        }))
-    };
-
-    const service = new SummarizeService(
-        configManager as any,
-        { generate } as any,
-        conversationManager as any,
-        contextTrimService as any,
-        settingsManager as any
-    );
-
-    return { service, generate, getHistoryRef, mutateContents, liveHistory: mutableHistory };
-}
 
 // ==================== 测试用例 ====================
 
 describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
-    it('无工具交互可排除且超出上下文：返回 CONTEXT_OVERFLOW，不发 API 请求', async () => {
-        const { service, generate, mutateContents } = createHarness({
+    test('无工具交互可排除且超出上下文：返回 CONTEXT_OVERFLOW，不发 API 请求', async () => {
+        const { service, generate, mutateContents } = createSummarizeHarness({
             // 单轮超大：3000 + 1000 token，预算 100，maxInput = 4000 * 0.5 = 2000
             fullHistory: [userMsg('老问题', 3000), modelMsg('老回答', 1000)],
             maxContextTokens: 4000
@@ -212,8 +100,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(mutateContents).not.toHaveBeenCalled();
     });
 
-    it('溢出时排除最后一轮工具交互（整轮一起排除），重新估算后正常总结并逻辑截断', async () => {
-        const { service, generate, liveHistory } = createHarness({
+    test('溢出时排除最后一轮工具交互（整轮一起排除），重新估算后正常总结并逻辑截断', async () => {
+        const { service, generate, liveHistory } = createSummarizeHarness({
             // 三轮：500 / 500 / 400；预算 100 → 轮内细粒度切点落在轮3尾部（1400 token 被纳入总结），
             // maxInput = 1000 * 0.9 = 900 → 逐轮向前排除，最终只总结轮1（500 token）
             fullHistory: [
@@ -249,8 +137,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(liveHistory.slice(4).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'r3', 'fc3', 'fc3', 'done']);
     });
 
-    it('同一轮内的多个工具交互一起排除（不拆散轮）', async () => {
-        const { service, generate, liveHistory } = createHarness({
+    test('同一轮内的多个工具交互一起排除（不拆散轮）', async () => {
+        const { service, generate, liveHistory } = createSummarizeHarness({
             // 轮2 有两个工具交互（fc2a/fc2b）；总结范围 = 轮1+轮2 = 800 token > 500
             fullHistory: [
                 userMsg('r1', 100), fcMsg('fc1', 100), frMsg('fc1', 100),
@@ -278,8 +166,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
             .toEqual(['r2', 'fc2a', 'fc2a', 'fc2b', 'fc2b', 'r3', 'fc3', 'fc3', 'done']);
     });
 
-    it('迭代排除后仍超限：返回 CONTEXT_OVERFLOW，不发 API 请求', async () => {
-        const { service, generate, mutateContents } = createHarness({
+    test('迭代排除后仍超限：返回 CONTEXT_OVERFLOW，不发 API 请求', async () => {
+        const { service, generate, mutateContents } = createSummarizeHarness({
             // 轮1 = 700 token：排除轮2（300）后仍剩 700 > 500，继续排除时轮1起点即范围起点 → 无法收缩
             // 预算 20%（200）使规划器能先产生一个可用的轮内切点（cutIndex=7）
             fullHistory: [
@@ -300,8 +188,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(mutateContents).not.toHaveBeenCalled();
     });
 
-    it('从旧总结开始的范围：previousSummarizedCount 从最后一个总结消息读取，历史 = [旧总结, 新总结, 尾巴]', async () => {
-        const { service, generate, liveHistory } = createHarness({
+    test('从旧总结开始的范围：previousSummarizedCount 从最后一个总结消息读取，历史 = [旧总结, 新总结, 尾巴]', async () => {
+        const { service, generate, liveHistory } = createSummarizeHarness({
             fullHistory: [
                 summaryMsg('sum1', { summarizedMessageCount: 4 }),
                 fcMsg('fc1', 100), frMsg('fc1', 100),
@@ -333,8 +221,8 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(liveHistory.slice(4).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'done']);
     });
 
-    it('最后一个总结缺 summarizedMessageCount：往前找更早总结的累计值，不回退数组下标', async () => {
-        const { service, generate, liveHistory } = createHarness({
+    test('最后一个总结缺 summarizedMessageCount：往前找更早总结的累计值，不回退数组下标', async () => {
+        const { service, generate, liveHistory } = createSummarizeHarness({
             fullHistory: [
                 summaryMsg('sum1', { summarizedMessageCount: 3 }),
                 modelMsg('m1', 100),
@@ -371,10 +259,10 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 });
 
 describe('SummarizeService.handleAutoSummarize - 逻辑截断语义', () => {
-    it('无旧总结时：历史 = [第一条用户消息, 被总结消息(isSummarized), 新总结, 尾巴]，removedCount 正确', async () => {
+    test('无旧总结时：历史 = [第一条用户消息, 被总结消息(isSummarized), 新总结, 尾巴]，removedCount 正确', async () => {
         const structuralSync = jest.fn(async () => ({ synced: true, deferred: false }));
         setGlobalBranchService({ syncMainHistoryAfterStructuralMutation: structuralSync } as any);
-        const { service, liveHistory } = createHarness({
+        const { service, liveHistory } = createSummarizeHarness({
             fullHistory: [
                 userMsg('r1', 50), fcMsg('fc1', 50), frMsg('fc1', 50),
                 userMsg('r2', 100), fcMsg('fc2', 100), frMsg('fc2', 100),
@@ -402,8 +290,8 @@ describe('SummarizeService.handleAutoSummarize - 逻辑截断语义', () => {
     });
 });
 
-describe('SummarizeService.handleAutoSummarize - H2 并发安全（STALE_RANGE）', () => {
-    it('并发删除导致 insertIndex 越界：放弃总结（STALE_RANGE），不落盘', async () => {
+describe('SummarizeService.handleAutoSummarize 并发安全（STALE_RANGE）', () => {
+    test('并发删除导致 insertIndex 越界：放弃总结（STALE_RANGE），不落盘', async () => {
         const planningSnapshot: Content[] = [
             userMsg('r1', 100), fcMsg('fc1', 100), frMsg('fc1', 100),
             userMsg('r2', 100)
@@ -411,7 +299,7 @@ describe('SummarizeService.handleAutoSummarize - H2 并发安全（STALE_RANGE�
         // 规划时 insertIndex=3（总结 r1 轮）；替换前并发删除把历史缩短到 1 条
         const concurrentShrunkenHistory: Content[] = [userMsg('r1', 100)];
 
-        const { service, generate, mutateContents, liveHistory } = createHarness({
+        const { service, generate, mutateContents, liveHistory } = createSummarizeHarness({
             fullHistory: planningSnapshot,
             historyRef: planningSnapshot,
             liveHistory: concurrentShrunkenHistory,
@@ -430,13 +318,13 @@ describe('SummarizeService.handleAutoSummarize - H2 并发安全（STALE_RANGE�
         expect(liveHistory).toEqual([userMsg('r1', 100)]);
     });
 
-    it('总结范围会吞掉当前回合真实用户消息（单超大轮轮内截断）：放弃总结（STALE_RANGE），不落盘', async () => {
+    test('总结范围会吞掉当前回合真实用户消息（单超大轮轮内截断）：放弃总结（STALE_RANGE），不落盘', async () => {
         const singleOversizedRound: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
         ];
 
-        const { service, liveHistory } = createHarness({
+        const { service, liveHistory } = createSummarizeHarness({
             fullHistory: singleOversizedRound,
             keepRecentTokens: '10%' // 100：单轮 240 > 预算 → 轮内截断，切点会包含轮首用户消息
         });
@@ -453,12 +341,12 @@ describe('SummarizeService.handleAutoSummarize - H2 并发安全（STALE_RANGE�
 });
 
 describe('SummarizeService.handleAutoSummarize - C 总结质量校验', () => {
-    it('总结文本低于 MIN_SUMMARY_LENGTH：返回 LOW_QUALITY_SUMMARY，不替换历史', async () => {
+    test('总结文本低于 MIN_SUMMARY_LENGTH：返回 LOW_QUALITY_SUMMARY，不替换历史', async () => {
         const history: Content[] = [
             userMsg('r1', 100), fcMsg('fc1', 100), frMsg('fc1', 100),
             userMsg('r2', 100), fcMsg('fc2', 100), frMsg('fc2', 100)
         ];
-        const { service, generate, liveHistory } = createHarness({
+        const { service, generate, liveHistory } = createSummarizeHarness({
             fullHistory: history,
             keepRecentTokens: '50%', // 500：轮级边界落在 r2 轮首（round 边界），总结 r1 轮
             summarizeMaxInputRatio: 0.9,
@@ -481,8 +369,8 @@ describe('SummarizeService.handleAutoSummarize - C 总结质量校验', () => {
 });
 
 describe('SummarizeService.handleAutoSummarize - abort 判定', () => {
-    it('ChannelError CANCELLED_ERROR：返回 ABORTED 而非普通失败', async () => {
-        const { service, generate } = createHarness({
+    test('ChannelError CANCELLED_ERROR：返回 ABORTED 而非普通失败', async () => {
+        const { service, generate } = createSummarizeHarness({
             fullHistory: [userMsg('q1', 100), userMsg('q2', 100)],
             generateError: new ChannelError(ErrorType.CANCELLED_ERROR, 'cancelled')
         });
@@ -496,10 +384,10 @@ describe('SummarizeService.handleAutoSummarize - abort 判定', () => {
         }
     });
 
-    it('原生 AbortError：返回 ABORTED 而非普通失败', async () => {
+    test('原生 AbortError：返回 ABORTED 而非普通失败', async () => {
         const abortError = new Error('aborted');
         abortError.name = 'AbortError';
-        const { service, generate } = createHarness({
+        const { service, generate } = createSummarizeHarness({
             fullHistory: [userMsg('q1', 100), userMsg('q2', 100)],
             generateError: abortError
         });
@@ -513,8 +401,8 @@ describe('SummarizeService.handleAutoSummarize - abort 判定', () => {
         }
     });
 
-    it('普通 API 错误仍按 UNKNOWN_ERROR 返回', async () => {
-        const { service, generate } = createHarness({
+    test('普通 API 错误仍按 UNKNOWN_ERROR 返回', async () => {
+        const { service, generate } = createSummarizeHarness({
             fullHistory: [userMsg('q1', 100), userMsg('q2', 100)],
             generateError: new Error('rate limited')
         });

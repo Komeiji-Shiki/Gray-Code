@@ -1,5 +1,5 @@
 /**
- * 读侧一致性（双 rename 提交窗口）测试。
+ * 读侧一致性（双 rename 提交窗口，R2 3.1/3.3 + M4）测试。
  *
  * writeSegmentedHistory 的目录 rename 与 index rename 是两次独立操作，读侧可能短暂看到
  * “新段文件 + 旧 index”。本测试锁定：
@@ -10,8 +10,8 @@
  * - M4 自愈优先从可读段重建（保留分段后的追加），无任何可读段时才用 legacy。
  */
 
-import { FileSystemStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory, Content } from '../../modules/conversation/types';
+import { FileSystemStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory, Content } from '../../modules/conversation';
 import { Uri } from 'vscode';
 import { createAdapter, normPath } from './helpers/fakeVscodeFs';
 import { makeContent, makeHistory } from '../__fixtures__/conversationFixtures';
@@ -78,7 +78,7 @@ describe('双 rename 提交窗口：读侧一致性校验（不静默返回错�
     });
 });
 
-describe('R2 3.1 双 rename 窗口：段读取后重读 index 复核', () => {
+describe('双 rename 窗口：段读取后重读 index 复核', () => {
     test('段读取后 index 变为新版本（新段+旧 index 窗口）：复核拦截 → 重试后读到一致新状态', async () => {
         const { adapter, fake } = createAdapter();
         await adapter.saveHistory('conv-w', makeHistory(SEGMENT_SIZE)); // 200 条 1 段
@@ -162,7 +162,7 @@ describe('R2 3.1 双 rename 窗口：段读取后重读 index 复核', () => {
     });
 });
 
-describe('R2 3.3 读侧重试：双格式都不存在不重试', () => {
+describe('读侧重试：双格式都不存在不重试', () => {
     test('legacy+segmented 双缺失：只尝试一次直接返回 not_found（不空转退避重试）', async () => {
         const { adapter } = createAdapter();
         let attempts = 0;
@@ -232,7 +232,7 @@ describe('appendHistory 提交前重算 totalMessages = Σsegments.count', () =>
     });
 });
 
-describe('M4 自愈优先从可读段重建（不丢分段后的追加）', () => {
+describe('自愈优先从可读段重建（不丢分段后的追加）', () => {
     test('尾段损坏但前段可读：从段重建保留 200 条，legacy 旧快照不被使用', async () => {
         const { adapter, fake } = createAdapter();
         await adapter.saveHistory('conv-m4b', makeHistory(SEGMENT_SIZE + 10)); // 2 段：200 + 10

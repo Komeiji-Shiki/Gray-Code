@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import { formatReadFileDescription } from '../read_file'
 
 describe('formatReadFileDescription', () => {
-  it('批量读取逐行显示全部文件，不折叠为 +N', () => {
+  test('批量读取逐行显示全部文件，不折叠为 +N', () => {
     expect(formatReadFileDescription({
       files: [
         { path: 'src/first.ts', startLine: 1, endLine: 10 },
@@ -16,12 +16,12 @@ describe('formatReadFileDescription', () => {
     ].join('\n'))
   })
 
-  it('单文件摘要保持原有行范围格式', () => {
+  test('单文件摘要保持原有行范围格式', () => {
     expect(formatReadFileDescription({ path: 'src/one.ts', endLine: 8 }))
       .toBe('src/one.ts [L1-8]')
   })
 
-  it('空批量参数不会遮蔽同一次调用中的单文件路径', () => {
+  test('空批量参数不会遮蔽同一次调用中的单文件路径', () => {
     expect(formatReadFileDescription({
       files: [],
       path: 'frontend/src/App.vue',

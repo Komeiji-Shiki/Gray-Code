@@ -8,9 +8,9 @@
  * / 其它 mutate 串行；无变更返回原引用跳过写回。
  */
 
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
+import { ConversationManager } from '../../modules/conversation';
 import { createAdapter } from './helpers/fakeVscodeFs';
-import type { Content } from '../../modules/conversation/types';
+import type { Content } from '../../modules/conversation';
 import { makeContent } from '../__fixtures__/conversationFixtures';
 
 /** 构造历史：user 消息 + 含 N 个 functionCall 的 model 消息 */

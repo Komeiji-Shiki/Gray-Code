@@ -12,6 +12,7 @@
  * - useBackgroundTaskStore（P2 回执投递）为跨 store 依赖，直接模块级引用。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Attachment } from '../../types'
 import type { ChatStoreState, QueuedMessage } from './types'
 import type { SendMessageOptions } from './messageActions'
@@ -55,9 +56,10 @@ export function enqueueMessage(
 
   // 用户在响应期间发话：若当前会话正有前台命令在等待，将其转入后台，
   // 让本轮尽快结束、排队消息尽快送达（命令结果稍后以回执回流唤醒模型）。
-  // 空闲时无前台命令可转移，跳过无效 IPC。
-  if (state.isStreaming.value || state.isWaitingForResponse.value) {
-    void sendToExtension('terminal.detachToBackground', {
+  // 空闲时无前台命令可转移，跳过无效 IPC；无会话归属（空白标签页）时
+  // conversationId 为 null，无法转移，同样跳过（避免向后端发送 null 会话）
+  if ((state.isStreaming.value || state.isWaitingForResponse.value) && state.currentConversationId.value) {
+    void sendToExtension(MESSAGE_NAMES['terminal.detachToBackground'], {
       conversationId: state.currentConversationId.value
     }).catch(() => {})
   }

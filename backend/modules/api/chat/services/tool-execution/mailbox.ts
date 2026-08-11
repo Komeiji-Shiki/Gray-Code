@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具执行服务：mailbox 收件箱排水（mailbox drain epoch / inbox 注入）
+ * GrayCode - 工具执行服务：mailbox 收件箱排水（mailbox drain epoch / inbox 注入）
  *
  * ToolExecutionService.ts 职责拆分（第二批）的 MailboxCore 基类。
  * 继承链：ToolExecutionService → ExecutionCore → ResultCore → PreflightCore → MailboxCore。
@@ -206,3 +206,4 @@ export class MailboxCore {
         this.injectInboxMessages(mailboxConversationId, mailboxRunId, responseParts, toolResults);
     }
 }
+

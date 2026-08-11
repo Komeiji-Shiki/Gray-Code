@@ -1,5 +1,5 @@
 /**
- * LimCode - 检查点模块
+ * GrayCode - 检查点模块
  *
  * 提供工作区备份和恢复功能
  *
@@ -33,6 +33,9 @@ export { CheckpointRetentionService } from './CheckpointRetentionService';
 export { runBounded, DEFAULT_CHECKPOINT_CONCURRENCY, CheckpointAbortError, throwIfAborted } from './checkpointConcurrency';
 export type { CheckpointManifest, CheckpointSummary, CheckpointOperationProgress } from './types';
 export type { CheckpointExclusionConfig } from './types';
+// T16：CheckpointSummaryWithSize 单一来源迁至 shared/protocol.ts，此处 re-export 保持导出路径
+// （CheckpointSummary / CheckpointSummaryWithSize 均由 shared 定义，经 ./types 与本行透出）
+export type { CheckpointSummaryWithSize } from '../../../shared/protocol';
 
 // 排除类别（EX-03~EX-06）与默认规则
 export {
@@ -127,3 +130,4 @@ export type {
     CheckpointSnapshotBuildResult,
     ExclusionPreviewOptions
 } from './CheckpointSnapshotBuilder';
+

@@ -1,5 +1,5 @@
 import { mount, type VueWrapper } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
 import InputBox from '../../components/input/InputBox.vue'
 import type { EditorNode } from '../../types/editorNode'
@@ -46,7 +46,7 @@ describe('InputBox paste', () => {
     vi.restoreAllMocks()
   })
 
-  it('单行文字粘贴：阻止默认插入并写入文本节点，不切换 contenteditable', () => {
+  test('单行文字粘贴：阻止默认插入并写入文本节点，不切换 contenteditable', () => {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     // 回归核心：contenteditable 属性从头到尾不得被修改——属性值切换会重建
     // editing host 的 undo 栈，粘贴产生的 undo 记录随恢复动作一并销毁（Ctrl+Z 失效）
@@ -65,7 +65,7 @@ describe('InputBox paste', () => {
     expect(wrapper.emitted('paste')).toBeUndefined()
   })
 
-  it('多行文字粘贴：换行以 data-lim-break 标记的 BR 插入，提取节点保留换行', () => {
+  test('多行文字粘贴：换行以 data-lim-break 标记的 BR 插入，提取节点保留换行', () => {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     const event = createPasteEvent([createClipboardItem('string')], 'line1\nline2')
 
@@ -78,7 +78,7 @@ describe('InputBox paste', () => {
     expect(lastEmittedNodes(wrapper)).toEqual([{ type: 'text', text: 'line1\nline2' }])
   })
 
-  it('Windows 剪贴板 \\r\\n 归一化为 \\n', () => {
+  test('Windows 剪贴板 \\r\\n 归一化为 \\n', () => {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     const event = createPasteEvent([createClipboardItem('string')], 'a\r\nb')
 
@@ -87,7 +87,7 @@ describe('InputBox paste', () => {
     expect(lastEmittedNodes(wrapper)).toEqual([{ type: 'text', text: 'a\nb' }])
   })
 
-  it('execCommand 可用时一次性 insertHTML 写入（单个原生 undo 条目，Ctrl+Z 整体撤销）', () => {
+  test('execCommand 可用时一次性 insertHTML 写入（单个原生 undo 条目，Ctrl+Z 整体撤销）', () => {
     const execCommandMock = vi.fn().mockReturnValue(true)
     Object.defineProperty(document, 'execCommand', {
       value: execCommandMock,
@@ -120,7 +120,7 @@ describe('InputBox paste', () => {
     }
   })
 
-  it('空文本粘贴不干预默认行为', () => {
+  test('空文本粘贴不干预默认行为', () => {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     const event = createPasteEvent([createClipboardItem('string')], '')
 
@@ -131,7 +131,7 @@ describe('InputBox paste', () => {
     expect(wrapper.emitted('paste')).toBeUndefined()
   })
 
-  it('文件粘贴仍阻止默认插入并向父组件发送附件', () => {
+  test('文件粘贴仍阻止默认插入并向父组件发送附件', () => {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     const file = new File(['content'], 'note.txt', { type: 'text/plain' })
     const event = createPasteEvent([
@@ -161,7 +161,7 @@ describe('InputBox 尺寸调整', () => {
     vi.restoreAllMocks()
   })
 
-  it('拖动手柄可放大输入框，双击后恢复自动高度', async () => {
+  test('拖动手柄可放大输入框，双击后恢复自动高度', async () => {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     Object.defineProperty(editor, 'getBoundingClientRect', {
       value: () => ({ height: 80, top: 0, bottom: 80, left: 0, right: 320, width: 320, x: 0, y: 0, toJSON: () => ({}) }),
@@ -182,7 +182,7 @@ describe('InputBox 占位符', () => {
     vi.restoreAllMocks()
   })
 
-  it('空输入框显示占位符，有内容时隐藏', async () => {
+  test('空输入框显示占位符，有内容时隐藏', async () => {
     const empty = mount(InputBox, {
       props: { nodes: [], placeholder: '输入消息...' }
     })
@@ -207,7 +207,7 @@ describe('InputBox 占位符', () => {
     withWhitespace.unmount()
   })
 
-  it('未传 placeholder 时回退到 i18n 提示', () => {
+  test('未传 placeholder 时回退到 i18n 提示', () => {
     const wrapper = mount(InputBox, {
       props: { nodes: [] }
     })
@@ -237,7 +237,7 @@ describe('InputBox 外部状态同步（发送后清空回归）', () => {
     return wrapper
   }
 
-  it('真实输入路径（isInputting 窗口内跳过同步）后发送清空：DOM 重建、残留文本与 placeholder 不叠加', async () => {
+  test('真实输入路径（isInputting 窗口内跳过同步）后发送清空：DOM 重建、残留文本与 placeholder 不叠加', async () => {
     const wrapper = mountWithParent()
     await nextTick()
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
@@ -263,7 +263,7 @@ describe('InputBox 外部状态同步（发送后清空回归）', () => {
     wrapper.unmount()
   })
 
-  it('外部替换节点内容时 DOM 同步刷新（renderNodesToDom 路径）', async () => {
+  test('外部替换节点内容时 DOM 同步刷新（renderNodesToDom 路径）', async () => {
     const wrapper = mountWithParent()
     await nextTick()
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
@@ -280,5 +280,118 @@ describe('InputBox 外部状态同步（发送后清空回归）', () => {
     await nextTick()
     expect(editor.textContent).toContain('bbb')
     wrapper.unmount()
+  })
+})
+
+
+describe('InputBox 双撤销栈跨栈边界（前端 M2）', () => {
+  // 自定义撤销栈（接管 Ctrl+Z/Y）与浏览器原生 undo 栈（粘贴写 execCommand 记录）并存：
+  // 粘贴→手动编辑→撤销 序列必须逐条回退，不能错位/跨栈跳变。
+  // 用真实父组件包装：update:nodes 回流写回 nodes——restoreHistoryEntry 的 nextTick
+  // 渲染依赖 props.nodes 同步，静态 props 会让 undo 后渲染为空。
+  let wrapper: VueWrapper
+
+  beforeEach(() => {
+    wrapper = mount({
+      components: { InputBox },
+      setup() {
+        const nodes = ref<EditorNode[]>([])
+        return { nodes }
+      },
+      template: '<InputBox :nodes="nodes" @update:nodes="nodes = $event" />'
+    })
+  })
+
+  afterEach(() => {
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  function typeText(text: string) {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    editor.textContent = text
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  function pressUndo() {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
+  }
+
+  function pressRedo() {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true, cancelable: true }))
+  }
+
+  function pasteText(text: string) {
+    const execCommandMock = vi.fn().mockReturnValue(true)
+    Object.defineProperty(document, 'execCommand', {
+      value: execCommandMock,
+      configurable: true,
+      writable: true
+    })
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const event = createPasteEvent([createClipboardItem('string')], text)
+    editor.dispatchEvent(event)
+    // jsdom 的 execCommand mock 不产生真实 DOM 变更/不派发 input 事件；
+    // 真实 Chromium 中 execCommand('insertText') 更新 DOM 并派发 input 事件（handleInput 入自定义栈）——
+    // 手动模拟该行为，才能验证「粘贴路径与手动输入共享自定义撤销栈」的跨栈边界
+    editor.textContent = (editor.textContent ?? '') + text
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    return execCommandMock
+  }
+
+  test('粘贴 → 手动编辑 → Ctrl+Z 逐条回退（不跨栈跳变）', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+
+    // 1. 手动输入 base（自定义栈快照 1）
+    typeText('base')
+    await nextTick()
+
+    // 2. 粘贴 hello（写原生 undo 栈 + input 事件 → 自定义栈快照 2）
+    const execCommandMock = pasteText('hello')
+    await nextTick()
+    expect(execCommandMock).toHaveBeenCalled()
+
+    // 3. 手动追加 !（自定义栈快照 3）
+    typeText('basehello!')
+    await nextTick()
+
+    // 4. Ctrl+Z → 应回到快照 2（basehello，粘贴后）而非跨过粘贴直接到 base
+    pressUndo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('basehello')
+
+    // 5. Ctrl+Z → 回到快照 1（base，粘贴前）
+    pressUndo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('base')
+
+    // 6. Ctrl+Y → 回到快照 2
+    pressRedo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('basehello')
+
+    delete (document as { execCommand?: unknown }).execCommand
+  })
+
+  test('粘贴后直接 Ctrl+Z 一次整体撤销本次粘贴（原生 undo 条目）', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+
+    typeText('base')
+    await nextTick()
+    pasteText('hello')
+    await nextTick()
+
+    // 自定义栈：粘贴也入栈 → Ctrl+Z 回到粘贴前
+    pressUndo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('base')
+
+    delete (document as { execCommand?: unknown }).execCommand
   })
 })

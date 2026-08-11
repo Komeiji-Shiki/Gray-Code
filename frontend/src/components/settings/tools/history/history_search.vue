@@ -10,6 +10,7 @@
  * 5. 单行显示字符限制 (lineDisplayLimit)
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
@@ -31,7 +32,7 @@ async function loadConfig() {
   isLoading.value = true
   try {
     const response = await sendToExtension<{ config: any }>(
-      'tools.getHistorySearchConfig',
+      MESSAGE_NAMES['tools.getHistorySearchConfig'],
       {}
     )
     if (response?.config) {
@@ -53,7 +54,7 @@ async function loadConfig() {
 async function saveConfig() {
   isSaving.value = true
   try {
-    await sendToExtension('tools.updateHistorySearchConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateHistorySearchConfig'], {
       config: {
         searchScope: searchScope.value,
         maxSearchMatches: maxSearchMatches.value,

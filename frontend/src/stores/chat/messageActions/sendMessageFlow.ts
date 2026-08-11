@@ -10,6 +10,7 @@
  * P2 回执窗口、interrupt 限频等已修 bug 注释原样保留，一行未改。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
 import { triggerRef } from 'vue'
@@ -173,7 +174,7 @@ async function deliverInterruptMessage(
     const result = await sendToExtension<{
       success: boolean
       error?: { code?: string; message?: string }
-    }>('chat.sendInterruptMessage', {
+    }>(MESSAGE_NAMES['chat.sendInterruptMessage'], {
       conversationId,
       text
     })
@@ -372,6 +373,10 @@ export async function sendMessage(
   // 一次性渠道覆盖：仅本次请求生效，不改全局 configId/后端设置
   const effectiveConfigId = (options?.configIdOverride || '').trim() || state.configId.value
   
+  // 创建会话分支固化的 newId（创建期间用户可能切换标签页/会话，
+  // currentConversationId 随后可能已被新会话接管，后续必须以 newId 为准）
+  let createdConversationId: string | null = null
+
   try {
     if (!state.currentConversationId.value) {
       // await 前固化目标标签页：创建对话期间用户可能切换标签页，绑定必须基于快照
@@ -380,6 +385,7 @@ export async function sendMessage(
       if (!newId) {
         throw new Error('Failed to create conversation')
       }
+      createdConversationId = newId
       originConvId = newId
       // 更新当前标签页的 conversationId 和标题（仅当用户没有切换走）
       if (tabIdAtSend && state.activeTabId.value === tabIdAtSend) {
@@ -393,9 +399,24 @@ export async function sendMessage(
     }
 
     // 固化目标会话 ID：此后所有会话标识读写以此为准，避免多次 await 后重读 currentConversationId
-    const targetConvId = state.currentConversationId.value
+    // （创建会话期间用户切换标签页后 currentConversationId 可能已是其他会话，
+    // 创建分支必须使用固化的 newId，否则新消息会追加/发送到切换后的会话，新建 A 成孤儿）
+    const targetConvId = createdConversationId ?? state.currentConversationId.value
     if (!targetConvId) {
       throw new Error('No conversation ID after creation')
+    }
+
+    // 追加/发送前校验会话归属：创建会话期间用户已切换标签页/会话时中止本次发送，
+    // 避免把新消息追加到已切换会话的窗口并发送到错误会话（H5 同款：复位流式状态）
+    if (createdConversationId && !validateSessionIdentity(state, createdConversationId)) {
+      // 对齐 H5(a)（474-481 同款守卫）：仅当当前 streamingMessageId 仍是本次发送的占位时才复位。
+      // 本分支尚未创建 assistant 占位（assistantMessageId 仍为 null），守卫等价于
+      // 「当前会话没有进行中的流式消息」——切到的标签页若正在流式（快照恢复
+      // isStreaming=true / streamingMessageId 非空）则不复位，避免误清新会话流式状态。
+      if (state.streamingMessageId.value === assistantMessageId) {
+        resetPendingSendState(state)
+      }
+      return false
     }
 
     if (hiddenFunctionResponse) {
@@ -490,7 +511,7 @@ export async function sendMessage(
         }))
       : undefined
 
-    const streamResult = await sendToExtension<{ success?: boolean }>('chatStream', {
+    const streamResult = await sendToExtension<{ success?: boolean }>(MESSAGE_NAMES.chatStream, {
       conversationId: targetConvId,
       configId: effectiveConfigId,
       message: messageText,
@@ -568,6 +589,7 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
 
   const backendIndex = calculateBackendIndex(state.allMessages.value, failedIndex, state.windowStartIndex.value)
   state.allMessages.value = state.allMessages.value.slice(0, failedIndex)
+  rebuildMessageIndexById(state)
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
   return backendIndex

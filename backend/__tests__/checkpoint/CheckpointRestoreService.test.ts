@@ -12,9 +12,9 @@ import * as path from 'path';
 import { CheckpointRestoreService } from '../../modules/checkpoint/CheckpointRestoreService';
 import type { SettingsManager } from '../../modules/settings/SettingsManager';
 import type { ConversationManager } from '../../modules/conversation/ConversationManager';
-import type { CheckpointManifestRepository } from '../../modules/checkpoint/CheckpointManifestRepository';
-import type { CheckpointQueryService } from '../../modules/checkpoint/CheckpointQueryService';
-import type { CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
+import type { CheckpointManifestRepository } from '../../modules/checkpoint';
+import type { CheckpointQueryService } from '../../modules/checkpoint';
+import type { CheckpointRecord } from '../../modules/checkpoint';
 import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 /** 只测链构建/越界守卫，不触碰恢复引擎：其余依赖用空桩 */
@@ -71,6 +71,17 @@ describe('CheckpointRestoreService', () => {
             expect(chain[0].id).toBe(`cp-${N}`);
             expect(chain[N].id).toBe('cp-0');
             expect(broken).toBe(false);
+        });
+        test('成环引用（A→B→A）→ visited 截断标记 broken，不死循环', () => {
+            const service = createService(path.join(os.tmpdir(), 'limcode-cp-restore-test'));
+            // 损坏元数据：cp-a 与 cp-b 互为 base（成环），无 visited 守卫将无限循环
+            const cpA = makeRecord({ id: 'cp-a', type: 'incremental', baseCheckpointId: 'cp-b', timestamp: 1000 });
+            const cpB = makeRecord({ id: 'cp-b', type: 'incremental', baseCheckpointId: 'cp-a', timestamp: 2000 });
+
+            const { chain, broken } = (service as any).getIncrementalChain([cpA, cpB], cpA);
+            // 不死循环：环被截断，每个节点至多出现一次
+            expect(chain.map(c => c.id)).toEqual(['cp-b', 'cp-a']);
+            expect(broken).toBe(true);
         });
     });
 

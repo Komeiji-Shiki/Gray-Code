@@ -4,6 +4,7 @@
  * 扁平化设计，显示所有对话记录
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref } from 'vue'
 import { IconButton, ConfirmDialog } from '../common'
 import { useChatStore } from '../../stores'
@@ -51,7 +52,7 @@ function confirmDelete(): void {
 // 处理在文件管理器中显示
 async function handleRevealInExplorer(id: string) {
   try {
-    await sendToExtension('conversation.revealInExplorer', { conversationId: id })
+    await sendToExtension(MESSAGE_NAMES['conversation.revealInExplorer'], { conversationId: id })
   } catch (error) {
     console.error('Failed to reveal in explorer:', error)
   }

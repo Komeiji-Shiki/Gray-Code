@@ -60,7 +60,7 @@ async function createWorkspace(dir: string): Promise<void> {
     }
 }
 
-describe('MIG-09 基准 ① 大工作区 checkpoint', () => {
+describe('基准 ① 大工作区 checkpoint', () => {
     let rootDir: string;
     let wsDir: string;
     let checkpointsDir: string;

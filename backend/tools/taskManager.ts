@@ -11,6 +11,20 @@
  * 2. 任务完成或取消时调用 unregisterTask() 注销任务
  * 3. 外部可以通过 cancelTask() 取消任务
  * 4. 通过 onTaskEvent() 订阅任务事件
+ *
+ * 与 SubAgent 运行时事件总线（runEventBus，backend/tools/subagents/eventBus/）的分工边界：
+ * - TaskManager：任务级 UI/回执契约。以「任务」为粒度追踪活跃工具任务（终端、图像生成、
+ *   后台 SubAgent 等），通过 taskEvent 事件驱动前端任务条/回执（backgroundTaskStore 等）；
+ *   无状态机、无 transcript、无持久化，任务终态即从 activeTasks 移除。
+ * - runEventBus：SubAgent 专用运行级/内容级 Monitor 协议（subagentMonitor.event / manifest），
+ *   以「运行（run）」为粒度维护状态机 + 内容 transcript + 持久化（eventBus/ 下
+ *   protocol / transcript / persist），供 SubAgentMonitorPanel 等面板消费。
+ * - 桥接：后台 SubAgent（显式 background=true，或前台 detach 转后台）同时存在于两套系统——
+ *   subagents.ts / detachedTaskBridge.ts 以 'background_subagent' 注册进 TaskManager；
+ *   detachedTaskBridge 订阅 runEventBus 终态事件（run_completed/run_failed/run_cancelled）
+ *   后手动调用 unregisterTask() 同步注销任务。两系统互不感知，靠该桥手动同步；
+ *   因此同一 SubAgent 完成时 Monitor 面板与任务条/回执各收一份通知，属预期设计
+ *   （见 KNOWN_ISSUES.md「有意保留的设计决定」）。
  */
 
 import { EventEmitter } from 'events';
@@ -19,8 +33,19 @@ import { generatePrefixedId } from './shared/idGen';
 
 /**
  * 任务类型
+ *
+ * 全仓实际取值清单（与 registerTask()/emitEvent() 调用处一致）：
+ * - 'terminal'             终端命令（backend/tools/terminal/processRunner.ts）
+ * - 'image_generation'     图像生成（backend/tools/media/generate_image.ts）
+ * - 'background_subagent'  后台 SubAgent 任务（backend/tools/subagents/subagents.ts、detachedTaskBridge.ts）
+ * - 'agent_message'        agent_send_message 入队轻量通知（backend/tools/subagents/agentSendMessage.ts；
+ *                          emitEvent 直发，不注册任务）
+ * - 'crop_image' / 'remove_background' / 'resize_image' / 'rotate_image'
+ *                          图像批处理（backend/tools/media/）
+ *
+ * 保留 `| string` 兜底：注册表对运行期自定义类型开放，新增任务类型无需改此处声明。
  */
-export type TaskType = 'terminal' | 'image_generation' | string;
+export type TaskType = 'terminal' | 'image_generation' | 'background_subagent' | 'agent_message' | 'crop_image' | 'remove_background' | 'resize_image' | 'rotate_image' | string;
 
 /**
  * 任务状态
@@ -362,11 +387,17 @@ class TaskManagerClass {
             if (task.abortController.signal.aborted || stale) {
                 // 修改原因：旧实现删除/补发事件前从不 abort 控制器，泄漏任务的实际操作
                 //          （终端进程、图像生成请求等）会脱离任务表继续运行。
-                // 修改方式：删除前先 abort 控制器；但对「显式无超时且仍在运行」的任务
-                //          （timeout=0 或后台终端命令 background=true）跳过兜底，
+                // 修改方式：删除前先 abort 控制器；但对「显式无超时且仍在运行」的任务跳过兜底，
                 //          避免误杀合法长任务。
+                // 修改目的：终端任务注册 metadata 现已携带 timeout（processRunner 写入），
+                //          timeout=0（显式不超时）或 timeout 大于本兜底阈值（如 >30min 的长命令）
+                //          的前台任务不再被 30 分钟兜底强杀；后台任务（background=true）保持原跳过逻辑；
+                //          自身 timeout 未超过阈值的任务超期未终态仍由本兜底清理。
                 if (!task.abortController.signal.aborted) {
-                    if (task.metadata?.timeout === 0 || task.metadata?.background === true) {
+                    const metadataTimeout = task.metadata?.timeout;
+                    const hasOwnTimeoutBeyondThreshold =
+                        typeof metadataTimeout === 'number' && metadataTimeout > TaskManagerClass.CLEANUP_STALE_TASK_TIMEOUT_MS;
+                    if (metadataTimeout === 0 || hasOwnTimeoutBeyondThreshold || task.metadata?.background === true) {
                         continue;
                     }
                     task.abortController.abort();

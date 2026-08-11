@@ -3,6 +3,7 @@
  * Read File 工具配置面板
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onMounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
@@ -34,7 +35,7 @@ const accessOptions: Array<{ value: OutsideWorkspaceReadAccess; labelKey: string
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ config: { outsideWorkspaceAccess?: OutsideWorkspaceReadAccess } }>('tools.getToolConfig', {
+    const response = await sendToExtension<{ config: { outsideWorkspaceAccess?: OutsideWorkspaceReadAccess } }>(MESSAGE_NAMES['tools.getToolConfig'], {
       toolName: 'read_file'
     })
     outsideWorkspaceAccess.value = response?.config?.outsideWorkspaceAccess ?? 'deny'
@@ -48,7 +49,7 @@ async function loadConfig() {
 async function saveConfig() {
   isSaving.value = true
   try {
-    await sendToExtension('tools.updateToolConfig', {
+    await sendToExtension(MESSAGE_NAMES['tools.updateToolConfig'], {
       toolName: 'read_file',
       config: {
         outsideWorkspaceAccess: outsideWorkspaceAccess.value

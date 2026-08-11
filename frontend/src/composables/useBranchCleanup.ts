@@ -8,6 +8,7 @@
  *   conversation.updateBranchRetentionConfig，默认 30 天，0 = 不自动清理）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { getSettingsView } from '@/composables/useDeferredNumberInput'
@@ -68,7 +69,7 @@ export function useBranchCleanup() {
     isCountLoading.value = true
     countError.value = null
     try {
-      const result = await sendToExtension<BranchDeletedCountResult>('conversation.getDeletedBranchCount', {})
+      const result = await sendToExtension<BranchDeletedCountResult>(MESSAGE_NAMES['conversation.getDeletedBranchCount'], {})
       if (result && typeof result.deletedNodeCount === 'number') {
         deletedCount.value = result.deletedNodeCount
       }
@@ -90,7 +91,7 @@ export function useBranchCleanup() {
     pruneError.value = null
     pruneSkippedCount.value = 0
     try {
-      const result = await sendToExtension<BranchPruneResult>('conversation.pruneDeletedBranches', {})
+      const result = await sendToExtension<BranchPruneResult>(MESSAGE_NAMES['conversation.pruneDeletedBranches'], {})
       const pruned = result && typeof result.prunedNodeCount === 'number' ? result.prunedNodeCount : 0
       pruneFeedback.value = String(pruned)
       // R8c-P4：被跳过（会话已不存在）的 sidecar 数量透出给设置页提示
@@ -110,7 +111,7 @@ export function useBranchCleanup() {
     isRetentionLoading.value = true
     retentionError.value = null
     try {
-      const result = await sendToExtension<{ retentionDays: number }>('conversation.getBranchRetentionConfig', {})
+      const result = await sendToExtension<{ retentionDays: number }>(MESSAGE_NAMES['conversation.getBranchRetentionConfig'], {})
       if (result && typeof result.retentionDays === 'number') {
         retentionDays.value = result.retentionDays
         retentionDraft.value = String(result.retentionDays)
@@ -138,7 +139,7 @@ export function useBranchCleanup() {
     try {
       const value = Number(retentionDraft.value)
       const result = await sendToExtension<{ success: boolean; retentionDays: number }>(
-        'conversation.updateBranchRetentionConfig',
+        MESSAGE_NAMES['conversation.updateBranchRetentionConfig'],
         { retentionDays: value }
       )
       // 无返回值（或响应缺少 retentionDays）时按失败处理，不再无条件 return true

@@ -226,13 +226,13 @@ export async function checkShellAvailability(shellType: string, customPath?: str
     reason?: string;
 }> {
     const cacheKey = getShellAvailabilityCacheKey(shellType, customPath);
-    const cached = shellAvailabilityCache.get(cacheKey);
+    const cached = getCachedShellAvailability(cacheKey);
     if (cached !== undefined) {
         // 缓存只存布尔值（与同步版一致），不可用时不再重构具体原因，由调用方回退兜底文案
         return cached ? { available: true } : { available: false };
     }
     const result = await checkShellAvailabilityUncached(shellType, customPath);
-    shellAvailabilityCache.set(cacheKey, result.available);
+    setCachedShellAvailability(cacheKey, result.available);
     return result;
 }
 
@@ -324,16 +324,40 @@ export async function checkAllShellsAvailability(shells: Array<{ type: string; p
 }
 
 /**
- * Shell 可用性同步检测结果缓存（模块级 Map，进程生命周期内有效）。
+ * Shell 可用性检测结果缓存（模块级 Map，带时间戳 TTL 过期）。
  *
  * 修改原因：工具创建时 getAvailableShells 会对每个启用的 shell 同步 execSync
  * （which/where/wsl --status，各最多 3s），且 getAvailableShellsDescription /
  * getEnabledShellTypesForEnum / getUnavailableShellsDescription 会多次触发
  * getAvailableShells，一次工具创建可能重复执行多轮外部检测，阻塞 extension host。
- * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存。
- * 修改目的：工具创建只做一轮检测，避免重复 execSync 阻塞。
+ * 修改方式：按 "shellType:customPath" 缓存首次检测结果，后续读取直接命中缓存；
+ *           缓存条目记录检测时间戳，超过 SHELL_AVAILABILITY_CACHE_TTL_MS 后视为过期
+ *           并重新检测（用户新装 shell / 修改 PATH 后能在 TTL 内自动反映）。
+ * 修改目的：保留「一次工具创建内重复检测直接命中」的去重收益，同时避免永久缓存
+ *           导致环境变化永远无法生效。
  */
-const shellAvailabilityCache = new Map<string, boolean>();
+const SHELL_AVAILABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface ShellAvailabilityCacheEntry {
+    available: boolean;
+    checkedAt: number;
+}
+
+const shellAvailabilityCache = new Map<string, ShellAvailabilityCacheEntry>();
+
+function getCachedShellAvailability(cacheKey: string): boolean | undefined {
+    const entry = shellAvailabilityCache.get(cacheKey);
+    if (!entry) return undefined;
+    if (Date.now() - entry.checkedAt > SHELL_AVAILABILITY_CACHE_TTL_MS) {
+        shellAvailabilityCache.delete(cacheKey);
+        return undefined;
+    }
+    return entry.available;
+}
+
+function setCachedShellAvailability(cacheKey: string, available: boolean): void {
+    shellAvailabilityCache.set(cacheKey, { available, checkedAt: Date.now() });
+}
 
 function getShellAvailabilityCacheKey(shellType: string, customPath?: string): string {
     return `${shellType}:${customPath ?? ''}`;
@@ -343,9 +367,9 @@ function getShellAvailabilityCacheKey(shellType: string, customPath?: string): s
  * 同步检测 Shell 是否可用（带模块级缓存）
  */
 function checkShellAvailabilitySync(shellType: string, customPath?: string): boolean {
-    // 缓存命中直接返回，避免重复 execSync 阻塞
+    // 缓存命中直接返回，避免重复 execSync 阻塞（TTL 过期后重新检测）
     const cacheKey = getShellAvailabilityCacheKey(shellType, customPath);
-    const cached = shellAvailabilityCache.get(cacheKey);
+    const cached = getCachedShellAvailability(cacheKey);
     if (cached !== undefined) {
         return cached;
     }
@@ -380,7 +404,7 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
         available = false;
     }
 
-    shellAvailabilityCache.set(cacheKey, available);
+    setCachedShellAvailability(cacheKey, available);
     return available;
 }
 

@@ -23,34 +23,34 @@ describe('isUriInsideWorkspace', () => {
         }];
     });
 
-    it('returns true for a file inside the workspace', () => {
+    test('returns true for a file inside the workspace', () => {
         const fileUri = vscode.Uri.file(path.join(workspaceRoot, 'src', 'index.ts'));
         expect(isUriInsideWorkspace(fileUri)).toBe(true);
     });
 
-    it('returns true for the workspace root itself', () => {
+    test('returns true for the workspace root itself', () => {
         const rootUri = vscode.Uri.file(workspaceRoot);
         expect(isUriInsideWorkspace(rootUri)).toBe(true);
     });
 
-    it('returns false for a file outside the workspace (e.g. /tmp)', () => {
+    test('returns false for a file outside the workspace (e.g. /tmp)', () => {
         const outsideUri = vscode.Uri.file('/tmp/secret.txt');
         expect(isUriInsideWorkspace(outsideUri)).toBe(false);
     });
 
-    it('returns false for a path-traversal escape via ..', () => {
+    test('returns false for a path-traversal escape via ..', () => {
         // 模拟 joinPath 产出的越界 URI
         const escapedUri = vscode.Uri.file(path.resolve(workspaceRoot, '..', '..', 'etc', 'passwd'));
         expect(isUriInsideWorkspace(escapedUri)).toBe(false);
     });
 
-    it('returns false when no workspace folders are open', () => {
+    test('returns false when no workspace folders are open', () => {
         (vscode.workspace as any).workspaceFolders = undefined;
         const fileUri = vscode.Uri.file(path.join(workspaceRoot, 'src', 'index.ts'));
         expect(isUriInsideWorkspace(fileUri)).toBe(false);
     });
 
-    it('returns true when vscode.workspace.getWorkspaceFolder API recognizes the URI', () => {
+    test('returns true when vscode.workspace.getWorkspaceFolder API recognizes the URI', () => {
         const fileUri = vscode.Uri.file(path.join(workspaceRoot, 'lib', 'utils.ts'));
         (vscode.workspace.getWorkspaceFolder as jest.Mock).mockReturnValue({
             name: 'project',
@@ -60,13 +60,13 @@ describe('isUriInsideWorkspace', () => {
         expect(vscode.workspace.getWorkspaceFolder).toHaveBeenCalledWith(fileUri);
     });
 
-    it('falls back to fsPath prefix when getWorkspaceFolder returns undefined', () => {
+    test('falls back to fsPath prefix when getWorkspaceFolder returns undefined', () => {
         const fileUri = vscode.Uri.file(path.join(workspaceRoot, 'nested', 'deep', 'file.json'));
         (vscode.workspace.getWorkspaceFolder as jest.Mock).mockReturnValue(undefined);
         expect(isUriInsideWorkspace(fileUri)).toBe(true);
     });
 
-    it('returns false for a sibling directory (prefix match false positive prevention)', () => {
+    test('returns false for a sibling directory (prefix match false positive prevention)', () => {
         // /workspace/project-2 should NOT match if workspace is /workspace/project
         const siblingUri = vscode.Uri.file(path.join('/workspace', 'project-2', 'file.ts'));
         (vscode.workspace.getWorkspaceFolder as jest.Mock).mockReturnValue(undefined);

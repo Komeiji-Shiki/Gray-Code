@@ -4,6 +4,7 @@
  * 配置图像生成 API 和默认参数
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { reactive, ref, onMounted, onUnmounted, computed } from 'vue'
 import { CustomSelect, CustomCheckbox, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
@@ -68,7 +69,7 @@ const imageSizeOptions = computed<SelectOption[]>(() => [
 // 加载配置
 async function loadConfig() {
   try {
-    const response = await sendToExtension<any>('getGenerateImageConfig', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getGenerateImageConfig, {})
     if (response) {
       Object.assign(imageConfig, response)
       syncMaxBatchTasksFromStored()
@@ -103,7 +104,7 @@ function scheduleConfigSave() {
 // 保存到后端（快照当前配置）
 async function persistConfig() {
   try {
-    await sendToExtension('updateGenerateImageConfig', {
+    await sendToExtension(MESSAGE_NAMES.updateGenerateImageConfig, {
       config: { ...imageConfig }
     })
   } catch (error) {

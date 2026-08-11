@@ -28,7 +28,7 @@ describe('read_file batch requests', () => {
         });
     });
 
-    it('declaration exposes legacy path and batch files forms', () => {
+    test('declaration exposes legacy path and batch files forms', () => {
         const declaration = createReadFileTool().declaration as any;
 
         expect(declaration.parameters.properties.path.type).toBe('string');
@@ -37,7 +37,7 @@ describe('read_file batch requests', () => {
         expect(declaration.description).toContain('一个或多个文件');
     });
 
-    it('keeps the existing single-path call compatible', async () => {
+    test('keeps the existing single-path call compatible', async () => {
         const result = await createReadFileTool().handler({
             path: 'a.txt',
             startLine: 2,
@@ -54,7 +54,7 @@ describe('read_file batch requests', () => {
         });
     });
 
-    it('treats an empty files default as absent when path is provided', async () => {
+    test('treats an empty files default as absent when path is provided', async () => {
         const result = await createReadFileTool().handler({
             path: 'a.txt',
             files: [],
@@ -69,7 +69,7 @@ describe('read_file batch requests', () => {
         });
     });
 
-    it('reads multiple files in input order with independent line ranges', async () => {
+    test('reads multiple files in input order with independent line ranges', async () => {
         const result = await createReadFileTool().handler({
             files: [
                 { path: 'a.txt', startLine: 1, endLine: 1 },
@@ -84,7 +84,7 @@ describe('read_file batch requests', () => {
         expect(result.data.results[1].content).toBe('   3 | b3\n   4 | b4');
     });
 
-    it('preserves successful results when one batch item fails', async () => {
+    test('preserves successful results when one batch item fails', async () => {
         const result = await createReadFileTool().handler({
             files: [{ path: 'a.txt' }, { path: 'missing.txt' }]
         }) as any;
@@ -96,7 +96,7 @@ describe('read_file batch requests', () => {
         expect(result.data.results[1]).toMatchObject({ path: 'missing.txt', success: false, error: 'ENOENT' });
     });
 
-    it('rejects empty batches and ambiguous mixed forms', async () => {
+    test('rejects empty batches and ambiguous mixed forms', async () => {
         const tool = createReadFileTool();
         const empty = await tool.handler({ files: [] }) as any;
         const mixed = await tool.handler({ path: 'a.txt', files: [{ path: 'b.txt' }] }) as any;

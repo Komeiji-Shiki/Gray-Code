@@ -2,7 +2,7 @@ import { SummarizeService } from '../../modules/api/chat/services/SummarizeServi
 import type { Content } from '../../modules/conversation/types';
 
 describe('SummarizeService summary token statistics', () => {
-    it('separates main-context compression from summarizer request usage', () => {
+    test('separates main-context compression from summarizer request usage', () => {
         const service = new SummarizeService({} as any, {} as any, {} as any, {} as any);
         const user: Content = { role: 'user', parts: [{ text: 'x'.repeat(400) }] };
         const model: Content = {

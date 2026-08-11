@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import { toRelativePath, normalizeLineEndingsToLF } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
-import { getDiffManager } from '../file/diffManager';
+import { getDiffManager } from '../../core/services/diffManager';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 import {

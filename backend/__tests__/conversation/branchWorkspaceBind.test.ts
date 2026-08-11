@@ -16,9 +16,9 @@
 import * as fsp from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+import { ConversationManager } from '../../modules/conversation';
+import { MemoryStorageAdapter } from '../../modules/conversation';
+import type { ConversationHistory } from '../../modules/conversation';
 import { BranchService } from '../../modules/conversation/branch/BranchService';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import { BranchError } from '../../modules/conversation/branch/types';

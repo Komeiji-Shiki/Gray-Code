@@ -67,6 +67,11 @@
         "category": "GrayCode"
       },
       {
+        "command": "graycode.runIntegrityCheck",
+        "title": "运行存档完整性检查",
+        "category": "GrayCode"
+      },
+      {
         "command": "graycode.diff.acceptAll",
         "title": "Accept All Changes",
         "icon": "$(check-all)",
@@ -299,8 +304,9 @@
     "test:frontend": "npm --prefix frontend test",
     "test:all": "npm test && npm run test:frontend",
     "test:fast-tavern-ts": "npm --prefix fast-tavern-main/npm-fast-tavern ci && npm --prefix fast-tavern-main/npm-fast-tavern test",
-    "test:fast-tavern-py": "python -m pip install --quiet pytest && python -m pytest fast-tavern-main/py-fast-tavern/tests -q",
+    "test:fast-tavern-py": "node scripts/run-fast-tavern-py.mjs",
     "ci": "npm run typecheck:all && npm run test:all && npm run test:fast-tavern-ts && npm run test:fast-tavern-py",
+    "i18n:check": "node scripts/i18n-sync.mjs --check",
     "benchmark": "jest --config jest.backend.config.js --testMatch \"**/*.benchmark.ts\" --runInBand --testTimeout 600000"
   },
   "dependencies": {

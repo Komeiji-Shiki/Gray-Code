@@ -6,11 +6,13 @@
  * 因此这里不做类型标注（避免循环定义）。修改结构后 en/ja 会自动受到类型约束。
  */
 
+import sharedZhCN from './_shared/zh-CN';
+
 const zhCN = {
     common: {
         save: '保存',
         cancel: '取消',
-        confirm: '确认',
+        confirm: sharedZhCN.common.confirm,
         delete: '删除',
         edit: '编辑',
         add: '添加',
@@ -20,7 +22,8 @@ const zhCN = {
         enabled: '已启用',
         disabled: '已禁用',
         loading: '加载中...',
-        error: '错误',
+        error: sharedZhCN.common.error,
+        unknownError: sharedZhCN.common.unknownError,
         success: '成功',
         warning: '警告',
         info: '信息',
@@ -51,18 +54,20 @@ const zhCN = {
         about: '关于',
         version: '版本',
         name: '名称',
-        description: '描述',
-        status: '状态',
+        description: sharedZhCN.common.description,
+        status: sharedZhCN.common.status,
         type: '类型',
         size: '大小',
         path: '路径',
         time: '时间',
-        date: '日期',
+        date: sharedZhCN.common.date,
         actions: '操作',
         more: '更多',
         less: '收起',
         expand: '展开',
         collapse: '折叠',
+        show: sharedZhCN.common.show,
+        hide: sharedZhCN.common.hide,
         preview: '预览',
         download: '下载',
         upload: '上传',
@@ -76,12 +81,12 @@ const zhCN = {
         start: '启动',
         stop: '停止',
         pause: '暂停',
-        resume: '继续',
+        resume: sharedZhCN.common.resume,
         running: '运行中',
         stopped: '已停止',
         pending: '等待中',
-        completed: '已完成',
-        failed: '失败',
+        completed: sharedZhCN.common.completed,
+        failed: sharedZhCN.common.failed,
         unknown: '未知'
     },
 
@@ -117,9 +122,9 @@ const zhCN = {
 
         common: {
             confirmDialog: {
-                title: '确认',
+                title: sharedZhCN.components.common.confirmDialog.title,
                 message: '确定要执行此操作吗？',
-                confirm: '确定',
+                confirm: sharedZhCN.components.common.confirmDialog.confirm,
                 cancel: '取消'
             },
             inputDialog: {
@@ -348,7 +353,7 @@ const zhCN = {
             remove: '移除',
             tokenUsage: '使用量',
             context: '上下文',
-            fileNotExists: '文件不存在',
+            fileNotExists: sharedZhCN.components.input.fileNotExists,
             queue: {
                 title: '排队消息',
                 sendNow: '立即发送',
@@ -409,7 +414,7 @@ const zhCN = {
                 hint: '内容将以 <context> 标签包裹发送给 AI',
                 dropHint: '释放鼠标添加文件内容',
                 fileAdded: '已添加文件内容: {path}',
-                readFailed: '读取文件失败',
+                readFailed: sharedZhCN.components.input.promptContext.readFailed,
                 addFailed: '添加失败: {error}'
             },
             filePicker: {
@@ -431,8 +436,8 @@ const zhCN = {
                 checkpointCreateError: '创建存档点失败: {error}',
                 holdShiftToDrag: '请按住 Shift 键拖拽文件',
                 fileNotInWorkspace: '文件不在工作区内',
-                fileNotInAnyWorkspace: '文件不在任何打开的工作区内',
-                fileInOtherWorkspace: '文件属于其他工作区: {workspaceName}',
+                fileNotInAnyWorkspace: sharedZhCN.components.input.notifications.fileNotInAnyWorkspace,
+                fileInOtherWorkspace: sharedZhCN.components.input.notifications.fileInOtherWorkspace,
                 fileAdded: '已添加固定文件: {path}',
                 addFailed: '添加失败: {error}',
                 cannotGetFilePath: '无法获取文件路径，请从 VSCode 资源管理器或标签页拖拽',
@@ -541,7 +546,7 @@ const zhCN = {
                 mimeType: 'MIME 类型',
                 size: '大小',
                 fileUri: '文件 URI',
-                status: '状态',
+                status: sharedZhCN.components.message.responseViewer.status,
                 duration: '耗时',
                 moreMetadata: '更多元信息',
                 attachmentType: '附件类型',
@@ -575,7 +580,7 @@ const zhCN = {
                     executing: '执行中',
                     awaitingApply: '等待应用',
                     success: '成功',
-                    error: '失败',
+                    error: sharedZhCN.components.message.responseViewer.toolStatuses.error,
                     warning: '警告',
                     unknown: '未知'
                 }
@@ -649,7 +654,7 @@ const zhCN = {
                 restoreResultPartialTitle: '恢复部分完成',
                 restoreResultWarningTitle: '未备份文件提示',
                 restoreResultSuccessTitle: '恢复完成',
-                restoreResultFailed: '恢复检查点失败',
+                restoreResultFailed: sharedZhCN.components.message.checkpoint.restoreResultFailed,
                 restoreResultPartial: '恢复部分完成，以下文件失败：{files}',
                 restoreResultPartialMore: '恢复部分完成，以下文件失败：{files} 等 {count} 个文件',
                 restoreResultUnbacked: '以下文件在创建存档时未被备份（大小超限或不可读），本次恢复未处理它们：{paths}',
@@ -666,7 +671,7 @@ const zhCN = {
             continue: {
                 title: '对话等待中',
                 description: '工具执行完成。您可以发送新消息，或点击"继续"让 AI 继续响应',
-                button: '继续'
+                button: sharedZhCN.components.message.continue.button
             },
             error: {
                 title: '请求失败',
@@ -680,19 +685,19 @@ const zhCN = {
             tool: {
                 parameters: '参数',
                 result: '结果',
-                error: '错误',
+                error: sharedZhCN.components.message.tool.error,
                 paramCount: '{count} 个参数',
                 streamingArgs: '正在生成参数...',
                 confirmExecution: '点击确认执行',
                 confirm: '确认执行',
                 saveAll: '全部保存',
-                rejectAll: '全部拒绝',
-                reject: '拒绝',
+                rejectAll: sharedZhCN.components.message.tool.rejectAll,
+                reject: sharedZhCN.components.message.tool.reject,
                 confirmed: '已确认',
                 rejected: '已拒绝',
                 viewDiff: '查看差异',
                 viewDiffInVSCode: '在 VSCode 中查看差异',
-                openDiffFailed: '打开 diff 预览失败',
+                openDiffFailed: sharedZhCN.components.message.tool.openDiffFailed,
                 openDetails: '打开详情',
                 openSubAgentMonitorDetails: '打开 SubAgent Monitor 详情',
                 todoWrite: {
@@ -777,8 +782,8 @@ const zhCN = {
                     sourceCurrentInput: '本次工具输入',
                     sourceSnapshot: '当时快照',
                     statusPending: '待做',
-                    statusInProgress: '进行中',
-                    statusCompleted: '完成',
+                    statusInProgress: sharedZhCN.components.message.tool.todoPanel.statusInProgress,
+                    statusCompleted: sharedZhCN.components.message.tool.todoPanel.statusCompleted,
                     statusCancelled: '取消',
                     totalItems: '共 {count} 项',
                     copyAsMarkdown: '复制为 Markdown',
@@ -794,12 +799,12 @@ const zhCN = {
                     executeLabel: '执行：',
                     executed: '已执行',
                     executing: '执行中...',
-                    executePlan: '执行计划',
+                    executePlan: sharedZhCN.components.message.tool.planCard.executePlan,
                     openFile: '打开文件',
                     loadChannelsFailed: '加载渠道失败',
                     loadModelsFailed: '加载模型失败',
                     executePlanFailed: '执行计划失败',
-                    openFileFailed: '打开文件失败',
+                    openFileFailed: sharedZhCN.components.message.tool.planCard.openFileFailed,
                     promptPrefix: '请按照以下计划执行：\n\n{plan}',
                     sourceUpToDate: '来源：最新',
                     sourceUntracked: '来源：未追踪',
@@ -813,62 +818,35 @@ const zhCN = {
                     generateLabel: '生成计划：',
                     generated: '已生成计划',
                     generating: '生成计划中...',
-                    generatePlan: '生成计划',
+                    generatePlan: sharedZhCN.components.message.tool.designCard.generatePlan,
                     openFile: '打开文件',
                     loadChannelsFailed: '加载渠道失败',
                     loadModelsFailed: '加载模型失败',
                     generatePlanFailed: '生成计划失败',
-                    openFileFailed: '打开文件失败'
+                    openFileFailed: sharedZhCN.components.message.tool.designCard.openFileFailed
                 },
                 reviewCard: {
+                    ...sharedZhCN.components.message.tool.reviewCard,
                     sourceCreate: '创建',
                     sourceMilestone: '里程碑',
                     sourceFinalize: '完成',
                     sourceReopen: '重新打开',
                     sourceValidate: '校验',
                     sourceCompare: '比较',
-                    statusCompleted: '已完成',
-                    statusInProgress: '进行中',
-                    decisionAccepted: '通过',
-                    decisionConditionallyAccepted: '有条件通过',
-                    decisionRejected: '不通过',
+                    statusCompleted: sharedZhCN.components.message.tool.reviewCard.statusCompleted,
                     decisionNeedsFollowUp: '需继续跟进',
                     validationAutoUpgrade: '可升级旧文档',
                     validationInvalid: '无效',
                     validationWarning: '有警告',
                     validationValid: '正常',
-                    issueError: '错误',
+                    issueError: sharedZhCN.components.message.tool.reviewCard.issueError,
                     issueWarning: '警告',
-                    severityHigh: '高',
-                    severityMedium: '中',
-                    severityLow: '低',
                     milestonesChip: '{completed}/{total} 里程碑',
                     findingsChip: '问题 {total} · 高{high} 中{medium} 低{low}',
                     modulesChip: '模块 {count}',
                     formatChip: '格式 {format}',
-                    status: '状态',
-                    decision: '结论',
                     milestones: '里程碑',
-                    findings: '问题',
                     format: '格式',
-                    latestConclusion: '最新结论',
-                    recommendedNextAction: '下一步建议',
-                    tracking: '跟踪状态',
-                    trackingOpen: '开放',
-                    trackingAcceptedRisk: '接受风险',
-                    trackingFixed: '已修复',
-                    trackingWontFix: '不修复',
-                    trackingDuplicate: '重复',
-                    categoryHtml: 'HTML',
-                    categoryCss: 'CSS',
-                    categoryJavascript: 'JavaScript',
-                    categoryAccessibility: '可访问性',
-                    categoryPerformance: '性能',
-                    categoryMaintainability: '可维护性',
-                    categoryDocs: '文档',
-                    categoryTest: '测试',
-                    categoryOther: '其他',
-                    evidence: '证据',
                     findingDetails: '问题详情',
                     compareBase: '基线文档',
                     compareTarget: '目标文档',
@@ -880,16 +858,9 @@ const zhCN = {
                     compareEvidenceChanged: '证据变化',
                     compareRelatedMilestonesChanged: '相关里程碑变化',
                     compareChanges: '变化项',
-                    changeSeverity: '严重级别',
-                    changeTrackingStatus: '跟踪状态',
                     changeTitle: '标题',
-                    changeDescription: '说明',
-                    changeRecommendation: '建议',
-                    changeEvidence: '证据',
-                    changeRelatedMilestoneIds: '相关里程碑',
                     validation: '校验信息',
                     progress: '进度',
-                    modules: '已审模块',
                     noIssues: '没有问题',
                     issueSummary: '{count} 个问题 · 错误 {errors} · 警告 {warnings}',
                     openFile: '打开文档',
@@ -898,12 +869,12 @@ const zhCN = {
                     copyPath: '复制路径',
                     copied: '已复制',
                     rawResult: '完整结果',
-                    generatePlan: '生成计划',
                     generatingPlan: '生成计划中...',
                     planGenerated: '已生成计划',
                     generatePlanFailed: '生成计划失败'
                 },
                 progressCard: {
+                    ...sharedZhCN.components.message.tool.progressCard,
                     sourceCreate: '创建',
                     sourceUpdate: '更新',
                     sourceMilestone: '里程碑',
@@ -913,25 +884,19 @@ const zhCN = {
                     validationInvalid: '无效',
                     validationWarning: '有警告',
                     validationValid: '正常',
-                    issueError: '错误',
+                    issueError: sharedZhCN.components.message.tool.progressCard.issueError,
                     issueWarning: '警告',
                     issueSummary: '{count} 个问题 · 错误 {errors} · 警告 {warnings}',
-                    status: '状态',
                     phase: '阶段',
-                    statusActive: '进行中',
                     statusBlocked: '阻塞',
-                    statusCompleted: '已完成',
+                    statusCompleted: sharedZhCN.components.message.tool.progressCard.statusCompleted,
                     statusArchived: '已归档',
                     phaseDesign: '设计',
                     phasePlan: '计划',
                     phaseImplementation: '实现',
                     phaseReview: '审查',
                     phaseMaintenance: '维护',
-                    milestoneStatusCompleted: '已完成',
-                    milestoneStatusInProgress: '进行中',
                     currentFocus: '当前焦点',
-                    currentProgress: '当前进度',
-                    latestConclusion: '最新结论',
                     currentBlocker: '当前阻塞',
                     nextAction: '下一步',
                     updatedAt: '更新时间',
@@ -985,7 +950,7 @@ const zhCN = {
                     add: '新建配置',
                     delete: '删除配置',
                     inputPlaceholder: '输入配置名称',
-                    confirm: '确认',
+                    confirm: sharedZhCN.components.settings.channelSettings.selector.confirm,
                     cancel: '取消'
                 },
                 empty: {
@@ -1008,7 +973,7 @@ const zhCN = {
                         title: '删除配置',
                         message: '确定要删除配置 "{name}" 吗？此操作不可恢复。',
                         cancel: '取消',
-                        confirm: '确定'
+                        confirm: sharedZhCN.components.settings.channelSettings.dialog.delete.confirm,
                     },
                     changeType: {
                         title: '更改渠道类型',
@@ -1068,7 +1033,7 @@ const zhCN = {
                         supportedTypes: '支持的文件类型：',
                         image: '图片',
                         imageFormats: 'PNG、JPEG、WebP',
-                        document: '文档',
+                        document: sharedZhCN.components.settings.channelSettings.form.multimodal.document,
                         documentFormats: 'PDF',
                         capabilities: '多模态工具能力：',
                         table: {
@@ -1216,7 +1181,7 @@ const zhCN = {
                     notification: '通知',
                     agents: '代理',
                     activity: '使用时间',
-                    other: '其他'
+                    other: sharedZhCN.components.settings.autoExec.categories.other
                 },
                 badges: {
                     dangerous: '危险'
@@ -1244,9 +1209,9 @@ const zhCN = {
                 serverEnv: '环境变量',
                 serverStatus: '服务器状态',
                 connecting: '连接中',
-                connected: '已连接',
-                disconnected: '已断开',
-                error: '错误'
+                connected: sharedZhCN.components.settings.mcp.connected,
+                disconnected: sharedZhCN.components.settings.mcp.disconnected,
+                error: sharedZhCN.components.settings.mcp.error
             },
             checkpoint: {
                 title: '存档点设置',
@@ -1287,8 +1252,8 @@ const zhCN = {
                     tools: {
                         title: '工具备份配置',
                         description: '选择需要在执行前后创建备份的工具',
-                        beforeLabel: '执行前',
-                        afterLabel: '执行后',
+                        beforeLabel: sharedZhCN.components.settings.checkpoint.sections.tools.beforeLabel,
+                        afterLabel: sharedZhCN.components.settings.checkpoint.sections.tools.afterLabel,
                         empty: '暂无可用的工具'
                     },
                     other: {
@@ -1373,8 +1338,8 @@ const zhCN = {
                         deleteSelected: '删除所选',
                         noCheckpointsInConversation: '该对话暂无存档点',
                         checkpointFiles: '{count} 个文件',
-                        phaseBefore: '执行前',
-                        phaseAfter: '执行后',
+                        phaseBefore: sharedZhCN.components.settings.checkpoint.sections.cleanup.phaseBefore,
+                        phaseAfter: sharedZhCN.components.settings.checkpoint.sections.cleanup.phaseAfter,
                         typeFull: '完整',
                         typeIncremental: '增量',
                         toolUserMessage: '用户消息',
@@ -1399,7 +1364,7 @@ const zhCN = {
                         manifestLoadFailed: '排除清单加载失败',
                         manifestUnavailable: '该存档为旧格式，无排除清单可查看',
                         manifestExcludedCount: '排除文件数',
-                        manifestNote: '该存档创建时按当时的排除规则排除了 {count} 个文件',
+                        manifestNote: sharedZhCN.components.settings.checkpoint.sections.cleanup.manifestNote,
                         manifestRulesChanged: '当前排除规则已变化，恢复将按当前规则执行',
                         manifestIgnoreSnapshot: '排除规则快照',
                         manifestRuleVersion: '规则版本',
@@ -1419,7 +1384,7 @@ const zhCN = {
                             restoring: '恢复中',
                             deleting: '删除中',
                             done: '完成',
-                            failed: '失败',
+                            failed: sharedZhCN.components.settings.checkpoint.sections.cleanup.progress.failed,
                             cancelled: '已取消',
                             cancel: '取消',
                             cancelFailed: '取消失败，请重试',
@@ -1552,7 +1517,7 @@ const zhCN = {
                     enableDiagnostics: '启用诊断信息',
                     severityTypes: '问题类型',
                     severity: {
-                        error: '错误',
+                        error: sharedZhCN.components.settings.contextSettings.diagnostics.severity.error,
                         warning: '警告',
                         information: '信息',
                         hint: '提示'
@@ -1603,11 +1568,11 @@ const zhCN = {
                     processing: '正在处理 {dependency}...',
                     complete: '{dependency} 处理完成',
                     failed: '{dependency} 处理失败',
-                    installSuccess: '{name} 安装成功！',
+                    installSuccess: sharedZhCN.components.settings.dependencySettings.progress.installSuccess,
                     installFailed: '{name} 安装失败',
                     uninstallSuccess: '{name} 已卸载',
                     uninstallFailed: '{name} 卸载失败',
-                    unknownError: '未知错误'
+                    unknownError: sharedZhCN.components.settings.dependencySettings.progress.unknownError
                 },
                 panel: {
                     installedCount: '{installed}/{total}'
@@ -1694,7 +1659,7 @@ const zhCN = {
                 serverCard: {
                     connect: '连接',
                     disconnect: '断开',
-                    connecting: '连接中...',
+                    connecting: sharedZhCN.components.settings.mcpSettings.serverCard.connecting,
                     edit: '编辑',
                     delete: '删除',
                     tools: '工具',
@@ -1702,8 +1667,8 @@ const zhCN = {
                     prompts: '提示'
                 },
                 status: {
-                    connected: '已连接',
-                    connecting: '连接中...',
+                    connected: sharedZhCN.components.settings.mcpSettings.status.connected,
+                    connecting: sharedZhCN.components.settings.mcpSettings.status.connecting,
                     error: '连接错误',
                     disconnected: '未连接'
                 },
@@ -1713,10 +1678,10 @@ const zhCN = {
                     serverId: '服务器 ID',
                     serverIdPlaceholder: '可选，留空则自动生成',
                     serverIdHint: '只能包含字母、数字、下划线和中划线，用于在 JSON 配置中标识服务器',
-                    serverIdError: 'ID 只能包含字母、数字、下划线和中划线',
+                    serverIdError: sharedZhCN.components.settings.mcpSettings.form.serverIdError,
                     serverName: '服务器名称',
                     serverNamePlaceholder: '例如：My MCP Server',
-                    description: '描述',
+                    description: sharedZhCN.components.settings.mcpSettings.form.description,
                     descriptionPlaceholder: '可选的描述信息',
                     required: '*',
                     transportType: '传输类型',
@@ -1776,7 +1741,7 @@ const zhCN = {
                 generalWorker: '启用通用 Worker（傻瓜模式）',
                 generalWorkerHint: '主模型可直接派发零配置的 "General Worker"：继承当前渠道与全部工具权限，数量由主模型自行决定，无需手动配置任何 agent',
                 basicInfo: '基本信息',
-                description: '描述',
+                description: sharedZhCN.components.settings.subagents.description,
                 descriptionPlaceholder: '向主 AI 说明何时使用此子代理',
                 maxIterations: '最大迭代次数',
                 maxIterationsHint: '子代理内部最大工具调用轮数（-1 表示无限制）',
@@ -1859,9 +1824,9 @@ const zhCN = {
                     cancel: '取消'
                 },
                 errors: {
-                    addFailed: '添加模型失败',
-                    removeFailed: '移除模型失败',
-                    setActiveFailed: '设置激活模型失败'
+                    addFailed: sharedZhCN.components.settings.modelManager.errors.addFailed,
+                    removeFailed: sharedZhCN.components.settings.modelManager.errors.removeFailed,
+                    setActiveFailed: sharedZhCN.components.settings.modelManager.errors.setActiveFailed
                 }
             },
             modelSelectionDialog: {
@@ -1933,11 +1898,23 @@ const zhCN = {
                     placeholder: '输入动态上下文模板，可使用 {{$WORKSPACE_FILES}}、{{$OPEN_TABS}} 等变量...',
                     enableTooltip: '启用/禁用动态上下文模板',
                     disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。',
-                    strategyTitle: '动态上下文策略',
-                    strategySingle: '单份动态上下文',
-                    strategyPreserve: '保留旧动态上下文原位',
-                    strategyDescription: '单份模式保持现有行为；保留模式会把已缓存的旧动态上下文固定插回原回合位置，新回合上下文插入到新消息前。',
-                    strategyPreserveWarning: '保留模式会增加请求 token；旧动态上下文越多，越容易触发上下文裁剪或总结。'
+                    strategyTitle: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyTitle,
+                    strategySingle: sharedZhCN.components.settings.promptSettings.dynamicSection.strategySingle,
+                    strategyPreserve: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyPreserve,
+                    strategyDescription: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyDescription,
+                    strategyPreserveWarning: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyPreserveWarning,
+                    strategyVarsPrefix: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyVarsPrefix,
+                    strategyVarsSeparator: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyVarsSeparator,
+                    strategyVarsSuffix: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyVarsSuffix,
+                    strategyVarsWarning: sharedZhCN.components.settings.promptSettings.dynamicSection.strategyVarsWarning
+                },
+                assemblyMode: {
+                    title: sharedZhCN.components.settings.promptSettings.assemblyMode.title,
+                    description: sharedZhCN.components.settings.promptSettings.assemblyMode.description,
+                    legacyLabel: sharedZhCN.components.settings.promptSettings.assemblyMode.legacyLabel,
+                    legacyDescription: sharedZhCN.components.settings.promptSettings.assemblyMode.legacyDescription,
+                    entriesLabel: sharedZhCN.components.settings.promptSettings.assemblyMode.entriesLabel,
+                    entriesDescription: sharedZhCN.components.settings.promptSettings.assemblyMode.entriesDescription
                 },
                 toolPolicy: {
                     title: '工具策略',
@@ -2331,7 +2308,7 @@ const zhCN = {
                         enableDiffGuardDesc: '当一次性删除的行数超过文件总行数的指定百分比时，在工具外侧显示警告提示',
                         diffGuardThreshold: '警戒阈值',
                         diffGuardThresholdDesc: '删除行数占文件总行数的百分比超过此值时触发警告',
-                        diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查',
+                        diffGuardWarning: sharedZhCN.components.settings.toolSettings.files.applyDiff.diffGuardWarning,
                         outsideWorkspaceAccess: '工作区外写入',
                         outsideWorkspaceDesc: '控制 apply_diff 修改工作区外已有文件的行为。',
                         outsideWorkspaceDenyDesc: 'apply_diff 只能修改工作区内文件。',
@@ -2408,7 +2385,7 @@ const zhCN = {
                         setDefaultTooltip: '设为默认',
                         executablePath: '可执行文件路径（可选）：',
                         executablePathPlaceholder: '留空则使用系统 PATH 中的路径',
-                        execTimeout: '执行超时',
+                        execTimeout: sharedZhCN.components.settings.toolSettings.terminal.executeCommand.execTimeout,
                         timeoutHint: '命令执行超过此时间将自动终止',
                         timeout30s: '30 秒',
                         timeout1m: '1 分钟',
@@ -2460,7 +2437,7 @@ const zhCN = {
                     loading: '加载中...',
                     loadingConfig: '加载配置...',
                     saving: '保存中...',
-                    error: '错误',
+                    error: sharedZhCN.components.settings.toolSettings.common.error,
                     retry: '重试'
                 }
             },
@@ -2495,7 +2472,7 @@ const zhCN = {
                     agents: '代理',
                     mcp: 'MCP 工具',
                     activity: '使用时间',
-                    other: '其他'
+                    other: sharedZhCN.components.settings.toolsSettings.categories.other
                 },
                 dependency: {
                     required: '需要依赖',
@@ -2800,8 +2777,8 @@ const zhCN = {
 
         backgroundTasks: {
             running: '运行中',
-            completed: '已完成',
-            failed: '失败',
+            completed: sharedZhCN.components.backgroundTasks.completed,
+            failed: sharedZhCN.components.backgroundTasks.failed,
             cancelled: '已取消',
             cancel: '取消任务',
             dismiss: '清除',
@@ -2828,7 +2805,7 @@ const zhCN = {
                 loadOlder: '加载更早消息',
                 loadingOlder: '加载中…',
                 pause: '暂停',
-                resume: '继续',
+                resume: sharedZhCN.components.subagents.monitor.resume,
                 exit: '退出并让主工具失败',
                 retrying: '自动重试 {attempt}/{maxAttempts}',
                 retrySuccess: '自动重试成功',
@@ -2840,8 +2817,8 @@ const zhCN = {
                     running: '运行中',
                     paused: '已暂停',
                     awaitingMonitorAction: '等待处理',
-                    completed: '已完成',
-                    failed: '失败',
+                    completed: sharedZhCN.components.subagents.monitor.status.completed,
+                    failed: sharedZhCN.components.subagents.monitor.status.failed,
                     cancelled: '已取消',
                     interrupted: '已中断'
                 }
@@ -2906,8 +2883,8 @@ const zhCN = {
                     effortMax: '最大努力',
                     effortXHigh: '极高努力（Opus 4.7+）',
                     effortHigh: '高努力（默认）',
-                    effortMedium: '中等努力',
-                    effortLow: '低努力',
+                    effortMedium: sharedZhCN.components.channels.anthropic.thinking.effortMedium,
+                    effortLow: sharedZhCN.components.channels.anthropic.thinking.effortLow,
                     effortCustom: '自定义（手动输入）',
                     effortCustomPlaceholder: '输入自定义 effort 值（如 max、ultra）',
                     effortHint: '控制 Claude 的思考深度，级别越高思考越深入但消耗更多 Token；选择 custom 可手动输入任意 effort 值',
@@ -2915,7 +2892,7 @@ const zhCN = {
                     displayHint: 'Opus 4.7+ 默认隐藏思考内容。选择「摘要」可恢复可见的思维链输出',
                     displayOmitted: '隐藏',
                     displayOmittedHint: '不返回思考内容，仅保留签名用于后续对话（Opus 4.7+ 默认）',
-                    displaySummarized: '摘要',
+                    displaySummarized: sharedZhCN.components.channels.anthropic.thinking.displaySummarized,
                     displaySummarizedHint: '返回思考过程摘要，可在聊天面板中查看模型的推理思路'
                 },
                 promptCaching: {
@@ -2955,9 +2932,9 @@ const zhCN = {
                     levelLabel: '思考等级',
                     levelHint: 'minimal: 最少思考 | low: 较少思考 | medium: 中等 | high: 深度思考',
                     levelMinimal: '最少',
-                    levelLow: '低',
-                    levelMedium: '中',
-                    levelHigh: '高',
+                    levelLow: sharedZhCN.components.channels.gemini.thinking.levelLow,
+                    levelMedium: sharedZhCN.components.channels.gemini.thinking.levelMedium,
+                    levelHigh: sharedZhCN.components.channels.gemini.thinking.levelHigh,
                     budgetLabel: '思考预算 (Token)',
                     budgetPlaceholder: '1024',
                     budgetHint: '自定义思考过程允许使用的 token 数量'
@@ -2992,9 +2969,9 @@ const zhCN = {
                     effortHint: 'none: 不使用 | minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义',
                     effortNone: '无',
                     effortMinimal: '最少',
-                    effortLow: '低',
-                    effortMedium: '中',
-                    effortHigh: '高',
+                    effortLow: sharedZhCN.components.channels.openai.thinking.effortLow,
+                    effortMedium: sharedZhCN.components.channels.openai.thinking.effortMedium,
+                    effortHigh: sharedZhCN.components.channels.openai.thinking.effortHigh,
                     effortXHigh: '极高',
                     effortMax: '最大',
                     effortUltra: '极端',
@@ -3119,7 +3096,7 @@ const zhCN = {
             failed: '执行失败',
             cancelled: '已取消',
             approve: '批准',
-            reject: '拒绝',
+            reject: sharedZhCN.components.tools.reject,
             autoExecuted: '自动执行',
             terminate: '终止',
             saveToPath: '保存到路径',
@@ -3129,7 +3106,7 @@ const zhCN = {
             hideDetails: '隐藏详情',
             parameters: '参数',
             result: '结果',
-            error: '错误',
+            error: sharedZhCN.components.tools.error,
             duration: '耗时',
             file: {
                 readFile: '读取文件',
@@ -3168,14 +3145,14 @@ const zhCN = {
                     total: '共 {count} 个',
                     noDirectories: '没有要创建的目录',
                     success: '成功',
-                    failed: '失败'
+                    failed: sharedZhCN.components.tools.file.createDirectoryPanel.failed,
                 },
                 deleteFilePanel: {
                     title: '删除文件',
                     total: '共 {count} 个',
                     noFiles: '没有要删除的文件',
                     success: '成功',
-                    failed: '失败'
+                    failed: sharedZhCN.components.tools.file.deleteFilePanel.failed,
                 },
                 listFilesPanel: {
                     title: '列出文件',
@@ -3287,9 +3264,9 @@ const zhCN = {
                     status: {
                         needDependency: '需要依赖',
                         cancelled: '已取消',
-                        failed: '失败',
+                        failed: sharedZhCN.components.tools.media.cropImagePanel.status.failed,
                         success: '成功',
-                        error: '错误',
+                        error: sharedZhCN.components.tools.media.cropImagePanel.status.error,
                         processing: '处理中...',
                         waiting: '等待中'
                     },
@@ -3319,9 +3296,9 @@ const zhCN = {
                     status: {
                         needDependency: '需要依赖',
                         cancelled: '已取消',
-                        failed: '失败',
+                        failed: sharedZhCN.components.tools.media.generateImagePanel.status.failed,
                         success: '成功',
-                        error: '错误',
+                        error: sharedZhCN.components.tools.media.generateImagePanel.status.error,
                         generating: '生成中...',
                         waiting: '等待中'
                     },
@@ -3350,9 +3327,9 @@ const zhCN = {
                     status: {
                         needDependency: '需要依赖',
                         cancelled: '已取消',
-                        failed: '失败',
+                        failed: sharedZhCN.components.tools.media.removeBackgroundPanel.status.failed,
                         success: '成功',
-                        error: '错误',
+                        error: sharedZhCN.components.tools.media.removeBackgroundPanel.status.error,
                         processing: '处理中...',
                         waiting: '等待中',
                         disabled: '已禁用'
@@ -3390,9 +3367,9 @@ const zhCN = {
                     status: {
                         needDependency: '需要依赖',
                         cancelled: '已取消',
-                        failed: '失败',
+                        failed: sharedZhCN.components.tools.media.resizeImagePanel.status.failed,
                         success: '成功',
-                        error: '错误',
+                        error: sharedZhCN.components.tools.media.resizeImagePanel.status.error,
                         processing: '处理中...',
                         waiting: '等待中'
                     },
@@ -3425,9 +3402,9 @@ const zhCN = {
                     status: {
                         needDependency: '需要依赖',
                         cancelled: '已取消',
-                        failed: '失败',
+                        failed: sharedZhCN.components.tools.media.rotateImagePanel.status.failed,
                         success: '成功',
-                        error: '错误',
+                        error: sharedZhCN.components.tools.media.rotateImagePanel.status.error,
                         processing: '处理中...',
                         waiting: '等待中'
                     },
@@ -3531,7 +3508,7 @@ const zhCN = {
                 executeCommandPanel: {
                     title: '终端',
                     status: {
-                        failed: '失败',
+                        failed: sharedZhCN.components.tools.terminal.executeCommandPanel.status.failed,
                         terminated: '已终止',
                         success: '成功',
                         exitCode: '退出码: {code}',
@@ -3554,7 +3531,7 @@ const zhCN = {
                 title: '子代理',
                 task: '任务',
                 context: '上下文',
-                completed: '执行完成',
+                completed: sharedZhCN.components.tools.subagents.completed,
                 failed: '执行失败',
                 executing: '正在执行...',
                 partialResponse: '部分响应',
@@ -3588,9 +3565,9 @@ const zhCN = {
             continueRequiredMessage: '当前对话需要继续。点击通知可回到对应窗口继续处理。',
             continueRequiredMessageWithConversation: '对话“{title}”需要继续。点击通知可回到对应窗口继续处理。',
             actions: {
-                generatePlan: '生成计划',
-                executePlan: '执行计划',
-                continue: '继续',
+                generatePlan: sharedZhCN.app.agentStopNotification.actions.generatePlan,
+                executePlan: sharedZhCN.app.agentStopNotification.actions.executePlan,
+                continue: sharedZhCN.app.agentStopNotification.actions.continue,
                 genericConfirmation: '回到 GrayCode 继续'
             }
         }
@@ -3603,13 +3580,13 @@ const zhCN = {
         invalidConfig: '配置无效',
         fileNotFound: '文件未找到',
         permissionDenied: '权限被拒绝',
-        unknown: '未知错误',
+        unknown: sharedZhCN.errors.unknown,
         connectionFailed: '连接失败',
         authFailed: '认证失败',
         rateLimited: '请求过于频繁',
         serverError: '服务器错误',
         invalidResponse: '响应格式无效',
-        cancelled: '操作已取消'
+        cancelled: sharedZhCN.errors.cancelled
     },
 
     composables: {
@@ -3618,7 +3595,7 @@ const zhCN = {
                 validationFailed: '附件验证失败',
                 createThumbnailFailed: '创建缩略图失败',
                 createVideoThumbnailFailed: '创建视频缩略图失败',
-                readFileFailed: '读取文件失败',
+                readFileFailed: sharedZhCN.composables.useAttachments.errors.readFileFailed,
                 loadVideoFailed: '加载视频失败',
                 readResultNotString: '读取结果不是字符串'
             }
@@ -3628,7 +3605,7 @@ const zhCN = {
     stores: {
         terminalStore: {
             errors: {
-                killTerminalFailed: '杀死终端失败',
+                killTerminalFailed: sharedZhCN.stores.terminalStore.errors.killTerminalFailed,
                 refreshOutputFailed: '刷新终端输出失败'
             }
         },
@@ -3645,9 +3622,9 @@ const zhCN = {
                 editRetryFailed: '编辑重试失败',
                 deleteFailed: '删除失败',
                 noConversationSelected: '未选择对话',
-                unknownError: '未知错误',
+                unknownError: sharedZhCN.stores.chatStore.errors.unknownError,
                 restoreFailed: '恢复失败',
-                restoreCheckpointFailed: '恢复检查点失败',
+                restoreCheckpointFailed: sharedZhCN.stores.chatStore.errors.restoreCheckpointFailed,
                 restoreRetryFailed: '回档并重试失败',
                 restoreDeleteFailed: '回档并删除失败',
                 noConfigSelected: '未选择配置',

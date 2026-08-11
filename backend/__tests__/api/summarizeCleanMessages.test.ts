@@ -17,7 +17,7 @@ function createService(): SummarizeService {
 describe('SummarizeService.cleanMessagesForSummarize - no images to summarize model', () => {
     const config = { type: 'gemini' } as any;
 
-    it('inlineData（内联图片）替换为 [Image: ...] 文本占位符', () => {
+    test('inlineData（内联图片）替换为 [Image: ...] 文本占位符', () => {
         const service = createService();
         const cleaned = (service as any).cleanMessagesForSummarize([
             {
@@ -38,7 +38,7 @@ describe('SummarizeService.cleanMessagesForSummarize - no images to summarize mo
         expect(JSON.stringify(cleaned)).not.toContain('inlineData');
     });
 
-    it('inlineData 无 displayName 时回退到 mimeType 占位符', () => {
+    test('inlineData 无 displayName 时回退到 mimeType 占位符', () => {
         const service = createService();
         const cleaned = (service as any).cleanMessagesForSummarize([
             { role: 'user', parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'xx' } }] }
@@ -47,7 +47,7 @@ describe('SummarizeService.cleanMessagesForSummarize - no images to summarize mo
         expect(cleaned[0].parts).toEqual([{ text: '[Image: image/jpeg]' }]);
     });
 
-    it('fileData（文件引用）替换为 [File: ...] 文本占位符', () => {
+    test('fileData（文件引用）替换为 [File: ...] 文本占位符', () => {
         const service = createService();
         const cleaned = (service as any).cleanMessagesForSummarize([
             { role: 'user', parts: [{ fileData: { fileUri: 'file:///a/b.png', displayName: 'b.png' } }] }
@@ -56,7 +56,7 @@ describe('SummarizeService.cleanMessagesForSummarize - no images to summarize mo
         expect(cleaned[0].parts).toEqual([{ text: '[File: b.png]' }]);
     });
 
-    it('纯文本消息与 functionCall/functionResponse 清理行为保持原样', () => {
+    test('纯文本消息与 functionCall/functionResponse 清理行为保持原样', () => {
         const service = createService();
         const cleaned = (service as any).cleanMessagesForSummarize([
             { role: 'user', parts: [{ text: 'plain' }] },
@@ -83,7 +83,7 @@ describe('SummarizeService.cleanMessagesForSummarize - no images to summarize mo
         expect(cleaned[2].parts[0].functionResponse.response).toEqual({ success: true });
     });
 
-    it('中断残留（rejected 且无配对响应）的 functionCall 整体丢弃', () => {
+    test('中断残留（rejected 且无配对响应）的 functionCall 整体丢弃', () => {
         const service = createService();
         const cleaned = (service as any).cleanMessagesForSummarize([
             { role: 'user', parts: [{ text: '继续' }] },

@@ -1,12 +1,12 @@
-import { ConversationManager } from '../../modules/conversation/ConversationManager';
+import { ConversationManager } from '../../modules/conversation';
 import { validateHistoryIntegrity } from '../../modules/channel/HistoryIntegrityValidator';
-import { MemoryStorageAdapter } from '../../modules/conversation/storage';
+import { MemoryStorageAdapter } from '../../modules/conversation';
 import {
     deleteLogicalMessage,
     repairFunctionCallPairsAfterDelete,
     truncateFrom,
 } from '../../modules/conversation/TranscriptMutation';
-import type { Content } from '../../modules/conversation/types';
+import type { Content } from '../../modules/conversation';
 
 function functionCallMessage(
     id: string,

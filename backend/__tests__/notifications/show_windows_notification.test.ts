@@ -12,7 +12,7 @@ class FakeToastAdapter implements WindowsToastAdapter {
 }
 
 describe('show_windows_notification tool', () => {
-  it('declares custom title and message as required parameters', () => {
+  test('declares custom title and message as required parameters', () => {
     const declaration = createShowWindowsNotificationToolDeclaration()
 
     expect(declaration.name).toBe('show_windows_notification')
@@ -21,7 +21,7 @@ describe('show_windows_notification tool', () => {
     expect(declaration.parameters.required).toEqual(['title', 'message'])
   })
 
-  it('shows a Windows toast with normalized custom content', async () => {
+  test('shows a Windows toast with normalized custom content', async () => {
     const adapter = new FakeToastAdapter()
     const executedCommands: string[] = []
     const tool = createShowWindowsNotificationTool(
@@ -50,7 +50,7 @@ describe('show_windows_notification tool', () => {
     expect(executedCommands).toEqual(['graycode.openChat'])
   })
 
-  it('allows disabling click-to-open-chat and sound suppression', async () => {
+  test('allows disabling click-to-open-chat and sound suppression', async () => {
     const adapter = new FakeToastAdapter()
     const tool = createShowWindowsNotificationTool(adapter, 'win32')
 
@@ -67,7 +67,7 @@ describe('show_windows_notification tool', () => {
     expect(adapter.requests[0].onClick).toBeUndefined()
   })
 
-  it('reports unsupported platform without calling the toast adapter', async () => {
+  test('reports unsupported platform without calling the toast adapter', async () => {
     const adapter = new FakeToastAdapter()
     const tool = createShowWindowsNotificationTool(adapter, 'linux')
 
@@ -78,7 +78,7 @@ describe('show_windows_notification tool', () => {
     expect(adapter.requests).toHaveLength(0)
   })
 
-  it('rejects empty messages', async () => {
+  test('rejects empty messages', async () => {
     const adapter = new FakeToastAdapter()
     const tool = createShowWindowsNotificationTool(adapter, 'win32')
 

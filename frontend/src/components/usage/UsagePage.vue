@@ -10,6 +10,7 @@
  * - 按模型：可配置单价（美元/百万 token）估算成本
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, onMounted } from 'vue'
 import { CustomScrollbar } from '../common'
 import UsageTimeSection from './UsageTimeSection.vue'
@@ -71,7 +72,7 @@ async function loadStats(force = false) {
     const startTime = rangeToStartTime(range)
     const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
     if (force) query.force = true
-    const result = await sendToExtension<UsageStatsResult>('usage.getStats', query)
+    const result = await sendToExtension<UsageStatsResult>(MESSAGE_NAMES['usage.getStats'], query)
     if (requestId === loadRequestId) stats.value = result
   } catch (error) {
     if (requestId === loadRequestId) {
@@ -104,7 +105,7 @@ const editOutput = ref('')
 
 async function loadPricing() {
   try {
-    const response = await sendToExtension<any>('getSettings', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
     const saved = response?.settings?.ui?.usagePricing
     pricing.value = saved && typeof saved === 'object' ? saved : {}
   } catch {
@@ -168,7 +169,7 @@ async function savePricing() {
   pricing.value = { ...pricing.value, [modelVersion]: { input, output } }
   editingModel.value = ''
   try {
-    await sendToExtension('updateUISettings', {
+    await sendToExtension(MESSAGE_NAMES.updateUISettings, {
       ui: { usagePricing: { [modelVersion]: { input, output } } }
     })
   } catch (error) {

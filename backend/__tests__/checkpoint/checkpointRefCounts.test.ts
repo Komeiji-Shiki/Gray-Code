@@ -17,7 +17,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { BranchGraphRepository } from '../../modules/conversation/branch/BranchGraphRepository';
 import type { ConversationBranchGraph, ConversationBranchNode } from '../../modules/conversation/branch/types';
-import { computeCheckpointReferenceCounts } from '../../modules/checkpoint/checkpointRefCounts';
+import { computeCheckpointReferenceCounts } from '../../modules/checkpoint';
 
 /** 构造一个最小合法节点（workspaceCheckpointId 可覆盖） */
 function node(id: string, overrides: Partial<ConversationBranchNode> = {}): ConversationBranchNode {
@@ -102,6 +102,15 @@ describe('computeCheckpointReferenceCounts（BCP-06 引用计数扫描）', () =
         await repo.save('c1', graph({
             n1: node('n1'), // 无绑定
             n2: node('n2', { workspaceCheckpointId: '' }), // 空串
+        }));
+
+        const counts = await computeCheckpointReferenceCounts(repo);
+        expect(counts.size).toBe(0);
+    });
+    test('非字符串 workspaceCheckpointId（数字）→ typeof 守卫拒绝不计数', async () => {
+        await repo.save('c1', graph({
+            n1: node('n1', { workspaceCheckpointId: 123 as unknown as string }),
+            n2: node('n2', { workspaceCheckpointId: 0 as unknown as string }),
         }));
 
         const counts = await computeCheckpointReferenceCounts(repo);

@@ -38,7 +38,7 @@ describe('SkillsManager.refresh', () => {
         fs.rmSync(root, { recursive: true, force: true });
     });
 
-    it('refresh 后已删除的 skill 不再视为启用，仍存在的保留启用状态', async () => {
+    test('refresh 后已删除的 skill 不再视为启用，仍存在的保留启用状态', async () => {
         writeSkill(projectSkills, 'foo');
         writeSkill(projectSkills, 'bar');
 
@@ -62,7 +62,7 @@ describe('SkillsManager.refresh', () => {
         expect(manager.isSkillEnabled('foo')).toBe(true);
     });
 
-    it('refresh 不影响未启用 skill 的状态', async () => {
+    test('refresh 不影响未启用 skill 的状态', async () => {
         writeSkill(projectSkills, 'foo');
         writeSkill(projectSkills, 'bar');
 

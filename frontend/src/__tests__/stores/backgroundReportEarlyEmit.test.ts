@@ -17,7 +17,7 @@
  */
 import { ref, nextTick } from 'vue'
 import type { Ref } from 'vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
@@ -27,7 +27,8 @@ vi.mock('../../utils/vscode', () => ({
   sendToExtension: vi.fn(async (type: string) => (
     type === 'getWorkspaceUri' ? null : { success: true }
   )),
-  onMessageFromExtension: vi.fn(() => () => {})
+  onMessageFromExtension: vi.fn(() => () => {}),
+  onExtensionCommand: vi.fn(() => () => {})
 }))
 
 import { sendToExtension } from '../../utils/vscode'
@@ -148,7 +149,7 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
     )
   })
 
-  it('收到唤醒事件后领取正文，并携带内部来源与 claim ID 发起 chatStream', async () => {
+  test('收到唤醒事件后领取正文，并携带内部来源与 claim ID 发起 chatStream', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = false
@@ -194,7 +195,7 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
     expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')).toBeUndefined()
   })
 
-  it('空闲领取期间切换会话时退回 claim，不把消息发进错误会话', async () => {
+  test('空闲领取期间切换会话时退回 claim，不把消息发进错误会话', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = false
@@ -236,7 +237,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     )
   })
 
-  it('回合仍在响应中：先以 preserveSubAgents 取消旧流，再发送回执消息', async () => {
+  test('回合仍在响应中：先以 preserveSubAgents 取消旧流，再发送回执消息', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -271,7 +272,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(true)
   })
 
-  it('无可投递任务时不发起任何 IPC', async () => {
+  test('无可投递任务时不发起任何 IPC', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -286,7 +287,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
   })
 
-  it('运行中任务 / 已回流任务不重复投递', async () => {
+  test('运行中任务 / 已回流任务不重复投递', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -308,7 +309,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
   })
 
-  it('跨会话任务被跳过，保留未回流等待归属会话', async () => {
+  test('跨会话任务被跳过，保留未回流等待归属会话', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -331,7 +332,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('投递窗口内会话切换：放弃投递，回执保持未回流', async () => {
+  test('投递窗口内会话切换：放弃投递，回执保持未回流', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -361,7 +362,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('投递窗口内并发发送者抢先开启新流：放弃投递，不降级为 inbox 中断', async () => {
+  test('投递窗口内并发发送者抢先开启新流：放弃投递，不降级为 inbox 中断', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -394,7 +395,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('回执发送失败：回滚 reported，等待下次补发', async () => {
+  test('回执发送失败：回滚 reported，等待下次补发', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -418,7 +419,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('回执投递进行中不重入：同一边界只发送一条回执', async () => {
+  test('回执投递进行中不重入：同一边界只发送一条回执', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -466,7 +467,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     )
   })
 
-  it('队列为空 + 有挂起回执：动作边界提前投递回执', async () => {
+  test('队列为空 + 有挂起回执：动作边界提前投递回执', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -491,7 +492,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(true)
   })
 
-  it('队列有排队消息时排队消息优先，回执等下一个边界（保持未回流）', async () => {
+  test('队列有排队消息时排队消息优先，回执等下一个边界（保持未回流）', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -519,7 +520,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('动作边界（非终结 toolIteration）触发编排：回执在 LLM 执行完动作后立即投递', async () => {
+  test('动作边界（非终结 toolIteration）触发编排：回执在 LLM 执行完动作后立即投递', async () => {
     const state = createState({
       allMessages: ref<Message[]>([createStreamingPlaceholder('msg_1')]),
       streamingMessageId: ref('msg_1'),
@@ -537,7 +538,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(processQueueAfterAction).toHaveBeenCalledTimes(1)
   })
 
-  it('flushReports 先持锁（回合结束补发路径）时动作边界投递跳过，不产生重复回执', async () => {
+  test('flushReports 先持锁（回合结束补发路径）时动作边界投递跳过，不产生重复回执', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -580,7 +581,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(true)
   })
 
-  it('sendMessage 返回 false（会话校验未过）：回滚 reported，等待下次补发', async () => {
+  test('sendMessage 返回 false（会话校验未过）：回滚 reported，等待下次补发', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -609,7 +610,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('迟到调度（已非等待响应）：直接投递回执，不再 cancelStream', async () => {
+  test('迟到调度（已非等待响应）：直接投递回执，不再 cancelStream', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -634,7 +635,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(true)
   })
 
-  it('编排路径（processQueueAfterAction）投递窗口内会话切换：回执保持未回流', async () => {
+  test('编排路径（processQueueAfterAction）投递窗口内会话切换：回执保持未回流', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -663,7 +664,7 @@ describe('processQueueAfterAction：动作边界编排回执投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  it('回执发送失败回滚后，下一动作边界重试投递成功（恢复链）', async () => {
+  test('回执发送失败回滚后，下一动作边界重试投递成功（恢复链）', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true

@@ -23,6 +23,7 @@
 import type { Attachment } from '../../types'
 import type { SendMessageOptions } from '../chat/messageActions'
 import type { CancelStreamOptions } from '../chat/toolActions'
+import { ref } from 'vue'
 
 /** 会话忙闲/归属状态快照（每次 getState() 重新求值，保证实时性） */
 export interface BackgroundTaskChatState {
@@ -45,7 +46,11 @@ export interface BackgroundTaskChatBridge {
   ): Promise<boolean>
 }
 
-let registeredBridge: BackgroundTaskChatBridge | null = null
+// 已注册的会话桥用 Vue ref 承载：backgroundTaskStore 的 watch getter 在桥注册前
+// （初始化顺序/HMR 重建间隙）也能通过 registeredBridge.value 建立响应式依赖——
+// 桥注册/替换时 getter 重新求值并顺带追踪底层 chat ref；若用普通变量，
+// 桥未注册时创建的 watch 无任何依赖，注册后也永远不会再求值（watch 永久失效）。
+const registeredBridge = ref<BackgroundTaskChatBridge | null>(null)
 let fallbackBridge: BackgroundTaskChatBridge | null = null
 
 /**
@@ -53,12 +58,12 @@ let fallbackBridge: BackgroundTaskChatBridge | null = null
  * 传 null 可注销（预留，当前无调用方）。
  */
 export function registerChatBridge(bridge: BackgroundTaskChatBridge | null): void {
-  registeredBridge = bridge
+  registeredBridge.value = bridge
 }
 
 /** 同步读取已注册的会话桥；未注册时返回 null（调用方按空闲/无会话兜底） */
 export function getChatBridge(): BackgroundTaskChatBridge | null {
-  return registeredBridge
+  return registeredBridge.value
 }
 
 /** 兜底包装的目标形态（兼容真实 store 与测试 mock 的纯对象） */
@@ -95,10 +100,10 @@ function wrapChatStore(store: ChatStoreLike): BackgroundTaskChatBridge {
  *   真实实例化时 setup 体内会同步自注册；非真实 store（测试 mock）走包装适配。
  */
 export async function resolveChatBridge(): Promise<BackgroundTaskChatBridge> {
-  if (registeredBridge) return registeredBridge
+  if (registeredBridge.value) return registeredBridge.value
   if (fallbackBridge) return fallbackBridge
   const { useChatStore } = await import('../chatStore')
   const store = useChatStore()
-  fallbackBridge = registeredBridge ?? wrapChatStore(store as unknown as ChatStoreLike)
+  fallbackBridge = registeredBridge.value ?? wrapChatStore(store as unknown as ChatStoreLike)
   return fallbackBridge
 }

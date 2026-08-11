@@ -1,5 +1,5 @@
 /**
- * LimCode - MCP 处理器
+ * GrayCode - MCP 处理器
  *
  * 负责处理 MCP 相关的所有请求
  */

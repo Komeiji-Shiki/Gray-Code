@@ -9,10 +9,10 @@
  * - 流式：正常完成（有 finish_reason）不受影响
  */
 
-import { ChannelManager } from '../../modules/channel/ChannelManager';
+import { ChannelManager } from '../../modules/channel';
 import { createProxyFetch, proxyStreamFetch } from '../../modules/channel/proxyFetch';
-import { ChannelError, ErrorType } from '../../modules/channel/types';
-import type { GenerateRequest } from '../../modules/channel/types';
+import { ChannelError, ErrorType } from '../../modules/channel';
+import type { GenerateRequest } from '../../modules/channel';
 
 // mock 代理 fetch 模块：ChannelManager 只用 createProxyFetch / proxyStreamFetch 两个导出
 jest.mock('../../modules/channel/proxyFetch', () => ({
@@ -63,7 +63,7 @@ beforeEach(() => {
 });
 
 describe('非流式空响应自动重试', () => {
-    it('HTTP 200 但内容为空：重试 totalAttempts 次后抛 EMPTY_RESPONSE_ERROR', async () => {
+    test('HTTP 200 但内容为空：重试 totalAttempts 次后抛 EMPTY_RESPONSE_ERROR', async () => {
         const fetchMock = jest.fn(async () => ({
             status: 200,
             text: async () => JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'stop' }] }),
@@ -80,7 +80,7 @@ describe('非流式空响应自动重试', () => {
         expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
-    it('内容正常：不重试，直接成功', async () => {
+    test('内容正常：不重试，直接成功', async () => {
         const fetchMock = jest.fn(async () => ({
             status: 200,
             text: async () => JSON.stringify({ choices: [{ message: { content: '你好！' }, finish_reason: 'stop' }] }),
@@ -97,7 +97,7 @@ describe('非流式空响应自动重试', () => {
 });
 
 describe('流式空响应自动重试', () => {
-    it('从未产出内容且未收到 done：重试后抛 EMPTY_RESPONSE_ERROR', async () => {
+    test('从未产出内容且未收到 done：重试后抛 EMPTY_RESPONSE_ERROR', async () => {
         // 只有空 delta、无 finish_reason/usage 的 chunk（上游抽风返回空流）
         mockProxyStreamFetch.mockImplementation(async function* () {
             yield sse({ id: '1', choices: [{ index: 0, delta: {}, finish_reason: null }] });
@@ -115,7 +115,7 @@ describe('流式空响应自动重试', () => {
         expect(mockProxyStreamFetch).toHaveBeenCalledTimes(3);
     });
 
-    it('已产出内容但未收到 done（静默截断）：抛 streamTruncated 且不重试', async () => {
+    test('已产出内容但未收到 done（静默截断）：抛 streamTruncated 且不重试', async () => {
         mockProxyStreamFetch.mockImplementation(async function* () {
             yield sse({ id: '1', choices: [{ index: 0, delta: { content: '半截内容' }, finish_reason: null }] });
             // 连接被掐断：无 finish_reason、无 [DONE]
@@ -139,7 +139,7 @@ describe('流式空响应自动重试', () => {
         }
     });
 
-    it('正常完成（有 finish_reason）：不受影响', async () => {
+    test('正常完成（有 finish_reason）：不受影响', async () => {
         mockProxyStreamFetch.mockImplementation(async function* () {
             yield sse({ id: '1', choices: [{ index: 0, delta: { content: '你好' }, finish_reason: null }] });
             yield sse({ id: '2', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });

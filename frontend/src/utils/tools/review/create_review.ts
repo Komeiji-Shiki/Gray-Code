@@ -4,6 +4,7 @@
 
 import { registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
+import { getToolMetaDescription } from '../toolMetaLookup'
 import { formatReviewToolFallbackContent } from '../../reviewCards'
 
 registerTool('create_review', {
@@ -15,7 +16,8 @@ registerTool('create_review', {
     const title = (args as any)?.title as string | undefined
     if (path && path.trim()) return path
     if (title && title.trim()) return title.trim()
-    return t('components.message.tool.createReview.fallbackTitle')
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化标题
+    return getToolMetaDescription('create_review') ?? t('components.message.tool.createReview.fallbackTitle')
   },
   contentFormatter: (args, result) => formatReviewToolFallbackContent('create_review', args, result)
 })

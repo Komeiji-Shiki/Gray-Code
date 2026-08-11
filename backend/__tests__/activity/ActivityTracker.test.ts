@@ -84,17 +84,17 @@ describe('ActivityTracker', () => {
         return await store.loadDay(toDateStr(Date.now()));
     }
 
-    it('samples immediately on start when window is focused', async () => {
+    test('samples immediately on start when window is focused', async () => {
         expect(await todaySamples()).toHaveLength(1);
     });
 
-    it('samples on heartbeat while focused and active', async () => {
+    test('samples on heartbeat while focused and active', async () => {
         const initial = (await todaySamples()).length;
         jest.advanceTimersByTime(60_000);
         expect(await todaySamples()).toHaveLength(initial + 1);
     });
 
-    it('samples immediately on user activity events', async () => {
+    test('samples immediately on user activity events', async () => {
         const initial = (await todaySamples()).length;
         // 推进 2 秒，避免与 start 采样落在同一去重窗口（1s）内
         jest.advanceTimersByTime(2_000);
@@ -103,7 +103,7 @@ describe('ActivityTracker', () => {
         expect(await todaySamples()).toHaveLength(initial + 1);
     });
 
-    it('pauses heartbeat after idle timeout and resumes on user activity', async () => {
+    test('pauses heartbeat after idle timeout and resumes on user activity', async () => {
         const initial = (await todaySamples()).length;
         // 推进 7 分钟：前 5 次心跳（60s~300s，未超 5 分钟空闲线）采样，
         // 第 6 次心跳（360s）超过空闲线 → 暂停
@@ -126,7 +126,7 @@ describe('ActivityTracker', () => {
         expect(await todaySamples()).toHaveLength(resumed + 1);
     });
 
-    it('pauses sampling on window blur and resumes on focus', async () => {
+    test('pauses sampling on window blur and resumes on focus', async () => {
         const initial = (await todaySamples()).length;
 
         fireWindowState(false);
@@ -143,7 +143,7 @@ describe('ActivityTracker', () => {
         expect(await todaySamples()).toHaveLength(initial + 2);
     });
 
-    it('deduplicates burst events within the same second', async () => {
+    test('deduplicates burst events within the same second', async () => {
         const initial = (await todaySamples()).length;
         // 与 start 采样错开去重窗口，验证 burst 内部去重为 1 个
         jest.advanceTimersByTime(2_000);
@@ -154,7 +154,7 @@ describe('ActivityTracker', () => {
         expect(await todaySamples()).toHaveLength(initial + 1);
     });
 
-    it('flushes samples to disk on dispose', async () => {
+    test('flushes samples to disk on dispose', async () => {
         jest.advanceTimersByTime(120_000);
         await tracker.flush();
         tracker.dispose();
@@ -167,13 +167,13 @@ describe('ActivityTracker', () => {
         expect(parsed.samples.length).toBeGreaterThanOrEqual(3); // start + 2 次心跳
     });
 
-    it('is safe to dispose multiple times', async () => {
+    test('is safe to dispose multiple times', async () => {
         tracker.dispose();
         expect(() => tracker.dispose()).not.toThrow();
     });
 
     describe('AI work integration', () => {
-        it('markAiActive keeps sampling during idle (user watching AI output)', async () => {
+        test('markAiActive keeps sampling during idle (user watching AI output)', async () => {
             const initial = (await todaySamples()).length;
             // 空闲 7 分钟：第 6 次心跳本应触发空闲暂停
             jest.advanceTimersByTime(7 * 60_000);
@@ -193,7 +193,7 @@ describe('ActivityTracker', () => {
             expect((await todaySamples()).length).toBe(idleCount + 1 + 5);
         });
 
-        it('beginAiWork/endAiWork reference counting keeps sampling across idle and blur', async () => {
+        test('beginAiWork/endAiWork reference counting keeps sampling across idle and blur', async () => {
             const initial = (await todaySamples()).length;
 
             // 与 start 采样错开去重窗口（1s）
@@ -223,7 +223,7 @@ describe('ActivityTracker', () => {
             expect((await todaySamples()).length).toBe(afterEnd);
         });
 
-        it('endAiWork without begin is a no-op', async () => {
+        test('endAiWork without begin is a no-op', async () => {
             expect(() => tracker.endAiWork()).not.toThrow();
         });
     });

@@ -19,14 +19,14 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         StreamAbortManager.setGlobalInstance(undefined);
     });
 
-    it('无旧流时 abortAndWaitForCompletion 立即返回', async () => {
+    test('无旧流时 abortAndWaitForCompletion 立即返回', async () => {
         const manager = new StreamAbortManager();
         const start = Date.now();
         await manager.abortAndWaitForCompletion('conv-free', 1000);
         expect(Date.now() - start).toBeLessThan(100);
     });
 
-    it('活跃旧流：abort 后等待其 finally delete() 完成再返回', async () => {
+    test('活跃旧流：abort 后等待其 finally delete() 完成再返回', async () => {
         const manager = new StreamAbortManager();
         const controller = manager.create('conv-active');
         const waiting = manager.abortAndWaitForCompletion('conv-active', 2000);
@@ -47,7 +47,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         expect(next.signal.aborted).toBe(false);
     });
 
-    it('cancel 后旧流的 finally 走引用不匹配路径仍能唤醒等待（停止后立即重发）', async () => {
+    test('cancel 后旧流的 finally 走引用不匹配路径仍能唤醒等待（停止后立即重发）', async () => {
         const manager = new StreamAbortManager();
         const controller = manager.create('conv-cancel');
         manager.cancel('conv-cancel'); // 停止：abort + 移出 controllers + 登记退出信号
@@ -64,7 +64,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         await expect(waiting).resolves.toBeUndefined();
     });
 
-    it('旧流挂死（finally 永不执行）时超时兜底，不阻塞新流启动', async () => {
+    test('旧流挂死（finally 永不执行）时超时兜底，不阻塞新流启动', async () => {
         const manager = new StreamAbortManager();
         manager.create('conv-hang');
         const start = Date.now();
@@ -73,7 +73,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         expect(Date.now() - start).toBeLessThan(2000);
     });
 
-    it('waitForOldStreamCompletion 只等已退休旧流，不中止新流控制器', async () => {
+    test('waitForOldStreamCompletion 只等已退休旧流，不中止新流控制器', async () => {
         const manager = new StreamAbortManager();
         const oldController = manager.create('conv-backend');
         manager.cancel('conv-backend'); // 旧流退休（停止后重发）
@@ -88,7 +88,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         expect(newController.signal.aborted).toBe(false);
     });
 
-    it('连续 stop/重发：退出信号链式叠加，等待所有旧代退出', async () => {
+    test('连续 stop/重发：退出信号链式叠加，等待所有旧代退出', async () => {
         const manager = new StreamAbortManager();
         const c1 = manager.create('conv-chain');
         manager.cancel('conv-chain'); // 第一代退休
@@ -108,7 +108,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         await expect(waiting).resolves.toBeUndefined();
     });
 
-    it('delete 引用不匹配不会误删新流控制器（保留新流可取消能力）', async () => {
+    test('delete 引用不匹配不会误删新流控制器（保留新流可取消能力）', async () => {
         const manager = new StreamAbortManager();
         const old = manager.create('conv-mismatch');
         manager.cancel('conv-mismatch');
@@ -121,7 +121,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
     });
 
 
-    it('waitForIdle 先注册后 cancel：等待退休旧流 finally，不永久挂起也不假空闲', async () => {
+    test('waitForIdle 先注册后 cancel：等待退休旧流 finally，不永久挂起也不假空闲', async () => {
         const manager = new StreamAbortManager();
         const controller = manager.create('conv-wait-cancel');
         const waiting = manager.waitForIdle('conv-wait-cancel');
@@ -136,7 +136,7 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         await expect(waiting).resolves.toBeUndefined();
     });
 
-    it('cancel 后再 waitForIdle 仍等待退休旧流完成', async () => {
+    test('cancel 后再 waitForIdle 仍等待退休旧流完成', async () => {
         const manager = new StreamAbortManager();
         const controller = manager.create('conv-post-cancel');
         manager.cancel('conv-post-cancel');
@@ -148,6 +148,63 @@ describe('StreamAbortManager - 旧流退出等待（H1 写序竞态）', () => {
         expect(settled).toBe(false);
 
         manager.delete('conv-post-cancel', controller);
+        await expect(waiting).resolves.toBeUndefined();
+    });
+});
+
+
+// ============ M6 补测：waitForIdle 两个超时分支（fake timers） ============
+describe('StreamAbortManager - waitForIdle 超时分支（M6 fake timers）', () => {
+    afterEach(() => {
+        StreamAbortManager.setGlobalInstance(undefined);
+        jest.useRealTimers();
+    });
+
+    test('活跃流分支：finally 永不执行 → 超时视同空闲返回，不循环重试', async () => {
+        jest.useFakeTimers();
+        const manager = new StreamAbortManager();
+        manager.create('conv-active-hang');
+
+        const waiting = manager.waitForIdle('conv-active-hang', 6000);
+        const probe = waiting.then(() => 'done', () => 'err');
+
+        // 未到超时：等待不返回（旧流挂死，delete 永不来）
+        await jest.advanceTimersByTimeAsync(5999);
+        await expect(Promise.race([probe, Promise.resolve('pending')])).resolves.toBe('pending');
+
+        // 超时到点：返回（视为已空闲），且不进入下一轮 while 循环
+        await jest.advanceTimersByTimeAsync(1);
+        await expect(probe).resolves.toBe('done');
+    });
+
+    test('退休分支：cancel 后 finally 永不执行 → 超时返回且 retired 条目被 clear', async () => {
+        jest.useFakeTimers();
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv-retired-hang');
+        manager.cancel('conv-retired-hang');
+
+        const waiting = manager.waitForIdle('conv-retired-hang', 6000);
+        await jest.advanceTimersByTimeAsync(6000);
+        await expect(waiting).resolves.toBeUndefined();
+
+        // 条目已 clear：后续 waitForIdle 立即返回，不再白等 6s
+        expect((manager as any).retiredChain.getEntry('conv-retired-hang')).toBeUndefined();
+        const second = manager.waitForIdle('conv-retired-hang', 6000);
+        await jest.advanceTimersByTimeAsync(10);
+        await expect(second).resolves.toBeUndefined();
+        expect(controller.signal.aborted).toBe(true);
+    });
+
+    test('M8 窗口：delete 先于等待者注册 → 等待者靠超时兜底返回（非挂死）', async () => {
+        jest.useFakeTimers();
+        const manager = new StreamAbortManager();
+        const controller = manager.create('conv-window');
+        // 模拟「isActive 检查之后、registerIdleWaiter 之前」delete 已发生：
+        // 此时删除不经过已注册等待者表，等待者只能靠超时兜底（6s 延迟边界，非错误）
+        manager.delete('conv-window', controller);
+
+        const waiting = manager.waitForIdle('conv-window', 6000);
+        await jest.advanceTimersByTimeAsync(6000);
         await expect(waiting).resolves.toBeUndefined();
     });
 });

@@ -1,5 +1,5 @@
 /**
- * LimCode - 对话处理器
+ * GrayCode - 对话处理器
  *
  * 负责处理对话请求，协调各个模块
  */
@@ -692,3 +692,4 @@ export class ChatHandler {
     }
     
 }
+

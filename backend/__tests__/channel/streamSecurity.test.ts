@@ -8,10 +8,10 @@
  * - 多模态流内容判定：inlineData/fileData 不被误判为空响应（不触发整流重播/重复计费）
  */
 
-import { ChannelManager } from '../../modules/channel/ChannelManager';
+import { ChannelManager } from '../../modules/channel';
 import { createProxyFetch, proxyStreamFetch } from '../../modules/channel/proxyFetch';
-import { ChannelError, ErrorType } from '../../modules/channel/types';
-import type { GenerateRequest } from '../../modules/channel/types';
+import { ChannelError, ErrorType } from '../../modules/channel';
+import type { GenerateRequest } from '../../modules/channel';
 
 // mock 代理 fetch 模块：ChannelManager 只用 createProxyFetch / proxyStreamFetch 两个导出
 jest.mock('../../modules/channel/proxyFetch', () => ({
@@ -98,7 +98,7 @@ beforeEach(() => {
 });
 
 describe('流式请求配置验证（SEC）', () => {
-    it('无效配置（缺 url/model）：发起网络请求前抛 VALIDATION_ERROR', async () => {
+    test('无效配置（缺 url/model）：发起网络请求前抛 VALIDATION_ERROR', async () => {
         const manager = createManager({ model: undefined, url: undefined, apiKey: undefined });
 
         const error = await collectError(manager.generateStream(REQUEST) as AsyncGenerator<any>);
@@ -108,7 +108,7 @@ describe('流式请求配置验证（SEC）', () => {
         expect(mockCreateProxyFetch).not.toHaveBeenCalled();
     });
 
-    it('无效配置不触发重试（VALIDATION_ERROR 不可重试，立即失败）', async () => {
+    test('无效配置不触发重试（VALIDATION_ERROR 不可重试，立即失败）', async () => {
         const manager = createManager({ model: undefined });
         const error = await collectError(manager.generateStream(REQUEST) as AsyncGenerator<any>);
         expect(error.type).toBe(ErrorType.VALIDATION_ERROR);
@@ -117,7 +117,7 @@ describe('流式请求配置验证（SEC）', () => {
 });
 
 describe('纯文本错误体不丢失（SEC）', () => {
-    it('原生 fetch 分支：网关 502 纯文本错误正文进入错误信息', async () => {
+    test('原生 fetch 分支：网关 502 纯文本错误正文进入错误信息', async () => {
         // 无代理 → 走原生 fetch 分支（getEffectiveProxyUrl 返回 undefined）
         const configManager = {
             getConfig: jest.fn().mockResolvedValue({
@@ -160,7 +160,7 @@ describe('纯文本错误体不丢失（SEC）', () => {
 });
 
 describe('流式缓冲上限（SEC）', () => {
-    it('上游持续发送无法解析的数据：超限终止（PARSE_ERROR），缓冲不再无限累积', async () => {
+    test('上游持续发送无法解析的数据：超限终止（PARSE_ERROR），缓冲不再无限累积', async () => {
         // 非 SSE/JSON 垃圾数据：parseStreamBuffer 整段保留为 remaining → 缓冲逐轮增长
         const garbage = 'x'.repeat(8 * 1024 * 1024);
         mockProxyStreamFetch.mockImplementation(async function* () {
@@ -172,7 +172,7 @@ describe('流式缓冲上限（SEC）', () => {
         expect(error.type).toBe(ErrorType.PARSE_ERROR);
     });
 
-    it('合法巨型单事件（低于上限，跨多块到达）：不被上限误杀', async () => {
+    test('合法巨型单事件（低于上限，跨多块到达）：不被上限误杀', async () => {
         // 模拟一个 40MB 的巨型 SSE data 事件（多模态 base64 附件），分块到达；
         // 事件完成前解析「无进展」，但 40MB < 64MB 上限，不允许被误杀
         const bigEvent = `data: ${JSON.stringify({
@@ -199,7 +199,7 @@ describe('流式缓冲上限（SEC）', () => {
         expect(mockProxyStreamFetch).toHaveBeenCalledTimes(1);
     });
 
-    it('正常 SSE 流不受缓冲上限影响', async () => {
+    test('正常 SSE 流不受缓冲上限影响', async () => {
         mockProxyStreamFetch.mockImplementation(async function* () {
             for (let i = 0; i < 50; i++) {
                 yield sse({ id: String(i), choices: [{ index: 0, delta: { content: '数据' }, finish_reason: null }] });
@@ -220,7 +220,7 @@ describe('流式缓冲上限（SEC）', () => {
 });
 
 describe('多模态流内容判定（SEC）', () => {
-    it('只有 inlineData/fileData 的流被截断：判定为有内容（API_ERROR 截断），不误判空响应、不重试', async () => {
+    test('只有 inlineData/fileData 的流被截断：判定为有内容（API_ERROR 截断），不误判空响应、不重试', async () => {
         mockProxyStreamFetch.mockImplementation(async function* () {
             yield sse({ candidates: [{ content: { role: 'model', parts: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }] }, finishReason: null }] });
             yield sse({ candidates: [{ content: { role: 'model', parts: [{ fileData: { mimeType: 'application/pdf', fileUri: 'gs://bucket/x.pdf' } }] }, finishReason: null }] });
@@ -235,7 +235,7 @@ describe('多模态流内容判定（SEC）', () => {
         expect(mockProxyStreamFetch).toHaveBeenCalledTimes(1);
     });
 
-    it('多模态流正常完成（有 finishReason）：不受影响', async () => {
+    test('多模态流正常完成（有 finishReason）：不受影响', async () => {
         mockProxyStreamFetch.mockImplementation(async function* () {
             yield sse({ candidates: [{ content: { role: 'model', parts: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }] }, finishReason: null }] });
             yield sse({ candidates: [{ content: { role: 'model', parts: [] }, finishReason: 'STOP' }] });

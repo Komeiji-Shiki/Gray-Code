@@ -12,7 +12,7 @@ import {
     resolvePathInsideRoot,
     resolveSafePathInsideRoot,
     validateWorkspaceSnapshot
-} from '../../modules/checkpoint/CheckpointWorkspace';
+} from '../../modules/checkpoint';
 
 /**
  * CheckpointWorkspace 测试

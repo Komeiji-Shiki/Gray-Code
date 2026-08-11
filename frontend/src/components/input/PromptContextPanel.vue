@@ -4,6 +4,7 @@
  * 用于管理附加到用户消息前的特殊提示词内容（如文件内容等）
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed } from 'vue'
 import { IconButton, CustomScrollbar } from '../common'
 import { sendToExtension, showNotification } from '../../utils/vscode'
@@ -209,7 +210,7 @@ async function handleDrop(e: DragEvent) {
           path: string
           content: string
           error?: string
-        }>('readFileForContext', { uri: uri.trim() })
+        }>(MESSAGE_NAMES.readFileForContext, { uri: uri.trim() })
         
         if (result?.success) {
           const newItem: PromptContextItem = {

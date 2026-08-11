@@ -3,6 +3,7 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { getToolMetaDescription } from '../toolMetaLookup'
 
 // 注册 create_directory 工具
 // 只在外部显示创建的目录路径，不需要展开面板
@@ -23,6 +24,7 @@ registerTool('create_directory', {
     if (args.path) {
       return args.path as string
     }
-    return '创建目录'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
+    return getToolMetaDescription('create_directory') ?? '创建目录'
   }
 })

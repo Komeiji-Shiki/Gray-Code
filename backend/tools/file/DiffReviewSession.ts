@@ -3,7 +3,7 @@
  * DiffManager 保持公开 API 与 UI 行为不变，DiffReviewSession 负责集中维护 outcome、关联 message/tool id 与定时器清理。
  */
 
-import type { PendingDiff } from './diffManager';
+import type { PendingDiff } from '../../core/services/diffManager';
 
 export type DiffReviewSessionOutcome = 'pending' | 'accepted' | 'rejected' | 'partial' | 'timeout' | 'cancelled';
 

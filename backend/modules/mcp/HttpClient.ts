@@ -1,5 +1,5 @@
 /**
- * LimCode MCP 模块 - HTTP/SSE 客户端
+ * GrayCode MCP 模块 - HTTP/SSE 客户端
  *
  * 通过 HTTP 或 SSE 与 MCP 服务器通信
  */
@@ -506,58 +506,43 @@ export class HttpMcpClient extends EventEmitter {
         resetIdleTimer();
 
         try {
-            while (!matched) {
-                let chunk: { done: boolean; value?: Uint8Array };
+            // 累积的事件数据跨 chunk 保留：SSE 事件可能跨多个数据块，且末事件可能不以空行结尾
+            let eventData: string[] | null = null;
+            const dispatchEvent = () => {
+                if (eventData === null) return;
+                const jsonStr = eventData.join('\n').trim();
+                eventData = null;
+                if (!jsonStr || jsonStr === '[DONE]') return;
+
+                let event: (Partial<JsonRpcResponse> & { method?: string; params?: unknown }) | undefined;
                 try {
-                    chunk = await reader.read();
+                    event = JSON.parse(jsonStr) as Partial<JsonRpcResponse> & { method?: string; params?: unknown };
                 } catch {
-                    // 读流被取消/中止（外部中止、超时或 disconnect）
-                    break;
+                    // 忽略解析错误（多行 data 已在合并后解析）
+                    return;
                 }
-                const { done, value } = chunk;
-                if (done) break;
 
-                resetIdleTimer();
-
-                bufferParts.push(decoder.decode(value, { stream: true }));
-
-                // 按 SSE 规范解析：data: 行累积，空行触发事件
-                const chunkText = bufferParts.join('');
-                bufferParts.length = 0;
-                const lines = chunkText.split('\n');
-                // 末尾不完整的行保留到下一 chunk
-                bufferParts.push(lines.pop() || '');
-
-                let eventData: string[] | null = null;
-                const dispatchEvent = () => {
-                    if (eventData === null) return;
-                    const jsonStr = eventData.join('\n').trim();
-                    eventData = null;
-                    if (!jsonStr || jsonStr === '[DONE]') return;
-
-                    let event: (Partial<JsonRpcResponse> & { method?: string; params?: unknown }) | undefined;
-                    try {
-                        event = JSON.parse(jsonStr) as Partial<JsonRpcResponse> & { method?: string; params?: unknown };
-                    } catch {
-                        // 忽略解析错误（多行 data 已在合并后解析）
-                        return;
+                // 只消费与请求 id 匹配的响应，服务器下发的通知不会被误当结果
+                if (event.jsonrpc === '2.0' && event.id === expectedId) {
+                    if (event.error) {
+                        throw new Error(event.error.message);
                     }
-
-                    // 只消费与请求 id 匹配的响应，服务器下发的通知不会被误当结果
-                    if (event.jsonrpc === '2.0' && event.id === expectedId) {
-                        if (event.error) {
-                            throw new Error(event.error.message);
-                        }
-                        matched = true;
-                        result = event.result as T;
-                    } else if (event.jsonrpc === '2.0'
-                        && event.id === undefined
-                        && typeof event.method === 'string') {
-                        // 服务器通知（无 id）：按 method 派发，供 McpManager 刷新列表缓存等
-                        this.emit('notification', event.method, event.params);
-                    }
-                };
-
+                    matched = true;
+                    result = event.result as T;
+                } else if (event.jsonrpc === '2.0'
+                    && event.id === undefined
+                    && typeof event.method === 'string') {
+                    // 服务器通知（无 id）：按 method 派发，供 McpManager 刷新列表缓存等
+                    this.emit('notification', event.method, event.params);
+                }
+            };
+            // 解析一段 SSE 文本：data: 行累积进 eventData，空行触发事件派发
+            const parseChunkText = (text: string, keepTail: boolean) => {
+                const lines = text.split('\n');
+                if (keepTail) {
+                    // 末尾不完整的行保留到下一 chunk
+                    bufferParts.push(lines.pop() || '');
+                }
                 for (const rawLine of lines) {
                     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
                     if (line.startsWith('data:')) {
@@ -570,11 +555,39 @@ export class HttpMcpClient extends EventEmitter {
                         if (matched) break;
                     }
                 }
+            };
 
-                // 流结束时派发尚未结束的事件
-                if (done && eventData !== null) {
-                    dispatchEvent();
+            while (!matched) {
+                let chunk: { done: boolean; value?: Uint8Array };
+                try {
+                    chunk = await reader.read();
+                } catch {
+                    // 读流被取消/中止（外部中止、超时或 disconnect）
+                    break;
                 }
+                const { done, value } = chunk;
+                if (done) {
+                    // 流结束：先 flush decoder 中残留的不完整多字节 UTF-8 序列（末 chunk 以不完整
+                    // 多字节字符结尾时不 flush 会截断末行，末事件 JSON 解析失败被丢、请求报
+                    // requestTimeout），再解析保留的末尾不完整行并派发残留事件——末事件可能不以
+                    // 空行结尾，直接 break 会丢弃末事件（tools/call 挂起超时）。原
+                    // 「if (done && eventData !== null)」位于 done 提前 break 之后，属死代码。
+                    bufferParts.push(decoder.decode());
+                    parseChunkText(bufferParts.join(''), false);
+                    if (eventData !== null) {
+                        dispatchEvent();
+                    }
+                    break;
+                }
+
+                resetIdleTimer();
+
+                bufferParts.push(decoder.decode(value, { stream: true }));
+
+                // 按 SSE 规范解析：data: 行累积，空行触发事件
+                const chunkText = bufferParts.join('');
+                bufferParts.length = 0;
+                parseChunkText(chunkText, true);
 
                 if (matched) {
                     // 已拿到结果，提前关闭读流（某些服务器不会主动关闭 SSE 流）

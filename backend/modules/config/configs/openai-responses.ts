@@ -1,5 +1,5 @@
 /**
- * LimCode - OpenAI Responses 配置类型
+ * GrayCode - OpenAI Responses 配置类型
  * 
  * OpenAI Responses API 格式的配置支持
  * 使用 /v1/responses 端点，支持更丰富的功能
@@ -125,3 +125,4 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
      */
     optionsEnabled?: OpenAIResponsesOptionsEnabled;
 }
+

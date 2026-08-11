@@ -80,7 +80,7 @@ beforeEach(() => {
 });
 
 describe('withProgressWriteLock - 单元语义', () => {
-  it('同一路径的写操作按调用顺序串行，绝不重叠执行', async () => {
+  test('同一路径的写操作按调用顺序串行，绝不重叠执行', async () => {
     const order: number[] = [];
     let running = 0;
     let maxActive = 0;
@@ -100,7 +100,7 @@ describe('withProgressWriteLock - 单元语义', () => {
     expect(getProgressWriteQueueSize()).toBe(0);
   });
 
-  it('不同路径互不阻塞', async () => {
+  test('不同路径互不阻塞', async () => {
     let releaseA: () => void = () => undefined;
     const gate = new Promise<void>(resolve => { releaseA = resolve; });
     let aStarted = false;
@@ -121,7 +121,7 @@ describe('withProgressWriteLock - 单元语义', () => {
     expect(getProgressWriteQueueSize()).toBe(0);
   });
 
-  it('前一个写失败不会阻塞后续写入，错误传播给调用方', async () => {
+  test('前一个写失败不会阻塞后续写入，错误传播给调用方', async () => {
     const first = withProgressWriteLock('p.md', async () => {
       throw new Error('boom');
     });
@@ -134,7 +134,7 @@ describe('withProgressWriteLock - 单元语义', () => {
 });
 
 describe('autoSync 并发 - 不互相覆盖', () => {
-  it('design 与 plan 同时同步 progress.md，两个 artifact 与两条 log 都保留', async () => {
+  test('design 与 plan 同时同步 progress.md，两个 artifact 与两条 log 都保留', async () => {
     const [designWarnings, planWarnings] = await Promise.all([
       syncProgressFromDesignArtifact({ designPath: '.graycode/design/a.md', title: '设计 A' }),
       syncProgressFromPlanArtifact({
@@ -154,7 +154,7 @@ describe('autoSync 并发 - 不互相覆盖', () => {
     expect(metadata.log.filter(entry => entry.type === 'artifact_changed')).toHaveLength(2);
   });
 
-  it('design 与 review 同时同步，两个 artifact 都保留', async () => {
+  test('design 与 review 同时同步，两个 artifact 都保留', async () => {
     const [designWarnings, reviewWarnings] = await Promise.all([
       syncProgressFromDesignArtifact({ designPath: '.graycode/design/c.md' }),
       syncProgressFromReviewArtifact({ reviewPath: '.graycode/review/r.md', latestConclusion: '审查结论' }),
@@ -176,7 +176,7 @@ describe('update_progress / record_progress_milestone 并发 - 不互相覆盖',
     expect(warnings).toEqual([]);
   }
 
-  it('两个 update_progress 并发追加，todos/risks/log 都不丢失', async () => {
+  test('两个 update_progress 并发追加，todos/risks/log 都不丢失', async () => {
     await seedInitialProgress();
     const tool = createUpdateProgressTool();
 
@@ -201,7 +201,7 @@ describe('update_progress / record_progress_milestone 并发 - 不互相覆盖',
     expect(metadata.log.some(entry => entry.message === 'B 更新')).toBe(true);
   });
 
-  it('update_progress 与 record_progress_milestone 并发，里程碑与 log 都保留', async () => {
+  test('update_progress 与 record_progress_milestone 并发，里程碑与 log 都保留', async () => {
     await seedInitialProgress();
     const updateTool = createUpdateProgressTool();
     const milestoneTool = createRecordProgressMilestoneTool();

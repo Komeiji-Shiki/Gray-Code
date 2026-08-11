@@ -4,7 +4,7 @@
  */
 
 /**
- * 检查路径是否允许在指定 LimCode 文档目录下写入
+ * 检查路径是否允许在指定 GrayCode 文档目录下写入
  *
  * 通用拒绝规则：
  * - 不在指定目录下的路径
@@ -182,3 +182,4 @@ export function getReadonlyModeDangerousTools(): Set<string> {
         'execute_command'
     ]);
 }
+

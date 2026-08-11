@@ -25,7 +25,7 @@ describe('diff review tool confirmation semantics', () => {
         service = new ToolExecutionService(undefined, undefined, settingsManager);
     });
 
-    it.each([...DIFF_REVIEW_TOOL_NAMES])(
+    test.each([...DIFF_REVIEW_TOOL_NAMES])(
         '%s 不走聊天确认（autoSave 关闭 + 自动执行页未勾选）',
         async (toolName) => {
             await settingsManager.setToolAutoExec(toolName, false);
@@ -34,7 +34,7 @@ describe('diff review tool confirmation semantics', () => {
         }
     );
 
-    it.each([...DIFF_REVIEW_TOOL_NAMES])(
+    test.each([...DIFF_REVIEW_TOOL_NAMES])(
         '%s 不走聊天确认（autoSave 开启 + 自动执行页未勾选，以前会被双重把关）',
         async (toolName) => {
             await settingsManager.updateApplyDiffConfig({ autoSave: true });
@@ -44,13 +44,13 @@ describe('diff review tool confirmation semantics', () => {
         }
     );
 
-    it('search_in_files replace 模式不走聊天确认（走 diff 审阅）', async () => {
+    test('search_in_files replace 模式不走聊天确认（走 diff 审阅）', async () => {
         await settingsManager.setToolAutoExec('search_in_files', false);
 
         expect(service.toolNeedsConfirmation('search_in_files', { query: 'a', mode: 'replace', replace: 'b' })).toBe(false);
     });
 
-    it('search_in_files search 模式（只读）仍跟随自动执行页配置', async () => {
+    test('search_in_files search 模式（只读）仍跟随自动执行页配置', async () => {
         await settingsManager.setToolAutoExec('search_in_files', false);
         expect(service.toolNeedsConfirmation('search_in_files', { query: 'a' })).toBe(true);
 
@@ -58,7 +58,7 @@ describe('diff review tool confirmation semantics', () => {
         expect(service.toolNeedsConfirmation('search_in_files', { query: 'a' })).toBe(false);
     });
 
-    it('非 diff 审阅工具仍跟随自动执行页配置', async () => {
+    test('非 diff 审阅工具仍跟随自动执行页配置', async () => {
         await settingsManager.setToolAutoExec('execute_command', false);
         expect(service.toolNeedsConfirmation('execute_command', { command: 'echo hi' })).toBe(true);
 
@@ -67,20 +67,20 @@ describe('diff review tool confirmation semantics', () => {
     });
 
     describe('isDiffReviewToolCall', () => {
-        it('覆盖四个写入工具', () => {
+        test('覆盖四个写入工具', () => {
             expect(isDiffReviewToolCall('write_file')).toBe(true);
             expect(isDiffReviewToolCall('apply_diff')).toBe(true);
             expect(isDiffReviewToolCall('insert_code')).toBe(true);
             expect(isDiffReviewToolCall('delete_code')).toBe(true);
         });
 
-        it('search_in_files 按 mode 区分', () => {
+        test('search_in_files 按 mode 区分', () => {
             expect(isDiffReviewToolCall('search_in_files', { mode: 'replace' })).toBe(true);
             expect(isDiffReviewToolCall('search_in_files', { mode: 'search' })).toBe(false);
             expect(isDiffReviewToolCall('search_in_files')).toBe(false);
         });
 
-        it('其他工具不属于 diff 审阅类', () => {
+        test('其他工具不属于 diff 审阅类', () => {
             expect(isDiffReviewToolCall('read_file')).toBe(false);
             expect(isDiffReviewToolCall('execute_command')).toBe(false);
             expect(isDiffReviewToolCall('delete_file')).toBe(false);

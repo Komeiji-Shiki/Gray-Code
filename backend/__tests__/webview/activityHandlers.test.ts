@@ -45,7 +45,7 @@ describe('ActivityHandlers activity.getStats', () => {
         await fs.rm(dir, { recursive: true, force: true });
     });
 
-    it('returns stats with default 7d range', async () => {
+    test('returns stats with default 7d range', async () => {
         const ctx = createCtx();
         await getActivityStatsHandler({}, 'req_1', ctx);
         expect(ctx.sendError).not.toHaveBeenCalled();
@@ -56,7 +56,7 @@ describe('ActivityHandlers activity.getStats', () => {
         expect(data.hourlyHeatmap).toEqual([]);
     });
 
-    it('supports range and includeHourly', async () => {
+    test('supports range and includeHourly', async () => {
         const ctx = createCtx();
         await getActivityStatsHandler({ range: 'today', includeHourly: true }, 'req_2', ctx);
         const data = ctx.sendResponse.mock.calls[0][1];
@@ -64,7 +64,7 @@ describe('ActivityHandlers activity.getStats', () => {
         expect(data.hourlyHeatmap).toHaveLength(1);
     });
 
-    it('caches results within TTL and force bypasses cache', async () => {
+    test('caches results within TTL and force bypasses cache', async () => {
         const ctx = createCtx();
         await getActivityStatsHandler({}, 'req_a', ctx);
         await getActivityStatsHandler({}, 'req_b', ctx);
@@ -88,7 +88,7 @@ describe('ActivityHandlers activity.getStats', () => {
         expect(fresh).toBe(3); // force 绕过缓存，拿到新值
     });
 
-    it('returns error when tracker is not initialized', async () => {
+    test('returns error when tracker is not initialized', async () => {
         setGlobalActivityTracker(null);
         const ctx = createCtx();
         await getActivityStatsHandler({}, 'req_e', ctx);

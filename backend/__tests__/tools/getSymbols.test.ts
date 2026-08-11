@@ -47,7 +47,7 @@ describe('get_symbols LSP lifecycle', () => {
         jest.useRealTimers();
     });
 
-    it('打开大型文件激活语言服务并转换层级 DocumentSymbol', async () => {
+    test('打开大型文件激活语言服务并转换层级 DocumentSymbol', async () => {
         executeCommandMock.mockResolvedValue([
             documentSymbol('ChatFlowService', vscode.SymbolKind.Class, 100, 2300, [
                 documentSymbol('handleChatStream', vscode.SymbolKind.Method, 1100, 1250)
@@ -74,7 +74,7 @@ describe('get_symbols LSP lifecycle', () => {
         });
     });
 
-    it('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
+    test('TypeScript 语言服务首次未就绪时短暂等待后重试', async () => {
         jest.useFakeTimers();
         executeCommandMock
             .mockRejectedValueOnce(new Error('TypeScript language service is not ready'))
@@ -88,7 +88,7 @@ describe('get_symbols LSP lifecycle', () => {
         expect(executeCommandMock).toHaveBeenCalledTimes(2);
     });
 
-    it('provider 挂起时按时返回具体失败原因，而不是无限等待', async () => {
+    test('provider 挂起时按时返回具体失败原因，而不是无限等待', async () => {
         jest.useFakeTimers();
         executeCommandMock.mockImplementation(() => new Promise(() => undefined));
 
@@ -104,7 +104,7 @@ describe('get_symbols LSP lifecycle', () => {
         expect(executeCommandMock).toHaveBeenCalledTimes(1);
     });
 
-    it('持续失败时顶层错误包含文件级 tsserver 原因', async () => {
+    test('持续失败时顶层错误包含文件级 tsserver 原因', async () => {
         jest.useFakeTimers();
         executeCommandMock.mockRejectedValue(new Error('tsserver crashed'));
 

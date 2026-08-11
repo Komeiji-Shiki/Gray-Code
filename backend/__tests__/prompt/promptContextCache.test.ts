@@ -8,7 +8,7 @@
 import { deserializePromptContextCache, serializePromptContextCache } from '../../modules/prompt/promptContextCache';
 
 describe('promptContextCache thought preservation', () => {
-    it('preserves thought parts through serialize/deserialize round-trip', () => {
+    test('preserves thought parts through serialize/deserialize round-trip', () => {
         const cache = serializePromptContextCache({
             beforeHistoryMessages: [
                 { role: 'user', parts: [{ text: 'seed user' }] },
@@ -30,7 +30,7 @@ describe('promptContextCache thought preservation', () => {
         ]);
     });
 
-    it('keeps plain messages unchanged through round-trip', () => {
+    test('keeps plain messages unchanged through round-trip', () => {
         const cache = serializePromptContextCache({
             messages: [{ role: 'user', parts: [{ text: 'plain ctx' }] }],
             dynamicSnapshotMessages: [{ role: 'user', parts: [{ text: 'plain ctx' }] }]
@@ -41,7 +41,7 @@ describe('promptContextCache thought preservation', () => {
         expect(restored.dynamicSnapshotMessages[0].parts).toEqual([{ text: 'plain ctx' }]);
     });
 
-    it('restores thought-only messages without fabricating an empty text part', () => {
+    test('restores thought-only messages without fabricating an empty text part', () => {
         const cache = serializePromptContextCache({
             messages: [{ role: 'model', parts: [{ text: 'only thinking', thought: true }] }],
             dynamicSnapshotMessages: []
@@ -51,7 +51,7 @@ describe('promptContextCache thought preservation', () => {
         expect(restored.beforeHistoryMessages[0].parts).toEqual([{ text: 'only thinking', thought: true }]);
     });
 
-    it('merges multiple thought parts into one thoughtText that re-emits identical joined text', () => {
+    test('merges multiple thought parts into one thoughtText that re-emits identical joined text', () => {
         const cache = serializePromptContextCache({
             messages: [
                 {
@@ -74,12 +74,12 @@ describe('promptContextCache thought preservation', () => {
         ]);
     });
 
-    it('stays compatible with legacy plain-text caches', () => {
+    test('stays compatible with legacy plain-text caches', () => {
         const restored = deserializePromptContextCache('legacy ctx text');
         expect(restored.beforeHistoryMessages[0].parts).toEqual([{ text: 'legacy ctx text' }]);
     });
 
-    it('stays compatible with v2 caches that lack thoughtText', () => {
+    test('stays compatible with v2 caches that lack thoughtText', () => {
         const legacyV2 = JSON.stringify({
             version: 2,
             beforeHistoryMessages: [{ role: 'model', text: 'flattened old content' }],

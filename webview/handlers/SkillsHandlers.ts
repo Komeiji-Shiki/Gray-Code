@@ -2,6 +2,7 @@
  * Skills 消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { t } from '../../backend/i18n';
@@ -316,11 +317,11 @@ export const openDirectory: MessageHandler = async (data, requestId, ctx) => {
  * 注册 Skills 处理器
  */
 export function registerSkillsHandlers(registry: Map<string, MessageHandler>): void {
-    registry.set('getSkillsConfig', getSkillsConfig);
-    registry.set('checkSkillsExistence', checkSkillsExistence);
-    registry.set('setSkillEnabled', setSkillEnabled);
-    registry.set('removeSkillConfig', removeSkillConfig);
-    registry.set('refreshSkills', refreshSkills);
-    registry.set('getSkillsDirectory', getSkillsDirectory);
-    registry.set('openDirectory', openDirectory);
+    registry.set(MESSAGE_NAMES.getSkillsConfig, getSkillsConfig);
+    registry.set(MESSAGE_NAMES.checkSkillsExistence, checkSkillsExistence);
+    registry.set(MESSAGE_NAMES.setSkillEnabled, setSkillEnabled);
+    registry.set(MESSAGE_NAMES.removeSkillConfig, removeSkillConfig);
+    registry.set(MESSAGE_NAMES.refreshSkills, refreshSkills);
+    registry.set(MESSAGE_NAMES.getSkillsDirectory, getSkillsDirectory);
+    registry.set(MESSAGE_NAMES.openDirectory, openDirectory);
 }

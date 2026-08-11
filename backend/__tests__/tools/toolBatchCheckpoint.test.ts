@@ -1,5 +1,5 @@
 /**
- * CPF-05 测试：只读 tool_batch 不创建存档。
+ * CPF-05 / BCP-02 测试：工具执行存档判定与绑定（只读 tool_batch 不创建；写批次 fire-and-forget 存档绑定）。
  *
  * 判定基于真实工具名集合（toolNames.some(name => configuredTools.includes(name))），
  * 而不是笼统的「批次存在写工具」或「配置列表非空」。
@@ -90,12 +90,12 @@ async function run(service: ToolExecutionService, calls: FunctionCallInfo[], con
     }
 }
 
-describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
+describe('read-only tool_batch skips checkpoint creation', () => {
     beforeEach(() => {
         jest.clearAllMocks();
     });
 
-    it.each([
+    test.each([
         ['read_file + search_in_files(search)', [makeCall('read_file', { path: 'a.ts' }), makeCall('search_in_files', { query: 'x' })]],
         ['list_files + find_files', [makeCall('list_files', {}), makeCall('find_files', { patterns: ['**/*.ts'] })]],
         ['get_symbols + find_references', [makeCall('get_symbols', { path: 'a.ts' }), makeCall('find_references', { path: 'a.ts', line: 1 })]]
@@ -105,7 +105,7 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
     });
 
-    it('read_file + write_file（write_file 已配置）：创建 before/after 存档（tool_batch）', async () => {
+    test('read_file + write_file（write_file 已配置）：创建 before/after 存档（tool_batch）', async () => {
         const env = await createEnv(['write_file']);
         await run(env.service, [makeCall('read_file', { path: 'a.ts' }), makeCall('write_file', { path: 'a.ts', content: 'x' })]);
 
@@ -114,14 +114,14 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
         expect(env.calls.after[0][2]).toBe('tool_batch');
     });
 
-    it('批次含未配置的写工具：不创建存档', async () => {
+    test('批次含未配置的写工具：不创建存档', async () => {
         // 配置里只有 apply_diff；批内 write_file 未配置
         const env = await createEnv(['apply_diff']);
         await run(env.service, [makeCall('read_file', { path: 'a.ts' }), makeCall('write_file', { path: 'a.ts', content: 'x' })]);
         expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
     });
 
-    it('find_files 单调用未配置存档时不反查会话节点，也不创建存档', async () => {
+    test('find_files 单调用未配置存档时不反查会话节点，也不创建存档', async () => {
         const conversationManager = {
             getMessageNodeIdAt: jest.fn().mockRejectedValue(new Error('read-only tool must not touch conversation history'))
         };
@@ -133,20 +133,20 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
     });
 
-    it('search_in_files(replace) 单调用（已配置）：创建存档', async () => {
+    test('search_in_files(replace) 单调用（已配置）：创建存档', async () => {
         const env = await createEnv(['search_in_files']);
         await run(env.service, [makeCall('search_in_files', { query: 'old', mode: 'replace', replace: 'new' })]);
         expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
         expect(env.calls.before[0][2]).toBe('search_in_files');
     });
 
-    it('search_in_files(search) 单调用：不创建存档（保持既有语义）', async () => {
+    test('search_in_files(search) 单调用：不创建存档（保持既有语义）', async () => {
         const env = await createEnv(['search_in_files']);
         await run(env.service, [makeCall('search_in_files', { query: 'x' })]);
         expect(env.checkpointService.createToolExecutionCheckpoint).not.toHaveBeenCalled();
     });
 
-    it('批次内 search_in_files(replace)（已配置）：创建存档', async () => {
+    test('批次内 search_in_files(replace)（已配置）：创建存档', async () => {
         const env = await createEnv(['search_in_files']);
         await run(env.service, [makeCall('read_file', { path: 'a.ts' }), makeCall('search_in_files', { query: 'old', mode: 'replace', replace: 'new' })]);
         expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
@@ -155,7 +155,7 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
 
     // ==================== BCP-01：before/after 存档点透传 messageNodeId ====================
 
-    it('BCP-01：注入 conversationManager 时，before/after 存档调用携带由索引反查的 nodeId', async () => {
+    test('BCP-01：注入 conversationManager 时，before/after 存档调用携带由索引反查的 nodeId', async () => {
         const conversationManager = {
             getMessageNodeIdAt: jest.fn().mockResolvedValue('node-batch')
         };
@@ -176,7 +176,7 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
         expect(afterCall[4]).toBe('node-batch');
     });
 
-    it('BCP-01：未注入 conversationManager 时，nodeId 参数为 undefined（CheckpointService 兜底反查，兼容旧调用）', async () => {
+    test('BCP-01：未注入 conversationManager 时，nodeId 参数为 undefined（CheckpointService 兜底反查，兼容旧调用）', async () => {
         const env = await createEnv(['write_file']);
         await run(env.service, [makeCall('write_file', { path: 'a.ts', content: 'x' })]);
 
@@ -190,7 +190,7 @@ describe('CPF-05 read-only tool_batch skips checkpoint creation', () => {
 
 // ==================== BCP-02：工具执行存档后绑定工作区存档到分支节点 ====================
 
-describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
+describe('工具执行存档绑定（fire-and-forget）', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;
@@ -283,7 +283,7 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         throw new Error(`node ${nodeId} was not bound to ${expectedId ?? 'any id'} within ${timeoutMs}ms; last=${JSON.stringify(last)}`);
     }
 
-    it('写工具执行 before/after 存档后，节点绑定最新（after）存档 id 且 state=checkpointed', async () => {
+    test('写工具执行 before/after 存档后，节点绑定最新（after）存档 id 且 state=checkpointed', async () => {
         const [userNodeId] = await seedGraph('conv-bcp2');
         const env = await createToolEnv(['write_file']);
 
@@ -297,7 +297,7 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
     });
 
-    it('绑定失败（reject）不阻塞工具执行：工具循环正常完成、存档照常创建', async () => {
+    test('绑定失败（reject）不阻塞工具执行：工具循环正常完成、存档照常创建', async () => {
         const [userNodeId] = await seedGraph('conv-bcp2');
         // 用会 reject 的假 BranchService 替换全局实例（绑定失败仅 warn）
         const rejectingService = {
@@ -314,7 +314,7 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         expect(rejectingService.bindWorkspaceCheckpoint).toHaveBeenCalledWith('conv-bcp2', userNodeId, 'cp-before-1');
     });
 
-    it('绑定挂起（永不 resolve）也不阻塞工具循环（fire-and-forget 语义）', async () => {
+    test('绑定挂起（永不 resolve）也不阻塞工具循环（fire-and-forget 语义）', async () => {
         await seedGraph('conv-bcp2');
         const hangingService = {
             bindWorkspaceCheckpoint: jest.fn().mockReturnValue(new Promise(() => {}))
@@ -331,7 +331,7 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         expect(hangingService.bindWorkspaceCheckpoint).toHaveBeenCalledTimes(2);
     });
 
-    it('未注册 BranchService（getGlobalBranchService undefined）时绑定跳过，工具循环正常', async () => {
+    test('未注册 BranchService（getGlobalBranchService undefined）时绑定跳过，工具循环正常', async () => {
         await seedGraph('conv-bcp2');
         setGlobalBranchService(undefined);
 
@@ -342,7 +342,7 @@ describe('BCP-02 工具执行存档绑定（fire-and-forget）', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
     });
 
-    it('纯只读批次不创建存档 → 不触发绑定', async () => {
+    test('纯只读批次不创建存档 → 不触发绑定', async () => {
         const [userNodeId] = await seedGraph('conv-bcp2');
         const env = await createToolEnv(['write_file']);
         // 多调用只读批次（read_file + search_in_files(search)）→ CPF-05 不创建存档
@@ -399,7 +399,7 @@ describe('PERF-CP deferred before-checkpoint', () => {
         };
     }
 
-    it('apply_diff 单调用批次：before-checkpoint 与工具并行启动，批末收集（PERF-CP）', async () => {
+    test('apply_diff 单调用批次：before-checkpoint 与工具并行启动，批末收集（PERF-CP）', async () => {
         const env = await createDeferredEnv(['apply_diff'], ['apply_diff']);
         const generator = env.service.executeFunctionCallsWithProgress(
             [makeCall('apply_diff', { path: 'a.ts', hunks: [] })],
@@ -435,7 +435,7 @@ describe('PERF-CP deferred before-checkpoint', () => {
         expect(env.checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(2);
     });
 
-    it('混合批（apply_diff + delete_file）保持同步：checkpoint 完成前工具不执行', async () => {
+    test('混合批（apply_diff + delete_file）保持同步：checkpoint 完成前工具不执行', async () => {
         const env = await createDeferredEnv(['apply_diff'], []);
         const generator = env.service.executeFunctionCallsWithProgress(
             [makeCall('apply_diff', { path: 'a.ts', hunks: [] }), makeCall('delete_file', { path: 'b.ts' })],

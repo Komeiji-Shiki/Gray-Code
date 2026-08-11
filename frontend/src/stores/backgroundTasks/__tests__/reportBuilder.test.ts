@@ -25,11 +25,11 @@ function startEvent(overrides: Partial<TaskEventLike> = {}): TaskEventLike {
 }
 
 describe('isBackgroundStartEvent', () => {
-    it('background_subagent 的 start 事件是后台任务', () => {
+    test('background_subagent 的 start 事件是后台任务', () => {
         expect(isBackgroundStartEvent(startEvent())).toBe(true);
     });
 
-    it('terminal 仅在 metadata.background 为 true 时是后台任务', () => {
+    test('terminal 仅在 metadata.background 为 true 时是后台任务', () => {
         expect(isBackgroundStartEvent({
             taskId: 't1', taskType: 'terminal', type: 'start',
             data: { command: 'npm test', background: true }
@@ -40,13 +40,13 @@ describe('isBackgroundStartEvent', () => {
         })).toBe(false);
     });
 
-    it('非 start 事件不识别为后台任务登记', () => {
+    test('非 start 事件不识别为后台任务登记', () => {
         expect(isBackgroundStartEvent(startEvent({ type: 'complete' }))).toBe(false);
     });
 });
 
 describe('taskRecordFromStartEvent', () => {
-    it('构建 subagent 任务记录', () => {
+    test('构建 subagent 任务记录', () => {
         const record = taskRecordFromStartEvent(startEvent());
         expect(record.kind).toBe('subagent');
         expect(record.label).toBe('Code Reviewer');
@@ -57,7 +57,7 @@ describe('taskRecordFromStartEvent', () => {
         expect(record.reported).toBe(false);
     });
 
-    it('构建 terminal 任务记录并截断超长命令', () => {
+    test('构建 terminal 任务记录并截断超长命令', () => {
         const longCommand = 'x'.repeat(100);
         const record = taskRecordFromStartEvent({
             taskId: 'term_1', taskType: 'terminal', type: 'start',
@@ -73,7 +73,7 @@ describe('taskRecordFromStartEvent', () => {
 describe('applyCompletionEvent', () => {
     const base = taskRecordFromStartEvent(startEvent());
 
-    it('complete 事件写入结果载荷', () => {
+    test('complete 事件写入结果载荷', () => {
         const done = applyCompletionEvent(base, {
             taskId: 'bgagent_1', taskType: 'background_subagent', type: 'complete',
             createdAt: 5000,
@@ -87,7 +87,7 @@ describe('applyCompletionEvent', () => {
         expect(base.status).toBe('running');
     });
 
-    it('error 事件保留错误信息', () => {
+    test('error 事件保留错误信息', () => {
         const failed = applyCompletionEvent(base, {
             taskId: 'bgagent_1', taskType: 'background_subagent', type: 'error',
             data: { error: 'boom' }
@@ -96,7 +96,7 @@ describe('applyCompletionEvent', () => {
         expect(failed.error).toBe('boom');
     });
 
-    it('cancelled 事件（无 data）标记取消状态', () => {
+    test('cancelled 事件（无 data）标记取消状态', () => {
         const cancelled = applyCompletionEvent(base, {
             taskId: 'bgagent_1', taskType: 'background_subagent', type: 'cancelled'
         });
@@ -105,7 +105,7 @@ describe('applyCompletionEvent', () => {
 });
 
 describe('buildCompletionReport', () => {
-    it('subagent 单任务回执包含标识、状态与结果全文', () => {
+    test('subagent 单任务回执包含标识、状态与结果全文', () => {
         const task: BackgroundTaskRecord = {
             ...taskRecordFromStartEvent(startEvent()),
             status: 'completed',
@@ -123,7 +123,7 @@ describe('buildCompletionReport', () => {
         expect(report).toContain('Full review report here.');
     });
 
-    it('超长结果不再截断：回执包含完整正文，不出现 [Truncated ...] 提示（回归：后台完成消息被腰斩）', () => {
+    test('超长结果不再截断：回执包含完整正文，不出现 [Truncated ...] 提示（回归：后台完成消息被腰斩）', () => {
         const longResponse = 'R'.repeat(12000)
         const task: BackgroundTaskRecord = {
             ...taskRecordFromStartEvent(startEvent()),
@@ -140,7 +140,7 @@ describe('buildCompletionReport', () => {
         expect(report.length).toBeGreaterThan(longResponse.length);
     });
 
-    it('terminal 任务回执包含退出码与输出', () => {
+    test('terminal 任务回执包含退出码与输出', () => {
         const task: BackgroundTaskRecord = {
             ...taskRecordFromStartEvent({
                 taskId: 'term_1', taskType: 'terminal', type: 'start',
@@ -158,7 +158,7 @@ describe('buildCompletionReport', () => {
         expect(report).toContain('Tests: 10 passed');
     });
 
-    it('多个任务合并为一条回执，用分隔线分段', () => {
+    test('多个任务合并为一条回执，用分隔线分段', () => {
         const agentTask: BackgroundTaskRecord = {
             ...taskRecordFromStartEvent(startEvent()),
             status: 'completed',

@@ -1,5 +1,5 @@
 /**
- * LimCode - 总结范围规划器
+ * GrayCode - 总结范围规划器
  *
  * 纯函数模块：根据 token 预算决定总结时保留多少最近内容。
  *
@@ -325,3 +325,4 @@ export function planSummarizeMessages(options: {
     }
     return null;
 }
+

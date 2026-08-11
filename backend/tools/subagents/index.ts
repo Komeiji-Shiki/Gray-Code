@@ -4,8 +4,6 @@
  * 导出所有子代理相关的工具和类型
  */
 
-import type { Tool } from '../types';
-
 // 导出类型
 export type {
     SubAgentType,
@@ -93,7 +91,7 @@ export {
     type AgentMessage,
     type AgentSendMessageInput,
     type AgentSendMessageResult
-} from './agentMailbox';
+} from '../../core/services/agentMailbox';
 
 // 导出 agent_send_message 工具
 export {
@@ -103,28 +101,15 @@ export {
     agentSendMessageHandler
 } from './agentSendMessage';
 
-/**
- * 获取所有 SubAgents 工具
- * @returns 所有 SubAgents 工具的数组
- */
-export function getAllSubAgentsTools(): Tool[] {
-    const { getSubAgentsTool } = require('./subagents');
-    const { getAgentSendMessageTool } = require('./agentSendMessage');
-    
-    return [
-        getSubAgentsTool(),
-        getAgentSendMessageTool()
-    ];
-}
+// 静态导入注册函数（与上方 re-export 共用同一模块实例，替代原函数内 require）
+import { getSubAgentsTool } from './subagents';
+import { getAgentSendMessageTool } from './agentSendMessage';
 
 /**
  * 获取所有 SubAgents 工具的注册函数
  * @returns 注册函数数组
  */
 export function getSubAgentsToolRegistrations() {
-    const { getSubAgentsTool } = require('./subagents');
-    const { getAgentSendMessageTool } = require('./agentSendMessage');
-    
     return [
         getSubAgentsTool,
         getAgentSendMessageTool

@@ -13,10 +13,11 @@
 
 import { createDefaultExecutor, resolveSubAgentAvailableTools, getRunAllowedTools } from '../../tools/subagents/executor';
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
-import { SUB_AGENT_PRESETS, getSubAgentPreset } from '../../tools/subagents/presets';
-import { subAgentConcurrencyLimiter } from '../../tools/subagents/concurrencyLimiter';
-import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents/types';
+import { SUB_AGENT_PRESETS, getSubAgentPreset } from '../../tools/subagents';
+import { subAgentConcurrencyLimiter } from '../../tools/subagents';
+import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { GenerateResponse } from '../../modules/channel/types';
+import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
 
 jest.mock('../../modules/channel/ToolDeclarationResolver', () => ({
     ToolDeclarationResolver: jest.fn()
@@ -30,20 +31,6 @@ const ALL_BUILTIN_TOOLS = [
     'execute_command', 'subagents'
 ];
 
-function createConfig(overrides: Partial<SubAgentConfig> = {}): SubAgentConfig {
-    return {
-        type: 'tester',
-        name: 'Tester',
-        description: 'test agent',
-        systemPrompt: 'you are a test agent',
-        channel: { channelId: 'channel_1' },
-        tools: { mode: 'all' },
-        maxIterations: 5,
-        maxRuntime: 300,
-        enabled: true,
-        ...overrides
-    };
-}
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
     return {
@@ -140,12 +127,12 @@ function presetConfig(presetId: string): SubAgentConfig {
     };
 }
 
-describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层）', () => {
+describe('嵌套子代理权限隔离 - 预设工具集裁剪（executor 层）', () => {
     afterEach(() => {
         jest.clearAllMocks();
     });
 
-    it('deep-researcher（blacklist 排除写工具 + execute_command）解析后无写工具、无 subagents', async () => {
+    test('deep-researcher（blacklist 排除写工具 + execute_command）解析后无写工具、无 subagents', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
         const resolved = await resolveSubAgentAvailableTools(presetConfig('deep-researcher'), createContext());
         const names = resolved.map(d => d.name);
@@ -162,7 +149,7 @@ describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层
         expect(names).toContain('search_in_files');
     });
 
-    it('code-reviewer（whitelist 只读）解析后无写工具、无 subagents', async () => {
+    test('code-reviewer（whitelist 只读）解析后无写工具、无 subagents', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
         const resolved = await resolveSubAgentAvailableTools(presetConfig('code-reviewer'), createContext());
         const names = resolved.map(d => d.name);
@@ -173,7 +160,7 @@ describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层
         expect(names).toContain('read_file');
     });
 
-    it('web-searcher（mcp 模式）无内置写工具，subagents 被裁剪', async () => {
+    test('web-searcher（mcp 模式）无内置写工具，subagents 被裁剪', async () => {
         mockResolveTools([...ALL_BUILTIN_TOOLS, 'mcp__server_a__search']);
         const resolved = await resolveSubAgentAvailableTools(presetConfig('web-searcher'), createContext());
         const names = resolved.map(d => d.name);
@@ -183,7 +170,7 @@ describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层
         expect(names).not.toContain('subagents');
     });
 
-    it('parallel-editor（whitelist 含全部写/执行工具）保留写/执行能力；subagents 未列入白名单故不暴露', async () => {
+    test('parallel-editor（whitelist 含全部写/执行工具）保留写/执行能力；subagents 未列入白名单故不暴露', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
         const resolved = await resolveSubAgentAvailableTools(presetConfig('parallel-editor'), createContext());
         const names = resolved.map(d => d.name);
@@ -195,10 +182,10 @@ describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层
         expect(names).not.toContain('subagents');
     });
 
-    it('whitelist 含全部写/执行工具且显式包含 subagents 时保留 subagents', async () => {
+    test('whitelist 含全部写/执行工具且显式包含 subagents 时保留 subagents', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
         const resolved = await resolveSubAgentAvailableTools(
-            createConfig({ tools: { mode: 'whitelist', whitelist: [...ALL_BUILTIN_TOOLS] } }),
+            createSubAgentConfig({ tools: { mode: 'whitelist', whitelist: [...ALL_BUILTIN_TOOLS] } }),
             createContext()
         );
         const names = resolved.map(d => d.name);
@@ -209,18 +196,18 @@ describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层
         expect(names).toContain('subagents');
     });
 
-    it('mode all（General Worker 配置）保留 subagents', async () => {
+    test('mode all（General Worker 配置）保留 subagents', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
-        const resolved = await resolveSubAgentAvailableTools(createConfig(), createContext());
+        const resolved = await resolveSubAgentAvailableTools(createSubAgentConfig(), createContext());
         const names = resolved.map(d => d.name);
         expect(names).toContain('subagents');
         expect(names).toContain('write_file');
     });
 
-    it('blacklist 只排除 execute_command（写工具齐全）时 subagents 仍被裁剪（防执行权限逃逸）', async () => {
+    test('blacklist 只排除 execute_command（写工具齐全）时 subagents 仍被裁剪（防执行权限逃逸）', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
         const resolved = await resolveSubAgentAvailableTools(
-            createConfig({ tools: { mode: 'blacklist', blacklist: ['execute_command'] } }),
+            createSubAgentConfig({ tools: { mode: 'blacklist', blacklist: ['execute_command'] } }),
             createContext()
         );
         const names = resolved.map(d => d.name);
@@ -232,18 +219,18 @@ describe('H-1 嵌套子代理权限隔离 - 预设工具集裁剪（executor 层
     });
 });
 
-describe('H-1 嵌套子代理权限隔离 - 父限制传播（executor 层）', () => {
+describe('嵌套子代理权限隔离 - 父限制传播（executor 层）', () => {
     afterEach(() => {
         subAgentConcurrencyLimiter.release('restricted_child');
         subAgentConcurrencyLimiter.release('m6_empty_run');
         jest.clearAllMocks();
     });
 
-    it('mode=all 的 General Worker 被只读父限制裁剪：无写工具、无 subagents，且不收到嵌套提示', async () => {
+    test('mode=all 的 General Worker 被只读父限制裁剪：无写工具、无 subagents，且不收到嵌套提示', async () => {
         mockResolveTools(ALL_BUILTIN_TOOLS);
         let resolveGenerate: (v: unknown) => void = () => { };
         const generateMock = jest.fn((_request: any) => new Promise(r => { resolveGenerate = r; }));
-        const executor = createDefaultExecutor(createConfig(), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -283,14 +270,14 @@ describe('H-1 嵌套子代理权限隔离 - 父限制传播（executor 层）', 
         expect(getRunAllowedTools('restricted_child')).toBeUndefined();
     });
 
-    it('M-6：可用工具为空集时拒绝一切工具调用（不把空集当“不校验”）', async () => {
+    test('M-6：可用工具为空集时拒绝一切工具调用（不把空集当“不校验”）', async () => {
         // 解析结果为空 → allowedToolNames 为空 Set
         mockResolveTools([]);
         const generateMock = jest.fn((_request: any): Promise<any> => Promise.resolve());
         generateMock
             .mockResolvedValueOnce(toolCallResponse('write_file', { path: 'x.txt' }))
             .mockResolvedValueOnce(textResponse());
-        const executor = createDefaultExecutor(createConfig({ maxIterations: 5 }), createContext({
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5 }), createContext({
             channelManager: { generate: generateMock } as any
         }));
 
@@ -312,8 +299,8 @@ describe('H-1 嵌套子代理权限隔离 - 父限制传播（executor 层）', 
     });
 });
 
-describe('H-1 预设定义完整性（presets 数据不变形）', () => {
-    it('deep-researcher 黑名单包含全部写工具与 execute_command', () => {
+describe('预设定义完整性（presets 数据不变形）', () => {
+    test('deep-researcher 黑名单包含全部写工具与 execute_command', () => {
         const preset = getSubAgentPreset('deep-researcher');
         expect(preset?.tools.mode).toBe('blacklist');
         expect(preset?.tools.blacklist).toEqual(expect.arrayContaining([
@@ -321,7 +308,7 @@ describe('H-1 预设定义完整性（presets 数据不变形）', () => {
         ]));
     });
 
-    it('四个内置预设均存在且 tools 配置合法', () => {
+    test('四个内置预设均存在且 tools 配置合法', () => {
         const ids = SUB_AGENT_PRESETS.map(p => p.presetId);
         expect(ids).toEqual(expect.arrayContaining(['code-reviewer', 'deep-researcher', 'parallel-editor', 'web-searcher']));
         for (const preset of SUB_AGENT_PRESETS) {

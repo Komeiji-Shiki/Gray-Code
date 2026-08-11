@@ -1,5 +1,5 @@
 /**
- * LimCode - 上下文总结服务
+ * GrayCode - 上下文总结服务
  *
  * 负责将对话历史压缩为总结消息
  */
@@ -39,7 +39,7 @@ import {
     DEFAULT_SUMMARIZE_MAX_INPUT_RATIO,
     clampMaxAutoSummarizeAttempts,
     clampSummarizeMaxInputRatio
-} from '../../../settings/summarizeTypes';
+} from '../../../settings/types/summarizeTypes';
 import type {
     SummarizeContextRequestData,
     SummarizeContextSuccessData,
@@ -250,8 +250,9 @@ export class SummarizeService {
             }
             const keepRecentRounds = configKeepRecentRounds;
 
-            // 1. 确保对话存在
-            await this.conversationManager.getHistory(conversationId);
+            // 1. 确保对话存在（getHistoryRef 同时完成历史加载供步骤 4 复用，
+            //    避免同一请求两次全量读历史——旧实现 getHistory() 仅判存在、随后又读一次）
+            const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
 
             // 2. 确定使用的渠道配置
             let actualConfigId = configId;
@@ -292,9 +293,7 @@ export class SummarizeService {
                 };
             }
 
-            // 4. 获取对话历史
-            const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
-
+            // 4. 获取对话历史（复用步骤 1 的加载结果，避免二次全量读取）
             this.log.info('manual.history_loaded', { conversationId, fullHistoryLength: fullHistory.length });
 
             // 5. 找到最后一个总结消息的位置
@@ -477,6 +476,25 @@ export class SummarizeService {
                     error: {
                         code: 'EMPTY_SUMMARY',
                         message: t('modules.api.chat.errors.emptySummary')
+                    }
+                };
+            }
+
+            // C：总结质量校验——与自动总结（auto.low_quality_summary）对齐：长度低于阈值视为
+            // 低质量总结（可能丢失关键信息；模型返回“OK”等占位文本也不落盘），
+            // 逻辑截断语义下标记不可逆，低质量总结不能覆盖真实对话。
+            if (summaryText.length < MIN_SUMMARY_LENGTH) {
+                this.log.warn('manual.low_quality_summary', {
+                    conversationId,
+                    summaryLength: summaryText.length,
+                    promptTokens: beforeTokenCount,
+                    completionTokens: afterTokenCount
+                });
+                return {
+                    success: false,
+                    error: {
+                        code: 'LOW_QUALITY_SUMMARY',
+                        message: t('modules.api.chat.errors.lowQualitySummary')
                     }
                 };
             }
@@ -895,15 +913,16 @@ export class SummarizeService {
             let estimatedTokens = perMessageTokens.reduce((sum, t) => sum + t, 0);
             let insertIndex = summarizeEndIndex;
 
-            // 超出了总结模型上下文：循环排除最后一对工具交互所在轮，重新估算直到装得下
-            // 每次重新扫描当前 messagesToSummarize 中最后一对 functionCall + functionResponse；
+            // 超出了总结模型上下文：循环排除最后一对工具交互所在轮，重新估算直到装得下。
+            // C-15：token 总和与逐条数组均增量维护，循环内直接按 insertIndex 游标在 fullHistory
+            // 上扫描（不再每轮 fullHistory.slice() 重切，O(k·n) → O(n)），循环结束后只切片一次。
             // 若该轮起点（真实用户消息）在总结范围内则整轮一起排除（保持语义完整，
             // 避免把同一轮的工具交互拆散在总结消息两侧），轮首在范围之外时仅排除该工具交互
             while (estimatedTokens > summaryBudget.maxHistoryTokens) {
                 // 找到当前范围内最后一对 functionCall + functionResponse
                 let lastToolInteractionStart = -1;
-                for (let i = messagesToSummarize.length - 1; i >= 0; i--) {
-                    const msg = messagesToSummarize[i];
+                for (let i = insertIndex - 1; i >= summarizeInputStartIndex; i--) {
+                    const msg = fullHistory[i];
                     if (msg.role === 'model' && msg.parts.some(p => p.functionCall)) {
                         lastToolInteractionStart = i;
                         break;
@@ -917,14 +936,14 @@ export class SummarizeService {
 
                 // 定位该工具交互所属轮次的起点（其之前最近的真实用户消息），整轮一起排除
                 let roundStart = -1;
-                for (let i = lastToolInteractionStart; i >= 0; i--) {
-                    if (isRealUserMessage(messagesToSummarize[i])) {
+                for (let i = lastToolInteractionStart; i >= summarizeInputStartIndex; i--) {
+                    if (isRealUserMessage(fullHistory[i])) {
                         roundStart = i;
                         break;
                     }
                 }
 
-                const cutIndex = roundStart >= 0 ? roundStart : lastToolInteractionStart;
+                const cutIndex = (roundStart >= 0 ? roundStart : lastToolInteractionStart) - summarizeInputStartIndex;
                 if (cutIndex <= 0) {
                     // 排除后总结范围为空（仅剩的轮自身仍超限），无法再收缩
                     break;
@@ -942,7 +961,6 @@ export class SummarizeService {
                     estimatedTokens -= perMessageTokens[i];
                 }
                 perMessageTokens.length = cutIndex;
-                messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
                 insertIndex = newEndIndex;
                 this.log.warn('auto.context_overflow_trimmed', {
                     conversationId,
@@ -954,6 +972,8 @@ export class SummarizeService {
                     newRange: `${summarizeInputStartIndex}-${newEndIndex}`
                 });
             }
+            // 循环结束（或未收缩）后按最终游标统一切片一次
+            messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, insertIndex);
 
             if (messagesToSummarize.length === 0) {
                 this.log.warn('auto.no_messages_after_trim', { conversationId });
@@ -1629,3 +1649,4 @@ export class SummarizeService {
         return !!obj && typeof (obj as AsyncGenerator<StreamChunk>)[Symbol.asyncIterator] === 'function';
     }
 }
+

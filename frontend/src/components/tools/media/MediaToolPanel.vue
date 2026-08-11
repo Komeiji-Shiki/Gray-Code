@@ -15,6 +15,7 @@
  * 与 pre-status 插槽表达，i18n 文案统一从 ns 命名空间读取。
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref } from 'vue'
 import { sendToExtension } from '../../../utils/vscode'
 import { useChatStore } from '../../../stores/chatStore'
@@ -242,7 +243,7 @@ async function saveImage(imageData: MultimodalData, path: string) {
     const payload: Record<string, unknown> = { path }
     payload.data = imageData.data
     payload.mimeType = imageData.mimeType
-    const result = await sendToExtension('saveImageToPath', payload) as { success: boolean; error?: string }
+    const result = await sendToExtension(MESSAGE_NAMES.saveImageToPath, payload) as { success: boolean; error?: string }
 
     if (!result) {
       saveError.value = tk('saveFailed')
@@ -264,7 +265,7 @@ async function saveImage(imageData: MultimodalData, path: string) {
 // 在 VSCode 中打开图片
 async function openImageInVSCode(path: string) {
   try {
-    await sendToExtension('openWorkspaceFile', { path })
+    await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path })
   } catch (err) {
     console.error('打开文件失败:', err)
   }

@@ -1,11 +1,11 @@
 /**
- * MessageItem 测试（R3 复审批次 FIX-D）
+ * MessageItem 测试（R3 复审批次 FIX-D：R3-#5 折叠态持久化 + M1-1 视图模式 Map 清理）
  *
  * 覆盖：
  * - R3-#5: 后台任务回流消息三段式折叠态按 messageId 模块级持久化，
  *   组件实例重建（滚动/新增消息/重载）后恢复用户上次选择的视图模式
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { defineComponent, nextTick } from 'vue'
 import MessageItem from '../MessageItem.vue'
@@ -78,13 +78,13 @@ function mountItem(message: Message) {
   })
 }
 
-describe('R3-#5: 后台任务三段式折叠态持久化', () => {
+describe('后台任务三段式折叠态持久化', () => {
   beforeEach(() => {
     // 模块级 Map 在测试间隔离
     backgroundTaskViewModeByMessageId.clear()
   })
 
-  it('默认折叠；切换视图后组件重建仍恢复所选模式', async () => {
+  test('默认折叠；切换视图后组件重建仍恢复所选模式', async () => {
     const message = createBackgroundTaskMessage('bg_task_1')
     const wrapper = mountItem(message)
 
@@ -104,7 +104,7 @@ describe('R3-#5: 后台任务三段式折叠态持久化', () => {
     wrapper2.unmount()
   })
 
-  it('不同消息 id 的折叠态互不影响', async () => {
+  test('不同消息 id 的折叠态互不影响', async () => {
     const m1 = createBackgroundTaskMessage('bg_task_a')
     const m2 = createBackgroundTaskMessage('bg_task_b')
     const w1 = mountItem(m1)
@@ -134,7 +134,7 @@ describe('思考块视图自动模式切换', () => {
     } as Message
   }
 
-  it('已结束消息（非流式）自动折叠为第一行预览', async () => {
+  test('已结束消息（非流式）自动折叠为第一行预览', async () => {
     const wrapper = mountItem(createThoughtMessage('thought_ended', false))
     await nextTick()
     const stub = wrapper.findComponent(MessageRenderBlockCapture)
@@ -143,7 +143,7 @@ describe('思考块视图自动模式切换', () => {
     wrapper.unmount()
   })
 
-  it('思考中（流式）默认中展开', async () => {
+  test('思考中（流式）默认中展开', async () => {
     const wrapper = mountItem(createThoughtMessage('thought_streaming', true))
     await nextTick()
     const stub = wrapper.findComponent(MessageRenderBlockCapture)
@@ -152,7 +152,7 @@ describe('思考块视图自动模式切换', () => {
     wrapper.unmount()
   })
 
-  it('思考结束且输出结束后自动折叠；用户手动切换后不再覆盖', async () => {
+  test('思考结束且输出结束后自动折叠；用户手动切换后不再覆盖', async () => {
     const message = createThoughtMessage('thought_manual', true)
     const wrapper = mountItem(message)
     await nextTick()
@@ -172,12 +172,12 @@ describe('思考块视图自动模式切换', () => {
   })
 })
 
-describe('M1-1: 视图模式 Map 清理与容量上限', () => {
+describe('视图模式 Map 清理与容量上限', () => {
   beforeEach(() => {
     backgroundTaskViewModeByMessageId.clear()
   })
 
-  it('pruneBackgroundTaskViewModes 只保留活跃消息 ID 的记录', () => {
+  test('pruneBackgroundTaskViewModes 只保留活跃消息 ID 的记录', () => {
     backgroundTaskViewModeByMessageId.set('m1', 'expanded')
     backgroundTaskViewModeByMessageId.set('m2', 'medium')
     backgroundTaskViewModeByMessageId.set('m3', 'collapsed')
@@ -189,7 +189,7 @@ describe('M1-1: 视图模式 Map 清理与容量上限', () => {
     expect(backgroundTaskViewModeByMessageId.has('m3')).toBe(true)
   })
 
-  it('容量达到上限后写入新消息的视图模式会淘汰最旧记录', async () => {
+  test('容量达到上限后写入新消息的视图模式会淘汰最旧记录', async () => {
     for (let i = 0; i < BACKGROUND_TASK_VIEW_MODE_CAP; i++) {
       backgroundTaskViewModeByMessageId.set(`m_${i}`, 'collapsed')
     }

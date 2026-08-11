@@ -12,10 +12,10 @@
  * prompt 模式不转文本）；校验器 orphan 检测跳过 rejected。
  */
 
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
-import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { OpenAIFormatter } from '../../modules/channel';
+import { AnthropicFormatter } from '../../modules/channel';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
-import { GeminiFormatter } from '../../modules/channel/formatters/gemini';
+import { GeminiFormatter } from '../../modules/channel';
 import { ConversationManager } from '../../modules/conversation/ConversationManager';
 import { MemoryStorageAdapter } from '../../modules/conversation/storage';
 import { validateHistoryIntegrity } from '../../modules/channel/HistoryIntegrityValidator';
@@ -116,7 +116,7 @@ function buildNormalCallAndResponse(): Content[] {
 }
 
 describe('OpenAIFormatter: rejected functionCall 过滤（function_call 模式）', () => {
-    it('rejected 调用不生成 tool_calls，文本正常输出，无孤儿 tool_calls', () => {
+    test('rejected 调用不生成 tool_calls，文本正常输出，无孤儿 tool_calls', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -142,7 +142,7 @@ describe('OpenAIFormatter: rejected functionCall 过滤（function_call 模式�
         expect(messages.filter((m: any) => m.role === 'tool')).toHaveLength(0);
     });
 
-    it('正常 functionCall + functionResponse 配对不受影响', () => {
+    test('正常 functionCall + functionResponse 配对不受影响', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -166,7 +166,7 @@ describe('OpenAIFormatter: rejected functionCall 过滤（function_call 模式�
 });
 
 describe('AnthropicFormatter: rejected functionCall 过滤（function_call 模式）', () => {
-    it('rejected 调用不生成 tool_use block', () => {
+    test('rejected 调用不生成 tool_use block', () => {
         const formatter = new AnthropicFormatter();
         const request = formatter.buildRequest({
             configId: 'anthropic-test',
@@ -194,7 +194,7 @@ describe('AnthropicFormatter: rejected functionCall 过滤（function_call 模�
 });
 
 describe('OpenAIResponsesFormatter: rejected functionCall 过滤', () => {
-    it('rejected 调用不生成 function_call item', () => {
+    test('rejected 调用不生成 function_call item', () => {
         const formatter = new OpenAIResponsesFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -219,7 +219,7 @@ describe('OpenAIResponsesFormatter: rejected functionCall 过滤', () => {
 });
 
 describe('validateHistoryIntegrity: rejected functionCall 不构成孤儿', () => {
-    it('detectOrphanFunctionCall 开启时 rejected 调用不报 orphan_function_call', () => {
+    test('detectOrphanFunctionCall 开启时 rejected 调用不报 orphan_function_call', () => {
         const result = validateHistoryIntegrity([buildRejectedModelMessage()], {
             detectOrphanFunctionCall: true
         });
@@ -227,7 +227,7 @@ describe('validateHistoryIntegrity: rejected functionCall 不构成孤儿', () =
         expect(result.issues.filter(i => i.kind === 'orphan_function_call')).toHaveLength(0);
     });
 
-    it('未响应的非 rejected 调用仍报 orphan_function_call（原有检测不回归）', () => {
+    test('未响应的非 rejected 调用仍报 orphan_function_call（原有检测不回归）', () => {
         const result = validateHistoryIntegrity([
             {
                 role: 'model',
@@ -243,7 +243,7 @@ describe('validateHistoryIntegrity: rejected functionCall 不构成孤儿', () =
         }));
     });
 
-    it('duplicate_function_call_id 检测不受 rejected 标记影响', () => {
+    test('duplicate_function_call_id 检测不受 rejected 标记影响', () => {
         const result = validateHistoryIntegrity([
             {
                 role: 'model',
@@ -260,7 +260,7 @@ describe('validateHistoryIntegrity: rejected functionCall 不构成孤儿', () =
 describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（主路径核心修复）', () => {
     const manager = new ConversationManager(new MemoryStorageAdapter());
 
-    it('中断残留（rejected 无响应）被丢弃，不再进入发送历史', () => {
+    test('中断残留（rejected 无响应）被丢弃，不再进入发送历史', () => {
         const forApi = manager.getHistoryForAPIFrom([
             { role: 'user', parts: [{ text: '继续' }] },
             { role: 'model', parts: [
@@ -277,7 +277,7 @@ describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（
         expect(model.parts.some(p => p.functionCall)).toBe(false);
     });
 
-    it('用户显式拒绝（rejected + 占位响应）保留成对发送，rejected 字段剥离', () => {
+    test('用户显式拒绝（rejected + 占位响应）保留成对发送，rejected 字段剥离', () => {
         const forApi = manager.getHistoryForAPIFrom([
             { role: 'user', parts: [{ text: '拒绝该工具' }] },
             { role: 'model', parts: [
@@ -298,7 +298,7 @@ describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（
         expect(fr?.response).toMatchObject({ success: false, error: expect.any(String), rejected: true });
     });
 
-    it('端到端：formatHistoryForAPI 丢弃后 OpenAI formatter 不再产生孤儿 tool_calls', () => {
+    test('端到端：formatHistoryForAPI 丢弃后 OpenAI formatter 不再产生孤儿 tool_calls', () => {
         const formatter = new OpenAIFormatter();
         const history = manager.getHistoryForAPIFrom([
             { role: 'model', parts: [
@@ -326,7 +326,7 @@ describe('formatHistoryForAPI: 无配对响应的 rejected 调用整体丢弃（
 });
 
 describe('GeminiFormatter: rejected functionCall 过滤', () => {
-    it('XML 模式：rejected 调用不转文本，也不泄漏原生 part', () => {
+    test('XML 模式：rejected 调用不转文本，也不泄漏原生 part', () => {
         const formatter = new GeminiFormatter();
         const request = buildGeminiRequest(formatter, [buildRejectedModelMessage()], 'xml');
         const contents = request.body.contents as any[];
@@ -337,7 +337,7 @@ describe('GeminiFormatter: rejected functionCall 过滤', () => {
         expect(serialized).not.toContain('read_file');
     });
 
-    it('JSON 模式：rejected 调用不转文本，也不泄漏原生 part', () => {
+    test('JSON 模式：rejected 调用不转文本，也不泄漏原生 part', () => {
         const formatter = new GeminiFormatter();
         const request = buildGeminiRequest(formatter, [buildRejectedModelMessage()], 'json');
         const contents = request.body.contents as any[];
@@ -348,7 +348,7 @@ describe('GeminiFormatter: rejected functionCall 过滤', () => {
         expect(serialized).not.toContain('read_file');
     });
 
-    it('原生 function_call 模式：rejected 调用 part 被过滤', () => {
+    test('原生 function_call 模式：rejected 调用 part 被过滤', () => {
         const formatter = new GeminiFormatter();
         const request = buildGeminiRequest(formatter, [buildRejectedModelMessage()], 'function_call');
         const contents = request.body.contents as any[];
@@ -396,7 +396,7 @@ function buildNormalCall(): Content[] {
 }
 
 describe('formatter 成对过滤：rejected call + 配对 response 一起丢弃（防御层加固）', () => {
-    it('OpenAI function_call 模式：rejected call 及其占位 response 都不输出（无孤儿 tool 消息）', () => {
+    test('OpenAI function_call 模式：rejected call 及其占位 response 都不输出（无孤儿 tool 消息）', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -416,7 +416,7 @@ describe('formatter 成对过滤：rejected call + 配对 response 一起丢弃�
         expect(JSON.stringify(messages)).not.toContain('call_mix_1');
     });
 
-    it('Anthropic function_call 模式：rejected call 及其占位 response 都不输出（无孤儿 tool_result）', () => {
+    test('Anthropic function_call 模式：rejected call 及其占位 response 都不输出（无孤儿 tool_result）', () => {
         const formatter = new AnthropicFormatter();
         const request = formatter.buildRequest({
             configId: 'anthropic-test',
@@ -436,7 +436,7 @@ describe('formatter 成对过滤：rejected call + 配对 response 一起丢弃�
         expect(serialized).not.toContain('call_mix_1');
     });
 
-    it('OpenAIResponses：rejected call 及其 function_call_output 都不输出', () => {
+    test('OpenAIResponses：rejected call 及其 function_call_output 都不输出', () => {
         const formatter = new OpenAIResponsesFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -456,7 +456,7 @@ describe('formatter 成对过滤：rejected call + 配对 response 一起丢弃�
         expect(JSON.stringify(input)).not.toContain('call_mix_1');
     });
 
-    it('Gemini 原生模式：rejected call 及其配对 response 都丢弃，无空 parts 消息', () => {
+    test('Gemini 原生模式：rejected call 及其配对 response 都丢弃，无空 parts 消息', () => {
         const formatter = new GeminiFormatter();
         const request = buildGeminiRequest(formatter, buildRejectedCallWithResponse(), 'function_call');
         const contents = request.body.contents as any[];
@@ -466,7 +466,7 @@ describe('formatter 成对过滤：rejected call + 配对 response 一起丢弃�
 });
 
 describe('formatter 正常调用正控（防「丢弃所有调用」类回归）', () => {
-    it('OpenAIResponses：正常 call + response 仍输出 function_call + function_call_output', () => {
+    test('OpenAIResponses：正常 call + response 仍输出 function_call + function_call_output', () => {
         const formatter = new OpenAIResponsesFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -485,7 +485,7 @@ describe('formatter 正常调用正控（防「丢弃所有调用」类回归）
         expect(input.filter((i: any) => i?.type === 'function_call_output')).toHaveLength(1);
     });
 
-    it('Gemini XML/JSON/原生：正常调用仍保留', () => {
+    test('Gemini XML/JSON/原生：正常调用仍保留', () => {
         for (const mode of ['xml', 'json']) {
             // XML/JSON 模式把调用转成文本（不含 call id，含工具名）
             const formatter = new GeminiFormatter();
@@ -510,7 +510,7 @@ describe('纯 rejected 消息（无文本）：formatter 不产生空消息/空 
         }];
     }
 
-    it('OpenAI function_call 模式：不输出任何消息', () => {
+    test('OpenAI function_call 模式：不输出任何消息', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -528,7 +528,7 @@ describe('纯 rejected 消息（无文本）：formatter 不产生空消息/空 
         expect(request.body.messages.filter((m: any) => m.role !== 'system')).toHaveLength(0);
     });
 
-    it('Gemini 三模式：纯 rejected 消息被整体丢弃，无空 parts', () => {
+    test('Gemini 三模式：纯 rejected 消息被整体丢弃，无空 parts', () => {
         for (const mode of ['xml', 'json', 'function_call']) {
             const formatter = new GeminiFormatter();
             const request = buildGeminiRequest(formatter, buildOnlyRejectedCall(), mode);
@@ -539,7 +539,7 @@ describe('纯 rejected 消息（无文本）：formatter 不产生空消息/空 
 });
 
 describe('prompt 模式（xml/json）：rejected 调用不转文本', () => {
-    it('OpenAI xml 模式：rejected 不转 XML 调用文本，周围文本保留', () => {
+    test('OpenAI xml 模式：rejected 不转 XML 调用文本，周围文本保留', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -558,7 +558,7 @@ describe('prompt 模式（xml/json）：rejected 调用不转文本', () => {
         expect(serialized).not.toContain('read_file');
     });
 
-    it('OpenAI json 模式：rejected 不转 JSON 调用文本', () => {
+    test('OpenAI json 模式：rejected 不转 JSON 调用文本', () => {
         const formatter = new OpenAIFormatter();
         const request = formatter.buildRequest({
             configId: 'openai-test',
@@ -577,7 +577,7 @@ describe('prompt 模式（xml/json）：rejected 调用不转文本', () => {
         expect(serialized).not.toContain('read_file');
     });
 
-    it('Anthropic xml/json 模式：rejected 不转文本', () => {
+    test('Anthropic xml/json 模式：rejected 不转文本', () => {
         for (const mode of ['xml', 'json']) {
             const formatter = new AnthropicFormatter();
             const request = formatter.buildRequest({

@@ -1,5 +1,5 @@
 /**
- * LimCode - Diff 审阅类工具的统一判定
+ * GrayCode - Diff 审阅类工具的统一判定
  *
  * 这些工具的写入都会经过 DiffManager 的 pendingDiff 审阅机制，
  * diff 机制本身就是它们的确认层：
@@ -36,3 +36,4 @@ export function isDiffReviewToolCall(toolName: string, args?: Record<string, unk
 
     return false;
 }
+

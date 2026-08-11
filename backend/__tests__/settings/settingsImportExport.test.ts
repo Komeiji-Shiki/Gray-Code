@@ -9,7 +9,8 @@
  * - #22: reloadAndNotify fires change events
  */
 
-import { SettingsManager, type SettingsStorage } from '../../../backend/modules/settings/SettingsManager';
+import { SettingsManager } from '../../../backend/modules/settings/SettingsManager';
+import { createMemorySettingsStorage, createSettingsManager } from '../__fixtures__/settingsFixtures';
 import {
     MACHINE_SCOPE_KEYS,
     BUILTIN_MODE_TOOL_POLICIES,
@@ -24,7 +25,6 @@ import {
     REVIEW_PROMPT_MODE,
     CODE_PROMPT_MODE,
     DEFAULT_MODE_ID,
-    type GlobalSettings,
     type PromptMode,
     type SettingsChangeEvent,
 } from '../../../backend/modules/settings/types';
@@ -35,26 +35,6 @@ import * as vscode from 'vscode';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-class MemorySettingsStorage implements SettingsStorage {
-    public value: any;
-
-    constructor(loaded: any = null) {
-        this.value = loaded;
-    }
-
-    async load() {
-        return this.value;
-    }
-
-    async save(settings: GlobalSettings) {
-        this.value = settings;
-    }
-}
-
-function createManager(stored?: any): SettingsManager {
-    return new SettingsManager(new MemorySettingsStorage(stored));
-}
 
 function makeCodeModeConfig(): any {
     return {
@@ -71,7 +51,7 @@ function makeCodeModeConfig(): any {
 // ---------------------------------------------------------------------------
 
 describe('SkillsManager.validateSkillId (#20)', () => {
-    it('accepts valid lowercase-hyphen ids', () => {
+    test('accepts valid lowercase-hyphen ids', () => {
         expect(SkillsManager.validateSkillId('my-skill')).toBe(true);
         expect(SkillsManager.validateSkillId('a')).toBe(true);
         expect(SkillsManager.validateSkillId('abc123')).toBe(true);
@@ -79,22 +59,22 @@ describe('SkillsManager.validateSkillId (#20)', () => {
         expect(SkillsManager.validateSkillId('a'.repeat(64))).toBe(true);
     });
 
-    it('rejects empty or non-string input', () => {
+    test('rejects empty or non-string input', () => {
         expect(SkillsManager.validateSkillId('')).toBe(false);
         expect(SkillsManager.validateSkillId(null as any)).toBe(false);
         expect(SkillsManager.validateSkillId(undefined as any)).toBe(false);
     });
 
-    it('rejects ids that start or end with hyphen', () => {
+    test('rejects ids that start or end with hyphen', () => {
         expect(SkillsManager.validateSkillId('-start')).toBe(false);
         expect(SkillsManager.validateSkillId('end-')).toBe(false);
     });
 
-    it('rejects consecutive hyphens', () => {
+    test('rejects consecutive hyphens', () => {
         expect(SkillsManager.validateSkillId('a--b')).toBe(false);
     });
 
-    it('rejects uppercase or special chars', () => {
+    test('rejects uppercase or special chars', () => {
         expect(SkillsManager.validateSkillId('MySkill')).toBe(false);
         expect(SkillsManager.validateSkillId('my_skill')).toBe(false);
         expect(SkillsManager.validateSkillId('my skill')).toBe(false);
@@ -102,7 +82,7 @@ describe('SkillsManager.validateSkillId (#20)', () => {
         expect(SkillsManager.validateSkillId('a\\b')).toBe(false);
     });
 
-    it('rejects ids longer than 64 chars', () => {
+    test('rejects ids longer than 64 chars', () => {
         expect(SkillsManager.validateSkillId('a'.repeat(65))).toBe(false);
     });
 });
@@ -112,12 +92,12 @@ describe('SkillsManager.validateSkillId (#20)', () => {
 // ---------------------------------------------------------------------------
 
 describe('MACHINE_SCOPE_KEYS (#18)', () => {
-    it('contains proxy and storagePath', () => {
+    test('contains proxy and storagePath', () => {
         expect(MACHINE_SCOPE_KEYS).toContain('proxy');
         expect(MACHINE_SCOPE_KEYS).toContain('storagePath');
     });
 
-    it('is a readonly array of two entries', () => {
+    test('is a readonly array of two entries', () => {
         expect(MACHINE_SCOPE_KEYS.length).toBe(2);
     });
 });
@@ -127,8 +107,8 @@ describe('MACHINE_SCOPE_KEYS (#18)', () => {
 // ---------------------------------------------------------------------------
 
 describe('Built-in mode toolPolicy customization (#19)', () => {
-    it('preserves user-customized toolPolicy across getter reads', async () => {
-        const manager = createManager(makeCodeModeConfig());
+    test('preserves user-customized toolPolicy across getter reads', async () => {
+        const manager = createSettingsManager(makeCodeModeConfig());
         await manager.initialize();
 
         // Customize design mode toolPolicy
@@ -148,8 +128,8 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
         }
     });
 
-    it('fills built-in default for non-customized modes via normalize', async () => {
-        const manager = createManager(makeCodeModeConfig());
+    test('fills built-in default for non-customized modes via normalize', async () => {
+        const manager = createSettingsManager(makeCodeModeConfig());
         await manager.initialize();
 
         // Read design mode — should get built-in default via normalize
@@ -161,7 +141,7 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
         expect(resolved.toolPolicy).toEqual(BUILTIN_MODE_TOOL_POLICIES[DESIGN_MODE_ID]);
     });
 
-    it('migration sets toolPolicy for non-customized built-in modes', async () => {
+    test('migration sets toolPolicy for non-customized built-in modes', async () => {
         // Create a config with built-in modes but no toolPolicyCustomized flag
         const stored = {
             toolsConfig: {
@@ -177,7 +157,7 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
                 },
             },
         };
-        const manager = createManager(stored);
+        const manager = createSettingsManager(stored);
         await manager.initialize();
 
         // After migration, built-in mode should have default toolPolicy and be marked
@@ -187,7 +167,7 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
         expect(designMode?.toolPolicyCustomized).toBe(false);
     });
 
-    it('migration does not overwrite customized modes', async () => {
+    test('migration does not overwrite customized modes', async () => {
         const customPolicy = ['read_file'];
         const stored = {
             toolsConfig: {
@@ -203,7 +183,7 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
                 },
             },
         };
-        const manager = createManager(stored);
+        const manager = createSettingsManager(stored);
         await manager.initialize();
 
         const settings = manager.getSettings();
@@ -212,8 +192,8 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
         expect(designMode?.toolPolicyCustomized).toBe(true);
     });
 
-    it('runtime resolves built-in default when toolPolicy is not customized', async () => {
-        const manager = createManager(makeCodeModeConfig());
+    test('runtime resolves built-in default when toolPolicy is not customized', async () => {
+        const manager = createSettingsManager(makeCodeModeConfig());
         await manager.initialize();
 
         // Resolve ask mode — should fall back to built-in default
@@ -227,8 +207,8 @@ describe('Built-in mode toolPolicy customization (#19)', () => {
 // ---------------------------------------------------------------------------
 
 describe('reloadAndNotify (#22)', () => {
-    it('fires SettingsChangeEvent of type full after reload', async () => {
-        const manager = createManager(makeCodeModeConfig());
+    test('fires SettingsChangeEvent of type full after reload', async () => {
+        const manager = createSettingsManager(makeCodeModeConfig());
         await manager.initialize();
 
         const events: SettingsChangeEvent[] = [];
@@ -245,8 +225,8 @@ describe('reloadAndNotify (#22)', () => {
         expect(events[0].newValue).toBeDefined();
     });
 
-    it('reloads settings from storage', async () => {
-        const storage = new MemorySettingsStorage(makeCodeModeConfig());
+    test('reloads settings from storage', async () => {
+        const storage = createMemorySettingsStorage(makeCodeModeConfig());
         const manager = new SettingsManager(storage);
         await manager.initialize();
 
@@ -266,7 +246,7 @@ describe('reloadAndNotify (#22)', () => {
 // ---------------------------------------------------------------------------
 
 describe('VSCode settings value resolution (#21)', () => {
-    it('collectVSCodeSettings reads explicit scope values and excludes defaultValue', () => {
+    test('collectVSCodeSettings reads explicit scope values and excludes defaultValue', () => {
         const inspect = jest.fn((key: string) => {
             if (key === 'ui') {
                 return {
@@ -297,7 +277,7 @@ describe('VSCode settings value resolution (#21)', () => {
 // ---------------------------------------------------------------------------
 
 describe('Import merge strategy (#15, #18)', () => {
-    it('production export key list excludes all machine-scope keys', () => {
+    test('production export key list excludes all machine-scope keys', () => {
         for (const machineKey of MACHINE_SCOPE_KEYS) {
             expect(SETTINGS_EXPORT_KEYS).not.toContain(machineKey);
         }
@@ -311,7 +291,7 @@ describe('Import merge strategy (#15, #18)', () => {
 // ---------------------------------------------------------------------------
 
 describe('BUILTIN_MODE_TOOL_POLICIES', () => {
-    it('maps all four built-in modes (code excluded)', () => {
+    test('maps all four built-in modes (code excluded)', () => {
         expect(BUILTIN_MODE_TOOL_POLICIES[DESIGN_MODE_ID]).toBeDefined();
         expect(BUILTIN_MODE_TOOL_POLICIES[PLAN_MODE_ID]).toBeDefined();
         expect(BUILTIN_MODE_TOOL_POLICIES[ASK_MODE_ID]).toBeDefined();
@@ -320,7 +300,7 @@ describe('BUILTIN_MODE_TOOL_POLICIES', () => {
         expect(BUILTIN_MODE_TOOL_POLICIES[DEFAULT_MODE_ID]).toBeUndefined();
     });
 
-    it('matches the prompt mode definitions', () => {
+    test('matches the prompt mode definitions', () => {
         expect(BUILTIN_MODE_TOOL_POLICIES[DESIGN_MODE_ID]).toEqual(DESIGN_PROMPT_MODE.toolPolicy);
         expect(BUILTIN_MODE_TOOL_POLICIES[PLAN_MODE_ID]).toEqual(PLAN_PROMPT_MODE.toolPolicy);
         expect(BUILTIN_MODE_TOOL_POLICIES[ASK_MODE_ID]).toEqual(ASK_PROMPT_MODE.toolPolicy);

@@ -1,5 +1,5 @@
 /**
- * LimCode - Chat 处理器模块导出
+ * GrayCode - Chat 处理器模块导出
  *
  * 统一导出所有 Chat 相关的处理器类
  */
@@ -10,3 +10,4 @@ export {
     type StreamProcessorConfig,
     type ProcessedChunkData
 } from './StreamResponseProcessor';
+

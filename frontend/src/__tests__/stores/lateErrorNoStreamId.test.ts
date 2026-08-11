@@ -12,7 +12,7 @@
  */
 import { ref } from 'vue'
 import type { Ref } from 'vue'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, expect, vi } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from '../../stores/chat/types'
 import { handleError, handleCancelled } from '../../stores/chat/streamChunkHandlers'
@@ -83,7 +83,7 @@ function newRequestState() {
 }
 
 describe('无 streamId 的迟到 error chunk（H4）', () => {
-  it('createdAt 早于占位消息创建时间：不删除消息、不复位新流状态', () => {
+  test('createdAt 早于占位消息创建时间：不删除消息、不复位新流状态', () => {
     const { state } = newRequestState()
 
     handleError({
@@ -102,7 +102,7 @@ describe('无 streamId 的迟到 error chunk（H4）', () => {
     expect(state.isWaitingForResponse.value).toBe(true)
   })
 
-  it('无 conversationId：只记错误，不删除消息', () => {
+  test('无 conversationId：只记错误，不删除消息', () => {
     const { state } = newRequestState()
 
     handleError({
@@ -120,7 +120,7 @@ describe('无 streamId 的迟到 error chunk（H4）', () => {
     expect(state.isStreaming.value).toBe(true)
   })
 
-  it('其他会话的迟到 error chunk：不触碰当前会话消息', () => {
+  test('其他会话的迟到 error chunk：不触碰当前会话消息', () => {
     const { state } = newRequestState()
 
     handleError({
@@ -135,7 +135,7 @@ describe('无 streamId 的迟到 error chunk（H4）', () => {
     expect(state.isStreaming.value).toBe(true)
   })
 
-  it('属于当前流的无 streamId error chunk：保持原有删除/记录行为', () => {
+  test('属于当前流的无 streamId error chunk：保持原有删除/记录行为', () => {
     const { state } = newRequestState()
 
     // createdAt 晚于占位消息创建时间 → 判定为当前流的 chunk
@@ -155,7 +155,7 @@ describe('无 streamId 的迟到 error chunk（H4）', () => {
     expect(state.error.value?.code).toBe('STREAM_ERROR')
   })
 
-  it('携带 streamId 的 chunk 不受 H4 守卫影响', () => {
+  test('携带 streamId 的 chunk 不受 H4 守卫影响', () => {
     const { state } = newRequestState()
 
     // 旧流的 chunk 带 streamId 时由 handleStreamChunk 过滤，处理器内直接正常执行
@@ -174,7 +174,7 @@ describe('无 streamId 的迟到 error chunk（H4）', () => {
 })
 
 describe('无 streamId 的迟到 cancelled chunk（H4）', () => {
-  it('createdAt 早于占位消息创建时间：不删除消息、不复位新流状态', () => {
+  test('createdAt 早于占位消息创建时间：不删除消息、不复位新流状态', () => {
     const { state } = newRequestState()
 
     handleCancelled({
@@ -190,7 +190,7 @@ describe('无 streamId 的迟到 cancelled chunk（H4）', () => {
     expect(state.isWaitingForResponse.value).toBe(true)
   })
 
-  it('无 conversationId 的迟到 cancelled chunk：不触碰消息与状态', () => {
+  test('无 conversationId 的迟到 cancelled chunk：不触碰消息与状态', () => {
     const { state } = newRequestState()
 
     handleCancelled({
@@ -203,7 +203,7 @@ describe('无 streamId 的迟到 cancelled chunk（H4）', () => {
     expect(state.isStreaming.value).toBe(true)
   })
 
-  it('属于当前流的无 streamId cancelled chunk：保持原有行为', () => {
+  test('属于当前流的无 streamId cancelled chunk：保持原有行为', () => {
     const { state } = newRequestState()
 
     handleCancelled({
@@ -220,7 +220,7 @@ describe('无 streamId 的迟到 cancelled chunk（H4）', () => {
     expect(state.isWaitingForResponse.value).toBe(false)
   })
 
-  it('当前流无活跃 streamId 时无 streamId chunk 不受守卫影响', () => {
+  test('当前流无活跃 streamId 时无 streamId chunk 不受守卫影响', () => {
     const placeholder = {
       id: 'msg_a',
       role: 'assistant',

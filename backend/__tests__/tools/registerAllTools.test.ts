@@ -18,7 +18,7 @@ describe('registerAllTools 注册真实工厂函数', () => {
         registerAllTools(registry);
     });
 
-    it('注册全部内置工具（含 read_skill 与 subagents）', () => {
+    test('注册全部内置工具（含 read_skill 与 subagents）', () => {
         expect(registry.has('read_file')).toBe(true);
         expect(registry.has('write_file')).toBe(true);
         expect(registry.has('apply_diff')).toBe(true);
@@ -31,7 +31,7 @@ describe('registerAllTools 注册真实工厂函数', () => {
         expect(registry.count()).toBeGreaterThan(20);
     });
 
-    it('非 read_skill 工具 refreshTool 重新生成新实例（对象引用变化）', () => {
+    test('非 read_skill 工具 refreshTool 重新生成新实例（对象引用变化）', () => {
         const before = registry.getTool('write_file');
         expect(before).toBeDefined();
 
@@ -43,7 +43,7 @@ describe('registerAllTools 注册真实工厂函数', () => {
         expect(after).not.toBe(before);
     });
 
-    it('read_skill 仍以真实工厂注册，refreshTool 生成新实例', () => {
+    test('read_skill 仍以真实工厂注册，refreshTool 生成新实例', () => {
         const before = registry.getTool('read_skill');
         expect(before).toBeDefined();
 
@@ -54,7 +54,7 @@ describe('registerAllTools 注册真实工厂函数', () => {
         expect(after).not.toBe(before);
     });
 
-    it('subagents 工具注册成功且刷新不抛错', () => {
+    test('subagents 工具注册成功且刷新不抛错', () => {
         expect(registry.getTool('subagents')).toBeDefined();
         expect(registry.getTool('agent_send_message')).toBeDefined();
         expect(registry.refreshTool('subagents')).toBe(true);

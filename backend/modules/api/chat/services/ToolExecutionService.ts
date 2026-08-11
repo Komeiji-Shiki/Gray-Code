@@ -1,5 +1,5 @@
 /**
- * LimCode - 工具执行服务（壳）
+ * GrayCode - 工具执行服务（壳）
  *
  * ToolExecutionService.ts 职责拆分（第二批）后的壳文件：保留类名、全部 public 方法
  * 签名与文件级导出（ToolExecutionService / ToolExecutionProgressEvent / ToolExecutionFullResult），
@@ -78,3 +78,4 @@ export class ToolExecutionService extends ExecutionCore {
         this.conversationStore = store;
     }
 }
+

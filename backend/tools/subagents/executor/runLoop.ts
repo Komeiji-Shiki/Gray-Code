@@ -23,7 +23,7 @@ import type { SubAgentRunStatus } from '../runEventBus';
 import { subAgentRunController } from '../runController';
 import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from '../concurrencyLimiter';
 import { fileWriteLockManager } from '../../../core/fileWriteLockManager';
-import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../agentMailbox';
+import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../../../core/services/agentMailbox';
 import { markAiActive } from '../../../modules/activity';
 import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
@@ -208,7 +208,9 @@ export function createDefaultExecutor(
         // 修改方式：改为句柄数组——createOperationSignal 每次 push，release 时按句柄摘除，
         //          detach 回调遍历数组逐个 detachParent。
         // 修改目的：转后台（detach）语义对并行工具调用同样正确。
-        let currentOperationHandles: Array<{ detachParent: () => void }> = [];
+        // M5 收尾窗口超时中止在飞工具需要遍历句柄调用 abort，数组元素类型与
+        // createOperationSignal 返回的 OperationSignalHandle 保持一致（含 detachParent 与 abort）。
+        let currentOperationHandles: Array<OperationSignalHandle> = [];
         // 转后台（detach）后父 abort 信号对 run 不再有约束力——所有取消检查必须经由
         // 本 helper 读取父信号（detached 后视为无父信号），否则 detach 后旧流 abort
         // 仍会在下一轮迭代/工具执行前杀死 run（R7c E1）。
@@ -421,6 +423,8 @@ export function createDefaultExecutor(
             release: () => void;
             /** 只解绑父 abort 信号的监听（转后台 detach 用），超时与 controller 信号保持绑定 */
             detachParent: () => void;
+            /** 主动中止本操作：触发组合 controller 的 abort（M5 收尾窗口超时中止在飞工具用） */
+            abort: () => void;
         }
 
         const createOperationSignal = (): OperationSignalHandle => {
@@ -430,7 +434,7 @@ export function createDefaultExecutor(
                 .filter((signal): signal is AbortSignal => !!signal);
             if (signals.length === 0) {
                 // 无任何信号可组合：不注册句柄（其他并行操作的在飞句柄保留在数组中，不受影响）
-                return { signal: undefined, release: () => undefined, detachParent: () => undefined };
+                return { signal: undefined, release: () => undefined, detachParent: () => undefined, abort: () => undefined };
             }
             const controller = new AbortController();
             const abort = () => controller.abort();
@@ -447,6 +451,7 @@ export function createDefaultExecutor(
             }
             const handle: OperationSignalHandle = {
                 signal: controller.signal,
+                abort: () => controller.abort(),
                 release: () => {
                     for (const signal of attached) {
                         signal.removeEventListener('abort', abort);
@@ -749,8 +754,11 @@ export function createDefaultExecutor(
                 
                 let response: any;
                 try {
-                    const result = await context.channelManager.generate(generateRequest);
+                    // 修改原因：requestStartTime 在 await generate() 之后才取值，非流式请求的耗时统计
+                    //          只覆盖响应处理时间，遗漏完整请求时长。
+                    // 修改方式：generate 前取值，让耗时统计覆盖完整请求周期。
                     const requestStartTime = Date.now();
+                    const result = await context.channelManager.generate(generateRequest);
                     const streamProcessor = new StreamResponseProcessor({
                         requestStartTime,
                         providerType,
@@ -1051,41 +1059,69 @@ export function createDefaultExecutor(
                 //          executeToolCall 由 Promise.all 并行执行，结果按原 call 顺序回填
                 //          toolCalls / toolResultParts（history push 顺序稳定）。
                 // 修改目的：嵌套子代理并行度与主会话一致；单工具调用场景行为完全不变。
-                const toolExecutionOutcomes = await Promise.all(
-                    currentToolCalls.map(async (call): Promise<ToolExecutionOutcome> => {
+                // M5 收尾窗口：Promise.all 等待最慢工具无上限——若某工具不响应 abort 信号
+                // （挂死/网络挂起），run 永久卡在收尾窗口。加整体超时兜底：超时按失败早退；
+                // 在飞工具的 Promise 仍会执行完（其 finally 释放组合信号句柄），run 状态已终结。
+                // race 会消费全部输入 promise 的 settle，落败分支无 unhandled rejection。
+                const PARALLEL_TOOL_FINISH_WINDOW_MS = 30_000;
+                let finishTimer: ReturnType<typeof setTimeout> | undefined;
+                const toolExecutionOutcomes = await Promise.race([
+                    Promise.all(
+                        currentToolCalls.map(async (call): Promise<ToolExecutionOutcome> => {
 
-                        // 执行工具前检查超时（同步预检：map 阶段按原序同步执行完毕，
-                        // 未通过预检的 call 返回早退标记，不创建组合信号、不执行工具）
-                        const timeoutCheck = checkTimeout();
-                        if (timeoutCheck.exceeded || parentAbort()?.aborted || timeoutController?.signal.aborted) {
-                            return { earlyExit: true as const, timeoutCheck };
-                        }
+                            // 执行工具前检查超时（同步预检：map 阶段按原序同步执行完毕，
+                            // 未通过预检的 call 返回早退标记，不创建组合信号、不执行工具）
+                            const timeoutCheck = checkTimeout();
+                            if (timeoutCheck.exceeded || parentAbort()?.aborted || timeoutController?.signal.aborted) {
+                                return { earlyExit: true as const, timeoutCheck };
+                            }
 
-                        // 组合信号在早退检查之后创建，避免为不会执行的工具调用注册监听器
-                        const toolOperation = createOperationSignal();
-                        const toolStartTime = Date.now();
-                        try {
-                            const result = await executeToolCall(
-                                call.name,
-                                call.args,
-                                { ...context, promptModeSnapshot: currentPromptModeSnapshot },
-                                toolOperation.signal,
-                                allowedToolNames,
-                                config,
-                                call.id,
-                                runId,
-                                config.name,
-                                // A-COMM：子代理信箱会话使用本次调用的动态主会话 ID
-                                currentConversationId,
-                                // F2：把本 run 的嵌套深度随工具上下文透传，供内层 subagents 工具做深度校验
-                                depth
-                            );
-                            return { earlyExit: false as const, call, result, duration: Date.now() - toolStartTime };
-                        } finally {
-                            toolOperation.release();
-                        }
+                            // 组合信号在早退检查之后创建，避免为不会执行的工具调用注册监听器
+                            const toolOperation = createOperationSignal();
+                            const toolStartTime = Date.now();
+                            try {
+                                const result = await executeToolCall(
+                                    call.name,
+                                    call.args,
+                                    { ...context, promptModeSnapshot: currentPromptModeSnapshot },
+                                    toolOperation.signal,
+                                    allowedToolNames,
+                                    config,
+                                    call.id,
+                                    runId,
+                                    config.name,
+                                    // A-COMM：子代理信箱会话使用本次调用的动态主会话 ID
+                                    currentConversationId,
+                                    // F2：把本 run 的嵌套深度随工具上下文透传，供内层 subagents 工具做深度校验
+                                    depth
+                                );
+                                return { earlyExit: false as const, call, result, duration: Date.now() - toolStartTime };
+                            } finally {
+                                toolOperation.release();
+                            }
+                        })
+                    ),
+                    new Promise<never>((_, reject) => {
+                        finishTimer = setTimeout(() => {
+                            // 修改原因：收尾窗口超时后旧逻辑仅 fail run，在飞工具 Promise 仍继续执行，
+                            //          其 tool_started/tool_completed 事件仍发往已注销 run（emit 会对
+                            //          未知 runId 自动重建 snapshot，形成僵尸记录），agentMailbox 已
+                            //          unregisterRun，工具侧 agent_send_message 投递失败。
+                            // 修改方式：超时分支对快照中的所有在飞操作句柄调用 abort（组合 controller
+                            //          中止各工具的 operationSignal；响应 abort 的工具在宽限期内收敛，
+                            //          不响应 abort 的挂死工具保持原行为，但 run 已进入终态收敛路径）。
+                            // 修改目的：收尾窗口超时后工具侧事件与信箱投递尽快收敛，不再污染已注销 run。
+                            for (const handle of [...currentOperationHandles]) {
+                                handle.abort();
+                            }
+                            reject(new Error(
+                                `Parallel tool execution did not finish within ${PARALLEL_TOOL_FINISH_WINDOW_MS / 1000}s; run aborted (M5)`
+                            ));
+                        }, PARALLEL_TOOL_FINISH_WINDOW_MS);
                     })
-                );
+                ]).finally(() => {
+                    if (finishTimer) clearTimeout(finishTimer);
+                });
 
                 // 按原 call 顺序回填结果（toolCalls / toolResultParts 顺序与模型调用顺序一致，
                 // 保证 history push 顺序稳定）；早退标记不产生结果。
@@ -1137,15 +1173,19 @@ export function createDefaultExecutor(
                 // call 结果已按原序回填（与旧串行实现「先执行、再在下一 call 的预检处 return」
                 // 的净效果一致）；此处不再 push history——旧实现同样在预检 return 处跳过
                 // history push。早退信息取首个早退标记的快照，与旧实现预检时刻的状态一致。
+                // 文案区分：取消导致的早退不得误报为超时（cancelled 标志已正确，仅文案误导）。
                 if (firstEarlyExit) {
+                    const isTimeout = firstEarlyExit.timeoutCheck.exceeded;
                     return finalizeRun({
                         success: false,
                         response: lastResponse,
                         modelVersion,
                         steps,
                         toolCalls,
-                        error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${firstEarlyExit.timeoutCheck.elapsed}s`,
-                        cancelled: !firstEarlyExit.timeoutCheck.exceeded
+                        error: isTimeout
+                            ? `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${firstEarlyExit.timeoutCheck.elapsed}s`
+                            : 'Cancelled during execution',
+                        cancelled: !isTimeout
                     });
                 }
                 
@@ -1211,9 +1251,10 @@ export function createDefaultExecutor(
             // A-COMM：run 结束/取消时注销信箱已知记录并清理该 run 的 inbox，避免内存残留与误投递。
             agentMailbox.unregisterRun(currentConversationId, runId);
             // 修改原因：run 异常退出时可能残留未释放的文件写锁（正常路径已在工具执行 finally 中释放）。
-            // 修改方式：按 runId 兜底清理该 run 持有的全部锁。
+            // 修改方式：按 subagent 身份（kind+runId）兜底清理该 run 持有的全部锁——
+            // 只传 runId 可能误释放与 runId 同 id 的其他 kind 锁（R2 M1）。
             // 修改目的：避免锁泄漏导致其他 agent 永久无法修改相关文件。
-            fileWriteLockManager.releaseAllByHolder(runId);
+            fileWriteLockManager.releaseAllByHolder({ kind: 'subagent', id: runId, label: 'sub-agent run cleanup' });
             // 终态事件必须在工具 Promise 返回主流程前落盘；否则扩展重载会把已完成 run 误判为 interrupted。
             await subAgentRunEventBus.flushRun(runId);
         }

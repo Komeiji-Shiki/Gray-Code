@@ -1,5 +1,5 @@
 /**
- * LimCode MCP (Model Context Protocol) 模块 - 客户端管理器
+ * GrayCode MCP (Model Context Protocol) 模块 - 客户端管理器
  *
  * 管理 MCP 服务器配置和客户端连接
  */
@@ -10,6 +10,10 @@ import type {
     McpServerInfo,
     McpServerStatus,
     McpServerCapabilities,
+    McpTransportConfig,
+    StdioTransportConfig,
+    SseTransportConfig,
+    StreamableHttpTransportConfig,
     McpStorageAdapter,
     CreateMcpServerInput,
     UpdateMcpServerInput,
@@ -56,6 +60,61 @@ function slugifyServerName(name: string): string {
 }
 
 /**
+ * 比较两份 transport 配置是否实质变化（连接参数）
+ *
+ * 不用 JSON.stringify 整串比较：对象键序不同（env/headers 键序变化）会误判为变化，
+ * 触发无谓重连；连续两次相同内容的 updateServer 也会双重连。只比较影响连接的字段：
+ * - stdio：type + command + args + env（键值对逐一比较，与键序无关）
+ * - sse / streamable-http：type + url + headers（键值对逐一比较）
+ */
+function transportConfigChanged(a: McpTransportConfig, b: McpTransportConfig): boolean {
+    if (a.type !== b.type) {
+        return true;
+    }
+    if (a.type === 'stdio') {
+        const prev = a as StdioTransportConfig;
+        const next = b as StdioTransportConfig;
+        if (prev.command !== next.command) {
+            return true;
+        }
+        const prevArgs = prev.args ?? [];
+        const nextArgs = next.args ?? [];
+        if (prevArgs.length !== nextArgs.length) {
+            return true;
+        }
+        for (let i = 0; i < prevArgs.length; i++) {
+            if (prevArgs[i] !== nextArgs[i]) {
+                return true;
+            }
+        }
+        return !sameStringRecord(prev.env, next.env);
+    }
+    const prev = a as SseTransportConfig | StreamableHttpTransportConfig;
+    const next = b as SseTransportConfig | StreamableHttpTransportConfig;
+    return prev.url !== next.url || !sameStringRecord(prev.headers, next.headers);
+}
+
+/**
+ * 比较两个可选字符串键值表是否相等（undefined 视同空表，与键序无关）
+ */
+function sameStringRecord(
+    a: Record<string, string> | undefined,
+    b: Record<string, string> | undefined
+): boolean {
+    const keysA = Object.keys(a ?? {});
+    const keysB = Object.keys(b ?? {});
+    if (keysA.length !== keysB.length) {
+        return false;
+    }
+    for (const key of keysA) {
+        if (a?.[key] !== b?.[key]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
  * MCP 管理器
  * 
  * 负责：
@@ -79,8 +138,12 @@ export class McpManager {
     /** 每个 serverId 的 in-flight connect promise（防止并发 connect 假成功） */
     private connectPromises: Map<string, Promise<void>> = new Map();
 
-    /** 每个 serverId 的列表刷新链（串行化并发 list_changed 通知刷新，防止旧刷新覆盖新数据） */
-    private refreshChains: Map<string, Promise<void>> = new Map();
+    /** 每个 serverId 的列表刷新链（串行化 list_changed 通知刷新，防止旧刷新覆盖新数据）；
+     *  同代际通知合并（refreshPending 标记），链长有上限，disconnect 时清理 */
+    private refreshChains: Map<string, { promise: Promise<void>; generation: number }> = new Map();
+
+    /** 每个 serverId 的刷新合并标记：已有在途刷新链时，后续通知仅置位，由链尾补刷一次 */
+    private refreshPending: Map<string, boolean> = new Map();
     
     /** 事件监听器 */
     private listeners: Map<McpEventType, Set<McpEventListener>> = new Map();
@@ -88,8 +151,21 @@ export class McpManager {
     /** 是否已初始化 */
     private initialized: boolean = false;
 
+    /** 创建服务器串行队列：校验-保存非原子，并发同 customId 会互相覆盖（M4），整段串行避免 last-writer-wins */
+    private createQueue: Promise<unknown> = Promise.resolve();
+
     constructor(storageAdapter: McpStorageAdapter) {
         this.storageAdapter = storageAdapter;
+    }
+
+    /** 将创建操作加入串行队列（前一个完成后再执行下一个，错误不阻断后续） */
+    private enqueueCreate<T>(fn: () => Promise<T>): Promise<T> {
+        const run = this.createQueue.then(fn);
+        this.createQueue = run.then(
+            () => undefined,
+            () => undefined
+        );
+        return run;
     }
 
     /**
@@ -178,6 +254,7 @@ export class McpManager {
         this.clients.clear();
         this.connectPromises.clear();
         this.refreshChains.clear();
+        this.refreshPending.clear();
         this.connectGenerations.clear();
         this.listeners.clear();
         this.initialized = false;
@@ -213,38 +290,42 @@ export class McpManager {
      * @param customId 自定义 ID（可选，不提供则自动生成）
      */
     async createServer(input: CreateMcpServerInput, customId?: string): Promise<string> {
-        const id = customId || await this.generateReadableId(input.name);
-        
-        // 验证 ID 是否可用
-        const validation = await this.validateServerId(id);
-        if (!validation.valid) {
-            throw new Error(validation.error);
-        }
-        
-        const now = Date.now();
-        const config: McpServerConfig = {
-            ...input,
-            id,
-            createdAt: now,
-            updatedAt: now
-        };
-
-        await this.storageAdapter.saveConfig(config);
-        
-        this.servers.set(config.id, {
-            config,
-            status: 'disconnected'
-        });
-        
-        // 如果启用了自动连接，立即尝试连接
-        if (config.enabled && config.autoConnect) {
-            // 异步连接，不阻塞创建流程；失败至少记录（serverId 与原因可观测）
-            this.connect(config.id).catch(e => {
-                console.warn(`[MCP] Auto-connect failed for ${config.id} after create:`, e);
+        // 校验-生成-保存非原子：并发同 customId 会互相通过校验、后者覆盖前者（last-writer-wins，M4）。
+        // 整段串行化后，后到的并发调用在前者保存完成后再校验，能发现 id 已存在并明确报错。
+        return this.enqueueCreate(async () => {
+            const id = customId || await this.generateReadableId(input.name);
+            
+            // 验证 ID 是否可用
+            const validation = await this.validateServerId(id);
+            if (!validation.valid) {
+                throw new Error(validation.error);
+            }
+            
+            const now = Date.now();
+            const config: McpServerConfig = {
+                ...input,
+                id,
+                createdAt: now,
+                updatedAt: now
+            };
+    
+            await this.storageAdapter.saveConfig(config);
+            
+            this.servers.set(config.id, {
+                config,
+                status: 'disconnected'
             });
-        }
-        
-        return config.id;
+            
+            // 如果启用了自动连接，立即尝试连接
+            if (config.enabled && config.autoConnect) {
+                // 异步连接，不阻塞创建流程；失败至少记录（serverId 与原因可观测）
+                this.connect(config.id).catch(e => {
+                    console.warn(`[MCP] Auto-connect failed for ${config.id} after create:`, e);
+                });
+            }
+            
+            return config.id;
+        });
     }
 
     /**
@@ -310,6 +391,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.serverNotFound', { serverId }));
         }
 
+        const previousTransport = info.config.transport;
         const updatedConfig: McpServerConfig = {
             ...info.config,
             ...updates,
@@ -318,6 +400,18 @@ export class McpManager {
 
         await this.storageAdapter.saveConfig(updatedConfig);
         info.config = updatedConfig;
+
+        // transport 实质变化（type/命令/参数/URL/请求头/env 等连接参数变更）时，已连接/连接中的
+        // 客户端仍按旧参数运行：需按新配置重连，否则新 transport 不生效（旧连接继续服务）。
+        // 仅比较关键连接字段而非 JSON.stringify 整串：键序变化（env/headers）会误判为变化
+        // 触发无谓重连，连续两次相同 updateServer 也会双重连。异步重连，
+        // 不阻塞配置保存返回（与 initialize 自动连接同口径；失败仅记日志，状态由事件感知）。
+        if (transportConfigChanged(previousTransport, updatedConfig.transport)
+            && (info.status === 'connected' || info.status === 'connecting')) {
+            this.reconnect(serverId).catch(e => {
+                console.error(`[MCP] Reconnect after updateServer failed for ${serverId}:`, e);
+            });
+        }
     }
 
     /**
@@ -713,6 +807,28 @@ export class McpManager {
 
             // 连接成功清除过期错误，避免 UI 一直展示上次失败的 lastError
             info.lastError = undefined;
+
+            // MCP H-2：connect() 内部的能力列表（tools/resources/prompts）拉取失败会被 StdioClient
+            // 吞掉（列表保持空），此时进程/协议可能不稳定——不能无脑置 connected（假连接）。
+            // 区分「服务器真无工具」与「拉取失败」：拉取失败则置 error 并广播，等待用户重连/处理。
+            const client = this.clients.get(serverId);
+            const listFailed =
+                typeof (client as any)?.isListFetchFailed === 'function'
+                    ? (client as any).isListFetchFailed()
+                    : false;
+            if (listFailed) {
+                const errorMessage = 'MCP server connected, but capability list fetch failed (tools/resources/prompts).';
+                info.lastError = errorMessage;
+                this.updateServerStatus(serverId, 'error');
+                this.emitEvent({
+                    type: 'server:error',
+                    serverId,
+                    data: { error: errorMessage },
+                    timestamp: Date.now()
+                });
+                return;
+            }
+
             this.updateServerStatus(serverId, 'connected');
             info.connectedAt = Date.now();
 
@@ -779,6 +895,13 @@ export class McpManager {
                     }
                     info.lastError = err.message;
                     this.updateServerStatus(info.config.id, 'error');
+                    // 与 runConnect 失败路径对齐：广播 server:error，供 UI/能力缓存等下游感知
+                    this.emitEvent({
+                        type: 'server:error',
+                        serverId: info.config.id,
+                        data: { error: err.message },
+                        timestamp: Date.now()
+                    });
                 });
 
                 client.on('exit', () => {
@@ -790,6 +913,14 @@ export class McpManager {
                         this.clients.delete(info.config.id);
                     }
                     this.updateServerStatus(info.config.id, 'disconnected');
+                    // 进程意外退出（非用户显式 disconnect）：必须广播 disconnected 事件，
+                    // 下游（工具声明缓存等）依赖该事件失效已死服务器的能力列表；
+                    // 显式 disconnect() 路径会递增代际，此处代际校验已拦截，不会双发。
+                    this.emitEvent({
+                        type: 'server:disconnected',
+                        serverId: info.config.id,
+                        timestamp: Date.now()
+                    });
                 });
 
                 // 提前注册到管理 map，确保连接过程中的 delete/disable/disconnect 能找到它
@@ -987,6 +1118,10 @@ export class McpManager {
                 this.clients.delete(info.config.id);
             }
         }
+        // 清理该 server 的刷新链与合并标记：残留链会让重连后的新代际通知误合并到旧链上
+        //（旧链代际校验跳过刷新 → 通知丢失）；在途旧链本身会正常结束，不受此处清理影响
+        this.refreshChains.delete(info.config.id);
+        this.refreshPending.delete(info.config.id);
     }
 
     /**
@@ -996,7 +1131,8 @@ export class McpManager {
      * 重新拉取列表并刷新 info.capabilities 缓存，供 ToolDeclarationResolver 等
      * 消费方在下一次工具声明重建时使用新数据。
      * - 同一 serverId 的刷新按到达顺序串行执行（per-server 刷新链），
-     *   避免并发刷新时旧结果覆盖新结果
+     *   避免并发刷新时旧结果覆盖新结果；通知风暴时合并（链长有上限），
+     *   disconnect 时清理残留链
      * - 刷新完成写入 capabilities 前重查代际：await 期间若已 disconnect/重连，
      *   不得用旧 client 的空列表覆盖新连接的能力缓存
      * - 刷新失败仅记日志，不重连（避免服务器临时故障时无谓重连）
@@ -1017,60 +1153,104 @@ export class McpManager {
         }
 
         const serverId = info.config.id;
-        // per-server 刷新链：后到的通知排在先到的之后执行，旧刷新不得覆盖新数据
-        const previous = this.refreshChains.get(serverId) ?? Promise.resolve();
-        const refresh = previous.then(async () => {
-            // 排队期间可能已 disconnect/重连：代际已变则跳过本次刷新
-            if (!this.isCurrentGeneration(serverId, generation)) {
-                return;
+        // 合并通知风暴：同一 server 已有在途刷新链时不追加链节（链长有上限），仅置
+        // refreshPending 标记，由链尾补刷一次，避免 list_changed 通知风暴下链无限增长。
+        // 旧代际残留链（disconnect 后未及清理）不合并：等待其结束后走新链，防止通知丢失。
+        // 等待结束后循环重查 refreshChains：并发等待同一条旧链的多个新代际通知，若各自
+        // 直接落穿建链，后建链会覆盖先建链的注册 → 双链并发刷新（旧结果覆盖新结果）。
+        for (;;) {
+            const queued = this.refreshChains.get(serverId);
+            if (!queued) {
+                break;
             }
-
-            try {
-                await client.refreshLists();
-            } catch (error) {
-                // 刷新失败仅记日志，不重连
-                console.error(`[MCP] Failed to refresh lists for ${serverId} after ${method}:`, error);
-                return;
+            if (queued.generation === generation) {
+                this.refreshPending.set(serverId, true);
+                await queued.promise;
+                // 链已结束且消费了 pending（补刷已发生）：本次通知已被覆盖；
+                // pending 仍为 true（链结束前未及消费的极端时序）：走新链补刷，确保不丢
+                if (this.refreshPending.get(serverId) !== true) {
+                    return;
+                }
+                this.refreshPending.set(serverId, false);
+                // 已结束链未消费 pending：需自建新链补刷（注册会覆盖已结束的旧链，旧注册者
+                // 的比较式清理不会误删新链），无需继续循环等待
+                break;
             }
+            // 代际不匹配（旧链残留或等待期间其他通知注册的新链）：等待其结束后重查，
+            // 期间注册的新链会被继续等待合并，避免双链并发刷新
+            await queued.promise;
+        }
 
-            // 写入前重查代际：await 期间可能已 disconnect/重连，
-            // 不得用旧 client 的空列表覆盖新连接的能力缓存
-            if (!this.isCurrentGeneration(serverId, generation)) {
-                return;
+        // 执行刷新；执行期间合并进来的通知（pending）触发链尾补刷
+        this.refreshPending.set(serverId, false);
+        const chain = (async () => {
+            for (;;) {
+                // 排队期间可能已 disconnect/重连：代际已变则跳过本次刷新
+                if (!this.isCurrentGeneration(serverId, generation)) {
+                    return;
+                }
+
+                try {
+                    await client.refreshLists();
+                } catch (error) {
+                    // 刷新失败仅记日志，不重连
+                    console.error(`[MCP] Failed to refresh lists for ${serverId} after ${method}:`, error);
+                    return;
+                }
+
+                // 写入前重查代际：await 期间可能已 disconnect/重连，
+                // 不得用旧 client 的空列表覆盖新连接的能力缓存
+                if (!this.isCurrentGeneration(serverId, generation)) {
+                    return;
+                }
+
+                // 重建能力缓存：下一次 getAllTools/getAllResources/getAllPrompts 使用新数据
+                info.capabilities = {
+                    tools: client.getTools().map(t => ({
+                        name: t.name,
+                        description: t.description,
+                        inputSchema: t.inputSchema
+                    })),
+                    resources: client.getResources().map(r => ({
+                        uri: r.uri,
+                        name: r.name,
+                        description: r.description,
+                        mimeType: r.mimeType
+                    })),
+                    prompts: client.getPrompts().map(p => ({
+                        name: p.name,
+                        description: p.description,
+                        arguments: p.arguments
+                    }))
+                };
+
+                this.emitEvent({
+                    type: 'server:capabilities_updated',
+                    serverId,
+                    data: { method },
+                    timestamp: Date.now()
+                });
+
+                // 执行期间有合并进来的通知：补刷一次
+                if (this.refreshPending.get(serverId) !== true) {
+                    return;
+                }
+                this.refreshPending.set(serverId, false);
             }
-
-            // 重建能力缓存：下一次 getAllTools/getAllResources/getAllPrompts 使用新数据
-            info.capabilities = {
-                tools: client.getTools().map(t => ({
-                    name: t.name,
-                    description: t.description,
-                    inputSchema: t.inputSchema
-                })),
-                resources: client.getResources().map(r => ({
-                    uri: r.uri,
-                    name: r.name,
-                    description: r.description,
-                    mimeType: r.mimeType
-                })),
-                prompts: client.getPrompts().map(p => ({
-                    name: p.name,
-                    description: p.description,
-                    arguments: p.arguments
-                }))
-            };
-
-            this.emitEvent({
-                type: 'server:capabilities_updated',
-                serverId,
-                data: { method },
-                timestamp: Date.now()
-            });
-        });
+        })();
         // 链尾兜底：异常不得让刷新链断裂，也不得产生未处理的 rejection（监听器无 await 方）
-        this.refreshChains.set(serverId, refresh.catch(error => {
+        const safeChain = chain.catch(error => {
             console.error(`[MCP] Unexpected error during list refresh for ${serverId}:`, error);
-        }));
-        await this.refreshChains.get(serverId);
+        });
+        this.refreshChains.set(serverId, { promise: safeChain, generation });
+        try {
+            await safeChain;
+        } finally {
+            // 只清理自己注册的链，避免误删并发注册的新链
+            if (this.refreshChains.get(serverId)?.promise === safeChain) {
+                this.refreshChains.delete(serverId);
+            }
+        }
     }
 
     /**

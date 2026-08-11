@@ -424,14 +424,8 @@ export class WindowsAgentStopNotificationService {
       }
     }
 
-    // 先记录去重键再弹窗：两个并发相同 dedupeKey 的 notify 在 JS 单线程内
-    // 会在第一个 await（showToast）之前同步完成 check+record，保证只弹一次
-    this.rememberDedupe(dedupeKey, now)
-    log.debug('dedupe_key_remembered', {
-      dedupeKey,
-      storedAt: now
-    })
-
+    // 先渲染再记录去重键：渲染过程（deriveWindowsAgentStopWindowTitle 读 vscode 状态等）
+    // 可能抛错，若先记录会导致去重键滞留 TTL 5 分钟，后续同 key 通知被误判 duplicate
     const rendered = this.buildRenderedNotification(payload.reason, settings.content, {
       actionType: payload.actionType,
       actionLabel: payload.actionLabel
@@ -443,6 +437,14 @@ export class WindowsAgentStopNotificationService {
       windowTitle: rendered.windowTitle,
       reasonLabel: rendered.reasonLabel,
       actionLabel: rendered.actionLabel
+    })
+
+    // 渲染成功后再记录去重键再弹窗：两个并发相同 dedupeKey 的 notify 在 JS 单线程内
+    // 会在第一个 await（showToast）之前同步完成 check+record，保证只弹一次
+    this.rememberDedupe(dedupeKey, now)
+    log.debug('dedupe_key_remembered', {
+      dedupeKey,
+      storedAt: now
     })
 
     const result = await this.showToast(rendered.title, rendered.message)

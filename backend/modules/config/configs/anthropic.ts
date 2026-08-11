@@ -1,5 +1,5 @@
 /**
- * LimCode - Anthropic 配置类型
+ * GrayCode - Anthropic 配置类型
  *
  * Anthropic Claude API 的配置支持
  */

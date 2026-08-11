@@ -25,13 +25,13 @@ import { TokenizerResourceManager } from '../../modules/tokenizer/TokenizerResou
 // ==================== 转换纯函数 ====================
 
 describe('cl100kTiktokenToJsTiktoken', () => {
-    it('官方两字段格式转 js-tiktoken 三字段格式', () => {
+    test('官方两字段格式转 js-tiktoken 三字段格式', () => {
         const input = 'IQ== 0\nIg== 1\nIw== 2\n';
         const output = cl100kTiktokenToJsTiktoken(input);
         expect(output).toBe('x 0 IQ==\nx 1 Ig==\nx 2 Iw==\n');
     });
 
-    it('跳过空行与非法行', () => {
+    test('跳过空行与非法行', () => {
         const input = 'IQ== 0\n\nnot-a-rank\nIg== 1\n';
         const output = cl100kTiktokenToJsTiktoken(input);
         expect(output).toBe('x 0 IQ==\nx 1 Ig==\n');
@@ -54,7 +54,7 @@ describe('deepseekHfToTiktoken', () => {
         ]
     };
 
-    it('vocab 转换：映射字符 → 原始字节 base64，按 rank 排序', () => {
+    test('vocab 转换：映射字符 → 原始字节 base64，按 rank 排序', () => {
         const out = deepseekHfToTiktoken(miniTokenizerJson);
         const lines = out.bpeRanks.trim().split('\n');
         expect(lines).toHaveLength(4);
@@ -68,12 +68,12 @@ describe('deepseekHfToTiktoken', () => {
         expect(lines[3]).toBe('x 3 IGhlbGxv');
     });
 
-    it('仅收录 special 标记的 added_tokens', () => {
+    test('仅收录 special 标记的 added_tokens', () => {
         const out = deepseekHfToTiktoken(miniTokenizerJson);
         expect(out.specialTokens).toEqual({ '<｜special｜>': 128000 });
     });
 
-    it('patStr 为合并后的三分支交替正则', () => {
+    test('patStr 为合并后的三分支交替正则', () => {
         const out = deepseekHfToTiktoken(miniTokenizerJson);
         // 三个 Split 分支都在
         expect(out.patStr).toContain('\\p{N}{1,3}');
@@ -96,7 +96,7 @@ describe('TokenizerResourceManager - 缓存命中', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    it('缓存文件存在且足够大时直接读取，不触发下载', async () => {
+    test('缓存文件存在且足够大时直接读取，不触发下载', async () => {
         const ranks = 'x 0 IQ==\n'.repeat(200000); // 模拟大词表（>1MB）
         fs.writeFileSync(path.join(dir, 'cl100k.ranks'), ranks, 'utf8');
 
@@ -116,7 +116,7 @@ describe('TokenizerResourceManager - 缓存命中', () => {
         }
     });
 
-    it('缓存损坏（过小）时删除并重新下载', async () => {
+    test('缓存损坏（过小）时删除并重新下载', async () => {
         fs.writeFileSync(path.join(dir, 'cl100k.ranks'), 'tiny', 'utf8');
 
         const originalFetch = global.fetch;
@@ -151,7 +151,7 @@ describe('TokenizerResourceManager - 下载转换', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    it('cl100k：下载文本 → 转换 → 缓存', async () => {
+    test('cl100k：下载文本 → 转换 → 缓存', async () => {
         const originalFetch = global.fetch;
         global.fetch = jest.fn(async () => ({
             ok: true,
@@ -168,7 +168,7 @@ describe('TokenizerResourceManager - 下载转换', () => {
         }
     });
 
-    it('deepseek-v3：下载 zip → 解压 tokenizer.json → 转换 → 缓存（含 meta）', async () => {
+    test('deepseek-v3：下载 zip → 解压 tokenizer.json → 转换 → 缓存（含 meta）', async () => {
         const zip = new AdmZip();
         zip.addFile(
             'deepseek_v3_tokenizer/tokenizer.json',
@@ -201,7 +201,7 @@ describe('TokenizerResourceManager - 下载转换', () => {
         }
     });
 
-    it('下载失败（HTTP 错误）抛出异常', async () => {
+    test('下载失败（HTTP 错误）抛出异常', async () => {
         const originalFetch = global.fetch;
         global.fetch = jest.fn(async () => ({
             ok: false,
@@ -216,7 +216,7 @@ describe('TokenizerResourceManager - 下载转换', () => {
         }
     });
 
-    it('并发请求共享同一次下载', async () => {
+    test('并发请求共享同一次下载', async () => {
         let callCount = 0;
         const originalFetch = global.fetch;
         global.fetch = jest.fn(async () => {

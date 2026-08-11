@@ -5,6 +5,7 @@
  * 的读取、增删、启停、校验与存在性检查。
  */
 
+import { MESSAGE_NAMES } from '../../../shared/protocol';
 import { t } from '../../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../../types';
 import { validateFileInWorkspace, checkFileExists } from '../../utils/WorkspaceUtils';
@@ -266,11 +267,11 @@ export const validatePinnedFile: MessageHandler = async (data, requestId, ctx) =
  */
 export function registerPinnedFileHandlers(registry: Map<string, MessageHandler>): void {
   // 固定文件管理
-  registry.set('getPinnedFilesConfig', getPinnedFilesConfig);
-  registry.set('checkPinnedFilesExistence', checkPinnedFilesExistence);
-  registry.set('checkWorkspaceFilesExist', checkWorkspaceFilesExist);
-  registry.set('addPinnedFile', addPinnedFile);
-  registry.set('removePinnedFile', removePinnedFile);
-  registry.set('setPinnedFileEnabled', setPinnedFileEnabled);
-  registry.set('validatePinnedFile', validatePinnedFile);
+  registry.set(MESSAGE_NAMES.getPinnedFilesConfig, getPinnedFilesConfig);
+  registry.set(MESSAGE_NAMES.checkPinnedFilesExistence, checkPinnedFilesExistence);
+  registry.set(MESSAGE_NAMES.checkWorkspaceFilesExist, checkWorkspaceFilesExist);
+  registry.set(MESSAGE_NAMES.addPinnedFile, addPinnedFile);
+  registry.set(MESSAGE_NAMES.removePinnedFile, removePinnedFile);
+  registry.set(MESSAGE_NAMES.setPinnedFileEnabled, setPinnedFileEnabled);
+  registry.set(MESSAGE_NAMES.validatePinnedFile, validatePinnedFile);
 }

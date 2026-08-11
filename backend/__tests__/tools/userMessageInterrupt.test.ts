@@ -11,7 +11,7 @@ import {
     MAIN_SESSION_RUN_ID,
     USER_INTERRUPT_MAX_LENGTH,
     USER_INTERRUPT_MIN_INTERVAL_MS
-} from '../../tools/subagents/agentMailbox';
+} from '../../core/services/agentMailbox';
 
 describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => {
     let mailbox: AgentMailbox;
@@ -26,7 +26,7 @@ describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => 
         nowSpy.mockRestore();
     });
 
-    it('投递成功：写入主会话 inbox，fromAgentName 为 user，自动新线程 hopDepth=1', () => {
+    test('投递成功：写入主会话 inbox，fromAgentName 为 user，自动新线程 hopDepth=1', () => {
         const result = mailbox.sendUserMessageToMain('conv_1', '  快点处理这个  ');
 
         expect(result.success).toBe(true);
@@ -45,7 +45,7 @@ describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => 
         expect(msg.id).toBeTruthy();
     });
 
-    it('缺会话 ID → INVALID_CONVERSATION，不产生消息', () => {
+    test('缺会话 ID → INVALID_CONVERSATION，不产生消息', () => {
         const result = mailbox.sendUserMessageToMain('', 'hello');
         expect(result.success).toBe(false);
         if (result.success) return;
@@ -54,7 +54,7 @@ describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => 
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('空文本 → EMPTY_TEXT', () => {
+    test('空文本 → EMPTY_TEXT', () => {
         const result = mailbox.sendUserMessageToMain('conv_1', '   ');
         expect(result.success).toBe(false);
         if (result.success) return;
@@ -62,7 +62,7 @@ describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => 
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('超过长度上限 → TEXT_TOO_LONG，不产生消息', () => {
+    test('超过长度上限 → TEXT_TOO_LONG，不产生消息', () => {
         const long = 'x'.repeat(USER_INTERRUPT_MAX_LENGTH + 1);
         const result = mailbox.sendUserMessageToMain('conv_1', long);
         expect(result.success).toBe(false);
@@ -71,13 +71,13 @@ describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => 
         expect(mailbox.getPendingMessageCount()).toBe(0);
     });
 
-    it('恰好等于长度上限可投递', () => {
+    test('恰好等于长度上限可投递', () => {
         const text = 'x'.repeat(USER_INTERRUPT_MAX_LENGTH);
         const result = mailbox.sendUserMessageToMain('conv_1', text);
         expect(result.success).toBe(true);
     });
 
-    it('同一会话频率限制：间隔不足 USER_INTERRUPT_MIN_INTERVAL_MS 拒绝，超过后放行', () => {
+    test('同一会话频率限制：间隔不足 USER_INTERRUPT_MIN_INTERVAL_MS 拒绝，超过后放行', () => {
         expect(mailbox.sendUserMessageToMain('conv_1', 'first').success).toBe(true);
 
         // 5 秒后再次发送 → 拒绝（防刷屏）
@@ -96,12 +96,12 @@ describe('AgentMailbox.sendUserMessageToMain（U1 用户消息插入）', () => 
         expect(drained.map(m => m.text)).toEqual(['first', 'third']);
     });
 
-    it('频率限制按会话隔离：不同会话可同时投递', () => {
+    test('频率限制按会话隔离：不同会话可同时投递', () => {
         expect(mailbox.sendUserMessageToMain('conv_1', 'a').success).toBe(true);
         expect(mailbox.sendUserMessageToMain('conv_2', 'b').success).toBe(true);
     });
 
-    it('clearConversation 重置频率限制并清理 inbox', () => {
+    test('clearConversation 重置频率限制并清理 inbox', () => {
         expect(mailbox.sendUserMessageToMain('conv_1', 'a').success).toBe(true);
 
         mailbox.clearConversation('conv_1');

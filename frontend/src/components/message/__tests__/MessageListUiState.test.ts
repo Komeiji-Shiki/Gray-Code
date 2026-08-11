@@ -6,7 +6,7 @@
  * - tabActions.closeTab 在移除标签页后清理对应 UI 状态（closeTab 调用链接线）
  * - MESSAGE_LIST_UI_STATE_CAP 容量常量存在且为正数（兜底上限）
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, expect, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import {
   messageListUiStateByTab,
@@ -26,12 +26,12 @@ function makeUiState(overrides: Partial<{ scrollTop: number }> = {}) {
   }
 }
 
-describe('M2-1: messageListUiStateByTab 清理', () => {
+describe('messageListUiStateByTab 清理', () => {
   beforeEach(() => {
     messageListUiStateByTab.clear()
   })
 
-  it('pruneMessageListUiStateByTab 只保留仍打开的标签页记录', () => {
+  test('pruneMessageListUiStateByTab 只保留仍打开的标签页记录', () => {
     messageListUiStateByTab.set('tab_1', makeUiState())
     messageListUiStateByTab.set('tab_2', makeUiState())
     messageListUiStateByTab.set('tab_closed', makeUiState())
@@ -43,7 +43,7 @@ describe('M2-1: messageListUiStateByTab 清理', () => {
     expect(messageListUiStateByTab.has('tab_closed')).toBe(false)
   })
 
-  it('closeTab 关闭标签页后清理对应 UI 状态（非活跃标签页）', () => {
+  test('closeTab 关闭标签页后清理对应 UI 状态（非活跃标签页）', () => {
     const state = {
       openTabs: ref([
         { id: 'tab_1', conversationId: 'conv_1', title: 'A', isStreaming: false },
@@ -66,7 +66,7 @@ describe('M2-1: messageListUiStateByTab 清理', () => {
     expect(state.openTabs.value.map((t: { id: string }) => t.id)).toEqual(['tab_1'])
   })
 
-  it('容量上限常量为正数（兜底防线）', () => {
+  test('容量上限常量为正数（兜底防线）', () => {
     expect(MESSAGE_LIST_UI_STATE_CAP).toBeGreaterThan(0)
   })
 })

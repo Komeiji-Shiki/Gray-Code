@@ -1,6 +1,19 @@
 <script setup lang="ts">
+/**
+ * SettingsPanel - 设置面板主容器
+ *
+ * 模板拆分说明（T12 批次，纯结构性拆分，行为零变化）：
+ * - SettingsSidebar：左侧页签栏（折叠/搜索高亮）
+ * - SettingsSearchBox：设置项搜索框 + 结果下拉
+ * - GeneralSettingsSection：通用页签（代理/语言/更新/存储路径/导入导出/应用信息）
+ * - UsageSummaryCard：用量统计 Token 摘要卡片
+ * - StorageMigrateDialog：存储路径迁移确认对话框
+ * 所有响应式状态仍由本组件持有，子组件仅通过 props/emits 通信。
+ * 注意：SEARCH_INDEX 必须留在本文件（settingsSearchAnchorConsistency.test.ts 直接解析本文件源码做 L-3 校验）。
+ */
 import { ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useSettingsStore, type SettingsTab } from '@/stores/settingsStore'
+import { MESSAGE_NAMES } from '@shared/protocol'
 import ChannelSettings from './ChannelSettings.vue'
 import ToolsSettings from './ToolsSettings.vue'
 import AutoExecSettings from './AutoExecSettings.vue'
@@ -18,25 +31,18 @@ import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
 import UsageTimeSection from '../usage/UsageTimeSection.vue'
 import type { UsageStatsResult, UsageTimeRange } from '@/types/usage'
-import { CustomScrollbar, CustomCheckbox, CustomSelect, Modal, type SelectOption } from '../common'
+import { CustomScrollbar } from '../common'
 import { sendToExtension } from '@/utils/vscode'
-import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
+import { useI18n } from '@/i18n'
+import SettingsSidebar from './panel/SettingsSidebar.vue'
+import SettingsSearchBox from './panel/SettingsSearchBox.vue'
+import GeneralSettingsSection from './panel/GeneralSettingsSection.vue'
+import UsageSummaryCard from './panel/UsageSummaryCard.vue'
+import StorageMigrateDialog from './panel/StorageMigrateDialog.vue'
+import type { TabItem, SearchIndexEntry } from './panel/types'
 
 const settingsStore = useSettingsStore()
 const { t, setLanguage } = useI18n()
-
-interface TabItem {
-  id: SettingsTab
-  label: string
-  icon: string
-}
-
-// 语言选项（使用 computed 以便语言切换时自动更新）
-const languageOptions = computed<SelectOption[]>(() => SUPPORTED_LANGUAGES.map(lang => ({
-  value: lang.value,
-  label: lang.labelKey ? t(lang.labelKey) : lang.label,
-  description: lang.value === 'auto' ? t('components.settings.settingsPanel.language.autoDescription') : lang.nativeLabel
-})))
 
 // 侧边栏折叠状态（展开时显示图标+文字，折叠时仅图标）
 const sidebarCollapsed = ref(false)
@@ -63,19 +69,6 @@ const tabs = computed<TabItem[]>(() => [
 ])
 
 // ========== 设置项搜索 ==========
-
-interface SearchIndexEntry {
-  /** 稳定唯一键（结果列表 key） */
-  key: string
-  /** 目标页签 */
-  tab: SettingsTab
-  /** 结果行显示标签（i18n key） */
-  labelKey: string
-  /** 搜索关键词（中/英/日混合，小写包含匹配） */
-  keywords: string[]
-  /** 目标元素选择器（相对 .settings-section）；缺省定位到节标题 h4 */
-  anchor?: string
-}
 
 // 静态搜索索引：设置项为硬编码组件，无统一注册表，用关键词索引覆盖各页签主要设置项。
 // 每个页签级条目作为兜底；每个设置块都有 data-search-anchor 锚点条目。
@@ -735,7 +728,6 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
 const searchQuery = ref('')
 const searchFocused = ref(false)
 const activeSearchIndex = ref(0)
-const searchRootRef = ref<HTMLElement>()
 const scrollbarRef = ref<InstanceType<typeof CustomScrollbar>>()
 
 // 关键词变化后重置选中项，避免旧索引落到不存在的条目上
@@ -773,50 +765,23 @@ function tabIcon(tabId: SettingsTab): string {
   return tabs.value.find((tab) => tab.id === tabId)?.icon || 'codicon-settings-gear'
 }
 
-function closeSearchDropdown() {
-  searchFocused.value = false
-}
-
-// Esc：关闭下拉并清空查询
-function handleSearchEsc() {
-  closeSearchDropdown()
-  searchQuery.value = ''
-  activeSearchIndex.value = 0
-}
-
-function clearSearch() {
-  searchQuery.value = ''
-  activeSearchIndex.value = 0
-  searchInputRef.value?.focus()
-}
-
 function moveSearchSelection(delta: number) {
   const count = searchResults.value.length
   if (count === 0) return
   activeSearchIndex.value = (activeSearchIndex.value + delta + count) % count
 }
 
-// M-2：键盘导航/鼠标悬停时让选中项保持在下拉可视区域内（结果超出 max-height 时跟随滚动）
-watch(activeSearchIndex, () => {
-  nextTick(() => {
-    document.querySelector('.settings-search-result.active')?.scrollIntoView({ block: 'nearest' })
-  })
-})
-
-function openSearchSelection() {
-  const list = searchResults.value
-  if (list.length === 0) return
-  openSearchResult(list[Math.min(activeSearchIndex.value, list.length - 1)])
-}
-
 /** 跳转到搜索结果：切换页签 → 清空搜索 → 等待渲染 → 滚动定位并闪烁高亮 */
 function openSearchResult(entry: SearchIndexEntry) {
-  closeSearchDropdown()
+  searchFocused.value = false
   // L-2：跳转完成即清空搜索词，侧边栏恢复常态高亮（避免跳转后仍整页置灰/高亮）
   searchQuery.value = ''
   activeSearchIndex.value = 0
   settingsStore.setActiveTab(entry.tab)
   nextTick(() => {
+    // 卸载守卫（仿 CustomScrollbar.vue）：组件可能在 nextTick 待执行期间已卸载（onUnmounted
+    // 已跑完），此时直接跳过——不再新建 rAF / searchFlashTimer，否则没有清理时机（残留 1.6s 定时器）
+    if (isUnmounted) return
     const section = document.querySelector('.settings-section')
     if (!section) return
     let target: HTMLElement | null = null
@@ -851,26 +816,13 @@ function openSearchResult(entry: SearchIndexEntry) {
       }
     })
     target!.classList.add('search-flash')
-    window.setTimeout(() => target!.classList.remove('search-flash'), 1600)
+    searchFlashTimer = setTimeout(() => target!.classList.remove('search-flash'), 1600)
   })
 }
 
-function handleSearchOutsideClick(event: MouseEvent) {
-  if (!searchFocused.value) return
-  const root = searchRootRef.value
-  if (root && !root.contains(event.target as Node)) {
-    closeSearchDropdown()
-  }
-}
-
-const searchInputRef = ref<HTMLInputElement>()
-
-onMounted(() => {
-  document.addEventListener('click', handleSearchOutsideClick)
-})
-
 onUnmounted(() => {
-  document.removeEventListener('click', handleSearchOutsideClick)
+  // 先置卸载标记：nextTick 回调若在卸载后执行，直接跳过（不再新建 rAF / searchFlashTimer）
+  isUnmounted = true
   // 统一清理未触发的定时器，避免卸载后仍修改状态
   if (validateDebounceTimer) {
     clearTimeout(validateDebounceTimer)
@@ -887,6 +839,10 @@ onUnmounted(() => {
   if (importExportMessageTimer) {
     clearTimeout(importExportMessageTimer)
     importExportMessageTimer = null
+  }
+  if (searchFlashTimer) {
+    clearTimeout(searchFlashTimer)
+    searchFlashTimer = null
   }
 })
 
@@ -910,6 +866,10 @@ const saveMessageType = ref<'success' | 'error'>('success')
 let storageMessageTimer: ReturnType<typeof setTimeout> | null = null
 let proxySaveMessageTimer: ReturnType<typeof setTimeout> | null = null
 let importExportMessageTimer: ReturnType<typeof setTimeout> | null = null
+// 搜索结果跳转闪烁高亮清除定时器（组件卸载时统一清理）
+let searchFlashTimer: ReturnType<typeof setTimeout> | null = null
+// 组件卸载标记（仿 CustomScrollbar.vue）：nextTick 回调在卸载后执行时据此跳过
+let isUnmounted = false
 // 存储路径设置
 const storageSettings = reactive({
   currentPath: '',
@@ -929,7 +889,7 @@ let pathValidationRequestId = 0
 // 加载设置
 async function loadSettings() {
   try {
-    const response = await sendToExtension<any>('getSettings', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
     if (response?.settings?.proxy) {
       proxySettings.enabled = response.settings.proxy.enabled || false
       proxySettings.url = response.settings.proxy.url || ''
@@ -960,7 +920,7 @@ const appInfo = ref<{ name: string; displayName: string; version: string }>({
 
 async function loadAppInfo() {
   try {
-    const response = await sendToExtension<any>('getAppInfo', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getAppInfo, {})
     if (response) {
       appInfo.value = {
         name: response.name || '',
@@ -976,7 +936,7 @@ async function loadAppInfo() {
 // 加载存储路径配置
 async function loadStorageConfig() {
   try {
-    const response = await sendToExtension<any>('storagePath.getConfig', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.getConfig'], {})
     if (response) {
       storageSettings.currentPath = response.effectivePath || ''
       storageSettings.defaultPath = response.defaultPath || ''
@@ -991,7 +951,7 @@ async function loadStorageConfig() {
 // 打开系统文件夹选择器
 async function pickStoragePath() {
   try {
-    const response = await sendToExtension<any>('storagePath.selectFolder', {}, { timeoutMs: 120000 })
+    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.selectFolder'], {}, { timeoutMs: 120000 })
     if (response?.path) {
       storageSettings.customPath = response.path
     }
@@ -1004,7 +964,7 @@ async function pickStoragePath() {
 // 在文件资源管理器中打开存储目录
 async function openStoragePathInExplorer() {
   try {
-    await sendToExtension('storagePath.openInExplorer', {
+    await sendToExtension(MESSAGE_NAMES['storagePath.openInExplorer'], {
       path: storageSettings.currentPath
     })
   } catch (error: any) {
@@ -1028,7 +988,7 @@ async function validateStoragePath(path: string) {
   pathValidationResult.value = null
 
   try {
-    const response = await sendToExtension<any>('storagePath.validate', { path: normalizedPath })
+    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.validate'], { path: normalizedPath })
     if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
       pathValidationResult.value = {
         valid: response?.valid ?? false,
@@ -1106,7 +1066,7 @@ async function resetStoragePath() {
   needsReload.value = false
   
   try {
-    const response = await sendToExtension<any>('storagePath.reset', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.reset'], {})
     
     if (response?.success) {
       storageSettings.customPath = ''
@@ -1149,7 +1109,7 @@ async function executeMigration() {
   needsReload.value = false
   
   try {
-    const response = await sendToExtension<any>('storagePath.migrate', {
+    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.migrate'], {
       path: storageSettings.customPath.trim()
     })
     
@@ -1182,7 +1142,7 @@ async function executeMigration() {
 // 重新加载窗口
 async function reloadWindow() {
   try {
-    await sendToExtension('reloadWindow', {})
+    await sendToExtension(MESSAGE_NAMES.reloadWindow, {})
   } catch (error) {
     console.error('Failed to reload window:', error)
   }
@@ -1194,7 +1154,7 @@ async function saveProxySettings() {
   saveMessage.value = ''
   
   try {
-    await sendToExtension('updateProxySettings', {
+    await sendToExtension(MESSAGE_NAMES.updateProxySettings, {
       proxySettings: {
         enabled: proxySettings.enabled,
         url: proxySettings.url.trim() || undefined
@@ -1219,10 +1179,6 @@ async function saveProxySettings() {
 
 const checkUpdatesEnabled = ref(true)
 const updateChannel = ref<'stable' | 'nightly'>('stable')
-const updateChannelOptions = computed<SelectOption[]>(() => [
-  { value: 'stable', label: t('components.settings.settingsPanel.update.channelStable') },
-  { value: 'nightly', label: t('components.settings.settingsPanel.update.channelNightly') },
-])
 const isUpdateChecking = ref(false)
 const isUpdating = ref(false)
 const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
@@ -1231,7 +1187,7 @@ const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string
 async function saveCheckUpdates(value: boolean) {
   checkUpdatesEnabled.value = value
   try {
-    await sendToExtension('updateSettings', { settings: { checkForUpdates: value } })
+    await sendToExtension(MESSAGE_NAMES.updateSettings, { settings: { checkForUpdates: value } })
   } catch (error) {
     console.error('Failed to save update check setting:', error)
   }
@@ -1243,7 +1199,7 @@ async function saveUpdateChannel(value: string) {
   const previous = updateChannel.value
   updateChannel.value = channel
   try {
-    const response = await sendToExtension<any>('updateSettings', { settings: { updateChannel: channel } })
+    const response = await sendToExtension<any>(MESSAGE_NAMES.updateSettings, { settings: { updateChannel: channel } })
     // SettingsHandler.updateSettings 失败时 resolve { success: false }（不抛错，内部 try/catch 捕获），
     // 必须显式检查并回滚 UI 选择，否则界面显示已切换而实际未保存（静默丢失用户操作）。
     if (response?.success === false) {
@@ -1262,7 +1218,7 @@ async function checkUpdateNow() {
   isUpdateChecking.value = true
   updateCheckResult.value = null
   try {
-    const response = await sendToExtension<any>('checkUpdateNow', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.checkUpdateNow, {})
     const status = response?.status
     if (!status) {
       updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
@@ -1292,7 +1248,7 @@ async function updateNow() {
   isUpdating.value = true
   updateCheckResult.value = null
   try {
-    const response = await sendToExtension<any>('updateNow', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES.updateNow, {})
     if (response?.alreadyUpToDate) {
       updateCheckResult.value = { type: 'success', text: t('components.settings.settingsPanel.update.upToDate') }
     } else if (response?.version) {
@@ -1309,24 +1265,13 @@ async function updateNow() {
   }
 }
 
-// 验证代理 URL 格式
-function isValidProxyUrl(url: string): boolean {
-  if (!url.trim()) return true // 空值允许
-  try {
-    const parsed = new URL(url)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
 // 更新语言设置
 async function updateLanguage(lang: string) {
   languageSetting.value = lang
   setLanguage(lang as any)
   
   try {
-    await sendToExtension('updateUISettings', {
+    await sendToExtension(MESSAGE_NAMES.updateUISettings, {
       ui: { language: lang }
     })
   } catch (error) {
@@ -1345,7 +1290,7 @@ async function handleExportSettings() {
   importExportMessage.value = ''
   
   try {
-    const response = await sendToExtension<any>('settings.export', {})
+    const response = await sendToExtension<any>(MESSAGE_NAMES['settings.export'], {})
     if (response?.success) {
       importExportMessage.value = t('components.settings.settingsPanel.exportImport.exportSuccess', { path: response.filePath })
       importExportMessageType.value = 'success'
@@ -1374,7 +1319,7 @@ async function handleImportSettings() {
   try {
     // 先让用户选择导入方式（弹出确认对话框由扩展端处理）
     // 这里直接调用导入，扩展端会弹出文件选择器和覆盖确认
-    const response = await sendToExtension<any>('settings.import', { overwrite: false })
+    const response = await sendToExtension<any>(MESSAGE_NAMES['settings.import'], { overwrite: false })
     if (response?.success) {
       const parts: string[] = []
       if (response.imported?.vscodeSettings) parts.push(t('components.settings.settingsPanel.exportImport.vscodeSettings'))
@@ -1409,13 +1354,6 @@ const usageRange = ref<UsageTimeRange>('all')
 const usageLoading = ref(false)
 const usageLoadError = ref('')
 
-const usageRangeOptions = computed(() => ([
-  { id: 'all' as UsageTimeRange, label: t('components.usage.rangeAll') },
-  { id: 'today' as UsageTimeRange, label: t('components.usage.rangeToday') },
-  { id: '7d' as UsageTimeRange, label: t('components.usage.range7d') },
-  { id: '30d' as UsageTimeRange, label: t('components.usage.range30d') }
-]))
-
 /** 快捷范围 → 起始时间（本地 00:00 对齐；'all' 不限制） */
 function usageRangeToStartTime(range: UsageTimeRange): number | undefined {
   if (range === 'all') return undefined
@@ -1432,7 +1370,7 @@ async function loadUsageStats() {
   try {
     const startTime = usageRangeToStartTime(usageRange.value)
     const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
-    usageStats.value = await sendToExtension<UsageStatsResult>('usage.getStats', query)
+    usageStats.value = await sendToExtension<UsageStatsResult>(MESSAGE_NAMES['usage.getStats'], query)
   } catch (error) {
     usageLoadError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -1448,13 +1386,6 @@ watch(() => settingsStore.activeTab, (tab) => {
   if (tab === 'usage') loadUsageStats()
 })
 
-/** 格式化 token 数量（1.5K / 1.5M） */
-function formatUsageTokens(count: number): string {
-  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
-  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
-  return String(count)
-}
-
 // 初始化
 onMounted(() => {
   loadSettings()
@@ -1467,93 +1398,32 @@ onMounted(() => {
   <div class="settings-panel">
     <div class="settings-header">
       <h3>{{ t('components.settings.settingsPanel.title') }}</h3>
-      <div ref="searchRootRef" class="settings-search-root">
-        <div
-          class="settings-search-box"
-          :class="{ focused: searchFocused, 'has-query': !!searchQuery }"
-        >
-          <i class="codicon codicon-search settings-search-icon"></i>
-          <input
-            ref="searchInputRef"
-            v-model="searchQuery"
-            type="text"
-            :placeholder="t('components.settings.settingsPanel.search.placeholder')"
-            @focus="searchFocused = true"
-            @keydown.down.prevent="moveSearchSelection(1)"
-            @keydown.up.prevent="moveSearchSelection(-1)"
-            @keydown.enter.prevent="openSearchSelection"
-            @keydown.esc="handleSearchEsc"
-          />
-          <button
-            v-if="searchQuery"
-            class="settings-search-clear"
-            :title="t('components.settings.settingsPanel.search.clear')"
-            @click="clearSearch"
-          >
-            <i class="codicon codicon-close"></i>
-          </button>
-        </div>
-        <Transition name="settings-search-dropdown">
-          <div
-            v-if="searchFocused"
-            class="settings-search-results"
-            :class="{ 'is-empty': searchActive && searchResults.length === 0 }"
-          >
-            <template v-if="searchActive && searchResults.length > 0">
-              <div
-                v-for="(result, index) in searchResults"
-                :key="result.key"
-                class="settings-search-result"
-                :class="{ active: index === activeSearchIndex }"
-                @mousedown.prevent="openSearchResult(result)"
-                @mouseenter="activeSearchIndex = index"
-              >
-                <i :class="['codicon', tabIcon(result.tab)]"></i>
-                <span class="settings-search-result-label">{{ t(result.labelKey) }}</span>
-                <span class="settings-search-result-tab">{{ t(`components.settings.tabs.${result.tab}`) }}</span>
-              </div>
-            </template>
-            <div v-else-if="searchActive" class="settings-search-no-results">
-              <i class="codicon codicon-search"></i>
-              {{ t('components.settings.settingsPanel.search.noResults') }}
-            </div>
-            <div v-else class="settings-search-no-results">
-              <i class="codicon codicon-search"></i>
-              {{ t('components.settings.settingsPanel.search.hint') }}
-            </div>
-          </div>
-        </Transition>
-      </div>
+      <!-- T12：拆至 SettingsSearchBox（搜索框 + 结果下拉） -->
+      <SettingsSearchBox
+        v-model:query="searchQuery"
+        v-model:focused="searchFocused"
+        v-model:active-index="activeSearchIndex"
+        :search-active="searchActive"
+        :results="searchResults"
+        :tab-icon="tabIcon"
+        @open="openSearchResult"
+        @move="moveSearchSelection"
+      />
       <button class="settings-close-btn" :title="t('components.settings.settingsPanel.backToChat')" @click="settingsStore.showChat">
         <i class="codicon codicon-close"></i>
       </button>
     </div>
     
     <div class="settings-content">
-      <!-- 左侧页签（可折叠：展开显示图标+文字，折叠仅图标+tooltip；汉堡按钮在顶部） -->
-      <div class="settings-sidebar" :class="{ collapsed: sidebarCollapsed }">
-        <button
-          class="settings-tab settings-sidebar-toggle"
-          :data-tooltip="sidebarCollapsed ? t('components.settings.settingsPanel.sidebarExpand') : t('components.settings.settingsPanel.sidebarCollapse')"
-          @click="sidebarCollapsed = !sidebarCollapsed"
-        >
-          <i class="codicon codicon-menu"></i>
-        </button>
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          :class="['settings-tab', {
-            active: settingsStore.activeTab === tab.id,
-            'has-match': searchActive && tabsWithMatches.has(tab.id),
-            dimmed: searchActive && !tabsWithMatches.has(tab.id)
-          }]"
-          :data-tooltip="tab.label"
-          @click="settingsStore.setActiveTab(tab.id)"
-        >
-          <i :class="['codicon', tab.icon]"></i>
-          <span v-if="!sidebarCollapsed" class="settings-tab-label">{{ tab.label }}</span>
-        </button>
-      </div>
+      <!-- 左侧页签（T12：拆至 SettingsSidebar；可折叠：展开显示图标+文字，折叠仅图标+tooltip） -->
+      <SettingsSidebar
+        :tabs="tabs"
+        :active-tab="settingsStore.activeTab"
+        v-model:collapsed="sidebarCollapsed"
+        :search-active="searchActive"
+        :tabs-with-matches="tabsWithMatches"
+        @select="settingsStore.setActiveTab"
+      />
       
       <!-- 右侧内容 -->
       <CustomScrollbar ref="scrollbarRef" class="settings-main-scrollbar">
@@ -1675,282 +1545,53 @@ onMounted(() => {
             <MemorySettings />
           </div>
           
-          <!-- 通用设置 -->
+          <!-- 通用设置（T12：拆至 GeneralSettingsSection） -->
           <div v-if="settingsStore.activeTab === 'general'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.general.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.general.description') }}</p>
-            
-            <div class="settings-form">
-              <!-- 代理设置 -->
-              <div class="form-group" data-search-anchor="proxy">
-                <label class="group-label">
-                  <i class="codicon codicon-globe"></i>
-                  {{ t('components.settings.settingsPanel.proxy.title') }}
-                </label>
-                <p class="field-description">{{ t('components.settings.settingsPanel.proxy.description') }}</p>
-                
-                <div class="proxy-settings">
-                  <div class="proxy-enable">
-                    <CustomCheckbox
-                      v-model="proxySettings.enabled"
-                      :label="t('components.settings.settingsPanel.proxy.enable')"
-                    />
-                  </div>
-                  
-                  <div class="proxy-url-group" :class="{ disabled: !proxySettings.enabled }">
-                    <label>{{ t('components.settings.settingsPanel.proxy.url') }}</label>
-                    <input
-                      type="text"
-                      v-model="proxySettings.url"
-                      :placeholder="t('components.settings.settingsPanel.proxy.urlPlaceholder')"
-                      :disabled="!proxySettings.enabled"
-                      class="proxy-url-input"
-                      :class="{ invalid: proxySettings.url && !isValidProxyUrl(proxySettings.url) }"
-                    />
-                    <p v-if="proxySettings.url && !isValidProxyUrl(proxySettings.url)" class="error-hint">
-                      {{ t('components.settings.settingsPanel.proxy.urlError') }}
-                    </p>
-                  </div>
-                  
-                  <div class="proxy-actions">
-                    <button
-                      class="save-btn"
-                      @click="saveProxySettings"
-                      :disabled="isSaving || (!!proxySettings.url && !isValidProxyUrl(proxySettings.url))"
-                    >
-                      <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
-                      <span v-else>{{ t('components.settings.settingsPanel.proxy.save') }}</span>
-                    </button>
-                    <span v-if="saveMessage" class="save-message" :class="{ success: saveMessageType === 'success' }">
-                      {{ saveMessage }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              <div class="divider"></div>
-              
-              <!-- 语言设置 -->
-              <div class="form-group" data-search-anchor="language">
-                <label class="group-label">
-                  <i class="codicon codicon-globe"></i>
-                  {{ t('components.settings.settingsPanel.language.title') }}
-                </label>
-                <p class="field-description">{{ t('components.settings.settingsPanel.language.description') }}</p>
-                
-                <div class="language-settings">
-                  <CustomSelect
-                    :model-value="languageSetting"
-                    :options="languageOptions"
-                    :placeholder="t('components.settings.settingsPanel.language.placeholder')"
-                    @update:model-value="updateLanguage"
-                  />
-                </div>
-              </div>
-              
-              <div class="divider"></div>
 
-              <!-- 更新设置 -->
-              <div class="form-group" data-search-anchor="update">
-                <label class="group-label">
-                  <i class="codicon codicon-cloud-download"></i>
-                  {{ t('components.settings.settingsPanel.update.title') }}
-                </label>
-                <p class="field-description">{{ t('components.settings.settingsPanel.update.description') }}</p>
-
-                <div class="update-settings">
-                  <CustomCheckbox
-                    v-model="checkUpdatesEnabled"
-                    :label="t('components.settings.settingsPanel.update.enableLabel')"
-                    @update:model-value="saveCheckUpdates"
-                  />
-
-                  <div class="update-channel-row">
-                    <label class="field-label">{{ t('components.settings.settingsPanel.update.channelLabel') }}</label>
-                    <CustomSelect
-                      :model-value="updateChannel"
-                      :options="updateChannelOptions"
-                      @update:model-value="saveUpdateChannel"
-                    />
-                    <p class="field-hint">{{ t('components.settings.settingsPanel.update.channelDescription') }}</p>
-                  </div>
-
-                  <div class="update-check-row">
-                    <button class="save-btn" :disabled="isUpdateChecking || isUpdating" @click="checkUpdateNow">
-                      <i v-if="isUpdateChecking" class="codicon codicon-loading codicon-modifier-spin"></i>
-                      <span v-else>{{ t('components.settings.settingsPanel.update.checkNow') }}</span>
-                    </button>
-                    <button class="update-now-btn" :disabled="isUpdateChecking || isUpdating" @click="updateNow">
-                      <i v-if="isUpdating" class="codicon codicon-loading codicon-modifier-spin"></i>
-                      <span v-else>{{ t('components.settings.settingsPanel.update.updateNow') }}</span>
-                    </button>
-                    <span v-if="updateCheckResult" class="save-message" :class="updateCheckResult.type">
-                      {{ updateCheckResult.text }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              <!-- 存储路径设置 -->
-              <div class="form-group" data-search-anchor="storage">
-                <label class="group-label">
-                  <i class="codicon codicon-folder"></i>
-                  {{ t('components.settings.storageSettings.title') }}
-                </label>
-                <p class="field-description">{{ t('components.settings.storageSettings.description') }}</p>
-                
-                <div class="storage-settings">
-                  <!-- 存储路径输入（合并当前路径与自定义路径） -->
-                  <div class="storage-custom-path">
-                    <label>{{ t('components.settings.storageSettings.customPath') }}</label>
-                    <div class="path-input-group">
-                      <input
-                        type="text"
-                        v-model="storageSettings.customPath"
-                        :placeholder="storageSettings.currentPath || t('components.settings.storageSettings.customPathPlaceholder')"
-                        class="path-input"
-                        :class="{
-                          valid: pathValidationResult?.valid === true,
-                          invalid: pathValidationResult?.valid === false
-                        }"
-                      />
-                      <button
-                        class="path-picker-btn"
-                        :title="t('components.settings.storageSettings.browse')"
-                        :disabled="isMigrating"
-                        @click="pickStoragePath"
-                      >
-                        <i class="codicon codicon-folder-opened"></i>
-                      </button>
-                    </div>
-                    <p class="field-hint">{{ t('components.settings.storageSettings.customPathHint') }}</p>
-                    <p class="current-path-note">
-                      {{ t('components.settings.storageSettings.currentPath') }}：
-                      <span class="path-note-value" :title="storageSettings.currentPath">{{ storageSettings.currentPath || '-' }}</span>
-                      <span v-if="storageSettings.isCustom" class="path-badge custom">{{ t('common.custom') }}</span>
-                      <span v-else class="path-badge default">{{ t('common.default') }}</span>
-                    </p>
-                    <p v-if="pathValidationResult?.valid === false && pathValidationResult?.message" class="error-hint">
-                      {{ pathValidationResult.message }}
-                    </p>
-                  </div>
-                  
-                  <!-- 操作按钮 -->
-                  <div class="storage-actions">
-                    <button
-                      class="action-btn primary"
-                      @click="applyStoragePath"
-                      :disabled="isMigrating || isValidatingPath || (storageSettings.customPath.trim() !== '' && !pathValidationResult?.valid)"
-                    >
-                      <i class="codicon codicon-check"></i>
-                      {{ t('components.settings.storageSettings.apply') }}
-                    </button>
-                    <button
-                      class="action-btn"
-                      @click="resetStoragePath"
-                      :disabled="isMigrating"
-                      :title="!storageSettings.isCustom ? t('components.settings.storageSettings.notifications.alreadyDefaultTitle') : ''"
-                    >
-                      <i class="codicon codicon-discard"></i>
-                      {{ t('components.settings.storageSettings.reset') }}
-                    </button>
-                    <button
-                      class="action-btn"
-                      @click="openStoragePathInExplorer"
-                      :disabled="isMigrating || !storageSettings.currentPath"
-                      :title="t('components.settings.storageSettings.openInExplorerTitle')"
-                    >
-                      <i class="codicon codicon-link-external"></i>
-                      {{ t('components.settings.storageSettings.openInExplorer') }}
-                    </button>
-                  </div>
-                  
-                  <!-- 状态消息 -->
-                  <div v-if="storageMessage" class="storage-message" :class="storageMessageType">
-                    <i :class="['codicon', storageMessageType === 'success' ? 'codicon-check' : storageMessageType === 'info' ? 'codicon-info' : 'codicon-error']"></i>
-                    {{ storageMessage }}
-                    <!-- 重新加载按钮 -->
-                    <button
-                      v-if="needsReload"
-                      class="reload-btn"
-                      @click="reloadWindow"
-                    >
-                      <i class="codicon codicon-refresh"></i>
-                      {{ t('components.settings.storageSettings.reloadWindow') }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              
-              <div class="divider"></div>
-              
-              <!-- 设置导入/导出 -->
-              <div class="form-group" data-search-anchor="importExport">
-                <label class="group-label">
-                  <i class="codicon codicon-export"></i>
-                  {{ t('components.settings.settingsPanel.exportImport.title') }}
-                </label>
-                <p class="field-description">{{ t('components.settings.settingsPanel.exportImport.description') }}</p>
-                
-                <div class="import-export-actions">
-                  <button
-                    class="action-btn primary"
-                    @click="handleExportSettings"
-                    :disabled="isExporting"
-                  >
-                    <i v-if="isExporting" class="codicon codicon-loading codicon-modifier-spin"></i>
-                    <i v-else class="codicon codicon-export"></i>
-                    {{ isExporting ? t('components.settings.settingsPanel.exportImport.exporting') : t('components.settings.settingsPanel.exportImport.exportBtn') }}
-                  </button>
-                  <button
-                    class="action-btn"
-                    @click="handleImportSettings"
-                    :disabled="isImporting"
-                  >
-                    <i v-if="isImporting" class="codicon codicon-loading codicon-modifier-spin"></i>
-                    <i v-else class="codicon codicon-import"></i>
-                    {{ isImporting ? t('components.settings.settingsPanel.exportImport.importing') : t('components.settings.settingsPanel.exportImport.importBtn') }}
-                  </button>
-                </div>
-                
-                <!-- 状态消息 -->
-                <div v-if="importExportMessage" class="storage-message" :class="importExportMessageType">
-                  <i :class="['codicon', importExportMessageType === 'success' ? 'codicon-check' : 'codicon-error']"></i>
-                  {{ importExportMessage }}
-                </div>
-              </div>
-              
-              <div class="divider"></div>
-              
-              <!-- 应用信息 -->
-              <div class="form-group" data-search-anchor="appInfo">
-                <label class="group-label">
-                  <i class="codicon codicon-info"></i>
-                  {{ t('components.settings.settingsPanel.appInfo.title') }}
-                </label>
-                <div class="info-text">
-                  <p>{{ t('components.settings.settingsPanel.appInfo.name', { appName: appInfo.displayName || appInfo.name }) }}</p>
-                  <p class="version">{{ t('components.settings.settingsPanel.appInfo.version', { version: appInfo.version }) }}</p>
-                  <div class="github-links">
-                    <a href="https://github.com/Komeiji-Shiki/Gray-Code" target="_blank" class="github-link">
-                      <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                      </svg>
-                      {{ t('components.settings.settingsPanel.appInfo.repository') }}
-                    </a>
-                    <a href="https://github.com/Komeiji-Shiki" target="_blank" class="github-link">
-                      <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-                      </svg>
-                      {{ t('components.settings.settingsPanel.appInfo.developer') }}
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <GeneralSettingsSection
+              v-model:proxy-enabled="proxySettings.enabled"
+              v-model:proxy-url="proxySettings.url"
+              :is-saving="isSaving"
+              :save-message="saveMessage"
+              :save-message-type="saveMessageType"
+              @save-proxy="saveProxySettings"
+              :language="languageSetting"
+              @update:language="updateLanguage"
+              v-model:check-updates-enabled="checkUpdatesEnabled"
+              @update:check-updates-enabled="saveCheckUpdates"
+              :update-channel="updateChannel"
+              @update:update-channel="saveUpdateChannel"
+              :is-update-checking="isUpdateChecking"
+              :is-updating="isUpdating"
+              :update-check-result="updateCheckResult"
+              @check-update-now="checkUpdateNow"
+              @update-now="updateNow"
+              :storage-settings="storageSettings"
+              v-model:custom-path="storageSettings.customPath"
+              :is-validating-path="isValidatingPath"
+              :path-validation-result="pathValidationResult"
+              :is-migrating="isMigrating"
+              :storage-message="storageMessage"
+              :storage-message-type="storageMessageType"
+              :needs-reload="needsReload"
+              @pick-storage-path="pickStoragePath"
+              @apply-storage-path="applyStoragePath"
+              @reset-storage-path="resetStoragePath"
+              @open-in-explorer="openStoragePathInExplorer"
+              @reload-window="reloadWindow"
+              :is-exporting="isExporting"
+              :is-importing="isImporting"
+              :import-export-message="importExportMessage"
+              :import-export-message-type="importExportMessageType"
+              @export-settings="handleExportSettings"
+              @import-settings="handleImportSettings"
+              :app-info="appInfo"
+            />
           </div>
 
-          <!-- 用量统计 -->
+          <!-- 用量统计（T12：Token 摘要拆至 UsageSummaryCard） -->
           <div v-if="settingsStore.activeTab === 'usage'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.usage.title') }}</h4>
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.usage.description') }}</p>
@@ -1959,127 +1600,26 @@ onMounted(() => {
             <UsageTimeSection />
 
             <!-- Token 用量摘要 -->
-            <div class="usage-summary-card">
-              <div class="usage-summary-header">
-                <span class="usage-summary-title">
-                  <i class="codicon codicon-graph"></i>
-                  {{ t('components.usage.title') }}
-                </span>
-                <button class="usage-summary-refresh" :title="t('components.usage.refresh')" :disabled="usageLoading" @click="loadUsageStats()">
-                  <i class="codicon codicon-refresh"></i>
-                </button>
-              </div>
-
-              <!-- 时间范围筛选 -->
-              <div class="usage-summary-range">
-                <button
-                  v-for="option in usageRangeOptions"
-                  :key="option.id"
-                  :class="['usage-range-btn', { active: usageRange === option.id }]"
-                  :disabled="usageLoading"
-                  @click="usageRange = option.id"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
-
-              <!-- 加载中 -->
-              <div v-if="usageLoading" class="usage-summary-state">
-                <i class="codicon codicon-loading codicon-modifier-spin"></i>
-                <span>{{ t('components.usage.loading') }}</span>
-              </div>
-
-              <!-- 加载失败 -->
-              <div v-else-if="usageLoadError" class="usage-summary-state is-error">
-                <i class="codicon codicon-error"></i>
-                <span>{{ t('components.usage.loadFailed') }}</span>
-                <button class="usage-retry-btn" @click="loadUsageStats()">{{ t('components.usage.retry') }}</button>
-              </div>
-
-              <!-- 空数据 -->
-              <div v-else-if="!usageStats || usageStats.totals.modelMessages === 0" class="usage-summary-state">
-                <i class="codicon codicon-graph"></i>
-                <span>{{ t('components.usage.empty') }}</span>
-              </div>
-
-              <template v-else>
-                <!-- 总览卡片 -->
-                <div class="usage-summary-totals">
-                  <div class="usage-summary-total-item is-main">
-                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.totalTokens) }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.totalTokens') }}</span>
-                  </div>
-                  <div class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.promptTokens) }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.promptTokens') }}</span>
-                  </div>
-                  <div class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.candidatesTokens) }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.candidatesTokens') }}</span>
-                  </div>
-                  <div class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.thoughtsTokens) }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.thoughtsTokens') }}</span>
-                  </div>
-                  <div v-if="usageStats.totals.cacheCreationTokens > 0" class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.cacheCreationTokens) }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.cacheCreationTokens') }}</span>
-                  </div>
-                  <div v-if="usageStats.totals.cacheReadTokens > 0" class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ formatUsageTokens(usageStats.totals.cacheReadTokens) }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.cacheReadTokens') }}</span>
-                  </div>
-                  <div class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ usageStats.totals.conversations }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.conversations') }}</span>
-                  </div>
-                  <div class="usage-summary-total-item">
-                    <span class="usage-summary-value">{{ usageStats.totals.modelMessages }}</span>
-                    <span class="usage-summary-label">{{ t('components.usage.modelMessages') }}</span>
-                  </div>
-                </div>
-
-                <!-- 读取失败提示 -->
-                <div v-if="usageStats.totals.skippedConversations > 0" class="usage-skipped-hint">
-                  <i class="codicon codicon-warning"></i>
-                  <span>{{ t('components.usage.skippedHint', { count: usageStats.totals.skippedConversations }) }}</span>
-                </div>
-              </template>
-
-              <!-- 打开完整用量统计页面 -->
-              <div class="usage-summary-footer">
-                <button class="usage-open-full-btn" @click="settingsStore.showUsage">
-                  <i class="codicon codicon-arrow-right"></i>
-                  {{ t('components.settings.settingsPanel.sections.usage.openFullPage') }}
-                </button>
-              </div>
-            </div>
+            <UsageSummaryCard
+              :stats="usageStats"
+              v-model:range="usageRange"
+              :loading="usageLoading"
+              :load-error="usageLoadError"
+              @refresh="loadUsageStats()"
+              @retry="loadUsageStats()"
+              @open-full="settingsStore.showUsage"
+            />
           </div>
         </div>
       </CustomScrollbar>
     </div>
     
-    <!-- 迁移确认对话框 -->
-    <Modal
-      v-model="showMigrateDialog"
-      :title="t('components.settings.storageSettings.dialog.migrateTitle')"
-    >
-      <div class="migrate-dialog-content">
-        <p>{{ t('components.settings.storageSettings.dialog.migrateMessage') }}</p>
-        <p class="migrate-warning">
-          <i class="codicon codicon-warning"></i>
-          {{ t('components.settings.storageSettings.dialog.migrateWarning') }}
-        </p>
-      </div>
-      <template #footer>
-        <button class="dialog-btn" :disabled="isMigrating" @click="showMigrateDialog = false">
-          {{ t('components.settings.storageSettings.dialog.cancel') }}
-        </button>
-        <button class="dialog-btn primary" :disabled="isMigrating" @click="executeMigration">
-          {{ t('components.settings.storageSettings.dialog.confirm') }}
-        </button>
-      </template>
-    </Modal>
+    <!-- 迁移确认对话框（T12：拆至 StorageMigrateDialog） -->
+    <StorageMigrateDialog
+      v-model:show="showMigrateDialog"
+      :is-migrating="isMigrating"
+      @confirm="executeMigration"
+    />
   </div>
 </template>
 
@@ -2133,100 +1673,6 @@ onMounted(() => {
   min-height: 0;
 }
 
-/* 左侧页签（可折叠：默认展开显示图标+文字，折叠仅图标） */
-.settings-sidebar {
-  width: 132px;
-  border-right: 1px solid var(--vscode-panel-border);
-  padding: 8px 4px;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  transition: width 0.2s ease;
-}
-
-.settings-sidebar.collapsed {
-  width: 48px;
-}
-
-/* 顶部汉堡按钮：与页签同款；margin 在展开/收起时保持一致，避免切换时列表整体跳动 */
-.settings-sidebar-toggle {
-  margin-bottom: 2px;
-}
-
-.settings-tab {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  width: 100%;
-  height: 30px;
-  padding: 0 10px;
-  background: transparent;
-  border: none;
-  border-radius: 6px;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.settings-tab:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.settings-tab-label {
-  flex: 1;
-  font-size: 12px;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 自定义 tooltip 显示在右侧 */
-.settings-tab::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 100%;
-  top: 50%;
-  transform: translateY(-50%);
-  margin-left: 8px;
-  padding: 4px 8px;
-  background: var(--vscode-editorWidget-background);
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.15s, visibility 0.15s;
-  pointer-events: none;
-  z-index: 1000;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.settings-sidebar.collapsed .settings-tab:hover::after {
-  opacity: 1;
-  visibility: visible;
-}
-
-/* 汉堡按钮在展开/收起状态下都显示 tooltip */
-.settings-sidebar-toggle:hover::after {
-  opacity: 1;
-  visibility: visible;
-}
-
-.settings-tab.active {
-  background: var(--vscode-list-activeSelectionBackground);
-  color: var(--vscode-list-activeSelectionForeground);
-}
-
-.settings-tab .codicon {
-  font-size: 18px;
-}
-
 /* 右侧内容 - 滚动条容器 */
 .settings-main-scrollbar {
   flex: 1;
@@ -2250,876 +1696,6 @@ onMounted(() => {
   margin: 0 0 16px 0;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
-}
-
-/* 表单样式 */
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-group label {
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.info-text {
-  padding: 8px 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-}
-
-.info-text p {
-  margin: 0;
-  font-size: 13px;
-}
-
-.info-text .version {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.github-links {
-  display: flex;
-  gap: 16px;
-  margin-top: 10px;
-}
-
-.github-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--vscode-textLink-foreground);
-  text-decoration: none;
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background-color 0.15s;
-}
-
-.github-link:hover {
-  background: var(--vscode-list-hoverBackground);
-  text-decoration: underline;
-}
-
-.github-icon {
-  width: 16px;
-  height: 16px;
-}
-
-/* 代理设置样式 */
-.group-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.group-label .codicon {
-  font-size: 14px;
-  color: var(--vscode-foreground);
-}
-
-.field-description {
-  margin: 4px 0 12px 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.proxy-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-}
-
-.proxy-enable {
-  display: flex;
-  align-items: center;
-}
-
-.proxy-url-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition: opacity 0.2s;
-}
-
-.proxy-url-group.disabled {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.proxy-url-group label {
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.proxy-url-input {
-  width: 100%;
-  padding: 6px 10px;
-  font-size: 13px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.proxy-url-input:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.proxy-url-input:disabled {
-  background: var(--vscode-input-background);
-  opacity: 0.6;
-}
-
-.proxy-url-input.invalid {
-  border-color: var(--vscode-inputValidation-errorBorder);
-}
-
-.error-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--vscode-errorForeground);
-}
-
-.proxy-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 4px;
-}
-
-.save-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 60px;
-  padding: 6px 12px;
-  font-size: 12px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.save-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.save-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.save-message {
-  font-size: 12px;
-  color: var(--vscode-errorForeground);
-}
-
-.save-message.success {
-  color: var(--vscode-terminal-ansiGreen);
-}
-
-.save-message.info {
-  color: var(--vscode-descriptionForeground);
-}
-
-/* 更新设置 */
-.update-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.update-channel-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.update-channel-row .field-label {
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.update-channel-row .field-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.update-check-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.update-now-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  padding: 6px 16px;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.update-now-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.update-now-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.divider {
-  height: 1px;
-  background: var(--vscode-panel-border);
-  margin: 8px 0;
-}
-
-/* 语言设置 */
-.language-settings {
-  max-width: 240px;
-}
-
-/* Loading 动画 */
-.codicon-modifier-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* 存储路径设置样式 */
-.storage-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-}
-
-.path-badge {
-  flex-shrink: 0;
-  padding: 2px 6px;
-  font-size: 10px;
-  font-weight: 500;
-  border-radius: 3px;
-  text-transform: uppercase;
-}
-
-.path-badge.default {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-}
-
-.path-badge.custom {
-  background: var(--vscode-statusBarItem-prominentBackground);
-  color: var(--vscode-statusBarItem-prominentForeground);
-}
-
-.storage-custom-path {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.storage-custom-path label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
-}
-
-.path-input-group {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.path-input {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.path-picker-btn {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.path-picker-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.path-picker-btn .codicon {
-  font-size: 16px;
-}
-
-.current-path-note {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.path-note-value {
-  max-width: 60%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--vscode-editor-font-family, monospace);
-}
-
-.path-input:focus {
-  border-color: var(--vscode-focusBorder);
-}
-
-.path-input.valid {
-  border-color: var(--vscode-terminal-ansiGreen);
-}
-
-.path-input.invalid {
-  border-color: var(--vscode-inputValidation-errorBorder);
-}
-
-.field-hint {
-  margin: 0;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.storage-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.action-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.action-btn:hover:not(:disabled) {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.action-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.action-btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.storage-message {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.storage-message.success {
-  background: rgba(0, 200, 0, 0.1);
-  color: var(--vscode-terminal-ansiGreen);
-}
-
-.storage-message.error {
-  background: rgba(200, 0, 0, 0.1);
-  color: var(--vscode-errorForeground);
-}
-
-.reload-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 12px;
-  padding: 4px 10px;
-  font-size: 12px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.reload-btn:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-/* 迁移对话框 */
-.migrate-dialog-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.migrate-dialog-content p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.migrate-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  background: rgba(255, 200, 0, 0.1);
-  border-radius: 4px;
-  color: var(--vscode-editorWarning-foreground);
-}
-
-.migrate-warning .codicon {
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.dialog-btn {
-  padding: 6px 14px;
-  font-size: 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.dialog-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.dialog-btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.dialog-btn.primary:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-/* 用量统计（设置内嵌摘要） */
-.usage-summary-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-  background: var(--vscode-editorWidget-background, transparent);
-}
-
-.usage-summary-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.usage-summary-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.usage-summary-title .codicon {
-  font-size: 14px;
-}
-
-.usage-summary-refresh {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-}
-
-.usage-summary-refresh:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.usage-summary-refresh:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.usage-summary-range {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-
-.usage-range-btn {
-  padding: 2px 8px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  font-size: 10px;
-}
-
-.usage-range-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.usage-range-btn.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
-}
-
-.usage-range-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.usage-summary-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 16px 8px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
-}
-
-.usage-summary-state .codicon {
-  font-size: 18px;
-}
-
-.usage-summary-state.is-error {
-  color: var(--vscode-errorForeground);
-}
-
-.usage-retry-btn {
-  margin-top: 2px;
-  padding: 3px 10px;
-  border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 4px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  cursor: pointer;
-  font-size: 11px;
-}
-
-.usage-retry-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.usage-summary-totals {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 12px;
-}
-
-.usage-summary-total-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.usage-summary-value {
-  font-size: 14px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.usage-summary-total-item.is-main .usage-summary-value {
-  font-size: 18px;
-}
-
-.usage-summary-label {
-  font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.usage-skipped-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--vscode-editorWarning-foreground);
-}
-
-.usage-skipped-hint .codicon {
-  flex-shrink: 0;
-}
-
-.usage-summary-footer {
-  display: flex;
-  justify-content: flex-end;
-  border-top: 1px solid var(--vscode-panel-border);
-  padding-top: 10px;
-}
-
-.usage-open-full-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 11px;
-  background: transparent;
-  color: var(--vscode-textLink-foreground);
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background-color 0.15s;
-}
-
-.usage-open-full-btn:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.usage-open-full-btn .codicon {
-  font-size: 12px;
-}
-
-/* ===== 设置项搜索 ===== */
-
-.settings-search-root {
-  position: relative;
-  flex: 1;
-  max-width: 380px;
-  margin: 0 12px;
-}
-
-.settings-search-box {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #3c3c3c));
-  border-radius: 4px;
-  background: var(--vscode-input-background, #3c3c3c);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.settings-search-box.focused {
-  border-color: var(--vscode-focusBorder, #3794ff);
-  box-shadow: 0 0 0 1px var(--vscode-focusBorder, #3794ff);
-}
-
-.settings-search-icon {
-  font-size: 12px;
-  flex-shrink: 0;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
-}
-
-.settings-search-box input {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  padding: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-}
-
-.settings-search-box input::placeholder {
-  color: var(--vscode-input-placeholderForeground, var(--vscode-descriptionForeground, #9d9d9d));
-}
-
-.settings-search-clear {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.settings-search-clear:hover {
-  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
-  color: var(--vscode-foreground);
-}
-
-.settings-search-clear .codicon {
-  font-size: 11px;
-}
-
-.settings-search-results {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: 2147482000;
-  max-height: 300px;
-  overflow-y: auto;
-  padding: 4px 0;
-  background: var(--vscode-dropdown-background, var(--vscode-editorWidget-background, #252526));
-  border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border, #454545));
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.settings-search-result {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  cursor: pointer;
-  min-width: 0;
-}
-
-.settings-search-result:hover,
-.settings-search-result.active {
-  background: var(--vscode-list-activeSelectionBackground, #094771);
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
-}
-
-.settings-search-result .codicon {
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.settings-search-result-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-search-result-tab {
-  flex-shrink: 0;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 10px;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
-}
-
-.settings-search-result:hover .settings-search-result-tab,
-.settings-search-result.active .settings-search-result-tab {
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
-  opacity: 0.8;
-}
-
-.settings-search-no-results {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground, #9d9d9d);
-}
-
-.settings-search-no-results .codicon {
-  font-size: 12px;
-}
-
-.settings-search-dropdown-enter-active,
-.settings-search-dropdown-leave-active {
-  transition: opacity 0.12s ease, transform 0.12s ease;
-}
-
-.settings-search-dropdown-enter-from,
-.settings-search-dropdown-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-
-/* 搜索生效时侧边栏：命中页签高亮，未命中置灰 */
-.settings-tab.has-match {
-  color: var(--vscode-textLink-foreground, #3794ff);
-}
-
-.settings-tab.has-match.active {
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
-}
-
-.settings-tab.dimmed {
-  opacity: 0.35;
 }
 
 /* 搜索结果跳转后的临时闪烁高亮 */

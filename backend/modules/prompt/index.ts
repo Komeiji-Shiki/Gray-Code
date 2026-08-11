@@ -1,5 +1,5 @@
 /**
- * LimCode - 系统提示词模块
+ * GrayCode - 系统提示词模块
  * 
  * 导出系统提示词管理器和相关类型
  */
@@ -20,3 +20,4 @@ export type {
     SerializedPromptContextCache,
     SerializedPromptContextMessage
 } from './promptContextCache'
+

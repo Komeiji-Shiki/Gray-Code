@@ -8,9 +8,9 @@
  * - saveContents 返回 void（既有适配器）时保持写后回读，向后兼容。
  */
 
-import { DelegatingTranscriptRepository } from '../../modules/conversation/TranscriptRepository';
-import type { TranscriptRepositoryDelegate } from '../../modules/conversation/TranscriptRepository';
-import type { Content } from '../../modules/conversation/types';
+import { DelegatingTranscriptRepository } from '../../modules/conversation';
+import type { TranscriptRepositoryDelegate } from '../../modules/conversation';
+import type { Content } from '../../modules/conversation';
 
 function content(text: string): Content {
     return { role: 'user', parts: [{ text }], timestamp: 1 } as Content;

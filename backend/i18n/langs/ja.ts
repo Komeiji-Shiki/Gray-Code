@@ -1,22 +1,10 @@
 /**
- * LimCode Backend - 日本語言語パック
+ * GrayCode Backend - 日本語言語パック
  */
 
 import type { BackendLanguageMessages } from '../types';
 
 const ja: BackendLanguageMessages = {
-    core: {
-        registry: {
-            moduleAlreadyRegistered: 'モジュール "{moduleId}" は既に登録されています',
-            duplicateApiName: 'モジュール "{moduleId}" に重複した API 名があります: {apiName}',
-            registeringModule: '[ModuleRegistry] モジュールを登録中: {moduleId} ({moduleName} v{version})',
-            moduleNotRegistered: 'モジュールが登録されていません: {moduleId}',
-            unregisteringModule: '[ModuleRegistry] モジュールの登録を解除中: {moduleId}',
-            apiNotFound: 'API が見つかりません: {moduleId}.{apiName}',
-            missingRequiredParams: '必須パラメータが不足しています: {params}'
-        }
-    },
-
     modules: {
         config: {
             errors: {
@@ -40,7 +28,8 @@ const ja: BackendLanguageMessages = {
                 maxTokensMin: 'max_tokens は 0 より大きくなければなりません',
                 topPRange: 'top_p は 0.0 〜 1.0 の範囲でなければなりません',
                 topKMin: 'top_k は 0 以上でなければなりません',
-                thinkingBudgetMin: 'thinking.budget_tokens は 1024 以上でなければなりません'
+                thinkingBudgetMin: 'thinking.budget_tokens は 1024 以上でなければなりません',
+                unsupportedType: 'サポートされていないチャンネルタイプ: {type}'
             }
         },
 
@@ -432,7 +421,9 @@ const ja: BackendLanguageMessages = {
         common: {
             taskNotFound: 'タスク {id} が見つからないか、既に完了しています',
             cancelTaskFailed: 'タスクのキャンセルに失敗しました: {error}',
-            toolAlreadyExists: 'ツールは既に存在します: {name}'
+            toolAlreadyExists: 'ツールは既に存在します: {name}',
+            show: '表示',
+            hide: '非表示'
         },
         
         skills: {
@@ -783,6 +774,28 @@ description: "このスキルの機能と使用場面の簡単な説明"
         dialogs: {
             selectStorageFolder: 'ストレージフォルダを選択',
             selectFolder: 'フォルダを選択'
+        },
+
+        promptSettings: {
+            dynamicSection: {
+                strategyTitle: '動的コンテキスト戦略',
+                strategySingle: '単一の動的コンテキスト',
+                strategyPreserve: '古い動的コンテキストを元の位置に保持',
+                strategyDescription: '単一モードは既存の動作を維持します。保持モードでは、キャッシュ済みの古い動的コンテキストを元のターン位置に戻し、新しいコンテキストを新しいメッセージの前に挿入します。',
+                strategyPreserveWarning: '保持モードはリクエストのトークン数を増やします。保持するコンテキストが多いほど、コンテキスト裁剪や要約が発生しやすくなります。',
+                strategyVarsPrefix: 'プリセットエントリまたは従来テンプレートに',
+                strategyVarsSeparator: '、',
+                strategyVarsSuffix: 'などの変化する変数が含まれる場合、この設定は古いターンのスナップショットを保持するかどうかを決定します。',
+                strategyVarsWarning: '古い動的コンテキストを元の位置に保持すると、古いターンの動的スナップショットを元の位置に固定して戻し、現在のターンに現在のコンテキストを挿入します。長いコンテキストや多数の履歴ターンに適しています。'
+            },
+            assemblyMode: {
+                title: 'プロンプト組み立て方式',
+                description: '各モードで選択できる組み立て方式は 1 つだけです：従来テンプレートまたはプリセットエントリ。',
+                legacyLabel: '従来テンプレート',
+                legacyDescription: 'システムプロンプトテンプレートと動的コンテキストテンプレートを使用します。',
+                entriesLabel: 'プリセットエントリ',
+                entriesDescription: '並べ替え可能なエントリを使用し、Chat History で実際の履歴の位置を制御します。'
+            }
         }
     },
 

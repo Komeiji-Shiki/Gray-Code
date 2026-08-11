@@ -17,7 +17,7 @@ import {
 import type { XMLToolCall } from '../../tools/xmlFormatter';
 
 describe('parseXMLToolCalls - tool_name 形态容错', () => {
-    it('常规字符串 tool_name 正常解析（回归保护）', () => {
+    test('常规字符串 tool_name 正常解析（回归保护）', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>read_file</tool_name>
   <parameters>
@@ -30,7 +30,7 @@ describe('parseXMLToolCalls - tool_name 形态容错', () => {
         expect(calls[0].args).toEqual({ path: 'a.txt' });
     });
 
-    it('tool_name 携带属性时仍提取出字符串工具名', () => {
+    test('tool_name 携带属性时仍提取出字符串工具名', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name priority="high">read_file</tool_name>
   <parameters>
@@ -43,7 +43,7 @@ describe('parseXMLToolCalls - tool_name 形态容错', () => {
         expect(calls[0].name).toBe('read_file');
     });
 
-    it('tool_name 为空时跳过该调用', () => {
+    test('tool_name 为空时跳过该调用', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name></tool_name>
   <parameters><path>a.txt</path></parameters>
@@ -54,7 +54,7 @@ describe('parseXMLToolCalls - tool_name 形态容错', () => {
 });
 
 describe('parseXMLToolCalls - 带属性参数节点', () => {
-    it('带属性的纯文本参数节点保留文本内容', () => {
+    test('带属性的纯文本参数节点保留文本内容', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -69,7 +69,7 @@ describe('parseXMLToolCalls - 带属性参数节点', () => {
         expect(calls[0].args.content).toBe('hello world');
     });
 
-    it('带属性的嵌套对象参数仍按子元素解析', () => {
+    test('带属性的嵌套对象参数仍按子元素解析', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>example_tool</tool_name>
   <parameters>
@@ -86,7 +86,7 @@ describe('parseXMLToolCalls - 带属性参数节点', () => {
 });
 
 describe('parseXMLToolCalls - CDATA 感知切块', () => {
-    it('CDATA 内包含 </tool_use> 时不提前截断', () => {
+    test('CDATA 内包含 </tool_use> 时不提前截断', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -101,7 +101,7 @@ describe('parseXMLToolCalls - CDATA 感知切块', () => {
 });
 
 describe('convertFunctionCallToXML - 历史重放格式', () => {
-    it('对象数组参数重放为 <item> 嵌套元素而非 JSON 文本', () => {
+    test('对象数组参数重放为 <item> 嵌套元素而非 JSON 文本', () => {
         const xml = convertFunctionCallToXML('read_file', {
             files: [{ path: 'a.txt' }, { path: 'b.txt' }]
         });
@@ -115,7 +115,7 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
         expect(calls[0].args).toEqual({ files: [{ path: 'a.txt' }, { path: 'b.txt' }] });
     });
 
-    it('顶层字符串参数重放后可解析回原结构', () => {
+    test('顶层字符串参数重放后可解析回原结构', () => {
         const xml = convertFunctionCallToXML('write_file', {
             path: 'a.txt',
             content: 'if (a < b) {}'
@@ -126,14 +126,14 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
         expect(calls[0].args).toEqual({ path: 'a.txt', content: 'if (a < b) {}' });
     });
 
-    it('特殊字符标量参数使用 CDATA 保护并可往返', () => {
+    test('特殊字符标量参数使用 CDATA 保护并可往返', () => {
         const xml = convertFunctionCallToXML('write_file', { path: 'a.txt', content: '<x> & </y>' });
 
         const calls = parseXMLToolCalls(xml);
         expect(calls[0].args.content).toBe('<x> & </y>');
     });
 
-    it('顶层非法 XML 键名使用可逆编码并保留其他参数', () => {
+    test('顶层非法 XML 键名使用可逆编码并保留其他参数', () => {
         const args = {
             '': 'empty key',
             'bad key': 'value',
@@ -149,7 +149,7 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
         expect(parseXMLToolCalls(xml)[0].args).toEqual(args);
     });
 
-    it('嵌套对象中的非法键名保持对象结构而非退化为 JSON 字符串', () => {
+    test('嵌套对象中的非法键名保持对象结构而非退化为 JSON 字符串', () => {
         const args = {
             options: {
                 'display name': 'Alice',
@@ -166,7 +166,7 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
         expect(typeof calls[0].args.options.nested).toBe('object');
     });
 
-    it('数组内对象的非法键名逐项往返，且保留 Unicode 键名', () => {
+    test('数组内对象的非法键名逐项往返，且保留 Unicode 键名', () => {
         const args = {
             rows: [
                 { 'bad key': 'first', valid: 'one' },
@@ -180,7 +180,7 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
         expect(calls[0].args).toEqual(args);
     });
 
-    it('保留元素名作为真实对象键时也能无歧义往返', () => {
+    test('保留元素名作为真实对象键时也能无歧义往返', () => {
         const args = {
             options: {
                 __graycode_encoded_key__: 'literal value'
@@ -194,7 +194,7 @@ describe('convertFunctionCallToXML - 历史重放格式', () => {
 });
 
 describe('convertFunctionResponseToXML - 响应转义', () => {
-    it('响应内容中的标记文本被 CDATA 包裹，不破坏结构', () => {
+    test('响应内容中的标记文本被 CDATA 包裹，不破坏结构', () => {
         const xml = convertFunctionResponseToXML('read_file', {
             success: true,
             content: 'docs about </tool_result> and <tool_use> markers'
@@ -208,7 +208,7 @@ describe('convertFunctionResponseToXML - 响应转义', () => {
         expect(closeTag).toBeGreaterThan(cdataEnd);
     });
 
-    it('普通响应仍保持可读 JSON 内容', () => {
+    test('普通响应仍保持可读 JSON 内容', () => {
         const xml = convertFunctionResponseToXML('todo_write', { success: true, total: 3 });
 
         expect(xml).toContain('"total": 3');
@@ -218,7 +218,7 @@ describe('convertFunctionResponseToXML - 响应转义', () => {
 });
 
 describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
-    it('数字字符串参数不被自动转换（parseTagValue: false）', () => {
+    test('数字字符串参数不被自动转换（parseTagValue: false）', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -231,7 +231,7 @@ describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
         expect(calls[0].args.content).toBe('1.10');
     });
 
-    it('DOCTYPE 自定义实体不会被展开', () => {
+    test('DOCTYPE 自定义实体不会被展开', () => {
         const calls = parseXMLToolCalls(`<!DOCTYPE tool_use [
   <!ENTITY secret "expanded-value">
 ]>
@@ -248,7 +248,7 @@ describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
         expect(calls[0].args.content).toBe('&secret;');
     });
 
-    it('超深嵌套输入安全失败（maxNestedTags 限制，不抛异常）', () => {
+    test('超深嵌套输入安全失败（maxNestedTags 限制，不抛异常）', () => {
         const depth = 150;
         const nested = '<a>'.repeat(depth) + '</a>'.repeat(depth);
         const xml = `<tool_use>
@@ -263,7 +263,7 @@ describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
         expect(Array.isArray(calls)).toBe(true);
     });
 
-    it('危险键名（__proto__ / constructor）被解析器安全拒绝，无原型污染', () => {
+    test('危险键名（__proto__ / constructor）被解析器安全拒绝，无原型污染', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
@@ -280,7 +280,7 @@ describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
         expect(calls).toHaveLength(0);
     });
 
-    it('编码后的危险键名在写入参数对象前被丢弃，其他参数仍可用', () => {
+    test('编码后的危险键名在写入参数对象前被丢弃，其他参数仍可用', () => {
         const args = JSON.parse(`{
             "__proto__": { "polluted": "yes" },
             "constructor": { "polluted": "yes" },
@@ -296,7 +296,7 @@ describe('parseXMLToolCalls - 安全与字符串语义（F-01）', () => {
         expect(({} as any).polluted).toBeUndefined();
     });
 
-    it('无编码标记的保留标签仍按已有合法 XML 键解析', () => {
+    test('无编码标记的保留标签仍按已有合法 XML 键解析', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name>example_tool</tool_name>
   <parameters>

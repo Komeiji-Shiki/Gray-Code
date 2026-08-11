@@ -1,5 +1,5 @@
 /**
- * BranchService 业务编排单测（第五阶段 BR-05/06/07/09）。
+ * BranchService 业务编排单测（第五阶段 BR-05/06/07/09；另覆盖 BS-2、FIX-G3（M-1/M-2/BS-3/BS-4）、TREE-09、BCP-06 行为）。
  *
  * 覆盖：
  * - BR-06：getBranchGraph / getBranchGraphMeta / saveBranchGraph（validate 闸门）/
@@ -19,11 +19,11 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import {
     ConversationManager,
-} from '../../modules/conversation/ConversationManager';
+} from '../../modules/conversation';
 import {
     MemoryStorageAdapter,
-} from '../../modules/conversation/storage';
-import type { ConversationHistory } from '../../modules/conversation/types';
+} from '../../modules/conversation';
+import type { ConversationHistory } from '../../modules/conversation';
 import {
     BranchService,
     getGlobalBranchService,
@@ -76,7 +76,7 @@ describe('BranchService', () => {
         return (await manager.getMessagesRaw(conversationId)).map(m => m.id!);
     }
 
-    describe('BR-06 读写删接口', () => {
+    describe('读写删接口', () => {
         test('getBranchGraph：无图 → { graph: null }；save 后往返一致', async () => {
             const ids = await seedConversation('c1');
             expect((await service.getBranchGraph('c1')).graph).toBeNull();
@@ -124,7 +124,7 @@ describe('BranchService', () => {
         });
     });
 
-    describe('BR-07 候选创建 / 编辑 / 切换 / 删除（会话写锁内）', () => {
+    describe('候选创建 / 编辑 / 切换 / 删除（会话写锁内）', () => {
         test('createRerollCandidate：无图先建线性基线（imported），新候选 kind=reroll 且激活，旧候选保留', async () => {
             const [userNodeId, modelNodeId] = await seedConversation('c1');
             const result = await service.createRerollCandidate('c1', modelNodeId, {
@@ -269,7 +269,7 @@ describe('BranchService', () => {
         });
     });
 
-    describe('BR-05 validateActivePathMatchesHistory（调试校验）', () => {
+    describe('validateActivePathMatchesHistory（调试校验）', () => {
         test('无图且历史为空 → valid；无图但历史非空 → 报图缺失', async () => {
             await manager.createConversation('empty', 'T');
             const empty = await service.validateActivePathMatchesHistory('empty');
@@ -305,7 +305,7 @@ describe('BranchService', () => {
         });
     });
 
-    describe('BR-09 跨对话分支建模 + deleteConversation 清理', () => {
+    describe('跨对话分支建模 + deleteConversation 清理', () => {
         test('createBranchConversation：metadata sourceNodeId 双写 + 新对话图 imported/exportedFrom + 源头图 exportedRefs', async () => {
             const ids = await seedConversation('source');
             const result = await manager.createBranchConversation('source', 1, { conversationId: 'target' });
@@ -369,7 +369,7 @@ describe('BranchService', () => {
         });
     });
 
-    describe('FIX-G3 复查修复（M-1/M-2/BS-3/BS-4）', () => {
+    describe('复查修复（M-1/M-2/BS-3/BS-4）', () => {
         test('getBranchGraphMeta：sidecar 损坏（解析失败）→ exists:false + corrupted:true + errorCode（M-1）', async () => {
             await seedConversation('c1');
             const filePath = repo.getBranchesFilePath('c1');
@@ -459,7 +459,7 @@ describe('BranchService', () => {
         });
     });
 
-    describe('BS-2 appendHistoryToGraph（方法级，调用点后续接线）', () => {
+    describe('appendHistoryToGraph（方法级，调用点后续接线）', () => {
         test('无分支图 → 返回 false 且不建 sidecar（线性对话未建图不强制建）', async () => {
             const ids = await seedConversation('c1');
             expect(await repo.exists('c1')).toBe(false);
@@ -718,7 +718,7 @@ describe('BranchService', () => {
         });
     });
 
-    describe('TREE-09 软删 / 恢复 / 重命名 / 修剪 / 保留期', () => {
+    describe('软删 / 恢复 / 重命名 / 修剪 / 保留期', () => {
         /** 建会话 + 两个 reroll 候选，返回 [user, model, r1, r2] */
         async function seedCandidates(conversationId: string): Promise<string[]> {
             const ids = await seedConversation(conversationId);
@@ -1004,9 +1004,97 @@ describe('BranchService', () => {
             expect(pruned.prunedNodeCount).toBe(1);
         });
     });
+
+    describe('clearHistory / restoreSnapshot 图同步（forceResetToEmpty / rebase 接线）', () => {
+        test('clearHistory 整体清空：forceResetToEmpty 空图；新 append 后图以新根重建，不挂旧根/旧尾', async () => {
+            const ids = await seedConversation('c1');
+            await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'a2' }] });
+            expect((await service.getBranchGraph('c1')).graph!.rootNodeId).toBe(ids[0]);
+
+            // 清空主历史（内部接线 global BranchService → syncGraphAfterHistoryDelete forceResetToEmpty）
+            await manager.clearHistory('c1');
+            expect(await manager.getMessagesRaw('c1')).toEqual([]);
+            const cleared = (await service.getBranchGraph('c1')).graph!;
+            expect(cleared.rootNodeId).toBeNull();
+            expect(cleared.activeTailNodeId).toBeNull();
+            expect(cleared.nodes).toEqual({});
+            expect(cleared.activeChildId).toBeNull();
+            expect(validate(cleared).valid).toBe(true);
+
+            // 清空后 append 新消息（新写入使用随机 UUID，不会与旧消息 id 冲突）
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'n1' }], timestamp: 500 },
+                { role: 'model', parts: [{ text: 'n2' }], timestamp: 600 },
+            ]);
+            const newIds = (await manager.getMessagesRaw('c1')).map(m => m.id!);
+            expect(newIds[0]).not.toBe(ids[0]);
+
+            // 下一次图同步以当前主历史重建：新根 = 新历史首条消息（不再挂到被清空的旧图/旧尾）
+            const reconciled = await service.ensureMainHistoryRepresentedInGraph('c1');
+            expect(reconciled.reconciled).toBe(true);
+            const rebuilt = (await service.getBranchGraph('c1')).graph!;
+            expect(rebuilt.rootNodeId).toBe(newIds[0]);
+            expect(activePath(rebuilt)).toEqual(newIds);
+            expect(rebuilt.nodes[ids[0]]).toBeUndefined();
+            expect(validate(rebuilt).valid).toBe(true);
+        });
+
+        test('restoreSnapshot 空历史快照：等价清空 → forceResetToEmpty 空图', async () => {
+            await seedConversation('c1');
+            await manager.clearHistory('c1');
+            const emptySnapshot = await manager.createSnapshot('c1');
+            expect(emptySnapshot.history).toEqual([]);
+
+            // 重新写入内容并建图（图非空、根非空），再恢复空快照
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'q1' }], timestamp: 100 },
+                { role: 'model', parts: [{ text: 'a1' }], timestamp: 200 },
+            ]);
+            await service.ensureMainHistoryRepresentedInGraph('c1');
+            await service.createRerollCandidate('c1', (await manager.getMessagesRaw('c1'))[1].id!, { parts: [{ text: 'a2' }] });
+            expect((await service.getBranchGraph('c1')).graph!.rootNodeId).not.toBeNull();
+
+            await manager.restoreSnapshot('c1', emptySnapshot.id);
+
+            expect(await manager.getMessagesRaw('c1')).toEqual([]);
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(graph.rootNodeId).toBeNull();
+            expect(graph.activeTailNodeId).toBeNull();
+            expect(graph.nodes).toEqual({});
+            expect(validate(graph).valid).toBe(true);
+        });
+
+        test('restoreSnapshot 非空历史快照：按快照主历史 rebase 活跃路径，旧候选归档保留', async () => {
+            const ids = await seedConversation('c1'); // [u1, m1]
+            const fullSnapshot = await manager.createSnapshot('c1');
+            expect(fullSnapshot.history.map(m => m.id)).toEqual(ids);
+
+            // 快照后继续追加并建候选：图先于快照状态（活跃路径含快照外消息）
+            await manager.addBatch('c1', [
+                { role: 'user', parts: [{ text: 'q2' }], timestamp: 300 },
+                { role: 'model', parts: [{ text: 'a2' }], timestamp: 400 },
+            ]);
+            const grownIds = (await manager.getMessagesRaw('c1')).map(m => m.id!);
+            const candidate = await service.createRerollCandidate('c1', ids[1], { parts: [{ text: 'alt' }] });
+            expect(activePath((await service.getBranchGraph('c1')).graph!)).toContain(candidate.nodeId);
+
+            await manager.restoreSnapshot('c1', fullSnapshot.id);
+
+            // 主历史回到快照状态；图活跃路径以快照主历史重建
+            expect((await manager.getMessagesRaw('c1')).map(m => m.id!)).toEqual(ids);
+            const graph = (await service.getBranchGraph('c1')).graph!;
+            expect(graph.rootNodeId).toBe(ids[0]);
+            expect(activePath(graph)).toEqual(ids);
+            expect(graph.activeTailNodeId).toBe(ids[1]);
+            // 快照外的追加消息与候选退化为非活跃节点保留（rebase 归档语义），图仍合法
+            expect(graph.nodes[grownIds[2]]!.parentId).toBe(ids[1]);
+            expect(graph.nodes[candidate.nodeId]).toMatchObject({ parentId: ids[1], kind: 'reroll' });
+            expect(validate(graph).valid).toBe(true);
+        });
+    });
 });
 
-describe('BCP-06 purge/prune 引用归零存档清理联动', () => {
+describe('purge/prune 引用归零存档清理联动', () => {
     let tempDir: string;
     let repo: BranchGraphRepository;
     let manager: ConversationManager;

@@ -56,7 +56,7 @@ function makeMessages(count: number, startIndex: number): Content[] {
     return messages;
 }
 
-describe('MIG-09 基准 ② 长对话（1 万条消息，真实磁盘）', () => {
+describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
     let rootDir: string;
     let manager: ConversationManager;
 

@@ -7,13 +7,13 @@ import {
     restoreWorkspaceSnapshot,
     type RestoreChainEntry,
     type RestoreTargetState
-} from '../../modules/checkpoint/CheckpointRestoreEngine';
+} from '../../modules/checkpoint';
 import { hashFileStreaming } from '../../modules/checkpoint/fileHashing';
 import {
     createRuntimeWorkspaceRoots,
     createWorkspaceScopedPath,
     type RuntimeWorkspaceRoot
-} from '../../modules/checkpoint/CheckpointWorkspace';
+} from '../../modules/checkpoint';
 import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
 
 /**

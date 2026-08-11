@@ -1,5 +1,5 @@
 /**
- * LimCode - MemoryManager
+ * GrayCode - MemoryManager
  *
  * OptMem 风格永久记忆系统的核心引擎。
  * 负责 LOG（追加式日志）和 TREE（二叉树摘要缓存）的读写，
@@ -86,23 +86,23 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * 若只按文本长度（entryChars）校验，用户在把 entryChars 调高或 id 位数增长后
  * 会在 pad() 处以晦涩的 "Too long" 报错。此处按实际 id 精确计算可用文本预算。
  */
-function assertRecordFits(id: number, date: string, text: string): void {
+function assertRecordFits(id: number, date: string, text: string, rec: number = LOG_REC): void {
     const overhead = 1 + String(id).length + 1 + date.length + 1;
     const used = overhead + Buffer.byteLength(text, 'utf-8');
-    if (used > LOG_REC - 1) {
-        die(`Too long: text takes ${used - overhead} bytes, budget ${LOG_REC - 1 - overhead} bytes ` +
-            `(fixed-width record holds ${LOG_REC - 1}, header takes ${overhead}).`);
+    if (used > rec - 1) {
+        die(`Too long: text takes ${used - overhead} bytes, budget ${rec - 1 - overhead} bytes ` +
+            `(fixed-width record holds ${rec - 1}, header takes ${overhead}).`);
     }
 }
 
-/** 从字节缓冲区解析多条记录 */
-function records(buf: Buffer): LogEntry[] {
+/** 从字节缓冲区解析多条记录；rec 为当前记录宽度（新格式 1024，旧格式降级 320） */
+function records(buf: Buffer, rec: number = LOG_REC): LogEntry[] {
     const out: LogEntry[] = [];
-    // 只解析完整记录：崩溃残留的尾部半条记录（长度不是 LOG_REC 的整数倍）
+    // 只解析完整记录：崩溃残留的尾部半条记录（长度不是 rec 的整数倍）
     // 会被忽略而不是解析成垃圾条目——修复发生在下一次追加（repair），
     // 但修复前的 wake/recall/listEntries 不应把撕裂的尾巴当作有效记忆。
-    for (let i = 0; i + LOG_REC <= buf.length; i += LOG_REC) {
-        const slice = buf.subarray(i, i + LOG_REC);
+    for (let i = 0; i + rec <= buf.length; i += rec) {
+        const slice = buf.subarray(i, i + rec);
         const str = slice.toString('utf-8').trimEnd();
         if (str) {
             // B-9: 损坏行（无空格头部/非数字 id）跳过，不让 NaN id 伪记录进入 wake/recall
@@ -150,6 +150,11 @@ export class MemoryManager {
     private dir: string;
     private config: MemoryConfig;
     private lock = new AsyncLock();
+    /**
+     * 当前 LOG 记录宽度：新格式 1024（默认）；迁移失败且文件为旧格式（320 对齐非 1024 对齐）
+     * 时降级为 320——按 1024 解析旧记录会产生空结果/混拼乱码（见 repairLog）。
+     */
+    private logRecMode: number = LOG_REC;
 
     constructor(storagePath: string, config?: Partial<MemoryConfig>) {
         this.dir = storagePath;
@@ -234,19 +239,79 @@ export class MemoryManager {
             size = (await fs.stat(logPath)).size;
         } catch (e: any) {
             if (e?.code !== 'ENOENT') throw e;
-            return; // 文件不存在，忽略（与 repair 同口径）
+            this.logRecMode = LOG_REC; // 文件不存在，忽略（与 repair 同口径）
+            return;
         }
-        if (size === 0) return;
+        if (size === 0) {
+            this.logRecMode = LOG_REC;
+            return;
+        }
 
         // 纯新格式（1024 对齐且非 320 对齐）：无需处理
-        if (size % LOG_REC === 0 && size % OLD_LOG_REC !== 0) return;
+        if (size % LOG_REC === 0 && size % OLD_LOG_REC !== 0) {
+            this.logRecMode = LOG_REC;
+            return;
+        }
 
         // 其余：先尝试严格迁移（旧格式 / 旧格式+撕裂尾 / 歧义尺寸中的旧格式）
-        if (await this.tryMigrateLog()) return;
+        if (await this.tryMigrateLog()) {
+            this.logRecMode = LOG_REC;
+            return;
+        }
 
         // 迁移未执行：保持现状（fail-open，不丢数据）
-        if (size % LOG_REC === 0 || size % OLD_LOG_REC === 0) return; // 对齐文件不动
-        await this.truncateLogTail(logPath, size);                    // 撕裂尾巴按新宽度截断
+        if (size % LOG_REC === 0 || size % OLD_LOG_REC === 0) {
+            // 对齐文件不动。旧格式（320 对齐非 1024 对齐）→ 读/写降级为 320 宽度：
+            // 迁移失败说明含损坏记录，按 1024 解析会产生空结果/混拼乱码，
+            // 降级后损坏记录被跳过、合法记录仍可读。
+            this.logRecMode = size % LOG_REC === 0 ? LOG_REC : OLD_LOG_REC;
+            return;
+        }
+
+        // 非对齐（撕裂尾）：必须先判定格式倾向再截断——迁移失败场景下若文件是旧格式
+        // （320 对齐的主体 + 撕裂尾），按 1024 截断会直接删掉旧格式字节（M1）。
+        // probe 前两条 320 记录判定；probe 无法判定（<640B 小文件）时取截断损失更小的宽度。
+        const handle = await fs.open(logPath, 'r');
+        let legacyLike: boolean;
+        try {
+            const legacy = await this.probeLegacyFormat(handle, size);
+            legacyLike = legacy !== null ? legacy : size % OLD_LOG_REC <= size % LOG_REC;
+        } finally {
+            await handle.close();
+        }
+        if (legacyLike) {
+            await this.truncateLogTail(logPath, size, OLD_LOG_REC);
+            this.logRecMode = OLD_LOG_REC;
+            return;
+        }
+        await this.truncateLogTail(logPath, size, LOG_REC);
+        this.logRecMode = LOG_REC;
+    }
+
+    /**
+     * 快速判别文件是否为旧格式（320B/条）：前两条 320 记录必须都是合法记录（id 0/1、ISO 日期）。
+     *
+     * 返回 true = 旧格式嫌疑；false = 确非旧格式（probe 读够且前两条不合法）；
+     * null = 文件过小（< 640B，仅一条）无法 probe。
+     * 复用于迁移判定（tryMigrateLog）与迁移失败后的截断宽度/降级判定（repairLog）。
+     */
+    private async probeLegacyFormat(
+        handle: import('fs').promises.FileHandle,
+        fileSize: number
+    ): Promise<boolean | null> {
+        if (fileSize < OLD_LOG_REC * 2) return null;
+        const probe = Buffer.alloc(OLD_LOG_REC * 2);
+        const { bytesRead: probeRead } = await handle.read(probe, 0, probe.length, 0);
+        if (probeRead < OLD_LOG_REC * 2) return null;
+        const p0 = probe.subarray(0, OLD_LOG_REC).toString('utf-8').trimEnd();
+        const p1 = probe.subarray(OLD_LOG_REC, OLD_LOG_REC * 2).toString('utf-8').trimEnd();
+        const e0 = p0 ? parse(p0) : null;
+        const e1 = p1 ? parse(p1) : null;
+        if (!e0 || e0.id !== 0 || !ISO_DATE_RE.test(e0.date) ||
+            !e1 || e1.id !== 1 || !ISO_DATE_RE.test(e1.date)) {
+            return false; // 非旧格式
+        }
+        return true;
     }
 
     /**
@@ -273,18 +338,10 @@ export class MemoryManager {
                     // 快速判别：前两条 320 记录必须都合法（id 0/1、ISO 日期），否则不是旧格式
                     // ——新格式/损坏文件的第二个 320 切片必然落在第一条 1024 记录内部，解析失败。
                     // 避免大文件每次访问都全量扫描（歧义尺寸下 1024 对齐的新文件也会走到这里）。
-                    const probe = Buffer.alloc(OLD_LOG_REC * 2);
-                    const { bytesRead: probeRead } = await handle.read(probe, 0, probe.length, 0);
-                    if (probeRead >= OLD_LOG_REC * 2) {
-                        const p0 = probe.subarray(0, OLD_LOG_REC).toString('utf-8').trimEnd();
-                        const p1 = probe.subarray(OLD_LOG_REC, OLD_LOG_REC * 2).toString('utf-8').trimEnd();
-                        const e0 = p0 ? parse(p0) : null;
-                        const e1 = p1 ? parse(p1) : null;
-                        if (!e0 || e0.id !== 0 || !ISO_DATE_RE.test(e0.date) ||
-                            !e1 || e1.id !== 1 || !ISO_DATE_RE.test(e1.date)) {
-                            return false; // 非旧格式
-                        }
-                    }
+                    // probe 返回 null（<640B 单条记录小文件）时不拦截，交给全量校验判定。
+                    const legacy = await this.probeLegacyFormat(handle, stat.size);
+                    if (legacy === false) return false; // 非旧格式
+                }
                     const outHandle = await fs.open(tmpPath, 'w');
                     try {
                         valid = true;
@@ -316,7 +373,6 @@ export class MemoryManager {
                     } finally {
                         await outHandle.close();
                     }
-                }
             } finally {
                 await handle.close();
             }
@@ -335,11 +391,11 @@ export class MemoryManager {
         return migrated;
     }
 
-    /** 截断撕裂的尾部半条记录（与 repair(filePath, rec) 的截断语义一致，宽度为 LOG_REC） */
-    private async truncateLogTail(logPath: string, size: number): Promise<void> {
+    /** 截断撕裂的尾部半条记录（与 repair(filePath, rec) 的截断语义一致，宽度为 rec） */
+    private async truncateLogTail(logPath: string, size: number, rec: number = LOG_REC): Promise<void> {
         const handle = await fs.open(logPath, 'r+');
         try {
-            await handle.truncate(size - (size % LOG_REC));
+            await handle.truncate(size - (size % rec));
         } finally {
             await handle.close();
         }
@@ -373,7 +429,7 @@ export class MemoryManager {
     }
 
     private async logLen(): Promise<number> {
-        return this.count(this.logPath(), LOG_REC);
+        return this.count(this.logPath(), this.logRecMode);
     }
 
     /** 追加日志记录，返回起始 ID */
@@ -381,6 +437,7 @@ export class MemoryManager {
         const release = await this.lock.acquire();
         try {
             await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            const rec = this.logRecMode;
             const base = await this.logLen();
             const chunks: Buffer[] = [];
             for (let k = 0; k < items.length; k++) {
@@ -388,8 +445,8 @@ export class MemoryManager {
                 // 锁内用真实分配的 id 精确校验整条记录容量（含 "#<id> <date> " 头部开销）：
                 // id 由本方法在锁内分配，此处校验与实际写入完全一致，不存在估算竞态
                 // （锁外按 logLen 估算可能低估 id 位数，并发追加时仍会在 pad() 抛晦涩 Too long）。
-                assertRecordFits(base + k, date, text);
-                chunks.push(pad(`#${base + k} ${date} ${text}`, LOG_REC));
+                assertRecordFits(base + k, date, text, rec);
+                chunks.push(pad(`#${base + k} ${date} ${text}`, rec));
             }
             await fs.appendFile(this.logPath(), Buffer.concat(chunks));
             return base;
@@ -400,15 +457,16 @@ export class MemoryManager {
 
     /** 读取指定范围的日志记录 */
     private async logSlice(lo: number, hi: number): Promise<LogEntry[]> {
+        const rec = this.logRecMode;
         const handle = await fs.open(this.logPath(), 'r');
         try {
-            const buf = Buffer.alloc((hi - lo) * LOG_REC);
-            const { bytesRead } = await handle.read(buf, 0, buf.length, lo * LOG_REC);
+            const buf = Buffer.alloc((hi - lo) * rec);
+            const { bytesRead } = await handle.read(buf, 0, buf.length, lo * rec);
             if (bytesRead < buf.length) {
                 // 记录不足，截取实际读取的部分
-                return records(buf.subarray(0, bytesRead));
+                return records(buf.subarray(0, bytesRead), rec);
             }
-            return records(buf);
+            return records(buf, rec);
         } finally {
             await handle.close();
         }
@@ -423,15 +481,16 @@ export class MemoryManager {
 
     /** 流式扫描全部日志 */
     private async *logScan(): AsyncGenerator<LogEntry> {
+        const rec = this.logRecMode;
         let handle: import('fs').promises.FileHandle | null = null;
         try {
             handle = await fs.open(this.logPath(), 'r');
             let offset = 0;
             while (true) {
-                const buf = Buffer.alloc(LOG_REC * 4096);
+                const buf = Buffer.alloc(rec * 4096);
                 const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
                 if (bytesRead === 0) break;
-                const entries = records(buf.subarray(0, bytesRead));
+                const entries = records(buf.subarray(0, bytesRead), rec);
                 for (const e of entries) yield e;
                 offset += bytesRead;
             }
@@ -1088,6 +1147,7 @@ export class MemoryManager {
         const release = await this.lock.acquire();
         try {
             await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
+            const rec = this.logRecMode;
             const T = await this.logLen();
             if (id < 0 || id >= T) {
                 die(`No memory at index ${id}.`);
@@ -1096,14 +1156,14 @@ export class MemoryManager {
             // 读取原条目以保留 ID 和日期
             const entry = await this.logGet(id);
             // 整条记录容量校验（头部 + 文本），避免 pad() 处晦涩的 Too long
-            assertRecordFits(entry.id, entry.date, trimmed);
+            assertRecordFits(entry.id, entry.date, trimmed, rec);
             const newLine = `#${entry.id} ${entry.date} ${trimmed}`;
 
-            const buf = pad(newLine, LOG_REC);
+            const buf = pad(newLine, rec);
             const logPath = this.logPath();
             const handle = await fs.open(logPath, 'r+');
             try {
-                await handle.write(buf, 0, buf.length, id * LOG_REC);
+                await handle.write(buf, 0, buf.length, id * rec);
             } finally {
                 await handle.close();
             }
@@ -1158,15 +1218,16 @@ export class MemoryManager {
                 // 物理索引对齐与空/损坏记录跳过语义与旧实现一致。
                 // 流式写 tmp：不再全量累积 rebuilt 数组，峰值内存从 O(T·LOG_REC) 降为 O(CHUNK·LOG_REC)。
                 const CHUNK = 4096;
+                const rec = this.logRecMode;
                 for (let base = 0; base < T; base += CHUNK) {
                     const count = Math.min(CHUNK, T - base);
-                    const buf = Buffer.alloc(count * LOG_REC);
-                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * LOG_REC);
-                    const effective = Math.floor(bytesRead / LOG_REC);
+                    const buf = Buffer.alloc(count * rec);
+                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * rec);
+                    const effective = Math.floor(bytesRead / rec);
                     const kept: Buffer[] = [];
                     for (let i = 0; i < effective; i++) {
                         const idx = base + i;
-                        const slice = buf.subarray(i * LOG_REC, (i + 1) * LOG_REC);
+                        const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
                         // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
                         if (!str) continue;
@@ -1175,7 +1236,7 @@ export class MemoryManager {
                         if (!parsed) {
                             continue; // B-9: 损坏行跳过（不重建），与 records() 解析口径一致
                         }
-                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, LOG_REC));
+                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, rec));
                         outCount++;
                     }
                     if (kept.length > 0) {
@@ -1274,22 +1335,25 @@ export class MemoryManager {
             let outCount = 0;
             try {
                 const CHUNK = 4096;
+                // 对齐必须按当前记录宽度（旧格式降级 320B/条）进行：按 LOG_REC=1024 对齐
+                // 会读错偏移，重编号后 tmp 近乎全空，rename 会用空文件覆盖 LOG.txt → 全量记忆丢失
+                const rec = this.logRecMode;
                 for (let base = 0; base < T; base += CHUNK) {
                     const count = Math.min(CHUNK, T - base);
-                    const buf = Buffer.alloc(count * LOG_REC);
-                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * LOG_REC);
-                    const effective = Math.floor(bytesRead / LOG_REC);
+                    const buf = Buffer.alloc(count * rec);
+                    const { bytesRead } = await handle.read(buf, 0, buf.length, base * rec);
+                    const effective = Math.floor(bytesRead / rec);
                     const kept: Buffer[] = [];
                     for (let i = 0; i < effective; i++) {
                         const idx = base + i;
-                        const slice = buf.subarray(i * LOG_REC, (i + 1) * LOG_REC);
+                        const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
                         // 空/损坏记录跳过语义与 deleteRange 一致
                         if (!str) continue;
                         if (toDelete.has(idx)) continue;
                         const parsed = parse(str);
                         if (!parsed) continue;
-                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, LOG_REC));
+                        kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, rec));
                         outCount++;
                     }
                     if (kept.length > 0) {
@@ -1371,7 +1435,7 @@ export class MemoryManager {
             await this.repairLog(); // 打开前修复：旧格式迁移 + 撕裂尾截断
             const logHandle = await fs.open(logPath, 'r+');
             try {
-                await logHandle.truncate(keepId * LOG_REC);
+                await logHandle.truncate(keepId * this.logRecMode);
             } finally {
                 await logHandle.close();
             }
@@ -1491,3 +1555,4 @@ export class MemoryManager {
         return this.dir;
     }
 }
+

@@ -8,8 +8,8 @@
  * - PDF 附件：Anthropic 转 document 块；OpenAI 系转文本占位
  */
 
-import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
-import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
+import { OpenAIFormatter } from '../../modules/channel';
+import { AnthropicFormatter } from '../../modules/channel';
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
 import type { OpenAIConfig, AnthropicConfig, OpenAIResponsesConfig } from '../../modules/config/types';
 import type { Content, ContentPart } from '../../modules/conversation/types';
@@ -80,7 +80,7 @@ const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8
 describe('OpenAIFormatter 附件序列化', () => {
     const formatter = new OpenAIFormatter();
 
-    it('将 txt 附件（text/plain）解码为 text 块，而不是 image_url', () => {
+    test('将 txt 附件（text/plain）解码为 text 块，而不是 image_url', () => {
         const config = createOpenAIConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -99,7 +99,7 @@ describe('OpenAIFormatter 附件序列化', () => {
         });
     });
 
-    it('function_call 模式下 txt 附件同样解码为 text 块', () => {
+    test('function_call 模式下 txt 附件同样解码为 text 块', () => {
         const config = createOpenAIConfig({ toolMode: 'function_call' });
         const request = formatter.buildRequest({
             configId: config.id,
@@ -118,7 +118,7 @@ describe('OpenAIFormatter 附件序列化', () => {
         expect(userMessage.content.some((c: any) => c.type === 'image_url')).toBe(false);
     });
 
-    it('图片附件仍然转换为 image_url（不回归）', () => {
+    test('图片附件仍然转换为 image_url（不回归）', () => {
         const config = createOpenAIConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -132,7 +132,7 @@ describe('OpenAIFormatter 附件序列化', () => {
         });
     });
 
-    it('PDF 等不支持格式转为文本占位，而不是 image_url', () => {
+    test('PDF 等不支持格式转为文本占位，而不是 image_url', () => {
         // 默认未开启 pdfAttachmentEnabled 时的保守行为
         const config = createOpenAIConfig();
         const request = formatter.buildRequest({
@@ -148,7 +148,7 @@ describe('OpenAIFormatter 附件序列化', () => {
         expect(userMessage.content.some((c: any) => c.type === 'image_url')).toBe(false);
     });
 
-    it('开启 pdfAttachmentEnabled 后 PDF 附件以 file 内容块发送', () => {
+    test('开启 pdfAttachmentEnabled 后 PDF 附件以 file 内容块发送', () => {
         const config = createOpenAIConfig({ pdfAttachmentEnabled: true });
         const request = formatter.buildRequest({
             configId: config.id,
@@ -166,7 +166,7 @@ describe('OpenAIFormatter 附件序列化', () => {
         expect(userMessage.content.some((c: any) => c.type === 'image_url')).toBe(false);
     });
 
-    it('xml 模式下开启 pdfAttachmentEnabled 后 PDF 同样以 file 内容块发送', () => {
+    test('xml 模式下开启 pdfAttachmentEnabled 后 PDF 同样以 file 内容块发送', () => {
         const config = createOpenAIConfig({ toolMode: 'xml', pdfAttachmentEnabled: true });
         const request = formatter.buildRequest({
             configId: config.id,
@@ -177,7 +177,7 @@ describe('OpenAIFormatter 附件序列化', () => {
         expect(userMessage.content.some((c: any) => c.type === 'file')).toBe(true);
     });
 
-    it('xml 模式下 txt 附件同样解码为 text 块', () => {
+    test('xml 模式下 txt 附件同样解码为 text 块', () => {
         const config = createOpenAIConfig({ toolMode: 'xml' });
         const request = formatter.buildRequest({
             configId: config.id,
@@ -198,7 +198,7 @@ describe('OpenAIFormatter 附件序列化', () => {
 describe('AnthropicFormatter 附件序列化', () => {
     const formatter = new AnthropicFormatter();
 
-    it('将 txt 附件（text/plain）解码为 text 块', () => {
+    test('将 txt 附件（text/plain）解码为 text 块', () => {
         const config = createAnthropicConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -213,7 +213,7 @@ describe('AnthropicFormatter 附件序列化', () => {
         expect(userMessage.content.some((c: any) => c.type === 'image')).toBe(false);
     });
 
-    it('将 PDF 附件转换为 document 块', () => {
+    test('将 PDF 附件转换为 document 块', () => {
         const config = createAnthropicConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -231,7 +231,7 @@ describe('AnthropicFormatter 附件序列化', () => {
         });
     });
 
-    it('图片附件仍然转换为 image 块（不回归）', () => {
+    test('图片附件仍然转换为 image 块（不回归）', () => {
         const config = createAnthropicConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -255,7 +255,7 @@ describe('AnthropicFormatter 附件序列化', () => {
 describe('OpenAIResponsesFormatter 附件序列化', () => {
     const formatter = new OpenAIResponsesFormatter();
 
-    it('将 txt 附件（text/plain）解码为 input_text 块', () => {
+    test('将 txt 附件（text/plain）解码为 input_text 块', () => {
         const config = createResponsesConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -271,7 +271,7 @@ describe('OpenAIResponsesFormatter 附件序列化', () => {
         expect(userMessage.content.some((c: any) => c.type === 'input_image')).toBe(false);
     });
 
-    it('图片附件仍然转换为 input_image 块（不回归）', () => {
+    test('图片附件仍然转换为 input_image 块（不回归）', () => {
         const config = createResponsesConfig();
         const request = formatter.buildRequest({
             configId: config.id,
@@ -285,7 +285,7 @@ describe('OpenAIResponsesFormatter 附件序列化', () => {
         });
     });
 
-    it('PDF 附件转换为 input_file 块（Responses API 支持 base64 内联 PDF）', () => {
+    test('PDF 附件转换为 input_file 块（Responses API 支持 base64 内联 PDF）', () => {
         const config = createResponsesConfig();
         const request = formatter.buildRequest({
             configId: config.id,

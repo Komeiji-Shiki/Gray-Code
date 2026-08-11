@@ -4,6 +4,7 @@
  * 用于配置 Model Context Protocol 服务器
  */
 
+import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { CustomCheckbox, ConfirmDialog } from '../common'
@@ -140,7 +141,7 @@ const statusText = (status: McpServerStatus) => {
 async function loadServers() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ success: boolean; servers?: McpServerInfo[]; error?: any }>('getMcpServers', {})
+    const response = await sendToExtension<{ success: boolean; servers?: McpServerInfo[]; error?: any }>(MESSAGE_NAMES.getMcpServers, {})
     if (response?.success && response.servers) {
       servers.value = response.servers
     }
@@ -163,7 +164,7 @@ async function tryAutoConnect(server: McpServerInfo) {
   connectingServers.value.add(serverId)
   
   try {
-    await sendToExtension('connectMcpServer', { serverId })
+    await sendToExtension(MESSAGE_NAMES.connectMcpServer, { serverId })
     await loadServers()  // 刷新状态
   } catch (error) {
     console.error(`Auto-connect ${serverId} failed:`, error)
@@ -249,7 +250,7 @@ async function checkIdAvailability(id: string) {
   idValidation.checking = true
   
   try {
-    const response = await sendToExtension<{ success: boolean; valid?: boolean; error?: string }>('validateMcpServerId', {
+    const response = await sendToExtension<{ success: boolean; valid?: boolean; error?: string }>(MESSAGE_NAMES.validateMcpServerId, {
       id: id.trim(),
       excludeId: editingServer.value?.id
     })
@@ -399,7 +400,7 @@ async function saveServer() {
       
       const customId = formData.customId.trim() || undefined
       
-      const response = await sendToExtension<{ success: boolean; error?: any }>('createMcpServer', { input, customId })
+      const response = await sendToExtension<{ success: boolean; error?: any }>(MESSAGE_NAMES.createMcpServer, { input, customId })
       if (!response?.success) {
         throw new Error(response?.error?.message || t('components.settings.mcpSettings.validation.createFailed'))
       }
@@ -415,7 +416,7 @@ async function saveServer() {
         cleanSchema: formData.cleanSchema
       }
       
-      const response = await sendToExtension<{ success: boolean; error?: any }>('updateMcpServer', {
+      const response = await sendToExtension<{ success: boolean; error?: any }>(MESSAGE_NAMES.updateMcpServer, {
         serverId: editingServer.value.id,
         updates
       })
@@ -445,7 +446,7 @@ async function confirmDeleteServer() {
   if (!deleteTargetServer.value) return
   
   try {
-    const response = await sendToExtension<{ success: boolean; error?: any }>('deleteMcpServer', {
+    const response = await sendToExtension<{ success: boolean; error?: any }>(MESSAGE_NAMES.deleteMcpServer, {
       serverId: deleteTargetServer.value.config.id
     })
     if (response?.success) {
@@ -470,11 +471,11 @@ async function toggleConnection(server: McpServerInfo) {
   try {
     connectionError.value = ''
     if (server.status === 'connected') {
-      await sendToExtension('disconnectMcpServer', { serverId })
+      await sendToExtension(MESSAGE_NAMES.disconnectMcpServer, { serverId })
     } else {
       // 立即显示连接中状态
       connectingServers.value.add(serverId)
-      await sendToExtension('connectMcpServer', { serverId })
+      await sendToExtension(MESSAGE_NAMES.connectMcpServer, { serverId })
     }
     await loadServers()
   } catch (error: any) {
@@ -493,7 +494,7 @@ async function toggleEnabled(server: McpServerInfo) {
   const newEnabled = !server.config.enabled
   
   try {
-    await sendToExtension('setMcpServerEnabled', {
+    await sendToExtension(MESSAGE_NAMES.setMcpServerEnabled, {
       serverId,
       enabled: newEnabled
     })
@@ -515,7 +516,7 @@ async function toggleEnabled(server: McpServerInfo) {
 // 打开 JSON 配置文件（在 VSCode 编辑器中）
 async function openConfigFile() {
   try {
-    await sendToExtension('openMcpConfigFile', {})
+    await sendToExtension(MESSAGE_NAMES.openMcpConfigFile, {})
   } catch (error) {
     console.error('Failed to open config file:', error)
   }

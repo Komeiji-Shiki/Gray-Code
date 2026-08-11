@@ -1,5 +1,5 @@
 /**
- * LimCode - 存储适配器接口
+ * GrayCode - 存储适配器接口
  * 
  * 存储格式说明:
  * - 对话历史: 完整的 Gemini Content[] 格式
@@ -1191,15 +1191,25 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                         // 才用 legacy 快照（legacy 在分段完成后才删除，崩溃窗口内它是旧快照，会丢分段后的追加）。
                         let existing: ConversationHistory = [];
                         let anySegmentReadable = false;
+                        // 中间段不可读时不得静默跳过：跳过会让自愈重写把该段消息悄悄丢弃（静默数据
+                        // 丢失）。收集所有失败段并整体报错，由上层按「历史不可读」处理；只有全部
+                        // 中间段可读（或根本没有中间段）时才继续自愈重写。
+                        const unreadableSegments: string[] = [];
                         for (let i = 0; i < segments.length - 1; i++) {
                             const seg = segments[i];
                             const segResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, seg.file));
                             if (!segResult.value) {
-                                // 该段不可读：跳过（自愈优先保留其它可读段；比整体回退 legacy 丢得少）
+                                unreadableSegments.push(seg.file);
                                 continue;
                             }
                             anySegmentReadable = true;
                             existing.push(...segResult.value.slice(0, seg.count));
+                        }
+                        if (unreadableSegments.length > 0) {
+                            throw new Error(
+                                `appendHistory: cannot self-heal, unreadable history segment(s) `
+                                + `${unreadableSegments.join(', ')} for ${conversationId}`
+                            );
                         }
                         if (!anySegmentReadable) {
                             const legacyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
@@ -1887,3 +1897,4 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
     }
 }
+

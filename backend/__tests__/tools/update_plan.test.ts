@@ -42,7 +42,7 @@ describe('update_plan tool', () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode('# Existing Plan'))
   })
 
-  it('rewrites an existing plan markdown document with normalized TODO section and requires confirmation in revision mode', async () => {
+  test('rewrites an existing plan markdown document with normalized TODO section and requires confirmation in revision mode', async () => {
     const tool = createUpdatePlanTool()
     const result = await tool.handler({
       path: '.graycode/plans/api.plan.md',
@@ -79,7 +79,7 @@ describe('update_plan tool', () => {
     })
   })
 
-  it('syncs only the TODO section in progress_sync mode and does not require confirmation', async () => {
+  test('syncs only the TODO section in progress_sync mode and does not require confirmation', async () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode([
       '<!-- GRAYCODE_SOURCE_ARTIFACT_START -->',
       '{"type":"design","path":".graycode/design/api.md","contentHash":"sha256:test"}',
@@ -116,9 +116,9 @@ describe('update_plan tool', () => {
       updateMode: 'progress_sync',
       changeSummary: undefined
     })
-    expect((result.data as any).content).toContain('<!-- GRAYCODE_SOURCE_ARTIFACT_START -->')
-    expect((result.data as any).content).toContain('`#api-1`')
-    expect((result.data as any).content).not.toContain('`#old-1`')
+    expect(result.data.content).toContain('<!-- GRAYCODE_SOURCE_ARTIFACT_START -->')
+    expect(result.data.content).toContain('`#api-1`')
+    expect(result.data.content).not.toContain('`#old-1`')
     expect(mockSyncProgressFromPlanArtifact).toHaveBeenCalledWith({
       planPath: '.graycode/plans/api.plan.md',
       title: undefined,
@@ -129,7 +129,7 @@ describe('update_plan tool', () => {
     })
   })
 
-  it('rejects update_plan when the target plan file does not exist', async () => {
+  test('rejects update_plan when the target plan file does not exist', async () => {
     mockReadFile.mockRejectedValue(new Error('File not found'))
 
     const tool = createUpdatePlanTool()
@@ -144,7 +144,7 @@ describe('update_plan tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('ignores sourceArtifact in progress_sync mode and returns a warning', async () => {
+  test('ignores sourceArtifact in progress_sync mode and returns a warning', async () => {
     mockReadFile.mockResolvedValue(new TextEncoder().encode([
       '<!-- GRAYCODE_SOURCE_ARTIFACT_START -->',
       '{"type":"design","path":".graycode/design/api.md","contentHash":"sha256:test"}',
@@ -168,16 +168,16 @@ describe('update_plan tool', () => {
 
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBe(false)
-    expect((result.data as any).warnings).toEqual([
+    expect(result.data.warnings).toEqual([
       "sourceArtifact was provided in progress_sync mode and has been ignored. Use updateMode: 'revision' if you need to change the plan source."
     ])
-    expect((result.data as any).content).toContain('.graycode/design/api.md')
-    expect((result.data as any).content).not.toContain('.graycode/review/api.md')
+    expect(result.data.content).toContain('.graycode/design/api.md')
+    expect(result.data.content).not.toContain('.graycode/review/api.md')
     expect(mockReadFile).toHaveBeenCalledTimes(1)
     expect(mockWriteFile).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects continuation carry-over fields at runtime', async () => {
+  test('rejects continuation carry-over fields at runtime', async () => {
     const tool = createUpdatePlanTool()
     const result = await tool.handler({
       path: '.graycode/plans/api.plan.md',
@@ -193,7 +193,7 @@ describe('update_plan tool', () => {
     expect(mockWriteFile).not.toHaveBeenCalled()
   })
 
-  it('rejects paths outside .graycode/plans', async () => {
+  test('rejects paths outside .graycode/plans', async () => {
     const tool = createUpdatePlanTool()
     const result = await tool.handler({
       path: '.graycode/review/not-allowed.md',

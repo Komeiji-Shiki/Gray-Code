@@ -1,5 +1,5 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect } from 'vitest'
 import ActivityStatsResult from '../ActivityStatsResult.vue'
 
 /**
@@ -69,21 +69,21 @@ function mountStats(result?: Record<string, unknown>, args: Record<string, unkno
 }
 
 describe('ActivityStatsResult', () => {
-  it('无 result 时显示等待状态', () => {
+  test('无 result 时显示等待状态', () => {
     const wrapper = mountStats(undefined)
     const state = wrapper.get('.as-state')
     expect(state.text()).toContain('正在统计')
     wrapper.unmount()
   })
 
-  it('失败时显示错误信息', () => {
+  test('失败时显示错误信息', () => {
     const wrapper = mountStats({ success: false, error: 'Activity tracker is not initialized' })
     const state = wrapper.get('.as-state.is-error')
     expect(state.text()).toContain('Activity tracker is not initialized')
     wrapper.unmount()
   })
 
-  it('成功时渲染总览、每日条形图和热力图', () => {
+  test('成功时渲染总览、每日条形图和热力图', () => {
     const wrapper = mountStats({ success: true, data: makeData() })
 
     // 头部：标题 + 生成时间
@@ -109,7 +109,7 @@ describe('ActivityStatsResult', () => {
     wrapper.unmount()
   })
 
-  it('当前会话未活跃时显示 —', () => {
+  test('当前会话未活跃时显示 —', () => {
     const data = makeData({ currentSession: { active: false, startedAt: null, minutes: 0 } })
     const wrapper = mountStats({ success: true, data })
     const totals = wrapper.findAll('.as-total-value')
@@ -117,7 +117,7 @@ describe('ActivityStatsResult', () => {
     wrapper.unmount()
   })
 
-  it('每日数据超过 31 天时截断并显示提示', () => {
+  test('每日数据超过 31 天时截断并显示提示', () => {
     const daily: ReturnType<typeof makeDay>[] = []
     for (let i = 0; i < 40; i++) {
       const date = new Date(Date.UTC(2026, 6, 1) + i * 86400000)
@@ -135,7 +135,7 @@ describe('ActivityStatsResult', () => {
     wrapper.unmount()
   })
 
-  it('长范围且存在月度数据时显示月度概览', () => {
+  test('长范围且存在月度数据时显示月度概览', () => {
     const daily: ReturnType<typeof makeDay>[] = []
     for (let i = 0; i < 45; i++) {
       const date = new Date(Date.UTC(2026, 5, 1) + i * 86400000)
@@ -155,7 +155,7 @@ describe('ActivityStatsResult', () => {
     wrapper.unmount()
   })
 
-  it('短范围即使有月度数据也不显示月度概览', () => {
+  test('短范围即使有月度数据也不显示月度概览', () => {
     const data = makeData({
       monthly: [{ month: '2026-08', totalMinutes: 168, activeDays: 1, sessionCount: 4 }]
     })

@@ -112,7 +112,10 @@ export function registerSettingsCommands(
                     return await provider.importSettings(json, {
                         overwriteChannelConfigs: overwrite,
                         overwriteMcpServers: overwrite,
-                        overwriteSkills: overwrite
+                        overwriteSkills: overwrite,
+                        // 与 webview handlers/SettingsTransferHandlers.importSettings 对齐：
+                        // 「覆盖所有」同样覆盖 graycode 的 VS Code 设置（imported.vscodeSettings 已在结果中展示）
+                        overwriteVscodeSettings: overwrite
                     });
                 });
 

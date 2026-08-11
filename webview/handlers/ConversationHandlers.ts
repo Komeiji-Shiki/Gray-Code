@@ -2,6 +2,7 @@
  * 对话管理消息处理器
  */
 
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import { subAgentRunController } from '../../backend/tools/subagents';
@@ -286,19 +287,19 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   const register = (name: string, handler: MessageHandler): void => {
     registry.set(name, withConversationBoundary(name, handler));
   };
-  register('conversation.createConversation', createConversation);
-  register('conversation.listConversations', listConversations);
-  register('conversation.getConversationMetadata', getConversationMetadata);
-  register('conversation.getConversationMetadataBatch', getConversationMetadataBatch);
-  register('conversation.updateSummary', updateSummary);
-  register('conversation.setWorkspaceUri', setWorkspaceUri);
-  register('conversation.setCustomMetadata', setCustomMetadata);
-  register('conversation.deleteConversation', deleteConversation);
-  register('conversation.createBranchConversation', createBranchConversation);
-  register('conversation.getMessagesPaged', getMessagesPaged);
-  register('conversation.loadConversationForView', loadConversationForView);
-  register('conversation.rejectToolCalls', rejectToolCalls);
+  register(MESSAGE_NAMES['conversation.createConversation'], createConversation);
+  register(MESSAGE_NAMES['conversation.listConversations'], listConversations);
+  register(MESSAGE_NAMES['conversation.getConversationMetadata'], getConversationMetadata);
+  register(MESSAGE_NAMES['conversation.getConversationMetadataBatch'], getConversationMetadataBatch);
+  register(MESSAGE_NAMES['conversation.updateSummary'], updateSummary);
+  register(MESSAGE_NAMES['conversation.setWorkspaceUri'], setWorkspaceUri);
+  register(MESSAGE_NAMES['conversation.setCustomMetadata'], setCustomMetadata);
+  register(MESSAGE_NAMES['conversation.deleteConversation'], deleteConversation);
+  register(MESSAGE_NAMES['conversation.createBranchConversation'], createBranchConversation);
+  register(MESSAGE_NAMES['conversation.getMessagesPaged'], getMessagesPaged);
+  register(MESSAGE_NAMES['conversation.loadConversationForView'], loadConversationForView);
+  register(MESSAGE_NAMES['conversation.rejectToolCalls'], rejectToolCalls);
   // 直接注册（不经 withConversationBoundary）：保持拆分前（FileHandlers.ts 域 G）的
   // 错误码 REVEAL_IN_EXPLORER_ERROR 与参数校验行为不变。
-  registry.set('conversation.revealInExplorer', revealConversationInExplorer);
+  registry.set(MESSAGE_NAMES['conversation.revealInExplorer'], revealConversationInExplorer);
 }

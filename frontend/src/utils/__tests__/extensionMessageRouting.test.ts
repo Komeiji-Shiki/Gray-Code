@@ -22,7 +22,7 @@ function createPending() {
 }
 
 describe('routeExtensionMessage', () => {
-  it('成功响应兑现对应请求，且不广播给推送订阅者', () => {
+  test('成功响应兑现对应请求，且不广播给推送订阅者', () => {
     const { handler, resolved } = createPending();
     const pending = new Map([['req_1', handler]]);
     const broadcasts: unknown[] = [];
@@ -40,7 +40,7 @@ describe('routeExtensionMessage', () => {
     expect(pending.has('req_1')).toBe(false);
   });
 
-  it('失败响应以错误消息 reject', () => {
+  test('失败响应以错误消息 reject', () => {
     const { handler, rejected } = createPending();
     const pending = new Map([['req_2', handler]]);
 
@@ -54,7 +54,7 @@ describe('routeExtensionMessage', () => {
     expect(rejected[0]!.message).toBe('磁盘写入失败');
   });
 
-  it('失败响应缺少错误消息时给出兜底文案，不会 reject 一个空 Error', () => {
+  test('失败响应缺少错误消息时给出兜底文案，不会 reject 一个空 Error', () => {
     const { handler, rejected } = createPending();
     const pending = new Map([['req_3', handler]]);
 
@@ -62,7 +62,7 @@ describe('routeExtensionMessage', () => {
     expect(rejected[0]!.message).toBe('Unknown error');
   });
 
-  it('主动推送消息广播给订阅者', () => {
+  test('主动推送消息广播给订阅者', () => {
     const broadcasts: unknown[] = [];
     const result = routeExtensionMessage(
       { type: 'subagentMonitor.event', data: { runId: 'run_1' } },
@@ -75,7 +75,7 @@ describe('routeExtensionMessage', () => {
     expect(first.type).toBe('subagentMonitor.event');
   });
 
-  it('无人等待的 requestId 响应不会被当作推送消息广播出去', () => {
+  test('无人等待的 requestId 响应不会被当作推送消息广播出去', () => {
     // 这正是旧实现的缺陷：第一个监听器兑现并删除 requestId 后，
     // 其余监听器查不到它，就把这条响应交给了业务 handler。
     const broadcasts: unknown[] = [];
@@ -89,7 +89,7 @@ describe('routeExtensionMessage', () => {
     expect(broadcasts).toHaveLength(0);
   });
 
-  it('非对象消息与无 type 的消息一律忽略', () => {
+  test('非对象消息与无 type 的消息一律忽略', () => {
     const broadcasts: unknown[] = [];
     const sink = (message: unknown) => broadcasts.push(message);
 
