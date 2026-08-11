@@ -22,6 +22,7 @@ const runtime = vi.hoisted(() => ({
   chatStore: undefined as any,
   settingsStore: undefined as any,
   terminalStore: undefined as any,
+  preloadChannelConfigs: vi.fn().mockResolvedValue(undefined),
   sendToExtension: vi.fn(),
   onMessageFromExtension: vi.fn(),
   messageHandler: undefined as ((message: any) => void) | undefined,
@@ -85,6 +86,11 @@ vi.mock('../../components/Splash.vue', () => ({
     emits: ['done'],
     template: '<div data-testid="splash-stub" />'
   }
+}))
+
+// 启动预加载渠道配置：测试环境不真实发起 IPC，mock 掉避免请求噪音
+vi.mock('../../services/channelConfigCache', () => ({
+  preloadChannelConfigs: runtime.preloadChannelConfigs
 }))
 
 vi.mock('../../composables', () => ({
@@ -205,6 +211,8 @@ describe('App 开屏动画启动偏好', () => {
     }
     runtime.terminalStore = { initialize: vi.fn() }
 
+    runtime.preloadChannelConfigs.mockClear()
+
     runtime.sendToExtension.mockReset()
     runtime.sendToExtension.mockImplementation((type: string) => {
       if (type === 'getSettings') return settingsRequest.promise
@@ -277,15 +285,20 @@ describe('App 开屏动画启动偏好', () => {
     settingsRequest.resolve(makeSettingsResponse(true))
     await flushPromises()
 
+    // 启动即触发渠道配置预加载（开屏动画期间完成，首次打开渠道页命中缓存）。
+    expect(runtime.preloadChannelConfigs).toHaveBeenCalled()
+
     // initialize() 的首个 await 前已完成本地空白标签页准备；后端加载不能继续锁住主界面。
     expect(wrapper.getComponent({ name: 'Splash' }).props('ready')).toBe(true)
     expect(wrapper.findComponent({ name: 'InputArea' }).exists()).toBe(true)
+    // 预加载走 channelConfigCache 模块（幂等、静默失败），App 不直接发 config.listConfigs IPC。
     expect(runtime.sendToExtension.mock.calls.some(call => call[0] === 'config.listConfigs')).toBe(false)
 
-    // 完整聊天初始化随后落定，界面保持可用且 App 仍不发渠道预加载请求。
+    // 完整聊天初始化随后落定，界面保持可用且预加载不随初始化重复触发。
     chatInitialization.resolve()
     await flushPromises()
 
+    expect(runtime.preloadChannelConfigs).toHaveBeenCalledTimes(1)
     expect(runtime.sendToExtension.mock.calls.some(call => call[0] === 'config.listConfigs')).toBe(false)
   })
 
