@@ -71,7 +71,8 @@ def _apply_trim(match: str, trims: list[str]) -> str:
 
 def _interpolate_replacement(template: str, match_trimmed: str, groups: list[str]) -> str:
     raw = str(template or "")
-    out = re.sub(r"\{\{\s*match\s*\}\}", match_trimmed, raw, flags=re.IGNORECASE)
+    # 用 lambda 替换：返回字面量 match_trimmed，避免其中的 \1/\g<1> 被 re.sub 当反向引用解析
+    out = re.sub(r"\{\{\s*match\s*\}\}", lambda m: match_trimmed, raw, flags=re.IGNORECASE)
 
     DOLLAR = "\u0000DOLLAR\u0000"
     out = out.replace("$$", DOLLAR)

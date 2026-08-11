@@ -101,7 +101,15 @@ export function getActiveEntries(params: {
   } = params;
 
   const defaultCaseSensitive = options?.defaultCaseSensitive ?? false;
-  const recursionLimit = Math.max(0, Math.trunc(options?.recursionLimit ?? 5));
+  // 对齐 Python _to_recursion_limit：NaN → 不迭代；+Inf → 防死循环退化为 5；-Inf → 0
+  const recursionLimit = (() => {
+    const n = options?.recursionLimit ?? 5;
+    const num = typeof n === 'number' ? n : Number(n);
+    if (Number.isNaN(num)) return -1;
+    if (num === Number.POSITIVE_INFINITY) return 5;
+    if (num === Number.NEGATIVE_INFINITY) return 0;
+    return Math.max(0, Math.trunc(num));
+  })();
   const rng = options?.rng ?? Math.random;
 
   const all: Array<{ entry: WorldBookEntry; source: 'global' | 'character'; prio: number; seq: number }> = [];
@@ -160,17 +168,20 @@ export function getActiveEntries(params: {
     for (const node of all) {
       const entry = node.entry;
       if (!entry) continue;
-      if (byIndex.has(entry.index)) continue;
-      if (probFailed.has(entry.index)) continue;
+      // 非数值 index 不参与（对齐 Python get_active_entries.py 的 _is_number 校验）
+      const idx = entry.index;
+      if (typeof idx !== 'number' || !Number.isFinite(idx)) continue;
+      if (byIndex.has(idx)) continue;
+      if (probFailed.has(idx)) continue;
 
       if (!consider(entry, iteration)) continue;
 
       if (!passProbability(entry)) {
-        probFailed.add(entry.index);
+        probFailed.add(idx);
         continue;
       }
 
-      byIndex.set(entry.index, { entry, prio: node.prio, seq: node.seq });
+      byIndex.set(idx, { entry, prio: node.prio, seq: node.seq });
       anyNew = true;
 
       // preventRecursion: 不参与“递归上下文”

@@ -84,7 +84,9 @@ def variables_add(ctx: VariableContext, input_value: dict[str, Any]):
                 summed = cur_num + add_num
                 next_val = int(summed) if float(int(summed)) == summed else summed
             else:
-                next_val = f"{cur or ''}{add_val or ''}"
+                # 对齐 TS String(cur ?? '') + String(value ?? '')：0/''/False 是合法值，
+                # 仅 None 视为缺失，避免 NaN 分支把 0 静默吞掉（与下方 except 分支一致）
+                next_val = f"{'' if cur is None else cur}{'' if add_val is None else add_val}"
         except Exception:
             next_val = f"{'' if cur is None else cur}{'' if add_val is None else add_val}"
 

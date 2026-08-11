@@ -40,7 +40,8 @@ def _normalize_one_entry(e: Any) -> WorldBookEntry | None:
     if not isinstance(e, dict):
         return None
 
-    position = str(e.get("position") or "")
+    # 对齐 TS String(e.position ?? '')：position=0 是合法位置编号，不应被 truthiness 丢弃（仅 None 视为缺失）
+    position = "" if e.get("position") is None else str(e.get("position"))
     if not position:
         return None
 

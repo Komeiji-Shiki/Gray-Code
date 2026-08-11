@@ -50,8 +50,19 @@ function normalizeOne(item: any): RegexScriptData | null {
   const macroModeRaw = String((item as any).macroMode ?? 'none');
   const macroMode = macroModeRaw === 'raw' || macroModeRaw === 'escaped' || macroModeRaw === 'none' ? macroModeRaw : 'none';
 
-  const minDepth = (item as any).minDepth === null || typeof (item as any).minDepth === 'number' ? (item as any).minDepth : null;
-  const maxDepth = (item as any).maxDepth === null || typeof (item as any).maxDepth === 'number' ? (item as any).maxDepth : null;
+  // NaN/±Infinity（typeof number 但不可用）与其它类型 → null（对齐 Python _normalize_depth）
+  const minDepth = (() => {
+    const v = (item as any).minDepth;
+    if (v === null) return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return null;
+  })();
+  const maxDepth = (() => {
+    const v = (item as any).maxDepth;
+    if (v === null) return null;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return null;
+  })();
 
   return {
     id,

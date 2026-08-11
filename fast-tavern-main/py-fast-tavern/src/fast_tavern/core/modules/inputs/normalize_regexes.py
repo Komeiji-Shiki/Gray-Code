@@ -61,7 +61,8 @@ def _normalize_one(item: Any) -> RegexScriptData | None:
     if "findRegex" not in item:
         return None
 
-    script_id = str(item.get("id") or "")
+    # 对齐 TS String(item.id ?? '')：id=0 是合法标识，不应被 truthiness 丢弃（仅 None 视为缺失）
+    script_id = "" if item.get("id") is None else str(item.get("id"))
     if not script_id:
         return None
 

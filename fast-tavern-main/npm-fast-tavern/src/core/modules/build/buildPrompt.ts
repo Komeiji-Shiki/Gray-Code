@@ -2,19 +2,20 @@ import type {
   BuildPromptParams,
   BuildPromptResult,
   ChatMessage,
+  RegexScriptData,
   Role,
   TaggedContent,
+  WorldBookEntry,
 } from '../../types';
-
 import { convertMessagesOut } from '../../convert';
-import { normalizeRegexes, normalizeWorldbooks } from '../inputs';
-import { getActiveEntries } from '../worldbook';
 import { assembleTaggedPromptList } from '../assemble';
-import { mergeRegexRules } from '../regex';
 import { compileTaggedStages } from '../pipeline';
+import { getActiveEntries } from '../worldbook';
+import mergeRegexRules } from '../regex';
+import { normalizeRegexes, normalizeWorldbooks } from '../inputs';
 import { createVariableContext } from '../variables';
 
-function normalizeRole(raw: string | undefined | null, fallback: Role = 'user'): Role {
+function normalizeRole(raw: string, fallback: Role = 'user'): Role {
   const r = String(raw ?? '').toLowerCase();
   if (r === 'system') return 'system';
   if (r === 'user') return 'user';
@@ -22,204 +23,136 @@ function normalizeRole(raw: string | undefined | null, fallback: Role = 'user'):
   return fallback;
 }
 
-function chatMessageToText(m: ChatMessage): string {
-  if (!m) return '';
+/** 从 ChatMessage 中提取纯文本（content 风格或 parts 风格） */
+function messageText(m: ChatMessage): string {
   if ('content' in m) return String(m.content ?? '');
   return (m.parts || []).map((p: any) => ('text' in p ? (p.text ?? '') : '')).join('');
 }
 
-function toInternalHistory(messages: ChatMessage[]): ChatMessage[] {
-  return (messages || []).map((m) => {
-    const role = normalizeRole(m.role, 'user');
-    if ('parts' in m) {
-      return {
-        role,
-        ...(m.name ? { name: m.name } : {}),
-        ...(typeof m.swipeId === 'number' ? { swipeId: m.swipeId } : {}),
-        parts: (m.parts || []).map((p: any) => ({ ...p })),
-        ...(Array.isArray((m as any).swipes) ? { swipes: (m as any).swipes } : {}),
-      };
-    }
-
-    return {
-      role,
-      ...(m.name ? { name: m.name } : {}),
-      ...(typeof m.swipeId === 'number' ? { swipeId: m.swipeId } : {}),
-      parts: [{ text: String((m as any).content ?? '') }],
-    };
-  });
-}
-
-function internalHistoryToChatNodes(internal: ChatMessage[]): Array<{ role: Role; text: string; historyDepth: number }> {
-  const list = (internal || []).map((m) => ({
-    role: normalizeRole(m.role, 'user'),
-    text: chatMessageToText(m),
-  }));
-
-  const n = list.length;
-  return list.map((x, idx) => ({ ...x, historyDepth: n - 1 - idx }));
-}
-
-function taggedToInternal(tagged: TaggedContent[]): ChatMessage[] {
-  return (tagged || []).map((item) => ({
+function toInternalMessages(stage: TaggedContent[]): ChatMessage[] {
+  return (stage || []).map((item) => ({
     role: item.role,
     parts: [{ text: item.text ?? '' }],
   }));
 }
 
-function applySystemRolePolicy(internal: ChatMessage[], policy: 'keep' | 'to_user'): ChatMessage[] {
-  if (policy === 'keep') return internal;
-  return (internal || []).map((m) => ({
-    ...m,
-    role: String(m.role || '') === 'system' ? 'user' : m.role,
-  }));
-}
-
 /**
- * 仅从 character 提取 char 宏，并与用户提供的 macros 合并。
- * 优先级：用户显式提供的 macros > character 自动提取
- */
-function buildMacros(userMacros: Record<string, string>, character?: BuildPromptParams['character']): Record<string, string> {
-  const out: Record<string, string> = {};
-
-  if (character?.name) {
-    out.char = character.name;
-  }
-
-  return { ...out, ...(userMacros || {}) };
-}
-
-
-/**
- * 向后兼容：允许调用方继续传旧字段 `apiSetting`。
+ * 主入口：预设 + 世界书 + 正则 + 角色卡 + 历史 + 变量 -> 多阶段提示词。
  *
- * 说明：当前 build 流程不直接消费 `other/apiSetting`，
- * 但这里做轻量归一化，保证输入结构语义一致。
+ * 流程（对齐 docs/FORMAT_ZH.md「组装流程」）：
+ * 1) History 归一化为内部 parts 风格，并标注 historyDepth（从末尾计数，0=最后一条）
+ * 2) 宏与变量上下文（char 未显式提供时用 character.name 补全）
+ * 3) 世界书激活（getActiveEntries，使用最近 recentHistoryForWorldbook 条历史作为上下文）
+ * 4) 装配 TaggedContent（assembleTaggedPromptList：骨架 + 插槽 + fixed 注入）
+ * 5) 正则脚本合并（global + preset + character）
+ * 6) 分阶段编译（raw/afterPreRegex/afterMacro/afterPostRegex）
+ * 7) 输出转换（tagged 直接返回带 tag 列表；其余按 outputFormat + systemRolePolicy）
  */
-function normalizePresetCompat(preset: BuildPromptParams['preset']): BuildPromptParams['preset'] {
-  const raw = (preset || {}) as any;
-  return {
-    ...raw,
-    other: raw.other ?? raw.apiSetting ?? {},
-    utilityPrompts: raw.utilityPrompts ?? {},
-  } as BuildPromptParams['preset'];
-}
-
 export function buildPrompt(params: BuildPromptParams): BuildPromptResult {
   const {
     preset,
     character,
     globals,
     history,
-    macros,
+    view,
+    outputFormat = 'gemini',
+    systemRolePolicy = 'keep',
+    macros: userMacros,
     variables,
     globalVariables,
-    view,
     options,
   } = params;
 
-  const normalizedPreset = normalizePresetCompat(preset);
+  // 1) History 归一化：内部 parts 风格 + historyDepth（0=最后一条）
+  const chatMessages: ChatMessage[] = (history || []).map((m) => ({
+    role: normalizeRole(String((m as any)?.role ?? '')),
+    parts: [{ text: messageText(m) }],
+  }));
 
-  const finalMacros = buildMacros(macros || {}, character);
+  const chatNodes = chatMessages.map((m, idx, arr) => ({
+    role: normalizeRole(String(m.role ?? '')),
+    text: messageText(m),
+    historyDepth: arr.length - 1 - idx,
+  }));
+
+  // 2) 宏与变量上下文
+  const macros: Record<string, string> = { ...(userMacros || {}) };
+  if (character?.name && macros.char === undefined) {
+    macros.char = character.name;
+  }
   const variableContext = createVariableContext(variables, globalVariables);
 
-  // 1) history：统一为内部 ChatMessage(parts)[]，并产出线性 chatHistory 节点（带 historyDepth）
-  const internalHistory = toInternalHistory(history || []);
-  const chatNodes = internalHistoryToChatNodes(internalHistory);
-
-  // 用于世界书匹配：取最近 N 条历史文本
-  const recentN = options?.recentHistoryForWorldbook ?? 5;
-  const recentHistoryText = chatNodes
-    .slice(-recentN)
+  // 3) 世界书激活（最近几条历史作为 keyword 匹配上下文）
+  const recentHistoryForWorldbook = options?.recentHistoryForWorldbook ?? 5;
+  const contextText = chatNodes
+    .slice(-recentHistoryForWorldbook)
     .map((n) => n.text)
     .join('\n');
 
-  // 2) 世界书：全局 + 角色
-  const globalWorldBookEntries = normalizeWorldbooks(globals?.worldBooks);
-  const activeEntries = getActiveEntries({
-    contextText: recentHistoryText,
-    globalEntries: globalWorldBookEntries,
+  const activeWorldbookEntries: WorldBookEntry[] = getActiveEntries({
+    contextText,
+    globalEntries: normalizeWorldbooks(globals?.worldBooks),
     characterWorldBook: character?.worldBook ?? null,
-    options: {
-      vectorSearch: options?.vectorSearch as any,
-      recursionLimit: options?.recursionLimit,
-      rng: options?.rng,
-      defaultCaseSensitive: options?.defaultCaseSensitive,
-    },
+    options,
   });
 
-  // 3) 装配：preset.prompts + 世界书插槽/注入 + 聊天历史
+  // 4) 装配 TaggedContent
   const tagged = assembleTaggedPromptList({
-    presetPrompts: normalizedPreset.prompts,
-    activeEntries,
+    presetPrompts: preset.prompts || [],
+    activeEntries: activeWorldbookEntries,
     chatHistory: chatNodes,
     positionMap: options?.positionMap,
+    chatHistoryIdentifier: 'chatHistory',
   });
 
-  // 4) 正则：global + preset + character（按 RegexScriptData 语义）
-  const globalScripts = normalizeRegexes(globals?.regexScripts);
-  const presetScripts = normalizeRegexes(normalizedPreset.regexScripts);
-  const characterScripts = normalizeRegexes(character?.regexScripts);
-
-  const scripts = mergeRegexRules({
-    globalScripts,
-    presetScripts,
-    characterScripts,
+  // 5) 正则脚本合并
+  const mergedRegexScripts: RegexScriptData[] = mergeRegexRules({
+    globalScripts: normalizeRegexes(globals?.regexScripts),
+    presetScripts: preset.regexScripts || [],
+    characterScripts: character?.regexScripts || [],
   });
 
-  // 5) 编译各阶段（raw -> macro -> regex）
+  // 6) 分阶段编译
   const compiled = compileTaggedStages(tagged, {
     view,
-    scripts,
-    macros: finalMacros,
+    scripts: mergedRegexScripts,
+    macros,
     variableContext,
   });
 
-  const taggedStages = compiled.stages;
-  const perItem = compiled.perItem;
-
-  const internalStages = {
-    raw: taggedToInternal(taggedStages.raw),
-    afterPreRegex: taggedToInternal(taggedStages.afterPreRegex),
-    afterMacro: taggedToInternal(taggedStages.afterMacro),
-    afterPostRegex: taggedToInternal(taggedStages.afterPostRegex),
+  // 7) 输出转换
+  const toOutput = (
+    stage: TaggedContent[]
+  ): ChatMessage[] | TaggedContent[] | string => {
+    if (outputFormat === 'tagged') return stage;
+    let internal = toInternalMessages(stage);
+    if (systemRolePolicy === 'to_user') {
+      internal = internal.map((m) => (m.role === 'system' ? { ...m, role: 'user' } : m));
+    }
+    return convertMessagesOut(internal, outputFormat as Exclude<typeof outputFormat, 'tagged'>);
   };
-
-  const outputFormat = params.outputFormat ?? 'gemini';
-  const systemRolePolicy = params.systemRolePolicy ?? 'keep';
-
-  const internalAfterPolicy = {
-    raw: applySystemRolePolicy(internalStages.raw, systemRolePolicy),
-    afterPreRegex: applySystemRolePolicy(internalStages.afterPreRegex, systemRolePolicy),
-    afterMacro: applySystemRolePolicy(internalStages.afterMacro, systemRolePolicy),
-    afterPostRegex: applySystemRolePolicy(internalStages.afterPostRegex, systemRolePolicy),
-  };
-
-  const outputStages =
-    outputFormat === 'tagged'
-      ? taggedStages
-      : {
-          raw: convertMessagesOut(internalAfterPolicy.raw, outputFormat as any),
-          afterPreRegex: convertMessagesOut(internalAfterPolicy.afterPreRegex, outputFormat as any),
-          afterMacro: convertMessagesOut(internalAfterPolicy.afterMacro, outputFormat as any),
-          afterPostRegex: convertMessagesOut(internalAfterPolicy.afterPostRegex, outputFormat as any),
-        };
 
   return {
     outputFormat,
     systemRolePolicy,
-    activeWorldbookEntries: activeEntries,
-    mergedRegexScripts: scripts,
-    variables: {
-      local: { ...variableContext.local },
-      global: { ...variableContext.global },
-    },
+    activeWorldbookEntries,
+    mergedRegexScripts,
+    variables: { local: variableContext.local, global: variableContext.global },
     stages: {
-      tagged: taggedStages,
-      internal: internalStages,
-      output: outputStages,
-      perItem,
+      tagged: compiled.stages,
+      internal: {
+        raw: toInternalMessages(compiled.stages.raw),
+        afterPreRegex: toInternalMessages(compiled.stages.afterPreRegex),
+        afterMacro: toInternalMessages(compiled.stages.afterMacro),
+        afterPostRegex: toInternalMessages(compiled.stages.afterPostRegex),
+      },
+      output: {
+        raw: toOutput(compiled.stages.raw),
+        afterPreRegex: toOutput(compiled.stages.afterPreRegex),
+        afterMacro: toOutput(compiled.stages.afterMacro),
+        afterPostRegex: toOutput(compiled.stages.afterPostRegex),
+      },
+      perItem: compiled.perItem,
     },
   };
 }
-

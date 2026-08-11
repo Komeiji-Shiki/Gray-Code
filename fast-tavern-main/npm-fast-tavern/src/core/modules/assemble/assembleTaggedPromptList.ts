@@ -134,7 +134,8 @@ export function assembleTaggedPromptList(params: {
       continue;
     }
 
-    if (prompt.content) {
+    // 空串也是合法内容（与 `?? ''` 语义统一）：仅 undefined/null 视为缺失
+    if (prompt.content !== undefined && prompt.content !== null) {
       result.push({
         tag: `Preset: ${prompt.name}`,
         target: 'slashCommands',
