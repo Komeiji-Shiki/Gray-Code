@@ -29,7 +29,7 @@
 > 最新版下载（[Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)）：
 > [安装版](https://github.com/czocelot/Gray-Code-Desktop/releases/latest) · [免安装便携版](https://github.com/czocelot/Gray-Code-Desktop/releases/latest) · [免安装 zip](https://github.com/czocelot/Gray-Code-Desktop/releases/latest)
 >
-> 本仓库同时维护基于上游 [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code) 的 VS Code 扩展，桌面版与扩展共享同一套 backend / frontend / webview 代码。
+> 本仓库同时维护基于上游 [Komeiji-Shiki/Gray-Code](https://github.com/Komeiji-Shiki/Gray-Code) 的 VS Code 扩展。
 
 ---
 
