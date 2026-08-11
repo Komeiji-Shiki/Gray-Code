@@ -24,12 +24,14 @@ describe('show_windows_notification tool', () => {
   test('shows a Windows toast with normalized custom content', async () => {
     const adapter = new FakeToastAdapter()
     const executedCommands: string[] = []
+    const focusWindow = jest.fn(async () => true)
     const tool = createShowWindowsNotificationTool(
       adapter,
       'win32',
       async command => {
         executedCommands.push(command)
-      }
+      },
+      focusWindow
     )
 
     const result = await tool.handler({
@@ -48,6 +50,7 @@ describe('show_windows_notification tool', () => {
 
     await adapter.requests[0].onClick?.()
     expect(executedCommands).toEqual(['graycode.openChat'])
+    expect(focusWindow).toHaveBeenCalledTimes(1)
   })
 
   test('allows disabling click-to-open-chat and sound suppression', async () => {

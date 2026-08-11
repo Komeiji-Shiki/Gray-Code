@@ -35,3 +35,7 @@ export type { WindowsAgentStopNotificationTemplateContext } from './templateRend
 export { deriveWindowsAgentStopWindowTitle } from './windowTitle';
 export type { DeriveWindowsAgentStopWindowTitleOptions } from './windowTitle';
 
+// 窗口前置（点击通知后把 VSCode 窗口带到 Windows 前台）
+export { focusVSCodeWindow } from './focusWindow';
+export type { FocusWindowFunction } from './focusWindow';
+

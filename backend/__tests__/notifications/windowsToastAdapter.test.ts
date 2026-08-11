@@ -18,6 +18,9 @@ jest.mock('vscode', () => ({
   env: {
     appName: 'Visual Studio Code',
     uriScheme: 'vscode'
+  },
+  extensions: {
+    getExtension: jest.fn()
   }
 }))
 
@@ -75,6 +78,7 @@ describe('NodeNotifierWindowsToastAdapter', () => {
     jest.clearAllMocks()
     jest.mocked(vscode.env).appName = 'Visual Studio Code'
     jest.mocked(vscode.env).uriScheme = 'vscode'
+    jest.mocked(vscode.extensions.getExtension).mockReset()
   })
 
   afterEach(() => {
@@ -216,6 +220,49 @@ describe('NodeNotifierWindowsToastAdapter', () => {
 
     expect(toaster.notify).toHaveBeenCalledWith(
       expect.objectContaining({ appID: 'Microsoft.VisualStudioCode.Insiders' }),
+      expect.any(Function)
+    )
+  })
+
+  test('默认使用 GrayCode 扩展自身的 icon.png 作为 toast 图标', async () => {
+    mockPlatform('win32')
+    jest.mocked(vscode.extensions.getExtension).mockReturnValue({
+      extensionPath: 'C:\\Users\\gray\\extensions\\komeiji-shiki.graycode-1.5.1'
+    } as any)
+    const toaster = createFakeToaster()
+    toaster.notify.mockImplementation((_options, callback) => {
+      callback?.(null, 'OK')
+    })
+    const adapter = new NodeNotifierWindowsToastAdapter(() => toaster)
+
+    await adapter.show(makeRequest())
+
+    expect(toaster.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        icon: 'C:\\Users\\gray\\extensions\\komeiji-shiki.graycode-1.5.1\\resources\\icon.png'
+      }),
+      expect.any(Function)
+    )
+  })
+
+  test('显式传入 iconPath 时传给 node-notifier', async () => {
+    mockPlatform('win32')
+    const toaster = createFakeToaster()
+    toaster.notify.mockImplementation((_options, callback) => {
+      callback?.(null, 'OK')
+    })
+    const adapter = new NodeNotifierWindowsToastAdapter(
+      () => toaster,
+      console,
+      5 * 60 * 1000,
+      'Microsoft.VisualStudioCode',
+      'D:\\gray\\icon.png'
+    )
+
+    await adapter.show(makeRequest())
+
+    expect(toaster.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ icon: 'D:\\gray\\icon.png' }),
       expect.any(Function)
     )
   })

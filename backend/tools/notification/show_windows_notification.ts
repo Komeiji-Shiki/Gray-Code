@@ -2,6 +2,8 @@ import * as vscode from 'vscode'
 import type { Tool, ToolDeclaration, ToolResult } from '../types'
 import { NodeNotifierWindowsToastAdapter } from '../../modules/notifications/WindowsToastAdapter'
 import type { WindowsToastAdapter } from '../../modules/notifications/types'
+import { focusVSCodeWindow } from '../../modules/notifications/focusWindow'
+import type { FocusWindowFunction } from '../../modules/notifications/focusWindow'
 
 const DEFAULT_TITLE = 'GrayCode'
 const MAX_TITLE_LENGTH = 120
@@ -61,7 +63,8 @@ export function createShowWindowsNotificationToolDeclaration(): ToolDeclaration 
 export function createShowWindowsNotificationTool(
   adapter: WindowsToastAdapter = new NodeNotifierWindowsToastAdapter(),
   platform: NodeJS.Platform = process.platform,
-  executeCommand: (command: string) => Promise<unknown> | Thenable<unknown> = command => vscode.commands.executeCommand(command)
+  executeCommand: (command: string) => Promise<unknown> | Thenable<unknown> = command => vscode.commands.executeCommand(command),
+  focusWindow: FocusWindowFunction = focusVSCodeWindow
 ): Tool {
   return {
     declaration: createShowWindowsNotificationToolDeclaration(),
@@ -99,6 +102,7 @@ export function createShowWindowsNotificationTool(
           onClick: openChatOnClick
             ? async () => {
                 await executeCommand('graycode.openChat')
+                await focusWindow()
               }
             : undefined
         })
