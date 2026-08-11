@@ -30,6 +30,7 @@
   - 后端 tools/file：修复 realpath 符号链接防 outside 绕过（安全加固）、read_file 幻影空行、write_file 存在保护。
   - 后端 tools/media：修复 generate_image 超时误报用户取消（对齐外层口径）。
   - 后端 tools/terminal：修复 where 检测命令注入（改 argv 传参，安全加固）。
+  - 后端 tools/terminal：修复 execute_command 超时误判为用户取消——超时不再触发对话自动暂停（Conversation Paused），超时错误如实回传 LLM 继续对话（与 generate_image 超时口径一致，对齐「以用户真实取消信号为准」）；新增超时/手动终止/超时后中止竞态回归测试与 postToolStopState 判定单元测试。
   - 后端 subagents：修复排队 pause 不取消、resume 重建缺口、续跑预留互斥、mailbox hop 防绕过、退避监听控制信号。
   - 后端 shared：summarizeContext 加入超时豁免名单。
   - 前端：修复取消标记按会话隔离、JsonViewer DAG 误标、阈值钳制/引用复用/输入指纹、声音聚焦、i18n 同步。
