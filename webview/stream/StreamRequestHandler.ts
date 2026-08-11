@@ -110,6 +110,31 @@ export class StreamRequestHandler {
     this.deps.sendError(requestId, 'NETWORK_ERROR', message)
   }
 
+  /**
+   * 消费流直到终结事件或视图不可达（H6）。
+   *
+   * 视图不可达（面板关闭/重载）时 processChunk 丢弃 chunk 并返回 false，终结事件同样
+   * 返回 false——若循环只按 isError 判断，会永远继续消费，后端在后台全量生成
+   * （消耗 token、工具副作用继续执行）。检测到视图不可达后立即 abort 控制器
+   * 中止后端生成并停止消费；abort 信号透传给后端，pending 的流式请求快速落定。
+   */
+  private async consumeStream(
+    stream: AsyncIterable<any>,
+    processor: StreamChunkProcessor,
+    controller?: AbortController
+  ): Promise<void> {
+    for await (const chunk of stream) {
+      const isError = processor.processChunk(chunk);
+      if (isError) break;
+      if (processor.isViewUnreachable()) {
+        controller?.abort();
+        break;
+      }
+    }
+    // 流结束后刷新缓冲区，确保所有消息都已发送
+    processor.flush();
+  }
+
   private serializeErrorDetails(details: unknown): string {
     if (details === undefined || details === null) return ''
     if (typeof details === 'string') return details.trim()
@@ -256,12 +281,7 @@ export class StreamRequestHandler {
       // 发送响应，通知前端请求已接收并开始
       this.deps.sendResponse(requestId, { started: true });
       
-      for await (const chunk of stream) {
-        const isError = processor.processChunk(chunk);
-        if (isError) break;
-      }
-      // 流结束后刷新缓冲区，确保所有消息都已发送
-      processor.flush();
+      await this.consumeStream(stream, processor, controller);
     } catch (error: any) {
       // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
       this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
@@ -324,11 +344,7 @@ export class StreamRequestHandler {
       // 发送响应，通知前端请求已接收并开始
       this.deps.sendResponse(requestId, { started: true });
       
-      for await (const chunk of stream) {
-        const isError = processor.processChunk(chunk);
-        if (isError) break;
-      }
-      processor.flush();
+      await this.consumeStream(stream, processor, controller);
     } catch (error: any) {
       // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
       this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
@@ -391,11 +407,7 @@ export class StreamRequestHandler {
       // 发送响应，通知前端请求已接收并开始
       this.deps.sendResponse(requestId, { started: true });
       
-      for await (const chunk of stream) {
-        const isError = processor.processChunk(chunk);
-        if (isError) break;
-      }
-      processor.flush();
+      await this.consumeStream(stream, processor, controller);
     } catch (error: any) {
       // 取消/网络中止/普通错误统一由 handleStreamError 判定（signal.aborted + 错误类型双条件）
       this.handleStreamError(error, processor, requestId, controller?.signal.aborted === true);
