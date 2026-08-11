@@ -79,6 +79,9 @@ export class DependencyManager {
     /** 进行中的安装任务（同依赖串行化：第二个调用复用其结果；不同依赖可并行） */
     private installsInFlight: Map<string, Promise<boolean>> = new Map();
     
+    /** 进行中的卸载任务（同依赖串行化：第二个调用复用其结果） */
+    private uninstallsInFlight: Map<string, Promise<boolean>> = new Map();
+    
     /** 复制阶段全局串行队列：不同依赖并行安装时共享同一个 depsDir，复制阶段必须互斥执行 */
     private copyQueue: Promise<void> = Promise.resolve();
 
@@ -271,6 +274,7 @@ export class DependencyManager {
      * 若同一依赖已有安装在进行中，后续调用直接复用其结果（等待其完成），
      * 避免多个安装共享固定 deps-temp 目录时互相删除/覆盖；
      * 不同依赖互不阻塞，可并行安装（各自使用独立的临时目录）。
+     * 同一依赖的卸载进行中时，安装会等待其完成后再执行，避免安装复制与卸载清理互相干扰。
      */
     async install(name: string): Promise<boolean> {
         const config = this.optionalDependencies[name];
@@ -287,6 +291,17 @@ export class DependencyManager {
         const inFlight = this.installsInFlight.get(name);
         if (inFlight) {
             return inFlight;
+        }
+        
+        // 同依赖卸载进行中：等待其完成后再安装，避免安装复制与卸载残留清理互相干扰。
+        // 等待期间同依赖安装可能已由其他并发调用注册，复用其结果（不重复安装）
+        const uninstallInFlight = this.uninstallsInFlight.get(name);
+        if (uninstallInFlight) {
+            await uninstallInFlight;
+            const afterWait = this.installsInFlight.get(name);
+            if (afterWait) {
+                return afterWait;
+            }
         }
         
         const promise = this.doInstall(name, config);
@@ -506,8 +521,43 @@ export class DependencyManager {
     
     /**
      * 卸载依赖
+     *
+     * 并发保护：同依赖的卸载通过 uninstallsInFlight 串行化——若同一依赖已有卸载进行中，
+     * 后续调用直接复用其结果（卸载幂等）；同一依赖的安装进行中时，卸载会等待其完成
+     * 后再执行（避免卸载残留清理误删安装复制中的目录），反之安装也会等待卸载完成。
      */
     async uninstall(name: string): Promise<boolean> {
+        // 同依赖卸载进行中：复用其结果（卸载幂等，避免并发重复清理残留）
+        const uninstallInFlight = this.uninstallsInFlight.get(name);
+        if (uninstallInFlight) {
+            return uninstallInFlight;
+        }
+        // 同依赖安装进行中：等待其完成后再卸载，避免卸载残留清理与安装复制互相干扰。
+        // 等待期间同依赖卸载可能已由其他并发调用注册，复用其结果（不重复清理）
+        const installInFlight = this.installsInFlight.get(name);
+        if (installInFlight) {
+            await installInFlight;
+            const afterWait = this.uninstallsInFlight.get(name);
+            if (afterWait) {
+                return afterWait;
+            }
+        }
+        const promise = this.doUninstall(name);
+        this.uninstallsInFlight.set(name, promise);
+        try {
+            return await promise;
+        } finally {
+            // 仅当仍指向本次任务时删除，避免误删后续任务
+            if (this.uninstallsInFlight.get(name) === promise) {
+                this.uninstallsInFlight.delete(name);
+            }
+        }
+    }
+    
+    /**
+     * 执行卸载（仅由 uninstall 调用，受 uninstallsInFlight 并发保护）
+     */
+    private async doUninstall(name: string): Promise<boolean> {
         try {
             const targetDir = path.join(this.depsDir, name);
             await rm(targetDir, { recursive: true, force: true });
@@ -632,6 +682,15 @@ export class DependencyManager {
         
         try {
             const modulePath = path.join(this.depsDir, name);
+            // 卸载后重装同一路径时，Node 的 require.cache 仍缓存旧版本模块（loadedModules
+            // 缓存已随卸载/安装清除，但 require.cache 不会自动失效）：加载前主动清除该模块
+            // 的缓存条目，保证重装后 require 读到新版本。require.resolve 失败（模块未安装/
+            // 损坏）时跳过清理，交由下方 require 统一按加载失败处理。
+            try {
+                delete require.cache[require.resolve(modulePath)];
+            } catch {
+                // resolve 失败：模块不存在或损坏，跳过缓存清理
+            }
             // 使用 require 加载
             const mod = require(modulePath);
             this.loadedModules.set(name, mod);
