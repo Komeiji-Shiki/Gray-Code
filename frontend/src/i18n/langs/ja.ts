@@ -1809,6 +1809,9 @@ const ja: LanguageMessages = {
                 selectChannel: 'チャンネルを選択',
                 model: 'モデル',
                 selectModel: 'モデルを選択',
+                forceUseCurrentChannel: 'すべてのサブエージェントで現在のチャンネルを強制使用',
+                forceUseCurrentChannelHint: '有効にすると、すべてのサブエージェントは各自のチャンネル・モデル設定を無視し、現在のセッションで使用中のチャンネルを使用します（General Worker と同じ継承方式）',
+                forceUseCurrentChannelActiveHint: '「現在のチャンネルを強制使用」が有効です。以下の設定は一時的に無効になります',
                 tools: 'ツール設定',
                 toolsDescription: 'このサブエージェントが使用できるツールを設定',
                 toolMode: {
