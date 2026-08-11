@@ -188,4 +188,28 @@ describe('SubAgentConcurrencyLimiter', () => {
             jest.useRealTimers();
         }
     });
+
+    test('排队超时溢出防护：超过 setTimeout 上限（2^31-1 ms）的 timeoutMs 被 clamp，不会立即触发', async () => {
+        jest.useFakeTimers();
+        try {
+            const limiter = new SubAgentConcurrencyLimiter(() => 1);
+            await limiter.acquire('r1');
+
+            // 2^31 毫秒超过 setTimeout 上限：若未 clamp，Node 会把超限值当作 1ms 立即触发回调
+            const pending = limiter.acquire('r2', undefined, 2 ** 31);
+            expect(limiter.getQueueLength()).toBe(1);
+
+            // 推进 1ms：未 clamp 的话此刻已 reject；clamp 后仍在排队
+            jest.advanceTimersByTime(1);
+            expect(limiter.getQueueLength()).toBe(1);
+
+            // 推进到 clamp 后的上限（2^31-1）附近：超时触发，队列清空
+            jest.advanceTimersByTime(2 ** 31 - 2);
+            await expect(pending).rejects.toBeInstanceOf(SubAgentQueueTimeoutError);
+            expect(limiter.getQueueLength()).toBe(0);
+            expect(jest.getTimerCount()).toBe(0);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
 });
