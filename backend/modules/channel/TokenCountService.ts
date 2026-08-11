@@ -12,10 +12,12 @@ import type { ChannelConfig, TokenCountMethod, TokenCountApiConfig } from '../co
 import { cleanContentForAPI } from '../conversation';
 import {
     isImageMimeType,
+    isPdfMimeType,
     isTextMimeType,
     buildTextAttachmentContent,
     buildUnsupportedAttachmentText
 } from './formatters/mediaParts';
+import { serializeToolResultForLLM } from './formatters/toolResponseFormatter';
 
 /** 计数请求超时（毫秒）：超时自动中止，调用方走本地估算降级 */
 const COUNT_REQUEST_TIMEOUT_MS = 15000;
@@ -284,6 +286,16 @@ export class TokenCountService {
             for (const part of cleaned.parts) {
                 if ('text' in part && part.text) {
                     totalChars += part.text.length;
+                } else if (part.functionResponse) {
+                    // 工具结果文本计入本地估算（与 API 计数口径一致，避免 tool 消息被整体漏计）
+                    const serialized = serializeToolResultForLLM(
+                        part.functionResponse.name,
+                        part.functionResponse.response as Record<string, unknown>
+                    );
+                    totalChars += serialized.length;
+                } else if (part.functionCall) {
+                    // 工具调用参数计入本地估算（参数 JSON 是发送给模型的真实输入）
+                    totalChars += JSON.stringify(part.functionCall.args).length;
                 }
             }
         }
@@ -415,34 +427,75 @@ export class TokenCountService {
             };
         }
         
-        // 转换内容格式
-        const messages = contents.map(content => {
+        // 转换内容格式（对齐 openai.ts convertHistoryFunctionCallMode 的消息形态）：
+        // - functionCall → assistant 消息的 tool_calls（旧实现拍成空文本，工具调用 token 漏计）
+        // - functionResponse → role:tool 消息（旧实现拍成空文本，工具结果 token 漏计）
+        // - system / 文本 / 图片维持原格式
+        const messages: any[] = [];
+        for (const content of contents) {
             const cleaned = cleanContentForAPI(content);
-            return {
-                role: cleaned.role === 'model' ? 'assistant' : cleaned.role,
-                content: cleaned.parts.map(part => {
-                    if ('text' in part && part.text) {
-                        return { type: 'text' as const, text: part.text };
-                    }
-                    if ('inlineData' in part && part.inlineData) {
-                        const { mimeType, data } = part.inlineData;
-                        if (isImageMimeType(mimeType)) {
-                            return {
-                                type: 'image_url' as const,
-                                image_url: {
-                                    url: `data:${mimeType};base64,${data}`
-                                }
-                            };
+            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
+
+            const textParts = cleaned.parts.filter(p => 'text' in p && p.text);
+            const functionCallParts = cleaned.parts.filter(p => p.functionCall);
+            const functionResponseParts = cleaned.parts.filter(p => p.functionResponse);
+
+            if (functionCallParts.length > 0) {
+                // assistant 消息：文本并入 content，调用挂 tool_calls
+                messages.push({
+                    role: 'assistant',
+                    content: textParts.length > 0 ? textParts.map(p => p.text).join('\n') : null,
+                    tool_calls: functionCallParts.map((p, index) => ({
+                        id: p.functionCall!.id || `call_${Date.now()}_${index}`,
+                        type: 'function',
+                        function: {
+                            name: p.functionCall!.name,
+                            arguments: typeof p.functionCall!.args === 'string'
+                                ? p.functionCall!.args
+                                : JSON.stringify(p.functionCall!.args)
                         }
-                        if (isTextMimeType(mimeType)) {
-                            return { type: 'text' as const, text: buildTextAttachmentContent(data) };
+                    }))
+                });
+            }
+
+            // 工具结果独立为 role:tool 消息
+            for (const part of functionResponseParts) {
+                const resp = part.functionResponse!;
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: resp.id || '',
+                    content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                });
+            }
+
+            // 普通消息（文本 + 图片，含 system）
+            if (functionCallParts.length === 0 && functionResponseParts.length === 0) {
+                messages.push({
+                    role,
+                    content: cleaned.parts.map(part => {
+                        if ('text' in part && part.text) {
+                            return { type: 'text' as const, text: part.text };
                         }
-                        return { type: 'text' as const, text: buildUnsupportedAttachmentText(mimeType) };
-                    }
-                    return { type: 'text' as const, text: '' };
-                })
-            };
-        });
+                        if ('inlineData' in part && part.inlineData) {
+                            const { mimeType, data } = part.inlineData;
+                            if (isImageMimeType(mimeType)) {
+                                return {
+                                    type: 'image_url' as const,
+                                    image_url: {
+                                        url: `data:${mimeType};base64,${data}`
+                                    }
+                                };
+                            }
+                            if (isTextMimeType(mimeType)) {
+                                return { type: 'text' as const, text: buildTextAttachmentContent(data) };
+                            }
+                            return { type: 'text' as const, text: buildUnsupportedAttachmentText(mimeType) };
+                        }
+                        return { type: 'text' as const, text: '' };
+                    })
+                });
+            }
+        }
         
         const requestBody: any = { messages };
         if (model) {
@@ -626,24 +679,74 @@ export class TokenCountService {
         
         const countUrl = this.buildAnthropicCountUrl(baseUrl);
         
-        // 转换内容格式
-        const messages = contents.map(content => {
+        // 转换内容格式（对齐 anthropic.ts buildRequest 的消息形态）：
+        // - system 消息提取到独立 system 字段（count_tokens 与 Messages API 一样只接受
+        //   user/assistant 角色，旧实现把 system 塞进 messages 会漏计/报错）
+        // - 图片/PDF → image/document 块（旧实现拍成空文本，图片 token 漏计）
+        // - functionCall/functionResponse → tool_use/tool_result 块（旧实现拍成空文本，
+        //   工具调用与结果 token 漏计）
+        const systemTexts: string[] = [];
+        const messages: any[] = [];
+        for (const content of contents) {
             const cleaned = cleanContentForAPI(content);
-            return {
-                role: cleaned.role === 'model' ? 'assistant' : cleaned.role,
-                content: cleaned.parts.map(part => {
-                    if ('text' in part && part.text !== undefined) {
-                        return { type: 'text' as const, text: part.text };
+            if (cleaned.role === 'system') {
+                for (const part of cleaned.parts) {
+                    if ('text' in part && part.text) {
+                        systemTexts.push(part.text);
                     }
-                    return { type: 'text' as const, text: '' };
-                })
-            };
-        });
+                }
+                continue;
+            }
+            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
+            const contentBlocks: any[] = [];
+            for (const part of cleaned.parts) {
+                if ('text' in part && part.text !== undefined) {
+                    contentBlocks.push({ type: 'text', text: part.text });
+                } else if (part.inlineData) {
+                    const { mimeType, data } = part.inlineData;
+                    if (isImageMimeType(mimeType)) {
+                        contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data } });
+                    } else if (isPdfMimeType(mimeType)) {
+                        contentBlocks.push({ type: 'document', source: { type: 'base64', media_type: mimeType, data } });
+                    } else if (isTextMimeType(mimeType)) {
+                        contentBlocks.push({ type: 'text', text: buildTextAttachmentContent(data) });
+                    } else {
+                        contentBlocks.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
+                    }
+                } else if (part.functionCall) {
+                    const fc = part.functionCall;
+                    contentBlocks.push({
+                        type: 'tool_use',
+                        // 无 id 时生成（与 anthropic.ts convertHistoryFunctionCallMode 一致），
+                        // 保证 count_tokens 结构校验通过
+                        id: fc.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                        name: fc.name,
+                        input: fc.args
+                    });
+                } else if (part.functionResponse) {
+                    const resp = part.functionResponse;
+                    contentBlocks.push({
+                        type: 'tool_result',
+                        tool_use_id: resp.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                    });
+                }
+            }
+            if (contentBlocks.length === 0) {
+                // 空消息（如思考被剥离）：保留一个空 text 块，避免 count_tokens 结构校验报错
+                contentBlocks.push({ type: 'text', text: '' });
+            }
+            messages.push({ role, content: contentBlocks });
+        }
         
-        const requestBody = {
+        const requestBody: any = {
             model,
             messages
         };
+        // system 消息单独放在 system 字段（与 Messages API 请求一致），确保计入输入 token
+        if (systemTexts.length > 0) {
+            requestBody.system = systemTexts.join('\n');
+        }
         
         const response = await this.fetchWithTimeout(countUrl, {
             method: 'POST',
@@ -779,35 +882,76 @@ export class TokenCountService {
             };
         }
         
-        // 清理并转换内容格式为 OpenAI Messages 格式
-        const messages = contents.map(content => {
+        // 清理并转换内容格式为 OpenAI Messages 格式（对齐 openai.ts convertHistoryFunctionCallMode）：
+        // - functionCall → assistant 消息的 tool_calls（旧实现拍成空文本，工具调用 token 漏计）
+        // - functionResponse → role:tool 消息（旧实现拍成空文本，工具结果 token 漏计）
+        // - system / 文本 / 图片维持原格式
+        const messages: any[] = [];
+        for (const content of contents) {
             const cleaned = cleanContentForAPI(content);
-            return {
-                role: cleaned.role === 'model' ? 'assistant' : cleaned.role,
-                content: cleaned.parts.map(part => {
-                    if ('text' in part && part.text) {
-                        return { type: 'text' as const, text: part.text };
-                    }
-                    // 处理图片、文本附件等其他类型（按 MIME 分发，文本不能当图片）
-                    if ('inlineData' in part && part.inlineData) {
-                        const { mimeType, data } = part.inlineData;
-                        if (isImageMimeType(mimeType)) {
-                            return {
-                                type: 'image_url' as const,
-                                image_url: {
-                                    url: `data:${mimeType};base64,${data}`
-                                }
-                            };
+            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
+
+            const textParts = cleaned.parts.filter(p => 'text' in p && p.text);
+            const functionCallParts = cleaned.parts.filter(p => p.functionCall);
+            const functionResponseParts = cleaned.parts.filter(p => p.functionResponse);
+
+            if (functionCallParts.length > 0) {
+                // assistant 消息：文本并入 content，调用挂 tool_calls
+                messages.push({
+                    role: 'assistant',
+                    content: textParts.length > 0 ? textParts.map(p => p.text).join('\n') : null,
+                    tool_calls: functionCallParts.map((p, index) => ({
+                        id: p.functionCall!.id || `call_${Date.now()}_${index}`,
+                        type: 'function',
+                        function: {
+                            name: p.functionCall!.name,
+                            arguments: typeof p.functionCall!.args === 'string'
+                                ? p.functionCall!.args
+                                : JSON.stringify(p.functionCall!.args)
                         }
-                        if (isTextMimeType(mimeType)) {
-                            return { type: 'text' as const, text: buildTextAttachmentContent(data) };
+                    }))
+                });
+            }
+
+            // 工具结果独立为 role:tool 消息
+            for (const part of functionResponseParts) {
+                const resp = part.functionResponse!;
+                messages.push({
+                    role: 'tool',
+                    tool_call_id: resp.id || '',
+                    content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                });
+            }
+
+            // 普通消息（文本 + 图片，含 system）
+            if (functionCallParts.length === 0 && functionResponseParts.length === 0) {
+                messages.push({
+                    role,
+                    content: cleaned.parts.map(part => {
+                        if ('text' in part && part.text) {
+                            return { type: 'text' as const, text: part.text };
                         }
-                        return { type: 'text' as const, text: buildUnsupportedAttachmentText(mimeType) };
-                    }
-                    return { type: 'text' as const, text: '' };
-                })
-            };
-        });
+                        // 处理图片、文本附件等其他类型（按 MIME 分发，文本不能当图片）
+                        if ('inlineData' in part && part.inlineData) {
+                            const { mimeType, data } = part.inlineData;
+                            if (isImageMimeType(mimeType)) {
+                                return {
+                                    type: 'image_url' as const,
+                                    image_url: {
+                                        url: `data:${mimeType};base64,${data}`
+                                    }
+                                };
+                            }
+                            if (isTextMimeType(mimeType)) {
+                                return { type: 'text' as const, text: buildTextAttachmentContent(data) };
+                            }
+                            return { type: 'text' as const, text: buildUnsupportedAttachmentText(mimeType) };
+                        }
+                        return { type: 'text' as const, text: '' };
+                    })
+                });
+            }
+        }
         
         const requestBody = {
             model: config.model,
@@ -986,25 +1130,74 @@ export class TokenCountService {
         contents: Content[],
         externalSignal?: AbortSignal
     ): Promise<TokenCountResult> {
-        // 清理并转换内容格式为 Anthropic messages 格式
-        const messages = contents.map(content => {
+        // 清理并转换内容格式为 Anthropic messages 格式（对齐 anthropic.ts buildRequest）：
+        // - system 消息提取到独立 system 字段（count_tokens 与 Messages API 一样只接受
+        //   user/assistant 角色，旧实现把 system 塞进 messages 会漏计/报错）
+        // - 图片/PDF → image/document 块（旧实现拍成空文本，图片 token 漏计）
+        // - functionCall/functionResponse → tool_use/tool_result 块（旧实现拍成空文本，
+        //   工具调用与结果 token 漏计）
+        const systemTexts: string[] = [];
+        const messages: any[] = [];
+        for (const content of contents) {
             const cleaned = cleanContentForAPI(content);
-            return {
-                role: cleaned.role === 'model' ? 'assistant' : cleaned.role,
-                content: cleaned.parts.map(part => {
-                    if ('text' in part && part.text !== undefined) {
-                        return { type: 'text' as const, text: part.text };
+            if (cleaned.role === 'system') {
+                for (const part of cleaned.parts) {
+                    if ('text' in part && part.text) {
+                        systemTexts.push(part.text);
                     }
-                    // 处理图片等其他类型
-                    return { type: 'text' as const, text: '' };
-                })
-            };
-        });
+                }
+                continue;
+            }
+            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
+            const contentBlocks: any[] = [];
+            for (const part of cleaned.parts) {
+                if ('text' in part && part.text !== undefined) {
+                    contentBlocks.push({ type: 'text', text: part.text });
+                } else if (part.inlineData) {
+                    const { mimeType, data } = part.inlineData;
+                    if (isImageMimeType(mimeType)) {
+                        contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data } });
+                    } else if (isPdfMimeType(mimeType)) {
+                        contentBlocks.push({ type: 'document', source: { type: 'base64', media_type: mimeType, data } });
+                    } else if (isTextMimeType(mimeType)) {
+                        contentBlocks.push({ type: 'text', text: buildTextAttachmentContent(data) });
+                    } else {
+                        contentBlocks.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
+                    }
+                } else if (part.functionCall) {
+                    const fc = part.functionCall;
+                    contentBlocks.push({
+                        type: 'tool_use',
+                        // 无 id 时生成（与 anthropic.ts convertHistoryFunctionCallMode 一致），
+                        // 保证 count_tokens 结构校验通过
+                        id: fc.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                        name: fc.name,
+                        input: fc.args
+                    });
+                } else if (part.functionResponse) {
+                    const resp = part.functionResponse;
+                    contentBlocks.push({
+                        type: 'tool_result',
+                        tool_use_id: resp.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                    });
+                }
+            }
+            if (contentBlocks.length === 0) {
+                // 空消息（如思考被剥离）：保留一个空 text 块，避免 count_tokens 结构校验报错
+                contentBlocks.push({ type: 'text', text: '' });
+            }
+            messages.push({ role, content: contentBlocks });
+        }
         
-        const requestBody = {
+        const requestBody: any = {
             model: config.model,
             messages
         };
+        // system 消息单独放在 system 字段（与 Messages API 请求一致），确保计入输入 token
+        if (systemTexts.length > 0) {
+            requestBody.system = systemTexts.join('\n');
+        }
         
         const response = await this.fetchWithTimeout(config.baseUrl, {
             method: 'POST',
