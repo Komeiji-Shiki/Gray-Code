@@ -228,10 +228,12 @@ export class ToolsSettingsService {
      * 获取工具自动执行配置
      */
     getToolAutoExecConfig(): Readonly<ToolAutoExecConfig> {
-        // 拷贝返回：未配置时直接返回模块级 DEFAULT_TOOL_AUTO_EXEC_CONFIG 活引用，
-        // 调用方原地修改会污染全局默认值。
+        // 拷贝返回：与模块级默认值合并后再拷贝——setToolAutoExec 只持久化单键
+        // （如 { execute_command: true }），未配置的默认键（delete_file 等）必须补全，
+        // 否则调用方逐键读取会把缺失键误判为「未配置 → 默认自动执行」，
+        // delete_file 将失去确认保护（与 isToolAutoExec 的合并语义一致）。
         const config = this.core.settings.toolAutoExec;
-        return config ? { ...config } : { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG };
+        return { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG, ...(config || {}) };
     }
 
     /**
@@ -241,8 +243,12 @@ export class ToolsSettingsService {
      * @returns true = 自动执行，false = 需要确认
      */
     isToolAutoExec(toolName: string): boolean {
-        const config = this.core.settings.toolAutoExec || DEFAULT_TOOL_AUTO_EXEC_CONFIG;
-        // 如果未配置，默认自动执行
+        // 读路径合并默认值（默认键补全、用户键覆盖）：setToolAutoExec 只持久化单键，
+        // settings.toolAutoExec 一旦存在就缺其它默认键（如只设 execute_command 后
+        // delete_file 键缺失），直接读活对象会把 delete_file 判为 undefined → 自动执行，
+        // 删除文件失去确认保护。合并后缺失键回落到默认值（delete_file 默认需确认）。
+        const config = { ...DEFAULT_TOOL_AUTO_EXEC_CONFIG, ...(this.core.settings.toolAutoExec || {}) };
+        // 如果未配置（含默认配置未覆盖的未知工具名），默认自动执行
         if (config[toolName] === undefined) {
             return true;
         }
@@ -260,7 +266,8 @@ export class ToolsSettingsService {
             const oldConfig = { ...this.getToolAutoExecConfig() };
             
             // 只写 [toolName]: autoExec 单键：不把 DEFAULT_TOOL_AUTO_EXEC_CONFIG 整体
-            // 持久化（首次写入时其余键保持 undefined，由 isToolAutoExec 的默认语义兜底）
+            // 持久化（首次写入时其余键保持 undefined，由 isToolAutoExec/getToolAutoExecConfig
+            // 读取时合并默认值兜底，缺键仍按默认需确认处理）
             // 整体替换对象：任何存储实现都不会因对象引用复用而漏写（同 setToolEnabled）
             this.core.settings.toolAutoExec = {
                 ...(this.core.settings.toolAutoExec || {}),

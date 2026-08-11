@@ -149,18 +149,31 @@ export class SettingsCore {
      * 能够完整保留默认配置的子属性。
      */
     deepMergeConfig<T>(defaultConfig: T, storedConfig: any): T {
-        // 基本类型或数组/null/undefined，直接使用 stored 的值（如果存在），否则回退到 default
+        // undefined：保留默认（调用方未设置该键）
         if (storedConfig === undefined) {
             return defaultConfig;
         }
 
-        // 处理基础类型或特殊对象类型
-        if (
-            typeof defaultConfig !== 'object' || defaultConfig === null ||
-            typeof storedConfig !== 'object' || storedConfig === null ||
-            Array.isArray(defaultConfig) || Array.isArray(storedConfig)
-        ) {
+        // 显式 null：清空字段语义（与 deepMergeToolsConfig 一致：updateSettings 收到
+        // null 时显式写入 null，此处 merged[key] 同样置 null，由读取方以 null 兜底处理）
+        if (storedConfig === null) {
+            return null as T;
+        }
+
+        const isDefaultPureObject =
+            typeof defaultConfig === 'object' && defaultConfig !== null && !Array.isArray(defaultConfig);
+
+        if (!isDefaultPureObject) {
+            // default 是原始值/数组：stored 直接覆盖（数组与原始值直接覆盖语义）
             return storedConfig as T;
+        }
+
+        // default 是纯对象：stored 也必须是纯对象才能逐键合并
+        if (typeof storedConfig !== 'object' || Array.isArray(storedConfig)) {
+            // 类型冲突（如 settings.json 被误写为 toolsConfig: 123 等损坏数据）：
+            // 直接采用 default 兜底，避免 reloadAndNotify 把 this.settings 整体赋成
+            // 非对象后，各主题服务读取字段时崩溃或静默返回错误值。
+            return defaultConfig;
         }
 
         const merged = { ...defaultConfig } as Record<string, any>;
@@ -429,10 +442,15 @@ export class SettingsCore {
         // 读-改-写-通知整体入队串行：与 updateSettings/reloadAndNotify 共用同一写队列
         await this.serializeMutation(async () => {
             const oldSettings = this.cloneConfig(this.settings);
+            // 保留存储路径配置：DEFAULT_GLOBAL_SETTINGS 不含 storagePath（StoragePathSettingsService
+            // 字段名），整体重置会让用户自定义数据目录/迁移状态静默回落到默认路径。
+            // reset 只重置普通设置项，数据存放位置不属于应被清空的内容。
+            const storagePath = this.settings.storagePath ? this.cloneConfig(this.settings.storagePath) : undefined;
             // 深拷贝默认配置：浅展开会让嵌套对象与模块级 DEFAULT_GLOBAL_SETTINGS 共享引用，
             // 后续对 this.settings 嵌套字段的修改会污染全局默认值（与构造器/import 路径一致）。
             this.settings = {
                 ...this.cloneConfig(DEFAULT_GLOBAL_SETTINGS),
+                ...(storagePath ? { storagePath } : {}),
                 lastUpdated: Date.now()
             };
 
