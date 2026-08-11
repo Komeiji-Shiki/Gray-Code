@@ -1,11 +1,11 @@
 /**
- * SubAgentsSettings 设置页测试——「强制使用当前渠道」勾选框
+ * SubAgentsSettings 设置页测试——「强制使用当前渠道」全局开关
  *
  * 覆盖：
- * - 渠道与模型区块渲染勾选框及说明文案
- * - 勾选后：subagents.update 携带 forceUseCurrentChannel，渠道/模型下拉被禁用
- * - 取消勾选后：下拉恢复可用
- * - 已配置勾选状态的代理初始渲染即禁用下拉
+ * - 全局配置区块（与启用通用 Worker 同级）渲染勾选框及说明文案
+ * - 勾选后：subagents.updateGlobalConfig 携带 forceUseCurrentChannel，各子代理渠道/模型下拉被禁用，并显示激活提示
+ * - 取消勾选后：下拉恢复可用、激活提示消失
+ * - 已开启全局开关时：初始渲染即禁用下拉
  */
 import { mount, flushPromises } from '@vue/test-utils'
 import { describe, expect, vi, beforeEach } from 'vitest'
@@ -31,15 +31,16 @@ const AGENT = {
   enabled: true
 }
 
-function mockDefaults(channelOverride?: Record<string, unknown>) {
+function mockDefaults(options: { forceUseCurrentChannel?: boolean } = {}) {
   mockSend.mockImplementation((message: string) => {
     switch (message) {
       case MESSAGE_NAMES['subagents.list']:
         return Promise.resolve({
-          agents: [{ ...AGENT, channel: { ...AGENT.channel, ...channelOverride } }],
+          agents: [AGENT],
           maxConcurrentAgents: 3,
           generalWorkerEnabled: true,
-          defaultMaxIterations: 80
+          defaultMaxIterations: 80,
+          forceUseCurrentChannel: options.forceUseCurrentChannel === true
         })
       case MESSAGE_NAMES['config.listConfigs']:
         return Promise.resolve(['channel_1'])
@@ -60,6 +61,8 @@ function mockDefaults(channelOverride?: Record<string, unknown>) {
         return Promise.resolve({ tools: [] })
       case MESSAGE_NAMES['subagents.update']:
         return Promise.resolve({ ok: true })
+      case MESSAGE_NAMES['subagents.updateGlobalConfig']:
+        return Promise.resolve({ ok: true })
       default:
         return Promise.resolve(undefined)
     }
@@ -78,47 +81,51 @@ function mountSettings(): ReturnType<typeof mount> {
   })
 }
 
+/** 全局配置区块中的「强制使用当前渠道」勾选框（第 2 个，通用 Worker 之后） */
+function forceCheckbox(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('.global-config input[type="checkbox"]')[1]
+}
+
 function channelSection(wrapper: ReturnType<typeof mount>) {
   return wrapper.find('[data-search-anchor="subagents-channel-model"]')
 }
 
-describe('SubAgentsSettings 强制使用当前渠道', () => {
+describe('SubAgentsSettings 强制使用当前渠道（全局开关）', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  test('渠道与模型区块渲染勾选框、文案与说明', async () => {
+  test('全局配置区块渲染勾选框、文案与说明', async () => {
     mockDefaults()
     const wrapper = mountSettings()
     await flushPromises()
 
-    const section = channelSection(wrapper)
-    const checkbox = section.find('input[type="checkbox"]')
-    expect(checkbox.exists()).toBe(true)
-    expect(section.find('.checkbox-text').text()).toBe('强制使用当前渠道')
-    expect(section.find('.checkbox-hint').text()).toContain('当前会话')
+    const globalSection = wrapper.find('.global-config')
+    const checkboxes = globalSection.findAll('input[type="checkbox"]')
+    // 通用 Worker 与「强制使用当前渠道」同级并列
+    expect(checkboxes).toHaveLength(2)
+    const force = forceCheckbox(wrapper)
+    expect(force.exists()).toBe(true)
+    expect((force.element as HTMLInputElement).parentElement?.textContent).toContain('强制所有子代理使用当前渠道')
+    expect(wrapper.find('.global-config .checkbox-hint').text()).toContain('统一改用当前会话正在使用的渠道')
 
     wrapper.unmount()
   })
 
-  test('勾选后：subagents.update 携带 forceUseCurrentChannel，渠道/模型下拉被禁用', async () => {
+  test('勾选后：updateGlobalConfig 携带 forceUseCurrentChannel，下拉禁用且显示激活提示', async () => {
     mockDefaults()
     const wrapper = mountSettings()
     await flushPromises()
 
-    const section = channelSection(wrapper)
-    await section.find('input[type="checkbox"]').setValue(true)
+    await forceCheckbox(wrapper).setValue(true)
     await flushPromises()
 
-    // 保存载荷：channel 对象整体透传，保留原 channelId，附加 forceUseCurrentChannel
-    expect(mockSend).toHaveBeenCalledWith(MESSAGE_NAMES['subagents.update'], {
-      type: 'tester',
-      updates: {
-        channel: { channelId: 'channel_1', forceUseCurrentChannel: true }
-      }
+    expect(mockSend).toHaveBeenCalledWith(MESSAGE_NAMES['subagents.updateGlobalConfig'], {
+      forceUseCurrentChannel: true
     })
 
-    // 勾选后渠道/模型下拉均禁用（运行时忽略其值）
+    const section = channelSection(wrapper)
+    expect(section.text()).toContain('此处配置暂不生效')
     const selects = section.findAllComponents({ name: 'CustomSelect' })
     expect(selects).toHaveLength(2)
     for (const select of selects) {
@@ -128,25 +135,23 @@ describe('SubAgentsSettings 强制使用当前渠道', () => {
     wrapper.unmount()
   })
 
-  test('取消勾选后：下拉恢复可用', async () => {
+  test('取消勾选后：下拉恢复可用、激活提示消失', async () => {
     mockDefaults({ forceUseCurrentChannel: true })
     const wrapper = mountSettings()
     await flushPromises()
 
     const section = channelSection(wrapper)
+    expect(section.text()).toContain('此处配置暂不生效')
     let selects = section.findAllComponents({ name: 'CustomSelect' })
     expect(selects[0].props('disabled')).toBe(true)
 
-    await section.find('input[type="checkbox"]').setValue(false)
+    await forceCheckbox(wrapper).setValue(false)
     await flushPromises()
 
-    expect(mockSend).toHaveBeenCalledWith(MESSAGE_NAMES['subagents.update'], {
-      type: 'tester',
-      updates: {
-        channel: { channelId: 'channel_1', forceUseCurrentChannel: false }
-      }
+    expect(mockSend).toHaveBeenCalledWith(MESSAGE_NAMES['subagents.updateGlobalConfig'], {
+      forceUseCurrentChannel: false
     })
-
+    expect(section.text()).not.toContain('此处配置暂不生效')
     selects = section.findAllComponents({ name: 'CustomSelect' })
     expect(selects[0].props('disabled')).toBe(false)
     expect(selects[1].props('disabled')).toBe(false) // 渠道仍选中（channel_1），模型下拉恢复可用
@@ -154,15 +159,16 @@ describe('SubAgentsSettings 强制使用当前渠道', () => {
     wrapper.unmount()
   })
 
-  test('已配置勾选状态的代理：初始渲染即禁用渠道/模型下拉', async () => {
+  test('全局开关已开启：初始渲染即禁用渠道/模型下拉并显示激活提示', async () => {
     mockDefaults({ forceUseCurrentChannel: true })
     const wrapper = mountSettings()
     await flushPromises()
 
-    const section = channelSection(wrapper)
-    const checkbox = section.find('input[type="checkbox"]')
-    expect((checkbox.element as HTMLInputElement).checked).toBe(true)
+    const force = forceCheckbox(wrapper)
+    expect((force.element as HTMLInputElement).checked).toBe(true)
 
+    const section = channelSection(wrapper)
+    expect(section.text()).toContain('此处配置暂不生效')
     const selects = section.findAllComponents({ name: 'CustomSelect' })
     for (const select of selects) {
       expect(select.props('disabled')).toBe(true)

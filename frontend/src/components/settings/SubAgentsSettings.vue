@@ -40,7 +40,6 @@ interface SubAgentConfig {
   channel: {
     channelId: string
     modelId?: string
-    forceUseCurrentChannel?: boolean
   }
   tools: SubAgentToolsConfig
   maxIterations?: number
@@ -88,6 +87,8 @@ const maxConcurrentAgents = ref(3)
 const generalWorkerEnabled = ref(true)
 // 全局默认迭代次数（未单独配置的 agent 与 General Worker 继承，默认 80）
 const defaultMaxIterations = ref(80)
+// 强制使用当前会话渠道（全局开关）：开启后所有子代理忽略自身固定渠道，统一改用当前会话渠道
+const forceUseCurrentChannel = ref(false)
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -167,11 +168,6 @@ const modelOptions = computed<SelectOption[]>(() => {
   }))
 })
 
-// 强制使用当前会话渠道：勾选后忽略上方渠道/模型下拉，运行时改用当前正在使用的渠道
-const forceUseCurrentChannel = computed(() =>
-  currentAgent.value?.channel.forceUseCurrentChannel === true
-)
-
 // 工具模式选项
 const toolModeOptions = computed<SelectOption[]>(() => [
   { value: 'all', label: t('components.settings.subagents.toolMode.all') },
@@ -236,7 +232,7 @@ function isMcpTool(tool: ToolInfo): boolean {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number }>(MESSAGE_NAMES['subagents.list'], {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number, forceUseCurrentChannel?: boolean }>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -247,6 +243,7 @@ async function loadSubAgents() {
       if (response.defaultMaxIterations !== undefined) {
         defaultMaxIterations.value = response.defaultMaxIterations
       }
+      forceUseCurrentChannel.value = response.forceUseCurrentChannel === true
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
         currentAgentType.value = subAgents.value[0].type
@@ -658,6 +655,14 @@ onMounted(async () => {
           />
           <span class="field-hint">{{ t('components.settings.subagents.generalWorkerHint') }}</span>
         </div>
+        <div class="form-group">
+          <CustomCheckbox
+            :modelValue="forceUseCurrentChannel"
+            :label="t('components.settings.subagents.forceUseCurrentChannel')"
+            :hint="t('components.settings.subagents.forceUseCurrentChannelHint')"
+            @update:modelValue="(v: boolean) => { forceUseCurrentChannel = v; updateGlobalConfig('forceUseCurrentChannel', v) }"
+          />
+        </div>
       </div>
       
       <!-- 子代理选择器 -->
@@ -761,15 +766,7 @@ onMounted(async () => {
         <!-- 渠道和模型 -->
         <div class="config-section" data-search-anchor="subagents-channel-model">
           <h5>{{ t('components.settings.subagents.channelModel') }}</h5>
-
-          <div class="form-group">
-            <CustomCheckbox
-              :modelValue="forceUseCurrentChannel"
-              :label="t('components.settings.subagents.forceUseCurrentChannel')"
-              :hint="t('components.settings.subagents.forceUseCurrentChannelHint')"
-              @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, forceUseCurrentChannel: $event })"
-            />
-          </div>
+          <p v-if="forceUseCurrentChannel" class="field-hint">{{ t('components.settings.subagents.forceUseCurrentChannelActiveHint') }}</p>
           
           <div class="form-row">
             <div class="form-group flex-1">

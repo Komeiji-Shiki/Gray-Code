@@ -493,8 +493,8 @@ async function executeSubAgent(
     }
     // F2：父 runId（A-COMM 信箱身份），用于级联清理父子关系；主模型直接派发时缺省。
     const parentRunId = context?.mailboxRunId as string | undefined;
-    // 强制使用当前渠道：配置了 forceUseCurrentChannel 的子代理忽略自身固定渠道，
-    // 运行时改用「派发方当前正在使用的渠道」（channelConfigId + channelModelId）——
+    // 强制使用当前渠道（全局开关）：开启后所有已配置固定渠道的子代理忽略自身渠道，
+    // 运行时统一改用「派发方当前正在使用的渠道」（channelConfigId + channelModelId）——
     // 主会话直接派发时为会话当前渠道；嵌套派发时为主 run 的渠道（与 General Worker
     // 嵌套继承口径一致，父 run 非强制时嵌套子代理继承父 run 的固定渠道）。
     // 与 General Worker 的继承口径一致（含 modelId——只换渠道不换模型会落到渠道默认
@@ -503,13 +503,13 @@ async function executeSubAgent(
     // 注意：自定义 executor 不消费 effectiveConfig（request 不含 channel 字段），
     // 该开关仅对默认 executor 生效。
     let effectiveConfig = config;
-    if (config.channel.forceUseCurrentChannel === true) {
+    if (getSubAgentsSettings().forceUseCurrentChannel === true) {
         const channelConfigId = context?.channelConfigId as string | undefined;
         if (!channelConfigId) {
             return {
                 success: false,
-                error: `SubAgent "${agentName}" is configured to force the current channel, `
-                    + 'but no active channel is available in the tool context.'
+                error: `Global setting "force use current channel" is enabled, but no active channel `
+                    + `is available in the tool context for sub-agent "${agentName}".`
             };
         }
         effectiveConfig = {

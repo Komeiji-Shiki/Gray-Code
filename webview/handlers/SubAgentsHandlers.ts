@@ -71,8 +71,9 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
     const generalWorkerEnabled = config.generalWorkerEnabled !== false;
     const defaultMaxIterations = config.defaultMaxIterations ?? 80;
+    const forceUseCurrentChannel = config.forceUseCurrentChannel === true;
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations });
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, forceUseCurrentChannel });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
   }
@@ -435,6 +436,10 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
 
     if (data.generalWorkerEnabled !== undefined && typeof data.generalWorkerEnabled === 'boolean') {
       updates.generalWorkerEnabled = data.generalWorkerEnabled;
+    }
+
+    if (data.forceUseCurrentChannel !== undefined && typeof data.forceUseCurrentChannel === 'boolean') {
+      updates.forceUseCurrentChannel = data.forceUseCurrentChannel;
     }
 
     // 全局默认迭代次数（-1 表示无限制，与 per-agent maxIterations 语义一致）
