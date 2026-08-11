@@ -113,6 +113,9 @@ async function deleteSingleFile(
         const originalContent = normalizeLineEndingsToLF(
             await fs.promises.readFile(absolutePath, 'utf8')
         );
+        // PERF：提前预热目标文档（openTextDocument），与行计算/块定位并行，
+        // 首次打开 diff 视图时读盘 + 语言服务初始化不再阻塞 UI。
+        getDiffManager()?.prewarmDocument?.(uri);
         const originalLines = originalContent.split('\n');
         const totalLines = originalLines.length;
 

@@ -609,6 +609,14 @@ export class DiffManager {
     private rejectingDiffIds: Set<string> = new Set();
 
     /**
+     * 预热中的目标文档（uri → openTextDocument promise）。
+     * PERF：首次打开 diff 视图时 openTextDocument 需读盘 + 触发语言服务初始化，
+     * 造成「预览已出现但 UI 卡顿」；在 hunk 应用期间提前发起即可隐藏该成本。
+     * 使用后即删（见 showDiffViewUnlocked），失败时亦移除以便重试。
+     */
+    private prewarmPromises: Map<string, Promise<vscode.TextDocument | undefined>> = new Map();
+
+    /**
      * Diff 动作全局串行队列。
      *
      * 为什么要改：多个 diff 确认入口可能同时触发，例如前端按钮、自动保存、CodeLens 或连续工具调用，单靠 20ms 延迟只能降低概率，不能保证VS Code 文档保存、标签页切换和状态广播按顺序收敛。
@@ -987,6 +995,37 @@ export class DiffManager {
     }
 
     /**
+     * PERF：预热目标文档——提前发起 openTextDocument（读盘 + 语言服务初始化），
+     * 与 hunk 应用 / diff 警戒检查等耗时操作并行，避免首次打开 diff 视图时
+     * 渲染进程一次性成本（grammar 加载 / tokenize）造成的 UI 卡顿。
+     *
+     * fire-and-forget：失败静默移除缓存，showDiffViewUnlocked 会 fallback 重新打开；
+     * 同一 uri 重复调用直接跳过（幂等）。测试/受限环境下 openTextDocument 不可用
+     * 时静默降级，不影响原始路径。
+     */
+    public prewarmDocument(fileUri: vscode.Uri): void {
+        const key = fileUri.toString();
+        if (this.prewarmPromises.has(key)) {
+            return;
+        }
+        try {
+            const raw = vscode.workspace.openTextDocument(fileUri);
+            // Promise.resolve 兜底：mock/受限环境下 openTextDocument 可能返回非 Promise
+            const p = Promise.resolve(raw).then(
+                (doc) => doc,
+                () => {
+                    // 打开失败：移除缓存，showDiffViewUnlocked 走 fallback 重试
+                    this.prewarmPromises.delete(key);
+                    return undefined;
+                }
+            );
+            this.prewarmPromises.set(key, p);
+        } catch {
+            // 环境不支持（测试 mock 缺失等）：静默跳过，showDiffView 走原始路径
+        }
+    }
+
+    /**
      * 创建待审阅的 diff（原始方法）
      */
     public async createPendingDiff(
@@ -1000,6 +1039,9 @@ export class DiffManager {
         options?: CreatePendingDiffOptions
     ): Promise<PendingDiff> {
         const id = `diff-${Date.now()}-${newUuid()}`;
+        // PERF：预热目标文档——与后续 checkDiffGuard / 视图打开并行，
+        // 覆盖所有调用方（apply_diff / insert_code / delete_code / write_file）。
+        this.prewarmDocument(vscode.Uri.file(absolutePath));
         const session = DiffReviewSession.create({
             id,
             filePath,
@@ -1531,7 +1573,14 @@ export class DiffManager {
         // 用 WorkspaceEdit 而非 showTextDocument + editor.edit：
         // - 不需要打开可见的文件本体 tab（后面只展示 diff tab），
         //   避免多开一个 tab 并把焦点从聊天输入框抢走（用户可能正在打字）
-        const document = await vscode.workspace.openTextDocument(fileUri);
+        // PERF：优先复用预热打开的文档（openTextDocument 读盘/语言服务初始化已提前完成）；
+        // 文档已被关闭或预热失败时 fallback 重新打开。使用后即删缓存，避免 stale 引用。
+        const prewarmKey = fileUri.toString();
+        const prewarmed = await this.prewarmPromises.get(prewarmKey);
+        const document = (prewarmed && vscode.workspace.textDocuments.includes(prewarmed))
+            ? prewarmed
+            : await vscode.workspace.openTextDocument(fileUri);
+        this.prewarmPromises.delete(prewarmKey);
         if (!isPending()) {
             return;
         }

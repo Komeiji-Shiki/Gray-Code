@@ -262,6 +262,9 @@ ${descriptionSuffix}`,
 
             try {
                 const originalContent = await fs.promises.readFile(absolutePath, 'utf8');
+                // PERF：提前预热目标文档（openTextDocument 读盘 + 语言服务初始化），
+                // 与 hunk 应用/解析并行，首次打开 diff 视图时不再卡顿。
+                getDiffManager()?.prewarmDocument?.(uri);
 
                 // ========== 统一 diff 模式 ==========
                 if (format === 'unified') {
