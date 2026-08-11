@@ -72,8 +72,11 @@ export class ConversationToolCallService {
             if (message.parts) {
                 for (const part of message.parts) {
                     if (part.functionCall && part.functionCall.id) {
-                        // 检查是否需要标记此工具
-                        const shouldReject = toolCallIds
+                        // 检查是否需要标记此工具（toolCallIds 为空数组时与 undefined 同语义：
+                        // 标记该消息中所有未响应的工具调用——方法 JSDoc「如果为空，则标记所有未执行的工具」；
+                        // 旧实现 `toolCallIds ? …` 把 []（truthy）当成「只拒绝列出的 id」，空列表会静默
+                        // 一个都不拒绝，调用方按「全部拒绝」理解却什么都没发生）
+                        const shouldReject = (toolCallIds && toolCallIds.length > 0)
                             ? toolCallIds.includes(part.functionCall.id)
                             : !respondedToolIds.has(part.functionCall.id);
 
