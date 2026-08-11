@@ -279,8 +279,8 @@ function evictOldestToolResponseCacheEntry(cache: Map<string, Record<string, unk
 
 /**
  * 写入一条工具响应缓存并触发 ref 更新（Map.set 不会被 Vue 的 ref 追踪，必须手动 triggerRef）。
- * 容量上限内行为与既有 set+triggerRef 完全一致；超限时先淘汰最旧条目再写入，
- * 保证任何写入路径（回填/流式落盘/拒绝工具插入/隐藏 FR 合并）都有界。
+ * 仅「新增 key」且已满员时才淘汰最旧条目：覆盖更新已有 key 不增加容量，不应误淘汰
+ * 其他条目（满员时更新已有 key 若无条件淘汰，最旧条目会被无辜踢出）。
  */
 export function setToolResponseCacheEntry(
   state: Pick<ChatStoreState, 'toolResponseCache'>,
@@ -288,7 +288,7 @@ export function setToolResponseCacheEntry(
   response: Record<string, unknown>
 ): void {
   const cache = state.toolResponseCache.value
-  if (cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
+  if (!cache.has(toolCallId) && cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
     evictOldestToolResponseCacheEntry(cache)
   }
   cache.set(toolCallId, response)
@@ -298,6 +298,7 @@ export function setToolResponseCacheEntry(
 /**
  * 批量写入工具响应缓存：循环内只做容量淘汰，末尾统一 triggerRef 一次，
  * 避免每条写入各触发一次 todoSnapshot 级联重放（O(工具数 × 重放成本)）。
+ * 淘汰条件与单条写入一致：仅新增 key 且已满员时才淘汰最旧条目。
  */
 export function setToolResponseCacheEntries(
   state: Pick<ChatStoreState, 'toolResponseCache'>,
@@ -306,7 +307,7 @@ export function setToolResponseCacheEntries(
   if (entries.length === 0) return
   const cache = state.toolResponseCache.value
   for (const [toolCallId, response] of entries) {
-    if (cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
+    if (!cache.has(toolCallId) && cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
       evictOldestToolResponseCacheEntry(cache)
     }
     cache.set(toolCallId, response)

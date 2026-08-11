@@ -146,6 +146,10 @@ export class SubAgentConcurrencyLimiter {
             // 定时器引用存入 entry.timeout，三处出队路径（drainQueue 唤醒 / abort 移除 / push 后重查 aborted 移除）
             // 都经 entry.cleanup() 统一 clearTimeout，避免 open handle 残留。
             if (timeoutMs !== undefined && timeoutMs > 0) {
+                // setTimeout 的毫秒上限为 2^31-1（约 24.8 天）：超出的数值会被 Node 当作 1ms
+                // 立即触发，导致「长排队超时」被误判为「立即超时失败」；clamp 到上限避免溢出
+                // （错误信息仍用调用方原始 timeoutMs，定时器触发时刻用 clamp 后的值）。
+                const clampedTimeoutMs = Math.min(timeoutMs, 2 ** 31 - 1);
                 entry.timeout = setTimeout(() => {
                     const index = this.queue.indexOf(entry);
                     if (index >= 0) {
@@ -153,7 +157,7 @@ export class SubAgentConcurrencyLimiter {
                     }
                     entry.cleanup();
                     reject(new SubAgentQueueTimeoutError(runId, timeoutMs));
-                }, timeoutMs);
+                }, clampedTimeoutMs);
             }
             this.queue.push(entry);
 

@@ -24,6 +24,9 @@
   - 设置：`VSCodeSettingsStorage` 读取改为 Global 优先（save 只写 Global，读的来源与写入来源一致，工作区级旧值不再吞掉设置页修改，Global 未设置时仍回退 workspace 值）；`ui.language` 默认值 `'zh-CN'` → `'auto'`（跟随 VS Code 语言，非中文用户不再被默认强制中文回复，且不再经 Settings Sync 固化扩散）；`StoragePathManager.migrateData` 同路径判定 Windows 大小写归一（仅大小写不同的目标路径不再触发「同目录中转迁移」清空全部存储数据）；`DEFAULT_DIAGNOSTICS_CONFIG.enabled` 改回 `false`（与接口文档一致，默认不再每轮向模型注入工作区诊断）。
   - 前端：直接发送失败时恢复输入正文（与附件恢复同路径，用户输入不再静默丢失）；`toolResponseCache` 增加容量上限（500 条，超限淘汰最旧，批量回填合并 triggerRef 减少 todoSnapshot 全量重放次数）；`sendQueuedMessageNow` 在 cancelStream 抛错时把排队消息放回队首（不再静默丢失）。
   - 测试：`vscode` mock 补齐 `env`（`ui.language` 默认 `'auto'` 后 `PromptManager.getUserLanguage` 的 auto 分支在单测中不再抛 TypeError）；新增 `workspaceRealpath`、`InputArea`、`toolResponseCache`、`queueSendNowCancelError` 等回归用例。
+  - 测试：`vscode` mock 补齐 `env`（`ui.language` 默认 `'auto'` 后 `PromptManager.getUserLanguage` 的 auto 分支在单测中不再抛 TypeError）；新增 `workspaceRealpath`、`InputArea`、`toolResponseCache`、`queueSendNowCancelError` 等回归用例。
+  - 合并审查修复：子代理排队超时定时器 clamp 到 `setTimeout` 上限（2^31-1 ms，约 24.8 天）——超出该值的 `queueTimeoutSeconds` 会被 Node 当作 1ms 立即触发，导致长排队超时被误判为立即失败，新增溢出防护回归用例；`toolResponseCache` 满员时覆盖更新已有 key 不再误淘汰最旧条目（Map.set 更新不改变迭代序，仅新增 key 且已满员才淘汰），新增单条/批量覆盖更新回归用例。
+## [1.5.1]
 ## [1.5.1]
 
 ### Added

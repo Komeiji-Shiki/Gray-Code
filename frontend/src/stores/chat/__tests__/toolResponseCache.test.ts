@@ -156,4 +156,49 @@ describe('toolResponseCache 容量上限', () => {
     expect(state.toolResponseCache.value.size).toBe(1)
     expect(state.toolResponseCache.value.get('tool-x')).toEqual({ v: 2 })
   })
+
+  test('满员时覆盖更新已有 key 不触发淘汰（容量保持，FIFO 队首仍是最旧）', () => {
+    const state = mockState([])
+    for (let i = 0; i < TOOL_RESPONSE_CACHE_MAX_SIZE; i++) {
+      setToolResponseCacheEntry(state, `tool-${i}`, { seq: i })
+    }
+    // 满员后覆盖更新最旧 key：不应触发淘汰，其他条目完整保留
+    setToolResponseCacheEntry(state, 'tool-0', { seq: 'updated' })
+    expect(state.toolResponseCache.value.size).toBe(TOOL_RESPONSE_CACHE_MAX_SIZE)
+    expect(state.toolResponseCache.value.has('tool-1')).toBe(true)
+    expect(state.toolResponseCache.value.get('tool-0')).toEqual({ seq: 'updated' })
+
+    // 继续写入新 key：FIFO 淘汰最旧条目（Map.set 更新已有 key 不改变迭代顺序，
+    // tool-0 仍是最旧；修复点在于「更新本身不再误淘汰其他条目」）
+    setToolResponseCacheEntry(state, 'tool-new', { seq: 'new' })
+    expect(state.toolResponseCache.value.size).toBe(TOOL_RESPONSE_CACHE_MAX_SIZE)
+    expect(state.toolResponseCache.value.has('tool-0')).toBe(false)
+    expect(state.toolResponseCache.value.has('tool-1')).toBe(true)
+    expect(state.toolResponseCache.value.get('tool-new')).toEqual({ seq: 'new' })
+  })
+
+  test('批量写入满员时更新已有 key 不触发淘汰（仅新增触发）', () => {
+    const state = mockState([])
+    const entries: Array<[string, Record<string, unknown>]> = []
+    for (let i = 0; i < TOOL_RESPONSE_CACHE_MAX_SIZE; i++) {
+      entries.push([`tool-${i}`, { seq: i }])
+    }
+    setToolResponseCacheEntries(state, entries)
+
+    // 批量仅覆盖更新已有 key：不触发淘汰
+    setToolResponseCacheEntries(state, [['tool-0', { seq: 'updated' }]])
+    expect(state.toolResponseCache.value.size).toBe(TOOL_RESPONSE_CACHE_MAX_SIZE)
+    expect(state.toolResponseCache.value.get('tool-0')).toEqual({ seq: 'updated' })
+    expect(state.toolResponseCache.value.has('tool-1')).toBe(true)
+
+    // 批量更新 + 新增：只有新增触发 FIFO 淘汰（tool-0 仍是最旧，被淘汰）
+    setToolResponseCacheEntries(state, [
+      ['tool-1', { seq: 'updated-2' }],
+      ['tool-new', { seq: 'new' }]
+    ])
+    expect(state.toolResponseCache.value.size).toBe(TOOL_RESPONSE_CACHE_MAX_SIZE)
+    expect(state.toolResponseCache.value.has('tool-0')).toBe(false)
+    expect(state.toolResponseCache.value.get('tool-1')).toEqual({ seq: 'updated-2' })
+    expect(state.toolResponseCache.value.get('tool-new')).toEqual({ seq: 'new' })
+  })
 })
