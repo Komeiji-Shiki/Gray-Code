@@ -692,7 +692,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                                 truncatedNote
                             },
                             error,
-                            cancelled: isExternalAbort || terminalProcess.killed === true
+                            // 超时不是取消：killed 与 timedOut 非互斥（超时强杀两标记都置位），
+                            // 必须排除 timedOut，否则超时被下游误判为「用户取消」→ 对话被自动暂停
+                            cancelled: isExternalAbort || (terminalProcess.killed === true && !terminalProcess.timedOut)
                         });
                     });
 

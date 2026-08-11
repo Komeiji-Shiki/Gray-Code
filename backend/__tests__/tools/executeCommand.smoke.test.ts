@@ -38,6 +38,11 @@ jest.mock('child_process', () => ({
     execSync: jest.fn()
 }));
 
+// 隔离 tree-kill：超时/终止路径不产生真实系统调用（CI 安全）
+jest.mock('tree-kill', () => jest.fn((_pid: number, _signal?: string, callback?: (error?: Error) => void) => {
+    callback?.();
+}));
+
 // 保留真实 getShellConfig 等实现，仅隔离 shell 可用性检测（避免真实 where/which/execSync）
 jest.mock('../../tools/terminal/shellConfig', () => {
     const actual = jest.requireActual('../../tools/terminal/shellConfig');
@@ -51,7 +56,7 @@ jest.mock('../../tools/terminal/shellConfig', () => {
 import { decodeWithMode, pushOutputLines, type StreamDecodeMode } from '../../tools/terminal/outputDecoder';
 import { getShellConfig } from '../../tools/terminal/shellConfig';
 import { createExecuteCommandTool } from '../../tools/terminal/execute_command';
-import type { TerminalProcess } from '../../tools/terminal/processRunner';
+import { killTerminalProcess, getActiveTerminalProcesses, type TerminalProcess } from '../../tools/terminal/processRunner';
 
 const spawnMock = jest.mocked(cp.spawn);
 const osModule = require('os') as typeof os;
@@ -225,9 +230,9 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         platformSpy.mockRestore();
     });
 
-    function runCommand(args: any): Promise<ToolResult> {
+    function runCommand(args: any, contextOverrides: Record<string, unknown> = {}): Promise<ToolResult> {
         toolIdSeq += 1;
-        return handler(args, { toolId: `tool-${toolIdSeq}`, conversationId: 'conv-1' } as any);
+        return handler(args, { toolId: `tool-${toolIdSeq}`, conversationId: 'conv-1', ...contextOverrides } as any);
     }
 
     test('空 command 返回校验错误，不 spawn', async () => {
@@ -340,5 +345,79 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(result.data.taskId).toBeDefined();
 
         proc.emit('close', 0); // 清理 TaskManager 注册
+    });
+
+    test('超时：返回失败错误而非取消（不触发对话暂停语义）', async () => {
+        const proc = makeFakeProc();
+        const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 });
+        await flush();
+
+        // 等待超时回调触发（tree-kill 已 mock，不产生真实系统调用）
+        await new Promise(resolve => setTimeout(resolve, 250));
+
+        // 超时强杀后 close 以非零退出码到达
+        proc.emit('close', 1);
+
+        const result = await promise;
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('timed out after');
+        // 超时不是用户取消：cancelled 必须为 falsy，下游才不会被误判为「取消」而暂停对话
+        expect(result.cancelled).toBeFalsy();
+    });
+
+    test('手动终止：cancelled=true 语义保持（回归护栏）', async () => {
+        const proc = makeFakeProc();
+        const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 0 });
+        await flush();
+
+        const active = getActiveTerminalProcesses();
+        expect(active).toHaveLength(1);
+
+        const killPromise = killTerminalProcess(active[0].id);
+        // killTerminalProcess 等待进程 close 后才返回
+        proc.emit('close', null);
+        await killPromise;
+
+        const result = await promise;
+        expect(result.cancelled).toBe(true);
+        expect(result.success).toBe(true);
+        expect(result.error).toBeUndefined();
+    });
+
+    test('超时后 close(0) 到达：仍判失败（不因退出码翻转为成功）', async () => {
+        const proc = makeFakeProc();
+        const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 });
+        await flush();
+
+        await new Promise(resolve => setTimeout(resolve, 250));
+        proc.emit('close', 0);
+
+        const result = await promise;
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('timed out after');
+        expect(result.cancelled).toBeFalsy();
+    });
+
+    test('超时后用户中止：isExternalAbort 分支仍判 cancelled=true（竞态护栏）', async () => {
+        const abortController = new AbortController();
+        const proc = makeFakeProc();
+        const promise = runCommand(
+            { command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 },
+            { abortSignal: abortController.signal }
+        );
+        await flush();
+
+        // 等待超时回调触发（killed 与 timedOut 同时置位）
+        await new Promise(resolve => setTimeout(resolve, 250));
+
+        // 超时后用户中止：外部 signal abort 触发 killTerminalProcess（等待 close），
+        // close 到达时 isExternalAbort=true → 仍按用户取消处理，不破坏取消语义
+        abortController.abort();
+        proc.emit('close', 1);
+
+        const result = await promise;
+        expect(result.cancelled).toBe(true);
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('User cancelled');
     });
 });
