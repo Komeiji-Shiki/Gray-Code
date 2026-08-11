@@ -1,7 +1,11 @@
+import { setLanguage } from '@/i18n'
 import {
   extractProgressCardData,
   formatProgressToolFallbackContent
 } from '../../../frontend/src/utils/progressCards'
+
+// 进度卡文案走 i18n：固定英文，断言不依赖进程/环境默认语言
+setLanguage('en')
 
 describe('progressCards utility', () => {
   test('extracts create_progress card data from progressSnapshot first', () => {

@@ -251,7 +251,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(spawnMock).not.toHaveBeenCalled();
     });
 
-    test('cmd /s /c：带引号空格路径的命令整体包裹，windowsVerbatimArguments=true', async () => {
+    test('cmd /s /c：不再预包外层引号，windowsVerbatimArguments=true 原样传递模型引号', async () => {
         const prev = process.env.ComSpec;
         process.env.ComSpec = 'C:\\Windows\\System32\\cmd.exe';
         try {
@@ -266,7 +266,7 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
 
             expect(spawnMock).toHaveBeenCalledWith(
                 'C:\\Windows\\System32\\cmd.exe',
-                ['/s', '/c', '"chcp 65001 >nul && "C:\\Program Files\\node\\node.exe" --version"'],
+                ['/s', '/c', 'chcp 65001 >nul && "C:\\Program Files\\node\\node.exe" --version'],
                 expect.objectContaining({ cwd: tmpDir, windowsHide: true, windowsVerbatimArguments: true })
             );
 

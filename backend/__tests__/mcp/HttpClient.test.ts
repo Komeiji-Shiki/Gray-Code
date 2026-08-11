@@ -97,12 +97,13 @@ describe('HttpMcpClient', () => {
     });
 
     test('should NOT consume server notifications (id null) as the response', async () => {
-        // 流只包含一个带 result 的通知（id:null）后关闭：不能当作请求结果
+        // 流只包含一个带 result 的通知（id:null）后关闭：不能当作请求结果；
+        // 服务器主动关闭流 → 明确报 MCP SSE stream closed（而非误报请求超时）。
         fetchMock.mockResolvedValue(sseResponse([
             'data: {"jsonrpc":"2.0","id":null,"result":{"hacked":true}}\n\n',
         ]));
         const client = makeClient(200);
-        await expect(client.callTool('t', {})).rejects.toThrow(/(请求超时|timeout)/i);
+        await expect(client.callTool('t', {})).rejects.toThrow('MCP SSE stream closed');
     });
 
     test('should pick the response matching the request id even when a notification arrives first', async () => {
