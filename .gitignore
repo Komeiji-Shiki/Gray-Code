@@ -42,6 +42,13 @@ tmp-*.err.log
 Thumbs.db
 desktop.ini
 
+# Python (fast-tavern py)
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
 # editor swap / backup files
 *.swp
 *.swo
