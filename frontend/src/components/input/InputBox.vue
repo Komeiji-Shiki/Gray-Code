@@ -797,15 +797,22 @@ let hoverTimer: ReturnType<typeof setTimeout> | null = null
 // 离开后延迟隐藏预览的定时器（onBeforeUnmount 统一清理）
 let hidePreviewTimer: ReturnType<typeof setTimeout> | null = null
 
-// 上次渲染到 DOM 的 nodes 轻量指纹（数组长度 + 首尾节点文本）：
+// 上次渲染到 DOM 的 nodes 轻量指纹（覆盖全部节点）：
 // props.nodes 每键击都会更新，但 DOM 通常已同步（用户输入直接落 DOM），
 // 先用指纹判断「是否可能不同步」，相同则跳过全量 extractNodesFromEditor DOM 遍历。
+// 覆盖全部节点（类型 + 内容）而不是「长度 + 首尾」：中间文本/徽章变化而长度与
+// 首尾不变时，粗粒度指纹会误判为相同并跳过 DOM 重建，残留陈旧内容。
 let lastRenderedNodesFingerprint = ''
 function getNodesFingerprint(nodes: EditorNode[]): string {
   const len = nodes.length
   if (len === 0) return '0'
-  const textOf = (n: EditorNode) => (n.type === 'text' ? n.text : `@${n.context.id}`)
-  return `${len}:${textOf(nodes[0])}:${textOf(nodes[len - 1])}`
+  // 内容直接拼接即可：输入正文量级远小于 DOM 遍历开销，且 getPlainText 已每键击 O(n)
+  let fp = `${len}:`
+  for (const n of nodes) {
+    fp += n.type === 'context' ? `@${n.context.id}` : n.text
+    fp += '|'
+  }
+  return fp
 }
 
 function truncatePreview(content: string, maxLines = 10, maxChars = 500): string {
@@ -836,7 +843,7 @@ watch(() => props.nodes, () => {
   }
 
   if (!isInputting && editorRef.value) {
-    // 轻量指纹相同（长度 + 首尾节点文本）说明 DOM 与 nodes 大概率已同步，
+    // 轻量指纹相同（全部节点内容）说明 DOM 与 nodes 大概率已同步，
     // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM。
     // 例外：props.nodes 为空（发送清空）时必须强制提取比对——空数组指纹恒为 '0'，
     // 而 lastRenderedNodesFingerprint 在用户直接编辑路径下由 handleInput 维护，

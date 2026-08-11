@@ -351,6 +351,22 @@ function buildTransportConfig(): McpTransportConfig {
   }
 }
 
+// 超时阈值（毫秒），与模板 input 的 min/max 对齐
+const TIMEOUT_MIN_MS = 1000
+const TIMEOUT_MAX_MS = 300000
+const TIMEOUT_DEFAULT_MS = 30000
+
+/**
+ * 超时阈值钳制：v-model.number 在清空/非法输入时会把 formData.timeout 置为 ''（字符串），
+ * 直接透传会污染后端配置；统一钳制到 [min, max]，非法输入回退默认值。
+ */
+function normalizeTimeout(value: unknown): number {
+  if (value === '' || value === null || value === undefined) return TIMEOUT_DEFAULT_MS
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return TIMEOUT_DEFAULT_MS
+  return Math.min(TIMEOUT_MAX_MS, Math.max(TIMEOUT_MIN_MS, Math.round(n)))
+}
+
 // 保存服务器
 async function saveServer() {
   if (!formData.name.trim()) {
@@ -383,6 +399,10 @@ async function saveServer() {
   isSaving.value = true
   saveError.value = ''
   
+  // 超时阈值钳制（见 normalizeTimeout）：脏输入（清空/非法）回退默认值并回写 UI，
+  // 避免 ''（字符串）/越界值直接透传到后端配置。
+  formData.timeout = normalizeTimeout(formData.timeout)
+
   try {
     const transport = buildTransportConfig()
     

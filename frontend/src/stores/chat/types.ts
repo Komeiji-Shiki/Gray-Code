@@ -299,8 +299,12 @@ export interface ChatStoreState {
   /** 消息排队队列（候选区） */
   messageQueue: Ref<QueuedMessage[]>
 
-  /** 上一次被 cancelStream 取消的 streamingMessageId（用于防止迟到的 cancelled/error chunk 误清新请求状态） */
-  _lastCancelledStreamId: Ref<string | null>
+  /**
+   * 上一次被 cancelStream 取消的流标记（conversationId + messageId，见 toolActions.cancelStream 写入）。
+   * 用于防止迟到的 cancelled/error/complete chunk 误清新请求状态：stale 判定先比会话——
+   * 切到其他会话（标签页）后，该会话合法终结 chunk 不得因「消息 id 不同」被误判丢弃（M-front）。
+   */
+  _lastCancelledStreamId: Ref<{ conversationId: string; messageId: string } | null>
 
   /** 最近一个因审批门闸停止的 streamId（用于迟到 chunk 诊断） */
   _lastApprovalGatedStreamId: Ref<string | null>

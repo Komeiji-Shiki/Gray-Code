@@ -397,8 +397,8 @@ export function createChatState(): ChatStoreState {
   /** 消息排队队列（候选区） */
   const messageQueue = ref<QueuedMessage[]>([])
 
-  /** 上一次被 cancelStream 取消的 streamingMessageId */
-  const _lastCancelledStreamId = ref<string | null>(null)
+  /** 上一次被 cancelStream 取消的流标记（conversationId + messageId，stale 判定按会话归属，见 types.ts） */
+  const _lastCancelledStreamId = ref<{ conversationId: string; messageId: string } | null>(null)
 
   /** 最近一个因审批门闸停止的 streamId */
   const _lastApprovalGatedStreamId = ref<string | null>(null)

@@ -471,7 +471,10 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   }
 
   // 引用稳定化：复用上一次内容相同的 text/thought block 的对象引用，
-  // 避免仅因工具状态变更而触发下游 MarkdownRenderer 的无效重渲染
+  // 避免仅因工具状态变更而触发下游 MarkdownRenderer 的无效重渲染。
+  // 复用条件必须同时满足段落身份（partKey/partCount）一致：同 index 新块若属于
+  // 新 part 或已合并为多 part 块，沿用旧对象的 partKey/partCount 会让平滑尾块摘出
+  // （tailInfo 按 partKey 匹配）失效，导致 CharFlow 与真实文本双重渲染。
   const prev = _prevRenderBlocks
   if (prev.length === blocks.length) {
     for (let i = 0; i < blocks.length; i++) {
@@ -480,7 +483,9 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       if (
         cur.type === old.type &&
         (cur.type === 'text' || cur.type === 'thought') &&
-        cur.text === old.text
+        cur.text === old.text &&
+        cur.partKey === old.partKey &&
+        cur.partCount === old.partCount
       ) {
         blocks[i] = old
       }

@@ -560,11 +560,11 @@ export async function sendMessage(
   } catch (err: any) {
     // 独立于 isStreaming 判断是否取消：取消瞬间 isStreaming 已被 cancelStream 清除，
     // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉。
-    // _lastCancelledStreamId 存的是被取消请求的 streamingMessageId（消息 id，见
-    // toolActions.cancelStream 的写入与 types.ts 声明），与本次发送的占位消息 id
-    // （assistantMessageId）比较才能命中「用户取消 + 迟到失败」场景；不能与
+    // _lastCancelledStreamId 存的是被取消请求的流标记 { conversationId, messageId }（见
+    // toolActions.cancelStream 的写入与 types.ts 声明），比对其 messageId 与本次发送的
+    // 占位消息 id（assistantMessageId）才能命中「用户取消 + 迟到失败」场景；不能与
     // activeStreamId（streamId）比较——两者类型不同永不相等（原实现导致恒 false）。
-    const wasStreamCancelled = state._lastCancelledStreamId.value === assistantMessageId
+    const wasStreamCancelled = state._lastCancelledStreamId.value?.messageId === assistantMessageId
     if (!wasStreamCancelled) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
