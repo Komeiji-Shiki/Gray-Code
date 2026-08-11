@@ -1171,7 +1171,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
 
             if (!indexResult.value) {
                 // 尚无分段索引：legacy 或全新对话 → 合并后全量重写（罕见路径，保证语义正确）
-                const legacyResult = await this.asHistoryReadResult(this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
+                const legacyResult = this.asHistoryReadResult(
+                    await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+                );
                 const existing = legacyResult.value ?? [];
                 await this.writeSegmentedHistory(conversationId, existing.concat(pending));
                 await this.refreshUpdatedAt(conversationId);
@@ -1234,7 +1236,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                             );
                         }
                         if (!anySegmentReadable) {
-                            const legacyResult = await this.asHistoryReadResult(this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
+                            const legacyResult = this.asHistoryReadResult(
+                                await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+                            );
                             if (legacyResult.value && legacyResult.value.length > 0) {
                                 existing = legacyResult.value;
                             }
@@ -1328,7 +1332,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         const legacyPath = this.getLegacyHistoryPath(conversationId);
         if (await this.exists(legacyPath)) {
             // M1(a)：legacy 分支至少做一次 JSON.parse 探测，损坏 JSON / 非数组 JSON 报不可读
-            const legacyResult = await this.asHistoryReadResult(this.readJsonFile<ConversationHistory>(legacyPath));
+            const legacyResult = this.asHistoryReadResult(
+                await this.readJsonFile<ConversationHistory>(legacyPath)
+            );
             return {
                 exists: true,
                 readable: legacyResult.value !== null,
@@ -1550,7 +1556,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                     skipped++;
                     continue;
                 }
-                const historyResult = await this.asHistoryReadResult(this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
+                const historyResult = this.asHistoryReadResult(
+                    await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+                );
                 const legacyHistory = historyResult.value;
                 if (!legacyHistory) throw new Error(historyResult.errorMessage || historyResult.errorCode || 'Failed to read legacy history');
                 // 与 saveHistory 共用同一写队列：迁移与用户消息写入并发时，
@@ -1632,7 +1640,9 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             return await this.loadSegmentedHistory(conversationId);
         }
 
-        return await this.asHistoryReadResult(this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
+        return this.asHistoryReadResult(
+            await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+        );
     }
 
     async loadHistoryPage(

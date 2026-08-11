@@ -84,7 +84,7 @@ export function createWorkspaceAssetController(
     // 缓存命中的图片同步设置 src；未命中的收集后按并发上限批量拉取
     const pending: Array<{ img: Element; imgPath: string }> = []
 
-    for (const img of images) {
+    for (const img of Array.from(images)) {
       const encodedPath = img.getAttribute('data-path')
       if (!encodedPath) continue
 

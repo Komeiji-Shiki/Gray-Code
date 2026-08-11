@@ -280,9 +280,11 @@ export class ConversationQueryService {
                 }
                 let working = original;
                 for (const part of original.parts) {
-                    if (part.functionCall && part.functionCall.id) {
+                    const functionCall = part.functionCall;
+                    const callId = functionCall?.id;
+                    if (callId) {
                         // 如果工具调用没有对应的响应，且还没有被标记为 rejected
-                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                        if (!respondedToolCallIds.has(callId) && !functionCall.rejected) {
                             // 先深拷贝目标消息再原地修改：防御存储层 M2 浅拷贝直读路径
                             // （getMessagesRaw/loadHistory）共享缓存嵌套对象引用的窗口，
                             // 避免 rejected 标记污染 HistorySegmentCache。
@@ -290,14 +292,14 @@ export class ConversationQueryService {
                                 working = structuredClone(original);
                                 history[i] = working;
                             }
-                            const target = working.parts!.find(p => p.functionCall?.id === part.functionCall.id);
+                            const target = working.parts!.find(p => p.functionCall?.id === callId);
                             if (target?.functionCall) {
                                 target.functionCall.rejected = true;
                             }
                             const calls = unresolvedCallsByIndex.get(i) || [];
                             calls.push({
-                                id: part.functionCall.id,
-                                name: part.functionCall.name || 'unknown'
+                                id: callId,
+                                name: functionCall.name || 'unknown'
                             });
                             unresolvedCallsByIndex.set(i, calls);
                         }

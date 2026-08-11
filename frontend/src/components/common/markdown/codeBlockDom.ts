@@ -135,7 +135,7 @@ export function createCodeBlockDomController(
       })
     }
 
-    for (const block of blocks) {
+    for (const block of Array.from(blocks)) {
       if (!block.classList.contains('keep-expanded')) continue
       if (keepExpandedObservedBlocks.has(block)) continue
       keepExpandedObservedBlocks.add(block)

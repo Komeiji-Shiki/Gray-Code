@@ -451,7 +451,7 @@ export class SummarizeService {
                 } finally {
                     // 提前退出（abort）时回收流式响应生成器，避免底层流/连接资源悬挂；
                     // 正常耗尽后调用是幂等 no-op。
-                    await response.return?.();
+                    await response.return?.(undefined);
                 }
 
                 finalContent = accumulator.getContent();
@@ -1104,7 +1104,7 @@ export class SummarizeService {
                 } finally {
                     // 提前退出（abort）时回收流式响应生成器，避免底层流/连接资源悬挂；
                     // 正常耗尽后调用是幂等 no-op。
-                    await response.return?.();
+                    await response.return?.(undefined);
                 }
 
                 finalContent = accumulator.getContent();
