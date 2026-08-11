@@ -5,6 +5,31 @@
  * - bpeRanks：每行 `x <rank> <base64(UTF-8 字节)>`——第一字段是占位（解析时被丢弃），
  *   第二字段是起始 rank，第三字段起是 base64 token 列表（rank 连续递增）。
  * - patStr：单个正则（在原始文本上切分，切分片段按 UTF-8 字节查词表做 BPE）。
+ *
+ * 解析契约（js-tiktoken/lite Tiktoken 构造器，源码见
+ * frontend/node_modules/js-tiktoken/dist/lite.cjs 的 constructor，原文如下）：
+ *   const uncompressed = ranks.bpe_ranks.split("\n").filter(Boolean).reduce((memo, x) => {
+ *     const [_, offsetStr, ...tokens] = x.split(" ");
+ *     const offset = Number.parseInt(offsetStr, 10);
+ *     tokens.forEach((token, i) => memo[token] = offset + i);
+ *     return memo;
+ *   }, {});
+ *   for (const [token, rank] of Object.entries(uncompressed)) {
+ *     const bytes = base64.toByteArray(token);   // base64 → UTF-8 字节序列
+ *     this.rankMap.set(bytes.join(","), rank);  // BPE 查表键：字节序列
+ *   }
+ * 要点：
+ * 1. 每行按单个空格 split，不做 trim——本文件两个转换器均输出 `x <rank> <base64>`
+ *    （单空格分隔、行尾 '\n'），空行被 filter(Boolean) 丢弃，与解析完全兼容；
+ *    行首/行尾不允许有多余空白，否则 split(" ") 会产生空 token 字段。
+ * 2. 第一字段（占位 x）被丢弃；第二字段是起始 rank；同一行后续每个 base64 token
+ *    的 rank 为 offset + i（连续递增）。
+ * 3. token 必须是无空格的 base64（UTF-8 字节）：decodeByteToken 输出即此格式。
+ * 4. patStr 在 encode() 中以 /ug 标志对原文切分，切分片段按 UTF-8 字节查 rankMap，
+ *    未命中时做 bytePairMerge/bytePairEncode 贪心 BPE；special_tokens 是 text→rank
+ *    映射，encode() 先于 patStr 匹配（不允许时抛错）。
+ * 端到端一致性：cl100k 转换器保留官方 rank（`x rank base64`，每行单 token，i=0）；
+ * deepseek 转换器以 HF vocab id 为 rank（按 id 升序输出，解析端不要求有序）。
  */
 
 export interface DeepseekTokenizerOutput {

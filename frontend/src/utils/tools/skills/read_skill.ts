@@ -6,13 +6,15 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { getToolDisplayName } from '../../toolLocalization'
 import ReadSkillComponent from '../../../components/tools/skills/read_skill.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
 
 // 注册 read_skill 工具
 registerTool('read_skill', {
   name: 'read_skill',
-  label: 'Read Skill',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('read_skill'),
   icon: 'codicon-book',
   
   // 描述生成器 - 显示加载的 skill 名称
@@ -29,13 +31,19 @@ registerTool('read_skill', {
 // 兼容旧的 toggle_skills 工具调用（历史对话中可能存在）
 registerTool('toggle_skills', {
   name: 'toggle_skills',
-  label: 'Toggle Skills (Legacy)',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('toggle_skills'),
   icon: 'codicon-lightbulb',
   
   descriptionFormatter: (args) => {
-    const entries = Object.entries(args).filter(([_, v]) => typeof v === 'boolean')
-    const enabling = entries.filter(([_, v]) => v === true).map(([k]) => k)
-    const disabling = entries.filter(([_, v]) => v === false).map(([k]) => k)
+    // 单次遍历分桶（原实现对同一数组三次 filter 遍历，冗余）：
+    // 每项只访问一次，按布尔值归入启用/禁用两个桶
+    const enabling: string[] = []
+    const disabling: string[] = []
+    for (const [key, value] of Object.entries(args)) {
+      if (value === true) enabling.push(key)
+      else if (value === false) disabling.push(key)
+    }
     
     const parts: string[] = []
     if (enabling.length > 0) {

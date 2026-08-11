@@ -244,12 +244,12 @@ function handleContinue() {
       <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message, .summary-message" :width="10" :marker-height="10">
       <div class="messages-container">
         <!-- 自动加载更多指示器：点击可手动触发加载（自动补载的兜底入口） -->
-        <div v-if="hasMore" class="load-more-container" @click="loadMore()">
+        <button v-if="hasMore" type="button" class="load-more-container" @click="loadMore()">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
           <span v-if="chatStore.historyFolded" class="load-more-text">
             {{ t('components.message.historyFolded', { count: chatStore.foldedMessageCount }) }}
           </span>
-        </div>
+        </button>
 
         <template v-for="row in messageRenderRows" :key="row.key">
           <div v-if="row.kind === 'build'" class="build-sticky-shell">
@@ -792,17 +792,19 @@ function handleContinue() {
   min-height: 100%;
 }
 
-/* 加载更多指示器 */
+/* 加载更多指示器（button 语义：可键盘聚焦触发加载） */
 .load-more-container {
   display: flex;
   justify-content: center;
   align-items: center;
   gap: 8px;
   padding: 12px;
+  width: 100%;
   color: var(--vscode-descriptionForeground);
   opacity: 0.7;
   /* 点击可手动触发加载更多 */
   cursor: pointer;
+  font: inherit;
 }
 
 .load-more-container .codicon {

@@ -218,7 +218,9 @@ const zhCN = {
                 }
             },
             scrollToTop: '回到顶部',
-            scrollToBottom: '回到底部'
+            scrollToBottom: '回到底部',
+            scrollbar: '滚动条',
+            horizontalScrollbar: '横向滚动条'
         },
 
         header: {
@@ -855,6 +857,15 @@ const zhCN = {
                     comparePersisted: '持续问题',
                     compareSeverityChanged: '严重级别变化',
                     compareTrackingChanged: '跟踪状态变化',
+                    compareBaseLine: '基线: {path}',
+                    compareTargetLine: '目标: {path}',
+                    compareAddedLine: '新增问题: {count}',
+                    compareRemovedLine: '移除问题: {count}',
+                    comparePersistedLine: '持续问题: {count}',
+                    compareSeverityChangedLine: '严重级别变化: {count}',
+                    compareTrackingChangedLine: '跟踪状态变化: {count}',
+                    milestonesRecordedNone: '尚未记录里程碑',
+                    milestonesRecorded: '已记录 {count} 个里程碑；最新: {latest}',
                     compareEvidenceChanged: '证据变化',
                     compareRelatedMilestonesChanged: '相关里程碑变化',
                     compareChanges: '变化项',
@@ -899,6 +910,12 @@ const zhCN = {
                     currentFocus: '当前焦点',
                     currentBlocker: '当前阻塞',
                     nextAction: '下一步',
+                    milestonesCompleted: '{completed}/{total} 个里程碑已完成',
+                    milestonesLatestSuffix: '；最新：{latest}',
+                    validationValidLine: '有效: {state}',
+                    validationIssuesLine: '问题: {count}',
+                    validationErrorsLine: '错误: {count}',
+                    validationWarningsLine: '警告: {count}',
                     updatedAt: '更新时间',
                     milestones: '里程碑',
                     todos: 'TODO',
@@ -914,6 +931,13 @@ const zhCN = {
                     copyPath: '复制路径',
                     copied: '已复制',
                     rawResult: '完整结果'
+                },
+                deleteCode: {
+                    totalFiles: '共 {count} 个文件',
+                    badge: '删除第 {start}~{end} 行',
+                    lineCount: '{count} 行',
+                    deletedCount: '已删除 {count} 行',
+                    willDelete: '将删除第 {start} 行到第 {end} 行（共 {count} 行）'
                 }
             },
             attachment: {
@@ -3642,6 +3666,15 @@ const zhCN = {
     },
 
     utils: {
+        file: {
+            readFailed: '读取文件失败',
+            sizeExceeded: '文件大小超过限制 ({size})',
+            thumbnailCanvasFailed: '无法创建缩略图画布',
+            thumbnailTimeout: '生成缩略图超时',
+            thumbnailFailed: '生成缩略图失败',
+            thumbnailReadFailed: '读取缩略图源文件失败',
+            thumbnailReadAborted: '读取缩略图源文件已取消'
+        },
         tools: {
             noFile: '无文件',
             changes: '{count} 个更改',
@@ -3649,7 +3682,14 @@ const zhCN = {
             recursiveSuffix: ' (递归)',
             dirCount: '{count} 个目录',
             searchModeSearch: '搜索内容',
-            searchModeReplace: '搜索替换'
+            searchModeReplace: '搜索替换',
+            lineRange: '(第 {start}~{end} 行)',
+            lineBefore: '(第 {line} 行前)',
+            batchCropCount: '批量裁切 {count} 张',
+            batchGenerateCount: '批量生成 {count} 张: {prompt} 等',
+            batchRemoveBackgroundCount: '批量抠图 {count} 张',
+            batchResizeCount: '批量缩放 {count} 张',
+            batchRotateCount: '批量旋转 {count} 张'
         }
     }
 };

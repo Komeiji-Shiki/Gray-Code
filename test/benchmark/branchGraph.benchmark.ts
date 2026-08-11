@@ -172,6 +172,17 @@ describe('基准 ③ 大量分支（100 候选）', () => {
         // 既有活跃路径深度仅 2（候选轮询挂 10 个 user 父节点，activeChildId 链收敛长度 2），
         // 深链段从当前活跃尾连续 append DEEP_COUNT 个节点，再用 switchActivePath 激活整条深链，
         // 让 activePath / switchActivePath 承受 100+ 层深度压力。
+        // JIT 预热（F8 同款策略）：deepBuild 前先跑小规模 insertNode 序列（结果丢弃，不计入基准），
+        // 避免建深链段首轮被 JIT 编译/内联缓存拖慢，使该段测量更接近稳态性能。
+        {
+            let w = graph;
+            let wp = w.activeTailNodeId;
+            for (let i = 0; i < 16; i++) {
+                const node = makeNode(`deep_warm_${i}`, wp, i % 2 === 0 ? 'user' : 'model');
+                w = insertNode(w, node, { setActive: true, updateTail: true });
+                wp = node.id;
+            }
+        }
         const deepBuild = await withTiming(async () => {
             let g = graph;
             let parent = g.activeTailNodeId; // 当前活跃尾（reroll_run_90）

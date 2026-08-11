@@ -24,6 +24,7 @@ import type {
 } from './types';
 import { CHANNEL_TYPES } from './types';
 import { deepMerge } from './configs/base';
+import type { OpenAIResponsesConfig } from './configs';
 import type { ConfigStorageAdapter } from './storage';
 import { newHexId } from '../../core/id';
 
@@ -112,15 +113,6 @@ function isSensitiveFieldName(name: string): boolean {
 }
 
 /**
- * 判断对象是否为 { key, value, enabled } 形态的键值条目
- *
- * customHeaders 与 customBody.items 中的条目都符合此形态
- */
-function isKeyValueItem(obj: Record<string, unknown>): boolean {
-    return typeof obj.key === 'string' && 'enabled' in obj;
-}
-
-/**
  * 递归脱敏配置中的敏感信息（不修改原对象，返回新对象）
  *
  * 仅用于 exportConfig 的 includeSensitive=false 路径：
@@ -149,9 +141,10 @@ function redactSensitiveConfig(value: unknown, inCustomContext = false): unknown
         } else if (key === 'url' && typeof val === 'string') {
             // URL 查询参数可能内嵌密钥（?key=/?token= 等）
             result[key] = redactUrlQuerySecrets(val);
-        } else if (key === 'value' && typeof val === 'string' && inCustomContext && isKeyValueItem(source)) {
+        } else if (key === 'value' && typeof val === 'string' && inCustomContext && typeof source.key === 'string') {
             // 仅在 customHeaders / customBody.items 条目上下文中脱敏 value：
-            // 其它含 key/enabled 字段的对象（如工具配置）的 value 不脱敏
+            // 条目含 key 字符串即脱敏（enabled 字段可能缺失，不能作为判定前提）；
+            // 其它含 key 字段的对象（如工具配置）的 value 不脱敏
             result[key] = '***REDACTED***';
         } else if (key === 'json' && typeof val === 'string' && inCustomContext) {
             // customBody advanced 模式：整个 JSON 字符串可能内嵌密钥
@@ -209,6 +202,42 @@ export class ConfigManager {
     
     /** 加载中的 Promise（ensureLoaded 并发去重：避免并发调用重复 list/load） */
     private loadingPromise: Promise<void> | null = null;
+
+    /**
+     * 每个 configId 的串行变更队列：把「读缓存 → 合并 → save → 写缓存」整段入队。
+     *
+     * updateConfig/updateModels 基于 configCache 旧值合并后整体写回，且 configCache.set
+     * 在 storageAdapter.save 之后——并发调用在 save await 期间读到旧缓存、基于旧列表合并
+     * 后写回，会静默覆盖先前的变更。队列参考 config/storage.ts MementoStorageAdapter 的
+     * writeQueue（链式串行），并按 configId 分队列，无关配置互不阻塞。
+     */
+    private readonly configWriteQueues = new Map<string, Promise<void>>();
+
+    /**
+     * 将一次配置变更整段入队串行执行（参考 MementoStorageAdapter.writeQueue 的链式队列）。
+     *
+     * 链尾吞掉本次错误（调用方仍从返回的 Promise 拿到真实结果），防止单次失败阻塞后续写；
+     * 队列空闲后自清理对应条目，避免 Map 无限增长。
+     */
+    private enqueueConfigMutation<T>(configId: string, task: () => Promise<T>): Promise<T> {
+        const previous = this.configWriteQueues.get(configId) ?? Promise.resolve();
+        const start = previous.then(
+            () => undefined,
+            () => undefined
+        );
+        const underlying = start.then(task);
+        const tail = underlying.then(
+            () => undefined,
+            () => undefined
+        );
+        this.configWriteQueues.set(configId, tail);
+        void tail.then(() => {
+            if (this.configWriteQueues.get(configId) === tail) {
+                this.configWriteQueues.delete(configId);
+            }
+        });
+        return underlying;
+    }
     
     /**
      * 初始化管理器（加载所有配置到缓存）
@@ -418,33 +447,41 @@ export class ConfigManager {
             throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(input.type) }));
         }
 
-        // idOverride 用于导入等场景：若该 ID 已存在，静默覆盖会丢失原配置；
-        // 覆盖现有配置应走 updateConfig / importConfig(overwrite) / replaceConfig 路径
-        if (idOverride && this.configCache.has(idOverride)) {
-            throw new Error(t('modules.config.errors.configExists', { configId: idOverride }));
-        }
-
         // 生成唯一 ID（允许调用方覆盖，用于导入场景保留原始 id）
         const id = idOverride || newHexId();
-        const now = Date.now();
-        
-        // 获取默认配置并与输入合并
-        const defaults = this.getDefaultConfig(input.type);
-        
-        // 构建完整配置（输入值覆盖默认值）
-        const config: ChannelConfig = {
-            ...defaults,
-            ...input,
-            id,
-            createdAt: now,
-            updatedAt: now
-        } as ChannelConfig;
-        
-        // 保存（不验证配置）
-        await this.storageAdapter.save(config);
-        this.configCache.set(id, config);
-        
-        return id;
+
+        return this.enqueueConfigMutation(id, async () => {
+            // idOverride 用于导入等场景：若该 ID 已存在，静默覆盖会丢失原配置；
+            // 覆盖现有配置应走 updateConfig / importConfig(overwrite) / replaceConfig 路径。
+            // 存在性检查与创建入同一队列，避免并发 createConfig 同 id 双写
+            if (idOverride && this.configCache.has(idOverride)) {
+                throw new Error(t('modules.config.errors.configExists', { configId: idOverride }));
+            }
+
+            const now = Date.now();
+
+            // 获取默认配置并与输入合并
+            const defaults = this.getDefaultConfig(input.type);
+
+            // 构建完整配置（输入值覆盖默认值）。
+            // 纯对象字段（options/optionsEnabled/customBody/tokenCountApiConfig 等）复用
+            // mergeNestedUpdates 深合并：浅合并会让传入的部分嵌套字段（如只传
+            // options.temperature）整体替换默认对象、丢失默认子字段（如 Gemini 的
+            // thinkingConfig）；数组（models/customHeaders/tags）与原始值仍按覆盖。
+            const config: ChannelConfig = {
+                ...defaults,
+                ...this.mergeNestedUpdates(defaults as unknown as ChannelConfig, input as unknown as UpdateConfigInput),
+                id,
+                createdAt: now,
+                updatedAt: now
+            } as ChannelConfig;
+
+            // 保存（不验证配置）
+            await this.storageAdapter.save(config);
+            this.configCache.set(id, config);
+
+            return id;
+        });
     }
     
     /**
@@ -487,61 +524,70 @@ export class ConfigManager {
      */
     async updateConfig(configId: string, updates: UpdateConfigInput): Promise<ChannelConfig> {
         await this.ensureLoaded();
-        
-        const existing = this.configCache.get(configId);
-        if (!existing) {
-            throw new Error(t('modules.config.errors.configNotFound', { configId }));
-        }
-        
-        const newType = updates.type;
-        const typeChanged = newType !== undefined && newType !== existing.type;
-        
-        // 运行时校验渠道类型（webview / 导入等来源不受 TypeScript 约束）
-        if (typeChanged && !isChannelType(newType)) {
-            throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(newType) }));
-        }
-        
-        let updated: ChannelConfig;
-        if (typeChanged) {
-            // 渠道类型变更：以新类型默认配置为基底重建，仅保留跨类型通用字段，
-            // 类型特有字段（options、models 等）重置为新类型默认值；
-            // 显式传入的 updates 优先级最高
-            const defaults = this.getDefaultConfig(newType);
-            const common = pickCommonFields(existing);
-            // url 特例：若旧 url 只是旧类型的默认端点（用户未自定义过），
-            // 不保留、跟随新类型默认端点；自定义端点（中转站/代理）则跨类型保留，
-            // 避免切换类型时要求用户重写 URL
-            if (existing.url === this.getDefaultConfig(existing.type).url) {
-                delete common.url;
+
+        // 读缓存 → 合并 → save → 写缓存整段入该 configId 的串行变更队列：
+        // configCache.set 在 save 之后，并发调用在 save await 期间会读到旧缓存、
+        // 基于旧列表合并后整体写回，静默覆盖先前的变更（updateModels 同理）。
+        return this.enqueueConfigMutation(configId, async () => {
+            const existing = this.configCache.get(configId);
+            if (!existing) {
+                throw new Error(t('modules.config.errors.configNotFound', { configId }));
             }
-            updated = {
-                ...defaults,
-                ...common,
-                ...updates,
-                id: configId,  // 保持 ID 不变
-                createdAt: existing.createdAt,  // 保持创建时间
-                updatedAt: Date.now()  // 更新时间
-            } as ChannelConfig;
-        } else {
-            // 普通合并更新：嵌套纯对象字段（options/customBody/tokenCountApiConfig 等）
-            // 深合并，避免部分嵌套更新（如只改 options.temperature）整体替换 options 丢失兄弟字段；
-            // 数组（customHeaders/models/tags 等）与原始值仍按覆盖（复用 base.ts deepMerge
-            // 的纯对象合并语义，数组分支在本合并中不会触发）。
-            updated = {
-                ...existing,
-                ...this.mergeNestedUpdates(existing, updates),
-                id: configId,  // 保持 ID 不变
-                type: existing.type,  // 防御性兜底：防止显式传 undefined 覆盖 type
-                createdAt: existing.createdAt,  // 保持创建时间
-                updatedAt: Date.now()  // 更新时间
-            } as ChannelConfig;
-        }
-        
-        // 保存（不验证配置）
-        await this.storageAdapter.save(updated);
-        this.configCache.set(configId, updated);
-        // 返回更新后的配置（与 getConfig 同样返回深拷贝，调用方可直接消费，避免再次读取）
-        return JSON.parse(JSON.stringify(updated)) as ChannelConfig;
+
+            const newType = updates.type;
+            const typeChanged = newType !== undefined && newType !== existing.type;
+
+            // 运行时校验渠道类型（webview / 导入等来源不受 TypeScript 约束）
+            if (typeChanged && !isChannelType(newType)) {
+                throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(newType) }));
+            }
+
+            let updated: ChannelConfig;
+            if (typeChanged) {
+                // 渠道类型变更：以新类型默认配置为基底重建，仅保留跨类型通用字段，
+                // 类型特有字段（options、models 等）重置为新类型默认值；
+                // 显式传入的 updates 优先级最高
+                const defaults = this.getDefaultConfig(newType);
+                const common = pickCommonFields(existing);
+                // url 特例：若旧 url 只是旧类型的默认端点（用户未自定义过），
+                // 不保留、跟随新类型默认端点；自定义端点（中转站/代理）则跨类型保留，
+                // 避免切换类型时要求用户重写 URL
+                if (existing.url === this.getDefaultConfig(existing.type).url) {
+                    delete common.url;
+                }
+                // 先合并 defaults 与 common 得到重建基底，再对 updates 的纯对象字段套
+                // mergeNestedUpdates（与普通合并路径同一语义）：浅展开会让部分嵌套 updates
+                // （如只传 options.temperature）整体替换新类型默认 options，丢失新类型默认
+                // 子字段（max_tokens/thinking 等）；数组与原始值仍按覆盖
+                const base = { ...defaults, ...common };
+                updated = {
+                    ...base,
+                    ...this.mergeNestedUpdates(base as unknown as ChannelConfig, updates),
+                    id: configId,  // 保持 ID 不变
+                    createdAt: existing.createdAt,  // 保持创建时间
+                    updatedAt: Date.now()  // 更新时间
+                } as ChannelConfig;
+            } else {
+                // 普通合并更新：嵌套纯对象字段（options/customBody/tokenCountApiConfig 等）
+                // 深合并，避免部分嵌套更新（如只改 options.temperature）整体替换 options 丢失兄弟字段；
+                // 数组（customHeaders/models/tags 等）与原始值仍按覆盖（复用 base.ts deepMerge
+                // 的纯对象合并语义，数组分支在本合并中不会触发）。
+                updated = {
+                    ...existing,
+                    ...this.mergeNestedUpdates(existing, updates),
+                    id: configId,  // 保持 ID 不变
+                    type: existing.type,  // 防御性兜底：防止显式传 undefined 覆盖 type
+                    createdAt: existing.createdAt,  // 保持创建时间
+                    updatedAt: Date.now()  // 更新时间
+                } as ChannelConfig;
+            }
+
+            // 保存（不验证配置）
+            await this.storageAdapter.save(updated);
+            this.configCache.set(configId, updated);
+            // 返回更新后的配置（与 getConfig 同样返回深拷贝，调用方可直接消费，避免再次读取）
+            return JSON.parse(JSON.stringify(updated)) as ChannelConfig;
+        });
     }
     
     /**
@@ -554,52 +600,69 @@ export class ConfigManager {
      */
     async replaceConfig(configId: string, config: ChannelConfig): Promise<ChannelConfig> {
         await this.ensureLoaded();
-        
-        const existing = this.configCache.get(configId);
-        if (!existing) {
-            throw new Error(t('modules.config.errors.configNotFound', { configId }));
-        }
-        
-        // 运行时校验渠道类型（导入来源不受 TypeScript 约束）
-        if (!isChannelType(config.type)) {
-            throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(config.type) }));
-        }
-        
-        const replaced: ChannelConfig = {
-            ...config,
-            id: configId,
-            createdAt: existing.createdAt,
-            updatedAt: Date.now()
-        } as ChannelConfig;
-        
-        await this.storageAdapter.save(replaced);
-        this.configCache.set(configId, replaced);
-        
-        return JSON.parse(JSON.stringify(replaced)) as ChannelConfig;
+
+        return this.enqueueConfigMutation(configId, async () => {
+            const existing = this.configCache.get(configId);
+            if (!existing) {
+                throw new Error(t('modules.config.errors.configNotFound', { configId }));
+            }
+
+            // 运行时校验渠道类型（导入来源不受 TypeScript 约束）
+            if (!isChannelType(config.type)) {
+                throw new Error(t('modules.channel.errors.unsupportedChannelType', { type: String(config.type) }));
+            }
+
+            const replaced: ChannelConfig = {
+                ...config,
+                id: configId,
+                createdAt: existing.createdAt,
+                updatedAt: Date.now()
+            } as ChannelConfig;
+
+            await this.storageAdapter.save(replaced);
+            this.configCache.set(configId, replaced);
+
+            return JSON.parse(JSON.stringify(replaced)) as ChannelConfig;
+        });
     }
     
     /**
      * 原子合并模型列表（基于最新缓存合并后写回，避免 ModelsHandler 的 check-then-write 竞态）。
      *
-     * mergeFn 在 ensureLoaded 之后同步执行、期间无 await，同一时刻只有一个调用能基于最新列表合并。
+     * 合并与写回整段进入该 configId 的串行变更队列（与 updateConfig 同一队列）：
+     * mergeFn 基于最新缓存同步执行，期间无其它写操作交错，避免并发 updateModels/
+     * updateConfig 基于过期缓存合并后整体写回互相覆盖（参考 MementoStorageAdapter.writeQueue）。
+     *
+     * 若合并后当前激活模型（model 字段）不在合并结果列表中（被本次合并移除），
+     * model 字段在同一原子单元内置空——removeModel 无需再发第二次 updateConfig 写。
      *
      * @returns 更新后的配置（深拷贝）
      */
     async updateModels(configId: string, mergeFn: (current: ModelInfo[]) => ModelInfo[]): Promise<ChannelConfig> {
         await this.ensureLoaded();
-        const existing = this.configCache.get(configId);
-        if (!existing) {
-            throw new Error(t('modules.config.errors.configNotFound', { configId }));
-        }
-        const currentModels = (existing as { models?: ModelInfo[] }).models ?? [];
-        const updated = {
-            ...existing,
-            models: mergeFn(currentModels),
-            updatedAt: Date.now()
-        } as ChannelConfig;
-        await this.storageAdapter.save(updated);
-        this.configCache.set(configId, updated);
-        return JSON.parse(JSON.stringify(updated)) as ChannelConfig;
+        return this.enqueueConfigMutation(configId, async () => {
+            const existing = this.configCache.get(configId);
+            if (!existing) {
+                throw new Error(t('modules.config.errors.configNotFound', { configId }));
+            }
+            const currentModels = (existing as { models?: ModelInfo[] }).models ?? [];
+            const mergedModels = mergeFn(currentModels);
+            const updated = {
+                ...existing,
+                models: mergedModels,
+                // 原子性：模型列表合并与「激活模型失效清空」在同一队列任务内完成——若本次合并
+                // 移除了当前激活模型（ModelsHandler.removeModel 场景），model 字段同步置空。
+                // 此前 removeModel 在 updateModels 之后再单独发 updateConfig({model:''})：
+                // 两次独立队列任务之间存在并发窗口，两写之间提交的 setActiveModel 会被随后
+                // 清空覆盖（check-then-act 竞态）。现在清空判定基于合并后的最新列表，与写回
+                // 同一原子单元，任意交错均收敛正确（addModels 等只增不改的合并不受影响）。
+                model: existing.model && !mergedModels.some(m => m.id === existing.model) ? '' : existing.model,
+                updatedAt: Date.now()
+            } as ChannelConfig;
+            await this.storageAdapter.save(updated);
+            this.configCache.set(configId, updated);
+            return JSON.parse(JSON.stringify(updated)) as ChannelConfig;
+        });
     }
 
     /**
@@ -609,13 +672,15 @@ export class ConfigManager {
      */
     async deleteConfig(configId: string): Promise<void> {
         await this.ensureLoaded();
-        
-        if (!this.configCache.has(configId)) {
-            throw new Error(t('modules.config.errors.configNotFound', { configId }));
-        }
-        
-        await this.storageAdapter.delete(configId);
-        this.configCache.delete(configId);
+
+        return this.enqueueConfigMutation(configId, async () => {
+            if (!this.configCache.has(configId)) {
+                throw new Error(t('modules.config.errors.configNotFound', { configId }));
+            }
+
+            await this.storageAdapter.delete(configId);
+            this.configCache.delete(configId);
+        });
     }
     
     /**
@@ -705,11 +770,11 @@ export class ConfigManager {
                 break;
             
             case 'openai':
-                this.validateOpenAIConfig(config as any, errors, warnings);
+                this.validateOpenAIConfig(config, errors, warnings);
                 break;
-            
+
             case 'openai-responses':
-                this.validateOpenAIConfig(config as any, errors, warnings);
+                this.validateOpenAIConfig(config, errors, warnings);
                 break;
             
             case 'anthropic':
@@ -789,7 +854,7 @@ export class ConfigManager {
      * 验证 OpenAI 配置
      */
     private validateOpenAIConfig(
-        config: any,
+        config: OpenAIConfig | OpenAIResponsesConfig,
         errors: string[],
         warnings: string[]
     ): void {
@@ -968,7 +1033,21 @@ export class ConfigManager {
         
         // 创建新配置（保留原始 id，防止 activeChannelId 悬空）
         const { createdAt, updatedAt, ...input } = configData;
-        return this.createConfig(input, configData.id);
+        const id = await this.createConfig(input, configData.id);
+        // 与 replaceConfig 保留 createdAt 的语义对齐：createConfig 会重置 createdAt，
+        // 导入文件携带原始创建时间时回写（updatedAt 仍为导入时刻；回写入同一队列防交错）
+        if (typeof createdAt === 'number') {
+            await this.enqueueConfigMutation(id, async () => {
+                const config = this.configCache.get(id);
+                if (!config) {
+                    return;
+                }
+                const restored = { ...config, createdAt, updatedAt: Date.now() } as ChannelConfig;
+                await this.storageAdapter.save(restored);
+                this.configCache.set(id, restored);
+            });
+        }
+        return id;
     }
     
     /**
@@ -1041,12 +1120,14 @@ export class ConfigManager {
                     bVal = (b.name || '').toLowerCase();
                     break;
                 case 'createdAt':
-                    aVal = a.createdAt;
-                    bVal = b.createdAt;
+                    // 缺失 createdAt/updatedAt 的导入配置按 0 参与排序（同 getStats 的 ?? 0 兜底），
+                    // 避免 undefined 相减产生 NaN 比较
+                    aVal = a.createdAt ?? 0;
+                    bVal = b.createdAt ?? 0;
                     break;
                 case 'updatedAt':
-                    aVal = a.updatedAt;
-                    bVal = b.updatedAt;
+                    aVal = a.updatedAt ?? 0;
+                    bVal = b.updatedAt ?? 0;
                     break;
                 case 'type':
                     aVal = a.type;
@@ -1065,11 +1146,12 @@ export class ConfigManager {
     }
     
     /**
-     * 嵌套字段深合并（用于 updateConfig 普通合并路径）
+     * 嵌套字段深合并（用于 updateConfig 普通合并路径与 typeChanged 重建路径）
      *
      * 仅当目标与来源都是纯对象时用 base.ts deepMerge 递归合并（options/customBody/
      * tokenCountApiConfig 等），数组（customHeaders/models/tags）与原始值按覆盖，
-     * 保持既有浅合并语义不回归；同时过滤 __proto__/constructor/prototype 键，
+     * 保持既有浅合并语义不回归；显式 undefined 跳过（保留旧值，对齐 SettingsCore.
+     * deepMergeToolsConfig 语义）；同时过滤 __proto__/constructor/prototype 键，
      * 防止 webview/导入来源的恶意键触发原型链污染（与 configs/base.ts deepMerge 一致）。
      */
     private mergeNestedUpdates(existing: ChannelConfig, updates: UpdateConfigInput): Record<string, unknown> {
@@ -1079,6 +1161,13 @@ export class ConfigManager {
 
         for (const [key, value] of Object.entries(updates)) {
             if (unsafeKeys.has(key)) {
+                continue;
+            }
+            if (value === undefined) {
+                // 显式 undefined 保留旧值（对齐 SettingsCore.deepMergeToolsConfig 语义）：
+                // webview/导入来源的部分更新可能携带未填字段，undefined 覆盖会清空既有值；
+                // 嵌套层级的 undefined 由 deepMerge 内部同样保留目标值（core/deepMerge 对
+                // null/undefined 源值返回 target），两层语义一致
                 continue;
             }
             const existingValue = source[key];

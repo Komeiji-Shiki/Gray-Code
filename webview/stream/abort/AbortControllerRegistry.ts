@@ -7,7 +7,6 @@
  * （由 StreamAbortManager 壳注入，detachActiveSubAgents 留在壳，第五批再处理该依赖）。
  */
 
-import type * as vscode from 'vscode';
 import { RetiredStreamChain } from './RetiredStreamChain';
 
 export class AbortControllerRegistry {
@@ -197,9 +196,9 @@ export class AbortControllerRegistry {
   }
 
   /**
-   * 取消所有活跃的流式请求
+   * 取消所有活跃的流式请求（R2-07：移除从未使用的 _view 参数）
    */
-  cancelAll(_view?: { webview: vscode.Webview }): void {
+  cancelAll(): void {
     for (const [conversationId, controller] of this.controllers) {
       controller.abort();
       this.retiredChain.track(conversationId, controller);
@@ -218,6 +217,28 @@ export class AbortControllerRegistry {
       controller.abort();
     }
     this.summaryControllers.clear();
+  }
+
+  /**
+   * 会话删除路径的完整清理（R2-07）：移除该会话的取消代次记录（cancelEpochs）、
+   * 等待者表（idleWaiters）与总结控制器；若删除时仍有活跃主流（abortAndWaitForCompletion
+   * 超时未退出），一并中止并移出——已删除的会话不应再有任何流；其 finally 的 delete()
+   * 因引用不匹配走退休链释放，不会误删其他会话的控制器。
+   */
+  removeConversation(conversationId: string): void {
+    const controller = this.controllers.get(conversationId);
+    if (controller) {
+      controller.abort();
+      this.retiredChain.track(conversationId, controller);
+      this.controllers.delete(conversationId);
+    }
+    const summaryController = this.summaryControllers.get(conversationId);
+    if (summaryController) {
+      summaryController.abort();
+      this.summaryControllers.delete(conversationId);
+    }
+    this.releaseIdleWaiters(conversationId);
+    this.cancelEpochs.delete(conversationId);
   }
 
   /**

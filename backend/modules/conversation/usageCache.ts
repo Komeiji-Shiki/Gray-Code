@@ -80,11 +80,18 @@ export class UsageStatsCache {
         return ids;
     }
 
-    /** 移除磁盘上已不存在的对话（listConversations 之后调用） */
+    /** 移除磁盘上已不存在的对话（listConversations 之后调用）；dirty 集合同步清理 */
     prune(keepIds: ReadonlySet<string>): void {
         for (const id of [...this.entries.keys()]) {
             if (!keepIds.has(id)) {
                 this.entries.delete(id);
+            }
+        }
+        // 已删除会话的 dirty 标记若不清理，会在 takeDirty 中残留为待重读会话
+        // （无害但属无效条目，且会阻止该 ID 重建后直接命中内存缓存）
+        for (const id of [...this.dirty]) {
+            if (!keepIds.has(id)) {
+                this.dirty.delete(id);
             }
         }
     }

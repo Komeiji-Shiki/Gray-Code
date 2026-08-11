@@ -20,6 +20,9 @@ const FALLBACK_METADATA: ProductMetadata = {
     version: '0.0.0'
 };
 
+/** 兜底扩展 id：仅当 initializeProductMetadata 未执行（懒加载/测试路径）时使用 */
+const FALLBACK_EXTENSION_ID = 'Komeiji-Shiki.graycode';
+
 let productMetadata: ProductMetadata | undefined;
 /** initialize 时缓存的当前扩展 id（如 'publisher.name'），供兜底路径复用，避免硬编码扩展 id */
 let cachedExtensionId: string | undefined;
@@ -60,7 +63,7 @@ export function getProductMetadata(): ProductMetadata {
         // 修改目的：保持运行时版本来源仍然是扩展宿主元数据，同时让旧调用路径具备安全退路。
         const vscodeApi = require('vscode') as typeof import('vscode');
         // 优先用 initialize 时缓存的扩展 id；未初始化过时回退默认 id，保证兜底仍可用
-        const extension = vscodeApi.extensions?.getExtension?.(cachedExtensionId ?? 'Komeiji-Shiki.graycode');
+        const extension = vscodeApi.extensions?.getExtension?.(cachedExtensionId ?? FALLBACK_EXTENSION_ID);
         if (extension?.packageJSON) {
             productMetadata = normalizePackageMetadata(extension.packageJSON);
             return productMetadata;
@@ -74,6 +77,17 @@ export function getProductMetadata(): ProductMetadata {
 
 export function getProductVersion(): string {
     return getProductMetadata().version;
+}
+
+/**
+ * 返回当前扩展 id（如 'publisher.name'）。
+ *
+ * initializeProductMetadata 时缓存 context.extension.id；未初始化时回退默认 id。
+ * 供需要按扩展 id 查询 vscode.extensions 的模块（如 CHANGELOG 路径解析）复用，
+ * 避免各模块散落硬编码扩展 id。
+ */
+export function getProductExtensionId(): string {
+    return cachedExtensionId ?? FALLBACK_EXTENSION_ID;
 }
 
 export function createGrayCodeMcpClientInfo(): { name: string; version: string } {

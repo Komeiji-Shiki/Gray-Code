@@ -55,24 +55,29 @@ export class ProxySettingsService {
      * 更新代理设置
      */
     async updateProxySettings(proxySettings: Partial<ProxySettings>): Promise<void> {
-        const oldValue = this.core.settings.proxy;
-        this.core.settings.proxy = {
-            // 不再强制默认 enabled:true（首次只设置 URL 会隐式启用代理）。
-            // 展开顺序保证：proxySettings.enabled ?? 原值 ?? false。
-            enabled: false,
-            ...this.core.settings.proxy,
-            ...proxySettings
-        } as ProxySettings;
-        this.core.settings.lastUpdated = Date.now();
-        
-        await this.core.storage.save(this.core.settings);
-        
-        this.core.notifyChange({
-            type: 'proxy',
-            path: 'proxy',
-            oldValue,
-            newValue: this.core.settings.proxy,
-            settings: this.core.settings
+        // 读-改-写-通知整体入队串行（与 SettingsCore 写队列共用）：并发调用（如
+        // setProxyEnabled/setProxyUrl 交错）基于同一旧 proxy 合并后整体写回时后写覆盖先写；
+        // oldValue 读取必须在 mutator 内，保证排队后读到前一个变更的结果
+        await this.core.serializeMutation(async () => {
+            const oldValue = this.core.settings.proxy;
+            this.core.settings.proxy = {
+                // 不再强制默认 enabled:true（首次只设置 URL 会隐式启用代理）。
+                // 展开顺序保证：proxySettings.enabled ?? 原值 ?? false。
+                enabled: false,
+                ...this.core.settings.proxy,
+                ...proxySettings
+            } as ProxySettings;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'proxy',
+                path: 'proxy',
+                oldValue,
+                newValue: this.core.settings.proxy,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
         });
     }
 

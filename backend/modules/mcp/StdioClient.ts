@@ -166,6 +166,8 @@ export class StdioMcpClient extends EventEmitter {
         // 收集 stderr 输出用于错误诊断
         this.stderrOutput = '';
         this.stderrTruncated = false;
+        // 新连接尝试：重置列表拉取失败标记，旧连接的失败不得污染本次连接判定
+        this.listFetchFailed = false;
         
         this.process = crossSpawn(this.command, this.args, {
             env: processEnv,
@@ -285,9 +287,11 @@ export class StdioMcpClient extends EventEmitter {
                 this.cleanup();
                 return;
             }
-            const exited = new Promise<void>((resolve) => {
-                this.process!.once('exit', () => resolve());
-            });
+            const proc = this.process;
+            let resolveExited!: () => void;
+            const exited = new Promise<void>((resolve) => { resolveExited = resolve; });
+            const onExitOnce = () => resolveExited();
+            proc.once('exit', onExitOnce);
             const wait = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
             treeKill(pid, 'SIGTERM', (err?: Error) => {
                 if (err) {
@@ -295,19 +299,36 @@ export class StdioMcpClient extends EventEmitter {
                 }
             });
             await Promise.race([exited, wait(5000)]);
+            // 超时路径：进程未在 5s 内退出，once('exit') 尚未触发——显式移除，避免监听泄漏
+            //（进程随后退出时该监听已无意义；若进程已退出，once 已自移除，removeListener 为无害空操作）
+            proc.removeListener('exit', onExitOnce);
             const processAfterSigterm = this.process;
             if (processAfterSigterm && processAfterSigterm.exitCode === null && processAfterSigterm.signalCode === null) {
                 // SIGTERM 未生效：SIGKILL 强制终止并再等待退出，仍超时则告警
                 await new Promise<void>((resolve) => {
-                    try { treeKill(pid, 'SIGKILL', () => {}); } catch {}
-                    const timer = setTimeout(resolve, 5000);
                     const activeProcess = this.process;
                     if (!activeProcess) {
-                        clearTimeout(timer);
                         resolve();
                         return;
                     }
-                    activeProcess.once('exit', () => { clearTimeout(timer); resolve(); });
+                    let timer: ReturnType<typeof setTimeout>;
+                    let settled = false;
+                    const settle = () => {
+                        if (settled) return;
+                        settled = true;
+                        resolve();
+                    };
+                    const onKillExit = () => {
+                        clearTimeout(timer);
+                        settle();
+                    };
+                    timer = setTimeout(() => {
+                        // 超时路径：进程仍未退出，移除未触发的 once('exit') 监听，避免泄漏
+                        activeProcess.removeListener('exit', onKillExit);
+                        settle();
+                    }, 5000);
+                    try { treeKill(pid, 'SIGKILL', () => {}); } catch {}
+                    activeProcess.once('exit', onKillExit);
                 });
                 const processAfterSigkill = this.process;
                 if (processAfterSigkill && processAfterSigkill.exitCode === null && processAfterSigkill.signalCode === null) {
@@ -362,12 +383,15 @@ export class StdioMcpClient extends EventEmitter {
             throw new Error('Process not started');
         }
         
+        let anyFailed = false;
+        
         // 刷新工具列表（如果支持）
         if (this.capabilities?.tools) {
             try {
                 const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
                 this.tools = toolsResult.tools || [];
             } catch (error) {
+                anyFailed = true;
                 console.error('[MCP] Failed to refresh tools list:', error);
             }
         }
@@ -378,6 +402,7 @@ export class StdioMcpClient extends EventEmitter {
                 const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
                 this.resources = resourcesResult.resources || [];
             } catch (error) {
+                anyFailed = true;
                 console.error('[MCP] Failed to refresh resources list:', error);
             }
         }
@@ -388,8 +413,14 @@ export class StdioMcpClient extends EventEmitter {
                 const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
                 this.prompts = promptsResult.prompts || [];
             } catch (error) {
+                anyFailed = true;
                 console.error('[MCP] Failed to refresh prompts list:', error);
             }
+        }
+        
+        // 全部成功：复位拉取失败标记（连接期间/上次刷新留下的失败标记不得永久滞留）
+        if (!anyFailed) {
+            this.listFetchFailed = false;
         }
     }
     
@@ -616,6 +647,10 @@ export class StdioMcpClient extends EventEmitter {
             // 随后的 exit 事件会再次调用 cleanup，幂等无害。
             // 必须传 callback：tree-kill 无 callback 时出错会异步 throw（uncaughtException）。
             if (this.process && this.process.pid) {
+                // 显式广播 exit：cleanup() 会先移除 processExitHandler（唯一 emit 'exit' 的地方），
+                // 而 kill 是异步的——进程真正退出时已无人监听，上层（McpManager）将永远收不到
+                // exit 通知、状态停留在 connected。此处模拟进程被 SIGTERM 杀死的退出事件。
+                this.emit('exit', null, 'SIGTERM');
                 try { treeKill(this.process.pid, 'SIGTERM', () => {}); } catch { /* ignore */ }
             }
             this.cleanup('Stdout buffer exceeded limit');
@@ -651,7 +686,8 @@ export class StdioMcpClient extends EventEmitter {
                 this.pendingRequests.delete(message.id);
                 
                 if (message.error) {
-                    pending.reject(new Error(message.error.message));
+                    // 错误码拼入信息：上层（McpManager）只展示 message，不丢 code
+                    pending.reject(new Error(`MCP error ${message.error.code}: ${message.error.message}`));
                 } else {
                     pending.resolve(message.result);
                 }

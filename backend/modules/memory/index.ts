@@ -88,6 +88,9 @@ const _workspaceInitPromises = new Map<string, Promise<import('./MemoryManager')
 /** scopeKey -> 只读 MemoryManager 实例（createIfMissing=false 时复用，含已加载 config） */
 const _workspaceReadonlyInstances = new Map<string, import('./MemoryManager').MemoryManager>();
 
+/** scopeKey -> 只读初始化中的 Promise（createIfMissing=false 并发去重，防同一目录双实例） */
+const _workspaceReadonlyInitPromises = new Map<string, Promise<import('./MemoryManager').MemoryManager | null>>();
+
 /** 设置工作区记忆存储根目录（由 initMemoryManager 调用） */
 export function setWorkspaceMemoryBaseDir(dir: string | null): void {
     _workspaceBaseDir = dir;
@@ -95,6 +98,7 @@ export function setWorkspaceMemoryBaseDir(dir: string | null): void {
     _workspaceInstances.clear();
     _workspaceInitPromises.clear();
     _workspaceReadonlyInstances.clear();
+    _workspaceReadonlyInitPromises.clear();
 }
 
 /** 规范化工作区 key：Windows 大小写不敏感 + 统一正斜杠 */
@@ -171,6 +175,10 @@ export async function getMemoryManagerForWorkspace(
         // 复用已缓存的只读实例（含已加载 config）：避免每次只读访问都新建实例 + loadConfig
         const readonly = _workspaceReadonlyInstances.get(scopeKey);
         if (readonly) return readonly;
+        // 并发只读访问共享同一个初始化 promise：否则两个只读调用会各自
+        // new MemoryManager + loadConfig，产生同一目录两个实例（各自独立 AsyncLock）
+        const readonlyPending = _workspaceReadonlyInitPromises.get(scopeKey);
+        if (readonlyPending) return readonlyPending;
     }
 
     const initPromise = (async () => {
@@ -183,6 +191,23 @@ export async function getMemoryManagerForWorkspace(
         if (!createIfMissing) {
             const manager = new MemoryManager(dir);
             await manager.loadConfig();
+            // 并发写路径（createIfMissing=true）已完成完整初始化时直接复用其结果：
+            // 避免只读实例与写实例并存（各自独立 AsyncLock 并发读写同一 LOG）
+            const writeInstance = _workspaceInstances.get(scopeKey);
+            if (writeInstance) return writeInstance;
+            // 写路径正在初始化中（_workspaceInitPromises 已在途、尚未落 _workspaceInstances）：
+            // 等待其完成并复用其结果，关闭「只读先缓存、写后完成」的窄窗口——该窗口下
+            // 只读完成路径检查写实例（上面的 get）与写路径 _workspaceInstances.set 之间
+            // 存在间隙，只读实例先缓存、写路径随后完成，同一目录双实例并存。
+            const writePending = _workspaceInitPromises.get(scopeKey);
+            if (writePending) {
+                try {
+                    const adopted = await writePending;
+                    if (adopted) return adopted;
+                } catch {
+                    // 写初始化失败：回退缓存只读实例，本次只读访问仍可用
+                }
+            }
             // 缓存只读实例（含 config）：后续只读访问直接复用；
             // 不写入 _workspaceInstances——写路径（createIfMissing=true）仍走完整初始化分支
             _workspaceReadonlyInstances.set(scopeKey, manager);
@@ -226,18 +251,23 @@ export async function getMemoryManagerForWorkspace(
         return manager;
     })();
 
-    // 只读路径（createIfMissing=false）不注册到共享初始化池：否则并发写路径
+    // 只读路径（createIfMissing=false）不注册到共享写初始化池：否则并发写路径
     // （createIfMissing=true）会复用只读 promise，拿到「只 loadConfig、未 init()」
     // 的实例（无 TREE/LOG.txt），写工具随后会在 appendFile 处 ENOENT 失败。
-    // 只读路径重复 loadConfig 幂等无副作用，无需入池去重。
+    // 只读路径之间仍需共享 promise 池（_workspaceReadonlyInitPromises），
+    // 否则并发只读访问会各自 new MemoryManager 产生同一目录双实例。
     if (createIfMissing) {
         _workspaceInitPromises.set(scopeKey, initPromise);
+    } else {
+        _workspaceReadonlyInitPromises.set(scopeKey, initPromise);
     }
     try {
         return await initPromise;
     } finally {
         if (createIfMissing) {
             _workspaceInitPromises.delete(scopeKey);
+        } else {
+            _workspaceReadonlyInitPromises.delete(scopeKey);
         }
     }
 }

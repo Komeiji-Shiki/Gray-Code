@@ -6,12 +6,14 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { getToolDisplayName } from '../../toolLocalization'
 import ActivityStatsResult from '../../../components/tools/activity/ActivityStatsResult.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
 
 registerTool('get_activity_stats', {
   name: 'get_activity_stats',
-  label: 'Activity Stats',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('get_activity_stats'),
   icon: 'codicon-graph-line',
 
   descriptionFormatter: (args) => {

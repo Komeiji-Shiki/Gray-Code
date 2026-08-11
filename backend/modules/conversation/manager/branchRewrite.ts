@@ -15,6 +15,46 @@ import { activePath, findUnsyncedFunctionResponses, isFunctionResponseMessage } 
 import { BranchError } from '../branch/types';
 import type { BranchHistoryRewriteResult } from './types';
 
+/**
+ * parts 的键序无关深度指纹：递归规范化（对象键排序）后序列化。
+ *
+ * parts 可经不同代码路径构造（图节点 appendHistoryToGraph 的 JSON 往返 / 主历史段 /
+ * 工具结算 structuredClone / 分支编辑），对象键顺序不保证一致；仅键序差异（内容实质
+ * 相同）不得误判为分歧——否则 divergenceIndex 误触发会删除仍有效的检查点（与 R8a-H1
+ * 的 FR id 误判同源问题）。双方 parts 均来自 JSON 存储流水线，无 undefined / 函数 /
+ * 循环引用，可安全递归。
+ */
+function partFingerprint(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+        // 原始值（undefined 仅防御：parts 实际来自 JSON 往返不会出现）
+        return value === undefined ? 'undefined' : JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map(partFingerprint).join(',')}]`;
+    }
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys.map(key => `${JSON.stringify(key)}:${partFingerprint(record[key])}`).join(',')}}`;
+}
+
+/**
+ * 幂等判定用的「重写相关内容」深度相等：主历史消息与图重建消息在 id 之外的
+ * 可重建字段（role / isFunctionResponse / parts 指纹）逐项一致。只比较 id 会漏掉
+ * 「图节点内容与主历史分歧」（如工具结果被就地编辑）——id 全同但内容不同时
+ * 仍执行重写，避免分歧静默固化。图不存储的字段（index/tokenCount/turnDynamicContext
+ * 等）不参与比较：重写本来就会用图内容重建它们。
+ *
+ * 性能：调用方按下标懒计算两侧 parts 指纹（identical 与 divergence 两个循环共用一份
+ * 缓存）；id 不同直接判分歧，指纹只在 id 相同的下标才计算——省掉「两个循环各自全量
+ * JSON.stringify 双方 parts」的重复开销。
+ */
+function rewriteContentEqual(a: Content, b: Content, aFingerprint: string, bFingerprint: string): boolean {
+    if (a.role !== b.role || (a.isFunctionResponse ?? false) !== (b.isFunctionResponse ?? false)) {
+        return false;
+    }
+    return aFingerprint === bFingerprint;
+}
+
 /** rewriteHistoryFromBranchGraph 依赖的 ConversationManager 能力（委托绑定） */
 export interface BranchRewriteContext {
     storage: IStorageAdapter;
@@ -43,11 +83,11 @@ export interface BranchRewriteContext {
  * - 重写前检查主历史非 FR 消息是否全部存在于图中（R8a-M2）：存在未同步消息
  *   （appendHistoryToGraph 为锁外 fire-and-forget，同步完成前切换会丢消息）时抛
  *   BRANCH_OPERATION_CONFLICT 拒绝切换，防止未入图消息被整体替换丢弃；
- * - 与旧主历史逐元素按 id 比对：完全一致 → 不落盘（rewritten=false，幂等）；
+ * - 与旧主历史逐元素比对（id + role/parts 内容指纹）：完全一致 → 不落盘（rewritten=false，幂等）；
  *   否则全量重写——先失效上下文裁剪状态（R8a-M1：先于历史变更、幂等无害，避免
  *   saveHistory 成功后 metadata 写失败抛错 → 图/历史永久分裂），再 storage.saveHistory
  *   （分段原子写 + updatedAt）+ 用量索引全量重建，并返回 divergenceIndex
- *   （旧历史与新历史首次 id 分歧的数组下标，检查点清理起点）。
+ *   （旧历史与新历史首次分歧的数组下标，检查点清理起点）。
  *
  * 锁边界（BR-07 / M-3 强约束）：
  * - 本方法整体在 runExclusive（会话写锁）内执行；内部只调用不重复获取会话写锁的存储写入
@@ -94,6 +134,22 @@ export async function rewriteHistoryFromBranchGraph(
         // 1. 活跃路径 → Content[]（functionResponse 拆分，决策 8）
         const pathIds = activePath(graph);
         const oldHistory = await ctx.getMessagesRaw(conversationId);
+
+        // 切图→重写非原子窗口校验：switchBranchCandidate 已记录「切图瞬间」的主历史尾 id
+        // 与图活跃尾；两者任一变化（窗口期并发追加 / 其它切换）说明重写将基于陈旧快照覆盖
+        // 并发写入，拒绝并让调用方重试（重试时无预期状态，由下方 R8a-M2 一致性检查继续兜底）。
+        const expectation = branchService.consumeRewriteExpectation(conversationId);
+        if (expectation) {
+            const mainHistoryTailId = oldHistory.length > 0 ? (oldHistory[oldHistory.length - 1]?.id ?? null) : null;
+            if (mainHistoryTailId !== expectation.mainHistoryTailId
+                || graph.activeTailNodeId !== expectation.graphActiveTailNodeId) {
+                throw new BranchError(
+                    'BRANCH_OPERATION_CONFLICT',
+                    'switch rejected: main history tail or branch graph active tail changed since the graph switch; ' +
+                    'retry the switch (no history was modified)'
+                );
+            }
+        }
 
         // R8a-M2：切换重写前一致性检查——主历史中存在于图之外（未同步进图）的消息。
         // appendHistoryToGraph 是锁外 fire-and-forget（失败仅告警，ConversationManager
@@ -215,11 +271,36 @@ export async function rewriteHistoryFromBranchGraph(
 
         const historyIds = nextContents.map(message => message.id ?? '');
 
-        // 3. 与旧主历史逐元素按 id 比对：完全一致 → 不落盘（幂等，避免无变更全量重写）
+        // 3. 与旧主历史逐元素比对：id 与重写相关内容（role/parts 指纹）完全一致 → 不落盘（幂等，
+        //    避免无变更全量重写）。只比较 id 会漏掉「图节点内容与主历史分歧」——id 全同但
+        //    内容不同时仍执行重写，避免分歧静默固化。
+        //    性能：两侧 parts 指纹按下标懒计算一次、identical 与 divergence 两个循环共用
+        //    （id 不同直接判分歧，指纹只在 id 相同的下标才计算——同一路径重复切换时
+        //    绝大多数位置 id 相同，仅在分歧处付出规范化开销）。
+        const oldFingerprints: (string | undefined)[] = new Array(oldHistory.length);
+        const nextFingerprints: (string | undefined)[] = new Array(nextContents.length);
+        const fingerprintAt = (list: (string | undefined)[], index: number, content: Content): string => {
+            const cached = list[index];
+            if (cached !== undefined) {
+                return cached;
+            }
+            const fp = partFingerprint(content.parts ?? []);
+            list[index] = fp;
+            return fp;
+        };
         let identical = oldHistory.length === nextContents.length;
         if (identical) {
             for (let i = 0; i < nextContents.length; i += 1) {
                 if ((oldHistory[i]!.id ?? '') !== (nextContents[i]!.id ?? '')) {
+                    identical = false;
+                    break;
+                }
+                if (!rewriteContentEqual(
+                    oldHistory[i]!,
+                    nextContents[i]!,
+                    fingerprintAt(oldFingerprints, i, oldHistory[i]!),
+                    fingerprintAt(nextFingerprints, i, nextContents[i]!)
+                )) {
                     identical = false;
                     break;
                 }
@@ -235,7 +316,8 @@ export async function rewriteHistoryFromBranchGraph(
             };
         }
 
-        // 4. 分歧索引：旧历史与新历史首次按 id 分歧的数组下标（含该下标，检查点清理起点）。
+        // 4. 分歧索引：旧历史与新历史首次分歧的数组下标（含该下标，检查点清理起点）。
+        //    判定口径与幂等判定一致：id 或重写相关内容（role/parts）任一不同即视为分歧。
         //    初值 = min(旧,新)：旧历史更长（新路径为旧路径前缀）时即新历史长度（清理全部越界
         //    检查点）；旧历史更短（新路径为旧路径延伸）时即新历史首个越界下标（旧历史无此索引，
         //    清理效果等价）——与 BranchHistoryRewriteResult.divergenceIndex 注释一致
@@ -243,7 +325,13 @@ export async function rewriteHistoryFromBranchGraph(
         let divergenceIndex = Math.min(oldHistory.length, nextContents.length);
         const common = Math.min(oldHistory.length, nextContents.length);
         for (let i = 0; i < common; i += 1) {
-            if ((oldHistory[i]!.id ?? '') !== (nextContents[i]!.id ?? '')) {
+            if ((oldHistory[i]!.id ?? '') !== (nextContents[i]!.id ?? '')
+                || !rewriteContentEqual(
+                    oldHistory[i]!,
+                    nextContents[i]!,
+                    fingerprintAt(oldFingerprints, i, oldHistory[i]!),
+                    fingerprintAt(nextFingerprints, i, nextContents[i]!)
+                )) {
                 divergenceIndex = i;
                 break;
             }

@@ -120,10 +120,16 @@ export class EarlyStreamingToolProgressQueue {
 
         return new Promise(resolve => {
             const previous = this.waiter;
-            this.waiter = () => {
+            const current = () => {
                 previous?.();
+                // 摘除自己：被唤醒时若自己仍是当前 waiter（未被更新注册者替换），
+                // 清空队列，避免超时（Promise.race 丢弃）后残留 waiter 链被后续落定重复调用。
+                if (this.waiter === current) {
+                    this.waiter = undefined;
+                }
                 resolve();
             };
+            this.waiter = current;
         });
     }
 }

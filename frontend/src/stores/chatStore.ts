@@ -35,7 +35,7 @@ import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
-import { createChatState } from './chat/state'
+import { createChatState, getMessagesStructuralVersion, rebuildMessageIndexById } from './chat/state'
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
 import { formatTime } from './chat/utils'
@@ -101,8 +101,7 @@ import {
   editAndRetry as editAndRetryFn,
   deleteMessage as deleteMessageFn,
   deleteSingleMessage as deleteSingleMessageFn,
-  restoreSummarizedMessages as restoreSummarizedMessagesFn,
-  clearMessages as clearMessagesFn
+  restoreSummarizedMessages as restoreSummarizedMessagesFn
 } from './chat/messageActions'
 
 import type { CancelStreamOptions } from './chat/toolActions'
@@ -208,6 +207,8 @@ export const useChatStore = defineStore('chat', () => {
     responseMap: Map<string, unknown>
     list: TodoItem[] | null
     anchorBackendIndex: number | null
+    /** 缓存时的消息数组结构版本（state.ts 维护）：非纯尾部 splice/删除/整体替换会递增 */
+    version: number
   } | null = null
 
   const todoSnapshot = vueComputed(() => {
@@ -230,10 +231,17 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量
+    // 前缀引用校验：缓存窗口是当前窗口的前缀且未被改写（含尾消息原地替换）时走增量。
+    // 注意：messagesRef 与 allMessages 是同一个响应式数组代理，原地 splice（中间插入/删除）
+    // 无法被逐元素引用比较感知；结构版本号（state.ts 在非纯尾部变更时递增）作为补充指纹，
+    // 版本不一致一律回退全量重放。
     const cache = todoReplayCache
     let prefixOk = false
-    if (cache !== null && cache.messagesRef.length <= len) {
+    if (
+      cache !== null &&
+      cache.messagesRef.length <= len &&
+      cache.version === getMessagesStructuralVersion(state)
+    ) {
       prefixOk = true
       for (let i = 0; i < cache.scannedCount; i++) {
         if (allMessages[i] !== cache.messagesRef[i]) {
@@ -276,7 +284,8 @@ export const useChatStore = defineStore('chat', () => {
       messagesRef: allMessages,
       responseMap,
       list: result.todos,
-      anchorBackendIndex: result.anchorBackendIndex
+      anchorBackendIndex: result.anchorBackendIndex,
+      version: getMessagesStructuralVersion(state)
     }
     return result
   })
@@ -304,7 +313,6 @@ export const useChatStore = defineStore('chat', () => {
   
   const deleteMessage = (targetIndex: number) => deleteMessageFn(state, targetIndex, cancelStream)
   const deleteSingleMessage = (targetIndex: number) => deleteSingleMessageFn(state, targetIndex, cancelStream)
-  const clearMessages = () => clearMessagesFn(state)
 
   // ============ 后台任务桥接（单向：chat → backgroundTaskStore） ============
   // 背景：chatStore ↔ backgroundTaskStore 曾是双向耦合（backgroundTaskStore 直接 useChatStore），
@@ -345,16 +353,23 @@ export const useChatStore = defineStore('chat', () => {
     // 如果当前标签页已经是空白的，直接在当前标签页创建
     if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
       // 空白标签页可能已入队消息/附件/编辑器节点：resetConversationState 会清空它们，
-      // 先暂存再恢复，避免「新建对话」静默丢弃排队内容（P2）
+      // 先暂存再恢复，避免「新建对话」静默丢弃排队内容（P2）；
+      // 输入框内容 / Prompt 模式 / 模型选择同样被重置，一并保留（空白标签页新建对话不应清空输入态）
       const preserved = {
         messageQueue: state.messageQueue.value,
         attachments: state.attachments.value,
-        editorNodes: state.editorNodes.value
+        editorNodes: state.editorNodes.value,
+        inputValue: state.inputValue.value,
+        currentPromptModeId: state.currentPromptModeId.value,
+        selectedModelId: state.selectedModelId.value
       }
       await createNewConvAction(state, cancelStreamAndRejectTools)
       state.messageQueue.value = preserved.messageQueue
       state.attachments.value = preserved.attachments
       state.editorNodes.value = preserved.editorNodes
+      state.inputValue.value = preserved.inputValue
+      state.currentPromptModeId.value = preserved.currentPromptModeId
+      state.selectedModelId.value = preserved.selectedModelId
       void loadBranchGraphAction(state)
       return
     }
@@ -697,6 +712,7 @@ export const useChatStore = defineStore('chat', () => {
       initializedChatStates.add(state)
       state.currentConversationId.value = null
       state.allMessages.value = []
+      rebuildMessageIndexById(state)
       state.windowStartIndex.value = 0
       state.totalMessages.value = 0
       state.isLoadingMoreMessages.value = false
@@ -780,7 +796,6 @@ export const useChatStore = defineStore('chat', () => {
     editAndRetry,
     deleteMessage,
     deleteSingleMessage,
-    clearMessages,
 
     // 分支（TREE-07 / TREE-10 / TREE-11）
     branchGraph: state.branchGraph,

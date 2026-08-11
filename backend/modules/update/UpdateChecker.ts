@@ -204,6 +204,10 @@ export class UpdateChecker {
     private readonly lastAutoCheckKey = 'lastAutoCheckAt';
     private readonly options: UpdateCheckerOptions;
     private status: UpdateCheckStatus = { state: 'idle' };
+    /** 进行中的 check() Promise：并发（含 force）检查复用同一请求，避免重复打上游 */
+    private inFlightCheck: Promise<UpdateCheckStatus> | null = null;
+    /** 代际计数：resetStatus() 递增，使在途 check() 的结果作废（不写回状态/存储） */
+    private generation = 0;
 
     constructor(options: UpdateCheckerOptions) {
         this.options = options;
@@ -216,68 +220,100 @@ export class UpdateChecker {
 
     /**
      * 检查更新（幂等：进行中的检查返回同一结果，不会并发重复请求）。
-     * force=true 忽略 24h 节流（手动检查）。
+     * force=true 忽略 24h 节流（手动检查）；进行中检查不被 force 吞掉——
+     * 等待其结束后按 force 语义重新检查。
      */
     async check(force = false): Promise<UpdateCheckStatus> {
         if (!this.options.isCheckEnabled()) {
             this.status = { state: 'disabled' };
             return this.status;
         }
-        if (this.status.state === 'checking') {
-            return this.status;
-        }
-
-        const now = this.options.now ? this.options.now() : Date.now();
-        const lastCheckAt = this.options.storage.get(this.lastCheckKey);
-        const lastAutoCheckAt = this.options.storage.get(this.lastAutoCheckKey);
-        // 节流：force（用户显式检查）无视节流；非 force 检查受「上次成功检查」与
-        // 「上次自动检查尝试」两个时间戳共同节流——自动检查失败也只节流后续自动检查，
-        // 避免网络异常时每次启动都重试，但不会拖住用户显式检查/UI 重试
-        if (!shouldCheck(lastCheckAt, now, force) || (!force && !shouldCheck(lastAutoCheckAt, now, false))) {
-            // 节流窗口内：返回内存状态（可能是本会话已查过的结果，或 idle）
-            return this.status;
-        }
-
-        this.status = { state: 'checking' };
-        try {
-            const info = await this.fetchLatestRelease();
-            const current = this.getCurrentVersion();
-            if (!current) {
-                // 当前扩展版本读取失败：置 error 而非静默 upToDate（否则会误导用户以为已是最新）
-                throw new Error('无法读取当前扩展版本');
-            }
-            // nightly 版本号为 <semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809），
-            // compareVersions 将其视为「高于同主版本正式版」的最新构建，
-            // 两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）
-            if (current && compareVersions(info.version, current) > 0) {
-                this.status = { state: 'updateAvailable', checkedAt: now, update: info };
-            } else {
-                this.status = { state: 'upToDate', checkedAt: now };
-            }
-            // 成功：记录成功检查时间（节流后续所有非 force 检查）；自动检查另记录尝试时间
-            try {
-                await this.options.storage.update(this.lastCheckKey, now);
-                if (!force) {
-                    await this.options.storage.update(this.lastAutoCheckKey, now);
-                }
-            } catch {
-                // 存储失败不影响检查状态
-            }
-        } catch (e: any) {
-            this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
-            // 失败只节流「自动检查」：写 lastAutoCheckAt（避免网络异常时每次启动都重试），
-            // 不写 lastCheckKey（成功检查时间戳）——否则用户显式检查/UI 重试会被失败的
-            // 自动检查拖入 24h 节流窗口而无法重试。
-            // force 手动检查失败不记录任何时间戳——不吞掉下一次自动检查的机会
+        // 并发去重：进行中的检查返回同一 Promise（不重复请求上游）
+        if (this.inFlightCheck) {
             if (!force) {
+                return this.inFlightCheck;
+            }
+            // force 检查：等待进行中的检查结束后按 force 语义重查（不吞掉用户显式检查）
+            await this.inFlightCheck;
+        }
+
+        // 捕获代际：resetStatus() 会递增 generation 使在途检查结果作废，
+        // 写回状态/存储前校验代际未变，否则丢弃本次结果
+        const gen = this.generation;
+        const run = async (): Promise<UpdateCheckStatus> => {
+            const now = this.options.now ? this.options.now() : Date.now();
+            const lastCheckAt = this.options.storage.get(this.lastCheckKey);
+            const lastAutoCheckAt = this.options.storage.get(this.lastAutoCheckKey);
+            // 节流：force（用户显式检查）无视节流；非 force 检查受「上次成功检查」与
+            // 「上次自动检查尝试」两个时间戳共同节流——自动检查失败也只节流后续自动检查，
+            // 避免网络异常时每次启动都重试，但不会拖住用户显式检查/UI 重试
+            if (!shouldCheck(lastCheckAt, now, force) || (!force && !shouldCheck(lastAutoCheckAt, now, false))) {
+                // 节流窗口内：返回内存状态（可能是本会话已查过的结果，或 idle）
+                return this.status;
+            }
+
+            this.status = { state: 'checking' };
+            try {
+                const info = await this.fetchLatestRelease();
+                // 检查期间 resetStatus() 已调用：丢弃本次结果，不写回状态与存储
+                if (gen !== this.generation) {
+                    return this.status;
+                }
+                const current = this.getCurrentVersion();
+                if (!current) {
+                    // 当前扩展版本读取失败：置 error 而非静默 upToDate（否则会误导用户以为已是最新）
+                    throw new Error('无法读取当前扩展版本');
+                }
+                // nightly 版本号为 <semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809），
+                // compareVersions 将其视为「高于同主版本正式版」的最新构建，
+                // 两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）
+                if (current && compareVersions(info.version, current) > 0) {
+                    this.status = { state: 'updateAvailable', checkedAt: now, update: info };
+                } else {
+                    this.status = { state: 'upToDate', checkedAt: now };
+                }
+                // 成功：记录成功检查时间（节流后续所有非 force 检查）；自动检查另记录尝试时间
+                if (gen !== this.generation) {
+                    return this.status;
+                }
                 try {
-                    await this.options.storage.update(this.lastAutoCheckKey, now);
+                    await this.options.storage.update(this.lastCheckKey, now);
+                    if (!force) {
+                        await this.options.storage.update(this.lastAutoCheckKey, now);
+                    }
                 } catch {
                     // 存储失败不影响检查状态
                 }
+            } catch (e: any) {
+                if (gen !== this.generation) {
+                    return this.status;
+                }
+                this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
+                // 失败只节流「自动检查」：写 lastAutoCheckAt（避免网络异常时每次启动都重试），
+                // 不写 lastCheckKey（成功检查时间戳）——否则用户显式检查/UI 重试会被失败的
+                // 自动检查拖入 24h 节流窗口而无法重试。
+                // force 手动检查失败不记录任何时间戳——不吞掉下一次自动检查的机会
+                if (!force) {
+                    try {
+                        await this.options.storage.update(this.lastAutoCheckKey, now);
+                    } catch {
+                        // 存储失败不影响检查状态
+                    }
+                }
+            }
+            return this.status;
+        };
+
+        const promise = run();
+        this.inFlightCheck = promise;
+        try {
+            return await promise;
+        } finally {
+            // 只清除自己持有的 in-flight 引用：期间若有新检查启动，不能误清
+            if (this.inFlightCheck === promise) {
+                this.inFlightCheck = null;
             }
         }
-        return this.status;
     }
 
     /**
@@ -329,6 +365,13 @@ export class UpdateChecker {
                 await fs.writeFile(tmpTarget, buf);
             }
             await fs.rename(tmpTarget, target);
+        } catch (error) {
+            // 超时中止（代理/原生 fetch 路径均以 AbortError 呈现）：给出明确的超时文案，
+            // 而不是底层 'Request cancelled'/'This operation was aborted'
+            if (error instanceof Error && error.name === 'AbortError') {
+                throw new Error(`下载超时（超过 ${Math.round(UPDATE_DOWNLOAD_TIMEOUT_MS / 1000)} 秒）`);
+            }
+            throw error;
         } finally {
             clearTimeout(timer);
             await fs.rm(tmpTarget, { force: true }).catch(() => undefined);
@@ -372,6 +415,11 @@ export class UpdateChecker {
      * 避免旧渠道的缓存结果（如 Nightly 徽章/可安装项）残留到新渠道。
      */
     resetStatus(): void {
+        // 代际计数递增：使在途 check() 的结果作废（check 在写回状态/存储前校验代际，
+        // 变化即丢弃），防止旧渠道的检查结果覆盖 reset 后的新状态
+        this.generation++;
+        // 清空 in-flight 引用：reset 后新检查不再复用旧检查的结果
+        this.inFlightCheck = null;
         this.status = { state: 'idle' };
         void this.options.storage.update(this.lastCheckKey, 0).catch(() => undefined);
         // 同步重置自动检查尝试时间戳：渠道切换后自动检查按新渠道立即重试
@@ -417,6 +465,13 @@ export class UpdateChecker {
                 throw new Error('GitHub Releases API 响应格式异常');
             }
             return info;
+        } catch (error) {
+            // 超时中止（代理/原生 fetch 路径均以 AbortError 呈现）：给出明确的「检查超时」文案，
+            // 与下载路径（downloadAndInstall）统一口径，而不是底层 'Request cancelled'/'This operation was aborted'
+            if (error instanceof Error && error.name === 'AbortError') {
+                throw new Error(`检查超时（超过 ${Math.round(UPDATE_FETCH_TIMEOUT_MS / 1000)} 秒）`);
+            }
+            throw error;
         } finally {
             clearTimeout(timer);
         }

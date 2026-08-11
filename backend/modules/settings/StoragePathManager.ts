@@ -649,9 +649,30 @@ export class StoragePathManager {
         } catch (error: any) {
             let errorMessage = error.message || 'Unknown error while restoring default storage';
 
+            // 先恢复配置指向（customDataPath/migrationStatus 回写为 resetToDefault 前的原值），
+            // 再执行数据回滚：与 migrateData 的 catch 一致——若配置切换已成功（customDataPath
+            // 已清空）而后续清理失败，配置指向默认路径但默认路径数据被回滚删除，会造成数据丢失。
+            // 先恢复配置保证任何时刻配置与数据指向一致。
+            try {
+                await this.settingsManager.updateStoragePathConfig({
+                    customDataPath: config.customDataPath,
+                    migrationStatus: config.migrationStatus,
+                    lastMigrationAt: config.lastMigrationAt,
+                    migrationError: config.migrationError
+                });
+            } catch (configSaveError: any) {
+                const reason = configSaveError?.message || String(configSaveError);
+                errorMessage += `; failed to persist recovery status: ${reason}`;
+                console.error('[StoragePathManager] Failed to persist reset failure status:', configSaveError);
+            }
+
             if (stagingRoot && sourceMutationStarted) {
                 try {
-                    await this.removeStorageData(this.defaultDataPath);
+                    // 回滚删除默认路径数据时保留「包含自定义路径」的子目录：
+                    // 自定义路径位于默认路径内部时，误删会让刚恢复的自定义路径数据连带丢失
+                    // （与 migrateData 的 preservedSubDirs 语义一致）
+                    const rollbackPreservedSubDirs = await this.findPreservedSubDirs(this.defaultDataPath, customPath);
+                    await this.removeStorageData(this.defaultDataPath, rollbackPreservedSubDirs);
                     await this.copyStorageData(stagingRoot, customPath, 0, 0, 'Restoring');
                 } catch (rollbackError) {
                     preserveStaging = true;

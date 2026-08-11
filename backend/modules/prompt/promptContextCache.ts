@@ -310,9 +310,26 @@ export function deserializePromptContextCache(raw: string): DeserializedPromptCo
             return deserializeV1(parsed as Partial<SerializedPromptContextCacheV1>);
         }
 
-        throw new Error('Unsupported prompt context cache version');
+        // 版本不认识：仅当对象首键确为 version 时才视为未知版本/损坏的结构化缓存丢弃。
+        // 可成功 parse 但首键非 version 的 JSON 形态纯文本（如 {"value":123}）不在此列，
+        // 落入下方 catch 的 legacy 纯文本回退——旧启发式 /^\{\s*"v/ 会误杀此类合法消息（第五轮 LOW）。
+        if (Object.keys(parsed)[0] === 'version') {
+            return emptyCache();
+        }
+
+        throw new Error('Not a structured prompt context cache');
     } catch {
         if (!legacyText) {
+            return emptyCache();
+        }
+
+        // 损坏/截断的结构化缓存（JSON.parse 失败）判别：只认序列化器实际可能产出的前缀——
+        // 完整键 {"version": 或截断停在 "version" 单词后半的任意位置（{"vers、{"versi、...
+        // {"version 无冒号等）。旧判定 /^\{\s*"v/ 过宽：{"value":123} 这类合法 JSON 形态的
+        // 纯文本 legacy 消息会被误判丢弃；极短截断（{"v/{"ve/{"ver）同样按纯文本回退（第五轮 LOW）。
+        // 成功 parse 的未知版本对象已在 try 内按「首键是否为 version」判定，不落到此处。
+        // （写入侧 tmp+rename 原子写属 conversation 存储职责，超出本模块范围，读取侧启发式兜底。）
+        if (/^\{\s*"version"\s*:/.test(legacyText) || /^\{\s*"vers/.test(legacyText)) {
             return emptyCache();
         }
 

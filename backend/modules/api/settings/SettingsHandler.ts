@@ -5,6 +5,7 @@
  */
 
 import { t, setLanguage } from '../../../i18n';
+import { getProductExtensionId, getProductMetadata } from '../../../core/productMetadata';
 import type { SettingsManager } from '../../settings/SettingsManager';
 import type { CheckpointConfig, GenerateImageToolConfig, MemoryToolConfig, SummarizeConfig } from '../../settings/types';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
@@ -33,9 +34,6 @@ import type {
     UpdateListFilesConfigRequest,
     UpdateApplyDiffConfigRequest
 } from './types';
-
-/** 扩展 ID（getCurrentVersion / getChangelogSinceVersion 共用，避免散落硬编码） */
-const GRAYCODE_EXTENSION_ID = 'Komeiji-Shiki.graycode';
 
 /**
  * 设置处理器
@@ -984,16 +982,8 @@ export class SettingsHandler {
      * 获取当前插件版本
      */
     private getCurrentVersion(): string {
-        try {
-            const vscode = require('vscode');
-            const extension = vscode.extensions.getExtension(GRAYCODE_EXTENSION_ID);
-            if (extension) {
-                return extension.packageJSON.version || '';
-            }
-            return '';
-        } catch {
-            return '';
-        }
+        // 复用产品元数据（版本唯一来源为扩展自身 packageJSON），删除硬编码扩展 id
+        return getProductMetadata().version || '';
     }
     
     /**
@@ -1055,8 +1045,8 @@ export class SettingsHandler {
             const fs = require('fs');
             const path = require('path');
             
-            // 获取插件路径
-            const extension = vscode.extensions.getExtension(GRAYCODE_EXTENSION_ID);
+            // 获取插件路径（扩展 id 复用产品元数据缓存，避免硬编码）
+            const extension = vscode.extensions.getExtension(getProductExtensionId());
             if (!extension) {
                 return '';
             }

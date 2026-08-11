@@ -329,14 +329,27 @@ export class ChatFlowEditBranch extends ChatFlowContext {
         success: false,
         error: {
           code: 'CANCELLED',
-          message: t('modules.api.chat.errors.requestCancelled'),
+          message: t('modules.channel.errors.requestCancelled'),
+        },
+      };
+    }
+
+    // content 为空或 parts 为空时显式返回错误，不再用非空断言透传 success:true + content:undefined
+    // EMPTY_RESPONSE 使用独立文案（模型返回了空内容），不复用 requestCancelled 的
+    // 「请求已取消」——正常空输出与取消语义不同，避免误导用户。
+    if (!loopResult.content?.parts?.length) {
+      return {
+        success: false,
+        error: {
+          code: 'EMPTY_RESPONSE',
+          message: t('modules.channel.errors.emptyResponse'),
         },
       };
     }
 
     return {
       success: true,
-      content: loopResult.content!,
+      content: loopResult.content,
     };
   }
 

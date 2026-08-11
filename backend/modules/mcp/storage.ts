@@ -40,7 +40,10 @@ export class MementoMcpStorageAdapter implements McpStorageAdapter {
 
     /** 读取全部配置（内部使用，不经过队列——调用方须已在队列中，避免嵌套入队死锁） */
     private readConfigs(): McpServerConfig[] {
-        return this.memento.get<McpServerConfig[]>(MementoMcpStorageAdapter.STORAGE_KEY, []);
+        // 返回浅拷贝：saveConfig 的 read-modify-write 会直接修改数组（下标赋值/push），
+        // 不得改动 memento 内部持有的数组引用，否则未持久化的改动会污染后续读取
+        const configs = this.memento.get<McpServerConfig[]>(MementoMcpStorageAdapter.STORAGE_KEY, []);
+        return Array.isArray(configs) ? [...configs] : [];
     }
 
     async getAllConfigs(): Promise<McpServerConfig[]> {
@@ -168,11 +171,23 @@ export class FileSystemMcpStorageAdapter implements McpStorageAdapter {
         await this.ensureDir();
         // 使用 mcpServers 格式
         const data = { mcpServers: configs };
+        const content = JSON.stringify(data, null, 2);
         // tmp+rename 原子替换：先写临时文件再 rename，避免写入中途崩溃/断电
         // 留下截断或半写的线上配置（调用方在 enqueue 队列内，tmp 文件名不会并发冲突）
         const tmpPath = `${this.filePath}.tmp`;
-        await this.fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-        await this.fs.rename(tmpPath, this.filePath);
+        await this.fs.writeFile(tmpPath, content, 'utf-8');
+        try {
+            await this.fs.rename(tmpPath, this.filePath);
+        } catch {
+            // Windows 上目标文件被占用时 rename 可能 EPERM：回退直接写（非原子，但至少不失败），
+            // 并清理残留的 tmp 文件（rename 失败不会移动 tmp）
+            await this.fs.writeFile(this.filePath, content, 'utf-8');
+            try {
+                await this.fs.rm(tmpPath, { force: true });
+            } catch {
+                // 忽略清理失败
+            }
+        }
     }
 
     async getAllConfigs(): Promise<McpServerConfig[]> {
@@ -310,8 +325,14 @@ export class VSCodeFileSystemMcpStorageAdapter implements McpStorageAdapter {
         try {
             await this.vscodeFs.rename(tmpUri, this.fileUri, { overwrite: true });
         } catch {
-            // Windows 上目标文件被占用时 rename 可能 EPERM：回退直接写（非原子，但至少不失败）
+            // Windows 上目标文件被占用时 rename 可能 EPERM：回退直接写（非原子，但至少不失败），
+            // 并清理残留的 tmp 文件（rename 失败不会移动 tmp，与 FileSystem 适配器同口径）
             await this.vscodeFs.writeFile(this.fileUri, buf);
+            try {
+                await this.vscodeFs.delete(tmpUri);
+            } catch {
+                // 忽略清理失败
+            }
         }
     }
 

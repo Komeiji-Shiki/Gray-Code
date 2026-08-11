@@ -78,7 +78,8 @@ export function tryParseArgs(argsText: string | undefined): Record<string, unkno
  */
 export function mergeFunctionCallIdentity(target: StreamFunctionCall, incoming: StreamFunctionCall): void {
   if (incoming.name && !target.name) target.name = incoming.name
-  if (incoming.id) target.id = incoming.id
+  // 与注释一致：身份字段只在 target 缺失时填充，避免流式过程中 id 被反复覆盖
+  if (incoming.id && !target.id) target.id = incoming.id
   if (incoming.itemId && !target.itemId) target.itemId = incoming.itemId
   if (typeof incoming.index === 'number' && typeof target.index !== 'number') target.index = incoming.index
 }

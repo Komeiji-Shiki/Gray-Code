@@ -1,6 +1,7 @@
 import { extractPreviewText, isProgressDocPath } from './taskCards'
 // WP14：统一 type guard —— asRecord/asString/asNumber/asBoolean 与本文件本地副本语义一致，直接复用
 import { asRecord, asString, asNumber, asBoolean } from './typeGuards'
+import { t } from '@/i18n'
 
 export type ProgressToolName =
   | 'create_progress'
@@ -110,7 +111,10 @@ function buildCurrentProgressFromSnapshot(snapshot: LooseRecord): string | undef
   const latestId = asString(latestMilestone?.id)
 
   if (typeof total === 'number' && typeof completed === 'number' && total > 0) {
-    return `${completed}/${total} 个里程碑已完成${latestId ? `；最新：${latestId}` : ''}`
+    const base = t('components.message.tool.progressCard.milestonesCompleted', { completed, total })
+    return latestId
+      ? base + t('components.message.tool.progressCard.milestonesLatestSuffix', { latest: latestId })
+      : base
   }
 
   return undefined
@@ -142,10 +146,10 @@ export function formatProgressToolFallbackContent(
     const errorCount = asNumber(validation?.errorCount) || 0
     const warningCount = asNumber(validation?.warningCount) || 0
     return [
-      `Valid: ${isValid === true ? 'true' : isValid === false ? 'false' : 'unknown'}`,
-      `Issues: ${issueCount}`,
-      `Errors: ${errorCount}`,
-      `Warnings: ${warningCount}`,
+      t('components.message.tool.progressCard.validationValidLine', { state: isValid === true ? 'true' : isValid === false ? 'false' : 'unknown' }),
+      t('components.message.tool.progressCard.validationIssuesLine', { count: issueCount }),
+      t('components.message.tool.progressCard.validationErrorsLine', { count: errorCount }),
+      t('components.message.tool.progressCard.validationWarningsLine', { count: warningCount }),
     ].join('\n')
   }
 
@@ -156,11 +160,11 @@ export function formatProgressToolFallbackContent(
   const currentBlocker = asString(snapshot?.currentBlocker) || asString(data.currentBlocker) || asString(args.currentBlocker)
   const nextAction = asString(snapshot?.nextAction) || asString(data.nextAction) || asString(args.nextAction)
 
-  if (currentFocus) blocks.push(`当前焦点\n${currentFocus}`)
-  if (currentProgress) blocks.push(`当前进度\n${currentProgress}`)
-  if (latestConclusion) blocks.push(`最新结论\n${latestConclusion}`)
-  if (currentBlocker) blocks.push(`当前阻塞\n${currentBlocker}`)
-  if (nextAction) blocks.push(`下一步\n${nextAction}`)
+  if (currentFocus) blocks.push(`${t('components.message.tool.progressCard.currentFocus')}\n${currentFocus}`)
+  if (currentProgress) blocks.push(`${t('components.message.tool.progressCard.currentProgress')}\n${currentProgress}`)
+  if (latestConclusion) blocks.push(`${t('components.message.tool.progressCard.latestConclusion')}\n${latestConclusion}`)
+  if (currentBlocker) blocks.push(`${t('components.message.tool.progressCard.currentBlocker')}\n${currentBlocker}`)
+  if (nextAction) blocks.push(`${t('components.message.tool.progressCard.nextAction')}\n${nextAction}`)
 
   return blocks.join('\n\n')
 }

@@ -258,6 +258,15 @@ function buildFileTree(
             const fullPath = path.join(dirPath, entry.name)
             const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')
             
+            // 符号链接/路径逃逸防护：relative 结果以 .. 开头或含 /../ 段说明该条目
+            // 已逃逸工作区根（根目录本身为符号链接、或 dirPath 经符号链接解析进入外部目录），
+            // 直接跳过，避免文件树泄漏工作区外路径（04 批 LOW）。
+            // 纵深防御：跨盘（Windows 不同驱动器）时 path.relative 返回绝对路径
+            // （如 D:/...），不以 .. 开头也不含 /../ 段，需 isAbsolute 兜底。
+            if (relativePath.startsWith('..') || relativePath.includes('/../') || path.isAbsolute(relativePath)) {
+                continue
+            }
+            
             if (shouldIgnore(relativePath, patterns, entry.isDirectory(), customIgnorePatterns)) {
                 continue
             }
@@ -441,13 +450,20 @@ export function getWorkspaceFileTree(maxDepth: number = 2, customIgnorePatterns:
         return getSingleWorkspaceFileTree(workspaceFolders[0].uri.fsPath, maxDepth, customIgnorePatterns, nodeBudget)
     }
     
-    // 多工作区模式
+    // 多工作区模式：总节点预算按根均分（余数给第一个根），避免每根各用完整预算
+    // 导致总节点数达 N×10000（04 批 LOW）。均分后每根预算固定，缓存 key（含
+    // nodeBudget）依然稳定可复用；共享 budget 对象会让缓存 key 随已消耗量漂移，无法复用 TTL 缓存。
     const sections: string[] = []
+    const rootCount = workspaceFolders.length
+    const perRootBudget = Math.max(0, Math.floor(nodeBudget / rootCount))
     
-    for (const folder of workspaceFolders) {
+    for (let i = 0; i < rootCount; i++) {
+        const folder = workspaceFolders[i]
         const workspaceName = folder.name
         const workspacePath = folder.uri.fsPath
-        const fileTree = getSingleWorkspaceFileTree(workspacePath, maxDepth, customIgnorePatterns, nodeBudget)
+        // 第一个根吸收均分余数，保证多根总预算恰为 nodeBudget
+        const budget = i === 0 ? nodeBudget - perRootBudget * (rootCount - 1) : perRootBudget
+        const fileTree = getSingleWorkspaceFileTree(workspacePath, maxDepth, customIgnorePatterns, budget)
         
         if (fileTree) {
             // 添加工作区标题和缩进的文件树

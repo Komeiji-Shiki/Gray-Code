@@ -55,14 +55,11 @@ export class PromptSettingsService {
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
         const config = this.core.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
 
-        const normalizeMode = (mode: PromptMode): PromptMode => {
-            const normalizedMode = this.normalizePromptModeSnapshot(mode);
-            return normalizedMode;
-        };
-        
         // 情况1：没有 modes 字段（老版本）
         if (!config.modes) {
-            return {
+            // 返回前整体深拷贝：modes 内的内置模式对象（DESIGN_PROMPT_MODE 等）是模块级
+            // 常量活引用，浅展开会让调用方原地修改污染全局默认值（与情况 2 的 cloneConfig 约定一致）
+            return this.core.cloneConfig({
                 ...config,
                 currentModeId: DEFAULT_MODE_ID,
                 dynamicContextStrategy: this.normalizeDynamicContextStrategy(config.dynamicContextStrategy),
@@ -80,7 +77,7 @@ export class PromptSettingsService {
                     [ASK_MODE_ID]: ASK_PROMPT_MODE,
                     [REVIEW_MODE_ID]: REVIEW_PROMPT_MODE
                 }
-            };
+            });
         }
         
         // 情况2：已有 modes，补齐缺失的内置模式，并同步内置模式的 toolPolicy
@@ -111,12 +108,6 @@ export class PromptSettingsService {
         // 内置模式的 toolPolicy 不再在 getter 中强制回滚。
         // 迁移由 migratePromptModeToolPolicies() 显式处理，
         // 运行时由 normalizePromptModeSnapshot() 按 toolPolicyCustomized 标记回退。
-        const builtInModeIds = new Set([
-            DESIGN_MODE_ID,
-            PLAN_MODE_ID,
-            ASK_MODE_ID,
-            REVIEW_MODE_ID,
-        ]);
 
         const dynamicContextStrategy = this.normalizeDynamicContextStrategy(config.dynamicContextStrategy);
         for (const [modeId, mode] of Object.entries(modes)) {
@@ -330,8 +321,14 @@ export class PromptSettingsService {
      * 更新系统提示词配置
      */
     async updateSystemPromptConfig(config: Partial<SystemPromptConfig>): Promise<void> {
-        const oldConfig = this.getSystemPromptConfig();
-        await this.core.saveToolsConfigEntry('system_prompt', oldConfig, { ...oldConfig, ...config });
+        // 读-改-写整体入队串行：oldConfig 读取与 newConfig 构造必须在 mutator 内，
+        // 否则并发 update 基于队列外旧快照构造的 newConfig 会覆盖前一个变更（静默丢更新）；
+        // 本方法亦被 savePromptMode/renamePromptMode/deletePromptMode/setCurrentPromptMode
+        // 等已入队方法在 mutator 内调用，serializeMutation 重入保护（内联执行）保证不产生嵌套死锁
+        await this.core.serializeMutation(async () => {
+            const oldConfig = this.getSystemPromptConfig();
+            await this.core.saveToolsConfigEntry('system_prompt', oldConfig, { ...oldConfig, ...config });
+        });
     }
 
     /**
@@ -400,11 +397,14 @@ export class PromptSettingsService {
      * 设置默认提示词模式
      */
     async setCurrentPromptMode(modeId: string): Promise<void> {
-        const config = this.getSystemPromptConfig();
-        if (!config.modes?.[modeId]) {
-            throw new Error(`Mode not found: ${modeId}`);
-        }
-        await this.updateSystemPromptConfig({ currentModeId: modeId });
+        // 读-改-写整体入队串行：config 读取/校验与写回必须在同一 mutator 内（同 savePromptMode）
+        await this.core.serializeMutation(async () => {
+            const config = this.getSystemPromptConfig();
+            if (!config.modes?.[modeId]) {
+                throw new Error(`Mode not found: ${modeId}`);
+            }
+            await this.updateSystemPromptConfig({ currentModeId: modeId });
+        });
     }
 
     /**
@@ -416,17 +416,21 @@ export class PromptSettingsService {
         if (typeof mode.id !== 'string' || !mode.id.trim()) {
             throw new Error('Mode id is required');
         }
-        const config = this.getSystemPromptConfig();
-        // 用户显式保存模式时，若传入的 mode 包含 toolPolicy 字段，
-        // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值。
-        // 注意：先拷贝快照再设标记，避免原地修改调用方传入的 mode 对象
-        const modeSnapshot = { ...mode };
-        if ('toolPolicy' in (modeSnapshot as any)) {
-            modeSnapshot.toolPolicyCustomized = true;
-        }
-        const snapshot = this.normalizePromptModeSnapshot(modeSnapshot);
-        const modes = { ...config.modes, [mode.id]: snapshot };
-        await this.updateSystemPromptConfig({ modes });
+        // 读-改-写整体入队串行：modes 读取与构造必须在 mutator 内，否则并发
+        // savePromptMode/deletePromptMode 基于同一旧 modes 写回时后写覆盖先写（丢模式）
+        await this.core.serializeMutation(async () => {
+            const config = this.getSystemPromptConfig();
+            // 用户显式保存模式时，若传入的 mode 包含 toolPolicy 字段，
+            // 先标记为已定制，让 normalizePromptModeSnapshot 能识别并保留用户值。
+            // 注意：先拷贝快照再设标记，避免原地修改调用方传入的 mode 对象
+            const modeSnapshot = { ...mode };
+            if ('toolPolicy' in (modeSnapshot as any)) {
+                modeSnapshot.toolPolicyCustomized = true;
+            }
+            const snapshot = this.normalizePromptModeSnapshot(modeSnapshot);
+            const modes = { ...config.modes, [mode.id]: snapshot };
+            await this.updateSystemPromptConfig({ modes });
+        });
     }
 
     /**
@@ -446,16 +450,19 @@ export class PromptSettingsService {
             throw new Error('Mode name is required');
         }
 
-        const config = this.getSystemPromptConfig();
-        const existingMode = config.modes?.[normalizedModeId];
-        if (!existingMode) {
-            throw new Error(`Mode not found: ${normalizedModeId}`);
-        }
+        // 读-改-写整体入队串行（同 savePromptMode）：config 读取与 modes 构造必须在 mutator 内
+        return this.core.serializeMutation(async () => {
+            const config = this.getSystemPromptConfig();
+            const existingMode = config.modes?.[normalizedModeId];
+            if (!existingMode) {
+                throw new Error(`Mode not found: ${normalizedModeId}`);
+            }
 
-        const updatedMode = this.normalizePromptModeSnapshot({ ...existingMode, id: normalizedModeId, name: normalizedName });
-        const modes = { ...config.modes, [normalizedModeId]: updatedMode };
-        await this.updateSystemPromptConfig({ modes });
-        return updatedMode;
+            const updatedMode = this.normalizePromptModeSnapshot({ ...existingMode, id: normalizedModeId, name: normalizedName });
+            const modes = { ...config.modes, [normalizedModeId]: updatedMode };
+            await this.updateSystemPromptConfig({ modes });
+            return updatedMode;
+        });
     }
 
     private normalizePromptModeSnapshot(mode: PromptMode): PromptMode {
@@ -488,74 +495,82 @@ export class PromptSettingsService {
      * 迁移完成后立即落盘。后续 initialize() 调用可重复执行——已定制的模式不会受影响。
      */
     async migratePromptModeToolPolicies(): Promise<void> {
-        const config = this.core.settings.toolsConfig?.system_prompt;
-        if (!config?.modes) return;
+        // 读-改-写整体入队串行：读活引用→构造副本→落盘整段入队，避免与并发写操作
+        // 交错（如导入流程 reload 后基于旧快照写回覆盖）；调用方为顶层（initialize），无嵌套
+        await this.core.serializeMutation(async () => {
+            const config = this.core.settings.toolsConfig?.system_prompt;
+            if (!config?.modes) return;
 
-        const modes = { ...config.modes };
-        let changed = false;
+            const modes = { ...config.modes };
+            let changed = false;
 
-        const builtInModeIds = new Set([
-            DESIGN_MODE_ID,
-            PLAN_MODE_ID,
-            ASK_MODE_ID,
-            REVIEW_MODE_ID,
-        ]);
+            const builtInModeIds = new Set([
+                DESIGN_MODE_ID,
+                PLAN_MODE_ID,
+                ASK_MODE_ID,
+                REVIEW_MODE_ID,
+            ]);
 
-        for (const modeId of builtInModeIds) {
-            const mode = modes[modeId];
-            if (!mode) continue;
-            if (mode.toolPolicyCustomized === true) continue;
+            for (const modeId of builtInModeIds) {
+                const mode = modes[modeId];
+                if (!mode) continue;
+                if (mode.toolPolicyCustomized === true) continue;
 
-            const builtInPolicy = BUILTIN_MODE_TOOL_POLICIES[modeId];
-            if (!this.core.arraysEqual(mode.toolPolicy, builtInPolicy as string[])) {
-                modes[modeId] = {
-                    ...mode,
-                    toolPolicy: builtInPolicy ? [...builtInPolicy] : undefined,
-                    toolPolicyCustomized: false,
-                };
-                changed = true;
-            } else if (mode.toolPolicyCustomized !== false) {
-                // toolPolicy 已匹配但标记未设置，补齐标记
-                modes[modeId] = { ...mode, toolPolicyCustomized: false };
-                changed = true;
+                const builtInPolicy = BUILTIN_MODE_TOOL_POLICIES[modeId];
+                if (!this.core.arraysEqual(mode.toolPolicy, builtInPolicy as string[])) {
+                    modes[modeId] = {
+                        ...mode,
+                        toolPolicy: builtInPolicy ? [...builtInPolicy] : undefined,
+                        toolPolicyCustomized: false,
+                    };
+                    changed = true;
+                } else if (mode.toolPolicyCustomized !== false) {
+                    // toolPolicy 已匹配但标记未设置，补齐标记
+                    modes[modeId] = { ...mode, toolPolicyCustomized: false };
+                    changed = true;
+                }
             }
-        }
 
-        if (changed) {
-            this.core.settings.toolsConfig = {
-                ...this.core.settings.toolsConfig,
-                system_prompt: { ...config, modes },
-            };
-            await this.core.storage.save(this.core.settings);
-        }
+            if (changed) {
+                this.core.settings.toolsConfig = {
+                    ...this.core.settings.toolsConfig,
+                    system_prompt: { ...config, modes },
+                };
+                await this.core.storage.save(this.core.settings);
+            }
+        });
     }
 
     /**
      * 删除模式
      */
     async deletePromptMode(modeId: string): Promise<void> {
-        const config = this.getSystemPromptConfig();
-        const modes = { ...config.modes };
+        // 读-改-写整体入队串行（同 savePromptMode）：config 读取/判断与 modes 构造
+        // 必须在 mutator 内，避免并发 deletePromptMode/savePromptMode 交错丢模式
+        await this.core.serializeMutation(async () => {
+            const config = this.getSystemPromptConfig();
+            const modes = { ...config.modes };
 
-        // 不存在/已删除的模式：直接返回，不做无意义的保存广播
-        if (!modes[modeId]) {
-            return;
-        }
+            // 不存在/已删除的模式：直接返回，不做无意义的保存广播
+            if (!modes[modeId]) {
+                return;
+            }
 
-        // 至少保留一个模式
-        if (Object.keys(modes).length <= 1) {
-            throw new Error('Cannot delete the last mode');
-        }
-        
-        delete modes[modeId];
-        
-        // 如果删除的是当前模式，切换到第一个可用的模式
-        let currentModeId = config.currentModeId;
-        if (currentModeId === modeId) {
-            const remainingModes = Object.keys(modes);
-            currentModeId = remainingModes[0] || DEFAULT_MODE_ID;
-        }
-        await this.updateSystemPromptConfig({ modes, currentModeId });
+            // 至少保留一个模式
+            if (Object.keys(modes).length <= 1) {
+                throw new Error('Cannot delete the last mode');
+            }
+            
+            delete modes[modeId];
+            
+            // 如果删除的是当前模式，切换到第一个可用的模式
+            let currentModeId = config.currentModeId;
+            if (currentModeId === modeId) {
+                const remainingModes = Object.keys(modes);
+                currentModeId = remainingModes[0] || DEFAULT_MODE_ID;
+            }
+            await this.updateSystemPromptConfig({ modes, currentModeId });
+        });
     }
 
     /**

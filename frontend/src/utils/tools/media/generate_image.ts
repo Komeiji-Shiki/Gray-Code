@@ -8,6 +8,8 @@
 import { registerTool } from '../../toolRegistry'
 import GenerateImagePanel from '../../../components/tools/media/generate_image.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+import { getToolDisplayName } from '../../toolLocalization'
+import { t } from '../../../i18n'
 
 /**
  * 单个任务类型
@@ -22,8 +24,8 @@ interface ImageTask {
 
 registerTool('generate_image', {
   name: 'generate_image',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '生成图像',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('generate_image'),
   icon: 'codicon-file-media',
   expandable: true,
   contentComponent: GenerateImagePanel,
@@ -42,7 +44,7 @@ registerTool('generate_image', {
       // 多任务显示
       const firstPrompt = images[0].prompt
       const shortPrompt = firstPrompt.length > 20 ? firstPrompt.slice(0, 20) + '...' : firstPrompt
-      return `批量生成 ${images.length} 张: ${shortPrompt} 等`
+      return t('utils.tools.batchGenerateCount', { count: images.length, prompt: shortPrompt })
     }
     
     // 单张模式
@@ -51,7 +53,7 @@ registerTool('generate_image', {
       return outputPath ? `${shortPrompt} → ${outputPath}` : shortPrompt
     }
     
-    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退硬编码
-    return getToolMetaDescription('generate_image') ?? '图像生成'
+    // TODO(meta): 兜底描述改从后端声明取（单一来源）；toolMeta 缺失时回退本地化显示名
+    return getToolMetaDescription('generate_image') ?? getToolDisplayName('generate_image')
   }
 })

@@ -394,7 +394,7 @@ export class CheckpointManager {
      * 保存检查点到对话元数据
      *
      * 实现位于 CheckpointBackupExecutor（create 路径主体）；本方法为兼容既有
-     * 调用方/测试保留的同名委托。
+     * 调用方/测试保留的同名私有委托（测试经 `(manager as any)` 直接调用）。
      */
     private async saveCheckpointToConversation(
         conversationId: string,
@@ -675,11 +675,15 @@ export class CheckpointManager {
                         success: true,
                         restored: plan.added.length + plan.modified.length,
                         // CP-PREV-1: deleted 为“确认删除 untracked 后”的总数；
-                        // deletedIfUnconfirmed 仅计快照记录过的路径（默认执行时的真实删除数）
-                        deleted: plan.toDelete.length + plan.untrackedToDelete.length,
-                        deletedIfUnconfirmed: plan.toDelete.length,
+                        // deletedIfUnconfirmed 仅计快照记录过的路径（默认执行时的真实删除数），
+                        // 含快照时被工具删除的文件（deletedInSnapshot——目标状态无此文件，默认删除）
+                        deleted: plan.toDelete.length + plan.deletedInSnapshot.length + plan.untrackedToDelete.length,
+                        deletedIfUnconfirmed: plan.toDelete.length + plan.deletedInSnapshot.length,
                         skipped: plan.skipped,
-                        deletablePaths: plan.toDelete.map(p => this.restoreService.toDisplayPath(p, roots)),
+                        deletablePaths: [
+                            ...plan.toDelete.map(p => this.restoreService.toDisplayPath(p, roots)),
+                            ...plan.deletedInSnapshot.map(p => this.restoreService.toDisplayPath(p, roots))
+                        ],
                         // 快照后新建的文件与空目录合并展示，确认后一并清理
                         untrackedPaths: [
                             ...plan.untrackedToDelete.map(p => this.restoreService.toDisplayPath(p, roots)),
@@ -706,11 +710,14 @@ export class CheckpointManager {
 
     /**
      * 清理过期检查点（CPF-12：委托 CheckpointRetentionService）
+     *
+     * 实现位于 CheckpointRetentionService；本方法为兼容既有调用方/测试保留的
+     * 同名私有委托（测试经 `(manager as any)` 直接调用）。
      */
     private async cleanupOldCheckpoints(conversationId: string): Promise<void> {
         await this.retentionService.cleanupOldCheckpoints(conversationId);
     }
-    
+
     /**
      * 删除检查点
      */
@@ -721,12 +728,35 @@ export class CheckpointManager {
         // 互斥，恢复可能读到正在被删除的备份目录。唯一 token 使二者真正串行；
         // 当前代码中不存在同 ownerId 的合法嵌套调用（锁内清理走无锁 Internal 版）。
         const ownerId = `checkpoint:${conversationId}:${checkpointId}:delete:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        return checkpointOperationLockManager.runExclusive(
-            this.getCheckpointDeletionLockIds(),
-            'delete',
-            ownerId,
-            () => this.deletionService.deleteCheckpointInternal(conversationId, checkpointId)
-        );
+        // CPF-11: 删除操作注册进度/取消句柄（与 deleteAllCheckpoints/deleteCheckpointsBatch 对齐）
+        const { operationId, signal, report } = this.beginOperation('delete', conversationId, checkpointId);
+        try {
+            return await checkpointOperationLockManager.runExclusive(
+                this.getCheckpointDeletionLockIds(),
+                'delete',
+                ownerId,
+                async () => {
+                    try {
+                        const deleted = await this.deletionService.deleteCheckpointInternal(conversationId, checkpointId);
+                        report({ phase: signal.aborted ? 'cancelled' : 'done', cancelled: signal.aborted, processed: deleted ? 1 : 0, total: 1 });
+                        return deleted;
+                    } catch (err) {
+                        report({ phase: 'failed', cancelled: false });
+                        throw err;
+                    }
+                },
+                signal
+            );
+        } catch (err) {
+            // M4: 等待文件写锁期间被取消 → 取消结果（不冒泡）
+            if (signal.aborted || this.isFileLockCancellationError(err)) {
+                report({ phase: 'cancelled', cancelled: true });
+                return false;
+            }
+            throw err;
+        } finally {
+            this.endOperation(operationId);
+        }
     }
 
     /**
@@ -751,12 +781,56 @@ export class CheckpointManager {
      *                            用于回档场景：刚用于恢复的存档点应保留，支持反复回档到同一位置。
      */
     async deleteCheckpointsFromIndex(conversationId: string, fromIndex: number, excludeCheckpointId?: string): Promise<number> {
-        return checkpointOperationLockManager.runExclusive(
-            this.getCheckpointDeletionLockIds(),
-            'delete',
-            `checkpoint:${conversationId}:delete-from-index:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            () => this.deletionService.deleteCheckpointsFromIndexInternal(conversationId, fromIndex, excludeCheckpointId)
-        );
+        // CPF-11: 删除操作注册进度/取消句柄（与 deleteAllCheckpoints/deleteCheckpointsBatch 对齐）
+        const { operationId, signal, report } = this.beginOperation('delete', conversationId);
+        try {
+            return await checkpointOperationLockManager.runExclusive(
+                this.getCheckpointDeletionLockIds(),
+                'delete',
+                `checkpoint:${conversationId}:delete-from-index:${operationId}`,
+                async () => {
+                    // BCP-08 分支隔离：读取主历史 fromIndex 之后的节点 id 集合作为当前分支 lineage，
+                    // 传给删除服务只删该分支的存档（分支 A 编辑消息时不误删分支 B 中 messageIndex
+                    // >= fromIndex 的存档——B 的 BranchGraph 仍引用它们）。
+                    // 读取失败（IO 异常）→ lineage 缺省，回退按索引删除的旧语义
+                    //（与 deleteCheckpointsByNodeIds 缺省 referenceCounts 跳过引用计数闸门同模式）。
+                    let lineageNodeIds: Set<string> | undefined;
+                    try {
+                        const history = await this.conversationManager.getMessagesRaw(conversationId);
+                        lineageNodeIds = new Set(
+                            history.slice(Math.max(0, fromIndex))
+                                .map(m => m.id)
+                                .filter((id): id is string => typeof id === 'string' && id.length > 0)
+                        );
+                    } catch (err) {
+                        log.warn('delete_checkpoints_from_index_lineage_read_failed', {
+                            conversationId,
+                            error: err instanceof Error ? err.message : String(err)
+                        });
+                    }
+                    try {
+                        const count = await this.deletionService.deleteCheckpointsFromIndexInternal(
+                            conversationId, fromIndex, excludeCheckpointId, lineageNodeIds
+                        );
+                        report({ phase: signal.aborted ? 'cancelled' : 'done', cancelled: signal.aborted, processed: count, total: count });
+                        return count;
+                    } catch (err) {
+                        report({ phase: 'failed', cancelled: false });
+                        throw err;
+                    }
+                },
+                signal
+            );
+        } catch (err) {
+            // M4: 等待文件写锁期间被取消 → 取消结果（不冒泡）
+            if (signal.aborted || this.isFileLockCancellationError(err)) {
+                report({ phase: 'cancelled', cancelled: true });
+                return 0;
+            }
+            throw err;
+        } finally {
+            this.endOperation(operationId);
+        }
     }
     
     /**

@@ -4,7 +4,7 @@
  * 支持语言切换和翻译
  */
 
-import { ref, computed } from 'vue';
+import { ref, computed, readonly } from 'vue';
 import type { SupportedLanguage, LanguageMessages, LanguageOption } from './types';
 import zhCN from './langs/zh-CN';
 import en from './langs/en';
@@ -21,9 +21,9 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
 ];
 
 /**
- * 语言包
+ * 语言包（按语言代码索引；composables/useI18n.ts re-export 此表供非组件上下文使用）
  */
-const messages: Record<string, LanguageMessages> = {
+export const messages: Record<string, LanguageMessages> = {
     'zh-CN': zhCN,
     'en': en,
     'ja': ja
@@ -126,6 +126,50 @@ export function setDetectedLanguage(lang: string) {
 }
 
 /**
+ * 独立翻译函数：显式指定语言（用于 Store 等非 Vue 组件上下文，如相对时间格式化）。
+ *
+ * 与 t() 的差异：语言由调用方显式传入而非当前生效语言。
+ * 参数替换与 t() 同一语义：缺失参数保留占位符（不输出字面 "undefined"）。
+ * lang='auto' 时按 actualLanguage 归一化，与 t() 同一口径。
+ *
+ * 行为说明（相对旧 composables/useI18n 实现的变化）：调用方（如 stores/chat/utils.ts 的
+ * 相对时间格式化）传入 settingsStore.language，用户选「跟随系统」时该值为 'auto'。旧实现
+ * 对无法命中的语言一律回退 zh-CN；现归一化到 actualLanguage——跟随 VS Code 检测语言，
+ * 'auto' 不再固定回退中文。这是合理改进（显式选择语言时行为不变），保留现状，勿再改回。
+ */
+export function translate(lang: string, key: string, params?: Record<string, any>): string {
+    const resolvedLang = lang === 'auto' ? actualLanguage.value : lang;
+    const message = messages[resolvedLang] || messages['zh-CN'];
+
+    const keys = key.split('.');
+    let value: any = message;
+
+    for (const k of keys) {
+        if (value && typeof value === 'object' && k in value) {
+            value = value[k];
+        } else {
+            // 键名不存在：与 t() 一致——按 key 去重输出缺失警告后返回键名本身
+            if (!warnedMissingKeys.has(key)) {
+                warnedMissingKeys.add(key);
+                console.warn(`[i18n] Missing translation: ${key}`);
+            }
+            return key;
+        }
+    }
+
+    if (typeof value !== 'string') {
+        return key;
+    }
+
+    if (params) {
+        return value.replace(/\{(\w+)\}/g, (match, paramName) => {
+            return params[paramName] !== undefined ? String(params[paramName]) : match;
+        });
+    }
+    return value;
+}
+
+/**
  * 翻译函数
  *
  * 使用点号分隔的路径获取翻译
@@ -196,7 +240,8 @@ export function hasMessage(key: string): boolean {
 export function useI18n() {
     return {
         t,
-        currentLanguage,
+        // readonly 包装：currentLanguage 是模块级 ref，不允许调用方直写，语言切换统一走 setLanguage()
+        currentLanguage: readonly(currentLanguage),
         actualLanguage,
         setLanguage,
         getLanguage,

@@ -18,6 +18,7 @@ import {
     getGlobalBranchService,
     setGlobalBranchService,
 } from '../../backend/modules/conversation/branch';
+import { ErrorType } from '../../backend/modules/channel';
 import { StreamChunkProcessor } from '../stream/StreamChunkProcessor';
 import {
     isConversationStreaming,
@@ -25,14 +26,18 @@ import {
 } from './streamGuard';
 import type { HandlerContext, MessageHandler } from '../types';
 
+/**
+ * awaitConversationIdle 总超时（毫秒）。
+ * R2-09：waitForIdle 单轮等待上限为 OLD_STREAM_EXIT_WAIT_TIMEOUT_MS（6s）且超时即返回
+ * （不再每 6s 重试循环），自身实际上界 ≈6s；外层 10s race 仍保留作兜底（防 waitForIdle
+ * 语义未来变化），超时视同空闲返回 {idle:true}（响应形状与调用方语义不变）。
+ */
+const AWAIT_CONVERSATION_IDLE_TIMEOUT_MS = 10_000;
+
 async function stopConversationStream(ctx: HandlerContext, conversationId: string): Promise<void> {
-  const abortManager = ctx.streamAbortControllers;
-  if (typeof abortManager?.abortAndWaitForCompletion === 'function') {
-    await abortManager.abortAndWaitForCompletion(conversationId);
-    return;
-  }
-  abortManager?.cancel(conversationId);
-  await abortManager?.waitForIdle(conversationId);
+  // R2-07：HandlerContext 契约已保证 streamAbortControllers 为 StreamAbortManager，
+  // 移除恒真的 typeof 分支（死代码）与 Map 鸭子类型 fallback。
+  await ctx.streamAbortControllers.abortAndWaitForCompletion(conversationId);
 }
 
 /**
@@ -135,8 +140,22 @@ export const awaitConversationIdle: MessageHandler = async (data, requestId, ctx
     return;
   }
 
+  // R2-07 阻塞队列防护：流未结束期间 handler 一直占住串行队列，cancelStream/deleteMessage
+  // 等取消类消息全部排队；前端已有 race 超时放弃响应，扩展侧用总超时（10s）兜底。
+  // R2-08 注释修正：waitForIdle 单轮等待上限为 OLD_STREAM_EXIT_WAIT_TIMEOUT_MS（6s），
+  // 且超时即返回（不再每 6s 重试循环），自身实际上界 ≈6s；外层 10s race 仍保留作兜底
+  // （防 waitForIdle 语义未来变化）——超时视同空闲返回 {idle:true}（响应形状与调用方语义不变）。
   const abortManager = ctx.streamAbortControllers;
-  await abortManager.waitForIdle(conversationId);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<void>(resolve => {
+    timer = setTimeout(resolve, AWAIT_CONVERSATION_IDLE_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([abortManager.waitForIdle(conversationId), timeoutPromise]);
+  } finally {
+    // waitForIdle 先落定时清理超时定时器，避免残留 open handle
+    if (timer) clearTimeout(timer);
+  }
 
   ctx.sendResponse(requestId, { idle: true });
 };
@@ -296,7 +315,9 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
   // 未走路由（直接调用/测试）时回退 ctx.view。
   const processor = new StreamChunkProcessor(() => {
     if (ctx.postMessage) {
-      return { webview: { postMessage: (message: any) => ctx.postMessage?.(message) } as any };
+      // R2-07：包装 postMessage 透出路由投递结果（true=已投递/已回退，false=投递失败），
+      // 不再吞掉 clientRegistry.postMessage 的返回值（投递无留痕）
+      return { webview: { postMessage: (message: any): boolean => ctx.postMessage?.(message) ?? false } as any };
     }
     return ctx.view as any;
   }, conversationId, resolvedStreamId);
@@ -319,10 +340,14 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
     processor.flush();
   } catch (error: any) {
     // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致），
-    // 避免残留空占位消息；不按错误处理。
-    if (controller.signal.aborted) {
+    // 避免残留空占位消息；不按错误处理。判定口径与 StreamRequestHandler.handleStreamError
+    // 统一（R2-07）：signal.aborted 或底层 CANCELLED_ERROR 任一命中即视为取消。
+    if (controller.signal.aborted || error?.type === ErrorType.CANCELLED_ERROR) {
       processor.processChunk({ cancelled: true });
       processor.flush();
+      // 补 cancelled 请求响应（R2-07）：前端 await sendToExtension 需要明确的结尾响应，
+      // 幂等，与 StreamRequestHandler.reportCancelled 的 sendResponse({cancelled:true}) 一致
+      ctx.sendResponse(requestId, { cancelled: true });
       return;
     }
     const message = error?.message || 'reroll failed';
@@ -397,7 +422,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
   // L1：chunk 转发复用 clientId 路由（与 rerollStream 同）
   const processor = new StreamChunkProcessor(() => {
     if (ctx.postMessage) {
-      return { webview: { postMessage: (message: any) => ctx.postMessage?.(message) } as any };
+      // R2-07：包装 postMessage 透出路由投递结果（与 rerollStream 同）
+      return { webview: { postMessage: (message: any): boolean => ctx.postMessage?.(message) ?? false } as any };
     }
     return ctx.view as any;
   }, conversationId, resolvedStreamId);
@@ -421,10 +447,13 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     }
     processor.flush();
   } catch (error: any) {
-    // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致）
-    if (controller.signal.aborted) {
+    // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致）；
+    // 判定口径统一（R2-07）：signal.aborted 或底层 CANCELLED_ERROR 任一命中即视为取消。
+    if (controller.signal.aborted || error?.type === ErrorType.CANCELLED_ERROR) {
       processor.processChunk({ cancelled: true });
       processor.flush();
+      // 补 cancelled 请求响应（R2-07）：与 rerollStream / StreamRequestHandler 一致
+      ctx.sendResponse(requestId, { cancelled: true });
       return;
     }
     const message = error?.message || 'edit branch failed';

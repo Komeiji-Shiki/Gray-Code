@@ -3,7 +3,7 @@
  * 侧边抽屉组件
  */
 
-import { computed, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
 
 const props = withDefaults(defineProps<{
@@ -41,8 +41,18 @@ function handleMaskClick() {
   }
 }
 
+// 抽屉根节点：Esc 顶层判定需要知道焦点是否在本抽屉内
+const drawerRoot = ref<HTMLElement | null>(null)
+
 function handleEsc(e: KeyboardEvent) {
-  if (e.key === 'Escape' && visible.value && props.closable) {
+  if (e.key !== 'Escape') return
+  const root = drawerRoot.value
+  const active = document.activeElement
+  // 与 Modal 同款顶层判定：焦点位于其他（更上层）role="dialog" 内时本 Drawer 不参与 Esc 关闭，
+  // 避免 Modal 之上按 Esc 同时关闭两层（最上层对话框独自处理）
+  const inOtherDialog = !!active && !!active.closest?.('[role="dialog"]') && !!root && !root.contains(active)
+  if (inOtherDialog) return
+  if (visible.value && props.closable) {
     close()
   }
 }
@@ -78,6 +88,7 @@ onUnmounted(() => {
         <Transition :name="`drawer-slide-${placement}`">
           <div
             v-if="visible"
+            ref="drawerRoot"
             :class="['drawer', placement]"
             :style="{ width }"
             role="dialog"

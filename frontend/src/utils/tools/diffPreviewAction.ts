@@ -16,6 +16,18 @@ function resolveDiffFilePaths(tool: ToolUsage, resolver: DiffFilePathResolver): 
   return typeof raw === 'string' && raw.trim() ? [raw.trim()] : []
 }
 
+/**
+ * 深拷贝：优先 structuredClone（项目其它位置已统一此口径，避免 JSON 往返的大字符串开销）；
+ * Vue 响应式 Proxy 无法 structuredClone（抛 DataCloneError），失败时回退 JSON 往返，保持旧行为。
+ */
+function deepCloneForPreview<T>(value: T): T {
+  try {
+    return structuredClone(value)
+  } catch {
+    return JSON.parse(JSON.stringify(value))
+  }
+}
+
 export function createDiffPreviewAction(resolver: DiffFilePathResolver): ToolActionConfig {
   return {
     id: 'open-diff-preview',
@@ -34,10 +46,10 @@ export function createDiffPreviewAction(resolver: DiffFilePathResolver): ToolAct
       if (paths.length === 0) return
 
       // 修改原因：diff.openPreview 需要可结构化克隆的数据，直接传 Vue 响应式对象可能失败。
-      // 修改方式：沿用旧 ToolMessage 逻辑，对 args/result 做 JSON 序列化拷贝。
-      // 修改目的：迁移到 ToolConfig action 后保持旧 diff 预览行为不变。
-      const serializedArgs = JSON.parse(JSON.stringify(tool.args || {}))
-      const serializedResult = tool.result ? JSON.parse(JSON.stringify(tool.result)) : undefined
+      // 修改方式：优先 structuredClone（替代 JSON 往返深拷贝，项目其它位置已统一此口径）；
+      //          响应式 Proxy 无法 structuredClone 时回退 JSON 序列化拷贝（保持旧行为）。
+      const serializedArgs = deepCloneForPreview(tool.args || {})
+      const serializedResult = tool.result ? deepCloneForPreview(tool.result) : undefined
 
       await sendToExtension(MESSAGE_NAMES['diff.openPreview'], {
         toolId: tool.id,

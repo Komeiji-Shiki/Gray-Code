@@ -63,7 +63,17 @@ function loadPack(filePath, context = {}) {
     src = src.replace(/export\s+default\s+[\w$]+\s*;?/, '');          // export default xxx;
     src = src.replace(/^const\s+[\w$]+\s*(:\s*[^=]+?)?\s*=\s*/m, ''); // const xxx[: Type] = ...
     src = src.replace(/;\s*$/, '');
-    return vm.runInNewContext(`(${src})`, context, { timeout: 10000 });
+    try {
+        return vm.runInNewContext(`(${src})`, context, { timeout: 10000 });
+    } catch (err) {
+        // 剥离 TS 语法后 vm 求值抛错：显式报错退出，避免后续用残缺对象继续运行产生误导性结果。
+        // 常见触发：语言包出现本脚本不支持的语法（类型标注、多行 import、非纯对象字面量等）。
+        console.error(`[i18n-sync] 语言包解析失败: ${filePath}`);
+        console.error('  剥离 TS 语法后 vm 求值抛错（语言包可能含有类型标注 / 多行 import 等本脚本不支持的语法）：');
+        console.error(`  ${err instanceof Error ? (err.stack || err.message) : String(err)}`);
+        console.error('  请保持语言包为纯对象字面量（基准包无类型标注），或改用 esbuild/tsc 转译方案。');
+        process.exit(1);
+    }
 }
 
 /**
@@ -368,7 +378,6 @@ function report() {
     for (const [v, keys] of beZhByValue) beNorm.set(normalizeText(v), keys);
     const feNorm = new Map();
     for (const [v, keys] of feZhByValue) feNorm.set(normalizeText(v), keys);
-    const nearCommon = [...beNorm.keys()].filter((n) => feNorm.has(n) && !beZhByValue.has(beNorm.get(n).values().next().value));
     // 更准确：排除已在【2】中精确匹配的值
     const exactSet = new Set(exactCommon);
     const nearPairs = [];

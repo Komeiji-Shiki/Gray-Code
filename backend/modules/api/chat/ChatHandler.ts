@@ -42,7 +42,7 @@ import type {
 } from './types';
 import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, DiffInterruptService, ChatFlowService } from './services';
 import { ContextBudgetExceededError } from './services/ContextTrimService';
-import type { RerollRequestData, EditBranchRequestData } from './services/ChatFlowService';
+import type { RerollRequestData, EditBranchRequestData, ChatStreamCancelledData } from './services/ChatFlowService';
 
 /**
  * 对话处理器
@@ -251,7 +251,7 @@ export class ChatHandler {
             if (error.type === ErrorType.CANCELLED_ERROR) {
                 return {
                     code: 'CANCELLED',
-                    message: t('modules.api.chat.errors.requestCancelled')
+                    message: t('modules.channel.errors.requestCancelled')
                 };
             }
 
@@ -302,6 +302,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamCancelledData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleChatStream(request)) {
@@ -314,7 +315,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -323,7 +324,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
             
@@ -354,6 +355,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamCancelledData
     > {
         // 新实现：委托给 ChatFlowService 处理完整流程，保留统一的错误处理逻辑
         try {
@@ -368,7 +370,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -377,7 +379,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -453,6 +455,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamCancelledData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleRetryStream(request)) {
@@ -466,7 +469,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -475,7 +478,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
             
@@ -505,6 +508,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamCancelledData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleRerollStream(request)) {
@@ -517,7 +521,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -526,7 +530,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -557,6 +561,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamCancelledData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleEditBranchStream(request)) {
@@ -569,7 +574,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -578,7 +583,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -629,6 +634,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamCancelledData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleEditAndRetryStream(request)) {
@@ -641,7 +647,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
 
@@ -650,7 +656,7 @@ export class ChatHandler {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const
-                } as any;
+                } satisfies ChatStreamCancelledData;
                 return;
             }
             

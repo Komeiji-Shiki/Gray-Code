@@ -4,12 +4,13 @@
 
 import { registerTool } from '../../toolRegistry'
 import FindReferencesComponent from '../../../components/tools/lsp/find_references.vue'
+import { getToolDisplayName } from '../../toolLocalization'
 
 // 注册 find_references 工具
 registerTool('find_references', {
   name: 'find_references',
-  // TODO(i18n): label/descriptionFormatter 仍为硬编码中文，后续接入 getToolDisplayName / t() 统一本地化
-  label: '查找引用',
+  // 本地化：渲染时按当前语言取显示名（复用 toolLocalization 通道）
+  labelFormatter: () => getToolDisplayName('find_references'),
   icon: 'codicon-references',
   
   // 描述生成器

@@ -12,6 +12,7 @@ import { describe, expect, vi, beforeEach, afterEach } from 'vitest'
 import { nextTick } from 'vue'
 import ChannelSettings from '../ChannelSettings.vue'
 import { ConfirmDialog } from '../../common'
+import { resetChannelConfigsCache } from '@/services/channelConfigCache'
 
 const { chatStoreMock } = vi.hoisted(() => ({
   chatStoreMock: {
@@ -73,6 +74,7 @@ describe('ChannelSettings 无渠道空态', () => {
   }
 
   beforeEach(() => {
+    resetChannelConfigsCache() // 重置预加载缓存与在途任务，避免用例之间共享模块状态
     configs = []
     chatStoreMock.configId = ''
     chatStoreMock.setConfigId.mockClear()

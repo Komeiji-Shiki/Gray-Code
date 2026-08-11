@@ -113,19 +113,15 @@ export class ModelsHandler {
                 return errorResponse('CONFIG_NOT_FOUND', t('modules.api.models.errors.configNotFound'));
             }
 
-            // 原子移除（基于最新缓存）；如果移除的是当前激活模型，随后清空 model 字段。
-            // 判定基于 updateModels 原子合并返回的最新配置，而非请求前的旧快照——
-            // 消除 check-then-act 竞态（旧实现先用旧快照判断 removedActive，期间
-            // setActiveModel 等并发变更会导致误清/漏清 model 字段）。
-            const updatedConfig = await this.configManager.updateModels(request.configId, (current) =>
+            // 原子移除（基于最新缓存）。「移除的是激活模型 → 清空 model 字段」已并入
+            // updateModels 的同一队列任务（ConfigManager 在合并后检查激活模型是否仍在
+            // 列表中，被移除则同步置空），不再需要第二次 updateConfig 写——消除旧实现
+            // 两写之间的并发窗口（updateModels 与 updateConfig({model:''}) 之间提交的
+            // setActiveModel 会被随后清空覆盖）；清空判定基于合并后的最新状态而非请求前
+            // 旧快照，任意并发交错均收敛正确。
+            await this.configManager.updateModels(request.configId, (current) =>
                 current.filter(m => m.id !== request.modelId)
             );
-
-            if (updatedConfig.model === request.modelId) {
-                await this.configManager.updateConfig(request.configId, {
-                    model: ''
-                });
-            }
 
             return {
                 success: true

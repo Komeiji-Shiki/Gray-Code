@@ -4,8 +4,9 @@
  * 将 extension.ts 打包为 dist/extension.js，替代原有的 tsc 直出方案。
  *
  * 用法：
- *   node esbuild.config.js          # 单次构建
- *   node esbuild.config.js --watch  # 监听模式（文件变更自动重新打包）
+ *   node esbuild.config.js              # 单次构建（生产；不带 sourcemap）
+ *   node esbuild.config.js --watch      # 监听模式（文件变更自动重新打包；始终带 sourcemap 便于调试）
+ *   node esbuild.config.js --sourcemap  # 单次构建并生成 sourcemap（排查线上问题时显式开启）
  */
 
 const esbuild = require('esbuild');
@@ -18,19 +19,21 @@ const externalModules = [
     'vscode',
 ];
 
-const outdir = path.join(__dirname, 'dist');
 const isWatch = process.argv.includes('--watch');
+const withSourcemap = isWatch || process.argv.includes('--sourcemap');
 
 /** @type {import('esbuild').BuildOptions} */
 const buildOptions = {
     entryPoints: ['extension.ts'],
     bundle: true,
-    outfile: path.join(outdir, 'extension.js'),
+    outfile: path.join(__dirname, 'dist', 'extension.js'),
     platform: 'node',
     format: 'cjs',
     target: 'node20',
     external: externalModules,
-    sourcemap: true,
+    // 生产构建不再恒定开启 sourcemap（发布产物体积/源码暴露考量）：
+    // watch 模式恒开（本地调试依赖源码映射），单次构建需显式 --sourcemap。
+    sourcemap: withSourcemap,
     minify: false,
     keepNames: true,
     tsconfig: 'tsconfig.json',

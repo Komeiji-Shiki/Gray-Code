@@ -201,7 +201,8 @@ function getCmdGuidanceDescription(): string {
         '- 管道示例：`dir | findstr foo`。',
         '- 字面管道符可放进双引号：`"a|b"`；必要时使用 `a^|b`。如果已经在双引号内，不要额外写 `^|`。',
         '- 多命令串联可用 `&&`：`npm install && npm test`。',
-        '- 路径含空格时使用双引号。复杂脚本通常优先改用 PowerShell 或 sh。'
+        '- 路径含空格时使用双引号。复杂脚本通常优先改用 PowerShell 或 sh。',
+        '- 不要给整条命令外层再加引号（cmd 启动时会剥除最外层引号，命令内再含引号会解析失败）。'
     ].join('\n');
 }
 

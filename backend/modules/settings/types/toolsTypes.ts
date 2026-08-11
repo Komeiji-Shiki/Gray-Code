@@ -791,7 +791,7 @@ export function getDefaultExecuteCommandConfig(): ExecuteCommandToolConfig {
  */
 export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
-  execute_command: false   // 需要确认
+    execute_command: false   // 需要确认
 };
 
 /**

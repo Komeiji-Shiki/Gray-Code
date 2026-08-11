@@ -29,6 +29,10 @@ export interface StdioTransportConfig {
 
 /**
  * SSE 传输配置
+ *
+ * 注意：经典 SSE 传输（GET /sse 端点 + 独立事件流）实际未实现——'sse' 类型仅为
+ * 兼容旧配置保留，HttpMcpClient 按 streamable-http 语义统一处理（POST 请求 +
+ * SSE 响应流）。新建配置请使用 streamable-http。
  */
 export interface SseTransportConfig {
     type: 'sse';
