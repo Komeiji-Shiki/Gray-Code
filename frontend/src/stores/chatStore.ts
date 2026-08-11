@@ -217,6 +217,11 @@ export const useChatStore = defineStore('chat', () => {
 
     const responseMap = new Map<string, unknown>()
 
+    // 残余成本说明：toolResponseCache 每次回填/淘汰都会 triggerRef（见 state.ts 的
+    // setToolResponseCacheEntry*），导致本 computed 每次全量重建 responseMap，并把
+    // “与工具响应无关的消息”也一并重扫一遍。容量上限（TOOL_RESPONSE_CACHE_MAX_SIZE）
+    // 只把缓存体积约束在常数内，不消除该次级联重放；窗口扫描此前已收敛过
+    // （见 KNOWN_ISSUES），按最小改动原则这里只做容量约束，不重构本 computed 的增量语义。
     for (const [toolId, response] of state.toolResponseCache.value.entries()) {
       responseMap.set(toolId, response)
     }

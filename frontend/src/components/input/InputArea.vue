@@ -44,7 +44,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [content: string, attachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }]
+  send: [content: string, attachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }, onResult?: (ok: boolean) => void]
   cancel: []
   clearAttachments: []
   attachFile: []
@@ -186,15 +186,28 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
     ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride }
     : undefined
 
+  // 备份本次发送的正文节点：直接发送是异步的（父组件 await sendMessage 后才回报结果），
+  // 发送失败（忙时投递拒绝带附件消息 / IPC 异常）时用备份恢复输入，避免正文静默丢失。
+  const pendingNodes = editorNodes.value
+
+  // 发送结果回调：仅处理失败恢复。成功/清空仍走下方同步路径（点击即清空，
+  // 避免发送窗口内重复点击双发）；失败且用户尚未开始输入新内容时把正文节点恢复回输入框
+  // （附件由父组件在失败分支恢复；inputValue 由下方 editorNodes 反向同步 watch 自动更新）。
+  const onSendResult = (ok: boolean) => {
+    if (!ok && editorNodes.value.length === 0) {
+      editorNodes.value = pendingNodes
+    }
+  }
+
   // 智能决策：AI 空闲且队列为空时直接发送，否则入队
   if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0) {
     // 直接发送
-    emit('send', content, currentAttachments, sendOptions)
+    emit('send', content, currentAttachments, sendOptions, onSendResult)
   } else {
     // 加入候选区队列
     // 如果有工具待确认，仍走直接发送路径（发送即中断当前回合，不入队滞留）
     if (chatStore.hasPendingToolConfirmation) {
-      emit('send', content, currentAttachments, sendOptions)
+      emit('send', content, currentAttachments, sendOptions, onSendResult)
     } else {
       chatStore.enqueueMessage(content, currentAttachments, sendOptions)
       // 入队后清空附件（通知父组件）

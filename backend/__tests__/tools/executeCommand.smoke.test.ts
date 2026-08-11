@@ -420,4 +420,34 @@ describe('handler：spawn 隔离下的参数转义与执行流', () => {
         expect(result.success).toBe(false);
         expect(result.error).toContain('User cancelled');
     });
+
+    test('超时后 SIGTERM 免疫进程最终被 SIGKILL 强杀（升级兜底）', async () => {
+        jest.useFakeTimers();
+        try {
+            const treeKillMock = require('tree-kill') as jest.Mock;
+            const proc = makeFakeProc();
+            const promise = runCommand({ command: 'sleep 60', cwd: tmpDir, shell: 'powershell', timeout: 100 });
+
+            // 等 handler 内 await（checkShellAvailability mock）续行完成 spawn 与超时注册
+            await Promise.resolve();
+            await Promise.resolve();
+
+            // 超时回调触发：先经 tree-kill 发 SIGTERM（mock 直接回调、无错误）
+            jest.advanceTimersByTime(100);
+            expect(treeKillMock).toHaveBeenCalledWith(4242, 'SIGTERM', expect.any(Function));
+
+            // SIGTERM 免疫：进程不 close → 等待 KILL_WAIT_CLOSE_TIMEOUT_MS 后升级 SIGKILL
+            jest.advanceTimersByTime(10_000);
+            expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+
+            // SIGKILL 不可捕获、close 必达：execute_command 正常 resolve（不挂死）
+            proc.emit('close', 1);
+            const result = await promise;
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('timed out after');
+            expect(result.cancelled).toBeFalsy();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
 });

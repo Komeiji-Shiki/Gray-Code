@@ -13,7 +13,7 @@ import * as path from 'path';
 import { t } from '../../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../../types';
 import {
-  isUriInsideWorkspace,
+  isUriInsideWorkspaceRealpath,
   MAX_ATTACHMENT_SIZE_BYTES,
   MAX_BASE64_ATTACHMENT_LENGTH
 } from './fileHandlerUtils';
@@ -231,8 +231,9 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
     
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, imgPath);
 
-    // 防止路径穿越：imgPath 含 `..` 可逃逸工作区覆写任意文件
-    if (!isUriInsideWorkspace(fileUri)) {
+    // 防止路径穿越：imgPath 含 `..` 可逃逸工作区覆写任意文件；realpath 感知校验同时
+    // 阻止工作区内 symlink 指向工作区外目录时把文件写到工作区外
+    if (!(await isUriInsideWorkspaceRealpath(fileUri))) {
       ctx.sendResponse(requestId, {
         success: false,
         error: t('webview.errors.fileNotInWorkspace')
