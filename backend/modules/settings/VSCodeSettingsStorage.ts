@@ -177,6 +177,13 @@ export class VSCodeSettingsStorage implements SettingsStorage {
                 // 包括庞大的 toolsConfig，触发多次写入与 Settings Sync 全量同步。
                 // 修改方式：与上次快照（上次保存/加载的结果）逐键深比较，只写变更的键；
                 // 全部未变更时不产生任何 config.update。
+                // 已知边界（有意保留）：首次保存时 lastSavedSnapshot 为空快照，所有有值的键
+                // （含与 DEFAULT_GLOBAL_SETTINGS 相同的默认值，如默认 toolsConfig、checkForUpdates
+                // 等）都会被判为「变更」写入磁盘——即「首次 save 固化默认值」。这是有意行为：
+                // 读取路径 initialize/reloadAndNotify 用 DEFAULT_GLOBAL_SETTINGS 深合并兜底，
+                // 固化值与内存默认值一致、功能等价；代价是扩展升级修改默认值后，已固化键不会
+                // 自动跟随新默认值（用户值优先语义）。若未来要过滤「与默认值全等」的键，需在
+                // SettingsCore 保存路径统一处理并与 deepMergeConfig 语义对齐，此处不做。
                 const updates: PromiseLike<void>[] = [];
                 const nextSnapshot: Record<string, unknown> = {};
                 const source = settings as unknown as Record<string, unknown>;
