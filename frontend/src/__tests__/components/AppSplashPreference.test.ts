@@ -23,13 +23,13 @@ const runtime = vi.hoisted(() => ({
   settingsStore: undefined as any,
   terminalStore: undefined as any,
   sendToExtension: vi.fn(),
-  onMessageFromExtension: vi.fn(() => vi.fn()),
+  onMessageFromExtension: vi.fn(),
+  messageHandler: undefined as ((message: any) => void) | undefined,
   configureSoundSettings: vi.fn(),
   setLanguage: vi.fn(),
   cleanupAudioHooks: vi.fn(),
   cleanupVisibilityHooks: vi.fn(),
-  disposeAgentStopController: vi.fn(),
-  preloadChannelConfigs: vi.fn().mockResolvedValue(undefined)
+  disposeAgentStopController: vi.fn()
 }))
 
 vi.mock('pinia', () => ({
@@ -130,10 +130,6 @@ vi.mock('../../services/agentStopNotificationController', () => ({
   }))
 }))
 
-vi.mock('../../services/channelConfigCache', () => ({
-  preloadChannelConfigs: runtime.preloadChannelConfigs
-}))
-
 vi.mock('../../stores/chat/smoothStreamManager', () => ({
   disposeAllSmoothStreams: vi.fn()
 }))
@@ -214,11 +210,14 @@ describe('App 开屏动画启动偏好', () => {
       if (type === 'getSettings') return settingsRequest.promise
       return Promise.resolve({ success: true })
     })
-    runtime.onMessageFromExtension.mockClear()
+    runtime.onMessageFromExtension.mockReset()
+    runtime.messageHandler = undefined
+    runtime.onMessageFromExtension.mockImplementation((handler: (message: any) => void) => {
+      runtime.messageHandler = handler
+      return vi.fn()
+    })
     runtime.configureSoundSettings.mockClear()
     runtime.setLanguage.mockClear()
-    runtime.preloadChannelConfigs.mockClear()
-    runtime.preloadChannelConfigs.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -235,7 +234,42 @@ describe('App 开屏动画启动偏好', () => {
     expect(wrapper.find('[data-testid="splash-stub"]').exists()).toBe(true)
   })
 
-  test('语言已加载但聊天初始化未完成时保持 Splash，且不提前挂载输入区', async () => {
+  test('先注册扩展命令监听器，再发送 webviewReady 握手', async () => {
+    wrapper = mount(App)
+    await nextTick()
+
+    const readyCallIndex = runtime.sendToExtension.mock.calls.findIndex(call => call[0] === 'webviewReady')
+    expect(readyCallIndex).toBeGreaterThanOrEqual(0)
+    expect(runtime.onMessageFromExtension.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.sendToExtension.mock.invocationCallOrder[readyCallIndex]
+    )
+  })
+
+  test('BackendHost 初始化未完成时收到 newChat 命令也立即创建，不挂起等待初始化 Promise', async () => {
+    const chatInitialization = deferred<void>()
+    runtime.chatStore.initialize.mockReturnValueOnce(chatInitialization.promise)
+
+    wrapper = mount(App)
+    await nextTick()
+
+    // getSettings 仍在途时就必须启动 initialize 的同步准备段；不能等语言请求返回后才建空白标签页。
+    expect(runtime.chatStore.initialize).toHaveBeenCalledTimes(1)
+    expect(runtime.messageHandler).toBeTypeOf('function')
+
+    runtime.messageHandler!({ type: 'command', command: 'newChat' })
+    await nextTick()
+
+    expect(runtime.chatStore.createNewConversation).toHaveBeenCalledTimes(1)
+    expect(runtime.settingsStore.showChat).toHaveBeenCalledTimes(1)
+
+    // 两条启动请求随后完成，也不能把同一条命令重复执行。
+    settingsRequest.resolve(makeSettingsResponse(true))
+    chatInitialization.resolve()
+    await flushPromises()
+    expect(runtime.chatStore.createNewConversation).toHaveBeenCalledTimes(1)
+  })
+
+  test('语言已加载但聊天初始化仍在途时结束 Splash 并挂载输入区', async () => {
     const chatInitialization = deferred<void>()
     runtime.chatStore.initialize.mockReturnValueOnce(chatInitialization.promise)
 
@@ -243,15 +277,16 @@ describe('App 开屏动画启动偏好', () => {
     settingsRequest.resolve(makeSettingsResponse(true))
     await flushPromises()
 
-    expect(wrapper.getComponent({ name: 'Splash' }).props('ready')).toBe(false)
-    expect(wrapper.findComponent({ name: 'InputArea' }).exists()).toBe(false)
+    // initialize() 的首个 await 前已完成本地空白标签页准备；后端加载不能继续锁住主界面。
+    expect(wrapper.getComponent({ name: 'Splash' }).props('ready')).toBe(true)
+    expect(wrapper.findComponent({ name: 'InputArea' }).exists()).toBe(true)
+    expect(runtime.sendToExtension.mock.calls.some(call => call[0] === 'config.listConfigs')).toBe(false)
 
+    // 完整聊天初始化随后落定，界面保持可用且 App 仍不发渠道预加载请求。
     chatInitialization.resolve()
     await flushPromises()
 
-    expect(wrapper.getComponent({ name: 'Splash' }).props('ready')).toBe(true)
-    expect(wrapper.findComponent({ name: 'InputArea' }).exists()).toBe(true)
-    expect(runtime.preloadChannelConfigs).toHaveBeenCalledTimes(1)
+    expect(runtime.sendToExtension.mock.calls.some(call => call[0] === 'config.listConfigs')).toBe(false)
   })
 
   test('同步偏好关闭时首帧立即显示关闭态占位，从始至终不挂载 Splash', async () => {

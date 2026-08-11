@@ -31,7 +31,6 @@ import type { SoundAgentRole } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
-import { preloadChannelConfigs } from './services/channelConfigCache'
 
 // i18n
 const { t } = useI18n()
@@ -46,10 +45,6 @@ const languageLoaded = ref(false)
 const startupSplashEnabled = window.__GRAYCODE_STARTUP_SPLASH_ENABLED !== false
 // 主界面启动数据是否已完成初始化；关闭开屏动画时据此结束专属占位画面。
 const mainViewInitialized = ref(false)
-// Splash/初始化期间到达的 newChat 命令：命令监听器早于 chatStore.initialize 注册，
-// 因而命令可能在首次空白标签页尚未同步建立前到达。先挂起，关键聊天初始化完成后逐个补执行；
-// 用计数器而非布尔，避免初始化期间连续到达多个 newChat 命令时合并丢失。
-let pendingNewChat = 0
 // 开始动画是否已完成（Splash 淡出后置 true，移除组件）
 const splashDone = ref(false)
 
@@ -541,17 +536,12 @@ onMounted(async () => {
   }
 
   console.log('GrayCode Chat 已加载')
-  
-  // Notify the extension that the webview is ready to receive command messages.
-  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
-    console.error('[App] Failed to notify extension that webview is ready:', error)
-  })
-  
+
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
 
-  // 渠道列表预加载属于非关键启动任务：必须等聊天状态初始化结束后再启动。
-  // 否则逐渠道 config.getConfig 会占用扩展端串行消息队列，推迟空白标签页建立与首条发送。
+  // App 启动阶段不预加载渠道列表：该批串行 config 请求会与 BackendHost 就绪及聊天初始化竞争。
+  // InputArea 保留原有按需加载，渠道设置页仍可使用自身缓存，不阻塞 newChat 与首条发送。
   disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
   disposeVisibilityHooks = registerVisibilityChangeHooks()
   
@@ -562,14 +552,10 @@ onMounted(async () => {
     if (message.type === 'command') {
       switch (message.command) {
         case 'newChat':
-          if (!mainViewInitialized.value) {
-            // 初始化完成前挂起：监听器可能早于 chatStore.initialize 收到命令，
-            // 此时首次空白标签页尚未建立；待关键聊天状态就绪后逐个补执行。
-            // 计数器累加：初始化期间的多个 newChat 命令全部补执行，不合并丢失
-            pendingNewChat++
-          } else {
-            handleNewChat()
-          }
+          // initialize() 已在首个 await 前同步建立空白标签页，初始化期间可立即执行。
+          // 不得挂起到 initialize 完成：BackendHost 尚未就绪时初始化可能长期等待，
+          // 挂起会让用户点击新建后永远没有任何动作。
+          handleNewChat()
           break
         case 'showHistory':
           handleShowHistory()
@@ -632,31 +618,38 @@ onMounted(async () => {
       }
     }
   })
-  
-  // 先加载语言设置，确保 UI 语言正确（监听器已注册，初始化期间的命令/事件不会丢失）
-  await loadLanguageSettings()
+
+  // 语言与聊天初始化并行启动，但保持 getSettings 先入队：
+  // - loadLanguageSettings() 先调用，延续既有设置加载顺序；
+  // - initialize() 随即执行其首个 await 前的同步准备段，立即建立空白标签页；
+  // - 因此 BackendHost 尚未就绪、任一请求仍在途时，newChat 也有可操作的本地状态，
+  //   无需也不得挂起到完整初始化结束。
+  const languageSettingsPromise = loadLanguageSettings()
+  const chatInitializationPromise = chatStore.initialize().then(
+    () => ({ ok: true as const }),
+    error => ({ ok: false as const, error })
+  )
+
+  // command 订阅与 initialize 同步准备都已完成后再发送 ready 握手。扩展端会在握手中
+  // 立即 flush pendingCommands；此顺序保证积压的 newChat 既不会丢，也不会命中未准备的 store。
+  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
+    console.error('[App] Failed to notify extension that webview is ready:', error)
+  })
+
+  await languageSettingsPromise
 
   agentStopNotificationController = createAgentStopNotificationController({
     chatStore,
     sendToExtension
   })
-  
-  // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
-  try {
-    await chatStore.initialize()
-  } catch (err) {
-    console.error('[App] chatStore.initialize failed', err)
-  } finally {
-    // 关键聊天状态已就绪后再启动渠道预加载；InputArea 挂载时复用同一在途缓存，不重复请求。
-    void preloadChannelConfigs()
-    mainViewInitialized.value = true
-    // 补执行初始化期间挂起的 newChat 命令（首次状态重置已完成，不会再被覆盖）；
-    // 挂起计数可能 >1（初始化期间多个 newChat 命令），循环逐个补执行
-    while (pendingNewChat > 0) {
-      pendingNewChat--
-      handleNewChat()
-    }
+
+  // 关闭开屏动画时，专属占位持续到聊天初始化结束。
+  const chatInitialization = await chatInitializationPromise
+  if (!chatInitialization.ok) {
+    console.error('[App] chatStore.initialize failed', chatInitialization.error)
   }
+
+  mainViewInitialized.value = true
 })
 
 onBeforeUnmount(() => {
@@ -685,7 +678,7 @@ onBeforeUnmount(() => {
 
     <Splash
       v-if="!splashDone && startupSplashEnabled"
-      :ready="languageLoaded && mainViewInitialized"
+      :ready="languageLoaded"
       @done="splashDone = true"
     />
     
@@ -773,9 +766,9 @@ onBeforeUnmount(() => {
       <!-- 后台任务状态条（有任务时显示） -->
       <BackgroundTaskBar />
 
-      <!-- 输入区域（关键聊天初始化完成后挂载，避免启动 IPC 在途时触发首条发送竞态） -->
+      <!-- 输入区域：语言就绪后按需加载渠道；不等待完整聊天/历史初始化 -->
       <InputArea
-        v-if="mainViewInitialized"
+        v-if="languageLoaded"
         :attachments="attachments"
         :uploading="uploading"
         @send="handleSend"

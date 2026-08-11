@@ -22,11 +22,6 @@ import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
 import { sendToExtension, showNotification, onExtensionCommand } from '../../utils/vscode'
 import * as configService from '../../services/config'
-import {
-  getChannelConfigsCache,
-  preloadChannelConfigs,
-  setChannelConfigsCache
-} from '../../services/channelConfigCache'
 import * as contextService from '../../services/context'
 import { formatNumber, generateId } from '../../utils/format'
 import { languageFromPath } from '../../utils/languageFromPath'
@@ -105,16 +100,6 @@ const currentModels = computed(() => currentConfig.value?.models || [])
 async function loadConfigs() {
   isLoadingConfigs.value = true
   try {
-    // App 在关键聊天初始化结束后启动同一份预加载；这里复用缓存/在途 Promise，
-    // 避免 InputArea 与 App 各自执行一轮 listConfigs + N 次 getConfig，阻塞消息通道。
-    await preloadChannelConfigs()
-    const cached = getChannelConfigsCache()
-    if (cached !== null) {
-      configs.value = cached
-      return
-    }
-
-    // 预加载失败时保留原有直接加载能力，并在成功后回填共享缓存。
     const ids = await configService.listConfigIds()
     const loaded: any[] = []
 
@@ -124,7 +109,6 @@ async function loadConfigs() {
     }
 
     configs.value = loaded
-    setChannelConfigsCache(loaded)
   } catch (error) {
     console.error('Failed to load configs:', error)
   } finally {

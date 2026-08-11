@@ -33,6 +33,51 @@ describe('chatStore 首次初始化竞态', () => {
     runtime.onMessageFromExtension.mockClear()
   })
 
+  test('对话列表初始化仍在途时，首条消息可创建会话、绑定标签页并发起 chatStream', async () => {
+    const conversationListRequest = deferred<string[]>()
+    runtime.sendToExtension.mockImplementation((type: string) => {
+      if (type === 'getWorkspaceUri') return Promise.resolve(null)
+      if (type === 'settings.getActiveChannelId') return Promise.resolve({})
+      if (type === 'checkpoint.getConfig') return Promise.resolve({ config: {} })
+      if (type === 'conversation.listConversations') return conversationListRequest.promise
+      if (type === 'conversation.createConversation') return Promise.resolve({ success: true })
+      if (type === 'conversation.setCustomMetadata') return Promise.resolve({ success: true })
+      if (type === 'chatStream') return Promise.resolve({ started: true })
+      return Promise.resolve(undefined)
+    })
+
+    const store = useChatStore()
+    const initialization = store.initialize()
+    await vi.waitFor(() => {
+      expect(runtime.sendToExtension).toHaveBeenCalledWith('conversation.listConversations', {})
+    })
+
+    const initialTabId = store.activeTabId
+    expect(initialTabId).toBeTruthy()
+
+    const sent = await store.sendMessage('hello')
+
+    expect(sent).toBe(true)
+    expect(store.currentConversationId).toMatch(/^conv_/)
+    expect(store.openTabs.find(tab => tab.id === initialTabId)?.conversationId).toBe(store.currentConversationId)
+    expect(store.allMessages.map(message => message.role)).toEqual(['user', 'assistant'])
+    expect(runtime.sendToExtension).toHaveBeenCalledWith(
+      'chatStream',
+      expect.objectContaining({
+        conversationId: store.currentConversationId,
+        message: 'hello'
+      })
+    )
+
+    // 初始化的旧列表快照随后返回，也不能删除刚创建的会话和消息。
+    conversationListRequest.resolve([])
+    await initialization
+
+    expect(store.currentConversationId).toMatch(/^conv_/)
+    expect(store.allMessages.map(message => message.role)).toEqual(['user', 'assistant'])
+    expect(store.conversations.some(conversation => conversation.id === store.currentConversationId)).toBe(true)
+  })
+
   test('首次 await 前建立空白标签页，异步加载结束不覆盖期间创建的会话与消息', async () => {
     const workspaceRequest = deferred<string | null>()
     runtime.sendToExtension.mockImplementation((type: string) => {

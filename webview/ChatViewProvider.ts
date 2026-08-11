@@ -33,7 +33,8 @@ import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';
 import { createBackend } from '../backend/bootstrap';
 import type { BackendRuntime } from '../backend/bootstrap';
 import { MessageRouter } from './MessageRouter';
-import { PUSH_MESSAGE_NAMES } from '../shared/protocol';
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '../shared/protocol';
+import { scheduleWebviewMessage } from './messageHandlingQueue';
 import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
@@ -573,13 +574,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // 监听来自 webview 的消息
         webviewView.webview.onDidReceiveMessage(
-            async (message) => {
-                // 将消息处理包装在队列中，确保按顺序执行
-                this.messageHandlingQueue = this.messageHandlingQueue.then(() =>
-                    this.handleMessage(message)
-                ).catch(err => {
-                    console.error('[ChatViewProvider] Error in message handling queue:', err);
-                });
+            (message) => {
+                // 普通消息保持串行；webviewReady 必须真正绕过队列。
+                // 若先到的 config/list 请求正在等待 BackendHost，握手排队会让 pendingCommands
+                //（尤其 newChat）无法 flush，前端表现为点击/首条发送后无反应。
+                this.messageHandlingQueue = scheduleWebviewMessage(
+                    this.messageHandlingQueue,
+                    message,
+                    currentMessage => this.handleMessage(currentMessage),
+                    err => console.error('[ChatViewProvider] Error in message handling queue:', err)
+                );
             },
             undefined,
             this.viewDisposables
@@ -712,7 +716,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         // The frontend sends this as soon as its JS is ready to receive commands.
         // Handle it even if backend init is still running.
-        if (type === 'webviewReady') {
+        if (type === MESSAGE_NAMES.webviewReady) {
             this.webviewReady = true;
             // Flush any queued commands.
             for (const cmd of this.pendingCommands) {
