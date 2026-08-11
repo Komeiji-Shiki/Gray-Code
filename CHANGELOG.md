@@ -9,7 +9,8 @@
 ## [Unreleased]
 
 ### Fixed
-  - 启动/新对话：彻底修复 `308c79d4` 引入的 1.5.0 回归——扩展端 `webviewReady` 现在真正绕过等待 BackendHost 的串行消息队列，前端先注册 command 监听并同步启动聊天状态准备，再发送 ready 握手，积压的 `newChat` 不会被配置请求堵住或在监听建立前丢失；`newChat` 不再挂起等待完整 `initialize()`，语言设置与聊天初始化并行启动且在首个异步等待前建立空白标签页。移除 App 启动期渠道配置预加载，InputArea 只等语言就绪、不等完整历史加载；对话列表落地保留加载期间刚创建的会话，无标签页承接的迟到流回收等待状态。
+  - 启动/新对话：彻底修复 `308c79d4` 引入的 1.5.0 回归——扩展端 `webviewReady` 现在真正绕过等待 BackendHost 的串行消息队列，前端先注册 command 监听并同步启动聊天状态准备，再发送 ready 握手，积压的 `newChat` 不会被配置请求堵住或在监听建立前丢失；`newChat` 不再挂起等待完整 `initialize()`，语言设置与聊天初始化并行启动且在首个异步等待前建立空白标签页。InputArea 只等语言就绪、不等完整历史加载；对话列表落地保留加载期间刚创建的会话，无标签页承接的迟到流回收等待状态。
+  - 启动/渠道：恢复 App 启动期渠道配置预加载（1.5.0 引入、0f712a53 曾因消息队列竞争移除）——config 请求为纯本地文件读取、不依赖 BackendHost，且 webviewReady 握手已绕过串行队列，预加载不再阻塞 newChat 与首条发送；开屏动画期间完成 listConfigs + 逐条 getConfig，首次打开「设置 → 渠道」页直接命中缓存。
   - 后端：修复 1.5.0 批次遗留的 TypeScript/运行缺陷——总结流生成器回收显式传入 `undefined`；共享 `ContentPart.functionCall` 补齐 Anthropic forced-tool 预填参数标记；未响应工具调用扫描固化 `callId` 后再深拷贝标记；legacy 历史五条读取路径先等待文件读取再执行数组校验，恢复 legacy 历史读取、追加、完整性检查与迁移。
   - 后端：修复动态上下文占位符正则合并时未分组导致 `{{$TODO_LIST}}/{{$MEMORY}}/{{$PINNED_FILES}}` 等占位符完全不展开；修复设置导出 `SETTINGS_EXPORT_KEYS` 未过滤 machine 键（proxy/storagePath 随导出泄漏，循环依赖下 `new Set(undefined)` 掩盖了过滤失效）；前端 `NodeList` 迭代补 `Array.from` 修复测试代码类型检查。
   - 后端：回归测试对齐 1.5.0 已收敛的架构与语义——分支图删除同步以 `ConversationManager` 为唯一责任方（移除 orchestrator 重复调用的旧断言，补 manager 内图同步失败不阻断硬删除用例）；MCP 流被服务器提前关闭断言为 `MCP SSE stream closed`（不再误报超时）；CMD 不再预包外层引号（模型按 cmd 语法自带引号）；进度卡回退文案测试固定英文断言（i18n 隔离）。

@@ -31,6 +31,7 @@ import type { SoundAgentRole } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
+import { preloadChannelConfigs } from './services/channelConfigCache'
 
 // i18n
 const { t } = useI18n()
@@ -540,8 +541,13 @@ onMounted(async () => {
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
 
-  // App 启动阶段不预加载渠道列表：该批串行 config 请求会与 BackendHost 就绪及聊天初始化竞争。
-  // InputArea 保留原有按需加载，渠道设置页仍可使用自身缓存，不阻塞 newChat 与首条发送。
+  // 启动即预加载渠道配置列表（幂等、静默失败、30s 超时）：开屏动画期间完成，
+  // 首次打开「设置 → 渠道」页直接命中缓存，无需现场串行请求。
+  // 安全性：listConfigs/getConfig 仅本地文件读取、不依赖 BackendHost，不会挂起消息队列；
+  // webviewReady 握手已由 messageHandlingQueue 绕过串行队列；initialize 首个 await 前
+  // 已同步建立空白标签页，newChat 可立即执行——均不受预加载影响。
+  void preloadChannelConfigs()
+
   disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
   disposeVisibilityHooks = registerVisibilityChangeHooks()
   
