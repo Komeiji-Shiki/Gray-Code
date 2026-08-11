@@ -1162,7 +1162,33 @@ export class DiffManager {
                     return `'${c.path}' is currently being modified by ${holderName}`;
                 })
                 .join('; ');
+            // H4：锁冲突时 diff 预览可能已把编辑器 buffer 覆盖为 AI 内容并标脏，
+            // 必须先恢复原始内容并清 dirty，否则用户 Ctrl+S 会把未确认的 AI 内容写盘。
+            // 恢复期间标记 rejecting：doc.save() 清 dirty 会触发 willSave/save 监听器，
+            // 与 rejectDiffUnlocked 的做法一致，避免监听器在 finalize 之前抢先结算 diff。
+            // 恢复是 best-effort（失败只告警，不掩盖锁冲突错误）；dirty 拒绝预览等 buffer
+            // 未污染的幂等场景由 restoreOriginalContentBestEffort 内部按 H1 判据跳过。
+            let restoreSucceeded = true;
+            this.rejectingDiffIds.add(diff.id);
+            try {
+                await this.restoreOriginalContentBestEffort(diff);
+            } catch (error) {
+                restoreSucceeded = false;
+                console.warn(`[DiffManager] Failed to restore original content after write lock conflict for ${diff.filePath}:`, error);
+            } finally {
+                this.rejectingDiffIds.delete(diff.id);
+            }
             this.finalizeRejectedDiff(diff);
+            // 恢复成功才关 tab：closeDiffTab 对 dirty 文档有静默 save 兜底，恢复失败时
+            // buffer 仍是未确认的 AI 内容，此时关 tab 会把 AI 内容写盘（与 rejectDiffUnlocked
+            // 在恢复失败时中断、不进入 closeDiffTab 的安全语义一致）。
+            if (restoreSucceeded) {
+                try {
+                    await this.closeDiffTab(diff.absolutePath);
+                } catch (error) {
+                    console.warn(`[DiffManager] Failed to close diff tab after write lock conflict for ${diff.filePath}:`, error);
+                }
+            }
             throw new Error(
                 `File write conflict: ${conflictText}. `
                 + `Do not loop on this file. Work on other parts of your task first, `
@@ -2022,6 +2048,59 @@ export class DiffManager {
     }
 
     /**
+     * 恢复目标文件缓冲区/磁盘内容为 originalContent（rejectDiffUnlocked 与写盘锁冲突路径的公共实现）。
+     *
+     * 幂等安全：预览前文档 dirty（diff.userUnsavedContentBeforePreview 已记录）时，buffer 从未被
+     * 覆盖过，任何恢复动作都会把用户未保存内容回滚成磁盘原文（H1），必须整体跳过——即使
+     * showDiffView 失败（buffer 未污染）或锁冲突发生在 dirty 拒绝预览之后，重复调用也无副作用。
+     * （cancelAllPendingUnlocked 保留其自身带 doc.isDirty 守卫的内联实现：取消路径只处理脏文档，
+     * 且不做未打开文档的 fs 写回兜底，语义不同，不强制合一。）
+     *
+     * 失败抛错（不吞）：rejectDiffUnlocked 需要据此把「恢复失败」上报为拒绝失败；锁冲突等
+     * 已确定失败的路径由调用方 try/catch 兜底（保持 best-effort 语义，不掩盖主错误）。
+     */
+    private async restoreOriginalContentBestEffort(diff: PendingDiff): Promise<void> {
+        // H1：预览因目标文档 dirty 被拒绝时，buffer 从未被覆盖过，仍是用户未保存版本；
+        // 这里任何恢复动作都会把用户未保存内容回滚成磁盘原文，必须整体跳过。
+        if (diff.userUnsavedContentBeforePreview !== undefined) {
+            return;
+        }
+        const uri = vscode.Uri.file(diff.absolutePath);
+        const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+
+        if (doc) {
+            const edit = new vscode.WorkspaceEdit();
+            const fullRange = new vscode.Range(
+                doc.positionAt(0),
+                doc.positionAt(doc.getText().length)
+            );
+            edit.replace(uri, fullRange, diff.originalContent);
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                throw new Error(`Failed to restore original content for ${diff.filePath}`);
+            }
+
+            // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
+            // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
+            // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
+            // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
+            try {
+                await doc.save();
+            } catch {
+                // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
+                try {
+                    await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+                } catch {
+                    // ignore
+                }
+            }
+        } else {
+            // 如果文档没打开，直接写回原始文件内容确保万无一失
+            fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
+        }
+    }
+
+    /**
      * 拒绝 diff（放弃修改）
      */
     public async rejectDiff(id: string): Promise<boolean> {
@@ -2045,44 +2124,9 @@ export class DiffManager {
                 return false;
             }
 
-            // 1. 恢复文件内容
-            // H1：预览因目标文档 dirty 被拒绝时，buffer 从未被覆盖过，仍是用户未保存版本；
-            // 这里任何恢复动作都会把用户未保存内容回滚成磁盘原文，必须整体跳过。
-            if (diff.userUnsavedContentBeforePreview === undefined) {
-                const uri = vscode.Uri.file(diff.absolutePath);
-                const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
-
-                if (doc) {
-                    const edit = new vscode.WorkspaceEdit();
-                    const fullRange = new vscode.Range(
-                        doc.positionAt(0),
-                        doc.positionAt(doc.getText().length)
-                    );
-                    edit.replace(uri, fullRange, diff.originalContent);
-                    const applied = await vscode.workspace.applyEdit(edit);
-                    if (!applied) {
-                        throw new Error(`Failed to restore original content for ${diff.filePath}`);
-                    }
-
-                    // WorkspaceEdit 会再次把文档标脏（即便内容已是原始值）。
-                    // 必须 save() 清理 dirty——否则 closeDiffTab 关闭 diff tab 后
-                    // VSCode 发现底层文本文档仍处于 dirty 状态，弹出"是否保存更改？"
-                    // 原生确认对话框，阻断整个 diff 流程并最终显示"被用户取消"。
-                    try {
-                        await doc.save();
-                    } catch {
-                        // doc.save 失败时回退到 revert（仅在 save 失败时弹出确认）
-                        try {
-                            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
-                        } catch {
-                            // ignore
-                        }
-                    }
-                } else {
-                    // 如果文档没打开，直接写回原始文件内容确保万无一失
-                    fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
-                }
-            }
+            // 1. 恢复文件内容（H1 跳过判据与幂等语义见 restoreOriginalContentBestEffort；
+            //    恢复失败抛错由外层 catch 收敛为"拒绝失败"，与既有行为一致）
+            await this.restoreOriginalContentBestEffort(diff);
 
             // write_file 新建文件被拒绝：关 tab 并删除残留空文件
             if (diff.newFile) {
@@ -2377,7 +2421,14 @@ export class DiffManager {
         if (conversationId) {
             return interruptedConversationIds.has(conversationId);
         }
-        // 未传 conversationId：退化为全局中断判定（向后兼容）
+        // 未传 conversationId：退化为全局中断判定（向后兼容）。
+        // 已知误伤面（有意保留，不改判据）：waitForDiffResolution 对无 conversationId 的
+        // diff 传入 undefined，会命中其他会话触发的 per-conversation 中断。但生产链路全部
+        // 经 DiffInterruptService 按会话标记，且各流程（orchestrator/editBranch/context/reroll）
+        // 的 finally 都调 resetUserInterrupt 兜底清理全局标记，常见路径已被覆盖；
+        // 若改为"仅无会话归属的全局中断才命中"，会与 diffManager.test.ts 对 isUserInterrupted()
+        // 的既有断言（per-conversation 中断下无参仍返回 true）冲突，且可能让无会话 diff
+        // 在中断后悬挂等待，故保留现状并在注释中记录该取舍。
         return true;
     }
 
@@ -2549,6 +2600,17 @@ export class DiffManager {
         }
 
         this.statusListeners.clear();
+
+        // M-core：dispose 时清空 pending diff 并释放 deferred 模式持有的写盘锁，
+        // 避免单例销毁后残留悬挂 diff 状态与写盘锁（锁的兜底释放依赖进程/扩展卸载，
+        // 这里显式收敛，防止同一会话后续重建 DiffManager 时被旧锁阻塞）。
+        for (const diff of this.pendingDiffs.values()) {
+            if (diff.lockAcquired && diff.lockHolder) {
+                fileWriteLockManager.release([diff.absolutePath], diff.lockHolder);
+                diff.lockAcquired = false;
+            }
+        }
+        this.pendingDiffs.clear();
 
         DiffManager.instance = null;
     }
