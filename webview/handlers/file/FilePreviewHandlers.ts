@@ -14,7 +14,7 @@ import * as os from 'os';
 import { t } from '../../../backend/i18n';
 import type { MessageHandler } from '../../types';
 import {
-  isUriInsideWorkspace,
+  isUriInsideWorkspaceRealpath,
   MAX_ATTACHMENT_SIZE_BYTES,
   MAX_BASE64_ATTACHMENT_LENGTH
 } from './fileHandlerUtils';
@@ -76,8 +76,8 @@ export const showContextContent: MessageHandler = async (data, requestId, ctx) =
     const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const tempFilePath = path.join(tempDir, `preview_${safeTitle}_${uniqueSuffix}${ext}`);
     
-    // 写入内容
-    await fs.promises.writeFile(tempFilePath, content, 'utf-8');
+    // 写入内容：显式 0600 权限，避免明文内容在 os.tmpdir 下被同机其他用户读取（umask 默认 0644）
+    await fs.promises.writeFile(tempFilePath, content, { encoding: 'utf-8', mode: 0o600 });
     
     const uri = vscode.Uri.file(tempFilePath);
     
@@ -130,7 +130,8 @@ export const previewAttachment: MessageHandler = async (data, requestId, ctx) =>
       );
       return;
     }
-    await fs.promises.writeFile(tempFilePath, buffer);
+    // 显式 0600 权限（与 showContextContent 同口径）：附件明文写入 os.tmpdir，避免其他本地用户可读
+    await fs.promises.writeFile(tempFilePath, buffer, { mode: 0o600 });
     
     const uri = vscode.Uri.file(tempFilePath);
     await vscode.commands.executeCommand('vscode.open', uri);
@@ -154,7 +155,8 @@ export const readWorkspaceImage: MessageHandler = async (data, requestId, ctx) =
     
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, imgPath);
 
-    if (!isUriInsideWorkspace(fileUri)) {
+    // realpath 感知校验：防止工作区内 symlink 指向工作区外文件时被词法前缀匹配放行
+    if (!(await isUriInsideWorkspaceRealpath(fileUri))) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
       return;
     }
@@ -209,7 +211,8 @@ export const openWorkspaceFile: MessageHandler = async (data, requestId, ctx) =>
     
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, filePath);
 
-    if (!isUriInsideWorkspace(fileUri)) {
+    // realpath 感知校验：防止工作区内 symlink 指向工作区外文件时被词法前缀匹配放行
+    if (!(await isUriInsideWorkspaceRealpath(fileUri))) {
       throw new Error(t('webview.errors.fileNotInWorkspace'));
     }
 

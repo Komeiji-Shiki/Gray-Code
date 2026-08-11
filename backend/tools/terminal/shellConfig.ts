@@ -396,8 +396,14 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
             if (shellPath.startsWith('/')) {
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
-                // 使用 which 检查 PATH
-                cp.execSync(`which ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+                // 使用 which 检查 PATH：参数必须通过 argv 传递，不能拼进 shell 命令——
+                // customPath 属于用户可控配置，字符串拼接存在命令注入风险（与 Windows
+                // 分支 where.exe 的 argv 传参方式对齐）。spawnSync 不抛非零退出码，
+                // 需自行检查 status 以保持“不可用”语义。
+                const result = cp.spawnSync('which', [shellPath], { timeout: 3000, stdio: 'ignore' });
+                if (result.status !== 0) {
+                    throw new Error(`which ${shellPath} not found`);
+                }
             }
         }
         available = true;

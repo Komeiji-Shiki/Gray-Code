@@ -7,12 +7,11 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed } from './types'
-import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { insertMessageAt, removeMessageAt, rebuildMessageIndexById } from './state'
+import { insertMessageAt, removeMessageAt, rebuildMessageIndexById, setToolResponseCacheEntry, setToolResponseCacheEntries } from './state'
 import { finishSmoothStreamForState, resetTurnBaseTokenEstimate } from './streamChunkHandlers'
 
 /**
@@ -69,10 +68,9 @@ export function getToolResponseById(
     }
   }
 
-  // 4) 回填值缓存
+  // 4) 回填值缓存（带容量上限，超限淘汰最旧条目，见 state.ts setToolResponseCacheEntry）
   if (latest !== null) {
-    state.toolResponseCache.value.set(toolCallId, latest)
-    triggerRef(state.toolResponseCache)
+    setToolResponseCacheEntry(state, toolCallId, latest)
   }
 
   return latest
@@ -348,10 +346,8 @@ function ensureFunctionResponseMessageForRejectedTools(
   insertMessageAt(state, info.messageIndex + 1, responseMessage)
 
   // 为本次插入的 functionResponse 回填值缓存，保持 getToolResponseById 的 O(1) 查询路径一致
-  for (const [callId, response] of responseByCallId) {
-    state.toolResponseCache.value.set(callId, response)
-  }
-  triggerRef(state.toolResponseCache)
+  // （批量写入末尾统一 triggerRef 一次，带容量上限淘汰，见 state.ts setToolResponseCacheEntries）
+  setToolResponseCacheEntries(state, Array.from(responseByCallId.entries()))
 
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
