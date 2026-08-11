@@ -92,12 +92,26 @@ async function writeSingleFile(
         try {
             await vscode.workspace.fs.stat(uri);
             fileExists = true;
-            const contentBytes = await vscode.workspace.fs.readFile(uri);
-            originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
         } catch {
-            // 文件不存在，原始内容为空
+            // 文件不存在（或 stat 失败），原始内容为空
             fileExists = false;
             originalContent = '';
+        }
+
+        if (fileExists) {
+            try {
+                const contentBytes = await vscode.workspace.fs.readFile(uri);
+                originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
+            } catch (error) {
+                // 修改原因：文件存在但读取失败（权限/IO 错误）之前被并入“文件不存在”分支，
+                // 会把现有文件误判为新文件——下方预写空文件 writeFile('') 直接截断原文件（数据丢失）。
+                // 修改方式：存在但读不到的文件直接返回错误，不再进入“新建文件”分支。
+                return {
+                    path: filePath,
+                    success: false,
+                    error: `Failed to read existing file: ${error instanceof Error ? error.message : String(error)}`
+                };
+            }
         }
 
         // 如果内容相同且文件已存在，无需修改。
