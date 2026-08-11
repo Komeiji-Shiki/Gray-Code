@@ -44,6 +44,7 @@
 - [Project Structure](#project-structure)
 - [FAQ](#faq)
 - [Contributing](#contributing)
+- [Related Projects](#related-projects)
 - [License](#license)
 
 ---
@@ -265,6 +266,14 @@ Gray-Code/
 ## Contributing
 
 Issues and pull requests are welcome through [GitHub Issues](https://github.com/Komeiji-Shiki/Gray-Code/issues). Before submitting, run `npm run typecheck`, `npm run build`, `npm test`, and `npm run test:frontend` to make sure type checking, backend and frontend builds, and both test suites pass. If your change affects frontend interaction, also verify the local webview development mode.
+
+## Related Projects
+
+Community-maintained projects based on this repository:
+
+- [**GrayCode Desktop**](https://github.com/czocelot/Gray-Code-Desktop) — A standalone desktop app (Electron) that runs without VS Code, powered by a built-in `vscode-shim` compatibility layer with the same features as the extension. Available for Windows / macOS / Linux, with both installer and portable versions ([Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)). It shares the same backend / frontend / webview codebase with this repository and is continuously synced with upstream by community maintainers.
+
+> Derived projects are maintained independently by the community; their release cadence and features may differ from this repository. Please refer to the corresponding repository for details.
 
 ## License
 
