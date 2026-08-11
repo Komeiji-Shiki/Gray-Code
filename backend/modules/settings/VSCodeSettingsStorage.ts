@@ -198,7 +198,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
                     }
                     // 仅对变更键做深拷贝快照：与活对象解耦，后续原地变更才能被 deepEqual 检出
                     nextSnapshot[key] = deepCloneValue(value);
-                    updates.push(config.update(key, value, vscode.ConfigurationTarget.Global));
+                    updates.push(config.update(key, value, this.resolveSaveTarget(config, key)));
                 }
 
                 // 仍使用 Promise.all 并行写入，减小更新期间处于不一致状态的时间窗口
@@ -221,21 +221,23 @@ export class VSCodeSettingsStorage implements SettingsStorage {
     }
 
     /**
-     * 读取 graycode.* 配置值时优先 Global（与 save() 写入的 ConfigurationTarget.Global 一致），
-     * workspace/workspaceFolder 值仅作 Global 未设置时的 fallback。
+     * save 写入目标层级：工作区（含 folder）层已有用户显式值时跟随写入 Workspace 层
+     * （.vscode/settings.json / .code-workspace），否则写 Global。
      *
-     * 修复：save() 只写 Global，而 config.get() 读的是 workspaceFolder > workspace > global
-     * 的合并值——工作区 .vscode/settings.json 中存在旧 graycode.* 键（如 toolsConfig）时，
-     * 用户在设置页的修改会写入 Global 但读回仍取 workspace 旧值，表现为「修改丢失」。
-     * 改为优先 Global 后，设置页修改一定生效；手动在工作区配置 graycode.* 且从未在设置页
-     * 保存过的用户（Global 未设置）仍能读到 workspace 值（fallback 语义保留）。
+     * 读侧保持 VS Code 合并值语义（workspaceFolder > workspace > global）：工作区显式配置
+     * 优先是 VS Code 惯例，不能因 save 只写 Global 而破坏。若 save 一律写 Global 而读合并值，
+     * 工作区中的旧 graycode.* 键会永久吞掉设置页修改；跟随已有层级写入后，设置页修改落在
+     * 最高优先级层、读回必然生效，workspace 显式配置的覆盖语义也保留（无 workspace 值时
+     * 仍写 Global）。
+     * 已知边界：多根工作区仅 folder 层有值时写 Workspace 层无法覆盖 folder 值（冷门组合，
+     * 保持与 VS Code 层级语义一致，不额外处理）。
      */
-    private getConfigValue<T>(config: vscode.WorkspaceConfiguration, key: string): T | undefined {
-        const inspected = config.inspect<T>(key);
-        if (!inspected) {
-            return undefined;
+    private resolveSaveTarget(config: vscode.WorkspaceConfiguration, key: string): vscode.ConfigurationTarget {
+        const inspected = config.inspect(key);
+        if (inspected && (inspected.workspaceValue !== undefined || inspected.workspaceFolderValue !== undefined)) {
+            return vscode.ConfigurationTarget.Workspace;
         }
-        return inspected.globalValue ?? inspected.workspaceValue ?? inspected.workspaceFolderValue;
+        return vscode.ConfigurationTarget.Global;
     }
 
     private readSettingsFromVSCode(
@@ -246,40 +248,40 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         // SettingsManager.initialize() 会与 DEFAULT_GLOBAL_SETTINGS 做合并。
         const settings: Partial<GlobalSettings> = {};
 
-            if (opts.includeSyncable) {
-            settings.toolsConfig = this.getConfigValue(config, 'toolsConfig');
-            settings.ui = this.getConfigValue(config, 'ui');
-            settings.toolsEnabled = this.getConfigValue(config, 'toolsEnabled');
-            settings.toolAutoExec = this.getConfigValue(config, 'toolAutoExec');
-            settings.maxToolIterations = this.getConfigValue(config, 'maxToolIterations');
-            
-            const defaultToolMode = this.getConfigValue<string>(config, 'defaultToolMode');
+        if (opts.includeSyncable) {
+            settings.toolsConfig = config.get('toolsConfig');
+            settings.ui = config.get('ui');
+            settings.toolsEnabled = config.get('toolsEnabled');
+            settings.toolAutoExec = config.get('toolAutoExec');
+            settings.maxToolIterations = config.get('maxToolIterations');
+
+            const defaultToolMode = config.get<string>('defaultToolMode');
             if (defaultToolMode === 'function_call' || defaultToolMode === 'xml' || defaultToolMode === 'json') {
                 settings.defaultToolMode = defaultToolMode;
             }
 
-            const activeChannelId = this.getConfigValue<string>(config, 'activeChannelId');
+            const activeChannelId = config.get<string>('activeChannelId');
             settings.activeChannelId = activeChannelId && activeChannelId.trim() ? activeChannelId : undefined;
 
-            const lastReadAnnouncementVersion = this.getConfigValue<string>(config, 'lastReadAnnouncementVersion');
+            const lastReadAnnouncementVersion = config.get<string>('lastReadAnnouncementVersion');
             settings.lastReadAnnouncementVersion = lastReadAnnouncementVersion && lastReadAnnouncementVersion.trim()
                 ? lastReadAnnouncementVersion
                 : undefined;
 
-            const checkForUpdates = this.getConfigValue<boolean>(config, 'checkForUpdates');
+            const checkForUpdates = config.get<boolean>('checkForUpdates');
             if (typeof checkForUpdates === 'boolean') {
                 settings.checkForUpdates = checkForUpdates;
             }
 
-            const updateChannel = this.getConfigValue<string>(config, 'updateChannel');
+            const updateChannel = config.get<string>('updateChannel');
             if (updateChannel === 'stable' || updateChannel === 'nightly') {
                 settings.updateChannel = updateChannel;
             }
         }
 
         if (opts.includeMachine) {
-            settings.proxy = this.getConfigValue(config, 'proxy');
-            settings.storagePath = this.getConfigValue(config, 'storagePath');
+            settings.proxy = config.get('proxy');
+            settings.storagePath = config.get('storagePath');
         }
 
         // toolsEnabled 在类型上是必填字段（但这里可能为 undefined），兜底给空对象
