@@ -40,6 +40,7 @@ interface SubAgentConfig {
   channel: {
     channelId: string
     modelId?: string
+    forceUseCurrentChannel?: boolean
   }
   tools: SubAgentToolsConfig
   maxIterations?: number
@@ -165,6 +166,11 @@ const modelOptions = computed<SelectOption[]>(() => {
     description: m.description
   }))
 })
+
+// 强制使用当前会话渠道：勾选后忽略上方渠道/模型下拉，运行时改用当前正在使用的渠道
+const forceUseCurrentChannel = computed(() =>
+  currentAgent.value?.channel.forceUseCurrentChannel === true
+)
 
 // 工具模式选项
 const toolModeOptions = computed<SelectOption[]>(() => [
@@ -755,6 +761,15 @@ onMounted(async () => {
         <!-- 渠道和模型 -->
         <div class="config-section" data-search-anchor="subagents-channel-model">
           <h5>{{ t('components.settings.subagents.channelModel') }}</h5>
+
+          <div class="form-group">
+            <CustomCheckbox
+              :modelValue="forceUseCurrentChannel"
+              :label="t('components.settings.subagents.forceUseCurrentChannel')"
+              :hint="t('components.settings.subagents.forceUseCurrentChannelHint')"
+              @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, forceUseCurrentChannel: $event })"
+            />
+          </div>
           
           <div class="form-row">
             <div class="form-group flex-1">
@@ -763,6 +778,7 @@ onMounted(async () => {
                 :modelValue="currentAgent.channel.channelId"
                 :options="channelOptions"
                 :placeholder="t('components.settings.subagents.selectChannel')"
+                :disabled="forceUseCurrentChannel"
                 @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, channelId: $event, modelId: '' })"
               />
             </div>
@@ -773,7 +789,7 @@ onMounted(async () => {
                 :modelValue="currentAgent.channel.modelId || ''"
                 :options="modelOptions"
                 :placeholder="t('components.settings.subagents.selectModel')"
-                :disabled="!selectedChannel"
+                :disabled="forceUseCurrentChannel || !selectedChannel"
                 @update:modelValue="updateAgentField('channel', { ...currentAgent.channel, modelId: $event })"
               />
             </div>

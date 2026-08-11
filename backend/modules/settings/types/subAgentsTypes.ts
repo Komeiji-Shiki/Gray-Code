@@ -54,6 +54,15 @@ export interface SubAgentConfigItem {
     channel: {
         channelId: string;
         modelId?: string;
+
+        /**
+         * 强制使用当前会话渠道（忽略上方配置的渠道与模型）。
+         *
+         * 与运行时 SubAgentChannelConfig.forceUseCurrentChannel 对应：
+         * 勾选后子代理派发时改用主会话当前正在使用的渠道（channelConfigId + channelModelId），
+         * 与 General Worker 的继承口径一致；未勾选（默认）时使用下方配置的固定渠道。
+         */
+        forceUseCurrentChannel?: boolean;
     };
     
     /**

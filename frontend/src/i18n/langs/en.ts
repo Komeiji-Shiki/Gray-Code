@@ -1776,6 +1776,8 @@ const en: LanguageMessages = {
                 selectChannel: 'Select Channel',
                 model: 'Model',
                 selectModel: 'Select Model',
+                forceUseCurrentChannel: 'Force Use Current Channel',
+                forceUseCurrentChannelHint: 'When enabled, the channel/model selection above is ignored and the sub-agent uses the channel currently in use in this session (same inheritance as General Worker)',
                 tools: 'Tool Configuration',
                 toolsDescription: 'Configure tools available to this sub-agent',
                 toolMode: {
