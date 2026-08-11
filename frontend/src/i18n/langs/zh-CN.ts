@@ -1778,6 +1778,8 @@ const zhCN = {
                 selectChannel: '选择渠道',
                 model: '模型',
                 selectModel: '选择模型',
+                forceUseCurrentChannel: '强制使用当前渠道',
+                forceUseCurrentChannelHint: '勾选后忽略上方渠道与模型选择，改用当前会话正在使用的渠道（与 General Worker 的继承口径一致）',
                 tools: '工具配置',
                 toolsDescription: '配置子代理可使用的工具',
                 toolMode: {
