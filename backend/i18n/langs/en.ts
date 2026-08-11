@@ -772,6 +772,7 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             getStorageConfigFailed: 'Failed to get storage config',
             updateStorageConfigFailed: 'Failed to update storage config',
             validateStoragePathFailed: 'Failed to validate storage path',
+            getStorageStatsFailed: 'Failed to get storage stats',
             migrateStorageFailed: 'Failed to migrate storage'
         },
         

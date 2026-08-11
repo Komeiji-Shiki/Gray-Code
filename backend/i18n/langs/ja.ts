@@ -772,6 +772,7 @@ description: "このスキルの機能と使用場面の簡単な説明"
             getStorageConfigFailed: 'ストレージ設定の取得に失敗しました',
             updateStorageConfigFailed: 'ストレージ設定の更新に失敗しました',
             validateStoragePathFailed: 'ストレージパスの検証に失敗しました',
+            getStorageStatsFailed: 'ストレージ統計の取得に失敗しました',
             migrateStorageFailed: 'ストレージの移行に失敗しました'
         },
         

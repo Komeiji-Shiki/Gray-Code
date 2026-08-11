@@ -26,6 +26,19 @@ export const getStoragePathConfig: MessageHandler = async (data, requestId, ctx)
 };
 
 /**
+ * 获取存储统计数据（大目录统计可达数十秒，属 UNBOUNDED 请求）
+ */
+export const getStorageStats: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { path: targetPath } = data;
+    const stats = await ctx.storagePathManager.getStorageStats(targetPath);
+    ctx.sendResponse(requestId, { stats });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_STORAGE_STATS_ERROR', error.message || t('webview.errors.getStorageStatsFailed'));
+  }
+};
+
+/**
  * 验证存储路径
  */
 export const validateStoragePath: MessageHandler = async (data, requestId, ctx) => {
@@ -138,6 +151,7 @@ export const reloadWindow: MessageHandler = async (_data, requestId, ctx) => {
  */
 export function registerStoragePathHandlers(registry: Map<string, MessageHandler>): void {
   registry.set(MESSAGE_NAMES['storagePath.getConfig'], getStoragePathConfig);
+  registry.set(MESSAGE_NAMES['storagePath.getStats'], getStorageStats);
   registry.set(MESSAGE_NAMES['storagePath.validate'], validateStoragePath);
   registry.set(MESSAGE_NAMES['storagePath.migrate'], migrateStorage);
   registry.set(MESSAGE_NAMES['storagePath.reset'], resetStoragePath);

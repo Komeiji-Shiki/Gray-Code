@@ -255,6 +255,7 @@ export const MESSAGE_NAMES = {
 
 // ---- 存储路径（StoragePathHandlers） ----
   'storagePath.getConfig': 'storagePath.getConfig',
+  'storagePath.getStats': 'storagePath.getStats',
   'storagePath.migrate': 'storagePath.migrate',
   'storagePath.openInExplorer': 'storagePath.openInExplorer',
   'storagePath.reset': 'storagePath.reset',
@@ -422,6 +423,8 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
   // storagePath.reset：重置回默认路径同样要搬迁整份数据（分钟级），超时会让前端误判失败
   MESSAGE_NAMES['storagePath.reset'],
   MESSAGE_NAMES['storagePath.selectFolder'],
+  // 目录统计类：大目录统计可达数十秒（DirectoryStats），不应按普通请求 180s 超时
+  MESSAGE_NAMES['storagePath.getStats'],
   MESSAGE_NAMES['checkpoint.restore'],
   MESSAGE_NAMES['checkpoint.deleteBatch'],
   MESSAGE_NAMES['checkpoint.previewRestore'],

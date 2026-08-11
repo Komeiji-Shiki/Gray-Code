@@ -75,9 +75,13 @@ vi.mock('../../components/common', () => ({
 vi.mock('../../components/backgroundTasks/BackgroundTaskBar.vue', () => ({
   default: { name: 'BackgroundTaskBar', template: '<div />' }
 }))
-vi.mock('../../components/common/UpdateModal.vue', () => ({
-  default: { name: 'UpdateModal', template: '<div />' }
-}))
+vi.mock('../../components/common/UpdateModal.vue', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../components/common/UpdateModal.vue')>()
+  return {
+    ...actual,
+    default: { name: 'UpdateModal', template: '<div />' }
+  }
+})
 vi.mock('../../components/subagents/SubAgentMonitor.vue', () => ({
   default: { name: 'SubAgentMonitor', template: '<div />' }
 }))
@@ -172,6 +176,8 @@ describe('App 开屏动画启动偏好', () => {
       setSplashEnabled: vi.fn((enabled: boolean) => {
         settingsStore.splashEnabled = enabled
       }),
+      setWallpaperPath: vi.fn(),
+      setWallpaperOpacity: vi.fn(),
       showChat: vi.fn(),
       showHistory: vi.fn(),
       showUsage: vi.fn(),

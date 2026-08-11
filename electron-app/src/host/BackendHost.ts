@@ -61,6 +61,7 @@ import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandler
 import type { HandlerContext } from '../../../webview/types';
 import { getDiffManager, type PendingDiff, type FinalizedDiffInfo } from '../../../backend/tools/file/diffManager';
 import { warmUpShellAvailabilityCache } from '../../../backend/tools/terminal/execute_command';
+import { subAgentRunEventBus } from '../../../backend/tools/subagents';
 import { setGlobalStoragePath } from '../../../backend/core/settingsContext';
 import { ElectronContext } from './ElectronContext';
 import { SubAgentMonitorBridge } from './SubAgentMonitorBridge';
@@ -317,6 +318,11 @@ export class BackendHost {
   /** SubAgent monitor window seam: conversation store for historical run restore. */
   getConversationStore(): ConversationManager {
     return this.conversationManager;
+  }
+
+  /** 子代理运行事件总线（与 monitor 桥同一单例，供诊断/测试注入事件） */
+  getSubAgentRunEventBus() {
+    return subAgentRunEventBus;
   }
 
   /** Register the sub-agent monitor webview client so routed responses reach it. */

@@ -773,6 +773,7 @@ description: "简要描述该技能的功能及使用场景"
             getStorageConfigFailed: '获取存储配置失败',
             updateStorageConfigFailed: '更新存储配置失败',
             validateStoragePathFailed: '验证存储路径失败',
+            getStorageStatsFailed: '获取存储统计失败',
             migrateStorageFailed: '迁移存储失败'
         },
         
