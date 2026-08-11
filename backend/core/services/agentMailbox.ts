@@ -394,18 +394,31 @@ export class AgentMailbox {
 
         // threadId + hopDepth 防循环
         const threadId = input.threadId?.trim?.() || newUuid();
+
+        // 收件箱容量检查放在 hop 递增之前（L-tsub 修复）：邮箱满被拒是收件方背压（尚未
+        // 消费），不是线程互回循环，不应消耗 hop 深度。旧实现在 hop 递增后才检查容量，
+        // inbox 满的丢弃尝试也会把线程深度往前推，收件方消费稍慢就会让线程提前撞上
+        // MAX_HOP_DEPTH 被误判为死循环。这里只读不建——被拒时不会留下空 inbox 条目。
+        const claimedCount = this.messageClaims.get(conversationId)?.get(toRunId)?.messages.length ?? 0;
+        if ((this.inboxes.get(conversationId)?.get(toRunId)?.length ?? 0) + claimedCount >= AGENT_INBOX_MAX_MESSAGES) {
+            return {
+                success: false,
+                error: `agent_send_message target inbox is full (max ${AGENT_INBOX_MAX_MESSAGES} pending messages). `
+                    + 'Wait for the recipient to consume earlier messages before sending more.'
+            };
+        }
+
         // 修改原因：旧实现把「读取 prevDepth」与「写回 hopDepth」拆在投递校验两端，
         //          读-写窗口若被 await/提前返回路径拆散，并发互回可能双写同一深度绕过
         //          MAX_HOP_DEPTH；且 threadDepths 按 (conversationId, threadId) 只增不删，
         //          长会话线程越多残留越多。
         // 修改方式：递增收敛到 incrementThreadDepth（同一同步块内读-增-写，原子递增）；
-        //          hop 被拒绝时删除该线程深度记录（removeThreadDepth，含空会话映射清理），
-        //          threadDepths 不再只增不删。
-        // 语义说明：递增发生在投递校验（inbox 满等）之前，被拒绝的回复尝试也消耗一跳，
-        //          对「同线程反复尝试互回」的循环防护更强；被拒消息本就未投递、线程未推进。
+        //          超过上限拒绝后保留该线程的深度记录（不再删除）——若在拒绝时删除，
+        //          重试方会从 1 重新计数，同一条线程的互回循环实际可以无限延续，
+        //          MAX_HOP_DEPTH 被绕过（M-tsub 修复）。记录量由 incrementThreadDepth 内的
+        //          THREAD_DEPTH_MAX_ENTRIES FIFO 兜底，不会无限增长。
         const hopDepth = this.incrementThreadDepth(conversationId, threadId);
         if (hopDepth > MAX_HOP_DEPTH) {
-            this.removeThreadDepth(conversationId, threadId);
             return {
                 success: false,
                 error: `Thread "${threadId}" exceeded the maximum hop depth (${MAX_HOP_DEPTH}). `
@@ -434,14 +447,6 @@ export class AgentMailbox {
             runInbox = [];
             convInbox.set(toRunId, runInbox);
         }
-        const claimedCount = this.messageClaims.get(conversationId)?.get(toRunId)?.messages.length ?? 0;
-        if (runInbox.length + claimedCount >= AGENT_INBOX_MAX_MESSAGES) {
-            return {
-                success: false,
-                error: `agent_send_message target inbox is full (max ${AGENT_INBOX_MAX_MESSAGES} pending messages). `
-                    + 'Wait for the recipient to consume earlier messages before sending more.'
-            };
-        }
         runInbox.push(message);
 
         return {
@@ -469,9 +474,9 @@ export class AgentMailbox {
             this.threadDepths.set(conversationId, convDepths);
         }
         // 有界：单会话线程深度记录超过上限时按 FIFO 淘汰最旧条目（Map 迭代序 = 插入序）。
-        // 单跳线程永不超限也永不删除（removeThreadDepth 只在 hop 超限时触发），长会话中
-        // 线程会无限累积；淘汰最旧记录后该线程深度归零重新计——仅放宽防循环上限，
-        // 512 个活跃线程才会触发，实际互回链远低于此。
+        // 超限被拒的线程保留记录（同线程后续投递持续被拒，防循环不被绕过），长会话中
+        // 线程会无限累积，由本 FIFO 上限兜底；被淘汰后该线程深度归零重新计——仅放宽
+        // 防循环上限，512 个活跃线程才会触发，实际互回链远低于此。
         if (convDepths.size >= THREAD_DEPTH_MAX_ENTRIES && !convDepths.has(threadId)) {
             const oldestKey = convDepths.keys().next().value as string | undefined;
             if (oldestKey !== undefined) {
@@ -481,19 +486,6 @@ export class AgentMailbox {
         const nextDepth = (convDepths.get(threadId) ?? 0) + 1;
         convDepths.set(threadId, nextDepth);
         return nextDepth;
-    }
-
-    /**
-     * 删除某线程的深度记录；会话下无其他线程时连会话映射一并清理，
-     * 保证 threadDepths 不会只增不删（长会话线程残留）。
-     */
-    private removeThreadDepth(conversationId: string, threadId: string): void {
-        const convDepths = this.threadDepths.get(conversationId);
-        if (!convDepths) return;
-        convDepths.delete(threadId);
-        if (convDepths.size === 0) {
-            this.threadDepths.delete(conversationId);
-        }
     }
 
     /**

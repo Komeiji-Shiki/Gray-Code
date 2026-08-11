@@ -83,7 +83,12 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
             // 修改原因：persistQueues 已改为按 conversationId 键控，不能在这里按 runId 删除——
             //          同会话其他 run 可能还有排队中的写入，删掉会话队列会破坏它们的串行化。
             // 修改方式：保留会话级队列条目（已 settle 的 Promise，按会话数有界，后续写入会覆盖）。
+            // L-tsub 修复：淘汰快照时一并清理该 run 的 persistErrors / transcriptLoadPromises，
+            //          避免残留引用（错误记录、未完成/已完成的加载 Promise 条目）长期驻留内存；
+            //          在途加载 Promise 仍会正常 settle（其 finally 删除不存在的条目为 no-op）。
             this.lastPersistAt.delete(snapshot.runId);
+            this.persistErrors.delete(snapshot.runId);
+            this.transcriptLoadPromises.delete(snapshot.runId);
             overflow--;
         }
     }
@@ -101,7 +106,18 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
                 snapshot.transcriptLoaded = true;
                 return snapshot;
             }
+            // 修改原因（M-tsub）：加载是异步的，await 期间续跑/transcript 修改可能已把更新的
+            //          内容写入内存快照；直接整体覆盖会把较新的内存内容退回成持久化里的旧版本，
+            //          随后 flushPersist 再把这份陈旧数据写回磁盘（数据回退）。
+            // 修改方式：加载前后比较 contentRevision/updatedAt，加载期间版本已前进则跳过覆盖
+            //          （只置 transcriptLoaded，避免下次重复加载）。
+            const revisionBefore = snapshot.contentRevision;
+            const updatedAtBefore = snapshot.updatedAt;
             const external = await store.loadSubAgentTranscript(snapshot.conversationId, runId);
+            if (snapshot.contentRevision > revisionBefore || snapshot.updatedAt > updatedAtBefore) {
+                snapshot.transcriptLoaded = true;
+                return snapshot;
+            }
             snapshot.contents = Array.isArray(external?.contents) ? external.contents : [];
             const lastSentHistory = external ? restoreLastSentHistory(external) : undefined;
             if (Array.isArray(lastSentHistory)) {
