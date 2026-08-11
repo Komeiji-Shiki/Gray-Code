@@ -739,6 +739,9 @@ async function loadLanguageSettings() {
   } catch (error) {
     console.error('Failed to load language settings:', error)
   } finally {
+    // 无论 getSettings 成败都放行主题上报：失败时本会话后续主题切换仍能同步主进程
+    // （成功路径在 setTheme 之后置位，保证 watch 首次触发时已就绪）
+    themeLoadedFromSettings = true
     languageLoaded.value = true
     // 启动里程碑：UI 可用（Splash ready 信号）时刻（配合 GRAYCODE_DIAG 主进程计时定位热点）
     console.info(`[startup] renderer languageLoaded at ${Date.now()}`)
