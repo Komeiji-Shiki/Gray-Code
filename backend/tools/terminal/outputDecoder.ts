@@ -21,7 +21,7 @@ const MAX_RETAINED_OUTPUT_LINES = 50000;
 
 /** 单行输出上限：长流式输出（无换行的巨块，如 `print('x'*2e9)`）会在单行内无限累积，
  *  内存与最终响应体均无界；超限时截断保留尾部并计入 omittedOutputLines。 */
-const MAX_SINGLE_LINE_CHARS = 1_000_000;
+export const MAX_SINGLE_LINE_CHARS = 1_000_000;
 
 /**
  * 输出数组前段清理的摊销阈值。

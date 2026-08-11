@@ -11,7 +11,7 @@ import { StreamAbortManager, OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from './StreamAbo
 import { setStreamAbortManager } from '../../backend/core/streamAbortBridge';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
-import { getDiffManager } from '../../backend/tools/file/diffManager';
+import { getDiffManager } from '../../backend/core/services/diffManager';
 import { ChannelError, ErrorType } from '../../backend/modules/channel/types';
 import { assertSafeId } from '../../backend/core/idValidation';
 

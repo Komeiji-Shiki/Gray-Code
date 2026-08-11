@@ -33,6 +33,26 @@ export const GEN_RETURN_RECOVERY_GRACE_MS = 500;
 const drainLog = Logger.get('ToolLoopDrain');
 
 /**
+ * promise 与超时竞速：超时先到返回 undefined。
+ *
+ * 竞速双方任意一方先落定都清理 timer，避免残留 open handle。
+ * 供 drainToolExecutionGeneratorAfterAbort 内部与 tool-execution/execution.ts
+ * 的并行组收尾窗口共用（同构实现合并，行为零改动）。
+ */
+export function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
+    });
+    // 竞速双方任意一方先落定都清理 timer，避免残留 open handle
+    promise.then(
+        () => { if (timer) clearTimeout(timer); },
+        () => { if (timer) clearTimeout(timer); }
+    );
+    return Promise.race([promise, timeoutPromise]);
+}
+
+/**
  * abort 先于 gen.next() 落定时驱动工具执行生成器收尾，取回已完成部分的真实结果。
  *
  * 必须先等 initialNext（即主循环里那次正在恢复生成器的 next() 请求）：
@@ -53,19 +73,6 @@ export async function drainToolExecutionGeneratorAfterAbort(
     initialNext: Promise<IteratorResult<ToolExecutionProgressEvent, ToolExecutionFullResult>>,
     graceMs: number
 ): Promise<ToolExecutionFullResult | undefined> {
-    const raceWithTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeoutPromise = new Promise<undefined>((resolve) => {
-            timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
-        });
-        // 竞速双方任意一方先落定都清理 timer，避免残留 open handle
-        promise.then(
-            () => { if (timer) clearTimeout(timer); },
-            () => { if (timer) clearTimeout(timer); }
-        );
-        return Promise.race([promise, timeoutPromise]);
-    };
-
     // 收尾窗口内生成器抛错（initialNext / gen.next() reject）：已无法取回真实结果，
     // 按「drain 失败」处理（返回 undefined，调用方走既有取消路径 → cancelled 语义），
     // 不让异常穿透为 error chunk。

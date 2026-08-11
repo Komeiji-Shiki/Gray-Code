@@ -50,7 +50,7 @@ import {
     setGlobalStoragePath
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
-import { getDiffManager } from '../backend/tools/file/diffManager';
+import { getDiffManager } from '../backend/core/services/diffManager';
 import { warmUpShellAvailabilityCache } from '../backend/tools/terminal/execute_command';
 import { resolveMainChatDiffViewColumn } from '../backend/tools/file/diffViewColumn';
 import { addChatFocusRestoreNotifier } from '../backend/core/chatFocusGuard';

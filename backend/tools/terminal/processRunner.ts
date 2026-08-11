@@ -37,6 +37,7 @@ import {
     getMaxOutputLines,
     decodeWithMode,
     flushDecodeState,
+    MAX_SINGLE_LINE_CHARS,
     type StreamDecodeState
 } from './outputDecoder';
 import {
@@ -48,11 +49,6 @@ import {
 
 /** 终端任务类型常量 */
 const TASK_TYPE_TERMINAL = 'terminal';
-
-/** 单行输出上限：长流式输出（无换行的巨块，如 `print('x'*2e9)`）会在单行内无限累积，
- *  内存与最终响应体均无界；超限时截断保留尾部并计入 omittedOutputLines。
- *  与 outputDecoder.pushOutputLines 的同一护栏保持一致。 */
-const MAX_SINGLE_LINE_CHARS = 1_000_000;
 
 /**
  * 判定解析后的目录是否仍落在工作区内（cwd 越界守卫）。

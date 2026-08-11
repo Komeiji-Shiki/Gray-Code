@@ -32,7 +32,7 @@ const DEFAULT_EXCLUDE = DEFAULT_EXCLUDE_GLOB;
  * 串行做 stat/读文件头/读全文等 I/O，单次搜索耗时随文件数线性增长。
  * 修改方式：复用 utils.mapWithConcurrency 受控并发（默认 8），结果仍按原文件顺序返回。
  */
-const FILE_SCAN_CONCURRENCY = 8;
+export const FILE_SCAN_CONCURRENCY = 8;
 
 /**
  * 获取 search_in_files 工具配置（带默认值兜底）

@@ -24,7 +24,7 @@ import type { CheckpointService } from '../CheckpointService';
 import type { ToolProgressEmitter } from '../../../../../tools/types';
 import type { LockHolder } from '../../../../../core/fileWriteLockManager';
 import { isDiffReviewToolCall } from '../diffReviewTools';
-import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../abortDrain';
+import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort, raceWithTimeout } from '../abortDrain';
 import { cloneToolResponse, ResultCore } from './result';
 
 /**
@@ -61,25 +61,6 @@ export interface ToolExecutionFullResult {
  * 结算，保证停止按钮不被拖死。
  */
 const PARALLEL_GROUP_ABORT_DRAIN_GRACE_MS = 2000;
-
-/**
- * promise 与超时竞速：超时先到返回 undefined。
- *
- * 与 ToolIterationLoopService.drainToolExecutionGeneratorAfterAbort 内部的
- * raceWithTimeout 同构（并行组收尾窗口使用）；竞速双方任意一方先落定都清理 timer，
- * 避免残留 open handle。
- */
-function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<undefined>((resolve) => {
-        timer = setTimeout(() => resolve(undefined), Math.max(0, timeoutMs));
-    });
-    promise.then(
-        () => { if (timer) clearTimeout(timer); },
-        () => { if (timer) clearTimeout(timer); }
-    );
-    return Promise.race([promise, timeoutPromise]);
-}
 
 /**
  * 执行编排核心基类（executeFunctionCalls 系列 + 主循环控制）

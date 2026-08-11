@@ -18,18 +18,13 @@ import {
     decodeTextBytes
 } from './textEncoding';
 import type { TextDetectionResult } from './textEncoding';
-import { clampNonNegativeNumber, truncateWithEllipsis } from './searchPass';
+import { clampNonNegativeNumber, truncateWithEllipsis, FILE_SCAN_CONCURRENCY } from './searchPass';
 import type { SearchMatch } from './searchPass';
 
 /**
  * 替换模式 matches 收集预算上限：防止 maxFiles×高频 query 产生数百万条匹配全量回传
  */
 export const MAX_REPLACE_MATCHES = 20000;
-
-/**
- * 文件级扫描并发上限（与 searchPass 保持一致）。
- */
-const FILE_SCAN_CONCURRENCY = 8;
 
 /**
  * 替换结果

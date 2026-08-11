@@ -59,7 +59,7 @@ import { initializeSubAgentsFromSettings } from '../../../webview/handlers/SubAg
 import { WorkspaceManager, setWorkspaceManager } from '../../../webview/utils/WorkspaceManager';
 import { SAVED_WORKSPACES_KEY } from '../../../webview/handlers/WorkspaceHandlers';
 import type { HandlerContext } from '../../../webview/types';
-import { getDiffManager, type PendingDiff, type FinalizedDiffInfo } from '../../../backend/tools/file/diffManager';
+import { getDiffManager, type PendingDiff, type FinalizedDiffInfo } from '../../../backend/core/services/diffManager';
 import { warmUpShellAvailabilityCache } from '../../../backend/tools/terminal/execute_command';
 import { subAgentRunEventBus } from '../../../backend/tools/subagents';
 import { setGlobalStoragePath } from '../../../backend/core/settingsContext';

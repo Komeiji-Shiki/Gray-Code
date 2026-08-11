@@ -313,6 +313,12 @@ export enum OverviewRulerLane {
   Full = 7
 }
 
+export enum ProgressLocation {
+  SourceControl = 1,
+  Window = 10,
+  Notification = 15
+}
+
 export enum DiagnosticSeverity {
   Error = 0,
   Warning = 1,
@@ -394,7 +400,19 @@ export class Position {
 }
 
 export class Range {
-  constructor(readonly start: Position, readonly end: Position) {}
+  readonly start: Position;
+  readonly end: Position;
+  constructor(start: Position, end: Position);
+  constructor(startLine: number, startCharacter: number, endLine: number, endCharacter: number);
+  constructor(start: Position | number, end: Position | number, endLine?: number, endCharacter?: number) {
+    if (typeof start === 'number') {
+      this.start = new Position(start, end as number);
+      this.end = new Position(endLine as number, endCharacter as number);
+    } else {
+      this.start = start;
+      this.end = end as Position;
+    }
+  }
   get isEmpty(): boolean {
     return this.start.isEqual(this.end);
   }
@@ -1427,6 +1445,26 @@ export const window = {
   createTextEditorDecorationType(_options: any): any {
     return { dispose() {} };
   },
+  createWebviewPanel(viewType: string, title: string, _viewColumn: any, _options?: any): any {
+    console.warn(`[vscode-shim] window.createWebviewPanel is not supported on desktop: ${viewType}`);
+    return {
+      viewType,
+      title,
+      visible: true,
+      active: true,
+      webview: {
+        html: '',
+        cspSource: '',
+        asWebviewUri: (uri: Uri) => uri,
+        onDidReceiveMessage: () => new Disposable(),
+        postMessage: async () => true
+      },
+      onDidChangeViewState: () => new Disposable(),
+      onDidDispose: () => new Disposable(),
+      reveal() {},
+      dispose() {}
+    };
+  },
   withProgress<T>(_options: any, task: (progress: any, token: any) => Promise<T>): Promise<T> {
     return task({ report() {} }, new CancellationToken());
   },
@@ -1652,6 +1690,15 @@ export const languages = {
       clear() {},
       dispose() {}
     };
+  },
+  registerCodeLensProvider(_selector: any, _provider: any): Disposable {
+    return new Disposable();
+  },
+  registerHoverProvider(_selector: any, _provider: any): Disposable {
+    return new Disposable();
+  },
+  registerCodeActionsProvider(_selector: any, _provider: any, _metadata?: any): Disposable {
+    return new Disposable();
   }
 };
 
@@ -1824,6 +1871,7 @@ export default {
   TextEditorRevealType,
   ViewColumn,
   OverviewRulerLane,
+  ProgressLocation,
   DiagnosticSeverity,
   SymbolKind,
   ExtensionMode,
