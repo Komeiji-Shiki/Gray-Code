@@ -88,6 +88,8 @@ const maxConcurrentAgents = ref(3)
 const generalWorkerEnabled = ref(true)
 // 全局默认迭代次数（未单独配置的 agent 与 General Worker 继承，默认 80）
 const defaultMaxIterations = ref(80)
+// 排队超时（秒，-1 表示无限制，默认 600）
+const queueTimeoutSeconds = ref(600)
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -236,7 +238,7 @@ function isMcpTool(tool: ToolInfo): boolean {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number }>(MESSAGE_NAMES['subagents.list'], {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number, queueTimeoutSeconds?: number }>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -246,6 +248,9 @@ async function loadSubAgents() {
       generalWorkerEnabled.value = response.generalWorkerEnabled !== false
       if (response.defaultMaxIterations !== undefined) {
         defaultMaxIterations.value = response.defaultMaxIterations
+      }
+      if (response.queueTimeoutSeconds !== undefined) {
+        queueTimeoutSeconds.value = response.queueTimeoutSeconds
       }
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
@@ -402,11 +407,15 @@ function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | '
   const raw = (event.target as HTMLInputElement).value
   const parsed = parseInt(raw, 10)
   const max = field === 'defaultMaxIterations' ? 1000 : Number.POSITIVE_INFINITY
-  if (isNaN(parsed) || parsed < 1 || parsed > max) {
+  // maxConcurrentAgents：-1（无并发上限）或 >=1 合法，0 非法；defaultMaxIterations 仍要求 1-1000
+  const invalid = field === 'defaultMaxIterations'
+    ? isNaN(parsed) || parsed < 1 || parsed > max
+    : isNaN(parsed) || parsed < -1 || parsed === 0
+  if (invalid) {
     // 非法输入：就地提示；:value 绑定已保存值，重渲染时自动回填
     globalNumberError.value = field === 'defaultMaxIterations'
       ? '请输入 1-1000 之间的整数'
-      : '请输入不小于 1 的整数'
+      : '请输入 -1 或不小于 1 的整数'
     return
   }
   globalNumberError.value = ''
@@ -417,6 +426,19 @@ function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | '
     defaultMaxIterations.value = parsed
     void updateGlobalConfig('defaultMaxIterations', parsed)
   }
+}
+
+// 排队超时（秒）：-1（无限制）或 >=1 合法，0 非法
+function handleQueueTimeout(event: Event) {
+  const raw = (event.target as HTMLInputElement).value
+  const parsed = parseInt(raw, 10)
+  if (isNaN(parsed) || parsed < -1 || parsed === 0) {
+    globalNumberError.value = t('components.settings.subagents.queueTimeoutSecondsInvalid')
+    return
+  }
+  globalNumberError.value = ''
+  queueTimeoutSeconds.value = parsed
+  void updateGlobalConfig('queueTimeoutSeconds', parsed)
 }
 
 // 打开新建对话框
@@ -655,7 +677,7 @@ onMounted(async () => {
             <input
               type="number"
               :value="maxConcurrentAgents"
-              min="1"
+              min="-1"
               @change="handleGlobalNumberChange($event, 'maxConcurrentAgents')"
             />
             <span class="field-hint">{{ t('components.settings.subagents.maxConcurrentAgentsHint') }}</span>
@@ -670,6 +692,16 @@ onMounted(async () => {
               @change="handleGlobalNumberChange($event, 'defaultMaxIterations')"
             />
             <span class="field-hint">{{ t('components.settings.subagents.defaultMaxIterationsHint') }}</span>
+          </div>
+          <div class="form-group flex-1">
+            <label>{{ t('components.settings.subagents.queueTimeoutSeconds') }}</label>
+            <input
+              type="number"
+              :value="queueTimeoutSeconds"
+              min="-1"
+              @change="handleQueueTimeout"
+            />
+            <span class="field-hint">{{ t('components.settings.subagents.queueTimeoutSecondsHint') }}</span>
           </div>
         </div>
         <p v-if="globalNumberError" class="field-hint global-number-error" style="color: var(--vscode-errorForeground)">{{ globalNumberError }}</p>
