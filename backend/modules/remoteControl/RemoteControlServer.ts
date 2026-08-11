@@ -1468,6 +1468,11 @@ export class RemoteControlServer {
         } catch (rollbackErr: any) {
           // 回滚失败不影响主错误返回
         }
+        // 会话已删除，activeConversationId 不能继续指向它（否则 /api/status
+        // 与移动端状态条持续指向已删除会话）
+        if (this.activeConversationId === targetId) {
+          this.activeConversationId = null;
+        }
       }
       this.sendJson(res, 500, { ok: false, error: err?.message || 'Failed to start stream' });
     }

@@ -66,15 +66,25 @@ async function downloadAndInstallAndNotify(checker: UpdateChecker, update: Updat
 export const installUpdate: MessageHandler = async (data, requestId, ctx) => {
     try {
         const checker = getChecker(ctx);
-        const update = data?.update as UpdateInfo | undefined;
-        if (!update || !update.installerAssetUrl) {
-            ctx.sendError(requestId, 'INSTALL_UPDATE_ERROR', '该 Release 未附带安装包');
+        const requested = data?.update as UpdateInfo | undefined;
+        const status = checker.getStatus();
+        // 安全：不信任渲染层传入的 URL——只采用 checker 自己从 GitHub Releases 解析
+        // 出的更新（版本一致才采用）。XSS 失守后渲染层可构造任意 installerAssetUrl，
+        // 若直接下载会把任意 .exe 落进 update 白名单目录构成 RCE 链路。
+        const update = status.state === 'updateAvailable' && status.update
+            && requested?.version === status.update.version
+            ? status.update
+            : undefined;
+        if (!update) {
+            ctx.sendError(requestId, 'INSTALL_UPDATE_NO_ASSET', '该 Release 未附带安装包');
             return;
         }
         const localPath = await downloadAndInstallAndNotify(checker, update);
         ctx.sendResponse(requestId, { success: true, version: update.version, localPath });
     } catch (error: any) {
-        ctx.sendError(requestId, 'INSTALL_UPDATE_ERROR', error?.message || 'Failed to install update');
+        // 透传 checker 抛出的结构化错误码（UPDATE_NO_ASSET / UPDATE_LAUNCH_FAILED /
+        // UPDATE_URL_UNTRUSTED），前端按码取 i18n 文案——固定码会让本地化映射成死代码
+        ctx.sendError(requestId, error?.code || 'INSTALL_UPDATE_ERROR', error?.message || 'Failed to install update');
     }
 };
 
@@ -98,16 +108,19 @@ export const updateNow: MessageHandler = async (data, requestId, ctx) => {
             return;
         }
         if (status.state === 'disabled') {
-            ctx.sendError(requestId, 'UPDATE_NOW_ERROR', '自动更新检查已关闭');
+            // 结构化错误码：前端按码取 i18n 文案（disabled/checking/error 分支）
+            ctx.sendError(requestId, 'UPDATE_NOW_DISABLED', '自动更新检查已关闭');
             return;
         }
         if (status.state === 'checking') {
-            ctx.sendError(requestId, 'UPDATE_NOW_ERROR', '正在检查更新，请稍候');
+            ctx.sendError(requestId, 'UPDATE_NOW_CHECKING', '正在检查更新，请稍候');
             return;
         }
         ctx.sendError(requestId, 'UPDATE_NOW_ERROR', status.state === 'error' ? status.message : '检查更新失败');
     } catch (error: any) {
-        ctx.sendError(requestId, 'UPDATE_NOW_ERROR', error?.message || 'Failed to update');
+        // 透传 checker 抛出的结构化错误码（UPDATE_NO_ASSET / UPDATE_LAUNCH_FAILED /
+        // UPDATE_URL_UNTRUSTED），前端按码取 i18n 文案
+        ctx.sendError(requestId, error?.code || 'UPDATE_NOW_ERROR', error?.message || 'Failed to update');
     }
 };
 

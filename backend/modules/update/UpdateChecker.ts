@@ -59,6 +59,25 @@ export function stripVersionPrefix(version: string): string {
 }
 
 /**
+ * 安装包下载地址信任校验：只允许从本仓库的 GitHub Releases 下载。
+ *
+ * 安全边界：installUpdate 消息携带的 update 对象来自渲染层（渲染层渲染 AI 生成的
+ * HTML，XSS 失守后不可信）——若不加校验，攻击者可在 <数据目录>/update/ 落盘任意
+ * .exe（桌面版 shim 对 update 目录内的 .exe 有专门启动白名单），形成远程代码执行链路。
+ * browser_download_url 恒为 https://github.com/<repo>/releases/download/<tag>/<asset>。
+ */
+export function isTrustedInstallerUrl(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'https:'
+            && parsed.hostname === 'github.com'
+            && parsed.pathname.startsWith(`/${UPDATE_REPO}/releases/download/`);
+    } catch {
+        return false;
+    }
+}
+
+/**
  * 版本号归一化：dash 形式的构建号并入版本段，与点号形式等价比较。
  *
  * 同一个版本在仓库内有两种写法：
@@ -145,10 +164,12 @@ export function pickInstallerAsset(
     const setup = byName(/\.Setup\.[^/\\]+\.exe$/i);
     const portable = byName(/Portable/i);
 
-    // portable 优先便携版；该形态 release 未附便携资产时回退 Setup（保证用户仍有更新可装，
-    // 而非卡在无更新状态）——正常发布流程会同时附齐两种形态。
-    const asset = kind === 'portable' ? (portable ?? setup ?? anyExe) : (setup ?? anyExe);
-    return asset ?? zip;
+    // portable 形态只允许便携版 exe / 免安装 zip——绝不回退 Setup 安装包：
+    // 便携版用户被拉进安装版会污染系统环境（安装注册表/开始菜单项），
+    // 宁可提示「该 Release 未附便携资产」也不下错安装包。
+    // 正常发布流程会同时附齐两种形态；zip（免安装解压版）不污染系统，可作为便携兜底。
+    const asset = kind === 'portable' ? (portable ?? zip) : (setup ?? anyExe ?? zip);
+    return asset;
 }
 
 /**
@@ -156,7 +177,8 @@ export function pickInstallerAsset(
  * 响应格式异常时返回 null（调用方按错误处理）。
  *
  * 资产匹配（fork 桌面版）：按当前运行形态匹配——
- * - portable：优先便携版 exe（GrayCode-Portable-*），避免便携用户被拉进安装版；
+ * - portable：只匹配便携版 exe（GrayCode-Portable-*）或免安装 zip，绝不匹配 Setup
+ *   安装包（避免便携用户被拉进安装版污染系统环境）；
  * - installed：优先 NSIS 安装包（GrayCode.Setup.*.exe），其次任意 .exe，再次 .zip。
  */
 export function parseReleaseResponse(data: unknown, installerKind: InstallerKind = 'installed'): UpdateInfo | null {
@@ -208,6 +230,8 @@ export interface UpdateCheckerOptions {
     getCurrentVersion?: () => string;
     /** 当前运行形态（缺省 installed）：便携版运行时注入 PORTABLE_EXECUTABLE_DIR */
     getInstallerKind?: () => InstallerKind;
+    /** 状态变化回调（桌面版用于把 updateAvailable 推送给前端弹窗） */
+    onStatusChange?: (status: UpdateCheckStatus) => void;
     /** fetch 实现（缺省按代理配置创建；测试注入） */
     fetchImpl?: (url: string, init?: RequestInit) => Promise<Response>;
     /** 当前时间戳（测试注入） */
@@ -235,6 +259,12 @@ export class UpdateChecker {
         return this.status;
     }
 
+    /** 统一写状态入口：onStatusChange 回调（桌面版推送给前端弹窗） */
+    private setStatus(status: UpdateCheckStatus): void {
+        this.status = status;
+        this.options.onStatusChange?.(status);
+    }
+
     /**
      * 检查更新（幂等：进行中的检查返回同一结果，不会并发重复请求）。
      * force=true 忽略 24h 节流（手动检查）；进行中检查不被 force 吞掉——
@@ -246,7 +276,7 @@ export class UpdateChecker {
      */
     async check(force = false): Promise<UpdateCheckStatus> {
         if (!force && !this.options.isCheckEnabled()) {
-            this.status = { state: 'disabled' };
+            this.setStatus({ state: 'disabled' });
             return this.status;
         }
         // 并发去重：进行中的检查返回同一 Promise（不重复请求上游）
@@ -273,7 +303,7 @@ export class UpdateChecker {
                 return this.status;
             }
 
-            this.status = { state: 'checking' };
+            this.setStatus({ state: 'checking' });
             try {
                 const current = this.getCurrentVersion();
                 if (!current) {
@@ -286,9 +316,9 @@ export class UpdateChecker {
                     return this.status;
                 }
                 if (info && compareVersions(info.version, current) > 0) {
-                    this.status = { state: 'updateAvailable', checkedAt: now, update: info };
+                    this.setStatus({ state: 'updateAvailable', checkedAt: now, update: info });
                 } else {
-                    this.status = { state: 'upToDate', checkedAt: now };
+                    this.setStatus({ state: 'upToDate', checkedAt: now });
                 }
                 // 成功：记录成功检查时间（节流后续所有非 force 检查）；自动检查另记录尝试时间
                 if (gen !== this.generation) {
@@ -306,7 +336,7 @@ export class UpdateChecker {
                 if (gen !== this.generation) {
                     return this.status;
                 }
-                this.status = { state: 'error', checkedAt: now, message: e?.message || String(e) };
+                this.setStatus({ state: 'error', checkedAt: now, message: e?.message || String(e) });
                 // 失败只节流「自动检查」：写 lastAutoCheckAt（避免网络异常时每次启动都重试），
                 // 不写 lastCheckKey（成功检查时间戳）——否则用户显式检查/UI 重试会被失败的
                 // 自动检查拖入 24h 节流窗口而无法重试。
@@ -341,7 +371,17 @@ export class UpdateChecker {
      */
     async downloadAndInstall(update: UpdateInfo): Promise<string> {
         if (!update.installerAssetUrl) {
-            throw new Error('该 Release 未附带安装包，请前往 GitHub Releases 手动下载。');
+            const err = new Error('该 Release 未附带安装包，请前往 GitHub Releases 手动下载。');
+            (err as Error & { code?: string }).code = 'UPDATE_NO_ASSET';
+            throw err;
+        }
+        // 渲染层可构造任意 update 对象（installUpdate 消息不设防）：下载源必须来自
+        // 本仓库 GitHub Releases，否则「任意 URL 下载 → update 目录 .exe → 启动白名单」
+        // 构成远程代码执行链路。
+        if (!isTrustedInstallerUrl(update.installerAssetUrl)) {
+            const err = new Error('安装包下载地址不合法，请前往 GitHub Releases 手动下载。');
+            (err as Error & { code?: string }).code = 'UPDATE_URL_UNTRUSTED';
+            throw err;
         }
         const dir = path.join(this.options.globalStoragePath, 'update');
         await fs.mkdir(dir, { recursive: true });
@@ -398,7 +438,15 @@ export class UpdateChecker {
             await fs.rm(tmpTarget, { force: true }).catch(() => undefined);
         }
 
-        await vscode.env.openExternal(vscode.Uri.file(target));
+        // 交给系统打开安装包（桌面版 shim：安装包 .exe 走专用白名单通道启动；
+        // 返回 false 说明系统未能启动（如被安全策略拦截），必须抛错让调用方提示
+        // 用户走 GitHub 页面兜底——否则「已下载」假象下安装器从未启动。
+        const opened = await vscode.env.openExternal(vscode.Uri.file(target));
+        if (!opened) {
+            const err = new Error('安装包已下载但系统未能打开，请前往 GitHub Releases 手动下载安装。');
+            (err as Error & { code?: string }).code = 'UPDATE_LAUNCH_FAILED';
+            throw err;
+        }
         return target;
     }
 
@@ -434,7 +482,7 @@ export class UpdateChecker {
         this.generation++;
         // 清空 in-flight 引用：reset 后新检查不再复用旧检查的结果
         this.inFlightCheck = null;
-        this.status = { state: 'idle' };
+        this.setStatus({ state: 'idle' });
         void this.options.storage.update(this.lastCheckKey, 0).catch(() => undefined);
         // 同步重置自动检查尝试时间戳：渠道切换后自动检查按新渠道立即重试
         void this.options.storage.update(this.lastAutoCheckKey, 0).catch(() => undefined);

@@ -102,7 +102,9 @@ const en: LanguageMessages = {
             viewPage: 'View on GitHub',
             downloading: 'Downloading and installing…',
             installed: 'Installed. Reload the window to apply.',
-            failed: 'Download or install failed'
+            failed: 'Download or install failed',
+            noAsset: 'This release has no installer attached. Please download it from GitHub Releases.',
+            launchFailed: 'The installer was downloaded but could not be launched. Please download it from GitHub Releases.'
         },
         attachment: {
             preview: 'Preview',
@@ -2245,7 +2247,9 @@ const en: LanguageMessages = {
                     updateAvailable: 'Update available: v{version}',
                     installedHint: 'v{version} installed. Reload the window to apply.',
                     error: 'Check failed',
-                    disabledHint: 'Automatic check is disabled'
+                    disabledHint: 'Automatic check is disabled',
+                    noAsset: 'This release has no installer attached. Please download it from GitHub Releases.',
+                    launchFailed: 'The installer was downloaded but could not be launched. Please download it from GitHub Releases.'
                 },
                 exportImport: {
                     title: 'Settings Export/Import',

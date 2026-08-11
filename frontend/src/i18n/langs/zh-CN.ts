@@ -104,7 +104,9 @@ const zhCN = {
             viewPage: '前往 GitHub 查看',
             downloading: '正在下载并安装，请稍候…',
             installed: '安装完成，重新加载窗口后生效。',
-            failed: '下载或安装失败'
+            failed: '下载或安装失败',
+            noAsset: '该版本未附带安装包，请前往 GitHub Releases 手动下载',
+            launchFailed: '安装包已下载但系统未能打开，请前往 GitHub Releases 手动下载安装'
         },
         attachment: {
             preview: '预览',
@@ -2247,7 +2249,9 @@ const zhCN = {
                     updateAvailable: '发现新版本 v{version}',
                     installedHint: 'v{version} 已安装，重启窗口后生效',
                     error: '检查失败',
-                    disabledHint: '自动检查已关闭'
+                    disabledHint: '自动检查已关闭',
+                    noAsset: '该版本未附带安装包，请前往 GitHub Releases 手动下载',
+                    launchFailed: '安装包已下载但系统未能打开，请前往 GitHub Releases 手动下载安装'
                 },
                 exportImport: {
                     title: '设置导入/导出',

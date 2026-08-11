@@ -102,7 +102,9 @@ const ja: LanguageMessages = {
             viewPage: 'GitHub で見る',
             downloading: 'ダウンロード中...',
             installed: 'インストールが完了しました。ウィンドウをリロードしてください。',
-            failed: 'ダウンロードまたはインストールに失敗しました'
+            failed: 'ダウンロードまたはインストールに失敗しました',
+            noAsset: 'このリリースにはインストーラーが添付されていません。GitHub Releases から手動でダウンロードしてください。',
+            launchFailed: 'インストーラーはダウンロードされましたが起動できませんでした。GitHub Releases から手動でダウンロードしてください。'
         },
         attachment: {
             preview: 'プレビュー',
@@ -2245,7 +2247,9 @@ const ja: LanguageMessages = {
                     updateAvailable: '新バージョン v{version} があります',
                     installedHint: 'v{version} がインストールされました。ウィンドウをリロードしてください。',
                     error: '確認に失敗しました',
-                    disabledHint: '自動チェックは無効です'
+                    disabledHint: '自動チェックは無効です',
+                    noAsset: 'このリリースにはインストーラーが添付されていません。GitHub Releases から手動でダウンロードしてください。',
+                    launchFailed: 'インストーラーはダウンロードされましたが起動できませんでした。GitHub Releases から手動でダウンロードしてください。'
                 },
                 exportImport: {
                     title: '設定のエクスポート/インポート',

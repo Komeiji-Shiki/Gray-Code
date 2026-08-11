@@ -1536,7 +1536,15 @@ export const commands = {
             newContent = provider?.provideTextDocumentContent(newUri) ?? '';
             if (originalUri?.query) {
               const m = /(?:^|&)id=([^&]*)/.exec(originalUri.query);
-              if (m) previewId = decodeURIComponent(m[1]);
+              // query 可能含非法 % 序列（文件路径含字面 % 时）：decodeURIComponent
+              // 抛 URIError 会让整个 vscode.diff 命令 reject、diff 面板打不开。
+              if (m) {
+                try {
+                  previewId = decodeURIComponent(m[1]);
+                } catch {
+                  previewId = m[1];
+                }
+              }
             }
             // Uri.parse 已对 path 解码（DiffHandlers 构造时 encodeURIComponent 一次），
             // 这里不再二次 decodeURIComponent：文件路径含字面 %（如 report%final.md）时
@@ -1731,15 +1739,37 @@ export const env = {
     if (!h) return false;
     try {
       if (typeof target !== 'string') {
-        // file: URI（如「打开 Skills 目录」）不能走 shell:openExternal 的
-        // http/https/mailto 白名单，改走 shell:openPath（含目录/可执行扩展名校验），
-        // 与 VS Code 中 openExternal(file URI) 打开系统资源管理器的语义一致。
+        // file: URI（如「打开 Skills 目录」/一键更新下载的安装包）：
+        // - 目录与普通文件走 shell:openPath（native 层拒绝可执行扩展名）；
+        // - .exe 安装包走 update:launchInstaller 专用白名单通道（仅允许更新缓存
+        //   目录内的安装包启动），与 VS Code 中 openExternal(file URI) 打开
+        //   系统资源管理器的语义一致；否则一键更新下载完成后安装器永远无法启动。
+        // 两类 op 返回 { ok:false } 时抛错而不是静默返回 true：调用方（一键更新）
+        // 必须能感知「无法启动」，否则用户看到“已下载并打开”而安装器从未启动。
         if (target.scheme === 'file' && target.fsPath) {
-          await h.native('shell:openPath', { path: target.fsPath });
+          const ext = path.extname(target.fsPath).toLowerCase();
+          // .exe 安装包优先走 update:launchInstaller 专用白名单通道（仅允许更新缓存
+          // 目录内的安装包启动）；被拒绝时回退 shell:openPath 沿用 native 层既有策略
+          // （目录仍可打开；目录外 .exe 依旧拒绝），保证不引入行为回归。
+          if (ext === '.exe') {
+            const launchResult = await h.native<{ ok: boolean; error?: string }>('update:launchInstaller', { path: target.fsPath });
+            if (launchResult?.ok) {
+              return true;
+            }
+          }
+          const result = await h.native<{ ok: boolean; error?: string }>('shell:openPath', { path: target.fsPath });
+          if (!result?.ok) {
+            throw new Error(result?.error || 'Failed to open path');
+          }
           return true;
         }
       }
-      await h.native('shell:openExternal', { url: typeof target === 'string' ? target : target.toString() });
+      const result = await h.native<{ ok: boolean; error?: string }>('shell:openExternal', {
+        url: typeof target === 'string' ? target : target.toString()
+      });
+      if (!result?.ok) {
+        throw new Error(result?.error || 'Failed to open URL');
+      }
       return true;
     } catch {
       return false;

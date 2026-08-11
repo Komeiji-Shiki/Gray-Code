@@ -82,6 +82,52 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
+/** 错误日志脱敏：遮蔽常见密钥字段、截断超长字符串（与 main.ts redactSecrets 同策略） */
+const LOG_SECRET_FIELD_RE = /(api[_-]?key|authorization|password|token|secret|credential)/i;
+/** 内嵌在错误 message/stack 文本里的密钥值模式（如 "Invalid apiKey sk-xxx" / "api_key=abc123"） */
+const LOG_SECRET_VALUE_RE = /((?:api[_-]?key|authorization|password|token|secret|credential)\s*[=:]\s*)\S+/gi;
+function redactLogText(text: string): string {
+  return text.replace(LOG_SECRET_VALUE_RE, '$1[redacted]');
+}
+function redactLogValue(value: unknown, depth = 0, seen?: Set<object>): unknown {
+  if (depth > 4) return '[depth-limit]';
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Error) {
+    const out: Record<string, unknown> = {
+      name: value.name,
+      message: redactLogText(String(value.message || '').slice(0, 500)),
+      stack: redactLogText(String(value.stack || '').split('\n').slice(0, 8).join('\n'))
+    };
+    // 递归处理 cause 链（深度受限防环：对象引用环由 seen 集合兜底）
+    if ((value as any).cause !== undefined) {
+      const cause = (value as any).cause;
+      const set = seen ?? new Set<object>();
+      if (!set.has(value)) {
+        set.add(value);
+        out.cause = redactLogValue(cause, depth + 1, set);
+      }
+    }
+    return out;
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((v) => redactLogValue(v, depth + 1, seen));
+  }
+  const out: Record<string, unknown> = {};
+  const set = seen ?? new Set<object>();
+  if (set.has(value as object)) return '[circular]';
+  set.add(value as object);
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (LOG_SECRET_FIELD_RE.test(k)) {
+      out[k] = typeof v === 'string' && v.length > 4 ? v.slice(0, 2) + '***' + v.slice(-1) : '[redacted]';
+    } else if (typeof v === 'string' && v.length > 500) {
+      out[k] = redactLogText(v.slice(0, 500) + '...');
+    } else {
+      out[k] = redactLogValue(v, depth + 1, set);
+    }
+  }
+  return out;
+}
+
 export interface BackendHostOptions {
   userDataPath: string;
   extensionPath: string;
@@ -460,6 +506,11 @@ export class BackendHost {
 
     this.storagePathManager = new StoragePathManager(this.settingsManager, this.context as any);
     await this.storagePathManager.ensureDirectories();
+    // 注册一键更新安装包启动白名单目录（native 层 update:launchInstaller 仅允许
+    // 启动该目录内的 .exe/.zip；不注册则任何安装包都无法启动，一键更新等于半残）
+    void this.options.native('update:registerLaunchDir', {
+      dir: path.join(this.storagePathManager.getEffectiveDataPath(), 'update')
+    }).catch(() => undefined);
 
     const effectiveDataUri = this.storagePathManager.getEffectiveDataUri();
     const storageAdapter = new FileSystemStorageAdapter(vscode, effectiveDataUri);
@@ -516,12 +567,6 @@ export class BackendHost {
       this.unsubscribers.push(() => disposable.dispose());
     }
 
-    await createSkillsManager({
-        workspacePaths: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
-        globalStoragePath: this.storagePathManager.getEffectiveDataPath()
-    });
-    await this.syncSkillsState();
-
     // shell 可用性磁盘缓存预热：registerAllTools 内 createExecuteCommandTool
     // 会对所有启用 shell 做同步 spawn 探测（wsl --status 最坏阻塞 3s），
     // 预热使探测命中 24h 磁盘缓存，冷启动免 spawn（无缓存时退化为原行为）。
@@ -555,7 +600,21 @@ export class BackendHost {
 
     await Promise.all([
       this.checkpointManager.initialize(),
-      this.mcpManager.initialize(),
+      // MCP 配置损坏（servers.json 解析失败）不应拖垮整个后端初始化：应用其余功能
+      // 仍可用，MCP 服务器待用户修复配置后重试即可（与 bootstrap 兜底语义对齐）
+      this.mcpManager.initialize().catch((mcpErr) => {
+        console.error('[BackendHost] MCP initialization failed, continuing without MCP servers:', mcpErr);
+      }),
+      // Skills 初始化（含工作区目录扫描，大工作区可达数百 ms）并入并行批：
+      // 工具声明经 getSkillsManager() 惰性取用（未就绪时空声明），registerAllTools
+      // 与 handler 均无就绪依赖；扫描期间聊天本就未开始，无用户可见差异
+      (async () => {
+        await createSkillsManager({
+          workspacePaths: (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath),
+          globalStoragePath: this.storagePathManager.getEffectiveDataPath()
+        });
+        await this.syncSkillsState();
+      })(),
       initMemoryManager(this.storagePathManager.getEffectiveDataPath()),
       // 使用时间统计追踪器（与 ChatViewProvider 25.65 对齐）：心跳 + 用户活动事件按天采样落盘。
       // 桌面端无编辑器事件，采样依赖窗口焦点桥接（main.ts focus/blur → __setWindowFocused）与心跳。
@@ -603,7 +662,11 @@ export class BackendHost {
       mcpManager: this.mcpManager,
       settingsManager: this.settingsManager,
       configManager: this.configManager,
-      toolExecutionService: this.chatHandler.getToolExecutionService()
+      toolExecutionService: this.chatHandler.getToolExecutionService(),
+      // 子代理 token 消耗归集到发起它的主会话用量统计（UsagePage）；
+      // 与 ChatViewProvider/bootstrap 装配对齐，缺失时子代理消耗静默丢失
+      usageIndexAppend: (conversationId, messages) =>
+        this.conversationManager.appendUsageIndexMessages(conversationId, messages)
     });
 
     // Diff status changes -> frontend (pending diff bar / countdown)
@@ -916,7 +979,14 @@ export class BackendHost {
         get: (key) => this.context.globalState.get<number>(key),
         update: (key, value) => Promise.resolve(this.context.globalState.update(key, value))
       },
-      globalStoragePath: this.storagePathManager.getEffectiveDataPath()
+      globalStoragePath: this.storagePathManager.getEffectiveDataPath(),
+      // 检查完成发现新版本 → 推送给前端弹窗（前端仅在挂载时查询一次 status，
+      // 而启动检查延迟 10s 才完成，不推送则自动更新提示永远不会出现）
+      onStatusChange: (status) => {
+        if (status.state === 'updateAvailable' && status.update) {
+          this.postToRenderer('command', 'update.checkAvailable', { update: status.update });
+        }
+      }
     });
     this.updateCheckTimer = setTimeout(() => {
       this.updateChecker?.check(false).catch(() => {});
@@ -1389,7 +1459,9 @@ export class BackendHost {
         this.postToRenderer('error', requestId, 'UNKNOWN_TYPE', `Unknown message type: ${type}`);
       }
     } catch (error: any) {
-      console.error('[BackendHost] error handling message:', error);
+      // 脱敏后再落日志：错误对象可能携带请求体/配置（含 apiKey 字段），
+      // 直接 console.error 原始对象会把密钥写进 stderr（与 main.ts redactSecrets 同策略）
+      console.error('[BackendHost] error handling message:', redactLogValue(error));
       this.postToRenderer('error', requestId, error.code || 'HANDLER_ERROR', error instanceof Error ? error.message : String(error));
     }
   }

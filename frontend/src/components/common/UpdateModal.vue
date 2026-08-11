@@ -8,9 +8,9 @@
  * - 安装失败可一键前往 GitHub 下载页兜底
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '@/i18n'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
 import { escapeHtml } from './markdownUtils'
 
 const { t } = useI18n()
@@ -19,11 +19,27 @@ const visible = ref(false)
 const phase = ref<'prompt' | 'downloading' | 'installed' | 'failed'>('prompt')
 const update = ref<{ version: string; name: string; body: string; installerAssetUrl?: string } | null>(null)
 const errorMsg = ref('')
+/** 用户最近一次关闭弹窗时的版本：相同版本的后端推送不再弹出（避免用户关掉后
+ *  路过设置页点一次「立即检查」弹窗又回来；新版本仍会弹出） */
+let lastDismissedVersion = ''
 
 onMounted(async () => {
+  // 后端启动检查延迟 10s 才完成，且挂载时内存状态恒为 idle——仅靠挂载查询弹窗
+  // 永远不会出现；订阅后端 update.checkAvailable 推送（BackendHost 检查完成发现
+  // 新版本时主动下发），挂载查询只作为兜底（如 webview 重载后状态仍在内存中）。
+  const unsubscribe = onExtensionCommand<{ update?: typeof update.value }>('update.checkAvailable', (data) => {
+    if (data?.update && data.update.version !== lastDismissedVersion) {
+      update.value = data.update
+      phase.value = 'prompt'
+      visible.value = true
+    }
+  })
+  onBeforeUnmount(unsubscribe)
+
   try {
     const res = await sendToExtension<{ status: { state: string; update?: typeof update.value } }>(MESSAGE_NAMES.getUpdateStatus, {})
-    if (res?.status?.state === 'updateAvailable' && res.status.update) {
+    if (res?.status?.state === 'updateAvailable' && res.status.update && !visible.value
+      && res.status.update.version !== lastDismissedVersion) {
       update.value = res.status.update
       phase.value = 'prompt'
       visible.value = true
@@ -41,16 +57,26 @@ async function install() {
     phase.value = 'installed'
   } catch (e: any) {
     phase.value = 'failed'
-    errorMsg.value = e?.message || String(e)
+    // 后端错误码 → 本地化文案（后端兜底 message 为中文，en/ja 用户不能直接看到）
+    const codeText: Record<string, string> = {
+      INSTALL_UPDATE_NO_ASSET: t('components.update.noAsset'),
+      UPDATE_NO_ASSET: t('components.update.noAsset'),
+      UPDATE_LAUNCH_FAILED: t('components.update.launchFailed')
+    }
+    errorMsg.value = (e?.code && codeText[e.code]) || e?.message || String(e)
   }
 }
 
 function close() {
+  if (update.value) {
+    lastDismissedVersion = update.value.version
+  }
   visible.value = false
 }
 
 function openReleasePage() {
-  void sendToExtension(MESSAGE_NAMES.openUpdatePage, {})
+  // 打开 GitHub 页面失败不能产生 unhandled rejection（设置页/弹窗已有兜底文案）
+  void sendToExtension(MESSAGE_NAMES.openUpdatePage, {}).catch(() => undefined)
 }
 
 // Release 说明渲染：先整体转义再替换 markdown 标记（防注入，与 AnnouncementModal 同策略）

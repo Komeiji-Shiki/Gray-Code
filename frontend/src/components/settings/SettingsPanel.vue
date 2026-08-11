@@ -1069,7 +1069,10 @@ async function loadStorageConfig() {
 // 打开系统文件夹选择器
 async function pickStoragePath() {
   try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.selectFolder'], {}, { timeoutMs: 120000 })
+    // storagePath.selectFolder 已列入 UNBOUNDED_REQUEST_TYPES（对话框期间 promise 挂起
+    // 是预期行为）——显式传 timeoutMs 会覆盖该豁免，用户浏览深层目录超时后选择结果
+    // 会被当作迟到响应丢弃，customPath 不更新。不传即走 0（无超时）。
+    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.selectFolder'], {})
     if (response?.path) {
       storageSettings.customPath = response.path
     }
@@ -1365,7 +1368,19 @@ async function updateNow() {
     }
   } catch (error: any) {
     console.error('Failed to update now:', error)
-    updateCheckResult.value = { type: 'error', text: error?.message || t('components.settings.settingsPanel.update.error') }
+    // 后端错误码 → 本地化文案（后端兜底 message 为中文，en/ja 用户不能直接看到）
+    const codeText: Record<string, string> = {
+      UPDATE_NOW_DISABLED: t('components.settings.settingsPanel.update.disabledHint'),
+      UPDATE_NOW_CHECKING: t('components.settings.settingsPanel.update.checking'),
+      UPDATE_NOW_ERROR: t('components.settings.settingsPanel.update.error'),
+      UPDATE_NO_ASSET: t('components.settings.settingsPanel.update.noAsset'),
+      UPDATE_LAUNCH_FAILED: t('components.settings.settingsPanel.update.launchFailed'),
+      INSTALL_UPDATE_NO_ASSET: t('components.settings.settingsPanel.update.noAsset')
+    }
+    updateCheckResult.value = {
+      type: 'error',
+      text: (error?.code && codeText[error.code]) || error?.message || t('components.settings.settingsPanel.update.error')
+    }
   } finally {
     isUpdating.value = false
   }

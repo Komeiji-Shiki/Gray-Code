@@ -160,11 +160,23 @@ function resolveUserDataDir(): string {
   if (app.isPackaged) {
     // 便携版（portable target）：NSIS 启动器把程序解压到 %TEMP% 运行，进程退出后临时目录
     // 会被整目录删除；app.getPath('exe') 返回的是临时目录里的 exe，用它推导数据目录会把
-    // 全部数据写进临时目录并随退出丢失（每次启动都是“全新应用”，更新后也无法保留数据）。
+    // 全部数据写进临时目录并随退出丢失（每次启动都是"全新应用"，更新后也无法保留数据）。
     // 必须改用启动器注入的 PORTABLE_EXECUTABLE_DIR（便携 exe 实际所在目录）。
     const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
     if (portableDir) {
-      return path.join(path.resolve(portableDir), 'data');
+      const portableDataDir = path.join(path.resolve(portableDir), 'data');
+      // 与安装版分支同一套只读探测：便携 exe 位于只读介质（U 盘/网络共享/受限权限目录）
+      // 时数据目录不可写，若直接使用会静默丢全部会话/设置/记忆——回退系统 AppData。
+      if (probeWritable(portableDataDir)) {
+        return portableDataDir;
+      }
+      // 回退目录与安装版的 AppData/GrayCode 分开：两者同时存在时不互相串写数据，
+      // 也不因共享 userData 而互相占用单实例锁
+      const portableFallbackDir = path.join(app.getPath('appData'), 'GrayCodePortable');
+      console.warn(
+        `[main] portable data dir is not writable (${portableDataDir}), falling back to ${portableFallbackDir}`
+      );
+      return portableFallbackDir;
     }
     // 安装版 / zip 免安装版：数据目录与可执行文件同级（win-unpacked/GrayCode.exe → win-unpacked/data）
     const installDataDir = path.join(path.dirname(app.getPath('exe')), 'data');
@@ -356,21 +368,20 @@ async function injectDesktopRendererAssets(win: BrowserWindow): Promise<void> {
       overlayPath ? fs.promises.readFile(overlayPath, 'utf-8') : Promise.resolve(null)
     ]);
 
-    if (themeCss !== null) {
-      await insertCssOnce(win, themeCss, 'theme');
-    } else {
-      console.warn('[main] theme.css not found; UI will fall back to browser defaults');
-    }
-
-    if (codiconCss !== null) {
-      await insertCssOnce(win, codiconCss, 'codicons');
-    }
-
-    if (overlayJs !== null) {
-      await win.webContents.executeJavaScript(overlayJs, false).catch((err) => {
-        console.warn('[main] overlay.js injection failed:', err);
-      });
-    }
+    // 三类注入互不依赖（insertedCssKeys 按 keyName 分键），并行注入省两次跨进程 IPC 往返
+    await Promise.all([
+      themeCss !== null
+        ? insertCssOnce(win, themeCss, 'theme')
+        : Promise.resolve(console.warn('[main] theme.css not found; UI will fall back to browser defaults')),
+      codiconCss !== null
+        ? insertCssOnce(win, codiconCss, 'codicons')
+        : Promise.resolve(),
+      overlayJs !== null
+        ? win.webContents.executeJavaScript(overlayJs, false).catch((err) => {
+          console.warn('[main] overlay.js injection failed:', err);
+        })
+        : Promise.resolve()
+    ]);
   } catch (err) {
     console.warn('[main] Failed to inject renderer assets:', err);
   }
@@ -618,6 +629,11 @@ function createBackend(): void {
 
 /** BackendHost 懒加载就绪前到达的渲染层消息（窗口先于后端加载完成时排队，就绪后补投） */
 const pendingRendererMessages: unknown[] = [];
+/** 懒加载窗口期内消息缓冲上限：防止后端加载失败（弹窗等待用户确认）期间无限堆积内存 */
+const PENDING_MESSAGES_MAX = 200;
+/** 缓冲满丢弃统计（限频告警用） */
+let pendingDrops = 0;
+let lastPendingDropLogAt = 0;
 
 // 消息入口注册一次（不放在 createWindow 内，避免 macOS activate 重建窗口时重复注册，
 // 导致每条渲染层消息被处理两次）。同一窗口内的所有消息都走同一个入口。
@@ -626,8 +642,14 @@ ipcMain.on('graycode:renderer-to-backend', (event, message: any) => {
   if (!isTrustedSender(event)) return;
   if (backendHost) {
     void backendHost.handleRendererMessage(message);
-  } else {
+  } else if (pendingRendererMessages.length < PENDING_MESSAGES_MAX) {
     pendingRendererMessages.push(message);
+  } else {
+    // 缓冲区已满：静默丢弃会让对应前端请求悬挂到超时且无排障线索——限频告警
+    if (pendingDrops++ === 0 || Date.now() - lastPendingDropLogAt > 5000) {
+      lastPendingDropLogAt = Date.now();
+      console.warn(`[main] pending renderer message buffer full (${PENDING_MESSAGES_MAX}), dropping type=${String(message?.type || '?')}`);
+    }
   }
 });
 
@@ -1371,7 +1393,12 @@ if (!gotSingleInstanceLock) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     } else if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      // 第二次双击可能发生在首个实例完全就绪之前（便携版解压慢时最常见）：
+      // 此时 createWindow 会在 app ready 前抛错、协议也尚未注册，必须等 whenReady；
+      // 回调执行时再复查一次窗口，避免连续两次双击排队创建出两个窗口。
+      void app.whenReady().then(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      });
     }
   });
 }

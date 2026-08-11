@@ -217,6 +217,9 @@ export async function getDefinitions(uri: Uri, position: Position): Promise<Loca
   if (uri.scheme !== 'file') return [];
   let content: string;
   try {
+    const stat = await fsp.stat(uri.fsPath);
+    // 与 getDocumentSymbols 同一上限：超大文件跳过解析，避免全量正则扫描阻塞主进程
+    if (stat.size > MAX_FILE_BYTES) return [];
     content = await fsp.readFile(uri.fsPath, 'utf-8');
   } catch {
     return [];
@@ -231,6 +234,9 @@ export async function getReferences(uri: Uri, position: Position): Promise<Locat
   if (uri.scheme !== 'file') return [];
   let content: string;
   try {
+    const stat = await fsp.stat(uri.fsPath);
+    // 与 getDocumentSymbols 同一上限：超大文件跳过解析，避免全量正则扫描阻塞主进程
+    if (stat.size > MAX_FILE_BYTES) return [];
     content = await fsp.readFile(uri.fsPath, 'utf-8');
   } catch {
     return [];

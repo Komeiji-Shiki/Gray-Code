@@ -4,6 +4,9 @@
  * 安全加固：所有可被渲染层触发的操作都做输入校验。
  * - openExternal 仅允许 https/http/mailto
  * - openPath / showInFolder 拒绝可执行扩展名
+ * - update:launchInstaller 只允许启动「更新缓存目录」内的 .exe/.zip（一键更新安装包），
+ *   可执行文件启动是最高风险动作，白名单必须严格限定到该目录且不与其它的
+ *   可执行文件打开路径共用（否则 openPath 的 .exe 禁令形同虚设）。
  */
 
 import { dialog, shell, clipboard, BrowserWindow } from 'electron';
@@ -12,6 +15,17 @@ import * as path from 'path';
 
 let pickWorkspaceHandler: (() => void) | null = null;
 let openWorkspaceHandler: ((fsPath: string) => void) | null = null;
+
+/**
+ * 一键更新安装包允许启动的目录（<数据目录>/update）。
+ * 由 BackendHost 初始化时经 update:registerLaunchDir 注册（主进程直连 runNative，
+ * 渲染层不可达）；未注册（null）时 update:launchInstaller 一律拒绝。
+ */
+let updateLaunchDir: string | null = null;
+
+export function setUpdateLaunchDir(dir: string | null): void {
+  updateLaunchDir = dir ? path.resolve(dir) : null;
+}
 
 /** Set by main.ts: opens the "Open Workspace Folder" dialog. */
 export function setPickWorkspaceHandler(handler: (() => void) | null): void {
@@ -103,6 +117,7 @@ export async function runNative<T = any>(
       const dialogOptions: Electron.OpenDialogOptions = {
         title: options.title,
         buttonLabel: options.openLabel,
+        defaultPath: options.defaultUri?.fsPath,
         filters: normalizeDialogFilters(options.filters),
         properties: [
           ...(options.canSelectFiles !== false ? (['openFile'] as const) : []),
@@ -150,6 +165,33 @@ export async function runNative<T = any>(
       }
       await shell.openExternal(target);
       return { ok: true } as T;
+    }
+    case 'update:registerLaunchDir': {
+      // 主进程内部调用（BackendHost 初始化时注册一键更新下载目录）；
+      // 渲染层白名单不含本 op，不可达。
+      const dir = typeof payload?.dir === 'string' && payload.dir ? payload.dir : null;
+      setUpdateLaunchDir(dir);
+      return { ok: true } as T;
+    }
+    case 'update:launchInstaller': {
+      // 启动一键更新下载的安装包：路径必须位于已注册的更新目录内、
+      // 扩展名为 .exe/.zip 且文件确实存在（目录或任意路径一律拒绝）。
+      const target = typeof payload?.path === 'string' ? payload.path : '';
+      const resolved = target ? path.resolve(target) : '';
+      const insideUpdateDir = !!updateLaunchDir && !!resolved &&
+        (resolved === updateLaunchDir || resolved.startsWith(updateLaunchDir + path.sep));
+      const ext = path.extname(resolved).toLowerCase();
+      let isRegularFile = false;
+      try {
+        isRegularFile = fs.statSync(resolved).isFile();
+      } catch {
+        isRegularFile = false;
+      }
+      if (!insideUpdateDir || (ext !== '.exe' && ext !== '.zip') || !isRegularFile) {
+        return { ok: false, error: `Refusing to launch installer: ${target || '(empty)'}` } as T;
+      }
+      const launchError = await shell.openPath(resolved);
+      return { ok: !launchError } as T;
     }
     case 'clipboard:write':
       clipboard.writeText(String(payload?.text ?? ''));

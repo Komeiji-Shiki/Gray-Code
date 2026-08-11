@@ -14,6 +14,7 @@ export {
     parseReleaseResponse,
     resolveReleaseChannel,
     pickInstallerAsset,
+    isTrustedInstallerUrl,
 } from './UpdateChecker';
 
 export type {

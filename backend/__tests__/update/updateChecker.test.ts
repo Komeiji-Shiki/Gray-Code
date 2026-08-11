@@ -15,6 +15,7 @@ import {
     parseReleaseResponse,
     resolveReleaseChannel,
     pickInstallerAsset,
+    isTrustedInstallerUrl,
     UPDATE_CHECK_INTERVAL_MS,
 } from '../../modules/update/UpdateChecker';
 import * as vscode from 'vscode';
@@ -185,23 +186,42 @@ describe('parseReleaseResponse', () => {
         expect(info!.installerAssetUrl).toContain('P.exe');
     });
 
-    it('portable 形态无便携资产时回退 Setup（仍有更新可装）', () => {
+    it('portable 形态无便携资产时回退 zip（绝不回退 Setup 安装包）', () => {
+        const info = parseReleaseResponse({
+            tag_name: 'v1.7.6.1',
+            assets: [
+                { name: 'GrayCode.Setup.1.7.6-1.exe', browser_download_url: 'https://example.com/S.exe' },
+                { name: 'GrayCode-1.7.6-1-win.zip', browser_download_url: 'https://example.com/Z.zip' },
+            ],
+        }, 'portable');
+        expect(info!.installerAssetUrl).toContain('Z.zip');
+    });
+
+    it('portable 形态只有 Setup 资产时 installerAssetUrl 为 undefined（宁可不更新也不下错安装包）', () => {
         const info = parseReleaseResponse({
             tag_name: 'v1.7.6.1',
             assets: [
                 { name: 'GrayCode.Setup.1.7.6-1.exe', browser_download_url: 'https://example.com/S.exe' },
             ],
         }, 'portable');
-        expect(info!.installerAssetUrl).toContain('S.exe');
+        expect(info!.installerAssetUrl).toBeUndefined();
     });
 
-    it('pickInstallerAsset：无匹配时回退 zip', () => {
+    it('pickInstallerAsset：无匹配时回退 zip（installed 形态）', () => {
         const asset = pickInstallerAsset(
             [{ name: 'GrayCode-1.7.6.1-win.zip', browser_download_url: 'https://example.com/Z.zip' }],
             'portable',
         );
         expect(asset?.browser_download_url).toContain('Z.zip');
         expect(pickInstallerAsset([{ name: 'source.zip', browser_download_url: 'x' }], 'installed')).toBeUndefined();
+        // installed 形态只有 Setup 时优先 Setup
+        expect(pickInstallerAsset(
+            [
+                { name: 'GrayCode-Portable-1.7.6-1.exe', browser_download_url: 'x/P.exe' },
+                { name: 'GrayCode.Setup.1.7.6-1.exe', browser_download_url: 'x/S.exe' },
+            ],
+            'installed',
+        )?.browser_download_url).toContain('S.exe');
     });
 });
 
@@ -254,6 +274,23 @@ function createChecker(overrides: {
 function okResponse(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
+
+describe('isTrustedInstallerUrl', () => {
+    it('本仓库 GitHub Releases 下载地址放行', () => {
+        expect(isTrustedInstallerUrl(
+            'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.7.13/GrayCode.Setup.1.7.13.exe'
+        )).toBe(true);
+    });
+
+    it('非 github.com / 其它仓库 / 非 https / 非 releases/download 路径一律拒绝', () => {
+        expect(isTrustedInstallerUrl('http://github.com/czocelot/Gray-Code-Desktop/releases/download/v1/x.exe')).toBe(false);
+        expect(isTrustedInstallerUrl('https://evil.com/czocelot/Gray-Code-Desktop/releases/download/v1/x.exe')).toBe(false);
+        expect(isTrustedInstallerUrl('https://github.com/other-owner/Other-Repo/releases/download/v1/x.exe')).toBe(false);
+        expect(isTrustedInstallerUrl('https://github.com/czocelot/Gray-Code-Desktop/raw/main/x.exe')).toBe(false);
+        expect(isTrustedInstallerUrl('not a url')).toBe(false);
+        expect(isTrustedInstallerUrl('')).toBe(false);
+    });
+});
 
 describe('UpdateChecker.check', () => {
     test('关闭自动检查时状态为 disabled 且不发请求', async () => {
@@ -503,7 +540,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
             name: '',
             body: '',
             publishedAt: '',
-            installerAssetUrl: 'https://example.com/GrayCode.Setup.1.5.0.exe',
+            installerAssetUrl: 'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.5.0/GrayCode.Setup.1.5.0.exe',
         });
         expect(target).toContain('graycode-1.5.0-setup.exe');
         expect(fs.existsSync(target)).toBe(true);
@@ -519,7 +556,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
             fetchImpl: async () => new Response('Not Found', { status: 404 }),
         });
         await expect(checker.downloadAndInstall({
-            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', installerAssetUrl: 'https://example.com/x.exe',
+            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', installerAssetUrl: 'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.5.0/x.exe',
         })).rejects.toThrow(/404/);
         expect(vscode.env.openExternal).not.toHaveBeenCalled();
     });
@@ -530,8 +567,82 @@ describe('UpdateChecker.downloadAndInstall', () => {
             fetchImpl: async () => new Response('', { status: 200 }),
         });
         await expect(checker.downloadAndInstall({
-            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', installerAssetUrl: 'https://example.com/x.exe',
+            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', installerAssetUrl: 'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.5.0/x.exe',
         })).rejects.toThrow(/空/);
         expect(vscode.env.openExternal).not.toHaveBeenCalled();
+    });
+
+    it('openExternal 返回 false 时抛错（系统未能打开安装包，不再是静默假成功）', async () => {
+        (vscode.env.openExternal as jest.Mock).mockResolvedValueOnce(false);
+        const { checker } = createChecker({
+            fetchImpl: async () => new Response(Buffer.from('SETUP-EXE-CONTENT'), { status: 200 }),
+        });
+        const err = await checker.downloadAndInstall({
+            version: '1.5.0',
+            tagName: 'v1.5.0',
+            name: '',
+            body: '',
+            publishedAt: '',
+            installerAssetUrl: 'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.5.0/GrayCode.Setup.1.5.0.exe',
+        }).catch((e: Error & { code?: string }) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toContain('未能打开');
+        expect((err as Error & { code?: string }).code).toBe('UPDATE_LAUNCH_FAILED');
+        // 下载的文件仍保留（用户可手动打开）
+        const target = path.join((checker as any).options.globalStoragePath, 'update', 'graycode-1.5.0-setup.exe');
+        expect(fs.existsSync(target)).toBe(true);
+    });
+
+    it('无安装包资产抛错且带 UPDATE_NO_ASSET 码', async () => {
+        const { checker } = createChecker();
+        const err = await checker.downloadAndInstall({
+            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '',
+        }).catch((e: Error & { code?: string }) => e);
+        expect((err as Error).message).toContain('未附带安装包');
+        expect((err as Error & { code?: string }).code).toBe('UPDATE_NO_ASSET');
+    });
+
+    it('安装包下载地址不是本仓库 GitHub Releases：拒绝下载（UPDATE_URL_UNTRUSTED，防 RCE 链路）', async () => {
+        const fetchImpl = jest.fn(async () => new Response(Buffer.from('EVIL'), { status: 200 }));
+        const { checker } = createChecker({ fetchImpl });
+        const err = await checker.downloadAndInstall({
+            version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '',
+            installerAssetUrl: 'https://evil.example.com/payload.exe',
+        }).catch((e: Error & { code?: string }) => e);
+        expect((err as Error & { code?: string }).code).toBe('UPDATE_URL_UNTRUSTED');
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+});
+
+describe('UpdateChecker.onStatusChange', () => {
+    it('状态每次变更都回调（checking → updateAvailable；checking → upToDate）', async () => {
+        const seen: string[] = [];
+        const checker2 = new UpdateChecker({
+            isCheckEnabled: () => true,
+            storage: { get: () => undefined, update: jest.fn(async () => {}) },
+            globalStoragePath: fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-osc-')),
+            getCurrentVersion: () => '1.4.4',
+            fetchImpl: async () => okResponse({
+                tag_name: 'v1.5.0',
+                name: 'v1.5.0',
+                body: 'new',
+                assets: [{ name: 'GrayCode.Setup.1.5.0.exe', browser_download_url: 'https://example.com/GrayCode.Setup.1.5.0.exe' }],
+            }),
+            onStatusChange: (status) => seen.push(status.state),
+        });
+        await checker2.check();
+        expect(seen).toEqual(['checking', 'updateAvailable']);
+        // 已是最新时推送 upToDate
+        const seen2: string[] = [];
+        const checker3 = new UpdateChecker({
+            isCheckEnabled: () => true,
+            storage: { get: () => undefined, update: jest.fn(async () => {}) },
+            globalStoragePath: fs.mkdtempSync(path.join(os.tmpdir(), 'mm-update-osc2-')),
+            getCurrentVersion: () => '1.4.4',
+            fetchImpl: async () => okResponse({ tag_name: 'v1.4.4', assets: [] }),
+            onStatusChange: (status) => seen2.push(status.state),
+        });
+        await checker3.check();
+        expect(seen2).toEqual(['checking', 'upToDate']);
     });
 });

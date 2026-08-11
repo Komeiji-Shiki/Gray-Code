@@ -34,7 +34,14 @@ function createCtx(checker?: UpdateChecker) {
 function createChecker(status: any, downloadImpl?: jest.Mock) {
     return {
         check: jest.fn(async () => status),
-        downloadAndInstall: downloadImpl ?? jest.fn(async () => '/tmp/graycode-1.5.0-setup.exe'),
+        downloadAndInstall: downloadImpl ?? jest.fn(async (update: UpdateInfo) => {
+            if (!update.installerAssetUrl) {
+                const err = new Error('该 Release 未附带安装包，请前往 GitHub Releases 手动下载。') as Error & { code?: string };
+                err.code = 'UPDATE_NO_ASSET';
+                throw err;
+            }
+            return '/tmp/graycode-1.5.0-setup.exe';
+        }),
         getStatus: jest.fn(() => status),
     } as unknown as UpdateChecker;
 }
@@ -78,16 +85,16 @@ describe('UpdateHandlers updateNow', () => {
         expect(ctx.sendError).not.toHaveBeenCalled();
     });
 
-    test('自动检查关闭：报错', async () => {
+    test('自动检查关闭：报错（结构化错误码 UPDATE_NOW_DISABLED）', async () => {
         const checker = createChecker({ state: 'disabled' });
         const ctx = createCtx(checker);
         await updateNow({}, 'req_3', ctx);
 
         expect(ctx.sendResponse).not.toHaveBeenCalled();
-        expect(ctx.sendError).toHaveBeenCalledWith('req_3', 'UPDATE_NOW_ERROR', expect.stringContaining('关闭'));
+        expect(ctx.sendError).toHaveBeenCalledWith('req_3', 'UPDATE_NOW_DISABLED', expect.stringContaining('关闭'));
     });
 
-    test('检查失败：报错', async () => {
+    test('检查失败：报错（结构化错误码 UPDATE_NOW_ERROR）', async () => {
         const checker = createChecker({ state: 'error', checkedAt: 1, message: 'network down' });
         const ctx = createCtx(checker);
         await updateNow({}, 'req_4', ctx);
@@ -120,13 +127,36 @@ describe('UpdateHandlers updateNow', () => {
 });
 
 describe('UpdateHandlers installUpdate', () => {
-    it('无安装包资产：报错', async () => {
+    it('版本与 checker 当前状态不一致：拒绝（不信任渲染层传入的更新对象）', async () => {
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE });
         const ctx = createCtx(checker);
-        await installUpdate({ update: { ...FAKE_UPDATE, installerAssetUrl: undefined } }, 'req_7', ctx);
+        await installUpdate({ update: { ...FAKE_UPDATE, version: '9.9.9' } }, 'req_7', ctx);
 
         expect(ctx.sendResponse).not.toHaveBeenCalled();
-        expect(ctx.sendError).toHaveBeenCalledWith('req_7', 'INSTALL_UPDATE_ERROR', expect.any(String));
+        expect(ctx.sendError).toHaveBeenCalledWith('req_7', 'INSTALL_UPDATE_NO_ASSET', expect.any(String));
+    });
+
+    it('checker 解析的更新无安装包资产：透传 UPDATE_NO_ASSET 码', async () => {
+        const noAssetUpdate = { ...FAKE_UPDATE, installerAssetUrl: undefined };
+        const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: noAssetUpdate });
+        const ctx = createCtx(checker);
+        await installUpdate({ update: noAssetUpdate }, 'req_7', ctx);
+
+        expect(ctx.sendResponse).not.toHaveBeenCalled();
+        // checker.downloadAndInstall 抛出的结构化码经 handler 透传（本地化映射依赖它）
+        expect(ctx.sendError).toHaveBeenCalledWith('req_7', 'UPDATE_NO_ASSET', expect.stringContaining('未附带安装包'));
+    });
+
+    it('下载失败时透传 checker 抛出的结构化错误码（UPDATE_LAUNCH_FAILED）', async () => {
+        const launchErr = new Error('launch blocked') as Error & { code?: string };
+        launchErr.code = 'UPDATE_LAUNCH_FAILED';
+        const downloadImpl = jest.fn(async () => { throw launchErr; });
+        const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE }, downloadImpl);
+        const ctx = createCtx(checker);
+        await installUpdate({ update: FAKE_UPDATE }, 'req_8', ctx);
+
+        expect(ctx.sendResponse).not.toHaveBeenCalled();
+        expect(ctx.sendError).toHaveBeenCalledWith('req_8', 'UPDATE_LAUNCH_FAILED', expect.stringContaining('launch blocked'));
     });
 
     it('正常下载并回复成功', async () => {
