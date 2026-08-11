@@ -493,6 +493,33 @@ async function executeSubAgent(
     }
     // F2：父 runId（A-COMM 信箱身份），用于级联清理父子关系；主模型直接派发时缺省。
     const parentRunId = context?.mailboxRunId as string | undefined;
+    // 强制使用当前渠道（全局开关）：开启后所有已配置固定渠道的子代理忽略自身渠道，
+    // 运行时统一改用「派发方当前正在使用的渠道」（channelConfigId + channelModelId）——
+    // 主会话直接派发时为会话当前渠道；嵌套派发时为主 run 的渠道（与 General Worker
+    // 嵌套继承口径一致，父 run 非强制时嵌套子代理继承父 run 的固定渠道）。
+    // 与 General Worker 的继承口径一致（含 modelId——只换渠道不换模型会落到渠道默认
+    // 模型，默认模型配额/权限与主模型不同时报错）；替换发生在派发前，executor 内
+    // 的 runLoop/工具声明/嵌套派发统一消费 effectiveConfig，无需感知该开关。
+    // 注意：自定义 executor 不消费 effectiveConfig（request 不含 channel 字段），
+    // 该开关仅对默认 executor 生效。
+    let effectiveConfig = config;
+    if (getSubAgentsSettings().forceUseCurrentChannel === true) {
+        const channelConfigId = context?.channelConfigId as string | undefined;
+        if (!channelConfigId) {
+            return {
+                success: false,
+                error: `Global setting "force use current channel" is enabled, but no active channel `
+                    + `is available in the tool context for sub-agent "${agentName}".`
+            };
+        }
+        effectiveConfig = {
+            ...config,
+            channel: {
+                channelId: channelConfigId,
+                modelId: context?.channelModelId || undefined
+            }
+        };
+    }
     // H-1（R4 复查）：嵌套派发时继承父 run 的可用工具限制——
     // 子 run 最终可用工具 = 子配置解析结果 ∩ 父 run 可用工具（executor 内取交集）。
     // 父 run 的工具集由 executor 在解析后按 runId 注册（setRunAllowedTools），
@@ -510,7 +537,7 @@ async function executeSubAgent(
     const runtimeExecutor = customExecutor
         ? customExecutor
         : baseExecutorContext
-            ? createDefaultExecutor(config, {
+            ? createDefaultExecutor(effectiveConfig, {
                 ...baseExecutorContext,
                 conversationId,
                 conversationStore: context?.conversationStore as any,
@@ -622,8 +649,8 @@ async function executeSubAgent(
         let channelName = '';
         try {
             const configManager = getGlobalConfigManager();
-            const channelConfig = configManager && (await configManager.getConfig(config.channel.channelId));
-            channelName = channelConfig?.name || config.channel.channelId;
+            const channelConfig = configManager && (await configManager.getConfig(effectiveConfig.channel.channelId));
+            channelName = channelConfig?.name || effectiveConfig.channel.channelId;
         } catch {
             // channelName 仅供 UI 展示，查询失败不阻断子代理结果
         }
@@ -640,7 +667,7 @@ async function executeSubAgent(
                     runId: result.runId,
                     partialResponse: result.response,
                     channelName,
-                    modelId: config.channel.modelId,
+                    modelId: effectiveConfig.channel.modelId,
                     steps: result.steps,
                     toolsUsed: (result.toolCalls ?? []).map(tc => tc.tool)
                 }
@@ -656,7 +683,7 @@ async function executeSubAgent(
             runId: result.runId,
             [result.success ? 'response' : 'partialResponse']: result.response,
             channelName,
-            modelId: config.channel.modelId,
+            modelId: effectiveConfig.channel.modelId,
             steps: result.steps,
             // 子代理发起并受理的工具调用名列表（发给 AI）：让主模型了解子代理是否调用过
             // 工具及调用了哪些（空数组 = 未调用任何工具）。仅列名称，不包含参数/结果，
