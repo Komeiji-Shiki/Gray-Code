@@ -136,6 +136,9 @@ export class CheckpointOperationLockManager {
 
             // CP-LOCK-1: 取消信号作用于排队等待——abort 时把 pending 项移出队列并 reject，
             // 而不是等到锁授予后在任务内才失败（排队等待时间无上限）。
+            // M-CP-3: 排队等待有意不设超时兜底——长等待只可能由同工作区的其他存档操作/写工具
+            // 持有锁造成，属正常互斥而非死锁；异常长期占用由 CP-LOCK-4 队列容量上限（fail-fast）
+            // 与调用方 abort（取消信号）兜底，补超时会与「等待用户确认的写工具」合法长持锁冲突。
             if (abortSignal?.aborted) {
                 reject(new Error(CHECKPOINT_LOCK_CANCELLED_MESSAGE));
                 return;

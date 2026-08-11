@@ -31,6 +31,25 @@ export const CHECKPOINT_MANIFEST_FILENAME = 'manifest.json';
 /** CPF-LAZY-1: 重量级 files 映射的独立存储文件名（schema version 2 起） */
 export const CHECKPOINT_MANIFEST_FILES_FILENAME = 'files.json';
 
+/**
+ * 备份目录内元数据残留/元数据文件名判定（H3）。
+ *
+ * 写路径（writeManifestFiles）实际可能留下的元数据残留：
+ * - manifest.json.tmp / files.json.tmp：写失败或崩溃窗口的未提交临时文件（失败回滚 rm 回收，
+ *   崩溃则残留）；
+ * - files.json.prev：写新 files.json 前被暂存的旧配对（ATOMIC-PAIR 崩溃窗口回滚）。
+ * 只精确匹配这些已知残留名与两个正式元数据文件名，**禁止**用宽泛的 .tmp/.prev 后缀——
+ * 备份目录内用户的真实文件（如 notes.tmp、data.prev）不属元数据，恢复/统计/保留合并
+ * 不得跳过它们。注意不存在 manifest.json.prev（提交点 rename 前 metaTmpPath 仅以 .tmp 存在）。
+ */
+export function isCheckpointMetadataEntryName(name: string): boolean {
+    return name === CHECKPOINT_MANIFEST_FILENAME
+        || name === CHECKPOINT_MANIFEST_FILES_FILENAME
+        || name === `${CHECKPOINT_MANIFEST_FILENAME}.tmp`
+        || name === `${CHECKPOINT_MANIFEST_FILES_FILENAME}.tmp`
+        || name === `${CHECKPOINT_MANIFEST_FILES_FILENAME}.prev`;
+}
+
 /** files.json 磁盘载荷：checkpointId 与 filesRevision 用于与 manifest.json 配对一致性校验 */
 export interface CheckpointManifestFilesPayload {
     checkpointId: string;
