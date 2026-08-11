@@ -57,6 +57,23 @@ const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 
 /**
+ * 自动总结的确定性失败码：重试不会改变结果（范围失效/无内容可总结/质量不足/配置问题），
+ * 只会重复消耗一次总结模型生成调用。这些失败直接走 granular fallback 而非有界重试；
+ * 仅瞬时错误（UNKNOWN_ERROR / API 抖动等）保留重试机会。
+ */
+const DETERMINISTIC_AUTO_SUMMARIZE_FAILURES = new Set([
+    'STALE_RANGE',
+    'LOW_QUALITY_SUMMARY',
+    'EMPTY_SUMMARY',
+    'CONTEXT_OVERFLOW',
+    'NOT_ENOUGH_ROUNDS',
+    'NOT_ENOUGH_CONTENT',
+    'NO_MESSAGES_TO_SUMMARIZE',
+    'CONFIG_NOT_FOUND',
+    'CONFIG_DISABLED'
+]);
+
+/**
  * 流式取消时给在途早启动工具的收尾窗口（毫秒）。
  *
  * 流式边执行工具已产生真实副作用（写文件、跑命令），取消时若只结算"取消时刻已 settle"
@@ -867,7 +884,10 @@ export class ToolIterationLoopService {
 
                     // 总结失败：记录日志，但不要阻塞当前轮对话，继续正常请求
                     this.log.warn('stream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
-                    if (!isSummaryOnlyAborted && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                    // 确定性失败（范围失效/无内容/质量不足/配置问题）重试结果相同且白白消耗总结模型调用，
+                    // 直接放弃重试走 granular fallback；仅瞬时错误有界重试。
+                    const isDeterministicFailure = DETERMINISTIC_AUTO_SUMMARIZE_FAILURES.has(summarizeError.code);
+                    if (!isSummaryOnlyAborted && !isDeterministicFailure && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
                         iteration--;
                         continue;
                     }
@@ -1850,7 +1870,10 @@ export class ToolIterationLoopService {
 
                     // 总结失败：不阻塞当前请求，继续使用现有历史
                     this.log.warn('nonstream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
-                    if (summarizeError.code !== 'ABORTED' && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                    // 确定性失败不重试（与流式路径一致）：STALE_RANGE / 低质量 / 无内容等重试
+                    // 结果相同，只重复消耗总结模型调用，直接放弃重试走 granular fallback。
+                    const isDeterministicFailure = DETERMINISTIC_AUTO_SUMMARIZE_FAILURES.has(summarizeError.code);
+                    if (summarizeError.code !== 'ABORTED' && !isDeterministicFailure && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
                         iteration--;
                         continue;
                     }

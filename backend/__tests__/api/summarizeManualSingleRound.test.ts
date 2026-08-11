@@ -155,11 +155,11 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
     });
 });
 
-describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生效）', () => {
-    test('多轮历史（realUserCount > 1）范围覆盖第二轮用户消息：仍 STALE_RANGE', async () => {
+describe('SummarizeService.handleSummarizeContext - 放行边界', () => {
+    test('多轮历史（realUserCount > 1）范围覆盖最后一条真实用户消息：放行（用户主动总结预期行为）', async () => {
         // 两轮：规划预算 100 装不下任何保留后缀，切点被迫深入轮内（done，index 6）
-        // → insertIndex=6 > lastRealUserMessageIndex=3（user1），但真实用户消息有 2 条，
-        // 不属于「唯一真实用户回合」放行范围，保持 STALE。
+        // → insertIndex=6 > lastRealUserMessageIndex=3（user2）。手动总结是用户主动操作，
+        // 覆盖当前轮正是预期行为——单轮与多轮一致放行；首条用户消息保护仍生效。
         const twoRounds: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             userMsg('r2', 40), fcMsg('fc2', 40), frMsg('fc2', 40),
@@ -170,13 +170,24 @@ describe('SummarizeService.handleSummarizeContext - 放行边界（仅单轮生�
 
         const result = await service.handleSummarizeContext({ conversationId: 'conv1', configId: 'cfg1' });
 
-        expect(result.success).toBe(false);
-        if (!result.success) {
-            expect(result.error.code).toBe('STALE_RANGE');
+        expect(result.success).toBe(true);
+        if (result.success) {
+            // 标记 [1, 6)（r1 受首条用户消息保护不标记）= fc1/fr1/r2/fc2/fr2
+            expect(result.insertIndex).toBe(6);
+            expect(result.removedCount).toBe(5);
+            expect(result.summarizedMessageCount).toBe(5);
         }
-        // 不落盘：两轮对话原样保留
-        expect(liveHistory).toHaveLength(7);
-        expect(liveHistory.some(m => m.isSummary)).toBe(false);
+        // 逻辑截断：原文保留，被总结区间打标记，总结消息插入 index 6
+        expect(liveHistory).toHaveLength(8);
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[0].isSummarized).toBeUndefined();
+        expect(liveHistory[1]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[2]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[3]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[4]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[5]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[6]).toMatchObject({ isSummary: true, index: 6 });
+        expect(msgLabel(liveHistory[7])).toBe('done');
     });
 
     test('多轮 + 预算充足（正常路径）：照常成功，放行逻辑不介入', async () => {

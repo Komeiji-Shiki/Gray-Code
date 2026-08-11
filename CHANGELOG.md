@@ -8,6 +8,12 @@
 ## [Unreleased]
 
 ### Fixed
+  - 修复自动总结在「切点深入当前回合」场景白烧总结模型调用：planner 对多轮 + 当前轮超预算时会把轮内切点扩进当前轮，锁内 STALE 检查在 AI 生成完成后才拒绝——每次尝试都完整消耗一次总结模型生成。现 `resolveSummarizeRange`（auto 模式）把切点钳制到最后一条真实用户消息（保留整个当前回合、总结更早内容），单超大轮直接放弃规划（NOT_ENOUGH_ROUNDS，不再调 AI）；planner 保持通用（granular fallback 仍可深入当前长轮裁剪）。
+  - 修复自动总结收缩后只剩旧总结消息仍发起生成：`insertIndex <= historyStartIndex` 时直接返回 NO_MESSAGES_TO_SUMMARIZE，不再把无新增内容的请求发给总结模型。
+  - 自动总结失败重试优化：STALE_RANGE / LOW_QUALITY_SUMMARY / EMPTY_SUMMARY / CONTEXT_OVERFLOW / NOT_ENOUGH_ROUNDS / NOT_ENOUGH_CONTENT / NO_MESSAGES_TO_SUMMARIZE / CONFIG_NOT_FOUND / CONFIG_DISABLED 等确定性失败不再重试（重试结果相同且重复消耗总结模型调用），直接走 granular fallback；仅瞬时错误（UNKNOWN_ERROR 等）保留有界重试（流式与非流式路径同步）。
+  - 手动总结多轮放行：此前仅单轮（realUserCount === 1）允许总结范围覆盖最后一条真实用户消息，多轮 + 轮内截断时手动总结恒 STALE_RANGE 失败；现手动模式无论轮数一律放行（用户主动总结覆盖当前轮是预期行为），首条用户消息保护不变；自动总结保持严格 STALE。
+  - 修复 `auto.completed` 日志 `totalSummarizedCount` 用规划值（首条用户消息保护后实际标记数可能更小），改为以实际标记数为准。
+  - 测试：`summarizeOverflowTrim` 单超大轮用例改为 NOT_ENOUGH_ROUNDS + 不调 AI；新增多轮 + 当前轮超预算钳制用例；`summarizeManualSingleRound` 多轮放行用例；`nonStreamAutoSummarizeTurn` 确定性失败不重试 / 瞬时错误仍有界重试用例；harness `identifyRounds` 按真实轮数计算（planner 放弃时错误码语义准确）。
   - 修复记忆配置按作用域各自独立导致的「改了没反应」困惑：现配置全局统一——`MemoryManager` 新增共享 config 路径（默认 `<dataPath>/memory/config`），全局与所有工作区实例读写同一份配置（记忆数据 LOG/TREE 仍按作用域隔离）；`initMemoryManager` 初始化时固定共享路径（测试可经 `setGlobalMemoryConfigPath` 注入），工作区实例 `init()` 遇已存在的共享配置不再覆盖重写（此前初始化会把用户改好的全局配置重置为默认值）；`memory_config` 工具读配置改 `loadConfig()` 实时读盘（不再读实例内存缓存，跨作用域即时可见），`memory_note` 的 Too long 错误补充提示可用 `memory_config` 调整 `entryChars` 上限。新增 `memoryConfigTool.test.ts` 双向同步用例（全局改 → 工作区实例读到；工作区改 → 全局实例读到）。
 
 ## [1.5.1]

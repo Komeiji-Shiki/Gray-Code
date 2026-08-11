@@ -992,6 +992,19 @@ export class SummarizeService {
             // 循环结束（或未收缩）后按最终游标统一切片一次
             messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, insertIndex);
 
+            // 收缩后总结范围不再覆盖任何新消息（只剩旧总结消息本身）时，本次总结
+            // 没有可总结的新内容，直接放弃——继续调 AI 只会生成一份无新增信息的总结。
+            if (insertIndex <= historyStartIndex) {
+                this.log.warn('auto.no_new_messages_after_trim', { conversationId, historyStartIndex, insertIndex });
+                return {
+                    success: false,
+                    error: {
+                        code: 'NO_MESSAGES_TO_SUMMARIZE',
+                        message: t('modules.api.chat.errors.noMessagesToSummarize')
+                    }
+                };
+            }
+
             if (messagesToSummarize.length === 0) {
                 this.log.warn('auto.no_messages_after_trim', { conversationId });
                 return {
@@ -1224,7 +1237,8 @@ export class SummarizeService {
                 conversationId,
                 insertIndex: replaceResult.insertIndex,
                 removedCount,
-                totalSummarizedCount,
+                // 以实际标记数为准（首条用户消息保护可能使标记数小于规划值）
+                totalSummarizedCount: summaryContent.summarizedMessageCount,
                 promptTokens: beforeTokenCount,
                 completionTokens: afterTokenCount,
                 summaryTokenStats
@@ -1293,7 +1307,8 @@ export class SummarizeService {
      *        （单轮）时，轮内截断的切点必然位于轮首 user 消息之后，insertIndex 恒大于
      *        lastRealUserMessageIndex。此时没有「当前回合」需要保护——用户主动总结就是要
      *        覆盖这一轮的前半部分，允许落盘而不是放弃；自动总结保持严格 STALE（回合内
-     *        吞掉当前用户消息会毁掉回复上下文）。
+     *        吞掉当前用户消息会毁掉回复上下文）。手动总结无论轮数一律放行：多轮场景的
+     *        intra_round 扩展切进最后一轮同样是用户主动总结的预期行为。
      * @returns ok=true 时 markedCount = 实际标记的消息数，insertIndex = 总结消息的插入位置
      *          （= 入参 insertIndex，不因首条用户消息保护而改变）；
      *          ok=false 时 code='STALE_RANGE'（历史已变化，本次总结放弃，不落盘）
@@ -1343,20 +1358,14 @@ export class SummarizeService {
                 stale = true;
                 return history;
             }
-            if (insertIndex > lastRealUserMessageIndex) {
-                // 手动总结 + 单轮（历史中仅一条真实用户消息）时放行：轮内截断（intra_round）
-                // 的切点必然在轮首 user 消息之后，覆盖它正是用户主动总结的预期行为（把这一轮
-                // 的前半部分拿去总结），不存在「当前回合」需要保护；首条用户消息保护仍生效
-                // （标记起点从该消息之后开始），总结文本由 AI 生成。
+            if (insertIndex > lastRealUserMessageIndex && !allowCoverLastRealUserRound) {
+                // 手动总结（allowCoverLastRealUserRound=true）：覆盖最后一条真实用户消息
+                // 及其后的内容正是用户主动总结的预期——单轮与多轮一致放行（单轮场景
+                // 的轮内截断切点必然在轮首 user 消息之后，多轮场景的 intra_round 扩展同样
+                // 只会切进用户想要总结的当前轮）；首条用户消息保护仍生效（markStart 钳制）。
                 // 自动总结保持严格 STALE：回合内吞掉当前用户消息会毁掉回复上下文。
-                const realUserCount = history.reduce(
-                    (count, message) => count + (isRealUserMessage(message) ? 1 : 0),
-                    0
-                );
-                if (!allowCoverLastRealUserRound || realUserCount !== 1) {
-                    stale = true;
-                    return history;
-                }
+                stale = true;
+                return history;
             }
 
             // 首条用户消息保护：标记起点不早于它之后（i + 1），且不越过 insertIndex。
@@ -1536,11 +1545,52 @@ export class SummarizeService {
         });
 
         if (plan) {
-            const summarizeEndIndex = historyStartIndex + plan.cutIndex;
+            let cutIndex = plan.cutIndex;
+            // 自动总结严格保护当前回合：切点不得越过最后一条真实用户消息。
+            // 越过后 markAndInsertSummarizedAtomically 的锁内 STALE 检查会拒绝本次总结，
+            // 而拒绝发生在 AI 生成完成之后——白白消耗一次总结模型调用。钳制到当前回合
+            // 起点后：多轮时切点最多落在当前回合边界（保留整个当前回合，总结更早内容）；
+            // 单轮（唯一轮即当前回合）时无安全切点，直接放弃（不调 AI）。
+            // 手动总结不受此限制：用户主动总结覆盖当前轮正是预期行为（锁内放行）。
+            if (mode === 'auto') {
+                let lastRealUserMessageIndex = -1;
+                for (let i = historyAfterSummary.length - 1; i >= 0; i--) {
+                    if (isRealUserMessage(historyAfterSummary[i])) {
+                        lastRealUserMessageIndex = i;
+                        break;
+                    }
+                }
+                if (lastRealUserMessageIndex < 0) {
+                    // 无真实用户消息（异常历史）：无法安全总结
+                    return {
+                        ok: false,
+                        code: rounds.length === 0 ? 'NOT_ENOUGH_CONTENT' : 'NOT_ENOUGH_ROUNDS',
+                        currentRounds: rounds.length
+                    };
+                }
+                if (lastRealUserMessageIndex === 0) {
+                    // 单轮（唯一真实用户消息就是第一条）：切点必在轮首 user 之后，
+                    // 任何总结范围都会覆盖当前回合 → 直接放弃，避免白烧 AI 生成。
+                    return {
+                        ok: false,
+                        code: 'NOT_ENOUGH_ROUNDS',
+                        currentRounds: rounds.length
+                    };
+                }
+                cutIndex = Math.min(cutIndex, lastRealUserMessageIndex);
+                if (cutIndex <= 0) {
+                    return {
+                        ok: false,
+                        code: 'NOT_ENOUGH_ROUNDS',
+                        currentRounds: rounds.length
+                    };
+                }
+            }
+            const summarizeEndIndex = historyStartIndex + cutIndex;
             if (plan.boundary === 'intra_round') {
                 this.log.info(`${mode}.intra_round_split`, {
                     conversationId,
-                    cutIndex: plan.cutIndex,
+                    cutIndex,
                     summarizeEndIndex,
                     keepBudgetTokens
                 });
