@@ -2,6 +2,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { t } from '../../i18n';
 import { IS_WINDOWS } from './textUtils';
 
@@ -195,8 +196,79 @@ export function toFileUri(pathStr: string): vscode.Uri {
     return vscode.Uri.file(trimmed);
 }
 
+/**
+ * 将路径解析为用于比较的规范绝对路径（realpath-aware）。
+ *
+ * 修改原因：旧比较只做词法规范化（path.resolve + 字符串前缀比较），工作区内指向工作区外的
+ * 符号链接会通过词法前缀比较被误判为“在工作区内”，绕过 deny/ask 策略
+ * （read_file/write_file/delete_file 等的 outside-workspace 判定链共用 normalizePathForComparison）。
+ * 修改方式：对路径本身（或其最近的存在祖先）做 fs.realpathSync.native 解析后，再拼接不存在的
+ * 尾部段，把解析结果用于前缀比较；不存在/无权限/符号链接循环/realpath 实现缺失（如测试 mock
+ * 掉的 fs）时降级为词法路径。
+ *
+ * 性能说明：仅在工作区内外判定与路径比较处调用（每工具调用每路径一次），同步 realpath 的开销
+ * 可接受；不存在的路径会向上找最近的存在祖先，最多一次目录树深度。
+ *
+ * 另：backend/core/fileWriteLockManager 的锁 key 归一化（resolveLockPath，backend/core/ 不在
+ * 本目录修改域）目前仍用词法 fsPath；如需让同一物理文件（经符号链接）的不同写法映射到同一锁
+ * key，可复用本函数（导出）。
+ */
+export function resolveRealpathForComparison(fsPath: string): string {
+    const absolute = path.resolve(fsPath);
+    // realpathSync 可能被测试 mock 掉（jest.mock('fs') 只保留部分 API），缺失时降级词法路径
+    const realpathSync = typeof (fs as any).realpathSync?.native === 'function'
+        ? (fs as any).realpathSync.native
+        : undefined;
+    if (!realpathSync) {
+        return absolute;
+    }
+
+    let current = absolute;
+    const tail: string[] = [];
+    while (true) {
+        try {
+            const real = realpathSync(current) as string;
+            // tail 经 unshift 构建：unshift 把后失败（更浅）的段放数组前，故 tail 已是
+            // 「浅→深」的正确拼接顺序（如 ['workspace','project','src','index.ts']）。
+            // 注意：不能再 reverse()——那会拼出 D:\index.ts\src\project\workspace 的错乱路径。
+            const combined = tail.length === 0 ? real : path.join(real, ...tail);
+            return stripWindowsLongPathPrefix(combined);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException)?.code;
+            // 只有“路径不存在”才向上找最近的已存在祖先；无权限（EACCES）、符号链接循环
+            // （ELOOP）等其他失败直接降级词法路径，避免把不可解析路径误判为真实路径。
+            if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+                return absolute;
+            }
+            const parent = path.dirname(current);
+            if (parent === current) {
+                return absolute;
+            }
+            tail.unshift(path.basename(current));
+            current = parent;
+        }
+    }
+}
+
+/**
+ * 去掉 Windows realpath 输出可能带上的长路径前缀（\\?\ 与 \\?\UNC\）。
+ *
+ * fs.realpathSync.native 在 Windows 长路径/UNC 下会返回 \\?\ 前缀路径，直接参与字符串前缀
+ * 比较会让同一物理文件出现两种写法（//?/C:/... 与 C:/...），必须统一为普通盘符/UNC 路径形式。
+ * POSIX 路径不含该前缀，调用无副作用。
+ */
+function stripWindowsLongPathPrefix(p: string): string {
+    if (p.startsWith('\\\\?\\UNC\\')) {
+        return '\\\\' + p.slice(8);
+    }
+    if (p.startsWith('\\\\?\\')) {
+        return p.slice(4);
+    }
+    return p;
+}
+
 export function normalizePathForComparison(fsPath: string): string {
-    let normalized = path.resolve(fsPath).replace(/\\/g, '/');
+    let normalized = resolveRealpathForComparison(fsPath).replace(/\\/g, '/');
     if (normalized.length > 1) {
         normalized = normalized.replace(/\/+$/, '');
     }
