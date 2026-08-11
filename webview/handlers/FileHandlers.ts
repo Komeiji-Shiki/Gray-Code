@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
-import { resolveUriWithInfo } from '../../backend/tools/utils';
+import { resolveUriWithInfo, isPathInsideOrEqualReal } from '../../backend/tools/utils';
 import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute, resolveWorkspaceFolderByUri } from '../utils/WorkspaceUtils';
 import { assertSafeId } from '../../backend/core/idValidation';
 import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
@@ -630,6 +630,13 @@ export const readWorkspaceTextFile: MessageHandler = async (data, requestId, ctx
       return;
     }
 
+    // realpath 复核（与桌面工具链同口径）：词法包含通过但工作区内符号链接指向工作区外时，
+    // 真实位置判定为外部，拒绝读取（移动端读文件路径与桌面 read_file 的护栏对齐）
+    if (!isPathInsideOrEqualReal(fileUri.fsPath, workspaceFolder.uri.fsPath)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
     const stat = await vscode.workspace.fs.stat(fileUri);
     if (stat.size > MAX_TEXT_FILE_SIZE_BYTES) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.readFileFailed') });
@@ -690,6 +697,13 @@ export const writeWorkspaceTextFile: MessageHandler = async (data, requestId, ct
       return;
     }
 
+    // realpath 复核（与桌面工具链同口径）：符号链接指向工作区外时拒绝写入；
+    // 新建文件路径经「最近存在祖先」解析，父目录在工作区内即放行
+    if (!isPathInsideOrEqualReal(fileUri.fsPath, workspaceFolder.uri.fsPath)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
     if (Buffer.byteLength(content, 'utf-8') > MAX_TEXT_FILE_SIZE_BYTES) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.readFileFailed') });
       return;
@@ -732,6 +746,12 @@ export const readWorkspaceFileForInput: MessageHandler = async (data, requestId,
     const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, relativePath);
 
     if (!isUriInsideWorkspace(fileUri)) {
+      ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
+      return;
+    }
+
+    // realpath 复核（与桌面工具链同口径）：工作区内符号链接指向工作区外时拒绝读取
+    if (!isPathInsideOrEqualReal(fileUri.fsPath, workspaceFolder.uri.fsPath)) {
       ctx.sendResponse(requestId, { success: false, error: t('webview.errors.fileNotInWorkspace') });
       return;
     }

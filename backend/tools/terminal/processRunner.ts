@@ -24,7 +24,6 @@ import { TaskManager, type TaskEvent } from '../taskManager';
 import { getAllWorkspaces, getWorkspaceByUri, parseWorkspacePath } from '../utils';
 import {
     getShellConfig,
-    checkShellAvailability,
     getShellAvailabilityWithReason,
     getAvailableShellsDescription,
     getDefaultShellName,
@@ -895,8 +894,11 @@ function setTerminalProcessPriority(pid: number | undefined, background: boolean
     try {
         if (os.platform() === 'win32') {
             const priorityClass = background ? 'BelowNormal' : 'Normal';
-            cp.exec(
-                `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'"`,
+            // 参数通过 argv 传递，不拼进 shell 命令（纵深防御；pid 为 Node 内部数值、
+            // priorityClass 为硬编码常量，当前无注入面）
+            cp.execFile(
+                'powershell.exe',
+                ['-NoProfile', '-Command', `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'`],
                 { windowsHide: true, timeout: 5000 },
                 () => { /* 失败静默：优先级是软约束 */ }
             );

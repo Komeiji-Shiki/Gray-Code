@@ -991,10 +991,13 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
 
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
+                const errorName = error instanceof Error ? error.name : '';
                 // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError 拒绝，
                 // 仅凭 errorMessage 会把请求超时误判为用户取消。以用户 abortSignal 是否真的 aborted 为准。
                 const isCancelled = abortSignal.aborted === true ||
-                    errorMessage.includes('cancelled');
+                    (errorName === 'AbortError' && !abortSignal) ||
+                    errorMessage.includes('cancelled') ||
+                    errorMessage.includes('canceled');
 
                 TaskManager.unregisterTask(
                     toolId,

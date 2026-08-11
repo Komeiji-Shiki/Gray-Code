@@ -96,9 +96,10 @@ export class StreamRequestHandler {
     // 确保前端一定能收到 cancelled 事件以清理占位消息
     const delivered = processor.processChunk({ cancelled: true })
     processor.flush()
-    // 视图不可达（已销毁/重建）时 processChunk 返回 false：留痕便于排查占位消息残留
+    // 视图不可达（已销毁/重建）时 processChunk 返回 false：面板关闭触发 H6 中止属
+    // 设计内路径，降级为 debug 留痕（仅「从未有消费者」的后台流异常才值得告警）
     if (!delivered) {
-      console.warn('[StreamRequestHandler] Cancelled event not delivered: target view unreachable')
+      console.debug('[StreamRequestHandler] Cancelled event not delivered: target view unreachable')
     }
   }
 

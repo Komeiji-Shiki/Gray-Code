@@ -74,12 +74,21 @@ describe('compareVersions', () => {
         expect(compareVersions('1.0.0-alpha', '1.0.0-beta')).toBe(-1);
     });
 
-    it('nightly 预发布视为高于同主版本正式版，nightly 之间按日期比较', () => {
-        expect(compareVersions('1.4.6-nightly.20260810', '1.4.6')).toBe(1);
-        expect(compareVersions('1.4.6', '1.4.6-nightly.20260809')).toBe(-1);
+    it('预发布标识符逐段比较：数字段按数值（beta.10 > beta.2，修复字典序误判）', () => {
+        expect(compareVersions('1.4.6-beta.10', '1.4.6-beta.2')).toBe(1);
+        expect(compareVersions('1.4.6-beta.2', '1.4.6-beta.10')).toBe(-1);
+        expect(compareVersions('1.4.6-beta.1', '1.4.6-beta.1')).toBe(0);
+        // 段数少者更旧（beta < beta.1）
+        expect(compareVersions('1.4.6-beta', '1.4.6-beta.1')).toBe(-1);
+        // 数字段 < 字母数字段
+        expect(compareVersions('1.4.6-beta.1', '1.4.6-beta.rc')).toBe(-1);
+    });
+
+    it('nightly 形态按 semver 预发布语义判旧（fork 已移除 nightly 渠道，无特殊放行）', () => {
+        expect(compareVersions('1.4.6-nightly.20260810', '1.4.6')).toBe(-1);
+        expect(compareVersions('1.4.6', '1.4.6-nightly.20260809')).toBe(1);
         expect(compareVersions('1.4.6-nightly.20260810', '1.4.6-nightly.20260809')).toBe(1);
         expect(compareVersions('1.4.6-nightly.20260809', '1.4.6-nightly.20260809')).toBe(0);
-        expect(compareVersions('1.4.7', '1.4.6-nightly.20260810')).toBe(1);
     });
 });
 

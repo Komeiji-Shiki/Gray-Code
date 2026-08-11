@@ -115,14 +115,20 @@ export function compareVersions(a: string, b: string): number {
         prerelease: boolean;
     } => {
         const raw = stripVersionPrefix(v);
-        const suffix = raw.includes('-') ? raw.split('-')[1] : null;
-        // 预发布标识符段：纯数字段转数值（按数值比较），其余保留字符串（按字典序比较）；
-        // 数字开头的构建号（-2dev / -10dev）由 normalizeVersion 并入版本段，不属预发布。
+        const dash = raw.indexOf('-');
+        const main = dash >= 0 ? raw.slice(0, dash) : raw;
+        const suffix = dash >= 0 ? raw.slice(dash + 1) : null;
+        // 版本段只取主版本部分：语义预发布的 dash 段（-beta、-nightly.x）绝不能并入版本段，
+        // 否则 `1.4.6-nightly.20260810` 的日期段会被 parseInt 误当第四版本段（语义错误）。
+        // 数字开头的构建号（-2dev / -10dev，electron-builder 形态）并入版本段成为第四段，
+        // 与 fork 的 normalizeVersion 口径一致。
+        const buildMerge = suffix !== null && /^\d/.test(suffix) ? `.${suffix}` : '';
+        // 预发布标识符段：纯数字段转数值（按数值比较），其余保留字符串（按字典序比较）
         const prereleaseSegs = suffix !== null && !/^\d/.test(suffix)
             ? suffix.split('.').map(seg => (/^\d+$/.test(seg) ? parseInt(seg, 10) : seg))
             : null;
         return {
-            nums: normalizeVersion(raw).split('.').map(n => parseInt(n, 10) || 0),
+            nums: `${main}${buildMerge}`.split('.').map(n => parseInt(n, 10) || 0),
             prereleaseSegs,
             prerelease: prereleaseSegs !== null
         };
@@ -501,8 +507,8 @@ export class UpdateChecker {
 
     /**
      * 渠道等影响检查结果的条件变化时调用：清除内存状态并重置节流时间戳，
-     * 使下一次检查（含启动自动检查）按新条件重新拉取，
-     * 避免旧渠道的缓存结果（如 Nightly 徽章/可安装项）残留到新渠道。
+     * 使下一次检查（含启动自动检查）按新条件重新拉取。
+     * （fork 已移除 nightly 渠道，本方法仅保留为状态重置入口，供测试与未来渠道扩展使用）
      */
     resetStatus(): void {
         // 代际计数递增：使在途 check() 的结果作废（check 在写回状态/存储前校验代际，

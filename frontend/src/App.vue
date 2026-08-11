@@ -640,10 +640,17 @@ function applyDesktopTheme(theme?: string): void {
   document.body.classList.toggle('graycode-desktop-theme-light', isLight)
   document.body.classList.toggle('vscode-light', isLight)
   document.body.classList.toggle('vscode-dark', !isLight)
+  // 设置加载完成前不发送 app.setTheme：主进程启动时已同步预读保存的主题
+  // （main.ts resolveSavedTheme → applyDesktopThemeToWindow），此刻发送默认 'auto'
+  // 会把 themeSource 从预读的 light/dark 重置为 system，启动窗口期原生控件闪回系统色
+  if (!themeLoadedFromSettings) return
   // 上报主进程：同步原生窗口背景色 + nativeTheme.themeSource（系统对话框、
   // 原生控件、prefers-color-scheme 随应用主题而非系统；auto 时传 auto 由主进程解析）
   sendToExtension('app.setTheme', { theme: theme ?? 'auto' }).catch(() => { /* 主进程无需应答，失败无害 */ })
 }
+
+/** 设置（含主题）是否已从后端加载完成；用于主题上报的启动 clobber 防护 */
+let themeLoadedFromSettings = false
 
 // 外观设置变更 → 立即应用：主题（含 auto 跟随系统监听）与 UI 不透明度（CSS 变量）。
 // immediate: 启动路径兜底——loadLanguageSettings 失败/缓慢时也至少按默认值应用一次，
@@ -719,13 +726,13 @@ async function loadLanguageSettings() {
       }
     }
 
-    // 应用桌面版主题（light / dark / auto），并同步到 store（watch 负责后续变更即时生效）
+    // 应用桌面版主题（light / dark / auto）：setTheme 触发上方 watch 统一应用
+    // （body class + matchMedia 监听 + app.setTheme 上报），此处无需重复调用
     const savedTheme = response?.settings?.ui?.theme
     settingsStore.setTheme(
       savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto' ? savedTheme : 'auto'
     )
-    applyDesktopTheme(response?.settings?.ui?.theme)
-    watchDesktopThemeMedia(response?.settings?.ui?.theme)
+    themeLoadedFromSettings = true
 
     // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
     configureSoundSettings(response?.settings?.ui?.sound)

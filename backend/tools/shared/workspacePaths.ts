@@ -371,7 +371,12 @@ function resolveRealPathOrNearestExisting(filePath: string): string | null {
             try {
                 const ancestor = nearestExistingAncestorOf(filePath);
                 if (ancestor !== null) {
-                    const stat = fsSync.statSync(ancestor, { throwIfNoEntry: false });
+                    // 路径自身存在时用 lstat：statSync 跟随链接取目标 mtime，链接被重定向
+                    // （换目标）而目标 mtime 不变时缓存不会失效；lstat 取链接自身 mtime，
+                    // 重定向必然更新，缓存随之作废。
+                    const stat = ancestor === filePath
+                        ? fsSync.lstatSync(ancestor, { throwIfNoEntry: false })
+                        : fsSync.statSync(ancestor, { throwIfNoEntry: false });
                     if (stat && stat.mtimeMs === cached.ancestorMtimeMs) {
                         return cached.resolved;
                     }
@@ -411,22 +416,29 @@ function resolveRealPathOrNearestExisting(filePath: string): string | null {
         result = path.join(result, ...trailing);
     }
 
-    // 记录最近存在祖先的 mtime，用于缓存失效判断
+    // 记录最近存在祖先的 mtime，用于缓存失效判断（与命中校验同口径：路径自身用 lstat）
     let ancestorMtimeMs = 0;
     try {
         const ancestor = nearestExistingAncestorOf(filePath);
         if (ancestor !== null) {
-            const stat = fsSync.statSync(ancestor, { throwIfNoEntry: false });
+            const stat = ancestor === filePath
+                ? fsSync.lstatSync(ancestor, { throwIfNoEntry: false })
+                : fsSync.statSync(ancestor, { throwIfNoEntry: false });
             ancestorMtimeMs = stat?.mtimeMs ?? 0;
         }
     } catch {
         ancestorMtimeMs = 0;
     }
 
-    if (realPathCache.size >= REAL_PATH_CACHE_MAX) {
-        realPathCache.clear();
+    // 解析失败（realpathSync 缺失/整棵祖先链不可解析）时不入缓存：失败条目若被缓存，
+    // 命中路径会跳过 mtime 复检直接返回空值，isPathInsideOrEqualReal 因此永久退化为
+    // 纯词法判定（fail-open 边缘）。不缓存则每次调用重试，真实路径一旦可解析立即恢复。
+    if (result !== null) {
+        if (realPathCache.size >= REAL_PATH_CACHE_MAX) {
+            realPathCache.clear();
+        }
+        realPathCache.set(filePath, { resolved: result, ancestorMtimeMs });
     }
-    realPathCache.set(filePath, { resolved: result ?? '', ancestorMtimeMs });
     return result;
 }
 
