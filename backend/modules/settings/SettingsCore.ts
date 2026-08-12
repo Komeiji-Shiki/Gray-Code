@@ -13,6 +13,7 @@ import type {
 } from './types';
 import { DEFAULT_GLOBAL_SETTINGS } from './types';
 import { deepEqual } from '../../core/deepEqual';
+import { deepMerge } from '../../core/deepMerge';
 
 /**
  * 合并键黑名单：webview 消息直接透传进 updateSettings（SettingsHandler 无键白名单），
@@ -32,36 +33,22 @@ function isSafeMergeKey(key: string): boolean {
  * 浅合并会让用户手写的部分配置整体替换嵌套默认对象（如只写一个子字段时
  * 其它子字段全部丢失），这里对纯对象逐层合并。
  *
- * 与 core/deepMerge.ts 的 deepMerge 语义差异（保留本地实现、不强制合一的原因）：
- * - 覆盖值为 undefined 时保留目标旧值（对齐 deepMergeConfig 语义：显式 undefined 不应把
- *   顶层键整体置空，如 toolsConfig: undefined 会删掉全部工具配置）；
- * - 覆盖值为 null 时本实现显式写入 null（updateSettings 接收 webview 消息，null 清空字段
- *   语义依赖前者；core.deepMerge 保留目标值）；
- * - 类型冲突（目标非纯对象、源为纯对象）时本实现直接复用源引用；
- *   core.deepMerge 生成源对象副本（getToolsConfigEntry 已用 cloneConfig 兜底拷贝）。
+ * 已收敛为 core/deepMerge.ts 参数化 deepMerge 的薄封装，不再保留本地递归实现。
+ * 对非循环输入与历史本地实现逐字节等价（另额外获得循环引用防护）：
+ * - nullMode: 'write'：覆盖值为 null 时显式写入 null（updateSettings 接收 webview 消息，
+ *   null 清空字段语义依赖此行为；core.deepMerge 默认 'keep' 会保留目标值）；
+ * - conflictMode: 'reuse-source'：类型冲突（目标非纯对象、源为纯对象）时直接复用源引用
+ *   （getToolsConfigEntry 已用 cloneConfig 兜底拷贝）；
+ * - undefinedMode: 'skip'：覆盖值为 undefined 时跳过该键、不创建 own 属性（对齐 deepMergeConfig
+ *   语义），避免 toolsConfig: undefined 等顶层键整体置空删除全部配置。
+ * 原型污染键防护（__proto__/constructor/prototype）与循环引用防护由 core 统一提供。
  */
 export function deepMergeToolsConfig<T extends object>(base: T, override: Partial<T>): T {
-    const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };
-    for (const [key, value] of Object.entries(override)) {
-        if (!isSafeMergeKey(key)) {
-            continue;
-        }
-        if (value === undefined) {
-            // 显式 undefined 保留旧值（对齐 deepMergeConfig 语义），
-            // 避免 toolsConfig: undefined 等顶层键整体置空删除全部配置
-            continue;
-        }
-        const baseValue = (base as Record<string, unknown>)[key];
-        if (
-            value !== null && typeof value === 'object' && !Array.isArray(value) &&
-            baseValue !== null && typeof baseValue === 'object' && !Array.isArray(baseValue)
-        ) {
-            out[key] = deepMergeToolsConfig(baseValue as object, value as object);
-        } else {
-            out[key] = value;
-        }
-    }
-    return out as T;
+    return deepMerge(base, override, {
+        nullMode: 'write',
+        conflictMode: 'reuse-source',
+        undefinedMode: 'skip'
+    }) as T;
 }
 
 /**
