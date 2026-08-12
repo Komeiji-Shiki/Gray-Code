@@ -69,6 +69,23 @@ import {
     createResizeImageTool,
     createRotateImageTool
 } from '../tools/media';
+import { createWriteFileTool } from '../tools/file/write_file';
+import { createListFilesTool } from '../tools/file/list_files';
+import { createDeleteFileTool } from '../tools/file/delete_file';
+import { createCreateDirectoryTool } from '../tools/file/create_directory';
+import { createInsertCodeTool } from '../tools/file/insert_code';
+import { createDeleteCodeTool } from '../tools/file/delete_code';
+import { createApplyDiffTool } from '../tools/file/diff/declaration';
+import { createSearchInFilesTool } from '../tools/search/declaration';
+import { createFindFilesTool } from '../tools/search/find_files';
+import { createGetSymbolsTool } from '../tools/lsp/get_symbols';
+import { createGotoDefinitionTool } from '../tools/lsp/goto_definition';
+import { createFindReferencesTool } from '../tools/lsp/find_references';
+import { createExecuteCommandTool } from '../tools/terminal/processRunner';
+import { createHistorySearchTool } from '../tools/history/history_search';
+import { getReadSkillTool } from '../tools/skills/readSkill';
+import { createSubAgentsTool } from '../tools/subagents/subagents';
+import { createAgentSendMessageTool } from '../tools/subagents/agentSendMessage';
 import { createSkillsManager, getSkillsManager } from '../modules/skills';
 import { initMemoryManager } from '../modules/memory';
 import { registerMaintenanceCommands } from '../tools/maintenance/commands';
@@ -393,6 +410,29 @@ export class BackendRuntime {
         registerToolDeclarationFactory('crop_image', (args) => createCropImageTool(args.maxBatchTasks));
         registerToolDeclarationFactory('resize_image', (args) => createResizeImageTool(args.maxBatchTasks));
         registerToolDeclarationFactory('rotate_image', (args) => createRotateImageTool(args.maxBatchTasks));
+
+        // 模型工具声明国际化：为 17 个半动态工具注册声明工厂（M-i18n）。
+        // 描述语言（zh-CN → 中文，en/ja → 英文）与动态信息（工作区列表、shell 列表、
+        // 技能列表、代理列表、MAX_HOP_DEPTH、截断行数等）由工厂每次调用时重新构建，
+        // 语言切换后 resolver 按需重建声明；这些工具不依赖解析选项，factory 忽略 args。
+        // 懒创建：每次调用重建，不要缓存（语义与 read_file/图片工具注册一致）。
+        registerToolDeclarationFactory('write_file', () => createWriteFileTool());
+        registerToolDeclarationFactory('list_files', () => createListFilesTool());
+        registerToolDeclarationFactory('delete_file', () => createDeleteFileTool());
+        registerToolDeclarationFactory('create_directory', () => createCreateDirectoryTool());
+        registerToolDeclarationFactory('insert_code', () => createInsertCodeTool());
+        registerToolDeclarationFactory('delete_code', () => createDeleteCodeTool());
+        registerToolDeclarationFactory('apply_diff', () => createApplyDiffTool());
+        registerToolDeclarationFactory('search_in_files', () => createSearchInFilesTool());
+        registerToolDeclarationFactory('find_files', () => createFindFilesTool());
+        registerToolDeclarationFactory('get_symbols', () => createGetSymbolsTool());
+        registerToolDeclarationFactory('goto_definition', () => createGotoDefinitionTool());
+        registerToolDeclarationFactory('find_references', () => createFindReferencesTool());
+        registerToolDeclarationFactory('execute_command', () => createExecuteCommandTool());
+        registerToolDeclarationFactory('history_search', () => createHistorySearchTool());
+        registerToolDeclarationFactory('read_skill', () => getReadSkillTool());
+        registerToolDeclarationFactory('subagents', () => createSubAgentsTool());
+        registerToolDeclarationFactory('agent_send_message', () => createAgentSendMessageTool());
 
         // 注册 SubAgent 可用性查询（A1：modules 层经 core 桥读取，tools 层实现在组合根注入）。
         // 幂等：覆盖式注册，重试初始化重复调用安全；查询函数在工具声明解析时才执行，

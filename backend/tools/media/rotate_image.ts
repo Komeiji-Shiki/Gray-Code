@@ -23,6 +23,9 @@ import { readImageFile } from './imageUtils';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
+import { buildRotateImageDescriptions } from '../localization/dynamicDescriptions';
 
 /** 旋转任务类型常量 */
 const TASK_TYPE_ROTATE = 'rotate_image';
@@ -348,37 +351,18 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
 
-    let description = `Rotate image tool. Rotates images clockwise to specified angle.
+    // 语言感知说明：根据当前实际界面语言（zh-CN/en/ja）生成模型可见说明。
+    // 顶层说明（Limits、多根尾巴）与参数说明统一由
+    // localization/dynamicDescriptions 的语言感知生成器负责。
+    const lang = resolveLocalizationLanguage(getActualLanguage());
+    const descriptions = buildRotateImageDescriptions({
+        lang,
+        maxBatchTasks,
+        isMultiRoot,
+        workspaceNames: workspaces.map(w => w.name)
+    });
 
-**Features**:
-- Supports any rotation angle (positive, negative, over 360 degrees)
-- Positive angles rotate clockwise
-- Negative angles rotate counter-clockwise
-- Automatically calculates minimum bounding rectangle canvas
-
-**Background Fill**:
-- PNG/WebP: Transparent background
-- JPEG: Black background
-
-**Parameters**:
-- angle: Rotation angle (required, positive for clockwise)
-- image_path: Source image path (required)
-- output_path: Output file path (required)
-- format: Output format (optional: png, jpg, webp. If not specified, uses original format or infers from output path)
-
-**Examples**:
-- Rotate 90° clockwise: angle=90
-- Rotate 45° counter-clockwise: angle=-45
-- Rotate 180° (flip): angle=180
-
-**Supported Formats**: PNG, JPEG, WebP (selected based on format parameter or output path extension)
-
-**Limits**:
-- Maximum ${maxBatchTasks} rotate tasks per call`;
-
-    if (isMultiRoot) {
-        description += `\n\n**Multi-root Workspace**: Use "workspace_name/path" format for paths. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-    }
+    const description = descriptions.description;
 
     return {
         declaration: {
@@ -392,25 +376,25 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
                     // 批量模式参数
                     images: {
                         type: 'array',
-                        description: 'Batch mode: Rotate task array. Each task can independently configure input, output, angle, and format. MUST be an array even for single task.',
+                        description: descriptions.images,
                         items: {
                             type: 'object',
                             properties: {
                                 image_path: {
                                     type: 'string',
-                                    description: 'Source image path (required)'
+                                    description: descriptions.batchImagePath
                                 },
                                 output_path: {
                                     type: 'string',
-                                    description: 'Output file path (required)'
+                                    description: descriptions.batchOutputPath
                                 },
                                 angle: {
                                     type: 'number',
-                                    description: 'Rotation angle (required, positive for clockwise, any value)'
+                                    description: descriptions.batchAngle
                                 },
                                 format: {
                                     type: 'string',
-                                    description: 'Output format (optional: png, jpg, webp)'
+                                    description: descriptions.batchFormat
                                 }
                             },
                             required: ['image_path', 'output_path', 'angle']
@@ -419,23 +403,19 @@ export function createRotateImageTool(maxBatchTasks: number = 10): Tool {
                     // 单张模式参数
                     image_path: {
                         type: 'string',
-                        description: isMultiRoot
-                            ? 'Single mode: Source image path (required). Use "workspace_name/path" format.'
-                            : 'Single mode: Source image path (required). Relative to workspace.'
+                        description: descriptions.singleImagePath
                     },
                     output_path: {
                         type: 'string',
-                        description: isMultiRoot
-                            ? 'Single mode: Output file path (required). Use "workspace_name/path" format.'
-                            : 'Single mode: Output file path (required).'
+                        description: descriptions.singleOutputPath
                     },
                     angle: {
                         type: 'number',
-                        description: 'Single mode: Rotation angle (required, positive for clockwise, any value)'
+                        description: descriptions.singleAngle
                     },
                     format: {
                         type: 'string',
-                        description: 'Single mode: Output format (optional: png, jpg, webp)'
+                        description: descriptions.singleFormat
                     }
                 }
             }

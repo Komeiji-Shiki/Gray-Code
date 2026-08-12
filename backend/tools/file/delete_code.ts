@@ -13,6 +13,8 @@ import { getDiffManager } from '../../core/services/diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import type { LockHolder } from '../../core/fileWriteLockManager';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
 // 超大文件全量 readFileSync 会阻塞 extension host 并全量读入内存。
@@ -254,15 +256,28 @@ async function deleteSingleFile(
 export function createDeleteCodeTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
 
-    const arrayFormatNote = '\n\n**IMPORTANT**: The `files` parameterMUST be an array, even for a single file. Example: `{"files": [{"path": "file.ts", "start_line": 10, "end_line": 20}]}`.';
+    // 修复历史拼写问题：parameterMUST → parameter MUST（中英文同时修复）
+    const arrayFormatNote = isZh
+        ? '\n\n**重要**：`files` 参数必须是数组，即使只删除一个文件。示例：`{"files": [{"path": "file.ts", "start_line": 10, "end_line": 20}]}`。'
+        : '\n\n**IMPORTANT**: The `files` parameter MUST be an array, even for a single file. Example: `{"files": [{"path": "file.ts", "start_line": 10, "end_line": 20}]}`.';
 
-    let description = 'Delete a range of lines (inclusive on both ends) from one or more files. A Diff preview will be shown for user confirmation.' + arrayFormatNote;
-    let pathDescription = 'File path (relative to workspace root)';
+    let description = isZh
+        ? '从一个或多个文件中删除指定行范围（两端都包含）的代码。执行前会展示 Diff 预览并等待用户确认。' + arrayFormatNote
+        : 'Delete a range of lines (inclusive on both ends) from one or more files. A Diff preview will be shown for user confirmation.' + arrayFormatNote;
+    let pathDescription = isZh
+        ? '文件路径（相对于工作区根目录）'
+        : 'File path (relative to workspace root)';
 
     if (isMultiRoot) {
-        description += `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-        pathDescription = 'File path, must use "workspace_name/path" format';
+        description += isZh
+            ? `\n\n多根工作区：必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`
+            : `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = isZh
+            ? '文件路径，必须使用 "workspace_name/path" 格式'
+            : 'File path, must use "workspace_name/path" format';
     }
 
     return {
@@ -284,16 +299,18 @@ export function createDeleteCodeTool(): Tool {
                                 },
                                 start_line: {
                                     type: 'number',
-                         description: 'Start line number (1-based, inclusive)'
+                                    description: isZh ? '起始行号（1-based，包含）' : 'Start line number (1-based, inclusive)'
                                 },
                                 end_line: {
                                     type: 'number',
-                                    description: 'End line number (1-based, inclusive)'
+                                    description: isZh ? '结束行号（1-based，包含）' : 'End line number (1-based, inclusive)'
                                 }
                             },
                             required: ['path', 'start_line', 'end_line']
                         },
-                        description: 'Array of delete operations. Each element specifies a file and line range to delete. MUST be an array even for a single file.'
+                        description: isZh
+                            ? '删除操作数组。每个元素指定一个文件和要删除的行范围。即使只删除一个文件也必须传数组。'
+                            : 'Array of delete operations. Each element specifies a file and line range to delete. MUST be an array even for a single file.'
                     }
                 },
                 required: ['files']

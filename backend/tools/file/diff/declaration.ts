@@ -28,6 +28,8 @@ import {
 } from './parse';
 import type { LegacyDiffBlock, StructuredDiffHunk, StructuredHunkPlan } from './types';
 import { ensureOutsideWorkspaceAccessApproved } from '../outsideWorkspaceAccess';
+import { getActualLanguage } from '../../../i18n';
+import { resolveLocalizationLanguage } from '../../localization/types';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
 // 超大文件（如打包产物）全量 readFileSync 会阻塞 extension host 并全量读入内存。
@@ -47,14 +49,24 @@ export function createApplyDiffTool(): Tool {
         // 获取工作区信息
         const workspaces = getAllWorkspaces();
         const isMultiRoot = workspaces.length > 1;
+        // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+        const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
 
         // 根据工作区数量生成描述
-        let pathDescription = '文件路径，相对于当前工作区根目录。例如：src/example.ts。';
+        let pathDescription: string;
         let descriptionSuffix = '';
-
-        if (isMultiRoot) {
-            pathDescription = `文件路径，必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
-            descriptionSuffix = `\n\n多根工作区：必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
+        if (isZh) {
+            pathDescription = '文件路径，相对于当前工作区根目录。例如：src/example.ts。';
+            if (isMultiRoot) {
+                pathDescription = `文件路径，必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
+                descriptionSuffix = `\n\n多根工作区：必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
+            }
+        } else {
+            pathDescription = 'File path, relative to the current workspace root. For example: src/example.ts.';
+            if (isMultiRoot) {
+                pathDescription = `File path, must use the "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+                descriptionSuffix = `\n\nMulti-root workspace: Must use the "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            }
         }
 
         const format = getApplyDiffFormat();
@@ -63,11 +75,8 @@ export function createApplyDiffTool(): Tool {
             // 修改原因：旧版 search/replace 声明只强调“单次调用单文件”，容易让模型误以为每改一个文件后必须停止等待。
             // 修改方式：在工具 description 中加入批量修改规则，明确“一个工具调用单文件”和“一轮回复多个工具调用”并不冲突。
             // 修改目的：鼓励模型在多文件修改计划已经明确且互不依赖时，同一轮连续输出多个 apply_diff 调用，减少无意义的工具迭代。
-            return {
-                name: 'apply_diff',
-                category: 'file',
-                strict: true,  // API 端强制 schema 校验
-                description: `对单个文件应用旧版 search/replace 差异，并打开待确认 diff 预览。
+            const description = isZh
+                ? `对单个文件应用旧版 search/replace 差异，并打开待确认 diff 预览。
 
 参数：
 - path：目标文件路径。
@@ -90,7 +99,37 @@ export function createApplyDiffTool(): Tool {
 - 错误示例：修改 A 文件后停止，等下一轮再修改 B 文件。
 - 正确示例：同一轮依次输出 apply_diff(A)、apply_diff(B)、apply_diff(C)。
 
-${descriptionSuffix}`,
+${descriptionSuffix}`
+                : `Apply a legacy search/replace diff to a single file and open a diff preview for confirmation.
+
+Parameters:
+- path: target file path.
+- diffs: array of legacy diff objects to apply.
+
+Each diff object contains:
+- search: the original content to find; it must match the file content exactly.
+- replace: the replacement content.
+- start_line: optional, 1-based start line number, used to locate repeated content.
+
+Rules:
+- search must match exactly, including spaces, indentation, and newlines.
+- diffs are applied in array order.
+- If a diff fails, that diff is not applied.
+
+Batch modification rules:
+- This tool still modifies only one file per call; if you plan to modify multiple independent files, output multiple apply_diff calls in a row in the same reply.
+- Do not stop and wait for results after the first apply_diff unless a later modification depends on its result or you need to confirm whether the previous modification succeeded.
+- For clearly specified, independent multi-file modifications, emit all apply_diff calls at once to reduce pointless tool iterations.
+- Wrong example: modifying file A then stopping and waiting for the next round to modify file B.
+- Correct example: output apply_diff(A), apply_diff(B), apply_diff(C) in sequence in the same round.
+
+${descriptionSuffix}`;
+
+            return {
+                name: 'apply_diff',
+                category: 'file',
+                strict: true,  // API 端强制 schema 校验
+                description,
 
                 parameters: {
                     type: 'object',
@@ -101,21 +140,27 @@ ${descriptionSuffix}`,
                         },
                         diffs: {
                             type: 'array',
-                            description: '旧版 diff 对象数组。即使只有一个 diff，也必须使用数组。',
+                            description: isZh
+                                ? '旧版 diff 对象数组。即使只有一个 diff，也必须使用数组。'
+                                : 'Array of legacy diff objects. Even a single diff must be passed as an array.',
                             items: {
                                 type: 'object',
                                 properties: {
                                     search: {
                                         type: 'string',
-                                        description: '要查找的原始内容，必须精确匹配。'
+                                        description: isZh
+                                            ? '要查找的原始内容，必须精确匹配。'
+                                            : 'The original content to find; it must match exactly.'
                                     },
                                     replace: {
                                         type: 'string',
-                                        description: '替换后的目标内容。'
+                                        description: isZh ? '替换后的目标内容。' : 'The replacement content.'
                                     },
                                     start_line: {
                                         type: 'number',
-                                        description: '可选，1-based 起始行号，用于重复内容定位。'
+                                        description: isZh
+                                            ? '可选，1-based 起始行号，用于重复内容定位。'
+                                            : 'Optional, 1-based start line number, used to locate repeated content.'
                                     }
                                 },
                                 required: ['search', 'replace']
@@ -133,11 +178,8 @@ ${descriptionSuffix}`,
         // 修改原因：模型会把“apply_diff 一次调用只处理一个文件”误读成“一轮只能调用一次 apply_diff”。
         // 修改方式：在默认结构化 hunk 声明中补充批量修改规则，明确多文件计划应在同一轮连续输出多个 apply_diff 调用。
         // 修改目的：让工具说明本身承担行为引导，减少用户反复用自然语言纠正模型每次只改一个文件的问题。
-        return {
-            name: 'apply_diff',
-            category: 'file',
-            strict: true,  // API 端强制 schema 校验
-            description: `对单个文件应用一个或多个结构化内容替换，并打开待确认 diff 预览。
+        const description = isZh
+            ? `对单个文件应用一个或多个结构化内容替换，并打开待确认 diff 预览。
 
 推荐输入格式：
 - path：目标文件路径。
@@ -171,7 +213,48 @@ ${descriptionSuffix}`,
     }
   ]
 }
-${descriptionSuffix}`,
+${descriptionSuffix}`
+            : `Apply one or more structured content replacements to a single file and open a diff preview for confirmation.
+
+Recommended input format:
+- path: target file path.
+- hunks: array of structured modifications. Each hunk represents one contiguous replacement.
+- hunks[].oldContent: the original content in the file to be replaced; it must match the file content exactly.
+- hunks[].newContent: the replacement content. Fill it in per JSON string rules; the tool uses it as the final file content — do not add a + prefix, and do not escape double quotes for diff purposes.
+- hunks[].startLine: optional, 1-based, line number in the original (pre-edit) file. It is only used to locate oldContent when oldContent appears multiple times in the file; when oldContent is unique, startLine is ignored to avoid failures from stale line numbers.
+
+Rules:
+- One call modifies only one file; put multiple non-contiguous replacements in the hunks array.
+- hunks must be ordered by their appearance in the original file so line-number offsets from earlier replacements are maintained correctly.
+- Two hunks must not modify the same section or overlapping text; if you need to change the same block, merge it into a single hunk.
+- oldContent must match; if oldContent appears multiple times, provide startLine or more context to make it unique.
+- The patch field remains only as a fallback for legacy unified diff hunk strings; prefer hunks for new calls.
+
+Batch modification rules:
+- This tool still modifies only one file per call; if you plan to modify multiple independent files, output multiple apply_diff calls in a row in the same reply.
+- Do not stop and wait for results after the first apply_diff unless a later modification depends on its result or you need to confirm whether the previous modification succeeded.
+- For clearly specified, independent multi-file modifications, emit all apply_diff calls at once to reduce pointless tool iterations.
+- Wrong example: modifying file A then stopping and waiting for the next round to modify file B.
+- Correct example: output apply_diff(A), apply_diff(B), apply_diff(C) in sequence in the same round.
+
+Example:
+{
+  "path": "src/example.ts",
+  "hunks": [
+    {
+      "oldContent": "content: old;",
+      "newContent": "content: \"\";",
+      "startLine": 12
+    }
+  ]
+}
+${descriptionSuffix}`;
+
+        return {
+            name: 'apply_diff',
+            category: 'file',
+            strict: true,  // API 端强制 schema 校验
+            description,
 
             parameters: {
                 type: 'object',
@@ -182,21 +265,29 @@ ${descriptionSuffix}`,
                     },
                     hunks: {
                         type: 'array',
-                        description: '推荐格式。结构化 hunk 数组；每个 hunk 使用 oldContent/newContent 表示一次连续内容替换。',
+                        description: isZh
+                            ? '推荐格式。结构化 hunk 数组；每个 hunk 使用 oldContent/newContent 表示一次连续内容替换。'
+                            : 'Recommended format. Array of structured hunks; each hunk uses oldContent/newContent to express one contiguous content replacement.',
                         items: {
                             type: 'object',
                             properties: {
                                 oldContent: {
                                     type: 'string',
-                                    description: '文件中要被替换的原始内容，必须精确匹配。'
+                                    description: isZh
+                                        ? '文件中要被替换的原始内容，必须精确匹配。'
+                                        : 'The original content in the file to be replaced; it must match exactly.'
                                 },
                                 newContent: {
                                     type: 'string',
-                                    description: '替换后的目标内容。按 JSON 字符串规则填写；工具收到后作为最终文件内容使用。'
+                                    description: isZh
+                                        ? '替换后的目标内容。按 JSON 字符串规则填写；工具收到后作为最终文件内容使用。'
+                                        : 'The replacement content. Fill it in per JSON string rules; the tool uses it as the final file content.'
                                 },
                                 startLine: {
                                     type: 'number',
-                                    description: '可选，1-based，基于修改前原文件的行号。仅当 oldContent 重复出现时用于定位。'
+                                    description: isZh
+                                        ? '可选，1-based，基于修改前原文件的行号。仅当 oldContent 重复出现时用于定位。'
+                                        : 'Optional, 1-based, line number in the original (pre-edit) file. Used for locating only when oldContent appears multiple times.'
                                 }
                             },
                             required: ['oldContent', 'newContent']
@@ -204,7 +295,9 @@ ${descriptionSuffix}`,
                     },
                     patch: {
                         type: 'string',
-                        description: "兼容字段。旧 unified diff hunks 文本；新调用请优先使用 hunks。"
+                        description: isZh
+                            ? '兼容字段。旧 unified diff hunks 文本；新调用请优先使用 hunks。'
+                            : 'Compatibility field. Legacy unified diff hunks text; prefer hunks for new calls.'
                     }
                 },
                 required: ['path']

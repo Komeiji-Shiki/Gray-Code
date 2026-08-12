@@ -15,6 +15,9 @@ import { saveImage, parseImageDimensionsFromBase64, createFetchSignal } from './
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
+import { buildGenerateImageDescriptions } from '../localization/dynamicDescriptions';
 
 /** 图像生成任务类型常量 */
 const TASK_TYPE_IMAGE_GEN = 'image_generation';
@@ -661,75 +664,35 @@ export function createGenerateImageTool(
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     
-    // 构建参数说明
-    const paramNotes: string[] = [];
-    
-    // 宽高比说明
-    if (config.enableAspectRatio) {
-        if (config.forcedAspectRatio) {
-            paramNotes.push(`- **Aspect Ratio**: User set to ${config.forcedAspectRatio} (cannot be changed)`);
-        } else {
-            paramNotes.push(`- **Aspect Ratio**: Can use aspect_ratio parameter (optional)`);
-        }
-    }
-    
-    // 图片尺寸说明
-    if (config.enableImageSize) {
-        if (config.forcedImageSize) {
-            paramNotes.push(`- **Image Size**: User set to ${config.forcedImageSize} (cannot be changed)`);
-        } else {
-            paramNotes.push(`- **Image Size**: Can use image_size parameter (optional)`);
-        }
-    }
-    
-    const paramSection = paramNotes.length > 0
-        ? `\n\n**Parameter Configuration**:\n${paramNotes.join('\n')}`
-        : '';
+    // 语言感知说明：根据当前实际界面语言（zh-CN/en/ja）生成模型可见说明。
+    // 顶层说明（Limits、宽高比/尺寸参数配置、单张/批量模式、多根尾巴）与
+    // 参数说明统一由 localization/dynamicDescriptions 的语言感知生成器负责。
+    const lang = resolveLocalizationLanguage(getActualLanguage());
+    const descriptions = buildGenerateImageDescriptions({
+        lang,
+        maxBatchTasks,
+        maxImagesPerTask,
+        config,
+        isMultiRoot,
+        workspaceNames: workspaces.map(w => w.name)
+    });
 
-    // 动态生成描述
-    let description = `Generate images using AI model. Supports single and batch generation modes.
-
-**Important**: Generated images have solid backgrounds, NOT transparent backgrounds. If you need transparent background images, use the remove_background tool after generation.
-
-**Limits**:
-- Maximum ${maxBatchTasks} generation tasks per call
-- Maximum ${maxImagesPerTask} images saved per task${paramSection}
-
-**Single Mode**: Use prompt + output_path parameters
-**Batch Mode**: Use images array parameter (max ${maxBatchTasks} tasks), generate multiple images with different prompts
-
-**Prompt Format**:
-- Natural language: Describe the scene in complete sentences (e.g., "an orange cat sitting on a windowsill, sunlight shining on it")
-- Tag-style: Comma-separated keywords (e.g., "orange cat, sitting on windowsill, sunlight, warm lighting, high quality")
-- Mixed: Combine both styles
-
-Features:
-- Text-to-image: Generate images from prompts
-- Image editing: Modify based on reference images
-- Multi-image composition: Create new scenes using multiple reference images
-- Batch generation: Generate multiple different images in one request
-
-Generated images will be saved to the specified path and returned for viewing.`;
-    
-    // 多工作区说明
-    if (isMultiRoot) {
-        description += `\n\n**Multi-root Workspace**: Paths must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-    }
+    const description = descriptions.description;
 
     // 构建批量任务的属性定义
     const batchItemProperties: Record<string, unknown> = {
         prompt: {
             type: 'string',
-            description: 'Image generation prompt. Supports natural language, tags, or mixed.'
+            description: descriptions.batchPrompt
         },
         reference_images: {
             type: 'array',
-            description: 'Reference image paths array (optional). Maximum 14 images. MUST be an array even for single image, e.g., ["image.png"]',
+            description: descriptions.batchReferenceImages,
             items: { type: 'string' }
         },
         output_path: {
             type: 'string',
-            description: 'Output file path (required)'
+            description: descriptions.batchOutputPath
         }
     };
 
@@ -737,7 +700,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
     if (config.enableAspectRatio && !config.forcedAspectRatio) {
         batchItemProperties.aspect_ratio = {
             type: 'string',
-            description: 'Image aspect ratio (optional)',
+            description: descriptions.batchAspectRatio,
             enum: [...SUPPORTED_ASPECT_RATIOS]
         };
     }
@@ -746,7 +709,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
     if (config.enableImageSize && !config.forcedImageSize) {
         batchItemProperties.image_size = {
             type: 'string',
-            description: 'Image resolution (optional)',
+            description: descriptions.batchImageSize,
             enum: [...SUPPORTED_IMAGE_SIZES]
         };
     }
@@ -755,25 +718,19 @@ Generated images will be saved to the specified path and returned for viewing.`;
     const singleModeProperties: Record<string, unknown> = {
         prompt: {
             type: 'string',
-            description: 'Single mode: Image generation prompt. Supports: 1) Natural language description; 2) Comma-separated tags/keywords; 3) Mixed style.'
+            description: descriptions.singlePrompt
         },
         reference_images: {
             type: 'array',
-            description: isMultiRoot
-                ? `Single mode: Reference image paths array (optional). Maximum 14 images. Use "workspace_name/path" format. MUST be an array even for single image.`
-                : 'Single mode: Reference image paths array (optional). Maximum 14 images. MUST be an array even for single image, e.g., ["image.png"]',
+            description: descriptions.singleReferenceImages,
             items: {
                 type: 'string',
-                description: isMultiRoot
-                    ? 'Reference image file path, use "workspace_name/path" format'
-                    : 'Reference image file path (relative to workspace)'
+                description: descriptions.singleReferenceImageItem
             }
         },
         output_path: {
             type: 'string',
-            description: isMultiRoot
-                ? `Single mode: Output file path (required). Use "workspace_name/path" format.`
-                : 'Single mode: Output file path (required). Relative to workspace directory.'
+            description: descriptions.singleOutputPath
         }
     };
 
@@ -781,7 +738,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
     if (config.enableAspectRatio && !config.forcedAspectRatio) {
         singleModeProperties.aspect_ratio = {
             type: 'string',
-            description: 'Single mode: Image aspect ratio (optional). Supported: 1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9',
+            description: descriptions.singleAspectRatio,
             enum: [...SUPPORTED_ASPECT_RATIOS]
         };
     }
@@ -790,7 +747,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
     if (config.enableImageSize && !config.forcedImageSize) {
         singleModeProperties.image_size = {
             type: 'string',
-            description: 'Single mode: Image resolution (optional). 1K=1024px, 2K=2048px, 4K=4096px.',
+            description: descriptions.singleImageSize,
             enum: [...SUPPORTED_IMAGE_SIZES]
         };
     }
@@ -806,7 +763,7 @@ Generated images will be saved to the specified path and returned for viewing.`;
                     // 批量生成模式参数
                     images: {
                         type: 'array',
-                        description: 'Batch mode: Image generation task array. Each task can independently configure prompt, reference images, and output path. MUST be an array even for single task, e.g., [{"prompt": "...", "output_path": "..."}]',
+                        description: descriptions.images,
                         items: {
                             type: 'object',
                             properties: batchItemProperties,

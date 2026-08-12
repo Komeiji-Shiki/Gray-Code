@@ -5,6 +5,15 @@
  * ToolDeclarationResolver 过去直接 import createReadFileTool / createGenerateImageTool 等工厂，
  * 现在改为：工厂由组合根（backend/bootstrap）注册到本注册表，resolver 按工具名反向获取。
  *
+ * 已注册工具（组合根 backend/bootstrap/index.ts 的 initTools）：
+ * - 动态能力工具：read_file、generate_image、remove_background、crop_image、resize_image、rotate_image；
+ * - 模型工具声明国际化（半动态工具 + 声明工厂）：write_file、list_files、delete_file、create_directory、
+ *   insert_code、delete_code、apply_diff、search_in_files、find_files、get_symbols、goto_definition、
+ *   find_references、execute_command、history_search、read_skill、subagents、agent_send_message。
+ *   后一批工厂忽略 args，描述按进程级实际语言生成（zh-CN → 中文，en/ja → 英文），
+ *   动态信息（工作区列表、shell 列表、技能列表、代理列表、MAX_HOP_DEPTH、截断行数等）
+ *   在工厂内保持运行时插值；语言切换后 resolver 按需重建声明。
+ *
  * 语义约束：
  * - 工厂必须是「懒创建」：每次调用都重新构建动态工具（read_file 多模态描述、图片工具参数
  *   随解析选项/设置变化），不要改成单例缓存；

@@ -8,7 +8,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolContext, ToolResult, MultimodalData, MultimodalCapability } from '../types';
-import { t } from '../../i18n';
+import { t, getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
+import { buildReadFileDescriptions } from '../localization/dynamicDescriptions';
 import { Logger } from '../../core/logger';
 import {
     resolveUri,
@@ -369,52 +371,23 @@ export function createReadFileTool(
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     
-    // 根据多模态配置和渠道类型生成不同的工具描述
-    let description: string;
-    
-    // 行号格式说明
-    const lineNumberNote = '\n\n说明：读取文本文件时，返回内容会带行号前缀（例如 "   1 | code here"）。这些数字和 "|" 只是定位标记，不属于文件正文；编辑文件时不要把它们写回去。';
-    
-    // 行范围说明。
-    // 单文件兼容别名（line/maxLine/maxLines/limit）不再写进描述和 schema 向模型宣传：
-    // 每轮请求都会携带工具声明，别名参数既烧 token 又鼓励旧写法。
-    // 它们仍通过 declaration 的 paramAliases/compatParams 被接受（见下方声明）。
-    const lineRangeNote = '\n\n行范围：单文件读取时使用顶层 startLine/endLine；批量读取时在每个 files[] 项中分别设置 startLine/endLine。只有已经知道准确行号时才填写（例如来自 get_symbols、goto_definition、find_references、list_files、find_files 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。';
+    // 语言感知说明：根据当前实际界面语言（zh-CN/en/ja）生成模型可见说明。
+    // 顶层说明（多模态四分支、行号/行范围说明、多根尾巴）与 path/files 等参数说明
+    // 统一由 localization/dynamicDescriptions 的语言感知生成器负责（目录只覆盖参数，
+    // 不覆盖动态顶层说明），避免静态文本覆盖掉运行时动态信息。
+    const lang = resolveLocalizationLanguage(getActualLanguage());
+    const readFileDescriptions = buildReadFileDescriptions({
+        lang,
+        multimodalEnabled,
+        channelType,
+        toolMode,
+        isMultiRoot,
+        workspaceNames: workspaces.map(w => w.name)
+    });
 
-    // 多模态/二进制行范围限制说明（多模态开启时强调）
-    const lineRangeBinaryRestrictionNote =
-        '\n\n重要：startLine/endLine 只适用于文本文件。读取图片、PDF、音频、视频或其他二进制/多模态文件时无需填写行范围；即使误填，工具也会忽略这些行范围参数。';
-    
-    if (!multimodalEnabled) {
-        // 未启用多模态时，只支持文本文件
-        description = '读取工作区中的一个或多个文件。当前支持类型：文本文件。' + lineNumberNote + lineRangeNote;
-    } else if (channelType === 'openai') {
-        // OpenAI 格式有特殊限制
-        if (toolMode === 'function_call') {
-            // OpenAI function_call 模式不支持多模态
-            description = '读取工作区中的一个或多个文件。当前支持类型：文本文件。' + lineNumberNote + lineRangeNote;
-        } else {
-            // OpenAI xml/json 模式只支持图片
-            description = '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP）。图片会作为多模态数据返回。' + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
-        }
-    } else {
-        // Gemini 和 Anthropic 全面支持
-        description = '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP）、文档（PDF）。图片和文档会作为多模态数据返回。' + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
-    }
-    
-    // 多工作区说明
-    if (isMultiRoot) {
-        description += '\n\n多根工作区：path 与 files[].path 必须使用 "workspace_name/path" 格式来指定工作区。';
-    }
-    
-    // 路径参数描述
-    let pathDescription = '单文件读取时使用。要读取的文件路径，相对于当前工作区根目录。例如：src/main.ts。';
-    if (isMultiRoot) {
-        pathDescription = `单文件读取时使用。当前是多根工作区，必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`;
-    }
-    const batchPathDescription = isMultiRoot
-        ? `批量读取的文件路径。必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
-        : '批量读取的文件路径，相对于当前工作区根目录。例如：src/main.ts。';
+    const description = readFileDescriptions.description;
+    const pathDescription = readFileDescriptions.path;
+    const batchPathDescription = readFileDescriptions.batchPath;
     
     return {
         declaration: {
@@ -437,7 +410,7 @@ export function createReadFileTool(
                     },
                     files: {
                         type: 'array',
-                        description: '批量读取时使用。每个文件可以分别指定文本行范围；不要与顶层 path/startLine/endLine 同时使用。',
+                        description: readFileDescriptions.files,
                         items: {
                             type: 'object',
                             properties: {
@@ -448,12 +421,12 @@ export function createReadFileTool(
                                 startLine: {
                                     type: 'integer',
                                     minimum: 1,
-                                    description: '该文本文件的起始行号，1-based，包含该行。非文本文件会忽略。'
+                                    description: readFileDescriptions.batchStartLine
                                 },
                                 endLine: {
                                     type: 'integer',
                                     minimum: 1,
-                                    description: '该文本文件的结束行号，1-based，包含该行。非文本文件会忽略。'
+                                    description: readFileDescriptions.batchEndLine
                                 }
                             },
                             required: ['path']
@@ -462,12 +435,12 @@ export function createReadFileTool(
                     startLine: {
                         type: 'integer',
                         minimum: 1,
-                        description: '起始行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。指定后从该行读取到文件末尾，或读取到 endLine。'
+                        description: readFileDescriptions.startLine
                     },
                     endLine: {
                         type: 'integer',
                         minimum: 1,
-                        description: '结束行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。未指定 startLine 时，从文件开头读取到该行。'
+                        description: readFileDescriptions.endLine
                     }
                 }
             }

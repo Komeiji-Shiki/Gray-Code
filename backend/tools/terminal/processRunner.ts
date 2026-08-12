@@ -22,6 +22,8 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDefaultExecuteCommandConfig } from '../../modules/settings';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { getAllWorkspaces, parseWorkspacePath } from '../utils';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 import {
     getShellConfig,
     checkShellAvailability,
@@ -148,6 +150,8 @@ export function createExecuteCommandTool(): Tool {
     const osName = getOSName();
     const osArch = os.arch();
     const osRelease = os.release();
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
     // 获取工作区信息
     const workspaceRoots = getAllWorkspaceRoots();
@@ -156,12 +160,24 @@ export function createExecuteCommandTool(): Tool {
     // 生成工作区说明
     let workspaceDescription = '';
     if (isMultiRoot) {
-        workspaceDescription = '\n\n**Multi-root Workspace Mode:**\n' +
-            workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n') +
-            '\n\nUse "workspace_name/path" format to specify the working directory';
+        workspaceDescription = isZh
+            ? '\n\n**多根工作区模式：**\n' +
+                workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n') +
+                '\n\n使用 "workspace_name/path" 格式指定工作目录'
+            : '\n\n**Multi-root Workspace Mode:**\n' +
+                workspaceRoots.map(ws => `- ${ws.name}: ${ws.path}`).join('\n') +
+                '\n\nUse "workspace_name/path" format to specify the working directory';
     }
     
-    // 1.2.2-fix：cwd 参数描述复用统一规则生成器。
+    // shellConfig 的 getAvailableShellsDescription 只有英文文案（'- No available Shell' / '(default)'），
+    // 中文分支做最小本地化映射，避免中文请求收到中英混排。
+    const availableShellsText = isZh
+        ? getAvailableShellsDescription()
+            .replace('- No available Shell', '- 无可用 Shell')
+            .replace('(default)', '（默认）')
+        : getAvailableShellsDescription();
+    
+    // 1.2.2-fix：cwd 参数描述复用统一规则生成器（promptDescriptions 内部已按语言生成）。
     // 为什么要改：旧描述过短，模型经常不知道应填工作区相对路径还是绝对路径。
     // 怎么改：按单根/多根工作区动态生成 schema 字段说明。
     // 目的：让只读取参数 schema 的模型也能正确选择 cwd。
@@ -172,15 +188,27 @@ export function createExecuteCommandTool(): Tool {
             name: 'execute_command',
             category: 'terminal',
             strict: true,  // API 端强制 schema 校验
-            description: `执行 Shell 命令并返回输出。
+            description: isZh
+                ? `执行 Shell 命令并返回输出。
 
 **当前用户环境：**
 - OS: ${osName} (${osArch})
 - OS Version: ${osRelease}
+- 默认 Shell: ${getDefaultShellName()}
+
+**当前可用 Shell：**
+${availableShellsText}${workspaceDescription}
+
+${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`
+                : `Execute a Shell command and return its output.
+
+**Current user environment:**
+- OS: ${osName} (${osArch})
+- OS Version: ${osRelease}
 - Default Shell: ${getDefaultShellName()}
 
-**Enabled Shells / 当前可用 Shell：**
-${getAvailableShellsDescription()}${workspaceDescription}
+**Enabled Shells / Available Shells:**
+${availableShellsText}${workspaceDescription}
 
 ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             parameters: {
@@ -188,7 +216,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                 properties: {
                     command: {
                         type: 'string',
-                        description: '要执行的 Shell 命令文本。注意：这是给所选 shell 解析的命令字符串，不是 argv 数组。'
+                        description: isZh
+                            ? '要执行的 Shell 命令文本。注意：这是给所选 shell 解析的命令字符串，不是 argv 数组。'
+                            : 'The Shell command text to execute. Note: this is a command string parsed by the selected shell, not an argv array.'
                     },
                     cwd: {
                         type: 'string',
@@ -196,18 +226,24 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                     },
                     shell: {
                         type: 'string',
-                        description: `Shell 类型。可选值：${getEnabledShellTypesForEnum().join(', ')}。不传或传 default 时使用当前默认 Shell。`,
+                        description: isZh
+                            ? `Shell 类型。可选值：${getEnabledShellTypesForEnum().join(', ')}。不传或传 default 时使用当前默认 Shell。`
+                            : `Shell type. Available values: ${getEnabledShellTypesForEnum().join(', ')}. When omitted or set to "default", the current default shell is used.`,
                         enum: getEnabledShellTypesForEnum(),
                         default: 'default'
                     },
                     timeout: {
                         type: 'number',
-                        description: '超时时间（毫秒）。0 表示不超时，默认 60000（60 秒）。',
+                        description: isZh
+                            ? '超时时间（毫秒）。0 表示不超时，默认 60000（60 秒）。'
+                            : 'Timeout in milliseconds. 0 means no timeout; default is 60000 (60 seconds).',
                         default: 60000
                     },
                     background: {
                         type: 'boolean',
-                        description: 'Run this command in the BACKGROUND. Use ONLY for long-running commands (builds, servers, batch jobs) when the user should not have to wait. The tool returns immediately with a taskId; the final output will arrive later as a "[Background task completed]" user message. Do NOT wait or poll for it. Background commands ignore the timeout parameter.'
+                        description: isZh
+                            ? '在后台运行此命令。仅用于长时间运行的命令（构建、服务器、批处理任务），用户无需等待。工具立即返回 taskId；最终输出稍后以 "[Background task completed]" 用户消息到达。不要等待或轮询它。后台命令忽略 timeout 参数。'
+                            : 'Run this command in the BACKGROUND. Use ONLY for long-running commands (builds, servers, batch jobs) when the user should not have to wait. The tool returns immediately with a taskId; the final output will arrive later as a "[Background task completed]" user message. Do NOT wait or poll for it. Background commands ignore the timeout parameter.'
                     }
                 },
                 required: ['command']

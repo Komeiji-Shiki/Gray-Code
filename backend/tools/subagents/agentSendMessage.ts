@@ -13,16 +13,35 @@
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
 import { TaskManager } from '../taskManager';
 import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessageResult } from '../../core/services/agentMailbox';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 
 /**
  * 动态获取工具声明
  */
 export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     return {
         name: 'agent_send_message',
         aliases: ['agent.sendMessage'],
         category: 'agents',
-        description: `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: if the recipient is running a tool, the message is inserted after that tool completes; if the main session is idle, it starts an internal message round immediately; an active sub-agent consumes the message before its next model call or before it can finish.
+        description: isZh
+            ? `向同一对话中的另一个代理（子代理）或主会话（主模型）发送消息。投递是异步的：如果接收方正在运行工具，消息会在该工具完成后插入；如果主会话空闲，会立即开始内部消息轮次；活动中的子代理会在下一次模型调用前或完成前消费消息。
+
+**寻址（二选一）：**
+- targetRunId：当前对话中活动的子代理运行的 runId。只能寻址当前对话中已知的 runId（防止伪造/注入）。
+- targetAgentName：当前对话中活动的子代理名称。使用 "main" 到达主会话（主模型）。
+
+**线程与循环保护：**
+- 传入上一次发送返回的 threadId 以继续该线程。同一线程中的回复会使 hopDepth 递增；超过 ${MAX_HOP_DEPTH} 跳后投递会被拒绝并返回明确错误——这可以防止代理互相循环。要重新开始，请省略 threadId。
+
+**使用说明：**
+- 你的身份自动识别；你无法冒充其他代理。
+- 投递确认表示消息由进程内邮箱可靠持有，直到某个接收方边界消费它。
+- 主会话投递可以在空闲时启动内部轮次；不要轮询或重复发送相同文本。
+- 活动中的子代理在工具之后、模型调用之前以及完成前原子地检查其收件箱。`
+            : `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: if the recipient is running a tool, the message is inserted after that tool completes; if the main session is idle, it starts an internal message round immediately; an active sub-agent consumes the message before its next model call or before it can finish.
 
 **Addressing (choose exactly one):**
 - targetRunId: the runId of a sub-agent run that is currently active in this conversation. Only runs known in the current conversation can be addressed (prevents spoofing/injection).
@@ -41,19 +60,25 @@ export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
             properties: {
                 targetRunId: {
                     type: 'string',
-                    description: 'The runId of the recipient sub-agent run (active in the current conversation). Mutually exclusive with targetAgentName.'
+                    description: isZh
+                        ? '接收方子代理运行的 runId（当前对话中活动）。与 targetAgentName 互斥。'
+                        : 'The runId of the recipient sub-agent run (active in the current conversation). Mutually exclusive with targetAgentName.'
                 },
                 targetAgentName: {
                     type: 'string',
-                    description: 'The name of the recipient sub-agent (active in the current conversation), or "main" for the main session. Mutually exclusive with targetRunId.'
+                    description: isZh
+                        ? '接收方子代理的名称（当前对话中活动），或 "main" 表示主会话。与 targetRunId 互斥。'
+                        : 'The name of the recipient sub-agent (active in the current conversation), or "main" for the main session. Mutually exclusive with targetRunId.'
                 },
                 message: {
                     type: 'string',
-                    description: 'The message text to send.'
+                    description: isZh ? '要发送的消息文本。' : 'The message text to send.'
                 },
                 threadId: {
                     type: 'string',
-                    description: 'Optional thread ID to continue a previous conversation thread (see loop protection above).'
+                    description: isZh
+                        ? '可选的线程 ID，用于继续之前的对话线程（见上方循环保护说明）。'
+                        : 'Optional thread ID to continue a previous conversation thread (see loop protection above).'
                 }
             },
             required: ['message']

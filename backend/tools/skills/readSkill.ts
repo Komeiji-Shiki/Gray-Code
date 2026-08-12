@@ -12,7 +12,8 @@
 
 import type { Tool, ToolArgs, ToolDeclaration, ToolResult, ToolRegistration } from '../types';
 import { getSkillsManager } from '../../modules/skills';
-import { t } from '../../i18n';
+import { t, getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 
 /** 工具描述中 Skill 列表的最大字符预算（参考 Claude Code 的 15,000 字符上限） */
 const SKILL_LIST_BUDGET = 15000;
@@ -55,6 +56,8 @@ function formatSkillSummariesAsYaml(summaries: Array<{ name: string; description
  */
 export function generateReadSkillDeclaration(): ToolDeclaration {
     const skillsManager = getSkillsManager();
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     let yamlList = '';
     
     if (skillsManager) {
@@ -62,15 +65,27 @@ export function generateReadSkillDeclaration(): ToolDeclaration {
         yamlList = formatSkillSummariesAsYaml(summaries);
     }
     
+    // 技能 YAML 摘要列表（动态）原样保留，不翻译用户自定义的技能名称/描述；
+    // 仅描述框架按语言生成。
     const description = yamlList
-        ? `Read the full content of a skill by its name.
+        ? isZh
+            ? `按名称读取某个技能（Skill）的完整内容。
+
+技能是用户定义的知识模块，为特定任务提供专门上下文和指令。每个技能按需加载领域知识。当任务匹配某个可用技能的描述时，你应该主动加载它。
+
+可用技能：
+${yamlList}
+传入技能名称以读取其完整内容。`
+            : `Read the full content of a skill by its name.
 
 Skills are user-defined knowledge modules that provide specialized context and instructions for specific tasks. Each skill provides domain expertise that is loaded on demand. When a task matches an available skill's description, you should proactively load it.
 
 Available skills:
 ${yamlList}
 Pass the skill name to read its full content.`
-        : `Read the full content of a skill by its name. No skills are currently available.`;
+        : isZh
+            ? '按名称读取某个技能（Skill）的完整内容。当前没有可用技能。'
+            : 'Read the full content of a skill by its name. No skills are currently available.';
     
     return {
         name: 'read_skill',
@@ -82,7 +97,9 @@ Pass the skill name to read its full content.`
             properties: {
                 name: {
                     type: 'string',
-                    description: 'The name of the skill to read (from the available skills list above)',
+                    description: isZh
+                        ? '要读取的技能名称（来自上方可用技能列表）'
+                        : 'The name of the skill to read (from the available skills list above)',
                 },
             },
             required: ['name'],

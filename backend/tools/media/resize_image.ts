@@ -19,6 +19,9 @@ import { readImageFile } from './imageUtils';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
+import { buildResizeImageDescriptions } from '../localization/dynamicDescriptions';
 
 /** 缩放任务类型常量 */
 const TASK_TYPE_RESIZE = 'resize_image';
@@ -266,33 +269,18 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
 
-    let description = `Resize image tool. Resizes images to specified target dimensions.
+    // 语言感知说明：根据当前实际界面语言（zh-CN/en/ja）生成模型可见说明。
+    // 顶层说明（Limits、16384x16384 上限、多根尾巴）与参数说明统一由
+    // localization/dynamicDescriptions 的语言感知生成器负责。
+    const lang = resolveLocalizationLanguage(getActualLanguage());
+    const descriptions = buildResizeImageDescriptions({
+        lang,
+        maxBatchTasks,
+        isMultiRoot,
+        workspaceNames: workspaces.map(w => w.name)
+    });
 
-**Features**:
-- Resize image to specified width and height
-- Uses stretch fill mode (does not preserve aspect ratio)
-- Suitable for scenarios requiring exact dimensions
-
-**Parameters**:
-- width: Target width (pixels, required)
-- height: Target height (pixels, required)
-- image_path: Source image path (required)
-- output_path: Output file path (required)
-
-**Examples**:
-- Resize to 800x600: width=800, height=600
-- Resize to square 512x512: width=512, height=512
-- Resize to 1920x1080: width=1920, height=1080
-
-**Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)
-
-**Limits**:
-- Maximum ${maxBatchTasks} resize tasks per call
-- Target dimensions cannot exceed 16384x16384`;
-
-    if (isMultiRoot) {
-        description += `\n\n**Multi-root Workspace**: Use "workspace_name/path" format for paths. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-    }
+    const description = descriptions.description;
 
     return {
         declaration: {
@@ -306,25 +294,25 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
                     // 批量模式参数
                     images: {
                         type: 'array',
-                        description: 'Batch mode: Resize task array. Each task can independently configure input, output, and target dimensions. MUST be an array even for single task.',
+                        description: descriptions.images,
                         items: {
                             type: 'object',
                             properties: {
                                 image_path: {
                                     type: 'string',
-                                    description: 'Source image path (required)'
+                                    description: descriptions.batchImagePath
                                 },
                                 output_path: {
                                     type: 'string',
-                                    description: 'Output file path (required)'
+                                    description: descriptions.batchOutputPath
                                 },
                                 width: {
                                     type: 'integer',
-                                    description: 'Target width (pixels, required)'
+                                    description: descriptions.batchWidth
                                 },
                                 height: {
                                     type: 'integer',
-                                    description: 'Target height (pixels, required)'
+                                    description: descriptions.batchHeight
                                 }
                             },
                             required: ['image_path', 'output_path', 'width', 'height']
@@ -333,23 +321,19 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
                     // 单张模式参数（向后兼容）
                     image_path: {
                         type: 'string',
-                        description: isMultiRoot
-                            ? 'Single mode: Source image path (required). Use "workspace_name/path" format.'
-                            : 'Single mode: Source image path (required). Relative to workspace.'
+                        description: descriptions.singleImagePath
                     },
                     output_path: {
                         type: 'string',
-                        description: isMultiRoot
-                            ? 'Single mode: Output file path (required). Use "workspace_name/path" format.'
-                            : 'Single mode: Output file path (required).'
+                        description: descriptions.singleOutputPath
                     },
                     width: {
                         type: 'integer',
-                        description: 'Single mode: Target width (pixels, required)'
+                        description: descriptions.singleWidth
                     },
                     height: {
                         type: 'integer',
-                        description: 'Single mode: Target height (pixels, required)'
+                        description: descriptions.singleHeight
                     }
                 }
             }

@@ -43,7 +43,8 @@ import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import type { Content } from '../../modules/conversation/types';
 import type { HistorySearchToolConfig } from '../../modules/settings/types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
-import { t } from '../../i18n';
+import { t, getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { formatToDocument, getSummarizedMessages } from './virtualDocument';
 import { handleRead, handleSearch } from './historySearch';
@@ -62,6 +63,8 @@ const {
 // ─── 工具声明与处理器 ───────────────────────────────────
 
 export function createHistorySearchToolDeclaration(): ToolDeclaration {
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     const declaration: ToolDeclaration = {
         name: 'history_search',
         readOnly: true,
@@ -72,27 +75,38 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
             properties: {
                 mode: {
                     type: 'string',
-                    description:
-                        'Operation mode. ' +
-                        '"search": search for keywords/regex, returns line numbers and context. ' +
-                        '"read": read lines by line number range.',
+                    description: isZh
+                        ? '操作模式。' +
+                            '"search"：搜索关键词/正则，返回匹配的行号和上下文。' +
+                            '"read"：按行号范围读取。'
+                        : 'Operation mode. ' +
+                            '"search": search for keywords/regex, returns line numbers and context. ' +
+                            '"read": read lines by line number range.',
                     enum: ['search', 'read']
                 },
                 query: {
                     type: 'string',
-                    description: '[search mode] Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set is_regex=true. Search results are locators with context, not complete history content.'
+                    description: isZh
+                        ? '[搜索模式] 搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 is_regex=true。搜索结果是带上下文的定位器，不是完整历史内容。'
+                        : '[search mode] Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set is_regex=true. Search results are locators with context, not complete history content.'
                 },
                 is_regex: {
                     type: 'boolean',
-                    description: '[search mode] Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally.'
+                    description: isZh
+                        ? '[搜索模式] 是否将 query 视为正则表达式。默认：false。为 false 时，正则样式的字符按字面量搜索。'
+                        : '[search mode] Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally.'
                 },
                 start_line: {
                     type: 'number',
-                    description: '[read mode] Start line number from the virtual history document (1-based, inclusive). Use snake_case start_line, not read_file-style startLine.'
+                    description: isZh
+                        ? '[读取模式] 虚拟历史文档中的起始行号（1-based，包含）。使用 snake_case 的 start_line，不要用 read_file 风格的 startLine。'
+                        : '[read mode] Start line number from the virtual history document (1-based, inclusive). Use snake_case start_line, not read_file-style startLine.'
                 },
                 end_line: {
                     type: 'number',
-                    description: '[read mode] End line number from the virtual history document (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read. For one complete long line, set end_line equal to start_line.'
+                    description: isZh
+                        ? '[读取模式] 虚拟历史文档中的结束行号（1-based，包含）。每次最多读取 ' + MAX_READ_LINES + ' 行。要获取单个完整长行，请让 end_line 等于 start_line。'
+                        : '[read mode] End line number from the virtual history document (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read. For one complete long line, set end_line equal to start_line.'
                 }
             },
             required: ['mode']
@@ -102,6 +116,20 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
     Object.defineProperty(declaration, 'description', {
         get() {
             const scope = getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
+            const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
+            if (isZh) {
+                const scopeText = scope === 'summarized' ? '仅压缩/总结过的历史' : '完整对话历史';
+                return `搜索并读取对话历史，不是工作区文件。当前设置允许搜索范围：[${scopeText}]。` +
+                    `用于查找更早的对话轮次、之前的工具调用、工具结果和用户决策；仓库文件请使用 search_in_files 或 find_files。` +
+                    `历史以带行号的虚拟文档形式呈现。` +
+                    `行号标记仅用于导航，不属于原文正文。` +
+                    `每个轮次标题显示其行范围，例如 "══ Round 3 (L45-L88) ══"。` +
+                    `两种模式：\n` +
+                    `"search" — 在历史中查找关键词/正则并返回带上下文的匹配行号。搜索输出是定位器，不是完整内容。如果查询使用了正则语法，请设置 is_regex=true；否则这些字符按字面量处理。` +
+                    `"read" — 使用 start_line/end_line（snake_case，每次最多 ${MAX_READ_LINES} 行）从格式化历史中读取指定行范围。这里不要使用 read_file 风格的 startLine/endLine。` +
+                    `典型流程：先用 search 定位相关行，再用 read 获取这些行或从轮次标题读取整个轮次范围的完整内容。\n` +
+                    `提示：要获取单个长行（例如工具响应）的完整内容，使用 start_line=N end_line=N 读取——单行读取永不截断。`;
+            }
             const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
             return `Search and read conversation history, not workspace files. CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}]. ` +
                 `Use this tool for earlier chat turns, previous tool calls, tool results, and user decisions; use search_in_files or find_files for repository files. ` +

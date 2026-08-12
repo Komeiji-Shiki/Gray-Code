@@ -14,6 +14,8 @@ import {
     withTimeoutAndAbort
 } from './lspLifecycle';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 
 /**
  * 定义位置信息
@@ -32,20 +34,34 @@ interface DefinitionLocation {
 export function createGotoDefinitionTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
-    let description = `Go to the definition of a symbol and return the complete definition code. This is useful for:
+    let description = isZh
+        ? `跳转到符号的定义位置并返回完整的定义代码。适用于：
+- 查找函数/类/变量的定义位置并查看完整实现
+- 无需额外的 read_file 调用即可了解符号的实现方式
+
+返回带行号的完整定义代码。`
+        : `Go to the definition of a symbol and return the complete definition code. This is useful for:
 - Finding where a function/class/variable is defined and seeing its full implementation
 - Understanding how a symbol is implemented without additional read_file calls
 
 Returns the complete definition code with line numbers.`;
     
     if (isMultiRoot) {
-        description += '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
+        description += isZh
+            ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
+            : '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
     }
     
-    let pathDescription = 'File path (relative to workspace root)';
+    let pathDescription = isZh
+        ? '文件路径（相对于工作区根目录）'
+        : 'File path (relative to workspace root)';
     if (isMultiRoot) {
-        pathDescription = `File path, use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = isZh
+            ? `文件路径，使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`
+            : `File path, use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
@@ -63,15 +79,17 @@ Returns the complete definition code with line numbers.`;
                     },
                     line: {
                         type: 'number',
-                        description: 'Line number (1-based) where the symbol is located'
+                        description: isZh ? '符号所在的行号（1-based）' : 'Line number (1-based) where the symbol is located'
                     },
                     column: {
                         type: 'number',
-                        description: 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
+                        description: isZh
+                            ? '符号起始的列号（1-based）。未指定时使用第 1 列。'
+                            : 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
                     },
                     symbol: {
                         type: 'string',
-                        description: 'The symbol name to find (optional, for documentation purposes)'
+                        description: isZh ? '要查找的符号名称（可选，仅用于说明）' : 'The symbol name to find (optional, for documentation purposes)'
                     }
                 },
                 required: ['path', 'line']

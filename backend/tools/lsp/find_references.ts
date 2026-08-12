@@ -14,6 +14,8 @@ import {
     withTimeoutAndAbort
 } from './lspLifecycle';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 
 /** context 参数允许的最大上下文行数（防止引用多时响应体暴涨） */
 const MAX_CONTEXT_LINES = 10;
@@ -53,8 +55,17 @@ interface GroupedReferences {
 export function createFindReferencesTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
-    let description = `Find all references to a symbol at a specific position in a file. This is useful for:
+    let description = isZh
+        ? `查找文件中指定位置符号的全部引用。适用于：
+- 了解函数/类/变量在整个代码库中的使用情况
+- 重构时找出所有需要修改的位置
+- 了解改动的影响范围
+
+返回按文件分组的引用，带行号和代码内容。`
+        : `Find all references to a symbol at a specific position in a file. This is useful for:
 - Understanding how a function/class/variable is used across the codebase
 - Finding all places that need to be updated when refactoring
 - Understanding the impact of changes
@@ -62,12 +73,18 @@ export function createFindReferencesTool(): Tool {
 Returns references grouped by file, with line numbers and code content.`;
     
     if (isMultiRoot) {
-        description += '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
+        description += isZh
+            ? '\n\n多根工作区：使用 "workspace_name/path" 格式指定工作区。'
+            : '\n\nMulti-root workspace: Use "workspace_name/path" format to specify the workspace.';
     }
     
-    let pathDescription = 'File path (relative to workspace root)';
+    let pathDescription = isZh
+        ? '文件路径（相对于工作区根目录）'
+        : 'File path (relative to workspace root)';
     if (isMultiRoot) {
-        pathDescription = `File path, use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = isZh
+            ? `文件路径，使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`
+            : `File path, use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
@@ -85,19 +102,23 @@ Returns references grouped by file, with line numbers and code content.`;
                     },
                     line: {
                         type: 'number',
-                        description: 'Line number (1-based) where the symbol is located'
+                        description: isZh ? '符号所在的行号（1-based）' : 'Line number (1-based) where the symbol is located'
                     },
                     column: {
                         type: 'number',
-                        description: 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
+                        description: isZh
+                            ? '符号起始的列号（1-based）。未指定时使用第 1 列。'
+                            : 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
                     },
                     symbol: {
                         type: 'string',
-                        description: 'The symbol name to find references for (optional, for documentation purposes)'
+                        description: isZh ? '要查找引用的符号名称（可选，仅用于说明）' : 'The symbol name to find references for (optional, for documentation purposes)'
                     },
                     context: {
                         type: 'number',
-                        description: 'Number of context lines to include before and after each reference. Default: 2. Use 0 for single line only. Max: 10 (values above are clamped).'
+                        description: isZh
+                            ? '每个引用前后要包含的上下文行数。默认：2。0 表示仅单行。最大：10（超过会被截断）。'
+                            : 'Number of context lines to include before and after each reference. Default: 2. Use 0 for single line only. Max: 10 (values above are clamped).'
                     }
                 },
                 required: ['path', 'line']

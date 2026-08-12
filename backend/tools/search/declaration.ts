@@ -35,6 +35,8 @@ import type {
 } from './searchPass';
 import { searchAndReplaceInDirectory, MAX_REPLACE_MATCHES } from './replacePass';
 import type { ReplaceResult, SkippedFileInfo } from './replacePass';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../localization/types';
 
 /**
  * 工作区外访问策略自检（H3）。
@@ -98,10 +100,16 @@ export function createSearchInFilesTool(): Tool {
     // 获取工作区信息用于描述
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
     
-    let pathDescription = 'Search path relative to workspace root. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Default "." searches the entire workspace.';
+    let pathDescription = isZh
+        ? '相对于工作区根目录的搜索路径。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。默认 "." 搜索整个工作区。'
+        : 'Search path relative to workspace root. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Default "." searches the entire workspace.';
     if (isMultiRoot) {
-        pathDescription = `Search path, use "workspace_name/path" format. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = isZh
+            ? `搜索路径，使用 "workspace_name/path" 格式。目录使用 "workspace_name/dir/"（尾部斜杠），单个文件使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}`
+            : `Search path, use "workspace_name/path" format. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
@@ -109,8 +117,12 @@ export function createSearchInFilesTool(): Tool {
             name: 'search_in_files',
             strict: true,  // API 端强制 schema 校验
             description: isMultiRoot
-                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
-                : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
+                ? isZh
+                    ? `在工作区多个文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "workspace_name/dir/"（尾部斜杠），单个文件使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+                    : `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
+                : isZh
+                    ? '在工作区文件中搜索或搜索并替换内容。支持正则表达式。目录使用 "dir/"（尾部斜杠），单个文件使用 "dir/file.ext"。返回匹配的文件和上下文。'
+                    : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
             category: 'search',
             parameters: {
                 type: 'object',
@@ -118,12 +130,16 @@ export function createSearchInFilesTool(): Tool {
                     mode: {
                         type: 'string',
                         enum: ['search', 'replace'],
-                        description: 'Operation mode. Use "search" for finding content only, use "replace" for search and replace.',
+                        description: isZh
+                            ? '操作模式。使用 "search" 仅查找内容，使用 "replace" 执行查找并替换。'
+                            : 'Operation mode. Use "search" for finding content only, use "replace" for search and replace.',
                         default: 'search'
                     },
                     query: {
                         type: 'string',
-                        description: 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode first tries the full literal phrase and may retry space-separated keywords when isRegex=false.'
+                        description: isZh
+                            ? '搜索关键词、精确短语、空格分隔的关键词或正则表达式。如果查询包含正则语法（如 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$"），请设置 isRegex=true。搜索模式先尝试完整字面短语；isRegex=false 时可能改用空格分隔的关键词重试。'
+                            : 'Search keyword, exact phrase, space-separated keywords, or regular expression. If query contains regex syntax such as "|", ".*", ".+", "\\.", "\\d", "[]", "()", "^", or "$", set isRegex=true. Search mode first tries the full literal phrase and may retry space-separated keywords when isRegex=false.'
                     },
                     path: {
                         type: 'string',
@@ -132,30 +148,38 @@ export function createSearchInFilesTool(): Tool {
                     },
                     pattern: {
                         type: 'string',
-                        description: 'File matching pattern, e.g., "*.ts" or "**/*.js"',
+                        description: isZh
+                            ? '文件匹配模式，例如："*.ts" 或 "**/*.js"'
+                            : 'File matching pattern, e.g., "*.ts" or "**/*.js"',
                         default: '**/*'
                     },
                     isRegex: {
                         type: 'boolean',
-                        description: 'Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally; zero-result searches may return suspected_regex diagnostics instead of silently changing semantics.',
+                        description: isZh
+                            ? '是否将 query 视为正则表达式。默认：false。为 false 时，正则样式的字符按字面量搜索；零结果搜索可能返回 suspected_regex 诊断，而不是静默改变语义。'
+                            : 'Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally; zero-result searches may return suspected_regex diagnostics instead of silently changing semantics.',
                         default: false
                     },
                     caseSensitive: {
                         type: 'boolean',
-                        description: 'Whether matching is case-sensitive. Defaults differ by mode: search mode defaults to false (case-insensitive), replace mode defaults to true (conservative exact replacement). Pass explicitly to override, e.g. set caseSensitive=false in replace mode to replace matches found by a case-insensitive search.'
+                        description: isZh
+                            ? '匹配是否区分大小写。默认值因模式而异：search 模式默认不区分（便于定位），replace 模式默认区分（保守替换）。可显式覆盖，例如在 replace 模式下设置 caseSensitive=false 以替换不区分大小写搜索到的匹配。'
+                            : 'Whether matching is case-sensitive. Defaults differ by mode: search mode defaults to false (case-insensitive), replace mode defaults to true (conservative exact replacement). Pass explicitly to override, e.g. set caseSensitive=false in replace mode to replace matches found by a case-insensitive search.'
                     },
                     maxResults: {
                         type: 'number',
-                        description: '[Search mode] Maximum number of match results',
+                        description: isZh ? '[搜索模式] 最大匹配结果数' : '[Search mode] Maximum number of match results',
                         default: 100
                     },
                     replace: {
                         type: 'string',
-                        description: '[Replace mode] Replacement string. REQUIRED when mode is "replace"; omitting it would silently replace all matches with empty string. Supports regex capture groups like $1, $2 when isRegex is true.'
+                        description: isZh
+                            ? '[替换模式] 替换字符串。mode 为 "replace" 时必须提供；省略会静默把所有匹配替换为空字符串。isRegex=true 时支持 $1、$2 等捕获组。'
+                            : '[Replace mode] Replacement string. REQUIRED when mode is "replace"; omitting it would silently replace all matches with empty string. Supports regex capture groups like $1, $2 when isRegex is true.'
                     },
                     maxFiles: {
                         type: 'number',
-                        description: '[Replace mode] Maximum number of files to process',
+                        description: isZh ? '[替换模式] 最多处理的文件数' : '[Replace mode] Maximum number of files to process',
                         default: 50
                     }
                 },
