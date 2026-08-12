@@ -490,16 +490,12 @@ const globalNumberError = ref('')
 function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntime') {
   const raw = (event.target as HTMLInputElement).value
   const parsed = parseInt(raw, 10)
-  const max = field === 'defaultMaxIterations' ? 1000 : Number.POSITIVE_INFINITY
-  // maxConcurrentAgents / defaultMaxRuntime：-1（无限制）或 >=1 合法，0 非法；defaultMaxIterations 仍要求 1-1000
-  const invalid = field === 'defaultMaxIterations'
-    ? isNaN(parsed) || parsed < 1 || parsed > max
-    : isNaN(parsed) || parsed < -1 || parsed === 0
+  // 三个全局数字参数（maxConcurrentAgents / defaultMaxIterations / defaultMaxRuntime）统一口径：
+  // -1（无限制）或 >=1 合法，0 非法（与后端校验一致；上游 657a28b9 确认 defaultMaxIterations 同样支持 -1）
+  const invalid = isNaN(parsed) || parsed < -1 || parsed === 0
   if (invalid) {
     // 非法输入：就地提示；:value 绑定已保存值，重渲染时自动回填
-    globalNumberError.value = field === 'defaultMaxIterations'
-      ? '请输入 1-1000 之间的整数'
-      : '请输入 -1 或不小于 1 的整数'
+    globalNumberError.value = '请输入 -1 或不小于 1 的整数'
     return
   }
   globalNumberError.value = ''
@@ -776,8 +772,7 @@ onMounted(async () => {
             <input
               type="number"
               :value="defaultMaxIterations"
-              min="1"
-              max="1000"
+              min="-1"
               @change="handleGlobalNumberChange($event, 'defaultMaxIterations')"
             />
             <span class="field-hint">{{ t('components.settings.subagents.defaultMaxIterationsHint') }}</span>

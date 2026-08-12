@@ -185,7 +185,7 @@ export function getDiffAutoSaveProgressById(sessionId: string): number {
   return session ? getDiffAutoSaveProgress(session) : 0
 }
 
-function getActionErrorMessage(error: unknown, fallback: string): string {
+export function getActionErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && typeof error.message === 'string' && error.message.trim()) {
     return error.message
   }

@@ -26,6 +26,7 @@ import {
   confirmDiff,
   diffGuardWarnings,
   ensureDiffReviewControllerInitialized,
+  getActionErrorMessage,
   getDiffActionError,
   getDiffAutoSaveProgress,
   getDiffAutoSaveProgressById,
@@ -104,13 +105,6 @@ function isDiffToolPending(tool: ToolUsage): boolean {
 
   const resultData = tool.result?.data as any
   return !!resultData && extractPendingDiffIdsFromResultData(resultData).some(hasPendingDiffSession)
-}
-
-function getActionErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) return error.message
-  if (typeof error === 'string' && error.trim()) return error
-  const maybeMessage = (error as any)?.message
-  return typeof maybeMessage === 'string' && maybeMessage.trim() ? maybeMessage : fallback
 }
 
 // 整个聊天页面共享一个 Diff 状态订阅与倒计时；重复组件只复用初始化 Promise。
@@ -643,7 +637,7 @@ watch(
   () => {
     nextTick(() => {
       for (const tool of enhancedTools.value) {
-               if (shouldShowStreamingPreview(tool)) {
+        if (shouldShowStreamingPreview(tool)) {
           const el = streamingPreviewRefs.get(tool.id)
           if (el) {
             el.scrollTop = el.scrollHeight
