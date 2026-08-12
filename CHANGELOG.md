@@ -7,6 +7,8 @@
 -->
 ## [Unreleased]
 
+## [1.5.3] - 2026-08-12
+
 ### Fixed
   - 修复 `show_windows_notification` 通知点击后无法聚焦 VSCode 窗口/打开聊天（Windows 11 24H2/25H2 激活机制变化）：系统不再投递 shortcut 激活与 COM 激活器（ToastNotificationActivation），node-notifier/SnoreToast 发完即退导致点击无任何回调。现改用自编译 `toast-linger.exe`（12KB，.NET Framework 4.x + WinRT 投影，系统自带运行时，源码 `scripts/toast-linger/Program.netfx.cs`）：驻留进程发 WinRT toast 并监听进程内 Activated 事件（25H2 唯一可靠激活路径），点击时聚焦 VSCode 窗口并写标记文件（`%TEMP%\graycode-toast-clicked.flag`），扩展侧轮询标记后执行 `graycode.openChat`；exe 启动时自注册 AUMID 快捷方式（`GrayCode.Notification`，发 toast 的前提）。新增 `WinRtLingerToastAdapter` 替换工具默认适配器（`NodeNotifierWindowsToastAdapter` 保留供 Agent 停止通知使用）；esbuild 随包分发 `resources/bin/toast-linger.exe`。新增 `winRtLingerToastAdapter.test.ts`（22 cases 全绿）。
   - 修复通知点击后 VS Code 窗口仍无法置前（Windows 11 24H2+ 前台锁收紧）：`focusWindow` 原有「模拟 Alt 键 + AttachThreadInput」组合拳在 Win11 24H2/25H2 实测全部失效——AttachThreadInput 返回成功但 SetForegroundWindow 仍被拒（返回 false），WScript.Shell AppActivate / SwitchToThisWindow 亦无效；且脚本无论成败都 exit 0，聚焦失败被静默吞掉（点击 toast 后窗口不聚焦、无任何日志）。现 `Win32Focus.FocusWindow` 改用系统放行的「任务栏恢复」激活路径：已最小化 → 直接 SW_RESTORE + SetForegroundWindow；未最小化 → 先直接激活（无闪烁），被拒后 SW_MINIMIZE → SW_RESTORE → SetForegroundWindow（系统视为合法的恢复激活，实测 GetForegroundWindow 命中目标窗口）；最后 SetWindowPos TOPMOST→NOTOPMOST 兜底保证 Z 序置顶。FocusWindow 返回真实聚焦结果，脚本失败时 exit 1，execFile 回调把 stdout/stderr 写入日志，不再假成功。已在 PowerShell 5.1 下用生产脚本原样端到端验证（进程树定位 Code.exe 主窗口 → 窗口成功置前）。
