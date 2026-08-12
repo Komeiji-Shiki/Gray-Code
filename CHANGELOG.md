@@ -39,6 +39,8 @@
     - fix：全仓扫描修复批次（安全数据一致性/流式挂起/设置/前端）；
     - feat(subagents)：子代理排队超时可配置 + 最大并发数支持 -1（新增全局 `queueTimeoutSeconds`，-1 无限制）；
     - fix：PR #34/#35 合并审查修复——排队超时定时器 clamp 上限 + toolResponseCache 覆盖更新误淘汰；
+    - fix(PR #36)：回退 ToolIterationLoopService 早启动工具等待超时兜底（PR #35 引入）——该兜底在流式结束后把 3 秒窗口内未落定的早启动工具强制标记为超时失败，误伤仍在正常执行的长耗时工具（如 execute_command 超过 3 秒即被占位结算）；其防御场景已由工具层既有超时与取消路径覆盖。恢复原始等待逻辑（保留 abort 事件 race），长任务不再被误杀；
+    - feat(PR #37)：子代理运行时长上限可配置——新增全局 `defaultMaxRuntime`（-1 无限制，默认 1800 = 30 分钟），per-agent 未配置 maxRuntime 时继承全局默认（per-agent 已配置的仍优先）；前端子代理设置新增「默认最大运行时间（秒）」输入框；
   - **不采纳**：fast-tavern 相关 commit（b9e8f29d feat(fast-tavern) build 模块、0730d582 .venv gitignore）按项目决策剔除，合并树不含 fast-tavern-main 子项目；上游 1.5.x 版本小节（[1.5.0]/[1.5.1]）不并入本地 CHANGELOG 版本体系（内容已在前序合并按本地口径记录）。
 
 ## [1.7.14dev] - 2026-08-11
