@@ -507,6 +507,37 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set<string>([
 // ============ 3. 跨端共享类型 ============
 
 /**
+ * ── 传输层契约说明（04#15，仅文档化、不引入类型/不改运行时逻辑） ──
+ *
+ * 以下不是「共享类型」，而是前端与扩展两侧共同依赖、但历史上只靠各自约定消化的传输语义。
+ * 这里以注释形式固化，避免接口表面误导。
+ *
+ * 1) 流式请求的「多响应」契约
+ *    同一 requestId 的流式请求（chatStream / retryStream / toolConfirmation /
+ *    chat.rerollStream / chat.editBranchStream / cancelStream）会先后收到多帧信封响应，
+ *    而非一次性回复：通常先收到成功响应（data 为 { started: true }），此后仍可能再收到
+ *    成功响应（data 为 { cancelled: true }）或失败信封（success: false，error: { code,
+ *    message }）。即 started 不是终态；前端必须继续按 requestId 匹配并消化 started 之后的
+ *    cancelled / error，不能把 started 当作「该请求已一次性完成」。流式内容（chunk）另经
+ *    streamChunkBatch 推送，其条目内的 chunk / complete / cancelled / error 等 payload
+ *    判别字段不参与这里的 requestId 信封匹配（双通道）。
+ *
+ * 2) requestId 归一化约定（非法/缺失时的兜底）
+ *    入口处（ChatViewProvider / SubAgentMonitorPanel）把非字符串或缺失的 message.requestId
+ *    归一为 ''。响应/错误信封会原样回填该 requestId：'' 会被 JSON 保留（而 undefined 会被
+ *    序列化丢弃），保证无 requestId 的错误响应仍能到达前端；前端此时无法靠 requestId 精确
+ *    匹配，只能走自身超时/全局兜底（见 ChatViewProvider 入口归一化注释）。
+ *
+ * 3) resolveClientId 未注册时的回退语义
+ *    WebviewClientRegistry.resolveClientId(requested, fallback) 的返回顺序为：已注册的
+ *    requested → 已注册的 fallback → 非空 requested（即使未注册）→ 非空 fallback（即使
+ *    未注册）→ undefined。注意：当 requested 是非空字符串但未注册时，接口返回的仍是该
+ *    原始字符串而非 undefined——调用方不能把「返回值」当作「已注册」的判定依据；未注册
+ *    clientId 后续的 sendResponse/sendError 会因 registry 查表失败而回退到主聊天。
+ *    （权威实现见 webview/runtime/WebviewClientRegistry.ts，本文件只做契约固化。）
+ */
+
+/**
  * Token 详情条目
  *
  * 按模态（modality）分类的 token 统计。

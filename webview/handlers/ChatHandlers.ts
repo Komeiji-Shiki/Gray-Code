@@ -60,10 +60,17 @@ function resolveBranchService(ctx: HandlerContext): BranchService {
  *
  * H6（R2-xx）：getView 必须实时反映「发起端视图是否可达」——路由上下文注入的
  * isClientAlive（registry.isAlive 包装）在面板关闭/重载后返回 false，此时返回 undefined，
- * 让 StreamChunkProcessor.consume 的 isViewUnreachable() 检查真正生效并 abort 后端生成；
+ * 让 StreamChunkProcessor.consume 的 isViewUnreachable() 检查真正生效并 abort 后端生成
+ * （含流启动时视图已不可达/从未注册；allowHeadlessConsume 默认 false）；
  * 非路由上下文（直连调用/测试）回退 ctx.view。
  */
 function createRoutedChunkProcessor(ctx: HandlerContext, conversationId: string, streamId: string): StreamChunkProcessor {
+    // 路由上下文（ctx.postMessage 存在）走真实视图可达性探测：面板关闭/重载后
+    // isClientAlive 返回 false → getView 返回 undefined → consume 立即 abort 后端生成
+    // （04#3，allowHeadlessConsume 默认 false）。
+    // 非路由上下文（直连调用/测试）无前端视图，属 headless 消费：显式传
+    // allowHeadlessConsume=true，保留「从未取到 view 不判不可达」旧语义，避免测试流被误 abort。
+    const allowHeadlessConsume = !ctx.postMessage;
     return new StreamChunkProcessor(() => {
         if (ctx.postMessage) {
             if (ctx.isClientAlive && !ctx.isClientAlive()) {
@@ -74,7 +81,7 @@ function createRoutedChunkProcessor(ctx: HandlerContext, conversationId: string,
             return { webview: { postMessage: (message: any): boolean => ctx.postMessage?.(message) ?? false } as any };
         }
         return ctx.view as any;
-    }, conversationId, streamId);
+    }, conversationId, streamId, allowHeadlessConsume);
 }
 
 /**
@@ -386,7 +393,8 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
     });
     // 发送响应，通知前端请求已接收并开始（与 StreamRequestHandler 协议一致）
     ctx.sendResponse(requestId, { started: true });
-    // H6 统一消费循环：视图不可达（Monitor 面板关闭/主视图重载）时立即 abort 控制器
+    // H6 统一消费循环：视图不可达（Monitor 面板关闭/主视图重载，或流启动时视图已
+    // 销毁/未注册）时 consume() 命中 isViewUnreachable() 即 abort 控制器并 break，
     // 中止后端生成，避免 token 浪费与工具副作用在无消费者时继续执行
     await processor.consume(stream, controller);
   } catch (error: any) {
@@ -486,7 +494,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     });
     // 发送响应，通知前端请求已接收并开始（与 StreamRequestHandler 协议一致）
     ctx.sendResponse(requestId, { started: true });
-    // H6 统一消费循环：视图不可达时立即 abort 控制器中止后端生成（与 rerollStream 同）
+    // H6 统一消费循环：视图不可达（含流启动即不可达）时 consume() 命中
+    // isViewUnreachable() 即 abort 控制器并 break（与 rerollStream 同）
     await processor.consume(stream, controller);
   } catch (error: any) {
     // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致）；

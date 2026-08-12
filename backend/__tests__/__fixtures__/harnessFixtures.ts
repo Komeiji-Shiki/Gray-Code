@@ -93,7 +93,9 @@ export function createMessageRouterHarness() {
         chatHandler as any,
         conversationManager as any,
         {} as any,
-        () => undefined,
+        // 模拟 Monitor 已注册且视图可达：StreamChunkProcessor.getView 依赖它判断视图可达性
+        // （04#3 后默认「无 view 即 abort」，测试需显式提供可达 view 模拟真实用户路径）
+        () => ({ webview: { postMessage: () => true } as any }),
         rawSendResponse,
         rawSendError,
         clientRegistry

@@ -3,8 +3,8 @@
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
 import type { ChatViewProvider } from '../ChatViewProvider';
+import { exportSettingsToFile, importSettingsFromFile } from '../utils/settingsTransfer';
 
 /**
  * 注册设置相关命令：导出设置 / 导入设置 / 迁移旧版对话历史。
@@ -26,32 +26,22 @@ export function registerSettingsCommands(
             }
 
             try {
-                // 让用户选择保存位置
-                const result = await vscode.window.showSaveDialog({
-                    defaultUri: vscode.Uri.file('graycode-settings.json'),
-                    filters: {
-                        'JSON Files': ['json'],
-                        'All Files': ['*']
-                    },
-                    title: '导出 GrayCode 设置'
-                });
+                // 等待后端初始化完成后再构造 exporter 依赖来源（发现 7）
+                const source = await provider.createSettingsTransferSource();
 
-                if (!result) {
-                    return; // 用户取消
-                }
-
-                const json = await vscode.window.withProgress({
+                const outcome = await vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
                     title: 'GrayCode：正在导出设置...',
                     cancellable: false
                 }, async () => {
-                    return await provider.exportSettings();
+                    return await exportSettingsToFile(source);
                 });
 
-                // 写入文件
-                await fs.writeFile(result.fsPath, json, 'utf-8');
+                if (outcome.cancelled) {
+                    return; // 用户取消
+                }
 
-                vscode.window.showInformationMessage(`设置已成功导出到：${result.fsPath}`);
+                vscode.window.showInformationMessage(`设置已成功导出到：${outcome.filePath}`);
             } catch (error: any) {
                 vscode.window.showErrorMessage(`GrayCode 导出设置失败：${error?.message || String(error)}`);
             }
@@ -65,59 +55,22 @@ export function registerSettingsCommands(
             }
 
             try {
-                // 让用户选择导入文件
-                const result = await vscode.window.showOpenDialog({
-                    canSelectFiles: true,
-                    canSelectFolders: false,
-                    canSelectMany: false,
-                    filters: {
-                        'JSON Files': ['json'],
-                        'All Files': ['*']
-                    },
-                    title: '导入 GrayCode 设置'
-                });
+                // 等待后端初始化完成后再构造 exporter 依赖来源（发现 7）
+                const source = await provider.createSettingsTransferSource();
 
-                if (!result || result.length === 0) {
-                    return; // 用户取消
-                }
-
-                const filePath = result[0].fsPath;
-
-                // 读取文件
-                const json = await fs.readFile(filePath, 'utf-8');
-
-                // 让用户确认导入选项
-                const overwriteChoice = await vscode.window.showQuickPick(
-                    [
-                        { label: '跳过已存在的项', description: '只导入新的配置，不覆盖已有配置', value: 'skip' },
-                        { label: '覆盖所有', description: '覆盖所有已有配置（建议先备份）', value: 'overwrite' }
-                    ],
-                    {
-                        placeHolder: '选择导入方式',
-                        title: 'GrayCode 导入设置'
-                    }
-                );
-
-                if (!overwriteChoice) {
-                    return; // 用户取消
-                }
-
-                const overwrite = overwriteChoice.value === 'overwrite';
-
-                const importResult = await vscode.window.withProgress({
+                const outcome = await vscode.window.withProgress({
                     location: vscode.ProgressLocation.Notification,
                     title: 'GrayCode：正在导入设置...',
                     cancellable: false
                 }, async () => {
-                    return await provider.importSettings(json, {
-                        overwriteChannelConfigs: overwrite,
-                        overwriteMcpServers: overwrite,
-                        overwriteSkills: overwrite,
-                        // 与 webview handlers/SettingsTransferHandlers.importSettings 对齐：
-                        // 「覆盖所有」同样覆盖 graycode 的 VS Code 设置（imported.vscodeSettings 已在结果中展示）
-                        overwriteVscodeSettings: overwrite
-                    });
+                    return await importSettingsFromFile(source);
                 });
+
+                if (outcome.cancelled) {
+                    return; // 用户取消
+                }
+
+                const importResult = outcome.result;
 
                 // 构建结果消息
                 const parts: string[] = [];

@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../../backend/i18n';
 import type { MessageHandler } from '../types';
+import { withBoundary } from './errorBoundary';
 
 function requireMcpData(data: unknown, requestId: string, ctx: Parameters<MessageHandler>[2]): Record<string, any> | null {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
@@ -31,167 +32,131 @@ async function pathExists(uri: vscode.Uri): Promise<boolean> {
  * 打开 MCP 配置文件
  */
 export const openMcpConfigFile: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const mcpConfigDir = ctx.storagePathManager.getMcpPath();
-    const mcpConfigFile = path.join(mcpConfigDir, 'servers.json');
-    
-    // 确保目录存在
-    const configDirUri = vscode.Uri.file(mcpConfigDir);
-    if (!await pathExists(configDirUri)) {
-      await vscode.workspace.fs.createDirectory(configDirUri);
-    }
-    
-    // 确保配置文件存在
-    const configUri = vscode.Uri.file(mcpConfigFile);
-    if (!await pathExists(configUri)) {
-      const defaultConfig = { mcpServers: {} };
-      await vscode.workspace.fs.writeFile(
-        configUri,
-        Buffer.from(JSON.stringify(defaultConfig, null, 2), 'utf-8')
-      );
-    }
-    
-    // 在 VSCode 编辑器中打开配置文件
-    const document = await vscode.workspace.openTextDocument(configUri);
-    await vscode.window.showTextDocument(document, {
-      preview: false,
-      viewColumn: vscode.ViewColumn.One
-    });
-    
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'OPEN_MCP_CONFIG_ERROR', error.message || t('webview.errors.openMcpConfigFailed'));
+  const mcpConfigDir = ctx.storagePathManager.getMcpPath();
+  const mcpConfigFile = path.join(mcpConfigDir, 'servers.json');
+  
+  // 确保目录存在
+  const configDirUri = vscode.Uri.file(mcpConfigDir);
+  if (!await pathExists(configDirUri)) {
+    await vscode.workspace.fs.createDirectory(configDirUri);
   }
+  
+  // 确保配置文件存在
+  const configUri = vscode.Uri.file(mcpConfigFile);
+  if (!await pathExists(configUri)) {
+    const defaultConfig = { mcpServers: {} };
+    await vscode.workspace.fs.writeFile(
+      configUri,
+      Buffer.from(JSON.stringify(defaultConfig, null, 2), 'utf-8')
+    );
+  }
+  
+  // 在 VSCode 编辑器中打开配置文件
+  const document = await vscode.workspace.openTextDocument(configUri);
+  await vscode.window.showTextDocument(document, {
+    preview: false,
+    viewColumn: vscode.ViewColumn.One
+  });
+  
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 获取 MCP 服务器列表
  */
 export const getMcpServers: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const servers = await ctx.mcpManager.listServers();
-    ctx.sendResponse(requestId, { success: true, servers });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'GET_MCP_SERVERS_ERROR', error.message || t('webview.errors.getMcpServersFailed'));
-  }
+  const servers = await ctx.mcpManager.listServers();
+  ctx.sendResponse(requestId, { success: true, servers });
 };
 
 /**
  * 验证 MCP 服务器 ID
  */
 export const validateMcpServerId: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { id, excludeId } = params;
-    const result = await ctx.mcpManager.validateServerId(id, excludeId);
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'VALIDATE_MCP_SERVER_ID_ERROR', error.message || t('webview.errors.validateMcpServerIdFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { id, excludeId } = params;
+  const result = await ctx.mcpManager.validateServerId(id, excludeId);
+  ctx.sendResponse(requestId, { success: true, ...result });
 };
 
 /**
  * 创建 MCP 服务器
  */
 export const createMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { input, customId } = params;
-    const serverId = await ctx.mcpManager.createServer(input, customId);
-    ctx.sendResponse(requestId, { success: true, serverId });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'CREATE_MCP_SERVER_ERROR', error.message || t('webview.errors.createMcpServerFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { input, customId } = params;
+  const serverId = await ctx.mcpManager.createServer(input, customId);
+  ctx.sendResponse(requestId, { success: true, serverId });
 };
 
 /**
  * 更新 MCP 服务器
  */
 export const updateMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { serverId, updates } = params;
-    await ctx.mcpManager.updateServer(serverId, updates);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'UPDATE_MCP_SERVER_ERROR', error.message || t('webview.errors.updateMcpServerFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { serverId, updates } = params;
+  await ctx.mcpManager.updateServer(serverId, updates);
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 删除 MCP 服务器
  */
 export const deleteMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { serverId } = params;
-    await ctx.mcpManager.deleteServer(serverId);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'DELETE_MCP_SERVER_ERROR', error.message || t('webview.errors.deleteMcpServerFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { serverId } = params;
+  await ctx.mcpManager.deleteServer(serverId);
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 连接 MCP 服务器
  */
 export const connectMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { serverId } = params;
-    await ctx.mcpManager.connect(serverId);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'CONNECT_MCP_SERVER_ERROR', error.message || t('webview.errors.connectMcpServerFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { serverId } = params;
+  await ctx.mcpManager.connect(serverId);
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 断开 MCP 服务器
  */
 export const disconnectMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { serverId } = params;
-    await ctx.mcpManager.disconnect(serverId);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'DISCONNECT_MCP_SERVER_ERROR', error.message || t('webview.errors.disconnectMcpServerFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { serverId } = params;
+  await ctx.mcpManager.disconnect(serverId);
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 设置 MCP 服务器启用状态
  */
 export const setMcpServerEnabled: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const params = requireMcpData(data, requestId, ctx);
-    if (!params) return;
-    const { serverId, enabled } = params;
-    await ctx.mcpManager.setServerEnabled(serverId, enabled);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SET_MCP_SERVER_ENABLED_ERROR', error.message || t('webview.errors.setMcpServerEnabledFailed'));
-  }
+  const params = requireMcpData(data, requestId, ctx);
+  if (!params) return;
+  const { serverId, enabled } = params;
+  await ctx.mcpManager.setServerEnabled(serverId, enabled);
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 注册 MCP 处理器
  */
 export function registerMcpHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set(MESSAGE_NAMES.openMcpConfigFile, openMcpConfigFile);
-  registry.set(MESSAGE_NAMES.getMcpServers, getMcpServers);
-  registry.set(MESSAGE_NAMES.validateMcpServerId, validateMcpServerId);
-  registry.set(MESSAGE_NAMES.createMcpServer, createMcpServer);
-  registry.set(MESSAGE_NAMES.updateMcpServer, updateMcpServer);
-  registry.set(MESSAGE_NAMES.deleteMcpServer, deleteMcpServer);
-  registry.set(MESSAGE_NAMES.connectMcpServer, connectMcpServer);
-  registry.set(MESSAGE_NAMES.disconnectMcpServer, disconnectMcpServer);
-  registry.set(MESSAGE_NAMES.setMcpServerEnabled, setMcpServerEnabled);
+  registry.set(MESSAGE_NAMES.openMcpConfigFile, withBoundary('OPEN_MCP_CONFIG_ERROR', t('webview.errors.openMcpConfigFailed'), openMcpConfigFile));
+  registry.set(MESSAGE_NAMES.getMcpServers, withBoundary('GET_MCP_SERVERS_ERROR', t('webview.errors.getMcpServersFailed'), getMcpServers));
+  registry.set(MESSAGE_NAMES.validateMcpServerId, withBoundary('VALIDATE_MCP_SERVER_ID_ERROR', t('webview.errors.validateMcpServerIdFailed'), validateMcpServerId));
+  registry.set(MESSAGE_NAMES.createMcpServer, withBoundary('CREATE_MCP_SERVER_ERROR', t('webview.errors.createMcpServerFailed'), createMcpServer));
+  registry.set(MESSAGE_NAMES.updateMcpServer, withBoundary('UPDATE_MCP_SERVER_ERROR', t('webview.errors.updateMcpServerFailed'), updateMcpServer));
+  registry.set(MESSAGE_NAMES.deleteMcpServer, withBoundary('DELETE_MCP_SERVER_ERROR', t('webview.errors.deleteMcpServerFailed'), deleteMcpServer));
+  registry.set(MESSAGE_NAMES.connectMcpServer, withBoundary('CONNECT_MCP_SERVER_ERROR', t('webview.errors.connectMcpServerFailed'), connectMcpServer));
+  registry.set(MESSAGE_NAMES.disconnectMcpServer, withBoundary('DISCONNECT_MCP_SERVER_ERROR', t('webview.errors.disconnectMcpServerFailed'), disconnectMcpServer));
+  registry.set(MESSAGE_NAMES.setMcpServerEnabled, withBoundary('SET_MCP_SERVER_ENABLED_ERROR', t('webview.errors.setMcpServerEnabledFailed'), setMcpServerEnabled));
 }

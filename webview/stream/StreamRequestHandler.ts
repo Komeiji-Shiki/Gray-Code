@@ -107,7 +107,8 @@ export class StreamRequestHandler {
   /**
    * 消费流直到终结事件或视图不可达（H6）。
    *
-   * 视图不可达（面板关闭/重载）时 processChunk 丢弃 chunk 并返回 false，终结事件同样
+   * 视图不可达（面板关闭/重载，或流启动时目标 view 已销毁/未注册——除非显式
+   * allowHeadlessConsume）时 processChunk 丢弃 chunk 并返回 false，终结事件同样
    * 返回 false——若循环只按 isError 判断，会永远继续消费，后端在后台全量生成
    * （消耗 token、工具副作用继续执行）。检测到视图不可达后立即 abort 控制器
    * 中止后端生成并停止消费；abort 信号透传给后端，pending 的流式请求快速落定。
@@ -117,8 +118,8 @@ export class StreamRequestHandler {
     processor: StreamChunkProcessor,
     controller?: AbortController
   ): Promise<void> {
-    // H6 统一消费循环（见 StreamChunkProcessor.consume）：终结事件或视图不可达时停止，
-    // 视图不可达立即 abort 控制器中止后端生成；结束后统一 flush 缓冲。
+    // H6 统一消费循环（见 StreamChunkProcessor.consume）：终结事件或视图不可达时停止；
+    // isViewUnreachable() 命中即 controller.abort() 并 break；结束后统一 flush 缓冲。
     await processor.consume(stream, controller);
   }
 

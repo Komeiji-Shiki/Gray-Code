@@ -42,8 +42,10 @@ export class StreamChunkProcessor {
   private lastChunkFlushTime: number = 0;
   /**
    * 视图是否曾可达（H6 中止判定用）：processChunk 曾成功通过 getView() 检查即置位。
-   * 流启动时视图已不可达（从未有消费者）的场景保持既有继续消费语义，只有
-   * 「视图从可达变为不可达」（面板关闭/重载/目标 webview 销毁）才需要中止后端生成。
+   * 该标志只用于 allowHeadlessConsume === true 的兼容路径（后台任务/测试等无前端
+   * 消费者的流）：保持「只有视图从可达变为不可达（面板关闭/重载/目标 webview 销毁）
+   * 才中止」的旧语义。默认（false）下，流启动时视图已不可达（从未有消费者）同样
+   * 视为不可达并中止后端生成。
    */
   private viewEverReachable = false;
 
@@ -55,7 +57,14 @@ export class StreamChunkProcessor {
      */
     private getView: () => { webview: vscode.Webview } | undefined,
     private conversationId: string,
-    private streamId: string
+    private streamId: string,
+    /**
+     * 是否允许 headless 消费（无视图时仍继续消费后端流）。
+     * 默认 false：流启动时目标 view 已销毁/未注册即视为不可达，consume() 会立即
+     * abort 后端生成，避免无消费者时全量生成（浪费 token / 工具副作用继续执行）。
+     * 仅真正需要后台消费的路径（后台任务/测试）显式传 true 保留旧语义。
+     */
+    public allowHeadlessConsume: boolean = false
   ) {}
 
   /**
@@ -214,11 +223,24 @@ export class StreamChunkProcessor {
    * H6：processChunk 在视图不可达时返回 false，与普通非终结 chunk 的 false 无法区分；
    * 消费方在 processChunk 返回 false 后调用本方法判断是否需要中止流——视图不可达时
    * 继续消费只会让后端在后台全量生成（消耗 token / 执行工具副作用）。
-   * getView 每次实时获取，因此本方法反映调用时刻的最新可达状态；viewEverReachable
-   * 保证「从未有视图」的流（后台任务/测试）保持既有继续消费语义。
+   * getView 每次实时获取，因此本方法反映调用时刻的最新可达状态。
+   *
+   * 默认（allowHeadlessConsume === false）下，即使从未成功取到 view（流启动时视图已
+   * 不可达/从未注册）也判定为不可达；只有显式允许 headless 消费时才沿用
+   * viewEverReachable 语义，保留「从未有视图的流（后台任务/测试）继续消费」的旧行为。
    */
   isViewUnreachable(): boolean {
-    return this.viewEverReachable && !this.getView();
+    const view = this.getView();
+    if (view) {
+      return false;
+    }
+    if (this.allowHeadlessConsume) {
+      // 兼容路径：仅「视图从可达变为不可达」视为不可达，从未有视图的流继续消费。
+      return this.viewEverReachable;
+    }
+    // 默认路径：流启动时视图已不可达（从未成功取到 view）同样视为不可达，
+    // 让 consume() 立即 abort 后端生成。
+    return true;
   }
 
   /**

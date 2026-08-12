@@ -2,63 +2,31 @@
  * 设置导入/导出子域消息处理器（从 SettingsHandlers 拆分）。
  *
  * 消息 key：settings.export / settings.import。
+ *
+ * 对话框 / 写文件 / 解析导入流程已收敛到 utils/settingsTransfer（发现 7），
+ * 此处仅保留 webview handler 的入口适配：把共享流程的结果直接回响应。
  */
 
 import { MESSAGE_NAMES } from '../../shared/protocol';
-import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import type { SettingsExporter } from '../../backend/modules/settings';
-import type { HandlerContext, MessageHandler } from '../types';
-import { createSettingsExporter } from '../utils/settingsTransfer';
-
-/**
- * 创建设置导出器实例（构造参数经 utils/settingsTransfer 共享，发现 7）
- */
-function createExporter(ctx: HandlerContext): SettingsExporter | null {
-    return createSettingsExporter({
-        settingsManager: ctx.settingsManager,
-        configManager: ctx.configManager,
-        mcpManager: ctx.mcpManager,
-        storagePathManager: ctx.storagePathManager,
-        extensionPath: ctx.context?.extensionPath
-    });
-}
+import type { MessageHandler } from '../types';
+import {
+    exportSettingsToFile,
+    importSettingsFromFile,
+    toSettingsTransferSource
+} from '../utils/settingsTransfer';
 
 /**
  * 导出设置
  * 从设置页面触发，弹出保存对话框，将设置导出为 JSON 文件
  */
-export const exportSettings: MessageHandler = async (data, requestId, ctx) => {
+export const exportSettings: MessageHandler = async (_data, requestId, ctx) => {
     try {
-        const exporter = createExporter(ctx);
-        if (!exporter) {
-            ctx.sendError(requestId, 'EXPORT_ERROR', 'SkillsManager is not initialized.');
-            return;
-        }
-
-        // 弹出保存对话框
-        const result = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.file(path.resolve('graycode-settings.json')),
-            filters: {
-                'JSON Files': ['json'],
-                'All Files': ['*']
-            },
-            title: '导出 GrayCode 设置'
-        });
-
-        if (!result) {
+        const outcome = await exportSettingsToFile(toSettingsTransferSource(ctx));
+        if (outcome.cancelled) {
             ctx.sendResponse(requestId, { success: false, cancelled: true });
             return;
         }
-
-        // 导出为 JSON
-        const json = await exporter.exportToJson(true);
-
-        // 写入文件
-        await fs.writeFile(result.fsPath, json, 'utf-8');
-
-        ctx.sendResponse(requestId, { success: true, filePath: result.fsPath });
+        ctx.sendResponse(requestId, { success: true, filePath: outcome.filePath });
     } catch (error: any) {
         ctx.sendError(requestId, 'EXPORT_ERROR', error.message || 'Failed to export settings');
     }
@@ -70,69 +38,16 @@ export const exportSettings: MessageHandler = async (data, requestId, ctx) => {
  */
 export const importSettings: MessageHandler = async (data, requestId, ctx) => {
     try {
-        const exporter = createExporter(ctx);
-        if (!exporter) {
-            ctx.sendError(requestId, 'IMPORT_ERROR', 'SkillsManager is not initialized.');
-            return;
-        }
-
         const { overwrite } = data || {}; // 前端传入的覆盖选项
-
-        // 弹出打开对话框
-        const result = await vscode.window.showOpenDialog({
-            canSelectFiles: true,
-            canSelectFolders: false,
-            canSelectMany: false,
-            filters: {
-                'JSON Files': ['json'],
-                'All Files': ['*']
-            },
-            title: '导入 GrayCode 设置'
-        });
-
-        if (!result || result.length === 0) {
+        const outcome = await importSettingsFromFile(toSettingsTransferSource(ctx), { overwrite });
+        if (outcome.cancelled) {
             ctx.sendResponse(requestId, { success: false, cancelled: true });
             return;
         }
-
-        const filePath = result[0].fsPath;
-
-        // 读取文件
-        const json = await fs.readFile(filePath, 'utf-8');
-
-        // 询问用户导入方式（如果前端未指定）
-        let shouldOverwrite = !!overwrite;
-        if (!overwrite) {
-            const choice = await vscode.window.showQuickPick(
-                [
-                    { label: '跳过已存在的项', description: '只导入新的配置，不覆盖已有配置', value: 'skip' },
-                    { label: '覆盖所有', description: '覆盖所有已有配置（建议先备份）', value: 'overwrite' }
-                ],
-                {
-                    placeHolder: '选择导入方式',
-                    title: 'GrayCode 导入设置'
-                }
-            );
-            if (!choice) {
-                ctx.sendResponse(requestId, { success: false, cancelled: true });
-                return;
-            }
-            shouldOverwrite = choice.value === 'overwrite';
-        }
-
-        // 解析并导入
-        const data_ = exporter.parseExportData(json);
-        const importResult = await exporter.importFromData(data_, {
-            overwriteChannelConfigs: shouldOverwrite,
-            overwriteMcpServers: shouldOverwrite,
-            overwriteSkills: shouldOverwrite,
-            overwriteVscodeSettings: shouldOverwrite
-        });
-
         ctx.sendResponse(requestId, {
-            success: importResult.success,
-            imported: importResult.imported,
-            errors: importResult.errors
+            success: outcome.result.success,
+            imported: outcome.result.imported,
+            errors: outcome.result.errors
         });
     } catch (error: any) {
         ctx.sendError(requestId, 'IMPORT_ERROR', error.message || 'Failed to import settings');

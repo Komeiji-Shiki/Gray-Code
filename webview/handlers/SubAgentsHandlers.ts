@@ -8,6 +8,7 @@ import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgent
 import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation';
 import type { SubAgentConfigItem } from '../../backend/modules/settings';
 import type { HandlerContext, MessageHandler } from '../types';
+import { withBoundary } from './errorBoundary';
 
 const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
 const MAX_SUBAGENT_ITERATIONS = 100_000;
@@ -63,21 +64,17 @@ function createRunMutationResponse(runId: string, anchorIndex?: number) {
  * 获取所有子代理列表和全局配置
  */
 export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    // 从 SettingsManager 获取持久化的配置
-    const config = ctx.settingsManager.getSubAgentsConfig();
-    const agents = config.agents || [];
-    const maxConcurrentAgents = config.maxConcurrentAgents ?? 3;
-    const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
-    const generalWorkerEnabled = config.generalWorkerEnabled !== false;
-    const defaultMaxIterations = config.defaultMaxIterations ?? 80;
-    const queueTimeoutSeconds = config.queueTimeoutSeconds ?? 600;
-    const defaultMaxRuntimeSeconds = config.defaultMaxRuntimeSeconds ?? 1800;
-    
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds, defaultMaxRuntimeSeconds });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
-  }
+  // 从 SettingsManager 获取持久化的配置
+  const config = ctx.settingsManager.getSubAgentsConfig();
+  const agents = config.agents || [];
+  const maxConcurrentAgents = config.maxConcurrentAgents ?? 3;
+  const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
+  const generalWorkerEnabled = config.generalWorkerEnabled !== false;
+  const defaultMaxIterations = config.defaultMaxIterations ?? 80;
+  const queueTimeoutSeconds = config.queueTimeoutSeconds ?? 600;
+  const defaultMaxRuntimeSeconds = config.defaultMaxRuntimeSeconds ?? 1800;
+  
+  ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds, defaultMaxRuntimeSeconds });
 };
 
 /**
@@ -88,417 +85,373 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
  * 修改目的：创建仍走现有 subagents.create 流程，模板只是预填来源。
  */
 export const getSubAgentPresets: MessageHandler = async (_data, requestId, ctx) => {
-  try {
-    ctx.sendResponse(requestId, { presets: SUB_AGENT_PRESETS });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'GET_SUBAGENT_PRESETS_ERROR', error.message || 'Failed to get subagent presets');
-  }
+  ctx.sendResponse(requestId, { presets: SUB_AGENT_PRESETS });
 };
 
 /**
  * 创建子代理
  */
 export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const type = typeof data.type === 'string' ? data.type.trim() : '';
-    const name = typeof data.name === 'string' ? data.name.trim() : '';
+  const type = typeof data.type === 'string' ? data.type.trim() : '';
+  const name = typeof data.name === 'string' ? data.name.trim() : '';
 
-    if (!type) {
-      ctx.sendError(requestId, 'SUBAGENT_TYPE_REQUIRED', 'SubAgent type is required');
-      return;
-    }
-    if (!name) {
-      ctx.sendError(requestId, 'SUBAGENT_NAME_REQUIRED', 'SubAgent name is required');
-      return;
-    }
-
-    const maxIterations = optionalBoundedNumber(data?.maxIterations, {
-      integer: true, min: 1, max: MAX_SUBAGENT_ITERATIONS, allowMinusOne: true
-    });
-    const maxRuntime = optionalBoundedNumber(data?.maxRuntime, {
-      integer: true, min: 1, max: MAX_SUBAGENT_RUNTIME_MS, allowMinusOne: true
-    });
-    if (maxIterations === null || maxRuntime === null) {
-      ctx.sendError(requestId, 'SUBAGENT_INVALID_LIMITS', 'maxIterations/maxRuntime must be -1 or a bounded positive integer');
-      return;
-    }
-
-    const config: SubAgentConfigItem = {
-      type,
-      name,
-      description: data.description || '',
-      systemPrompt: data.systemPrompt || '',
-      channel: data.channel || { channelId: '' },
-      tools: data.tools || { mode: 'all' },
-      maxIterations,
-      maxRuntime,
-      failureModeAfterRetries: data.failureModeAfterRetries || 'fail_parent_tool',
-      enabled: data.enabled !== false
-    };
-    
-    // 检查类型 ID 是否已存在
-    if (ctx.settingsManager.getSubAgent(config.type)) {
-      ctx.sendError(requestId, 'SUBAGENT_EXISTS', `SubAgent "${config.type}" already exists`);
-      return;
-    }
-    
-    // 检查名称是否重复
-    const existingAgents = ctx.settingsManager.getSubAgents();
-    const nameExists = existingAgents.some(a => a.name.toLowerCase() === config.name.toLowerCase());
-    if (nameExists) {
-      ctx.sendError(requestId, 'SUBAGENT_NAME_EXISTS', `A sub-agent with name "${config.name}" already exists`);
-      return;
-    }
-    
-    // 保存到 SettingsManager
-    await ctx.settingsManager.addSubAgent(config);
-    
-    // 注册到内存 registry
-    subAgentRegistry.registerFromConfig(config);
-    
-    // 通知工具定义刷新
-    refreshSubAgentsTool();
-    
-    ctx.sendResponse(requestId, { success: true, type: config.type });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'CREATE_SUBAGENT_ERROR', error.message || 'Failed to create subagent');
+  if (!type) {
+    ctx.sendError(requestId, 'SUBAGENT_TYPE_REQUIRED', 'SubAgent type is required');
+    return;
   }
+  if (!name) {
+    ctx.sendError(requestId, 'SUBAGENT_NAME_REQUIRED', 'SubAgent name is required');
+    return;
+  }
+
+  const maxIterations = optionalBoundedNumber(data?.maxIterations, {
+    integer: true, min: 1, max: MAX_SUBAGENT_ITERATIONS, allowMinusOne: true
+  });
+  const maxRuntime = optionalBoundedNumber(data?.maxRuntime, {
+    integer: true, min: 1, max: MAX_SUBAGENT_RUNTIME_MS, allowMinusOne: true
+  });
+  if (maxIterations === null || maxRuntime === null) {
+    ctx.sendError(requestId, 'SUBAGENT_INVALID_LIMITS', 'maxIterations/maxRuntime must be -1 or a bounded positive integer');
+    return;
+  }
+
+  const config: SubAgentConfigItem = {
+    type,
+    name,
+    description: data.description || '',
+    systemPrompt: data.systemPrompt || '',
+    channel: data.channel || { channelId: '' },
+    tools: data.tools || { mode: 'all' },
+    maxIterations,
+    maxRuntime,
+    failureModeAfterRetries: data.failureModeAfterRetries || 'fail_parent_tool',
+    enabled: data.enabled !== false
+  };
+  
+  // 检查类型 ID 是否已存在
+  if (ctx.settingsManager.getSubAgent(config.type)) {
+    ctx.sendError(requestId, 'SUBAGENT_EXISTS', `SubAgent "${config.type}" already exists`);
+    return;
+  }
+  
+  // 检查名称是否重复
+  const existingAgents = ctx.settingsManager.getSubAgents();
+  const nameExists = existingAgents.some(a => a.name.toLowerCase() === config.name.toLowerCase());
+  if (nameExists) {
+    ctx.sendError(requestId, 'SUBAGENT_NAME_EXISTS', `A sub-agent with name "${config.name}" already exists`);
+    return;
+  }
+  
+  // 保存到 SettingsManager
+  await ctx.settingsManager.addSubAgent(config);
+  
+  // 注册到内存 registry
+  subAgentRegistry.registerFromConfig(config);
+  
+  // 通知工具定义刷新
+  refreshSubAgentsTool();
+  
+  ctx.sendResponse(requestId, { success: true, type: config.type });
 };
 
 /**
  * 更新子代理配置
  */
 export const updateSubAgent: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { type, updates } = data || {};
-    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
-      ctx.sendError(requestId, 'UPDATE_SUBAGENT_INVALID_INPUT', 'updates must be an object');
-      return;
-    }
-    
-    if (!ctx.settingsManager.getSubAgent(type)) {
-      ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
-      return;
-    }
-    
-    // 如果更新名称，检查非空与重复；空名称会让 agent 在选择器里变成看不见的条目
-    if ('name' in updates) {
-      const nextName = typeof updates.name === 'string' ? updates.name.trim() : '';
-      if (!nextName) {
-        ctx.sendError(requestId, 'SUBAGENT_NAME_REQUIRED', 'SubAgent name is required');
-        return;
-      }
-      updates.name = nextName;
-
-      const existingAgents = ctx.settingsManager.getSubAgents();
-      const nameExists = existingAgents.some(
-        a => a.type !== type && a.name.toLowerCase() === nextName.toLowerCase()
-      );
-      if (nameExists) {
-        ctx.sendError(requestId, 'SUBAGENT_NAME_EXISTS', `A sub-agent with name "${nextName}" already exists`);
-        return;
-      }
-    }
-    
-    // 保存到 SettingsManager
-    const success = await ctx.settingsManager.updateSubAgent(type, updates);
-    
-    if (!success) {
-      ctx.sendError(requestId, 'UPDATE_SUBAGENT_FAILED', 'Failed to update subagent');
-      return;
-    }
-    
-    // 更新内存 registry
-    subAgentRegistry.updateConfig(type, updates);
-    
-    // 通知工具定义刷新
-    refreshSubAgentsTool();
-    
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'UPDATE_SUBAGENT_ERROR', error.message || 'Failed to update subagent');
+  const { type, updates } = data || {};
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    ctx.sendError(requestId, 'UPDATE_SUBAGENT_INVALID_INPUT', 'updates must be an object');
+    return;
   }
+  
+  if (!ctx.settingsManager.getSubAgent(type)) {
+    ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
+    return;
+  }
+  
+  // 如果更新名称，检查非空与重复；空名称会让 agent 在选择器里变成看不见的条目
+  if ('name' in updates) {
+    const nextName = typeof updates.name === 'string' ? updates.name.trim() : '';
+    if (!nextName) {
+      ctx.sendError(requestId, 'SUBAGENT_NAME_REQUIRED', 'SubAgent name is required');
+      return;
+    }
+    updates.name = nextName;
+
+    const existingAgents = ctx.settingsManager.getSubAgents();
+    const nameExists = existingAgents.some(
+      a => a.type !== type && a.name.toLowerCase() === nextName.toLowerCase()
+    );
+    if (nameExists) {
+      ctx.sendError(requestId, 'SUBAGENT_NAME_EXISTS', `A sub-agent with name "${nextName}" already exists`);
+      return;
+    }
+  }
+  
+  // 保存到 SettingsManager
+  const success = await ctx.settingsManager.updateSubAgent(type, updates);
+  
+  if (!success) {
+    ctx.sendError(requestId, 'UPDATE_SUBAGENT_FAILED', 'Failed to update subagent');
+    return;
+  }
+  
+  // 更新内存 registry
+  subAgentRegistry.updateConfig(type, updates);
+  
+  // 通知工具定义刷新
+  refreshSubAgentsTool();
+  
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
  * 删除子代理
  */
 export const deleteSubAgent: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { type } = data;
+  const { type } = data;
 
-    const existing = ctx.settingsManager.getSubAgent(type);
-    if (!existing) {
-      ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
-      return;
-    }
-
-    // 有正在跑的 run 时拒绝删除：配置一旦消失，run 结束后 Monitor 只能显示一个查不到定义的孤儿
-    // （agent 名称在 create/update 两处都做了唯一性校验，可用来定位活跃 run）
-    const activeRunIds = subAgentRunController.getActiveRunIds();
-    const busyRunId = activeRunIds.find(
-      runId => subAgentRunController.getState(runId)?.agentName === existing.name
-    );
-    if (busyRunId) {
-      ctx.sendError(
-        requestId,
-        'SUBAGENT_RUN_ACTIVE',
-        `SubAgent "${existing.name}" still has a running task. Stop it in the monitor before deleting.`
-      );
-      return;
-    }
-
-    // 从 SettingsManager 删除
-    const success = await ctx.settingsManager.deleteSubAgent(type);
-    
-    if (!success) {
-      ctx.sendError(requestId, 'DELETE_SUBAGENT_FAILED', 'Failed to delete subagent');
-      return;
-    }
-    
-    // 从内存 registry 删除
-    subAgentRegistry.unregister(type);
-    
-    // 通知工具定义刷新
-    refreshSubAgentsTool();
-    
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'DELETE_SUBAGENT_ERROR', error.message || 'Failed to delete subagent');
+  const existing = ctx.settingsManager.getSubAgent(type);
+  if (!existing) {
+    ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
+    return;
   }
+
+  // 有正在跑的 run 时拒绝删除：配置一旦消失，run 结束后 Monitor 只能显示一个查不到定义的孤儿
+  // （agent 名称在 create/update 两处都做了唯一性校验，可用来定位活跃 run）
+  const activeRunIds = subAgentRunController.getActiveRunIds();
+  const busyRunId = activeRunIds.find(
+    runId => subAgentRunController.getState(runId)?.agentName === existing.name
+  );
+  if (busyRunId) {
+    ctx.sendError(
+      requestId,
+      'SUBAGENT_RUN_ACTIVE',
+      `SubAgent "${existing.name}" still has a running task. Stop it in the monitor before deleting.`
+    );
+    return;
+  }
+
+  // 从 SettingsManager 删除
+  const success = await ctx.settingsManager.deleteSubAgent(type);
+  
+  if (!success) {
+    ctx.sendError(requestId, 'DELETE_SUBAGENT_FAILED', 'Failed to delete subagent');
+    return;
+  }
+  
+  // 从内存 registry 删除
+  subAgentRegistry.unregister(type);
+  
+  // 通知工具定义刷新
+  refreshSubAgentsTool();
+  
+  ctx.sendResponse(requestId, { success: true });
 };
 
 export const openSubAgentMonitor: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const runId = typeof data?.runId === 'string' ? data.runId : undefined;
-    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+  const runId = typeof data?.runId === 'string' ? data.runId : undefined;
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
 
-    if (!ctx.openSubAgentMonitor) {
-      ctx.sendError(requestId, 'SUBAGENT_MONITOR_UNAVAILABLE', 'SubAgent Monitor is not available in this context');
-      return;
-    }
-
-    if (conversationId) {
-      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
-    }
-
-    await ctx.openSubAgentMonitor(runId, conversationId);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'OPEN_SUBAGENT_MONITOR_ERROR', error.message || 'Failed to open SubAgent Monitor');
+  if (!ctx.openSubAgentMonitor) {
+    ctx.sendError(requestId, 'SUBAGENT_MONITOR_UNAVAILABLE', 'SubAgent Monitor is not available in this context');
+    return;
   }
+
+  if (conversationId) {
+    await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+  }
+
+  await ctx.openSubAgentMonitor(runId, conversationId);
+  ctx.sendResponse(requestId, { success: true });
 };
 
 export const pauseRun: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
-    if (!runId) {
-      ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_INVALID_INPUT', 'runId is required');
-      return;
-    }
-
-    const success = subAgentRunController.pause(runId);
-    ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_ERROR', error.message || 'Failed to pause SubAgent run');
+  const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+  if (!runId) {
+    ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_INVALID_INPUT', 'runId is required');
+    return;
   }
+
+  const success = subAgentRunController.pause(runId);
+  ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
 };
 
 export const resumeRun: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
-    if (!runId) {
-      ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_INVALID_INPUT', 'runId is required');
-      return;
-    }
-
-    const success = subAgentRunController.resume(runId);
-    ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_ERROR', error.message || 'Failed to resume SubAgent run');
+  const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+  if (!runId) {
+    ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_INVALID_INPUT', 'runId is required');
+    return;
   }
+
+  const success = subAgentRunController.resume(runId);
+  ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
 };
 
 export const exitRun: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
-    const reason = typeof data?.reason === 'string' && data.reason.trim()
-      ? data.reason.trim()
-      : 'SubAgent run stopped by user';
-    if (!runId) {
-      ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_INVALID_INPUT', 'runId is required');
-      return;
-    }
-
-    const success = subAgentRunController.exit(runId, reason);
-    ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_ERROR', error.message || 'Failed to exit SubAgent run');
+  const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+  const reason = typeof data?.reason === 'string' && data.reason.trim()
+    ? data.reason.trim()
+    : 'SubAgent run stopped by user';
+  if (!runId) {
+    ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_INVALID_INPUT', 'runId is required');
+    return;
   }
+
+  const success = subAgentRunController.exit(runId, reason);
+  ctx.sendResponse(requestId, { success, ...describeRunControl(runId) });
 };
 
 export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const runId = typeof data?.runId === 'string' ? data.runId : '';
-    const rawContentIndex = data?.contentIndex;
-    const contentIndex = typeof rawContentIndex === 'number' && Number.isInteger(rawContentIndex) && rawContentIndex >= 0
-      ? rawContentIndex
-      : undefined;
-    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+  const runId = typeof data?.runId === 'string' ? data.runId : '';
+  const rawContentIndex = data?.contentIndex;
+  const contentIndex = typeof rawContentIndex === 'number' && Number.isInteger(rawContentIndex) && rawContentIndex >= 0
+    ? rawContentIndex
+    : undefined;
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
 
-    if (!runId || contentIndex === undefined) {
-      ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
-      return;
-    }
-
-    if (conversationId) {
-      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
-    }
-    await subAgentRunEventBus.loadRunTranscript(runId);
-
-    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => deleteLogicalMessage(contents, contentIndex));
-    if (!snapshot) {
-      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
-      return;
-    }
-
-    const response = createRunMutationResponse(runId, contentIndex);
-    if (!response) {
-      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
-      return;
-    }
-    ctx.sendResponse(requestId, response);
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_ERROR', error.message || 'Failed to delete SubAgent message');
+  if (!runId || contentIndex === undefined) {
+    ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
+    return;
   }
+
+  if (conversationId) {
+    await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+  }
+  await subAgentRunEventBus.loadRunTranscript(runId);
+
+  const snapshot = subAgentRunEventBus.mutateContents(runId, contents => deleteLogicalMessage(contents, contentIndex));
+  if (!snapshot) {
+    ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+    return;
+  }
+
+  const response = createRunMutationResponse(runId, contentIndex);
+  if (!response) {
+    ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+    return;
+  }
+  ctx.sendResponse(requestId, response);
 };
 
 export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const runId = typeof data?.runId === 'string' ? data.runId : '';
-    const rawContentIndex = data?.contentIndex;
-    const contentIndex = typeof rawContentIndex === 'number' && Number.isInteger(rawContentIndex) && rawContentIndex >= 0
-      ? rawContentIndex
-      : undefined;
-    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+  const runId = typeof data?.runId === 'string' ? data.runId : '';
+  const rawContentIndex = data?.contentIndex;
+  const contentIndex = typeof rawContentIndex === 'number' && Number.isInteger(rawContentIndex) && rawContentIndex >= 0
+    ? rawContentIndex
+    : undefined;
+  const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
 
-    if (!runId || contentIndex === undefined) {
-      ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
-      return;
-    }
-
-    if (conversationId) {
-      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
-    }
-    await subAgentRunEventBus.loadRunTranscript(runId);
-
-    const currentSnapshot = subAgentRunEventBus.getSnapshot(runId);
-    if (!currentSnapshot) {
-      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
-      return;
-    }
-    // truncateFrom 为通用纯函数，允许 index===length 表示 no-op；Monitor 的 retry
-    // 必须锚定一条真实消息。否则无内容变化也会走 replaceContents，误清 provider
-    // 前缀缓存 lastSentHistory。
-    if (contentIndex >= currentSnapshot.contents.length) {
-      ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'contentIndex is out of bounds');
-      return;
-    }
-
-    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
-    if (!snapshot) {
-      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
-      return;
-    }
-
-    const response = createRunMutationResponse(runId, contentIndex);
-    if (!response) {
-      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
-      return;
-    }
-    ctx.sendResponse(requestId, response);
-  } catch (error: any) {
-    ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_ERROR', error.message || 'Failed to retry SubAgent message');
+  if (!runId || contentIndex === undefined) {
+    ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
+    return;
   }
+
+  if (conversationId) {
+    await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+  }
+  await subAgentRunEventBus.loadRunTranscript(runId);
+
+  const currentSnapshot = subAgentRunEventBus.getSnapshot(runId);
+  if (!currentSnapshot) {
+    ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+    return;
+  }
+  // truncateFrom 为通用纯函数，允许 index===length 表示 no-op；Monitor 的 retry
+  // 必须锚定一条真实消息。否则无内容变化也会走 replaceContents，误清 provider
+  // 前缀缓存 lastSentHistory。
+  if (contentIndex >= currentSnapshot.contents.length) {
+    ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'contentIndex is out of bounds');
+    return;
+  }
+
+  const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
+  if (!snapshot) {
+    ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+    return;
+  }
+
+  const response = createRunMutationResponse(runId, contentIndex);
+  if (!response) {
+    ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+    return;
+  }
+  ctx.sendResponse(requestId, response);
 };
 
 /**
  * 更新全局配置（maxConcurrentAgents 等）
  */
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'Invalid global config payload');
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'Invalid global config payload');
+    return;
+  }
+  const updates: Record<string, unknown> = {};
+
+  // 支持的全局配置字段
+  if (data.maxConcurrentAgents !== undefined) {
+    const value = data.maxConcurrentAgents;
+    if (typeof value !== 'number' || !Number.isFinite(value)
+        || !Number.isInteger(value) || (value !== -1 && value < 1)) {
+      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'maxConcurrentAgents must be -1 or a positive integer');
       return;
     }
-    const updates: Record<string, unknown> = {};
-
-    // 支持的全局配置字段
-    if (data.maxConcurrentAgents !== undefined) {
-      const value = data.maxConcurrentAgents;
-      if (typeof value !== 'number' || !Number.isFinite(value)
-          || !Number.isInteger(value) || (value !== -1 && value < 1)) {
-        ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'maxConcurrentAgents must be -1 or a positive integer');
-        return;
-      }
-      updates.maxConcurrentAgents = value;
-    }
-
-    if (data.failureModeAfterRetries === 'fail_parent_tool' || data.failureModeAfterRetries === 'wait_for_monitor_action') {
-      updates.failureModeAfterRetries = data.failureModeAfterRetries;
-    }
-
-    if (data.generalWorkerEnabled !== undefined && typeof data.generalWorkerEnabled === 'boolean') {
-      updates.generalWorkerEnabled = data.generalWorkerEnabled;
-    }
-
-    // 全局默认迭代次数（-1 表示无限制，与 per-agent maxIterations 语义一致）
-    if (data.defaultMaxIterations !== undefined) {
-      const v = data.defaultMaxIterations;
-      // Number.isInteger 校验：浮点值（如 2.5）不可入库（R2-08 复查）
-      if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && (v === -1 || v >= 1)) {
-        updates.defaultMaxIterations = v;
-      }
-    }
-
-    // 排队超时（秒，-1 表示无限制，0 视为非法——避免与「0 无超时」的 limiter 语义混淆）
-    if (data.queueTimeoutSeconds !== undefined) {
-      const v = data.queueTimeoutSeconds;
-      if (typeof v !== 'number' || !Number.isFinite(v)
-          || !Number.isInteger(v) || (v !== -1 && v < 1)) {
-        ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'queueTimeoutSeconds must be -1 or a positive integer');
-        return;
-      }
-      updates.queueTimeoutSeconds = v;
-    }
-
-    // 全局默认运行时间上限（秒，-1 表示无限制，0 视为非法——与 queueTimeoutSeconds 校验一致）
-    if (data.defaultMaxRuntimeSeconds !== undefined) {
-      const v = data.defaultMaxRuntimeSeconds;
-      if (typeof v !== 'number' || !Number.isFinite(v)
-          || !Number.isInteger(v) || (v !== -1 && v < 1)) {
-        ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'defaultMaxRuntimeSeconds must be -1 or a positive integer');
-        return;
-      }
-      updates.defaultMaxRuntimeSeconds = v;
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await ctx.settingsManager.updateSubAgentsConfig(updates);
-
-      if (updates.maxConcurrentAgents !== undefined) {
-        // 并发上限调大时立刻唤醒排队中的 run，而不是等某个运行中的 run 结束
-        subAgentConcurrencyLimiter.onCapacityChanged();
-      }
-
-      // 通知工具定义刷新（因为工具描述中包含限制信息和 General Worker 可见性）
-      refreshSubAgentsTool();
-    }
-
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', error.message || 'Failed to update global config');
+    updates.maxConcurrentAgents = value;
   }
+
+  if (data.failureModeAfterRetries === 'fail_parent_tool' || data.failureModeAfterRetries === 'wait_for_monitor_action') {
+    updates.failureModeAfterRetries = data.failureModeAfterRetries;
+  }
+
+  if (data.generalWorkerEnabled !== undefined && typeof data.generalWorkerEnabled === 'boolean') {
+    updates.generalWorkerEnabled = data.generalWorkerEnabled;
+  }
+
+  // 全局默认迭代次数（-1 表示无限制，与 per-agent maxIterations 语义一致）
+  if (data.defaultMaxIterations !== undefined) {
+    const v = data.defaultMaxIterations;
+    // Number.isInteger 校验：浮点值（如 2.5）不可入库（R2-08 复查）
+    if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && (v === -1 || v >= 1)) {
+      updates.defaultMaxIterations = v;
+    }
+  }
+
+  // 排队超时（秒，-1 表示无限制，0 视为非法——避免与「0 无超时」的 limiter 语义混淆）
+  if (data.queueTimeoutSeconds !== undefined) {
+    const v = data.queueTimeoutSeconds;
+    if (typeof v !== 'number' || !Number.isFinite(v)
+        || !Number.isInteger(v) || (v !== -1 && v < 1)) {
+      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'queueTimeoutSeconds must be -1 or a positive integer');
+      return;
+    }
+    updates.queueTimeoutSeconds = v;
+  }
+
+  // 全局默认运行时间上限（秒，-1 表示无限制，0 视为非法——与 queueTimeoutSeconds 校验一致）
+  if (data.defaultMaxRuntimeSeconds !== undefined) {
+    const v = data.defaultMaxRuntimeSeconds;
+    if (typeof v !== 'number' || !Number.isFinite(v)
+        || !Number.isInteger(v) || (v !== -1 && v < 1)) {
+      ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'defaultMaxRuntimeSeconds must be -1 or a positive integer');
+      return;
+    }
+    updates.defaultMaxRuntimeSeconds = v;
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await ctx.settingsManager.updateSubAgentsConfig(updates);
+
+    if (updates.maxConcurrentAgents !== undefined) {
+      // 并发上限调大时立刻唤醒排队中的 run，而不是等某个运行中的 run 结束
+      subAgentConcurrencyLimiter.onCapacityChanged();
+    }
+
+    // 通知工具定义刷新（因为工具描述中包含限制信息和 General Worker 可见性）
+    refreshSubAgentsTool();
+  }
+
+  ctx.sendResponse(requestId, { success: true });
 };
 
 /**
@@ -525,16 +478,16 @@ export function initializeSubAgentsFromSettings(ctx: HandlerContext): void {
  * 注册 SubAgents 处理器
  */
 export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set(MESSAGE_NAMES['subagents.list'], listSubAgents);
-  registry.set(MESSAGE_NAMES['subagents.getPresets'], getSubAgentPresets);
-  registry.set(MESSAGE_NAMES['subagents.create'], createSubAgent);
-  registry.set(MESSAGE_NAMES['subagents.update'], updateSubAgent);
-  registry.set(MESSAGE_NAMES['subagents.delete'], deleteSubAgent);
-  registry.set(MESSAGE_NAMES['subagents.updateGlobalConfig'], updateGlobalConfig);
-  registry.set(MESSAGE_NAMES['subagents.openMonitor'], openSubAgentMonitor);
-  registry.set(MESSAGE_NAMES['subagents.pauseRun'], pauseRun);
-  registry.set(MESSAGE_NAMES['subagents.resumeRun'], resumeRun);
-  registry.set(MESSAGE_NAMES['subagents.exitRun'], exitRun);
-  registry.set(MESSAGE_NAMES['subagents.deleteRunMessage'], deleteRunMessage);
-  registry.set(MESSAGE_NAMES['subagents.retryRunFromMessage'], retryRunFromMessage);
+  registry.set(MESSAGE_NAMES['subagents.list'], withBoundary('LIST_SUBAGENTS_ERROR', 'Failed to list subagents', listSubAgents));
+  registry.set(MESSAGE_NAMES['subagents.getPresets'], withBoundary('GET_SUBAGENT_PRESETS_ERROR', 'Failed to get subagent presets', getSubAgentPresets));
+  registry.set(MESSAGE_NAMES['subagents.create'], withBoundary('CREATE_SUBAGENT_ERROR', 'Failed to create subagent', createSubAgent));
+  registry.set(MESSAGE_NAMES['subagents.update'], withBoundary('UPDATE_SUBAGENT_ERROR', 'Failed to update subagent', updateSubAgent));
+  registry.set(MESSAGE_NAMES['subagents.delete'], withBoundary('DELETE_SUBAGENT_ERROR', 'Failed to delete subagent', deleteSubAgent));
+  registry.set(MESSAGE_NAMES['subagents.updateGlobalConfig'], withBoundary('UPDATE_GLOBAL_CONFIG_ERROR', 'Failed to update global config', updateGlobalConfig));
+  registry.set(MESSAGE_NAMES['subagents.openMonitor'], withBoundary('OPEN_SUBAGENT_MONITOR_ERROR', 'Failed to open SubAgent Monitor', openSubAgentMonitor));
+  registry.set(MESSAGE_NAMES['subagents.pauseRun'], withBoundary('SUBAGENT_PAUSE_RUN_ERROR', 'Failed to pause SubAgent run', pauseRun));
+  registry.set(MESSAGE_NAMES['subagents.resumeRun'], withBoundary('SUBAGENT_RESUME_RUN_ERROR', 'Failed to resume SubAgent run', resumeRun));
+  registry.set(MESSAGE_NAMES['subagents.exitRun'], withBoundary('SUBAGENT_EXIT_RUN_ERROR', 'Failed to exit SubAgent run', exitRun));
+  registry.set(MESSAGE_NAMES['subagents.deleteRunMessage'], withBoundary('SUBAGENT_DELETE_MESSAGE_ERROR', 'Failed to delete SubAgent message', deleteRunMessage));
+  registry.set(MESSAGE_NAMES['subagents.retryRunFromMessage'], withBoundary('SUBAGENT_RETRY_MESSAGE_ERROR', 'Failed to retry SubAgent message', retryRunFromMessage));
 }

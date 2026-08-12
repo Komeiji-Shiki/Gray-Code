@@ -18,6 +18,74 @@ import { WebviewClientRegistry, type WebviewClientId } from './runtime/WebviewCl
 import type * as vscode from 'vscode';
 
 /**
+ * requestId → clientId 路由映射的收敛封装（04#8）。
+ *
+ * 背景：映射的删除策略曾散落在 MessageRouter 的约 9 处（登记、非阻塞成功/失败兜底、阻塞成功/异常、
+ * sendRoutedResponse/sendRoutedError 回退、runStreamTask finally、runRegistryStreamHandler 成功/失败），
+ * 与三套执行模型（阻塞 await / 非阻塞 fire-and-forget / 流式后台任务）耦合，曾导致
+ * 「错误错投主聊天」「Map 无界泄漏」两类事故。这里把登记、路由与删除收口到语义化方法，
+ * 删除时机只由本类决定。
+ *
+ * 删除策略（唯一事实来源）：
+ * - track 记录 keepUntilFinalize：流式请求为 true（started 之后流仍在进行，后续
+ *   cancelled/error 响应仍需按 requestId 路由回发起方）；非流式请求为 false。
+ * - routeResponse 投递成功时：keepUntilFinalize=true 保留条目；false 视为终态、就地删除。
+ * - routeError 是终态：无论是否流式，投递成功或回退都必须删除。
+ * - 投递失败/未命中条目：删除后回退主聊天，防止无界泄漏。
+ * - finish/fail：幂等兜底删除，分别对应正常收尾与错误收尾。
+ */
+class RequestRouteTable {
+  constructor(
+    private readonly entries: Map<string, { clientId: WebviewClientId; keepUntilFinalize: boolean }>,
+    private readonly deliverResponse: (clientId: WebviewClientId, requestId: string, data: unknown) => boolean,
+    private readonly deliverError: (clientId: WebviewClientId, requestId: string, code: string, message: string) => boolean,
+    private readonly fallbackResponse: (requestId: string, data: unknown) => void,
+    private readonly fallbackError: (requestId: string, code: string, message: string) => void,
+  ) {}
+
+  /** 登记映射。requestId 或 clientId 为空时不登记（与既有入口守卫一致）。 */
+  track(requestId: string, clientId: WebviewClientId | undefined, keepUntilFinalize: boolean): void {
+    if (requestId && clientId) {
+      this.entries.set(requestId, { clientId, keepUntilFinalize });
+    }
+  }
+
+  /** 正常收尾/兜底清理：删除条目（幂等）。 */
+  finish(requestId: string): void {
+    this.entries.delete(requestId);
+  }
+
+  /** 错误收尾清理：删除条目（幂等）。与 finish 同效果，语义上区分失败路径。 */
+  fail(requestId: string): void {
+    this.entries.delete(requestId);
+  }
+
+  /** 按 requestId 路由成功响应，内部决定是否保留条目。 */
+  routeResponse(requestId: string, data: unknown): void {
+    const entry = this.entries.get(requestId);
+    if (entry && this.deliverResponse(entry.clientId, requestId, data)) {
+      if (!entry.keepUntilFinalize) {
+        this.entries.delete(requestId);
+      }
+      return;
+    }
+    this.entries.delete(requestId);
+    this.fallbackResponse(requestId, data);
+  }
+
+  /** 按 requestId 路由错误响应；错误是终态，路由成功或回退都必须删除条目。 */
+  routeError(requestId: string, code: string, message: string): void {
+    const entry = this.entries.get(requestId);
+    if (entry && this.deliverError(entry.clientId, requestId, code, message)) {
+      this.entries.delete(requestId);
+      return;
+    }
+    this.entries.delete(requestId);
+    this.fallbackError(requestId, code, message);
+  }
+}
+
+/**
  * 流式消息类型（由 MESSAGE_NAMES 常量组成，避免成为协议消息名的第二事实源）
  */
 export const STREAM_MESSAGE_TYPES = [
@@ -42,7 +110,10 @@ export class MessageRouter {
   private streamHandler: StreamRequestHandler;
   private abortManager: StreamAbortManager;
   private clientRegistry: WebviewClientRegistry;
-  private requestClients = new Map<string, WebviewClientId>();
+  // 底层 Map 保留 MessageRouter.requestClients 命名：既有测试经 (router as any).requestClients.size
+  // 断言「无残留」，且历史事故也以此名留档。RequestRouteTable 是唯一的增删入口。
+  private requestClients = new Map<string, { clientId: WebviewClientId; keepUntilFinalize: boolean }>();
+  private requestRoutes: RequestRouteTable;
 
   constructor(
     private chatHandler: ChatHandler,
@@ -54,6 +125,13 @@ export class MessageRouter {
     clientRegistry: WebviewClientRegistry
   ) {
     this.clientRegistry = clientRegistry;
+    this.requestRoutes = new RequestRouteTable(
+      this.requestClients,
+      (clientId, requestId, data) => this.clientRegistry.sendResponse(clientId, requestId, data),
+      (clientId, requestId, code, message) => this.clientRegistry.sendError(clientId, requestId, code, message),
+      (requestId, data) => this.sendResponse(requestId, data),
+      (requestId, code, message) => this.sendError(requestId, code, message)
+    );
     // 创建处理器注册表
     this.registry = createMessageHandlerRegistry();
     
@@ -66,7 +144,7 @@ export class MessageRouter {
       getClientView: this.getClientView,
       sendResponse: (requestId, data) => this.sendRoutedResponse(requestId, data),
       sendError: (requestId, code, message) => this.sendRoutedError(requestId, code, message),
-      finalizeRequest: (requestId) => this.requestClients.delete(requestId)
+      finalizeRequest: (requestId) => this.requestRoutes.finish(requestId)
     });
   }
 
@@ -78,19 +156,17 @@ export class MessageRouter {
   async route(type: string, data: any, requestId: string, ctx: HandlerContext, clientId?: string): Promise<boolean> {
     const resolvedClientId = this.clientRegistry.resolveClientId(clientId, ctx.clientId);
 
-    // requestId → clientId 的映射：非流式请求在 sendResponse / sendError 路由成功或回退时删除，
-    // 流式请求由流的 finally/finalizeRequest 统一清理。因此只能为「确实会被本 router 处理」的
-    // 请求登记：以前无论如何都先 set，未命中处理器而回退的消息、以及 handler 抛异常的请求都会
-    // 留下一条永不清理的条目，这个 Map 没有上界。
-    const trackRequestClient = () => {
-      if (requestId && resolvedClientId) {
-        this.requestClients.set(requestId, resolvedClientId);
-      }
+    // requestId → clientId 的映射：只对「确实会被本 router 处理」的请求登记（未命中处理器而
+    // 回退的消息、handler 抛异常的请求都不应留下永不清理的条目）。删除策略统一收敛到
+    // RequestRouteTable：流式请求 keepUntilFinalize=true，由流的 finally/finalizeRequest 清理；
+    // 非流式请求由 finish/fail 与 routeError 清理。
+    const trackRequestClient = (keepUntilFinalize: boolean) => {
+      this.requestRoutes.track(requestId, resolvedClientId, keepUntilFinalize);
     };
 
     // 检查是否是流式消息
     if (this.isStreamMessage(type)) {
-      trackRequestClient();
+      trackRequestClient(true);
       await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId, ctx);
       return true;
     }
@@ -106,45 +182,40 @@ export class MessageRouter {
     // 长任务（总结、依赖安装等）耗时数十秒到数分钟，串行 await 会让
     // 取消类消息排不到队，导致 webview 消息通道整体冻结。
     if (NON_BLOCKING_MESSAGE_TYPES.has(type)) {
-      trackRequestClient();
+      trackRequestClient(false);
       const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
       handler(data, requestId, routedCtx).then(
         () => {
-          // handler 成功但未调用 sendResponse/sendError（成功但不回复）时，
-          // requestClients 条目会永久残留。createRoutedContext 的 sendResponse/sendError
-          // 刻意不删除条目（流式请求的 started:true 之后流仍在进行，后续错误响应仍要靠
-          // requestId → clientId 映射路由回发起方，见 sendRoutedResponse 注释），因此
-          // 这里不能依赖「已回复则条目已被删」：非阻塞请求都是非流式 handler，resolve 后
-          // 映射不再被使用，统一用 has() 判断并兜底删除防泄漏。
-          if (this.requestClients.has(requestId)) {
-            this.requestClients.delete(requestId);
-          }
+          // handler 成功但未调用 sendResponse/sendError（成功但不回复）时，路由条目会永久残留。
+          // 非阻塞请求都是非流式 handler，resolve 后映射不再被使用，统一兜底释放防泄漏
+          // （createRoutedContext 的 sendResponse/sendError 不负责删除，删除统一由本表收口）。
+          this.requestRoutes.finish(requestId);
         },
         (error) => {
           console.error(`[MessageRouter] Non-blocking handler error for ${type}:`, error);
-          // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息，
-          // 先 delete 会导致错误必然错投主聊天，Monitor 面板请求永久挂起。
+          // 必须先 routeError 再兜底清理：routeError 依赖 requestId → clientId 映射路由回发起方，
+          // 先删会导致错误必然错投主聊天，Monitor 面板请求永久挂起。
           try {
             this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
           } catch {
             // 发送错误失败则静默忽略
           }
-          // sendRoutedError 内部成功路由时会删除条目；回退路径不删，这里兜底清理防泄漏。
-          this.requestClients.delete(requestId);
+          // routeError 在成功路由与回退时都会删除条目；这里兜底清理防泄漏（幂等）。
+          this.requestRoutes.fail(requestId);
         }
       );
       return true;
     }
 
-    trackRequestClient();
+    trackRequestClient(false);
     const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
     try {
       await handler(data, requestId, routedCtx);
       // 阻塞 handler 正常返回却没有响应时也必须释放路由映射。
-      this.requestClients.delete(requestId);
+      this.requestRoutes.finish(requestId);
     } catch (error) {
       // handler 抛出时没有任何一方会回复，映射必须就地清理
-      this.requestClients.delete(requestId);
+      this.requestRoutes.fail(requestId);
       throw error;
     }
     return true;
@@ -167,10 +238,10 @@ export class MessageRouter {
         if (!this.clientRegistry.sendResponse(clientId, requestId, data)) {
           ctx.sendResponse(requestId, data);
         }
-        // 不在此处删除 requestClients：流式请求（chat.rerollStream / chat.editBranchStream）
+        // 不在此处删除路由条目：流式请求（chat.rerollStream / chat.editBranchStream）
         // 的 started:true 之后流仍在进行，后续错误响应仍要靠 requestId → clientId 映射
-        // 路由回发起方；条目由 route() 的非阻塞/阻塞兜底与 runRegistryStreamHandler
-        // 成功回调统一清理（与 finalizeRequest 语义一致）。
+        // 路由回发起方；条目由 RequestRouteTable 的 keepUntilFinalize 语义保留，
+        // 并在 route()/runRegistryStreamHandler/finalizeRequest 的 finish/fail 统一清理。
       },
       sendError: (requestId, code, message) => {
         if (!this.clientRegistry.sendError(clientId, requestId, code, message)) {
@@ -194,29 +265,11 @@ export class MessageRouter {
   }
 
   private sendRoutedResponse(requestId: string, data: any): void {
-    const clientId = this.requestClients.get(requestId);
-    if (clientId && this.clientRegistry.sendResponse(clientId, requestId, data)) {
-      // 流式请求的 started:true / cancelled 响应发出后流可能仍在进行（后续错误响应仍要靠
-      // requestId → clientId 映射路由回发起方），此处不删除条目；由流的 finally/finalizeRequest
-      // 统一清理，避免 Monitor 侧错误被错投主聊天、await 永久挂起。
-      return;
-    }
-
-    // 回退到主聊天：目标客户端不存在或已销毁，条目必须清理，否则 requestClients 无界泄漏
-    this.requestClients.delete(requestId);
-    this.sendResponse(requestId, data);
+    this.requestRoutes.routeResponse(requestId, data);
   }
 
   private sendRoutedError(requestId: string, code: string, message: string): void {
-    const clientId = this.requestClients.get(requestId);
-    if (clientId && this.clientRegistry.sendError(clientId, requestId, code, message)) {
-      this.requestClients.delete(requestId);
-      return;
-    }
-
-    // 回退到主聊天：目标客户端不存在或已销毁，条目必须清理，否则 requestClients 无界泄漏
-    this.requestClients.delete(requestId);
-    this.sendError(requestId, code, message);
+    this.requestRoutes.routeError(requestId, code, message);
   }
 
   /**
@@ -238,7 +291,7 @@ export class MessageRouter {
       try {
         this.sendRoutedError(requestId, 'STREAM_HANDLER_ERROR', error?.message || String(error));
       } finally {
-        this.requestClients.delete(requestId);
+        this.requestRoutes.fail(requestId);
       }
     });
   }
@@ -265,15 +318,15 @@ export class MessageRouter {
         break;
         
       case 'cancelStream':
-        // data 缺失时直接解构会抛 TypeError（被上层 catch 吞掉），requestClients 已登记的条目
-        // 将永久残留；先 sendRoutedError 回传错误（映射还在，能路由到发起方），再兜底清理。
+        // data 缺失时直接解构会抛 TypeError（被上层 catch 吞掉），已登记的请求会永久残留；
+        // 先 routeError 回传错误（映射还在，能路由到发起方），再兜底清理。
         if (!data || typeof data.conversationId !== 'string' || !data.conversationId) {
           try {
             this.sendRoutedError(requestId, 'INVALID_DATA', 'cancelStream: missing conversationId');
           } catch {
             // 发送错误失败则静默忽略
           }
-          this.requestClients.delete(requestId);
+          this.requestRoutes.fail(requestId);
           break;
         }
         const { conversationId } = data;
@@ -298,7 +351,8 @@ export class MessageRouter {
    * H2：以 fire-and-forget 方式调用注册表中的流式 handler（chat.rerollStream / chat.editBranchStream）。
    *
    * 与 StreamRequestHandler 的流式类型同语义：route() 不 await 长流，取消/删除/新消息等 IPC
-   * 不会被长流占死；错误就地清理 requestClients 后按路由回传（sendRoutedError 依赖该映射）。
+   * 不会被长流占死；错误先经 routeError 按路由回传（依赖 requestId → clientId 映射），
+   * 再兜底清理路由映射（RequestRouteTable.fail）。
    */
   private runRegistryStreamHandler(
     type: string,
@@ -311,7 +365,7 @@ export class MessageRouter {
     if (!handler) {
       // 理论上不可能（注册表与 STREAM_MESSAGE_TYPES 同步维护）；兜底回传错误防挂起
       this.sendRoutedError(requestId, 'HANDLER_ERROR', `stream handler not registered: ${type}`);
-      this.requestClients.delete(requestId);
+      this.requestRoutes.fail(requestId);
       return;
     }
     const routedCtx = this.createRoutedContext(ctx, clientId);
@@ -319,17 +373,17 @@ export class MessageRouter {
       () => {
         // 流正常结束后统一清理路由映射（与 finalizeRequest 语义一致；
         // 流期间错误由 handler 内经 routedCtx 回传，不依赖该映射）
-        this.requestClients.delete(requestId);
+        this.requestRoutes.finish(requestId);
       },
       (error: any) => {
         console.error(`[MessageRouter] Stream handler error for ${type}:`, error);
-        // 必须先 sendRoutedError 再清理：sendRoutedError 需要 requestClients 里的路由信息
+        // 必须先 routeError 再兜底清理：routeError 依赖 requestId → clientId 映射路由回发起方
         try {
           this.sendRoutedError(requestId, 'HANDLER_ERROR', error?.message || String(error));
         } catch {
           // 发送错误失败则静默忽略
         }
-        this.requestClients.delete(requestId);
+        this.requestRoutes.fail(requestId);
       }
     );
   }

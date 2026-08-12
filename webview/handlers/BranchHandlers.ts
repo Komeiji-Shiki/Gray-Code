@@ -79,28 +79,43 @@ function sendBranchError(requestId: string, ctx: HandlerContext, error: unknown)
 }
 
 /**
+ * 分支域错误边界：分支 handler 的 try/catch 收敛到这一处。
+ *
+ * 与通用 withBoundary 的差异：分支操作需要把 BranchError.code 原样透出为 IPC 错误码
+ * （NODE_NOT_FOUND / BRANCH_OPERATION_CONFLICT / WORKSPACE_STATE_UNAVAILABLE 等），
+ * 未知异常才回退为 INTERNAL_ERROR——这不是固定 errorCode 的 withBoundary 能表达的，
+ * 因此保留 sendBranchError 作为分支域唯一的错误映射入口。
+ */
+function withBranchBoundary(handler: MessageHandler): MessageHandler {
+    return async (data, requestId, ctx) => {
+        try {
+            await handler(data || {}, requestId, ctx);
+        } catch (error) {
+            sendBranchError(requestId, ctx, error);
+        }
+    };
+}
+
+
+/**
  * 获取分支图（BR-06）。
  * 响应：{ graph, errorCode?, errorMessage? }（graph 为 null 表示无图/线性模式/损坏降级）
  */
-export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId } = data || {};
-    // L-7（R4 复查）：入参显式类型校验——非 string（数字/对象等）一律按缺失处理
-    if (typeof conversationId !== 'string' || !conversationId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
-      return;
-    }
-    const result = await resolveBranchService(ctx).getBranchGraph(conversationId);
-    // BCP-04：响应富化——每节点补充 hasWorkspaceState / wroteToWorkspace（决策 1 判据）
-    // （enrichGraphWorkspaceInfo 内部浅拷贝后再富化，不污染 BranchService 缓存共享引用）
-    if (result.graph) {
-      result.graph = enrichGraphWorkspaceInfo(result.graph);
-    }
-    ctx.sendResponse(requestId, result);
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const getBranchGraph: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId } = data || {};
+  // L-7（R4 复查）：入参显式类型校验——非 string（数字/对象等）一律按缺失处理
+  if (typeof conversationId !== 'string' || !conversationId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
+    return;
   }
-};
+  const result = await resolveBranchService(ctx).getBranchGraph(conversationId);
+  // BCP-04：响应富化——每节点补充 hasWorkspaceState / wroteToWorkspace（决策 1 判据）
+  // （enrichGraphWorkspaceInfo 内部浅拷贝后再富化，不污染 BranchService 缓存共享引用）
+  if (result.graph) {
+    result.graph = enrichGraphWorkspaceInfo(result.graph);
+  }
+  ctx.sendResponse(requestId, result);
+});
 
 /**
  * 获取分支图元信息（BR-06）：{ exists, rootNodeId, activeTailNodeId, nodeCount,
@@ -109,20 +124,16 @@ export const getBranchGraph: MessageHandler = async (data, requestId, ctx) => {
  * 注意：conversation.getBranchGraphMeta 注册已移除（无前端调用方，bug-hunt 第二轮）；
  * 函数保留供单元测试直接调用（branchHandlers.test.ts）。
  */
-export const getBranchGraphMeta: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId } = data || {};
-    // L-7（R4 复查）：入参显式类型校验
-    if (typeof conversationId !== 'string' || !conversationId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
-      return;
-    }
-    const result = await resolveBranchService(ctx).getBranchGraphMeta(conversationId);
-    ctx.sendResponse(requestId, result);
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const getBranchGraphMeta: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId } = data || {};
+  // L-7（R4 复查）：入参显式类型校验
+  if (typeof conversationId !== 'string' || !conversationId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId is required');
+    return;
   }
-};
+  const result = await resolveBranchService(ctx).getBranchGraphMeta(conversationId);
+  ctx.sendResponse(requestId, result);
+});
 
 /**
  * 创建 reroll 候选（TREE-01 底座）：同一父节点下新增候选并切换 activeChildId，旧候选保留。
@@ -131,30 +142,26 @@ export const getBranchGraphMeta: MessageHandler = async (data, requestId, ctx) =
  * 注意：conversation.createRerollCandidate 注册已移除（无前端调用方，bug-hunt 第二轮）；
  * 函数保留供单元测试直接调用（branchHandlers.test.ts）。
  */
-export const createRerollCandidate: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, parentNodeId, parts, modelVersion, usageMetadata, createdAt } = data || {};
-    // L-7（R4 复查）：入参显式类型校验——非 string 的 ID 一律按缺失处理
-    if (typeof conversationId !== 'string' || !conversationId.trim()
-        || typeof parentNodeId !== 'string' || !parentNodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and parentNodeId are required');
-      return;
-    }
-    // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
-    if (rejectIfStreaming(ctx, conversationId, requestId)) {
-      return;
-    }
-    const result = await resolveBranchService(ctx).createRerollCandidate(conversationId, parentNodeId, {
-      parts: Array.isArray(parts) ? parts : [],
-      modelVersion,
-      usageMetadata,
-      createdAt: typeof createdAt === 'number' ? createdAt : undefined
-    });
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const createRerollCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, parentNodeId, parts, modelVersion, usageMetadata, createdAt } = data || {};
+  // L-7（R4 复查）：入参显式类型校验——非 string 的 ID 一律按缺失处理
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || typeof parentNodeId !== 'string' || !parentNodeId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and parentNodeId are required');
+    return;
   }
-};
+  // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  const result = await resolveBranchService(ctx).createRerollCandidate(conversationId, parentNodeId, {
+    parts: Array.isArray(parts) ? parts : [],
+    modelVersion,
+    usageMetadata,
+    createdAt: typeof createdAt === 'number' ? createdAt : undefined
+  });
+  ctx.sendResponse(requestId, { success: true, ...result });
+});
 
 /**
  * 切换候选（TREE-04/06 全链编排）：
@@ -188,378 +195,342 @@ export const createRerollCandidate: MessageHandler = async (data, requestId, ctx
  * 锁序（M-3 强约束）：恢复（工作区/存档锁）在切图（会话写锁）**之前**完成，锁不嵌套；
  * 存档操作锁仍只在会话写锁之外获取。
  */
-export const switchBranchCandidate: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, nodeId, mode, confirmedDiscardDirty } = data || {};
-    // L-7（R4 复查）：入参显式类型校验
-    if (typeof conversationId !== 'string' || !conversationId.trim()
-        || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
-      return;
+export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, nodeId, mode, confirmedDiscardDirty } = data || {};
+  // L-7（R4 复查）：入参显式类型校验
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || typeof nodeId !== 'string' || !nodeId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
+    return;
+  }
+  // mode 显式校验：仅允许 'chat-only' | 'chat-and-workspace'，非法值报错而非静默降级为 chat-only
+  if (mode !== undefined && mode !== 'chat-only' && mode !== 'chat-and-workspace') {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'mode must be "chat-only" or "chat-and-workspace"');
+    return;
+  }
+  // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  const service = resolveBranchService(ctx);
+
+  // 任何工作区恢复、图指针修改之前先确认主历史已完整入图。旧实现直到图切换后的历史重写
+  // 才发现缺口，chat-and-workspace 模式甚至可能已经恢复了文件；现在保证失败为零副作用。
+  // 注：此前「冻结会话 + 总结后切分支被永久阻塞」的根因是超龄空占位让 deferred 图同步
+  // 永不收敛——该问题已由空占位超龄判定（isActiveEmptyPlaceholder）在源头修复（占位超龄
+  // 后 syncMainHistoryAfterStructuralMutation 直接收敛、append 前先收敛），此处保持
+  // 严格拒绝契约（未入图消息不丢，由调用方按错误提示重试/等待同步完成）。
+  await service.assertMainHistoryRepresentedInGraph(conversationId);
+
+  // BCP-03/04：切换模式（决策 1：缺省仅切聊天）。chat-and-workspace 先恢复目标分支
+  // 绑定的工作区存档，再执行切换——恢复失败**不切分支**（「不静默切换」硬约束）。
+  const workspaceMode = mode === 'chat-and-workspace';
+  let workspaceRestored = false;
+  /** R2-07：本次切换是否实际执行了工作区恢复（区别于「恢复被省略」的零文件变更路径） */
+  let workspaceActuallyRestored = false;
+  let restoredSummary: { restored: number; deleted: number; skipped: number } | undefined;
+
+  if (workspaceMode) {
+    // 1. 安全校验：目标节点必须绑定工作区存档（BCP-02 字段，只读；不存在 → WORKSPACE_STATE_UNAVAILABLE）
+    const graphResult = await service.getBranchGraph(conversationId);
+    const targetGraph = graphResult.graph;
+    if (!targetGraph) {
+      throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
+        '该对话没有分支图，无法联动恢复工作区（仅可切聊天）');
     }
-    // mode 显式校验：仅允许 'chat-only' | 'chat-and-workspace'，非法值报错而非静默降级为 chat-only
-    if (mode !== undefined && mode !== 'chat-only' && mode !== 'chat-and-workspace') {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'mode must be "chat-only" or "chat-and-workspace"');
-      return;
+    const targetNode = targetGraph.nodes[nodeId];
+    if (!targetNode) {
+      throw new BranchError('NODE_NOT_FOUND', `branch node not found: ${nodeId}`);
     }
-    // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
+    const checkpointId = targetNode.workspaceCheckpointId;
+    if (typeof checkpointId !== 'string' || checkpointId.length === 0) {
+      throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
+        '目标分支没有可用的工作区存档（workspaceCheckpointId 未绑定），无法连工作区一起恢复（仅可切聊天）');
+    }
+
+    // 2. dirty 检测（决策 11）：有未保存文件且未确认 → 返回 dirtyFiles，前端先确认；
+    //    不取消流、不恢复、不切分支（零副作用，用户取消确认时一切保持原状）。
+    if (confirmedDiscardDirty !== true) {
+      const dirtyFiles = detectDirtyFilesInWorkspace();
+      if (dirtyFiles.length > 0) {
+        ctx.sendResponse(requestId, { success: false, mode: 'chat-and-workspace', dirtyFiles });
+        return;
+      }
+    }
+
+    // 3. 取消该对话流式请求 + 关联活跃 SubAgent（复用 CheckpointHandlers 既有前置，BCP-03）
+    await cancelStreamAndSubAgents(ctx, conversationId);
+
+    // 4. previewRestore：存档不可恢复（链断裂 / 备份缺失 / 身份不符）→ 明确错误，不切分支
+    const preview = await ctx.checkpointManager.previewRestore(conversationId, checkpointId);
+    if (!preview.success
+        || (preview.failures && preview.failures.length > 0)
+        || (preview.missingBackupDirs && preview.missingBackupDirs.length > 0)) {
+      const reason = [
+        preview.error,
+        (preview.failures ?? []).map(f => `${f.path}: ${f.reason}`).join('; '),
+        (preview.missingBackupDirs ?? []).join(', '),
+      ].find(value => typeof value === 'string' && value.trim().length > 0) ?? 'unknown';
+      throw new BranchError('WORKSPACE_CHECKPOINT_BROKEN', `工作区存档无法安全恢复：${reason}`);
+    }
+
+    // 4.1 二次流式互斥检查（restoreCheckpoint 之前，preview 之后）：预览与恢复之间
+    //     可能有新流启动；命中时直接返回 BRANCH_BUSY——此时工作区文件尚未恢复，
+    //     拒绝路径零副作用（原实现把检查放在恢复之后，命中时恢复副作用无法回滚）。
     if (rejectIfStreaming(ctx, conversationId, requestId)) {
       return;
     }
-    const service = resolveBranchService(ctx);
 
-    // 任何工作区恢复、图指针修改之前先确认主历史已完整入图。旧实现直到图切换后的历史重写
-    // 才发现缺口，chat-and-workspace 模式甚至可能已经恢复了文件；现在保证失败为零副作用。
-    // 注：此前「冻结会话 + 总结后切分支被永久阻塞」的根因是超龄空占位让 deferred 图同步
-    // 永不收敛——该问题已由空占位超龄判定（isActiveEmptyPlaceholder）在源头修复（占位超龄
-    // 后 syncMainHistoryAfterStructuralMutation 直接收敛、append 前先收敛），此处保持
-    // 严格拒绝契约（未入图消息不丢，由调用方按错误提示重试/等待同步完成）。
-    await service.assertMainHistoryRepresentedInGraph(conversationId);
-
-    // BCP-03/04：切换模式（决策 1：缺省仅切聊天）。chat-and-workspace 先恢复目标分支
-    // 绑定的工作区存档，再执行切换——恢复失败**不切分支**（「不静默切换」硬约束）。
-    const workspaceMode = mode === 'chat-and-workspace';
-    let workspaceRestored = false;
-    /** R2-07：本次切换是否实际执行了工作区恢复（区别于「恢复被省略」的零文件变更路径） */
-    let workspaceActuallyRestored = false;
-    let restoredSummary: { restored: number; deleted: number; skipped: number } | undefined;
-
-    if (workspaceMode) {
-      // 1. 安全校验：目标节点必须绑定工作区存档（BCP-02 字段，只读；不存在 → WORKSPACE_STATE_UNAVAILABLE）
-      const graphResult = await service.getBranchGraph(conversationId);
-      const targetGraph = graphResult.graph;
-      if (!targetGraph) {
+    // 5. 恢复（BCP-03：恢复可安全省略——目标存档与当前工作区一致/无变化时跳过实际恢复；
+    //    legacy 存档 preview.restored === -1，不命中省略条件，仍执行恢复）
+    if (preview.restored !== 0 || preview.deletedIfUnconfirmed !== 0) {
+      let restored;
+      try {
+        restored = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId, {
+          // 分支切换恢复不删除快照后新建文件（deleteUntrackedFiles=false，#29 保护）
+          deleteUntrackedFiles: false,
+        });
+      } catch (restoreError) {
         throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
-          '该对话没有分支图，无法联动恢复工作区（仅可切聊天）');
+          `工作区恢复失败：${(restoreError as Error)?.message ?? String(restoreError)}`);
       }
-      const targetNode = targetGraph.nodes[nodeId];
-      if (!targetNode) {
-        throw new BranchError('NODE_NOT_FOUND', `branch node not found: ${nodeId}`);
-      }
-      const checkpointId = targetNode.workspaceCheckpointId;
-      if (typeof checkpointId !== 'string' || checkpointId.length === 0) {
+      if (!restored.success) {
         throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
-          '目标分支没有可用的工作区存档（workspaceCheckpointId 未绑定），无法连工作区一起恢复（仅可切聊天）');
+          `工作区恢复失败：${restored.error ?? 'unknown error'}`);
       }
-
-      // 2. dirty 检测（决策 11）：有未保存文件且未确认 → 返回 dirtyFiles，前端先确认；
-      //    不取消流、不恢复、不切分支（零副作用，用户取消确认时一切保持原状）。
-      if (confirmedDiscardDirty !== true) {
-        const dirtyFiles = detectDirtyFilesInWorkspace();
-        if (dirtyFiles.length > 0) {
-          ctx.sendResponse(requestId, { success: false, mode: 'chat-and-workspace', dirtyFiles });
-          return;
-        }
-      }
-
-      // 3. 取消该对话流式请求 + 关联活跃 SubAgent（复用 CheckpointHandlers 既有前置，BCP-03）
-      await cancelStreamAndSubAgents(ctx, conversationId);
-
-      // 4. previewRestore：存档不可恢复（链断裂 / 备份缺失 / 身份不符）→ 明确错误，不切分支
-      const preview = await ctx.checkpointManager.previewRestore(conversationId, checkpointId);
-      if (!preview.success
-          || (preview.failures && preview.failures.length > 0)
-          || (preview.missingBackupDirs && preview.missingBackupDirs.length > 0)) {
-        const reason = [
-          preview.error,
-          (preview.failures ?? []).map(f => `${f.path}: ${f.reason}`).join('; '),
-          (preview.missingBackupDirs ?? []).join(', '),
-        ].find(value => typeof value === 'string' && value.trim().length > 0) ?? 'unknown';
-        throw new BranchError('WORKSPACE_CHECKPOINT_BROKEN', `工作区存档无法安全恢复：${reason}`);
-      }
-
-      // 4.1 二次流式互斥检查（restoreCheckpoint 之前，preview 之后）：预览与恢复之间
-      //     可能有新流启动；命中时直接返回 BRANCH_BUSY——此时工作区文件尚未恢复，
-      //     拒绝路径零副作用（原实现把检查放在恢复之后，命中时恢复副作用无法回滚）。
-      if (rejectIfStreaming(ctx, conversationId, requestId)) {
-        return;
-      }
-
-      // 5. 恢复（BCP-03：恢复可安全省略——目标存档与当前工作区一致/无变化时跳过实际恢复；
-      //    legacy 存档 preview.restored === -1，不命中省略条件，仍执行恢复）
-      if (preview.restored !== 0 || preview.deletedIfUnconfirmed !== 0) {
-        let restored;
-        try {
-          restored = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId, {
-            // 分支切换恢复不删除快照后新建文件（deleteUntrackedFiles=false，#29 保护）
-            deleteUntrackedFiles: false,
-          });
-        } catch (restoreError) {
-          throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
-            `工作区恢复失败：${(restoreError as Error)?.message ?? String(restoreError)}`);
-        }
-        if (!restored.success) {
-          throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
-            `工作区恢复失败：${restored.error ?? 'unknown error'}`);
-        }
-        workspaceRestored = true;
-        workspaceActuallyRestored = true;
-        restoredSummary = {
-          restored: restored.restored,
-          deleted: restored.deleted ?? 0,
-          skipped: restored.skipped ?? 0,
-        };
-      } else {
-        // 省略实际恢复：工作区与目标存档一致，直接标记恢复完成（无文件变更）
-        workspaceRestored = true;
-        restoredSummary = { restored: 0, deleted: 0, skipped: preview.skipped ?? 0 };
-      }
-    }
-
-    // 切换前的活跃尾（主历史重写失败时回滚图状态的锚点）：有图取图活跃尾，
-    // 线性模式（无图）取主历史尾部最后一条非 functionResponse 消息（旧路径尾）。
-    let previousActiveTail: string | null = null;
-    const before = await service.getBranchGraph(conversationId);
-    if (before.graph) {
-      previousActiveTail = before.graph.activeTailNodeId;
+      workspaceRestored = true;
+      workspaceActuallyRestored = true;
+      restoredSummary = {
+        restored: restored.restored,
+        deleted: restored.deleted ?? 0,
+        skipped: restored.skipped ?? 0,
+      };
     } else {
-      const historyBefore = await ctx.conversationManager.getMessagesRaw(conversationId);
-      for (let i = historyBefore.length - 1; i >= 0; i -= 1) {
-        if (!isFunctionResponseMessage(historyBefore[i]!)) {
-          previousActiveTail = historyBefore[i]!.id ?? null;
-          break;
-        }
-      }
+      // 省略实际恢复：工作区与目标存档一致，直接标记恢复完成（无文件变更）
+      workspaceRestored = true;
+      restoredSummary = { restored: 0, deleted: 0, skipped: preview.skipped ?? 0 };
     }
-
-    // 6. 真正切图前再次检查。恢复（await 期间可能启动新流）到切图之间仍有 TOCTOU 窗口，
-    //    二次校验封闭该窗口，避免迟到 chunk 写入切换后的历史。
-    //    R2-07：恢复已实际执行（工作区文件已被改写）时不再拦截——命中 BRANCH_BUSY 会让
-    //    文件已恢复但分支/历史未切换，且错误信息不提示「文件已部分恢复」；
-    //    仅当恢复被省略（零文件变更）或纯聊天模式时才二次检查。
-    if (!workspaceActuallyRestored && rejectIfStreaming(ctx, conversationId, requestId)) {
-      return;
-    }
-    // R2-08：恢复已实际执行时不再拦截，但若此刻确有新流在跑（恢复窗口内启动），留痕告警——
-    // 该流未被取消，其迟到 chunk 可能写入切换后的分支历史；错误信息不提示「文件已部分恢复」。
-    if (workspaceActuallyRestored && isConversationStreaming(ctx, conversationId)) {
-      console.warn(
-        '[BranchHandlers] switchBranchCandidate: workspace restored while a stream is still active for conversation',
-        conversationId,
-        '— proceeding with branch switch; late stream chunks may land in the switched branch history'
-      );
-    }
-
-    // 图状态切换（BranchService，会话写锁内）——恢复（工作区锁）已完成，锁不嵌套
-    const switched = await service.switchBranchCandidate(conversationId, nodeId);
-
-    // 7. 主历史重写（ConversationManager，会话写锁内）
-    let rewrite;
-    try {
-      rewrite = await ctx.conversationManager.rewriteHistoryFromBranchGraph(conversationId);
-    } catch (error) {
-      // 失败回滚图状态（尽力而为）：切回切换前的活跃尾，保持图/历史一致
-      if (previousActiveTail) {
-        try {
-          // 回滚式切换不记录「切图→重写」预期状态（recordRewriteExpectation:false）：
-          // 该切换没有对应的主历史重写会消费它，残留预期会被下一次重写误校验而误拒切换。
-          await service.switchBranchCandidate(conversationId, previousActiveTail, { recordRewriteExpectation: false });
-        } catch (rollbackError) {
-          console.warn('[BranchHandlers] Failed to roll back branch graph after history rewrite failure:', rollbackError);
-        }
-      }
-      throw error;
-    }
-
-    // 8. 检查点清理（会话锁之外）：删除从分歧索引起的旧检查点（索引错位清理）。
-    //    CheckpointService.deleteCheckpointsFromIndex 内部持存档操作锁——必须在会话写锁外调用。
-    //    divergenceIndex 为 null 表示主历史与活跃路径完全一致，无需清理。
-    if (rewrite.divergenceIndex !== null) {
-      const checkpointService = new CheckpointService(
-        ctx.conversationManager,
-        ctx.checkpointManager,
-        ctx.settingsManager
-      );
-      await checkpointService.deleteCheckpointsFromIndex(conversationId, rewrite.divergenceIndex);
-    }
-
-    // 9. 响应：切图 + 主历史重写后的图与活跃路径信息（branchGraph 供前端刷新候选摘要）；
-    //    BCP-03：chat-and-workspace 额外返回 workspaceRestored / restoredSummary
-    const branchGraph = await service.getBranchGraph(conversationId);
-    if (branchGraph.graph) {
-      branchGraph.graph = enrichGraphWorkspaceInfo(branchGraph.graph);
-    }
-    ctx.sendResponse(requestId, {
-      success: true,
-      nodeId,
-      activeTailNodeId: switched.activeTailNodeId,
-      activePathIds: switched.activePathIds,
-      rewritten: true,
-      activePathLength: rewrite.activePathLength,
-      historyLength: rewrite.historyLength,
-      branchGraph,
-      ...(workspaceMode ? { workspaceRestored, restoredSummary } : {}),
-    });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
   }
-};
+
+  // 切换前的活跃尾（主历史重写失败时回滚图状态的锚点）：有图取图活跃尾，
+  // 线性模式（无图）取主历史尾部最后一条非 functionResponse 消息（旧路径尾）。
+  let previousActiveTail: string | null = null;
+  const before = await service.getBranchGraph(conversationId);
+  if (before.graph) {
+    previousActiveTail = before.graph.activeTailNodeId;
+  } else {
+    const historyBefore = await ctx.conversationManager.getMessagesRaw(conversationId);
+    for (let i = historyBefore.length - 1; i >= 0; i -= 1) {
+      if (!isFunctionResponseMessage(historyBefore[i]!)) {
+        previousActiveTail = historyBefore[i]!.id ?? null;
+        break;
+      }
+    }
+  }
+
+  // 6. 真正切图前再次检查。恢复（await 期间可能启动新流）到切图之间仍有 TOCTOU 窗口，
+  //    二次校验封闭该窗口，避免迟到 chunk 写入切换后的历史。
+  //    R2-07：恢复已实际执行（工作区文件已被改写）时不再拦截——命中 BRANCH_BUSY 会让
+  //    文件已恢复但分支/历史未切换，且错误信息不提示「文件已部分恢复」；
+  //    仅当恢复被省略（零文件变更）或纯聊天模式时才二次检查。
+  if (!workspaceActuallyRestored && rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  // R2-08：恢复已实际执行时不再拦截，但若此刻确有新流在跑（恢复窗口内启动），留痕告警——
+  // 该流未被取消，其迟到 chunk 可能写入切换后的分支历史；错误信息不提示「文件已部分恢复」。
+  if (workspaceActuallyRestored && isConversationStreaming(ctx, conversationId)) {
+    console.warn(
+      '[BranchHandlers] switchBranchCandidate: workspace restored while a stream is still active for conversation',
+      conversationId,
+      '— proceeding with branch switch; late stream chunks may land in the switched branch history'
+    );
+  }
+
+  // 图状态切换（BranchService，会话写锁内）——恢复（工作区锁）已完成，锁不嵌套
+  const switched = await service.switchBranchCandidate(conversationId, nodeId);
+
+  // 7. 主历史重写（ConversationManager，会话写锁内）
+  let rewrite;
+  try {
+    rewrite = await ctx.conversationManager.rewriteHistoryFromBranchGraph(conversationId);
+  } catch (error) {
+    // 失败回滚图状态（尽力而为）：切回切换前的活跃尾，保持图/历史一致
+    if (previousActiveTail) {
+      try {
+        // 回滚式切换不记录「切图→重写」预期状态（recordRewriteExpectation:false）：
+        // 该切换没有对应的主历史重写会消费它，残留预期会被下一次重写误校验而误拒切换。
+        await service.switchBranchCandidate(conversationId, previousActiveTail, { recordRewriteExpectation: false });
+      } catch (rollbackError) {
+        console.warn('[BranchHandlers] Failed to roll back branch graph after history rewrite failure:', rollbackError);
+      }
+    }
+    throw error;
+  }
+
+  // 8. 检查点清理（会话锁之外）：删除从分歧索引起的旧检查点（索引错位清理）。
+  //    CheckpointService.deleteCheckpointsFromIndex 内部持存档操作锁——必须在会话写锁外调用。
+  //    divergenceIndex 为 null 表示主历史与活跃路径完全一致，无需清理。
+  if (rewrite.divergenceIndex !== null) {
+    const checkpointService = new CheckpointService(
+      ctx.conversationManager,
+      ctx.checkpointManager,
+      ctx.settingsManager
+    );
+    await checkpointService.deleteCheckpointsFromIndex(conversationId, rewrite.divergenceIndex);
+  }
+
+  // 9. 响应：切图 + 主历史重写后的图与活跃路径信息（branchGraph 供前端刷新候选摘要）；
+  //    BCP-03：chat-and-workspace 额外返回 workspaceRestored / restoredSummary
+  const branchGraph = await service.getBranchGraph(conversationId);
+  if (branchGraph.graph) {
+    branchGraph.graph = enrichGraphWorkspaceInfo(branchGraph.graph);
+  }
+  ctx.sendResponse(requestId, {
+    success: true,
+    nodeId,
+    activeTailNodeId: switched.activeTailNodeId,
+    activePathIds: switched.activePathIds,
+    rewritten: true,
+    activePathLength: rewrite.activePathLength,
+    historyLength: rewrite.historyLength,
+    branchGraph,
+    ...(workspaceMode ? { workspaceRestored, restoredSummary } : {}),
+  });
+});
 
 /**
  * 软删除分支候选（TREE-09 底座）：节点标记 deleted + 候选摘要标记 deleted。
  * 活跃路径上的节点拒绝删除（BRANCH_OPERATION_CONFLICT）。
  * 入参：{ conversationId, nodeId }
  */
-export const deleteBranchCandidate: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, nodeId } = data || {};
-    // L-7（R4 复查）：入参显式类型校验
-    if (typeof conversationId !== 'string' || !conversationId.trim()
-        || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
-      return;
-    }
-    // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
-    if (rejectIfStreaming(ctx, conversationId, requestId)) {
-      return;
-    }
-    const result = await resolveBranchService(ctx).deleteBranchCandidate(conversationId, nodeId);
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const deleteBranchCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, nodeId } = data || {};
+  // L-7（R4 复查）：入参显式类型校验
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || typeof nodeId !== 'string' || !nodeId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
+    return;
   }
-};
+  // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  const result = await resolveBranchService(ctx).deleteBranchCandidate(conversationId, nodeId);
+  ctx.sendResponse(requestId, { success: true, ...result });
+});
 
 /**
  * 恢复软删候选（TREE-09）：清除节点与候选摘要的 deleted / deletedAt，不自动重新激活。
  * 入参：{ conversationId, nodeId }
  */
-export const restoreBranchCandidate: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, nodeId } = data || {};
-    if (typeof conversationId !== 'string' || !conversationId.trim()
-        || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
-      return;
-    }
-    if (rejectIfStreaming(ctx, conversationId, requestId)) {
-      return;
-    }
-    const result = await resolveBranchService(ctx).restoreBranchCandidate(conversationId, nodeId);
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const restoreBranchCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, nodeId } = data || {};
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || typeof nodeId !== 'string' || !nodeId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
+    return;
   }
-};
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  const result = await resolveBranchService(ctx).restoreBranchCandidate(conversationId, nodeId);
+  ctx.sendResponse(requestId, { success: true, ...result });
+});
 
 /**
  * 重命名分支候选（TREE-09）：只改 label（节点 + 候选摘要同步），不动 contents。
  * 入参：{ conversationId, nodeId, label }
  */
-export const renameBranchCandidate: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, nodeId, label } = data || {};
-    if (typeof conversationId !== 'string' || !conversationId.trim()
-        || typeof nodeId !== 'string' || !nodeId.trim()
-        || typeof label !== 'string') {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId, nodeId and label are required');
-      return;
-    }
-    if (rejectIfStreaming(ctx, conversationId, requestId)) {
-      return;
-    }
-    const result = await resolveBranchService(ctx).renameBranchCandidate(conversationId, nodeId, label);
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const renameBranchCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, nodeId, label } = data || {};
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || typeof nodeId !== 'string' || !nodeId.trim()
+      || typeof label !== 'string') {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId, nodeId and label are required');
+    return;
   }
-};
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  const result = await resolveBranchService(ctx).renameBranchCandidate(conversationId, nodeId, label);
+  ctx.sendResponse(requestId, { success: true, ...result });
+});
 
 /**
  * 彻底删除单个软删候选（TREE-09）：物理移除节点及其整棵子树（先软删后彻底删）。
  * 入参：{ conversationId, nodeId }
  */
-export const purgeBranchCandidate: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, nodeId } = data || {};
-    if (typeof conversationId !== 'string' || !conversationId.trim()
-        || typeof nodeId !== 'string' || !nodeId.trim()) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
-      return;
-    }
-    if (rejectIfStreaming(ctx, conversationId, requestId)) {
-      return;
-    }
-    const result = await resolveBranchService(ctx).purgeBranchCandidate(conversationId, nodeId);
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const purgeBranchCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, nodeId } = data || {};
+  if (typeof conversationId !== 'string' || !conversationId.trim()
+      || typeof nodeId !== 'string' || !nodeId.trim()) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId and nodeId are required');
+    return;
   }
-};
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
+    return;
+  }
+  const result = await resolveBranchService(ctx).purgeBranchCandidate(conversationId, nodeId);
+  ctx.sendResponse(requestId, { success: true, ...result });
+});
 
 /**
  * 软删分支数量统计（TREE-09）：缺省全量扫描；可指定 conversationId 只统计单会话。
  * 入参：{ conversationId? }
  */
-export const getDeletedBranchCount: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId } = data || {};
-    if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
-      return;
-    }
-    const result = await resolveBranchService(ctx).getDeletedBranchCount(
-      conversationId ? { conversationId } : {}
-    );
-    ctx.sendResponse(requestId, result);
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const getDeletedBranchCount: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId } = data || {};
+  if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
+    return;
   }
-};
+  const result = await resolveBranchService(ctx).getDeletedBranchCount(
+    conversationId ? { conversationId } : {}
+  );
+  ctx.sendResponse(requestId, result);
+});
 
 /**
  * 物理清理过期软删分支（TREE-09）：缺省全量清理；可指定 conversationId 只清理单会话。
  * 入参：{ conversationId?, retentionDays? }
  */
-export const pruneDeletedBranches: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { conversationId, retentionDays } = data || {};
-    if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
-      return;
-    }
-    if (retentionDays !== undefined && (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0)) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
-      return;
-    }
-    const result = await resolveBranchService(ctx).pruneDeletedBranches({
-      ...(conversationId ? { conversationId } : {}),
-      ...(retentionDays !== undefined ? { retentionDays } : {}),
-    });
-    ctx.sendResponse(requestId, result);
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const pruneDeletedBranches: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { conversationId, retentionDays } = data || {};
+  if (conversationId !== undefined && (typeof conversationId !== 'string' || !conversationId.trim())) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'conversationId must be a non-empty string when provided');
+    return;
   }
-};
+  if (retentionDays !== undefined && (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0)) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
+    return;
+  }
+  const result = await resolveBranchService(ctx).pruneDeletedBranches({
+    ...(conversationId ? { conversationId } : {}),
+    ...(retentionDays !== undefined ? { retentionDays } : {}),
+  });
+  ctx.sendResponse(requestId, result);
+});
 
 /**
  * 读取分支保留期配置（TREE-09）：{ retentionDays }
  */
-export const getBranchRetentionConfig: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const result = await resolveBranchService(ctx).getBranchRetentionConfig();
-    ctx.sendResponse(requestId, result);
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
-  }
-};
+export const getBranchRetentionConfig: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const result = await resolveBranchService(ctx).getBranchRetentionConfig();
+  ctx.sendResponse(requestId, result);
+});
 
 /**
  * 更新分支保留期配置（TREE-09）：入参 { retentionDays }（0 = 不自动清理）
  */
-export const updateBranchRetentionConfig: MessageHandler = async (data, requestId, ctx) => {
-  try {
-    const { retentionDays } = data || {};
-    if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
-      ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
-      return;
-    }
-    const result = await resolveBranchService(ctx).updateBranchRetentionConfig(retentionDays);
-    ctx.sendResponse(requestId, { success: true, ...result });
-  } catch (error) {
-    sendBranchError(requestId, ctx, error);
+export const updateBranchRetentionConfig: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
+  const { retentionDays } = data || {};
+  if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 0) {
+    ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'retentionDays must be a non-negative integer');
+    return;
   }
-};
+  const result = await resolveBranchService(ctx).updateBranchRetentionConfig(retentionDays);
+  ctx.sendResponse(requestId, { success: true, ...result });
+});
 
 /**
  * 注册分支处理器
