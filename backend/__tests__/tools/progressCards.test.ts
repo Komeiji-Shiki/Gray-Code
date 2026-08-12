@@ -1,4 +1,3 @@
-import { setLanguage } from '@/i18n'
 import {
   extractProgressCardData,
   formatProgressToolFallbackContent
