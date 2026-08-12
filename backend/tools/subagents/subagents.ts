@@ -43,7 +43,7 @@ const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set<string>([...MEMORY_TOOL_NAMES, ...T
  */
 let toolNameSnapshotCache: { key: string; builtin: string[]; mcp: string[] } | null = null;
 
-function getCachedToolNameSnapshot(): { builtin: string[]; mcp: string[] } {
+function getCachedToolNameSnapshot(): { key: string; builtin: string[]; mcp: string[] } {
     const toolRegistry = getGlobalToolRegistry();
     const mcpManager = getGlobalMcpManager();
 
@@ -229,7 +229,7 @@ function formatLimit(value: number | undefined, defaultValue: number, isZh: bool
 /**
  * 生成 agentName 参数的描述（包含各子代理的描述、可用工具和限制）
  */
-function generateAgentNameDescription(): string {
+function buildAgentNameDescription(): string {
     const configs = subAgentRegistry.getAllConfigs();
     const settings = getSubAgentsSettings();
     const hasGeneralWorker = settings.generalWorkerEnabled !== false;
@@ -275,7 +275,7 @@ function generateAgentNameDescription(): string {
 /**
  * 生成工具的主描述
  */
-function generateToolDescription(): string {
+function buildToolDescription(): string {
     const configs = subAgentRegistry.getAllConfigs();
     const settings = getSubAgentsSettings();
     const hasGeneralWorker = settings.generalWorkerEnabled !== false;
@@ -327,6 +327,69 @@ ${limitsSection}
 - Sub-agents have their own tool access and can make multiple tool calls
 - Use sub-agents for complex, multi-step tasks that require focused attention
 - For long-running tasks (batch review/research), pass \`background: true\` to start the sub-agent non-blocking: the tool returns immediately with a taskId, and the final result arrives later as a [Background task completed] message. Do NOT wait for it or poll. Background tasks keep running even if the current stream is stopped — cancel them explicitly via the background task bar.`;
+}
+
+/**
+ * 声明描述缓存（性能优化）：此前 generateAgentNameDescription / generateToolDescription
+ * 每次 getter 访问都会全量拼接所有代理的长描述；getAllDeclarations/getAvailableDeclarations
+ * 一次请求遍历全部工具时会反复触发，同一份描述被重建几十次。
+ *
+ * 缓存键 = 语言 + 关键输入指纹：
+ * - agentName 描述：语言、启用代理列表（名称/描述/迭代上限/运行上限/工具配置）、
+ *   工具名快照版本、generalWorkerEnabled、全局默认迭代/运行上限；
+ * - tool 描述：语言、启用代理数量、generalWorkerEnabled、maxConcurrentAgents。
+ * 任一输入变化即失效重建；工具名快照沿用 toolNameSnapshotCache 的失效边界。
+ */
+let agentNameDescriptionCache: { key: string; value: string } | null = null;
+let toolDescriptionCache: { key: string; value: string } | null = null;
+
+function generateAgentNameDescription(): string {
+    const configs = subAgentRegistry.getAllConfigs();
+    const settings = getSubAgentsSettings();
+    const hasGeneralWorker = settings.generalWorkerEnabled !== false;
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
+    const cacheKey = JSON.stringify([
+        isZh,
+        configs.map(config => ({
+            name: config.name,
+            description: config.description,
+            maxIterations: config.maxIterations,
+            maxRuntime: config.maxRuntime,
+            tools: {
+                mode: config.tools.mode,
+                whitelist: config.tools.whitelist,
+                blacklist: config.tools.blacklist,
+                list: config.tools.list
+            }
+        })),
+        getCachedToolNameSnapshot().key,
+        hasGeneralWorker,
+        getGlobalDefaultMaxIterations(),
+        getGlobalDefaultMaxRuntimeSeconds()
+    ]);
+    if (agentNameDescriptionCache && agentNameDescriptionCache.key === cacheKey) {
+        return agentNameDescriptionCache.value;
+    }
+    const value = buildAgentNameDescription();
+    agentNameDescriptionCache = { key: cacheKey, value };
+    return value;
+}
+
+function generateToolDescription(): string {
+    const configs = subAgentRegistry.getAllConfigs();
+    const settings = getSubAgentsSettings();
+    const hasGeneralWorker = settings.generalWorkerEnabled !== false;
+    const maxConcurrent = settings.maxConcurrentAgents ?? 3;
+    // 模型声明语言：zh-CN → 中文，en/ja → 英文（ja 本阶段映射到英文说明）
+    const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
+    const cacheKey = JSON.stringify([isZh, configs.length, hasGeneralWorker, maxConcurrent]);
+    if (toolDescriptionCache && toolDescriptionCache.key === cacheKey) {
+        return toolDescriptionCache.value;
+    }
+    const value = buildToolDescription();
+    toolDescriptionCache = { key: cacheKey, value };
+    return value;
 }
 
 /**

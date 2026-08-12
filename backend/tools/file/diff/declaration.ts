@@ -41,6 +41,13 @@ function getApplyDiffFormat(): 'unified' | 'search_replace' {
 }
 
 /**
+ * apply_diff 声明缓存（性能优化）：declaration getter 之前每次访问都全量重建中英文长描述与 schema；
+ * getAllDeclarations/getAvailableDeclarations 一次请求遍历全部工具时会反复触发。
+ * 缓存键 = 语言 + diff 格式（unified/search_replace）+ 工作区名列表指纹；任一变化即失效重建。
+ */
+let applyDiffDeclarationCache: { key: string; declaration: ToolDeclaration } | null = null;
+
+/**
  * 创建 apply_diff 工具
  */
 export function createApplyDiffTool(): Tool {
@@ -306,8 +313,19 @@ ${descriptionSuffix}`;
 
     return {
         // declaration 做成 getter：根据用户设置动态返回不同描述/Schema
+        // 性能优化：按「语言 + 格式 + 工作区指纹」进程级 memo，依赖未变化时直接返回缓存声明，
+        // 避免每次访问都重建长描述与 schema；语言/格式/工作区列表任一变化即失效重建。
         get declaration() {
-            return buildDeclaration();
+            const workspaces = getAllWorkspaces();
+            const isZh = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN';
+            const format = getApplyDiffFormat();
+            const cacheKey = `${isZh ? 'zh' : 'en'}|${format}|${workspaces.map(w => w.name).join('\u0000')}`;
+            if (applyDiffDeclarationCache && applyDiffDeclarationCache.key === cacheKey) {
+                return applyDiffDeclarationCache.declaration;
+            }
+            const declaration = buildDeclaration();
+            applyDiffDeclarationCache = { key: cacheKey, declaration };
+            return declaration;
         },
 
         handler: async (args, context): Promise<ToolResult> => {

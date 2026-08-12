@@ -254,6 +254,39 @@ export class SettingsCore {
     }
 
     /**
+     * 按需读取指定设置键（轻量快照）。
+     *
+     * 用于请求路径上只读标量字段（checkForUpdates / updateChannel / proxy / storagePath / ui 等）
+     * 的消费点，避免 getSettings() 每次对整个设置树（尤其庞大的 toolsConfig、
+     * toolsEnabled / toolAutoExec 等嵌套对象）做全量深拷贝带来的分配与 GC 压力。
+     *
+     * - 标量字段（number / string / boolean / undefined / null）直接返回原值：标量不可变，
+     *   无需拷贝，也不会暴露活对象引用。
+     * - 对象 / 数组字段仍走 cloneConfig 深拷贝兜底，绝不把存储活对象的引用暴露给调用方。
+     */
+    getScalarSettings<K extends keyof GlobalSettings>(...keys: K[]): Readonly<Pick<GlobalSettings, K>> {
+        const snapshot = {} as Pick<GlobalSettings, K>;
+        for (const key of keys) {
+            const value = this.settings[key];
+            (snapshot as Record<keyof GlobalSettings, unknown>)[key] =
+                value !== null && typeof value === 'object'
+                    ? this.cloneConfig(value)
+                    : value;
+        }
+        return snapshot;
+    }
+
+    /**
+     * 轻量读取更新检查相关设置（checkForUpdates / updateChannel / proxy）。
+     *
+     * 供 UpdateChecker 回调等只读消费点使用：仅构造三个字段的快照，proxy 走 cloneConfig
+     * 深拷贝（proxy 仅含 enabled / url / insecureSkipVerify 三个小字段，拷贝成本远低于整棵树）。
+     */
+    getUpdateSettings(): Readonly<Pick<GlobalSettings, 'checkForUpdates' | 'updateChannel' | 'proxy'>> {
+        return this.getScalarSettings('checkForUpdates', 'updateChannel', 'proxy');
+    }
+
+    /**
      * 串行执行读-改-写操作
      *
      * 多个主题服务的更新方法（addPinnedFile / setSkillEnabled 等）基于同一旧列表

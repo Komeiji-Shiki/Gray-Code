@@ -440,13 +440,17 @@ export function createDefaultExecutor(
         if (maxRuntime > 0) {
             timeoutController = new AbortController();
             // 修改原因：Monitor 暂停和等待用户操作的时间不应计入 maxRuntime，固定 setTimeout 会误把暂停时间算入运行时间。
-            // 修改方式：用短间隔轮询 checkTimeout，checkTimeout 会扣除 runController 记录的 inactiveDurationMs。
+            // 修改方式：用间隔轮询 checkTimeout，checkTimeout 会扣除 runController 记录的 inactiveDurationMs。
             // 修改目的：用户暂停查看 Monitor 或等待手动决策时，SubAgent 不会因为真实墙钟时间流逝而超时失败。
+            // 性能优化：轮询间隔由 500ms 拉大到 2000ms，把并发 run 的常驻定时器唤醒频率降为 1/4。
+            // 取舍：暂停时间扣减由 checkTimeout 内 getActiveElapsedMs（扣除 inactiveDurationMs）保证，与间隔无关；
+            //       拉大间隔只让「在飞 LLM/工具」的超时兜底中止最多晚 2s 触发，相对默认 1800s 上限可忽略，
+            //       且循环各同步点仍会即时 checkTimeout，不会在暂停期间误判超时。
             timeoutId = setInterval(() => {
                 if (checkTimeout().exceeded) {
                     timeoutController?.abort();
                 }
-            }, 500);
+            }, 2000);
             if (abortSignal && !detachedFromParent) {
                 const onParentAbort = () => {
                     if (timeoutId) {

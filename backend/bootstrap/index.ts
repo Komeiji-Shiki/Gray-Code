@@ -687,12 +687,13 @@ export class BackendRuntime {
     private initUpdate(settingsManager: SettingsManager): void {
         this.updateChecker = new UpdateChecker({
             // 用户可在设置页「通用」关闭自动检查（checkForUpdates !== false 默认开启）
-            isCheckEnabled: () => settingsManager.getSettings().checkForUpdates !== false,
+            // 用 getUpdateSettings 轻量快照，避免每次回调对整棵设置树全量深拷贝
+            isCheckEnabled: () => settingsManager.getUpdateSettings().checkForUpdates !== false,
             // 更新渠道：stable 正式版 / nightly 每日构建（设置页「通用」可选）
-            getUpdateChannel: () => settingsManager.getSettings().updateChannel ?? 'stable',
+            getUpdateChannel: () => settingsManager.getUpdateSettings().updateChannel ?? 'stable',
             // 复用渠道代理配置：GitHub API/下载在代理环境下同样走代理
             getProxyUrl: () => {
-                const proxy = settingsManager.getSettings().proxy;
+                const proxy = settingsManager.getUpdateSettings().proxy;
                 return proxy?.enabled && proxy?.url ? proxy.url : undefined;
             },
             // 上次检查时间戳存扩展 globalState（内部状态，不参与 Settings Sync）

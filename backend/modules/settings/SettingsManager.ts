@@ -172,6 +172,23 @@ export class SettingsManager {
     }
 
     /**
+     * 按需读取指定设置键（轻量快照）。
+     * 转发 SettingsCore.getScalarSettings：标量直返、对象/数组走深拷贝兜底，
+     * 供只读标量消费点避免 getSettings() 全树深拷贝。
+     */
+    getScalarSettings<K extends keyof GlobalSettings>(...keys: K[]): Readonly<Pick<GlobalSettings, K>> {
+        return this.core.getScalarSettings(...keys);
+    }
+
+    /**
+     * 轻量读取更新检查相关设置（checkForUpdates / updateChannel / proxy）。
+     * 转发 SettingsCore.getUpdateSettings。
+     */
+    getUpdateSettings(): Readonly<Pick<GlobalSettings, 'checkForUpdates' | 'updateChannel' | 'proxy'>> {
+        return this.core.getUpdateSettings();
+    }
+
+    /**
      * 更新设置（部分更新）
      */
     updateSettings(updates: Partial<GlobalSettings>): Promise<void> {
