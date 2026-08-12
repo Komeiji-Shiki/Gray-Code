@@ -25,10 +25,21 @@ import {
     type SubAgentRunSnapshot
 } from './types';
 
+/**
+ * 自动创建（emit 时 run 不存在）的快照僵尸 TTL（毫秒）。
+ *
+ * run 拆除/终态后迟到的工具事件会让 emit 自动重建无 conversationId/store 的快照，
+ * 这类记录 evictSnapshotsIfNeeded 清不掉；TTL 内未被 createRun/resumeRun 接管即视为僵尸，
+ * 下次事件到达时清理重建，避免高并发下永久驻留（内存泄漏）。
+ */
+const ZOMBIE_SNAPSHOT_TTL_MS = 60_000;
+
 export abstract class SubAgentRunEventBusCore {
     private readonly listeners = new Set<SubAgentRunListener>();
     protected readonly snapshots = new Map<string, SubAgentRunSnapshot>();
     protected readonly stores = new Map<string, SubAgentRunConversationStore>();
+    /** 自动创建（emit 时 run 不存在）的快照创建时间：用于僵尸快照 TTL 清理 */
+    private readonly zombieAutoCreatedAt = new WeakMap<SubAgentRunSnapshot, number>();
 
     /**
      * 请求把 run 落盘（由 persist.ts 派生类实现）：
@@ -135,6 +146,8 @@ export abstract class SubAgentRunEventBusCore {
             transcriptLoaded: true
         };
         this.snapshots.set(runId, snapshot);
+        // 正常 createRun 接管：清除自动创建标记（后续 emit 不再按僵尸 TTL 清理）
+        this.zombieAutoCreatedAt.delete(snapshot);
         if (options?.conversationId && options.conversationStore) {
             this.stores.set(runId, options.conversationStore);
         }
@@ -230,6 +243,34 @@ export abstract class SubAgentRunEventBusCore {
                 transcriptLoaded: true
             };
             this.snapshots.set(normalized.runId, snapshot);
+            this.zombieAutoCreatedAt.set(snapshot, timestamp);
+        } else if (this.zombieAutoCreatedAt.has(snapshot)) {
+            // 修改原因：run 拆除/终态后迟到的工具事件（abort 竞态、M5 并行工具收尾超时后到达）会让 emit
+            //          自动重建无 conversationId/store 的快照——evictSnapshotsIfNeeded 只淘汰「终态 + 有归属」
+            //          的快照，这类僵尸记录永久驻留；并发越高（abort/超时越多）产生越快，是长期内存泄漏点。
+            // 修改方式：自动创建的快照在 TTL 内未被 createRun/resumeRun 接管（仍是僵尸）时，清理后重建。
+            // 修改目的：迟到事件仍能记录（事件先于 createRun 的正常路径不受影响），但不会留下永久僵尸。
+            const created = this.zombieAutoCreatedAt.get(snapshot)!;
+            if (Date.now() - created > ZOMBIE_SNAPSHOT_TTL_MS
+                && !snapshot.conversationId
+                && !this.stores.has(normalized.runId)) {
+                this.zombieAutoCreatedAt.delete(snapshot);
+                this.snapshots.delete(normalized.runId);
+                snapshot = {
+                    runId: normalized.runId,
+                    agentName: normalized.agentName,
+                    status: 'running',
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                    contents: [],
+                    events: [],
+                    contentRevision: 0,
+                    eventSequence: 0,
+                    transcriptLoaded: true
+                };
+                this.snapshots.set(normalized.runId, snapshot);
+                this.zombieAutoCreatedAt.set(snapshot, timestamp);
+            }
         }
 
         ensureSnapshotProtocolFields(snapshot);
