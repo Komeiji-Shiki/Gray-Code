@@ -77,8 +77,7 @@ jobs:
         run: |
           npm ci
           # 前端有独立 package.json（非 workspaces），需单独安装其依赖
-          # 用 install 而非 ci：frontend lock 与 package.json 可能不同步（残留 graycode file:.. 条目），ci 会因同步检查失败
-          npm --prefix frontend install --no-audit --no-fund
+          npm --prefix frontend ci --no-audit --no-fund
 
       - name: Typecheck & test
         if: steps.should.outputs.build == 'true'
@@ -146,8 +145,10 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          if [ "${{ steps.should.outputs.build }}" = "true" ]; then
-            echo "✅ 检测到代码变化，已完成打包并发布 nightly release。"
-          else
+          if [ "${{ job.status }}" != "success" ]; then
+            echo "❌ nightly 构建或发布失败；请查看上方失败步骤。"
+          elif [ "${{ steps.should.outputs.build }}" != "true" ]; then
             echo "⏭️ 最近 24 小时没有新提交（且未勾选 force），跳过打包。"
+          else
+            echo "✅ 检测到代码变化，已完成打包并发布 nightly release。"
           fi

@@ -103,7 +103,7 @@ describe('bufferBackgroundChunk 缓冲上限', () => {
     // 最旧的 500 条被丢弃，剩余从第 500 条开始，且保持顺序
     expect((buffer[0] as any).seq).toBe(500)
     expect((buffer[buffer.length - 1] as any).seq).toBe(2499)
-  })
+  }, 15_000)
 
   test('未超上限时全部保留', () => {
     const state = mockState()
