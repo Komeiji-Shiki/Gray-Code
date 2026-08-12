@@ -482,7 +482,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/design/update_design.ts",
   },
   'update_plan': {
-    description: "Update an existing plan document (markdown) under .graycode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, or continuationPrompt.",
+    description: "Update an existing plan document (markdown) under .graycode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.",
     parameters: {
       "path": {"type":"string","description":"Target existing plan document path under .graycode/plans/**.md. Reuse the approved plan path here; do not send separate sourcePath or planPath fields.","required":true},
       "title": {"type":"string","description":"Optional updated plan title."},
