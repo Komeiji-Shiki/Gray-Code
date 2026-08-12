@@ -9,6 +9,7 @@
 
 ### Fixed
   - 子代理运行时长上限可配置：新增全局配置 `defaultMaxRuntimeSeconds`（秒，-1 表示无限制，默认1800 = 30 分钟）——per-agent 未单独配置 `maxRuntime` 时不再硬编码 30 分钟，而是继承该全局默认值（per-agent 已配置的 `maxRuntime` 仍优先）；前端子代理设置新增「默认最大运行时间（秒）」输入框（-1 或 >=1 合法，0 非法），长任务可设为 -1 无限制。
+  - 修复子代理「默认最大运行时间」设置面板失效：`subagents.list` 未返回 `defaultMaxRuntimeSeconds`（界面加载不回显已保存值）且 `subagents.updateGlobalConfig` 未处理该字段（保存被静默丢弃，此前仅手动编辑配置文件才生效）。现 `listSubAgents` 返回该字段（默认 1800），`updateGlobalConfig` 按与 `queueTimeoutSeconds` 一致的口径校验（-1 或 >=1 整数，0 非法）写入配置；子代理工具描述中的运行时长限制兜底同步跟随全局默认值（此前硬编码 1800，与实际执行不一致）。
   - 修复 `show_windows_notification` 只在 VS Code 右下角显示而非 Windows 系统通知：F-07 曾因 node-notifier 停更/传递依赖安全告警改用 VS Code 原生通知（`VSCodeNotificationAdapter`）；现按需求换回 node-notifier（`NodeNotifierWindowsToastAdapter`，系统 toast），`WindowsAgentStopNotificationService` 同步换回；esbuild 恢复 node-notifier 的 external 与 dist/node_modules 复制逻辑（snoretoast.exe 二进制随包分发）；测试重写为覆盖 `NodeNotifierWindowsToastAdapter`。
   - 通知图标：`show_windows_notification` 与 Agent 停止通知改用 GrayCode 扩展自带图标（`resources/icon.png`，经 `vscode.extensions.getExtension(getProductExtensionId())` 解析扩展安装路径），不再显示 Windows 对未注册 AUMID 的占位图标。
   - 通知点击聚焦：`show_windows_notification`（openChatOnClick）与 Agent 停止通知点击后把 VS Code 窗口置为 Windows 前台——新增 `focusWindow`（PowerShell 从扩展宿主 PPID 向上追溯进程树定位主窗口，SW_RESTORE + SetForegroundWindow；上限 32 层防异常进程树死循环，定位/调用失败静默降级，不影响打开聊天核心行为）。
