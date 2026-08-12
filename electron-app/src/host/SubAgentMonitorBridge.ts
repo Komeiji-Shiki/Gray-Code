@@ -16,6 +16,7 @@ import {
   subAgentRunController,
   subAgentRunEventBus,
   type SubAgentRunEvent,
+  type SubAgentRunManifest,
   type SubAgentRunSnapshot
 } from '../../../backend/tools/subagents';
 import type { SubAgentRunConversationStore } from '../../../backend/tools/subagents/runEventBus';
@@ -23,6 +24,12 @@ import { WEBVIEW_CLIENT_IDS } from '../../../webview/runtime/WebviewClientRegist
 import { createMonitorEventPayload } from '../../../webview/SubAgentMonitorPanel';
 
 const LLM_DELTA_FLUSH_MS = 50;
+// 面板折叠时非 delta 事件（tool_*/content_snapshot/usage/run_* 等）的合并窗口：
+// 不可见时逐条 postMessage 会把渲染进程 IPC 打满（并发 8-10 个子代理可达每秒数百条），
+// 合并到窗口粒度后降至每 run 每窗口 1 条；恢复可见后由 manifest 校准（前端 revision 判据）。
+const NON_DELTA_FLUSH_MS = 100;
+// manifest 轻量缓存容量上限（与 VSCode 版 SubAgentMonitorPanel.MANIFEST_CACHE_MAX 对齐）
+const MANIFEST_CACHE_MAX = 100;
 
 export interface SubAgentMonitorBridgeSeam {
   /** 路由非 lifecycle 消息（pauseRun/exitRun/deleteRunMessage/retryRunFromMessage 等） */
@@ -42,12 +49,19 @@ export interface SubAgentMonitorBridgeSeam {
 export class SubAgentMonitorBridge {
   /** 面板是否可见（由前端 subagents.monitor.setVisible 通知） */
   private visible = false;
+  /** 前端是否已挂载 Monitor（subagents.monitorReady 到达前不推送任何事件——面板从未打开时逐条构造+postMessage 纯属浪费，并发子代理时会把 IPC 打满） */
+  private monitorMounted = false;
   private focusRunId?: string;
   private focusConversationId?: string;
   private clientDispose?: { dispose(): void };
   private readonly unsubscribe: () => void;
   private readonly pendingLlmDeltaEvents = new Map<string, SubAgentRunEvent[]>();
   private llmDeltaFlushTimer?: ReturnType<typeof setTimeout>;
+  /** 面板折叠时按 runId 合并的非 delta 事件（每 run 只保留窗口内最新一条） */
+  private readonly pendingNonDeltaEvents = new Map<string, SubAgentRunEvent>();
+  private nonDeltaFlushTimer?: ReturnType<typeof setTimeout>;
+  /** updatedAt 未变化的 manifest 复用缓存（避免每条事件都重新派生轻量 manifest） */
+  private readonly manifestCache = new Map<string, { manifest: SubAgentRunManifest; updatedAt: number }>();
 
   constructor(private readonly host: SubAgentMonitorBridgeSeam) {
     this.unsubscribe = subAgentRunEventBus.subscribe((event, snapshot) => {
@@ -59,6 +73,10 @@ export class SubAgentMonitorBridge {
     this.visible = !!visible;
     if (!this.visible) {
       this.clearLlmDeltaQueue();
+      this.clearNonDeltaQueue();
+    } else {
+      // 恢复可见：折叠期间的事件被合并/丢弃，补一次纯状态同步（不覆盖用户在面板内的选中）
+      this.postManifest({ navigate: false });
     }
   }
 
@@ -75,6 +93,7 @@ export class SubAgentMonitorBridge {
     const { type, data, requestId } = message || {};
 
     if (type === 'subagents.monitorReady') {
+      this.monitorMounted = true;
       await this.loadConversationSnapshotsIfPossible(this.focusConversationId);
       this.host.postToRenderer({
         type: 'response',
@@ -139,6 +158,7 @@ export class SubAgentMonitorBridge {
   dispose(): void {
     this.unsubscribe();
     this.clearLlmDeltaQueue();
+    this.clearNonDeltaQueue();
     this.clientDispose?.dispose();
     this.clientDispose = undefined;
   }
@@ -151,8 +171,17 @@ export class SubAgentMonitorBridge {
   }
 
   private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
-    // 面板折叠时丢弃高频正文增量；低频状态事件继续推送，重新打开后由前端按 revision 校准
-    if (!this.visible && event.type === 'llm_delta') {
+    // 前端尚未挂载 Monitor（monitorReady 未到达）：没有任何监听器在消费，逐条构造
+    // 事件载荷并 postMessage 纯属浪费——并发子代理时每秒数百条 IPC 会把渲染进程打满（崩溃根因）。
+    if (!this.monitorMounted) {
+      return;
+    }
+    if (!this.visible) {
+      // 面板折叠：丢弃高频正文增量；其余事件合并到窗口粒度（恢复可见后前端按 revision 校准）
+      if (event.type === 'llm_delta') {
+        return;
+      }
+      this.enqueueNonDelta(event);
       return;
     }
     if (event.type === 'llm_delta') {
@@ -163,12 +192,52 @@ export class SubAgentMonitorBridge {
       type: 'subagentMonitor.event',
       data: {
         event: createMonitorEventPayload(event, snapshot),
-        manifest: subAgentRunEventBus.getManifest(snapshot.runId),
+        manifest: this.getCachedManifest(snapshot.runId),
         focusRunId: this.focusRunId,
         focusConversationId: this.focusConversationId,
         activeRunIds: subAgentRunController.getActiveRunIds()
       }
     });
+  }
+
+  /** 面板折叠时把非 delta 事件按 runId 合并（每 run 保留窗口内最新一条），到窗口粒度后一次 flush */
+  private enqueueNonDelta(event: SubAgentRunEvent): void {
+    this.pendingNonDeltaEvents.set(event.runId, event);
+    if (!this.nonDeltaFlushTimer) {
+      this.nonDeltaFlushTimer = setTimeout(() => this.flushNonDeltaEvents(), NON_DELTA_FLUSH_MS);
+      (this.nonDeltaFlushTimer as { unref?: () => void }).unref?.();
+    }
+  }
+
+  private flushNonDeltaEvents(): void {
+    this.nonDeltaFlushTimer = undefined;
+    if (this.pendingNonDeltaEvents.size === 0) {
+      return;
+    }
+    const batches = Array.from(this.pendingNonDeltaEvents.entries());
+    this.pendingNonDeltaEvents.clear();
+    for (const [runId, event] of batches) {
+      const snapshot = subAgentRunEventBus.getSnapshot(runId);
+      if (!snapshot) continue;
+      this.postToWindow({
+        type: 'subagentMonitor.event',
+        data: {
+          event: createMonitorEventPayload(event, snapshot),
+          manifest: this.getCachedManifest(runId),
+          focusRunId: this.focusRunId,
+          focusConversationId: this.focusConversationId,
+          activeRunIds: subAgentRunController.getActiveRunIds()
+        }
+      });
+    }
+  }
+
+  private clearNonDeltaQueue(): void {
+    if (this.nonDeltaFlushTimer) {
+      clearTimeout(this.nonDeltaFlushTimer);
+      this.nonDeltaFlushTimer = undefined;
+    }
+    this.pendingNonDeltaEvents.clear();
   }
 
   private enqueueLlmDelta(event: SubAgentRunEvent): void {
@@ -218,13 +287,36 @@ export class SubAgentMonitorBridge {
         type: 'subagentMonitor.event',
         data: {
           event: createMonitorEventPayload(mergedEvent, snapshot),
-          manifest: subAgentRunEventBus.getManifest(runId),
+          manifest: this.getCachedManifest(runId),
           focusRunId: this.focusRunId,
           focusConversationId: this.focusConversationId,
           activeRunIds: subAgentRunController.getActiveRunIds()
         }
       });
     }
+  }
+
+  /** 获取（并按需重建）指定 run 的轻量 manifest：updatedAt 未变化时直接复用缓存（对齐 VSCode 版 getCachedManifest） */
+  private getCachedManifest(runId: string): SubAgentRunManifest | undefined {
+    const manifest = subAgentRunEventBus.getManifest(runId);
+    if (!manifest) {
+      // manifest 可能为 undefined（run 尚未加载/已被清理）：顺带清理可能残留的过期缓存条目
+      this.manifestCache.delete(runId);
+      return undefined;
+    }
+    const cached = this.manifestCache.get(runId);
+    if (cached && cached.updatedAt === manifest.updatedAt) {
+      return cached.manifest;
+    }
+    this.manifestCache.set(runId, { manifest, updatedAt: manifest.updatedAt });
+    // 容量上限：超出时按插入序淘汰最旧条目
+    if (this.manifestCache.size > MANIFEST_CACHE_MAX) {
+      const oldestRunId = this.manifestCache.keys().next().value;
+      if (oldestRunId !== undefined) {
+        this.manifestCache.delete(oldestRunId);
+      }
+    }
+    return manifest;
   }
 
   private clearLlmDeltaQueue(): void {

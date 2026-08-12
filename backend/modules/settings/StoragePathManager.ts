@@ -18,6 +18,24 @@ import type { StorageStats } from './types';
 // 记忆目录随自定义存储路径一起迁移/清理/统计：memory 为全局记忆，memory-workspaces 下每个 <hash>/ 子目录对应一个工作区记忆
 const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills', 'activity', 'tokenizers', 'memory', 'memory-workspaces'];
 
+/**
+ * 判断两个路径是否指向同一存储位置（同路径判定）。
+ *
+ * Windows 文件系统大小写不敏感：path.normalize 只统一分隔符/相对段，不归一大小写。
+ * 用户手输目标路径与磁盘实际路径大小写不同（d:\graycode vs D:\GrayCode）时，若按普通
+ * 字符串比较会误判为不同路径，触发 staging 迁移把数据复制回同一目录后 removeStorageData
+ * 清空全部存储子目录——数据全丢。Windows 下比较前统一小写；非 Windows 保持原行为。
+ *
+ * platform 参数仅供测试注入（默认 process.platform），生产路径不传。
+ */
+export function isSameStoragePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+    const normalize = (p: string): string => {
+        const normalized = path.normalize(p);
+        return platform === 'win32' ? normalized.toLowerCase() : normalized;
+    };
+    return normalize(a) === normalize(b);
+}
+
 export class StoragePathManager {
     private defaultDataPath: string;
     private migrationInProgress = false;
@@ -273,10 +291,32 @@ export class StoragePathManager {
     /**
      * 复制目录（递归）
      */
-    private async copyDirectory(src: string, dest: string, onProgress?: (copied: number, total: number) => void): Promise<number> {
+    private async copyDirectory(
+        src: string,
+        dest: string,
+        onProgress?: (copied: number, total: number) => void,
+        visited: Set<string> = new Set()
+    ): Promise<number> {
         if (await this.isPathInside(src, dest)) {
             throw new Error('Cannot copy a directory into its own subdirectory');
         }
+
+        // 符号链接循环防护：fs.stat 跟随符号链接后按真实类型复制，若符号链接指向祖先目录
+        // （循环引用），递归会无限展开直到栈溢出、迁移中断。以真实路径为链去重：每个子目录
+        // 只携带自己的祖先链（兄弟目录互不可见），指向祖先的循环随即被截断，而同一真实目录
+        // 经多个符号链接复制时仍各自复制，不丢数据。
+        let srcRealPath = src;
+        try {
+            srcRealPath = await fs.realpath(src);
+        } catch {
+            // realpath 失败（目录刚被删除等竞态）：退化为未解析路径，交由后续 readdir 处理
+        }
+        if (visited.has(srcRealPath)) {
+            console.warn(`[StoragePathManager] Skipping symlink loop: ${src}`);
+            return 0;
+        }
+        const childVisited = new Set(visited);
+        childVisited.add(srcRealPath);
 
         let copiedCount = 0;
         await fs.mkdir(dest, { recursive: true });
@@ -303,7 +343,7 @@ export class StoragePathManager {
             }
 
             if (isDir) {
-                copiedCount += await this.copyDirectory(srcPath, destPath, onProgress);
+                copiedCount += await this.copyDirectory(srcPath, destPath, onProgress, childVisited);
             } else if (isFile) {
                 await fs.copyFile(srcPath, destPath);
                 copiedCount++;
@@ -446,7 +486,7 @@ export class StoragePathManager {
         const sourcePath = this.getEffectiveDataPath();
         const originalConfig = { ...this.settingsManager.getStoragePathConfig() };
 
-        if (path.normalize(sourcePath) === path.normalize(newPath)) {
+        if (isSameStoragePath(sourcePath, newPath)) {
             return { success: true, copiedFiles: 0 };
         }
 

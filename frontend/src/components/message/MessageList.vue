@@ -156,7 +156,9 @@ const {
   scrollbarRef,
   hasMore,
   loadMore,
-  messageRenderRows
+  messageRenderRows,
+  hasNewerMessages,
+  scrollToNewest
 } = virtualWindow
 
 const emit = defineEmits<{
@@ -430,6 +432,17 @@ function handleContinue() {
             </div>
           </div>
         </template>
+
+        <!-- 上翻历史滑动窗口裁剪后，窗口末尾与真实最新之间有缺口：底部「回到最新」入口 -->
+        <button
+          v-if="hasNewerMessages"
+          type="button"
+          class="load-newer-container"
+          @click="scrollToNewest()"
+        >
+          <i class="codicon codicon-arrow-down"></i>
+          <span>{{ t('components.message.loadNewer') }}</span>
+        </button>
         
         <!-- 继续对话提示 - 当最后一条是工具响应时显示 -->
         <div v-if="chatStore.needsContinueButton" class="continue-message">
@@ -806,6 +819,28 @@ function handleContinue() {
 
 .load-more-container .codicon {
   font-size: 16px;
+}
+
+/* 底部「回到最新」入口（上翻历史滑动窗口裁剪后，窗口末尾与真实最新之间有缺口时显示） */
+.load-newer-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  width: 100%;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  cursor: pointer;
+  font: inherit;
+}
+
+.load-newer-container .codicon {
+  font-size: 14px;
+}
+
+.load-newer-container:hover {
+  opacity: 1;
 }
 
 .load-more-text {

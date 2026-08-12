@@ -60,7 +60,11 @@ async function memoryNoteHandler(args: Record<string, unknown>, context?: ToolCo
             },
         };
     } catch (e: any) {
-        return { success: false, error: e?.message || String(e) };
+        let message = e?.message || String(e);
+        if (/^Too long:/.test(message)) {
+            message += ' (记忆配置为全局共享，可用 memory_config 调整 entryChars 上限)';
+        }
+        return { success: false, error: message };
     }
 }
 

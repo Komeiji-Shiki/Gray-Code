@@ -601,8 +601,15 @@ async function updateConfigFields(updates: Record<string, any>) {
   
   try {
     // 确保数据可序列化（structuredClone 一次性深拷贝移除响应式代理，
-    // 替代循环内逐字段 JSON.parse(JSON.stringify) 往返）
-    const serializableUpdates = structuredClone(updates)
+    // 替代循环内逐字段 JSON.parse(JSON.stringify) 往返）。
+    // 深度响应式 ref 的 Proxy 无法 structuredClone（抛 DataCloneError），失败时回退 JSON
+    // 往返（与 utils/tools/diffPreviewAction.deepCloneForPreview 同款），避免保存静默失败。
+    let serializableUpdates: Record<string, any>
+    try {
+      serializableUpdates = structuredClone(updates)
+    } catch {
+      serializableUpdates = JSON.parse(JSON.stringify(updates))
+    }
     
     await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
       configId,

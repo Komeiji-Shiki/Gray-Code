@@ -11,6 +11,7 @@ import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Content, CheckpointRecord } from '../../../types'
 import type { ChatStoreState } from '../types'
 import {
+  loadConversations,
   loadMoreConversations,
   updateConversationAfterMessage,
   loadHistory,
@@ -88,6 +89,53 @@ function makePageContent(index: number, text: string): Content {
     id: `msg-${index}`
   } as unknown as Content
 }
+
+describe('loadConversations 初始化竞态', () => {
+  beforeEach(() => {
+    mockSend.mockReset()
+  })
+
+  test('加载期间创建的持久化会话不会被旧列表快照覆盖', async () => {
+    let resolveIds!: (ids: string[]) => void
+    const idsPromise = new Promise<string[]>(resolve => {
+      resolveIds = resolve
+    })
+    const state = createState()
+
+    mockSend.mockImplementation((command: string) => {
+      if (command === 'conversation.listConversations') return idsPromise
+      if (command === 'conversation.getConversationMetadataBatch') {
+        // 模拟 listConversations 快照早于新会话创建：批量摘要里只有旧会话。
+        return Promise.resolve([{ id: 'conv_100_old', title: 'Old' }])
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const loading = loadConversations(state)
+
+    // listConversations 在途时，首条消息已把新会话持久化并写入本地列表。
+    state.conversations.value.unshift({
+      id: 'conv_200_new',
+      title: 'New',
+      createdAt: 200,
+      updatedAt: 200,
+      messageCount: 0,
+      isPersisted: true
+    })
+    state.persistedConversationIds.value.unshift('conv_200_new')
+    state.persistedConversationsLoaded.value += 1
+
+    resolveIds(['conv_100_old'])
+    await loading
+
+    expect(state.conversations.value.map(c => c.id)).toEqual(
+      expect.arrayContaining(['conv_200_new', 'conv_100_old'])
+    )
+    expect(state.persistedConversationIds.value).toEqual(
+      expect.arrayContaining(['conv_200_new', 'conv_100_old'])
+    )
+  })
+})
 
 describe('loadMoreConversations（HIS-10）', () => {
   beforeEach(() => {

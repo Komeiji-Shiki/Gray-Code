@@ -163,6 +163,12 @@ class AsyncLock {
 
 export class MemoryManager {
     private dir: string;
+    /**
+     * config 文件路径：默认 <dir>/config（各实例独立）；传入 sharedConfigPath
+     * （全局共享配置 <dataPath>/memory/config）时使用共享路径——全局与所有工作区
+     * 实例读写同一份 config，配置全局统一（记忆数据 LOG/TREE 仍按作用域隔离）。
+     */
+    private configPath: string;
     private config: MemoryConfig;
     private lock = new AsyncLock();
     /**
@@ -180,9 +186,10 @@ export class MemoryManager {
      */
     private treeSlotCache = new Map<number, { mtimeMs: number; fileSize: number; slots: boolean[] }>();
 
-    constructor(storagePath: string, config?: Partial<MemoryConfig>) {
+    constructor(storagePath: string, config?: Partial<MemoryConfig>, sharedConfigPath?: string) {
         this.dir = storagePath;
         this.config = { ...DEFAULT_MEMORY_CONFIG, ...config };
+        this.configPath = sharedConfigPath ?? path.join(this.dir, 'config');
     }
 
     /** 初始化存储目录结构 */
@@ -194,12 +201,15 @@ export class MemoryManager {
         } catch {
             await fs.writeFile(logPath, '');
         }
-        // 写入默认 config（如果不存在）
-        const configPath = path.join(this.dir, 'config');
+        // 写入默认 config（仅当文件不存在时）。共享全局 config 的工作区实例
+        // （configPath 指向已存在的全局配置）绝不可覆盖重写——否则工作区初始化会
+        // 把用户已改好的全局配置重置为默认值；只有首次初始化（文件不存在）才写默认。
+        // 目标不存在时直接写：无旧内容可保护，原子 tmp+rename 无收益，且避免迁移类
+        // 测试对 fs.rename 的计数把默认 config 写入误计入；updateConfig 改写才走原子写。
         try {
-            await fs.access(configPath);
+            await fs.access(this.configPath);
         } catch {
-            await this.writeConfig(this.config);
+            await fs.writeFile(this.configPath, this.buildConfigContent(this.config), 'utf-8');
         }
     }
 
@@ -1078,6 +1088,12 @@ export class MemoryManager {
             die('summary is required when blockId is provided.');
         }
 
+        // 反向缺参校验：提供了 summary 却没有 blockId（含空串——调用方按 truthy 归一化，
+        // 直接传 '' 与未传同口径）时，静默丢弃摘要等同数据丢失，明确报错。
+        if (!blockId && summary !== undefined) {
+            die('blockId is required when summary is provided.');
+        }
+
         if (blockId && summary !== undefined) {
             const [lo, hi] = this.parseBlockId(blockId);
             const todo = await this.pending(T, 1);
@@ -1596,7 +1612,8 @@ export class MemoryManager {
         return { ...this.config };
     }
 
-    private async writeConfig(cfg: MemoryConfig): Promise<void> {
+    /** 构造 config 文件内容（注释头 + 各配置行；与 OptMem 的 memo config 格式一致） */
+    private buildConfigContent(cfg: MemoryConfig): string {
         const lines = [
             '# OptMem sizes for this memory.',
             '# Edit with memory_config NAME=VALUE.',
@@ -1605,14 +1622,76 @@ export class MemoryManager {
             `ENTRY_CHARS  = ${cfg.entryChars}  # max bytes per memory`,
             '',
         ];
-        await fs.writeFile(path.join(this.dir, 'config'), lines.join('\n'), 'utf-8');
+        return lines.join('\n');
+    }
+
+    /**
+     * Windows 上 rename 到已存在目标偶发 EPERM/EEXIST（文件锁/杀软竞态）：
+     * 短暂退避重试（与 BranchGraphRepository.renameWithRetry 同风格）；
+     * 重试耗尽后先删旧目标再 rename（与 DiffStorageManager.atomicWriteFile 同语义）。
+     */
+    private async renameConfigOverwrite(tmpPath: string, configPath: string): Promise<void> {
+        for (let attempt = 1; ; attempt += 1) {
+            try {
+                await fs.rename(tmpPath, configPath);
+                return;
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException)?.code;
+                // 只重试「可恢复」错误码（Windows 文件锁/杀软竞态的瞬态 EPERM/EACCES/EBUSY，
+                // 以及 rename 覆盖已存在目标时的 EEXIST）；其余错误立即抛出。
+                if (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY' && code !== 'EEXIST') {
+                    throw error;
+                }
+                if (attempt >= 4) {
+                    // 重试耗尽：Windows 上 rename 无法覆盖已存在目标（EEXIST/EPERM）时
+                    // 先删旧再最后一次尝试（与 DiffStorageManager.atomicWriteFile 同语义）；
+                    // 其余可恢复码（EBUSY 等）原样抛出，避免删旧误伤正在被读的配置。
+                    if (code === 'EEXIST' || code === 'EPERM') {
+                        try {
+                            await fs.unlink(configPath);
+                        } catch {
+                            // 目标不存在或删除失败：最后一次 rename 会暴露真实错误
+                        }
+                        await fs.rename(tmpPath, configPath);
+                        return;
+                    }
+                    throw error;
+                }
+                await new Promise(resolve => setTimeout(resolve, 30 * attempt));
+            }
+        }
+    }
+
+    /**
+     * 原子写配置：先写同目录临时文件再 rename 替换（与仓库内 saveMetadata / 分支配置
+     * 同模式）。config 为全局 + 各工作区实例共享：直接 writeFile 全量覆盖在写入中途
+     * 崩溃/被杀时会留下截断文件，且并发 updateConfig 的 lost-update 窗口更大；
+     * tmp + 同目录 rename 是唯一提交点，崩溃时线上要么是完整旧版要么是完整新版。
+     * 写入失败清理 tmp 并向上抛，调用方（updateConfig / memory_config 工具）感知失败。
+     */
+    private async writeConfig(cfg: MemoryConfig): Promise<void> {
+        // 注意：tmp 文件名带 pid + 时间 + 随机后缀，避免并发实例写同一共享 config 互相覆盖 tmp
+        const tmpPath = `${this.configPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        try {
+            await fs.mkdir(path.dirname(this.configPath), { recursive: true });
+            await fs.writeFile(tmpPath, this.buildConfigContent(cfg), 'utf-8');
+            await this.renameConfigOverwrite(tmpPath, this.configPath);
+        } catch (error) {
+            // 写入失败：清理 tmp（rename 未发生，原 config 保持完好），并向上抛
+            try {
+                await fs.unlink(tmpPath);
+            } catch {
+                // 清理失败忽略
+            }
+            throw error;
+        }
     }
 
     /**
      * 从存储目录读取已有配置。
      */
     async loadConfig(): Promise<MemoryConfig> {
-        const configPath = path.join(this.dir, 'config');
+        const configPath = this.configPath;
         try {
             const content = await fs.readFile(configPath, 'utf-8');
             const cfg = { ...DEFAULT_MEMORY_CONFIG };

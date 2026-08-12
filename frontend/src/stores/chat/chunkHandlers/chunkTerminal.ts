@@ -55,12 +55,16 @@ export function handleComplete(
   updateConversationAfterMessage: () => Promise<void>
 ): void {
   // 竞态检测：如果 cancelStream 已清理旧请求，而新请求已开始，
-  // 迟到的旧请求 complete chunk 不应该影响新请求的消息和状态
-  const lastCancelledId = state._lastCancelledStreamId.value
+  // 迟到的旧请求 complete chunk 不应该影响新请求的消息和状态。
+  // 取消标记带会话归属（conversationId + messageId）：stale 判定先比会话——
+  // 切到其他会话（标签页）后，该会话合法终结 chunk 不得因「消息 id 不同」被误判丢弃
+  // （否则 isWaitingForResponse/streaming 永久残留）。
+  const lastCancelled = state._lastCancelledStreamId.value
   const isStaleCallback = !chunk.streamId && !!(
-    lastCancelledId &&
+    lastCancelled &&
     state.streamingMessageId.value &&
-    state.streamingMessageId.value !== lastCancelledId
+    state.streamingMessageId.value !== lastCancelled.messageId &&
+    (!chunk.conversationId || chunk.conversationId === lastCancelled.conversationId)
   )
 
   if (isStaleCallback) {
@@ -137,7 +141,11 @@ export function handleComplete(
   state.pendingModelOverride.value = null
   state.pendingConfigIdOverride.value = null
   state._lastApprovalGatedStreamId.value = null
-  state._lastCancelledStreamId.value = null
+  // 只清理「属于当前会话」的取消标记：跨会话标记保留到切回原会话后由该会话终结事件消费，
+  // 避免 tab A 取消后 tab B 的正常 complete 清掉 A 的防迟到标记（M-front）
+  if (state._lastCancelledStreamId.value?.conversationId === state.currentConversationId.value) {
+    state._lastCancelledStreamId.value = null
+  }
   // 工具参数增量计数跟踪随流终结清空（与 cancelled/error 终结路径统一），
   // 覆盖“无 done-delta 直接 complete”的场景，避免旧轮参数体污染下一轮流
   fcSeenBodies.clear()
@@ -179,16 +187,18 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   // 竞态检测：判断这个 cancelled chunk 是否属于已被 cancelStream() 清理过的旧请求。
   // 如果 cancelStream() 已经清理了状态并且新请求已经开始（streamingMessageId 已变为新 ID），
   // 此时迟到的 cancelled chunk 不应该重置新请求的全局状态。
-  const lastCancelledId = state._lastCancelledStreamId.value
+  // 取消标记带会话归属（conversationId + messageId）：stale 判定先比会话（M-front 跨标签页修复）。
+  const lastCancelled = state._lastCancelledStreamId.value
   const isStaleCallback = !chunk.streamId && !!(
-    lastCancelledId &&
+    lastCancelled &&
     state.streamingMessageId.value &&
-    state.streamingMessageId.value !== lastCancelledId
+    state.streamingMessageId.value !== lastCancelled.messageId &&
+    (!chunk.conversationId || chunk.conversationId === lastCancelled.conversationId)
   )
 
   if (isStaleCallback) {
     // 迟到的旧请求 cancelled chunk：只尝试清理旧消息的元数据，不重置全局状态
-    const oldMsgIndex = getMessageIndexById(state, lastCancelledId)
+    const oldMsgIndex = getMessageIndexById(state, lastCancelled?.messageId)
     if (oldMsgIndex !== -1) {
       const msg = state.allMessages.value[oldMsgIndex]
       if (msg.streaming) {
@@ -213,7 +223,14 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     const lastMsgIndex = state.allMessages.value.length - 1
     const lastMsg = state.allMessages.value[lastMsgIndex]
     if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.streaming) {
-      messageIndex = lastMsgIndex
+      // L-front：迟到 cancelled 的计时元数据不得覆写当前轮消息——本兼容回退分支无
+      // streamId/conversationId 归属保护，chunk 早于该消息创建时间则判定属于更早轮次，忽略。
+      const isLateCompatChunk = typeof chunk.createdAt === 'number' &&
+        typeof lastMsg.timestamp === 'number' &&
+        chunk.createdAt < lastMsg.timestamp
+      if (!isLateCompatChunk) {
+        messageIndex = lastMsgIndex
+      }
     }
   }
 
@@ -312,7 +329,10 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.pendingModelOverride.value = null
   state.pendingConfigIdOverride.value = null
   state._lastApprovalGatedStreamId.value = null
-  state._lastCancelledStreamId.value = null
+  // 只清理「属于当前会话」的取消标记（跨会话标记保留，见 handleComplete 说明）
+  if (state._lastCancelledStreamId.value?.conversationId === state.currentConversationId.value) {
+    state._lastCancelledStreamId.value = null
+  }
 }
 
 /**
@@ -337,12 +357,13 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     return
   }
 
-  // 竞态检测：与 handleCancelled 相同的逻辑
-  const lastCancelledId = state._lastCancelledStreamId.value
+  // 竞态检测：与 handleCancelled 相同的逻辑（取消标记带会话归属，先比会话）
+  const lastCancelled = state._lastCancelledStreamId.value
   const isStaleCallback = !chunk.streamId && !!(
-    lastCancelledId &&
+    lastCancelled &&
     state.streamingMessageId.value &&
-    state.streamingMessageId.value !== lastCancelledId
+    state.streamingMessageId.value !== lastCancelled.messageId &&
+    (!chunk.conversationId || chunk.conversationId === lastCancelled.conversationId)
   )
 
   if (isStaleCallback) {
@@ -404,5 +425,8 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   // 工具参数增量计数跟踪随流终结清空（与 done 分支同款），避免残留跨流污染
   fcSeenBodies.clear()
   state._lastApprovalGatedStreamId.value = null
-  state._lastCancelledStreamId.value = null
+  // 只清理「属于当前会话」的取消标记（跨会话标记保留，见 handleComplete 说明）
+  if (state._lastCancelledStreamId.value?.conversationId === state.currentConversationId.value) {
+    state._lastCancelledStreamId.value = null
+  }
 }

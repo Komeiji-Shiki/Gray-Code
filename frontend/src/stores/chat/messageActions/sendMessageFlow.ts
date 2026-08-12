@@ -13,15 +13,14 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
-import { triggerRef } from 'vue'
 import { sendToExtension } from '../../../utils/vscode'
 import { generateId } from '../../../utils/format'
-import { createAndPersistConversation, buildConversationTitle } from '../conversationActions'
+import { createAndPersistConversation, buildConversationTitle, loadHistory } from '../conversationActions'
 import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt } from '../state'
+import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt, setToolResponseCacheEntry } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
 
@@ -300,8 +299,8 @@ function upsertHiddenFunctionResponseMessage(
             .find(p => p.functionResponse?.id === payload.id)
             ?.functionResponse?.response as Record<string, unknown> | undefined
           if (mergedResponse) {
-            state.toolResponseCache.value.set(payload.id, mergedResponse)
-            triggerRef(state.toolResponseCache)
+            // 带容量上限写入（超限淘汰最旧条目），见 state.ts setToolResponseCacheEntry
+            setToolResponseCacheEntry(state, payload.id, mergedResponse)
           }
         }
         return
@@ -427,6 +426,21 @@ export async function sendMessage(
       return false
     }
 
+    // 上翻历史滑动窗口（loadOlderMessagesPage 底部裁剪）后，窗口末尾可能落后于真实最新消息：
+    // 发送前先重载最后一页对齐窗口，否则新消息的 backendIndex（windowStart + length）会与后端
+    // 真实索引错位（落到历史中部），导致后续删除/重试按 index 定位到错误消息。
+    if (
+      state.windowStartIndex.value + state.allMessages.value.length < state.totalMessages.value &&
+      !state.isStreaming.value &&
+      !state.isWaitingForResponse.value
+    ) {
+      await loadHistory(state)
+      // await 后会话可能已切换：重载的是切换后的会话，中止本次发送避免错位
+      if (state.currentConversationId.value !== targetConvId) {
+        return false
+      }
+    }
+
     if (hiddenFunctionResponse) {
       // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
       upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
@@ -540,6 +554,14 @@ export async function sendMessage(
     // H5(b)：await 期间会话可能已切换（流会在后端继续、chunk 进入原会话的后台缓冲）。
     // 校验失败时停止后续流程并标记，避免在无 UI 状态下继续写状态。
     if (!validateSessionIdentity(state, targetConvId)) {
+      // 通常表示用户主动切到其他标签页：原流继续在已绑定标签页的后台缓冲中运行。
+      // 若目标会话已经没有任何标签页承接（启动重置/标签页关闭竞态），终结 chunk 会被丢弃，
+      // 此时必须回收仍属于本次占位的全局流式状态，否则空白页会永久停在等待态。
+      const targetTabStillOpen = state.openTabs.value.some(tab => tab.conversationId === targetConvId)
+      if (!targetTabStillOpen && state.streamingMessageId.value === assistantMessageId) {
+        cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
+        resetPendingSendState(state)
+      }
       console.warn('[messageActions] sendMessage: conversation switched while chatStream in flight; stream continues in background', {
         targetConvId,
         currentConversationId: state.currentConversationId.value
@@ -550,11 +572,11 @@ export async function sendMessage(
   } catch (err: any) {
     // 独立于 isStreaming 判断是否取消：取消瞬间 isStreaming 已被 cancelStream 清除，
     // 若这里仍依赖 isStreaming，真实的发送失败会被当成"已取消"静默吞掉。
-    // _lastCancelledStreamId 存的是被取消请求的 streamingMessageId（消息 id，见
-    // toolActions.cancelStream 的写入与 types.ts 声明），与本次发送的占位消息 id
-    // （assistantMessageId）比较才能命中「用户取消 + 迟到失败」场景；不能与
+    // _lastCancelledStreamId 存的是被取消请求的流标记 { conversationId, messageId }（见
+    // toolActions.cancelStream 的写入与 types.ts 声明），比对其 messageId 与本次发送的
+    // 占位消息 id（assistantMessageId）才能命中「用户取消 + 迟到失败」场景；不能与
     // activeStreamId（streamId）比较——两者类型不同永不相等（原实现导致恒 false）。
-    const wasStreamCancelled = state._lastCancelledStreamId.value === assistantMessageId
+    const wasStreamCancelled = state._lastCancelledStreamId.value?.messageId === assistantMessageId
     if (!wasStreamCancelled) {
       safeSetError(state, originConvId, {
         code: err.code || 'SEND_ERROR',
@@ -602,4 +624,3 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
   setTotalMessagesFromWindow(state)
   return backendIndex
 }
-

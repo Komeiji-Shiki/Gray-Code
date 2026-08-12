@@ -14,6 +14,7 @@ import type {
 } from './toolsTypes';
 import {
     DEFAULT_MAX_TOOL_ITERATIONS,
+    DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES,
     DEFAULT_TOOL_AUTO_EXEC_CONFIG,
     DEFAULT_READ_FILE_CONFIG,
     DEFAULT_WRITE_FILE_CONFIG,
@@ -184,6 +185,16 @@ export interface GlobalSettings {
      * 默认: 200
      */
     maxToolIterations?: number;
+    
+    /**
+     * 无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * 仅在 maxToolIterations = -1 时生效：模型持续返回工具调用且取消信号缺失/未触发时，
+     * 超过该时限即终止循环并报错（TOOL_LOOP_WALLCLOCK_LIMIT）。
+     * -1 表示不设墙钟时限（仅保留迭代硬上限兜底）
+     * 默认: 30
+     */
+    maxToolLoopWallclockMinutes?: number;
     
     /**
      * 工具启用状态
@@ -400,6 +411,7 @@ export type SettingsChangeListener = (event: SettingsChangeEvent) => void | Prom
  */
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    maxToolLoopWallclockMinutes: DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES,
     checkForUpdates: true,
     toolsEnabled: {
         // 默认所有工具启用
@@ -439,7 +451,11 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     },
     ui: {
         theme: 'auto',
-        language: 'zh-CN',
+        // 默认 'auto'：跟随 VS Code 语言环境（PromptManager.getUserLanguage 的 'auto'
+        // 分支返回 vscode.env.language）。旧默认 'zh-CN' 会让 initialize() 深合并后恒为
+        // 中文，非中文用户被强制下发中文回复指示；且 VSCodeSettingsStorage 首次 save 会
+        // 把 'zh-CN' 固化并随 Settings Sync 扩散。'auto' 是合法值，固化无副作用。
+        language: 'auto',
         workspaceBehavior: 'restore',
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）

@@ -290,10 +290,10 @@ async function executeResizeTask(
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : '';
         
-        const isCancelled = abortSignal?.aborted ||
-            errorName === 'AbortError' ||
-            errorMessage.includes('aborted') ||
-            errorMessage.includes('cancelled');
+        const isCancelled = abortSignal?.aborted === true ||
+            (errorName === 'AbortError' && !abortSignal) ||
+            errorMessage.includes('cancelled') ||
+            errorMessage.includes('canceled');
         
         return {
             index,
@@ -566,9 +566,9 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
 
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                const isCancelled = abortSignal.aborted ||
-                    errorMessage.includes('aborted') ||
-                    errorMessage.includes('cancelled');
+                const isCancelled = abortSignal.aborted === true ||
+                    errorMessage.includes('cancelled') ||
+                    errorMessage.includes('canceled');
 
                 TaskManager.unregisterTask(
                     toolId,

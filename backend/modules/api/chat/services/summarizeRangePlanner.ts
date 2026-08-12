@@ -292,8 +292,12 @@ export function planSummarizeMessages(options: {
     for (let i = messages.length - 1; i >= 0; i--) {
         suffixTokens[i] = suffixTokens[i + 1] + (messageTokens[i] ?? 0);
     }
-    // 即使已有多轮，只要轮级边界后的最后一轮自身仍超预算，就继续开放当前长轮内部的切点。
-    if (suffixTokens[maximumCutIndex] > keepBudgetTokens) {
+    // 即使已有多轮，只要轮级边界后的最后一轮自身仍超预算，manual 才继续开放当前长轮
+    // 内部的切点：用户主动总结允许覆盖最后一轮的前半段（SummarizeService 的
+    // allowCoverLastRealUserRound 放行）。auto 保持严格——当前轮是进行中的回合，
+    // 轮内切点必然吞掉当前用户消息（落盘侧判 STALE_RANGE），提出这种切点只会白费一次
+    // 总结请求；auto 应退回到「当前轮之前的轮边界」切点，总结旧轮、保留当前轮整体。
+    if (mode === 'manual' && suffixTokens[maximumCutIndex] > keepBudgetTokens) {
         maximumCutIndex = messages.length - 1;
     }
 

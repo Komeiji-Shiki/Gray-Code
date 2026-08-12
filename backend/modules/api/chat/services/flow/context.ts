@@ -172,6 +172,25 @@ export class ChatFlowContext {
   }
 
   /**
+   * 获取无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+   *
+   * 仅当 maxToolIterations = -1 时生效；-1 表示不设墙钟时限。
+   */
+  getMaxToolLoopWallclockMinutes(): number {
+    return this.settingsManager?.getMaxToolLoopWallclockMinutes() ?? 30;
+  }
+
+  /**
+   * 获取无限制模式（maxToolIterations = -1）的工具循环墙钟时限（毫秒）
+   *
+   * -1 表示不设墙钟时限（仅保留迭代硬上限兜底）。
+   */
+  getMaxToolLoopWallclockMs(): number {
+    const minutes = this.getMaxToolLoopWallclockMinutes();
+    return minutes === -1 ? -1 : minutes * 60 * 1000;
+  }
+
+  /**
    * 确保对话存在（不存在则创建）
    */
   async ensureConversation(conversationId: string): Promise<void> {

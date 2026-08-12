@@ -610,6 +610,7 @@ const ja: LanguageMessages = {
             },
             emptyResponse: '（モデルの返答が空です）',
             historyFolded: '以前のメッセージは折りたたまれています（{count} 件破棄）。上にスクロールすると読み込めます。',
+            loadNewer: 'より古いメッセージを読み込みました。クリックで最新へ',
             stats: {
                 ttft: '初回トークン遅延 (TTFT)',
                 responseDuration: '応答時間',
@@ -1792,7 +1793,12 @@ const ja: LanguageMessages = {
                 maxConcurrentAgents: '最大同時実行数',
                 maxConcurrentAgentsHint: '同時に実行できるサブエージェントの上限。超過分は順番待ちになります（-1 で無制限）',
                 defaultMaxIterations: 'デフォルトのイテレーション数',
-                defaultMaxIterationsHint: '個別設定のないサブエージェントと General Worker に適用される既定値（1〜200、-1 で無制限）',
+                defaultMaxIterationsHint: '個別設定のないサブエージェントと General Worker に適用される既定値（-1 で無制限）',
+                queueTimeoutSeconds: 'キュー待機タイムアウト（秒）',
+                queueTimeoutSecondsHint: '並行キューで待機できる最大秒数。超過すると失敗します（-1 で無制限、デフォルト 600）',
+                queueTimeoutSecondsInvalid: '-1 または正の整数を入力してください',
+                defaultMaxRuntime: '最大実行時間（秒）',
+                defaultMaxRuntimeHint: '個別に maxRuntime を設定していないサブエージェントと General Worker に適用される実行時間上限（-1 で無制限、デフォルト 1800 = 30 分）',
                 generalWorker: '汎用ワーカーを有効化（お手軽モード）',
                 generalWorkerHint: 'メインモデルが設定不要の "General Worker" を直接派遣できます。現在のチャンネルと全ツール権限を継承し、数はモデルが自分で決定。エージェントの手動設定は不要です',
                 basicInfo: '基本情報',
@@ -1809,6 +1815,9 @@ const ja: LanguageMessages = {
                 selectChannel: 'チャンネルを選択',
                 model: 'モデル',
                 selectModel: 'モデルを選択',
+                syncWithCurrentModel: '現在のモデルと同期',
+                syncWithCurrentModelHint: '有効にすると、このサブエージェントは自身のチャンネル・モデル設定を無視し、実行時に現在のセッションで使用中のチャンネルとモデルを使用します（General Worker と同じ継承方式）。モデル切替時に個別設定は不要です',
+                syncWithCurrentModelActiveHint: '「現在のモデルと同期」が有効です。以下のチャンネル/モデル設定は一時的に無効になります',
                 tools: 'ツール設定',
                 toolsDescription: 'このサブエージェントが使用できるツールを設定',
                 toolMode: {
@@ -2569,6 +2578,11 @@ const ja: LanguageMessages = {
                     label: 'ターンあたりの最大ツール呼び出し回数',
                     hint: 'AI の無限ツール呼び出しループを防止、-1 で無制限',
                     unit: '回'
+                },
+                maxToolLoopWallclock: {
+                    label: '無制限モードのツールループ壁時計制限（分）',
+                    hint: '「ターンあたりの最大ツール呼び出し回数」が -1（無制限）の場合のみ有効；ツールループがこの制限を超えるとエラーで終了、-1 で壁時計制限なし',
+                    unit: '分'
                 },
                 actions: {
                     refresh: '更新',

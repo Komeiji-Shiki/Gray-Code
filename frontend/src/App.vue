@@ -640,16 +640,29 @@ function applyDesktopTheme(theme?: string): void {
   document.body.classList.toggle('graycode-desktop-theme-light', isLight)
   document.body.classList.toggle('vscode-light', isLight)
   document.body.classList.toggle('vscode-dark', !isLight)
+  // 设置加载完成前不发送 app.setTheme：主进程启动时已同步预读保存的主题
+  // （main.ts resolveSavedTheme → applyDesktopThemeToWindow），此刻发送默认 'auto'
+  // 会把 themeSource 从预读的 light/dark 重置为 system，启动窗口期原生控件闪回系统色
+  if (!themeLoadedFromSettings) return
+  // 上报主进程：同步原生窗口背景色 + nativeTheme.themeSource（系统对话框、
+  // 原生控件、prefers-color-scheme 随应用主题而非系统；auto 时传 auto 由主进程解析）
+  sendToExtension('app.setTheme', { theme: theme ?? 'auto' }).catch(() => { /* 主进程无需应答，失败无害 */ })
 }
 
-// 外观设置变更 → 立即应用：主题（含 auto 跟随系统监听）与 UI 不透明度（CSS 变量）
+/** 设置（含主题）是否已从后端加载完成；用于主题上报的启动 clobber 防护 */
+let themeLoadedFromSettings = false
+
+// 外观设置变更 → 立即应用：主题（含 auto 跟随系统监听）与 UI 不透明度（CSS 变量）。
+// immediate: 启动路径兜底——loadLanguageSettings 失败/缓慢时也至少按默认值应用一次，
+// 避免首帧停留在 :root 暗色（与 uiOpacity watch 的口径一致）
 watch(
   () => settingsStore.theme,
   (theme) => {
     if (!isElectronHost) return
     applyDesktopTheme(theme)
     watchDesktopThemeMedia(theme)
-  }
+  },
+  { immediate: true }
 )
 watch(
   () => settingsStore.uiOpacity,
@@ -713,19 +726,22 @@ async function loadLanguageSettings() {
       }
     }
 
-    // 应用桌面版主题（light / dark / auto），并同步到 store（watch 负责后续变更即时生效）
+    // 应用桌面版主题（light / dark / auto）：setTheme 触发上方 watch 统一应用
+    // （body class + matchMedia 监听 + app.setTheme 上报），此处无需重复调用
     const savedTheme = response?.settings?.ui?.theme
     settingsStore.setTheme(
       savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'auto' ? savedTheme : 'auto'
     )
-    applyDesktopTheme(response?.settings?.ui?.theme)
-    watchDesktopThemeMedia(response?.settings?.ui?.theme)
+    themeLoadedFromSettings = true
 
     // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
     configureSoundSettings(response?.settings?.ui?.sound)
   } catch (error) {
     console.error('Failed to load language settings:', error)
   } finally {
+    // 无论 getSettings 成败都放行主题上报：失败时本会话后续主题切换仍能同步主进程
+    // （成功路径在 setTheme 之后置位，保证 watch 首次触发时已就绪）
+    themeLoadedFromSettings = true
     languageLoaded.value = true
     // 启动里程碑：UI 可用（Splash ready 信号）时刻（配合 GRAYCODE_DIAG 主进程计时定位热点）
     console.info(`[startup] renderer languageLoaded at ${Date.now()}`)
@@ -756,11 +772,6 @@ onMounted(async () => {
     return
   }
 
-  // Notify the extension that the webview is ready to receive command messages.
-  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
-    console.error('[App] Failed to notify extension that webview is ready:', error)
-  })
-  
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
 
@@ -821,6 +832,14 @@ onMounted(async () => {
           // 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播放）
           setVscodeWindowFocused(message.data?.focused === true)
           break
+        case 'host.powerResume':
+          // 系统睡眠/挂起（Windows Modern Standby / 显示器关闭 / 锁屏）恢复：
+          // 主进程已强制合成重绘；这里补前端重排——CustomScrollbar 监听 window resize
+          // 会重算滚动条与布局（含吸底自愈），消息列表/虚拟窗口同步刷新；
+          // 同时恢复窗口焦点语义（解锁后视为聚焦，避免恢复瞬间提示音轰炸）
+          setVscodeWindowFocused(true)
+          window.dispatchEvent(new Event('resize'))
+          break
       }
     }
 
@@ -832,7 +851,11 @@ onMounted(async () => {
 
     // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成、后台子代理等）。
     // 后台子代理（background_subagent）事件走子代理独立提示音开关。
-    if (message.type === 'taskEvent') {
+    // 注意：taskEvent 是 command 信封命令名（{ type: 'command', command: 'taskEvent', data }），
+    // 后端 VSCode/Electron 两宿主均已按契约发送；保留对旧直发格式（type: 'taskEvent'）的
+    // 兼容匹配，避免旧扩展/缓存面板漏播。
+    if ((message.type === 'command' && message.command === 'taskEvent')
+        || message.type === 'taskEvent') {
       const event = message.data
       const eventRole = event?.taskType === 'background_subagent' ? 'subagent' : undefined
       if (event?.type === 'complete') {
@@ -875,7 +898,14 @@ onMounted(async () => {
       }
     }
   })
-  
+
+  // Notify the extension that the webview is ready to receive command messages.
+  // 注意：必须在命令监听器注册完成后再发送握手——webviewReady 后扩展可能立即下发
+  // command / taskEvent 等消息，监听器未就绪会丢消息（AppSplashPreference 测试断言该顺序）。
+  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
+    console.error('[App] Failed to notify extension that webview is ready:', error)
+  })
+
   // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
   // 与语言/设置加载无数据依赖（各写独立 store），并行启动缩短开屏/占位时长：
   // initialize 内部的 streamChunk/workspace 监听在调用瞬间同步注册，IPC 应答经

@@ -634,7 +634,11 @@ function extractAllTools() {
     const files = walkTsFiles(BACKEND_TOOLS_DIR);
     for (const file of files) {
         const rel = path.relative(ROOT, file).replace(/\\/g, '/');
-        const source = fs.readFileSync(file, 'utf8');
+        // 规范化真实换行（CRLF/CR → LF）：字符串/模板字面量中的真实换行符会被
+        // JSON.stringify 编码进生成物，若不统一，Windows 工作区（autocrlf 转 CRLF）
+        // 生成的 toolMeta.ts 与 CI（LF 源）不一致，导致 toolMetaParity 测试漂移失败。
+        // 源码中显式的 \r\n 转义序列是反斜杠字符，不在此替换范围，语义保持不变。
+        const source = fs.readFileSync(file, 'utf8').replace(/\r\n?/g, '\n');
         const candidates = findDeclarationCandidates(rel, source);
         for (const candidate of candidates) {
             const entry = buildToolEntry(candidate);

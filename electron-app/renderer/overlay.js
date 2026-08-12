@@ -52,7 +52,7 @@
 .gc-qp-item:hover,.gc-qp-item.selected{background:var(--vscode-list-activeSelectionBackground,#094771);color:var(--vscode-list-activeSelectionForeground,#fff)}
 .gc-qp-item .gc-qp-label{font-size:13px}
 .gc-qp-item .gc-qp-desc{font-size:11px;color:var(--vscode-descriptionForeground,#9d9d9d)}
-.gc-qp-item:hover .gc-qp-desc{color:rgba(255,255,255,.85)}
+.gc-qp-item:hover .gc-qp-desc{color:var(--vscode-list-activeSelectionForeground,#fff)}
 .gc-input{padding:8px 14px;border:none;background:transparent;color:var(--vscode-foreground,#ccc);font-size:13px;outline:none;width:100%;font-family:inherit}
 .gc-modal-actions{display:flex;justify-content:flex-end;gap:6px;padding:10px 14px;border-top:1px solid var(--vscode-widget-border,#454545)}
 .gc-empty{color:var(--vscode-descriptionForeground,#9d9d9d);padding:24px;text-align:center}

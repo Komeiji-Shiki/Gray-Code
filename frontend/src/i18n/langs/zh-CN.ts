@@ -612,6 +612,7 @@ const zhCN = {
             },
             emptyResponse: '（模型返回空内容）',
             historyFolded: '更早消息已折叠（已丢弃 {count} 条），继续上拉可加载',
+            loadNewer: '已加载较早消息，点击回到最新',
             stats: {
                 ttft: '首字延迟 (TTFT)',
                 responseDuration: '响应时间',
@@ -1794,7 +1795,12 @@ const zhCN = {
                 maxConcurrentAgents: '最大并发数',
                 maxConcurrentAgentsHint: '同时运行的子代理数量上限，超出的自动排队等待（-1 表示无限制）',
                 defaultMaxIterations: '默认迭代次数',
-                defaultMaxIterationsHint: '未单独配置迭代次数的子代理与 General Worker 的默认值（1~200，-1 表示无限制）',
+                defaultMaxIterationsHint: '未单独配置迭代次数的子代理与 General Worker 的默认值（-1 表示无限制）',
+                queueTimeoutSeconds: '排队超时（秒）',
+                queueTimeoutSecondsHint: '子代理在并发队列中排队等待的最长秒数，超过后以失败结算（-1 表示无限制，默认 600）',
+                queueTimeoutSecondsInvalid: '请输入 -1 或不小于 1 的整数',
+                defaultMaxRuntime: '默认最大运行时间（秒）',
+                defaultMaxRuntimeHint: '未单独配置 maxRuntime 的子代理与 General Worker 的执行时长上限（-1 表示无限制，默认 1800 = 30 分钟）',
                 generalWorker: '启用通用 Worker（傻瓜模式）',
                 generalWorkerHint: '主模型可直接派发零配置的 "General Worker"：继承当前渠道与全部工具权限，数量由主模型自行决定，无需手动配置任何 agent',
                 basicInfo: '基本信息',
@@ -1811,6 +1817,9 @@ const zhCN = {
                 selectChannel: '选择渠道',
                 model: '模型',
                 selectModel: '选择模型',
+                syncWithCurrentModel: '与当前模型同步',
+                syncWithCurrentModelHint: '勾选后该子代理忽略自身配置的渠道与模型，运行时统一使用当前会话正在使用的渠道与模型（与 General Worker 的继承口径一致）；切换模型时无需逐个修改',
+                syncWithCurrentModelActiveHint: '已启用「与当前模型同步」，以下渠道/模型配置暂不生效',
                 tools: '工具配置',
                 toolsDescription: '配置子代理可使用的工具',
                 toolMode: {
@@ -2571,6 +2580,11 @@ const zhCN = {
                     label: '单回合最大工具调用次数',
                     hint: '防止 AI 无限循环调用工具，-1 表示无限制',
                     unit: '次'
+                },
+                maxToolLoopWallclock: {
+                    label: '无限制模式工具循环墙钟时限（分钟）',
+                    hint: '仅在「单回合最大工具调用次数 = -1（无限制）」时生效；工具循环超过该时限即终止并报错，-1 表示不设墙钟时限',
+                    unit: '分钟'
                 },
                 actions: {
                     refresh: '刷新',

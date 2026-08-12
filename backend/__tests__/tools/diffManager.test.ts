@@ -117,7 +117,9 @@ function createPendingDiff(manager: DiffManager, overrides?: Partial<PendingDiff
         diffGuardDeletePercent: overrides?.diffGuardDeletePercent,
         conversationId: overrides?.conversationId,
         structuredHunkPlan: overrides?.structuredHunkPlan,
-        checkpointReady: overrides?.checkpointReady
+        checkpointReady: overrides?.checkpointReady,
+        lockHolder: overrides?.lockHolder,
+        lockAcquired: overrides?.lockAcquired
     };
 
     ((manager as any).pendingDiffs as Map<string, PendingDiff>).set(diff.id, diff);
@@ -713,11 +715,12 @@ describe('DiffManager lifecycle closure', () => {
         const acceptPromise = manager.acceptDiff(diff.id, false, false);
         await flushMicrotasks();
 
-        // checkpoint 未 resolve：不读盘、不写盘、不保存，diff 保持 pending
+        // checkpoint 未 resolve：不读盘、不写盘，diff 保持 pending；等待发生在全局动作
+        // 队列之外，不能让首个慢 checkpoint 阻塞取消或其它 Diff 动作。
         expect(diff.status).toBe('pending');
         expect(fs.writeFileSync).not.toHaveBeenCalled();
         expect(fs.readFileSync).not.toHaveBeenCalled();
-        expect(manager.isDiffActionInProgress(diff.id)).toBe(true);
+        expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
 
         resolveCheckpoint();
         const accepted = await acceptPromise;
@@ -1168,6 +1171,78 @@ describe('DiffManager PERF-CP deferred write lock', () => {
         fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
     });
 
+    test('预览状态在 checkpointReady 前发布，写锁仍等待 checkpoint 后获取', async () => {
+        const manager = getManager();
+        createDocument({ initialContent: 'original', saveReturns: true });
+        const statusListener = jest.fn();
+        manager.addStatusListener(statusListener);
+
+        let resolveCheckpoint!: () => void;
+        const checkpointReady = new Promise<void>((resolve) => {
+            resolveCheckpoint = resolve;
+        });
+        let settled = false;
+        const pendingPromise = manager.createPendingDiff(
+            'src/file.ts',
+            'C:/tmp/file.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            {
+                checkpointReady,
+                lockHolder: { kind: 'main', id: 'conv-x', label: 'main session' }
+            }
+        ).then((pending) => {
+            settled = true;
+            return pending;
+        });
+
+        await flushMicrotasks();
+
+        // 主编辑区预览完成后立即发布 pending；createPendingDiff 仍卡在真正写入所需的屏障上。
+        expect(statusListener).toHaveBeenCalledTimes(1);
+        expect(manager.getPendingDiffs()).toHaveLength(1);
+        expect(settled).toBe(false);
+        expect(manager.getPendingDiffs()[0].lockAcquired).not.toBe(true);
+
+        resolveCheckpoint();
+        const pending = await pendingPromise;
+        expect(pending.lockAcquired).toBe(true);
+
+        await manager.rejectDiff(pending.id);
+    });
+
+    test('并发等待同一 Diff 写入就绪时只获取一次 deferred 写锁', async () => {
+        const manager = getManager();
+        let resolveCheckpoint!: () => void;
+        const checkpointReady = new Promise<void>((resolve) => {
+            resolveCheckpoint = resolve;
+        });
+        const diff = createPendingDiff(manager, {
+            checkpointReady,
+            lockHolder: { kind: 'main', id: 'conv-shared', label: 'main session' }
+        });
+        const acquireSpy = jest.spyOn(fileWriteLockManager, 'tryAcquire');
+
+        const first = (manager as any).ensureDiffWriteReady(diff) as Promise<void>;
+        const second = (manager as any).ensureDiffWriteReady(diff) as Promise<void>;
+        expect(first).toBe(second);
+        expect(acquireSpy).not.toHaveBeenCalled();
+
+        resolveCheckpoint();
+        await Promise.all([first, second]);
+
+        expect(acquireSpy).toHaveBeenCalledTimes(1);
+        expect(diff.lockAcquired).toBe(true);
+
+        // 复用已获取状态不会重入增加锁计数。
+        await (manager as any).ensureDiffWriteReady(diff);
+        expect(acquireSpy).toHaveBeenCalledTimes(1);
+
+        fileWriteLockManager.release([diff.absolutePath], diff.lockHolder!);
+        diff.lockAcquired = false;
+    });
+
     test('写盘锁冲突：createPendingDiff 收敛 rejected 并抛出冲突错误', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: true });
@@ -1192,5 +1267,89 @@ describe('DiffManager PERF-CP deferred write lock', () => {
 
         // 释放占锁，避免影响后续用例
         fileWriteLockManager.release(['C:/tmp/file.ts'], OTHER_HOLDER);
+    });
+});
+
+describe('DiffManager document prewarm (PERF)', () => {
+    beforeEach(() => {
+        jest.restoreAllMocks();
+        resetDiffManagerSingleton();
+        jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        (vscode as any).EventEmitter = class { public event = jest.fn(); };
+        (vscode as any).WorkspaceEdit = MockWorkspaceEdit;
+        (vscode as any).Range = jest.fn().mockImplementation();
+        (vscode as any).TextEdit = { replace: jest.fn() };
+        (vscode.Uri as any).parse = (v: string) => ({ fsPath: v });
+        (vscode.Uri as any).file = (v: string) => ({ fsPath: v });
+        (vscode.workspace as any).textDocuments = [];
+        (vscode.workspace as any).registerTextDocumentContentProvider = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).openTextDocument = jest.fn();
+        (vscode.workspace as any).applyEdit = jest.fn(async () => true);
+        (vscode.workspace as any).onDidSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onWillSaveTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.workspace as any).onDidCloseTextDocument = jest.fn(() => ({ dispose: jest.fn() }));
+        (vscode.commands.executeCommand as jest.Mock).mockResolvedValue(undefined);
+        (vscode as any).window = {
+            showTextDocument: jest.fn(),
+            setStatusBarMessage: jest.fn(),
+            showErrorMessage: jest.fn(),
+            tabGroups: { all: [], close: jest.fn(async () => undefined) }
+        };
+        (fs.readFileSync as jest.Mock).mockReturnValue('original');
+        (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
+        (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+        resetDiffManagerSingleton();
+    });
+
+    test('createPendingDiff 同时预热目标与虚拟原文档，showDiffView 各复用一次', async () => {
+        const manager = getManager();
+        const openMock = vscode.workspace.openTextDocument as jest.Mock;
+
+        // mock 返回同一文档；真实 VS Code 会分别返回 file 与 gemini-diff-original 文档。
+        createDocument({ filePath: 'C:/tmp/prewarm.ts', initialContent: 'original' });
+
+        const pending = await manager.createPendingDiff(
+            'src/prewarm.ts',
+            'C:/tmp/prewarm.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            {}
+        );
+        await flushMicrotasks();
+
+        // 一次目标文档预热 + 一次虚拟原文档预热；showDiffView 不产生额外打开。
+        expect(openMock).toHaveBeenCalledTimes(2);
+        expect(openMock).toHaveBeenCalledWith({ fsPath: 'C:/tmp/prewarm.ts' });
+        expect(openMock).toHaveBeenCalledWith({ fsPath: expect.stringContaining('gemini-diff-original:') });
+        expect(pending.status).toBe('pending');
+    });
+
+    test('prewarm 打开失败时 showDiffView fallback 重新打开文档', async () => {
+        const manager = getManager();
+        const openMock = vscode.workspace.openTextDocument as jest.Mock;
+
+        // 预热（第一次调用）reject → 缓存被清理；第二次（fallback）成功
+        openMock.mockRejectedValueOnce(new Error('boom'));
+        createDocument({ filePath: 'C:/tmp/prewarm-fail.ts', initialContent: 'original' });
+
+        const pending = await manager.createPendingDiff(
+            'src/prewarm-fail.ts',
+            'C:/tmp/prewarm-fail.ts',
+            'original',
+            'changed',
+            undefined, undefined, undefined,
+            {}
+        );
+        await flushMicrotasks();
+
+        // 目标预热失败后 fallback 重试，加上虚拟原文档预热，共 3 次调用。
+        expect(openMock).toHaveBeenCalledTimes(3);
+        expect(pending.status).toBe('pending');
     });
 });

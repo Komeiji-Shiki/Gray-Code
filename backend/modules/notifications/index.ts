@@ -2,7 +2,7 @@
  * GrayCode - Windows 通知模块
  *
  * 提供 Windows Agent 停止通知（toast）相关能力：
- * - WindowsToastAdapter：toast 适配器接口（types.ts）与 VS Code 原生通知实现（VSCodeNotificationAdapter）
+ * - WindowsToastAdapter：toast 适配器接口（types.ts）与 Windows 系统 toast 实现（NodeNotifierWindowsToastAdapter）
  * - WindowsAgentStopNotificationService：Agent 停止通知服务（去重、模板渲染、窗口焦点判断）
  * - templateRenderer / windowTitle：模板渲染与窗口标题推导工具
  */
@@ -20,8 +20,8 @@ export type {
     AgentStopNotificationDispatchResult
 } from './types';
 
-// Toast 适配器（VS Code 原生通知实现）
-export { VSCodeNotificationAdapter } from './WindowsToastAdapter';
+// Toast 适配器（Windows 系统 toast 实现）
+export { NodeNotifierWindowsToastAdapter } from './WindowsToastAdapter';
 
 // Agent 停止通知服务
 export { WindowsAgentStopNotificationService } from './WindowsAgentStopNotificationService';
@@ -34,4 +34,8 @@ export type { WindowsAgentStopNotificationTemplateContext } from './templateRend
 // 窗口标题推导
 export { deriveWindowsAgentStopWindowTitle } from './windowTitle';
 export type { DeriveWindowsAgentStopWindowTitleOptions } from './windowTitle';
+
+// 窗口前置（点击通知后把 VSCode 窗口带到 Windows 前台）
+export { focusVSCodeWindow } from './focusWindow';
+export type { FocusWindowFunction } from './focusWindow';
 

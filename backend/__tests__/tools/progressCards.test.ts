@@ -4,6 +4,9 @@ import {
 } from '../../../frontend/src/utils/progressCards'
 import { setLanguage } from '../../../frontend/src/i18n'
 
+// 进度卡文案走 i18n：固定英文，断言不依赖进程/环境默认语言
+setLanguage('en')
+
 describe('progressCards utility', () => {
   beforeEach(() => {
     setLanguage('en')

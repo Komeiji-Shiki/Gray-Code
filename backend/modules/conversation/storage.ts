@@ -822,19 +822,89 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     /**
-     * 原子覆盖：优先 overwrite rename（无窗口）；平台不支持时回退“删旧 + rename”。
+     * 带 EPERM/EACCES/EBUSY 重试的 rename（与 BranchGraphRepository.renameWithRetry 同风格）：
+     * Windows 上 rename 偶发 EPERM（文件锁/杀软竞态），短暂退避重试后仍失败才抛出。
+     * 仅重试「可恢复」错误码（EPERM/EACCES/EBUSY，及 vscode FileSystemError 对应的
+     * NoPermissions/Unavailable）；其他错误（ENOENT 等）立即抛出。
+     */
+    private async renameWithRetry(src: any, dest: any, overwrite: boolean, attempts = 4, delayMs = 30): Promise<void> {
+        for (let attempt = 1; ; attempt += 1) {
+            try {
+                await this.vscode.workspace.fs.rename(src, dest, { overwrite });
+                return;
+            } catch (error: any) {
+                const code = String(error?.code ?? '');
+                const retryable =
+                    code === 'EPERM' || code === 'EACCES' || code === 'EBUSY'
+                    || code === 'NoPermissions' || code === 'Unavailable';
+                if (!retryable || attempt >= attempts) {
+                    throw error;
+                }
+                await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+            }
+        }
+    }
+
+    /**
+     * 原子覆盖：优先 overwrite rename（无窗口，并发读始终看到完整旧状态或完整新状态）；
+     * 平台不支持 overwrite 或瞬态重试耗尽时回退「旧目标改名备份 → rename 到位 → 清理备份」
+     * （与 DependencyManager 目录替换同模式）。第二次 rename 失败时把备份恢复回去，避免
+     * 「已删旧、新未落位」的不可恢复状态：例如 writeSegmentedHistory 中若在线 history 目录
+     * 被删后 rename 再失败，分段历史不可读且 appendHistory 的 H5/M4 自愈只能从目录残留段
+     * 文件/legacy 快照重建，二者都已不在时无法重建（只能抛错，不静默丢）。
      * 调用方必须已保证写写串行（runSegmentedHistoryWriteSerialized 或单写者）。
      */
     private async renameOverwrite(src: any, dest: any): Promise<void> {
         try {
-            await this.vscode.workspace.fs.rename(src, dest, { overwrite: true });
+            await this.renameWithRetry(src, dest, true);
+            return;
         } catch {
+            // 平台不支持 overwrite（rename 覆盖目标抛 FileExists 等）或瞬态重试耗尽：
+            // 进入「删旧 + rename」回退，但删旧改为「改名备份」，第二次 rename 失败可恢复。
+            const destBasename = String(dest?.path ?? '').split('/').filter(Boolean).pop() ?? 'dest';
+            const backup = this.vscode.Uri.joinPath(
+                dest,
+                '..',
+                `${destBasename}.rename-backup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            );
+            let backupMoved = false;
             try {
-                await this.vscode.workspace.fs.delete(dest, { useTrash: false });
+                await this.renameWithRetry(dest, backup, false);
+                backupMoved = true;
             } catch {
-                // ignore
+                // 旧目标改名备份失败（目标已被并发删除等罕见情况）：退回「删旧目标后重试」
+                try {
+                    await this.vscode.workspace.fs.delete(dest, { useTrash: false });
+                } catch {
+                    // ignore（目标不存在）
+                }
+                await this.renameWithRetry(src, dest, false);
+                return;
             }
-            await this.vscode.workspace.fs.rename(src, dest, { overwrite: true });
+            if (backupMoved) {
+                try {
+                    await this.renameWithRetry(src, dest, false);
+                } catch (error) {
+                    // 第二次 rename 失败：恢复备份，尽量保留旧目标（恢复也失败时抛原错误、
+                    // 不静默——旧目标仍在备份路径，可人工恢复，不会「删旧后丢失」）。
+                    try {
+                        await this.renameWithRetry(backup, dest, false);
+                    } catch (restoreError) {
+                        log.warn('renameOverwriteRestoreFailed', {
+                            backup: backup?.fsPath ?? String(backup),
+                            dest: dest?.fsPath ?? String(dest),
+                            error: String((restoreError as Error)?.message ?? restoreError)
+                        });
+                    }
+                    throw error;
+                }
+                // rename 成功：清理备份（recursive 对文件同样有效，目录也覆盖）
+                try {
+                    await this.vscode.workspace.fs.delete(backup, { recursive: true, useTrash: false });
+                } catch {
+                    // 备份清理失败忽略（不影响已完成的替换）
+                }
+            }
         }
     }
 
@@ -1065,6 +1135,98 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         return await this.readJsonFile<FileHistoryIndex>(this.getHistoryIndexPath(conversationId));
     }
 
+    /**
+     * 枚举 history 目录下的段文件（*.ndjson），按文件名升序返回。
+     * 目录不存在/不可读时返回空数组（调用方按「无段文件」处理，H5）。
+     */
+    private async enumerateHistorySegmentFiles(historyDir: any): Promise<string[]> {
+        try {
+            const entries = await this.vscode.workspace.fs.readDirectory(historyDir);
+            return entries
+                .filter(([name, type]) => type === FS_ENTRY_TYPE_FILE && /^\d{6}\.ndjson$/.test(name))
+                .map(([name]) => name)
+                .sort();
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * H5：index 不可读（parse_error/io_error）或缺失但目录残留段文件时的自愈恢复。
+     *
+     * 与 M4 尾段自愈同口径，返回可重建的 existing 历史（不含待追加的 pending）：
+     * - 目录中存在段文件且全部可读：按文件名顺序合并全部段内容；
+     * - 部分段可读、部分不可读：抛错（跳过会静默丢消息，与 M4「任一段不可读抛错」一致）；
+     * - 全部段不可读 / 目录无段文件：回退 legacy 快照（legacy 在分段完成后才删除，崩溃窗口内
+     *   它是旧快照）；legacy 也不可用时：
+     *   - not_found 且目录无段文件：全新对话 → 空历史（旧语义，保证 createConversation 后首次 append）；
+     *   - 其它（parse_error/io_error，或有段文件但全部不可读）：抛错，不静默写空历史覆盖。
+     *
+     * 注意 at-most-once（H1）：正常路径按 index.count 截断尾段残留；此处 index 不可读，
+     * 无法恢复已提交计数，只能按段文件实际内容全量读取——崩溃残留的未提交行会随全量重写
+     * 一并提交（在「丢历史」与「可能多收一条未提交消息」之间选择前者，宁可多不可少）。
+     */
+    private async recoverHistoryForAppend(
+        conversationId: string,
+        historyDir: any,
+        indexResult: StorageReadResult<FileHistoryIndex>
+    ): Promise<ConversationHistory> {
+        const files = await this.enumerateHistorySegmentFiles(historyDir);
+        if (files.length === 0) {
+            // 目录没有段文件：回退 legacy（与旧 not_found 语义一致，区别见抛错分支）
+            const legacyResult = this.asHistoryReadResult(
+                await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+            );
+            if (legacyResult.value !== null) {
+                return legacyResult.value;
+            }
+            if (indexResult.errorCode === 'not_found') {
+                // not_found 且目录无段文件、无 legacy：全新对话 → 空历史
+                return [];
+            }
+            throw new Error(
+                `appendHistory: cannot self-heal, index unreadable and no readable history for `
+                + `${conversationId} (${indexResult.errorCode ?? 'unknown'}: `
+                + `${indexResult.errorMessage ?? 'no segments and no legacy history'})`
+            );
+        }
+
+        let readableSegmentCount = 0;
+        const readable: ConversationHistory = [];
+        const unreadableSegments: string[] = [];
+        for (const file of files) {
+            const segResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, file));
+            if (!segResult.value) {
+                unreadableSegments.push(file);
+                continue;
+            }
+            readableSegmentCount += 1;
+            readable.push(...segResult.value);
+        }
+        if (readableSegmentCount > 0 && unreadableSegments.length > 0) {
+            // 部分段可读、部分不可读：无法安全重建（跳过会静默丢消息），抛错
+            throw new Error(
+                `appendHistory: cannot self-heal, unreadable history segment(s) `
+                + `${unreadableSegments.join(', ')} for ${conversationId}`
+            );
+        }
+        if (readableSegmentCount === 0) {
+            // 全部段不可读：回退 legacy；legacy 也没有 → 抛错（不静默丢）
+            const legacyResult = this.asHistoryReadResult(
+                await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId))
+            );
+            if (legacyResult.value !== null) {
+                return legacyResult.value;
+            }
+            throw new Error(
+                `appendHistory: cannot self-heal, all history segments unreadable and no legacy `
+                + `history for ${conversationId} (${indexResult.errorCode ?? 'unknown'}: `
+                + `${indexResult.errorMessage ?? 'unreadable segments and no legacy history'})`
+            );
+        }
+        return readable;
+    }
+
     private async writeSegmentedHistory(conversationId: string, history: ConversationHistory): Promise<void> {
         const conversationDir = this.getConversationDir(conversationId);
         const historyDir = this.getHistoryDir(conversationId);
@@ -1115,27 +1277,12 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         await this.vscode.workspace.fs.writeFile(tmpIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
 
         // 2. 原子切换：优先 overwrite rename（无窗口，并发读始终看到完整旧状态或完整新状态）；
-        //    平台不支持 overwrite 时回退到“删旧 + rename”（调用方已保证写写串行，窗口只剩毫秒级崩溃场景）。
-        try {
-            await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
-        } catch {
-            try {
-                await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
-            } catch {
-                // ignore
-            }
-            await this.vscode.workspace.fs.rename(tmpDir, historyDir, { overwrite: true });
-        }
-        try {
-            await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
-        } catch {
-            try {
-                await this.vscode.workspace.fs.delete(historyIndexPath, { useTrash: false });
-            } catch {
-                // ignore
-            }
-            await this.vscode.workspace.fs.rename(tmpIndexPath, historyIndexPath, { overwrite: true });
-        }
+        //    平台不支持 overwrite 或瞬态 EPERM 重试耗尽时，renameOverwrite 内部回退
+        //    「旧目标改名备份 → rename 到位 → 清理备份」，第二次 rename 失败时恢复备份，
+        //    不会留下「在线 history 目录已删、新目录未落位」的不可恢复状态（H5/M4 自愈依赖
+        //    目录残留段文件或 legacy 快照，两者都被清掉时无法重建，只能抛错不静默丢）。
+        await this.renameOverwrite(tmpDir, historyDir);
+        await this.renameOverwrite(tmpIndexPath, historyIndexPath);
 
         // 3. 删除遗留的 legacy 历史文件
         try {
@@ -1170,9 +1317,14 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
             const tmpIndexPath = this.vscode.Uri.joinPath(conversationDir, 'history.index.json.tmp');
 
             if (!indexResult.value) {
-                // 尚无分段索引：legacy 或全新对话 → 合并后全量重写（罕见路径，保证语义正确）
-                const legacyResult = await this.asHistoryReadResult(await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId)));
-                const existing = legacyResult.value ?? [];
+                // H5：index 不可读时不再静默回退 legacy 全量重写。旧行为把 parse_error/io_error
+                // 也当成「尚无分段索引」处理：此时 legacy 已在分段完成后删除（读得 null），
+                // existing = legacy ?? [] = [] → writeSegmentedHistory([] + pending)，整段分段历史
+                // 被覆盖丢失。现在与 M4 尾段自愈同口径：优先从目录枚举段文件读取合并；
+                // 任一段不可读抛错（不静默丢）；全部不可读才回退 legacy；都没有才抛错。
+                // not_found 且目录无段文件才是「尚无分段索引」的正常形态（legacy 或全新对话），
+                // 保留旧回退语义（legacy ?? []）；目录实际残留段文件（index 被外部删除）时同样走自愈。
+                const existing = await this.recoverHistoryForAppend(conversationId, historyDir, indexResult);
                 await this.writeSegmentedHistory(conversationId, existing.concat(pending));
                 await this.refreshUpdatedAt(conversationId);
                 return;
@@ -1896,11 +2048,23 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async loadSnapshot(snapshotId: string): Promise<HistorySnapshot | null> {
+        let content: Uint8Array;
         try {
             const uri = this.getSnapshotPath(snapshotId);
-            const content = await this.vscode.workspace.fs.readFile(uri);
-            return JSON.parse(Buffer.from(content).toString('utf8'));
+            content = await this.vscode.workspace.fs.readFile(uri);
+        } catch (error) {
+            // 文件不存在视为「快照不存在」（返回 null，restoreSnapshot 报 snapshotNotFound）；
+            // 真实 IO 错误（EACCES/EIO 等）向上抛——参考 loadMetadataWithStatus 的
+            // not_found / io_error 分级，避免真实存储故障被静默当作「快照不存在」。
+            if (this.isNotFoundError(error)) {
+                return null;
+            }
+            throw error;
+        }
+        try {
+            return JSON.parse(Buffer.from(content).toString('utf8')) as HistorySnapshot;
         } catch {
+            // 损坏快照（JSON 解析失败）：与 loadMetadata 的 parse_error→null 语义一致（保留旧行为）
             return null;
         }
     }

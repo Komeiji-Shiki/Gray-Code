@@ -907,3 +907,13 @@ export const DEFAULT_ROTATE_IMAGE_CONFIG: RotateImageToolConfig = {
  * 与 generalTypes.ts 中 maxToolIterations 的注释保持一致：默认值 200，-1 表示无限制
  */
 export const DEFAULT_MAX_TOOL_ITERATIONS = 200;
+
+/**
+ * 默认无限制模式（maxToolIterations = -1）工具循环墙钟时限（分钟）
+ *
+ * 对应 ToolIterationLoopService.MAX_TOOL_LOOP_WALLCLOCK_MS（默认 30 分钟）的
+ * 可配置来源；-1 表示不设墙钟时限（仅保留迭代硬上限兜底）。
+ * 仅当 maxToolIterations = -1（无限制模式）时生效，有限模式下不参与循环约束。
+ */
+export const DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES = 30;
+

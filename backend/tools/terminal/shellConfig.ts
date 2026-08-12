@@ -169,15 +169,6 @@ export function getShellConfig(shellType: ShellType): {
 }
 
 /**
- * 获取启用的 shell 列表（用于工具描述）
- */
-export function getEnabledShellTypes(): string[] {
-    const settingsManager = getGlobalSettingsManager();
-    const config = settingsManager?.getExecuteCommandConfig() || getDefaultExecuteCommandConfig();
-    return config.shells.filter(s => s.enabled).map(s => s.type);
-}
-
-/**
  * 获取 Shell 的默认可执行文件路径（用于可用性检测）
  * 这个路径应该与 getShellConfig 中使用的路径一致
  */
@@ -263,7 +254,6 @@ async function checkShellAvailabilityUncached(shellType: string, customPath?: st
         
         // 对于绝对路径，检查文件是否存在
         if (shellPath.includes('\\') || shellPath.includes('/')) {
-            const fs = require('fs');
             try {
                 fs.accessSync(shellPath, fs.constants.X_OK);
                 return { available: true };
@@ -287,7 +277,6 @@ async function checkShellAvailabilityUncached(shellType: string, customPath?: st
         // Unix 系统
         // 对于绝对路径，检查文件是否存在
         if (shellPath.startsWith('/')) {
-            const fs = require('fs');
             try {
                 fs.accessSync(shellPath, fs.constants.X_OK);
                 return { available: true };
@@ -465,16 +454,19 @@ function checkShellAvailabilitySync(shellType: string, customPath?: string): boo
                 // 绝对路径检查文件存在
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
-                // 使用 where 检查 PATH
-                cp.execSync(`where ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+                // 使用 where 检查 PATH：参数必须通过 argv 传递，不能拼进 shell 命令——
+                // customPath 属于用户可控配置，字符串拼接存在命令注入风险（与异步版 276 行同口径）
+                cp.execFileSync('where.exe', [shellPath], { timeout: 3000, stdio: 'ignore' });
             }
         } else {
             // 绝对路径检查文件存在
             if (shellPath.startsWith('/')) {
                 fs.accessSync(shellPath, fs.constants.X_OK);
             } else {
-                // 使用 which 检查 PATH
-                cp.execSync(`which ${shellPath}`, { timeout: 3000, stdio: 'ignore' });
+                // 使用 which 检查 PATH：参数必须通过 argv 传递，不能拼进 shell 命令
+                // （customPath 属于用户可控配置，字符串拼接存在命令注入风险，
+                // 与异步版 301 行、Windows 版 470 行同口径）
+                cp.execFileSync('which', [shellPath], { timeout: 3000, stdio: 'ignore' });
             }
         }
         available = true;

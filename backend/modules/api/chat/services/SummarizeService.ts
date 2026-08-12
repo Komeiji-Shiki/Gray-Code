@@ -965,6 +965,19 @@ export class SummarizeService {
             // 循环结束（或未收缩）后按最终游标统一切片一次
             messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, insertIndex);
 
+            // 收缩后总结范围不再覆盖任何新消息（只剩旧总结消息本身）时，本次总结
+            // 没有可总结的新内容，直接放弃——继续调 AI 只会生成一份无新增信息的总结。
+            if (insertIndex <= historyStartIndex) {
+                this.log.warn('auto.no_new_messages_after_trim', { conversationId, historyStartIndex, insertIndex });
+                return {
+                    success: false,
+                    error: {
+                        code: 'NO_MESSAGES_TO_SUMMARIZE',
+                        message: t('modules.api.chat.errors.noMessagesToSummarize')
+                    }
+                };
+            }
+
             if (messagesToSummarize.length === 0) {
                 this.log.warn('auto.no_messages_after_trim', { conversationId });
                 return {
@@ -1199,7 +1212,8 @@ export class SummarizeService {
                 conversationId,
                 insertIndex: replaceResult.insertIndex,
                 removedCount,
-                totalSummarizedCount,
+                // 以实际标记数为准（首条用户消息保护可能使标记数小于规划值）
+                totalSummarizedCount: summaryContent.summarizedMessageCount,
                 promptTokens: beforeTokenCount,
                 completionTokens: afterTokenCount,
                 summaryTokenStats
@@ -1264,11 +1278,11 @@ export class SummarizeService {
      * @param insertIndex 被标记区间终点（开区间，基于旧快照计算；同时也是总结消息插入位置）
      * @param baseSummarizedCount 旧总结累计覆盖数（previousSummarizedCount），用于在锁内
      *                            以实际标记数为准回填插入消息的 summarizedMessageCount
-     * @param allowCoverLastRealUserRound 手动总结放行开关：整个历史只有一个真实用户回合
-     *        （单轮）时，轮内截断的切点必然位于轮首 user 消息之后，insertIndex 恒大于
-     *        lastRealUserMessageIndex。此时没有「当前回合」需要保护——用户主动总结就是要
-     *        覆盖这一轮的前半部分，允许落盘而不是放弃；自动总结保持严格 STALE（回合内
-     *        吞掉当前用户消息会毁掉回复上下文）。
+     * @param allowCoverLastRealUserRound 手动总结放行开关：手动总结是用户主动行为，没有
+     *        进行中的回合需要保护，允许总结范围覆盖「最后一条真实用户消息所在轮的前半段」
+     *        （轮内截断的切点必然位于轮首 user 消息之后，insertIndex 恒大于
+     *        lastRealUserMessageIndex）；自动总结保持严格 STALE（回合内吞掉当前用户消息
+     *        会毁掉回复上下文）。
      * @returns ok=true 时 markedCount = 实际标记的消息数，insertIndex = 总结消息的插入位置
      *          （= 入参 insertIndex，不因首条用户消息保护而改变）；
      *          ok=false 时 code='STALE_RANGE'（历史已变化，本次总结放弃，不落盘）
@@ -1319,16 +1333,13 @@ export class SummarizeService {
                 return history;
             }
             if (insertIndex > lastRealUserMessageIndex) {
-                // 手动总结 + 单轮（历史中仅一条真实用户消息）时放行：轮内截断（intra_round）
-                // 的切点必然在轮首 user 消息之后，覆盖它正是用户主动总结的预期行为（把这一轮
-                // 的前半部分拿去总结），不存在「当前回合」需要保护；首条用户消息保护仍生效
+                // 手动总结放行：轮内截断（intra_round）的切点必然位于轮首 user 消息之后，
+                // insertIndex 恒大于最后一条真实用户消息下标。用户主动总结没有进行中的回合
+                // 需要保护（前端在等待响应期间禁止触发），把「最后一轮的前半段」纳入总结
+                // 正是预期行为（含多轮历史中最后一轮超预算的场景）；首条用户消息保护仍生效
                 // （标记起点从该消息之后开始），总结文本由 AI 生成。
                 // 自动总结保持严格 STALE：回合内吞掉当前用户消息会毁掉回复上下文。
-                const realUserCount = history.reduce(
-                    (count, message) => count + (isRealUserMessage(message) ? 1 : 0),
-                    0
-                );
-                if (!allowCoverLastRealUserRound || realUserCount !== 1) {
+                if (!allowCoverLastRealUserRound) {
                     stale = true;
                     return history;
                 }
@@ -1511,11 +1522,52 @@ export class SummarizeService {
         });
 
         if (plan) {
-            const summarizeEndIndex = historyStartIndex + plan.cutIndex;
+            let cutIndex = plan.cutIndex;
+            // 自动总结严格保护当前回合：切点不得越过最后一条真实用户消息。
+            // 越过后 markAndInsertSummarizedAtomically 的锁内 STALE 检查会拒绝本次总结，
+            // 而拒绝发生在 AI 生成完成之后——白白消耗一次总结模型调用。钳制到当前回合
+            // 起点后：多轮时切点最多落在当前回合边界（保留整个当前回合，总结更早内容）；
+            // 单轮（唯一轮即当前回合）时无安全切点，直接放弃（不调 AI）。
+            // 手动总结不受此限制：用户主动总结覆盖当前轮正是预期行为（锁内放行）。
+            if (mode === 'auto') {
+                let lastRealUserMessageIndex = -1;
+                for (let i = historyAfterSummary.length - 1; i >= 0; i--) {
+                    if (isRealUserMessage(historyAfterSummary[i])) {
+                        lastRealUserMessageIndex = i;
+                        break;
+                    }
+                }
+                if (lastRealUserMessageIndex < 0) {
+                    // 无真实用户消息（异常历史）：无法安全总结
+                    return {
+                        ok: false,
+                        code: rounds.length === 0 ? 'NOT_ENOUGH_CONTENT' : 'NOT_ENOUGH_ROUNDS',
+                        currentRounds: rounds.length
+                    };
+                }
+                if (lastRealUserMessageIndex === 0) {
+                    // 单轮（唯一真实用户消息就是第一条）：切点必在轮首 user 之后，
+                    // 任何总结范围都会覆盖当前回合 → 直接放弃，避免白烧 AI 生成。
+                    return {
+                        ok: false,
+                        code: 'NOT_ENOUGH_ROUNDS',
+                        currentRounds: rounds.length
+                    };
+                }
+                cutIndex = Math.min(cutIndex, lastRealUserMessageIndex);
+                if (cutIndex <= 0) {
+                    return {
+                        ok: false,
+                        code: 'NOT_ENOUGH_ROUNDS',
+                        currentRounds: rounds.length
+                    };
+                }
+            }
+            const summarizeEndIndex = historyStartIndex + cutIndex;
             if (plan.boundary === 'intra_round') {
                 this.log.info(`${mode}.intra_round_split`, {
                     conversationId,
-                    cutIndex: plan.cutIndex,
+                    cutIndex,
                     summarizeEndIndex,
                     keepBudgetTokens
                 });
@@ -1543,6 +1595,14 @@ export class SummarizeService {
      * - model 消息优先 usageMetadata（输出 token 扣除思考部分），否则本地估算
      */
     private estimateMessageTokensForBudget(message: Content, channelType: string): number {
+        // 中断/取消流的 usageMetadata 只覆盖已收到的 chunk，token 数可能严重偏低：
+        // 若据此规划保留预算会低估实际占用、总结范围规划过大。
+        // 与 conversation/usageStats.ts extractMessageTokens 及 manager/stats.ts
+        // 的 usageMetadataPartial 回退口径一致——回退到本地估算而非信任半截 usage。
+        if (message.usageMetadataPartial) {
+            return this.estimateSingleMessageTokensLocally(message);
+        }
+
         if (message.role === 'user') {
             const byChannel = message.tokenCountByChannel?.[channelType];
             if (typeof byChannel === 'number') {

@@ -302,6 +302,7 @@ export const MESSAGE_NAMES = {
   'tools.getFindFilesConfig': 'tools.getFindFilesConfig',
   'tools.getHistorySearchConfig': 'tools.getHistorySearchConfig',
   'tools.getMaxToolIterations': 'tools.getMaxToolIterations',
+  'tools.getMaxToolLoopWallclockMinutes': 'tools.getMaxToolLoopWallclockMinutes',
   'tools.getMcpTools': 'tools.getMcpTools',
   'tools.getSearchInFilesConfig': 'tools.getSearchInFilesConfig',
   'tools.getToolConfig': 'tools.getToolConfig',
@@ -314,6 +315,7 @@ export const MESSAGE_NAMES = {
   'tools.updateHistorySearchConfig': 'tools.updateHistorySearchConfig',
   'tools.updateListFilesConfig': 'tools.updateListFilesConfig',
   'tools.updateMaxToolIterations': 'tools.updateMaxToolIterations',
+  'tools.updateMaxToolLoopWallclockMinutes': 'tools.updateMaxToolLoopWallclockMinutes',
   'tools.updateSearchInFilesConfig': 'tools.updateSearchInFilesConfig',
   'tools.updateToolConfig': 'tools.updateToolConfig',
 
@@ -436,14 +438,15 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
   MESSAGE_NAMES['settings.export'],
   MESSAGE_NAMES['settings.import'],
   // installUpdate：下载 vsix + 安装为分钟级任务，超时会让前端误判失败而后端继续安装
-  MESSAGE_NAMES.installUpdate,
-  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
+  MESSAGE_NAMES.installUpdate,  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
   MESSAGE_NAMES['tokenizer.getResource'],
   MESSAGE_NAMES.countSystemPromptTokens,
   // 模态对话框类：桌面版 openFolder 对话框打开期间 promise 一直挂起
   MESSAGE_NAMES['workspace.openFolder'],
   // 后端视为分钟级长任务（NON_BLOCKING），180s 兜底超时会先触发，
   // 后端稍后返回的响应因无匹配请求被当作广播推送误分发（M6）
+  // summarizeContext：总结是长上下文 LLM 调用（分钟级），180s 前端超时会让误判失败后
+  // 端继续总结，重试又叠加 token 消耗；与后端 stream 类请求同样豁免
   MESSAGE_NAMES.summarizeContext,
 ]);
 
@@ -459,6 +462,10 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
  * ⚠️ 与 UNBOUNDED_REQUEST_TYPES（前端超时豁免）语义不同，禁止合并。
  */
 export const NON_BLOCKING_MESSAGE_TYPES = new Set<string>([
+  // Diff 接受/拒绝可能等待 checkpoint、文档保存和原生 Diff 标签关闭数秒。
+  // 它们必须异步执行，否则一次点击会占住主 Webview 串行队列，后续设置、焦点和保存请求全部排队。
+  MESSAGE_NAMES['diff.accept'],
+  MESSAGE_NAMES['diff.reject'],
   MESSAGE_NAMES.summarizeContext,
   MESSAGE_NAMES['dependencies.install'],
   MESSAGE_NAMES['dependencies.uninstall'],
@@ -663,6 +670,10 @@ export interface ContentPart {
         args: Record<string, unknown>;
         /** 增量解析时的原始 JSON 字符串（用于流式输出） */
         partialArgs?: string;
+        /**
+         * Anthropic forced tool use 的预填参数标记。仅用于流式累加器把初始 input
+         * 与后续 input_json_delta 合并；最终 Content 投影会删除该内部字段。
+         */
         prefilledArgs?: boolean;
         id?: string; // 可选的函数调用 ID
         /** 是否已被用户拒绝执行（重新加载对话时正确显示工具状态） */
@@ -777,5 +788,7 @@ export type CheckpointSummaryWithSize = CheckpointSummary & { size: number };
 //      ContentPart（含 ThoughtSignatures / OpenAIResponsesReasoningMetadata）与
 //      CheckpointSummary / CheckpointSummaryWithSize（T16，两端统一为契约超集）；
 //    - CheckpointManifest / CheckpointIgnoreSnapshot / CheckpointExcludedEntry 等检查点
+//      类型仍分属 backend/modules/checkpoint/types.ts，未纳入本阶段范围。
+
 //      类型仍分属 backend/modules/checkpoint/types.ts，未纳入本阶段范围。
 

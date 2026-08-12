@@ -9,9 +9,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
-import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio, parseImageDimensionsFromBytes } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { createFetchSignal } from '../utils';
+import { saveImage, parseImageDimensionsFromBase64, createFetchSignal } from './imageUtils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -358,20 +358,6 @@ async function callGeminiImageApi(
 }
 
 /**
- * 解析 base64 图片数据获取尺寸（统一收敛自 utils.parseImageDimensionsFromBytes）
- */
-function parseImageDimensionsFromBase64(base64Data: string, mimeType: string): { width: number; height: number } | null {
-    try {
-        const buffer = Buffer.from(base64Data, 'base64');
-        const parsed = parseImageDimensionsFromBytes(buffer, mimeType);
-        return parsed ? { width: parsed.width, height: parsed.height } : null;
-    } catch {
-        // 解析失败
-    }
-    return null;
-}
-
-/**
  * 从响应中提取图片和文本
  */
 function extractFromResponse(response: GeminiImageResponse): {
@@ -402,35 +388,6 @@ function extractFromResponse(response: GeminiImageResponse): {
     }
 
     return { images, texts };
-}
-
-/**
- * 保存图片到文件
- */
-async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext): Promise<void> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath, context?.activeWorkspaceUri);
-    if (!uri) {
-        throw new Error('No workspace folder open');
-    }
-
-    // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
-    if (isOutsideWorkspace) {
-        const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: outputPath }, context);
-        if (writeAccessError) {
-            throw new Error(writeAccessError);
-        }
-    }
-
-    // 确保目录存在
-    const dirUri = vscode.Uri.joinPath(uri, '..');
-    try {
-        await vscode.workspace.fs.createDirectory(dirUri);
-    } catch {
-        // 目录可能已存在
-    }
-
-    // 写入文件
-    await vscode.workspace.fs.writeFile(uri, buffer);
 }
 
 /**
@@ -688,15 +645,15 @@ async function executeImageTask(
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : '';
         
-        // 检测各种可能的取消错误
-        const isCancelled = abortSignal?.aborted ||
-            errorName === 'AbortError' ||
-            errorMessage.includes('aborted') ||
+        // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError
+        // （"The operation was aborted"）拒绝，仅凭 errorName/message 会把请求超时误判为用户取消。
+        // 修改方式：以用户 abortSignal 是否真的 aborted 为准（超时只中止内部 fetchSignal，
+        // 不会中止调用方的 abortSignal）；AbortError/消息检查仅作无信号时的后备。
+        const isCancelled = abortSignal?.aborted === true ||
+            (errorName === 'AbortError' && !abortSignal) ||
             errorMessage.includes('cancelled') ||
             errorMessage.includes('canceled') ||
-            errorMessage.includes('Request cancelled') ||
-            errorMessage.includes('The operation was aborted') ||
-            errorMessage.includes('signal is aborted');
+            errorMessage.includes('Request cancelled');
         
         return {
             index,

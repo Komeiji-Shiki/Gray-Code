@@ -33,7 +33,7 @@ import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
 import UsageTimeSection from '../usage/UsageTimeSection.vue'
 import type { UsageStatsResult, UsageTimeRange } from '@/types/usage'
-import { CustomScrollbar, CustomSelect, type SelectOption } from '../common'
+import { CustomScrollbar, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { pendingToolConfigExpand } from './tools/toolConfigFocus'
@@ -202,6 +202,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     labelKey: 'components.settings.toolsSettings.maxIterations.label',
     keywords: ['最大工具调用次数', 'max iterations', '工具调用', 'iteration', '反復', '无限制', '循环'],
     anchor: '[data-search-anchor="max-tool-iterations"]'
+  },
+  {
+    key: 'tools-max-tool-loop-wallclock', tab: 'tools',
+    labelKey: 'components.settings.toolsSettings.maxToolLoopWallclock.label',
+    keywords: ['墙钟时限', 'wall clock', 'wallclock', '工具循环', 'tool loop', '无限制', '无时限', '分钟', 'timeout', 'タイムアウト', '壁時計'],
+    anchor: '[data-search-anchor="max-tool-loop-wallclock"]'
   },
   {
     key: 'tools-list', tab: 'tools',
@@ -1757,24 +1763,10 @@ onMounted(() => {
               @export-settings="handleExportSettings"
               @import-settings="handleImportSettings"
               :app-info="appInfo"
+              :workspace-behavior="workspaceBehavior"
+              :workspace-behavior-options="workspaceBehaviorOptions"
+              @update:workspace-behavior="saveWorkspaceBehavior"
             />
-
-            <!-- 工作区行为（桌面版独有） -->
-            <div class="form-group" data-search-anchor="workspace-behavior">
-              <label class="group-label">
-                <i class="codicon codicon-folder-opened"></i>
-                {{ t('components.settings.settingsPanel.workspaceBehavior.title') }}
-              </label>
-              <p class="field-description">{{ t('components.settings.settingsPanel.workspaceBehavior.description') }}</p>
-
-              <div class="workspace-behavior-settings">
-                <CustomSelect
-                  :model-value="workspaceBehavior"
-                  :options="workspaceBehaviorOptions"
-                  @update:model-value="saveWorkspaceBehavior"
-                />
-              </div>
-            </div>
           </div>
 
           <!-- 用量统计（T12：Token 摘要拆至 UsageSummaryCard） -->

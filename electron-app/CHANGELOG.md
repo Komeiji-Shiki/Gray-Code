@@ -12,6 +12,40 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+## [1.7.15] - 2026-08-12
+
+### Fixed：手动总结多轮对话 STALE_RANGE 失败 + 自动总结在长工具轮下永远回退（详见根 CHANGELOG）
+  - **手动总结失败修复**：多轮对话 + 末轮超预算（工具长回合）时，轮内截断切点位于最后一条真实用户消息之后，落盘侧仅对单轮放行、多轮一律判 STALE_RANGE 放弃写入；放行开关扩展为对所有手动总结生效（用户主动行为，无进行中回合需要保护），首条用户消息锚点与并发越界保护不变；
+  - **自动总结修复**：auto 模式不再开放当前轮内部切点（切点必然吞掉当前用户消息 → STALE 必败回退），改为切在轮首总结旧轮、保留当前轮整体；manual 保持轮内切点；
+  - 测试：后端 273 套件/3094 例 + 前端 102 文件/1000 例 + typecheck 全绿。
+
+### Fixed：后台任务完成回执/任务小气泡收不到——taskEvent 推送格式与前端订阅契约不符（桌面版）
+  - **根因**：PUSH_MESSAGE_NAMES 契约规定 taskEvent 是 command 信封内的命令名（{ type: 'command', command: 'taskEvent', data }），前端 backgroundTaskStore 按此订阅；但桌面版 BackendHost 与 VSCode 版 ChatViewProvider 均用 postMessage 直发（type: 'taskEvent'）——后台任务完成事件到不了任务条/回执链路：BackgroundTaskBar 小气泡永不出现、完成回执不回流（仅 App.vue 声音提醒走直发匹配恰好能收到，掩盖了问题）；
+  - **修复**：ChatViewProvider.handleTaskEvent 改走 sendCommand（含 ready 队列）；桌面版 BackendHost 改 postToRenderer('command', 'taskEvent', event)；App.vue 声音提醒改匹配 command 信封（保留旧直发兼容）；
+  - 测试：backgroundTaskEventRouting 5 例 + 全量 typecheck 通过。
+
+### Fixed：Windows 空闲挂起渲染进程导致前端壳无响应——电源事件恢复 + 冻结自愈（桌面版）
+  - **根因**：Electron 渲染进程在 Windows 系统空闲（睡眠/锁屏/长时无输入）后不再绘制/响应，主进程 `webContents.send` 正常但渲染端无回包——前端壳无响应、后台任务与界面状态卡死；
+  - **修复**（三层防御）：①主进程监听 powerMonitor resume → 失效缓存并通知宿主重载（host.powerResume）；②渲染进程探针超时自动 reload（探针周期性 ping，主进程无回包即重建）；③webContents 标记 unresponsive 超 5s 自动 reload；
+  - 版本 1.7.15
+
+## [1.7.14dev] - 2026-08-11
+
+### Fixed：亮色模式真正亮色 + 窗口背景色/原生控件跟随主题（1.7.13 主题模式落地修复）
+  - **color-scheme 修复（亮色仍暗主因）**：原生 select 弹出层/复选框/滚动条此前按系统暗色渲染（系统暗色 + 应用亮色时），theme.css 暗色块补 `color-scheme: dark`、亮色块补 `color-scheme: light`；
+  - **补全 17 个缺失 --vscode-* 变量**（语法高亮/通知/设置类，暗/亮两套），消除组件 var() 引用回落到硬编码暗色 fallback 的亮色对比度崩坏；
+  - **窗口背景色与原生控件跟随主题**：新增 app.setTheme 上报链（App.vue → BackendHost → 主进程）同步 BrowserWindow.setBackgroundColor + nativeTheme.themeSource；启动时同步预读设置文件（resolveSavedTheme）免首帧闪烁（首帧启动画面/prefers-color-scheme 一并正确）；主题 watch 补 immediate；设置加载完成前不上报（防 clobber 预读主题）；
+  - MermaidZoomModal/overlay 硬编码白字改主题感知；版本 1.7.14dev
+
+### Merged：同步上游 main 至 bb8d0b16（25 commits，详见根 CHANGELOG）
+  - 子代理「与当前模型同步」逐代理开关（旧全局开关启动自动迁移）；发布前修复批次 H3-H6（checkpoint 精确匹配/conversation 分段自愈/webview 流中止/channel 计数/settings 加固等）；
+  - 不采纳 fast-tavern 与 nightly 相关 commits（-x ours 消掉并保留来源标记）；本地独有功能全量保留（远程控制 V7.2/桌面背景图/agentInbox/多工作区/安全加固）。
+
+### Fixed：扫描优化批次
+  - **亮色模式灰底灰字根因修复**：color-mix 内的 var() 在 Chromium 按定义点解析（非惰性），:root 定义的 --gc-surface-* 锁死暗色值导致亮色下输入框/设置面板/消息区/下拉框仍为暗灰底；亮色块重定义 4 个 surface 变量 + 亮色前景加深为近黑 #1f1f1f；
+  - 媒体工具超时取消口径统一（3 工具 6 处）；Unix which argv 防注入；compareVersions 预发布解析修正（-nightly.x 不再误并入版本段）；realpath 缓存加固 + 远控端文件读写 realpath 复核；StreamChunkProcessor 死路径清理；shellConfig/UpdateChecker 死代码清理；
+  - 测试：后端 273 套件/3088 例 + 前端 102 文件/1000 例 + typecheck 全绿；版本 1.7.14dev
+
 ## [1.7.13] - 2026-08-11
 
 ### Fixed（1.7.13dev 补记：UI 不透明度仅背景半透明 + 消息区/四下拉框透出 + 移除 nightly 更新渠道）
@@ -511,6 +545,20 @@ are tracked in the root `CHANGELOG.md`.
   - Diff 预览模态框（接受/拒绝/逐块），`vscode.diff` 命令拦截 + sessionId 异步解析（3s 轮询兜底）
   - Overlay：toast / quickPick / inputBox / 无工作区提示 / 首次运行 Welcome（DOM-ready 守卫）
   - 多语言 UI（简体中文 / English / 日本語）+ 顶部栏新建标签 / 语言切换 / 设置齿轮
+  - 首次运行引导与无工作区提示；工作区选择与持久化、失效目录自动降级提示
+  - 子代理 Monitor 独立窗口版（后续版本已改为内嵌面板）；run 卡片「继续」按钮与前后台任务状态回流
+  - 打包：electron-builder（win NSIS/zip、mac dmg/zip、linux AppImage/deb）+ GitHub Actions 三平台 CI
+  - 测试体系：后端 E2E（7 场景 40+ 断言）、UI 冒烟（UISMOKE）、MONITOR_SMOKE、mock MCP 服务器
+
+### Fixed
+  - 修复「无法打开项目文件夹」：WorkspaceFolder 补 `fsPath` 字段 + `Uri.toString()` 输出标准 `file:///` 格式
+  - 修复 macOS activate 重复注册 IPC 导致消息执行两次
+  - 修复 overlay.js 在 body 就绪前执行导致 appendChild 报错（DOM-ready 守卫）
+  - 修复自定义协议 MIME 缺失/大小写敏感路径校验（Windows 路径归一化）
+  - 修复 diff 预览右栏恒空与 sessionId 失效（两种 diff 路径分别处理）
+  - 修复 findFiles 默认跳过 dist/build 导致 AI 无法检查构建产物（改为设置可覆盖）
+  - 修复 workspaceState/globalState 导出 null（JSON 文件持久化）
+  - 修复 `require('./vscode-shim')` 打包后必崩（改为具名导入）
   - 首次运行引导与无工作区提示；工作区选择与持久化、失效目录自动降级提示
   - 子代理 Monitor 独立窗口版（后续版本已改为内嵌面板）；run 卡片「继续」按钮与前后台任务状态回流
   - 打包：electron-builder（win NSIS/zip、mac dmg/zip、linux AppImage/deb）+ GitHub Actions 三平台 CI

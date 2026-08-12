@@ -24,6 +24,113 @@
 
 （暂无未发布改动）
 
+## [1.7.15] - 2026-08-12
+
+### Added：无限制模式工具循环墙钟时限可配置——新增 graycode.maxToolLoopWallclockMinutes
+  - **背景**：-1 无限制模式（maxToolIterations = -1）的墙钟兜底此前硬编码 30 分钟（MAX_TOOL_LOOP_WALLCLOCK_MS），用户无法调节。
+  - **实现**：新增全局设置 `maxToolLoopWallclockMinutes`（默认 30 分钟，-1 = 不设墙钟时限，仅保留迭代硬上限兜底）；
+    ToolIterationLoopService 的 `ToolIterationLoopConfig.maxToolLoopWallclockMs` 接受该值（流式/非流式两条循环路径，
+    有限迭代模式语义零变化——墙钟兜底只作用于 -1 无限制模式）；工具设置页新增「无限制模式工具循环墙钟时限（分钟）」输入框，
+    明确标注「仅在最大工具调用次数 = -1（无限制）时生效，-1 表示不设墙钟时限」；VSCode 配置键同步注册（可 Settings Sync），
+    远控设置页（schema 驱动）同步镜像该字段；三语 i18n + package.json contributes.configuration 同步。
+  - **伴生修复**：maxToolLoopWallclockMs = -1（不设墙钟时限）时 deadline 计算为 0，原 guard 判断 Date.now() > 0 恒真会立即误触发
+    TOOL_LOOP_WALLCLOCK_LIMIT——guard 条件已补 `wallclockMs !== -1`。
+  - 测试：toolLoopWallclockLimit 3 例（小墙钟时限触发 / -1 不触发 / 有限模式不参与）。
+
+### Fixed：上翻历史过多时消息窗口无限增长导致界面卡死——上翻路径窗口有界化（滑动裁剪 + 回到最新入口）
+  - **根因**：底部追加路径由 trimWindowFromTop 在 MAX_WINDOW_MESSAGES 内折叠，上翻路径（loadOlderMessagesPage）从不裁剪，
+    allMessages 与虚拟窗口 visibleCount 随上翻无限增长 → 尾部切片渲染（resolveLoadedVisibleMessages）的 DOM 节点、
+    消息索引/缓存重建随轮次线性膨胀，消息轮次高时渲染线程被压垮，界面无法交互。
+  - **修复**：上翻路径窗口超过 MAX_WINDOW_MESSAGES 时从底部（最新侧）裁剪到上限——窗口整体随上翻滑动，仍可逐页翻完整历史；
+    流式/等待响应期间不裁剪（防误裁在途消息）；发送前若窗口末尾落后于真实最新（缺口），先重载最后一页对齐 backendIndex
+    （否则新消息索引错位导致删除/重试定位错误）；新增底部「回到最新」入口（hasNewerMessages），一键重载最后一页并滚动到底。
+  - 测试：conversationActions 全量回归通过。
+
+### Fixed：滚动条在底部时自动贴底失效——粘性底部状态自愈
+  - **根因**：内容增长瞬间的 scroll 事件用中间态布局把 wasAtBottom 误判为 false，且程序贴底写入目标（programmaticScrollTop）
+    陈旧时，用户滚回底部恰好命中该值会被当成「程序写入」而跳过 wasAtBottom 更新——陈旧 false 永久保留，自动贴底不再跟随。
+  - **修复**：updateLayout 跟随条件放宽为 `wasAtBottom || isAtBottom()`（用户当前在底部即跟随），跟随执行后恢复 wasAtBottom=true；
+    handleScroll 命中程序写入目标时同样置 wasAtBottom=true（等价于贴底意图）；上拉功能不受影响（滚离底部时两条件均为 false 不跟随）。
+  - 测试：CustomScrollbarSticky 扩至 6 例（新增「陈旧 programmaticScrollTop 吞掉贴底滚动事件后恢复吸底」）。
+
+### Fixed：后台任务完成回执/任务小气泡收不到——taskEvent 推送格式与前端订阅契约不符
+  - **根因**：PUSH_MESSAGE_NAMES 契约规定 taskEvent 是 command 信封内的命令名
+    （{ type: 'command', command: 'taskEvent', data }），前端 backgroundTaskStore 也按此订阅
+    （onExtensionCommand('taskEvent')）；但 VSCode 版 ChatViewProvider 与桌面版 BackendHost
+    实际都用 postMessage 直发（type: 'taskEvent'），两宿主与契约不符——
+    后台任务（execute_command background / 后台 subagent / 图片生成）完成事件到不了任务条/回执链路：
+    BackgroundTaskBar 小气泡永不出现、完成回执不回流对话，用户收不到后台任务完成的通知。
+    （仅 App.vue 的声音提醒走 message.type === 'taskEvent' 直发匹配，恰好能收到，掩盖了问题。）
+  - **修复**：ChatViewProvider.handleTaskEvent 改走 sendCommand（与 terminalOutput/dependencyProgress
+    等推送一致，含 ready 队列）；桌面版 BackendHost 改 postToRenderer('command', 'taskEvent', event)；
+    App.vue 声音提醒改匹配 command 信封（保留旧直发格式兼容）。
+  - 测试：backgroundTaskEventRouting 5 例（start→running、complete→completed 等）+ 全量 typecheck 通过。
+
+### Merged：合入上游 7df7be8c..e12da760 共 8 个 commits（PR#37 链路补齐/通知聚焦/Windows toast/diff 预热/settings 存储/tool-loop）
+  - **PR#37 链路补齐（e12da760）**：list 回显 + updateGlobalConfig 校验（-1 或正整数）+ 工具描述兜底跟随全局动态读取——适配到本地 defaultMaxRuntime 命名（不引入上游 defaultMaxRuntimeSeconds）；
+  - **通知系列**：点击通知后聚焦 VS Code 窗口 + toast 使用扩展自带图标（7e61d608）；Win32Focus.FocusWindow 组合拳绕过前台锁（c139b653）；换回 node-notifier 实现 Windows 系统 toast（c6491788）；
+  - **diff 预热增强（8e9eb585）**：预热扩展到虚拟原文档 + 写入就绪共享屏障 + pending 时序前置；
+  - **VSCodeSettingsStorage 修复（f65edbb8）**：读侧保持 VS Code 合并值语义（workspaceFolder > workspace > global），save 写入目标层级跟随（workspace 已有显式值写 Workspace 层，否则写 Global）——冲突合并保留本地 remoteControl 字段；
+  - **tool-loop（7e548b69）**：移除早启动工具等待超时兜底，恢复 abort race + 无限等待落定——与本地 PR#36 实现等价，合并保留本地实现；
+
+### Merged：合入上游 e12da760..e42da40d 共 5 个 commits（diff 审查异步化重构/子代理全局配置 2×2 布局/i18n 修正/版本同步；fast-tavern 与 nightly 相关本批无）
+  - **refactor(diff)（13c74fa9）**：diff 审查状态前移与异步化——writeReady 屏障真实化、自动保存倒计时展示同步、diff.accept/reject 非阻塞执行（protocol.ts 将 diff.accept/reject 纳入 NON_BLOCKING_MESSAGE_TYPES，避免一次点击占住主 Webview 串行队列，后续设置/焦点/保存请求全部排队）、前端 diff 逻辑抽离为 diffReviewController（ToolMessage.vue 大幅精简）；ChatViewProvider diff 状态载荷补 writeReady/autoSaveAt/autoSaveDelay/isProcessing 字段；本地 diffManager 的锁冲突恢复/终态快照/等待超时上限等增强与上游 writeReady 屏障机制并存（diffManager.ts 自动合并无冲突）；
+  - **style(subagents)（e42da40d）**：子代理设置「全局配置」四参数由一行四列改为 2×2 网格布局——「并发数/迭代次数」与「队列超时/运行时长」各占一行，窄面板下 label 与提示文字不再挤成多行（.global-config-row 双类选择器，不影响 agent 配置区 .form-row 布局）；
+  - **fix(i18n)（657a28b9）**：移除 defaultMaxIterations 提示中过时的 1~200 范围说明——实际校验无上限（-1 或 >=1），文案与行为保持一致（en/ja/zh-CN 三语同步）；
+  - **chore(release)（347bc26a/ba030791）**：上游版本号整理至 1.5.2 并同步 frontend 包版本——本地版本体系独立，根 package.json 保持 1.7.15dev（publisher czocelot、中文 description 保留），frontend 包版本按上游口径同步至 1.5.2；上游 1.5.x 版本小节不并入本地 CHANGELOG 版本体系（沿用既有约定）。
+
+### Fixed：手动总结多轮对话 STALE_RANGE 失败 + 自动总结在长工具轮下永远回退
+  - **修复手动总结失败（用户报告「总结失败: 对话历史在总结期间发生变化」）**：多轮对话且最后一轮超预算（工具长回合）时，规划器轮内截断的切点必然位于最后一条真实用户消息之后，落盘侧 `markAndInsertSummarizedAtomically` 只对「唯一真实用户回合」放行、多轮一律判 STALE_RANGE 放弃写入——工具用得越多越容易复现。手动总结是用户主动行为（前端在等待响应期间禁止触发，无进行中的回合需要保护），放行开关扩展为对所有手动总结生效：允许把「最后一轮的前半段」纳入总结（首条用户消息锚点保护与越界保护不变，并发缩短历史仍 STALE 不落盘）；
+  - **修复自动总结在长工具轮下必败回退**：auto 模式当前轮是进行中的回合，规划器却仍开放「当前轮内部」的细粒度切点（末轮超预算时切点深入当前轮，必然吞掉当前用户消息）→ 落盘侧判 STALE_RANGE，白费一次总结请求后每次都回退细粒度裁剪。规划器改为 auto 模式不开放当前轮内部切点：切点停在当前轮轮首，总结旧轮、保留当前轮整体（预算为软目标）；manual 模式保持轮内切点（配合上方放行）;
+  - 测试：新增多轮 + 末轮超预算手动总结放行（2 例）、auto 大窗口末轮超预算成功 + 单超大轮仍 STALE（3 例）、规划器 auto/manual 轮内切点分叉（2 例）、fallback 轮边界优先裁剪与紧预算轮内裁剪（2 例）；更新原「多轮仍 STALE」用例为新语义；后端 273 套件/3094 例 + 前端 102 文件/1000 例 + typecheck 全绿。
+
+### Merged：合入上游 main 至 7df7be8c（15 个 commit；fast-tavern 相关 commit 按项目决策不引入）
+  - 合入上游 2ffa0fc2..7df7be8c 共 15 个 commits（含 PR #33/#34/#35 合并提交）：
+    - chore：添加 .editorconfig 与 VS Code 编码设置，强制源码 UTF-8 防编码漂移；
+    - fix(memory)：记忆配置全局共享——全局与工作区实例统一读写 `<dataPath>/memory/config`（记忆数据仍按作用域隔离）；
+    - fix(tools/terminal)：execute_command 超时不再误报用户取消——超时错误如实回传 LLM 继续对话而非自动暂停；
+    - fix(summarize)：自动总结不再白烧 AI 调用（auto 切点钳制到当前回合、收缩后无新消息直接放弃、确定性失败不重试、手动总结多轮放行；本地 1a445158 已有等价实现，冲突按本地口径收敛）；
+    - fix(ci)：toolMeta 生成物跨平台行尾漂移——生成脚本规范化 CRLF/CR 换行，重新生成 toolMeta.ts 清除 \r 污染；
+    - perf(diff)：目标文档预热消除首次 diff 预览卡顿——prewarmDocument 与 hunk 应用并行打开文档，showDiffView 复用预热结果；
+    - docs：README 新增衍生项目章节，收录 Code Desktop 社区桌面版；
+    - fix：全仓扫描修复批次（安全数据一致性/流式挂起/设置/前端）；
+    - feat(subagents)：子代理排队超时可配置 + 最大并发数支持 -1（新增全局 `queueTimeoutSeconds`，-1 无限制）；
+    - fix：PR #34/#35 合并审查修复——排队超时定时器 clamp 上限 + toolResponseCache 覆盖更新误淘汰；
+    - fix(PR #36)：回退 ToolIterationLoopService 早启动工具等待超时兜底（PR #35 引入）——该兜底在流式结束后把 3 秒窗口内未落定的早启动工具强制标记为超时失败，误伤仍在正常执行的长耗时工具（如 execute_command 超过 3 秒即被占位结算）；其防御场景已由工具层既有超时与取消路径覆盖。恢复原始等待逻辑（保留 abort 事件 race），长任务不再被误杀；
+    - feat(PR #37)：子代理运行时长上限可配置——新增全局 `defaultMaxRuntime`（-1 无限制，默认 1800 = 30 分钟），per-agent 未配置 maxRuntime 时继承全局默认（per-agent 已配置的仍优先）；前端子代理设置新增「默认最大运行时间（秒）」输入框；
+  - **不采纳**：fast-tavern 相关 commit（b9e8f29d feat(fast-tavern) build 模块、0730d582 .venv gitignore）按项目决策剔除，合并树不含 fast-tavern-main 子项目；上游 1.5.x 版本小节（[1.5.0]/[1.5.1]）不并入本地 CHANGELOG 版本体系（内容已在前序合并按本地口径记录）。
+
+### Fixed：并发子代理太多导致桌面版崩溃（IPC 洪峰压垮渲染进程）
+  - **根因**：Electron 版 `SubAgentMonitorBridge` 无条件订阅子代理事件总线，且对非 llm_delta 事件**无节流、无「面板未打开」短路**（VSCode 版有 `!panel` 短路，移植时漏掉）——Monitor 从未打开时，每个子代理的 `tool_*/content_snapshot/run_*` 事件仍逐条构造载荷并 `webContents.send`，并发 8-10 个子代理即每秒数百条 IPC 灌进单一 `graycode:backend-to-renderer` 通道，渲染进程队列无限增长 → OOM/长时间无响应 → 窗口崩溃；
+  - **修复**：① 新增 `monitorMounted` 短路——前端 `subagents.monitorReady` 到达前（面板从未打开）不推送任何事件；② 面板折叠（`visible=false`）时非 delta 事件按 runId 合并到 100ms 窗口粒度（每 run 保留最新一条），llm_delta 维持丢弃；③ 恢复可见时补推一次纯状态 manifest（`navigate:false`，不覆盖用户选中）；④ 新增 `getCachedManifest`（updatedAt 缓存 + 容量上限），消除每条事件重复派生轻量 manifest 的开销（与 VSCode 版对齐）；
+  - 附带：折叠/未挂载时不再执行 `createMonitorEventPayload`/`getActiveRunIds` 等逐事件开销，主进程事件循环同步负载同步下降。
+
+## [1.7.14dev] - 2026-08-11
+
+### Merged：同步上游 main 至 bb8d0b16（发布前修复批次 H3-H6 + 子代理「与当前模型同步」+ settings/core 加固，25 commits）
+  - 合入上游 1f4f0020..bb8d0b16 全部 25 个 commits：
+    - **子代理「与当前模型同步」**（上游「强制使用当前渠道」下放为逐代理勾选）：勾选后子代理忽略自身固定渠道/模型，运行时使用当前会话渠道与模型（channelId + modelId 一并继承）；旧全局开关启动时自动迁移（migrateForceUseCurrentChannel，显式 false 保留），运行期兜底兼容；嵌套派发继承父 run 渠道；设置页勾选 UI + 三语言文案 + 后端/前端测试齐全；
+    - **发布前修复批次**：checkpoint 元数据残留精确匹配（H3）+ retention 假 manifest 防护；conversation appendHistory 分段索引不可读自愈重建（H5，不再静默全量重写丢历史）+ 插入同步分支图 + rejectToolCalls 空数组语义；webview 面板关闭中止活跃流（H6）+ 消息队列重置 + Monitor 路由守卫；channel providerEvent 激活 Anthropic 提前执行 + count_tokens 完整计数 + 多段 thinking 签名配对；chat usageMetadataPartial 回退估算 + editBranch 检查点对齐 + trim 预算计入首条消息 + repeatedCallGuard 失败判定；mcp/memory uri 透传 + timeout:0 无超时语义 + stale client 清理 + compress 缺参校验；prompt frontmatter 反转义校验 + fileTree 逃逸/尾斜杠 + 动态 section vanished 补发 marker；settings toolAutoExec 缺键回落默认（delete_file 确认保护）+ JSON 损坏自愈 + reset 保留 storagePath + 符号链接循环防护；deps require.cache 失效清理 + install/uninstall 互斥 + 预发布版本逐段比较 + endAiWork 空闲误判；tools realpath 防符号链接绕过 + read_file 幻影空行 + write_file 存在保护 + terminal where argv 防注入 + media 超时取消口径；subagents 排队 pause/resume 缺口/续跑互斥/mailbox hop/退避监听 5 项；前端取消标记按会话隔离 + JsonViewer DAG 误标 + 输入指纹/引用复用 + 声音聚焦等 15 文件；
+    - **不采纳**：fast-tavern 子项目（b9e8f29d 等，-x ours 消掉并保留来源标记）与 nightly 相关 commit（gitignore/CHANGELOG 结构均按本地保持）；
+  - 冲突解决要点：diffManager 锁冲突恢复（H4）与本地 rejectingDiffIds 机制共存；StdioClient disconnect 采用本地更强实现（treeKill 错误即时 resolve + 悬空 handle 清理）；UpdateChecker 保留本地 normalizeVersion（-2dev 构建号并入第四段）+ 上游预发布逐段比较；workspacePaths realpath 比较复用本地缓存解析器（统一解析链 + 缓存 + Windows 长路径前缀剥离）；子代理设置保留本地 handleChannelChange（渠道默认模型预填）；
+  - 合并回归修复：ToolContext 补 channelModelId 类型字段（syncWithCurrentModel 模型继承）、ChatViewProvider 补 disposed 守卫字段、会话快照 lastCancelledStreamId 类型对齐会话隔离形态、child_process 测试 mock 补 execFileSync、generateImage 测试路径对齐本地 pathGuard、toolMeta/i18n 共享映射重新生成；
+  - 测试：后端 273 套件/3087 例 + 前端 102 文件/1000 例全绿。
+
+### Fixed：亮色模式 UI 仍为暗色风格 + 窗口背景色/原生控件跟随主题（1.7.13 主题模式落地修复）
+  - **color-scheme 修复（主因）**：桌面端 CSS 从未声明 color-scheme，系统为暗色时原生 select 弹出层/复选框/滚动条按暗色渲染（即使应用已切到亮色）。theme.css 暗色块补 `color-scheme: dark`、亮色块补 `color-scheme: light`；
+  - **补全 17 个缺失 --vscode-* 变量**（暗/亮两套）：代码高亮语法色（keyword/string/comment/number/variable/entity/meta/entityName-function）、notifications-*、settings-*、warningForeground、editor-font-size——此前组件 var() 引用回落到硬编码暗色 fallback，亮色下对比度崩坏；
+  - **窗口背景色与原生控件跟随主题**：新增 app.setTheme 上报链（App.vue → BackendHost → 主进程），主进程同步 BrowserWindow.setBackgroundColor + nativeTheme.themeSource（系统对话框/原生菜单/首帧启动画面/prefers-color-scheme 随应用主题而非系统）；启动时同步预读设置文件（resolveSavedTheme）免首帧闪烁；主题 watch 补 immediate 启动兜底；设置加载完成前不上报（避免 clobber 主进程预读主题）；
+  - 顺带：MermaidZoomModal/overlay quick-pick hover 硬编码白字改主题感知（保持黑/白描边可读性）；boot-splash 首帧经 themeSource 的 prefers-color-scheme 正确取色。
+
+### Fixed：扫描优化批次（安全/一致性/死代码）
+  - **亮色模式灰底灰字根因修复（color-mix 定义点解析）**：Chromium 对 color-mix 内的 var() 按「定义点」解析（非惰性），style.css `:root` 上定义的 `--gc-surface-*`（输入框/设置面板/消息区/下拉框背景）会锁死暗色 `--vscode-*` 值，body 亮色类覆盖不生效——亮色下这些面板仍是暗灰底。亮色块重定义 4 个 surface 变量（color-mix 在 body 层解析到亮色值）；亮色前景统一加深为近黑 `#1f1f1f`（此前 `#383a42` 偏灰），描述文字 `#4d4d4d`；  - crop/rotate/resize 三工具 6 处 isCancelled 对齐新口径（API 请求超时 AbortError 不再误报用户取消，与 generate_image/remove_background 一致）；
+  - Unix which 检测改 execFileSync argv 传参（customPath 为用户可控配置，字符串拼接存在命令注入面；与 Windows/异步版同口径）；processRunner 优先级设置 exec → execFile；
+  - compareVersions 版本段解析修正：语义预发布（-beta/-nightly.x）的 dash 段不再误并入版本段（此前 1.4.6-nightly.20260810 被 parseInt 误当第四版本段判为高于正式版）；nightly 用例改为 semver 预发布语义断言，补 beta.10 vs beta.2 逐段数值比较；
+  - 工作区路径缓存加固：realpath 失败结果不再永久缓存（此前 fail-open 边缘）；路径自身改用 lstat 校验 mtime（符号链接重定向的缓存失效盲区）；
+  - 远控端文件读写/输入读取补 isPathInsideOrEqualReal realpath 复核（词法护栏之外的符号链接逃逸，与桌面工具链同口径）；
+  - StreamChunkProcessor 移除与 H6 中止互斥的终结事件暂存死路径（测试改写为 H6 语义）；reportCancelled 视图不可达日志降级 debug；清理 shellConfig 局部 require/getEnabledShellTypes 死代码/processRunner 未用 import/UpdateChecker 死注释；
+  - 测试：后端 273 套件/3088 例 + 前端 102 文件/1000 例 + typecheck 全绿；版本 1.7.14dev
+
 ## [1.7.13] - 2026-08-11
 
 ### Fixed（1.7.13dev 补记：UI 不透明度不再影响文字 + 消息区/四个下拉框背景透出 + 移除上游 nightly 更新渠道）
@@ -2859,5 +2966,7 @@
   - 多语言支持（中文、英文、日文）
   - MCP 服务器集成
   - 文件操作工具
+  - 终端命令执行
+  - 图像处理功能
   - 终端命令执行
   - 图像处理功能

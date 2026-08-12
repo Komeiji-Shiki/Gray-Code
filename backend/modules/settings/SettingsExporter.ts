@@ -18,11 +18,15 @@ import type { McpManager } from '../mcp';
 import type { McpServerConfig } from '../mcp';
 import { SkillsManager } from '../skills';
 import { ALL_CONFIG_KEYS } from './VSCodeSettingsStorage';
-import { MACHINE_SCOPE_KEYS } from './types';
+// 直接从定义文件导入：聚合入口 ./types 在本模块加载链中存在循环依赖（types → checkpointTypes
+// → CheckpointManager → diffManager → … → settings/index → SettingsExporter），模块执行时
+// MACHINE_SCOPE_KEYS 会是 undefined——旧写法 new Set(undefined) 恰好不抛错，导致
+// SETTINGS_EXPORT_KEYS 从未真正过滤 machine 键（proxy/storagePath 被导出）。
+import { MACHINE_SCOPE_KEYS } from './types/generalTypes';
 
-export const SETTINGS_EXPORT_KEYS = ALL_CONFIG_KEYS.filter(
-    key => !new Set<string>(MACHINE_SCOPE_KEYS).has(key)
-) as readonly string[];
+export const SETTINGS_EXPORT_KEYS: readonly string[] = ALL_CONFIG_KEYS.filter(
+    key => !(MACHINE_SCOPE_KEYS as readonly string[]).includes(key)
+);
 
 /** 导出包的版本号 */
 const EXPORT_FORMAT_VERSION = '1.0';

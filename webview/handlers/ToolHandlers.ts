@@ -142,6 +142,33 @@ export const updateMaxToolIterations: MessageHandler = async (data, requestId, c
   }
 };
 
+/**
+ * 获取无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+ */
+export const getMaxToolLoopWallclockMinutes: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const wallclockMinutes = ctx.settingsManager.getMaxToolLoopWallclockMinutes();
+    ctx.sendResponse(requestId, { wallclockMinutes });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_MAX_TOOL_LOOP_WALLCLOCK_ERROR', error.message || t('webview.errors.getMaxToolLoopWallclockFailed'));
+  }
+};
+
+/**
+ * 设置无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+ *
+ * @param value 分钟数，-1 表示不设墙钟时限，正整数表示具体分钟数（最小 1）
+ */
+export const updateMaxToolLoopWallclockMinutes: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { wallclockMinutes } = data;
+    await ctx.settingsManager.setMaxToolLoopWallclockMinutes(wallclockMinutes);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_MAX_TOOL_LOOP_WALLCLOCK_ERROR', error.message || t('webview.errors.updateMaxToolLoopWallclockFailed'));
+  }
+};
+
 // ========== 工具特定配置 ==========
 
 export const updateListFilesConfig: MessageHandler = async (data, requestId, ctx) => {
@@ -377,6 +404,8 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   registry.set(MESSAGE_NAMES['tools.setToolAutoExec'], setToolAutoExec);
   registry.set(MESSAGE_NAMES['tools.getMaxToolIterations'], getMaxToolIterations);
   registry.set(MESSAGE_NAMES['tools.updateMaxToolIterations'], updateMaxToolIterations);
+  registry.set(MESSAGE_NAMES['tools.getMaxToolLoopWallclockMinutes'], getMaxToolLoopWallclockMinutes);
+  registry.set(MESSAGE_NAMES['tools.updateMaxToolLoopWallclockMinutes'], updateMaxToolLoopWallclockMinutes);
   
   // 工具特定配置
   register(MESSAGE_NAMES['tools.updateListFilesConfig'], 'UPDATE_LIST_FILES_CONFIG_ERROR', t('webview.errors.updateListFilesConfigFailed'), updateListFilesConfig);

@@ -239,6 +239,7 @@ export class ChatFlowRetry extends ChatFlowContext {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage: isRetryFirstMessage,
       maxIterations: maxToolIterations,
+      maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
       // 重试场景原本没有模型消息前检查点，这里显式关闭以保持行为一致
       createBeforeModelCheckpoint: false,
       // 重试的是 AI 回复，回合起始用户消息不变，复用其上缓存的动态上下文

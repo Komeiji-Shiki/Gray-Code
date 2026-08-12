@@ -192,6 +192,7 @@ export const deleteConversation: MessageHandler = async (data, requestId, ctx) =
         error: String(error)
       });
     }
+
     try {
       // R2-07：清理取消注册表中的会话级残留（cancelEpochs 等），防止 Map 条目随会话增删无界增长
       ctx.streamAbortControllers.removeConversation(conversationId);

@@ -210,7 +210,7 @@ onUnmounted(() => {
   height: 36px;
   border-radius: 50%;
   background: rgba(128, 128, 128, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--vscode-panel-border, rgba(255, 255, 255, 0.1));
   color: var(--vscode-foreground);
   display: flex;
   align-items: center;
@@ -355,19 +355,33 @@ onUnmounted(() => {
   opacity: 0;
 }
 
-/* 增加 Mermaid 文字对比度：强制白字黑边 (Meme 字体风格)，确保任何背景色下都清晰
- * （对应原 MarkdownRenderer 中 .zoomed-mermaid-content 部分的规则） */
+/* 增加 Mermaid 文字对比度：跟随主题前景色 + 主题描边（Meme 字体风格），
+ * 描边保证任何背景色下都清晰（与 MarkdownRenderer 内联 mermaid 的口径一致） */
 .zoomed-mermaid-content :deep(text),
 .zoomed-mermaid-content :deep(span) {
-  fill: #ffffff !important;
-  color: #ffffff !important;
+  fill: var(--vscode-foreground, #ffffff) !important;
+  color: var(--vscode-foreground, #ffffff) !important;
   font-weight: 600 !important;
-  text-shadow: 
-    -1px -1px 0 #000,  
+}
+
+body.vscode-dark .zoomed-mermaid-content :deep(text),
+body.vscode-dark .zoomed-mermaid-content :deep(span) {
+  text-shadow:
+    -1px -1px 0 #000,
      1px -1px 0 #000,
     -1px  1px 0 #000,
      1px  1px 0 #000,
      0px  0px 4px rgba(0,0,0,0.8) !important;
+}
+
+body.vscode-light .zoomed-mermaid-content :deep(text),
+body.vscode-light .zoomed-mermaid-content :deep(span) {
+  text-shadow:
+    -1px -1px 0 #fff,
+     1px -1px 0 #fff,
+    -1px  1px 0 #fff,
+     1px  1px 0 #fff,
+     0px  0px 4px rgba(255,255,255,0.9) !important;
 }
 
 /* 节点样式微调 */

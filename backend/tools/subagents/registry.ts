@@ -192,7 +192,13 @@ export class SubAgentRegistry {
         
         // 不允许更改 type
         const { type: _, ...safeUpdates } = updates;
+        const oldChannel = entry.config.channel;
         Object.assign(entry.config, safeUpdates);
+        // channel 为嵌套对象：字段级合并，避免部分更新（如只改 channelId）静默丢
+        // modelId/syncWithCurrentModel（与 SubAgentsSettingsService.updateSubAgent 口径一致）
+        if (safeUpdates.channel && oldChannel) {
+            entry.config.channel = { ...oldChannel, ...safeUpdates.channel };
+        }
         
         // 清除缓存的执行器（以便下次使用时重新创建）
         entry.executor = undefined;

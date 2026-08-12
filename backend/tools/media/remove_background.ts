@@ -16,12 +16,12 @@ import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio, formatFileSize } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { createFetchSignal } from '../utils';
+import { readImageFile, getImageDimensions, createFetchSignal } from './imageUtils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
 import { getSharp } from '../../modules/dependencies';
-import { ensureMediaPathsSafe, MEDIA_MAX_INPUT_BYTES } from './pathGuard';
+import { ensureMediaPathsSafe } from './pathGuard';
 
 /** 抠图任务类型常量 */
 const TASK_TYPE_REMOVE_BG = 'remove_background';
@@ -139,164 +139,6 @@ interface GeminiImageResponse {
         code: number;
         message: string;
     };
-}
-
-/**
- * 读取图片文件
- */
-async function readImageFile(imagePath: string, context?: ToolContext): Promise<{ data: Buffer; mimeType: string } | null> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath, context?.activeWorkspaceUri);
-    if (!uri) {
-        return null;
-    }
-
-    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
-    if (isOutsideWorkspace) {
-        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imagePath }, context);
-        if (readAccessError) {
-            return null;
-        }
-    }
-
-    try {
-        const stat = await vscode.workspace.fs.stat(uri);
-        if (stat.size > MEDIA_MAX_INPUT_BYTES) {
-            console.warn(`Image file exceeds ${MEDIA_MAX_INPUT_BYTES} bytes: ${imagePath}`);
-            return null;
-        }
-
-        const content = await vscode.workspace.fs.readFile(uri);
-        const ext = path.extname(imagePath).toLowerCase();
-        let mimeType = 'image/png';
-        if (ext === '.jpg' || ext === '.jpeg') {
-            mimeType = 'image/jpeg';
-        } else if (ext === '.webp') {
-            mimeType = 'image/webp';
-        }
-
-        return {
-            data: Buffer.from(content),
-            mimeType
-        };
-    } catch (error) {
-        return null;
-    }
-}
-
-/**
- * 获取图片尺寸（优先使用 sharp，否则手动解析）
- */
-async function getImageDimensionsAsync(buffer: Buffer, mimeType: string): Promise<{ width: number; height: number } | null> {
-    // 首先尝试使用 sharp（最可靠）
-    try {
-        const sharp = await getSharp();
-        if (sharp) {
-            const metadata = await sharp(buffer).metadata();
-            if (metadata.width && metadata.height) {
-                return { width: metadata.width, height: metadata.height };
-            }
-        }
-    } catch {
-        // sharp 不可用或解析失败，继续尝试手动解析
-    }
-
-    // 手动解析
-    return getImageDimensionsSync(buffer, mimeType);
-}
-
-/**
- * 同步获取图片尺寸（通过解析 PNG/JPEG 头部）
- */
-function getImageDimensionsSync(buffer: Buffer, mimeType: string): { width: number; height: number } | null {
-    try {
-        if (mimeType === 'image/png') {
-            // PNG magic number: 89 50 4E 47 0D 0A 1A 0A (即 \x89PNG\r\n\x1a\n)
-            if (buffer.length >= 24) {
-                // 检查 PNG 签名
-                const isPNG = buffer[0] === 0x89 &&
-                    buffer[1] === 0x50 && // P
-                    buffer[2] === 0x4E && // N
-                    buffer[3] === 0x47 && // G
-                    buffer[4] === 0x0D &&
-                    buffer[5] === 0x0A &&
-                    buffer[6] === 0x1A &&
-                    buffer[7] === 0x0A;
-                
-                if (isPNG) {
-                    // IHDR 块从字节 8 开始，宽高在字节 16-23
-                    const width = buffer.readUInt32BE(16);
-                    const height = buffer.readUInt32BE(20);
-                    if (width > 0 && height > 0 && width < 100000 && height < 100000) {
-                        return { width, height };
-                    }
-                }
-            }
-        } else if (mimeType === 'image/jpeg') {
-            // JPEG 以 FF D8 开头
-            if (buffer.length >= 2 && buffer[0] === 0xFF && buffer[1] === 0xD8) {
-                let i = 2;
-                while (i < buffer.length - 9) {
-                    if (buffer[i] === 0xFF) {
-                        const marker = buffer[i + 1];
-                        // SOF0-SOF3 标记包含尺寸信息
-                        if (marker >= 0xC0 && marker <= 0xC3) {
-                            const height = buffer.readUInt16BE(i + 5);
-                            const width = buffer.readUInt16BE(i + 7);
-                            if (width > 0 && height > 0) {
-                                return { width, height };
-                            }
-                        }
-                        // 跳过这个段
-                        if (i + 3 < buffer.length) {
-                            const segmentLength = buffer.readUInt16BE(i + 2);
-                            i += 2 + segmentLength;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        i++;
-                    }
-                }
-            }
-        } else if (mimeType === 'image/webp') {
-            if (buffer.length >= 30 && buffer.toString('ascii', 0, 4) === 'RIFF' &&
-                buffer.toString('ascii', 8, 12) === 'WEBP') {
-                const format = buffer.toString('ascii', 12, 16);
-                if (format === 'VP8 ') {
-                    // Lossy WebP
-                    const width = buffer.readUInt16LE(26) & 0x3FFF;
-                    const height = buffer.readUInt16LE(28) & 0x3FFF;
-                    if (width > 0 && height > 0) {
-                        return { width, height };
-                    }
-                } else if (format === 'VP8L') {
-                    // Lossless WebP
-                    const b0 = buffer[21];
-                    const b1 = buffer[22];
-                    const b2 = buffer[23];
-                    const b3 = buffer[24];
-                    const width = 1 + (((b1 & 0x3F) << 8) | b0);
-                    const height = 1 + (((b3 & 0xF) << 10) | (b2 << 2) | ((b1 & 0xC0) >> 6));
-                    if (width > 0 && height > 0) {
-                        return { width, height };
-                    }
-                } else if (format === 'VP8X') {
-                    // Extended WebP
-                    if (buffer.length >= 30) {
-                        const width = 1 + (buffer[24] | (buffer[25] << 8) | (buffer[26] << 16));
-                        const height = 1 + (buffer[27] | (buffer[28] << 8) | (buffer[29] << 16));
-                        if (width > 0 && height > 0) {
-                            return { width, height };
-                        }
-                    }
-                }
-            }
-        }
-    } catch (error) {
-        // 解析失败
-        console.error('Failed to parse image dimensions:', error);
-    }
-    return null;
 }
 
 /**
@@ -501,7 +343,7 @@ async function executeRemoveTask(
         let aspectRatioForApi: string | undefined;
         
         try {
-            const rawDimensions = await getImageDimensionsAsync(imageFile.data, imageFile.mimeType);
+            const rawDimensions = await getImageDimensions(imageFile.data, imageFile.mimeType);
             if (rawDimensions) {
                 // 像素数护栏：超大图（如 50MP）在 API 调用后的逐像素合成会长时间阻塞主线程，先拦截，避免浪费 API 调用。
                 if (rawDimensions.width * rawDimensions.height > MAX_REMOVE_BG_PIXELS) {
@@ -591,7 +433,7 @@ async function executeRemoveTask(
         const originalMeta = await sharp(imageFile.data).metadata();
 
         // 像素数护栏（权威兜底）：逐像素合成是主线程 width*height 次 JS 循环，进入前必须校验尺寸。
-        // 此处以 sharp metadata（合成循环实际使用的尺寸源）为准，即使前面 getImageDimensionsAsync 失败也能拦截。
+        // 此处以 sharp metadata（合成循环实际使用的尺寸源）为准，即使前面 getImageDimensions 失败也能拦截。
         if (originalMeta.width && originalMeta.height && originalMeta.width * originalMeta.height > MAX_REMOVE_BG_PIXELS) {
             return {
                 index,
@@ -991,10 +833,13 @@ export function createRemoveBackgroundTool(maxBatchTasks: number = 5): Tool {
 
             } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
+                const errorName = error instanceof Error ? error.name : '';
                 // 修改原因：超时保护（createFetchSignal 的 timeout abort）会让 fetch 以 AbortError 拒绝，
                 // 仅凭 errorMessage 会把请求超时误判为用户取消。以用户 abortSignal 是否真的 aborted 为准。
                 const isCancelled = abortSignal.aborted === true ||
-                    errorMessage.includes('cancelled');
+                    (errorName === 'AbortError' && !abortSignal) ||
+                    errorMessage.includes('cancelled') ||
+                    errorMessage.includes('canceled');
 
                 TaskManager.unregisterTask(
                     toolId,

@@ -84,9 +84,10 @@ function sanitizePatternForHeuristic(pattern: string): string {
  *
  * 规则：逐字符跟踪括号深度，每层维护两个标记：
  * - 强标记（childQuantified）：层内出现过「被量词修饰的闭组」（如 `(a+)+` 的内层 `(a+)`）；
- * - 弱标记（atomQuantified）：层内出现过「被量词修饰的原子」（如 `a+`、`\d*`、`[ab]{2,}`），
- *   覆盖 `(?:a+|(?:ab))+` 这类「嵌套 + 裸量词原子」形态（正则启发式的 `[^()]*` 与纯闭组
- *   标记都跨不过）。
+ * - 弱标记（atomQuantified）：层内出现过「被量词修饰的原子」（如 `a+`、`\d*`、`[ab]{2,}`；
+ *   定长 `{n}` 修饰的原子如 `a{3}` 不计入——定长不产生重复歧义，`(a{3})+` 线性安全，
+ *   与闭组后定长 `{n}` 的既有处理口径一致），覆盖 `(?:a+|(?:ab))+` 这类
+ *   「嵌套 + 裸量词原子」形态（正则启发式的 `[^()]*` 与纯闭组标记都跨不过）。
  * 闭组时按尾随量词的强度向父层传递：强量词（`+` `*` `{n,}` `{n,m}`）套弱内层 → 命中；
  * 弱量词（`?`）只放大强内层（`((a+)+)?` 灾难），对仅弱内层（`(a+)?` 线性）放行；
  * 定长 `{n}` 只放大强内层（`((a+)+){2}` 灾难），`(a+){2}` 线性放行。
@@ -188,7 +189,13 @@ export function hasNestedQuantifiedGroups(pattern: string): boolean {
         if (ch === '{' && depth > 0) {
             const rangeMatch = /^\{\d+(?:,\d*)?\}/.exec(pattern.slice(i));
             if (rangeMatch) {
-                hasQuantifiedAtom.set(depth, true);
+                // 定长 {n} 修饰原子（a{3}）与闭组后定长 {n}（见上方 `)` 分支）口径一致：
+                // 定长不产生重复歧义，(a{3})+、(\d{3})+ 均为线性，不打弱标记；
+                // 只有可变范围量词 {n,}/{n,m}（含逗号）与 + * 同强度，才打弱标记
+                // （(a{3,})+ 仍判危险，保留既有判定）。
+                if (rangeMatch[0].includes(',')) {
+                    hasQuantifiedAtom.set(depth, true);
+                }
                 i += rangeMatch[0].length - 1; // 跳过量词本体（避免 `}` 干扰后续解析）
             }
         }

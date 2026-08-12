@@ -145,6 +145,13 @@ export class ActivityTracker implements vscode.Disposable {
     endAiWork(): void {
         if (this.aiWorkCount > 0) {
             this.aiWorkCount--;
+            // 最后一段 AI 工作结束时，用户可能一直守在屏幕前（此前只观看 AI 输出、
+            // 不操作编辑器）：若此处不刷新 lastActivityAt，下一次心跳会立刻按 5 分钟
+            // 空闲线判为离开。窗口聚焦时 markAiActive 刷新时间戳（并补一个采样点），
+            // 给用户一段新的空闲窗口；窗口失焦时交由失焦语义处理，不在此刷新。
+            if (this.aiWorkCount === 0 && vscode.window.state.focused) {
+                this.markAiActive();
+            }
         }
     }
 

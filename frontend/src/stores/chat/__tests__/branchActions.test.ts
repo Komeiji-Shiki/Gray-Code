@@ -378,7 +378,7 @@ describe('switchBranchCandidate（TREE-07 切换后重建）', () => {
       streamingMessageId: ref('m2'),
       activeStreamId: ref('req-1'),
       retryStatus: ref({ isRetrying: true, attempt: 1, maxAttempts: 3 }),
-      _lastCancelledStreamId: ref('req-1'),
+      _lastCancelledStreamId: ref({ conversationId: 'c1', messageId: 'req-1' }),
       _failedStreamMessageId: ref('m2')
     })
 

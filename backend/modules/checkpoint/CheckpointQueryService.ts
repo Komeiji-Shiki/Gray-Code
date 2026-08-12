@@ -22,7 +22,7 @@ import type { CheckpointSummary } from './types';
 // 此处 re-export 保持既有导出名与导入路径不破。
 import type { CheckpointSummaryWithSize } from '../../../shared/protocol';
 export type { CheckpointSummaryWithSize };
-import { CheckpointManifestRepository, CHECKPOINT_MANIFEST_FILENAME, CHECKPOINT_MANIFEST_FILES_FILENAME, isSafeCheckpointDirName } from './CheckpointManifestRepository';
+import { CheckpointManifestRepository, isSafeCheckpointDirName, isCheckpointMetadataEntryName } from './CheckpointManifestRepository';
 import { DEFAULT_CHECKPOINT_CONCURRENCY, runBounded } from './checkpointConcurrency';
 import { CHECKPOINT_CREATE_LOCK_PREFIX } from './checkpointPathUtils';
 
@@ -240,9 +240,10 @@ export class CheckpointQueryService {
             for (const entry of entries) {
                 // CPF-01: manifest 是元数据，不计入备份占用；
                 // CPF-LAZY-1: files.json 同样是元数据（重量级文件映射独立存储），不计入；
-                // ATOMIC-PAIR: files.json.prev 是崩溃窗口的旧配对备份（或写失败残留），同样不计入
-                if (entry.name === CHECKPOINT_MANIFEST_FILENAME || entry.name === CHECKPOINT_MANIFEST_FILES_FILENAME
-                    || entry.name.endsWith('.tmp') || entry.name.endsWith('.prev')) {
+                // ATOMIC-PAIR: files.json.prev 是崩溃窗口的旧配对备份（或写失败残留），同样不计入；
+                // H3: 只精确跳过已知元数据残留名（manifest.json.tmp / files.json.tmp / files.json.prev），
+                // 不再用宽泛的 .tmp/.prev 后缀，避免大小统计低估用户真实备份文件
+                if (isCheckpointMetadataEntryName(entry.name)) {
                     continue;
                 }
                 const fullPath = path.join(dirPath, entry.name);

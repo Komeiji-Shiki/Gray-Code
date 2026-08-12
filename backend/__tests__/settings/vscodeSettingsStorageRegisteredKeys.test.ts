@@ -40,6 +40,7 @@ describe('VSCodeSettingsStorage 配置键注册校验', () => {
             'toolsEnabled',
             'toolAutoExec',
             'maxToolIterations',
+            'maxToolLoopWallclockMinutes',
             'defaultToolMode',
             'activeChannelId',
             'lastReadAnnouncementVersion',

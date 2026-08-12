@@ -319,8 +319,12 @@ export interface ChatStoreState {
   /** 消息排队队列（候选区） */
   messageQueue: Ref<QueuedMessage[]>
 
-  /** 上一次被 cancelStream 取消的 streamingMessageId（用于防止迟到的 cancelled/error chunk 误清新请求状态） */
-  _lastCancelledStreamId: Ref<string | null>
+  /**
+   * 上一次被 cancelStream 取消的流标记（conversationId + messageId，见 toolActions.cancelStream 写入）。
+   * 用于防止迟到的 cancelled/error/complete chunk 误清新请求状态：stale 判定先比会话——
+   * 切到其他会话（标签页）后，该会话合法终结 chunk 不得因「消息 id 不同」被误判丢弃（M-front）。
+   */
+  _lastCancelledStreamId: Ref<{ conversationId: string; messageId: string } | null>
 
   /** 最近一个因审批门闸停止的 streamId（用于迟到 chunk 诊断） */
   _lastApprovalGatedStreamId: Ref<string | null>
@@ -479,8 +483,9 @@ export interface ConversationSessionSnapshot {
   pendingBranchReplayContext?: BranchStreamReplayContext | null
   /** 失败流保留的半截消息 ID（标签页切换期间保持，重试回滚用；旧快照无此字段） */
   failedStreamMessageId?: string | null
-  /** 上一次被 cancelStream 取消的 streamingMessageId（标签页切换期间保持，防迟到 chunk 误判；旧快照无此字段） */
-  lastCancelledStreamId?: string | null
+  /** 上一次被 cancelStream 取消的标记（conversationId + messageId，标签页切换期间保持，
+   * 按会话隔离防迟到 chunk 误判；旧快照无此字段或为旧字符串形态时回退 null） */
+  lastCancelledStreamId?: { conversationId: string; messageId: string } | null
   /** 最近一个因审批门闸停止的 streamId（标签页切换期间保持，迟到 chunk 诊断用；旧快照无此字段） */
   lastApprovalGatedStreamId?: string | null
   /** 分支图快照（TREE-12：切标签页回来恢复分支视图状态；null = 无图/线性模式） */

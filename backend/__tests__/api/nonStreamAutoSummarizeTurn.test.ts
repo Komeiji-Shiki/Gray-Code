@@ -119,6 +119,41 @@ describe('非流式循环自动总结的回合级计数与 abort 信号', () => 
         );
     });
 
+    test('确定性失败（STALE_RANGE）不重试：只消耗一次总结调用，直接走 fallback 继续主请求', async () => {
+        const summarizeService = {
+            getMaxAutoSummarizeAttemptsPerTurn: jest.fn().mockReturnValue(3),
+            handleAutoSummarize: jest.fn().mockResolvedValue({
+                success: false,
+                error: { code: 'STALE_RANGE', message: 'range stale' }
+            }),
+        };
+        const { service, channelManager } = createAutoSummarizeToolLoopHarness({ summarizeService });
+
+        await service.runNonStreamLoop('c1', 'cfg-1', config, 10, undefined, undefined, 'single', true);
+
+        // 确定性失败重试结果相同（历史未变），不再重复消耗总结模型调用
+        expect(summarizeService.handleAutoSummarize).toHaveBeenCalledTimes(1);
+        // fallback 后正常请求主模型
+        expect(channelManager.generate).toHaveBeenCalledTimes(1);
+    });
+
+    test('瞬时错误（UNKNOWN_ERROR）仍保留有界重试（maxAutoSummarizeAttempts 内）', async () => {
+        const summarizeService = {
+            getMaxAutoSummarizeAttemptsPerTurn: jest.fn().mockReturnValue(2),
+            handleAutoSummarize: jest.fn().mockResolvedValue({
+                success: false,
+                error: { code: 'UNKNOWN_ERROR', message: 'api flaky' }
+            }),
+        };
+        const { service, channelManager } = createAutoSummarizeToolLoopHarness({ summarizeService });
+
+        await service.runNonStreamLoop('c1', 'cfg-1', config, 10, undefined, undefined, 'single', true);
+
+        // 瞬时错误：重试 1 次后尝试次数耗尽，走 fallback 并正常请求
+        expect(summarizeService.handleAutoSummarize).toHaveBeenCalledTimes(2);
+        expect(channelManager.generate).toHaveBeenCalledTimes(1);
+    });
+
     test('低收益总结被跳过但需要硬窗口兜底时不调用总结，直接裁剪后继续主请求', async () => {
         const summarizeService = createSummarizeServiceMock(2);
         const { service, contextTrimService, channelManager } = createAutoSummarizeToolLoopHarness({ summarizeService });

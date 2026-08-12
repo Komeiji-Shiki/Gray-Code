@@ -21,7 +21,7 @@ import type { GenerateRequest } from '../../../modules/channel/types';
 import { subAgentRunEventBus } from '../runEventBus';
 import type { SubAgentRunStatus } from '../runEventBus';
 import { subAgentRunController } from '../runController';
-import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError } from '../concurrencyLimiter';
+import { subAgentConcurrencyLimiter, SubAgentQueueCancelledError, SubAgentQueueTimeoutError } from '../concurrencyLimiter';
 import { fileWriteLockManager } from '../../../core/fileWriteLockManager';
 import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '../../../core/services/agentMailbox';
 import { markAiActive } from '../../../modules/activity';
@@ -71,8 +71,12 @@ export function createDefaultExecutor(
         // 缺省按 0（主模型直接派发）处理。深度用于：超限校验已在 handler 完成，这里负责
         // 写入 run 元数据（run_created payload + runController 记录）供 Monitor 展示，
         // 并随工具执行上下文透传给下一层 subagents 工具调用。
-        const depth = Number.isInteger(request.depth) && (request.depth ?? 0) >= 0
-            ? Math.floor(request.depth!)
+        // L-tsub 修复：非整数值 depth（如 2.7）旧实现因 Number.isInteger 不通过会被整体归零，
+        // 深度被低估（2.7 → 0），嵌套超限校验（handler 侧 depth > MAX_SUBAGENT_NESTING_DEPTH）
+        // 形同虚设。改为「有限非负则向下取整」：2.7 → 2，缺省/非法值仍按 0（主模型直接派发）。
+        const rawDepth = request.depth;
+        const depth = typeof rawDepth === 'number' && Number.isFinite(rawDepth) && rawDepth >= 0
+            ? Math.floor(rawDepth)
             : 0;
 
         // 修改原因：子代理对话延续——允许新子代理继承旧 run 的完整 transcript，实现跨调用的对话接力。
@@ -140,6 +144,22 @@ export function createDefaultExecutor(
                     )
                 )) as Content[];
             }
+        }
+
+        // M-tsub 修复（并发续跑去重）：续跑校验是「读-判定」无预留——两个并发续跑都能通过
+        // 终态/归属校验并 resumeRun 同一个快照，后到者覆盖先到者正在写入的 transcript/事件。
+        // 校验通过后、resumeRun 前做原子 check-and-set 预留（tryReserveContinuation 同步无
+        // await 间隙），冲突时明确报错；run 收敛（队列取消/终态 flush）时在最外层 finally 释放。
+        let continuationReserved = false;
+        if (request.continueFromRunId) {
+            if (!subAgentRunController.tryReserveContinuation(runId)) {
+                return {
+                    success: false,
+                    runId,
+                    error: `Cannot continue from run "${request.continueFromRunId}": another continuation of the same run is already in progress.`
+                };
+            }
+            continuationReserved = true;
         }
 
         const initialPromptContent: Content = {
@@ -239,6 +259,9 @@ export function createDefaultExecutor(
         // 修改原因：多个 SubAgent 并行派发时需要全局并发上限，超出的 run 必须排队而不是被拒绝。
         // 修改方式：createRun 后先 emit run_queued 进入排队状态，acquire 全局信号量成功后 emit run_started 恢复 running。
         // 修改目的：Monitor 能显示排队中；计时起点在 acquire 之后，排队时间不计入 maxRuntime。
+        // M-tsub：acquire 前显式 markQueued —— 排队中 pause 只置 paused 不 abort（见 runController.markQueued），
+        //         排队中 exit 仍通过控制信号 abort acquire 桥把队列项取消。
+        subAgentRunController.markQueued(runId);
         subAgentRunEventBus.emit({
             runId,
             agentName: config.name,
@@ -326,7 +349,16 @@ export function createDefaultExecutor(
                     );
                 }
             }
-            await subAgentConcurrencyLimiter.acquire(runId, acquireSignal);
+            // 排队超时（秒，-1 无限制，默认 600）：acquire 前读取全局设置并换算为毫秒传入。
+            // 0 按无限制处理（limiter 内 timeoutMs<=0 不启动定时器，即排队不设超时）。
+            const queueTimeoutMs = (() => {
+                const raw = context.settingsManager?.getSubAgentsConfig?.()?.queueTimeoutSeconds;
+                if (raw === undefined || raw === null) return 600 * 1000;
+                return raw < 0 ? undefined : raw * 1000;
+            })();
+            await subAgentConcurrencyLimiter.acquire(runId, acquireSignal, queueTimeoutMs);
+            // M-tsub：acquire 成功后 markStarted —— 此后 pause 恢复 abort 语义（运行中 run）。
+            subAgentRunController.markStarted(runId);
         } catch (queueError) {
             subAgentRunController.unregister(runId);
             agentMailbox.unregisterRun(currentConversationId, runId);
@@ -334,13 +366,23 @@ export function createDefaultExecutor(
             if (request.parentRunId) {
                 subAgentRunController.unregisterChild(request.parentRunId, runId);
             }
-            const message = queueError instanceof SubAgentQueueCancelledError
+            // M-tsub：续跑预留必须随队列取消一并释放，否则该 run 的后续续跑会被永久拒绝。
+            if (continuationReserved) {
+                subAgentRunController.releaseContinuation(runId);
+                continuationReserved = false;
+            }
+            // 修改原因：排队超时（SubAgentQueueTimeoutError）是失败而非用户取消，终态事件与结果必须区分：
+            //          cancelled=true 会让 UI 显示「用户取消」，排队超时子代理应如实以失败结算（cancelled=false）。
+            const isQueueCancelled = queueError instanceof SubAgentQueueCancelledError;
+            const message = isQueueCancelled
                 ? 'User cancelled the sub-agent while it was waiting in the concurrency queue.'
-                : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
+                : queueError instanceof SubAgentQueueTimeoutError
+                    ? `Sub-agent failed after waiting ${queueError.timeoutMs / 1000}s in the concurrency queue (queue timeout).`
+                    : `SubAgent failed to acquire a concurrency slot: ${queueError instanceof Error ? queueError.message : String(queueError)}`;
             const finalized = finalizeRun({
                 success: false,
                 error: message,
-                cancelled: true
+                cancelled: isQueueCancelled
             });
             await subAgentRunEventBus.flushRun(runId);
             return finalized;
@@ -361,7 +403,12 @@ export function createDefaultExecutor(
         const maxIterations = config.maxIterations
             ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxIterations
             ?? 50;
-        const maxRuntime = config.maxRuntime ?? 1800; // 默认 30 分钟
+        // 修改原因：运行时长上限同样支持全局默认——per-agent 未配置 maxRuntime 时不再硬编码 30 分钟，
+        //          而是继承全局 defaultMaxRuntime（-1 无限制，默认 1800 秒 = 30 分钟）。
+        // 修改方式：优先取 per-agent maxRuntime，其次取全局 defaultMaxRuntime，最后回退 1800。
+        const maxRuntime = config.maxRuntime
+            ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxRuntime
+            ?? 1800; // 默认 30 分钟
         const startTime = Date.now();
         const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
         
@@ -879,8 +926,18 @@ export function createDefaultExecutor(
                                 note: `LLM call failed (${retryFailureMessage}); auto-retrying in ${Math.round(delayMs / 1000)}s (attempt ${llmCallRetryCount}/${SUBAGENT_LLM_CALL_RETRY_MAX})`
                             }
                         });
-                        const waited = await waitWithAbort(delayMs, timeoutController?.signal);
+                        // L-tsub 修复：旧实现退避等待只监听 timeoutController，pause/exit 触发的
+                        // run 控制信号在退避期间不生效，最长要等完整退避间隔（429 可达 ~58s）
+                        // 才会在下一轮循环顶部感知。改为监听 operationSignal——它已组合父信号/
+                        // 超时/run 控制信号；pause/exit 立即中断退避并走控制语义（等待 resume 或
+                        // 退出），而不是误报为「Cancelled during LLM retry wait」。
+                        const waited = await waitWithAbort(delayMs, operationSignal);
                         if (!waited || parentAbort()?.aborted || timeoutController?.signal.aborted) {
+                            if (operationSignal?.aborted && isControlInterruption()) {
+                                const controlResult = await waitForControlIfNeeded();
+                                if (controlResult) return controlResult;
+                                continue;
+                            }
                             const timeoutCheckAfter = checkTimeout();
                             if (timeoutCheckAfter.exceeded) {
                                 return finalizeRun({
@@ -1243,6 +1300,11 @@ export function createDefaultExecutor(
             subAgentRunController.unregister(runId);
             if (request.parentRunId) {
                 subAgentRunController.unregisterChild(request.parentRunId, runId);
+            }
+            // M-tsub：续跑预留随 run 收敛释放（幂等——队列取消路径已释放时此处 no-op）。
+            if (continuationReserved) {
+                subAgentRunController.releaseContinuation(runId);
+                continuationReserved = false;
             }
             subAgentConcurrencyLimiter.release(runId);
             // H-1：run 结束时清理本 run 在 runAllowedToolsRegistry 中的工具限制登记，

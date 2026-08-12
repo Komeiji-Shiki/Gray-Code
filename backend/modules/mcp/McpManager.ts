@@ -960,6 +960,14 @@ export class McpManager {
                         data: { error: err.message },
                         timestamp: Date.now()
                     });
+                    // 运行期错误后 client 已不可用（僵尸态，状态门禁已拦截后续调用）：
+                    // 从管理 map 摘除并断开底层连接，避免 deleteServer/setServerEnabled
+                    // 在 error 状态跳过 disconnect 后留下孤儿 client（stdio 子进程 /
+                    // HTTP session 悬挂）。引用比较防止误删随后 connect 注册的新 client。
+                    if (this.clients.get(info.config.id) === client) {
+                        this.clients.delete(info.config.id);
+                    }
+                    void client.disconnect().catch(() => { /* 进程可能已死，忽略 */ });
                 });
 
                 client.on('exit', () => {
@@ -1059,7 +1067,7 @@ export class McpManager {
                     transport.url,
                     'sse',
                     transport.headers || {},
-                    info.config.timeout || 30000
+                    info.config.timeout ?? 30000
                 );
 
                 // 设置错误处理（带代际校验）：HTTP 服务器死亡/网络错误/SSE 流意外结束时
@@ -1084,6 +1092,14 @@ export class McpManager {
                         data: { error: err.message },
                         timestamp: Date.now()
                     });
+                    // 运行期错误后 client 已不可用（僵尸态，状态门禁已拦截后续调用）：
+                    // 从管理 map 摘除并断开底层连接，避免 deleteServer/setServerEnabled
+                    // 在 error 状态跳过 disconnect 后留下孤儿 client（stdio 子进程 /
+                    // HTTP session 悬挂）。引用比较防止误删随后 connect 注册的新 client。
+                    if (this.clients.get(info.config.id) === sseClient) {
+                        this.clients.delete(info.config.id);
+                    }
+                    void sseClient.disconnect().catch(() => { /* 连接可能已死，忽略 */ });
                 });
 
                 // 提前注册到管理 map
@@ -1155,7 +1171,7 @@ export class McpManager {
                     transport.url,
                     'streamable-http',
                     transport.headers || {},
-                    info.config.timeout || 30000
+                    info.config.timeout ?? 30000
                 );
 
                 // 设置错误处理（带代际校验）：HTTP 服务器死亡/网络错误/SSE 流意外结束时
@@ -1180,6 +1196,14 @@ export class McpManager {
                         data: { error: err.message },
                         timestamp: Date.now()
                     });
+                    // 运行期错误后 client 已不可用（僵尸态，状态门禁已拦截后续调用）：
+                    // 从管理 map 摘除并断开底层连接，避免 deleteServer/setServerEnabled
+                    // 在 error 状态跳过 disconnect 后留下孤儿 client（stdio 子进程 /
+                    // HTTP session 悬挂）。引用比较防止误删随后 connect 注册的新 client。
+                    if (this.clients.get(info.config.id) === httpClient) {
+                        this.clients.delete(info.config.id);
+                    }
+                    void httpClient.disconnect().catch(() => { /* 连接可能已死，忽略 */ });
                 });
 
                 // 提前注册到管理 map
@@ -1415,11 +1439,14 @@ export class McpManager {
             const result = await client.callTool(request.toolName, request.arguments, request.signal);
             return {
                 success: !result.isError,
+                // 透传 uri：McpToolCallResult.content 类型契约声明了 uri?（types.ts），
+                // 服务器返回 resource 类型内容时携带的 uri 不能在此被丢弃
                 content: (result.content || []).map(c => ({
                     type: c.type as 'text' | 'image' | 'resource',
                     text: c.text,
                     data: c.data,
-                    mimeType: c.mimeType
+                    mimeType: c.mimeType,
+                    uri: c.uri
                 })),
                 isError: result.isError
             };
@@ -1450,13 +1477,20 @@ export class McpManager {
         }
         
         // 返回全部内容：多段文本聚合为一段（按换行连接），避免只取 contents[0]
-        // 丢失服务器返回的其余内容；无文本内容（如纯 blob）时退回首个内容的原始字段
+        // 丢失服务器返回的其余内容；无文本内容（如纯 blob）时退回首个内容的原始字段。
+        // uri 不能只取 first.uri：首段可能是 blob、文本来自后续段（来源错标），或
+        // 多段文本来源不同（静默丢弃）。各文本段 uri 一致时直接采用；不一致时按段
+        // 以 "[uri] " 前缀标注进聚合文本（结果类型只支持单一 uri，无法逐一表达）。
         const first = contents[0];
         const textContents = contents.filter(c => typeof c.text === 'string');
+        const textUris = Array.from(new Set(textContents.map(c => c.uri)));
+        const singleUri = textUris.length === 1;
         return {
-            uri: first.uri,
+            uri: singleUri ? textUris[0] : first.uri,
             mimeType: first.mimeType,
-            text: textContents.length > 0 ? textContents.map(c => c.text as string).join('\n') : first.text,
+            text: textContents.length > 0
+                ? textContents.map(c => (singleUri ? c.text as string : `[${c.uri}] ${c.text as string}`)).join('\n')
+                : first.text,
             blob: first.blob
         };
     }

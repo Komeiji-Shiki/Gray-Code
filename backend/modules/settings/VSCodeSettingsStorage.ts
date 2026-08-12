@@ -43,6 +43,7 @@ const SYNCABLE_KEYS = [
     'toolsEnabled',
     'toolAutoExec',
     'maxToolIterations',
+    'maxToolLoopWallclockMinutes',
     'defaultToolMode',
     'activeChannelId',
     'lastReadAnnouncementVersion',
@@ -177,6 +178,13 @@ export class VSCodeSettingsStorage implements SettingsStorage {
                 // 包括庞大的 toolsConfig，触发多次写入与 Settings Sync 全量同步。
                 // 修改方式：与上次快照（上次保存/加载的结果）逐键深比较，只写变更的键；
                 // 全部未变更时不产生任何 config.update。
+                // 已知边界（有意保留）：首次保存时 lastSavedSnapshot 为空快照，所有有值的键
+                // （含与 DEFAULT_GLOBAL_SETTINGS 相同的默认值，如默认 toolsConfig、checkForUpdates
+                // 等）都会被判为「变更」写入磁盘——即「首次 save 固化默认值」。这是有意行为：
+                // 读取路径 initialize/reloadAndNotify 用 DEFAULT_GLOBAL_SETTINGS 深合并兜底，
+                // 固化值与内存默认值一致、功能等价；代价是扩展升级修改默认值后，已固化键不会
+                // 自动跟随新默认值（用户值优先语义）。若未来要过滤「与默认值全等」的键，需在
+                // SettingsCore 保存路径统一处理并与 deepMergeConfig 语义对齐，此处不做。
                 const updates: PromiseLike<void>[] = [];
                 const nextSnapshot: Record<string, unknown> = {};
                 const source = settings as unknown as Record<string, unknown>;
@@ -190,7 +198,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
                     }
                     // 仅对变更键做深拷贝快照：与活对象解耦，后续原地变更才能被 deepEqual 检出
                     nextSnapshot[key] = deepCloneValue(value);
-                    updates.push(config.update(key, value, vscode.ConfigurationTarget.Global));
+                    updates.push(config.update(key, value, this.resolveSaveTarget(config, key)));
                 }
 
                 // 仍使用 Promise.all 并行写入，减小更新期间处于不一致状态的时间窗口
@@ -212,6 +220,26 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         return run;
     }
 
+    /**
+     * save 写入目标层级：工作区（含 folder）层已有用户显式值时跟随写入 Workspace 层
+     * （.vscode/settings.json / .code-workspace），否则写 Global。
+     *
+     * 读侧保持 VS Code 合并值语义（workspaceFolder > workspace > global）：工作区显式配置
+     * 优先是 VS Code 惯例，不能因 save 只写 Global 而破坏。若 save 一律写 Global 而读合并值，
+     * 工作区中的旧 graycode.* 键会永久吞掉设置页修改；跟随已有层级写入后，设置页修改落在
+     * 最高优先级层、读回必然生效，workspace 显式配置的覆盖语义也保留（无 workspace 值时
+     * 仍写 Global）。
+     * 已知边界：多根工作区仅 folder 层有值时写 Workspace 层无法覆盖 folder 值（冷门组合，
+     * 保持与 VS Code 层级语义一致，不额外处理）。
+     */
+    private resolveSaveTarget(config: vscode.WorkspaceConfiguration, key: string): vscode.ConfigurationTarget {
+        const inspected = config.inspect(key);
+        if (inspected && (inspected.workspaceValue !== undefined || inspected.workspaceFolderValue !== undefined)) {
+            return vscode.ConfigurationTarget.Workspace;
+        }
+        return vscode.ConfigurationTarget.Global;
+    }
+
     private readSettingsFromVSCode(
         config: vscode.WorkspaceConfiguration,
         opts: { includeSyncable: boolean; includeMachine: boolean }
@@ -220,14 +248,15 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         // SettingsManager.initialize() 会与 DEFAULT_GLOBAL_SETTINGS 做合并。
         const settings: Partial<GlobalSettings> = {};
 
-            if (opts.includeSyncable) {
+        if (opts.includeSyncable) {
             settings.toolsConfig = config.get('toolsConfig');
             settings.ui = config.get('ui');
             settings.toolsEnabled = config.get('toolsEnabled');
             settings.toolAutoExec = config.get('toolAutoExec');
             settings.maxToolIterations = config.get('maxToolIterations');
-            
-            const defaultToolMode = config.get('defaultToolMode');
+            settings.maxToolLoopWallclockMinutes = config.get('maxToolLoopWallclockMinutes');
+
+            const defaultToolMode = config.get<string>('defaultToolMode');
             if (defaultToolMode === 'function_call' || defaultToolMode === 'xml' || defaultToolMode === 'json') {
                 settings.defaultToolMode = defaultToolMode;
             }
@@ -366,4 +395,6 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         }
     }
 }
+
+
 

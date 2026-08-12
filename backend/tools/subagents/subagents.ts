@@ -194,6 +194,14 @@ function getGlobalDefaultMaxIterations(): number {
 }
 
 /**
+ * 全局默认运行时间上限（秒）。
+ * 与 runLoop 的解析链保持一致：per-agent maxRuntime → 全局 defaultMaxRuntime → 1800。
+ */
+function getGlobalDefaultMaxRuntime(): number {
+    return getSubAgentsSettings().defaultMaxRuntime ?? 1800;
+}
+
+/**
  * 统一判断是否存在可用子代理（含动态 General Worker）。
  *
  * 修改原因：工具声明过滤只看 Registry 已启用计数，General Worker 是运行时
@@ -232,7 +240,7 @@ function generateAgentNameDescription(): string {
         const tools = getAgentAvailableTools(config);
         const toolsStr = formatToolsList(tools, 8);
         const maxIterStr = formatLimit(config.maxIterations, getGlobalDefaultMaxIterations());
-        const maxRuntimeStr = formatLimit(config.maxRuntime, DEFAULT_MAX_RUNTIME_S);
+        const maxRuntimeStr = formatLimit(config.maxRuntime, getGlobalDefaultMaxRuntime());
         entries.push(`  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`);
     }
 
@@ -493,6 +501,44 @@ async function executeSubAgent(
     }
     // F2：父 runId（A-COMM 信箱身份），用于级联清理父子关系；主模型直接派发时缺省。
     const parentRunId = context?.mailboxRunId as string | undefined;
+    // 渠道策略（原「强制使用当前渠道」全局开关已下放为每个子代理的逐代理开关）：
+    // - config.channel.syncWithCurrentModel === true：该子代理忽略自身固定渠道/模型，
+    //   运行时统一改用「派发方当前正在使用的渠道」（channelConfigId + channelModelId）——
+    //   主会话直接派发时为会话当前渠道；嵌套派发时为主 run 的渠道（与 General Worker
+    //   嵌套继承口径一致，父 run 未同步时嵌套子代理继承父 run 的固定渠道）。
+    // - 旧全局开关向后兼容：forceUseCurrentChannel === true 且该代理未显式设置
+    //   syncWithCurrentModel（undefined）时按旧语义视同同步，避免升级后行为突变；
+    //   代理显式设置 false 则恢复使用自身固定渠道。
+    // 与 General Worker 的继承口径一致（含 modelId——只换渠道不换模型会落到渠道默认
+    // 模型，默认模型配额/权限与主模型不同时报错）；替换发生在派发前，executor 内
+    // 的 runLoop/工具声明/嵌套派发统一消费 effectiveConfig，无需感知该开关。
+    // 注意：自定义 executor 不消费 effectiveConfig（request 不含 channel 字段），
+    // 该开关仅对默认 executor 生效。
+    let effectiveConfig = config;
+    // 运行时旧全局开关兜底（正常路径 SettingsManager.initialize 已做一次性迁移清除该字段）：
+    // 仅当代理未显式设置 syncWithCurrentModel（=== undefined）时按旧语义视同同步，
+    // 显式 true/false 均以代理自身配置为准（null 等非布尔值不再被误判为同步）。
+    const legacyForceUseCurrentChannel = getSubAgentsSettings().forceUseCurrentChannel === true;
+    const syncWithCurrentModel = config.channel?.syncWithCurrentModel === true
+        || (legacyForceUseCurrentChannel && config.channel?.syncWithCurrentModel === undefined);
+    if (syncWithCurrentModel) {
+        const channelConfigId = context?.channelConfigId as string | undefined;
+        if (!channelConfigId) {
+            return {
+                success: false,
+                error: `Sub-agent "${agentName}" is set to sync with the current model, but no active channel `
+                    + `is available in the tool context.`
+            };
+        }
+        effectiveConfig = {
+            ...config,
+            channel: {
+                channelId: channelConfigId,
+                modelId: context?.channelModelId || undefined,
+                syncWithCurrentModel: true
+            }
+        };
+    }
     // H-1（R4 复查）：嵌套派发时继承父 run 的可用工具限制——
     // 子 run 最终可用工具 = 子配置解析结果 ∩ 父 run 可用工具（executor 内取交集）。
     // 父 run 的工具集由 executor 在解析后按 runId 注册（setRunAllowedTools），
@@ -510,7 +556,7 @@ async function executeSubAgent(
     const runtimeExecutor = customExecutor
         ? customExecutor
         : baseExecutorContext
-            ? createDefaultExecutor(config, {
+            ? createDefaultExecutor(effectiveConfig, {
                 ...baseExecutorContext,
                 conversationId,
                 conversationStore: context?.conversationStore as any,
@@ -530,11 +576,22 @@ async function executeSubAgent(
     if (background) {
         const backgroundAbortController = new AbortController();
         const taskId = TaskManager.generateTaskId('bgagent');
+        // L-tsub 修复：后台模式不 await executor，返回的 runId 必须与 executor 实际使用的
+        // runId 一致，否则 Monitor/任务记录里出现两条不同身份的 run（尤其 continueFromRunId
+        // 续跑时，executor 会用旧 runId 而这里曾返回预分配的新 runId）。executor 的规则是
+        // 「continueFromRunId 沿用旧 runId；否则 allocateRunId 判重（预分配或随机回退）」，
+        // 这里按同一规则同步预分配并原样传给 executor——executor 内部会再次 allocateRunId，
+        // 因预分配后尚无快照、且两处调用间无 await 间隙，结果与这里一致。
+        const effectiveRunId = continueFromRunId
+            ? continueFromRunId
+            : subAgentRunEventBus.allocateRunId(
+                runId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            );
 
         TaskManager.registerTask(taskId, 'background_subagent', backgroundAbortController, {
             conversationId,
             agentName,
-            runId,
+            runId: effectiveRunId,
             continueFromRunId,
             promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
         });
@@ -547,7 +604,7 @@ async function executeSubAgent(
             prompt,
             context: additionalContext,
             continueFromRunId,
-            runId,
+            runId: effectiveRunId,
             conversationId,
             conversationStore: context?.conversationStore as any,
             promptModeSnapshot: promptModeSnapshot,
@@ -571,7 +628,7 @@ async function executeSubAgent(
             });
         }).catch(error => {
             TaskManager.unregisterTask(taskId, 'error', {
-                runId,
+                runId: effectiveRunId,
                 agentName,
                 error: error instanceof Error ? error.message : String(error)
             });
@@ -582,7 +639,7 @@ async function executeSubAgent(
             data: {
                 background: true,
                 taskId,
-                runId,
+                runId: effectiveRunId,
                 agentName,
                 note: 'Started in background; the result will arrive as a [Background task completed] message. Do NOT wait or poll.'
             }
@@ -616,8 +673,8 @@ async function executeSubAgent(
         let channelName = '';
         try {
             const configManager = getGlobalConfigManager();
-            const channelConfig = configManager && (await configManager.getConfig(config.channel.channelId));
-            channelName = channelConfig?.name || config.channel.channelId;
+            const channelConfig = configManager && (await configManager.getConfig(effectiveConfig.channel.channelId));
+            channelName = channelConfig?.name || effectiveConfig.channel.channelId;
         } catch {
             // channelName 仅供 UI 展示，查询失败不阻断子代理结果
         }
@@ -634,7 +691,7 @@ async function executeSubAgent(
                     runId: result.runId,
                     partialResponse: result.response,
                     channelName,
-                    modelId: config.channel.modelId,
+                    modelId: effectiveConfig.channel.modelId,
                     steps: result.steps,
                     toolsUsed: (result.toolCalls ?? []).map(tc => tc.tool)
                 }
@@ -650,7 +707,7 @@ async function executeSubAgent(
             runId: result.runId,
             [result.success ? 'response' : 'partialResponse']: result.response,
             channelName,
-            modelId: config.channel.modelId,
+            modelId: effectiveConfig.channel.modelId,
             steps: result.steps,
             // 子代理发起并受理的工具调用名列表（发给 AI）：让主模型了解子代理是否调用过
             // 工具及调用了哪些（空数组 = 未调用任何工具）。仅列名称，不包含参数/结果，

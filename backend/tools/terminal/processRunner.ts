@@ -24,7 +24,6 @@ import { TaskManager, type TaskEvent } from '../taskManager';
 import { getAllWorkspaces, getWorkspaceByUri, parseWorkspacePath } from '../utils';
 import {
     getShellConfig,
-    checkShellAvailability,
     getShellAvailabilityWithReason,
     getAvailableShellsDescription,
     getDefaultShellName,
@@ -621,21 +620,10 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                             terminalProcess.killed = true;
                             terminalProcess.timedOut = true;
                             terminalProcess.error = `Command timed out after ${timeout}ms`;
-                            // 使用 tree-kill 终止整个进程树，而非仅杀父进程
-                            const pid = proc.pid;
-                            if (pid) {
-                                treeKill(pid, 'SIGTERM', (err) => {
-                                    if (err) {
-                                        try {
-                                            proc.kill('SIGKILL');
-                                        } catch {
-                                            // 忽略错误，进程可能已经退出
-                                        }
-                                    }
-                                });
-                            } else {
-                                proc.kill('SIGTERM');
-                            }
+                            // 与 killTerminalProcess 相同的「SIGTERM → 等待 → SIGKILL 升级」流程：
+                            // 进程树捕获/忽略 SIGTERM 时 'close' 永不触发，execute_command 的
+                            // Promise 永不 resolve（模型工具循环挂死）；升级强杀保证 close 必达。
+                            void terminateProcessTreeWithEscalation(terminalProcess);
                         }, timeout);
                     }
 
@@ -738,7 +726,9 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                                 truncatedNote
                             },
                             error,
-                            cancelled: isExternalAbort || terminalProcess.killed === true
+                            // 超时不是取消：killed 与 timedOut 非互斥（超时强杀两标记都置位），
+                            // 必须排除 timedOut，否则超时被下游误判为「用户取消」→ 对话被自动暂停
+                            cancelled: isExternalAbort || (terminalProcess.killed === true && !terminalProcess.timedOut)
                         });
                     });
 
@@ -895,8 +885,11 @@ function setTerminalProcessPriority(pid: number | undefined, background: boolean
     try {
         if (os.platform() === 'win32') {
             const priorityClass = background ? 'BelowNormal' : 'Normal';
-            cp.exec(
-                `powershell -NoProfile -Command "(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'"`,
+            // 参数通过 argv 传递，不拼进 shell 命令（纵深防御；pid 为 Node 内部数值、
+            // priorityClass 为硬编码常量，当前无注入面）
+            cp.execFile(
+                'powershell.exe',
+                ['-NoProfile', '-Command', `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).PriorityClass = '${priorityClass}'`],
                 { windowsHide: true, timeout: 5000 },
                 () => { /* 失败静默：优先级是软约束 */ }
             );
@@ -909,6 +902,82 @@ function setTerminalProcessPriority(pid: number | undefined, background: boolean
         // 忽略：优先级设置失败不影响命令执行
     }
 }
+
+/**
+ * 以「SIGTERM → 等待 KILL_WAIT_CLOSE_TIMEOUT_MS → SIGKILL 升级」终止进程树。
+ *
+ * 修改原因：超时/取消路径此前只发一次 SIGTERM——POSIX 上进程树捕获/忽略 SIGTERM 时
+ *          'close' 永不触发，execute_command 的 Promise 永不 resolve，模型工具循环挂死。
+ * 修改方式：与 killTerminalProcess 的强杀流程共用同一升级逻辑（幂等：进程已退出或
+ *          close 已触发时不再重复发信号；SIGKILL 不可捕获、close 必达，等待不永久挂起）。
+ * 修改目的：SIGTERM 免疫进程最终被 SIGKILL 强杀，等待方必然收到 close。
+ */
+function terminateProcessTreeWithEscalation(terminalProcess: TerminalProcess): Promise<void> {
+    const proc = terminalProcess.process;
+    return new Promise<void>((resolve) => {
+        // 进程已结束（close/error 处理器已落定 exitCode）：close 不会再触发，直接返回
+        if (proc.exitCode !== null) {
+            resolve();
+            return;
+        }
+
+        let settled = false;
+        let forceKillTimer: NodeJS.Timeout | undefined;
+
+        const onClose = (): void => {
+            if (settled) return;
+            settled = true;
+            if (forceKillTimer) clearTimeout(forceKillTimer);
+            resolve();
+        };
+
+        // 先注册 close 监听再发信号，避免进程在两者之间退出导致漏监听
+        proc.once('close', onClose);
+
+        // 注册监听后再检查：进程可能在注册前已退出，close 不会再触发
+        if (proc.exitCode !== null) {
+            onClose();
+            return;
+        }
+
+        forceKillTimer = setTimeout(() => {
+            try {
+                proc.kill('SIGKILL');
+            } catch {
+                // 可能已退出，忽略
+            }
+            // 修改原因：发 SIGKILL 后立即 onClose() 会让等待方在 close 处理器（落定
+            //          endTime/exitCode/output）执行前就返回，拿到 stale 结果。
+            // 修改方式：SIGKILL 不可捕获、close 必达——发完信号不 resolve，继续等真实
+            //          close 让 close 处理器落定终态；本定时器仅负责强杀，若 close
+            //          异常迟迟未达（极端情况），由最终兜底定时器 resolve。
+            forceKillTimer = setTimeout(() => onClose(), KILL_WAIT_CLOSE_TIMEOUT_MS);
+        }, KILL_WAIT_CLOSE_TIMEOUT_MS);
+
+        const pid = proc.pid;
+        if (pid) {
+            // 使用 tree-kill 终止进程树（Windows: taskkill /F /T；Unix: 递归发信号）
+            treeKill(pid, 'SIGTERM', (err) => {
+                if (err) {
+                    // tree-kill 失败：回退到直接 SIGKILL
+                    try {
+                        proc.kill('SIGKILL');
+                    } catch {
+                        // 忽略错误，进程可能已经退出
+                    }
+                }
+            });
+        } else {
+            // 没有 PID，使用默认方式
+            try {
+                proc.kill('SIGTERM');
+            } catch {
+                // 忽略错误，进程可能已经退出
+            }
+        }
+    });
+}
+
 /**
  * 杀掉终端进程
  * 同时支持直接调用和通过 TaskManager 取消
@@ -943,8 +1012,6 @@ export async function killTerminalProcess(terminalId: string): Promise<{
     }
 
     try {
-        const pid = terminalProcess.process.pid;
-
         // 进程已结束（close/error 处理器已落定 endTime 与 exitCode）：
         // close 事件不会再触发，直接返回最终输出与退出码
         if (terminalProcess.endTime !== undefined || terminalProcess.process.exitCode !== null) {
@@ -954,67 +1021,10 @@ export async function killTerminalProcess(terminalId: string): Promise<{
         // 标记为被终止：close 处理器据此把任务终态判定为 cancelled（而非超时失败）
         terminalProcess.killed = true;
 
-        // 等待进程树真正退出：先注册 close 监听再发信号，避免进程在两者之间退出导致漏监听；
-        // 超时后 SIGKILL 强杀（SIGKILL 不可捕获，close 必达），等待不会永久挂起。
-        await new Promise<void>((resolveClose) => {
-            let settled = false;
-            let forceKillTimer: NodeJS.Timeout | undefined;
-
-            const onClose = (): void => {
-                if (settled) return;
-                settled = true;
-                if (forceKillTimer) clearTimeout(forceKillTimer);
-                resolveClose();
-            };
-
-            terminalProcess.process.once('close', onClose);
-
-            // 注册监听后再检查：进程可能在注册前已退出，close 不会再触发
-            if (terminalProcess.process.exitCode !== null) {
-                onClose();
-                return;
-            }
-
-            forceKillTimer = setTimeout(() => {
-                try {
-                    terminalProcess.process.kill('SIGKILL');
-                } catch {
-                    // 进程可能已退出，忽略
-                }
-                // 修改原因：旧实现发 SIGKILL 后立即 onClose()，close 处理器（落定
-                //          endTime/exitCode/output）尚未执行就返回，10s 强杀路径
-                //          返回 stale 结果（exitCode=undefined、输出缺尾部）。
-                // 修改方式：SIGKILL 不可捕获、close 必达——发完信号不再 resolve，
-                //          继续等真实 close 让 close 处理器落定终态；本定时器仅负责
-                //          强杀，若 close 异常迟迟未达（极端情况），由最终兜底定时器
-                //          resolve，保证等待不会永久挂起。
-                forceKillTimer = setTimeout(() => onClose(), KILL_WAIT_CLOSE_TIMEOUT_MS);
-            }, KILL_WAIT_CLOSE_TIMEOUT_MS);
-
-            if (pid) {
-                // 使用 tree-kill 终止进程树
-                // tree-kill 会自动处理不同平台的差异：
-                // - Windows: 使用 taskkill /F /T /PID
-                // - Unix: 使用 ps 查找子进程并发送信号
-                treeKill(pid, 'SIGTERM', (err) => {
-                    if (err) {
-                        // 如果 tree-kill 失败，回退到直接终止进程
-                        try {
-                            terminalProcess.process.kill('SIGKILL');
-                        } catch {
-                            // 忽略错误，进程可能已经退出
-                        }
-                    }
-                });
-            } else {
-                // 没有 PID，使用默认方式
-                try {
-                    terminalProcess.process.kill('SIGTERM');
-                } catch {
-                    // 忽略错误，进程可能已经退出
-                }
-            }
-        });
+        // 等待进程树真正退出：SIGTERM → 等待 KILL_WAIT_CLOSE_TIMEOUT_MS → SIGKILL 升级
+        // （见 terminateProcessTreeWithEscalation：先注册 close 监听再发信号，避免进程在
+        // 两者之间退出导致漏监听；SIGKILL 不可捕获、close 必达，等待不会永久挂起）
+        await terminateProcessTreeWithEscalation(terminalProcess);
 
         // close 处理器已把 endTime/exitCode/output 落定并注销任务
         return buildKillTerminalResult(terminalProcess);

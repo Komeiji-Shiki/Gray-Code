@@ -103,15 +103,34 @@ export function normalizeVersion(version: string): string {
 
 /**
  * 语义版本比较（支持任意段数，缺段按 0；非数字段按 0）。
- * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）。
+ * 主版本段相等时，预发布（-beta 等）判为更旧（同号预发布 < 正式）；
+ * 同为预发布时按标识符逐段比较（数字段数值比较、字符串段字典序、段数多者更新、
+ * 数字段 < 字母数字段），全部相等才判相等。
  * 返回 -1（a < b）/ 0（相等）/ 1（a > b）。
  */
 export function compareVersions(a: string, b: string): number {
-    const parse = (v: string): { nums: number[]; prerelease: boolean } => {
+    const parse = (v: string): {
+        nums: number[];
+        prereleaseSegs: Array<string | number> | null;
+        prerelease: boolean;
+    } => {
         const raw = stripVersionPrefix(v);
+        const dash = raw.indexOf('-');
+        const main = dash >= 0 ? raw.slice(0, dash) : raw;
+        const suffix = dash >= 0 ? raw.slice(dash + 1) : null;
+        // 版本段只取主版本部分：语义预发布的 dash 段（-beta、-nightly.x）绝不能并入版本段，
+        // 否则 `1.4.6-nightly.20260810` 的日期段会被 parseInt 误当第四版本段（语义错误）。
+        // 数字开头的构建号（-2dev / -10dev，electron-builder 形态）并入版本段成为第四段，
+        // 与 fork 的 normalizeVersion 口径一致。
+        const buildMerge = suffix !== null && /^\d/.test(suffix) ? `.${suffix}` : '';
+        // 预发布标识符段：纯数字段转数值（按数值比较），其余保留字符串（按字典序比较）
+        const prereleaseSegs = suffix !== null && !/^\d/.test(suffix)
+            ? suffix.split('.').map(seg => (/^\d+$/.test(seg) ? parseInt(seg, 10) : seg))
+            : null;
         return {
-            nums: normalizeVersion(raw).split('.').map(n => parseInt(n, 10) || 0),
-            prerelease: raw.includes('-') && !/^\d/.test(raw.split('-')[1] ?? '')
+            nums: `${main}${buildMerge}`.split('.').map(n => parseInt(n, 10) || 0),
+            prereleaseSegs,
+            prerelease: prereleaseSegs !== null
         };
     };
     const ap = parse(a);
@@ -125,11 +144,26 @@ export function compareVersions(a: string, b: string): number {
     if (ap.prerelease !== bp.prerelease) {
         return ap.prerelease ? -1 : 1;
     }
-    if (ap.prerelease && bp.prerelease) {
-        // 同为预发布：按标识字符串比较（alpha < beta < rc）
-        const pa = stripVersionPrefix(a).split('-')[1] ?? '';
-        const pb = stripVersionPrefix(b).split('-')[1] ?? '';
-        if (pa !== pb) return pa < pb ? -1 : 1;
+    // 同为预发布：按标识符逐段比较（1.4.6-beta vs 1.4.6-alpha、1.4.6-beta.1 vs 1.4.6-beta.2、
+    // 1.4.6-beta.10 vs 1.4.6-beta.2 数值比较，修复旧字典序误判）
+    if (ap.prereleaseSegs && bp.prereleaseSegs) {
+        const segLen = Math.max(ap.prereleaseSegs.length, bp.prereleaseSegs.length);
+        for (let i = 0; i < segLen; i++) {
+            const x = ap.prereleaseSegs[i];
+            const y = bp.prereleaseSegs[i];
+            // 某一段缺失：段数少者更旧（1.0.0-alpha < 1.0.0-alpha.1）
+            if (x === undefined) return -1;
+            if (y === undefined) return 1;
+            if (x === y) continue;
+            // 数字段与字母数字段相遇：数字段更旧（semver：numeric < alphanumeric）
+            if (typeof x !== typeof y) {
+                return typeof x === 'number' ? -1 : 1;
+            }
+            if (typeof x === 'number' && typeof y === 'number') {
+                return x < y ? -1 : 1;
+            }
+            return String(x) < String(y) ? -1 : 1;
+        }
     }
     return 0;
 }
@@ -473,8 +507,8 @@ export class UpdateChecker {
 
     /**
      * 渠道等影响检查结果的条件变化时调用：清除内存状态并重置节流时间戳，
-     * 使下一次检查（含启动自动检查）按新条件重新拉取，
-     * 避免旧渠道的缓存结果（如 Nightly 徽章/可安装项）残留到新渠道。
+     * 使下一次检查（含启动自动检查）按新条件重新拉取。
+     * （fork 已移除 nightly 渠道，本方法仅保留为状态重置入口，供测试与未来渠道扩展使用）
      */
     resetStatus(): void {
         // 代际计数递增：使在途 check() 的结果作废（check 在写回状态/存储前校验代际，

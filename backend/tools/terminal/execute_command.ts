@@ -11,7 +11,6 @@
  */
 
 export {
-    getEnabledShellTypes,
     checkShellAvailability,
     checkAllShellsAvailability,
     getShellAvailabilityWithReason,

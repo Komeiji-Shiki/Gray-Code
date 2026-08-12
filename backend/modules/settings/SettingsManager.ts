@@ -148,8 +148,11 @@ export class SettingsManager {
             // lastUpdated 需要使用最新的或当前时间
             this.core.settings.lastUpdated = stored.lastUpdated || Date.now();
 
-            // 显式迁移内置模式的 toolPolicy（幂等，仅未定制时填充默认值）
+            // 显式迁移内置模式的 toolPolicy（幂等仅未定制时填充默认值）
             await this.prompt.migratePromptModeToolPolicies();
+
+            // 一次性迁移子代理旧全局开关 forceUseCurrentChannel → 逐代理 syncWithCurrentModel（幂等）
+            await this.subagents.migrateForceUseCurrentChannel();
         }
     }
 
@@ -200,6 +203,24 @@ export class SettingsManager {
      */
     setMaxToolIterations(value: number): Promise<void> {
         return this.tools.setMaxToolIterations(value);
+    }
+
+    /**
+     * 获取无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * 仅当 maxToolIterations = -1 时生效；-1 表示不设墙钟时限。
+     */
+    getMaxToolLoopWallclockMinutes(): number {
+        return this.tools.getMaxToolLoopWallclockMinutes();
+    }
+
+    /**
+     * 设置无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * @param value 分钟数，-1 表示不设墙钟时限，正整数表示具体分钟数（最小 1）
+     */
+    setMaxToolLoopWallclockMinutes(value: number): Promise<void> {
+        return this.tools.setMaxToolLoopWallclockMinutes(value);
     }
 
     // ========== 渠道管理 ==========

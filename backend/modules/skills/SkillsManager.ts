@@ -204,9 +204,11 @@ export class SkillsManager {
             const description = t('tools.skills.exampleSkill.description');
             const content = t('tools.skills.exampleSkill.content');
             
+            // description 用 JSON.stringify 生成双引号 YAML 标量：
+            // 含换行/引号/冒号时 frontmatter 不再错乱（parseFrontmatter 配套反转义）
             const exampleContent = `---
 name: how-to-create-skill
-description: "${description}"
+description: ${JSON.stringify(description)}
 ---
 
 ${content}
@@ -383,7 +385,10 @@ ${content}
                             const realDir = await fs.promises.realpath(dirPath);
                             const realTarget = await fs.promises.realpath(fullPath);
                             const rel = path.relative(realDir, realTarget);
-                            if (rel.startsWith('..') || path.isAbsolute(rel)) {
+                            // 精确判逃逸（Windows 下 path.relative 返回 \\ 分隔）：仅 .. 或 ..\
+                            // 前缀才算，startsWith('..') 会把扫描根内名为 ..foo 的合法目录误判
+                            // 为逃逸（与 fileTree 同款修复）。
+                            if (/^\.\.($|[\\/])/.test(rel) || path.isAbsolute(rel)) {
                                 continue;
                             }
                             dirs.push({ name: entry.name, fullPath });
@@ -507,10 +512,17 @@ ${content}
     /**
      * 反转 JSON 双引号字符串转义（\n \r \t \" \\ \uXXXX 等），
      * 与 SettingsExporter.buildSkillMarkdown 的 JSON.stringify 输出配套，保证往返一致。
+     *
+     * 误判修复：\u 后随非 4 位十六进制（如 \update、\user、Windows 路径 C:\Users）时，
+     * 旧实现只判断 esc[0] === 'u' 即走 unicode 分支，parseInt('',16)=NaN →
+     * String.fromCharCode(NaN) 产生 NUL 字符；单反斜杠（\U）也被直接剥掉。
+     * 现改为先校验完整转义形态 /^u[0-9a-fA-F]{4}$/ 才做 unicode 解码，否则保留
+     * 字面反斜杠 + 原文；双反斜杠 \\ 仍解为单个 \。
      */
     private unescapeQuotedValue(value: string): string {
         return value.replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_match, esc: string) => {
-            if (esc[0] === 'u') {
+            // 仅完整 \uXXXX（4 位十六进制）形态才做 unicode 解码，避免误判
+            if (/^u[0-9a-fA-F]{4}$/.test(esc)) {
                 return String.fromCharCode(parseInt(esc.substring(1), 16));
             }
             switch (esc) {
@@ -522,7 +534,7 @@ ${content}
                 case '"': return '"';
                 case '\\': return '\\';
                 case '/': return '/';
-                default: return esc;
+                default: return '\\' + esc; // 未知转义保留字面反斜杠 + 原文
             }
         });
     }

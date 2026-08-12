@@ -52,6 +52,7 @@ import { ContextTrimService } from '../../modules/api/chat/services/ContextTrimS
 import { CheckpointManager, type CheckpointRecord } from '../../modules/checkpoint/CheckpointManager';
 import type { CheckpointManifest } from '../../modules/checkpoint/types';
 import type { Content } from '../../modules/conversation/types';
+import { isRealUserMessage } from '../../modules/conversation/helpers';
 import { setGlobalBranchService } from '../../modules/conversation/branch/BranchService';
 import { createPromptManagerMock } from './mockFixtures';
 
@@ -460,7 +461,16 @@ export function createSummarizeHarness(options: {
 
     const contextTrimService = {
         findLastSummaryIndex: jest.fn(() => lastSummaryIndex),
-        identifyRounds: jest.fn(() => [])
+        // 真实轮数（真实实现按 isRealUserMessage 识别回合起点）：planner 放弃时
+        // resolveSummarizeRange 用轮数区分 NOT_ENOUGH_CONTENT / NOT_ENOUGH_ROUNDS，
+        // mock 恒返回 [] 会把单轮场景误标为 NOT_ENOUGH_CONTENT。
+        identifyRounds: jest.fn((history: Content[]) => {
+            const starts: number[] = [];
+            for (let i = 0; i < history.length; i++) {
+                if (isRealUserMessage(history[i])) starts.push(i);
+            }
+            return starts;
+        })
     };
 
     const settingsManager = {

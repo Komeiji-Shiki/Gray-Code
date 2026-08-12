@@ -303,7 +303,7 @@ describe('planSummarizeMessages', () => {
         expect(plan).toEqual({ cutIndex: 4, boundary: 'intra_round' });
     });
 
-    test('多轮历史的当前长轮自身超预算时也允许轮内切分', () => {
+    test('auto 模式当前长轮超预算时不开放轮内切点：退回整轮边界切分（防 STALE）', () => {
         const messages = [
             user('old'), modelText('old answer'),
             user('current'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('done')
@@ -316,7 +316,30 @@ describe('planSummarizeMessages', () => {
             mode: 'auto'
         });
 
+        // auto 模式当前轮是进行中的回合：轮内切点必然吞掉当前用户消息，落盘侧判
+        // STALE_RANGE，提出这种切点只会白费一次总结请求。切点停在 current 轮首，
+        // 总结 old 轮、保留 current 轮整体（预算为软目标，允许保留超出预算）。
+        expect(plan).toEqual({ cutIndex: 2, boundary: 'round' });
+        expect(validateHistoryIntegrityForTest(messages.slice(plan!.cutIndex))).toBe(true);
+    });
+
+    test('manual 模式当前长轮超预算时仍开放轮内切点（用户主动总结放行）', () => {
+        const messages = [
+            user('old'), modelText('old answer'),
+            user('current'), fc('a'), fr('a'), fc('b'), fr('b'), modelText('done')
+        ];
+        const plan = planSummarizeMessages({
+            messages,
+            messageTokens: [50, 50, 100, 200, 200, 200, 200, 100],
+            keepBudgetTokens: 550,
+            minKeepRounds: 1,
+            mode: 'manual'
+        });
+
+        // manual 是显式用户行为（无进行中的回合）：允许把当前轮的前半段纳入总结，
+        // 切在第一个装得下预算的安全 model 边界（fr a 之后的 fc b，index 5）。
         expect(plan).toEqual({ cutIndex: 5, boundary: 'intra_round' });
+        expect(validateHistoryIntegrityForTest(messages.slice(plan!.cutIndex))).toBe(true);
     });
 
     function validateHistoryIntegrityForTest(history: Content[]): boolean {

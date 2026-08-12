@@ -6,7 +6,7 @@
  * custom `graycode://` protocol (so fetch()/audio work without CORS issues).
  */
 
-import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, powerMonitor } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 // BackendHost 体积大（内联整个 backend + webview 路由），启动路径必须懒加载：
@@ -208,6 +208,13 @@ Logger.setLevel(LogLevel.INFO);
 
 let mainWindow: BrowserWindow | null = null;
 let backendHost: BackendHost | null = null;
+
+// ===== 电源/冻结防御（Windows 空闲挂起：前端壳无响应而后端正常） =====
+// powerMonitor 监听只注册一次（macOS activate 重建窗口时跳过重复注册）；
+// rendererProbeTimer/rendererProbeFailures 为渲染进程健康自检探针状态。
+let powerMonitorListenersInstalled = false;
+let rendererProbeTimer: NodeJS.Timeout | null = null;
+let rendererProbeFailures = 0;
 
 const workspaceStateFile = () => path.join(app.getPath('userData'), 'workspace.json');
 
@@ -594,6 +601,8 @@ function createBackend(): void {
       },
       // 渲染层 UI 语言生效后重建应用菜单（含 auto 解析后的实际语言）
       onMenuLanguageChange: (lang) => rebuildMenu(lang),
+      // 渲染层主题生效后同步原生窗口背景色与 nativeTheme（含 auto 解析后的实际主题）
+      onThemeChange: (theme) => applyDesktopThemeToWindow(theme),
       // 界面语言为 auto/未配置时的系统 locale 回退（app.getLocale）
       systemLocale: () => app.getLocale()
     });
@@ -808,6 +817,47 @@ function restoreWorkspace(): void {
   });
 }
 
+// ============================================================================
+// 主题（亮色/暗色/跟随系统）→ 原生窗口
+//
+// 渲染层 CSS 变量负责界面配色；这里负责原生部分：BrowserWindow 背景色
+// （启动/加载/resize 露出的边缘）与 nativeTheme.themeSource（系统对话框、
+// 原生菜单、渲染层 prefers-color-scheme——首帧启动画面与 auto 模式 matchMedia
+// 都依赖它）。设置持久化在 {userData}/graycode/settings/vscode-config.json
+// （BackendHost __initConfigStore 同路径），启动时同步预读，免首帧闪烁。
+// ============================================================================
+function resolveSavedTheme(): string {
+  try {
+    const raw = fs.readFileSync(
+      path.join(app.getPath('userData'), 'graycode', 'settings', 'vscode-config.json'),
+      'utf-8'
+    );
+    const parsed = JSON.parse(raw) as { ui?: { theme?: unknown } };
+    const theme = parsed?.ui?.theme;
+    if (theme === 'light' || theme === 'dark') return theme;
+  } catch {
+    // 文件不存在/损坏：回退 auto（跟随系统）
+  }
+  return 'auto';
+}
+
+/** 窗口背景色：与 theme.css 的 --vscode-editor-background（dark #1e1e1e / light #ffffff）一致 */
+function resolveWindowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff';
+}
+
+/**
+ * 应用主题 → nativeTheme.themeSource + 窗口背景色。
+ * themeSource 同步后渲染层 prefers-color-scheme 跟随（auto 模式下 matchMedia
+ * change 事件触发渲染层重新应用）；窗口背景色实时更新（页面加载中/重载瞬间生效）。
+ */
+function applyDesktopThemeToWindow(theme: string): void {
+  nativeTheme.themeSource = theme === 'light' || theme === 'dark' ? theme : 'system';
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBackgroundColor(resolveWindowBackgroundColor());
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -815,8 +865,9 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 620,
     show: false,
-    // 初始背景跟随系统深浅色，避免浅色系统下启动时深色闪烁（页面加载后由主题变量接管）
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1e' : '#ffffff',
+    // 初始背景跟随应用主题（预读设置文件；读取失败时按系统深浅色兜底），
+    // 页面加载后由渲染层 app.setTheme 上报实时同步（见 applyDesktopThemeToWindow）
+    backgroundColor: resolveWindowBackgroundColor(),
     autoHideMenuBar: false,
     icon: path.join(REPO_ROOT, 'resources', 'icon.png'),
     title: 'GrayCode',
@@ -878,6 +929,33 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // 渲染进程「冻结」（非崩溃）检测：Windows 电源事件（睡眠/Modern Standby/显示器关闭/
+  // 效率模式）可能挂起渲染进程线程——主进程与后端仍正常，但界面完全无响应，且
+  // render-process-gone 不会触发（进程没死）。冻结 5s 后自动 reload 恢复；
+  // 与崩溃计数（rendererCrashCount）分开，冻结恢复不参与「连续崩溃弹对话框」判定。
+  let frozenReloadTimer: NodeJS.Timeout | null = null;
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('[main] renderer unresponsive (frozen), auto-reload scheduled in 5s');
+    if (frozenReloadTimer !== null) clearTimeout(frozenReloadTimer);
+    frozenReloadTimer = setTimeout(() => {
+      frozenReloadTimer = null;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        console.error('[main] renderer still frozen after 5s, auto reloading');
+        mainWindow.webContents.reload();
+      }
+    }, 5000);
+  });
+  mainWindow.webContents.on('responsive', () => {
+    if (frozenReloadTimer !== null) {
+      clearTimeout(frozenReloadTimer);
+      frozenReloadTimer = null;
+      console.error('[main] renderer responsive again');
+    }
+  });
+  mainWindow.on('closed', () => {
+    if (frozenReloadTimer !== null) clearTimeout(frozenReloadTimer);
   });
 
   // 渲染进程崩溃处理：记录崩溃原因后先自动 reload 恢复（最多 2 次）；若仍连续崩溃
@@ -1428,8 +1506,72 @@ if (gotSingleInstanceLock) {
       registerCustomProtocol();
       registerNativeOps();
       buildMenu(resolveUiLanguage());
+      // 主题在窗口创建前落地：首帧启动画面（boot-splash 的 prefers-color-scheme
+      // 媒体查询）与 BrowserWindow 背景色随应用主题而非系统，避免亮色主题下深色首帧
+      applyDesktopThemeToWindow(resolveSavedTheme());
       createBackend();
       createWindow();
+
+      // ===== 电源事件恢复 + 渲染进程健康自检（Windows 空闲挂起防御） =====
+      // 症状：空闲太久（显示器关闭/Modern Standby/锁屏/效率模式）后前端壳无响应，后端正常——
+      // Windows 会冻结渲染进程线程并丢失 GPU 合成上下文，恢复后界面不重绘且输入无效。
+      // 三层防御：
+      //  1) powerMonitor resume/lock-screen/unlock-screen → 强制合成重绘 + 通知前端重排；
+      //  2) 30s 周期 executeJavaScript 探针 → 无电源事件（仅进程被挂起）时也能发现并自动 reload；
+      //  3) webContents unresponsive → 5s 自动 reload（见 createWindow，冻结兜底）。
+      if (!powerMonitorListenersInstalled) {
+        powerMonitorListenersInstalled = true;
+        const reviveRenderer = () => {
+          rendererProbeFailures = 0;
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+          // 强制合成器重绘（GPU 上下文丢失后恢复）
+          mainWindow.webContents.invalidate();
+          // 通知前端重排：CustomScrollbar 监听 window resize → 重算滚动条与布局；
+          // 消息列表/虚拟窗口同步刷新（命令信封与 BackendHost 推送格式一致）
+          mainWindow.webContents.send('graycode:backend-to-renderer', {
+            type: 'command',
+            command: 'host.powerResume',
+            data: {}
+          });
+        };
+        powerMonitor.on('resume', () => {
+          diagLog('power-resume');
+          reviveRenderer();
+        });
+        // Windows 锁屏/解锁（睡眠常伴随锁屏；解锁恢复时同样需要 revive）
+        powerMonitor.on('lock-screen', () => diagLog('power-lock'));
+        powerMonitor.on('unlock-screen', () => {
+          diagLog('power-unlock');
+          reviveRenderer();
+        });
+      }
+      // 渲染进程健康探针：executeJavaScript 必须由渲染进程执行才能 resolve；
+      // 线程被系统挂起时 2s 超时 → 连续 2 次判定冻结 → 自动 reload（无需用户交互）。
+      if (rendererProbeTimer === null) {
+        rendererProbeTimer = setInterval(() => {
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+          const wc = mainWindow.webContents;
+          // 页面加载中不探测（避免误报）；冻结后 reload 是自愈手段，探针本身无副作用
+          if (wc.isLoading()) return;
+          void Promise.race([
+            wc.executeJavaScript('1', true).then(() => true).catch(() => false),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000))
+          ]).then((ok) => {
+            if (!ok) {
+              rendererProbeFailures++;
+              if (rendererProbeFailures >= 2) {
+                rendererProbeFailures = 0;
+                console.error('[main] renderer frozen (probe failed twice), auto reloading');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.reload();
+                }
+              }
+            } else {
+              rendererProbeFailures = 0;
+            }
+          });
+        }, 30_000);
+      }
 
       app.on('activate', () => {
         // macOS：点击 Dock 图标时若无窗口则重建；已有窗口时恢复/聚焦。
@@ -1478,6 +1620,10 @@ if (gotSingleInstanceLock) {
     ]).catch(() => {
       // dispose 抛错不阻塞退出
     }).finally(() => {
+      if (rendererProbeTimer !== null) {
+        clearInterval(rendererProbeTimer);
+        rendererProbeTimer = null;
+      }
       app.exit(0);
     });
   });

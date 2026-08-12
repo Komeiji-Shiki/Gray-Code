@@ -79,7 +79,13 @@ export class SubAgentsSettingsService {
             }
             
             const agents = [...config.agents];
-            agents[index] = { ...agents[index], ...updates };
+            const merged = { ...agents[index], ...updates };
+            // channel 为嵌套对象：部分更新（如只改 channelId）整体替换会静默丢
+            // modelId/syncWithCurrentModel，做字段级合并（与前端整对象发送兼容）
+            if (updates.channel && agents[index].channel) {
+                merged.channel = { ...agents[index].channel, ...updates.channel };
+            }
+            agents[index] = merged;
             
             await this.updateSubAgentsConfig({ agents });
             return true;
@@ -114,6 +120,34 @@ export class SubAgentsSettingsService {
         await this.core.serializeMutation(async () => {
             const oldConfig = this.getSubAgentsConfig();
             await this.core.saveToolsConfigEntry('subagents', oldConfig, { ...oldConfig, ...config });
+        });
+    }
+
+    /**
+     * 一次性迁移旧的「强制所有子代理使用当前渠道」全局开关（幂等）。
+     *
+     * 该全局开关已下放为每个子代理渠道配置上的 syncWithCurrentModel 逐代理开关，
+     * 且新 UI 不再提供关闭入口——若不清除，旧配置一旦开启将永久生效且无法全局关闭
+     * （连新建的代理也会被静默同步）。迁移规则：
+     * - forceUseCurrentChannel === true 时：对每个未显式设置 syncWithCurrentModel 的
+     *   代理写入 syncWithCurrentModel: true（保持升级前的继承行为）；显式 false 的代理
+     *   保持自身固定渠道。
+     * - 清除全局 forceUseCurrentChannel 字段。
+     * 重复执行安全：首次迁移后字段已清除，直接返回。
+     */
+    async migrateForceUseCurrentChannel(): Promise<void> {
+        await this.core.serializeMutation(async () => {
+            const raw = this.core.settings.toolsConfig?.subagents as SubAgentsConfig | undefined;
+            if (!raw || raw.forceUseCurrentChannel !== true) return;
+
+            const agents = (raw.agents || []).map(agent => {
+                if (agent.channel?.syncWithCurrentModel !== undefined) return agent;
+                return { ...agent, channel: { ...agent.channel, syncWithCurrentModel: true } };
+            });
+            const { forceUseCurrentChannel: _removed, ...rest } = raw;
+            const next: SubAgentsConfig = { ...rest, agents };
+
+            await this.core.saveToolsConfigEntry('subagents', raw, next);
         });
     }
 }

@@ -290,8 +290,49 @@ export function toFileUri(pathStr: string): vscode.Uri {
     return vscode.Uri.file(trimmed);
 }
 
+/**
+ * 将路径解析为用于比较的规范绝对路径（realpath-aware）。
+ *
+ * 修改原因：旧比较只做词法规范化（path.resolve + 字符串前缀比较），工作区内指向工作区外的
+ * 符号链接会通过词法前缀比较被误判为“在工作区内”，绕过 deny/ask 策略
+ * （read_file/write_file/delete_file 等的 outside-workspace 判定链共用 normalizePathForComparison）。
+ * 修改方式：复用下方带 mtime 失效缓存的 resolveRealPathOrNearestExisting（与
+ * isPathInsideOrEqualReal 安全链共用同一解析器，结果一致且有缓存），解析路径本身或其最近的
+ * 存在祖先的 realpath 后拼接尾部段；解析失败（含测试 mock 掉 fs 时）降级为词法路径。
+ * 返回前剥离 Windows 长路径前缀（\\?\ 与 \\?\UNC\），避免同一物理文件出现两种写法。
+ *
+ * 另：backend/core/fileWriteLockManager 的锁 key 归一化（resolveLockPath，backend/core/ 不在
+ * 本目录修改域）目前仍用词法 fsPath；如需让同一物理文件（经符号链接）的不同写法映射到同一锁
+ * key，可复用本函数（导出）。
+ */
+export function resolveRealpathForComparison(fsPath: string): string {
+    const absolute = path.resolve(fsPath);
+    const real = resolveRealPathOrNearestExisting(absolute);
+    if (real === null) {
+        return absolute;
+    }
+    return stripWindowsLongPathPrefix(real);
+}
+
+/**
+ * 去掉 Windows realpath 输出可能带上的长路径前缀（\\?\ 与 \\?\UNC\）。
+ *
+ * fs.realpathSync.native 在 Windows 长路径/UNC 下会返回 \\?\ 前缀路径，直接参与字符串前缀
+ * 比较会让同一物理文件出现两种写法（//?/C:/... 与 C:/...），必须统一为普通盘符/UNC 路径形式。
+ * POSIX 路径不含该前缀，调用无副作用。
+ */
+function stripWindowsLongPathPrefix(p: string): string {
+    if (p.startsWith('\\\\?\\UNC\\')) {
+        return '\\\\' + p.slice(8);
+    }
+    if (p.startsWith('\\\\?\\')) {
+        return p.slice(4);
+    }
+    return p;
+}
+
 export function normalizePathForComparison(fsPath: string): string {
-    let normalized = path.resolve(fsPath).replace(/\\/g, '/');
+    let normalized = resolveRealpathForComparison(fsPath).replace(/\\/g, '/');
     if (normalized.length > 1) {
         normalized = normalized.replace(/\/+$/, '');
     }
@@ -330,7 +371,12 @@ function resolveRealPathOrNearestExisting(filePath: string): string | null {
             try {
                 const ancestor = nearestExistingAncestorOf(filePath);
                 if (ancestor !== null) {
-                    const stat = fsSync.statSync(ancestor, { throwIfNoEntry: false });
+                    // 路径自身存在时用 lstat：statSync 跟随链接取目标 mtime，链接被重定向
+                    // （换目标）而目标 mtime 不变时缓存不会失效；lstat 取链接自身 mtime，
+                    // 重定向必然更新，缓存随之作废。
+                    const stat = ancestor === filePath
+                        ? fsSync.lstatSync(ancestor, { throwIfNoEntry: false })
+                        : fsSync.statSync(ancestor, { throwIfNoEntry: false });
                     if (stat && stat.mtimeMs === cached.ancestorMtimeMs) {
                         return cached.resolved;
                     }
@@ -370,22 +416,29 @@ function resolveRealPathOrNearestExisting(filePath: string): string | null {
         result = path.join(result, ...trailing);
     }
 
-    // 记录最近存在祖先的 mtime，用于缓存失效判断
+    // 记录最近存在祖先的 mtime，用于缓存失效判断（与命中校验同口径：路径自身用 lstat）
     let ancestorMtimeMs = 0;
     try {
         const ancestor = nearestExistingAncestorOf(filePath);
         if (ancestor !== null) {
-            const stat = fsSync.statSync(ancestor, { throwIfNoEntry: false });
+            const stat = ancestor === filePath
+                ? fsSync.lstatSync(ancestor, { throwIfNoEntry: false })
+                : fsSync.statSync(ancestor, { throwIfNoEntry: false });
             ancestorMtimeMs = stat?.mtimeMs ?? 0;
         }
     } catch {
         ancestorMtimeMs = 0;
     }
 
-    if (realPathCache.size >= REAL_PATH_CACHE_MAX) {
-        realPathCache.clear();
+    // 解析失败（realpathSync 缺失/整棵祖先链不可解析）时不入缓存：失败条目若被缓存，
+    // 命中路径会跳过 mtime 复检直接返回空值，isPathInsideOrEqualReal 因此永久退化为
+    // 纯词法判定（fail-open 边缘）。不缓存则每次调用重试，真实路径一旦可解析立即恢复。
+    if (result !== null) {
+        if (realPathCache.size >= REAL_PATH_CACHE_MAX) {
+            realPathCache.clear();
+        }
+        realPathCache.set(filePath, { resolved: result, ancestorMtimeMs });
     }
-    realPathCache.set(filePath, { resolved: result ?? '', ancestorMtimeMs });
     return result;
 }
 

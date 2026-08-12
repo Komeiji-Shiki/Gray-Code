@@ -2,7 +2,7 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.7.13",
+  "version": "1.7.15",
   "publisher": "czocelot",
   "icon": "resources/icon.png",
   "engines": {
@@ -251,6 +251,11 @@
           "default": 200,
           "description": "单回合最大工具调用次数（可同步，-1 表示无限制）"
         },
+        "graycode.maxToolLoopWallclockMinutes": {
+          "type": "number",
+          "default": 30,
+          "description": "无限制模式（maxToolIterations = -1）工具循环墙钟时限（分钟，可同步，-1 表示不设墙钟时限）"
+        },
         "graycode.defaultToolMode": {
           "type": "string",
           "default": "function_call",
@@ -312,6 +317,7 @@
     "cross-spawn": "^7.0.6",
     "fast-xml-parser": "^5.10.1",
     "ignore": "^7.0.5",
+    "node-notifier": "^10.0.1",
     "tree-kill": "^1.2.2"
   },
   "devDependencies": {
@@ -324,7 +330,8 @@
     "jest": "^29.7.0",
     "ts-jest": "^29.4.6",
     "typescript": "^5.9.3",
-    "undici-types": "^6.21.0"
+    "undici-types": "^6.21.0",
+    "jsdom": "^29.1.1"
   },
   "keywords": [
     "agent",

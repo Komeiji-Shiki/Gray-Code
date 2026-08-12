@@ -10,7 +10,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
 import type { Content, Message } from '../../types'
 import { perfLog, perfMeasureAsync } from '../../utils/perf'
-import { syncTotalMessagesFromWindow, syncFoldedHistoryHint } from './windowUtils'
+import { syncTotalMessagesFromWindow, syncFoldedHistoryHint, MAX_WINDOW_MESSAGES } from './windowUtils'
 import {
   applyConversationModelConfig,
   applyConversationPromptMode,
@@ -509,17 +509,30 @@ export async function createBranchConversation(
 export async function loadConversations(state: ChatStoreState): Promise<void> {
   state.isLoadingConversations.value = true
 
+  // 记录请求发出时的本地 ID。listConversations 是一个时间点快照；等待它返回期间，
+  // 首条消息可能已经创建并持久化新会话。该增量必须在合并时保留，不能被旧快照覆盖。
+  const persistedIdsAtRequestStart = new Set(state.persistedConversationIds.value)
+
   try {
     // 仅获取全部 ID（一次请求），实际元数据采用分页加载
     const ids = await sendToExtension<string[]>(MESSAGE_NAMES['conversation.listConversations'], {})
+    const remoteIds = Array.isArray(ids) ? ids : []
+    const remoteIdSet = new Set(remoteIds)
+    const concurrentlyCreatedIds = state.persistedConversationIds.value.filter(id =>
+      !persistedIdsAtRequestStart.has(id) && !remoteIdSet.has(id)
+    )
 
-    // 重置分页游标
-    state.persistedConversationIds.value = sortConversationIds(ids)
+    // 重置分页游标；把请求在途期间创建的新会话并入远端快照。
+    state.persistedConversationIds.value = sortConversationIds([
+      ...new Set([...remoteIds, ...concurrentlyCreatedIds])
+    ])
     state.persistedConversationsLoaded.value = 0
 
-    // 保留未持久化的对话
-    const unpersistedConvs = state.conversations.value.filter(c => !c.isPersisted)
-    state.conversations.value = [...unpersistedConvs]
+    // 保留未持久化会话，以及远端快照尚未包含、但本次加载期间刚创建的持久化会话。
+    const concurrentlyCreatedIdSet = new Set(concurrentlyCreatedIds)
+    state.conversations.value = state.conversations.value.filter(conversation =>
+      !conversation.isPersisted || concurrentlyCreatedIdSet.has(conversation.id)
+    )
 
     // 加载第一页
     await loadMoreConversations(state, { initial: true })
@@ -675,14 +688,32 @@ export async function loadOlderMessagesPage(
     const olderMsgs = older.map(c => contentToMessageEnhanced(c))
     // 追加到窗口顶部
     state.allMessages.value = [...olderMsgs, ...state.allMessages.value]
+
+    // 上翻路径窗口有界化（修复「上翻历史翻太多时界面卡死」）：
+    // 底部追加路径由 trimWindowFromTop 在 MAX_WINDOW_MESSAGES 内折叠，上翻路径此前从不裁剪，
+    // allMessages 随上翻无限增长 → 尾部切片渲染（resolveLoadedVisibleMessages）与消息索引/缓存
+    // 重建线性膨胀，消息轮次高时渲染线程被 DOM 与 computed 级联压垮，界面无法交互。
+    // 这里在窗口超过 MAX_WINDOW_MESSAGES 时从底部（最新侧）裁剪到上限：窗口整体随上翻滑动，
+    // 尾部切片渲染自动跟随，仍可逐页向上翻完整历史；被裁掉的最新消息经底部
+    // 「回到最新」入口（hasNewerMessages）恢复。
+    // 流式/等待响应期间不裁剪——在途消息正在窗口底部追加，误裁会破坏流式会话。
+    if (
+      state.allMessages.value.length > MAX_WINDOW_MESSAGES &&
+      !state.isStreaming.value &&
+      !state.isWaitingForResponse.value
+    ) {
+      state.allMessages.value = state.allMessages.value.slice(0, MAX_WINDOW_MESSAGES)
+    }
     rebuildMessageIndexById(state)
 
     state.totalMessages.value = result?.total ?? state.totalMessages.value
     state.windowStartIndex.value = older[0]?.index ?? state.windowStartIndex.value
 
-    // 这是用户主动上拉恢复更早历史，不能立刻从顶部裁剪；
+    // 这是用户主动上拉恢复更早历史，不能从顶部裁剪；
     // 否则刚拉回来的旧消息会被马上丢掉，表现为”继续上拉无法加载”。
-    // 后续发送/重试等向底部追加新消息时仍会通过 trimWindowFromTop 控制窗口大小。
+    // 窗口有界化走「底部裁剪」：超过 MAX_WINDOW_MESSAGES 时丢弃最新侧多余消息（见上方），
+    // 窗口整体随上翻滑动，被裁掉的最新消息经底部「回到最新」入口（hasNewerMessages）恢复；
+    // 发送/重试等向底部追加新消息时仍通过 trimWindowFromTop 控制窗口大小。
     syncFoldedHistoryHint(state)
 
     perfLog('conversation.window', {

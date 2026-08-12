@@ -69,6 +69,19 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 顶部加载指示器：后端有更多消息 或 前端还有已加载但未渲染的消息
   const hasMore = computed(() => hasMoreHistory.value || visibleCount.value < props.messages.length)
 
+  // 上翻历史滑动窗口（loadOlderMessagesPage 底部裁剪）后，窗口末尾与真实最新消息之间存在缺口：
+  // 展示底部「回到最新」入口，点击重载最后一页并滚动到底部（被裁剪的最新消息恢复可见）。
+  const hasNewerMessages = computed(() =>
+    chatStore.windowStartIndex + chatStore.allMessages.length < chatStore.totalMessages
+  )
+
+  // 回到最新：重载最后一页（窗口末尾重新对齐真实最新），再滚动到底部
+  async function scrollToNewest() {
+    await chatStore.loadHistory()
+    needsScrollToBottom.value = true
+    nextTick(() => tryScrollToBottom({ instant: true }))
+  }
+
   // 增强的消息对象接口
   interface EnhancedMessage {
     message: Message
@@ -442,8 +455,6 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
       resizeObserver = null
     }
     saveCurrentUiState(props.tabId)
-
-    // A-M2：消息列表卸载后不再有 diff 面板消费方，主动释放模块级行级差分缓存
     clearLineDiffCache()
   })
 
@@ -451,6 +462,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     scrollbarRef,
     hasMore,
     loadMore,
-    messageRenderRows
+    messageRenderRows,
+    hasNewerMessages,
+    scrollToNewest
   }
 }

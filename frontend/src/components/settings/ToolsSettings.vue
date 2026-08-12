@@ -50,6 +50,22 @@ const maxToolIterations = ref<number>(0)
 const isLoadingMaxIterations = ref(false)
 const isSavingMaxIterations = ref(false)
 
+// 无限制模式（maxToolIterations = -1）工具循环墙钟时限（分钟）配置（初始为0，从后端加载真实值）
+const maxToolLoopWallclockMinutes = ref<number>(0)
+const isLoadingWallclock = ref(false)
+const isSavingWallclock = ref(false)
+
+// 草稿模式：清空后不立即回退旧值；离开设置页时自动回填已保存值
+// -1 表示不设墙钟时限，正整数表示具体分钟数（保留原 parseInt 的整数语义）
+const {
+  draft: wallclockDraft,
+  handleInput: handleWallclockDraftInput,
+  syncFromStored: syncWallclockFromStored
+} = useDeferredNumberInput(
+  () => maxToolLoopWallclockMinutes.value,
+  v => (v === -1 || v >= 1) && Number.isInteger(v)
+)
+
 // 草稿模式：清空后不立即回退旧值；离开设置页时自动回填已保存值
 // -1 表示无限制，正整数表示具体次数（保留原 parseInt 的整数语义）
 const {
@@ -253,11 +269,48 @@ function handleMaxIterationsChange(event: Event) {
   handleMaxIterationsDraftInput(target.value, saveMaxToolIterations)
 }
 
+// 加载无限制模式工具循环墙钟时限配置
+async function loadMaxToolLoopWallclock() {
+  isLoadingWallclock.value = true
+  try {
+    const response = await sendToExtension<{ wallclockMinutes: number }>(MESSAGE_NAMES['tools.getMaxToolLoopWallclockMinutes'], {})
+    if (response?.wallclockMinutes !== undefined) {
+      maxToolLoopWallclockMinutes.value = response.wallclockMinutes
+      syncWallclockFromStored()
+    }
+  } catch (error) {
+    console.error('Failed to load maxToolLoopWallclockMinutes:', error)
+  } finally {
+    isLoadingWallclock.value = false
+  }
+}
+
+// 保存无限制模式工具循环墙钟时限配置
+async function saveMaxToolLoopWallclock(value: number) {
+  isSavingWallclock.value = true
+  try {
+    await sendToExtension(MESSAGE_NAMES['tools.updateMaxToolLoopWallclockMinutes'], { wallclockMinutes: value })
+    maxToolLoopWallclockMinutes.value = value
+  } catch (error) {
+    console.error('Failed to save maxToolLoopWallclockMinutes:', error)
+  } finally {
+    isSavingWallclock.value = false
+  }
+}
+
+// 处理墙钟时限变化：清空/无效值不提交（保持为空），有效值立即保存
+function handleWallclockChange(event: Event) {
+  const target = event.target as HTMLInputElement
+  // -1 表示不设墙钟时限，正整数表示具体分钟数
+  handleWallclockDraftInput(target.value, saveMaxToolLoopWallclock)
+}
+
 // 组件挂载
 onMounted(() => {
   loadTools()
   loadDependencies()
   loadMaxToolIterations()
+  loadMaxToolLoopWallclock()
 })
 
 // 设置搜索跳转到未展开的工具配置面板时，自动展开对应面板（信号消费后复位）
@@ -300,6 +353,28 @@ watch(pendingToolConfigExpand, (toolName) => expandFromSearchSignal(toolName))
           <span class="unit">{{ t('components.settings.toolsSettings.maxIterations.unit') }}</span>
           <i
             v-if="isSavingMaxIterations"
+            class="codicon codicon-loading codicon-modifier-spin saving-indicator"
+          ></i>
+        </div>
+      </div>
+
+      <div class="config-item" data-search-anchor="max-tool-loop-wallclock">
+        <div class="config-label">
+          <span class="label-text">{{ t('components.settings.toolsSettings.maxToolLoopWallclock.label') }}</span>
+          <span class="label-hint">{{ t('components.settings.toolsSettings.maxToolLoopWallclock.hint') }}</span>
+        </div>
+        <div class="config-control">
+          <input
+            type="number"
+            class="iterations-input"
+            :value="wallclockDraft"
+            min="-1"
+            :disabled="isLoadingWallclock || isSavingWallclock"
+            @input="handleWallclockChange"
+          />
+          <span class="unit">{{ t('components.settings.toolsSettings.maxToolLoopWallclock.unit') }}</span>
+          <i
+            v-if="isSavingWallclock"
             class="codicon codicon-loading codicon-modifier-spin saving-indicator"
           ></i>
         </div>

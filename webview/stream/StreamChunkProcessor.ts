@@ -41,11 +41,11 @@ export class StreamChunkProcessor {
   /** 上次 chunk flush 的时间戳 */
   private lastChunkFlushTime: number = 0;
   /**
-   * 视图缺失（面板关闭/重建窗口）时暂存的终结类事件（complete/cancelled/error），
-   * 视图恢复后由 flush() 补发。普通 chunk 增量无法投递时可丢弃，但终结事件必须送达，
-   * 否则新视图永远收不到旧流结束信号，占位消息永久「生成中」、isStreaming 无法复位。
+   * 视图是否曾可达（H6 中止判定用）：processChunk 曾成功通过 getView() 检查即置位。
+   * 流启动时视图已不可达（从未有消费者）的场景保持既有继续消费语义，只有
+   * 「视图从可达变为不可达」（面板关闭/重载/目标 webview 销毁）才需要中止后端生成。
    */
-  private pendingTerminalBuffer: Record<string, any>[] = [];
+  private viewEverReachable = false;
 
   constructor(
     /**
@@ -60,24 +60,22 @@ export class StreamChunkProcessor {
 
   /**
    * 处理并发送 chunk
-   * @returns true = 错误/取消等终结事件已送达（视图不可达时返回 false，调用方可留痕）；false = 其他
+   * @returns true = 错误/取消等终结事件已送达（视图不可达时返回 false，调用方可留痕）；
+   *          false = 其他（含视图不可达——消费方需配合 isViewUnreachable() 区分，见 H6）
    */
   processChunk(chunk: any): boolean {
     if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) {
       return false;
     }
     if (!this.getView()) {
-      // 视图缺失（面板关闭/重建窗口）：普通 chunk 直接丢弃（增量内容无法投递，终结事件
-      // 补发后前端会基于最终状态复位）；但终结类事件（complete/cancelled/error）不得
-      // 静默丢弃——先清空 messageBuffer 与计时器，再把终结事件暂存，视图恢复后由
-      // flush() 补发，否则占位消息永久「生成中」、isStreaming 无法复位。
-      if (this.isTerminalChunk(chunk)) {
-        this.dropBuffered();
-        this.stageTerminalChunk(chunk);
-        return this.isErrorChunk(chunk);
-      }
+      // H6：视图不可达（面板关闭/重载/目标 webview 已销毁）——chunk 与终结事件都
+      // 无法投递，返回 false；消费方经 isViewUnreachable() 区分「普通非终结 chunk」
+      // 与「视图不可达」，后者应立即中止后端生成（见 StreamRequestHandler.consumeStream）。
+      // 历史暂存机制（视图恢复后补发终结事件）已随 H6 中止语义移除：abort 后前端
+      // 会话状态由后端会话数据重建，无需跨视图投递旧流终态。
       return false;
     }
+    this.viewEverReachable = true;
     // 只有存在实际观看端时才把流式输出视为活跃，后台无视图流不应制造虚假在场时间。
     markAiActive();
 
@@ -181,6 +179,19 @@ export class StreamChunkProcessor {
   }
 
   /**
+   * 视图是否不可达（目标 webview 已销毁/面板关闭/重载）。
+   *
+   * H6：processChunk 在视图不可达时返回 false，与普通非终结 chunk 的 false 无法区分；
+   * 消费方在 processChunk 返回 false 后调用本方法判断是否需要中止流——视图不可达时
+   * 继续消费只会让后端在后台全量生成（消耗 token / 执行工具副作用）。
+   * getView 每次实时获取，因此本方法反映调用时刻的最新可达状态；viewEverReachable
+   * 保证「从未有视图」的流（后台任务/测试）保持既有继续消费语义。
+   */
+  isViewUnreachable(): boolean {
+    return this.viewEverReachable && !this.getView();
+  }
+
+  /**
    * 发送错误消息（立即刷新）
    *
    * @param type 底层错误类型（ChannelError.type，如 API_ERROR/NETWORK_ERROR/TIMEOUT_ERROR/
@@ -196,9 +207,9 @@ export class StreamChunkProcessor {
     if (typeof type === 'string' && type.trim()) {
       error.type = type;
     }
-    // 视图缺失：错误属于终结类事件，不得静默丢弃，暂存待视图恢复后补发
+    // 视图不可达：错误属于终结类事件，但 H6 中止语义下无投递目标（视图恢复后由
+    // 后端会话数据重建前端状态），直接丢弃
     if (!this.getView()) {
-      this.pendingTerminalBuffer.push(this.buildMessage('error', { error }));
       return;
     }
     this.enqueue('error', {
@@ -230,27 +241,9 @@ export class StreamChunkProcessor {
     const view = this.getView();
     if (!view) {
       // 视图缺失（面板关闭/重建窗口）：普通 chunk 缓冲无法投递，直接清空防止滞留内存；
-      // 终结类事件已由 processChunk/sendError 暂存到 pendingTerminalBuffer，视图恢复后补发。
+      // 终结类事件由 consumeStream 的 H6 中止路径负责（abort 后端生成），无需暂存补发
       this.messageBuffer = [];
       return;
-    }
-
-    // 视图恢复：先补发暂存的旧流终结事件（complete/cancelled/error），再发送当前缓冲，
-    // 保证前端按序收到终结信号，占位消息与 isStreaming 状态能正常复位。
-    if (this.pendingTerminalBuffer.length > 0) {
-      const pending = this.pendingTerminalBuffer;
-      this.pendingTerminalBuffer = [];
-      if (pending.length === 1) {
-        view.webview.postMessage({
-          type: PUSH_MESSAGE_NAMES.streamChunk,
-          data: pending[0]
-        });
-      } else {
-        view.webview.postMessage({
-          type: PUSH_MESSAGE_NAMES.streamChunkBatch,
-          data: pending
-        });
-      }
     }
 
     if (this.messageBuffer.length === 0) return;
@@ -345,7 +338,6 @@ export class StreamChunkProcessor {
 
   /**
    * 构造待发送消息（统一装配 conversationId/streamId/createdAt）。
-   * 正常路径（enqueue）与视图缺失暂存路径共用，保证补发格式与正常路径完全一致。
    */
   private buildMessage(type: string, data: Record<string, any>): Record<string, any> {
     const createdAt = typeof data.createdAt === 'number' && Number.isFinite(data.createdAt) ? data.createdAt : Date.now()
@@ -356,54 +348,5 @@ export class StreamChunkProcessor {
       ...data,
       createdAt
     };
-  }
-
-  /**
-   * 判断 chunk 是否为终结类事件（complete/cancelled/error）。
-   * 分支条件与 processChunk 中的处理保持一致。
-   */
-  private isTerminalChunk(chunk: any): boolean {
-    return ('cancelled' in chunk && !!chunk.cancelled)
-      || ('error' in chunk && !!chunk.error)
-      || ('content' in chunk && !!chunk.content && !('cancelled' in chunk));
-  }
-
-  /**
-   * 判断 chunk 是否为错误类型（processChunk 返回 true 的语义）
-   */
-  private isErrorChunk(chunk: any): boolean {
-    return 'error' in chunk && !!chunk.error;
-  }
-
-  /**
-   * 视图缺失时暂存终结类事件（complete/cancelled/error），视图恢复后由 flush() 补发。
-   * 消息装配与正常路径（enqueue）一致，且与 processChunk 正常分支的入队字段完全对应。
-   */
-  private stageTerminalChunk(chunk: any): void {
-    if ('error' in chunk && chunk.error) {
-      this.pendingTerminalBuffer.push(this.buildMessage('error', { error: chunk.error }));
-    } else if ('cancelled' in chunk && chunk.cancelled) {
-      this.pendingTerminalBuffer.push(this.buildMessage('cancelled', { content: chunk.content }));
-    } else {
-      this.pendingTerminalBuffer.push(this.buildMessage('complete', {
-        content: chunk.content,
-        checkpoints: chunk.checkpoints
-      }));
-    }
-  }
-
-  /**
-   * 清空 messageBuffer 与待执行计时器（视图缺失时普通 chunk 无法投递，防止缓冲滞留内存）。
-   */
-  private dropBuffered(): void {
-    if (this.flushTimer !== null) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-    if (this.throttleTimer !== null) {
-      clearTimeout(this.throttleTimer);
-      this.throttleTimer = null;
-    }
-    this.messageBuffer = [];
   }
 }

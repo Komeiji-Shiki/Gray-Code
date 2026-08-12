@@ -610,6 +610,7 @@ const en: LanguageMessages = {
             },
             emptyResponse: '(Empty response from model)',
             historyFolded: 'Earlier messages are folded ({count} discarded). Scroll up to load them.',
+            loadNewer: 'Older messages loaded; click to jump to latest',
             stats: {
                 ttft: 'Time to first token (TTFT)',
                 responseDuration: 'Response Duration',
@@ -1792,7 +1793,12 @@ const en: LanguageMessages = {
                 maxConcurrentAgents: 'Max Concurrent Agents',
                 maxConcurrentAgentsHint: 'Maximum number of sub-agents running at the same time; extra ones wait in a queue (-1 for unlimited)',
                 defaultMaxIterations: 'Default Max Iterations',
-                defaultMaxIterationsHint: 'Default iteration limit for sub-agents and General Worker without their own setting (1~200, -1 for unlimited)',
+                defaultMaxIterationsHint: 'Default iteration limit for sub-agents and General Worker without their own setting (-1 for unlimited)',
+                queueTimeoutSeconds: 'Queue Timeout (seconds)',
+                queueTimeoutSecondsHint: 'How long a sub-agent waits in the concurrency queue before it fails (-1 for unlimited, default 600)',
+                queueTimeoutSecondsInvalid: 'Enter -1 or a positive integer',
+                defaultMaxRuntime: 'Max Runtime (seconds)',
+                defaultMaxRuntimeHint: 'Max wall-clock runtime for sub-agents and General Worker without their own maxRuntime (-1 for unlimited, default 1800 = 30 min)',
                 generalWorker: 'Enable General Worker (easy mode)',
                 generalWorkerHint: 'Lets the main model dispatch zero-config "General Worker" agents that inherit the current channel and full tool permissions; the model decides how many to use, no manual agent setup needed',
                 basicInfo: 'Basic Info',
@@ -1809,6 +1815,9 @@ const en: LanguageMessages = {
                 selectChannel: 'Select Channel',
                 model: 'Model',
                 selectModel: 'Select Model',
+                syncWithCurrentModel: 'Sync with Current Model',
+                syncWithCurrentModelHint: 'When enabled, this sub-agent ignores its own channel/model and uses the channel and model currently in use in this session at dispatch time (same inheritance as General Worker); switch models without editing each agent',
+                syncWithCurrentModelActiveHint: '"Sync with Current Model" is enabled; the channel/model settings below are temporarily inactive',
                 tools: 'Tool Configuration',
                 toolsDescription: 'Configure tools available to this sub-agent',
                 toolMode: {
@@ -2569,6 +2578,11 @@ const en: LanguageMessages = {
                     label: 'Max Tool Calls Per Turn',
                     hint: 'Prevents AI from infinite tool call loops, -1 for unlimited',
                     unit: 'calls'
+                },
+                maxToolLoopWallclock: {
+                    label: 'Unlimited Mode Tool Loop Wall-clock Limit (minutes)',
+                    hint: 'Only applies when "Max Tool Calls Per Turn" is -1 (unlimited); the tool loop is terminated with an error after exceeding this limit, -1 disables the wall-clock limit',
+                    unit: 'min'
                 },
                 actions: {
                     refresh: 'Refresh',

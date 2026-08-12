@@ -2,7 +2,7 @@
  * Chat Store 状态定义
  */
 
-import { reactive, ref } from 'vue'
+import { reactive, ref, triggerRef } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointSummary } from '../../types'
 import type { Attachment } from '../../types'
@@ -224,7 +224,7 @@ export function replaceMessageAt(state: MessageIndexLookupState, index: number, 
   if (index !== state.allMessages.value.length - 1) {
     clearVisibleChatMessagesCache(state as unknown as ChatStoreState)
     clearMessageIndexBoundsCache(state.allMessages.value)
-    bumpMessagesStructuralVersion(state)
+       bumpMessagesStructuralVersion(state)
   }
 
   assertMessageIndexInvariant(state)
@@ -271,6 +271,57 @@ export function getMessageIndexById(state: MessageIndexLookupState, messageId: s
 
   rebuildMessageIndexById(state)
   return state.messageIndexById.value.get(messageId) ?? fallbackIndex
+}
+
+// ============ 工具响应缓存（toolResponseCache）容量约束 ============
+
+/** 工具响应缓存最大条目数：超限时淘汰最旧条目（Map 迭代序 = 插入序），防止长会话随工具调用数无限增长 */
+export const TOOL_RESPONSE_CACHE_MAX_SIZE = 500
+
+/** 淘汰最旧条目：Map 迭代顺序即插入顺序，删除第一个 key 即可 */
+function evictOldestToolResponseCacheEntry(cache: Map<string, Record<string, unknown>>): void {
+  const oldestKey = cache.keys().next().value
+  if (typeof oldestKey === 'string') {
+    cache.delete(oldestKey)
+  }
+}
+
+/**
+ * 写入一条工具响应缓存并触发 ref 更新（Map.set 不会被 Vue 的 ref 追踪，必须手动 triggerRef）。
+ * 仅「新增 key」且已满员时才淘汰最旧条目：覆盖更新已有 key 不增加容量，不应误淘汰
+ * 其他条目（满员时更新已有 key 若无条件淘汰，最旧条目会被无辜踢出）。
+ */
+export function setToolResponseCacheEntry(
+  state: Pick<ChatStoreState, 'toolResponseCache'>,
+  toolCallId: string,
+  response: Record<string, unknown>
+): void {
+  const cache = state.toolResponseCache.value
+  if (!cache.has(toolCallId) && cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
+    evictOldestToolResponseCacheEntry(cache)
+  }
+  cache.set(toolCallId, response)
+  triggerRef(state.toolResponseCache)
+}
+
+/**
+ * 批量写入工具响应缓存：循环内只做容量淘汰，末尾统一 triggerRef 一次，
+ * 避免每条写入各触发一次 todoSnapshot 级联重放（O(工具数 × 重放成本)）。
+ * 淘汰条件与单条写入一致：仅新增 key 且已满员时才淘汰最旧条目。
+ */
+export function setToolResponseCacheEntries(
+  state: Pick<ChatStoreState, 'toolResponseCache'>,
+  entries: Array<[string, Record<string, unknown>]>
+): void {
+  if (entries.length === 0) return
+  const cache = state.toolResponseCache.value
+  for (const [toolCallId, response] of entries) {
+    if (!cache.has(toolCallId) && cache.size >= TOOL_RESPONSE_CACHE_MAX_SIZE) {
+      evictOldestToolResponseCacheEntry(cache)
+    }
+    cache.set(toolCallId, response)
+  }
+  triggerRef(state.toolResponseCache)
 }
 
 /**
@@ -433,8 +484,8 @@ export function createChatState(): ChatStoreState {
   /** 消息排队队列（候选区） */
   const messageQueue = ref<QueuedMessage[]>([])
 
-  /** 上一次被 cancelStream 取消的 streamingMessageId */
-  const _lastCancelledStreamId = ref<string | null>(null)
+  /** 上一次被 cancelStream 取消的流标记（conversationId + messageId，stale 判定按会话归属，见 types.ts） */
+  const _lastCancelledStreamId = ref<{ conversationId: string; messageId: string } | null>(null)
 
   /** 最近一个因审批门闸停止的 streamId */
   const _lastApprovalGatedStreamId = ref<string | null>(null)
@@ -475,7 +526,11 @@ export function createChatState(): ChatStoreState {
   /** 后台对话的流式缓冲区 */
   const backgroundStreamBuffers = ref<Map<string, StreamChunk[]>>(new Map())
 
-  /** 工具响应缓存：toolCallId -> response，避免 O(M) 线性扫描 */
+  /**
+   * 工具响应缓存：toolCallId -> response，避免 O(M) 线性扫描。
+   * 写入一律经 state.ts 的 setToolResponseCacheEntry（带容量上限 TOOL_RESPONSE_CACHE_MAX_SIZE，
+   * 超限淘汰最旧条目），所有写入方共用同一约束。
+   */
   const toolResponseCache = ref<Map<string, Record<string, unknown>>>(new Map())
 
   /** functionResponse.id -> 消息下标，随消息写入维护的权威索引 */
