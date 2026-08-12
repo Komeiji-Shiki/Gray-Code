@@ -16,7 +16,11 @@ import { makeRecord } from '../__fixtures__/checkpointFixtures';
 
 interface Harness {
     service: CheckpointService;
-    checkpointManager: { createCheckpoint: jest.Mock };
+    checkpointManager: {
+        createCheckpoint: jest.Mock;
+        runWithCheckpointDeletionLock: jest.Mock;
+        deleteCheckpointsFromIndex: jest.Mock;
+    };
     conversationManager: {
         getHistoryRef: jest.Mock;
         getMessageNodeIdAt: jest.Mock;
@@ -38,7 +42,12 @@ function createHarness(): Harness {
                 options?: { messageNodeId?: string }
             ) =>
                 makeRecord({ conversationId, messageIndex, toolName, phase, messageNodeId: options?.messageNodeId })
-        )
+        ),
+        runWithCheckpointDeletionLock: jest.fn(async (
+            _conversationId: string,
+            task: (ownerId: string) => Promise<unknown>
+        ) => await task('outer-lock-owner')),
+        deleteCheckpointsFromIndex: jest.fn().mockResolvedValue(1)
     };
     const conversationManager = {
         getHistoryRef: jest.fn().mockResolvedValue([]),
@@ -172,6 +181,36 @@ describe('CheckpointService 反查并透传 messageNodeId', () => {
 
         expect(checkpointManager.createCheckpoint).toHaveBeenCalledWith(
             'conv-1', 2, 'write_file', 'before', { progress, messageNodeId: 'node-progress' }
+        );
+    });
+
+    test('runWithCheckpointDeletionLock 把截断回调和删除放在同一可重入锁 owner 下', async () => {
+        const { service, checkpointManager } = createHarness();
+        const order: string[] = [];
+        checkpointManager.runWithCheckpointDeletionLock.mockImplementation(async (
+            _conversationId: string,
+            task: (ownerId: string) => Promise<unknown>
+        ) => {
+            order.push('lock:start');
+            const result = await task('stable-owner');
+            order.push('lock:end');
+            return result;
+        });
+        checkpointManager.deleteCheckpointsFromIndex.mockImplementation(async () => {
+            order.push('checkpoints:deleted');
+            return 1;
+        });
+
+        const result = await service.runWithCheckpointDeletionLock('conv-1', async deleteLocked => {
+            order.push('history:truncated');
+            await deleteLocked(3, 'keep-cp', new Set(['deleted-node']));
+            return 7;
+        });
+
+        expect(result).toBe(7);
+        expect(order).toEqual(['lock:start', 'history:truncated', 'checkpoints:deleted', 'lock:end']);
+        expect(checkpointManager.deleteCheckpointsFromIndex).toHaveBeenCalledWith(
+            'conv-1', 3, 'keep-cp', new Set(['deleted-node']), 'stable-owner'
         );
     });
 });

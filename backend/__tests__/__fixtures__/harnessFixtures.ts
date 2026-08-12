@@ -350,8 +350,27 @@ export function createChatFlowHarness(options: {
         cancelAllPending: jest.fn().mockResolvedValue(undefined),
         resetUserInterrupt: jest.fn(),
     };
+    const deleteCheckpointsFromIndex = jest.fn().mockResolvedValue(undefined);
     const checkpointService = {
-        deleteCheckpointsFromIndex: jest.fn().mockResolvedValue(undefined),
+        deleteCheckpointsFromIndex,
+        runWithCheckpointDeletionLock: jest.fn(async (_conversationId: string, task: (
+            deleteFromIndex: (
+                startIndex: number,
+                excludeCheckpointId?: string,
+                lineageNodeIdsOverride?: ReadonlySet<string>
+            ) => Promise<void>
+        ) => Promise<unknown>) => await task(async (
+            startIndex: number,
+            excludeCheckpointId?: string,
+            lineageNodeIdsOverride?: ReadonlySet<string>
+        ) => {
+            await deleteCheckpointsFromIndex(
+                _conversationId,
+                startIndex,
+                excludeCheckpointId,
+                lineageNodeIdsOverride
+            );
+        })),
         createUserMessageCheckpoint: jest.fn().mockResolvedValue(null),
     };
     const toolIterationLoopService = {
@@ -385,6 +404,8 @@ export function createChatFlowHarness(options: {
     return {
         flowService,
         conversationManager,
+        checkpointService,
+        diffInterruptService,
         toolIterationLoopService,
         branchService: options.branchService as { syncGraphAfterHistoryDelete: jest.Mock }
     };

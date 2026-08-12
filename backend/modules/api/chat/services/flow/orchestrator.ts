@@ -27,6 +27,7 @@ import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort }
 import { RepeatedCallGuard } from '../repeatedCallGuard';
 import type { ToolExecutionFullResult, ToolExecutionProgressEvent } from '../ToolExecutionService';
 import type { Content, ContentPart } from '../../../../conversation/types';
+import { ConversationMessageChangedError } from '../../../../conversation/ConversationManager';
 import type { CheckpointRecord } from '../../../../checkpoint';
 import {
   agentMailbox,
@@ -992,18 +993,18 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     // H1：先等旧流完全退出，再执行删除（旧流取消结算若落在删除之后会把已删内容追加回来）
     await this.waitForOldStreamExit(conversationId);
 
-    // 2. 中断之前未完成的 diff 等待
-    this.diffInterruptService.markUserInterrupt(conversationId);
-
+    let diffInterruptMarked = false;
     try {
-      // M1：请求带 messageId 时校验索引处消息 id 一致，防止索引漂移误删其他消息。
-      // 注意：DeleteToMessageRequestData 未声明该字段（types.ts 仅允许为
-      // EditAndRetryRequestData 增加 messageId），这里按可选读取，旧前端不传时保持旧行为。
-      const requestMessageId = (request as { messageId?: string }).messageId;
+      // M1：请求带 messageId 时校验索引处消息 id 一致，防止后台子代理回执等并发写入
+      // 让旧索引误删其他消息。旧前端不传时保持旧行为。
+      const requestMessageId = request.messageId;
+      const expectedMessageId = typeof requestMessageId === 'string' && requestMessageId.trim() !== ''
+        ? requestMessageId.trim()
+        : undefined;
       // 决策 6：分支图同步已收敛进 ConversationManager.deleteToMessage（锁内捕获锚点、
       // 锁外经 graphSyncQueues 串行队列执行，与 deleteMessage/clearHistory 同模式）；
-      // 这里仅保留删除前的历史快照用于 M1 校验（校验与删除之间不得有其他写入，
-      // rejectAllPendingToolCalls 只追加）。
+      // 这里读取的历史只用于边界提示和 M1 快速预检。后续 diff/tool/checkpoint 清理均有
+      // await，期间允许其他写入，所以并发正确性由 manager 的锁内最终校验保证。
       const historyBeforeDelete = await this.conversationManager.getMessagesRaw(conversationId);
       // C-3：校验 targetIndex 边界。负数/越界此前会让删除语义错误（deleteToMessage 锁内
       // 会重新校验并抛错），这里在删除动作前显式拒绝，返回明确的 INVALID_TARGET_INDEX。
@@ -1016,9 +1017,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
           },
         };
       }
-      if (typeof requestMessageId === 'string' && requestMessageId.trim() !== '') {
+      if (expectedMessageId) {
         const targetMessage = historyBeforeDelete[targetIndex];
-        if (!targetMessage || targetMessage.id !== requestMessageId.trim()) {
+        if (!targetMessage || targetMessage.id !== expectedMessageId) {
           return {
             success: false,
             error: {
@@ -1029,30 +1030,88 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         }
       }
 
-      // 3. 取消所有待处理的 diff（关闭编辑器并恢复文件）
-      await this.diffInterruptService.cancelAllPending(conversationId);
-      
-      // 4. 拒绝所有未响应的工具调用并持久化
-      await this.conversationManager.rejectAllPendingToolCalls(conversationId);
-
-      await this.clearPendingApprovalGateIfPresent(conversationId, 'delete_to_message');
-
-      // 5. 删除关联的检查点（回档场景下保留刚用于恢复的存档点，支持反复回档）
-      await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex, preserveCheckpointId);
-
-      // 6. 删除消息（决策 6 分支图同步已收敛进 ConversationManager.deleteToMessage：锁内捕获
+      // 3. 先原子删除消息（决策 6 分支图同步已收敛进 ConversationManager.deleteToMessage：锁内捕获
       // deletedFromMessageId / lastKeptMessageId / deletedWasSummary，锁外经 withGraphSyncQueue
       // 会话级串行队列同步软删「该点之后」的整棵子树，删除响应返回前图一致；失败仅告警不阻断，
       // 主历史为唯一真源。此处不再直接调用 BranchService——避免与 manager 侧双同步，且与
       // deleteMessage/clearHistory/restoreSnapshot 的队列互斥语义统一（先入队的 append 图同步
-      // 必须先完成，再执行本次软删）。
-      const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);
+      // 必须先完成，再执行本次软删）。权威 messageId 校验必须是预检后的第一个持久化动作；
+      // 否则陈旧请求虽然最终返回 MESSAGE_CHANGED，却已经取消 diff、拒绝工具调用或清掉审批门。
+      let deletedCount = 0;
+      const deletionCapture = { deletedMessageIds: [] as string[] };
+      try {
+        // expectedMessageId 会在 ConversationManager 的 mutateContents 写锁内再次校验；
+      // 上面的预检只负责尽早失败，不能作为并发正确性的依据。
+        const runPostDeleteCleanup = async (label: string, action: () => Promise<unknown>): Promise<void> => {
+          try {
+            await action();
+          } catch (error) {
+            console.warn(`[ChatFlow] Post-delete cleanup failed (${label})`, error);
+          }
+        };
 
-      // 6.5 根据剩余历史重放 todo 工具，修正 ConversationMetadata.custom.todoList
-      await this.rebuildTodoListMetadataFromHistory(conversationId);
-      
-      // 7. 清除裁剪状态（回退后应重新计算裁剪）
-      await this.toolIterationLoopService.clearTrimState(conversationId);
+        // 检查点操作锁必须覆盖 transcript 截断到检查点删除的完整窗口，锁序为
+        // checkpoint → conversation。否则截断提交后、按旧 index 清理前，并发创建的
+        // before 检查点可能落到相同 index 并被本次旧请求误删。
+        await this.checkpointService.runWithCheckpointDeletionLock(
+          conversationId,
+          async deleteCheckpointsFromIndexLocked => {
+            deletedCount = await this.conversationManager.deleteToMessage(
+              conversationId,
+              targetIndex,
+              expectedMessageId,
+              deletionCapture,
+            );
+
+            // 权威删除已经提交后才广播用户中断；陈旧 messageId 请求若在这里之前被拒绝，
+            // 不应让仍在工作的 diff 观察到一次虚假的中断。
+            this.diffInterruptService.markUserInterrupt(conversationId);
+            diffInterruptMarked = true;
+
+            // lineage 使用 manager 在截断锁内捕获的被删消息 ID；检查点删除失败属于派生清理
+            // 失败，记录告警但不把已成功的 transcript 截断伪装成失败。
+            await runPostDeleteCleanup('checkpoints', () => deleteCheckpointsFromIndexLocked(
+              targetIndex,
+              preserveCheckpointId,
+              new Set(deletionCapture.deletedMessageIds),
+            ));
+          }
+        );
+      } catch (error) {
+        if (error instanceof ConversationMessageChangedError) {
+          return {
+            success: false,
+            error: {
+              code: 'MESSAGE_CHANGED',
+              message: t('modules.api.chat.errors.messageChanged'),
+            },
+          };
+        }
+        throw error;
+      }
+
+      // 4. 历史原子截断成功后再删除关联检查点。预检后的 await 若发生索引漂移，
+      // 上面的锁内校验会先返回 MESSAGE_CHANGED，不能提前提交不可回滚的 checkpoint 删除。
+      // lineage 必须使用 manager 在截断写锁内捕获的被删消息 ID；此时主历史已截断，
+      // 若重新从 history.slice(targetIndex) 推导会得到空集合并错误保留分支检查点。
+      // 从这里开始主历史已经提交，所有派生清理都降级为 best effort：其中任一失败若再向
+      // 调用方报“删除失败”，用户按旧 index 重试只会得到 MESSAGE_CHANGED，并永久跳过其余清理。
+      const runPostDeleteCleanup = async (label: string, action: () => Promise<unknown>): Promise<void> => {
+        try {
+          await action();
+        } catch (error) {
+          console.warn(`[ChatFlow] Post-delete cleanup failed (${label})`, error);
+        }
+      };
+
+      // 5. 删除已提交后，再清理本会话仍悬挂的编辑器、工具调用与审批状态。
+      await runPostDeleteCleanup('pending diffs', () => this.diffInterruptService.cancelAllPending(conversationId));
+      await runPostDeleteCleanup('pending tool calls', () => this.conversationManager.rejectAllPendingToolCalls(conversationId));
+      await runPostDeleteCleanup('approval gate', () => this.clearPendingApprovalGateIfPresent(conversationId, 'delete_to_message'));
+
+      // 6. 根据剩余历史重放 todo，并清除裁剪状态（回退后应重新计算裁剪）。
+      await runPostDeleteCleanup('todo metadata', () => this.rebuildTodoListMetadataFromHistory(conversationId));
+      await runPostDeleteCleanup('trim state', () => this.toolIterationLoopService.clearTrimState(conversationId));
 
       return {
         success: true,
@@ -1061,7 +1120,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     } finally {
       // 8. 重置 diff 中断标记：mark 之后的任何 await 抛错都必须清理，
       // 否则全局中断标记残留，无会话 diff 被误取消。
-      this.diffInterruptService.resetUserInterrupt(conversationId);
+      if (diffInterruptMarked) {
+        this.diffInterruptService.resetUserInterrupt(conversationId);
+      }
     }
   }
 }

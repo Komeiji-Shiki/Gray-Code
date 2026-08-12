@@ -100,4 +100,50 @@ describe('DelegatingTranscriptRepository.saveAndReload', () => {
         expect(loadCount).toBe(1); // 回读一次
         expect(result.map(textOf)).toEqual(['reloaded']);
     });
+
+    test('mutateContents 保存成功后、释放互斥锁前同步触发 onPersisted', async () => {
+        const order: string[] = [];
+        let stored = [content('old')];
+        const delegate: TranscriptRepositoryDelegate = {
+            async loadContents() { return stored; },
+            async saveContents(contents) {
+                order.push('saved');
+                stored = contents;
+                return contents;
+            }
+        };
+        const repo = new DelegatingTranscriptRepository(delegate, async task => {
+            order.push('lock:start');
+            try {
+                return await task();
+            } finally {
+                order.push('lock:end');
+            }
+        });
+
+        await repo.mutateContents(
+            history => [...history, content('new')],
+            persisted => order.push(`persisted:${persisted.length}`)
+        );
+
+        expect(order).toEqual(['lock:start', 'saved', 'persisted:2', 'lock:end']);
+    });
+
+    test('mutateContents 无变更或保存失败时不触发 onPersisted', async () => {
+        const hook = jest.fn();
+        const unchanged = new DelegatingTranscriptRepository({
+            async loadContents() { return [content('old')]; },
+            async saveContents(contents) { return contents; }
+        });
+        await unchanged.mutateContents(history => history, hook);
+        expect(hook).not.toHaveBeenCalled();
+
+        const failed = new DelegatingTranscriptRepository({
+            async loadContents() { return [content('old')]; },
+            async saveContents() { throw new Error('disk failed'); }
+        });
+        await expect(failed.mutateContents(history => [...history, content('new')], hook))
+            .rejects.toThrow('disk failed');
+        expect(hook).not.toHaveBeenCalled();
+    });
 });

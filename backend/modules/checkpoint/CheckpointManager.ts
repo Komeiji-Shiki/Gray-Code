@@ -790,6 +790,26 @@ export class CheckpointManager {
     private async deleteCheckpointInternal(conversationId: string, checkpointId: string): Promise<boolean> {
         return this.deletionService.deleteCheckpointInternal(conversationId, checkpointId);
     }
+
+    /**
+     * 为“截断对话记录并删除对应检查点”持有一把完整的检查点操作锁。
+     *
+     * 锁序固定为 checkpoint → conversation：调用方进入 task 后才可修改对话记录。
+     * task 会收到本次唯一 ownerId，随后调用 deleteCheckpointsFromIndex 时原样传回即可
+     * 走同 owner 可重入路径，避免等待自己持有的锁。
+     */
+    async runWithCheckpointDeletionLock<T>(
+        conversationId: string,
+        task: (ownerId: string) => Promise<T>
+    ): Promise<T> {
+        const ownerId = `checkpoint:${conversationId}:history-delete:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        return await checkpointOperationLockManager.runExclusive(
+            this.getCheckpointDeletionLockIds(),
+            'delete',
+            ownerId,
+            () => task(ownerId)
+        );
+    }
     
     /**
      * 删除指定消息索引及之后的检查点
@@ -799,33 +819,43 @@ export class CheckpointManager {
      * @param excludeCheckpointId 可选，保留该检查点（含其增量基链）。
      *                            用于回档场景：刚用于恢复的存档点应保留，支持反复回档到同一位置。
      */
-    async deleteCheckpointsFromIndex(conversationId: string, fromIndex: number, excludeCheckpointId?: string): Promise<number> {
+    async deleteCheckpointsFromIndex(
+        conversationId: string,
+        fromIndex: number,
+        excludeCheckpointId?: string,
+        lineageNodeIdsOverride?: ReadonlySet<string>,
+        lockOwnerId?: string
+    ): Promise<number> {
         // CPF-11: 删除操作注册进度/取消句柄（与 deleteAllCheckpoints/deleteCheckpointsBatch 对齐）
         const { operationId, signal, report } = this.beginOperation('delete', conversationId);
         try {
             return await checkpointOperationLockManager.runExclusive(
                 this.getCheckpointDeletionLockIds(),
                 'delete',
-                `checkpoint:${conversationId}:delete-from-index:${operationId}`,
+                lockOwnerId ?? `checkpoint:${conversationId}:delete-from-index:${operationId}`,
                 async () => {
                     // BCP-08 分支隔离：读取主历史 fromIndex 之后的节点 id 集合作为当前分支 lineage，
                     // 传给删除服务只删该分支的存档（分支 A 编辑消息时不误删分支 B 中 messageIndex
                     // >= fromIndex 的存档——B 的 BranchGraph 仍引用它们）。
                     // 读取失败（IO 异常）→ lineage 缺省，回退按索引删除的旧语义
                     //（与 deleteCheckpointsByNodeIds 缺省 referenceCounts 跳过引用计数闸门同模式）。
-                    let lineageNodeIds: Set<string> | undefined;
-                    try {
-                        const history = await this.conversationManager.getMessagesRaw(conversationId);
-                        lineageNodeIds = new Set(
-                            history.slice(Math.max(0, fromIndex))
-                                .map(m => m.id)
-                                .filter((id): id is string => typeof id === 'string' && id.length > 0)
-                        );
-                    } catch (err) {
-                        log.warn('delete_checkpoints_from_index_lineage_read_failed', {
-                            conversationId,
-                            error: err instanceof Error ? err.message : String(err)
-                        });
+                    let lineageNodeIds: Set<string> | undefined = lineageNodeIdsOverride === undefined
+                        ? undefined
+                        : new Set(lineageNodeIdsOverride);
+                    if (lineageNodeIdsOverride === undefined) {
+                        try {
+                            const history = await this.conversationManager.getMessagesRaw(conversationId);
+                            lineageNodeIds = new Set(
+                                history.slice(Math.max(0, fromIndex))
+                                    .map(m => m.id)
+                                    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+                            );
+                        } catch (err) {
+                            log.warn('delete_checkpoints_from_index_lineage_read_failed', {
+                                conversationId,
+                                error: err instanceof Error ? err.message : String(err)
+                            });
+                        }
                     }
                     try {
                         const count = await this.deletionService.deleteCheckpointsFromIndexInternal(

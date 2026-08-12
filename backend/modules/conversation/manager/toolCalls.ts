@@ -147,6 +147,7 @@ export class ConversationToolCallService {
     ): Promise<void> {
         const repository = this.manager.getTranscriptRepository(conversationId);
         let changed = false;
+        let graphSyncPromise: Promise<void> | undefined;
 
         // get→修改→replace 整体走仓储互斥执行器（withConversationWriteLock），
         // 与 settleFunctionResponses / mutateContents 串行：避免并发时后写覆盖先写，
@@ -235,9 +236,28 @@ export class ConversationToolCallService {
 
             // 无变更：返回原引用跳过写回（此时没有任何原地修改）
             return history;
+        }, () => {
+            // functionResponse 已经落盘、会话锁尚未释放：先把分支图重建任务接到图同步队列。
+            // 随后追加的新消息即使先写入 transcript，其图同步也只能排在本任务之后，避免
+            // 分支图遗漏刚插入的拒绝回执，切换分支时又把它静默丢掉。
+            if (changed) {
+                graphSyncPromise = this.manager.queueBranchGraphStructuralSync(
+                    conversationId,
+                    'tool_calls_rejected'
+                );
+            }
         });
 
         if (changed) {
+            if (graphSyncPromise) {
+                try {
+                    await graphSyncPromise;
+                } catch (error) {
+                    // 主历史是唯一真源；分支图后续读写仍有自校验。拒绝回执已经提交，不能因
+                    // 派生图同步失败把中止/删除流程误报为失败。
+                    console.warn('[ConversationToolCallService] Failed to sync branch graph after rejecting pending tools:', error);
+                }
+            }
             await this.manager.invalidateContextManagementState(conversationId, 'pending_tool_calls_rejected');
         }
     }

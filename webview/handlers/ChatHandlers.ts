@@ -59,7 +59,7 @@ function resolveBranchService(ctx: HandlerContext): BranchService {
  * 删除消息（删除到指定位置）
  */
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, targetIndex, preserveCheckpointId } = data || {};
+  const { conversationId, targetIndex, messageId, preserveCheckpointId } = data || {};
 
   // 入参校验优先于任何副作用（取消流）：非法参数直接返回明确错误码，不触发取消动作
   // （与 deleteSingleMessage 的校验口径一致）
@@ -67,6 +67,31 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
       || !Number.isInteger(targetIndex) || targetIndex < 0) {
     ctx.sendError(requestId, 'DELETE_MESSAGE_ERROR', 'Invalid conversationId or targetIndex');
     return;
+  }
+
+  // 带稳定消息 ID 的请求先做一次只读预检，再中止活跃流。陈旧窗口请求如果已经指向
+  // 另一条消息，不应仅仅因为用户点了“删除并重发”就把当前仍在生成的正确请求取消掉。
+  // 这里只负责快速拒绝；真正截断时 ConversationManager 仍会在会话写锁内再次核对 ID。
+  const expectedMessageId = typeof messageId === 'string' && messageId.trim() !== ''
+    ? messageId.trim()
+    : undefined;
+  if (expectedMessageId) {
+    try {
+      const currentMessage = await ctx.conversationManager.getMessage(conversationId, targetIndex);
+      if (!currentMessage || currentMessage.id !== expectedMessageId) {
+        ctx.sendResponse(requestId, {
+          success: false,
+          error: {
+            code: 'MESSAGE_CHANGED',
+            message: t('modules.api.chat.errors.messageChanged'),
+          },
+        });
+        return;
+      }
+    } catch (error: any) {
+      ctx.sendError(requestId, 'DELETE_MESSAGE_ERROR', error?.message || t('webview.errors.deleteMessageFailed'));
+      return;
+    }
   }
 
   // 先取消该对话的流式请求（如果有）
@@ -82,6 +107,9 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
     const result = await ctx.chatHandler.handleDeleteToMessage({
       conversationId,
       targetIndex,
+      // 前端按窗口消息生成稳定 id；后台子代理回执/工具结算可能让绝对索引在 IPC
+      // 往返期间漂移。透传 id 让后端在任何删除副作用前拒绝陈旧请求，不能只按 index。
+      messageId: expectedMessageId,
       preserveCheckpointId
     });
     ctx.sendResponse(requestId, result);

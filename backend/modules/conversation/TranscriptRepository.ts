@@ -20,6 +20,15 @@ import type { Content } from './types';
  */
 export type TranscriptContentsMutator = (contents: Content[]) => Content[];
 
+/**
+ * transcript 已经成功落盘、但仓储互斥锁尚未释放时执行的同步回调。
+ *
+ * 回调只能同步预留后续工作（例如把分支图同步任务接到会话级队列尾部），不能在这里
+ * await 再次获取同一把会话锁，否则会形成锁重入死锁。只有 mutator 确实产生新数组并且
+ * saveContents 成功时才会调用；无变更或保存失败都不会调用。
+ */
+export type TranscriptPersistedHook = (contents: ReadonlyArray<Content>) => void;
+
 export interface ITranscriptRepository {
     getContents(): Promise<Content[]>;
     /**
@@ -36,8 +45,11 @@ export interface ITranscriptRepository {
     appendContents(contents: Content[]): Promise<Content[]>;
     /** 整体替换。返回值：保存后的完整历史（真实落盘形态，见 saveAndReload）。 */
     replaceContents(contents: Content[]): Promise<Content[]>;
-    /** 变换后保存。返回值：保存后的完整历史（真实落盘形态，见 saveAndReload）。 */
-    mutateContents(mutator: TranscriptContentsMutator): Promise<Content[]>;
+    /**
+     * 变换后保存。返回值：保存后的完整历史（真实落盘形态，见 saveAndReload）。
+     * onPersisted 在保存成功后、互斥锁释放前同步执行，供调用方预留派生状态更新顺序。
+     */
+    mutateContents(mutator: TranscriptContentsMutator, onPersisted?: TranscriptPersistedHook): Promise<Content[]>;
 }
 
 export interface TranscriptRepositoryDelegate {
@@ -136,7 +148,10 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
         return await this.getContents();
     }
 
-    async mutateContents(mutator: TranscriptContentsMutator): Promise<Content[]> {
+    async mutateContents(
+        mutator: TranscriptContentsMutator,
+        onPersisted?: TranscriptPersistedHook
+    ): Promise<Content[]> {
         // 修改原因：删除、截断、批量追加等操作都属于“读取当前 transcript 后生成新数组”的同一语义，不应在调用方各写一套流程。
         // 修改方式：仓储统一负责 get -> mutate -> replace，mutator 只关注纯数组变换。
         // 修改目的：把 TranscriptMutation 这类纯函数自然接到统一入口，主聊天和 SubAgent 共享同一套变更方式。
@@ -149,7 +164,11 @@ export class DelegatingTranscriptRepository implements ITranscriptRepository {
             if (nextContents === currentContents) {
                 return currentContents; // 无变更，跳过写回
             }
-            return await this.saveAndReload(nextContents);
+            const persisted = await this.saveAndReload(nextContents);
+            // 必须在 exclusive 回调返回前同步触发：调用方可在此把派生状态任务接到自己的
+            // 串行队列尾部，确保随后取得 transcript 锁的 append 无法抢先预留队列位置。
+            onPersisted?.(persisted);
+            return persisted;
         });
     }
 }

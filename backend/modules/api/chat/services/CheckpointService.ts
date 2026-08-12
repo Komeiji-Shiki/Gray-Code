@@ -276,12 +276,63 @@ export class CheckpointService {
     async deleteCheckpointsFromIndex(
         conversationId: string,
         startIndex: number,
-        excludeCheckpointId?: string
+        excludeCheckpointId?: string,
+        lineageNodeIdsOverride?: ReadonlySet<string>
     ): Promise<void> {
         if (!this.checkpointManager) {
             return;
         }
-        await this.checkpointManager.deleteCheckpointsFromIndex(conversationId, startIndex, excludeCheckpointId);
+        if (lineageNodeIdsOverride === undefined) {
+            // 保持既有调用形状：普通分支切换仍是三参调用，只有 delete-to-message
+            // 在历史已经原子截断后才需要显式传入锁内捕获的 lineage。
+            await this.checkpointManager.deleteCheckpointsFromIndex(
+                conversationId,
+                startIndex,
+                excludeCheckpointId
+            );
+            return;
+        }
+        await this.checkpointManager.deleteCheckpointsFromIndex(
+            conversationId,
+            startIndex,
+            excludeCheckpointId,
+            lineageNodeIdsOverride
+        );
+    }
+
+    /**
+     * 在同一把检查点操作锁内执行对话截断，并提供一个可重入的检查点删除函数。
+     *
+     * 这让“读取旧索引 → 截断记录 → 按旧索引删除检查点”成为对其它检查点创建/删除互斥的
+     * 整体，避免截断后有新的 before 检查点插入同一索引，随后被旧请求误删。
+     */
+    async runWithCheckpointDeletionLock<T>(
+        conversationId: string,
+        task: (deleteFromIndex: (
+            startIndex: number,
+            excludeCheckpointId?: string,
+            lineageNodeIdsOverride?: ReadonlySet<string>
+        ) => Promise<void>) => Promise<T>
+    ): Promise<T> {
+        if (!this.checkpointManager) {
+            return await task(async () => undefined);
+        }
+        return await this.checkpointManager.runWithCheckpointDeletionLock(
+            conversationId,
+            async lockOwnerId => await task(async (
+                startIndex,
+                excludeCheckpointId,
+                lineageNodeIdsOverride
+            ) => {
+                await this.checkpointManager!.deleteCheckpointsFromIndex(
+                    conversationId,
+                    startIndex,
+                    excludeCheckpointId,
+                    lineageNodeIdsOverride,
+                    lockOwnerId
+                );
+            })
+        );
     }
 }
 

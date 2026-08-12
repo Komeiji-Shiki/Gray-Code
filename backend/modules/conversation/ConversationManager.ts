@@ -62,6 +62,29 @@ export type {
 
 export { deterministicNodeId } from './manager/nodeId';
 
+/**
+ * deleteToMessage 的乐观并发校验失败。
+ *
+ * 调用方可以在锁外做一次快速预检，但最终的 message id 校验必须与截断共用
+ * TranscriptRepository.mutateContents 的会话写锁；否则预检后的 await 会留下索引漂移窗口。
+ */
+export class ConversationMessageChangedError extends Error {
+    readonly code = 'MESSAGE_CHANGED' as const;
+
+    constructor(
+        readonly expectedMessageId: string,
+        readonly actualMessageId: string | undefined
+    ) {
+        super(`Conversation message changed: expected ${expectedMessageId}, got ${actualMessageId ?? '<missing>'}`);
+        this.name = 'ConversationMessageChangedError';
+    }
+}
+
+/** deleteToMessage 在同一写锁快照中捕获的删除区间信息。 */
+export interface DeleteToMessageCapture {
+    deletedMessageIds: string[];
+}
+
 
 
 
@@ -250,6 +273,26 @@ export class ConversationManager {
             }
         });
         await current;
+    }
+
+    /**
+     * transcript 发生结构性变更后，把现有分支图按当前主历史重新对齐。
+     *
+     * 调用方通常在 TranscriptRepository.mutateContents 的 onPersisted 回调中同步调用本方法：
+     * 方法本身会立即把任务接到 graphSyncQueues 队尾并返回 Promise，从而在会话写锁释放前
+     * 预留顺序；真正的分支图更新稍后再顺序获取会话锁，不会发生锁重入。
+     */
+    queueBranchGraphStructuralSync(
+        conversationId: string,
+        reason: 'tool_calls_rejected'
+    ): Promise<void> {
+        const branchService = getGlobalBranchService();
+        if (!branchService) {
+            return Promise.resolve();
+        }
+        return this.withGraphSyncQueue(conversationId, async () => {
+            await branchService.syncMainHistoryAfterStructuralMutation(conversationId, reason);
+        });
     }
 
     /**
@@ -1598,6 +1641,7 @@ export class ConversationManager {
      *
      * @param conversationId 对话 ID
      * @param targetIndex 目标消息索引（删除到这个索引为止，包括该消息）
+     * @param expectedMessageId 可选的目标消息稳定 ID；在截断写锁内做最终并发校验
      * @returns 删除的消息数量
      *
      * @example
@@ -1609,7 +1653,9 @@ export class ConversationManager {
      */
     async deleteToMessage(
         conversationId: string,
-        targetIndex: number
+        targetIndex: number,
+        expectedMessageId?: string,
+        capture?: DeleteToMessageCapture
     ): Promise<number> {
         const repository = this.getTranscriptRepository(conversationId);
         // 修改原因：重试/删除到指定消息的语义是从目标索引开始截断，不能在主对话和 SubAgent 子对话各写一套实现。
@@ -1628,9 +1674,30 @@ export class ConversationManager {
         let deletedFromMessageId: string | null = null;
         let lastKeptMessageId: string | null = null;
         let deletedWasSummary = false;
+        const normalizedExpectedMessageId = expectedMessageId?.trim();
+        let graphSyncPromise: Promise<void> | undefined;
         const nextHistory = await repository.mutateContents(currentHistory => {
-            if (targetIndex < 0 || targetIndex >= currentHistory.length) {
+            if (!Number.isInteger(targetIndex) || targetIndex < 0) {
                 throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
+            }
+            // M1：这是 messageId 的最终权威校验，必须和 truncateFrom 位于同一个
+            // mutateContents 写锁内。编排层预检之后会等待 diff/tool/checkpoint 清理，期间
+            // 任何前序插入或删除都会让旧 targetIndex 指向另一条消息；锁内不匹配时拒绝
+            // 整次 mutation，绝不能按漂移后的索引截断。
+            const actualMessageId = currentHistory[targetIndex]?.id;
+            if (normalizedExpectedMessageId && actualMessageId !== normalizedExpectedMessageId) {
+                throw new ConversationMessageChangedError(normalizedExpectedMessageId, actualMessageId);
+            }
+            // 不带 expectedMessageId 的旧调用仍维持原有越界错误；带 expectedMessageId 时，
+            // 并发删除导致 index 消失属于 MESSAGE_CHANGED，已由上面的 missing id 分支区分。
+            if (targetIndex >= currentHistory.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
+            }
+            if (capture) {
+                capture.deletedMessageIds = currentHistory
+                    .slice(targetIndex)
+                    .map(message => message.id)
+                    .filter((id): id is string => typeof id === 'string' && id.length > 0);
             }
             deletedFromMessageId = currentHistory[targetIndex]?.id ?? null;
             lastKeptMessageId = targetIndex > 0 ? (currentHistory[targetIndex - 1]?.id ?? null) : null;
@@ -1638,11 +1705,41 @@ export class ConversationManager {
             const next = truncateFrom(currentHistory, targetIndex);
             deleteCount = currentHistory.length - next.length;
             return next;
+        }, () => {
+            // 保存已成功、会话锁尚未释放：此刻把删除同步接到图队列尾部，确保随后 append
+            // 虽可在本次锁释放后提交 transcript，但它的图同步只能排在本次删除之后。
+            if (!deletedFromMessageId) {
+                return;
+            }
+            const branchService = getGlobalBranchService();
+            if (!branchService) {
+                return;
+            }
+            graphSyncPromise = this.withGraphSyncQueue(conversationId, async () => {
+                if (deletedWasSummary) {
+                    await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
+                } else {
+                    await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
+                        lastKeptMessageId,
+                    });
+                }
+            });
         });
         if (deleteCount > 0) {
             // HIS-11：结构性删除后同步 custom.messageCount（防对话列表 messageCount 漂移）
             await this.syncMessageCountAfterStructuralChange(conversationId, nextHistory.length);
-            await this.invalidateContextManagementState(conversationId, 'history_truncated');
+            // 主 transcript 已在上面的 mutateContents 中提交；上下文管理 metadata 是可重建的
+            // 派生状态。这里若写盘失败不能把已成功的删除伪装成失败，否则编排层不会继续清理
+            // checkpoint，而用户按旧索引重试也无法恢复这次部分提交。
+            try {
+                await this.invalidateContextManagementState(conversationId, 'history_truncated');
+            } catch (error) {
+                log.warn('delete_to_message_context_metadata_invalidation_failed', {
+                    conversationId,
+                    targetIndex,
+                    error: (error as Error)?.message ?? String(error),
+                });
+            }
 
             // 决策 6：删除成功后同步软删分支图「该点之后」的整棵子树（TREE-09 软删语义：
             // 节点标记 deleted + deletedAt，不物理移除 sidecar；活跃尾同步回退到保留锚点）。
@@ -1658,26 +1755,15 @@ export class ConversationManager {
             // 删除前已入队的 append 图同步必须先完成，再执行本次软删——不经队列直接同步时，
             // 先入队的 append 任务会在删除同步完成后把已删消息挂回图（幻影节点，切分支时"复活"）。
             // 队列内按入队顺序串行，图活跃路径与主历史严格一致。
-            if (deletedFromMessageId) {
-                const branchService = getGlobalBranchService();
-                if (branchService) {
-                    try {
-                        await this.withGraphSyncQueue(conversationId, async () => {
-                            if (deletedWasSummary) {
-                                await branchService.syncMainHistoryAfterStructuralMutation(conversationId, 'summary_deleted');
-                            } else {
-                                await branchService.syncGraphAfterHistoryDelete(conversationId, deletedFromMessageId, {
-                                    lastKeptMessageId,
-                                });
-                            }
-                        });
-                    } catch (error) {
-                        log.warn('branch_delete_to_message_sync_failed', {
-                            conversationId,
-                            targetIndex,
-                            error: (error as Error)?.message ?? String(error),
-                        });
-                    }
+            if (graphSyncPromise) {
+                try {
+                    await graphSyncPromise;
+                } catch (error) {
+                    log.warn('branch_delete_to_message_sync_failed', {
+                        conversationId,
+                        targetIndex,
+                        error: (error as Error)?.message ?? String(error),
+                    });
                 }
             }
         }

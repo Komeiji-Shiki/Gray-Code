@@ -10,6 +10,7 @@
  */
 
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
+import { ConversationManager, MemoryStorageAdapter } from '../../modules/conversation';
 import type { Content } from '../../modules/conversation/types';
 import { createChatFlowHarness } from '../__fixtures__/harnessFixtures';
 
@@ -148,23 +149,101 @@ describe('编辑/删除接口消息索引 id 校验', () => {
             const result = await flowService.handleDeleteToMessage({ conversationId: 'c1', targetIndex: 2 });
 
             expect(result).toEqual({ success: true, deletedCount: 0 });
-            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith('c1', 2);
+            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith(
+                'c1', 2, undefined, { deletedMessageIds: [] }
+            );
         });
 
         test('携带匹配 messageId 时正常删除', async () => {
-            const { flowService, conversationManager } = createChatFlowHarness();
+            const { flowService, conversationManager, checkpointService } = createChatFlowHarness();
             conversationManager.getMessagesRaw.mockResolvedValue(history);
+            conversationManager.deleteToMessage.mockImplementation(async (
+                _conversationId: string,
+                targetIndex: number,
+                _expectedMessageId?: string,
+                capture?: { deletedMessageIds: string[] },
+            ) => {
+                if (capture) capture.deletedMessageIds = history.slice(targetIndex).map(message => message.id!);
+                return history.length - targetIndex;
+            });
 
             const result = await flowService.handleDeleteToMessage({
                 conversationId: 'c1',
                 targetIndex: 2,
-                // 注意：DeleteToMessageRequestData 未声明 messageId（types.ts 仅允许为
-                // EditAndRetryRequestData 增加该字段），实现侧按可选读取；测试经断言透传。
                 messageId: 'u1',
-            } as never);
+            });
 
             expect(result.success).toBe(true);
-            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith('c1', 2);
+            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith(
+                'c1', 2, 'u1', { deletedMessageIds: ['u1', 'm1'] }
+            );
+            expect(checkpointService.deleteCheckpointsFromIndex).toHaveBeenCalledWith(
+                'c1', 2, undefined, new Set(['u1', 'm1'])
+            );
+        });
+
+        test('预检快照返回前发生前序删除时，锁内 messageId 校验拒绝漂移且不提交清理副作用', async () => {
+            const storage = new MemoryStorageAdapter();
+            const realManager = new ConversationManager(storage);
+            await realManager.createConversation('c1', 'race');
+            await storage.saveHistory('c1', history);
+
+            const { flowService, conversationManager, checkpointService, diffInterruptService } = createChatFlowHarness();
+            let firstRead = true;
+            conversationManager.getMessagesRaw.mockImplementation(async (conversationId: string) => {
+                const staleSnapshot = await realManager.getMessagesRaw(conversationId);
+                if (firstRead) {
+                    firstRead = false;
+                    // 在预检取得快照后、快照交给编排层前提交另一写操作：u1 从 index 2
+                    // 漂移到 index 1。编排层会基于旧快照通过预检，但 manager 锁内必须拒绝。
+                    await realManager.deleteMessage(conversationId, 0);
+                }
+                return staleSnapshot;
+            });
+            conversationManager.deleteToMessage.mockImplementation(
+                (
+                    conversationId: string,
+                    targetIndex: number,
+                    expectedMessageId?: string,
+                    capture?: { deletedMessageIds: string[] },
+                ) => realManager.deleteToMessage(conversationId, targetIndex, expectedMessageId, capture)
+            );
+
+            const result = await flowService.handleDeleteToMessage({
+                conversationId: 'c1',
+                targetIndex: 2,
+                messageId: 'u1',
+            });
+
+            expect(result).toEqual({
+                success: false,
+                error: { code: 'MESSAGE_CHANGED', message: expect.any(String) },
+            });
+            // 只保留竞态写入本身的效果；若仍按旧 index 2 截断，m1 会被错误删除。
+            expect((await realManager.getMessagesRaw('c1')).map(message => message.id))
+                .toEqual(['m0', 'u1', 'm1']);
+            expect(conversationManager.deleteToMessage).toHaveBeenCalledWith(
+                'c1', 2, 'u1', { deletedMessageIds: [] }
+            );
+            expect(diffInterruptService.markUserInterrupt).not.toHaveBeenCalled();
+            expect(diffInterruptService.cancelAllPending).not.toHaveBeenCalled();
+            expect(diffInterruptService.resetUserInterrupt).not.toHaveBeenCalled();
+            expect(conversationManager.rejectAllPendingToolCalls).not.toHaveBeenCalled();
+            expect(checkpointService.deleteCheckpointsFromIndex).not.toHaveBeenCalled();
+        });
+
+        test('历史截断提交后 metadata 失效写入失败不伪装成删除失败', async () => {
+            const storage = new MemoryStorageAdapter();
+            const realManager = new ConversationManager(storage);
+            await realManager.createConversation('c_metadata', 'metadata failure');
+            await storage.saveHistory('c_metadata', history);
+            jest.spyOn(realManager as any, 'invalidateContextManagementState')
+                .mockRejectedValueOnce(new Error('metadata disk failure'));
+
+            await expect(realManager.deleteToMessage('c_metadata', 2, 'u1'))
+                .resolves.toBe(2);
+            expect((await realManager.getMessagesRaw('c_metadata')).map(message => message.id))
+                .toEqual(['u0', 'm0']);
         });
 
         test('携带不匹配 messageId 时返回 MESSAGE_CHANGED，不执行删除', async () => {
@@ -175,7 +254,7 @@ describe('编辑/删除接口消息索引 id 校验', () => {
                 conversationId: 'c1',
                 targetIndex: 2,
                 messageId: 'u1-drifted',
-            } as never);
+            });
 
             expect(result).toEqual({
                 success: false,

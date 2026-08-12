@@ -8,7 +8,7 @@
  * - 可直接用于 Gemini API 调用
  */
 
-export { ConversationManager } from './ConversationManager';
+export { ConversationManager, ConversationMessageChangedError } from './ConversationManager';
 export { FileUsageIndexStore } from './UsageIndexStore';
 export {
     IStorageAdapter,
