@@ -21,6 +21,18 @@
 -->
 
 ## [Unreleased]
+### Fixed：后台任务完成回执/任务小气泡收不到——taskEvent 推送格式与前端订阅契约不符
+  - **根因**：PUSH_MESSAGE_NAMES 契约规定 taskEvent 是 command 信封内的命令名
+    （{ type: 'command', command: 'taskEvent', data }），前端 backgroundTaskStore 也按此订阅
+    （onExtensionCommand('taskEvent')）；但 VSCode 版 ChatViewProvider 与桌面版 BackendHost
+    实际都用 postMessage 直发（type: 'taskEvent'），两宿主与契约不符——
+    后台任务（execute_command background / 后台 subagent / 图片生成）完成事件到不了任务条/回执链路：
+    BackgroundTaskBar 小气泡永不出现、完成回执不回流对话，用户收不到后台任务完成的通知。
+    （仅 App.vue 的声音提醒走 message.type === 'taskEvent' 直发匹配，恰好能收到，掩盖了问题。）
+  - **修复**：ChatViewProvider.handleTaskEvent 改走 sendCommand（与 terminalOutput/dependencyProgress
+    等推送一致，含 ready 队列）；桌面版 BackendHost 改 postToRenderer('command', 'taskEvent', event)；
+    App.vue 声音提醒改匹配 command 信封（保留旧直发格式兼容）。
+  - 测试：backgroundTaskEventRouting 5 例（start→running、complete→completed 等）+ 全量 typecheck 通过。
 
 ### Merged：合入上游 7df7be8c..e12da760 共 8 个 commits（PR#37 链路补齐/通知聚焦/Windows toast/diff 预热/settings 存储/tool-loop）
   - **PR#37 链路补齐（e12da760）**：list 回显 + updateGlobalConfig 校验（-1 或正整数）+ 工具描述兜底跟随全局动态读取——适配到本地 defaultMaxRuntime 命名（不引入上游 defaultMaxRuntimeSeconds）；

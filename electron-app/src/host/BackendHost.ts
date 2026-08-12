@@ -651,7 +651,10 @@ export class BackendHost {
     this.unsubscribers.push(
       onTerminalOutput((event: TerminalOutputEvent) => this.postToRenderer('message', 'terminalOutput', event)),
       onImageGenOutput((event: ImageGenOutputEvent) => this.postToRenderer('message', 'imageGenOutput', event)),
-      TaskManager.onTaskEvent((event: TaskEvent) => this.postToRenderer('message', 'taskEvent', event))
+      // 修改原因：taskEvent 必须走 command 信封（{ type: 'command', command: 'taskEvent', data }）
+      // ——前端 backgroundTaskStore 用 onExtensionCommand('taskEvent') 订阅，之前发
+      // type: 'taskEvent' 直发导致后台任务小气泡与完成回执永远收不到。
+      TaskManager.onTaskEvent((event: TaskEvent) => this.postToRenderer('command', 'taskEvent', event))
     );
 
     this.channelManager.setMcpManager(this.mcpManager);

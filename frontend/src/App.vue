@@ -843,7 +843,11 @@ onMounted(async () => {
 
     // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成、后台子代理等）。
     // 后台子代理（background_subagent）事件走子代理独立提示音开关。
-    if (message.type === 'taskEvent') {
+    // 注意：taskEvent 是 command 信封命令名（{ type: 'command', command: 'taskEvent', data }），
+    // 后端 VSCode/Electron 两宿主均已按契约发送；保留对旧直发格式（type: 'taskEvent'）的
+    // 兼容匹配，避免旧扩展/缓存面板漏播。
+    if ((message.type === 'command' && message.command === 'taskEvent')
+        || message.type === 'taskEvent') {
       const event = message.data
       const eventRole = event?.taskType === 'background_subagent' ? 'subagent' : undefined
       if (event?.type === 'complete') {

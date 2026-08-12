@@ -638,10 +638,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
         if (!this._view) return;
         
-        this._view.webview.postMessage({
-            type: PUSH_MESSAGE_NAMES.taskEvent,
-            data: event
-        });
+        // 修改原因：taskEvent 是 PUSH_MESSAGE_NAMES 契约中的 command 信封命令名
+        // （{ type: 'command', command: 'taskEvent', data }），此前用 postMessage 直发
+        // （type: 'taskEvent'）导致前端 backgroundTaskStore（onExtensionCommand）永远收不到
+        // ——后台任务小气泡（BackgroundTaskBar）与完成回执不出现。
+        // 修改方式：与 terminalOutput / dependencyProgress 等推送一致走 sendCommand。
+        this.sendCommand(PUSH_MESSAGE_NAMES.taskEvent, event);
     }
     
     /**
