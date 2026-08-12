@@ -2,6 +2,8 @@
 
 <!--
   ⚠️ 维护提醒：`## [Unreleased]
+
+## [1.7.15dev] - 2026-08-12
 ### Fixed：远程控制 V7.2——图标零面积路径修复（plus/close/check/chevronDown/folderUp）+ 渠道表单死控件 + 思考关闭开关 + 分页/竞态加固
   - **修复图标渲染缺失（用户报告：关闭对话 ✕、新建对话 ＋、关闭设置 ✕ 及其他图标不可见）**：根因是 ICONS 注册表中 plus/close（及 check/chevronDown/folderUp）使用零面积线段路径（如 M12 5v14M5 12h14），而全部 SVG 仅设 fill="currentColor" 无 stroke——fill 对零面积路径不产生任何像素，图标在所有配色模式下都不可见（真实 Chromium 像素级验证）。已全部改为 Material 实心闭合路径（plus/close 同时修正 remoteControlUi.ts 内 5 处静态内联 SVG），与其余 53 个填充型图标一致；新增回归断言（静态 ✕/＋ 与动态 tab-close/tab-add 路径必须含闭合 z）。
   - **浅色主题变量补齐**：@media (prefers-color-scheme: light) 的 :root 块此前缺失 --vscode-icon-foreground、--vscode-toolbar-hoverBackground、--vscode-toolbar-activeBackground、--vscode-focusBorder、--vscode-editor-selectionBackground、--vscode-scrollbarSlider-*、--vscode-button-foreground、--vscode-inputValidation-warningForeground、--vscode-tab-activeBorderTop 共 10 个变量（浅色下回退深色值导致图标/交互色与白色背景混淆）；同时补齐从未定义的 --vscode-textCodeBlock-background/--vscode-editorHoverWidget-background（此前仅靠 fallback）。
