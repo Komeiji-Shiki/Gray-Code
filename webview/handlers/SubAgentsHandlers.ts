@@ -72,8 +72,9 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const generalWorkerEnabled = config.generalWorkerEnabled !== false;
     const defaultMaxIterations = config.defaultMaxIterations ?? 80;
     const queueTimeoutSeconds = config.queueTimeoutSeconds ?? 600;
+    const defaultMaxRuntimeSeconds = config.defaultMaxRuntimeSeconds ?? 1800;
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds });
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds, defaultMaxRuntimeSeconds });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
   }
@@ -456,6 +457,17 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
         return;
       }
       updates.queueTimeoutSeconds = v;
+    }
+
+    // 全局默认运行时间上限（秒，-1 表示无限制，0 视为非法——与 queueTimeoutSeconds 校验一致）
+    if (data.defaultMaxRuntimeSeconds !== undefined) {
+      const v = data.defaultMaxRuntimeSeconds;
+      if (typeof v !== 'number' || !Number.isFinite(v)
+          || !Number.isInteger(v) || (v !== -1 && v < 1)) {
+        ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'defaultMaxRuntimeSeconds must be -1 or a positive integer');
+        return;
+      }
+      updates.defaultMaxRuntimeSeconds = v;
     }
 
     if (Object.keys(updates).length > 0) {

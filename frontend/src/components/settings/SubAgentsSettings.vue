@@ -427,7 +427,7 @@ function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | '
   globalNumberError.value = ''
   if (field === 'maxConcurrentAgents') {
     maxConcurrentAgents.value = parsed
-       void updateGlobalConfig('maxConcurrentAgents', parsed)
+    void updateGlobalConfig('maxConcurrentAgents', parsed)
   } else if (field === 'defaultMaxIterations') {
     defaultMaxIterations.value = parsed
     void updateGlobalConfig('defaultMaxIterations', parsed)
@@ -713,7 +713,8 @@ onMounted(async () => {
             <span class="field-hint">{{ t('components.settings.subagents.queueTimeoutSecondsHint') }}</span>
           </div>
           <div class="form-group flex-1">
-            <label>{{ t('components.settings.subagents.defaultMaxRuntimeSeconds') }}</label>            <input
+            <label>{{ t('components.settings.subagents.defaultMaxRuntimeSeconds') }}</label>
+            <input
               type="number"
               :value="defaultMaxRuntimeSeconds"
               min="-1"

@@ -143,7 +143,7 @@ describe('SubAgent executor 终态收敛', () => {
                 agentType: 'tester',
                 prompt: 'x',
                 runId: 'run_timer'
-   });
+            });
 
             expect(result.runId).toBe('run_timer');
             // 泄漏的话这里会残留一个 500ms 轮询 interval
