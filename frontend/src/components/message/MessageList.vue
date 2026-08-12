@@ -1359,38 +1359,3 @@ function handleContinue() {
   border-radius: 4px;
 }
 </style>
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.restore-unbacked-tip {
-  margin-top: 10px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
-}
-</style>
-.restore-unbacked-tip {
-  margin-top: 10px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
-}
-</style>
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.restore-unbacked-tip {
-  margin-top: 10px;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-  border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
-}
-</style>

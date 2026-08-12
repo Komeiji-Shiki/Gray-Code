@@ -6,7 +6,7 @@
  * custom `graycode://` protocol (so fetch()/audio work without CORS issues).
  */
 
-import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme } from 'electron';
+import { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, powerMonitor } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 // BackendHost 体积大（内联整个 backend + webview 路由），启动路径必须懒加载：
@@ -208,6 +208,13 @@ Logger.setLevel(LogLevel.INFO);
 
 let mainWindow: BrowserWindow | null = null;
 let backendHost: BackendHost | null = null;
+
+// ===== 电源/冻结防御（Windows 空闲挂起：前端壳无响应而后端正常） =====
+// powerMonitor 监听只注册一次（macOS activate 重建窗口时跳过重复注册）；
+// rendererProbeTimer/rendererProbeFailures 为渲染进程健康自检探针状态。
+let powerMonitorListenersInstalled = false;
+let rendererProbeTimer: NodeJS.Timeout | null = null;
+let rendererProbeFailures = 0;
 
 const workspaceStateFile = () => path.join(app.getPath('userData'), 'workspace.json');
 
@@ -924,6 +931,33 @@ function createWindow(): void {
     mainWindow = null;
   });
 
+  // 渲染进程「冻结」（非崩溃）检测：Windows 电源事件（睡眠/Modern Standby/显示器关闭/
+  // 效率模式）可能挂起渲染进程线程——主进程与后端仍正常，但界面完全无响应，且
+  // render-process-gone 不会触发（进程没死）。冻结 5s 后自动 reload 恢复；
+  // 与崩溃计数（rendererCrashCount）分开，冻结恢复不参与「连续崩溃弹对话框」判定。
+  let frozenReloadTimer: NodeJS.Timeout | null = null;
+  mainWindow.webContents.on('unresponsive', () => {
+    console.error('[main] renderer unresponsive (frozen), auto-reload scheduled in 5s');
+    if (frozenReloadTimer !== null) clearTimeout(frozenReloadTimer);
+    frozenReloadTimer = setTimeout(() => {
+      frozenReloadTimer = null;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        console.error('[main] renderer still frozen after 5s, auto reloading');
+        mainWindow.webContents.reload();
+      }
+    }, 5000);
+  });
+  mainWindow.webContents.on('responsive', () => {
+    if (frozenReloadTimer !== null) {
+      clearTimeout(frozenReloadTimer);
+      frozenReloadTimer = null;
+      console.error('[main] renderer responsive again');
+    }
+  });
+  mainWindow.on('closed', () => {
+    if (frozenReloadTimer !== null) clearTimeout(frozenReloadTimer);
+  });
+
   // 渲染进程崩溃处理：记录崩溃原因后先自动 reload 恢复（最多 2 次）；若仍连续崩溃
   // （确定性崩溃 reload 也救不回来），改弹错误对话框由用户选择「重载」或「退出」，
   // 避免无限 reload 循环（计数不随 did-finish-load 重置，防刷屏式崩溃自愈假象）。
@@ -1478,6 +1512,67 @@ if (gotSingleInstanceLock) {
       createBackend();
       createWindow();
 
+      // ===== 电源事件恢复 + 渲染进程健康自检（Windows 空闲挂起防御） =====
+      // 症状：空闲太久（显示器关闭/Modern Standby/锁屏/效率模式）后前端壳无响应，后端正常——
+      // Windows 会冻结渲染进程线程并丢失 GPU 合成上下文，恢复后界面不重绘且输入无效。
+      // 三层防御：
+      //  1) powerMonitor resume/lock-screen/unlock-screen → 强制合成重绘 + 通知前端重排；
+      //  2) 30s 周期 executeJavaScript 探针 → 无电源事件（仅进程被挂起）时也能发现并自动 reload；
+      //  3) webContents unresponsive → 5s 自动 reload（见 createWindow，冻结兜底）。
+      if (!powerMonitorListenersInstalled) {
+        powerMonitorListenersInstalled = true;
+        const reviveRenderer = () => {
+          rendererProbeFailures = 0;
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+          // 强制合成器重绘（GPU 上下文丢失后恢复）
+          mainWindow.webContents.invalidate();
+          // 通知前端重排：CustomScrollbar 监听 window resize → 重算滚动条与布局；
+          // 消息列表/虚拟窗口同步刷新（命令信封与 BackendHost 推送格式一致）
+          mainWindow.webContents.send('graycode:backend-to-renderer', {
+            type: 'command',
+            command: 'host.powerResume',
+            data: {}
+          });
+        };
+        powerMonitor.on('resume', () => {
+          diagLog('power-resume');
+          reviveRenderer();
+        });
+        // Windows 锁屏/解锁（睡眠常伴随锁屏；解锁恢复时同样需要 revive）
+        powerMonitor.on('lock-screen', () => diagLog('power-lock'));
+        powerMonitor.on('unlock-screen', () => {
+          diagLog('power-unlock');
+          reviveRenderer();
+        });
+      }
+      // 渲染进程健康探针：executeJavaScript 必须由渲染进程执行才能 resolve；
+      // 线程被系统挂起时 2s 超时 → 连续 2 次判定冻结 → 自动 reload（无需用户交互）。
+      if (rendererProbeTimer === null) {
+        rendererProbeTimer = setInterval(() => {
+          if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+          const wc = mainWindow.webContents;
+          // 页面加载中不探测（避免误报）；冻结后 reload 是自愈手段，探针本身无副作用
+          if (wc.isLoading()) return;
+          void Promise.race([
+            wc.executeJavaScript('1', true).then(() => true).catch(() => false),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000))
+          ]).then((ok) => {
+            if (!ok) {
+              rendererProbeFailures++;
+              if (rendererProbeFailures >= 2) {
+                rendererProbeFailures = 0;
+                console.error('[main] renderer frozen (probe failed twice), auto reloading');
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                  mainWindow.webContents.reload();
+                }
+              }
+            } else {
+              rendererProbeFailures = 0;
+            }
+          });
+        }, 30_000);
+      }
+
       app.on('activate', () => {
         // macOS：点击 Dock 图标时若无窗口则重建；已有窗口时恢复/聚焦。
         // BackendHost 与 IPC 监听只创建一次，这里只重建窗口，避免双重注册。
@@ -1525,6 +1620,10 @@ if (gotSingleInstanceLock) {
     ]).catch(() => {
       // dispose 抛错不阻塞退出
     }).finally(() => {
+      if (rendererProbeTimer !== null) {
+        clearInterval(rendererProbeTimer);
+        rendererProbeTimer = null;
+      }
       app.exit(0);
     });
   });

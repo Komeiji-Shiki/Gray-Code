@@ -832,6 +832,14 @@ onMounted(async () => {
           // 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播放）
           setVscodeWindowFocused(message.data?.focused === true)
           break
+        case 'host.powerResume':
+          // 系统睡眠/挂起（Windows Modern Standby / 显示器关闭 / 锁屏）恢复：
+          // 主进程已强制合成重绘；这里补前端重排——CustomScrollbar 监听 window resize
+          // 会重算滚动条与布局（含吸底自愈），消息列表/虚拟窗口同步刷新；
+          // 同时恢复窗口焦点语义（解锁后视为聚焦，避免恢复瞬间提示音轰炸）
+          setVscodeWindowFocused(true)
+          window.dispatchEvent(new Event('resize'))
+          break
       }
     }
 

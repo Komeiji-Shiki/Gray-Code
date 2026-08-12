@@ -1924,10 +1924,4 @@ onMounted(() => {
     background-color: transparent;
   }
 }
-</style>ground-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
-  }
-  100% {
-    background-color: transparent;
-  }
-}
 </style>
