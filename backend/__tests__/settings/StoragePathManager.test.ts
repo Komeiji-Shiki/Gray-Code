@@ -180,6 +180,13 @@ describe('StoragePathManager', () => {
         expect(isSameStoragePath('d:/graycode', 'D:\\GrayCode', 'win32')).toBe(true);
     });
 
+    test('isSameStoragePath: 忽略非根目录末尾分隔符，但不破坏根目录', () => {
+        expect(isSameStoragePath('D:\\GrayCode', 'd:\\graycode\\', 'win32')).toBe(true);
+        expect(isSameStoragePath('D:\\', 'd:/', 'win32')).toBe(true);
+        expect(isSameStoragePath('/data/graycode', '/data/graycode/', 'linux')).toBe(true);
+        expect(isSameStoragePath('/', '/', 'linux')).toBe(true);
+    });
+
     test('isSameStoragePath: 非 Windows 保持大小写敏感', () => {
         expect(isSameStoragePath('/data/GrayCode', '/data/graycode', 'linux')).toBe(false);
         expect(isSameStoragePath('/data/GrayCode', '/data/GrayCode', 'linux')).toBe(true);
@@ -210,5 +217,81 @@ describe('StoragePathManager', () => {
         } finally {
             Object.defineProperty(process, 'platform', { value: originalPlatform });
         }
+    });
+
+    test('migrateData: 目标仅多尾分隔符时直接短路，源数据不会被清理', async () => {
+        const sourceFile = path.join(defaultPath, 'conversations', 'chat.json');
+        await fs.mkdir(path.dirname(sourceFile), { recursive: true });
+        await fs.writeFile(sourceFile, 'must survive');
+        const settingsManager = createSettingsManager();
+        const manager = new StoragePathManager(
+            settingsManager as any,
+            { globalStorageUri: { fsPath: defaultPath } } as any
+        );
+
+        const result = await manager.migrateData(`${defaultPath}${path.sep}`);
+
+        expect(result).toEqual({ success: true, copiedFiles: 0 });
+        await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe('must survive');
+        expect(settingsManager.markMigrationStarted).not.toHaveBeenCalled();
+        expect(settingsManager.updateStoragePathConfig).not.toHaveBeenCalled();
+    });
+
+    test('migrateData: 不同字符串解析到同一物理目录时在复制前二次短路', async () => {
+        const sourceFile = path.join(defaultPath, 'conversations', 'chat.json');
+        await fs.mkdir(path.dirname(sourceFile), { recursive: true });
+        await fs.writeFile(sourceFile, 'must survive canonical alias');
+        const settingsManager = createSettingsManager();
+        const manager = new StoragePathManager(
+            settingsManager as any,
+            { globalStorageUri: { fsPath: defaultPath } } as any
+        );
+        jest.spyOn(manager, 'validatePath').mockResolvedValue({ valid: true });
+        jest.spyOn(manager as any, 'resolvePathForComparison').mockResolvedValue(defaultPath);
+
+        const result = await manager.migrateData(path.join(tempRoot, 'alias'));
+
+        expect(result).toEqual({ success: true, copiedFiles: 0 });
+        await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe('must survive canonical alias');
+        expect(settingsManager.markMigrationStarted).not.toHaveBeenCalled();
+        expect(settingsManager.updateStoragePathConfig).not.toHaveBeenCalled();
+    });
+
+    test('resetToDefault: 自定义路径实际就是默认目录时只清配置，不删除数据', async () => {
+        const sourceFile = path.join(defaultPath, 'conversations', 'chat.json');
+        await fs.mkdir(path.dirname(sourceFile), { recursive: true });
+        await fs.writeFile(sourceFile, 'must survive reset');
+        const settingsManager = createSettingsManager({
+            customDataPath: `${defaultPath}${path.sep}`,
+            migrationStatus: 'completed'
+        });
+        const manager = new StoragePathManager(
+            settingsManager as any,
+            { globalStorageUri: { fsPath: defaultPath } } as any
+        );
+
+        await expect(manager.resetToDefault()).resolves.toEqual({ success: true });
+        await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe('must survive reset');
+        expect(settingsManager.getStoragePathConfig()).toMatchObject({
+            customDataPath: undefined,
+            migrationStatus: 'none'
+        });
+    });
+
+    test('cleanupOldStorage: 旧配置的自定义路径实际就是默认目录时不删除当前数据', async () => {
+        const sourceFile = path.join(defaultPath, 'conversations', 'chat.json');
+        await fs.mkdir(path.dirname(sourceFile), { recursive: true });
+        await fs.writeFile(sourceFile, 'must survive manual cleanup');
+        const settingsManager = createSettingsManager({
+            customDataPath: `${defaultPath}${path.sep}`,
+            migrationStatus: 'completed'
+        });
+        const manager = new StoragePathManager(
+            settingsManager as any,
+            { globalStorageUri: { fsPath: defaultPath } } as any
+        );
+
+        await expect(manager.cleanupOldStorage()).resolves.toEqual({ success: true, freedBytes: 0 });
+        await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe('must survive manual cleanup');
     });
 });

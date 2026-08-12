@@ -21,7 +21,8 @@ const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'de
 /**
  * 判断两个路径是否指向同一存储位置（同路径判定）。
  *
- * Windows 文件系统大小写不敏感：path.normalize 只统一分隔符/相对段，不归一大小写。
+ * Windows 文件系统大小写不敏感：path.win32.normalize 统一 Windows 分隔符/相对段，
+ * 但不归一大小写。
  * 用户手输目标路径与磁盘实际路径大小写不同（d:\graycode vs D:\GrayCode）时，若按普通
  * 字符串比较会误判为不同路径，触发 staging 迁移把数据复制回同一目录后 removeStorageData
  * 清空全部存储子目录——数据全丢。Windows 下比较前统一小写；非 Windows 保持原行为。
@@ -33,8 +34,21 @@ export function isSameStoragePath(a: string, b: string, platform: NodeJS.Platfor
     // （Linux CI 上 path.normalize 是 POSIX 语义，不识别反斜杠分隔符，会把 'd:/graycode' 与
     //  'D:\\GrayCode' 判为不同路径）。
     const normalize = (p: string): string => {
-        const normalized = platform === 'win32' ? path.win32.normalize(p) : path.posix.normalize(p);
-        return platform === 'win32' ? normalized.toLowerCase() : normalized;
+        const pathApi = platform === 'win32' ? path.win32 : path.posix;
+        let normalized = pathApi.normalize(p);
+        // path.normalize 会保留非根路径末尾的分隔符；用户手输 `D:\data\` 或
+        // `/data/` 时若不消除它，字符串比较仍会把同一目录误判成两个位置。
+        // 根路径（`D:\`、`\\server\share\`、`/`）必须保留自身分隔符。
+        const root = pathApi.parse(normalized).root;
+        while (normalized.length > root.length && /[\\/]$/.test(normalized)) {
+            normalized = normalized.slice(0, -1);
+        }
+        if (platform === 'win32') {
+            // 不可使用宿主平台的 path.normalize：Ubuntu CI 在测试 Windows 路径时不会
+            // 把正斜杠和反斜杠统一，导致同一路径被误判为不同路径。
+            return normalized.toLowerCase();
+        }
+        return normalized;
     };
     return normalize(a) === normalize(b);
 }
@@ -508,11 +522,18 @@ export class StoragePathManager {
                 return { success: false, error: validation.error, copiedFiles: 0 };
             }
 
-            await this.settingsManager.markMigrationStarted();
+            // 字符串规范化只是第一道快速保护；junction/符号链接/短文件名仍可能让两个
+            // 不同字符串指向同一物理目录。复制或清理前按 realpath 再短路一次，防止
+            // staging 完成后 removeStorageData 把源（也就是目标）清空。
+            const sourceComparisonPath = await this.resolvePathForComparison(sourcePath);
+            const destinationPath = await this.resolvePathForComparison(newPath);
+            if (isSameStoragePath(sourceComparisonPath, destinationPath)) {
+                return { success: true, copiedFiles: 0 };
+            }
 
+            await this.settingsManager.markMigrationStarted();
             const stats = await this.getStorageStats(sourcePath);
             const totalFiles = stats.fileCount;
-            const destinationPath = await this.resolvePathForComparison(newPath);
             const requiresStaging = await this.pathsOverlap(sourcePath, destinationPath);
             let copiedFiles = 0;
 
@@ -623,6 +644,21 @@ export class StoragePathManager {
         if (config.migrationStatus !== 'completed' || !config.customDataPath) {
             return { success: false, freedBytes: 0 };
         }
+
+        // 兼容旧版本留下的错误配置：customDataPath 可能只是默认目录的尾分隔符/大小写/
+        // junction 别名。此时默认目录并不是“旧目录”，清理它会直接删除当前正在使用的数据。
+        // 手动清理入口必须和 migrate/reset 一样，在任何 removeStorageData 之前做物理同路径短路。
+        try {
+            const customComparisonPath = await this.resolvePathForComparison(config.customDataPath);
+            const defaultComparisonPath = await this.resolvePathForComparison(this.defaultDataPath);
+            if (isSameStoragePath(customComparisonPath, defaultComparisonPath)) {
+                return { success: true, freedBytes: 0 };
+            }
+        } catch (error) {
+            // 无法可靠判定时必须 fail closed；不能为了“清理”继续删除可能仍是当前数据的默认目录。
+            console.error('[StoragePathManager] Failed to verify old storage path before cleanup:', error);
+            return { success: false, freedBytes: 0 };
+        }
         
         return await this.cleanupOldStorageInternal(this.defaultDataPath);
     }
@@ -650,6 +686,20 @@ export class StoragePathManager {
         let preservedSubDirs: string[] = [];
 
         try {
+            // 旧配置可能保存了默认目录的尾分隔符、junction 或符号链接别名。此时“重置”
+            // 只需清掉自定义路径配置；绝不能进入 staging 后把同一物理目录作为源清理。
+            const customComparisonPath = await this.resolvePathForComparison(customPath);
+            const defaultComparisonPath = await this.resolvePathForComparison(this.defaultDataPath);
+            if (isSameStoragePath(customComparisonPath, defaultComparisonPath)) {
+                await this.settingsManager.updateStoragePathConfig({
+                    customDataPath: undefined,
+                    migrationStatus: 'none',
+                    lastMigrationAt: undefined,
+                    migrationError: undefined
+                });
+                return { success: true };
+            }
+
             const stats = await this.getStorageStats(customPath);
             const requiresStaging = await this.pathsOverlap(customPath, this.defaultDataPath);
             let copiedFiles = 0;
