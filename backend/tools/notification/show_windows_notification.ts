@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import type { Tool, ToolDeclaration, ToolResult } from '../types'
-import { NodeNotifierWindowsToastAdapter } from '../../modules/notifications/WindowsToastAdapter'
+import { WinRtLingerToastAdapter } from '../../modules/notifications/WinRtLingerToastAdapter'
 import type { WindowsToastAdapter } from '../../modules/notifications/types'
 import { focusVSCodeWindow } from '../../modules/notifications/focusWindow'
 import type { FocusWindowFunction } from '../../modules/notifications/focusWindow'
@@ -61,7 +61,7 @@ export function createShowWindowsNotificationToolDeclaration(): ToolDeclaration 
 }
 
 export function createShowWindowsNotificationTool(
-  adapter: WindowsToastAdapter = new NodeNotifierWindowsToastAdapter(),
+  adapter: WindowsToastAdapter = new WinRtLingerToastAdapter(),
   platform: NodeJS.Platform = process.platform,
   executeCommand: (command: string) => Promise<unknown> | Thenable<unknown> = command => vscode.commands.executeCommand(command),
   focusWindow: FocusWindowFunction = focusVSCodeWindow

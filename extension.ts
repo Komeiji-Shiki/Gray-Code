@@ -3,6 +3,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { ChatViewProvider } from './webview/ChatViewProvider';
 import { setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
 import { Logger } from './backend/core/logger';
@@ -78,6 +81,31 @@ export function activate(context: vscode.ExtensionContext) {
         context.subscriptions.push(...registerSettingsCommands(context, chatViewProvider));
     } catch (error) {
         console.error('[GrayCode] activate: command registration failed:', error);
+    }
+
+    // ====== Toast 点击标记轮询（Windows） ======
+    // toast-linger.exe（Win11 24H2+/25H2 唯一可靠的 toast 点击激活路径：驻留进程内
+    // Activated 事件）在用户点击通知时写 %TEMP%\graycode-toast-clicked.flag 并聚焦
+    // VSCode 窗口；这里轮询该标记，命中后打开聊天面板（graycode.openChat）并删除标记。
+    try {
+        const toastClickMarker = path.join(os.tmpdir(), 'graycode-toast-clicked.flag');
+        const markerTimer = setInterval(() => {
+            try {
+                if (fs.existsSync(toastClickMarker)) {
+                    try {
+                        fs.unlinkSync(toastClickMarker);
+                    } catch {
+                        // 删除失败不阻塞 openChat（下次轮询会再次命中）
+                    }
+                    vscode.commands.executeCommand('graycode.openChat');
+                }
+            } catch (error) {
+                console.error('[GrayCode] toast click marker polling failed:', error);
+            }
+        }, 1000);
+        context.subscriptions.push({ dispose: () => clearInterval(markerTimer) });
+    } catch (error) {
+        console.error('[GrayCode] activate: toast click marker watcher failed:', error);
     }
 
     // ====== Diff / Selection 提供者与命令注册（分阶段保护：失败仅记日志并继续） ======
