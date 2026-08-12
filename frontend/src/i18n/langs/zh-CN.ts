@@ -1761,7 +1761,7 @@ const zhCN = {
                 maxConcurrentAgents: '最大并发数',
                 maxConcurrentAgentsHint: '同时运行的子代理数量上限，超出的自动排队等待（-1 表示无限制）',
                 defaultMaxIterations: '默认迭代次数',
-                defaultMaxIterationsHint: '未单独配置迭代次数的子代理与 General Worker 的默认值（1~200，-1 表示无限制）',
+                defaultMaxIterationsHint: '未单独配置迭代次数的子代理与 General Worker 的默认值（-1 表示无限制）',
                 queueTimeoutSeconds: '排队超时（秒）',
                 queueTimeoutSecondsHint: '子代理在并发队列中排队等待的最长秒数，超过后以失败结算（-1 表示无限制，默认 600）',
                 queueTimeoutSecondsInvalid: '请输入 -1 或不小于 1 的整数',
