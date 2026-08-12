@@ -164,11 +164,57 @@ describe('SubAgents 工具后台分支', () => {
             expect.objectContaining({
                 runId: 'subagent_run_tool_abc',
                 agentName: 'Test Agent',
+                conversationId: 'conv_1',
                 response: 'final report body',
                 steps: 5,
                 toolsUsed: ['read_file', 'get_symbols']
             })
         );
+    });
+
+    test('run 终态事件会立即注销后台任务，不等待 executor 落盘 Promise settle', async () => {
+        const fakeExecutor = jest.fn(() => new Promise(() => undefined));
+        (createDefaultExecutor as jest.Mock).mockReturnValue(fakeExecutor);
+
+        const tool = getSubAgentsTool();
+        await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x', background: true },
+            { toolId: 'terminal_event', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        );
+
+        expect(TaskManager.unregisterTask).not.toHaveBeenCalled();
+        subAgentRunEventBus.emit({
+            runId: 'subagent_run_terminal_event',
+            agentName: 'Test Agent',
+            type: 'run_completed',
+            payload: {
+                response: '落盘尚未完成但结果已可用',
+                steps: 4,
+                toolsUsed: ['read_file']
+            }
+        });
+
+        expect(TaskManager.unregisterTask).toHaveBeenCalledWith(
+            'bgagent_test_1',
+            'completed',
+            expect.objectContaining({
+                runId: 'subagent_run_terminal_event',
+                conversationId: 'conv_1',
+                agentName: 'Test Agent',
+                response: '落盘尚未完成但结果已可用',
+                steps: 4,
+                toolsUsed: ['read_file']
+            })
+        );
+
+        // 重复/迟到终态事件不得二次注销，否则前端会收到重复回执。
+        subAgentRunEventBus.emit({
+            runId: 'subagent_run_terminal_event',
+            agentName: 'Test Agent',
+            type: 'run_completed',
+            payload: { response: '迟到的重复结果' }
+        });
+        expect(TaskManager.unregisterTask).toHaveBeenCalledTimes(1);
     });
 
     test('executor 失败时注销为 error 并携带错误信息', async () => {
@@ -187,6 +233,42 @@ describe('SubAgents 工具后台分支', () => {
             'error',
             expect.objectContaining({ runId: 'subagent_run_tool_abc', agentName: 'Test Agent', error: 'boom' })
         );
+    });
+
+    test('自定义 executor 同步抛错也会注销任务并解除终态绑定', async () => {
+        const customExecutor = jest.fn(() => {
+            throw new Error('sync boom');
+        });
+        (subAgentRegistry.getByName as jest.Mock).mockReturnValue({ config: TEST_CONFIG, executor: customExecutor });
+
+        const tool = getSubAgentsTool();
+        const result = await tool.handler(
+            { agentName: 'Test Agent', prompt: 'x', background: true },
+            { toolId: 'sync_throw', conversationId: 'conv_1', abortSignal: new AbortController().signal }
+        ) as any;
+        expect(result.success).toBe(true);
+        await flushMicrotasks();
+
+        expect(TaskManager.unregisterTask).toHaveBeenCalledTimes(1);
+        expect(TaskManager.unregisterTask).toHaveBeenCalledWith(
+            'bgagent_test_1',
+            'error',
+            expect.objectContaining({
+                runId: 'subagent_run_sync_throw',
+                agentName: 'Test Agent',
+                conversationId: 'conv_1',
+                error: 'sync boom'
+            })
+        );
+
+        // catch 已解除 bridge 绑定；迟到终态不能再次注销同一任务。
+        subAgentRunEventBus.emit({
+            runId: 'subagent_run_sync_throw',
+            agentName: 'Test Agent',
+            type: 'run_failed',
+            payload: { error: 'late terminal' }
+        });
+        expect(TaskManager.unregisterTask).toHaveBeenCalledTimes(1);
     });
 
     test('executor 被取消时注销为 cancelled', async () => {

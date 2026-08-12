@@ -62,8 +62,12 @@ export {
     type SubAgentRunConversationStore
 } from './runEventBus';
 
-// 分离转后台任务桥
-export { registerDetachedSubAgentTask } from './detachedTaskBridge';
+// 分离/显式后台任务桥
+export {
+    bindBackgroundSubAgentTask,
+    unbindBackgroundSubAgentTask,
+    registerDetachedSubAgentTask
+} from './detachedTaskBridge';
 export { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
 export {
     subAgentRunController,

@@ -320,7 +320,10 @@ export function createDefaultExecutor(
                         response: finalized.response,
                         error: finalized.error,
                         steps: finalized.steps,
-                        modelVersion: finalized.modelVersion
+                        modelVersion: finalized.modelVersion,
+                        // 后台任务在 run 终态事件即时回流，不再等待 executor
+                        // finally 中的 transcript 落盘；工具名因此必须同终态事件携带。
+                        toolsUsed: (finalized.toolCalls ?? []).map(toolCall => toolCall.tool)
                     }
                 });
             }

@@ -15,6 +15,7 @@ import type { SubAgentRunStatus } from './runEventBus';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 import { TaskManager } from '../taskManager';
+import { bindBackgroundSubAgentTask, unbindBackgroundSubAgentTask } from './detachedTaskBridge';
 import { MEMORY_TOOL_NAMES } from '../memory';
 import { TODO_TOOL_NAMES } from '../todo';
 import { getActualLanguage } from '../../i18n';
@@ -640,8 +641,14 @@ async function executeSubAgent(
             continueFromRunId,
             promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
         });
+        bindBackgroundSubAgentTask({
+            runId: effectiveRunId,
+            taskId,
+            conversationId,
+            agentName
+        });
 
-        runtimeExecutor({
+        Promise.resolve().then(() => runtimeExecutor({
             agentType: config.type,
             prompt,
             context: additionalContext,
@@ -657,11 +664,16 @@ async function executeSubAgent(
             background: true,
             // H-1：父 run 的工具限制随请求传给 executor（子 run 工具 = 子配置 ∩ 父限制）
             inheritedToolFilter: inheritedToolFilterList
-        }, backgroundAbortController.signal).then(result => {
+        }, backgroundAbortController.signal)).then(result => {
+            // 自定义 executor 可能不发 run 终态事件：Promise settle 作为兜底。
+            // 默认 executor 已由 detachedTaskBridge 在 run 终态事件时注销，
+            // 此时 unregisterTask 对已移除任务是安全 no-op。
+            unbindBackgroundSubAgentTask(effectiveRunId, taskId);
             const status = result.cancelled ? 'cancelled' : (result.success ? 'completed' : 'error');
             TaskManager.unregisterTask(taskId, status, {
                 runId: result.runId,
                 agentName,
+                conversationId,
                 response: result.response,
                 steps: result.steps,
                 // 与前台 L622 同口径：子代理实际调用的工具名列表（空数组 = 未调用任何工具）
@@ -669,9 +681,11 @@ async function executeSubAgent(
                 ...(result.error ? { error: result.error } : {})
             });
         }).catch(error => {
+            unbindBackgroundSubAgentTask(effectiveRunId, taskId);
             TaskManager.unregisterTask(taskId, 'error', {
                 runId: effectiveRunId,
                 agentName,
+                conversationId,
                 error: error instanceof Error ? error.message : String(error)
             });
         });
