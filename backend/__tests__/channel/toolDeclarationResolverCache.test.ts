@@ -6,10 +6,16 @@
  * - options 变化（channelType/allowlist/denylist 等）→ 缓存键变化 → 重建；
  * - 设置指纹变化（toolsEnabled 等）→ 重建；
  * - MCP 工具列表版本事件（server:connected/disconnected/capabilities_updated）→ 失效重建；
+ * - 语言进入缓存键：setLanguage('zh-CN') 首次解析构建中文声明、同语言第二次命中缓存；
+ *   切 'en' 必须重建（英文声明不复用中文对象）；切回 'zh-CN' 命中中文缓存；
+ *   'ja' 归并英文目录命中 en 缓存；测试结束恢复原语言；
  * - dispose() 移除全部 MCP 监听器（配合 executor 共享实例的生命周期管理）。
  */
 
 import { ToolDeclarationResolver } from '../../modules/channel/ToolDeclarationResolver';
+import { setLanguage, getActualLanguage } from '../../i18n';
+import { getToolDescriptionLocalization } from '../../tools/localization/catalogs';
+import { localizeToolDeclaration } from '../../tools/localization/localizeToolDeclaration';
 import type { ToolDeclaration } from '../../tools/types';
 
 const DECLARATIONS: ToolDeclaration[] = [
@@ -113,5 +119,99 @@ describe('ToolDeclarationResolver 声明缓存', () => {
         // 事件派发不再触发版本递增（监听器已移除）
         const callsBefore = (mcpManager.listeners.get('server:connected')?.size ?? 0);
         expect(callsBefore).toBe(0);
+    });
+});
+
+describe('ToolDeclarationResolver 语言缓存（声明本地化）', () => {
+    let originalLanguage: ReturnType<typeof getActualLanguage>;
+
+    beforeEach(() => {
+        originalLanguage = getActualLanguage();
+    });
+
+    afterEach(() => {
+        // 恢复原语言，避免污染同文件其他测试与后续测试文件
+        setLanguage(originalLanguage);
+    });
+
+    /**
+     * 解析结果应与「目录本地化应用器」产出一致：
+     * 目录已覆盖时即本地化说明，目录未覆盖时两边都保留原文。
+     */
+    function expectLocalizedAs(expectedLang: 'zh-CN' | 'en', declarations: ToolDeclaration[]): void {
+        for (const decl of DECLARATIONS) {
+            const localized = localizeToolDeclaration(decl, getToolDescriptionLocalization(expectedLang, decl.name));
+            const resolved = declarations.find(d => d.name === decl.name)!;
+            expect(resolved.description).toBe(localized.description);
+        }
+    }
+
+    test('setLanguage(zh-CN) 第一次 resolve 构建中文声明，同语言第二次命中缓存', () => {
+        const { resolver, toolRegistry } = createHarness();
+        setLanguage('zh-CN');
+        const first = resolver.resolve(BASE_OPTIONS)!;
+        const second = resolver.resolve(BASE_OPTIONS)!;
+        // 第二次命中缓存：不重复构建（getDeclarationsBy 只调用一次）
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(1);
+        // 命中返回浅克隆数组，元素引用稳定（声明对象是解析时的私有快照）
+        expect(second.length).toBe(first.length);
+        for (let i = 0; i < first.length; i++) {
+            expect(second[i]).toBe(first[i]);
+        }
+        // 中文声明与 zh-CN 目录应用器产物一致（目录已覆盖时即中文说明）
+        expectLocalizedAs('zh-CN', first);
+    });
+
+    test('切 setLanguage(en) 必须重新构建：英文声明不复用中文对象', () => {
+        const { resolver, toolRegistry } = createHarness();
+        setLanguage('zh-CN');
+        const zh = resolver.resolve(BASE_OPTIONS)!;
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(1);
+
+        setLanguage('en');
+        const en = resolver.resolve(BASE_OPTIONS)!;
+        // 语言变化 → 缓存键变化 → 重建
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(2);
+        expect(en.length).toBe(zh.length);
+        // 英文声明是新构建对象，不能复用中文缓存中的对象引用
+        for (let i = 0; i < en.length; i++) {
+            expect(en[i]).not.toBe(zh[i]);
+        }
+        // 英文结果与 en 目录应用器产物一致（目录未覆盖时保持原始英文声明）
+        expectLocalizedAs('en', en);
+    });
+
+    test('再次 setLanguage(zh-CN) 命中中文缓存（不重复构建）', () => {
+        const { resolver, toolRegistry } = createHarness();
+        setLanguage('zh-CN');
+        const zh1 = resolver.resolve(BASE_OPTIONS)!;
+        setLanguage('en');
+        resolver.resolve(BASE_OPTIONS);
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(2);
+
+        setLanguage('zh-CN');
+        const zh2 = resolver.resolve(BASE_OPTIONS)!;
+        // zh-CN 缓存条目仍在：直接命中，不重建
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(2);
+        expect(zh2.length).toBe(zh1.length);
+        for (let i = 0; i < zh1.length; i++) {
+            expect(zh2[i]).toBe(zh1[i]);
+        }
+    });
+
+    test('setLanguage(ja) 归并为英文目录：命中 en 缓存（内容与引用一致）', () => {
+        const { resolver, toolRegistry } = createHarness();
+        setLanguage('en');
+        const en = resolver.resolve(BASE_OPTIONS)!;
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(1);
+
+        setLanguage('ja');
+        const ja = resolver.resolve(BASE_OPTIONS)!;
+        // ja 经 resolveLocalizationLanguage 归并为 en：缓存键相同 → 命中 en 缓存，不重建
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(1);
+        expect(ja.length).toBe(en.length);
+        for (let i = 0; i < en.length; i++) {
+            expect(ja[i]).toBe(en[i]);
+        }
     });
 });

@@ -4,6 +4,13 @@
  * 修改原因：ChannelManager 和 SubAgent 过去各自生成工具声明，导致 read_file 多模态描述、图片工具过滤、MCP schema 清理等逻辑容易漏同步。
  * 修改方式：把原 ChannelManager.getFilteredTools 的核心逻辑抽成共享解析器，并提供工具来源、白名单、黑名单等通用过滤选项。
  * 修改目的：主会话和 SubAgent 都从同一个入口获取工具声明，避免以后主工具声明升级但 SubAgent 没有升级。
+ *
+ * 本地化接入点：本文件是主会话与 SubAgent 共用的模型工具声明入口，中英文国际化在此统一接入——
+ * builtin 声明在 buildDynamicBuiltinDeclaration 返回前经 localizeToolDeclaration 应用目录覆盖
+ * （zh-CN 中文说明 / en、ja 映射英文说明），MCP 缺省说明与受限模式 search_in_files 只读说明按语言生成。
+ * 声明缓存键包含 resolveLocalizationLanguage(getActualLanguage())：语言是进程级且对话期间不变，
+ * 语言切换后不得命中旧语言缓存，同语言同配置下连续 resolve 全部命中缓存，保证单次对话内
+ * 工具定义绝不因任何原因二次修改。
  */
 
 import type { ToolDeclaration } from '../../tools/types';
@@ -13,8 +20,12 @@ import { isSearchInFilesReplaceForbidden } from '../settings';
 import type { ResolvedPromptModeSnapshot } from '../settings';
 import type { McpManager } from '../mcp';
 import { encodeMcpToolName } from '../mcp';
-import { getToolDeclarationFactory } from '../../tools/toolDeclarationRegistry';
+import { getToolDeclarationFactory, type ToolDeclarationFactoryArgs } from '../../tools/toolDeclarationRegistry';
 import { hasAvailableSubAgentSafe } from '../../core/subAgentAvailabilityBridge';
+import { getActualLanguage } from '../../i18n';
+import { resolveLocalizationLanguage } from '../../tools/localization/types';
+import { getToolDescriptionLocalization } from '../../tools/localization/catalogs';
+import { localizeToolDeclaration } from '../../tools/localization/localizeToolDeclaration';
 
 export type DeclarationChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
 export type DeclarationToolMode = 'function_call' | 'xml' | 'json';
@@ -117,6 +128,9 @@ export class ToolDeclarationResolver {
             ? options.promptModeSnapshot.toolPolicy
             : undefined;
         return JSON.stringify([
+            // 实际语言进入缓存键：语言是进程级且对话期间不变，语言切换后不得命中旧语言缓存；
+            // zh-CN/en/ja 经 resolveLocalizationLanguage 归并为 zh-CN/en 两档，同语言内保持稳定命中。
+            resolveLocalizationLanguage(getActualLanguage()),
             options.channelType ?? '',
             options.toolMode ?? '',
             options.multimodalEnabled ?? false,
@@ -185,6 +199,10 @@ export class ToolDeclarationResolver {
      * 动态声明替换：优先使用组合根注册的工厂重建动态声明（read_file 多模态描述、
      * 图片工具参数随解析选项/设置变化）。工厂未注册时保持静态声明（回退行为，
      * 与工厂直连时代码路径等价：不替换任何字段）。
+     *
+     * 本地化：工厂重建完成后、返回前统一应用模型声明本地化目录（zh-CN 中文说明 /
+     * en、ja 映射英文说明）。动态工具目录只配置参数说明（顶层说明保留工厂动态产物），
+     * 静态工具目录配置 description + parameters；未配置的工具保留原文（零拷贝）。
      */
     private buildDynamicBuiltinDeclaration(
         tool: ToolDeclaration,
@@ -194,105 +212,93 @@ export class ToolDeclarationResolver {
         const multimodalEnabled = options.multimodalEnabled;
         const channelType = options.channelType;
         const toolMode = options.toolMode;
+        let shouldExclude = false;
+        let buildArgs: ToolDeclarationFactoryArgs = {};
 
+        // read_file：多模态/渠道/工具模式决定描述与参数形态（仅文本 / 文本+图片 / 文本+图片+PDF）
         if (tool.name === 'read_file') {
-            const factory = getToolDeclarationFactory('read_file');
-            if (factory) {
-                const dynamicTool = factory({ multimodalEnabled, channelType, toolMode });
-                declaration = {
-                    ...declaration,
-                    description: dynamicTool.declaration.description,
-                    parameters: dynamicTool.declaration.parameters
-                };
-            }
+            buildArgs = { multimodalEnabled, channelType, toolMode };
         }
 
+        // 图片工具：多模态关闭或 OpenAI function_call 渠道不对外暴露（排除逻辑保留）
         if (tool.name === 'generate_image') {
-            const shouldExclude = !multimodalEnabled ||
+            shouldExclude = !multimodalEnabled ||
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const factory = getToolDeclarationFactory('generate_image');
-            if (factory) {
-                const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
-                const maxImagesPerTask = imageConfig?.maxImagesPerTask || 1;
-                const paramsConfig = {
+            const imageConfig = this.settingsManager?.getGenerateImageConfig();
+            buildArgs = {
+                maxBatchTasks: imageConfig?.maxBatchTasks || 5,
+                maxImagesPerTask: imageConfig?.maxImagesPerTask || 1,
+                paramsConfig: {
                     enableAspectRatio: imageConfig?.enableAspectRatio ?? false,
                     forcedAspectRatio: imageConfig?.defaultAspectRatio || undefined,
                     enableImageSize: imageConfig?.enableImageSize ?? false,
                     forcedImageSize: imageConfig?.defaultImageSize || undefined
-                };
-                const dynamicTool = factory({ maxBatchTasks, maxImagesPerTask, paramsConfig });
-                declaration = {
-                    ...declaration,
-                    description: dynamicTool.declaration.description,
-                    parameters: dynamicTool.declaration.parameters
-                };
-            }
+                }
+            };
         }
 
         if (tool.name === 'remove_background') {
-            const shouldExclude = !multimodalEnabled ||
+            shouldExclude = !multimodalEnabled ||
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const factory = getToolDeclarationFactory('remove_background');
-            if (factory) {
-                const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
-                const dynamicTool = factory({ maxBatchTasks });
-                declaration = { ...declaration, description: dynamicTool.declaration.description };
-            }
+            const imageConfig = this.settingsManager?.getGenerateImageConfig();
+            buildArgs = { maxBatchTasks: imageConfig?.maxBatchTasks || 5 };
         }
 
         if (tool.name === 'crop_image') {
-            const shouldExclude = !multimodalEnabled ||
+            shouldExclude = !multimodalEnabled ||
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const factory = getToolDeclarationFactory('crop_image');
-            if (factory) {
-                const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-                const dynamicTool = factory({ maxBatchTasks });
-                declaration = { ...declaration, description: dynamicTool.declaration.description };
-            }
+            const imageConfig = this.settingsManager?.getGenerateImageConfig();
+            buildArgs = { maxBatchTasks: imageConfig?.maxBatchTasks || 10 };
         }
 
         if (tool.name === 'resize_image') {
-            const shouldExclude = !multimodalEnabled ||
+            shouldExclude = !multimodalEnabled ||
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const factory = getToolDeclarationFactory('resize_image');
-            if (factory) {
-                const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-                const dynamicTool = factory({ maxBatchTasks });
-                declaration = { ...declaration, description: dynamicTool.declaration.description };
-            }
+            const imageConfig = this.settingsManager?.getGenerateImageConfig();
+            buildArgs = { maxBatchTasks: imageConfig?.maxBatchTasks || 10 };
         }
 
         if (tool.name === 'rotate_image') {
-            const shouldExclude = !multimodalEnabled ||
+            shouldExclude = !multimodalEnabled ||
                 (channelType === 'openai' && toolMode === 'function_call');
             if (shouldExclude) return null;
 
-            const factory = getToolDeclarationFactory('rotate_image');
-            if (factory) {
-                const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-                const dynamicTool = factory({ maxBatchTasks });
-                declaration = { ...declaration, description: dynamicTool.declaration.description };
-            }
+            const imageConfig = this.settingsManager?.getGenerateImageConfig();
+            buildArgs = { maxBatchTasks: imageConfig?.maxBatchTasks || 10 };
         }
 
         if (tool.name === 'subagents' && !hasAvailableSubAgentSafe()) {
             return null;
         }
 
-        return declaration;
+        // 泛化工厂调用：任何已注册工厂的工具都经此重建动态声明（read_file/图片工具由
+        // 上面分支构建参数；其余已注册工厂——execute_command、history_search、read_skill、
+        // subagents、agent_send_message、write_file/list_files/apply_diff 等文件搜索类——
+        // 传空对象 {}，工厂忽略参数自行生成）。工厂未注册时保持静态声明回退（不替换任何字段）。
+        const factory = getToolDeclarationFactory(tool.name);
+        if (factory && !shouldExclude) {
+            const dynamicTool = factory(buildArgs);
+            declaration = {
+                ...declaration,
+                description: dynamicTool.declaration.description,
+                parameters: dynamicTool.declaration.parameters
+            };
+        }
+
+        // 模型声明本地化：语言进入缓存键（见 buildCacheKey），此处按进程级实际语言
+        // （zh-CN → 中文目录；en/ja → 英文目录）应用目录覆盖。动态工具目录只配置
+        // 参数说明（顶层说明保留工厂动态产物），静态工具目录配置 description + parameters，
+        // 未配置的工具保留原文（零拷贝返回原对象）。
+        const lang = resolveLocalizationLanguage(getActualLanguage());
+        return localizeToolDeclaration(declaration, getToolDescriptionLocalization(lang, tool.name));
     }
 
     private resolveMcpDeclarations(): ToolDeclaration[] {
@@ -300,6 +306,7 @@ export class ToolDeclarationResolver {
             return [];
         }
 
+        const lang = resolveLocalizationLanguage(getActualLanguage());
         const tools: ToolDeclaration[] = [];
         const mcpTools = this.mcpManager.getAllTools();
         for (const serverTools of mcpTools) {
@@ -312,7 +319,9 @@ export class ToolDeclarationResolver {
 
                 tools.push({
                     name: toolName,
-                    description: tool.description || `MCP tool: ${tool.name}`,
+                    // 服务端提供的 description 一律原样保留（不翻译）；仅缺省兜底文本按语言生成
+                    description: tool.description ||
+                        (lang === 'zh-CN' ? `MCP 工具：${tool.name}` : `MCP tool: ${tool.name}`),
                     parameters: schema
                 });
             }
@@ -354,6 +363,10 @@ export class ToolDeclarationResolver {
         // 让模型在声明层就看不到替换能力（运行时门 getToolRejectionReason 兜底）。
         // 声明缓存键含 toolPolicy，各模式声明互不污染。
         if (isSearchInFilesReplaceForbidden(promptAllowlist)) {
+            // 只读说明按语言生成：zh-CN 中文，en/ja 英文（ja 映射 en）
+            const readOnlyModeDescription = resolveLocalizationLanguage(getActualLanguage()) === 'zh-CN'
+                ? '操作模式。当前模式只允许只读搜索，不可使用替换功能。'
+                : 'Operation mode. This mode only permits read-only search; replace is not available in the current mode.';
             filtered = filtered.map(tool => {
                 if (tool.name !== 'search_in_files') {
                     return tool;
@@ -364,7 +377,7 @@ export class ToolDeclarationResolver {
                     properties.mode = {
                         ...modeProperty,
                         enum: ['search'],
-                        description: 'Operation mode. This mode only permits read-only search; replace is not available in the current mode.'
+                        description: readOnlyModeDescription
                     };
                 }
                 // replace 专属参数（replace 串、替换上限）一并移除
