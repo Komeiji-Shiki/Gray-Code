@@ -431,7 +431,7 @@ describe('SummarizeService.handleAutoSummarize - 当前轮超预算（auto 不�
         }
     });
 
-    test('单超大轮（auto）：仍 STALE_RANGE（当前轮即全部历史，无法在不吞用户消息的前提下总结）', async () => {
+    test('单超大轮（auto）：直接放弃规划（NOT_ENOUGH_ROUNDS，不调 AI）——当前轮即全部历史，无法在不吞用户消息的前提下总结', async () => {
         const singleOversizedRound: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
@@ -446,7 +446,8 @@ describe('SummarizeService.handleAutoSummarize - 当前轮超预算（auto 不�
 
         expect(result.success).toBe(false);
         if (!result.success) {
-            expect(result.error.code).toBe('STALE_RANGE');
+            // 切点钳制到最后一条真实用户消息后无旧轮可总结 → planner 直接放弃（不再白烧一次 AI 生成）
+            expect(result.error.code).toBe('NOT_ENOUGH_ROUNDS');
         }
         // 用户消息与工具交互原样保留，未做任何替换
         expect(liveHistory.map(msgLabel)).toEqual(['r1', 'fc1', 'fc1', 'fc2', 'fc2', 'done']);

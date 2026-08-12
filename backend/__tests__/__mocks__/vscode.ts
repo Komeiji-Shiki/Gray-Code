@@ -5,6 +5,8 @@ import * as pathModule from 'path';
 // 缺少该字段会让 PromptManager.getUserLanguage 的 'auto' 分支（ui.language 默认值）抛 TypeError。
 export const env = {
     language: 'en',
+    // UpdateChecker 等模块的 openExternal（打开外部链接/安装器）
+    openExternal: jest.fn(async () => true),
 };
 
 export const workspace = {
@@ -92,9 +94,6 @@ export class TabInputText {
     constructor(public uri: any) {}
 }
 export const commands = { executeCommand: jest.fn() };
-export const env = {
-    openExternal: jest.fn(async () => true),
-};
 export const window = {
     showWarningMessage: jest.fn(),
     showErrorMessage: jest.fn(),
