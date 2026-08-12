@@ -277,16 +277,19 @@ export class CheckpointManager {
                 // 批量工具：按批内工具与 beforeTools/afterTools 的交集精确判定（CPF-07 批次检查点）。
                 // 旧实现只检查「对应列表非空」——只要用户给任意工具勾过 before，批内仅配置了
                 // after 的工具（如只勾了「执行后」的 write_file）也会错误触发批次 before 存档。
-                // 调用方未提供批内工具名时（旧调用方/测试）回退旧语义：任一列表非空即创建。
+                // 显式传空数组（batchToolNames = []）＝无工具不建存档；未传时（旧调用方）
+                // 回退旧语义：任一列表非空即创建。
                 const batchToolNames = options?.batchToolNames;
-                if (phase === 'before') {
-                    shouldCreate = batchToolNames && batchToolNames.length > 0
-                        ? batchToolNames.some(name => config.beforeTools.includes(name))
-                        : config.beforeTools.length > 0;
+                if (batchToolNames !== undefined) {
+                    if (phase === 'before') {
+                        shouldCreate = batchToolNames.some(name => config.beforeTools.includes(name));
+                    } else {
+                        shouldCreate = batchToolNames.some(name => config.afterTools.includes(name));
+                    }
+                } else if (phase === 'before') {
+                    shouldCreate = config.beforeTools.length > 0;
                 } else {
-                    shouldCreate = batchToolNames && batchToolNames.length > 0
-                        ? batchToolNames.some(name => config.afterTools.includes(name))
-                        : config.afterTools.length > 0;
+                    shouldCreate = config.afterTools.length > 0;
                 }
             } else {
                 // 使用工具配置

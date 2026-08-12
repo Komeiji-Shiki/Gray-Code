@@ -1042,12 +1042,16 @@ export class ToolIterationLoopService {
                                 // 多次全量读 transcript）。
                                 streamBatchCheckpoint.batchToolNames.add(fc.name);
                                 // 批次挂载索引惰性计算（首个工具到达时启动一次；模型消息未落盘，
-                                // history.length = 即将写入位置——与 createModelMessageCheckpoint before 语义一致）
+                                // history.length = 即将写入位置——与 createModelMessageCheckpoint before 语义一致）。
+                                // getHistoryRef 失败时索引留空，各消费点在 messageIndex 缺省时直接读取兑底。
                                 if (!streamBatchCheckpoint.batchIndexPromise) {
                                     streamBatchCheckpoint.batchIndexPromise = this.conversationManager
                                         .getHistoryRef(conversationId)
                                         .then(history => {
                                             streamBatchCheckpoint.messageIndex = history.length;
+                                        })
+                                        .catch(() => {
+                                            // 索引留空：ensure/finalize 消费点有独立兑底读取，不再向上传播
                                         });
                                 }
                                 // needsCheckpoint 按「批内工具命中 afterTools」判定：
@@ -1432,21 +1436,35 @@ export class ToolIterationLoopService {
                 );
 
                 // CPF-07：全部早启动工具已完成（无主循环）——批次收尾。
-                // 存在确认工具时：批次尚未完成（确认工具未执行），先补建 before（若批内自动工具
+                // 存在确认工具且未早停：批次尚未完成（确认工具未执行），先补建 before（若批内自动工具
                 // 均未配置 before 而未创建），after 推迟到确认路径全部工具执行完成后创建；
+                // 存在确认工具但早停：确认工具未决（随后被拒绝），批次实际未完成——同样不创建 after；
                 // 无确认工具时正常创建 after（幂等；after 创建失败仅降级，不阻断工具结果落盘）。
-                if (firstConfirmTool && !earlyStopState.shouldStop) {
-                    await this.ensureBatchBeforeForConfirmation(
-                        conversationId,
-                        streamBatchCheckpoint,
-                        functionCalls,
-                        batchMessageIndex
-                    );
+                if (firstConfirmTool) {
+                    if (!earlyStopState.shouldStop) {
+                        await this.ensureBatchBeforeForConfirmation(
+                            conversationId,
+                            streamBatchCheckpoint,
+                            functionCalls,
+                            batchMessageIndex
+                        );
+                    }
                     const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
                         conversationId,
                         streamBatchCheckpoint,
                         false
                     );
+                    if (earlyStopState.shouldStop) {
+                        // 早停：不下发确认事件，确认工具由 rejectAllPendingToolCalls 标记拒绝
+                        yield {
+                            conversationId,
+                            content: finalContent,
+                            toolIteration: true as const,
+                            toolResults: earlyToolResults,
+                            checkpoints: finalBatchCheckpoints
+                        };
+                        return;
+                    }
                     yield {
                         conversationId,
                         pendingToolCalls: [{
@@ -1539,7 +1557,7 @@ export class ToolIterationLoopService {
                             { batchToolNames: Array.from(streamBatchCheckpoint.batchToolNames) }
                         );
                         if (streamBatchCheckpoint.beforeCheckpoint) {
-                            streamBatchCheckpoint.needsCheckpoint = true;
+                            // needsCheckpoint 只由「批内工具命中 afterTools」置位（见上方收集循环）
                         } else {
                             // 配置未命中（批内已见工具均未配置 before）：重置防重入，
                             // 允许确认路径补建（批内确认工具可能配置了 before）。
@@ -2263,9 +2281,9 @@ export class ToolIterationLoopService {
         conversationId: string,
         batch: StreamToolBatchCheckpointState
     ): Promise<void> {
-        // 防重入：并发早启动工具同时到达时只创建一次（创建失败也不再重试——
-        // 本批次后续工具降级为无存档执行，与执行核心「before 失败即批次失败」相比
-        // 更宽松，但保证流式循环不被检查点异常打断；失败由调用方 catch 转为工具错误）
+        // 防重入：并发早启动工具同时到达时只创建一次；创建失败（异常）时保持 beforeCreated=true
+        // 降级为无存档执行（与主循环路径一致，仅 warn 不阻断工具），配置未命中（null）时重置
+        // 允许后续到达的已配置工具再次触发创建。
         batch.beforeCreated = true;
         const checkpointService = this.checkpointService;
         if (!checkpointService) {
@@ -2273,31 +2291,42 @@ export class ToolIterationLoopService {
             // 防御性早退（batch 状态已置位，后续工具不再尝试创建）
             return;
         }
-        // 挂载索引由批次状态统一计算（首个早启动工具到达时惰性启动；此处 await 保证就绪）
-        await batch.batchIndexPromise;
-        let index = batch.messageIndex;
-        if (index === undefined) {
-            // 防御：索引 promise 异常/未启动时直接读取（正常不可达）
-            const history = await this.conversationManager.getHistoryRef(conversationId);
-            index = history.length;
-            batch.messageIndex = index;
-        }
-        const checkpoint = await checkpointService.createToolExecutionCheckpoint(
-            conversationId,
-            index,
-            'tool_batch',
-            'before',
-            undefined,
-            // CPF-07 精确判定：批内已见工具名透传（CheckpointManager 按 beforeTools 求交）
-            { batchToolNames: Array.from(batch.batchToolNames) }
-        );
-        if (checkpoint) {
-            batch.beforeCheckpoint = checkpoint;
-            batch.needsCheckpoint = true;
-        } else {
-            // 配置未命中（当前已见工具均未配置 before）：重置防重入，
-            // 允许后续到达的已配置工具再次触发创建。
-            batch.beforeCreated = false;
+        try {
+            // 挂载索引由批次状态统一计算（首个早启动工具到达时惰性启动；此处 await 保证就绪，
+            // batchIndexPromise 已挂 catch，失败时 messageIndex 缺省走下方兑底读取）
+            if (batch.messageIndex === undefined) {
+                await batch.batchIndexPromise;
+            }
+            let index = batch.messageIndex;
+            if (index === undefined) {
+                // 防御：索引 promise 异常/未启动时直接读取（正常不可达）
+                const history = await this.conversationManager.getHistoryRef(conversationId);
+                index = history.length;
+                batch.messageIndex = index;
+            }
+            const checkpoint = await checkpointService.createToolExecutionCheckpoint(
+                conversationId,
+                index,
+                'tool_batch',
+                'before',
+                undefined,
+                // CPF-07 精确判定：批内已见工具名透传（CheckpointManager 按 beforeTools 求交）
+                { batchToolNames: Array.from(batch.batchToolNames) }
+            );
+            if (checkpoint) {
+                batch.beforeCheckpoint = checkpoint;
+            } else {
+                // 配置未命中（当前已见工具均未配置 before）：重置防重入，
+                // 允许后续到达的已配置工具再次触发创建。
+                batch.beforeCreated = false;
+            }
+        } catch (error) {
+            // 存档创建异常（磁盘/锁等）：降级为无存档执行（warn），不阻断工具执行，
+            // 与主循环路径 checkpoint.batch_before_failed 语义一致。
+            this.log.warn('checkpoint.batch_before_failed', {
+                conversationId,
+                error: (error as Error)?.message ?? String(error)
+            });
         }
     }
 
@@ -2352,7 +2381,6 @@ export class ToolIterationLoopService {
             );
             if (checkpoint) {
                 batch.beforeCheckpoint = checkpoint;
-                batch.needsCheckpoint = true;
             } else {
                 batch.beforeCreated = false;
             }
@@ -2387,10 +2415,12 @@ export class ToolIterationLoopService {
         // 批次挂载索引可能仍由早启动的惰性 promise 计算中（无 before 创建、仅 after 配置的批次）：
         // await 保证就绪后再判定；索引仍缺时说明批次无任何存档需求，直接返回空。
         await batch.batchIndexPromise;
-        if (!batch.needsCheckpoint || batch.messageIndex === undefined) {
+        if (batch.messageIndex === undefined) {
             return [];
         }
-        if (!createAfter) {
+        // 仅配 before（批内无工具命中 afterTools，needsCheckpoint=false）或确认路径
+        // （createAfter=false）：下发 before，不创建 after。
+        if (!createAfter || !batch.needsCheckpoint) {
             return [batch.beforeCheckpoint].filter((cp): cp is CheckpointRecord => !!cp);
         }
         try {

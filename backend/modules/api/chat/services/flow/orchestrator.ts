@@ -525,6 +525,8 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
 
     const toolResultsThisTurn: Array<{ id: string; name: string; result: Record<string, unknown> }> = [];
     const checkpointsThisTurn: CheckpointRecord[] = [];
+    /** M3：本回合（及之前确认回合）被用户拒绝的工具 ID——补建批次 after 时排除 */
+    const rejectedToolIdsThisTurn = new Set<string>();
 
     let responseParts: ContentPart[] = [];
     let multimodalAttachments: ContentPart[] = [];
@@ -649,6 +651,8 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       resolvedIdsThisTurn.add(nextCall.id);
     } else {
       await this.conversationManager.rejectToolCalls(conversationId, messageIndex, [nextCall.id]);
+      // M3：记录被拒绝的工具——补建批次 after 时排除（未执行的工具不参与 afterTools 判定）
+      rejectedToolIdsThisTurn.add(nextCall.id);
 
       const rejectedResult = {
         success: false,
@@ -881,15 +885,20 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     // 批次 before 已在流式阶段（确认事件下发前）创建；after 挂模型消息索引，
     // CheckpointManager 按批内工具与 afterTools 的交集精确判定（批内无配置 after 的工具则跳过）。
     // 多个确认回合时只在最后一个回合（队列耗尽）补建一次；取消/中断路径不补（与流式语义一致）。
+    // M3：本回合被用户拒绝的工具从未执行，不计入批内工具名——
+    // 否则「批内唯一工具被拒」也会因该工具的 afterTools 配置产生一对空批次存档。
     // checkpointService 未注入（测试 harness/降级环境）时跳过补建。
     if (this.checkpointService) {
+      const executedBatchToolNames = allFunctionCalls
+        .filter(c => !rejectedToolIdsThisTurn.has(c.id))
+        .map(c => c.name);
       const batchAfterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
         conversationId,
         modelMessageIndex,
         'tool_batch',
         'after',
         undefined,
-        { batchToolNames: allFunctionCalls.map(c => c.name) }
+        { batchToolNames: executedBatchToolNames }
       );
       if (batchAfterCheckpoint) {
         checkpointsThisTurn.push(batchAfterCheckpoint);

@@ -204,12 +204,17 @@ export class CheckpointService {
             return true;
         }
         const config = this.settingsManager.getCheckpointConfig();
+        // 整体关闭时直接返回 false：避免每个早启动工具都触发一次 ensure 尝试
+        // （每次尝试含一次全量 transcript 读取后由 CheckpointManager 返回 null）
+        if (!config.enabled) {
+            return false;
+        }
         // CPF-07：按 phase 精确判定——批次 before 只认 beforeTools、after 只认 afterTools；
         // 不传 phase 时保持旧语义（before ∪ after 并集），兼容既有调用。
         const toolList = phase === 'before'
-            ? config.beforeTools
+            ? (config.beforeTools ?? [])
             : phase === 'after'
-                ? config.afterTools
+                ? (config.afterTools ?? [])
                 : [...(config.beforeTools ?? []), ...(config.afterTools ?? [])];
         return toolList.includes(toolName);
     }
@@ -249,9 +254,9 @@ export class CheckpointService {
             phase,
             {
                 ...(options && options.progress ? { progress: options.progress } : {}),
-                ...(options && options.batchToolNames && options.batchToolNames.length > 0
-                    ? { batchToolNames: options.batchToolNames }
-                    : {}),
+                // 空数组也透传（CheckpointManager 对空 batchToolNames 显式返回 false＝无工具不建存档），
+                // 与「未传」回退旧语义（列表非空即建）明确区分，避免契约歧义。
+                ...(options && options.batchToolNames ? { batchToolNames: options.batchToolNames } : {}),
                 ...(resolvedNodeId ? { messageNodeId: resolvedNodeId } : {})
             }
         ));
