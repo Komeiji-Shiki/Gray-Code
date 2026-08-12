@@ -22,6 +22,17 @@
   - webview 置顶文件配置响应收敛（agent-sweep 04#14）：`getPinnedFilesConfig` 移除前端零消费的硬编码英文 `sectionTitle` 字段，有无工作区两个分支统一返回 `{ files }` 契约（`sectionTitle` 仅后端 PromptManager 直接读 settings 消费）。
   - 测试补齐（agent-sweep 02#20）：新增 `write_file`/`insert_code`/`delete_code` 三个写类工具 handler 的 diff 审阅终态单测（接受/拒绝/取消/autoSave 失败/参数边界，共 23 用例）与 `ToolRegistry` 核心行为单测（重复注册抛错、refreshTool 失败保留旧实例、revision 递增语义，5 用例），覆盖此前无直接测试的终态组装逻辑。
 
+  - 设置读取性能优化（agent-sweep 01#14）：`SettingsCore`/`SettingsManager` 新增 `getScalarSettings(...keys)`（标量直返、对象/数组走深拷贝兜底）与 `getUpdateSettings()`（checkForUpdates/updateChannel/proxy 快照）；bootstrap UpdateChecker 回调改走 `getUpdateSettings`，不再每次对整个设置树（含庞大 toolsConfig）全量深拷贝。`getSettings()` 全量语义保留；WindowsAgentStopNotificationService 因低频读取暂保持。
+  - 工具声明 getter memo 化与轮询优化（agent-sweep 02#19）：apply_diff/subagents/history_search 的动态声明 getter 按「语言 + 输入指纹」进程级缓存，输入变化时重建（subagents 复用 toolNameSnapshotCache.key）；子代理 runLoop 超时轮询间隔由 500ms 拉大到 2000ms（暂停时间扣减由 getActiveElapsedMs 保证，与轮询间隔无关）。
+  - 流式视图不可达保护补齐「流启动即无视图」场景（agent-sweep 04#3）：`StreamChunkProcessor` 新增 `allowHeadlessConsume`（默认 false），默认下流启动时目标 webview 已销毁/未注册同样判定不可达并立即 abort 后端生成；仅显式允许 headless 的路径保留「视图从可达变为不可达才中止」的旧语义。
+  - 设置导出/导入三份平行实现收敛（agent-sweep 04#7）：新建 `webview/utils/settingsTransfer.ts` 的 `exportSettingsToFile`/`importSettingsFromFile`（统一 exporter 构造、保存/打开对话框、覆盖询问与默认文件名 graycode-settings.json），ChatViewProvider/SettingsTransferHandlers/settingsCommands 三处调用方只保留各自入口适配。
+  - 路由映射生命周期收敛（agent-sweep 04#8）：`MessageRouter.requestClients` 的增删收敛为 `RequestRouteTable` 的 track/finish/fail/routeResponse/routeError 语义方法，删除时机唯一事实来源（流式 keepUntilFinalize 保留、非流式/错误终态删除、投递失败回退主聊天），消除约 9 处散落 delete 的漂移风险。
+  - 视图重建后旧会话任务隔离（agent-sweep 04#12）：ChatViewProvider 引入会话代际号（视图重建/关闭递增），消息到达时捕获代际，旧代际的响应/错误经 `GenerationAwareWebviewClientRegistry` 拦截不再投递到新视图（取消类副作用仍执行）。
+  - 错误边界统一（agent-sweep 04#13）：BranchHandlers/CheckpointHandlers/McpHandlers/SubAgentsHandlers 的手写 try/catch 收敛为 `withBoundary` 统一口径（对外错误码语义不变；BranchHandlers 因错误码动态映射保留 `withBranchBoundary` 薄封装）。
+  - 传输层契约文档化（agent-sweep 04#15）：`shared/protocol.ts` 固化「流式多响应」「requestId 归一化」「resolveClientId 未注册回退」三条跨端约定为注释文档，不改运行时逻辑。
+  - nightly 版本基线修复（agent-sweep E-03）：nightly 版本改为「当前版本的下一 minor 版本 + `-nightly.<date>`」（如 1.5.3 → 1.6.0-nightly.<date>），恒高于当前稳定线，避免稳定版 bump 后 nightly 被 compareVersions 判为落后；解析失败退回旧形式。
+  - 消息列表虚拟窗口上限（agent-sweep F-08）：`useVirtualMessageWindow` 由「只增不减分页」改为 200 行滑动窗口（顶部滑窗 + 底部裁行 + 锚点法恢复滚动位置），长会话上滚渲染 DOM 不再无界增长；吸底与流式新增贴尾语义保持。
+
 ## [1.5.3] - 2026-08-12
 
 ### Fixed

@@ -1,8 +1,9 @@
 /**
  * useVirtualMessageWindow - 消息列表虚拟窗口 / 滚动 / UI 状态保存恢复
  *
- * 从 MessageList.vue 拆分（S4 批次），纯重构不改行为：
- * - visibleCount / hasMore / loadMore（先前端展开、再按需后端拉取，含连续空页上限与滚动位置保持）
+ * 从 MessageList.vue 拆分（S4 批次）：
+ * - visibleCount / hasMore / loadMore（先前端展开、再按需后端拉取，含连续空页上限与滚动位置保持；
+ *   F-08 起 visibleCount 封顶 MAX_RENDERED_ROWS，超出后改为滑动窗口裁剪顶部/底部行）
  * - maybeAutoLoadMore 自动补载 / handleScroll 滚动加载
  * - messageRenderRows 渲染行组装（build / todo sticky 条 + checkpoint 增强消息 + 总结分隔线）
  * - saveCurrentUiState / restoreUiState（模块级 messageListUiStateByTab，H5 / M2-1）
@@ -19,7 +20,6 @@ import { CustomScrollbar } from '../common'
 import { pruneMediumTrimmedByMessageId } from './mediumTrimState'
 import { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './messageViewModes'
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
-import { resolveLoadedVisibleMessages } from './messageListUtils'
 import { clearLineDiffCache } from '../../utils/lineDiff'
 import type { Message, CheckpointRecord } from '../../types'
 
@@ -62,12 +62,45 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   const VISIBLE_INCREMENT = 40
   // 连续空页上限：后端返回 loaded=true 但无新增消息时停止继续拉取，避免死循环
   const MAX_EMPTY_LOAD_PAGES = 3
+  // 滚动到顶部/底部触发加载或贴尾的阈值（px）
+  const SCROLL_LOAD_THRESHOLD = 100
+
+  // F-08：渲染窗口上限。此前 visibleCount 只增不减，用户持续上滚时渲染行数线性增长，
+  // 从不裁掉已滚出视口顶部的行；数千条历史会渲染上千个 MessageItem，逐步吃掉流式渲染优化。
+  // 这里把窗口长度封顶，超出后改为「滑动窗口」：loadMore 上翻历史时窗口上移，
+  // 同时把底部最早渲染的行裁掉（见 loadMore 的重定位逻辑）。
+  // 取值权衡：200 行既覆盖常见视口（约 5~10 屏），又不会让长会话退回 O(n) 渲染。
+  const MAX_RENDERED_ROWS = 200
+
+  // 窗口长度（渲染的消息条数），保持在 [1, MAX_RENDERED_ROWS]
   const visibleCount = ref(VISIBLE_INCREMENT)
+  // 窗口起点：props.messages 中第一条参与渲染的消息下标（滑动窗口的 startIndex）
+  const windowStart = ref(0)
+
+  // 当前可见消息总数
+  const messageCount = computed(() => props.messages.length)
+  // 实际渲染条数（消息不足窗口大小时按实际条数）
+  const windowSize = computed(() => Math.min(visibleCount.value, messageCount.value))
+  // 窗口起点允许的最大值（保证窗口不越过数组末尾）
+  const maxWindowStart = computed(() => Math.max(0, messageCount.value - windowSize.value))
+  // 归一化后的窗口起点（windowStart 可能在消息数组被裁剪/替换后越界，这里兜底）
+  const safeWindowStart = computed(() => {
+    if (messageCount.value === 0) return 0
+    return Math.min(Math.max(windowStart.value, 0), maxWindowStart.value)
+  })
+  // 窗口终点（不含），即滑动窗口的 endIndex
+  const windowEnd = computed(() => safeWindowStart.value + windowSize.value)
+
+  // 与 CustomScrollbar 的协调点（F-08）：滑动窗口裁剪顶部/底部行会改变 scrollHeight 与剩余
+  // 消息的内容偏移；CustomScrollbar 的 MutationObserver 会在 childList 变更后自动 updateScrollbar
+  // 并重扫 marker，因此这里无需手动通知它。吸底时其 sticky-bottom 只跟随「容器底部」——
+  // 本文件只需在窗口重新贴尾后滚到底部（handleScroll），其 wasAtBottom 随 scroll 事件同步，
+  // 之后继续跟随流式新增。裁剪后残留的 marker 会随下一次结构重扫被清掉，不会指向已卸载 DOM。
 
   // 是否还有更多“未加载到窗口”的历史消息
   const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
-  // 顶部加载指示器：后端有更多消息 或 前端还有已加载但未渲染的消息
-  const hasMore = computed(() => hasMoreHistory.value || visibleCount.value < props.messages.length)
+  // 顶部加载指示器：后端有更多历史 或 窗口起点之前还有已加载但未渲染的消息
+  const hasMore = computed(() => hasMoreHistory.value || safeWindowStart.value > 0)
 
   // 增强的消息对象接口
   interface EnhancedMessage {
@@ -78,7 +111,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   }
 
   const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
-    const visibleMessages = resolveLoadedVisibleMessages(props.messages, visibleCount.value)
+    const visibleMessages = props.messages.slice(safeWindowStart.value, windowEnd.value)
 
     // 预先按消息索引对检查点进行分组
     return visibleMessages.map(message => {
@@ -153,6 +186,50 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     return rows
   })
 
+  // 将窗口长度约束在 [1, MAX_RENDERED_ROWS]
+  function clampVisibleCount(value: number): number {
+    if (!Number.isFinite(value)) return VISIBLE_INCREMENT
+    return Math.max(1, Math.min(MAX_RENDERED_ROWS, Math.floor(value)))
+  }
+
+  // 贴尾：窗口渲染最新 size 条消息（吸底/流式新增的基础）
+  function anchorToTail() {
+    const len = props.messages.length
+    const size = Math.min(visibleCount.value, len)
+    windowStart.value = Math.max(0, len - size)
+  }
+
+  // 记录顶部锚点：滑窗会「顶部新增 + 底部裁剪」同时发生，scrollHeight 变化不再单调，
+  // 不能用旧的 oldScrollTop + ΔscrollHeight 恢复位置；改为锚定第一条尚未完全滚出视口的消息。
+  function captureTopAnchor(container: HTMLElement): { messageId: string | null; offset: number } {
+    const elements = container.querySelectorAll<HTMLElement>('.message-item, .summary-message')
+    const containerRect = container.getBoundingClientRect()
+    for (let i = 0; i < elements.length; i++) {
+      const el = elements[i]
+      const rect = el.getBoundingClientRect()
+      if (rect.bottom > containerRect.top + 1) {
+        const message = enhancedVisibleMessages.value[i]
+        return { messageId: message?.message?.id ?? null, offset: rect.top - containerRect.top }
+      }
+    }
+    return { messageId: null, offset: 0 }
+  }
+
+  // 用锚点恢复视口位置（兼容顶部新增与底部裁剪；锚点已不在窗口内时保持浏览器默认钳制）
+  async function restoreTopAnchor(container: HTMLElement, anchor: { messageId: string | null; offset: number }) {
+    await nextTick()
+    if (!anchor.messageId) return
+    const elements = container.querySelectorAll<HTMLElement>('.message-item, .summary-message')
+    const index = enhancedVisibleMessages.value.findIndex(m => m.message.id === anchor.messageId)
+    if (index === -1 || index >= elements.length) return
+    const el = elements[index]
+    const containerRect = container.getBoundingClientRect()
+    const elRect = el.getBoundingClientRect()
+    // 锚点消息在内容中的绝对偏移（与 CustomScrollbar marker 计算同源：rect + scrollTop）
+    const contentOffset = elRect.top - containerRect.top + container.scrollTop
+    container.scrollTop = Math.max(0, contentOffset - anchor.offset)
+  }
+
   // 是否正在加载更多（用于节流）
   const viewportHeight = ref(0)
 
@@ -167,41 +244,43 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
     // 固化发起时的标签页与会话身份
     const originTabId = props.tabId
+    const originConversationId = chatStore.currentConversationId
 
     isLoadingMore.value = true
-    const oldScrollHeight = container.scrollHeight
-    const oldScrollTop = container.scrollTop
+    const anchor = captureTopAnchor(container)
+
+    // 固化发起时的窗口状态，供加载完成后重定位窗口使用
+    const prevLen = props.messages.length
+    const prevStart = safeWindowStart.value
+    const needBackendLoad = hasMoreHistory.value
+    const needFrontendExpand = prevStart > 0
 
     try {
-      const needBackendLoad = hasMoreHistory.value
-      const needFrontendExpand = visibleCount.value < props.messages.length
-
-      // 优先展开前端已加载但未渲染的消息
-      if (needFrontendExpand) {
-        visibleCount.value += VISIBLE_INCREMENT
-      }
-
-      // 如果后端还有更多消息，再拉取
+      // 如果后端还有更多消息，先拉取（prepend 会整体右移消息数组）
       if (needBackendLoad) {
-        const prevLen = props.messages.length
         await nextTick()
 
         await chatStore.loadOlderMessagesPage()
         await nextTick()
 
         // 校验归属：await 期间可能已切换标签页或对话
-        if (props.tabId !== originTabId) return
+        if (props.tabId !== originTabId || chatStore.currentConversationId !== originConversationId) return
 
         if (props.messages.length <= prevLen) {
           // 如果这一页没有新增可见消息，继续尝试下一页
           // 连续空页上限：后端返回 loaded=true 但无新增（空页）时停止，避免死循环
           let emptyPages = 0
-          while (hasMoreHistory.value && props.tabId === originTabId && emptyPages < MAX_EMPTY_LOAD_PAGES) {
+          while (
+            hasMoreHistory.value &&
+            props.tabId === originTabId &&
+            chatStore.currentConversationId === originConversationId &&
+            emptyPages < MAX_EMPTY_LOAD_PAGES
+          ) {
             const currentLen = props.messages.length
             const loaded = await chatStore.loadOlderMessagesPage()
             await nextTick()
 
-            if (props.tabId !== originTabId) break
+            if (props.tabId !== originTabId || chatStore.currentConversationId !== originConversationId) break
 
             if (!loaded || props.messages.length > currentLen) {
               break
@@ -210,16 +289,30 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
           }
         }
       }
+
+      // 加载完成后重定位窗口：
+      // - 未达上限：增长窗口并保持贴尾（原有「先前端展开」行为，最新消息始终可见）。
+      // - 已达上限：向上滑动窗口，露出更早消息，同时裁掉底部等量最新行。
+      const added = props.messages.length - prevLen
+      const frontendStep = needFrontendExpand ? VISIBLE_INCREMENT : 0
+
+      if (visibleCount.value < MAX_RENDERED_ROWS) {
+        visibleCount.value = clampVisibleCount(visibleCount.value + frontendStep + added)
+        anchorToTail()
+      } else {
+        // prepend 已把数组整体右移（等价于窗口向上滑了 added 行），
+        // 这里只需再向上滑 frontendStep，即可露出更早消息并裁掉底部等量行。
+        windowStart.value = Math.max(0, prevStart - frontendStep)
+      }
     } catch (error) {
       // 拉取失败：记录日志，加载标记在 finally 中复位
       console.error('[MessageList] Failed to load older messages:', error)
     } finally {
       // 无条件复位加载标记，避免切走标签页后该标签页上拉加载永久禁用（H4）
       isLoadingMore.value = false
-      // 仅当标签页未切换时才修正滚动位置
-      if (props.tabId === originTabId) {
-        const newScrollHeight = container.scrollHeight
-        container.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight)
+      // 仅当标签页与会话都未切换时才修正滚动位置（锚点法，兼容顶部新增 + 底部裁剪）
+      if (props.tabId === originTabId && chatStore.currentConversationId === originConversationId) {
+        await restoreTopAnchor(container, anchor)
       }
       // 内容仍不满一屏且还有更多时继续自动补载（覆盖初始挂载/首屏不满的场景）
       maybeAutoLoadMore()
@@ -231,6 +324,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
   // 会在内容填满一屏或没有更多消息时自然收敛。
   function maybeAutoLoadMore() {
     if (isLoadingMore.value || !hasMore.value) return
+    // 仅在窗口贴尾时自动补载：避免用户上翻历史（窗口未贴尾）时被自动向上滑窗
+    if (windowEnd.value < props.messages.length) return
     const container = scrollbarRef.value?.getContainer()
     if (!container) return
     if (container.scrollHeight <= container.clientHeight + 1) {
@@ -238,7 +333,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     }
   }
 
-  // 滚动事件处理：实现自动加载
+  // 滚动事件处理：实现自动加载与滑窗贴尾
   function handleScroll(e: Event) {
     const container = e.target as HTMLElement
     if (!container) return
@@ -246,9 +341,19 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
       viewportHeight.value = container.clientHeight
     }
 
-    // 当滚动到距离顶部 100px 以内时自动加载
-    if (hasMore.value && !isLoadingMore.value && container.scrollTop < 100) {
-      loadMore()
+    // 顶部阈值：自动加载更早历史（沿用原 100px 判定）
+    if (hasMore.value && !isLoadingMore.value && container.scrollTop < SCROLL_LOAD_THRESHOLD) {
+      void loadMore()
+      return
+    }
+
+    // 底部阈值：窗口尚未贴尾时（上翻历史裁掉了底部行），滚到底部重新贴尾，
+    // 让最新消息重新进入渲染窗口；随后 CustomScrollbar 的 sticky-bottom 继续跟随流式新增。
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    if (distanceFromBottom < SCROLL_LOAD_THRESHOLD && windowEnd.value < props.messages.length) {
+      anchorToTail()
+      needsScrollToBottom.value = true
+      nextTick(() => tryScrollToBottom({ instant: true }))
     }
   }
 
@@ -308,7 +413,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     if (!tabId) return
     const saved = uiStateByTab.get(tabId)
     if (saved) {
-      visibleCount.value = saved.visibleCount
+      visibleCount.value = clampVisibleCount(saved.visibleCount)
+      anchorToTail()
       isBuildExpanded.value = saved.buildExpanded
       isTodoExpanded.value = saved.todoExpanded
       restoreNotice.value = saved.restoreNotice ?? null
@@ -324,6 +430,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     }
 
     visibleCount.value = VISIBLE_INCREMENT
+    anchorToTail()
     needsScrollToBottom.value = true
     restoreTodoExpandedState()
     nextTick(() => {
@@ -355,6 +462,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
 
     // 重置分页计数（新对话从最后一页开始显示）
     visibleCount.value = VISIBLE_INCREMENT
+    // 重置窗口到贴尾（消息尚未到达时由 messages.length watcher 兜底）
+    anchorToTail()
     // 标记需要滚动到底部
     needsScrollToBottom.value = true
     nextTick(() => tryScrollToBottom({ instant: true }))
@@ -365,9 +474,19 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     // 当消息加载完成时，尝试滚动
     // 如果容器还没有尺寸（display: none），ResizeObserver 会在可见时触发
     if (needsScrollToBottom.value && newMessages.length > 0) {
+      // 先贴尾：保证滚动目标是「最新消息窗口」，而不是可能被上翻滑窗裁掉的旧窗口
+      anchorToTail()
       tryScrollToBottom({ instant: true })
     }
   }, { deep: false })
+
+  // 监听可见消息长度变化：窗口贴尾时跟随新增消息继续贴尾（流式新增不丢最新消息）；
+  // 上翻历史（窗口未贴尾）时保持窗口不动，避免打断阅读位置。
+  watch(() => props.messages.length, (_newLen, oldLen) => {
+    if (needsScrollToBottom.value || windowEnd.value >= oldLen) {
+      anchorToTail()
+    }
+  })
 
   // 尝试滚动到底部（会检查容器是否准备好）
   function tryScrollToBottom(options?: { instant?: boolean }) {

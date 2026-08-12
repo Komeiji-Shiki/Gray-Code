@@ -115,23 +115,42 @@ jobs:
       # 扩展 nightly 渠道将无法从名称提取版本号，导致更新检查失败。
       - name: Compute nightly version
         id: version
-        # nightly 版本号 = 当前版本 + -nightly.<YYYYMMDD> 预发布段（如 1.4.6-nightly.20260809）：
-        # - 合法 semver（vsce 打包校验 /^\.d+\.d+\.d+$/ 及预发布标识符要求）；
+        # nightly 版本号基线 = 当前 pkg.version 的「下一个 minor 版本」（E-03 修复）：
+        #   解析 major.minor 后 minor+1、patch 归 0，再追加 -nightly.<YYYYMMDD>。
+        #   例如 1.5.3 → 1.6.0-nightly.20260809，恒高于当前稳定线，避免 1.5.4 发布后
+        #   nightly 仍产出 1.5.3-nightly.* 而被 compareVersions 判为落后于稳定版。
+        # - 合法 semver：三段数字 + 预发布标识 nightly.<YYYYMMDD>（vsce 打包校验要求）；
         # - compareVersions 将 -nightly.<date> 视为「高于同主版本正式版」的最新构建，
-        #   两个 nightly 之间按日期比较（1.4.6-nightly.20260810 > 1.4.6-nightly.20260809 > 1.4.6）；
+        #   两个 nightly 之间按日期比较；新基线领先一个 minor，稳定版 bump 后也不会被反超；
         # - 扩展 nightly 渠道从 Release name 中提取该版本号用于更新判断。
         # 放在 npm ci 之后才改 package.json 的 version，避免影响依赖解析。
         if: steps.should.outputs.build == 'true'
         run: |
-          node -e '
+          set -euo pipefail
+          pkg_version="$(node -p "require('./package.json').version" 2>/dev/null || true)"
+          pkg_version="${pkg_version:-0.0.0}"
+          today="$(date -u +%Y%m%d)"
+          # 用 bash 参数展开解析 major.minor（避免复杂转义的 node 一行脚本）
+          major="${pkg_version%%.*}"
+          rest="${pkg_version#*.}"
+          minor="${rest%%.*}"
+          # 非数字段置空，作为解析失败的判据
+          case "$major" in ''|*[!0-9]*) major='';; esac
+          case "$minor" in ''|*[!0-9]*) minor='';; esac
+          if [ -n "$major" ] && [ -n "$minor" ]; then
+            next_minor=$((minor + 1))
+            nightly="${major}.${next_minor}.0-nightly.${today}"
+          else
+            # 解析失败兜底：退回旧的「当前版本 + -nightly.<date>」形式，保证仍可打包
+            nightly="${pkg_version}-nightly.${today}"
+          fi
+          NIGHTLY_VERSION="$nightly" node -e '
             const fs = require("fs");
             const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
-            const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-            const nightly = `${pkg.version}-nightly.${date}`;
-            pkg.version = nightly;
+            pkg.version = process.env.NIGHTLY_VERSION;
             fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
-            console.log(nightly);
-          ' > .nightly-version.txt
+          '
+          printf '%s\n' "$nightly" > .nightly-version.txt
           echo "nightly_version=$(cat .nightly-version.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Package vsix
