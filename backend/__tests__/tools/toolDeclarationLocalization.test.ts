@@ -15,6 +15,8 @@
 import { localizeToolDeclaration } from '../../tools/localization/localizeToolDeclaration';
 import { resolveLocalizationLanguage } from '../../tools/localization/types';
 import { getToolDescriptionLocalization } from '../../tools/localization/catalogs';
+import { zhCN } from '../../tools/localization/catalogs/zh-CN/index';
+import { en as enCatalog } from '../../tools/localization/catalogs/en/index';
 import type { ToolDeclaration } from '../../tools/types';
 
 /** 带 enum/required/default 与嵌套数组 schema 的静态工具声明（apply_diff 形态） */
@@ -186,6 +188,32 @@ describe('localizeToolDeclaration 保留语义', () => {
     });
 });
 
+describe('localizeToolDeclaration required 数组隔离', () => {
+    test('返回对象的 required 数组不与原声明共享引用', () => {
+        const declaration: ToolDeclaration = {
+            name: 'sample_tool',
+            description: 'Original description.',
+            parameters: {
+                type: 'object',
+                required: ['path'],
+                properties: {
+                    path: { type: 'string', description: 'The path.' },
+                    files: { type: 'array', description: 'Files.' }
+                }
+            }
+        };
+        const result = localizeToolDeclaration(declaration, {
+            description: '中文说明。',
+            parameters: { path: '路径说明。' }
+        });
+        // 修复点：required 数组必须克隆（否则对返回对象 push 会污染原声明的 required）
+        expect(result.parameters.required).not.toBe(declaration.parameters.required);
+        result.parameters.required!.push('files');
+        expect(result.parameters.required).toEqual(['path', 'files']);
+        expect(declaration.parameters.required).toEqual(['path']);
+    });
+});
+
 describe('resolveLocalizationLanguage 语言归并', () => {
     test('zh-CN → zh-CN', () => {
         expect(resolveLocalizationLanguage('zh-CN')).toBe('zh-CN');
@@ -221,8 +249,112 @@ describe('getToolDescriptionLocalization 目录查找', () => {
         expect(localization!.parameters?.['files']).toContain('MUST be an array');
     });
 
+    test('en 目录 memory_note 覆盖（并行修复中）：若已合入则覆盖说明不含中文字符', () => {
+        const localization = getToolDescriptionLocalization('en', 'memory_note');
+        if (!localization) {
+            // 并行修复（en 目录 memory_* 英文覆盖）尚未合入：en 无 memory_note，保留英文原文属预期
+            expect(localization).toBeUndefined();
+            return;
+        }
+        const texts = [localization.description, ...Object.values(localization.parameters ?? {})]
+            .filter((text): text is string => typeof text === 'string');
+        expect(texts.length).toBeGreaterThan(0);
+        for (const text of texts) {
+            expect(text).not.toMatch(/[\u4e00-\u9fff]/);
+        }
+    });
+
     test('未配置的工具返回 undefined（两种语言一致）', () => {
         expect(getToolDescriptionLocalization('zh-CN', 'definitely_no_such_tool')).toBeUndefined();
         expect(getToolDescriptionLocalization('en', 'definitely_no_such_tool')).toBeUndefined();
+    });
+});
+
+describe('目录参数路径键格式校验', () => {
+    /**
+     * localizeToolDeclaration.setDescriptionAtPath 的本地镜像（该实现未导出）：
+     * 路径键以 '.' 分段；'[]' 结尾的段是数组遍历（取 items 后继续）；末段写入 description。
+     */
+    function resolvePathInSchema(properties: Record<string, any>, pathKey: string): boolean {
+        const segments = pathKey.split('.');
+        let node: Record<string, any> | undefined = { properties };
+        for (let i = 0; i < segments.length; i++) {
+            if (!node) {
+                return false;
+            }
+            const segment = segments[i];
+            const isArrayTraversal = segment.endsWith('[]');
+            const name = isArrayTraversal ? segment.slice(0, -2) : segment;
+            const prop = node.properties?.[name] ?? node[name];
+            if (!prop || typeof prop !== 'object') {
+                return false;
+            }
+            if (i === segments.length - 1) {
+                return true;
+            }
+            node = isArrayTraversal ? (prop.items ?? prop) : prop;
+        }
+        return false;
+    }
+
+    /** 由键自身构造最小 schema fixture：每段一个对象属性；'[]' 段生成 array → items → object 结构 */
+    function buildFixtureFromKey(pathKey: string): Record<string, any> {
+        const segments = pathKey.split('.');
+        const root: Record<string, any> = {};
+        let current = root;
+        for (const segment of segments) {
+            const isArrayTraversal = segment.endsWith('[]');
+            const name = isArrayTraversal ? segment.slice(0, -2) : segment;
+            const child: Record<string, any> = { type: 'object', properties: {} };
+            if (isArrayTraversal) {
+                child.type = 'array';
+                child.items = { type: 'object', properties: {} };
+            }
+            current[name] = child;
+            current = isArrayTraversal ? child.items.properties : child.properties;
+        }
+        return root;
+    }
+
+    /** 段格式：普通名（字母/下划线开头，可含数字）或 name[] 数组段；不允许 '[]' 开头 / 连续 '[][]' */
+    const SEGMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*(\[\])?$/;
+
+    function validateKeyFormat(key: string): string[] {
+        const errors: string[] = [];
+        if (key.length === 0) {
+            errors.push('空键');
+            return errors;
+        }
+        const segments = key.split('.');
+        for (const segment of segments) {
+            if (segment.length === 0) {
+                errors.push(`段为空：${key}`);
+            } else if (segment.startsWith('[]')) {
+                errors.push(`段以 '[]' 开头：${key} → ${segment}`);
+            } else if (segment.includes('[][]')) {
+                errors.push(`段含连续 '[][]'：${key} → ${segment}`);
+            } else if (!SEGMENT_RE.test(segment)) {
+                errors.push(`段格式非法：${key} → ${segment}`);
+            }
+        }
+        return errors;
+    }
+
+    test.each(['zh-CN', 'en'])('%s 目录：全部参数路径键格式合法且能被路径解析', (lang) => {
+        const catalog = lang === 'zh-CN' ? zhCN : enCatalog;
+        const toolNames = Object.keys(catalog);
+        expect(toolNames.length).toBeGreaterThan(0);
+        const errors: string[] = [];
+        for (const toolName of toolNames) {
+            const parameters = catalog[toolName].parameters ?? {};
+            for (const key of Object.keys(parameters)) {
+                errors.push(...validateKeyFormat(key).map(error => `${toolName} → ${error}`));
+                // 用与 setDescriptionAtPath 相同的遍历逻辑在最小 fixture 上解析，必须能找到叶子
+                if (!resolvePathInSchema(buildFixtureFromKey(key), key)) {
+                    errors.push(`${toolName} → ${key}：按路径解析逻辑无法定位`);
+                }
+            }
+        }
+        expect(errors).toEqual([]);
     });
 });

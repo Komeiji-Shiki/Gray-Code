@@ -17,12 +17,33 @@ import { setLanguage, getActualLanguage } from '../../i18n';
 import { getToolDescriptionLocalization } from '../../tools/localization/catalogs';
 import { localizeToolDeclaration } from '../../tools/localization/localizeToolDeclaration';
 import type { ToolDeclaration } from '../../tools/types';
+import { clearToolDeclarationFactories } from '../../tools/toolDeclarationRegistry';
 
 const DECLARATIONS: ToolDeclaration[] = [
     { name: 'read_file', description: 'Read a file', parameters: { type: 'object', properties: {} } },
     { name: 'write_file', description: 'Write a file', parameters: { type: 'object', properties: {} } },
-    { name: 'search_in_files', description: 'Search files', parameters: { type: 'object', properties: {} } }
+    { name: 'search_in_files', description: 'Search files', parameters: { type: 'object', properties: {} } },
+    // memory_note：zh-CN 目录已覆盖（catalogs/zh-CN/auxiliary.ts），en 目录当前未覆盖。
+    // stub 用英文原文 + 简单 schema（含 required），用于验证「目录已覆盖工具的说明随语言切换」。
+    {
+        name: 'memory_note',
+        description: 'Record a permanent memory note. One line of text, limited by the entryChars limit.',
+        parameters: {
+            type: 'object',
+            required: ['text'],
+            properties: {
+                text: { type: 'string', description: 'The memory text to record.' }
+            }
+        }
+    }
 ];
+
+// 这些 stub 测试依赖「工厂未注册」的静态声明回退路径；工具声明工厂注册表是模块级单例，
+// 组合根或其他测试可能注册过动态工厂（如 read_file 的多模态描述工厂）。每个用例前清空注册，
+// 保证解析严格走「stub 声明 + 目录本地化」路径，不被工厂产物污染（未来新增注册也不会破坏本文件）。
+beforeEach(() => {
+    clearToolDeclarationFactories();
+});
 
 /** 可触发事件的最小 MCP 管理器 mock */
 function createMcpManagerMock() {
@@ -72,8 +93,8 @@ describe('ToolDeclarationResolver 声明缓存', () => {
         const { resolver, toolRegistry } = createHarness();
         const first = resolver.resolve(BASE_OPTIONS);
         const second = resolver.resolve(BASE_OPTIONS);
-        expect(first?.length).toBe(3);
-        expect(second?.length).toBe(3);
+        expect(first?.length).toBe(4);
+        expect(second?.length).toBe(4);
         expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(1);
     });
 
@@ -213,5 +234,34 @@ describe('ToolDeclarationResolver 语言缓存（声明本地化）', () => {
         for (let i = 0; i < en.length; i++) {
             expect(ja[i]).toBe(en[i]);
         }
+    });
+
+    test('目录已覆盖工具（memory_note）：zh-CN 解析出中文说明，en 不含中文字符', () => {
+        const { resolver, toolRegistry } = createHarness();
+        const originalEnglish = DECLARATIONS.find(decl => decl.name === 'memory_note')!.description;
+
+        setLanguage('zh-CN');
+        const zh = resolver.resolve(BASE_OPTIONS)!;
+        const zhMemory = zh.find(decl => decl.name === 'memory_note')!;
+        // zh-CN 目录覆盖了 memory_note：顶层说明与参数说明均为中文
+        expect(zhMemory.description).toMatch(/[\u4e00-\u9fff]/);
+        const zhCatalog = getToolDescriptionLocalization('zh-CN', 'memory_note')!;
+        expect(zhMemory.description).toBe(zhCatalog.description);
+        expect(zhMemory.parameters.properties.text.description).toBe(zhCatalog.parameters!['text']);
+
+        setLanguage('en');
+        const en = resolver.resolve(BASE_OPTIONS)!;
+        const enMemory = en.find(decl => decl.name === 'memory_note')!;
+        // en 目录当前未覆盖 memory_note：保留原始英文声明；
+        // 即使并行修复合入 en memory_* 英文覆盖，覆盖文本同样不含中文字符——两种情况下都断言无 CJK
+        expect(enMemory.description).not.toMatch(/[\u4e00-\u9fff]/);
+        const enCatalog = getToolDescriptionLocalization('en', 'memory_note');
+        if (enCatalog) {
+            expect(enMemory.description).toBe(enCatalog.description ?? originalEnglish);
+        } else {
+            expect(enMemory.description).toBe(originalEnglish);
+        }
+        // 语言切换 → 缓存键变化 → 重建（zh-CN 与 en 各构建一次）
+        expect(toolRegistry.getDeclarationsBy).toHaveBeenCalledTimes(2);
     });
 });
