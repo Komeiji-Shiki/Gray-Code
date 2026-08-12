@@ -5,7 +5,7 @@ import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type
 import type { SubAgentRunConversationStore } from '../backend/tools/subagents';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
-import { PUSH_MESSAGE_NAMES } from '../shared/protocol';
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '../shared/protocol';
 
 /**
  * Monitor 事件 payload 瘦身字段配置。
@@ -402,7 +402,7 @@ export class SubAgentMonitorPanel {
         // 整体 no-op，R2-07 回的 SUBAGENT_MONITOR_HANDLER_ERROR 根本发不出去（守卫已删除）。
         // 前端随 webview 销毁自愈：await 的 promise 随页面销毁失效，不会永久挂起。
 
-        if (message.type === 'subagents.monitorReady') {
+        if (message.type === MESSAGE_NAMES['subagents.monitorReady']) {
             // 修改原因：monitorReady 是打开 Monitor 的首包，不能继续返回包含完整 contents 的 snapshots。
             // 修改方式：返回由事件总线从 snapshot 派生的 manifests；Content[] 仅通过 getRunWindow 按 run 拉取。
             // 修改目的：大输出不会在首屏阶段进入 stringify/postMessage/deserialize/Vue state/Markdown 渲染链路。
@@ -423,7 +423,7 @@ export class SubAgentMonitorPanel {
             return;
         }
 
-        if (message.type === 'subagents.monitor.getRunWindow') {
+        if (message.type === MESSAGE_NAMES['subagents.monitor.getRunWindow']) {
             const runId = typeof message.data?.runId === 'string' ? message.data.runId.trim() : '';
             if (!runId) {
                 this.postRoutedMessage({
@@ -670,10 +670,14 @@ export class SubAgentMonitorPanel {
         const csp = [
             "default-src 'none'",
             `img-src ${webview.cspSource} https: data:`,
+            // 与主聊天 buildCsp 对齐：Monitor 提示音（<audio>，内置 mp3）依赖 media-src，
+            // 缺省 default-src 'none' 下无 media-src 时提示音会被 CSP 静默拦截；
+            // 生产模式 connect-src 必须放行 vscode-webview 资源，否则前端任何 fetch/WS 被拒
+            `media-src ${webview.cspSource} data: blob:${devServerOrigin ? ' ' + devServerOrigin : ''}`,
             `font-src ${webview.cspSource}`,
             `style-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
             `script-src ${webview.cspSource} 'nonce-${nonce}' ${devServerOrigin || ''}`,
-            `connect-src ${devServerOrigin || ''}`
+            `connect-src ${webview.cspSource}${devServerOrigin ? ' ' + devServerOrigin : ''}`
         ].join('; ');
         const bootstrap = `<script nonce="${nonce}">window.__GRAYCODE_VIEW_MODE = 'subagentMonitor'; window.__GRAYCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__GRAYCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
 

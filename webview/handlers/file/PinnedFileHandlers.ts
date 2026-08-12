@@ -60,7 +60,10 @@ export const getPinnedFilesConfig: MessageHandler = async (data, requestId, ctx)
   try {
     const workspaceUri = ctx.getCurrentWorkspaceUri();
     if (!workspaceUri) {
-      ctx.sendResponse(requestId, { files: [], sectionTitle: 'PINNED FILES CONTENT' });
+      // 无工作区：sectionTitle 沿用设置侧配置（单一来源，不再硬编码英文魔值），
+      // 响应结构与正常分支一致（直接展开 config，仅 files 置空）。
+      const config = ctx.settingsManager.getPinnedFilesConfig();
+      ctx.sendResponse(requestId, { ...config, files: [] });
       return;
     }
 

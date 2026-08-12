@@ -8,34 +8,21 @@ import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { SettingsExporter } from '../../backend/modules/settings';
-import { getSkillsManager } from '../../backend/modules/skills';
-import { getExtensionVersion } from '../utils/extensionInfo';
+import type { SettingsExporter } from '../../backend/modules/settings';
 import type { HandlerContext, MessageHandler } from '../types';
+import { createSettingsExporter } from '../utils/settingsTransfer';
 
 /**
- * 获取 Skills 目录路径
- */
-function getSkillsDir(ctx: HandlerContext): string {
-    return path.join(ctx.storagePathManager.getEffectiveDataPath(), 'skills');
-}
-
-/**
- * 创建设置导出器实例
+ * 创建设置导出器实例（构造参数经 utils/settingsTransfer 共享，发现 7）
  */
 function createExporter(ctx: HandlerContext): SettingsExporter | null {
-    const skillsManager = getSkillsManager();
-    if (!skillsManager) {
-        return null;
-    }
-    return new SettingsExporter(
-        ctx.settingsManager,
-        ctx.configManager,
-        ctx.mcpManager,
-        skillsManager,
-        ctx.context ? getExtensionVersion(ctx.context.extensionPath) : '0.0.0',
-        getSkillsDir(ctx)
-    );
+    return createSettingsExporter({
+        settingsManager: ctx.settingsManager,
+        configManager: ctx.configManager,
+        mcpManager: ctx.mcpManager,
+        storagePathManager: ctx.storagePathManager,
+        extensionPath: ctx.context?.extensionPath
+    });
 }
 
 /**

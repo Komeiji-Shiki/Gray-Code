@@ -8,7 +8,7 @@ import type { HandlerContext, MessageHandlerRegistry } from './types';
 import { createMessageHandlerRegistry } from './handlers';
 // B1：非阻塞名单迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导出路径
 // （backend/__tests__/webview/messageRouterNonBlockingBehavior.test.ts 直接 import 它）。
-import { NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
+import { MESSAGE_NAMES, NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
 export { NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
 import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
@@ -18,18 +18,18 @@ import { WebviewClientRegistry, type WebviewClientId } from './runtime/WebviewCl
 import type * as vscode from 'vscode';
 
 /**
- * 流式消息类型
+ * 流式消息类型（由 MESSAGE_NAMES 常量组成，避免成为协议消息名的第二事实源）
  */
 export const STREAM_MESSAGE_TYPES = [
-  'chatStream',
-  'retryStream',
-  'toolConfirmation',
-  'cancelStream',
+  MESSAGE_NAMES.chatStream,
+  MESSAGE_NAMES.retryStream,
+  MESSAGE_NAMES.toolConfirmation,
+  MESSAGE_NAMES.cancelStream,
   // H2（R6a-FIX）：reroll/editBranch 长流与 chatStream/retryStream 同模式——
   // 走 fire-and-forget，避免 route() 串行 await 整个流占死 IPC 消息队列
   // （期间 cancelStream/deleteMessage/switchBranchCandidate/新消息全部排队）。
-  'chat.rerollStream',
-  'chat.editBranchStream'
+  MESSAGE_NAMES['chat.rerollStream'],
+  MESSAGE_NAMES['chat.editBranchStream']
 ] as const;
 
 type StreamMessageType = typeof STREAM_MESSAGE_TYPES[number];
@@ -159,6 +159,10 @@ export class MessageRouter {
       ...ctx,
       clientId,
       view: ctx.view,
+      // H6/R2-xx：实时存活探测（registry.isAlive 包装）——流式 handler（reroll/editBranch）
+      // 的 StreamChunkProcessor.getView 用它判断「视图从可达变为不可达」并中止后端生成
+      // （见 ChatHandlers.createRoutedChunkProcessor）。
+      isClientAlive: () => this.clientRegistry.isClientReachable(clientId),
       sendResponse: (requestId, data) => {
         if (!this.clientRegistry.sendResponse(clientId, requestId, data)) {
           ctx.sendResponse(requestId, data);

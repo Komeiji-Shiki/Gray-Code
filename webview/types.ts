@@ -59,6 +59,10 @@ export interface HandlerContext {
   // R2-08：返回投递结果（true=已送达或已进入异步投递，不保证最终送达；false=完全未送达：
   // registry 丢弃且回退不可用/失败），供调用方留痕，不再吞掉 clientRegistry.postMessage 的返回值
   postMessage?: (message: any) => boolean;
+  // 视图是否可达的实时探测（路由上下文注入，registry.isAlive 包装）：
+  // reroll/editBranch 等流式 handler 用它判断「视图从可达变为不可达」从而中止后端生成；
+  // undefined 表示非路由上下文（直连调用/测试），调用方回退 ctx.view 判定。
+  isClientAlive?: () => boolean;
   openSubAgentMonitor?: (runId?: string, conversationId?: string) => Promise<void> | void;
   // 修改原因：Monitor 路由上下文把 view 覆盖为 undefined（流按 clientId 路由、storage 进度不能发到 Monitor），
   //          但 vscode.diff 默认在“当前活动组”打开——焦点在 Monitor 面板时 diff 会开在 Monitor 列而不是主聊天侧。

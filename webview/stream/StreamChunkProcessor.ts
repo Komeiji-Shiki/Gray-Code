@@ -77,7 +77,9 @@ export class StreamChunkProcessor {
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
-    } else if ('chunk' in chunk && chunk.chunk) {
+    } else if (typeof chunk.chunk === 'string') {
+      // 空字符串增量（模型空输出补丁/心跳 chunk 等）也是合法 chunk：按 chunk 处理
+      // （空增量并入批次无副作用），只有真正的非字符串才落入下方未知类型分支。
       // 只有真实内容增量才计入用户在场活跃（状态类事件不制造虚假在场时间）
       markAiActive();
       this.enqueue('chunk', { chunk: chunk.chunk }, { scheduleImmediateFlush: false });
@@ -167,11 +169,43 @@ export class StreamChunkProcessor {
       this.flush();
       return true;
     } else {
-      // 未知 chunk 类型：不静默丢弃，留痕便于排查后端协议演进
-      console.warn('[StreamChunkProcessor] Unknown chunk type dropped:', chunk);
+      // 未知 chunk 类型：不静默丢弃，打全原始 chunk 结构（键列表 + 尽力序列化）便于排查后端协议演进
+      let chunkDump: string;
+      try {
+        chunkDump = JSON.stringify(chunk);
+      } catch {
+        chunkDump = String(chunk);
+      }
+      console.warn(`[StreamChunkProcessor] Unknown chunk type dropped (keys: ${Object.keys(chunk).join(',')}):`, chunkDump);
     }
 
     return false;
+  }
+
+  /**
+   * 消费流直到终结事件或视图不可达（H6，公共循环）。
+   *
+   * 统一 chatStream/retryStream/toolConfirmation（StreamRequestHandler）与
+   * chat.rerollStream/chat.editBranchStream（ChatHandlers）五处消费循环，消除复制漂移：
+   * 视图不可达（面板关闭/重载）时 processChunk 丢弃 chunk 并返回 false，终结事件同样
+   * 返回 false——若循环只按 isError 判断，会永远继续消费，后端在后台全量生成
+   * （消耗 token、工具副作用继续执行）。检测到视图不可达后立即 abort 控制器
+   * 中止后端生成并停止消费；abort 信号透传给后端，pending 的流式请求快速落定。
+   */
+  async consume(
+    stream: AsyncIterable<any>,
+    controller?: AbortController
+  ): Promise<void> {
+    for await (const chunk of stream) {
+      const isError = this.processChunk(chunk);
+      if (isError) break;
+      if (this.isViewUnreachable()) {
+        controller?.abort();
+        break;
+      }
+    }
+    // 流结束后刷新缓冲区，确保所有消息都已发送
+    this.flush();
   }
 
   /**

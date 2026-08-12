@@ -8,21 +8,19 @@ import { t } from '../../backend/i18n';
 import { subAgentRunController } from '../../backend/tools/subagents';
 import { subAgentRunEventBus } from '../../backend/tools/subagents';
 import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../stream/StreamAbortManager';
-import type { HandlerContext, MessageHandler } from '../types';
+import type { MessageHandler } from '../types';
+import { withBoundary } from './errorBoundary';
 
 function withConversationBoundary(name: string, handler: MessageHandler): MessageHandler {
-  return async (data, requestId, ctx) => {
+  // 统一错误边界来自 handlers/errorBoundary（唯一实现）；本包装器只保留
+  // 对话子域特有的 data 形态校验（CONVERSATION_INVALID_PARAMS）。
+  return withBoundary('CONVERSATION_HANDLER_ERROR', `Failed to handle ${name}`, async (data, requestId, ctx) => {
     if (data !== undefined && data !== null && (typeof data !== 'object' || Array.isArray(data))) {
       ctx.sendError(requestId, 'CONVERSATION_INVALID_PARAMS', `Invalid parameters for ${name}`);
       return;
     }
-    try {
-      await handler(data || {}, requestId, ctx);
-    } catch (error) {
-      const message = error instanceof Error && error.message ? error.message : `Failed to handle ${name}`;
-      ctx.sendError(requestId, 'CONVERSATION_HANDLER_ERROR', message);
-    }
-  };
+    await handler(data || {}, requestId, ctx);
+  });
 }
 
 /**

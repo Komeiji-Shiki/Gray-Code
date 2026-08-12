@@ -70,6 +70,27 @@ export class WebviewClientRegistry {
     return this.get(clientId)?.webviewHost;
   }
 
+  /**
+   * 实时存活探测：client 已注册且 isAlive()（如有）为 true。
+   * isAlive 抛错视同不可达（与 postMessage 内的存活判定口径一致，M8）。
+   * 供流式 handler 的视图可达性判定使用（StreamChunkProcessor.isViewUnreachable）。
+   */
+  isClientReachable(clientId: unknown): boolean {
+    const client = this.get(clientId);
+    if (!client) {
+      return false;
+    }
+    if (!client.isAlive) {
+      return true;
+    }
+    try {
+      return client.isAlive();
+    } catch (error) {
+      console.warn('[WebviewClientRegistry] isAlive check threw, treating client as dead:', error);
+      return false;
+    }
+  }
+
   resolveClientId(requestedClientId?: unknown, fallbackClientId?: unknown): WebviewClientId | undefined {
     const requested = this.tryNormalizeClientId(requestedClientId);
     const fallback = this.tryNormalizeClientId(fallbackClientId);

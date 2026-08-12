@@ -4,6 +4,8 @@
 
 import type { MessageHandler } from '../types';
 
+export { withBoundary } from './errorBoundary';
+
 import { registerConversationHandlers } from './ConversationHandlers';
 import { registerBranchHandlers } from './BranchHandlers';
 import { registerConfigHandlers } from './ConfigHandlers';

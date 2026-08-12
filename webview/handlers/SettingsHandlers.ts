@@ -14,16 +14,7 @@ import { t } from '../../backend/i18n';
 import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings';
 import type { MessageHandler } from '../types';
 import { getProductMetadata } from '../../backend/core/productMetadata';
-
-function settingsHandlerBoundary(errorCode: string, fallback: string, handler: MessageHandler): MessageHandler {
-  return async (data, requestId, ctx) => {
-    try {
-      await handler(data || {}, requestId, ctx);
-    } catch (error) {
-      ctx.sendError(requestId, errorCode, error instanceof Error && error.message ? error.message : fallback);
-    }
-  };
-}
+import { withBoundary } from './errorBoundary';
 
 /**
  * 获取设置
@@ -314,10 +305,10 @@ export const countSystemPromptTokens: MessageHandler = async (data, requestId, c
  * 设置导入/导出由 ./SettingsTransferHandlers 的 registerSettingsTransferHandlers 注册。
  */
 export function registerSettingsHandlers(registry: Map<string, MessageHandler>): void {
-  registry.set(MESSAGE_NAMES.getSettings, settingsHandlerBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
+  registry.set(MESSAGE_NAMES.getSettings, withBoundary('GET_SETTINGS_ERROR', 'Failed to get settings', getSettings));
   registry.set(MESSAGE_NAMES.getAppInfo, getAppInfo);
-  registry.set(MESSAGE_NAMES.updateSettings, settingsHandlerBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
-  registry.set(MESSAGE_NAMES.updateProxySettings, settingsHandlerBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
+  registry.set(MESSAGE_NAMES.updateSettings, withBoundary('UPDATE_SETTINGS_ERROR', 'Failed to update settings', updateSettings));
+  registry.set(MESSAGE_NAMES.updateProxySettings, withBoundary('UPDATE_PROXY_SETTINGS_ERROR', 'Failed to update proxy settings', updateProxySettings));
   registry.set(MESSAGE_NAMES.updateUISettings, updateUISettings);
   registry.set(MESSAGE_NAMES['settings.getActiveChannelId'], getActiveChannelId);
   registry.set(MESSAGE_NAMES['settings.setActiveChannelId'], setActiveChannelId);

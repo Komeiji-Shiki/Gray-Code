@@ -56,6 +56,28 @@ function resolveBranchService(ctx: HandlerContext): BranchService {
 }
 
 /**
+ * 构造带 clientId 路由的流式 chunk 处理器（reroll/editBranch 共用）。
+ *
+ * H6（R2-xx）：getView 必须实时反映「发起端视图是否可达」——路由上下文注入的
+ * isClientAlive（registry.isAlive 包装）在面板关闭/重载后返回 false，此时返回 undefined，
+ * 让 StreamChunkProcessor.consume 的 isViewUnreachable() 检查真正生效并 abort 后端生成；
+ * 非路由上下文（直连调用/测试）回退 ctx.view。
+ */
+function createRoutedChunkProcessor(ctx: HandlerContext, conversationId: string, streamId: string): StreamChunkProcessor {
+    return new StreamChunkProcessor(() => {
+        if (ctx.postMessage) {
+            if (ctx.isClientAlive && !ctx.isClientAlive()) {
+                return undefined;
+            }
+            // R2-07：包装 postMessage 透出路由投递结果（true=已投递/已回退，false=投递失败），
+            // 不再吞掉 clientRegistry.postMessage 的返回值（投递无留痕）
+            return { webview: { postMessage: (message: any): boolean => ctx.postMessage?.(message) ?? false } as any };
+        }
+        return ctx.view as any;
+    }, conversationId, streamId);
+}
+
+/**
  * 删除消息（删除到指定位置）
  */
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
@@ -247,21 +269,26 @@ export const claimAgentMessages: MessageHandler = async (data, requestId, ctx) =
     return;
   }
 
-  const metadata = await ctx.conversationManager.getMetadata(conversationId);
-  if (!metadata) {
-    ctx.sendError(requestId, 'AGENT_MESSAGE_CONVERSATION_NOT_FOUND', 'Conversation not found');
-    return;
-  }
+  try {
+    const metadata = await ctx.conversationManager.getMetadata(conversationId);
+    if (!metadata) {
+      ctx.sendError(requestId, 'AGENT_MESSAGE_CONVERSATION_NOT_FOUND', 'Conversation not found');
+      return;
+    }
 
-  const claim = agentMailbox.claimMainSessionAgentMessages(conversationId);
-  ctx.sendResponse(requestId, claim
-    ? {
-        claimId: claim.claimId,
-        conversationId,
-        message: formatAgentMessagesForModel(claim.messages),
-        messageCount: claim.messages.length
-      }
-    : { claimId: null, conversationId, message: null, messageCount: 0 });
+    const claim = agentMailbox.claimMainSessionAgentMessages(conversationId);
+    ctx.sendResponse(requestId, claim
+      ? {
+          claimId: claim.claimId,
+          conversationId,
+          message: formatAgentMessagesForModel(claim.messages),
+          messageCount: claim.messages.length
+        }
+      : { claimId: null, conversationId, message: null, messageCount: 0 });
+  } catch (error: any) {
+    // 与其他聊天类 handler 同口径的错误边界：异常不再冒泡到 route() 的通用 HANDLER_ERROR
+    ctx.sendError(requestId, 'AGENT_MESSAGE_CLAIM_ERROR', error?.message || 'Failed to claim agent messages');
+  }
 };
 
 export const releaseAgentMessages: MessageHandler = async (data, requestId, ctx) => {
@@ -271,8 +298,13 @@ export const releaseAgentMessages: MessageHandler = async (data, requestId, ctx)
     ctx.sendError(requestId, 'AGENT_MESSAGE_RELEASE_INVALID_ARGS', 'conversationId and claimId are required');
     return;
   }
-  const released = agentMailbox.releaseMessageClaim(conversationId, MAIN_SESSION_RUN_ID, claimId);
-  ctx.sendResponse(requestId, { released });
+  try {
+    const released = agentMailbox.releaseMessageClaim(conversationId, MAIN_SESSION_RUN_ID, claimId);
+    ctx.sendResponse(requestId, { released });
+  } catch (error: any) {
+    // 与 claimAgentMessages 同口径的错误边界
+    ctx.sendError(requestId, 'AGENT_MESSAGE_RELEASE_ERROR', error?.message || 'Failed to release agent messages');
+  }
 };
 
 /**
@@ -340,15 +372,8 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
   const resolvedStreamId = typeof streamId === 'string' && streamId.trim() ? streamId : requestId;
   // L1：chunk 转发复用 clientId 路由——ctx.postMessage 由 MessageRouter.createRoutedContext 注入，
   // 按 clientId 路由到发起端 webview（目标失效回退主视图），与 StreamRequestHandler.getClientView 同语义；
-  // 未走路由（直接调用/测试）时回退 ctx.view。
-  const processor = new StreamChunkProcessor(() => {
-    if (ctx.postMessage) {
-      // R2-07：包装 postMessage 透出路由投递结果（true=已投递/已回退，false=投递失败），
-      // 不再吞掉 clientRegistry.postMessage 的返回值（投递无留痕）
-      return { webview: { postMessage: (message: any): boolean => ctx.postMessage?.(message) ?? false } as any };
-    }
-    return ctx.view as any;
-  }, conversationId, resolvedStreamId);
+  // 未走路由（直接调用/测试）时回退 ctx.view。getView 内置可达性探测（H6）。
+  const processor = createRoutedChunkProcessor(ctx, conversationId, resolvedStreamId);
   try {
     const stream = ctx.chatHandler.handleRerollStream({
       conversationId,
@@ -361,11 +386,9 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
     });
     // 发送响应，通知前端请求已接收并开始（与 StreamRequestHandler 协议一致）
     ctx.sendResponse(requestId, { started: true });
-    for await (const chunk of stream) {
-      const isError = processor.processChunk(chunk);
-      if (isError) break;
-    }
-    processor.flush();
+    // H6 统一消费循环：视图不可达（Monitor 面板关闭/主视图重载）时立即 abort 控制器
+    // 中止后端生成，避免 token 浪费与工具副作用在无消费者时继续执行
+    await processor.consume(stream, controller);
   } catch (error: any) {
     // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致），
     // 避免残留空占位消息；不按错误处理。判定口径与 StreamRequestHandler.handleStreamError
@@ -447,14 +470,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
   }
 
   const resolvedStreamId = typeof streamId === 'string' && streamId.trim() ? streamId : requestId;
-  // L1：chunk 转发复用 clientId 路由（与 rerollStream 同）
-  const processor = new StreamChunkProcessor(() => {
-    if (ctx.postMessage) {
-      // R2-07：包装 postMessage 透出路由投递结果（与 rerollStream 同）
-      return { webview: { postMessage: (message: any): boolean => ctx.postMessage?.(message) ?? false } as any };
-    }
-    return ctx.view as any;
-  }, conversationId, resolvedStreamId);
+  // L1：chunk 转发复用 clientId 路由（与 rerollStream 同，getView 内置可达性探测 H6）
+  const processor = createRoutedChunkProcessor(ctx, conversationId, resolvedStreamId);
   try {
     const stream = ctx.chatHandler.handleEditBranchStream({
       conversationId,
@@ -469,11 +486,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
     });
     // 发送响应，通知前端请求已接收并开始（与 StreamRequestHandler 协议一致）
     ctx.sendResponse(requestId, { started: true });
-    for await (const chunk of stream) {
-      const isError = processor.processChunk(chunk);
-      if (isError) break;
-    }
-    processor.flush();
+    // H6 统一消费循环：视图不可达时立即 abort 控制器中止后端生成（与 rerollStream 同）
+    await processor.consume(stream, controller);
   } catch (error: any) {
     // 用户取消：透出 cancelled 结尾事件（与 StreamRequestHandler.reportCancelled 一致）；
     // 判定口径统一（R2-07）：signal.aborted 或底层 CANCELLED_ERROR 任一命中即视为取消。

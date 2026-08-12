@@ -432,7 +432,8 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
   MESSAGE_NAMES['settings.export'],
   MESSAGE_NAMES['settings.import'],
   // installUpdate：下载 vsix + 安装为分钟级任务，超时会让前端误判失败而后端继续安装
-  MESSAGE_NAMES.installUpdate,  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
+  // 网络/下载类：tokenizer 词表首次下载可达分钟级；token 计数调用渠道 API 受网络超时配置影响
+  MESSAGE_NAMES.installUpdate,
   MESSAGE_NAMES['tokenizer.getResource'],
   MESSAGE_NAMES.countSystemPromptTokens,
   // summarizeContext：总结是长上下文 LLM 调用（分钟级），180s 前端超时会让误判失败后
@@ -493,6 +494,14 @@ export const NON_BLOCKING_MESSAGE_TYPES = new Set<string>([
   MESSAGE_NAMES.checkUpdateNow,
   MESSAGE_NAMES.updateNow,
   MESSAGE_NAMES.installUpdate,
+  // awaitConversationIdle：内部 waitForIdle 等待直到流结束（外层 10s 超时兜底），
+  // 若占住串行队列，期间 cancelStream / deleteMessage 等取消类消息全部排队，
+  // 用户「停止」点击被推迟数秒才生效；fire-and-forget 后响应照常由 handler 发出。
+  MESSAGE_NAMES['chat.awaitConversationIdle'],
+  // 重负载读取类：全量用量聚合（跨会话读文件聚合）与记忆条目枚举（最多 1 万条）
+  // 耗时数秒且不要求串行语义，不应阻塞队列中的取消类消息。
+  MESSAGE_NAMES['usage.getStats'],
+  MESSAGE_NAMES.getMemoryEntries,
 ]);
 
 // ============ 3. 跨端共享类型 ============

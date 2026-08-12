@@ -5,7 +5,8 @@
 import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager, detachRunningTerminalsToBackground } from '../../backend/tools';
-import type { HandlerContext, MessageHandler } from '../types';
+import type { MessageHandler } from '../types';
+import { withBoundary } from './errorBoundary';
 
 function getResultError(result: unknown, fallback: string): string {
   if (!result || typeof result !== 'object') return fallback;
@@ -15,16 +16,6 @@ function getResultError(result: unknown, fallback: string): string {
     return (error as { message: string }).message;
   }
   return fallback;
-}
-
-function withToolBoundary(errorCode: string, fallback: string, handler: MessageHandler): MessageHandler {
-  return async (data, requestId, ctx) => {
-    try {
-      await handler(data || {}, requestId, ctx);
-    } catch (error) {
-      ctx.sendError(requestId, errorCode, error instanceof Error && error.message ? error.message : fallback);
-    }
-  };
 }
 
 // ========== 工具列表和配置 ==========
@@ -365,7 +356,7 @@ export const taskGetAll: MessageHandler = async (data, requestId, ctx) => {
  */
 export function registerToolHandlers(registry: Map<string, MessageHandler>): void {
   const register = (name: string, errorCode: string, fallback: string, handler: MessageHandler): void => {
-    registry.set(name, withToolBoundary(errorCode, fallback, handler));
+    registry.set(name, withBoundary(errorCode, fallback, handler));
   };
   // 工具列表和配置
   register(MESSAGE_NAMES['tools.getTools'], 'GET_TOOLS_ERROR', t('webview.errors.getToolsFailed'), getTools);

@@ -17,7 +17,6 @@ import type { ChannelManager } from '../backend/modules/channel';
 import type { ChatHandler } from '../backend/modules/api/chat';
 import type { ModelsHandler } from '../backend/modules/api/models';
 import type { SettingsManager, StoragePathManager } from '../backend/modules/settings';
-import { SettingsExporter } from '../backend/modules/settings';
 import type { SettingsHandler } from '../backend/modules/api/settings';
 import type { CheckpointManager } from '../backend/modules/checkpoint';
 import type { McpManager } from '../backend/modules/mcp';
@@ -25,7 +24,6 @@ import type { DependencyManager } from '../backend/modules/dependencies';
 import type { InstallProgressEvent } from '../backend/modules/dependencies';
 import { toolRegistry, getDiffManager, resolveMainChatDiffViewColumn } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
-import { getSkillsManager } from '../backend/modules/skills';
 import type { ActivityTracker } from '../backend/modules/activity';
 import type { UpdateChecker } from '../backend/modules/update';
 import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications';
@@ -45,7 +43,7 @@ import { disposeUsageCache } from './handlers/UsageHandlers';
 import { disposeActivityStatsCache } from './handlers/ActivityHandlers';
 import { disposeFileHandlerResources } from './handlers/FileHandlers';
 import { clearExecCmdAvailabilityCache } from './handlers/ToolHandlers';
-import { getExtensionVersion } from './utils/extensionInfo';
+import { createSettingsExporter } from './utils/settingsTransfer';
 import { getCurrentWorkspaceUri as getCurrentWorkspaceUriFromUtils } from './utils/WorkspaceUtils';
 import {
     buildDeferredFrontendLoader,
@@ -780,7 +778,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.sendError('', 'INVALID_MESSAGE', 'Invalid webview message');
             return;
         }
-        const { type, data, requestId } = message;
+        const { type, data } = message;
+        // 入口归一化：requestId 非字符串时归一为 ''——JSON 序列化会丢弃值为 undefined 的键，
+        // 前端按 requestId 匹配响应，undefined 会让错误响应无法匹配（前端只能走自身超时）
+        const requestId = typeof message.requestId === 'string' ? message.requestId : '';
         // 安全：不信任消息体中的 clientId。来源 webview 是主聊天视图
         // （注册身份固定为 mainChat），路由身份按来源 webview 的注册身份决定，
         // 防止主聊天伪造 clientId='subagent-monitor' 触发 monitor 专属操作
@@ -838,7 +839,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             
             if (!handled) {
                 console.warn('Unknown message type:', type);
-                this.sendError(requestId, 'UNKNOWN_TYPE', `Unknown message type: ${type}`);
+                // 无 requestId 的错误响应附带 messageType，便于前端按消息类型兜底处理（发现 11）
+                this.sendError(requestId, 'UNKNOWN_TYPE', `Unknown message type: ${type}`,
+                    requestId ? undefined : { messageType: typeof type === 'string' ? type : String(type) });
             }
         } catch (error: any) {
             console.error('Error handling message:', error);
@@ -960,15 +963,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     /**
      * 发送错误到前端
      */
-    private sendError(requestId: string, code: string, message: string) {
+    private sendError(requestId: string, code: string, message: string, extra?: Record<string, unknown>) {
+        // extra：可选附加字段（如无 requestId 时的 messageType），JSON 序列化会丢弃 undefined，
+        // 无额外字段时输出结构与既有协议完全一致
+        const error: Record<string, unknown> = { code, message };
+        if (extra) {
+            Object.assign(error, extra);
+        }
         this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: PUSH_MESSAGE_NAMES.error,
             requestId,
             success: false,
-            error: {
-                code,
-                message
-            }
+            error
         }, this._view?.webview);
     }
 
@@ -1049,19 +1055,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     public async exportSettings(): Promise<string> {
         await this.initPromise;
 
-        const skillsManager = getSkillsManager();
-        if (!skillsManager) {
+        const exporter = createSettingsExporter({
+            settingsManager: this.settingsManager,
+            configManager: this.configManager,
+            mcpManager: this.mcpManager,
+            storagePathManager: this.storagePathManager,
+            extensionPath: this.context.extensionPath
+        });
+        if (!exporter) {
             throw new Error('SkillsManager is not initialized.');
         }
-
-        const exporter = new SettingsExporter(
-            this.settingsManager,
-            this.configManager,
-            this.mcpManager,
-            skillsManager,
-            getExtensionVersion(this.context.extensionPath),
-            this.storagePathManager.getEffectiveDataPath() + '/skills'
-        );
 
         return await exporter.exportToJson(true);
     }
@@ -1078,19 +1081,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     ): Promise<{ success: boolean; imported: { vscodeSettings: boolean; channelConfigs: number; mcpServers: number; skills: number }; errors: string[] }> {
         await this.initPromise;
 
-        const skillsManager = getSkillsManager();
-        if (!skillsManager) {
+        const exporter = createSettingsExporter({
+            settingsManager: this.settingsManager,
+            configManager: this.configManager,
+            mcpManager: this.mcpManager,
+            storagePathManager: this.storagePathManager,
+            extensionPath: this.context.extensionPath
+        });
+        if (!exporter) {
             throw new Error('SkillsManager is not initialized.');
         }
-
-        const exporter = new SettingsExporter(
-            this.settingsManager,
-            this.configManager,
-            this.mcpManager,
-            skillsManager,
-            getExtensionVersion(this.context.extensionPath),
-            this.storagePathManager.getEffectiveDataPath() + '/skills'
-        );
 
         const data = exporter.parseExportData(json);
         return await exporter.importFromData(data, options);

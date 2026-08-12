@@ -39,17 +39,16 @@ export const validateStoragePath: MessageHandler = async (data, requestId, ctx) 
 };
 
 /**
- * 推送存储迁移进度：优先直推 ctx.view（主聊天 webview）；view 为 undefined
- * （Monitor 路由上下文显式置空，见 ChatViewProvider.routeSubAgentMonitorMessage）时
- * 降级走 ctx.postMessage 按 clientId 路由回发起方，避免进度静默丢失。
+ * 推送存储迁移进度：优先走 ctx.postMessage（registry 路由，自带 clientId/isAlive/回退语义，
+ * 与其余推送路径同口径），仅无路由能力（非路由上下文/测试直连）时降级直投 ctx.view。
  */
 function pushMigrationProgress(ctx: HandlerContext, status: unknown): void {
   const message = { type: PUSH_MESSAGE_NAMES.storageMigrationProgress, data: status };
-  if (ctx.view) {
-    ctx.view.webview.postMessage(message);
-  } else {
-    ctx.postMessage?.(message);
+  if (ctx.postMessage) {
+    ctx.postMessage(message);
+    return;
   }
+  ctx.view?.webview.postMessage(message);
 }
 
 /**

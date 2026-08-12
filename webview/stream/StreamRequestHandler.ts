@@ -117,16 +117,9 @@ export class StreamRequestHandler {
     processor: StreamChunkProcessor,
     controller?: AbortController
   ): Promise<void> {
-    for await (const chunk of stream) {
-      const isError = processor.processChunk(chunk);
-      if (isError) break;
-      if (processor.isViewUnreachable()) {
-        controller?.abort();
-        break;
-      }
-    }
-    // 流结束后刷新缓冲区，确保所有消息都已发送
-    processor.flush();
+    // H6 统一消费循环（见 StreamChunkProcessor.consume）：终结事件或视图不可达时停止，
+    // 视图不可达立即 abort 控制器中止后端生成；结束后统一 flush 缓冲。
+    await processor.consume(stream, controller);
   }
 
   private serializeErrorDetails(details: unknown): string {
