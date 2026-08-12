@@ -394,7 +394,7 @@ ASK MODE
 - Use the provided tools to read and analyze the codebase to answer questions.
 - **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- You can only use the tools provided in the current mode. You cannot modify files or execute commands.
+- You can only use the tools provided in the current mode. You may only write TODO list files; you cannot modify code or execute commands.
 - Focus on providing accurate answers based on code analysis.
 - Always maintain code readability and maintainability in your responses.`
 
