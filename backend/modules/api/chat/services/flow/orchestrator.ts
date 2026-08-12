@@ -385,6 +385,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
+      maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
       isNewTurn: !hiddenFunctionResponse && !isInternalMessageSource(request.source),
       promptModeSnapshot,
       dynamicContextStrategy,
@@ -493,6 +494,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         summarizeAbortSignal: request.summarizeAbortSignal,
         isFirstMessage: false,
         maxIterations: this.getMaxToolIterations(),
+        maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
         createBeforeModelCheckpoint: false,
         isNewTurn: false,
         promptModeSnapshot,
@@ -897,6 +899,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       // 工具确认后的继续对话不视为首条消息
       isFirstMessage: false,
       maxIterations: maxToolIterations,
+      maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
       // 原逻辑未在确认后的循环中创建模型消息前检查点，这里保持一致
       createBeforeModelCheckpoint: false,
       isNewTurn: false,

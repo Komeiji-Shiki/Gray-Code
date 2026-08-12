@@ -204,6 +204,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     anchor: '[data-search-anchor="max-tool-iterations"]'
   },
   {
+    key: 'tools-max-tool-loop-wallclock', tab: 'tools',
+    labelKey: 'components.settings.toolsSettings.maxToolLoopWallclock.label',
+    keywords: ['墙钟时限', 'wall clock', 'wallclock', '工具循环', 'tool loop', '无限制', '无时限', '分钟', 'timeout', 'タイムアウト', '壁時計'],
+    anchor: '[data-search-anchor="max-tool-loop-wallclock"]'
+  },
+  {
     key: 'tools-list', tab: 'tools',
     labelKey: 'components.settings.settingsPanel.sections.tools.title',
     keywords: ['工具列表', 'tool list', 'ツール一覧', '全部启用', '全部禁用', '启用', '禁用', '依赖', '自动应用', '自动批准', '应用diff', 'auto apply'],
@@ -1913,6 +1919,12 @@ onMounted(() => {
   }
   60% {
     background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+</style>ground-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
   }
   100% {
     background-color: transparent;

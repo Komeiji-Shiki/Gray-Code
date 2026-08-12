@@ -610,6 +610,7 @@ const ja: LanguageMessages = {
             },
             emptyResponse: '（モデルの返答が空です）',
             historyFolded: '以前のメッセージは折りたたまれています（{count} 件破棄）。上にスクロールすると読み込めます。',
+            loadNewer: 'より古いメッセージを読み込みました。クリックで最新へ',
             stats: {
                 ttft: '初回トークン遅延 (TTFT)',
                 responseDuration: '応答時間',
@@ -2577,6 +2578,11 @@ const ja: LanguageMessages = {
                     label: 'ターンあたりの最大ツール呼び出し回数',
                     hint: 'AI の無限ツール呼び出しループを防止、-1 で無制限',
                     unit: '回'
+                },
+                maxToolLoopWallclock: {
+                    label: '無制限モードのツールループ壁時計制限（分）',
+                    hint: '「ターンあたりの最大ツール呼び出し回数」が -1（無制限）の場合のみ有効；ツールループがこの制限を超えるとエラーで終了、-1 で壁時計制限なし',
+                    unit: '分'
                 },
                 actions: {
                     refresh: '更新',

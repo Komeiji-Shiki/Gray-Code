@@ -192,6 +192,7 @@ interface UiText {
   /* 设置字段 */
   fldCheckUpdates: string;
   fldMaxToolIterations: string;
+  fldMaxToolLoopWallclockMinutes: string;
   fldDefaultToolMode: string;
   fldLanguage: string;
   fldTheme: string;
@@ -571,6 +572,7 @@ interface UiText {
   toolShellPath: string;
   toolShellDefault: string;
   toolMaxIter: string;
+  toolMaxIterWallclock: string;
   toolSandboxGlobal: string;
   /* 记忆 */
   memScopeRow: string;
@@ -777,6 +779,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     secDeps: '依赖环境',
     fldCheckUpdates: '检查更新',
     fldMaxToolIterations: '最大工具迭代',
+    fldMaxToolLoopWallclockMinutes: '无限制模式墙钟时限（分钟）',
     fldDefaultToolMode: '默认工具模式',
     fldLanguage: '界面语言',
     fldTheme: '主题',
@@ -1152,6 +1155,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     toolShellPath: '可执行文件路径',
     toolShellDefault: '设为默认',
     toolMaxIter: '最大工具调用次数',
+    toolMaxIterWallclock: '无限制模式墙钟时限（分钟）',
     toolSandboxGlobal: '沙箱总开关',
     memScopeRow: '作用域',
     memEdit: '编辑',
@@ -1351,6 +1355,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     secDeps: 'Dependencies',
     fldCheckUpdates: 'Check for updates',
     fldMaxToolIterations: 'Max tool iterations',
+    fldMaxToolLoopWallclockMinutes: 'Unlimited mode wall-clock limit (min)',
     fldDefaultToolMode: 'Default tool mode',
     fldLanguage: 'Language',
     fldTheme: 'Theme',
@@ -1726,6 +1731,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     toolShellPath: 'Executable path',
     toolShellDefault: 'Set default',
     toolMaxIter: 'Max tool iterations',
+    toolMaxIterWallclock: 'Unlimited mode wall-clock limit (min)',
     toolSandboxGlobal: 'Sandbox master switch',
     memScopeRow: 'Scope',
     memEdit: 'Edit',
@@ -1925,6 +1931,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     secDeps: '依存環境',
     fldCheckUpdates: '更新を確認',
     fldMaxToolIterations: '最大ツール反復',
+    fldMaxToolLoopWallclockMinutes: '無制限モードの壁時計制限（分）',
     fldDefaultToolMode: 'デフォルトのツールモード',
     fldLanguage: '言語',
     fldTheme: 'テーマ',
@@ -2300,6 +2307,7 @@ export const UI_TEXTS: Record<UiLang, UiText> = {
     toolShellPath: '実行ファイルパス',
     toolShellDefault: 'デフォルトに設定',
     toolMaxIter: '最大ツール呼び出し回数',
+    toolMaxIterWallclock: '無制限モードの壁時計制限（分）',
     toolSandboxGlobal: 'サンドボックス主スイッチ',
     memScopeRow: 'スコープ',
     memEdit: '編集',

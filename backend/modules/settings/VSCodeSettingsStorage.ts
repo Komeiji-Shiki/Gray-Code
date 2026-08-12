@@ -43,6 +43,7 @@ const SYNCABLE_KEYS = [
     'toolsEnabled',
     'toolAutoExec',
     'maxToolIterations',
+    'maxToolLoopWallclockMinutes',
     'defaultToolMode',
     'activeChannelId',
     'lastReadAnnouncementVersion',
@@ -253,6 +254,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             settings.toolsEnabled = config.get('toolsEnabled');
             settings.toolAutoExec = config.get('toolAutoExec');
             settings.maxToolIterations = config.get('maxToolIterations');
+            settings.maxToolLoopWallclockMinutes = config.get('maxToolLoopWallclockMinutes');
 
             const defaultToolMode = config.get<string>('defaultToolMode');
             if (defaultToolMode === 'function_call' || defaultToolMode === 'xml' || defaultToolMode === 'json') {
@@ -393,4 +395,6 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         }
     }
 }
+
+
 

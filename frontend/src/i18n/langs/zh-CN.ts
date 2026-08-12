@@ -612,6 +612,7 @@ const zhCN = {
             },
             emptyResponse: '（模型返回空内容）',
             historyFolded: '更早消息已折叠（已丢弃 {count} 条），继续上拉可加载',
+            loadNewer: '已加载较早消息，点击回到最新',
             stats: {
                 ttft: '首字延迟 (TTFT)',
                 responseDuration: '响应时间',
@@ -2579,6 +2580,11 @@ const zhCN = {
                     label: '单回合最大工具调用次数',
                     hint: '防止 AI 无限循环调用工具，-1 表示无限制',
                     unit: '次'
+                },
+                maxToolLoopWallclock: {
+                    label: '无限制模式工具循环墙钟时限（分钟）',
+                    hint: '仅在「单回合最大工具调用次数 = -1（无限制）」时生效；工具循环超过该时限即终止并报错，-1 表示不设墙钟时限',
+                    unit: '分钟'
                 },
                 actions: {
                     refresh: '刷新',

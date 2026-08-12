@@ -89,6 +89,9 @@ export const STREAM_CANCEL_TOOL_SETTLE_GRACE_MS = 3000;
  * -1 是用户显式配置的「无限制」，兜底不改其正常语义；仅在极端失控时触发：模型持续
  * 返回工具调用、且 abortSignal 缺失或未触发（否则请求永久挂起，占用会话写锁与内存）。
  * 触发时工具循环立即终止并报错（错误码 TOOL_LOOP_WALLCLOCK_LIMIT）。
+ *
+ * 该值可通过设置 graycode.maxToolLoopWallclockMinutes 调节（见 ToolIterationLoopConfig
+ * maxToolLoopWallclockMs），-1 表示不设墙钟时限；本常量仅作为未配置时的默认值。
  */
 export const MAX_TOOL_LOOP_WALLCLOCK_MS = 30 * 60 * 1000;
 
@@ -143,6 +146,13 @@ export interface ToolIterationLoopConfig {
     isFirstMessage?: boolean;
     /** 最大迭代次数（-1 表示无限制） */
     maxIterations: number;
+    /**
+     * 无限制模式（maxIterations = -1）的墙钟时限（毫秒）。
+     *
+     * 缺省使用 MAX_TOOL_LOOP_WALLCLOCK_MS（30 分钟）；-1 表示不设墙钟时限
+     * （仅保留迭代硬上限兜底）。仅当 maxIterations = -1 时参与循环约束。
+     */
+    maxToolLoopWallclockMs?: number;
     /** 起始迭代次数（默认 0） */
     startIteration?: number;
     /** 是否创建模型消息前的检查点 */
@@ -709,6 +719,7 @@ export class ToolIterationLoopService {
             isFirstMessage = false,
             promptModeSnapshot,
             maxIterations,
+            maxToolLoopWallclockMs,
             startIteration = 0,
             createBeforeModelCheckpoint = true
         } = loopConfig;
@@ -790,7 +801,9 @@ export class ToolIterationLoopService {
         // （墙钟时间 + 迭代硬上限，见循环内 1.5 检查）：-1 是用户显式配置的「无限制」，
         // 兜底不改其正常语义，仅在极端失控（模型持续返回工具调用且 abortSignal 缺失/
         // 未触发）时终止循环，避免请求永久挂起占用会话写锁与内存。
-        const unlimitedLoopDeadline = maxIterations === -1 ? Date.now() + MAX_TOOL_LOOP_WALLCLOCK_MS : 0;
+        // 墙钟时限可经 maxToolLoopWallclockMinutes 设置调节（-1 = 不设墙钟时限）。
+        const wallclockMs = maxToolLoopWallclockMs ?? MAX_TOOL_LOOP_WALLCLOCK_MS;
+        const unlimitedLoopDeadline = maxIterations === -1 && wallclockMs !== -1 ? Date.now() + wallclockMs : 0;
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
 
@@ -821,17 +834,17 @@ export class ToolIterationLoopService {
                     };
                     return;
                 }
-                if (Date.now() > unlimitedLoopDeadline) {
+                if (wallclockMs !== -1 && Date.now() > unlimitedLoopDeadline) {
                     this.log.error('stream.tool_loop_wallclock_cap', {
                         conversationId,
                         iteration: iteration - 1,
-                        wallclockMs: MAX_TOOL_LOOP_WALLCLOCK_MS
+                        wallclockMs
                     });
                     yield {
                         conversationId,
                         error: {
                             code: 'TOOL_LOOP_WALLCLOCK_LIMIT',
-                            message: t('modules.api.chat.errors.maxToolIterationsWallclock', { minutes: MAX_TOOL_LOOP_WALLCLOCK_MS / 60000 })
+                            message: t('modules.api.chat.errors.maxToolIterationsWallclock', { minutes: wallclockMs / 60000 })
                         }
                     };
                     return;
@@ -1852,7 +1865,8 @@ export class ToolIterationLoopService {
         dynamicContextStrategy: DynamicContextStrategy = 'single',
         isNewTurn: boolean = true,
         abortSignal?: AbortSignal,
-        summarizeAbortSignal?: AbortSignal
+        summarizeAbortSignal?: AbortSignal,
+        maxToolLoopWallclockMs?: number
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         // 非流式 abort 结算状态：追踪「最近一次已落盘的 assistant 消息」的工具调用，
@@ -1926,7 +1940,9 @@ export class ToolIterationLoopService {
         // （墙钟时间 + 迭代硬上限，见循环内检查）：-1 是用户显式配置的「无限制」，
         // 兜底不改其正常语义，仅在极端失控（模型持续返回工具调用且 abortSignal 缺失/
         // 未触发）时终止循环，避免请求永久挂起占用会话写锁与内存。
-        const unlimitedLoopDeadline = maxIterations === -1 ? Date.now() + MAX_TOOL_LOOP_WALLCLOCK_MS : 0;
+        // 墙钟时限可经 maxToolLoopWallclockMinutes 设置调节（-1 = 不设墙钟时限）。
+        const wallclockMs = maxToolLoopWallclockMs ?? MAX_TOOL_LOOP_WALLCLOCK_MS;
+        const unlimitedLoopDeadline = maxIterations === -1 && wallclockMs !== -1 ? Date.now() + wallclockMs : 0;
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
@@ -1961,17 +1977,17 @@ export class ToolIterationLoopService {
                         }
                     };
                 }
-                if (Date.now() > unlimitedLoopDeadline) {
+                if (wallclockMs !== -1 && Date.now() > unlimitedLoopDeadline) {
                     this.log.error('nonstream.tool_loop_wallclock_cap', {
                         conversationId,
                         iteration: iteration - 1,
-                        wallclockMs: MAX_TOOL_LOOP_WALLCLOCK_MS
+                        wallclockMs
                     });
                     return {
                         exceededMaxIterations: true,
                         guardError: {
                             code: 'TOOL_LOOP_WALLCLOCK_LIMIT',
-                            message: t('modules.api.chat.errors.maxToolIterationsWallclock', { minutes: MAX_TOOL_LOOP_WALLCLOCK_MS / 60000 })
+                            message: t('modules.api.chat.errors.maxToolIterationsWallclock', { minutes: wallclockMs / 60000 })
                         }
                     };
                 }

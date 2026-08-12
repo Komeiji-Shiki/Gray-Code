@@ -610,6 +610,7 @@ const en: LanguageMessages = {
             },
             emptyResponse: '(Empty response from model)',
             historyFolded: 'Earlier messages are folded ({count} discarded). Scroll up to load them.',
+            loadNewer: 'Older messages loaded; click to jump to latest',
             stats: {
                 ttft: 'Time to first token (TTFT)',
                 responseDuration: 'Response Duration',
@@ -2577,6 +2578,11 @@ const en: LanguageMessages = {
                     label: 'Max Tool Calls Per Turn',
                     hint: 'Prevents AI from infinite tool call loops, -1 for unlimited',
                     unit: 'calls'
+                },
+                maxToolLoopWallclock: {
+                    label: 'Unlimited Mode Tool Loop Wall-clock Limit (minutes)',
+                    hint: 'Only applies when "Max Tool Calls Per Turn" is -1 (unlimited); the tool loop is terminated with an error after exceeding this limit, -1 disables the wall-clock limit',
+                    unit: 'min'
                 },
                 actions: {
                     refresh: 'Refresh',

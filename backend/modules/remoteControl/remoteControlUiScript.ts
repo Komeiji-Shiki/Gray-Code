@@ -2923,6 +2923,8 @@ function renderToolsSection() {
   }
   /* 全局配置：最大工具调用次数（桌面端 ToolsSettings 同款） */
   renderField(card, { t: 'toolMaxIter', p: ['maxToolIterations'], w: 'number', min: -1 });
+  /* 无限制模式墙钟时限（仅 maxToolIterations = -1 时生效；-1 = 不设墙钟时限） */
+  renderField(card, { t: 'toolMaxIterWallclock', p: ['maxToolLoopWallclockMinutes'], w: 'number', min: -1 });
   /* 批量启用/禁用 */
   var batch = el('div', { class: 'sheet-actions' });
   var allOn = el('button', { class: 'btn', text: t('fldToolsAllEnable') });
@@ -5089,6 +5091,7 @@ function renderGeneralSection() {
   renderSimpleSection('secGeneral', [
     { t: 'fldCheckUpdates', p: ['checkForUpdates'], w: 'toggle' },
     { t: 'fldMaxToolIterations', p: ['maxToolIterations'], w: 'number', min: -1 },
+    { t: 'fldMaxToolLoopWallclockMinutes', p: ['maxToolLoopWallclockMinutes'], w: 'number', min: -1 },
     { t: 'fldDefaultToolMode', p: ['defaultToolMode'], w: 'select', o: ['function_call', 'xml', 'json'] },
     { t: 'fldLanguage', p: ['ui', 'language'], w: 'select', o: ['auto', 'zh-CN', 'en', 'ja'] },
     { t: 'fldWorkspaceBehavior', p: ['ui', 'workspaceBehavior'], w: 'select', o: ['restore', 'none'] },

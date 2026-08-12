@@ -189,6 +189,7 @@ export class ChatFlowReroll extends ChatFlowContext {
         summarizeAbortSignal: request.summarizeAbortSignal,
         isFirstMessage: isRerollFirstMessage,
         maxIterations: maxToolIterations,
+        maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
         // reroll 的是 AI 回复，回合起始用户消息不变，复用其上缓存的动态上下文
         createBeforeModelCheckpoint: false,
         isNewTurn: false,

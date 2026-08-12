@@ -36,7 +36,8 @@ import {
     getDefaultExecuteCommandConfig,
     getDefaultSandboxConfig,
     SANDBOX_LANGUAGES,
-    DEFAULT_MAX_TOOL_ITERATIONS
+    DEFAULT_MAX_TOOL_ITERATIONS,
+    DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES
 } from './types';
 import { MEMORY_TOOL_NAMES, isMemoryToolName } from '../memory';
 import { SettingsCore } from './SettingsCore';
@@ -87,6 +88,43 @@ export class ToolsSettingsService {
             this.core.notifyChange({
                 type: 'tools',
                 path: 'maxToolIterations',
+                oldValue,
+                newValue: safeValue,
+                settings: this.core.cloneConfig(this.core.settings)
+            });
+        });
+    }
+
+    /**
+     * 获取无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * 仅当 maxToolIterations = -1 时生效；-1 表示不设墙钟时限。
+     */
+    getMaxToolLoopWallclockMinutes(): number {
+        return this.core.settings.maxToolLoopWallclockMinutes ?? DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES;
+    }
+
+    /**
+     * 设置无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * @param value 分钟数，-1 表示不设墙钟时限，正整数表示具体分钟数（最小 1）
+     */
+    async setMaxToolLoopWallclockMinutes(value: number): Promise<void> {
+        await this.core.serializeMutation(async () => {
+            // -1 表示无时限，正整数表示具体分钟数，最小为 1
+            // NaN/Infinity 等非法输入回退默认值
+            const safeValue = value === -1
+                ? -1
+                : (Number.isFinite(value) ? Math.max(1, Math.floor(value)) : DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES);
+            const oldValue = this.core.settings.maxToolLoopWallclockMinutes;
+            this.core.settings.maxToolLoopWallclockMinutes = safeValue;
+            this.core.settings.lastUpdated = Date.now();
+            
+            await this.core.storage.save(this.core.settings);
+            
+            this.core.notifyChange({
+                type: 'tools',
+                path: 'maxToolLoopWallclockMinutes',
                 oldValue,
                 newValue: safeValue,
                 settings: this.core.cloneConfig(this.core.settings)

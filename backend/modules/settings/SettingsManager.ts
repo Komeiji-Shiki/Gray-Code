@@ -205,6 +205,24 @@ export class SettingsManager {
         return this.tools.setMaxToolIterations(value);
     }
 
+    /**
+     * 获取无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * 仅当 maxToolIterations = -1 时生效；-1 表示不设墙钟时限。
+     */
+    getMaxToolLoopWallclockMinutes(): number {
+        return this.tools.getMaxToolLoopWallclockMinutes();
+    }
+
+    /**
+     * 设置无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * @param value 分钟数，-1 表示不设墙钟时限，正整数表示具体分钟数（最小 1）
+     */
+    setMaxToolLoopWallclockMinutes(value: number): Promise<void> {
+        return this.tools.setMaxToolLoopWallclockMinutes(value);
+    }
+
     // ========== 渠道管理 ==========
 
     /**

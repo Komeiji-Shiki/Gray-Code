@@ -524,7 +524,7 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
   if (!scrollContainer.value) return
 
   const container = scrollContainer.value
-  if (options.preserveBottom && props.stickyBottom && wasAtBottom) {
+  if (options.preserveBottom && props.stickyBottom && (wasAtBottom || isAtBottom())) {
     // 用户滚动输入冷静期内不贴底：让滚动真正生效（内容增长可能抵消滚动距离）
     const inUserScrollCooldown = performance.now() - lastUserScrollInputAt < USER_SCROLL_COOLDOWN_MS
     if (!inUserScrollCooldown) {
@@ -534,8 +534,10 @@ function updateLayout(options: { preserveBottom?: boolean; updateMarkers?: boole
         programmaticScrollTop = targetTop
         container.scrollTop = targetTop
       }
-      // 写入即贴底：不在此复验（scrollHeight 可能已因大段输出/md 解析继续增长，
-      // 复验会误判「不在底部」→ 永久丢吸底）。wasAtBottom 只由用户滚动更新。
+      // 跟随执行即恢复吸底状态：内容增长瞬间的 scroll 事件可能用中间态布局把
+      // wasAtBottom 误判为 false，此处自愈（否则用户仍在底部时自动贴底永久失效）。
+      // 不在此复验 scrollHeight（可能已因大段输出/md 解析继续增长，复验会误判）。
+      wasAtBottom = true
     }
   }
 
@@ -575,8 +577,10 @@ let scrollRafId: number | null = null
 function handleScroll() {
   const container = scrollContainer.value
   if (container && programmaticScrollTop !== null && container.scrollTop === programmaticScrollTop) {
-    // 程序贴底写入触发的 scroll 事件：写入即贴底，状态保持（不因 scrollHeight 增长误判）
+    // 程序贴底写入触发的 scroll 事件（或用户恰好滚回同一贴底位置，等价于贴底意图）：
+    // 写入即贴底，恢复吸底状态——不能「状态保持」，否则陈旧 false 会让自动贴底永久失效
     programmaticScrollTop = null
+    wasAtBottom = true
   } else {
     wasAtBottom = isAtBottom()
   }

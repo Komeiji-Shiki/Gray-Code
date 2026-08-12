@@ -14,6 +14,7 @@ import type {
 } from './toolsTypes';
 import {
     DEFAULT_MAX_TOOL_ITERATIONS,
+    DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES,
     DEFAULT_TOOL_AUTO_EXEC_CONFIG,
     DEFAULT_READ_FILE_CONFIG,
     DEFAULT_WRITE_FILE_CONFIG,
@@ -184,6 +185,16 @@ export interface GlobalSettings {
      * 默认: 200
      */
     maxToolIterations?: number;
+    
+    /**
+     * 无限制模式（maxToolIterations = -1）的工具循环墙钟时限（分钟）
+     *
+     * 仅在 maxToolIterations = -1 时生效：模型持续返回工具调用且取消信号缺失/未触发时，
+     * 超过该时限即终止循环并报错（TOOL_LOOP_WALLCLOCK_LIMIT）。
+     * -1 表示不设墙钟时限（仅保留迭代硬上限兜底）
+     * 默认: 30
+     */
+    maxToolLoopWallclockMinutes?: number;
     
     /**
      * 工具启用状态
@@ -400,6 +411,7 @@ export type SettingsChangeListener = (event: SettingsChangeEvent) => void | Prom
  */
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    maxToolLoopWallclockMinutes: DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES,
     checkForUpdates: true,
     toolsEnabled: {
         // 默认所有工具启用

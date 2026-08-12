@@ -21,6 +21,33 @@
 -->
 
 ## [Unreleased]
+### Added：无限制模式工具循环墙钟时限可配置——新增 graycode.maxToolLoopWallclockMinutes
+  - **背景**：-1 无限制模式（maxToolIterations = -1）的墙钟兜底此前硬编码 30 分钟（MAX_TOOL_LOOP_WALLCLOCK_MS），用户无法调节。
+  - **实现**：新增全局设置 `maxToolLoopWallclockMinutes`（默认 30 分钟，-1 = 不设墙钟时限，仅保留迭代硬上限兜底）；
+    ToolIterationLoopService 的 `ToolIterationLoopConfig.maxToolLoopWallclockMs` 接受该值（流式/非流式两条循环路径，
+    有限迭代模式语义零变化——墙钟兜底只作用于 -1 无限制模式）；工具设置页新增「无限制模式工具循环墙钟时限（分钟）」输入框，
+    明确标注「仅在最大工具调用次数 = -1（无限制）时生效，-1 表示不设墙钟时限」；VSCode 配置键同步注册（可 Settings Sync），
+    远控设置页（schema 驱动）同步镜像该字段；三语 i18n + package.json contributes.configuration 同步。
+  - **伴生修复**：maxToolLoopWallclockMs = -1（不设墙钟时限）时 deadline 计算为 0，原 guard 判断 Date.now() > 0 恒真会立即误触发
+    TOOL_LOOP_WALLCLOCK_LIMIT——guard 条件已补 `wallclockMs !== -1`。
+  - 测试：toolLoopWallclockLimit 3 例（小墙钟时限触发 / -1 不触发 / 有限模式不参与）。
+
+### Fixed：上翻历史过多时消息窗口无限增长导致界面卡死——上翻路径窗口有界化（滑动裁剪 + 回到最新入口）
+  - **根因**：底部追加路径由 trimWindowFromTop 在 MAX_WINDOW_MESSAGES 内折叠，上翻路径（loadOlderMessagesPage）从不裁剪，
+    allMessages 与虚拟窗口 visibleCount 随上翻无限增长 → 尾部切片渲染（resolveLoadedVisibleMessages）的 DOM 节点、
+    消息索引/缓存重建随轮次线性膨胀，消息轮次高时渲染线程被压垮，界面无法交互。
+  - **修复**：上翻路径窗口超过 MAX_WINDOW_MESSAGES 时从底部（最新侧）裁剪到上限——窗口整体随上翻滑动，仍可逐页翻完整历史；
+    流式/等待响应期间不裁剪（防误裁在途消息）；发送前若窗口末尾落后于真实最新（缺口），先重载最后一页对齐 backendIndex
+    （否则新消息索引错位导致删除/重试定位错误）；新增底部「回到最新」入口（hasNewerMessages），一键重载最后一页并滚动到底。
+  - 测试：conversationActions 全量回归通过。
+
+### Fixed：滚动条在底部时自动贴底失效——粘性底部状态自愈
+  - **根因**：内容增长瞬间的 scroll 事件用中间态布局把 wasAtBottom 误判为 false，且程序贴底写入目标（programmaticScrollTop）
+    陈旧时，用户滚回底部恰好命中该值会被当成「程序写入」而跳过 wasAtBottom 更新——陈旧 false 永久保留，自动贴底不再跟随。
+  - **修复**：updateLayout 跟随条件放宽为 `wasAtBottom || isAtBottom()`（用户当前在底部即跟随），跟随执行后恢复 wasAtBottom=true；
+    handleScroll 命中程序写入目标时同样置 wasAtBottom=true（等价于贴底意图）；上拉功能不受影响（滚离底部时两条件均为 false 不跟随）。
+  - 测试：CustomScrollbarSticky 扩至 6 例（新增「陈旧 programmaticScrollTop 吞掉贴底滚动事件后恢复吸底」）。
+
 ### Fixed：后台任务完成回执/任务小气泡收不到——taskEvent 推送格式与前端订阅契约不符
   - **根因**：PUSH_MESSAGE_NAMES 契约规定 taskEvent 是 command 信封内的命令名
     （{ type: 'command', command: 'taskEvent', data }），前端 backgroundTaskStore 也按此订阅

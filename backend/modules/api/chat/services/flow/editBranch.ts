@@ -331,6 +331,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
+      // 无限制模式墙钟时限（毫秒，-1 = 不设墙钟时限；由 graycode.maxToolLoopWallclockMinutes 配置）
+      this.getMaxToolLoopWallclockMs(),
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -729,6 +731,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
         // 系统提示词（与 send/retry/reroll 同口径）；非根节点编辑后必非首条，判断自然为 false
         isFirstMessage: isFirstMessageHistory(await this.conversationManager.getHistoryRef(conversationId)),
         maxIterations: maxToolIterations,
+        maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
         isNewTurn: true,
         promptModeSnapshot,
         dynamicContextStrategy,
@@ -935,6 +938,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage: isEditFirstMessage,
       maxIterations: maxToolIterations,
+      maxToolLoopWallclockMs: this.getMaxToolLoopWallclockMs(),
       promptModeSnapshot,
       dynamicContextStrategy,
     })) {

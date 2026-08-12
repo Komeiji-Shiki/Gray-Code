@@ -15,7 +15,7 @@ import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
 import { generateId } from '../../../utils/format'
-import { createAndPersistConversation, buildConversationTitle } from '../conversationActions'
+import { createAndPersistConversation, buildConversationTitle, loadHistory } from '../conversationActions'
 import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
@@ -426,6 +426,21 @@ export async function sendMessage(
       return false
     }
 
+    // 上翻历史滑动窗口（loadOlderMessagesPage 底部裁剪）后，窗口末尾可能落后于真实最新消息：
+    // 发送前先重载最后一页对齐窗口，否则新消息的 backendIndex（windowStart + length）会与后端
+    // 真实索引错位（落到历史中部），导致后续删除/重试按 index 定位到错误消息。
+    if (
+      state.windowStartIndex.value + state.allMessages.value.length < state.totalMessages.value &&
+      !state.isStreaming.value &&
+      !state.isWaitingForResponse.value
+    ) {
+      await loadHistory(state)
+      // await 后会话可能已切换：重载的是切换后的会话，中止本次发送避免错位
+      if (state.currentConversationId.value !== targetConvId) {
+        return false
+      }
+    }
+
     if (hiddenFunctionResponse) {
       // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
       upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
@@ -609,4 +624,3 @@ export function rollbackFailedStreamMessage(state: ChatStoreState): number {
   setTotalMessagesFromWindow(state)
   return backendIndex
 }
-

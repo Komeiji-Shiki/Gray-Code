@@ -302,6 +302,7 @@ export const MESSAGE_NAMES = {
   'tools.getFindFilesConfig': 'tools.getFindFilesConfig',
   'tools.getHistorySearchConfig': 'tools.getHistorySearchConfig',
   'tools.getMaxToolIterations': 'tools.getMaxToolIterations',
+  'tools.getMaxToolLoopWallclockMinutes': 'tools.getMaxToolLoopWallclockMinutes',
   'tools.getMcpTools': 'tools.getMcpTools',
   'tools.getSearchInFilesConfig': 'tools.getSearchInFilesConfig',
   'tools.getToolConfig': 'tools.getToolConfig',
@@ -314,6 +315,7 @@ export const MESSAGE_NAMES = {
   'tools.updateHistorySearchConfig': 'tools.updateHistorySearchConfig',
   'tools.updateListFilesConfig': 'tools.updateListFilesConfig',
   'tools.updateMaxToolIterations': 'tools.updateMaxToolIterations',
+  'tools.updateMaxToolLoopWallclockMinutes': 'tools.updateMaxToolLoopWallclockMinutes',
   'tools.updateSearchInFilesConfig': 'tools.updateSearchInFilesConfig',
   'tools.updateToolConfig': 'tools.updateToolConfig',
 
@@ -782,5 +784,7 @@ export type CheckpointSummaryWithSize = CheckpointSummary & { size: number };
 //      ContentPart（含 ThoughtSignatures / OpenAIResponsesReasoningMetadata）与
 //      CheckpointSummary / CheckpointSummaryWithSize（T16，两端统一为契约超集）；
 //    - CheckpointManifest / CheckpointIgnoreSnapshot / CheckpointExcludedEntry 等检查点
+//      类型仍分属 backend/modules/checkpoint/types.ts，未纳入本阶段范围。
+
 //      类型仍分属 backend/modules/checkpoint/types.ts，未纳入本阶段范围。
 

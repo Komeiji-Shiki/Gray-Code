@@ -187,4 +187,39 @@ describe('CustomScrollbar sticky-bottom', () => {
       vi.useRealTimers()
     }
   })
+
+  test('陈旧 programmaticScrollTop 吞掉贴底滚动事件后仍恢复吸底（自愈）', async () => {
+    const wrapper = mountSticky()
+    await nextTick()
+    const container = wrapper.get('.scroll-container').element as HTMLElement
+    Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true })
+    Object.defineProperty(container, 'clientHeight', { value: 100, configurable: true })
+    container.scrollTop = 400
+    container.dispatchEvent(new Event('scroll'))// 在底部
+    await raf()
+
+    // 内容增长 → 贴底写入 scrollTop=700（programmaticScrollTop=700）
+    Object.defineProperty(container, 'scrollHeight', {value: 800, configurable: true })
+    container.appendChild(document.createElement('div'))
+    await settleLayout()
+    expect(container.scrollTop).toBe(700)
+
+    // 模拟程序写入触发的 scroll 事件丢失/延迟：programmaticScrollTop 保持 700
+    // 用户滚到顶部再滚回并停在 700 —— scroll 事件命中陈旧 programmaticScrollTop，
+    // 旧实现按「程序写入」处理且不更新 wasAtBottom（保持 false）→ 自动贴底永久失效
+    container.scrollTop = 0
+    container.dispatchEvent(new Event('scroll'))
+    await raf()
+    container.scrollTop = 700
+    container.dispatchEvent(new Event('scroll'))
+    await raf()
+
+    // 内容再次增长：吸底状态必须已恢复（否则 scrollTop 停在 700，不再跟随）
+    Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true })
+    container.appendChild(document.createElement('div'))
+    await settleLayout()
+    expect(container.scrollTop).toBe(900) // 1000 - 100
+
+    wrapper.unmount()
+  })
 })

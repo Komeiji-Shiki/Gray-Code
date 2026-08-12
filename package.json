@@ -251,6 +251,11 @@
           "default": 200,
           "description": "单回合最大工具调用次数（可同步，-1 表示无限制）"
         },
+        "graycode.maxToolLoopWallclockMinutes": {
+          "type": "number",
+          "default": 30,
+          "description": "无限制模式（maxToolIterations = -1）工具循环墙钟时限（分钟，可同步，-1 表示不设墙钟时限）"
+        },
         "graycode.defaultToolMode": {
           "type": "string",
           "default": "function_call",
