@@ -35,6 +35,7 @@ import {
 } from '../../../../../core/services/agentMailbox';
 import { resolveAndPersistPostToolStopState } from '../postToolStopState';
 import { ChatStreamOutput, ChatStreamCancelledData, ChatFlowContext, ChatFlowDeps, isFirstMessageHistory } from './context';
+import { extractAffectedPaths, workspaceUriToFsPath } from '../../../../checkpoint/affectedPaths';
 
 function isInternalMessageSource(source: ChatRequestData['source']): boolean {
   return source === 'background_task' || source === 'agent_message';
@@ -887,18 +888,55 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     // 多个确认回合时只在最后一个回合（队列耗尽）补建一次；取消/中断路径不补（与流式语义一致）。
     // M3：本回合被用户拒绝的工具从未执行，不计入批内工具名——
     // 否则「批内唯一工具被拒」也会因该工具的 afterTools 配置产生一对空批次存档。
+    // 已知风险（保持现状，不改）：modelMessageIndex 来自「从后往前找最近一个含函数调用的 model 消息」，
+    // 若该消息已被总结/裁剪，索引可能偏移——架构性改动超出本次范围，存档挂载位置不影响内容正确性。
     // checkpointService 未注入（测试 harness/降级环境）时跳过补建。
     if (this.checkpointService) {
       const executedBatchToolNames = allFunctionCalls
         .filter(c => !rejectedToolIdsThisTurn.has(c.id))
         .map(c => c.name);
+      // CP-PARTIAL-1：确认路径补建批次 after 同样按受影响路径构建部分快照（不再全量扫描工作区）——
+      // 仅当批内全部已执行工具都能确定受影响路径时透传，任一无法确定（execute_command 等）则回退全量。
+      // 工作区根 fsPath 从会话元数据解析（getMetadata 防御性探测：测试替身可能未实现，缺失时回退全量）。
+      let affectedPaths: string[] | undefined;
+      let workspaceRootFsPath: string | undefined;
+      try {
+        const meta = await this.conversationManager.getMetadata(conversationId);
+        workspaceRootFsPath = meta?.workspaceUri ? (workspaceUriToFsPath(meta.workspaceUri) ?? undefined) : undefined;
+      } catch {
+        // 元数据读取失败：回退全量
+      }
+      if (workspaceRootFsPath) {
+        const accumulated: string[] = [];
+        const seen = new Set<string>();
+        for (const c of allFunctionCalls) {
+          if (rejectedToolIdsThisTurn.has(c.id)) continue;
+          const paths = extractAffectedPaths(c.name, c.args, workspaceRootFsPath);
+          if (paths === null) {
+            accumulated.length = 0;
+            break;
+          }
+          for (const p of paths) {
+            if (!seen.has(p)) {
+              seen.add(p);
+              accumulated.push(p);
+            }
+          }
+        }
+        if (accumulated.length > 0) {
+          affectedPaths = accumulated;
+        }
+      }
       const batchAfterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
         conversationId,
         modelMessageIndex,
         'tool_batch',
         'after',
         undefined,
-        { batchToolNames: executedBatchToolNames }
+        {
+          batchToolNames: executedBatchToolNames,
+          ...(affectedPaths ? { affectedPaths } : {}),
+        }
       );
       if (batchAfterCheckpoint) {
         checkpointsThisTurn.push(batchAfterCheckpoint);

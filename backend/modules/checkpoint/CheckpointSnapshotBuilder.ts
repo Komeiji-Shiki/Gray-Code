@@ -16,7 +16,9 @@
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import type { Stats, BigIntStats } from 'fs';
 import { CheckpointIgnoreResolver, type CheckpointResolverExcludedEntry } from './CheckpointIgnoreResolver';
+import { isPathWithin } from './affectedPaths';
 import {
     createWorkspaceScopedPath,
     type RuntimeWorkspaceRoot
@@ -72,6 +74,12 @@ export interface SnapshotBuildOptions {
         fileHashes: Record<string, string>;
         fileStats: Record<string, SnapshotFileStat>;
     };
+    /**
+     * CP-PARTIAL-1：受影响文件绝对路径（工具执行存档性能优化）。
+     * 非空时走部分快照分支——不递归扫描整个工作区，只对列出的路径 stat + 哈希；
+     * 不在任何工作区根内的路径被跳过。缺省（undefined/空数组）＝全量扫描（既有行为）。
+     */
+    affectedPaths?: string[];
 }
 
 export interface CheckpointSnapshotBuildResult {
@@ -106,6 +114,12 @@ export interface CheckpointSnapshotBuildResult {
 export async function buildWorkspaceSnapshot(
     options: SnapshotBuildOptions
 ): Promise<CheckpointSnapshotBuildResult> {
+    // CP-PARTIAL-1：受影响路径限定（工具执行存档性能优化）——非空时走部分快照分支，
+    // 不再递归扫描整个工作区（大工作区全量 stat + 哈希可达 10-20MB 哈希表）。
+    if (options.affectedPaths && options.affectedPaths.length > 0) {
+        return buildAffectedPathsSnapshot(options);
+    }
+
     const { roots, customIgnorePatterns, maxFileSizeBytes, excludeAbsolutePaths = [], concurrency = 8 } = options;
     const previous = options.previous;
     const maxSize = typeof maxFileSizeBytes === 'number' && maxFileSizeBytes > 0
@@ -155,47 +169,18 @@ export async function buildWorkspaceSnapshot(
         scopedEmptyDirs.sort();
         emptyDirs.push(...scopedEmptyDirs);
 
-        // 3. 有界并发执行 stat + 哈希
+        // 3. 有界并发执行 stat + 哈希（statAndHashEntry 与部分快照分支共用同一逻辑）
         await runBounded(entries, concurrency, async entry => {
-            const { absolutePath, scopedPath } = entry;
-            try {
-                const stat = await fs.stat(absolutePath, { bigint: true });
-                const size = Number(stat.size);
-                const mtimeMs = Number(stat.mtimeMs);
-                const mtimeNs = stat.mtimeNs.toString();
-
-                // 大小上限：超出则记录排除，不进入哈希（避免读入超大文件）
-                if (maxSize !== undefined && size > maxSize) {
-                    sizeExcluded.push({ scopedPath, reason: 'size', size });
-                    return;
-                }
-
-                // stat 复用：与上一快照一致时直接复用哈希，避免重复读盘
-                const prevStat = previous?.fileStats[scopedPath];
-                const statUnchanged = prevStat
-                    ? (prevStat.mtimeNs !== undefined
-                        // mtimeNs 分支同样必须校验 size：在 mtime 精度粗糙的文件系统（FAT32/SMB/容器挂载卷）上，
-                        // 同一时间刻度内文件被重写且字节数不变时会错误复用旧哈希，恢复时静默得到过期内容
-                        ? prevStat.mtimeNs === mtimeNs && prevStat.size === size
-                        : prevStat.mtimeMs === mtimeMs && prevStat.size === size)
-                    : false;
-                if (
-                    statUnchanged &&
-                    previous?.fileHashes[scopedPath] !== undefined
-                ) {
-                    fileHashes[scopedPath] = previous.fileHashes[scopedPath];
-                    fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
-                    return;
-                }
-
-                // 流式哈希
-                const hash = await hashFileStreaming(absolutePath);
-                fileHashes[scopedPath] = hash;
-                fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
-            } catch {
-                // 文件无法访问（权限、已删除等）：记录为不可读，不进入哈希
-                unreadable.push({ scopedPath, reason: 'unreadable' });
-            }
+            await statAndHashEntry({
+                absolutePath: entry.absolutePath,
+                scopedPath: entry.scopedPath,
+                maxSize,
+                previous,
+                fileHashes,
+                fileStats,
+                sizeExcluded,
+                unreadable
+            });
         });
 
         rootStats.push({
@@ -221,6 +206,202 @@ export async function buildWorkspaceSnapshot(
         unreadable,
         excluded,
         roots: rootStats
+    };
+}
+
+// ========== CP-PARTIAL-1：受影响路径限定快照（部分快照分支） ==========
+
+/** statAndHashEntry 入参（全量/部分快照分支共用） */
+interface StatAndHashEntryParams {
+    absolutePath: string;
+    scopedPath: string;
+    maxSize?: number;
+    previous?: SnapshotBuildOptions['previous'];
+    fileHashes: Record<string, string>;
+    fileStats: Record<string, SnapshotFileStat>;
+    sizeExcluded: SnapshotExcludedEntry[];
+    unreadable: SnapshotExcludedEntry[];
+    /** 调用方已 stat（部分快照分支判定文件/目录用）；缺省时内部 stat */
+    stat?: BigIntStats;
+}
+
+/**
+ * 单文件 stat + 哈希（全量/部分快照分支共用）。
+ *
+ * 逻辑与全量分支原实现逐位一致：大小上限排除 → stat 未变化复用上一快照哈希 →
+ * 流式哈希；任何失败（stat/哈希异常）记录为不可读，不进入哈希表。
+ */
+async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
+    const { absolutePath, scopedPath, maxSize, previous, fileHashes, fileStats, sizeExcluded, unreadable } = params;
+    try {
+        const stat = params.stat ?? (await fs.stat(absolutePath, { bigint: true }));
+        const size = Number(stat.size);
+        const mtimeMs = Number(stat.mtimeMs);
+        const mtimeNs = stat.mtimeNs.toString();
+
+        // 大小上限：超出则记录排除，不进入哈希（避免读入超大文件）
+        if (maxSize !== undefined && size > maxSize) {
+            sizeExcluded.push({ scopedPath, reason: 'size', size });
+            return;
+        }
+
+        // stat 复用：与上一快照一致时直接复用哈希，避免重复读盘
+        const prevStat = previous?.fileStats[scopedPath];
+        const statUnchanged = prevStat
+            ? (prevStat.mtimeNs !== undefined
+                // mtimeNs 分支同样必须校验 size：在 mtime 精度粗糙的文件系统（FAT32/SMB/容器挂载卷）上，
+                // 同一时间刻度内文件被重写且字节数不变时会错误复用旧哈希，恢复时静默得到过期内容
+                ? prevStat.mtimeNs === mtimeNs && prevStat.size === size
+                : prevStat.mtimeMs === mtimeMs && prevStat.size === size)
+            : false;
+        if (
+            statUnchanged &&
+            previous?.fileHashes[scopedPath] !== undefined
+        ) {
+            fileHashes[scopedPath] = previous.fileHashes[scopedPath];
+            fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
+            return;
+        }
+
+        // 流式哈希
+        const hash = await hashFileStreaming(absolutePath);
+        fileHashes[scopedPath] = hash;
+        fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
+    } catch {
+        // 文件无法访问（权限、已删除等）：记录为不可读，不进入哈希
+        unreadable.push({ scopedPath, reason: 'unreadable' });
+    }
+}
+
+/**
+ * CP-PARTIAL-1：受影响路径限定快照（工具执行存档性能优化）。
+ *
+ * 与全量分支的差异：不调用 resolver.collectEntries 递归扫描整个工作区，只对
+ * affectedPaths 列出的绝对路径逐个处理：
+ * - 匹配所属工作区根（大小写不敏感前缀 + 路径边界；不在任何根内 → 跳过）；
+ * - 忽略规则判定（同一 CheckpointIgnoreResolver 四层排除模型）；忽略 → 计入 excluded；
+ * - 目录：仅空目录进入 emptyDirs（非空目录不递归——其内容不在受影响路径内时无需记录）；
+ * - 文件：大小上限 / previous 复用 / 流式哈希（与全量分支同一 statAndHashEntry 逻辑）；
+ * - stat 失败（ENOENT 等）→ unreadable。
+ *
+ * 注意：受影响路径清单来自模型传入参数；副作用不可知的批次（execute_command 等）由
+ * 调用方回退全量（affectedPaths 缺省），保证快照完整性。
+ */
+async function buildAffectedPathsSnapshot(
+    options: SnapshotBuildOptions
+): Promise<CheckpointSnapshotBuildResult> {
+    const { roots, customIgnorePatterns, excludeAbsolutePaths = [] } = options;
+    const previous = options.previous;
+    const maxSize = typeof options.maxFileSizeBytes === 'number' && options.maxFileSizeBytes > 0
+        ? options.maxFileSizeBytes
+        : undefined;
+
+    const fileHashes: Record<string, string> = {};
+    const fileStats: Record<string, SnapshotFileStat> = {};
+    const emptyDirs: string[] = [];
+    const sizeExcluded: SnapshotExcludedEntry[] = [];
+    const unreadable: SnapshotExcludedEntry[] = [];
+    const excluded: CheckpointExcludedEntry[] = [];
+    const fileCountByRoot = new Map<string, number>();
+
+    // 每个根目录一个 resolver（与全量分支同一排除语义）
+    const resolvers = new Map<string, CheckpointIgnoreResolver>();
+    const getResolver = (root: RuntimeWorkspaceRoot): CheckpointIgnoreResolver => {
+        let resolver = resolvers.get(root.id);
+        if (!resolver) {
+            resolver = new CheckpointIgnoreResolver(root.fsPath, customIgnorePatterns ?? [], {
+                enabledProfiles: options.enabledProfiles ?? DEFAULT_ENABLED_PROFILES,
+                profilePatterns: options.profilePatterns,
+                excludeAbsolutePaths
+            });
+            resolvers.set(root.id, resolver);
+        }
+        return resolver;
+    };
+
+    for (const absPath of options.affectedPaths ?? []) {
+        // 匹配所属工作区根（大小写不敏感前缀 + 路径边界；不在任何根内 → 跳过）
+        const root = roots.find(candidate => isPathWithin(candidate.fsPath, absPath));
+        if (!root) {
+            continue;
+        }
+        const relativePath = path.relative(root.fsPath, absPath).replace(/\\/g, '/');
+        const scopedPath = createWorkspaceScopedPath(root.id, relativePath);
+
+        // 忽略规则判定（四层排除模型）：忽略 → 计入 excluded（与全量分支同形状）
+        const ignoreResult = await getResolver(root).checkIgnore(relativePath, false);
+        if (ignoreResult.ignored) {
+            excluded.push({
+                path: scopedPath,
+                reason: ignoreResult.reason ?? 'custom',
+                rule: ignoreResult.rule,
+                source: ignoreResult.source
+            });
+            continue;
+        }
+
+        let stat: BigIntStats;
+        try {
+            stat = await fs.stat(absPath, { bigint: true });
+        } catch {
+            // stat 失败（ENOENT 等，如 delete_file 删除后目标已不存在）→ 不可读
+            unreadable.push({ scopedPath, reason: 'unreadable' });
+            continue;
+        }
+
+        if (stat.isDirectory()) {
+            // 目录：仅空目录记录（非空目录不递归——其内容不在受影响路径内时无需记录）
+            let entries: string[];
+            try {
+                entries = await fs.readdir(absPath);
+            } catch {
+                unreadable.push({ scopedPath, reason: 'unreadable' });
+                continue;
+            }
+            if (entries.length === 0) {
+                emptyDirs.push(scopedPath);
+            }
+            continue;
+        }
+
+        fileCountByRoot.set(root.id, (fileCountByRoot.get(root.id) ?? 0) + 1);
+        await statAndHashEntry({
+            absolutePath: absPath,
+            scopedPath,
+            maxSize,
+            previous,
+            fileHashes,
+            fileStats,
+            sizeExcluded,
+            unreadable,
+            stat
+        });
+    }
+
+    // 空目录按字典序排序（与全量分支 scopedEmptyDirs.sort() 一致）
+    emptyDirs.sort();
+
+    // 大小上限 / 不可读同样计入 excluded（与全量分支一致，EX-07/EX-09）
+    for (const entry of sizeExcluded) {
+        excluded.push({ path: entry.scopedPath, reason: 'size', size: entry.size });
+    }
+    for (const entry of unreadable) {
+        excluded.push({ path: entry.scopedPath, reason: 'unreadable' });
+    }
+
+    // 各根目录统计（诊断与日志用）：fileCount = 该根下处理的文件数
+    return {
+        fileHashes,
+        fileStats,
+        emptyDirs,
+        sizeExcluded,
+        unreadable,
+        excluded,
+        roots: roots.map(root => ({
+            rootId: root.id,
+            fileCount: fileCountByRoot.get(root.id) ?? 0,
+            emptyDirCount: emptyDirs.filter(scoped => scoped.startsWith(root.id + '/')).length
+        }))
     };
 }
 

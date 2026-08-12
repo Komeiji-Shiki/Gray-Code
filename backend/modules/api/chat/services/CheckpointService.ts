@@ -239,6 +239,11 @@ export class CheckpointService {
             progress?: (progress: CheckpointOperationProgress) => void;
             /** 批内工具名（tool_batch 精确判定用，透传给 CheckpointManager） */
             batchToolNames?: string[];
+            /**
+             * CP-PARTIAL-1：受影响文件绝对路径（工具执行存档按参数限定的文件构建部分快照，
+             * 不再全量扫描工作区；透传给 CheckpointManager）。缺省 = 全量扫描（既有行为）。
+             */
+            affectedPaths?: string[];
         }
     ): Promise<CheckpointRecord | null> {
         if (!this.checkpointManager) {
@@ -257,6 +262,7 @@ export class CheckpointService {
                 // 空数组也透传（CheckpointManager 对空 batchToolNames 显式返回 false＝无工具不建存档），
                 // 与「未传」回退旧语义（列表非空即建）明确区分，避免契约歧义。
                 ...(options && options.batchToolNames ? { batchToolNames: options.batchToolNames } : {}),
+                ...(options && options.affectedPaths ? { affectedPaths: options.affectedPaths } : {}),
                 ...(resolvedNodeId ? { messageNodeId: resolvedNodeId } : {})
             }
         ));

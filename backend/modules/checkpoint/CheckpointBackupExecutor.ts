@@ -60,6 +60,8 @@ export interface CheckpointBackupExecutorParams {
     checkpointId: string;
     backupDir: string;
     roots: RuntimeWorkspaceRoot[];
+    /** CP-PARTIAL-1：受影响文件绝对路径（工具执行存档按参数限定的文件构建部分快照；缺省 = 全量扫描） */
+    affectedPaths?: string[];
     signal: AbortSignal;
     reportProgress: (patch: Partial<CheckpointOperationProgress>) => void;
 }
@@ -95,6 +97,7 @@ export class CheckpointBackupExecutor {
             checkpointId,
             backupDir,
             roots,
+            affectedPaths,
             signal,
             reportProgress
         } = params;
@@ -175,7 +178,10 @@ export class CheckpointBackupExecutor {
                         fileHashes: this.normalizeHashesToScoped(lastCheckpoint.fileHashes ?? {}, roots),
                         fileStats: this.normalizeStatsToScoped(lastCheckpoint.fileStats ?? {}, roots)
                     }
-                    : undefined
+                    : undefined,
+                // CP-PARTIAL-1：工具执行存档按参数限定的文件构建部分快照（不再全量扫描工作区）；
+                // 缺省（undefined）= 全量扫描（既有行为；forceCreate 手动存档等不传本字段）
+                affectedPaths
             });
 
             // 当前快照的哈希/统计：备份复制失败的文件从这里剔除，

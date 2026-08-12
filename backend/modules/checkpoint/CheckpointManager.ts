@@ -253,6 +253,12 @@ export class CheckpointManager {
             forceCreate?: boolean;
             /** 批内工具名（tool_batch 精确判定用）：按批内工具与 beforeTools/afterTools 的交集决定是否创建 */
             batchToolNames?: string[];
+            /**
+             * CP-PARTIAL-1：受影响文件绝对路径（工具执行存档按参数限定的文件构建部分快照，
+             * 不再全量扫描工作区）。缺省（undefined）= 全量扫描（既有行为）。
+             * forceCreate 手动存档 / user_message / model_message 存档不要传本字段。
+             */
+            affectedPaths?: string[];
         }
     ): Promise<CheckpointRecord | null> {
         // 检查是否应该创建检查点
@@ -359,6 +365,7 @@ export class CheckpointManager {
                 checkpointId,
                 backupDir,
                 roots,
+                affectedPaths: options?.affectedPaths,
                 signal,
                 reportProgress
             }),

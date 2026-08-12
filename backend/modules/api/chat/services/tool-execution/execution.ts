@@ -33,6 +33,7 @@ import type { LockHolder } from '../../../../../core/fileWriteLockManager';
 import { isDiffReviewToolCall } from '../diffReviewTools';
 import { MAIN_LOOP_ABORT_DRAIN_GRACE_MS, drainToolExecutionGeneratorAfterAbort } from '../abortDrain';
 import { cloneToolResponse, ResultCore } from './result';
+import { extractAffectedPaths, workspaceUriToFsPath } from '../../../../checkpoint/affectedPaths';
 
 /**
  * 工具执行完整结果
@@ -469,8 +470,43 @@ export class ExecutionCore extends ResultCore {
         const isDiffReviewOnlyBatch = calls.length > 0 && calls.every(call => isDiffReviewToolCall(call.name));
         // CPF-07：批量路径（tool_batch）透传批内工具名，供 CheckpointManager 按 beforeTools/afterTools
         // 交集精确判定是否创建；单工具路径不需要（CheckpointManager 按工具名精确判定）。
+        // 注意：这里保持 calls.map(name) 现状（基于原始调用构建，before 创建发生在 preparedList 之前，
+        // 无法知道拒绝结果）——被策略拒绝的工具名仍计入，与 affectedPaths 提取口径一致（同样基于原始 calls）。
         const checkpointBatchToolNames = toolNameForCheckpoint === 'tool_batch'
             ? calls.map(call => call.name)
+            : undefined;
+        // CP-PARTIAL-1：工具执行存档只扫描模型传入参数涉及的文件（不再全量扫描工作区）。
+        // 对批内每个调用提取受影响路径；任一调用无法确定（execute_command 等副作用不可知）
+        // → 整个批次 affectedPaths = undefined（回退全量快照，保证快照完整性）。
+        // 单工具路径（toolNameForCheckpoint = 工具名）同样提取。
+        // workspaceRootFsPath 来自 resolvedWorkspaceUri（activeWorkspaceUri 或会话元数据）；
+        // 缺失/无法解析为本地 fs 路径时传 undefined（全量）。
+        const checkpointAffectedPaths = (() => {
+            if (!toolNameForCheckpoint || !resolvedWorkspaceUri) {
+                return undefined;
+            }
+            const workspaceRootFsPath = workspaceUriToFsPath(resolvedWorkspaceUri);
+            if (!workspaceRootFsPath) {
+                return undefined;
+            }
+            const accumulated: string[] = [];
+            const seen = new Set<string>();
+            for (const call of calls) {
+                const paths = extractAffectedPaths(call.name, call.args, workspaceRootFsPath);
+                if (paths === null) {
+                    return undefined;
+                }
+                for (const p of paths) {
+                    if (!seen.has(p)) {
+                        seen.add(p);
+                        accumulated.push(p);
+                    }
+                }
+            }
+            return accumulated.length > 0 ? accumulated : undefined;
+        })();
+        const checkpointAffectedPathsOption = checkpointAffectedPaths
+            ? { affectedPaths: checkpointAffectedPaths }
             : undefined;
         let beforeCheckpointPromise: Promise<CheckpointRecord | null> | null = null;
         let resolvedMessageNodeId: string | undefined;
@@ -486,8 +522,8 @@ export class ExecutionCore extends ResultCore {
                     'before',
                     resolvedMessageNodeId,
                     checkpointBatchToolNames
-                        ? { batchToolNames: checkpointBatchToolNames }
-                        : undefined
+                        ? { batchToolNames: checkpointBatchToolNames, ...checkpointAffectedPathsOption }
+                        : checkpointAffectedPathsOption
                 ).catch((error) => {
                     // deferred 模式下 checkpoint 失败不升级为整批失败：工具已并行执行完成、
                     // 真实副作用结果已收集在 responses/toolResults，泵循环 catch 会把全部调用
@@ -507,8 +543,8 @@ export class ExecutionCore extends ResultCore {
                     'before',
                     resolvedMessageNodeId,
                     checkpointBatchToolNames
-                        ? { batchToolNames: checkpointBatchToolNames }
-                        : undefined
+                        ? { batchToolNames: checkpointBatchToolNames, ...checkpointAffectedPathsOption }
+                        : checkpointAffectedPathsOption
                 );
                 if (beforeCheckpoint) {
                     checkpoints.push(beforeCheckpoint);
@@ -790,8 +826,8 @@ export class ExecutionCore extends ResultCore {
                     'after',
                     resolvedMessageNodeId,
                     checkpointBatchToolNames
-                        ? { batchToolNames: checkpointBatchToolNames }
-                        : undefined
+                        ? { batchToolNames: checkpointBatchToolNames, ...checkpointAffectedPathsOption }
+                        : checkpointAffectedPathsOption
                 );
                 if (afterCheckpoint) {
                     checkpoints.push(afterCheckpoint);

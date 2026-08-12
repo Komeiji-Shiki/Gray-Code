@@ -122,6 +122,9 @@ export function createToolLoopHarness(channelManager: unknown, toolRegistry: unk
         getHistoryRef: jest.fn().mockResolvedValue([]),
         getCustomMetadata: jest.fn().mockResolvedValue(undefined),
         setCustomMetadata: jest.fn().mockResolvedValue(undefined),
+        // CP-PARTIAL-1：会话元数据（工作区 URI 来源）；默认 null = 未绑定工作区，
+        // 链路测试可覆盖 mockResolvedValue({ workspaceUri: 'file:///...' }) 注入工作区
+        getMetadata: jest.fn().mockResolvedValue(null),
         addContent: jest.fn().mockResolvedValue(undefined),
         settleFunctionResponses: jest.fn().mockResolvedValue(undefined),
         updateMessage: jest.fn().mockResolvedValue(undefined),

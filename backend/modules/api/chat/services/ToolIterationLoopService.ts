@@ -52,6 +52,7 @@ import { deserializePromptContextCache, serializePromptContextCache } from '../.
 import type { DynamicContextDiffBase, DynamicRuntimeContext } from '../../../prompt/PromptManager';
 import { MAIN_SESSION_RUN_ID } from '../../../../core/services/agentMailbox';
 import { DEFAULT_MAX_AUTO_SUMMARIZE_ATTEMPTS_PER_TURN } from '../../../settings/types/summarizeTypes';
+import { extractAffectedPaths, workspaceUriToFsPath } from '../../../checkpoint/affectedPaths';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -122,6 +123,21 @@ interface StreamToolBatchCheckpointState {
     finalized: boolean;
     /** 批内已见工具名（CPF-07 精确判定：tool_batch 存档按批内工具与 beforeTools/afterTools 交集创建） */
     batchToolNames: Set<string>;
+    /**
+     * CP-PARTIAL-1：批次累计的受影响文件绝对路径（工具执行存档按参数限定的文件构建部分快照，
+     * 不再全量扫描工作区）。undefined = 尚未累计或已回退全量（affectedPathsResolved=true）。
+     */
+    affectedPaths?: string[];
+    /**
+     * CP-PARTIAL-1：批次是否已确定回退全量（批内任一工具无法确定受影响路径，如 execute_command）
+     * ——确定后不再累计，后续检查点（含 after）全部全量扫描。
+     */
+    affectedPathsResolved: boolean;
+    /**
+     * CP-PARTIAL-1：工作区根 fsPath（从 runtimeContext.workspaceUri 解析；无法解析时缺省 = 回退全量）。
+     * 早启动/主循环共用同一份；确认分支复用 batch 状态里存的值。
+     */
+    workspaceRootFsPath?: string;
 }
 
 /**
@@ -991,7 +1007,12 @@ export class ToolIterationLoopService {
                 needsCheckpoint: false,
                 afterCheckpoint: null,
                 finalized: false,
-                batchToolNames: new Set()
+                batchToolNames: new Set(),
+                // CP-PARTIAL-1：工作区根 fsPath（早启动/主循环共用；确认分支复用 batch 状态）
+                workspaceRootFsPath: runtimeContext?.workspaceUri
+                    ? (workspaceUriToFsPath(runtimeContext.workspaceUri) ?? undefined)
+                    : undefined,
+                affectedPathsResolved: false
             };
             const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
                 .drainSettled()
@@ -1041,6 +1062,12 @@ export class ToolIterationLoopService {
                                 // earlyCheckpointIndex 只在首次需要时取一次（批次内复用，避免多个工具
                                 // 多次全量读 transcript）。
                                 streamBatchCheckpoint.batchToolNames.add(fc.name);
+                                // CP-PARTIAL-1：累计受影响路径（当前已知工具；流式期间后续工具到达时继续累计）
+                                this.collectAffectedPaths(
+                                    streamBatchCheckpoint,
+                                    [fc],
+                                    streamBatchCheckpoint.workspaceRootFsPath
+                                );
                                 // 批次挂载索引惰性计算（首个工具到达时启动一次；模型消息未落盘，
                                 // history.length = 即将写入位置——与 createModelMessageCheckpoint before 语义一致）。
                                 // getHistoryRef 失败时索引留空，各消费点在 messageIndex 缺省时直接读取兑底。
@@ -1270,7 +1297,9 @@ export class ToolIterationLoopService {
             // 模型消息位置；早启动（history.length，模型消息未落盘时=插入位置）与此值语义一致，
             // 主循环/确认路径共用此值（工具结果 settle 后历史变长，不能再按 length 推算）。
             const currentHistoryRef = await this.conversationManager.getHistoryRef(conversationId);
-            const batchMessageIndex = currentHistoryRef.length - 1;
+            // 测试 harness 场景下历史可能为空（length - 1 = -1）；生产不可达（有工具调用必有模型消息），
+            // 纯防御钳制到 0，避免 -1 索引泄漏到检查点挂载。
+            const batchMessageIndex = Math.max(0, currentHistoryRef.length - 1);
 
             // 找到第一个需要确认的工具（按顺序），并只自动执行它之前的前缀工具。
             const autoPrefix: FunctionCallInfo[] = [];
@@ -1532,6 +1561,12 @@ export class ToolIterationLoopService {
                         streamBatchCheckpoint.needsCheckpoint = true;
                     }
                 }
+                // CP-PARTIAL-1：主循环工具累计受影响路径（早启动阶段未覆盖的工具在此补全）
+                this.collectAffectedPaths(
+                    streamBatchCheckpoint,
+                    guardedAutoPrefix,
+                    streamBatchCheckpoint.workspaceRootFsPath
+                );
                 // 批次挂载索引：早启动阶段已设置（模型消息未落盘时的 history.length = 插入位置）则保留；
                 // 否则用主循环路径计算值（模型消息已落盘，length - 1 = 模型消息位置；两路径同一模型消息）。
                 if (streamBatchCheckpoint.messageIndex === undefined) {
@@ -1554,7 +1589,12 @@ export class ToolIterationLoopService {
                             'tool_batch',
                             'before',
                             undefined,
-                            { batchToolNames: Array.from(streamBatchCheckpoint.batchToolNames) }
+                            {
+                                batchToolNames: Array.from(streamBatchCheckpoint.batchToolNames),
+                                ...(streamBatchCheckpoint.affectedPaths
+                                    ? { affectedPaths: streamBatchCheckpoint.affectedPaths }
+                                    : {})
+                            }
                         );
                         if (streamBatchCheckpoint.beforeCheckpoint) {
                             // needsCheckpoint 只由「批内工具命中 afterTools」置位（见上方收集循环）
@@ -2262,6 +2302,47 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * CP-PARTIAL-1：在批次状态上累计受影响路径（工具执行存档按参数限定的文件构建部分快照）。
+     *
+     * 对每个调用调用 extractAffectedPaths；任一调用无法确定（返回 null，如 execute_command 副作用
+     * 不可知）→ 整个批次 affectedPaths = undefined（回退全量，保证快照完整性）。
+     * 已确定回退全量（affectedPathsResolved）的批次不再累计。
+     * 同一路径多次出现只保留一次（保持顺序）。
+     *
+     * 注意（流式早启动固有语义）：批次 before 在首个已配置工具启动前创建，此时后续工具调用仍在
+     * 流式传输中，before 只可能基于「当时已见工具」的路径；后续工具导致回退全量时，before 保持
+     * 已创建的部分快照，after 及后续检查点回退全量（最佳努力，不阻塞工具执行）。
+     */
+    private collectAffectedPaths(
+        batch: StreamToolBatchCheckpointState,
+        calls: readonly FunctionCallInfo[],
+        workspaceRootFsPath?: string
+    ): void {
+        if (batch.affectedPathsResolved) {
+            // 已确定回退全量：不再累计
+            return;
+        }
+        if (!workspaceRootFsPath) {
+            batch.affectedPaths = undefined;
+            batch.affectedPathsResolved = true;
+            return;
+        }
+        const accumulated = new Set(batch.affectedPaths ?? []);
+        for (const call of calls) {
+            const paths = extractAffectedPaths(call.name, call.args, workspaceRootFsPath);
+            if (paths === null) {
+                batch.affectedPaths = undefined;
+                batch.affectedPathsResolved = true;
+                return;
+            }
+            for (const p of paths) {
+                accumulated.add(p);
+            }
+        }
+        batch.affectedPaths = [...accumulated];
+    }
+
+    /**
      * CPF-07：流式工具批次 before 检查点——第一个「已配置 before 存档」的工具启动前创建一次。
      *
      * 与调用方约定（见 ensure 处注释）：本方法只创建 before 并把结果写入 batch 状态；
@@ -2311,7 +2392,10 @@ export class ToolIterationLoopService {
                 'before',
                 undefined,
                 // CPF-07 精确判定：批内已见工具名透传（CheckpointManager 按 beforeTools 求交）
-                { batchToolNames: Array.from(batch.batchToolNames) }
+                {
+                    batchToolNames: Array.from(batch.batchToolNames),
+                    ...(batch.affectedPaths ? { affectedPaths: batch.affectedPaths } : {})
+                }
             );
             if (checkpoint) {
                 batch.beforeCheckpoint = checkpoint;
@@ -2358,6 +2442,8 @@ export class ToolIterationLoopService {
                 batch.needsCheckpoint = true;
             }
         }
+        // CP-PARTIAL-1：确认路径同样累计受影响路径（批内确认工具/后缀工具）
+        this.collectAffectedPaths(batch, calls, batch.workspaceRootFsPath);
         if (!calls.some(call => checkpointService.isToolConfiguredForCheckpoint(call.name, call.args, 'before'))) {
             return;
         }
@@ -2377,7 +2463,10 @@ export class ToolIterationLoopService {
                 'tool_batch',
                 'before',
                 undefined,
-                { batchToolNames: Array.from(batch.batchToolNames) }
+                {
+                    batchToolNames: Array.from(batch.batchToolNames),
+                    ...(batch.affectedPaths ? { affectedPaths: batch.affectedPaths } : {})
+                }
             );
             if (checkpoint) {
                 batch.beforeCheckpoint = checkpoint;
@@ -2431,7 +2520,10 @@ export class ToolIterationLoopService {
                 'after',
                 undefined,
                 // CPF-07 精确判定：批内工具名透传（CheckpointManager 按 afterTools 求交）
-                { batchToolNames: Array.from(batch.batchToolNames) }
+                {
+                    batchToolNames: Array.from(batch.batchToolNames),
+                    ...(batch.affectedPaths ? { affectedPaths: batch.affectedPaths } : {})
+                }
             );
         } catch (error) {
             this.log.warn('checkpoint.batch_after_failed', {
