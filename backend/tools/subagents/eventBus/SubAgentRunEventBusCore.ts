@@ -329,6 +329,12 @@ export abstract class SubAgentRunEventBusCore {
             index,
             timestamp: content.timestamp || now
         } as Content));
+        // Monitor 的删除/重试会结构性改写 transcript。lastSentHistory 是上一次真正发给
+        // provider 的历史快照，只能在 transcript 未改写时作为 continueFromRunId 前缀复用；
+        // 若继续保留，续跑会绕过刚写入的 contents，把用户已删除的工具结果重新发给模型。
+        // 显式改写后 provider 前缀本来也已经变化，旧缓存不再可命中，因此直接失效；续跑
+        // 会走 executor 的既有 fallback，从当前 contents（过滤 Invocation 展示卡）重建历史。
+        delete snapshot.lastSentHistory;
         this.commitContentChange(snapshot, now);
         return snapshot;
     }

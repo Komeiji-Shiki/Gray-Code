@@ -12,6 +12,7 @@ import { subAgentConcurrencyLimiter } from '../../tools/subagents';
 import type { SubAgentConfig, SubAgentExecutorContext } from '../../tools/subagents';
 import type { Content } from '../../modules/conversation/types';
 import { createSubAgentConfig } from '../__fixtures__/subagentFixtures';
+import { deleteRunMessage, retryRunFromMessage } from '../../../webview/handlers/SubAgentsHandlers';
 
 
 function createContext(overrides: Partial<SubAgentExecutorContext> = {}): SubAgentExecutorContext {
@@ -141,6 +142,7 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
 describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () => {
     afterEach(() => {
         subAgentConcurrencyLimiter.release('cont_lsh_old');
+        subAgentConcurrencyLimiter.release('cont_deleted_context');
     });
 
     test('updateLastSentHistory 深拷贝存入快照，不污染 Monitor contents 与 contentRevision，不发 content_snapshot', () => {
@@ -168,6 +170,35 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
         expect(snapshot.events.some(e => e.type === 'content_snapshot')).toBe(false);
 
         subAgentRunEventBus.emit({ runId: 'hist_only', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+    });
+
+    test('Monitor retry 的 one-past-end 索引被拒绝，且不清除 lastSentHistory', async () => {
+        const runId = 'hist_invalid_retry';
+        const contents: Content[] = [{ role: 'model', parts: [{ text: 'keep me' }] }];
+        const sentHistory: Content[] = [{ role: 'user', parts: [{ text: 'provider prefix' }] }];
+        subAgentRunEventBus.createRun(runId, 'Tester', undefined, {
+            conversationId: 'conv_1',
+            initialContents: contents
+        });
+        subAgentRunEventBus.updateLastSentHistory(runId, sentHistory);
+        subAgentRunEventBus.emit({ runId, agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+
+        const sendResponse = jest.fn();
+        const sendError = jest.fn();
+        await retryRunFromMessage({ runId, contentIndex: contents.length }, 'req-invalid-retry', {
+            conversationManager: {} as any,
+            sendResponse,
+            sendError
+        } as any);
+
+        expect(sendResponse).not.toHaveBeenCalled();
+        expect(sendError).toHaveBeenCalledWith(
+            'req-invalid-retry',
+            'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT',
+            'contentIndex is out of bounds'
+        );
+        expect(subAgentRunEventBus.getSnapshot(runId)?.contents).toEqual(contents);
+        expect(subAgentRunEventBus.getSnapshot(runId)?.lastSentHistory).toEqual(sentHistory);
     });
 
     test('续跑 baseContents 优先取 lastSentHistory（而不是 contents 卡片），历史逐条一致', async () => {
@@ -207,6 +238,86 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
             { role: 'user', parts: [{ text: 'old task' }] },
             { role: 'model', parts: [{ text: 'old reply' }] }
         ]);
+    });
+
+    test('Monitor 删除工具结果后，续跑下一次 provider history 不再包含已删除 marker', async () => {
+        const runId = 'cont_deleted_context';
+        const deletedMarker = 'DELETED_SUBAGENT_RESULT_MARKER';
+        const callContent: Content = {
+            role: 'model',
+            parts: [{ functionCall: { id: 'call-delete-me', name: 'read_file', args: { path: 'secret.txt' } } }]
+        };
+        const resultContent: Content = {
+            role: 'user',
+            isFunctionResponse: true,
+            parts: [{
+                functionResponse: {
+                    id: 'call-delete-me',
+                    name: 'read_file',
+                    response: { success: true, data: { output: deletedMarker } }
+                }
+            }]
+        };
+
+        subAgentRunEventBus.createRun(runId, 'Tester', { agentType: 'tester', prompt: 'old task' }, {
+            conversationId: 'conv_1',
+            initialContents: [
+                { role: 'user', parts: [{ text: '# SubAgent Invocation\nold task' }], isUserInput: true },
+                callContent,
+                resultContent,
+                { role: 'model', parts: [{ text: 'old final answer' }] }
+            ] as Content[]
+        });
+        // 旧 run 最后一轮真正发给 provider 的前缀包含该工具结果；这正是续跑优先读取的缓存。
+        subAgentRunEventBus.updateLastSentHistory(runId, [
+            { role: 'user', parts: [{ text: 'old task' }] },
+            callContent,
+            { role: 'user', parts: resultContent.parts }
+        ]);
+        subAgentRunEventBus.emit({ runId, agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+        expect(JSON.stringify(subAgentRunEventBus.getSnapshot(runId)?.lastSentHistory)).toContain(deletedMarker);
+
+        // 走 Monitor 实际 handler：删除 functionResponse 楼层（其 functionCall 会按配对规则修复）。
+        const sendResponse = jest.fn();
+        const sendError = jest.fn();
+        await deleteRunMessage({ runId, contentIndex: 2 }, 'req-delete', {
+            conversationManager: {} as any,
+            sendResponse,
+            sendError
+        } as any);
+
+        expect(sendError).not.toHaveBeenCalled();
+        expect(sendResponse).toHaveBeenCalled();
+        const deletedSnapshot = subAgentRunEventBus.getSnapshot(runId)!;
+        expect(JSON.stringify(deletedSnapshot.contents)).not.toContain(deletedMarker);
+        // 结构改写后旧 provider 前缀必须失效，否则 continueFromRunId 会绕过上面的删除。
+        expect(deletedSnapshot.lastSentHistory).toBeUndefined();
+
+        let nextProviderHistory: Content[] = [];
+        const generateMock = jest.fn().mockImplementationOnce(async (request: any) => {
+            nextProviderHistory = JSON.parse(JSON.stringify(request.history));
+            return {
+                content: { role: 'model', parts: [{ text: 'continued' }] },
+                model: 'model-x'
+            };
+        });
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
+            conversationId: 'conv_1',
+            channelManager: { generate: generateMock } as any,
+            toolRegistry: { getAllDeclarations: () => [] } as any
+        }));
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'continue after deletion',
+            continueFromRunId: runId,
+            conversationId: 'conv_1'
+        });
+
+        expect(result.success).toBe(true);
+        expect(generateMock).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(nextProviderHistory)).not.toContain(deletedMarker);
+        expect(JSON.stringify(nextProviderHistory)).not.toContain('SubAgent Invocation');
+        expect(JSON.stringify(nextProviderHistory)).toContain('continue after deletion');
     });
 });
 

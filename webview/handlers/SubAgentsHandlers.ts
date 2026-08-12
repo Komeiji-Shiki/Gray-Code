@@ -392,6 +392,19 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
     }
     await subAgentRunEventBus.loadRunTranscript(runId);
 
+    const currentSnapshot = subAgentRunEventBus.getSnapshot(runId);
+    if (!currentSnapshot) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+    // truncateFrom 为通用纯函数，允许 index===length 表示 no-op；Monitor 的 retry
+    // 必须锚定一条真实消息。否则无内容变化也会走 replaceContents，误清 provider
+    // 前缀缓存 lastSentHistory。
+    if (contentIndex >= currentSnapshot.contents.length) {
+      ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'contentIndex is out of bounds');
+      return;
+    }
+
     const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
     if (!snapshot) {
       ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
