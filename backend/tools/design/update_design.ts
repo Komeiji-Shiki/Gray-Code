@@ -74,7 +74,20 @@ export function createUpdateDesignTool(): Tool {
       try {
         await vscode.workspace.fs.readFile(uri);
       } catch (e: any) {
-        return { success: false, error: e?.message || `Design document does not exist: ${targetPath}` };
+        // 参照 create_progress：区分「文档不存在」与其它读取错误（发现 17）。
+        // 只有 ENOENT/FileNotFound 才按不存在处理（保留原始消息，与旧行为一致）；
+        // EACCES/IO 等异常给出明确错误。
+        const readMessage = String(e?.message || '');
+        const readCode = String(e?.code || '');
+        const isNotFound = readCode === 'ENOENT' || readCode === 'FileNotFound'
+          || /enoent|not exist|file not found|FileNotFound/i.test(readMessage);
+        if (isNotFound) {
+          return { success: false, error: e?.message || `Design document does not exist: ${targetPath}` };
+        }
+        return {
+          success: false,
+          error: `Failed to read existing design document: ${readMessage || targetPath}`
+        };
       }
 
       try {

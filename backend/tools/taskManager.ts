@@ -100,12 +100,13 @@ function enqueueBackgroundSubAgentResult(
  * - 'background_subagent'  后台 SubAgent 任务（backend/tools/subagents/subagents.ts、detachedTaskBridge.ts）
  * - 'agent_message'        agent_send_message 入队轻量通知（backend/tools/subagents/agentSendMessage.ts；
  *                          emitEvent 直发，不注册任务）
- * - 'crop_image' / 'remove_background' / 'resize_image' / 'rotate_image'
+* - 'crop_image' / 'remove_background' / 'resize_image' / 'rotate_image'
  *                          图像批处理（backend/tools/media/）
  *
- * 保留 `| string` 兜底：注册表对运行期自定义类型开放，新增任务类型无需改此处声明。
+ * 显式联合（去掉 `| string` 兜底）：新增任务类型时需显式扩展本声明，
+ * 编译期即可捕获 `taskEvent:${taskType}` 事件名与 type 比较中的拼写错误。
  */
-export type TaskType = 'terminal' | 'image_generation' | 'background_subagent' | 'agent_message' | 'crop_image' | 'remove_background' | 'resize_image' | 'rotate_image' | string;
+export type TaskType = 'terminal' | 'image_generation' | 'background_subagent' | 'agent_message' | 'crop_image' | 'remove_background' | 'resize_image' | 'rotate_image';
 
 /**
  * 任务状态
@@ -192,6 +193,12 @@ class TaskManagerClass {
         abortController: AbortController,
         metadata?: Record<string, unknown>
     ): void {
+        // 同 ID 重复注册通常是调用方生命周期错误（旧任务未注销就重注册同名任务），
+        // 新条目会覆盖旧条目的 abortController，导致旧任务无法再被取消；告警留痕便于排查。
+        if (this.activeTasks.has(id)) {
+            console.warn(`[TaskManager] Duplicate task registration for id "${id}" (type: ${type}); the previous entry will be overwritten.`);
+        }
+
         const taskInfo: TaskInfo = {
             id,
             type,

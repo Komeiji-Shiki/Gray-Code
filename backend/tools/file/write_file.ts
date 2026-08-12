@@ -11,8 +11,8 @@ import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
 import { getDiffManager } from '../../core/services/diffManager';
-import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
+import { resolveDiffOutcome } from './diff/resolveDiffOutcome';
 import { fileWriteLockManager, type LockHolder } from '../../core/fileWriteLockManager';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
@@ -206,41 +206,20 @@ async function writeSingleFile(
             }
         );
 
-        // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
-        // 为什么改用 DiffManager 统一等待：write_file 与 apply_diff 都依赖 pending diff 生命周期，不能各自维护略有差异的轮询/监听逻辑。
-        // 怎么改：复用 waitForDiffResolution，让状态监听、轮询兜底和 abort 清理集中在 DiffManager。
-        // 目的：让所有文件写入类 diff-review 工具在自动保存和用户中断场景下表现一致。
-        const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
+        // 等待 diff 被处理并统一解析审阅终态。
+        // 为什么改用统一 helper：write_file 与 apply_diff/insert_code/delete_code/replacePass 都依赖
+        // pending diff 生命周期，终态判定（wasAccepted）、diff 内容保存与取消/拒绝文案必须五处一致，
+        // 不能各自维护略有差异的判定/文案逻辑（发现 04）。
+        const outcome = await resolveDiffOutcome({
+            pendingDiffId: pendingDiff.id,
+            abortSignal,
+            originalContent,
+            newContent: content,
+            filePath,
+            actionLabel: 'Write'
+        });
 
-        // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
-        // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
-        const wasRejected = interruptReason === 'rejected';
-        const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
-        
-        const finalDiff = diffManager.getDiff(pendingDiff.id);
-                // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
-        // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
-        const wasAccepted = interruptReason === 'none';
-        const autoSaveError = finalDiff?.autoSaveError;
-
-        // 尝试将内容保存到 DiffStorageManager，供前端按需加载
-        const diffStorageManager = getDiffStorageManager();
-        let diffContentId: string | undefined;
-        
-        if (diffStorageManager) {
-            try {
-                const diffRef = await diffStorageManager.saveGlobalDiff({
-                    originalContent,
-                    newContent: content,
-                    filePath
-                });
-                diffContentId = diffRef.diffId;
-            } catch (e) {
-                console.warn('Failed to save diff content to storage:', e);
-            }
-        }
-        
-        if (wasRejected) {
+        if (outcome.wasRejected) {
             // 用户显式拒绝：与取消区分，返回 status:'rejected' + 可读错误
             return {
                 path: filePath,
@@ -248,12 +227,13 @@ async function writeSingleFile(
                 cancelled: false,
                 action: fileExists ? 'modified' : 'created',
                 status: 'rejected',
-                error: 'Diff was rejected by user',
-                diffContentId
+                error: outcome.rejectedMessage,
+                diffContentId: outcome.diffContentId,
+                pendingDiffId: outcome.pendingDiffId
             };
         }
 
-        if (wasInterrupted) {
+        if (outcome.wasInterrupted) {
             // 用户终止/中断，视为取消
             return {
                 path: filePath,
@@ -261,22 +241,24 @@ async function writeSingleFile(
                 cancelled: true,
                 action: fileExists ? 'modified' : 'created',
                 status: 'rejected',
-                error: interruptReason === 'abort'
-                    ? 'Write was cancelled by user'
-                    : 'Write was interrupted by user',
-                diffContentId
+                error: outcome.interruptKind === 'abort'
+                    ? outcome.abortMessage
+                    : outcome.interruptMessage,
+                diffContentId: outcome.diffContentId,
+                pendingDiffId: outcome.pendingDiffId
             };
         }
         
         // 简化返回：AI 已经知道写入的内容，不需要重复返回
         return {
             path: filePath,
-            success: wasAccepted,
+            success: outcome.wasAccepted,
             action: fileExists ? 'modified' : 'created',
-            status: wasAccepted ? 'accepted' : 'rejected',
-            error: wasAccepted ? undefined : (autoSaveError || 'Diff was rejected'),
-            autoSaveError,
-            diffContentId
+            status: outcome.wasAccepted ? 'accepted' : 'rejected',
+            error: outcome.wasAccepted ? undefined : (outcome.autoSaveError || outcome.rejectedMessage),
+            autoSaveError: outcome.autoSaveError,
+            diffContentId: outcome.diffContentId,
+            pendingDiffId: outcome.pendingDiffId
         };
     } catch (error) {
         return {

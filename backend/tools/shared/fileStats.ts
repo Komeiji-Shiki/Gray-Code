@@ -3,9 +3,7 @@
 import * as vscode from 'vscode';
 import * as fsp from 'fs/promises';
 import { isBinaryFile } from './multimodal';
-
-/** 行数统计的文件大小上限：超过后 lineCount 的参考价值很低，不值得付出读取成本 */
-const MAX_LINE_COUNT_FILE_SIZE_BYTES = 4 * 1024 * 1024;
+import { MAX_LINE_COUNT_FILE_BYTES } from './fileSizeGuards';
 
 /** 分块读取统计行数时的块大小 */
 const LINE_COUNT_CHUNK_SIZE = 64 * 1024;
@@ -36,7 +34,7 @@ export async function countTextFileLines(uri: vscode.Uri, filePath: string): Pro
     try {
         const stat = await vscode.workspace.fs.stat(uri);
         if (typeof stat.size === 'number') {
-            if (stat.size > MAX_LINE_COUNT_FILE_SIZE_BYTES) {
+            if (stat.size > MAX_LINE_COUNT_FILE_BYTES) {
                 return undefined;
             }
             if (stat.size === 0) {

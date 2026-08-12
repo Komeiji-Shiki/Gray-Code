@@ -10,15 +10,14 @@ import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, formatFileSize } from '../utils';
 import { getDiffManager } from '../../core/services/diffManager';
-import { getDiffStorageManager } from '../../modules/conversation';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
+import { resolveDiffOutcome } from './diff/resolveDiffOutcome';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
 
-// 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
-// 超大文件全量 readFileSync 会阻塞 extension host 并全量读入内存。
-const MAX_EDIT_FILE_BYTES = 5 * 1024 * 1024;
+// 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）已统一收敛到 shared/fileSizeGuards
+import { MAX_EDIT_FILE_BYTES } from '../shared/fileSizeGuards';
 
 /**
  * 单个插入条目
@@ -172,37 +171,17 @@ async function insertSingleFile(
             { confirmedByToolConfirmation: approvedByToolConfirmation === true, conversationId, checkpointReady, lockHolder }
         );
 
-        // 等待用户处理
-        // 修改原因：本地 waitForDiffResolution 包装只是透传，删除重复包装直接调用。
-        const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
+        // 等待用户处理并统一解析审阅终态（与 write_file/apply_diff/delete_code/replacePass 共用 helper）
+        const outcome = await resolveDiffOutcome({
+            pendingDiffId: pendingDiff.id,
+            abortSignal,
+            originalContent,
+            newContent,
+            filePath,
+            actionLabel: 'Insert'
+        });
 
-        // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
-        // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
-        const wasRejected = interruptReason === 'rejected';
-        const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
-        const finalDiff = diffManager.getDiff(pendingDiff.id);
-        // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
-        // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"写入成功"。
-        const wasAccepted = interruptReason === 'none';
-        const autoSaveError = finalDiff?.autoSaveError;
-
-        // 保存 diff 内容供前端按需加载
-        const diffStorageManager = getDiffStorageManager();
-        let diffContentId: string | undefined;
-        if (diffStorageManager) {
-            try {
-                const diffRef = await diffStorageManager.saveGlobalDiff({
-                    originalContent,
-                    newContent,
-                    filePath
-                });
-                diffContentId = diffRef.diffId;
-            } catch (e) {
-                console.warn('Failed to save diff content to storage:', e);
-            }
-        }
-
-        if (wasRejected) {
+        if (outcome.wasRejected) {
             // 用户显式拒绝：与取消区分，返回 status:'rejected' + 可读错误
             return {
                 path: filePath,
@@ -211,36 +190,38 @@ async function insertSingleFile(
                 line,
                 insertedLines: insertedLineCount,
                 status: 'rejected',
-                error: 'Diff was rejected by user',
-                diffContentId
+                error: outcome.rejectedMessage,
+                diffContentId: outcome.diffContentId,
+                pendingDiffId: outcome.pendingDiffId
             };
         }
 
-        if (wasInterrupted) {
+        if (outcome.wasInterrupted) {
             return {
                 path: filePath,
                 success: false,
                 cancelled: true,
-            line,
+                line,
                 insertedLines: insertedLineCount,
                 status: 'rejected',
-                error: interruptReason === 'abort'
-                    ? 'Insert was cancelled by user'
-                    : 'Insert was interrupted by user',
-                diffContentId
+                error: outcome.interruptKind === 'abort'
+                    ? outcome.abortMessage
+                    : outcome.interruptMessage,
+                diffContentId: outcome.diffContentId,
+                pendingDiffId: outcome.pendingDiffId
             };
         }
 
         return {
             path: filePath,
-            success: wasAccepted,
+            success: outcome.wasAccepted,
             line,
             insertedLines: insertedLineCount,
-            status: wasAccepted ? 'accepted' : 'rejected',
-            error: wasAccepted ? undefined : (autoSaveError || 'Diff was rejected'),
-            autoSaveError,
-            diffContentId,
-            pendingDiffId: pendingDiff.id
+            status: outcome.wasAccepted ? 'accepted' : 'rejected',
+            error: outcome.wasAccepted ? undefined : (outcome.autoSaveError || outcome.rejectedMessage),
+            autoSaveError: outcome.autoSaveError,
+            diffContentId: outcome.diffContentId,
+            pendingDiffId: outcome.pendingDiffId
         };
     } catch (error) {
         return {
@@ -298,11 +279,12 @@ export function createInsertCodeTool(): Tool {
                                     description: pathDescription
                                 },
                                 line: {
-                                    type: 'number',
+                                    type: 'integer',
+                                    minimum: 1,
                                     description: isZh
                                         ? '要插入到的行号（1-based）。使用 last_line + 1 在文件末尾追加。'
                                         : 'Line number (1-based) to insert before. Use last_line + 1 to append at end of file.'
-               },
+                                },
                                 content: {
                                     type: 'string',
                                     description: isZh ? '要插入的代码内容' : 'The code content to insert'

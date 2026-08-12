@@ -231,7 +231,7 @@ async function readReferenceImage(imgPath: string, context?: ToolContext): Promi
 
     // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
     if (isOutsideWorkspace) {
-        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imgPath }, context);
+        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imgPath }, context, 'generate_image');
         if (readAccessError) {
             return null;
         }
@@ -582,7 +582,7 @@ async function executeImageTask(
             }
 
             // 保存图片
-            await saveImage(buffer, finalOutputPath, context);
+            await saveImage(buffer, finalOutputPath, context, 'generate_image');
             savedPaths.push(finalOutputPath);
 
             // 收集尺寸信息

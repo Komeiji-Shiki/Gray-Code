@@ -101,11 +101,13 @@ Returns references grouped by file, with line numbers and code content.`;
                         description: pathDescription
                     },
                     line: {
-                        type: 'number',
+                        type: 'integer',
+                        minimum: 1,
                         description: isZh ? '符号所在的行号（1-based）' : 'Line number (1-based) where the symbol is located'
                     },
                     column: {
-                        type: 'number',
+                        type: 'integer',
+                        minimum: 1,
                         description: isZh
                             ? '符号起始的列号（1-based）。未指定时使用第 1 列。'
                             : 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'
@@ -151,7 +153,8 @@ Returns references grouped by file, with line numbers and code content.`;
             
             // 修改原因：find_references 接受绝对路径时可通过 LSP 读取工作区外文件内容，不受读策略管控。
             // 修改方式：与 read_file 一致，入口处校验 outside-workspace 读策略（deny/ask/allow）。
-            const accessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: filePath }, context);
+            // 使用真实工具名：服务层白名单已包含 find_references，ask 策略下确认弹窗可正常放行。
+            const accessError = ensureOutsideWorkspaceAccessApproved('find_references', { path: filePath }, context);
             if (accessError) {
                 return { success: false, error: accessError };
             }

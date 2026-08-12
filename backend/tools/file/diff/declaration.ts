@@ -10,8 +10,8 @@ import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult } from '../../types';
 import { getDiffManager } from '../../../core/services/diffManager';
 import { resolveUriWithInfo, getAllWorkspaces, formatFileSize } from '../../utils';
-import { getDiffStorageManager } from '../../../modules/conversation';
 import { getGlobalSettingsManager } from '../../../core/settingsContext';
+import { resolveDiffOutcome } from './resolveDiffOutcome';
 import type { LockHolder } from '../../../core/fileWriteLockManager';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from '../unifiedDiff';
 import {
@@ -31,9 +31,8 @@ import { ensureOutsideWorkspaceAccessApproved } from '../outsideWorkspaceAccess'
 import { getActualLanguage } from '../../../i18n';
 import { resolveLocalizationLanguage } from '../../localization/types';
 
-// 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）：
-// 超大文件（如打包产物）全量 readFileSync 会阻塞 extension host 并全量读入内存。
-const MAX_EDIT_FILE_BYTES = 5 * 1024 * 1024;
+// 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）已统一收敛到 shared/fileSizeGuards
+import { MAX_EDIT_FILE_BYTES } from '../../shared/fileSizeGuards';
 
 function getApplyDiffFormat(): 'unified' | 'search_replace' {
     const settingsManager = getGlobalSettingsManager();
@@ -518,46 +517,37 @@ ${descriptionSuffix}`;
                         }
                     );
 
-                    // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
-                    // 为什么改用 DiffManager 统一等待：apply_diff 之前只监听状态变化，用户中断会清掉自动保存定时器但不一定产生新状态事件，导致偶发卡住。
-                    // 怎么改：统一等待方法同时监听状态事件、轮询中断标记，并处理 AbortSignal。
-                    // 目的：让结构化 hunks 与旧 patch 路径共享可靠的 diff 生命周期收敛逻辑。
-                    const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
+                    // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断），并统一解析审阅终态。
+                    // 为什么改：终态判定/文案/保存与其余四个写类工具共用 resolveDiffOutcome（发现 04），
+                    // wasAccepted 语义（含 finalDiff.status 复查）五处一致。
+                    const outcome = await resolveDiffOutcome({
+                        pendingDiffId: pendingDiff.id,
+                        abortSignal: context?.abortSignal,
+                        originalContent,
+                        newContent,
+                        filePath,
+                        useDeferredSave: true,
+                        actionLabel: 'Diff'
+                    });
                     // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理：
                     // - rejected：用户在 diff 审阅 UI 里显式点了拒绝 → status:'rejected' + 可读错误（不标记 cancelled）
                     // - abort/user：请求被取消（AbortSignal / 新消息中断）→ cancelled: true
-                    const wasRejected = interruptReason === 'rejected';
-                    const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
+                    const wasRejected = outcome.wasRejected;
+                    const wasInterrupted = outcome.wasInterrupted;
 
                     // 获取最终状态
-                    const finalDiff = diffManager.getDiff(pendingDiff.id);
-                    const wasAccepted = !wasInterrupted && !wasRejected && (!finalDiff || finalDiff.status === 'accepted');
+                    const finalDiff = outcome.finalDiff;
+                    const wasAccepted = outcome.wasAccepted;
 
                     // 用户可能在保存前编辑了内容（手动保存/手动接受时）
                     const userEditedContent = finalDiff?.userEditedContent;
-
-                    // 尝试将大内容保存到 DiffStorageManager
-                    const diffStorageManager = getDiffStorageManager();
-                    let diffContentId: string | undefined;
-
-                    if (diffStorageManager) {
-                        try {
-                            const diffRef = diffStorageManager.saveGlobalDiffDeferred({
-                                originalContent,
-                                newContent,
-                                filePath
-                            });
-                            diffContentId = diffRef.diffId;
-                        } catch (e) {
-                            console.warn('Failed to save diff content to storage:', e);
-                        }
-                    }
+                    const diffContentId = outcome.diffContentId;
 
                     if (wasRejected) {
                         return {
                             success: false,
                             cancelled: false,
-                            error: 'Diff was rejected by user',
+                            error: outcome.rejectedMessage,
                             data: {
                                 file: filePath,
                                 message: `Diff for ${filePath} was rejected by user.`,
@@ -579,7 +569,8 @@ ${descriptionSuffix}`;
                         return {
                             success: false,
                             cancelled: true,
-                            error: 'Diff was cancelled by user',
+                            // apply_diff 的历史文案对 abort/user 统一使用“取消”表述，保留该工具契约
+                            error: outcome.abortMessage,
                             data: {
                                 file: filePath,
                                 message: `Diff for ${filePath} was cancelled by user.`,
@@ -597,7 +588,7 @@ ${descriptionSuffix}`;
                         };
                     }
 
-                    const autoSaveError = finalDiff?.autoSaveError;
+                    const autoSaveError = outcome.autoSaveError;
                     const rejectedBlockIndices = finalDiff?.rejectedBlockIndices ?? [];
                     // 部分接受：用户拒绝了部分块（或手动编辑内容），不能把初始全量匹配统计当作"全部接受"返回。
                     // 实际接受数 = 初始成功块 - 被拒绝块；实际失败数 = 初始失败块 + 被拒绝块。
@@ -750,41 +741,33 @@ ${descriptionSuffix}`;
                     }
                 );
 
-                // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
-                // 为什么旧 search/replace 路径也要改：它和结构化 hunks 一样会创建 pending diff，不能保留另一套可能遗漏中断的等待逻辑。
-                // 怎么改：复用 DiffManager.waitForDiffResolution，统一事件监听、轮询兜底和 abort 清理。
-                // 目的：让 apply_diff 的所有输入格式在自动保存和取消场景下表现一致。
-                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
+                // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断），并统一解析审阅终态。
+                // 为什么旧 search/replace 路径也要改：它和结构化 hunks 一样会创建 pending diff，
+                // 终态判定/文案/保存与其余四个写类工具共用 resolveDiffOutcome（发现 04）。
+                const outcome = await resolveDiffOutcome({
+                    pendingDiffId: pendingDiff.id,
+                    abortSignal: context?.abortSignal,
+                    originalContent,
+                    newContent: currentContent,
+                    filePath,
+                    useDeferredSave: true,
+                    actionLabel: 'Diff'
+                });
                 // 用户“拒绝”（rejected）与“中断/取消”（abort/user）分开处理（与 unified 路径一致）：
                 // rejected → status:'rejected' + 可读错误（不标记 cancelled）；abort/user → cancelled: true
-                const wasRejected = interruptReason === 'rejected';
-                const wasInterrupted = interruptReason === 'abort' || interruptReason === 'user';
+                const wasRejected = outcome.wasRejected;
+                const wasInterrupted = outcome.wasInterrupted;
 
-                const finalDiff = diffManager.getDiff(pendingDiff.id);
-                const wasAccepted = !wasInterrupted && !wasRejected && (!finalDiff || finalDiff.status === 'accepted');
+                const finalDiff = outcome.finalDiff;
+                const wasAccepted = outcome.wasAccepted;
                 const userEditedContent = finalDiff?.userEditedContent;
-
-                const diffStorageManager = getDiffStorageManager();
-                let diffContentId: string | undefined;
-
-                if (diffStorageManager) {
-                    try {
-                        const diffRef = diffStorageManager.saveGlobalDiffDeferred({
-                            originalContent,
-                            newContent: currentContent,
-                            filePath
-                        });
-                        diffContentId = diffRef.diffId;
-                    } catch (e) {
-                        console.warn('Failed to save diff content to storage:', e);
-                    }
-                }
+                const diffContentId = outcome.diffContentId;
 
                 if (wasRejected) {
                     return {
                         success: false,
                         cancelled: false,
-                        error: 'Diff was rejected by user',
+                        error: outcome.rejectedMessage,
                         data: {
                             file: filePath,
                             message: `Diff for ${filePath} was rejected by user.`,
@@ -804,7 +787,8 @@ ${descriptionSuffix}`;
                     return {
                         success: false,
                         cancelled: true,
-                        error: 'Diff was cancelled by user',
+                        // apply_diff 的历史文案对 abort/user 统一使用“取消”表述，保留该工具契约
+                        error: outcome.abortMessage,
                         data: {
                             file: filePath,
                             message: `Diff for ${filePath} was cancelled by user.`,
@@ -820,7 +804,7 @@ ${descriptionSuffix}`;
                     };
                 }
 
-                const autoSaveError = finalDiff?.autoSaveError;
+                const autoSaveError = outcome.autoSaveError;
                 const rejectedBlockIndices = finalDiff?.rejectedBlockIndices ?? [];
                 // 部分接受：用户拒绝了部分块（或手动编辑内容），返回 partial 状态与修正后的计数。
                 const isPartial = wasAccepted && (!!finalDiff?.partial || rejectedBlockIndices.length > 0);

@@ -319,7 +319,7 @@ async function executeRemoveTask(
         }
 
         // 1. 读取原图
-        const imageFile = await readImageFile(image_path, context);
+        const imageFile = await readImageFile(image_path, context, 'remove_background');
         if (!imageFile) {
             return { index, success: false, error: `Task ${index + 1}: Cannot read image: ${image_path}` };
         }
@@ -392,7 +392,7 @@ async function executeRemoveTask(
         if (mask_path) {
             const { uri: maskUri, isOutsideWorkspace: maskOutside } = resolveFileToolPathWithInfo(mask_path);
             const maskAccessError = maskOutside
-                ? ensureOutsideWorkspaceAccessApproved('read_file', { path: mask_path }, context)
+                ? ensureOutsideWorkspaceAccessApproved('read_file', { path: mask_path }, context, 'remove_background')
                 : null;
             if (!maskUri) {
                 maskSaveWarning = `Task ${index + 1}: mask_path could not be resolved, mask image was NOT saved: ${mask_path}`;
@@ -482,7 +482,7 @@ async function executeRemoveTask(
 
         // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
         if (outputOutside) {
-            const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: output_path }, context);
+            const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: output_path }, context, 'remove_background');
             if (writeAccessError) {
                 return { index, success: false, error: `Task ${index + 1}: ${writeAccessError}` };
             }

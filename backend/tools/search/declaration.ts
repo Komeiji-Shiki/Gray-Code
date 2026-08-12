@@ -428,18 +428,21 @@ export function createSearchInFilesTool(): Tool {
                     
                     const runSearchPass = async (regex: RegExp): Promise<SearchPassResult> => {
                         const results: SearchMatch[] = [];
+                        const skippedFiles: SkippedFileInfo[] = [];
                         let filesTruncated = false;
+                        let statPathWarning: SearchPathWarningInfo | undefined;
                         // maxResults+1 探测语义（参照 find_files）：多取 1 条用于精确判定截断，
                         // 恰好等于 maxResults 条时不误报 truncated；超出部分在返回前裁剪。
                         const probeLimit = maxResults + 1;
 
                         if (isExplicit && targetWorkspace) {
                             // 显式指定了工作区，只搜索该工作区
-                            const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                            const { searchRoot, effectivePattern, pathWarning } = await getSearchRootAndPattern(
                                 targetWorkspace.uri,
                                 relativePath,
                                 filePattern
                             );
+                            if (pathWarning) statPathWarning = pathWarning;
                             const accessError = getSearchRootAccessError(searchRoot, args, context);
                             if (accessError) {
                                 throw new OutsideWorkspaceAccessError(accessError);
@@ -456,6 +459,7 @@ export function createSearchInFilesTool(): Tool {
                             );
                             results.push(...pass.matches);
                             filesTruncated = pass.filesTruncated;
+                            skippedFiles.push(...pass.skippedFiles);
                         } else if (searchPath === '.' && workspaces.length > 1) {
                             // 搜索所有工作区
                             for (const ws of workspaces) {
@@ -475,15 +479,17 @@ export function createSearchInFilesTool(): Tool {
                                 );
                                 results.push(...wsPass.matches);
                                 filesTruncated = filesTruncated || wsPass.filesTruncated;
+                                skippedFiles.push(...wsPass.skippedFiles);
                             }
                         } else {
                             // 单工作区或未指定，使用默认
                             const root = targetWorkspace?.uri || workspaces[0].uri;
-                            const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                            const { searchRoot, effectivePattern, pathWarning } = await getSearchRootAndPattern(
                                 root,
                                 relativePath,
                                 filePattern
                             );
+                            if (pathWarning) statPathWarning = pathWarning;
                             const accessError = getSearchRootAccessError(searchRoot, args, context);
                             if (accessError) {
                                 throw new OutsideWorkspaceAccessError(accessError);
@@ -500,6 +506,7 @@ export function createSearchInFilesTool(): Tool {
                             );
                             results.push(...pass.matches);
                             filesTruncated = filesTruncated || pass.filesTruncated;
+                            skippedFiles.push(...pass.skippedFiles);
                         }
 
                         // 探测多取 1 条：只有真的超出 maxResults 才算截断；恰好等于时裁剪后不报 truncated
@@ -512,7 +519,9 @@ export function createSearchInFilesTool(): Tool {
                             results,
                             matchesTruncated,
                             budgetTruncated: !!budget?.truncated,
-                            filesTruncated
+                            filesTruncated,
+                            skippedFiles,
+                            pathWarning: statPathWarning
                         };
                     };
 
@@ -558,7 +567,13 @@ export function createSearchInFilesTool(): Tool {
                             truncated: searchPass.matchesTruncated || searchPass.budgetTruncated || searchPass.filesTruncated,
                             multiRoot: workspaces.length > 1,
                             queryFallback: fallbackInfo,
-                            pathWarning: allResults.length === 0 ? pathWarning : undefined
+                            // 处理失败/被护栏跳过的文件及原因：与 replace 模式的 skippedFiles 同构，
+                            // 让模型能区分「真没有匹配」与「N 个文件因权限/IO/大小被跳过」
+                            skippedFiles: searchPass.skippedFiles.length > 0 ? searchPass.skippedFiles : undefined,
+                            // 0 命中时优先展示 possible_multiple_paths 诊断，其次展示 stat 失败降级说明
+                            pathWarning: allResults.length === 0
+                                ? (pathWarning ?? searchPass.pathWarning)
+                                : undefined
                         }
                     };
                 }

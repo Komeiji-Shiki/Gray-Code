@@ -97,13 +97,15 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
                         : '[search mode] Whether to treat query as a regular expression. Default: false. When false, regex-looking characters are searched literally.'
                 },
                 start_line: {
-                    type: 'number',
+                    type: 'integer',
+                    minimum: 1,
                     description: isZh
                         ? '[读取模式] 虚拟历史文档中的起始行号（1-based，包含）。使用 snake_case 的 start_line，不要用 read_file 风格的 startLine。'
                         : '[read mode] Start line number from the virtual history document (1-based, inclusive). Use snake_case start_line, not read_file-style startLine.'
                 },
                 end_line: {
-                    type: 'number',
+                    type: 'integer',
+                    minimum: 1,
                     description: isZh
                         ? '[读取模式] 虚拟历史文档中的结束行号（1-based，包含）。每次最多读取 ' + MAX_READ_LINES + ' 行。要获取单个完整长行，请让 end_line 等于 start_line。'
                         : '[read mode] End line number from the virtual history document (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read. For one complete long line, set end_line equal to start_line.'

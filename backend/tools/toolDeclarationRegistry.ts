@@ -79,3 +79,66 @@ export function getToolDeclarationFactory(name: string): ToolDeclarationFactory 
 export function clearToolDeclarationFactories(): void {
     toolDeclarationFactories.clear();
 }
+
+// —— 动态声明自检（发现 15）——
+
+/** 对象自身是否含 getter/setter 属性（含不可枚举属性） */
+function hasAccessorProperties(obj: object): boolean {
+    for (const key of Object.getOwnPropertyNames(obj)) {
+        const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+        if (descriptor?.get || descriptor?.set) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * 判定工具声明是否「动态」：tool.declaration 本身是 getter，
+ * 或声明对象上有 getter 字段（如 history_search 的 description getter）。
+ * 动态声明的工具必须有对应工厂，否则 resolver 会静默回退静态声明。
+ */
+function isDynamicDeclarationTool(tool: Tool): boolean {
+    const descriptor = Object.getOwnPropertyDescriptor(tool, 'declaration');
+    if (descriptor?.get) {
+        return true;
+    }
+    const declaration = tool.declaration;
+    if (declaration && typeof declaration === 'object') {
+        return hasAccessorProperties(declaration);
+    }
+    return false;
+}
+
+/**
+ * 只读自检：收集「声明含 getter 但未注册声明工厂」的工具名。
+ * 供组合根（assertToolDeclarationFactories）与测试调用，
+ * 防止注释清单与 registerToolDeclarationFactory 实际注册漂移。
+ */
+export function collectMissingToolDeclarationFactories(tools: Iterable<Tool>): string[] {
+    const missing: string[] = [];
+    for (const tool of tools) {
+        if (!isDynamicDeclarationTool(tool)) {
+            continue;
+        }
+        const name = tool.declaration?.name;
+        if (name && !toolDeclarationFactories.has(name)) {
+            missing.push(name);
+        }
+    }
+    return missing;
+}
+
+/**
+ * 断言所有动态声明工具都已注册声明工厂；缺失时抛错。
+ * 组合根在 registerAllTools + 工厂注册完成后调用（测试可传自定义工具集）。
+ */
+export function assertToolDeclarationFactories(tools: Iterable<Tool>): void {
+    const missing = collectMissingToolDeclarationFactories(tools);
+    if (missing.length > 0) {
+        throw new Error(
+            `Tool declaration factories are missing for dynamic tools: ${missing.join(', ')}. ` +
+            'Register them in the composition root (backend/bootstrap initTools) to keep the dynamic declaration list in sync.'
+        );
+    }
+}

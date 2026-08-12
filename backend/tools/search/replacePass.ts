@@ -7,10 +7,10 @@
 
 import * as vscode from 'vscode';
 import { toRelativePath, normalizeLineEndingsToLF } from '../utils';
-import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../../core/services/diffManager';
 import type { LockHolder } from '../../core/fileWriteLockManager';
 import type { SearchInFilesToolConfig } from '../../modules/settings/types';
+import { resolveDiffOutcome } from '../file/diff/resolveDiffOutcome';
 import {
     tryGetFileSizeBytes,
     readHeaderBytes,
@@ -19,7 +19,56 @@ import {
 } from './textEncoding';
 import type { TextDetectionResult } from './textEncoding';
 import { clampNonNegativeNumber, truncateWithEllipsis } from './searchPass';
-import type { SearchMatch } from './searchPass';
+import type { SearchMatch, SkippedFileInfo } from './searchPass';
+
+export type { SkippedFileInfo };
+
+/**
+ * 展开替换模板中的 $-引用（ECMA-262 GetSubstitution 语义：$$、$&、$`、$'、$n、$nn、$<name>），
+ * 仅用于「替换是否产生实际变化」的逐匹配计数（发现 06）。
+ *
+ * 为什么不改真实替换：真实替换仍走 String.prototype.replace 的原生展开，
+ * 本函数只做计数，任何边缘差异最多影响计数精度，不影响落盘内容。
+ */
+export function expandReplacementTemplate(
+    replacement: string,
+    matchText: string,
+    matchIndex: number,
+    fullText: string,
+    captureGroups: Array<string | undefined>,
+    namedGroups?: Record<string, string | undefined>
+): string {
+    const preceding = fullText.slice(0, matchIndex);
+    const following = fullText.slice(matchIndex + matchText.length);
+
+    return replacement.replace(/\$(\$|&|`|'|\d{1,2}|<[^>]+>)/g, (token, ref: string) => {
+        switch (ref) {
+            case '$': return '$';
+            case '&': return matchText;
+            case '`': return preceding;
+            case "'": return following;
+        }
+
+        if (ref.startsWith('<')) {
+            // 命名组：存在但未参与匹配 → 空串；不存在 → 保留字面 $<name>
+            const name = ref.slice(1, -1);
+            if (namedGroups && Object.prototype.hasOwnProperty.call(namedGroups, name)) {
+                return namedGroups[name] ?? '';
+            }
+            return token;
+        }
+
+        // 数字引用：按规范，首数字为 0 或捕获组少于 10 时只消费一位
+        const consumeOne = ref[0] === '0' || captureGroups.length < 10;
+        const digits = consumeOne ? ref[0] : ref;
+        const rest = consumeOne && ref.length > 1 ? ref.slice(1) : '';
+        const n = Number(digits);
+        if (n === 0 || n > captureGroups.length) {
+            return `$${digits}${rest}`;
+        }
+        return (captureGroups[n - 1] ?? '') + rest;
+    });
+}
 
 /**
  * 替换模式 matches 收集预算上限：防止 maxFiles×高频 query 产生数百万条匹配全量回传
@@ -45,17 +94,6 @@ export interface ReplaceResult {
  * 在单个目录中搜索并替换
  * 使用 DiffManager 创建待审阅的 diff
  */
-/**
- * 替换模式下被跳过的文件及原因。
- *
- * 为什么需要：以前文件处理异常被静默吞掉，模型看到的结果是
- * “这个文件没有匹配”，实际是“处理失败”，导致结果与现实对不上。
- */
-export interface SkippedFileInfo {
-    file: string;
-    reason: string;
-}
-
 export async function searchAndReplaceInDirectory(
     searchRoot: vscode.Uri,
     filePattern: string,
@@ -186,6 +224,9 @@ export async function searchAndReplaceInDirectory(
             };
 
             let fileReplacementCount = 0;
+            // 实际内容发生变化的替换数（发现 06）：逐匹配展开替换模板比对原文，
+            // “替换文本与原文相同”的无变化匹配不计入，与 filesModified 语义一致。
+            let fileChangedReplacementCount = 0;
             let match;
             searchRegex.lastIndex = 0;
 
@@ -213,6 +254,20 @@ export async function searchAndReplaceInDirectory(
 
                 fileReplacementCount++;
 
+                // 计数用展开：与下方实际执行的 String.prototype.replace 使用同一 replacement，
+                // 展开结果与原文一致说明该匹配不会产生任何内容变化。
+                const expanded = expandReplacementTemplate(
+                    replacement,
+                    rawMatchText,
+                    match.index,
+                    originalText,
+                    match.slice(1) as Array<string | undefined>,
+                    match.groups as Record<string, string | undefined> | undefined
+                );
+                if (expanded !== rawMatchText) {
+                    fileChangedReplacementCount++;
+                }
+
                 // 防止空匹配导致死循环
                 if (rawMatchText.length === 0) {
                     searchRegex.lastIndex++;
@@ -224,11 +279,7 @@ export async function searchAndReplaceInDirectory(
             const newText = originalText.replace(searchRegex, replacement);
             
             if (newText !== originalText) {
-                totalReplacements += fileReplacementCount;
-                
-                let diffContentId: string | undefined;
-                let status: 'accepted' | 'rejected' | 'pending' = 'pending';
-                let pendingDiffId: string | undefined;
+                totalReplacements += fileChangedReplacementCount;
 
                 // 使用 DiffManager 创建待审阅的 diff
                 const newContentLines = newText.split('\n').length;
@@ -255,50 +306,36 @@ export async function searchAndReplaceInDirectory(
                     }
                 );
 
-                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
+                // 等待 diff 结算并统一解析审阅终态（发现 04：与 write_file/apply_diff/insert_code/
+                // delete_code 共用 resolveDiffOutcome，wasAccepted 语义与结果字段五处一致）。
+                const outcome = await resolveDiffOutcome({
+                    pendingDiffId: pendingDiff.id,
+                    abortSignal,
+                    originalContent: originalText,
+                    newContent: newText,
+                    filePath: relativePath,
+                    actionLabel: 'Replace'
+                });
 
                 // 修改原因：waitForDiffResolution 的 'rejected'（用户拒绝了该文件的 diff，含被
                 //           FIFO 淘汰后留痕的拒绝）只影响当前文件，不应把整个 replace 工具标记为
                 //           cancelled；只有 'abort'（AbortSignal 中止）/ 'user'（用户中断）才是真取消。
                 // 修改方式：仅真取消置 cancelledBySignal，用户拒绝保持 per-file rejected 状态。
-                const wasAborted = interruptReason === 'abort' || interruptReason === 'user';
-                if (wasAborted) {
+                if (outcome.wasInterrupted) {
                     cancelledBySignal = true;
                 }
 
-                const finalDiff = diffManager.getDiff(pendingDiff.id);
-                // 由 waitForDiffResolution 的终态语义判定：'rejected'（含被 FIFO 淘汰后留痕的拒绝）
-                // 一律不算接受，避免被拒绝的 diff 被淘汰后 !finalDiff 误报"替换成功"。
-                const wasAccepted = interruptReason === 'none';
-                const autoSaveError = finalDiff?.autoSaveError;
-
                 // 取消/中断视为 rejected，避免前端继续显示 waiting
-                status = wasAccepted ? 'accepted' : 'rejected';
-                pendingDiffId = undefined;
+                const status: 'accepted' | 'rejected' = outcome.wasAccepted ? 'accepted' : 'rejected';
 
-                // 保存 diff 内容用于前端显示
-                const diffStorageManager = getDiffStorageManager();
-                if (diffStorageManager) {
-                    try {
-                        const diffRef = await diffStorageManager.saveGlobalDiff({
-                            originalContent: originalText,
-                            newContent: newText,
-                            filePath: relativePath
-                        });
-                        diffContentId = diffRef.diffId;
-                    } catch (e) {
-                        console.warn('Failed to save diff content:', e);
-                    }
-                }
-                
                 replacements.push({
                     file: relativePath,
                     workspace: workspaceName || undefined,
-                    replacements: fileReplacementCount,
+                    replacements: fileChangedReplacementCount,
                     status,
-                    diffContentId,
-                    autoSaveError,
-                    pendingDiffId
+                    diffContentId: outcome.diffContentId,
+                    autoSaveError: outcome.autoSaveError,
+                    pendingDiffId: outcome.pendingDiffId
                 });
             } else if (fileReplacementCount > 0) {
                 // 有匹配但替换后内容无变化（替换文本与原文相同），

@@ -43,13 +43,15 @@ describe('parseXMLToolCalls - tool_name 形态容错', () => {
         expect(calls[0].name).toBe('read_file');
     });
 
-    test('tool_name 为空时跳过该调用', () => {
+    test('tool_name 为空时生成 malformed 反馈（不再静默跳过）', () => {
         const calls = parseXMLToolCalls(`<tool_use>
   <tool_name></tool_name>
   <parameters><path>a.txt</path></parameters>
 </tool_use>`);
 
-        expect(calls).toHaveLength(0);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].name).toBe('malformed_tool_call');
+        expect(calls[0].args.__toolCallParseError).toBeDefined();
     });
 });
 

@@ -74,7 +74,19 @@ export function createCreateDesignTool(): Tool {
           error: `Design document already exists at ${outPath}. Use update_design to revise it instead of overwriting.`
         };
       } catch (e: any) {
-        // 目标不存在（或不可读）：继续创建；写入失败由下方 try/catch 返回错误
+        // 参照 create_progress：区分 ENOENT/FileNotFound 与其它读取错误——
+        // 只有文件不存在时才继续创建，EACCES/IO 等异常应显式失败而不是被当作「文件不存在」。
+        const readMessage = String(e?.message || '');
+        const readCode = String(e?.code || '');
+        const isNotFound = readCode === 'ENOENT' || readCode === 'FileNotFound'
+          || /enoent|not exist|file not found|FileNotFound/i.test(readMessage);
+        if (!isNotFound) {
+          return {
+            success: false,
+            error: `Failed to check existing design document: ${readMessage || outPath}`
+          };
+        }
+        // 文件不存在：继续创建；写入失败由下方 try/catch 返回错误
       }
 
       try {

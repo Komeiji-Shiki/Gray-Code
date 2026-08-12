@@ -22,16 +22,18 @@ import { getSharp } from '../../modules/dependencies';
  */
 export async function readImageFile(
     imagePath: string,
-    context?: ToolContext
+    context?: ToolContext,
+    displayName?: string
 ): Promise<{ data: Buffer; mimeType: string; ext: string } | null> {
     const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(imagePath);
     if (!uri) {
         return null;
     }
 
-    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）
+    // 工作区外读取：按 read 策略审批（deny 拒绝 / ask 需确认 / allow 放行）。
+    // 借用 read_file 策略是设计决定，但错误文案通过 displayName 展示真实工具名。
     if (isOutsideWorkspace) {
-        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imagePath }, context);
+        const readAccessError = ensureOutsideWorkspaceAccessApproved('read_file', { path: imagePath }, context, displayName);
         if (readAccessError) {
             return null;
         }
@@ -62,15 +64,16 @@ export async function readImageFile(
 /**
  * 保存图片到文件（含工作区外 write 策略审批 + 自动创建父目录）
  */
-export async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext): Promise<void> {
+export async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext, displayName?: string): Promise<void> {
     const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath);
     if (!uri) {
         throw new Error('No workspace folder open');
     }
 
-    // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
+    // 工作区外写入：按 write 策略审批（与 write_file 保持一致）；
+    // 借用 write_file 策略是设计决定，但错误文案通过 displayName 展示真实工具名。
     if (isOutsideWorkspace) {
-        const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: outputPath }, context);
+        const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: outputPath }, context, displayName);
         if (writeAccessError) {
             throw new Error(writeAccessError);
         }

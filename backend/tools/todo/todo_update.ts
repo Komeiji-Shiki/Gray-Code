@@ -13,14 +13,11 @@
 
 import type { Tool, ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { isTodoStatus } from '../shared/todoValidation';
+import type { TodoItem, TodoStatus } from '../shared/todoValidation';
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-
-export interface TodoItem {
-    id: string;
-    content: string;
-    status: TodoStatus;
-}
+// 与 todo_write 一致：TodoStatus/TodoItem 已收敛到 shared/todoValidation（发现 12），
+// 这里 re-export 保持对外符号不变。
+export type { TodoItem, TodoStatus };
 
 export type TodoUpdateOp =
     | { op: 'add'; id: string; content: string; status?: TodoStatus }

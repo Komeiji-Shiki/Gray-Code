@@ -11,31 +11,19 @@ import { getWorkspaceRoot, getAllWorkspaces, toRelativePath, countTextFileLines,
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
-
-/**
- * 默认排除模式
- */
-const DEFAULT_EXCLUDE = '**/node_modules/**';
+import { buildExcludePattern, DEFAULT_EXCLUDE_PATTERN } from '../shared/globUtils';
 
 /**
  * 获取排除模式
  *
  * 从设置管理器获取用户配置的排除模式，如果未配置则使用默认值
- * 将多个模式合并为单个 glob 模式（用大括号语法）
+ * 将多个模式合并为单个 glob 模式（用大括号语法）。
+ * 实现已收敛到 shared/globUtils.buildExcludePattern（发现 11）。
  */
 function getExcludePattern(): string {
     const settingsManager = getGlobalSettingsManager();
-    if (settingsManager) {
-        const config = settingsManager.getFindFilesConfig();
-        if (config.excludePatterns && config.excludePatterns.length > 0) {
-            // 多个模式用 {} 语法组合
-            if (config.excludePatterns.length === 1) {
-                return config.excludePatterns[0];
-            }
-            return `{${config.excludePatterns.join(',')}}`;
-        }
-    }
-    return DEFAULT_EXCLUDE;
+    const config = settingsManager ? settingsManager.getFindFilesConfig() : undefined;
+    return buildExcludePattern(config?.excludePatterns, DEFAULT_EXCLUDE_PATTERN);
 }
 
 /**

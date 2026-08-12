@@ -58,7 +58,13 @@ function schemaToTypeDescription(schema: any): string {
  */
 function generateParameterExample(schema: any): any {
     if (!schema) return null;
-    
+
+    // enum 参数取 schema.enum[0]（发现 09）：示例值与 schema 约束保持一致，
+    // 避免模型照着与约束冲突的示例输出而被拒。
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+        return schema.enum[0];
+    }
+
     if (schema.type === 'string') {
         return schema.example || 'string_value';
     }
@@ -106,10 +112,25 @@ export function convertToolsToJSON(tools: ToolDeclaration[]): string {
             return `    - ${name} (${typeInfo})${isRequired ? ' [required]' : ''}: ${description}`;
         }).join('\n');
         
-        // 生成示例参数
+        // 生成示例参数（发现 09）：
+        // - 仅包含 required 参数；required 为空（如 read_file 的 path/files 均可选）时
+        //   退化为优先 path、其次第一个参数，避免生成空 parameters 示例；
+        // - 互斥参数（path/files、path/paths）只放其一（优先 path），
+        //   避免示例与 handler 的互斥校验自相矛盾。
         const exampleParams: Record<string, any> = {};
-        for (const [name, schema] of Object.entries(params)) {
-            exampleParams[name] = generateParameterExample(schema);
+        const paramNames = Object.keys(params);
+        const hasPathParam = Object.prototype.hasOwnProperty.call(params, 'path');
+        let exampleNames = required.filter(name => Object.prototype.hasOwnProperty.call(params, name));
+        if (exampleNames.length === 0) {
+            exampleNames = hasPathParam
+                ? ['path']
+                : (paramNames.length > 0 ? [paramNames[0]] : []);
+        }
+        for (const name of exampleNames) {
+            if (hasPathParam && (name === 'files' || name === 'paths')) {
+                continue;
+            }
+            exampleParams[name] = generateParameterExample(params[name]);
         }
         
         return `### ${tool.name}
@@ -260,7 +281,7 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             const parsed = parseJsonLenient(jsonStr);
             
             // 验证是否是有效的工具调用格式
-            if (parsed && typeof parsed === 'object' && typeof (parsed as any).tool === 'string') {
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof (parsed as any).tool === 'string') {
                 const toolName = (parsed as any).tool as string;
                 if (!toolName.trim()) {
                     // 空 tool 名：不再静默丢弃整块，构造带解析错误的调用反馈给模型
@@ -276,6 +297,16 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
                         parameters: (parsed as any).parameters || {}
                     });
                 }
+            } else {
+                // 合法 JSON 但不是工具调用结构（缺 tool 字段、tool 非字符串、或块内容不是对象）：
+                // 不再静默丢弃——对齐未闭合块的反馈模式，push malformed_tool_call + 解析错误说明，
+                // 让模型知道失败原因而不是反复重发同样的错误格式。
+                results.push({
+                    tool: 'malformed_tool_call',
+                    parameters: {
+                        __toolCallParseError: 'The block between markers must be a JSON object with a string `tool` field. Fix it and send the tool call again.'
+                    }
+                });
             }
         } catch (error) {
             // JSON 解析失败，跳过这个块（上层 promptToolParser 会生成解析失败反馈）

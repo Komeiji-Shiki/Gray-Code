@@ -81,8 +81,7 @@ export {
     getSubAgentsTool,
     getSubAgentsToolDeclaration,
     hasAvailableSubAgent,
-    refreshSubAgentsTool,
-    registerSubAgents 
+    refreshSubAgentsTool
 } from './subagents';
 
 // 导出 agent 消息信箱（A-COMM）

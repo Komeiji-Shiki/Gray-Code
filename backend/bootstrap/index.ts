@@ -60,7 +60,7 @@ import {
     hasAvailableSubAgent
 } from '../tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../tools';
-import { registerToolDeclarationFactory } from '../tools/toolDeclarationRegistry';
+import { registerToolDeclarationFactory, assertToolDeclarationFactories } from '../tools/toolDeclarationRegistry';
 import { createReadFileTool } from '../tools/file/read_file';
 import {
     createGenerateImageTool,
@@ -111,6 +111,11 @@ import { setSubAgentAvailabilityQuery } from '../core/subAgentAvailabilityBridge
 
 const log = Logger.get('backend/bootstrap');
 const UPDATE_CHECK_DELAY_MS = 10_000;
+/**
+ * TaskManager 泄漏任务周期清扫间隔（发现 01）：abort 后未注销 / 驻留超 30 分钟的任务，
+ * 正常运行期间兜底补发 cancelled 终态并移除（dispose 时同步 clearInterval）。
+ */
+const TASK_CLEANUP_INTERVAL_MS = 60_000;
 
 /** ChannelManager 重试状态（与 modules/channel RetryStatusCallback 结构一致，避免穿透导入） */
 export interface BackendRetryStatus {
@@ -174,6 +179,8 @@ export class BackendRuntime {
     private readonly cleanupFns: Array<() => void> = [];
     /** 延迟更新检查定时器（重试/回滚/dispose 时清理） */
     private updateCheckTimer?: NodeJS.Timeout;
+    /** TaskManager 泄漏任务周期清扫定时器（dispose/回滚时清理；初始化成功后重建，重试幂等） */
+    private taskCleanupTimer?: NodeJS.Timeout;
     /** graycode.runIntegrityCheck 命令注册 disposable（重试初始化前先注销旧注册） */
     private maintenanceCommandDisposable?: vscode.Disposable;
     /** 完整性检查输出通道（VSCode createOutputChannel 同名复用，重试不重建） */
@@ -193,6 +200,13 @@ export class BackendRuntime {
         if (this.updateCheckTimer !== undefined) {
             clearTimeout(this.updateCheckTimer);
             this.updateCheckTimer = undefined;
+        }
+    }
+
+    private clearTaskCleanupTimer(): void {
+        if (this.taskCleanupTimer !== undefined) {
+            clearInterval(this.taskCleanupTimer);
+            this.taskCleanupTimer = undefined;
         }
     }
 
@@ -438,6 +452,10 @@ export class BackendRuntime {
         // 幂等：覆盖式注册，重试初始化重复调用安全；查询函数在工具声明解析时才执行，
         // 语义与改造前 ToolDeclarationResolver 直连 hasAvailableSubAgent 一致。
         setSubAgentAvailabilityQuery(hasAvailableSubAgent);
+
+        // 动态声明自检（发现 15）：工厂注册完成后断言「声明含 getter 的工具」都有工厂，
+        // 防止注释清单与注册漂移导致 resolver 静默回退静态声明（描述不更新而非报错）。
+        assertToolDeclarationFactories(toolRegistry.getAllTools());
     }
 
     /** 11.1. 同步 skills 启用状态（settings 无记录的新 Skill 默认启用） */
@@ -563,6 +581,20 @@ export class BackendRuntime {
         this.trackCleanup(TaskManager.onTaskEvent((event) => {
             this.hooks.handleTaskEvent(event);
         }));
+
+        // TaskManager 泄漏兜底周期清扫（发现 01）：cleanup() 此前只在 dispose 执行一次，
+        // 「已取消未注销」与「驻留超 30 分钟」的任务在正常运行期间永远残留。
+        // 挂在正常运行期的心跳上，每分钟清扫一次；dispose/失败回滚时由 clearTaskCleanupTimer 清理。
+        // 重试幂等：仅当不存在时创建（回滚已清理，重试再建）。
+        if (this.taskCleanupTimer === undefined) {
+            this.taskCleanupTimer = setInterval(() => {
+                try {
+                    TaskManager.cleanup();
+                } catch (error) {
+                    log.warn('task_cleanup_sweep_failed', { error: error?.message || String(error) });
+                }
+            }, TASK_CLEANUP_INTERVAL_MS);
+        }
     }
 
     /** 23-25.5. MCP 管理器 + 接线 Channel/Chat + 全局引用（前置：storagePathManager/channelManager/chatHandler） */
@@ -746,6 +778,9 @@ export class BackendRuntime {
 
         // 取消所有活跃任务
         TaskManager.cancelAllTasks();
+
+        // 停掉周期清扫定时器：dispose 末尾有同步 cleanup() 兜底，先清定时器避免竞态
+        this.clearTaskCleanupTimer();
 
         // 清扫泄漏任务：cancelAllTasks 仅触发 abort 不删除条目，这里把已 abort 却未走
         // unregisterTask 注销（泄漏）的任务补发 cancelled 终态事件后移除，activeTasks 不留残项。

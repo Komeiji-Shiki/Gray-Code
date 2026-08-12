@@ -537,6 +537,23 @@ function parseToolUseNode(toolUse: any): XMLToolCall | null {
     return { name, args };
 }
 
+/**
+ * 构造「合法 XML 但不是工具调用」的 malformed 反馈条目（对齐 JSON 的
+ * malformed_tool_call + __toolCallParseError 模式，发现 08）。
+ * 执行层（ToolExecutionService）检测到 __toolCallParseError 后不执行工具，
+ * 直接把错误作为工具结果回传给模型。
+ */
+function buildMalformedXmlToolCall(): XMLToolCall {
+    return {
+        name: 'malformed_tool_call',
+        args: {
+            __toolCallParseError: 'The <tool_use> block is valid XML but could not be interpreted as a tool call ' +
+                '(check that <tool_name> is not empty and parameters use the documented element structure). ' +
+                'Fix it and send the tool call again.'
+        }
+    };
+}
+
 const TOOL_USE_OPEN = '<tool_use>';
 const TOOL_USE_CLOSE = '</tool_use>';
 const CDATA_OPEN = '<![CDATA[';
@@ -650,14 +667,22 @@ export function parseXMLToolCalls(xmlText: string): XMLToolCall[] {
                         const call = parseToolUseNode(tu);
                         if (call) {
                             results.push(call);
+                        } else {
+                            results.push(buildMalformedXmlToolCall());
                         }
                     }
                 } else {
                     const call = parseToolUseNode(toolUse);
                     if (call) {
                         results.push(call);
+                    } else {
+                        results.push(buildMalformedXmlToolCall());
                     }
                 }
+            } else {
+                // 合法 XML 但不是工具调用结构（根元素不是 tool_use）：
+                // 不再静默丢弃——对齐 JSON 未闭合块的反馈模式，让模型收到修正反馈。
+                results.push(buildMalformedXmlToolCall());
             }
         } catch (error) {
             console.warn('Failed to parse XML tool call block:', error);

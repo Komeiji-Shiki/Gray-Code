@@ -829,12 +829,3 @@ export function refreshSubAgentsTool(): void {
     // 这里不需要做任何事情，但保留接口以保持向后兼容
     console.log('[SubAgents] Tool declaration will be refreshed on next access');
 }
-
-/**
- * 注册 SubAgents 工具
- * 
- * @deprecated 使用 getSubAgentsTool() 代替
- */
-export function registerSubAgents(): Tool {
-    return getSubAgentsTool();
-}

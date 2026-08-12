@@ -105,6 +105,25 @@ ${TOOL_CALL_END}`;
         expect(calls[1].parameters).toEqual({ path: 'b.txt' });
     });
 
+    test('合法 JSON 但不是工具调用结构时生成 malformed 反馈（发现 08）', () => {
+        const calls = parseJSONToolCalls(`${TOOL_CALL_START}
+{"foo": "bar"}
+${TOOL_CALL_END}`);
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].tool).toBe('malformed_tool_call');
+        expect(calls[0].parameters.__toolCallParseError).toContain('`tool` field');
+    });
+
+    test('tool 字段非字符串时同样生成 malformed 反馈', () => {
+        const calls = parseJSONToolCalls(`${TOOL_CALL_START}
+{"tool": 123}
+${TOOL_CALL_END}`);
+
+        expect(calls).toHaveLength(1);
+        expect(calls[0].tool).toBe('malformed_tool_call');
+    });
+
     test('convertFunctionCallToJSON 输出含标记内容可被解析读回', () => {
         const json = convertFunctionCallToJSON('write_file', {
             path: 'a.txt',

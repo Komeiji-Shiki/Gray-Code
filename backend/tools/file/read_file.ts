@@ -39,12 +39,24 @@ import {
 import { parseImageDimensions as parseImageDimensionsFromImageUtils } from '../media/imageUtils';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 
-// 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）：
-// 超大文件全量读入并全量塞进模型上下文会导致内存与 token 爆炸。
-const MAX_READ_FILE_BYTES = 5 * 1024 * 1024;
+// 文件大小护栏（与 search_in_files 的 5MB 默认上限一致）已统一收敛到 shared/fileSizeGuards
+import { MAX_READ_FILE_BYTES } from '../shared/fileSizeGuards';
 
 /** 批量读取并发上限（与 list_files 的行数统计一致，避免一次读大量文件时并发无界） */
 const BATCH_READ_CONCURRENCY = 8;
+
+/**
+ * 批量 files 条数上限（发现 16）：超出截断并在结果中置 truncated。
+ * 与 get_symbols 的 MAX_SYMBOL_PATHS = 20 同口径——单文件 5MB 护栏挡不住
+ * 批量路径的累计爆炸（50 张图 × 5MB ≈ 250MB base64 一次性读入内存）。
+ */
+const MAX_BATCH_FILES = 20;
+
+/**
+ * 多模态附件累计字节上限（原始字节，base64 编码前）：超出后不再追加 inlineData 附件，
+ * 并在结果中置 truncated/multimodalTruncated，让模型知道附件被截断。
+ */
+const MAX_BATCH_MULTIMODAL_BYTES = 24 * 1024 * 1024;
 
 const log = Logger.get('ReadFileTool');
 
@@ -472,10 +484,16 @@ export function createReadFileTool(
                 : undefined;
             
             const hasSinglePath = typeof args.path === 'string' && args.path.trim() !== '';
-            const batchFiles = Array.isArray(args.files) ? args.files : undefined;
+            let batchFiles = Array.isArray(args.files) ? args.files : undefined;
             // 某些 function-calling 客户端会把未提供的可选数组补成 []。当 path 有值时，
             // 空 files 应视为“未提供批量参数”，不能误判成单双模式冲突。
             const hasBatchFiles = !!batchFiles && batchFiles.length > 0;
+
+            // 批量条数上限（发现 16）：超出截断并在结果中置 truncated 标记
+            const batchFilesTruncated = !!batchFiles && batchFiles.length > MAX_BATCH_FILES;
+            if (batchFilesTruncated) {
+                batchFiles = (batchFiles as unknown[]).slice(0, MAX_BATCH_FILES);
+            }
 
             if (hasSinglePath && hasBatchFiles) {
                 return { success: false, error: 'Provide either path or files, not both.' };
@@ -511,6 +529,8 @@ export function createReadFileTool(
             const allMultimodal: MultimodalData[] = [];
             let successCount = 0;
             let failCount = 0;
+            let multimodalBytes = 0;
+            let multimodalTruncated = false;
 
             // 批量读取受控并发：替代逐文件串行 await（批量读大量文件时串行耗时线性增长）
             // mapWithConcurrency 保持输入顺序，聚合结果与 fileRequests 一一对应
@@ -548,7 +568,15 @@ export function createReadFileTool(
                 if (result.success) {
                     successCount++;
                     if (multimodal) {
-                        allMultimodal.push(...multimodal);
+                        // 多模态附件累计字节上限（发现 16）：条数上限之外再加累计护栏，
+                        // 超限附件不再追加进 inlineData（文本结果仍保留），并标记截断。
+                        const size = typeof result.size === 'number' ? result.size : 0;
+                        if (multimodalBytes + size > MAX_BATCH_MULTIMODAL_BYTES) {
+                            multimodalTruncated = true;
+                        } else {
+                            multimodalBytes += size;
+                            allMultimodal.push(...multimodal);
+                        }
                     }
                 } else {
                     failCount++;
@@ -563,7 +591,10 @@ export function createReadFileTool(
                     successCount,
                     failCount,
                     totalCount: fileRequests.length,
-                    multiRoot: isMultiRoot
+                    multiRoot: isMultiRoot,
+                    // 发现 16：files 超条数上限或多模态附件超累计字节上限时置位
+                    truncated: batchFilesTruncated || multimodalTruncated,
+                    multimodalTruncated
                 },
                 multimodal: allMultimodal.length > 0 ? allMultimodal : undefined,
                 error: allSuccess ? undefined : `${failCount} file${failCount === 1 ? '' : 's'} failed to read`

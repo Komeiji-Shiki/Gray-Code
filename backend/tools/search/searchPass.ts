@@ -18,11 +18,7 @@ import {
     decodeTextBytes
 } from './textEncoding';
 import type { TextDetectionResult } from './textEncoding';
-
-/**
- * 默认排除模式
- */
-const DEFAULT_EXCLUDE = '**/node_modules/**';
+import { buildExcludePattern, DEFAULT_EXCLUDE_PATTERN } from '../shared/globUtils';
 
 /**
  * 获取 search_in_files 工具配置（带默认值兜底）
@@ -41,16 +37,10 @@ export function getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
  * 从已解析的工具配置取用户配置的排除模式，未配置时使用默认值；
  * 多个模式合并为单个 glob 模式（大括号语法）。
  * handler 直接复用本函数，避免两处重复维护相同逻辑。
+ * 实现已收敛到 shared/globUtils.buildExcludePattern（发现 11）。
  */
 export function getExcludePattern(config: Readonly<SearchInFilesToolConfig>): string {
-    if (config.excludePatterns && config.excludePatterns.length > 0) {
-        // 多个模式用 {} 语法组合
-        if (config.excludePatterns.length === 1) {
-            return config.excludePatterns[0];
-        }
-        return `{${config.excludePatterns.join(',')}}`;
-    }
-    return DEFAULT_EXCLUDE;
+    return buildExcludePattern(config.excludePatterns, DEFAULT_EXCLUDE_PATTERN);
 }
 
 export function splitWhitespaceFallbackKeywords(query: string): string[] {
@@ -99,6 +89,22 @@ export interface SearchPassResult {
     budgetTruncated: boolean;
     /** findFiles 达到文件数上限（结果可能不完整） */
     filesTruncated: boolean;
+    /** 处理失败/被大小护栏跳过的文件及原因（与 replacePass 的 SkippedFileInfo 同构） */
+    skippedFiles: SkippedFileInfo[];
+    /** getSearchRootAndPattern 的 stat 失败降级说明（路径不存在/不可访问时按目录处理） */
+    pathWarning?: SearchPathWarningInfo;
+}
+
+/**
+ * 被跳过的文件及原因。
+ *
+ * 为什么需要：文件处理异常若被静默吞掉，模型看到的结果是
+ * “这个文件没有匹配”，实际是“处理失败”，导致结果与现实对不上。
+ * 与 replacePass 的 SkippedFileInfo 同构（search/replace 两模式对处理失败保持同等可见性）。
+ */
+export interface SkippedFileInfo {
+    file: string;
+    reason: string;
 }
 
 export interface SearchQueryFallbackInfo {
@@ -111,7 +117,7 @@ export interface SearchQueryFallbackInfo {
 }
 
 export interface SearchPathWarningInfo {
-    type: 'possible_multiple_paths';
+    type: 'possible_multiple_paths' | 'stat_failed_treated_as_directory';
     path: string;
     candidates: string[];
     message: string;
@@ -189,11 +195,12 @@ export async function searchInDirectory(
     excludePattern: string,
     config: Readonly<SearchInFilesToolConfig>,
     budget?: SearchBudget
-): Promise<{ matches: SearchMatch[]; filesTruncated: boolean }> {
+): Promise<{ matches: SearchMatch[]; filesTruncated: boolean; skippedFiles: SkippedFileInfo[] }> {
     // 本地克隆：g 标志正则携带可变 lastIndex 状态，共享实例跨函数/跨循环传递
     // 全靠每处使用前手动重置，极其脆弱；克隆后状态完全局限在本函数内。
     const searchRegex = new RegExp(searchRegexInput.source, searchRegexInput.flags);
     const results: SearchMatch[] = [];
+    const skippedFiles: SkippedFileInfo[] = [];
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
     const findLimit = Math.max(1, Math.floor(clampNonNegativeNumber(config.maxFindFiles, 1000)));
@@ -223,6 +230,10 @@ export async function searchInDirectory(
             if (maxFileSizeBytes > 0) {
                 const size = await tryGetFileSizeBytes(fileUri);
                 if (typeof size === 'number' && size > maxFileSizeBytes) {
+                    skippedFiles.push({
+                        file: toRelativePath(fileUri, workspaceName !== null),
+                        reason: `File exceeds the search size limit (${size} > ${maxFileSizeBytes} bytes)`
+                    });
                     continue;
                 }
             }
@@ -320,12 +331,17 @@ export async function searchInDirectory(
                     }
                 }
             }
-        } catch {
-            // 跳过无法读取的文件
+        } catch (e) {
+            // 处理失败不再静默吞掉：与 replacePass 一致记录原因，
+            // 让模型能区分“没匹配”和“处理失败”（EACCES/IO 等）。
+            skippedFiles.push({
+                file: toRelativePath(fileUri, workspaceName !== null),
+                reason: `Failed to process: ${e instanceof Error ? e.message : String(e)}`
+            });
         }
     }
     
-    return { matches: results, filesTruncated };
+    return { matches: results, filesTruncated, skippedFiles };
 }
 
 /**
@@ -349,7 +365,7 @@ export async function getSearchRootAndPattern(
     rootUri: vscode.Uri,
     relativePath: string,
     filePattern: string
-): Promise<{ searchRoot: vscode.Uri; effectivePattern: string }> {
+): Promise<{ searchRoot: vscode.Uri; effectivePattern: string; pathWarning?: SearchPathWarningInfo }> {
     // 空路径或当前目录，直接用 workspace 根目录
     if (!relativePath || relativePath === '.' || relativePath === './') {
         return { searchRoot: rootUri, effectivePattern: filePattern };
@@ -371,7 +387,18 @@ export async function getSearchRootAndPattern(
             };
         }
     } catch {
-        // stat 失败（路径不存在或权限问题），按目录处理
+        // stat 失败（路径不存在或权限问题），按目录处理；附 pathWarning 让模型知道
+        // 根路径可能写错，而不是把「无结果」静默归因于没有匹配。
+        return {
+            searchRoot: fullUri,
+            effectivePattern: filePattern,
+            pathWarning: {
+                type: 'stat_failed_treated_as_directory',
+                path: relativePath,
+                candidates: [],
+                message: `Could not stat "${relativePath}" (it may not exist or may not be accessible), so it was searched as a directory. If you meant a single file, check the path spelling.`
+            }
+        };
     }
 
     // 默认按目录处理

@@ -179,7 +179,7 @@ async function executeCropTask(
         }
 
         // 读取原图
-        const imageFile = await readImageFile(image_path, context);
+        const imageFile = await readImageFile(image_path, context, 'crop_image');
         if (!imageFile) {
             return { index, success: false, error: `Task ${index + 1}: Cannot read image: ${image_path}` };
         }
@@ -256,7 +256,7 @@ async function executeCropTask(
 
         // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
         if (outputOutside) {
-            const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: output_path }, context);
+            const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: output_path }, context, 'crop_image');
             if (writeAccessError) {
                 return { index, success: false, error: `Task ${index + 1}: ${writeAccessError}` };
             }
