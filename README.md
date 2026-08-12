@@ -272,7 +272,7 @@ Gray-Code/
 
 感谢以下朋友对 GrayCode 的帮助与支持：
 
-- [**1b0t3**](https://github.com/1b0t3) —— opencode GO 套餐及 GPT 5.6 sol
+- [**1b0t3**](https://github.com/1b0t3) —— opencode GO 套餐及 GPT 5.6 sol 以及项目小图标logo
 - [**czocelot**](https://github.com/czocelot) —— DeepSeek V4 Flash，以及 bug 寻找、项目测试与修复；并二创了 [Gray-Code-Desktop](https://github.com/czocelot/Gray-Code-Desktop)
 - [**NebulaRaven**](https://github.com/NebulaRaven) —— bug 寻找、项目测试与修复 以及帮助合并pr
 
