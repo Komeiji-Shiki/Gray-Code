@@ -1,6 +1,6 @@
 {
   "name": "graycode-frontend",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,6 +21,7 @@
     "js-tiktoken": "^1.0.21",
     "katex": "^0.16.11",
     "markdown-it": "^14.1.0",
+    "markdown-it-container": "^4.0.0",
     "markdown-it-deflist": "^3.0.0",
     "markdown-it-footnote": "^4.0.0",
     "markdown-it-task-lists": "^2.1.1",

@@ -1793,7 +1793,7 @@ const ja: LanguageMessages = {
                 maxConcurrentAgents: '最大同時実行数',
                 maxConcurrentAgentsHint: '同時に実行できるサブエージェントの上限。超過分は順番待ちになります（-1 で無制限）',
                 defaultMaxIterations: 'デフォルトのイテレーション数',
-                defaultMaxIterationsHint: '個別設定のないサブエージェントと General Worker に適用される既定値（1〜200、-1 で無制限）',
+                defaultMaxIterationsHint: '個別設定のないサブエージェントと General Worker に適用される既定値（-1 で無制限）',
                 queueTimeoutSeconds: 'キュー待機タイムアウト（秒）',
                 queueTimeoutSecondsHint: '並行キューで待機できる最大秒数。超過すると失敗します（-1 で無制限、デフォルト 600）',
                 queueTimeoutSecondsInvalid: '-1 または正の整数を入力してください',

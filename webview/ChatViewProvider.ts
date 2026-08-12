@@ -943,7 +943,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     filePath: d.filePath,
                     toolId: d.toolId,
                     diffGuardWarning: d.diffGuardWarning,
-                    diffGuardDeletePercent: d.diffGuardDeletePercent
+                    diffGuardDeletePercent: d.diffGuardDeletePercent,
+                    writeReady: d.writeReady === true,
+                    autoSaveAt: d.autoSaveAt,
+                    autoSaveDelay: d.scheduledAutoSaveDelay,
+                    isProcessing: diffManager.isDiffActionInProgress(d.id)
                 })),
                 // 最近终结 diff 的终态（自动应用/取消路径前端无响应可读，
                 // 靠此把已从 pending 列表消失的条目结算，避免接受/拒绝按钮残留）

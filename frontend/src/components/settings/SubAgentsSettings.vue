@@ -760,7 +760,7 @@ onMounted(async () => {
       <!-- 全局配置 -->
       <div class="config-section global-config" data-search-anchor="subagents-global">
         <h5>{{ t('components.settings.subagents.globalConfig') }}</h5>
-        <div class="form-row">
+        <div class="form-row global-config-row">
           <div class="form-group flex-1">
             <label>{{ t('components.settings.subagents.maxConcurrentAgents') }}</label>
             <input
@@ -1335,6 +1335,15 @@ onMounted(async () => {
   margin-bottom: 16px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+/* 全局配置四参数 2×2 布局：一行四个过宽（label/hint 挤成多行），
+   改为两行两列——「并发数/迭代次数」与「队列超时/运行时长」各占一行。
+   双类选择器提升特异性（.form-row 在其后定义，单类会被它的 display:flex 覆盖） */
+.global-config .global-config-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 /* 数字输入框隐藏上下箭头 */

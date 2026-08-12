@@ -1793,7 +1793,7 @@ const en: LanguageMessages = {
                 maxConcurrentAgents: 'Max Concurrent Agents',
                 maxConcurrentAgentsHint: 'Maximum number of sub-agents running at the same time; extra ones wait in a queue (-1 for unlimited)',
                 defaultMaxIterations: 'Default Max Iterations',
-                defaultMaxIterationsHint: 'Default iteration limit for sub-agents and General Worker without their own setting (1~200, -1 for unlimited)',
+                defaultMaxIterationsHint: 'Default iteration limit for sub-agents and General Worker without their own setting (-1 for unlimited)',
                 queueTimeoutSeconds: 'Queue Timeout (seconds)',
                 queueTimeoutSecondsHint: 'How long a sub-agent waits in the concurrency queue before it fails (-1 for unlimited, default 600)',
                 queueTimeoutSecondsInvalid: 'Enter -1 or a positive integer',

@@ -68,6 +68,12 @@
   - **VSCodeSettingsStorage 修复（f65edbb8）**：读侧保持 VS Code 合并值语义（workspaceFolder > workspace > global），save 写入目标层级跟随（workspace 已有显式值写 Workspace 层，否则写 Global）——冲突合并保留本地 remoteControl 字段；
   - **tool-loop（7e548b69）**：移除早启动工具等待超时兜底，恢复 abort race + 无限等待落定——与本地 PR#36 实现等价，合并保留本地实现；
 
+### Merged：合入上游 e12da760..e42da40d 共 5 个 commits（diff 审查异步化重构/子代理全局配置 2×2 布局/i18n 修正/版本同步；fast-tavern 与 nightly 相关本批无）
+  - **refactor(diff)（13c74fa9）**：diff 审查状态前移与异步化——writeReady 屏障真实化、自动保存倒计时展示同步、diff.accept/reject 非阻塞执行（protocol.ts 将 diff.accept/reject 纳入 NON_BLOCKING_MESSAGE_TYPES，避免一次点击占住主 Webview 串行队列，后续设置/焦点/保存请求全部排队）、前端 diff 逻辑抽离为 diffReviewController（ToolMessage.vue 大幅精简）；ChatViewProvider diff 状态载荷补 writeReady/autoSaveAt/autoSaveDelay/isProcessing 字段；本地 diffManager 的锁冲突恢复/终态快照/等待超时上限等增强与上游 writeReady 屏障机制并存（diffManager.ts 自动合并无冲突）；
+  - **style(subagents)（e42da40d）**：子代理设置「全局配置」四参数由一行四列改为 2×2 网格布局——「并发数/迭代次数」与「队列超时/运行时长」各占一行，窄面板下 label 与提示文字不再挤成多行（.global-config-row 双类选择器，不影响 agent 配置区 .form-row 布局）；
+  - **fix(i18n)（657a28b9）**：移除 defaultMaxIterations 提示中过时的 1~200 范围说明——实际校验无上限（-1 或 >=1），文案与行为保持一致（en/ja/zh-CN 三语同步）；
+  - **chore(release)（347bc26a/ba030791）**：上游版本号整理至 1.5.2 并同步 frontend 包版本——本地版本体系独立，根 package.json 保持 1.7.15dev（publisher czocelot、中文 description 保留），frontend 包版本按上游口径同步至 1.5.2；上游 1.5.x 版本小节不并入本地 CHANGELOG 版本体系（沿用既有约定）。
+
 ## [1.7.15dev] - 2026-08-12
 
 
@@ -2954,6 +2960,12 @@
   - 🎉 首次发布
   - AI 编程助手核心功能
   - 多模态支持
+  - 对话历史管理
+  - 多语言支持（中文、英文、日文）
+  - MCP 服务器集成
+  - 文件操作工具
+  - 终端命令执行
+  - 图像处理功能
   - 对话历史管理
   - 多语言支持（中文、英文、日文）
   - MCP 服务器集成
