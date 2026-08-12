@@ -1744,21 +1744,3 @@ input[type="number"]::-webkit-inner-spin-button {
   font-size: 12px;
 }
 </style>
-
-.tool-description {
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.no-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 12px;
-}
-</style>
