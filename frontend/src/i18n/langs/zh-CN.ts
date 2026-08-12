@@ -1798,6 +1798,8 @@ const zhCN = {
                 queueTimeoutSeconds: '排队超时（秒）',
                 queueTimeoutSecondsHint: '子代理在并发队列中排队等待的最长秒数，超过后以失败结算（-1 表示无限制，默认 600）',
                 queueTimeoutSecondsInvalid: '请输入 -1 或不小于 1 的整数',
+                defaultMaxRuntime: '默认最大运行时间（秒）',
+                defaultMaxRuntimeHint: '未单独配置 maxRuntime 的子代理与 General Worker 的执行时长上限（-1 表示无限制，默认 1800 = 30 分钟）',
                 generalWorker: '启用通用 Worker（傻瓜模式）',
                 generalWorkerHint: '主模型可直接派发零配置的 "General Worker"：继承当前渠道与全部工具权限，数量由主模型自行决定，无需手动配置任何 agent',
                 basicInfo: '基本信息',

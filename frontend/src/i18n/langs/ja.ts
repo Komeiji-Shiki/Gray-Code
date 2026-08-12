@@ -1796,6 +1796,8 @@ const ja: LanguageMessages = {
                 queueTimeoutSeconds: 'キュー待機タイムアウト（秒）',
                 queueTimeoutSecondsHint: '並行キューで待機できる最大秒数。超過すると失敗します（-1 で無制限、デフォルト 600）',
                 queueTimeoutSecondsInvalid: '-1 または正の整数を入力してください',
+                defaultMaxRuntime: '最大実行時間（秒）',
+                defaultMaxRuntimeHint: '個別に maxRuntime を設定していないサブエージェントと General Worker に適用される実行時間上限（-1 で無制限、デフォルト 1800 = 30 分）',
                 generalWorker: '汎用ワーカーを有効化（お手軽モード）',
                 generalWorkerHint: 'メインモデルが設定不要の "General Worker" を直接派遣できます。現在のチャンネルと全ツール権限を継承し、数はモデルが自分で決定。エージェントの手動設定は不要です',
                 basicInfo: '基本情報',

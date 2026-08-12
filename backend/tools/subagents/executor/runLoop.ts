@@ -403,7 +403,12 @@ export function createDefaultExecutor(
         const maxIterations = config.maxIterations
             ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxIterations
             ?? 50;
-        const maxRuntime = config.maxRuntime ?? 1800; // 默认 30 分钟
+        // 修改原因：运行时长上限同样支持全局默认——per-agent 未配置 maxRuntime 时不再硬编码 30 分钟，
+        //          而是继承全局 defaultMaxRuntime（-1 无限制，默认 1800 秒 = 30 分钟）。
+        // 修改方式：优先取 per-agent maxRuntime，其次取全局 defaultMaxRuntime，最后回退 1800。
+        const maxRuntime = config.maxRuntime
+            ?? context.settingsManager?.getSubAgentsConfig?.()?.defaultMaxRuntime
+            ?? 1800; // 默认 30 分钟
         const startTime = Date.now();
         const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
         

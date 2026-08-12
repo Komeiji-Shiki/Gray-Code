@@ -91,6 +91,8 @@ const generalWorkerEnabled = ref(true)
 const defaultMaxIterations = ref(80)
 // 排队超时（秒，-1 表示无限制，默认 600）
 const queueTimeoutSeconds = ref(600)
+// 全局默认运行时间上限（秒，-1 表示无限制，默认 1800 = 30 分钟；未单独配置 maxRuntime 的 agent 继承）
+const defaultMaxRuntime = ref(1800)
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -317,7 +319,7 @@ function isMcpTool(tool: ToolInfo): boolean {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number, queueTimeoutSeconds?: number }>(MESSAGE_NAMES['subagents.list'], {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, generalWorkerEnabled?: boolean, defaultMaxIterations?: number, queueTimeoutSeconds?: number, defaultMaxRuntime?: number }>(MESSAGE_NAMES['subagents.list'], {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
@@ -330,6 +332,9 @@ async function loadSubAgents() {
       }
       if (response.queueTimeoutSeconds !== undefined) {
         queueTimeoutSeconds.value = response.queueTimeoutSeconds
+      }
+      if (response.defaultMaxRuntime !== undefined) {
+        defaultMaxRuntime.value = response.defaultMaxRuntime
       }
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
@@ -482,11 +487,11 @@ async function toggleSyncWithCurrentModel(value: boolean) {
 // 全局数字输入非法提示（就地校验并提示，不再静默回退默认值）
 const globalNumberError = ref('')
 
-function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations') {
+function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | 'defaultMaxIterations' | 'defaultMaxRuntime') {
   const raw = (event.target as HTMLInputElement).value
   const parsed = parseInt(raw, 10)
   const max = field === 'defaultMaxIterations' ? 1000 : Number.POSITIVE_INFINITY
-  // maxConcurrentAgents：-1（无并发上限）或 >=1 合法，0 非法；defaultMaxIterations 仍要求 1-1000
+  // maxConcurrentAgents / defaultMaxRuntime：-1（无限制）或 >=1 合法，0 非法；defaultMaxIterations 仍要求 1-1000
   const invalid = field === 'defaultMaxIterations'
     ? isNaN(parsed) || parsed < 1 || parsed > max
     : isNaN(parsed) || parsed < -1 || parsed === 0
@@ -501,6 +506,9 @@ function handleGlobalNumberChange(event: Event, field: 'maxConcurrentAgents' | '
   if (field === 'maxConcurrentAgents') {
     maxConcurrentAgents.value = parsed
     void updateGlobalConfig('maxConcurrentAgents', parsed)
+  } else if (field === 'defaultMaxRuntime') {
+    defaultMaxRuntime.value = parsed
+    void updateGlobalConfig('defaultMaxRuntime', parsed)
   } else {
     defaultMaxIterations.value = parsed
     void updateGlobalConfig('defaultMaxIterations', parsed)
@@ -783,6 +791,16 @@ onMounted(async () => {
               @change="handleQueueTimeout"
             />
             <span class="field-hint">{{ t('components.settings.subagents.queueTimeoutSecondsHint') }}</span>
+          </div>
+          <div class="form-group flex-1">
+            <label>{{ t('components.settings.subagents.defaultMaxRuntime') }}</label>
+            <input
+              type="number"
+              :value="defaultMaxRuntime"
+              min="-1"
+              @change="handleGlobalNumberChange($event, 'defaultMaxRuntime')"
+            />
+            <span class="field-hint">{{ t('components.settings.subagents.defaultMaxRuntimeHint') }}</span>
           </div>
         </div>
         <p v-if="globalNumberError" class="field-hint global-number-error" style="color: var(--vscode-errorForeground)">{{ globalNumberError }}</p>
@@ -1708,6 +1726,24 @@ input[type="number"]::-webkit-inner-spin-button {
 .mcp-badge .codicon {
   font-size: 10px;
 }
+
+.tool-description {
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.no-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+</style>
 
 .tool-description {
   overflow: hidden;
