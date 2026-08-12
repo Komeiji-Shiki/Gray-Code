@@ -12,7 +12,9 @@
  *
  * 白名单工具（args 中的 `path` 字段，均为 string）：
  *   write_file / apply_diff / insert_code / delete_code / delete_file / create_directory
- * search_in_files 仅 replace 模式写文件（取 args.path）；search 模式只读 → null。
+ * search_in_files 一律返回 null：replace 模式的影响面 = pattern × 目录子树，静态不可知
+ *   （args.path 通常是目录，而部分快照对非空目录不递归——被替换的文件不会进入快照，
+ *   恢复时既无法还原内容又会被误判）；search 模式只读。两者均回退全量（安全侧）。
  * 其余工具（execute_command 等副作用不可知）→ null。
  *
  * 安全边界：
@@ -41,9 +43,17 @@ const AFFECTED_PATH_FIELDS: Record<string, string> = {
  *   下折叠小写比较；
  * - 其余平台（大小写敏感）按原样比较。
  * 边界用 `path.sep` 判断，防止 `/root/outside` 匹配 `/root/outside2`。
+ *
+ * platform 参数仅供测试注入（默认 process.platform，生产调用不传）——
+ * 与 StoragePathManager.isSameStoragePath 同策略：测试显式传 win32 时不能依赖
+ * 当前运行平台的语义（Linux CI 上测 Windows 大小写折叠必须可注入）。
  */
-export function isPathWithin(rootFsPath: string, absPath: string): boolean {
-    const caseFold = process.platform === 'win32' || process.platform === 'darwin'
+export function isPathWithin(
+    rootFsPath: string,
+    absPath: string,
+    platform: NodeJS.Platform = process.platform
+): boolean {
+    const caseFold = platform === 'win32' || platform === 'darwin'
         ? (p: string) => p.toLowerCase()
         : (p: string) => p;
     const root = caseFold(path.resolve(rootFsPath));
@@ -63,8 +73,16 @@ export function workspaceUriToFsPath(uri: string): string | null {
     try {
         let fsPath = uri;
         if (uri.startsWith('file://')) {
-            // file:///C%3A/Users/... -> /C:/Users/... -> C:/Users/...
-            let p = decodeURIComponent(uri.slice('file://'.length));
+            // 先剥离未编码的 fragment/query（file URI 语义中 # 之后是 fragment、? 之后是
+            // query，不属于路径；文件名中的字面 #/? 应以 %23/%3F 编码，不受影响），再解码。
+            let p = uri.slice('file://'.length).split('#')[0].split('?')[0];
+            try {
+                // file:///C%3A/Users/... -> /C:/Users/... -> C:/Users/...
+                p = decodeURIComponent(p);
+            } catch {
+                // 非法编码序列（如文件名含未编码 %）：无法可靠确定本地路径 → 回退全量
+                return null;
+            }
             if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
             fsPath = p.replace(/\//g, path.sep);
         } else {
@@ -91,12 +109,13 @@ export function extractAffectedPaths(
     args: unknown,
     workspaceRootFsPath: string
 ): string[] | null {
-    // search_in_files：仅 replace 模式写文件（取 args.path）；search 模式只读 → 无法确定
+    // search_in_files：replace 模式的影响面 = pattern × 目录子树，静态不可知（args.path
+    // 通常是目录，部分快照对非空目录不递归，被替换的文件不会进入快照）；search 模式
+    // 只读。两者一律回退全量（低频操作，正确性优先）。
     if (toolName === 'search_in_files') {
-        if ((args as { mode?: unknown } | null | undefined)?.mode !== 'replace') {
-            return null;
-        }
-    } else if (!(toolName in AFFECTED_PATH_FIELDS)) {
+        return null;
+    }
+    if (!(toolName in AFFECTED_PATH_FIELDS)) {
         // 非白名单工具（execute_command 等副作用不可知）→ 无法确定
         return null;
     }

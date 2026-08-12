@@ -316,12 +316,20 @@ export class CheckpointRestoreService {
         }
 
         // 先用当前规则裁剪目标状态（每个根独立 ignore 作用域），再进行 diff / restore。
-        const targetState = checkpoint.fileHashes
+        // CP-PARTIAL-2：部分快照标记随目标状态透传给恢复引擎（computeRestorePlan 据此
+        // 禁用 deletedInSnapshot 判定——部分快照缺失的文件只是不在扫描范围内）。
+        const filteredTarget = checkpoint.fileHashes
             ? await this.filterRestoreTargetScoped(
                 checkpoint.fileHashes,
                 checkpoint.emptyDirs || [],
                 roots
             )
+            : undefined;
+        const targetState = filteredTarget
+            ? {
+                ...filteredTarget,
+                ...(checkpoint.partial === true ? { partial: true } : {})
+            }
             : undefined;
 
         // 旧版存档（无 fileHashes）：单根走 legacy 语义（只复制、绝不删除）；多根明确拒绝

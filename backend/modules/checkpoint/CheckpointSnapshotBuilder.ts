@@ -328,8 +328,21 @@ async function buildAffectedPathsSnapshot(
         const relativePath = path.relative(root.fsPath, absPath).replace(/\\/g, '/');
         const scopedPath = createWorkspaceScopedPath(root.id, relativePath);
 
+        // 先 stat 确定真实类型（文件/目录），再按类型判定忽略规则——目录路径以尾斜杠形式
+        // 参与目录型规则匹配，与全量分支 collectEntries 先取 dirent.isDirectory 再
+        // shouldIgnore 的顺序一致（此前在 stat 前以 isDirectory=false 判定，目录型规则
+        // 对受影响路径中的目录不生效）。
+        let stat: BigIntStats;
+        try {
+            stat = await fs.stat(absPath, { bigint: true });
+        } catch {
+            // stat 失败（ENOENT 等，如 delete_file 删除后目标已不存在）→ 不可读
+            unreadable.push({ scopedPath, reason: 'unreadable' });
+            continue;
+        }
+
         // 忽略规则判定（四层排除模型）：忽略 → 计入 excluded（与全量分支同形状）
-        const ignoreResult = await getResolver(root).checkIgnore(relativePath, false);
+        const ignoreResult = await getResolver(root).checkIgnore(relativePath, stat.isDirectory());
         if (ignoreResult.ignored) {
             excluded.push({
                 path: scopedPath,
@@ -337,15 +350,6 @@ async function buildAffectedPathsSnapshot(
                 rule: ignoreResult.rule,
                 source: ignoreResult.source
             });
-            continue;
-        }
-
-        let stat: BigIntStats;
-        try {
-            stat = await fs.stat(absPath, { bigint: true });
-        } catch {
-            // stat 失败（ENOENT 等，如 delete_file 删除后目标已不存在）→ 不可读
-            unreadable.push({ scopedPath, reason: 'unreadable' });
             continue;
         }
 

@@ -111,6 +111,12 @@ export interface CheckpointManifestMeta {
      * 旧格式（v1 或未含该字段的 v2 历史数据）缺省 = 不校验（兼容读取）。
      */
     filesRevision?: string;
+    /**
+     * CP-PARTIAL-2：部分快照标记（工具执行存档按受影响路径限定构建，fileHashes 只含
+     * 受影响文件）。恢复侧据此禁用「快照时被删除」判定：部分快照中缺失的文件只是
+     * 不在扫描范围内，并非被工具删除，绝不能默认删除。缺省（undefined）= 全量快照。
+     */
+    partial?: boolean;
 }
 
 /**
@@ -330,6 +336,11 @@ export interface CheckpointRecord {
     backupBytes?: number;
     /** CPF-01: 本存档 manifest 的 schema 版本（写入 manifest.json 时记录） */
     manifestVersion?: number;
+    /**
+     * CP-PARTIAL-2：部分快照标记（与 manifest.partial 同源，enrichRecord 从 manifest 回填）。
+     * 恢复时禁用 deletedInSnapshot 判定，避免把「未扫描」误判为「被删除」。
+     */
+    partial?: boolean;
 }
 
 /** 批量删除检查点的请求项 */

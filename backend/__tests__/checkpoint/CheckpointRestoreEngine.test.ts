@@ -496,6 +496,115 @@ describe('CheckpointRestoreEngine', () => {
         }
     });
 
+    test('CP-PARTIAL-2: 部分快照目标不触发 deletedInSnapshot——目标缺失的文件默认保留', async () => {
+        const ctx = await setupContext();
+        try {
+            // 链：全量 base（a.txt + b.txt）→ partial 目标（只含 a.txt，工具批次存档）。
+            // 部分快照的 fileHashes 只含受影响文件；b.txt 只是不在扫描范围内（并非被删除），
+            // 恢复时绝不能进 deletedInSnapshot（否则会被默认删除）。
+            const chain: RestoreChainEntry[] = [{
+                checkpointId: 'cp-full',
+                backupDir: 'cp-full',
+                fileHashes: {
+                    [scoped(ctx, 'a.txt')]: md5('a-v1'),
+                    [scoped(ctx, 'b.txt')]: md5('b-v1')
+                }
+            }, {
+                checkpointId: 'cp-partial',
+                backupDir: 'cp-partial',
+                fileHashes: { [scoped(ctx, 'a.txt')]: md5('a-v1') }
+            }];
+            const partialTarget: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'a.txt')]: md5('a-v1') },
+                emptyDirs: [],
+                partial: true
+            };
+            const current = {
+                [scoped(ctx, 'a.txt')]: md5('a-v1'),
+                [scoped(ctx, 'b.txt')]: md5('b-v1')
+            };
+
+            const plan = computeRestorePlan(
+                { checkpointsDir: ctx.checkpointsDir, roots: ctx.roots },
+                chain,
+                partialTarget,
+                current,
+                []
+            );
+            // b.txt 在 base 链中存在、目标缺失：partial 目标下不得判为「快照时被删除」
+            expect(plan.deletedInSnapshot).toEqual([]);
+            // 落入 untracked 默认保留（用户确认后才会删除）；白名单缺省也不得进 toDelete
+            expect(plan.untrackedToDelete).toEqual([scoped(ctx, 'b.txt')]);
+            expect(plan.toDelete).toEqual([]);
+
+            // 对照：全量目标（无 partial 标记）保持旧语义——b.txt 判为 deletedInSnapshot 默认删除
+            const fullTarget: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'a.txt')]: md5('a-v1') },
+                emptyDirs: []
+            };
+            const planFull = computeRestorePlan(
+                { checkpointsDir: ctx.checkpointsDir, roots: ctx.roots },
+                chain,
+                fullTarget,
+                current,
+                []
+            );
+            expect(planFull.deletedInSnapshot).toEqual([scoped(ctx, 'b.txt')]);
+            expect(planFull.untrackedToDelete).toEqual([]);
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
+    test('CP-PARTIAL-2: 恢复部分快照不删除未记录的工作区文件', async () => {
+        const ctx = await setupContext();
+        try {
+            // 链：全量 base + partial 目标（工具批次存档）；备份目录里有 a.txt 与 b.txt
+            await writeFile(path.join(ctx.checkpointsDir, 'cp-full'), `${ctx.roots[0].id}/a.txt`, 'a-v1');
+            await writeFile(path.join(ctx.checkpointsDir, 'cp-full'), `${ctx.roots[0].id}/b.txt`, 'b-v1');
+            // partial 节点磁盘上只存受影响文件（a.txt）
+            await writeFile(path.join(ctx.checkpointsDir, 'cp-partial'), `${ctx.roots[0].id}/a.txt`, 'a-v1');
+            const chain: RestoreChainEntry[] = [{
+                checkpointId: 'cp-full',
+                backupDir: 'cp-full',
+                fileHashes: {
+                    [scoped(ctx, 'a.txt')]: md5('a-v1'),
+                    [scoped(ctx, 'b.txt')]: md5('b-v1')
+                }
+            }, {
+                checkpointId: 'cp-partial',
+                backupDir: 'cp-partial',
+                fileHashes: { [scoped(ctx, 'a.txt')]: md5('a-v1') }
+            }];
+            const partialTarget: RestoreTargetState = {
+                fileHashes: { [scoped(ctx, 'a.txt')]: md5('a-v1') },
+                emptyDirs: [],
+                partial: true
+            };
+            // 工作区：a.txt 漂移（应被恢复）+ b.txt 原样（不应被删除）
+            await writeFile(ctx.workspaceDir, 'a.txt', 'drifted');
+            await writeFile(ctx.workspaceDir, 'b.txt', 'b-v1');
+            const current = await collectCurrentState(ctx);
+
+            const result = await restoreWorkspaceSnapshot(
+                { checkpointsDir: ctx.checkpointsDir, roots: ctx.roots },
+                chain,
+                partialTarget,
+                current.hashes,
+                current.emptyDirs
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.deleted).toBe(0);
+            await expect(readWorkspaceFile(ctx, 'a.txt')).resolves.toBe('a-v1');
+            await expect(readWorkspaceFile(ctx, 'b.txt')).resolves.toBe('b-v1');
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
     test('restore keeps untracked empty dirs by default and removes them only after confirmation (CP-09)', async () => {
         const ctx = await setupContext();
         try {

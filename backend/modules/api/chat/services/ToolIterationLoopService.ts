@@ -163,8 +163,6 @@ interface TurnBatchCheckpointState {
     beforeCheckpoint: CheckpointRecord | null;
     /** before 是否已创建（含创建失败——失败后本回合不再重试，降级为无存档执行） */
     beforeCreated: boolean;
-    /** 已建 before（finalize 下发/确认事件需要；由各创建点写回） */
-    needsCheckpoint: boolean;
 }
 
 /**
@@ -592,8 +590,7 @@ export class ToolIterationLoopService {
             const fresh: TurnBatchCheckpointState = {
                 turnStartMessageId: anchor,
                 beforeCheckpoint: null,
-                beforeCreated: false,
-                needsCheckpoint: false
+                beforeCreated: false
             };
             this.turnBatchCheckpoints.set(conversationId, fresh);
             // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
@@ -1091,11 +1088,12 @@ export class ToolIterationLoopService {
             // 迭代内可临时修改（早启动/主循环/确认补建三处创建点），创建/重置后立即写回回合状态；
             // messageIndex 合并后由本迭代的挂载索引计算覆盖（早启动 batchIndexPromise / 主循环
             // batchMessageIndex），保证迭代 N 的 after 挂本迭代模型消息索引、before 挂回合
-            // 首个创建迭代索引；needsCheckpoint 合并后由迭代逻辑继续累加（批内 after 命中判定）。
+            // 首个创建迭代索引。needsCheckpoint 不跨迭代传播：每次迭代由本迭代的批内工具
+            // 按 afterTools 命中自行收集（传播后新一轮迭代会跳过 after 命中检查，最终正确性
+            // 只能靠 CheckpointManager 求交兜底，多一次无效创建尝试且状态语义复杂化）。
             streamBatchCheckpoint.beforeCreated = turnBatch.beforeCreated;
             streamBatchCheckpoint.beforeCheckpoint = turnBatch.beforeCheckpoint;
             streamBatchCheckpoint.messageIndex = turnBatch.messageIndex;
-            streamBatchCheckpoint.needsCheckpoint = turnBatch.needsCheckpoint;
             const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
                 .drainSettled()
                 .flatMap(settlement => settlement.fullResult.toolResults.map(toolResult => ({
@@ -1684,7 +1682,6 @@ export class ToolIterationLoopService {
                             turnBatch.beforeCheckpoint = streamBatchCheckpoint.beforeCheckpoint;
                             turnBatch.beforeCreated = true;
                             turnBatch.messageIndex = messageIndex;
-                            turnBatch.needsCheckpoint = true;
                         } else {
                             // 配置未命中（批内已见工具均未配置 before）：重置防重入，
                             // 允许确认路径补建（批内确认工具可能配置了 before）。
@@ -2362,7 +2359,6 @@ export class ToolIterationLoopService {
                             // 回合级写回：before 在真实用户回合内只创建一次
                             turnBatch.beforeCheckpoint = beforeCheckpoint;
                             turnBatch.messageIndex = messageIndex;
-                            turnBatch.needsCheckpoint = true;
                         } else {
                             // 配置未命中：回合状态同步（允许后续迭代补建）
                             turnBatch.beforeCreated = false;
@@ -2595,7 +2591,6 @@ export class ToolIterationLoopService {
                 turnBatch.beforeCheckpoint = checkpoint;
                 turnBatch.beforeCreated = true;
                 turnBatch.messageIndex = index;
-                turnBatch.needsCheckpoint = true;
             } else {
                 // 配置未命中（当前已见工具均未配置 before）：重置防重入，
                 // 允许后续到达的已配置工具再次触发创建；回合状态同步（允许后续迭代补建）。
@@ -2677,7 +2672,6 @@ export class ToolIterationLoopService {
                 turnBatch.beforeCheckpoint = checkpoint;
                 turnBatch.beforeCreated = true;
                 turnBatch.messageIndex = messageIndex;
-                turnBatch.needsCheckpoint = true;
             } else {
                 batch.beforeCreated = false;
                 // 配置未命中：回合状态同步（允许后续迭代补建）

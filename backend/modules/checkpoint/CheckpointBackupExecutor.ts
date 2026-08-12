@@ -103,6 +103,11 @@ export class CheckpointBackupExecutor {
         } = params;
         const deps = this.deps;
 
+        // CP-PARTIAL-2：部分快照标记——与 buildWorkspaceSnapshot 的部分快照分支条件一致
+        // （非空受影响路径数组）。写入 manifest 与记录，恢复侧据此禁用删除判定：
+        // 部分快照的 fileHashes 只含受影响文件，「目标缺失」不等于「快照时被删除」。
+        const snapshotPartial = Array.isArray(affectedPaths) && affectedPaths.length > 0;
+
         // C-13: 实例级告警计数在每次创建开始时复位——实例跨多次创建复用，
         // 不复位会导致后续创建的复制失败被静默吞掉（计数超上限后不再逐文件告警）
         this.copyFailureWarnCount = 0;
@@ -226,10 +231,14 @@ export class CheckpointBackupExecutor {
                 baseCheckpointId = lastCheckpoint.id;
 
                 // 构建变更列表（scoped 键）
+                // CP-PARTIAL-2：部分快照的 currentHashes 只含受影响文件，「previous 有而
+                // current 没有」的文件只是不在扫描范围内（并非被删除）——deleted 判定对
+                // 部分快照不可靠，禁用（否则恢复链把未删除的文件误标 deleted，污染
+                // deletedInSnapshot 判定与后续存档的增量比较）。
                 changes = [
                     ...added.map(p => ({ path: p, type: 'added' as const, hash: currentHashes[p] })),
                     ...modified.map(p => ({ path: p, type: 'modified' as const, hash: currentHashes[p] })),
-                    ...deleted.map(p => ({ path: p, type: 'deleted' as const }))
+                    ...(snapshotPartial ? [] : deleted.map(p => ({ path: p, type: 'deleted' as const })))
                 ];
 
                 // 只复制变更的文件（如果没有变更，则不复制任何文件）
@@ -352,7 +361,9 @@ export class CheckpointBackupExecutor {
                 emptyDirs: snapshot.emptyDirs,
                 changes: changes as CheckpointManifest['changes'],
                 excluded: snapshot.excluded,
-                ignoreSnapshot: exclusionSnapshot
+                ignoreSnapshot: exclusionSnapshot,
+                // CP-PARTIAL-2：部分快照标记（只写 true，缺省 = 全量，与读取侧兼容）
+                ...(snapshotPartial ? { partial: true } : {})
             };
             // M5: 写 manifest 前检查取消（取消尾窗：避免取消发生在写前仍落盘）
             throwIfAborted(signal);
@@ -389,7 +400,10 @@ export class CheckpointBackupExecutor {
                 workspaceFingerprint: workspaceSnapshot.workspaceFingerprint,
                 // CPF-09: 创建时记录磁盘占用，设置页无需重复扫描目录
                 backupBytes,
-                manifestVersion: CHECKPOINT_MANIFEST_VERSION
+                manifestVersion: CHECKPOINT_MANIFEST_VERSION,
+                // CP-PARTIAL-2：记录侧同样携带部分快照标记（恢复 prepare 直接从 enrichRecord
+                // 后的记录读取，无需再打开 manifest 元数据）
+                ...(snapshotPartial ? { partial: true } : {})
             };
 
             // 保存到对话元数据（失败会抛出，由外层 catch 回收备份目录）

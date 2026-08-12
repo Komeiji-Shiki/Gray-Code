@@ -470,8 +470,9 @@ export class ExecutionCore extends ResultCore {
         const isDiffReviewOnlyBatch = calls.length > 0 && calls.every(call => isDiffReviewToolCall(call.name));
         // CPF-07：批量路径（tool_batch）透传批内工具名，供 CheckpointManager 按 beforeTools/afterTools
         // 交集精确判定是否创建；单工具路径不需要（CheckpointManager 按工具名精确判定）。
-        // 注意：这里保持 calls.map(name) 现状（基于原始调用构建，before 创建发生在 preparedList 之前，
-        // 无法知道拒绝结果）——被策略拒绝的工具名仍计入，与 affectedPaths 提取口径一致（同样基于原始 calls）。
+        // before 用原始 calls：before 创建先于 preparedList（策略拒绝判定），无法预知拒绝结果；
+        // 被拒工具尚未执行，before 存档内容仍是当时的工作区状态，语义无害。after 在下方按
+        // 实际执行的工具重算（排除被拒/参数错误/中止未执行的调用，与 orchestrator M3 同一语义）。
         const checkpointBatchToolNames = toolNameForCheckpoint === 'tool_batch'
             ? calls.map(call => call.name)
             : undefined;
@@ -481,7 +482,8 @@ export class ExecutionCore extends ResultCore {
         // 单工具路径（toolNameForCheckpoint = 工具名）同样提取。
         // workspaceRootFsPath 来自 resolvedWorkspaceUri（activeWorkspaceUri 或会话元数据）；
         // 缺失/无法解析为本地 fs 路径时传 undefined（全量）。
-        const checkpointAffectedPaths = (() => {
+        // before 基于原始 calls；after 基于实际执行的工具重算（见下方 executedBatchToolNames）。
+        const resolveCheckpointAffectedPaths = (targetCalls: readonly FunctionCallInfo[]): string[] | undefined => {
             if (!toolNameForCheckpoint || !resolvedWorkspaceUri) {
                 return undefined;
             }
@@ -491,7 +493,7 @@ export class ExecutionCore extends ResultCore {
             }
             const accumulated: string[] = [];
             const seen = new Set<string>();
-            for (const call of calls) {
+            for (const call of targetCalls) {
                 const paths = extractAffectedPaths(call.name, call.args, workspaceRootFsPath);
                 if (paths === null) {
                     return undefined;
@@ -504,7 +506,8 @@ export class ExecutionCore extends ResultCore {
                 }
             }
             return accumulated.length > 0 ? accumulated : undefined;
-        })();
+        };
+        const checkpointAffectedPaths = resolveCheckpointAffectedPaths(calls);
         const checkpointAffectedPathsOption = checkpointAffectedPaths
             ? { affectedPaths: checkpointAffectedPaths }
             : undefined;
@@ -818,6 +821,22 @@ export class ExecutionCore extends ResultCore {
             // BCP-01: 复用 before 已反查的节点 ID（与 before 同消息，index 不变；
             // 工具执行只在其后追加 functionResponse，不影响该索引位置的节点），
             // 避免同一批次内第二次全量重读 transcript 文件。
+            // CPF-07 精确化：after 排除本批被参数错误/策略拒绝/中止未执行的工具（未执行，
+            // 不参与 afterTools 判定与受影响路径提取）——否则「批内唯一被执行工具未配存档、
+            // 被拒工具配了存档」会多建一对空批次存档（与 orchestrator M3 同一语义）。
+            // 执行循环结束时 index 指向第一个未处理调用（正常完成 = preparedList.length，
+            // abort break 时 = 未执行段起点），slice(0, index) 精确限定已结算范围。
+            const executedCalls = preparedList
+                .slice(0, index)
+                .filter(item => !item.error && !item.rejectionReason)
+                .map(item => item.executionCall);
+            const executedBatchToolNames = toolNameForCheckpoint === 'tool_batch'
+                ? executedCalls.map(call => call.name)
+                : undefined;
+            const executedAffectedPaths = resolveCheckpointAffectedPaths(executedCalls);
+            const afterOptions = executedBatchToolNames
+                ? { batchToolNames: executedBatchToolNames, ...(executedAffectedPaths ? { affectedPaths: executedAffectedPaths } : {}) }
+                : (executedAffectedPaths ? { affectedPaths: executedAffectedPaths } : undefined);
             try {
                 const afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                     conversationId,
@@ -825,9 +844,7 @@ export class ExecutionCore extends ResultCore {
                     toolNameForCheckpoint,
                     'after',
                     resolvedMessageNodeId,
-                    checkpointBatchToolNames
-                        ? { batchToolNames: checkpointBatchToolNames, ...checkpointAffectedPathsOption }
-                        : checkpointAffectedPathsOption
+                    afterOptions
                 );
                 if (afterCheckpoint) {
                     checkpoints.push(afterCheckpoint);

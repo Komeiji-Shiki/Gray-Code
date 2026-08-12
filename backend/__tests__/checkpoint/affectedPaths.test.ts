@@ -24,6 +24,7 @@ import { createTempWorkspace } from '../__fixtures__/checkpointFixtures';
 import { createToolLoopHarness } from '../__fixtures__/harnessFixtures';
 import {
     extractAffectedPaths,
+    isPathWithin,
     workspaceUriToFsPath
 } from '../../modules/checkpoint/affectedPaths';
 import type { CheckpointRecord } from '../../modules/checkpoint';
@@ -48,9 +49,9 @@ describe('extractAffectedPaths', () => {
         }
     });
 
-    test('search_in_files：replace 模式提取 path，search 模式/缺省模式返回 null', () => {
-        expect(extractAffectedPaths('search_in_files', { mode: 'replace', path: 'src/a.ts' }, root))
-            .toEqual([path.resolve(root, 'src/a.ts')]);
+    test('search_in_files：一律返回 null（replace 影响面 = pattern × 目录子树，静态不可知）', () => {
+        expect(extractAffectedPaths('search_in_files', { mode: 'replace', path: 'src/a.ts' }, root)).toBeNull();
+        expect(extractAffectedPaths('search_in_files', { mode: 'replace', path: 'src' }, root)).toBeNull();
         expect(extractAffectedPaths('search_in_files', { mode: 'search', path: 'src/a.ts' }, root)).toBeNull();
         expect(extractAffectedPaths('search_in_files', { path: 'src/a.ts' }, root)).toBeNull();
     });
@@ -93,9 +94,35 @@ describe('extractAffectedPaths', () => {
         if (process.platform === 'win32') {
             expect(workspaceUriToFsPath('file:///C%3A/Users/test%20ws')).toBe('C:\\Users\\test ws');
             expect(workspaceUriToFsPath('file:///C:/Users/test')).toBe('C:\\Users\\test');
+            // file://C:/... 无三斜杠形式同样解析
+            expect(workspaceUriToFsPath('file://C:/Users/test')).toBe('C:\\Users\\test');
         } else {
             expect(workspaceUriToFsPath('file:///home/user/ws')).toBe('/home/user/ws');
         }
+    });
+
+    test('workspaceUriToFsPath：未编码 fragment/query 被剥离，非法编码序列返回 null', () => {
+        if (process.platform === 'win32') {
+            expect(workspaceUriToFsPath('file:///C:/Users/ws#frag')).toBe('C:\\Users\\ws');
+            expect(workspaceUriToFsPath('file:///C:/Users/ws?query=1')).toBe('C:\\Users\\ws');
+        } else {
+            expect(workspaceUriToFsPath('file:///home/user/ws#frag')).toBe('/home/user/ws');
+            expect(workspaceUriToFsPath('file:///home/user/ws?query=1')).toBe('/home/user/ws');
+        }
+        // 文件名含未编码 %（非法 URI 编码）：无法可靠确定本地路径 → 回退全量
+        expect(workspaceUriToFsPath('file:///home/user/100%bad')).toBeNull();
+    });
+
+    test('isPathWithin：platform 参数可注入（win32 大小写折叠与反斜杠分隔符，Linux CI 可测）', () => {
+        const rootWin = 'd:/graycode';
+        expect(isPathWithin(rootWin, 'D:\\GrayCode\\src\\a.ts', 'win32')).toBe(true);
+        expect(isPathWithin(rootWin, 'd:/graycode/src/a.ts', 'win32')).toBe(true);
+        expect(isPathWithin(rootWin, 'd:/outside/a.ts', 'win32')).toBe(false);
+        // 兄弟前缀（路径边界）：/root/outside 不匹配 /root/outside2
+        expect(isPathWithin('/root', '/root2/a.ts', 'linux')).toBe(false);
+        expect(isPathWithin('/root', '/root/a.ts', 'linux')).toBe(true);
+        // 缺省参数 = 当前运行平台（现有行为保持）
+        expect(isPathWithin('/root', '/root/a.ts')).toBe(true);
     });
 });
 

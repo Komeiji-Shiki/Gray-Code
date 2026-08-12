@@ -75,6 +75,12 @@ export interface RestoreTargetState {
     fileHashes: Record<string, string>;
     /** 目标空目录（scoped 或相对路径键） */
     emptyDirs: string[];
+    /**
+     * CP-PARTIAL-2：目标是否为部分快照（工具执行存档按受影响路径限定构建）。
+     * partial 目标的 fileHashes 只含受影响文件，缺失的文件只是不在扫描范围内——
+     * 禁用 deletedInSnapshot 判定（这些文件归入 untracked 默认保留，绝不默认删除）。
+     */
+    partial?: boolean;
 }
 
 export interface RestoreEngineOptions {
@@ -256,7 +262,15 @@ export function computeRestorePlan(
         if (scopedKey in targetHashes) continue;
         // M-3（R7b 补充）：目录级排除条目只记录目录自身，此处按前缀匹配保护目录内文件
         if (isProtectedScopedPath(scopedKey, protectedScopedPaths)) continue;
-        // 快照时被工具删除（base 链中存在、目标缺失）：恢复默认删除（目标状态无此文件）
+        // CP-PARTIAL-2：部分快照目标的 fileHashes 只含受影响文件，「目标缺失」只是
+        // 不在扫描范围内（并非被删除）——一律归 untracked 默认保留（用户确认后才删除），
+        // 不参与 deletedInSnapshot / 白名单删除判定（白名单缺省时除受保护路径外均可删，
+        // 若落入 toDelete 会静默删除未扫描的文件）。
+        if (target.partial) {
+            untrackedToDelete.push(scopedKey);
+            continue;
+        }
+        // 快照时被工具删除（base 链中存在、目标缺失）：恢复默认删除（目标状态无此文件）。
         if (baseChainKeys.has(scopedKey)) {
             deletedInSnapshot.push(scopedKey);
             continue;
