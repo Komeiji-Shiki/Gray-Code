@@ -43,6 +43,11 @@
     - feat(PR #37)：子代理运行时长上限可配置——新增全局 `defaultMaxRuntime`（-1 无限制，默认 1800 = 30 分钟），per-agent 未配置 maxRuntime 时继承全局默认（per-agent 已配置的仍优先）；前端子代理设置新增「默认最大运行时间（秒）」输入框；
   - **不采纳**：fast-tavern 相关 commit（b9e8f29d feat(fast-tavern) build 模块、0730d582 .venv gitignore）按项目决策剔除，合并树不含 fast-tavern-main 子项目；上游 1.5.x 版本小节（[1.5.0]/[1.5.1]）不并入本地 CHANGELOG 版本体系（内容已在前序合并按本地口径记录）。
 
+### Fixed：并发子代理太多导致桌面版崩溃（IPC 洪峰压垮渲染进程）
+  - **根因**：Electron 版 `SubAgentMonitorBridge` 无条件订阅子代理事件总线，且对非 llm_delta 事件**无节流、无「面板未打开」短路**（VSCode 版有 `!panel` 短路，移植时漏掉）——Monitor 从未打开时，每个子代理的 `tool_*/content_snapshot/run_*` 事件仍逐条构造载荷并 `webContents.send`，并发 8-10 个子代理即每秒数百条 IPC 灌进单一 `graycode:backend-to-renderer` 通道，渲染进程队列无限增长 → OOM/长时间无响应 → 窗口崩溃；
+  - **修复**：① 新增 `monitorMounted` 短路——前端 `subagents.monitorReady` 到达前（面板从未打开）不推送任何事件；② 面板折叠（`visible=false`）时非 delta 事件按 runId 合并到 100ms 窗口粒度（每 run 保留最新一条），llm_delta 维持丢弃；③ 恢复可见时补推一次纯状态 manifest（`navigate:false`，不覆盖用户选中）；④ 新增 `getCachedManifest`（updatedAt 缓存 + 容量上限），消除每条事件重复派生轻量 manifest 的开销（与 VSCode 版对齐）；
+  - 附带：折叠/未挂载时不再执行 `createMonitorEventPayload`/`getActiveRunIds` 等逐事件开销，主进程事件循环同步负载同步下降。
+
 ## [1.7.14dev] - 2026-08-11
 
 ### Merged：同步上游 main 至 bb8d0b16（发布前修复批次 H3-H6 + 子代理「与当前模型同步」+ settings/core 加固，25 commits）
