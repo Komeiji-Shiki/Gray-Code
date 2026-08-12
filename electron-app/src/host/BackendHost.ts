@@ -975,7 +975,13 @@ export class BackendHost {
     // GitHub Releases 自动更新检查（与 ChatViewProvider 对齐：设置项开关 + 代理 + 10s 延迟首查）
     this.updateChecker = new UpdateChecker({
       isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
-      getInstallerKind: () => (process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'installed'),
+      // 更新面板「下载版本」：auto 跟随运行形态（getRuntimeKind）；用户显式选择则用所选
+      getInstallerKind: () => {
+        const selected = this.settingsManager.getSettings().updateInstallerKind;
+        return selected === 'portable' || selected === 'installed' ? selected : 'auto';
+      },
+      // 运行形态：便携版经 NSIS 启动器注入 PORTABLE_EXECUTABLE_DIR（auto 时的回退依据）
+      getRuntimeKind: () => (process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'installed'),
       getProxyUrl: () => {
         const proxy = this.settingsManager.getSettings().proxy;
         return proxy?.enabled && proxy?.url ? proxy.url : undefined;

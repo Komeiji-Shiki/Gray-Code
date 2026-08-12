@@ -4,21 +4,22 @@
  *
  * 后端启动检查（24h 节流）发现 GitHub Releases 有新版时弹出：
  * - 显示新版本号 + Release 说明
- * - 用户确认后自动下载安装包并交给系统打开（installUpdate 消息，后端下载完成提示安装）
- * - 安装失败可一键前往 GitHub 下载页兜底
+ * - 主按钮跳转到「设置 → 通用 → 自动更新」面板，由用户在更新面板选择
+ *   下载版本（auto/便携版/安装版）并手动完成更新流程（不再在弹窗内直接下载）
+ * - 附「前往 GitHub 查看」入口兜底
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from '@/i18n'
 import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
+import { useSettingsStore } from '@/stores/settingsStore'
 import { escapeHtml } from './markdownUtils'
 
 const { t } = useI18n()
+const settingsStore = useSettingsStore()
 
 const visible = ref(false)
-const phase = ref<'prompt' | 'downloading' | 'installed' | 'failed'>('prompt')
 const update = ref<{ version: string; name: string; body: string; installerAssetUrl?: string } | null>(null)
-const errorMsg = ref('')
 /** 用户最近一次关闭弹窗时的版本：相同版本的后端推送不再弹出（避免用户关掉后
  *  路过设置页点一次「立即检查」弹窗又回来；新版本仍会弹出） */
 let lastDismissedVersion = ''
@@ -30,7 +31,6 @@ onMounted(async () => {
   const unsubscribe = onExtensionCommand<{ update?: typeof update.value }>('update.checkAvailable', (data) => {
     if (data?.update && data.update.version !== lastDismissedVersion) {
       update.value = data.update
-      phase.value = 'prompt'
       visible.value = true
     }
   })
@@ -41,7 +41,6 @@ onMounted(async () => {
     if (res?.status?.state === 'updateAvailable' && res.status.update && !visible.value
       && res.status.update.version !== lastDismissedVersion) {
       update.value = res.status.update
-      phase.value = 'prompt'
       visible.value = true
     }
   } catch {
@@ -49,29 +48,17 @@ onMounted(async () => {
   }
 })
 
-async function install() {
-  if (!update.value) return
-  phase.value = 'downloading'
-  try {
-    await sendToExtension(MESSAGE_NAMES.installUpdate, { update: update.value })
-    phase.value = 'installed'
-  } catch (e: any) {
-    phase.value = 'failed'
-    // 后端错误码 → 本地化文案（后端兜底 message 为中文，en/ja 用户不能直接看到）
-    const codeText: Record<string, string> = {
-      INSTALL_UPDATE_NO_ASSET: t('components.update.noAsset'),
-      UPDATE_NO_ASSET: t('components.update.noAsset'),
-      UPDATE_LAUNCH_FAILED: t('components.update.launchFailed')
-    }
-    errorMsg.value = (e?.code && codeText[e.code]) || e?.message || String(e)
-  }
-}
-
 function close() {
   if (update.value) {
     lastDismissedVersion = update.value.version
   }
   visible.value = false
+}
+
+/** 主按钮：跳转到「设置 → 通用 → 自动更新」面板，由用户在更新面板选择版本并手动更新 */
+function goToUpdateSettings() {
+  close()
+  settingsStore.showSettings('general')
 }
 
 function openReleasePage() {
@@ -113,28 +100,8 @@ const formattedBody = computed(() => {
 
           <!-- 内容区域 -->
           <div class="modal-body">
-            <!-- 下载中 -->
-            <div v-if="phase === 'downloading'" class="status-center">
-              <i class="codicon codicon-loading spin"></i>
-              <span>{{ t('components.update.downloading') }}</span>
-            </div>
-
-            <!-- 安装完成 -->
-            <div v-else-if="phase === 'installed'" class="status-center success">
-              <i class="codicon codicon-check"></i>
-              <span>{{ t('components.update.installed') }}</span>
-            </div>
-
-            <!-- 失败 -->
-            <div v-else-if="phase === 'failed'" class="status-center failed">
-              <i class="codicon codicon-error"></i>
-              <span>{{ t('components.update.failed') }}</span>
-              <p class="error-detail">{{ errorMsg }}</p>
-            </div>
-
-            <!-- 提示安装 -->
-            <template v-else>
-              <p class="update-intro">{{ t('components.update.intro', { version: update?.version || '' }) }}</p>
+            <template v-if="update">
+              <p class="update-intro">{{ t('components.update.intro', { version: update.version || '' }) }}</p>
               <template v-if="formattedBody">
                 <p class="release-title">{{ t('components.update.releaseNotes') }}</p>
                 <div class="changelog-content" v-html="formattedBody"></div>
@@ -144,18 +111,9 @@ const formattedBody = computed(() => {
 
           <!-- 底部按钮 -->
           <div class="modal-footer">
-            <template v-if="phase === 'prompt'">
-              <button class="ghost-btn" @click="openReleasePage">{{ t('components.update.viewPage') }}</button>
-              <button class="ghost-btn" @click="close">{{ t('components.update.later') }}</button>
-              <button class="primary-btn" @click="install">{{ t('components.update.install') }}</button>
-            </template>
-            <template v-else-if="phase === 'failed'">
-              <button class="primary-btn" @click="openReleasePage">{{ t('components.update.viewPage') }}</button>
-              <button class="ghost-btn" @click="close">{{ t('common.close') }}</button>
-            </template>
-            <template v-else>
-              <button class="primary-btn" @click="close">{{ t('common.close') }}</button>
-            </template>
+            <button class="ghost-btn" @click="openReleasePage">{{ t('components.update.viewPage') }}</button>
+            <button class="ghost-btn" @click="close">{{ t('components.update.later') }}</button>
+            <button class="primary-btn" @click="goToUpdateSettings">{{ t('components.update.goToSettings') }}</button>
           </div>
         </div>
       </div>

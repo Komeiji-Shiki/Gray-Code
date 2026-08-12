@@ -14,6 +14,7 @@ export {
     parseReleaseResponse,
     resolveReleaseChannel,
     pickInstallerAsset,
+    resolveInstallerKind,
     isTrustedInstallerUrl,
 } from './UpdateChecker';
 
@@ -23,4 +24,5 @@ export type {
     UpdateCheckerOptions,
     ReleaseChannel,
     InstallerKind,
+    RuntimeInstallerKind,
 } from './UpdateChecker';

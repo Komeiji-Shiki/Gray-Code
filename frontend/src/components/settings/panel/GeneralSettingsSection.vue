@@ -23,6 +23,7 @@ defineProps<{
   language: string
   // 更新设置
   checkUpdatesEnabled: boolean
+  updateInstallerKind: 'auto' | 'portable' | 'installed'
   isUpdateChecking: boolean
   isUpdating: boolean
   updateCheckResult: { type: 'success' | 'error' | 'info'; text: string } | null
@@ -58,6 +59,7 @@ const emit = defineEmits<{
   (e: 'saveProxy'): void
   (e: 'update:language', value: string): void
   (e: 'update:checkUpdatesEnabled', value: boolean): void
+  (e: 'update:updateInstallerKind', value: 'auto' | 'portable' | 'installed'): void
   (e: 'checkUpdateNow'): void
   (e: 'updateNow'): void
   (e: 'update:customPath', value: string): void
@@ -185,6 +187,23 @@ function onCustomPathInput(event: Event) {
           :label="t('components.settings.settingsPanel.update.enableLabel')"
           @update:model-value="emit('update:checkUpdatesEnabled', $event)"
         />
+
+        <!-- 下载版本选择：auto 跟随运行形态 / 显式指定便携版或安装版 -->
+        <div class="update-kind-row">
+          <label class="update-kind-label">
+            {{ t('components.settings.settingsPanel.update.kindLabel') }}
+          </label>
+          <select
+            class="update-kind-select"
+            :value="updateInstallerKind"
+            @change="emit('update:updateInstallerKind', ($event.target as HTMLSelectElement).value as 'auto' | 'portable' | 'installed')"
+          >
+            <option value="auto">{{ t('components.settings.settingsPanel.update.kindAuto') }}</option>
+            <option value="portable">{{ t('components.settings.settingsPanel.update.kindPortable') }}</option>
+            <option value="installed">{{ t('components.settings.settingsPanel.update.kindInstalled') }}</option>
+          </select>
+          <p class="field-hint">{{ t('components.settings.settingsPanel.update.kindHint') }}</p>
+        </div>
 
         <div class="update-check-row">
           <button class="save-btn" :disabled="isUpdateChecking || isUpdating" @click="emit('checkUpdateNow')">
@@ -584,6 +603,30 @@ function onCustomPathInput(event: Event) {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* 下载版本选择（auto/portable/installed） */
+.update-kind-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-kind-label {
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  font-weight: 500;
+}
+
+.update-kind-select {
+  max-width: 280px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: inherit;
 }
 
 .update-now-btn {

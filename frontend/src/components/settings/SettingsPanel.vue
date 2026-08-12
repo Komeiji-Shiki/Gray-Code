@@ -1027,6 +1027,9 @@ async function loadSettings() {
     workspaceBehavior.value = response?.settings?.ui?.workspaceBehavior === 'none' ? 'none' : 'restore'
     // 加载自动更新检查开关（默认开启）
     checkUpdatesEnabled.value = response?.settings?.checkForUpdates !== false
+    // 加载「下载版本」选择（默认 auto：跟随运行形态）
+    const kind = response?.settings?.updateInstallerKind
+    updateInstallerKind.value = kind === 'portable' || kind === 'installed' ? kind : 'auto'
     
     // 加载存储路径配置
     await loadStorageConfig()
@@ -1308,6 +1311,30 @@ const checkUpdatesEnabled = ref(true)
 const isUpdateChecking = ref(false)
 const isUpdating = ref(false)
 const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
+/** 更新面板「下载版本」选择：auto 跟随运行形态 / portable 便携版 / installed 安装版 */
+const updateInstallerKind = ref<'auto' | 'portable' | 'installed'>('auto')
+
+// 保存「下载版本」选择
+async function saveUpdateInstallerKind(value: 'auto' | 'portable' | 'installed') {
+  const previous = updateInstallerKind.value
+  updateInstallerKind.value = value
+  try {
+    const response = await sendToExtension<any>(MESSAGE_NAMES.updateSettings, { settings: { updateInstallerKind: value } })
+    if (response?.success === false) {
+      updateInstallerKind.value = previous
+      console.error('Failed to save update installer kind:', response?.error?.message || response?.error)
+    } else {
+      // 切换下载版本后清空旧检查结果，提示用户重新检查以按新形态匹配资产
+      updateCheckResult.value = {
+        type: 'info',
+        text: t('components.settings.settingsPanel.update.kindChanged')
+      }
+    }
+  } catch (error) {
+    updateInstallerKind.value = previous
+    console.error('Failed to save update installer kind:', error)
+  }
+}
 
 // 保存自动检查开关
 async function saveCheckUpdates(value: boolean) {
@@ -1369,7 +1396,9 @@ async function updateNow() {
     } else if (response?.version) {
       updateCheckResult.value = {
         type: 'success',
-        text: t('components.settings.settingsPanel.update.installedHint').replace('{version}', response.version)
+        text: t('components.settings.settingsPanel.update.installedHint')
+          .replace('{version}', response.version)
+          .replace('{path}', response.localPath || '')
       }
     }
   } catch (error: any) {
@@ -1738,6 +1767,8 @@ onMounted(() => {
               @update:language="updateLanguage"
               v-model:check-updates-enabled="checkUpdatesEnabled"
               @update:check-updates-enabled="saveCheckUpdates"
+              v-model:update-installer-kind="updateInstallerKind"
+              @update:update-installer-kind="saveUpdateInstallerKind"
               :is-update-checking="isUpdateChecking"
               :is-updating="isUpdating"
               :update-check-result="updateCheckResult"
@@ -1895,6 +1926,34 @@ onMounted(() => {
   gap: 6px;
   font-size: 13px;
   font-weight: 500;
+}
+
+.group-label .codicon {
+  font-size: 14px;
+  color: var(--vscode-foreground);
+}
+
+.field-description {
+  margin: 4px 0 12px 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* 搜索结果跳转后的临时闪烁高亮 */
+.search-flash {
+  animation: settings-search-flash 1.6s ease;
+}
+
+@keyframes settings-search-flash {
+  0% {
+    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  }
+  60% {
+    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 
 .group-label .codicon {

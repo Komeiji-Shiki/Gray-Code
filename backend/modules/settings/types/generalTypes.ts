@@ -366,6 +366,13 @@ export interface GlobalSettings {
      * - false: 关闭检查（用户可在设置页「通用」中关闭）
      */
     checkForUpdates?: boolean;
+
+    /**
+     * 更新面板「下载版本」选择：
+     * - auto（默认）: 跟随当前运行形态（便携版下便携版、安装版下安装版）；
+     * - portable / installed: 显式指定下载便携版 / 安装版安装包（无论当前运行形态）。
+     */
+    updateInstallerKind?: 'auto' | 'portable' | 'installed';
     
     /**
      * 最后更新时间戳
@@ -413,6 +420,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
     maxToolLoopWallclockMinutes: DEFAULT_MAX_TOOL_LOOP_WALLCLOCK_MINUTES,
     checkForUpdates: true,
+    updateInstallerKind: 'auto',
     toolsEnabled: {
         // 默认所有工具启用
     },

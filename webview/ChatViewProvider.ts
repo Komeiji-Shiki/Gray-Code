@@ -497,6 +497,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.updateChecker = new UpdateChecker({
             // 用户可在设置页「通用」关闭自动检查（checkForUpdates !== false 默认开启）
             isCheckEnabled: () => this.settingsManager.getSettings().checkForUpdates !== false,
+            // 更新面板「下载版本」：auto 跟随运行形态；显式选择 portable/installed 则用所选
+            getInstallerKind: () => {
+                const selected = this.settingsManager.getSettings().updateInstallerKind;
+                if (selected === 'portable' || selected === 'installed') return selected;
+                return process.env.PORTABLE_EXECUTABLE_DIR ? 'portable' : 'installed';
+            },
             // 复用渠道代理配置：GitHub API/下载在代理环境下同样走代理
             getProxyUrl: () => {
                 const proxy = this.settingsManager.getSettings().proxy;

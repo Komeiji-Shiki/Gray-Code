@@ -24,6 +24,23 @@
 
 （暂无未发布改动）
 
+
+## [1.7.16] - 2026-08-12
+
+### Added：自动更新面板可选下载版本（auto / 便携版 / 安装版）
+  - **背景**：此前下载形态只按运行形态自动判定（便携版/安装版），便携版标识缺失或判定失效时便携用户也会被拉进安装版（污染系统环境）；且 UI 无显式选择入口。
+  - **实现**：更新面板（设置 → 通用 → 自动更新）新增「下载版本」下拉——auto（跟随当前运行形态，默认）/ 便携版（GrayCode-Portable）/ 安装版（GrayCode.Setup）；后端 UpdateChecker 增加 resolveInstallerKind 纯函数，检查/下载时按用户选择解析资产（auto 回退运行时形态判定）；新设置键 graycode.updateInstallerKind（可 Settings Sync）；切换后提示重新检查；三语 i18n。
+
+### Changed：更新提醒弹窗不再直接下载——主按钮改为跳转「通用-自动更新」面板
+  - 发现新版本弹窗保留版本号与 Release 说明展示，主按钮改为「前往更新设置」跳转到设置 → 通用 → 自动更新，由用户在面板选择版本并手动完成更新；移除弹窗内下载/安装流程。
+
+### Changed：下载完成不再自动打开安装器——提示更新包位置，用户手动完成更新
+  - 下载完成后不再调用 openExternal 自动启动安装器（此前便携版/安装版都自动打开，安装流程不可控）；弹窗说明更新包位于 <数据目录>\update（便携版为 <便携外层目录>\data\update），并提供「打开文件夹」入口，由用户手动进行接下来的更新流程（便携版运行 GrayCode-Portable 安装包，安装版运行 GrayCode.Setup 安装包）；UpdateChecker 新增 getUpdateDir 公开方法。
+
+### Fixed：webview 消息通道阻塞 handler 30s 超时兜底（渲染层挂起场景通道冻结）
+  - **背景**：消息通道对普通消息严格串行（messageHandlingQueue），若某个阻塞 handler 永不回复（渲染层/后端重负荷后挂起），后续 cancel/delete/新消息全部排队，webview 通道整体冻结（渲染进程僵死诊断报告 B.4 项）。
+  - **实现**：MessageRouter 对阻塞 handler 增加 30s 超时（BLOCKING_HANDLER_TIMEOUT_MS）——超时释放路由映射并回传 HANDLER_TIMEOUT 错误，队列继续处理后续消息；handler 本身无法中断，其迟到响应走 sendRoutedResponse 回退路径（requestId 已删除 → 主聊天），无害。
+
 ## [1.7.15] - 2026-08-12
 
 ### Added：无限制模式工具循环墙钟时限可配置——新增 graycode.maxToolLoopWallclockMinutes

@@ -18,6 +18,30 @@ import { WebviewClientRegistry, type WebviewClientId } from './runtime/WebviewCl
 import type * as vscode from 'vscode';
 
 /**
+ * 阻塞 handler 超时兜底阈值：
+ *
+ * 消息通道对普通消息严格串行（messageHandlingQueue），若某个阻塞 handler 永不回复
+ * （渲染层/后端在重负荷后挂起，或 handler 内部死锁），后续 cancel/delete/新消息全部
+ * 排队，webview 消息通道整体冻结（report(2).md 渲染进程僵死场景的 B.4 项）。
+ * 超时后释放路由映射并回传错误，让队列继续处理后续消息；handler 本身无法中断，
+ * 其迟到的响应会走 sendRoutedResponse 回退路径（requestId 已删除 → 主聊天），无害。
+ */
+export const BLOCKING_HANDLER_TIMEOUT_MS = 30_000;
+
+/** 给 Promise 加超时：超时 reject（handler 仍可能在后台继续运行） */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`BLOCKING_HANDLER_TIMEOUT (${ms}ms)`)), ms);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
  * 流式消息类型
  */
 export const STREAM_MESSAGE_TYPES = [
@@ -149,12 +173,25 @@ export class MessageRouter {
     trackRequestClient();
     const routedCtx = this.createRoutedContext(ctx, resolvedClientId);
     try {
-      await handler(data, requestId, routedCtx);
+      // 阻塞 handler 超时兜底（B.4）：30s 未完成即释放路由映射并回传错误，
+      // 防止永不回复的 handler 占死串行消息队列（渲染层挂起场景通道整体冻结）
+      await withTimeout(Promise.resolve(handler(data, requestId, routedCtx)), BLOCKING_HANDLER_TIMEOUT_MS);
       // 阻塞 handler 正常返回却没有响应时也必须释放路由映射。
       this.requestClients.delete(requestId);
     } catch (error) {
       // handler 抛出时没有任何一方会回复，映射必须就地清理
       this.requestClients.delete(requestId);
+      // 超时场景：handler 仍在后台运行无法中断，回传超时错误让前端不再永久挂起；
+      // 不 rethrow（队列继续处理后续消息）。迟到响应经 sendRoutedResponse 回退，无害。
+      if (error instanceof Error && error.message.startsWith('BLOCKING_HANDLER_TIMEOUT')) {
+        console.error(`[MessageRouter] Blocking handler ${type} timed out after ${BLOCKING_HANDLER_TIMEOUT_MS}ms`, error);
+        try {
+          this.sendRoutedError(requestId, 'HANDLER_TIMEOUT', `Handler ${type} timed out`);
+        } catch {
+          // 发送错误失败则静默忽略
+        }
+        return true;
+      }
       throw error;
     }
     return true;

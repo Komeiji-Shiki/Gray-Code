@@ -201,6 +201,7 @@ export const MESSAGE_NAMES = {
 
   openDirectory: 'openDirectory',
   openMcpConfigFile: 'openMcpConfigFile',
+  openUpdateFolder: 'openUpdateFolder',
   openUpdatePage: 'openUpdatePage',
   openWorkspaceFile: 'openWorkspaceFile',
   openWorkspaceFileAt: 'openWorkspaceFileAt',
@@ -791,4 +792,5 @@ export type CheckpointSummaryWithSize = CheckpointSummary & { size: number };
 //      类型仍分属 backend/modules/checkpoint/types.ts，未纳入本阶段范围。
 
 //      类型仍分属 backend/modules/checkpoint/types.ts，未纳入本阶段范围。
+
 

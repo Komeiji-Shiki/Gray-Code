@@ -12,6 +12,18 @@ are tracked in the root `CHANGELOG.md`.
 
 （暂无未发布改动）
 
+
+## [1.7.16] - 2026-08-12
+
+### Changed：自动更新全链路改造（桌面版）
+  - **更新面板可选下载版本（auto / 便携版 / 安装版）**：修复「便携版/安装版统一下载安装版」——不再只依赖运行形态自动判定（便携版标识缺失或判定失效时会误判为安装版），用户可在更新面板显式选择下载形态（便携版 GrayCode-Portable / 安装版 GrayCode.Setup）；后端 UpdateChecker 增加 resolveInstallerKind 纯函数按选择解析资产，新设置键 graycode.updateInstallerKind（可 Settings Sync）；运行时形态判定注入化（getRuntimeKind），不再直接读环境变量（可测试性 + 解耦）；
+  - **更新提醒弹窗主按钮改为跳转「设置 → 通用 → 自动更新」面板**：发现新版本弹窗不再直接下载，由用户在更新面板选择版本并手动完成更新；
+  - **下载完成不再自动打开安装器**：提示更新包位于 <数据目录>\update（便携版 <便携外层目录>\data\update），提供「打开文件夹」入口（openUpdateFolder 消息 + UpdateChecker.getUpdateDir），用户手动完成更新流程（便携版运行 GrayCode-Portable 安装包，安装版运行 GrayCode.Setup 安装包）；
+  - 测试：updateChecker 51 例 + updateHandlers 13 例更新至新语义，全部通过。
+
+### Fixed：首帧 boot-splash.js 同步 localStorage 改异步（渲染层挂起时首帧阻塞风险）
+  - boot-splash.js 此前在 <head> 同步读取 localStorage（同步存储访问在渲染进程挂起时可能阻塞首帧绘制，try/catch 拦不住「挂起」）；改为宏任务延迟读取（setTimeout 0），配合既有的 unresponsive 5s reload + 渲染进程探针 + powerMonitor 三层防御，进一步降低首帧阻塞风险。
+
 ## [1.7.15] - 2026-08-12
 
 ### Fixed：手动总结多轮对话 STALE_RANGE 失败 + 自动总结在长工具轮下永远回退（详见根 CHANGELOG）

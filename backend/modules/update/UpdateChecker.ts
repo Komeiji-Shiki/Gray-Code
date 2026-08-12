@@ -38,6 +38,8 @@ export interface UpdateInfo {
     body: string;
     /** 安装包资产下载地址（release 未附带安装包时为 undefined） */
     installerAssetUrl?: string;
+    /** 匹配到的安装包所属形态（portable / installed），供前端展示所选版本 */
+    installerKind?: 'portable' | 'installed';
     /** 发布时间（ISO） */
     publishedAt: string;
 }
@@ -181,7 +183,27 @@ export function shouldCheck(lastCheckAt: number | undefined, now: number, force:
  *   GrayCode-Portable-*.exe，避免便携版用户被拉进安装版（污染系统环境）；
  * - installed：安装版（NSIS Setup）或免安装 zip——优先 GrayCode.Setup.*.exe。
  */
-export type InstallerKind = 'portable' | 'installed';
+export type RuntimeInstallerKind = 'portable' | 'installed';
+
+/**
+ * 更新面板「下载版本」选择：
+ * - auto：跟随当前运行形态（便携版下便携版、安装版下安装版）——默认；
+ * - portable / installed：用户显式指定，无论当前运行形态都下载对应安装包。
+ *   （修复「便携版/安装版统一下载安装版」：此前只按运行形态自动匹配，一旦形态判定
+ *   失效（如便携版标识缺失）便携用户也会被拉进安装版；现在交给用户在面板显式选择。）
+ */
+export type InstallerKind = 'auto' | RuntimeInstallerKind;
+
+/**
+ * 解析实际下载形态：auto 跟随运行形态，否则用用户显式选择。
+ * 纯函数，便于单元测试。
+ */
+export function resolveInstallerKind(
+    selected: InstallerKind | undefined,
+    runtimeKind: RuntimeInstallerKind,
+): RuntimeInstallerKind {
+    return selected === 'portable' || selected === 'installed' ? selected : runtimeKind;
+}
 
 /** 按运行形态挑选安装包资产（纯函数，可独立测试） */
 export function pickInstallerAsset(
@@ -220,7 +242,9 @@ export function parseReleaseResponse(data: unknown, installerKind: InstallerKind
     const raw = data as Record<string, unknown>;
     if (typeof raw.tag_name !== 'string' || !raw.tag_name) return null;
     const assets: Array<Record<string, unknown>> = Array.isArray(raw.assets) ? raw.assets as Array<Record<string, unknown>> : [];
-    const installer = pickInstallerAsset(assets, installerKind);
+    // auto 形态在此不适用（需要运行形态才能 resolve）：调用方（fetchLatestRelease）
+    // 传入前已用 resolveInstallerKind 解析为具体形态。
+    const installer = pickInstallerAsset(assets, installerKind === 'auto' ? 'installed' : installerKind);
     return {
         version: stripVersionPrefix(raw.tag_name),
         tagName: raw.tag_name,
@@ -229,6 +253,7 @@ export function parseReleaseResponse(data: unknown, installerKind: InstallerKind
         installerAssetUrl: typeof installer?.browser_download_url === 'string' && installer.browser_download_url
             ? installer.browser_download_url
             : undefined,
+        installerKind: installerKind === 'auto' ? undefined : installerKind,
         publishedAt: typeof raw.published_at === 'string' ? raw.published_at : '',
     };
 }
@@ -262,8 +287,10 @@ export interface UpdateCheckerOptions {
     globalStoragePath: string;
     /** 当前扩展版本（缺省从 vscode.extensions 读取） */
     getCurrentVersion?: () => string;
-    /** 当前运行形态（缺省 installed）：便携版运行时注入 PORTABLE_EXECUTABLE_DIR */
+    /** 更新面板「下载版本」选择（缺省 auto）：auto 跟随运行形态，或用户显式选择 portable/installed */
     getInstallerKind?: () => InstallerKind;
+    /** 当前运行形态（auto 时的回退依据；桌面版便携运行时注入 PORTABLE_EXECUTABLE_DIR） */
+    getRuntimeKind?: () => RuntimeInstallerKind;
     /** 状态变化回调（桌面版用于把 updateAvailable 推送给前端弹窗） */
     onStatusChange?: (status: UpdateCheckStatus) => void;
     /** fetch 实现（缺省按代理配置创建；测试注入） */
@@ -291,6 +318,11 @@ export class UpdateChecker {
     /** 当前检查状态（前端 getUpdateStatus 查询用） */
     getStatus(): UpdateCheckStatus {
         return this.status;
+    }
+
+    /** 更新包下载目录（<数据目录>/update，便携版为 <便携外层目录>/data/update） */
+    getUpdateDir(): string {
+        return path.join(this.options.globalStoragePath, 'update');
     }
 
     /** 统一写状态入口：onStatusChange 回调（桌面版推送给前端弹窗） */
@@ -417,7 +449,7 @@ export class UpdateChecker {
             (err as Error & { code?: string }).code = 'UPDATE_URL_UNTRUSTED';
             throw err;
         }
-        const dir = path.join(this.options.globalStoragePath, 'update');
+        const dir = this.getUpdateDir();
         await fs.mkdir(dir, { recursive: true });
         // 安全校验：tag 名可能来自远端 Release（受仓库控制），净化后才允许拼入文件路径，
         // 防止路径穿越如 v1.0.0/../../evil）把安装包写到 update 目录之外。
@@ -426,7 +458,9 @@ export class UpdateChecker {
             throw new Error(`非法版本号格式：${update.version}`);
         }
         const ext = update.installerAssetUrl.endsWith('.zip') ? '.zip' : '.exe';
-        const target = path.join(dir, `graycode-${update.version}-setup${ext}`);
+        // 文件名带形态后缀，方便用户在 update 目录区分便携版/安装版安装包
+        const kindSuffix = this.getInstallerKind() === 'portable' ? 'portable' : 'setup';
+        const target = path.join(dir, `graycode-${update.version}-${kindSuffix}${ext}`);
         const tmpTarget = `${target}.tmp`;
 
         const controller = new AbortController();
@@ -436,9 +470,9 @@ export class UpdateChecker {
             if (!res.ok) {
                 throw new Error(`下载失败：HTTP ${res.status} ${res.statusText}`);
             }
-            // 先写 .tmp 再 rename：中断/失败不残留半成品 .vsix（防旧版本文件被当成可用包）
+            // 先写 .tmp 再 rename：中断/失败不残留半成品（防旧版本文件被当成可用包）
             if (res.body) {
-                // 流式写入 tmp：vsix 包可达数百 MB，避免整包载入内存
+                // 流式写入 tmp：安装包可达数百 MB，避免整包载入内存
                 // （Node 18+ 的 web ReadableStream 可直接 for-await 迭代）
                 const fileHandle = await fs.open(tmpTarget, 'w');
                 try {
@@ -446,7 +480,7 @@ export class UpdateChecker {
                         await fileHandle.write(chunk);
                     }
                     if ((await fileHandle.stat()).size === 0) {
-                        throw new Error('下载内容为空，vsix 可能已损坏。');
+                        throw new Error('下载内容为空，安装包可能已损坏。');
                     }
                 } finally {
                     await fileHandle.close();
@@ -455,7 +489,7 @@ export class UpdateChecker {
                 // 无流式响应体（如代理路径）：回退整包读取
                 const buf = Buffer.from(await res.arrayBuffer());
                 if (buf.length === 0) {
-                    throw new Error('下载内容为空，vsix 可能已损坏。');
+                    throw new Error('下载内容为空，安装包可能已损坏。');
                 }
                 await fs.writeFile(tmpTarget, buf);
             }
@@ -472,15 +506,10 @@ export class UpdateChecker {
             await fs.rm(tmpTarget, { force: true }).catch(() => undefined);
         }
 
-        // 交给系统打开安装包（桌面版 shim：安装包 .exe 走专用白名单通道启动；
-        // 返回 false 说明系统未能启动（如被安全策略拦截），必须抛错让调用方提示
-        // 用户走 GitHub 页面兜底——否则「已下载」假象下安装器从未启动。
-        const opened = await vscode.env.openExternal(vscode.Uri.file(target));
-        if (!opened) {
-            const err = new Error('安装包已下载但系统未能打开，请前往 GitHub Releases 手动下载安装。');
-            (err as Error & { code?: string }).code = 'UPDATE_LAUNCH_FAILED';
-            throw err;
-        }
+        // 下载完成即返回路径：不再自动打开安装器。
+        // 更新包位于 <数据目录>\update 内（便携版数据目录为 <便携外层目录>\data，
+        // 安装版为系统数据目录），由用户在弹窗指引下**手动**完成接下来的更新流程
+        // （便携版：运行新的 GrayCode-Portable 自解压 exe；安装版：运行 Setup）。
         return target;
     }
 
@@ -499,10 +528,18 @@ export class UpdateChecker {
         return ext?.packageJSON?.version || '';
     }
 
-    private getInstallerKind(): InstallerKind {
-        return this.options.getInstallerKind
+    /**
+     * 解析实际下载形态：auto 跟随运行形态（便携版/安装版自动判定），
+     * 用户显式选择（更新面板）则用所选形态。
+     */
+    private getInstallerKind(): RuntimeInstallerKind {
+        const selected = this.options.getInstallerKind
             ? this.options.getInstallerKind()
+            : 'auto';
+        const runtimeKind = this.options.getRuntimeKind
+            ? this.options.getRuntimeKind()
             : 'installed';
+        return resolveInstallerKind(selected, runtimeKind);
     }
 
     /**
@@ -558,6 +595,7 @@ export class UpdateChecker {
             }
             const body = await res.json();
             const rawReleases = Array.isArray(body) ? body : [body];
+            // 每次检查按当前「下载版本」选择解析资产（含 auto 跟随运行形态）
             const installerKind = this.getInstallerKind();
             const releases = rawReleases
                 .map(r => parseReleaseResponse(r, installerKind))

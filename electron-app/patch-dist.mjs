@@ -42,16 +42,22 @@ fs.writeFileSync(
 // - __GC_BOOT_TS：在 <head> 最早执行，记录 Vue 应用挂载前的动画起点；
 //   Splash.vue 挂载后据此以负延迟无缝续播 boot-splash.html 的动画（--gc-boot-offset）。
 // - gc-splash-disabled 标记：用户关闭启动画面（appearance.splashEnabled=false）时由
-//   settingsStore 写入 localStorage；此处读到即在 <html> 上加 gc-no-splash 类
-//   （早于 body 解析，CSS 直接不渲染 #gc-boot），避免「关闭动画仍闪现首帧画面」。
+//   settingsStore 写入 localStorage；此处读到即在 <html> 上加 gc-no-splash 类。
+//   注意：读取改在宏任务（setTimeout 0）中执行——首帧同步访问 localStorage 在渲染进程
+//   挂起时可能阻塞首帧绘制（同步存储 IPC 挂起，try/catch 拦不住），异步化后即使存储
+//   通路故障也不阻塞首帧（代价：splashEnabled=false 时可能闪现一帧静态画面，可接受）。
 fs.writeFileSync(
   path.join(distDir, 'boot-splash.js'),
   [
     'window.__GC_BOOT_TS = Date.now();',
     'try {',
-    "  if (localStorage.getItem('gc-splash-disabled') === '1') {",
-    "    document.documentElement.classList.add('gc-no-splash');",
-    '  }',
+    '  setTimeout(function () {',
+    '    try {',
+    "      if (localStorage.getItem('gc-splash-disabled') === '1') {",
+    "        document.documentElement.classList.add('gc-no-splash');",
+    '      }',
+    '    } catch (e) {}',
+    '  }, 0);',
     '} catch (e) {}',
     ''
   ].join('\n'),

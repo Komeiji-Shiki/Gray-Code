@@ -47,7 +47,8 @@ const SYNCABLE_KEYS = [
     'defaultToolMode',
     'activeChannelId',
     'lastReadAnnouncementVersion',
-    'checkForUpdates'
+    'checkForUpdates',
+    'updateInstallerKind'
 ] as const;
 
 // 这些 key 应在 package.json 中声明 scope: "machine"
@@ -273,6 +274,11 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             if (typeof checkForUpdates === 'boolean') {
                 settings.checkForUpdates = checkForUpdates;
             }
+
+            const updateInstallerKind = config.get<string>('updateInstallerKind');
+            if (updateInstallerKind === 'portable' || updateInstallerKind === 'installed' || updateInstallerKind === 'auto') {
+                settings.updateInstallerKind = updateInstallerKind;
+            }
         }
 
         if (opts.includeMachine) {
@@ -395,6 +401,3 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         }
     }
 }
-
-
-

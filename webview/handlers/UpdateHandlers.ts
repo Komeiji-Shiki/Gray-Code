@@ -10,6 +10,7 @@
 
 import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
+import * as path from 'path';
 import type { MessageHandler, HandlerContext } from '../types';
 import { UpdateChecker, type UpdateInfo } from '../../backend/modules/update';
 import { getExtensionVersion } from '../utils/extensionInfo';
@@ -51,14 +52,21 @@ export const checkUpdateNow: MessageHandler = async (data, requestId, ctx) => {
     }
 };
 
-/** 下载安装包并交给系统打开，成功后提示用户完成安装（installUpdate / updateNow 共用） */
+/** 下载安装包到 <数据目录>/update 并提示用户手动完成接下来的更新流程（installUpdate / updateNow 共用） */
 async function downloadAndInstallAndNotify(checker: UpdateChecker, update: UpdateInfo): Promise<string> {
     const localPath = await checker.downloadAndInstall(update);
-    // 桌面版：安装包已交给系统打开，由用户完成安装后重启应用生效
-    await vscode.window.showInformationMessage(
-        `GrayCode v${update.version} 安装包已下载并打开，请完成安装后重启应用。`,
+    // 桌面版：不再自动打开安装器——下载完成后提示用户更新包位置，由用户手动进行接下来的更新流程
+    // （便携版：运行新的 GrayCode-Portable 自解压包；安装版：运行 GrayCode.Setup 安装包）
+    const dir = path.dirname(localPath);
+    const chosen = await vscode.window.showInformationMessage(
+        `GrayCode v${update.version} 更新包已下载到：${dir}\n请手动完成接下来的更新流程（便携版运行 GrayCode-Portable 安装包，安装版运行 GrayCode.Setup 安装包）。`,
+        '打开文件夹',
         '确定'
     );
+    if (chosen === '打开文件夹') {
+        // 打开更新包所在目录，方便用户手动进行更新（失败静默，不影响下载成功回执）
+        await vscode.env.openExternal(vscode.Uri.file(dir)).then(() => undefined, () => undefined);
+    }
     return localPath;
 }
 
@@ -134,6 +142,17 @@ export const openUpdatePage: MessageHandler = async (data, requestId, ctx) => {
     }
 };
 
+/** 打开更新包所在目录（<数据目录>/update，手动更新流程的辅助入口） */
+export const openUpdateFolder: MessageHandler = async (data, requestId, ctx) => {
+    try {
+        const dir = getChecker(ctx).getUpdateDir();
+        await vscode.env.openExternal(vscode.Uri.file(dir));
+        ctx.sendResponse(requestId, { success: true });
+    } catch (error: any) {
+        ctx.sendError(requestId, 'OPEN_UPDATE_FOLDER_ERROR', error?.message || 'Failed to open update folder');
+    }
+};
+
 /** 注册更新处理器 */
 export function registerUpdateHandlers(registry: Map<string, MessageHandler>): void {
     registry.set(MESSAGE_NAMES.getUpdateStatus, getUpdateStatus);
@@ -141,4 +160,5 @@ export function registerUpdateHandlers(registry: Map<string, MessageHandler>): v
     registry.set(MESSAGE_NAMES.installUpdate, installUpdate);
     registry.set(MESSAGE_NAMES.updateNow, updateNow);
     registry.set(MESSAGE_NAMES.openUpdatePage, openUpdatePage);
+    registry.set(MESSAGE_NAMES.openUpdateFolder, openUpdateFolder);
 }

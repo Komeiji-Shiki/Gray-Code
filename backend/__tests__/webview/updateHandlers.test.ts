@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 describe('UpdateHandlers updateNow', () => {
-    it('有新版本：自动下载并打开 + 提示完成安装 + 回复成功', async () => {
+    it('有新版本：自动下载到 update 目录 + 提示手动完成更新 + 回复成功', async () => {
         const downloadImpl = jest.fn(async () => '/tmp/graycode-1.5.0-setup.exe');
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE }, downloadImpl);
         const ctx = createCtx(checker);
@@ -61,8 +61,10 @@ describe('UpdateHandlers updateNow', () => {
 
         expect(checker.check).toHaveBeenCalledWith(true);
         expect(downloadImpl).toHaveBeenCalledWith(FAKE_UPDATE);
+        // 下载完成后提示用户更新包位置（手动流程），不再自动打开安装器
         expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-            expect.stringContaining('1.5.0'),
+            expect.stringContaining('更新包已下载到'),
+            '打开文件夹',
             '确定'
         );
         expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
@@ -112,7 +114,7 @@ describe('UpdateHandlers updateNow', () => {
         expect(ctx.sendError).toHaveBeenCalledWith('req_5', 'UPDATE_NOW_ERROR', expect.stringContaining('500'));
     });
 
-    it('下载完成后提示完成安装，不执行 reloadWindow', async () => {
+    it('下载完成后提示手动完成更新（不再自动打开安装器），不执行 reloadWindow', async () => {
         (vscode.window.showInformationMessage as jest.Mock).mockResolvedValue('确定');
         const checker = createChecker({ state: 'updateAvailable', checkedAt: 1, update: FAKE_UPDATE });
         const ctx = createCtx(checker);
@@ -120,7 +122,8 @@ describe('UpdateHandlers updateNow', () => {
 
         expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
         expect(vscode.window.showInformationMessage).toHaveBeenCalledWith(
-            expect.stringContaining('安装包已下载并打开'),
+            expect.stringContaining('更新包已下载到'),
+            '打开文件夹',
             '确定'
         );
     });

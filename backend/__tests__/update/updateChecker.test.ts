@@ -538,8 +538,7 @@ describe('UpdateChecker.downloadAndInstall', () => {
         })).rejects.toThrow(/未附带安装包/);
     });
 
-    it('下载成功并交给系统打开（openExternal）', async () => {
-        (vscode.env.openExternal as jest.Mock).mockResolvedValueOnce(true);
+    it('下载成功到 <数据目录>/update 且不自动打开安装器（手动更新流程）', async () => {
         const { checker } = createChecker({
             fetchImpl: async () => new Response(Buffer.from('SETUP-EXE-CONTENT'), { status: 200 }),
         });
@@ -554,9 +553,8 @@ describe('UpdateChecker.downloadAndInstall', () => {
         expect(target).toContain('graycode-1.5.0-setup.exe');
         expect(fs.existsSync(target)).toBe(true);
         expect(fs.readFileSync(target, 'utf-8')).toBe('SETUP-EXE-CONTENT');
-        expect(vscode.env.openExternal).toHaveBeenCalledWith(
-            expect.objectContaining({ fsPath: target })
-        );
+        // 不再自动打开安装器：更新包留在 update 目录，由用户在弹窗指引下手动完成更新
+        expect(vscode.env.openExternal).not.toHaveBeenCalled();
     });
 
     it('下载 HTTP 失败时抛错且不打开', async () => {
@@ -579,27 +577,6 @@ describe('UpdateChecker.downloadAndInstall', () => {
             version: '1.5.0', tagName: 'v1.5.0', name: '', body: '', publishedAt: '', installerAssetUrl: 'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.5.0/x.exe',
         })).rejects.toThrow(/空/);
         expect(vscode.env.openExternal).not.toHaveBeenCalled();
-    });
-
-    it('openExternal 返回 false 时抛错（系统未能打开安装包，不再是静默假成功）', async () => {
-        (vscode.env.openExternal as jest.Mock).mockResolvedValueOnce(false);
-        const { checker } = createChecker({
-            fetchImpl: async () => new Response(Buffer.from('SETUP-EXE-CONTENT'), { status: 200 }),
-        });
-        const err = await checker.downloadAndInstall({
-            version: '1.5.0',
-            tagName: 'v1.5.0',
-            name: '',
-            body: '',
-            publishedAt: '',
-            installerAssetUrl: 'https://github.com/czocelot/Gray-Code-Desktop/releases/download/v1.5.0/GrayCode.Setup.1.5.0.exe',
-        }).catch((e: Error & { code?: string }) => e);
-        expect(err).toBeInstanceOf(Error);
-        expect((err as Error).message).toContain('未能打开');
-        expect((err as Error & { code?: string }).code).toBe('UPDATE_LAUNCH_FAILED');
-        // 下载的文件仍保留（用户可手动打开）
-        const target = path.join((checker as any).options.globalStoragePath, 'update', 'graycode-1.5.0-setup.exe');
-        expect(fs.existsSync(target)).toBe(true);
     });
 
     it('无安装包资产抛错且带 UPDATE_NO_ASSET 码', async () => {
