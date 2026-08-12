@@ -60,10 +60,11 @@ export const getPinnedFilesConfig: MessageHandler = async (data, requestId, ctx)
   try {
     const workspaceUri = ctx.getCurrentWorkspaceUri();
     if (!workspaceUri) {
-      // 无工作区：sectionTitle 沿用设置侧配置（单一来源，不再硬编码英文魔值），
-      // 响应结构与正常分支一致（直接展开 config，仅 files 置空）。
-      const config = ctx.settingsManager.getPinnedFilesConfig();
-      ctx.sendResponse(requestId, { ...config, files: [] });
+      // 无工作区：仅返回前端实际消费的 files（置空）。
+      // sectionTitle 不随本响应下发：它只被后端 PromptManager 直接读 settingsManager
+      // 消费（见 backend/modules/prompt/PromptManager.ts），前端 listPinnedFiles 只使用
+      // files，故移除原硬编码英文 'PINNED FILES CONTENT' 字段。
+      ctx.sendResponse(requestId, { files: [] });
       return;
     }
 
@@ -74,10 +75,8 @@ export const getPinnedFilesConfig: MessageHandler = async (data, requestId, ctx)
     const sourceFiles = conversationFiles ?? allConfig.files;
     const workspaceFiles = filterPinnedFilesByWorkspace(sourceFiles, workspaceUri);
     
-    ctx.sendResponse(requestId, {
-      ...allConfig,
-      files: workspaceFiles
-    });
+    // 与无工作区分支保持同一响应契约：只返回 files（sectionTitle 仅后端提示词使用，前端不消费）。
+    ctx.sendResponse(requestId, { files: workspaceFiles });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_PINNED_FILES_CONFIG_ERROR', error.message || t('webview.errors.getPinnedFilesConfigFailed'));
   }

@@ -15,6 +15,13 @@
   - 修复回合级批次存档状态跨迭代传播 `needsCheckpoint`：传播后新一轮迭代的工具到达时跳过 after 命中检查，正确性依赖 CheckpointManager 求交兜底且多一次无效创建尝试；现 `needsCheckpoint` 由每次迭代按本迭代批内工具自行收集，回合级状态只保留 before 相关字段（行为更精确，状态更简单）。
   - 修复后台结果领取与用户发送的竞态（A-COMM 接管窗口）：领取 claim 后到内部回流流启动前（含 cancelStream 往返）的几毫秒内，`isStreaming/isWaitingForResponse` 仍残留旧流状态，用户此时发送会被误投为「用户插话」——插话随后被内部回流流在工具边界 drain 消费，既不落历史又被处理一次，用户重发会重复处理。现新增 `agentMessageClaimGate` 接管窗口标记（claim 成功后置位、内部流启动/调度放弃后清除），窗口内用户消息走排队（InputArea 分流）而非插话投递（sendMessageFlow 兑底返回 false），内部流启动后恢复既有插话语义。新增接管窗口时序 / 跨会话隔离 / 标记模块测试。
 
+### Changed
+  - 设置核心深合并收敛（agent-sweep 01#12）：`core/deepMerge.ts` 的 `deepMerge` 新增可选 `options`（`nullMode`/`undefinedMode`/`conflictMode`），缺省行为与历史完全一致；`SettingsCore.deepMergeToolsConfig` 改为该参数化实现的薄封装（`nullMode:'write'`、`conflictMode:'reuse-source'`、`undefinedMode:'skip'`），删除本地递归实现，对非循环输入行为零变化（额外获得循环引用防护）；`deepMergeConfig` 因「default 为主、stored 补齐」方向相反且含损坏数据兜底语义，刻意保留本地实现，三套 merge 的关系与差异集中文档化到 core/deepMerge.ts 头注释。
+  - DependencyManager 单例支持存储路径切换（agent-sweep 01#10）：`getInstance(context, customDepsPath)` 在实例已存在且显式传入的 `customDepsPath` 与当前 `graycodeDir` 不一致时重建实例（需携带 context，否则 fail-fast 抛错），依赖重新安装到新目录，不再静默沿用旧目录；重建会丢弃旧目录的 progressListeners/loadedModules 缓存（切换路径场景可接受）。
+  - 工具声明 schema 与行为对齐（agent-sweep 02#13/02#18）：`goto_definition` 的 `line`/`column` 由 `type:'number'` 改为 `type:'integer'` + `minimum:1`，与 handler 整数校验及 read_file 对齐；`refreshSubAgentsTool` 由「只打日志的空操作」改为纯 no-op 并注明 subagent 工具声明是 getter 每次访问重算（保留导出仅兼容既有 webview 调用方）。
+  - webview 置顶文件配置响应收敛（agent-sweep 04#14）：`getPinnedFilesConfig` 移除前端零消费的硬编码英文 `sectionTitle` 字段，有无工作区两个分支统一返回 `{ files }` 契约（`sectionTitle` 仅后端 PromptManager 直接读 settings 消费）。
+  - 测试补齐（agent-sweep 02#20）：新增 `write_file`/`insert_code`/`delete_code` 三个写类工具 handler 的 diff 审阅终态单测（接受/拒绝/取消/autoSave 失败/参数边界，共 23 用例）与 `ToolRegistry` 核心行为单测（重复注册抛错、refreshTool 失败保留旧实例、revision 递增语义，5 用例），覆盖此前无直接测试的终态组装逻辑。
+
 ## [1.5.3] - 2026-08-12
 
 ### Fixed
