@@ -5,7 +5,9 @@
  * - M4：maxConcurrentAgents=1 + parentRunId → 立即拒绝（防排队死锁，而非挂 30 分钟）；
  * - M10：并行工具 in-flight 时 detachFromParent + 父 abort → 所有在飞工具不被旧流取消，
  *       run 继续执行至完成（currentOperationHandles 数组化后逐个解绑）；
- * - M5：并行工具不响应 abort 且挂死 → 收尾窗口超时兜底终止 run（非永久挂起）。
+ * - M5 兜底已删除：abort 收敛由 executeToolCall 500ms 宽限（waitForAbortableOperation）覆盖，
+ *       工具层自身超时保证落定，正常执行恢复裸 Promise.all（回归测试：挂死工具不再被
+ *       超时兜底误杀 / abort 后 500ms 宽限收敛不卡死）。
  */
 import { createDefaultExecutor } from '../../tools/subagents/executor';
 import { subAgentRunController } from '../../tools/subagents/runController';
@@ -153,11 +155,13 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         subAgentRunController.unregister('m4_nested');
         subAgentRunController.unregister('m4_parent');
         subAgentRunController.unregister('m10_par');
-        subAgentRunController.unregister('m5_hang');
+        subAgentRunController.unregister('m5_no_fallback');
+        subAgentRunController.unregister('m5_abort_grace');
         subAgentConcurrencyLimiter.release('m4_nested');
         subAgentConcurrencyLimiter.release('m4_parent');
         subAgentConcurrencyLimiter.release('m10_par');
-        subAgentConcurrencyLimiter.release('m5_hang');
+        subAgentConcurrencyLimiter.release('m5_no_fallback');
+        subAgentConcurrencyLimiter.release('m5_abort_grace');
         jest.useRealTimers();
     });
 
@@ -245,22 +249,21 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         expect(executeToolMock).toHaveBeenCalledTimes(2);
     });
 
-    test('M5：并行工具挂死（无 abort 可响应）→ 收尾窗口超时兜底终止 run（非永久挂起）', async () => {
+    test('挂死工具不再被超时兜底误杀：无 abort 时推进超过原 30s 窗口 run 仍活跃', async () => {
         jest.useFakeTimers();
         const { context, generateMock, release } = createGatedChannel();
-        // 工具永不 settle 且无 abort 触发（组合信号未 abort 时收尾窗口才是唯一兜底；
-        // abort 场景已被 executeToolCall 内 600ms 宽限覆盖）
+        // 工具永不 settle 且无 abort 触发——M5 兜底删除后不应再有 30s 硬上限误杀正常慢工具
         const executeToolMock = jest.fn(() => new Promise(() => undefined));
         mockToolService(context, executeToolMock);
-        // maxRuntime 设 60s > 收尾窗口 30s，确保先由收尾窗口触发
-        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 60 }), context);
+        // maxRuntime 120s > 推进的 40s，确保只有（已删除的）M5 窗口会触发
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 120 }), context);
         const runPromise = executor({
             agentType: 'tester',
             prompt: 'hanging parallel tools',
-            runId: 'm5_hang'
+            runId: 'm5_no_fallback'
         });
 
-        // fake timers 驱动：run 启动 → 第一轮 generate 完成 → 工具进入并行段
+        // fake timers 驱动：run 启动 → 第一轮 generate 完成 → 工具进入并行段挂死
         await jest.advanceTimersByTimeAsync(100);
         release(toolCallsResponse(
             { id: 'h1', name: 'read_file', args: { path: 'a.txt' } },
@@ -269,18 +272,47 @@ describe('SubAgent executor - 并行化边界（M4/M5/M10）', () => {
         await jest.advanceTimersByTimeAsync(100);
         expect(executeToolMock).toHaveBeenCalledTimes(2);
 
-        // 未到收尾窗口 run 不应结束（工具挂死、无 abort）
-        await jest.advanceTimersByTimeAsync(1000);
+        // 推进超过原 30s 收尾窗口：run 仍应活跃且未 settle（无 abort、无兜底误杀）
+        await jest.advanceTimersByTimeAsync(40_000);
+        expect(subAgentRunController.isActive('m5_no_fallback')).toBe(true);
         let settled: SubAgentResult | undefined;
         void runPromise.then((r) => { settled = r; });
         await jest.advanceTimersByTimeAsync(0);
         expect(settled).toBeUndefined();
+        // 注意：run 会一直挂着，测试结束靠 afterEach 的 unregister/release 清理，不要 await runPromise
+    });
 
-        // 推进到收尾窗口（30s）→ 收尾窗口超时兜底，run 失败终止
-        await jest.advanceTimersByTimeAsync(29_000);
+    test('abort 后不响应 abort 的挂死工具在 500ms 宽限后被结算，run 收敛不卡死', async () => {
+        jest.useFakeTimers();
+        const { context, generateMock, release } = createGatedChannel();
+        // 工具永不 settle 且不响应 abort——executeToolCall 的 500ms 宽限（waitForAbortableOperation）
+        // 是唯一收敛路径：宽限到期后结算为 cancelled 结果 → Promise.all 收敛 → run 正常收尾
+        const executeToolMock = jest.fn(() => new Promise(() => undefined));
+        mockToolService(context, executeToolMock);
+        const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 5, maxRuntime: 120 }), context);
+        const abortCtrl = new AbortController();
+        const runPromise = executor({
+            agentType: 'tester',
+            prompt: 'hanging parallel tools',
+            runId: 'm5_abort_grace'
+        }, abortCtrl.signal);
+
+        // fake timers 驱动：run 启动 → 第一轮 generate 完成 → 工具进入并行段挂死
+        await jest.advanceTimersByTimeAsync(100);
+        release(toolCallsResponse(
+            { id: 'h1', name: 'read_file', args: { path: 'a.txt' } },
+            { id: 'h2', name: 'read_file', args: { path: 'b.txt' } }
+        ));
+        await jest.advanceTimersByTimeAsync(100);
+        expect(executeToolMock).toHaveBeenCalledTimes(2);
+
+        // abort → waitForAbortableOperation 立即返回 aborted → 500ms 宽限到期后工具结算为
+        // cancelled → Promise.all 收敛 → 下一轮 loop 顶部 abort 检查 → run 以 cancelled 收尾
+        abortCtrl.abort();
+        await jest.advanceTimersByTimeAsync(600);
         const result = await runPromise;
         expect(result.success).toBe(false);
-        expect(result.error).toContain('did not finish within');
-        expect(subAgentRunController.isActive('m5_hang')).toBe(false);
+        expect(result.cancelled).toBe(true);
+        expect(subAgentRunController.isActive('m5_abort_grace')).toBe(false);
     });
 });
