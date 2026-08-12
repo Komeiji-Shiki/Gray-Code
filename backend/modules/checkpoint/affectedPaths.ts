@@ -42,24 +42,31 @@ const AFFECTED_PATH_FIELDS: Record<string, string> = {
  * - win32（Windows 文件系统不区分大小写）与 darwin（macOS 默认 APFS 大小写不敏感卷）
  *   下折叠小写比较；
  * - 其余平台（大小写敏感）按原样比较。
- * 边界用 `path.sep` 判断，防止 `/root/outside` 匹配 `/root/outside2`。
+ * 边界用所选平台的分隔符判断，防止 `/root/outside` 匹配 `/root/outside2`。
  *
  * platform 参数仅供测试注入（默认 process.platform，生产调用不传）——
  * 与 StoragePathManager.isSameStoragePath 同策略：测试显式传 win32 时不能依赖
- * 当前运行平台的语义（Linux CI 上测 Windows 大小写折叠必须可注入）。
+ * 当前运行平台的语义。注意注入必须同时切换路径解析实现（path.win32/path.posix）：
+ * 仅折叠大小写不够——Linux CI 上宿主 path.resolve 不识别反斜杠分隔符与盘符，
+ * Windows 路径会被拼到 cwd 下。
  */
 export function isPathWithin(
     rootFsPath: string,
     absPath: string,
     platform: NodeJS.Platform = process.platform
 ): boolean {
+    // 按 platform 参数选择路径语义：测试注入 win32/linux 时不能依赖当前运行平台的
+    // path 模块（Linux CI 上 path.resolve 是 POSIX 语义，不识别反斜杠分隔符与盘符，
+    // 会把 'D:\\GrayCode\\src\\a.ts' 当作普通文件名拼到 cwd 下，与 'd:/graycode'
+    // 永不匹配）。生产默认 process.platform 时 path.win32/path.posix 与宿主一致。
+    const pathApi = platform === 'win32' ? path.win32 : path.posix;
     const caseFold = platform === 'win32' || platform === 'darwin'
         ? (p: string) => p.toLowerCase()
         : (p: string) => p;
-    const root = caseFold(path.resolve(rootFsPath));
-    const target = caseFold(path.resolve(absPath));
+    const root = caseFold(pathApi.resolve(rootFsPath));
+    const target = caseFold(pathApi.resolve(absPath));
     if (target === root) return true;
-    return target.startsWith(root + path.sep);
+    return target.startsWith(root + pathApi.sep);
 }
 
 /**
