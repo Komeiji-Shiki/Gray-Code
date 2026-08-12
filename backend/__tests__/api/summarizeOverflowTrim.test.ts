@@ -83,10 +83,11 @@ const msgLabel = (m: Content): string =>
 // ==================== 测试用例 ====================
 
 describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
-    test('单超大轮（无工具交互）：planner 直接放弃规划，不发 API 请求', async () => {
+    test('单超大轮（无工具交互）：总结输入溢出 → CONTEXT_OVERFLOW，不发 API 请求', async () => {
         const { service, generate, mutateContents } = createSummarizeHarness({
-            // 单轮超大：3000 + 1000 token，预算 100。auto 模式不深入当前轮
-            // （锁内 STALE 会白烧生成）→ planner 放弃 → NOT_ENOUGH_ROUNDS，无 AI 调用
+            // 单轮 3000 + 1000 token。auto 模式允许轮内截断（轮首用户消息受锚点保护不标记），
+            // 但总结输入只有用户消息本身（3000 token），超出总结模型输入预算且无工具交互可
+            // 收缩 → CONTEXT_OVERFLOW，依然不调用总结模型（避免必败请求）。
             fullHistory: [userMsg('老问题', 3000), modelMsg('老回答', 1000)],
             maxContextTokens: 4000
         });
@@ -95,7 +96,7 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 
         expect(result.success).toBe(false);
         if (!result.success) {
-            expect(result.error.code).toBe('NOT_ENOUGH_ROUNDS');
+            expect(result.error.code).toBe('CONTEXT_OVERFLOW');
         }
         expect(generate).not.toHaveBeenCalled();
         expect(mutateContents).not.toHaveBeenCalled();
@@ -290,6 +291,74 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(liveHistory[5]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 5 });
         expect(liveHistory.slice(6).map(msgLabel)).toEqual(['r4', 'fc4', 'fc4']);
     });
+
+    test('单轮长工具回合：auto 按保留预算轮内截断，总结已完成前缀，首条用户消息原样保留', async () => {
+        // 单轮 800 token，keepRecentTokens='50%' → 保留预算 400。planner 从前往后选第一个
+        // 不超预算的安全切点：fc3 起（300）≤ 400 → 总结 [0, 5)，保留 [fc3, fr3, done]。
+        // 轮首用户消息 r1 是唯一真实用户消息（同时是首条锚点）：不标记、原文保留发送。
+        const { service, generate, liveHistory } = createSummarizeHarness({
+            fullHistory: [
+                userMsg('r1', 100, { id: 'u1' }), fcMsg('fc1', 100), frMsg('fc1', 100),
+                fcMsg('fc2', 100), frMsg('fc2', 100),
+                fcMsg('fc3', 100), frMsg('fc3', 100), modelMsg('done', 100)
+            ],
+            keepRecentTokens: '50%',
+            // 总结模型输入预算（1000 * 0.5 - 固定开销）需装得下 500 token 的总结范围，避免触发收缩
+            maxContextTokens: 2000
+        });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.insertIndex).toBe(5);
+            expect(result.removedCount).toBe(4);
+            expect(result.summarizedMessageCount).toBe(4);
+        }
+        expect(generate).toHaveBeenCalledTimes(1);
+        // 历史 = [r1, fc1/fr1/fc2/fr2(isSummarized), 新总结, fc3, fr3, done]
+        expect(liveHistory).toHaveLength(9);
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[0].isSummarized).toBeUndefined();
+        expect(liveHistory[1]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[2]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[3]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[4]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[5]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 5 });
+        expect(liveHistory.slice(6).map(msgLabel)).toEqual(['fc3', 'fc3', 'done']);
+    });
+
+    test('单轮总结输入超预算：沿工具边界逐对收缩，保留最新工具轮', async () => {
+        // 单轮 14100 token，总结输入预算 ~7500（100000 * 0.08 减固定开销）：总结范围 [0, 7)
+        // 超出预算 → 轮内收缩逐对排除最新工具交互（fc3/fr3 → fc2/fr2），收缩到 [0, 3) 装得下。
+        // 轮内收缩切点落在 functionCall 消息上，FC+FR 同在保留区，配对完整不拆散。
+        const { service, generate, liveHistory } = createSummarizeHarness({
+            fullHistory: [
+                userMsg('r1', 100, { id: 'u1' }), fcMsg('fc1', 2000), frMsg('fc1', 2000),
+                fcMsg('fc2', 2000), frMsg('fc2', 2000),
+                fcMsg('fc3', 2000), frMsg('fc3', 2000), modelMsg('done', 2000)
+            ],
+            keepRecentTokens: '10%',
+            summarizeMaxInputRatio: 0.08,
+            maxContextTokens: 100000
+        });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            expect(result.insertIndex).toBe(3);
+            expect(result.removedCount).toBe(2);
+        }
+        expect(generate).toHaveBeenCalledTimes(1);
+        // 历史 = [r1, fc1/fr1(isSummarized), 新总结, fc2, fr2, fc3, fr3, done]
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[0].isSummarized).toBeUndefined();
+        expect(liveHistory[1]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[2]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[3]).toMatchObject({ isSummary: true, index: 3 });
+        expect(liveHistory.slice(4).map(msgLabel)).toEqual(['fc2', 'fc2', 'fc3', 'fc3', 'done']);
+    });
 });
 
 describe('SummarizeService.handleAutoSummarize - 逻辑截断语义', () => {
@@ -352,27 +421,41 @@ describe('SummarizeService.handleAutoSummarize 并发安全（STALE_RANGE）', (
         expect(liveHistory).toEqual([userMsg('r1', 100)]);
     });
 
-    test('单超大轮（唯一轮即当前回合）：planner 放弃规划，不调 AI 不落盘', async () => {
-        const singleOversizedRound: Content[] = [
-            userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
-            fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
+    test('单轮轮内截断期间新真实用户消息插入锚点之后：锚点校验作废（STALE_RANGE），不落盘', async () => {
+        const planningSnapshot: Content[] = [
+            userMsg('r1', 100, { id: 'u1' }), fcMsg('fc1', 2000), frMsg('fc1', 2000),
+            fcMsg('fc2', 2000), frMsg('fc2', 2000), modelMsg('done', 2000)
+        ];
+        // 规划时单轮（锚点 u1 在 index 0），总结范围 [0, 5)（insertIndex=5，越过锚点标记其后前缀）；
+        // 总结生成期间新真实用户消息插入到锚点之后、切点之前（index 3）→ 锁内最后真实用户
+        // 消息索引与规划锚点不一致 → 放弃落盘，避免把用户新输入也算进被总结区间。
+        const concurrentNewUserMessage: Content[] = [
+            userMsg('r1', 100, { id: 'u1' }), fcMsg('fc1', 2000), frMsg('fc1', 2000),
+            userMsg('new user input', 100, { id: 'u2' }),
+            fcMsg('fc2', 2000), frMsg('fc2', 2000), modelMsg('done', 2000)
         ];
 
-        const { service, generate, liveHistory } = createSummarizeHarness({
-            fullHistory: singleOversizedRound,
-            keepRecentTokens: '10%' // 100：单轮 240 > 预算 → auto 无安全切点（切点必在轮首 user 之后）
+        const { service, generate, mutateContents, liveHistory } = createSummarizeHarness({
+            fullHistory: planningSnapshot,
+            historyRef: planningSnapshot,
+            liveHistory: concurrentNewUserMessage,
+            keepRecentTokens: '10%',
+            // 预算（100000 * 0.5 - 固定开销 ≈ 49600）装得下 8100 token 的总结范围 → 不触发收缩，
+            // insertIndex 保持 5，锁内 5 > 3（新消息索引）→ 锚点校验失败
+            maxContextTokens: 100000
         });
 
         const result = await service.handleAutoSummarize('conv1', 'cfg1');
 
         expect(result.success).toBe(false);
         if (!result.success) {
-            // 不再 STALE_RANGE（那需要先白烧一次 AI 生成）：planner 直接放弃
-            expect(result.error.code).toBe('NOT_ENOUGH_ROUNDS');
+            expect(result.error.code).toBe('STALE_RANGE');
         }
-        expect(generate).not.toHaveBeenCalled();
-        // 用户消息与工具交互原样保留，未做任何替换
-        expect(liveHistory.map(msgLabel)).toEqual(['r1', 'fc1', 'fc1', 'fc2', 'fc2', 'done']);
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(mutateContents).toHaveBeenCalledTimes(1);
+        // 不落盘：历史保持并发写入后的形态，没有总结消息
+        expect(liveHistory).toHaveLength(7);
+        expect(liveHistory.some(m => m.isSummary)).toBe(false);
     });
 });
 
