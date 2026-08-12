@@ -819,13 +819,11 @@ export function getSubAgentsTool(): Tool {
 }
 
 /**
- * 强制刷新工具定义
- * 
- * 当子代理配置发生变化时调用，确保下次获取工具定义时是最新的
- * 注意：由于使用了 getter，实际上不需要手动刷新，但保留此方法以备将来使用
+ * 强制刷新工具定义（纯 no-op，保留兼容）
+ *
+ * subagent 工具声明是 getter 每次访问重算（见 createSubAgentsTool 的 declaration getter），
+ * 刷新无需动作；保留此函数仅为兼容既有调用方（webview 层仍会调用它）。
  */
 export function refreshSubAgentsTool(): void {
-    // 使用 getter 后，每次访问 declaration 都会重新生成
-    // 这里不需要做任何事情，但保留接口以保持向后兼容
-    console.log('[SubAgents] Tool declaration will be refreshed on next access');
+    // 纯 no-op：声明 getter 每次访问重算，刷新无需任何动作；保留此函数仅为兼容调用方。
 }

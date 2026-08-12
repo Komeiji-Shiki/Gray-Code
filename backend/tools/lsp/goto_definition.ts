@@ -78,11 +78,13 @@ Returns the complete definition code with line numbers.`;
                         description: pathDescription
                     },
                     line: {
-                        type: 'number',
+                        type: 'integer',
+                        minimum: 1,
                         description: isZh ? '符号所在的行号（1-based）' : 'Line number (1-based) where the symbol is located'
                     },
                     column: {
-                        type: 'number',
+                        type: 'integer',
+                        minimum: 1,
                         description: isZh
                             ? '符号起始的列号（1-based）。未指定时使用第 1 列。'
                             : 'Column number (1-based) where the symbol starts. If not specified, uses column 1.'

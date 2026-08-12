@@ -226,8 +226,8 @@ export const toolMeta: Record<string, ToolMeta> = {
     descriptionDynamic: true,
     parameters: {
       "path": {"type":"string","required":true},
-      "line": {"type":"number","required":true},
-      "column": {"type":"number"},
+      "line": {"type":"integer","required":true},
+      "column": {"type":"integer"},
       "symbol": {"type":"string"},
     },
     parametersDynamic: true,
