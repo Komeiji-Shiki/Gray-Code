@@ -7,6 +7,8 @@
 -->
 ## [Unreleased]
 
+## [1.5.2] - 2026-08-12
+
 ### Fixed
   - 子代理运行时长上限可配置：新增全局配置 `defaultMaxRuntimeSeconds`（秒，-1 表示无限制，默认1800 = 30 分钟）——per-agent 未单独配置 `maxRuntime` 时不再硬编码 30 分钟，而是继承该全局默认值（per-agent 已配置的 `maxRuntime` 仍优先）；前端子代理设置新增「默认最大运行时间（秒）」输入框（-1 或 >=1 合法，0 非法），长任务可设为 -1 无限制。
   - 修复子代理「默认最大运行时间」设置面板失效：`subagents.list` 未返回 `defaultMaxRuntimeSeconds`（界面加载不回显已保存值）且 `subagents.updateGlobalConfig` 未处理该字段（保存被静默丢弃，此前仅手动编辑配置文件才生效）。现 `listSubAgents` 返回该字段（默认 1800），`updateGlobalConfig` 按与 `queueTimeoutSeconds` 一致的口径校验（-1 或 >=1 整数，0 非法）写入配置；子代理工具描述中的运行时长限制兜底同步跟随全局默认值（此前硬编码 1800，与实际执行不一致）。
@@ -35,7 +37,6 @@
   - 测试：`vscode` mock 补齐 `env`（`ui.language` 默认 `'auto'` 后 `PromptManager.getUserLanguage` 的 auto 分支在单测中不再抛 TypeError）；新增 `workspaceRealpath`、`InputArea`、`toolResponseCache`、`queueSendNowCancelError` 等回归用例。
   - 测试：`vscode` mock 补齐 `env`（`ui.language` 默认 `'auto'` 后 `PromptManager.getUserLanguage` 的 auto 分支在单测中不再抛 TypeError）；新增 `workspaceRealpath`、`InputArea`、`toolResponseCache`、`queueSendNowCancelError` 等回归用例。
   - 合并审查修复：子代理排队超时定时器 clamp 到 `setTimeout` 上限（2^31-1 ms，约 24.8 天）——超出该值的 `queueTimeoutSeconds` 会被 Node 当作 1ms 立即触发，导致长排队超时被误判为立即失败，新增溢出防护回归用例；`toolResponseCache` 满员时覆盖更新已有 key 不再误淘汰最旧条目（Map.set 更新不改变迭代序，仅新增 key 且已满员才淘汰），新增单条/批量覆盖更新回归用例。
-## [1.5.1]
 ## [1.5.1]
 
 ### Added
