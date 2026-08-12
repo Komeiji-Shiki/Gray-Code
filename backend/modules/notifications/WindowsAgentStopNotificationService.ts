@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { t } from '../../i18n'
 import type { SettingsManager } from '../settings'
-import { VSCodeNotificationAdapter } from './WindowsToastAdapter'
+import { NodeNotifierWindowsToastAdapter } from './WindowsToastAdapter'
 import { renderWindowsAgentStopTemplate } from './templateRenderer'
 import { deriveWindowsAgentStopWindowTitle } from './windowTitle'
 import type {
@@ -15,6 +15,8 @@ import type {
   WindowsToastShowResult
 } from './types'
 import { Logger } from '../../core/logger'
+import { focusVSCodeWindow } from './focusWindow'
+import type { FocusWindowFunction } from './focusWindow'
 
 const log = Logger.get('WindowsAgentStopNotification')
 const APP_NAME = 'GrayCode'
@@ -57,6 +59,7 @@ export interface WindowsAgentStopNotificationServiceOptions {
     listener: (state: { focused: boolean }) => void
   ) => { dispose: () => void }
   executeCommand?: (command: string) => Promise<unknown> | Thenable<unknown>
+  focusWindow?: FocusWindowFunction
   logger?: Pick<Console, 'warn' | 'error'>
   dedupeTtlMs?: number
 }
@@ -108,6 +111,7 @@ export class WindowsAgentStopNotificationService {
     listener: (state: { focused: boolean }) => void
   ) => { dispose: () => void }
   private readonly executeCommand: (command: string) => Promise<unknown> | Thenable<unknown>
+  private readonly focusWindow: FocusWindowFunction
   private readonly logger: Pick<Console, 'warn' | 'error'>
   private readonly dedupeTtlMs: number
   private readonly dedupeByKey = new Map<string, number>()
@@ -116,11 +120,12 @@ export class WindowsAgentStopNotificationService {
   private windowStateDisposable?: { dispose: () => void }
 
   constructor(options: WindowsAgentStopNotificationServiceOptions) {
-    this.adapter = options.adapter ?? new VSCodeNotificationAdapter()
+    this.adapter = options.adapter ?? new NodeNotifierWindowsToastAdapter()
     this.platform = options.platform ?? process.platform
     this.getWindowState = options.getWindowState ?? (() => vscode.window.state)
     this.onDidChangeWindowState = options.onDidChangeWindowState ?? vscode.window.onDidChangeWindowState
     this.executeCommand = options.executeCommand ?? ((command: string) => vscode.commands.executeCommand(command))
+    this.focusWindow = options.focusWindow ?? focusVSCodeWindow
     this.logger = options.logger ?? console
     this.dedupeTtlMs = options.dedupeTtlMs ?? 5 * 60 * 1000
     this.settingsManager = options.settingsManager
@@ -299,6 +304,7 @@ export class WindowsAgentStopNotificationService {
     try {
       log.debug('notification_click_execute_open_chat')
       await this.executeCommand('graycode.openChat')
+      await this.focusWindow()
       log.debug('open_chat_executed')
     } catch (error) {
       this.logger.error('[windows-agent-stop-notification] Failed to focus chat view:', error)

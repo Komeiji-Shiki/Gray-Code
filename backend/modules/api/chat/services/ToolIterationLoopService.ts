@@ -112,7 +112,6 @@ export const MAX_ITERATIONS_HARD_CAP = 10000;
 function isExpectedToolExecutionError(err: unknown): err is ChannelError {
     return err instanceof ChannelError;
 }
-
 function shouldStartToolDuringModelStream(
     call: FunctionCallInfo,
     toolExecutionService: ToolExecutionService,
@@ -1324,6 +1323,12 @@ export class ToolIterationLoopService {
             if (streamingToolPromises.size > 0) {
                 // 等待循环内必须有 abort 检查：若某工具不响应 abortSignal 且永不结束，
                 // 无检查的 waitForNextSettlement 会让整个请求永久挂起，停止按钮失效。
+                // 与 abort 事件做 race，取消时立即退出等待循环。
+                // 注意：此处不设超时兜底（曾加过固定窗口，误杀正常慢工具后已移除）——
+                // 工具执行层自身保证最终落定：execute_command 受 timeout 参数约束且有
+                // SIGTERM→SIGKILL 升级，MCP 请求有默认 30s 超时，show_windows_notification
+                // 等待用户点击后 resolve；固定窗口会把仍在正常执行的慢工具（如 MCP 工具）
+                // 误判为失败占位，且真实结果随后到达时已结算的占位无法被覆盖，副作用重复。
                 while (earlyToolProgressQueue.hasPending() && !abortSignal?.aborted) {
                     const readyStatuses = drainSettledEarlyToolStatuses();
                     if (readyStatuses.length > 0) {

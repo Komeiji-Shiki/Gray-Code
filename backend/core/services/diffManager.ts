@@ -643,12 +643,19 @@ export class DiffManager {
     private rejectingDiffIds: Set<string> = new Set();
 
     /**
-     * 预热中的目标文档（uri → openTextDocument promise）。
-     * PERF：首次打开 diff 视图时 openTextDocument 需读盘 + 触发语言服务初始化，
-     * 造成「预览已出现但 UI 卡顿」；在 hunk 应用期间提前发起即可隐藏该成本。
-     * 使用后即删（见 showDiffViewUnlocked），失败时亦移除以便重试。
+     * 预热中的 Diff 两侧文档（uri → openTextDocument promise）。
+     * PERF：真实目标文档与 gemini-diff-original 虚拟原文档都要提前打开；只预热右侧时，
+     * 首个 Diff 仍会在 vscode.diff 内为左侧文档初始化内容提供器、语言模式与 Diff 模型，
+     * 表现为编辑器外壳已经出现但工具状态仍停顿。使用后即删，失败时允许 fallback 重试。
      */
     private prewarmPromises: Map<string, Promise<vscode.TextDocument | undefined>> = new Map();
+
+    /**
+     * 单个 Diff 的写入就绪屏障（checkpoint 完成 + deferred 写锁获取）。
+     * createPendingDiff、自动确认、手动接受/拒绝和保存事件必须复用同一个 Promise：
+     * 状态可以在屏障完成前发布，但任何真正写盘/回滚都不能越过它，也不能重复重入加锁。
+     */
+    private writeReadyPromises: Map<string, Promise<void>> = new Map();
 
     /**
      * Diff 动作全局串行队列。
@@ -1056,34 +1063,61 @@ export class DiffManager {
         return { deletePercent };
     }
 
+    private getOriginalContentUri(diff: Pick<PendingDiff, 'id' | 'filePath'>): vscode.Uri {
+        return vscode.Uri.parse(`gemini-diff-original:${diff.id}/${path.basename(diff.filePath)}`);
+    }
+
+    private getPrewarmKey(uri: vscode.Uri): string {
+        const serialized = uri.toString();
+        // 单元测试/受限 mock 可能只提供普通对象并继承 Object#toString；生产 URI 不走此分支。
+        return serialized === '[object Object]'
+            ? `${uri.scheme || ''}:${uri.fsPath || uri.path || ''}`
+            : serialized;
+    }
+
     /**
-     * PERF：预热目标文档——提前发起 openTextDocument（读盘 + 语言服务初始化），
-     * 与 hunk 应用 / diff 警戒检查等耗时操作并行，避免首次打开 diff 视图时
-     * 渲染进程一次性成本（grammar 加载 / tokenize）造成的 UI 卡顿。
+     * PERF：预热 Diff 文档——提前发起 openTextDocument（读盘/内容提供 + 语言服务初始化），
+     * 与 hunk 应用、diff 警戒检查等耗时操作并行。真实目标文档和虚拟原文档均走此入口。
      *
-     * fire-and-forget：失败静默移除缓存，showDiffViewUnlocked 会 fallback 重新打开；
-     * 同一 uri 重复调用直接跳过（幂等）。测试/受限环境下 openTextDocument 不可用
-     * 时静默降级，不影响原始路径。
+     * fire-and-forget：失败静默移除缓存，消费时会 fallback 重新打开；同一 uri 幂等。
      */
     public prewarmDocument(fileUri: vscode.Uri): void {
-        const key = fileUri.toString();
+        const key = this.getPrewarmKey(fileUri);
         if (this.prewarmPromises.has(key)) {
             return;
         }
         try {
             const raw = vscode.workspace.openTextDocument(fileUri);
-            // Promise.resolve 兜底：mock/受限环境下 openTextDocument 可能返回非 Promise
-            const p = Promise.resolve(raw).then(
+            let promise!: Promise<vscode.TextDocument | undefined>;
+            promise = Promise.resolve(raw).then(
                 (doc) => doc,
                 () => {
-                    // 打开失败：移除缓存，showDiffViewUnlocked 走 fallback 重试
-                    this.prewarmPromises.delete(key);
+                    // 仅删除当前失败的 Promise，避免旧请求迟到失败时误删同 URI 的新预热。
+                    if (this.prewarmPromises.get(key) === promise) {
+                        this.prewarmPromises.delete(key);
+                    }
                     return undefined;
                 }
             );
-            this.prewarmPromises.set(key, p);
+            this.prewarmPromises.set(key, promise);
         } catch {
-            // 环境不支持（测试 mock 缺失等）：静默跳过，showDiffView 走原始路径
+            // 环境不支持（测试 mock 缺失等）：消费时走原始打开路径
+        }
+    }
+
+    private async consumePrewarmedDocument(fileUri: vscode.Uri): Promise<vscode.TextDocument> {
+        const key = this.getPrewarmKey(fileUri);
+        const promise = this.prewarmPromises.get(key);
+        try {
+            const prewarmed = await promise;
+            return (prewarmed && vscode.workspace.textDocuments.includes(prewarmed))
+                ? prewarmed
+                : await vscode.workspace.openTextDocument(fileUri);
+        } finally {
+            // 仅消费自己观察到的 Promise；同 URI 若已开始新预热，不得误删。
+            if (promise && this.prewarmPromises.get(key) === promise) {
+                this.prewarmPromises.delete(key);
+            }
         }
     }
 
@@ -1172,8 +1206,10 @@ export class DiffManager {
         const shouldSkipDiffView = shouldDirectApplyConfirmedToolDiff ||
             (fullConfig?.autoSave && fullConfig?.autoApplyWithoutDiffView);
 
-        // 无条件注册虚拟文档内容（只是 Map 写入；cleanup 的 removeContent 已处理回收）
+        // 无条件注册并预热虚拟原文档。上一轮只预热真实目标文档，首个 vscode.diff
+        // 仍需冷启动左侧内容提供器/语言模式/Diff 模型，界面外壳出现后仍可能停顿。
         this.contentProvider.setContent(id, originalContent);
+        this.prewarmDocument(this.getOriginalContentUri(pendingDiff));
 
         // 如果有块信息且不跳过 diff 视图，懒注册 CodeLens 会话
         if (blocks && !shouldSkipDiffView) {
@@ -1206,10 +1242,12 @@ export class DiffManager {
             });
         }
 
+        let pendingStatePublished = false;
+
         // 根据配置决定是否显示 diff 视图
         if (shouldSkipDiffView) {
-            // 跳过 diff 视图：先取写盘锁（含等待 checkpoint 完成），再直接写入并保存
-            await this.acquireWriteLockForDiff(pendingDiff);
+            // 跳过 diff 视图：先完成 checkpoint + 写锁屏障，再直接写入并保存
+            await this.ensureDiffWriteReady(pendingDiff);
             await this.directApplyAndSave(pendingDiff);
         } else {
             // 显示 diff 视图
@@ -1221,21 +1259,31 @@ export class DiffManager {
                     error
                 );
             }
-            // PERF-CP：预览先行——视图出现后再等待 checkpoint 完成并获取写盘锁，
-            // 审阅期间持有（与入口持锁语义一致），diff 终结时释放。
-            await this.acquireWriteLockForDiff(pendingDiff);
+
+            if (pendingDiff.status === 'pending') {
+                // 关键时序：预览出现后立即发布 pending 并启动自动确认，不再让首个共享
+                // checkpoint 挡在 UI/50ms 倒计时之前。真正接受、拒绝、保存仍统一等待
+                // ensureDiffWriteReady，因此这里只提前可见状态，不会提前写盘。
+                if (currentSettings.autoSave) {
+                    this.scheduleAutoSave(id);
+                }
+                this.notifyStatusChange();
+                pendingStatePublished = true;
+            }
+
+            // PERF-CP：checkpoint 与预览并发；这里仍等待同一个写入就绪 Promise，
+            // 保留 createPendingDiff 的冲突错误传播语义。提前触发的自动/手动动作也会
+            // 复用此 Promise，不会重复获取写锁。
+            await this.ensureDiffWriteReady(pendingDiff);
         }
 
-        // 如果开启自动保存且 diff 仍处于pending 状态，设置定时器
-        if (pendingDiff.status === 'pending') {
-            const currentSettings = this.getSettings();
+        // 直接应用等未提前发布的路径只在仍 pending 时补发一次。
+        if (!pendingStatePublished && pendingDiff.status === 'pending') {
             if (currentSettings.autoSave) {
                 this.scheduleAutoSave(id);
             }
+            this.notifyStatusChange();
         }
-
-        // 通知状态变化
-        this.notifyStatusChange();
 
         return pendingDiff;
     }
@@ -1252,18 +1300,47 @@ export class DiffManager {
     }
 
     /**
-     * PERF-CP：deferred 模式下获取写盘锁（入口未持锁）。
+     * 返回单个 Diff 的共享写入就绪 Promise。
      *
-     * 先等待 checkpoint 完成（写入前存档屏障），再尝试获取目标路径锁；
-     * 冲突时把 diff 收敛为 rejected 并抛错（工具结果呈现失败，不悬挂）；
-     * 缺省无 lockHolder（非 deferred 模式）时为零开销 no-op。
-     * 锁由调用方持有到 diff 终结（cleanup 释放），与旧入口持锁语义对齐。
+     * 状态发布与自动确认可以先发生，但 checkpoint 完成和 deferred 写锁获取必须只执行一次；
+     * 否则 createPendingDiff 与 50ms 自动确认同时等待后会对同一 holder 重入加锁，终结时只
+     * release 一次便会残留锁。所有写盘/回滚入口都通过本方法汇合。
+     */
+    private ensureDiffWriteReady(diff: PendingDiff): Promise<void> {
+        if (diff.lockAcquired) {
+            return Promise.resolve();
+        }
+
+        const existing = this.writeReadyPromises.get(diff.id);
+        if (existing) {
+            return existing;
+        }
+
+        const promise = this.acquireWriteLockForDiff(diff);
+        this.writeReadyPromises.set(diff.id, promise);
+        const clear = () => {
+            if (this.writeReadyPromises.get(diff.id) === promise) {
+                this.writeReadyPromises.delete(diff.id);
+            }
+        };
+        // 同时注册成功/失败清理，返回的 then Promise 不会 reject，避免 fire-and-forget 未处理拒绝。
+        void promise.then(clear, clear);
+        return promise;
+    }
+
+    /**
+     * PERF-CP：等待 checkpoint 后获取 deferred 写盘锁。
+     * 冲突时把 diff 收敛为 rejected 并抛错；缺省无 lockHolder 时只执行 checkpoint 屏障。
      */
     private async acquireWriteLockForDiff(diff: PendingDiff): Promise<void> {
+        await this.awaitCheckpointBeforeWrite(diff);
+        // 等待期间可能已被取消/拒绝；此时绝不能迟到加锁，否则 cleanup 已执行而锁无人释放。
+        if (diff.status !== 'pending' || diff.lockAcquired) {
+            return;
+        }
         if (!diff.lockHolder) {
             return;
         }
-        await this.awaitCheckpointBeforeWrite(diff);
         const result = fileWriteLockManager.tryAcquire([diff.absolutePath], diff.lockHolder);
         if (!result.acquired) {
             const conflictText = result.conflicts
@@ -1371,6 +1448,20 @@ export class DiffManager {
      * 确认单个块
      */
     public async confirmBlock(sessionId: string, blockIndex: number): Promise<void> {
+        const diff = this.pendingDiffs.get(sessionId);
+        if (!diff || diff.status !== 'pending') {
+            return;
+        }
+        try {
+            // 状态可能在首个 checkpoint 完成前已发布；先在全局动作队列外等待共享屏障，
+            // 避免块级操作占住队列，阻塞取消与其他 Diff 动作。
+            await this.ensureDiffWriteReady(diff);
+        } catch {
+            return;
+        }
+        if (diff.status !== 'pending') {
+            return;
+        }
         await this.runDiffActionSerialized(() => this.confirmBlockUnlocked(sessionId, blockIndex));
     }
 
@@ -1396,6 +1487,18 @@ export class DiffManager {
      * 拒绝单个块
      */
     public async rejectBlock(sessionId: string, blockIndex: number): Promise<void> {
+        const diff = this.pendingDiffs.get(sessionId);
+        if (!diff || diff.status !== 'pending') {
+            return;
+        }
+        try {
+            await this.ensureDiffWriteReady(diff);
+        } catch {
+            return;
+        }
+        if (diff.status !== 'pending') {
+            return;
+        }
         await this.runDiffActionSerialized(() => this.rejectBlockUnlocked(sessionId, blockIndex));
     }
 
@@ -1643,14 +1746,7 @@ export class DiffManager {
         // 用 WorkspaceEdit 而非 showTextDocument + editor.edit：
         // - 不需要打开可见的文件本体 tab（后面只展示 diff tab），
         //   避免多开一个 tab 并把焦点从聊天输入框抢走（用户可能正在打字）
-        // PERF：优先复用预热打开的文档（openTextDocument 读盘/语言服务初始化已提前完成）；
-        // 文档已被关闭或预热失败时 fallback 重新打开。使用后即删缓存，避免 stale 引用。
-        const prewarmKey = fileUri.toString();
-        const prewarmed = await this.prewarmPromises.get(prewarmKey);
-        const document = (prewarmed && vscode.workspace.textDocuments.includes(prewarmed))
-            ? prewarmed
-            : await vscode.workspace.openTextDocument(fileUri);
-        this.prewarmPromises.delete(prewarmKey);
+        const document = await this.consumePrewarmedDocument(fileUri);
         if (!isPending()) {
             return;
         }
@@ -1698,10 +1794,16 @@ export class DiffManager {
             return;
         }
 
-        // 2. 创建原始内容的虚拟URI
-        const originalUri = vscode.Uri.parse(`gemini-diff-original:${diff.id}/${path.basename(diff.filePath)}`);
+        // 2. 复用提前打开的原始内容虚拟文档。目标文档预热只覆盖右侧；左侧若留到
+        // vscode.diff 内部首次打开，仍会在编辑器外壳出现后触发内容提供器与 Diff 模型冷启动。
+        const originalUri = this.getOriginalContentUri(diff);
+        await this.consumePrewarmedDocument(originalUri);
+        if (!isPending()) {
+            await restoreToOriginalBestEffort();
+            return;
+        }
 
-        // 4. 打开 diff 视图
+        // 3. 打开 diff 视图
         const title = t('tools.file.diffManager.diffTitle', { filePath: diff.filePath });
         if (!isPending()) {
             await restoreToOriginalBestEffort();
@@ -1740,11 +1842,10 @@ export class DiffManager {
             const currentSettings = this.getSettings();
             const isManualOrAutoSave = currentSettings.autoSave || event.reason === vscode.TextDocumentSaveReason.Manual;
 
-            // checkpoint 写盘屏障：手动与非手动两条路径都必须等待 checkpoint 完成后再保存。
-            // 非手动分支原本直接放行（只记标记），这里统一补上 event.waitUntil，
-            // 保证任何路径都不会在 checkpoint 未落盘时把内容写进文件。
-            if (diff.checkpointReady) {
-                event.waitUntil(diff.checkpointReady);
+            // 预览可在 checkpoint/写锁就绪前发布；只有确实存在屏障时才挂 waitUntil，
+            // 保持普通（入口已持锁、无 checkpoint）路径零额外 Promise。
+            if (diff.checkpointReady || (diff.lockHolder && !diff.lockAcquired)) {
+                event.waitUntil(this.ensureDiffWriteReady(diff));
             }
 
             if (isManualOrAutoSave) {
@@ -1916,6 +2017,17 @@ export class DiffManager {
      * @param isAutoSave 是否为自动保存（自动保存时强制使用AI 内容；手动接受时尽量保留用户编辑）
      */
     public async acceptDiff(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
+        const diff = this.pendingDiffs.get(id);
+        if (!diff || diff.status !== 'pending') {
+            return false;
+        }
+        try {
+            // 在进入全局动作队列前等待共享屏障，避免首个 checkpoint 较慢时占住整条队列，
+            // 也保证提前发布状态后到来的自动/手动接受不会绕过 deferred 写锁。
+            await this.ensureDiffWriteReady(diff);
+        } catch {
+            return false;
+        }
         return this.runDiffActionSerialized(() => this.acceptDiffUnlocked(id, closeTab, isAutoSave));
     }
 
@@ -1928,9 +2040,9 @@ export class DiffManager {
         this.acceptingDiffIds.add(id);
 
         try {
-            // checkpoint 写盘屏障：单点覆盖下方全部保存分支（staging + 三分支写盘），
-            // checkpoint 未完成（或失败）前不触碰编辑器与磁盘，避免与盘点并发竞态。
-            await this.awaitCheckpointBeforeWrite(diff);
+            // checkpoint + deferred 写锁共享屏障：即使状态已经提前发布、用户立即点击接受，
+            // 也必须等待 createPendingDiff 启动的同一个 Promise，不能重复重入加锁。
+            await this.ensureDiffWriteReady(diff);
 
             if (diff.status !== 'pending') {
                 return false;
@@ -2251,6 +2363,15 @@ export class DiffManager {
      * 拒绝 diff（放弃修改）
      */
     public async rejectDiff(id: string): Promise<boolean> {
+        const diff = this.pendingDiffs.get(id);
+        if (!diff || diff.status !== 'pending') {
+            return false;
+        }
+        try {
+            await this.ensureDiffWriteReady(diff);
+        } catch {
+            return false;
+        }
         return this.runDiffActionSerialized(() => this.rejectDiffUnlocked(id));
     }
 
@@ -2263,9 +2384,9 @@ export class DiffManager {
         this.rejectingDiffIds.add(id);
 
         try {
-            // checkpoint 写盘屏障：恢复原文也是写盘，checkpoint 未完成（或失败）前不得恢复，
-            // 避免把文件回滚到盘点未覆盖的状态；失败时由调用方走现有收敛（转 rejected）。
-            await this.awaitCheckpointBeforeWrite(diff);
+            // checkpoint + deferred 写锁共享屏障：拒绝恢复原文同样属于写盘，且提前发布状态后
+            // 可能在 createPendingDiff 返回前触发，必须复用同一个就绪 Promise。
+            await this.ensureDiffWriteReady(diff);
 
             if (diff.status !== 'pending') {
                 return false;
@@ -2342,8 +2463,16 @@ export class DiffManager {
             this.autoSaveTimers.delete(id);
         }
         this.diffSessions.get(id)?.clearAutoSave();
+        this.writeReadyPromises.delete(id);
 
         this.contentProvider.removeContent(id);
+        const diff = this.pendingDiffs.get(id);
+        if (diff) {
+            // 未进入/未完成 showDiffView（direct apply、dirty 拒绝、提前取消）时也要清理两侧
+            // 预热缓存；Promise 本身可自然落定，Map 不再持有它。
+            this.prewarmPromises.delete(this.getPrewarmKey(vscode.Uri.file(diff.absolutePath)));
+            this.prewarmPromises.delete(this.getPrewarmKey(this.getOriginalContentUri(diff)));
+        }
 
         // 移除 CodeLens 会话（会自动触发相关 UI 刷新）
         try {
@@ -2353,7 +2482,6 @@ export class DiffManager {
         }
 
         const tempDir = path.join(require('os').tmpdir(), 'gemini-diff');
-        const diff = this.pendingDiffs.get(id);
         if (diff) {
             // PERF-CP：终结时释放写盘锁（deferred 模式审阅期间持有）
             if (diff.lockAcquired && diff.lockHolder) {
@@ -2757,6 +2885,8 @@ export class DiffManager {
         this.diffSessions.clear();
 
         this.nonManualSaveFlushed.clear();
+        this.prewarmPromises.clear();
+        this.writeReadyPromises.clear();
 
         if (this.providerDisposable) {
             this.providerDisposable.dispose();

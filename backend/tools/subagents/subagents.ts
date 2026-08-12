@@ -194,6 +194,14 @@ function getGlobalDefaultMaxIterations(): number {
 }
 
 /**
+ * 全局默认运行时间上限（秒）。
+ * 与 runLoop 的解析链保持一致：per-agent maxRuntime → 全局 defaultMaxRuntime → 1800。
+ */
+function getGlobalDefaultMaxRuntime(): number {
+    return getSubAgentsSettings().defaultMaxRuntime ?? 1800;
+}
+
+/**
  * 统一判断是否存在可用子代理（含动态 General Worker）。
  *
  * 修改原因：工具声明过滤只看 Registry 已启用计数，General Worker 是运行时
@@ -232,7 +240,7 @@ function generateAgentNameDescription(): string {
         const tools = getAgentAvailableTools(config);
         const toolsStr = formatToolsList(tools, 8);
         const maxIterStr = formatLimit(config.maxIterations, getGlobalDefaultMaxIterations());
-        const maxRuntimeStr = formatLimit(config.maxRuntime, DEFAULT_MAX_RUNTIME_S);
+        const maxRuntimeStr = formatLimit(config.maxRuntime, getGlobalDefaultMaxRuntime());
         entries.push(`  - "${config.name}": ${config.description || 'No description'}\n    Tools (${tools.length}): ${toolsStr}\n    Limits: max ${maxIterStr} iterations, max ${maxRuntimeStr}s runtime`);
     }
 

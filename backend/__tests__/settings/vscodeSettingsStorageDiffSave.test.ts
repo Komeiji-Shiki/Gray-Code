@@ -21,8 +21,8 @@ function makeConfig(initial: Record<string, unknown> = {}, workspaceInitial: Rec
     const workspaceStored = new Map<string, unknown>(Object.entries(workspaceInitial));
     return {
         _stored: stored,
-        // get 保留 workspace 兜底语义（与 vscode 合并值口径一致）；load 已改用 inspect 优先 Global
-        get: jest.fn((key: string) => stored.get(key) ?? workspaceStored.get(key)),
+        // get 模拟 VS Code 合并值口径（workspaceFolder > workspace > global）
+        get: jest.fn((key: string) => workspaceStored.get(key) ?? stored.get(key)),
         inspect: jest.fn((key: string) => {
             if (!stored.has(key) && !workspaceStored.has(key)) {
                 return undefined;
@@ -33,8 +33,13 @@ function makeConfig(initial: Record<string, unknown> = {}, workspaceInitial: Rec
                 workspaceFolderValue: undefined
             };
         }),
-        update: jest.fn(async (key: string, value: unknown) => {
-            stored.set(key, value);
+        // update 按目标层级写入（与真实 VS Code 一致：Workspace 写工作区层，其余写 Global）
+        update: jest.fn(async (key: string, value: unknown, target?: vscode.ConfigurationTarget) => {
+            if (target === vscode.ConfigurationTarget.Workspace) {
+                workspaceStored.set(key, value);
+            } else {
+                stored.set(key, value);
+            }
         })
     };
 }
@@ -234,16 +239,61 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
         });
     });
 
-    // ===== 回归：workspace 级旧 graycode.* 不吞设置页修改（save 写 Global，load 优先 Global） =====
+    // ===== 回归：workspace 级旧 graycode.* 不吞设置页修改（save 跟随层级写入，读保持合并值） =====
+    // 读侧保持 VS Code 合并值语义（workspace > global）：工作区显式配置优先；设置页修改
+    // 由 save 的层级跟随保证——workspace 层已有值时写入 Workspace 层，读回必然是新值。
 
-    test('workspace 有旧值 + 用户已改 Global：load 读回 Global 而非 workspace 旧值', async () => {
-        // 场景：.vscode/settings.json 有旧 graycode.toolsConfig；用户在设置页修改后 save 写入
-        // Global（新旧值不同）。load 若读合并值会取 workspace 旧值，修改“看起来丢失”；
-        // 修复后读优先 Global，设置页修改一定生效。
-        const workspaceOld = { write_file: { maxSizeKB: 100 } };
-        const globalNew = { write_file: { maxSizeKB: 999 } };
+    test('workspace 有旧值时 save 跟随写入 Workspace 层（设置页修改不被吞）', async () => {
+        // 场景：.vscode/settings.json 有旧 graycode.toolsConfig；用户在设置页修改后 save。
+        // 旧实现一律写 Global，读合并值时被 workspace 旧值吞掉；现写入 Workspace 层覆盖旧值。
         const loadedConfig = makeConfig(
-            { toolsConfig: globalNew, toolsEnabled: {} },
+            { toolsEnabled: {} },
+            { toolsConfig: { write_file: { maxSizeKB: 100 } } }
+        );
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const storage = new VSCodeSettingsStorage();
+        await storage.load();
+
+        await storage.save({
+            toolsEnabled: {},
+            toolsConfig: { write_file: { maxSizeKB: 999 } },
+        } as any);
+
+        expect(loadedConfig.update).toHaveBeenCalledWith(
+            'toolsConfig',
+            { write_file: { maxSizeKB: 999 } },
+            vscode.ConfigurationTarget.Workspace
+        );
+    });
+
+    test('workspace 有旧值 + 设置页修改保存后 load 读回新值', async () => {
+        const loadedConfig = makeConfig(
+            { toolsEnabled: {} },
+            { toolsConfig: { write_file: { maxSizeKB: 100 } } }
+        );
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const storage = new VSCodeSettingsStorage();
+        await storage.load();
+
+        await storage.save({
+            toolsEnabled: {},
+            toolsConfig: { write_file: { maxSizeKB: 999 } },
+        } as any);
+
+        // 模拟重启：新实例从同一持久化源读回，必须看到设置页修改后的新值（workspace 层已更新）
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const restarted = new VSCodeSettingsStorage();
+        const loaded = await restarted.load();
+        expect((loaded as any).toolsConfig).toEqual({ write_file: { maxSizeKB: 999 } });
+    });
+
+    test('workspace 显式配置优先于 Global（VS Code 惯例保留）', async () => {
+        // 用户手动在 .vscode/settings.json 配置 graycode.toolsConfig（global 也有旧值）：
+        // 读合并值必须取 workspace 值，而不是被 Global 覆盖。
+        const workspaceOld = { write_file: { maxSizeKB: 100 } };
+        const globalOld = { write_file: { maxSizeKB: 50 } };
+        const loadedConfig = makeConfig(
+            { toolsConfig: globalOld, toolsEnabled: {} },
             { toolsConfig: workspaceOld }
         );
         (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
@@ -251,10 +301,20 @@ describe('VSCodeSettingsStorage.save 只写变更键', () => {
 
         const loaded = await storage.load();
 
-        expect((loaded as any).toolsConfig).toEqual(globalNew);
+        expect((loaded as any).toolsConfig).toEqual(workspaceOld);
     });
 
-    test('Global 未设置时 workspace 值仍作为 fallback 生效', async () => {
+    test('无 workspace 值时 save 仍写 Global', async () => {
+        const loadedConfig = makeConfig({ toolsEnabled: {} });
+        (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);
+        const storage = new VSCodeSettingsStorage();
+
+        await storage.save({ toolsEnabled: {}, maxToolIterations: 20 } as any);
+
+        expect(loadedConfig.update).toHaveBeenCalledWith('maxToolIterations', 20, vscode.ConfigurationTarget.Global);
+    });
+
+    test('Global 未设置时 workspace 值仍生效', async () => {
         const workspaceValue = { write_file: { maxSizeKB: 100 } };
         const loadedConfig = makeConfig({ toolsEnabled: {} }, { toolsConfig: workspaceValue });
         (vscode.workspace as any).getConfiguration = jest.fn(() => loadedConfig);

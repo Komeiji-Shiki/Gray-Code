@@ -2,8 +2,6 @@
 
 <!--
   ⚠️ 维护提醒：`## [Unreleased]
-
-## [1.7.15dev] - 2026-08-12
 ### Fixed：远程控制 V7.2——图标零面积路径修复（plus/close/check/chevronDown/folderUp）+ 渠道表单死控件 + 思考关闭开关 + 分页/竞态加固
   - **修复图标渲染缺失（用户报告：关闭对话 ✕、新建对话 ＋、关闭设置 ✕ 及其他图标不可见）**：根因是 ICONS 注册表中 plus/close（及 check/chevronDown/folderUp）使用零面积线段路径（如 M12 5v14M5 12h14），而全部 SVG 仅设 fill="currentColor" 无 stroke——fill 对零面积路径不产生任何像素，图标在所有配色模式下都不可见（真实 Chromium 像素级验证）。已全部改为 Material 实心闭合路径（plus/close 同时修正 remoteControlUi.ts 内 5 处静态内联 SVG），与其余 53 个填充型图标一致；新增回归断言（静态 ✕/＋ 与动态 tab-close/tab-add 路径必须含闭合 z）。
   - **浅色主题变量补齐**：@media (prefers-color-scheme: light) 的 :root 块此前缺失 --vscode-icon-foreground、--vscode-toolbar-hoverBackground、--vscode-toolbar-activeBackground、--vscode-focusBorder、--vscode-editor-selectionBackground、--vscode-scrollbarSlider-*、--vscode-button-foreground、--vscode-inputValidation-warningForeground、--vscode-tab-activeBorderTop 共 10 个变量（浅色下回退深色值导致图标/交互色与白色背景混淆）；同时补齐从未定义的 --vscode-textCodeBlock-background/--vscode-editorHoverWidget-background（此前仅靠 fallback）。
@@ -23,6 +21,16 @@
 -->
 
 ## [Unreleased]
+
+### Merged：合入上游 7df7be8c..e12da760 共 8 个 commits（PR#37 链路补齐/通知聚焦/Windows toast/diff 预热/settings 存储/tool-loop）
+  - **PR#37 链路补齐（e12da760）**：list 回显 + updateGlobalConfig 校验（-1 或正整数）+ 工具描述兜底跟随全局动态读取——适配到本地 defaultMaxRuntime 命名（不引入上游 defaultMaxRuntimeSeconds）；
+  - **通知系列**：点击通知后聚焦 VS Code 窗口 + toast 使用扩展自带图标（7e61d608）；Win32Focus.FocusWindow 组合拳绕过前台锁（c139b653）；换回 node-notifier 实现 Windows 系统 toast（c6491788）；
+  - **diff 预热增强（8e9eb585）**：预热扩展到虚拟原文档 + 写入就绪共享屏障 + pending 时序前置；
+  - **VSCodeSettingsStorage 修复（f65edbb8）**：读侧保持 VS Code 合并值语义（workspaceFolder > workspace > global），save 写入目标层级跟随（workspace 已有显式值写 Workspace 层，否则写 Global）——冲突合并保留本地 remoteControl 字段；
+  - **tool-loop（7e548b69）**：移除早启动工具等待超时兜底，恢复 abort race + 无限等待落定——与本地 PR#36 实现等价，合并保留本地实现；
+
+## [1.7.15dev] - 2026-08-12
+
 
 ### Fixed：手动总结多轮对话 STALE_RANGE 失败 + 自动总结在长工具轮下永远回退
   - **修复手动总结失败（用户报告「总结失败: 对话历史在总结期间发生变化」）**：多轮对话且最后一轮超预算（工具长回合）时，规划器轮内截断的切点必然位于最后一条真实用户消息之后，落盘侧 `markAndInsertSummarizedAtomically` 只对「唯一真实用户回合」放行、多轮一律判 STALE_RANGE 放弃写入——工具用得越多越容易复现。手动总结是用户主动行为（前端在等待响应期间禁止触发，无进行中的回合需要保护），放行开关扩展为对所有手动总结生效：允许把「最后一轮的前半段」纳入总结（首条用户消息锚点保护与越界保护不变，并发缩短历史仍 STALE 不落盘）；
