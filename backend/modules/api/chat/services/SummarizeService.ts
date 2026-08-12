@@ -919,6 +919,18 @@ export class SummarizeService {
             let estimatedTokens = perMessageTokens.reduce((sum, t) => sum + t, 0);
             let insertIndex = summarizeEndIndex;
 
+            // 规划锚点：当前回合起始真实用户消息（id + 绝对索引）。单轮长工具回合的轮内
+            // 截断切点会越过该消息（只标记其后的已完成工具前缀），原子落盘时以此锚点
+            // 校验总结生成期间没有新的真实用户输入（用户发新消息 = 锚点后移/替换 =
+            // 本次总结作废）。
+            let plannedCurrentUserMessage: { index: number; id?: string } | undefined;
+            for (let i = fullHistory.length - 1; i >= 0; i--) {
+                if (isRealUserMessage(fullHistory[i])) {
+                    plannedCurrentUserMessage = { index: i, id: fullHistory[i].id };
+                    break;
+                }
+            }
+
             // 超出了总结模型上下文：循环排除最后一对工具交互所在轮，重新估算直到装得下。
             // C-15：token 总和与逐条数组均增量维护，循环内直接按 insertIndex 游标在 fullHistory
             // 上扫描（不再每轮 fullHistory.slice() 重切，O(k·n) → O(n)），循环结束后只切片一次。
@@ -928,6 +940,14 @@ export class SummarizeService {
             // （整轮排除时为轮首之前、仅排除工具交互时在该交互之前），下一轮从该游标
             // 继续向前找即可，避免每轮从 insertIndex 全量回扫的 O(n²)。
             let toolScanCursor = insertIndex - 1;
+            // 轮内收缩仅对单轮历史（整个历史只有一个真实用户回合）启用：单轮长工具回合的
+            // 总结范围起点即当前轮轮首，整轮排除会清空范围，只能沿工具边界逐对收缩。
+            // 多轮历史在整轮排除无法继续时保持旧行为（CONTEXT_OVERFLOW → granular fallback），
+            // 避免把第一轮的用户输入也排除出总结范围（总结输入只剩用户消息 = 白烧一次总结调用）。
+            let realUserCount = 0;
+            for (let i = 0; i < fullHistory.length; i++) {
+                if (isRealUserMessage(fullHistory[i])) realUserCount++;
+            }
             while (estimatedTokens > summaryBudget.maxHistoryTokens) {
                 // 找到当前范围内最后一对 functionCall + functionResponse
                 let lastToolInteractionStart = -1;
@@ -962,8 +982,42 @@ export class SummarizeService {
 
                 const cutIndex = (roundStart >= 0 ? roundStart : lastToolInteractionStart) - summarizeInputStartIndex;
                 if (cutIndex <= 0) {
-                    // 排除后总结范围为空（仅剩的轮自身仍超限），无法再收缩
-                    break;
+                    if (realUserCount !== 1) {
+                        // 多轮历史：排除后总结范围为空（仅剩的轮自身仍超限），无法再收缩
+                        break;
+                    }
+                    // 整轮排除会清空总结范围（范围起点即当前轮轮首 = 单轮长工具回合）。
+                    // 改为轮内收缩：把「最后一对已完成工具交互」排除出总结范围，保留最新
+                    // 工具轮、总结更老前缀，直到装进总结模型输入预算。切点落在 functionCall
+                    // 消息上，FC+FR 同在保留区，配对完整不拆散。
+                    const intraCut = lastToolInteractionStart - summarizeInputStartIndex;
+                    if (intraCut <= 0) {
+                        // 连最后一对工具交互都在范围起点：无法再收缩
+                        break;
+                    }
+                    const prevIntraEnd = insertIndex;
+                    const newIntraEnd = summarizeInputStartIndex + intraCut;
+                    if (newIntraEnd >= prevIntraEnd) {
+                        // 防御：范围没有缩小
+                        break;
+                    }
+                    for (let i = intraCut; i < perMessageTokens.length; i++) {
+                        estimatedTokens -= perMessageTokens[i];
+                    }
+                    perMessageTokens.length = intraCut;
+                    insertIndex = newIntraEnd;
+                    // 下一轮扫描游标落在本次排除段之前（该工具交互的 functionCall 之前）
+                    toolScanCursor = intraCut - 1;
+                    this.log.warn('auto.context_overflow_intra_round_trimmed', {
+                        conversationId,
+                        estimatedTokens,
+                        maxHistoryTokens: summaryBudget.maxHistoryTokens,
+                        maxInputTokens: summaryBudget.maxInputTokens,
+                        fixedRequestTokens: summaryBudget.fixedRequestTokens,
+                        originalRange: `${summarizeInputStartIndex}-${prevIntraEnd}`,
+                        newRange: `${summarizeInputStartIndex}-${newIntraEnd}`
+                    });
+                    continue;
                 }
 
                 const prevEndIndex = insertIndex;
@@ -1203,7 +1257,9 @@ export class SummarizeService {
                 historyStartIndex,
                 insertIndex,
                 summaryContent,
-                previousSummarizedCount
+                previousSummarizedCount,
+                false,
+                plannedCurrentUserMessage
             );
 
             if (!replaceResult.ok) {
@@ -1306,9 +1362,15 @@ export class SummarizeService {
      * @param allowCoverLastRealUserRound 手动总结放行开关：整个历史只有一个真实用户回合
      *        （单轮）时，轮内截断的切点必然位于轮首 user 消息之后，insertIndex 恒大于
      *        lastRealUserMessageIndex。此时没有「当前回合」需要保护——用户主动总结就是要
-     *        覆盖这一轮的前半部分，允许落盘而不是放弃；自动总结保持严格 STALE（回合内
-     *        吞掉当前用户消息会毁掉回复上下文）。手动总结无论轮数一律放行：多轮场景的
-     *        intra_round 扩展切进最后一轮同样是用户主动总结的预期行为。
+     *        覆盖这一轮的前半部分，允许落盘而不是放弃；手动总结无论轮数一律放行：多轮
+     *        场景的 intra_round 扩展切进最后一轮同样是用户主动总结的预期行为。
+     *        自动总结默认保持严格 STALE；唯一例外是单轮长工具回合的轮内截断（见
+     *        plannedCurrentUserMessage）：切点越过锚点用户消息但该消息本身不标记（原文
+     *        保留发送），只压缩它之后已完成的工具前缀，模型仍能看到原始任务。
+     * @param plannedCurrentUserMessage 自动总结规划时最后一条真实用户消息的锚点
+     *        （{ index, id }）。仅当 insertIndex 越过锁内最新真实用户消息时用于校验：
+     *        锚点必须原样在位（id 一致、索引未后移，即总结期间没有新用户输入），否则
+     *        STALE_RANGE 放弃本次总结。
      * @returns ok=true 时 markedCount = 实际标记的消息数，insertIndex = 总结消息的插入位置
      *          （= 入参 insertIndex，不因首条用户消息保护而改变）；
      *          ok=false 时 code='STALE_RANGE'（历史已变化，本次总结放弃，不落盘）
@@ -1319,7 +1381,8 @@ export class SummarizeService {
         insertIndex: number,
         summaryContent: Content,
         baseSummarizedCount: number,
-        allowCoverLastRealUserRound = false
+        allowCoverLastRealUserRound = false,
+        plannedCurrentUserMessage?: { index: number; id?: string }
     ): Promise<
         | { ok: true; markedCount: number; insertIndex: number }
         | { ok: false; code: 'STALE_RANGE'; freshHistoryLength: number }
@@ -1359,13 +1422,29 @@ export class SummarizeService {
                 return history;
             }
             if (insertIndex > lastRealUserMessageIndex && !allowCoverLastRealUserRound) {
+                // 轮内截断（自动总结单轮长工具回合 / 手动总结覆盖当前轮）。
                 // 手动总结（allowCoverLastRealUserRound=true）：覆盖最后一条真实用户消息
-                // 及其后的内容正是用户主动总结的预期——单轮与多轮一致放行（单轮场景
-                // 的轮内截断切点必然在轮首 user 消息之后，多轮场景的 intra_round 扩展同样
-                // 只会切进用户想要总结的当前轮）；首条用户消息保护仍生效（markStart 钳制）。
-                // 自动总结保持严格 STALE：回合内吞掉当前用户消息会毁掉回复上下文。
-                stale = true;
-                return history;
+                // 及其后的内容正是用户主动总结的预期——单轮与多轮一致放行；首条用户消息
+                // 保护仍生效（markStart 钳制）。
+                // 自动总结：仅当「规划锚定的当前回合用户消息」原样在位时放行——id 一致且
+                // 索引未后移（其后没有出现新的真实用户输入）。锚点用户消息本身不标记
+                // （markStart 钳制在它之后），模型始终能看到原始任务；总结生成期间用户
+                // 若发送新消息（锚点替换/后移），本次总结作废。
+                const planned = plannedCurrentUserMessage;
+                if (
+                    !planned
+                    || typeof planned.id !== 'string'
+                    || planned.id.length === 0
+                    || lastRealUserMessageIndex !== planned.index
+                ) {
+                    stale = true;
+                    return history;
+                }
+                const anchor = history[lastRealUserMessageIndex];
+                if (!anchor || anchor.id !== planned.id) {
+                    stale = true;
+                    return history;
+                }
             }
 
             // 首条用户消息保护：标记起点不早于它之后（i + 1），且不越过 insertIndex。
@@ -1378,6 +1457,12 @@ export class SummarizeService {
                     }
                     break;
                 }
+            }
+            // 轮内截断（自动总结越过锚点用户消息）：锚点消息本身不标记，原文保留发送。
+            // 手动总结（allowCoverLastRealUserRound=true）不钳制——用户主动总结覆盖当前轮
+            // 是预期行为（多轮场景的 intra_round 扩展同样切进用户想要总结的轮）。
+            if (insertIndex > lastRealUserMessageIndex && !allowCoverLastRealUserRound) {
+                markStart = Math.max(markStart, lastRealUserMessageIndex + 1);
             }
 
             // 逻辑截断：给被总结区间内的消息打标记（原文保留，不参与发送与统计）。
@@ -1569,21 +1654,31 @@ export class SummarizeService {
                     };
                 }
                 if (lastRealUserMessageIndex === 0) {
-                    // 单轮（唯一真实用户消息就是第一条）：切点必在轮首 user 之后，
-                    // 任何总结范围都会覆盖当前回合 → 直接放弃，避免白烧 AI 生成。
-                    return {
-                        ok: false,
-                        code: 'NOT_ENOUGH_ROUNDS',
-                        currentRounds: rounds.length
-                    };
-                }
-                cutIndex = Math.min(cutIndex, lastRealUserMessageIndex);
-                if (cutIndex <= 0) {
-                    return {
-                        ok: false,
-                        code: 'NOT_ENOUGH_ROUNDS',
-                        currentRounds: rounds.length
-                    };
+                    // 单轮长工具回合（唯一真实用户消息就是第一条，即首条锚点）：允许轮内截断，
+                    // 总结该轮「已完成的工具前缀」。轮首用户消息受「首条用户消息保护」永不标记
+                    // （锁内 markStart 钳制在它之后），模型始终能看到原始任务；planner 的切点
+                    // 落在安全的 model 消息上，不拆散 functionCall/functionResponse 配对。
+                    // 无工具交互的纯文本单轮同样允许（切点后保留区非空即可），总结输入超预算
+                    // 时由 handleAutoSummarize 的溢出收缩 / CONTEXT_OVERFLOW 兜底。
+                    if (cutIndex <= 0) {
+                        return {
+                            ok: false,
+                            code: 'NOT_ENOUGH_ROUNDS',
+                            currentRounds: rounds.length
+                        };
+                    }
+                } else {
+                    // 多轮：切点钳制到当前回合起点（保留整个当前轮，总结更早内容）。
+                    // 不能深入当前轮——非首条用户消息没有「锚点保护」，被标记后模型会丢失
+                    // 当前任务上下文。
+                    cutIndex = Math.min(cutIndex, lastRealUserMessageIndex);
+                    if (cutIndex <= 0) {
+                        return {
+                            ok: false,
+                            code: 'NOT_ENOUGH_ROUNDS',
+                            currentRounds: rounds.length
+                        };
+                    }
                 }
             }
             const summarizeEndIndex = historyStartIndex + cutIndex;
