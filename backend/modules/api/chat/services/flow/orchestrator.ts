@@ -561,7 +561,11 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         undefined,
         undefined,
         // General Worker 模型继承：把主会话当前模型透传给工具上下文
-        modelOverride
+        modelOverride,
+        // CPF-07：确认路径执行属于流式批次的一部分——批次 before/after 由批次维度统一管理
+        // （before 已在确认事件前下发、after 在队列全部完成后补建），此处跳过工具级检查点，
+        // 避免「批次存档 + 工具级存档」重复（此前每个确认工具会再自建一组 before/after）。
+        'skip'
       );
 
       while (true) {
@@ -707,7 +711,10 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         undefined,
         undefined,
         // General Worker 模型继承：把主会话当前模型透传给工具上下文
-        modelOverride
+        modelOverride,
+        // CPF-07：与队首工具一致——确认回合内执行的工具统一跳过工具级检查点，
+        // 批次 after 在队列全部完成后补建（见下方「队列已全部完成」分支）。
+        'skip'
       );
 
       while (true) {
@@ -868,6 +875,25 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         checkpoints: checkpointsThisTurn,
       } satisfies ChatStreamToolConfirmationData;
       return;
+    }
+
+    // CPF-07：确认路径工具队列已全部完成（无下一个待确认工具）——补建批次 after。
+    // 批次 before 已在流式阶段（确认事件下发前）创建；after 挂模型消息索引，
+    // CheckpointManager 按批内工具与 afterTools 的交集精确判定（批内无配置 after 的工具则跳过）。
+    // 多个确认回合时只在最后一个回合（队列耗尽）补建一次；取消/中断路径不补（与流式语义一致）。
+    // checkpointService 未注入（测试 harness/降级环境）时跳过补建。
+    if (this.checkpointService) {
+      const batchAfterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
+        conversationId,
+        modelMessageIndex,
+        'tool_batch',
+        'after',
+        undefined,
+        { batchToolNames: allFunctionCalls.map(c => c.name) }
+      );
+      if (batchAfterCheckpoint) {
+        checkpointsThisTurn.push(batchAfterCheckpoint);
+      }
     }
 
     // 7. 工具队列已全部完成，发送 toolIteration，并继续 AI 对话

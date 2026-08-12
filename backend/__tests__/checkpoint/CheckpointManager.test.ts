@@ -853,6 +853,131 @@ describe('CheckpointManager metadata RMW migration', () => {
         }
     });
 
+    test('CPF-07 tool_batch 精确判定：批内工具未配置 before 时不创建批次 before（仅 after 配置不触发）', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-toolbatch-exact';
+        const snapshotMock = snapshotBuilderModule.buildWorkspaceSnapshot as jest.Mock;
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'a\n');
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+            // 批内工具 write_file 只配置了 after（未勾选「执行前」），execute_command 未配置
+            ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                enabled: true,
+                beforeTools: [],
+                afterTools: ['write_file'],
+                messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                maxCheckpoints: -1,
+                customIgnorePatterns: []
+            });
+            snapshotMock.mockResolvedValueOnce({
+                fileHashes: {},
+                fileStats: {},
+                emptyDirs: [],
+                sizeExcluded: [],
+                unreadable: [],
+                excluded: [],
+                roots: []
+            });
+
+            // 批内工具均未配置 before → before 不创建（此前旧实现会因 afterTools 非空而误创建）
+            const beforeCp = await manager.createCheckpoint(conversationId, 0, 'tool_batch', 'before', {
+                batchToolNames: ['write_file', 'execute_command']
+            });
+            expect(beforeCp).toBeNull();
+            // 批内工具配置了 after → after 正常创建
+            const afterCp = await manager.createCheckpoint(conversationId, 0, 'tool_batch', 'after', {
+                batchToolNames: ['write_file', 'execute_command']
+            });
+            expect(afterCp).not.toBeNull();
+        } finally {
+            snapshotMock.mockImplementation(
+                jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
+            );
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('CPF-07 tool_batch 精确判定：批内任一工具配置 before 即创建；未传 batchToolNames 回退旧语义', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-toolbatch-exact2';
+        const snapshotMock = snapshotBuilderModule.buildWorkspaceSnapshot as jest.Mock;
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'a\n');
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+            // execute_command 配置了 before；write_file 只配置 after
+            ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                enabled: true,
+                beforeTools: ['execute_command'],
+                afterTools: ['write_file'],
+                messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                maxCheckpoints: -1,
+                customIgnorePatterns: []
+            });
+            snapshotMock.mockResolvedValueOnce({
+                fileHashes: {},
+                fileStats: {},
+                emptyDirs: [],
+                sizeExcluded: [],
+                unreadable: [],
+                excluded: [],
+                roots: []
+            });
+
+            // 批内存在配置 before 的工具（execute_command）→ before 创建
+            const beforeCp = await manager.createCheckpoint(conversationId, 0, 'tool_batch', 'before', {
+                batchToolNames: ['write_file', 'execute_command']
+            });
+            expect(beforeCp).not.toBeNull();
+        } finally {
+            snapshotMock.mockImplementation(
+                jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
+            );
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
+    test('CPF-07 tool_batch 回退语义：未传 batchToolNames 时按列表非空创建（旧调用方兼容）', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-toolbatch-legacy';
+        const snapshotMock = snapshotBuilderModule.buildWorkspaceSnapshot as jest.Mock;
+        try {
+            await writeFile(workspaceRoot, 'a.txt', 'a\n');
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], []);
+            ((manager as any).settingsManager.getCheckpointConfig as jest.Mock).mockReturnValue({
+                enabled: true,
+                beforeTools: ['apply_diff'],
+                afterTools: [],
+                messageCheckpoint: { beforeMessages: [], afterMessages: [] },
+                maxCheckpoints: -1,
+                customIgnorePatterns: []
+            });
+            snapshotMock.mockResolvedValueOnce({
+                fileHashes: {},
+                fileStats: {},
+                emptyDirs: [],
+                sizeExcluded: [],
+                unreadable: [],
+                excluded: [],
+                roots: []
+            });
+
+            // 未传 batchToolNames（旧调用方）：beforeTools 非空 → 按旧语义创建
+            const beforeCp = await manager.createCheckpoint(conversationId, 0, 'tool_batch', 'before');
+            expect(beforeCp).not.toBeNull();
+        } finally {
+            snapshotMock.mockImplementation(
+                jest.requireActual('../../modules/checkpoint/CheckpointSnapshotBuilder').buildWorkspaceSnapshot
+            );
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
     test('cleanupOldCheckpoints merges chain before deleting referenced base', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
         const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');

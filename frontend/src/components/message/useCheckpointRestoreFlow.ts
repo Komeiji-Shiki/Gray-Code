@@ -345,7 +345,7 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
     if (cp.toolName === 'tool_batch') {
       return phase === 'before' ? t('components.message.checkpoint.toolBatchBefore') : t('components.message.checkpoint.toolBatchAfter')
     }
-    return phase === 'before' ? t('components.message.checkpoint.toolBatchBefore') : t('components.message.checkpoint.toolBatchAfter')
+    return phase === 'before' ? t('components.message.checkpoint.toolExecutionBefore') : t('components.message.checkpoint.toolExecutionAfter')
   }
 
   // 获取合并后的标签文案

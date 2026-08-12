@@ -625,6 +625,8 @@ const en: LanguageMessages = {
                 assistantMessageAfter: 'After Assistant Message',
                 toolBatchBefore: 'Before Tool Batch',
                 toolBatchAfter: 'After Tool Batch',
+                toolExecutionBefore: 'Before Tool Execution',
+                toolExecutionAfter: 'After Tool Execution',
                 userMessageUnchanged: 'User Message · Unchanged',
                 assistantMessageUnchanged: 'Assistant Message · Unchanged',
                 toolBatchUnchanged: 'Tool Batch Completed · Unchanged',

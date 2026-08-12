@@ -108,16 +108,20 @@ function shouldStartToolDuringModelStream(
 interface StreamToolBatchCheckpointState {
     /** 模型消息索引（批次检查点统一挂载点；在模型消息落盘前的 history.length 处取值） */
     messageIndex?: number;
+    /** 批次挂载索引计算 promise（首个工具到达时惰性启动；before/after 创建与 finalize 共用） */
+    batchIndexPromise?: Promise<void>;
     /** before 检查点（仅创建一次） */
     beforeCheckpoint: CheckpointRecord | null;
     /** before 是否已创建（含创建失败——失败后本批次不再重试，后续工具降级为无存档执行） */
     beforeCreated: boolean;
-    /** 批内是否已确认存在已配置存档工具（决定是否创建 after 与是否下发） */
+    /** 批内是否存在配置了 after 存档的工具（决定是否创建 after 与是否下发） */
     needsCheckpoint: boolean;
     /** after 检查点（finalize 幂等，避免多个 yield 点重复创建） */
     afterCheckpoint: CheckpointRecord | null;
     /** 是否已 finalize（after 已尝试创建） */
     finalized: boolean;
+    /** 批内已见工具名（CPF-07 精确判定：tool_batch 存档按批内工具与 beforeTools/afterTools 交集创建） */
+    batchToolNames: Set<string>;
 }
 
 /**
@@ -986,7 +990,8 @@ export class ToolIterationLoopService {
                 beforeCreated: false,
                 needsCheckpoint: false,
                 afterCheckpoint: null,
-                finalized: false
+                finalized: false,
+                batchToolNames: new Set()
             };
             const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
                 .drainSettled()
@@ -1029,15 +1034,31 @@ export class ToolIterationLoopService {
                                     }
                                 } satisfies ChatStreamToolStatusData;
 
-                                // CPF-07：批次 before 检查点——第一个「已配置存档工具」启动前创建
-                                // （纯只读工具不触发，CheckpointManager 内部再按 beforeTools/afterTools 决定
-                                // 是否真正创建）。创建不阻塞流式循环：before 与工具执行串在同一 promise 链上
-                                // （before 完成后才启动工具，保持「写工具执行前已有存档」的既有保证）。
+                                // CPF-07：批次 before 检查点——第一个「已配置 before 存档」的工具启动前创建
+                                // （纯只读/仅配置 after 的工具不触发；CheckpointManager 内部再按 beforeTools 精确判定，
+                                // 避免「未勾选执行前存档」的工具也触发批次 before）。创建不阻塞流式循环：before 与工具执行
+                                // 串在同一 promise 链上（before 完成后才启动工具，保持「写工具执行前已有存档」的既有保证）。
                                 // earlyCheckpointIndex 只在首次需要时取一次（批次内复用，避免多个工具
                                 // 多次全量读 transcript）。
+                                streamBatchCheckpoint.batchToolNames.add(fc.name);
+                                // 批次挂载索引惰性计算（首个工具到达时启动一次；模型消息未落盘，
+                                // history.length = 即将写入位置——与 createModelMessageCheckpoint before 语义一致）
+                                if (!streamBatchCheckpoint.batchIndexPromise) {
+                                    streamBatchCheckpoint.batchIndexPromise = this.conversationManager
+                                        .getHistoryRef(conversationId)
+                                        .then(history => {
+                                            streamBatchCheckpoint.messageIndex = history.length;
+                                        });
+                                }
+                                // needsCheckpoint 按「批内工具命中 afterTools」判定：
+                                // 仅配置 after（未勾 before）的工具批次仍需在完成后创建 after 存档。
+                                if (!streamBatchCheckpoint.needsCheckpoint
+                                    && this.checkpointService?.isToolConfiguredForCheckpoint(fc.name, fc.args, 'after')) {
+                                    streamBatchCheckpoint.needsCheckpoint = true;
+                                }
                                 const beforeCheckpointPromise = streamBatchCheckpoint.beforeCreated
                                     ? null
-                                    : this.checkpointService?.isToolConfiguredForCheckpoint(fc.name, fc.args)
+                                    : this.checkpointService?.isToolConfiguredForCheckpoint(fc.name, fc.args, 'before')
                                         ? this.ensureStreamBatchBeforeCheckpoint(conversationId, streamBatchCheckpoint)
                                         : null;
                                 const rawPromise = (beforeCheckpointPromise ?? Promise.resolve())
@@ -1241,6 +1262,12 @@ export class ToolIterationLoopService {
             // 12. 有工具调用：按 AI 输出顺序依次处理。
             // 规则：执行到第一个“需要用户批准”的工具时暂停；后续工具必须等待前置工具完成。
 
+            // CPF-07：批次检查点挂载索引——模型消息已落盘（addContent 在 1216），此刻历史末位即
+            // 模型消息位置；早启动（history.length，模型消息未落盘时=插入位置）与此值语义一致，
+            // 主循环/确认路径共用此值（工具结果 settle 后历史变长，不能再按 length 推算）。
+            const currentHistoryRef = await this.conversationManager.getHistoryRef(conversationId);
+            const batchMessageIndex = currentHistoryRef.length - 1;
+
             // 找到第一个需要确认的工具（按顺序），并只自动执行它之前的前缀工具。
             const autoPrefix: FunctionCallInfo[] = [];
             let firstConfirmTool: FunctionCallInfo | null = null;
@@ -1404,14 +1431,22 @@ export class ToolIterationLoopService {
                     }
                 );
 
-                // CPF-07：全部早启动工具已完成（无主循环）——批次收尾：创建 after 并返回
-                // before + after（幂等；after 创建失败仅降级，不阻断工具结果落盘）。
-                const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
-                    conversationId,
-                    streamBatchCheckpoint
-                );
-
+                // CPF-07：全部早启动工具已完成（无主循环）——批次收尾。
+                // 存在确认工具时：批次尚未完成（确认工具未执行），先补建 before（若批内自动工具
+                // 均未配置 before 而未创建），after 推迟到确认路径全部工具执行完成后创建；
+                // 无确认工具时正常创建 after（幂等；after 创建失败仅降级，不阻断工具结果落盘）。
                 if (firstConfirmTool && !earlyStopState.shouldStop) {
+                    await this.ensureBatchBeforeForConfirmation(
+                        conversationId,
+                        streamBatchCheckpoint,
+                        functionCalls,
+                        batchMessageIndex
+                    );
+                    const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
+                        conversationId,
+                        streamBatchCheckpoint,
+                        false
+                    );
                     yield {
                         conversationId,
                         pendingToolCalls: [{
@@ -1427,6 +1462,11 @@ export class ToolIterationLoopService {
 
                     return;
                 }
+
+                const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
+                    conversationId,
+                    streamBatchCheckpoint
+                );
 
                 yield {
                     conversationId,
@@ -1460,28 +1500,51 @@ export class ToolIterationLoopService {
                     }))
                 } satisfies ChatStreamToolsExecutingData;
 
-                const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
-                const messageIndex = currentHistory.length - 1;
-
+                // CPF-07：批次检查点挂载索引复用循环层统一计算值（模型消息位置，见 12 段注释）
+                const messageIndex = batchMessageIndex;
+                // 收集主循环工具名 + 判定 after 命中——独立于 before 创建：
+                // 即使批次 before 已在早启动阶段创建（beforeCreated=true），主循环剩余工具
+                // 仍须计入 batchToolNames/needsCheckpoint，否则「仅主循环工具配置 after」
+                // 的批次会丢失 after 存档。
+                const loopCheckpointService = this.checkpointService;
+                for (const call of guardedAutoPrefix) {
+                    streamBatchCheckpoint.batchToolNames.add(call.name);
+                    if (!streamBatchCheckpoint.needsCheckpoint && loopCheckpointService
+                        && loopCheckpointService.isToolConfiguredForCheckpoint(call.name, call.args, 'after')) {
+                        streamBatchCheckpoint.needsCheckpoint = true;
+                    }
+                }
+                // 批次挂载索引：早启动阶段已设置（模型消息未落盘时的 history.length = 插入位置）则保留；
+                // 否则用主循环路径计算值（模型消息已落盘，length - 1 = 模型消息位置；两路径同一模型消息）。
+                if (streamBatchCheckpoint.messageIndex === undefined) {
+                    streamBatchCheckpoint.messageIndex = messageIndex;
+                }
                 // CPF-07：主循环执行前补齐批次 before——早启动阶段未触发（批内写工具全部在
                 // 主循环）时在此创建，挂模型消息索引（与 execution.ts 同步 before 语义一致：
                 // 存档完成后工具才开始执行）。早启动已创建则跳过。
+                // 判定按 beforeTools 精确化：仅配置了 after 的工具不触发批次 before。
                 // 创建失败降级为无存档执行（warn），不阻断主循环（与 after 失败降级一致）。
-                const loopCheckpointService = this.checkpointService;
                 if (!streamBatchCheckpoint.beforeCreated && loopCheckpointService
                     && guardedAutoPrefix.some(call =>
-                        loopCheckpointService.isToolConfiguredForCheckpoint(call.name, call.args)
+                        loopCheckpointService.isToolConfiguredForCheckpoint(call.name, call.args, 'before')
                     )) {
-                    streamBatchCheckpoint.messageIndex = messageIndex;
                     streamBatchCheckpoint.beforeCreated = true;
                     try {
                         streamBatchCheckpoint.beforeCheckpoint = await loopCheckpointService.createToolExecutionCheckpoint(
                             conversationId,
                             messageIndex,
                             'tool_batch',
-                            'before'
+                            'before',
+                            undefined,
+                            { batchToolNames: Array.from(streamBatchCheckpoint.batchToolNames) }
                         );
-                        streamBatchCheckpoint.needsCheckpoint = true;
+                        if (streamBatchCheckpoint.beforeCheckpoint) {
+                            streamBatchCheckpoint.needsCheckpoint = true;
+                        } else {
+                            // 配置未命中（批内已见工具均未配置 before）：重置防重入，
+                            // 允许确认路径补建（批内确认工具可能配置了 before）。
+                            streamBatchCheckpoint.beforeCreated = false;
+                        }
                     } catch (error) {
                         this.log.warn('checkpoint.batch_before_failed', {
                             conversationId,
@@ -1764,10 +1827,19 @@ export class ToolIterationLoopService {
 
             // 13. 如果遇到需要确认的工具，则暂停并等待（仅等待当前这个“队首”工具）
             if (firstConfirmTool) {
-                // CPF-07：autoPrefix 已全部执行完（等待确认中的工具未执行）——批次收尾下发存档
+                // CPF-07：autoPrefix 已全部执行完（等待确认中的工具未执行）——
+                // 补建 before（若批内自动工具均未配置 before 而未创建；确认工具可能配置了 before），
+                // 批次 after 推迟到确认路径全部工具执行完成后创建（避免确认前就产生“批次后”存档）。
+                await this.ensureBatchBeforeForConfirmation(
+                    conversationId,
+                    streamBatchCheckpoint,
+                    functionCalls,
+                    batchMessageIndex
+                );
                 const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
                     conversationId,
-                    streamBatchCheckpoint
+                    streamBatchCheckpoint,
+                    false
                 );
                 yield {
                     conversationId,
@@ -2172,7 +2244,7 @@ export class ToolIterationLoopService {
     }
 
     /**
-     * CPF-07：流式工具批次 before 检查点——第一个「已配置存档工具」启动前创建一次。
+     * CPF-07：流式工具批次 before 检查点——第一个「已配置 before 存档」的工具启动前创建一次。
      *
      * 与调用方约定（见 ensure 处注释）：本方法只创建 before 并把结果写入 batch 状态；
      * 调用方把返回的 promise 与工具执行串在同一链上（before 完成后工具才启动），
@@ -2181,6 +2253,9 @@ export class ToolIterationLoopService {
      * 挂载索引：模型消息尚未落盘，history.length = 模型消息即将写入的位置
      * （与 createModelMessageCheckpoint 的 before 语义一致；批次内所有检查点共用该索引，
      * 前端据此把前后存档显示在模型消息两侧）。
+     *
+     * 配置未命中（批内已见工具均未配置 before，createToolExecutionCheckpoint 返回 null）时
+     * 重置 beforeCreated，允许后续到达的已配置工具再次触发创建。
      *
      * @returns before 检查点创建完成时 resolve（null = 配置未启用/未配置，不创建）
      */
@@ -2198,16 +2273,95 @@ export class ToolIterationLoopService {
             // 防御性早退（batch 状态已置位，后续工具不再尝试创建）
             return;
         }
-        const index = (await this.conversationManager.getHistoryRef(conversationId)).length;
-        batch.messageIndex = index;
+        // 挂载索引由批次状态统一计算（首个早启动工具到达时惰性启动；此处 await 保证就绪）
+        await batch.batchIndexPromise;
+        let index = batch.messageIndex;
+        if (index === undefined) {
+            // 防御：索引 promise 异常/未启动时直接读取（正常不可达）
+            const history = await this.conversationManager.getHistoryRef(conversationId);
+            index = history.length;
+            batch.messageIndex = index;
+        }
         const checkpoint = await checkpointService.createToolExecutionCheckpoint(
             conversationId,
             index,
             'tool_batch',
-            'before'
+            'before',
+            undefined,
+            // CPF-07 精确判定：批内已见工具名透传（CheckpointManager 按 beforeTools 求交）
+            { batchToolNames: Array.from(batch.batchToolNames) }
         );
-        batch.beforeCheckpoint = checkpoint;
-        batch.needsCheckpoint = true;
+        if (checkpoint) {
+            batch.beforeCheckpoint = checkpoint;
+            batch.needsCheckpoint = true;
+        } else {
+            // 配置未命中（当前已见工具均未配置 before）：重置防重入，
+            // 允许后续到达的已配置工具再次触发创建。
+            batch.beforeCreated = false;
+        }
+    }
+
+    /**
+     * CPF-07：确认工具批次补建 before——批内自动工具均未配置 before（批次 before 未创建）时，
+     * 若批内存在配置了 before 的工具（如确认工具本身），在进入确认等待前补建批次 before，
+     * 保证「确认工具执行前已有存档」。配置未命中（返回 null）时静默跳过。
+     *
+     * @param messageIndex 可选：主循环路径（模型消息已落盘）传 messageIndex（length - 1）；
+     *   早启动路径不传（模型消息未落盘，用 history.length，与 ensureStreamBatchBeforeCheckpoint 一致）
+     */
+    private async ensureBatchBeforeForConfirmation(
+        conversationId: string,
+        batch: StreamToolBatchCheckpointState,
+        calls: FunctionCallInfo[],
+        messageIndex?: number
+    ): Promise<void> {
+        if (batch.beforeCreated) {
+            return;
+        }
+        const checkpointService = this.checkpointService;
+        if (!checkpointService) {
+            return;
+        }
+        for (const call of calls) {
+            batch.batchToolNames.add(call.name);
+            // 批内确认工具/后缀工具命中 afterTools 时，批次完成仍需创建 after 存档
+            if (!batch.needsCheckpoint && checkpointService.isToolConfiguredForCheckpoint(call.name, call.args, 'after')) {
+                batch.needsCheckpoint = true;
+            }
+        }
+        if (!calls.some(call => checkpointService.isToolConfiguredForCheckpoint(call.name, call.args, 'before'))) {
+            return;
+        }
+        if (messageIndex === undefined) {
+            await batch.batchIndexPromise;
+            messageIndex = batch.messageIndex;
+        }
+        if (messageIndex === undefined) {
+            return;
+        }
+        batch.messageIndex = messageIndex;
+        batch.beforeCreated = true;
+        try {
+            const checkpoint = await checkpointService.createToolExecutionCheckpoint(
+                conversationId,
+                messageIndex,
+                'tool_batch',
+                'before',
+                undefined,
+                { batchToolNames: Array.from(batch.batchToolNames) }
+            );
+            if (checkpoint) {
+                batch.beforeCheckpoint = checkpoint;
+                batch.needsCheckpoint = true;
+            } else {
+                batch.beforeCreated = false;
+            }
+        } catch (error) {
+            this.log.warn('checkpoint.batch_before_confirm_failed', {
+                conversationId,
+                error: (error as Error)?.message ?? String(error)
+            });
+        }
     }
 
     /**
@@ -2217,24 +2371,37 @@ export class ToolIterationLoopService {
      * after 创建失败仅降级（保留已创建的 before，不阻断工具结果落盘），与
      * execution.ts deferred 模式下 after 失败 warn 降级的语义一致。
      * 取消/中止路径不调用本方法（不补 after；before 保留供前端 loadCheckpoints 可见）。
+     *
+     * @param createAfter 存在确认工具时传 false：批次未完成（确认工具未执行），
+     *   after 由确认路径在全部工具执行完成后补建，避免确认前就产生「批次后」存档
      */
     private async finalizeStreamBatchCheckpoints(
         conversationId: string,
-        batch: StreamToolBatchCheckpointState
+        batch: StreamToolBatchCheckpointState,
+        createAfter = true
     ): Promise<CheckpointRecord[]> {
         if (batch.finalized) {
             return [batch.beforeCheckpoint, batch.afterCheckpoint].filter((cp): cp is CheckpointRecord => !!cp);
         }
         batch.finalized = true;
+        // 批次挂载索引可能仍由早启动的惰性 promise 计算中（无 before 创建、仅 after 配置的批次）：
+        // await 保证就绪后再判定；索引仍缺时说明批次无任何存档需求，直接返回空。
+        await batch.batchIndexPromise;
         if (!batch.needsCheckpoint || batch.messageIndex === undefined) {
             return [];
+        }
+        if (!createAfter) {
+            return [batch.beforeCheckpoint].filter((cp): cp is CheckpointRecord => !!cp);
         }
         try {
             batch.afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
                 conversationId,
                 batch.messageIndex,
                 'tool_batch',
-                'after'
+                'after',
+                undefined,
+                // CPF-07 精确判定：批内工具名透传（CheckpointManager 按 afterTools 求交）
+                { batchToolNames: Array.from(batch.batchToolNames) }
             );
         } catch (error) {
             this.log.warn('checkpoint.batch_after_failed', {

@@ -251,6 +251,8 @@ export class CheckpointManager {
             progress?: (progress: CheckpointOperationProgress) => void;
             messageNodeId?: string;
             forceCreate?: boolean;
+            /** 批内工具名（tool_batch 精确判定用）：按批内工具与 beforeTools/afterTools 的交集决定是否创建 */
+            batchToolNames?: string[];
         }
     ): Promise<CheckpointRecord | null> {
         // 检查是否应该创建检查点
@@ -272,12 +274,19 @@ export class CheckpointManager {
                     shouldCreate = config.messageCheckpoint?.afterMessages?.includes(messageType) ?? false;
                 }
             } else if (toolName === 'tool_batch') {
-                // 批量工具：只要配置了任何工具的检查点，就创建
-                // tool_batch 表示多个工具调用被批量处理
+                // 批量工具：按批内工具与 beforeTools/afterTools 的交集精确判定（CPF-07 批次检查点）。
+                // 旧实现只检查「对应列表非空」——只要用户给任意工具勾过 before，批内仅配置了
+                // after 的工具（如只勾了「执行后」的 write_file）也会错误触发批次 before 存档。
+                // 调用方未提供批内工具名时（旧调用方/测试）回退旧语义：任一列表非空即创建。
+                const batchToolNames = options?.batchToolNames;
                 if (phase === 'before') {
-                    shouldCreate = config.beforeTools.length > 0;
+                    shouldCreate = batchToolNames && batchToolNames.length > 0
+                        ? batchToolNames.some(name => config.beforeTools.includes(name))
+                        : config.beforeTools.length > 0;
                 } else {
-                    shouldCreate = config.afterTools.length > 0;
+                    shouldCreate = batchToolNames && batchToolNames.length > 0
+                        ? batchToolNames.some(name => config.afterTools.includes(name))
+                        : config.afterTools.length > 0;
                 }
             } else {
                 // 使用工具配置

@@ -627,6 +627,8 @@ const zhCN = {
                 assistantMessageAfter: '助手消息后存档',
                 toolBatchBefore: '批量工具执行前存档',
                 toolBatchAfter: '批量工具执行后存档',
+                toolExecutionBefore: '工具执行前存档',
+                toolExecutionAfter: '工具执行后存档',
                 userMessageUnchanged: '用户消息存档 · 内容未变化',
                 assistantMessageUnchanged: '助手消息存档 · 内容未变化',
                 toolBatchUnchanged: '批量工具执行完成 · 内容未变化',

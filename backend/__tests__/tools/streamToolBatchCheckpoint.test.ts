@@ -295,4 +295,40 @@ describe('CPF-07 流式早启动批次检查点合并', () => {
         expect(last.checkpoints[0].phase).toBe('before');
         expect(last.checkpoints[1].phase).toBe('after');
     });
+
+    test('仅配置 after（未配置 before）的早启动批次：不创建 before，完成后仍创建 after', async () => {
+        const writeTool = makeTool('write_file');
+        async function* stream() {
+            yield { delta: [{ text: 'hello' }] };
+            yield { delta: [{ functionCall: { id: 'call_1', name: 'write_file', args: { path: 'a.ts' } } }] };
+            yield { delta: [], done: true };
+        }
+        const channelManager = { generate: jest.fn().mockReturnValue(stream()) };
+        const { service, checkpointService } = createToolLoopHarness(channelManager, {
+            getTool: () => writeTool
+        });
+        seedCheckpointRecords(checkpointService);
+        // 用户只勾选了 write_file 的「执行后」（after），未勾选「执行前」（before）
+        (checkpointService.isToolConfiguredForCheckpoint as jest.Mock).mockImplementation(
+            (name: string, _args: unknown, phase?: 'before' | 'after') =>
+                name === 'write_file' && phase === 'after'
+        );
+
+        const outputs = await collectOutputs(service, {});
+
+        // 只创建一次 after（tool_batch）；before 不应创建（此前旧实现会因并集判定而误建）
+        expect(checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(1);
+        const cpCalls = (checkpointService.createToolExecutionCheckpoint as jest.Mock).mock.calls;
+        expect(cpCalls[0][2]).toBe('tool_batch');
+        expect(cpCalls[0][3]).toBe('after');
+
+        // 下发 [after]
+        const toolIterationOutputs = outputs.filter(o => (o as { toolIteration?: boolean }).toolIteration === true);
+        const last = toolIterationOutputs[toolIterationOutputs.length - 1] as {
+            checkpoints: Array<{ phase: string; toolName: string }>;
+        };
+        expect(last.checkpoints).toHaveLength(1);
+        expect(last.checkpoints[0].phase).toBe('after');
+        expect(last.checkpoints[0].toolName).toBe('tool_batch');
+    });
 });

@@ -196,7 +196,7 @@ export class CheckpointService {
      * 用途：ToolIterationLoopService 流式路径在「一次模型回复 = 一个工具批次」维度统一创建
      * 检查点，需在创建前判断批内是否存在已配置存档工具（避免纯只读批次误建 tool_batch 存档）。
      */
-    isToolConfiguredForCheckpoint(toolName: string, args?: unknown): boolean {
+    isToolConfiguredForCheckpoint(toolName: string, args?: unknown, phase?: 'before' | 'after'): boolean {
         if (toolName === 'search_in_files' && (args as { mode?: string })?.mode !== 'replace') {
             return false;
         }
@@ -204,8 +204,14 @@ export class CheckpointService {
             return true;
         }
         const config = this.settingsManager.getCheckpointConfig();
-        const configured = new Set([...(config.beforeTools ?? []), ...(config.afterTools ?? [])]);
-        return configured.has(toolName);
+        // CPF-07：按 phase 精确判定——批次 before 只认 beforeTools、after 只认 afterTools；
+        // 不传 phase 时保持旧语义（before ∪ after 并集），兼容既有调用。
+        const toolList = phase === 'before'
+            ? config.beforeTools
+            : phase === 'after'
+                ? config.afterTools
+                : [...(config.beforeTools ?? []), ...(config.afterTools ?? [])];
+        return toolList.includes(toolName);
     }
 
     /**
@@ -224,7 +230,11 @@ export class CheckpointService {
         toolName: string,
         phase: 'before' | 'after',
         messageNodeId?: string,
-        options?: { progress?: (progress: CheckpointOperationProgress) => void }
+        options?: {
+            progress?: (progress: CheckpointOperationProgress) => void;
+            /** 批内工具名（tool_batch 精确判定用，透传给 CheckpointManager） */
+            batchToolNames?: string[];
+        }
     ): Promise<CheckpointRecord | null> {
         if (!this.checkpointManager) {
             return null;
@@ -239,6 +249,9 @@ export class CheckpointService {
             phase,
             {
                 ...(options && options.progress ? { progress: options.progress } : {}),
+                ...(options && options.batchToolNames && options.batchToolNames.length > 0
+                    ? { batchToolNames: options.batchToolNames }
+                    : {}),
                 ...(resolvedNodeId ? { messageNodeId: resolvedNodeId } : {})
             }
         ));

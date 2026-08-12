@@ -467,6 +467,11 @@ export class ExecutionCore extends ResultCore {
         // （checkpoint 根锁与路径锁互斥，入口取锁会死锁/冲突），写盘锁推迟到 diffManager
         // 写盘时获取。混合批（含 search_in_files replace 或其他写工具）保持同步语义，零变化。
         const isDiffReviewOnlyBatch = calls.length > 0 && calls.every(call => isDiffReviewToolCall(call.name));
+        // CPF-07：批量路径（tool_batch）透传批内工具名，供 CheckpointManager 按 beforeTools/afterTools
+        // 交集精确判定是否创建；单工具路径不需要（CheckpointManager 按工具名精确判定）。
+        const checkpointBatchToolNames = toolNameForCheckpoint === 'tool_batch'
+            ? calls.map(call => call.name)
+            : undefined;
         let beforeCheckpointPromise: Promise<CheckpointRecord | null> | null = null;
         let resolvedMessageNodeId: string | undefined;
         if (toolNameForCheckpoint && this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
@@ -479,7 +484,10 @@ export class ExecutionCore extends ResultCore {
                     messageIndex,
                     toolNameForCheckpoint,
                     'before',
-                    resolvedMessageNodeId
+                    resolvedMessageNodeId,
+                    checkpointBatchToolNames
+                        ? { batchToolNames: checkpointBatchToolNames }
+                        : undefined
                 ).catch((error) => {
                     // deferred 模式下 checkpoint 失败不升级为整批失败：工具已并行执行完成、
                     // 真实副作用结果已收集在 responses/toolResults，泵循环 catch 会把全部调用
@@ -497,7 +505,10 @@ export class ExecutionCore extends ResultCore {
                     messageIndex,
                     toolNameForCheckpoint,
                     'before',
-                    resolvedMessageNodeId
+                    resolvedMessageNodeId,
+                    checkpointBatchToolNames
+                        ? { batchToolNames: checkpointBatchToolNames }
+                        : undefined
                 );
                 if (beforeCheckpoint) {
                     checkpoints.push(beforeCheckpoint);
@@ -777,7 +788,10 @@ export class ExecutionCore extends ResultCore {
                     messageIndex,
                     toolNameForCheckpoint,
                     'after',
-                    resolvedMessageNodeId
+                    resolvedMessageNodeId,
+                    checkpointBatchToolNames
+                        ? { batchToolNames: checkpointBatchToolNames }
+                        : undefined
                 );
                 if (afterCheckpoint) {
                     checkpoints.push(afterCheckpoint);

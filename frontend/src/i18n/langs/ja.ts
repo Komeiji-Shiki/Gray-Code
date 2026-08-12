@@ -625,6 +625,8 @@ const ja: LanguageMessages = {
                 assistantMessageAfter: 'アシスタントメッセージ後のチェックポイント',
                 toolBatchBefore: 'バッチツール実行前のチェックポイント',
                 toolBatchAfter: 'バッチツール実行後のチェックポイント',
+                toolExecutionBefore: 'ツール実行前のチェックポイント',
+                toolExecutionAfter: 'ツール実行後のチェックポイント',
                 userMessageUnchanged: 'ユーザーメッセージ · 変更なし',
                 assistantMessageUnchanged: 'アシスタントメッセージ · 変更なし',
                 toolBatchUnchanged: 'バッチツール実行完了 · 変更なし',
