@@ -407,7 +407,7 @@ export class BackendRuntime {
         registerToolDeclarationFactory('read_file', (args) => createReadFileTool(args.multimodalEnabled, args.channelType, args.toolMode));
         registerToolDeclarationFactory('generate_image', (args) => createGenerateImageTool(args.maxBatchTasks, args.maxImagesPerTask, args.paramsConfig));
         registerToolDeclarationFactory('remove_background', (args) => createRemoveBackgroundTool(args.maxBatchTasks));
-        registerToolDeclarationFactory('crop_image', (args) => createCropImageTool(args.maxBatchTasks));
+        registerToolDeclarationFactory('crop_image', (args) => createCropImageTool(args.maxBatchTasks, { useNormalizedCoordinates: args.useNormalizedCoordinates }));
         registerToolDeclarationFactory('resize_image', (args) => createResizeImageTool(args.maxBatchTasks));
         registerToolDeclarationFactory('rotate_image', (args) => createRotateImageTool(args.maxBatchTasks));
 

@@ -14,6 +14,7 @@
  */
 
 import type { ToolDeclaration } from '../../tools/types';
+import type { ToolOptions } from '../../tools/types';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings';
 import { isSearchInFilesReplaceForbidden } from '../settings';
@@ -40,6 +41,8 @@ export interface ToolDeclarationResolveOptions {
     allowlist?: string[];
     denylist?: string[];
     excludeToolNames?: string[];
+    /** 渠道工具配置（如 crop_image 的 useNormalizedCoordinates），影响动态声明形态 */
+    toolOptions?: ToolOptions;
 }
 
 // ==================== 工具声明缓存 ====================
@@ -113,6 +116,8 @@ export class ToolDeclarationResolver {
             settings.toolsEnabled ?? {},
             settings.toolAutoExec ?? null,
             toolsConfig.memory ?? null,
+            toolsConfig.execute_command ?? null,
+            toolsConfig.history_search ?? null,
             toolsConfig.generate_image ?? null,
             toolsConfig.remove_background ?? null,
             toolsConfig.crop_image ?? null,
@@ -169,7 +174,8 @@ export class ToolDeclarationResolver {
         const filtered = this.applyFinalFilters(tools, options);
         this.declarationCache.set(cacheKey, filtered);
         this.touchDeclarationCache(cacheKey);
-        return filtered.length > 0 ? filtered : undefined;
+        // 与命中路径对称：返回浅克隆（数组层），避免调用方对返回数组的原地修改污染缓存本体
+        return filtered.length > 0 ? filtered.slice() : undefined;
     }
 
     private resolveBuiltinDeclarations(options: ToolDeclarationResolveOptions): ToolDeclaration[] {
@@ -254,7 +260,12 @@ export class ToolDeclarationResolver {
             if (shouldExclude) return null;
 
             const imageConfig = this.settingsManager?.getGenerateImageConfig();
-            buildArgs = { maxBatchTasks: imageConfig?.maxBatchTasks || 10 };
+            buildArgs = {
+                maxBatchTasks: imageConfig?.maxBatchTasks || 10,
+                // 坐标模式与运行时 handler 同源（渠道 toolOptions.cropImage.useNormalizedCoordinates），
+                // 避免声明宣称归一化坐标而运行时按像素解释导致模型传错坐标
+                useNormalizedCoordinates: options.toolOptions?.cropImage?.useNormalizedCoordinates ?? true
+            };
         }
 
         if (tool.name === 'resize_image') {
@@ -286,11 +297,15 @@ export class ToolDeclarationResolver {
         const factory = getToolDeclarationFactory(tool.name);
         if (factory && !shouldExclude) {
             const dynamicTool = factory(buildArgs);
-            declaration = {
-                ...declaration,
-                description: dynamicTool.declaration.description,
-                parameters: dynamicTool.declaration.parameters
-            };
+            // 工厂漏返回 declaration 时优雅回退静态声明（与 getToolDeclarationFactory 的回退设计一致）
+            const dynamicDecl = dynamicTool?.declaration;
+            if (dynamicDecl && typeof dynamicDecl.description === 'string' && dynamicDecl.parameters) {
+                declaration = {
+                    ...declaration,
+                    description: dynamicDecl.description,
+                    parameters: dynamicDecl.parameters
+                };
+            }
         }
 
         // 模型声明本地化：语言进入缓存键（见 buildCacheKey），此处按进程级实际语言

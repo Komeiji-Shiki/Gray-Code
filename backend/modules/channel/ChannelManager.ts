@@ -12,7 +12,7 @@ import type { ResolvedPromptModeSnapshot } from '../settings';
 import type { McpManager } from '../mcp';
 import { formatterRegistry } from './formatters';
 import { ToolDeclarationResolver } from './ToolDeclarationResolver';
-import type { ToolDeclaration } from '../../tools/types';
+import type { ToolDeclaration, ToolOptions } from '../../tools/types';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -422,7 +422,8 @@ export class ChannelManager {
                     (config as any).multimodalToolsEnabled,
                     config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
                     (config as any).toolMode,
-                    request.promptModeSnapshot
+                    request.promptModeSnapshot,
+                    (config as any).toolOptions
                 ));
         
         // 6. 构建请求
@@ -629,7 +630,8 @@ export class ChannelManager {
                     (config as any).multimodalToolsEnabled,
                     config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
                     (config as any).toolMode,
-                    request.promptModeSnapshot
+                    request.promptModeSnapshot,
+                    (config as any).toolOptions
                 ));
         
         // 5. 构建请求
@@ -1313,13 +1315,15 @@ export class ChannelManager {
         multimodalEnabled?: boolean,
         channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
         toolMode?: 'function_call' | 'xml' | 'json',
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        toolOptions?: ToolOptions
     ): ToolDeclaration[] | undefined {
         return this.toolResolver.resolve({
             multimodalEnabled,
             channelType,
             toolMode,
-            promptModeSnapshot
+            promptModeSnapshot,
+            toolOptions
         });
     }
     

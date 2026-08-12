@@ -37,6 +37,8 @@ export interface ToolDeclarationFactoryArgs {
     toolMode?: 'function_call' | 'xml' | 'json';
     /** 图片工具：单次调用允许的最大任务数 */
     maxBatchTasks?: number;
+    /** crop_image：是否使用归一化坐标（0-1000）；false 表示像素坐标，与运行时 handler 同源 */
+    useNormalizedCoordinates?: boolean;
     /** generate_image：单个任务的最大图片数 */
     maxImagesPerTask?: number;
     /** generate_image：宽高比/图片尺寸参数配置（与 createGenerateImageTool 的 paramsConfig 同构） */

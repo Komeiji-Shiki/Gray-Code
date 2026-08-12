@@ -91,7 +91,9 @@ export function localizeToolDeclaration(
         description: localization.description ?? declaration.description,
         parameters: {
             ...declaration.parameters,
-            properties: deepClone(declaration.parameters.properties)
+            properties: deepClone(declaration.parameters.properties),
+            // required 数组同样克隆，避免与原声明共享引用
+            required: declaration.parameters.required ? [...declaration.parameters.required] : declaration.parameters.required
         }
     };
 
