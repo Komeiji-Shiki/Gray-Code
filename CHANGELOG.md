@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+  - 回退 `ToolIterationLoopService` 早启动工具等待超时兜底（PR #35 引入的改动）：该兜底在流式结束后把 3 秒窗口内未落定的早启动工具强制标记为超时失败，误伤仍在正常执行的长耗时工具（如 execute_command 超过 3 秒即被占位结算），导致工具调用全面失效；且其防御场景已由工具层既有超时与取消路径覆盖，「无 abortSignal 路径」实际不存在。现恢复原始等待逻辑（保留 abort 事件 race），长任务不再被误杀。
   - 修复自动总结在「切点深入当前回合」场景白烧总结模型调用：planner 对多轮 + 当前轮超预算时会把轮内切点扩进当前轮，锁内 STALE 检查在 AI 生成完成后才拒绝——每次尝试都完整消耗一次总结模型生成。现 `resolveSummarizeRange`（auto 模式）把切点钳制到最后一条真实用户消息（保留整个当前回合、总结更早内容），单超大轮直接放弃规划（NOT_ENOUGH_ROUNDS，不再调 AI）；planner 保持通用（granular fallback 仍可深入当前长轮裁剪）。
   - 修复自动总结收缩后只剩旧总结消息仍发起生成：`insertIndex <= historyStartIndex` 时直接返回 NO_MESSAGES_TO_SUMMARIZE，不再把无新增内容的请求发给总结模型。
   - 自动总结失败重试优化：STALE_RANGE / LOW_QUALITY_SUMMARY / EMPTY_SUMMARY / CONTEXT_OVERFLOW / NOT_ENOUGH_ROUNDS / NOT_ENOUGH_CONTENT / NO_MESSAGES_TO_SUMMARIZE / CONFIG_NOT_FOUND / CONFIG_DISABLED 等确定性失败不再重试（重试结果相同且重复消耗总结模型调用），直接走 granular fallback；仅瞬时错误（UNKNOWN_ERROR 等）保留有界重试（流式与非流式路径同步）。
