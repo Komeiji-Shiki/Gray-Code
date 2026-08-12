@@ -131,7 +131,9 @@ export function createToolLoopHarness(channelManager: unknown, toolRegistry: unk
     const toolExecutionService = new ToolExecutionService(toolRegistry as never);
     const checkpointService = {
         createModelMessageCheckpoint: jest.fn().mockResolvedValue(null),
-        createToolExecutionCheckpoint: jest.fn().mockResolvedValue(null)
+        createToolExecutionCheckpoint: jest.fn().mockResolvedValue(null),
+        // CPF-07：默认所有工具均视为已配置存档工具；需要模拟「纯只读/未配置」语义的测试可覆盖
+        isToolConfiguredForCheckpoint: jest.fn().mockReturnValue(true)
     };
     const messageBuilderService = { buildHistoryOptions: jest.fn().mockReturnValue({}) };
     const contextTrimService = {

@@ -93,6 +93,34 @@ function shouldStartToolDuringModelStream(
 }
 
 /**
+ * CPF-07：流式工具批次检查点状态（一次模型回复 = 一个工具批次，共享一组 before/after 存档）。
+ *
+ * 背景：流式早启动路径对每个工具单独调用 executeFunctionCallsWithResults，若各自创建检查点
+ * 会产生 N 组物理存档（每组独立扫描工作区 + 前端多行展示 + 消耗 maxCheckpoints 配额）。
+ * 这里把检查点提升到批次维度统一管理：
+ * - before：第一个「已配置存档工具」启动前创建（挂模型消息索引，与 createModelMessageCheckpoint
+ *   的 before 语义一致）；纯只读批次（批内无已配置存档工具）不创建（CPF-05 语义）。
+ * - after：全部工具执行完成后创建（finalize 幂等，取消/中止路径不补 after）。
+ *
+ * 早启动工具执行时以 checkpointMode='skip' 跳过执行核心内部检查点；主循环同样 skip，
+ * 由本状态统一在批次边界创建并随 yield 下发（前端展示为一条 tool_batch 前/后存档）。
+ */
+interface StreamToolBatchCheckpointState {
+    /** 模型消息索引（批次检查点统一挂载点；在模型消息落盘前的 history.length 处取值） */
+    messageIndex?: number;
+    /** before 检查点（仅创建一次） */
+    beforeCheckpoint: CheckpointRecord | null;
+    /** before 是否已创建（含创建失败——失败后本批次不再重试，后续工具降级为无存档执行） */
+    beforeCreated: boolean;
+    /** 批内是否已确认存在已配置存档工具（决定是否创建 after 与是否下发） */
+    needsCheckpoint: boolean;
+    /** after 检查点（finalize 幂等，避免多个 yield 点重复创建） */
+    afterCheckpoint: CheckpointRecord | null;
+    /** 是否已 finalize（after 已尝试创建） */
+    finalized: boolean;
+}
+
+/**
  * 工具迭代循环配置
  */
 export interface ToolIterationLoopConfig {
@@ -952,6 +980,14 @@ export class ToolIterationLoopService {
             const streamingToolPromises = new Map<string, Promise<ToolExecutionFullResult>>();
             const streamingToolResults = new Map<string, ToolExecutionFullResult>();
             const earlyToolProgressQueue = new EarlyStreamingToolProgressQueue();
+            // CPF-07：本迭代（一次模型回复）的工具批次检查点状态——早启动与主循环共享一组 before/after
+            const streamBatchCheckpoint: StreamToolBatchCheckpointState = {
+                beforeCheckpoint: null,
+                beforeCreated: false,
+                needsCheckpoint: false,
+                afterCheckpoint: null,
+                finalized: false
+            };
             const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
                 .drainSettled()
                 .flatMap(settlement => settlement.fullResult.toolResults.map(toolResult => ({
@@ -993,49 +1029,63 @@ export class ToolIterationLoopService {
                                     }
                                 } satisfies ChatStreamToolStatusData;
 
-                                // 检查点挂到“即将写入的模型消息”索引上（与 createModelMessageCheckpoint
-                                // 的 before 语义一致）。以前这里传 undefined，导致流式早启动的工具
-                                // （含 execute_command 等会改变文件系统的工具）完全没有检查点保护。
-                                const earlyCheckpointIndex = (await this.conversationManager.getHistoryRef(conversationId)).length;
-                                const rawPromise = this.toolExecutionService.executeFunctionCallsWithResults(
-                                    [repeatedCallGuard.guardCall({ id: fc.id, name: fc.name, args: fc.args })],
-                                    conversationId,
-                                    earlyCheckpointIndex,
-                                    config,
-                                    abortSignal,
-                                    promptModeSnapshot,
-                                    undefined,
-                                    undefined,
-                                    undefined,
-                                    // E-1：早启动生成器一律不参与主会话信箱 drain（不传 mailbox 身份）。
-                                    // 原因：早启动在其持有 epoch 期间完成 drain 后，若流中途 cancel 且
-                                    // 携带 agentInbox 的结果被整体丢弃（partialContent.parts.length===0 不落盘，
-                                    // 或调用 id 不在 partialContent 中不结算），消息已从 inbox 移除、未持久化 =
-                                    // 丢失。改为统一由主循环 drain；无主循环时在 autoPrefix 为空分支显式 drain 一次。
-                                    undefined,
-                                    undefined,
-                                    // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
-                                    undefined,
-                                    // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
-                                    runtimeContext?.workspaceUri,
-                                    // General Worker 模型继承：把主会话当前模型透传给工具上下文
-                                    modelOverride
-                                ).catch(err => {
-                                    // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
-                                    // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
-                                    const errorResponse: Record<string, unknown> = {
-                                        success: false,
-                                        error: (err as Error).message
-                                    };
-                                    return {
-                                        responseParts: [{ functionResponse: { id: fc.id, name: fc.name, response: errorResponse } }],
-                                        toolResults: [{ id: fc.id, name: fc.name, args: fc.args, result: errorResponse }],
-                                        checkpoints: []
-                                    } as ToolExecutionFullResult;
-                                }).then(fullResult => {
-                                    streamingToolResults.set(fc.id, fullResult);
-                                    return fullResult;
-                                });
+                                // CPF-07：批次 before 检查点——第一个「已配置存档工具」启动前创建
+                                // （纯只读工具不触发，CheckpointManager 内部再按 beforeTools/afterTools 决定
+                                // 是否真正创建）。创建不阻塞流式循环：before 与工具执行串在同一 promise 链上
+                                // （before 完成后才启动工具，保持「写工具执行前已有存档」的既有保证）。
+                                // earlyCheckpointIndex 只在首次需要时取一次（批次内复用，避免多个工具
+                                // 多次全量读 transcript）。
+                                const beforeCheckpointPromise = streamBatchCheckpoint.beforeCreated
+                                    ? null
+                                    : this.checkpointService?.isToolConfiguredForCheckpoint(fc.name, fc.args)
+                                        ? this.ensureStreamBatchBeforeCheckpoint(conversationId, streamBatchCheckpoint)
+                                        : null;
+                                const rawPromise = (beforeCheckpointPromise ?? Promise.resolve())
+                                    .then(() => this.toolExecutionService.executeFunctionCallsWithResults(
+                                        [repeatedCallGuard.guardCall({ id: fc.id, name: fc.name, args: fc.args })],
+                                        conversationId,
+                                        // CPF-07：不再传 earlyCheckpointIndex——批次检查点已由上方统一创建，
+                                        // 执行核心以 checkpointMode='skip' 跳过内部检查点（避免每组工具
+                                        // 各建一组 before/after 物理存档）。
+                                        undefined,
+                                        config,
+                                        abortSignal,
+                                        promptModeSnapshot,
+                                        undefined,
+                                        undefined,
+                                        undefined,
+                                        // E-1：早启动生成器一律不参与主会话信箱 drain（不传 mailbox 身份）。
+                                        // 原因：早启动在其持有 epoch 期间完成 drain 后，若流中途 cancel 且
+                                        // 携带 agentInbox 的结果被整体丢弃（partialContent.parts.length===0 不落盘，
+                                        // 或调用 id 不在 partialContent 中不结算），消息已从 inbox 移除、未持久化 =
+                                        // 丢失。改为统一由主循环 drain；无主循环时在 autoPrefix 为空分支显式 drain 一次。
+                                        undefined,
+                                        undefined,
+                                        // 主会话路径无嵌套深度（subagent 工具自行注入子代理深度）
+                                        undefined,
+                                        // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
+                                        runtimeContext?.workspaceUri,
+                                        // General Worker 模型继承：把主会话当前模型透传给工具上下文
+                                        modelOverride,
+                                        // CPF-07：批次检查点统一由本服务创建，执行核心跳过内部检查点
+                                        'skip'
+                                    ))
+                                    .catch(err => {
+                                        // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
+                                        // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
+                                        const errorResponse: Record<string, unknown> = {
+                                            success: false,
+                                            error: (err as Error).message
+                                        };
+                                        return {
+                                            responseParts: [{ functionResponse: { id: fc.id, name: fc.name, response: errorResponse } }],
+                                            toolResults: [{ id: fc.id, name: fc.name, args: fc.args, result: errorResponse }],
+                                            checkpoints: []
+                                        } as ToolExecutionFullResult;
+                                    }).then(fullResult => {
+                                        streamingToolResults.set(fc.id, fullResult);
+                                        return fullResult;
+                                    });
 
                                 const promise = earlyToolProgressQueue.track(fc, rawPromise);
                                 streamingToolPromises.set(fc.id, promise);
@@ -1313,11 +1363,8 @@ export class ToolIterationLoopService {
             // 流式提前执行的工具产生的多模态附件（xml/json prompt 模式）。
             // 以前这些附件被完全忽略，提前执行的 generate_image / MCP 图片结果会静默丢失。
             const earlyMultimodalAttachments = earlyFullResults.flatMap(result => result.multimodalAttachments ?? []);
-            // 流式提前执行的工具创建的检查点（挂在 earlyCheckpointIndex 上，与
-            // createModelMessageCheckpoint 的 before 语义一致）。主循环路径透传
-            // executionResult.checkpoints，此分支无主循环执行，透传提前执行结果
-            // 汇总的真实检查点（此前恒下发 checkpoints:[]，前端无检查点可回档）。
-            const earlyCheckpoints = earlyFullResults.flatMap(result => result.checkpoints ?? []);
+            // CPF-07：早启动工具执行时 checkpointMode='skip'，不再各自携带检查点；
+            // 批次检查点（before/after）统一由 streamBatchCheckpoint 管理并在批次收尾处下发。
 
             // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
             // 但 earlyResponseParts 中有结果需要写入历史。
@@ -1357,6 +1404,13 @@ export class ToolIterationLoopService {
                     }
                 );
 
+                // CPF-07：全部早启动工具已完成（无主循环）——批次收尾：创建 after 并返回
+                // before + after（幂等；after 创建失败仅降级，不阻断工具结果落盘）。
+                const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
+                    conversationId,
+                    streamBatchCheckpoint
+                );
+
                 if (firstConfirmTool && !earlyStopState.shouldStop) {
                     yield {
                         conversationId,
@@ -1368,7 +1422,7 @@ export class ToolIterationLoopService {
                         content: finalContent,
                         awaitingConfirmation: true as const,
                         toolResults: earlyToolResults,
-                        checkpoints: earlyCheckpoints
+                        checkpoints: finalBatchCheckpoints
                     } satisfies ChatStreamToolConfirmationData;
 
                     return;
@@ -1379,7 +1433,7 @@ export class ToolIterationLoopService {
                     content: finalContent,
                     toolIteration: true as const,
                     toolResults: earlyToolResults,
-                    checkpoints: earlyCheckpoints,
+                    checkpoints: finalBatchCheckpoints,
                 };
 
                 if (earlyStopState.shouldStop) {
@@ -1409,6 +1463,33 @@ export class ToolIterationLoopService {
                 const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
                 const messageIndex = currentHistory.length - 1;
 
+                // CPF-07：主循环执行前补齐批次 before——早启动阶段未触发（批内写工具全部在
+                // 主循环）时在此创建，挂模型消息索引（与 execution.ts 同步 before 语义一致：
+                // 存档完成后工具才开始执行）。早启动已创建则跳过。
+                // 创建失败降级为无存档执行（warn），不阻断主循环（与 after 失败降级一致）。
+                const loopCheckpointService = this.checkpointService;
+                if (!streamBatchCheckpoint.beforeCreated && loopCheckpointService
+                    && guardedAutoPrefix.some(call =>
+                        loopCheckpointService.isToolConfiguredForCheckpoint(call.name, call.args)
+                    )) {
+                    streamBatchCheckpoint.messageIndex = messageIndex;
+                    streamBatchCheckpoint.beforeCreated = true;
+                    try {
+                        streamBatchCheckpoint.beforeCheckpoint = await loopCheckpointService.createToolExecutionCheckpoint(
+                            conversationId,
+                            messageIndex,
+                            'tool_batch',
+                            'before'
+                        );
+                        streamBatchCheckpoint.needsCheckpoint = true;
+                    } catch (error) {
+                        this.log.warn('checkpoint.batch_before_failed', {
+                            conversationId,
+                            error: (error as Error)?.message ?? String(error)
+                        });
+                    }
+                }
+
                 // 执行工具调用（按顺序），并实时发送每个工具的开始/结束状态；
                 // 达到连续失败阈值的重复调用会被护栏替换为短路错误调用
                 const gen = this.toolExecutionService.executeFunctionCallsWithProgress(
@@ -1429,7 +1510,9 @@ export class ToolIterationLoopService {
                     // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
                     runtimeContext?.workspaceUri,
                     // General Worker 模型继承：把主会话当前模型透传给工具上下文
-                    modelOverride
+                    modelOverride,
+                    // CPF-07：批次检查点统一由本服务创建，执行核心跳过内部检查点
+                    'skip'
                 );
 
                 while (true) {
@@ -1661,12 +1744,18 @@ export class ToolIterationLoopService {
                 );
 
                 if (postToolStopState.shouldStop) {
+                    // CPF-07：主循环已完成（executionResult 非空）——批次收尾：创建 after 并下发
+                    // before + after（幂等；executionResult.checkpoints 因 checkpointMode='skip' 恒为空）
+                    const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
+                        conversationId,
+                        streamBatchCheckpoint
+                    );
                     yield {
                         conversationId,
                         content: finalContent,
                         toolIteration: true as const,
                         toolResults: executionResult.toolResults,
-                        checkpoints: executionResult.checkpoints
+                        checkpoints: finalBatchCheckpoints
                     };
 
                     return;
@@ -1675,6 +1764,11 @@ export class ToolIterationLoopService {
 
             // 13. 如果遇到需要确认的工具，则暂停并等待（仅等待当前这个“队首”工具）
             if (firstConfirmTool) {
+                // CPF-07：autoPrefix 已全部执行完（等待确认中的工具未执行）——批次收尾下发存档
+                const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
+                    conversationId,
+                    streamBatchCheckpoint
+                );
                 yield {
                     conversationId,
                     pendingToolCalls: [{
@@ -1685,7 +1779,7 @@ export class ToolIterationLoopService {
                     content: finalContent,
                     awaitingConfirmation: true as const,
                     toolResults: executionResult?.toolResults,
-                    checkpoints: executionResult?.checkpoints
+                    checkpoints: finalBatchCheckpoints
                 };
 
                 return;
@@ -1693,12 +1787,17 @@ export class ToolIterationLoopService {
 
             // 14. 没有需要确认的工具，说明所有工具均已自动执行完成
             if (executionResult) {
+                // CPF-07：批次收尾（无确认工具路径）——创建 after 并下发 before + after
+                const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
+                    conversationId,
+                    streamBatchCheckpoint
+                );
                 yield {
                     conversationId,
                     content: finalContent,
                     toolIteration: true as const,
                     toolResults: executionResult.toolResults,
-                    checkpoints: executionResult.checkpoints
+                    checkpoints: finalBatchCheckpoints
                 };
             }
 
@@ -2070,6 +2169,80 @@ export class ToolIterationLoopService {
         return {
             exceededMaxIterations: true
         };
+    }
+
+    /**
+     * CPF-07：流式工具批次 before 检查点——第一个「已配置存档工具」启动前创建一次。
+     *
+     * 与调用方约定（见 ensure 处注释）：本方法只创建 before 并把结果写入 batch 状态；
+     * 调用方把返回的 promise 与工具执行串在同一链上（before 完成后工具才启动），
+     * 保证「写工具执行前已有存档」；不阻塞流式循环。
+     *
+     * 挂载索引：模型消息尚未落盘，history.length = 模型消息即将写入的位置
+     * （与 createModelMessageCheckpoint 的 before 语义一致；批次内所有检查点共用该索引，
+     * 前端据此把前后存档显示在模型消息两侧）。
+     *
+     * @returns before 检查点创建完成时 resolve（null = 配置未启用/未配置，不创建）
+     */
+    private async ensureStreamBatchBeforeCheckpoint(
+        conversationId: string,
+        batch: StreamToolBatchCheckpointState
+    ): Promise<void> {
+        // 防重入：并发早启动工具同时到达时只创建一次（创建失败也不再重试——
+        // 本批次后续工具降级为无存档执行，与执行核心「before 失败即批次失败」相比
+        // 更宽松，但保证流式循环不被检查点异常打断；失败由调用方 catch 转为工具错误）
+        batch.beforeCreated = true;
+        const checkpointService = this.checkpointService;
+        if (!checkpointService) {
+            // 调用方经 isToolConfiguredForCheckpoint 确认后才进入本方法，正常不可达；
+            // 防御性早退（batch 状态已置位，后续工具不再尝试创建）
+            return;
+        }
+        const index = (await this.conversationManager.getHistoryRef(conversationId)).length;
+        batch.messageIndex = index;
+        const checkpoint = await checkpointService.createToolExecutionCheckpoint(
+            conversationId,
+            index,
+            'tool_batch',
+            'before'
+        );
+        batch.beforeCheckpoint = checkpoint;
+        batch.needsCheckpoint = true;
+    }
+
+    /**
+     * CPF-07：流式工具批次收尾——全部工具执行完成后创建 after 存档（幂等）。
+     *
+     * 返回批次存档列表（before → after，按顺序）；批内无已配置存档工具时返回 []。
+     * after 创建失败仅降级（保留已创建的 before，不阻断工具结果落盘），与
+     * execution.ts deferred 模式下 after 失败 warn 降级的语义一致。
+     * 取消/中止路径不调用本方法（不补 after；before 保留供前端 loadCheckpoints 可见）。
+     */
+    private async finalizeStreamBatchCheckpoints(
+        conversationId: string,
+        batch: StreamToolBatchCheckpointState
+    ): Promise<CheckpointRecord[]> {
+        if (batch.finalized) {
+            return [batch.beforeCheckpoint, batch.afterCheckpoint].filter((cp): cp is CheckpointRecord => !!cp);
+        }
+        batch.finalized = true;
+        if (!batch.needsCheckpoint || batch.messageIndex === undefined) {
+            return [];
+        }
+        try {
+            batch.afterCheckpoint = await this.checkpointService.createToolExecutionCheckpoint(
+                conversationId,
+                batch.messageIndex,
+                'tool_batch',
+                'after'
+            );
+        } catch (error) {
+            this.log.warn('checkpoint.batch_after_failed', {
+                conversationId,
+                error: (error as Error)?.message ?? String(error)
+            });
+        }
+        return [batch.beforeCheckpoint, batch.afterCheckpoint].filter((cp): cp is CheckpointRecord => !!cp);
     }
 
     /**

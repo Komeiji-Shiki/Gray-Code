@@ -187,6 +187,28 @@ export class CheckpointService {
     }
 
     /**
+     * 判定单个工具调用是否命中已配置的存档工具（流式早启动批次检查点合并用）。
+     *
+     * 语义与工具执行核心（execution.ts toolNameForCheckpoint）的单工具判定一致：
+     * - search_in_files 纯 search 模式只读，不创建存档；
+     * - settingsManager 未注入时保守返回 true（由 CheckpointManager 内部配置决定是否真正创建）。
+     *
+     * 用途：ToolIterationLoopService 流式路径在「一次模型回复 = 一个工具批次」维度统一创建
+     * 检查点，需在创建前判断批内是否存在已配置存档工具（避免纯只读批次误建 tool_batch 存档）。
+     */
+    isToolConfiguredForCheckpoint(toolName: string, args?: unknown): boolean {
+        if (toolName === 'search_in_files' && (args as { mode?: string })?.mode !== 'replace') {
+            return false;
+        }
+        if (!this.settingsManager) {
+            return true;
+        }
+        const config = this.settingsManager.getCheckpointConfig();
+        const configured = new Set([...(config.beforeTools ?? []), ...(config.afterTools ?? [])]);
+        return configured.has(toolName);
+    }
+
+    /**
      * 为工具执行创建检查点
      *
      * 这里不额外做开关判断，直接委托给 CheckpointManager，由其根据配置决定是否实际创建。

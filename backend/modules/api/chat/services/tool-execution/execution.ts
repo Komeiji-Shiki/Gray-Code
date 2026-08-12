@@ -9,6 +9,13 @@
  * - 主循环核心（executeFunctionCallsWithProgressCore：并行分组 / abort 竞速 / 检查点 / 多模态汇聚）
  * - 类型（ToolExecutionProgressEvent / ToolExecutionFullResult）与并行组收尾窗口常量/工具函数
  *
+ * checkpointMode 参数（流式早启动批次检查点合并）：
+ * - 'auto'（默认）：本批次自行创建 before/after 检查点（工具执行核心既有语义）。
+ * - 'skip'：跳过本批次内部检查点创建，由调用方（ToolIterationLoopService 流式路径）按
+ *   「一次模型回复 = 一个工具批次」统一创建一组 before/after——早启动路径对每个工具单独
+ *   调用本方法，若各自建检查点会产生 N 组物理存档；合并后仅一组（tool_batch）。
+ *   非流式主循环 / subagent 等调用点不传该参数，保持既有行为零变化。
+ *
  * 逻辑与拆分前逐字一致；仅可见性从 private 调整为 protected（跨继承类调用所需，
  * 编译期属性，零运行时影响），以及 UNBOUND_WARNED_MAX 的引用限定符改为本类名
  * （避免壳文件循环依赖，值不变）。
@@ -147,6 +154,7 @@ export class ExecutionCore extends ResultCore {
      * @param messageIndex 消息索引（用于创建检查点）
      * @param config 渠道配置（用于获取多模态工具设置和工具模式）
      * @param abortSignal 取消信号（用于中断工具执行）
+     * @param checkpointMode 'skip' 时本批次不创建检查点（由调用方统一创建，见文件头说明）
      * @returns 完整执行结果
      */
     async executeFunctionCallsWithResults(
@@ -163,7 +171,8 @@ export class ExecutionCore extends ResultCore {
         mailboxRunId?: string,
         nestingDepth?: number,
         activeWorkspaceUri?: string,
-        modelOverride?: string
+        modelOverride?: string,
+        checkpointMode?: 'auto' | 'skip'
     ): Promise<ToolExecutionFullResult> {
         const generator = this.executeFunctionCallsWithProgress(
             calls,
@@ -179,7 +188,8 @@ export class ExecutionCore extends ResultCore {
             mailboxRunId,
             nestingDepth,
             activeWorkspaceUri,
-            modelOverride
+            modelOverride,
+            checkpointMode
         );
 
         // abort-race（复用 ToolIterationLoopService 主循环 1433-1503 的模式）：
@@ -300,7 +310,8 @@ export class ExecutionCore extends ResultCore {
         mailboxRunId?: string,
         nestingDepth?: number,
         activeWorkspaceUri?: string,
-        modelOverride?: string
+        modelOverride?: string,
+        checkpointMode?: 'auto' | 'skip'
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         // MED-1：领取 drain epoch——最新启动的执行循环持有 (conversationId, runId) 的 drain 权
         const mailboxDrain = this.claimMailboxDrainEpoch(mailboxConversationId, mailboxRunId);
@@ -320,7 +331,8 @@ export class ExecutionCore extends ResultCore {
                 nestingDepth,
                 mailboxDrain,
                 activeWorkspaceUri,
-                modelOverride
+                modelOverride,
+                checkpointMode
             );
         } finally {
             // E-2：生成器异常/被提前 return() 时兜底释放（正常完成路径由核心 return 后同样
@@ -352,7 +364,8 @@ export class ExecutionCore extends ResultCore {
         nestingDepth?: number,
         mailboxDrain?: { key: string; epoch: number },
         activeWorkspaceUri?: string,
-        modelOverride?: string
+        modelOverride?: string,
+        checkpointMode?: 'auto' | 'skip'
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const approvedToolCallIds = executionOptions instanceof Set ? executionOptions : undefined;
         const resolvedProgressEmitter = typeof executionOptions === 'function'
@@ -403,6 +416,11 @@ export class ExecutionCore extends ResultCore {
         const toolMode = config?.toolMode || 'function_call';
         const isPromptMode = toolMode === 'xml' || toolMode === 'json';
 
+        // CPF-07：checkpointMode='skip' 时本批次不创建检查点——流式早启动路径对每个工具单独
+        // 调用本方法，若各自建检查点会产生 N 组 before/after 物理存档；由 ToolIterationLoopService
+        // 按「一次模型回复 = 一个工具批次」统一创建一组（tool_batch）。短路在判定之前，
+        // 避免不必要的配置读取与节点反查。
+        const skipCheckpointCreation = checkpointMode === 'skip';
         // 检查点创建名（CPF-05）：
         // - 单个调用：用工具名（search_in_files 纯 search 模式只读，不创建存档）
         // - 批量调用：只有批内存在「当前已配置的写工具」时才用 tool_batch；
@@ -414,7 +432,7 @@ export class ExecutionCore extends ResultCore {
         const configuredCheckpointTools = checkpointConfig
             ? new Set([...(checkpointConfig.beforeTools ?? []), ...(checkpointConfig.afterTools ?? [])])
             : undefined;
-        const toolNameForCheckpoint: string | null = (() => {
+        const toolNameForCheckpoint: string | null = skipCheckpointCreation ? null : (() => {
             if (calls.length === 1) {
                 const single = calls[0];
                 if (single.name === 'search_in_files' && single.args?.mode !== 'replace') {
