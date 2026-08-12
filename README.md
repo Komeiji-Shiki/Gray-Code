@@ -45,6 +45,7 @@
 - [常见问题](#常见问题)
 - [贡献](#贡献)
 - [衍生项目](#衍生项目)
+- [鸣谢](#鸣谢)
 - [许可证](#许可证)
 
 ---
@@ -266,6 +267,14 @@ Gray-Code/
 - [**GrayCode Desktop**](https://github.com/czocelot/Gray-Code-Desktop) —— 独立桌面版（Electron），无需安装 VS Code，内置 `vscode-shim` 兼容层，功能与扩展版一致，支持 Windows / macOS / Linux，提供安装版与免安装便携版（[Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)）。桌面版与本仓库共享同一套 backend / frontend / webview 代码，并由社区成员持续同步上游更新。
 
 > 衍生项目由社区独立维护，其发布节奏与功能可能与本仓库不完全一致，具体以对应仓库为准。
+
+## 鸣谢
+
+感谢以下朋友对 GrayCode 的帮助与支持：
+
+- [**1b0t3**](https://github.com/1b0t3) —— opencode GO 套餐及 GPT 5.6 sol
+- [**czocelot**](https://github.com/czocelot) —— DeepSeek V4 Flash，以及 bug 寻找、项目测试与修复；并二创了 [Gray-Code-Desktop](https://github.com/czocelot/Gray-Code-Desktop)
+- [**NebulaRaven**](https://github.com/NebulaRaven) —— bug 寻找、项目测试与修复 以及帮助合并pr
 
 ## 许可证
 

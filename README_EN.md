@@ -45,6 +45,7 @@
 - [FAQ](#faq)
 - [Contributing](#contributing)
 - [Related Projects](#related-projects)
+- [Acknowledgements](#acknowledgements)
 - [License](#license)
 
 ---
@@ -274,6 +275,14 @@ Community-maintained projects based on this repository:
 - [**GrayCode Desktop**](https://github.com/czocelot/Gray-Code-Desktop) — A standalone desktop app (Electron) that runs without VS Code, powered by a built-in `vscode-shim` compatibility layer with the same features as the extension. Available for Windows / macOS / Linux, with both installer and portable versions ([Releases](https://github.com/czocelot/Gray-Code-Desktop/releases)). It shares the same backend / frontend / webview codebase with this repository and is continuously synced with upstream by community maintainers.
 
 > Derived projects are maintained independently by the community; their release cadence and features may differ from this repository. Please refer to the corresponding repository for details.
+
+## Acknowledgements
+
+Special thanks to the following friends for their help and support:
+
+- [**1b0t3**](https://github.com/1b0t3) — opencode GO package and GPT 5.6 sol
+- [**czocelot**](https://github.com/czocelot) — DeepSeek V4 Flash, plus bug hunting, testing, and fixes; also created [Gray-Code-Desktop](https://github.com/czocelot/Gray-Code-Desktop)
+- [**NebulaRaven**](https://github.com/NebulaRaven) — bug hunting, testing, and fixes
 
 ## License
 
