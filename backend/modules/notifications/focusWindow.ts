@@ -7,8 +7,9 @@ const log = Logger.get('FocusVSCodeWindow')
  * PowerShell 脚本主体：从起始 PID 向上追溯进程树，定位 VSCode 主窗口并置为 Windows 前台。
  * - 优先匹配进程名（Code / VSCodium / codium），找不到时兜底取第一个带主窗口句柄的祖先。
  * - SW_RESTORE(9) 先恢复最小化窗口，再经 FocusWindow 置前。
- * - 置前组合拳：模拟 Alt 键 + AttachThreadInput 绕过 Windows 前台锁（SetForegroundWindow
- *   默认只允许前台进程/刚接收过输入的进程调用），最后 BringWindowToTop 兜底。
+ * - 置前策略见 WINDOWS_FOCUS_TYPE：先直接 SetForegroundWindow，被前台锁拒绝时用
+ *   "最小化→恢复"（系统视为任务栏恢复，属于合法激活路径）绕过，最后 SetWindowPos
+ *   TOPMOST 兜底保证 Z 序置顶。FocusWindow 返回是否成功取得前台，失败时脚本 exit 1。
  * - 向上追溯上限 32 层，避免异常进程树导致死循环。
  */
 const FOCUS_WINDOW_SCRIPT = `
@@ -19,7 +20,8 @@ for ($i = 0; $i -lt 32; $i++) {
   if ($null -eq $p) { break }
   if ($p.MainWindowHandle -ne 0) {
     if ($p.ProcessName -match 'Code|VSCodium|codium') {
-      [GrayCode.Win32Focus]::FocusWindow($p.MainWindowHandle) | Out-Null
+      $focused = [GrayCode.Win32Focus]::FocusWindow($p.MainWindowHandle)
+      if (-not $focused) { exit 1 }
       exit 0
     }
     if ($null -eq $fallback) { $fallback = $p.MainWindowHandle }
@@ -29,7 +31,8 @@ for ($i = 0; $i -lt 32; $i++) {
   $currentId = [int]$wmi.ParentProcessId
 }
 if ($null -ne $fallback) {
-  [GrayCode.Win32Focus]::FocusWindow($fallback) | Out-Null
+  $focused = [GrayCode.Win32Focus]::FocusWindow($fallback)
+  if (-not $focused) { exit 1 }
   exit 0
 }
 exit 1
@@ -47,39 +50,37 @@ namespace GrayCode {
     [DllImport("user32.dll")]
     public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
     [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    [DllImport("user32.dll")]
-    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
-    [DllImport("user32.dll")]
-    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+    public static extern bool IsIconic(IntPtr hWnd);
 
-    // 恢复最小化窗口并置为前台。绕 Windows 前台锁：先模拟一次 Alt 键（让系统认为本进程
-    // 刚收到用户输入），再把调用线程附加到前台线程输入队列后 SetForegroundWindow，最后
-    // BringWindowToTop 兜底（即使激活被拒也尽量把窗口提到 Z 序顶部）。
-    public static void FocusWindow(IntPtr hWnd) {
-      ShowWindowAsync(hWnd, 9); // SW_RESTORE
-
-      keybd_event(0x12, 0, 0, UIntPtr.Zero); // VK_MENU down
-      keybd_event(0x12, 0, 2, UIntPtr.Zero); // KEYEVENTF_KEYUP
-
-      uint fgPid;
-      uint fgThread = 0;
-      IntPtr fg = GetForegroundWindow();
-      if (fg != IntPtr.Zero) {
-        fgThread = GetWindowThreadProcessId(fg, out fgPid);
+    // 把窗口恢复并置为前台。Windows 前台锁在 Win10/11 24H2+ 已收紧：AttachThreadInput、
+    // 模拟 Alt 键（keybd_event）等传统 hack 均被拒绝（实测 SetForegroundWindow 返回 false）。
+    // 系统唯一放行的"外部进程激活"路径是用户操作触发的激活（如任务栏恢复窗口）：
+    // 先最小化再恢复即被系统视为一次合法的恢复激活，随后 SetForegroundWindow 会被允许。
+    // 策略：已最小化 → 直接恢复并激活；未最小化 → 先直接激活（无闪烁），被拒后
+    // 最小化→恢复→激活（会闪一下，但保证生效）；最后 SetWindowPos TOPMOST 置顶后
+    // 立即恢复 NOTOPMOST，即使激活仍被拒也能保证窗口 Z 序跳到最前。
+    public static bool FocusWindow(IntPtr hWnd) {
+      if (IsIconic(hWnd)) {
+        ShowWindowAsync(hWnd, 9); // SW_RESTORE
+        bool ok = SetForegroundWindow(hWnd);
+        BringWindowToTop(hWnd);
+        SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_TOPMOST | SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE
+        SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_NOTOPMOST
+        return ok;
       }
-      uint targetPid;
-      uint targetThread = GetWindowThreadProcessId(hWnd, out targetPid);
-      if (fgThread != 0 && targetThread != 0 && fgThread != targetThread) {
-        AttachThreadInput(fgThread, targetThread, true);
-        SetForegroundWindow(hWnd);
-        AttachThreadInput(fgThread, targetThread, false);
-      } else {
-        SetForegroundWindow(hWnd);
+
+      bool focused = SetForegroundWindow(hWnd);
+      if (!focused) {
+        ShowWindowAsync(hWnd, 6); // SW_MINIMIZE
+        ShowWindowAsync(hWnd, 9); // SW_RESTORE
+        focused = SetForegroundWindow(hWnd);
       }
       BringWindowToTop(hWnd);
+      SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_TOPMOST
+      SetWindowPos(hWnd, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_NOTOPMOST
+      return focused;
     }
   }
 }
@@ -103,7 +104,7 @@ export function focusVSCodeWindow(startPid?: number): Promise<boolean> {
   const fullScript =
     `$StartPid = ${pid}\n` +
     `$sig = @'\n${WINDOWS_FOCUS_TYPE}\n'@\n` +
-    `try { Add-Type -TypeDefinition $sig -ErrorAction Stop } catch { }\n` +
+    `try { Add-Type -TypeDefinition $sig -ErrorAction Stop } catch { Write-Error $_.Exception.Message; exit 1 }\n` +
     FOCUS_WINDOW_SCRIPT
   const encoded = Buffer.from(fullScript, 'utf16le').toString('base64')
 
@@ -112,12 +113,17 @@ export function focusVSCodeWindow(startPid?: number): Promise<boolean> {
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
       { windowsHide: true, timeout: 5000 },
-      (error) => {
+      (error, stdout, stderr) => {
         if (error) {
-          log.warn('focus_window_failed', { error: String(error) })
+          log.warn('focus_window_failed', {
+            error: String(error),
+            stdout: String(stdout).trim(),
+            stderr: String(stderr).trim()
+          })
           resolve(false)
           return
         }
+        log.debug('focus_window_ok', { stdout: String(stdout).trim() })
         resolve(true)
       }
     )

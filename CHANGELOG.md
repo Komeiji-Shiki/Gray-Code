@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+  - 修复通知点击后 VS Code 窗口仍无法置前（Windows 11 24H2+ 前台锁收紧）：`focusWindow` 原有「模拟 Alt 键 + AttachThreadInput」组合拳在 Win11 24H2/25H2 实测全部失效——AttachThreadInput 返回成功但 SetForegroundWindow 仍被拒（返回 false），WScript.Shell AppActivate / SwitchToThisWindow 亦无效；且脚本无论成败都 exit 0，聚焦失败被静默吞掉（点击 toast 后窗口不聚焦、无任何日志）。现 `Win32Focus.FocusWindow` 改用系统放行的「任务栏恢复」激活路径：已最小化 → 直接 SW_RESTORE + SetForegroundWindow；未最小化 → 先直接激活（无闪烁），被拒后 SW_MINIMIZE → SW_RESTORE → SetForegroundWindow（系统视为合法的恢复激活，实测 GetForegroundWindow 命中目标窗口）；最后 SetWindowPos TOPMOST→NOTOPMOST 兜底保证 Z 序置顶。FocusWindow 返回真实聚焦结果，脚本失败时 exit 1，execFile 回调把 stdout/stderr 写入日志，不再假成功。已在 PowerShell 5.1 下用生产脚本原样端到端验证（进程树定位 Code.exe 主窗口 → 窗口成功置前）。
   - 修复流式早启动工具产生多组存档：流式边执行路径对每个工具单独调用工具执行服务，原实现为每个工具各创建一组 before/after 存档（一次模型回复 N 个工具 → N 组物理存档，前端重复展示、每次存档全量扫描工作区、额外消耗 maxCheckpoints 配额）。现检查点提升到「一次模型回复 = 一个工具批次」维度统一管理：before 在第一个已配置存档工具启动前创建（tool_batch，挂模型消息索引）、after 在全部工具完成后创建（幂等），早启动与主循环执行均以 `checkpointMode='skip'` 跳过执行核心内部检查点；纯只读批次仍不创建（CPF-05 语义保持）；取消/中止路径不补 after。修复后每条模型回复仅一对存档（前端显示为模型消息前一条「工具批次前」+ 后一条「工具批次后」），消除多组存档点错位/刷屏；`CheckpointService` 新增 `isToolConfiguredForCheckpoint` 供批次判定；新增 `streamToolBatchCheckpoint.test.ts` 覆盖全早启动/混合/纯只读/取消/纯主循环场景。
 
 ### Changed
