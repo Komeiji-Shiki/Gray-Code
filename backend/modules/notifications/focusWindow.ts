@@ -6,7 +6,9 @@ const log = Logger.get('FocusVSCodeWindow')
 /**
  * PowerShell 脚本主体：从起始 PID 向上追溯进程树，定位 VSCode 主窗口并置为 Windows 前台。
  * - 优先匹配进程名（Code / VSCodium / codium），找不到时兜底取第一个带主窗口句柄的祖先。
- * - SW_RESTORE(9) 先恢复最小化窗口，再 SetForegroundWindow 置前。
+ * - SW_RESTORE(9) 先恢复最小化窗口，再经 FocusWindow 置前。
+ * - 置前组合拳：模拟 Alt 键 + AttachThreadInput 绕过 Windows 前台锁（SetForegroundWindow
+ *   默认只允许前台进程/刚接收过输入的进程调用），最后 BringWindowToTop 兜底。
  * - 向上追溯上限 32 层，避免异常进程树导致死循环。
  */
 const FOCUS_WINDOW_SCRIPT = `
@@ -17,8 +19,7 @@ for ($i = 0; $i -lt 32; $i++) {
   if ($null -eq $p) { break }
   if ($p.MainWindowHandle -ne 0) {
     if ($p.ProcessName -match 'Code|VSCodium|codium') {
-      [GrayCode.Win32Focus]::ShowWindowAsync($p.MainWindowHandle, 9) | Out-Null
-      [GrayCode.Win32Focus]::SetForegroundWindow($p.MainWindowHandle) | Out-Null
+      [GrayCode.Win32Focus]::FocusWindow($p.MainWindowHandle) | Out-Null
       exit 0
     }
     if ($null -eq $fallback) { $fallback = $p.MainWindowHandle }
@@ -28,8 +29,7 @@ for ($i = 0; $i -lt 32; $i++) {
   $currentId = [int]$wmi.ParentProcessId
 }
 if ($null -ne $fallback) {
-  [GrayCode.Win32Focus]::ShowWindowAsync($fallback, 9) | Out-Null
-  [GrayCode.Win32Focus]::SetForegroundWindow($fallback) | Out-Null
+  [GrayCode.Win32Focus]::FocusWindow($fallback) | Out-Null
   exit 0
 }
 exit 1
@@ -44,6 +44,43 @@ namespace GrayCode {
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    // 恢复最小化窗口并置为前台。绕 Windows 前台锁：先模拟一次 Alt 键（让系统认为本进程
+    // 刚收到用户输入），再把调用线程附加到前台线程输入队列后 SetForegroundWindow，最后
+    // BringWindowToTop 兜底（即使激活被拒也尽量把窗口提到 Z 序顶部）。
+    public static void FocusWindow(IntPtr hWnd) {
+      ShowWindowAsync(hWnd, 9); // SW_RESTORE
+
+      keybd_event(0x12, 0, 0, UIntPtr.Zero); // VK_MENU down
+      keybd_event(0x12, 0, 2, UIntPtr.Zero); // KEYEVENTF_KEYUP
+
+      uint fgPid;
+      uint fgThread = 0;
+      IntPtr fg = GetForegroundWindow();
+      if (fg != IntPtr.Zero) {
+        fgThread = GetWindowThreadProcessId(fg, out fgPid);
+      }
+      uint targetPid;
+      uint targetThread = GetWindowThreadProcessId(hWnd, out targetPid);
+      if (fgThread != 0 && targetThread != 0 && fgThread != targetThread) {
+        AttachThreadInput(fgThread, targetThread, true);
+        SetForegroundWindow(hWnd);
+        AttachThreadInput(fgThread, targetThread, false);
+      } else {
+        SetForegroundWindow(hWnd);
+      }
+      BringWindowToTop(hWnd);
+    }
   }
 }
 `
