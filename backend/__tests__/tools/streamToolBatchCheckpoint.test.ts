@@ -331,4 +331,73 @@ describe('CPF-07 流式早启动批次检查点合并', () => {
         expect(last.checkpoints[0].phase).toBe('after');
         expect(last.checkpoints[0].toolName).toBe('tool_batch');
     });
+
+    test('跨迭代（同一用户回合多次模型请求）：批次前存档只创建一次（回合级），每次迭代各自批次后存档', async () => {
+        const cmdTool = makeTool('execute_command');
+        // 模拟真实仓储：getHistoryRef 读可变历史；addContent/settleFunctionResponses 增长历史
+        // （迭代 1 模型消息 @0 → 迭代 1 FR @1 → 迭代 2 模型消息 @2 → 迭代 2 FR @3）
+        const history: Array<{ role: string; parts: unknown[]; isFunctionResponse?: boolean }> = [];
+        async function* stream1() {
+            yield { delta: [{ text: 'hello' }] };
+            yield { delta: [{ functionCall: { id: 'call_1', name: 'execute_command', args: { command: 'a' } } }] };
+            yield { delta: [], done: true };
+        }
+        async function* stream2() {
+            yield { delta: [{ text: 'again' }] };
+            yield { delta: [{ functionCall: { id: 'call_2', name: 'execute_command', args: { command: 'b' } } }] };
+            yield { delta: [], done: true };
+        }
+        const channelManager = {
+            // 迭代 1：工具调用流；迭代 2：工具调用流；迭代 3：纯文本收尾
+            generate: jest.fn()
+                .mockReturnValueOnce(stream1())
+                .mockReturnValueOnce(stream2())
+                .mockReturnValueOnce({ content: { role: 'model', parts: [{ text: 'final' }] } })
+        };
+        const { service, conversationManager, checkpointService } = createToolLoopHarness(channelManager, {
+            getTool: () => cmdTool
+        });
+        // 覆盖 harness 默认的恒空历史：让模型消息/FR 落盘增长历史（跨迭代挂载索引断言依赖）
+        (conversationManager.getHistoryRef as jest.Mock).mockImplementation(async () => history);
+        (conversationManager.addContent as jest.Mock).mockImplementation(
+            async (_cid: string, content: { role: string; parts: unknown[] }) => {
+                history.push(content as never);
+                return content;
+            }
+        );
+        (conversationManager.settleFunctionResponses as jest.Mock).mockImplementation(
+            async (_cid: string, parts: unknown[]) => {
+                history.push({ role: 'user', parts, isFunctionResponse: true } as never);
+            }
+        );
+        seedCheckpointRecords(checkpointService);
+
+        const outputs = await collectOutputs(service, { maxIterations: 3 });
+
+        // 存档创建：before × 1 + after × 2 = 3 次（迭代 2 不再创建 before）
+        expect(checkpointService.createToolExecutionCheckpoint).toHaveBeenCalledTimes(3);
+        const cpCalls = (checkpointService.createToolExecutionCheckpoint as jest.Mock).mock.calls;
+        expect(cpCalls[0][2]).toBe('tool_batch');
+        expect(cpCalls[0][3]).toBe('before');
+        expect(cpCalls[1][3]).toBe('after');
+        expect(cpCalls[2][3]).toBe('after');
+        // 挂载索引：before 与迭代 1 的 after 同索引（迭代 1 模型消息 @0）；
+        // 迭代 2 的 after 用迭代 2 的模型消息索引（@2）——不被回合级 before 索引污染
+        expect(cpCalls[0][1]).toBe(cpCalls[1][1]);
+        expect(cpCalls[0][1]).toBe(0);
+        expect(cpCalls[2][1]).toBe(2);
+
+        // 迭代 2 的 toolIteration 事件仍带回合级 before（同一记录）+ 迭代 2 的 after；
+        // 前端 addCheckpoint 按 cp.id 去重，重复下发的 before 不会重复展示
+        const toolIterationOutputs = outputs.filter(o => (o as { toolIteration?: boolean }).toolIteration === true);
+        expect(toolIterationOutputs).toHaveLength(2);
+        const iter2 = toolIterationOutputs[1] as {
+            checkpoints: Array<{ phase: string; id: string; messageIndex: number }>;
+        };
+        expect(iter2.checkpoints.map(c => c.phase)).toEqual(['before', 'after']);
+        // 迭代 2 下发的 before 是迭代 1 创建的同一条记录（回合级复用，id 一致）
+        expect(iter2.checkpoints[0].id).toBe('cp-before-1');
+        expect(iter2.checkpoints[0].messageIndex).toBe(0);
+        expect(iter2.checkpoints[1].messageIndex).toBe(2);
+    });
 });

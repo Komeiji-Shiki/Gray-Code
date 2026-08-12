@@ -7,6 +7,9 @@
 -->
 ## [Unreleased]
 
+### Fixed
+  - 修复同一用户回合内多次模型请求调用工具时「批次前存档」跨迭代冗余：此前每次工具迭代（一次模型请求）各创建一对「批次前/批次后」存档，相邻迭代间出现「迭代 N 的批次后存档」紧挨「迭代 N+1 的批次前存档」的冗余展示。现批次前存档提升为回合级（`ToolIterationLoopService` 新增 `turnBatchCheckpoints` 回合状态，按「会话 + 回合起始用户消息 id」锚定，与 `turnAutoSummarizeAttempts` 同生命周期策略：新回合或锚点变化自动重置、M5 有界淘汰）：整个真实用户回合（含确认工具跨请求执行、`isNewTurn=false` 续跑）只创建一次批次前存档（挂在回合首个创建迭代的模型消息位置），中间迭代不再创建 before；每次迭代仍创建自己的批次后存档（恢复粒度不损失——迭代 N 的批次后存档即迭代 N+1 的执行前状态）。前端 `addCheckpoint` 按 `cp.id` 去重，重复下发的回合级 before 不会重复展示，存档序列由 `[前][后][前][后]…` 变为 `[前][后][后][后]…`。非流式路径（`runNonStreamLoop`）同步接入回合级 before + 迭代级 after（此前为工具级 `auto` 存档，现以 `checkpointMode='skip'` 批次化，存档持久化后经 `checkpoint.getCheckpoints` 读取可见）。新增跨迭代回归测试（流式/非流式各一条：两次工具迭代只建一次 before，before 与迭代 1 的 after 同索引、迭代 2 的 after 挂迭代 2 模型消息索引）。
+
 ## [1.5.3] - 2026-08-12
 
 ### Fixed

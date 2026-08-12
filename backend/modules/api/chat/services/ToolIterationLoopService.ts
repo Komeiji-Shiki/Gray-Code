@@ -141,6 +141,33 @@ interface StreamToolBatchCheckpointState {
 }
 
 /**
+ * 回合级工具批次 before 状态（同一真实用户回合内多次模型请求/多次迭代共享）。
+ *
+ * 背景：同一用户回合内模型可能多次请求（多次工具迭代，含确认工具跨请求执行），旧实现每次
+ * 迭代各自创建一对「批次前/批次后」存档，相邻迭代间出现「迭代 N 的批次后存档」紧挨
+ * 「迭代 N+1 的批次前存档」的冗余展示。
+ *
+ * 修复：before 提升到回合维度——整个真实用户回合只创建一次（挂在首个创建迭代的模型消息
+ * 位置），中间迭代不再创建 before；after 保持迭代级（每次迭代一个），迭代 N 的 after 即
+ * 迭代 N+1 的「执行前状态」，恢复粒度不损失。
+ *
+ * 生命周期：与 turnAutoSummarizeAttempts 同策略——不主动清理，新回合（isNewTurn=true）
+ * 或回合锚点（起始用户消息 id）变化时自动重置；条目数 = 会话数，超出上限按 M5 淘汰最旧。
+ */
+interface TurnBatchCheckpointState {
+    /** 回合锚点：起始用户消息 id（防跨回合串用；null/空 = 无锚点，与既有模式一致） */
+    turnStartMessageId: string | null;
+    /** before 挂载索引（回合首个创建迭代的模型消息位置；创建成功后写回） */
+    messageIndex?: number;
+    /** before 检查点（回合内仅创建一次） */
+    beforeCheckpoint: CheckpointRecord | null;
+    /** before 是否已创建（含创建失败——失败后本回合不再重试，降级为无存档执行） */
+    beforeCreated: boolean;
+    /** 已建 before（finalize 下发/确认事件需要；由各创建点写回） */
+    needsCheckpoint: boolean;
+}
+
+/**
  * 工具迭代循环配置
  */
 export interface ToolIterationLoopConfig {
@@ -535,6 +562,48 @@ export class ToolIterationLoopService {
     }
 
     /**
+     * 各会话「当前真实用户回合」的工具批次 before 状态（conversationId → 回合状态）。
+     *
+     * 与 turnAutoSummarizeAttempts 同模式：回合内多次 runToolLoop / runNonStreamLoop
+     * （新回合生成 → 工具确认后 isNewTurn=false 续跑）共享同一份 before 状态——批次前存档
+     * 只在回合首个创建迭代建一次，中间迭代只建各自的批次后存档（迭代 N 的 after 即迭代 N+1
+     * 的执行前状态）；新回合（isNewTurn）或回合锚点变化自动重置，会话删除后条目不残留
+     * （M5 有界淘汰）。
+     */
+    private readonly turnBatchCheckpoints = new Map<string, TurnBatchCheckpointState>();
+
+    /**
+     * 解析本回合的工具批次 before 状态（回合级共享，语义照抄 resolveTurnAutoSummarizeAttempts）。
+     *
+     * - 新真实用户回合（isNewTurn=true）或回合锚点变化（起始用户消息 id 漂移）：重置为新状态；
+     * - 回合续跑（retry / 工具确认后的继续，isNewTurn=false 且锚点未变）：复用既有状态——
+     *   beforeCreated=true 时续跑不再创建批次前存档。
+     */
+    private resolveTurnBatchCheckpoint(
+        conversationId: string,
+        turnStartMessageId: string | null,
+        isNewTurn: boolean,
+    ): TurnBatchCheckpointState {
+        const anchor = typeof turnStartMessageId === 'string' && turnStartMessageId.trim()
+            ? turnStartMessageId.trim()
+            : '';
+        const current = this.turnBatchCheckpoints.get(conversationId);
+        if (isNewTurn || anchor !== current?.turnStartMessageId) {
+            const fresh: TurnBatchCheckpointState = {
+                turnStartMessageId: anchor,
+                beforeCheckpoint: null,
+                beforeCreated: false,
+                needsCheckpoint: false
+            };
+            this.turnBatchCheckpoints.set(conversationId, fresh);
+            // M5：保持会话级 Map 有界（会话删除后条目不残留无界增长）
+            this.evictOldestIfOversized(this.turnBatchCheckpoints);
+            return fresh;
+        }
+        return current!;
+    }
+
+    /**
      * 清除指定会话的裁剪状态
      * 
      * 在以下情况下应调用：
@@ -765,6 +834,10 @@ export class ToolIterationLoopService {
             historyRef[turnStartIndex]?.id,
             isNewTurn,
         );
+        // 回合级工具批次 before 状态：同一真实用户回合内只创建一次批次前存档（挂在回合首个
+        // 创建迭代的模型消息位置），中间迭代/确认续跑不再创建 before，只保留各自迭代的 after。
+        // 与 turnAutoSummarizeAttempts 同策略：新回合或锚点变化自动重置，不主动清理。
+        const turnBatch = this.resolveTurnBatchCheckpoint(conversationId, turnStartId, isNewTurn);
 
         if (turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
             // 新用户消息已经在 ChatFlowService 中携带快照；这里只对旧历史缺失缓存的兼容路径
@@ -1014,6 +1087,15 @@ export class ToolIterationLoopService {
                     : undefined,
                 affectedPathsResolved: false
             };
+            // 回合级 before 状态合并：before 由回合状态决定（本回合首个创建迭代建一次），
+            // 迭代内可临时修改（早启动/主循环/确认补建三处创建点），创建/重置后立即写回回合状态；
+            // messageIndex 合并后由本迭代的挂载索引计算覆盖（早启动 batchIndexPromise / 主循环
+            // batchMessageIndex），保证迭代 N 的 after 挂本迭代模型消息索引、before 挂回合
+            // 首个创建迭代索引；needsCheckpoint 合并后由迭代逻辑继续累加（批内 after 命中判定）。
+            streamBatchCheckpoint.beforeCreated = turnBatch.beforeCreated;
+            streamBatchCheckpoint.beforeCheckpoint = turnBatch.beforeCheckpoint;
+            streamBatchCheckpoint.messageIndex = turnBatch.messageIndex;
+            streamBatchCheckpoint.needsCheckpoint = turnBatch.needsCheckpoint;
             const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
                 .drainSettled()
                 .flatMap(settlement => settlement.fullResult.toolResults.map(toolResult => ({
@@ -1090,7 +1172,7 @@ export class ToolIterationLoopService {
                                 const beforeCheckpointPromise = streamBatchCheckpoint.beforeCreated
                                     ? null
                                     : this.checkpointService?.isToolConfiguredForCheckpoint(fc.name, fc.args, 'before')
-                                        ? this.ensureStreamBatchBeforeCheckpoint(conversationId, streamBatchCheckpoint)
+                                        ? this.ensureStreamBatchBeforeCheckpoint(conversationId, streamBatchCheckpoint, turnBatch)
                                         : null;
                                 const rawPromise = (beforeCheckpointPromise ?? Promise.resolve())
                                     .then(() => this.toolExecutionService.executeFunctionCallsWithResults(
@@ -1475,6 +1557,7 @@ export class ToolIterationLoopService {
                             conversationId,
                             streamBatchCheckpoint,
                             functionCalls,
+                            turnBatch,
                             batchMessageIndex
                         );
                     }
@@ -1567,11 +1650,11 @@ export class ToolIterationLoopService {
                     guardedAutoPrefix,
                     streamBatchCheckpoint.workspaceRootFsPath
                 );
-                // 批次挂载索引：早启动阶段已设置（模型消息未落盘时的 history.length = 插入位置）则保留；
-                // 否则用主循环路径计算值（模型消息已落盘，length - 1 = 模型消息位置；两路径同一模型消息）。
-                if (streamBatchCheckpoint.messageIndex === undefined) {
-                    streamBatchCheckpoint.messageIndex = messageIndex;
-                }
+                // 批次挂载索引：主循环路径计算值（模型消息已落盘，length - 1 = 模型消息位置）。
+                // 早启动阶段已设置时（模型消息未落盘时的 history.length = 插入位置）两值相等，覆盖无副作用；
+                // 无条件覆盖同时避免回合级 before 合并带来的「迭代 1 索引」污染迭代 2+ 的 after 挂载
+                // （回合 before 挂回合首个创建迭代索引，迭代 after 挂各自模型消息索引）。
+                streamBatchCheckpoint.messageIndex = messageIndex;
                 // CPF-07：主循环执行前补齐批次 before——早启动阶段未触发（批内写工具全部在
                 // 主循环）时在此创建，挂模型消息索引（与 execution.ts 同步 before 语义一致：
                 // 存档完成后工具才开始执行）。早启动已创建则跳过。
@@ -1597,17 +1680,25 @@ export class ToolIterationLoopService {
                             }
                         );
                         if (streamBatchCheckpoint.beforeCheckpoint) {
-                            // needsCheckpoint 只由「批内工具命中 afterTools」置位（见上方收集循环）
+                            // 回合级写回：before 在真实用户回合内只创建一次（后续迭代/确认续跑复用）
+                            turnBatch.beforeCheckpoint = streamBatchCheckpoint.beforeCheckpoint;
+                            turnBatch.beforeCreated = true;
+                            turnBatch.messageIndex = messageIndex;
+                            turnBatch.needsCheckpoint = true;
                         } else {
                             // 配置未命中（批内已见工具均未配置 before）：重置防重入，
                             // 允许确认路径补建（批内确认工具可能配置了 before）。
                             streamBatchCheckpoint.beforeCreated = false;
+                            turnBatch.beforeCreated = false;
                         }
                     } catch (error) {
                         this.log.warn('checkpoint.batch_before_failed', {
                             conversationId,
                             error: (error as Error)?.message ?? String(error)
                         });
+                        // 回合状态同步：创建异常降级为无存档执行（beforeCreated 保持 true，
+                        // 与批次状态一致——后续迭代不再从回合值读到 false 而重复尝试创建）。
+                        turnBatch.beforeCreated = true;
                     }
                 }
 
@@ -1892,6 +1983,7 @@ export class ToolIterationLoopService {
                     conversationId,
                     streamBatchCheckpoint,
                     functionCalls,
+                    turnBatch,
                     batchMessageIndex
                 );
                 const finalBatchCheckpoints = await this.finalizeStreamBatchCheckpoints(
@@ -1992,6 +2084,9 @@ export class ToolIterationLoopService {
             historyRef[turnStartIndex]?.id,
             isNewTurn,
         );
+        // 回合级工具批次 before 状态：与流式路径一致——同一真实用户回合只创建一次批次前存档，
+        // 每次迭代各自创建批次后存档；确认/隐藏 functionResponse 续跑（isNewTurn=false）复用。
+        const turnBatch = this.resolveTurnBatchCheckpoint(conversationId, turnStartId, isNewTurn);
 
         let promptContext: RequestPromptContext;
         let dynamicContextText: string;
@@ -2221,8 +2316,71 @@ export class ToolIterationLoopService {
             const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
             const messageIndex = currentHistory.length - 1;
 
+            // CPF-07：非流式批次检查点（简化版：无早启动/无确认工具）——回合级 before + 迭代级 after。
+            // 此前非流式路径以 checkpointMode='auto' 调用执行核心，每个工具各自创建一组工具级存档
+            // （toolName=write_file 等）；现与流式路径对齐为批次维度：before 在本回合首个
+            // 「已配置 before 存档」的迭代创建一次（挂本迭代模型消息索引），after 在每次迭代
+            // 工具执行完成后创建（挂本迭代模型消息索引，批内工具名透传按 afterTools 精确判定）；
+            // 执行核心传 checkpointMode='skip'，避免工具级存档与批次存档重复。
+            const guardedCalls = repeatedCallGuard.guardCalls(functionCalls);
+            const batchToolNames = guardedCalls.map(c => c.name);
+            // CP-PARTIAL-1：非流式批次同样按受影响路径构建部分快照（任一工具无法确定则回退全量）
+            const workspaceRootFsPath = runtimeContext?.workspaceUri
+                ? (workspaceUriToFsPath(runtimeContext.workspaceUri) ?? undefined)
+                : undefined;
+            const nonStreamBatch: StreamToolBatchCheckpointState = {
+                beforeCheckpoint: null,
+                beforeCreated: false,
+                needsCheckpoint: false,
+                afterCheckpoint: null,
+                finalized: false,
+                batchToolNames: new Set(batchToolNames),
+                workspaceRootFsPath,
+                affectedPathsResolved: false
+            };
+            this.collectAffectedPaths(nonStreamBatch, guardedCalls, workspaceRootFsPath);
+            const checkpointService = this.checkpointService;
+            // 回合级 before：本真实用户回合第一个「已配置 before 存档」的迭代创建一次
+            if (checkpointService && !turnBatch.beforeCreated) {
+                if (guardedCalls.some(c => checkpointService.isToolConfiguredForCheckpoint(c.name, c.args, 'before'))) {
+                    turnBatch.beforeCreated = true;
+                    try {
+                        const beforeCheckpoint = await checkpointService.createToolExecutionCheckpoint(
+                            conversationId,
+                            messageIndex,
+                            'tool_batch',
+                            'before',
+                            undefined,
+                            {
+                                batchToolNames,
+                                ...(nonStreamBatch.affectedPaths
+                                    ? { affectedPaths: nonStreamBatch.affectedPaths }
+                                    : {})
+                            }
+                        );
+                        if (beforeCheckpoint) {
+                            // 回合级写回：before 在真实用户回合内只创建一次
+                            turnBatch.beforeCheckpoint = beforeCheckpoint;
+                            turnBatch.messageIndex = messageIndex;
+                            turnBatch.needsCheckpoint = true;
+                        } else {
+                            // 配置未命中：回合状态同步（允许后续迭代补建）
+                            turnBatch.beforeCreated = false;
+                        }
+                    } catch (error) {
+                        this.log.warn('checkpoint.batch_before_failed', {
+                            conversationId,
+                            iteration,
+                            error: (error as Error)?.message ?? String(error)
+                        });
+                        // 创建异常降级为无存档执行（本回合不再重试）
+                        turnBatch.beforeCreated = true;
+                    }
+                }
+            }
+
             const executionResult = await this.toolExecutionService.executeFunctionCallsWithResults(
-                repeatedCallGuard.guardCalls(functionCalls),
+                guardedCalls,
                 conversationId,
                 messageIndex,
                 config,
@@ -2239,9 +2397,40 @@ export class ToolIterationLoopService {
                 // 当前对话绑定的工作区 URI（用于工具执行的工作区限定/记忆路由）
                 runtimeContext?.workspaceUri,
                 // General Worker 模型继承：把主会话当前模型透传给工具上下文
-                modelOverride
+                modelOverride,
+                // CPF-07：批次检查点由本循环统一创建，执行核心跳过工具级检查点
+                'skip'
             );
             repeatedCallGuard.recordResults(executionResult.toolResults);
+
+            // 迭代级 after（批次维度）：批内工具命中 afterTools 才创建（CheckpointManager 内部
+            // 再按 afterTools 精确判定）；取消/中止不补（与流式语义一致）。存档已持久化到
+            // CheckpointManager（元数据 + 快照），前端经 checkpoint.getCheckpoints（loadCheckpoints）
+            // 读取可见——非流式响应协议不含 checkpoints 通道，不做协议扩展（最小改动）。
+            if (checkpointService && !abortSignal?.aborted
+                && guardedCalls.some(c => checkpointService.isToolConfiguredForCheckpoint(c.name, c.args, 'after'))) {
+                try {
+                    await checkpointService.createToolExecutionCheckpoint(
+                        conversationId,
+                        messageIndex,
+                        'tool_batch',
+                        'after',
+                        undefined,
+                        {
+                            batchToolNames,
+                            ...(nonStreamBatch.affectedPaths
+                                ? { affectedPaths: nonStreamBatch.affectedPaths }
+                                : {})
+                        }
+                    );
+                } catch (error) {
+                    this.log.warn('checkpoint.batch_after_failed', {
+                        conversationId,
+                        iteration,
+                        error: (error as Error)?.message ?? String(error)
+                    });
+                }
+            }
             // 非流式 abort 结算状态更新：记录本次已结算（真实结果/cancelled 占位）的调用，
             // abort 分支据此只补未配对调用的占位，已执行完的真实结果保持原样。
             lastSettledResult = executionResult;
@@ -2356,11 +2545,14 @@ export class ToolIterationLoopService {
      * 配置未命中（批内已见工具均未配置 before，createToolExecutionCheckpoint 返回 null）时
      * 重置 beforeCreated，允许后续到达的已配置工具再次触发创建。
      *
+     * @param turnBatch 回合级 before 状态：创建/重置后立即写回，保证跨迭代/跨请求一致
+     *   （同一真实用户回合内 before 只创建一次）
      * @returns before 检查点创建完成时 resolve（null = 配置未启用/未配置，不创建）
      */
     private async ensureStreamBatchBeforeCheckpoint(
         conversationId: string,
-        batch: StreamToolBatchCheckpointState
+        batch: StreamToolBatchCheckpointState,
+        turnBatch: TurnBatchCheckpointState
     ): Promise<void> {
         // 防重入：并发早启动工具同时到达时只创建一次；创建失败（异常）时保持 beforeCreated=true
         // 降级为无存档执行（与主循环路径一致，仅 warn 不阻断工具），配置未命中（null）时重置
@@ -2399,10 +2591,16 @@ export class ToolIterationLoopService {
             );
             if (checkpoint) {
                 batch.beforeCheckpoint = checkpoint;
+                // 回合级写回：before 在真实用户回合内只创建一次（后续迭代/确认续跑复用）
+                turnBatch.beforeCheckpoint = checkpoint;
+                turnBatch.beforeCreated = true;
+                turnBatch.messageIndex = index;
+                turnBatch.needsCheckpoint = true;
             } else {
                 // 配置未命中（当前已见工具均未配置 before）：重置防重入，
-                // 允许后续到达的已配置工具再次触发创建。
+                // 允许后续到达的已配置工具再次触发创建；回合状态同步（允许后续迭代补建）。
                 batch.beforeCreated = false;
+                turnBatch.beforeCreated = false;
             }
         } catch (error) {
             // 存档创建异常（磁盘/锁等）：降级为无存档执行（warn），不阻断工具执行，
@@ -2411,6 +2609,9 @@ export class ToolIterationLoopService {
                 conversationId,
                 error: (error as Error)?.message ?? String(error)
             });
+            // 回合状态同步：创建异常降级为无存档执行（batch.beforeCreated 保持 true，
+            // 与批次状态一致——后续迭代不再从回合值读到 false 而重复尝试创建）。
+            turnBatch.beforeCreated = true;
         }
     }
 
@@ -2419,6 +2620,7 @@ export class ToolIterationLoopService {
      * 若批内存在配置了 before 的工具（如确认工具本身），在进入确认等待前补建批次 before，
      * 保证「确认工具执行前已有存档」。配置未命中（返回 null）时静默跳过。
      *
+     * @param turnBatch 回合级 before 状态：创建/重置后立即写回，保证跨迭代/跨请求一致
      * @param messageIndex 可选：主循环路径（模型消息已落盘）传 messageIndex（length - 1）；
      *   早启动路径不传（模型消息未落盘，用 history.length，与 ensureStreamBatchBeforeCheckpoint 一致）
      */
@@ -2426,6 +2628,7 @@ export class ToolIterationLoopService {
         conversationId: string,
         batch: StreamToolBatchCheckpointState,
         calls: FunctionCallInfo[],
+        turnBatch: TurnBatchCheckpointState,
         messageIndex?: number
     ): Promise<void> {
         if (batch.beforeCreated) {
@@ -2470,14 +2673,23 @@ export class ToolIterationLoopService {
             );
             if (checkpoint) {
                 batch.beforeCheckpoint = checkpoint;
+                // 回合级写回：before 在真实用户回合内只创建一次（后续迭代/确认续跑复用）
+                turnBatch.beforeCheckpoint = checkpoint;
+                turnBatch.beforeCreated = true;
+                turnBatch.messageIndex = messageIndex;
+                turnBatch.needsCheckpoint = true;
             } else {
                 batch.beforeCreated = false;
+                // 配置未命中：回合状态同步（允许后续迭代补建）
+                turnBatch.beforeCreated = false;
             }
         } catch (error) {
             this.log.warn('checkpoint.batch_before_confirm_failed', {
                 conversationId,
                 error: (error as Error)?.message ?? String(error)
             });
+            // 回合状态同步：创建异常降级为无存档执行（batch.beforeCreated 保持 true）
+            turnBatch.beforeCreated = true;
         }
     }
 
