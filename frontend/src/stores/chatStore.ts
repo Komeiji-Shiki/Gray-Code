@@ -31,6 +31,7 @@ import { defineStore } from 'pinia'
 import { computed as vueComputed, watch } from 'vue'
 import type { Attachment, CheckpointRecord, Message, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { t } from '../composables/useI18n'
 import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
@@ -380,7 +381,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 创建新标签页
-    const tabId = createTabAction(state, { title: 'New Chat' })
+    const tabId = createTabAction(state, { title: t('components.tabs.newChat') })
     if (tabId) {
       // createTabAction 未传 conversationId：新标签页的 conversationId 恒为 null，
       // existingTab.conversationId 分支是死代码（旧实现每次都会走到），直接切换
@@ -600,7 +601,7 @@ export const useChatStore = defineStore('chat', () => {
    * 创建新标签页
    */
   function createNewTab(): string | null {
-    const tabId = createTabAction(state, { title: 'New Chat' })
+    const tabId = createTabAction(state, { title: t('components.tabs.newChat') })
     if (tabId) {
       switchTabWrapped(tabId)
     }
@@ -655,7 +656,7 @@ export const useChatStore = defineStore('chat', () => {
     const conv = state.conversations.value.find(c => c.id === conversationId)
     const tabId = createTabAction(state, {
       conversationId,
-      title: conv?.title || 'Chat'
+      title: conv?.title || t('components.tabs.chat')
     })
     if (tabId) {
       switchTabWrapped(tabId)
@@ -690,7 +691,7 @@ export const useChatStore = defineStore('chat', () => {
       state.foldedMessageCount.value = 0
       state.toolResponseCache.value = new Map()
 
-      const initialTabId = createTabAction(state, { title: 'New Chat' })
+      const initialTabId = createTabAction(state, { title: t('components.tabs.newChat') })
       if (initialTabId) {
         state.activeTabId.value = initialTabId
       }
@@ -732,6 +733,34 @@ export const useChatStore = defineStore('chat', () => {
     await loadCurrentConfig(state)
     await loadCheckpointConfig(state)
     await loadConversations()
+  }
+
+  // ============ 工具确认回合 ============
+
+  /**
+   * 开始一次工具确认回合：把本次确认流绑定到 streamId 并置等待标记，
+   * 避免流式过滤器把后端返回的 chunk 当作「未知流」丢弃。
+   * （此前由 ToolMessage 组件直写 activeStreamId/isWaitingForResponse，现收敛到 store API）
+   */
+  function beginToolConfirmationRound(options: {
+    conversationId: string
+    configId: string
+    modelOverride?: string
+    promptModeId?: string | null
+    streamId: string
+  }): void {
+    // 防御性校验：缺少绑定上下文时不进入等待态（调用方在发起 IPC 前已做同款校验）
+    if (!options.conversationId || !options.configId || !options.streamId) return
+    state.activeStreamId.value = options.streamId
+    state.isWaitingForResponse.value = true
+  }
+
+  /**
+   * 中止工具确认回合：请求未发出时回滚流绑定与等待标记，避免阻塞后续有效流
+   */
+  function abortToolConfirmationRound(): void {
+    state.activeStreamId.value = null
+    state.isWaitingForResponse.value = false
   }
 
   // ============ 返回 ============
@@ -825,6 +854,8 @@ export const useChatStore = defineStore('chat', () => {
     getToolResponseById,
     hasToolResponse,
     getActualIndex,
+    beginToolConfirmationRound,
+    abortToolConfirmationRound,
     
     // 检查点
     checkpoints: state.checkpoints,

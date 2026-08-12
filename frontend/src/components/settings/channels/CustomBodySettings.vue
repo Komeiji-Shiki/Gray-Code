@@ -98,7 +98,7 @@ function handleJsonInput(e: Event) {
     }
     jsonError.value = ''
   } catch {
-    jsonError.value = 'JSON 格式错误'
+    jsonError.value = t('components.channels.customBody.jsonError')
   }
 }
 

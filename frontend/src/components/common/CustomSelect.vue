@@ -7,6 +7,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import CustomScrollbar from './CustomScrollbar.vue'
 import type { SelectOption } from './types'
+import { t } from '@/i18n'
 
 export type { SelectOption }
 
@@ -19,7 +20,7 @@ const props = withDefaults(defineProps<{
   dropUp?: boolean  // 向上展开
   compact?: boolean  // 紧凑模式
 }>(), {
-  placeholder: '请选择',
+  placeholder: '',
   disabled: false,
   searchable: false,
   dropUp: false,
@@ -39,6 +40,9 @@ const inputRef = ref<HTMLInputElement>()
 const selectedOption = computed(() => {
   return props.options.find(opt => opt.value === props.modelValue)
 })
+
+// 未传入 placeholder 时回退到 i18n 默认值（跟随语言切换）
+const resolvedPlaceholder = computed(() => props.placeholder || t('components.common.customSelect.placeholder'))
 
 const filteredOptions = computed(() => {
   if (!searchQuery.value) {
@@ -148,7 +152,7 @@ onUnmounted(() => {
       <span v-if="selectedOption" class="selected-value">
         <span class="selected-label">{{ selectedOption.label }}</span>
       </span>
-      <span v-else class="placeholder">{{ placeholder }}</span>
+      <span v-else class="placeholder">{{ resolvedPlaceholder }}</span>
       <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
     </button>
 
@@ -160,7 +164,7 @@ onUnmounted(() => {
             v-model="searchQuery"
             type="text"
             class="search-input"
-            placeholder="搜索..."
+            :placeholder="t('components.common.customSelect.searchPlaceholder')"
             @click.stop
           />
         </div>
@@ -188,7 +192,7 @@ onUnmounted(() => {
             </div>
 
             <div v-if="filteredOptions.length === 0" class="empty-state">
-              <span>没有匹配的选项</span>
+              <span>{{ t('components.common.customSelect.noMatch') }}</span>
             </div>
           </div>
         </CustomScrollbar>

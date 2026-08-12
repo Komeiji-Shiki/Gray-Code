@@ -57,7 +57,7 @@ vi.mock('../../i18n', () => ({
 function createChatStore() {
   const inputValue = ref('')
   const allMessages = ref<Array<Record<string, unknown>>>([])
-  return {
+  const store: Record<string, any> = {
     inputValue,
     allMessages,
     clearInputValue: vi.fn(() => { inputValue.value = '' }),
@@ -68,8 +68,19 @@ function createChatStore() {
     pendingModelOverride: null,
     activeStreamId: null,
     isWaitingForResponse: false,
-    currentPromptModeId: 'code'
+    currentPromptModeId: 'code',
+    // 与 chatStore 真实实现保持一致：绑定流 + 置等待标记
+    beginToolConfirmationRound: vi.fn((options: any) => {
+      if (!options.conversationId || !options.configId || !options.streamId) return
+      store.activeStreamId = options.streamId
+      store.isWaitingForResponse = true
+    }),
+    abortToolConfirmationRound: vi.fn(() => {
+      store.activeStreamId = null
+      store.isWaitingForResponse = false
+    })
   }
+  return store
 }
 
 function makeTool(): Record<string, unknown> {

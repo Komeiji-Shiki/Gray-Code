@@ -143,41 +143,63 @@ const highlightedPaths = computed(() => {
   })
 })
 
-// 键盘事件处理
-function handleKeydown(e: KeyboardEvent | { key: string, preventDefault?: Function, stopPropagation?: Function }) {
+// 键盘事件处理（真实键盘事件入口）
+function handleKeydown(e: KeyboardEvent) {
   if (!props.visible) return
   
   switch (e.key) {
     case 'ArrowDown':
-      e.preventDefault?.()
-      e.stopPropagation?.()
-      // 列表为空时直接跳过，避免 Math.min(..., files.length - 1) 把选中索引置为 -1
-      if (files.value.length === 0) break
-      selectedIndex.value = Math.min(selectedIndex.value + 1, files.value.length - 1)
-      scrollToSelected()
+      e.preventDefault()
+      e.stopPropagation()
+      moveHighlight(1)
       break
     case 'ArrowUp':
-      e.preventDefault?.()
-      e.stopPropagation?.()
-      selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
-      scrollToSelected()
+      e.preventDefault()
+      e.stopPropagation()
+      moveHighlight(-1)
       break
     case 'Enter':
-      e.preventDefault?.()
-      e.stopPropagation?.()
-      selectCurrent()
+      e.preventDefault()
+      e.stopPropagation()
+      confirmSelection()
       break
     case 'Escape':
-      e.preventDefault?.()
-      e.stopPropagation?.()
+      e.preventDefault()
+      e.stopPropagation()
       emit('close')
       break
     case 'Tab':
-      e.preventDefault?.()
-      e.stopPropagation?.()
-      selectCurrent()
+      e.preventDefault()
+      e.stopPropagation()
+      confirmSelection()
       break
   }
+}
+
+/**
+ * 移动高亮（delta: -1 上移 / +1 下移）。
+ * 语义化 API：供父组件（InputArea/EditDialog）在无真实键盘事件的场景直接调用，
+ * 替代原先手工拼假 KeyboardEvent 传 handleKeydown 的脆弱模式。
+ */
+function moveHighlight(delta: number) {
+  if (!props.visible) return
+
+  if (delta < 0) {
+    selectedIndex.value = Math.max(selectedIndex.value - 1, 0)
+  } else {
+    // 列表为空时直接跳过，避免 Math.min(..., files.length - 1) 把选中索引置为 -1
+    if (files.value.length === 0) return
+    selectedIndex.value = Math.min(selectedIndex.value + 1, files.value.length - 1)
+  }
+  scrollToSelected()
+}
+
+/**
+ * 确认当前高亮项。语义化 API：供父组件在无真实键盘事件的场景直接调用。
+ */
+function confirmSelection() {
+  if (!props.visible) return
+  selectCurrent()
 }
 
 // 滚动到选中项
@@ -227,7 +249,9 @@ onBeforeUnmount(() => {
 // 暴露方法
 defineExpose({
   handleKeydown,
-  selectCurrent
+  selectCurrent,
+  moveHighlight,
+  confirmSelection
 })
 </script>
 

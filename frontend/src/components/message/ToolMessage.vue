@@ -252,23 +252,13 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       getPendingDiffSessions(tool.id).length === 0 &&
       (effectiveStatus === 'executing' || effectiveStatus === 'awaiting_apply')
     ) {
-      const now = Date.now()
+      // 孤儿宽限期判定：进入时间的记录与届满重估定时器由下方的
+      // watch(syncPendingDiffOrphanState) 维护，computed 只做纯读（保持纯函数）。
       const existed = pendingDiffOrphanedAt.value.get(tool.id)
-      const since = existed ?? now
-      if (!existed) {
-        pendingDiffOrphanedAt.value.set(tool.id, now)
-        pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
-        // 安排宽限期届满后的重估（#59 修复）
-        const capturedToolId = tool.id
-        setTimeout(() => {
-          if (pendingDiffOrphanedAt.value.has(capturedToolId)) {
-            orphanCheckTick.value++
-          }
-        }, DIFF_ORPHAN_GRACE_MS)
-      }
+      const since = existed ?? Date.now()
 
       // 宽限期内保持原状态，避免 UI 闪烁（先 error 再 success）。
-      if (now - since < DIFF_ORPHAN_GRACE_MS) {
+      if (Date.now() - since < DIFF_ORPHAN_GRACE_MS) {
         return { ...tool, status: effectiveStatus, awaitingConfirmation: false }
       }
 
@@ -278,12 +268,6 @@ const enhancedTools = computed<ToolUsage[]>(() => {
         error: tool.error || t('components.tools.cancelled'),
         awaitingConfirmation: false
       }
-    }
-
-    // 非 executing/awaiting_apply 场景，清理 orphan 记录
-    if (pendingDiffOrphanedAt.value.has(tool.id) && effectiveStatus !== 'executing' && effectiveStatus !== 'awaiting_apply') {
-      pendingDiffOrphanedAt.value.delete(tool.id)
-      pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
     }
 
     // diff 工具：如果 diff 处于 pending（等待应用/审阅），将状态映射为 awaiting_apply
@@ -299,6 +283,64 @@ const enhancedTools = computed<ToolUsage[]>(() => {
     return { ...tool, status: effectiveStatus, awaitingConfirmation: awaitingConfirm }
   })
 })
+
+/**
+ * 孤儿检测副作用（#59 修复，从 enhancedTools computed 中移出）：
+ * 依据原始工具状态维护 pendingDiffOrphanedAt 记录，并在宽限期届满时安排重估定时器。
+ * 幂等：已记录的 id 不重复记录；非孤儿候选（含已收到响应、状态离开 executing/awaiting_apply）
+ * 时清理记录，与旧 computed 内联逻辑语义一致。
+ */
+function syncPendingDiffOrphanState(): void {
+  const next = new Map(pendingDiffOrphanedAt.value)
+  let changed = false
+
+  for (const tool of props.tools) {
+    const isDiffTool = DIFF_SUPPORTED_TOOLS.includes(tool.name)
+    let isDiffApplicable = true
+    if (tool.name === 'search_in_files') {
+      const args = tool.args as Record<string, unknown>
+      isDiffApplicable = args?.mode === 'replace'
+    }
+
+    // 与 computed 一致：已有响应时孤儿分支不会执行，无需维护记录
+    const response = tool.result || (tool.id ? chatStore.getToolResponseById(tool.id) : undefined)
+    if (response) continue
+
+    const effectiveStatus = tool.status || 'queued'
+    const isOrphanCandidate =
+      isDiffTool &&
+      isDiffApplicable &&
+      seenDiffToolIds.value.has(tool.id) &&
+      getPendingDiffSessions(tool.id).length === 0 &&
+      (effectiveStatus === 'executing' || effectiveStatus === 'awaiting_apply')
+
+    if (isOrphanCandidate) {
+      if (!next.has(tool.id)) {
+        next.set(tool.id, Date.now())
+        changed = true
+        // 安排宽限期届满后的重估（#59 修复）
+        const capturedToolId = tool.id
+        setTimeout(() => {
+          if (pendingDiffOrphanedAt.value.has(capturedToolId)) {
+            orphanCheckTick.value++
+          }
+        }, DIFF_ORPHAN_GRACE_MS)
+      }
+    } else if (next.has(tool.id)) {
+      // 非 executing/awaiting_apply 场景，清理 orphan 记录
+      next.delete(tool.id)
+      changed = true
+    }
+  }
+
+  if (changed) {
+    pendingDiffOrphanedAt.value = next
+  }
+}
+
+// 工具状态 / diff 会话视图变化时同步孤儿记录；pendingDiffViewsByToolId 覆盖
+// 会话级（pending diff 增删、处理状态）变化，props.tools 覆盖原始状态变化。
+watch([() => props.tools, pendingDiffViewsByToolId], syncPendingDiffOrphanState, { immediate: true })
 
 // 正在处理确认的工具 ID 集合
 
@@ -383,8 +425,13 @@ async function sendToolConfirmation(
 
     // 为本次工具确认流绑定 streamId，避免流式过滤器把后端返回的 chunk 当作“未知流”丢弃
     const streamId = generateId()
-    chatStore.activeStreamId = streamId
-    chatStore.isWaitingForResponse = true
+    chatStore.beginToolConfirmationRound({
+      conversationId: currentConversationId,
+      configId: confirmationConfigId,
+      modelOverride: chatStore.pendingModelOverride || undefined,
+      promptModeId: chatStore.currentPromptModeId,
+      streamId
+    })
 
     await sendToExtension(MESSAGE_NAMES.toolConfirmation, {
       conversationId: currentConversationId,
@@ -399,14 +446,12 @@ async function sendToolConfirmation(
     console.error('Failed to send tool confirmation:', error)
 
     // 请求未发出时回滚 stream 绑定，避免阻塞后续有效流
-    chatStore.activeStreamId = null
-    chatStore.isWaitingForResponse = false
+    chatStore.abortToolConfirmationRound()
     return false
   }
 }
 
 // 展开状态
-// eslint-disable-next-line no-undef
 const expandedTools = ref<Set<string>>(new Set())
 
 // 切换展开/收起

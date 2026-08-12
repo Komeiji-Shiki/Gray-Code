@@ -24,6 +24,7 @@ import type {
   ToolInfo,
   ToolPolicyMode
 } from './prompt/types'
+import { groupToolsByCategory, getCategoryName } from '@/utils/toolCategory'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -59,11 +60,13 @@ interface SystemPromptConfig {
 }
 
 // 静态变量（放入系统提示词，可被 API provider 缓存）
-const STATIC_PROMPT_MODULES: PromptModule[] = [
+// 模块 name/description/requiresConfig 元数据取自语言包（随界面语言切换）；
+// example 为变量内容预览（英文示例），保持原文不变。
+const STATIC_PROMPT_MODULES = computed<PromptModule[]>(() => [
   {
     id: 'ENVIRONMENT',
-    name: '环境信息',
-    description: '包含工作区路径、操作系统、时区和用户语言（静态内容，可缓存）',
+    name: t('components.settings.promptSettings.modules.ENVIRONMENT.name'),
+    description: t('components.settings.promptSettings.modules.ENVIRONMENT.description'),
     example: `====
 
 ENVIRONMENT
@@ -76,8 +79,8 @@ Please respond using the user's language by default.`
   },
   {
     id: 'TOOLS',
-    name: '工具定义',
-    description: '根据渠道配置生成 XML 或 Function Call 格式的工具定义（此变量由系统自动填充）',
+    name: t('components.settings.promptSettings.modules.TOOLS.name'),
+    description: t('components.settings.promptSettings.modules.TOOLS.description'),
     example: `====
 
 TOOLS
@@ -90,8 +93,8 @@ Description: Read file content
   },
   {
     id: 'CONTEXT_BADGE_FORMAT',
-    name: '上下文徽章结构',
-    description: '解释 <lim-context ...>...</lim-context> 的字段含义，明确哪里是标题、哪里是正文，以及 binary 徽章不应按文本解析',
+    name: t('components.settings.promptSettings.modules.CONTEXT_BADGE_FORMAT.name'),
+    description: t('components.settings.promptSettings.modules.CONTEXT_BADGE_FORMAT.description'),
     example: `====
 
 CONTEXT BADGE FORMAT
@@ -106,20 +109,20 @@ CONTEXT BADGE FORMAT
   },
   {
     id: 'MCP_TOOLS',
-    name: 'MCP 工具',
-    description: '来自 MCP 服务器的额外工具定义（此变量由系统自动填充）',
+    name: t('components.settings.promptSettings.modules.MCP_TOOLS.name'),
+    description: t('components.settings.promptSettings.modules.MCP_TOOLS.description'),
     example: `====
 
 MCP TOOLS
 
 Additional tools from MCP servers:
 ...`,
-    requiresConfig: 'MCP 设置中需要配置并连接服务器'
+    requiresConfig: t('components.settings.promptSettings.modules.MCP_TOOLS.requiresConfig')
   },
   {
     id: 'MEMORY',
-    name: '记忆系统',
-    description: '永久记忆系统（OptMem）的使用说明，告诉 AI 如何跨会话记录和回忆信息。可在 设置 → 记忆 中自定义内容。',
+    name: t('components.settings.promptSettings.modules.MEMORY.name'),
+    description: t('components.settings.promptSettings.modules.MEMORY.description'),
     example: `====
 
 MEMORY
@@ -131,16 +134,16 @@ Run memory_wake before any other tool call...
 
 ### While working: register memories (mandatory)
 Call memory_note whenever you learn something new...`,
-    requiresConfig: '设置 → 记忆 中可自定义此提示词'
+    requiresConfig: t('components.settings.promptSettings.modules.MEMORY.requiresConfig')
   }
-]
+])
 
 // 动态变量（作为上下文消息临时插入，不存储到历史记录）
-const DYNAMIC_CONTEXT_MODULES: PromptModule[] = [
+const DYNAMIC_CONTEXT_MODULES = computed<PromptModule[]>(() => [
   {
     id: 'TODO_LIST',
-    name: 'TODO 列表',
-    description: '显示当前会话的 TODO 列表（来自 todo_write / todo_update / create_plan 持久化的 todoList 元数据）',
+    name: t('components.settings.promptSettings.modules.TODO_LIST.name'),
+    description: t('components.settings.promptSettings.modules.TODO_LIST.description'),
     example: `====
 
 TODO LIST
@@ -152,8 +155,8 @@ Total: 3 | pending: 1 | in_progress: 1 | completed: 1 | cancelled: 0
   },
   {
     id: 'WORKSPACE_FILES',
-    name: '工作区文件树',
-    description: '列出工作区中的文件和目录结构，受上下文感知设置中的深度和忽略模式影响',
+    name: t('components.settings.promptSettings.modules.WORKSPACE_FILES.name'),
+    description: t('components.settings.promptSettings.modules.WORKSPACE_FILES.description'),
     example: `====
 
 WORKSPACE FILES
@@ -164,12 +167,12 @@ src/
   main.ts
   utils/
     helper.ts`,
-    requiresConfig: '上下文感知 > 发送工作区文件树'
+    requiresConfig: t('components.settings.promptSettings.modules.WORKSPACE_FILES.requiresConfig')
   },
   {
     id: 'OPEN_TABS',
-    name: '打开的标签页',
-    description: '列出当前在编辑器中打开的文件标签页',
+    name: t('components.settings.promptSettings.modules.OPEN_TABS.name'),
+    description: t('components.settings.promptSettings.modules.OPEN_TABS.description'),
     example: `====
 
 OPEN TABS
@@ -177,23 +180,23 @@ OPEN TABS
 Currently open files in editor:
   - src/main.ts
   - src/utils/helper.ts`,
-    requiresConfig: '上下文感知 > 发送打开的标签页'
+    requiresConfig: t('components.settings.promptSettings.modules.OPEN_TABS.requiresConfig')
   },
   {
     id: 'ACTIVE_EDITOR',
-    name: '活动编辑器',
-    description: '显示当前正在编辑的文件路径',
+    name: t('components.settings.promptSettings.modules.ACTIVE_EDITOR.name'),
+    description: t('components.settings.promptSettings.modules.ACTIVE_EDITOR.description'),
     example: `====
 
 ACTIVE EDITOR
 
 Currently active file: src/main.ts`,
-    requiresConfig: '上下文感知 > 发送当前活动编辑器'
+    requiresConfig: t('components.settings.promptSettings.modules.ACTIVE_EDITOR.requiresConfig')
   },
   {
     id: 'DIAGNOSTICS',
-    name: '诊断信息',
-    description: '显示工作区的错误、警告等诊断信息，帮助 AI 修复代码问题',
+    name: t('components.settings.promptSettings.modules.DIAGNOSTICS.name'),
+    description: t('components.settings.promptSettings.modules.DIAGNOSTICS.description'),
     example: `====
 
 DIAGNOSTICS
@@ -203,12 +206,12 @@ The following diagnostics were found in the workspace:
 src/main.ts:
   Line 10: [Error] Cannot find name 'foo'. (ts)
   Line 15: [Warning] 'bar' is defined but never used. (ts)`,
-    requiresConfig: '上下文感知 > 启用诊断信息'
+    requiresConfig: t('components.settings.promptSettings.modules.DIAGNOSTICS.requiresConfig')
   },
   {
     id: 'PINNED_FILES',
-    name: '固定文件内容',
-    description: '显示用户固定的文件的完整内容',
+    name: t('components.settings.promptSettings.modules.PINNED_FILES.name'),
+    description: t('components.settings.promptSettings.modules.PINNED_FILES.description'),
     example: `====
 
 PINNED FILES CONTENT
@@ -218,12 +221,12 @@ The following are pinned files...
 --- README.md ---
 # Project Title
 ...`,
-    requiresConfig: '需要在输入框旁的固定文件按钮中添加文件'
+    requiresConfig: t('components.settings.promptSettings.modules.PINNED_FILES.requiresConfig')
   },
   {
     id: 'SKILLS',
-    name: 'Skills 内容',
-    description: '显示当前启用的 Skills 的内容。Skills 是用户自定义的知识模块，AI 可以通过 toggle_skills 工具动态启用/禁用。',
+    name: t('components.settings.promptSettings.modules.SKILLS.name'),
+    description: t('components.settings.promptSettings.modules.SKILLS.description'),
     example: `====
 
 ACTIVE SKILLS
@@ -234,15 +237,15 @@ The following skills are currently active...
 
 # Pymatgen - Python Materials Genomics
 ...`,
-    requiresConfig: 'AI 通过 toggle_skills 工具启用 skills'
+    requiresConfig: t('components.settings.promptSettings.modules.SKILLS.requiresConfig')
   }
-]
+])
 
-// 静态变量 ID 集合
-const staticModuleIds = new Set(STATIC_PROMPT_MODULES.map(m => m.id))
+// 静态变量 ID 集合（模块 ID 恒定，不随语言变化）
+const staticModuleIds = new Set(['ENVIRONMENT', 'TOOLS', 'CONTEXT_BADGE_FORMAT', 'MCP_TOOLS', 'MEMORY'])
 
 // 动态变量 ID 集合
-const dynamicModuleIds = new Set(DYNAMIC_CONTEXT_MODULES.map(m => m.id))
+const dynamicModuleIds = new Set(['TODO_LIST', 'WORKSPACE_FILES', 'OPEN_TABS', 'ACTIVE_EDITOR', 'DIAGNOSTICS', 'PINNED_FILES', 'SKILLS'])
 
 // 默认静态系统提示词模板（代码模式）
 const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
@@ -792,34 +795,13 @@ const filteredTools = computed(() => {
 })
 
 const groupedTools = computed<Record<string, ToolInfo[]>>(() => {
-  const grouped: Record<string, ToolInfo[]> = {}
-  for (const tool of filteredTools.value) {
-    const category = tool.category || '其他'
-    if (!grouped[category]) grouped[category] = []
-    grouped[category].push(tool)
-  }
+  // 复用 utils/toolCategory 的归一化分组：未知/缺省分类归入 other，避免中文分组键拼出不存在键
+  const grouped = groupToolsByCategory(filteredTools.value)
   for (const category of Object.keys(grouped)) {
     grouped[category].sort((a, b) => a.name.localeCompare(b.name))
   }
   return grouped
 })
-
-function getCategoryDisplayName(category: string): string {
-  const mapping: Record<string, string> = {
-    file: t('components.settings.toolsSettings.categories.file'),
-    search: t('components.settings.toolsSettings.categories.search'),
-    terminal: t('components.settings.toolsSettings.categories.terminal'),
-    lsp: t('components.settings.toolsSettings.categories.lsp'),
-    media: t('components.settings.toolsSettings.categories.media'),
-    other: t('components.settings.toolsSettings.categories.other'),
-    其他: t('components.settings.toolsSettings.categories.other'),
-    mcp: 'MCP',
-    todo: 'TODO',
-    agents: 'Agents',
-    skills: 'Skills'
-  }
-  return mapping[category] || category
-}
 
 function isToolSelected(name: string): boolean {
   return toolPolicy.value.includes(name)
@@ -1536,7 +1518,7 @@ watch(selectedChannel, () => {
         :is-loading-tools="isLoadingTools"
         :available-tools="availableTools"
         :grouped-tools="groupedTools"
-        :get-category-display-name="getCategoryDisplayName"
+        :get-category-display-name="getCategoryName"
         :is-tool-selected="isToolSelected"
         :tool-policy="toolPolicy"
         @select-all="selectAllTools"

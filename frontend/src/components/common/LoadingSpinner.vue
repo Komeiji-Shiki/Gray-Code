@@ -4,6 +4,8 @@
  * 使用横线脉冲动画替代旋转圆圈
  */
 
+import { t } from '@/i18n'
+
 withDefaults(defineProps<{
   size?: 'small' | 'medium' | 'large'
   text?: string
@@ -13,7 +15,7 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <div class="loading-spinner" role="status" :aria-label="text || 'Loading'">
+  <div class="loading-spinner" role="status" :aria-label="text || t('common.loading')">
     <div :class="['spinner', size]">
       <div class="spinner-line"></div>
     </div>

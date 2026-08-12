@@ -16,7 +16,7 @@ import { CustomScrollbar } from '../common'
 import UsageTimeSection from './UsageTimeSection.vue'
 import { useSettingsStore, useChatStore } from '@/stores'
 import { sendToExtension } from '@/utils/vscode'
-import { t } from '../../i18n'
+import { t, actualLanguage } from '../../i18n'
 import type {
   UsageBucket,
   UsageStatsResult,
@@ -246,7 +246,8 @@ function handleRowClick(row: UsageRow) {
 }
 
 function formatGeneratedAt(timestamp: number): string {
-  return new Date(timestamp).toLocaleString()
+  // 传入界面语言 locale：en/ja 界面下时间格式不随系统 locale 走
+  return new Date(timestamp).toLocaleString(actualLanguage.value)
 }
 
 const tabs = computed(() => ([

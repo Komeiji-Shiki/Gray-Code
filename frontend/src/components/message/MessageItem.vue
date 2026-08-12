@@ -57,7 +57,7 @@ const settingsStore = useSettingsStore()
 // 流式输出指示器文本：支持用户自定义（外观设置），为空时使用 i18n 默认值
 const streamingIndicatorText = computed(() => {
   const custom = (settingsStore.appearanceLoadingText || '').trim()
-  return custom || t('common.loading') || 'Loading'
+  return custom || t('common.loading')
 })
 
 // 使用 Array.from 以更好地支持中文等多字节字符
@@ -625,7 +625,7 @@ const modelVersion = computed(() => props.message.metadata?.modelVersion)
 
 // 角色显示名称
 const roleDisplayName = computed(() => {
-  if (isAgentMessage.value) return 'Agent message'
+  if (isAgentMessage.value) return t('components.message.roles.agent')
   if (isBackgroundTask.value) return t('components.backgroundTasks.completed')
   if (isUser.value) return t('components.message.roles.user')
   if (isTool.value) return t('components.message.roles.tool')
@@ -843,7 +843,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       <div v-else-if="isBackgroundTask" class="background-task-card">
         <div class="bg-task-header">
           <i class="codicon codicon-hubot bg-task-icon"></i>
-          <span class="bg-task-label">{{ isAgentMessage ? 'Agent message' : (t('components.backgroundTasks.completed') || 'Background task completed') }}</span>
+          <span class="bg-task-label">{{ isAgentMessage ? t('components.message.roles.agent') : t('components.backgroundTasks.completed') }}</span>
           <!-- 三段式视图切换：折叠 / 中展开（滚动） / 完全展开 -->
           <div class="bg-task-view-controls">
             <button
@@ -995,7 +995,7 @@ function handleRestoreAndRetry(checkpointId: string) {
             
             <!-- Token 速率 -->
             <span v-if="tokenRate" class="token-rate" :title="t('components.message.stats.tokenRate')">
-              <i class="codicon codicon-zap"></i>{{ tokenRate }} t/s
+              <i class="codicon codicon-zap"></i>{{ t('components.message.stats.tokensPerSecond', { rate: tokenRate }) }}
             </span>
           </div>
           

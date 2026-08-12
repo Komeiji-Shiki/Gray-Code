@@ -197,12 +197,18 @@ const en: LanguageMessages = {
             modal: {
                 close: 'Close'
             },
+            customSelect: {
+                placeholder: 'Please select',
+                searchPlaceholder: 'Search...',
+                noMatch: 'No matching options'
+            },
             markdown: {
                 copyCode: 'Copy code',
                 wrapEnable: 'Wrap lines',
                 wrapDisable: 'No wrap',
                 copied: 'Copied',
-                imageLoadFailed: 'Failed to load image'
+                imageLoadFailed: 'Failed to load image',
+                openFileFailed: 'Failed to open file'
             },
             markdownRenderer: {
                 mermaid: {
@@ -231,6 +237,7 @@ const en: LanguageMessages = {
 
         tabs: {
             newChat: 'New Chat',
+            chat: 'Chat',
             newTab: 'New Tab',
             closeTab: 'Close Tab'
         },
@@ -450,7 +457,8 @@ const en: LanguageMessages = {
             roles: {
                 user: 'User',
                 tool: 'Tool',
-                assistant: 'Assistant'
+                assistant: 'Assistant',
+                agent: 'Agent message'
             },
             actions: {
                 edit: 'Edit message',
@@ -590,7 +598,8 @@ const en: LanguageMessages = {
             stats: {
                 ttft: 'Time to first token (TTFT)',
                 responseDuration: 'Response Duration',
-                tokenRate: 'Token Rate'
+                tokenRate: 'Token Rate',
+                tokensPerSecond: '{rate} t/s'
             },
             thought: {
                 thinking: 'Thinking...',
@@ -1741,6 +1750,7 @@ const en: LanguageMessages = {
                     createFailed: 'Create failed',
                     updateFailed: 'Update failed'
                 },
+                saveFailed: 'Failed to save',
                 delete: {
                     title: 'Delete MCP Server',
                     message: 'Are you sure you want to delete server "{name}"? This action cannot be undone.',
@@ -1994,11 +2004,11 @@ const en: LanguageMessages = {
                 modules: {
                     ENVIRONMENT: {
                         name: 'Environment Info',
-                        description: 'Contains workspace path, operating system, current time and timezone information'
+                        description: 'Contains workspace path, operating system, timezone and user language (static content, cacheable)'
                     },
                     CONTEXT_BADGE_FORMAT: {
                         name: 'Context Badge Format',
-                        description: 'Explains <lim-context ...>...</lim-context> semantics, including title (title attribute), body (tag content), and binary badge handling'
+                        description: 'Explains the meaning of <lim-context ...>...</lim-context> fields, clarifying which part is the title, which part is the body, and that binary badges should not be parsed as text'
                     },
                     WORKSPACE_FILES: {
                         name: 'Workspace File Tree',
@@ -2027,8 +2037,8 @@ const en: LanguageMessages = {
                     },
                     SKILLS: {
                         name: 'Skills Content',
-                        description: 'Skills are user-defined knowledge modules. AI loads content on demand via the read_skill tool. Skill names and descriptions are listed in the tool description.',
-                        requiresConfig: 'Enable skills in the Skills panel, AI loads content via read_skill tool'
+                        description: 'Shows the content of currently enabled Skills. Skills are user-defined knowledge modules that the AI can dynamically enable/disable via the toggle_skills tool.',
+                        requiresConfig: 'Skills are enabled by the AI via the toggle_skills tool'
                     },
                     TOOLS: {
                         name: 'Tool Definitions',
@@ -2048,6 +2058,27 @@ const en: LanguageMessages = {
                         description: 'Instructions for the permanent memory system (OptMem), telling the AI how to record and recall information across sessions.',
                         requiresConfig: 'Customizable in Settings → Memory'
                     }
+                },
+                entriesEditor: {
+                    dragToReorder: 'Drag to reorder',
+                    chatHistoryAlwaysEnabled: 'Always enabled',
+                    chatHistoryAlwaysEnabledTitle: 'Chat History is always enabled to prevent losing real history',
+                    entryNamePlaceholder: 'Entry name',
+                    moveUp: 'Move up',
+                    moveDown: 'Move down',
+                    chatHistoryNoteTitle: 'Real conversation history will be inserted here',
+                    chatHistoryNoteDescription: 'This entry is not sent as a normal message. It cannot be deleted, duplicated, or disabled, but can be dragged or moved up/down to control where history appears in the preset skeleton.',
+                    contentPlaceholder: 'Enter prompt content. Variables like {{$ENVIRONMENT}}, {{$TODO_LIST}} are available',
+                    fakeThoughtLabel: 'Fake thought process',
+                    fakeThoughtTitle: 'Only assistant (temporary assistant messages) can fake the thought process',
+                    fakeThoughtHint: 'Optional. Sent back as thought content with this assistant message; not sent when the channel has "Send history thinking content" disabled',
+                    fakeThoughtPlaceholder: 'Enter the fake AI thought process. Leave empty for none',
+                    insertVariable: 'Insert variable',
+                    staticGroup: 'Static',
+                    dynamicGroup: 'Dynamic',
+                    roleSystemDescription: 'Merged into the system prompt',
+                    roleUserDescription: 'Inserted as temporary user context',
+                    roleAssistantDescription: 'Inserted as a temporary assistant message'
                 },
                 exampleOutput: 'Example Output:',
                 requiresConfigLabel: 'Requires Config:'
@@ -2246,6 +2277,7 @@ const en: LanguageMessages = {
                     saving: 'Saving...',
                     save: 'Save Config',
                     reset: 'Reset to Default',
+                    defaultPrompt: 'You must proactively activate memory at startup\n\nIn every session, run memory_wake before any other tool call, then follow its instructions strictly until everything is finished.\n\nMemory consists of two parts: global memory (shared across all workspaces) and current workspace memory (isolated per workspace). memory_wake outputs both; pay attention to the --- Global memory --- and --- Workspace memory --- markers. When recording new memories, memory_note writes to the current workspace memory store by default.\n\nYou may proactively record memories while working\n\nWhen you learn something new, or something worth keeping happens, call memory_note.\n\nThis includes major insights, discoveries that greatly improve efficiency, facts or opinions the user teaches you, any information you learn about their life, and any events with lasting impact.\n\nMemory notes should always be durable: useful for future sessions, possibly for completely unrelated tasks. If a note is only useful until the current task ends → do not record it.\n\nNever record:\n- Work logs: completed tasks, completed rounds, commits, pushes, validations that have been run. Git history already contains all of this.\n- Temporary state: current progress, next steps, which files you have staged.\n- Operation rules for a single task only, useless for future sessions.\n\nWhen in doubt, do not record. A few refined memories are better than a noisy log.\n\nDo not record redundant memories.\n\nIf memory_note or memory_wake requires compression: run memory_compress before proceeding with your next step.',
                     systemPrompt: {
                         title: 'Custom Prompt',
                         description: 'The prompt shown above is currently active and can be edited directly. Click "Reset to Default" to restore the built-in default. Changes take effect in the next session.',
@@ -2898,7 +2930,8 @@ const en: LanguageMessages = {
                     historyContentHint: 'Let AI see thought processes of completed rounds',
                     roundsLabel: 'History Thinking Rounds',
                     roundsHint: 'How many non-latest rounds to send. -1 for all, 0 for none, positive N for last N rounds (e.g., 1 for only the second-to-last round)'
-                }
+                },
+                toggleHint: 'When enabled, this parameter will be sent to the API'
             },
             anthropic: {
                 thinking: {
@@ -2962,6 +2995,7 @@ const en: LanguageMessages = {
                     modeLevel: 'Level',
                     modeBudget: 'Budget',
                     levelLabel: 'Thinking Level',
+                    levelPlaceholder: 'Select thinking level',
                     levelHint: 'minimal: Minimal thinking | low: Less thinking | medium: Moderate | high: Deep thinking',
                     levelMinimal: 'Minimal',
                     levelLow: sharedEn.components.channels.gemini.thinking.levelLow,
@@ -2998,6 +3032,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
+                    effortPlaceholder: 'Select thinking effort',
                     effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom',
                     effortNone: 'None',
                     effortMinimal: 'Minimal',
@@ -3010,6 +3045,7 @@ const en: LanguageMessages = {
                     effortCustom: 'Custom',
                     effortCustomPlaceholder: 'Enter custom effort value (e.g. max, ultra)',
                     summaryLabel: 'Output Detail (Summary)',
+                    summaryPlaceholder: 'Select output verbosity',
                     summaryHint: 'auto: Auto select | concise: Brief output | detailed: Detailed output',
                     summaryAuto: 'Auto',
                     summaryConcise: 'Concise',
@@ -3028,6 +3064,7 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
+                    effortPlaceholder: 'Select thinking effort',
                     effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Extra High | max: Maximum | ultra: Ultra | custom: Custom',
                     effortNone: 'None (none)',
                     effortMinimal: 'Minimal (minimal)',
@@ -3040,6 +3077,7 @@ const en: LanguageMessages = {
                     effortCustom: 'Custom (custom)',
                     effortCustomPlaceholder: 'Enter custom effort value (e.g. max, ultra)',
                     summaryLabel: 'Output Detail (Summary)',
+                    summaryPlaceholder: 'Select verbosity',
                     summaryHint: 'auto: Auto select | concise: Brief output | detailed: Detailed output',
                     summaryAuto: 'Auto',
                     summaryConcise: 'Concise',

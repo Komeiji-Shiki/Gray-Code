@@ -86,7 +86,6 @@ export const useTerminalStore = defineStore('terminal', () => {
   const hasRunning = computed(() => runningCount.value > 0)
   
   // ============ 方法 ============
-  // ============ 方法 ============
   
   /**
    * 注册终端（在工具调用开始时）

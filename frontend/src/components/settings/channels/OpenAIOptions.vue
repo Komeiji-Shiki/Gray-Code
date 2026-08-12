@@ -329,7 +329,7 @@ function onSendThoughtsChange(e: any) {
             :model-value="getReasoningValue('effort', 'high')"
             :options="effortOptions"
             :disabled="!isOptionEnabled('reasoning')"
-            placeholder="选择思考强度"
+            :placeholder="t('components.channels.openai.thinking.effortPlaceholder')"
             @update:model-value="(v: string) => updateReasoning('effort', v)"
           />
           <input
@@ -350,7 +350,7 @@ function onSendThoughtsChange(e: any) {
         <div class="option-item option-with-toggle">
           <div class="option-header">
             <label>{{ t('components.channels.openai.thinking.summaryLabel') }}</label>
-            <label class="toggle-switch small" title="启用后此参数将发送到 API">
+            <label class="toggle-switch small" :title="t('components.channels.common.toggleHint')">
               <input
                 type="checkbox"
                 :checked="getReasoningValue('summaryEnabled', false)"
@@ -364,7 +364,7 @@ function onSendThoughtsChange(e: any) {
             :model-value="getReasoningValue('summary', 'auto')"
             :options="summaryOptions"
             :disabled="!isOptionEnabled('reasoning') || !getReasoningValue('summaryEnabled', false)"
-            placeholder="选择输出详细程度"
+            :placeholder="t('components.channels.openai.thinking.summaryPlaceholder')"
             @update:model-value="(v: string) => updateReasoning('summary', v)"
           />
           <span class="option-hint">

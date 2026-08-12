@@ -199,12 +199,18 @@ const zhCN = {
             modal: {
                 close: '关闭'
             },
+            customSelect: {
+                placeholder: '请选择',
+                searchPlaceholder: '搜索...',
+                noMatch: '没有匹配的选项'
+            },
             markdown: {
                 copyCode: '复制代码',
                 wrapEnable: '自动换行',
                 wrapDisable: '不换行',
                 copied: '已复制',
-                imageLoadFailed: '图片加载失败'
+                imageLoadFailed: '图片加载失败',
+                openFileFailed: '打开文件失败'
             },
             markdownRenderer: {
                 mermaid: {
@@ -233,6 +239,7 @@ const zhCN = {
 
         tabs: {
             newChat: '新对话',
+            chat: '对话',
             newTab: '新建标签页',
             closeTab: '关闭标签页'
         },
@@ -452,7 +459,8 @@ const zhCN = {
             roles: {
                 user: '用户',
                 tool: '工具',
-                assistant: '助手'
+                assistant: '助手',
+                agent: 'Agent 消息'
             },
             actions: {
                 edit: '编辑消息',
@@ -592,7 +600,8 @@ const zhCN = {
             stats: {
                 ttft: '首字延迟 (TTFT)',
                 responseDuration: '响应时间',
-                tokenRate: 'Token 速率'
+                tokenRate: 'Token 速率',
+                tokensPerSecond: '{rate} t/s'
             },
             thought: {
                 thinking: '正在思考...',
@@ -1743,6 +1752,7 @@ const zhCN = {
                     createFailed: '创建失败',
                     updateFailed: '更新失败'
                 },
+                saveFailed: '保存失败',
                 delete: {
                     title: '删除 MCP 服务器',
                     message: '确定要删除服务器 "{name}" 吗？此操作不可恢复。',
@@ -1996,11 +2006,11 @@ const zhCN = {
                 modules: {
                     ENVIRONMENT: {
                         name: '环境信息',
-                        description: '包含工作区路径、操作系统、当前时间和时区信息'
+                        description: '包含工作区路径、操作系统、时区和用户语言（静态内容，可缓存）'
                     },
                     CONTEXT_BADGE_FORMAT: {
                         name: '上下文徽章结构',
-                        description: '解释 <lim-context ...>...</lim-context> 的字段语义，明确标题（title 属性）、正文（标签体）以及 binary 徽章不应按文本解析'
+                        description: '解释 <lim-context ...>...</lim-context> 的字段含义，明确哪里是标题、哪里是正文，以及 binary 徽章不应按文本解析'
                     },
                     WORKSPACE_FILES: {
                         name: '工作区文件树',
@@ -2029,8 +2039,8 @@ const zhCN = {
                     },
                     SKILLS: {
                         name: 'Skills 内容',
-                        description: 'Skills 是用户自定义的知识模块。AI 通过 read_skill 工具按需加载内容，Skill 名称和描述列在工具描述中。',
-                        requiresConfig: '在 Skills 面板中启用 Skill，AI 通过 read_skill 工具加载内容'
+                        description: '显示当前启用的 Skills 的内容。Skills 是用户自定义的知识模块，AI 可以通过 toggle_skills 工具动态启用/禁用。',
+                        requiresConfig: 'AI 通过 toggle_skills 工具启用 skills'
                     },
                     TOOLS: {
                         name: '工具定义',
@@ -2050,6 +2060,27 @@ const zhCN = {
                         description: '永久记忆系统（OptMem）的使用说明，告诉 AI 如何跨会话记录和回忆信息。可在 设置 → 记忆 中自定义内容。',
                         requiresConfig: '设置 → 记忆 中可自定义此提示词'
                     }
+                },
+                entriesEditor: {
+                    dragToReorder: '拖动排序',
+                    chatHistoryAlwaysEnabled: '必启用',
+                    chatHistoryAlwaysEnabledTitle: 'Chat History 始终启用，避免真实历史丢失',
+                    entryNamePlaceholder: '条目名称',
+                    moveUp: '上移',
+                    moveDown: '下移',
+                    chatHistoryNoteTitle: '真实对话历史会插入在这里',
+                    chatHistoryNoteDescription: '该条目不会作为普通消息发送，不可删除、不可复制、不可禁用，但可以拖动或上下移动来控制历史在预设骨架中的位置。',
+                    contentPlaceholder: '输入提示词内容，可使用 {{$ENVIRONMENT}}、{{$TODO_LIST}} 等变量',
+                    fakeThoughtLabel: '伪造思考过程',
+                    fakeThoughtTitle: '仅 assistant（临时助手消息）可伪造思考过程',
+                    fakeThoughtHint: '可选，随该条 assistant 消息以思考内容回传；渠道关闭「发送历史思考内容」时不发送',
+                    fakeThoughtPlaceholder: '输入伪造的 AI 思考过程，留空则不伪造',
+                    insertVariable: '插入变量',
+                    staticGroup: '静态',
+                    dynamicGroup: '动态',
+                    roleSystemDescription: '合并进系统提示词',
+                    roleUserDescription: '作为临时用户上下文插入',
+                    roleAssistantDescription: '作为临时助手消息插入'
                 },
                 exampleOutput: '示例输出：',
                 requiresConfigLabel: '依赖配置：'
@@ -2248,6 +2279,7 @@ const zhCN = {
                     saving: '正在保存...',
                     save: '保存配置',
                     reset: '恢复默认',
+                    defaultPrompt: '启动时必须主动激活记忆\n\n在每次会话中，在进行任何其他工具调用之前运行 memory_wake，然后严格按照其提示执行，直到一切结束。\n\n记忆包含两部分：全局记忆（所有工作区共享）与当前工作区记忆（按工作区隔离），memory_wake 会同时输出两者，注意区分 --- Global memory --- 与 --- Workspace memory --- 标注；记录新记忆时 memory_note 默认写入当前工作区的记忆存储。\n\n工作期间可主动记录记忆\n\n当你学到新东西，或发生值得保留的事情时，调用 memory_note。\n\n这包括你受到的大的启发，对效率有大幅提升的发现、用户教给你的事实或见解、你了解到的关于他们生活的任何信息，以及任何具有持久影响的事件。\n\n记忆笔记应始终是持久的：对未来的会话仍然有用，可能用于完全不相关的任务。如果一条笔记只在当前任务结束前有用 → 不要记录。\n\n绝不记录：\n- 工作日志：已完成的任务、已完成的轮次、提交、推送、已运行的验证。Git 历史已包含所有这些。\n- 临时状态：当前进度、后续步骤、你暂存了哪些文件。\n- 仅限单次任务的操作规则，对未来会话无用。\n\n如有疑问，不要记录。几条精炼的记忆胜过嘈杂的日志。\n\n不要记录冗余的记忆。\n\n如果 memory_note 或 memory_wake 要求压缩：在你进行下一步操作之前执行 memory_compress。',
                     systemPrompt: {
                         title: '自定义提示词',
                         description: '上方为当前生效的提示词，可直接编辑。点击「恢复默认」可还原为内置默认值。修改后在下一次会话生效。',
@@ -2900,7 +2932,8 @@ const zhCN = {
                     historyContentHint: '让 AI 看到之前已完成回合的思考过程',
                     roundsLabel: '发送历史思考回合数',
                     roundsHint: '控制发送多少轮非最新回合的历史对话思考。-1 表示全部，0 表示不发送历史对话，正数 N 表示发送最近 N 轮（如 1 表示只发送倒数第二回合）'
-                }
+                },
+                toggleHint: '启用后此参数将发送到 API'
             },
             anthropic: {
                 thinking: {
@@ -2964,6 +2997,7 @@ const zhCN = {
                     modeLevel: '等级',
                     modeBudget: '预算',
                     levelLabel: '思考等级',
+                    levelPlaceholder: '选择思考等级',
                     levelHint: 'minimal: 最少思考 | low: 较少思考 | medium: 中等 | high: 深度思考',
                     levelMinimal: '最少',
                     levelLow: sharedZhCN.components.channels.gemini.thinking.levelLow,
@@ -3000,6 +3034,7 @@ const zhCN = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
+                    effortPlaceholder: '选择思考强度',
                     effortHint: 'none: 不使用 | minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义',
                     effortNone: '无',
                     effortMinimal: '最少',
@@ -3012,6 +3047,7 @@ const zhCN = {
                     effortCustom: '自定义',
                     effortCustomPlaceholder: '输入自定义 effort 值（如 max、ultra）',
                     summaryLabel: '输出详细程度 (Summary)',
+                    summaryPlaceholder: '选择输出详细程度',
                     summaryHint: 'auto: 自动选择 | concise: 简洁输出 | detailed: 详细输出',
                     summaryAuto: '自动',
                     summaryConcise: '简洁',
@@ -3030,6 +3066,7 @@ const zhCN = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
+                    effortPlaceholder: '选择思考强度',
                     effortHint: 'none: 不使用 | minimal: 最少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 极高 | max: 最大 | ultra: 极端 | custom: 自定义',
                     effortNone: '无 (none)',
                     effortMinimal: '最少 (minimal)',
@@ -3042,6 +3079,7 @@ const zhCN = {
                     effortCustom: '自定义 (custom)',
                     effortCustomPlaceholder: '输入自定义 effort 值（如 max、ultra）',
                     summaryLabel: '输出详细程度 (Summary)',
+                    summaryPlaceholder: '选择详细程度',
                     summaryHint: 'auto: 自动选择 | concise: 简洁输出 | detailed: 详细输出',
                     summaryAuto: '自动',
                     summaryConcise: '简洁',

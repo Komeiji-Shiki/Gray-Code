@@ -105,7 +105,13 @@ vi.mock('../../composables', () => ({
 
 vi.mock('../../i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
-  setLanguage: runtime.setLanguage
+  setLanguage: runtime.setLanguage,
+  SUPPORTED_LANGUAGES: [
+    { value: 'auto', labelKey: 'components.settings.settingsPanel.language.followSystem', label: 'Auto', nativeLabel: 'Auto' },
+    { value: 'zh-CN', label: '简体中文', nativeLabel: '简体中文' },
+    { value: 'en', label: 'English', nativeLabel: 'English' },
+    { value: 'ja', label: '日本語', nativeLabel: '日本語' }
+  ]
 }))
 
 vi.mock('../../utils', () => ({

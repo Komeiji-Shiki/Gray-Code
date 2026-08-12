@@ -217,11 +217,18 @@ async function loadChannels() {
   isLoadingChannels.value = true
   try {
     const ids = await configService.listConfigIds()
-    const loaded: any[] = []
-    for (const id of ids) {
-      const config = await configService.getConfig(id)
-      if (config) loaded.push(config)
-    }
+
+    // 并行拉取全部渠道配置（原为串行 N 次 IPC）；单条失败仅跳过该条，不拖垮整批
+    const results = await Promise.all(ids.map(async (id) => {
+      try {
+        return await configService.getConfig(id)
+      } catch (error) {
+        console.warn(`[task-cards] Failed to load config ${id}:`, error)
+        return null
+      }
+    }))
+    const loaded = results.filter((c): c is any => !!c)
+
     channelConfigs.value = loaded
     if (chatStore.configId && !selectedChannelId.value) {
       selectedChannelId.value = chatStore.configId

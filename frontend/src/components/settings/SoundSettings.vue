@@ -417,13 +417,7 @@ async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreview
       content: buildWindowsAgentStopNotificationContentDraft()
     }
 
-    console.log('[sound-settings][preview]', 'sending Windows notification preview', {
-      reason,
-      payload
-    })
-
-    const result = await sendToExtension(MESSAGE_NAMES['notifications.preview'], payload)
-    console.log('[sound-settings][preview]', 'Windows notification preview finished', { reason, result })
+    await sendToExtension(MESSAGE_NAMES['notifications.preview'], payload)
   } catch (error) {
     console.error('Failed to trigger Windows notification preview:', error)
   }
@@ -431,7 +425,6 @@ async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreview
 
 async function testCue(cue: SoundCue) {
   testMessage.value = ''
-  console.log('[sound-settings][testCue]', 'start test cue', { cue })
 
   // 试听应使用当前表单音量，但不应把“未保存”的 enabled/cues 等设置带到运行时。
   // 因此这里临时覆盖运行时音量，播放后再恢复。

@@ -449,7 +449,7 @@ async function saveServer() {
     viewMode.value = 'list'
     await loadServers()
   } catch (error: any) {
-    saveError.value = error.message || '保存失败'
+    saveError.value = error.message || t('components.settings.mcpSettings.saveFailed')
   } finally {
     isSaving.value = false
   }

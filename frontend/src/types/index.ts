@@ -362,6 +362,8 @@ export interface UIConfig {
 export interface VSCodeMessage<T = any> {
   type: string
   requestId?: string
+  /** 扩展下发的 command 消息携带命令名（type === 'command' 时存在） */
+  command?: string
   data: T
 }
 
@@ -587,12 +589,9 @@ export type AttachmentValidator = (file: File) => boolean | string
 
 // ============ 常量 ============
 
-// 附件大小上限（实质无限制）。注意：实际仍可能受 VS Code webview 消息体积/内存、以及模型接口上限影响。
-export const MAX_ATTACHMENT_SIZE = Number.MAX_SAFE_INTEGER
-export const MAX_MESSAGE_LENGTH = 10000
-export const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-export const SUPPORTED_VIDEO_TYPES = ['video/mp4', 'video/webm']
-export const SUPPORTED_AUDIO_TYPES = ['audio/mp3', 'audio/wav', 'audio/ogg']
+// 附件大小上限：50MB。webview 会把整个文件读成 base64（内存放大 ≈4/3）并随 postMessage 传输，
+// 上限必须保持在 VS Code webview 消息体积与内存可承受范围内。
+export const MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024
 
 // ============ 检查点相关类型 ============
 

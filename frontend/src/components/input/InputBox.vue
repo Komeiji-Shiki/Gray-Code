@@ -866,7 +866,7 @@ watch(() => props.nodes, () => {
   }
 
   nextTick(() => adjustHeight())
-}, { deep: true })
+})
 
 onMounted(() => {
   nextTick(() => {

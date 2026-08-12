@@ -33,7 +33,8 @@ import UsageTimeSection from '../usage/UsageTimeSection.vue'
 import type { UsageStatsResult, UsageTimeRange } from '@/types/usage'
 import { CustomScrollbar } from '../common'
 import { sendToExtension } from '@/utils/vscode'
-import { useI18n } from '@/i18n'
+import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
+import type { SupportedLanguage } from '@/i18n/types'
 import SettingsSidebar from './panel/SettingsSidebar.vue'
 import SettingsSearchBox from './panel/SettingsSearchBox.vue'
 import GeneralSettingsSection from './panel/GeneralSettingsSection.vue'
@@ -854,8 +855,8 @@ const proxySettings = reactive({
   url: ''
 })
 
-// 语言设置
-const languageSetting = ref<string>('auto')
+// 语言设置（'auto' = 跟随系统）
+const languageSetting = ref<SupportedLanguage>('auto')
 
 // 是否正在保存
 const isSaving = ref(false)
@@ -896,10 +897,11 @@ async function loadSettings() {
       proxySettings.enabled = response.settings.proxy.enabled || false
       proxySettings.url = response.settings.proxy.url || ''
     }
-    // 加载语言设置
-    if (response?.settings?.ui?.language) {
-      languageSetting.value = response.settings.ui.language
-      setLanguage(response.settings.ui.language)
+    // 加载语言设置（运行时守卫：仅接受 SUPPORTED_LANGUAGES 中的合法值）
+    const language = response?.settings?.ui?.language
+    if (language && isSupportedLanguage(language)) {
+      languageSetting.value = language
+      setLanguage(language)
     }
     // 加载自动更新检查开关（默认开启）
     checkUpdatesEnabled.value = response?.settings?.checkForUpdates !== false
@@ -1275,11 +1277,18 @@ async function updateNow() {
   }
 }
 
+// 语言值运行时守卫：只接受 SUPPORTED_LANGUAGES 中的合法值，类型系统据此收窄到 SupportedLanguage
+function isSupportedLanguage(value: string): value is SupportedLanguage {
+  return SUPPORTED_LANGUAGES.some(l => l.value === value)
+}
+
 // 更新语言设置
 async function updateLanguage(lang: string) {
+  // 非法语言值（越出 SUPPORTED_LANGUAGES）直接忽略，不再用 as any 把运行时风险带进 i18n
+  if (!isSupportedLanguage(lang)) return
   const previous = languageSetting.value
   languageSetting.value = lang
-  setLanguage(lang as any)
+  setLanguage(lang)
 
   try {
     const response = await sendToExtension<any>(MESSAGE_NAMES.updateUISettings, {
@@ -1289,12 +1298,12 @@ async function updateLanguage(lang: string) {
     // 否则界面显示已切换而实际未保存
     if (response?.success === false) {
       languageSetting.value = previous
-      setLanguage(previous as any)
+      setLanguage(previous)
       console.error('Failed to save language setting:', response?.error?.message || response?.error)
     }
   } catch (error) {
     languageSetting.value = previous
-    setLanguage(previous as any)
+    setLanguage(previous)
     console.error('Failed to save language setting:', error)
   }
 }

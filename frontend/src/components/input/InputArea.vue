@@ -102,14 +102,19 @@ async function loadConfigs() {
   isLoadingConfigs.value = true
   try {
     const ids = await configService.listConfigIds()
-    const loaded: any[] = []
 
-    for (const id of ids) {
-      const config = await configService.getConfig(id)
-      if (config) loaded.push(config)
-    }
+    // 并行拉取全部渠道配置（原为串行 N 次 IPC，渠道多时首屏线性变慢）；
+    // 单条失败仅跳过该条并告警，不拖垮整批（保留单条失败容忍语义）
+    const results = await Promise.all(ids.map(async (id) => {
+      try {
+        return await configService.getConfig(id)
+      } catch (error) {
+        console.warn(`Failed to load config ${id}:`, error)
+        return null
+      }
+    }))
 
-    configs.value = loaded
+    configs.value = results.filter((c): c is any => !!c)
   } catch (error) {
     console.error('Failed to load configs:', error)
   } finally {
@@ -418,12 +423,14 @@ async function handleSelectFile(path: string, asText: boolean = false) {
 function handleAtPickerKeydown(key: string) {
   if (!showFilePicker.value || !filePickerRef.value) return
 
+  // 直接调用面板暴露的语义化 API（moveHighlight/confirmSelection），
+  // 不再构造假 KeyboardEvent 传给子组件
   if (key === 'ArrowUp') {
-    filePickerRef.value.handleKeydown({ key: 'ArrowUp', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
+    filePickerRef.value.moveHighlight(-1)
   } else if (key === 'ArrowDown') {
-    filePickerRef.value.handleKeydown({ key: 'ArrowDown', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
+    filePickerRef.value.moveHighlight(1)
   } else if (key === 'Enter') {
-    filePickerRef.value.selectCurrent()
+    filePickerRef.value.confirmSelection()
   }
 }
 
@@ -593,12 +600,6 @@ watch(() => chatStore.configId, () => {
   if (chatStore.configId && !configs.value.some(c => c.id === chatStore.configId)) {
     loadConfigs()
   }
-})
-
-// 非深 watch：loadCurrentConfig 总是整体替换 currentConfig 引用（stores/chat/configActions.ts），
-// 深 watch 会在配置对象任何嵌套字段变化时触发全量 loadConfigs（串行 N 次 IPC），改为引用级监听即可
-watch(() => chatStore.currentConfig, () => {
-  loadConfigs()
 })
 
 watch(() => settingsStore.promptModesVersion, () => {

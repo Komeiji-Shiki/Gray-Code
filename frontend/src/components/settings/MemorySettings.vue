@@ -17,34 +17,10 @@ const { t } = useI18n()
 /** 条目列表展示上限（与后端 getMemoryEntries 默认 limit 一致） */
 const ENTRIES_LIMIT = 5000
 
-// 内置默认提示词（与 PromptManager.generateMemorySection 保持一致）
-const DEFAULT_SYSTEM_PROMPT = [
-  '启动时必须主动激活记忆',
-  '',
-  '在每次会话中，在进行任何其他工具调用之前运行 memory_wake，然后严格按照其提示执行，直到一切结束。',
-  '',
-  '记忆包含两部分：全局记忆（所有工作区共享）与当前工作区记忆（按工作区隔离），memory_wake 会同时输出两者，注意区分 --- Global memory --- 与 --- Workspace memory --- 标注；记录新记忆时 memory_note 默认写入当前工作区的记忆存储。',
-  '',
-  '工作期间可主动记录记忆',
-  '',
-  '当你学到新东西，或发生值得保留的事情时，调用 memory_note。',
-  '',
-  '这包括你受到的大的启发，对效率有大幅提升的发现、用户教给你的事实或见解、你了解到的关于他们生活的任何信息，以及任何具有持久影响的事件。',
-  '',
-  '记忆笔记应始终是持久的：对未来的会话仍然有用，可能用于完全不相关的任务。如果一条笔记只在当前任务结束前有用 → 不要记录。',
-  '',
-  '绝不记录：',
-  '- 工作日志：已完成的任务、已完成的轮次、提交、推送、已运行的验证。Git 历史已包含所有这些。',
-  '- 临时状态：当前进度、后续步骤、你暂存了哪些文件。',
-  '- 仅限单次任务的操作规则，对未来会话无用。',
-  '',
-  '如有疑问，不要记录。几条精炼的记忆胜过嘈杂的日志。',
-  '',
-  '不要记录冗余的记忆。',
-  '',
-  '如果 memory_note 或 memory_wake 要求压缩：在你进行下一步操作之前执行 memory_compress。',
-  '',
-].join('\n')
+// 内置默认提示词（与 PromptManager.generateMemorySection 保持一致）。
+// 内容来自语言包（components.settings.memory.defaultPrompt），随界面语言切换；
+// 用户保存后 systemPrompt 持有其编辑值，不再随语言变化（与旧行为一致：默认值仅作初始/恢复基准）。
+const DEFAULT_SYSTEM_PROMPT = computed(() => t('components.settings.memory.defaultPrompt'))
 
 const isLoading = ref(true)
 const isSaving = ref(false)
@@ -60,7 +36,7 @@ let configLoadSeq = 0
 let entryLoadSeq = 0
 
 // 记忆提示词（systemPrompt）— 初始化为默认值，方便用户直接编辑
-const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT)
+const systemPrompt = ref(DEFAULT_SYSTEM_PROMPT.value)
 
 // 运行时参数
 const wakeLines = ref(96)
@@ -518,7 +494,7 @@ async function saveConfig() {
   isSaving.value = true
   statusMessage.value = ''
   try {
-    const promptToSave = systemPrompt.value === DEFAULT_SYSTEM_PROMPT ? '' : systemPrompt.value
+    const promptToSave = systemPrompt.value === DEFAULT_SYSTEM_PROMPT.value ? '' : systemPrompt.value
     await sendToExtension(MESSAGE_NAMES.updateMemoryConfig, {
       config: {
         enabled: enabled.value,
@@ -545,7 +521,7 @@ async function saveConfig() {
 // 重置为默认
 function resetToDefault() {
   enabled.value = true
-  systemPrompt.value = DEFAULT_SYSTEM_PROMPT
+  systemPrompt.value = DEFAULT_SYSTEM_PROMPT.value
   wakeLines.value = 96
   entryChars.value = 280
   partChars.value = 20000

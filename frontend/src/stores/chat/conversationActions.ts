@@ -22,6 +22,7 @@ import { validateSessionIdentity } from './utils'
 import { rebuildMessageIndexById } from './state'
 import { resetConversationState, createTab } from './tabActions'
 import { clearPendingDirtyConfirm } from './dirtyConfirmState'
+import { t } from '../../composables/useI18n'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -906,7 +907,7 @@ export async function deleteConversation(
     if (deletedConvTabs.some(t => t.id === state.activeTabId.value)) {
       state.activeTabId.value = null
       resetConversationState(state)
-      const replacementTabId = createTab(state, { title: 'New Chat', switchTo: false })
+      const replacementTabId = createTab(state, { title: t('components.tabs.newChat'), switchTo: false })
       if (replacementTabId) {
         state.activeTabId.value = replacementTabId
       }

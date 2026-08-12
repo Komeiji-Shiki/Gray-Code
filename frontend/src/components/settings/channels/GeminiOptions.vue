@@ -125,7 +125,9 @@ const {
 } = useDeferredNumberInput(() => props.config?.historyThinkingRounds ?? -1)
 
 // 外部配置更新时同步草稿（用户已手动输入过的字段不被覆盖，
-// 避免快速连打时响应竞态把未提交的草稿回退）
+// 避免快速连打时响应竞态把未提交的草稿回退）。
+// 引用级 watch 即可：ChannelSettings 重载配置时整体替换 config 引用，
+// deep watch 会对整个嵌套配置树（含 models 数组、options）逐属性遍历，纯属浪费。
 watch(
   () => props.config,
   () => {
@@ -134,8 +136,7 @@ watch(
     if (!maxImagesTouched.value) syncMaxImagesFromStored()
     if (!thinkingBudgetTouched.value) syncThinkingBudgetFromStored()
     if (!historyThinkingRoundsTouched.value) syncHistoryThinkingRoundsFromStored()
-  },
-  { deep: true }
+  }
 )
 </script>
 
@@ -300,7 +301,7 @@ watch(
             :model-value="getThinkingConfigValue('thinkingLevel', 'low')"
             :options="thinkingLevelOptions"
             :disabled="!isOptionEnabled('thinkingConfig')"
-            placeholder="选择思考等级"
+            :placeholder="t('components.channels.gemini.thinking.levelPlaceholder')"
             @update:model-value="(v: string) => updateThinkingConfig('thinkingLevel', v)"
           />
           <span class="option-hint">{{ t('components.channels.gemini.thinking.levelHint') }}</span>

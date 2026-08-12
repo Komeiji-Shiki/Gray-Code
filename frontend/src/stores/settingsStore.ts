@@ -15,6 +15,9 @@ export type AppView = 'chat' | 'history' | 'settings' | 'usage'
 /** 支持的语言 */
 export type Language = 'zh-CN' | 'en' | 'ja'
 
+/** 语言设置值（含「跟随系统」的 auto，与 i18n 的 SUPPORTED_LANGUAGES 对齐） */
+export type LanguageSetting = Language | 'auto'
+
 export const useSettingsStore = defineStore('settings', () => {
   // 当前视图（默认为聊天）
   const currentView = ref<AppView>('chat')
@@ -22,8 +25,8 @@ export const useSettingsStore = defineStore('settings', () => {
   // 设置面板的标签页
   const activeTab = ref<SettingsTab>('channel')
   
-  // 当前语言（默认中文）
-  const language = ref<Language>('zh-CN')
+  // 当前语言（默认中文；auto 表示跟随系统）
+  const language = ref<LanguageSetting>('zh-CN')
 
   // 外观设置：流式 Loading 文本（为空表示使用默认值）
   const appearanceLoadingText = ref<string>('')
@@ -79,8 +82,8 @@ export const useSettingsStore = defineStore('settings', () => {
     activeTab.value = tab
   }
   
-  // 设置语言
-  function setLanguage(lang: Language) {
+  // 设置语言（接受 'auto'：跟随系统）
+  function setLanguage(lang: LanguageSetting) {
     language.value = lang
   }
 

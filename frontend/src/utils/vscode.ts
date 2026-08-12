@@ -8,12 +8,10 @@ import { routeExtensionMessage, type PendingRequestHandler } from './extensionMe
 // B1：超时豁免名单迁入 shared/protocol.ts 单一来源（与 NON_BLOCKING_MESSAGE_TYPES 语义不同，勿合并）
 import { MESSAGE_NAMES, UNBOUNDED_REQUEST_TYPES } from '@shared/protocol'
 
-// 获取 VSCode API
-declare function acquireVsCodeApi(): any
+// 获取 VSCode API（全局类型由 vite-env.d.ts 声明：acquireVsCodeApi(): VsCodeApi）
+let vscodeApi: VsCodeApi | null = null
 
-let vscodeApi: any = null
-
-export function getVSCodeAPI() {
+export function getVSCodeAPI(): VsCodeApi {
   if (!vscodeApi) {
     vscodeApi = acquireVsCodeApi()
   }
@@ -266,14 +264,14 @@ export function onExtensionCommand<T = any>(
 // 状态持久化
 export function saveState(key: string, value: any) {
   const vscode = getVSCodeAPI()
-  const state = vscode.getState() || {}
+  const state = (vscode.getState() as Record<string, any>) || {}
   state[key] = value
   vscode.setState(state)
 }
 
 export function loadState<T = any>(key: string, defaultValue?: T): T | undefined {
   const vscode = getVSCodeAPI()
-  const state = vscode.getState() || {}
+  const state = (vscode.getState() as Record<string, any>) || {}
   return state[key] !== undefined ? state[key] : defaultValue
 }
 

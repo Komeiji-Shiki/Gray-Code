@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { getSettingsView } from '@/composables/useDeferredNumberInput'
+import { t } from '@/i18n'
 import type { PromptModule, PromptEntryRole, PromptEntry } from './prompt/types'
 
 const CHAT_HISTORY_PROMPT_ENTRY_ID = 'chat-history'
@@ -16,11 +17,11 @@ const emit = defineEmits<{
   (event: 'convert-legacy'): void
 }>()
 
-const roleOptions: Array<{ value: PromptEntryRole; label: string; description: string }> = [
-  { value: 'system', label: 'system', description: '合并进系统提示词' },
-  { value: 'user', label: 'user', description: '作为临时用户上下文插入' },
-  { value: 'assistant', label: 'assistant', description: '作为临时助手消息插入' }
-]
+const roleOptions = computed<Array<{ value: PromptEntryRole; label: string; description: string }>>(() => [
+  { value: 'system', label: 'system', description: t('components.settings.promptSettings.entriesEditor.roleSystemDescription') },
+  { value: 'user', label: 'user', description: t('components.settings.promptSettings.entriesEditor.roleUserDescription') },
+  { value: 'assistant', label: 'assistant', description: t('components.settings.promptSettings.entriesEditor.roleAssistantDescription') }
+])
 
 type DropPosition = 'before' | 'after'
 
@@ -433,8 +434,8 @@ function handleDragEnd() {
             role="button"
             tabindex="0"
             draggable="true"
-            title="拖动排序"
-            aria-label="拖动排序"
+            :title="t('components.settings.promptSettings.entriesEditor.dragToReorder')"
+            :aria-label="t('components.settings.promptSettings.entriesEditor.dragToReorder')"
             @dragstart="handleDragStart(entry.id, $event)"
             @dragend="handleDragEnd"
             @keydown="handleDragHandleKeydown(entry.id, $event)"
@@ -445,24 +446,24 @@ function handleDragEnd() {
           <label
             v-if="!isChatHistoryEntry(entry)"
             class="entry-enabled"
-            :title="entry.enabled ? '已启用' : '已禁用'"
+            :title="entry.enabled ? t('common.enabled') : t('common.disabled')"
           >
             <input
               type="checkbox"
               :checked="entry.enabled"
               @change="updateEntry(entry.id, { enabled: readCheckedValue($event) })"
             />
-            <span>{{ entry.enabled ? '启用' : '禁用' }}</span>
+            <span>{{ entry.enabled ? t('common.enable') : t('common.disable') }}</span>
           </label>
-          <span v-else class="entry-enabled locked" title="Chat History 始终启用，避免真实历史丢失">
+          <span v-else class="entry-enabled locked" :title="t('components.settings.promptSettings.entriesEditor.chatHistoryAlwaysEnabledTitle')">
             <i class="codicon codicon-lock"></i>
-            必启用
+            {{ t('components.settings.promptSettings.entriesEditor.chatHistoryAlwaysEnabled') }}
           </span>
 
           <input
             class="entry-name-input"
             :value="nameDrafts[entry.id] ?? entry.name"
-            placeholder="条目名称"
+            :placeholder="t('components.settings.promptSettings.entriesEditor.entryNamePlaceholder')"
             @input="handleNameInput(entry, $event)"
           />
 
@@ -482,16 +483,16 @@ function handleDragEnd() {
           </div>
 
           <div class="entry-buttons">
-            <button class="icon-btn" type="button" :disabled="index === 0" title="上移" @click="moveEntry(entry.id, -1)">
+            <button class="icon-btn" type="button" :disabled="index === 0" :title="t('components.settings.promptSettings.entriesEditor.moveUp')" @click="moveEntry(entry.id, -1)">
               <i class="codicon codicon-arrow-up"></i>
             </button>
-            <button class="icon-btn" type="button" :disabled="index === entries.length - 1" title="下移" @click="moveEntry(entry.id, 1)">
+            <button class="icon-btn" type="button" :disabled="index === entries.length - 1" :title="t('components.settings.promptSettings.entriesEditor.moveDown')" @click="moveEntry(entry.id, 1)">
               <i class="codicon codicon-arrow-down"></i>
             </button>
-            <button class="icon-btn" type="button" :disabled="isChatHistoryEntry(entry)" title="复制" @click="duplicateEntry(entry.id)">
+            <button class="icon-btn" type="button" :disabled="isChatHistoryEntry(entry)" :title="t('common.copy')" @click="duplicateEntry(entry.id)">
               <i class="codicon codicon-copy"></i>
             </button>
-            <button class="icon-btn danger" type="button" :disabled="isChatHistoryEntry(entry)" title="删除" @click="removeEntry(entry.id)">
+            <button class="icon-btn danger" type="button" :disabled="isChatHistoryEntry(entry)" :title="t('common.delete')" @click="removeEntry(entry.id)">
               <i class="codicon codicon-trash"></i>
             </button>
           </div>
@@ -500,8 +501,8 @@ function handleDragEnd() {
         <div v-if="isChatHistoryEntry(entry)" class="chat-history-note">
           <i class="codicon codicon-info"></i>
           <div>
-            <strong>真实对话历史会插入在这里</strong>
-            <p>该条目不会作为普通消息发送，不可删除、不可复制、不可禁用，但可以拖动或上下移动来控制历史在预设骨架中的位置。</p>
+            <strong>{{ t('components.settings.promptSettings.entriesEditor.chatHistoryNoteTitle') }}</strong>
+            <p>{{ t('components.settings.promptSettings.entriesEditor.chatHistoryNoteDescription') }}</p>
           </div>
         </div>
 
@@ -509,29 +510,29 @@ function handleDragEnd() {
           <textarea
             class="entry-content-textarea"
             :value="entry.content"
-            placeholder="输入提示词内容，可使用 {{$ENVIRONMENT}}、{{$TODO_LIST}} 等变量"
+            :placeholder="t('components.settings.promptSettings.entriesEditor.contentPlaceholder')"
             rows="8"
             @input="updateEntry(entry.id, { content: readInputValue($event) })"
           ></textarea>
 
           <div v-if="entry.role === 'assistant'" class="entry-fake-thought">
-            <label class="fake-thought-label" title="仅 assistant（临时助手消息）可伪造思考过程">
-              伪造思考过程
-              <span class="fake-thought-hint">可选，随该条 assistant 消息以思考内容回传；渠道关闭「发送历史思考内容」时不发送</span>
+            <label class="fake-thought-label" :title="t('components.settings.promptSettings.entriesEditor.fakeThoughtTitle')">
+              {{ t('components.settings.promptSettings.entriesEditor.fakeThoughtLabel') }}
+              <span class="fake-thought-hint">{{ t('components.settings.promptSettings.entriesEditor.fakeThoughtHint') }}</span>
             </label>
             <textarea
               class="fake-thought-textarea"
               :value="entry.fakeThought ?? ''"
-              placeholder="输入伪造的 AI 思考过程，留空则不伪造"
+              :placeholder="t('components.settings.promptSettings.entriesEditor.fakeThoughtPlaceholder')"
               rows="3"
               @input="updateEntry(entry.id, { fakeThought: readInputValue($event) })"
             ></textarea>
           </div>
 
           <details class="entry-modules">
-            <summary>插入变量</summary>
+            <summary>{{ t('components.settings.promptSettings.entriesEditor.insertVariable') }}</summary>
             <div class="module-chip-group">
-              <span class="chip-group-label">静态</span>
+              <span class="chip-group-label">{{ t('components.settings.promptSettings.entriesEditor.staticGroup') }}</span>
               <button
                 v-for="module in staticModules"
                 :key="module.id"
@@ -544,7 +545,7 @@ function handleDragEnd() {
               </button>
             </div>
             <div class="module-chip-group">
-              <span class="chip-group-label">动态</span>
+              <span class="chip-group-label">{{ t('components.settings.promptSettings.entriesEditor.dynamicGroup') }}</span>
               <button
                 v-for="module in dynamicModules"
                 :key="module.id"

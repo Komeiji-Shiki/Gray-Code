@@ -3,7 +3,7 @@
  */
 
 import type { ChatStoreState } from './types'
-import { translate } from '../../composables/useI18n'
+import { translate, actualLanguage } from '../../composables/useI18n'
 import { useSettingsStore } from '../settingsStore'
 
 /**
@@ -45,7 +45,10 @@ export function formatTime(timestamp: number): string {
     const days = Math.floor(diff / day)
     return translate(lang, 'stores.chatStore.relativeTime.daysAgo', { days })
   } else {
-    // 超过一周显示完整日期；传当前语言，避免日期格式与界面语言不一致
-    return new Date(timestamp).toLocaleDateString(lang)
+    // 超过一周显示完整日期；传当前语言，避免日期格式与界面语言不一致。
+    // 'auto'（跟随系统）不是合法 BCP 47 标签，先经 actualLanguage 归一化，
+    // 否则 toLocaleDateString('auto') 会抛 RangeError 导致历史列表渲染崩溃。
+    const resolved = lang === 'auto' ? actualLanguage.value : lang
+    return new Date(timestamp).toLocaleDateString(resolved)
   }
 }

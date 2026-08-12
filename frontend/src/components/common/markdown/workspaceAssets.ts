@@ -13,6 +13,7 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Ref } from 'vue'
 import { sendToExtension, showNotification } from '@/utils/vscode'
+import { t } from '@/i18n'
 import { fileExistenceCache, setCached, imageCache, setCachedImage } from './markdownItCore'
 import {
   decodeDataPath,
@@ -131,7 +132,7 @@ export function createWorkspaceAssetController(
             img.setAttribute('data-image-path', imgPath)
           } else {
             img.classList.add('image-error')
-            img.setAttribute('title', response?.error || '无法加载图片')
+            img.setAttribute('title', response?.error || t('components.common.markdown.imageLoadFailed'))
           }
         } catch (error) {
           console.error('加载图片失败:', error)
@@ -209,7 +210,7 @@ export function createWorkspaceAssetController(
     } catch (err: any) {
       const msg = typeof err?.message === 'string' && err.message.trim()
         ? err.message
-        : '打开文件失败'
+        : t('components.common.markdown.openFileFailed')
       await showNotification(msg, 'error')
     }
   }

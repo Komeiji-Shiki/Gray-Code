@@ -175,12 +175,13 @@ function handleCloseAtPicker() {
 function handleAtPickerKeydown(key: string) {
   if (!showFilePicker.value || !filePickerRef.value) return
 
+  // 直接调用面板暴露的语义化 API（moveHighlight/confirmSelection），不再构造假 KeyboardEvent
   if (key === 'ArrowUp') {
-    filePickerRef.value.handleKeydown({ key: 'ArrowUp', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
+    filePickerRef.value.moveHighlight(-1)
   } else if (key === 'ArrowDown') {
-    filePickerRef.value.handleKeydown({ key: 'ArrowDown', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
+    filePickerRef.value.moveHighlight(1)
   } else if (key === 'Enter') {
-    filePickerRef.value.selectCurrent()
+    filePickerRef.value.confirmSelection()
   }
 }
 

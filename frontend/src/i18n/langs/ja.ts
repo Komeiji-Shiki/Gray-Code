@@ -197,12 +197,18 @@ const ja: LanguageMessages = {
             modal: {
                 close: '閉じる'
             },
+            customSelect: {
+                placeholder: '選択してください',
+                searchPlaceholder: '検索...',
+                noMatch: '一致するオプションがありません'
+            },
             markdown: {
                 copyCode: 'コードをコピー',
                 wrapEnable: '折り返し',
                 wrapDisable: '折り返しなし',
                 copied: 'コピーしました',
-                imageLoadFailed: '画像の読み込みに失敗しました'
+                imageLoadFailed: '画像の読み込みに失敗しました',
+                openFileFailed: 'ファイルを開けませんでした'
             },
             markdownRenderer: {
                 mermaid: {
@@ -231,6 +237,7 @@ const ja: LanguageMessages = {
 
         tabs: {
             newChat: '新しい会話',
+            chat: 'チャット',
             newTab: '新しいタブ',
             closeTab: 'タブを閉じる'
         },
@@ -450,7 +457,8 @@ const ja: LanguageMessages = {
             roles: {
                 user: 'ユーザー',
                 tool: 'ツール',
-                assistant: 'アシスタント'
+                assistant: 'アシスタント',
+                agent: 'Agent メッセージ'
             },
             actions: {
                 edit: 'メッセージを編集',
@@ -590,7 +598,8 @@ const ja: LanguageMessages = {
             stats: {
                 ttft: '初回トークン遅延 (TTFT)',
                 responseDuration: '応答時間',
-                tokenRate: 'トークン速度'
+                tokenRate: 'トークン速度',
+                tokensPerSecond: '{rate} t/s'
             },
             thought: {
                 thinking: '考え中...',
@@ -1741,6 +1750,7 @@ const ja: LanguageMessages = {
                     createFailed: '作成に失敗しました',
                     updateFailed: '更新に失敗しました'
                 },
+                saveFailed: '保存に失敗しました',
                 delete: {
                     title: 'MCP サーバーを削除',
                     message: 'サーバー "{name}" を削除してもよろしいですか？この操作は元に戻せません。',
@@ -1994,11 +2004,11 @@ const ja: LanguageMessages = {
                 modules: {
                     ENVIRONMENT: {
                         name: '環境情報',
-                        description: 'ワークスペースパス、オペレーティングシステム、現在時刻、タイムゾーン情報を含みます'
+                        description: 'ワークスペースパス、オペレーティングシステム、タイムゾーン、ユーザー言語を含みます（静的コンテンツでキャッシュ可能）'
                     },
                     CONTEXT_BADGE_FORMAT: {
                         name: 'コンテキストバッジ構造',
-                        description: '<lim-context ...>...</lim-context> の意味を説明し、タイトル（title 属性）・本文（タグ本体）・binary バッジの扱いを明確化します'
+                        description: '<lim-context ...>...</lim-context> のフィールドの意味を説明し、どれがタイトルでどれが本文か、また binary バッジはテキストとして解析しないことを明確にします'
                     },
                     WORKSPACE_FILES: {
                         name: 'ワークスペースファイルツリー',
@@ -2027,8 +2037,8 @@ const ja: LanguageMessages = {
                     },
                     SKILLS: {
                         name: 'Skills の内容',
-                        description: 'Skills はユーザー定義のナレッジモジュールです。AI は read_skill ツールでオンデマンドに内容を読み込みます。Skill の名前と説明はツール説明に記載されています。',
-                        requiresConfig: 'Skills パネルで Skill を有効にし、AI が read_skill ツールで内容を読み込みます'
+                        description: '現在有効な Skills の内容を表示します。Skills はユーザー定義のナレッジモジュールで、AI は toggle_skills ツールで動的に有効化・無効化できます。',
+                        requiresConfig: 'Skills は AI が toggle_skills ツールで有効化します'
                     },
                     TOOLS: {
                         name: 'ツール定義',
@@ -2048,6 +2058,27 @@ const ja: LanguageMessages = {
                         description: '永続記憶システム（OptMem）の使い方ガイド。セッションをまたいで情報を記録・想起する方法を AI に伝えます。設定 → 記憶 でカスタマイズできます。',
                         requiresConfig: '設定 → 記憶 でカスタマイズできます'
                     }
+                },
+                entriesEditor: {
+                    dragToReorder: 'ドラッグして並べ替え',
+                    chatHistoryAlwaysEnabled: '常に有効',
+                    chatHistoryAlwaysEnabledTitle: 'Chat History は実際の履歴が失われないよう常に有効です',
+                    entryNamePlaceholder: 'エントリ名',
+                    moveUp: '上へ移動',
+                    moveDown: '下へ移動',
+                    chatHistoryNoteTitle: '実際の会話履歴がここに挿入されます',
+                    chatHistoryNoteDescription: 'このエントリは通常のメッセージとして送信されません。削除・複製・無効化はできませんが、ドラッグまたは上下移動でプリセット骨格内の履歴の位置を調整できます。',
+                    contentPlaceholder: 'プロンプト内容を入力。{{$ENVIRONMENT}}、{{$TODO_LIST}} などの変数を使用できます',
+                    fakeThoughtLabel: '偽の思考プロセス',
+                    fakeThoughtTitle: 'assistant（一時的なアシスタントメッセージ）のみ思考プロセスを偽装できます',
+                    fakeThoughtHint: '任意。この assistant メッセージの思考内容として返送されます。チャンネルで「履歴の思考内容を送信」が無効の場合は送信されません',
+                    fakeThoughtPlaceholder: '偽の AI 思考プロセスを入力。空のままにすると偽装しません',
+                    insertVariable: '変数を挿入',
+                    staticGroup: '静的',
+                    dynamicGroup: '動的',
+                    roleSystemDescription: 'システムプロンプトに統合',
+                    roleUserDescription: '一時的なユーザーコンテキストとして挿入',
+                    roleAssistantDescription: '一時的なアシスタントメッセージとして挿入'
                 },
                 exampleOutput: '出力例：',
                 requiresConfigLabel: '必要な設定：'
@@ -2246,6 +2277,7 @@ const ja: LanguageMessages = {
                     saving: '保存中...',
                     save: '設定を保存',
                     reset: 'デフォルトに戻す',
+                    defaultPrompt: '起動時には必ず記憶をアクティブにする\n\n各セッションでは、他のツール呼び出しより先に memory_wake を実行し、すべてが終わるまでその指示に厳密に従ってください。\n\n記憶は 2 つの部分で構成されます：グローバル記憶（全ワークスペース共有）と現在のワークスペース記憶（ワークスペースごとに分離）。memory_wake は両方を出力するので、--- Global memory --- と --- Workspace memory --- のマーカーを区別してください。新しい記憶を記録するとき、memory_note はデフォルトで現在のワークスペースの記憶ストアに書き込みます。\n\n作業中は自発的に記憶を記録できます\n\n新しいことを学んだり、残す価値のある出来事があったら、memory_note を呼び出してください。\n\nこれには大きなひらめき、効率を大幅に高める発見、ユーザーから教わった事実や見解、ユーザーの生活について知った情報、そして持続的な影響を持つ出来事が含まれます。\n\n記憶メモは常に永続的であるべきです：将来のセッションで役立ち、まったく無関係なタスクに使われる可能性があります。メモが現在のタスクが終わるまでしか役に立たない場合 → 記録しないでください。\n\n絶対に記録しないもの：\n- 作業ログ：完了したタスク、完了したラウンド、コミット、プッシュ、実行済みの検証。Git 履歴にすべて含まれています。\n- 一時的な状態：現在の進捗、次のステップ、ステージしたファイル。\n- 単一タスク限定の操作ルール（将来のセッションでは役に立たないもの）。\n\n迷ったら記録しないでください。洗練された少数の記憶は、雑然としたログに勝ります。\n\n冗長な記憶は記録しないでください。\n\nmemory_note または memory_wake が圧縮を要求した場合：次の操作に進む前に memory_compress を実行してください。',
                     systemPrompt: {
                         title: 'カスタムプロンプト',
                         description: '上に表示されているプロンプトが現在有効です。直接編集できます。「デフォルトに戻す」で組み込みのデフォルトに戻せます。変更は次のセッションで有効になります。',
@@ -2898,7 +2930,8 @@ const ja: LanguageMessages = {
                     historyContentHint: '完了した履歴ターンの思考プロセスを AI に送信',
                     roundsLabel: '履歴思考ラウンド数',
                     roundsHint: '最新以外のラウンドをいくつ送信するか。-1 ですべて、0 で送信なし、正の N で最近の N ラウンド（例：1 は最後から 2 番目のラウンドのみ）'
-                }
+                },
+                toggleHint: '有効にすると、このパラメータが API に送信されます'
             },
             anthropic: {
                 thinking: {
@@ -2962,6 +2995,7 @@ const ja: LanguageMessages = {
                     modeLevel: 'レベル',
                     modeBudget: 'バジェット',
                     levelLabel: '思考レベル',
+                    levelPlaceholder: '思考レベルを選択',
                     levelHint: 'minimal: 最小限の思考 | low: 少ない思考 | medium: 中程度 | high: 深い思考',
                     levelMinimal: '最小',
                     levelLow: sharedJa.components.channels.gemini.thinking.levelLow,
@@ -2998,6 +3032,7 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考強度 (Effort)',
+                    effortPlaceholder: '思考強度を選択',
                     effortHint: 'none: 使用しない | minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最高 | max: 最大 | ultra: 究極 | custom: カスタム',
                     effortNone: 'なし',
                     effortMinimal: '極小',
@@ -3010,6 +3045,7 @@ const ja: LanguageMessages = {
                     effortCustom: 'カスタム',
                     effortCustomPlaceholder: 'カスタム effort 値を入力（例: max、ultra）',
                     summaryLabel: '出力詳細度 (Summary)',
+                    summaryPlaceholder: '出力の詳細度を選択',
                     summaryHint: 'auto: 自動選択 | concise: 簡潔な出力 | detailed: 詳細な出力',
                     summaryAuto: '自動',
                     summaryConcise: '簡潔',
@@ -3028,6 +3064,7 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考強度 (Effort)',
+                    effortPlaceholder: '思考強度を選択',
                     effortHint: 'none: 使用しない | minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 超高 | max: 最大 | ultra: 究極 | custom: カスタム',
                     effortNone: 'なし (none)',
                     effortMinimal: '極小 (minimal)',
@@ -3040,6 +3077,7 @@ const ja: LanguageMessages = {
                     effortCustom: 'カスタム (custom)',
                     effortCustomPlaceholder: 'カスタム effort 値を入力（例: max、ultra）',
                     summaryLabel: '出力詳細度 (Summary)',
+                    summaryPlaceholder: '詳細度を選択',
                     summaryHint: 'auto: 自動選択 | concise: 簡潔な出力 | detailed: 詳細な出力',
                     summaryAuto: '自動',
                     summaryConcise: '簡潔',

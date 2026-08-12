@@ -22,10 +22,11 @@ import Splash from './components/Splash.vue'
 import StartupBackdrop from './components/StartupBackdrop.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
-import { useI18n, setLanguage } from './i18n'
+import { useI18n, setLanguage, SUPPORTED_LANGUAGES } from './i18n'
+import type { SupportedLanguage } from './i18n/types'
 import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
-import type { Attachment, Message, StreamChunk } from './types'
+import type { Attachment, Message, StreamChunk, VSCodeMessage } from './types'
 import { configureSoundSettings } from './services/soundCues'
 import type { SoundAgentRole } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
@@ -356,10 +357,7 @@ async function handleRetry(messageId: string) {
 
 // 处理复制
 async function handleCopy(content: string) {
-  const success = await copyToClipboard(content)
-  if (success) {
-    console.log('已复制到剪贴板')
-  }
+  await copyToClipboard(content)
 }
 
 // 处理附件上传
@@ -434,7 +432,7 @@ function handleRemoveAttachment(id: string) {
 }
 
 // 格式化错误详情
-function formatErrorDetails(details: any): string {
+function formatErrorDetails(details: unknown): string {
   if (typeof details === 'string') {
     // 如果是字符串，尝试解析为 JSON
     try {
@@ -500,10 +498,21 @@ function resolveSelectionContextEnabled(appearance: any): boolean {
 
 async function loadLanguageSettings() {
   try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES.getSettings, {})
-    if (response?.settings?.ui?.language) {
-      settingsStore.setLanguage(response.settings.ui.language)
-      setLanguage(response.settings.ui.language)
+    const response = await sendToExtension<{
+      settings?: {
+        ui?: {
+          language?: string
+          appearance?: Record<string, any>
+          sound?: any
+        }
+      }
+    }>(MESSAGE_NAMES.getSettings, {})
+    const language = response?.settings?.ui?.language
+    // 运行时守卫：仅接受 SUPPORTED_LANGUAGES 中的合法语言值，类型系统据此收窄
+    if (language && SUPPORTED_LANGUAGES.some(l => l.value === language)) {
+      const lang = language as SupportedLanguage
+      settingsStore.setLanguage(lang)
+      setLanguage(lang)
     }
 
     // 加载外观设置
@@ -527,7 +536,7 @@ async function loadLanguageSettings() {
 // 组件挂载
 onMounted(async () => {
   if (isSubAgentMonitor) {
-    console.log('GrayCode SubAgent Monitor 已加载')
+    console.debug('GrayCode SubAgent Monitor 已加载')
     // 修改原因：Monitor 复用同一前端入口但过去从不加载语言设置；
     //          导致面板内已国际化的 MessageItem / ToolMessage / 各工具卡全部回退到默认中文，
     //          英文和日文用户看到的子代理详情是混合语言。
@@ -542,7 +551,7 @@ onMounted(async () => {
     return
   }
 
-  console.log('GrayCode Chat 已加载')
+  console.debug('GrayCode Chat 已加载')
 
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
@@ -560,7 +569,7 @@ onMounted(async () => {
   // 立即注册命令监听器，确保在初始化期间也能响应用户操作。
   // 注册必须早于 loadLanguageSettings() 的 await：语言设置加载的 IPC 往返窗口内，
   // 扩展下发的 command / taskEvent / streamChunk / retryStatus 消息不会因监听器未注册而丢失。
-  disposeMessageListener = onMessageFromExtension((message: any) => {
+  disposeMessageListener = onMessageFromExtension((message: VSCodeMessage) => {
     if (message.type === 'command') {
       switch (message.command) {
         case 'newChat':

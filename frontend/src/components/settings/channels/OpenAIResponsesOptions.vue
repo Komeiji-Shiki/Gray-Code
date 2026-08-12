@@ -205,7 +205,7 @@ function onSendThoughtSignaturesChange(e: any) {
             :model-value="getReasoningValue('effort', 'high')"
             :options="effortOptions"
             :disabled="!isOptionEnabled('reasoning')"
-            placeholder="选择思考强度"
+            :placeholder="t('components.channels.openai-responses.thinking.effortPlaceholder')"
             @update:model-value="(v: string) => updateReasoning('effort', v)"
           />
           <input
@@ -240,7 +240,7 @@ function onSendThoughtSignaturesChange(e: any) {
             :model-value="getReasoningValue('summary', 'auto')"
             :options="summaryOptions"
             :disabled="!isOptionEnabled('reasoning') || !getReasoningValue('summaryEnabled', false)"
-            placeholder="选择详细程度"
+            :placeholder="t('components.channels.openai-responses.thinking.summaryPlaceholder')"
             @update:model-value="(v: string) => updateReasoning('summary', v)"
           />
           <span class="option-hint">
