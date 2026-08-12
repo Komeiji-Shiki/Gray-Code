@@ -11,17 +11,35 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, defineComponent, type PropType, type Component, type ComponentPublicInstance } from 'vue'
+import { ref, computed, h, watchEffect, watch, nextTick, defineComponent, type PropType, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage } from '../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
 import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
-import { sendToExtension, onExtensionCommand, showNotification } from '../../utils/vscode'
+import { sendToExtension, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId, decodeUnicodeEscapes } from '../../utils/format'
 import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
 import { computeTaskCardStatus } from '../../utils/tools/subagents/backgroundStatus'
+import {
+  confirmDiff,
+  diffGuardWarnings,
+  ensureDiffReviewControllerInitialized,
+  getDiffActionError,
+  getDiffAutoSaveProgress,
+  getDiffAutoSaveProgressById,
+  getDiffAutoSaveTimeLeft,
+  getDiffAutoSaveTimeLeftById,
+  getPendingDiffSessions,
+  globalApplyDiffConfig,
+  hasPendingDiffSession,
+  isDiffSessionProcessing,
+  persistedDiffGuardWarnings,
+  rejectDiff,
+  seenDiffToolIds,
+  type PendingDiffSession
+} from './diffReviewController'
 
 const { t } = useI18n()
 
@@ -33,487 +51,70 @@ const props = defineProps<{
 const chatStore = useChatStore()
 const backgroundTaskStore = useBackgroundTaskStore()
 
-// ===========================================================================
-// 模块级 Diff 倒计时单例
-//
-// 修复原因：每个 ToolMessage 实例会为同一组 pending diff 分别启动定时器，
-//          导致 N 个组件同时发送 diff.accept。
-// 修复方式：将所有 diff 倒计时状态提升到模块级，所有实例共享读剩余时间，
-//          按 diff 单例收敛，到点只发一次 diff.accept。
-// ===========================================================================
-
-const applyDiffTimeLeft = ref<Map<string, number>>(new Map())
-const applyDiffProgress = ref<Map<string, number>>(new Map())
-const applyDiffTimers = new Map<string, ReturnType<typeof setInterval>>()
-
-
-
-// --- Apply Diff 确认逻辑 ---
-// 支持 apply_diff, write_file, search_in_files(替换模式) 共用 diff 确认流程
-
-// 支持 diff 确认的工具名称列表
 const DIFF_SUPPORTED_TOOLS = ['apply_diff', 'write_file', 'search_in_files', 'insert_code', 'delete_code']
-
-type ApplyDiffAutoSaveConfig = { autoSave: boolean; autoSaveDelay: number }
-
-type PendingDiffSession = {
-  id: string
-  toolId?: string
-  filePath: string
-  diffGuardWarning?: string
-  diffGuardDeletePercent?: number
-}
-
-// apply_diff 的全局配置（应用到所有支持 diff 的工具）
-const globalApplyDiffConfig = ref<ApplyDiffAutoSaveConfig>({ autoSave: false, autoSaveDelay: 3000 })
-
-// 工具 ID 到 Pending Diff 列表的映射
-const toolIdToPendingDiffs = ref<Map<string, PendingDiffSession[]>>(new Map())
-
-// 工具 ID 到 diff 警戒值警告的映射
-const diffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
-// 持久警戒值缓存：一旦出现过警戒，工具结束后仍保留在消息上显示
-// （避免 pending 结束后 diff.statusChanged 把临时映射清空）
-const persistedDiffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
-
-// 记录曾经出现过的 diff 工具（避免在 diff 刚开始、映射尚未同步前误判为错误）
-const seenDiffToolIds = ref<Set<string>>(new Set())
-
-// diff 工具从 pendingDiffs 列表消失到收到最终 functionResponse 之间，可能会出现短暂的空窗。
-// 为避免 UI 闪烁（先 error 再 success），这里给一个宽限期。
 const pendingDiffOrphanedAt = ref<Map<string, number>>(new Map())
 const DIFF_ORPHAN_GRACE_MS = 800
-
-/**
- * 孤儿宽限期重估触发器（#59 修复）。
- *
- * 宽限期用 Date.now() 判定，但没有任何重估调度，超时纠正分支实际不可达。
- * 在进入宽限期时设 setTimeout，届满后 bump 此 ref 触发 enhancedTools 重新计算。
- */
 const orphanCheckTick = ref(0)
 
-const processingDiffSessionIds = ref<Set<string>>(new Set())
-const diffActionErrors = ref<Map<string, string>>(new Map())
-
-function addProcessingDiffSessionId(sessionId: string) {
-  if (!sessionId || processingDiffSessionIds.value.has(sessionId)) return
-  const next = new Set(processingDiffSessionIds.value)
-  next.add(sessionId)
-  processingDiffSessionIds.value = next
-}
-
-function removeProcessingDiffSessionId(sessionId: string) {
-  if (!sessionId || !processingDiffSessionIds.value.has(sessionId)) return
-  const next = new Set(processingDiffSessionIds.value)
-  next.delete(sessionId)
-  processingDiffSessionIds.value = next
-}
-
-function clearDiffActionError(sessionId: string) {
-  if (!sessionId || !diffActionErrors.value.has(sessionId)) return
-  const next = new Map(diffActionErrors.value)
-  next.delete(sessionId)
-  diffActionErrors.value = next
-}
-
-function setDiffActionError(sessionId: string, message: string) {
-  const next = new Map(diffActionErrors.value)
-  next.set(sessionId, message)
-  diffActionErrors.value = next
-}
-
-function getDiffActionError(sessionId: string): string | undefined {
-  return diffActionErrors.value.get(sessionId)
-}
-
-function getAllPendingDiffSessions(): PendingDiffSession[] {
-  return Array.from(toolIdToPendingDiffs.value.values()).flatMap((sessions) => sessions)
-}
-
-function getPendingDiffSessions(toolOrId: ToolUsage | string): PendingDiffSession[] {
-  const toolId = typeof toolOrId === 'string' ? toolOrId : toolOrId.id
-  return toolIdToPendingDiffs.value.get(toolId) ?? []
-}
-
-/**
- * Pending diff 的增强视图：把进度/剩余时间/处理中/错误一次性展开，
- * 模板只消费数组字段，避免同一渲染周期内重复调用 getPendingDiffSessions /
- * getDiffActionError 与多次 Map.get / Set.has。
- */
 interface PendingDiffView extends PendingDiffSession {
   progress: number
   timeLeft: number
+  isPreparing: boolean
   isProcessing: boolean
   error: string | undefined
 }
 
-// 按工具 ID 预计算 pending diff 增强视图（computed 数组，供模板消费）
 const pendingDiffViewsByToolId = computed<Map<string, PendingDiffView[]>>(() => {
-  // 显式读取这些 ref，使处理状态/错误/倒计时状态变化时 computed 重新求值
-  void processingDiffSessionIds.value
-  void diffActionErrors.value
-  void applyDiffTimeLeft.value
-  void applyDiffProgress.value
-
   const views = new Map<string, PendingDiffView[]>()
   for (const tool of enhancedTools.value) {
-    views.set(tool.id, getPendingDiffSessions(tool).map((session) => ({
+    views.set(tool.id, getPendingDiffSessions(tool.id).map((session) => ({
       ...session,
-      progress: applyDiffProgress.value.get(session.id) || 0,
-      timeLeft: applyDiffTimeLeft.value.get(session.id) || 0,
-      isProcessing: processingDiffSessionIds.value.has(session.id),
+      progress: getDiffAutoSaveProgress(session),
+      timeLeft: getDiffAutoSaveTimeLeft(session),
+      isPreparing: !session.writeReady,
+      isProcessing: isDiffSessionProcessing(session.id),
       error: getDiffActionError(session.id)
     })))
   }
   return views
 })
 
-function hasPendingDiffSession(sessionId: string): boolean {
-  return getAllPendingDiffSessions().some((session) => session.id === sessionId)
-}
-
 function extractPendingDiffIdsFromResultData(data: any): string[] {
   const pendingDiffIds = new Set<string>()
-
   if (typeof data?.pendingDiffId === 'string' && data.pendingDiffId) {
     pendingDiffIds.add(data.pendingDiffId)
   }
-
-  if (Array.isArray(data?.results)) {
-    for (const item of data.results) {
+  for (const key of ['results', 'replacements']) {
+    if (!Array.isArray(data?.[key])) continue
+    for (const item of data[key]) {
       if (typeof item?.pendingDiffId === 'string' && item.pendingDiffId) {
         pendingDiffIds.add(item.pendingDiffId)
       }
     }
   }
-
-  if (Array.isArray(data?.replacements)) {
-    for (const item of data.replacements) {
-      if (typeof item?.pendingDiffId === 'string' && item.pendingDiffId) {
-        pendingDiffIds.add(item.pendingDiffId)
-      }
-    }
-  }
-
   return Array.from(pendingDiffIds)
 }
 
-function getActionErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && typeof error.message === 'string' && error.message.trim()) {
-    return error.message
-  }
-
-  if (typeof error === 'string' && error.trim()) {
-    return error
-  }
-
-  const maybeMessage = (error as any)?.message
-  if (typeof maybeMessage === 'string' && maybeMessage.trim()) {
-    return maybeMessage
-  }
-
-  return fallback
-}
-
-// 检查是否是支持 diff 的工具且处于 pending 状态
-function isDiffToolPending(tool: ToolUsage) {
-  // 检查工具是否支持 diff 确认
+function isDiffToolPending(tool: ToolUsage): boolean {
   if (!DIFF_SUPPORTED_TOOLS.includes(tool.name)) return false
-  
-  // 对于 search_in_files，只有替换模式才需要确认
-  if (tool.name === 'search_in_files') {
-    const args = tool.args as Record<string, unknown>
-    const mode = args?.mode as string
-    if (mode !== 'replace') return false
+  if (tool.name === 'search_in_files' && (tool.args as Record<string, unknown>)?.mode !== 'replace') {
+    return false
   }
-  
-  // 情况 1: 检查工具是否在后端活跃的 Pending Diff 列表中
-  if (getPendingDiffSessions(tool).length > 0) return true
-  
-  // 情况 2: 结果中已有状态 (已返回)，且后端报告它是活跃的
+  if (getPendingDiffSessions(tool.id).length > 0) return true
+
   const resultData = tool.result?.data as any
-  if (resultData) {
-    return extractPendingDiffIdsFromResultData(resultData).some((pendingDiffId) => hasPendingDiffSession(pendingDiffId))
-  }
-  
-  return false
+  return !!resultData && extractPendingDiffIdsFromResultData(resultData).some(hasPendingDiffSession)
 }
 
-function normalizeApplyDiffConfig(raw: any): ApplyDiffAutoSaveConfig {
-  const autoSave = !!raw?.autoSave
-  const delay = Number(raw?.autoSaveDelay)
-  const autoSaveDelay = Number.isFinite(delay) ? Math.max(0, delay) : 3000
-  return { autoSave, autoSaveDelay }
+function getActionErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message
+  if (typeof error === 'string' && error.trim()) return error
+  const maybeMessage = (error as any)?.message
+  return typeof maybeMessage === 'string' && maybeMessage.trim() ? maybeMessage : fallback
 }
 
-function clearAllDiffTimers() {
-  for (const sessionId of Array.from(applyDiffTimers.keys())) {
-    stopDiffTimer(sessionId)
-  }
-  applyDiffTimeLeft.value = new Map()
-  applyDiffProgress.value = new Map()
-}
-
-function applyGlobalApplyDiffConfig(config: ApplyDiffAutoSaveConfig, opts?: { restartTimers?: boolean }) {
-  const restartTimers = opts?.restartTimers ?? false
-  globalApplyDiffConfig.value = config
-
-  if (!restartTimers) return
-
-  // 配置变更时，重置所有倒计时并按新配置重新开始
-  clearAllDiffTimers()
-
-  if (config.autoSave) {
-    for (const session of getAllPendingDiffSessions()) {
-      if (!applyDiffTimers.has(session.id) && !processingDiffSessionIds.value.has(session.id) && !diffActionErrors.value.has(session.id)) {
-        startDiffTimer(session.id, config.autoSaveDelay)
-      }
-    }
-  }
-}
-
-// 启动自动确认计时器
-function startDiffTimer(sessionId: string, delay: number) {
-  if (applyDiffTimers.has(sessionId)) return
-  if (processingDiffSessionIds.value.has(sessionId)) return
-  if (diffActionErrors.value.has(sessionId)) return
-  if (delay <= 0) return
-
-  
-  applyDiffTimeLeft.value.set(sessionId, delay)
-  applyDiffProgress.value.set(sessionId, 100)
-  const startTime = Date.now()
-  
-  const timer = setInterval(() => {
-    const elapsed = Date.now() - startTime
-    const remaining = Math.max(0, delay - elapsed)
-    applyDiffTimeLeft.value.set(sessionId, remaining)
-    applyDiffProgress.value.set(sessionId, (remaining / delay) * 100)
-    
-    if (remaining <= 0) {
-      stopDiffTimer(sessionId)
-      confirmDiff(sessionId)
-    }
-  }, 50)
-  
-  applyDiffTimers.set(sessionId, timer)
-}
-
-function stopDiffTimer(sessionId: string) {
-  const timer = applyDiffTimers.get(sessionId)
-  if (timer) {
-    clearInterval(timer)
-    applyDiffTimers.delete(sessionId)
-  }
-  applyDiffTimeLeft.value.delete(sessionId)
-  applyDiffProgress.value.delete(sessionId)
-}
-
-// 确认执行 diff
-async function confirmDiff(sessionId: string) {
-  if (processingDiffSessionIds.value.has(sessionId)) return
-
-  stopDiffTimer(sessionId)
-  clearDiffActionError(sessionId)
-
-  if (!hasPendingDiffSession(sessionId)) {
-    const message = 'Pending diff not found. Please retry after status sync.'
-    setDiffActionError(sessionId, message)
-    await showNotification(message, 'error')
-    return
-  }
-
-  addProcessingDiffSessionId(sessionId)
-  
-  try {
-    await sendToExtension(MESSAGE_NAMES['diff.accept'], { sessionId })
-  } catch (err) {
-    removeProcessingDiffSessionId(sessionId)
-    const message = getActionErrorMessage(err, 'Failed to accept diff. Please retry.')
-    setDiffActionError(sessionId, message)
-    await showNotification(message, 'error')
-    console.error('Failed to accept diff:', err)
-  }
-}
-
-// 拒绝执行 diff
-async function rejectDiff(sessionId: string) {
-  if (processingDiffSessionIds.value.has(sessionId)) return
-
-  stopDiffTimer(sessionId)
-  clearDiffActionError(sessionId)
-
-  if (!hasPendingDiffSession(sessionId)) {
-    const message = 'Pending diff not found. Please retry after status sync.'
-    setDiffActionError(sessionId, message)
-    await showNotification(message, 'error')
-    return
-  }
-
-  addProcessingDiffSessionId(sessionId)
-  
-  try {
-    await sendToExtension(MESSAGE_NAMES['diff.reject'], { sessionId })
-  } catch (err) {
-    removeProcessingDiffSessionId(sessionId)
-    const message = getActionErrorMessage(err, 'Failed to reject diff. Please retry.')
-    setDiffActionError(sessionId, message)
-    await showNotification(message, 'error')
-    console.error('Failed to reject diff:', err)
-  }
-}
-
-// ===========================================================================
-// 同步生命周期注册（#54 修复：从 onMounted(async) 中移出，确保 Vue 正确追踪）
-// ===========================================================================
-
-// 监听后端推送的配置变更（无需刷新页面即可生效）
-const unregisterApplyDiffConfigChanged = onExtensionCommand('tools.applyDiffConfigChanged', (data: any) => {
-  applyGlobalApplyDiffConfig(normalizeApplyDiffConfig(data?.config), { restartTimers: true })
-})
-
-// 监听 enhancedTools 的变化，为新出现的 pending 工具启动计时器
-// 注意：applyDiffTimers 为模块级单例（#55 修复），多个 ToolMessage 的 watchEffect
-// 会尝试为同一 session 启动计时器，但 startDiffTimer 内部的 has 检查会跳过已存在的。
-watchEffect(() => {
-  const cfg = globalApplyDiffConfig.value
-  if (!cfg.autoSave) {
-    return
-  }
-
-  for (const session of getAllPendingDiffSessions()) {
-    if (!applyDiffTimers.has(session.id) && !processingDiffSessionIds.value.has(session.id) && !diffActionErrors.value.has(session.id)) {
-      startDiffTimer(session.id, cfg.autoSaveDelay)
-    }
-  }
-})
-
-// 监听 diff 状态变化同步
-// 相同载荷去重：后端可能对同一状态重复广播（定时器刷新/多面板路由），
-// 内容未变化时跳过全部响应式更新，避免所有 ToolMessage 实例无谓重渲染。
-let lastPendingDiffsKey = ''
-const unregisterStatusChanged = onExtensionCommand('diff.statusChanged', (data: any) => {
-  const pendingDiffs: any[] = Array.isArray(data?.pendingDiffs) ? data.pendingDiffs : []
-  // 轻量去重键：定长长度前缀编码（`${len}:${value}`，字段间 \u0000 分隔、条目间 | 分隔），
-  // 避免裸拼接与 JSON.stringify 语义不等价：长度前缀使字段边界明确，
-  // 任意字段值（含 \u0000 与 | 字符）都不会与其他组合碰撞，去重语义与 JSON 键等价。
-  const payloadKey = pendingDiffs
-    .map((d: any) => [d.id, d.toolId, d.filePath, d.diffGuardWarning, d.diffGuardDeletePercent]
-      .map(v => `${String(v ?? '').length}:${v ?? ''}`)
-      .join('\u0000'))
-    .join('|')
-  if (payloadKey === lastPendingDiffsKey) {
-    return
-  }
-  lastPendingDiffsKey = payloadKey
-
-  // 更新工具 ID 映射
-  const newMapping = new Map<string, PendingDiffSession[]>()
-  for (const d of pendingDiffs) {
-    if (d.toolId) {
-      const existing = newMapping.get(d.toolId) || []
-      existing.push({
-        id: d.id,
-        toolId: d.toolId,
-        filePath: d.filePath,
-        diffGuardWarning: d.diffGuardWarning,
-        diffGuardDeletePercent: d.diffGuardDeletePercent
-      })
-      newMapping.set(d.toolId, existing)
-    }
-  }
-  toolIdToPendingDiffs.value = newMapping
-
-  // 更新 diff 警戒值警告映射
-  const newWarnings = new Map<string, { warning: string; deletePercent: number }>()
-  for (const d of pendingDiffs) {
-    if (d.toolId && d.diffGuardWarning) {
-      const nextWarning = {
-        warning: d.diffGuardWarning,
-        deletePercent: d.diffGuardDeletePercent ?? 0
-      }
-      const currentWarning = newWarnings.get(d.toolId)
-      if (!currentWarning || nextWarning.deletePercent >= currentWarning.deletePercent) {
-        newWarnings.set(d.toolId, nextWarning)
-      }
-    }
-  }
-
-  // 实时警告（仅当前 pending）
-  diffGuardWarnings.value = newWarnings
-
-  // 持久化警告（工具结束后继续显示在消息上）
-  if (newWarnings.size > 0) {
-    const nextPersisted = new Map(persistedDiffGuardWarnings.value)
-    for (const [toolId, warning] of newWarnings.entries()) {
-      nextPersisted.set(toolId, warning)
-    }
-    persistedDiffGuardWarnings.value = nextPersisted
-  }
-
-  // 记录已出现过的 diff 工具 ID
-  const nextSeen = new Set(seenDiffToolIds.value)
-  for (const toolId of newMapping.keys()) {
-    nextSeen.add(toolId)
-  }
-  seenDiffToolIds.value = nextSeen
-
-  const activeSessionIds = new Set<string>(pendingDiffs.map((d: any) => d.id))
-
-  const nextProcessingDiffs = new Set(processingDiffSessionIds.value)
-  let processingChanged = false
-  for (const sessionId of Array.from(nextProcessingDiffs)) {
-    if (!activeSessionIds.has(sessionId)) {
-      nextProcessingDiffs.delete(sessionId)
-      processingChanged = true
-    }
-  }
-  if (processingChanged) {
-    processingDiffSessionIds.value = nextProcessingDiffs
-  }
-
-  const nextDiffErrors = new Map(diffActionErrors.value)
-  let errorsChanged = false
-  for (const sessionId of Array.from(nextDiffErrors.keys())) {
-    if (!activeSessionIds.has(sessionId)) {
-      nextDiffErrors.delete(sessionId)
-      errorsChanged = true
-    }
-  }
-  if (errorsChanged) {
-    diffActionErrors.value = nextDiffErrors
-  }
-
-  // 清理已完成工具的计时器（模块级单例，由 diff.statusChanged 统一清理）
-  for (const sessionId of Array.from(applyDiffTimers.keys())) {
-    if (!activeSessionIds.has(sessionId)) {
-      stopDiffTimer(sessionId)
-    }
-  }
-})
-
-onBeforeUnmount(() => {
-    // 只注销本组件注册的事件监听器。
-    // 若当前实例卸载时已没有任何 pending diff，会同步释放模块级倒计时；
-    // 仍有 pending 时保留单例计时器，由后续 diff.statusChanged 或新的实例接管。
-    unregisterApplyDiffConfigChanged()
-    unregisterStatusChanged()
-    if (getAllPendingDiffSessions().length === 0) clearAllDiffTimers()
-})
-
-// 异步初始化：获取 diff 工具配置（仅此一步需要 await，留在 onMounted 内）
-onMounted(async () => {
-  try {
-    const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>(MESSAGE_NAMES['tools.getToolConfig'], {
-      toolName: 'apply_diff'
-    })
-    if (response?.config) {
-      applyGlobalApplyDiffConfig(normalizeApplyDiffConfig(response.config), { restartTimers: true })
-    }
-  } catch (err) {
-    console.error('Failed to get diff tool config:', err)
-  }
-})
+// 整个聊天页面共享一个 Diff 状态订阅与倒计时；重复组件只复用初始化 Promise。
+void ensureDiffReviewControllerInitialized()
 
 // ---------------------------
 
@@ -557,7 +158,7 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       const data = (response as any).data
 
       if (activePendingDiff) {
-        const isAnyDiffProcessing = getPendingDiffSessions(tool).some((pendingDiff) => processingDiffSessionIds.value.has(pendingDiff.id))
+        const isAnyDiffProcessing = getPendingDiffSessions(tool.id).some((pendingDiff) => isDiffSessionProcessing(pendingDiff.id))
 
         return {
           ...tool,
@@ -687,7 +288,7 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 
     // diff 工具：如果 diff 处于 pending（等待应用/审阅），将状态映射为 awaiting_apply
     if (activePendingDiff) {
-      const isAnyDiffProcessing = getPendingDiffSessions(tool).some((pendingDiff) => processingDiffSessionIds.value.has(pendingDiff.id))
+      const isAnyDiffProcessing = getPendingDiffSessions(tool.id).some((pendingDiff) => isDiffSessionProcessing(pendingDiff.id))
       if (isAnyDiffProcessing) {
         return { ...tool, status: 'executing' as const, awaitingConfirmation: false }
       }
@@ -736,44 +337,6 @@ watchEffect(() => {
 
   if (changed) {
     processingToolIds.value = current
-  }
-})
-
-watchEffect(() => {
-  if (processingDiffSessionIds.value.size === 0) return
-
-  const activeSessionIds = new Set(getAllPendingDiffSessions().map((session) => session.id))
-  const current = new Set(processingDiffSessionIds.value)
-  let changed = false
-
-  for (const sessionId of current) {
-    if (!activeSessionIds.has(sessionId)) {
-      current.delete(sessionId)
-      changed = true
-    }
-  }
-
-  if (changed) {
-    processingDiffSessionIds.value = current
-  }
-})
-
-watchEffect(() => {
-  if (diffActionErrors.value.size === 0) return
-
-  const activeSessionIds = new Set(getAllPendingDiffSessions().map((session) => session.id))
-  const next = new Map(diffActionErrors.value)
-  let changed = false
-
-  for (const sessionId of Array.from(next.keys())) {
-    if (!activeSessionIds.has(sessionId)) {
-      next.delete(sessionId)
-      changed = true
-    }
-  }
-
-  if (changed) {
-    diffActionErrors.value = next
   }
 })
 
@@ -1105,15 +668,15 @@ function renderToolContent(tool: ToolUsage) {
       toolId: tool.id,
       toolName: tool.name,
       messageBackendIndex: props.messageBackendIndex,
-      pendingDiffs: getPendingDiffSessions(tool),
+      pendingDiffs: getPendingDiffSessions(tool.id),
       diffActionController: {
         autoSaveEnabled: globalApplyDiffConfig.value.autoSave,
-        getTimeLeft: (sessionId: string) => applyDiffTimeLeft.value.get(sessionId) || 0,
-        getProgress: (sessionId: string) => applyDiffProgress.value.get(sessionId) || 0,
-        isProcessing: (sessionId: string) => processingDiffSessionIds.value.has(sessionId),
-        getError: (sessionId: string) => getDiffActionError(sessionId),
-        confirm: (sessionId: string) => confirmDiff(sessionId),
-        reject: (sessionId: string) => rejectDiff(sessionId)
+        getTimeLeft: getDiffAutoSaveTimeLeftById,
+        getProgress: getDiffAutoSaveProgressById,
+        isProcessing: isDiffSessionProcessing,
+        getError: getDiffActionError,
+        confirm: confirmDiff,
+        reject: rejectDiff
       }
     })
   }
@@ -1309,10 +872,13 @@ const ToolContentHost = defineComponent({
             <span class="diff-action-file-path">{{ pendingDiff.filePath }}</span>
           </div>
           <div class="footer-top" v-if="globalApplyDiffConfig.autoSave">
-            <div class="timer-container">
-              <div class="timer-bar" :style="{ width: pendingDiff.progress + '%' }"></div>
-            </div>
-            <span class="timer-text">{{ (pendingDiff.timeLeft / 1000).toFixed(1) }}s</span>
+            <template v-if="pendingDiff.autoSaveAt !== undefined">
+              <div class="timer-container">
+                <div class="timer-bar" :style="{ width: pendingDiff.progress + '%' }"></div>
+              </div>
+              <span class="timer-text">{{ (pendingDiff.timeLeft / 1000).toFixed(1) }}s</span>
+            </template>
+            <span v-else-if="pendingDiff.isPreparing" class="timer-text">{{ t('common.loading') }}</span>
           </div>
           <div class="footer-buttons">
             <button
@@ -1334,7 +900,7 @@ const ToolContentHost = defineComponent({
           </div>
           <div v-if="pendingDiff.isProcessing" class="diff-action-state">
             <span class="codicon codicon-loading codicon-modifier-spin"></span>
-            <span>{{ t('components.tools.executing') }}</span>
+            <span>{{ pendingDiff.isPreparing ? t('common.loading') : t('components.tools.executing') }}</span>
           </div>
           <div v-else-if="pendingDiff.error" class="diff-action-error">
             <span class="codicon codicon-error"></span>
