@@ -32,6 +32,7 @@ import type { PromptContextItem } from '../../types/promptContext'
 import type { EditorNode } from '../../types/editorNode'
 import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
+import { isAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -199,8 +200,11 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
     }
   }
 
-  // 智能决策：AI 空闲且队列为空时直接发送，否则入队
-  if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0) {
+  // 智能决策：AI 空闲且队列为空时直接发送，否则入队。
+  // A-COMM 接管窗口（后台结果领取后内部回流流即将启动）：视为忙碌入队——
+  // 窗口内的插话会被内部回流流误消费且不落历史，用户消息应走正常回合排队。
+  const agentMessageRoundPending = isAgentMessageRoundPending(chatStore.currentConversationId)
+  if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0 && !agentMessageRoundPending) {
     // 直接发送
     emit('send', content, currentAttachments, sendOptions, onSendResult)
   } else {

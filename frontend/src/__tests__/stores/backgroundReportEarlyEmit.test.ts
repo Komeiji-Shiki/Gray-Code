@@ -34,6 +34,7 @@ vi.mock('../../utils/vscode', () => ({
 import { sendToExtension } from '../../utils/vscode'
 import { useChatStore } from '../../stores/chatStore'
 import { useBackgroundTaskStore } from '../../stores/backgroundTaskStore'
+import { isAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
 
 function startEvent(taskId: string, taskType: 'terminal' | 'background_subagent', data: Record<string, unknown>) {
   return {
@@ -331,6 +332,43 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
 
     expect(claimAttempts).toBe(1)
     expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(false)
+  })
+
+  test('接管窗口时序：claim 领取后到内部流启动前标记置位，调度结束后清除', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = false
+
+    let resolveChatStream!: (value: unknown) => void
+    const chatStreamGate = new Promise(resolve => { resolveChatStream = resolve })
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        return {
+          claimId: 'claim_gate_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nMessage: gate timing',
+          messageCount: 1
+        }
+      }
+      if (type === 'chatStream') return chatStreamGate
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    const flushPromise = bgStore.flushReports()
+    await vi.waitFor(() => {
+      expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(true)
+    })
+
+    // 内部流尚未启动（chatStream 挂起）：接管窗口标记应置位，窗口内用户发送不走插话
+    expect(isAgentMessageRoundPending('conv_1')).toBe(true)
+
+    resolveChatStream({ success: true })
+    await flushPromise
+    // 调度结束：标记清除，后续忙时发送恢复插话语义
+    expect(isAgentMessageRoundPending('conv_1')).toBe(false)
   })
 })
 

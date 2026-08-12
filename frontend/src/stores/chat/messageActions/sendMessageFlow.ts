@@ -23,6 +23,7 @@ import { validateSessionIdentity } from '../utils'
 import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt, setToolResponseCacheEntry } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
+import { isAgentMessageRoundPending } from '../agentMessageClaimGate'
 
 /**
  * 发送失败清理：移除本次发送遗留的窗口占位（user 消息 + assistant 空气泡）。
@@ -348,7 +349,13 @@ export async function sendMessage(
   // 把用户消息投递到主会话 inbox，由注入点在最近一次工具调用完成后带出，
   // 让主模型在工具循环中尽快感知用户输入。
   // 隐藏发送（计划确认等 functionResponse）与带附件消息不走插入路径，保持既有语义。
+  // A-COMM 接管窗口例外：后台结果领取后内部回流流即将启动，窗口内的插话会被内部流
+  // 在工具边界 drain 消费——既不落历史又被处理一次，用户重发会重复处理。此时返回
+  // false 让调用方走排队/输入恢复（InputArea 已按同一标记分流入队，这里是其他入口的兜底）。
   if (!isHiddenSend && (state.isStreaming.value || state.isWaitingForResponse.value)) {
+    if (isAgentMessageRoundPending(state.currentConversationId.value)) {
+      return false
+    }
     return deliverInterruptMessage(state, messageText, attachments)
   }
 

@@ -13,6 +13,11 @@ import { vi, describe, expect, beforeEach } from 'vitest'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, CheckpointRecord } from '../../stores/chat/types'
 import { sendMessage, INTERRUPT_MESSAGE_MAX_LENGTH, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
+import {
+    markAgentMessageRoundPending,
+    clearAgentMessageRoundPending,
+    isAgentMessageRoundPending
+} from '../../stores/chat/agentMessageClaimGate'
 
 vi.mock('../../utils/vscode', () => ({
   sendToExtension: vi.fn().mockResolvedValue({ success: true })
@@ -382,6 +387,81 @@ describe('忙时投递轻量回显（M3-1）', () => {
 
     clearInterruptDeliveries('conv_1')
     expect(recentInterruptDeliveries.value.map(n => n.conversationId)).toEqual(['conv_2'])
+  })
+})
+
+describe('A-COMM 接管窗口（后台结果领取后）：用户消息不走插话投递', () => {
+  beforeEach(() => {
+    vi.mocked(sendToExtension).mockClear()
+    vi.mocked(sendToExtension).mockResolvedValue({ success: true })
+    recentInterruptDeliveries.value = []
+    clearAgentMessageRoundPending('conv_1')
+    clearAgentMessageRoundPending('conv_2')
+  })
+
+  test('接管窗口内忙时发送：返回 false、不调 sendInterruptMessage、不记录投递提示', async () => {
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([]),
+      isStreaming: ref(true),
+      isWaitingForResponse: ref(true)
+    })
+    markAgentMessageRoundPending('conv_1')
+
+    const result = await sendMessage(state, createComputed(), '窗口内发送的消息')
+
+    // 调用方（InputArea）已按同一标记分流入队；此处兜底返回 false 让其他入口恢复输入
+    expect(result).toBe(false)
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeUndefined()
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chatStream')).toBeUndefined()
+    expect(recentInterruptDeliveries.value).toHaveLength(0)
+    // 流式状态不被修改
+    expect(state.isStreaming.value).toBe(true)
+    expect(state.isWaitingForResponse.value).toBe(true)
+  })
+
+  test('标记清除后恢复忙时插话语义', async () => {
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([]),
+      isStreaming: ref(true),
+      isWaitingForResponse: ref(true)
+    })
+    markAgentMessageRoundPending('conv_1')
+    clearAgentMessageRoundPending('conv_1')
+
+    const result = await sendMessage(state, createComputed(), '内部流已启动后的消息')
+
+    expect(result).toBe(true)
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeDefined()
+  })
+
+  test('跨会话隔离：conv_1 的接管窗口不影响 conv_2 的插话投递', async () => {
+    const state = createState({
+      currentConversationId: ref('conv_2'),
+      allMessages: ref([]),
+      isStreaming: ref(true),
+      isWaitingForResponse: ref(true)
+    })
+    markAgentMessageRoundPending('conv_1')
+
+    const result = await sendMessage(state, createComputed(), '另一会话的消息')
+
+    expect(result).toBe(true)
+    expect(vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.sendInterruptMessage')).toBeDefined()
+  })
+
+  test('标记模块：置位/清除/幂等与只清除归属会话', () => {
+    expect(isAgentMessageRoundPending('conv_1')).toBe(false)
+    expect(isAgentMessageRoundPending(null)).toBe(false)
+    markAgentMessageRoundPending('conv_1')
+    expect(isAgentMessageRoundPending('conv_1')).toBe(true)
+    expect(isAgentMessageRoundPending('conv_2')).toBe(false)
+    // 清除其他会话不生效（标记仍归属 conv_1）
+    clearAgentMessageRoundPending('conv_2')
+    expect(isAgentMessageRoundPending('conv_1')).toBe(true)
+    clearAgentMessageRoundPending('conv_1')
+    expect(isAgentMessageRoundPending('conv_1')).toBe(false)
   })
 })
 

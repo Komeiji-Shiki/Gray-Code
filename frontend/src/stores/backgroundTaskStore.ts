@@ -25,6 +25,11 @@ import {
 // 单向桥接：本 store 不再 import chatStore（曾与 chatStore 构成模块级 import 环），
 // 会话状态/操作面经 backgroundTasks/bridge 注册表消费（chatStore 实例创建时注册）。
 import { getChatBridge, resolveChatBridge } from './backgroundTasks/bridge'
+// A-COMM 接管窗口标记：claim 领取后到内部回流流启动前，用户消息不走忙时插话投递
+import {
+    markAgentMessageRoundPending,
+    clearAgentMessageRoundPending
+} from './chat/agentMessageClaimGate'
 
 interface AgentMessageClaimPayload {
   claimId: string | null
@@ -194,32 +199,40 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     if (flushGeneration !== lifecycleGeneration) return true
     if (!claim) return false
 
-    // 领取 IPC 期间会话可能切换。不要在这里退回：旧会话的后端请求可能已经通过
-    // “准备写入”校验，退回会让同一结果被下一次领取后重复写入。保留领取状态，
-    // 切回该会话时会继续使用同一批消息。
-    if (chat.getState().currentConversationId !== conversationId) {
-      return true
-    }
-
+    // A-COMM 接管窗口：claim 领取后到内部流启动前，用户消息不应走忙时插话投递——
+    // 插话会被内部回流流在工具边界 drain 消费，既不落历史又被处理一次（重发后重复处理）。
+    // 标记置位后，sendMessageFlow / InputArea 会让窗口内的用户消息走排队（正常回合）。
+    markAgentMessageRoundPending(conversationId)
     try {
-      const sent = await chat.sendMessage(claim.message!, undefined, {
-        source: 'agent_message',
-        agentMessageClaimId: claim.claimId!
-      })
-      if (!sent) {
-        // 不主动 release：sendMessage=false 也可能表示“请求已在原会话启动，但前端随后切换会话”。
-        // 后端会在消息成功落库后确认 claim；未落库的 claim 会在下次空闲时原样重试。
-        console.warn('[backgroundTaskStore] Agent message round did not start; claim remains pending for retry')
-        scheduleReportRetry(flushGeneration)
-      } else if (flushGeneration === lifecycleGeneration) {
-        resetReportRetry()
+      // 领取 IPC 期间会话可能切换。不要在这里退回：旧会话的后端请求可能已经通过
+      // “准备写入”校验，退回会让同一结果被下一次领取后重复写入。保留领取状态，
+      // 切回该会话时会继续使用同一批消息。
+      if (chat.getState().currentConversationId !== conversationId) {
+        return true
       }
-    } catch (error) {
-      // 与上面相同，保留 claim 等下一次 watcher/动作边界重试。
-      console.warn('[backgroundTaskStore] Failed to start agent message round; claim remains pending:', error)
-      scheduleReportRetry(flushGeneration)
+
+      try {
+        const sent = await chat.sendMessage(claim.message!, undefined, {
+          source: 'agent_message',
+          agentMessageClaimId: claim.claimId!
+        })
+        if (!sent) {
+          // 不主动 release：sendMessage=false 也可能表示“请求已在原会话启动，但前端随后切换会话”。
+          // 后端会在消息成功落库后确认 claim；未落库的 claim 会在下次空闲时原样重试。
+          console.warn('[backgroundTaskStore] Agent message round did not start; claim remains pending for retry')
+          scheduleReportRetry(flushGeneration)
+        } else if (flushGeneration === lifecycleGeneration) {
+          resetReportRetry()
+        }
+      } catch (error) {
+        // 与上面相同，保留 claim 等下一次 watcher/动作边界重试。
+        console.warn('[backgroundTaskStore] Failed to start agent message round; claim remains pending:', error)
+        scheduleReportRetry(flushGeneration)
+      }
+      return true
+    } finally {
+      clearAgentMessageRoundPending(conversationId)
     }
-    return true
   }
 
   /** 把一批任务乐观标记为已回流（不可变更新，保证响应性） */
@@ -412,38 +425,46 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         if (chat.getState().currentConversationId !== currentId) {
           return
         }
-        if (chat.getState().isWaitingForResponse || chat.getState().isStreaming) {
-          await chat.cancelStream({ preserveSubAgents: true })
-        }
-
-        if (flushGeneration !== lifecycleGeneration) return
-
-        if (chat.getState().currentConversationId !== currentId) {
-          // 与空闲发送路径一致：会话切换不主动退回，避免和已经进入后端写入阶段的
-          // 请求竞争，导致同一完成结果被领取两次。
-          return
-        }
-        if (chat.getState().isStreaming || chat.getState().isWaitingForResponse) {
-          // 其他发送者抢先启动新流；claim 保留，等该流的动作边界/结束后继续。
-          return
-        }
-
+        // A-COMM 接管窗口：claim 领取后到内部流启动前（含 cancelStream 往返），用户消息
+        // 不应走忙时插话投递——插话会被内部回流流误消费且不落历史。标记置位后
+        // sendMessageFlow / InputArea 让窗口内的用户消息走排队（正常回合）。
+        markAgentMessageRoundPending(currentId)
         try {
-          const sent = await chat.sendMessage(agentClaim.message!, undefined, {
-            source: 'agent_message',
-            agentMessageClaimId: agentClaim.claimId!
-          })
-          if (!sent) {
-            console.warn('[backgroundTaskStore] Agent message action-boundary round did not start; claim remains pending')
-            scheduleReportRetry(flushGeneration, true)
-          } else if (flushGeneration === lifecycleGeneration) {
-            resetReportRetry()
+          if (chat.getState().isWaitingForResponse || chat.getState().isStreaming) {
+            await chat.cancelStream({ preserveSubAgents: true })
           }
-        } catch (error) {
-          console.warn('[backgroundTaskStore] Failed to send agent message after action; claim remains pending:', error)
-          scheduleReportRetry(flushGeneration, true)
+
+          if (flushGeneration !== lifecycleGeneration) return
+
+          if (chat.getState().currentConversationId !== currentId) {
+            // 与空闲发送路径一致：会话切换不主动退回，避免和已经进入后端写入阶段的
+            // 请求竞争，导致同一完成结果被领取两次。
+            return
+          }
+          if (chat.getState().isStreaming || chat.getState().isWaitingForResponse) {
+            // 其他发送者抢先启动新流；claim 保留，等该流的动作边界/结束后继续。
+            return
+          }
+
+          try {
+            const sent = await chat.sendMessage(agentClaim.message!, undefined, {
+              source: 'agent_message',
+              agentMessageClaimId: agentClaim.claimId!
+            })
+            if (!sent) {
+              console.warn('[backgroundTaskStore] Agent message action-boundary round did not start; claim remains pending')
+              scheduleReportRetry(flushGeneration, true)
+            } else if (flushGeneration === lifecycleGeneration) {
+              resetReportRetry()
+            }
+          } catch (error) {
+            console.warn('[backgroundTaskStore] Failed to send agent message after action; claim remains pending:', error)
+            scheduleReportRetry(flushGeneration, true)
+          }
+          return
+        } finally {
+          clearAgentMessageRoundPending(currentId)
         }
-        return
       }
 
       const ready = taskList.value.filter(t =>
