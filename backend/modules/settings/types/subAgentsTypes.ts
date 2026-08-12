@@ -140,6 +140,14 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     queueTimeoutSeconds?: number;
 
     /**
+     * 全局默认运行时间上限（秒，-1 表示无限制）。
+     *
+     * 未单独配置 maxRuntime 的 agent（含 General Worker）继承该默认值；
+     * 单独配置的 agent 优先使用自己的 maxRuntime。默认 1800（30 分钟）。
+     */
+    defaultMaxRuntimeSeconds?: number;
+
+    /**
      * （已废弃）是否强制所有子代理使用当前会话渠道（全局开关）。
      *
      * 该全局开关已下放为每个子代理渠道配置上的 syncWithCurrentModel 逐代理开关。
@@ -159,5 +167,6 @@ export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     failureModeAfterRetries: 'fail_parent_tool',
     generalWorkerEnabled: true,
     defaultMaxIterations: 80,
-    queueTimeoutSeconds: 600
+    queueTimeoutSeconds: 600,
+    defaultMaxRuntimeSeconds: 1800
 };
