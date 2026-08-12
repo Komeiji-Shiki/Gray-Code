@@ -1,6 +1,9 @@
 /**
  * GrayCode - 中文工具说明：文件 / 搜索 / LSP
  *
+ * 注意：本分类（文件/搜索/LSP 共 12 个工具）全部由语言感知声明工厂负责中英文生成，
+ * 目录故意为空，不要在此添加 description 覆盖（会覆盖动态多根工作区信息）。
+ *
  * 覆盖工具：
  * - write_file / list_files / delete_file / create_directory
  * - apply_diff / insert_code / delete_code

@@ -38,6 +38,14 @@ const MEDIA_MODE_NOTE_EN =
 
 /** 多根工作区尾巴（可用工作区名称保留运行时插值） */
 function multiRootTail(lang: LocalizationLanguage, workspaceNames: string[]): string {
+    // workspaceNames 为空时省略工作区列表，避免输出 "可用工作区：" 空尾巴；保留多根提示本身。
+    if (workspaceNames.length === 0) {
+        return pick(
+            lang,
+            '\n\n**多根工作区**：路径必须使用 "workspace_name/path" 格式。',
+            '\n\n**Multi-root Workspace**: Paths must use "workspace_name/path" format.'
+        );
+    }
     return pick(
         lang,
         `\n\n**多根工作区**：路径必须使用 "workspace_name/path" 格式。可用工作区：${workspaceNames.join(', ')}`,
@@ -407,13 +415,13 @@ Generated images will be saved to the specified path and returned for viewing.`;
         ),
         batchAspectRatio: pick(
             lang,
-            '图片宽高比（可选）',
-            'Image aspect ratio (optional)'
+            '图片宽高比（可选）。支持：1:1、3:2、2:3、3:4、4:3、4:5、5:4、9:16、16:9、21:9',
+            'Image aspect ratio (optional). Supported: 1:1, 3:2, 2:3, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9'
         ),
         batchImageSize: pick(
             lang,
-            '图片分辨率（可选）',
-            'Image resolution (optional)'
+            '图片分辨率（可选）。1K=1024px，2K=2048px，4K=4096px。',
+            'Image resolution (optional). 1K=1024px, 2K=2048px, 4K=4096px.'
         ),
         singlePrompt: pick(
             lang,
@@ -1096,7 +1104,7 @@ export function buildRotateImageDescriptions(options: RotateImageDescriptionOpti
 - angle：旋转角度（必填，正数为顺时针）
 - image_path：源图片路径（必填）
 - output_path：输出文件路径（必填）
-- format：输出格式（可选：png、jpg、webp。未指定时使用原格式或根据输出路径推断）
+- format：输出格式（可选：png、jpg、jpeg、webp。未指定时使用原格式或根据输出路径推断）
 
 **示例**：
 - 顺时针旋转 90°：angle=90
@@ -1124,7 +1132,7 @@ export function buildRotateImageDescriptions(options: RotateImageDescriptionOpti
 - angle: Rotation angle (required, positive for clockwise)
 - image_path: Source image path (required)
 - output_path: Output file path (required)
-- format: Output format (optional: png, jpg, webp. If not specified, uses original format or infers from output path)
+- format: Output format (optional: png, jpg, jpeg, webp. If not specified, uses original format or infers from output path)
 
 **Examples**:
 - Rotate 90° clockwise: angle=90
@@ -1165,8 +1173,8 @@ export function buildRotateImageDescriptions(options: RotateImageDescriptionOpti
         ),
         batchFormat: pick(
             lang,
-            '输出格式（可选：png、jpg、webp）',
-            'Output format (optional: png, jpg, webp)'
+            '输出格式（可选：png、jpg、jpeg、webp）',
+            'Output format (optional: png, jpg, jpeg, webp)'
         ),
         singleImagePath: isMultiRoot
             ? pick(
@@ -1197,8 +1205,8 @@ export function buildRotateImageDescriptions(options: RotateImageDescriptionOpti
         ),
         singleFormat: pick(
             lang,
-            '单张模式：输出格式（可选：png、jpg、webp）',
-            'Single mode: Output format (optional: png, jpg, webp)'
+            '单张模式：输出格式（可选：png、jpg、jpeg、webp）',
+            'Single mode: Output format (optional: png, jpg, jpeg, webp)'
         )
     };
 }

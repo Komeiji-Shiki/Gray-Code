@@ -74,9 +74,11 @@ function getDeclarationLanguage(): LocalizationLanguage {
  */
 function getMaxOutputLinesText(lang: LocalizationLanguage): string {
     const maxOutputLines = getMaxOutputLines();
-    return lang === 'zh-CN'
-        ? (maxOutputLines === -1 ? '全部' : `最后 ${maxOutputLines}`)
-        : (maxOutputLines === -1 ? 'all lines' : `last ${maxOutputLines} lines`);
+    // maxOutputLines === -1 表示不截断：返回完整句子，由调用处直接拼成完整条目。
+    if (maxOutputLines === -1) {
+        return lang === 'zh-CN' ? '默认不截断输出' : 'by default, output is not truncated';
+    }
+    return lang === 'zh-CN' ? `最后 ${maxOutputLines}` : `last ${maxOutputLines} lines`;
 }
 
 /**
@@ -92,6 +94,7 @@ export function getExecuteCommandShellGuidanceDescription(
 ): string {
     const lang = getDeclarationLanguage();
     const defaultShellType = getDefaultShellType();
+    const maxOutputLinesValue = getMaxOutputLines();
     const maxOutputLines = getMaxOutputLinesText(lang);
 
     // shellConfig 的 getUnavailableShellsDescription 只有中文本地化（'- 无'），
@@ -114,12 +117,14 @@ export function getExecuteCommandShellGuidanceDescription(
             '## Shell 选择规则',
             '',
             `- 如果不传 \`shell\` 或设置为 \`default\`，将使用当前默认 Shell：\`${defaultShellType}\`（${getDefaultShellName()}）。`,
-            '- 当前只能选择 "Enabled Shells" 列表和参数 enum 中出现的 shell；不要选择不可用的 shell。',
+            '- 当前只能选择 "已启用 Shell 列表" 和参数 enum 中出现的 shell；不要选择不可用的 shell。',
             '- Windows 文件系统、PowerShell cmdlet、对象管道：优先选择 `powershell`。',
             '- CMD 内置命令、批处理兼容行为：选择 `cmd`。',
             '- POSIX sh 语法、`grep` / `sed` / `find` / `head`、heredoc：选择 `sh` / `bash` / `gitbash`。',
             '- macOS 默认通常是 `zsh`；Linux 默认通常是 `bash`。',
-            '- 返回输出默认只保留' + maxOutputLines + '行；长任务请设置 `timeout`，单位毫秒，`0` 表示不超时。',
+            (maxOutputLinesValue === -1
+                ? '- 默认不截断输出'
+                : '- 返回输出默认只保留' + maxOutputLines + '行') + '；长任务请设置 `timeout`，单位毫秒，`0` 表示不超时。',
             '',
             '## 当前已配置但不可用的 Shell',
             '',
@@ -162,7 +167,9 @@ export function getExecuteCommandShellGuidanceDescription(
         '- CMD built-in commands and batch-compatible behavior: choose `cmd`.',
         '- POSIX sh syntax, `grep` / `sed` / `find` / `head`, heredoc: choose `sh` / `bash` / `gitbash`.',
         '- macOS usually defaults to `zsh`; Linux usually defaults to `bash`.',
-        `- By default, only the ${maxOutputLines} of output are kept; for long tasks set \`timeout\` in milliseconds, \`0\` means no timeout.`,
+        (maxOutputLinesValue === -1
+            ? '- By default, output is not truncated'
+            : `- By default, only the ${maxOutputLines} of output are kept`) + '; for long tasks set `timeout` in milliseconds, `0` means no timeout.',
         '',
         '## Enabled but currently unavailable shells',
         '',
@@ -298,7 +305,7 @@ function getPowerShellGuidanceDescription(lang: LocalizationLanguage): string {
             '- 未引用的 `|` 是 PowerShell 管道，示例：`Get-ChildItem | Select-Object -First 10`。',
             '- 调用路径含空格的可执行文件，用 `&`：`& "C:\\Program Files\\nodejs\\node.exe" --version`。',
             '- 调 native exe 时，PowerShell 解析后还会进入 Windows/native argv 规则；引号和反斜杠紧贴双引号时要格外小心。',
-            '- 复杂 Node/Python/JSON/正则内容不要硬写成 `node -e "..."`，优先用 single-quoted here-string 写临时脚本。'
+            '- 复杂 Node/Python/JSON/正则内容不要硬写成 `node -e "..."`，优先用单引号 here-string 写临时脚本。'
         ].join('\n')
         : [
             '## PowerShell rules (`shell: "powershell"`)',
@@ -452,7 +459,7 @@ function getComplexCommandGuidanceDescription(lang: LocalizationLanguage): strin
             '## 复杂命令规则',
             '',
             '- 简单命令可以直接内联；包含多层引号、JSON、正则、Node/Python 代码、Nginx/systemd 配置、SSH 远端脚本时，不要强行写成一行。',
-            '- PowerShell 推荐：用 `@\' ... \'@` single-quoted here-string 写入临时脚本，再用 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` 保存为 UTF-8 无 BOM 后执行。',
+            '- PowerShell 推荐：用 `@\' ... \'@` 单引号 here-string 写入临时脚本，再用 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` 保存为 UTF-8 无 BOM 后执行。',
             '- sh/bash/zsh 推荐：用 `cat > /tmp/script.sh <<\'EOF\' ... EOF` 写强字面量 heredoc，再执行脚本。',
             '- CMD 不适合承载复杂多行脚本；除非用户明确要求 CMD，否则复杂逻辑优先用 PowerShell 或 sh。',
             '- 诊断引号/管道问题时，先写一个 argv/hex 探针确认目标程序实际收到什么，不要猜。'
