@@ -86,10 +86,14 @@ export class StreamChunkProcessor {
 
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
-    } else if (typeof chunk.chunk === 'string') {
-      // 空字符串增量（模型空输出补丁/心跳 chunk 等）也是合法 chunk：按 chunk 处理
-      // （空增量并入批次无副作用），只有真正的非字符串才落入下方未知类型分支。
-      // 只有真实内容增量才计入用户在场活跃（状态类事件不制造虚假在场时间）
+    } else if ('chunk' in chunk && chunk.chunk !== undefined && chunk.chunk !== null) {
+      // 文本增量：后端各渠道 formatter 统一发送对象 { delta: ContentPart[], done }
+      // （backend/modules/channel/types.ts 的 StreamChunk；anthropic/openai/openai-responses/gemini
+      // formatter 均按此构造）。2c93ad4e 曾把判定收窄为 typeof chunk.chunk === 'string'，
+      // 导致对象增量全部落入下方 unknown 分支被丢弃——前端收不到逐 token 更新，只在
+      // complete 到达时一次性替换内容（表现为「非流式」回归；1.5.3 的 truthy 判定正常）。
+      // 这里恢复对象判定（主路径），同时保留字符串/空串兼容（模型空输出补丁/心跳 chunk 等，
+      // 空增量并入批次无副作用）。只有真实内容增量才计入用户在场活跃（状态类事件不制造虚假在场时间）
       markAiActive();
       this.enqueue('chunk', { chunk: chunk.chunk }, { scheduleImmediateFlush: false });
       // 修改原因：trace 显示 webview 侧卡顿集中在 postMessage / HandlePostMessage；chunk 热路径必须真正按 50ms 合并。
