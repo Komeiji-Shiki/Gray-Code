@@ -52,9 +52,13 @@
 
 ## About GrayCode
 
-GrayCode is an AI coding assistant that runs inside VS Code. It can understand your current workspace, read and edit files, search code, execute commands, inspect symbols and references, manage task plans, and connect to external tools through MCP. Use it to explore unfamiliar projects, explain module relationships, locate bugs, or edit code and review every change through VS Code diff previews before accepting or rejecting it.
+GrayCode is an AI coding assistant that runs inside VS Code. It can understand your current workspace, read and edit files, search code, execute commands, inspect symbols and references, manage task plans, and connect to external tools through MCP.
 
-For larger work, GrayCode can turn requirements into a design document, generate an execution plan, implement the confirmed plan, and finally produce a structured review record. In long conversations, it can summarize context automatically according to your settings. MCP, Skills, and Sub-Agents extend specialized capabilities, while permanent memory allows the assistant to retain project conventions, design decisions, and personal preferences across sessions and restore relevant context when a new session starts.
+Use it to explore unfamiliar projects, explain module relationships, locate bugs, or edit code and review every change through VS Code diff previews before accepting or rejecting it.
+
+You can also turn requirements into a design document, generate an execution plan, implement the confirmed plan, and review existing changes with a structured review record. In long conversations, it can summarize context automatically according to your settings to reduce repetitive explanations.
+
+MCP, Skills, and Sub-Agents extend specialized capabilities, while permanent memory allows the assistant to retain project conventions, design decisions, and personal preferences across sessions and restore relevant context when a new session starts.
 
 ## Quick Start
 
@@ -72,15 +76,32 @@ For a first try, ask: “Read this project’s structure, explain what the main 
 
 ## Core Capabilities
 
-**Multi-provider model support** — GrayCode supports Gemini, OpenAI Compatible, OpenAI Responses, and Anthropic channels. Gemini supports native function calling, multimodal input, thinking configuration, and image history limits. OpenAI Compatible works with OpenAI Chat Completions and compatible gateways such as DeepSeek and other relay or gateway services. OpenAI Responses supports `/v1/responses`-style requests, Responses tool calls, and token counting. Anthropic supports Claude tool use, extended thinking, and prompt caching. Each channel can independently configure models, API URL, API key, tool mode, streaming, timeout, retries, custom headers, custom request body, context thresholds, and token counting.
+**Multi-provider model support** — GrayCode supports the following model channels:
 
-**Tool calling and code operations** — The assistant can call built-in tools to perform real work: read and write files, create directories, delete files, modify code with structured replacements or line insertion and deletion, search file names and content, execute terminal commands, inspect code with VS Code language services, generate and process images, maintain Design / Plan / Review / Progress documents, manage TODO lists, search conversation history, and show Windows notifications. Tool names and descriptions in the settings page follow the interface language (Chinese, English, and Japanese), while model-facing tool names remain stable, such as `read_file` and `apply_diff`.
+- **Gemini** — Google Gemini API and compatible-format services, with native Function Calling, multimodal input, thinking configuration, image history limits, and more
+- **OpenAI Compatible** — OpenAI Chat Completions and compatible interfaces, suitable for OpenAI, DeepSeek, and various relay or compatible services
+- **OpenAI Responses** — `/v1/responses`-style requests, supporting Responses tool calls and token counting
+- **Anthropic** — Claude API, supporting Claude tool use, extended thinking, and prompt caching
 
-Invalid argument types sent by a model are corrected when possible, such as the string `"true"` becoming a boolean or a stringified array becoming an array. Unknown arguments are stripped and returned with a warning instead of failing the entire call. Adjacent read-only built-in tools in the same batch are executed in parallel to reduce latency. If the same arguments fail twice in a row, the third identical call is short-circuited with guidance to try a different approach. File paths in tool results are clickable; insert and delete operations also jump to and highlight the affected lines. Sensitive tools can require manual confirmation, and file modifications normally appear as diff previews so you can inspect them before accepting.
+Each channel can independently configure models, API URL, API key, tool mode, streaming, timeout, retries, custom headers, custom request body, context thresholds, and token counting.
+
+**Tool calling and code operations** — The assistant can call built-in tools to perform real work: read and write files, create directories, delete files, modify code with structured replacements or line insertion and deletion, search file names and content, execute terminal commands, inspect code with VS Code language services, generate and process images, maintain Design / Plan / Review / Progress documents, manage TODO lists, search conversation history, and show Windows notifications.
+
+Tool names and descriptions in the settings page follow the interface language (Chinese, English, and Japanese), while model-facing tool names remain stable, such as `read_file` and `apply_diff`.
+
+Invalid argument types sent by a model are corrected when possible, such as the string `"true"` becoming a boolean or a stringified array becoming an array. Unknown arguments are stripped and returned with a warning instead of failing the entire call.
+
+Adjacent read-only built-in tools in the same batch (such as read_file, list_files, find_files, get_symbols, goto_definition, find_references, history_search, read_skill, memory_wake, memory_recall, and memory_zoom) are executed in parallel to reduce the cumulative latency of repeated reads and searches.
+
+If the same arguments fail twice in a row, the third identical call is short-circuited with guidance to try a different approach, avoiding wasted iterations on repeated failures.
+
+File paths in tool results are clickable; insert and delete operations also jump to and highlight the affected lines. Sensitive tools can require manual confirmation, and file modifications normally appear as diff previews so you can inspect them before accepting.
 
 **Design, plan, and review workflows** — GrayCode includes document tools for complex tasks. Design records requirements, constraints, options, interfaces, and risks in `.graycode/design/**.md`. Plan breaks a confirmed design into executable steps and TODO items in `.graycode/plans/**.md`. Progress maintains the project ledger in `.graycode/progress.md`, including phase, risks, milestones, and next actions. Review records the review process, evidence, findings, and conclusions in `.graycode/review/**.md`. This workflow is useful for long-running tasks and collaborative work because important state is not lost in a long chat.
 
-**Context awareness** — Depending on your settings, GrayCode can send workspace file trees, open tabs, the active editor, VS Code diagnostics, pinned files and directories, referenced or dragged files and folders, selected code, current time, system environment, workspace paths, and other dynamic information to the model. It also supports both single-use dynamic context and preserved dynamic context policies for tasks that reference the same files over many turns.
+**Context awareness** — Depending on your settings, GrayCode can send workspace file trees, open tabs, the active editor, VS Code diagnostics, pinned files and directories, referenced or dragged files and folders, selected code, current time, system environment, workspace paths, and other dynamic information to the model.
+
+It also supports both single-use dynamic context and preserved dynamic context policies for tasks that reference the same files over many turns.
 
 💡 **Recommended setting:** If you often work through many consecutive turns, set the dynamic context policy to “Preserve previous dynamic context in place” in Settings → Prompts. A stable request prefix improves the hit rate of Anthropic Prompt Caching, DeepSeek KVCache, and similar provider-side caches. See “Dynamic Context Policies” below for details.
 
@@ -88,31 +109,77 @@ Invalid argument types sent by a model are corrected when possible, such as the 
 
 **MCP extensions** — GrayCode supports the Model Context Protocol and can connect to external MCP servers over stdio, SSE, or streamable HTTP. Connected MCP tools are exposed to the model together with built-in tools.
 
-**Skills and Sub-Agents** — Skills are user-defined knowledge modules loaded on demand with `read_skill`. Sub-Agents are configurable specialized agents with limited tool sets and prompts, allowing focused subtasks inside larger tasks. Sub-Agents can nest (depth limit 2, inheriting parent tool filtering), run in the foreground or background (background runs are managed from the task bar, and their completion cards support collapsed / medium / fully expanded views), and communicate with each other and with the main conversation through `agent_send_message` (an inbox mechanism injected with the latest tool result). Sending a new message while a foreground Sub-Agent is running automatically detaches it to the background so it keeps working. The Sub-Agent settings let you configure default iteration and runtime limits (per-agent overrides are supported).
+**Skills and Sub-Agents** — Skills are user-defined knowledge modules loaded on demand with `read_skill`. Sub-Agents are configurable specialized agents with limited tool sets and prompts, allowing focused subtasks inside larger tasks.
 
-**Permanent memory (OptMem)** — GrayCode includes the OptMem permanent memory system. The default prompt asks the assistant to call `memory_wake` at the beginning of a new session to restore conventions, decisions, and knowledge, and to use `memory_note` for information worth retaining long term. Older memories are compressed into one-line summaries through a binary-tree structure to reduce token usage while preserving important details. `memory_recall` supports regular-expression search across all memories, and `memory_zoom` expands tree nodes layer by layer.
+**Permanent memory (OptMem)** — GrayCode includes the OptMem permanent memory system. The default prompt asks the assistant to call `memory_wake` at the beginning of a new session to restore conventions, decisions, and knowledge, and to use `memory_note` for information worth retaining long term, such as project conventions, user-taught knowledge, and key decisions.
 
-Memory data is stored locally as append-only logs and fixed-width records, without any external service. Settings → Memory allows you to customize the memory prompt, use the `{{$MEMORY}}` template variable, view and edit raw memory entries (add new ones manually as with `memory_note`, or delete a single entry — following entries are renumbered and related summaries are cleared), and adjust runtime parameters such as `wakeLines`, `entryChars`, `partChars`, and `partLines`. Memory tools are disabled for Sub-Agents to prevent duplicate or incorrect memory writes.
+Memory is split into global memory (shared across all workspaces) and workspace memory (stored separately per workspace); both `memory_wake` and `memory_recall` cover the two scopes. Older memories are compressed into one-line summaries through a binary-tree structure to reduce token usage while preserving important details. `memory_recall` supports regular-expression search across all memories, and `memory_zoom` expands tree nodes layer by layer. Memory data is stored locally as append-only logs and fixed-width records, without any external service.
 
-**Conversation and experience** — GrayCode supports multiple conversation tabs, automatic history persistence, history viewing and migration, message queuing while the assistant is busy (queued messages are sent automatically right after the current action finishes, without waiting for the whole run to end; completion receipts from background sub-agents / background commands are likewise inserted as soon as they finish instead of waiting for the model turn to end), visible tool states, token usage, thinking content, response timing, automatic checkpoints, sound alerts, Windows notifications, Chinese / English / Japanese interfaces, usage statistics, cost estimation, and Mermaid rendering. Usage statistics aggregate token usage by conversation, model, and day, with bar charts, cache-write / cache-hit dimensions, and cost estimation; the token usage covers all branches, including inactive candidates.
+Settings → Memory lets you customize the memory prompt or fine-tune it through the `{{$MEMORY}}` template variable; actual behavior is also affected by tool enablement, prompt mode, and model tool-calling capability.
 
-**Streaming rendering experience** — AI output is rendered through a refined streaming pipeline: smooth output types characters at an adaptive rate (speed up when backlogged, slow down gracefully when the provider stalls; adjustable in Appearance: off / smooth / balanced / silky), a character-level fade-in pipeline produces a continuous stream of characters at high token rates, and settled paragraphs are promoted to Markdown rendering immediately instead of waiting for the whole response. Long code blocks stay expanded during streaming and keep their expanded state after it ends. A real-time TPS visualization bar at the bottom of the input area shows the current generation speed (EMA-smoothed, toggleable). A splash animation draws the Gray logo on startup (toggleable).
+Settings → Memory also lets you view and edit all raw memory entries in place (edits automatically clean related tree summaries), manually add new memories (equivalent to `memory_note`), and delete entries one by one or in a multi-select batch (after deletion, entries are renumbered and related summaries are cleared).
 
-**Branching conversations** — Rerolling and editing user messages no longer destroys history: the previous answer is kept as a candidate branch under the same parent node (up to 10 candidates), switchable with the candidate switcher (‹ 2/3 ›) and the branch tree panel, which supports renaming, soft deletion (recoverable, default 30-day retention), and one-click cleanup. The branch tree panel has two modes: Branch Navigation (collapses linear segments, keeping branch points) and Full Message Graph (track-style layout showing all nodes). Editing a user message can use “Keep current branch” (in-place save) — only the target message text changes, leaving subsequent messages, checkpoints, and branches intact without regenerating. Branch switching can optionally restore workspace checkpoints together with the chat, guarding unsaved files with confirmation first; checkpoints and branch nodes are bidirectionally linked.
+You can adjust memory runtime parameters in Settings → Memory: `wakeLines` (wake output lines), `entryChars` (maximum bytes per entry), `partChars` (maximum characters per page), and `partLines` (maximum lines per page).
 
-**Usage time statistics** — GrayCode automatically tracks your IDE active time: a 60-second heartbeat plus user activity events (editing, cursor movement, scrolling, editor switching, terminal, and window focus) mark active periods, pausing after 5 minutes of inactivity; AI working sessions (streaming generation, tool execution, sub-agent generation, background tasks) also count as active. The Usage Time section in the usage statistics page and Settings → Usage shows today's usage, the current continuous working session, and the total within the selected range, a daily bar chart for the last 7/30 days, monthly aggregation for 90 days and beyond (click a month to expand daily details), and a 7-day × 24-hour activity heatmap (hover to see active minutes per hour), with range switching among 7 days / 30 days / 90 days / 1 year / all. The assistant can also query your usage statistics via the `get_activity_stats` tool to understand your work-rest rhythm. The data contains timestamps only, is stored fully locally, and never includes conversation content.
+Memory tools are disabled for Sub-Agents to prevent duplicate or incorrect memory writes.
+
+**Conversation and experience** — Multiple conversation tabs keep several working contexts alive at once. Conversation history is saved automatically and can be viewed, restored, and migrated.
+
+The message queue lets you keep typing while the assistant is busy — queued messages are sent automatically right after the current action finishes, without waiting for the whole run to end; completion receipts from background sub-agents / background commands are likewise inserted as soon as they finish instead of waiting for the model turn to end.
+
+Tool states, token usage, thinking content, time-to-first-token (TTFT), and response timing are visualized. Automatic checkpoints can create recovery points for key messages or tool executions according to policy, and the toolbar at the bottom of the input area also lets you create a manual checkpoint at any time. Sound alerts and Windows notifications help with long tasks and confirmations. The interface supports Chinese, English, and Japanese, with appearance settings.
+
+The usage statistics page aggregates token usage from conversation history across overview, per-conversation, per-model, and per-day dimensions, with bar-chart visualization, cache-write / cache-hit dimensions, cost estimation, and time-range filtering.
+
+Mermaid rendering turns Mermaid syntax in Markdown code blocks into flowcharts, sequence diagrams, and other charts automatically.
+
+**Streaming rendering experience** — AI output is rendered through a refined streaming pipeline: smooth output types characters at an adaptive rate (speed up when backlogged, slow down gracefully when the provider stalls; adjustable in Appearance: off / smooth / balanced / silky), a character-level fade-in pipeline produces a continuous stream of characters at high token rates, and settled paragraphs are promoted to Markdown rendering immediately instead of waiting for the whole response. Long code blocks stay expanded during streaming and keep their expanded state after it ends.
+
+A real-time TPS visualization bar at the bottom of the input area shows the current generation speed (EMA-smoothed, toggleable). A splash animation draws the Gray logo on startup (toggleable).
+
+**Usage time statistics** — GrayCode automatically tracks your IDE active time: a 60-second heartbeat plus user activity events (editing, cursor movement, scrolling, editor switching, terminal, and window focus) mark active periods, pausing after 5 minutes of inactivity; AI working sessions (streaming generation, tool execution, sub-agent generation, background tasks) also count as active.
+
+The Usage Time section in the usage statistics page and Settings → Usage shows today's usage, the current continuous working session, and the total within the selected range, a daily bar chart for the last 7/30 days, monthly aggregation for 90 days and beyond (click a month to expand daily details), and a 7-day × 24-hour activity heatmap (hover to see active minutes per hour), with range switching among 7 days / 30 days / 90 days / 1 year / all.
+
+The assistant can also query your usage statistics via the `get_activity_stats` tool to understand your work-rest rhythm. The data contains timestamps only, is stored fully locally, and never includes conversation content.
+
+**Branching conversations** — Rerolling and editing user messages no longer destroys history: the previous answer is kept as a candidate branch under the same parent node (up to 10 candidates), you can switch between candidates and rebuild the active path, and each candidate can continue into its own sub-branch.
+
+The candidate switcher (‹ 2/3 ›) at the top of the message area and the full branch tree panel support viewing, switching, renaming, and soft-deleting branches (soft deletion is recoverable, with a default 30-day retention and one-click cleanup in settings). The branch tree panel has two modes: Branch Navigation (collapses linear segments, keeping branch points) and Full Message Graph (track-style layout showing all nodes).
+
+Editing a user message can use “Keep current branch” (in-place save) — only the target message text changes, leaving subsequent messages, checkpoints, and branches intact without regenerating. Branch switching restores the chat only by default; when a branch has executed write tools or holds workspace checkpoints, you are prompted whether to restore the workspace checkpoint together (unsaved files are guarded with confirmation first). Checkpoints and branch nodes are bidirectionally linked, and checkpoint cleanup follows reference counting when branches are deleted. Usage statistics cover all branches, including inactive candidates.
+
+**Sub-Agents** — Configurable specialized agents with limited tool sets and prompts:
+
+- Nested dispatch is supported (a Sub-Agent can spawn further Sub-Agents, depth limit 2, inheriting parent permissions)
+- Foreground and background modes; background runs are managed from the task bar, and their completion cards support collapsed / medium / fully expanded views
+- Sending a new message while a foreground Sub-Agent is running automatically detaches it to the background so it keeps working
+- Sub-Agents can communicate with each other and with the main conversation through `agent_send_message` (an inbox mechanism injected with the latest tool result)
+- Per-agent settings cover default iteration counts and runtime limits (individual agents can override global defaults)
+- A “Sync with current model” switch makes an agent follow the current conversation's channel and model when dispatched, so you don't need to update every agent when switching channels
 
 ## Model Channel Configuration
 
-All channels support API URL / API key, model lists, tool mode, streaming, timeout, retries, custom headers, custom request bodies, context thresholds, and token counting. Tool modes include `function_call`, `xml`, and `json`, allowing you to choose between native tool calling and prompt-based protocols depending on model compatibility.
+Existing channels can change their type at any time (Gemini / OpenAI Compatible / OpenAI Responses / Anthropic are interchangeable); generic fields (API key, timeout, retries, custom headers/body, etc.) are kept, while type-specific fields are reset to the new type's defaults.
+
+All channels support, fully or partially, the following configuration:
+
+- **Connection** — API URL / API key, model lists (added manually or fetched from the server)
+- **Requests** — tool mode (`function_call` uses native tool calling, `xml` injects tool descriptions as XML for models with unstable or missing native support, `json` injects tool descriptions as JSON code blocks), `preferStream` / `stream` controls streaming preference, `timeout` sets the request timeout, and automatic retries (count and interval after failures)
+- **Customization** — custom headers (extra request headers for relays or self-hosted services) and custom request bodies (append or override body fields, supporting simple key-value pairs and full JSON)
+- **Advanced** — context thresholds (trim or summarize context at a token ratio), strict tools (enforce schema more strictly on supported channels), and token counting (channel default, Gemini countTokens API, custom OpenAI-format counting API, OpenAI Responses, Anthropic count_tokens, or local estimation)
 
 **Gemini** commonly uses API URL, API key, optional `Authorization: Bearer`, temperature, `maxOutputTokens`, thinking configuration, thinking visibility, and a history image limit to prevent oversized multimodal histories.
 
-**OpenAI Compatible** is intended for OpenAI Chat Completions and compatible services, including third-party relays, self-hosted gateways, and OpenAI-format model providers. Common options include temperature, `max_tokens`, `top_p`, frequency and presence penalties, reasoning options, custom headers and body fields, and the DeepSeek `user_id` switch.
+**OpenAI Compatible** is intended for OpenAI Chat Completions and compatible services, including third-party relays, self-hosted gateways, and OpenAI-format model providers.
+
+Common options include temperature, `max_tokens`, `top_p`, frequency and presence penalties, reasoning options (such as effort and summary), custom headers and body fields for relay-specific parameters, and the DeepSeek `user_id` switch (when enabled, a stable identifier based on the conversation ID isolates DeepSeek KVCache per conversation; off by default to avoid confusing relays or other compatible services).
 
 **OpenAI Responses** is intended for the Responses API. It uses `input`, `instructions`, and output-style structures. Common options include API base URL, `max_output_tokens`, `top_p`, temperature, reasoning options, and Responses token counting.
 
-**Anthropic** is intended for the Claude API. Common options include API URL / API key, optional bearer authentication, temperature, `max_tokens`, `top_p`, `top_k`, extended thinking, prompt caching, cache TTL, cache keep-alive, thinking visibility, and thinking effort levels.
+**Anthropic** is intended for the Claude API.
+
+Common options include API URL / API key, optional bearer authentication, temperature, `max_tokens`, `top_p`, `top_k`, extended thinking (enabled / adaptive / disabled), prompt caching (cache TTL of 5 minutes / 1 hour and a cache keep-alive switch), thinking visibility (hidden / summary), and thinking effort levels (low / medium / high / xhigh / max / ultra, plus a custom level; OpenAI and OpenAI Responses channels support extended effort levels too).
 
 ## Common Workflows
 
@@ -126,7 +193,7 @@ Suggested prompt: “Locate the relevant code and explain your plan first. Do no
 
 **Review existing changes** — Switch to Review mode and ask: “Review the current workspace changes, focusing on correctness, edge cases, test coverage, and maintainability. Produce a structured review document.”
 
-**Keep long conversations usable** — Enable automatic summarization, manually ask for a summary when needed, use Plan / Progress documents to preserve task state, and use preserved dynamic context when important context must stay fixed across turns.
+**Keep long conversations usable** — Enable automatic summarization, manually ask for a summary when needed, use Plan / Progress documents to preserve task state, and use preserved dynamic context when important context must stay fixed across turns. Summarized originals are kept in history as marked messages and can be restored at any time; the first user message is always preserved.
 
 ## Built-in Tools
 
@@ -147,25 +214,69 @@ Tool availability depends on settings, dependencies, channel capabilities, and w
 
 ## Settings Pages
 
-The settings page includes Channels, Tools, Auto Execution, MCP, Checkpoints, Summarization, Image Generation, Dependencies, Context, Prompts, Token Counting, Sub-Agents, Sound, Appearance, Usage, Memory, and General settings. Appearance covers interface language, loading text, splash animation, the TPS bar, and the smooth-streaming level. Checkpoints include four-layer exclusion rules with a preview. Usage embeds the Usage Time section and a token usage summary card with a full statistics page entry.
+Open Settings from the top-right of the chat panel to access the following sections; the title bar of the settings page supports keyword search with real-time filtering and jump-to-setting:
 
-Channels manage model providers and API parameters. Tools control whether individual tools are enabled and how they behave. Auto Execution decides which tools require confirmation. MCP manages external servers. Checkpoints configure recovery points. Summarization controls automatic context summaries. Context controls which workspace information can be injected. Prompts manage modes, templates, prompt entries, dynamic context policies, template variables, and mode-level tool policies. Memory configures OptMem and custom memory instructions. General settings include proxy, storage path migration, and settings import / export.
+- **Channels** — manage model channels, model lists, API parameters, tool modes, retries, custom headers/body, and more
+- **Tools** — enable or disable tools, adjust tool configuration, and set the maximum tool calls per turn
+- **Auto Execution** — control which tools run automatically and which require manual confirmation
+- **MCP** — add, connect, and manage MCP servers
+- **Checkpoints** — configure automatic checkpoints, four-layer exclusion rules, and checkpoint cleanup, with an exclusion preview
+- **Summarization** — configure automatic summarization thresholds, the summary model, and the summary prompt
+- **Image Generation** — configure image generation services and parameters
+- **Dependencies** — check and install dependencies for certain tools
+- **Context** — control injected context such as file trees, open tabs, diagnostics, and pinned files
+- **Prompts** — manage prompt modes, legacy templates, prompt entries, dynamic context templates and policies, template variables, and mode-level tool policies
+- **Token Counting** — configure token counting methods for different channels
+- **Sub-Agents** — configure specialized agents, tool scopes, and prompts
+- **Sound** — configure sounds for task completion, errors, warnings, and more
+- **Appearance** — configure interface language, loading text, splash animation, the TPS bar, the smooth-streaming level, selected-code actions, and other UI preferences
+- **Usage** — embeds the Usage Time section and a token usage summary card, with a full statistics page entry
+- **Memory** — configure OptMem and custom memory instructions
+- **General** — proxy, automatic updates (check / one-click update), storage path migration, settings import / export, and other general settings
 
 ## Context and Prompts
 
 **Prompt modes** — GrayCode includes five built-in modes: Code for normal coding and file edits, Design for requirement analysis and design documents, Plan for task breakdown and execution plans, Ask for question answering without modifications, and Review for code review records. You can modify, duplicate, delete, or add modes in Settings → Prompts.
 
-Each mode can independently configure its assembly method, static system prompt, dynamic context template, dynamic context retention policy, and mode-level tool policy. Mode-level tool policies can inherit the default tool set or allow only selected tools.
+Each mode can independently configure its assembly method (legacy template or prompt entries), static system prompt, dynamic context template, dynamic context retention policy, and mode-level tool policy (inherit the default tool set or allow only selected tools). The mode selector at the bottom of the input box uses these modes; saving prompt settings refreshes the mode list.
 
-**Legacy templates and prompt entries** — Legacy templates are suitable for simple prompts that need one system prompt and one dynamic context template. Prompt Entries provide finer control over the order of system, user, and assistant context, and include a Chat History entry that marks where the real conversation history should be inserted.
+**Legacy templates and prompt entries** — GrayCode supports two prompt assembly methods:
 
-Prompt entries can be reordered, enabled or disabled, duplicated, and converted from legacy templates. System entries are merged into the system prompt. User entries are temporary user context and are not saved as real history. Assistant entries are temporary assistant examples and are also not saved as real history. The position of Chat History determines whether preset constraints appear before, after, or around the real conversation history.
+- **Legacy templates** — suitable for simple configurations needing one system prompt and one dynamic context template; `template` serves as the system prompt, and `dynamicTemplate` is inserted as a temporary dynamic context message
+- **Prompt Entries** — suitable for precise control over system/user/assistant context order or for specifying where the real conversation history is inserted; entries are assembled in order, and a Chat History entry marks the insertion point for real history
 
-**Dynamic context policies** — Dynamic context is generated for each request and normally is not written into real history. The `single` policy inserts only the latest dynamic context, which is suitable for normal conversations. The `preserve` policy keeps previous dynamic context in its original position where possible, keeping request prefixes stable and improving provider-side cache hit rates. `preserve` is useful for long, multi-turn implementation or review work, but it increases historical token pressure. You can switch back to `single` or enable automatic summarization if context becomes too long.
+Legacy templates are the easiest to understand: the system prompt template holds long-term stable rules and role instructions, while the dynamic context template is regenerated per request and never written into real history. If you only want to change the assistant's role, tone, or default behavior, use a legacy template.
 
-**Context awareness settings** — Settings → Context controls which information can become dynamic context: workspace file tree, maximum tree depth, open tabs, active editor path, VS Code diagnostics, severity and count limits, and custom ignore patterns for files such as dependencies, logs, and build output.
+Prompt entries act more like a “request skeleton editor”. In Settings → Prompts, switch the assembly method to Prompt Entries to add, duplicate, delete, enable/disable, and drag to reorder entries.
 
-**Template variables** — System prompts, dynamic context templates, and prompt entries support variables in the form `{{$VARIABLE}}`. Common static variables include `{{$ENVIRONMENT}}`, `{{$CONTEXT_BADGE_FORMAT}}`, `{{$TOOLS}}`, `{{$MCP_TOOLS}}`, and `{{$MEMORY}}`. Common dynamic variables include `{{$TODO_LIST}}`, `{{$WORKSPACE_FILES}}`, `{{$OPEN_TABS}}`, `{{$ACTIVE_EDITOR}}`, `{{$DIAGNOSTICS}}`, `{{$PINNED_FILES}}`, and `{{$SKILLS}}`.
+Entries fall into two categories: regular Prompt entries (sent to the model under the chosen role, with content and variables) and the Chat History entry (a fixed insertion point for real conversation history; never sent as a normal message, cannot be deleted or disabled, but can be repositioned).
+
+Regular Prompt entries have three roles: system (merged into the system prompt, typically for global rules, tool descriptions, output formats, and long-term constraints), user (temporary user context inserted into the request and not saved to real history, typically for current task context, file trees, TODO, and supplementary material), and assistant (temporary assistant messages inserted into the request and not saved to real history, typically for example replies, expected format samples, and preset intermediate states).
+
+The position of Chat History matters: after all entries, the model sees preset rules and context before real history; in the middle, it enables “pre-history context → real history → post-history constraints”; before everything, it re-emphasizes strong constraints after real history. Prompt entries can be converted from legacy templates, which helps split one big prompt into maintainable pieces.
+
+**Dynamic context policies** — Dynamic context is “context generated fresh for each request”, such as file trees, open tabs, the active file, diagnostics, TODO, and pinned files. It is normally not written into real history to keep history clean.
+
+GrayCode supports two dynamic context retention policies:
+
+- **single** — inserts only the latest dynamic context each turn; older turns' dynamic context is not replayed, suitable for most normal chats to avoid repeated context consuming tokens
+- **preserve** — keeps each turn's cached dynamic context and re-inserts it near its original position where possible; new context goes to the new turn position; a stable request prefix improves LLM prompt-cache hits, suitable for multi-turn editing of the same files, keeping per-turn context in the model's view, and chatty long conversations
+
+Usage advice: use single for everyday questions and short tasks; use preserve for long tasks, multi-turn implementation, and review sessions that need stable context positions. A stable prefix helps Anthropic Prompt Caching, DeepSeek KVCache, and similar caches, potentially lowering latency and cost — actual gains depend on the provider and request content. preserve increases historical token pressure; switch back to single or enable automatic summarization if context gets too long.
+
+The dynamic context policy is configured per prompt mode; the input area also provides a “send and preserve previous dynamic context in place” entry to override the policy for a single send.
+
+**Context awareness settings** — Settings → Context controls which information can become dynamic context: workspace file tree, maximum tree depth, open tabs, active editor path, VS Code diagnostics with severity and count limits, and custom ignore patterns for files such as dependencies, logs, and build output.
+
+These switches decide whether variables can produce content; whether the prompt template or entries reference those variables decides whether the content is actually included in requests.
+
+**Template variables** — System prompts, dynamic context templates, and prompt entries support variables in the form `{{$VARIABLE}}`.
+
+Common static variables include `{{$ENVIRONMENT}}` (workspace path, operating system, time zone, user language, and other environment information), `{{$CONTEXT_BADGE_FORMAT}}` (the format description for input context badges), `{{$TOOLS}}` (built-in tool descriptions, generated for the current channel tool mode), `{{$MCP_TOOLS}}` (tool descriptions from connected MCP servers), and `{{$MEMORY}}` (usage instructions for the permanent memory system).
+
+Common dynamic variables include `{{$TODO_LIST}}` (current session TODO state), `{{$WORKSPACE_FILES}}` (workspace file tree), `{{$OPEN_TABS}}` (open editor tabs), `{{$ACTIVE_EDITOR}}` (active editor path), `{{$DIAGNOSTICS}}` (VS Code diagnostics), `{{$PINNED_FILES}}` (pinned file contents), and `{{$SKILLS}}` (summaries or contents of enabled Skills).
+
+In the prompt-entry editor you can click “Insert variable” to append a variable to the current entry. If context descriptions look wrong after an upgrade, restore the default templates in prompt settings and customize them again.
 
 **Pinned files and context badges** — The input area supports context badges for files or directories, selected code, attachments, pinned files, and Skills. These badges tell the model exactly what to focus on in the current turn.
 
@@ -177,21 +288,34 @@ Prompt entries can be reordered, enabled or disabled, duplicated, and converted 
 
 **Sub-Agents** — Sub-Agents divide work between specialized roles such as test analysis, documentation, security review, or frontend styling. Each agent can have its own prompt and allowed tools. Memory tools are excluded from Sub-Agents to prevent duplicate or incorrect cross-session memory writes. The main model can pass `continueFromRunId` to continue a new agent run from a completed previous run.
 
-**SubAgent Monitor** — The independent SubAgent Monitor panel shows and manages agent runs in real time. It supports multiple run tabs, automatic output following, pause / resume / exit controls, read-only historical runs, loading older transcript messages, and compact result cards in the main chat for background runs.
+**SubAgent Monitor** — The independent SubAgent Monitor panel shows and manages agent runs in real time:
+
+- Multiple run tabs to monitor several agents at once
+- Automatic output following that keeps scrolling as content grows
+- Pause / resume / exit controls to intervene mid-run
+- Read-only historical runs (completed or cancelled runs are marked as “Historical run · view only”)
+- “Load earlier messages” to page through the full transcript
+- Background runs flow back as compact cards in the main chat and can jump to the Monitor for the full record
 
 ## Data Storage and Sync
 
-**VS Code Settings Sync** — Most settings are stored under the `graycode.*` VS Code settings namespace and can sync through VS Code Settings Sync, including tool switches, auto-execution policies, prompt configuration, UI preferences, token counting, and image tool configuration. Machine-level settings are excluded from sync: `graycode.proxy`, `graycode.storagePath`, and `graycode.activeChannelId`.
+**VS Code Settings Sync** — Most settings are stored under the `graycode.*` VS Code settings namespace and can sync through VS Code Settings Sync, including tool switches, auto-execution policies, prompt configuration, UI preferences, token counting, and image tool configuration.
+
+Machine-level settings are excluded from sync: `graycode.proxy`, `graycode.storagePath`, and `graycode.activeChannelId`, so proxy ports, storage paths, and the active channel never overwrite each other across machines.
 
 **Custom storage path** — Configure and migrate the data storage path in Settings → General. Reload the window after migration.
 
 **Legacy migration** — When upgrading from older versions, GrayCode attempts to migrate the legacy `globalStorage/settings/settings.json` into VS Code settings and backs up the old file as `settings.json.bak`.
 
-**Settings import and export** — Settings → General can export channel configuration, MCP servers, Skills, and VS Code settings to JSON, or import them from a file. Import supports both skipping existing items and overwriting all items. Export does not include conversation history, checkpoints, raw permanent-memory data, or workspace files. You can also run `GrayCode: Export Settings` and `GrayCode: Import Settings` from the Command Palette.
+**Settings import and export** — Settings → General can export channel configuration, MCP servers, Skills, and VS Code settings to JSON, or import them from a file. Import supports both skipping existing items and overwriting all items.
+
+Export does not include conversation history, checkpoints, raw permanent-memory data, or workspace files; migrate the storage path or back them up separately. You can also run `GrayCode: Export Settings` and `GrayCode: Import Settings` from the Command Palette.
 
 ## Installation and Updates
 
 VS Code `^1.84.0` or newer is required. Node.js 20 or newer is recommended for source builds and VSIX packaging. This extension is published on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode); you can also install it from a VSIX package or from source.
+
+**Automatic updates** — The extension periodically checks GitHub Releases for new versions after startup. When a new version is available, a dialog shows the release notes; on confirmation it downloads the VSIX and installs it automatically. You can also use “Check now” or “One-click update” in Settings → General → Automatic updates.
 
 **Install from VSIX** — Download a `graycode-*.vsix` file from [GitHub Releases](https://github.com/Komeiji-Shiki/Gray-Code/releases), or build one locally. In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the VSIX file.
 
@@ -221,7 +345,17 @@ npx @vscode/vsce package
 
 **Manual startup** — Run `npm run watch` in terminal A, run `npm run dev:frontend` in terminal B, then use the normal `Run Extension` configuration or a custom configuration with `GRAYCODE_WEBVIEW_DEV_SERVER_URL`.
 
-**Common scripts** — `npm run compile` bundles the extension backend with esbuild. `npm run typecheck` runs TypeScript checks. `npm run watch` starts esbuild watch mode. `npm run build:frontend` builds the webview frontend. `npm run dev:frontend` starts the local frontend server. `npm run build` builds backend and frontend. `npm test` runs backend Jest tests. `npm run test:frontend` runs frontend Vitest tests. `npm run test:coverage` generates backend coverage.
+**Common scripts** —
+
+- `npm run compile` — bundles the extension backend with esbuild
+- `npm run typecheck` — runs TypeScript checks for the backend and the extension
+- `npm run watch` — starts esbuild watch mode
+- `npm run build:frontend` — builds the webview frontend
+- `npm run dev:frontend` — starts the local frontend dev server
+- `npm run build` — builds the backend and the frontend webview
+- `npm test` — runs backend Jest tests
+- `npm run test:frontend` — runs frontend Vitest tests
+- `npm run test:coverage` — runs backend tests with coverage
 
 ## Project Structure
 
@@ -260,7 +394,9 @@ Gray-Code/
 
 **Why is the model context too long?** Enable automatic summarization, lower the context threshold, reduce dynamic context such as file trees, open tabs, and diagnostics, reduce pinned files, or set a Gemini image history limit.
 
-**Where do I accept a diff?** When a tool creates a file modification, VS Code opens a diff preview. Use the editor title actions or keyboard shortcuts: accept the current block (`Ctrl+Shift+Y` / `Cmd+Shift+Y` on macOS), reject the current block (`Ctrl+Shift+N` / `Cmd+Shift+N` on macOS), go to the next block (`Alt+]`), or go to the previous block (`Alt+[`). Commands are also available: `GrayCode: Accept All Changes`, `GrayCode: Reject All Changes`, `GrayCode: Accept Diff Block...`, and `GrayCode: Reject Diff Block...`.
+**Where do I accept a diff?** When a tool creates a file modification, VS Code opens a diff preview.
+
+Use the editor title actions or keyboard shortcuts: accept the current block (`Ctrl+Shift+Y` / `Cmd+Shift+Y` on macOS), reject the current block (`Ctrl+Shift+N` / `Cmd+Shift+N` on macOS), go to the next block (`Alt+]`), or go to the previous block (`Alt+[`). Commands are also available: `GrayCode: Accept All Changes`, `GrayCode: Reject All Changes`, `GrayCode: Accept Diff Block...`, and `GrayCode: Reject Diff Block...`.
 
 **Why do Windows notifications or sounds not appear?** Check whether the corresponding event is enabled in Settings → Sound, whether Windows allows VS Code notifications, and whether the webview has been allowed to play audio by the browser policy.
 
@@ -280,7 +416,7 @@ Community-maintained projects based on this repository:
 
 Special thanks to the following friends for their help and support:
 
-- [**1b0t3**](https://github.com/1b0t3) — opencode GO package and GPT 5.6 sol
+- [**1b0t3**](https://github.com/1b0t3) — opencode GO package, GPT 5.6 sol, and the project icon/logo
 - [**czocelot**](https://github.com/czocelot) — DeepSeek V4 Flash, plus bug hunting, testing, and fixes; also created [Gray-Code-Desktop](https://github.com/czocelot/Gray-Code-Desktop)
 - [**NebulaRaven**](https://github.com/NebulaRaven) — bug hunting, testing, and fixes
 
