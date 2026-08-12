@@ -14,6 +14,9 @@ import {
     MAX_HOP_DEPTH,
     AGENT_MESSAGE_MAX_LENGTH,
     AGENT_INBOX_MAX_MESSAGES,
+    MAIN_SESSION_CLAIM_MAX_MESSAGES,
+    MAIN_SESSION_CLAIM_MAX_CHARACTERS,
+    formatAgentMessagesForModel,
     type AgentMessage
 } from '../../core/services/agentMailbox';
 
@@ -570,6 +573,172 @@ describe('AgentMailbox - 清理', () => {
     });
 });
 
+describe('AgentMailbox - 主会话结果可靠领取', () => {
+    let mailbox: AgentMailbox;
+
+    beforeEach(() => {
+        mailbox = new AgentMailbox();
+    });
+
+    test('消息使用明确 kind，名为 user 的普通子 agent 结果仍可领取', () => {
+        mailbox.registerRun('conv_1', 'run_user', 'user');
+        const sent = mailbox.sendMessage({
+            conversationId: 'conv_1',
+            fromRunId: 'run_user',
+            fromAgentName: 'user',
+            targetRunId: MAIN_SESSION_RUN_ID,
+            text: 'result from agent named user'
+        });
+        expect(sent.success).toBe(true);
+
+        const claim = mailbox.claimMainSessionAgentMessages('conv_1');
+        expect(claim?.messages).toHaveLength(1);
+        expect(claim?.messages[0]).toMatchObject({
+            fromAgentName: 'user',
+            kind: 'agent',
+            text: 'result from agent named user'
+        });
+        expect(formatAgentMessagesForModel(claim!.messages)).toContain('[Agent message received]');
+        expect(formatAgentMessagesForModel(claim!.messages)).toContain('From: user (run_user)');
+    });
+
+    test('用户插话与可信系统结果分别标记，且兼容缺少 kind 的旧用户插话', () => {
+        expect(mailbox.sendUserMessageToMain('conv_1', 'new interrupt').success).toBe(true);
+        const interrupt = mailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)[0];
+        expect(interrupt).toMatchObject({ fromAgentName: 'user', kind: 'user_interrupt' });
+        expect(formatAgentMessagesForModel([interrupt])).toContain('[User message received]');
+
+        // 模拟升级前已经驻留在内存中的消息：没有 kind 时保留旧版 user 哨兵兼容。
+        delete interrupt.kind;
+        expect(mailbox.claimMainSessionAgentMessages('conv_1')).toBeUndefined();
+
+        const system = mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_1',
+            messageId: 'background-task:system-1',
+            fromRunId: 'finished-run',
+            fromAgentName: 'user',
+            text: 'trusted completion'
+        });
+        expect(system.success).toBe(true);
+        const claim = mailbox.claimMainSessionAgentMessages('conv_1');
+        expect(claim?.messages).toHaveLength(1);
+        expect(claim?.messages[0]).toMatchObject({ fromAgentName: 'user', kind: 'system' });
+    });
+
+    test('主模型工具边界不会提前消费可信系统结果，必须等写入会话记录后确认', () => {
+        mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_reliable',
+            messageId: 'background-task:reliable-1',
+            fromRunId: 'finished-run',
+            text: 'must survive a cancelled tool round'
+        });
+
+        expect(mailbox.drainMessages('conv_reliable', MAIN_SESSION_RUN_ID)).toEqual([]);
+        expect(mailbox.peekMessages('conv_reliable', MAIN_SESSION_RUN_ID)).toHaveLength(1);
+
+        const claim = mailbox.claimMainSessionAgentMessages('conv_reliable')!;
+        expect(claim.messages[0].text).toBe('must survive a cancelled tool round');
+        expect(mailbox.acknowledgeMessageClaim(
+            'conv_reliable',
+            MAIN_SESSION_RUN_ID,
+            claim.claimId
+        )).toBe(true);
+        expect(mailbox.getPendingMessageCount()).toBe(0);
+    });
+
+    test('正在写入时不能 release；结束写入后可退回，确认或清理会移除写入状态', () => {
+        mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_1',
+            messageId: 'background-task:delivery-1',
+            fromRunId: 'finished-run',
+            text: 'completion'
+        });
+        const claim = mailbox.claimMainSessionAgentMessages('conv_1')!;
+
+        expect(mailbox.beginMessageClaimDelivery('conv_1', MAIN_SESSION_RUN_ID, claim.claimId)).toBe(true);
+        expect(mailbox.beginMessageClaimDelivery('conv_1', MAIN_SESSION_RUN_ID, claim.claimId)).toBe(false);
+        expect(mailbox.releaseMessageClaim('conv_1', MAIN_SESSION_RUN_ID, claim.claimId)).toBe(false);
+        expect(mailbox.hasMessageClaim('conv_1', MAIN_SESSION_RUN_ID, claim.claimId)).toBe(true);
+
+        expect(mailbox.endMessageClaimDelivery('conv_1', MAIN_SESSION_RUN_ID, claim.claimId)).toBe(true);
+        expect(mailbox.releaseMessageClaim('conv_1', MAIN_SESSION_RUN_ID, claim.claimId)).toBe(true);
+        const retry = mailbox.claimMainSessionAgentMessages('conv_1')!;
+        expect(mailbox.beginMessageClaimDelivery('conv_1', MAIN_SESSION_RUN_ID, retry.claimId)).toBe(true);
+        expect(mailbox.acknowledgeMessageClaim('conv_1', MAIN_SESSION_RUN_ID, retry.claimId)).toBe(true);
+        expect(mailbox.endMessageClaimDelivery('conv_1', MAIN_SESSION_RUN_ID, retry.claimId)).toBe(false);
+
+        mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_2',
+            messageId: 'background-task:delivery-2',
+            fromRunId: 'finished-run',
+            text: 'completion'
+        });
+        const clearing = mailbox.claimMainSessionAgentMessages('conv_2')!;
+        expect(mailbox.beginMessageClaimDelivery('conv_2', MAIN_SESSION_RUN_ID, clearing.claimId)).toBe(true);
+        mailbox.clearConversation('conv_2');
+        expect(mailbox.endMessageClaimDelivery('conv_2', MAIN_SESSION_RUN_ID, clearing.claimId)).toBe(false);
+    });
+
+    test('删除会话后拒绝迟到的系统结果，注册新 run 可重新激活同一会话 ID', () => {
+        mailbox.clearConversation('conv_deleted');
+        const late = mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_deleted',
+            messageId: 'background-task:late',
+            fromRunId: 'old-run',
+            text: 'late completion'
+        });
+        expect(late.success).toBe(false);
+        expect(mailbox.getPendingMessageCount()).toBe(0);
+
+        mailbox.registerRun('conv_deleted', 'new-run', 'worker');
+        const afterRecreate = mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_deleted',
+            messageId: 'background-task:new',
+            fromRunId: 'new-run',
+            text: 'new completion'
+        });
+        expect(afterRecreate.success).toBe(true);
+        expect(mailbox.claimMainSessionAgentMessages('conv_deleted')?.messages[0].text).toBe('new completion');
+    });
+
+    test('领取按条数和总字符分批，并保证单条超长结果仍可领取', () => {
+        for (let index = 0; index < MAIN_SESSION_CLAIM_MAX_MESSAGES + 2; index += 1) {
+            mailbox.enqueueMainSessionSystemMessage({
+                conversationId: 'conv_count',
+                messageId: `background-task:count-${index}`,
+                fromRunId: `run-${index}`,
+                text: `result-${index}`
+            });
+        }
+        const first = mailbox.claimMainSessionAgentMessages('conv_count')!;
+        expect(first.messages).toHaveLength(MAIN_SESSION_CLAIM_MAX_MESSAGES);
+        mailbox.acknowledgeMessageClaim('conv_count', MAIN_SESSION_RUN_ID, first.claimId);
+        expect(mailbox.claimMainSessionAgentMessages('conv_count')?.messages).toHaveLength(2);
+
+        for (let index = 0; index < 2; index += 1) {
+            mailbox.enqueueMainSessionSystemMessage({
+                conversationId: 'conv_chars',
+                messageId: `background-task:chars-${index}`,
+                fromRunId: `run-${index}`,
+                text: 'x'.repeat(Math.floor(MAIN_SESSION_CLAIM_MAX_CHARACTERS * 0.6))
+            });
+        }
+        const characterLimited = mailbox.claimMainSessionAgentMessages('conv_chars')!;
+        expect(characterLimited.messages).toHaveLength(1);
+        mailbox.acknowledgeMessageClaim('conv_chars', MAIN_SESSION_RUN_ID, characterLimited.claimId);
+        expect(mailbox.claimMainSessionAgentMessages('conv_chars')?.messages).toHaveLength(1);
+
+        mailbox.enqueueMainSessionSystemMessage({
+            conversationId: 'conv_oversized',
+            messageId: 'background-task:oversized',
+            fromRunId: 'run-oversized',
+            text: 'x'.repeat(MAIN_SESSION_CLAIM_MAX_CHARACTERS + 1)
+        });
+        expect(mailbox.claimMainSessionAgentMessages('conv_oversized')?.messages[0].text)
+            .toHaveLength(MAIN_SESSION_CLAIM_MAX_CHARACTERS + 1);
+    });
+});
+
 describe('AgentMailbox - 全局单例', () => {
     afterEach(() => {
         agentMailbox.clearAll();
@@ -588,5 +757,40 @@ describe('AgentMailbox - 全局单例', () => {
         const drained = agentMailbox.drainMessages('conv_1', 'run_b');
         expect(drained).toHaveLength(1);
         expect((drained[0] as AgentMessage).text).toBe('through singleton');
+    });
+
+    test('可信后台结果允许完整超长正文，并以稳定 messageId 跨 inbox/claim 幂等', () => {
+        const fullResult = `full-result:${'x'.repeat(AGENT_MESSAGE_MAX_LENGTH + 4096)}`;
+        const input = {
+            conversationId: 'conv_background',
+            messageId: 'background-task:bgagent_1',
+            threadId: 'background-task:bgagent_1',
+            fromRunId: 'run_finished',
+            fromAgentName: 'researcher',
+            text: fullResult
+        };
+
+        expect(agentMailbox.enqueueMainSessionSystemMessage(input).success).toBe(true);
+        expect(agentMailbox.enqueueMainSessionSystemMessage(input).success).toBe(true);
+        expect(agentMailbox.getPendingMessageCount()).toBe(1);
+
+        const claim = agentMailbox.claimMainSessionAgentMessages('conv_background');
+        expect(claim?.messages).toHaveLength(1);
+        expect(claim?.messages[0]).toMatchObject({
+            id: input.messageId,
+            text: fullResult,
+            fromRunId: input.fromRunId,
+            fromAgentName: input.fromAgentName
+        });
+
+        // 已领取但尚未 ack 时重复终态仍命中 claim 内的同一稳定 ID，不复制消息。
+        expect(agentMailbox.enqueueMainSessionSystemMessage(input).success).toBe(true);
+        expect(agentMailbox.claimMainSessionAgentMessages('conv_background')?.messages).toHaveLength(1);
+        expect(agentMailbox.acknowledgeMessageClaim(
+            'conv_background',
+            MAIN_SESSION_RUN_ID,
+            claim!.claimId
+        )).toBe(true);
+        expect(agentMailbox.getPendingMessageCount()).toBe(0);
     });
 });

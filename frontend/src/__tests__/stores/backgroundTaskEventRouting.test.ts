@@ -6,7 +6,7 @@
  * 输入框上方的后台任务小气泡（BackgroundTaskBar）永不出现。
  * 本测试锁定：command 格式消息 → store 正确登记任务（start）并推进终态（complete）。
  */
-import { describe, expect, beforeEach, vi } from 'vitest'
+import { describe, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('../../utils/vscode', () => ({
@@ -45,15 +45,22 @@ function completeEvent(taskId: string, data: Record<string, unknown> = {}) {
 
 describe('backgroundTaskStore 消息路由（command 格式）', () => {
   let handler: TaskEventHandler
+  let storeCleanup: (() => void) | undefined
 
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
+    storeCleanup = undefined
+  })
+
+  afterEach(() => {
+    storeCleanup?.()
+    storeCleanup = undefined
   })
 
   test('initialize 以 taskEvent 命令名注册订阅', () => {
     const store = useBackgroundTaskStore()
-    store.initialize()
+    storeCleanup = store.initialize()
     const calls = vi.mocked(onExtensionCommand).mock.calls
     expect(calls.some(c => c[0] === 'taskEvent')).toBe(true)
     store.initialize()
@@ -63,7 +70,7 @@ describe('backgroundTaskStore 消息路由（command 格式）', () => {
 
   test('收到 command 格式的 taskEvent 消息后登记后台任务（start → running）', () => {
     const store = useBackgroundTaskStore()
-    store.initialize()
+    storeCleanup = store.initialize()
     handler = vi.mocked(onExtensionCommand).mock.calls.find(c => c[0] === 'taskEvent')![1] as unknown as TaskEventHandler
 
     handler(startEvent('t1', 'background_subagent', { background: true, agentName: 'reviewer', runId: 'r1' }))
@@ -78,7 +85,7 @@ describe('backgroundTaskStore 消息路由（command 格式）', () => {
 
   test('complete 事件推进任务为 completed（对勾态由 UI 按 status 渲染）', () => {
     const store = useBackgroundTaskStore()
-    store.initialize()
+    storeCleanup = store.initialize()
     handler = vi.mocked(onExtensionCommand).mock.calls.find(c => c[0] === 'taskEvent')![1] as unknown as TaskEventHandler
 
     handler(startEvent('t1', 'background_subagent', { background: true, agentName: 'reviewer', runId: 'r1' }))
@@ -90,9 +97,80 @@ describe('backgroundTaskStore 消息路由（command 格式）', () => {
     })
   })
 
+  test('start 在 Webview 重载期间丢失时，自包含 complete 仍恢复任务并自动回流', async () => {
+    const chat = useChatStore()
+    chat.currentConversationId = 'conv_1'
+    chat.isStreaming = false
+    chat.isWaitingForResponse = false
+
+    const store = useBackgroundTaskStore()
+    storeCleanup = store.initialize()
+    handler = vi.mocked(onExtensionCommand).mock.calls.find(c => c[0] === 'taskEvent')![1] as unknown as TaskEventHandler
+
+    // 故意不发 start：模拟 Webview 未订阅/正在 task.getAll 恢复时任务已结束。
+    handler(completeEvent('orphan_complete', {
+      conversationId: 'conv_1',
+      agentName: 'reviewer',
+      runId: 'r_orphan',
+      response: '不应丢失的完整结果',
+      steps: 2
+    }))
+
+    await vi.waitFor(() => {
+      expect(store.taskList.find(t => t.taskId === 'orphan_complete')?.reported).toBe(true)
+    })
+    expect(store.taskList.find(t => t.taskId === 'orphan_complete')).toMatchObject({
+      kind: 'subagent',
+      status: 'completed',
+      conversationId: 'conv_1',
+      runId: 'r_orphan'
+    })
+    const reportPayload = vi.mocked(sendToExtension).mock.calls
+      .filter(([type]) => type === 'chatStream')
+      .map(([, data]) => JSON.stringify(data))
+      .find(payload => payload.includes('不应丢失的完整结果'))
+    expect(reportPayload).toBeTruthy()
+  })
+
+  test('空闲自动回流首次启动失败时有确定退避重试，无需新的 UI 事件唤醒', async () => {
+    const chat = useChatStore()
+    chat.currentConversationId = 'conv_retry'
+    chat.isStreaming = false
+    chat.isWaitingForResponse = false
+
+    let chatStreamAttempts = 0
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chatStream') {
+        chatStreamAttempts += 1
+        return { success: chatStreamAttempts > 1 }
+      }
+      return { success: true }
+    })
+
+    const store = useBackgroundTaskStore()
+    store.handleTaskEvent(startEvent('retry_task', 'background_subagent', {
+      conversationId: 'conv_retry',
+      agentName: 'reviewer',
+      runId: 'r_retry'
+    }))
+    store.handleTaskEvent(completeEvent('retry_task', {
+      conversationId: 'conv_retry',
+      agentName: 'reviewer',
+      runId: 'r_retry',
+      response: '重试后回流'
+    }))
+
+    await vi.waitFor(() => {
+      expect(chatStreamAttempts).toBe(2)
+      expect(store.taskList.find(t => t.taskId === 'retry_task')?.reported).toBe(true)
+    }, { timeout: 2500 })
+  })
+
   test('cleanup 后取消订阅', () => {
     const store = useBackgroundTaskStore()
     const cleanup = store.initialize()
+    storeCleanup = cleanup
     cleanup()
     // cleanup 内部调用 onExtensionCommand 返回的取消函数（mock 返回 () => {}，不抛错即可）
     expect(sendToExtension).toHaveBeenCalled()
@@ -106,7 +184,7 @@ describe('backgroundTaskStore 消息路由（command 格式）', () => {
     chat.isWaitingForResponse = false
 
     const store = useBackgroundTaskStore()
-    store.initialize()
+    storeCleanup = store.initialize()
     handler = vi.mocked(onExtensionCommand).mock.calls.find(c => c[0] === 'taskEvent')![1] as unknown as TaskEventHandler
 
     handler(startEvent('t1', 'background_subagent', { background: true, agentName: 'reviewer', runId: 'r1', conversationId: 'conv_1' }))

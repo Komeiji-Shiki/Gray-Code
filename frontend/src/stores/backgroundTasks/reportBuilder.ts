@@ -115,6 +115,10 @@ export function applyCompletionEvent(record: BackgroundTaskRecord, event: TaskEv
   return {
     ...record,
     status,
+    // 后端已把完整 SubAgent 结果放入 agentMailbox 的 claim/ack 通道时，taskEvent 仅用于
+    // 更新任务条；旧 background_task 回执若再发送会造成重复历史。邮箱消息会在真正
+    // addMessage 成功后才 ack，因此这里的 UI 标记不会承担交付可靠性。
+    reported: data.delivery === 'agent_mailbox' ? true : record.reported,
     finishedAt: typeof event.createdAt === 'number' ? event.createdAt : Date.now(),
     response: typeof data.response === 'string' ? data.response : record.response,
     steps: typeof data.steps === 'number' ? data.steps : record.steps,

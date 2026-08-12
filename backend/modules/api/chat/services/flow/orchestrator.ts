@@ -51,6 +51,27 @@ function isValidAgentMessageClaim(request: ChatRequestData): boolean {
 }
 
 /**
+ * 在真正准备写入会话记录前独占本批后台结果。
+ *
+ * 单纯“再检查一次领取是否存在”仍有检查后被另一页面退回、随后重复领取的竞态；
+ * beginMessageClaimDelivery 会把检查与占用合并为一个同步操作，并让写入期间的 release 失败。
+ */
+function beginAgentMessageClaimDelivery(request: ChatRequestData): boolean {
+  if (request.source !== 'agent_message') return true;
+  const claimId = request.agentMessageClaimId?.trim();
+  if (!claimId || !isValidAgentMessageClaim(request)) return false;
+  return agentMailbox.beginMessageClaimDelivery(request.conversationId, MAIN_SESSION_RUN_ID, claimId);
+}
+
+/** 写入未成功确认时解除独占，保留原领取供后续重试。 */
+function endAgentMessageClaimDelivery(request: ChatRequestData): void {
+  if (request.source !== 'agent_message') return;
+  const claimId = request.agentMessageClaimId?.trim();
+  if (!claimId) return;
+  agentMailbox.endMessageClaimDelivery(request.conversationId, MAIN_SESSION_RUN_ID, claimId);
+}
+
+/**
  * C-6：创建与 abortSignal race 的 Promise，供 gen.next() 主循环防挂起。
  *
  * - 信号已中止时立即 resolve（避免 listener 注册后信号永不触发、Promise 永不落定）；
@@ -135,41 +156,58 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
     const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot, request.dynamicContextStrategyOverride);
 
-    if (!hiddenFunctionResponse) {
-      await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
-    }
-
     // 2.5 请求前置清理：中断上一轮未完成的 diff 等待、拒绝所有未响应的工具调用
     //（与流式 handleChatStream 对齐，避免悬空 functionCall/pending diff 跨回合残留）
     // H1：先等旧流完全退出，再执行清理与写入用户消息（避免旧流结算落在新用户消息之后）
     await this.waitForOldStreamExit(conversationId);
-    await this.prepareConversationForRequest(conversationId);
+    if (!beginAgentMessageClaimDelivery(request)) {
+      return {
+        success: false,
+        error: {
+          code: 'INVALID_AGENT_MESSAGE_CLAIM',
+          message: 'The agent message claim is missing, stale, or does not match the mailbox payload.',
+        },
+      };
+    }
 
-    // 3. 添加输入到历史；真实用户消息在创建时一次性携带动态上下文快照。
-    if (hiddenFunctionResponse) {
-      await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
-    } else {
-      const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
-      const persistedMessageId = messageId || randomUUID();
-      const internalMessage = isInternalMessageSource(request.source);
-      const turnDynamicContext = internalMessage
-        ? undefined
-        : await this.toolIterationLoopService.createTurnDynamicContext(
-            conversationId,
-            persistedMessageId,
-            promptModeSnapshot,
-            dynamicContextStrategy
-          );
-      await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-        isUserInput: !internalMessage,
-        source: request.source,
-        ...(turnDynamicContext
-          ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
-          : {})
-      }, persistedMessageId);
-      if (request.source === 'agent_message' && request.agentMessageClaimId) {
-        agentMailbox.acknowledgeMessageClaim(conversationId, MAIN_SESSION_RUN_ID, request.agentMessageClaimId);
+    try {
+      // 最终领取校验/独占之后才执行会改变会话状态的清理。若同一批结果已经被另一请求
+      // 写入并确认，本请求会在上面直接结束，不会误清审批状态或拒绝工具调用。
+      if (!hiddenFunctionResponse) {
+        await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
       }
+      await this.prepareConversationForRequest(conversationId);
+
+      // 3. 添加输入到历史；真实用户消息在创建时一次性携带动态上下文快照。
+      if (hiddenFunctionResponse) {
+        await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
+      } else {
+        const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
+        const persistedMessageId = messageId || randomUUID();
+        const internalMessage = isInternalMessageSource(request.source);
+        const turnDynamicContext = internalMessage
+          ? undefined
+          : await this.toolIterationLoopService.createTurnDynamicContext(
+              conversationId,
+              persistedMessageId,
+              promptModeSnapshot,
+              dynamicContextStrategy
+            );
+        await this.conversationManager.addMessage(conversationId, 'user', userParts, {
+          isUserInput: !internalMessage,
+          source: request.source,
+          ...(turnDynamicContext
+            ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
+            : {})
+        }, persistedMessageId);
+        if (request.source === 'agent_message' && request.agentMessageClaimId) {
+          agentMailbox.acknowledgeMessageClaim(conversationId, MAIN_SESSION_RUN_ID, request.agentMessageClaimId);
+        }
+      }
+    } finally {
+      // acknowledge 已成功时会同时清掉独占状态；此前任一步抛错则只解除独占，
+      // 领取内容仍在，下一次空闲调度可以原样重试。
+      endAgentMessageClaimDelivery(request);
     }
 
     // 4. 工具调用循环（委托给 ToolIterationLoopService，非流式）
@@ -288,20 +326,33 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
     const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot, request.dynamicContextStrategyOverride);
 
-    if (!hiddenFunctionResponse) {
-      await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
-    }
-
-
     // 3. 请求前置清理：中断上一轮未完成的 diff 等待并关闭编辑器、
     //    拒绝所有未响应的工具调用（在添加用户消息之前，确保 functionResponse
     //    会被插入到工具调用消息之后、用户消息之前）
     // H1：先等旧流完全退出（webview 层已等待过一遍，这里对直接调用入口兜底），
     // 避免旧流取消结算落在新用户消息之后（半截旧回答/错位结算）
     await this.waitForOldStreamExit(conversationId);
-    await this.prepareConversationForRequest(conversationId);
+    // claim 在等待旧流期间可能已被另一条同会话重试写入历史并 ack。初始校验只能
+    // 拦截请求进入时的陈旧 claim；真正做 prepare/addMessage 前必须再验一次，避免
+    // “后端已启动、前端因切会话返回 false 后重试”把同一后台结果写入两遍。
+    if (!beginAgentMessageClaimDelivery(request)) {
+      yield {
+        conversationId,
+        error: {
+          code: 'INVALID_AGENT_MESSAGE_CLAIM',
+          message: 'The agent message claim is missing, stale, or does not match the mailbox payload.'
+        }
+      };
+      return;
+    }
 
     try {
+      // 只有成功独占这批后台结果的请求才允许修改审批/工具状态。
+      if (!hiddenFunctionResponse) {
+        await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
+      }
+      await this.prepareConversationForRequest(conversationId);
+
       // 4/5/6. 写入输入到历史：
       // - 普通模式：用户文本消息 + before/after checkpoint
       // - 隐藏模式：写入（或替换）functionResponse，不创建可见 user 文本消息，也不创建用户消息 checkpoint
@@ -363,6 +414,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
       }
     } finally {
+      // 写入前失败或生成器被取消时允许后续重试；写入成功后 acknowledge 已经消费领取，
+      // 此调用为幂等 no-op。
+      endAgentMessageClaimDelivery(request);
       // 7. 重置中断标记：中途任何 await 抛错都必须清理，
       // 否则全局中断标记残留，无会话 diff 被误取消（对照 delete 路径的 finally 用法）。
       this.diffInterruptService.resetUserInterrupt(conversationId);

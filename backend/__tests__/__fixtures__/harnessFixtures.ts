@@ -332,6 +332,7 @@ export function createChatFlowHarness(options: {
         getCustomMetadata: jest.fn().mockResolvedValue(undefined),
         setCustomMetadata: jest.fn().mockResolvedValue(undefined),
         rejectAllPendingToolCalls: jest.fn().mockResolvedValue(undefined),
+        addMessage: jest.fn().mockResolvedValue(undefined),
         addContent: jest.fn().mockResolvedValue(undefined),
         settleFunctionResponses: jest.fn().mockResolvedValue(undefined),
         getMessageNodeIdAt: jest.fn().mockResolvedValue(undefined),

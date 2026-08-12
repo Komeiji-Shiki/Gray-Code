@@ -195,7 +195,47 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
     expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')).toBeUndefined()
   })
 
-  test('空闲领取期间切换会话时退回 claim，不把消息发进错误会话', async () => {
+  test('Webview 缺席期间没有终态事件时，initialize 仍主动领取后端保留的完成结果', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = false
+
+    let claimed = false
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'task.getAll') return { tasks: [] }
+      if (type === 'chat.claimAgentMessages') {
+        if (claimed) return null
+        claimed = true
+        return {
+          claimId: 'claim_after_reload',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nMessage:\n[Background task completed]\n\nResult: recovered',
+          messageCount: 1
+        }
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    const cleanup = bgStore.initialize()
+    try {
+      await vi.waitFor(() => {
+        const streamCall = vi.mocked(sendToExtension).mock.calls.find(([type]) => type === 'chatStream')
+        expect(streamCall?.[1]).toMatchObject({
+          conversationId: 'conv_1',
+          source: 'agent_message',
+          agentMessageClaimId: 'claim_after_reload',
+          message: expect.stringContaining('recovered')
+        })
+      })
+    } finally {
+      cleanup()
+    }
+  })
+
+  test('空闲领取期间切换会话时保留 claim，不把消息发进错误会话或制造重复领取', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = false
@@ -220,10 +260,77 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
 
     const calls = vi.mocked(sendToExtension).mock.calls
     expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
-    expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')?.[1]).toEqual({
-      conversationId: 'conv_1',
-      claimId: 'claim_switch_1'
+    expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')).toBeUndefined()
+  })
+
+  test('领取 IPC 一次失败后自动退避重试，无需新的唤醒事件', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = false
+
+    let claimAttempts = 0
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        claimAttempts += 1
+        if (claimAttempts === 1) throw new Error('temporary claim failure')
+        return {
+          claimId: 'claim_retry_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nMessage: retry me',
+          messageCount: 1
+        }
+      }
+      return { success: true }
     })
+
+    const bgStore = useBackgroundTaskStore()
+    bgStore.handleTaskEvent({
+      taskId: 'agentmsg:retry',
+      taskType: 'agent_message',
+      type: 'progress',
+      data: { conversationId: 'conv_1', messageId: 'retry' },
+      createdAt: Date.now()
+    })
+
+    await vi.waitFor(() => {
+      expect(claimAttempts).toBe(2)
+      expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(true)
+    }, { timeout: 2500 })
+  })
+
+  test('cleanup 使领取中的旧 flush 失效，不会在 reject 后复活 timer 或派发消息', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = false
+    store.isWaitingForResponse = false
+
+    let claimAttempts = 0
+    let rejectClaim!: (reason?: unknown) => void
+    const pendingClaim = new Promise<never>((_resolve, reject) => {
+      rejectClaim = reject
+    })
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        claimAttempts += 1
+        return pendingClaim
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    const cleanup = bgStore.initialize()
+    await vi.waitFor(() => expect(claimAttempts).toBe(1))
+
+    cleanup()
+    rejectClaim(new Error('claim failed after cleanup'))
+    // 旧实现会在 catch 中重新挂 500ms timer；越过首个退避窗口后仍应无第二次领取/发送。
+    await new Promise(resolve => setTimeout(resolve, 650))
+
+    expect(claimAttempts).toBe(1)
+    expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(false)
   })
 })
 
@@ -270,6 +377,81 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(message).toContain('[Background task completed]')
     expect(message).toContain('调研完成')
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(true)
+  })
+
+  test('动作边界领取 IPC 一次失败后仍在动作边界自动重试并发送 agent 消息', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = true
+    store.isWaitingForResponse = true
+    store.activeStreamId = 'stream_1'
+
+    let claimAttempts = 0
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        claimAttempts += 1
+        if (claimAttempts === 1) throw new Error('temporary claim failure')
+        return {
+          claimId: 'claim_action_retry_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nMessage: retry at action boundary',
+          messageCount: 1
+        }
+      }
+      if (type === 'cancelStream') {
+        store.isStreaming = false
+        store.isWaitingForResponse = false
+        store.activeStreamId = null
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    await bgStore.flushReportsAfterAction()
+
+    await vi.waitFor(() => {
+      expect(claimAttempts).toBe(2)
+      expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(true)
+    }, { timeout: 2500 })
+
+    const calls = vi.mocked(sendToExtension).mock.calls
+    const cancelIndex = calls.findIndex(([type]) => type === 'cancelStream')
+    const streamIndex = calls.findIndex(([type]) => type === 'chatStream')
+    expect(cancelIndex).toBeGreaterThanOrEqual(0)
+    expect(streamIndex).toBeGreaterThan(cancelIndex)
+  })
+
+  test('动作边界领取期间切换会话时不取消新会话的流，并保留原会话结果', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = true
+    store.isWaitingForResponse = true
+    store.activeStreamId = 'stream_1'
+
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        store.currentConversationId = 'conv_2'
+        store.activeStreamId = 'stream_2'
+        return {
+          claimId: 'claim_action_switch_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nMessage: keep for conv_1',
+          messageCount: 1
+        }
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    await bgStore.flushReportsAfterAction()
+
+    const calls = vi.mocked(sendToExtension).mock.calls
+    expect(calls.find(([type]) => type === 'cancelStream')).toBeUndefined()
+    expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
+    expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')).toBeUndefined()
+    expect(store.activeStreamId).toBe('stream_2')
   })
 
   test('无可投递任务时不发起任何 IPC', async () => {
@@ -395,7 +577,7 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
   })
 
-  test('回执发送失败：回滚 reported，等待下次补发', async () => {
+  test('动作边界回执发送失败：先回滚 reported，再自动退避补发', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'
     store.isStreaming = true
@@ -408,15 +590,26 @@ describe('flushReportsAfterAction：动作边界回执提前投递', () => {
     await settle()
 
     vi.mocked(sendToExtension).mockClear()
+    let chatStreamAttempts = 0
     vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
       if (type === 'getWorkspaceUri') return null
-      if (type === 'chatStream') throw new Error('ipc failed')
+      if (type === 'chatStream') {
+        chatStreamAttempts += 1
+        if (chatStreamAttempts === 1) throw new Error('ipc failed')
+      }
       return { success: true }
     })
 
     await bgStore.flushReportsAfterAction()
 
+    // 首次失败必须先恢复未回流状态，不能假装已成功。
     expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(false)
+
+    // 没有任何新 toolIteration / watcher 事件，退避计时器也会自主补发。
+    await vi.waitFor(() => {
+      expect(chatStreamAttempts).toBe(2)
+      expect(bgStore.taskList.find(t => t.taskId === 't1')?.reported).toBe(true)
+    }, { timeout: 2500 })
   })
 
   test('回执投递进行中不重入：同一边界只发送一条回执', async () => {

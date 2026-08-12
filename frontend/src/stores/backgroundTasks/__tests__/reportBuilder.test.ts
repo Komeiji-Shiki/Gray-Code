@@ -87,6 +87,16 @@ describe('applyCompletionEvent', () => {
         expect(base.status).toBe('running');
     });
 
+    test('后端 mailbox 已接管交付时直接标记 reported，避免旧回执重复发送', () => {
+        const done = applyCompletionEvent(base, {
+            taskId: 'bgagent_1', taskType: 'background_subagent', type: 'complete',
+            data: { response: 'Delivered through claim/ack.', delivery: 'agent_mailbox' }
+        });
+        expect(done.status).toBe('completed');
+        expect(done.reported).toBe(true);
+        expect(base.reported).toBe(false);
+    });
+
     test('error 事件保留错误信息', () => {
         const failed = applyCompletionEvent(base, {
             taskId: 'bgagent_1', taskType: 'background_subagent', type: 'error',

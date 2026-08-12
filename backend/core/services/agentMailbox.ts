@@ -33,12 +33,20 @@ export const AGENT_MESSAGE_MAX_LENGTH = 16000;
 /** 单个收件方 inbox 允许积压的消息条数上限（防上下文洪泛） */
 export const AGENT_INBOX_MAX_MESSAGES = 50;
 
+/** 主会话每次领取的消息条数上限，避免一次构造过大的模型请求。 */
+export const MAIN_SESSION_CLAIM_MAX_MESSAGES = 8;
+
+/** 主会话每次领取的正文总字符上限；首条消息即使超长也仍允许单独领取。 */
+export const MAIN_SESSION_CLAIM_MAX_CHARACTERS = 64 * 1024;
+
 /** 单会话 threadDepths 允许的最大线程条目数（超过按 FIFO 淘汰最旧条目，防长会话线性增长） */
 export const THREAD_DEPTH_MAX_ENTRIES = 512;
 
 /**
  * 一条投递到收件方 inbox 的消息
  */
+export type AgentMessageKind = 'agent' | 'user_interrupt' | 'system';
+
 export interface AgentMessage {
     /** 消息唯一 ID */
     id: string;
@@ -56,6 +64,8 @@ export interface AgentMessage {
     hopDepth: number;
     /** 创建时间戳 */
     createdAt: number;
+    /** 消息来源。可选仅用于兼容升级前仍驻留在内存中的消息。 */
+    kind?: AgentMessageKind;
 }
 
 /** 主模型空闲投递时领取的一批消息；确认前仍由信箱持有。 */
@@ -67,16 +77,30 @@ export interface AgentMessageClaim {
 }
 
 /**
+ * 升级前的旧内存消息没有 kind：旧版只有用户插话会把 fromAgentName 写成 user，
+ * 因此保留这个回退。新消息一律优先采用 kind，名为 user 的普通子 agent 不会再被
+ * 误认成用户插话。
+ */
+function getAgentMessageKind(message: AgentMessage): AgentMessageKind {
+    if (message.kind) return message.kind;
+    return message.fromAgentName === 'user' ? 'user_interrupt' : 'agent';
+}
+
+function isUserInterruptMessage(message: AgentMessage): boolean {
+    return getAgentMessageKind(message) === 'user_interrupt';
+}
+
+/**
  * 把代理消息转成可直接作为 user content 注入模型的文本。
  * 保留 runId / threadId / hopDepth，收件模型可以据此继续同一线程回复。
  */
 export function formatAgentMessagesForModel(messages: AgentMessage[]): string {
-    const onlyUserMessages = messages.length > 0 && messages.every(message => message.fromAgentName === 'user');
+    const onlyUserMessages = messages.length > 0 && messages.every(isUserInterruptMessage);
     const title = onlyUserMessages
         ? (messages.length === 1 ? '[User message received]' : '[User messages received]')
         : (messages.length === 1 ? '[Agent message received]' : '[Agent messages received]');
     const sections = messages.map((message, index) => {
-        const sender = message.fromAgentName === 'user'
+        const sender = isUserInterruptMessage(message)
             ? 'User'
             : message.fromAgentName
                 ? `${message.fromAgentName} (${message.fromRunId})`
@@ -110,6 +134,22 @@ export interface AgentSendMessageInput {
     /** 消息正文 */
     text: string;
     /** 线程 ID（不传则新建线程） */
+    threadId?: string;
+}
+
+/**
+ * 可信后台系统生产者向主会话投递消息的入参。
+ *
+ * 与 agent_send_message 的边界不同：后台任务结果可能超过 16k，且 run 在终态投递时
+ * 已经注销，因此这里不做发送方存活/正文长度/hop 校验。调用者必须是扩展内部受信模块；
+ * messageId 由调用者稳定生成，用于在 inbox 与未确认 claim 之间幂等去重。
+ */
+export interface MainSessionSystemMessageInput {
+    conversationId: string;
+    messageId: string;
+    fromRunId: string;
+    fromAgentName?: string;
+    text: string;
     threadId?: string;
 }
 
@@ -171,12 +211,16 @@ export class AgentMailbox {
     private inboxes = new Map<string, Map<string, AgentMessage[]>>();
     /** 主模型空闲回流已领取但尚未确认的消息；同一收件方同时只允许一个 claim。 */
     private messageClaims = new Map<string, Map<string, AgentMessageClaim>>();
+    /** 正在写入会话历史的 claim；写入期间禁止 release，防止同一批消息被并发重复领取。 */
+    private messageClaimDeliveries = new Map<string, Map<string, string>>();
     /** conversationId -> runId -> run 元信息（仅记录「本对话下已知的 run」） */
     private knownRuns = new Map<string, Map<string, KnownRun>>();
     /** conversationId -> threadId -> 最近一次投递的 hopDepth */
     private threadDepths = new Map<string, Map<string, number>>();
     /** conversationId -> 最近一次用户消息插入时间（防刷屏） */
     private lastUserInterruptAt = new Map<string, number>();
+    /** 已删除会话的墓碑；用于拒绝后台任务结束后迟到的系统结果。 */
+    private deletedConversations = new Set<string>();
 
     /**
      * 注册一个 run 为「本对话下已知」（子代理 run 启动时调用）。
@@ -186,6 +230,8 @@ export class AgentMailbox {
         if (!conversationId || !runId) {
             return;
         }
+        // 同一 ID 的会话若被上层明确重建并启动新 run，则恢复接收后台结果。
+        this.deletedConversations.delete(conversationId);
         if (runId === MAIN_SESSION_RUN_ID) {
             return;
         }
@@ -223,6 +269,7 @@ export class AgentMailbox {
         // 出的消息数」上界约束，且对话删除时由 clearConversation 一并清理。
         const pendingClaim = this.messageClaims.get(conversationId)?.get(runId);
         if (pendingClaim) {
+            this.endMessageClaimDelivery(conversationId, runId, pendingClaim.claimId);
             this.messageClaims.get(conversationId)!.delete(runId);
             if (this.messageClaims.get(conversationId)!.size === 0) {
                 this.messageClaims.delete(conversationId);
@@ -278,7 +325,10 @@ export class AgentMailbox {
     /** 确认该 run 已领取的消息已处理完毕并删除对应 claim（幂等）。 */
     private confirmRunClaim(conversationId: string, runId: string): void {
         const convClaims = this.messageClaims.get(conversationId);
-        if (!convClaims?.has(runId)) return;
+        if (!convClaims) return;
+        const claim = convClaims.get(runId);
+        if (!claim) return;
+        this.endMessageClaimDelivery(conversationId, runId, claim.claimId);
         convClaims.delete(runId);
         if (convClaims.size === 0) {
             this.messageClaims.delete(conversationId);
@@ -287,6 +337,10 @@ export class AgentMailbox {
 
     /** 把已 drain 的消息挂到该 run 的 claim（副本由信箱持有，可恢复）。 */
     private holdRunClaim(conversationId: string, runId: string, messages: AgentMessage[]): void {
+        const previousClaim = this.messageClaims.get(conversationId)?.get(runId);
+        if (previousClaim) {
+            this.endMessageClaimDelivery(conversationId, runId, previousClaim.claimId);
+        }
         let convClaims = this.messageClaims.get(conversationId);
         if (!convClaims) {
             convClaims = new Map();
@@ -325,6 +379,82 @@ export class AgentMailbox {
      */
     getKnownRuns(conversationId: string): KnownRun[] {
         return Array.from(this.knownRuns.get(conversationId)?.values() ?? []);
+    }
+
+    /**
+     * 由可信后台系统生产者把完整结果放入主会话 claim/ack 通道。
+     *
+     * 稳定 messageId 同时在待领取 inbox 和已领取未确认 claim 中查重：Webview 切换、
+     * taskEvent 重放或终态兜底重复结算都只会产生一封消息。消息只有在主会话输入成功
+     * 写入历史后才由 acknowledgeMessageClaim 删除，因此“流已启动”不再等同于“已交付”。
+     */
+    enqueueMainSessionSystemMessage(input: MainSessionSystemMessageInput): AgentSendMessageResult {
+        const conversationId = input.conversationId?.trim?.() ?? '';
+        if (!conversationId) {
+            return { success: false, error: 'System message delivery requires a conversationId.' };
+        }
+        if (this.deletedConversations.has(conversationId)) {
+            return { success: false, error: 'System message delivery rejected because the conversation was deleted.' };
+        }
+        const messageId = input.messageId?.trim?.() ?? '';
+        if (!messageId) {
+            return { success: false, error: 'System message delivery requires a stable messageId.' };
+        }
+        const fromRunId = input.fromRunId?.trim?.() ?? '';
+        if (!fromRunId) {
+            return { success: false, error: 'System message delivery requires a fromRunId.' };
+        }
+        const messageText = input.text?.trim?.() ?? '';
+        if (!messageText) {
+            return { success: false, error: 'System message delivery requires non-empty text.' };
+        }
+
+        const pending = this.inboxes.get(conversationId)?.get(MAIN_SESSION_RUN_ID) ?? [];
+        const claimed = this.messageClaims.get(conversationId)?.get(MAIN_SESSION_RUN_ID)?.messages ?? [];
+        const existing = [...pending, ...claimed].find(message => message.id === messageId);
+        if (existing) {
+            return {
+                success: true,
+                data: {
+                    messageId: existing.id,
+                    threadId: existing.threadId,
+                    toRunId: existing.toRunId,
+                    hopDepth: existing.hopDepth
+                }
+            };
+        }
+
+        const threadId = input.threadId?.trim?.() || messageId;
+        const message: AgentMessage = {
+            id: messageId,
+            threadId,
+            fromRunId,
+            ...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),
+            toRunId: MAIN_SESSION_RUN_ID,
+            text: messageText,
+            hopDepth: 1,
+            createdAt: Date.now(),
+            kind: 'system'
+        };
+
+        let convInbox = this.inboxes.get(conversationId);
+        if (!convInbox) {
+            convInbox = new Map();
+            this.inboxes.set(conversationId, convInbox);
+        }
+        const mainInbox = convInbox.get(MAIN_SESSION_RUN_ID) ?? [];
+        mainInbox.push(message);
+        convInbox.set(MAIN_SESSION_RUN_ID, mainInbox);
+
+        return {
+            success: true,
+            data: {
+                messageId,
+                threadId,
+                toRunId: MAIN_SESSION_RUN_ID,
+                hopDepth: 1
+            }
+        };
     }
 
     /**
@@ -434,7 +564,8 @@ export class AgentMailbox {
             toRunId,
             text,
             hopDepth,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            kind: 'agent'
         };
 
         let convInbox = this.inboxes.get(conversationId);
@@ -491,7 +622,7 @@ export class AgentMailbox {
     /**
      * 用户消息插入主会话收件箱（U1：主会话工具循环/流式进行中快速感知用户输入）。
      *
-     * - 发送方固定为主会话（MAIN_SESSION_RUN_ID），fromAgentName 固定为 'user'（收件方识别）；
+     * - 发送方固定为主会话（MAIN_SESSION_RUN_ID），kind 明确标记为 user_interrupt；
      * - 收件方固定为主会话（MAIN_SESSION_RUN_ID），由 ToolExecutionService 注入点在最近一次
      *   工具调用完成后 drain 并随工具结果返回给主模型；
      * - 每次插入自动新建线程（不传 threadId → hopDepth=1），不存在 agent 互回循环负担；
@@ -549,12 +680,25 @@ export class AgentMailbox {
             return { success: false, code: 'SEND_FAILED', error: result.error };
         }
 
+        // sendMessage 统一创建普通代理消息；这里在同一同步调用中把刚创建的消息改为
+        // 用户插话。按稳定 messageId 查找，避免再依赖可与 agent 名称冲突的字符串哨兵。
+        const inserted = this.inboxes.get(convId)?.get(MAIN_SESSION_RUN_ID)
+            ?.find(message => message.id === result.data.messageId);
+        if (!inserted) {
+            return {
+                success: false,
+                code: 'SEND_FAILED',
+                error: 'User message could not be located after delivery.'
+            };
+        }
+        inserted.kind = 'user_interrupt';
+
         this.lastUserInterruptAt.set(convId, now);
         return { success: true, data: result.data };
     }
 
     /**
-     * 主模型空闲回流领取全部待处理消息（代理消息与用户忙时插话）。
+     * 主模型空闲回流分批领取待处理的代理/系统消息（用户忙时插话由工具边界处理）。
      *
      * 领取后消息暂时离开 inbox，避免与活跃工具循环重复消费；只有 acknowledge 后才真正删除。
      * 同一会话已有未确认 claim 时原样返回，Webview 重载或发送重试不会丢消息。
@@ -574,10 +718,31 @@ export class AgentMailbox {
         const runInbox = convInbox?.get(MAIN_SESSION_RUN_ID);
         if (!runInbox?.length) return undefined;
 
-        const messages = runInbox.filter(message => message.fromAgentName !== 'user');
+        const messages: AgentMessage[] = [];
+        const remaining: AgentMessage[] = [];
+        let claimedCharacters = 0;
+        let claimLimitReached = false;
+        for (const message of runInbox) {
+            if (isUserInterruptMessage(message)) {
+                remaining.push(message);
+                continue;
+            }
+
+            const exceedsCount = messages.length >= MAIN_SESSION_CLAIM_MAX_MESSAGES;
+            const exceedsCharacters = messages.length > 0
+                && claimedCharacters + message.text.length > MAIN_SESSION_CLAIM_MAX_CHARACTERS;
+            if (claimLimitReached || exceedsCount || exceedsCharacters) {
+                claimLimitReached = true;
+                remaining.push(message);
+                continue;
+            }
+
+            // 至少领取一条：单条系统结果可能超过字符上限，但不能因此永久卡在队首。
+            messages.push(message);
+            claimedCharacters += message.text.length;
+        }
         if (messages.length === 0) return undefined;
 
-        const remaining = runInbox.filter(message => message.fromAgentName === 'user');
         if (remaining.length > 0) {
             convInbox!.set(MAIN_SESSION_RUN_ID, remaining);
         } else {
@@ -614,11 +779,41 @@ export class AgentMailbox {
         return this.messageClaims.get(conversationId)?.get(runId)?.claimId === claimId;
     }
 
+    /**
+     * 标记 claim 已开始写入会话历史。同一 claim 同时只允许一个写入者；返回 false 表示
+     * claim 已失效或已有写入正在进行。
+     */
+    beginMessageClaimDelivery(conversationId: string, runId: string, claimId: string): boolean {
+        if (!this.hasMessageClaim(conversationId, runId, claimId)) return false;
+
+        let convDeliveries = this.messageClaimDeliveries.get(conversationId);
+        if (!convDeliveries) {
+            convDeliveries = new Map();
+            this.messageClaimDeliveries.set(conversationId, convDeliveries);
+        }
+        if (convDeliveries.has(runId)) return false;
+        convDeliveries.set(runId, claimId);
+        return true;
+    }
+
+    /**
+     * 取消/结束一次尚未确认的写入尝试。只解除“正在写入”状态，claim 仍保持已领取，
+     * 调用方随后可以重试写入或显式 release。
+     */
+    endMessageClaimDelivery(conversationId: string, runId: string, claimId: string): boolean {
+        const convDeliveries = this.messageClaimDeliveries.get(conversationId);
+        if (convDeliveries?.get(runId) !== claimId) return false;
+        convDeliveries.delete(runId);
+        if (convDeliveries.size === 0) this.messageClaimDeliveries.delete(conversationId);
+        return true;
+    }
+
     /** 确认空闲回流已经成功落库，永久删除对应 claim。 */
     acknowledgeMessageClaim(conversationId: string, runId: string, claimId: string): boolean {
         const convClaims = this.messageClaims.get(conversationId);
         const claim = convClaims?.get(runId);
         if (!claim || claim.claimId !== claimId) return false;
+        this.endMessageClaimDelivery(conversationId, runId, claimId);
         convClaims!.delete(runId);
         if (convClaims!.size === 0) this.messageClaims.delete(conversationId);
         return true;
@@ -629,6 +824,9 @@ export class AgentMailbox {
         const convClaims = this.messageClaims.get(conversationId);
         const claim = convClaims?.get(runId);
         if (!claim || claim.claimId !== claimId) return false;
+        // 写入者已经过最终校验后，另一条页面生命周期不能再把同一 claim 放回队列；
+        // 否则写入成功与 release 交错会造成下一次重复领取。
+        if (this.messageClaimDeliveries.get(conversationId)?.get(runId) === claimId) return false;
 
         convClaims!.delete(runId);
         if (convClaims!.size === 0) this.messageClaims.delete(conversationId);
@@ -657,8 +855,25 @@ export class AgentMailbox {
         if (!runInbox || runInbox.length === 0) {
             return [];
         }
-        convInbox.delete(runId);
-        return runInbox;
+
+        // TaskManager 写入的后台完成结果必须只走“领取 → 写入会话记录 → 确认”链路。
+        // 主模型的工具边界若把 system 消息与普通 agent 消息一起 drain，会在工具结果真正
+        // 落盘前就从队列删除；随后流取消/写盘失败便永久丢失，破坏可靠交付承诺。
+        // 子 agent 的普通通信保持原有 drain 语义；仅主会话保留可信系统结果等待 claim。
+        const retained = runId === MAIN_SESSION_RUN_ID
+            ? runInbox.filter(message => getAgentMessageKind(message) === 'system')
+            : [];
+        const drained = retained.length > 0
+            ? runInbox.filter(message => getAgentMessageKind(message) !== 'system')
+            : runInbox;
+
+        if (retained.length > 0) {
+            convInbox.set(runId, retained);
+        } else {
+            convInbox.delete(runId);
+            if (convInbox.size === 0) this.inboxes.delete(conversationId);
+        }
+        return drained;
     }
 
     /**
@@ -672,7 +887,7 @@ export class AgentMailbox {
     getMainSessionAgentMessageConversationIds(): string[] {
         const ids = new Set<string>();
         for (const [conversationId, convInbox] of this.inboxes) {
-            if (convInbox.get(MAIN_SESSION_RUN_ID)?.some(message => message.fromAgentName !== 'user')) {
+            if (convInbox.get(MAIN_SESSION_RUN_ID)?.some(message => !isUserInterruptMessage(message))) {
                 ids.add(conversationId);
             }
         }
@@ -722,9 +937,11 @@ export class AgentMailbox {
     clearConversation(conversationId: string): void {
         this.inboxes.delete(conversationId);
         this.messageClaims.delete(conversationId);
+        this.messageClaimDeliveries.delete(conversationId);
         this.knownRuns.delete(conversationId);
         this.threadDepths.delete(conversationId);
         this.lastUserInterruptAt.delete(conversationId);
+        this.deletedConversations.add(conversationId);
     }
 
     /**
@@ -733,9 +950,11 @@ export class AgentMailbox {
     clearAll(): void {
         this.inboxes.clear();
         this.messageClaims.clear();
+        this.messageClaimDeliveries.clear();
         this.knownRuns.clear();
         this.threadDepths.clear();
         this.lastUserInterruptAt.clear();
+        this.deletedConversations.clear();
     }
 }
 

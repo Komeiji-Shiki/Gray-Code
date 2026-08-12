@@ -96,9 +96,19 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     }
 
     if (event.type === 'complete' || event.type === 'cancelled' || event.type === 'error') {
-      const record = tasks.value[event.taskId]
-      // 只处理已登记的后台任务；前台任务的事件不入表
-      if (!record || record.status !== 'running') return
+      let record = tasks.value[event.taskId]
+      if (!record) {
+        // Webview 重载/初始化竞态：start 可能在订阅前丢失，或 complete 在
+        // restoreActiveTasks 的 task.getAll 响应返回前抢先到达。旧实现直接丢弃
+        // 这条终态；后端此时已注销任务，task.getAll 也无法再恢复，
+        // 于是后台 SubAgent 结果永久不回流。终态 taskEvent 现在携带完整
+        // SubAgent 元数据，可先合成 start 记录再应用终态。
+        const syntheticStart: TaskEventLike = { ...event, type: 'start' }
+        if (!isBackgroundStartEvent(syntheticStart)) return
+        record = taskRecordFromStartEvent(syntheticStart)
+      }
+      // 重复/乱序终态不能覆盖已经结算的任务。
+      if (record.status !== 'running') return
       tasks.value = { ...tasks.value, [event.taskId]: applyCompletionEvent(record, event) }
       if (flushing) {
         // flush 进行中：本次直接调度会被 flushing 保护丢弃（任务已落表），
@@ -113,27 +123,54 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   // ============ 混合回流 ============
 
   let flushing = false
+  /** 当前持有 flushing 锁的生命周期；Webview 重挂载后允许新生命周期接管，不被旧 await 卡住。 */
+  let flushingGeneration: number | undefined
   /** flush 进行中到达的 complete/cancelled/error 事件标记：结束后补一轮 flush（见 handleTaskEvent） */
   let flushDroppedEvent = false
+  /**
+   * 每次 initialize/cleanup 都推进代次。跨越 await 的旧 flush 只能收尾，
+   * 不得在已经卸载或重新挂载后继续发消息、重置新 timer 或复活重试。
+   */
+  let lifecycleGeneration = 0
+  /** 空闲回执发送的有界退避重试；避免一次 IPC/流启动竞态让结果永久挂起。 */
+  let reportRetryTimer: ReturnType<typeof setTimeout> | undefined
+  let reportRetryAttempt = 0
+  const REPORT_RETRY_BASE_DELAY_MS = 500
+  const REPORT_RETRY_MAX_DELAY_MS = 30_000
+
+  function resetReportRetry(): void {
+    reportRetryAttempt = 0
+    if (reportRetryTimer !== undefined) {
+      clearTimeout(reportRetryTimer)
+      reportRetryTimer = undefined
+    }
+  }
+
+  function scheduleReportRetry(
+    expectedGeneration = lifecycleGeneration,
+    resumeAtActionBoundary = false
+  ): void {
+    if (expectedGeneration !== lifecycleGeneration || reportRetryTimer !== undefined) return
+    const delay = Math.min(
+      REPORT_RETRY_BASE_DELAY_MS * (2 ** Math.min(reportRetryAttempt, 6)),
+      REPORT_RETRY_MAX_DELAY_MS
+    )
+    reportRetryAttempt += 1
+    reportRetryTimer = setTimeout(() => {
+      reportRetryTimer = undefined
+      if (expectedGeneration !== lifecycleGeneration) return
+      if (resumeAtActionBoundary) {
+        void flushReportsAfterAction()
+      } else {
+        void flushReports()
+      }
+    }, delay)
+  }
 
   /** 领取当前会话的 agent→main 消息；没有消息时返回 null。 */
   async function claimAgentMessages(conversationId: string): Promise<AgentMessageClaimPayload | null> {
     const claim = await sendToExtension<AgentMessageClaimPayload>(MESSAGE_NAMES['chat.claimAgentMessages'], { conversationId })
     return claim?.claimId && claim.message ? claim : null
-  }
-
-  /** 尚未启动内部回合时退回领取，让活跃工具循环或下次调度可以继续消费。 */
-  async function releaseAgentMessages(claim: AgentMessageClaimPayload): Promise<void> {
-    if (!claim.claimId) return
-    try {
-      await sendToExtension(MESSAGE_NAMES['chat.releaseAgentMessages'], {
-        conversationId: claim.conversationId,
-        claimId: claim.claimId
-      })
-    } catch (error) {
-      // claim 本身仍保存在后端；释放 IPC 失败不会丢消息，下次领取返回同一 claim。
-      console.warn('[backgroundTaskStore] Failed to release agent message claim:', error)
-    }
   }
 
   /**
@@ -142,14 +179,25 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
    */
   async function sendClaimedAgentMessages(
     chat: Awaited<ReturnType<typeof resolveChatBridge>>,
-    conversationId: string
+    conversationId: string,
+    flushGeneration: number
   ): Promise<boolean> {
-    const claim = await claimAgentMessages(conversationId)
+    let claim: AgentMessageClaimPayload | null
+    try {
+      claim = await claimAgentMessages(conversationId)
+    } catch (error) {
+      // 完成事件只会推送一次；领取 IPC 的一次性失败不能让 mailbox 永久挂起。
+      console.warn('[backgroundTaskStore] Failed to claim agent messages, will retry:', error)
+      scheduleReportRetry(flushGeneration)
+      return true
+    }
+    if (flushGeneration !== lifecycleGeneration) return true
     if (!claim) return false
 
-    // 领取 IPC 期间会话可能切换；尚未启动流，可以安全退回。
+    // 领取 IPC 期间会话可能切换。不要在这里退回：旧会话的后端请求可能已经通过
+    // “准备写入”校验，退回会让同一结果被下一次领取后重复写入。保留领取状态，
+    // 切回该会话时会继续使用同一批消息。
     if (chat.getState().currentConversationId !== conversationId) {
-      await releaseAgentMessages(claim)
       return true
     }
 
@@ -162,10 +210,14 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         // 不主动 release：sendMessage=false 也可能表示“请求已在原会话启动，但前端随后切换会话”。
         // 后端会在消息成功落库后确认 claim；未落库的 claim 会在下次空闲时原样重试。
         console.warn('[backgroundTaskStore] Agent message round did not start; claim remains pending for retry')
+        scheduleReportRetry(flushGeneration)
+      } else if (flushGeneration === lifecycleGeneration) {
+        resetReportRetry()
       }
     } catch (error) {
       // 与上面相同，保留 claim 等下一次 watcher/动作边界重试。
       console.warn('[backgroundTaskStore] Failed to start agent message round; claim remains pending:', error)
+      scheduleReportRetry(flushGeneration)
     }
     return true
   }
@@ -203,17 +255,28 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     // 重入防护必须与持锁保持同步（其间不能插入 await）：
     // 桥接解析（resolveChatBridge）是异步的，若先 await 再持锁，并发调用会双双越过守卫
     // 导致重复回执（同一边界只发一条的测试语义依赖守卫-持锁同步）。
-    if (flushing) return
+    const flushGeneration = lifecycleGeneration
+    if (flushing && flushingGeneration === flushGeneration) return
     flushing = true
+    flushingGeneration = flushGeneration
     try {
-      const chat = await resolveChatBridge()
+      let chat: Awaited<ReturnType<typeof resolveChatBridge>>
+      try {
+        chat = await resolveChatBridge()
+      } catch (error) {
+        console.warn('[backgroundTaskStore] Failed to resolve chat bridge, will retry:', error)
+        scheduleReportRetry(flushGeneration)
+        return
+      }
+      if (flushGeneration !== lifecycleGeneration) return
       if (chat.getState().isStreaming || chat.getState().isWaitingForResponse) return
 
       const currentId = chat.getState().currentConversationId
       if (!currentId) return
 
       // agent 消息优先：它通常是其他 agent 针对当前工作的即时补充，先于普通后台完成报告。
-      if (await sendClaimedAgentMessages(chat, currentId)) return
+      if (await sendClaimedAgentMessages(chat, currentId, flushGeneration)) return
+      if (flushGeneration !== lifecycleGeneration) return
 
       const ready = taskList.value.filter(t =>
         !t.reported
@@ -245,6 +308,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         }
       }
 
+      if (flushGeneration !== lifecycleGeneration) return
+
       // 等待期间可能切换了会话或启动了新流；重新判定，不能把旧会话报告发进新会话。
       if (chat.getState().currentConversationId !== currentId
         || chat.getState().isStreaming
@@ -263,6 +328,9 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         if (!sent) {
           console.error('Failed to send background task report, will retry later')
           rollbackReported(ready)
+          scheduleReportRetry(flushGeneration)
+        } else if (flushGeneration === lifecycleGeneration) {
+          resetReportRetry()
         }
       } catch (error) {
         // 修改原因：乐观标记后若发送失败，旧实现会让任务永远停留在 reported=true，后台任务结果被永久丢弃。
@@ -270,16 +338,21 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         // 修改目的：回执发送失败是可恢复状态，不应静默吞掉已完成任务的产出。
         console.error('Failed to send background task report, will retry later:', error)
         rollbackReported(ready)
+        scheduleReportRetry(flushGeneration)
       }
     } finally {
-      flushing = false
-      // flush 期间到达的 complete 事件被 flushing 保护丢弃（handleTaskEvent 只落表不调度）：
-      // 结束后重查挂起数，非零（且确实有被丢弃事件）则再调度一次 flushReports，避免回执永久滞留。
-      // 注意：不能只看 pendingReportCount——发送失败回滚也会使其非零，无条件重调度会形成
-      // 发送失败→回滚→重试 的热循环；因此必须叠加 flushDroppedEvent 标记（真实新完成事件）。
-      if (flushDroppedEvent) {
-        flushDroppedEvent = false
-        void flushReports()
+      // 新生命周期可能已接管 flushing 锁；旧链不得清掉新锁或消费新事件标记。
+      if (flushingGeneration === flushGeneration) {
+        flushing = false
+        flushingGeneration = undefined
+        // flush 期间到达的 complete 事件被 flushing 保护丢弃（handleTaskEvent 只落表不调度）：
+        // 结束后重查挂起数，非零（且确实有被丢弃事件）则再调度一次 flushReports，避免回执永久滞留。
+        // 注意：不能只看 pendingReportCount——发送失败回滚也会使其非零，无条件重调度会形成
+        // 发送失败→回滚→重试 的热循环；因此必须叠加 flushDroppedEvent 标记（真实新完成事件）。
+        if (flushDroppedEvent) {
+          flushDroppedEvent = false
+          void flushReports()
+        }
       }
     }
   }
@@ -304,24 +377,50 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   async function flushReportsAfterAction(): Promise<void> {
     // 重入防护与持锁保持同步（不插入 await），理由同 flushReports：
     // 桥接解析异步化后若先 await 再持锁，同一边界的并发调度会双双越过守卫导致重复回执。
-    if (flushing) return
+    const flushGeneration = lifecycleGeneration
+    if (flushing && flushingGeneration === flushGeneration) return
     flushing = true
+    flushingGeneration = flushGeneration
     try {
-      const chat = await resolveChatBridge()
+      let chat: Awaited<ReturnType<typeof resolveChatBridge>>
+      try {
+        chat = await resolveChatBridge()
+      } catch (error) {
+        console.warn('[backgroundTaskStore] Failed to resolve chat bridge after action, will retry:', error)
+        scheduleReportRetry(flushGeneration, true)
+        return
+      }
+      if (flushGeneration !== lifecycleGeneration) return
 
       const currentId = chat.getState().currentConversationId
       if (!currentId) return
 
       // 先领取 agent 消息。若当前工具结果已通过 ToolExecutionService 消费了它，领取为空，
       // 再继续处理普通后台任务报告。
-      const agentClaim = await claimAgentMessages(currentId)
+      let agentClaim: AgentMessageClaimPayload | null
+      try {
+        agentClaim = await claimAgentMessages(currentId)
+      } catch (error) {
+        console.warn('[backgroundTaskStore] Failed to claim agent messages after action, will retry:', error)
+        scheduleReportRetry(flushGeneration, true)
+        return
+      }
+      if (flushGeneration !== lifecycleGeneration) return
       if (agentClaim) {
+        // 领取请求返回前用户可能已经切到另一会话；此时不能取消新会话正在运行的流。
+        // 领取状态保留在原会话，切回后再继续处理。
+        if (chat.getState().currentConversationId !== currentId) {
+          return
+        }
         if (chat.getState().isWaitingForResponse || chat.getState().isStreaming) {
           await chat.cancelStream({ preserveSubAgents: true })
         }
 
+        if (flushGeneration !== lifecycleGeneration) return
+
         if (chat.getState().currentConversationId !== currentId) {
-          await releaseAgentMessages(agentClaim)
+          // 与空闲发送路径一致：会话切换不主动退回，避免和已经进入后端写入阶段的
+          // 请求竞争，导致同一完成结果被领取两次。
           return
         }
         if (chat.getState().isStreaming || chat.getState().isWaitingForResponse) {
@@ -336,9 +435,13 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
           })
           if (!sent) {
             console.warn('[backgroundTaskStore] Agent message action-boundary round did not start; claim remains pending')
+            scheduleReportRetry(flushGeneration, true)
+          } else if (flushGeneration === lifecycleGeneration) {
+            resetReportRetry()
           }
         } catch (error) {
           console.warn('[backgroundTaskStore] Failed to send agent message after action; claim remains pending:', error)
+          scheduleReportRetry(flushGeneration, true)
         }
         return
       }
@@ -358,6 +461,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         await chat.cancelStream({ preserveSubAgents: true })
       }
 
+      if (flushGeneration !== lifecycleGeneration) return
+
       // 投递窗口内会话已切换：放弃本次，任务保持未回流，等待切回原会话后补发
       if (chat.getState().currentConversationId !== currentId) {
         return
@@ -376,16 +481,23 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         if (!sent) {
           console.error('Failed to send background task report after action, will retry later')
           rollbackReported(ready)
+          scheduleReportRetry(flushGeneration, true)
+        } else if (flushGeneration === lifecycleGeneration) {
+          resetReportRetry()
         }
       } catch (error) {
         console.error('Failed to send background task report after action, will retry later:', error)
         rollbackReported(ready)
+        scheduleReportRetry(flushGeneration, true)
       }
     } finally {
-      flushing = false
-      if (flushDroppedEvent) {
-        flushDroppedEvent = false
-        void flushReports()
+      if (flushingGeneration === flushGeneration) {
+        flushing = false
+        flushingGeneration = undefined
+        if (flushDroppedEvent) {
+          flushDroppedEvent = false
+          void flushReports()
+        }
       }
     }
   }
@@ -458,6 +570,10 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
   function initialize(): () => void {
     if (cleanup) return cleanup
+    lifecycleGeneration += 1
+    const initializedGeneration = lifecycleGeneration
+    resetReportRetry()
+    flushDroppedEvent = false
     initialized.value = true
 
     const unsubscribeMessages = onExtensionCommand<TaskEventLike>('taskEvent', event => {
@@ -490,15 +606,25 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     // Webview 重载期间到达的 agent 消息没有对应前端事件；初始化时主动领取一次。
     void flushReports()
 
-    cleanup = () => {
+    let cleanedUp = false
+    const cleanupCurrent = () => {
+      if (cleanedUp) return
+      cleanedUp = true
+      if (lifecycleGeneration === initializedGeneration) {
+        // 先失效旧代次，再清 timer；已在 await 中的 flush 之后无法重新挂 timer/发消息。
+        lifecycleGeneration += 1
+        initialized.value = false
+      }
+      resetReportRetry()
+      flushDroppedEvent = false
       unsubscribeMessages()
       stopWatchStreaming()
       stopWatchWaiting()
       stopWatchConversation()
-      initialized.value = false
-      cleanup = undefined
+      if (cleanup === cleanupCurrent) cleanup = undefined
     }
-    return cleanup
+    cleanup = cleanupCurrent
+    return cleanupCurrent
   }
 
   return {
