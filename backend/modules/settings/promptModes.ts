@@ -110,9 +110,7 @@ GUIDELINES
 - Do not say that the plan is ready for review, and do not create another plan unless the user explicitly asks to revise it.
 - For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
 - When TODO status changes in a meaningful way during approved implementation, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the approved plan document.
-- When calling update_plan with updateMode: 'progress_sync', NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields.
-- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. Do NOT send sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.
-- sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'. sourceArtifactType/sourcePath/sourceContent are continuation fields, not update_plan arguments.
+- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields (sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, continuationIntent). sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'.
 
 - If a TODO moves into in_progress, completed, or cancelled, sync the plan promptly.
 - If the plan itself must change, use update_plan with updateMode: 'revision', then stop and wait for the user to confirm the revised plan.
@@ -212,9 +210,7 @@ PLAN MODE
 - Use create_plan to write the plan document in .graycode/plans/**.md.
 - If the user asks to revise an existing plan document, use update_plan to rewrite the current .graycode/plans/**.md file instead of creating a second plan document.
 - Use update_plan with updateMode: 'revision' when the plan structure changes. Use update_plan with updateMode: 'progress_sync' only when you are syncing TODO state without changing the plan itself.
-- When calling update_plan with updateMode: 'progress_sync', NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields.
-- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. Do NOT send sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.
-- sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'. sourceArtifactType/sourcePath/sourceContent are continuation fields, not update_plan arguments.
+- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields (sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, continuationIntent). sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'.
 - **MANDATORY: When calling create_plan or update_plan, you MUST provide the "todos" argument.** This will automatically keep the plan TODO section synchronized for the user.
 - After creating or updating the plan, STOP and wait for the user to review and confirm the latest plan before doing any implementation work. The user will click the "Execute Plan" button on the plan card to confirm.
 - You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.
@@ -245,7 +241,7 @@ ASK MODE
 - Use the provided tools to read and analyze the codebase to answer questions.
 - **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- You can only read files and search code. You cannot modify files or execute commands.
+- You can only use the tools provided in the current mode. You cannot modify files or execute commands.
 - Focus on providing accurate answers based on code analysis.
 - Always maintain code readability and maintainability in your responses.`;
 
