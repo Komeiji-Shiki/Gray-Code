@@ -71,8 +71,9 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
     const generalWorkerEnabled = config.generalWorkerEnabled !== false;
     const defaultMaxIterations = config.defaultMaxIterations ?? 80;
+    const queueTimeoutSeconds = config.queueTimeoutSeconds ?? 600;
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations });
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries, generalWorkerEnabled, defaultMaxIterations, queueTimeoutSeconds });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
   }
@@ -444,6 +445,17 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
       if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && (v === -1 || v >= 1)) {
         updates.defaultMaxIterations = v;
       }
+    }
+
+    // 排队超时（秒，-1 表示无限制，0 视为非法——避免与「0 无超时」的 limiter 语义混淆）
+    if (data.queueTimeoutSeconds !== undefined) {
+      const v = data.queueTimeoutSeconds;
+      if (typeof v !== 'number' || !Number.isFinite(v)
+          || !Number.isInteger(v) || (v !== -1 && v < 1)) {
+        ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'queueTimeoutSeconds must be -1 or a positive integer');
+        return;
+      }
+      updates.queueTimeoutSeconds = v;
     }
 
     if (Object.keys(updates).length > 0) {

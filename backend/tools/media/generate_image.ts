@@ -9,9 +9,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
-import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio, parseImageDimensionsFromBytes } from '../utils';
+import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
-import { createFetchSignal } from '../utils';
+import { saveImage, parseImageDimensionsFromBase64, createFetchSignal } from './imageUtils';
 import { createProxyFetch } from '../../modules/channel/proxyFetch';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { withLinkedAbort } from '../abortLink';
@@ -358,20 +358,6 @@ async function callGeminiImageApi(
 }
 
 /**
- * 解析 base64 图片数据获取尺寸（统一收敛自 utils.parseImageDimensionsFromBytes）
- */
-function parseImageDimensionsFromBase64(base64Data: string, mimeType: string): { width: number; height: number } | null {
-    try {
-        const buffer = Buffer.from(base64Data, 'base64');
-        const parsed = parseImageDimensionsFromBytes(buffer, mimeType);
-        return parsed ? { width: parsed.width, height: parsed.height } : null;
-    } catch {
-        // 解析失败
-    }
-    return null;
-}
-
-/**
  * 从响应中提取图片和文本
  */
 function extractFromResponse(response: GeminiImageResponse): {
@@ -402,35 +388,6 @@ function extractFromResponse(response: GeminiImageResponse): {
     }
 
     return { images, texts };
-}
-
-/**
- * 保存图片到文件
- */
-async function saveImage(buffer: Buffer, outputPath: string, context?: ToolContext): Promise<void> {
-    const { uri, isOutsideWorkspace } = resolveFileToolPathWithInfo(outputPath, context?.activeWorkspaceUri);
-    if (!uri) {
-        throw new Error('No workspace folder open');
-    }
-
-    // 工作区外写入：按 write 策略审批（与 write_file 保持一致）
-    if (isOutsideWorkspace) {
-        const writeAccessError = ensureOutsideWorkspaceAccessApproved('write_file', { path: outputPath }, context);
-        if (writeAccessError) {
-            throw new Error(writeAccessError);
-        }
-    }
-
-    // 确保目录存在
-    const dirUri = vscode.Uri.joinPath(uri, '..');
-    try {
-        await vscode.workspace.fs.createDirectory(dirUri);
-    } catch {
-        // 目录可能已存在
-    }
-
-    // 写入文件
-    await vscode.workspace.fs.writeFile(uri, buffer);
 }
 
 /**

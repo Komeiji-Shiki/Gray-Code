@@ -13,7 +13,6 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
-import { triggerRef } from 'vue'
 import { sendToExtension } from '../../../utils/vscode'
 import { generateId } from '../../../utils/format'
 import { createAndPersistConversation, buildConversationTitle } from '../conversationActions'
@@ -21,7 +20,7 @@ import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt } from '../state'
+import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt, setToolResponseCacheEntry } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
 
@@ -300,8 +299,8 @@ function upsertHiddenFunctionResponseMessage(
             .find(p => p.functionResponse?.id === payload.id)
             ?.functionResponse?.response as Record<string, unknown> | undefined
           if (mergedResponse) {
-            state.toolResponseCache.value.set(payload.id, mergedResponse)
-            triggerRef(state.toolResponseCache)
+            // 带容量上限写入（超限淘汰最旧条目），见 state.ts setToolResponseCacheEntry
+            setToolResponseCacheEntry(state, payload.id, mergedResponse)
           }
         }
         return
@@ -540,6 +539,14 @@ export async function sendMessage(
     // H5(b)：await 期间会话可能已切换（流会在后端继续、chunk 进入原会话的后台缓冲）。
     // 校验失败时停止后续流程并标记，避免在无 UI 状态下继续写状态。
     if (!validateSessionIdentity(state, targetConvId)) {
+      // 通常表示用户主动切到其他标签页：原流继续在已绑定标签页的后台缓冲中运行。
+      // 若目标会话已经没有任何标签页承接（启动重置/标签页关闭竞态），终结 chunk 会被丢弃，
+      // 此时必须回收仍属于本次占位的全局流式状态，否则空白页会永久停在等待态。
+      const targetTabStillOpen = state.openTabs.value.some(tab => tab.conversationId === targetConvId)
+      if (!targetTabStillOpen && state.streamingMessageId.value === assistantMessageId) {
+        cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
+        resetPendingSendState(state)
+      }
       console.warn('[messageActions] sendMessage: conversation switched while chatStream in flight; stream continues in background', {
         targetConvId,
         currentConversationId: state.currentConversationId.value

@@ -10,7 +10,7 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { sendToExtension, onExtensionCommand } from '../utils/vscode'
 import { useI18n } from '../composables/useI18n'
 
 /**
@@ -316,15 +316,23 @@ export const useTerminalStore = defineStore('terminal', () => {
   function initialize(): () => void {
     if (terminalCleanup) return terminalCleanup
     
-    // M-7：保存 onMessageFromExtension 返回的取消函数，dispose() 时注销，
-    // 避免 HMR/重复初始化产生多份活跃订阅
-    disposeTerminalOutputListener = onMessageFromExtension((message) => {
-      if (message.type === 'terminalOutput') {
-        const event = message.data as TerminalOutputEvent | undefined
-        // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）
-        if (!event || typeof event.terminalId !== 'string' || typeof event.type !== 'string') return
-        handleTerminalOutput(event)
+    // M-7：保存 onExtensionCommand 返回的取消函数，dispose() 时注销，
+    // 避免 HMR/重复初始化产生多份活跃订阅。
+    // 订阅走统一 sendCommand 信封（{ type: 'command', command: 'terminalOutput', data }），
+    // 与 shared/protocol.ts 及 backgroundTaskStore 的推送口径一致。
+    disposeTerminalOutputListener = onExtensionCommand<TerminalOutputEvent | TerminalOutputEvent[]>('terminalOutput', (event) => {
+      // 入口校验：缺失 terminalId/type 的事件会污染 terminals Map（Map 以 terminalId 为键）。
+      // 扩展端 50ms 节流批处理会把短窗口内多条事件合并为数组消息：逐条按原语义处理
+      // （数组内顺序即产生顺序，start/output/error/exit 的相对次序保持不变）。
+      if (Array.isArray(event)) {
+        for (const item of event) {
+          if (!item || typeof item.terminalId !== 'string' || typeof item.type !== 'string') continue
+          handleTerminalOutput(item)
+        }
+        return
       }
+      if (!event || typeof event.terminalId !== 'string' || typeof event.type !== 'string') return
+      handleTerminalOutput(event)
     })
     
     initialized.value = true

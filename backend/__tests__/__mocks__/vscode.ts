@@ -1,6 +1,12 @@
 // Minimal vscode mock for unit tests
 import * as pathModule from 'path';
 
+// 真实 VS Code 中 env.language 始终存在（如 'en'/'zh-cn'）；
+// 缺少该字段会让 PromptManager.getUserLanguage 的 'auto' 分支（ui.language 默认值）抛 TypeError。
+export const env = {
+    language: 'en',
+};
+
 export const workspace = {
     workspaceFolders: [],
     textDocuments: [],

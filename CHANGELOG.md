@@ -27,6 +27,20 @@
   - **修复自动总结在长工具轮下必败回退**：auto 模式当前轮是进行中的回合，规划器却仍开放「当前轮内部」的细粒度切点（末轮超预算时切点深入当前轮，必然吞掉当前用户消息）→ 落盘侧判 STALE_RANGE，白费一次总结请求后每次都回退细粒度裁剪。规划器改为 auto 模式不开放当前轮内部切点：切点停在当前轮轮首，总结旧轮、保留当前轮整体（预算为软目标）；manual 模式保持轮内切点（配合上方放行）;
   - 测试：新增多轮 + 末轮超预算手动总结放行（2 例）、auto 大窗口末轮超预算成功 + 单超大轮仍 STALE（3 例）、规划器 auto/manual 轮内切点分叉（2 例）、fallback 轮边界优先裁剪与紧预算轮内裁剪（2 例）；更新原「多轮仍 STALE」用例为新语义；后端 273 套件/3094 例 + 前端 102 文件/1000 例 + typecheck 全绿。
 
+### Merged：合入上游 main 至 7df7be8c（15 个 commit；fast-tavern 相关 commit 按项目决策不引入）
+  - 合入上游 2ffa0fc2..7df7be8c 共 15 个 commits（含 PR #33/#34/#35 合并提交）：
+    - chore：添加 .editorconfig 与 VS Code 编码设置，强制源码 UTF-8 防编码漂移；
+    - fix(memory)：记忆配置全局共享——全局与工作区实例统一读写 `<dataPath>/memory/config`（记忆数据仍按作用域隔离）；
+    - fix(tools/terminal)：execute_command 超时不再误报用户取消——超时错误如实回传 LLM 继续对话而非自动暂停；
+    - fix(summarize)：自动总结不再白烧 AI 调用（auto 切点钳制到当前回合、收缩后无新消息直接放弃、确定性失败不重试、手动总结多轮放行；本地 1a445158 已有等价实现，冲突按本地口径收敛）；
+    - fix(ci)：toolMeta 生成物跨平台行尾漂移——生成脚本规范化 CRLF/CR 换行，重新生成 toolMeta.ts 清除 \r 污染；
+    - perf(diff)：目标文档预热消除首次 diff 预览卡顿——prewarmDocument 与 hunk 应用并行打开文档，showDiffView 复用预热结果；
+    - docs：README 新增衍生项目章节，收录 Code Desktop 社区桌面版；
+    - fix：全仓扫描修复批次（安全数据一致性/流式挂起/设置/前端）；
+    - feat(subagents)：子代理排队超时可配置 + 最大并发数支持 -1（新增全局 `queueTimeoutSeconds`，-1 无限制）；
+    - fix：PR #34/#35 合并审查修复——排队超时定时器 clamp 上限 + toolResponseCache 覆盖更新误淘汰；
+  - **不采纳**：fast-tavern 相关 commit（b9e8f29d feat(fast-tavern) build 模块、0730d582 .venv gitignore）按项目决策剔除，合并树不含 fast-tavern-main 子项目；上游 1.5.x 版本小节（[1.5.0]/[1.5.1]）不并入本地 CHANGELOG 版本体系（内容已在前序合并按本地口径记录）。
+
 ## [1.7.14dev] - 2026-08-11
 
 ### Merged：同步上游 main 至 bb8d0b16（发布前修复批次 H3-H6 + 子代理「与当前模型同步」+ settings/core 加固，25 commits）

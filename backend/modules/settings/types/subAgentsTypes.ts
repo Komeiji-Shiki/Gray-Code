@@ -142,6 +142,14 @@ export interface SubAgentsConfig extends Record<string, unknown> {
     generalWorkerEnabled?: boolean;
 
     /**
+     * 排队等待并发席位的超时（秒，-1 无限制），默认 600。
+     *
+     * 子代理超出 maxConcurrentAgents 时进入全局 FIFO 队列；
+     * 排队超过该时间后该 run 以失败结算（而非用户取消），不再无限等待。
+     */
+    queueTimeoutSeconds?: number;
+
+    /**
      * （已废弃）是否强制所有子代理使用当前会话渠道（全局开关）。
      *
      * 该全局开关已下放为每个子代理渠道配置上的 syncWithCurrentModel 逐代理开关。
@@ -161,5 +169,6 @@ export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     failureModeAfterRetries: 'fail_parent_tool',
     generalWorkerEnabled: true,
     defaultMaxIterations: 80,
-    defaultMaxRuntime: DEFAULT_MAX_RUNTIME_S
+    defaultMaxRuntime: DEFAULT_MAX_RUNTIME_S,
+    queueTimeoutSeconds: 600
 };

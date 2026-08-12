@@ -83,9 +83,10 @@ const msgLabel = (m: Content): string =>
 // ==================== 测试用例 ====================
 
 describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
-    test('无工具交互可排除且超出上下文：返回 CONTEXT_OVERFLOW，不发 API 请求', async () => {
+    test('单超大轮（无工具交互）：planner 直接放弃规划，不发 API 请求', async () => {
         const { service, generate, mutateContents } = createSummarizeHarness({
-            // 单轮超大：3000 + 1000 token，预算 100，maxInput = 4000 * 0.5 = 2000
+            // 单轮超大：3000 + 1000 token，预算 100。auto 模式不深入当前轮
+            // （锁内 STALE 会白烧生成）→ planner 放弃 → NOT_ENOUGH_ROUNDS，无 AI 调用
             fullHistory: [userMsg('老问题', 3000), modelMsg('老回答', 1000)],
             maxContextTokens: 4000
         });
@@ -94,7 +95,7 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
 
         expect(result.success).toBe(false);
         if (!result.success) {
-            expect(result.error.code).toBe('CONTEXT_OVERFLOW');
+            expect(result.error.code).toBe('NOT_ENOUGH_ROUNDS');
         }
         expect(generate).not.toHaveBeenCalled();
         expect(mutateContents).not.toHaveBeenCalled();
@@ -164,6 +165,39 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(liveHistory[2]).toMatchObject({ isSummarized: true });
         expect(liveHistory.slice(4).map(msgLabel))
             .toEqual(['r2', 'fc2a', 'fc2a', 'fc2b', 'fc2b', 'r3', 'fc3', 'fc3', 'done']);
+    });
+
+    test('多轮 + 当前轮超预算：auto 钳制切点到当前回合起点，总结更早内容并保留整个当前轮', async () => {
+        const { service, generate, liveHistory } = createSummarizeHarness({
+            // 轮1 = 100 token，轮2（当前轮）= 1000 token；预算 50% × 1100 = 550
+            // 轮级边界（index 2）后缀 1000 > 550 → planner 会深入当前轮找切点（cutIndex=5），
+            // auto 钳制到当前轮起点（index 2）：总结 [r1, old answer]，保留整个当前轮。
+            // 旧行为：切点深入当前轮 → 锁内 STALE 拒绝 → 白烧一次 AI 生成。
+            fullHistory: [
+                userMsg('r1', 50), modelMsg('old answer', 50),
+                userMsg('r2', 100), fcMsg('a', 200), frMsg('a', 200),
+                fcMsg('b', 200), frMsg('b', 200), modelMsg('done', 100)
+            ],
+            keepRecentTokens: '50%'
+        });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            // 首条用户消息 r1 不标记：标记 [1, 2) = old answer，总结插入 index 2（当前轮起点）
+            expect(result.insertIndex).toBe(2);
+            expect(result.removedCount).toBe(1);
+            expect(result.summarizedMessageCount).toBe(1);
+        }
+        expect(generate).toHaveBeenCalledTimes(1);
+        // 历史 = [r1, old answer(isSummarized), 新总结, r2, fc a, fr a, fc b, fr b, done]
+        expect(liveHistory).toHaveLength(9);
+        expect(liveHistory[0].parts[0].text).toBe('r1');
+        expect(liveHistory[0].isSummarized).toBeUndefined();
+        expect(liveHistory[1]).toMatchObject({ isSummarized: true });
+        expect(liveHistory[2]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 2 });
+        expect(liveHistory.slice(3).map(msgLabel)).toEqual(['r2', 'a', 'a', 'b', 'b', 'done']);
     });
 
     test('迭代排除后仍超限：返回 CONTEXT_OVERFLOW，不发 API 请求', async () => {
@@ -318,23 +352,25 @@ describe('SummarizeService.handleAutoSummarize 并发安全（STALE_RANGE）', (
         expect(liveHistory).toEqual([userMsg('r1', 100)]);
     });
 
-    test('总结范围会吞掉当前回合真实用户消息（单超大轮轮内截断）：放弃总结（STALE_RANGE），不落盘', async () => {
+    test('单超大轮（唯一轮即当前回合）：planner 放弃规划，不调 AI 不落盘', async () => {
         const singleOversizedRound: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             fcMsg('fc2', 40), frMsg('fc2', 40), modelMsg('done', 40)
         ];
 
-        const { service, liveHistory } = createSummarizeHarness({
+        const { service, generate, liveHistory } = createSummarizeHarness({
             fullHistory: singleOversizedRound,
-            keepRecentTokens: '10%' // 100：单轮 240 > 预算 → 轮内截断，切点会包含轮首用户消息
+            keepRecentTokens: '10%' // 100：单轮 240 > 预算 → auto 无安全切点（切点必在轮首 user 之后）
         });
 
         const result = await service.handleAutoSummarize('conv1', 'cfg1');
 
         expect(result.success).toBe(false);
         if (!result.success) {
-            expect(result.error.code).toBe('STALE_RANGE');
+            // 不再 STALE_RANGE（那需要先白烧一次 AI 生成）：planner 直接放弃
+            expect(result.error.code).toBe('NOT_ENOUGH_ROUNDS');
         }
+        expect(generate).not.toHaveBeenCalled();
         // 用户消息与工具交互原样保留，未做任何替换
         expect(liveHistory.map(msgLabel)).toEqual(['r1', 'fc1', 'fc1', 'fc2', 'fc2', 'done']);
     });

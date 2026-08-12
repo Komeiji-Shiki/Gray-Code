@@ -427,7 +427,9 @@ describe('决策 6：主历史删除同步软删分支图子树', () => {
             await simulateToolLoopOutput(manager, 'c1');
             await service.finishReroll('c1', started.candidateNodeId);
 
-            // 主历史当前 = [U, A, FR, B]；删除到索引 1（含 A），保留 U
+            // 主历史当前 = [U, A, FR, B]；删除到索引 1（含 A），保留 U。
+            // 分支图同步已收敛进 ConversationManager.deleteToMessage（决策 6），
+            // 此处只调用 manager，不得再手动调用 syncGraphAfterHistoryDelete（会因幂等短路）。
             const historyBefore = await manager.getMessagesRaw('c1');
             expect(historyBefore.length).toBe(4);
             const anchorId = historyBefore[1]!.id!; // 第一个被删消息（A，图节点）

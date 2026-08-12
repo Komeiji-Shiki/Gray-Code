@@ -359,7 +359,15 @@ export class DiffStorageManager {
                 error: error instanceof Error ? error.message : String(error)
             });
         }
-        await this.persistGlobalDiff(id, diffContent, indexed ? conversationId : undefined);
+        try {
+            await this.persistGlobalDiff(id, diffContent, indexed ? conversationId : undefined);
+        } catch (error) {
+            // 保持「缓存 = 已落盘」不变量（上游修复）：persist 失败时从内存缓存移除该条目，
+            // 避免进程内 loadGlobalDiff 读到未持久化内容、重启后静默丢失的假象；
+            // 并向上抛，让调用方感知持久化失败（diffContentId 不返回/不入历史引用）。
+            this.evictGlobalDiff(id);
+            throw error;
+        }
         return this.buildGlobalDiffReference(id, content.filePath);
     }
 
@@ -395,6 +403,10 @@ export class DiffStorageManager {
                 }
                 await this.persistGlobalDiff(id, diffContent, indexed ? conversationId : undefined);
             } catch (error) {
+                // 与 saveGlobalDiff 同口径：persist 失败时从缓存移除该条目，保持内存缓存与
+                // 磁盘一致（diffContentId 已随引用返回调用方，读侧 loadGlobalDiff 会缓存未命中
+                // → 磁盘也读不到 → null，前端按「无 diff 可预览」处理，不再有重启即丢的假象）。
+                this.evictGlobalDiff(id);
                 log.warn('global_diff_background_save_failed', {
                     diffId: id,
                     error: error instanceof Error ? error.message : String(error)
@@ -440,7 +452,7 @@ export class DiffStorageManager {
      * 原子写文件：先写 .tmp 再 rename 覆盖（与 storage.ts 同模式），
      * 避免写入中途崩溃留下半截 JSON 被读取侧解析失败。
      * Windows 的 rename 不覆盖已存在目标（EPERM/EEXIST）：先删旧文件再 rename；
-     * 其它错误（权限等）原样抛出，保留旧文件（残留 .tmp 由下次写入覆盖，读取侧只认 .json）。
+     * 其它错误（权限等）清理 .tmp 残留后原样抛出，保留旧文件（读取侧只认 .json）。
      */
     private async atomicWriteFile(filePath: string, data: string | Buffer): Promise<void> {
         const tmpPath = `${filePath}.tmp`;
@@ -450,6 +462,13 @@ export class DiffStorageManager {
         } catch (error) {
             const code = (error as NodeJS.ErrnoException)?.code;
             if (code !== 'EEXIST' && code !== 'EPERM') {
+                // 非「目标已存在」类错误（EACCES/EIO 等）：清理 .tmp 残留后原样抛出，
+                // 避免临时文件堆积（读取侧只认 .json，残留 tmp 不会被读到）。
+                try {
+                    await fs.promises.unlink(tmpPath);
+                } catch {
+                    // 清理失败忽略
+                }
                 throw error;
             }
             try {
@@ -457,7 +476,18 @@ export class DiffStorageManager {
             } catch {
                 // 目标不存在，无需删除
             }
-            await fs.promises.rename(tmpPath, filePath);
+            try {
+                await fs.promises.rename(tmpPath, filePath);
+            } catch (secondError) {
+                // 删旧后 rename 仍失败：同样清理 .tmp 残留后抛出（旧文件已不可得，
+                // 但至少不遗留半截 JSON 的临时文件）。
+                try {
+                    await fs.promises.unlink(tmpPath);
+                } catch {
+                    // 清理失败忽略
+                }
+                throw secondError;
+            }
         }
     }
 
@@ -483,6 +513,14 @@ export class DiffStorageManager {
             if (oldest) this.globalDiffCacheBytes -= oldest.bytes;
             this.globalDiffCache.delete(oldestId);
         }
+    }
+
+    /** 从全局 diff 缓存移除条目（persist 失败时保持「缓存 = 已落盘」不变量） */
+    private evictGlobalDiff(id: string): void {
+        const previous = this.globalDiffCache.get(id);
+        if (!previous) return;
+        this.globalDiffCacheBytes -= previous.bytes;
+        this.globalDiffCache.delete(id);
     }
     
     /**

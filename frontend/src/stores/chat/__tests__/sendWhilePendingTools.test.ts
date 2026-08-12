@@ -82,7 +82,11 @@ vi.mock('../state', () => ({
   }),
   // sendMessage 失败路径（cleanupFailedSendPlaceholders）会调用 getMessageIndexById：
   // 与 oneOffChannelOverride.test.ts 同款 mock（占位未入数组 → -1）
-  getMessageIndexById: vi.fn().mockReturnValue(-1)
+  getMessageIndexById: vi.fn().mockReturnValue(-1),
+  // toolActions 回填工具响应缓存（getToolResponseById 回填 / 拒绝工具插入）：
+  // 本测试不校验缓存内容，空实现即可（缺导出会 TypeError 中断 cancelStreamAndRejectTools）
+  setToolResponseCacheEntry: vi.fn(),
+  setToolResponseCacheEntries: vi.fn()
 }))
 
 vi.mock('../streamChunkHandlers', () => ({

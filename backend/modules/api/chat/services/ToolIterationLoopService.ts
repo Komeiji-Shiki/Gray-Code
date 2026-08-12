@@ -57,6 +57,23 @@ const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 
 /**
+ * 自动总结的确定性失败码：重试不会改变结果（范围失效/无内容可总结/质量不足/配置问题），
+ * 只会重复消耗一次总结模型生成调用。这些失败直接走 granular fallback 而非有界重试；
+ * 仅瞬时错误（UNKNOWN_ERROR / API 抖动等）保留重试机会。
+ */
+const DETERMINISTIC_AUTO_SUMMARIZE_FAILURES = new Set([
+    'STALE_RANGE',
+    'LOW_QUALITY_SUMMARY',
+    'EMPTY_SUMMARY',
+    'CONTEXT_OVERFLOW',
+    'NOT_ENOUGH_ROUNDS',
+    'NOT_ENOUGH_CONTENT',
+    'NO_MESSAGES_TO_SUMMARIZE',
+    'CONFIG_NOT_FOUND',
+    'CONFIG_DISABLED'
+]);
+
+/**
  * 流式取消时给在途早启动工具的收尾窗口（毫秒）。
  *
  * 流式边执行工具已产生真实副作用（写文件、跑命令），取消时若只结算"取消时刻已 settle"
@@ -95,6 +112,17 @@ export const MAX_ITERATIONS_HARD_CAP = 10000;
 function isExpectedToolExecutionError(err: unknown): err is ChannelError {
     return err instanceof ChannelError;
 }
+
+/**
+ * 流式结束后等待早启动工具落定的兜底窗口（毫秒）。
+ *
+ * 与取消路径的 STREAM_CANCEL_TOOL_SETTLE_GRACE_MS 同级别：早启动工具随模型流启动，
+ * 流结束时本应接近完成。正常快速落定路径零额外延迟（仍由 waitForNextSettlement 立即
+ * 唤醒）；只有窗口内仍未落定的工具才被标记为超时失败，避免不响应 abort 且永不结束的
+ * 工具让请求（含无 abortSignal 的路径）无限挂起。
+ */
+export const STREAM_EARLY_TOOL_SETTLE_TIMEOUT_MS = STREAM_CANCEL_TOOL_SETTLE_GRACE_MS;
+
 function shouldStartToolDuringModelStream(
     call: FunctionCallInfo,
     toolExecutionService: ToolExecutionService,
@@ -941,7 +969,10 @@ export class ToolIterationLoopService {
 
                     // 总结失败：记录日志，但不要阻塞当前轮对话，继续正常请求
                     this.log.warn('stream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
-                    if (!isSummaryOnlyAborted && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                    // 确定性失败（范围失效/无内容/质量不足/配置问题）重试结果相同且白白消耗总结模型调用，
+                    // 直接放弃重试走 granular fallback；仅瞬时错误有界重试。
+                    const isDeterministicFailure = DETERMINISTIC_AUTO_SUMMARIZE_FAILURES.has(summarizeError.code);
+                    if (!isSummaryOnlyAborted && !isDeterministicFailure && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
                         iteration--;
                         continue;
                     }
@@ -1303,7 +1334,10 @@ export class ToolIterationLoopService {
             if (streamingToolPromises.size > 0) {
                 // 等待循环内必须有 abort 检查：若某工具不响应 abortSignal 且永不结束，
                 // 无检查的 waitForNextSettlement 会让整个请求永久挂起，停止按钮失效。
-                while (earlyToolProgressQueue.hasPending() && !abortSignal?.aborted) {
+                // 与取消路径（1062-1087 行）一致加 deadline 兜底：abort 未触发时窗口内
+                // 仍未落定的工具标记为超时失败，请求不会无限挂起。
+                const settleDeadline = Date.now() + STREAM_EARLY_TOOL_SETTLE_TIMEOUT_MS;
+                while (earlyToolProgressQueue.hasPending() && !abortSignal?.aborted && Date.now() < settleDeadline) {
                     const readyStatuses = drainSettledEarlyToolStatuses();
                     if (readyStatuses.length > 0) {
                         for (const statusChunk of readyStatuses) {
@@ -1314,28 +1348,43 @@ export class ToolIterationLoopService {
                     if (abortSignal?.aborted) {
                         break;
                     }
-                    if (abortSignal) {
-                        // waitForNextSettlement 本身无 abort 监听：若某工具不响应
-                        // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
-                        // 与 abort 事件做 race，取消时立即退出等待循环。
-                        let onAbort: (() => void) | undefined;
-                        const abortPromise = abortSignal.aborted
-                            ? Promise.resolve()
-                            : new Promise<void>((resolve) => {
-                                onAbort = () => resolve();
-                                abortSignal.addEventListener('abort', onAbort, { once: true });
-                            });
-                        try {
-                            await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise]);
-                        } finally {
-                            if (onAbort) {
-                                abortSignal.removeEventListener('abort', onAbort);
+                    const remainingMs = settleDeadline - Date.now();
+                    if (remainingMs <= 0) {
+                        break;
+                    }
+                    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+                    const timeoutPromise = new Promise<void>((resolve) => {
+                        settleTimer = setTimeout(resolve, remainingMs);
+                    });
+                    try {
+                        if (abortSignal) {
+                            // waitForNextSettlement 本身无 abort 监听：若某工具不响应
+                            // abortSignal 且永不结束，单独等待会永久挂起、停止按钮失效。
+                            // 与 abort 事件 + deadline 兜底做 race，取消或超时都退出等待循环。
+                            let onAbort: (() => void) | undefined;
+                            const abortPromise = abortSignal.aborted
+                                ? Promise.resolve()
+                                : new Promise<void>((resolve) => {
+                                    onAbort = () => resolve();
+                                    abortSignal.addEventListener('abort', onAbort, { once: true });
+                                });
+                            try {
+                                await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), abortPromise, timeoutPromise]);
+                            } finally {
+                                if (onAbort) {
+                                    abortSignal.removeEventListener('abort', onAbort);
+                                }
                             }
+                        } else {
+                            // 无 abort 信号时直接等下一次落定——若用已 resolve 的 Promise 做 race，
+                            // 循环会退化为纯忙等（100% CPU）直到工具落定；仅与 deadline 兜底 race。
+                            await Promise.race([earlyToolProgressQueue.waitForNextSettlement(), timeoutPromise]);
                         }
-                    } else {
-                        // 无 abort 信号时直接等下一次落定——若用已 resolve 的 Promise 做 race，
-                        // 循环会退化为纯忙等（100% CPU）直到工具落定。
-                        await earlyToolProgressQueue.waitForNextSettlement();
+                    } finally {
+                        // 工具先落定 / abort / 超时时清理 timer，避免残留 open handle
+                        if (settleTimer) {
+                            clearTimeout(settleTimer);
+                        }
                     }
                 }
                 for (const statusChunk of drainSettledEarlyToolStatuses()) {
@@ -1368,6 +1417,27 @@ export class ToolIterationLoopService {
                         cancelled: true as const
                     };
                     return;
+                }
+
+                // 兜底超时：deadline 内仍未落定的早启动工具标记为超时失败（而不是无限等待）。
+                // 与取消路径的「超时未落定标记取消」对齐：结果以失败占位结算，避免悬空
+                // tool_use 触发 API 400；副作用已发生的工具其真实结果随后到达时写入的是本
+                // 迭代局部 map，不影响已结算的失败占位。
+                if (earlyToolProgressQueue.hasPending()) {
+                    for (const call of autoPrefix) {
+                        if (streamingToolPromises.has(call.id) && !streamingToolResults.has(call.id)) {
+                            const errorResponse: Record<string, unknown> = {
+                                success: false,
+                                error: `Timed out waiting for early-started tool ${call.name} after ${STREAM_EARLY_TOOL_SETTLE_TIMEOUT_MS}ms`,
+                            };
+                            streamingToolResults.set(call.id, {
+                                responseParts: [{ functionResponse: { id: call.id, name: call.name, response: errorResponse } }],
+                                toolResults: [{ id: call.id, name: call.name, args: call.args, result: errorResponse }],
+                                checkpoints: []
+                            });
+                            this.log.warn('stream.early_tool_settle_timeout', { conversationId, toolName: call.name, toolId: call.id, iteration });
+                        }
+                    }
                 }
 
                 const remainingAutoPrefix: FunctionCallInfo[] = [];
@@ -2010,7 +2080,10 @@ export class ToolIterationLoopService {
 
                     // 总结失败：不阻塞当前请求，继续使用现有历史
                     this.log.warn('nonstream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
-                    if (summarizeError.code !== 'ABORTED' && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
+                    // 确定性失败不重试（与流式路径一致）：STALE_RANGE / 低质量 / 无内容等重试
+                    // 结果相同，只重复消耗总结模型调用，直接放弃重试走 granular fallback。
+                    const isDeterministicFailure = DETERMINISTIC_AUTO_SUMMARIZE_FAILURES.has(summarizeError.code);
+                    if (summarizeError.code !== 'ABORTED' && !isDeterministicFailure && autoSummarizeAttempts < maxAutoSummarizeAttempts) {
                         iteration--;
                         continue;
                     }

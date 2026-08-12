@@ -443,6 +443,8 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
   MESSAGE_NAMES['workspace.openFolder'],
   // 后端视为分钟级长任务（NON_BLOCKING），180s 兜底超时会先触发，
   // 后端稍后返回的响应因无匹配请求被当作广播推送误分发（M6）
+  // summarizeContext：总结是长上下文 LLM 调用（分钟级），180s 前端超时会让误判失败后
+  // 端继续总结，重试又叠加 token 消耗；与后端 stream 类请求同样豁免
   MESSAGE_NAMES.summarizeContext,
 ]);
 
@@ -662,6 +664,10 @@ export interface ContentPart {
         args: Record<string, unknown>;
         /** 增量解析时的原始 JSON 字符串（用于流式输出） */
         partialArgs?: string;
+        /**
+         * Anthropic forced tool use 的预填参数标记。仅用于流式累加器把初始 input
+         * 与后续 input_json_delta 合并；最终 Content 投影会删除该内部字段。
+         */
         prefilledArgs?: boolean;
         id?: string; // 可选的函数调用 ID
         /** 是否已被用户拒绝执行（重新加载对话时正确显示工具状态） */

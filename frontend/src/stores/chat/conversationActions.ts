@@ -509,17 +509,30 @@ export async function createBranchConversation(
 export async function loadConversations(state: ChatStoreState): Promise<void> {
   state.isLoadingConversations.value = true
 
+  // 记录请求发出时的本地 ID。listConversations 是一个时间点快照；等待它返回期间，
+  // 首条消息可能已经创建并持久化新会话。该增量必须在合并时保留，不能被旧快照覆盖。
+  const persistedIdsAtRequestStart = new Set(state.persistedConversationIds.value)
+
   try {
     // 仅获取全部 ID（一次请求），实际元数据采用分页加载
     const ids = await sendToExtension<string[]>(MESSAGE_NAMES['conversation.listConversations'], {})
+    const remoteIds = Array.isArray(ids) ? ids : []
+    const remoteIdSet = new Set(remoteIds)
+    const concurrentlyCreatedIds = state.persistedConversationIds.value.filter(id =>
+      !persistedIdsAtRequestStart.has(id) && !remoteIdSet.has(id)
+    )
 
-    // 重置分页游标
-    state.persistedConversationIds.value = sortConversationIds(ids)
+    // 重置分页游标；把请求在途期间创建的新会话并入远端快照。
+    state.persistedConversationIds.value = sortConversationIds([
+      ...new Set([...remoteIds, ...concurrentlyCreatedIds])
+    ])
     state.persistedConversationsLoaded.value = 0
 
-    // 保留未持久化的对话
-    const unpersistedConvs = state.conversations.value.filter(c => !c.isPersisted)
-    state.conversations.value = [...unpersistedConvs]
+    // 保留未持久化会话，以及远端快照尚未包含、但本次加载期间刚创建的持久化会话。
+    const concurrentlyCreatedIdSet = new Set(concurrentlyCreatedIds)
+    state.conversations.value = state.conversations.value.filter(conversation =>
+      !conversation.isPersisted || concurrentlyCreatedIdSet.has(conversation.id)
+    )
 
     // 加载第一页
     await loadMoreConversations(state, { initial: true })

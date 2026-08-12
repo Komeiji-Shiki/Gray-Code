@@ -57,8 +57,12 @@ vi.mock('../utils', () => ({
 vi.mock('../state', () => ({
   rebuildMessageIndexById: vi.fn(),
   appendMessage: vi.fn(),
-  getMessageIndexById: vi.fn(() => -1),
-  removeMessageAt: vi.fn()
+  // sendMessage 失败路径（cleanupFailedSendPlaceholders）会调用 getMessageIndexById：
+  // 测试中占位消息未真正写入数组（appendMessage 被 mock），返回 -1 与真实行为一致
+  getMessageIndexById: vi.fn().mockReturnValue(-1),
+  // sendMessageFlow 的隐藏 FR 合并路径会回填工具响应缓存：本测试不校验缓存内容，空实现即可
+  setToolResponseCacheEntry: vi.fn(),
+  setToolResponseCacheEntries: vi.fn()
 }))
 
 vi.mock('../streamChunkHandlers', () => ({

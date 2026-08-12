@@ -134,6 +134,9 @@ async function deleteSingleFile(
         const originalContent = normalizeLineEndingsToLF(
             rawBuffer.toString('utf8')
         );
+        // PERF：提前预热目标文档（openTextDocument），与行计算/块定位并行，
+        // 首次打开 diff 视图时读盘 + 语言服务初始化不再阻塞 UI。
+        getDiffManager()?.prewarmDocument?.(uri);
         const originalLines = originalContent.split('\n');
         // 幻影尾行不是真实行：范围校验与删除计数都以真实行为准
         const totalLines = hasPhantomTailLine(originalLines)

@@ -7,7 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
-import { resolveUri, getAllWorkspaces } from '../utils';
+import { resolveUri, getAllWorkspaces, mapWithConcurrency } from '../utils';
 import {
     LSP_TIMEOUT_MS,
     LSP_RETRY_DELAY_MS,
@@ -284,13 +284,24 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
                 return { success: false, error: accessError };
             }
             
+            // 上限保护：每个文件最多 20s LSP 超时，超限文件直接截断并在结果中提示，
+            // 避免一次调用把整个工作区几千个文件全部串行扫一遍。
+            const MAX_SYMBOL_PATHS = 20;
+            const pathsTruncated = pathList.length > MAX_SYMBOL_PATHS;
+            const pathsToProcess = pathsTruncated ? pathList.slice(0, MAX_SYMBOL_PATHS) : pathList;
+            
             const results: FileSymbolResult[] = [];
             let successCount = 0;
             let failCount = 0;
             let totalSymbolCount = 0;
             
-            for (const filePath of pathList) {
-                const result = await getSymbolsForFile(filePath, context?.abortSignal, context?.activeWorkspaceUri);
+            // 受控并发（默认 4 个在飞），仍按输入顺序返回结果
+            const processed = await mapWithConcurrency(
+                pathsToProcess,
+                4,
+                async (filePath: string) => getSymbolsForFile(filePath, context?.abortSignal, context?.activeWorkspaceUri)
+            );
+            for (const result of processed) {
                 results.push(result);
                 
                 if (result.success) {
@@ -302,7 +313,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             }
             
             const allSuccess = failCount === 0;
-            const anyTruncated = results.some(result => result.truncated === true);
+            const anyTruncated = results.some(result => result.truncated === true) || pathsTruncated;
             const failedDetails = results
                 .filter(result => !result.success)
                 .map(result => `${result.path}: ${result.error || 'Unknown symbol provider error'}`)

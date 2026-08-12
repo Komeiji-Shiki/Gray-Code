@@ -39,8 +39,9 @@ async function resolveMemoryManager(data?: any): Promise<import('../../backend/m
  *
  * 数值项（wakeLines/entryChars）以目标作用域 MemoryManager 的
  * 运行时配置为权威来源：settings 配置的数值项经 getToolsConfigEntry 深合并默认值后
- * 永远有值（96/280），?? 兜底恒不生效，会掩盖工作区各自的运行时配置——
- * 记忆隔离下每个工作区的 config 独立持久化，这里必须按 data.workspaceUri 读对应实例。
+ * 永远有值（96/280），?? 兜底恒不生效——config 文件全局共享一份
+ * （<dataPath>/memory/config，记忆数据 LOG/TREE 仍按工作区隔离），任意作用域实例
+ * 读写同一份配置，这里按 data.workspaceUri 读对应实例（配置值全局一致）。
  * enabled/systemPrompt 属于全局设置段，仍取 settings 配置。
  */
 export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
@@ -66,9 +67,10 @@ export const getMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
 /**
  * 更新记忆配置
  *
- * - 传了 workspaceUri：配置保存到该作用域 MemoryManager（记忆隔离），不写全局
- *   SettingsManager——否则工作区 tab 保存的数值会污染全局配置，且全局 toolsConfig
- *   深合并默认值后所有工作区读到同一份配置，隔离失效。
+ * - 传了 workspaceUri：配置写入该作用域 MemoryManager（updateConfig 持久化到全局
+ *   共享的 config 文件 <dataPath>/memory/config——配置全局共享一份，数据仍按
+ *   工作区隔离），不写全局 SettingsManager（行为不变：工作区 tab 保存的数值不进
+ *   toolsConfig）。
  * - 未传 workspaceUri（全局）：写 SettingsManager（持久化）并同步全局 MemoryManager 运行时。
  */
 export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) => {
@@ -78,7 +80,7 @@ export const updateMemoryConfig: MessageHandler = async (data, requestId, ctx) =
     const { config = {} } = data || {};
     const wsUri = typeof data?.workspaceUri === 'string' && data.workspaceUri ? data.workspaceUri : '';
     if (wsUri) {
-      // 工作区作用域：仅写该工作区 MemoryManager（数值项校验并持久化到其 config 文件）
+      // 工作区作用域：仅写该工作区 MemoryManager（数值项校验并持久化到全局共享的 config 文件）
       const mgr = await resolveMemoryManager(data);
       if (!mgr) {
         return ctx.sendError(requestId, 'MEMORY_NOT_INITIALIZED', 'MemoryManager is not initialized.');

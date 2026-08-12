@@ -204,9 +204,11 @@ export class SkillsManager {
             const description = t('tools.skills.exampleSkill.description');
             const content = t('tools.skills.exampleSkill.content');
             
+            // description 用 JSON.stringify 生成双引号 YAML 标量：
+            // 含换行/引号/冒号时 frontmatter 不再错乱（parseFrontmatter 配套反转义）
             const exampleContent = `---
 name: how-to-create-skill
-description: "${description}"
+description: ${JSON.stringify(description)}
 ---
 
 ${content}

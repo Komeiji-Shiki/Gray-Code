@@ -36,9 +36,6 @@ import type {
     UpdateApplyDiffConfigRequest
 } from './types';
 
-/** 扩展 ID（getCurrentVersion / getChangelogSinceVersion 共用，避免散落硬编码） */
-const GRAYCODE_EXTENSION_ID = 'czocelot.graycode';
-
 /**
  * 设置处理器
  * 

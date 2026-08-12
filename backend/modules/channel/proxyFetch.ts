@@ -12,6 +12,11 @@ import { URL } from 'url';
 import { ChannelError, ErrorType } from './types';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
+/** chunked 结束标记（'0\r\n\r\n' 与 '\r\n0\r\n' 均为 4 字节）：增量扫描保留末 3 字节用于跨包检测 */
+const CHUNKED_END_MARKER = Buffer.from('0\r\n\r\n');
+const CHUNKED_END_MARKER_ALT = '\r\n0\r\n';
+const CHUNKED_END_MARKER_LEN = 4;
+
 /**
  * 解析是否跳过 TLS 证书校验。
  *
@@ -870,10 +875,6 @@ function sendRequestOverSocket(
     });
 }
 
-/** chunked 结束标记（0\r\n\r\n）与旧式换行变体 */
-const CHUNKED_END_MARKER = Buffer.from('0\r\n\r\n');
-const CHUNKED_END_MARKER_ALT = '\r\n0\r\n';
-
 /** 滚动尾窗最大字节数：结束标记序列仅 5 字节，4KB 足以覆盖任意跨包切分 */
 const TAIL_WINDOW_MAX_BYTES = 4 * 1024;
 
@@ -1291,6 +1292,12 @@ export async function* proxyStreamFetch(
                 let errorBodyBytes: Buffer[] = [];
                 let errorContentLength = -1;
                 let errorIsChunked = false;
+                // 错误体结束标记的增量扫描状态（与 sendRequestOverSocket 的
+                // hasChunkedEndMarker 同思路：避免逐 data 事件对 errorBodyBytes 整段
+                // Buffer.concat + includes 的 O(n²) 探测；跨包标记靠保留上一探测末尾
+                // CHUNKED_END_MARKER_LEN-1 字节兜住，探测结果语义与全量扫描一致）
+                let errorBodyScanTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+                let errorBodyScanOffset = 0;
 
                 const isErrorBodyComplete = (): boolean => {
                     const totalBytes = errorBodyBytes.reduce((sum, b) => sum + b.length, 0);
@@ -1298,9 +1305,30 @@ export async function* proxyStreamFetch(
                         return totalBytes >= errorContentLength;
                     }
                     if (errorIsChunked) {
-                        const fullBody = Buffer.concat(errorBodyBytes);
-                        const endMarker = Buffer.from('0\r\n\r\n');
-                        return fullBody.includes(endMarker) || fullBody.toString('utf8').includes('\r\n0\r\n');
+                        // 只对新增尾部做探测（无新增字节时沿用上次结果）
+                        if (totalBytes <= errorBodyScanOffset) {
+                            return false;
+                        }
+                        const newStart = errorBodyScanOffset;
+                        const newParts: Buffer[] = [];
+                        let offset = 0;
+                        for (const part of errorBodyBytes) {
+                            const partEnd = offset + part.length;
+                            if (partEnd <= newStart) {
+                                offset = partEnd;
+                                continue;
+                            }
+                            newParts.push(part.subarray(Math.max(0, newStart - offset)));
+                            offset = partEnd;
+                        }
+                        const newBytes = newParts.length === 0 ? Buffer.alloc(0) : Buffer.concat(newParts);
+                        errorBodyScanOffset = totalBytes;
+                        const window = errorBodyScanTail.length > 0
+                            ? Buffer.concat([errorBodyScanTail, newBytes])
+                            : newBytes;
+                        // 只保留窗口末尾 3 字节：下一包探测时与新增字节拼接，跨包标记也能命中
+                        errorBodyScanTail = window.subarray(Math.max(0, window.length - (CHUNKED_END_MARKER_LEN - 1)));
+                        return window.includes(CHUNKED_END_MARKER) || window.toString('utf8').includes(CHUNKED_END_MARKER_ALT);
                     }
                     // 未声明 content-length 也非 chunked → 连接关闭判定
                     return false;

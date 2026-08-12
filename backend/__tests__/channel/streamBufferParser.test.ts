@@ -32,6 +32,39 @@ describe('parseStreamBuffer - SSE', () => {
         expect(result.unparsed).toBeUndefined();
     });
 
+    test('data: 前缀被 chunk 边界切断时跨包拼接不丢事件', () => {
+        // 第一包末尾 "da" 是 "data:" 前缀被网络包切开的半行：不以 data: 开头，
+        // 旧实现既不进 remaining 也不报错，下一包的 "ta: {...}" 又因不以 data: 开头被忽略
+        // → 第二个 SSE JSON 事件永久丢失。
+        const first = parseStreamBuffer('data: {"a":1}\n\nda');
+        expect(first.chunks).toEqual([{ a: 1 }]);
+        expect(first.remaining).toBe('da');
+        expect(first.unparsed).toBeUndefined();
+
+        // 第二包先拼接 remaining 再解析：前缀补齐后正常产出第二个事件
+        const second = parseStreamBuffer(first.remaining + 'ta: {"b":2}\n\n');
+        expect(second.chunks).toEqual([{ b: 2 }]);
+        expect(second.remaining).toBe('');
+    });
+
+    test('恰好被切在 "data:" 冒号后的半行也跨包保留', () => {
+        // 旧实现：空内容的 data: 行不会累积进 currentData，切在冒号后的 "data:" 被静默丢弃
+        const first = parseStreamBuffer('data: {"a":1}\n\ndata:');
+        expect(first.chunks).toEqual([{ a: 1 }]);
+        expect(first.remaining).toBe('data:');
+
+        const second = parseStreamBuffer(first.remaining + ' {"b":2}\n\n');
+        expect(second.chunks).toEqual([{ b: 2 }]);
+        expect(second.remaining).toBe('');
+    });
+
+    test('完整 JSON 行无结尾换行时不会被重复追加进 remaining', () => {
+        // 最后一行是完整事件（只是缺换行）：已进 chunks，remaining 必须为空，避免下一包重复解析
+        const result = parseStreamBuffer('data: {"a":1}');
+        expect(result.chunks).toEqual([{ a: 1 }]);
+        expect(result.remaining).toBe('');
+    });
+
     test('流结束仍解析不了的 data 内容转为 unparsed 而非丢弃', () => {
         const result = parseStreamBuffer('data: upstream gateway timeout', true);
         expect(result.chunks).toEqual([]);

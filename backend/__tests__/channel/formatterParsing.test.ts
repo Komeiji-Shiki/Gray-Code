@@ -9,7 +9,7 @@
 
 import { OpenAIFormatter } from '../../modules/channel';
 import { GeminiFormatter } from '../../modules/channel';
-import { AnthropicFormatter } from '../../modules/channel';
+import { AnthropicFormatter, StreamAccumulator } from '../../modules/channel';
 
 const sampleTools = [
     {
@@ -229,6 +229,42 @@ describe('AnthropicFormatter.parseResponse', () => {
             cacheReadTokenCount: 60,
             cachedContentTokenCount: 90
         });
+    });
+
+    test('流式 tool_use 预填 input 与后续 input_json_delta 正确合并', () => {
+        const accumulator = new StreamAccumulator('function_call', () => 'generated-tool-id');
+        accumulator.setProviderType('anthropic');
+
+        const start = formatter.parseStreamChunk({
+            type: 'content_block_start',
+            index: 0,
+            content_block: {
+                type: 'tool_use',
+                id: 'toolu-prefilled',
+                name: 'read_file',
+                input: { path: 'src/app.ts' }
+            }
+        });
+        accumulator.add(start);
+
+        const delta = formatter.parseStreamChunk({
+            type: 'content_block_delta',
+            index: 0,
+            delta: {
+                type: 'input_json_delta',
+                partial_json: ',"startLine":10}'
+            }
+        });
+        accumulator.add(delta);
+
+        const functionCall = accumulator.getFinalContent().parts.find(part => part.functionCall)?.functionCall;
+        expect(functionCall).toEqual({
+            id: 'toolu-prefilled',
+            name: 'read_file',
+            args: { path: 'src/app.ts', startLine: 10 }
+        });
+        expect(functionCall?.prefilledArgs).toBeUndefined();
+        expect(functionCall?.partialArgs).toBeUndefined();
     });
 
     test('keeps redacted_thinking data for later turns', () => {

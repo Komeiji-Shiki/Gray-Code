@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import { t } from '../../backend/i18n';
 import { getWorkspaceManager } from './WorkspaceManager';
 import { getFsCaseSensitivity } from './fsCaseSensitivity';
+import { isPathInsideOrEqual } from './workspaceRealpath';
 
 /**
  * 检查路径是否应该被忽略
@@ -253,34 +254,26 @@ export async function validateFileInWorkspace(filePath: string, workspaceUri?: s
       return { valid: false, error: t('webview.errors.fileNotExists'), errorCode: 'FILE_NOT_EXISTS' };
     }
     
-    // 尝试使用 VSCode API 获取工作区
-    let belongingWorkspace = vscode.workspace.getWorkspaceFolder(fileUri);
-    
-    // 如果 API 返回 null，手动通过路径匹配（解决远程 SSH scheme 不一致问题）
-    // 例如：文件是 vscode-remote://ssh-remote+host/path 但工作区是 file:///path
-    if (!belongingWorkspace) {
-      const fileFsPath = fileUri.path;
-      const normalizedFilePath = fileFsPath.toLowerCase();
-      
-      for (const folder of workspaceFolders) {
-        const workspaceFsPath = folder.uri.path;
-        const normalizedWorkspacePath = workspaceFsPath.toLowerCase();
-        if (normalizedFilePath.startsWith(normalizedWorkspacePath + '/')
-            || normalizedFilePath === normalizedWorkspacePath) {
-          belongingWorkspace = folder;
-          break;
-        }
+    // realpath 感知的归属判定：先解析符号链接再做前缀比较，防止工作区内 symlink 指向
+    // 工作区外文件时被词法前缀匹配误判为属于工作区（与 workspaceRealpath.ts 的
+    // isUriInsideWorkspaceRealpath 同一实现口径）。realpath 不可用（如测试 mock 掉 fs）
+    // 或路径不可解析（远程 scheme/不存在路径）时内部自动降级为词法比较，保持既有行为。
+    let belongingWorkspace: vscode.WorkspaceFolder | undefined;
+    for (const folder of workspaceFolders) {
+      if (await isPathInsideOrEqual(fileUri.fsPath, folder.uri.fsPath)) {
+        belongingWorkspace = folder;
+        break;
       }
+    }
 
-      // 对话绑定工作区已关闭：按 URI 虚拟解析归属（大小写不敏感比对，兼容 Windows）
-      if (!belongingWorkspace && workspaceUri) {
-        const virtual = resolveWorkspaceFolderByUri(workspaceUri);
-        if (virtual) {
-          const normalizedFile = fileUri.fsPath.replace(/\\/g, '/').toLowerCase();
-          const normalizedVirtual = (virtual as any).fsPath.replace(/\\/g, '/').toLowerCase();
-          if (normalizedFile.startsWith(normalizedVirtual + '/') || normalizedFile === normalizedVirtual) {
-            belongingWorkspace = virtual;
-          }
+    // 对话绑定工作区已关闭：按 URI 虚拟解析归属（大小写不敏感比对，兼容 Windows）
+    if (!belongingWorkspace && workspaceUri) {
+      const virtual = resolveWorkspaceFolderByUri(workspaceUri);
+      if (virtual) {
+        const normalizedFile = fileUri.fsPath.replace(/\\/g, '/').toLowerCase();
+        const normalizedVirtual = (virtual as any).fsPath.replace(/\\/g, '/').toLowerCase();
+        if (normalizedFile.startsWith(normalizedVirtual + '/') || normalizedFile === normalizedVirtual) {
+          belongingWorkspace = virtual;
         }
       }
     }

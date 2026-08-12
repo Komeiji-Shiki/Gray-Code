@@ -772,11 +772,6 @@ onMounted(async () => {
     return
   }
 
-  // Notify the extension that the webview is ready to receive command messages.
-  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
-    console.error('[App] Failed to notify extension that webview is ready:', error)
-  })
-  
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
 
@@ -891,7 +886,14 @@ onMounted(async () => {
       }
     }
   })
-  
+
+  // Notify the extension that the webview is ready to receive command messages.
+  // 注意：必须在命令监听器注册完成后再发送握手——webviewReady 后扩展可能立即下发
+  // command / taskEvent 等消息，监听器未就绪会丢消息（AppSplashPreference 测试断言该顺序）。
+  sendToExtension(MESSAGE_NAMES.webviewReady, {}).catch(error => {
+    console.error('[App] Failed to notify extension that webview is ready:', error)
+  })
+
   // 异步初始化 chatStore（加载历史对话等）。关闭开屏动画时，专属占位持续到这一步结束。
   // 与语言/设置加载无数据依赖（各写独立 store），并行启动缩短开屏/占位时长：
   // initialize 内部的 streamChunk/workspace 监听在调用瞬间同步注册，IPC 应答经

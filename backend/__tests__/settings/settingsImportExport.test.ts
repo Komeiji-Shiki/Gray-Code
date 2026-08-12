@@ -284,6 +284,10 @@ describe('Import merge strategy (#15, #18)', () => {
         }
         expect(SETTINGS_EXPORT_KEYS).toContain('toolsConfig');
         expect(SETTINGS_EXPORT_KEYS).toContain('checkForUpdates');
+        // 回归保护：proxy 虽是 ALL_CONFIG_KEYS 成员（VSCodeSettingsStorage MACHINE_KEYS），
+        // 但属于机器作用域，必须被 SETTINGS_EXPORT_KEYS 过滤掉。
+        expect(SETTINGS_EXPORT_KEYS).not.toContain('proxy');
+        expect(SETTINGS_EXPORT_KEYS).not.toContain('storagePath');
     });
 });
 

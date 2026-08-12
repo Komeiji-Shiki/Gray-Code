@@ -219,6 +219,24 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         return run;
     }
 
+    /**
+     * 读取 graycode.* 配置值时优先 Global（与 save() 写入的 ConfigurationTarget.Global 一致），
+     * workspace/workspaceFolder 值仅作 Global 未设置时的 fallback。
+     *
+     * 修复：save() 只写 Global，而 config.get() 读的是 workspaceFolder > workspace > global
+     * 的合并值——工作区 .vscode/settings.json 中存在旧 graycode.* 键（如 toolsConfig）时，
+     * 用户在设置页的修改会写入 Global 但读回仍取 workspace 旧值，表现为「修改丢失」。
+     * 改为优先 Global 后，设置页修改一定生效；手动在工作区配置 graycode.* 且从未在设置页
+     * 保存过的用户（Global 未设置）仍能读到 workspace 值（fallback 语义保留）。
+     */
+    private getConfigValue<T>(config: vscode.WorkspaceConfiguration, key: string): T | undefined {
+        const inspected = config.inspect<T>(key);
+        if (!inspected) {
+            return undefined;
+        }
+        return inspected.globalValue ?? inspected.workspaceValue ?? inspected.workspaceFolderValue;
+    }
+
     private readSettingsFromVSCode(
         config: vscode.WorkspaceConfiguration,
         opts: { includeSyncable: boolean; includeMachine: boolean }
@@ -228,35 +246,35 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         const settings: Partial<GlobalSettings> = {};
 
             if (opts.includeSyncable) {
-            settings.toolsConfig = config.get('toolsConfig');
-            settings.ui = config.get('ui');
-            settings.toolsEnabled = config.get('toolsEnabled');
-            settings.toolAutoExec = config.get('toolAutoExec');
-            settings.maxToolIterations = config.get('maxToolIterations');
+            settings.toolsConfig = this.getConfigValue(config, 'toolsConfig');
+            settings.ui = this.getConfigValue(config, 'ui');
+            settings.toolsEnabled = this.getConfigValue(config, 'toolsEnabled');
+            settings.toolAutoExec = this.getConfigValue(config, 'toolAutoExec');
+            settings.maxToolIterations = this.getConfigValue(config, 'maxToolIterations');
             
-            const defaultToolMode = config.get('defaultToolMode');
+            const defaultToolMode = this.getConfigValue<string>(config, 'defaultToolMode');
             if (defaultToolMode === 'function_call' || defaultToolMode === 'xml' || defaultToolMode === 'json') {
                 settings.defaultToolMode = defaultToolMode;
             }
 
-            const activeChannelId = config.get<string>('activeChannelId');
+            const activeChannelId = this.getConfigValue<string>(config, 'activeChannelId');
             settings.activeChannelId = activeChannelId && activeChannelId.trim() ? activeChannelId : undefined;
 
-            const lastReadAnnouncementVersion = config.get<string>('lastReadAnnouncementVersion');
+            const lastReadAnnouncementVersion = this.getConfigValue<string>(config, 'lastReadAnnouncementVersion');
             settings.lastReadAnnouncementVersion = lastReadAnnouncementVersion && lastReadAnnouncementVersion.trim()
                 ? lastReadAnnouncementVersion
                 : undefined;
 
-            const checkForUpdates = config.get<boolean>('checkForUpdates');
+            const checkForUpdates = this.getConfigValue<boolean>(config, 'checkForUpdates');
             if (typeof checkForUpdates === 'boolean') {
                 settings.checkForUpdates = checkForUpdates;
             }
         }
 
         if (opts.includeMachine) {
-            settings.proxy = config.get('proxy');
-            settings.storagePath = config.get('storagePath');
-            settings.remoteControl = config.get('remoteControl');
+            settings.proxy = this.getConfigValue(config, 'proxy');
+            settings.storagePath = this.getConfigValue(config, 'storagePath');
+            settings.remoteControl = this.getConfigValue(config, 'remoteControl');
         }
 
         // toolsEnabled 在类型上是必填字段（但这里可能为 undefined），兜底给空对象

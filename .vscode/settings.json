@@ -1,4 +1,6 @@
 {
+    "files.encoding": "utf8",
+    "files.autoGuessEncoding": false,
     "i18n-ally.localesPaths": [
         "backend/i18n",
         "frontend/src/i18n",
