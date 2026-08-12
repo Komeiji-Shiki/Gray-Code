@@ -24,7 +24,9 @@ function resolveWindowsToastIconPath(): string | undefined {
   try {
     const extension = vscode.extensions?.getExtension?.(getProductExtensionId())
     if (extension?.extensionPath) {
-      return path.join(extension.extensionPath, 'resources', 'icon.png')
+      // Windows toast 专属路径：固定用 win32 语义拼接（Linux CI 上 path.join 是 POSIX 语义，
+      // 会把 Windows 反斜杠路径拼成混合分隔符，与 Windows 生产行为不一致）
+      return path.win32.join(extension.extensionPath, 'resources', 'icon.png')
     }
   } catch {
     // 测试/非 VS Code 环境拿不到扩展路径时返回 undefined，不阻塞通知

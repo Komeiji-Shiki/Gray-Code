@@ -29,8 +29,11 @@ const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'de
  * platform 参数仅供测试注入（默认 process.platform），生产路径不传。
  */
 export function isSameStoragePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+    // 按 platform 参数选择路径语义：测试注入 win32/linux 时不能依赖当前运行平台的 path 模块
+    // （Linux CI 上 path.normalize 是 POSIX 语义，不识别反斜杠分隔符，会把 'd:/graycode' 与
+    //  'D:\\GrayCode' 判为不同路径）。
     const normalize = (p: string): string => {
-        const normalized = path.normalize(p);
+        const normalized = platform === 'win32' ? path.win32.normalize(p) : path.posix.normalize(p);
         return platform === 'win32' ? normalized.toLowerCase() : normalized;
     };
     return normalize(a) === normalize(b);

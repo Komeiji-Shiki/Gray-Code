@@ -18,7 +18,9 @@ function resolveToastLingerPath(): string | undefined {
   try {
     const extension = vscode.extensions?.getExtension?.(getProductExtensionId())
     if (extension?.extensionPath) {
-      const candidate = path.join(extension.extensionPath, 'resources', 'bin', 'toast-linger.exe')
+      // Windows 专属二进制路径：固定用 win32 语义拼接（与 WindowsToastAdapter 一致，
+      // 避免 Linux CI 上 path.join 的 POSIX 语义产出混合分隔符）
+      const candidate = path.win32.join(extension.extensionPath, 'resources', 'bin', 'toast-linger.exe')
       if (fs.existsSync(candidate)) return candidate
     }
   } catch {
