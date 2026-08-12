@@ -10,8 +10,8 @@
  *
  * 防漂移手段：
  *   1. 本测试以 child_process 跑 `node scripts/generate-tool-meta.mjs --check`：
- *      脚本现场重生成并逐字节对比生成物——任何人手改生成物、或后端声明改动后
- *      忘记重新生成，都会在这里失败。
+ *      脚本现场重生成并对比生成物（忽略 Git checkout 造成的物理行尾差异）——
+ *      任何人手改生成物、或后端声明改动后忘记重新生成，都会在这里失败。
  *   2. 结构断言：生成物含 AUTO-GENERATED 头与类型定义。
  *   3. 覆盖断言：前端每个镜像工具（registerTool('name')）都必须在生成物中有登记，
  *      例外仅限显式 legacy 名单（如前端独有的 toggle_skills）。

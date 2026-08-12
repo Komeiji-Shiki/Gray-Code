@@ -781,7 +781,10 @@ function main() {
     if (args.includes('--check')) {
         let existing = '';
         try {
-            existing = fs.readFileSync(OUT_FILE, 'utf8');
+            // Git 的 core.autocrlf 可能在 Windows checkout 时把生成物的物理行尾转为
+            // CRLF；文件行尾本身无语义，不应令 parity 校验误报。字符串中的 `\\r\\n`
+            // 转义是普通反斜杠字符，不受此替换影响，仍可检测出元数据语义漂移。
+            existing = fs.readFileSync(OUT_FILE, 'utf8').replace(/\r\n?/g, '\n');
         } catch {
             existing = '';
         }
