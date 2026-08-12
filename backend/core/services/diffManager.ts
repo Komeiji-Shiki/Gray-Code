@@ -125,6 +125,12 @@ export interface PendingDiff {
     lockHolder?: LockHolder;
     /** 写盘锁是否已获取（diff 终结时释放的依据） */
     lockAcquired?: boolean;
+    /** checkpoint 与 deferred 写锁均已完成；自动保存只能在此后开始倒计时。 */
+    writeReady?: boolean;
+    /** 后端自动保存的绝对触发时间（Unix 毫秒），供前端只读展示。 */
+    autoSaveAt?: number;
+    /** 当前自动保存计时器实际使用的延迟。 */
+    scheduledAutoSaveDelay?: number;
 }
 
 /**
@@ -687,19 +693,36 @@ export class DiffManager {
     public refreshAutoSaveTimers(): void {
         const currentSettings = this.getSettings();
 
-        // 关闭自动保存：清理全部定时器
+        // 关闭自动保存：清理全部定时器和前端展示中的截止时间
         if (!currentSettings.autoSave) {
-            for (const timer of this.autoSaveTimers.values()) {
+            for (const [id, timer] of this.autoSaveTimers) {
                 clearTimeout(timer);
+                this.diffSessions.get(id)?.clearAutoSave();
+                const diff = this.pendingDiffs.get(id);
+                if (diff) {
+                    delete diff.autoSaveAt;
+                    delete diff.scheduledAutoSaveDelay;
+                }
             }
             this.autoSaveTimers.clear();
+            this.notifyStatusChange();
             return;
         }
 
-        // 开启自动保存：为所有pending diff 调度/重置定时器
+        // 只为已经通过 checkpoint/写锁屏障的会话重新计时。
         for (const diff of this.getPendingDiffs()) {
-            this.scheduleAutoSave(diff.id);
+            if (diff.writeReady !== false) {
+                this.scheduleAutoSave(diff.id, false);
+            } else {
+                const timer = this.autoSaveTimers.get(diff.id);
+                if (timer) clearTimeout(timer);
+                this.autoSaveTimers.delete(diff.id);
+                this.diffSessions.get(diff.id)?.clearAutoSave();
+                delete diff.autoSaveAt;
+                delete diff.scheduledAutoSaveDelay;
+            }
         }
+        this.notifyStatusChange();
     }
 
     /**
@@ -1118,6 +1141,9 @@ export class DiffManager {
             pendingDiff.lockHolder = options.lockHolder;
         }
 
+        // 显式记录屏障状态，前端在尚未就绪时显示“准备中”，而不是提前进入 0.0s/执行中。
+        pendingDiff.writeReady = !options?.checkpointReady && !options?.lockHolder;
+
         // 检查diff 警戒值
         const guardResult = this.checkDiffGuard(originalContent, newContent);
         if (guardResult.warning) {
@@ -1129,7 +1155,6 @@ export class DiffManager {
         // 当 confirmedByToolConfirmation 为 true 时，说明上层（如 SubAgent 或工具确认弹窗）
         // 已经批准了本次写入，此时直接应用保存，不再要求 autoSave 也必须开启。
         // autoSave 是控制”diff 预览中是否自动保存内容”的独立设置，与”用户是否已确认”正交。
-        const currentSettings = this.getSettings();
         const fullConfig = this.getFullApplyDiffConfig();
         const shouldDirectApplyConfirmedToolDiff =
             options?.confirmedByToolConfirmation === true;
@@ -1173,6 +1198,7 @@ export class DiffManager {
         }
 
         let pendingStatePublished = false;
+        let publishedBeforeWriteReady = false;
 
         // 根据配置决定是否显示 diff 视图
         if (shouldSkipDiffView) {
@@ -1191,26 +1217,25 @@ export class DiffManager {
             }
 
             if (pendingDiff.status === 'pending') {
-                // 关键时序：预览出现后立即发布 pending 并启动自动确认，不再让首个共享
-                // checkpoint 挡在 UI/50ms 倒计时之前。真正接受、拒绝、保存仍统一等待
-                // ensureDiffWriteReady，因此这里只提前可见状态，不会提前写盘。
-                if (currentSettings.autoSave) {
-                    this.scheduleAutoSave(id);
+                // 无屏障路径在首次发布前即可启动计时，整条状态只广播一次。
+                // 有屏障路径先发布“准备中”，屏障完成后再发布真实倒计时。
+                if (pendingDiff.writeReady && this.getSettings().autoSave) {
+                    this.scheduleAutoSave(id, false);
                 }
                 this.notifyStatusChange();
                 pendingStatePublished = true;
+                publishedBeforeWriteReady = !pendingDiff.writeReady;
             }
 
-            // PERF-CP：checkpoint 与预览并发；这里仍等待同一个写入就绪 Promise，
-            // 保留 createPendingDiff 的冲突错误传播语义。提前触发的自动/手动动作也会
-            // 复用此 Promise，不会重复获取写锁。
+            // checkpoint 与预览并发；真正写盘、手动接受和自动保存都复用同一屏障。
             await this.ensureDiffWriteReady(pendingDiff);
         }
 
-        // 直接应用等未提前发布的路径只在仍 pending 时补发一次。
-        if (!pendingStatePublished && pendingDiff.status === 'pending') {
-            if (currentSettings.autoSave) {
-                this.scheduleAutoSave(id);
+        // 屏障完成后才按最新配置启动倒计时。配置可能在 checkpoint 扫描期间被修改，
+        // 因而不能复用 createPendingDiff 开头读取的旧快照。
+        if (pendingDiff.status === 'pending' && (!pendingStatePublished || publishedBeforeWriteReady)) {
+            if (this.getSettings().autoSave) {
+                this.scheduleAutoSave(id, false);
             }
             this.notifyStatusChange();
         }
@@ -1237,7 +1262,8 @@ export class DiffManager {
      * release 一次便会残留锁。所有写盘/回滚入口都通过本方法汇合。
      */
     private ensureDiffWriteReady(diff: PendingDiff): Promise<void> {
-        if (diff.lockAcquired) {
+        if (diff.writeReady || diff.lockAcquired) {
+            diff.writeReady = true;
             return Promise.resolve();
         }
 
@@ -1246,7 +1272,11 @@ export class DiffManager {
             return existing;
         }
 
-        const promise = this.acquireWriteLockForDiff(diff);
+        const promise = this.acquireWriteLockForDiff(diff).then(() => {
+            if (diff.status === 'pending') {
+                diff.writeReady = true;
+            }
+        });
         this.writeReadyPromises.set(diff.id, promise);
         const clear = () => {
             if (this.writeReadyPromises.get(diff.id) === promise) {
@@ -1895,29 +1925,71 @@ export class DiffManager {
     /**
      * 设置自动保存定时器
      */
-    private scheduleAutoSave(id: string): void {
+    private scheduleAutoSave(id: string, notify: boolean = true): void {
+        const diff = this.pendingDiffs.get(id);
+        if (!diff || diff.status !== 'pending') {
+            return;
+        }
+
+        const hasWriteBarrier = !!diff.checkpointReady || (!!diff.lockHolder && !diff.lockAcquired);
+        if (diff.writeReady === false || (diff.writeReady !== true && hasWriteBarrier)) {
+            // 运行时修改配置或旧调用方可能在屏障完成前请求调度。不要提前消耗延迟，
+            // 复用共享屏障；失败时明确拒绝，避免 pending 工具永久悬挂。
+            void this.ensureDiffWriteReady(diff).then(
+                () => {
+                    if (diff.status === 'pending' && this.getSettings().autoSave) {
+                        this.scheduleAutoSave(id, notify);
+                    }
+                },
+                async () => {
+                    await this.finalizeAutoSaveFailure(
+                        id,
+                        'Auto-save failed while accepting diff because the diff write barrier failed. The diff was rejected to unblock tool execution.'
+                    );
+                }
+            );
+            return;
+        }
+        diff.writeReady = true;
+
         const existingTimer = this.autoSaveTimers.get(id);
         if (existingTimer) {
             clearTimeout(existingTimer);
         }
 
         const currentSettings = this.getSettings();
+        if (!currentSettings.autoSave) {
+            this.autoSaveTimers.delete(id);
+            this.diffSessions.get(id)?.clearAutoSave();
+            delete diff.autoSaveAt;
+            delete diff.scheduledAutoSaveDelay;
+            if (notify) this.notifyStatusChange();
+            return;
+        }
+
+        const delay = Math.max(0, currentSettings.autoSaveDelay);
         const session = this.diffSessions.get(id);
+        diff.scheduledAutoSaveDelay = delay;
+        diff.autoSaveAt = Date.now() + delay;
+
         const runAutoSave = async () => {
+            this.autoSaveTimers.delete(id);
+            delete diff.autoSaveAt;
+            delete diff.scheduledAutoSaveDelay;
             // 自动保存：强制使用AI 建议的内容（避免覆盖用户可能正在进行的手动修改）
             const accepted = await this.acceptDiff(id, true, true);
-            if (!accepted) {
+            if (!accepted && diff.status === 'pending') {
                 // 自动保存失败必须以明确rejected 收敛，否则等待diff 结束的工具Promise 会永久pending。
                 await this.finalizeAutoSaveFailure(id, 'Auto-save failed while accepting diff. The diff was rejected to unblock tool execution.');
             }
-            this.autoSaveTimers.delete(id);
         };
 
         const timer = session
-            ? session.scheduleAutoSave(currentSettings.autoSaveDelay, runAutoSave)
-            : setTimeout(runAutoSave, currentSettings.autoSaveDelay);
+            ? session.scheduleAutoSave(delay, runAutoSave)
+            : setTimeout(runAutoSave, delay);
 
         this.autoSaveTimers.set(id, timer);
+        if (notify) this.notifyStatusChange();
     }
 
     private async finalizeAutoSaveFailure(id: string, message: string): Promise<void> {
@@ -1968,6 +2040,9 @@ export class DiffManager {
         }
 
         this.acceptingDiffIds.add(id);
+        if (isAutoSave) {
+            this.notifyStatusChange();
+        }
 
         try {
             // checkpoint + deferred 写锁共享屏障：即使状态已经提前发布、用户立即点击接受，
@@ -2367,8 +2442,13 @@ export class DiffManager {
         this.diffSessions.get(id)?.clearAutoSave();
         this.writeReadyPromises.delete(id);
 
-        this.contentProvider.removeContent(id);
         const diff = this.pendingDiffs.get(id);
+        if (diff) {
+            delete diff.autoSaveAt;
+            delete diff.scheduledAutoSaveDelay;
+        }
+
+        this.contentProvider.removeContent(id);
         if (diff) {
             // 未进入/未完成 showDiffView（direct apply、dirty 拒绝、提前取消）时也要清理两侧
             // 预热缓存；Promise 本身可自然落定，Map 不再持有它。

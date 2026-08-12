@@ -452,6 +452,10 @@ export const UNBOUNDED_REQUEST_TYPES = new Set<string>([
  * ⚠️ 与 UNBOUNDED_REQUEST_TYPES（前端超时豁免）语义不同，禁止合并。
  */
 export const NON_BLOCKING_MESSAGE_TYPES = new Set<string>([
+  // Diff 接受/拒绝可能等待 checkpoint、文档保存和原生 Diff 标签关闭数秒。
+  // 它们必须异步执行，否则一次点击会占住主 Webview 串行队列，后续设置、焦点和保存请求全部排队。
+  MESSAGE_NAMES['diff.accept'],
+  MESSAGE_NAMES['diff.reject'],
   MESSAGE_NAMES.summarizeContext,
   MESSAGE_NAMES['dependencies.install'],
   MESSAGE_NAMES['dependencies.uninstall'],

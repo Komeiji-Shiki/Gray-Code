@@ -663,7 +663,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     filePath: d.filePath,
                     toolId: d.toolId,
                     diffGuardWarning: d.diffGuardWarning,
-                    diffGuardDeletePercent: d.diffGuardDeletePercent
+                    diffGuardDeletePercent: d.diffGuardDeletePercent,
+                    writeReady: d.writeReady === true,
+                    autoSaveAt: d.autoSaveAt,
+                    autoSaveDelay: d.scheduledAutoSaveDelay,
+                    isProcessing: diffManager.isDiffActionInProgress(d.id)
                 })),
                 allProcessed
             });
