@@ -51,6 +51,9 @@ describe('SubAgent executor 终态收敛', () => {
         subAgentConcurrencyLimiter.release('queue_holder_1');
         subAgentConcurrencyLimiter.release('queue_holder_2');
         subAgentConcurrencyLimiter.release('queue_holder_3');
+        subAgentConcurrencyLimiter.release('run_global_runtime');
+        subAgentConcurrencyLimiter.release('run_per_agent_runtime');
+        subAgentConcurrencyLimiter.release('run_runtime_unlimited');
     });
 
     test('超出最大迭代次数时发出 run_failed 并返回 runId', async () => {
@@ -140,11 +143,93 @@ describe('SubAgent executor 终态收敛', () => {
                 agentType: 'tester',
                 prompt: 'x',
                 runId: 'run_timer'
-            });
+   });
 
             expect(result.runId).toBe('run_timer');
             // 泄漏的话这里会残留一个 500ms 轮询 interval
             expect(jest.getTimerCount()).toBe(timersBefore);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    /** 无限流式响应：每 1s yield 一个文本 chunk（挂起期间可被超时轮询 abort） */
+    function hangingStream(): AsyncGenerator<{ delta: { text: string }[] }> {
+        async function* stream() {
+            while (true) {
+                yield { delta: [{ text: 'tick' }] };
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+        return stream();
+    }
+
+    test('per-agent 未配置 maxRuntime 时继承全局 defaultMaxRuntimeSeconds（超时生效）', async () => {
+        jest.useFakeTimers();
+        try {
+            // 无限流每 1s 一个 chunk；全局上限 1s → 1000ms 轮询到超时后 abort 并结算
+            const generate = jest.fn(() => hangingStream());
+            const context: SubAgentExecutorContext = {
+                ...createContext(),
+                channelManager: { generate } as any,
+                settingsManager: { getSubAgentsConfig: () => ({ defaultMaxRuntimeSeconds: 1 }) } as any
+            };
+            const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 100, maxRuntime: undefined }), context);
+            const runPromise = executor({ agentType: 'tester', prompt: 'x', runId: 'run_global_runtime' });
+            await jest.advanceTimersByTimeAsync(3000);
+            const result = await runPromise;
+
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Exceeded maximum runtime (1s)');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('per-agent maxRuntime 优先于全局 defaultMaxRuntimeSeconds', async () => {
+        jest.useFakeTimers();
+        try {
+            const generate = jest.fn(() => hangingStream());
+            const context: SubAgentExecutorContext = {
+                ...createContext(),
+                channelManager: { generate } as any,
+                settingsManager: { getSubAgentsConfig: () => ({ defaultMaxRuntimeSeconds: 1 }) } as any
+            };
+            // per-agent maxRuntime=3 > 全局 1 → 以 per-agent 为准（3000ms 才超时）
+            const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 100, maxRuntime: 3 }), context);
+            const runPromise = executor({ agentType: 'tester', prompt: 'x', runId: 'run_per_agent_runtime' });
+            await jest.advanceTimersByTimeAsync(5000);
+            const result = await runPromise;
+
+            expect(result.success).toBe(false);
+            expect(result.error).toContain('Exceeded maximum runtime (3s)');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('全局 defaultMaxRuntimeSeconds=-1 表示无限制，run 不被超时中止', async () => {
+        jest.useFakeTimers();
+        try {
+            // 有限流：2 个 chunk 后自然结束 → 无工具调用 → 正常完成，全程无超时
+            async function* shortStream() {
+                yield { delta: [{ text: 'a' }] };
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                yield { delta: [{ text: 'b' }] };
+            }
+            const generate = jest.fn(() => shortStream());
+            const context: SubAgentExecutorContext = {
+                ...createContext(),
+                channelManager: { generate } as any,
+                settingsManager: { getSubAgentsConfig: () => ({ defaultMaxRuntimeSeconds: -1 }) } as any
+            };
+            const executor = createDefaultExecutor(createSubAgentConfig({ maxIterations: 100, maxRuntime: undefined }), context);
+            const runPromise = executor({ agentType: 'tester', prompt: 'x', runId: 'run_runtime_unlimited' });
+            await jest.advanceTimersByTimeAsync(5000);
+            const result = await runPromise;
+
+            expect(result.success).toBe(true);
+            expect(result.error).toBeUndefined();
         } finally {
             jest.useRealTimers();
         }

@@ -1763,6 +1763,8 @@ const en: LanguageMessages = {
                 queueTimeoutSeconds: 'Queue Timeout (seconds)',
                 queueTimeoutSecondsHint: 'How long a sub-agent waits in the concurrency queue before it fails (-1 for unlimited, default 600)',
                 queueTimeoutSecondsInvalid: 'Enter -1 or a positive integer',
+                defaultMaxRuntimeSeconds: 'Max Runtime (seconds)',
+                defaultMaxRuntimeSecondsHint: 'Max wall-clock runtime for sub-agents and General Worker without their own maxRuntime (-1 for unlimited, default 1800 = 30 min)',
                 generalWorker: 'Enable General Worker (easy mode)',
                 generalWorkerHint: 'Lets the main model dispatch zero-config "General Worker" agents that inherit the current channel and full tool permissions; the model decides how many to use, no manual agent setup needed',
                 basicInfo: 'Basic Info',
