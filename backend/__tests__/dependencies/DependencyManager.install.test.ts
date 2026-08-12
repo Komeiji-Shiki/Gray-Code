@@ -12,17 +12,18 @@ import * as os from 'os';
 import * as path from 'path';
 import { DependencyManager } from '../../modules/dependencies/DependencyManager';
 
-// 模拟 child_process.exec：
-// DependencyManager 使用 promisify(childProcess.exec)，promisify 依据 fn.length
-// 决定传给回调前的参数个数，真实 exec.length === 2 (command, options)，这里保持一致。
+// 模拟 child_process.execFile：
+// DependencyManager 使用 promisify(childProcess.execFile)，promisify 依据 fn.length
+// 决定传给回调前的参数个数，真实 execFile.length === 4 (file, args, options, callback)，
+// 这里保持一致，确保 (file, args, options) 三个参数能正确传递。
 jest.mock('child_process', () => {
     const actual = jest.requireActual('child_process');
-    const exec = jest.fn();
-    Object.defineProperty(exec, 'length', { value: 2 });
-    return { ...actual, exec };
+    const execFile = jest.fn();
+    Object.defineProperty(execFile, 'length', { value: 4 });
+    return { ...actual, execFile };
 });
 
-const execMock = childProcess.exec as unknown as jest.Mock;
+const execMock = childProcess.execFile as unknown as jest.Mock;
 
 describe('DependencyManager.install', () => {
     let limcodeDir: string;
@@ -44,7 +45,7 @@ describe('DependencyManager.install', () => {
 
     /** 模拟 npm install 成功：在 options.cwd（临时目录）下生成 node_modules/sharp */
     function mockNpmSuccess(delayMs = 0): void {
-        execMock.mockImplementation((command: string, options: any, callback: any) => {
+        execMock.mockImplementation((file: string, args: string[], options: any, callback: any) => {
             const tempDir = options?.cwd as string;
             const done = () => {
                 const pkgDir = path.join(tempDir, 'node_modules', 'sharp');
@@ -92,7 +93,7 @@ describe('DependencyManager.install', () => {
     });
 
     test('安装失败：返回 false、不标记已安装、清理临时目录', async () => {
-        execMock.mockImplementation((command: string, options: any, callback: any) => {
+        execMock.mockImplementation((file: string, args: string[], options: any, callback: any) => {
             callback(new Error('npm install failed (mock)'), '', '');
         });
         const mgr = createManager();

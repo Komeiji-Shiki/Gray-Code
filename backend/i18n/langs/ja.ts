@@ -29,7 +29,10 @@ const ja: BackendLanguageMessages = {
                 topPRange: 'top_p は 0.0 〜 1.0 の範囲でなければなりません',
                 topKMin: 'top_k は 0 以上でなければなりません',
                 thinkingBudgetMin: 'thinking.budget_tokens は 1024 以上でなければなりません',
-                unsupportedType: 'サポートされていないチャンネルタイプ: {type}'
+                unsupportedType: 'サポートされていないチャンネルタイプ: {type}',
+                retryCountInvalid: 'retryCount は 0 以上の整数である必要があります',
+                retryIntervalInvalid: 'retryInterval は正の数である必要があります',
+                timeoutInvalid: 'timeout は正の数である必要があります'
             }
         },
 
@@ -126,6 +129,44 @@ const ja: BackendLanguageMessages = {
                 migratingConversations: '会話を移行中...',
                 migratingCheckpoints: 'チェックポイントを移行中...',
                 migratingConfigs: '設定を移行中...'
+            },
+            exporter: {
+                parseFailed: 'エクスポートファイルの解析に失敗しました：{error}',
+                invalidRoot: 'エクスポートファイルの形式が無効です：ルート要素はオブジェクトである必要があります',
+                missingVersion: 'エクスポートファイルに version フィールドがありません',
+                unsupportedVersion: 'サポートされていないエクスポートファイルバージョン：{version}（現在サポートされているのは {supported} のみ）',
+                missingChannelConfigs: 'エクスポートファイルに channelConfigs 配列がありません',
+                missingMcpServers: 'エクスポートファイルに mcpServers 配列がありません',
+                missingSkills: 'エクスポートファイルに skills 配列がありません',
+                missingVscodeSettings: 'エクスポートファイルに vscodeSettings オブジェクトがありません',
+                importVscodeSettingsFailed: 'VSCode 設定のインポートに失敗しました：{error}',
+                importChannelConfigsFailed: 'チャンネル設定のインポートに失敗しました：{error}',
+                importMcpServersFailed: 'MCP サーバー設定のインポートに失敗しました：{error}',
+                importSkillsFailed: 'スキルのインポートに失敗しました：{error}',
+                reloadSettingsFailed: '設定の再読み込みに失敗しました：{error}',
+                partialVscodeSettingsImportFailed: '一部の VSCode 設定のインポートに失敗しました：{detail}',
+                channelConfigItemError: 'チャンネル設定 "{name}": {error}',
+                partialChannelConfigsImportFailed: '一部のチャンネル設定のインポートに失敗しました：{detail}',
+                mcpServerItemError: 'MCP サーバー "{name}": {error}',
+                partialMcpServersImportFailed: '一部の MCP サーバー設定のインポートに失敗しました：{detail}',
+                skillItemError: 'スキル "{name}": {error}',
+                skillRestoreError: 'スキル "{name}" の有効状態の復元：{error}',
+                skillRestoreFailuresSummary: '{count} 件のスキルの有効状態の復元に失敗しました（ファイルはインポート済み）：{detail}',
+                partialSkillsImportFailed: '一部のスキルのインポートに失敗しました：{detail}'
+            }
+        },
+
+        update: {
+            errors: {
+                cannotReadVersion: '現在の拡張機能バージョンを読み取れませんでした',
+                invalidDownloadUrl: '不正なダウンロードURLです：このリポジトリの GitHub Releases の vsix パッケージのみ受け付けます。',
+                invalidVersion: '不正なバージョン番号：{version}',
+                downloadFailed: 'ダウンロードに失敗しました：HTTP {status} {statusText}',
+                emptyDownload: 'ダウンロード内容が空です。vsix が破損している可能性があります。',
+                downloadTimeout: 'ダウンロードがタイムアウトしました（{seconds} 秒超過）',
+                apiError: 'GitHub Releases API が {status} {statusText} を返しました',
+                apiResponseInvalid: 'GitHub Releases API の応答形式が不正です',
+                checkTimeout: '更新チェックがタイムアウトしました（{seconds} 秒超過）'
             }
         },
 
@@ -188,7 +229,8 @@ const ja: BackendLanguageMessages = {
                 noResponseBody: 'レスポンスボディがありません',
                 emptyResponse: 'モデルが空の応答を返しました',
                 streamTruncated: 'ストリーム出力が途中で切断されました（完了マーカー未受信）。ネットワークまたはプロキシの中断が原因の可能性があります',
-                streamBufferOverflow: 'ストリームバッファがサイズ上限を超えました：上流データを解析できませんでした（バッファが消費されず増加し続けました）'
+                streamBufferOverflow: 'ストリームバッファがサイズ上限を超えました：上流データを解析できませんでした（バッファが消費されず増加し続けました）',
+                invalidRetryConfig: '無効な再試行設定: {configId}（retryCount は 0 以上の整数である必要があります）'
             },
             modelList: {
                 errors: {

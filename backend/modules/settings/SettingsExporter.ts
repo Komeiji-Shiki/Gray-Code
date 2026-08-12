@@ -18,6 +18,7 @@ import type { McpManager } from '../mcp';
 import type { McpServerConfig } from '../mcp';
 import { SkillsManager } from '../skills';
 import { ALL_CONFIG_KEYS } from './VSCodeSettingsStorage';
+import { t } from '../../i18n';
 // 直接从定义文件导入：聚合入口 ./types 在本模块加载链中存在循环依赖（types → checkpointTypes
 // → CheckpointManager → diffManager → … → settings/index → SettingsExporter），模块执行时
 // MACHINE_SCOPE_KEYS 会是 undefined——旧写法 new Set(undefined) 恰好不抛错，导致
@@ -129,11 +130,11 @@ export class SettingsExporter {
         try {
             data = JSON.parse(json);
         } catch (error: any) {
-            throw new Error(`解析导出文件失败：${error.message}`);
+            throw new Error(t('modules.settings.exporter.parseFailed', { error: error.message }));
         }
 
         if (!data || typeof data !== 'object') {
-            throw new Error('导出文件格式无效：根元素必须是对象');
+            throw new Error(t('modules.settings.exporter.invalidRoot'));
         }
 
         const obj = data as Record<string, unknown>;
@@ -143,28 +144,31 @@ export class SettingsExporter {
 
         // 基本结构验证
         if (!obj.version || typeof obj.version !== 'string') {
-            throw new Error('导出文件缺少 version 字段');
+            throw new Error(t('modules.settings.exporter.missingVersion'));
         }
 
         // 版本兼容性校验：不支持的导出版本给出明确错误，避免按错误结构静默导入
         if (obj.version !== EXPORT_FORMAT_VERSION) {
-            throw new Error(`不支持的导出文件版本：${obj.version}（当前仅支持 ${EXPORT_FORMAT_VERSION}）`);
+            throw new Error(t('modules.settings.exporter.unsupportedVersion', {
+                version: String(obj.version),
+                supported: EXPORT_FORMAT_VERSION
+            }));
         }
 
         if (!Array.isArray(obj.channelConfigs)) {
-            throw new Error('导出文件缺少 channelConfigs 数组');
+            throw new Error(t('modules.settings.exporter.missingChannelConfigs'));
         }
 
         if (!Array.isArray(obj.mcpServers)) {
-            throw new Error('导出文件缺少 mcpServers 数组');
+            throw new Error(t('modules.settings.exporter.missingMcpServers'));
         }
 
         if (!Array.isArray(obj.skills)) {
-            throw new Error('导出文件缺少 skills 数组');
+            throw new Error(t('modules.settings.exporter.missingSkills'));
         }
 
         if (!obj.vscodeSettings || typeof obj.vscodeSettings !== 'object') {
-            throw new Error('导出文件缺少 vscodeSettings 对象');
+            throw new Error(t('modules.settings.exporter.missingVscodeSettings'));
         }
 
         return obj as unknown as SettingsExportData;
@@ -244,7 +248,7 @@ export class SettingsExporter {
             });
             result.imported.vscodeSettings = true;
         } catch (error: any) {
-            result.errors.push(`导入 VSCode 设置失败：${error.message}`);
+            result.errors.push(t('modules.settings.exporter.importVscodeSettingsFailed', { error: error.message }));
         }
 
         // 2. 导入渠道配置
@@ -255,7 +259,7 @@ export class SettingsExporter {
                 });
                 result.imported.channelConfigs = count;
             } catch (error: any) {
-                result.errors.push(`导入渠道配置失败：${error.message}`);
+                result.errors.push(t('modules.settings.exporter.importChannelConfigsFailed', { error: error.message }));
             }
         }
 
@@ -267,7 +271,7 @@ export class SettingsExporter {
                 });
                 result.imported.mcpServers = count;
             } catch (error: any) {
-                result.errors.push(`导入 MCP 服务器配置失败：${error.message}`);
+                result.errors.push(t('modules.settings.exporter.importMcpServersFailed', { error: error.message }));
             }
         }
 
@@ -279,7 +283,7 @@ export class SettingsExporter {
                 });
                 result.imported.skills = count;
             } catch (error: any) {
-                result.errors.push(`导入 Skills 失败：${error.message}`);
+                result.errors.push(t('modules.settings.exporter.importSkillsFailed', { error: error.message }));
             }
         }
 
@@ -287,7 +291,7 @@ export class SettingsExporter {
         try {
             await this.settingsManager.reloadAndNotify();
         } catch (error: any) {
-            result.errors.push(`重载设置失败：${error.message}`);
+            result.errors.push(t('modules.settings.exporter.reloadSettingsFailed', { error: error.message }));
         }
 
         if (result.errors.length > 0) {
@@ -371,7 +375,7 @@ export class SettingsExporter {
         }
 
         if (failures.length > 0) {
-            throw new Error(`部分 VSCode 设置导入失败：${failures.join('; ')}`);
+            throw new Error(t('modules.settings.exporter.partialVscodeSettingsImportFailed', { detail: failures.join('; ') }));
         }
     }
 
@@ -408,12 +412,15 @@ export class SettingsExporter {
                 imported++;
             } catch (error: any) {
                 console.error(`[SettingsExporter] Failed to import channel config ${cfg.id}:`, error);
-                failures.push(`渠道配置 "${cfg.name || cfg.id}": ${error.message}`);
+                failures.push(t('modules.settings.exporter.channelConfigItemError', {
+                    name: String(cfg.name || cfg.id),
+                    error: error.message
+                }));
             }
         }
 
         if (failures.length > 0) {
-            throw new Error(`部分渠道配置导入失败：${failures.join('; ')}`);
+            throw new Error(t('modules.settings.exporter.partialChannelConfigsImportFailed', { detail: failures.join('; ') }));
         }
 
         return imported;
@@ -446,12 +453,15 @@ export class SettingsExporter {
                 imported++;
             } catch (error: any) {
                 console.error(`[SettingsExporter] Failed to import MCP server ${server.id}:`, error);
-                failures.push(`MCP 服务器 "${server.name || server.id}": ${error.message}`);
+                failures.push(t('modules.settings.exporter.mcpServerItemError', {
+                    name: String(server.name || server.id),
+                    error: error.message
+                }));
             }
         }
 
         if (failures.length > 0) {
-            throw new Error(`部分 MCP 服务器配置导入失败：${failures.join('; ')}`);
+            throw new Error(t('modules.settings.exporter.partialMcpServersImportFailed', { detail: failures.join('; ') }));
         }
 
         return imported;
@@ -524,7 +534,10 @@ export class SettingsExporter {
                 importedIds.push(skillData.id);
             } catch (error: any) {
                 console.error(`[SettingsExporter] Failed to import skill ${skillData.id}:`, error);
-                failures.push(`Skill "${skillData.name || skillData.id}": ${error.message}`);
+                failures.push(t('modules.settings.exporter.skillItemError', {
+                    name: String(skillData.name || skillData.id),
+                    error: error.message
+                }));
             }
         }
 
@@ -551,18 +564,24 @@ export class SettingsExporter {
                     console.error(`[SettingsExporter] Failed to restore enabled state for skill ${id}:`, error);
                     // 仅记录不阻断：导入本身已成功（imported 计数已含该项），整体误报
                     // 「部分 Skill 导入失败」会让用户误以为 skill 未导入；幂等可重试
-                    restoreFailures.push(`Skill "${skillData.name || id}" 启用状态恢复：${error.message}`);
+                    restoreFailures.push(t('modules.settings.exporter.skillRestoreError', {
+                        name: String(skillData.name || id),
+                        error: error.message
+                    }));
                 }
             }
         }
 
         if (restoreFailures.length > 0) {
-            console.warn(`[SettingsExporter] ${restoreFailures.length} 个 Skill 启用状态恢复失败（文件已导入）：${restoreFailures.join('; ')}`);
+            console.warn(t('modules.settings.exporter.skillRestoreFailuresSummary', {
+                count: restoreFailures.length,
+                detail: restoreFailures.join('; ')
+            }));
         }
 
         if (failures.length > 0) {
             // 部分计数随错误带出：调用方即使收到异常也能获知已成功导入的数量
-            const error = new Error(`部分 Skill 导入失败：${failures.join('; ')}`) as Error & { importedCount?: number };
+            const error = new Error(t('modules.settings.exporter.partialSkillsImportFailed', { detail: failures.join('; ') })) as Error & { importedCount?: number };
             error.importedCount = imported;
             throw error;
         }

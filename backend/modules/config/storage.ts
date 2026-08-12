@@ -95,14 +95,14 @@ export class MemoryStorageAdapter implements ConfigStorageAdapter {
  * 
  * const storage = new MementoStorageAdapter(
  *     context.globalState,
- *     'limcode.configs'
+ *     'graycode.configs'
  * );
  * ```
  */
 export class MementoStorageAdapter implements ConfigStorageAdapter {
     constructor(
         private memento: any,  // vscode.Memento
-        private key: string = 'limcode.configs'
+        private key: string = 'graycode.configs'
     ) {}
 
     /**

@@ -14,7 +14,7 @@ function createHistory(text = 'hello'): Content[] {
 }
 
 function expectedAnthropicUserId(domainId: string): string {
-    return `limcode-conversation-${createHash('sha256').update(domainId, 'utf8').digest('hex')}`;
+    return `graycode-conversation-${createHash('sha256').update(domainId, 'utf8').digest('hex')}`;
 }
 
 describe('AnthropicFormatter metadata.user_id', () => {

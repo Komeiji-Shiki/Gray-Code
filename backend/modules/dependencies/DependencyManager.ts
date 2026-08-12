@@ -15,7 +15,7 @@ import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { t } from '../../i18n';
 
-const exec = promisify(childProcess.exec);
+const execFile = promisify(childProcess.execFile);
 const mkdir = promisify(fs.mkdir);
 const readdir = promisify(fs.readdir);
 const statAsync = promisify(fs.stat);
@@ -354,13 +354,19 @@ export class DependencyManager {
             });
             
             // 使用 npm 安装
+            // argv 数组直传（execFile 不经过 shell）：tempDir 来自可配置存储路径，
+            // 字符串拼接进 shell 命令会受引号/$()/& 等特殊字符影响（注入面/命令异常）；
+            // Windows 上 npm 实际是 npm.cmd，execFile 不经过 shell 也能解析 .cmd 启动器。
             // maxBuffer 放大到 64MB：npm 输出较多时不会被默认 1MB 上限误杀
-            const { stdout, stderr } = await exec(
-                `npm install --prefix "${tempDir}" --no-save`,
+            const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+            const { stdout, stderr } = await execFile(
+                npmCommand,
+                ['install', '--prefix', tempDir, '--no-save'],
                 {
                     cwd: tempDir,
                     timeout: 300000,  // 5分钟超时
-                    maxBuffer: 64 * 1024 * 1024
+                    maxBuffer: 64 * 1024 * 1024,
+                    windowsHide: true
                 }
             );
             

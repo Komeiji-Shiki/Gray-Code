@@ -18,6 +18,8 @@ import * as path from 'path';
 // SettingsStorage 接口定义在 SettingsCore.ts，SettingsManager 仅 re-export 该类型）
 import type { SettingsStorage } from './SettingsCore';
 import type { GlobalSettings } from './types';
+import { t } from '../../i18n';
+import { deepEqual } from '../../core/deepEqual';
 
 export interface VSCodeSettingsStorageOptions {
     /**
@@ -61,32 +63,8 @@ type ConfigKey = SyncableKey | MachineKey;
 /** save 时需要同步的全部配置键（syncable + machine） */
 export const ALL_CONFIG_KEYS: readonly ConfigKey[] = [...SYNCABLE_KEYS, ...MACHINE_KEYS];
 
-/**
- * 深比较两个配置值（对象按键集合递归比较，数组按顺序比较）。
- * 用于 save 时判断某键是否真的变化，避免无谓的 config.update 与 Settings Sync。
- */
-function deepEqual(a: unknown, b: unknown): boolean {
-    if (a === b) return true;
-    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
-        return false;
-    }
-    if (Array.isArray(a) !== Array.isArray(b)) {
-        return false;
-    }
-    if (Array.isArray(a)) {
-        return a.length === (b as unknown[]).length
-            && (a as unknown[]).every((v, i) => deepEqual(v, (b as unknown[])[i]));
-    }
-    const aKeys = Object.keys(a as Record<string, unknown>);
-    const bKeys = Object.keys(b as Record<string, unknown>);
-    if (aKeys.length !== bKeys.length) {
-        return false;
-    }
-    return aKeys.every(k => deepEqual(
-        (a as Record<string, unknown>)[k],
-        (b as Record<string, unknown>)[k]
-    ));
-}
+// 深比较使用 core/deepEqual（与 SettingsCore.notifySystemPromptChangeIfNeeded 共用同一实现），
+// 用于 save 时判断某键是否真的变化，避免无谓的 config.update 与 Settings Sync。
 
 /**
  * 深拷贝配置值（快照用）。
@@ -208,7 +186,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
                 this.lastSavedSnapshot = nextSnapshot;
             } catch (error) {
                 console.error('[VSCodeSettingsStorage] Failed to save settings:', error);
-                throw new Error(`保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
+                throw new Error(`${t('modules.settings.errors.saveFailed')}: ${error instanceof Error ? error.message : String(error)}`);
             }
         });
 
@@ -334,7 +312,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             console.error('[VSCodeSettingsStorage] Failed to read legacy settings file:', error);
             // 向用户显示警告，给予手动恢复的机会
             vscode.window.showWarningMessage(
-                `LimCode: 读取旧版设置文件失败，配置可能无法迁移。请检查文件: ${legacyFile}`
+                `GrayCode: 读取旧版设置文件失败，配置可能无法迁移。请检查文件: ${legacyFile}`
             );
             return null;
         }
@@ -346,7 +324,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             console.error('[VSCodeSettingsStorage] Failed to parse legacy settings file:', error);
             // 向用户显示警告
             vscode.window.showWarningMessage(
-                `LimCode: 解析旧版设置文件失败(JSON Error)，配置可能无法迁移。请检查文件: ${legacyFile}`
+                `GrayCode: 解析旧版设置文件失败(JSON Error)，配置可能无法迁移。请检查文件: ${legacyFile}`
             );
             return null;
         }

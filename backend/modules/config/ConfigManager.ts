@@ -763,6 +763,29 @@ export class ConfigManager {
             errors.push(t('modules.config.validation.typeRequired'));
         }
         
+        // 重试与超时参数校验：配置来源可能绕过 TS 类型（webview/导入），非法值会令
+        // ChannelManager 的 totalAttempts 为 NaN/负数（零次尝试并误报网络错误）或
+        // setTimeout 立即/负值触发（请求秒超时）。此处只报错不修改，消费端另有钳制兜底。
+        const retryLike = config as { retryCount?: unknown; retryInterval?: unknown; timeout?: unknown };
+        if (retryLike.retryCount !== undefined &&
+            (typeof retryLike.retryCount !== 'number' ||
+                !Number.isInteger(retryLike.retryCount) ||
+                retryLike.retryCount < 0)) {
+            errors.push(t('modules.config.validation.retryCountInvalid'));
+        }
+        if (retryLike.retryInterval !== undefined &&
+            (typeof retryLike.retryInterval !== 'number' ||
+                !Number.isFinite(retryLike.retryInterval) ||
+                retryLike.retryInterval <= 0)) {
+            errors.push(t('modules.config.validation.retryIntervalInvalid'));
+        }
+        if (retryLike.timeout !== undefined &&
+            (typeof retryLike.timeout !== 'number' ||
+                !Number.isFinite(retryLike.timeout) ||
+                retryLike.timeout <= 0)) {
+            errors.push(t('modules.config.validation.timeoutInvalid'));
+        }
+        
         // 根据类型进行特定验证
         switch (config.type) {
             case 'gemini':

@@ -29,7 +29,10 @@ const en: BackendLanguageMessages = {
                 topPRange: 'top_p must be between 0.0 and 1.0',
                 topKMin: 'top_k must be greater than or equal to 0',
                 thinkingBudgetMin: 'thinking.budget_tokens must be at least 1024',
-                unsupportedType: 'Unsupported channel type: {type}'
+                unsupportedType: 'Unsupported channel type: {type}',
+                retryCountInvalid: 'retryCount must be a non-negative integer',
+                retryIntervalInvalid: 'retryInterval must be a positive number',
+                timeoutInvalid: 'timeout must be a positive number'
             }
         },
 
@@ -126,6 +129,44 @@ const en: BackendLanguageMessages = {
                 migratingConversations: 'Migrating conversations...',
                 migratingCheckpoints: 'Migrating checkpoints...',
                 migratingConfigs: 'Migrating configs...'
+            },
+            exporter: {
+                parseFailed: 'Failed to parse export file: {error}',
+                invalidRoot: 'Invalid export file format: root element must be an object',
+                missingVersion: 'Export file is missing the version field',
+                unsupportedVersion: 'Unsupported export file version: {version} (only {supported} is supported)',
+                missingChannelConfigs: 'Export file is missing the channelConfigs array',
+                missingMcpServers: 'Export file is missing the mcpServers array',
+                missingSkills: 'Export file is missing the skills array',
+                missingVscodeSettings: 'Export file is missing the vscodeSettings object',
+                importVscodeSettingsFailed: 'Failed to import VSCode settings: {error}',
+                importChannelConfigsFailed: 'Failed to import channel configs: {error}',
+                importMcpServersFailed: 'Failed to import MCP server configs: {error}',
+                importSkillsFailed: 'Failed to import skills: {error}',
+                reloadSettingsFailed: 'Failed to reload settings: {error}',
+                partialVscodeSettingsImportFailed: 'Some VSCode settings failed to import: {detail}',
+                channelConfigItemError: 'Channel config "{name}": {error}',
+                partialChannelConfigsImportFailed: 'Some channel configs failed to import: {detail}',
+                mcpServerItemError: 'MCP server "{name}": {error}',
+                partialMcpServersImportFailed: 'Some MCP server configs failed to import: {detail}',
+                skillItemError: 'Skill "{name}": {error}',
+                skillRestoreError: 'Skill "{name}" enabled state restore: {error}',
+                skillRestoreFailuresSummary: 'Failed to restore enabled state for {count} skill(s) (files already imported): {detail}',
+                partialSkillsImportFailed: 'Some skills failed to import: {detail}'
+            }
+        },
+
+        update: {
+            errors: {
+                cannotReadVersion: 'Failed to read the current extension version',
+                invalidDownloadUrl: 'Invalid download URL: only vsix packages from this repository\'s GitHub Releases are accepted.',
+                invalidVersion: 'Invalid version: {version}',
+                downloadFailed: 'Download failed: HTTP {status} {statusText}',
+                emptyDownload: 'Downloaded content is empty; the vsix may be corrupted.',
+                downloadTimeout: 'Download timed out (exceeded {seconds} seconds)',
+                apiError: 'GitHub Releases API returned {status} {statusText}',
+                apiResponseInvalid: 'Unexpected GitHub Releases API response format',
+                checkTimeout: 'Update check timed out (exceeded {seconds} seconds)'
             }
         },
 
@@ -188,7 +229,8 @@ const en: BackendLanguageMessages = {
                 noResponseBody: 'No response body',
                 emptyResponse: 'The model returned an empty response',
                 streamTruncated: 'Stream output was truncated (no completion marker received), possibly due to network/proxy interruption',
-                streamBufferOverflow: 'Stream buffer exceeded the size limit: upstream data could not be parsed (buffer kept growing without being consumed)'
+                streamBufferOverflow: 'Stream buffer exceeded the size limit: upstream data could not be parsed (buffer kept growing without being consumed)',
+                invalidRetryConfig: 'Invalid retry configuration: {configId} (retryCount must be a non-negative integer)'
             },
             modelList: {
                 errors: {

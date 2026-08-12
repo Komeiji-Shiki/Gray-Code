@@ -157,6 +157,12 @@ export class StdioMcpClient extends EventEmitter {
      * 启动服务器进程并初始化
      */
     async connect(): Promise<void> {
+        // 重入保护：同一实例并发 connect 时第二次 spawn 会覆盖 this.process 并重新
+        // 注册处理器，第一个子进程失去引用（既不被 kill、stdout 也无人消费），造成
+        // 进程与管道泄漏。必须先 disconnect()（其 cleanup 置 process=null）才能重连。
+        if (this.process) {
+            throw new Error('Already connected or connecting. Call disconnect() before reconnecting.');
+        }
         // 启动子进程
         const processEnv = {
             ...process.env,

@@ -14,7 +14,7 @@ function createHistory(text = 'hello'): Content[] {
 }
 
 function expectedDeepSeekUserId(conversationId: string): string {
-    return `limcode-conversation-${createHash('sha256').update(conversationId, 'utf8').digest('hex')}`;
+    return `graycode-conversation-${createHash('sha256').update(conversationId, 'utf8').digest('hex')}`;
 }
 
 describe('OpenAIFormatter DeepSeek user_id', () => {

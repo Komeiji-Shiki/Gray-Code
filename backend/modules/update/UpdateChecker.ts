@@ -17,6 +17,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createProxyFetch } from '../channel';
+import { t } from '../../i18n';
 
 /** GitHub 仓库（owner/repo） */
 export const UPDATE_REPO = 'Komeiji-Shiki/Gray-Code';
@@ -294,7 +295,7 @@ export class UpdateChecker {
                 const current = this.getCurrentVersion();
                 if (!current) {
                     // 当前扩展版本读取失败：置 error 而非静默 upToDate（否则会误导用户以为已是最新）
-                    throw new Error('无法读取当前扩展版本');
+                    throw new Error(t('modules.update.errors.cannotReadVersion'));
                 }
                 // nightly 版本号为 <semver>-nightly.<YYYYMMDD>（如 1.4.6-nightly.20260809），
                 // compareVersions 将其视为「高于同主版本正式版」的最新构建，
@@ -356,10 +357,10 @@ export class UpdateChecker {
         // 安全校验：只允许下载本仓库 GitHub Releases 的 vsix，且版本号符合合法格式，
         // 防止前端传入任意 URL / 版本拼出恶意下载路径（本地代码执行路径）
         if (!update.vsixAssetUrl || !update.vsixAssetUrl.startsWith(`https://github.com/${UPDATE_REPO}/releases/`)) {
-            throw new Error('非法下载地址：仅接受本仓库 GitHub Releases 的 vsix 安装包。');
+            throw new Error(t('modules.update.errors.invalidDownloadUrl'));
         }
         if (!/^[\w.\-+]+$/.test(update.version)) {
-            throw new Error(`非法版本号：${update.version}`);
+            throw new Error(t('modules.update.errors.invalidVersion', { version: update.version }));
         }
         const dir = path.join(this.options.globalStoragePath, 'update');
         await fs.mkdir(dir, { recursive: true });
@@ -371,7 +372,10 @@ export class UpdateChecker {
         try {
             const res = await this.getFetch()(update.vsixAssetUrl, { signal: controller.signal });
             if (!res.ok) {
-                throw new Error(`下载失败：HTTP ${res.status} ${res.statusText}`);
+                throw new Error(t('modules.update.errors.downloadFailed', {
+                    status: res.status,
+                    statusText: res.statusText
+                }));
             }
             // 先写 .tmp 再 rename：中断/失败不残留半成品 .vsix（防旧版本文件被当成可用包）
             if (res.body) {
@@ -383,7 +387,7 @@ export class UpdateChecker {
                         await fileHandle.write(chunk);
                     }
                     if ((await fileHandle.stat()).size === 0) {
-                        throw new Error('下载内容为空，vsix 可能已损坏。');
+                        throw new Error(t('modules.update.errors.emptyDownload'));
                     }
                 } finally {
                     await fileHandle.close();
@@ -392,16 +396,26 @@ export class UpdateChecker {
                 // 无流式响应体（如代理路径）：回退整包读取
                 const buf = Buffer.from(await res.arrayBuffer());
                 if (buf.length === 0) {
-                    throw new Error('下载内容为空，vsix 可能已损坏。');
+                    throw new Error(t('modules.update.errors.emptyDownload'));
                 }
                 await fs.writeFile(tmpTarget, buf);
+            }
+            // Windows 上 rename 无法覆盖已存在目标（EEXIST/EPERM）：同版本 vsix 已存在
+            // （首次下载后安装被拒/取消，再次安装同版本）时直接 rename 会失败。先删旧再
+            // rename（tmp 是完整文件，删旧窗口内最坏是 target 短暂缺失，下次下载重建）
+            try {
+                await fs.rm(target, { force: true });
+            } catch {
+                // 删除失败（文件锁/杀软等）：rename 仍会尝试并暴露真实错误
             }
             await fs.rename(tmpTarget, target);
         } catch (error) {
             // 超时中止（代理/原生 fetch 路径均以 AbortError 呈现）：给出明确的超时文案，
             // 而不是底层 'Request cancelled'/'This operation was aborted'
             if (error instanceof Error && error.name === 'AbortError') {
-                throw new Error(`下载超时（超过 ${Math.round(UPDATE_DOWNLOAD_TIMEOUT_MS / 1000)} 秒）`);
+                throw new Error(t('modules.update.errors.downloadTimeout', {
+                    seconds: Math.round(UPDATE_DOWNLOAD_TIMEOUT_MS / 1000)
+                }));
             }
             throw error;
         } finally {
@@ -490,18 +504,23 @@ export class UpdateChecker {
                 signal: controller.signal,
             });
             if (!res.ok) {
-                throw new Error(`GitHub Releases API 返回 ${res.status} ${res.statusText}`);
+                throw new Error(t('modules.update.errors.apiError', {
+                    status: res.status,
+                    statusText: res.statusText
+                }));
             }
             const info = parseReleaseResponse(await res.json(), channel);
             if (!info) {
-                throw new Error('GitHub Releases API 响应格式异常');
+                throw new Error(t('modules.update.errors.apiResponseInvalid'));
             }
             return info;
         } catch (error) {
             // 超时中止（代理/原生 fetch 路径均以 AbortError 呈现）：给出明确的「检查超时」文案，
             // 与下载路径（downloadAndInstall）统一口径，而不是底层 'Request cancelled'/'This operation was aborted'
             if (error instanceof Error && error.name === 'AbortError') {
-                throw new Error(`检查超时（超过 ${Math.round(UPDATE_FETCH_TIMEOUT_MS / 1000)} 秒）`);
+                throw new Error(t('modules.update.errors.checkTimeout', {
+                    seconds: Math.round(UPDATE_FETCH_TIMEOUT_MS / 1000)
+                }));
             }
             throw error;
         } finally {

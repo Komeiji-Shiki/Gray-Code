@@ -45,11 +45,13 @@ export class UISettingsService {
             
             await this.core.storage.save(this.core.settings);
             
+            // 事件负载统一深拷贝（与 SettingsCore full/tools 事件口径一致）：
+            // newValue 直接引用 this.core.settings.ui 活对象，监听器原地修改会污染核心状态
             this.core.notifyChange({
                 type: 'ui',
                 path: 'ui',
-                oldValue,
-                newValue: this.core.settings.ui,
+                oldValue: this.core.cloneConfig(oldValue),
+                newValue: this.core.cloneConfig(this.core.settings.ui),
                 settings: this.core.cloneConfig(this.core.settings)
             });
         });

@@ -71,11 +71,14 @@ export class ProxySettingsService {
             
             await this.core.storage.save(this.core.settings);
             
+            // 事件负载统一深拷贝（与 SettingsCore full/tools 事件口径一致）：
+            // newValue 直接引用 this.core.settings.proxy 活对象，监听器原地修改会污染
+            // 内存中的权威设置并被下次 storage.save 持久化
             this.core.notifyChange({
                 type: 'proxy',
                 path: 'proxy',
-                oldValue,
-                newValue: this.core.settings.proxy,
+                oldValue: this.core.cloneConfig(oldValue),
+                newValue: this.core.cloneConfig(this.core.settings.proxy),
                 settings: this.core.cloneConfig(this.core.settings)
             });
         });

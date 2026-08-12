@@ -1348,6 +1348,9 @@ export class MemoryManager {
     async deleteRange(lo: number, hi: number): Promise<{ removed: number }> {
         const release = await this.lock.acquire();
         let T = 0;
+        // 声明在 try 外：return 位于 try/finally 块之后，块内 const 会脱离作用域；
+        // 默认值取请求区间长度，实际值在扫描结束后按跳过记录数修正
+        let actualRemoved = hi - lo + 1;
         try {
             // 输入校验：非整数/NaN 不得进入，避免 NaN 比较恒 false 导致静默全量重写；
             // 负数属于“越界”，交给下方 lo < 0 检查抛 “No memory at index”，语义更准确
@@ -1368,6 +1371,9 @@ export class MemoryManager {
             const handle = await fs.open(logPath, 'r');
             const outHandle = await fs.open(tmpPath, 'w');
             let outCount = 0;
+            // 区间内实际被跳过的空/损坏记录数：这些记录本就不存在/不可读，删除条数
+            // 与 newT 推演必须扣除它们，否则会与实际写回 tmp 的条数分叉（见下方）
+            let skippedInRange = 0;
             try {
                 // B-6: 分块读取（每次至多 CHUNK 条），避免百万条记忆时逐条 1KB read 的百万次系统调用。
                 // 物理索引对齐与空/损坏记录跳过语义与旧实现一致。
@@ -1384,13 +1390,20 @@ export class MemoryManager {
                         const idx = base + i;
                         const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
+                        const inRange = idx >= lo && idx <= hi;
                         // 遇空记录（损坏文件中的空洞）跳过而不是 break：保留其后仍有效的记录
-                        if (!str) continue;
-                        if (idx >= lo && idx <= hi) continue;
+                        if (!str) {
+                            if (inRange) skippedInRange++;
+                            continue;
+                        }
                         const parsed = parse(str);
                         if (!parsed) {
-                            continue; // B-9: 损坏行跳过（不重建），与 records() 解析口径一致
+                            // B-9: 损坏行跳过（不重建），与 records() 解析口径一致；
+                            // 区间内的损坏行计入「跳过」：实际删除数按真实可删记录统计
+                            if (inRange) skippedInRange++;
+                            continue;
                         }
+                        if (inRange) continue;
                         kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, rec));
                         outCount++;
                     }
@@ -1407,7 +1420,10 @@ export class MemoryManager {
             // 陈旧摘要会被 wake/zoom 当作权威数据展示（危险）。若先 rename LOG 再截断树，
             // 崩溃窗口内新 LOG + 旧摘要共存，已删记忆会在 wake 中“复活”且 pending() 认为
             // 已压缩永不重建。顺序反之后，崩溃窗口最多是“摘要缺失”，自愈安全。
-            const newT = T - (hi - lo + 1);
+            // 实际删除数 = 请求区间 - 区间内空/损坏记录：按真实条数推演 newT 与返回值，
+            // 保证与写回 tmp 的条数（= 后续 logLen()）一致，树摘要保留边界不错位
+            actualRemoved = (hi - lo + 1) - skippedInRange;
+            const newT = T - actualRemoved;
             for (let size = 2; size <= T; size *= 2) {
                 const p = this.treePath(size);
                 const keep = hi < T - 1 ? 0 : Math.floor(newT / size);
@@ -1431,7 +1447,7 @@ export class MemoryManager {
             release();
         }
 
-        return { removed: hi - lo + 1 };
+        return { removed: actualRemoved };
     }
 
     /**
@@ -1489,6 +1505,9 @@ export class MemoryManager {
             const handle = await fs.open(logPath, 'r');
             const outHandle = await fs.open(tmpPath, 'w');
             let outCount = 0;
+            // 目标 id 集合内实际被跳过的空/损坏记录数（与 deleteRange 同口径）：
+            // 删除条数与 newT 推演必须扣除它们，保证与写回 tmp 的条数一致
+            let skippedInRange = 0;
             try {
                 const CHUNK = 4096;
                 // 对齐必须按当前记录宽度（旧格式降级 320B/条）进行：按 LOG_REC=1024 对齐
@@ -1504,11 +1523,19 @@ export class MemoryManager {
                         const idx = base + i;
                         const slice = buf.subarray(i * rec, (i + 1) * rec);
                         const str = slice.toString('utf-8').trimEnd();
-                        // 空/损坏记录跳过语义与 deleteRange 一致
-                        if (!str) continue;
-                        if (toDelete.has(idx)) continue;
+                        const inTarget = toDelete.has(idx);
+                        // 空/损坏记录跳过语义与 deleteRange 一致；目标 id 内的空/损坏记录
+                        // 计入「跳过」，实际删除数按真实可删记录统计
+                        if (!str) {
+                            if (inTarget) skippedInRange++;
+                            continue;
+                        }
                         const parsed = parse(str);
-                        if (!parsed) continue;
+                        if (!parsed) {
+                            if (inTarget) skippedInRange++;
+                            continue;
+                        }
+                        if (inTarget) continue;
                         kept.push(pad(`#${outCount} ${parsed.date} ${parsed.text}`, rec));
                         outCount++;
                     }
@@ -1524,7 +1551,9 @@ export class MemoryManager {
             // 树摘要清理（与 deleteRange 多区间聚合后的最终语义一致）：
             // 仅当删除恰好构成一个覆盖日志尾部的单区间时保留其前缀块，
             // 否则全部清空——多区间/非尾部删除时任何块都可能因重编号而失效。
-            const newT = T - sorted.length;
+            // 实际删除数扣除目标 id 内的空/损坏记录（同 deleteRange 口径）
+            const actualRemoved = sorted.length - skippedInRange;
+            const newT = T - actualRemoved;
             const tailSingleRange = ranges.length === 1 && ranges[0][1] === T - 1;
             for (let size = 2; size <= T; size *= 2) {
                 const p = this.treePath(size);
@@ -1544,7 +1573,7 @@ export class MemoryManager {
 
             // 树清理完成后原子换 LOG（顺序与 deleteRange 一致：先清树、后换 LOG）
             await fs.rename(tmpPath, logPath);
-            return { removed: sorted.length };
+            return { removed: actualRemoved };
         } finally {
             release();
         }

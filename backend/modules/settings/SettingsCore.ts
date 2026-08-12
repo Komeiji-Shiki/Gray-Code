@@ -12,6 +12,7 @@ import type {
     SettingsChangeListener
 } from './types';
 import { DEFAULT_GLOBAL_SETTINGS } from './types';
+import { deepEqual } from '../../core/deepEqual';
 
 /**
  * 合并键黑名单：webview 消息直接透传进 updateSettings（SettingsHandler 无键白名单），
@@ -306,42 +307,16 @@ export class SettingsCore {
     }
 
     /**
-     * 深度比较两个值是否相等（用于判断 full 事件是否影响 system_prompt 缓存）。
-     * 仅比较可序列化数据（配置对象），不做类型收窄、不处理函数等非常规值。
-     */
-    private static deepEqual(a: unknown, b: unknown): boolean {
-        if (a === b) {
-            return true;
-        }
-        if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') {
-            return false;
-        }
-        if (Array.isArray(a) !== Array.isArray(b)) {
-            return false;
-        }
-        const aKeys = Object.keys(a as Record<string, unknown>);
-        const bKeys = Object.keys(b as Record<string, unknown>);
-        if (aKeys.length !== bKeys.length) {
-            return false;
-        }
-        return aKeys.every(key =>
-            SettingsCore.deepEqual(
-                (a as Record<string, unknown>)[key],
-                (b as Record<string, unknown>)[key]
-            )
-        );
-    }
-
-    /**
      * 'full' 事件无 path，现有监听器（ChatHandler 的 PromptManager 缓存失效判定）只识别
      * 'tools' 事件，且要求 newValue/oldValue 顶层含 system_prompt——full 事件里
      * system_prompt 嵌套在 toolsConfig 下永远匹配不到。这里在 system_prompt 实际变化时
      * 补发一条 'tools' 事件，让既有监听器无需改动即可使 PromptManager 缓存失效。
+     * 深度比较使用 core/deepEqual（与 VSCodeSettingsStorage.save 的 diff 共用）。
      */
     private notifySystemPromptChangeIfNeeded(oldSettings: GlobalSettings, newSettings: GlobalSettings): void {
         const oldPrompt = oldSettings.toolsConfig?.system_prompt;
         const newPrompt = newSettings.toolsConfig?.system_prompt;
-        if (SettingsCore.deepEqual(oldPrompt, newPrompt)) {
+        if (deepEqual(oldPrompt, newPrompt)) {
             return;
         }
         // 事件负载深拷贝（同 full/tools 事件统一口径）：system_prompt 是存储活对象上的

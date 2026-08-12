@@ -10,7 +10,9 @@ import type { McpStorageAdapter, McpServerConfig } from './types';
  * 使用 VSCode 的 Memento API 存储 MCP 配置
  */
 export class MementoMcpStorageAdapter implements McpStorageAdapter {
-    private static readonly STORAGE_KEY = 'limcode.mcp.servers';
+    private static readonly STORAGE_KEY = 'graycode.mcp.servers';
+    /** 旧品牌键（历史版本写入）：读取时双读迁移，保证已有用户数据不丢 */
+    private static readonly LEGACY_STORAGE_KEY = 'limcode.mcp.servers';
     
     /** VSCode Memento 实例 */
     private memento: {
@@ -42,7 +44,25 @@ export class MementoMcpStorageAdapter implements McpStorageAdapter {
     private readConfigs(): McpServerConfig[] {
         // 返回浅拷贝：saveConfig 的 read-modify-write 会直接修改数组（下标赋值/push），
         // 不得改动 memento 内部持有的数组引用，否则未持久化的改动会污染后续读取
-        const configs = this.memento.get<McpServerConfig[]>(MementoMcpStorageAdapter.STORAGE_KEY, []);
+        const stored = this.memento.get<McpServerConfig[] | undefined>(
+            MementoMcpStorageAdapter.STORAGE_KEY,
+            undefined
+        );
+        let configs = stored;
+        // 旧品牌键双读迁移：新键无值时回退读取旧键（limcode.mcp.servers），并一次性
+        // 把数据写入新键 + 清空旧键。清空旧键是必要的：否则用户随后删光全部服务器时，
+        // 下次读取会再次回退到旧键把已删除的数据“复活”。
+        if (!Array.isArray(configs) || configs.length === 0) {
+            const legacy = this.memento.get<McpServerConfig[] | undefined>(
+                MementoMcpStorageAdapter.LEGACY_STORAGE_KEY,
+                undefined
+            );
+            if (Array.isArray(legacy) && legacy.length > 0) {
+                configs = legacy;
+                void this.memento.update(MementoMcpStorageAdapter.STORAGE_KEY, configs);
+                void this.memento.update(MementoMcpStorageAdapter.LEGACY_STORAGE_KEY, undefined);
+            }
+        }
         return Array.isArray(configs) ? [...configs] : [];
     }
 

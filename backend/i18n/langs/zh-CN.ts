@@ -30,7 +30,10 @@ const zhCN = {
                 topPRange: 'top_p 必须在 0.0 - 1.0 之间',
                 topKMin: 'top_k 必须大于等于 0',
                 thinkingBudgetMin: 'thinking.budget_tokens 不能小于 1024',
-                unsupportedType: '不支持的渠道类型: {type}'
+                unsupportedType: '不支持的渠道类型: {type}',
+                retryCountInvalid: 'retryCount 必须是非负整数',
+                retryIntervalInvalid: 'retryInterval 必须是正数',
+                timeoutInvalid: 'timeout 必须是正数'
             }
         },
 
@@ -127,6 +130,44 @@ const zhCN = {
                 migratingConversations: '正在迁移对话...',
                 migratingCheckpoints: '正在迁移存档点...',
                 migratingConfigs: '正在迁移配置...'
+            },
+            exporter: {
+                parseFailed: '解析导出文件失败：{error}',
+                invalidRoot: '导出文件格式无效：根元素必须是对象',
+                missingVersion: '导出文件缺少 version 字段',
+                unsupportedVersion: '不支持的导出文件版本：{version}（当前仅支持 {supported}）',
+                missingChannelConfigs: '导出文件缺少 channelConfigs 数组',
+                missingMcpServers: '导出文件缺少 mcpServers 数组',
+                missingSkills: '导出文件缺少 skills 数组',
+                missingVscodeSettings: '导出文件缺少 vscodeSettings 对象',
+                importVscodeSettingsFailed: '导入 VSCode 设置失败：{error}',
+                importChannelConfigsFailed: '导入渠道配置失败：{error}',
+                importMcpServersFailed: '导入 MCP 服务器配置失败：{error}',
+                importSkillsFailed: '导入 Skills 失败：{error}',
+                reloadSettingsFailed: '重载设置失败：{error}',
+                partialVscodeSettingsImportFailed: '部分 VSCode 设置导入失败：{detail}',
+                channelConfigItemError: '渠道配置 "{name}": {error}',
+                partialChannelConfigsImportFailed: '部分渠道配置导入失败：{detail}',
+                mcpServerItemError: 'MCP 服务器 "{name}": {error}',
+                partialMcpServersImportFailed: '部分 MCP 服务器配置导入失败：{detail}',
+                skillItemError: 'Skill "{name}": {error}',
+                skillRestoreError: 'Skill "{name}" 启用状态恢复：{error}',
+                skillRestoreFailuresSummary: '{count} 个 Skill 启用状态恢复失败（文件已导入）：{detail}',
+                partialSkillsImportFailed: '部分 Skill 导入失败：{detail}'
+            }
+        },
+
+        update: {
+            errors: {
+                cannotReadVersion: '无法读取当前扩展版本',
+                invalidDownloadUrl: '非法下载地址：仅接受本仓库 GitHub Releases 的 vsix 安装包。',
+                invalidVersion: '非法版本号：{version}',
+                downloadFailed: '下载失败：HTTP {status} {statusText}',
+                emptyDownload: '下载内容为空，vsix 可能已损坏。',
+                downloadTimeout: '下载超时（超过 {seconds} 秒）',
+                apiError: 'GitHub Releases API 返回 {status} {statusText}',
+                apiResponseInvalid: 'GitHub Releases API 响应格式异常',
+                checkTimeout: '检查超时（超过 {seconds} 秒）'
             }
         },
 
@@ -189,7 +230,8 @@ const zhCN = {
                 noResponseBody: '没有响应体',
                 emptyResponse: '模型返回了空内容',
                 streamTruncated: '流式输出被截断（未收到完整结束标记），可能由网络或代理中断导致',
-                streamBufferOverflow: '流式响应缓冲区超过大小上限：上游数据无法解析（缓冲持续累积未被消费）'
+                streamBufferOverflow: '流式响应缓冲区超过大小上限：上游数据无法解析（缓冲持续累积未被消费）',
+                invalidRetryConfig: '无效的重试配置: {configId}（retryCount 必须为非负整数）'
             },
             modelList: {
                 errors: {

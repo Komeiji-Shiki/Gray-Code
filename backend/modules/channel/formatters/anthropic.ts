@@ -58,7 +58,7 @@ import type {
     HttpRequestOptions
 } from '../types';
 
-const ANTHROPIC_USER_ID_PREFIX = 'limcode-conversation-';
+const ANTHROPIC_USER_ID_PREFIX = 'graycode-conversation-';
 
 /**
  * Anthropic 格式转换器

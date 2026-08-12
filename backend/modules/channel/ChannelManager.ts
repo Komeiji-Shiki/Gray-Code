@@ -441,9 +441,18 @@ export class ChannelManager {
         // 7. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
-        const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
-        const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        // 钳制兜底：配置来源可能绕过 TS 类型（webview/导入），负值 retryCount 会让
+        // totalAttempts <= 0、NaN 会让 for 循环零次执行（误报网络错误）；至少尝试一次
+        const maxRetries = Math.max(0, Math.floor((config as any).retryCount ?? 3));  // 默认3次
+        const retryInterval = Math.max(0, (config as any).retryInterval ?? 3000);  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
+        // 钳制后仍无效（retryCount 为 NaN/Infinity 等）：转为明确的配置错误而非网络错误
+        if (!Number.isInteger(totalAttempts) || totalAttempts <= 0) {
+            throw new ChannelError(
+                ErrorType.VALIDATION_ERROR,
+                t('modules.channel.errors.invalidRetryConfig', { configId: request.configId })
+            );
+        }
         
         // 8. 执行 HTTP 调用（带重试）
         let lastError: any;
@@ -655,9 +664,17 @@ export class ChannelManager {
         // 6. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
-        const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
-        const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        // 钳制兜底（与 generateNonStream 同口径）：负值/NaN retryCount 不得导致零次尝试
+        const maxRetries = Math.max(0, Math.floor((config as any).retryCount ?? 3));  // 默认3次
+        const retryInterval = Math.max(0, (config as any).retryInterval ?? 3000);  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
+        // 钳制后仍无效（retryCount 为 NaN/Infinity 等）：转为明确的配置错误而非网络错误
+        if (!Number.isInteger(totalAttempts) || totalAttempts <= 0) {
+            throw new ChannelError(
+                ErrorType.VALIDATION_ERROR,
+                t('modules.channel.errors.invalidRetryConfig', { configId: request.configId })
+            );
+        }
         
         // 7. 执行流式请求（带重试）
         let lastError: any;

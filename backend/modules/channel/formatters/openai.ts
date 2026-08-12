@@ -57,7 +57,7 @@ import type {
     ErrorType
 } from '../types';
 
-const DEEPSEEK_USER_ID_PREFIX = 'limcode-conversation-';
+const DEEPSEEK_USER_ID_PREFIX = 'graycode-conversation-';
 
 /**
  * OpenAI 格式转换器

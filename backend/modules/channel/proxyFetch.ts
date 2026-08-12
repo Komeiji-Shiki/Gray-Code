@@ -12,10 +12,7 @@ import { URL } from 'url';
 import { ChannelError, ErrorType } from './types';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
-/** chunked 结束标记（'0\r\n\r\n' 与 '\r\n0\r\n' 均为 4 字节）：增量扫描保留末 3 字节用于跨包检测 */
-const CHUNKED_END_MARKER = Buffer.from('0\r\n\r\n');
-const CHUNKED_END_MARKER_ALT = '\r\n0\r\n';
-const CHUNKED_END_MARKER_LEN = 4;
+
 
 /**
  * 解析是否跳过 TLS 证书校验。
@@ -469,11 +466,14 @@ function sendRequestOverSocket(
     let isChunked = false;
     let headerEndIndex = -1;
     let responseHeaders: Record<string, string> = {};
-    // chunked 结束标记的增量扫描状态（#38 修复：逐 data 事件对整段累积体做
-    // Buffer.concat + includes 探测结束标记是 O(n²)；改为只探测新增尾部，跨包标记靠
-    // 保留上一探测末尾 CHUNKED_END_MARKER_LEN-1 字节兜住，探测结果语义与全量扫描一致）
-    let chunkedBodyScanOffset = 0;
-    let chunkedBodyScanTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+    // chunked 帧结构校验状态（真实解析，替代旧的 0\r\n\r\n 字节模式扫描）：
+    // 只保留未校验尾部增量校验（validateChunkedFrames 逐帧解析 size 行/chunk 数据/CRLF，
+    // 终止块 + trailer 收尾且与数据末尾对齐才算完整），避免 chunk 内容中恰好出现
+    // 0\r\n\r\n 字节序列时把截断响应误判为完整并提前 resolve。
+    let chunkedBodyScanOffset = 0;          // 已提取进校验缓冲的 body 字节数
+    let chunkedValidationBuffer: Buffer = Buffer.alloc(0);
+    let chunkedValidationConsumed = 0;      // 校验缓冲内已通过帧校验的前缀偏移
+    let chunkedValidationFailed = false;    // 帧损坏：后续数据无法修复，close 时拒绝
 
     // 流式响应体状态（bodySink 提供时启用）：头解析完成后立即 resolve（status/headers 可用），
     // body 字节经 bodySink 逐包转交 ReadableStream；连接异常/中止经 bodySink.error 传播。
@@ -628,21 +628,27 @@ function sendRequestOverSocket(
         return Buffer.concat(parts);
     };
 
-    /** chunked body 结束标记探测（增量版）：只扫「新增尾部 + 上一探测保留的 3 字节」 */
-    const hasChunkedEndMarker = (): boolean => {
-        const bodyReceived = receivedLength - headerEndIndex - 4;
-        if (bodyReceived <= chunkedBodyScanOffset) {
-            // 无新增字节（end/close 重复调用）：此前未命中即仍未命中
+    /** chunked body 完整性校验（增量）：对新增字节做真实帧结构校验，完整终止才返回 true */
+    const hasValidChunkedBody = (): boolean => {
+        if (chunkedValidationFailed) {
             return false;
         }
+        const bodyReceived = receivedLength - headerEndIndex - 4;
         const newBytes = collectNewBodyBytes();
         chunkedBodyScanOffset = bodyReceived;
-        const window = chunkedBodyScanTail.length > 0
-            ? Buffer.concat([chunkedBodyScanTail, newBytes])
-            : newBytes;
-        // 只保留窗口末尾 3 字节：下一包探测时与新增字节拼接，跨包结束标记也能命中
-        chunkedBodyScanTail = window.subarray(Math.max(0, window.length - (CHUNKED_END_MARKER_LEN - 1)));
-        return window.includes(CHUNKED_END_MARKER) || window.toString('utf8').includes(CHUNKED_END_MARKER_ALT);
+        if (chunkedValidationConsumed > 0) {
+            chunkedValidationBuffer = chunkedValidationBuffer.subarray(chunkedValidationConsumed);
+            chunkedValidationConsumed = 0;
+        }
+        if (newBytes.length > 0) {
+            chunkedValidationBuffer = Buffer.concat([chunkedValidationBuffer, newBytes]);
+        }
+        const result = validateChunkedFrames(chunkedValidationBuffer, chunkedValidationConsumed);
+        chunkedValidationConsumed = result.validatedOffset;
+        if (result.corrupt) {
+            chunkedValidationFailed = true;
+        }
+        return result.complete;
     };
 
     const isResponseComplete = (): boolean => {
@@ -655,7 +661,7 @@ function sendRequestOverSocket(
         }
 
         if (isChunked) {
-            return hasChunkedEndMarker();
+            return hasValidChunkedBody();
         }
 
         return false;
@@ -674,7 +680,7 @@ function sendRequestOverSocket(
         }
 
         if (isChunked) {
-            return hasChunkedEndMarker();
+            return hasValidChunkedBody();
         }
 
         // 未声明 content-length 也非 chunked —— 假定连接断开时即为完整
@@ -827,6 +833,81 @@ function sendRequestOverSocket(
         }
         reject(err);
     });
+}
+
+/**
+ * 增量校验 chunked 编码帧结构（真实解析，替代字节模式扫描）：
+ * 从 validatedOffset 起逐帧解析 chunk size 行、chunk 数据与尾部 CRLF；
+ * 终止块（size=0）后的 trailer 行必须以空行收尾且与数据末尾对齐才算「完整」。
+ *
+ * - complete=true：终止帧完整到达，帧尾与数据末尾对齐（无多余字节）；
+ * - corrupt=true：帧结构损坏（size 非十六进制 / chunk 数据后缺 CRLF），后续数据无法修复；
+ * - 其余情况：数据不足，validatedOffset 记录已通过校验的前缀，下次从该处续扫（O(n) 总开销）。
+ */
+function validateChunkedFrames(
+    data: Buffer,
+    validatedOffset: number
+): { complete: boolean; corrupt: boolean; validatedOffset: number } {
+    let offset = Math.min(validatedOffset, data.length);
+    while (offset < data.length) {
+        // 定位 chunk size 行结束（\r\n）
+        let sizeEnd = -1;
+        for (let i = offset; i < data.length - 1; i++) {
+            if (data[i] === 0x0d && data[i + 1] === 0x0a) {
+                sizeEnd = i;
+                break;
+            }
+        }
+        if (sizeEnd === -1) {
+            // size 行不完整：等待更多数据
+            return { complete: false, corrupt: false, validatedOffset: offset };
+        }
+
+        const sizeLine = data.subarray(offset, sizeEnd).toString('ascii').trim();
+        const chunkSize = parseInt(sizeLine, 16);
+        if (isNaN(chunkSize)) {
+            // 帧损坏：不可修复
+            return { complete: false, corrupt: true, validatedOffset: data.length };
+        }
+
+        if (chunkSize === 0) {
+            // 终止块：其后允许 0..n 行 trailer，必须以空行（\r\n）收尾
+            let cursor = sizeEnd + 2;
+            while (true) {
+                let lineEnd = -1;
+                for (let i = cursor; i < data.length - 1; i++) {
+                    if (data[i] === 0x0d && data[i + 1] === 0x0a) {
+                        lineEnd = i;
+                        break;
+                    }
+                }
+                if (lineEnd === -1) {
+                    // trailer 行不完整：从终止块起点续扫（trailer 量小，重复扫描可忽略）
+                    return { complete: false, corrupt: false, validatedOffset: sizeEnd };
+                }
+                if (lineEnd === cursor) {
+                    // 空行：终止帧结束。仅当与数据末尾对齐才算完整；
+                    // 多余字节视为可疑（Connection: close 下服务器不应在终止块后继续输出）
+                    return { complete: lineEnd + 2 === data.length, corrupt: false, validatedOffset: lineEnd + 2 };
+                }
+                cursor = lineEnd + 2;
+            }
+        }
+
+        const chunkDataStart = sizeEnd + 2;
+        const chunkDataEnd = chunkDataStart + chunkSize;
+        if (chunkDataEnd + 2 > data.length) {
+            // chunk 数据/尾部 CRLF 不完整：等待更多数据
+            return { complete: false, corrupt: false, validatedOffset: offset };
+        }
+        if (data[chunkDataEnd] !== 0x0d || data[chunkDataEnd + 1] !== 0x0a) {
+            // chunk 数据后不是 CRLF：帧损坏，不可修复
+            return { complete: false, corrupt: true, validatedOffset: data.length };
+        }
+        offset = chunkDataEnd + 2;
+    }
+    // 已消费全部数据仍未遇到终止块：等待更多数据
+    return { complete: false, corrupt: false, validatedOffset: offset };
 }
 
 /**
@@ -1203,12 +1284,13 @@ export async function* proxyStreamFetch(
                 let errorBodyBytes: Buffer[] = [];
                 let errorContentLength = -1;
                 let errorIsChunked = false;
-                // 错误体结束标记的增量扫描状态（与 sendRequestOverSocket 的
-                // hasChunkedEndMarker 同思路：避免逐 data 事件对 errorBodyBytes 整段
-                // Buffer.concat + includes 的 O(n²) 探测；跨包标记靠保留上一探测末尾
-                // CHUNKED_END_MARKER_LEN-1 字节兜住，探测结果语义与全量扫描一致）
-                let errorBodyScanTail: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+                // 错误体 chunked 帧结构校验状态（与 sendRequestOverSocket 的
+                // hasValidChunkedBody 同口径：真实解析替代 0\r\n\r\n 字节模式扫描，
+                // 避免错误页内容中恰好出现该字节序列时把截断体当完整体提前 finalize）
                 let errorBodyScanOffset = 0;
+                let errorValidationBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+                let errorValidationConsumed = 0;
+                let errorValidationFailed = false;
 
                 const isErrorBodyComplete = (): boolean => {
                     const totalBytes = errorBodyBytes.reduce((sum, b) => sum + b.length, 0);
@@ -1216,10 +1298,10 @@ export async function* proxyStreamFetch(
                         return totalBytes >= errorContentLength;
                     }
                     if (errorIsChunked) {
-                        // 只对新增尾部做探测（无新增字节时沿用上次结果）
-                        if (totalBytes <= errorBodyScanOffset) {
+                        if (errorValidationFailed) {
                             return false;
                         }
+                        // 提取未校验的新增字节（相对上一次扫描偏移）
                         const newStart = errorBodyScanOffset;
                         const newParts: Buffer[] = [];
                         let offset = 0;
@@ -1234,12 +1316,19 @@ export async function* proxyStreamFetch(
                         }
                         const newBytes = newParts.length === 0 ? Buffer.alloc(0) : Buffer.concat(newParts);
                         errorBodyScanOffset = totalBytes;
-                        const window = errorBodyScanTail.length > 0
-                            ? Buffer.concat([errorBodyScanTail, newBytes])
-                            : newBytes;
-                        // 只保留窗口末尾 3 字节：下一包探测时与新增字节拼接，跨包标记也能命中
-                        errorBodyScanTail = window.subarray(Math.max(0, window.length - (CHUNKED_END_MARKER_LEN - 1)));
-                        return window.includes(CHUNKED_END_MARKER) || window.toString('utf8').includes(CHUNKED_END_MARKER_ALT);
+                        if (errorValidationConsumed > 0) {
+                            errorValidationBuffer = errorValidationBuffer.subarray(errorValidationConsumed);
+                            errorValidationConsumed = 0;
+                        }
+                        if (newBytes.length > 0) {
+                            errorValidationBuffer = Buffer.concat([errorValidationBuffer, newBytes]);
+                        }
+                        const result = validateChunkedFrames(errorValidationBuffer, errorValidationConsumed);
+                        errorValidationConsumed = result.validatedOffset;
+                        if (result.corrupt) {
+                            errorValidationFailed = true;
+                        }
+                        return result.complete;
                     }
                     // 未声明 content-length 也非 chunked → 连接关闭判定
                     return false;
