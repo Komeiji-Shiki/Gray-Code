@@ -52,9 +52,10 @@ NODE_OPTIONS=--expose-gc npx jest --config jest.backend.config.js --testMatch "*
 - 长对话：append < 15s（实测 0.89s）；全量读 / usage 扫描 < 2s、usage 索引 < 1s（实测 12-34ms）；
 - 分支图：全部微操作 < 1s（实测 < 20ms；含 220 节点压力图 + 100 层深链段）。
 
-校准基准日 2026-08-04（R8e-FIX 实测数据见 `.graycode/research/mig09-benchmarks.md`）；
-上限约为实测的 15-75×，既收紧到能捕捉量级回归，又给 CI 慢机留足余量。
+校准基准日 2026-08-04（R8e-FIX 实测，关键数字见上方清单；详细实测数据与修改说明记录在
+仓库提交历史中，不再引用被 gitignore 的本地文档）；上限约为实测的 15-75×，既收紧到能捕捉
+量级回归，又给 CI 慢机留足余量。
 
 ## 数据记录
 
-实测结果与修改说明见 `.graycode/research/mig09-benchmarks.md`。
+实测结果与修改说明见仓库提交历史（R8e-FIX 及 MIG-09 相关提交）。

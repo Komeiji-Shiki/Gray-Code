@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  toast-linger 构建定义（E-05）：.NET Framework 4.x + WinRT 投影（Windows.Data.Xml.Dom /
+  Windows.UI.Notifications），无第三方 NuGet 依赖。
+  依赖：
+    - Windows 10 SDK 的 Windows.winmd（UnionMetadata；Choose 依次探测常见版本）
+    - .NET Framework 运行时目录的 System.Runtime.WindowsRuntime.dll（Facades 引用程序集
+      通常不含该文件，故直接从 CLR 目录引用，<Private>false 不随产物复制）
+  编译：见同目录 build.ps1 / README.md。
+-->
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.Common.props" Condition="Exists('$(MSBuildToolsPath)\Microsoft.Common.props')" />
+
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{8F4C7B2A-4E1D-4A6B-9C3E-7D5F2A1B8E6C}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>ToastLinger</RootNamespace>
+    <AssemblyName>toast-linger</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <OutputPath>bin\Release\</OutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <!-- 探测 Windows 10 SDK UnionMetadata 版本（按常见版本从新到旧依次回退） -->
+  <Choose>
+    <When Condition="Exists('$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.26100.0\Windows.winmd')">
+      <PropertyGroup><TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion></PropertyGroup>
+    </When>
+    <When Condition="Exists('$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.22621.0\Windows.winmd')">
+      <PropertyGroup><TargetPlatformVersion>10.0.22621.0</TargetPlatformVersion></PropertyGroup>
+    </When>
+    <When Condition="Exists('$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.22000.0\Windows.winmd')">
+      <PropertyGroup><TargetPlatformVersion>10.0.22000.0</TargetPlatformVersion></PropertyGroup>
+    </When>
+    <When Condition="Exists('$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.19041.0\Windows.winmd')">
+      <PropertyGroup><TargetPlatformVersion>10.0.19041.0</TargetPlatformVersion></PropertyGroup>
+    </When>
+    <When Condition="Exists('$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\10.0.18362.0\Windows.winmd')">
+      <PropertyGroup><TargetPlatformVersion>10.0.18362.0</TargetPlatformVersion></PropertyGroup>
+    </When>
+  </Choose>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <!-- WinRT 投影（Windows.Data.Xml.Dom / Windows.UI.Notifications 等） -->
+    <Reference Include="Windows" Condition="'$(TargetPlatformVersion)' != ''">
+      <HintPath>$(MSBuildProgramFiles32)\Windows Kits\10\UnionMetadata\$(TargetPlatformVersion)\Windows.winmd</HintPath>
+    </Reference>
+    <!-- CLR 侧 WinRT 互操作支持；.NET Framework 的 Facades 目录通常不含该引用程序集，
+         故从 CLR 运行时目录引用（该程序集随 .NET Framework 安装，运行时必然存在） -->
+    <Reference Include="System.Runtime.WindowsRuntime">
+      <HintPath>$(windir)\Microsoft.NET\Framework64\v4.0.30319\System.Runtime.WindowsRuntime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.netfx.cs" />
+  </ItemGroup>
+
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

@@ -26,12 +26,23 @@ jobs:
           node-version: 20
           cache: npm
 
+      # fast-tavern py 的 venv 缓存（E-11）：key 含 runner.os 与 python 版本，避免跨版本复用损坏的 venv。
+      # venv 由 scripts/run-fast-tavern-py.mjs 在首次运行时创建，缓存命中时跳过 python -m venv。
+      - name: Resolve system python version (cache key)
+        id: pyver
+        run: echo "ver=$(python3 -V 2>&1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache fast-tavern venv
+        uses: actions/cache@v4
+        with:
+          path: fast-tavern-main/py-fast-tavern/.venv
+          key: fast-tavern-venv-${{ runner.os }}-py${{ steps.pyver.outputs.ver }}
+
       - name: Install dependencies
         run: |
           npm ci
           # 前端有独立 package.json（非 workspaces），需单独安装其依赖
-          # 用 install 而非 ci：frontend lock 与 package.json 可能不同步（残留 graycode file:.. 条目），ci 会因同步检查失败
-          npm --prefix frontend install --no-audit --no-fund
+          npm --prefix frontend ci --no-audit --no-fund
 
       - name: Typecheck & test
         run: npm run ci
@@ -39,19 +50,23 @@ jobs:
       - name: i18n parity check
         run: npm run i18n:check
 
-      - name: Package vsix
-        # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤
-        run: npx vsce package --out "graycode-${{ github.ref_name }}.vsix"
-
       - name: Extract release notes from CHANGELOG
+        # E-10：先于打包执行（fail fast）——CHANGELOG 漏写版本小节时此处直接失败，
+        # 不再白白跑完 vsce package（含 vscode:prepublish 全量构建）后才失败。
         # 默认只携带当前版本小节；通过 GITHUB_TOKEN 查询最新已发布 release，
         # 检测到中间版本未发布（被跳过）时自动补带跳过版本的内容
         run: node scripts/extract-release-notes.mjs "${{ github.ref_name }}" > release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Package vsix
+        # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤
+        run: npx vsce package --out "graycode-${{ github.ref_name }}.vsix"
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: "graycode-${{ github.ref_name }}.vsix"
           body_path: release-notes.md
+          # E-10：tag 含 '-' 视为预发布（如 v1.5.4-beta.1），否则发布为正式 Release
+          prerelease: ${{ contains(github.ref_name, '-') }}

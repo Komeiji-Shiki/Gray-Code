@@ -57,9 +57,8 @@
   - 设置：`VSCodeSettingsStorage` 读恢复 VS Code 合并值语义（workspaceFolder > workspace > global，工作区显式配置优先），save 按目标层级写入——某键工作区层已有值时写入 Workspace 层（.vscode/settings.json / .code-workspace）、否则写 Global，设置页修改落在最高优先级层、不再被工作区旧值吞掉，同时保留 workspace 显式配置覆盖 Global 的惯例（PR #35 曾改读优先 Global 破坏覆盖语义，现以层级跟随替代）；`ui.language` 默认值 `'zh-CN'` → `'auto'`（跟随 VS Code 语言，非中文用户不再被默认强制中文回复，且不再经 Settings Sync 固化扩散）；`StoragePathManager.migrateData` 同路径判定 Windows 大小写归一（仅大小写不同的目标路径不再触发「同目录中转迁移」清空全部存储数据）；`DEFAULT_DIAGNOSTICS_CONFIG.enabled` 改回 `false`（与接口文档一致，默认不再每轮向模型注入工作区诊断）。
   - 前端：直接发送失败时恢复输入正文（与附件恢复同路径，用户输入不再静默丢失）；`toolResponseCache` 增加容量上限（500 条，超限淘汰最旧，批量回填合并 triggerRef 减少 todoSnapshot 全量重放次数）；`sendQueuedMessageNow` 在 cancelStream 抛错时把排队消息放回队首（不再静默丢失）。
   - 测试：`vscode` mock 补齐 `env`（`ui.language` 默认 `'auto'` 后 `PromptManager.getUserLanguage` 的 auto 分支在单测中不再抛 TypeError）；新增 `workspaceRealpath`、`InputArea`、`toolResponseCache`、`queueSendNowCancelError` 等回归用例。
-  - 测试：`vscode` mock 补齐 `env`（`ui.language` 默认 `'auto'` 后 `PromptManager.getUserLanguage` 的 auto 分支在单测中不再抛 TypeError）；新增 `workspaceRealpath`、`InputArea`、`toolResponseCache`、`queueSendNowCancelError` 等回归用例。
   - 合并审查修复：子代理排队超时定时器 clamp 到 `setTimeout` 上限（2^31-1 ms，约 24.8 天）——超出该值的 `queueTimeoutSeconds` 会被 Node 当作 1ms 立即触发，导致长排队超时被误判为立即失败，新增溢出防护回归用例；`toolResponseCache` 满员时覆盖更新已有 key 不再误淘汰最旧条目（Map.set 更新不改变迭代序，仅新增 key 且已满员才淘汰），新增单条/批量覆盖更新回归用例。
-## [1.5.1]
+## [1.5.1] - 2026-08-11
 
 ### Added
   - 子代理渠道策略：新增逐代理「与当前模型同步」（`syncWithCurrentModel`）开关——勾选后该子代理忽略自身固定的渠道/模型，派发前统一改用当前会话渠道与模型（`channelConfigId` + `channelModelId`），与 General Worker 继承口径一致，渠道切换（备用 key/新供应商）时无需逐个修改子代理；无活动渠道时拒绝派发并返回明确错误；勾选后渠道/模型下拉禁用并显示激活提示；旧「强制使用当前渠道」全局开关已废弃，启动时自动一次性迁移为逐代理配置（幂等，显式 `false` 的代理保持固定渠道），新 UI 不再提供全局入口。

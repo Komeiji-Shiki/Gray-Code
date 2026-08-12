@@ -240,7 +240,10 @@ function check() {
         if (!fs.existsSync(filePath)) {
             console.error(`[i18n-sync --check] 缺少生成物: ${filePath}`);
             failed = true;
-        } else if (fs.readFileSync(filePath, 'utf8') !== expected) {
+        } else if (fs.readFileSync(filePath, 'utf8').replace(/\r\n?/g, '\n') !== expected) {
+            // E-06：与 generate-tool-meta --check 同口径——读取生成物时先把 CRLF/CR 归一化为 LF
+            // 再比较。否则 Windows 开发者按默认 core.autocrlf 检出时，生成物物理行尾为 CRLF，
+            // 而 expected 由脚本以 LF 生成，字节比较必然假失败。
             console.error(`[i18n-sync --check] 生成物与源不一致（漂移）: ${filePath}`);
             console.error('  请运行 node scripts/i18n-sync.mjs 重新生成');
             failed = true;
@@ -319,7 +322,7 @@ function report() {
 
     const line = '='.repeat(72);
     console.log(line);
-    console.log('LimCode i18n 语言包盘点报告');
+    console.log('GrayCode i18n 语言包盘点报告');
     console.log(line);
 
     /* ---- 1. 结构概览 ---- */

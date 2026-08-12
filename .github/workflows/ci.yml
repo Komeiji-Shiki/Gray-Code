@@ -1,0 +1,36 @@
+name: CI
+
+# PR 与 main 分支推送的质量门禁（E-01）：
+# typecheck + 前后端测试 + fast-tavern 双实现 + i18n 一致性校验，
+# 与本地 `npm run ci` 同一入口（i18n:check 已并入 ci script，此处单独再跑一步仅为日志可读性）。
+# nightly（schedule）与 release（打 tag）由各自 workflow 负责，本 workflow 只做日常 PR/main 验证。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          # 前端有独立 package.json（非 workspaces），需单独安装其依赖
+          npm --prefix frontend ci --no-audit --no-fund
+
+      - name: Typecheck & test
+        run: npm run ci
+
+      - name: i18n parity check
+        run: npm run i18n:check

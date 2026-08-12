@@ -9,6 +9,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using System.Security;
 using System.Text;
 using System.Windows.Forms;
 using Windows.Data.Xml.Dom;
@@ -144,14 +145,19 @@ class Program
         string title = args.Length > 1 ? args[1] : "GrayCode";
         string message = args.Length > 2 ? args[2] : "";
         int lingerMs = 30000;
-        if (args.Length > 3) int.TryParse(args[3], out lingerMs);
+        string lingerArgError = null;
+        if (args.Length > 3 && !int.TryParse(args[3], out lingerMs)) lingerArgError = args[3];
         bool silent = true;
-        if (args.Length > 4) bool.TryParse(args[4], out silent);
+        string silentArgError = null;
+        if (args.Length > 4 && !bool.TryParse(args[4], out silent)) silentArgError = args[4];
         string marker = Path.Combine(Path.GetTempPath(), "graycode-toast-clicked.flag");
         string log = Path.Combine(Path.GetTempPath(), "graycode-toast-linger.log");
         MarkerPath = marker;
         LogPath = log;
         Log(log, "start aumid=" + aumid + " title=" + title);
+        // E-23：参数解析失败不再静默回退——记日志，便于排查行为与预期不符的问题
+        if (lingerArgError != null) Log(log, "warning: invalid lingerMs arg ignored: " + lingerArgError);
+        if (silentArgError != null) Log(log, "warning: invalid silent arg ignored: " + silentArgError);
 
         string exePath = "";
         try
@@ -164,24 +170,36 @@ class Program
         catch { }
         if (!string.IsNullOrEmpty(exePath)) EnsureShortcut(aumid, exePath, log);
 
+        // E-04：title/message 来自通知内容（可能含模型生成文本），拼接进 XML 前必须先转义：
+        // 含 & / < / > 等字符直接拼串会让 doc.LoadXml 抛 XmlException 导致通知静默失效，
+        // 同时封堵了向 toast XML 注入任意节点的面。
         string xml = "<toast><visual><binding template=\"ToastGeneric\">"
-            + "<text>" + title + "</text><text>" + message + "</text>"
+            + "<text>" + SecurityElement.Escape(title) + "</text><text>" + SecurityElement.Escape(message) + "</text>"
             + "</binding></visual>"
             + (silent
                 ? "<audio silent=\"true\"/>"
                 : "<audio src=\"ms-winsoundevent:Notification.Default\"/>") +
             "</toast>";
-        XmlDocument doc = new XmlDocument();
-        doc.LoadXml(xml);
-        ToastNotification toast = new ToastNotification(doc);
+        try
+        {
+            XmlDocument doc = new XmlDocument();
+            doc.LoadXml(xml);
+            ToastNotification toast = new ToastNotification(doc);
 
-        toast.Activated += OnActivated;
-        toast.Dismissed += OnDismissed;
-        toast.Failed += OnFailed;
+            toast.Activated += OnActivated;
+            toast.Dismissed += OnDismissed;
+            toast.Failed += OnFailed;
 
-        ToastNotifier notifier = ToastNotificationManager.CreateToastNotifier(aumid);
-        notifier.Show(toast);
-        Log(log, "shown");
+            ToastNotifier notifier = ToastNotificationManager.CreateToastNotifier(aumid);
+            notifier.Show(toast);
+            Log(log, "shown");
+        }
+        catch (Exception e)
+        {
+            // 失败写日志并以非零码退出，供扩展侧（show_windows_notification）读取 stderr 定位问题
+            Log(log, "toast build/show failed: " + e.Message);
+            return 2;
+        }
 
         Form form = new Form
         {
@@ -244,8 +262,20 @@ class Program
     static string MarkerPath = "";
     static string LogPath = "";
 
+    // E-23：日志超过阈值直接截断重建（按天轮转对本工具的调用频率意义不大，
+    // 阈值截断最简单且足够：防止 %TEMP% 下日志无限增长）
+    const long LOG_MAX_BYTES = 1024 * 1024; // 1 MB
+
     static void Log(string path, string msg)
     {
-        try { File.AppendAllText(path, DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine); } catch { }
+        try
+        {
+            if (File.Exists(path) && new FileInfo(path).Length > LOG_MAX_BYTES)
+            {
+                File.Delete(path);
+            }
+            File.AppendAllText(path, DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine);
+        }
+        catch { }
     }
 }

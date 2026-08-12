@@ -1,0 +1,22 @@
+# 锁死文本文件行尾为 LF（E-06）：
+# 仓库内所有文本按 LF 检出/入库，避免 Windows 开发者按默认 core.autocrlf=true 克隆时
+# 把 _shared/*.ts、toolMeta.ts 等生成物以 CRLF 检出，导致 i18n-sync / generate-tool-meta
+# 的 --check 字节比较稳定假失败（也防止 CRLF 混入提交再次复现 v1.5.1 的 release 被拦事故）。
+# 二进制文件（*.exe 等）不受 text 属性影响，由 git 自动判定。
+* text=auto eol=lf
+
+# 常见文本类型显式声明（与 text=auto 叠加，确保生成物/脚本/配置行尾确定）
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.cs text eol=lf
+*.ps1 text eol=lf
+*.vue text eol=lf
+*.css text eol=lf
+*.html text eol=lf

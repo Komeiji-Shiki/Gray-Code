@@ -79,6 +79,12 @@ describe('基准 ② 长对话（1 万条消息，真实磁盘）', () => {
         const conversationId = 'bench-long';
         await manager.createConversation(conversationId, 'Benchmark Long Conversation');
 
+        // ---- 0. JIT 预热（F8 同款思路）：主测量前先在独立会话上小规模 append 1 批，
+        // 把 addBatch → appendHistory（分段写入/原子 rename/index 重写）与 usage 索引
+        // 链路的 JIT 编译与冷缓存开销移出主测量（此前 append 首批发 JIT 预热开销混入主测量）----
+        await manager.createConversation('bench-long-warmup', 'Benchmark Warmup');
+        await manager.addBatch('bench-long-warmup', makeMessages(BATCH_SIZE, 0));
+
         // ---- 1. append 增量写（100 批，每批 100 条）----
         const append = await withTiming(async () => {
             for (let batch = 0; batch < BATCH_COUNT; batch++) {

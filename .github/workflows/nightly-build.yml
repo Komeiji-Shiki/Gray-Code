@@ -35,6 +35,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      # 供 test-windows job 判断是否跳过（24 小时无变化时两个 job 都跳过）
+      build: ${{ steps.should.outputs.build }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,6 +75,20 @@ jobs:
           node-version: 20
           cache: npm
 
+      # fast-tavern py 的 venv 缓存（E-11）：key 含 runner.os 与 python 版本，避免跨版本复用损坏的 venv。
+      # venv 由 scripts/run-fast-tavern-py.mjs 在首次运行时创建，缓存命中时跳过 python -m venv。
+      - name: Resolve system python version (cache key)
+        if: steps.should.outputs.build == 'true'
+        id: pyver
+        run: echo "ver=$(python3 -V 2>&1 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache fast-tavern venv
+        if: steps.should.outputs.build == 'true'
+        uses: actions/cache@v4
+        with:
+          path: fast-tavern-main/py-fast-tavern/.venv
+          key: fast-tavern-venv-${{ runner.os }}-py${{ steps.pyver.outputs.ver }}
+
       - name: Install dependencies
         if: steps.should.outputs.build == 'true'
         run: |
@@ -86,6 +103,12 @@ jobs:
       - name: i18n parity check
         if: steps.should.outputs.build == 'true'
         run: npm run i18n:check
+
+      # benchmark 的三个套件带 smoke 上限断言（防灾难性回归），此前无任何 CI 执行（E-08）；
+      # 放测试之后、打包之前，回归即拦截 nightly。
+      - name: Benchmark (smoke limits)
+        if: steps.should.outputs.build == 'true'
+        run: npm run benchmark
 
       # 注意：本步骤必须带 id: version——下方 Release name/body 通过 steps.version.outputs.nightly_version
       # 引用本步骤输出；缺 id 时引用恒为空，Release 名会退化为 "v"，
@@ -152,3 +175,31 @@ jobs:
           else
             echo "✅ 检测到代码变化，已完成打包并发布 nightly release。"
           fi
+
+  # Windows 平台覆盖（E-09）：Windows 专属链路（toast-linger、WinRtLingerToastAdapter、
+  # path.win32 归一化、通知聚焦）此前无任何 CI 覆盖。这里只跑 typecheck + jest 后端测试
+  # （跳过 fast-tavern-py 的 venv 重建，成本可控；ubuntu 主 job 已跑全量）。
+  test-windows:
+    runs-on: windows-latest
+    needs: build
+    if: needs.build.outputs.build == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          # 前端有独立 package.json（非 workspaces），需单独安装其依赖
+          npm --prefix frontend ci --no-audit --no-fund
+
+      - name: Typecheck & backend tests (Windows)
+        run: |
+          npm run typecheck:all
+          npm test

@@ -11,7 +11,18 @@
             "presentation": {
                 "reveal": "silent"
             },
-            "problemMatcher": "$tsc"
+            "problemMatcher": {
+                "owner": "esbuild",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.+?):(\\d+):(\\d+):\\s+(ERROR|WARNING):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
         },
         {
             "label": "Backend Watch",
@@ -24,13 +35,24 @@
             },
             "problemMatcher": {
                 "owner": "esbuild-watch",
-                "pattern": {
-                    "regexp": "^$"
-                },
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": [
+                    {
+                        "regexp": "^\\s*[✘X]\\s*\\[(ERROR|WARNING)\\]\\s*(.*)$",
+                        "severity": 1,
+                        "message": 2
+                    },
+                    {
+                        "regexp": "^\\s*(.*?):(\\d+):(\\d+):\\s*$",
+                        "file": 1,
+                        "line": 2,
+                        "column": 3
+                    }
+                ],
                 "background": {
                     "activeOnStart": true,
                     "beginsPattern": ".*watching for changes.*",
-                    "endsPattern": ".*watching for changes.*\\(Ctrl\\+C to stop\\).*"
+                    "endsPattern": ".*rebuild (done|failed).*"
                 }
             }
         },
@@ -42,7 +64,18 @@
             "presentation": {
                 "reveal": "silent"
             },
-            "problemMatcher": "$tsc"
+            "problemMatcher": {
+                "owner": "esbuild",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": {
+                    "regexp": "^(.+?):(\\d+):(\\d+):\\s+(ERROR|WARNING):\\s+(.*)$",
+                    "file": 1,
+                    "line": 2,
+                    "column": 3,
+                    "severity": 4,
+                    "message": 5
+                }
+            }
         },
         {
             "label": "Build Frontend",

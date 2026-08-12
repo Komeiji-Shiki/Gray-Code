@@ -37,6 +37,12 @@ tmp-*.err.log
 .env.development
 .env.production
 
+# private keys / certificates (never commit)
+*.pem
+*.key
+*.p12
+*.pfx
+
 # OS metadata
 .DS_Store
 Thumbs.db

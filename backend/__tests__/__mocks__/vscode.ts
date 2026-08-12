@@ -1,5 +1,6 @@
 // Minimal vscode mock for unit tests
 import * as pathModule from 'path';
+import { fileUriToFilePath } from '../../../shared/uriParseShim';
 
 // 真实 VS Code 中 env.language 始终存在（如 'en'/'zh-cn'）；
 // 缺少该字段会让 PromptManager.getUserLanguage 的 'auto' 分支（ui.language 默认值）抛 TypeError。
@@ -39,17 +40,13 @@ function createFileUri(inputPath: string) {
 export const Uri = {
     file: createFileUri,
     parse: (value: string) => {
-        const decoded = decodeURIComponent(value);
-        if (/^file:\/\//i.test(decoded)) {
-            // 只去掉 scheme 的 `file://`（两个斜杠），`file:///abs/path` 中属于路径本身的前导
-            // 斜杠必须保留——原正则 `\/?` 会把第三个斜杠一起吃掉，Linux 上绝对路径被
-            // 解析成相对路径（Windows 的 file://C:/ 形式只有两个斜杠，恰好不触发）。
-            let filePath = decoded.replace(/^file:\/\//i, '');
-            if (process.platform !== 'win32' && /^[a-zA-Z]:\//.test(filePath)) {
-                filePath = `/${filePath}`;
-            }
+        // E-21：与 test/benchmark/benchmarkHarness.ts 共用 shared/uriParseShim.ts 的
+        // file:// 归一化逻辑，防两处 shim 各自演化漂移。
+        const filePath = fileUriToFilePath(value);
+        if (filePath !== null) {
             return createFileUri(filePath);
         }
+        const decoded = decodeURIComponent(value);
         return { fsPath: decoded, scheme: decoded.split(':')[0], path: decoded };
     },
     joinPath: jest.fn((base: any, ...paths: string[]) => createFileUri(pathModule.join(base.fsPath, ...paths))),

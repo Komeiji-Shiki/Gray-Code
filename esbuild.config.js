@@ -40,9 +40,12 @@ const buildOptions = {
     format: 'cjs',
     target: 'node20',
     external: externalModules.concat(nativePackages),
-    // 生产构建不再恒定开启 sourcemap（发布产物体积/源码暴露考量）：
+    // 生产构建不恒定开启 sourcemap（发布产物体积/源码暴露考量）：
     // watch 模式恒开（本地调试依赖源码映射），单次构建需显式 --sourcemap。
     sourcemap: withSourcemap,
+    // E-17：刻意不开启 minify——保留可读源码与注释，便于用户对 vsix 内扩展代码做安全审计。
+    // （与 sourcemap 的取舍方向不同：sourcemap 关闭是避免发布源码映射，这里是有意保留可读性；
+    //   若日后改为 minify: true，可配合 legalComments: 'inline' 保留许可证头。）
     minify: false,
     keepNames: true,
     tsconfig: 'tsconfig.json',
@@ -60,6 +63,11 @@ const buildOptions = {
  * 否则安装 vsix 后 require 会找不到模块。
  */
 function copyNativePackages() {
+    // E-18：复制前整体清空 dist/node_modules——历史上复制过、现已移出配置的包
+    // 不会残留在 dist 中被一起打包（白名单裁剪不做，保持整包复制语义）。
+    // 注意只清 node_modules 子目录：dist/extension.js 由 esbuild 构建产出，不能动。
+    fs.rmSync(path.join(outdir, 'node_modules'), { recursive: true, force: true });
+
     /** 已处理的包名集合，避免循环依赖重复复制 */
     const visited = new Set();
 
@@ -88,7 +96,6 @@ function copyNativePackages() {
         }
 
         const dest = path.join(outdir, 'node_modules', pkgName);
-        fs.rmSync(dest, { recursive: true, force: true });
         // dereference: pnpm 下包内部可能含 symlink，复制真实文件
         fs.cpSync(src, dest, { recursive: true, dereference: true });
         console.log(`[esbuild] copied: ${pkgName} → dist/node_modules/${pkgName}`);

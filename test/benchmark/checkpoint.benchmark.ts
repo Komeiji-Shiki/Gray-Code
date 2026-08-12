@@ -100,6 +100,19 @@ describe('基准 ① 大工作区 checkpoint', () => {
             data: { files: afterCreate.files, bytes: afterCreate.bytes },
         });
 
+        // ---- 0. JIT 预热（F8 同款思路）：主测量前先对一个小工作区（10 文件）跑一次
+        // 完整 buildWorkspaceSnapshot，把扫描/stat/流式哈希链路的 JIT 编译与冷缓存开销
+        // 移出主测量，使打印数字更接近稳态性能（预热结果丢弃）----
+        const warmDir = path.join(rootDir, 'warmup');
+        await fs.mkdir(warmDir, { recursive: true });
+        for (let i = 0; i < 10; i++) {
+            await fs.writeFile(path.join(warmDir, `warm_${i}.ts`), `// warmup file ${i}\n`, 'utf8');
+        }
+        await buildWorkspaceSnapshot({
+            roots: createRuntimeWorkspaceRoots([{ name: 'warm', uri: `file://${warmDir}`, fsPath: warmDir }]),
+            concurrency: 8,
+        });
+
         // ---- 1. 快照创建：buildWorkspaceSnapshot ----
         // R8e-FIX F2：checkpointsDir 位于扫描根（wsDir）之外，excludeAbsolutePaths 传它也
         // 永不命中，属无效配置——不再传排除项（若要排除应把目录移入 wsDir 内再排除）。
