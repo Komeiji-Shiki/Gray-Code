@@ -45,6 +45,9 @@ defineProps<{
   isImporting: boolean
   importExportMessage: string
   importExportMessageType: 'success' | 'error'
+  // 工作区行为（桌面版独有）
+  workspaceBehavior: string
+  workspaceBehaviorOptions: SelectOption[]
   // 应用信息
   appInfo: { name: string; displayName: string; version: string }
 }>()
@@ -65,6 +68,7 @@ const emit = defineEmits<{
   (e: 'reloadWindow'): void
   (e: 'exportSettings'): void
   (e: 'importSettings'): void
+  (e: 'update:workspaceBehavior', value: string): void
 }>()
 
 // 语言选项（使用 computed 以便语言切换时自动更新）
@@ -325,6 +329,25 @@ function onCustomPathInput(event: Event) {
       <div v-if="importExportMessage" class="storage-message" :class="importExportMessageType">
         <i :class="['codicon', importExportMessageType === 'success' ? 'codicon-check' : 'codicon-error']"></i>
         {{ importExportMessage }}
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 工作区行为（桌面版独有） -->
+    <div class="form-group" data-search-anchor="workspace-behavior">
+      <label class="group-label">
+        <i class="codicon codicon-folder-opened"></i>
+        {{ t('components.settings.settingsPanel.workspaceBehavior.title') }}
+      </label>
+      <p class="field-description">{{ t('components.settings.settingsPanel.workspaceBehavior.description') }}</p>
+
+      <div class="workspace-behavior-settings">
+        <CustomSelect
+          :model-value="workspaceBehavior"
+          :options="workspaceBehaviorOptions"
+          @update:model-value="emit('update:workspaceBehavior', $event)"
+        />
       </div>
     </div>
 
