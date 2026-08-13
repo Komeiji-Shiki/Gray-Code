@@ -23,7 +23,7 @@ const runtime = vi.hoisted(() => ({
   settingsStore: undefined as any,
   sendToExtension: vi.fn().mockResolvedValue({ success: true }),
   showNotification: vi.fn().mockResolvedValue(undefined),
-  onExtensionCommand: vi.fn(() => () => {}),
+  onExtensionCommand: vi.fn((_command: string, _handler: (data: any) => void) => () => {}),
   config: {
     listConfigIds: vi.fn().mockResolvedValue([]),
     getConfig: vi.fn().mockResolvedValue(null),
