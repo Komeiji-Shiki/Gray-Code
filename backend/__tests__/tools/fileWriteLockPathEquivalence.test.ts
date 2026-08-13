@@ -6,9 +6,9 @@
  * 否则可绕过互斥锁导致并行覆盖。
  */
 
-import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import {
     FileWriteLockManager,
@@ -200,59 +200,84 @@ describe('锁 key 路径等价 - 多工作区', () => {
     });
 });
 
-describe('锁 key 路径等价 - 符号链接（同一物理文件）', () => {
-    let realDir: string;
+describe('锁 key 路径等价 - symlink/junction', () => {
+    let tempRoot: string;
+    let parentDir: string;
+    let targetA: string;
+    let targetB: string;
     let linkDir: string;
     let manager: FileWriteLockManager;
 
-    beforeAll(() => {
-        realDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-lock-real-'));
-        linkDir = path.join(path.dirname(realDir), `gc-lock-link-${path.basename(realDir)}`);
-        try {
-            // 真实 symlink 创建在 CI/Windows 上不可靠（需管理员/开发者模式），失败则跳过本组用例
-            fs.symlinkSync(realDir, linkDir, 'dir');
-        } catch (error) {
-            if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') {
-                linkDir = '';
-            } else {
-                throw error;
-            }
-        }
-    });
+    const createDirectoryLink = (target: string, link: string) => {
+        fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
+    };
+    const itWithFileSymlink = process.platform === 'win32' ? test.skip : test;
 
-    afterAll(() => {
-        try { fs.rmSync(realDir, { recursive: true, force: true }); } catch { /* ignore */ }
-        if (linkDir) {
-            try { fs.rmSync(linkDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    const removeDirectoryLink = (link: string) => {
+        try {
+            fs.unlinkSync(link);
+        } catch {
+            fs.rmdirSync(link);
         }
-    });
+    };
 
     beforeEach(() => {
+        tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-lock-symlink-'));
+        parentDir = path.join(tempRoot, 'parent');
+        targetA = path.join(tempRoot, 'target-a');
+        targetB = path.join(tempRoot, 'target-b');
+        linkDir = path.join(parentDir, 'link');
+        fs.mkdirSync(parentDir);
+        fs.mkdirSync(targetA);
+        fs.mkdirSync(targetB);
+        createDirectoryLink(targetA, linkDir);
         manager = new FileWriteLockManager();
         (vscode.workspace as any).workspaceFolders = [];
     });
 
     afterEach(() => {
         (vscode.workspace as any).workspaceFolders = [];
+        fs.rmSync(tempRoot, { recursive: true, force: true });
     });
 
-    test('经符号链接访问已存在文件与真实路径互斥', () => {
-        if (!linkDir) {
-            return; // Windows 无权限创建符号链接时跳过
-        }
-        const realFile = path.join(realDir, 'shared.ts');
+    test('链接路径与真实路径指向已存在文件时互斥', () => {
+        const realFile = path.join(targetA, 'shared.ts');
         fs.writeFileSync(realFile, 'x');
         expect(manager.tryAcquire([path.join(linkDir, 'shared.ts')], holderA).acquired).toBe(true);
         expect(manager.tryAcquire([realFile], holderB).acquired).toBe(false);
     });
 
-    test('经符号链接新建文件与真实路径互斥（祖先 realpath + 尾部拼接）', () => {
-        if (!linkDir) {
-            return; // Windows 无权限创建符号链接时跳过
-        }
-        const linkNew = path.join(linkDir, 'new.ts');
-        const realNew = path.join(realDir, 'new.ts');
-        expect(manager.tryAcquire([linkNew], holderA).acquired).toBe(true);
-        expect(manager.tryAcquire([realNew], holderB).acquired).toBe(false);
+    test('链接路径与真实路径指向待创建文件时互斥', () => {
+        expect(manager.tryAcquire([path.join(linkDir, 'new.ts')], holderA).acquired).toBe(true);
+        expect(manager.tryAcquire([path.join(targetA, 'new.ts')], holderB).acquired).toBe(false);
+    });
+
+    itWithFileSymlink('最终路径是 dangling symlink 时仍与待创建目标互斥', () => {
+        const targetFile = path.join(targetA, 'dangling-target.ts');
+        const danglingLink = path.join(parentDir, 'dangling-link.ts');
+        fs.symlinkSync(targetFile, danglingLink, 'file');
+
+        expect(manager.tryAcquire([danglingLink], holderA).acquired).toBe(true);
+        expect(manager.tryAcquire([targetFile], holderB).acquired).toBe(false);
+    });
+
+    test('父目录锁仍阻止经指向目录外的链接写入后代', () => {
+        expect(manager.tryAcquire([parentDir], holderA).acquired).toBe(true);
+        expect(manager.tryAcquire([path.join(linkDir, 'new.ts')], holderB).acquired).toBe(false);
+    });
+
+    test('链接改指后同 holder 重入可逐次释放全部旧物理 key', () => {
+        const displayPath = path.join(linkDir, 'same.ts');
+        expect(manager.tryAcquire([displayPath], holderA).acquired).toBe(true);
+
+        removeDirectoryLink(linkDir);
+        createDirectoryLink(targetB, linkDir);
+        expect(manager.tryAcquire([displayPath], holderA).acquired).toBe(true);
+
+        manager.release([displayPath], holderA);
+        manager.release([displayPath], holderA);
+
+        expect(manager.getLockCount()).toBe(0);
+        expect(manager.tryAcquire([path.join(targetA, 'same.ts')], holderB).acquired).toBe(true);
     });
 });

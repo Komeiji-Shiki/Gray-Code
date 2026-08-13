@@ -125,6 +125,23 @@ describe('write_file 终态语义（diff 审阅）', () => {
         assertCommonPassthrough(entry);
     });
 
+    test('新文件拒绝后的清理失败会在结果中明确透传', async () => {
+        const cleanupError = 'Failed to clean up pre-created file "sample.ts": file is locked';
+        mockDiffManager.waitForDiffResolution.mockResolvedValue('rejected');
+        mockDiffManager.getDiff.mockReturnValue({
+            id: 'pending-diff-1',
+            status: 'rejected',
+            cleanupError
+        });
+
+        const result = await runWriteFile({ path: 'sample.ts', content: 'new content' }, { toolId: 'tool-1' });
+        const entry = result.data.results[0];
+
+        expect(result.success).toBe(false);
+        expect(entry.cleanupError).toBe(cleanupError);
+        expect(entry.error).toBe(`Diff was rejected by user. ${cleanupError}`);
+    });
+
     test.each([
         ['abort', 'Write was cancelled by user'],
         ['user', 'Write was interrupted by user']
@@ -186,5 +203,12 @@ describe('write_file 终态语义（diff 审阅）', () => {
         const result = await runWriteFile({ path: 'sample.ts', content: 123 });
         expect(result).toEqual({ success: false, error: 'content is required' });
         expect(mockDiffManager.createPendingDiff).not.toHaveBeenCalled();
+    });
+
+    test('工具契约说明确认前预创建、拒绝清理范围和失败报告', () => {
+        const description = registerWriteFile().declaration.description;
+        expect(description).toContain('确认前预创建空文件');
+        expect(description).toContain('本次新建且仍为空的父目录');
+        expect(description).toContain('清理失败');
     });
 });

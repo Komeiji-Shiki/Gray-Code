@@ -1,11 +1,14 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 
 jest.mock('fs', () => ({
     readFileSync: jest.fn(),
     writeFileSync: jest.fn(),
+    statSync: jest.fn(),
     existsSync: jest.fn(),
-    unlinkSync: jest.fn()
+    unlinkSync: jest.fn(),
+    rmdirSync: jest.fn()
 }));
 
 jest.mock('../../tools/file/DiffCodeLensProvider', () => {
@@ -116,6 +119,8 @@ function createPendingDiff(manager: DiffManager, overrides?: Partial<PendingDiff
         diffGuardWarning: overrides?.diffGuardWarning,
         diffGuardDeletePercent: overrides?.diffGuardDeletePercent,
         conversationId: overrides?.conversationId,
+        newFile: overrides?.newFile,
+        newFileCreatedDirectoryRoot: overrides?.newFileCreatedDirectoryRoot,
         structuredHunkPlan: overrides?.structuredHunkPlan,
         checkpointReady: overrides?.checkpointReady,
         lockHolder: overrides?.lockHolder,
@@ -195,6 +200,7 @@ describe('DiffManager lifecycle closure', () => {
         (fs.readFileSync as jest.Mock).mockReturnValue('original');
         (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
         (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.statSync as jest.Mock).mockReturnValue({ size: 0 });
         (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
     });
 
@@ -896,6 +902,7 @@ describe('DiffManager conversationId scoping (#48)', () => {
         (fs.readFileSync as jest.Mock).mockReturnValue('original');
         (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
         (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.statSync as jest.Mock).mockReturnValue({ size: 0 });
         (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
     });
 
@@ -1048,6 +1055,7 @@ describe('DiffManager newFile through CreatePendingDiffOptions (#14)', () => {
         (fs.readFileSync as jest.Mock).mockReturnValue('original');
         (fs.writeFileSync as jest.Mock).mockImplementation(() => undefined);
         (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.statSync as jest.Mock).mockReturnValue({ size: 0 });
         (fs.unlinkSync as jest.Mock).mockImplementation(() => undefined);
     });
 
@@ -1072,6 +1080,140 @@ describe('DiffManager newFile through CreatePendingDiffOptions (#14)', () => {
         // Cancel: should try to delete the new file
         await manager.rejectDiff(pendingDiff.id);
         expect(fs.unlinkSync).toHaveBeenCalledWith('C:/tmp/newfile.ts');
+        expect(fs.rmdirSync).not.toHaveBeenCalled();
+    });
+
+    test('拒绝时删除预创建文件，并只向上删除本次 mkdir 创建的空目录', async () => {
+        const manager = getManager();
+        const createdRoot = path.resolve('tmp', 'write-preview-created');
+        const nestedDir = path.join(createdRoot, 'nested');
+        const absolutePath = path.join(nestedDir, 'newfile.ts');
+        (fs.unlinkSync as jest.Mock).mockClear().mockImplementation(() => undefined);
+        (fs.rmdirSync as jest.Mock).mockClear().mockImplementation(() => undefined);
+
+        const pendingDiff = await manager.createPendingDiff(
+            'write-preview-created/nested/newfile.ts',
+            absolutePath,
+            '',
+            'new content',
+            undefined, undefined, undefined,
+            { newFile: true, newFileCreatedDirectoryRoot: createdRoot }
+        );
+
+        await manager.rejectDiff(pendingDiff.id);
+
+        expect(fs.unlinkSync).toHaveBeenCalledTimes(1);
+        expect(fs.unlinkSync).toHaveBeenCalledWith(absolutePath);
+        expect(fs.rmdirSync).toHaveBeenNthCalledWith(1, nestedDir);
+        expect(fs.rmdirSync).toHaveBeenNthCalledWith(2, createdRoot);
+        expect(pendingDiff.cleanupError).toBeUndefined();
+        expect(pendingDiff.newFileCleanupComplete).toBe(true);
+    });
+
+    test('预创建文件删除失败仍终结拒绝，但把 cleanupError 保留给工具结果', async () => {
+        const manager = getManager();
+        const cleanupFailure = Object.assign(new Error('file is locked'), { code: 'EPERM' });
+        (fs.unlinkSync as jest.Mock).mockImplementation(() => { throw cleanupFailure; });
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/locked-newfile.ts',
+            'C:/tmp/locked-newfile.ts',
+            '',
+            'new content',
+            undefined, undefined, undefined,
+            { newFile: true }
+        );
+
+        await expect(manager.rejectDiff(pendingDiff.id)).resolves.toBe(true);
+        expect(pendingDiff.status).toBe('rejected');
+        expect(pendingDiff.cleanupError).toMatch(/Failed to clean up pre-created file.*file is locked/);
+        expect(pendingDiff.newFileCleanupComplete).not.toBe(true);
+    });
+
+    test('拒绝时发现预创建文件已被其他写入者填充则保留内容并报告', async () => {
+        const manager = getManager();
+        (fs.statSync as jest.Mock).mockReturnValue({ size: 12 });
+        (fs.unlinkSync as jest.Mock).mockClear();
+
+        const pendingDiff = await manager.createPendingDiff(
+            'src/concurrently-written.ts',
+            'C:/tmp/concurrently-written.ts',
+            '',
+            'new content',
+            undefined, undefined, undefined,
+            { newFile: true }
+        );
+
+        (fs.writeFileSync as jest.Mock).mockClear();
+        await expect(manager.rejectDiff(pendingDiff.id)).resolves.toBe(true);
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
+        expect(fs.unlinkSync).not.toHaveBeenCalled();
+        expect(pendingDiff.cleanupError).toMatch(/no longer empty/);
+    });
+
+    test('取消脏的新文件预览时先恢复为空，再关闭并删除预创建文件', async () => {
+        const manager = getManager();
+        const doc = createDocument({
+            filePath: 'C:/tmp/cancelled-newfile.ts',
+            initialContent: 'new content',
+            saveReturns: true
+        });
+        doc.setText('new content');
+        (vscode.commands.executeCommand as jest.Mock).mockImplementation(async (command: string) => {
+            if (command === 'workbench.action.files.revert') {
+                doc.setText('');
+                doc.isDirty = false;
+            }
+        });
+        (fs.unlinkSync as jest.Mock).mockClear();
+
+        const pendingDiff = createPendingDiff(manager, {
+            id: 'cancelled-new-file',
+            filePath: 'src/cancelled-newfile.ts',
+            absolutePath: 'C:/tmp/cancelled-newfile.ts',
+            originalContent: '',
+            newContent: 'new content',
+            newFile: true
+        });
+
+        const result = await manager.cancelAllPending();
+
+        expect(result.cancelled).toHaveLength(1);
+        expect(doc.getText()).toBe('');
+        expect(vscode.commands.executeCommand).toHaveBeenCalledWith(
+            'workbench.action.files.revert',
+            doc.uri
+        );
+        expect(doc.save).not.toHaveBeenCalled();
+        expect(fs.unlinkSync).toHaveBeenCalledWith('C:/tmp/cancelled-newfile.ts');
+        expect(pendingDiff.status).toBe('rejected');
+        expect(pendingDiff.cleanupError).toBeUndefined();
+    });
+
+    test('新文件缓冲 revert 失败时保留脏内容并报告清理失败', async () => {
+        const manager = getManager();
+        const doc = createDocument({
+            filePath: 'C:/tmp/revert-failed.ts',
+            initialContent: 'unconfirmed content'
+        });
+        doc.setText('unconfirmed content');
+        (fs.unlinkSync as jest.Mock).mockClear();
+
+        const pendingDiff = createPendingDiff(manager, {
+            id: 'revert-failed-new-file',
+            filePath: 'src/revert-failed.ts',
+            absolutePath: 'C:/tmp/revert-failed.ts',
+            originalContent: '',
+            newContent: 'unconfirmed content',
+            newFile: true
+        });
+
+        await manager.cancelAllPending();
+
+        expect(doc.isDirty).toBe(true);
+        expect(fs.unlinkSync).not.toHaveBeenCalled();
+        expect(pendingDiff.status).toBe('rejected');
+        expect(pendingDiff.cleanupError).toMatch(/unsaved changes/);
     });
 });
 

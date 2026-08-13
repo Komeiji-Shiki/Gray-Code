@@ -98,6 +98,12 @@ export interface PendingDiff {
     toolId?: string;
     /** 原本不存在的文件（write_file 新建）：拒绝或取消时需删除残留空文件 */
     newFile?: boolean;
+    /** write_file 递归 mkdir 本次创建的最高层目录；清理不得越过该边界 */
+    newFileCreatedDirectoryRoot?: string;
+    /** 新文件拒绝/取消后的残留清理失败原因（工具结果必须向调用方暴露） */
+    cleanupError?: string;
+    /** 新文件及其可安全删除的空父目录已完成清理 */
+    newFileCleanupComplete?: boolean;
     /** diff 警戒值警告信息（当删除行数超过阈值时设置）*/
     diffGuardWarning?: string;
     /** 删除行占比（0-100，用于前端显示） */
@@ -179,6 +185,8 @@ export interface CreatePendingDiffOptions {
     confirmedByToolConfirmation?: boolean;
     /** 原本不存在的文件（write_file 新建）：拒绝或取消时需删除残留空文件 */
     newFile?: boolean;
+    /** write_file 递归 mkdir 本次创建的最高层目录；仅用于拒绝/取消后的安全空目录清理 */
+    newFileCreatedDirectoryRoot?: string;
     /** 会话 ID：用于中断判定的会话隔离，避免全局中断标记泄漏误伤 */
     conversationId?: string;
     /** 结构化 hunk 计划（apply_diff 结构化路径产出），块级拒绝/最终内容重放时复用 */
@@ -545,25 +553,89 @@ export class DiffManager {
         this.notifySaveComplete(diff);
     }
 
-    /**
-     * 删除"本次会话预创建且未成功应用"的新文件残留（H2）。
-     *
-     * 为什么下沉到公共终结路径：write_file 预创建空文件后，acquireWriteLockForDiff 冲突、
-     * autoSave 失败、用户取消等所有失败路径都会走到 finalizeRejectedDiff/finalizeCancelledDiff，
-     * 只在个别路径清理会漏掉残留空文件。
-     * 为什么只在拒绝/取消路径调用：newFile 语义是"目标文件之前不存在、AI 要新建"，
-     * 确认接受后该文件应保留（finalizeAcceptedDiff 不调用本方法）。
-     * 已删除/不存在的文件 unlink 会抛错，统一吞掉。
-     */
+    /** 删除预创建新文件，并在安全边界内向上删除本次创建且仍为空的父目录。 */
     private removeNewFileResidue(diff: PendingDiff): void {
-        if (!diff.newFile) {
+        if (!diff.newFile || diff.newFileCleanupComplete) {
             return;
+        }
+
+        delete diff.cleanupError;
+        const openDocument = vscode.workspace.textDocuments.find(
+            doc => sameFsPath(doc.uri.fsPath, diff.absolutePath)
+        );
+        if (openDocument?.isDirty) {
+            diff.cleanupError = `Refused to clean up pre-created file "${diff.filePath}" because its editor buffer still has unsaved changes.`;
+            console.warn(`[DiffManager] ${diff.cleanupError}`);
+            return;
+        }
+        if (typeof fs.statSync === 'function') {
+            try {
+                const stat = fs.statSync(diff.absolutePath);
+                if (stat && stat.size !== 0) {
+                    diff.cleanupError = `Refused to clean up pre-created file "${diff.filePath}" because it is no longer empty.`;
+                    console.warn(`[DiffManager] ${diff.cleanupError}`);
+                    return;
+                }
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException)?.code;
+                if (code !== 'ENOENT') {
+                    diff.cleanupError = `Failed to inspect pre-created file "${diff.filePath}" before cleanup: ${error instanceof Error ? error.message : String(error)}`;
+                    console.warn(`[DiffManager] ${diff.cleanupError}`);
+                    return;
+                }
+            }
         }
         try {
             fs.unlinkSync(diff.absolutePath);
-        } catch (e) {
-            console.warn(`[DiffManager] Failed to remove new file ${diff.filePath}:`, e);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException)?.code;
+            if (code !== 'ENOENT') {
+                diff.cleanupError = `Failed to clean up pre-created file "${diff.filePath}": ${error instanceof Error ? error.message : String(error)}`;
+                console.warn(`[DiffManager] ${diff.cleanupError}`);
+                return;
+            }
         }
+
+        const createdRoot = diff.newFileCreatedDirectoryRoot
+            ? path.resolve(diff.newFileCreatedDirectoryRoot)
+            : undefined;
+        if (!createdRoot || createdRoot === path.parse(createdRoot).root) {
+            diff.newFileCleanupComplete = true;
+            return;
+        }
+
+        let current = path.resolve(path.dirname(diff.absolutePath));
+        const relativeToRoot = path.relative(createdRoot, current);
+        const isInsideCreatedRoot = relativeToRoot === ''
+            || (!relativeToRoot.startsWith('..') && !path.isAbsolute(relativeToRoot));
+        if (!isInsideCreatedRoot) {
+            diff.cleanupError = `Refused to clean parent directories for "${diff.filePath}": cleanup boundary is outside the target parent.`;
+            console.warn(`[DiffManager] ${diff.cleanupError}`);
+            return;
+        }
+
+        while (true) {
+            try {
+                fs.rmdirSync(current);
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException)?.code;
+                if (code === 'ENOENT') {
+                    // 已被其它安全清理路径移除，继续向边界收敛。
+                } else if (code === 'ENOTEMPTY' || code === 'EEXIST') {
+                    // 目录已有其它内容：安全保留，不视为清理失败，也不能继续删除祖先。
+                    diff.newFileCleanupComplete = true;
+                    return;
+                } else {
+                    diff.cleanupError = `Failed to clean up parent directory "${current}": ${error instanceof Error ? error.message : String(error)}`;
+                    console.warn(`[DiffManager] ${diff.cleanupError}`);
+                    return;
+                }
+            }
+
+            if (current === createdRoot) break;
+            current = path.dirname(current);
+        }
+        diff.newFileCleanupComplete = true;
     }
 
     private finalizeRejectedDiff(diff: PendingDiff): void {
@@ -805,6 +877,9 @@ export class DiffManager {
         if (options?.newFile) {
             pendingDiff.newFile = true;
         }
+        if (options?.newFileCreatedDirectoryRoot) {
+            pendingDiff.newFileCreatedDirectoryRoot = options.newFileCreatedDirectoryRoot;
+        }
 
         // 绑定会话 ID：让 waitForDiffResolution 的中断判定能按会话隔离，
         // 避免全局中断标记泄漏导致 autoSave 已应用后仍返回 "cancelled by user"。
@@ -1006,7 +1081,11 @@ export class DiffManager {
             let restoreSucceeded = true;
             this.rejectingDiffIds.add(diff.id);
             try {
-                await this.restoreOriginalContentBestEffort(diff);
+                if (diff.newFile) {
+                    await this.closeDiffTabAndCleanNewFile(diff.id, diff);
+                } else {
+                    await this.restoreOriginalContentBestEffort(diff);
+                }
             } catch (error) {
                 restoreSucceeded = false;
                 console.warn(`[DiffManager] Failed to restore original content after write lock conflict for ${diff.filePath}:`, error);
@@ -1017,7 +1096,7 @@ export class DiffManager {
             // 恢复成功才关 tab：closeDiffTab 对 dirty 文档有静默 save 兜底，恢复失败时
             // buffer 仍是未确认的 AI 内容，此时关 tab 会把 AI 内容写盘（与 rejectDiffUnlocked
             // 在恢复失败时中断、不进入 closeDiffTab 的安全语义一致）。
-            if (restoreSucceeded) {
+            if (restoreSucceeded && !diff.newFile) {
                 try {
                     await this.closeDiffTab(diff.absolutePath);
                 } catch (error) {
@@ -1523,10 +1602,18 @@ export class DiffManager {
             const savedContent = savedDoc.getText();
 
             if (savedContent === diff.originalContent) {
+                if (diff.newFile) {
+                    this.rejectingDiffIds.add(diff.id);
+                    try {
+                        await this.closeDiffTabAndCleanNewFile(diff.id, diff);
+                    } finally {
+                        this.rejectingDiffIds.delete(diff.id);
+                    }
+                }
                 this.finalizeRejectedDiff(diff);
 
                 const currentSettings = this.getSettings();
-                if (!currentSettings.autoSave) {
+                if (!currentSettings.autoSave && !diff.newFile) {
                     await this.closeDiffTab(diff.absolutePath);
                 }
                 return;
@@ -1571,9 +1658,6 @@ export class DiffManager {
             } catch (e) {
                 // 读文件失败（文件被删除、权限问题等）：收敛 diff 为拒绝，避免永久 pending
                 this.finalizeRejectedDiff(diff);
-                if (diff.newFile) {
-                    try { fs.unlinkSync(diff.absolutePath); } catch { /* ignore */ }
-                }
             }
         });
 
@@ -1949,24 +2033,48 @@ export class DiffManager {
     }
 
     /**
-     * 关标签页并删除新建文件残留（所有拒绝/取消路径的统一收敛点）。
+     * 丢弃新文件 diff 的未确认缓冲，但不把空 originalContent 写回磁盘。
      *
-     * 为什么不在同步 finalize* 方法里做 unlink：finalize 不负责 I/O，
-     * 把删文件逻辑集中在一个异步辅助方法里，避免各取消路径重复实现。
+     * 对新文件沿用 restoreOriginalContentBestEffort 会执行 doc.save()/writeFileSync('')，
+     * 可能先截断并发写入者刚写入的内容，令后续“非空文件不删”检查失去意义。revert 会从
+     * 当前磁盘重新载入：正常预创建文件恢复为空；若磁盘已被外部写入，则保留其非空内容。
      */
+    private async prepareNewFileForCleanup(diff: PendingDiff): Promise<boolean> {
+        const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));
+        if (!doc?.isDirty) {
+            return true;
+        }
+        if (diff.userUnsavedContentBeforePreview !== undefined) {
+            diff.cleanupError = `Refused to clean up pre-created file "${diff.filePath}" because it had unsaved user changes before the preview.`;
+            console.warn(`[DiffManager] ${diff.cleanupError}`);
+            return false;
+        }
+        try {
+            await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
+        } catch (error) {
+            diff.cleanupError = `Failed to discard the unconfirmed editor buffer for "${diff.filePath}": ${error instanceof Error ? error.message : String(error)}`;
+            console.warn(`[DiffManager] ${diff.cleanupError}`);
+            return false;
+        }
+        if (doc.isDirty) {
+            diff.cleanupError = `Failed to discard the unconfirmed editor buffer for "${diff.filePath}": the document is still dirty after revert.`;
+            console.warn(`[DiffManager] ${diff.cleanupError}`);
+            return false;
+        }
+        return true;
+    }
+
+    /** 先关闭 diff 标签页，再重试删除预创建文件与安全范围内的空父目录。 */
     private async closeDiffTabAndCleanNewFile(id: string, diff: PendingDiff): Promise<void> {
+        if (diff.newFile && !(await this.prepareNewFileForCleanup(diff))) {
+            return;
+        }
         try {
             await this.closeDiffTab(diff.absolutePath);
         } catch (err) {
             console.warn(`[DiffManager] Failed to close diff tab for ${diff.absolutePath}:`, err);
         }
-        if (diff.newFile) {
-            try {
-                fs.unlinkSync(diff.absolutePath);
-            } catch (e) {
-                console.warn(`[DiffManager] Failed to remove new file ${diff.filePath}:`, e);
-            }
-        }
+        this.removeNewFileResidue(diff);
     }
 
     /**
@@ -2055,17 +2163,18 @@ export class DiffManager {
                 return false;
             }
 
-            // 1. 恢复文件内容（H1 跳过判据与幂等语义见 restoreOriginalContentBestEffort；
-            //    恢复失败抛错由外层 catch 收敛为"拒绝失败"，与既有行为一致）
-            await this.restoreOriginalContentBestEffort(diff);
-
-            // write_file 新建文件被拒绝：关 tab 并删除残留空文件
+            // write_file 新建文件不能通过 save()/writeFileSync('') 恢复：那会截断并发写入。
+            // 专用清理路径先 revert 未确认缓冲，再只删除仍为空的磁盘文件。
             if (diff.newFile) {
                 await this.closeDiffTabAndCleanNewFile(id, diff);
                 this.finalizeRejectedDiff(diff);
                 this.rejectingDiffIds.delete(id);
                 return true;
             }
+
+            // 1. 恢复已有文件内容（H1 跳过判据与幂等语义见 restoreOriginalContentBestEffort；
+            //    恢复失败抛错由外层 catch 收敛为"拒绝失败"，与既有行为一致）
+            await this.restoreOriginalContentBestEffort(diff);
 
             this.finalizeRejectedDiff(diff);
 
@@ -2405,17 +2514,30 @@ export class DiffManager {
                 continue;
             }
 
-            // 1. 标记为取消（公开 PendingDiff 状态仍映射为rejected，以保持既有 API/前端判断不变）
+            // 新文件要在发布 rejected 状态前完成关闭/清理尝试，确保 cleanupError 能被
+            // waitForDiffResolution 的调用方稳定读到。rejecting 标记避免关 tab监听器抢先终结。
+            if (diff.newFile) {
+                this.rejectingDiffIds.add(id);
+                try {
+                    await this.closeDiffTabAndCleanNewFile(id, diff);
+                } finally {
+                    this.rejectingDiffIds.delete(id);
+                }
+            }
+
+            // 1. 标记为取消（公开 PendingDiff 状态仍映射为 rejected，以保持既有 API/前端判断不变）
             this.finalizeCancelledDiff(diff);
             cancelled.push({ ...diff });
 
-            // 2. 关标签页并删除新建文件残留
-            await this.closeDiffTabAndCleanNewFile(id, diff);
+            // 2. 已有文件保持原顺序：先终结再关 tab，避免 close listener 抢先结算。
+            if (!diff.newFile) {
+                await this.closeDiffTabAndCleanNewFile(id, diff);
+            }
 
             // 3. 尝试恢复文件到原始状态
             // H1：预览因目标文档 dirty 被拒绝的 diff，buffer 仍是用户未保存版本，
             // 恢复动作会覆盖用户未保存内容，必须跳过（关闭 diff 标签页不影响用户内容）。
-            if (diff.userUnsavedContentBeforePreview === undefined) {
+            if (!diff.newFile && diff.userUnsavedContentBeforePreview === undefined) {
                 try {
                     const uri = vscode.Uri.file(diff.absolutePath);
                     const doc = vscode.workspace.textDocuments.find(d => sameFsPath(d.uri.fsPath, diff.absolutePath));

@@ -55,6 +55,8 @@ interface WriteResult {
      * 目的：让自动确认失败能明确显示原因，同时不再卡住等待链路。
      */
     autoSaveError?: string;
+    /** 新文件拒绝/取消后残留清理失败原因 */
+    cleanupError?: string;
     /** Pending diff ID，用于确认/拒绝（历史字段，尽量避免再依赖） */
     pendingDiffId?: string;
 }
@@ -99,6 +101,7 @@ async function writeSingleFile(
         // 检查文件是否存在并获取原始内容
         let originalContent = '';
         let fileExists = false;
+        let newFileCreatedDirectoryRoot: string | undefined;
         
         try {
             await vscode.workspace.fs.stat(uri);
@@ -139,9 +142,11 @@ async function writeSingleFile(
         // 如果文件不存在，需要先创建目录
         // 异步 IO：避免在 extension host 主线程上做同步磁盘操作；
         // mkdir recursive 幂等，无需先 existsSync 探测
-            if (!fileExists) {
+        if (!fileExists) {
             const dirPath = path.dirname(absolutePath);
-            await fs.promises.mkdir(dirPath, { recursive: true });
+            // recursive mkdir 会返回本次创建的最高层目录；把该安全边界交给 DiffManager，
+            // 拒绝/取消时只会向上删除这次新建且仍为空的目录，不触碰既有父目录。
+            newFileCreatedDirectoryRoot = await fs.promises.mkdir(dirPath, { recursive: true });
             // checkpoint 写盘屏障：预写空文件也是落盘，必须在 checkpoint 就绪后执行，
             // 否则批量工具并行写盘可能先于盘点落盘（并发化后 checkpoint 记录会丢失）。
             if (checkpointReady) {
@@ -162,11 +167,9 @@ async function writeSingleFile(
                 prewriteLocked = true;
             }
             try {
-                // 创建空文件以便 DiffManager 可以操作。
-                // 设计说明：这是「确认前先落盘空文件」的既有行为——工具契约已如实告知模型
-                // （新建文件会在确认前短暂出现在工作区）；拒绝/取消路径由 DiffManager 的
-                // newFile 残留清理负责删除。若未来改为确认前不落盘（虚拟文档 diff），需同步
-                // 调整 createPendingDiff/showDiffView 对不存在文件的处理，超出本次最小修复范围。
+                // 创建空文件以便 DiffManager 可以操作。这是确认前的既有预创建行为；
+                // 拒绝/取消后 DiffManager 会删除该文件与本次创建的空父目录，清理失败会
+                // 通过 cleanupError 返回给调用方。未来改用虚拟文档 diff 后可移除此预写。
                 await fs.promises.writeFile(absolutePath, '', 'utf8');
             } catch (error) {
                 // H2：预创建空文件失败时清理可能残留的空文件（仅当确认是本次创建的空文件，
@@ -212,6 +215,7 @@ async function writeSingleFile(
             {
                 confirmedByToolConfirmation: approvedByToolConfirmation === true,
                 newFile: !fileExists,
+                ...(newFileCreatedDirectoryRoot ? { newFileCreatedDirectoryRoot } : {}),
                 conversationId,
                 checkpointReady,
                 // PERF-CP：deferred 模式写盘锁持有者身份（DiffManager 审阅期间持有）
@@ -240,7 +244,10 @@ async function writeSingleFile(
                 cancelled: false,
                 action: fileExists ? 'modified' : 'created',
                 status: 'rejected',
-                error: outcome.rejectedMessage,
+                error: outcome.finalDiff?.cleanupError
+                    ? `${outcome.rejectedMessage}. ${outcome.finalDiff.cleanupError}`
+                    : outcome.rejectedMessage,
+                cleanupError: outcome.finalDiff?.cleanupError,
                 diffContentId: outcome.diffContentId,
                 pendingDiffId: outcome.pendingDiffId
             };
@@ -254,9 +261,12 @@ async function writeSingleFile(
                 cancelled: true,
                 action: fileExists ? 'modified' : 'created',
                 status: 'rejected',
-                error: outcome.interruptKind === 'abort'
+                error: (outcome.interruptKind === 'abort'
                     ? outcome.abortMessage
-                    : outcome.interruptMessage,
+                    : outcome.interruptMessage) + (outcome.finalDiff?.cleanupError
+                    ? `. ${outcome.finalDiff.cleanupError}`
+                    : ''),
+                cleanupError: outcome.finalDiff?.cleanupError,
                 diffContentId: outcome.diffContentId,
                 pendingDiffId: outcome.pendingDiffId
             };
@@ -268,8 +278,13 @@ async function writeSingleFile(
             success: outcome.wasAccepted,
             action: fileExists ? 'modified' : 'created',
             status: outcome.wasAccepted ? 'accepted' : 'rejected',
-            error: outcome.wasAccepted ? undefined : (outcome.autoSaveError || outcome.rejectedMessage),
+            error: outcome.wasAccepted
+                ? undefined
+                : `${outcome.autoSaveError || outcome.rejectedMessage}${outcome.finalDiff?.cleanupError
+                    ? `. ${outcome.finalDiff.cleanupError}`
+                    : ''}`,
             autoSaveError: outcome.autoSaveError,
+            cleanupError: outcome.finalDiff?.cleanupError,
             diffContentId: outcome.diffContentId,
             pendingDiffId: outcome.pendingDiffId
         };
@@ -300,7 +315,7 @@ export function createWriteFileTool(): Tool {
     let description = isZh
         ? `写入内容到一个文件。若文件不存在则创建；若文件已存在则用 content 覆盖其完整内容。执行前会展示 Diff 预览并等待用户确认。
 
-注意：目标文件不存在时，为展示 Diff 预览需在确认前先在磁盘上创建空文件（确认等待期间工作区会短暂出现该空文件）；拒绝或取消写入时残留会被自动删除。
+注意：目标文件不存在时，为展示 Diff 预览会在确认前预创建空文件。拒绝或取消后会删除该文件，并删除本次新建且仍为空的父目录；若残留清理失败，工具结果会明确报告。
 
 适用场景：
 - 创建新文件
@@ -316,7 +331,7 @@ export function createWriteFileTool(): Tool {
 注意：path 是相对于工作区根目录的路径；content 必须是文件的完整目标内容。修改大文件时，优先考虑 apply_diff，避免整文件重写带来的误删风险。`
         : `Write content to a file. If the file does not exist, it will be created; if it already exists, its entire content will be overwritten with content. A Diff preview is shown and user confirmation is awaited before applying.
 
-Note: when the target file does not exist yet, an empty file is created on disk before confirmation so the Diff preview can be rendered (the empty file briefly appears in the workspace while confirmation is pending); any leftover is removed automatically when the write is rejected or cancelled.
+Note: when the target does not exist, an empty file is pre-created before confirmation so the Diff preview can be rendered. Rejecting or cancelling removes that file and any still-empty parent directories created for it; cleanup failures are reported in the tool result.
 
 Use cases:
 - Creating a new file

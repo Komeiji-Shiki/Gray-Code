@@ -212,8 +212,8 @@ export function toFileUri(pathStr: string): vscode.Uri {
  * 性能说明：仅在工作区内外判定与路径比较处调用（每工具调用每路径一次），同步 realpath 的开销
  * 可接受；不存在的路径会向上找最近的存在祖先，最多一次目录树深度。
  *
- * 另：backend/core/fileWriteLockManager 的锁 key 归一化（resolveLockPath）已复用本函数
- * 对解析出的绝对路径做 realpath 归一，让同一物理文件（经符号链接）的不同写法映射到同一锁 key。
+ * 另：backend/core/fileWriteLockManager 同时保留词法 key 并复用本函数生成物理 key：前者维持
+ * 目录祖先锁语义，后者让同一物理文件（经符号链接）的不同写法互斥。
  */
 export function resolveRealpathForComparison(fsPath: string): string {
     const absolute = path.resolve(fsPath);
@@ -242,6 +242,25 @@ export function resolveRealpathForComparison(fsPath: string): string {
             if (code !== 'ENOENT' && code !== 'ENOTDIR') {
                 return absolute;
             }
+
+            // realpath 对“链接项存在、但最终目标尚不存在”的 dangling symlink 也返回 ENOENT。
+            // 这时仍可用 lstat + readlink 得到物理目标；否则 link/new.ts 与 target/new.ts
+            // 会生成不同的比较路径，绕过写锁和工作区边界判断。
+            try {
+                const linkStat = fs.lstatSync(current);
+                if (linkStat.isSymbolicLink()) {
+                    const rawTarget = fs.readlinkSync(current);
+                    const target = path.resolve(path.dirname(current), rawTarget);
+                    const resolvedTarget = resolveRealpathForComparison(target);
+                    const combined = tail.length === 0
+                        ? resolvedTarget
+                        : path.join(resolvedTarget, ...tail);
+                    return stripWindowsLongPathPrefix(combined);
+                }
+            } catch {
+                // 当前段确实不存在，继续向上寻找最近的存在祖先。
+            }
+
             const parent = path.dirname(current);
             if (parent === current) {
                 return absolute;

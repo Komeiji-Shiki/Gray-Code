@@ -98,4 +98,23 @@ describe('write_file outside-workspace flow', () => {
         const options = mockDiffManager.createPendingDiff.mock.calls[0][7];
         expect(options).toEqual({ confirmedByToolConfirmation: true, newFile: true });
     });
+
+    test('passes recursive mkdir creation boundary to new-file cleanup', async () => {
+        const outsidePath = path.resolve('/tmp/new-parent/nested/file.txt');
+        const createdRoot = path.dirname(path.dirname(outsidePath));
+        (fs.promises.mkdir as jest.Mock).mockResolvedValueOnce(createdRoot);
+        const tool = registerWriteFile();
+
+        await tool.handler(
+            { path: outsidePath, content: 'content' },
+            { toolId: 'tool-cleanup-boundary' }
+        );
+
+        const options = mockDiffManager.createPendingDiff.mock.calls[0][7];
+        expect(options).toEqual({
+            confirmedByToolConfirmation: false,
+            newFile: true,
+            newFileCreatedDirectoryRoot: createdRoot
+        });
+    });
 });
