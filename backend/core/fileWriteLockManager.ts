@@ -6,6 +6,7 @@
  * 修改目的：后来者收到"该文件正被 X 修改，先处理任务其他部分，稍后再回来"的提示，由 LLM 自行调度，避免死等与死锁。
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { resolveFileToolPathWithInfo } from '../tools/utils';
 import { resolveRealpathForComparison } from '../tools/shared/workspacePaths';
@@ -56,11 +57,10 @@ function holderIdentity(holder: LockHolder): string {
  *
  * - 反斜杠统一为斜杠；
  * - 去除开头 './' 与末尾 '/'；
- * - Windows/macOS 平台小写化（两者默认文件系统不区分大小写，与 diffManager.sameFsPath /
- *   checkpoint 的大小写折叠策略一致）；其他平台保留原始大小写；
+ * - 仅在目标所在目录确认大小写不敏感时小写化；
  * - '.'、'' 归一为 ''，表示整个 workspace 根（与所有路径冲突）。
  */
-export function normalizeLockPath(rawPath: string): string {
+export function normalizeLockPath(rawPath: string, caseInsensitive?: boolean): string {
     let p = String(rawPath || '').replace(/\\/g, '/').trim();
     while (p.startsWith('./')) {
         p = p.slice(2);
@@ -71,9 +71,118 @@ export function normalizeLockPath(rawPath: string): string {
     }
     // 折叠重复分隔符
     p = p.replace(/\/{2,}/g, '/');
-    // Windows/macOS 默认文件系统不区分大小写，锁 key 小写归一；其余平台保留大小写，
-    // 避免破坏大小写敏感文件系统的互斥语义（与 diffManager.sameFsPath / checkpoint 策略对齐）
-    return (process.platform === 'win32' || process.platform === 'darwin') ? p.toLowerCase() : p;
+    const shouldFoldCase = caseInsensitive ?? isPathCaseInsensitive(rawPath);
+    return shouldFoldCase ? p.toLowerCase() : p;
+}
+
+/** 切换第一个 ASCII 字母的大小写；没有可切换字符时返回 undefined。 */
+function toggleAsciiCase(value: string): string | undefined {
+    for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (ch >= 'a' && ch <= 'z') {
+            return value.slice(0, i) + ch.toUpperCase() + value.slice(i + 1);
+        }
+        if (ch >= 'A' && ch <= 'Z') {
+            return value.slice(0, i) + ch.toLowerCase() + value.slice(i + 1);
+        }
+    }
+    return undefined;
+}
+
+function sameFileIdentity(a: fs.Stats, b: fs.Stats, aPath: string, bPath: string): boolean {
+    // dev + ino 在本地文件系统与绝大多数网络文件系统上可稳定识别同一目录项。
+    if ((a.dev !== 0 || a.ino !== 0 || b.dev !== 0 || b.ino !== 0)) {
+        return a.dev === b.dev && a.ino === b.ino;
+    }
+    // 个别网络文件系统返回 dev/ino=0；此时用 realpath 的规范拼写兜底。
+    try {
+        return resolveRealpathForComparison(aPath) === resolveRealpathForComparison(bPath);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * 只读探测目标所在目录的大小写语义。
+ *
+ * 不能按 `process.platform === 'darwin'` 推断：macOS 支持大小写敏感的 APFS/HFS 卷；
+ * Windows 也存在按目录启用大小写敏感的场景。探测优先在目标最近的已存在目录中选择
+ * 一个真实目录项，切换其大小写后比较文件身份；空目录则探测目录自身在父目录中的名字。
+ * 无法可靠探测时采用保守兜底：Windows 保持历史默认，其余平台保留大小写，避免把两个
+ * 真实文件错误合并为同一锁。
+ */
+export function isPathCaseInsensitive(fsPath: string): boolean {
+    if (process.platform !== 'win32' && process.platform !== 'darwin') {
+        return false;
+    }
+
+    try {
+        let current = path.resolve(fsPath);
+        let stat: fs.Stats | undefined;
+        while (true) {
+            try {
+                stat = fs.statSync(current);
+                break;
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException)?.code;
+                if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+                    return process.platform === 'win32';
+                }
+                const parent = path.dirname(current);
+                if (parent === current) {
+                    return process.platform === 'win32';
+                }
+                current = parent;
+            }
+        }
+
+        let directory = stat.isDirectory() ? current : path.dirname(current);
+        try {
+            const entries = fs.readdirSync(directory, { withFileTypes: true });
+            for (const entry of entries) {
+                const toggled = toggleAsciiCase(entry.name);
+                if (!toggled || toggled === entry.name) continue;
+                const originalPath = path.join(directory, entry.name);
+                const toggledPath = path.join(directory, toggled);
+                try {
+                    const originalStat = fs.statSync(originalPath);
+                    const toggledStat = fs.statSync(toggledPath);
+                    return sameFileIdentity(originalStat, toggledStat, originalPath, toggledPath);
+                } catch (error) {
+                    const code = (error as NodeJS.ErrnoException)?.code;
+                    if (code === 'ENOENT' || code === 'ENOTDIR') {
+                        return false;
+                    }
+                }
+            }
+        } catch {
+            // 目录不可枚举时继续尝试用目录自身探测。
+        }
+
+        while (true) {
+            const parent = path.dirname(directory);
+            if (parent === directory) break;
+            const base = path.basename(directory);
+            const toggled = toggleAsciiCase(base);
+            if (toggled && toggled !== base) {
+                try {
+                    const originalStat = fs.statSync(directory);
+                    const toggledStat = fs.statSync(path.join(parent, toggled));
+                    return sameFileIdentity(originalStat, toggledStat, directory, path.join(parent, toggled));
+                } catch (error) {
+                    const code = (error as NodeJS.ErrnoException)?.code;
+                    if (code === 'ENOENT' || code === 'ENOTDIR') {
+                        return false;
+                    }
+                }
+            }
+            directory = parent;
+        }
+    } catch {
+        // 测试 mock 或特殊文件系统缺少所需 API 时走平台兜底。
+    }
+
+    return process.platform === 'win32';
 }
 
 /**
@@ -86,9 +195,6 @@ export function normalizeLockPath(rawPath: string): string {
  * - 空串 '' 保持 ''（整个 workspace 根锁，与所有路径互斥；checkpoint 存档锁依赖此语义）；
  * - 相对路径 / 工作区前缀路径 / file:// URI 复用 resolveFileToolPathWithInfo 解析为绝对
  *   fsPath（保留多工作区前缀与工作区外绝对路径语义，与工具侧解析口径一致）；
- * - 对解析出的绝对路径再做 realpath 归一（复用 workspacePaths 的 resolveRealpathForComparison）：
- *   符号链接指向的同一物理文件（如 src-link -> src 下 src/a.ts 与 src-link/a.ts）映射到同一
- *   锁 key，避免经符号链接绕过写锁；不存在的路径向上找最近已存在祖先解析后拼接尾部段；
  * - 解析失败（无工作区、多工作区未加前缀等）回退 path.resolve，保证同一写法仍映射到同一 key。
  */
 export function resolveLockPath(rawPath: string): string {
@@ -99,12 +205,30 @@ export function resolveLockPath(rawPath: string): string {
     try {
         const info = resolveFileToolPathWithInfo(trimmed);
         if (info.uri?.fsPath) {
-            return resolveRealpathForComparison(info.uri.fsPath);
+            return info.uri.fsPath;
         }
     } catch {
         // 解析异常时回退 path.resolve，保持确定性
     }
     return path.resolve(trimmed);
+}
+
+/**
+ * 为一个写目标生成全部互斥 key。
+ *
+ * - 词法 key 保留用户路径的祖先关系，因此 `parent/` 仍会阻止经 `parent/link/...` 写入；
+ * - 物理 key 通过 realpath 合并 symlink/junction 与真实目标别名；
+ * - 两者相同时去重，普通路径仍只占一条内部锁记录。
+ */
+function resolveLockKeys(rawPath: string, caseSensitivityProbe: (fsPath: string) => boolean): string[] {
+    const lexicalPath = resolveLockPath(rawPath);
+    if (lexicalPath === '') {
+        return [''];
+    }
+    const lexicalKey = normalizeLockPath(lexicalPath, false);
+    const physicalPath = resolveRealpathForComparison(lexicalPath);
+    const physicalKey = normalizeLockPath(physicalPath, caseSensitivityProbe(physicalPath));
+    return lexicalKey === physicalKey ? [lexicalKey] : [lexicalKey, physicalKey];
 }
 
 /**
@@ -206,10 +330,19 @@ export function getWritePathsForCall(toolName: string, args: Record<string, unkn
  * - releaseAllByHolder 供 run 结束/异常退出时兜底清理。
  */
 export class FileWriteLockManager {
+    constructor(
+        private readonly caseInsensitiveForPath: (fsPath: string) => boolean = isPathCaseInsensitive
+    ) {}
+
     private readonly locks = new Map<string, LockEntry>();
 
-    /** holder 身份键（`${kind}:${id}`）-> (原始路径 -> acquire 时解析出的锁 key)；release 复用，避免工作区变化导致 key 漂移 */
-    private readonly acquiredKeysByHolder = new Map<string, Map<string, string>>();
+    /**
+     * holder 身份键 -> 原始路径 -> 每次 acquire 的 key 组栈。
+     *
+     * 一条路径同时持有词法/物理 key；symlink 在两次重入之间改指时，两次 key 组也可能不同。
+     * release 必须弹出获取时的原组，不能重新解析或用单个 display->key 覆盖旧记录。
+     */
+    private readonly acquiredKeysByHolder = new Map<string, Map<string, string[][]>>();
 
     /** 锁集合变化代际：release / releaseAllByHolder 真正释放锁时自增，用于唤醒等待 acquire 的调用方 */
     private lockGeneration = 0;
@@ -246,24 +379,28 @@ export class FileWriteLockManager {
     }
 
     tryAcquire(paths: string[], holder: LockHolder): TryAcquireResult {
-        // 锁 key 使用绝对规范路径：同一物理文件的不同写法（.. / 相对 / 绝对 / file://）归一为同一 key
-        const keys = paths.map(p => ({ key: normalizeLockPath(resolveLockPath(p)), display: p }));
+        const requests = paths.map(display => ({
+            keys: resolveLockKeys(display, this.caseInsensitiveForPath),
+            display
+        }));
 
         // 无路径可锁（空/空白路径已被过滤）：直接成功返回，不记录 acquired keys
-        if (keys.length === 0) {
+        if (requests.length === 0) {
             return { acquired: true };
         }
 
         const conflicts: LockConflict[] = [];
 
-        for (const { key } of keys) {
-            for (const [existingKey, entry] of this.locks) {
-                // 身份按 kind + id 组合比较：不同 kind 同 id 不算同一持有者
-                if (holderIdentity(entry.holder) === holderIdentity(holder)) {
-                    continue;
-                }
-                if (keysConflict(key, existingKey)) {
-                    conflicts.push({ path: entry.displayPath, holder: entry.holder });
+        for (const request of requests) {
+            for (const key of request.keys) {
+                for (const [existingKey, entry] of this.locks) {
+                    // 身份按 kind + id 组合比较：不同 kind 同 id 不算同一持有者
+                    if (holderIdentity(entry.holder) === holderIdentity(holder)) {
+                        continue;
+                    }
+                    if (keysConflict(key, existingKey)) {
+                        conflicts.push({ path: entry.displayPath, holder: entry.holder });
+                    }
                 }
             }
         }
@@ -280,28 +417,31 @@ export class FileWriteLockManager {
             return { acquired: false, conflicts: unique };
         }
 
-        for (const { key, display } of keys) {
-            const existing = this.locks.get(key);
-            if (existing && holderIdentity(existing.holder) === holderIdentity(holder)) {
-                existing.count += 1;
-            } else {
-                this.locks.set(key, { holder, displayPath: display, count: 1 });
+        for (const request of requests) {
+            for (const key of request.keys) {
+                const existing = this.locks.get(key);
+                if (existing && holderIdentity(existing.holder) === holderIdentity(holder)) {
+                    existing.count += 1;
+                } else {
+                    this.locks.set(key, { holder, displayPath: request.display, count: 1 });
+                }
             }
         }
-        // 记录本次 acquire 实际解析出的锁 key，供 release 复用（键为 holder 身份 `${kind}:${id}`）
-        this.recordAcquiredKeys(holderIdentity(holder), keys);
+        this.recordAcquiredKeys(holderIdentity(holder), requests);
         return { acquired: true };
     }
 
-    /** 记录持有者各原始路径对应的锁 key（release 时直接复用）；holderId 为 `${kind}:${id}` 身份键 */
-    private recordAcquiredKeys(holderId: string, keys: Array<{ key: string; display: string }>): void {
+    /** 记录持有者每次 acquire 的完整 key 组（release 时按 LIFO 弹出）。 */
+    private recordAcquiredKeys(holderId: string, requests: Array<{ keys: string[]; display: string }>): void {
         let map = this.acquiredKeysByHolder.get(holderId);
         if (!map) {
             map = new Map();
             this.acquiredKeysByHolder.set(holderId, map);
         }
-        for (const { key, display } of keys) {
-            map.set(display, key);
+        for (const { keys, display } of requests) {
+            const stack = map.get(display) ?? [];
+            stack.push(keys);
+            map.set(display, stack);
         }
     }
 
@@ -342,7 +482,7 @@ export class FileWriteLockManager {
             // O(锁数) 冲突扫描空转。注册（入队）与代际快照同属一个同步 tick，不可能
             // 出现「唤醒先于注册」竞态，无需 50ms 兜底；maxWaitMs 超时上限由独立
             // 闹钟保证，不会永久睡死。
-            const waiterKeys = paths.map(p => normalizeLockPath(resolveLockPath(p)));
+            const waiterKeys = paths.flatMap(p => resolveLockKeys(p, this.caseInsensitiveForPath));
             await new Promise<void>((resolve, reject) => {
                 let settled = false;
                 const entry = {
@@ -394,18 +534,22 @@ export class FileWriteLockManager {
         const holderKey = holderIdentity(holder);
         const holderKeys = this.acquiredKeysByHolder.get(holderKey);
         for (const p of paths) {
-            const key = holderKeys?.get(p) ?? normalizeLockPath(resolveLockPath(p));
-            const entry = this.locks.get(key);
-            if (!entry || holderIdentity(entry.holder) !== holderKey) {
-                continue;
-            }
-            entry.count -= 1;
-            if (entry.count <= 0) {
-                this.locks.delete(key);
-                // 锁真正释放时同步删除其 display->key 记录，避免 acquiredKeysByHolder 条目只增不减
+            const stack = holderKeys?.get(p);
+            const keys = stack?.pop() ?? resolveLockKeys(p, this.caseInsensitiveForPath);
+            if (stack && stack.length === 0) {
                 holderKeys?.delete(p);
-                releasedKeys.push(key);
-                released = true;
+            }
+            for (const key of keys) {
+                const entry = this.locks.get(key);
+                if (!entry || holderIdentity(entry.holder) !== holderKey) {
+                    continue;
+                }
+                entry.count -= 1;
+                if (entry.count <= 0) {
+                    this.locks.delete(key);
+                    releasedKeys.push(key);
+                    released = true;
+                }
             }
         }
         // 持有者已无任何锁时清掉其 path->key 记录，避免无界增长
@@ -443,9 +587,17 @@ export class FileWriteLockManager {
         }
     }
 
-    /** 当前持有的锁数量（测试与诊断用） */
+    /**
+     * 当前逻辑锁数量（测试与诊断用）。
+     * 一条逻辑路径可能对应词法/物理两个内部 key，这里按 holder + 展示路径去重，
+     * 保持该诊断 API 在引入双 key 前后的语义稳定。
+     */
     getLockCount(): number {
-        return this.locks.size;
+        const logicalLocks = new Set<string>();
+        for (const entry of this.locks.values()) {
+            logicalLocks.add(`${holderIdentity(entry.holder)}\0${entry.displayPath}`);
+        }
+        return logicalLocks.size;
     }
 }
 
