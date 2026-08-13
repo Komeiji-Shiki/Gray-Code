@@ -153,7 +153,11 @@ async function writeSingleFile(
                 prewriteLocked = true;
             }
             try {
-                // 创建空文件以便 DiffManager 可以操作
+                // 创建空文件以便 DiffManager 可以操作。
+                // 设计说明：这是「确认前先落盘空文件」的既有行为——工具契约已如实告知模型
+                // （新建文件会在确认前短暂出现在工作区）；拒绝/取消路径由 DiffManager 的
+                // newFile 残留清理负责删除。若未来改为确认前不落盘（虚拟文档 diff），需同步
+                // 调整 createPendingDiff/showDiffView 对不存在文件的处理，超出本次最小修复范围。
                 await fs.promises.writeFile(absolutePath, '', 'utf8');
             } catch (error) {
                 // H2：预创建空文件失败时清理可能残留的空文件（仅当确认是本次创建的空文件，
@@ -287,6 +291,8 @@ export function createWriteFileTool(): Tool {
     let description = isZh
         ? `写入内容到一个文件。若文件不存在则创建；若文件已存在则用 content 覆盖其完整内容。执行前会展示 Diff 预览并等待用户确认。
 
+注意：目标文件不存在时，为展示 Diff 预览需在确认前先在磁盘上创建空文件（确认等待期间工作区会短暂出现该空文件）；拒绝写入时残留会被自动删除。
+
 适用场景：
 - 创建新文件
 - 重写一个已有文件的完整内容
@@ -300,6 +306,8 @@ export function createWriteFileTool(): Tool {
 
 注意：path 是相对于工作区根目录的路径；content 必须是文件的完整目标内容。修改大文件时，优先考虑 apply_diff，避免整文件重写带来的误删风险。`
         : `Write content to a file. If the file does not exist, it will be created; if it already exists, its entire content will be overwritten with content. A Diff preview is shown and user confirmation is awaited before applying.
+
+Note: when the target file does not exist yet, an empty file is created on disk before confirmation so the Diff preview can be rendered (the empty file briefly appears in the workspace while confirmation is pending); any leftover is removed automatically when the write is rejected.
 
 Use cases:
 - Creating a new file
