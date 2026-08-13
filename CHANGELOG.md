@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+  - 修复 #40 新文件确认预创建后的残留与数据安全问题：`write_file` 现在记录 recursive mkdir 本次创建的最高目录边界；拒绝、取消、写锁冲突或自动保存失败时删除预创建空文件，并只向上删除边界内仍为空的目录。新文件缓冲通过 revert 丢弃未确认内容，不再先写空文件而截断并发写入；文件已非空、缓冲仍脏或清理 I/O 失败时保留数据并通过 `cleanupError` 明确返回，工具中英文契约同步说明该行为。
   - 修复 #38/#39 合入后的文件写锁回归：realpath 单 key 会丢失符号链接词法祖先关系，使目录锁可被指向目录外的链接后代绕过；链接改指后同一 holder 重入还会覆盖旧 key 并泄漏永久锁。现同时持有词法/物理 key，并按每次 acquire 的 key 组栈释放；dangling symlink 也会解析到待创建目标。大小写折叠改为探测目标卷/目录的实际语义，不再把所有 macOS 路径无条件小写，大小写敏感 APFS/HFS 卷上的 `Foo.ts`/`foo.ts` 可独立加锁。
   - 修复符号链接绕过文件写锁：`fileWriteLockManager.resolveLockPath` 此前只用词法 fsPath 生成锁 key，工作区存在符号链接（如 `src-link -> src`）时 `src/a.ts` 与 `src-link/a.ts` 得到两个不同 key，两个 Agent 可并发写同一物理文件导致覆盖与 checkpoint 错位；现复用 `resolveRealpathForComparison` 做 realpath 归一（不存在路径向上找最近已存在祖先后拼接尾部段，与 outside-workspace 判定同口径），经符号链接访问的已存在/新建文件与真实路径映射到同一锁 key。新增符号链接路径等价测试（Windows 无权限创建 symlink 时自动跳过，Linux CI 真实运行）。
   - 修复 macOS 大小写不同路径绕过文件写锁：`normalizeLockPath` 此前仅对 win32 小写化锁 key，darwin 保留大小写，与 `diffManager.sameFsPath`（win32||darwin 大小写不敏感）及 checkpoint 的 `CASE_INSENSITIVE_FS` 判定不一致；现大小写折叠条件改为 `win32 || darwin`，默认大小写不敏感的 macOS 卷上 `Foo.ts` 与 `foo.ts` 映射到同一锁 key，linux 等大小写敏感平台保留大小写互斥语义。测试平台门控细化为大小写不敏感/敏感两组。
