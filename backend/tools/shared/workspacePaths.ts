@@ -209,9 +209,8 @@ export function toFileUri(pathStr: string): vscode.Uri {
  * 性能说明：仅在工作区内外判定与路径比较处调用（每工具调用每路径一次），同步 realpath 的开销
  * 可接受；不存在的路径会向上找最近的存在祖先，最多一次目录树深度。
  *
- * 另：backend/core/fileWriteLockManager 的锁 key 归一化（resolveLockPath，backend/core/ 不在
- * 本目录修改域）目前仍用词法 fsPath；如需让同一物理文件（经符号链接）的不同写法映射到同一锁
- * key，可复用本函数（导出）。
+ * 另：backend/core/fileWriteLockManager 的锁 key 归一化（resolveLockPath）已复用本函数
+ * 对解析出的绝对路径做 realpath 归一，让同一物理文件（经符号链接）的不同写法映射到同一锁 key。
  */
 export function resolveRealpathForComparison(fsPath: string): string {
     const absolute = path.resolve(fsPath);

@@ -7,6 +7,8 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as vscode from 'vscode';
 import {
     FileWriteLockManager,
@@ -195,5 +197,62 @@ describe('锁 key 路径等价 - 多工作区', () => {
     test('未加前缀的相对路径回退后同一写法仍互斥', () => {
         expect(manager.tryAcquire(['src/a.ts'], holderA).acquired).toBe(true);
         expect(manager.tryAcquire(['./src/a.ts'], holderB).acquired).toBe(false);
+    });
+});
+
+describe('锁 key 路径等价 - 符号链接（同一物理文件）', () => {
+    let realDir: string;
+    let linkDir: string;
+    let manager: FileWriteLockManager;
+
+    beforeAll(() => {
+        realDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-lock-real-'));
+        linkDir = path.join(path.dirname(realDir), `gc-lock-link-${path.basename(realDir)}`);
+        try {
+            // 真实 symlink 创建在 CI/Windows 上不可靠（需管理员/开发者模式），失败则跳过本组用例
+            fs.symlinkSync(realDir, linkDir, 'dir');
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES') {
+                linkDir = '';
+            } else {
+                throw error;
+            }
+        }
+    });
+
+    afterAll(() => {
+        try { fs.rmSync(realDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        if (linkDir) {
+            try { fs.rmSync(linkDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+    });
+
+    beforeEach(() => {
+        manager = new FileWriteLockManager();
+        (vscode.workspace as any).workspaceFolders = [];
+    });
+
+    afterEach(() => {
+        (vscode.workspace as any).workspaceFolders = [];
+    });
+
+    test('经符号链接访问已存在文件与真实路径互斥', () => {
+        if (!linkDir) {
+            return; // Windows 无权限创建符号链接时跳过
+        }
+        const realFile = path.join(realDir, 'shared.ts');
+        fs.writeFileSync(realFile, 'x');
+        expect(manager.tryAcquire([path.join(linkDir, 'shared.ts')], holderA).acquired).toBe(true);
+        expect(manager.tryAcquire([realFile], holderB).acquired).toBe(false);
+    });
+
+    test('经符号链接新建文件与真实路径互斥（祖先 realpath + 尾部拼接）', () => {
+        if (!linkDir) {
+            return; // Windows 无权限创建符号链接时跳过
+        }
+        const linkNew = path.join(linkDir, 'new.ts');
+        const realNew = path.join(realDir, 'new.ts');
+        expect(manager.tryAcquire([linkNew], holderA).acquired).toBe(true);
+        expect(manager.tryAcquire([realNew], holderB).acquired).toBe(false);
     });
 });

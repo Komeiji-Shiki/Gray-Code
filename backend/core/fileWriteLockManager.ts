@@ -8,6 +8,7 @@
 
 import * as path from 'path';
 import { resolveFileToolPathWithInfo } from '../tools/utils';
+import { resolveRealpathForComparison } from '../tools/shared/workspacePaths';
 
 /**
  * 锁持有者标识。
@@ -83,6 +84,9 @@ export function normalizeLockPath(rawPath: string): string {
  * - 空串 '' 保持 ''（整个 workspace 根锁，与所有路径互斥；checkpoint 存档锁依赖此语义）；
  * - 相对路径 / 工作区前缀路径 / file:// URI 复用 resolveFileToolPathWithInfo 解析为绝对
  *   fsPath（保留多工作区前缀与工作区外绝对路径语义，与工具侧解析口径一致）；
+ * - 对解析出的绝对路径再做 realpath 归一（复用 workspacePaths 的 resolveRealpathForComparison）：
+ *   符号链接指向的同一物理文件（如 src-link -> src 下 src/a.ts 与 src-link/a.ts）映射到同一
+ *   锁 key，避免经符号链接绕过写锁；不存在的路径向上找最近已存在祖先解析后拼接尾部段；
  * - 解析失败（无工作区、多工作区未加前缀等）回退 path.resolve，保证同一写法仍映射到同一 key。
  */
 export function resolveLockPath(rawPath: string): string {
@@ -93,7 +97,7 @@ export function resolveLockPath(rawPath: string): string {
     try {
         const info = resolveFileToolPathWithInfo(trimmed);
         if (info.uri?.fsPath) {
-            return info.uri.fsPath;
+            return resolveRealpathForComparison(info.uri.fsPath);
         }
     } catch {
         // 解析异常时回退 path.resolve，保持确定性
