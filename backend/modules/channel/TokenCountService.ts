@@ -9,27 +9,20 @@ import { createProxyFetch } from './proxyFetch';
 import type { TokenCountChannelConfig, TokenCountConfig } from '../settings';
 import type { Content } from '../conversation';
 import type { ChannelConfig, TokenCountMethod, TokenCountApiConfig } from '../config';
-import { cleanContentForAPI } from '../conversation';
+import type { TokenCountResult } from './tokenCount/types';
 import {
-    isImageMimeType,
-    isPdfMimeType,
-    isTextMimeType,
-    buildTextAttachmentContent,
-    buildUnsupportedAttachmentText
-} from './formatters/mediaParts';
-import { serializeToolResultForLLM } from './formatters/toolResponseFormatter';
+    buildGeminiCountRequestBody,
+    buildOpenAICountMessages,
+    buildOpenAIResponsesCountInput,
+    buildAnthropicCountPayload
+} from './tokenCount/tokenCountRequestBuilder';
+import {
+    buildOpenAIResponsesCountUrl as buildOpenAIResponsesCountUrlImpl,
+    buildAnthropicCountUrl as buildAnthropicCountUrlImpl
+} from './tokenCount/tokenCountUrlBuilder';
+import { estimateLocalTokens } from './tokenCount/localTokenEstimator';
 
-/**
- * Token 计数结果
- */
-export interface TokenCountResult {
-    /** 是否成功 */
-    success: boolean;
-    /** 总 token 数 */
-    totalTokens?: number;
-    /** 错误信息 */
-    error?: string;
-}
+export type { TokenCountResult } from './tokenCount/types';
 
 /**
  * Token 计数服务
@@ -62,47 +55,14 @@ export class TokenCountService {
      * - https://api.openai.com/v1/responses/input_tokens
      */
     private buildOpenAIResponsesCountUrl(rawUrl: string): string {
-        const normalizedUrl = rawUrl.trim().replace(/\/+$/, '');
-
-        if (/\/responses\/input_tokens$/i.test(normalizedUrl)) {
-            return normalizedUrl;
-        }
-
-        if (/\/v1\/responses$/i.test(normalizedUrl) || /\/responses$/i.test(normalizedUrl)) {
-            return `${normalizedUrl}/input_tokens`;
-        }
-
-        if (/\/v1$/i.test(normalizedUrl)) {
-            return `${normalizedUrl}/responses/input_tokens`;
-        }
-
-        return `${normalizedUrl}/v1/responses/input_tokens`;
+        return buildOpenAIResponsesCountUrlImpl(rawUrl);
     }
 
     /**
      * 构建 Anthropic count_tokens 端点
      */
     private buildAnthropicCountUrl(rawUrl?: string): string {
-        if (!rawUrl) {
-            return 'https://api.anthropic.com/v1/messages/count_tokens';
-        }
-
-        let normalizedUrl = rawUrl.trim().replace(/\/+$/, '');
-        // 先去掉旧端点后缀（/complete），再规整 /v1/models → /v1。
-        // 顺序不能反：若先处理 /v1/models，baseUrl 为 .../v1/models/complete 时
-        // 会残留 /complete 后缀，最终拼出 .../v1/models/v1/messages/count_tokens 的畸形 URL。
-        // （/v1/complete 结尾的地址会被 /complete 规则覆盖，无需单独处理。）
-        normalizedUrl = normalizedUrl
-            .replace(/\/complete$/i, '')
-            .replace(/\/v1\/models$/i, '/v1');
-
-        if (/\/v1\/messages\/count_tokens$/i.test(normalizedUrl) || /\/messages\/count_tokens$/i.test(normalizedUrl)) {
-            return normalizedUrl;
-        }
-        if (/\/v1\/messages$/i.test(normalizedUrl) || /\/messages$/i.test(normalizedUrl)) {
-            return `${normalizedUrl}/count_tokens`;
-        }
-        return /\/v1$/i.test(normalizedUrl) ? `${normalizedUrl}/messages/count_tokens` : `${normalizedUrl}/v1/messages/count_tokens`;
+        return buildAnthropicCountUrlImpl(rawUrl);
     }
     
     /**
@@ -213,7 +173,7 @@ export class TokenCountService {
                 case 'anthropic':
                     return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
                 case 'local':
-                    return this.countLocalTokens(contents);
+                    return estimateLocalTokens(contents);
                 default:
                     return {
                         success: false,
@@ -251,40 +211,7 @@ export class TokenCountService {
         
         return Promise.all(promises);
     }
-    
-    /**
-     * 本地估算 token 数
-     * 约 4 个字符 = 1 个 token，并乘以 1.5 安全系数偏大估算
-     */
-    private countLocalTokens(contents: Content[]): TokenCountResult {
-        const SAFETY_FACTOR = 1.5;
-        let totalChars = 0;
         
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            for (const part of cleaned.parts) {
-                if ('text' in part && part.text) {
-                    totalChars += part.text.length;
-                } else if (part.functionResponse) {
-                    // 工具结果文本计入本地估算（与 API 计数口径一致，避免 tool 消息被整体漏计）
-                    const serialized = serializeToolResultForLLM(
-                        part.functionResponse.name,
-                        part.functionResponse.response as Record<string, unknown>
-                    );
-                    totalChars += serialized.length;
-                } else if (part.functionCall) {
-                    // 工具调用参数计入本地估算（参数 JSON 是发送给模型的真实输入）
-                    totalChars += JSON.stringify(part.functionCall.args).length;
-                }
-            }
-        }
-        
-        return {
-            success: true,
-            totalTokens: Math.ceil(Math.ceil(totalChars / 4) * SAFETY_FACTOR)
-        };
-    }
-    
     /**
      * 使用渠道配置调用 Gemini Token 计数
      */
@@ -333,22 +260,7 @@ export class TokenCountService {
         }
         
         // 构建请求体
-        const geminiContents = contents.map(content => {
-            const cleaned = cleanContentForAPI(content);
-            return {
-                role: cleaned.role,
-                parts: cleaned.parts.map(part => {
-                    if ('text' in part && part.text !== undefined) {
-                        return { text: part.text };
-                    }
-                    return part;
-                })
-            };
-        });
-        
-        const requestBody = {
-            contents: geminiContents
-        };
+        const requestBody = buildGeminiCountRequestBody(contents);
         
         const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(countUrl, {
@@ -413,71 +325,7 @@ export class TokenCountService {
         // - functionCall → assistant 消息的 tool_calls（旧实现拍成空文本，工具调用 token 漏计）
         // - functionResponse → role:tool 消息（旧实现拍成空文本，工具结果 token 漏计）
         // - system / 文本 / 图片维持原格式
-        const messages: any[] = [];
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
-
-            const textParts = cleaned.parts.filter(p => 'text' in p && p.text);
-            const functionCallParts = cleaned.parts.filter(p => p.functionCall);
-            const functionResponseParts = cleaned.parts.filter(p => p.functionResponse);
-
-            if (functionCallParts.length > 0) {
-                // assistant 消息：文本并入 content，调用挂 tool_calls
-                messages.push({
-                    role: 'assistant',
-                    content: textParts.length > 0 ? textParts.map(p => p.text).join('\n') : null,
-                    tool_calls: functionCallParts.map((p, index) => ({
-                        id: p.functionCall!.id || `call_${Date.now()}_${index}`,
-                        type: 'function',
-                        function: {
-                            name: p.functionCall!.name,
-                            arguments: typeof p.functionCall!.args === 'string'
-                                ? p.functionCall!.args
-                                : JSON.stringify(p.functionCall!.args)
-                        }
-                    }))
-                });
-            }
-
-            // 工具结果独立为 role:tool 消息
-            for (const part of functionResponseParts) {
-                const resp = part.functionResponse!;
-                messages.push({
-                    role: 'tool',
-                    tool_call_id: resp.id || '',
-                    content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
-                });
-            }
-
-            // 普通消息（文本 + 图片，含 system）
-            if (functionCallParts.length === 0 && functionResponseParts.length === 0) {
-                messages.push({
-                    role,
-                    content: cleaned.parts.map(part => {
-                        if ('text' in part && part.text) {
-                            return { type: 'text' as const, text: part.text };
-                        }
-                        if ('inlineData' in part && part.inlineData) {
-                            const { mimeType, data } = part.inlineData;
-                            if (isImageMimeType(mimeType)) {
-                                return {
-                                    type: 'image_url' as const,
-                                    image_url: {
-                                        url: `data:${mimeType};base64,${data}`
-                                    }
-                                };
-                            }
-                            if (isTextMimeType(mimeType)) {
-                                return { type: 'text' as const, text: buildTextAttachmentContent(data) };
-                            }
-                            return { type: 'text' as const, text: buildUnsupportedAttachmentText(mimeType) };
-                        }
-                        return { type: 'text' as const, text: '' };
-                    })
-                });
-            }
-        }
+        const messages = buildOpenAICountMessages(contents);
         
         const requestBody: any = { messages };
         if (model) {
@@ -557,41 +405,7 @@ export class TokenCountService {
         // 转换内容格式
         // 对于 Responses API，我们将所有内容转换为 input 数组
         // 系统消息提取为 instructions
-        let instructions = '';
-        const inputParts: any[] = [];
-
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            if (cleaned.role === 'system') {
-                for (const part of cleaned.parts) {
-                    if ('text' in part && part.text) {
-                        instructions += (instructions ? '\n' : '') + part.text;
-                    }
-                }
-                continue;
-            }
-
-            // user/model 消息都放入 input
-            for (const part of cleaned.parts) {
-                if ('text' in part && part.text) {
-                    inputParts.push({ type: 'text', text: part.text });
-                } else if ('inlineData' in part && part.inlineData) {
-                    const { mimeType, data } = part.inlineData;
-                    if (isImageMimeType(mimeType)) {
-                        inputParts.push({
-                            type: 'image_url',
-                            image_url: {
-                                url: `data:${mimeType};base64,${data}`
-                            }
-                        });
-                    } else if (isTextMimeType(mimeType)) {
-                        inputParts.push({ type: 'text', text: buildTextAttachmentContent(data) });
-                    } else {
-                        inputParts.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
-                    }
-                }
-            }
-        }
+        const { input: inputParts, instructions } = buildOpenAIResponsesCountInput(contents);
         
         const requestBody: any = { 
             input: inputParts 
@@ -671,67 +485,15 @@ export class TokenCountService {
         // - 图片/PDF → image/document 块（旧实现拍成空文本，图片 token 漏计）
         // - functionCall/functionResponse → tool_use/tool_result 块（旧实现拍成空文本，
         //   工具调用与结果 token 漏计）
-        const systemTexts: string[] = [];
-        const messages: any[] = [];
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            if (cleaned.role === 'system') {
-                for (const part of cleaned.parts) {
-                    if ('text' in part && part.text) {
-                        systemTexts.push(part.text);
-                    }
-                }
-                continue;
-            }
-            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
-            const contentBlocks: any[] = [];
-            for (const part of cleaned.parts) {
-                if ('text' in part && part.text !== undefined) {
-                    contentBlocks.push({ type: 'text', text: part.text });
-                } else if (part.inlineData) {
-                    const { mimeType, data } = part.inlineData;
-                    if (isImageMimeType(mimeType)) {
-                        contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data } });
-                    } else if (isPdfMimeType(mimeType)) {
-                        contentBlocks.push({ type: 'document', source: { type: 'base64', media_type: mimeType, data } });
-                    } else if (isTextMimeType(mimeType)) {
-                        contentBlocks.push({ type: 'text', text: buildTextAttachmentContent(data) });
-                    } else {
-                        contentBlocks.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
-                    }
-                } else if (part.functionCall) {
-                    const fc = part.functionCall;
-                    contentBlocks.push({
-                        type: 'tool_use',
-                        // 无 id 时生成（与 anthropic.ts convertHistoryFunctionCallMode 一致），
-                        // 保证 count_tokens 结构校验通过
-                        id: fc.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                        name: fc.name,
-                        input: fc.args
-                    });
-                } else if (part.functionResponse) {
-                    const resp = part.functionResponse;
-                    contentBlocks.push({
-                        type: 'tool_result',
-                        tool_use_id: resp.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
-                    });
-                }
-            }
-            if (contentBlocks.length === 0) {
-                // 空消息（如思考被剥离）：保留一个空 text 块，避免 count_tokens 结构校验报错
-                contentBlocks.push({ type: 'text', text: '' });
-            }
-            messages.push({ role, content: contentBlocks });
-        }
+        const { messages, system } = buildAnthropicCountPayload(contents);
         
         const requestBody: any = {
             model,
             messages
         };
         // system 消息单独放在 system 字段（与 Messages API 请求一致），确保计入输入 token
-        if (systemTexts.length > 0) {
-            requestBody.system = systemTexts.join('\n');
+        if (system) {
+            requestBody.system = system;
         }
         
         const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
@@ -796,23 +558,7 @@ export class TokenCountService {
             .replace('{key}', config.apiKey);
         
         // 清理并转换内容格式为 Gemini 格式
-        const geminiContents = contents.map(content => {
-            const cleaned = cleanContentForAPI(content);
-            return {
-                role: cleaned.role,
-                parts: cleaned.parts.map(part => {
-                    if ('text' in part && part.text !== undefined) {
-                        return { text: part.text };
-                    }
-                    // 处理其他类型的 part（如 inlineData, functionResponse 等）
-                    return part;
-                })
-            };
-        });
-        
-        const requestBody = {
-            contents: geminiContents
-        };
+        const requestBody = buildGeminiCountRequestBody(contents);
         
         const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);
         const response = await proxyFetch(url, {
@@ -873,72 +619,7 @@ export class TokenCountService {
         // - functionCall → assistant 消息的 tool_calls（旧实现拍成空文本，工具调用 token 漏计）
         // - functionResponse → role:tool 消息（旧实现拍成空文本，工具结果 token 漏计）
         // - system / 文本 / 图片维持原格式
-        const messages: any[] = [];
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
-
-            const textParts = cleaned.parts.filter(p => 'text' in p && p.text);
-            const functionCallParts = cleaned.parts.filter(p => p.functionCall);
-            const functionResponseParts = cleaned.parts.filter(p => p.functionResponse);
-
-            if (functionCallParts.length > 0) {
-                // assistant 消息：文本并入 content，调用挂 tool_calls
-                messages.push({
-                    role: 'assistant',
-                    content: textParts.length > 0 ? textParts.map(p => p.text).join('\n') : null,
-                    tool_calls: functionCallParts.map((p, index) => ({
-                        id: p.functionCall!.id || `call_${Date.now()}_${index}`,
-                        type: 'function',
-                        function: {
-                            name: p.functionCall!.name,
-                            arguments: typeof p.functionCall!.args === 'string'
-                                ? p.functionCall!.args
-                                : JSON.stringify(p.functionCall!.args)
-                        }
-                    }))
-                });
-            }
-
-            // 工具结果独立为 role:tool 消息
-            for (const part of functionResponseParts) {
-                const resp = part.functionResponse!;
-                messages.push({
-                    role: 'tool',
-                    tool_call_id: resp.id || '',
-                    content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
-                });
-            }
-
-            // 普通消息（文本 + 图片，含 system）
-            if (functionCallParts.length === 0 && functionResponseParts.length === 0) {
-                messages.push({
-                    role,
-                    content: cleaned.parts.map(part => {
-                        if ('text' in part && part.text) {
-                            return { type: 'text' as const, text: part.text };
-                        }
-                        // 处理图片、文本附件等其他类型（按 MIME 分发，文本不能当图片）
-                        if ('inlineData' in part && part.inlineData) {
-                            const { mimeType, data } = part.inlineData;
-                            if (isImageMimeType(mimeType)) {
-                                return {
-                                    type: 'image_url' as const,
-                                    image_url: {
-                                        url: `data:${mimeType};base64,${data}`
-                                    }
-                                };
-                            }
-                            if (isTextMimeType(mimeType)) {
-                                return { type: 'text' as const, text: buildTextAttachmentContent(data) };
-                            }
-                            return { type: 'text' as const, text: buildUnsupportedAttachmentText(mimeType) };
-                        }
-                        return { type: 'text' as const, text: '' };
-                    })
-                });
-            }
-        }
+        const messages = buildOpenAICountMessages(contents);
         
         const requestBody = {
             model: config.model,
@@ -1020,40 +701,7 @@ export class TokenCountService {
         const url = this.buildOpenAIResponsesCountUrl(config.baseUrl);
         
         // 转换内容格式
-        let instructions = '';
-        const inputParts: any[] = [];
-
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            if (cleaned.role === 'system') {
-                for (const part of cleaned.parts) {
-                    if ('text' in part && part.text) {
-                        instructions += (instructions ? '\n' : '') + part.text;
-                    }
-                }
-                continue;
-            }
-
-            for (const part of cleaned.parts) {
-                if ('text' in part && part.text) {
-                    inputParts.push({ type: 'text', text: part.text });
-                } else if ('inlineData' in part && part.inlineData) {
-                    const { mimeType, data } = part.inlineData;
-                    if (isImageMimeType(mimeType)) {
-                        inputParts.push({
-                            type: 'image_url',
-                            image_url: {
-                                url: `data:${mimeType};base64,${data}`
-                            }
-                        });
-                    } else if (isTextMimeType(mimeType)) {
-                        inputParts.push({ type: 'text', text: buildTextAttachmentContent(data) });
-                    } else {
-                        inputParts.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
-                    }
-                }
-            }
-        }
+        const { input: inputParts, instructions } = buildOpenAIResponsesCountInput(contents);
         
         const requestBody = {
             model: config.model,
@@ -1127,67 +775,15 @@ export class TokenCountService {
         // - 图片/PDF → image/document 块（旧实现拍成空文本，图片 token 漏计）
         // - functionCall/functionResponse → tool_use/tool_result 块（旧实现拍成空文本，
         //   工具调用与结果 token 漏计）
-        const systemTexts: string[] = [];
-        const messages: any[] = [];
-        for (const content of contents) {
-            const cleaned = cleanContentForAPI(content);
-            if (cleaned.role === 'system') {
-                for (const part of cleaned.parts) {
-                    if ('text' in part && part.text) {
-                        systemTexts.push(part.text);
-                    }
-                }
-                continue;
-            }
-            const role = cleaned.role === 'model' ? 'assistant' : cleaned.role;
-            const contentBlocks: any[] = [];
-            for (const part of cleaned.parts) {
-                if ('text' in part && part.text !== undefined) {
-                    contentBlocks.push({ type: 'text', text: part.text });
-                } else if (part.inlineData) {
-                    const { mimeType, data } = part.inlineData;
-                    if (isImageMimeType(mimeType)) {
-                        contentBlocks.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data } });
-                    } else if (isPdfMimeType(mimeType)) {
-                        contentBlocks.push({ type: 'document', source: { type: 'base64', media_type: mimeType, data } });
-                    } else if (isTextMimeType(mimeType)) {
-                        contentBlocks.push({ type: 'text', text: buildTextAttachmentContent(data) });
-                    } else {
-                        contentBlocks.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
-                    }
-                } else if (part.functionCall) {
-                    const fc = part.functionCall;
-                    contentBlocks.push({
-                        type: 'tool_use',
-                        // 无 id 时生成（与 anthropic.ts convertHistoryFunctionCallMode 一致），
-                        // 保证 count_tokens 结构校验通过
-                        id: fc.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                        name: fc.name,
-                        input: fc.args
-                    });
-                } else if (part.functionResponse) {
-                    const resp = part.functionResponse;
-                    contentBlocks.push({
-                        type: 'tool_result',
-                        tool_use_id: resp.id || `toolu_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
-                    });
-                }
-            }
-            if (contentBlocks.length === 0) {
-                // 空消息（如思考被剥离）：保留一个空 text 块，避免 count_tokens 结构校验报错
-                contentBlocks.push({ type: 'text', text: '' });
-            }
-            messages.push({ role, content: contentBlocks });
-        }
+        const { messages, system } = buildAnthropicCountPayload(contents);
         
         const requestBody: any = {
             model: config.model,
             messages
         };
         // system 消息单独放在 system 字段（与 Messages API 请求一致），确保计入输入 token
-        if (systemTexts.length > 0) {
-            requestBody.system = systemTexts.join('\n');
+        if (system) {
+            requestBody.system = system;
         }
         
         const proxyFetch = createProxyFetch(proxyUrl ?? this.proxyUrl);

@@ -1,33 +1,21 @@
 /**
  * 树状分支业务编排服务（第五阶段 BR-06/07 + BR-05/09 接线）。
  *
- * 职责：
- * - BR-06：分支图读写删接口（getBranchGraph / getBranchGraphMeta / saveBranchGraph /
- *   deleteConversationBranch / createRerollCandidate / editCandidate / switchBranchCandidate /
- *   deleteBranchCandidate）；
- * - BR-07：所有分支图写操作统一进入会话写锁（ConversationManager.runExclusive）；
- * - BR-05：validateActivePathMatchesHistory 调试校验（主历史消息 id 链 == 图活跃路径）；
- * - BR-09：initializeBranchConversation / recordExport（跨对话「复制为新对话」建模）；
- * - BS-2：appendHistoryToGraph（主历史尾部新增消息并入分支图；方法级实现，调用点后续接线）；
- * - TREE-09：deleteBranchCandidate（软删 + deletedAt）/ restoreBranchCandidate（恢复）/
- *   renameBranchCandidate（重命名 label）/ purgeBranchCandidate（彻底删除）/
- *   getDeletedBranchCount（软删统计）/ pruneDeletedBranches（过期物理清理）/
- *   getBranchRetentionConfig / updateBranchRetentionConfig（保留期配置，默认 30 天）；
- * - BCP-02：bindWorkspaceCheckpoint（工具执行存档点 fire-and-forget 绑定工作区存档头节点
- *   到分支节点，写入 workspaceCheckpointId + workspaceState；无图不建图、软删节点拒绝）。
- * - BCP-06：purgeBranchCandidate / pruneDeletedBranches 物理清理后，经全局清理器
- *   （CheckpointManager 自注册）触发引用归零存档清理（computeCheckpointReferenceCounts
- *   重扫全量 BranchGraph + deleteCheckpointsByNodeIds 引用计数/CP-05 闸门；软删不触发）。
+ * 职责（原 BranchService 单文件已按职责拆分到同目录服务模块）：
+ * - branchGraphCache.ts：分支图内存缓存；
+ * - branchServiceTypes.ts：对外导出的结果/入参类型与常量；
+ * - branchServiceCore.ts：共享核心（写锁/读图/校验/保存/候选摘要等）；
+ * - branchStoreService.ts：BR-06 读写删接口（getBranchGraph / getBranchGraphMeta /
+ *   saveBranchGraph / deleteConversationBranch）；
+ * - branchReconcileService.ts：主历史 ↔ 分支图对账（ensureBranchGraph /
+ *   ensureMainHistoryRepresentedInGraph / syncMainHistoryAfterStructuralMutation /
+ *   assertMainHistoryRepresentedInGraph / validateActivePathMatchesHistory）；
+ * - branchCandidateService.ts：候选生命周期 / 分支切换 / 工作区存档绑定（BR-07 + TREE + BCP-02）；
+ * - branchRetentionService.ts：软删统计 / 修剪 / 保留期配置（TREE-09）；
+ * - branchHistorySyncService.ts：跨对话分支建模 / 主历史追加与删除同步（BR-09 + BS-2 + 决策 6）。
  *
- * 本阶段范围边界（与 TREE 阶段的分界）：
- * - switchBranchCandidate 只做「图状态切换 + 持久化」，不重写主历史、不重建派生状态
- *   （TODO / Build / 用量索引 / 上下文裁剪），那是 TREE-06 的职责；
- * - createRerollCandidate / editCandidate 只建候选节点并切换 activeChildId，不启动模型流
- *   （chat.rerollStream / chat.editBranchAndRetryStream 在 TREE-01/03）；
- * - deleteBranchCandidate 为软删除（TREE-09），且拒绝删除活跃路径上的节点；
- * - sidecar 损坏（解析失败或读取侧语义校验失败）时：读取降级线性模式（仓储层 +
- *   读取侧 validate/activePath 语义校验）；写入拒绝（BRANCH_STORAGE_CORRUPT），
- *   不静默覆盖可能可恢复的数据（MIG-05 完整性工具负责修复）。
+ * 本文件只保留 BranchService 类（对外委托入口）、全局实例注册与对外导出符号，
+ * 方法签名与运行时行为与拆分前完全一致。
  *
  * 锁序（BR-07 + M-3 复查修正，强约束）：
  *   「会话锁内严禁获取存档锁；存档锁只能在会话锁之外获取」。
@@ -35,161 +23,101 @@
  *   checkpointOperationLockManager 存档操作锁，再在锁内获取会话写锁），因此会话写锁是
  *   存档锁的内层：任何在会话写锁内再去获取存档锁的调用，都会与 restore/create 的
  *   「存档锁 → 会话锁」路径构成锁序反转（互相等待）而死锁。
- *   TREE-06（切换重写主历史）/ BCP（工作区存档绑定与恢复）设计必须遵守本约束：
- *   需要存档锁的操作只能从会话锁之外发起；分支图读改写只允许持有会话写锁。
- *   文件写锁（FileWriteLockManager.acquire）仍在最外层，获取方向为
- *   文件写锁 → 存档锁 → 会话锁（存档操作内部需要会话锁时按此方向获取）。
  */
 
-import { newUuid } from '../../../core/id';
-import * as fsp from 'fs/promises';
-import { Logger } from '../../../core/logger';
-import type { Content, ContentPart, UsageMetadata } from '../types';
+import type { Content, ContentPart } from '../types';
+import type { ConversationManager } from '../ConversationManager';
+import type { BranchGraphReadResult, BranchGraphRepository } from './BranchGraphRepository';
 import {
-    activePath,
-    childrenIndex,
-    collectDeletedNodes,
-    createEmptyBranchGraph,
+    getChildrenIndex,
+    type BranchServiceCoreContext,
+} from './branchServiceCore';
+import {
+    deleteConversationBranch,
+    getBranchGraph,
+    getBranchGraphMeta,
+    saveBranchGraph,
+} from './branchStoreService';
+import {
+    assertMainHistoryRepresentedInGraph,
+    ensureBranchGraph,
+    ensureMainHistoryRepresentedInGraph,
+    syncMainHistoryAfterStructuralMutation,
+    validateActivePathMatchesHistory,
+} from './branchReconcileService';
+import {
+    abortEmptyCandidateSetup,
+    bindWorkspaceCheckpoint,
+    createRerollCandidate,
+    deleteBranchCandidate,
     editCandidate,
-    extractBranchContentMetadata,
-    findUnsyncedFunctionResponses,
-    importLinearHistory,
-    insertNode,
-    isActiveEmptyPlaceholder,
-    isFunctionResponseMessage,
-    pruneDeletedNodes,
-    rebaseActivePathFromHistory,
-    removeSubtree,
-    renameBranchLabel,
-    renameNode,
-    rerollCandidate,
-    restoreNode,
-    softDeleteNode,
-    softDeleteSubtreeFrom,
-    switchActivePath,
-    updateNodeContent,
-    upsertCandidateSummary,
-    validate,
-} from './BranchGraph';
-import { BranchGraphRepository, type BranchGraphReadResult } from './BranchGraphRepository';
+    finishReroll,
+    purgeBranchCandidate,
+    renameBranchCandidate,
+    restoreBranchCandidate,
+    startReroll,
+    switchBranchCandidate,
+    updateActiveNodeParts,
+    updateNodeMetadata,
+} from './branchCandidateService';
 import {
+    getBranchRetentionConfig,
+    getDeletedBranchCount,
+    pruneDeletedBranches,
+    updateBranchRetentionConfig,
+} from './branchRetentionService';
+import {
+    appendHistoryToGraph,
+    initializeBranchConversation,
+    recordExport,
+    syncGraphAfterHistoryDelete,
+} from './branchHistorySyncService';
+import { invalidateBranchGraphCache } from './branchGraphCache';
+import { MAX_CANDIDATES_PER_PARENT } from './branchServiceTypes';
+import type {
+    BranchCandidateCreateResult,
+    BranchCandidateInput,
+    BranchDeleteResult,
+    BranchDeletedCountResult,
+    BranchGraphMetaResult,
+    BranchHistoryDeleteSyncResult,
+    BranchHistoryReconcileResult,
+    BranchPathConsistencyResult,
+    BranchPruneResult,
+    BranchPurgeResult,
+    BranchSetupAbortResult,
+    BranchStructuralSyncResult,
+    BranchSwitchResult,
+    RerollFinishResult,
+    RerollStartResult,
+} from './branchServiceTypes';
+import { DEFAULT_BRANCH_RETENTION_DAYS } from './types';
+import type {
     BranchContentMetadata,
-    BranchError,
-    BranchNodeKind,
-    BranchExportRecord,
     BranchRetentionConfig,
     ConversationBranchGraph,
-    ConversationBranchNode,
-    DEFAULT_BRANCH_RETENTION_DAYS,
     WorkspaceState,
 } from './types';
-import type { ConversationManager } from '../ConversationManager';
-// BCP-06: 引用计数扫描 + 全局清理器（CheckpointManager 构造时经 checkpointCleanerBridge
-// 自注册；E1 解环：conversation 侧只依赖本域桥接模块，不再 import checkpoint 内部实现）。
-import {
-    computeCheckpointReferenceCounts,
-    getGlobalCheckpointRefCountCleaner,
-} from './checkpointCleanerBridge';
 
-const log = Logger.get('BranchService');
-
-// ==================== 分支图内存缓存 ====================
-// 主历史每次 append 都在会话写锁内「读 branches.json → 改 → 原子写回」，
-// 读图路径（分支切换 / usageStats / Monitor）也无缓存；大图反复读改写是磁盘 IO 热路径。
-// 这里按分支文件完整路径（baseDir + conversationId，天然区分多工作区/多数据目录）做短 TTL 缓存：
-// - 写入（validateAndSave / saveBranchGraph）成功后回填快照，deleteConversationBranch 失效；
-// - 读取命中返回缓存的只读引用（不再 structuredClone 整张图——大图含工具结果，深拷贝是
-//   工具循环每次迭代的主要开销）；读侧约定只读：调用方需要修改必须先自行拷贝
-//   （webview 富化响应前浅拷贝，见 BranchHandlers.enrichGraphWorkspaceInfo）；
-// - 写路径（loadGraphCached）与缓存条目共享同一对象，但全部图变更函数（insertNode /
-//   updateNodeContent / switchActivePath 等）均为纯函数（内部 cloneGraph），不会原地修改
-//   共享条目；validateAndSave 落盘后以快照重新回填（写侧独立克隆契约不变）；
-// - 每次命中前 stat 文件（mtime + size，与 storage.readSegmentCached 同模式）：文件被
-//   仓储之外的路径直接改写（测试/外部工具）时缓存自动失效重读，不依赖 TTL 过期；
-// - 损坏/缺失态不缓存（错误降级路径保持原语义）。
-const BRANCH_GRAPH_CACHE_TTL_MS = 60_000;
-/** 分支图缓存条目上限（会话数）：超限按最久未访问淘汰（与 ConversationManager 的 LRU 同模式） */
-const BRANCH_GRAPH_CACHE_CAPACITY = 200;
-
-interface BranchGraphCacheEntry {
-    graph: ConversationBranchGraph;
-    expiresAt: number;
-    mtimeMs: number | null;
-    size: number | null;
-}
-
-const branchGraphCache = new Map<string, BranchGraphCacheEntry>();
-
-function getBranchGraphCacheKey(repository: BranchGraphRepository, conversationId: string): string {
-    return repository.getBranchesFilePath(conversationId);
-}
-
-function statBranchesFile(filePath: string): Promise<{ mtimeMs: number | null; size: number | null }> {
-    return fsp.stat(filePath)
-        .then(st => ({ mtimeMs: st.mtimeMs, size: st.size }))
-        .catch(() => ({ mtimeMs: null, size: null }));
-}
-
-/** LRU 触碰 + 容量淘汰（与 ConversationManager.touchCache 同模式） */
-function touchBranchGraphCache(key: string): void {
-    const value = branchGraphCache.get(key);
-    if (value !== undefined) {
-        branchGraphCache.delete(key);
-        branchGraphCache.set(key, value);
-    }
-    if (branchGraphCache.size > BRANCH_GRAPH_CACHE_CAPACITY) {
-        const oldest = branchGraphCache.keys().next().value;
-        if (oldest !== undefined) {
-            branchGraphCache.delete(oldest);
-        }
-    }
-}
-
-/**
- * 命中返回缓存图的只读引用（不再深拷贝）；过期 / 文件被外部改写 / 未命中返回 null。
- * 调用方必须保持只读纪律（图变更函数均为纯函数，不会破坏该契约）。
- */
-async function getBranchGraphCached(key: string): Promise<ConversationBranchGraph | null> {
-    const entry = branchGraphCache.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt <= Date.now()) {
-        branchGraphCache.delete(key);
-        return null;
-    }
-    const stat = await statBranchesFile(key);
-    if (stat.mtimeMs !== entry.mtimeMs || stat.size !== entry.size) {
-        // 文件在缓存后被仓储之外的路径改写：缓存陈旧，失效后走磁盘重读
-        branchGraphCache.delete(key);
-        return null;
-    }
-    touchBranchGraphCache(key);
-    return entry.graph;
-}
-
-/** 写入成功后回填快照（并刷新 TTL）；存快照防止调用方后续修改污染缓存 */
-async function setBranchGraphCached(key: string, graph: ConversationBranchGraph): Promise<void> {
-    const stat = await statBranchesFile(key);
-    branchGraphCache.set(key, {
-        graph: structuredClone(graph),
-        expiresAt: Date.now() + BRANCH_GRAPH_CACHE_TTL_MS,
-        mtimeMs: stat.mtimeMs,
-        size: stat.size,
-    });
-    touchBranchGraphCache(key);
-}
-
-/** 供测试/诊断清理分支图缓存（可选按会话，不传清空全部） */
-export function invalidateBranchGraphCache(conversationId?: string): void {
-    if (!conversationId) {
-        branchGraphCache.clear();
-        return;
-    }
-    for (const key of branchGraphCache.keys()) {
-        if (key.endsWith(`/${conversationId}/branches.json`) || key.endsWith(`\\${conversationId}\\branches.json`)) {
-            branchGraphCache.delete(key);
-        }
-    }
-}
+export { invalidateBranchGraphCache };
+export { MAX_CANDIDATES_PER_PARENT };
+export type {
+    BranchCandidateCreateResult,
+    BranchCandidateInput,
+    BranchDeleteResult,
+    BranchDeletedCountResult,
+    BranchGraphMetaResult,
+    BranchHistoryDeleteSyncResult,
+    BranchHistoryReconcileResult,
+    BranchPathConsistencyResult,
+    BranchPruneResult,
+    BranchPurgeResult,
+    BranchSetupAbortResult,
+    BranchStructuralSyncResult,
+    BranchSwitchResult,
+    RerollFinishResult,
+    RerollStartResult,
+};
 
 /** 模块级单例（与 DiffStorageManager 同模式）：由 webview BranchHandlers 懒初始化后注册。 */
 let globalBranchService: BranchService | undefined;
@@ -204,822 +132,118 @@ export function getGlobalBranchService(): BranchService | undefined {
     return globalBranchService;
 }
 
-/** createRerollCandidate / editCandidate 的返回值（轻量，不下发整图） */
-export interface BranchCandidateCreateResult {
-    nodeId: string;
-    parentNodeId: string;
-    kind: BranchNodeKind;
-    activeTailNodeId: string | null;
-    activePathIds: string[];
-}
-
-/** switchBranchCandidate 的返回值（本阶段只切图状态，不重写主历史） */
-export interface BranchSwitchResult {
-    nodeId: string;
-    activeTailNodeId: string | null;
-    activePathIds: string[];
-    /** 本阶段恒为 false：主历史全量重写是 TREE-06 的职责 */
-    mainHistoryRewrite: false;
-}
-
-/** deleteBranchCandidate 的返回值 */
-export interface BranchDeleteResult {
-    nodeId: string;
-    deleted: boolean;
-    /** 若删除的是父节点的当前活跃子，父节点 activeChildId 被清空（不影响活跃路径） */
-    clearedParentActiveChild: boolean;
-}
-
-/** BR-05 校验结果：主历史消息 id 链（不含 functionResponse）vs 图活跃路径 */
-export interface BranchPathConsistencyResult {
-    valid: boolean;
-    issues: string[];
-    graphMissing: boolean;
-    historyIds: string[];
-    activePathIds: string[];
-}
-
-/** 主历史补入/修复分支图的结果。 */
-export interface BranchHistoryReconcileResult {
-    /** 原先没有 sidecar，本次从主历史新建。 */
-    created: boolean;
-    /** sidecar 已存在但落后，本次保留旧候选并重建活跃路径。 */
-    reconciled: boolean;
-    /** 覆盖旧 sidecar 前生成的逐字节备份；未发生覆盖时为空。 */
-    backupPath?: string;
-    missingMessageCount: number;
-    unsyncedFunctionResponseCount: number;
-}
-
-/** 预期内结构变更（总结插入/恢复等）的分支图同步结果。 */
-export interface BranchStructuralSyncResult {
-    synced: boolean;
-    /** 正在生成的空 reroll/edit 占位仍处于活跃尾时不抢占其路径，留给 finishReroll 收敛。 */
-    deferred: boolean;
-}
-
-/** getBranchGraphMeta 的返回值（前端列表/徽标用，避免整图下发） */
-export interface BranchGraphMetaResult {
-    conversationId: string;
-    exists: boolean;
-    /**
-     * BS-1：损坏标记——sidecar 存在但不可用（JSON 解析失败 / 结构不符 / 读取侧语义校验失败），
-     * 与「无图（exists:false 且无 errorCode）」区分；为 true 时 errorCode 恒为
-     * 'BRANCH_STORAGE_CORRUPT'。前端三态：无图 / 损坏 / 存在可用。
-     */
-    corrupted?: boolean;
-    /** 损坏时携带（M-1）：调用方可按无图处理，或提示 sidecar 需修复（MIG-05 完整性工具） */
-    errorCode?: 'BRANCH_STORAGE_CORRUPT';
-    rootNodeId: string | null;
-    activeTailNodeId: string | null;
-    nodeCount: number;
-    candidateCount: number;
-    /** TREE-09：软删节点数（含子树节点；设置页「软删分支数量」展示用） */
-    deletedCount: number;
-    activePathLength: number;
-    exportedFrom?: { conversationId: string; nodeId: string };
-    exportedRefs: BranchExportRecord[];
-}
-
-/** 候选/编辑节点的创建入参 */
-export interface BranchCandidateInput {
-    parts: ContentPart[];
-    role?: 'user' | 'model' | 'system';
-    modelVersion?: string;
-    usageMetadata?: UsageMetadata;
-    createdAt?: number;
-}
-
-/** TREE-02（决策 4）：同一父节点下候选数量上限；超限拒绝创建并提示清理，不自动删除 */
-export const MAX_CANDIDATES_PER_PARENT = 10;
-
-/** TREE-09：软删分支数量统计结果 */
-export interface BranchDeletedCountResult {
-    /** 统计的会话数（全量扫描时为带 sidecar 的会话数） */
-    conversationCount: number;
-    /** 软删节点总数（含子树节点） */
-    deletedNodeCount: number;
-}
-
-/** TREE-09：pruneDeletedBranches 的返回结果 */
-export interface BranchPruneResult {
-    /** 扫描的会话数 */
-    conversationsScanned: number;
-    /** 实际发生了物理清理的会话数 */
-    conversationsChanged: number;
-    /** 物理移除的节点总数（含子树） */
-    prunedNodeCount: number;
-    /** sidecar 损坏被跳过的会话（不覆盖，留给 MIG-05 完整性工具） */
-    corruptConversations: string[];
-    /** 会话已不存在/已删除被跳过的会话（迟到清理） */
-    skippedConversations: string[];
-}
-
-/** TREE-09：purgeBranchCandidate 的返回结果（单个候选彻底删除） */
-export interface BranchPurgeResult {
-    nodeId: string;
-    /** 是否实际执行了物理移除（false = 节点不存在/未软删，幂等） */
-    purged: boolean;
-    /** 本次物理移除的节点数（含子树） */
-    prunedNodeCount: number;
-}
-
-/** 决策 6：主历史删除（deleteToMessage / deleteMessage）后的分支图同步结果 */
-export interface BranchHistoryDeleteSyncResult {
-    /** 图是否发生变更并落盘（无图 / 锚点缺失 / 幂等时为 false） */
-    graphUpdated: boolean;
-    /** 本次新标记软删的节点 id（整体重置为空图时为全部旧节点 id） */
-    deletedNodeIds: string[];
-    /** 是否整体重置为空图（删除到对话开头，锚定根节点） */
-    resetToEmpty: boolean;
-    /** 活跃尾是否被回退（被删集合包含原活跃尾） */
-    activeTailAdjusted: boolean;
-}
-
-/** TREE-01：startReroll 的返回值（reroll 开始：旧候选保留进 sidecar，新候选激活） */
-export interface RerollStartResult {
-    /** 新候选节点 ID（流式期间内容为空，完成后由 finishReroll 回填） */
-    candidateNodeId: string;
-    /** 父用户节点 ID */
-    parentNodeId: string;
-    /** 被 reroll 的旧助手节点 ID（仍保留在图中，可切回） */
-    previousNodeId: string;
-    /** 截断后主历史消息数（= 父节点索引 + 1；主历史已切换到新候选路径） */
-    historyLengthAfterTruncate: number;
-}
-
-/** TREE-01：finishReroll 的返回值（流式结果写入新节点 + 摘要更新后的图状态） */
-export interface RerollFinishResult {
-    /** 最终候选节点 ID；无输出时为已丢弃的空占位节点 ID。 */
-    candidateNodeId: string;
-    parentNodeId: string;
-    activeTailNodeId: string | null;
-    activePathIds: string[];
-    /** 写入图的模型消息数（0 = 流式未产生内容，空占位会被移除） */
-    syncedMessageCount: number;
-    /** 流式没有产生任何消息时，空占位节点已被安全移除。 */
-    discardedEmptyCandidate: boolean;
-}
-
-/** 分支流启动阶段失败后的受限回滚结果。 */
-export interface BranchSetupAbortResult {
-    removedNodeIds: string[];
-    activeTailNodeId: string | null;
-    activePathIds: string[];
-}
-
-/** 从节点 parts 生成候选摘要 preview（首段文本，无文本用工具名/空） */
-function buildCandidateSummary(node: ConversationBranchNode): { preview: string } {
-    const texts: string[] = [];
-    for (const part of node.parts ?? []) {
-        if (typeof part.text === 'string' && part.text.trim()) {
-            texts.push(part.text.trim());
-        }
-    }
-    if (texts.length > 0) {
-        return { preview: texts.join(' ').slice(0, 120) };
-    }
-    const toolNames = (node.parts ?? [])
-        .map(part => part.functionCall?.name)
-        .filter((name): name is string => typeof name === 'string');
-    return { preview: toolNames.length > 0 ? `[tool: ${toolNames.join(', ')}]` : '' };
-}
-
 export class BranchService {
     /**
      * TREE-09：软删节点保留天数（默认 DEFAULT_BRANCH_RETENTION_DAYS=30）。
      * 优先级：pruneDeletedBranches 显式入参 > branches.config.json 持久化配置 > 本构造默认值。
      */
     private readonly retentionDays: number;
-    /** 活跃空候选期间被延迟的总结结构同步；候选终结后一次性收敛。 */
-    private readonly deferredStructuralSyncConversationIds = new Set<string>();
+    /** 各职责服务共享的核心上下文（conversationManager / repository / 实例状态）。 */
+    private readonly ctx: BranchServiceCoreContext;
 
-    /**
-     * 「切图 → 主历史重写」非原子窗口的预期状态（switchBranchCandidate 记录，重写消费）。
-     *
-     * switchBranchCandidate 只切图状态并在释放会话写锁后由调用方编排主历史重写；窗口期内
-     * 并发追加 / 其它切换会让重写基于陈旧快照覆盖并发写入。记录「切图瞬间」的主历史尾 id
-     * 与图活跃尾，rewriteHistoryFromBranchGraph 在锁内校验两者未变化；不一致则拒绝重写，
-     * 由调用方重试（重试无预期状态，由 R8a-M2 一致性检查继续兜底）。
-     */
-    private readonly pendingRewriteExpectations = new Map<
-        string,
-        { mainHistoryTailId: string | null; graphActiveTailNodeId: string | null }
-    >();
+    constructor(
+        conversationManager: ConversationManager,
+        repository: BranchGraphRepository,
+        options: { retentionDays?: number } = {}
+    ) {
+        this.retentionDays = options.retentionDays ?? DEFAULT_BRANCH_RETENTION_DAYS;
+        this.ctx = {
+            conversationManager,
+            repository,
+            state: {
+                deferredStructuralSyncConversationIds: new Set<string>(),
+                pendingRewriteExpectations: new Map<
+                    string,
+                    { mainHistoryTailId: string | null; graphActiveTailNodeId: string | null }
+                >(),
+            },
+        };
+    }
 
     /** 取走（并清除）pending 的「切图→重写」预期状态；无预期返回 null（重写可独立调用） */
     consumeRewriteExpectation(conversationId: string): { mainHistoryTailId: string | null; graphActiveTailNodeId: string | null } | null {
-        const expectation = this.pendingRewriteExpectations.get(conversationId);
+        const expectation = this.ctx.state.pendingRewriteExpectations.get(conversationId);
         if (expectation) {
-            this.pendingRewriteExpectations.delete(conversationId);
+            this.ctx.state.pendingRewriteExpectations.delete(conversationId);
         }
         return expectation ?? null;
     }
 
-    constructor(
-        private readonly conversationManager: ConversationManager,
-        private readonly repository: BranchGraphRepository,
-        options: { retentionDays?: number } = {}
-    ) {
-        this.retentionDays = options.retentionDays ?? DEFAULT_BRANCH_RETENTION_DAYS;
-    }
-
     // ==================== BR-06：读写删接口 ====================
 
-    /**
-     * 读取分支图（BR-06）。
-     * - 文件不存在 → { graph: null }（线性模式）；
-     * - 损坏（解析失败 / 结构不符 / 读取侧语义校验失败）→
-     *   { graph: null, errorCode: 'BRANCH_STORAGE_CORRUPT' }（读取降级，不抛错）。
-     * 只读操作不进入会话写锁（sidecar 为原子替换，读不参与写串行）。
-     *
-     * M-2：仓储层只做浅层 shape 检查，可解析但语义损坏（环 / 悬空 parentId /
-     * activeChildId 指向非子节点 / 版本不符 / 尾指针非终端等）的图不得原样下发——
-     * 此处对 loaded.graph 做 validate() + activePath() 语义校验，损坏同样返回 errorCode。
-     */
     async getBranchGraph(conversationId: string): Promise<BranchGraphReadResult> {
-        const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
-        const cached = await getBranchGraphCached(cacheKey);
-        if (cached) {
-            // 缓存内图在回填时已通过 validate + activePath（见下与 validateAndSave），直接复用。
-            // 返回的是缓存条目共享引用（只读契约）：调用方不得原地修改，需要改动先自行拷贝。
-            return { graph: cached };
-        }
-        const loaded = await this.repository.load(conversationId);
-        if (loaded.graph) {
-            const validation = validate(loaded.graph);
-            if (!validation.valid) {
-                return {
-                    graph: null,
-                    errorCode: 'BRANCH_STORAGE_CORRUPT',
-                    errorMessage: `semantic validation failed: ${validation.issues.map(i => i.message).join('; ')}`,
-                };
-            }
-            try {
-                activePath(loaded.graph);
-            } catch (error) {
-                return {
-                    graph: null,
-                    errorCode: 'BRANCH_STORAGE_CORRUPT',
-                    errorMessage: `active path resolution failed: ${(error as Error)?.message ?? String(error)}`,
-                };
-            }
-            // 校验通过才回填缓存（损坏态不缓存，保持降级语义）
-            await setBranchGraphCached(cacheKey, loaded.graph);
-        }
-        return loaded;
+        return getBranchGraph(this.ctx, conversationId);
     }
 
-    /**
-     * 分支图元信息（BR-06）：轻量摘要，避免整图下发。
-     * 三态语义（BS-1）：
-     * - 无图：exists=false，无 errorCode；
-     * - 损坏（仓储解析失败 / 结构不符 / 读取侧语义校验失败）：exists=false +
-     *   corrupted=true + errorCode='BRANCH_STORAGE_CORRUPT'（M-1/M-2 兑现注释承诺）；
-     * - 存在可用：exists=true。
-     */
     async getBranchGraphMeta(conversationId: string): Promise<BranchGraphMetaResult> {
-        const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
-        const cached = await getBranchGraphCached(cacheKey);
-        const loaded = cached
-            ? { graph: cached } as BranchGraphReadResult
-            : await this.repository.load(conversationId);
-        const base: BranchGraphMetaResult = {
-            conversationId,
-            exists: false,
-            rootNodeId: null,
-            activeTailNodeId: null,
-            nodeCount: 0,
-            candidateCount: 0,
-            deletedCount: 0,
-            activePathLength: 0,
-            exportedRefs: [],
-        };
-        if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-            // 仓储损坏（JSON 解析失败 / 结构不符）：M-1 透出 errorCode
-            return { ...base, corrupted: true, errorCode: 'BRANCH_STORAGE_CORRUPT' };
-        }
-        if (!loaded.graph) {
-            return { ...base, exists: false };
-        }
-        const graph = loaded.graph;
-        // M-2：读取侧语义校验（validate + activePath），语义损坏同样降级为损坏态
-        const validation = validate(graph);
-        if (!validation.valid) {
-            log.warn('branch_graph_meta_semantic_corrupt', {
-                conversationId,
-                issues: validation.issues.map(i => i.message),
-            });
-            return { ...base, corrupted: true, errorCode: 'BRANCH_STORAGE_CORRUPT' };
-        }
-        try {
-            // M-2 校验通过：回填缓存（缓存命中路径已跳过校验，见 getBranchGraph 注释）
-            await setBranchGraphCached(cacheKey, graph);
-            return {
-                conversationId,
-                exists: true,
-                rootNodeId: graph.rootNodeId,
-                activeTailNodeId: graph.activeTailNodeId,
-                nodeCount: Object.keys(graph.nodes).length,
-                candidateCount: (graph.candidateSummaries ?? []).filter(s => !s.deleted).length,
-                deletedCount: collectDeletedNodes(graph).length,
-                activePathLength: activePath(graph).length,
-                exportedFrom: graph.exportedFrom,
-                exportedRefs: graph.exportedRefs ?? [],
-            };
-        } catch (error) {
-            // 图结构自相矛盾（环等）：与仓储损坏统一为 exists:false + corrupted + errorCode（M-2/BS-1）
-            log.warn('branch_graph_meta_unavailable', { conversationId, error: (error as Error)?.message ?? String(error) });
-            return { ...base, corrupted: true, errorCode: 'BRANCH_STORAGE_CORRUPT' };
-        }
+        return getBranchGraphMeta(this.ctx, conversationId);
     }
 
-    /**
-     * 保存分支图（BR-06）。先 validate 再持久化；结构无效抛 BRANCH_STORAGE_CORRUPT。
-     * 写入进入会话写锁（BR-07），保证与主历史写入串行。
-     */
     async saveBranchGraph(conversationId: string, graph: ConversationBranchGraph): Promise<void> {
-        const validation = validate(graph);
-        if (!validation.valid) {
-            throw new BranchError(
-                'BRANCH_STORAGE_CORRUPT',
-                `refusing to persist invalid branch graph: ${validation.issues.map(i => i.message).join('; ')}`
-            );
-        }
-        await this.conversationManager.runExclusive(conversationId, async () => {
-            // BS-4：已删除会话拒绝写（防删除后迟到写重建 sidecar）
-            await this.assertConversationWritable(conversationId);
-            await this.repository.save(conversationId, graph);
-        });
-        // 写后回填缓存（调用方传入的 graph 可能被后续复用/修改，只存快照）
-        await setBranchGraphCached(getBranchGraphCacheKey(this.repository, conversationId), graph);
+        return saveBranchGraph(this.ctx, conversationId, graph);
     }
 
-    /**
-     * 删除会话的分支图 sidecar（BR-06；级联清理，幂等）。
-     * 对话删除时由 ConversationManager.deleteConversation 接线调用（BR-04 清理要求；
-     * 该调用点在会话写锁之外，不会重入死锁）。
-     *
-     * M-5：删除与 sidecar 写入共用会话写锁，保证并发「写→删」先写后删（无残留）、
-     * 「删→写」删除后不再重建（迟到写由 assertConversationWritable 在锁内拒绝）。
-     * 本方法是级联清理路径，不做已删除会话检查（删除进行中/刚完成时正是它被调用的时机）。
-     */
     async deleteConversationBranch(conversationId: string): Promise<void> {
-        this.deferredStructuralSyncConversationIds.delete(conversationId);
-        this.pendingRewriteExpectations.delete(conversationId);
-        branchGraphCache.delete(getBranchGraphCacheKey(this.repository, conversationId));
-        await this.conversationManager.runExclusive(conversationId, async () => {
-            await this.repository.deleteConversation(conversationId);
-        });
+        return deleteConversationBranch(this.ctx, conversationId);
     }
 
     // ==================== BR-07：候选创建 / 编辑 / 切换 / 删除（全部在会话写锁内） ====================
 
-    /**
-     * 创建 reroll 候选（TREE-01 底座）：同一父节点下新增候选并切换 activeChildId，旧候选保留。
-     * 无分支图时先以主历史建线性基线图（MIG-01 惰性建图）。
-     */
     async createRerollCandidate(
         conversationId: string,
         parentNodeId: string,
         input: BranchCandidateInput
     ): Promise<BranchCandidateCreateResult> {
-        return await this.mutateGraph(conversationId, graph => {
-            // BS-3：父节点必须在当前活跃路径上（不能从非活跃分支节点再分支）
-            this.assertParentOnActivePath(graph, parentNodeId);
-            // TREE-02（决策 4）：每父节点候选上限，超限明确报错（提示清理，不自动删）
-            this.assertCandidateLimit(graph, parentNodeId);
-            const node = this.buildCandidateNode(input, parentNodeId, 'model');
-            const next = rerollCandidate(graph, parentNodeId, node, { updateTail: true });
-            const summary = buildCandidateSummary(node);
-            const withSummary = upsertCandidateSummary(next, {
-                nodeId: node.id,
-                parentId: parentNodeId,
-                kind: 'reroll',
-                createdAt: node.createdAt,
-                timestamp: node.timestamp,
-                modelVersion: node.modelVersion,
-                label: node.label,
-                preview: summary.preview,
-            });
-            return {
-                next: withSummary,
-                result: {
-                    nodeId: node.id,
-                    parentNodeId,
-                    kind: 'reroll',
-                    activeTailNodeId: withSummary.activeTailNodeId,
-                    activePathIds: activePath(withSummary),
-                },
-            };
-        });
+        return createRerollCandidate(this.ctx, conversationId, parentNodeId, input);
     }
 
-    /**
-     * 确保分支图 sidecar 存在（TREE-03 keep 模式前置）：无图时以主历史建线性基线图。
-     *
-     * 用于「先建图后截断」——让截断前的完整旧历史先进图，截断后再软删被移除的子树，
-     * 保证旧版本可回看（与 branch 模式 editCandidate 的惰性建图时机对齐，MIG-01）。
-     * 已有图 / sidecar 损坏（抛 BRANCH_STORAGE_CORRUPT，不覆盖）→ 幂等。
-     *
-     * @returns true 表示本次新建了图；false 表示图已存在或无需建图
-     */
     async ensureBranchGraph(conversationId: string): Promise<boolean> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            await this.assertConversationWritable(conversationId);
-            const loaded = await this.repository.load(conversationId);
-            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is corrupt for ${conversationId}; refusing to ensure branch graph (${loaded.errorMessage ?? 'unknown error'})`
-                );
-            }
-            if (loaded.graph) {
-                return false; // 已有图：无需重建
-            }
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            const graph = importLinearHistory(history);
-            await this.validateAndSave(conversationId, graph);
-            return true;
-        });
+        return ensureBranchGraph(this.ctx, conversationId);
     }
 
-    /**
-     * 确保当前主历史的每条消息都已归档进分支图。
-     *
-     * 旧版本会把已经结束的空 reroll/edit 占位节点留在活跃尾，普通追加因而持续跳过 sidecar；
-     * 结构性历史更新也可能在路径中间插入节点。编辑/重试若继续使用旧图，会 NODE_NOT_FOUND，
-     * 甚至在截断主历史后丢掉未归档的当前路径。本方法在这些破坏性操作之前执行：
-     *
-     * - 无图：从主历史建立基线；
-     * - 图已包含主历史全部消息与 functionResponse：幂等返回；主历史与图活跃路径不同可能只是
-     *   尚未执行历史重写的合法候选切换，不能擅自回切；
-     * - 图确实缺少主历史消息/回执：先生成逐字节备份，再以主历史重建活跃路径，旧候选继续保留；
-     * - 根节点不一致或重建后图无效：拒绝覆盖，原 sidecar 保持不变。
-     */
     async ensureMainHistoryRepresentedInGraph(conversationId: string): Promise<BranchHistoryReconcileResult> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            await this.assertConversationWritable(conversationId);
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            const graph = await this.loadGraphCached(conversationId);
-            if (!graph) {
-                const baseline = importLinearHistory(history);
-                await this.validateAndSave(conversationId, baseline);
-                return {
-                    created: true,
-                    reconciled: false,
-                    missingMessageCount: 0,
-                    unsyncedFunctionResponseCount: 0,
-                };
-            }
-
-            const gaps = this.getMainHistoryRepresentationGaps(history, graph);
-            const graphPath = activePath(graph);
-            const historyIsActivePrefix = gaps.historyIds.every((id, index) => graphPath[index] === id);
-            if (gaps.missingMessageIds.length === 0
-                && gaps.unsyncedFunctionResponseIds.length === 0) {
-                return {
-                    created: false,
-                    reconciled: false,
-                    missingMessageCount: 0,
-                    unsyncedFunctionResponseCount: 0,
-                };
-            }
-
-            // 先在内存中完成合并与 validate；无法无损并入时不制造无意义备份，也绝不覆盖旧图。
-            const reconciled = rebaseActivePathFromHistory(graph, history);
-            const backupPath = await this.repository.backup(conversationId, 'history-diverged');
-            if (!backupPath) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `refusing to reconcile branches.json for ${conversationId}: source sidecar disappeared before backup`
-                );
-            }
-            await this.validateAndSave(conversationId, reconciled);
-            log.warn('branch_history_reconciled', {
-                conversationId,
-                missingMessageCount: gaps.missingMessageIds.length,
-                unsyncedFunctionResponseCount: gaps.unsyncedFunctionResponseIds.length,
-                activePathMismatch: !historyIsActivePrefix,
-            });
-            return {
-                created: false,
-                reconciled: true,
-                backupPath,
-                missingMessageCount: gaps.missingMessageIds.length,
-                unsyncedFunctionResponseCount: gaps.unsyncedFunctionResponseIds.length,
-            };
-        });
+        return ensureMainHistoryRepresentedInGraph(this.ctx, conversationId);
     }
 
-    /**
-     * 把预期内的主历史结构变更同步到已有分支图。
-     *
-     * 与 ensureMainHistoryRepresentedInGraph 的异常修复路径不同：这里不新建 sidecar、不生成备份，
-     * 仅在已有图上以主历史重建活跃路径并保留所有旧候选。调用方必须已经成功提交主历史变更。
-     */
     async syncMainHistoryAfterStructuralMutation(
         conversationId: string,
         reason: 'summary_inserted' | 'summary_restored' | 'summary_deleted' | 'message_deleted_middle' | 'branch_finished' | 'message_inserted' | 'tool_calls_rejected'
     ): Promise<BranchStructuralSyncResult> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            await this.assertConversationWritable(conversationId);
-            const graph = await this.loadGraphCached(conversationId);
-            if (!graph) {
-                this.deferredStructuralSyncConversationIds.delete(conversationId);
-                return { synced: false, deferred: false };
-            }
-
-            const tail = graph.activeTailNodeId ? graph.nodes[graph.activeTailNodeId] : undefined;
-            if (isActiveEmptyPlaceholder(tail)) {
-                // 进行中的分支流以空占位锁定活跃路径；总结可能发生在模型请求前，不能在此抢占
-                // activeTail。finishReroll 会处理本次流的尾部，下一次分支操作仍有完整对账兜底。
-                // 超龄空占位（进程崩溃/被杀遗留）不再视为活跃流，直接收敛，避免图永久冻结。
-                this.deferredStructuralSyncConversationIds.add(conversationId);
-                return { synced: false, deferred: true };
-            }
-
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            // 删头部（主历史根前移）等根变更场景：rebase 默认拒绝（单根模型无法保留旧根为候选）。
-            // 主历史已变更的调用方允许重链——新根挂到图、旧根专属子树清理，避免图根永久陈旧、
-            // 后续 append 挂旧根（round4 复查 P1）；实际发生重链时显式告警便于观测。
-            const historyRootId = history.length > 0 ? (history[0]?.id ?? null) : null;
-            let next = rebaseActivePathFromHistory(graph, history, { allowRootChange: true });
-            if (historyRootId !== null && graph.rootNodeId !== null && graph.rootNodeId !== historyRootId) {
-                log.warn('branch_root_relinked_after_structural_mutation', {
-                    conversationId,
-                    reason,
-                    oldRootNodeId: graph.rootNodeId,
-                    newRootNodeId: historyRootId,
-                });
-            }
-            // 收敛被移出活跃路径的空占位幽灵（超龄占位经 isActiveEmptyPlaceholder 放行后
-            // rebase 会把它们降级为非活跃节点）：空内容、非软删的 reroll/edit 节点没有其它
-            // 回收路径，会永久占用候选上限（每父节点 10 个）并在面板显示空条目。软删后可被
-            // prune 清理，且不破坏候选归档语义。进行中的流不会产生非活跃空节点（其占位是
-            // 活跃尾），此处只会命中崩溃/被杀遗留的幽灵。
-            const reconciledPathIds = new Set(activePath(next));
-            for (const node of Object.values(next.nodes)) {
-                if (node.deleted || (node.parts?.length ?? 0) !== 0) {
-                    continue;
-                }
-                if (node.kind !== 'reroll' && node.kind !== 'edit') {
-                    continue;
-                }
-                if (reconciledPathIds.has(node.id)) {
-                    continue;
-                }
-                next = softDeleteNode(next, node.id);
-            }
-            await this.validateAndSave(conversationId, next);
-            this.deferredStructuralSyncConversationIds.delete(conversationId);
-            log.info('branch_structural_history_synced', { conversationId, reason });
-            return { synced: true, deferred: false };
-        });
+        return syncMainHistoryAfterStructuralMutation(this.ctx, conversationId, reason);
     }
 
-    /**
-     * 分支切换的零副作用预检：主历史有任何消息/函数回执尚未入图时立即拒绝。
-     * handler 在工作区恢复之前调用；switchBranchCandidate 在持锁变更前还会再次校验以防竞态。
-     */
     async assertMainHistoryRepresentedInGraph(conversationId: string): Promise<void> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        await this.conversationManager.runExclusive(conversationId, async () => {
-            const graph = await this.loadGraphForWrite(conversationId);
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            this.assertNoMainHistoryRepresentationGaps(history, graph);
-        });
+        return assertMainHistoryRepresentedInGraph(this.ctx, conversationId);
     }
 
-    /**
-     * 原地更新活跃路径上指定节点的 parts（保持分支的编辑，TREE-03 keep 模式底座）。
-     *
-     * 与 editCandidate 的区别：不创建新候选、不切换分支——直接改写节点内容并同步候选摘要，
-     * 保证分支图与主历史一致（BR-01：节点 id == Content.id；之后切回该分支时展示编辑后的文本）。
-     *
-     * @param nodeId 目标节点（须在当前活跃路径上）
-     * @param parts 新的消息内容
-     */
     async updateActiveNodeParts(
         conversationId: string,
         nodeId: string,
         parts: ContentPart[]
     ): Promise<{ nodeId: string }> {
-        return await this.mutateGraph(conversationId, graph => {
-            const node = graph.nodes[nodeId];
-            if (!node) {
-                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
-            }
-            if (!activePath(graph).includes(nodeId)) {
-                throw new BranchError(
-                    'INVALID_BRANCH_RELATION',
-                    `node ${nodeId} is not on the active path`
-                );
-            }
-            const next = updateNodeContent(graph, nodeId, { parts });
-            const summary = buildCandidateSummary({ ...node, parts });
-            const withSummary = upsertCandidateSummary(next, {
-                nodeId,
-                parentId: node.parentId,
-                kind: node.kind,
-                createdAt: node.createdAt,
-                timestamp: node.timestamp,
-                modelVersion: node.modelVersion,
-                label: node.label,
-                preview: summary.preview,
-            });
-            return { next: withSummary, result: { nodeId } };
-        });
+        return updateActiveNodeParts(this.ctx, conversationId, nodeId, parts);
     }
 
-    /**
-     * 原地更新指定节点的 contentMetadata（保留分支的编辑的往返元数据）。
-     *
-     * 用途：edit 流程的 branch 模式——editCandidate 新建用户节点时拿不到主历史侧元数据
-     * （isUserInput / tokenCountByChannel 等），待 addContent 落盘后按持久化内容补写；
-     * 不补写则切分支重写主历史时这些字段丢失（动态提示词插入点、前端用户图标、裁剪统计口径）。
-     */
     async updateNodeMetadata(
         conversationId: string,
         nodeId: string,
         contentMetadata: BranchContentMetadata | undefined
     ): Promise<void> {
-        return await this.mutateGraph(conversationId, graph => {
-            const node = graph.nodes[nodeId];
-            if (!node) {
-                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
-            }
-            const next = updateNodeContent(graph, nodeId, { contentMetadata });
-            return { next, result: undefined };
-        });
+        return updateNodeMetadata(this.ctx, conversationId, nodeId, contentMetadata);
     }
-    /**
-     * 创建编辑分支候选（TREE-03 底座）：在旧用户节点的父节点下新增 edit 候选并切换 activeChildId，
-     * 旧子树完整保留。无分支图时同样先建线性基线图。
-     */
+
     async editCandidate(
         conversationId: string,
         parentNodeId: string,
         input: BranchCandidateInput
     ): Promise<BranchCandidateCreateResult> {
-        return await this.mutateGraph(conversationId, graph => {
-            // BS-3：父节点必须在当前活跃路径上（不能从非活跃分支节点再分支）
-            this.assertParentOnActivePath(graph, parentNodeId);
-            // TREE-02（决策 4）：编辑候选同样计入每父节点候选上限
-            this.assertCandidateLimit(graph, parentNodeId);
-            const node = this.buildCandidateNode(input, parentNodeId, 'user');
-            const next = editCandidate(graph, parentNodeId, node, { updateTail: true });
-            const summary = buildCandidateSummary(node);
-            const withSummary = upsertCandidateSummary(next, {
-                nodeId: node.id,
-                parentId: parentNodeId,
-                kind: 'edit',
-                createdAt: node.createdAt,
-                timestamp: node.timestamp,
-                modelVersion: node.modelVersion,
-                label: node.label,
-                preview: summary.preview,
-            });
-            return {
-                next: withSummary,
-                result: {
-                    nodeId: node.id,
-                    parentNodeId,
-                    kind: 'edit',
-                    activeTailNodeId: withSummary.activeTailNodeId,
-                    activePathIds: activePath(withSummary),
-                },
-            };
-        });
+        return editCandidate(this.ctx, conversationId, parentNodeId, input);
     }
 
-    /**
-     * 开始 reroll（TREE-01）：验证目标助手节点在活跃路径 → 找到其直接父节点 →
-     * 保留目标助手节点及其子树（进 sidecar）→ 在同一父节点下创建新候选并激活 →
-     * 主历史从目标助手消息开始截断。
-     *
-     * 父节点既可以是 user，也可以是 model：工具调用后的续接回答在分支图中直接挂在
-     * 前一个 model 节点下（functionResponse 合并进该父节点），重生成续接回答时必须保留
-     * 前面的模型工具调用与工具结果，只替换被点中的单条回答。
-     *
-     * 顺序说明：先建图后截断主历史。线性模式首次建图时，旧助手节点必须先进入 sidecar，
-     * 否则截断主历史会把它永久删除（丢失旧回答）。
-     *
-     * 锁边界：图变更在会话写锁内（mutateGraph）；主历史截断走 ConversationManager 的
-     * deleteMessagesInRange（仓储内部自带会话写锁），不能嵌套在 runExclusive 内（防死锁），
-     * 因此两处不原子——中间窗由 finishReroll 的主历史→图回填兜底（TREE-13 将加流式互斥）。
-     *
-     * @param assistantNodeId 目标助手节点；省略时取活跃路径上最后一条助手消息（前端「重新生成」默认行为）
-     */
     async startReroll(conversationId: string, assistantNodeId?: string): Promise<RerollStartResult> {
-        // 破坏性截断前先把当前主历史完整归档进图；旧 sidecar 落后时备份并修复。
-        await this.ensureMainHistoryRepresentedInGraph(conversationId);
-        // 1. 图状态变更（会话写锁内）：验证 + 创建候选 + 激活 + 摘要
-        const created = await this.mutateGraph(conversationId, graph => {
-            const targetId = this.resolveRerollTarget(graph, assistantNodeId);
-            const target = graph.nodes[targetId]!;
-            if (target.role !== 'model') {
-                throw new BranchError(
-                    'INVALID_BRANCH_RELATION',
-                    `reroll target ${targetId} is not a model node`
-                );
-            }
-            const parentNodeId = target.parentId;
-            if (parentNodeId === null) {
-                throw new BranchError(
-                    'INVALID_BRANCH_RELATION',
-                    `reroll target ${targetId} has no parent node`
-                );
-            }
-            const parent = graph.nodes[parentNodeId];
-            if (!parent || (parent.role !== 'user' && parent.role !== 'model')) {
-                throw new BranchError(
-                    'INVALID_BRANCH_RELATION',
-                    `reroll target ${targetId} must have a user or model parent node`
-                );
-            }
-            // TREE-02（决策 4）：每父节点候选上限
-            this.assertCandidateLimit(graph, parentNodeId);
-            const node = this.buildCandidateNode({ parts: [] }, parentNodeId, 'model');
-            const next = rerollCandidate(graph, parentNodeId, node, { updateTail: true });
-            const withSummary = upsertCandidateSummary(next, {
-                nodeId: node.id,
-                parentId: parentNodeId,
-                kind: 'reroll',
-                createdAt: node.createdAt,
-                timestamp: node.timestamp,
-                modelVersion: node.modelVersion,
-                label: node.label,
-                preview: '',
-            });
-            return {
-                next: withSummary,
-                result: {
-                    candidateNodeId: node.id,
-                    parentNodeId,
-                    previousNodeId: targetId,
-                },
-            };
-        });
-        // 2. 主历史从目标助手消息开始截断。直接回复场景等价于“父 user 后截断”；
-        // 工具续接场景则保留目标前的 model + functionResponse，只移除被点回答及其后续消息。
-        try {
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            const targetIndex = history.findIndex(message => message.id === created.previousNodeId);
-            if (targetIndex < 0) {
-                throw new BranchError(
-                    'BRANCH_OPERATION_CONFLICT',
-                    `reroll target ${created.previousNodeId} is not present in main history`
-                );
-            }
-            await this.conversationManager.deleteMessagesInRange(
-                conversationId,
-                targetIndex,
-                history.length - 1
-            );
-            return { ...created, historyLengthAfterTruncate: targetIndex };
-        } catch (error) {
-            // 图候选先落盘、主历史后截断，两处无法共用同一把仓储锁。截断前后任一异常都要
-            // 移除本次空占位，否则调用方拿不到 candidateNodeId，finishReroll 也无从收敛。
-            // 若截断已经成功（极少数“提交后抛错”），旧回答已不在主历史，活跃尾回退父节点；
-            // 否则恢复旧回答路径。回滚失败只记录，不覆盖原始异常。
-            let fallbackNodeId = created.previousNodeId;
-            try {
-                const currentHistory = await this.conversationManager.getMessagesRaw(conversationId);
-                if (!currentHistory.some(message => message.id === created.previousNodeId)) {
-                    fallbackNodeId = created.parentNodeId;
-                }
-            } catch {
-                // 首次 getMessagesRaw 失败意味着尚未尝试截断，恢复旧回答是最保守选择。
-            }
-            try {
-                await this.abortEmptyCandidateSetup(conversationId, {
-                    setupRootNodeId: created.candidateNodeId,
-                    emptyCandidateNodeId: created.candidateNodeId,
-                    fallbackNodeId,
-                });
-            } catch (rollbackError) {
-                log.error('branch_reroll_setup_rollback_failed', {
-                    conversationId,
-                    candidateNodeId: created.candidateNodeId,
-                    error: (rollbackError as Error)?.message ?? String(rollbackError),
-                });
-            }
-            throw error;
-        }
+        return startReroll(this.ctx, conversationId, assistantNodeId);
     }
 
-    /**
-     * 分支流尚未开始写模型输出时，回滚本次启动阶段创建的临时子树。
-     *
-     * 这是故障恢复入口，不是通用删除 API。为避免误删真实内容，只接受两种精确形态：
-     * 1. 单个空 reroll 模型占位；
-     * 2. 一个 edit 用户节点及其唯一子节点（空 reroll 模型占位）。
-     * 两种形态都必须仍是活跃尾，且 fallback 不得位于待删子树内。
-     */
     async abortEmptyCandidateSetup(
         conversationId: string,
         input: {
@@ -1028,1272 +252,114 @@ export class BranchService {
             fallbackNodeId: string;
         }
     ): Promise<BranchSetupAbortResult> {
-        return await this.mutateGraph<BranchSetupAbortResult>(conversationId, graph => {
-            const root = graph.nodes[input.setupRootNodeId];
-            const candidate = graph.nodes[input.emptyCandidateNodeId];
-            const fallback = graph.nodes[input.fallbackNodeId];
-            if (!root || !candidate || !fallback) {
-                throw new BranchError(
-                    'NODE_NOT_FOUND',
-                    'cannot abort branch setup: setup root, empty candidate, or fallback node is missing'
-                );
-            }
-            const subtreeIds = new Set<string>();
-            const stack = [root.id];
-            while (stack.length > 0) {
-                const nodeId = stack.pop()!;
-                if (subtreeIds.has(nodeId)) {
-                    continue;
-                }
-                subtreeIds.add(nodeId);
-                for (const node of Object.values(graph.nodes)) {
-                    if (node.parentId === nodeId) {
-                        stack.push(node.id);
-                    }
-                }
-            }
-            const singleReroll = root.id === candidate.id
-                && root.kind === 'reroll'
-                && root.role === 'model'
-                && subtreeIds.size === 1;
-            const editWithEmptyModel = root.id !== candidate.id
-                && root.kind === 'edit'
-                && root.role === 'user'
-                && candidate.parentId === root.id
-                && candidate.kind === 'reroll'
-                && candidate.role === 'model'
-                && subtreeIds.size === 2;
-            if ((!singleReroll && !editWithEmptyModel)
-                || candidate.parts.length !== 0
-                || graph.activeTailNodeId !== candidate.id
-                || subtreeIds.has(fallback.id)) {
-                throw new BranchError(
-                    'BRANCH_OPERATION_CONFLICT',
-                    `refusing to abort non-empty, non-active, or unexpected branch setup ${root.id}`
-                );
-            }
-
-            const removed = removeSubtree(graph, root.id);
-            const next = switchActivePath(removed.graph, fallback.id);
-            return {
-                next,
-                result: {
-                    removedNodeIds: removed.prunedNodeIds,
-                    activeTailNodeId: next.activeTailNodeId,
-                    activePathIds: activePath(next),
-                },
-            };
-        });
+        return abortEmptyCandidateSetup(this.ctx, conversationId, input);
     }
 
-    /**
-     * 完成 reroll（TREE-01）：把工具循环写入主历史的流式结果回填进新候选节点（含续接节点），
-     * 并更新候选摘要。失败时也会调用：已有部分内容则保留供切回查看；完全无输出时移除空占位，
-     * 并把活跃尾回退到父节点，避免后续普通消息被永久判定为“仍在流式窗口”而停止同步。
-     *
-     * 回填规则（与 importLinearHistory 一致，决策 8）：
-     * - 主历史父节点之后第一条 model 消息 → 候选节点内容写入；若其 id 与候选占位节点 id
-     *   不同（工具循环生成新 UUID），候选节点重命名对齐（BR-01 同源）；
-     * - 后续 model 消息 → 在上一节点下插入 kind='continue' 续接节点并激活；
-     * - functionResponse 消息 → parts 并入前一个模型节点（不独立成节点）。
-     * - 后台回执/总结等其它角色消息 → 不冒充模型候选，候选结束后按完整主历史重建路径。
-     */
     async finishReroll(conversationId: string, candidateNodeId: string): Promise<RerollFinishResult> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        let requiresStructuralSync = false;
-        const result = await this.mutateGraph<RerollFinishResult>(conversationId, async graph => {
-            // 历史快照在会话写锁内读取（mutator 在 runExclusive 回调内执行）：与图变更原子化，
-            // 避免锁外快照与锁内图状态不一致（getMessagesRaw 只读、不取锁，无重入风险）。
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            const candidate = graph.nodes[candidateNodeId];
-            if (!candidate) {
-                throw new BranchError('NODE_NOT_FOUND', `reroll candidate node not found: ${candidateNodeId}`);
-            }
-            const parentNodeId = candidate.parentId;
-            if (parentNodeId === null) {
-                throw new BranchError(
-                    'INVALID_BRANCH_RELATION',
-                    `reroll candidate ${candidateNodeId} cannot be the root node`
-                );
-            }
-
-            const parentIndex = history.findIndex(message => message.id === parentNodeId);
-            const tail = parentIndex >= 0 ? history.slice(parentIndex + 1) : [];
-
-            let next = graph;
-            let cursorNodeId: string | null = null; // 当前模型节点（functionResponse 合并目标）
-            let firstMessageId: string | null = null;
-            let synced = 0;
-            for (const message of tail) {
-                if (isFunctionResponseMessage(message)) {
-                    // 决策 8：functionResponse 并入前一个模型节点
-                    if (cursorNodeId !== null) {
-                        const current = next.nodes[cursorNodeId]!;
-                        next = updateNodeContent(next, cursorNodeId, {
-                            parts: [...current.parts, ...(message.parts ?? [])],
-                        });
-                    }
-                    continue;
-                }
-                if (message.role !== 'model') {
-                    // SubAgent 后台回执、总结等结构消息可能在分支流期间并发追加。它们不是本次
-                    // 模型候选，绝不能因“位于 parent 之后”就被改写成 model 节点。先跳过，候选
-                    // 收敛后再按完整主历史 rebase，把这些消息按真实角色/顺序补进活跃路径。
-                    requiresStructuralSync = true;
-                    cursorNodeId = null;
-                    continue;
-                }
-                if (firstMessageId === null) {
-                    // 首条模型消息 → 候选节点内容写入（必要时重命名对齐消息 id）
-                    const targetId = typeof message.id === 'string' && message.id.length > 0
-                        ? message.id
-                        : candidateNodeId;
-                    if (targetId !== candidateNodeId) {
-                        next = renameNode(next, candidateNodeId, targetId);
-                    }
-                    next = updateNodeContent(next, targetId, {
-                        parts: message.parts ?? [],
-                        modelVersion: message.modelVersion,
-                        usageMetadata: message.usageMetadata,
-                        // R8b-M2：中断/取消流的截断用量标记随 usageMetadata 一起拷贝
-                        // （否则中断 reroll 候选按截断原值计入，统计低估）
-                        usageMetadataPartial: message.usageMetadataPartial,
-                        contentMetadata: extractBranchContentMetadata(message),
-                        timestamp: message.timestamp,
-                    });
-                    firstMessageId = targetId;
-                    cursorNodeId = targetId;
-                    synced += 1;
-                } else {
-                    // 后续模型消息 → 续接节点（kind='continue'，激活并更新尾指针）
-                    if (cursorNodeId === null) {
-                        // 链已被 SubAgent 回执/总结等非 model 消息打断（requiresStructuralSync 已置位）：
-                        // 此时续接父节点未知，若用 null 挂载会让 insertNode 误判为新根。跳过本次候选回填，
-                        // 候选收敛后按完整主历史 rebase，回执与后续模型消息按真实顺序重建进活跃路径。
-                        continue;
-                    }
-                    const id = typeof message.id === 'string' && message.id.length > 0
-                        ? message.id
-                        : `continue-${synced}`;
-                    const continuation: ConversationBranchNode = {
-                        id,
-                        parentId: cursorNodeId,
-                        role: 'model',
-                        parts: JSON.parse(JSON.stringify(message.parts ?? [])),
-                        kind: 'continue',
-                        createdAt: typeof message.timestamp === 'number' ? message.timestamp : Date.now(),
-                        timestamp: message.timestamp,
-                        modelVersion: message.modelVersion,
-                        usageMetadata: message.usageMetadata,
-                        // R8b-M2：续接节点同样携带中断标记（截断用量统计端回退估算）
-                        usageMetadataPartial: message.usageMetadataPartial,
-                        contentMetadata: extractBranchContentMetadata(message),
-                    };
-                    next = insertNode(next, continuation, { setActive: true, updateTail: true });
-                    cursorNodeId = id;
-                    synced += 1;
-                }
-            }
-
-            if (synced === 0) {
-                // 空占位没有任何可恢复内容。它只在流式窗口内有意义；若作为活跃尾持久保留，
-                // ConversationManager.appendContents 会把之后的每次普通追加都误判为仍在 reroll/edit
-                // 流式窗口并跳过图同步，最终让 branches.json 永久冻结。
-                //
-                // 物理移除前严格限定为“初始空叶子且仍是活跃尾”，防止并发异常下误删真实子树。
-                const currentCandidate = next.nodes[candidateNodeId];
-                const hasChildren = Object.values(next.nodes).some(node => node.parentId === candidateNodeId);
-                if (!currentCandidate
-                    || currentCandidate.parts.length !== 0
-                    || hasChildren
-                    || next.activeTailNodeId !== candidateNodeId
-                    || next.nodes[parentNodeId]?.activeChildId !== candidateNodeId) {
-                    throw new BranchError(
-                        'BRANCH_OPERATION_CONFLICT',
-                        `refusing to discard non-leaf or non-active empty candidate ${candidateNodeId}`
-                    );
-                }
-                const removed = removeSubtree(next, candidateNodeId).graph;
-                // removeNodeSet 内部已用 deriveActiveTail 重算尾指针（空占位删除后活跃尾=父节点），
-                // 不再需要调用方手工修补。
-                next = removed;
-                return {
-                    next,
-                    result: {
-                        candidateNodeId,
-                        parentNodeId,
-                        activeTailNodeId: parentNodeId,
-                        activePathIds: activePath(next),
-                        syncedMessageCount: 0,
-                        discardedEmptyCandidate: true,
-                    },
-                };
-            }
-
-            // 更新候选摘要（preview 从最终节点内容生成）
-            const finalCandidateId = firstMessageId ?? candidateNodeId;
-            const finalNode = next.nodes[finalCandidateId]!;
-            const summary = buildCandidateSummary(finalNode);
-            next = upsertCandidateSummary(next, {
-                nodeId: finalCandidateId,
-                parentId: parentNodeId,
-                kind: 'reroll',
-                createdAt: finalNode.createdAt,
-                timestamp: finalNode.timestamp,
-                modelVersion: finalNode.modelVersion,
-                label: finalNode.label,
-                preview: summary.preview,
-            });
-
-            return {
-                next,
-                result: {
-                    candidateNodeId: finalCandidateId,
-                    parentNodeId,
-                    activeTailNodeId: next.activeTailNodeId,
-                    activePathIds: activePath(next),
-                    syncedMessageCount: synced,
-                    discardedEmptyCandidate: false,
-                },
-            };
-        });
-
-        // 自动总结可能在 reroll/edit 的模型请求前发生。总结同步会在空占位活跃期间主动延迟，
-        // 因此候选终结后再用主历史收敛一次完整路径，把新总结节点及 isSummarized 元数据补入图。
-        if (requiresStructuralSync || this.deferredStructuralSyncConversationIds.has(conversationId)) {
-            try {
-                const sync = await this.syncMainHistoryAfterStructuralMutation(conversationId, 'branch_finished');
-                if (sync.synced) {
-                    const graph = (await this.getBranchGraph(conversationId)).graph;
-                    if (graph) {
-                        result.activeTailNodeId = graph.activeTailNodeId;
-                        result.activePathIds = activePath(graph);
-                    }
-                }
-            } catch (error) {
-                // 候选内容与主历史均已成功落盘，不把补充对账失败伪装成模型生成失败；下次破坏性
-                // 分支操作前的 ensureMainHistoryRepresentedInGraph 仍会备份并修复。
-                log.warn('branch_finish_structural_sync_failed', {
-                    conversationId,
-                    candidateNodeId,
-                    error: (error as Error)?.message ?? String(error),
-                });
-            }
-        }
-        return result;
+        return finishReroll(this.ctx, conversationId, candidateNodeId);
     }
 
-    /**
-     * 切换候选（TREE-04/06 底座）：把活跃路径切换到目标节点（祖先 activeChildId 沿 parentId 链重指，
-     * 尾指针 = 目标子树活跃尾），并持久化。
-     *
-     * 注意（本阶段边界）：只切换图状态，**不重写主历史**（TREE-06 才执行 replaceContents 全量重写），
-     * 因此切换后主历史与图活跃路径会暂时不一致，直到 TREE-06 落地。
-     *
-     * @param options.recordRewriteExpectation 默认 true：切换后记录「切图 → 重写」预期状态供
-     *        rewriteHistoryFromBranchGraph 消费校验。回滚式切换（主历史重写失败后切回旧活跃尾）
-     *        传 false——该切换没有对应的重写会消费预期，残留预期会被下一次重写误校验而误拒。
-     */
     async switchBranchCandidate(
         conversationId: string,
         nodeId: string,
         options: { recordRewriteExpectation?: boolean } = {}
     ): Promise<BranchSwitchResult> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            const graph = await this.loadGraphForWrite(conversationId);
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            // 在修改 activeChildId/activeTailNodeId 之前拒绝未归档历史，避免先切图再回滚的危险窗口。
-            this.assertNoMainHistoryRepresentationGaps(history, graph);
-            const next = switchActivePath(graph, nodeId);
-            await this.validateAndSave(conversationId, next);
-            // 记录「切图 → 主历史重写」非原子窗口的预期状态：重写时锁内校验主历史尾 id /
-            // 图活跃尾未变化，避免窗口期内并发追加/其它切换让重写基于陈旧快照覆盖并发写入。
-            // recordRewriteExpectation=false（回滚式切换：主历史重写失败后切回旧活跃尾）不记录——
-            // 该切换没有对应的重写会消费预期，残留预期会被下一次重写误校验（陈旧快照下的尾 id
-            // 与当下不符 → 合法切换被误拒，分支切换整体不可用）。
-            if (options.recordRewriteExpectation !== false) {
-                const mainHistoryTailId = history.length > 0 ? (history[history.length - 1]?.id ?? null) : null;
-                this.pendingRewriteExpectations.set(conversationId, {
-                    mainHistoryTailId,
-                    graphActiveTailNodeId: next.activeTailNodeId,
-                });
-            }
-            return {
-                nodeId,
-                activeTailNodeId: next.activeTailNodeId,
-                activePathIds: activePath(next),
-                mainHistoryRewrite: false,
-            };
-        });
+        return switchBranchCandidate(this.ctx, conversationId, nodeId, options);
     }
 
-    /**
-     * 软删除分支候选（TREE-09）：节点标记 deleted + deletedAt，候选摘要同步软删。
-     * - 活跃路径上的节点拒绝删除（BRANCH_OPERATION_CONFLICT，需先切换走）；
-     * - 若被删节点是其父节点的当前活跃子（仅可能发生在非活跃分支上），同步清空父节点 activeChildId；
-     * - R8c-P1：级联软删整棵子树（softDeleteNode 沿 children 递归标记 deleted + deletedAt），
-     *   prune 物理清理前子树整体可恢复（restoreBranchCandidate 对称级联恢复）；
-     * - 重复删除幂等（deletedAt 保持首次删除时间），且幂等路径不落盘（R8c-P6：图未变化）。
-     *
-     * 既有语义确认（读代码后的取舍）：TREE-09 之前的 deleteBranchCandidate 已实现为软删除
-     * （deleted 标记 + 摘要同步），本批次保留该语义并补充 deletedAt；「恢复」走 restoreBranchCandidate，
-     * 「彻底删除」走 purgeBranchCandidate / pruneDeletedBranches（物理清理），不把 delete 改回硬删。
-     */
     async deleteBranchCandidate(conversationId: string, nodeId: string): Promise<BranchDeleteResult> {
-        return await this.mutateGraph(conversationId, graph => {
-            const node = graph.nodes[nodeId];
-            if (!node) {
-                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
-            }
-            if (node.deleted) {
-                // R8c-P6：幂等路径——图未变化，mutateGraph 据此跳过 validateAndSave 不落盘
-                return { next: graph, result: { nodeId, deleted: true, clearedParentActiveChild: false } };
-            }
-            const currentActivePath = activePath(graph);
-            if (currentActivePath.includes(nodeId)) {
-                throw new BranchError(
-                    'BRANCH_OPERATION_CONFLICT',
-                    `cannot delete node ${nodeId}: it is on the active path; switch away first`
-                );
-            }
-            const clearedParentActiveChild =
-                node.parentId !== null && graph.nodes[node.parentId]?.activeChildId === nodeId;
-            const next = softDeleteNode(graph, nodeId, { deletedAt: Date.now() });
-            return {
-                next,
-                result: { nodeId, deleted: true, clearedParentActiveChild },
-            };
-        });
+        return deleteBranchCandidate(this.ctx, conversationId, nodeId);
     }
 
-    /**
-     * TREE-09：恢复软删候选——清除节点与候选摘要的 deleted / deletedAt。
-     * 不自动重新激活（恢复后仍是普通非活跃节点，由 switchBranchCandidate 显式切换）。
-     * 节点不存在 → NODE_NOT_FOUND；未删除节点幂等返回 restored:false。
-     */
     async restoreBranchCandidate(conversationId: string, nodeId: string): Promise<{ nodeId: string; restored: boolean }> {
-        return await this.mutateGraph<{ nodeId: string; restored: boolean }>(conversationId, graph => {
-            const node = graph.nodes[nodeId];
-            if (!node) {
-                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
-            }
-            if (!node.deleted) {
-                return { next: graph, result: { nodeId, restored: false } };
-            }
-            return { next: restoreNode(graph, nodeId), result: { nodeId, restored: true } };
-        });
+        return restoreBranchCandidate(this.ctx, conversationId, nodeId);
     }
 
-    /**
-     * TREE-09：重命名分支候选——只改 label（节点 + 候选摘要同步），不动 contents。
-     * label 非空、≤200 字符（trim 后）；节点不存在 → NODE_NOT_FOUND。
-     */
     async renameBranchCandidate(
         conversationId: string,
         nodeId: string,
         label: string
     ): Promise<{ nodeId: string; label: string }> {
-        return await this.mutateGraph(conversationId, graph => {
-            const trimmed = typeof label === 'string' ? label.trim() : '';
-            if (trimmed.length === 0) {
-                throw new BranchError('INVALID_BRANCH_RELATION', 'branch label must not be empty');
-            }
-            if (trimmed.length > 200) {
-                throw new BranchError('INVALID_BRANCH_RELATION', `branch label is too long (max 200 chars, got ${trimmed.length})`);
-            }
-            const next = renameBranchLabel(graph, nodeId, trimmed);
-            return { next, result: { nodeId, label: trimmed } };
-        });
+        return renameBranchCandidate(this.ctx, conversationId, nodeId, label);
     }
 
-    /**
-     * BCP-06：purge/prune 物理清理后触发「引用归零存档清理」。
-     *
-     * 流程（研究 §5.3）：
-     * 1. 被移除节点已在图中消失（调用方先 validateAndSave 落盘）；
-     * 2. 重扫全部 sidecar 计算引用计数（软删节点不计数）——被移除节点绑定的存档
-     *    若仍被存活节点引用则 refCount>0 → 拒绝删除；归零才进入待删候选；
-     * 3. 调全局清理器 deleteCheckpointsByNodeIds（nodeIds = 被移除节点，候选 = messageNodeId
-     *    匹配的存档；refCount>0 拒绝 + CP-05 祖先闭包合并 + backupDir 安全校验）；
-     * 4. 失败仅 log.warn（清理是派生态，不阻塞分支删除主流程；BCP-05 恢复前仍校验存档存在性）。
-     *
-     * 时序取舍（同步 await 而非 fire-and-forget）：
-     * - purge/prune 均为低频显式清理操作，确定性结果（deleted/rejected 落日志）价值更高；
-     * - 同步等待可避免多个 prune 并发时扫描交错；失败已内部捕获，不延长用户可见错误。
-     * 锁序：本方法在会话写锁之外调用（cleanupZeroReferencedCheckpoints 自身只取存档锁）。
-     */
-    private async cleanupZeroReferencedCheckpoints(
-        conversationId: string,
-        removedNodeIds: string[]
-    ): Promise<void> {
-        if (removedNodeIds.length === 0) {
-            return;
-        }
-        const cleaner = getGlobalCheckpointRefCountCleaner();
-        if (!cleaner) {
-            // 未注册（无 CheckpointManager / 测试环境）：跳过，图侧清理已完成
-            return;
-        }
-        try {
-            const referenceCounts = await computeCheckpointReferenceCounts(this.repository);
-            const outcome = await cleaner.deleteCheckpointsByNodeIds(conversationId, removedNodeIds, {
-                referenceCounts,
-            });
-            if (outcome.deletedIds.length > 0 || outcome.rejectedIds.length > 0) {
-                log.info('branch_checkpoint_cleanup', {
-                    conversationId,
-                    nodeIds: removedNodeIds,
-                    deletedIds: outcome.deletedIds,
-                    rejectedIds: outcome.rejectedIds,
-                });
-            }
-        } catch (err) {
-            log.warn('branch_checkpoint_cleanup_failed', {
-                conversationId,
-                error: (err as Error)?.message ?? String(err),
-            });
-        }
-    }
-
-    /**
-     * TREE-09：彻底删除（硬删）单个候选——物理移除节点及其整棵子树（purgeBranchCandidate）。
-     * 仅允许对已软删节点执行（先软删再彻底删；未软删抛 BRANCH_OPERATION_CONFLICT，避免误删）；
-     * 节点不存在（已被 prune 清理 / 从未来过）→ R8c-P7 幂等返回 purged:false（不再抛
-     * NODE_NOT_FOUND，与注释承诺的幂等语义一致；图未变化不落盘）。
-     */
     async purgeBranchCandidate(conversationId: string, nodeId: string): Promise<BranchPurgeResult> {
-        // 注：显式泛型（与 restoreBranchCandidate 的 mutateGraph<{...}> 同模式），
-        // 使回调两种返回形态（purged:false / purged:true）可被推断为 BranchPurgeResult。
-        // BCP-06: 闭包收集被物理移除节点的 workspaceCheckpointId（图侧绑定随节点消失）
-        let prunedNodeIds: string[] = [];
-        return await this.mutateGraph<BranchPurgeResult>(conversationId, graph => {
-            const node = graph.nodes[nodeId];
-            if (!node) {
-                // R8c-P7：幂等——节点已不存在（被 prune 清理等）视为“无可清理”，返回 purged:false
-                return {
-                    next: graph,
-                    result: { nodeId, purged: false, prunedNodeCount: 0 },
-                };
-            }
-            if (!node.deleted) {
-                throw new BranchError(
-                    'BRANCH_OPERATION_CONFLICT',
-                    `cannot purge node ${nodeId}: it is not soft-deleted; delete it first`
-                );
-            }
-            const { graph: next, prunedNodeIds: removed } = removeSubtree(graph, nodeId);
-            prunedNodeIds = removed;
-            return {
-                next,
-                result: { nodeId, purged: true, prunedNodeCount: prunedNodeIds.length },
-            };
-        }).then(async result => {
-            // BCP-06：物理移除后（会话写锁已释放），引用归零的存档清理（同步；失败仅 warn）
-            if (result.purged && prunedNodeIds.length > 0) {
-                await this.cleanupZeroReferencedCheckpoints(conversationId, prunedNodeIds);
-            }
-            return result;
-        });
+        return purgeBranchCandidate(this.ctx, conversationId, nodeId);
     }
 
     // ==================== BCP-02：工作区存档绑定 ====================
 
-    /**
-     * BCP-02：把工作区存档 id 绑定到分支节点（写入 workspaceCheckpointId + workspaceState）。
-     *
-     * 语义：
-     * - 会话写锁内执行（与 mutateGraph 同锁；但**不强制建图**——无 sidecar 的线性对话直接
-     *   返回 false，绑定是派生态，不因绑定创建分支图）；
-     * - 节点不存在 → NODE_NOT_FOUND；软删节点 → BRANCH_OPERATION_CONFLICT；
-     * - 重复绑定直接覆盖（最新存档为准）；同 id 且同 state 幂等返回 false（图未变化不落盘）；
-     * - workspaceState 缺省 'checkpointed'（绑定成功即视为「工作区已存档」）；
-     * - sidecar 损坏（解析/语义/活跃路径不可解）→ BRANCH_STORAGE_CORRUPT
-     *   （与其它写路径一致：拒绝覆盖可能可恢复的数据）。
-     *
-     * 调用方约定：工具执行存档点（ToolExecutionService）在 createCheckpoint 返回后以
-     * fire-and-forget 方式调用（不阻塞工具循环）；失败由调用方 log.warn。锁序约束：
-     * createCheckpoint 持工作区存档锁，本方法只取会话写锁，二者无嵌套（R1）。
-     *
-     * @returns true = 已绑定并落盘；false = 无图跳过或同 id 幂等（图未变化）。
-     */
     async bindWorkspaceCheckpoint(
         conversationId: string,
         nodeId: string,
         checkpointId: string,
         workspaceState: WorkspaceState = 'checkpointed'
     ): Promise<boolean> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            // BS-4：已删除会话拒绝写（防删除后迟到写重建 sidecar）
-            await this.assertConversationWritable(conversationId);
-            const loaded = await this.repository.load(conversationId);
-            if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is corrupt for ${conversationId}; refusing to bind workspace checkpoint (${loaded.errorMessage ?? 'unknown error'})`
-                );
-            }
-            if (!loaded.graph) {
-                // 无图（线性对话）：跳过绑定、不强制建图
-                return false;
-            }
-            // M-2：读取侧语义校验（与 loadGraphForWrite 同策略：语义损坏拒绝覆盖）
-            const validation = validate(loaded.graph);
-            if (!validation.valid) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is semantically corrupt for ${conversationId}; refusing to bind workspace checkpoint (${validation.issues.map(i => i.message).join('; ')})`
-                );
-            }
-            try {
-                activePath(loaded.graph);
-            } catch (error) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json active path is unresolvable for ${conversationId}; refusing to bind workspace checkpoint (${(error as Error)?.message ?? String(error)})`
-                );
-            }
-            const node = loaded.graph.nodes[nodeId];
-            if (!node) {
-                throw new BranchError('NODE_NOT_FOUND', `node not found: ${nodeId}`);
-            }
-            if (node.deleted) {
-                throw new BranchError(
-                    'BRANCH_OPERATION_CONFLICT',
-                    `cannot bind workspace checkpoint to soft-deleted node: ${nodeId}`
-                );
-            }
-            // 幂等：同 id 且同 state 已绑定 → 图未变化，不落盘
-            if (node.workspaceCheckpointId === checkpointId && node.workspaceState === workspaceState) {
-                return false;
-            }
-            const next: ConversationBranchGraph = {
-                ...loaded.graph,
-                nodes: {
-                    ...loaded.graph.nodes,
-                    [nodeId]: {
-                        ...node,
-                        workspaceCheckpointId: checkpointId,
-                        workspaceState,
-                    },
-                },
-            };
-            await this.validateAndSave(conversationId, next);
-            return true;
-        });
+        return bindWorkspaceCheckpoint(this.ctx, conversationId, nodeId, checkpointId, workspaceState);
     }
 
     // ==================== TREE-09：软删统计 / 修剪 / 保留期配置 ====================
 
-    /**
-     * TREE-09：统计软删分支数量。
-     * - 指定 conversationId：只统计该会话（无图/损坏 → 0，不抛错）；
-     * - 缺省：扫描全部带 sidecar 的会话（设置页「软删分支数量」展示用）；
-     * - R8c-P4：与 pruneDeletedBranches 同口径——会话元数据不存在（孤儿 sidecar，会话已删除/不存在）
-     *   不计数也不计入 conversationCount，保证设置页清理后数量归零（此前孤儿 sidecar 照常计数，
-     *   prune 却跳过它们，数量清理后不归零）。
-     * 只读操作，不进入会话写锁。
-     */
     async getDeletedBranchCount(options: { conversationId?: string } = {}): Promise<BranchDeletedCountResult> {
-        const conversationIds = options.conversationId
-            ? [options.conversationId]
-            : await this.repository.listConversationIds();
-        let deletedNodeCount = 0;
-        let conversationCount = 0;
-        for (const conversationId of conversationIds) {
-            const metadata = await this.conversationManager.getMetadata(conversationId);
-            if (!metadata) {
-                continue; // 孤儿 sidecar：会话已不存在，不计数（与 prune 的 skippedConversations 同口径）
-            }
-            conversationCount += 1;
-            const loaded = await this.repository.load(conversationId);
-            if (!loaded.graph || loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-                continue;
-            }
-            if (!validate(loaded.graph).valid) {
-                continue; // 语义损坏图不计数（读取侧同样降级）
-            }
-            deletedNodeCount += collectDeletedNodes(loaded.graph).length;
-        }
-        return { conversationCount, deletedNodeCount };
+        return getDeletedBranchCount(this.ctx, options);
     }
 
-    /**
-     * TREE-09：物理清理过期软删分支（prune）。
-     * - 指定 conversationId：只清理该会话；缺省：全量扫描所有带 sidecar 的会话；
-     * - 过期判定：deletedAt（缺失兜底 createdAt）+ retentionDays；
-     * - retentionDays 优先级：显式入参 > branches.config.json 持久化配置 > 构造默认值；
-     * - 过期节点连同整棵子树物理移除，同步清理候选摘要与 exportedFrom/exportedRefs 引用；
-     * - 每个会话在会话写锁内执行（BR-07）；损坏 sidecar 跳过不覆盖（MIG-05 完整性工具负责修复）；
-     *   会话已删除/不存在跳过（assertConversationWritable 冲突）。
-     * - 工作区存档的引用计数清理属 BCP-06，本批只做图侧清理。
-     */
     async pruneDeletedBranches(options: {
         conversationId?: string;
         retentionDays?: number;
         now?: number;
     } = {}): Promise<BranchPruneResult> {
-        const persisted = await this.repository.loadBranchRetentionConfig();
-        const retentionDays = options.retentionDays ?? persisted.retentionDays ?? this.retentionDays;
-        const conversationIds = options.conversationId
-            ? [options.conversationId]
-            : await this.repository.listConversationIds();
-
-        const result: BranchPruneResult = {
-            conversationsScanned: conversationIds.length,
-            conversationsChanged: 0,
-            prunedNodeCount: 0,
-            corruptConversations: [],
-            skippedConversations: [],
-        };
-        // BCP-06: 记录每个会话本次物理移除的节点 id（清理存档引用归零用；图侧绑定随节点消失）
-        const prunedNodeIdsByConversation = new Map<string, string[]>();
-        for (const conversationId of conversationIds) {
-            const outcome = await this.conversationManager.runExclusive(conversationId, async () => {
-                // BS-4：会话已删除/不存在 → 跳过（迟到清理不重建 sidecar）
-                const metadata = await this.conversationManager.getMetadata(conversationId);
-                if (!metadata) {
-                    return { corrupt: false, skipped: true, changed: false, pruned: 0 };
-                }
-                const loaded = await this.repository.load(conversationId);
-                if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT' || !loaded.graph) {
-                    return { corrupt: loaded.errorCode === 'BRANCH_STORAGE_CORRUPT', skipped: false, changed: false, pruned: 0 };
-                }
-                const validation = validate(loaded.graph);
-                if (!validation.valid) {
-                    return { corrupt: true, skipped: false, changed: false, pruned: 0 };
-                }
-                try {
-                    activePath(loaded.graph);
-                } catch {
-                    return { corrupt: true, skipped: false, changed: false, pruned: 0 };
-                }
-                const { graph: next, prunedNodeIds } = pruneDeletedNodes(loaded.graph, {
-                    now: options.now,
-                    retentionDays,
-                });
-                if (prunedNodeIds.length === 0) {
-                    return { corrupt: false, skipped: false, changed: false, pruned: 0 };
-                }
-                await this.validateAndSave(conversationId, next);
-                prunedNodeIdsByConversation.set(conversationId, prunedNodeIds);
-                return { corrupt: false, skipped: false, changed: true, pruned: prunedNodeIds.length };
-            });
-            if (outcome.corrupt) {
-                result.corruptConversations.push(conversationId);
-            }
-            if (outcome.skipped) {
-                result.skippedConversations.push(conversationId);
-            }
-            if (outcome.changed) {
-                result.conversationsChanged += 1;
-                result.prunedNodeCount += outcome.pruned;
-            }
-            // BCP-06：本会话物理清理完成后（会话写锁已释放），引用归零存档清理（同步；失败仅 warn）
-            const removedNodeIds = prunedNodeIdsByConversation.get(conversationId);
-            if (removedNodeIds && removedNodeIds.length > 0) {
-                await this.cleanupZeroReferencedCheckpoints(conversationId, removedNodeIds);
-            }
-        }
-        return result;
+        return pruneDeletedBranches(this.ctx, this.retentionDays, options);
     }
 
-    /**
-     * TREE-09：读取分支保留期配置（持久化 branches.config.json；缺失/损坏返回默认 30 天）。
-     */
     async getBranchRetentionConfig(): Promise<BranchRetentionConfig> {
-        const persisted = await this.repository.loadBranchRetentionConfig();
-        return { retentionDays: persisted.retentionDays ?? this.retentionDays };
+        return getBranchRetentionConfig(this.ctx, this.retentionDays);
     }
 
-    /**
-     * TREE-09：更新分支保留期配置（持久化 branches.config.json；非法值抛 INVALID_BRANCH_RELATION）。
-     * 0 = 不自动清理（永不过期）。
-     */
     async updateBranchRetentionConfig(retentionDays: number): Promise<BranchRetentionConfig> {
-        if (typeof retentionDays !== 'number' || !Number.isFinite(retentionDays)
-            || !Number.isInteger(retentionDays) || retentionDays < 0) {
-            throw new BranchError(
-                'INVALID_BRANCH_RELATION',
-                `invalid retentionDays: ${String(retentionDays)} (must be a non-negative integer, 0 = never auto-prune)`
-            );
-        }
-        const config: BranchRetentionConfig = { retentionDays };
-        await this.repository.saveBranchRetentionConfig(config);
-        return config;
+        return updateBranchRetentionConfig(this.ctx, retentionDays);
     }
 
     // ==================== BR-05：主历史 = 活跃路径 调试校验 ====================
 
-    /**
-     * BR-05 调试校验：主历史消息 id 链（不含 functionResponse，决策 8）== 图活跃路径。
-     * 无分支图时：主历史为空 → valid；主历史非空 → 报「图缺失」。
-     * 同时报告图结构校验（validate）问题。
-     *
-     * 用途：BranchService 的调试/完整性检查入口（MIG-05 完整性工具的前身），
-     * 不强制重写主历史（BR-05 本阶段只建立不变量文档与校验函数）。
-     */
     async validateActivePathMatchesHistory(conversationId: string): Promise<BranchPathConsistencyResult> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            const loaded = await this.repository.load(conversationId);
-            const history = await this.conversationManager.getMessagesRaw(conversationId);
-            const historyIds = history
-                .filter(message => !isFunctionResponseMessage(message))
-                .map(message => message.id ?? '');
-
-            if (!loaded.graph) {
-                const issues = historyIds.length > 0
-                    ? ['branch graph is missing while main history has messages (first branch op will build baseline)']
-                    : [];
-                return {
-                    valid: issues.length === 0,
-                    issues,
-                    graphMissing: true,
-                    historyIds,
-                    activePathIds: [],
-                };
-            }
-
-            const issues: string[] = [];
-            const graphValidation = validate(loaded.graph);
-            if (!graphValidation.valid) {
-                issues.push(...graphValidation.issues.map(issue => `graph[${issue.code}]: ${issue.message}`));
-            }
-
-            let graphPathIds: string[];
-            try {
-                graphPathIds = activePath(loaded.graph);
-            } catch (error) {
-                graphPathIds = [];
-                issues.push(`activePath resolution failed: ${(error as Error)?.message ?? String(error)}`);
-            }
-
-            if (historyIds.length !== graphPathIds.length) {
-                issues.push(`length mismatch: main history ${historyIds.length} vs graph active path ${graphPathIds.length}`);
-            }
-            const commonLength = Math.min(historyIds.length, graphPathIds.length);
-            for (let i = 0; i < commonLength; i++) {
-                if (historyIds[i] !== graphPathIds[i]) {
-                    issues.push(`id mismatch at position ${i}: main history ${historyIds[i] ?? '(missing)'} vs graph ${graphPathIds[i] ?? '(missing)'}`);
-                }
-            }
-
-            return {
-                valid: issues.length === 0,
-                issues,
-                graphMissing: false,
-                historyIds,
-                activePathIds: graphPathIds,
-            };
-        });
+        return validateActivePathMatchesHistory(this.ctx, conversationId);
     }
 
     // ==================== BR-09：跨对话「复制为新对话」建模 ====================
 
-    /**
-     * BR-09：为新创建的分支对话初始化 BranchGraph。
-     * - 把目标对话主历史全量导入为节点（kind='imported'，functionResponse 合并进模型节点）；
-     * - 图元数据记录 exportedFrom: { conversationId: 源头对话, nodeId: 来源节点 }。
-     * 由 ConversationManager.createBranchConversation 接线调用。
-     */
     async initializeBranchConversation(
         targetConversationId: string,
         sourceConversationId: string,
         sourceNodeId: string
     ): Promise<void> {
-        await this.conversationManager.ensureHistoryNodeIds(targetConversationId);
-        await this.conversationManager.runExclusive(targetConversationId, async () => {
-            const history = await this.conversationManager.getMessagesRaw(targetConversationId);
-            const graph = importLinearHistory(history);
-            const withMeta: ConversationBranchGraph = {
-                ...graph,
-                exportedFrom: { conversationId: sourceConversationId, nodeId: sourceNodeId },
-            };
-            await this.validateAndSave(targetConversationId, withMeta);
-        });
+        return initializeBranchConversation(this.ctx, targetConversationId, sourceConversationId, sourceNodeId);
     }
 
-    /**
-     * BR-09：在源头对话的分支图中记录导出关系（exportedRefs 列表，最小实现——不新增
-     * 'exported' 标注节点，避免制造无消息内容的假节点干扰活跃路径/校验）。
-     * 源头对话尚无分支图时先以主历史建线性基线图。
-     */
     async recordExport(
         sourceConversationId: string,
         targetConversationId: string,
         nodeId: string
     ): Promise<void> {
-        await this.conversationManager.ensureHistoryNodeIds(sourceConversationId);
-        await this.conversationManager.runExclusive(sourceConversationId, async () => {
-            const graph = await this.loadGraphForWrite(sourceConversationId);
-            // BS-4：源会话历史为空时 loadGraphForWrite 只会产出空图（无节点可导出）——
-            // 不保存空 sidecar：导出记录指向不存在的节点没有意义，也避免制造「空图」。
-            if (Object.keys(graph.nodes).length === 0) {
-                log.warn('branch_export_skipped_empty_source', {
-                    sourceConversationId,
-                    targetConversationId,
-                    nodeId,
-                    reason: 'source conversation has no history; not persisting an empty branch graph',
-                });
-                return;
-            }
-            const record: BranchExportRecord = {
-                targetConversationId,
-                nodeId,
-                exportedAt: Date.now(),
-            };
-            const existing = graph.exportedRefs ?? [];
-            if (existing.some(r => r.targetConversationId === targetConversationId && r.nodeId === nodeId)) {
-                return; // 幂等：同一导出关系不重复记录
-            }
-            const next: ConversationBranchGraph = { ...graph, exportedRefs: [...existing, record] };
-            await this.validateAndSave(sourceConversationId, next);
-        });
+        return recordExport(this.ctx, sourceConversationId, targetConversationId, nodeId);
     }
 
-    // ==================== BS-2：主历史追加 → 分支图（方法级，调用点后续接线） ====================
+    // ==================== BS-2：主历史追加 → 分支图 / 决策 6：主历史删除同步 ====================
 
-    /**
-     * BS-2：把主历史尾部新增消息逐条并入分支图（在会话写锁内执行）。
-     *
-     * 语义：
-     * - 无分支图（线性对话尚未建图）→ 跳过，不强制建图（返回 false）；
-     * - sidecar 损坏（解析失败或读取侧语义校验失败）→ 抛 BRANCH_STORAGE_CORRUPT（不覆盖）；
-     * - 已删除 / 不存在的会话 → 抛 BRANCH_OPERATION_CONFLICT（BS-4，防删除后迟到写重建 sidecar）；
-     * - 有图：按追加消息顺序逐条 insertNode 并入活跃路径（setActive + updateTail），
-     *   functionResponse 消息（决策 8）并入前一个节点，不独立成节点；createdAt 沿消息顺序
-     *   严格递增（与 importLinearHistory 一致，保证候选排序稳定）。
-     *
-     * 入参约定：newMessages 必须是主历史尾部**新增**的消息数组（调用方保证只传新消息，
-     * 且消息已带稳定 id）；本方法不做去重——重复 id 由 insertNode 抛 INVALID_BRANCH_RELATION。
-     *
-     * 调用点（后续批次接线）：应挂在 ConversationManager.appendContents 之后（主历史追加
-     * 成功后调用，传本次新增的消息数组）。本批次只实现方法 + 单测，不接调用点。
-     *
-     * @returns true = 已并入分支图；false = 无分支图，跳过（线性对话未建图不强制建）
-     */
     async appendHistoryToGraph(conversationId: string, newMessages: ReadonlyArray<Content>): Promise<boolean> {
-        if (newMessages.length === 0) {
-            return false;
-        }
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            await this.assertConversationWritable(conversationId);
-            let graph = await this.loadGraphCached(conversationId);
-            if (!graph) {
-                // 线性对话未建图：不强制建（图只在首次分支/导入时建立）
-                return false;
-            }
-            // 首条新消息的父节点 = 当前活跃尾（未插入节点前）；之后为上一个已插入节点
-            let cursor: string | null = graph.activeTailNodeId;
-            let previousCreatedAt = cursor !== null && graph.nodes[cursor]
-                ? graph.nodes[cursor]!.createdAt
-                : Number.NEGATIVE_INFINITY;
-            let changed = false;
-            for (const message of newMessages) {
-                if (isFunctionResponseMessage(message)) {
-                    // 决策 8：functionResponse 并入前一个节点（不独立成节点）
-                    if (cursor !== null && graph.nodes[cursor]) {
-                        const current = graph.nodes[cursor]!;
-                        graph = updateNodeContent(graph, cursor, {
-                            parts: [...current.parts, ...(message.parts ?? [])],
-                        });
-                        changed = true;
-                    } else {
-                        log.warn('branch_append_dropped_function_response', {
-                            conversationId,
-                            reason: 'functionResponse has no preceding node to merge into; dropped',
-                        });
-                    }
-                    continue;
-                }
-                const id = typeof message.id === 'string' && message.id.length > 0 ? message.id : null;
-                if (id === null) {
-                    throw new BranchError(
-                        'INTERNAL_ERROR',
-                        `appendHistoryToGraph: message without stable id cannot be appended to the branch graph (role=${message.role})`
-                    );
-                }
-                // createdAt 沿消息顺序严格递增（相同 timestamp 也按序 +1）
-                const rawCreatedAt = typeof message.timestamp === 'number' ? message.timestamp : Date.now();
-                const createdAt = Number.isFinite(previousCreatedAt)
-                    ? Math.max(rawCreatedAt, previousCreatedAt + 1)
-                    : rawCreatedAt;
-                previousCreatedAt = createdAt;
-                const node: ConversationBranchNode = {
-                    id,
-                    parentId: cursor,
-                    role: message.role,
-                    parts: JSON.parse(JSON.stringify(message.parts ?? [])),
-                    kind: 'normal',
-                    createdAt,
-                    timestamp: message.timestamp,
-                    modelVersion: message.modelVersion,
-                    usageMetadata: message.usageMetadata,
-                    // R8b-M2：中断/取消流的截断用量标记随节点一起拷贝
-                    usageMetadataPartial: message.usageMetadataPartial,
-                    contentMetadata: extractBranchContentMetadata(message),
-                };
-                graph = insertNode(graph, node, { setActive: true, updateTail: true });
-                cursor = id;
-                changed = true;
-            }
-            if (!changed) {
-                return false; // 全部消息被丢弃（异常输入），图未变化则不落盘
-            }
-            await this.validateAndSave(conversationId, graph);
-            return true;
-        });
+        return appendHistoryToGraph(this.ctx, conversationId, newMessages);
     }
 
-
-    /**
-     * 决策 6：主历史删除后同步软删分支图——「被删消息对应的节点及其后续整棵子树」。
-     *
-     * 语义（复用 TREE-09 软删：节点标记 deleted + deletedAt，不物理移除 sidecar；
-     * 级联覆盖该点之后的所有后代，含非活跃候选子树；prune 前可整体恢复）：
-     * - 无分支图（线性对话未建图）→ 返回 graphUpdated:false，不强制建图、不影响原有行为；
-     * - 锚点消息（第一个被删消息的 id，删除前捕获）不在图中（functionResponse 等决策 8
-     *   并入所属节点的消息 / 图未覆盖被删段）→ 退化用 lastKeptMessageId（最后保留消息）
-     *   软删其**之后**的所有后代（保留点自身不清除）；两者都不在图中 → 幂等 no-op；
-     * - 锚定根节点（删除到对话开头）→ 整图重置为空图（createEmptyBranchGraph）；
-     * - options.forceResetToEmpty（主历史整体清空，clearHistory / 恢复空快照）→ 无条件重置为
-     *   空图，不依赖锚点是否图根/是否存在——锚点非图根（图根陈旧）时仅软删子树会残留旧根/旧尾，
-     *   「空历史 + 非空图」无法由 rebase 处理（round4 复查 P1）；
-     * - 活跃尾若落在被删子树内（截断场景的常态）→ 回退到保留锚点，并清空指向被删节点的
-     *   activeChildId（validate 不变量）；
-     * - sidecar 损坏（解析 / 语义）→ 抛 BRANCH_STORAGE_CORRUPT（与其它写路径一致：不覆盖）。
-     *
-     * 锁边界：整体在会话写锁（runExclusive）内执行，与主历史删除共用同一把锁、串行化；
-     * 本方法不触碰存档锁（「会话锁内严禁获取存档锁」）。调用方约定：在主历史删除完成、
-     * 仓储互斥已释放后同步 await（顺序取锁，非嵌套）；图同步失败仅告警，不阻断硬删除。
-     *
-     * @param deletedFromMessageId 第一个被删除消息的 id（删除前捕获；null = 无锚点防御）
-     * @param options.lastKeptMessageId 最后保留消息的 id（锚点不在图内时的退化锚）
-     * @param options.forceResetToEmpty 主历史整体清空时无条件重置为空图（不依赖锚点）
-     */
     async syncGraphAfterHistoryDelete(
         conversationId: string,
         deletedFromMessageId: string | null,
         options: { deletedAt?: number; lastKeptMessageId?: string | null; forceResetToEmpty?: boolean } = {}
     ): Promise<BranchHistoryDeleteSyncResult> {
-        const empty: BranchHistoryDeleteSyncResult = {
-            graphUpdated: false,
-            deletedNodeIds: [],
-            resetToEmpty: false,
-            activeTailAdjusted: false,
-        };
-        if (!deletedFromMessageId && !options.forceResetToEmpty) {
-            // 无锚点（历史消息缺 id 的防御路径）：不做任何图变更（不臆测删除范围）。
-            // forceResetToEmpty（整体清空）时无锚点同样重置——历史早已为空但图残留旧根的陈旧场景。
-            return empty;
-        }
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            await this.assertConversationWritable(conversationId);
-            const graph = await this.loadGraphCached(conversationId);
-            if (!graph) {
-                // 线性对话未建图：删除不同步（主历史为唯一真源，不强制建图）
-                return empty;
-            }
-            if (options.forceResetToEmpty) {
-                // 主历史整体清空：无条件重置为空图（不依赖锚点是否图根/是否存在）。
-                // 锚点非图根（图根陈旧）时 softDeleteSubtreeFrom 仅软删锚点子树，图根/旧活跃尾
-                // 残留，清空后 append 挂旧尾（round4 复查 P1）；「空历史 + 非空图」唯一有效形态
-                // 即空图，旧内容已随主历史整体清空，等价于重新开始。
-                if (Object.keys(graph.nodes).length === 0) {
-                    // 幂等短路（round5 复查）：图已为空时重置为空图是无操作——不再空转
-                    // validateAndSave 写盘，也不误报 graphUpdated:true（与软删路径
-                    // outcome.graph === graph 短路同语义；此时 deletedNodeIds 本就为空）。
-                    return empty;
-                }
-                await this.validateAndSave(conversationId, createEmptyBranchGraph());
-                return {
-                    graphUpdated: true,
-                    deletedNodeIds: Object.keys(graph.nodes),
-                    resetToEmpty: true,
-                    activeTailAdjusted: true,
-                };
-            }
-            if (deletedFromMessageId === null) {
-                // 防御：forceResetToEmpty 分支已提前返回；无锚点时不臆测删除范围（类型收窄）
-                return empty;
-            }
-            let anchorNodeId: string | null = graph.nodes[deletedFromMessageId] ? deletedFromMessageId : null;
-            let excludeNode = false;
-            if (anchorNodeId === null) {
-                // 锚点消息不在图中（functionResponse / 图未覆盖被删段）：
-                // 退化为「最后保留消息之后的所有后代」整体软删（保留点自身不清除）
-                const keptNodeId = options.lastKeptMessageId && graph.nodes[options.lastKeptMessageId]
-                    ? options.lastKeptMessageId
-                    : null;
-                if (keptNodeId === null) {
-                    log.warn('branch_delete_sync_anchor_missing', {
-                        conversationId,
-                        deletedFromMessageId,
-                        reason: 'neither deleted anchor nor last kept message exists in the branch graph; graph left unchanged',
-                    });
-                    return empty;
-                }
-                anchorNodeId = keptNodeId;
-                excludeNode = true;
-            }
-            const outcome = softDeleteSubtreeFrom(graph, anchorNodeId, {
-                deletedAt: options.deletedAt ?? Date.now(),
-                excludeNode,
-            });
-            if (outcome.graph === graph) {
-                return empty; // R8c-P6 幂等：图未变化，不落盘
-            }
-            await this.validateAndSave(conversationId, outcome.graph);
-            return {
-                graphUpdated: true,
-                deletedNodeIds: outcome.deletedNodeIds,
-                resetToEmpty: outcome.resetToEmpty,
-                activeTailAdjusted: outcome.activeTailAdjusted,
-            };
-        });
-    }
-    // ==================== 内部工具 ====================
-
-    /**
-     * TREE-02（决策 4）：每父节点候选数量上限校验（不含软删除节点）。
-     * 超限抛 BRANCH_OPERATION_CONFLICT，提示用户清理，不自动删除。
-     */
-    private assertCandidateLimit(graph: ConversationBranchGraph, parentNodeId: string): void {
-        const children = (childrenIndex(graph).get(parentNodeId) ?? [])
-            .filter(childId => !graph.nodes[childId]?.deleted);
-        if (children.length >= MAX_CANDIDATES_PER_PARENT) {
-            throw new BranchError(
-                'BRANCH_OPERATION_CONFLICT',
-                `candidate limit reached: parent ${parentNodeId} already has ${children.length} `
-                    + `candidates (max ${MAX_CANDIDATES_PER_PARENT}); please clean up old candidates first`
-            );
-        }
-    }
-
-    /**
-     * BS-3：候选创建的父节点必须在当前活跃路径上。缺失 → NODE_NOT_FOUND；
-     * 存在但不在活跃路径（非活跃分支上的节点）→ BRANCH_OPERATION_CONFLICT
-     * （与 deleteBranchCandidate 的活跃路径冲突语义一致，拒绝从非活跃分支再分支）。
-     */
-    private assertParentOnActivePath(graph: ConversationBranchGraph, parentNodeId: string): void {
-        if (!graph.nodes[parentNodeId]) {
-            throw new BranchError('NODE_NOT_FOUND', `parent node not found: ${parentNodeId}`);
-        }
-        if (!activePath(graph).includes(parentNodeId)) {
-            throw new BranchError(
-                'BRANCH_OPERATION_CONFLICT',
-                `parent node ${parentNodeId} is not on the active path; cannot create a candidate under an inactive branch`
-            );
-        }
-    }
-
-    /**
-     * BS-4：写路径入口的「会话存在性」检查。ConversationManager 的 deletedConversationIds
-     * 为私有集合（且会随上限淘汰），BranchService 通过 getMetadata() === null 判定
-     * 「会话不存在（从未创建或已被删除）」，在会话写锁内拒绝分支图写入——防止删除后
-     * 迟到的写重建 sidecar（与 ConversationManager 的 append/mutate 短路同一目标）。
-     * 说明：deleteConversationBranch（级联清理路径，删除进行中正是其调用时机）与
-     * initializeBranchConversation（目标对话刚创建）不经过此检查。
-     */
-    private async assertConversationWritable(conversationId: string): Promise<void> {
-        const metadata = await this.conversationManager.getMetadata(conversationId);
-        if (!metadata) {
-            throw new BranchError(
-                'BRANCH_OPERATION_CONFLICT',
-                `conversation ${conversationId} does not exist or has been deleted; refusing to write branch graph`
-            );
-        }
-    }
-
-    /**
-     * TREE-01：解析 reroll 目标节点。显式传入时校验节点存在且在当前活跃路径上；
-     * 省略时取活跃路径上最后一条助手消息（前端「重新生成」默认行为）。
-     */
-    private resolveRerollTarget(graph: ConversationBranchGraph, assistantNodeId?: string): string {
-        if (assistantNodeId !== undefined) {
-            if (!graph.nodes[assistantNodeId]) {
-                throw new BranchError('NODE_NOT_FOUND', `node not found: ${assistantNodeId}`);
-            }
-            const path = activePath(graph);
-            if (!path.includes(assistantNodeId)) {
-                throw new BranchError(
-                    'INVALID_BRANCH_RELATION',
-                    `node ${assistantNodeId} is not on the active path; cannot reroll it`
-                );
-            }
-            return assistantNodeId;
-        }
-        const path = activePath(graph);
-        for (let i = path.length - 1; i >= 0; i -= 1) {
-            if (graph.nodes[path[i]]!.role === 'model') {
-                return path[i];
-            }
-        }
-        throw new BranchError(
-            'INVALID_BRANCH_RELATION',
-            'no assistant node found on the active path to reroll'
-        );
-    }
-
-    /** 主历史是否已经完整归档进图（节点存在性 + functionResponse parts）。 */
-    private getMainHistoryRepresentationGaps(
-        history: ReadonlyArray<Content>,
-        graph: ConversationBranchGraph
-    ): {
-        historyIds: string[];
-        missingMessageIds: string[];
-        unsyncedFunctionResponseIds: string[];
-    } {
-        const historyIds = history
-            .filter(message => !isFunctionResponseMessage(message))
-            .map(message => message.id ?? '');
-        return {
-            historyIds,
-            missingMessageIds: historyIds.filter(id => !id || !graph.nodes[id]),
-            unsyncedFunctionResponseIds: findUnsyncedFunctionResponses(history, graph),
-        };
-    }
-
-    private assertNoMainHistoryRepresentationGaps(
-        history: ReadonlyArray<Content>,
-        graph: ConversationBranchGraph
-    ): void {
-        const gaps = this.getMainHistoryRepresentationGaps(history, graph);
-        if (gaps.missingMessageIds.length === 0 && gaps.unsyncedFunctionResponseIds.length === 0) {
-            return;
-        }
-        throw new BranchError(
-            'BRANCH_OPERATION_CONFLICT',
-            `switch rejected: ${gaps.missingMessageIds.length} message(s) in main history are not yet synced to `
-            + `the branch graph (${gaps.unsyncedFunctionResponseIds.length} functionResponse message(s) `
-            + `not yet synced to their owner node parts); no branch or workspace state was changed`
-        );
-    }
-
-    /** 构建候选节点（kind 由 pure 函数 rerollCandidate/editCandidate 覆盖） */
-    private buildCandidateNode(
-        input: BranchCandidateInput,
-        parentNodeId: string,
-        defaultRole: 'user' | 'model' | 'system'
-    ): ConversationBranchNode {
-        const now = Date.now();
-        return {
-            id: newUuid(),
-            parentId: parentNodeId,
-            role: input.role ?? defaultRole,
-            parts: JSON.parse(JSON.stringify(input.parts ?? [])),
-            kind: 'normal',
-            createdAt: input.createdAt ?? now,
-            timestamp: input.createdAt ?? now,
-            modelVersion: input.modelVersion,
-            usageMetadata: input.usageMetadata,
-        };
-    }
-
-    /**
-     * 分支图变更通用执行器（BR-07）：
-     * 1. 锁外先确保主历史带稳定 id（ensureHistoryNodeIds 自身在会话写锁内完成，避免重入死锁）；
-     * 2. 进入会话写锁：读 sidecar → 无图/损坏处理 → mutator 变更 → validate → 原子保存。
-     *
-     * 无图：以主历史建线性基线图（首次分支惰性建图，MIG-01）；
-     * 损坏：抛 BRANCH_STORAGE_CORRUPT（不静默覆盖，读取侧已降级线性模式）。
-     */
-    private async mutateGraph<T>(
-        conversationId: string,
-        mutator: (graph: ConversationBranchGraph) =>
-            | { next: ConversationBranchGraph; result: T }
-            | Promise<{ next: ConversationBranchGraph; result: T }>
-    ): Promise<T> {
-        await this.conversationManager.ensureHistoryNodeIds(conversationId);
-        return await this.conversationManager.runExclusive(conversationId, async () => {
-            const graph = await this.loadGraphForWrite(conversationId);
-            const { next, result } = await mutator(graph);
-            // R8c-P6：幂等路径（mutator 原样返回读到的图，如重复软删/恢复/清理不存在的节点）
-            // 图未发生变化，跳过 validateAndSave——避免无意义的 sidecar 重写。
-            if (next !== graph) {
-                await this.validateAndSave(conversationId, next);
-            }
-            return result;
-        });
-    }
-
-    /**
-     * 读图（缓存优先，写路径与 append/syncDelete 共用）：无图 → null；损坏（解析或语义）→
-     * 抛 BRANCH_STORAGE_CORRUPT（不静默覆盖）。建线性基线仅限 loadGraphForWrite 的职责。
-     */
-    private async loadGraphCached(conversationId: string): Promise<ConversationBranchGraph | null> {
-        const cacheKey = getBranchGraphCacheKey(this.repository, conversationId);
-        const cached = await getBranchGraphCached(cacheKey);
-        if (cached) {
-            // 缓存内图已通过 validate + activePath（回填点保证）；与读路径共享同一对象，
-            // 图变更依赖纯函数（insertNode/updateNodeContent 等内部 cloneGraph），不会污染共享条目。
-            return cached;
-        }
-        const loaded = await this.repository.load(conversationId);
-        if (loaded.errorCode === 'BRANCH_STORAGE_CORRUPT') {
-            throw new BranchError(
-                'BRANCH_STORAGE_CORRUPT',
-                `branches.json is corrupt for ${conversationId}; refusing to overwrite (${loaded.errorMessage ?? 'unknown error'})`
-            );
-        }
-        if (loaded.graph) {
-            // M-2：读取侧语义校验——语义损坏同样拒绝覆盖（与解析损坏同策略：
-            // 不静默覆盖可能可恢复的数据，MIG-05 完整性工具负责修复）
-            const validation = validate(loaded.graph);
-            if (!validation.valid) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json is semantically corrupt for ${conversationId}; refusing to overwrite (${validation.issues.map(i => i.message).join('; ')})`
-                );
-            }
-            try {
-                activePath(loaded.graph);
-            } catch (error) {
-                throw new BranchError(
-                    'BRANCH_STORAGE_CORRUPT',
-                    `branches.json active path is unresolvable for ${conversationId}; refusing to overwrite (${(error as Error)?.message ?? String(error)})`
-                );
-            }
-            return loaded.graph;
-        }
-        return null;
-    }
-
-    /** 读图用于写入：无图 → 主历史建线性基线；损坏（解析或语义）→ 抛 BRANCH_STORAGE_CORRUPT（不覆盖） */
-    private async loadGraphForWrite(conversationId: string): Promise<ConversationBranchGraph> {
-        // BS-4：已删除会话拒绝写（防删除后迟到写重建 sidecar）。检查在会话写锁内进行，
-        // 与 deleteConversation 的锁序一致：delete 先入已删除集合 → 锁内删文件 → 释放锁，
-        // 迟到写入锁后在此被拒，不会与删除交错产生幽灵 sidecar。
-        await this.assertConversationWritable(conversationId);
-        const graph = await this.loadGraphCached(conversationId);
-        if (graph) {
-            return graph;
-        }
-        // 无 sidecar：以主历史建线性基线图（主历史是活跃路径的唯一真源）
-        const history = await this.conversationManager.getMessagesRaw(conversationId);
-        return importLinearHistory(history);
-    }
-
-    /** validate 通过后原子保存；无效抛 BRANCH_STORAGE_CORRUPT */
-    private async validateAndSave(conversationId: string, graph: ConversationBranchGraph): Promise<void> {
-        const validation = validate(graph);
-        if (!validation.valid) {
-            throw new BranchError(
-                'BRANCH_STORAGE_CORRUPT',
-                `refusing to persist invalid branch graph for ${conversationId}: ${validation.issues.map(i => i.message).join('; ')}`
-            );
-        }
-        await this.repository.save(conversationId, graph);
-        // 写后回填缓存（存快照：调用方持有的 graph 对象后续可能继续被修改）
-        await setBranchGraphCached(getBranchGraphCacheKey(this.repository, conversationId), graph);
+        return syncGraphAfterHistoryDelete(this.ctx, conversationId, deletedFromMessageId, options);
     }
 
     /** childrenIndex 便捷透出（供外部/测试检查候选顺序） */
     getChildrenIndex(graph: ConversationBranchGraph): Map<string, string[]> {
-        return childrenIndex(graph);
+        return getChildrenIndex(graph);
     }
 }

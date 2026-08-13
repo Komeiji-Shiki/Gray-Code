@@ -20,155 +20,13 @@ import type {
     HttpRequestOptions,
     HttpResponse
 } from './types';
-import type { Content } from '../conversation';
 import { ChannelError, ErrorType } from './types';
 import { isRetryableError as isRetryableErrorType } from '../../core/errors';
-import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
 import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
-import { parseStreamBuffer } from './streamBufferParser';
+import { ChannelHttpExecutor } from './channelManager/channelHttpExecutor';
+import { extractUpstreamErrorMessage, isResponseContentEmpty, streamChunkHasContent } from './channelManager/channelResponseHelpers';
 
-/**
- * 从上游 API 的非 2xx 响应体中提取人类可读的错误消息。
- *
- * 支持格式：
- * - Anthropic:         { error: { message: "..." } }
- * - OpenAI/OpenRouter: { error: { message: "...", code: 429, metadata: {...} } }
- * - 简化 JSON:         { message: "..." } / { error: "..." }
- * - 纯文本:            直接返回文本
- */
-function extractUpstreamErrorMessage(body: unknown): string | undefined {
-    if (!body || typeof body !== 'object') {
-        if (typeof body === 'string' && body.trim()) return body.trim();
-        return undefined;
-    }
-    const obj = body as Record<string, any>;
-    // Anthropic/OpenAI/OpenRouter 的 { error: { message: "..." } }
-    if (obj.error && typeof obj.error === 'object' && typeof obj.error.message === 'string') {
-        return obj.error.message.trim();
-    }
-    // { error: "..." }
-    if (typeof obj.error === 'string') {
-        return obj.error.trim();
-    }
-    // { message: "..." }
-    if (typeof obj.message === 'string') {
-        return obj.message.trim();
-    }
-    return undefined;
-}
-
-/**
- * 判断单个 part 是否携带内容（文本/思考/工具调用/多模态附件）。
- * 流式与非流式两条路径共用同一口径，避免判定规则分叉。
- */
-function partHasContent(part: any): boolean {
-    return (part.text && part.text.length > 0)
-        || !!part.functionCall
-        || !!part.inlineData
-        || !!part.fileData;
-}
-
-/**
- * 判断模型响应内容是否为空（无文本/思考/工具调用/附件）。
- * HTTP 成功但内容全空 = 上游/代理抽风返回的无效响应，应触发自动重试。
- */
-function isResponseContentEmpty(content: Content | undefined): boolean {
-    if (!content || !Array.isArray(content.parts) || content.parts.length === 0) return true;
-    return content.parts.every(part => !partHasContent(part));
-}
-
-/**
- * 判断流式 chunk 的增量是否携带内容（文本/思考/工具调用/多模态附件）。
- *
- * 修改原因（SEC）：多模态流（Gemini inlineData/fileData）过去只查 text/functionCall，
- * 连接中断时已有图片/文件数据的流被误判为「空响应」→ 整条流从头重播，附件重复、重复计费。
- * 修改方式：与非流式 isResponseContentEmpty 同一口径（共用 partHasContent），
- * 把 inlineData/fileData 纳入内容判定。
- */
-function streamChunkHasContent(chunk: StreamChunk): boolean {
-    return chunk.delta.some(part => partHasContent(part));
-}
-
-/**
- * 流式原始缓冲大小上限（字符）。
- *
- * 仅当「解析无进展」时生效（见两处调用点）：正常解析路径缓冲只保留未解析尾部（KB 级），
- * 不会触发；无法识别的上游垃圾数据（非 SSE/JSON，parseStreamBuffer 整段保留为 remaining）
- * 逐轮累积时触发终止，防止 Extension Host 内存耗尽。
- * 阈值 64MB：合法巨型单事件（多模态 base64 附件、大工具载荷）按事件全长累积，
- * 64MB 覆盖所有主流 provider 的单事件上限，同时把垃圾累积的内存占用封顶在可控范围。
- */
-const MAX_STREAM_BUFFER_LENGTH = 64 * 1024 * 1024;
-
-/** 缓冲超限即按「上游数据无法解析」报错终止流（PARSE_ERROR 不可重试，避免无意义重试） */
-function assertStreamBufferWithinLimit(buffer: string): void {
-    if (buffer.length > MAX_STREAM_BUFFER_LENGTH) {
-        throw new ChannelError(
-            ErrorType.PARSE_ERROR,
-            t('modules.channel.errors.streamBufferOverflow'),
-            { bufferLength: buffer.length, maxBufferLength: MAX_STREAM_BUFFER_LENGTH }
-        );
-    }
-}
-
-/**
- * 带上限读取非流式响应体文本：Content-Length 预检 + 流式累积截断。
- *
- * 修复：executeRequest 此前整包 await response.text()，上游异常返回巨型 body（数百 MB
- * HTML 错误页等）时内存耗尽 / 超 V8 字符串上限直接 RangeError 崩溃；现在超限即终止
- * 并报 PARSE_ERROR（不可重试，避免无意义重试）。
- */
-async function readBodyTextWithLimit(response: Response, limit: number): Promise<string> {
-    const contentLengthHeader = response.headers.get('content-length');
-    if (contentLengthHeader) {
-        const contentLength = Number(contentLengthHeader);
-        if (Number.isFinite(contentLength) && contentLength > limit) {
-            // 预检超限：先取消响应体（避免连接悬挂、body 数据继续流入），再报 PARSE_ERROR
-            await response.body?.cancel().catch(() => undefined);
-            throw new ChannelError(
-                ErrorType.PARSE_ERROR,
-                t('modules.channel.errors.streamBufferOverflow'),
-                { bufferLength: contentLength, maxBufferLength: limit }
-            );
-        }
-    }
-    if (!response.body) {
-        // 无流式体（极少见）：退化为整包读取后检查上限
-        const text = await response.text();
-        if (text.length > limit) {
-            throw new ChannelError(
-                ErrorType.PARSE_ERROR,
-                t('modules.channel.errors.streamBufferOverflow'),
-                { bufferLength: text.length, maxBufferLength: limit }
-            );
-        }
-        return text;
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let result = '';
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            result += decoder.decode(value, { stream: true });
-            if (result.length > limit) {
-                // 终止读取并取消剩余数据，避免连接悬挂
-                await reader.cancel().catch(() => undefined);
-                throw new ChannelError(
-                    ErrorType.PARSE_ERROR,
-                    t('modules.channel.errors.streamBufferOverflow'),
-                    { bufferLength: result.length, maxBufferLength: limit }
-                );
-            }
-        }
-        result += decoder.decode();
-    } finally {
-        reader.releaseLock();
-    }
-    return result;
-}
 
 /**
  * 重试状态回调类型
@@ -199,6 +57,7 @@ export class ChannelManager {
     private retryStatusCallback?: RetryStatusCallback;
     private toolResolver: ToolDeclarationResolver;
     private readonly log = Logger.get('ChannelManager');
+    private readonly httpExecutor: ChannelHttpExecutor;
     
     constructor(
         private configManager: ConfigManager,
@@ -206,6 +65,7 @@ export class ChannelManager {
         private settingsManager?: SettingsManager
     ) {
         this.toolResolver = new ToolDeclarationResolver(this.toolRegistry, this.settingsManager);
+        this.httpExecutor = new ChannelHttpExecutor(() => this.getProxyUrl());
     }
     
     /**
@@ -232,6 +92,27 @@ export class ChannelManager {
                 error: (error as Error)?.message ?? String(error),
             });
         }
+    }
+    
+    /**
+     * 执行 HTTP 请求（委托给 ChannelHttpExecutor，保持对外 API 兼容）。
+     */
+    async executeRequest(options: HttpRequestOptions, externalSignal?: AbortSignal): Promise<HttpResponse> {
+        return this.httpExecutor.executeRequest(options, externalSignal);
+    }
+    
+    /**
+     * 执行流式 HTTP 请求（委托给 ChannelHttpExecutor，保持对外 API 兼容）。
+     */
+    async *executeStreamRequest(options: HttpRequestOptions, externalSignal?: AbortSignal): AsyncGenerator<any> {
+        yield* this.httpExecutor.executeStreamRequest(options, externalSignal);
+    }
+    
+    /**
+     * 发送 Prompt Caching 保活请求（委托给 ChannelHttpExecutor，保持对外 API 兼容）。
+     */
+    async sendKeepAliveRequest(httpRequest: HttpRequestOptions, keepAliveBody: any): Promise<void> {
+        return this.httpExecutor.sendKeepAliveRequest(httpRequest, keepAliveBody);
     }
     
     /**
@@ -266,7 +147,7 @@ export class ChannelManager {
         
         // 2. 决定是否使用流式
         // 优先级：config.options.stream > config.preferStream > 默认值（false）
-        const optionsStream = (config as any).options?.stream;
+        const optionsStream = config.options?.stream;
         const useStream = optionsStream ?? config.preferStream ?? false;
         
         // 3. 根据 stream 决定调用哪个方法
@@ -419,11 +300,11 @@ export class ChannelManager {
             : (request.toolOverrides
                 ? request.toolOverrides
                 : this.getFilteredTools(
-                    (config as any).multimodalToolsEnabled,
-                    config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-                    (config as any).toolMode,
+                    config.multimodalToolsEnabled,
+                    config.type,
+                    config.toolMode,
                     request.promptModeSnapshot,
-                    (config as any).toolOptions
+                    config.toolOptions
                 ));
         
         // 6. 构建请求
@@ -440,11 +321,11 @@ export class ChannelManager {
         
         // 7. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
-        const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
+        const retryEnabled = request.skipRetry ? false : (config.retryEnabled ?? true);  // 默认启用重试
         // 钳制兜底：配置来源可能绕过 TS 类型（webview/导入），负值 retryCount 会让
         // totalAttempts <= 0、NaN 会让 for 循环零次执行（误报网络错误）；至少尝试一次
-        const maxRetries = Math.max(0, Math.floor((config as any).retryCount ?? 3));  // 默认3次
-        const retryInterval = Math.max(0, (config as any).retryInterval ?? 3000);  // 默认3秒
+        const maxRetries = Math.max(0, Math.floor(config.retryCount ?? 3));  // 默认3次
+        const retryInterval = Math.max(0, config.retryInterval ?? 3000);  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
         // 钳制后仍无效（retryCount 为 NaN/Infinity 等）：转为明确的配置错误而非网络错误
         if (!Number.isInteger(totalAttempts) || totalAttempts <= 0) {
@@ -466,7 +347,7 @@ export class ChannelManager {
             }
             
             try {
-                const httpResponse = await this.executeRequest(httpRequest, request.abortSignal);
+                const httpResponse = await this.httpExecutor.executeRequest(httpRequest, request.abortSignal);
                 
                 // 检查 HTTP 状态（与流式 response.ok 一致：接受全部 2xx）
                 if (httpResponse.status < 200 || httpResponse.status >= 300) {
@@ -636,11 +517,11 @@ export class ChannelManager {
             : (request.toolOverrides
                 ? request.toolOverrides
                 : this.getFilteredTools(
-                    (config as any).multimodalToolsEnabled,
-                    config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-                    (config as any).toolMode,
+                    config.multimodalToolsEnabled,
+                    config.type,
+                    config.toolMode,
                     request.promptModeSnapshot,
-                    (config as any).toolOptions
+                    config.toolOptions
                 ));
         
         // 5. 构建请求
@@ -648,9 +529,9 @@ export class ChannelManager {
         
         // 5.5 缓存保活：当 promptCachingKeepAlive 启用时，若流式请求在 4 分 30 秒内未完成则自动发送保活请求
         const keepAliveEnabled = config.type === 'anthropic'
-            && (config as any).promptCachingEnabled
-            && (config as any).promptCachingKeepAlive
-            && ((config as any).promptCachingTtl || '5m') === '5m';
+            && config.promptCachingEnabled
+            && config.promptCachingKeepAlive
+            && (config.promptCachingTtl || '5m') === '5m';
         // 保活请求：max_tokens=5, stream=false，其余参数与主请求一致
         const buildKeepAliveBody = () => {
             // 只浅拷贝并覆写 max_tokens/stream 两个字段：请求体可能很大
@@ -663,10 +544,10 @@ export class ChannelManager {
         
         // 6. 获取重试配置
         // 如果请求指定 skipRetry，则禁用重试
-        const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
+        const retryEnabled = request.skipRetry ? false : (config.retryEnabled ?? true);  // 默认启用重试
         // 钳制兜底（与 generateNonStream 同口径）：负值/NaN retryCount 不得导致零次尝试
-        const maxRetries = Math.max(0, Math.floor((config as any).retryCount ?? 3));  // 默认3次
-        const retryInterval = Math.max(0, (config as any).retryInterval ?? 3000);  // 默认3秒
+        const maxRetries = Math.max(0, Math.floor(config.retryCount ?? 3));  // 默认3次
+        const retryInterval = Math.max(0, config.retryInterval ?? 3000);  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
         // 钳制后仍无效（retryCount 为 NaN/Infinity 等）：转为明确的配置错误而非网络错误
         if (!Number.isInteger(totalAttempts) || totalAttempts <= 0) {
@@ -690,7 +571,7 @@ export class ChannelManager {
                 // 在建立阶段即失败（网络错误等），前端会误收「重试成功」。先消费首个 chunk 确认
                 // 请求实际建立（失败时错误在此抛出，走下方重试逻辑且不误报），再回调；首个
                 // chunk 通过包装生成器回填，消费语义与直接 for-await 完全一致。
-                const stream = this.executeStreamRequest(httpRequest, request.abortSignal);
+                const stream = this.httpExecutor.executeStreamRequest(httpRequest, request.abortSignal);
                 const firstResult = await stream.next();
                 const replayStream: AsyncGenerator<any> = firstResult.done
                     // 请求已建立但未产出任何块（空流）：仍按「已建立」处理并回调，空响应由下方
@@ -726,7 +607,7 @@ export class ChannelManager {
                         this.log.info('prompt_caching_keepalive_sending', { count: keepAliveFiredCount });
                         try {
                             const keepAliveBody = buildKeepAliveBody();
-                            await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
+                            await this.httpExecutor.sendKeepAliveRequest(httpRequest, keepAliveBody);
                             this.log.info('prompt_caching_keepalive_sent', { count: keepAliveFiredCount });
                         } catch (err: any) {
                             this.log.warn('prompt_caching_keepalive_failed', { error: err.message });
@@ -799,7 +680,7 @@ export class ChannelManager {
                         this.log.info('prompt_caching_exit_keepalive_sending', { elapsed });
                         try {
                             const keepAliveBody = buildKeepAliveBody();
-                            await this.sendKeepAliveRequest(httpRequest, keepAliveBody);
+                            await this.httpExecutor.sendKeepAliveRequest(httpRequest, keepAliveBody);
                             this.log.info('prompt_caching_exit_keepalive_sent');
                         } catch (err: any) {
                             this.log.warn('prompt_caching_exit_keepalive_failed', { error: err.message });
@@ -899,417 +780,8 @@ export class ChannelManager {
         return this.settingsManager?.getEffectiveProxyUrl();
     }
 
-    /**
-     * 发送缓存保活请求（fire-and-forget）
-     *
-     * 用于在流式请求进行中刷新 Anthropic Prompt Caching 的 5 分钟 TTL。
-     * 保活请求使用与主请求相同的 headers/URL，但 max_tokens=5、stream=false。
-     *
-     * @param httpRequest 主请求选项（用于复用 URL 和 headers）
-     * @param keepAliveBody 保活请求体（已设置 max_tokens=5, stream=false）
-     */
-    private async sendKeepAliveRequest(
-        httpRequest: HttpRequestOptions,
-        keepAliveBody: any
-    ): Promise<void> {
-        const { url, method, headers } = httpRequest;
-        const proxyUrl = this.getProxyUrl();
-        const fetchFn = createProxyFetch(proxyUrl);
-
-        // 保活请求有独立的短超时
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-        try {
-            const response = await fetchFn(url, {
-                method,
-                headers,
-                body: JSON.stringify(keepAliveBody),
-                signal: controller.signal
-            });
-            // 读取并丢弃响应体，确保连接正常关闭
-            await response.text().catch(() => {});
-        } finally {
-            clearTimeout(timeoutId);
-        }
-    }
     
-    /**
-     * 执行 HTTP 请求
-     *
-     * @param options 请求选项
-     * @param externalSignal 外部取消信号
-     * @returns HTTP 响应
-     */
-    private async executeRequest(options: HttpRequestOptions, externalSignal?: AbortSignal): Promise<HttpResponse> {
-        const { url, method, headers, body, timeout = 60000 } = options;
-        const proxyUrl = this.getProxyUrl();
-        
-        // 使用代理 fetch 或原生 fetch
-        const fetchFn = createProxyFetch(proxyUrl);
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeout);
-        
-        // 监听外部取消信号
-        const onExternalAbort = () => controller.abort();
-        if (externalSignal) {
-            externalSignal.addEventListener('abort', onExternalAbort);
-        }
-        
-        try {
-            const response = await fetchFn(url, {
-                method,
-                headers,
-                body: body ? JSON.stringify(body) : undefined,
-                signal: controller.signal,
-                // 透传超时：代理路径由 createProxyFetch 按此值设置请求超时（此前硬编码 120s）
-                timeout
-            });
-            
-            // 解析响应体：先读 text() 再尝试解析 JSON——response.json() 会消费响应体，
-            // 纯文本/HTML 错误体（网关 502 页等）在 json() 失败后无法再读正文（body used
-            // already），上游给出的真实错误内容会丢失；text 原文在解析失败时原样保留，
-            // 供 extractUpstreamErrorMessage 提取并进入错误信息。
-            // 带大小上限读取：上游异常返回巨型 body 时在内存耗尽前截断报 PARSE_ERROR。
-            const rawResponseBody = await readBodyTextWithLimit(response, MAX_STREAM_BUFFER_LENGTH);
-            let responseBody: unknown = rawResponseBody;
-            try {
-                responseBody = JSON.parse(rawResponseBody);
-            } catch {
-                // 非 JSON（含非 2xx 的纯文本错误体）：保留原文
-            }
-            const responseHeaders: Record<string, string> = {};
-            response.headers.forEach((value, key) => {
-                responseHeaders[key] = value;
-            });
-            
-            return {
-                status: response.status,
-                headers: responseHeaders,
-                body: responseBody
-            };
-        } catch (error) {
-            if (error instanceof Error && error.name === 'AbortError') {
-                // 检查是外部取消还是超时
-                if (externalSignal?.aborted) {
-                    throw new ChannelError(
-                        ErrorType.CANCELLED_ERROR,
-                        t('modules.channel.errors.requestCancelled')
-                    );
-                }
-                throw new ChannelError(
-                    ErrorType.TIMEOUT_ERROR,
-                    t('modules.channel.errors.requestTimeout', { timeout })
-                );
-            }
-            throw error;
-        } finally {
-            clearTimeout(timeoutId);
-            // 移除外部信号监听
-            if (externalSignal) {
-                externalSignal.removeEventListener('abort', onExternalAbort);
-            }
-        }
-    }
     
-    /**
-     * 执行流式 HTTP 请求
-     *
-     * @param options 请求选项
-     * @param externalSignal 外部取消信号
-     * @returns 异步生成器，产生原始响应块
-     */
-    private async *executeStreamRequest(
-        options: HttpRequestOptions,
-        externalSignal?: AbortSignal
-    ): AsyncGenerator<any> {
-        const { url, method, headers, body, timeout = 120000 } = options;
-        const proxyUrl = this.getProxyUrl();
-        
-        const controller = new AbortController();
-        
-        // 使用可重置的超时机制
-        // 每次收到有效内容时重置超时，避免模型慢速生成时被误判为超时
-        let timeoutId: NodeJS.Timeout | undefined;
-        let isTimedOut = false;
-        
-        const resetTimeout = () => {
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-            }
-            timeoutId = setTimeout(() => {
-                isTimedOut = true;
-                controller.abort();
-            }, timeout);
-        };
-        
-        // 初始化超时
-        resetTimeout();
-        
-        // 监听外部取消信号
-        const onExternalAbort = () => controller.abort();
-        if (externalSignal) {
-            externalSignal.addEventListener('abort', onExternalAbort);
-        }
-        
-        try {
-            let parsedChunkCount = 0;
-            // 流结束时仍无法解析的原始内容（上游用纯文本 / HTML 报错时就落在这里）
-            let unparsedTail = '';
-
-            // 使用代理流式请求
-            if (proxyUrl) {
-                let buffer = '';
-                // PERF：只保留未解析尾部——每包只拼接「未解析尾部 + 新块」，避免对整段
-                // 累积缓冲重复复制（O(n²)）。baseline 直接取 parseStreamBuffer 返回的
-                // remaining（对 SSE 是重建的 `data: ` 前缀行、对 JSONL 是未完成的末行），
-                // 而不是按偏移从头部切——偏移切法在 SSE 事件跨 chunk 且尾随空行时会把
-                // `data: ` 前缀切坏，在 JSONL 逐行格式下会直接丢块。
-                let lastRemaining = '';
-                // 未知格式整段残留标记：parseStreamBuffer 无法识别流格式时把整段缓冲原样
-                // 作为 remaining 返回（同一引用），需要完整累积后才能识别格式——此时不清空、
-                // 不压缩，保持「完整累积后识别格式」的既有语义。
-                // 未知格式整段残留同样受 64MB 上限约束：pendingWholeBuffer 时 noProgress
-                // 判定恒成立，异常上游持续输出非 SSE/JSON 内容会在累积超限时被
-                // assertStreamBufferWithinLimit 终止（PARSE_ERROR），不会无界累积到流结束。
-                let pendingWholeBuffer = false;
-                
-                for await (const chunk of proxyStreamFetch(url, {
-                    method,
-                    headers,
-                    body: body ? JSON.stringify(body) : undefined,
-                    timeout,
-                    signal: controller.signal
-                }, proxyUrl)) {
-                    // 检查是否已取消
-                    if (externalSignal?.aborted) {
-                        break;
-                    }
-                    
-                    // 收到数据，重置超时计时器
-                    resetTimeout();
-                    
-                    // 压缩已解析前缀后再追加新块
-                    buffer = pendingWholeBuffer ? buffer : lastRemaining;
-                    buffer += chunk;
-                    
-                    // 处理流式响应（解析窗口只含未解析尾部 + 新块）
-                    const result = parseStreamBuffer(buffer);
-                    parsedChunkCount += result.chunks.length;
-                    pendingWholeBuffer = result.remaining === buffer;
-                    // 「解析无进展」判定：SSE 分支的 remaining 是重建字符串（剥离了尾随空行、
-                    // chunked 大小行等），引用比较恒不相等，旧判定在上限检查处失效，垃圾 SSE
-                    // 数据可无界累积（内存耗尽）。补增量判定：本轮未产出 chunk 且未消费尾部比
-                    // 上轮更长 → 无进展累积，按当前缓冲执行上限检查。合法巨型单事件在完成前
-                    // 也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止。
-                    const noProgress = result.chunks.length === 0
-                        && (pendingWholeBuffer || result.remaining.length > lastRemaining.length);
-                    lastRemaining = result.remaining;
-                    if (noProgress) {
-                        assertStreamBufferWithinLimit(buffer);
-                    }
-
-                    
-                    for (const parsed of result.chunks) {
-                        yield parsed;
-                    }
-                }
-                
-                // 处理剩余的 buffer（用户已取消时不产出半截残留：原生 fetch 分支在 abort 时
-                // reader.read() 直接抛错，根本走不到这里，两条路径保持一致）
-                const finalTail = lastRemaining;
-                if (!externalSignal?.aborted && finalTail.trim()) {
-                    const result = parseStreamBuffer(finalTail, true);
-                    parsedChunkCount += result.chunks.length;
-                    unparsedTail = result.unparsed || '';
-
-                    for (const chunk of result.chunks) {
-                        yield chunk;
-                    }
-                }
-                
-                // 检查是否被外部取消：proxyStreamFetch 在信号中止时会优雅结束而非抛错，
-                // 若不显式抛出，generateStream 会把半截流当成「正常结束」，调用方把不完整
-                // 内容当完整助手消息落盘。与原生 fetch 分支（AbortError → CANCELLED_ERROR）
-                // 保持一致；顺序上先判取消再判超时（原生 catch 同样优先 CANCELLED_ERROR）。
-                if (externalSignal?.aborted) {
-                    throw new ChannelError(
-                        ErrorType.CANCELLED_ERROR,
-                        t('modules.channel.errors.requestCancelled')
-                    );
-                }
-                
-                // 检查是否因超时而结束（proxyStreamFetch 在信号中止时会 break 而非 throw）
-                if (isTimedOut) {
-                    throw new ChannelError(
-                        ErrorType.TIMEOUT_ERROR,
-                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
-                    );
-                }
-            } else {
-                // 原生 fetch 流式请求
-                const response = await fetch(url, {
-                    method,
-                    headers,
-                    body: body ? JSON.stringify(body) : undefined,
-                    signal: controller.signal
-                });
-                
-                if (!response.ok) {
-                    // 获取错误详情：必须先读 text() 再尝试解析 JSON——response.json() 会消费
-                    // 响应体，纯文本/HTML 错误体（网关 502 页面等）在 json() 失败后再读
-                    // text() 只能拿到空串，上游给出的真实错误正文会丢失（body used already）。
-                    const rawErrorBody = await response.text();
-                    let errorBody: unknown = rawErrorBody;
-                    try {
-                        errorBody = JSON.parse(rawErrorBody);
-                    } catch {
-                        // 非 JSON：保留原文（extractUpstreamErrorMessage 直接返回文本）
-                    }
-                    const upstreamMessage = extractUpstreamErrorMessage(errorBody);
-                    throw new ChannelError(
-                        ErrorType.API_ERROR,
-                        upstreamMessage
-                            ? `HTTP ${response.status}: ${upstreamMessage}`
-                            : t('modules.channel.errors.apiError', { status: response.status }),
-                        errorBody
-                    );
-                }
-                
-                if (!response.body) {
-                    throw new ChannelError(
-                        ErrorType.NETWORK_ERROR,
-                        t('modules.channel.errors.noResponseBody')
-                    );
-                }
-                
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                // 上一轮未消费尾部基准：SSE 分支 remaining 为重建字符串，用长度增量判定「无进展」
-                let lastRemaining = '';
-                
-                try {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) {
-                            // 最终冲刷：末块被切开的 UTF-8 多字节字符尾部缓存在 decoder 内部，
-                            // 缺这一步会导致最后一个字符丢失/乱码。
-                            buffer += decoder.decode();
-                            break;
-                        }
-                        // 收到数据，重置超时计时器
-                        resetTimeout();
-                        
-                        buffer += decoder.decode(value, { stream: true });
-                        
-                        // 处理流式响应
-                        const result = parseStreamBuffer(buffer);
-                        // 「解析无进展」判定：SSE 分支的 remaining 是重建字符串，恒不等于
-                        // buffer，旧判定（remaining !== buffer → 有进展）在上限检查处失效，
-                        // 垃圾 SSE 数据可无界累积（内存耗尽）。改为：未产出 chunk 且未消费
-                        // 尾部比上轮更长 → 无进展累积，按当前缓冲执行上限检查。合法巨型单事件
-                        // 在完成前也呈现「无进展」，64MB 阈值为其预留空间；垃圾数据累积超限即终止。
-                        const noProgress = result.chunks.length === 0
-                            && (result.remaining === buffer || result.remaining.length > lastRemaining.length);
-                        if (noProgress) {
-                            assertStreamBufferWithinLimit(buffer);
-                        }
-                        buffer = result.remaining;
-                        lastRemaining = result.remaining;
-                        parsedChunkCount += result.chunks.length;
-
-                        
-                        for (const chunk of result.chunks) {
-                            yield chunk;
-                        }
-                    }
-                    
-                    // 最终冲刷后的缓冲可能越过上限（末块多字节字符补齐），超限同样终止
-                    assertStreamBufferWithinLimit(buffer);
-                    
-                    // 处理剩余的 buffer
-                    if (buffer.trim()) {
-                        const result = parseStreamBuffer(buffer, true);
-                        parsedChunkCount += result.chunks.length;
-                        unparsedTail = result.unparsed || '';
-
-                        for (const chunk of result.chunks) {
-                            yield chunk;
-                        }
-                    }
-                    
-                    // 检查是否因超时而结束
-                    if (isTimedOut) {
-                        throw new ChannelError(
-                            ErrorType.TIMEOUT_ERROR,
-                            t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
-                        );
-                    }
-                } finally {
-                    reader.releaseLock();
-                }
-            }
-
-            // 流式连接结束但未解析出任何有效 chunk：
-            // 常见于本地代理/抓包链路提前断开，被误判为“正常结束”。
-            // 显式抛网络错误，触发上层重试并避免前端出现空消息。
-            //
-            // 另一种同样常见的情况是上游根本没按约定格式回：网关的 502 HTML、代理的纯文本错误。
-            // 这些内容过去在缓冲区里被静默丢弃，用户只能看到一句「没有响应体」，再往前端走就成了
-            // 「模型返回空内容」——上游其实已经说明了原因。这里把原文一并带出去。
-            if (!externalSignal?.aborted && parsedChunkCount === 0) {
-                const rawResponse = unparsedTail.trim();
-                throw new ChannelError(
-                    ErrorType.NETWORK_ERROR,
-                    t('modules.channel.errors.streamRequestFailed', {
-                        error: rawResponse
-                            ? (rawResponse.length > 800 ? `${rawResponse.slice(0, 800)}…` : rawResponse)
-                            : t('modules.channel.errors.noResponseBody')
-                    }),
-                    rawResponse ? { rawResponse } : undefined
-                );
-            }
-        } catch (error) {
-            if (error instanceof ChannelError) {
-                throw error;
-            }
-            if (error instanceof Error && error.name === 'AbortError') {
-                // 检查是外部取消还是超时
-                if (externalSignal?.aborted) {
-                    // 用户手动取消，使用 CANCELLED_ERROR，不应重试
-                    throw new ChannelError(
-                        ErrorType.CANCELLED_ERROR,
-                        t('modules.channel.errors.requestCancelled')
-                    );
-                }
-                if (isTimedOut) {
-                    throw new ChannelError(
-                        ErrorType.TIMEOUT_ERROR,
-                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
-                    );
-                }
-                throw new ChannelError(
-                    ErrorType.NETWORK_ERROR,
-                    t('modules.channel.errors.requestAborted')
-                );
-            }
-            throw new ChannelError(
-                ErrorType.NETWORK_ERROR,
-                t('modules.channel.errors.streamRequestFailed', { error: error instanceof Error ? error.message : t('errors.unknown') }),
-                error
-            );
-        } finally {
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-            }
-            // 移除外部信号监听
-            if (externalSignal) {
-                externalSignal.removeEventListener('abort', onExternalAbort);
-            }
-        }
-    }
     
     /**
      * 获取过滤后的工具声明

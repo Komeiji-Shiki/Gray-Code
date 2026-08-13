@@ -10,10 +10,6 @@ import type {
     McpServerInfo,
     McpServerStatus,
     McpServerCapabilities,
-    McpTransportConfig,
-    StdioTransportConfig,
-    SseTransportConfig,
-    StreamableHttpTransportConfig,
     McpStorageAdapter,
     CreateMcpServerInput,
     UpdateMcpServerInput,
@@ -30,89 +26,11 @@ import type {
 import { StdioMcpClient } from './StdioClient';
 import { HttpMcpClient } from './HttpClient';
 import { MCP_SERVER_ID_PATTERN } from './mcpToolNameCodec';
+import { generateId, slugifyServerName, transportConfigChanged } from './mcpManager/mcpServerId';
+import { performToolCall, performResourceRead, performPromptGet } from './mcpManager/mcpOperations';
+import { runConnect, performDisconnect, type McpConnectionDeps } from './mcpManager/mcpConnection';
+import { handleServerNotification } from './mcpManager/mcpListRefresh';
 
-/**
- * 生成唯一 ID（名称无法 slug 化或 slug 冲突时的回退方案）
- */
-function generateId(): string {
-    return `mcp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-}
-
-/**
- * 将服务器名称转换为可读的 slug ID
- *
- * 规则：
- * - 转为小写，空白替换为单下划线
- * - 仅保留字母、数字、下划线、中划线
- * - 折叠连续下划线（避免双下划线破坏 MCP 工具名解码）
- * - 结果不符合 MCP_SERVER_ID_PATTERN 时返回空串（调用方回退随机 ID）
- */
-function slugifyServerName(name: string): string {
-    const slug = name
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '_')
-        .replace(/[^a-z0-9_-]/g, '')
-        .replace(/_+/g, '_')
-        .replace(/^_+|_+$/g, '')
-        .replace(/^-+|-+$/g, '');
-    return MCP_SERVER_ID_PATTERN.test(slug) ? slug : '';
-}
-
-/**
- * 比较两份 transport 配置是否实质变化（连接参数）
- *
- * 不用 JSON.stringify 整串比较：对象键序不同（env/headers 键序变化）会误判为变化，
- * 触发无谓重连；连续两次相同内容的 updateServer 也会双重连。只比较影响连接的字段：
- * - stdio：type + command + args + env（键值对逐一比较，与键序无关）
- * - sse / streamable-http：type + url + headers（键值对逐一比较）
- */
-function transportConfigChanged(a: McpTransportConfig, b: McpTransportConfig): boolean {
-    if (a.type !== b.type) {
-        return true;
-    }
-    if (a.type === 'stdio') {
-        const prev = a as StdioTransportConfig;
-        const next = b as StdioTransportConfig;
-        if (prev.command !== next.command) {
-            return true;
-        }
-        const prevArgs = prev.args ?? [];
-        const nextArgs = next.args ?? [];
-        if (prevArgs.length !== nextArgs.length) {
-            return true;
-        }
-        for (let i = 0; i < prevArgs.length; i++) {
-            if (prevArgs[i] !== nextArgs[i]) {
-                return true;
-            }
-        }
-        return !sameStringRecord(prev.env, next.env);
-    }
-    const prev = a as SseTransportConfig | StreamableHttpTransportConfig;
-    const next = b as SseTransportConfig | StreamableHttpTransportConfig;
-    return prev.url !== next.url || !sameStringRecord(prev.headers, next.headers);
-}
-
-/**
- * 比较两个可选字符串键值表是否相等（undefined 视同空表，与键序无关）
- */
-function sameStringRecord(
-    a: Record<string, string> | undefined,
-    b: Record<string, string> | undefined
-): boolean {
-    const keysA = Object.keys(a ?? {});
-    const keysB = Object.keys(b ?? {});
-    if (keysA.length !== keysB.length) {
-        return false;
-    }
-    for (const key of keysA) {
-        if (a?.[key] !== b?.[key]) {
-            return false;
-        }
-    }
-    return true;
-}
 
 /**
  * MCP 管理器
@@ -154,8 +72,25 @@ export class McpManager {
     /** 创建服务器串行队列：校验-保存非原子，并发同 customId 会互相覆盖（M4），整段串行避免 last-writer-wins */
     private createQueue: Promise<unknown> = Promise.resolve();
 
+    /** 连接/刷新抽离服务所共享的依赖（供 mcpConnection / mcpListRefresh 使用） */
+    private readonly connectionDeps: McpConnectionDeps;
+
     constructor(storageAdapter: McpStorageAdapter) {
         this.storageAdapter = storageAdapter;
+
+        // 构建连接/刷新服务共享依赖：通过箭头函数绑定私有方法，避免把私有状态暴露给
+        // 抽离模块；Map 以引用共享，保证连接代际/刷新链与 McpManager 状态始终一致。
+        const deps: McpConnectionDeps = {
+            clients: this.clients,
+            refreshChains: this.refreshChains,
+            refreshPending: this.refreshPending,
+            isCurrentGeneration: (serverId, generation) => this.isCurrentGeneration(serverId, generation),
+            updateServerStatus: (serverId, status) => this.updateServerStatus(serverId, status),
+            emitEvent: (event) => this.emitEvent(event),
+            handleServerNotification: (info, client, generation, method, params) =>
+                handleServerNotification(deps, info, client, generation, method, params)
+        };
+        this.connectionDeps = deps;
     }
 
     /** 将创建操作加入串行队列（前一个完成后再执行下一个，错误不阻断后续） */
@@ -576,7 +511,7 @@ export class McpManager {
         const generation = this.nextGeneration(serverId);
         this.updateServerStatus(serverId, 'connecting');
 
-        const promise = this.runConnect(serverId, info, generation);
+        const promise = runConnect(this.connectionDeps, serverId, info, generation);
         this.connectPromises.set(serverId, promise);
 
         try {
@@ -612,7 +547,7 @@ export class McpManager {
         info.capabilities = undefined;
 
         try {
-            await this.performDisconnect(info);
+            await performDisconnect(this.connectionDeps, info);
         } catch {
             // 忽略断开连接错误
         }
@@ -667,7 +602,7 @@ export class McpManager {
         }
 
         try {
-            const result = await this.performToolCall(info, request);
+            const result = await performToolCall(this.clients, info, request);
             
             this.emitEvent({
                 type: 'tool:result',
@@ -700,7 +635,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.serverNotConnected', { serverName: info.config.name }));
         }
 
-        return await this.performResourceRead(info, request);
+        return await performResourceRead(this.clients, info, request);
     }
 
     /**
@@ -716,7 +651,7 @@ export class McpManager {
             throw new Error(t('modules.mcp.errors.serverNotConnected', { serverName: info.config.name }));
         }
 
-        return await this.performPromptGet(info, request);
+        return await performPromptGet(this.clients, info, request);
     }
 
     /**
@@ -841,679 +776,6 @@ export class McpManager {
         return next;
     }
 
-    /**
-     * 执行连接并更新状态（带代际校验）
-     *
-     * 旧代际的连接完成/失败路径不会覆盖新连接的状态；
-     * 但错误仍会传播给发起该次连接的调用方。
-     */
-    private async runConnect(serverId: string, info: McpServerInfo, generation: number): Promise<void> {
-        try {
-            await this.performConnect(info, generation);
 
-            // 旧代际的连接完成路径不得覆盖新连接的状态
-            if (!this.isCurrentGeneration(serverId, generation)) {
-                return;
-            }
 
-            // 连接成功清除过期错误，避免 UI 一直展示上次失败的 lastError
-            info.lastError = undefined;
-
-            // MCP H-2：connect() 内部的能力列表（tools/resources/prompts）拉取失败会被 StdioClient
-            // 吞掉（列表保持空），此时进程/协议可能不稳定——不能无脑置 connected（假连接）。
-            // 区分「服务器真无工具」与「拉取失败」：拉取失败则置 error 并广播，等待用户重连/处理。
-            const client = this.clients.get(serverId);
-            const listFailed =
-                typeof (client as any)?.isListFetchFailed === 'function'
-                    ? (client as any).isListFetchFailed()
-                    : false;
-            if (listFailed) {
-                const errorMessage = 'MCP server connected, but capability list fetch failed (tools/resources/prompts).';
-                info.lastError = errorMessage;
-                this.updateServerStatus(serverId, 'error');
-                this.emitEvent({
-                    type: 'server:error',
-                    serverId,
-                    data: { error: errorMessage },
-                    timestamp: Date.now()
-                });
-                return;
-            }
-
-            this.updateServerStatus(serverId, 'connected');
-            info.connectedAt = Date.now();
-
-            this.emitEvent({
-                type: 'server:connected',
-                serverId,
-                timestamp: Date.now()
-            });
-        } catch (error) {
-            // 旧代际连接失败：不覆盖新连接的状态（错误仍传播给调用方）
-            if (!this.isCurrentGeneration(serverId, generation)) {
-                throw error;
-            }
-
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            info.lastError = errorMessage;
-            this.updateServerStatus(serverId, 'error');
-
-            this.emitEvent({
-                type: 'server:error',
-                serverId,
-                data: { error: errorMessage },
-                timestamp: Date.now()
-            });
-
-            throw error;
-        }
-    }
-
-    /**
-     * 执行连接
-     *
-     * @param generation 本次连接尝试的代际号；error/exit/catch/完成路径据此判断自己是否仍是"当前连接"
-     */
-    private async performConnect(info: McpServerInfo, generation: number): Promise<void> {
-        const { transport } = info.config;
-        
-        switch (transport.type) {
-            case 'stdio': {
-                // error 状态下旧 stdio 子进程可能仍存活：直接覆盖 clients 条目会把旧 client
-                // 孤儿化（子进程存活到自然退出）。先断开旧 client（tree-kill）再建新连接；
-                // 旧 client 的 exit 回调带代际 + 引用双重校验，不会误删随后注册的新 client。
-                const previousClient = this.clients.get(info.config.id);
-                if (previousClient) {
-                    try {
-                        await previousClient.disconnect();
-                    } catch {
-                        // 旧进程可能已死；忽略，继续建新连接
-                    }
-                }
-
-                const client = new StdioMcpClient(
-                    transport.command,
-                    transport.args || [],
-                    transport.env,
-                    undefined, // cwd
-                    info.config.timeout
-                );
-
-                // 设置错误处理（带代际校验：旧 client 的回调不得影响新连接）
-                client.on('error', (err) => {
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    // 连接中（connect 尚未返回）的错误统一由 runConnect catch 置状态并广播，
-                    // 此处只记 lastError，避免 server:error 双重广播；连接完成后的运行期
-                    // 错误才在此广播（与 runConnect catch 同口径）。
-                    const wasConnecting = info.status === 'connecting';
-                    info.lastError = err.message;
-                    this.updateServerStatus(info.config.id, 'error');
-                    if (wasConnecting) {
-                        return;
-                    }
-                    // 与 runConnect 失败路径对齐：广播 server:error，供 UI/能力缓存等下游感知
-                    this.emitEvent({
-                        type: 'server:error',
-                        serverId: info.config.id,
-                        data: { error: err.message },
-                        timestamp: Date.now()
-                    });
-                    // 运行期错误后 client 已不可用（僵尸态，状态门禁已拦截后续调用）：
-                    // 从管理 map 摘除并断开底层连接，避免 deleteServer/setServerEnabled
-                    // 在 error 状态跳过 disconnect 后留下孤儿 client（stdio 子进程 /
-                    // HTTP session 悬挂）。引用比较防止误删随后 connect 注册的新 client。
-                    if (this.clients.get(info.config.id) === client) {
-                        this.clients.delete(info.config.id);
-                    }
-                    void client.disconnect().catch(() => { /* 进程可能已死，忽略 */ });
-                });
-
-                client.on('exit', () => {
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    // 只删除自己注册的 client，避免误删随后 connect 注册的新客户端
-                    if (this.clients.get(info.config.id) === client) {
-                        this.clients.delete(info.config.id);
-                    }
-                    this.updateServerStatus(info.config.id, 'disconnected');
-                    // 进程意外退出（非用户显式 disconnect）：必须广播 disconnected 事件，
-                    // 下游（工具声明缓存等）依赖该事件失效已死服务器的能力列表；
-                    // 显式 disconnect() 路径会递增代际，此处代际校验已拦截，不会双发。
-                    this.emitEvent({
-                        type: 'server:disconnected',
-                        serverId: info.config.id,
-                        timestamp: Date.now()
-                    });
-                });
-
-                // 提前注册到管理 map，确保连接过程中的 delete/disable/disconnect 能找到它
-                this.clients.set(info.config.id, client);
-
-                try {
-                    await client.connect();
-                } catch (_e) {
-                    // 只清理自己注册的 client
-                    if (this.clients.get(info.config.id) === client) {
-                        this.clients.delete(info.config.id);
-                    }
-                    await client.disconnect();
-                    throw _e;
-                }
-
-                // 连接期间若已被 disconnect/新 connect 取代，不再写入能力并关闭旧进程
-                if (!this.isCurrentGeneration(info.config.id, generation)) {
-                    await client.disconnect();
-                    return;
-                }
-
-                // 获取能力
-                info.capabilities = {
-                    tools: client.getTools().map(t => ({
-                        name: t.name,
-                        description: t.description,
-                        inputSchema: t.inputSchema
-                    })),
-                    resources: client.getResources().map(r => ({
-                        uri: r.uri,
-                        name: r.name,
-                        description: r.description,
-                        mimeType: r.mimeType
-                    })),
-                    prompts: client.getPrompts().map(p => ({
-                        name: p.name,
-                        description: p.description,
-                        arguments: p.arguments
-                    }))
-                };
-                info.protocolVersion = client.getProtocolVersion();
-
-                const serverInfo = client.getServerInfo();
-                if (serverInfo) {
-                    info.serverVersion = serverInfo.version;
-                    info.serverDescription = serverInfo.name;
-                }
-
-                // 订阅服务器推送通知（notifications/tools|resources|prompts/list_changed），
-                // 收到后刷新缓存列表，避免工具列表缓存永不刷新
-                client.on('notification', (method: string, params?: any) => {
-                    // 旧代际 client 的通知不得触发新连接的刷新
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    // fire-and-forget：handleServerNotification 内部按 serverId 串行化、
-                    // 自带异常兜底，不会产生未处理的 rejection（async 监听器 rejection 兜底）
-                    void this.handleServerNotification(info, client, generation, method, params);
-                });
-                break;
-            }
-
-            case 'sse': {
-                // 与 stdio 分支对齐：error 状态下旧 HttpMcpClient 可能仍持有进行中的
-                // fetch/读流，直接覆盖 clients 条目会把旧 client 孤儿化（activeControllers/
-                // activeReaders 永不释放，session 悬挂）。先断开旧 client 再建新连接。
-                const previousSseClient = this.clients.get(info.config.id);
-                if (previousSseClient) {
-                    try {
-                        await previousSseClient.disconnect();
-                    } catch {
-                        // 忽略，继续建新连接
-                    }
-                }
-
-                const sseClient = new HttpMcpClient(
-                    transport.url,
-                    'sse',
-                    transport.headers || {},
-                    info.config.timeout ?? 30000
-                );
-
-                // 设置错误处理（带代际校验）：HTTP 服务器死亡/网络错误/SSE 流意外结束时
-                // 广播错误并置 error 状态——否则服务器死后状态永久 connected
-                //（与 stdio 分支的 error 处理同口径）
-                sseClient.on('error', (err: Error) => {
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    // 连接中（connect 尚未返回）的错误统一由 runConnect catch 置状态并广播，
-                    // 此处只记 lastError，避免 server:error 双重广播；连接完成后的运行期
-                    // 错误才在此广播（与 runConnect catch 同口径）。
-                    const wasConnecting = info.status === 'connecting';
-                    info.lastError = err.message;
-                    this.updateServerStatus(info.config.id, 'error');
-                    if (wasConnecting) {
-                        return;
-                    }
-                    this.emitEvent({
-                        type: 'server:error',
-                        serverId: info.config.id,
-                        data: { error: err.message },
-                        timestamp: Date.now()
-                    });
-                    // 运行期错误后 client 已不可用（僵尸态，状态门禁已拦截后续调用）：
-                    // 从管理 map 摘除并断开底层连接，避免 deleteServer/setServerEnabled
-                    // 在 error 状态跳过 disconnect 后留下孤儿 client（stdio 子进程 /
-                    // HTTP session 悬挂）。引用比较防止误删随后 connect 注册的新 client。
-                    if (this.clients.get(info.config.id) === sseClient) {
-                        this.clients.delete(info.config.id);
-                    }
-                    void sseClient.disconnect().catch(() => { /* 连接可能已死，忽略 */ });
-                });
-
-                // 提前注册到管理 map
-                this.clients.set(info.config.id, sseClient);
-
-                try {
-                    await sseClient.connect();
-                } catch (_e) {
-                    if (this.clients.get(info.config.id) === sseClient) {
-                        this.clients.delete(info.config.id);
-                    }
-                    await sseClient.disconnect();
-                    throw _e;
-                }
-
-                if (!this.isCurrentGeneration(info.config.id, generation)) {
-                    await sseClient.disconnect();
-                    return;
-                }
-
-                info.capabilities = {
-                    tools: sseClient.getTools().map(t => ({
-                        name: t.name,
-                        description: t.description,
-                        inputSchema: t.inputSchema
-                    })),
-                    resources: sseClient.getResources().map(r => ({
-                        uri: r.uri,
-                        name: r.name,
-                        description: r.description,
-                        mimeType: r.mimeType
-                    })),
-                    prompts: sseClient.getPrompts().map(p => ({
-                        name: p.name,
-                        description: p.description,
-                        arguments: p.arguments
-                    }))
-                };
-                info.protocolVersion = sseClient.getProtocolVersion();
-
-                const sseServerInfo = sseClient.getServerInfo();
-                if (sseServerInfo) {
-                    info.serverVersion = sseServerInfo.version;
-                    info.serverDescription = sseServerInfo.name;
-                }
-                sseClient.on('notification', (method: string, params?: unknown) => {
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    void this.handleServerNotification(info, sseClient, generation, method, params);
-                });
-                break;
-            }
-
-            case 'streamable-http': {
-                // 与 stdio 分支对齐：error 状态下旧 HttpMcpClient 可能仍持有进行中的
-                // fetch/读流，直接覆盖 clients 条目会把旧 client 孤儿化（activeControllers/
-                // activeReaders 永不释放，session 悬挂）。先断开旧 client 再建新连接。
-                const previousHttpClient = this.clients.get(info.config.id);
-                if (previousHttpClient) {
-                    try {
-                        await previousHttpClient.disconnect();
-                    } catch {
-                        // 忽略，继续建新连接
-                    }
-                }
-
-                const httpClient = new HttpMcpClient(
-                    transport.url,
-                    'streamable-http',
-                    transport.headers || {},
-                    info.config.timeout ?? 30000
-                );
-
-                // 设置错误处理（带代际校验）：HTTP 服务器死亡/网络错误/SSE 流意外结束时
-                // 广播错误并置 error 状态——否则服务器死后状态永久 connected
-                //（与 stdio 分支的 error 处理同口径）
-                httpClient.on('error', (err: Error) => {
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    // 连接中（connect 尚未返回）的错误统一由 runConnect catch 置状态并广播，
-                    // 此处只记 lastError，避免 server:error 双重广播；连接完成后的运行期
-                    // 错误才在此广播（与 runConnect catch 同口径）。
-                    const wasConnecting = info.status === 'connecting';
-                    info.lastError = err.message;
-                    this.updateServerStatus(info.config.id, 'error');
-                    if (wasConnecting) {
-                        return;
-                    }
-                    this.emitEvent({
-                        type: 'server:error',
-                        serverId: info.config.id,
-                        data: { error: err.message },
-                        timestamp: Date.now()
-                    });
-                    // 运行期错误后 client 已不可用（僵尸态，状态门禁已拦截后续调用）：
-                    // 从管理 map 摘除并断开底层连接，避免 deleteServer/setServerEnabled
-                    // 在 error 状态跳过 disconnect 后留下孤儿 client（stdio 子进程 /
-                    // HTTP session 悬挂）。引用比较防止误删随后 connect 注册的新 client。
-                    if (this.clients.get(info.config.id) === httpClient) {
-                        this.clients.delete(info.config.id);
-                    }
-                    void httpClient.disconnect().catch(() => { /* 连接可能已死，忽略 */ });
-                });
-
-                // 提前注册到管理 map
-                this.clients.set(info.config.id, httpClient);
-
-                try {
-                    await httpClient.connect();
-                } catch (_e) {
-                    if (this.clients.get(info.config.id) === httpClient) {
-                        this.clients.delete(info.config.id);
-                    }
-                    await httpClient.disconnect();
-                    throw _e;
-                }
-
-                if (!this.isCurrentGeneration(info.config.id, generation)) {
-                    await httpClient.disconnect();
-                    return;
-                }
-
-                info.capabilities = {
-                    tools: httpClient.getTools().map(t => ({
-                        name: t.name,
-                        description: t.description,
-                        inputSchema: t.inputSchema
-                    })),
-                    resources: httpClient.getResources().map(r => ({
-                        uri: r.uri,
-                        name: r.name,
-                        description: r.description,
-                        mimeType: r.mimeType
-                    })),
-                    prompts: httpClient.getPrompts().map(p => ({
-                        name: p.name,
-                        description: p.description,
-                        arguments: p.arguments
-                    }))
-                };
-                info.protocolVersion = httpClient.getProtocolVersion();
-
-                const httpServerInfo = httpClient.getServerInfo();
-                if (httpServerInfo) {
-                    info.serverVersion = httpServerInfo.version;
-                    info.serverDescription = httpServerInfo.name;
-                }
-                httpClient.on('notification', (method: string, params?: unknown) => {
-                    if (!this.isCurrentGeneration(info.config.id, generation)) {
-                        return;
-                    }
-                    void this.handleServerNotification(info, httpClient, generation, method, params);
-                });
-                break;
-            }
-        }
-    }
-
-    /**
-     * 执行断开连接
-     */
-    private async performDisconnect(info: McpServerInfo): Promise<void> {
-        const client = this.clients.get(info.config.id);
-        if (client) {
-            await client.disconnect();
-            // 只删除自己断开的 client，避免误删并发 connect 注册的新客户端
-            if (this.clients.get(info.config.id) === client) {
-                this.clients.delete(info.config.id);
-            }
-        }
-        // 清理该 server 的刷新链与合并标记：残留链会让重连后的新代际通知误合并到旧链上
-        //（旧链代际校验跳过刷新 → 通知丢失）；在途旧链本身会正常结束，不受此处清理影响
-        this.refreshChains.delete(info.config.id);
-        this.refreshPending.delete(info.config.id);
-    }
-
-    /**
-     * 处理服务器推送的通知
-     *
-     * 收到列表变更通知（notifications/tools|resources|prompts/list_changed）时，
-     * 重新拉取列表并刷新 info.capabilities 缓存，供 ToolDeclarationResolver 等
-     * 消费方在下一次工具声明重建时使用新数据。
-     * - 同一 serverId 的刷新按到达顺序串行执行（per-server 刷新链），
-     *   避免并发刷新时旧结果覆盖新结果；通知风暴时合并（链长有上限），
-     *   disconnect 时清理残留链
-     * - 刷新完成写入 capabilities 前重查代际：await 期间若已 disconnect/重连，
-     *   不得用旧 client 的空列表覆盖新连接的能力缓存
-     * - 刷新失败仅记日志，不重连（避免服务器临时故障时无谓重连）
-     * - 刷新成功广播 server:capabilities_updated 事件，供前端等订阅方感知
-     * - 全程不向外抛出 rejection（async 监听器兜底：链尾 catch）
-     */
-    private async handleServerNotification(
-        info: McpServerInfo,
-        client: StdioMcpClient | HttpMcpClient,
-        generation: number,
-        method: string,
-        params?: unknown
-    ): Promise<void> {
-        if (method !== 'notifications/tools/list_changed'
-            && method !== 'notifications/resources/list_changed'
-            && method !== 'notifications/prompts/list_changed') {
-            return;
-        }
-
-        const serverId = info.config.id;
-        // 合并通知风暴：同一 server 已有在途刷新链时不追加链节（链长有上限），仅置
-        // refreshPending 标记，由链尾补刷一次，避免 list_changed 通知风暴下链无限增长。
-        // 旧代际残留链（disconnect 后未及清理）不合并：等待其结束后走新链，防止通知丢失。
-        // 等待结束后循环重查 refreshChains：并发等待同一条旧链的多个新代际通知，若各自
-        // 直接落穿建链，后建链会覆盖先建链的注册 → 双链并发刷新（旧结果覆盖新结果）。
-        for (;;) {
-            const queued = this.refreshChains.get(serverId);
-            if (!queued) {
-                break;
-            }
-            if (queued.generation === generation) {
-                this.refreshPending.set(serverId, true);
-                await queued.promise;
-                // 链已结束且消费了 pending（补刷已发生）：本次通知已被覆盖；
-                // pending 仍为 true（链结束前未及消费的极端时序）：走新链补刷，确保不丢
-                if (this.refreshPending.get(serverId) !== true) {
-                    return;
-                }
-                this.refreshPending.set(serverId, false);
-                // 已结束链未消费 pending：需自建新链补刷（注册会覆盖已结束的旧链，旧注册者
-                // 的比较式清理不会误删新链），无需继续循环等待
-                break;
-            }
-            // 代际不匹配（旧链残留或等待期间其他通知注册的新链）：等待其结束后重查，
-            // 期间注册的新链会被继续等待合并，避免双链并发刷新
-            await queued.promise;
-        }
-
-        // 执行刷新；执行期间合并进来的通知（pending）触发链尾补刷
-        this.refreshPending.set(serverId, false);
-        const chain = (async () => {
-            for (;;) {
-                // 排队期间可能已 disconnect/重连：代际已变则跳过本次刷新
-                if (!this.isCurrentGeneration(serverId, generation)) {
-                    return;
-                }
-
-                try {
-                    await client.refreshLists();
-                } catch (error) {
-                    // 刷新失败仅记日志，不重连
-                    console.error(`[MCP] Failed to refresh lists for ${serverId} after ${method}:`, error);
-                    return;
-                }
-
-                // 写入前重查代际：await 期间可能已 disconnect/重连，
-                // 不得用旧 client 的空列表覆盖新连接的能力缓存
-                if (!this.isCurrentGeneration(serverId, generation)) {
-                    return;
-                }
-
-                // 重建能力缓存：下一次 getAllTools/getAllResources/getAllPrompts 使用新数据
-                info.capabilities = {
-                    tools: client.getTools().map(t => ({
-                        name: t.name,
-                        description: t.description,
-                        inputSchema: t.inputSchema
-                    })),
-                    resources: client.getResources().map(r => ({
-                        uri: r.uri,
-                        name: r.name,
-                        description: r.description,
-                        mimeType: r.mimeType
-                    })),
-                    prompts: client.getPrompts().map(p => ({
-                        name: p.name,
-                        description: p.description,
-                        arguments: p.arguments
-                    }))
-                };
-
-                this.emitEvent({
-                    type: 'server:capabilities_updated',
-                    serverId,
-                    data: { method },
-                    timestamp: Date.now()
-                });
-
-                // 执行期间有合并进来的通知：补刷一次
-                if (this.refreshPending.get(serverId) !== true) {
-                    return;
-                }
-                this.refreshPending.set(serverId, false);
-            }
-        })();
-        // 链尾兜底：异常不得让刷新链断裂，也不得产生未处理的 rejection（监听器无 await 方）
-        const safeChain = chain.catch(error => {
-            console.error(`[MCP] Unexpected error during list refresh for ${serverId}:`, error);
-        });
-        this.refreshChains.set(serverId, { promise: safeChain, generation });
-        try {
-            await safeChain;
-        } finally {
-            // 只清理自己注册的链，避免误删并发注册的新链
-            if (this.refreshChains.get(serverId)?.promise === safeChain) {
-                this.refreshChains.delete(serverId);
-            }
-        }
-    }
-
-    /**
-     * 执行工具调用
-     */
-    private async performToolCall(
-        info: McpServerInfo,
-        request: McpToolCallRequest
-    ): Promise<McpToolCallResult> {
-        const client = this.clients.get(info.config.id);
-        if (!client) {
-            return {
-                success: false,
-                error: t('modules.mcp.errors.clientNotConnected')
-            };
-        }
-
-        // 调用前校验工具存在性：服务器声明了工具列表（非空）时，未知工具名直接失败，
-        // 避免把过期缓存/拼写错误中的工具名发给服务器（服务器端错误文案通常不直观）。
-        // 列表为空（未声明或未拉到）时不拦截，保持原有透传行为。
-        if (Array.isArray(info.capabilities?.tools) && info.capabilities.tools.length > 0) {
-            const tool = info.capabilities.tools.find(t => t.name === request.toolName);
-            if (!tool) {
-                return {
-                    success: false,
-                    error: `Tool "${request.toolName}" not found on MCP server "${info.config.name}"`
-                };
-            }
-        }
-        
-        try {
-            const result = await client.callTool(request.toolName, request.arguments, request.signal);
-            return {
-                success: !result.isError,
-                // 透传 uri：McpToolCallResult.content 类型契约声明了 uri?（types.ts），
-                // 服务器返回 resource 类型内容时携带的 uri 不能在此被丢弃
-                content: (result.content || []).map(c => ({
-                    type: c.type as 'text' | 'image' | 'resource',
-                    text: c.text,
-                    data: c.data,
-                    mimeType: c.mimeType,
-                    uri: c.uri
-                })),
-                isError: result.isError
-            };
-        } catch (error) {
-            return {
-                success: false,
-                error: error instanceof Error ? error.message : t('modules.mcp.errors.toolCallFailed')
-            };
-        }
-    }
-
-    /**
-     * 执行资源读取
-     */
-    private async performResourceRead(
-        info: McpServerInfo,
-        request: McpResourceReadRequest
-    ): Promise<McpResourceContent | null> {
-        const client = this.clients.get(info.config.id);
-        if (!client) {
-            throw new Error(t('modules.mcp.errors.clientNotConnected'));
-        }
-        
-        const result = await client.readResource(request.uri, request.signal);
-        const contents = result.contents || [];
-        if (contents.length === 0) {
-            return null;
-        }
-        
-        // 返回全部内容：多段文本聚合为一段（按换行连接），避免只取 contents[0]
-        // 丢失服务器返回的其余内容；无文本内容（如纯 blob）时退回首个内容的原始字段。
-        // uri 不能只取 first.uri：首段可能是 blob、文本来自后续段（来源错标），或
-        // 多段文本来源不同（静默丢弃）。各文本段 uri 一致时直接采用；不一致时按段
-        // 以 "[uri] " 前缀标注进聚合文本（结果类型只支持单一 uri，无法逐一表达）。
-        const first = contents[0];
-        const textContents = contents.filter(c => typeof c.text === 'string');
-        const textUris = Array.from(new Set(textContents.map(c => c.uri)));
-        const singleUri = textUris.length === 1;
-        return {
-            uri: singleUri ? textUris[0] : first.uri,
-            mimeType: first.mimeType,
-            text: textContents.length > 0
-                ? textContents.map(c => (singleUri ? c.text as string : `[${c.uri}] ${c.text as string}`)).join('\n')
-                : first.text,
-            blob: first.blob
-        };
-    }
-
-    /**
-     * 执行提示获取
-     */
-    private async performPromptGet(
-        info: McpServerInfo,
-        request: McpPromptGetRequest
-    ): Promise<McpPromptMessage[]> {
-        const client = this.clients.get(info.config.id);
-        if (!client) {
-            throw new Error(t('modules.mcp.errors.clientNotConnected'));
-        }
-        
-        const result = await client.getPrompt(request.promptName, request.arguments, request.signal);
-        return result.messages.map(m => ({
-            role: m.role as 'user' | 'assistant',
-            content: {
-                type: m.content.type as 'text' | 'image' | 'resource',
-                text: m.content.text
-            }
-        }));
-    }
 }

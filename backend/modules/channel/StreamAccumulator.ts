@@ -9,13 +9,13 @@ import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../
 import type { StreamChunk, StreamUsageMetadata } from './types';
 import type { ToolMode } from '../config';
 import { IncrementalPromptToolParser } from '../../core/parsers/promptToolParser';
-
-interface BuildContentOptions {
-    parsePartialArgs: boolean;
-    includeInternalFunctionCallFields: boolean;
-    warnOnParseFailure: boolean;
-    finalizeFunctionCallIndex?: number;
-}
+import {
+    buildContentFromState,
+    tryParseFunctionCallArgs,
+    type BuildContentOptions
+} from './streamAccumulator/streamContentBuilder';
+import { mergeUsageMetadata } from './streamAccumulator/streamUsageMerger';
+import { collectNewCompletedFunctionCalls } from './streamAccumulator/streamFunctionCallReporter';
 
 export interface StreamingContentOptions {
     includeInternalFields?: boolean;
@@ -139,55 +139,9 @@ export class StreamAccumulator {
      * 这里需要做增量合并，避免后到达的字段覆盖先到达的字段。
      */
     private mergeUsageMetadata(usage: StreamUsageMetadata): void {
-        const previous = this.usageMetadata;
-
-        if (usage.totalTokenCount !== undefined) {
-            this.hasProviderTotalTokenCount = true;
-        }
-
-        const merged: UsageMetadata = {
-            promptTokenCount: usage.promptTokenCount ?? previous?.promptTokenCount,
-            candidatesTokenCount: usage.candidatesTokenCount ?? previous?.candidatesTokenCount,
-            totalTokenCount: usage.totalTokenCount ?? previous?.totalTokenCount,
-            cachedContentTokenCount: usage.cachedContentTokenCount ?? previous?.cachedContentTokenCount,
-            cacheCreationTokenCount: usage.cacheCreationTokenCount ?? previous?.cacheCreationTokenCount,
-            cacheReadTokenCount: usage.cacheReadTokenCount ?? previous?.cacheReadTokenCount,
-            thoughtsTokenCount: usage.thoughtsTokenCount ?? previous?.thoughtsTokenCount,
-            promptTokensDetails: usage.promptTokensDetails ?? previous?.promptTokensDetails,
-            candidatesTokensDetails: usage.candidatesTokensDetails ?? previous?.candidatesTokensDetails
-        };
-
-        const hasAnyTokenField = merged.promptTokenCount !== undefined ||
-            merged.candidatesTokenCount !== undefined ||
-            merged.thoughtsTokenCount !== undefined;
-
-        // 某些流式渠道（如 Anthropic）不会直接给 totalTokenCount。
-        // 当未收到过渠道原生total 时，每次合并后都用已知字段重算，
-        // 避免出现先收到prompt，后收到 candidates 时total 仍停留在 prompt 的问题。
-        if (hasAnyTokenField) {
-            const prompt = merged.promptTokenCount ?? 0;
-            const candidates = merged.candidatesTokenCount ?? 0;
-            const thoughts = merged.thoughtsTokenCount ?? 0;
-
-            if (!this.hasProviderTotalTokenCount) {
-                merged.totalTokenCount = prompt + candidates + thoughts;
-            } else if (usage.totalTokenCount === undefined
-                && usage.candidatesTokenCount !== undefined
-                && previous?.totalTokenCount !== undefined) {
-                // Anthropic：message_start 的 total 只含 input（output 恒 0），
-                // message_delta 只带 output_tokens。若已有原生 total，把新的
-                // candidates 增量合并进去——否则输出 token 从总量中消失，
-                // 下游 ContextTrim/Summarize 的 total−prompt 恒为 0。
-                // 仅当本事件未带 total（即不是代理返回的完整 usage）时走此分支。
-                const prevCandidates = previous.candidatesTokenCount ?? 0;
-                merged.totalTokenCount = previous.totalTokenCount - prevCandidates + usage.candidatesTokenCount;
-            } else if (merged.totalTokenCount === undefined) {
-                // 理论上有原生 total 时不应进入此分支，但为稳健性保底。
-                merged.totalTokenCount = prompt + candidates + thoughts;
-            }
-        }
-
-        this.usageMetadata = merged;
+        const result = mergeUsageMetadata(this.usageMetadata, this.hasProviderTotalTokenCount, usage);
+        this.usageMetadata = result.usageMetadata;
+        this.hasProviderTotalTokenCount = result.hasProviderTotalTokenCount;
     }
 
     /**
@@ -305,50 +259,6 @@ export class StreamAccumulator {
      */
     getProviderType(): 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom' {
         return this.providerType;
-    }
-
-    /**
-     * 解析工具调用参数增量：解析成功时更新 fc.args 并清除预填标记，返回是否成功。
-     *
-     * 预填 input（forced tool use，anthropic content_block_start 携带完整 input）场景：
-     * 后续 input_json_delta 存在两种语义——
-     * - 剩余片段：预填 JSON 去尾闭合符 + 累积片段 = 完整 JSON；
-     * - 完整重放（部分代理行为）：片段自身即完整 JSON。
-     * 两种候选都尝试，任一解析成功即采用，保证预填参数与流式增量不丢不破。
-     */
-    private tryParseFunctionCallArgs(fc: any): boolean {
-        if (!fc.partialArgs || !fc.partialArgs.trim()) {
-            return false;
-        }
-        // 预填 input 已显式提供即参与拼接（含空对象 {}：JSON.stringify({}) = '{}'，
-        // slice(0,-1) 后为 '{'，与剩余片段合并 {"b":2} → '{"b":2}'；空对象 + 完整重放
-        // 场景由候选 2（片段自身）兜底）
-        const prefillJson = fc.prefilledArgs === true
-            && fc.args && typeof fc.args === 'object'
-            ? JSON.stringify(fc.args)
-            : '';
-        // 候选 1（剩余片段）：prefillJson 是完整闭合 JSON（如 {"a":1}），直接拼接增量片段必非法
-        // （闭合 JSON + 片段）；预填参数为对象/数组时去掉尾闭合符再拼接：
-        // {"a":1} + ,"b":2} → {"a":1,"b":2}，数组同理。
-        // 候选 2（完整重放）：片段自身即完整 JSON。
-        const candidates = prefillJson
-            ? [prefillJson.slice(0, -1) + fc.partialArgs, fc.partialArgs]
-            : [fc.partialArgs];
-        for (const candidate of candidates) {
-            try {
-                fc.args = JSON.parse(candidate);
-                // 参数已并入流式增量：预填标记失效，后续按普通累积语义继续
-                fc.prefilledArgs = false;
-                // 清空已消费的增量片段（合并路径 555-568 / 新块路径 578-580 共用此成功点）：
-                // 参数已并入 fc.args，残留 partialArgs 会在下一次合并时追加到已闭合 JSON
-                // 之后（{"a":1} + ,"b":2} 必非法），导致后续增量永远无法解析并无限累积
-                fc.partialArgs = '';
-                return true;
-            } catch {
-                // JSON 尚未完整，继续等待更多增量
-            }
-        }
-        return false;
     }
 
     /**
@@ -568,7 +478,7 @@ export class StreamAccumulator {
                             if (shouldParseNow && lastFc.partialArgs.trim()) {
                                 // 解析成功意味着工具调用“完成”，属于投影可见变化
                                 //（预填 input 场景按「预填 + 增量 / 增量自身」两种语义解析）
-                                if (this.tryParseFunctionCallArgs(lastFc)) {
+                                if (tryParseFunctionCallArgs(lastFc)) {
                                     visibleFieldChanged = true;
                                 }
                             }
@@ -583,7 +493,7 @@ export class StreamAccumulator {
 
                 // 找不到可合并块时作为新块添加；Responses 半截 JSON 只在 finalArgs 边界解析。
                 if (fc.partialArgs && (this.providerType !== 'openai-responses' || fc.finalArgs === true)) {
-                    this.tryParseFunctionCallArgs(fc);
+                    tryParseFunctionCallArgs(fc);
                 }
 
                 // 构建新Part，但排除 API 原始格式的thoughtSignature（单数）
@@ -682,114 +592,19 @@ export class StreamAccumulator {
      * streaming snapshot 只做轻量投影；最终写历史或工具执行前才解析partialArgs 并清理内部字段。
      */
     private buildContent(options: BuildContentOptions): Content {
-        let parts = this.parts
-            .map(p => {
-                const part = { ...p };
-                if (part.functionCall) {
-                    const fc = { ...part.functionCall } as any;
-                    const shouldFinalizeFunctionCall =
-                        typeof options.finalizeFunctionCallIndex === 'number' &&
-                        typeof fc.index === 'number' &&
-                        fc.index === options.finalizeFunctionCallIndex;
-                    // 预填 input（prefilledArgs）时 args 非空但可能不完整（增量尚未并入），
-                    // 同样走「预填 + 增量 / 增量自身」语义解析（见 tryParseFunctionCallArgs）
-                    if ((options.parsePartialArgs || shouldFinalizeFunctionCall) && fc.partialArgs &&
-                        ((!fc.args || Object.keys(fc.args).length === 0) || fc.prefilledArgs === true)) {
-                        if (!this.tryParseFunctionCallArgs(fc) && options.warnOnParseFailure) {
-                            const fnName = fc.name || 'unknown';
-                            const preview = String(fc.partialArgs || '').slice(0, 200);
-                            console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
-                        }
-                    }
-
-                    if (!options.includeInternalFunctionCallFields || shouldFinalizeFunctionCall) {
-                        delete fc.index;
-                        delete fc.partialArgs;
-                        // itemId/finalArgs 只是流式合并字段，最终Content 只保留跨 provider 通用协议。
-                        delete fc.itemId;
-                        delete fc.finalArgs;
-                        delete fc.prefilledArgs;
-                    }
-                    part.functionCall = fc;
-                }
-                return part;
-            })
-            .filter(p => {
-                // 保留非文本part（functionCall 等）
-                if (!('text' in p) || p.functionCall) return true;
-                // 过滤空文本（但保留有意义的内容）
-                if ('text' in p && p.text === '' && !p.thought) return false;
-                return true;
-            });
-
-        // 添加思考签名到 parts 中
-        // 如果有收集到的思考签名，需要作为单独的 part 添加
-        // 这样可以在后续发送给 API 时正确传递签名
-        if (Object.keys(this.thoughtSignatures).length > 0) {
-            // 检查parts 中是否已经有包含 thoughtSignatures 的part
-            const hasSignaturePart = parts.some(p => p.thoughtSignatures);
-            if (!hasSignaturePart) {
-                // 添加一个包含所有格式签名的 part
-                parts.push({ thoughtSignatures: { ...this.thoughtSignatures } });
-            }
-        }
-
-        const content: Content = {
-            role: 'model',
-            parts
-        };
-
-        // 添加模型版本
-        if (this.modelVersion) {
-            content.modelVersion = this.modelVersion;
-        }
-
-        // 添加完整的usageMetadata
-        if (this.usageMetadata) {
-            content.usageMetadata = { ...this.usageMetadata };
-        }
-
-        // 添加思考开始时间（用于前端实时显示）
-        if (this.thinkingStartTime !== undefined) {
-            content.thinkingStartTime = this.thinkingStartTime;
-        }
-
-        // 添加思考持续时间
-        // 如果有思考内容但没有普通文本，在获取Content 时计算最终持续时间
-        if (this.thinkingStartTime !== undefined) {
-            if (this.thinkingDuration !== undefined) {
-                content.thinkingDuration = this.thinkingDuration;
-            } else if (!this.hasReceivedNormalText) {
-                // 消息只有思考内容没有普通文本，使用当前时间计算
-                content.thinkingDuration = Date.now() - this.thinkingStartTime;
-            }
-        }
-
-        // 添加流式统计信息
-        content.chunkCount = this.chunkCount;
-        if (this.firstChunkTime !== undefined) {
-            content.firstChunkTime = this.firstChunkTime;
-        }
-
-        // 首字延迟（TTFT）：第一个流式块到达时间 - 请求开始时间
-        // 用于前端展示首字等待耗时，并让 Token 速率分母剥离首字等待窗口（避免首字等待拉低速率）
-        if (this.firstChunkTime !== undefined && this.requestStartTime !== undefined) {
-            const ttft = this.firstChunkTime - this.requestStartTime;
-            if (ttft >= 0) {
-                content.ttft = ttft;
-            }
-        }
-
-        // 修改原因：旧 streamDuration 只覆盖首块到末块窗口，上游攒包后会让 token 速度分母过小。
-        // 修改方式：用同一个requestStartTime -> lastChunkTime / Date.now() 局部值同时写入responseDuration 与streamDuration。
-        // 修改目的：字面修复streamDuration 为完整请求到流结束耗时，并避免两个字段因重复采样产生毫秒级抖动。
-        if (this.requestStartTime !== undefined) {
-            const completeResponseDuration = (this.lastChunkTime ?? Date.now()) - this.requestStartTime;
-            content.responseDuration = completeResponseDuration;
-            content.streamDuration = completeResponseDuration;
-        }
-
-        return content;
+        return buildContentFromState({
+            parts: this.parts,
+            thoughtSignatures: this.thoughtSignatures,
+            modelVersion: this.modelVersion,
+            usageMetadata: this.usageMetadata,
+            thinkingStartTime: this.thinkingStartTime,
+            thinkingDuration: this.thinkingDuration,
+            hasReceivedNormalText: this.hasReceivedNormalText,
+            chunkCount: this.chunkCount,
+            firstChunkTime: this.firstChunkTime,
+            requestStartTime: this.requestStartTime,
+            lastChunkTime: this.lastChunkTime
+        }, options);
     }
 
     /** 获取流式校准快照；保留内部合并字段（index/itemId），便于前端通过 index 匹配工具调用。
@@ -1094,45 +909,6 @@ export class StreamAccumulator {
         id: string;
         args: Record<string, unknown>;
     }> {
-        const result: Array<{ index: number; name: string; id: string; args: Record<string, unknown> }> = [];
-
-        for (let i = 0; i < this.parts.length; i++) {
-            const part = this.parts[i];
-            if (!part.functionCall) continue;
-
-            const fc = part.functionCall as any;
-            // "完成"判定：args 必须包含至少一个键，排除初始占位空壳{}。
-            //
-            // Anthropic content_block_start 发送input: {}，formatter 存为
-            // args: {}；OpenAI 首个 tool_call chunk 也设 args: {}。
-            // 真正的参数通过后续增量（input_json_delta / arguments delta）
-            // 拼接到partialArgs，JSON.parse 成功后才更新 args。
-            // 仅检查args 是否为对象会在初始阶段误判为完成，导致以空参数执行。
-            //
-            // 只有 partialArgs 被成功JSON.parse 后，args 才会含有实际的键。
-            const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
-            // 所有 provider 都要求稳定 id 才允许提前执行：
-            // - 常规路径下 functionCall 在入列时就会生成 id，此条件恒满足；
-            // - openai-responses 的占位调用要等官方 call_id 到达；
-            // - 没有稳定 id 的调用交给最终统一执行路径兜底，
-            //   避免 id 后补时与提前执行结果对不上号导致重复执行。
-            const hasStableToolCallId = typeof fc.id === 'string' && fc.id.trim().length > 0;
-            if (!hasRealArgs || !fc.name || !hasStableToolCallId) continue;
-            // 预填 input（forced tool use）的调用：流式增量可能仍在到达（prefilledArgs
-            // 直到增量并入才清除），未完成前不提前上报执行，避免以预填的部分参数执行工具
-            if (fc.prefilledArgs === true) continue;
-            if (this.reportedFunctionCallIds.has(fc.id)) continue;
-
-            this.reportedFunctionCallIds.add(fc.id);
-            result.push({
-                index: i,
-                name: fc.name,
-                id: fc.id,
-                // 返回浅拷贝：避免调用方修改污染累加器内部 parts 的 args 引用
-                args: { ...fc.args },
-            });
-        }
-
-        return result;
+        return collectNewCompletedFunctionCalls(this.parts, this.reportedFunctionCallIds);
     }
 }

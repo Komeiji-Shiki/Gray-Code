@@ -30,7 +30,6 @@ import MemorySettings from './MemorySettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
 import SoundSettings from './SoundSettings.vue'
 import UsageTimeSection from '../usage/UsageTimeSection.vue'
-import type { UsageStatsResult, UsageTimeRange } from '@/types/usage'
 import { CustomScrollbar } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
@@ -41,6 +40,11 @@ import GeneralSettingsSection from './panel/GeneralSettingsSection.vue'
 import UsageSummaryCard from './panel/UsageSummaryCard.vue'
 import StorageMigrateDialog from './panel/StorageMigrateDialog.vue'
 import type { TabItem, SearchIndexEntry } from './panel/types'
+import { useStoragePathSettings } from '@/composables/useStoragePathSettings'
+import { useUpdateSettings } from '@/composables/useUpdateSettings'
+import { useSettingsImportExport } from '@/composables/useSettingsImportExport'
+import { useUsageStats } from '@/composables/useUsageStats'
+import { useOneShotTimer } from '@/composables/useOneShotTimer'
 
 const settingsStore = useSettingsStore()
 const { t, setLanguage } = useI18n()
@@ -826,23 +830,8 @@ function openSearchResult(entry: SearchIndexEntry) {
 onUnmounted(() => {
   // 先置卸载标记：nextTick 回调若在卸载后执行，直接跳过（不再新建 rAF / searchFlashTimer）
   isUnmounted = true
-  // 统一清理未触发的定时器，避免卸载后仍修改状态
-  if (validateDebounceTimer) {
-    clearTimeout(validateDebounceTimer)
-    validateDebounceTimer = null
-  }
-  if (storageMessageTimer) {
-    clearTimeout(storageMessageTimer)
-    storageMessageTimer = null
-  }
-  if (proxySaveMessageTimer) {
-    clearTimeout(proxySaveMessageTimer)
-    proxySaveMessageTimer = null
-  }
-  if (importExportMessageTimer) {
-    clearTimeout(importExportMessageTimer)
-    importExportMessageTimer = null
-  }
+  // 仅清理仍由本组件持有的搜索结果闪烁定时器；
+  // 存储/更新/导入导出/用量区块的定时器由各自 composable（useOneShotTimer / useDeferredSave）在卸载时自行清理。
   if (searchFlashTimer) {
     clearTimeout(searchFlashTimer)
     searchFlashTimer = null
@@ -865,29 +854,60 @@ const saveMessage = ref('')
 // 保存消息类型（避免用文案字符串比较判断样式）
 const saveMessageType = ref<'success' | 'error'>('success')
 
-// 消息自动消失定时器（组件卸载时统一清理，避免卸载后仍修改状态）
-let storageMessageTimer: ReturnType<typeof setTimeout> | null = null
-let proxySaveMessageTimer: ReturnType<typeof setTimeout> | null = null
-let importExportMessageTimer: ReturnType<typeof setTimeout> | null = null
+// 保存消息自动消失定时器（组件卸载时由 useOneShotTimer 统一清理）
+const proxySaveMessageTimer = useOneShotTimer()
 // 搜索结果跳转闪烁高亮清除定时器（组件卸载时统一清理）
 let searchFlashTimer: ReturnType<typeof setTimeout> | null = null
 // 组件卸载标记（仿 CustomScrollbar.vue）：nextTick 回调在卸载后执行时据此跳过
 let isUnmounted = false
-// 存储路径设置
-const storageSettings = reactive({
-  currentPath: '',
-  defaultPath: '',
-  customPath: '',
-  isCustom: false
-})
-const isValidatingPath = ref(false)
-const pathValidationResult = ref<{ valid: boolean; message?: string } | null>(null)
-const isMigrating = ref(false)
-const showMigrateDialog = ref(false)
-const storageMessage = ref('')
-const storageMessageType = ref<'success' | 'error' | 'info'>('success')
-const needsReload = ref(false) // 迁移完成后需要重新加载
-let pathValidationRequestId = 0
+
+// ========== 区块级 composable（状态与动作下放，本组件只保留编排） ==========
+const {
+  storageSettings,
+  isValidatingPath,
+  pathValidationResult,
+  isMigrating,
+  showMigrateDialog,
+  storageMessage,
+  storageMessageType,
+  needsReload,
+  loadStorageConfig,
+  pickStoragePath,
+  openStoragePathInExplorer,
+  applyStoragePath,
+  resetStoragePath,
+  executeMigration,
+  reloadWindow
+} = useStoragePathSettings()
+
+const {
+  checkUpdatesEnabled,
+  updateChannel,
+  isUpdateChecking,
+  isUpdating,
+  updateCheckResult,
+  saveCheckUpdates,
+  saveUpdateChannel,
+  checkUpdateNow,
+  updateNow
+} = useUpdateSettings()
+
+const {
+  isExporting,
+  isImporting,
+  importExportMessage,
+  importExportMessageType,
+  handleExportSettings,
+  handleImportSettings
+} = useSettingsImportExport()
+
+const {
+  usageStats,
+  usageRange,
+  usageLoading,
+  usageLoadError,
+  loadUsageStats
+} = useUsageStats()
 
 // 加载设置
 async function loadSettings() {
@@ -937,220 +957,6 @@ async function loadAppInfo() {
   }
 }
 
-// 加载存储路径配置
-async function loadStorageConfig() {
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.getConfig'], {})
-    if (response) {
-      storageSettings.currentPath = response.effectivePath || ''
-      storageSettings.defaultPath = response.defaultPath || ''
-      storageSettings.customPath = response.config?.customDataPath || ''
-      storageSettings.isCustom = !!response.config?.customDataPath
-    }
-  } catch (error) {
-    console.error('Failed to load storage config:', error)
-  }
-}
-
-// 打开系统文件夹选择器
-async function pickStoragePath() {
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.selectFolder'], {}, { timeoutMs: 120000 })
-    if (response?.path) {
-      storageSettings.customPath = response.path
-    }
-  } catch (error: any) {
-    storageMessage.value = error?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', '')
-    storageMessageType.value = 'error'
-  }
-}
-
-// 在文件资源管理器中打开存储目录
-async function openStoragePathInExplorer() {
-  try {
-    await sendToExtension(MESSAGE_NAMES['storagePath.openInExplorer'], {
-      path: storageSettings.currentPath
-    })
-  } catch (error: any) {
-    storageMessage.value = error?.message || t('components.settings.storageSettings.notifications.openInExplorerFailed').replace('{error}', '')
-    storageMessageType.value = 'error'
-  }
-}
-
-// 验证路径
-async function validateStoragePath(path: string) {
-  const normalizedPath = path.trim()
-  const requestId = ++pathValidationRequestId
-
-  if (!normalizedPath) {
-    pathValidationResult.value = null
-    isValidatingPath.value = false
-    return
-  }
-
-  isValidatingPath.value = true
-  pathValidationResult.value = null
-
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.validate'], { path: normalizedPath })
-    if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
-      pathValidationResult.value = {
-        valid: response?.valid ?? false,
-        message: response?.error
-      }
-    }
-  } catch (error: any) {
-    if (requestId === pathValidationRequestId && storageSettings.customPath.trim() === normalizedPath) {
-      pathValidationResult.value = {
-        valid: false,
-        message: error?.message || 'Validation failed'
-      }
-    }
-  } finally {
-    if (requestId === pathValidationRequestId) {
-      isValidatingPath.value = false
-    }
-  }
-}
-
-// 防抖验证
-let validateDebounceTimer: ReturnType<typeof setTimeout> | null = null
-function debouncedValidatePath(path: string) {
-  if (validateDebounceTimer) {
-    clearTimeout(validateDebounceTimer)
-  }
-  pathValidationRequestId++
-  isValidatingPath.value = path.trim() !== ''
-  pathValidationResult.value = null
-  validateDebounceTimer = setTimeout(() => {
-    validateStoragePath(path)
-  }, 500)
-}
-
-// 监听自定义路径变化
-watch(() => storageSettings.customPath, (newPath) => {
-  debouncedValidatePath(newPath)
-})
-
-// 应用存储路径（迁移数据到新路径）
-async function applyStoragePath() {
-  if (isMigrating.value) return
-
-  const newPath = storageSettings.customPath.trim()
-
-  if (!newPath) {
-    storageMessage.value = t('components.settings.storageSettings.notifications.applyEmptyHint')
-    storageMessageType.value = 'info'
-    return
-  }
-
-  if (!pathValidationResult.value?.valid) {
-    // 路径验证未通过
-    storageMessage.value = pathValidationResult.value?.message || t('components.settings.storageSettings.notifications.validationFailed').replace('{error}', '')
-    storageMessageType.value = 'error'
-    return
-  }
-  
-  // 使用迁移接口来应用新路径（迁移到新路径）
-  confirmMigrate()
-}
-
-// 重置为默认路径
-async function resetStoragePath() {
-  if (isMigrating.value) return
-
-  if (!storageSettings.isCustom) {
-    // 已经是默认路径，无需重置
-    storageMessage.value = t('components.settings.storageSettings.notifications.alreadyDefault')
-    storageMessageType.value = 'info'
-    return
-  }
-  
-  isMigrating.value = true
-  needsReload.value = false
-  
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.reset'], {})
-    
-    if (response?.success) {
-      storageSettings.customPath = ''
-      pathValidationResult.value = null
-      storageMessage.value = t('components.settings.storageSettings.notifications.migrationSuccess')
-      storageMessageType.value = 'success'
-      needsReload.value = true  // 重置也需要重新加载窗口才能生效
-      await loadStorageConfig()
-    } else {
-      storageMessage.value = response?.error || 'Failed to reset storage path'
-      storageMessageType.value = 'error'
-    }
-  } catch (error: any) {
-    storageMessage.value = error?.message || 'Failed to reset storage path'
-    storageMessageType.value = 'error'
-  } finally {
-    isMigrating.value = false
-  }
-  
-  // 只有非成功消息才自动消失
-  if (!needsReload.value) {
-    if (storageMessageTimer) clearTimeout(storageMessageTimer)
-    storageMessageTimer = setTimeout(() => {
-      storageMessage.value = ''
-    }, 5000)
-  }
-}
-
-// 打开迁移确认对话框
-function confirmMigrate() {
-  showMigrateDialog.value = true
-}
-
-// 执行数据迁移
-async function executeMigration() {
-  if (isMigrating.value) return
-
-  showMigrateDialog.value = false
-  isMigrating.value = true
-  needsReload.value = false
-  
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['storagePath.migrate'], {
-      path: storageSettings.customPath.trim()
-    })
-    
-    if (response?.success) {
-      storageMessage.value = t('components.settings.storageSettings.notifications.migrationSuccess')
-      storageMessageType.value = 'success'
-      needsReload.value = true  // 迁移成功，需要重新加载
-      await loadStorageConfig()
-    } else {
-      const errorMsg = response?.error || 'Migration failed'
-      storageMessage.value = t('components.settings.storageSettings.notifications.migrationFailed').replace('{error}', errorMsg)
-      storageMessageType.value = 'error'
-    }
-  } catch (error: any) {
-    storageMessage.value = t('components.settings.storageSettings.notifications.migrationFailed').replace('{error}', error?.message || 'Unknown error')
-    storageMessageType.value = 'error'
-  } finally {
-    isMigrating.value = false
-  }
-  
-  // 只有非成功消息才自动消失
-  if (!needsReload.value) {
-    if (storageMessageTimer) clearTimeout(storageMessageTimer)
-    storageMessageTimer = setTimeout(() => {
-      storageMessage.value = ''
-    }, 5000)
-  }
-}
-
-// 重新加载窗口
-async function reloadWindow() {
-  try {
-    await sendToExtension(MESSAGE_NAMES.reloadWindow, {})
-  } catch (error) {
-    console.error('Failed to reload window:', error)
-  }
-}
 
 // 保存代理设置
 async function saveProxySettings() {
@@ -1166,10 +972,9 @@ async function saveProxySettings() {
     })
     saveMessage.value = t('components.settings.settingsPanel.proxy.saveSuccess')
     saveMessageType.value = 'success'
-    if (proxySaveMessageTimer) clearTimeout(proxySaveMessageTimer)
-    proxySaveMessageTimer = setTimeout(() => {
+    proxySaveMessageTimer.schedule(2000, () => {
       saveMessage.value = ''
-    }, 2000)
+    })
   } catch (error) {
     console.error('Failed to save proxy settings:', error)
     saveMessage.value = t('components.settings.settingsPanel.proxy.saveFailed')
@@ -1179,103 +984,6 @@ async function saveProxySettings() {
   }
 }
 
-// ========== 自动更新设置 ==========
-
-const checkUpdatesEnabled = ref(true)
-const updateChannel = ref<'stable' | 'nightly'>('stable')
-const isUpdateChecking = ref(false)
-const isUpdating = ref(false)
-const updateCheckResult = ref<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
-
-// 保存自动检查开关
-async function saveCheckUpdates(value: boolean) {
-  const previous = checkUpdatesEnabled.value
-  checkUpdatesEnabled.value = value
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES.updateSettings, { settings: { checkForUpdates: value } })
-    // SettingsHandler.updateSettings 失败时 resolve { success: false }（不抛错），
-    // 必须显式检查并回滚 UI 状态，否则界面显示已切换而实际未保存（对比 saveUpdateChannel）
-    if (response?.success === false) {
-      checkUpdatesEnabled.value = previous
-      console.error('Failed to save update check setting:', response?.error?.message || response?.error)
-    }
-  } catch (error) {
-    checkUpdatesEnabled.value = previous
-    console.error('Failed to save update check setting:', error)
-  }
-}
-
-// 保存更新渠道（stable 正式版 / nightly 每日构建）
-async function saveUpdateChannel(value: string) {
-  const channel = value === 'nightly' ? 'nightly' : 'stable'
-  const previous = updateChannel.value
-  updateChannel.value = channel
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES.updateSettings, { settings: { updateChannel: channel } })
-    // SettingsHandler.updateSettings 失败时 resolve { success: false }（不抛错，内部 try/catch 捕获），
-    // 必须显式检查并回滚 UI 选择，否则界面显示已切换而实际未保存（静默丢失用户操作）。
-    if (response?.success === false) {
-      updateChannel.value = previous
-      console.error('Failed to save update channel setting:', response?.error?.message || response?.error)
-    }
-  } catch (error) {
-    updateChannel.value = previous
-    console.error('Failed to save update channel setting:', error)
-  }
-}
-
-// 立即检查更新（忽略 24h 节流）
-async function checkUpdateNow() {
-  if (isUpdateChecking.value) return
-  isUpdateChecking.value = true
-  updateCheckResult.value = null
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES.checkUpdateNow, {})
-    const status = response?.status
-    if (!status) {
-      updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
-    } else if (status.state === 'updateAvailable') {
-      updateCheckResult.value = {
-        type: 'success',
-        text: t('components.settings.settingsPanel.update.updateAvailable').replace('{version}', status.update?.version || '')
-      }
-    } else if (status.state === 'upToDate') {
-      updateCheckResult.value = { type: 'success', text: t('components.settings.settingsPanel.update.upToDate') }
-    } else if (status.state === 'disabled') {
-      updateCheckResult.value = { type: 'info', text: t('components.settings.settingsPanel.update.disabledHint') }
-    } else if (status.state === 'error') {
-      updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
-    }
-  } catch (error) {
-    console.error('Failed to check update:', error)
-    updateCheckResult.value = { type: 'error', text: t('components.settings.settingsPanel.update.error') }
-  } finally {
-    isUpdateChecking.value = false
-  }
-}
-
-// 一键更新：立即检查，有新版本自动下载并安装（安装完成后后端提示重启窗口，用户只需重启）
-async function updateNow() {
-  if (isUpdating.value || isUpdateChecking.value) return
-  isUpdating.value = true
-  updateCheckResult.value = null
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES.updateNow, {})
-    if (response?.alreadyUpToDate) {
-      updateCheckResult.value = { type: 'success', text: t('components.settings.settingsPanel.update.upToDate') }
-    } else if (response?.version) {
-      updateCheckResult.value = {
-        type: 'success',
-        text: t('components.settings.settingsPanel.update.installedHint').replace('{version}', response.version)
-      }
-    }
-  } catch (error: any) {
-    console.error('Failed to update now:', error)
-    updateCheckResult.value = { type: 'error', text: error?.message || t('components.settings.settingsPanel.update.error') }
-  } finally {
-    isUpdating.value = false
-  }
-}
 
 // 语言值运行时守卫：只接受 SUPPORTED_LANGUAGES 中的合法值，类型系统据此收窄到 SupportedLanguage
 function isSupportedLanguage(value: string): value is SupportedLanguage {
@@ -1308,123 +1016,7 @@ async function updateLanguage(lang: string) {
   }
 }
 
-// ========== 设置导入/导出 ==========
-const isExporting = ref(false)
-const isImporting = ref(false)
-const importExportMessage = ref('')
-const importExportMessageType = ref<'success' | 'error'>('success')
 
-async function handleExportSettings() {
-  isExporting.value = true
-  importExportMessage.value = ''
-  
-  try {
-    const response = await sendToExtension<any>(MESSAGE_NAMES['settings.export'], {})
-    if (response?.success) {
-      importExportMessage.value = t('components.settings.settingsPanel.exportImport.exportSuccess', { path: response.filePath })
-      importExportMessageType.value = 'success'
-    } else if (response?.cancelled) {
-      // 用户取消了，不显示消息
-    } else {
-      importExportMessage.value = t('components.settings.settingsPanel.exportImport.exportFailed')
-      importExportMessageType.value = 'error'
-    }
-  } catch (error: any) {
-    importExportMessage.value = error?.message || t('components.settings.settingsPanel.exportImport.exportFailed')
-    importExportMessageType.value = 'error'
-  } finally {
-    isExporting.value = false
-    if (importExportMessage.value) {
-      if (importExportMessageTimer) clearTimeout(importExportMessageTimer)
-      importExportMessageTimer = setTimeout(() => { importExportMessage.value = '' }, 5000)
-    }
-  }
-}
-
-async function handleImportSettings() {
-  isImporting.value = true
-  importExportMessage.value = ''
-  
-  try {
-    // 先让用户选择导入方式（弹出确认对话框由扩展端处理）
-    // 这里直接调用导入，扩展端会弹出文件选择器和覆盖确认
-    const response = await sendToExtension<any>(MESSAGE_NAMES['settings.import'], { overwrite: false })
-    if (response?.success) {
-      const parts: string[] = []
-      if (response.imported?.vscodeSettings) parts.push(t('components.settings.settingsPanel.exportImport.vscodeSettings'))
-      if (response.imported?.channelConfigs > 0) parts.push(`${response.imported.channelConfigs} ${t('components.settings.settingsPanel.exportImport.channelConfigs')}`)
-      if (response.imported?.mcpServers > 0) parts.push(`${response.imported.mcpServers} ${t('components.settings.settingsPanel.exportImport.mcpServers')}`)
-      if (response.imported?.skills > 0) parts.push(`${response.imported.skills} ${t('components.settings.settingsPanel.exportImport.skills')}`)
-      importExportMessage.value = parts.length > 0
-        ? t('components.settings.settingsPanel.exportImport.importSuccess', { items: parts.join('、') })
-        : t('components.settings.settingsPanel.exportImport.importNoItems')
-      importExportMessageType.value = 'success'
-    } else if (response?.cancelled) {
-      // 用户取消了
-    } else {
-      importExportMessage.value = response?.errors?.join('；') || t('components.settings.settingsPanel.exportImport.importFailed')
-      importExportMessageType.value = 'error'
-    }
-  } catch (error: any) {
-    importExportMessage.value = error?.message || t('components.settings.settingsPanel.exportImport.importFailed')
-    importExportMessageType.value = 'error'
-  } finally {
-    isImporting.value = false
-    if (importExportMessage.value) {
-      if (importExportMessageTimer) clearTimeout(importExportMessageTimer)
-      importExportMessageTimer = setTimeout(() => { importExportMessage.value = '' }, 8000)
-    }
-  }
-}
-
-// ========== 用量统计（Token 用量摘要，内嵌于设置面板） ==========
-const usageStats = ref<UsageStatsResult | null>(null)
-const usageRange = ref<UsageTimeRange>('all')
-const usageLoading = ref(false)
-const usageLoadError = ref('')
-// 用量统计请求序号：慢响应到达时若已被更新的请求取代，直接丢弃（仿 validateStoragePath 的 pathValidationRequestId）
-let usageStatsRequestId = 0
-
-/** 快捷范围 → 起始时间（本地 00:00 对齐；'all' 不限制） */
-function usageRangeToStartTime(range: UsageTimeRange): number | undefined {
-  if (range === 'all') return undefined
-  const startOfToday = new Date()
-  startOfToday.setHours(0, 0, 0, 0)
-  if (range === 'today') return startOfToday.getTime()
-  const days = range === '7d' ? 6 : 29
-  return startOfToday.getTime() - days * 24 * 60 * 60 * 1000
-}
-
-async function loadUsageStats() {
-  const requestId = ++usageStatsRequestId
-  usageLoading.value = true
-  usageLoadError.value = ''
-  try {
-    const startTime = usageRangeToStartTime(usageRange.value)
-    const query: Record<string, unknown> = startTime !== undefined ? { startTime } : {}
-    const result = await sendToExtension<UsageStatsResult>(MESSAGE_NAMES['usage.getStats'], query)
-    // 仅采纳最新一次请求的响应：慢响应不得覆盖新范围/新页签触发的加载结果
-    if (requestId === usageStatsRequestId) {
-      usageStats.value = result
-    }
-  } catch (error) {
-    if (requestId === usageStatsRequestId) {
-      usageLoadError.value = error instanceof Error ? error.message : String(error)
-    }
-  } finally {
-    if (requestId === usageStatsRequestId) {
-      usageLoading.value = false
-    }
-  }
-}
-
-// 切换时间范围时重新聚合
-watch(usageRange, () => loadUsageStats())
-
-// 进入“用量统计”页签时刷新数据
-watch(() => settingsStore.activeTab, (tab) => {
-  if (tab === 'usage') loadUsageStats()
-})
 
 // 初始化
 onMounted(() => {

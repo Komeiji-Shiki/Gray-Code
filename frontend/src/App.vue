@@ -5,7 +5,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { onMounted, onBeforeUnmount, ref, watch, reactive } from 'vue'
+import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
@@ -22,14 +22,15 @@ import Splash from './components/Splash.vue'
 import StartupBackdrop from './components/StartupBackdrop.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
-import { useI18n, setLanguage, SUPPORTED_LANGUAGES } from './i18n'
-import type { SupportedLanguage } from './i18n/types'
+import { useSoundCueDispatcher } from './composables/useSoundCueDispatcher'
+import { useFilePickerDialog } from './composables/useFilePickerDialog'
+import { useViewNavigation } from './composables/useViewNavigation'
+import { useLanguageSettings } from './composables/useLanguageSettings'
+import { useI18n } from './i18n'
+import type { Attachment, Message, StreamChunk, VSCodeMessage } from './types'
 import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
-import type { Attachment, Message, StreamChunk, VSCodeMessage } from './types'
-import { configureSoundSettings } from './services/soundCues'
-import type { SoundAgentRole } from './services/soundCues'
-import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
+import { registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 import { preloadChannelConfigs } from './services/channelConfigCache'
@@ -40,8 +41,6 @@ const { t } = useI18n()
 // SubAgent Monitor 复用同一个前端入口，但不应初始化主聊天时间线。
 const isSubAgentMonitor = window.__GRAYCODE_VIEW_MODE === 'subagentMonitor'
 
-// 语言是否已加载
-const languageLoaded = ref(false)
 // 扩展在生成 Webview HTML 时同步注入本次启动偏好；模块执行与 Vue 挂载无需等待 IPC。
 // 浏览器预览等非扩展环境没有注入值时，沿用后端默认的“开启”。
 const startupSplashEnabled = window.__GRAYCODE_STARTUP_SPLASH_ENABLED !== false
@@ -55,190 +54,16 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
 
-// 播放错误提示音：同一错误去重，避免重复触发
-const lastErrorKey = ref('')
 // 从 store 获取原始 Ref（Pinia 会自动解包 ref，storeToRefs 保持 Ref 不被解包）
-const { storeAttachments: storeAttachmentsRef, error: errorRef } = storeToRefs(chatStore)
-watch(errorRef, (err) => {
-  // 仅在错误消息变化时触发一次声音，具体播放由统一控制器处理
-  // 这里不再直接调用 playCue，避免绕过过期丢弃与隐藏态折叠逻辑
-  // createdAt 使用前端接收到错误变化的当前时间即可
+const { storeAttachments: storeAttachmentsRef } = storeToRefs(chatStore)
 
-  if (!err) {
-    lastErrorKey.value = ''
-    return
-  }
-  const key = `${err.code}:${err.message}`
-  if (key === lastErrorKey.value) return
-  lastErrorKey.value = key
-  void handleSoundEvent({ cue: 'error', source: 'chatError', createdAt: Date.now() })
-})
-
-// ============ 声音事件：去重状态 & 辅助函数 ============
-
-/** 已触发过 taskComplete 音效的 toolStatus id 集合（避免同一工具重复播放） */
-const soundPlayedToolIds = reactive(new Set<string>())
-/** 去重集合容量上限：超出后整体清空，防止随会话运行无限增长 */
-const SOUND_PLAYED_TOOL_IDS_LIMIT = 500
-
-/** 记录已播放音效的工具 id（带容量上限，防止无限增长） */
-function addSoundPlayedToolId(toolId: string): void {
-  soundPlayedToolIds.add(toolId)
-  if (soundPlayedToolIds.size > SOUND_PLAYED_TOOL_IDS_LIMIT) {
-    soundPlayedToolIds.clear()
-  }
-}
-
-/** 上一次各对话的 TODO 全部完成状态（false→true 时触发音效） */
-const todoAllDoneByConv = reactive(new Map<string, boolean>())
-
-/** 上一次重试 attempt 编号（同一 attempt 不重复播放） */
-const lastRetryAttempt = ref(-1)
-
-let disposeMessageListener: (() => void) | null = null
-let disposeAudioUnlockHooks: (() => void) | null = null
-let disposeVisibilityHooks: (() => void) | null = null
-let agentStopNotificationController: AgentStopNotificationController | null = null
-
-/**
- * 从 toolStatus chunk 中检测特定工具完成并播放音效：
- * - create_plan 成功 → taskComplete
- * - todo_write / todo_update 导致 TODO 全部完成 → taskComplete
- * - subagents 工具成功/失败 → 子代理独立 taskComplete/taskError（role: subagent）
- */
-function dispatchConversationCue(
-  cue: 'warning' | 'error' | 'taskComplete' | 'taskError',
-  source: 'taskEvent' | 'retryStatus' | 'streamChunk' | 'chatError',
-  conversationId?: string,
-  createdAt?: number,
-  role?: SoundAgentRole
-): void {
-  void handleSoundEvent({
-    cue,
-    source,
-    conversationId,
-    createdAt,
-    role
-  })
-}
-
-function handleSoundForToolStatus(chunk: StreamChunk): void {
-  if (!chunk.toolStatus || !chunk.tool) return
-  const tool = chunk.tool
-
-  // 去重：同一个 tool id 只播放一次
-  if (soundPlayedToolIds.has(tool.id)) return
-
-  // 子代理工具：成功 → 子代理任务完成音；失败 → 子代理任务失败音。
-  // 与主聊天工具的提示音开关分开控制（cues.subagent.*）。
-  if (tool.name === 'subagents') {
-    // 后台模式：工具在启动瞬间即返回 { success: true, data: { background: true } } stub，
-    // 真实完成/失败由 taskEvent（background_subagent）送达——若在这里播会「开始就响一次、
-    // 完成再响一次」。跳过 stub，交给 taskEvent 路径统一播报。
-    const resultData = tool.result?.data as Record<string, unknown> | undefined
-    if (tool.status === 'success' && resultData?.background === true) return
-    if (tool.status === 'success' || tool.status === 'error') {
-      addSoundPlayedToolId(tool.id)
-      dispatchConversationCue(
-        tool.status === 'error' ? 'taskError' : 'taskComplete',
-        'streamChunk',
-        chunk.conversationId,
-        chunk.createdAt,
-        'subagent'
-      )
-    }
-    return
-  }
-
-  if (tool.status !== 'success') return
-
-  // create_plan 成功
-  if (tool.name === 'create_plan') {
-    addSoundPlayedToolId(tool.id)
-    dispatchConversationCue('taskComplete', 'streamChunk', chunk.conversationId, chunk.createdAt)
-    return
-  }
-
-  // todo_write / todo_update 全部完成检测
-  if (tool.name === 'todo_write' || tool.name === 'todo_update') {
-    const result = tool.result as Record<string, unknown> | undefined
-    if (!result) return
-    const data = (result.data ?? result) as Record<string, unknown>
-    const total = typeof data.total === 'number' ? data.total : -1
-    const counts = data.counts as Record<string, number> | undefined
-    if (!counts || total <= 0) return
-
-    const pending = typeof counts.pending === 'number' ? counts.pending : -1
-    const inProgress = typeof counts.in_progress === 'number' ? counts.in_progress : -1
-    const isAllDone = pending === 0 && inProgress === 0
-
-    // 获取对话 id（从 chunk 或当前对话）
-    const convId = chunk.conversationId || chatStore.currentConversationId || '__default'
-    const wasAllDone = todoAllDoneByConv.get(convId) ?? false
-
-    todoAllDoneByConv.set(convId, isAllDone)
-
-    // 容量上限：防止 Map 随会话运行无限增长；清空时保留当前会话条目，避免当前会话重复播放
-    if (todoAllDoneByConv.size > SOUND_PLAYED_TOOL_IDS_LIMIT) {
-      const currentValue = todoAllDoneByConv.get(convId)
-      todoAllDoneByConv.clear()
-      if (currentValue !== undefined) {
-        todoAllDoneByConv.set(convId, currentValue)
-      }
-    }
-
-    // 仅在 false→true 时播放
-    if (isAllDone && !wasAllDone) {
-      soundPlayedToolIds.add(tool.id)
-      dispatchConversationCue('taskComplete', 'streamChunk', convId, chunk.createdAt)
-    }
-  }
-}
-
-/**
- * 处理流式 chunk 中的声音事件
- */
-function handleSoundForStreamChunk(chunk: StreamChunk): void {
-  if (chunk.type === 'complete') {
-    dispatchConversationCue('taskComplete', 'streamChunk', chunk.conversationId, chunk.createdAt)
-  } else if (chunk.type === 'toolStatus') {
-    handleSoundForToolStatus(chunk)
-  }
-}
-
-/**
- * 仅处理“当前已打开标签页”的有效 chunk，支持多标签页并发提示音。
- *
- * 规则：
- * - 对于当前激活会话：使用 chatStore.activeStreamId 过滤迟到 chunk
- * - 对于后台标签页会话：使用会话快照中的 activeStreamId 过滤迟到 chunk
- */
-function shouldHandleSoundForStreamChunk(chunk: StreamChunk): boolean {
-  const convId = chunk.conversationId
-  if (!convId) return false
-
-  const currentConversationId = chatStore.currentConversationId || null
-  const tab = chatStore.openTabs.find(t => t.conversationId === convId)
-
-  // 仅处理“当前会话”或“已打开标签页中的会话”
-  if (!tab && convId !== currentConversationId) return false
-
-  const isCurrentConversation = convId === currentConversationId
-  const snapshotStreamId = tab ? (chatStore.sessionSnapshots.get(tab.id)?.activeStreamId || null) : null
-  // 后台标签页：快照可能因标签页刚打开/流刚启动尚未绑定 streamId 而过期缺失。
-  // 快照缺失时回退到与 store 最新 activeStreamId 宽松匹配，避免漏掉后台标签页的声音提示。
-  const expectedStreamId = isCurrentConversation
-    ? (chatStore.activeStreamId || null)
-    : (snapshotStreamId || chatStore.activeStreamId || null)
-
-  // 没有预期 streamId 时，不接收带 streamId 的 chunk（通常是迟到包）
-  if (chunk.streamId && !expectedStreamId) return false
-
-  // 预期 streamId 不匹配，丢弃
-  if (expectedStreamId && chunk.streamId && chunk.streamId !== expectedStreamId) return false
-
-  return true
-}
+// ============ 声音事件编排 ============
+const {
+  dispatchConversationCue,
+  handleSoundForStreamChunk,
+  shouldHandleSoundForStreamChunk,
+  handleRetryStatus
+} = useSoundCueDispatcher(chatStore)
 
 // 附件管理（传入 store 驱动的 Ref<Attachment[]>，实现对话级隔离）
 const {
@@ -249,17 +74,32 @@ const {
   clearAttachments
 } = useAttachments(storeAttachmentsRef)
 
-// 处理新建对话
-function handleNewChat() {
-  chatStore.createNewConversation()
-  settingsStore.showChat()
-}
+// 文件选择器（动态 input 生命周期管理；选中后走附件上传）
+const { openFilePicker } = useFilePickerDialog({
+  onFiles: async (files) => {
+    try {
+      await addAttachments(files)
+    } catch (err) {
+      console.error('上传附件失败:', err)
+    }
+  }
+})
 
-// 处理新建标签页
-function handleNewTab() {
-  chatStore.createNewTab()
-  settingsStore.showChat()
-}
+// 视图导航与子页面惰性挂载
+const {
+  visitedViews,
+  handleNewChat,
+  handleNewTab,
+  handleShowSettings,
+  handleShowHistory,
+  handleShowUsage
+} = useViewNavigation(chatStore, settingsStore)
+
+// 语言 / 外观 / 声音设置加载
+const { languageLoaded, loadLanguageSettings } = useLanguageSettings(settingsStore)
+
+// 保持模板绑定名不变：模板仍通过 handleAttachFile 触发文件选择
+const handleAttachFile = openFilePicker
 
 // 处理发送消息
 async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }, onSendResult?: (ok: boolean) => void) {
@@ -360,72 +200,6 @@ async function handleCopy(content: string) {
   await copyToClipboard(content)
 }
 
-// 处理附件上传
-async function handleAttachFile() {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.multiple = true
-  input.accept = 'image/*,video/*,audio/*,.pdf,.doc,.docx,.txt'
-
-  // 动态 input 清理：onchange 正常路径在 finally 中执行；用户取消（Esc/取消按钮）时
-  // onchange 不会触发，依赖 'cancel' 事件与失焦定时兜底，避免 input 元素残留在 DOM。
-  // 注意：Chromium 中文件选择框打开瞬间输入框即失焦（blur 早于 change），0ms 定时清理
-  // 会在用户选择完成前执行——因此清理绝不能置空 input.onchange，否则 change 派发到
-  // 无 handler 的游离 input，所选文件被静默丢弃。这里用 cleaned 标志防重复处理；
-  // change 事件在已移除的 input 上仍会正常派发，handler 照常读取 e.target.files。
-  let cleanupTimer: ReturnType<typeof setTimeout> | null = null
-  let cleaned = false
-  const cleanupInput = () => {
-    if (cleaned) return
-    cleaned = true
-    if (cleanupTimer) {
-      clearTimeout(cleanupTimer)
-      cleanupTimer = null
-    }
-    input.remove()
-    // 保留 input.onchange：change 可能晚于失焦清理派发（用户仍在选择文件），
-    // 游离 input 上 change 事件仍会触发本 handler 取回文件；处理完由 handler 自清理。
-    input.oncancel = null
-    input.onblur = null
-  }
-
-  input.onchange = async (e) => {
-    try {
-      const files = Array.from((e.target as HTMLInputElement).files || [])
-      if (files.length > 0) {
-        try {
-          await addAttachments(files)
-        } catch (err) {
-          console.error('上传附件失败:', err)
-        }
-      }
-    } finally {
-      cleanupInput()
-    }
-  }
-
-  // 取消兜底：Chromium/Firefox 在用户取消文件选择时触发 'cancel'（onchange 不触发）
-  input.oncancel = cleanupInput
-  // 失焦兜底：部分环境不派发 'cancel'，对话框关闭后 input 失焦即清理；
-  // 延迟 0ms 确保同一任务内先执行 onchange（选择文件的路径不会漏处理）。
-  // Chromium 中 blur 在选择框打开瞬间即触发，此路径只移除 DOM 与 cancel/blur handler，
-  // 保留 onchange 供用户选择完成后取文件（见 cleanupInput 注释）。
-  input.onblur = () => {
-    if (cleaned) return
-    if (cleanupTimer) clearTimeout(cleanupTimer)
-    cleanupTimer = setTimeout(cleanupInput, 0)
-  }
-
-  document.body.appendChild(input)
-  try {
-    input.click()
-  } catch (err) {
-    // 非用户手势上下文调用 click() 可能被浏览器拒绝：清理并提示，避免 input 泄漏
-    console.error('打开文件选择器失败:', err)
-    cleanupInput()
-  }
-}
-
 // 处理移除附件
 function handleRemoveAttachment(id: string) {
   removeAttachment(id)
@@ -456,82 +230,10 @@ async function handlePasteFiles(files: File[]) {
   }
 }
 
-// 显示设置
-function handleShowSettings() {
-  settingsStore.showSettings()
-}
-
-// 显示历史
-function handleShowHistory() {
-  settingsStore.showHistory()
-}
-
-// 显示用量统计
-function handleShowUsage() {
-  settingsStore.showUsage()
-}
-
-// 子页面惰性挂载标记：首次访问后保持挂载（v-show 切换），保留滚动位置与表单状态
-const visitedViews = reactive({ history: false, usage: false, settings: false })
-watch(() => settingsStore.currentView, (view) => {
-  if (view === 'history') visitedViews.history = true
-  else if (view === 'usage') visitedViews.usage = true
-  else if (view === 'settings') visitedViews.settings = true
-}, { immediate: true })
-
-// 加载语言设置
-function resolveSelectionContextEnabled(appearance: any): boolean {
-  if (!appearance) return true
-  if (typeof appearance.selectionContextEnabled === 'boolean') {
-    return appearance.selectionContextEnabled
-  }
-
-  const hasLegacy =
-    typeof appearance.selectionContextHoverEnabled === 'boolean' ||
-    typeof appearance.selectionContextCodeActionEnabled === 'boolean'
-
-  if (!hasLegacy) return true
-
-  return (appearance.selectionContextHoverEnabled ?? true) ||
-    (appearance.selectionContextCodeActionEnabled ?? true)
-}
-
-async function loadLanguageSettings() {
-  try {
-    const response = await sendToExtension<{
-      settings?: {
-        ui?: {
-          language?: string
-          appearance?: Record<string, any>
-          sound?: any
-        }
-      }
-    }>(MESSAGE_NAMES.getSettings, {})
-    const language = response?.settings?.ui?.language
-    // 运行时守卫：仅接受 SUPPORTED_LANGUAGES 中的合法语言值，类型系统据此收窄
-    if (language && SUPPORTED_LANGUAGES.some(l => l.value === language)) {
-      const lang = language as SupportedLanguage
-      settingsStore.setLanguage(lang)
-      setLanguage(lang)
-    }
-
-    // 加载外观设置
-    if (response?.settings?.ui?.appearance) {
-      const appearance = response.settings.ui.appearance
-      settingsStore.setAppearanceLoadingText(appearance.loadingText || '')
-      settingsStore.setSelectionContextEnabled(resolveSelectionContextEnabled(appearance))
-      settingsStore.setTpsBarEnabled(appearance.tpsBarEnabled !== false)
-      settingsStore.setSplashEnabled(appearance.splashEnabled !== false)
-    }
-
-    // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
-    configureSoundSettings(response?.settings?.ui?.sound)
-  } catch (error) {
-    console.error('Failed to load language settings:', error)
-  } finally {
-    languageLoaded.value = true
-  }
-}
+let disposeMessageListener: (() => void) | null = null
+let disposeAudioUnlockHooks: (() => void) | null = null
+let disposeVisibilityHooks: (() => void) | null = null
+let agentStopNotificationController: AgentStopNotificationController | null = null
 
 // 组件挂载
 onMounted(async () => {
@@ -625,18 +327,7 @@ onMounted(async () => {
 
     // 重试警告声音提醒
     if (message.type === 'retryStatus') {
-      const status = message.data
-      if (status?.type === 'retrying') {
-        const attempt = typeof status.attempt === 'number' ? status.attempt : -1
-        if (attempt !== lastRetryAttempt.value) {
-          lastRetryAttempt.value = attempt
-          const convId = typeof status.conversationId === 'string' ? status.conversationId : undefined
-          dispatchConversationCue('warning', 'retryStatus', convId, status?.createdAt)
-        }
-      } else {
-        // retrySuccess / retryFailed -> 重置 attempt 去重计数
-        lastRetryAttempt.value = -1
-      }
+      handleRetryStatus(message.data)
     }
   })
 

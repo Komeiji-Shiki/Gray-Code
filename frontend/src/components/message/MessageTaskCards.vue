@@ -3,10 +3,13 @@
  * MessageTaskCards - 在消息正文里显示 Design / Plan / Review / Progress 卡片
  *
  * 当前同时承载 design、plan、review 与 progress 的结果摘要展示。
+ * 拆分后：工具结果提取 → messageTaskCards/taskEntries.ts；渠道/模式选择 →
+ * useTaskCardChannels；计划来源状态 → usePlanSourceStatus。本组件只保留编排、
+ * 卡片展示判断与执行/生成动作。
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref, onMounted, watch } from 'vue'
-import { sendToExtension, loadState, saveState, showNotification } from '@/utils/vscode'
+import { sendToExtension, saveState, showNotification } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
 import ReviewTaskCard from './ReviewTaskCard.vue'
 import ProgressTaskCard from './ProgressTaskCard.vue'
@@ -14,25 +17,18 @@ import { MarkdownRenderer, CustomScrollbar } from '../common'
 import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
 import ModelSelector from '../input/ModelSelector.vue'
-import type { PromptMode, ChannelOption, ModelInfo } from '../input/types'
-import { isDesignDocPath, isPlanDocPath, stripPlanSourceArtifactSection } from '../../utils/taskCards'
-import { getPlanExecutionPrompt, getPlanGenerationPrompt, getPlanUpdateMode, type PlanUpdateMode } from '../../utils/toolContinuations'
+import { stripPlanSourceArtifactSection } from '../../utils/taskCards'
 import { generateId } from '../../utils/format'
-import {
-  extractReviewCardData,
-  formatReviewToolFallbackContent,
-  isReviewToolName,
-  type ReviewCardData
-} from '../../utils/reviewCards'
-import {
-  extractProgressCardData,
-  formatProgressToolFallbackContent,
-  isProgressToolName,
-  type ProgressCardData
-} from '../../utils/progressCards'
-import { useChatStore, useSettingsStore } from '@/stores'
-import * as configService from '@/services/config'
+import { useChatStore } from '@/stores'
 import { useI18n } from '../../i18n'
+import {
+  useTaskCardChannels,
+  PLAN_EXECUTION_MODE_STATE_KEY,
+  PLAN_GENERATION_MODE_STATE_KEY
+} from '@/composables/useTaskCardChannels'
+import { usePlanSourceStatus } from '@/composables/usePlanSourceStatus'
+import { buildTaskCards } from './messageTaskCards/taskEntries'
+import type { TaskCardItem, TaskCardKind } from './messageTaskCards/taskCardTypes'
 
 const props = defineProps<{
   tools: ToolUsage[]
@@ -40,248 +36,41 @@ const props = defineProps<{
 }>()
 
 const chatStore = useChatStore()
-const settingsStore = useSettingsStore()
 
 const { t } = useI18n()
 
-type CardStatus = 'pending' | 'running' | 'success' | 'error'
-type TaskCardKind = 'design' | 'plan' | 'review' | 'progress'
+const {
+  selectedChannelId,
+  selectedPlanExecutionModeId,
+  selectedPlanGenerationModeId,
+  selectedModelId,
+  modelOptions,
+  isLoadingChannels,
+  isLoadingModes,
+  promptModeOptions,
+  isLoadingModels,
+  channelOptions,
+  openModeSettings,
+  getModeIdForKind,
+  handleModeChange,
+  loadPromptModes,
+  loadChannels
+} = useTaskCardChannels()
 
-type TaskEntry = {
-  kind: TaskCardKind
-  path: string
-  content: string
-  success?: boolean
-  continuationPrompt?: string
-  updateMode?: PlanUpdateMode
-  reviewCardData?: ReviewCardData
-  progressCardData?: ProgressCardData
-  error?: string
-  warnings?: string[]
-}
+const {
+  refreshPlanSourceStatuses,
+  getPlanSourceState,
+  isPlanSourceBlocked,
+  getPlanSourceLabel,
+  getPlanBlockedReason
+} = usePlanSourceStatus()
 
-type TaskCardItem = {
-  key: string
-  kind: TaskCardKind
-  status: CardStatus
-  title: string
-  path: string
-  content: string
-  toolId: string
-  toolName: string
-  isActionCompleted: boolean
-  continuationPrompt?: string
-  updateMode?: PlanUpdateMode
-  reviewCardData?: ReviewCardData
-  progressCardData?: ProgressCardData
-  error?: string
-  warnings?: string[]
-}
-
-type PlanSourceStatus = 'up_to_date' | 'mismatched' | 'missing_source' | 'untracked'
-
-type PlanSourceState = {
-  sourceStatus: PlanSourceStatus
-  sourceArtifactType?: 'design' | 'review'
-  sourcePath?: string
-  blocked?: boolean
-  error?: string
-}
-
-function normalizePlanSourceState(input: unknown): PlanSourceState {
-  const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {}
-  const sourceStatus = raw.sourceStatus === 'up_to_date'
-    || raw.sourceStatus === 'mismatched'
-    || raw.sourceStatus === 'missing_source'
-    || raw.sourceStatus === 'untracked'
-    ? raw.sourceStatus
-    : 'untracked'
-
-  return {
-    sourceStatus,
-    sourceArtifactType: raw.sourceArtifactType === 'design' || raw.sourceArtifactType === 'review' ? raw.sourceArtifactType : undefined,
-    sourcePath: typeof raw.sourcePath === 'string' && raw.sourcePath.trim() ? raw.sourcePath : undefined,
-    blocked: raw.blocked === true,
-    error: typeof raw.error === 'string' && raw.error.trim() ? raw.error : undefined
-  }
-}
-
-const PLAN_EXECUTION_MODE_STATE_KEY = 'planExecution.preferredModeId'
-const PLAN_GENERATION_MODE_STATE_KEY = 'planGeneration.preferredModeId'
-
-// ============ 渠道选择相关 ============
-const channelConfigs = ref<any[]>([])
-const selectedChannelId = ref('')
-const selectedPlanExecutionModeId = ref('code')
-const selectedPlanGenerationModeId = ref('plan')
-const selectedModelId = ref('')
-const modelOptions = ref<ModelInfo[]>([])
-const isLoadingChannels = ref(false)
-const isLoadingModes = ref(false)
-const promptModeOptions = ref<PromptMode[]>([])
-const isLoadingModels = ref(false)
 const isExecutingPlan = ref(false)
 const isGeneratingPlan = ref(false)
 const expandedCards = ref<Set<string>>(new Set())
 const autoOpenedCardKeys = ref<Set<string>>(new Set())
-const planSourceStatusByPath = ref<Map<string, PlanSourceState>>(new Map())
-
-const channelOptions = computed<ChannelOption[]>(() =>
-  channelConfigs.value
-    .filter(config => config.enabled !== false)
-    .map(config => ({
-      id: config.id,
-      name: config.name,
-      model: config.model || config.id,
-      type: config.type
-    }))
-)
 
 const isAnyTaskActionRunning = computed(() => isExecutingPlan.value || isGeneratingPlan.value)
-
-function openModeSettings() {
-  settingsStore.showSettings('prompt')
-}
-
-function resolvePreferredModeId(
-  modes: PromptMode[],
-  storageKey: string,
-  fallbackModeId: string,
-  currentModeId?: string
-): string {
-  const persisted = String(loadState<string>(storageKey, '') || '').trim()
-  if (persisted && modes.some(mode => mode.id === persisted)) return persisted
-
-  if (fallbackModeId && modes.some(mode => mode.id === fallbackModeId)) return fallbackModeId
-
-  const current = String(currentModeId || '').trim()
-  if (current && modes.some(mode => mode.id === current)) return current
-
-  return modes[0]?.id || fallbackModeId || 'code'
-}
-
-function getModeIdForKind(kind: TaskCardKind): string {
-  return kind === 'plan'
-    ? selectedPlanExecutionModeId.value
-    : selectedPlanGenerationModeId.value
-}
-
-function handleModeChange(kind: TaskCardKind, modeId: string) {
-  const normalized = String(modeId || '').trim()
-  if (!normalized) return
-
-  if (kind === 'plan') {
-    selectedPlanExecutionModeId.value = normalized
-    saveState(PLAN_EXECUTION_MODE_STATE_KEY, normalized)
-    return
-  }
-
-  selectedPlanGenerationModeId.value = normalized
-  saveState(PLAN_GENERATION_MODE_STATE_KEY, normalized)
-}
-
-async function loadPromptModes() {
-  isLoadingModes.value = true
-  try {
-    const result = await configService.getPromptModes()
-    const modes = Array.isArray(result?.modes) ? result.modes : []
-    promptModeOptions.value = modes
-
-    const preferredExecutionModeId = resolvePreferredModeId(
-      modes,
-      PLAN_EXECUTION_MODE_STATE_KEY,
-      'code',
-      result?.currentModeId
-    )
-    const preferredGenerationModeId = resolvePreferredModeId(
-      modes,
-      PLAN_GENERATION_MODE_STATE_KEY,
-      'plan',
-      result?.currentModeId
-    )
-
-    selectedPlanExecutionModeId.value = preferredExecutionModeId
-    selectedPlanGenerationModeId.value = preferredGenerationModeId
-    saveState(PLAN_EXECUTION_MODE_STATE_KEY, preferredExecutionModeId)
-    saveState(PLAN_GENERATION_MODE_STATE_KEY, preferredGenerationModeId)
-  } catch (error) {
-    console.error('[task-cards] Failed to load prompt modes:', error)
-    selectedPlanExecutionModeId.value = 'code'
-    selectedPlanGenerationModeId.value = 'plan'
-  } finally {
-    isLoadingModes.value = false
-  }
-}
-
-async function loadChannels() {
-  isLoadingChannels.value = true
-  try {
-    const ids = await configService.listConfigIds()
-
-    // 并行拉取全部渠道配置（原为串行 N 次 IPC）；单条失败仅跳过该条，不拖垮整批
-    const results = await Promise.all(ids.map(async (id) => {
-      try {
-        return await configService.getConfig(id)
-      } catch (error) {
-        console.warn(`[task-cards] Failed to load config ${id}:`, error)
-        return null
-      }
-    }))
-    const loaded = results.filter((c): c is any => !!c)
-
-    channelConfigs.value = loaded
-    if (chatStore.configId && !selectedChannelId.value) {
-      selectedChannelId.value = chatStore.configId
-    } else if (loaded.length > 0 && !selectedChannelId.value) {
-      selectedChannelId.value = loaded[0].id
-    }
-  } catch (error) {
-    console.error(t('components.message.tool.planCard.loadChannelsFailed'), error)
-  } finally {
-    isLoadingChannels.value = false
-  }
-}
-
-function getSelectedChannelConfig() {
-  return channelConfigs.value.find(c => c.id === selectedChannelId.value)
-}
-
-async function loadModelsForChannel(configId: string) {
-  if (!configId) {
-    modelOptions.value = []
-    selectedModelId.value = ''
-    return
-  }
-
-  isLoadingModels.value = true
-  try {
-    const cfg = channelConfigs.value.find(c => c.id === configId)
-
-    // 1) 优先使用本地配置里已保存的 models（来自“模型管理”）
-    const localModels = Array.isArray((cfg as any)?.models) ? ((cfg as any).models as ModelInfo[]) : []
-    let models = localModels.length > 0 ? localModels : await configService.getChannelModels(configId)
-
-    // 2) 确保当前配置的 model 一定能显示/被选中
-    const current = (cfg?.model || '').trim()
-    if (current && !models.some(m => m.id === current)) {
-      models = [{ id: current, name: current }, ...models]
-    }
-
-    modelOptions.value = models
-
-    // 3) 默认选中：当前 config.model -> 第一项
-    if (!selectedModelId.value) {
-      selectedModelId.value = current || models[0]?.id || ''
-    }
-  } catch (error) {
-    console.error(t('components.message.tool.planCard.loadModelsFailed'), error)
-    const current = (getSelectedChannelConfig()?.model || '').trim()
-    modelOptions.value = current ? [{ id: current, name: current }] : []
-    if (!selectedModelId.value) selectedModelId.value = current
-  } finally {
-    isLoadingModels.value = false
-  }
-}
 
 function toggleCardExpand(key: string) {
   if (expandedCards.value.has(key)) {
@@ -340,35 +129,6 @@ async function openDocFile(card: TaskCardItem) {
   }
 }
 
-function getPlanSourceState(card: TaskCardItem): PlanSourceState | null {
-  if (card.kind !== 'plan' || !card.path) return null
-  return planSourceStatusByPath.value.get(card.path) || null
-}
-
-function isPlanSourceBlocked(card: TaskCardItem): boolean {
-  const state = getPlanSourceState(card)
-  return !!state && (state.sourceStatus === 'mismatched' || state.sourceStatus === 'missing_source' || state.blocked === true)
-}
-
-function getPlanSourceLabel(card: TaskCardItem): string {
-  const state = getPlanSourceState(card)
-  if (!state) return ''
-
-  if (state.sourceStatus === 'up_to_date') return t('components.message.tool.planCard.sourceUpToDate')
-  if (state.sourceStatus === 'mismatched') return t('components.message.tool.planCard.sourceMismatched')
-  if (state.sourceStatus === 'missing_source') return t('components.message.tool.planCard.sourceMissing')
-  return t('components.message.tool.planCard.sourceUntracked')
-}
-
-function getPlanBlockedReason(card: TaskCardItem): string {
-  const state = getPlanSourceState(card)
-  if (!state) return ''
-  if (typeof state.error === 'string' && state.error.trim()) return state.error
-  if (state.sourceStatus === 'mismatched') return t('components.message.tool.planCard.sourceBlockedMismatched')
-  if (state.sourceStatus === 'missing_source') return t('components.message.tool.planCard.sourceBlockedMissing')
-  return ''
-}
-
 function isCardActionCompleted(card: TaskCardItem): boolean {
   if (card.kind === 'plan' && isPlanSourceBlocked(card)) return false
   return card.isActionCompleted
@@ -379,32 +139,6 @@ function getCardActionTitle(card: TaskCardItem): string {
     return getPlanBlockedReason(card)
   }
   return getActionText(card)
-}
-
-async function refreshPlanSourceStatuses(cards: TaskCardItem[]) {
-  const next = new Map<string, PlanSourceState>()
-  const uniquePlanCards = new Map<string, TaskCardItem>()
-
-  for (const card of cards) {
-    if (card.kind !== 'plan' || !card.path) continue
-    if (!uniquePlanCards.has(card.path)) {
-      uniquePlanCards.set(card.path, card)
-    }
-  }
-
-  for (const [path, card] of uniquePlanCards.entries()) {
-    try {
-      const result = await sendToExtension<unknown>(MESSAGE_NAMES['plan.getSourceStatus'], {
-        path,
-        originalContent: card.content
-      })
-      next.set(path, normalizePlanSourceState(result))
-    } catch (error) {
-      console.error('[task-cards] Failed to load plan source status:', error)
-    }
-  }
-
-  planSourceStatusByPath.value = next
 }
 
 function getCardPreviewContent(card: TaskCardItem): string {
@@ -464,7 +198,7 @@ async function executePlan(card: TaskCardItem) {
       planContent: string
       blocked?: boolean
       blockReason?: 'source_mismatched' | 'source_missing'
-      sourceStatus?: PlanSourceStatus
+      sourceStatus?: 'up_to_date' | 'mismatched' | 'missing_source' | 'untracked'
       sourceArtifactType?: 'design' | 'review'
       sourcePath?: string
       error?: string
@@ -760,298 +494,13 @@ onMounted(() => {
   void autoOpenPendingCardTabs(taskCards.value)
 })
 
-watch(
-  () => selectedChannelId.value,
-  async (id) => {
-    const cfg = channelConfigs.value.find(c => c.id === id)
-    selectedModelId.value = (cfg?.model || '').trim()
-    await loadModelsForChannel(id)
-  }
+const taskCards = computed<TaskCardItem[]>(() =>
+  buildTaskCards(
+    props.tools,
+    (toolCallId) => chatStore.getToolResponseById(toolCallId),
+    getDocumentTitle
+  )
 )
-
-// ============ 工具状态映射 ============
-function getToolResult(tool: ToolUsage): any {
-  const fromTool = tool.result && typeof tool.result === 'object'
-    ? tool.result as any
-    : undefined
-
-  const fromResponse = tool.id
-    ? chatStore.getToolResponseById(tool.id) as any
-    : undefined
-
-  // 优先融合 functionResponse（包含 reload 后的真实结果、以及后续确认字段）
-  if (fromTool && fromResponse && typeof fromResponse === 'object') {
-    return { ...fromTool, ...fromResponse }
-  }
-  if (fromResponse && typeof fromResponse === 'object') {
-    return fromResponse
-  }
-  return fromTool
-}
-
-function mapToolStatus(tool: ToolUsage): CardStatus {
-  if (tool.status === 'executing' || tool.status === 'streaming' || tool.status === 'queued') return 'running'
-  if (tool.status === 'success') return 'success'
-  if (tool.status === 'error') return 'error'
-
-  const r = getToolResult(tool)
-  if (!r) return 'pending'
-  if (r.success === true) return 'success'
-  if (r.success === false) return 'error'
-  return 'pending'
-}
-
-// ============ 文档数据提取 ============
-function getWriteFileTaskEntries(tool: ToolUsage): TaskEntry[] {
-  const args = tool.args as any
-  // 兼容批量格式 (files 数组) 和单文件格式 (path + content)
-  let files = Array.isArray(args?.files) ? args.files : []
-  if (files.length === 0) {
-    const singlePath = args?.path as string | undefined
-    const singleContent = args?.content as string | undefined
-    if (singlePath) {
-      files = [{ path: singlePath, content: singleContent || '' }]
-    }
-  }
-
-  const result = getToolResult(tool)
-  const resultList = Array.isArray(result?.data?.results) ? result.data.results : []
-  const successByPath = new Map<string, boolean>()
-  for (const r of resultList) {
-    if (r?.path && typeof r.path === 'string' && typeof r.success === 'boolean') {
-      successByPath.set(r.path, r.success)
-    }
-  }
-
-  const planExecutionPrompt = getPlanExecutionPrompt(result)
-  const planGenerationPrompt = getPlanGenerationPrompt(result)
-
-  const entries: TaskEntry[] = []
-  for (const f of files) {
-    const path = f?.path
-    const content = f?.content
-    if (typeof path !== 'string' || typeof content !== 'string') continue
-
-    if (isDesignDocPath(path)) {
-      entries.push({
-        kind: 'design',
-        path,
-        content,
-        success: successByPath.get(path),
-        continuationPrompt: planGenerationPrompt || undefined
-      })
-      continue
-    }
-
-    if (isPlanDocPath(path)) {
-      entries.push({
-        kind: 'plan',
-        path,
-        content,
-        success: successByPath.get(path),
-        continuationPrompt: planExecutionPrompt || undefined
-      })
-    }
-  }
-
-  return entries
-}
-
-function getCreatePlanEntries(tool: ToolUsage): TaskEntry[] {
-  const args = tool.args as any
-  const result = getToolResult(tool)
-
-  const path = (result?.data?.path || args?.path) as string | undefined
-  const content = (result?.data?.content || args?.plan) as string | undefined
-
-  if (typeof path !== 'string' || typeof content !== 'string') return []
-  if (!isPlanDocPath(path)) return []
-
-  const success = typeof result?.success === 'boolean' ? result.success : undefined
-  const continuationPrompt = getPlanExecutionPrompt(result) || undefined
-
-  return [{
-    kind: 'plan',
-    path,
-    content,
-    success,
-    continuationPrompt
-  }]
-}
-
-function getUpdatePlanEntries(tool: ToolUsage): TaskEntry[] {
-  const args = tool.args as any
-  const result = getToolResult(tool)
-  const updateMode = getPlanUpdateMode(result, args)
-
-  const path = (result?.data?.path || args?.path) as string | undefined
-  const content = (result?.data?.content || args?.plan) as string | undefined
-
-  if (typeof path !== 'string' || typeof content !== 'string') return []
-  if (!isPlanDocPath(path)) return []
-  if (updateMode === 'progress_sync') return []
-
-  const success = typeof result?.success === 'boolean' ? result.success : undefined
-  const continuationPrompt = getPlanExecutionPrompt(result) || undefined
-
-  return [{
-    kind: 'plan',
-    path,
-    content,
-    success,
-    continuationPrompt,
-    updateMode
-  }]
-}
-
-function getCreateDesignEntries(tool: ToolUsage): TaskEntry[] {
-  const args = tool.args as any
-  const result = getToolResult(tool)
-
-  const path = (result?.data?.path || args?.path) as string | undefined
-  const content = (result?.data?.content || args?.design) as string | undefined
-
-  if (typeof path !== 'string' || typeof content !== 'string') return []
-  if (!isDesignDocPath(path)) return []
-
-  const success = typeof result?.success === 'boolean' ? result.success : undefined
-  const continuationPrompt = getPlanGenerationPrompt(result) || undefined
-
-  return [{
-    kind: 'design',
-    path,
-    content,
-    success,
-    continuationPrompt
-  }]
-}
-
-function getUpdateDesignEntries(tool: ToolUsage): TaskEntry[] {
-  const args = tool.args as any
-  const result = getToolResult(tool)
-
-  const path = (result?.data?.path || args?.path) as string | undefined
-  const content = (result?.data?.content || args?.design) as string | undefined
-
-  if (typeof path !== 'string' || typeof content !== 'string') return []
-  if (!isDesignDocPath(path)) return []
-
-  const success = typeof result?.success === 'boolean' ? result.success : undefined
-  const continuationPrompt = getPlanGenerationPrompt(result) || undefined
-
-  return [{
-    kind: 'design',
-    path,
-    content,
-    success,
-    continuationPrompt
-  }]
-}
-
-function getReviewTaskEntries(tool: ToolUsage): TaskEntry[] {
-  if (!isReviewToolName(tool.name)) return []
-
-  const args = (tool.args || {}) as Record<string, unknown>
-  const result = getToolResult(tool)
-  if (!result || typeof result !== 'object') return []
-  const reviewResult = result as Record<string, unknown>
-
-  const reviewCardData = extractReviewCardData(tool.name, args, reviewResult)
-  if (!reviewCardData) return []
-  const continuationPrompt = getPlanGenerationPrompt(reviewResult) || undefined
-
-  return [{
-    kind: 'review',
-    path: reviewCardData.path || '',
-    content: formatReviewToolFallbackContent(tool.name, args, reviewResult),
-    continuationPrompt,
-    success: typeof reviewResult.success === 'boolean' ? reviewResult.success : undefined,
-    reviewCardData
-  }]
-}
-
-function getProgressTaskEntries(tool: ToolUsage): TaskEntry[] {
-  if (!isProgressToolName(tool.name)) return []
-
-  const args = (tool.args || {}) as Record<string, unknown>
-  const result = getToolResult(tool)
-  if (!result || typeof result !== 'object') return []
-  const progressResult = result as Record<string, unknown>
-
-  const progressCardData = extractProgressCardData(tool.name, args, progressResult)
-  const error = typeof progressResult.error === 'string' && progressResult.error.trim()
-    ? progressResult.error.trim()
-    : undefined
-  const warnings = Array.isArray((progressResult as any)?.data?.warnings)
-    ? ((progressResult as any).data.warnings as unknown[])
-      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : []
-  if (!progressCardData) return []
-
-  return [{
-    kind: 'progress',
-    path: progressCardData.path || '',
-    content: formatProgressToolFallbackContent(tool.name, args, progressResult),
-    success: typeof progressResult.success === 'boolean' ? progressResult.success : undefined,
-    progressCardData,
-    error,
-    warnings
-  }]
-}
-
-function getTaskEntries(tool: ToolUsage): TaskEntry[] {
-  if (tool.name === 'write_file') return getWriteFileTaskEntries(tool)
-  if (tool.name === 'create_plan') return getCreatePlanEntries(tool)
-  if (tool.name === 'update_plan') return getUpdatePlanEntries(tool)
-  if (tool.name === 'create_design') return getCreateDesignEntries(tool)
-  if (tool.name === 'update_design') return getUpdateDesignEntries(tool)
-  if (isProgressToolName(tool.name)) return getProgressTaskEntries(tool)
-  if (isReviewToolName(tool.name)) return getReviewTaskEntries(tool)
-  return []
-}
-
-const taskCards = computed<TaskCardItem[]>(() => {
-  const cards: TaskCardItem[] = []
-
-  for (const tool of props.tools) {
-    const entries = getTaskEntries(tool)
-    if (entries.length === 0) continue
-
-    for (const entry of entries) {
-      const status: CardStatus = entry.continuationPrompt
-        ? 'success'
-        : typeof entry.success === 'boolean'
-          ? (entry.success ? 'success' : 'error')
-          : mapToolStatus(tool)
-
-      const title = entry.kind === 'review'
-        ? (entry.reviewCardData?.title || getDocumentTitle(entry.content, entry.path, entry.kind))
-        : entry.kind === 'progress'
-          ? (entry.progressCardData?.title || getDocumentTitle(entry.content, entry.path, entry.kind))
-        : getDocumentTitle(entry.content, entry.path, entry.kind)
-
-      cards.push({
-        key: `${entry.kind}:${tool.id}:${entry.path || title}`,
-        kind: entry.kind,
-        status,
-        title,
-        path: entry.path,
-        content: entry.content,
-        toolId: tool.id,
-        toolName: tool.name,
-        isActionCompleted: !!entry.continuationPrompt,
-        continuationPrompt: entry.continuationPrompt,
-        updateMode: entry.updateMode,
-        reviewCardData: entry.reviewCardData,
-        progressCardData: entry.progressCardData,
-        error: entry.error,
-        warnings: entry.warnings
-      })
-    }
-  }
-
-  return cards
-})
 
 watch(
   () => taskCards.value,
