@@ -55,7 +55,8 @@ function holderIdentity(holder: LockHolder): string {
  *
  * - 反斜杠统一为斜杠；
  * - 去除开头 './' 与末尾 '/'；
- * - Windows 平台小写化（文件系统不区分大小写）；其他平台保留原始大小写；
+ * - Windows/macOS 平台小写化（两者默认文件系统不区分大小写，与 diffManager.sameFsPath /
+ *   checkpoint 的大小写折叠策略一致）；其他平台保留原始大小写；
  * - '.'、'' 归一为 ''，表示整个 workspace 根（与所有路径冲突）。
  */
 export function normalizeLockPath(rawPath: string): string {
@@ -69,8 +70,9 @@ export function normalizeLockPath(rawPath: string): string {
     }
     // 折叠重复分隔符
     p = p.replace(/\/{2,}/g, '/');
-    // 仅 Windows 文件系统不区分大小写时才小写；其他平台保留大小写，避免破坏大小写敏感文件系统的互斥语义
-    return process.platform === 'win32' ? p.toLowerCase() : p;
+    // Windows/macOS 默认文件系统不区分大小写，锁 key 小写归一；其余平台保留大小写，
+    // 避免破坏大小写敏感文件系统的互斥语义（与 diffManager.sameFsPath / checkpoint 策略对齐）
+    return (process.platform === 'win32' || process.platform === 'darwin') ? p.toLowerCase() : p;
 }
 
 /**
