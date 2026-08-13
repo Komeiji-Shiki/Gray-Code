@@ -11,19 +11,6 @@ import type { HandlerContext, MessageHandler } from '../types';
 import { withBoundary } from './errorBoundary';
 
 const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
-const MAX_SUBAGENT_ITERATIONS = 100_000;
-const MAX_SUBAGENT_RUNTIME_MS = 24 * 60 * 60 * 1000;
-
-function optionalBoundedNumber(
-  value: unknown,
-  options: { integer: boolean; min: number; max: number; allowMinusOne?: boolean }
-): number | undefined | null {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  if (options.allowMinusOne && value === -1) return value;
-  if (options.integer && !Number.isInteger(value)) return null;
-  return value >= options.min && value <= options.max ? value : null;
-}
 
 /**
  * 控制类响应统一附带 run 的可控制性与最新状态。
@@ -104,17 +91,8 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
 
-  const maxIterations = optionalBoundedNumber(data?.maxIterations, {
-    integer: true, min: 1, max: MAX_SUBAGENT_ITERATIONS, allowMinusOne: true
-  });
-  const maxRuntime = optionalBoundedNumber(data?.maxRuntime, {
-    integer: true, min: 1, max: MAX_SUBAGENT_RUNTIME_MS, allowMinusOne: true
-  });
-  if (maxIterations === null || maxRuntime === null) {
-    ctx.sendError(requestId, 'SUBAGENT_INVALID_LIMITS', 'maxIterations/maxRuntime must be -1 or a bounded positive integer');
-    return;
-  }
-
+  // maxIterations / maxRuntime 的类型与范围已由 MessageRouter 入口按 MESSAGE_SCHEMAS 校验
+  // （整数、1..上限、允许 -1），此处直接透传；type/name 的非空与业务判重仍保留在 handler。
   const config: SubAgentConfigItem = {
     type,
     name,
@@ -122,8 +100,8 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
     systemPrompt: data.systemPrompt || '',
     channel: data.channel || { channelId: '' },
     tools: data.tools || { mode: 'all' },
-    maxIterations,
-    maxRuntime,
+    maxIterations: data.maxIterations,
+    maxRuntime: data.maxRuntime,
     failureModeAfterRetries: data.failureModeAfterRetries || 'fail_parent_tool',
     enabled: data.enabled !== false
   };
@@ -158,11 +136,9 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
  * 更新子代理配置
  */
 export const updateSubAgent: MessageHandler = async (data, requestId, ctx) => {
-  const { type, updates } = data || {};
-  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
-    ctx.sendError(requestId, 'UPDATE_SUBAGENT_INVALID_INPUT', 'updates must be an object');
-    return;
-  }
+  // updates 必须是对象、type 必须是字符串：已由 MessageRouter 入口按 MESSAGE_SCHEMAS 校验；
+  // 此处保留业务校验（存在性、名称非空/判重）。
+  const { type, updates } = data;
   
   if (!ctx.settingsManager.getSubAgent(type)) {
     ctx.sendError(requestId, 'SUBAGENT_NOT_FOUND', `SubAgent "${type}" not found`);
@@ -383,10 +359,8 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
  * 更新全局配置（maxConcurrentAgents 等）
  */
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    ctx.sendError(requestId, 'UPDATE_GLOBAL_CONFIG_ERROR', 'Invalid global config payload');
-    return;
-  }
+  // 顶层「必须是对象」已由 MessageRouter 入口按 MESSAGE_SCHEMAS（looseObject）校验；
+  // 各字段的合法值/忽略语义仍保留在 handler（非法值可能被静默忽略，不能上收到统一校验）。
   const updates: Record<string, unknown> = {};
 
   // 支持的全局配置字段

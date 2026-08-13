@@ -16,12 +16,13 @@
  *   保证与后端数据一致（新建/删除/改名/字段更新都会触发重新加载并刷新缓存）。
  */
 import { listConfigIds, getConfig } from './config'
+import type { ChannelConfig } from '../types'
 
 /** 预加载请求超时时间（ms）：超过视为失败，缓存保持 null 供后续重试 */
 const PRELOAD_TIMEOUT_MS = 30_000
 
 /** 已加载的渠道配置列表；null = 尚未成功加载（可重试） */
-let cachedConfigs: any[] | null = null
+let cachedConfigs: ChannelConfig[] | null = null
 /** 进行中的加载 Promise（合并并发调用，避免重复请求） */
 let inFlightLoad: Promise<void> | null = null
 /** 代际计数：显式失效（setChannelConfigsCache(null)/resetChannelConfigsCache）时递增，用于作废在途加载的结果写入 */
@@ -39,14 +40,14 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /** 拉取完整配置列表：listConfigIds + 逐条 getConfig，单条失败跳过（部分失败语义） */
-async function loadAllConfigs(): Promise<any[]> {
+async function loadAllConfigs(): Promise<ChannelConfig[]> {
   const ids = await listConfigIds()
   // 非法响应（非数组）按失败处理：抛错使整批预加载失败、缓存保持 null 可重试；
   // 不能把非数组当空列表缓存（[] !== null，一旦写入缓存将永久命中、永不重试）
   if (!Array.isArray(ids)) {
     throw new TypeError('listConfigIds returned non-array response')
   }
-  const list: any[] = []
+  const list: ChannelConfig[] = []
   for (const id of ids) {
     try {
       const config = await getConfig(id)
@@ -95,12 +96,12 @@ export function preloadChannelConfigs(): Promise<void> {
 }
 
 /** 读取已加载的渠道配置缓存（null = 未加载） */
-export function getChannelConfigsCache(): any[] | null {
+export function getChannelConfigsCache(): ChannelConfig[] | null {
   return cachedConfigs
 }
 
 /** 更新缓存（ChannelSettings 成功加载/变更后同步；传 null 使缓存失效并作废在途加载任务） */
-export function setChannelConfigsCache(configs: any[] | null): void {
+export function setChannelConfigsCache(configs: ChannelConfig[] | null): void {
   if (configs === null) {
     // 显式失效：作废在途任务（其完成结果将被丢弃），避免复用注定失败/过期的在途 Promise
     cacheGeneration++

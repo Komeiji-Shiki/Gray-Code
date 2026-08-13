@@ -6,6 +6,7 @@
  */
 
 import type { MultimodalCapability } from './shared/multimodal';
+import type { ToolParameterSchema } from './toolSchema';
 
 /**
  * 通用工具进度事件。
@@ -50,11 +51,7 @@ export interface ToolDeclaration {
     category?: string;
     
     /** 参数定义（JSON Schema） */
-    parameters: {
-        type: 'object';
-        properties: Record<string, any>;
-        required?: string[];
-    };
+    parameters: ToolParameterSchema;
     
     /**
      * 工具依赖列表
@@ -117,10 +114,23 @@ export interface ToolDeclaration {
 }
 
 /**
- * 工具执行参数
+ * 工具执行参数（规范化 + 校验之后的原始参数对象）。
+ *
+ * 用 `Record<string, unknown>` 取代 `[key: string]: any`：参数值在上游
+ * normalizeToolArgs / validateToolArgs 已按 schema 规范化并校验，handler 内
+ * 需要把未知值显式收窄为具体类型（通常经 parseArgs<T>），避免 any 静默传播。
  */
-export interface ToolArgs {
-    [key: string]: any;
+export type ToolArgs = Record<string, unknown>;
+
+/**
+ * 把执行链上游已规范化、已校验的参数收窄为具体工具的 Args 类型。
+ *
+ * 注意：这里只做编译期类型收窄，不重复运行时校验——运行时校验语义必须与
+ * normalizeToolArgs / validateToolArgs 完全一致，绝不能在此处改变对参数的
+ * 处理结果（审查发现 02#05 的硬性边界）。
+ */
+export function parseArgs<T>(args: ToolArgs): T {
+    return args as T;
 }
 
 /**
@@ -266,6 +276,11 @@ export interface ToolContext {
     conversationStore?: {
         getCustomMetadata: (conversationId: string, key: string) => Promise<unknown>;
         setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void>;
+        /**
+         * 获取完整对话历史（history_search 工具使用）。
+         * 运行时注入的实际对象是 ConversationManager；此处仅声明为可选方法以去除 handler 内的 `as any`。
+         */
+        getHistory?: (conversationId: string) => Promise<unknown>;
     };
 
     /**
@@ -287,7 +302,8 @@ export interface ToolResult {
     /** 是否成功 */
     success: boolean;
     
-    /** 返回数据（成功时） */
+    /** 返回数据（成功时）。保留 any：输出结构随工具而异，消费方（含大量测试）按各工具契约动态访问字段。
+     *  参数侧已通过 parseArgs<T>/PropertySchema 收敛；输出侧类型化需按工具逐个定义泛型，属后续专项。 */
     data?: any;
     
     /** 错误信息（失败时） */

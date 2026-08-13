@@ -48,9 +48,10 @@ export function createMemoryConfigDeclaration(): ToolDeclaration {
 /** 格式化配置输出（与默认值对比标注） */
 function formatConfig(config: MemoryConfig): string {
     const defaults = DEFAULT_MEMORY_CONFIG;
+    const defaultsRecord: Record<string, unknown> = { ...defaults };
     const lines: string[] = [];
     for (const [key, value] of Object.entries(config)) {
-        const defVal = (defaults as any)[key];
+        const defVal = defaultsRecord[key];
         const marker = value !== defVal ? ` (default ${defVal})` : '';
         lines.push(`${key.padEnd(12)} ${String(value).padEnd(7)} ${marker}`);
     }

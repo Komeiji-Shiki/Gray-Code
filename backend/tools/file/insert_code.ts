@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
+import { parseArgs } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, formatFileSize } from '../utils';
 import { getDiffManager } from '../../core/services/diffManager';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
@@ -26,6 +27,13 @@ interface InsertCodeEntry {
     path: string;
     line: number;
     content: string;
+}
+
+/**
+ * insert_code 的规范化参数形状。
+ */
+interface InsertCodeArgs {
+    files: InsertCodeEntry[];
 }
 
 /**
@@ -301,7 +309,7 @@ export function createInsertCodeTool(): Tool {
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
-            const fileList = args.files as InsertCodeEntry[] | undefined;
+            const fileList = parseArgs<InsertCodeArgs>(args).files;
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required and must be a non-empty array' };
             }

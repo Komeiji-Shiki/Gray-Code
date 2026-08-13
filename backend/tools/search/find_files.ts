@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { getWorkspaceRoot, getAllWorkspaces, toRelativePath, countTextFileLines, mapWithConcurrency } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getActualLanguage } from '../../i18n';
@@ -50,6 +51,16 @@ interface FindResult {
     count?: number;
     truncated?: boolean;
     error?: string;
+}
+
+/**
+ * find_files 的规范化参数形状（pattern 为向后兼容字段）。
+ */
+interface FindFilesArgs {
+    patterns?: string[];
+    pattern?: string;
+    exclude?: string;
+    maxResults?: number;
 }
 
 /**
@@ -229,14 +240,15 @@ export function createFindFilesTool(): Tool {
             }
         },
         handler: async (args): Promise<ToolResult> => {
+            const typed = parseArgs<FindFilesArgs>(args);
             // 支持 patterns 数组或单个 pattern（向后兼容）
             let patternList: string[] = [];
             
-            if (args.patterns && Array.isArray(args.patterns)) {
-                patternList = args.patterns as string[];
-            } else if (args.pattern && typeof args.pattern === 'string') {
+            if (typed.patterns && Array.isArray(typed.patterns)) {
+                patternList = typed.patterns;
+            } else if (typed.pattern && typeof typed.pattern === 'string') {
                 // 向后兼容单个 pattern 参数
-                patternList = [args.pattern];
+                patternList = [typed.pattern];
             }
             
             if (patternList.length === 0) {
@@ -244,9 +256,9 @@ export function createFindFilesTool(): Tool {
             }
 
             // 如果用户指定了 exclude 参数则使用，否则使用配置的默认值
-            const exclude = (args.exclude as string) || getExcludePattern();
+            const exclude = typed.exclude || getExcludePattern();
             // 0/负值/非数字语义混乱（负值会原样传入 findFiles）：统一回退到默认 500，并取整
-            const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.floor(args.maxResults) : 500;
+            const maxResults = typeof typed.maxResults === 'number' && typed.maxResults > 0 ? Math.floor(typed.maxResults) : 500;
 
             const results: FindResult[] = [];
             let successCount = 0;

@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { REVIEW_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
@@ -130,7 +131,7 @@ export function createRecordReviewMilestoneTool(): Tool {
   return {
     declaration: createRecordReviewMilestoneToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
-      const args = rawArgs as unknown as RecordReviewMilestoneArgs;
+      const args = parseArgs<RecordReviewMilestoneArgs>(rawArgs);
       const path = typeof args.path === 'string' ? args.path.trim() : '';
       const milestoneTitle = typeof args.milestoneTitle === 'string' ? args.milestoneTitle : '';
       const summary = typeof args.summary === 'string' ? args.summary : '';

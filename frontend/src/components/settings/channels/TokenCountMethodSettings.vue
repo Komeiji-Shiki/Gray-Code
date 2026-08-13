@@ -17,7 +17,7 @@ interface TokenCountApiConfig {
 interface Props {
     tokenCountMethod?: TokenCountMethod
     tokenCountApiConfig?: TokenCountApiConfig
-    channelType: 'gemini' | 'openai' | 'anthropic'
+    channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses'
 }
 
 const props = withDefaults(defineProps<Props>(), {

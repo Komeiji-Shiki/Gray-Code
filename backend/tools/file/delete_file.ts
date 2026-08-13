@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolResult, ToolContext } from '../types';
+import { parseArgs } from '../types';
 import { resolveUri, getAllWorkspaces, normalizePathForComparison } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import { getActualLanguage } from '../../i18n';
@@ -19,6 +20,13 @@ interface DeleteResult {
     path: string;
     success: boolean;
     error?: string;
+}
+
+/**
+ * delete_file 的规范化参数形状。
+ */
+interface DeleteFileArgs {
+    paths: string[];
 }
 
 /**
@@ -73,7 +81,7 @@ export function createDeleteFileTool(): Tool {
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
-            const pathList = args.paths as string[];
+            const pathList = parseArgs<DeleteFileArgs>(args).paths;
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required' };
             }

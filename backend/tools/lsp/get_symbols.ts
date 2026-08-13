@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { resolveUri, getAllWorkspaces, mapWithConcurrency } from '../utils';
 import {
     LSP_TIMEOUT_MS,
@@ -92,6 +93,13 @@ interface FileSymbolResult {
     error?: string;
     /** 符号数量超过上限被截断（调用方聚合到总结果中） */
     truncated?: boolean;
+}
+
+/**
+ * get_symbols 的规范化参数形状。
+ */
+interface GetSymbolsArgs {
+    paths: string[];
 }
 
 /**
@@ -290,7 +298,7 @@ Returns hierarchical symbol list with name, kind, and line numbers.`;
             }
         },
         handler: async (args, context): Promise<ToolResult> => {
-            const pathList = args.paths as string[];
+            const pathList = parseArgs<GetSymbolsArgs>(args).paths;
             
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required and must be a non-empty array' };

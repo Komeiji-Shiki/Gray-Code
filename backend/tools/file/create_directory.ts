@@ -7,6 +7,7 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
+import { parseArgs } from '../types';
 import { resolveUri, getAllWorkspaces } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
 import { getActualLanguage } from '../../i18n';
@@ -19,6 +20,13 @@ interface CreateResult {
     path: string;
     success: boolean;
     error?: string;
+}
+
+/**
+ * create_directory 的规范化参数形状。
+ */
+interface CreateDirectoryArgs {
+    paths: string[];
 }
 
 /**
@@ -102,7 +110,7 @@ export function createCreateDirectoryTool(): Tool {
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
-            const pathList = args.paths as string[];
+            const pathList = parseArgs<CreateDirectoryArgs>(args).paths;
             if (!pathList || !Array.isArray(pathList) || pathList.length === 0) {
                 return { success: false, error: 'paths is required' };
             }

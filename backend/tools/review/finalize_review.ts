@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { REVIEW_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
@@ -62,7 +63,7 @@ export function createFinalizeReviewTool(): Tool {
   return {
     declaration: createFinalizeReviewToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
-      const args = rawArgs as unknown as FinalizeReviewArgs;
+      const args = parseArgs<FinalizeReviewArgs>(rawArgs);
       const path = typeof args.path === 'string' ? args.path.trim() : '';
       const conclusion = typeof args.conclusion === 'string' ? args.conclusion : '';
 

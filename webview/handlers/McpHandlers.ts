@@ -9,13 +9,9 @@ import { t } from '../../backend/i18n';
 import type { MessageHandler } from '../types';
 import { withBoundary } from './errorBoundary';
 
-function requireMcpData(data: unknown, requestId: string, ctx: Parameters<MessageHandler>[2]): Record<string, any> | null {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    ctx.sendError(requestId, 'INVALID_PARAMS', 'Invalid MCP request parameters');
-    return null;
-  }
-  return data as Record<string, any>;
-}
+// 04#6：payload 形状校验已收敛到 MessageRouter.route() 入口（见 shared/protocol.ts 的
+// MESSAGE_SCHEMAS）。此处不再手写「data 必须是对象」的守卫，handler 只做业务处理；
+// 非法 payload 会在入口处回 INVALID_DATA。
 
 async function pathExists(uri: vscode.Uri): Promise<boolean> {
   try {
@@ -73,9 +69,7 @@ export const getMcpServers: MessageHandler = async (data, requestId, ctx) => {
  * 验证 MCP 服务器 ID
  */
 export const validateMcpServerId: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { id, excludeId } = params;
+  const { id, excludeId } = data ?? {};
   const result = await ctx.mcpManager.validateServerId(id, excludeId);
   ctx.sendResponse(requestId, { success: true, ...result });
 };
@@ -84,9 +78,7 @@ export const validateMcpServerId: MessageHandler = async (data, requestId, ctx) 
  * 创建 MCP 服务器
  */
 export const createMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { input, customId } = params;
+  const { input, customId } = data ?? {};
   const serverId = await ctx.mcpManager.createServer(input, customId);
   ctx.sendResponse(requestId, { success: true, serverId });
 };
@@ -95,9 +87,7 @@ export const createMcpServer: MessageHandler = async (data, requestId, ctx) => {
  * 更新 MCP 服务器
  */
 export const updateMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { serverId, updates } = params;
+  const { serverId, updates } = data ?? {};
   await ctx.mcpManager.updateServer(serverId, updates);
   ctx.sendResponse(requestId, { success: true });
 };
@@ -106,9 +96,7 @@ export const updateMcpServer: MessageHandler = async (data, requestId, ctx) => {
  * 删除 MCP 服务器
  */
 export const deleteMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { serverId } = params;
+  const { serverId } = data ?? {};
   await ctx.mcpManager.deleteServer(serverId);
   ctx.sendResponse(requestId, { success: true });
 };
@@ -117,9 +105,7 @@ export const deleteMcpServer: MessageHandler = async (data, requestId, ctx) => {
  * 连接 MCP 服务器
  */
 export const connectMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { serverId } = params;
+  const { serverId } = data ?? {};
   await ctx.mcpManager.connect(serverId);
   ctx.sendResponse(requestId, { success: true });
 };
@@ -128,9 +114,7 @@ export const connectMcpServer: MessageHandler = async (data, requestId, ctx) => 
  * 断开 MCP 服务器
  */
 export const disconnectMcpServer: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { serverId } = params;
+  const { serverId } = data ?? {};
   await ctx.mcpManager.disconnect(serverId);
   ctx.sendResponse(requestId, { success: true });
 };
@@ -139,9 +123,7 @@ export const disconnectMcpServer: MessageHandler = async (data, requestId, ctx) 
  * 设置 MCP 服务器启用状态
  */
 export const setMcpServerEnabled: MessageHandler = async (data, requestId, ctx) => {
-  const params = requireMcpData(data, requestId, ctx);
-  if (!params) return;
-  const { serverId, enabled } = params;
+  const { serverId, enabled } = data ?? {};
   await ctx.mcpManager.setServerEnabled(serverId, enabled);
   ctx.sendResponse(requestId, { success: true });
 };

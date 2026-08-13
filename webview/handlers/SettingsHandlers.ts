@@ -37,6 +37,9 @@ export const getAppInfo: MessageHandler = async (_data, requestId, ctx) => {
 
 /**
  * 更新设置
+ *
+ * 04#6：payload 形状（{ settings: object }）已由 MessageRouter 入口按 MESSAGE_SCHEMAS 校验，
+ * 此处保持原样透传后端。
  */
 export const updateSettings: MessageHandler = async (data, requestId, ctx) => {
   const result = await ctx.settingsHandler.updateSettings(data);
@@ -45,6 +48,8 @@ export const updateSettings: MessageHandler = async (data, requestId, ctx) => {
 
 /**
  * 更新代理设置
+ *
+ * 04#6：payload 形状（{ proxySettings: object }）已由 MessageRouter 入口按 MESSAGE_SCHEMAS 校验。
  */
 export const updateProxySettings: MessageHandler = async (data, requestId, ctx) => {
   const result = await ctx.settingsHandler.updateProxySettings(data);

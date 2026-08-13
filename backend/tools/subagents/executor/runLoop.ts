@@ -28,6 +28,10 @@ import { markAiActive } from '../../../modules/activity';
 import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
 import { trimSubAgentHistoryForContext } from './contextTrim';
+
+// TODO(02#05): 本文件保留了 `as any`（result/response 为上游 LLM 响应，形状随渠道/流式模式变化，
+// 且 ContentPart 等类型未完全覆盖所有可选字段）。这些断言只做字段探测，不改运行时语义；
+// 待上游响应类型补齐后可替换为收窄后的类型。
 import { resolveSubAgentAvailableTools } from './context';
 import { clearRunAllowedTools, setRunAllowedTools } from './capability';
 import { executeToolCall } from './executeToolCall';

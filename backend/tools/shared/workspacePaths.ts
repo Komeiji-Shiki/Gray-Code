@@ -6,6 +6,9 @@ import * as fs from 'fs';
 import { t } from '../../i18n';
 import { IS_WINDOWS } from './textUtils';
 
+// TODO(02#05): `(fs as any).realpathSync?.native` 访问 fs 的 native 绑定（@types/node 未声明），
+// 且测试环境可能 mock 掉 realpathSync；保留 as any 并做运行时可选链守卫。
+
 // ==================== 多工作区支持 ====================
 
 /**

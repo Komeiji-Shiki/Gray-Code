@@ -7,6 +7,7 @@
 import * as vscode from 'vscode';
 import { createHash } from 'crypto';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { REVIEW_PATH_SCOPE_LABEL, buildPathReceivedError } from '../shared/pathPolicy';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
@@ -236,7 +237,7 @@ export function createCompareReviewDocumentsTool(): Tool {
   return {
     declaration: createCompareReviewDocumentsToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
-      const args = rawArgs as unknown as CompareReviewDocumentsArgs;
+      const args = parseArgs<CompareReviewDocumentsArgs>(rawArgs);
       const basePath = typeof args.basePath === 'string' ? args.basePath.trim() : '';
       const targetPath = typeof args.targetPath === 'string' ? args.targetPath.trim() : '';
       const includeUnchanged = args.includeUnchanged === true;

@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { PLAN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { buildPlanDocument, extractPlanBodyContent } from './documentLayout';
@@ -104,7 +105,7 @@ export function createUpdatePlanTool(): Tool {
       if (unexpectedKeys.length > 0) {
         return { success: false, error: `Unexpected update_plan fields: ${unexpectedKeys.join(', ')}` };
       }
-      const args = rawArgs as unknown as UpdatePlanArgs;
+      const args = parseArgs<UpdatePlanArgs>(rawArgs);
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
       const plan = typeof args.plan === 'string' ? args.plan : '';
       const changeSummary = typeof args.changeSummary === 'string' ? args.changeSummary.trim() : '';

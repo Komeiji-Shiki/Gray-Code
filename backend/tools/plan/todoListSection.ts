@@ -29,15 +29,16 @@ export function normalizePlanTodoList(raw: unknown): PlanTodoItem[] {
   if (!Array.isArray(raw)) return [];
 
   const byId = new Map<string, PlanTodoItem>();
-  for (const item of raw) {
-    const idRaw = (item as any)?.id;
-    const contentRaw = (item as any)?.content;
+  for (const rawItem of raw) {
+    const item = rawItem as Record<string, unknown>;
+    const idRaw = item?.id;
+    const contentRaw = item?.content;
     if (typeof idRaw !== 'string' || !idRaw.trim()) continue;
     if (typeof contentRaw !== 'string') continue;
 
     const id = idRaw.trim();
     const content = normalizeSingleLineText(contentRaw);
-    const status = normalizeTodoStatus((item as any)?.status);
+    const status = normalizeTodoStatus(item?.status);
 
     byId.set(id, {
       id,

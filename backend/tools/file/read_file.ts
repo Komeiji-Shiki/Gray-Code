@@ -8,6 +8,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolContext, ToolResult, MultimodalData, MultimodalCapability } from '../types';
+import { parseArgs } from '../types';
 import { t, getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
 import { buildReadFileDescriptions } from '../localization/dynamicDescriptions';
@@ -83,6 +84,43 @@ interface ResolvedLineRangeArgs {
 }
 
 /**
+ * 批量读取的单个文件条目（对应 schema 的 files[] 元素）。
+ */
+interface ReadFileBatchItem {
+    path: string;
+    startLine?: number;
+    endLine?: number;
+}
+
+/**
+ * read_file 的规范化参数形状（含 compat 透传的行范围别名）。
+ */
+interface ReadFileArgs {
+    path?: string;
+    files?: ReadFileBatchItem[];
+    startLine?: number;
+    endLine?: number;
+    // 兼容透传参数（不向模型宣传，由 handler 解释语义）
+    line?: number;
+    maxLine?: number;
+    maxLines?: number;
+    limit?: number;
+}
+
+/**
+ * 行范围参数的公共形状：resolveLineRangeArgs 只关心这些字段，
+ * 既接受顶层参数也接受 files[] 条目。
+ */
+interface ReadFileLineRangeArgs {
+    startLine?: unknown;
+    endLine?: unknown;
+    line?: unknown;
+    maxLine?: unknown;
+    maxLines?: unknown;
+    limit?: unknown;
+}
+
+/**
  * read_file 多模态调试信息。
  *
  * 添加原因：用户界面已开启“多模态工具”但运行时仍可能收到 false，单靠错误文案无法定位是哪条链路漏传。
@@ -124,7 +162,7 @@ function normalizeLineNumber(value: unknown): number | undefined {
         : undefined;
 }
 
-function resolveLineRangeArgs(args: Record<string, unknown>): ResolvedLineRangeArgs {
+function resolveLineRangeArgs(args: ReadFileLineRangeArgs): ResolvedLineRangeArgs {
     // 修改原因：模型经常按其他文件读取工具的习惯传 line/maxLines/limit，而 read_file 原本只接受 startLine/endLine，会被 strict schema 直接拒绝。
     // 修改方式：保留 startLine/endLine 作为规范字段，同时把 line/maxLine/maxLines/limit 收敛为同一个 LineRange 语义。
     // 修改目的：提高工具调用容错率，并让“读取第 N 行”或“读取最多 N 行”的自然表达无需失败后重试。
@@ -465,6 +503,9 @@ export function createReadFileTool(
                 return { success: false, error: accessError };
             }
 
+            // 上游已 normalizeToolArgs + validateToolArgs 校验，这里仅做编译期类型收窄
+            const typed = parseArgs<ReadFileArgs>(args);
+
             // 从 context 中获取多模态能力
             const multimodalEnabled = context?.multimodalEnabled === true;
             const capability = context?.capability as MultimodalCapability ?? {
@@ -483,16 +524,16 @@ export function createReadFileTool(
                 ? context.multimodalDebug as Record<string, unknown>
                 : undefined;
             
-            const hasSinglePath = typeof args.path === 'string' && args.path.trim() !== '';
-            let batchFiles = Array.isArray(args.files) ? args.files : undefined;
+            const hasSinglePath = typeof typed.path === 'string' && typed.path.trim() !== '';
+            let batchFiles = Array.isArray(typed.files) ? typed.files : undefined;
             // 某些 function-calling 客户端会把未提供的可选数组补成 []。当 path 有值时，
             // 空 files 应视为“未提供批量参数”，不能误判成单双模式冲突。
             const hasBatchFiles = !!batchFiles && batchFiles.length > 0;
 
             // 批量条数上限（发现 16）：超出截断并在结果中置 truncated 标记
             const batchFilesTruncated = !!batchFiles && batchFiles.length > MAX_BATCH_FILES;
-            if (batchFilesTruncated) {
-                batchFiles = (batchFiles as unknown[]).slice(0, MAX_BATCH_FILES);
+            if (batchFilesTruncated && batchFiles) {
+                batchFiles = batchFiles.slice(0, MAX_BATCH_FILES);
             }
 
             if (hasSinglePath && hasBatchFiles) {
@@ -506,15 +547,15 @@ export function createReadFileTool(
             }
 
             let fileRequests: FileReadRequest[];
-            if (hasBatchFiles) {
-                fileRequests = (batchFiles as Array<Record<string, unknown>>).map(file => ({
+            if (hasBatchFiles && batchFiles) {
+                fileRequests = batchFiles.map(file => ({
                     path: typeof file.path === 'string' ? file.path : '',
                     ...resolveLineRangeArgs(file)
                 }));
             } else {
-                const resolvedLineRange = resolveLineRangeArgs(args);
+                const resolvedLineRange = resolveLineRangeArgs(typed);
                 fileRequests = [{
-                    path: args.path as string,
+                    path: typed.path as string,
                     startLine: resolvedLineRange.startLine,
                     endLine: resolvedLineRange.endLine
                 }];

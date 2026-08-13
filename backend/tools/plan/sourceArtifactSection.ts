@@ -137,8 +137,10 @@ export function extractPlanSourceArtifact(content: string): PlanSourceArtifact |
 }
 
 export async function buildTrackedPlanSourceArtifact(input: unknown): Promise<PlanSourceArtifact> {
-  const type = (input as any)?.type;
-  const path = typeof (input as any)?.path === 'string' ? (input as any).path.trim() : '';
+  const obj = input as Record<string, unknown> | null | undefined;
+  const type = obj?.type;
+  const rawPath = obj?.path;
+  const path = typeof rawPath === 'string' ? rawPath.trim() : '';
 
   if (!isPlanSourceArtifactType(type) || !path) {
     throw new Error('sourceArtifact must include a valid type and path');

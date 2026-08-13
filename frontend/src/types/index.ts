@@ -849,3 +849,8 @@ export * from './editorNode'
 // ============ 用量统计类型 ============
 
 export * from './usage'
+
+// ============ 渠道配置与设置子对象契约（F-09） ============
+
+export * from './channelConfig'
+export * from './settingsConfig'

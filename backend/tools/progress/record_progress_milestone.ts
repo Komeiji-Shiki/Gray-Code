@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { resolveUriWithInfo } from '../utils';
 import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import {
@@ -124,7 +125,7 @@ export function createRecordProgressMilestoneTool(): Tool {
   return {
     declaration: createRecordProgressMilestoneToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
-      const args = rawArgs as unknown as RecordProgressMilestoneArgs;
+      const args = parseArgs<RecordProgressMilestoneArgs>(rawArgs);
       const targetPath = typeof args.path === 'string' && args.path.trim()
         ? args.path.trim()
         : '.graycode/progress.md';

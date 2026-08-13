@@ -16,6 +16,7 @@ import { MarkdownRenderer } from '../../common'
 import ChannelSelector from '../../input/ChannelSelector.vue'
 import ModelSelector from '../../input/ModelSelector.vue'
 import type { ChannelOption, ModelInfo } from '../../input/types'
+import type { ChannelConfig } from '../../../types'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
@@ -35,7 +36,7 @@ const { openFile } = useOpenWorkspaceFile()
 const chatStore = useChatStore()
 
 // ============ Plan 执行相关 ============
-const channelConfigs = ref<any[]>([])
+const channelConfigs = ref<ChannelConfig[]>([])
 const selectedChannelId = ref('')
 const selectedModelId = ref('')
 const modelOptions = ref<ModelInfo[]>([])
@@ -59,7 +60,7 @@ async function loadChannels() {
   isLoadingChannels.value = true
   try {
     const ids = await configService.listConfigIds()
-    const loaded: any[] = []
+    const loaded: ChannelConfig[] = []
     for (const id of ids) {
       const config = await configService.getConfig(id)
       if (config) loaded.push(config)
@@ -92,7 +93,8 @@ async function loadModelsForChannel(configId: string) {
   isLoadingModels.value = true
   try {
     const cfg = channelConfigs.value.find(c => c.id === configId)
-    const localModels = Array.isArray((cfg as any)?.models) ? ((cfg as any).models as ModelInfo[]) : []
+    const storedModels = cfg?.models
+    const localModels = Array.isArray(storedModels) ? storedModels : []
     let models = localModels.length > 0 ? localModels : await configService.getChannelModels(configId)
 
     const current = (cfg?.model || '').trim()

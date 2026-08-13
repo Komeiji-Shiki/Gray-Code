@@ -8,7 +8,7 @@ import type { HandlerContext, MessageHandlerRegistry } from './types';
 import { createMessageHandlerRegistry } from './handlers';
 // B1：非阻塞名单迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导出路径
 // （backend/__tests__/webview/messageRouterNonBlockingBehavior.test.ts 直接 import 它）。
-import { MESSAGE_NAMES, NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
+import { MESSAGE_NAMES, NON_BLOCKING_MESSAGE_TYPES, validateMessagePayload } from '../shared/protocol';
 export { NON_BLOCKING_MESSAGE_TYPES } from '../shared/protocol';
 import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
@@ -164,17 +164,40 @@ export class MessageRouter {
       this.requestRoutes.track(requestId, resolvedClientId, keepUntilFinalize);
     };
 
+    const isStream = this.isStreamMessage(type);
+
+    // 未命中任何处理器：不登记映射、不做校验，返回 false 交由上层回 UNKNOWN_TYPE。
+    if (!isStream && !this.registry.has(type)) {
+      return false;
+    }
+
+    // 统一 payload 校验（04#6）：已登记 schema 的消息在此处按形状校验，失败回 INVALID_DATA；
+    // 未登记 schema 的消息（流式消息、结构尚不确定的普通消息）跳过，保持 handler 内部既有校验。
+    const validation = validateMessagePayload(type, data);
+    if (!validation.ok) {
+      // 先登记映射再 routeError：routeError 依赖 requestId → clientId 映射把错误路由回发起端
+      // （Monitor 等）；routeError 成功或回退都会删除条目，这里再兜底清理（幂等）。
+      trackRequestClient(false);
+      try {
+        this.sendRoutedError(requestId, 'INVALID_DATA', `Invalid payload for ${type}: ${validation.errors.join('; ')}`);
+      } catch {
+        // 发送错误失败则静默忽略
+      }
+      this.requestRoutes.fail(requestId);
+      return true;
+    }
+
     // 检查是否是流式消息
-    if (this.isStreamMessage(type)) {
+    if (isStream) {
       trackRequestClient(true);
       await this.handleStreamMessage(type as StreamMessageType, data, requestId, resolvedClientId, ctx);
       return true;
     }
 
-    // 检查注册表中是否有处理器
+    // 已确认注册表中有处理器
     const handler = this.registry.get(type);
     if (!handler) {
-      // 未找到处理器，返回 false 表示需要回退
+      // 理论不可达（上方 has 已确认）；保留兜底防未来改动
       return false;
     }
 

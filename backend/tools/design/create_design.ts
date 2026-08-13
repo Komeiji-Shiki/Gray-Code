@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { slugify } from '../shared/slugify';
 import { DESIGN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
@@ -47,7 +48,7 @@ export function createCreateDesignTool(): Tool {
   return {
     declaration: createCreateDesignToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
-      const args = rawArgs as unknown as CreateDesignArgs;
+      const args = parseArgs<CreateDesignArgs>(rawArgs);
       const design = typeof args.design === 'string' ? args.design : '';
       if (!design.trim()) {
         return { success: false, error: 'design is required and must be a non-empty string' };

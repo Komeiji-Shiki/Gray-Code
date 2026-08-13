@@ -509,9 +509,12 @@ function extractToolName(rawName: unknown): string | null {
         const trimmed = rawName.trim();
         return trimmed.length > 0 ? trimmed : null;
     }
-    if (rawName && typeof rawName === 'object' && typeof (rawName as any)['#text'] === 'string') {
-        const trimmed = (rawName as any)['#text'].trim();
-        return trimmed.length > 0 ? trimmed : null;
+    if (rawName && typeof rawName === 'object') {
+        const text = (rawName as Record<string, unknown>)['#text'];
+        if (typeof text === 'string') {
+            const trimmed = text.trim();
+            return trimmed.length > 0 ? trimmed : null;
+        }
     }
     return null;
 }

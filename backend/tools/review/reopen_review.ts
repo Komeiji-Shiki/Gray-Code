@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { REVIEW_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { isProgressArtifactPathAllowedWithMultiRoot } from '../progress/pathUtils';
@@ -42,7 +43,7 @@ export function createReopenReviewTool(): Tool {
   return {
     declaration: createReopenReviewToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
-      const args = rawArgs as unknown as ReopenReviewArgs;
+      const args = parseArgs<ReopenReviewArgs>(rawArgs);
       const path = typeof args.path === 'string' ? args.path.trim() : '';
 
       if (!path) {

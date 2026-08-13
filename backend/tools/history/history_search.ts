@@ -176,7 +176,7 @@ async function historySearchHandler(
     }
 
     const conversationId = context.conversationId as string | undefined;
-    const conversationStore = context.conversationStore as any;
+    const conversationStore = context.conversationStore;
 
     if (!conversationId) {
         return { success: false, error: t('tools.history.errors.conversationIdRequired') };

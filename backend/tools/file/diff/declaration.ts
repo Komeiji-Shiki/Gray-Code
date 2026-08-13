@@ -8,12 +8,13 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult } from '../../types';
+import { parseArgs } from '../../types';
 import { getDiffManager } from '../../../core/services/diffManager';
 import { resolveUriWithInfo, getAllWorkspaces, formatFileSize } from '../../utils';
 import { getGlobalSettingsManager } from '../../../core/settingsContext';
 import { resolveDiffOutcome } from './resolveDiffOutcome';
 import type { LockHolder } from '../../../core/fileWriteLockManager';
-import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from '../unifiedDiff';
+import { applyUnifiedDiffBestEffort, parseUnifiedDiff } from '../unifiedDiff';
 import {
     applyStructuredDiffHunksBestEffort,
     applyDiffToContent,
@@ -33,6 +34,17 @@ import { resolveLocalizationLanguage } from '../../localization/types';
 
 // 文件大小护栏（与 read_file/search_in_files 的 5MB 上限一致）已统一收敛到 shared/fileSizeGuards
 import { MAX_EDIT_FILE_BYTES } from '../../shared/fileSizeGuards';
+
+/**
+ * apply_diff 的规范化参数形状（unified 与 search_replace 两种格式的并集）。
+ * hunks/patch 为 unified 格式，diffs 为旧 search/replace 格式；handler 按当前配置分流。
+ */
+interface ApplyDiffArgs {
+    path: string;
+    patch?: string;
+    hunks?: StructuredDiffHunk[];
+    diffs?: LegacyDiffBlock[];
+}
 
 function getApplyDiffFormat(): 'unified' | 'search_replace' {
     const settingsManager = getGlobalSettingsManager();
@@ -336,10 +348,7 @@ ${descriptionSuffix}`;
                 return { success: false, error: accessError };
             }
 
-            const filePath = args.path as string;
-            const patch = args.patch as string | undefined;
-            const structuredHunks = args.hunks as StructuredDiffHunk[] | undefined;
-            const diffs = args.diffs as LegacyDiffBlock[] | undefined;
+            const { path: filePath, patch, hunks: structuredHunks, diffs } = parseArgs<ApplyDiffArgs>(args);
 
             if (!filePath || typeof filePath !== 'string') {
                 return { success: false, error: 'Path is required' };
@@ -408,7 +417,7 @@ ${descriptionSuffix}`;
                         results = applied.results;
                         blocks = applied.blocks;
                         newContent = applied.newContent;
-                        rawDiffs = structuredHunks as any[];
+                        rawDiffs = structuredHunks;
                         fallbackMode = 'structured_hunks';
                         // 顺序路径（含缩进容错）不产出计划；fast path 成功时缓存计划供重放复用
                         structuredHunkPlan = applied.plan;
@@ -439,7 +448,7 @@ ${descriptionSuffix}`;
                         }));
 
                         newContent = applied.newContent;
-                        rawDiffs = parsed.hunks as UnifiedDiffHunk[] as any[];
+                        rawDiffs = parsed.hunks;
 
                         // 若有 hunk 因行号/上下文不匹配等原因失败，尝试兜底：将 hunks 退化为全局精确 search/replace。
                         // 说明：
@@ -456,10 +465,10 @@ ${descriptionSuffix}`;
                                 diffCount = legacyDiffs.length;
                                 appliedCount = legacyApplied.appliedCount;
                                 failedCount = legacyApplied.failedCount;
-                                results = legacyApplied.results as any;
+                                results = legacyApplied.results;
                                 blocks = legacyApplied.blocks;
                                 newContent = legacyApplied.newContent;
-                                rawDiffs = legacyDiffs as any[];
+                                rawDiffs = legacyDiffs;
                                 fallbackMode = 'unified_hunks_search_replace';
                             }
                         }
@@ -483,7 +492,7 @@ ${descriptionSuffix}`;
                                 results = looseApplied.results;
                                 blocks = looseApplied.blocks;
                                 newContent = looseApplied.newContent;
-                                rawDiffs = legacyDiffs as any[];
+                                rawDiffs = legacyDiffs;
                                 fallbackMode = 'loose_hunk_search_replace';
                             } else {
                                 throw e;
@@ -747,7 +756,7 @@ ${descriptionSuffix}`;
                     originalContent,
                     currentContent,
                     blocks,
-                    diffs as any[],
+                    diffs,
                     context?.toolId,
                     {
                         confirmedByToolConfirmation: context?.approvedByToolConfirmation === true,

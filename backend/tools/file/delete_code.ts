@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
+import { parseArgs } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF, formatFileSize } from '../utils';
 import { getDiffManager } from '../../core/services/diffManager';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
@@ -26,6 +27,13 @@ interface DeleteCodeEntry {
     path: string;
     start_line: number;
     end_line: number;
+}
+
+/**
+ * delete_code 的规范化参数形状。
+ */
+interface DeleteCodeArgs {
+    files: DeleteCodeEntry[];
 }
 
 /**
@@ -300,7 +308,7 @@ export function createDeleteCodeTool(): Tool {
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
-            const fileList = args.files as DeleteCodeEntry[] | undefined;
+            const fileList = parseArgs<DeleteCodeArgs>(args).files;
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
                 return { success: false, error: 'files is required and must be a non-empty array' };
             }

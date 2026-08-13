@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
+import { parseArgs } from '../types';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
 import { getDiffManager } from '../../core/services/diffManager';
 import { ensureOutsideWorkspaceAccessApproved } from './outsideWorkspaceAccess';
@@ -21,6 +22,14 @@ import { resolveLocalizationLanguage } from '../localization/types';
  * 单个文件写入配置
  */
 interface WriteFileEntry {
+    path: string;
+    content: string;
+}
+
+/**
+ * write_file 的规范化参数形状。
+ */
+interface WriteFileArgs {
     path: string;
     content: string;
 }
@@ -358,10 +367,7 @@ Note: path is relative to the workspace root; content must be the complete targe
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
-            const entry: WriteFileEntry = {
-                path: args.path as string,
-                content: args.content as string
-            };
+            const entry: WriteFileEntry = parseArgs<WriteFileArgs>(args);
 
             const accessError = ensureOutsideWorkspaceAccessApproved('write_file', args, context);
             if (accessError) {

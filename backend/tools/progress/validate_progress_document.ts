@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { PROGRESS_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { isProgressModePathAllowedWithMultiRoot } from './pathUtils';
@@ -40,7 +41,7 @@ export function createValidateProgressDocumentTool(): Tool {
   return {
     declaration: createValidateProgressDocumentToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
-      const args = rawArgs as unknown as ValidateProgressDocumentArgs;
+      const args = parseArgs<ValidateProgressDocumentArgs>(rawArgs);
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
 
       if (!targetPath) {

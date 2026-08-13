@@ -15,6 +15,9 @@ import { EventEmitter } from 'events';
 import { TextDecoder } from 'util';
 import type { Tool, ToolResult, ToolContext } from '../types';
 
+// TODO(02#05): `(process as any).setPriority` 访问 Node 未在 @types/node 暴露的 POSIX API
+// （仅 POSIX 有效），运行时已做可选链守卫；保留 as any 避免引入不准确的全局类型声明。
+
 // tree-kill library, used to terminate process trees cross-platform
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const treeKill = require('tree-kill') as (pid: number, signal?: string, callback?: (error?: Error) => void) => void;

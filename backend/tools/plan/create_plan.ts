@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { slugify } from '../shared/slugify';
 import { PLAN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
@@ -74,7 +75,7 @@ export function createCreatePlanTool(): Tool {
   return {
     declaration: createCreatePlanToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: any): Promise<ToolResult> => {
-      const args = rawArgs as unknown as CreatePlanArgs;
+      const args = parseArgs<CreatePlanArgs>(rawArgs);
       const plan = typeof args.plan === 'string' ? args.plan : '';
       if (!plan.trim()) {
         return { success: false, error: 'plan is required and must be a non-empty string' };

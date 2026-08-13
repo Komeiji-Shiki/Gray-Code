@@ -114,7 +114,7 @@ function getPolicy(
 
     // search_in_files 读写模式混合：search 只读沿用读策略，replace 写入沿用写策略
     if (toolName === 'search_in_files') {
-        return (args as any)?.mode === 'replace'
+        return args?.mode === 'replace'
             ? getWritePolicy(toolName, settingsManager)
             : getReadPolicy(settingsManager);
     }
@@ -136,17 +136,17 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
 
     // delete_file/create_directory/list_files：paths 字符串数组（list_files 另兼容单 path）
     if (toolName === 'delete_file' || toolName === 'create_directory' || toolName === 'list_files') {
-        const fromArray = extractNonEmptyStrings((args as any).paths);
+        const fromArray = extractNonEmptyStrings(args.paths);
         if (fromArray.length > 0) {
             return fromArray;
         }
-        const single = (args as any).path;
+        const single = args.path;
         return typeof single === 'string' && single.trim().length > 0 ? [single] : [];
     }
 
     // insert_code/delete_code：files[].path
     if (toolName === 'insert_code' || toolName === 'delete_code') {
-        const files = (args as any).files;
+        const files = args.files;
         if (!Array.isArray(files)) {
             return [];
         }
@@ -157,11 +157,11 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
 
     // get_symbols：paths 字符串数组（批量符号查询）
     if (toolName === 'get_symbols') {
-        return extractNonEmptyStrings((args as any).paths);
+        return extractNonEmptyStrings(args.paths);
     }
 
     if (toolName === 'read_file' || toolName === 'write_file') {
-        const singlePath = (args as any).path;
+        const singlePath = args.path;
         if (typeof singlePath === 'string' && singlePath.trim().length > 0) {
             return [singlePath];
         }
@@ -169,12 +169,12 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
         // read_file 的规范 schema 是顶层 path（单文件）与 files（批量）数组；
         // 这里再兼容历史/第三方客户端可能传入的 paths 数组形式，
         // 避免 paths 形式的工作区外读取绕过策略检查
-        const fromPathsArray = extractNonEmptyStrings((args as any).paths);
+        const fromPathsArray = extractNonEmptyStrings(args.paths);
         if (fromPathsArray.length > 0) {
             return fromPathsArray;
         }
 
-        const files = (args as any).files;
+        const files = args.files;
         if (!Array.isArray(files)) {
             return [];
         }
@@ -184,7 +184,7 @@ function extractCandidatePaths(toolName: OutsideWorkspaceAwareToolName, args: Re
             .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
     }
 
-    const singlePath = (args as any).path;
+    const singlePath = args.path;
     return typeof singlePath === 'string' && singlePath.trim().length > 0 ? [singlePath] : [];
 }
 
@@ -235,7 +235,7 @@ function isDiffReviewCoveredForCall(
     if (!DIFF_REVIEW_WRITE_TOOLS.has(toolName)) {
         return false;
     }
-    if (toolName === 'search_in_files' && (args as any)?.mode !== 'replace') {
+    if (toolName === 'search_in_files' && args?.mode !== 'replace') {
         return false;
     }
     return getApplyDiffConfig(settingsManager).autoSave !== true;

@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { resolveUriWithInfo } from '../utils';
 import { slugify } from '../shared/slugify';
 import { REVIEW_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
@@ -55,7 +56,7 @@ export function createCreateReviewTool(): Tool {
   return {
     declaration: createCreateReviewToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
-      const args = rawArgs as unknown as CreateReviewArgs;
+      const args = parseArgs<CreateReviewArgs>(rawArgs);
       const review = typeof args.review === 'string' ? args.review : '';
       if (!review.trim()) {
         return { success: false, error: 'review is required and must be a non-empty string' };

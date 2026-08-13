@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import {
     getAllWorkspaces,
     parseWorkspacePath,
@@ -68,6 +69,21 @@ function getSearchRootAccessError(
  *（与 read_file 返回的访问错误信息保持一致，不额外包装 "Search failed:" 前缀）。
  */
 class OutsideWorkspaceAccessError extends Error {}
+
+/**
+ * search_in_files 的规范化参数形状。
+ */
+interface SearchInFilesArgs {
+    mode?: 'search' | 'replace';
+    query?: string;
+    path?: string;
+    pattern?: string;
+    isRegex?: boolean;
+    caseSensitive?: boolean;
+    maxResults?: number;
+    replace?: string;
+    maxFiles?: number;
+}
 
 function createPossibleMultiplePathsWarning(searchPath: string): SearchPathWarningInfo | undefined {
     const normalized = (searchPath || '').trim();
@@ -187,17 +203,18 @@ export function createSearchInFilesTool(): Tool {
             }
         },
         handler: async (args, context?: import('../types').ToolContext): Promise<ToolResult> => {
-            const query = args.query as string;
-            const searchPath = (args.path as string) || '.';
-            const filePattern = (args.pattern as string) || '**/*';
-            const isRegex = (args.isRegex as boolean) || false;
+            const typed = parseArgs<SearchInFilesArgs>(args);
+            const query = typed.query as string;
+            const searchPath = typed.path || '.';
+            const filePattern = typed.pattern || '**/*';
+            const isRegex = typed.isRegex || false;
             
             // 严格按照 mode 字段决定模式，忽略其他不相关的参数
-            const mode = (args.mode as string) || 'search';
+            const mode = typed.mode || 'search';
             const isReplaceMode = mode === 'replace';
 
             // replace 模式下 replace 参数必须显式提供：漏传时替换串为空会静默删除所有匹配内容
-            if (isReplaceMode && typeof args.replace !== 'string') {
+            if (isReplaceMode && typeof typed.replace !== 'string') {
                 return {
                     success: false,
                     error: 'replace parameter is required when mode is "replace"'
@@ -207,23 +224,23 @@ export function createSearchInFilesTool(): Tool {
             // 大小写语义：search 默认不区分（方便定位），replace 默认区分（保守替换）。
             // 支持显式覆盖，并在 0 命中时通过诊断信息提醒模型两种模式的默认差异，
             // 避免“search 搜得到、replace 替不了”的困惑。
-            const caseSensitive = typeof args.caseSensitive === 'boolean'
-                ? (args.caseSensitive as boolean)
+            const caseSensitive = typeof typed.caseSensitive === 'boolean'
+                ? typed.caseSensitive
                 : isReplaceMode;
             
             // 搜索模式参数（0/负值/非数字语义混乱：统一回退默认 100 并取整，参照 find_files）
-            const maxResults = typeof args.maxResults === 'number' && args.maxResults > 0 ? Math.floor(args.maxResults) : 100;
+            const maxResults = typeof typed.maxResults === 'number' && typed.maxResults > 0 ? Math.floor(typed.maxResults) : 100;
             
             // 替换模式参数（仅在替换模式下使用）。
             // isRegex=false 时 query 按字面量匹配，替换串也必须按字面量写入：
             // 转义 $ 序列，防止 $&/$1/$$ 被 String.replace 解释为特殊替换模式
             //（工具描述承诺捕获组仅在 isRegex=true 时生效）。
-            const rawReplacement = isReplaceMode ? ((args.replace as string) ?? '') : '';
+            const rawReplacement = isReplaceMode ? (typed.replace ?? '') : '';
             const replacement = isReplaceMode && !isRegex
                 ? rawReplacement.replace(/\$/g, '$$$$')
                 : rawReplacement;
-            const maxFiles = isReplaceMode && typeof args.maxFiles === 'number' && args.maxFiles > 0
-                ? Math.floor(args.maxFiles)
+            const maxFiles = isReplaceMode && typeof typed.maxFiles === 'number' && typed.maxFiles > 0
+                ? Math.floor(typed.maxFiles)
                 : 50;
 
             if (!query) {

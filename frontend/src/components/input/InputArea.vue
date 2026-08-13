@@ -27,7 +27,7 @@ import { formatNumber, generateId } from '../../utils/format'
 import { languageFromPath } from '../../utils/languageFromPath'
 import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { getFileType } from '../../utils/file'
-import type { Attachment } from '../../types'
+import type { Attachment, ChannelConfig } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
 import type { EditorNode } from '../../types/editorNode'
 import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
@@ -77,7 +77,7 @@ watch(() => chatStore.editorNodes, (nodes) => {
 
 // ========== Configs / Modes ==========
 
-const configs = ref<any[]>([])
+const configs = ref<ChannelConfig[]>([])
 const isLoadingConfigs = ref(false)
 
 const promptModes = ref<PromptMode[]>([])
@@ -114,7 +114,7 @@ async function loadConfigs() {
       }
     }))
 
-    configs.value = results.filter((c): c is any => !!c)
+    configs.value = results.filter((c): c is ChannelConfig => !!c)
   } catch (error) {
     console.error('Failed to load configs:', error)
   } finally {

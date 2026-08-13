@@ -21,6 +21,10 @@ import { TODO_TOOL_NAMES } from '../todo';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
 
+// TODO(02#05): 本文件保留了少量 `as any`（context.conversationStore / context.promptModeSnapshot）——
+// 运行时对象是 ConversationManager / ResolvedPromptModeSnapshot，而 ToolContext 只为元数据接口
+// 声明了窄类型；为不引入跨模块类型耦合，此处暂以 as any 透传，待 ToolContext 字段类型补齐后再收紧。
+
 // 修改原因：todo_write/todo_update 依赖主会话 conversationId，子代理执行路径无法使用，
 // 不应出现在子代理的工具描述/声明里（P1：避免子代理反复尝试调用报错浪费迭代）。
 // F2：不再排除 subagents——子 agent 需要能派生子子 agent（嵌套）；subagents 工具不依赖

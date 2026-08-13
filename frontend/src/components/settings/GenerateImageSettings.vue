@@ -10,11 +10,12 @@ import { CustomSelect, CustomCheckbox, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
+import type { ImageConfig } from '@/types'
 
 const { t } = useI18n()
 
 // 图像生成配置
-const imageConfig = reactive({
+const imageConfig = reactive<ImageConfig>({
   url: 'https://generativelanguage.googleapis.com/v1beta',
   apiKey: '',
   model: 'gemini-3-pro-image-preview',
@@ -84,9 +85,9 @@ async function loadConfig() {
 // @input 每按键触发：统一 400ms 防抖提交，避免每按键全量写配置
 let configSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-async function updateConfigField(field: string, value: any) {
+async function updateConfigField<K extends keyof ImageConfig>(field: K, value: ImageConfig[K] | undefined) {
   // 先更新本地值（即时反馈）
-  ;(imageConfig as any)[field] = value
+  imageConfig[field] = value as ImageConfig[K]
   scheduleConfigSave()
 }
 

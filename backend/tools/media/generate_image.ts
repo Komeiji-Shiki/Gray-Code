@@ -9,6 +9,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult, MultimodalData, ToolContext } from '../types';
+import type { PropertySchema } from '../toolSchema';
 import { resolveFileToolPathWithInfo, getAllWorkspaces, calculateAspectRatio } from '../utils';
 import { ensureOutsideWorkspaceAccessApproved } from '../file/outsideWorkspaceAccess';
 import { saveImage, parseImageDimensionsFromBase64, createFetchSignal } from './imageUtils';
@@ -680,7 +681,7 @@ export function createGenerateImageTool(
     const description = descriptions.description;
 
     // 构建批量任务的属性定义
-    const batchItemProperties: Record<string, unknown> = {
+    const batchItemProperties: Record<string, PropertySchema> = {
         prompt: {
             type: 'string',
             description: descriptions.batchPrompt
@@ -715,7 +716,7 @@ export function createGenerateImageTool(
     }
 
     // 构建单张模式的属性定义
-    const singleModeProperties: Record<string, unknown> = {
+    const singleModeProperties: Record<string, PropertySchema> = {
         prompt: {
             type: 'string',
             description: descriptions.singlePrompt

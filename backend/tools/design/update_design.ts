@@ -6,6 +6,7 @@
 
 import * as vscode from 'vscode';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import { parseArgs } from '../types';
 import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { DESIGN_PATH_SCOPE_LABEL, buildPathRejectedError } from '../shared/pathPolicy';
 import { ensureParentDir, isDesignModePathAllowedWithMultiRoot } from './pathUtils';
@@ -49,7 +50,7 @@ export function createUpdateDesignTool(): Tool {
   return {
     declaration: createUpdateDesignToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
-      const args = rawArgs as unknown as UpdateDesignArgs;
+      const args = parseArgs<UpdateDesignArgs>(rawArgs);
       const targetPath = typeof args.path === 'string' ? args.path.trim() : '';
       const design = typeof args.design === 'string' ? args.design : '';
       const changeSummary = typeof args.changeSummary === 'string' ? args.changeSummary.trim() : '';

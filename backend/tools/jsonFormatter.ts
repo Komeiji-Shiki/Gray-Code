@@ -281,8 +281,11 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
             const parsed = parseJsonLenient(jsonStr);
             
             // 验证是否是有效的工具调用格式
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof (parsed as any).tool === 'string') {
-                const toolName = (parsed as any).tool as string;
+            const parsedObj = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+                ? parsed as Record<string, unknown>
+                : null;
+            if (parsedObj && typeof parsedObj.tool === 'string') {
+                const toolName = parsedObj.tool;
                 if (!toolName.trim()) {
                     // 空 tool 名：不再静默丢弃整块，构造带解析错误的调用反馈给模型
                     results.push({
@@ -294,7 +297,7 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
                 } else {
                     results.push({
                         tool: toolName,
-                        parameters: (parsed as any).parameters || {}
+                        parameters: (parsedObj.parameters as Record<string, any>) || {}
                     });
                 }
             } else {

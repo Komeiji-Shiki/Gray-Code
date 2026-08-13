@@ -10,7 +10,7 @@ import { CustomCheckbox, CustomSelect, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useDeferredNumberInput, getSettingsView } from '@/composables/useDeferredNumberInput'
-import type { ModelInfo } from '@/types'
+import type { ModelInfo, SummarizeConfig } from '@/types'
 
 const { t } = useI18n()
 
@@ -29,7 +29,7 @@ const channels = ref<ChannelConfig[]>([])
 const isLoadingChannels = ref(false)
 
 // 总结配置
-const summarizeConfig = reactive({
+const summarizeConfig = reactive<SummarizeConfig>({
   // 手动总结提示词
   summarizePrompt: '请将以上对话内容进行总结，保留关键信息和上下文要点，去除冗余内容。',
   // 自动总结提示词
@@ -238,9 +238,9 @@ async function loadDefaultConfig() {
 // @input 每按键触发：统一 400ms 防抖提交，避免每按键全量写配置
 let configSaveDebounceTimer: ReturnType<typeof setTimeout> | null = null
 
-async function updateConfigField(field: string, value: any) {
+async function updateConfigField<K extends keyof SummarizeConfig>(field: K, value: SummarizeConfig[K]) {
   // 先更新本地值（即时反馈）
-  ;(summarizeConfig as any)[field] = value
+  summarizeConfig[field] = value
   scheduleConfigSave()
 }
 

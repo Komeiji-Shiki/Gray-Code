@@ -28,19 +28,10 @@
  *    它们不向模型宣传但会被保留，由 handler 自行解释语义。
  */
 
-export interface ToolParameterSchema {
-    type: 'object';
-    properties: Record<string, PropertySchema>;
-    required?: string[];
-}
-
-export interface PropertySchema {
-    type: string;
-    items?: PropertySchema;
-    properties?: Record<string, PropertySchema>;
-    required?: string[];
-    [key: string]: any;
-}
+// schema 类型已收敛到独立的 toolSchema.ts（types.ts / coerceToolArgs / validateToolArgs 共用），
+// 此处保留 re-export 以兼容既有 `import type { ... } from './coerceToolArgs'` 调用方。
+import type { PropertySchema, ToolParameterSchema } from './toolSchema';
+export type { PropertySchema, ToolParameterSchema } from './toolSchema';
 
 export interface NormalizeToolArgsOptions {
     /** 纯改名别名：alias → canonical（来自 ToolDeclaration.paramAliases） */
