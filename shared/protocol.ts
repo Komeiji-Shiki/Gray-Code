@@ -383,6 +383,8 @@ export const PUSH_MESSAGE_NAMES = {
   windowFocusChanged: 'windowFocusChanged',
   'input.addContext': 'input.addContext',
   'tools.applyDiffConfigChanged': 'tools.applyDiffConfigChanged',
+  // 渠道/模型配置变更（设置面板保存后推送，输入区据此刷新下拉框）
+  'channels.configChanged': 'channels.configChanged',
 } as const;
 
 /** 推送消息名字面量联合类型（等价于 PUSH_MESSAGE_NAMES 的全部值） */

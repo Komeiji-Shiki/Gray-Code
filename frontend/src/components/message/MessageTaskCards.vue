@@ -8,8 +8,8 @@
  * 卡片展示判断与执行/生成动作。
  */
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { computed, ref, onMounted, watch } from 'vue'
-import { sendToExtension, saveState, showNotification } from '@/utils/vscode'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { sendToExtension, saveState, showNotification, onExtensionCommand } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
 import ReviewTaskCard from './ReviewTaskCard.vue'
 import ProgressTaskCard from './ProgressTaskCard.vue'
@@ -36,6 +36,8 @@ const props = defineProps<{
 }>()
 
 const chatStore = useChatStore()
+
+let unsubscribeConfigChanged: (() => void) | null = null
 
 const { t } = useI18n()
 
@@ -492,6 +494,15 @@ onMounted(() => {
   void loadPromptModes()
   void refreshPlanSourceStatuses(taskCards.value)
   void autoOpenPendingCardTabs(taskCards.value)
+
+  // 设置面板中渠道/模型变更后刷新（新增模型无需重启扩展即可在下拉框看到）
+  unsubscribeConfigChanged = onExtensionCommand('channels.configChanged', () => {
+    loadChannels()
+  })
+})
+
+onBeforeUnmount(() => {
+  if (unsubscribeConfigChanged) unsubscribeConfigChanged()
 })
 
 const taskCards = computed<TaskCardItem[]>(() =>

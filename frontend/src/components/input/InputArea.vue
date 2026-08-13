@@ -279,6 +279,7 @@ const inputBoxRef = ref<InstanceType<typeof InputBox> | null>(null)
 const filePickerRef = ref<InstanceType<typeof FilePickerPanel> | null>(null)
 
 let unsubscribeAddContext: (() => void) | null = null
+let unsubscribeConfigChanged: (() => void) | null = null
 
 function handleTriggerAtPicker(query: string, _triggerPosition: number) {
   filePickerQuery.value = query
@@ -588,12 +589,19 @@ onMounted(() => {
     nextTick(() => inputBoxRef.value?.focus())
   })
 
+  // 渠道/模型设置在设置面板变更后（新增/移除模型、改渠道参数、增删渠道），
+  // 后端推送刷新命令，输入区重新拉取配置，让渠道/模型下拉框立即同步（无需重启扩展）。
+  unsubscribeConfigChanged = onExtensionCommand('channels.configChanged', () => {
+    loadConfigs()
+  })
+
   loadConfigs()
   loadPromptModes()
 })
 
 onBeforeUnmount(() => {
   if (unsubscribeAddContext) unsubscribeAddContext()
+  if (unsubscribeConfigChanged) unsubscribeConfigChanged()
 })
 
 watch(() => chatStore.configId, () => {

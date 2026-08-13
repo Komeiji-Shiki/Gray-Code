@@ -18,7 +18,7 @@ import ModelSelector from '../../input/ModelSelector.vue'
 import type { ChannelOption, ModelInfo } from '../../input/types'
 import type { ChannelConfig } from '../../../types'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
-import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
+import { loadDiffContent as loadDiffContentFromBackend, onExtensionCommand } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
 import { generateId } from '@/utils/format'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
@@ -44,6 +44,7 @@ const isLoadingChannels = ref(false)
 const isLoadingModels = ref(false)
 const expandedPlanFiles = ref<Set<string>>(new Set())
 const isExecutingPlan = ref(false)
+let unsubscribeConfigChanged: (() => void) | null = null
 
 const channelOptions = computed<ChannelOption[]>(() =>
   channelConfigs.value
@@ -178,6 +179,10 @@ async function executePlan(planContent: string, planPath?: string) {
 
 onMounted(() => {
   loadChannels()
+  // 设置面板中渠道/模型变更后刷新（新增模型无需重启扩展即可在下拉框看到）
+  unsubscribeConfigChanged = onExtensionCommand('channels.configChanged', () => {
+    loadChannels()
+  })
 })
 
 watch(
@@ -584,6 +589,7 @@ onBeforeUnmount(() => {
     clearTimeout(timeout)
   }
   copyTimeouts.clear()
+  if (unsubscribeConfigChanged) unsubscribeConfigChanged()
 })
 </script>
 

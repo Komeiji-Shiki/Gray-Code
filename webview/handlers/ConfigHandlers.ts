@@ -2,7 +2,7 @@
  * 配置管理消息处理器
  */
 
-import { MESSAGE_NAMES } from '../../shared/protocol';
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import type { CreateConfigInput, UpdateConfigInput } from '../../backend/modules/config';
@@ -70,13 +70,33 @@ export const getConfig: MessageHandler = async (data, requestId, ctx) => {
   }
 };
 
+/**
+ * 渠道/模型配置变更后向主聊天视图推送刷新命令，
+ * 让输入区的渠道/模型下拉框立即同步（无需重启扩展）。
+ * 路由上下文优先走 ctx.postMessage；非路由上下文（测试/直连）回退 ctx.view 直投。
+ */
+function notifyChannelsChanged(ctx: HandlerContext, configId?: string): void {
+  const message = {
+    type: PUSH_MESSAGE_NAMES.command,
+    command: PUSH_MESSAGE_NAMES['channels.configChanged'],
+    data: configId ? { configId } : {}
+  };
+  if (ctx.postMessage) {
+    ctx.postMessage(message);
+    return;
+  }
+  ctx.view?.webview.postMessage(message);
+}
+
 export const createConfig: MessageHandler = async (data, requestId, ctx) => {
   if (!isCreateConfigInput(data)) {
     ctx.sendError(requestId, 'CREATE_CONFIG_ERROR', 'Invalid config data');
     return;
   }
   try {
-    ctx.sendResponse(requestId, await ctx.configManager.createConfig(data as CreateConfigInput));
+    const config = await ctx.configManager.createConfig(data as CreateConfigInput);
+    notifyChannelsChanged(ctx, config);
+    ctx.sendResponse(requestId, config);
   } catch (error) {
     ctx.sendError(requestId, 'CREATE_CONFIG_ERROR', getErrorMessage(error, 'Failed to create config'));
   }
@@ -94,6 +114,7 @@ export const updateConfig: MessageHandler = async (data, requestId, ctx) => {
   }
   try {
     await ctx.configManager.updateConfig(configId, updates as UpdateConfigInput);
+    notifyChannelsChanged(ctx, configId);
     ctx.sendResponse(requestId, { success: true });
   } catch (error) {
     ctx.sendError(requestId, 'UPDATE_CONFIG_ERROR', getErrorMessage(error, 'Failed to update config'));
@@ -105,6 +126,7 @@ export const deleteConfig: MessageHandler = async (data, requestId, ctx) => {
   if (!requireString(configId, requestId, ctx, 'DELETE_CONFIG_ERROR', 'configId')) return;
   try {
     await ctx.configManager.deleteConfig(configId);
+    notifyChannelsChanged(ctx, configId);
     ctx.sendResponse(requestId, { success: true });
   } catch (error) {
     ctx.sendError(requestId, 'DELETE_CONFIG_ERROR', getErrorMessage(error, 'Failed to delete config'));
@@ -117,11 +139,13 @@ async function handleModelOperation(
   errorCode: string,
   fallback: string,
   operation: () => Promise<any>,
-  successData: (result: any) => unknown
+  successData: (result: any) => unknown,
+  onSuccess?: (result: any) => void
 ): Promise<void> {
   try {
     const result = await operation();
     if (result?.success) {
+      onSuccess?.(result);
       ctx.sendResponse(requestId, successData(result));
       return;
     }
@@ -148,7 +172,8 @@ export const addModels: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
   await handleModelOperation(requestId, ctx, 'ADD_MODELS_ERROR', t('webview.errors.addModelsFailed'),
-    () => ctx.modelsHandler.addModels(data), () => ({ success: true }));
+    () => ctx.modelsHandler.addModels(data), () => ({ success: true }),
+    () => notifyChannelsChanged(ctx, data.configId));
 };
 
 export const removeModel: MessageHandler = async (data, requestId, ctx) => {
@@ -157,7 +182,8 @@ export const removeModel: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
   await handleModelOperation(requestId, ctx, 'REMOVE_MODEL_ERROR', t('webview.errors.removeModelFailed'),
-    () => ctx.modelsHandler.removeModel(data as RemoveModelRequest), () => ({ success: true }));
+    () => ctx.modelsHandler.removeModel(data as RemoveModelRequest), () => ({ success: true }),
+    () => notifyChannelsChanged(ctx, data.configId));
 };
 
 export const setActiveModel: MessageHandler = async (data, requestId, ctx) => {
@@ -166,7 +192,8 @@ export const setActiveModel: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
   await handleModelOperation(requestId, ctx, 'SET_ACTIVE_MODEL_ERROR', t('webview.errors.setActiveModelFailed'),
-    () => ctx.modelsHandler.setActiveModel(data as SetActiveModelRequest), () => ({ success: true }));
+    () => ctx.modelsHandler.setActiveModel(data as SetActiveModelRequest), () => ({ success: true }),
+    () => notifyChannelsChanged(ctx, data.configId));
 };
 
 export function registerConfigHandlers(registry: Map<string, MessageHandler>): void {

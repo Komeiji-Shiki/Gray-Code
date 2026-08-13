@@ -297,4 +297,25 @@ describe('InputArea 发送失败恢复', () => {
     expect(typeof last[3]).toBe('function')
     direct.unmount()
   })
+
+  test('监听 channels.configChanged：设置面板变更后重新加载渠道配置（新增模型无需重启扩展）', async () => {
+    wrapper = mountWithParent(vi.fn().mockResolvedValue(true))
+    await nextTick()
+    await flushPromises()
+
+    // 挂载时已注册 channels.configChanged 监听（且仅注册一次）
+    const registered = vi.mocked(runtime.onExtensionCommand).mock.calls.filter(c => c[0] === 'channels.configChanged')
+    expect(registered).toHaveLength(1)
+    const handler = registered[0][1] as () => void
+
+    // 首次挂载拉取过一次配置
+    expect(runtime.config.listConfigIds).toHaveBeenCalledTimes(1)
+
+    // 模拟设置面板添加模型后后端推送刷新命令
+    handler()
+    await flushPromises()
+
+    // 输入区重新拉取渠道配置，模型下拉框数据源随之更新
+    expect(runtime.config.listConfigIds).toHaveBeenCalledTimes(2)
+  })
 })
