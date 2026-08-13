@@ -79,13 +79,19 @@ describe('reopen_review tool', () => {
     } as any)
 
     expect(result.success).toBe(true)
-    expect(result.data.reviewSnapshot.status).toBe('in_progress')
-    expect(result.data.reviewSnapshot.finalizedAt).toBeNull()
-    expect(result.data.reviewSnapshot.render.locale).toBe('zh-CN')
-    expect(result.data.overallDecision).toBeNull()
-    expect(result.data.reviewDelta).toMatchObject({ type: 'reopened' })
-    expect(result.data.content).toContain('- 状态: 进行中')
-    expect(result.data.content).toContain('- 总体结论: 待定')
+    const data = result.data as {
+      reviewSnapshot: { status: string; finalizedAt: string | null; render: { locale: string } }
+      overallDecision: string | null
+      reviewDelta: { type: string }
+      content: string
+    }
+    expect(data.reviewSnapshot.status).toBe('in_progress')
+    expect(data.reviewSnapshot.finalizedAt).toBeNull()
+    expect(data.reviewSnapshot.render.locale).toBe('zh-CN')
+    expect(data.overallDecision).toBeNull()
+    expect(data.reviewDelta).toMatchObject({ type: 'reopened' })
+    expect(data.content).toContain('- 状态: 进行中')
+    expect(data.content).toContain('- 总体结论: 待定')
 
     expect(setCustomMetadata).toHaveBeenCalledWith(
       'conversation-1',

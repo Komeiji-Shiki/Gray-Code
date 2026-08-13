@@ -70,14 +70,19 @@ describe('validate_progress_document tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(result.data.progressValidation).toMatchObject({
+    const data = result.data as {
+      progressValidation: Record<string, unknown>
+      progressSnapshot: Record<string, unknown>
+      issues: unknown[]
+    }
+    expect(data.progressValidation).toMatchObject({
       isValid: true,
       issueCount: 0,
       errorCount: 0,
       warningCount: 0,
       formatVersion: 1
     })
-    expect(result.data.progressSnapshot).toMatchObject({
+    expect(data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       projectName: 'Workspace',
       status: 'active',
@@ -94,13 +99,18 @@ describe('validate_progress_document tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(result.data.progressValidation).toMatchObject({
+    const data = result.data as {
+      progressValidation: Record<string, unknown>
+      progressSnapshot: Record<string, unknown>
+      issues: unknown[]
+    }
+    expect(data.progressValidation).toMatchObject({
       isValid: false,
       issueCount: 1,
       errorCount: 1,
       warningCount: 0
     })
-    expect(result.data.issues).toEqual([
+    expect(data.issues).toEqual([
       expect.objectContaining({ severity: 'error' })
     ])
   })

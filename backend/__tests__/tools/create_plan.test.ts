@@ -75,9 +75,10 @@ describe('create_plan tool', () => {
       ],
       sourceArtifact: undefined
     })
-    expect(result.data.content).toContain('## TODO LIST')
-    expect(result.data.content).toContain('`#api-1`')
-    expect(result.data.content).toContain('`#api-2`')
+    const data = result.data as { content: string }
+    expect(data.content).toContain('## TODO LIST')
+    expect(data.content).toContain('`#api-1`')
+    expect(data.content).toContain('`#api-2`')
 
     expect(mockCreateDirectory).toHaveBeenCalledWith({
       fsPath: 'D:/workspace/.graycode/plans'
@@ -110,14 +111,15 @@ describe('create_plan tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(result.data.sourceArtifact).toEqual({
+    const data = result.data as { content: string; sourceArtifact: { type: string; path: string; contentHash: string } }
+    expect(data.sourceArtifact).toEqual({
       type: 'design',
       path: '.graycode/design/tracked.md',
       contentHash: expect.stringMatching(/^sha256:/)
     })
-    expect(result.data.content).toContain('<!-- GRAYCODE_SOURCE_ARTIFACT_START -->')
-    expect(result.data.content).toContain('"type":"design"')
-    expect(result.data.content).toContain('"path":".graycode/design/tracked.md"')
+    expect(data.content).toContain('<!-- GRAYCODE_SOURCE_ARTIFACT_START -->')
+    expect(data.content).toContain('"type":"design"')
+    expect(data.content).toContain('"path":".graycode/design/tracked.md"')
     expect(mockResolveUriWithInfo).toHaveBeenCalledWith('.graycode/design/tracked.md')
   })
 

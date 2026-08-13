@@ -103,8 +103,8 @@ describe('localizeToolDeclaration 说明替换', () => {
                 'hunks[].oldContent': '需要精确匹配的原文内容。'
             }
         });
-        expect(result.parameters.properties.files.items.properties.path.description).toBe('批量模式下的文件路径。');
-        expect(result.parameters.properties.hunks.items.properties.oldContent.description).toBe('需要精确匹配的原文内容。');
+        expect(result.parameters.properties.files.items!.properties!.path.description).toBe('批量模式下的文件路径。');
+        expect(result.parameters.properties.hunks.items!.properties!.oldContent.description).toBe('需要精确匹配的原文内容。');
     });
 
     test('多层对象+数组路径替换（structuredFindings[].evidence[].path）', () => {
@@ -114,7 +114,7 @@ describe('localizeToolDeclaration 说明替换', () => {
             }
         });
         const findings = result.parameters.properties.structuredFindings;
-        expect(findings.items.properties.evidence.items.properties.path.description).toBe('证据文件路径。');
+        expect(findings.items!.properties!.evidence.items!.properties!.path.description).toBe('证据文件路径。');
     });
 });
 
@@ -125,8 +125,8 @@ describe('localizeToolDeclaration 保留语义', () => {
         });
         expect(result.description).toBe(APPLY_DIFF_DECLARATION.description);
         // 未配置的嵌套路径保留原文
-        expect(result.parameters.properties.files.items.properties.path.description).toBe('File path in batch mode.');
-        expect(result.parameters.properties.hunks.items.properties.oldContent.description).toBe('Exact original content to match.');
+        expect(result.parameters.properties.files.items!.properties!.path.description).toBe('File path in batch mode.');
+        expect(result.parameters.properties.hunks.items!.properties!.oldContent.description).toBe('Exact original content to match.');
         expect(result.parameters.properties.mode.description).toBe('Operation mode.');
     });
 

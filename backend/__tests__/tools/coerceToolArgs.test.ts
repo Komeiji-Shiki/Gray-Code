@@ -2,15 +2,9 @@ import {
     coerceToolArgs,
     normalizeToolArgs
 } from '../../tools/coerceToolArgs';
+import type { PropertySchema } from '../../tools/toolSchema';
 
-interface SchemaProperty {
-    type: string;
-    items?: SchemaProperty;
-    properties?: Record<string, SchemaProperty>;
-    required?: string[];
-}
-
-function schema(properties: Record<string, SchemaProperty>, required?: string[]) {
+function schema(properties: Record<string, PropertySchema>, required?: string[]) {
     return { type: 'object' as const, properties, required };
 }
 

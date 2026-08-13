@@ -70,11 +70,15 @@ describe('record_progress_milestone tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(result.data.progressDelta).toMatchObject({
+    const data = result.data as {
+      progressDelta: Record<string, unknown>
+      progressSnapshot: Record<string, unknown>
+    }
+    expect(data.progressDelta).toMatchObject({
       type: 'milestone_recorded',
       milestoneId: 'PG1'
     })
-    expect(result.data.progressSnapshot).toMatchObject({
+    expect(data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       currentProgress: '1/1 个里程碑已完成；最新：PG1',
       latestConclusion: '后端基础层已经完成。',

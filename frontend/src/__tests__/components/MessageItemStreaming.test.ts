@@ -1,4 +1,4 @@
-import { shallowMount } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, nextTick, watch } from 'vue'
 import { afterEach, beforeEach, describe, expect } from 'vitest'
@@ -47,7 +47,7 @@ const EmptyStub = defineComponent({
 
 function mountMessage(message: Message, pinia = createPinia()) {
   setActivePinia(pinia)
-  return shallowMount(MessageItem, {
+  return mount(MessageItem, {
     props: { message, messageIndex: 0 },
     global: {
       plugins: [pinia],
@@ -216,7 +216,7 @@ describe('MessageItem streaming render exclusivity', () => {
     const chatStore = useChatStore()
     chatStore.smoothTexts.set('thought-message', { partKey: 'thought:0', text: '' })
 
-    const wrapper = shallowMount(MessageItem, {
+    const wrapper = mount(MessageItem, {
       props: {
         message: {
           id: 'thought-message',

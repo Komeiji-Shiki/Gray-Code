@@ -72,14 +72,18 @@ describe('update_progress tool', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(result.data.progressSnapshot).toMatchObject({
+    const data = result.data as {
+      progressSnapshot: Record<string, unknown>
+      progressDelta: Record<string, unknown>
+    }
+    expect(data.progressSnapshot).toMatchObject({
       path: '.graycode/progress.md',
       phase: 'implementation',
       currentFocus: '实现后端 Progress 工具',
       latestConclusion: '后端结构已经开始实现。',
       nextAction: '继续补齐路径校验与工具注册。'
     })
-    expect(result.data.progressDelta).toMatchObject({
+    expect(data.progressDelta).toMatchObject({
       type: 'updated'
     })
 

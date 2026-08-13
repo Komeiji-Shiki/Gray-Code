@@ -56,19 +56,30 @@ describe('create_review tool', () => {
 
     expect(result.success).toBe(true)
     expect(result.requiresUserConfirmation).toBeUndefined()
-    expect(result.data.path).toBe('.graycode/review/workspace-review.md')
-    expect(result.data.content).toContain('# Workspace Review')
-    expect(result.data.content).toContain('## 评审快照')
-    expect(result.data.content).toContain('```json')
-    expect(result.data.content).toContain('"formatVersion": 4')
-    expect(result.data.reviewSnapshot.formatVersion).toBe(4)
-    expect(result.data.reviewSnapshot.render.locale).toBe('zh-CN')
-    expect(result.data.reviewValidation.detectedFormat).toBe('v4')
-    expect(result.data.reviewDelta).toMatchObject({ type: 'created' })
-    expect(result.data.title).toBe('Workspace Review')
-    expect(result.data.status).toBe('in_progress')
-    expect(result.data.totalMilestones).toBe(0)
-    expect(result.data.totalFindings).toBe(0)
+    const data = result.data as {
+      path: string
+      content: string
+      reviewSnapshot: { formatVersion: number; render: { locale: string } }
+      reviewValidation: { detectedFormat: string }
+      reviewDelta: { type: string }
+      title: string
+      status: string
+      totalMilestones: number
+      totalFindings: number
+    }
+    expect(data.path).toBe('.graycode/review/workspace-review.md')
+    expect(data.content).toContain('# Workspace Review')
+    expect(data.content).toContain('## 评审快照')
+    expect(data.content).toContain('```json')
+    expect(data.content).toContain('"formatVersion": 4')
+    expect(data.reviewSnapshot.formatVersion).toBe(4)
+    expect(data.reviewSnapshot.render.locale).toBe('zh-CN')
+    expect(data.reviewValidation.detectedFormat).toBe('v4')
+    expect(data.reviewDelta).toMatchObject({ type: 'created' })
+    expect(data.title).toBe('Workspace Review')
+    expect(data.status).toBe('in_progress')
+    expect(data.totalMilestones).toBe(0)
+    expect(data.totalFindings).toBe(0)
 
     expect(setCustomMetadata).toHaveBeenCalledWith(
       'conversation-1',
