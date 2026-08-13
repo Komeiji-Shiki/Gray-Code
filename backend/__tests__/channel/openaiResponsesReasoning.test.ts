@@ -190,4 +190,138 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTexts.join('')).toContain('Check the inputs');
         expect(assistantTexts.join('')).toContain('The answer is 42.');
     });
+
+    test('DeepSeek content-only reasoning：delta + done 合并为可回传的单一 part', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const accumulator = new StreamAccumulator('function_call', () => 'test_call');
+        accumulator.setProviderType('openai-responses');
+
+        accumulator.add(formatter.parseStreamChunk({
+            type: 'response.reasoning_text.delta',
+            output_index: 0,
+            item_id: 'rs_deepseek_1',
+            delta: '先检查工具结果，'
+        }));
+        accumulator.add(formatter.parseStreamChunk({
+            type: 'response.reasoning_text.delta',
+            output_index: 0,
+            item_id: 'rs_deepseek_1',
+            delta: '再决定下一步'
+        }));
+        accumulator.add(formatter.parseStreamChunk({
+            type: 'response.reasoning_text.done',
+            output_index: 0,
+            item_id: 'rs_deepseek_1',
+            text: '先检查工具结果，再决定下一步'
+        }));
+
+        const thoughtParts = accumulator.getFinalContent().parts.filter(part => part.thought);
+        expect(thoughtParts).toHaveLength(1);
+        expect(thoughtParts[0]).toMatchObject({
+            text: '先检查工具结果，再决定下一步',
+            thought: true,
+            openaiResponsesReasoning: {
+                id: 'rs_deepseek_1',
+                status: 'completed',
+                content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
+            }
+        });
+        expect(thoughtParts[0].thoughtSignatures).toBeUndefined();
+    });
+
+    test('DeepSeek content-only reasoning：下一轮按 reasoning_text 回传（不带 encrypted_content/summary）', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [{
+                    text: '先检查工具结果，再决定下一步',
+                    thought: true,
+                    openaiResponsesReasoning: {
+                        id: 'rs_deepseek_1',
+                        status: 'completed',
+                        content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
+                    }
+                }, { text: '继续调用工具。' }]
+            },
+            { role: 'user', parts: [{ text: 'Continue.' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test',
+                name: 'Responses Test',
+                preferStream: true,
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false,
+                options: {
+                    stream: true,
+                    reasoning: {
+                        effort: 'medium',
+                        summaryEnabled: true,
+                        summary: 'auto'
+                    }
+                }
+            })
+        );
+
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        expect(reasoningItems).toHaveLength(1);
+        expect(reasoningItems[0]).toEqual({
+            type: 'reasoning',
+            id: 'rs_deepseek_1',
+            status: 'completed',
+            content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
+        });
+        expect(reasoningItems[0]).not.toHaveProperty('encrypted_content');
+        expect(reasoningItems[0]).not.toHaveProperty('summary');
+    });
+
+    test('关闭 sendHistoryThoughts 时 content-only reasoning 降级为 assistant 文本', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [{
+                    text: '先检查工具结果，再决定下一步',
+                    thought: true,
+                    openaiResponsesReasoning: {
+                        id: 'rs_deepseek_1',
+                        status: 'completed',
+                        content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
+                    }
+                }, { text: '继续调用工具。' }]
+            },
+            { role: 'user', parts: [{ text: 'Continue.' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test',
+                name: 'Responses Test',
+                preferStream: true,
+                sendHistoryThoughts: false,
+                sendHistoryThoughtSignatures: false,
+                options: {
+                    stream: true,
+                    reasoning: {
+                        effort: 'medium',
+                        summaryEnabled: true,
+                        summary: 'auto'
+                    }
+                }
+            })
+        );
+
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')
+            .flatMap((item: any) => item.content)
+            .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
+            .map((part: any) => part.text);
+        expect(reasoningItems).toHaveLength(0);
+        expect(assistantTexts.join('')).toContain('先检查工具结果，再决定下一步');
+        expect(assistantTexts.join('')).toContain('继续调用工具。');
+    });
 });

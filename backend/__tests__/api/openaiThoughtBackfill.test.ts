@@ -139,4 +139,54 @@ describe('OpenAI thought backfill policy', () => {
         expect(historyDisabled.sendCurrentThoughtSignatures).toBe(historyDisabled.sendHistoryThoughtSignatures);
         expect(historyEnabled.sendCurrentThoughtSignatures).toBe(historyEnabled.sendHistoryThoughtSignatures);
     });
+
+    test('openai-responses 关闭 sendHistoryThoughts 时保留 Responses reasoning 元数据（普通裸 thought 仍过滤）', () => {
+        const options = messageBuilder.buildHistoryOptions(
+            createConfig('openai-responses', false, false)
+        );
+
+        const history: Content[] = [
+            {
+                role: 'user',
+                isUserInput: true,
+                parts: [{ text: 'First question' }]
+            },
+            {
+                role: 'model',
+                parts: [
+                    {
+                        text: 'First reasoning',
+                        thought: true,
+                        openaiResponsesReasoning: {
+                            id: 'rs_1',
+                            status: 'completed',
+                            content: [{ type: 'reasoning_text', text: 'First reasoning' }]
+                        }
+                    },
+                    { text: 'First answer' }
+                ]
+            },
+            {
+                role: 'user',
+                isUserInput: true,
+                parts: [{ text: 'Second question' }]
+            },
+            {
+                role: 'model',
+                parts: [
+                    { text: 'Second reasoning', thought: true },
+                    { text: 'Second answer' }
+                ]
+            }
+        ];
+
+        const forApi = conversationManager.getHistoryForAPIFrom(history, options);
+        const modelParts = forApi.flatMap(message => message.parts);
+
+        // 带 Responses reasoning 元数据的 part 保留，普通裸 thought 仍被过滤
+        expect(modelParts.some(part =>
+            part.text === 'First reasoning' && part.openaiResponsesReasoning?.content?.[0]?.type === 'reasoning_text'
+        )).toBe(true);
+        expect(thoughtTexts(forApi)).toEqual(['First reasoning']);
+    });
 });

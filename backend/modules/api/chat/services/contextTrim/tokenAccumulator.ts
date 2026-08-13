@@ -60,6 +60,12 @@ export interface AccumulateTokensParams {
     /** 系统提示词 + 当前动态上下文的总 token 数 */
     promptTokens: number;
     preservedDynamicContextTokenByIndex?: Map<number, number>;
+    /**
+     * 是否以「最后一条带 usageMetadata 的模型消息」的 totalTokenCount 作为总量锚点
+     * （与前端 usedTokens 显示口径同源，避免本地估算 ×1.5 导致判定值与显示脱节）。
+     * 命中时直接返回该值；未命中（如会话无 usage 记录）时回退原有估算逻辑。
+     */
+    useUsageAnchor?: boolean;
 }
 
 export function accumulateContextTokens(
@@ -94,6 +100,26 @@ export function accumulateContextTokens(
         userTokensTotal: 0,
         modelTokensTotal: 0
     };
+
+    // usage 锚点模式：直接用「最后一条带 usageMetadata 的模型消息」的 totalTokenCount
+    // 作为估计总量（前端 usedTokens 显示口径，不含任何本地估算放大），跳过逐条累加。
+    // 未找到可用 usage（新会话、代理不返回 usage 等）时回退原有估算逻辑，避免行为退化。
+    if (params.useUsageAnchor) {
+        for (let i = fullHistory.length - 1; i >= 0; i--) {
+            const message = fullHistory[i];
+            if (message.role !== 'model' || !message.usageMetadata) continue;
+            const usage = message.usageMetadata;
+            // 与前端 usedTokens 一致：totalTokenCount 优先，promptTokenCount 兜底
+            const anchorTokens = usage.totalTokenCount || usage.promptTokenCount;
+            if (typeof anchorTokens === 'number' && anchorTokens > 0) {
+                return {
+                    estimatedTotalTokens: anchorTokens,
+                    roundTokenInfos: [],
+                    usageStats
+                };
+            }
+        }
+    }
 
     // 首条真实用户消息锚点（prependFirstUserMessage：任务锚点永远前置）token 计入预算：
     // getNormalizedHistoryForStartIndex 在构建发送历史时把首条用户消息原样前置，其 token

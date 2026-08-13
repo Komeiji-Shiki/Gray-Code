@@ -286,54 +286,106 @@ export class StreamAccumulator {
             return;
         }
 
-        // Responses API 在 output_item.done 才给出完整 reasoning item。把最终的
-        // id/summary/content/encrypted_content 合并回已经由 delta 建立的思考 part，
-        // 避免最终摘要被当作第二段文本重复追加，也保证后续轮次可以原样回传。
         if (this.providerType === 'openai-responses' && part.openaiResponsesReasoning) {
-            const existingThought = [...this.parts].reverse().find(candidate =>
-                candidate.thought === true && !candidate.openaiResponsesReasoning
-            );
+            const incomingMetadata = part.openaiResponsesReasoning;
+            const incomingReasoningId = incomingMetadata.id;
+            const isReasoningDelta = incomingMetadata.status === 'in_progress';
+            const thoughtParts = this.parts.filter(candidate => candidate.thought === true);
+            let existingThought: ContentPart | undefined;
+
+            if (incomingReasoningId) {
+                // 有 item id 时优先精确匹配；若首个最终事件才带 id，允许它
+                // 接管此前尚未标注 id 的增量 part。
+                existingThought = [...thoughtParts].reverse().find(candidate =>
+                    candidate.openaiResponsesReasoning?.id === incomingReasoningId
+                ) || [...thoughtParts].reverse().find(candidate =>
+                    !candidate.openaiResponsesReasoning?.id
+                );
+            } else {
+                // 部分兼容端点省略 item_id，只能使用最近的思考 part 作为回退。
+                existingThought = [...thoughtParts].reverse()[0];
+            }
 
             if (existingThought) {
-                existingThought.openaiResponsesReasoning = {
-                    ...part.openaiResponsesReasoning,
-                    ...(part.openaiResponsesReasoning.summary ? {
-                        summary: part.openaiResponsesReasoning.summary.map(entry => ({ ...entry }))
-                    } : {}),
-                    ...(part.openaiResponsesReasoning.content ? {
-                        content: part.openaiResponsesReasoning.content.map(entry => ({ ...entry }))
-                    } : {})
+                const existingMetadata = existingThought.openaiResponsesReasoning || {};
+                const incomingSummary = incomingMetadata.summary || [];
+                const incomingContent = incomingMetadata.content || [];
+                const mergedMetadata = {
+                    ...existingMetadata,
+                    ...incomingMetadata,
+                    ...(isReasoningDelta
+                        ? {
+                            ...(incomingSummary.length > 0 ? {
+                                summary: [...(existingMetadata.summary || []), ...incomingSummary.map(entry => ({ ...entry }))]
+                            } : {}),
+                            ...(incomingContent.length > 0 ? {
+                                content: [...(existingMetadata.content || []), ...incomingContent.map(entry => ({ ...entry }))]
+                            } : {})
+                        }
+                        : {
+                            ...(incomingSummary.length > 0 ? {
+                                summary: incomingSummary.map(entry => ({ ...entry }))
+                            } : (existingMetadata.summary?.length ? {
+                                summary: existingMetadata.summary.map(entry => ({ ...entry }))
+                            } : {})),
+                            ...(incomingContent.length > 0 ? {
+                                content: incomingContent.map(entry => ({ ...entry }))
+                            } : (existingMetadata.content?.length ? {
+                                content: existingMetadata.content.map(entry => ({ ...entry }))
+                            } : {}))
+                        })
                 };
+                existingThought.openaiResponsesReasoning = mergedMetadata;
+
                 if (part.thoughtSignatures) {
                     existingThought.thoughtSignatures = {
                         ...(existingThought.thoughtSignatures || {}),
                         ...part.thoughtSignatures
                     };
                 }
-                // done 中的 summary/content 是最终权威文本，可修复未收到 delta 的兼容端点。
-                if (part.text) existingThought.text = part.text;
+
+                if (isReasoningDelta) {
+                    if (part.text) {
+                        existingThought.text = (existingThought.text || '') + part.text;
+                        options?.visibleDelta?.push({ text: part.text, thought: true });
+                    }
+                } else {
+                    // done/output_item.done 中的文本是最终权威值；若事件只带
+                    // metadata，则保留此前由 delta 累积的文本。
+                    const finalText = part.text
+                        || incomingMetadata.summary?.map(entry => entry.text).join('\n')
+                        || incomingMetadata.content?.map(entry => entry.text).join('\n');
+                    if (finalText) {
+                        const hadText = !!existingThought.text;
+                        existingThought.text = finalText;
+                        // 没有任何 delta、只收到最终事件时，需要让前端看到这段文本；
+                        // 已有增量时由 snapshot 校准，不重复发送全文 delta。
+                        if (!hadText) options?.visibleDelta?.push({ text: finalText, thought: true });
+                    }
+                }
             } else {
-                this.parts.push({
+                const newThought: ContentPart = {
                     ...part,
                     openaiResponsesReasoning: {
-                        ...part.openaiResponsesReasoning,
-                        ...(part.openaiResponsesReasoning.summary ? {
-                            summary: part.openaiResponsesReasoning.summary.map(entry => ({ ...entry }))
+                        ...incomingMetadata,
+                        ...(incomingMetadata.summary?.length ? {
+                            summary: incomingMetadata.summary.map(entry => ({ ...entry }))
                         } : {}),
-                        ...(part.openaiResponsesReasoning.content ? {
-                            content: part.openaiResponsesReasoning.content.map(entry => ({ ...entry }))
+                        ...(incomingMetadata.content?.length ? {
+                            content: incomingMetadata.content.map(entry => ({ ...entry }))
                         } : {})
                     }
-                });
-                if (options?.visibleDelta && part.text) {
-                    options.visibleDelta.push({ text: part.text, thought: true });
-                }
+                };
+                this.parts.push(newThought);
+                if (part.text) options?.visibleDelta?.push({ text: part.text, thought: true });
             }
 
             if (part.thoughtSignatures) {
                 Object.assign(this.thoughtSignatures, part.thoughtSignatures);
             }
-            this.contentRevision++;
+            // 纯 reasoning delta 已通过 visibleDelta 发送；完成事件需要结构快照
+            // 把最终 metadata/id 同步给前端和后续历史。
+            if (!isReasoningDelta) this.contentRevision++;
             return;
         }
 
@@ -538,8 +590,10 @@ export class StreamAccumulator {
         // 文本 part：尝试合并
         const isThought = part.thought === true;
 
-        // 思考计时逻辑
-        if (isThought) {
+        // 思考计时逻辑：只有明确来自 thought delta 的文本才更新思考开始时间；
+        // Responses reasoning 增量（openaiResponsesReasoning.status='in_progress'）
+        // 在 done/output_item.done 前不应影响 thinkingDuration 结算。
+        if (isThought && !(this.providerType === 'openai-responses' && part.openaiResponsesReasoning?.status === 'in_progress')) {
             // 记录思考开始时间（仅首次）
             if (this.thinkingStartTime === undefined) {
                 this.thinkingStartTime = Date.now();

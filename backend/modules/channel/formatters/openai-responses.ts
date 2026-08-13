@@ -36,10 +36,38 @@ function normalizeReasoningSummary(item: any): Array<{ type: 'summary_text'; tex
 }
 
 function normalizeReasoningContent(item: any): Array<{ type: 'reasoning_text'; text: string }> {
-    if (!Array.isArray(item?.content)) return [];
-    return item.content
-        .filter((entry: any) => typeof entry?.text === 'string' && entry.text.length > 0)
-        .map((entry: any) => ({ type: 'reasoning_text' as const, text: entry.text }));
+    if (Array.isArray(item?.content)) {
+        return item.content
+            .filter((entry: any) => typeof entry?.text === 'string' && entry.text.length > 0)
+            .map((entry: any) => ({ type: 'reasoning_text' as const, text: entry.text }));
+    }
+    if (typeof item?.content === 'string' && item.content.length > 0) {
+        return [{ type: 'reasoning_text', text: item.content }];
+    }
+    return [];
+}
+
+function hasReasoningMetadata(metadata: ContentPart['openaiResponsesReasoning']): boolean {
+    return !!metadata && (
+        typeof metadata.id === 'string' ||
+        typeof metadata.status === 'string' ||
+        (Array.isArray(metadata.summary) && metadata.summary.length > 0) ||
+        (Array.isArray(metadata.content) && metadata.content.length > 0)
+    );
+}
+
+function getReasoningEventText(chunk: any): string | undefined {
+    if (typeof chunk?.text === 'string' && chunk.text.length > 0) return chunk.text;
+    if (typeof chunk?.delta === 'string' && chunk.delta.length > 0) return chunk.delta;
+    if (typeof chunk?.content?.text === 'string' && chunk.content.text.length > 0) return chunk.content.text;
+    if (Array.isArray(chunk?.content)) {
+        const text = chunk.content
+            .filter((entry: any) => typeof entry?.text === 'string')
+            .map((entry: any) => entry.text)
+            .join('');
+        if (text) return text;
+    }
+    return undefined;
 }
 
 function getReasoningDisplayText(item: any): string | undefined {
@@ -92,12 +120,15 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         processedHistory = this.cleanInternalFields(processedHistory);
 
         // 转换历史消息为 OpenAI Responses input 格式。
-        // reasoning item 是 OpenAI 官方 Responses 专有输入类型，第三方兼容端点往往不支持，
-        // 会直接 400「输入项类型 'reasoning' 当前暂不支持」。reasoning item 只来自历史轮次，
-        // 且其核心（encrypted_content）就是思考签名，因此回传由「发送历史思考签名」开关控制：
-        // 关闭时不回传 reasoning item，可见摘要降级为普通 assistant 文本。
-        const allowReasoningItems = !!(config.sendHistoryThoughtSignatures);
-        const input = this.convertToResponsesInput(processedHistory, { allowReasoningItems });
+        // reasoning item 是 OpenAI Responses 的专用输入类型，第三方兼容端点可能不支持，
+        // 因此把「普通 reasoning 文本」与「加密 reasoning 签名」分开控制：
+        // - sendHistoryThoughts：回传 content/summary 形式的 reasoning_text；
+        // - sendHistoryThoughtSignatures：回传 encrypted_content 形式的 reasoning item。
+        // 没有 openaiResponsesReasoning 元数据的普通 thought 不会被误包装成 reasoning item。
+        const input = this.convertToResponsesInput(processedHistory, {
+            allowReasoningContent: config.sendHistoryThoughts === true,
+            allowReasoningSignatures: config.sendHistoryThoughtSignatures === true
+        });
 
         // 构建请求体
         const body: any = {
@@ -167,7 +198,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      */
     private convertToResponsesInput(
         history: Content[],
-        options?: { allowReasoningItems?: boolean }
+        options?: {
+            allowReasoningContent?: boolean;
+            allowReasoningSignatures?: boolean;
+        }
     ): any[] {
         const input: any[] = [];
         
@@ -204,15 +238,46 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 const part = content.parts[partIndex];
                 const encryptedContent = part.thoughtSignatures?.['openai-responses'];
                 const reasoningMetadata = part.openaiResponsesReasoning;
+                const previousPart = partIndex > 0 ? content.parts[partIndex - 1] : undefined;
+                const nextPart = partIndex + 1 < content.parts.length ? content.parts[partIndex + 1] : undefined;
+                const hasAdjacentReasoningPart = !!nextPart && (
+                    !!nextPart.thoughtSignatures?.['openai-responses'] ||
+                    hasReasoningMetadata(nextPart.openaiResponsesReasoning)
+                );
+                const legacyAdjacentText = previousPart?.thought &&
+                    !previousPart.thoughtSignatures?.['openai-responses'] &&
+                    !hasReasoningMetadata(previousPart.openaiResponsesReasoning)
+                    ? previousPart.text
+                    : undefined;
+                const reasoningSummary = normalizeReasoningSummary(reasoningMetadata);
+                const reasoningContent = normalizeReasoningContent(reasoningMetadata);
+                const displayText = part.text || getReasoningDisplayText(reasoningMetadata) || legacyAdjacentText;
+                const hasPlainThought = options?.allowReasoningContent === true &&
+                    part.thought === true &&
+                    typeof part.text === 'string' &&
+                    part.text.length > 0 &&
+                    !hasAdjacentReasoningPart &&
+                    !hasReasoningMetadata(reasoningMetadata) &&
+                    !encryptedContent;
+                const hasResponsesReasoning = !!encryptedContent || hasReasoningMetadata(reasoningMetadata) || hasPlainThought;
+                const canReplayPlainReasoning = options?.allowReasoningContent === true && (
+                    reasoningContent.length > 0 ||
+                    reasoningSummary.length > 0 ||
+                    hasPlainThought ||
+                    (!!reasoningMetadata && !!displayText && (
+                        typeof reasoningMetadata.id === 'string' ||
+                        typeof reasoningMetadata.status === 'string'
+                    ))
+                );
+                const canReplaySignedReasoning = options?.allowReasoningSignatures === true && !!encryptedContent;
 
                 // 1. 处理 OpenAI Responses reasoning item。新记录原样复放标准字段；
                 // 旧流式记录的摘要与签名分属相邻 part 时，在这里重新组合。
-                // 第三方兼容端点不支持 reasoning 输入项时，由 allowReasoningItems=false 整体跳过，
-                // 可见摘要文本降级为普通 assistant 内容保留（避免思考内容整体丢失）。
-                if (encryptedContent || reasoningMetadata?.id) {
-                    const displayText = part.text || (partIndex > 0 ? content.parts[partIndex - 1]?.text : undefined);
-                    const shouldSkip = !(options?.allowReasoningItems ?? true);
-                    if (shouldSkip) {
+                // 「发送历史思考内容」控制 plain reasoning_text/summary；
+                // 「发送历史思考签名」控制 encrypted_content。没有 Responses 元数据的
+                // 裸 thought 不会被猜测成 reasoning item，避免把其他 provider 的思考误发。
+                if (hasResponsesReasoning) {
+                    if (!canReplayPlainReasoning && !canReplaySignedReasoning) {
                         if (displayText) {
                             messageParts.push({
                                 type: role === 'assistant' ? 'output_text' : 'input_text',
@@ -221,29 +286,37 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         }
                         continue;
                     }
-                    flushMessage();
-                    const previousPart = partIndex > 0 ? content.parts[partIndex - 1] : undefined;
-                    const legacyAdjacentSummary = previousPart?.thought && !previousPart.thoughtSignatures?.['openai-responses']
-                        ? previousPart.text
-                        : undefined;
-                    const summary = reasoningMetadata?.summary?.length
-                        ? reasoningMetadata.summary.map(entry => ({ type: 'summary_text', text: entry.text }))
-                        : (part.text || legacyAdjacentSummary
-                            ? [{ type: 'summary_text', text: part.text || legacyAdjacentSummary }]
-                            : []);
-                    const reasoningItem: any = {
-                        type: 'reasoning',
-                        summary
-                    };
 
+                    flushMessage();
+                    const reasoningItem: any = {
+                        type: 'reasoning'
+                    };
                     if (reasoningMetadata?.id) reasoningItem.id = reasoningMetadata.id;
                     if (reasoningMetadata?.status) reasoningItem.status = reasoningMetadata.status;
-                    if (encryptedContent) reasoningItem.encrypted_content = encryptedContent;
-                    if (reasoningMetadata?.content?.length) {
-                        reasoningItem.content = reasoningMetadata.content.map(entry => ({
-                            type: 'reasoning_text',
-                            text: entry.text
-                        }));
+
+                    if (canReplaySignedReasoning) {
+                        // OpenAI 官方 Responses 的加密推理回传：保留 encrypted_content
+                        // 和官方 summary；不要把 plain content 混入该兼容路径。
+                        reasoningItem.encrypted_content = encryptedContent;
+                        const summary = reasoningSummary.length > 0
+                            ? reasoningSummary
+                            : (part.text || legacyAdjacentText
+                                ? [{ type: 'summary_text' as const, text: part.text || legacyAdjacentText }]
+                                : []);
+                        // 官方 Responses 对 reasoning 输入要求 summary 字段，即使为空。
+                        reasoningItem.summary = summary;
+                    } else if (reasoningContent.length > 0) {
+                        // DeepSeek 等端点要求 plain reasoning_text，并不接受
+                        // encrypted_content/summary；使用权威 content 数组原样回传。
+                        reasoningItem.content = reasoningContent;
+                    } else if (reasoningSummary.length > 0) {
+                        // 某些 Responses 兼容端点只提供 summary；没有 content 时保留
+                        // 官方 summary 形态，避免把已保存的推理摘要静默丢失。
+                        reasoningItem.summary = reasoningSummary;
+                    } else if (displayText) {
+                        // id/status + text 的旧流式记录没有标准数组字段，按 plain
+                        // reasoning_text 补全，以满足下一轮带 tools 的无状态回传要求。
+                        reasoningItem.content = [{ type: 'reasoning_text', text: displayText }];
                     }
 
                     input.push(reasoningItem);
@@ -260,8 +333,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     continue;
                 }
 
-                // 3. 过滤掉不含签名的思考分段
-                // OpenAI Responses 必须有签名才能回传推理项
+                // 3. 过滤掉没有 Responses 元数据、且未开启纯文本思考回传的思考分段。
+                // 有 openaiResponsesReasoning 的分段已在上方转换为 reasoning item；
+                // 普通 provider 的裸 thought 仍保持旧的丢弃语义。
                 if (part.thought) {
                     continue;
                 }
@@ -564,13 +638,58 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 });
                 break;
             
+            case 'response.reasoning_text.done':
+                // DeepSeek 等兼容端点会在 delta 后发送完整 reasoning_text；
+                // 该事件是权威全文，交给 StreamAccumulator 覆盖已累积的增量，
+                // 并保存为下一轮请求所需的 reasoning_text content。
+                {
+                    const text = getReasoningEventText(chunk);
+                    if (text) {
+                        parts.push({
+                            text,
+                            thought: true,
+                            openaiResponsesReasoning: {
+                                ...(typeof chunk.item_id === 'string' ? { id: chunk.item_id } : {}),
+                                status: 'completed',
+                                content: [{ type: 'reasoning_text', text }]
+                            }
+                        });
+                    }
+                }
+                break;
+
+            case 'response.reasoning_summary_text.done':
+                // 兼容提供完整摘要事件的 Responses 端点。
+                {
+                    const text = getReasoningEventText(chunk);
+                    if (text) {
+                        parts.push({
+                            text,
+                            thought: true,
+                            openaiResponsesReasoning: {
+                                ...(typeof chunk.item_id === 'string' ? { id: chunk.item_id } : {}),
+                                status: 'completed',
+                                summary: [{ type: 'summary_text', text }]
+                            }
+                        });
+                    }
+                }
+                break;
+
             case 'response.reasoning_text.delta':
             case 'response.reasoning_summary_text.delta':
             case 'response.reasoning.delta': // 兼容旧版本
-                // 思考内容增量
+                const isSummaryDelta = chunk.type === 'response.reasoning_summary_text.delta';
                 parts.push({
                     text: chunk.delta,
-                    thought: true
+                    thought: true,
+                    openaiResponsesReasoning: {
+                        ...(typeof chunk.item_id === 'string' ? { id: chunk.item_id } : {}),
+                        status: 'in_progress',
+                        ...(isSummaryDelta
+                            ? { summary: [{ type: 'summary_text', text: chunk.delta }] }
+                            : { content: [{ type: 'reasoning_text', text: chunk.delta }] })
+                    }
                 });
                 break;
             

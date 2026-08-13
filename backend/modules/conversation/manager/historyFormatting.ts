@@ -417,24 +417,38 @@ export function formatHistoryForAPI(
         // 注意：思考发送不依赖于 includeThoughts（渠道是否支持思考）
         // 这是因为历史中的思考内容可能来自任何渠道（如 Gemini），而当前使用其他渠道继续对话
         // 用户可能希望将 Gemini 产生的思考内容发送给 OpenAI/Anthropic 渠道
+        const hasResponsesReasoningMetadata = (part: ContentPart) => {
+            if (!part.thought) return false;
+            const metadata = part.openaiResponsesReasoning;
+            return !!part.thoughtSignatures?.['openai-responses'] || !!(
+                metadata && (
+                    typeof metadata.id === 'string' ||
+                    typeof metadata.status === 'string' ||
+                    (Array.isArray(metadata.summary) && metadata.summary.length > 0) ||
+                    (Array.isArray(metadata.content) && metadata.content.length > 0)
+                )
+            );
+        };
         if (isHistoryMessage) {
             // 历史消息：根据 sendHistoryThoughts 配置和 historyThinkingRounds 决定
             if (!sendHistoryThoughts) {
-                // 仅过滤掉纯思考内容，保留包含签名的 Part
-                parts = parts.filter(part => !part.thought || part.thoughtSignatures);
+                // 仅过滤掉纯思考内容；带签名或 Responses reasoning 元数据（可回传的
+                // reasoning item）保留——它们不是普通 thought 文本，而是无状态多轮
+                // 请求恢复推理上下文所需的协议数据（DeepSeek 等端点依赖）。
+                parts = parts.filter(part => !part.thought || part.thoughtSignatures || hasResponsesReasoningMetadata(part));
             } else {
                 // 检查当前消息是否在允许的历史思考回合范围内
                 const isInHistoryThoughtRange = index >= historyThoughtMinIndex && index < historyThoughtMaxIndex;
                 if (!isInHistoryThoughtRange) {
-                    parts = parts.filter(part => !part.thought);
+                    parts = parts.filter(part => !part.thought || hasResponsesReasoningMetadata(part));
                 }
             }
         } else {
             // 当前轮次 (Latest Round)
             // 当前轮次的思考发送由 sendCurrentThoughts 独立控制
             if (!sendCurrentThoughts) {
-                // 仅过滤掉纯思考内容，保留包含签名的 Part
-                parts = parts.filter(part => !part.thought || part.thoughtSignatures);
+                // 仅过滤掉纯思考内容；带签名或 Responses reasoning 元数据的 part 保留
+                parts = parts.filter(part => !part.thought || part.thoughtSignatures || hasResponsesReasoningMetadata(part));
             }
         }
         

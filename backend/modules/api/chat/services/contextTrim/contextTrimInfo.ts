@@ -461,7 +461,9 @@ export async function getHistoryWithContextTrimInfo(
             sendCurrentThoughtSignatures,
             channelType,
             promptTokens,
-            preservedDynamicContextTokenByIndex
+            preservedDynamicContextTokenByIndex,
+            // 与 UI usedTokens 显示口径对齐：以最后一条真实 usage 为锚点，避免本地估算脱节
+            useUsageAnchor: true
         });
 
         // 直接复用现有 token 估算系统：
