@@ -121,14 +121,22 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
 
         // 转换历史消息为 OpenAI Responses input 格式。
         // reasoning item 是 OpenAI Responses 的专用输入类型，第三方兼容端点可能不支持，
-        // 因此回传与否统一由「发送思考签名」开关（sendHistoryThoughtSignatures）把关：
-        // 关闭时无论 sendHistoryThoughts 是什么（其默认值 true 在设置 UI 中不可见、无法关闭），
-        // 都不再构造 reasoning item，可见思考摘要降级为普通 assistant 文本保留，避免第三方 400；
-        // 开启后：sendHistoryThoughts 决定 content/summary 形式的 reasoning_text 是否回传，
-        // sendHistoryThoughtSignatures 决定 encrypted_content 形式的 reasoning item 是否回传。
-        // 没有 openaiResponsesReasoning 元数据的普通 thought 不会被误包装成 reasoning item。
+        // 因此两类 reasoning 数据分开控制：
+        // - sendHistoryThoughts：控制 content/summary 形式的 reasoning_text 回传。
+        //   DeepSeek 等兼容端点在 thinking mode 下要求历史思考必须按 reasoning_text
+        //   原样回传（否则 400「The reasoning_text in the thinking mode must be passed
+        //   back to the API」），因此不能把它绑定到签名开关。
+        // - sendHistoryThoughtSignatures：控制 encrypted_content 形式的 reasoning item 回传
+        //   （OpenAI 官方加密思考形态）。
+        // 既无 content 又无 encrypted_content、只剩 summary 的 part 不构成有效 reasoning item
+        // （官方 API 要求 encrypted_content 或 content 才能恢复推理上下文，部分第三方端点
+        // 会 400「输入项类型 'reasoning' 当前暂不支持」），由 convertToResponsesInput
+        // 内部守卫降级为可见文本，避免构造无效输入项。
+        // 裸 thought（无 openaiResponsesReasoning 元数据）：sendHistoryThoughts=false 时
+        // 按旧语义丢弃；=true 时由 hasPlainThought 路径包装为 reasoning_text（与 openai
+        // 渠道永远携带 reasoning_content 的语义对齐）。
         const input = this.convertToResponsesInput(processedHistory, {
-            allowReasoningContent: config.sendHistoryThoughts === true && config.sendHistoryThoughtSignatures === true,
+            allowReasoningContent: config.sendHistoryThoughts === true,
             allowReasoningSignatures: config.sendHistoryThoughtSignatures === true
         });
 
@@ -289,6 +297,26 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         continue;
                     }
 
+                    // summary-only 守卫：既无 reasoning_text content 又未开启签名回传时，
+                    // 只剩 summary 的 reasoning item 对官方 API 无效（官方要求 encrypted_content
+                    // 或 content 才能恢复推理上下文），第三方端点也可能报「输入项类型 'reasoning'
+                    // 当前暂不支持」；此时降级为可见文本保留信息，不构造无效 reasoning item。
+                    // 注意：DeepSeek content-only 形态（reasoningContent.length > 0）不受影响，
+                    // 必须按 reasoning_text 回传以满足 thinking mode 要求。
+                    if (
+                        !canReplaySignedReasoning &&
+                        reasoningContent.length === 0 &&
+                        reasoningSummary.length > 0
+                    ) {
+                        if (displayText) {
+                            messageParts.push({
+                                type: role === 'assistant' ? 'output_text' : 'input_text',
+                                text: displayText
+                            });
+                        }
+                        continue;
+                    }
+
                     flushMessage();
                     const reasoningItem: any = {
                         type: 'reasoning'
@@ -311,13 +339,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         // DeepSeek 等端点要求 plain reasoning_text，并不接受
                         // encrypted_content/summary；使用权威 content 数组原样回传。
                         reasoningItem.content = reasoningContent;
-                    } else if (reasoningSummary.length > 0) {
-                        // 某些 Responses 兼容端点只提供 summary；没有 content 时保留
-                        // 官方 summary 形态，避免把已保存的推理摘要静默丢失。
-                        reasoningItem.summary = reasoningSummary;
                     } else if (displayText) {
-                        // id/status + text 的旧流式记录没有标准数组字段，按 plain
-                        // reasoning_text 补全，以满足下一轮带 tools 的无状态回传要求。
+                        // 到达此处的形态：无 content、无 summary（summary-only 已被上方守卫
+                        // 降级）、未开签名——即 id/status + text 的旧流式记录或裸 thought
+                        // 补全为 plain reasoning_text，以满足下一轮带 tools 的无状态回传要求。
                         reasoningItem.content = [{ type: 'reasoning_text', text: displayText }];
                     }
 
