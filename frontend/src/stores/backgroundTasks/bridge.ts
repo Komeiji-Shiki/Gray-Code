@@ -20,7 +20,7 @@
  *   兜底包装（真实 store 实例化时会同步自注册；被 mock 的 store 走包装适配）。
  */
 
-import type { Attachment } from '../../types'
+import type { Attachment, AgentMessageCardInfo } from '../../types'
 import type { SendMessageOptions } from '../chat/messageActions'
 import type { CancelStreamOptions } from '../chat/toolActions'
 import { ref } from 'vue'
@@ -30,6 +30,17 @@ export interface BackgroundTaskChatState {
   isStreaming: boolean
   isWaitingForResponse: boolean
   currentConversationId: string | null
+}
+
+/**
+ * agent 间消息卡片本地插入负载（由 backgroundTaskStore 转发给 chatStore）。
+ * 后端已把卡片持久化到会话历史；这里只做窗口内的实时同步。
+ */
+export interface AgentMessageCardInsertPayload {
+  /** 卡片元数据 */
+  card: AgentMessageCardInfo
+  /** 后端插入位置（绝对索引；后端已插入，前端据此对齐窗口） */
+  insertPosition: number
 }
 
 /** chatStore 向 backgroundTaskStore 暴露的会话状态/操作面 */
@@ -44,6 +55,11 @@ export interface BackgroundTaskChatBridge {
     attachments?: Attachment[],
     options?: SendMessageOptions
   ): Promise<boolean>
+  /**
+   * 把后端已持久化的 agent 间消息卡片同步插入当前窗口（幂等；
+   * 非当前会话/窗口外时由历史加载路径覆盖）。可选：测试 mock 可省略。
+   */
+  insertAgentMessageCard?(payload: AgentMessageCardInsertPayload): void
 }
 
 // 已注册的会话桥用 Vue ref 承载：backgroundTaskStore 的 watch getter 在桥注册前
@@ -77,6 +93,7 @@ interface ChatStoreLike {
     attachments?: Attachment[],
     options?: SendMessageOptions
   ) => Promise<boolean>
+  insertAgentMessageCard?: (payload: AgentMessageCardInsertPayload) => void
 }
 
 function wrapChatStore(store: ChatStoreLike): BackgroundTaskChatBridge {
@@ -89,7 +106,10 @@ function wrapChatStore(store: ChatStoreLike): BackgroundTaskChatBridge {
     cancelStream: (options) =>
       store.cancelStream ? store.cancelStream(options) : Promise.resolve(),
     sendMessage: (messageText, attachments, options) =>
-      store.sendMessage(messageText, attachments, options)
+      store.sendMessage(messageText, attachments, options),
+    ...(typeof store.insertAgentMessageCard === 'function'
+      ? { insertAgentMessageCard: (payload: AgentMessageCardInsertPayload) => store.insertAgentMessageCard!(payload) }
+      : {})
   }
 }
 

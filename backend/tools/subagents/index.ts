@@ -101,7 +101,8 @@ export {
     createAgentSendMessageTool,
     getAgentSendMessageTool,
     getAgentSendMessageToolDeclaration,
-    agentSendMessageHandler
+    agentSendMessageHandler,
+    resolveAgentCardInsertPosition
 } from './agentSendMessage';
 
 // 静态导入注册函数（与上方 re-export 共用同一模块实例，替代原函数内 require）

@@ -34,6 +34,12 @@ export interface Content {
   summaryTokenStats?: SummaryTokenStats
   /** 系统内部消息来源；后台任务和 agent 消息都不构成真实用户新回合。 */
   source?: 'user' | 'background_task' | 'agent_message'
+  /**
+   * agent 间消息卡片元数据（A-COMM 展示层）。
+   * 仅 source='agent_message' 且收件方为子代理的消息携带：主模型 ↔ 子代理、
+   * 子代理 ↔ 子代理 的通信以紧凑卡片写入会话历史，正文不进入模型上下文。
+   */
+  agentMessage?: AgentMessageCardInfo
   /** 是否为函数响应消息 */
   isFunctionResponse?: boolean
   /** 是否为上下文总结消息 */
@@ -101,6 +107,27 @@ export interface Content {
   candidatesTokenCount?: number
 }
 
+export interface AgentMessageCardInfo {
+  /** mailbox 消息唯一 ID */
+  messageId: string
+  /** 发送方 runId（主会话为 '__main__'） */
+  fromRunId: string
+  /** 发送方 agent 名称（已知时填充） */
+  fromAgentName?: string
+  /** 收件方 runId */
+  toRunId: string
+  /** 收件方 agent 名称（已知时填充） */
+  toAgentName?: string
+  /** 线程 ID */
+  threadId: string
+  /** 线程跳数 */
+  hopDepth: number
+  /** 消息正文 */
+  text: string
+  /** 投递时间戳（毫秒） */
+  createdAt: number
+}
+
 /**
  * Message - 前端展示用的消息格式
  *
@@ -124,6 +151,8 @@ export interface Message {
    * 消息来源：'user' 为正常用户输入，其他值为系统内部回流
    */
   source?: 'user' | 'background_task' | 'agent_message'
+  /** agent 间消息卡片元数据（A-COMM 展示层；见 Content.agentMessage） */
+  agentMessage?: AgentMessageCardInfo
   /**
    * 该消息在后端历史中的绝对索引（Content.index）
    *

@@ -10,9 +10,10 @@
  * 模型无法伪造 fromRunId。
  */
 
-import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
+import type { Tool, ToolResult, ToolContext, ToolDeclaration, ConversationStore } from '../types';
 import { TaskManager } from '../taskManager';
 import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessageResult } from '../../core/services/agentMailbox';
+import type { AgentMessageCardInfo, Content } from '../../modules/conversation/types';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
 
@@ -131,9 +132,9 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
         return { success: false, error: result.error };
     }
 
-    // 主模型没有常驻执行循环：入队后发轻量通知，让前端沿用后台消息的
-    // “工具动作边界或空闲立即开启内部回合”调度；正文仍由 mailbox claim 接口领取。
     if (result.data.toRunId === MAIN_SESSION_RUN_ID) {
+        // 主模型没有常驻执行循环：入队后发轻量通知，让前端沿用后台消息的
+        // “工具动作边界或空闲立即开启内部回合”调度；正文仍由 mailbox claim 接口领取。
         TaskManager.emitEvent({
             taskId: `agentmsg:${result.data.messageId}`,
             taskType: 'agent_message',
@@ -141,6 +142,42 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
             data: {
                 conversationId: mailboxConversationId,
                 messageId: result.data.messageId
+            }
+        });
+    } else {
+        // agent 间消息（主模型 ↔ 子代理、子代理 ↔ 子代理）：写入主会话历史作为
+        // 展示卡片（parts 为空 → formatHistoryForAPI 整体过滤，不发给模型），
+        // 事件携带完整卡片数据供前端实时插入“收件方”附近。
+        const toAgentName = agentMailbox.getAgentName(mailboxConversationId, result.data.toRunId);
+        const card: AgentMessageCardInfo = {
+            messageId: result.data.messageId,
+            fromRunId,
+            ...(fromAgentName ? { fromAgentName } : {}),
+            toRunId: result.data.toRunId,
+            ...(toAgentName ? { toAgentName } : {}),
+            threadId: result.data.threadId,
+            hopDepth: result.data.hopDepth,
+            text,
+            createdAt: Date.now()
+        };
+        let insertPosition: number | undefined;
+        try {
+            insertPosition = await insertAgentMessageCardIntoHistory(context, mailboxConversationId, card);
+        } catch (error) {
+            // 插入失败不影响投递结果；前端事件不带 insertPosition 时跳过本地插入，
+            // 消息仍可从子代理 transcript / 历史重载路径恢复可见性。
+            console.warn('[agent_send_message] Failed to insert agent message card into history:', error);
+        }
+        TaskManager.emitEvent({
+            taskId: `agentmsg:${result.data.messageId}`,
+            taskType: 'agent_message',
+            type: 'progress',
+            data: {
+                conversationId: mailboxConversationId,
+                messageId: result.data.messageId,
+                toRunId: result.data.toRunId,
+                card,
+                ...(typeof insertPosition === 'number' ? { insertPosition } : {})
             }
         });
     }
@@ -154,6 +191,87 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
             hopDepth: result.data.hopDepth
         }
     };
+}
+
+/**
+ * 归一化工具调用 ID 为 runId 后缀（与 subagents 工具 runId 推导口径一致：
+ * subagent_run_{normalizeToolIdForRunId(toolId)}）。
+ */
+function normalizeToolIdForRunId(toolId: string): string {
+    return toolId.trim().replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+/**
+ * 在会话历史中定位「收件方子代理」的锚点，返回卡片插入位置：
+ * 1. 从后往前找携带该 runId 的 subagents 工具结果（functionResponse.response.runId / data.runId）；
+ * 2. 其次找可推导出该 runId 的 subagents 工具调用（functionCall.id 归一化后匹配）；
+ * 3. 都找不到（run 已不在当前窗口/历史异常）时追加到历史末尾。
+ */
+export function resolveAgentCardInsertPosition(history: readonly Content[], toRunId: string): number {
+    const length = Array.isArray(history) ? history.length : 0;
+    if (length === 0) return 0;
+
+    for (let i = length - 1; i >= 0; i--) {
+        const parts = history[i]?.parts;
+        if (!Array.isArray(parts)) continue;
+        for (const part of parts) {
+            const response = part.functionResponse?.response;
+            if (!response || typeof response !== 'object' || Array.isArray(response)) continue;
+            const runId = (response as { runId?: unknown }).runId
+                ?? (response as { data?: { runId?: unknown } }).data?.runId;
+            if (typeof runId === 'string' && runId === toRunId) {
+                return i + 1;
+            }
+        }
+    }
+
+    if (toRunId.startsWith('subagent_run_')) {
+        const expectedToolId = toRunId.slice('subagent_run_'.length);
+        for (let i = length - 1; i >= 0; i--) {
+            const parts = history[i]?.parts;
+            if (!Array.isArray(parts)) continue;
+            for (const part of parts) {
+                const call = part.functionCall;
+                if (!call || call.name !== 'subagents') continue;
+                if (typeof call.id === 'string' && normalizeToolIdForRunId(call.id) === expectedToolId) {
+                    return i + 1;
+                }
+            }
+        }
+    }
+
+    return length;
+}
+
+/**
+ * 把 agent 间消息卡片写入主会话历史。
+ *
+ * 依赖 ToolContext.conversationStore（运行时为 ConversationManager，工具执行层统一注入）；
+ * 未注入（测试/降级路径）时返回 undefined，调用方跳过插入但不影响投递。
+ */
+async function insertAgentMessageCardIntoHistory(
+    context: ToolContext | undefined,
+    conversationId: string,
+    card: AgentMessageCardInfo
+): Promise<number | undefined> {
+    const store = context?.conversationStore as (ConversationStore & {
+        getHistory?: (conversationId: string) => Promise<Readonly<Content[]>>;
+        insertContent?: (conversationId: string, position: number, content: Content) => Promise<void>;
+    }) | undefined;
+    if (!store?.getHistory || typeof store.insertContent !== 'function') {
+        return undefined;
+    }
+    const history = await store.getHistory(conversationId);
+    const position = resolveAgentCardInsertPosition(history as Readonly<Content[]>, card.toRunId);
+    const content: Content = {
+        role: 'user',
+        parts: [],
+        source: 'agent_message',
+        agentMessage: card,
+        timestamp: card.createdAt
+    };
+    await store.insertContent(conversationId, position, content);
+    return position;
 }
 
 /**

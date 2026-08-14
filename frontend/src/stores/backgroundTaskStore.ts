@@ -14,6 +14,7 @@ import { MESSAGE_NAMES } from '@shared/protocol'
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { sendToExtension, onExtensionCommand } from '../utils/vscode'
+import type { AgentMessageCardInfo } from '../types'
 import {
   isBackgroundStartEvent,
   taskRecordFromStartEvent,
@@ -37,6 +38,9 @@ interface AgentMessageClaimPayload {
   message: string | null
   messageCount: number
 }
+
+/** 主会话（主模型）在信箱中的保留 runId（与后端 agentMailbox 常量一致） */
+const MAIN_SESSION_RUN_ID = '__main__'
 
 export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   /**
@@ -83,7 +87,15 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     if (!event?.taskId) return
 
     if (event.taskType === 'agent_message') {
-      // 正文留在后端 mailbox；事件只负责唤醒调度。忙时等动作边界/流结束，空闲立即领取。
+      // agent 间消息（收件方为子代理）：后端已把卡片持久化到会话历史，事件携带
+      // 卡片数据供前端实时同步到收件方附近；正文不进入主模型 inbox。
+      // 收件方为主会话（main）：正文留在后端 mailbox，事件只负责唤醒调度。
+      const data = event.data as Record<string, unknown> | undefined
+      const toRunId = typeof data?.toRunId === 'string' ? data.toRunId : ''
+      if (toRunId && toRunId !== MAIN_SESSION_RUN_ID) {
+        void handleAgentToAgentMessage(event)
+        return
+      }
       if (flushing) {
         flushDroppedEvent = true
       } else {
@@ -126,6 +138,37 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   }
 
   // ============ 混合回流 ============
+
+  /**
+   * agent 间消息（主模型 ↔ 子代理、子代理 ↔ 子代理）展示卡片同步。
+   *
+   * 后端投递成功时已把卡片 insertContent 到会话历史（parts 为空 → 不发给模型），
+   * 事件携带卡片元数据 + 后端插入位置；这里把卡片同步插入当前窗口对应位置。
+   * 非当前会话 / 窗口外时忽略——后端已持久化，切回会话或滚动加载历史时自然显示。
+   */
+  async function handleAgentToAgentMessage(event: TaskEventLike): Promise<void> {
+    const data = event.data as Record<string, unknown> | undefined
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : ''
+    const toRunId = typeof data?.toRunId === 'string' ? data.toRunId : ''
+    const rawCard = data?.card
+    const insertPosition = typeof data?.insertPosition === 'number' ? data.insertPosition : -1
+    if (!conversationId || !toRunId || !rawCard || typeof rawCard !== 'object' || insertPosition < 0) return
+    const rawMessageId = (rawCard as Record<string, unknown>).messageId
+    if (typeof rawMessageId !== 'string' || !rawMessageId) return
+
+    try {
+      const chat = await resolveChatBridge()
+      if (chat.getState().currentConversationId !== conversationId) return
+      if (typeof chat.insertAgentMessageCard !== 'function') return
+      chat.insertAgentMessageCard({
+        card: rawCard as AgentMessageCardInfo,
+        insertPosition
+      })
+    } catch (error) {
+      // 后端已持久化：本地同步失败不影响数据完整性，历史重载会覆盖。
+      console.warn('[backgroundTaskStore] Failed to insert agent message card:', error)
+    }
+  }
 
   let flushing = false
   /** 当前持有 flushing 锁的生命周期；Webview 重挂载后允许新生命周期接管，不被旧 await 卡住。 */

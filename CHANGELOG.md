@@ -7,6 +7,9 @@
 -->
 ## [Unreleased]
 
+### Added
+  - agent 间消息展示卡片（A-COMM 展示层）：主模型 ↔ 子代理、子代理 ↔ 子代理的 `agent_send_message` 投递成功后，消息以紧凑卡片写入主会话历史（`source='agent_message'` + `agentMessage` 元数据，`parts` 为空数组 → `formatHistoryForAPI` 整体过滤，不进入模型上下文），插入位置定位到收件方子代理的 subagents 工具调用/结果之后（`resolveAgentCardInsertPosition`：优先按 functionResponse.runId 匹配，其次按 functionCall.id 推导 `subagent_run_*`，均未命中时追加末尾）；`agentSendMessageHandler` 同步发出携带卡片数据与插入位置的事件，前端 backgroundTaskStore 路由到 `chatStore.insertAgentMessageCard` 实时插入窗口对应位置并同步后移插入点之后的 backendIndex（幂等：同 mailbox messageId 去重；非当前会话/窗口外由历史加载覆盖）。收件方为主会话的消息保持原 claim/ack 回流语义不变。前端卡片复用 BackgroundTaskCard 样式显示 From → To + 正文（复制按钮复制格式化正文，禁用编辑）。新增后端 5 用例与前端 6 用例。
+
 ## [1.5.4] - 2026-08-13
 
 ### Fixed

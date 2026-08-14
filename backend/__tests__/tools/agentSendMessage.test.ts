@@ -15,7 +15,8 @@ import { cleanFunctionResponseForAPI } from '../../modules/conversation/helpers'
 import {
     agentSendMessageHandler,
     getAgentSendMessageTool,
-    getAgentSendMessageToolDeclaration
+    getAgentSendMessageToolDeclaration,
+    resolveAgentCardInsertPosition
 } from '../../tools/subagents';
 import { getSubAgentsToolRegistrations } from '../../tools/subagents';
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
@@ -568,4 +569,187 @@ describe('agent_send_message - 历史重放防护（FIX-B）', () => {
         service.clearMailboxDrainEpochsForConversation('conv_a');
         expect((service as any).mailboxDrainEpochs.size).toBe(1);
     });
+
+describe('agent_send_message - agent 间消息卡片（A-COMM 展示层）', () => {
+    afterEach(() => {
+        agentMailbox.clearAll();
+    });
+
+    test('agent 间消息事件携带完整卡片数据与收件方 runId；正文不进主会话 inbox', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
+
+        const events: TaskEvent[] = [];
+        const dispose = TaskManager.onTaskEvent(event => events.push(event));
+        try {
+            const result = await agentSendMessageHandler(
+                { targetRunId: 'run_b', message: 'please check the file' },
+                { mailboxConversationId: 'conv_1', mailboxRunId: 'run_a' }
+            );
+
+            expect(result.success).toBe(true);
+            if (!result.success) return;
+
+            const event = events[events.length - 1];
+            expect(event).toMatchObject({
+                taskId: `agentmsg:${result.data.messageId}`,
+                taskType: 'agent_message',
+                type: 'progress'
+            });
+            expect(event.data).toMatchObject({
+                conversationId: 'conv_1',
+                messageId: result.data.messageId,
+                toRunId: 'run_b'
+            });
+            expect(event.data?.card).toMatchObject({
+                messageId: result.data.messageId,
+                fromRunId: 'run_a',
+                fromAgentName: 'Agent A',
+                toRunId: 'run_b',
+                toAgentName: 'Agent B',
+                threadId: result.data.threadId,
+                hopDepth: 1,
+                text: 'please check the file'
+            });
+            // 卡片数据走事件，正文不进入主会话 inbox（主模型不消费 agent 间通信）
+            expect(agentMailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)).toHaveLength(0);
+        } finally {
+            dispose();
+        }
+    });
+
+    test('注入 conversationStore 时把卡片插入会话历史：收件方 subagents 工具结果之后', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
+
+        const history = [
+            { role: 'user', parts: [{ text: 'task' }], id: 'm1', parentId: null },
+            {
+                role: 'model',
+                parts: [{ functionCall: { id: 'tool_1', name: 'subagents', args: { agentName: 'B', prompt: 'x' } } }],
+                id: 'm2',
+                parentId: 'm1'
+            },
+            {
+                role: 'user',
+                parts: [{
+                    functionResponse: {
+                        id: 'tool_1',
+                        name: 'subagents',
+                        response: { success: true, data: { runId: 'run_b', steps: 1 } }
+                    }
+                }],
+                isFunctionResponse: true,
+                id: 'm3',
+                parentId: 'm2'
+            }
+        ];
+        const inserted: Array<{ position: number; content: Record<string, unknown> }> = [];
+        const store = {
+            getCustomMetadata: async () => undefined,
+            setCustomMetadata: async () => undefined,
+            getHistory: async () => history,
+            insertContent: async (_conversationId: string, position: number, content: Record<string, unknown>) => {
+                inserted.push({ position, content });
+            }
+        };
+
+        const result = await agentSendMessageHandler(
+            { targetRunId: 'run_b', message: 'hello B' },
+            {
+                mailboxConversationId: 'conv_1',
+                mailboxRunId: 'run_a',
+                conversationStore: store
+            }
+        );
+
+        expect(result.success).toBe(true);
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0].position).toBe(3); // 工具结果（m3）之后
+        expect(inserted[0].content).toMatchObject({
+            role: 'user',
+            parts: [],
+            source: 'agent_message',
+            agentMessage: {
+                fromRunId: 'run_a',
+                fromAgentName: 'Agent A',
+                toRunId: 'run_b',
+                toAgentName: 'Agent B',
+                text: 'hello B',
+                hopDepth: 1
+            }
+        });
+    });
+
+    test('找不到收件方锚点时卡片追加到历史末尾', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
+
+        const history = [
+            { role: 'user', parts: [{ text: 'task' }], id: 'm1', parentId: null }
+        ];
+        const inserted: Array<{ position: number }> = [];
+        const store = {
+            getCustomMetadata: async () => undefined,
+            setCustomMetadata: async () => undefined,
+            getHistory: async () => history,
+            insertContent: async (_conversationId: string, position: number) => {
+                inserted.push({ position });
+            }
+        };
+
+        const result = await agentSendMessageHandler(
+            { targetRunId: 'run_b', message: 'hello' },
+            {
+                mailboxConversationId: 'conv_1',
+                mailboxRunId: 'run_a',
+                conversationStore: store
+            }
+        );
+
+        expect(result.success).toBe(true);
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0].position).toBe(1); // 历史长度
+    });
+
+    test('无 conversationStore 时投递成功且不插入（既有测试上下文兼容）', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
+
+        const result = await agentSendMessageHandler(
+            { targetRunId: 'run_b', message: 'hello' },
+            { mailboxConversationId: 'conv_1', mailboxRunId: 'run_a' }
+        );
+
+        expect(result.success).toBe(true);
+    });
+
+    test('resolveAgentCardInsertPosition：按 functionCall.id 推导 runId 定位；未命中兜底末尾', () => {
+        const history = [
+            { role: 'user', parts: [{ text: 'task' }] },
+            { role: 'model', parts: [{ functionCall: { id: 'tool 1', name: 'subagents', args: {} } }] },
+            {
+                role: 'user',
+                parts: [{
+                    functionResponse: {
+                        id: 'tool 1',
+                        name: 'subagents',
+                        response: { success: true, data: { runId: 'subagent_run_tool_1' } }
+                    }
+                }],
+                isFunctionResponse: true
+            }
+        ];
+
+        // 显式 runId 优先：插到工具结果之后
+        expect(resolveAgentCardInsertPosition(history as any, 'subagent_run_tool_1')).toBe(3);
+        // functionCall.id 归一化推导（'tool 1' → 'tool_1'）：run 尚未结束（无结果）时也能定位
+        const noResultHistory = history.slice(0, 2);
+        expect(resolveAgentCardInsertPosition(noResultHistory as any, 'subagent_run_tool_1')).toBe(2);
+        // 未知 runId：兜底末尾
+        expect(resolveAgentCardInsertPosition(history as any, 'subagent_run_other')).toBe(3);
+        // 空历史
+        expect(resolveAgentCardInsertPosition([], 'subagent_run_x')).toBe(0);
+    });
+});
 });

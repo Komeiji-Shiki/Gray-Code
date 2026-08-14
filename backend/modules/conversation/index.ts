@@ -41,6 +41,7 @@ export type {
 export type {
     Content,
     ContentPart,
+    AgentMessageCardInfo,
     UsageMetadata,
     ThoughtSignatures,
     ConversationHistory,

@@ -186,6 +186,13 @@ export interface ConversationStore {
      * @param value 元数据值
      */
     setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+
+    /**
+     * 在指定位置插入一条完整 Content（agent 间消息卡片写入历史使用）。
+     * 运行时注入的实际对象是 ConversationManager；此处仅声明为可选方法，
+     * 未注入（测试/子代理降级路径）时调用方静默跳过。
+     */
+    insertContent?(conversationId: string, position: number, content: unknown): Promise<void>;
 }
 
 /**

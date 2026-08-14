@@ -36,7 +36,8 @@ import { replayTodoStateFromMessages, type TodoItem } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
-import { createChatState, getMessagesStructuralVersion, rebuildMessageIndexById } from './chat/state'
+import { createChatState, getMessagesStructuralVersion, rebuildMessageIndexById, insertMessageAt, bumpMessagesStructuralVersion } from './chat/state'
+import { clearVisibleChatMessagesCache } from './chat/windowUtils'
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
 import { formatTime } from './chat/utils'
@@ -142,7 +143,7 @@ import {
 
 import type { StreamHandlerContext } from './chat/streamHandler'
 import { useSettingsStore } from './settingsStore'
-import { registerChatBridge } from './backgroundTasks/bridge'
+import { registerChatBridge, type AgentMessageCardInsertPayload } from './backgroundTasks/bridge'
 
 // 重新导出类型
 export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './chat/types'
@@ -307,6 +308,55 @@ export const useChatStore = defineStore('chat', () => {
   
   const sendMessage = (messageText: string, attachments?: Attachment[], options?: SendMessageOptions): Promise<boolean> =>
     sendMessageFn(state, computed, messageText, attachments, options)
+
+  /**
+   * 把后端已持久化的 agent 间消息卡片同步插入当前窗口（A-COMM 展示层）。
+   *
+   * 后端 insertContent 成功后事件携带 insertPosition（绝对索引）到达；这里只做
+   * 窗口内对齐：splice 插入卡片并把插入点之后带真实 backendIndex 的消息整体 +1
+   * （后端历史索引已后移，保持前后端一一对应）。localOnly 占位使用推导索引，不修正。
+   * 幂等：同 mailbox messageId 重复事件直接跳过。窗口外（更早历史被折叠）交给
+   * 历史加载路径，本地不做越界插入。
+   */
+  const insertAgentMessageCard = (payload: AgentMessageCardInsertPayload): void => {
+    const { card, insertPosition } = payload
+    const all = state.allMessages.value
+    if (!all || all.length === 0) return
+    // 幂等：同 mailbox messageId 已插入（taskEvent 重放/重复推送）
+    if (all.some(m => m.agentMessage?.messageId === card.messageId)) return
+
+    const insertAt = insertPosition - state.windowStartIndex.value
+    if (insertAt < 0) return // 插入点在窗口外（更早历史已折叠）：由历史加载覆盖
+
+    const message: Message = {
+      id: `agentmsg:${card.messageId}`,
+      role: 'user',
+      content: '',
+      timestamp: card.createdAt || Date.now(),
+      source: 'agent_message',
+      agentMessage: card,
+      localOnly: true,
+      backendIndex: insertPosition
+    }
+    insertMessageAt(state, insertAt, message)
+
+    // 后端已把插入点之后的消息整体后移 1：窗口内带真实 backendIndex 的后端消息同步 +1。
+    // 元素替换（同 id）不会改变 windowUtils 增量缓存的首尾指纹，但缓存持有旧对象，
+    // 与 replaceMessageAt 的中间替换同口径显式失效一次。
+    const next = state.allMessages.value
+    let shifted = false
+    for (let i = insertAt + 1; i < next.length; i++) {
+      const m = next[i]
+      if (!m.localOnly && typeof m.backendIndex === 'number') {
+        next[i] = { ...m, backendIndex: m.backendIndex + 1 }
+        shifted = true
+      }
+    }
+    if (shifted) {
+      clearVisibleChatMessagesCache(state)
+      bumpMessagesStructuralVersion(state)
+    }
+  }
   
   const retryLastMessage = () => retryLastMessageFn(state, computed, cancelStream)
   const retryFromMessage = (messageIndex: number) => 
@@ -335,7 +385,8 @@ export const useChatStore = defineStore('chat', () => {
       currentConversationId: state.currentConversationId.value
     }),
     cancelStream,
-    sendMessage
+    sendMessage,
+    insertAgentMessageCard
   })
 
   // ============ 分支操作（TREE-07 切换 / TREE-10 切换器数据源） ============

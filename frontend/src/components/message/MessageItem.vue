@@ -57,6 +57,17 @@ const isAgentMessage = computed(() => props.message.source === 'agent_message')
 // 内部回流消息共用紧凑卡片；代理消息使用独立标题。
 const isBackgroundTask = computed(() => props.message.source === 'background_task' || isAgentMessage.value)
 
+// agent 间消息卡片内容：From → To + 正文（agentMessage 元数据优先于空 content）
+const agentCardContent = computed(() => {
+  const am = props.message.agentMessage
+  if (!am) return props.message.content
+  const from = am.fromAgentName || am.fromRunId
+  const to = am.toAgentName || am.toRunId
+  const meta = `From: ${from} → To: ${to}`
+  const metaLine = am.threadId ? `${meta} · Thread: ${am.threadId} · Hop: ${am.hopDepth}` : meta
+  return `${metaLine}\n\n${am.text}`
+})
+
 // 是否为流式消息
 const isStreaming = computed(() => props.message.streaming === true)
 
@@ -151,7 +162,8 @@ function handleRestoreAndEdit(newContent: string, attachments: Attachment[], che
 
 // 处理操作
 function handleCopy() {
-  emit('copy', props.message.content)
+  // agent 间消息卡片：复制格式化后的 From → To + 正文（content 本身为空）
+  emit('copy', agentCardContent.value || props.message.content)
 }
 
 function handleDelete() {
@@ -204,7 +216,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       <MessageActions
         :class="{ 'actions-visible': showActions }"
         :message="message"
-        :can-edit="isUser"
+        :can-edit="isUser && !props.message.agentMessage"
         :can-retry="!isUser"
         :can-branch="typeof message.backendIndex === 'number' && !isStreaming"
         :can-view-response="!isUser"
@@ -258,7 +270,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       <BackgroundTaskCard
         v-else-if="isBackgroundTask"
         :message-id="message.id"
-        :content="message.content"
+        :content="agentCardContent"
         :is-agent="isAgentMessage"
       />
 

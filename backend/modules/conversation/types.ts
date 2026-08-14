@@ -34,6 +34,33 @@ export const CONVERSATION_CONTEXT_TRIM_STATE_KEY = 'trimState';
  * - 通过调用各渠道的 token 计数 API 获取精确值
  * - 如果 API 调用失败，回退到估算方法
  */
+/**
+ * agent 间消息卡片元数据（A-COMM 展示层）。
+ *
+ * 由 agent_send_message 投递成功后写入历史（收件方为子代理时），
+ * 前端据此渲染「From → To + 正文」的紧凑卡片；正文不进入模型上下文。
+ */
+export interface AgentMessageCardInfo {
+    /** mailbox 消息唯一 ID */
+    messageId: string;
+    /** 发送方 runId（主会话为 '__main__'） */
+    fromRunId: string;
+    /** 发送方 agent 名称（已知时填充） */
+    fromAgentName?: string;
+    /** 收件方 runId */
+    toRunId: string;
+    /** 收件方 agent 名称（已知时填充） */
+    toAgentName?: string;
+    /** 线程 ID */
+    threadId: string;
+    /** 线程跳数 */
+    hopDepth: number;
+    /** 消息正文 */
+    text: string;
+    /** 投递时间戳（毫秒） */
+    createdAt: number;
+}
+
 export interface ChannelTokenCounts {
     /** Gemini 渠道的 token 数 */
     gemini?: number;
@@ -245,6 +272,15 @@ export interface Content {
     
     /** 消息来源：真实用户输入或系统生成的后台/代理消息。仅用于内部历史语义与前端展示。 */
     source?: 'user' | 'background_task' | 'agent_message';
+
+    /**
+     * agent 间消息卡片元数据（A-COMM 展示层）。
+     *
+     * 仅 source='agent_message' 且收件方为子代理（非主会话）的消息携带：
+     * 主模型 ↔ 子代理、子代理 ↔ 子代理 的通信会作为一条展示卡片写入会话历史，
+     * 但 parts 为空数组——formatHistoryForAPI 对空 parts 消息整体过滤，不会发送给模型。
+     */
+    agentMessage?: AgentMessageCardInfo;
 
     /**
      * 消息创建时间戳（毫秒）
