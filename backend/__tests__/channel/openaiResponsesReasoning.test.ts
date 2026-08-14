@@ -229,7 +229,59 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(thoughtParts[0].thoughtSignatures).toBeUndefined();
     });
 
-    test('DeepSeek content-only reasoning：下一轮按 reasoning_text 回传（不带 encrypted_content/summary）', () => {
+    test('开启「发送思考签名」时 DeepSeek content-only reasoning 按 reasoning_text 回传（不带 encrypted_content/summary）', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [{
+                    text: '先检查工具结果，再决定下一步',
+                    thought: true,
+                    openaiResponsesReasoning: {
+                        id: 'rs_deepseek_1',
+                        status: 'completed',
+                        content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
+                    }
+                }, { text: '继续调用工具。' }]
+            },
+            { role: 'user', parts: [{ text: 'Continue.' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test',
+                name: 'Responses Test',
+                preferStream: true,
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: true,
+                options: {
+                    stream: true,
+                    reasoning: {
+                        effort: 'medium',
+                        summaryEnabled: true,
+                        summary: 'auto'
+                    }
+                }
+            })
+        );
+
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+        expect(reasoningItems).toHaveLength(1);
+        expect(reasoningItems[0]).toEqual({
+            type: 'reasoning',
+            id: 'rs_deepseek_1',
+            status: 'completed',
+            content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
+        });
+        expect(reasoningItems[0]).not.toHaveProperty('encrypted_content');
+        expect(reasoningItems[0]).not.toHaveProperty('summary');
+    });
+
+    test('sendHistoryThoughts 默认开启但「发送思考签名」关闭时 content-only reasoning 降级为 assistant 文本', () => {
+        // 回归：sendHistoryThoughts 默认 true 且 openai-responses 设置 UI 无对应开关（关不掉），
+        // 此前仅靠它控制 reasoning item 回传，导致第三方兼容端点报
+        // 「输入项类型 'reasoning' 当前暂不支持」。签名开关关闭时必须不回传 reasoning item。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -267,15 +319,13 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         );
 
         const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
-        expect(reasoningItems).toHaveLength(1);
-        expect(reasoningItems[0]).toEqual({
-            type: 'reasoning',
-            id: 'rs_deepseek_1',
-            status: 'completed',
-            content: [{ type: 'reasoning_text', text: '先检查工具结果，再决定下一步' }]
-        });
-        expect(reasoningItems[0]).not.toHaveProperty('encrypted_content');
-        expect(reasoningItems[0]).not.toHaveProperty('summary');
+        const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')
+            .flatMap((item: any) => item.content)
+            .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
+            .map((part: any) => part.text);
+        expect(reasoningItems).toHaveLength(0);
+        expect(assistantTexts.join('')).toContain('先检查工具结果，再决定下一步');
+        expect(assistantTexts.join('')).toContain('继续调用工具。');
     });
 
     test('关闭 sendHistoryThoughts 时 content-only reasoning 降级为 assistant 文本', () => {

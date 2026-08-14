@@ -121,12 +121,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
 
         // 转换历史消息为 OpenAI Responses input 格式。
         // reasoning item 是 OpenAI Responses 的专用输入类型，第三方兼容端点可能不支持，
-        // 因此把「普通 reasoning 文本」与「加密 reasoning 签名」分开控制：
-        // - sendHistoryThoughts：回传 content/summary 形式的 reasoning_text；
-        // - sendHistoryThoughtSignatures：回传 encrypted_content 形式的 reasoning item。
+        // 因此回传与否统一由「发送思考签名」开关（sendHistoryThoughtSignatures）把关：
+        // 关闭时无论 sendHistoryThoughts 是什么（其默认值 true 在设置 UI 中不可见、无法关闭），
+        // 都不再构造 reasoning item，可见思考摘要降级为普通 assistant 文本保留，避免第三方 400；
+        // 开启后：sendHistoryThoughts 决定 content/summary 形式的 reasoning_text 是否回传，
+        // sendHistoryThoughtSignatures 决定 encrypted_content 形式的 reasoning item 是否回传。
         // 没有 openaiResponsesReasoning 元数据的普通 thought 不会被误包装成 reasoning item。
         const input = this.convertToResponsesInput(processedHistory, {
-            allowReasoningContent: config.sendHistoryThoughts === true,
+            allowReasoningContent: config.sendHistoryThoughts === true && config.sendHistoryThoughtSignatures === true,
             allowReasoningSignatures: config.sendHistoryThoughtSignatures === true
         });
 
