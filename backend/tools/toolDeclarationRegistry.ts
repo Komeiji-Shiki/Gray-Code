@@ -32,7 +32,7 @@ export interface ToolDeclarationFactoryArgs {
     /** read_file：是否启用多模态（决定描述中是否包含图片/PDF 支持说明） */
     multimodalEnabled?: boolean;
     /** read_file：渠道类型（openai 的 function_call 模式不支持多模态） */
-    channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+    channelType?: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
     /** read_file：工具模式 */
     toolMode?: 'function_call' | 'xml' | 'json';
     /** 图片工具：单次调用允许的最大任务数 */

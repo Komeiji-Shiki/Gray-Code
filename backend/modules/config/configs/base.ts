@@ -11,8 +11,11 @@ export { deepMerge };
 
 /**
  * 支持的渠道类型
+ *
+ * gemini-interactions：Google Interactions API（v1beta/interactions）独立渠道，
+ * 与 gemini（generateContent 旧版）平行，设计参照 openai / openai-responses。
  */
-export type ChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses';
+export type ChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses';
 
 /**
  * 支持的渠道类型常量（运行时守卫用，与 ChannelType 类型字面量保持同源）
@@ -20,7 +23,7 @@ export type ChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses'
  * 新增渠道类型时必须在类型与常量中同步添加；ConfigManager 等运行时校验
  * 统一引用此常量，避免手写数组与类型失同步。
  */
-export const CHANNEL_TYPES: ReadonlyArray<ChannelType> = ['gemini', 'openai', 'anthropic', 'openai-responses'];
+export const CHANNEL_TYPES: ReadonlyArray<ChannelType> = ['gemini', 'gemini-interactions', 'openai', 'anthropic', 'openai-responses'];
 
 /**
  * 裁切图片工具配置

@@ -19,7 +19,7 @@ import type { TokenCountService } from '../../../channel/TokenCountService';
 /**
  * 规范化的渠道类型
  */
-export type NormalizedChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | undefined;
+export type NormalizedChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | undefined;
 
 export class TokenEstimationService {
     /** 本地估算安全系数：统一按偏大估算，避免低估导致超上下文 */

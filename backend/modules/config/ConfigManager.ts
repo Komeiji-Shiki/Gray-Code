@@ -18,6 +18,7 @@ import type {
     ConfigFilter,
     ConfigSortOptions,
     GeminiConfig,
+    GeminiInteractionsConfig,
     OpenAIConfig,
     AnthropicConfig,
     ModelInfo
@@ -331,6 +332,31 @@ export class ConfigManager {
                         maxOutputTokens: 65535,
                         maxImages: 0,
                         // Gemini 思考配置默认值
+                        thinkingConfig: {
+                            includeThoughts: true,
+                            mode: 'default',
+                            thinkingLevel: 'low',
+                            thinkingBudget: 1024
+                        }
+                    },
+                    optionsEnabled: {
+                        temperature: false,
+                        maxOutputTokens: false,
+                        maxImages: false,
+                        thinkingConfig: true
+                    }
+                };
+            
+            case 'gemini-interactions':
+                // Gemini Interactions API：与 gemini 同构的默认配置（URL/options/思考配置一致）
+                return {
+                    ...baseDefaults,
+                    url: 'https://generativelanguage.googleapis.com/v1beta',
+                    options: {
+                        ...baseDefaults.options,
+                        temperature: 1.0,
+                        maxOutputTokens: 65535,
+                        maxImages: 0,
                         thinkingConfig: {
                             includeThoughts: true,
                             mode: 'default',
@@ -792,6 +818,11 @@ export class ConfigManager {
                 this.validateGeminiConfig(config as GeminiConfig, errors, warnings);
                 break;
             
+            case 'gemini-interactions':
+                // 配置结构与 gemini 同构，复用同一套校验（URL/API Key/模型）
+                this.validateGeminiConfig(config as unknown as GeminiConfig, errors, warnings);
+                break;
+            
             case 'openai':
                 this.validateOpenAIConfig(config, errors, warnings);
                 break;
@@ -969,6 +1000,7 @@ export class ConfigManager {
         // 按类型统计
         const byType: Record<ChannelType, number> = {
             gemini: 0,
+            'gemini-interactions': 0,
             openai: 0,
             anthropic: 0,
             'openai-responses': 0

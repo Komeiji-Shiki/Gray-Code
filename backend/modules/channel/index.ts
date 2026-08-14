@@ -19,6 +19,7 @@ export { ErrorType, ChannelError } from './types';
 export {
     BaseFormatter,
     GeminiFormatter,
+    GeminiInteractionsFormatter,
     OpenAIFormatter,
     AnthropicFormatter,
     FormatterRegistry,

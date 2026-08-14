@@ -58,7 +58,7 @@ export function formatHistoryForAPI(
     const sendHistoryThoughtSignatures = opts.sendHistoryThoughtSignatures ?? false;
     // 当前轮次配置：默认发送当前思考内容
     const sendCurrentThoughts = opts.sendCurrentThoughts ?? true;
-    const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
+    const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'gemini-interactions' || opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
     const channelType = opts.channelType;
     // 历史思考回合数，默认 -1 表示全部
     const historyThinkingRounds = opts.historyThinkingRounds ?? -1;

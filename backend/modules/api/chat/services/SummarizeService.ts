@@ -433,7 +433,7 @@ export class SummarizeService {
 
             if (this.isAsyncGenerator(response)) {
                 const accumulator = new StreamAccumulator();
-                accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
+                accumulator.setProviderType(config.type as 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
 
                 try {
                     for await (const chunk of response) {
@@ -1153,7 +1153,7 @@ export class SummarizeService {
 
             if (this.isAsyncGenerator(response)) {
                 const accumulator = new StreamAccumulator();
-                accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
+                accumulator.setProviderType(config.type as 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
 
                 try {
                     for await (const chunk of response) {

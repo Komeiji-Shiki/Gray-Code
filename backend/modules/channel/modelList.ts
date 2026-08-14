@@ -428,6 +428,7 @@ export async function getModels(config: ChannelConfig, proxyUrl?: string): Promi
   const configType = config.type;
   switch (config.type) {
     case 'gemini':
+    case 'gemini-interactions':
       return getGeminiModels(config, proxyUrl);
     
     case 'openai':

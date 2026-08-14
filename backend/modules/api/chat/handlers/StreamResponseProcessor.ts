@@ -22,7 +22,7 @@ export interface StreamProcessorConfig {
     /** 请求开始时间（用于计算响应持续时间） */
     requestStartTime: number;
     /** 渠道类型 */
-    providerType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+    providerType: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
     /** 当前请求的工具模式 */
     toolMode: ToolMode;
     /** 取消信号 */

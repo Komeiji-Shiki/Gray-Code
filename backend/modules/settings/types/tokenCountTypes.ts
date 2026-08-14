@@ -49,6 +49,11 @@ export interface TokenCountConfig {
      * Gemini 渠道配置
      */
     gemini?: TokenCountChannelConfig;
+
+    /**
+     * Gemini Interactions 渠道配置（与 gemini 共用 countTokens 端点）
+     */
+    'gemini-interactions'?: TokenCountChannelConfig;
     
     /**
      * OpenAI 渠道配置
@@ -113,6 +118,7 @@ export const DEFAULT_ANTHROPIC_TOKEN_COUNT_CONFIG: TokenCountChannelConfig = {
  */
 export const DEFAULT_TOKEN_COUNT_CONFIG: TokenCountConfig = {
     gemini: DEFAULT_GEMINI_TOKEN_COUNT_CONFIG,
+    'gemini-interactions': { ...DEFAULT_GEMINI_TOKEN_COUNT_CONFIG },
     openai: DEFAULT_OPENAI_TOKEN_COUNT_CONFIG,
     anthropic: DEFAULT_ANTHROPIC_TOKEN_COUNT_CONFIG,
     'openai-responses': DEFAULT_OPENAI_RESPONSES_TOKEN_COUNT_CONFIG

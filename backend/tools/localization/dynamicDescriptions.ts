@@ -60,7 +60,7 @@ export interface ReadFileDescriptionOptions {
     /** 是否启用多模态工具 */
     multimodalEnabled?: boolean;
     /** 渠道类型 */
-    channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+    channelType?: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
     /** 工具模式 */
     toolMode?: 'function_call' | 'xml' | 'json';
     /** 是否多根工作区 */

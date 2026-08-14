@@ -76,8 +76,8 @@ const emit = defineEmits<{
       </button>
     </div>
 
-    <!-- 使用 Authorization 格式（仅 Gemini 和 Anthropic） -->
-    <div v-if="config.type === 'gemini' || config.type === 'anthropic'" class="checkbox-group api-key-option">
+    <!-- 使用 Authorization 格式（仅 Gemini/Gemini Interactions 和 Anthropic） -->
+    <div v-if="config.type === 'gemini' || config.type === 'gemini-interactions' || config.type === 'anthropic'" class="checkbox-group api-key-option">
       <label class="custom-checkbox">
         <input
           type="checkbox"
@@ -88,7 +88,7 @@ const emit = defineEmits<{
         <span class="checkbox-text">{{ t('components.settings.channelSettings.form.apiKey.useAuthorization') }}</span>
       </label>
       <span class="field-hint api-key-hint">
-        {{ config.type === 'gemini'
+        {{ config.type === 'gemini' || config.type === 'gemini-interactions'
           ? t('components.settings.channelSettings.form.apiKey.useAuthorizationHintGemini')
           : t('components.settings.channelSettings.form.apiKey.useAuthorizationHintAnthropic')
         }}
@@ -189,7 +189,7 @@ const emit = defineEmits<{
             <span class="channel-feature">{{ t('components.settings.channelSettings.form.multimodal.table.generateImage') }}</span>
             <span class="channel-feature">{{ t('components.settings.channelSettings.form.multimodal.table.historyMultimodal') }}</span>
           </div>
-          <div class="channel-row" :class="{ current: config.type === 'gemini' }">
+          <div class="channel-row" :class="{ current: config.type === 'gemini' || config.type === 'gemini-interactions' }">
             <span class="channel-name">{{ t('components.settings.channelSettings.form.multimodal.channels.geminiAll') }}</span>
             <span class="channel-feature support-yes">✓</span>
             <span class="channel-feature support-yes">✓</span>
@@ -293,7 +293,7 @@ const emit = defineEmits<{
               <span :class="config.type === 'openai-responses' ? 'support-yes' : ''">{{ t('components.settings.channelSettings.form.strictTools.support.openaiResponses') }}</span>
             </span>
           </div>
-          <div class="support-item" :class="{ current: config.type === 'gemini' }">
+          <div class="support-item" :class="{ current: config.type === 'gemini' || config.type === 'gemini-interactions' }">
             <span class="type-label">
               <span class="support-no">{{ t('components.settings.channelSettings.form.strictTools.support.gemini') }}</span>
             </span>

@@ -36,7 +36,7 @@ export function createStreamResponseProcessor(
 ): StreamResponseProcessor {
     return new StreamResponseProcessor({
         requestStartTime,
-        providerType: config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+        providerType: config.type as 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
         toolMode: config.toolMode || 'function_call',
         abortSignal,
         conversationId

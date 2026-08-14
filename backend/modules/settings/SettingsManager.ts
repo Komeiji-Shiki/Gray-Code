@@ -1170,7 +1170,7 @@ export class SettingsManager {
      * @param channelType 渠道类型 (gemini, openai, anthropic, openai-responses)
      * @returns 是否启用
      */
-    isTokenCountEnabled(channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses'): boolean {
+    isTokenCountEnabled(channelType: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses'): boolean {
         return this.tokenCount.isTokenCountEnabled(channelType);
     }
 

@@ -13,7 +13,7 @@
 import type { ModelInfo } from './index'
 
 /** 支持的渠道类型（与 backend/modules/config/configs/base.ts 的 ChannelType 同源） */
-export type ChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses'
+export type ChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses'
 
 /** 工具调用模式 */
 export type ToolMode = 'function_call' | 'xml' | 'json'

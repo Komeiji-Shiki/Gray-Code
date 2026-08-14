@@ -802,7 +802,7 @@ export class ChannelManager {
      */
     private getFilteredTools(
         multimodalEnabled?: boolean,
-        channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+        channelType?: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
         toolMode?: 'function_call' | 'xml' | 'json',
         promptModeSnapshot?: ResolvedPromptModeSnapshot,
         toolOptions?: ToolOptions

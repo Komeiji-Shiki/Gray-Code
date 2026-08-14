@@ -3,7 +3,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { useChatStore } from '@/stores'
 
-type ChannelType = 'gemini' | 'openai' | 'anthropic'
+type ChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic'
 
 /**
  * PromptSettings「Token 计数」区块的领域逻辑（S7 批次拆分，纯重构，行为零变化）。
@@ -23,6 +23,7 @@ export function usePromptTokenCount(getTemplate: () => string) {
   // 可用的渠道选项
   const channelOptions: { value: ChannelType; label: string }[] = [
     { value: 'gemini', label: 'Gemini' },
+    { value: 'gemini-interactions', label: 'Gemini Interactions' },
     { value: 'openai', label: 'OpenAI' },
     { value: 'anthropic', label: 'Anthropic' }
   ]

@@ -1034,6 +1034,7 @@ const en: LanguageMessages = {
                     channelType: {
                         label: 'Channel Type',
                         gemini: 'Gemini API',
+                        'gemini-interactions': 'Gemini Interactions API',
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API',

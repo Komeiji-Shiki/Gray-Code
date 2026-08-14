@@ -38,7 +38,7 @@ export interface GetHistoryOptions {
     sendCurrentThoughtSignatures?: boolean;
     
     /** 渠道类型，用于选择对应格式的签名 */
-    channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+    channelType?: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
     
     /**
      * 多模态能力（可选）

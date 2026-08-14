@@ -36,9 +36,9 @@ const emit = defineEmits<{
     </button>
 
     <div v-if="show" class="advanced-options">
-      <!-- Gemini 选项（key=渠道ID：切换配置时重挂载，草稿跟随新配置） -->
+      <!-- Gemini / Gemini Interactions 选项（key=渠道ID：切换配置时重挂载，草稿跟随新配置） -->
       <GeminiOptions
-        v-if="config.type === 'gemini'"
+        v-if="config.type === 'gemini' || config.type === 'gemini-interactions'"
         :key="config.id"
         :config="config"
         @update:option="(k: string, v: any) => emit('update:option', k, v)"

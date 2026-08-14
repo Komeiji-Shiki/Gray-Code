@@ -740,7 +740,7 @@ export class SettingsHandler {
      */
     async countSystemPromptTokens(request: {
         text: string;
-        channelType: 'gemini' | 'openai' | 'anthropic';
+        channelType: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic';
     }): Promise<{
         success: boolean;
         totalTokens?: number;
@@ -807,7 +807,7 @@ export class SettingsHandler {
      */
     async countSystemPromptTokensSeparate(request: {
         staticText: string;
-        channelType: 'gemini' | 'openai' | 'anthropic';
+        channelType: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic';
         conversationId?: string;
     }): Promise<{
         success: boolean;

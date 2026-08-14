@@ -8,7 +8,7 @@
  */
 import { t } from '@/i18n'
 
-type ChannelType = 'gemini' | 'openai' | 'anthropic'
+type ChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic'
 
 defineProps<{
   isCountingTokens: boolean

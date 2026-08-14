@@ -137,6 +137,7 @@ const configOptions = computed<SelectOption[]>(() =>
 // 类型选项
 const typeOptions = computed<SelectOption[]>(() => [
   { value: 'gemini', label: t('components.settings.channelSettings.form.channelType.gemini'), description: 'Google Gemini' },
+  { value: 'gemini-interactions', label: t('components.settings.channelSettings.form.channelType.gemini-interactions'), description: 'Google Gemini Interactions API' },
   { value: 'openai', label: t('components.settings.channelSettings.form.channelType.openai'), description: 'OpenAI Compatible' },
   { value: 'openai-responses', label: t('components.settings.channelSettings.form.channelType.openai-responses'), description: 'OpenAI Responses API' },
   { value: 'anthropic', label: t('components.settings.channelSettings.form.channelType.anthropic'), description: 'Anthropic Claude' }

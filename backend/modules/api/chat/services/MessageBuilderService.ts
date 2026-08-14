@@ -120,7 +120,7 @@ export class MessageBuilderService {
             // Responses 渠道已与历史签名合并，由 sendHistoryThoughtSignatures 统一控制
             sendCurrentThoughtSignatures,
             // 渠道类型，用于选择对应格式的签名
-            channelType: config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+            channelType: config.type as 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
             // 多模态能力，用于过滤历史中的多模态数据
             multimodalCapability: capability,
             // 历史思考回合数

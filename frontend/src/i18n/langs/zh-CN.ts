@@ -1036,6 +1036,7 @@ const zhCN = {
                     channelType: {
                         label: '渠道类型',
                         gemini: 'Gemini API',
+                        'gemini-interactions': 'Gemini Interactions API',
                         openai: 'OpenAI API',
                         'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API',

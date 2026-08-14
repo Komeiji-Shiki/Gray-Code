@@ -28,7 +28,7 @@ import { resolveLocalizationLanguage } from '../../tools/localization/types';
 import { getToolDescriptionLocalization } from '../../tools/localization/catalogs';
 import { localizeToolDeclaration } from '../../tools/localization/localizeToolDeclaration';
 
-export type DeclarationChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
+export type DeclarationChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
 export type DeclarationToolMode = 'function_call' | 'xml' | 'json';
 
 export interface ToolDeclarationResolveOptions {

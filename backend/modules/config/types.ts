@@ -9,6 +9,7 @@ export type {
     ChannelType,
     BaseChannelConfig,
     GeminiConfig,
+    GeminiInteractionsConfig,
     OpenAIConfig,
     AnthropicConfig,
     OpenAIResponsesConfig,

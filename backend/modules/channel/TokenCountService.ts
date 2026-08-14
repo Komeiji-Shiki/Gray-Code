@@ -74,7 +74,7 @@ export class TokenCountService {
      * @returns Token 计数结果
      */
     async countTokens(
-        channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
+        channelType: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
         contents: Content[],
         proxyUrl?: string
@@ -98,6 +98,8 @@ export class TokenCountService {
         try {
             switch (channelType) {
                 case 'gemini':
+                case 'gemini-interactions':
+                    // Interactions 渠道与 gemini 共用 countTokens 端点
                     return await this.countGeminiTokens(channelConfig, contents, proxyUrl);
                 case 'openai':
                     return await this.countOpenAITokens(channelConfig, contents, proxyUrl);
@@ -147,6 +149,7 @@ export class TokenCountService {
             // 根据渠道类型选择默认方式
             switch (channelConfig.type) {
                 case 'gemini':
+                case 'gemini-interactions':
                     actualMethod = 'gemini';
                     break;
                 case 'anthropic':
@@ -199,7 +202,7 @@ export class TokenCountService {
      * @returns Token 计数结果数组（与输入顺序一致）
      */
     async countTokensBatch(
-        channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
+        channelType: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
         contentsList: Content[][],
         proxyUrl?: string

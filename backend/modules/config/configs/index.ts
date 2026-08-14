@@ -11,6 +11,7 @@ export type { ChannelType, BaseChannelConfig, ModelInfo, TokenCountMethod, Token
 
 // 导出各渠道配置
 export type { GeminiConfig, GeminiOptionsEnabled, ThinkingConfig, ThinkingLevel, ThinkingMode } from './gemini';
+export type { GeminiInteractionsConfig } from './gemini-interactions';
 export type { OpenAIConfig } from './openai';
 export type { AnthropicConfig } from './anthropic';
 export type { OpenAIResponsesConfig, OpenAIResponsesOptionsEnabled } from './openai-responses';
@@ -21,12 +22,14 @@ export type { OpenAIResponsesConfig, OpenAIResponsesOptionsEnabled } from './ope
  * 使用 TypeScript 的 discriminated union 实现类型安全
  */
 import type { GeminiConfig } from './gemini';
+import type { GeminiInteractionsConfig } from './gemini-interactions';
 import type { OpenAIConfig } from './openai';
 import type { AnthropicConfig } from './anthropic';
 import type { OpenAIResponsesConfig } from './openai-responses';
 
 export type ChannelConfig =
     | GeminiConfig
+    | GeminiInteractionsConfig
     | OpenAIConfig
     | AnthropicConfig
     | OpenAIResponsesConfig;

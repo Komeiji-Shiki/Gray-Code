@@ -17,6 +17,7 @@ interface TokenCountChannelConfig {
 
 interface TokenCountConfig {
     gemini?: TokenCountChannelConfig
+    'gemini-interactions'?: TokenCountChannelConfig
     openai?: TokenCountChannelConfig
     anthropic?: TokenCountChannelConfig
     'openai-responses'?: TokenCountChannelConfig
@@ -33,6 +34,12 @@ let saveMessageTimer: ReturnType<typeof setTimeout> | null = null
 // 配置数据
 const config = reactive<TokenCountConfig>({
     gemini: {
+        enabled: false,
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens?key={key}',
+        apiKey: '',
+        model: 'gemini-2.5-pro'
+    },
+    'gemini-interactions': {
         enabled: false,
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens?key={key}',
         apiKey: '',
@@ -61,6 +68,7 @@ const config = reactive<TokenCountConfig>({
 // API Key 可见性
 const showApiKey = reactive({
     gemini: false,
+    'gemini-interactions': false,
     openai: false,
     anthropic: false,
     'openai-responses': false
@@ -69,6 +77,7 @@ const showApiKey = reactive({
 // 当前展开的面板
 const expandedPanels = reactive({
     gemini: true,
+    'gemini-interactions': false,
     openai: false,
     anthropic: false,
     'openai-responses': false
@@ -84,6 +93,9 @@ async function loadConfig() {
             
             if (savedConfig.gemini) {
                 Object.assign(config.gemini!, savedConfig.gemini)
+            }
+            if (savedConfig['gemini-interactions']) {
+                Object.assign(config['gemini-interactions']!, savedConfig['gemini-interactions'])
             }
             if (savedConfig.openai) {
                 Object.assign(config.openai!, savedConfig.openai)
@@ -105,7 +117,7 @@ async function loadConfig() {
 // 保存配置
 async function saveConfig() {
     // 保存前校验：任一渠道 enabled 但 API URL / API Key 为空时提示并阻止保存
-    const providers: (keyof TokenCountConfig)[] = ['gemini', 'openai', 'anthropic', 'openai-responses']
+    const providers: (keyof TokenCountConfig)[] = ['gemini', 'gemini-interactions', 'openai', 'anthropic', 'openai-responses']
     for (const provider of providers) {
         const c = config[provider]
         if (c?.enabled && (!c.baseUrl.trim() || !c.apiKey.trim())) {
@@ -126,6 +138,7 @@ async function saveConfig() {
             toolName: 'token_count',
             config: {
                 gemini: rawConfig.gemini,
+                'gemini-interactions': rawConfig['gemini-interactions'],
                 openai: rawConfig.openai,
                 anthropic: rawConfig.anthropic,
                 'openai-responses': rawConfig['openai-responses']
@@ -148,12 +161,12 @@ async function saveConfig() {
 }
 
 // 切换面板展开状态
-function togglePanel(panel: 'gemini' | 'openai' | 'anthropic' | 'openai-responses') {
+function togglePanel(panel: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses') {
     expandedPanels[panel] = !expandedPanels[panel]
 }
 
 // 切换 API Key 可见性
-function toggleApiKeyVisibility(channel: 'gemini' | 'openai' | 'anthropic' | 'openai-responses') {
+function toggleApiKeyVisibility(channel: 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses') {
     showApiKey[channel] = !showApiKey[channel]
 }
 
@@ -241,6 +254,68 @@ onUnmounted(() => {
                             v-model="config.gemini!.model"
                             :placeholder="t('components.settings.tokenCountSettings.geminiModelPlaceholder')"
                             :disabled="!config.gemini?.enabled"
+                        />
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Gemini Interactions 配置（与 gemini 共用 countTokens 端点） -->
+            <div class="channel-panel" :class="{ expanded: expandedPanels['gemini-interactions'] }" data-search-anchor="token-count-gemini-interactions">
+                <div class="panel-header" @click="togglePanel('gemini-interactions')">
+                    <div class="panel-title">
+                        <i :class="['codicon', expandedPanels['gemini-interactions'] ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <span class="channel-name">Gemini Interactions</span>
+                        <span v-if="config['gemini-interactions']?.enabled" class="status-badge enabled">
+                            {{ t('common.enabled') }}
+                        </span>
+                    </div>
+                </div>
+                
+                <div v-if="expandedPanels['gemini-interactions']" class="panel-content">
+                    <div class="form-group">
+                        <CustomCheckbox
+                            v-model="config['gemini-interactions']!.enabled"
+                            :label="t('components.settings.tokenCountSettings.enableChannel')"
+                        />
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>{{ t('components.settings.tokenCountSettings.baseUrl') }}</label>
+                        <input
+                            type="text"
+                            v-model="config['gemini-interactions']!.baseUrl"
+                            :placeholder="t('components.settings.tokenCountSettings.geminiUrlPlaceholder')"
+                            :disabled="!config['gemini-interactions']?.enabled"
+                        />
+                        <p class="field-hint">{{ t('components.settings.tokenCountSettings.geminiUrlHint') }}</p>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>{{ t('components.settings.tokenCountSettings.apiKey') }}</label>
+                        <div class="input-with-button">
+                            <input
+                                :type="showApiKey['gemini-interactions'] ? 'text' : 'password'"
+                                v-model="config['gemini-interactions']!.apiKey"
+                                :placeholder="t('components.settings.tokenCountSettings.apiKeyPlaceholder')"
+                                :disabled="!config['gemini-interactions']?.enabled"
+                            />
+                            <button
+                                class="toggle-visibility-btn"
+                                @click="toggleApiKeyVisibility('gemini-interactions')"
+                                type="button"
+                            >
+                                <i :class="['codicon', showApiKey['gemini-interactions'] ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>{{ t('components.settings.tokenCountSettings.model') }}</label>
+                        <input
+                            type="text"
+                            v-model="config['gemini-interactions']!.model"
+                            :placeholder="t('components.settings.tokenCountSettings.geminiModelPlaceholder')"
+                            :disabled="!config['gemini-interactions']?.enabled"
                         />
                     </div>
                 </div>

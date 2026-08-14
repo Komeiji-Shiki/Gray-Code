@@ -369,7 +369,7 @@ export interface SessionMetadata {
 
 export interface ChatConfig {
   model: string
-  provider: 'gemini' | 'openai' | 'openai-responses' | 'anthropic' | 'custom'
+  provider: 'gemini' | 'gemini-interactions' | 'openai' | 'openai-responses' | 'anthropic' | 'custom'
   apiKey?: string
   baseUrl?: string
   temperature?: number

@@ -503,7 +503,7 @@ export class GeminiFormatter extends BaseFormatter {
      *
      * 注意：functionResponse.parts 中的多模态内容会被提取并添加到消息中
      */
-    private convertHistoryToXMLMode(history: Content[]): Content[] {
+    protected convertHistoryToXMLMode(history: Content[]): Content[] {
         // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃
         //（避免 prompt 里出现无前序调用的孤响应文本）
         const rejectedCallIds = new Set<string>();
@@ -578,7 +578,7 @@ export class GeminiFormatter extends BaseFormatter {
      *
      * 注意：functionResponse.parts 中的多模态内容会被提取并添加到消息中
      */
-    private convertHistoryToJSONMode(history: Content[]): Content[] {
+    protected convertHistoryToJSONMode(history: Content[]): Content[] {
         // 成对过滤：rejected functionCall 及其配对 functionResponse 一起丢弃
         const rejectedCallIds = new Set<string>();
         for (const content of history) {
@@ -685,7 +685,7 @@ export class GeminiFormatter extends BaseFormatter {
      * 同时过滤剥空后的 part 与消息，避免向 Gemini 发送空 parts 的 content；
      * 与 convertThoughtSignatures / 各 toolMode 分支的空过滤口径一致。
      */
-    private stripRedactedThinking(history: Content[]): Content[] {
+    protected stripRedactedThinking(history: Content[]): Content[] {
         return history
             .map(content => ({
                 ...content,

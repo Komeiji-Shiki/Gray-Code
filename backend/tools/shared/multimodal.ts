@@ -159,7 +159,7 @@ export function getReadFileError(filePath: string, multimodalEnabled: boolean): 
 /**
  * 渠道类型
  */
-export type ChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses';
+export type ChannelType = 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses';
 
 /**
  * 工具模式
@@ -210,7 +210,8 @@ export function getMultimodalCapability(
     
     switch (channelType) {
         case 'gemini':
-            // Gemini 全面支持
+        case 'gemini-interactions':
+            // Gemini 全面支持（Interactions API 与 generateContent 多模态能力一致）
             return {
                 supportsImages: true,
                 supportsDocuments: true,

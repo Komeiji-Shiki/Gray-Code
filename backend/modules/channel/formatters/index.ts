@@ -6,6 +6,7 @@
 
 import { BaseFormatter } from './base';
 import { GeminiFormatter } from './gemini';
+import { GeminiInteractionsFormatter } from './gemini-interactions';
 import { OpenAIFormatter } from './openai';
 import { AnthropicFormatter } from './anthropic';
 import { OpenAIResponsesFormatter } from './openai-responses';
@@ -20,6 +21,7 @@ export class FormatterRegistry {
     constructor() {
         // 注册默认格式转换器
         this.register(new GeminiFormatter());
+        this.register(new GeminiInteractionsFormatter());
         this.register(new OpenAIFormatter());
         this.register(new AnthropicFormatter());
         this.register(new OpenAIResponsesFormatter());
@@ -61,6 +63,7 @@ export const formatterRegistry = new FormatterRegistry();
 // 导出类型和类
 export { BaseFormatter } from './base';
 export { GeminiFormatter } from './gemini';
+export { GeminiInteractionsFormatter } from './gemini-interactions';
 export { OpenAIFormatter } from './openai';
 export { AnthropicFormatter } from './anthropic';
 export { OpenAIResponsesFormatter } from './openai-responses';
