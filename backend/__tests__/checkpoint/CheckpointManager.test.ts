@@ -1834,6 +1834,207 @@ describe('CheckpointManager metadata RMW migration', () => {
     });
 });
 
+    // ==================== CP-PARTIAL-3：部分快照映射继承（增量链修复） ====================
+
+    describe('CP-PARTIAL-3 部分快照映射继承', () => {
+        beforeEach(() => {
+            jest.clearAllMocks();
+        });
+
+        test('部分快照继承上一存档完整映射（未受影响文件哈希与上一存档一致）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-partial3-inherit-');
+            const storageRoot = await createTempDirectory('limcode-cp-partial3-inherit-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                await writeFile(workspaceRoot, 'b.ts', 'b1');
+                await writeFile(workspaceRoot, 'c.ts', 'c1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, []);
+
+                // A：全量存档（完整映射 3 个文件）
+                const cpA = await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', { forceCreate: true });
+                expect(cpA).not.toBeNull();
+                expect(Object.keys(cpA!.fileHashes!)).toHaveLength(3);
+                expect(cpA!.partial).toBeUndefined();
+
+                // 工具修改 a.ts 后创建部分快照 B（只影响 a.ts）
+                await writeFile(workspaceRoot, 'a.ts', 'a2');
+                const cpB = await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', {
+                    forceCreate: true,
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                expect(cpB).not.toBeNull();
+                expect(cpB!.partial).toBe(true);
+
+                // B 的映射继承 A 的完整映射：3 个文件都在，未受影响的 b/c 哈希与 A 一致
+                const keysA = Object.keys(cpA!.fileHashes!);
+                const keysB = Object.keys(cpB!.fileHashes!);
+                expect(keysB).toHaveLength(3);
+                const hashOf = (keys: string[], record: CheckpointRecord, name: string) =>
+                    record.fileHashes![keys.find(k => k.endsWith('/' + name))!];
+                expect(hashOf(keysB, cpB!, 'a.ts')).toBe(hashContent('a2'));
+                expect(hashOf(keysB, cpB!, 'b.ts')).toBe(hashOf(keysA, cpA!, 'b.ts'));
+                expect(hashOf(keysB, cpB!, 'c.ts')).toBe(hashOf(keysA, cpA!, 'c.ts'));
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('部分快照后的全量存档只记真实变化（不再伪全量）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-partial3-incremental-');
+            const storageRoot = await createTempDirectory('limcode-cp-partial3-incremental-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                await writeFile(workspaceRoot, 'b.ts', 'b1');
+                await writeFile(workspaceRoot, 'c.ts', 'c1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, []);
+
+                // A：全量
+                await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', { forceCreate: true });
+                // B：部分快照（只影响 a.ts）
+                await writeFile(workspaceRoot, 'a.ts', 'a2');
+                await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', {
+                    forceCreate: true,
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                // C：全量扫描（批内含副作用不可知工具回退全量的场景）
+                await writeFile(workspaceRoot, 'a.ts', 'a3');
+                const cpC = await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', { forceCreate: true });
+
+                expect(cpC).not.toBeNull();
+                // 修复前：B 的映射只有 a.ts，C 会把 b/c 判为 added → changes 3 条伪全量；
+                // 修复后：B 继承完整映射，C 相对它只有 a.ts 一个真实变化
+                expect(cpC!.changes).toHaveLength(1);
+                expect(cpC!.changes![0].path.endsWith('/a.ts')).toBe(true);
+                expect(cpC!.changes![0].type).toBe('modified');
+                expect(cpC!.fileCount).toBe(1);
+                expect(Object.keys(cpC!.fileHashes!)).toHaveLength(3);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('恢复部分快照：删除清单不含继承映射覆盖的未受影响文件（不误删）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-partial3-restore-');
+            const storageRoot = await createTempDirectory('limcode-cp-partial3-restore-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                await writeFile(workspaceRoot, 'b.ts', 'b1');
+                await writeFile(workspaceRoot, 'c.ts', 'c1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, []);
+
+                // A：全量
+                await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', { forceCreate: true });
+                // B：部分快照（只影响 a.ts）
+                await writeFile(workspaceRoot, 'a.ts', 'a2');
+                const cpB = await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', {
+                    forceCreate: true,
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                expect(cpB).not.toBeNull();
+
+                // 快照 B 之后工作区继续漂移：b.ts 被改、新增 extra.ts
+                await writeFile(workspaceRoot, 'b.ts', 'b2');
+                await writeFile(workspaceRoot, 'extra.ts', 'x');
+
+                // 预览恢复 B：b/c 由继承映射覆盖（与目标哈希一致 → skipped），
+                // 只有快照后新建的 extra.ts 进 untracked 清单（默认保留，确认后才删）
+                const preview = await manager.previewRestore('conv-cp-partial3', cpB!.id);
+                expect(preview.success).toBe(true);
+                expect(preview.untrackedPaths).not.toContain('b.ts');
+                expect(preview.untrackedPaths).not.toContain('c.ts');
+                expect(preview.untrackedPaths).toContain('extra.ts');
+                // deleted = 确认删除 untracked 后的总数（只有 extra.ts 一条）；
+                // deletedIfUnconfirmed = 默认执行的真实删除数（部分快照不删除任何文件）
+                expect(preview.deleted).toBe(1);
+                expect(preview.deletedIfUnconfirmed).toBe(0);
+
+                // 实际恢复：b.ts 回到 B 快照内容，a/c/extra 保持，无文件被删
+                const result = await manager.restoreCheckpoint('conv-cp-partial3', cpB!.id);
+                expect(result.success).toBe(true);
+                expect(result.deleted).toBe(0);
+                await expect(fs.readFile(path.join(workspaceRoot, 'a.ts'), 'utf-8')).resolves.toBe('a2');
+                await expect(fs.readFile(path.join(workspaceRoot, 'b.ts'), 'utf-8')).resolves.toBe('b1');
+                await expect(fs.readFile(path.join(workspaceRoot, 'c.ts'), 'utf-8')).resolves.toBe('c1');
+                await expect(fs.readFile(path.join(workspaceRoot, 'extra.ts'), 'utf-8')).resolves.toBe('x');
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('部分快照受影响文件已被删除（stat 失败）时从继承映射剔除', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-partial3-delete-');
+            const storageRoot = await createTempDirectory('limcode-cp-partial3-delete-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                await writeFile(workspaceRoot, 'b.ts', 'b1');
+                await writeFile(workspaceRoot, 'c.ts', 'c1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, []);
+
+                // A：全量
+                await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', { forceCreate: true });
+                // delete_file 删除 a.ts 后创建部分快照 B（受影响路径含已删除文件）
+                await fs.rm(path.join(workspaceRoot, 'a.ts'));
+                const cpB = await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', {
+                    forceCreate: true,
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                expect(cpB).not.toBeNull();
+                expect(cpB!.partial).toBe(true);
+                // 被删文件从继承映射剔除（不「复活」），未受影响文件保留
+                const keysB = Object.keys(cpB!.fileHashes!);
+                expect(keysB.some(k => k.endsWith('/a.ts'))).toBe(false);
+                expect(keysB.some(k => k.endsWith('/b.ts'))).toBe(true);
+                expect(keysB.some(k => k.endsWith('/c.ts'))).toBe(true);
+                // 被删文件记录进 unbackedPaths（恢复侧保护，绝不删除）
+                expect(cpB!.unbackedPaths?.some(p => p.endsWith('/a.ts'))).toBe(true);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('上一存档为 partial 时部分快照回退全量（重建完整基线）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-partial3-heal-');
+            const storageRoot = await createTempDirectory('limcode-cp-partial3-heal-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                await writeFile(workspaceRoot, 'b.ts', 'b1');
+                await writeFile(workspaceRoot, 'c.ts', 'c1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, []);
+
+                // A：全量
+                await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', { forceCreate: true });
+                // B：部分快照（只影响 a.ts）
+                await writeFile(workspaceRoot, 'a.ts', 'a2');
+                await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', {
+                    forceCreate: true,
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                // C：请求部分快照（只影响 b.ts），但上一存档 B 是 partial（映射不完整）
+                // → 回退全量扫描重建完整基线
+                await writeFile(workspaceRoot, 'b.ts', 'b2');
+                const cpC = await manager.createCheckpoint('conv-cp-partial3', 0, 'tool_batch', 'after', {
+                    forceCreate: true,
+                    affectedPaths: [path.join(workspaceRoot, 'b.ts')]
+                });
+                expect(cpC).not.toBeNull();
+                // 回退全量：不标记 partial，映射完整（3 个文件）
+                expect(cpC!.partial).toBeUndefined();
+                expect(Object.keys(cpC!.fileHashes!)).toHaveLength(3);
+                // 增量相对 B（继承完整映射）：只有 b.ts 是真实变化
+                expect(cpC!.changes).toHaveLength(1);
+                expect(cpC!.changes![0].path.endsWith('/b.ts')).toBe(true);
+                expect(cpC!.fileCount).toBe(1);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+    });
+
 
 describe('CheckpointManager.checkpointsDir getter', () => {
     test('exposes the checkpoints dir under the storage root', async () => {

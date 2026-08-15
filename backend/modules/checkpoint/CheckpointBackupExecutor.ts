@@ -103,11 +103,6 @@ export class CheckpointBackupExecutor {
         } = params;
         const deps = this.deps;
 
-        // CP-PARTIAL-2：部分快照标记——与 buildWorkspaceSnapshot 的部分快照分支条件一致
-        // （非空受影响路径数组）。写入 manifest 与记录，恢复侧据此禁用删除判定：
-        // 部分快照的 fileHashes 只含受影响文件，「目标缺失」不等于「快照时被删除」。
-        const snapshotPartial = Array.isArray(affectedPaths) && affectedPaths.length > 0;
-
         // C-13: 实例级告警计数在每次创建开始时复位——实例跨多次创建复用，
         // 不复位会导致后续创建的复制失败被静默吞掉（计数超上限后不再逐文件告警）
         this.copyFailureWarnCount = 0;
@@ -157,6 +152,27 @@ export class CheckpointBackupExecutor {
                 lastCheckpoint = null;
             }
 
+            // CP-PARTIAL-2：部分快照标记——与 buildWorkspaceSnapshot 的部分快照分支条件一致
+            // （非空受影响路径数组）。写入 manifest 与记录，恢复侧据此禁用删除判定：
+            // 部分快照的 fileHashes 只含受影响文件，「目标缺失」不等于「快照时被删除」。
+            // CP-PARTIAL-3：effective 判定——部分快照必须建立在完整基线上（映射继承自
+            // 上一存档，见下方继承逻辑）：仅当上一存档存在且本身不是部分快照（映射完整）
+            // 时才成立；上一存档缺失（链头）或本身是 partial（旧版本产生的映射不完整）
+            // 时回退全量扫描（affectedPaths 置 undefined），继承无从谈起。顺带自愈旧版
+            // 部分快照链：部分快照之后的全量存档重建完整基线。
+            const requestedPartial = Array.isArray(affectedPaths) && affectedPaths.length > 0;
+            const snapshotPartial = requestedPartial && !!lastCheckpoint && lastCheckpoint.partial !== true;
+            const effectiveAffectedPaths = snapshotPartial ? affectedPaths : undefined;
+
+            // CP-PARTIAL-3：上一存档的归一化映射提前算好——buildWorkspaceSnapshot 的
+            // previous 参数与下方部分快照的映射继承复用同一份，保证两处口径一致
+            const previousHashes = lastCheckpoint
+                ? this.normalizeHashesToScoped(lastCheckpoint.fileHashes ?? {}, roots)
+                : undefined;
+            const previousStats = lastCheckpoint
+                ? this.normalizeStatsToScoped(lastCheckpoint.fileStats ?? {}, roots)
+                : undefined;
+
             // 用快照构建器扫描全部工作区根：
             // - 多根扫描（每个根独立 .gitignore 作用域）
             // - 强制排除存档目录自身（防止存档把自己再次备份）
@@ -178,21 +194,54 @@ export class CheckpointBackupExecutor {
                 // 排除整个扩展存储根（含 checkpoints/memory/conversations 等）：
                 // 自定义数据目录位于工作区内时，扩展自身数据绝不能进入存档
                 excludeAbsolutePaths: [path.dirname(deps.checkpointsDir)],
-                previous: lastCheckpoint
-                    ? {
-                        fileHashes: this.normalizeHashesToScoped(lastCheckpoint.fileHashes ?? {}, roots),
-                        fileStats: this.normalizeStatsToScoped(lastCheckpoint.fileStats ?? {}, roots)
-                    }
+                previous: previousHashes && previousStats
+                    ? { fileHashes: previousHashes, fileStats: previousStats }
                     : undefined,
                 // CP-PARTIAL-1：工具执行存档按参数限定的文件构建部分快照（不再全量扫描工作区）；
                 // 缺省（undefined）= 全量扫描（既有行为；forceCreate 手动存档等不传本字段）
-                affectedPaths
+                // CP-PARTIAL-3：无完整基线（链头 / 上一存档为 partial）时回退全量（传 undefined）
+                affectedPaths: effectiveAffectedPaths
             });
 
             // 当前快照的哈希/统计：备份复制失败的文件从这里剔除，
             // 保证 fileHashes 只声称真正备份成功的文件，同时让下一个检查点重新尝试备份
             const currentHashes: Record<string, string> = { ...snapshot.fileHashes };
             const currentStats: Record<string, SnapshotFileStat> = { ...snapshot.fileStats };
+            // CP-PARTIAL-3：部分快照的映射继承——部分快照只扫描受影响文件，fileHashes/
+            // fileStats 以此为基础补全上一存档（previous，完整基线）中未受影响文件的
+            // 哈希/stat，使部分快照的映射保持完整：
+            // - 创建侧：后续全量存档相对它算增量时只有真实变化，不再出现「整个工作区
+            //   判为 added」的伪全量存档（fileCount=全工作区文件数的失真统计）；
+            // - 恢复侧：恢复部分快照时未受影响文件与工作区哈希一致（skipped），不会
+            //   落入 untrackedToDelete 误删清单（此前用户确认后会把未扫描文件全删）。
+            if (snapshotPartial && previousHashes) {
+                for (const [scopedPath, hash] of Object.entries(previousHashes)) {
+                    if (!(scopedPath in currentHashes)) {
+                        currentHashes[scopedPath] = hash;
+                        const stat = previousStats?.[scopedPath];
+                        if (stat) {
+                            currentStats[scopedPath] = stat;
+                        }
+                    }
+                }
+                // 部分快照分支 stat 失败的受影响文件（delete_file 删除/不可读）：从继承
+                // 映射中剔除——文件在快照时已不存在，若保留上一存档的哈希，恢复时会被
+                // 当作「与目标一致」跳过，被删文件「复活」。
+                for (const entry of snapshot.unreadable) {
+                    delete currentHashes[entry.scopedPath];
+                    delete currentStats[entry.scopedPath];
+                }
+            }
+            // CP-PARTIAL-3：空目录同样继承上一存档（去重合并，scoped 归一化）——部分
+            // 快照分支不扫描目录，不继承的话恢复部分快照时快照前已存在的空目录会被
+            // 当作「快照后新建」归入 untrackedEmptyDirs（确认后清理）。
+            if (snapshotPartial && lastCheckpoint?.emptyDirs) {
+                const mergedEmptyDirs = new Set(snapshot.emptyDirs.map(dir => toScopedKey(dir, roots)));
+                for (const dir of lastCheckpoint.emptyDirs) {
+                    mergedEmptyDirs.add(toScopedKey(dir, roots));
+                }
+                snapshot.emptyDirs = [...mergedEmptyDirs].sort();
+            }
             const unbackedPaths: string[] = [];
             // CP-PERF-2: Set 旁路去重——sizeExcluded/unreadable 达十万级时逐条
             // Array.includes 是 O(n²)；Set.has 为 O(1)，输出顺序保持插入序不变。
@@ -215,9 +264,9 @@ export class CheckpointBackupExecutor {
             // 避免用 copiedCount 覆盖 total 造成进度条在结束阶段跳变
             let copyTotal = 0;
 
-            if (lastCheckpoint && lastCheckpoint.fileHashes) {
+            if (lastCheckpoint && lastCheckpoint.fileHashes && previousHashes) {
                 // 旧存档（相对路径键）与当前 scoped 键统一后比较，兼容旧增量链
-                const previousHashes = this.normalizeHashesToScoped(lastCheckpoint.fileHashes, roots);
+                // （previousHashes 已在快照构建前归一化，此处复用同一份，避免重复计算）
 
                 // 计算变更
                 const { added, modified, deleted } = this.computeChanges(
