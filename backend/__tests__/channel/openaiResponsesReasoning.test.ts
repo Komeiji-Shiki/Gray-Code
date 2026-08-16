@@ -229,6 +229,38 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(thoughtParts[0].thoughtSignatures).toBeUndefined();
     });
 
+    test('Responses reasoning delta 记录思考起点，并在正文开始时结算耗时', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const accumulator = new StreamAccumulator('function_call', () => 'test_call');
+        accumulator.setProviderType('openai-responses');
+        const nowSpy = jest.spyOn(Date, 'now');
+
+        try {
+            nowSpy.mockReturnValue(1_000);
+            accumulator.add(formatter.parseStreamChunk({
+                type: 'response.reasoning_summary_text.delta',
+                output_index: 0,
+                item_id: 'rs_timing_1',
+                delta: '正在分析'
+            }));
+
+            expect(accumulator.getThinkingStartTime()).toBe(1_000);
+            expect(accumulator.getThinkingDuration()).toBe(0);
+
+            nowSpy.mockReturnValue(2_600);
+            accumulator.add(formatter.parseStreamChunk({
+                type: 'response.output_text.delta',
+                output_index: 1,
+                delta: '最终回答'
+            }));
+
+            expect(accumulator.getThinkingDuration()).toBe(1_600);
+            expect(accumulator.getFinalContent().thinkingDuration).toBe(1_600);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
     test('开启「发送思考签名」时 DeepSeek content-only reasoning 按 reasoning_text 回传（不带 encrypted_content/summary）', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [

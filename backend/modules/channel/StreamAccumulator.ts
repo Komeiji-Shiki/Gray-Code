@@ -290,6 +290,14 @@ export class StreamAccumulator {
             const incomingMetadata = part.openaiResponsesReasoning;
             const incomingReasoningId = incomingMetadata.id;
             const isReasoningDelta = incomingMetadata.status === 'in_progress';
+
+            // Responses reasoning 走专用合并分支并会在末尾提前 return，不能依赖下方
+            // 通用文本分支记录思考起点。首个可见 reasoning 文本到达时立即启动计时，
+            // StreamResponseProcessor 才能把 thinkingStartTime 随当前 chunk 发给前端。
+            if (part.thought === true && part.text && this.thinkingStartTime === undefined) {
+                this.thinkingStartTime = Date.now();
+            }
+
             const thoughtParts = this.parts.filter(candidate => candidate.thought === true);
             let existingThought: ContentPart | undefined;
 
