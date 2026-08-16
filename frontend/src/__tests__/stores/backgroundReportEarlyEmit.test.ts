@@ -196,6 +196,97 @@ describe('agent_message：空闲主模型领取并启动内部回合', () => {
     expect(calls.find(([type]) => type === 'chat.releaseAgentMessages')).toBeUndefined()
   })
 
+  test('主会话正硬等前台子代理时，唤醒事件立即保留子代理并切换到消息回合', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = true
+    store.isWaitingForResponse = true
+    store.activeStreamId = 'stream_foreground_agent'
+
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'chat.claimAgentMessages') {
+        return {
+          claimId: 'claim_foreground_agent_1',
+          conversationId: 'conv_1',
+          message: '[Agent message received]\n\nFrom: Helper\nMessage: 主人要求立即转告主模型',
+          messageCount: 1
+        }
+      }
+      if (type === 'cancelStream') {
+        store.isStreaming = false
+        store.isWaitingForResponse = false
+        store.activeStreamId = null
+      }
+      return { success: true }
+    })
+
+    const bgStore = useBackgroundTaskStore()
+    bgStore.handleTaskEvent({
+      taskId: 'agentmsg:foreground-agent',
+      taskType: 'agent_message',
+      type: 'progress',
+      data: {
+        conversationId: 'conv_1',
+        messageId: 'foreground-agent',
+        toRunId: '__main__',
+        interruptMainRound: true
+      },
+      createdAt: Date.now()
+    })
+
+    await vi.waitFor(() => {
+      expect(vi.mocked(sendToExtension).mock.calls.some(([type]) => type === 'chatStream')).toBe(true)
+    })
+
+    const calls = vi.mocked(sendToExtension).mock.calls
+    const claimIndex = calls.findIndex(([type]) => type === 'chat.claimAgentMessages')
+    const cancelIndex = calls.findIndex(([type]) => type === 'cancelStream')
+    const streamIndex = calls.findIndex(([type]) => type === 'chatStream')
+    expect(claimIndex).toBeGreaterThanOrEqual(0)
+    expect(cancelIndex).toBeGreaterThan(claimIndex)
+    expect(streamIndex).toBeGreaterThan(cancelIndex)
+    expect(calls[cancelIndex][1]).toEqual({
+      conversationId: 'conv_1',
+      preserveSubAgents: true
+    })
+    expect(calls[streamIndex][1]).toMatchObject({
+      conversationId: 'conv_1',
+      source: 'agent_message',
+      agentMessageClaimId: 'claim_foreground_agent_1',
+      message: expect.stringContaining('立即转告主模型')
+    })
+  })
+
+  test('后台子代理在主会话忙时保持工具边界注入，不中断当前工具', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.isStreaming = true
+    store.isWaitingForResponse = true
+    store.activeStreamId = 'stream_other_tool'
+
+    const bgStore = useBackgroundTaskStore()
+    bgStore.handleTaskEvent({
+      taskId: 'agentmsg:background-agent',
+      taskType: 'agent_message',
+      type: 'progress',
+      data: {
+        conversationId: 'conv_1',
+        messageId: 'background-agent',
+        toRunId: '__main__',
+        interruptMainRound: false
+      },
+      createdAt: Date.now()
+    })
+    await settle()
+
+    const calls = vi.mocked(sendToExtension).mock.calls
+    expect(calls.find(([type]) => type === 'chat.claimAgentMessages')).toBeUndefined()
+    expect(calls.find(([type]) => type === 'cancelStream')).toBeUndefined()
+    expect(calls.find(([type]) => type === 'chatStream')).toBeUndefined()
+    expect(store.activeStreamId).toBe('stream_other_tool')
+  })
+
   test('Webview 缺席期间没有终态事件时，initialize 仍主动领取后端保留的完成结果', async () => {
     const store = useChatStore()
     store.currentConversationId = 'conv_1'

@@ -16,6 +16,7 @@ import { agentMailbox, MAIN_SESSION_RUN_ID, MAX_HOP_DEPTH, type AgentSendMessage
 import type { AgentMessageCardInfo, Content } from '../../modules/conversation/types';
 import { getActualLanguage } from '../../i18n';
 import { resolveLocalizationLanguage } from '../localization/types';
+import { subAgentRunController } from './runController';
 
 /**
  * 动态获取工具声明
@@ -28,7 +29,7 @@ export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
         aliases: ['agent.sendMessage'],
         category: 'agents',
         description: isZh
-            ? `向同一对话中的另一个代理（子代理）或主会话（主模型）发送消息。投递是异步的：如果接收方正在运行工具，消息会在该工具完成后插入；如果主会话空闲，会立即开始内部消息轮次；活动中的子代理会在下一次模型调用前或完成前消费消息。
+            ? `向同一对话中的另一个代理（子代理）或主会话（主模型）发送消息。投递是异步的：仍挂在主回合上的前台子代理给主会话发信时，会转为后台继续执行并立即开启内部消息轮次；其他忙碌收件方会在工具完成边界消费消息；主会话空闲时会立即开始内部消息轮次；活动中的子代理会在下一次模型调用前或完成前消费消息。
 
 **寻址（二选一）：**
 - targetRunId：当前对话中活动的子代理运行的 runId。只能寻址当前对话中已知的 runId（防止伪造/注入）。
@@ -42,7 +43,7 @@ export function getAgentSendMessageToolDeclaration(): ToolDeclaration {
 - 投递确认表示消息由进程内邮箱可靠持有，直到某个接收方边界消费它。
 - 主会话投递可以在空闲时启动内部轮次；不要轮询或重复发送相同文本。
 - 活动中的子代理在工具之后、模型调用之前以及完成前原子地检查其收件箱。`
-            : `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: if the recipient is running a tool, the message is inserted after that tool completes; if the main session is idle, it starts an internal message round immediately; an active sub-agent consumes the message before its next model call or before it can finish.
+            : `Send a message to another agent (sub-agent) or to the main session (the main model) in the current conversation. Delivery is asynchronous: when a foreground sub-agent still attached to the main round messages the main session, it is detached to continue in the background and an internal message round starts immediately; other busy recipients consume messages at a tool-completion boundary; an idle main session starts an internal message round immediately; active sub-agents consume messages before their next model call or before completion.
 
 **Addressing (choose exactly one):**
 - targetRunId: the runId of a sub-agent run that is currently active in this conversation. Only runs known in the current conversation can be addressed (prevents spoofing/injection).
@@ -135,13 +136,19 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
     if (result.data.toRunId === MAIN_SESSION_RUN_ID) {
         // 主模型没有常驻执行循环：入队后发轻量通知，让前端沿用后台消息的
         // “工具动作边界或空闲立即开启内部回合”调度；正文仍由 mailbox claim 接口领取。
+        // 只有仍挂在父回合上的前台子代理需要打断主回合的硬等待；后台/已 detach
+        // 子代理保持工具完成边界注入语义，不能中断主模型正在执行的其它工具。
+        const interruptMainRound = fromRunId !== MAIN_SESSION_RUN_ID
+            && subAgentRunController.isAttachedToParent(fromRunId);
         TaskManager.emitEvent({
             taskId: `agentmsg:${result.data.messageId}`,
             taskType: 'agent_message',
             type: 'progress',
             data: {
                 conversationId: mailboxConversationId,
-                messageId: result.data.messageId
+                messageId: result.data.messageId,
+                toRunId: MAIN_SESSION_RUN_ID,
+                interruptMainRound
             }
         });
     } else {

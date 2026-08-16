@@ -21,6 +21,7 @@ import {
 import { getSubAgentsToolRegistrations } from '../../tools/subagents';
 import { agentMailbox, MAIN_SESSION_RUN_ID } from '../../core/services/agentMailbox';
 import { TaskManager, type TaskEvent } from '../../tools/taskManager';
+import { subAgentRunController } from '../../tools/subagents/runController';
 
 function makeStubTool(handler?: (args: Record<string, unknown>, context?: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>, readOnly = false, name = 'stub_tool') {
     return {
@@ -112,10 +113,12 @@ describe('agent_send_message - handler', () => {
                 taskId: `agentmsg:${result.data.messageId}`,
                 taskType: 'agent_message',
                 type: 'progress',
-                data: {
+                data: expect.objectContaining({
                     conversationId: 'conv_1',
-                    messageId: result.data.messageId
-                }
+                    messageId: result.data.messageId,
+                    toRunId: MAIN_SESSION_RUN_ID,
+                    interruptMainRound: false
+                })
             }));
             // 事件不广播正文；正文仍由主模型 claim 接口从 mailbox 领取。
             // tsconfig.test.json lib 为 ES2020，不用 Array.prototype.at（ES2022）
@@ -123,6 +126,32 @@ describe('agent_send_message - handler', () => {
             expect(agentMailbox.peekMessages('conv_1', MAIN_SESSION_RUN_ID)[0].text).toBe('wake the main model');
         } finally {
             dispose();
+        }
+    });
+
+    test('仍挂父回合的前台子代理发给主模型时，唤醒事件要求打断硬等待', async () => {
+        agentMailbox.registerRun('conv_foreground', 'run_foreground', 'Foreground Agent');
+        subAgentRunController.register('run_foreground', 'Foreground Agent', 0, true);
+        const events: TaskEvent[] = [];
+        const dispose = TaskManager.onTaskEvent(event => events.push(event));
+        try {
+            const result = await agentSendMessageHandler(
+                { targetAgentName: 'main', message: 'deliver before I finish' },
+                { mailboxConversationId: 'conv_foreground', mailboxRunId: 'run_foreground' }
+            );
+
+            expect(result.success).toBe(true);
+            if (!result.success) return;
+            const event = events.find(candidate => candidate.taskId === `agentmsg:${result.data.messageId}`);
+            expect(event?.data).toMatchObject({
+                conversationId: 'conv_foreground',
+                messageId: result.data.messageId,
+                toRunId: MAIN_SESSION_RUN_ID,
+                interruptMainRound: true
+            });
+        } finally {
+            dispose();
+            subAgentRunController.unregister('run_foreground');
         }
     });
 

@@ -116,7 +116,9 @@ describe('SubAgentRunController - 转后台（detach）', () => {
             if (event.runId === 'run_detach') types.push(event.type);
         });
         try {
+            expect(controller.isAttachedToParent('run_detach')).toBe(true);
             expect(controller.detachFromParent('run_detach')).toBe(true);
+            expect(controller.isAttachedToParent('run_detach')).toBe(false);
             expect(controller.isDetached('run_detach')).toBe(true);
             expect(listenerCalled).toBe(true);
             expect(types).toContain('run_detached');
@@ -137,6 +139,7 @@ describe('SubAgentRunController - 转后台（detach）', () => {
     test('后台 run（attachedToParent=false）不被 detach，保留 TaskManager 取消能力', () => {
         const controller = new SubAgentRunController();
         controller.register('run_detach_bg', 'Agent', 0, false);
+        expect(controller.isAttachedToParent('run_detach_bg')).toBe(false);
         expect(controller.detachFromParent('run_detach_bg')).toBe(false);
         expect(controller.isDetached('run_detach_bg')).toBe(false);
         controller.unregister('run_detach_bg');
@@ -144,6 +147,7 @@ describe('SubAgentRunController - 转后台（detach）', () => {
 
     test('未注册的 run detach 返回 false', () => {
         const controller = new SubAgentRunController();
+        expect(controller.isAttachedToParent('run_missing')).toBe(false);
         expect(controller.detachFromParent('run_missing')).toBe(false);
     });
 

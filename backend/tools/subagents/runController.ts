@@ -458,6 +458,12 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
         });
     }
 
+    /** 当前 run 是否仍挂在父回合上（前台且尚未 detach）。 */
+    isAttachedToParent(runId: string): boolean {
+        const record = this.activeRuns.get(runId);
+        return record?.attachedToParent === true && record.detached !== true;
+    }
+
     /**
      * 判断 run 是否已与父 abort 信号解绑（转后台）。
      */

@@ -39,6 +39,13 @@ interface AgentMessageClaimPayload {
   messageCount: number
 }
 
+interface FlushReportsAfterActionOptions {
+  /** 仅处理中途到达的 agent→main 消息，不顺带投递普通后台任务报告。 */
+  agentMessagesOnly?: boolean
+}
+
+type ReportRetryMode = 'idle' | 'action' | 'agent_message'
+
 /** 主会话（主模型）在信箱中的保留 runId（与后端 agentMailbox 常量一致） */
 const MAIN_SESSION_RUN_ID = '__main__'
 
@@ -96,11 +103,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         void handleAgentToAgentMessage(event)
         return
       }
-      if (flushing) {
-        flushDroppedEvent = true
-      } else {
-        void flushReports()
-      }
+      const interruptMainRound = data?.interruptMainRound === true
+      requestAgentMessageFlush(interruptMainRound)
       return
     }
 
@@ -173,8 +177,12 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
   let flushing = false
   /** 当前持有 flushing 锁的生命周期；Webview 重挂载后允许新生命周期接管，不被旧 await 卡住。 */
   let flushingGeneration: number | undefined
-  /** flush 进行中到达的 complete/cancelled/error 事件标记：结束后补一轮 flush（见 handleTaskEvent） */
+  /** flush 进行中到达的 complete/cancelled/error 事件标记：结束后补一轮普通 flush。 */
   let flushDroppedEvent = false
+  /** flush 进行中到达的 agent→main 唤醒：当前 flush 收尾后优先处理中途消息。 */
+  let agentMessageWakePending = false
+  /** 待处理唤醒中是否至少有一条来自仍挂父回合的前台子代理。 */
+  let agentMessageInterruptPending = false
   /**
    * 每次 initialize/cleanup 都推进代次。跨越 await 的旧 flush 只能收尾，
    * 不得在已经卸载或重新挂载后继续发消息、重置新 timer 或复活重试。
@@ -196,7 +204,7 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
 
   function scheduleReportRetry(
     expectedGeneration = lifecycleGeneration,
-    resumeAtActionBoundary = false
+    retryMode: ReportRetryMode = 'idle'
   ): void {
     if (expectedGeneration !== lifecycleGeneration || reportRetryTimer !== undefined) return
     const delay = Math.min(
@@ -207,12 +215,52 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     reportRetryTimer = setTimeout(() => {
       reportRetryTimer = undefined
       if (expectedGeneration !== lifecycleGeneration) return
-      if (resumeAtActionBoundary) {
+      if (retryMode === 'agent_message') {
+        void flushReportsAfterAction({ agentMessagesOnly: true })
+      } else if (retryMode === 'action') {
         void flushReportsAfterAction()
       } else {
         void flushReports()
       }
     }, delay)
+  }
+
+  /**
+   * agent→main 消息的唤醒入口。
+   *
+   * 空闲主会话直接开启内部回合；主会话若正阻塞在前台子代理工具上，则走
+   * preserveSubAgents 取消路径，把前台子代理转为后台继续执行，再立即开启消息回合。
+   */
+  function requestAgentMessageFlush(interruptMainRound = false): void {
+    if (flushing) {
+      agentMessageWakePending = true
+      if (interruptMainRound) agentMessageInterruptPending = true
+      return
+    }
+
+    const state = chatStateSync()
+    if (interruptMainRound && (state.isStreaming || state.isWaitingForResponse)) {
+      void flushReportsAfterAction({ agentMessagesOnly: true })
+    } else {
+      // 后台/已 detach 子代理保持原语义：主会话忙时等当前工具边界注入，
+      // 空闲时由 flushReports 领取并开启内部回合。
+      void flushReports()
+    }
+  }
+
+  /** 当前 flush 释放锁后，优先补处理中途 agent 消息，再补普通后台完成事件。 */
+  function scheduleDeferredFlushes(): void {
+    if (agentMessageWakePending) {
+      const interruptMainRound = agentMessageInterruptPending
+      agentMessageWakePending = false
+      agentMessageInterruptPending = false
+      requestAgentMessageFlush(interruptMainRound)
+      return
+    }
+    if (flushDroppedEvent) {
+      flushDroppedEvent = false
+      void flushReports()
+    }
   }
 
   /** 领取当前会话的 agent→main 消息；没有消息时返回 null。 */
@@ -401,14 +449,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       if (flushingGeneration === flushGeneration) {
         flushing = false
         flushingGeneration = undefined
-        // flush 期间到达的 complete 事件被 flushing 保护丢弃（handleTaskEvent 只落表不调度）：
-        // 结束后重查挂起数，非零（且确实有被丢弃事件）则再调度一次 flushReports，避免回执永久滞留。
-        // 注意：不能只看 pendingReportCount——发送失败回滚也会使其非零，无条件重调度会形成
-        // 发送失败→回滚→重试 的热循环；因此必须叠加 flushDroppedEvent 标记（真实新完成事件）。
-        if (flushDroppedEvent) {
-          flushDroppedEvent = false
-          void flushReports()
-        }
+        // flush 期间到达的新事件在释放锁后补调度；agent 消息优先，避免继续被前台工具硬等待。
+        scheduleDeferredFlushes()
       }
     }
   }
@@ -424,13 +466,14 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
    *   替换当前回合 + sendMessage 开启新回合，由 H1 写序保证旧流完全退出后才写入新消息。
    *
    * 安全护栏（复用 processQueueAfterAction 的既有语义）：
-   * 1. 动作彻底结束：由调用方（非终结 toolIteration 边界）保证工具结果已落盘；
+   * 1. 普通后台报告只允许在动作彻底结束后投递；agentMessagesOnly 仅处理前台子代理
+   *    的显式中途通知，并先 preserveSubAgents 再取消旧流；
    * 2. 跨会话防护：只投递属于当前会话（或无会话归属）的任务；
    * 3. 投递窗口（cancelStream 往返）内会话切换或并发发送者抢先开启新流：
    *    放弃本次投递并回滚 reported（保持未回流），等待下一个动作边界或回合结束时补发；
    * 4. 发送失败回滚 reported，不静默丢弃任务产出。
    */
-  async function flushReportsAfterAction(): Promise<void> {
+  async function flushReportsAfterAction(options: FlushReportsAfterActionOptions = {}): Promise<void> {
     // 重入防护与持锁保持同步（不插入 await），理由同 flushReports：
     // 桥接解析异步化后若先 await 再持锁，同一边界的并发调度会双双越过守卫导致重复回执。
     const flushGeneration = lifecycleGeneration
@@ -443,7 +486,10 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         chat = await resolveChatBridge()
       } catch (error) {
         console.warn('[backgroundTaskStore] Failed to resolve chat bridge after action, will retry:', error)
-        scheduleReportRetry(flushGeneration, true)
+        scheduleReportRetry(
+          flushGeneration,
+          options.agentMessagesOnly ? 'agent_message' : 'action'
+        )
         return
       }
       if (flushGeneration !== lifecycleGeneration) return
@@ -458,7 +504,10 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         agentClaim = await claimAgentMessages(currentId)
       } catch (error) {
         console.warn('[backgroundTaskStore] Failed to claim agent messages after action, will retry:', error)
-        scheduleReportRetry(flushGeneration, true)
+        scheduleReportRetry(
+          flushGeneration,
+          options.agentMessagesOnly ? 'agent_message' : 'action'
+        )
         return
       }
       if (flushGeneration !== lifecycleGeneration) return
@@ -496,19 +545,29 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
             })
             if (!sent) {
               console.warn('[backgroundTaskStore] Agent message action-boundary round did not start; claim remains pending')
-              scheduleReportRetry(flushGeneration, true)
+              scheduleReportRetry(
+                flushGeneration,
+                options.agentMessagesOnly ? 'agent_message' : 'action'
+              )
             } else if (flushGeneration === lifecycleGeneration) {
               resetReportRetry()
             }
           } catch (error) {
             console.warn('[backgroundTaskStore] Failed to send agent message after action; claim remains pending:', error)
-            scheduleReportRetry(flushGeneration, true)
+            scheduleReportRetry(
+              flushGeneration,
+              options.agentMessagesOnly ? 'agent_message' : 'action'
+            )
           }
           return
         } finally {
           clearAgentMessageRoundPending(currentId)
         }
       }
+
+      // agent_message 唤醒可能发生在工具尚未结束时。若消息已被并发工具边界消费，
+      // 本次只结束，不得顺带把普通后台报告当作“动作已完成”而中断当前工具。
+      if (options.agentMessagesOnly) return
 
       const ready = taskList.value.filter(t =>
         !t.reported
@@ -545,23 +604,20 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
         if (!sent) {
           console.error('Failed to send background task report after action, will retry later')
           rollbackReported(ready)
-          scheduleReportRetry(flushGeneration, true)
+          scheduleReportRetry(flushGeneration, 'action')
         } else if (flushGeneration === lifecycleGeneration) {
           resetReportRetry()
         }
       } catch (error) {
         console.error('Failed to send background task report after action, will retry later:', error)
         rollbackReported(ready)
-        scheduleReportRetry(flushGeneration, true)
+        scheduleReportRetry(flushGeneration, 'action')
       }
     } finally {
       if (flushingGeneration === flushGeneration) {
         flushing = false
         flushingGeneration = undefined
-        if (flushDroppedEvent) {
-          flushDroppedEvent = false
-          void flushReports()
-        }
+        scheduleDeferredFlushes()
       }
     }
   }
@@ -638,6 +694,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     const initializedGeneration = lifecycleGeneration
     resetReportRetry()
     flushDroppedEvent = false
+    agentMessageWakePending = false
+    agentMessageInterruptPending = false
     initialized.value = true
 
     const unsubscribeMessages = onExtensionCommand<TaskEventLike>('taskEvent', event => {
@@ -681,6 +739,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       }
       resetReportRetry()
       flushDroppedEvent = false
+      agentMessageWakePending = false
+      agentMessageInterruptPending = false
       unsubscribeMessages()
       stopWatchStreaming()
       stopWatchWaiting()
