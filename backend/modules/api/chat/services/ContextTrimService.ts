@@ -37,6 +37,7 @@ import { Logger } from '../../../../core/logger';
 import {
     resolveModelContextWindowForConfig,
     resolveMaxContextTokensForConfig,
+    resolveMaxOutputTokensForConfig,
     DEFAULT_MAX_CONTEXT_TOKENS,
     type MaxContextResolution
 } from './contextTrim/contextWindowResolution';
@@ -61,7 +62,12 @@ import {
 import { planContextTrimStartIndex } from './contextTrim/contextTrimPlanner';
 import { clearTrimState as clearTrimStateForService } from './contextTrim/trimState';
 
-export { DEFAULT_MAX_CONTEXT_TOKENS, resolveModelContextWindowForConfig, resolveMaxContextTokensForConfig };
+export {
+    DEFAULT_MAX_CONTEXT_TOKENS,
+    resolveModelContextWindowForConfig,
+    resolveMaxContextTokensForConfig,
+    resolveMaxOutputTokensForConfig
+};
 export type { MaxContextResolution };
 export { PRESERVED_USER_INPUT_MAX_CHARS };
 export { ContextBudgetExceededError };

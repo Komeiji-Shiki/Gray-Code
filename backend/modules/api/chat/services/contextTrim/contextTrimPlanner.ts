@@ -47,7 +47,8 @@ export function planContextTrimStartIndex(
 
     // 获取最大上下文和阈值
     const maxContextResolution = resolveMaxContextTokensForConfig(config, modelOverride);
-    const maxContextTokens = maxContextResolution.maxContextTokens;
+    // 裁剪阈值针对可用输入预算，而不是包含输出预留的原始组合窗口。
+    const maxContextTokens = maxContextResolution.maxInputTokens;
     const thresholdConfig = config.contextThreshold ?? '80%';
     const threshold = calculateContextThreshold(thresholdConfig, maxContextTokens);
 
@@ -56,6 +57,9 @@ export function planContextTrimStartIndex(
         threshold,
         thresholdConfig,
         maxContextTokens,
+        contextWindowTokens: maxContextResolution.maxContextTokens,
+        maxOutputTokens: maxContextResolution.maxOutputTokens ?? null,
+        maxInputTokens: maxContextResolution.maxInputTokens,
         maxContextSource: maxContextResolution.source,
         configMaxContextTokens: maxContextResolution.configMaxContextTokens,
         modelId: maxContextResolution.modelId,

@@ -173,17 +173,22 @@ export class SummarizeService {
         prompt: string
     ): {
         modelMaxContextTokens: number;
+        modelMaxInputTokens: number;
         maxInputTokens: number;
         fixedRequestTokens: number;
         maxHistoryTokens: number;
     } {
         // 总结请求真正发给当前/独立总结模型，优先使用该模型自己的 contextWindow；
         // 渠道 maxContextTokens 只是上下文管理与显示基准，仅在模型元数据缺失时作为回退。
-        const modelMaxContextTokens = (
+        const modelResolution = (
             resolveModelContextWindowForConfig(config, modelOverride)
             ?? resolveMaxContextTokensForConfig(config, modelOverride)
-        ).maxContextTokens;
-        const maxInputTokens = Math.max(1, Math.floor(modelMaxContextTokens * inputRatio));
+        );
+        const modelMaxContextTokens = modelResolution.maxContextTokens;
+        const modelMaxInputTokens = modelResolution.maxInputTokens;
+        // inputRatio 是总结请求的历史输入比例；先从组合窗口扣除总结输出预留，
+        // 再按比例规划待总结历史，避免“输入预算 + 总结输出”再次超过窗口。
+        const maxInputTokens = Math.max(1, Math.floor(modelMaxInputTokens * inputRatio));
         const systemPromptTokens = this.estimateSingleMessageTokensLocally({
             role: 'user',
             parts: [{ text: BUILTIN_SUMMARIZE_SYSTEM_PROMPT }]
@@ -199,6 +204,7 @@ export class SummarizeService {
         const fixedRequestTokens = systemPromptTokens + userPromptTokens + providerReserveTokens;
         return {
             modelMaxContextTokens,
+            modelMaxInputTokens,
             maxInputTokens,
             fixedRequestTokens,
             maxHistoryTokens: Math.max(0, maxInputTokens - fixedRequestTokens)

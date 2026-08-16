@@ -385,7 +385,8 @@ export async function getHistoryWithContextTrimInfo(
 
     // 获取最大上下文和阈值
     const maxContextResolution = resolveMaxContextTokensForConfig(config, modelOverride);
-    const maxContextTokens = maxContextResolution.maxContextTokens;
+    // maxContextTokens 是模型声明的总窗口；上下文管理实际使用扣除输出预留后的输入预算。
+    const maxContextTokens = maxContextResolution.maxInputTokens;
     const thresholdConfig = config.contextThreshold ?? '80%';
     const threshold = calculateContextThreshold(thresholdConfig, maxContextTokens);
 
@@ -395,6 +396,9 @@ export async function getHistoryWithContextTrimInfo(
         threshold,
         thresholdConfig,
         maxContextTokens,
+        contextWindowTokens: maxContextResolution.maxContextTokens,
+        maxOutputTokens: maxContextResolution.maxOutputTokens ?? null,
+        maxInputTokens: maxContextResolution.maxInputTokens,
         maxContextSource: maxContextResolution.source,
         configMaxContextTokens: maxContextResolution.configMaxContextTokens,
         modelId: maxContextResolution.modelId,
@@ -471,7 +475,7 @@ export async function getHistoryWithContextTrimInfo(
         // - 模型消息使用 usageMetadata（candidates/thoughts）或回退估算
         // 不再额外维护 totalTokenCount/安全系数等并行判定逻辑。
         const exceedsSoftThreshold = fullTokenResult.estimatedTotalTokens > threshold;
-        const hardInputTokenLimit = resolveModelContextWindowForConfig(config, modelOverride)?.maxContextTokens;
+        const hardInputTokenLimit = resolveModelContextWindowForConfig(config, modelOverride)?.maxInputTokens;
         const compressibleHistoryTokens = Math.max(0, fullTokenResult.estimatedTotalTokens - promptTokens);
         const minimumUsefulHistoryTokens = Math.max(
             MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,

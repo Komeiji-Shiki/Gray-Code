@@ -290,6 +290,35 @@ describe('getGeminiModels - 缓存键一致性', () => {
     });
 });
 
+
+
+describe('getOpenAIModels - 上下文与输出限制映射', () => {
+    test('读取 OpenRouter context_length 与 top_provider.max_completion_tokens', async () => {
+        const originalFetch = global.fetch;
+        global.fetch = jest.fn(async () => jsonResponse({
+            data: [{
+                id: 'google/gemini-3-pro-preview',
+                context_length: 500000,
+                top_provider: { max_completion_tokens: 128000 }
+            }]
+        })) as unknown as typeof fetch;
+        try {
+            const models = await getOpenAIModels(createConfig({
+                type: 'openai',
+                apiKey: 'sk-openrouter-test',
+                url: 'https://openrouter.ai/api/v1'
+            }));
+            expect(models).toEqual([expect.objectContaining({
+                id: 'google/gemini-3-pro-preview',
+                contextWindow: 500000,
+                contextWindowIncludesOutput: true,
+                maxOutputTokens: 128000
+            })]);
+        } finally {
+            global.fetch = originalFetch;
+        }
+    });
+});
 // ---------------------------------------------------------------------------
 // 非 2xx 错误：读取响应体 + 脱敏 + ModelListRequestError
 // ---------------------------------------------------------------------------

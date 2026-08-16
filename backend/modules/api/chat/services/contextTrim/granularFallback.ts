@@ -93,8 +93,10 @@ export async function getHistoryWithGranularFallback(
     const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
     const messages = fullHistory.slice(historyStartIndex);
     const channelType = config.type || 'custom';
-    const maxContextTokens = resolveMaxContextTokensForConfig(config, modelOverride).maxContextTokens;
-    const actualModelWindow = resolveModelContextWindowForConfig(config, modelOverride)?.maxContextTokens;
+    const contextResolution = resolveMaxContextTokensForConfig(config, modelOverride);
+    // fallback 的输入预算同样必须扣除组合窗口中的最大输出预留。
+    const maxContextTokens = contextResolution.maxInputTokens;
+    const actualModelWindow = resolveModelContextWindowForConfig(config, modelOverride)?.maxInputTokens;
     const threshold = calculateContextThreshold(config.contextThreshold ?? '80%', maxContextTokens);
     // contextThreshold 只是触发自动总结和“优先压缩到此处”的软阈值，绝不能当成主 Agent 的硬上限。
     // 95% 只作为优先裁剪目标，给 provider 包装/输出留出余量；真正拒绝请求的边界仍是完整模型窗口。
@@ -102,8 +104,9 @@ export async function getHistoryWithGranularFallback(
         1,
         Math.floor((actualModelWindow ?? maxContextTokens) * 0.95)
     );
-    // 只有模型条目明确声明的 contextWindow 才能成为拒绝边界。渠道 maxContextTokens 是
-    // 显示/上下文管理基准；模型元数据缺失时最多做 best-effort 裁剪，绝不据此阻止主请求。
+    // 只有模型条目明确声明 contextWindow 时才把其输入预算作为硬拒绝边界。渠道
+    // maxContextTokens 是上下文管理基准；模型元数据缺失时最多做 best-effort 裁剪，
+    // 绝不据此阻止主请求。组合窗口的输出预留已在上方 resolution 中扣除。
     const hardInputTokenLimit = actualModelWindow;
     const fallbackEnvelopeInputTokenLimit = actualModelWindow ?? maxContextTokens;
     const softInputTokenLimit = Math.max(1, Math.min(threshold, preferredInputTokenLimit));

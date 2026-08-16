@@ -727,6 +727,9 @@ export interface ModelInfo {
   
   /** 最大输出token */
   maxOutputTokens?: number
+
+  /** contextWindow 是否已经是仅输入上限 */
+  contextWindowIncludesOutput?: boolean
 }
 export const SUPPORTED_DOCUMENT_TYPES = ['application/pdf', 'text/plain', 'application/json']
 

@@ -148,6 +148,12 @@ export interface ModelInfo {
     
     /** 最大输出token */
     maxOutputTokens?: number;
+
+    /**
+     * contextWindow 是否已经是仅输入上限。
+     * 未提供时由渠道类型推断；模型列表适配器可显式覆盖。
+     */
+    contextWindowIncludesOutput?: boolean;
 }
 
 /**
@@ -201,7 +207,7 @@ export interface BaseChannelConfig {
      *
      * 用于上下文阈值裁剪/自动总结的基准窗口。
      * - 如果未设置，将回退到当前模型的 contextWindow
-     * - 若模型信息不可用，再回退到 128000
+     * - 若模型信息不可用，主会话回退到 256000；子代理使用自己的防御性预算
      */
     maxContextTokens?: number;
 

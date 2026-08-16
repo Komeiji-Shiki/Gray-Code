@@ -358,12 +358,19 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
         const rawId = typeof m.name === 'string' && m.name.trim() ? m.name : (typeof m.id === 'string' ? m.id : '');
         const id = rawId.replace(/^models\//, '');
         const displayName = typeof m.displayName === 'string' && m.displayName.trim() ? m.displayName : undefined;
+        const description = typeof m.description === 'string' ? m.description : undefined;
+        const contextWindow = typeof m.inputTokenLimit === 'number' && Number.isFinite(m.inputTokenLimit) && m.inputTokenLimit > 0
+          ? m.inputTokenLimit
+          : undefined;
+        const maxOutputTokens = typeof m.outputTokenLimit === 'number' && Number.isFinite(m.outputTokenLimit) && m.outputTokenLimit > 0
+          ? m.outputTokenLimit
+          : undefined;
         return {
           id,
           name: displayName || id,
-          description: typeof m.description === 'string' ? m.description : undefined,
-          contextWindow: m.inputTokenLimit,
-          maxOutputTokens: m.outputTokenLimit
+          ...(description !== undefined ? { description } : {}),
+          ...(contextWindow !== undefined ? { contextWindow, contextWindowIncludesOutput: false } : {}),
+          ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {})
         };
       })
       .filter((m: any) => m.id);
@@ -445,11 +452,27 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
       ).values()
     );
 
-    const models = uniqueModels.map((m: any) => ({
-      id: m.id,
-      name: m.id,
-      description: m.created ? `Created: ${new Date(m.created * 1000).toLocaleDateString()}` : undefined
-    }));
+    const models = uniqueModels.map((m: any) => {
+      // OpenRouter 等兼容网关通常把组合上下文放在 context_length，
+      // 并把最大输出放在 top_provider.max_completion_tokens 或 max_completion_tokens。
+      // 官方 /v1/models 可能完全不返回这些字段，因此只在确实存在时写入。
+      const contextWindow = m.context_length ?? m.contextWindow;
+      const maxOutputTokens = m.top_provider?.max_completion_tokens
+        ?? m.top_provider?.max_output_tokens
+        ?? m.max_completion_tokens
+        ?? m.max_output_tokens;
+      return {
+        id: m.id,
+        name: m.id,
+        description: m.created ? `Created: ${new Date(m.created * 1000).toLocaleDateString()}` : undefined,
+        ...(typeof contextWindow === 'number' && Number.isFinite(contextWindow) && contextWindow > 0
+          ? { contextWindow, contextWindowIncludesOutput: true }
+          : {}),
+        ...(typeof maxOutputTokens === 'number' && Number.isFinite(maxOutputTokens) && maxOutputTokens > 0
+          ? { maxOutputTokens }
+          : {})
+      };
+    });
     cacheModelList(cacheKey, models);
     return models;
   } catch (error) {
@@ -526,13 +549,21 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
       ).values()
     );
 
-    const models = uniqueModels.map((m: any) => ({
-      id: m.id,
-      name: m.display_name || m.id,
-      description: m.display_name ? m.id : undefined,
-      contextWindow: m.input_token_limit,
-      maxOutputTokens: m.output_token_limit
-    }));
+    const models = uniqueModels.map((m: any) => {
+      const contextWindow = typeof m.input_token_limit === 'number' && Number.isFinite(m.input_token_limit) && m.input_token_limit > 0
+        ? m.input_token_limit
+        : undefined;
+      const maxOutputTokens = typeof m.output_token_limit === 'number' && Number.isFinite(m.output_token_limit) && m.output_token_limit > 0
+        ? m.output_token_limit
+        : undefined;
+      return {
+        id: m.id,
+        name: m.display_name || m.id,
+        ...(m.display_name ? { description: m.id } : {}),
+        ...(contextWindow !== undefined ? { contextWindow, contextWindowIncludesOutput: false } : {}),
+        ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {})
+      };
+    });
     cacheModelList(cacheKey, models);
     return models;
   } catch (error) {
