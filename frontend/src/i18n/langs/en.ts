@@ -256,6 +256,7 @@ const en: LanguageMessages = {
             thoughtsTokens: 'Thinking',
             cacheCreationTokens: 'Cache Write',
             cacheReadTokens: 'Cache Read',
+            cacheHitRate: 'Cache Hit Rate',
             conversations: 'Conversations',
             modelMessages: 'Responses',
             byConversation: 'By Conversation',

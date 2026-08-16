@@ -198,6 +198,15 @@ function formatTokens(count: number): string {
   return String(count)
 }
 
+/**
+ * 缓存命中率（缓存命中 token 占输入 token 的比例，promptTokens 已含缓存部分）。
+ * 输入为 0 或没有命中时不展示（与 cacheReadTokens > 0 才展示的既有口径一致）。
+ */
+function cacheHitRate(bucket: UsageBucket): string | null {
+  if (!bucket || bucket.promptTokens <= 0 || bucket.cacheReadTokens <= 0) return null
+  return `${((bucket.cacheReadTokens / bucket.promptTokens) * 100).toFixed(1)}%`
+}
+
 /** 当前 tab 的列表行（统一为 label + bucket 结构） */
 interface UsageRow extends UsageBucket {
   key: string
@@ -336,6 +345,10 @@ const tabs = computed(() => ([
               <span class="breakdown-value">{{ formatTokens(stats.totals.cacheReadTokens) }}</span>
               <span class="breakdown-label">{{ t('components.usage.cacheReadTokens') }}</span>
             </div>
+            <div v-if="cacheHitRate(stats.totals)" class="breakdown-item">
+              <span class="breakdown-value">{{ cacheHitRate(stats.totals) }}</span>
+              <span class="breakdown-label">{{ t('components.usage.cacheHitRate') }}</span>
+            </div>
             <div class="breakdown-item">
               <span class="breakdown-value">{{ stats.totals.conversations }}</span>
               <span class="breakdown-label">{{ t('components.usage.conversations') }}</span>
@@ -413,6 +426,7 @@ const tabs = computed(() => ([
               <span v-if="row.thoughtsTokens > 0">{{ t('components.usage.thoughtsTokens') }} {{ formatTokens(row.thoughtsTokens) }}</span>
               <span v-if="row.cacheCreationTokens > 0">{{ t('components.usage.cacheCreationTokens') }} {{ formatTokens(row.cacheCreationTokens) }}</span>
               <span v-if="row.cacheReadTokens > 0">{{ t('components.usage.cacheReadTokens') }} {{ formatTokens(row.cacheReadTokens) }}</span>
+              <span v-if="cacheHitRate(row)">{{ t('components.usage.cacheHitRate') }} {{ cacheHitRate(row) }}</span>
               <span>{{ t('components.usage.modelMessages') }} {{ row.modelMessages }}</span>
             </div>
 

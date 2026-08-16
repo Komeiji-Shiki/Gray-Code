@@ -258,6 +258,7 @@ const zhCN = {
             thoughtsTokens: '思考',
             cacheCreationTokens: '缓存写入',
             cacheReadTokens: '缓存命中',
+            cacheHitRate: '缓存命中率',
             conversations: '对话数',
             modelMessages: '回复数',
             byConversation: '按对话',

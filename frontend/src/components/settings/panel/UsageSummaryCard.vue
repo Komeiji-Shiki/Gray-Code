@@ -38,6 +38,12 @@ function formatTokens(count: number): string {
   if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
   return String(count)
 }
+
+/** 缓存命中率（缓存命中 token 占输入 token 的比例）；输入为 0 或无命中时不展示 */
+function cacheHitRate(promptTokens: number, cacheReadTokens: number): string | null {
+  if (promptTokens <= 0 || cacheReadTokens <= 0) return null
+  return `${((cacheReadTokens / promptTokens) * 100).toFixed(1)}%`
+}
 </script>
 
 <template>
@@ -111,6 +117,10 @@ function formatTokens(count: number): string {
         <div v-if="stats.totals.cacheReadTokens > 0" class="usage-summary-total-item">
           <span class="usage-summary-value">{{ formatTokens(stats.totals.cacheReadTokens) }}</span>
           <span class="usage-summary-label">{{ t('components.usage.cacheReadTokens') }}</span>
+        </div>
+        <div v-if="cacheHitRate(stats.totals.promptTokens, stats.totals.cacheReadTokens)" class="usage-summary-total-item">
+          <span class="usage-summary-value">{{ cacheHitRate(stats.totals.promptTokens, stats.totals.cacheReadTokens) }}</span>
+          <span class="usage-summary-label">{{ t('components.usage.cacheHitRate') }}</span>
         </div>
         <div class="usage-summary-total-item">
           <span class="usage-summary-value">{{ stats.totals.conversations }}</span>

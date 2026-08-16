@@ -256,6 +256,7 @@ const ja: LanguageMessages = {
             thoughtsTokens: '思考',
             cacheCreationTokens: 'キャッシュ書き込み',
             cacheReadTokens: 'キャッシュヒット',
+            cacheHitRate: 'キャッシュヒット率',
             conversations: '会話数',
             modelMessages: '応答数',
             byConversation: '会話別',
