@@ -1026,7 +1026,7 @@ const ja: LanguageMessages = {
                         show: '表示',
                         hide: '非表示',
                         useAuthorization: 'Authorization形式で送信',
-                        useAuthorizationHintGemini: 'x-goog-api-keyをAuthorization: Bearer形式に変換して送信',
+                        useAuthorizationHintGemini: 'サードパーティの中継/プロキシサービスのみで必要です：x-goog-api-key を Authorization: Bearer 形式に変換して送信します。Google 公式エンドポイントは API Key を Bearer 認証情報として受け付けません。',
                         useAuthorizationHintAnthropic: 'x-api-keyをAuthorization: Bearer形式に変換して送信'
                     },
                     stream: {

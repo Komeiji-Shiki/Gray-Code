@@ -1028,7 +1028,7 @@ const zhCN = {
                         show: '显示',
                         hide: '隐藏',
                         useAuthorization: '使用 Authorization 格式发送',
-                        useAuthorizationHintGemini: '将 x-goog-api-key 转为 Authorization: Bearer 格式发送',
+                        useAuthorizationHintGemini: '仅第三方中转服务需要开启：将 x-goog-api-key 转为 Authorization: Bearer 发送；Google 官方端点不接受把 API Key 作为 Bearer 凭证',
                         useAuthorizationHintAnthropic: '将 x-api-key 转为 Authorization: Bearer 格式发送'
                     },
                     stream: {

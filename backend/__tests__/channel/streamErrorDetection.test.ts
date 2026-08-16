@@ -38,6 +38,52 @@ describe('extractStreamError', () => {
         expect(result?.message).toContain('upstream_down');
     });
 
+    test('Google 官方 errors 数组包装：error.errors: [{ message }]', () => {
+        expect(extractStreamError({ error: { errors: [{ message: 'Quota exceeded', reason: 'RATE_LIMIT' }] } }))
+            .toEqual({ message: 'Quota exceeded' });
+    });
+
+    test('error 本身是数组包装', () => {
+        expect(extractStreamError({ error: [{ message: 'Array wrapped error' }] }))
+            .toEqual({ message: 'Array wrapped error' });
+    });
+
+    test('type=error 事件内层 errors 数组包装', () => {
+        expect(extractStreamError({ type: 'error', error: { errors: [{ message: 'Nested array error' }] } }))
+            .toEqual({ message: 'Nested array error' });
+    });
+
+    test('chunk 本身是错误数组', () => {
+        expect(extractStreamError([{ type: 'error', message: 'Top-level array error' }]))
+            .toEqual({ message: 'Top-level array error', code: 'error' });
+    });
+
+    test('errors 数组元素只有 reason 时透出原文（不误判为空）', () => {
+        const result = extractStreamError({ error: { errors: [{ reason: 'RATE_LIMIT' }] } });
+        expect(result?.message).toContain('RATE_LIMIT');
+    });
+
+    test('数组包装空数组不误判', () => {
+        expect(extractStreamError({ error: { errors: [] } })).toBeUndefined();
+        expect(extractStreamError([])).toBeUndefined();
+    });
+
+    test('空内层错误不会遮蔽外层 message', () => {
+        expect(extractStreamError({
+            error: { errors: [] },
+            code: 429,
+            message: 'Quota exceeded outside'
+        })).toEqual({ message: 'Quota exceeded outside', code: '429' });
+    });
+
+    test('空内层 message 也不会遮蔽外层说明', () => {
+        expect(extractStreamError({
+            error: { message: '' },
+            status: 'RESOURCE_EXHAUSTED',
+            message: 'Outer quota message'
+        })).toEqual({ message: 'Outer quota message', code: 'RESOURCE_EXHAUSTED' });
+    });
+
     test('正常 chunk 不被误判', () => {
         expect(extractStreamError({ choices: [{ delta: { content: 'hi' } }] })).toBeUndefined();
         expect(extractStreamError({ error: null })).toBeUndefined();
@@ -45,6 +91,9 @@ describe('extractStreamError', () => {
         expect(extractStreamError({ error: '   ' })).toBeUndefined();
         expect(extractStreamError(undefined)).toBeUndefined();
         expect(extractStreamError('not an object')).toBeUndefined();
+        expect(extractStreamError([{ type: 'text', text: 'normal content' }])).toBeUndefined();
+        expect(extractStreamError([{ type: 'step', status: 'in_progress' }])).toBeUndefined();
+        expect(extractStreamError([{ code: 200, message: 'normal response' }])).toBeUndefined();
     });
 });
 
@@ -75,6 +124,13 @@ describe('parseStreamChunk 遇到内联错误时抛出 ChannelError', () => {
         expect(() => formatter.parseStreamChunk({
             error: { code: 429, message: 'Resource has been exhausted' }
         })).toThrow(/Resource has been exhausted/);
+    });
+
+    test('Gemini：errors 数组包装错误同样带出原文', () => {
+        const formatter = new GeminiFormatter();
+        expect(() => formatter.parseStreamChunk({
+            error: { errors: [{ message: 'Model quota exceeded' }] }
+        })).toThrow(/Model quota exceeded/);
     });
 
     test('OpenAI Responses：error 事件与 response.failed 都带出原文', () => {

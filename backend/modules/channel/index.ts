@@ -38,7 +38,7 @@ export type { TokenCountResult } from './TokenCountService';
 
 // 模型列表
 export type { ModelInfo } from './modelList';
-export { getModels, getGeminiModels, getOpenAIModels, getClaudeModels } from './modelList';
+export { getModels, getGeminiModels, getOpenAIModels, getClaudeModels, ModelListRequestError } from './modelList';
 
 // 代理请求（proxyFetch）
 export {

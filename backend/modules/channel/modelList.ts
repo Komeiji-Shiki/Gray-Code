@@ -7,7 +7,7 @@
 
 import { t } from '../../i18n';
 import type { ChannelConfig, ModelInfo } from '../config';
-import { createProxyFetch } from './proxyFetch';
+import { createProxyFetch, extractUpstreamErrorMessage } from './proxyFetch';
 
 // ModelInfo 类型下沉至 config 域（config/configs/base.ts，经 config 门面 re-export）。
 // 此处保留 re-export 壳：channel/index.ts、api/models/* 等既有导入方零改动。
@@ -51,7 +51,7 @@ function touchModelListCache(key: string): void {
  * 非 Gemini/Anthropic 渠道返回 undefined，与历史 `as any` 转型访问时的运行时行为完全一致。
  */
 function getUseAuthorizationHeader(config: ChannelConfig): boolean | undefined {
-  return config.type === 'gemini' || config.type === 'anthropic'
+  return config.type === 'gemini' || config.type === 'gemini-interactions' || config.type === 'anthropic'
     ? config.useAuthorizationHeader
     : undefined;
 }
@@ -86,6 +86,84 @@ function cacheModelList(key: string, models: ModelInfo[]): void {
   // （排序/过滤/元素改写）会污染缓存条目——命中路径返回的是浅拷贝，语义不一致。
   modelListCache.set(key, { models: models.map(model => ({ ...model })), expiresAt: Date.now() + MODEL_LIST_CACHE_TTL_MS });
   touchModelListCache(key);
+}
+
+/**
+ * 模型列表请求错误（上游已返回明确失败原因）。
+ *
+ * message 为已脱敏（apiKey 明文 / URL query 中的 key 已替换为 ***）且截断的安全文案，
+ * ModelsHandler 仅对 instanceof ModelListRequestError 的错误透出 message 给 UI，
+ * 让用户直接看到真实失败原因（如 Google 403 key 被标记泄露）；
+ * 其余未知错误（网络异常、解析失败等）仍返回通用文案。
+ */
+export class ModelListRequestError extends Error {
+    constructor(
+        message: string,
+        /** 上游 HTTP 状态码（无响应时为 undefined） */
+        public readonly status?: number
+    ) {
+        super(message);
+        this.name = 'ModelListRequestError';
+    }
+}
+
+/** 透传给 UI 的上游错误消息最大长度（防止超长响应体撑爆错误面板/日志） */
+const MODEL_LIST_ERROR_MESSAGE_MAX_LENGTH = 500;
+
+/**
+ * 脱敏上游错误消息：
+ * 1. 用 *** 替换 apiKey 明文（覆盖 query key / Bearer / x-api-key / x-goog-api-key 被上游回显的场景）
+ * 2. 替换 URL query 中常见凭据参数的值，并覆盖 apiKey 的 URL 编码形式
+ * 3. 截断到 MODEL_LIST_ERROR_MESSAGE_MAX_LENGTH
+ */
+export function sanitizeUpstreamMessage(rawMessage: string, apiKey?: string): string {
+    let message = rawMessage;
+    if (apiKey) {
+        for (const secret of new Set([apiKey, encodeURIComponent(apiKey)])) {
+            if (secret) message = message.split(secret).join('***');
+        }
+    }
+    // 中转站可能回显完整 URL；常见凭据参数统一遮盖，不依赖其值恰好与 config.apiKey 同编码。
+    message = message.replace(
+        /([?&](?:key|api[_-]?key|x-goog-api-key|access[_-]?token|token|secret|password|signature|credential)=)[^&\s"'<>]+/gi,
+        '$1***'
+    );
+    if (message.length > MODEL_LIST_ERROR_MESSAGE_MAX_LENGTH) {
+        message = `${message.slice(0, MODEL_LIST_ERROR_MESSAGE_MAX_LENGTH)}…`;
+    }
+    return message;
+}
+
+/**
+ * 读取非 2xx 响应体并抛出 ModelListRequestError。
+ *
+ * 必须先读 text() 再尝试 JSON.parse（response.json() 会消费响应体，纯文本/HTML 错误体
+ * 在 json() 失败后再读 text() 只能拿到空串）；利用 extractUpstreamErrorMessage 提取
+ * 上游给出的真实失败原因（如 Google 403 的 key 泄露提示），替代旧实现只透出 statusText。
+ */
+async function throwModelListRequestError(response: Response, apiKey?: string): Promise<never> {
+    let rawErrorBody = '';
+    try {
+        rawErrorBody = await response.text();
+    } catch {
+        // 读取失败（连接中断等）：退回 statusText 兜底
+        rawErrorBody = '';
+    }
+
+    let errorBody: unknown = rawErrorBody;
+    if (rawErrorBody) {
+        try {
+            errorBody = JSON.parse(rawErrorBody);
+        } catch {
+            // 非 JSON：extractUpstreamErrorMessage 直接返回文本
+        }
+    }
+
+    const upstreamMessage = extractUpstreamErrorMessage(errorBody);
+    const message = upstreamMessage
+        ? `HTTP ${response.status}: ${upstreamMessage}`
+        : t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText });
+    throw new ModelListRequestError(sanitizeUpstreamMessage(message, apiKey), response.status);
 }
 
 /**
@@ -179,19 +257,50 @@ async function fetchAllPages<T>(
 }
 
 /**
+ * 规范化 Gemini 模型列表基础 URL。
+ *
+ * - trim 首尾空白（WHATWG URL 构造器自动去除）
+ * - 去除路径尾斜杠（避免拼接出 //models）
+ * - 基础 URL 自带的 query 参数（如中转站要求的 ?key=xxx / ?api-version=...）单独取出，
+ *   请求时合并进 /models 查询串——旧实现 `${url}/models?...` 会把 query 整体拼进路径段
+ *   （如 https://host/v1beta?foo=bar/models?...），导致请求 404
+ */
+export function normalizeGeminiModelsBaseUrl(rawUrl?: string): { baseUrl: string; baseQuery: URLSearchParams } {
+  const fallback = 'https://generativelanguage.googleapis.com/v1beta';
+  const raw = (rawUrl || fallback).trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    // 不能把无效的第三方地址静默替换成官方端点，否则会把凭据发往用户未填写的目标。
+    throw new ModelListRequestError(t('modules.config.validation.invalidUrl'));
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ModelListRequestError(t('modules.config.validation.invalidUrl'));
+  }
+  const baseQuery = new URLSearchParams(parsed.search);
+  parsed.search = '';
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  return { baseUrl: `${parsed.origin}${pathname}`, baseQuery };
+}
+
+/**
  * 获取 Gemini 模型列表
  * Gemini API 支持 pageSize 和 pageToken 分页参数
  */
 export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
   const apiKey = config.apiKey;
-  const url = config.url || 'https://generativelanguage.googleapis.com/v1beta';
-  const useAuthorizationHeader = getUseAuthorizationHeader(config);
-
   if (!apiKey) {
-    throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+    throw new ModelListRequestError(t('modules.channel.modelList.errors.apiKeyRequired'));
   }
 
-  const cacheKey = buildModelListCacheKey('gemini', url, config, proxyUrl);
+  const { baseUrl, baseQuery } = normalizeGeminiModelsBaseUrl(config.url);
+  const useAuthorizationHeader = getUseAuthorizationHeader(config);
+
+  // 缓存键使用真实 config.type（gemini / gemini-interactions 分开缓存）与规范化 URL
+  // （trim + 去尾斜杠，含基础 query，避免同义写法产生重复条目）
+  const normalizedUrl = baseQuery.toString() ? `${baseUrl}?${baseQuery.toString()}` : baseUrl;
+  const cacheKey = buildModelListCacheKey(config.type, normalizedUrl, config, proxyUrl);
   const cached = getModelListCached(cacheKey);
   if (cached) {
     return cached;
@@ -203,7 +312,9 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
     // 循环获取所有分页数据
     const allModels = await fetchAllPages<any>(
       async (pageToken, _pageCount) => {
-        const params = new URLSearchParams({ pageSize: '1000' });
+        // 基础 URL 自带的 query 合并进每次请求；分页/认证参数覆盖同名基础参数
+        const params = new URLSearchParams(baseQuery);
+        params.set('pageSize', '1000');
         // 未启用 useAuthorizationHeader 时，将 apiKey 放入 query parameter
         if (!useAuthorizationHeader) {
           params.set('key', apiKey);
@@ -217,15 +328,16 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
         if (useAuthorizationHeader) {
           headers['Authorization'] = `Bearer ${apiKey}`;
         } else {
+          // 兼容行为保持：默认同时发送 key query 与 x-goog-api-key 头
           headers['x-goog-api-key'] = apiKey;
         }
         // 应用自定义标头
         applyCustomHeaders(headers, config);
 
-        const response = await proxyFetch(`${url}/models?${params.toString()}`, { headers });
+        const response = await proxyFetch(`${baseUrl}/models?${params.toString()}`, { headers });
 
         if (!response.ok) {
-          throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+          await throwModelListRequestError(response, apiKey);
         }
 
         const data = await response.json() as any;
@@ -240,13 +352,21 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
       .filter((m: any) => 
         !m.supportedGenerationMethods || (Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
       )
-      .map((m: any) => ({
-        id: m.name.replace('models/', ''),
-        name: m.displayName,
-        description: m.description,
-        contextWindow: m.inputTokenLimit,
-        maxOutputTokens: m.outputTokenLimit
-      }));
+      .map((m: any) => {
+        // 健壮映射：id 仅去除开头的 models/ 前缀（名称中部的 models/ 原样保留）；
+        // displayName 缺失时回退 id；id 为空（name/id 均缺失）的条目剔除
+        const rawId = typeof m.name === 'string' && m.name.trim() ? m.name : (typeof m.id === 'string' ? m.id : '');
+        const id = rawId.replace(/^models\//, '');
+        const displayName = typeof m.displayName === 'string' && m.displayName.trim() ? m.displayName : undefined;
+        return {
+          id,
+          name: displayName || id,
+          description: typeof m.description === 'string' ? m.description : undefined,
+          contextWindow: m.inputTokenLimit,
+          maxOutputTokens: m.outputTokenLimit
+        };
+      })
+      .filter((m: any) => m.id);
     cacheModelList(cacheKey, models);
     return models;
   } catch (error) {
@@ -274,7 +394,7 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
   }
 
   if (!apiKey) {
-    throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+    throw new ModelListRequestError(t('modules.channel.modelList.errors.apiKeyRequired'));
   }
 
   const cacheKey = buildModelListCacheKey(config.type, url, config, proxyUrl);
@@ -306,7 +426,7 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
         });
 
         if (!response.ok) {
-          throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+          await throwModelListRequestError(response, apiKey);
         }
 
         const data = await response.json() as any;
@@ -348,10 +468,10 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
   const useAuthorizationHeader = getUseAuthorizationHeader(config);
 
   if (!apiKey) {
-    throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+    throw new ModelListRequestError(t('modules.channel.modelList.errors.apiKeyRequired'));
   }
 
-  const cacheKey = buildModelListCacheKey('anthropic', baseUrl, config, proxyUrl);
+  const cacheKey = buildModelListCacheKey(config.type, baseUrl, config, proxyUrl);
   const cached = getModelListCached(cacheKey);
   if (cached) {
     return cached;
@@ -385,7 +505,7 @@ export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string):
         });
 
         if (!response.ok) {
-          throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+          await throwModelListRequestError(response, apiKey);
         }
 
         const data = await response.json() as any;

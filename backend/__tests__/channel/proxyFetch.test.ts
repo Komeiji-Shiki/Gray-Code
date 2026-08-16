@@ -200,6 +200,34 @@ describe('extractUpstreamErrorMessage', () => {
             error: { message: 'inner' }
         })).toBe('inner');
     });
+
+    test('数组包装：error.errors: [{ message }]', () => {
+        expect(extractUpstreamErrorMessage({
+            error: { errors: [{ message: 'Quota exceeded', reason: 'RATE_LIMIT' }] }
+        })).toBe('Quota exceeded');
+    });
+
+    test('数组包装：error 本身是数组', () => {
+        expect(extractUpstreamErrorMessage({
+            error: [{ message: 'Array wrapped error' }]
+        })).toBe('Array wrapped error');
+    });
+
+    test('数组包装：顶层 errors: [{ message }]', () => {
+        expect(extractUpstreamErrorMessage({
+            errors: [{ message: 'Top-level errors array' }]
+        })).toBe('Top-level errors array');
+    });
+
+    test('数组包装：body 本身是数组', () => {
+        expect(extractUpstreamErrorMessage([{ message: 'Body array error' }]))
+            .toBe('Body array error');
+    });
+
+    test('数组包装：空数组 / error.errors 为空数组返回 undefined', () => {
+        expect(extractUpstreamErrorMessage({ error: { errors: [] } })).toBeUndefined();
+        expect(extractUpstreamErrorMessage([])).toBeUndefined();
+    });
 });
 
 // ---------------------------------------------------------------------------

@@ -1026,7 +1026,7 @@ const en: LanguageMessages = {
                         show: 'Show',
                         hide: 'Hide',
                         useAuthorization: 'Send as Authorization format',
-                        useAuthorizationHintGemini: 'Convert x-goog-api-key to Authorization: Bearer format',
+                        useAuthorizationHintGemini: 'Only needed for third-party relay/proxy services: converts x-goog-api-key to an Authorization: Bearer header. Google official endpoints do not accept the API key as a Bearer credential.',
                         useAuthorizationHintAnthropic: 'Convert x-api-key to Authorization: Bearer format'
                     },
                     stream: {

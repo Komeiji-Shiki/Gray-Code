@@ -59,6 +59,52 @@ function limitTotalImageParts(contents: Content[], maxImages: number): Content[]
 }
 
 /**
+ * 归一化用户手填的模型 ID：剥除手填的 models/ 前缀，返回官方裸 model ID。
+ *
+ * generateContent 官方端点为 /models/{model}:generateContent，Interactions 请求体
+ * model 字段同样接受裸 ID（gemini-3.x）；用户可能在配置里手填 models/ 前缀，
+ * 统一剥除后再构造，避免生成 models/models/... 的畸形 URL 或非裸 ID 请求体。
+ * gemini 与 gemini-interactions 共用此 helper。
+ */
+export function normalizeGeminiModelId(model: string | undefined): string | undefined {
+    if (!model) {
+        return undefined;
+    }
+    const trimmed = model.trim();
+    return trimmed.startsWith('models/')
+        ? trimmed.slice('models/'.length)
+        : trimmed;
+}
+
+/**
+ * 在 Gemini 基础 URL 后追加 API 路径，并把基础查询参数保留在最终路径末尾。
+ * 同时去除路径尾部的一个或多个斜杠，避免 `.../v1beta/?x=1` 生成双斜杠。
+ */
+export function buildGeminiApiUrl(
+    baseUrl: string,
+    endpointPath: string,
+    queryOverrides: Record<string, string | undefined> = {}
+): string {
+    const raw = baseUrl.trim();
+    const hashIndex = raw.indexOf('#');
+    const withoutHash = hashIndex >= 0 ? raw.slice(0, hashIndex) : raw;
+    const queryIndex = withoutHash.indexOf('?');
+    const basePath = (queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash).replace(/\/+$/, '');
+    const baseQuery = queryIndex >= 0 ? withoutHash.slice(queryIndex + 1) : '';
+    const params = new URLSearchParams(baseQuery);
+    for (const [key, value] of Object.entries(queryOverrides)) {
+        if (value === undefined) {
+            params.delete(key);
+        } else {
+            params.set(key, value);
+        }
+    }
+    const query = params.toString();
+    const endpoint = endpointPath.replace(/^\/+/, '');
+    return `${basePath}/${endpoint}${query ? `?${query}` : ''}`;
+}
+
+/**
  * Gemini 格式转换器
  * 
  * 支持 Google Gemini API 的完整功能：
@@ -201,26 +247,18 @@ export class GeminiFormatter extends BaseFormatter {
         // 决定是否使用流式（完全由配置决定）
         const useStream = config.options?.stream ?? config.preferStream ?? false;
         
-        // 构建 URL
-        const baseUrl = config.url.endsWith('/')
-            ? config.url.slice(0, -1)
-            : config.url;
-        
+        // 构建 URL 前无需预先修改基础地址；buildGeminiApiUrl 会统一处理尾斜杠与 query。
         const method = useStream
             ? 'streamGenerateContent'
             : 'generateContent';
         
-        // 流式请求需要添加 ?alt=sse 参数以获取 SSE 格式响应。
-        // baseUrl 可能已带 query（如 ?api-version=1）：query 必须跟在路径末尾，
-        // 直接拼接会把 query 塞进路径中间生成畸形 URL。拆出后统一追加到末尾。
-        const queryIndex = baseUrl.indexOf('?');
-        const basePath = queryIndex >= 0 ? baseUrl.slice(0, queryIndex) : baseUrl;
-        const baseQuery = queryIndex >= 0 ? baseUrl.slice(queryIndex + 1) : '';
-        const queryParts: string[] = [];
-        if (useStream) queryParts.push('alt=sse');
-        if (baseQuery) queryParts.push(baseQuery);
-        const querySuffix = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-        const url = `${basePath}/models/${config.model}:${method}${querySuffix}`;
+        // 流式请求用 alt=sse；基础 URL 自带的 query 会被保留并放到最终路径末尾。
+        // 用户可能手填 models/ 前缀：剥除后再构造，避免生成 models/models/...。
+        const url = buildGeminiApiUrl(
+            config.url,
+            `models/${normalizeGeminiModelId(config.model)}:${method}`,
+            useStream ? { alt: 'sse' } : {}
+        );
         
         // 构建请求头
         const headers: Record<string, string> = {

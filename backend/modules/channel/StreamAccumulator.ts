@@ -590,6 +590,38 @@ export class StreamAccumulator {
                     [this.providerType]: rawSig
                 };
             }
+
+            // Gemini Interactions 会把 thought 文本与签名拆成不同事件；签名元数据应并回
+            // 紧邻的 thought part，避免历史回传时生成「摘要 thought + 仅签名 thought」两步。
+            const isSignatureOnlyThought = this.providerType === 'gemini-interactions'
+                && nonTextPart.thought === true
+                && !!nonTextPart.thoughtSignatures
+                && Object.entries(nonTextPart).every(([key, value]) =>
+                    value === undefined || key === 'thought' || key === 'thoughtSignatures'
+                );
+            if (isSignatureOnlyThought) {
+                const previousPart = this.parts[this.parts.length - 1];
+                if (previousPart?.thought === true) {
+                    const incomingSignatures = nonTextPart.thoughtSignatures || {};
+                    const previousSignatures = previousPart.thoughtSignatures || {};
+                    const hasConflictingSignature = Object.entries(incomingSignatures).some(
+                        ([provider, signature]) => !!previousSignatures[provider]
+                            && !!signature
+                            && previousSignatures[provider] !== signature
+                    );
+                    // 无冲突或签名相同：属于同一 thought 的后到元数据，可安全并入。
+                    // 同一 provider 的签名不同通常代表新的无摘要 thought step，保留独立 part。
+                    if (!hasConflictingSignature) {
+                        previousPart.thoughtSignatures = {
+                            ...previousSignatures,
+                            ...incomingSignatures
+                        };
+                        this.contentRevision++;
+                        return;
+                    }
+                }
+            }
+
             this.parts.push(nonTextPart);
             this.contentRevision++;
             return;

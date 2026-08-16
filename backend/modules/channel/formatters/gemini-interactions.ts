@@ -13,7 +13,7 @@
  */
 
 import { t } from '../../../i18n';
-import { GeminiFormatter } from './gemini';
+import { buildGeminiApiUrl, GeminiFormatter, normalizeGeminiModelId } from './gemini';
 import { throwIfStreamError } from './streamError';
 import { applyCustomBody } from '../../config/configs/base';
 import { ChannelError, ErrorType } from '../types';
@@ -135,9 +135,9 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             processedHistory = limitTotalImageParts(processedHistory, maxImages);
         }
 
-        // 构建请求体
+        // 构建请求体（官方契约：裸 model ID + input 直接为 steps 数组；用户手填 models/ 前缀统一剥除）
         const body: any = {
-            model: c.model,
+            model: normalizeGeminiModelId(c.model),
             input: this.convertHistoryToSteps(processedHistory),
             generation_config: this.buildInteractionsGenerationConfig(c),
             // 客户端管理完整历史：显式关闭服务器端存储（store=false 与 previous_interaction_id 不兼容）
@@ -192,19 +192,8 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             body.stream = true;
         }
 
-        // 构建 URL：统一 interactions 端点；流式加 ?alt=sse 获取 SSE 格式。
-        // baseUrl 可能已带 query（如 ?api-version=1）：拆出后统一追加到末尾（与 gemini 同口径）。
-        const baseUrl = c.url.endsWith('/')
-            ? c.url.slice(0, -1)
-            : c.url;
-        const queryIndex = baseUrl.indexOf('?');
-        const basePath = queryIndex >= 0 ? baseUrl.slice(0, queryIndex) : baseUrl;
-        const baseQuery = queryIndex >= 0 ? baseUrl.slice(queryIndex + 1) : '';
-        const queryParts: string[] = [];
-        if (useStream) queryParts.push('alt=sse');
-        if (baseQuery) queryParts.push(baseQuery);
-        const querySuffix = queryParts.length > 0 ? `?${queryParts.join('&')}` : '';
-        const url = `${basePath}/interactions${querySuffix}`;
+        // 统一 interactions 端点；流式用 alt=sse，基础 URL 的查询参数保留在最终路径末尾。
+        const url = buildGeminiApiUrl(c.url, 'interactions', useStream ? { alt: 'sse' } : {});
 
         // 构建请求头
         const headers: Record<string, string> = {
@@ -427,6 +416,8 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                             chunk
                         );
                     case 'incomplete':
+                    case 'budget_exceeded':
+                        // budget_exceeded：思考预算耗尽，与 incomplete 同为非错误终止
                         done = true;
                         finishReason = 'incomplete';
                         break;
@@ -441,10 +432,19 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                 const step = chunk.step || {};
                 switch (step.type) {
                     case 'thought': {
-                        // thought 步骤的 step.start 通常携带完整初始 summary
+                        // thought 步骤的 step.start 通常携带完整初始 summary；
+                        // 含非空 signature 时一并保留（与 thought_signature delta 同源）
                         const text = this.extractSummaryText(step.summary);
+                        const sig = typeof step.signature === 'string' && step.signature ? step.signature : undefined;
                         if (text) {
-                            parts.push({ text, thought: true });
+                            parts.push({
+                                text,
+                                thought: true,
+                                ...(sig ? { thoughtSignatures: { gemini: sig } } : {})
+                            });
+                        } else if (sig) {
+                            // 无摘要但有签名：仅签名 part（与 thought_signature delta 同形态）
+                            parts.push({ thought: true, thoughtSignatures: { gemini: sig } });
                         }
                         break;
                     }
@@ -509,15 +509,38 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                         break;
 
                     case 'arguments_delta':
-                    case 'arguments':
-                        // 函数参数增量（迁移指南与 API 参考的 type 不一致，两种都认）
+                    case 'arguments': {
+                        // 函数参数增量（迁移指南与 API 参考的 type 不一致，两种都认）。
+                        // 官方流式字段是 delta.arguments（部分 JSON 字符串）；旧形态 partial_arguments 兼容。
+                        // 非字符串对象（部分代理直接返回完整对象）合理序列化；空增量不输出伪 part。
+                        const raw = (delta.arguments !== undefined && delta.arguments !== null && delta.arguments !== '')
+                            ? delta.arguments
+                            : (delta.partial_arguments !== undefined && delta.partial_arguments !== null && delta.partial_arguments !== '')
+                                ? delta.partial_arguments
+                                : undefined;
+                        let partialArgs: string | undefined;
+                        if (typeof raw === 'string') {
+                            partialArgs = raw;
+                        } else if (typeof raw === 'object') {
+                            try {
+                                partialArgs = JSON.stringify(raw);
+                            } catch {
+                                partialArgs = String(raw);
+                            }
+                        } else if (raw !== undefined) {
+                            partialArgs = String(raw);
+                        }
+                        if (!partialArgs) {
+                            break;
+                        }
                         parts.push({
                             functionCall: {
-                                partialArgs: delta.partial_arguments || '',
+                                partialArgs,
                                 ...(typeof chunk.index === 'number' ? { index: chunk.index } : {})
                             } as any
                         });
                         break;
+                    }
 
                     case 'text_annotation_delta':
                         // 引用标注：前端不渲染，忽略
@@ -542,19 +565,49 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                 // 步骤结束：函数参数已由 arguments_delta 增量流补全，无需额外处理
                 break;
 
-            case 'interaction.completed':
-                // 交互完成：携带 usage 与最终状态
+            case 'interaction.completed': {
+                // 交互完成：携带 usage 与最终状态。
+                // 终态细分：budget_exceeded / incomplete → incomplete 终止；failed 抛错；
+                // 其余（completed / requires_action / cancelled 等）→ STOP
                 done = true;
-                finishReason = 'STOP';
-                if (chunk.interaction) {
-                    if (chunk.interaction.usage) {
-                        usage = this.mapUsage(chunk.interaction.usage);
-                    }
-                    if (chunk.interaction.model) {
-                        modelVersion = chunk.interaction.model;
-                    }
+                const interaction = chunk.interaction || {};
+                if (interaction.usage) {
+                    usage = this.mapUsage(interaction.usage);
+                }
+                if (interaction.model) {
+                    modelVersion = interaction.model;
+                }
+                switch (interaction.status) {
+                    case 'budget_exceeded':
+                    case 'incomplete':
+                        finishReason = 'incomplete';
+                        break;
+                    case 'failed':
+                        throw new ChannelError(
+                            ErrorType.API_ERROR,
+                            t('modules.channel.formatters.streamError', { provider: 'Gemini Interactions', message: 'interaction failed' }),
+                            chunk
+                        );
+                    default:
+                        finishReason = 'STOP';
+                        break;
                 }
                 break;
+            }
+
+            case 'interaction.requires_action':
+                // 工具回合暂停：本轮生成结束，等待 function_result 后继续
+                done = true;
+                finishReason = 'STOP';
+                break;
+
+            case 'interaction.failed':
+                // 官方失败生命周期事件：显式抛错（与 status_update failed 同口径）
+                throw new ChannelError(
+                    ErrorType.API_ERROR,
+                    t('modules.channel.formatters.streamError', { provider: 'Gemini Interactions', message: 'interaction failed' }),
+                    chunk
+                );
 
             case 'done':
                 // SSE 结束标记（data: [DONE] 已被 parseStreamBuffer 剥离，事件本身无内容）
@@ -877,6 +930,8 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             case 'cancelled':
                 return 'STOP';
             case 'incomplete':
+            case 'budget_exceeded':
+                // budget_exceeded：思考预算耗尽，非错误终止（与流式路径同口径）
                 return 'incomplete';
             default:
                 return status;

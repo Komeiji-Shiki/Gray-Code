@@ -19,6 +19,8 @@ defineProps<{
   toolModeOptions: SelectOption[]
   timeoutDraft: string
   maxContextTokensDraft: string
+  /** 打开模型对话框前的准备钩子（由父组件提供，如 flush 未保存的 url/apiKey 编辑） */
+  prepareModelFetch?: () => Promise<void>
 }>()
 
 const emit = defineEmits<{
@@ -102,6 +104,7 @@ const emit = defineEmits<{
       :config-id="config.id"
       :models="config.models || []"
       :selected-model="config.model || ''"
+      :prepare="prepareModelFetch"
       @update:models="(m: any) => emit('update:field', 'models', m)"
       @update:selected-model="(id: string) => emit('update:field', 'model', id)"
     />

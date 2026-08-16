@@ -24,6 +24,10 @@ export function resolveProxyInsecureSkipVerify(explicit?: boolean): boolean {
 
 /**
  * 从上游 API 的非 2xx 响应体中提取人类可读错误消息。
+ *
+ * 兼容数组包装错误（官方错误体有时把 message 放进数组，如
+ * `{ error: { errors: [{ message }] } }`、`{ error: [{ message }] }`、
+ * `{ errors: [{ message }] }`，甚至响应体本身就是数组）。
  */
 export function extractUpstreamErrorMessage(body: unknown): string | undefined {
     if (!body || typeof body !== 'object') {
@@ -31,12 +35,44 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
         return undefined;
     }
 
+    // 响应体本身是数组包装：逐个元素尝试，取第一个可读消息
+    if (Array.isArray(body)) {
+        for (const item of body) {
+            const message = extractUpstreamErrorMessage(item);
+            if (message) return message;
+        }
+        return undefined;
+    }
+
     const obj = body as Record<string, any>;
-    if (obj.error && typeof obj.error === 'object' && typeof obj.error.message === 'string') {
-        return obj.error.message.trim();
+    if (obj.error && typeof obj.error === 'object' && !Array.isArray(obj.error)) {
+        if (typeof obj.error.message === 'string') {
+            return obj.error.message.trim();
+        }
+        // 数组包装：error.errors: [{ message }]
+        if (Array.isArray(obj.error.errors)) {
+            for (const item of obj.error.errors) {
+                const message = extractUpstreamErrorMessage(item);
+                if (message) return message;
+            }
+        }
     }
     if (typeof obj.error === 'string') {
         return obj.error.trim();
+    }
+    // 数组包装：error 本身是数组
+    if (Array.isArray(obj.error)) {
+        for (const item of obj.error) {
+            const message = extractUpstreamErrorMessage(item);
+            if (message) return message;
+        }
+    }
+    // 数组包装：顶层 errors: [{ message }]
+    if (Array.isArray(obj.errors)) {
+        for (const item of obj.errors) {
+            const message = extractUpstreamErrorMessage(item);
+            if (message) return message;
+        }
     }
     if (typeof obj.message === 'string') {
         return obj.message.trim();

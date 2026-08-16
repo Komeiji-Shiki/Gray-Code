@@ -14,6 +14,11 @@ interface Props {
   configId: string
   models: ModelInfo[]
   selectedModel: string
+  /**
+   * 打开模型选择对话框前的准备钩子（父组件用于 flush 未保存的配置，如 url/apiKey 防抖编辑）。
+   * 准备失败时不打开对话框并提示用户，避免 models.getModels 读取到后端持久化的旧配置。
+   */
+  prepare?: () => Promise<void>
 }
 
 interface Emits {
@@ -48,9 +53,16 @@ const filteredModels = computed(() => {
   )
 })
 
-// 打开选择对话框
-function openDialog() {
-  showDialog.value = true
+// 打开选择对话框：先等待父组件准备完成（如 flush 未保存的 url/apiKey 编辑，
+// 避免 models.getModels 只凭 configId 读到后端持久化的旧配置）；失败则不打开对话框
+async function openDialog() {
+  try {
+    await props.prepare?.()
+    showDialog.value = true
+  } catch (error) {
+    console.error('Failed to prepare before fetching models:', error)
+    alert(t('components.settings.modelSelectionDialog.error'))
+  }
 }
 
 // 处理对话框确认

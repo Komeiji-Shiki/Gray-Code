@@ -6,7 +6,7 @@ import { t } from '../../../i18n';
 import { Logger } from '../../../core/logger';
 import type { ConfigManager } from '../../config/ConfigManager';
 import type { SettingsManager } from '../../settings/SettingsManager';
-import { getModels, type ModelInfo } from '../../channel/modelList';
+import { getModels, ModelListRequestError, type ModelInfo } from '../../channel/modelList';
 import type {
     GetModelsRequest,
     GetModelsResponse,
@@ -54,8 +54,18 @@ export class ModelsHandler {
                 models
             };
         } catch (error: unknown) {
-            // C-x：内部错误信息（可能含代理 URL/密钥片段等实现细节）不透传 UI，
-            // 打日志便于排查，返回 i18n 通用文案
+            // ModelListRequestError：上游返回的明确错误，message 已在 modelList 层脱敏
+            // （apiKey 明文 / URL query key 已打码）并截断，可安全透传 UI，用户能直接看到
+            // 真实失败原因（如 Google 403 key 被标记泄露）；其余未知错误（网络异常、解析
+            // 失败等）仍打日志 + 返回 i18n 通用文案，避免泄露代理 URL/密钥片段等内部细节
+            if (error instanceof ModelListRequestError) {
+                this.log.error('models.get_failed', {
+                    configId: request.configId,
+                    status: error.status,
+                    error: error.message,
+                });
+                return errorResponse('GET_MODELS_FAILED', error.message);
+            }
             this.log.error('models.get_failed', {
                 configId: request.configId,
                 error: error instanceof Error ? error.message : String(error),

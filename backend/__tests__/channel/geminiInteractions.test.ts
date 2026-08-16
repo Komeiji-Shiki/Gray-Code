@@ -12,6 +12,7 @@
 
 import { GeminiInteractionsFormatter } from '../../modules/channel';
 import { GeminiFormatter, StreamAccumulator } from '../../modules/channel';
+import { normalizeGeminiModelId } from '../../modules/channel/formatters/gemini';
 import type { GenerateRequest } from '../../modules/channel';
 import type { GeminiInteractionsConfig } from '../../modules/config/types';
 import type { Content } from '../../modules/conversation/types';
@@ -93,6 +94,19 @@ describe('GeminiInteractionsFormatter.buildRequest', () => {
         expect(result.url).toBe('https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse');
         expect((result.body as any).stream).toBe(true);
         expect(result.stream).toBe(true);
+    });
+
+    test('尾斜杠与基础 query 会规范合并，stream 强制覆盖 alt=sse', () => {
+        const result = formatter.buildRequest(
+            makeRequest([{ role: 'user', parts: [{ text: 'x' }] }]),
+            makeConfig({
+                url: '  https://generativelanguage.googleapis.com/v1beta/?api-version=1&alt=json  ',
+                options: { stream: true }
+            })
+        );
+
+        expect(result.url).toBe('https://generativelanguage.googleapis.com/v1beta/interactions?api-version=1&alt=sse');
+        expect(result.url).not.toContain('/v1beta//interactions');
     });
 
     test('工具历史转换为 function_call / function_result steps（call_id 关联）', () => {
@@ -297,6 +311,15 @@ describe('GeminiInteractionsFormatter.buildRequest', () => {
         expect(result.headers['x-goog-api-key']).toBeUndefined();
         expect(result.headers['Authorization']).toBe('Bearer test-key');
     });
+
+    test('手填 models/ 前缀被剥除：body.model 保持官方裸 ID（不追加 models/）', () => {
+        const result = formatter.buildRequest(
+            makeRequest([{ role: 'user', parts: [{ text: 'x' }] }]),
+            makeConfig({ model: 'models/gemini-3.6-flash' })
+        );
+
+        expect((result.body as any).model).toBe('gemini-3.6-flash');
+    });
 });
 
 describe('GeminiInteractionsFormatter.parseResponse', () => {
@@ -433,6 +456,17 @@ describe('GeminiInteractionsFormatter.parseResponse', () => {
     test('HTTP 200 内联错误体抛出上游原文', () => {
         expect(() => formatter.parseResponse({ error: { message: 'quota exceeded', code: 429 } })).toThrow('quota exceeded');
     });
+
+    test('budget_exceeded 状态：非错误终止，映射 incomplete（非流式）', () => {
+        const result = formatter.parseResponse({
+            id: 'int_be',
+            status: 'budget_exceeded',
+            steps: [{ type: 'model_output', content: [{ type: 'text', text: 'Partial answer' }] }]
+        });
+
+        expect(result.finishReason).toBe('incomplete');
+        expect(result.content.parts).toEqual([{ text: 'Partial answer' }]);
+    });
 });
 
 describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）', () => {
@@ -486,8 +520,8 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
         const chunks: any[] = [
             { type: 'interaction.created', interaction: { id: 'int_y', status: 'in_progress' } },
             { type: 'step.start', index: 0, step: { type: 'function_call', id: 'fc_1', name: 'get_weather' } },
-            { type: 'step.delta', index: 0, delta: { type: 'arguments_delta', partial_arguments: '{"location": "' } },
-            { type: 'step.delta', index: 0, delta: { type: 'arguments', partial_arguments: 'Boston, MA"}' } },
+            { type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: '{"location": "' } },
+            { type: 'step.delta', index: 0, delta: { type: 'arguments', arguments: 'Boston, MA"}' } },
             { type: 'step.stop', index: 0, status: 'waiting' },
             { type: 'interaction.status_update', interaction_id: 'int_y', status: 'requires_action' }
         ];
@@ -498,7 +532,7 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
         expect(parsed[1].delta).toEqual([
             { functionCall: { name: 'get_weather', args: {}, partialArgs: '', index: 0, id: 'fc_1' } }
         ]);
-        // arguments_delta / arguments 两种 type 都认，index 定位
+        // arguments_delta / arguments 两种 type 都认；官方 delta.arguments 字段，index 定位
         expect(parsed[2].delta).toEqual([
             { functionCall: { partialArgs: '{"location": "', index: 0 } }
         ]);
@@ -516,8 +550,8 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
 
         const chunks: any[] = [
             { type: 'step.start', index: 0, step: { type: 'function_call', id: 'fc_1', name: 'read_file' } },
-            { type: 'step.delta', index: 0, delta: { type: 'arguments_delta', partial_arguments: '{"path": ' } },
-            { type: 'step.delta', index: 0, delta: { type: 'arguments_delta', partial_arguments: '"b.ts"}' } },
+            { type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: '{"path": ' } },
+            { type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: '"b.ts"}' } },
             { type: 'step.stop', index: 0 },
             { type: 'interaction.status_update', status: 'requires_action' }
         ];
@@ -533,14 +567,43 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
         expect(fc?.args).toEqual({ path: 'b.ts' });
     });
 
-    test('思考 + 签名经 StreamAccumulator 合并（思考文本 part + 独立签名 part）', () => {
+    test('arguments_delta：官方 delta.arguments 优先；partial_arguments 兼容；非字符串对象序列化；空增量不输出伪 part', () => {
+        // 旧形态 partial_arguments 兼容
+        const legacy = formatter.parseStreamChunk({
+            type: 'step.delta', index: 0, delta: { type: 'arguments_delta', partial_arguments: '{"a":' }
+        });
+        expect(legacy.delta).toEqual([{ functionCall: { partialArgs: '{"a":', index: 0 } }]);
+
+        // 官方字段 delta.arguments 优先：arguments 存在时忽略 partial_arguments
+        const preferred = formatter.parseStreamChunk({
+            type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: '{"x":1}', partial_arguments: '{"y":2}' }
+        });
+        expect(preferred.delta).toEqual([{ functionCall: { partialArgs: '{"x":1}', index: 0 } }]);
+
+        // 非字符串对象（部分代理直接返回完整对象）→ 合理序列化
+        const objectDelta = formatter.parseStreamChunk({
+            type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: { location: 'Boston' } }
+        });
+        expect(objectDelta.delta).toEqual([{ functionCall: { partialArgs: '{"location":"Boston"}', index: 0 } }]);
+
+        // 空增量（无 arguments / partial_arguments）→ 不输出伪 part
+        const empty = formatter.parseStreamChunk({
+            type: 'step.delta', index: 0, delta: { type: 'arguments_delta' }
+        });
+        expect(empty.delta).toEqual([]);
+        expect(formatter.parseStreamChunk({
+            type: 'step.delta', index: 0, delta: { type: 'arguments_delta', arguments: '' }
+        }).delta).toEqual([]);
+    });
+
+    test('思考文本与后到签名经 StreamAccumulator 合并为同一 part', () => {
         const accumulator = new StreamAccumulator('function_call', () => 'generated-id');
         accumulator.setProviderType('gemini-interactions');
 
         const chunks: any[] = [
-            { type: 'step.start', index: 0, step: { type: 'thought', summary: [{ type: 'text', text: 'thinking' }] } },
+            { type: 'step.start', index: 0, step: { type: 'thought', signature: 'sig-final', summary: [{ type: 'text', text: 'thinking' }] } },
             { type: 'step.delta', index: 0, delta: { type: 'thought_summary', content: { type: 'text', text: ' more' } } },
-            { type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'sig-9' } },
+            { type: 'step.delta', index: 0, delta: { type: 'thought_signature', signature: 'sig-final' } },
             { type: 'step.stop', index: 0 },
             { type: 'interaction.completed', interaction: { status: 'completed' } }
         ];
@@ -550,9 +613,55 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
         }
 
         const finalContent = accumulator.getFinalContent();
-        // 思考文本合并为一个 thought part；签名作为相邻独立 part（回传时合并为同一 thought step）
-        expect(finalContent.parts[0]).toEqual({ text: 'thinking more', thought: true });
-        expect(finalContent.parts[1]).toEqual({ thought: true, thoughtSignatures: { gemini: 'sig-9' } });
+        expect(finalContent.parts).toEqual([{
+            text: 'thinking more',
+            thought: true,
+            thoughtSignatures: { gemini: 'sig-final' }
+        }]);
+    });
+
+    test('不同 thought step 的不同签名不会覆盖前一步', () => {
+        const accumulator = new StreamAccumulator('function_call', () => 'generated-id');
+        accumulator.setProviderType('gemini-interactions');
+
+        const chunks: any[] = [
+            { type: 'step.start', index: 0, step: { type: 'thought', signature: 'sig-old', summary: [{ type: 'text', text: 'first thought' }] } },
+            { type: 'step.stop', index: 0 },
+            { type: 'step.start', index: 1, step: { type: 'thought', signature: '', summary: [] } },
+            { type: 'step.delta', index: 1, delta: { type: 'thought_signature', signature: 'sig-new' } },
+            { type: 'step.stop', index: 1 }
+        ];
+        for (const chunk of chunks) accumulator.add(formatter.parseStreamChunk(chunk));
+
+        expect(accumulator.getFinalContent().parts).toEqual([
+            { text: 'first thought', thought: true, thoughtSignatures: { gemini: 'sig-old' } },
+            { thought: true, thoughtSignatures: { gemini: 'sig-new' } }
+        ]);
+    });
+
+    test('step.start(thought) 携带非空 signature 时保留；空签名不输出', () => {
+        // 摘要 + 签名：签名并入同一 part
+        const withSig = formatter.parseStreamChunk({
+            type: 'step.start', index: 0,
+            step: { type: 'thought', signature: 'EpoG-sig', summary: [{ type: 'text', text: 'Thinking...' }] }
+        });
+        expect(withSig.delta).toEqual([
+            { text: 'Thinking...', thought: true, thoughtSignatures: { gemini: 'EpoG-sig' } }
+        ]);
+
+        // 无摘要仅签名：独立签名 part（与 thought_signature delta 同形态）
+        const sigOnly = formatter.parseStreamChunk({
+            type: 'step.start', index: 0,
+            step: { type: 'thought', signature: 'sig-only', summary: [] }
+        });
+        expect(sigOnly.delta).toEqual([{ thought: true, thoughtSignatures: { gemini: 'sig-only' } }]);
+
+        // 空签名：维持原行为（不输出签名）
+        const emptySig = formatter.parseStreamChunk({
+            type: 'step.start', index: 0,
+            step: { type: 'thought', signature: '', summary: [{ type: 'text', text: 'Hi' }] }
+        });
+        expect(emptySig.delta).toEqual([{ text: 'Hi', thought: true }]);
     });
 
     test('error 事件抛出上游原文', () => {
@@ -579,6 +688,48 @@ describe('GeminiInteractionsFormatter.parseStreamChunk（SSE 事件状态机）'
         const incomplete = formatter.parseStreamChunk({ type: 'interaction.status_update', status: 'incomplete' });
         expect(incomplete.done).toBe(true);
         expect(incomplete.finishReason).toBe('incomplete');
+    });
+
+    test('interaction.status_update(budget_exceeded) 终止且映射 incomplete', () => {
+        const result = formatter.parseStreamChunk({ type: 'interaction.status_update', status: 'budget_exceeded' });
+        expect(result.done).toBe(true);
+        expect(result.finishReason).toBe('incomplete');
+    });
+
+    test('interaction.completed 按终态细分：budget_exceeded/incomplete → incomplete；failed 抛错', () => {
+        const budget = formatter.parseStreamChunk({
+            type: 'interaction.completed',
+            interaction: { status: 'budget_exceeded', usage: { total_input_tokens: 5, total_output_tokens: 2, total_tokens: 7 } }
+        });
+        expect(budget.done).toBe(true);
+        expect(budget.finishReason).toBe('incomplete');
+        expect(budget.usage).toEqual({ promptTokenCount: 5, candidatesTokenCount: 2, totalTokenCount: 7 });
+
+        const incomplete = formatter.parseStreamChunk({
+            type: 'interaction.completed', interaction: { status: 'incomplete' }
+        });
+        expect(incomplete.done).toBe(true);
+        expect(incomplete.finishReason).toBe('incomplete');
+
+        const completed = formatter.parseStreamChunk({
+            type: 'interaction.completed', interaction: { status: 'completed' }
+        });
+        expect(completed.done).toBe(true);
+        expect(completed.finishReason).toBe('STOP');
+
+        expect(() => formatter.parseStreamChunk({
+            type: 'interaction.completed', interaction: { status: 'failed' }
+        })).toThrow();
+    });
+
+    test('interaction.requires_action 生命周期事件：本轮正常结束（STOP）', () => {
+        const result = formatter.parseStreamChunk({ type: 'interaction.requires_action', interaction_id: 'int_x' });
+        expect(result.done).toBe(true);
+        expect(result.finishReason).toBe('STOP');
+    });
+
+    test('interaction.failed 生命周期事件：显式抛错', () => {
+        expect(() => formatter.parseStreamChunk({ type: 'interaction.failed', interaction_id: 'int_x' })).toThrow();
     });
 });
 
@@ -613,5 +764,43 @@ describe('GeminiInteractionsFormatter 与旧 gemini 渠道隔离', () => {
             candidates: [{ content: { role: 'model', parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }]
         });
         expect(result.content.parts).toEqual([{ text: 'Hi' }]);
+    });
+
+    test('旧 gemini 渠道：手填 models/ 前缀剥除后构造官方裸 model URL', () => {
+        const legacy = new GeminiFormatter();
+        const result = legacy.buildRequest(
+            { configId: 'c', history: [{ role: 'user', parts: [{ text: 'x' }] }] } as any,
+            {
+                type: 'gemini',
+                url: 'https://generativelanguage.googleapis.com/v1beta',
+                model: 'models/gemini-2.0-flash',
+                options: {},
+                optionsEnabled: {}
+            } as any
+        );
+        expect(result.url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent');
+        expect(result.url).not.toContain('models/models/');
+    });
+
+    test('旧 gemini 渠道：尾斜杠后的 query 仍放在最终端点末尾', () => {
+        const legacy = new GeminiFormatter();
+        const result = legacy.buildRequest(
+            { configId: 'c', history: [{ role: 'user', parts: [{ text: 'x' }] }] } as any,
+            {
+                type: 'gemini',
+                url: 'https://generativelanguage.googleapis.com/v1beta/?api-version=1',
+                model: 'gemini-2.0-flash',
+                options: {},
+                optionsEnabled: {}
+            } as any
+        );
+        expect(result.url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?api-version=1');
+        expect(result.url).not.toContain('/v1beta//models');
+    });
+
+    test('normalizeGeminiModelId：仅剥除 models/ 前缀，裸 ID 原样返回', () => {
+        expect(normalizeGeminiModelId('models/gemini-3.6-flash')).toBe('gemini-3.6-flash');
+        expect(normalizeGeminiModelId('gemini-3.6-flash')).toBe('gemini-3.6-flash');
+        expect(normalizeGeminiModelId(undefined)).toBeUndefined();
     });
 });

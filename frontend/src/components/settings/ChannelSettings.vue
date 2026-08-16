@@ -515,6 +515,9 @@ function onChangeType(newType: string) {
     formatMessage(t('components.settings.channelSettings.dialog.changeType.message'), getTypeName(newType)),
     async () => {
       try {
+        // 先完成旧类型界面中尚未落盘的 URL/Key 保存，再切换类型；保证写入顺序，
+        // 避免延迟回调在类型重置完成后又把旧值覆盖回来。
+        await prepareModelFetch()
         await sendToExtension(MESSAGE_NAMES['config.updateConfig'], {
           configId,
           updates: { type: newType }
@@ -535,20 +538,67 @@ function onChangeType(newType: string) {
 
 // apiKey / url 输入防抖：@input 每按键全量写配置，300ms 防抖减少扩展往返。
 // 复用共享 useDeferredSave：每次 schedule 只保留最新一次提交，卸载时自动 flush（避免最后一次编辑丢失）。
-const { schedule: scheduleApiKeyUrlSave } = useDeferredSave({ delay: 300, flushOnUnmount: true })
+// 输入按字段累积为「聚合 pending patch」：同一防抖窗口内先输入的字段不会被后输入的字段覆盖，
+// 触发时用一次 updateConfigFields 合并提交（避免两个字段各自提交互相覆盖）。
+const { schedule: scheduleApiKeyUrlSave, flush: flushApiKeyUrlSave } = useDeferredSave({ delay: 300, flushOnUnmount: true })
+
+// 尚未提交的 url/apiKey 编辑补丁（按字段聚合；提交或渠道切换时清空）
+let pendingUrlApiKeyPatch: Partial<Pick<ChannelConfig, 'url' | 'apiKey'>> | null = null
+// 补丁所属渠道 ID：渠道切换后旧渠道残留补丁作废，避免跨渠道合并
+let pendingUrlApiKeyConfigId = ''
+
+async function commitPendingApiKeyUrlPatch(configId: string): Promise<void> {
+  // 旧渠道已有提交仍在队列中时，新渠道可能已产生自己的补丁；旧回调不得读取或清空它。
+  if (pendingUrlApiKeyConfigId !== configId) return
+  const patch = pendingUrlApiKeyPatch
+  pendingUrlApiKeyPatch = null
+  if (configId !== currentConfigId.value || !patch) return
+
+  const saved = await updateConfigFields(patch)
+  if (saved) return
+
+  // 保存失败时把补丁放回其原渠道的待提交区；期间若同渠道又有输入，新值覆盖旧值。
+  // 即使用户已经切走，切回该渠道后仍可重试，而不会被 rejected latestRun 永久阻塞。
+  if (pendingUrlApiKeyConfigId === configId) {
+    pendingUrlApiKeyPatch = { ...patch, ...(pendingUrlApiKeyPatch || {}) }
+  }
+  throw new Error('Failed to persist channel URL/API key')
+}
 
 function handleApiKeyUrlInput(field: 'url' | 'apiKey', value: string) {
   // 输入时快照渠道 ID：防抖窗口内用户可能切换渠道；回调触发时若渠道已切换则丢弃本次输入
   const configId = currentConfigId.value
-  scheduleApiKeyUrlSave(() => {
-    if (configId !== currentConfigId.value) return
-    void updateConfigField(field, value)
-  })
+  // 渠道切换后重置补丁：新渠道的输入不应与旧渠道残留补丁合并
+  if (pendingUrlApiKeyConfigId !== configId) {
+    pendingUrlApiKeyPatch = null
+    pendingUrlApiKeyConfigId = configId
+  }
+  // 聚合：同一防抖窗口内 url / apiKey 各自累积，后输入字段不覆盖先输入字段
+  pendingUrlApiKeyPatch = { ...pendingUrlApiKeyPatch, [field]: value }
+  scheduleApiKeyUrlSave(() => commitPendingApiKeyUrlPatch(configId))
+}
+
+// 打开模型选择对话框前先落盘未保存的 url/apiKey 编辑。
+// 若保存途中又有输入，循环再提交一次，确保 models.getModels 读取的是最后一次界面值。
+async function prepareModelFetch() {
+  const configId = currentConfigId.value
+  // 保存器由设置页复用；另一渠道最近一次保存的结果不应阻塞当前渠道获取模型。
+  if (pendingUrlApiKeyConfigId && pendingUrlApiKeyConfigId !== configId) return
+  do {
+    if (pendingUrlApiKeyConfigId === configId && pendingUrlApiKeyPatch) {
+      scheduleApiKeyUrlSave(() => commitPendingApiKeyUrlPatch(configId))
+    }
+    await flushApiKeyUrlSave()
+  } while (
+    currentConfigId.value === configId
+    && pendingUrlApiKeyConfigId === configId
+    && pendingUrlApiKeyPatch
+  )
 }
 
 // 更新多个配置字段（单个请求，避免竞态条件）
-async function updateConfigFields(updates: Partial<ChannelConfig>) {
-  if (!currentConfig.value) return
+async function updateConfigFields(updates: Partial<ChannelConfig>): Promise<boolean> {
+  if (!currentConfig.value) return false
   // await 前捕获目标配置 id：请求往返期间用户可能已切换渠道，
   // 若 await 后重新读 currentConfig.value.id 会命中新渠道，把旧渠道的 updates 合并进新渠道本地配置（跨渠道污染）
   const configId = currentConfig.value.id
@@ -575,7 +625,7 @@ async function updateConfigFields(updates: Partial<ChannelConfig>) {
     if (currentConfig.value?.id !== configId) {
       // 后端已写入旧渠道但本地合并被跳过：共享缓存仍保留编辑前值，失效缓存避免下次挂载读到陈旧数据
       setChannelConfigsCache(null)
-      return
+      return true
     }
 
     // 直接在本地更新配置值
@@ -591,8 +641,10 @@ async function updateConfigFields(updates: Partial<ChannelConfig>) {
     if (configId === chatStore.configId) {
       await chatStore.loadCurrentConfig()
     }
+    return true
   } catch (error) {
     console.error('Failed to update config fields:', error)
+    return false
   }
 }
 
@@ -761,6 +813,7 @@ onMounted(async () => {
         :tool-mode-options="toolModeOptions"
         :timeout-draft="timeoutDraft"
         :max-context-tokens-draft="maxContextTokensDraft"
+        :prepare-model-fetch="prepareModelFetch"
         @update:field="updateConfigField"
         @update:option="updateOption"
         @api-key-url-input="handleApiKeyUrlInput"
