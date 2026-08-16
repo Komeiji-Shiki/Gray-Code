@@ -706,6 +706,9 @@ async function executeSubAgent(
             agentName,
             runId: effectiveRunId,
             continueFromRunId,
+            // 嵌套后台子代理：完成结果投递给发起者 run（parentRunId），而非主会话；
+            // 主模型直接发起时为 undefined，结果按旧语义投主会话。
+            parentRunId,
             promptPreview: prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt
         });
         bindBackgroundSubAgentTask({

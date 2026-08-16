@@ -153,6 +153,18 @@ export interface MainSessionSystemMessageInput {
     threadId?: string;
 }
 
+/**
+ * 可信后台系统生产者向任意收件方投递消息的入参。
+ *
+ * 在 MainSessionSystemMessageInput 基础上增加可选 toRunId：缺省或 '__main__' 时投递主会话
+ * （与 enqueueMainSessionSystemMessage 语义一致）；指定其他 runId 时要求该 run 必须是
+ * 当前会话下仍活跃的已知 run（父子代理发起后台任务后，结果应投递给发起者而非主会话）。
+ */
+export interface SystemMessageInput extends MainSessionSystemMessageInput {
+    /** 收件方 runId；缺省投递主会话。指定时必须为当前会话已知的活跃 run。 */
+    toRunId?: string;
+}
+
 export type AgentSendMessageResult =
     | {
           success: true;
@@ -389,6 +401,21 @@ export class AgentMailbox {
      * 写入历史后才由 acknowledgeMessageClaim 删除，因此“流已启动”不再等同于“已交付”。
      */
     enqueueMainSessionSystemMessage(input: MainSessionSystemMessageInput): AgentSendMessageResult {
+        return this.enqueueSystemMessage({ ...input, toRunId: MAIN_SESSION_RUN_ID });
+    }
+
+    /**
+     * 由可信后台系统生产者把完整结果放入指定收件方的 claim/ack（主会话）或 inbox（子代理）通道。
+     *
+     * 与 enqueueMainSessionSystemMessage 的边界一致：后台任务结果可能超过 16k，且 run 在终态
+     * 投递时已经注销，因此这里不做发送方存活/正文长度/hop 校验。调用方必须是扩展内部受信模块；
+     * messageId 由调用者稳定生成，用于在 inbox 与未确认 claim 之间幂等去重。
+     *
+     * toRunId 缺省投递主会话（与旧 enqueueMainSessionSystemMessage 完全一致）；指定其他 runId 时
+     * 校验该 run 必须仍是当前会话已知的活跃 run——父子代理可能已经结束，投递给已注销 run 的消息
+     * 无人消费，应在源头拒绝并让调用方回退（如投递主会话）。
+     */
+    enqueueSystemMessage(input: SystemMessageInput): AgentSendMessageResult {
         const conversationId = input.conversationId?.trim?.() ?? '';
         if (!conversationId) {
             return { success: false, error: 'System message delivery requires a conversationId.' };
@@ -409,8 +436,17 @@ export class AgentMailbox {
             return { success: false, error: 'System message delivery requires non-empty text.' };
         }
 
-        const pending = this.inboxes.get(conversationId)?.get(MAIN_SESSION_RUN_ID) ?? [];
-        const claimed = this.messageClaims.get(conversationId)?.get(MAIN_SESSION_RUN_ID)?.messages ?? [];
+        const toRunId = input.toRunId?.trim?.() || MAIN_SESSION_RUN_ID;
+        // 主会话隐式已知；指定 run 必须仍活跃，否则拒绝并让调用方回退投递目标
+        if (toRunId !== MAIN_SESSION_RUN_ID && !this.isKnownRun(conversationId, toRunId)) {
+            return {
+                success: false,
+                error: `System message delivery rejected: run "${toRunId}" is not a known run in this conversation.`
+            };
+        }
+
+        const pending = this.inboxes.get(conversationId)?.get(toRunId) ?? [];
+        const claimed = this.messageClaims.get(conversationId)?.get(toRunId)?.messages ?? [];
         const existing = [...pending, ...claimed].find(message => message.id === messageId);
         if (existing) {
             return {
@@ -430,7 +466,7 @@ export class AgentMailbox {
             threadId,
             fromRunId,
             ...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),
-            toRunId: MAIN_SESSION_RUN_ID,
+            toRunId,
             text: messageText,
             hopDepth: 1,
             createdAt: Date.now(),
@@ -442,16 +478,16 @@ export class AgentMailbox {
             convInbox = new Map();
             this.inboxes.set(conversationId, convInbox);
         }
-        const mainInbox = convInbox.get(MAIN_SESSION_RUN_ID) ?? [];
-        mainInbox.push(message);
-        convInbox.set(MAIN_SESSION_RUN_ID, mainInbox);
+        const runInbox = convInbox.get(toRunId) ?? [];
+        runInbox.push(message);
+        convInbox.set(toRunId, runInbox);
 
         return {
             success: true,
             data: {
                 messageId,
                 threadId,
-                toRunId: MAIN_SESSION_RUN_ID,
+                toRunId,
                 hopDepth: 1
             }
         };

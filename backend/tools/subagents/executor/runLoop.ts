@@ -213,7 +213,7 @@ export function createDefaultExecutor(
         // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
         // F2：注册时携带嵌套深度；若本 run 由另一个子 agent 派生，同时登记父子关系，
         // 供父 run 结束时级联清理（见最外层 finally 的 cascadeExitChildren）。
-        subAgentRunController.register(runId, config.name, depth, !request.background);
+        subAgentRunController.register(runId, config.name, depth, !request.background, request.parentRunId);
         // 信箱寻址从 run 创建后立即生效，而不是等并发队列 acquire 完成：排队中的 run
         // 也是合法收件方，消息会在它获得席位后的第一次模型调用前送达。
         agentMailbox.registerRun(currentConversationId, runId, config.name);

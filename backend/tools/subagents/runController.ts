@@ -25,6 +25,8 @@ interface ActiveRunRecord {
     agentName?: string;
     /** 嵌套深度（主模型=0，子=1，子子=2），由 executor 注册时携带（F2） */
     depth?: number;
+    /** 父 runId（嵌套派发时由 executor 携带；主模型直接派发为 undefined）。用于转后台（detach）后结果回投给发起者。 */
+    parentRunId?: string;
     status: SubAgentRunStatus;
     controller: AbortController;
     /** 是否挂父轮 abort 信号（前台 SubAgent=true；后台模式=false，detach 只对前台生效） */
@@ -75,22 +77,25 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
      */
     private readonly continuationInFlight = new Set<string>();
 
-    register(runId: string, agentName?: string, depth?: number, attachedToParent = true): AbortSignal {
+    register(runId: string, agentName?: string, depth?: number, attachedToParent = true, parentRunId?: string): AbortSignal {
         // 修改原因：每次 SubAgent run 需要一个可由 Monitor 独立中止的控制信号，不能复用主聊天的 AbortController。
         // 修改方式：注册活跃 run 时创建专属 AbortController，并把 run 标记为 running。
         // 修改目的：后续 pause/exit 可以只影响该 SubAgent run，不直接让主窗口其他流式请求中止。
         // F2：同时记录嵌套深度，供子 agent 派发时读取父深度做超限校验与 Monitor 元数据。
         // 转后台（detach）：attachedToParent 标记该 run 是否挂父轮 abort 信号（前台 true / 后台 false），
         // detachFromParent 只对挂父信号的 run 生效——用户发新消息时前台 SubAgent 转后台继续，不被旧流 abort 连带杀掉。
+        // parentRunId：嵌套 run 转后台后，完成结果可据此投递给发起者（与显式 background 嵌套同语义）。
         const existing = this.activeRuns.get(runId);
         if (existing) {
             if (depth !== undefined) existing.depth = depth;
+            if (parentRunId !== undefined) existing.parentRunId = parentRunId;
             return existing.controller.signal;
         }
         const record: ActiveRunRecord = {
             runId,
             agentName,
             depth,
+            parentRunId,
             status: 'running',
             controller: new AbortController(),
             attachedToParent,
@@ -158,6 +163,11 @@ export class SubAgentRunController implements IRunController<SubAgentRunScope> {
      */
     getDepth(runId: string): number | undefined {
         return this.activeRuns.get(runId)?.depth;
+    }
+
+    /** 读取 run 的父 runId（嵌套派发时存在；主模型直接派发/未注册时返回 undefined）。 */
+    getParentRunId(runId: string): string | undefined {
+        return this.activeRuns.get(runId)?.parentRunId;
     }
 
     /**

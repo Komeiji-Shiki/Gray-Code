@@ -37,10 +37,17 @@ function nonEmptyString(value: unknown): string | undefined {
 }
 
 /**
- * 后台 SubAgent 的完整结果必须先进入后端 claim/ack 通道，taskEvent 只做 UI 展示与唤醒。
+ * 后台任务的完整结果必须先进入后端 claim/ack 通道，taskEvent 只做 UI 展示与唤醒。
  * 这样 Webview 尚未打开或切换会话时，终态事件即使没有观察者也不会丢失结果。
+ *
+ * 收件方判定：
+ * - background_subagent：优先投递给发起者（metadata.parentRunId，嵌套后台子代理场景）；
+ *   发起者已注销（run 不再活跃）或为主模型发起（无 parentRunId）时回退主会话。
+ * - terminal（仅 background=true）：投递给发起该命令的子代理（data.subagentRunId）；
+ *   子代理已结束或无归属（主模型发起）时回退主会话——主模型发起的后台命令仍由前端
+ *   生成回执，与旧行为一致。
  */
-function enqueueBackgroundSubAgentResult(
+function enqueueBackgroundTaskResult(
     task: TaskInfo,
     status: 'completed' | 'cancelled' | 'error',
     data: Record<string, unknown>
@@ -48,20 +55,36 @@ function enqueueBackgroundSubAgentResult(
     const metadata = task.metadata ?? {};
     const conversationId = nonEmptyString(data.conversationId) ?? nonEmptyString(metadata.conversationId);
     const runId = nonEmptyString(data.runId) ?? nonEmptyString(metadata.runId) ?? task.id;
-    const agentName = nonEmptyString(data.agentName) ?? nonEmptyString(metadata.agentName) ?? 'Sub-agent';
     if (!conversationId) return false;
 
-    const lines = [`Task: sub-agent "${agentName}" (runId: ${runId})`];
+    const isCommand = task.type === 'terminal';
+    const agentName = nonEmptyString(data.agentName) ?? nonEmptyString(metadata.agentName);
+    // 子代理发起者优先（嵌套后台子代理 = metadata.parentRunId；子代理内后台命令 = data.subagentRunId）；
+    // 收件方仍活跃时结果直接投递给它，否则回退主会话（主模型发起的后台任务保持原语义）。
+    const requesterRunId = nonEmptyString(metadata.parentRunId) ?? nonEmptyString(data.subagentRunId);
+    const targetRunId = requesterRunId && agentMailbox.isKnownRun(conversationId, requesterRunId)
+        ? requesterRunId
+        : undefined;
+
+    const lines = isCommand
+        ? [`Task: command \`${nonEmptyString(data.command) ?? 'unknown'}\``]
+        : [`Task: sub-agent "${agentName ?? 'Sub-agent'}" (runId: ${runId})`];
     const statusText = status === 'completed'
         ? 'success'
         : status === 'cancelled' ? 'cancelled by user' : 'failed';
     const statusMetadata: string[] = [];
-    if (typeof data.steps === 'number' && data.steps > 0) {
-        statusMetadata.push(`${data.steps} steps`);
-    }
-    if (Array.isArray(data.toolsUsed)) {
-        const toolsUsed = data.toolsUsed.filter((tool): tool is string => typeof tool === 'string');
-        statusMetadata.push(toolsUsed.length > 0 ? `tools: ${toolsUsed.join(', ')}` : 'tools: none');
+    if (isCommand) {
+        if (typeof data.exitCode === 'number') {
+            statusMetadata.push(`exit code ${data.exitCode}`);
+        }
+    } else {
+        if (typeof data.steps === 'number' && data.steps > 0) {
+            statusMetadata.push(`${data.steps} steps`);
+        }
+        if (Array.isArray(data.toolsUsed)) {
+            const toolsUsed = data.toolsUsed.filter((tool): tool is string => typeof tool === 'string');
+            statusMetadata.push(toolsUsed.length > 0 ? `tools: ${toolsUsed.join(', ')}` : 'tools: none');
+        }
     }
     const durationSeconds = Math.max(0, Math.round((Date.now() - task.startTime) / 1000));
     statusMetadata.push(`${durationSeconds}s`);
@@ -69,24 +92,33 @@ function enqueueBackgroundSubAgentResult(
 
     const error = nonEmptyString(data.error);
     if (error) lines.push(`Error: ${error}`);
-    const response = nonEmptyString(data.response);
-    if (response) {
-        lines.push('Result:', response);
+    if (isCommand) {
+        const output = nonEmptyString(data.output);
+        if (output) {
+            lines.push('Output:');
+            lines.push(output);
+        }
     } else {
-        lines.push('Open Monitor to view full transcript.');
+        const response = nonEmptyString(data.response);
+        if (response) {
+            lines.push('Result:', response);
+        } else {
+            lines.push('Open Monitor to view full transcript.');
+        }
     }
 
     const stableMessageId = `background-task:${task.id}`;
-    const result = agentMailbox.enqueueMainSessionSystemMessage({
+    const result = agentMailbox.enqueueSystemMessage({
         conversationId,
         messageId: stableMessageId,
         threadId: stableMessageId,
         fromRunId: runId,
-        fromAgentName: agentName,
-        text: `[Background task completed]\n\n${lines.join('\n')}`
+        ...(agentName ? { fromAgentName: agentName } : {}),
+        text: `[Background task completed]\n\n${lines.join('\n')}`,
+        ...(targetRunId ? { toRunId: targetRunId } : {})
     });
     if (!result.success) {
-        console.warn('[TaskManager] Failed to enqueue background SubAgent result:', result.error);
+        console.warn('[TaskManager] Failed to enqueue background task result:', result.error);
     }
     return result.success;
 }
@@ -241,7 +273,12 @@ class TaskManagerClass {
             : 'error';
 
         const terminalData: Record<string, unknown> = { ...(data ?? {}) };
-        if (task.type === 'background_subagent' && enqueueBackgroundSubAgentResult(task, status, terminalData)) {
+        const isBackgroundSubAgent = task.type === 'background_subagent';
+        // 仅后台 terminal 任务需要投递：前台命令结果已随 functionResponse 返回模型，
+        // 再投 mailbox 会重复。子代理发起的后台命令结果投递给发起 run（前端已不回流
+        // subagentRunId 任务），主模型发起的保持旧语义由前端生成回执。
+        const isBackgroundTerminal = task.type === 'terminal' && terminalData.background === true;
+        if ((isBackgroundSubAgent || isBackgroundTerminal) && enqueueBackgroundTaskResult(task, status, terminalData)) {
             // 前端据此只更新任务条，不再走旧的 background_task 回执；真正的交付由
             // agentMailbox claim -> conversation.addMessage -> acknowledge 保证。
             terminalData.delivery = 'agent_mailbox';

@@ -74,6 +74,9 @@ export function registerDetachedSubAgentTask(snapshot: SubAgentRunSnapshot): voi
         agentName,
         runId,
         detached: true,
+        // 嵌套前台子代理被转后台时，完成结果应投递给发起者 run（而非主会话）；
+        // 主模型直接启动的前台子代理无父 run，结果为 undefined，按旧语义投主会话。
+        parentRunId: subAgentRunController.getParentRunId(runId),
         promptPreview: `Detached SubAgent ${agentName || runId}`
     });
     bindBackgroundSubAgentTask({ runId, taskId, conversationId, agentName });
