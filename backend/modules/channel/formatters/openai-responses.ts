@@ -84,6 +84,25 @@ function getReasoningDisplayText(item: any): string | undefined {
 }
 
 const PROMPT_CACHE_KEY_PREFIX = 'graycode-cache-';
+const DEEPSEEK_REASONING_TEXT_FALLBACK = ' ';
+
+function isDeepSeekModel(model: string): boolean {
+    return model.toLowerCase().includes('deepseek');
+}
+
+function createDeepSeekReasoningTextFallbackContent(): Array<{ type: 'reasoning_text'; text: string }> {
+    return [{ type: 'reasoning_text', text: DEEPSEEK_REASONING_TEXT_FALLBACK }];
+}
+
+function hasReasoningTextContent(item: any): boolean {
+    return item?.type === 'reasoning' &&
+        Array.isArray(item.content) &&
+        item.content.some((entry: any) =>
+            entry?.type === 'reasoning_text' &&
+            typeof entry.text === 'string' &&
+            entry.text.length > 0
+        );
+}
 
 /**
  * OpenAI Responses 格式转换器
@@ -140,7 +159,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // 渠道永远携带 reasoning_content 的语义对齐）。
         const input = this.convertToResponsesInput(processedHistory, {
             allowReasoningContent: config.sendHistoryThoughts === true,
-            allowReasoningSignatures: config.sendHistoryThoughtSignatures === true
+            allowReasoningSignatures: config.sendHistoryThoughtSignatures === true,
+            useDeepSeekReasoningTextFallback: isDeepSeekModel(config.model)
         });
 
         // 构建请求体
@@ -256,6 +276,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         options?: {
             allowReasoningContent?: boolean;
             allowReasoningSignatures?: boolean;
+            useDeepSeekReasoningTextFallback?: boolean;
         }
     ): any[] {
         const input: any[] = [];
@@ -272,7 +293,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         }
         
         for (const content of history) {
+            const contentInputStart = input.length;
             const role = content.role === 'model' ? 'assistant' : content.role;
+            const useDeepSeekReasoningTextFallback =
+                options?.useDeepSeekReasoningTextFallback === true &&
+                role === 'assistant';
+            const shouldEnsureDeepSeekReasoningText =
+                useDeepSeekReasoningTextFallback &&
+                content.parts.some(part => !!part.functionCall && !part.functionCall.rejected);
             
             // 缓存当前正在构建的 message 类型项的内容
             let messageParts: any[] = [];
@@ -315,15 +343,24 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     !hasReasoningMetadata(reasoningMetadata) &&
                     !encryptedContent;
                 const hasResponsesReasoning = !!encryptedContent || hasReasoningMetadata(reasoningMetadata) || hasPlainThought;
-                const canReplayPlainReasoning = options?.allowReasoningContent === true && (
-                    reasoningContent.length > 0 ||
-                    reasoningSummary.length > 0 ||
-                    hasPlainThought ||
-                    (!!reasoningMetadata && !!displayText && (
-                        typeof reasoningMetadata.id === 'string' ||
-                        typeof reasoningMetadata.status === 'string'
-                    ))
-                );
+                const canReplayEmptyDeepSeekReasoning =
+                    useDeepSeekReasoningTextFallback &&
+                    !!reasoningMetadata &&
+                    reasoningContent.length === 0 &&
+                    reasoningSummary.length === 0 &&
+                    !displayText &&
+                    !encryptedContent;
+                const canReplayPlainReasoning = (
+                    options?.allowReasoningContent === true && (
+                        reasoningContent.length > 0 ||
+                        reasoningSummary.length > 0 ||
+                        hasPlainThought ||
+                        (!!reasoningMetadata && !!displayText && (
+                            typeof reasoningMetadata.id === 'string' ||
+                            typeof reasoningMetadata.status === 'string'
+                        ))
+                    )
+                ) || canReplayEmptyDeepSeekReasoning;
                 const canReplaySignedReasoning = options?.allowReasoningSignatures === true && !!encryptedContent;
 
                 // 1. 处理 OpenAI Responses reasoning item。新记录原样复放标准字段；
@@ -389,6 +426,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         // 降级）、未开签名——即 id/status + text 的旧流式记录或裸 thought
                         // 补全为 plain reasoning_text，以满足下一轮带 tools 的无状态回传要求。
                         reasoningItem.content = [{ type: 'reasoning_text', text: displayText }];
+                    } else if (canReplayEmptyDeepSeekReasoning) {
+                        // DeepSeek 可能返回只有 id/status、没有文本的 reasoning item；下一轮
+                        // 仍要求该项携带 reasoning_text，因此仅在原项的字段内补单空格。
+                        reasoningItem.content = createDeepSeekReasoningTextFallbackContent();
                     }
 
                     input.push(reasoningItem);
@@ -529,6 +570,19 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
 
             // 提交剩余积攒的消息内容
             flushMessage();
+
+            if (
+                shouldEnsureDeepSeekReasoningText &&
+                !input.slice(contentInputStart).some(hasReasoningTextContent)
+            ) {
+                // Responses 把 assistant 的思维链字段编码为独立 reasoning input item，
+                // DeepSeek 再将它与同一 assistant 工具调用消息合并。模型完全跳过思考时
+                // 不会留下 thought part，因此在该消息的输入片段开头补单空格字段。
+                input.splice(contentInputStart, 0, {
+                    type: 'reasoning',
+                    content: createDeepSeekReasoningTextFallbackContent()
+                });
+            }
         }
         
         return input;

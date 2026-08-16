@@ -588,6 +588,134 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(reasoningItems[0].content?.[0]).toEqual({ type: 'reasoning_text', text: '旧格式思维链' });
     });
 
+    test('DeepSeek 空 reasoning item 仅在 reasoning_text 字段内补单空格', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '读取文件。' }] },
+            {
+                role: 'model',
+                parts: [
+                    {
+                        thought: true,
+                        openaiResponsesReasoning: {
+                            id: 'rs_ds_empty_1',
+                            status: 'completed'
+                        }
+                    },
+                    { functionCall: { name: 'read_file', args: { path: 'a.ts' }, id: 'call_empty_1' } }
+                ]
+            },
+            {
+                role: 'user',
+                parts: [{
+                    functionResponse: {
+                        id: 'call_empty_1',
+                        name: 'read_file',
+                        response: { ok: true }
+                    }
+                }]
+            }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'vendor/DeepSeek-V4-Flash',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+        const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
+
+        expect(reasoningItems).toEqual([{
+            type: 'reasoning',
+            id: 'rs_ds_empty_1',
+            status: 'completed',
+            content: [{ type: 'reasoning_text', text: ' ' }]
+        }]);
+    });
+
+    test('DeepSeek assistant 工具调用未返回 reasoning 时补单空格字段', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '读取文件。' }] },
+            {
+                role: 'model',
+                parts: [{ functionCall: { name: 'read_file', args: { path: 'a.ts' }, id: 'call_no_reasoning_1' } }]
+            },
+            {
+                role: 'user',
+                parts: [{
+                    functionResponse: {
+                        id: 'call_no_reasoning_1',
+                        name: 'read_file',
+                        response: { ok: true }
+                    }
+                }]
+            }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'deepseek-v4-flash',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        const assistantTurnItems = request.body.input.filter((item: any) =>
+            item.type === 'reasoning' || item.type === 'function_call'
+        );
+        expect(assistantTurnItems).toEqual([
+            {
+                type: 'reasoning',
+                content: [{ type: 'reasoning_text', text: ' ' }]
+            },
+            {
+                type: 'function_call',
+                name: 'read_file',
+                call_id: 'call_no_reasoning_1',
+                arguments: '{"path":"a.ts"}'
+            }
+        ]);
+    });
+
+    test('非 DeepSeek assistant 工具调用缺少 reasoning 时不补字段', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '读取文件。' }] },
+            {
+                role: 'model',
+                parts: [
+                    { functionCall: { name: 'read_file', args: { path: 'a.ts' }, id: 'call_gpt_1' } }
+                ]
+            },
+            {
+                role: 'user',
+                parts: [{
+                    functionResponse: {
+                        id: 'call_gpt_1',
+                        name: 'read_file',
+                        response: { ok: true }
+                    }
+                }]
+            }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'gpt-5',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        expect(request.body.input.filter((item: any) => item.type === 'reasoning')).toHaveLength(0);
+        expect(request.body.input.filter((item: any) => item.type === 'function_call')).toHaveLength(1);
+    });
+
     test('子代理场景：reasoning item 位于 function_call 之前，thinking 不混入普通 assistant 文本', () => {
         // 复现 DeepSeek 带工具的子代理上下文：思考必须在工具调用之前按 reasoning 回传，
         // 且降级路径不得把思维链混入正文。
@@ -615,7 +743,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         const request = formatter.buildRequest(
             { configId: 'responses-test', history },
             createOpenAIResponsesConfig({
-                id: 'responses-test', name: 'Responses Test', preferStream: true,
+                id: 'responses-test', name: 'Responses Test', model: 'deepseek-v4-flash', preferStream: true,
                 sendHistoryThoughts: true,
                 sendHistoryThoughtSignatures: false
             })
