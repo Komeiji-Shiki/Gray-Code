@@ -3061,6 +3061,13 @@ const zhCN = {
                 }
             },
             'openai-responses': {
+                promptCacheKey: {
+                    title: 'Prompt Cache Key（会话缓存透传）',
+                    hint: '为支持该字段的 OpenAI 兼容网关（如 openai-api-server-via-codex）发送 prompt_cache_key，用于复用 Codex 后端会话缓存。开启后基于当前对话 ID 生成稳定且不含隐私信息的 key；总结、子代理等内部请求默认不会发送。',
+                    toggleHint: '开启后基于当前对话 ID 生成稳定 key 并在请求体中发送',
+                    keyPlaceholder: '留空自动生成（基于对话 ID）',
+                    keyHint: '自定义 key 会跨对话共享同一会话缓存域，请谨慎使用'
+                },
                 maxOutputTokens: {
                     label: '最大输出 Tokens',
                     placeholder: '8192',

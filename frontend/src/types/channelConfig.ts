@@ -207,6 +207,8 @@ export interface ChannelConfig {
   useAuthorizationHeader?: boolean
   deepSeekUserIdEnabled?: boolean
   pdfAttachmentEnabled?: boolean
+  promptCacheKeyEnabled?: boolean
+  promptCacheKey?: string
   promptCachingEnabled?: boolean
   promptCachingTtl?: '5m' | '1h'
   promptCachingKeepAlive?: boolean

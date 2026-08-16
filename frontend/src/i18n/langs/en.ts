@@ -3059,6 +3059,13 @@ const en: LanguageMessages = {
                 }
             },
             'openai-responses': {
+                promptCacheKey: {
+                    title: 'Prompt Cache Key (Session Cache Passthrough)',
+                    hint: 'Send prompt_cache_key for OpenAI-compatible gateways that support it (e.g. openai-api-server-via-codex) to reuse the Codex backend session cache. When enabled, a stable privacy-safe key is derived from the current conversation ID; internal requests such as summarization and sub-agents do not send it.',
+                    toggleHint: 'Derive a stable key from the current conversation ID and send it in the request body',
+                    keyPlaceholder: 'Leave empty to auto-generate (based on conversation ID)',
+                    keyHint: 'A custom key shares one session cache domain across conversations; use with caution'
+                },
                 maxOutputTokens: {
                     label: 'Max Output Tokens',
                     placeholder: '8192',

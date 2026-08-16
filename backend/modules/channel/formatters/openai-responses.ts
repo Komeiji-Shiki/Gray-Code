@@ -5,6 +5,7 @@
  * 详情参考: https://api.openai.com/v1/responses
  */
 
+import { createHash } from 'crypto';
 import { t } from '../../../i18n';
 import { BaseFormatter } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
@@ -82,6 +83,8 @@ function getReasoningDisplayText(item: any): string | undefined {
     return undefined;
 }
 
+const PROMPT_CACHE_KEY_PREFIX = 'graycode-cache-';
+
 /**
  * OpenAI Responses 格式转换器
  * 
@@ -153,6 +156,12 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             body.tools = this.convertTools(tools);
         }
 
+        // 添加 prompt_cache_key（会话缓存透传）
+        const promptCacheKey = this.buildPromptCacheKey(request, config);
+        if (promptCacheKey) {
+            body.prompt_cache_key = promptCacheKey;
+        }
+
         // 添加生成配置
         const genConfig = this.buildGenerationConfig(config);
         Object.assign(body, genConfig);
@@ -196,6 +205,42 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             timeout: config.timeout,
             stream: useStream
         };
+    }
+
+    /**
+     * 生成 OpenAI 兼容网关的 prompt_cache_key（会话缓存透传）。
+     *
+     * 支持该字段的网关（如 openai-api-server-via-codex）会把它原样转成
+     * session_id / x-client-request-id 请求头发给 Codex 后端，相同 key 的
+     * 后续请求可能复用后端会话缓存。
+     *
+     * - 显式 promptCacheKey 非空时优先使用（跨对话共享同一缓存域，高级用法）；
+     * - 否则仅当 promptCacheKeyEnabled 且请求携带 conversationId 时，
+     *   基于 conversationId 的 sha256 生成稳定 key（每对话独立缓存域，
+     *   不泄露原始 ID；续跑时 executor 沿用旧 runId，缓存域天然一致，
+     *   与 deepSeekUserIdEnabled 语义对齐）；
+     * - 其余情况返回 undefined（请求体不带该字段，不影响不识别它的端点）。
+     */
+    private buildPromptCacheKey(request: GenerateRequest, config: OpenAIResponsesConfig): string | undefined {
+        const explicitKey = config.promptCacheKey?.trim();
+        if (explicitKey) {
+            return explicitKey;
+        }
+
+        if (!config.promptCacheKeyEnabled) {
+            return undefined;
+        }
+
+        const conversationId = request.conversationId?.trim();
+        if (!conversationId) {
+            return undefined;
+        }
+
+        const digest = createHash('sha256')
+            .update(conversationId, 'utf8')
+            .digest('hex');
+
+        return `${PROMPT_CACHE_KEY_PREFIX}${digest}`;
     }
 
     /**

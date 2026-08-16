@@ -51,6 +51,25 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
     /** 当前使用的模型名称 */
     model: string;
     
+    /**
+     * 是否发送 prompt_cache_key（OpenAI 兼容网关的会话缓存透传）。
+     *
+     * 开启后基于主聊天 conversationId 生成稳定且不含隐私信息的 prompt_cache_key，
+     * 相同对话的后续请求可在支持该字段的网关（如 openai-api-server-via-codex）
+     * 上复用 Codex 后端会话缓存（网关会把该字段转成 session_id 请求头）；
+     * 总结、子代理等内部请求默认不携带 conversationId，不会发送该字段。
+     * 仅支持 prompt_cache_key 的网关可开启，默认关闭。
+     */
+    promptCacheKeyEnabled?: boolean;
+
+    /**
+     * 显式 prompt_cache_key 覆盖。
+     *
+     * 非空时优先使用此值（跨对话共享同一会话缓存域，高级用法）；
+     * 未设置或为空时回退为基于 conversationId 哈希生成。
+     */
+    promptCacheKey?: string;
+
     /** 可用模型列表 */
     models?: ModelInfo[];
     

@@ -3059,6 +3059,13 @@ const ja: LanguageMessages = {
                 }
             },
             'openai-responses': {
+                promptCacheKey: {
+                    title: 'Prompt Cache Key（セッションキャッシュ透過）',
+                    hint: '対応する OpenAI 互換ゲートウェイ（例: openai-api-server-via-codex）に prompt_cache_key を送信し、Codex バックエンドのセッションキャッシュを再利用します。有効にすると現在の会話 ID から安定したプライバシー安全なキーを生成します。要約・サブエージェントなどの内部リクエストでは送信されません。',
+                    toggleHint: '現在の会話 ID から安定したキーを生成してリクエストボディに送信',
+                    keyPlaceholder: '空欄で自動生成（会話 ID ベース）',
+                    keyHint: 'カスタムキーは会話をまたいで同じセッションキャッシュドメインを共有します。注意して使用してください'
+                },
                 maxOutputTokens: {
                     label: '最大出力トークン',
                     placeholder: '8192',

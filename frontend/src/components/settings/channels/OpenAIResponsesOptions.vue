@@ -129,6 +129,36 @@ function onSendThoughtSignaturesChange(e: any) {
 
 <template>
   <div class="openai-responses-options">
+    <!-- Prompt Cache Key（会话缓存透传） -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-history"></i>
+          {{ t('components.channels.openai-responses.promptCacheKey.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.openai-responses.promptCacheKey.toggleHint')">
+          <input
+            type="checkbox"
+            :checked="config.promptCacheKeyEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'promptCacheKeyEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.openai-responses.promptCacheKey.hint') }}</span>
+        <input
+          type="text"
+          :value="config.promptCacheKey ?? ''"
+          :placeholder="t('components.channels.openai-responses.promptCacheKey.keyPlaceholder')"
+          :disabled="!(config.promptCacheKeyEnabled ?? false)"
+          :class="{ disabled: !(config.promptCacheKeyEnabled ?? false) }"
+          @input="(e: any) => emit('update:field', 'promptCacheKey', e.target.value)"
+        />
+        <span class="option-hint">{{ t('components.channels.openai-responses.promptCacheKey.keyHint') }}</span>
+      </div>
+    </div>
+
     <!-- 温度 -->
     <div class="option-item option-with-toggle">
       <div class="option-header">
