@@ -13,7 +13,7 @@ import { isRetryableError } from '../../../core/errors';
  * 识别「上下文超限」类错误。
  *
  * 子代理没有接主链路的 ContextTrimService，历史上只增不减会撞上模型上下文上限。
- * 现在发送前有请求级防御性裁剪（trimSubAgentHistoryForContext），但识别错误仍是
+ * 现在发送前有请求级上下文防护（trimSubAgentHistoryForContext / compactSubAgentHistoryForContext），但识别错误仍是
  * 兜底防线（模型/上游措辞不同，裁剪不可能覆盖全部场景）。各家 provider 措辞不同
  * 但都认得出来。不做识别的话，用户只能看到一句原样透传的 `AI call failed: ...`，
  * 既不知道是撞了上下文，也不知道该去调哪个配置。

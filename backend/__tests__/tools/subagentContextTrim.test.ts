@@ -9,7 +9,11 @@
  * - 预算 = 渠道 maxContextTokens × 0.8（缺省 128000）
  */
 
-import { trimSubAgentHistoryForContext } from '../../tools/subagents/executor';
+import {
+    compactSubAgentHistoryForContext,
+    estimateSubAgentHistoryTokens,
+    trimSubAgentHistoryForContext
+} from '../../tools/subagents/executor';
 import type { Content } from '../../modules/conversation/types';
 import type { BaseChannelConfig } from '../../modules/config/configs/base';
 
@@ -152,6 +156,66 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         expectNoOrphanResponses(result);
     });
 
+    test('删掉一轮后仍超预算时继续删除，不能在刚好跨过阈值时提前停止', () => {
+        const history: Content[] = [
+            userMsg('task'),
+            modelCallMsg('c1', 'read_file', 800), toolResultMsg('c1', 800),
+            modelCallMsg('c2', 'read_file', 800), toolResultMsg('c2', 800),
+            modelTextMsg('answer')
+        ];
+        const result = trimSubAgentHistoryForContext(history, channelConfig(250));
+        expect(result.some(m => m.parts?.some(p => p.functionCall?.id === 'c1'))).toBe(false);
+        expect(result.some(m => m.parts?.some(p => p.functionCall?.id === 'c2'))).toBe(true);
+        expect(result[result.length - 1].parts?.[0].text).toBe('answer');
+        expect(estimateSubAgentHistoryTokens(result)).toBeLessThanOrEqual(200);
+        expectNoOrphanResponses(result);
+    });
+
+    test('保护区包含多个超大工具结果时仍会按最终预算收敛', () => {
+        const history = [
+            userMsg('task'),
+            modelCallMsg('c1', 'read_file', 10),
+            toolResultMsg('c1', 500000),
+            modelCallMsg('c2', 'read_file', 10),
+            toolResultMsg('c2', 500000)
+        ];
+        const result = trimSubAgentHistoryForContext(history, channelConfig(50000));
+        expect(estimateSubAgentHistoryTokens(result)).toBeLessThanOrEqual(40000);
+        expect(result.some(m => m.parts?.some(p => p.functionCall?.id === 'c2'))).toBe(true);
+        expectNoOrphanResponses(result);
+    });
+
+    test('系统提示词和工具声明会从子代理历史预算中扣除', () => {
+        const history = [userMsg('task'), modelTextMsg('x'.repeat(100000))];
+        const result = trimSubAgentHistoryForContext(history, channelConfig(50000), {
+            systemPrompt: 'system '.repeat(1000),
+            toolDeclarations: [{ name: 'read_file', description: 'tool '.repeat(1000) }]
+        });
+        expect(estimateSubAgentHistoryTokens(result)).toBeLessThan(40000);
+        expect(result[1].parts?.[0].text).toContain('sub-agent context trim');
+    });
+
+    test('独立压缩插入摘要但保留最近工具调用、配对和 provider 推理元数据', () => {
+        const currentCall = modelCallMsg('c3', 'read_file', 20);
+        currentCall.parts[0].thoughtSignatures = { gemini: 'sig-c3' };
+        const history: Content[] = [
+            userMsg('task'),
+            modelCallMsg('c1', 'read_file', 1000), toolResultMsg('c1', 1000),
+            modelCallMsg('c2', 'read_file', 1000), toolResultMsg('c2', 1000),
+            currentCall, toolResultMsg('c3', 1000)
+        ];
+        const result = compactSubAgentHistoryForContext(history, channelConfig(300), {
+            systemPrompt: 'agent system prompt'
+        });
+        expect(result.some(message => message.isSummary === true)).toBe(true);
+        expect(result.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(false);
+        expect(result.some(message => message.parts?.some(part => part.functionCall?.id === 'c3'))).toBe(true);
+        expect(result.find(message => message.parts?.some(part => part.functionCall?.id === 'c3'))?.parts[0].thoughtSignatures)
+            .toEqual({ gemini: 'sig-c3' });
+        expectNoOrphanResponses(result);
+    });
+
+
     test('预算按渠道 maxContextTokens 的 80% 计算（缺省 128000）', () => {
         // 无 maxContextTokens：预算 = 128000 * 0.8 = 102400 token
         const history = [
@@ -162,7 +226,6 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         const config = channelConfig(128000);
         delete (config as Partial<BaseChannelConfig>).maxContextTokens;
         const result = trimSubAgentHistoryForContext(history, config);
-        // 超预算触发裁剪：首条任务消息保留，超大文本被截断
         expect(result[0].parts?.[0].text).toBe('task');
         expect(result[1].parts?.[0].text).toContain('sub-agent context trim');
     });

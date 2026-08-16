@@ -22,5 +22,10 @@ export {
     resolveSubAgentAvailableTools
 } from './executor/context';
 export { stripReplayedAgentInboxForModel } from './executor/inbox';
-export { trimSubAgentHistoryForContext } from './executor/contextTrim';
+export {
+    trimSubAgentHistoryForContext,
+    compactSubAgentHistoryForContext,
+    estimateSubAgentMessageTokens,
+    estimateSubAgentHistoryTokens
+} from './executor/contextTrim';
 export { createDefaultExecutor, defaultExecutorFactory } from './executor/runLoop';

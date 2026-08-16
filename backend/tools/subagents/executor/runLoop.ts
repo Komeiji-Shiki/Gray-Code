@@ -27,7 +27,9 @@ import { agentMailbox, formatAgentMessagesForModel, type AgentMessage } from '..
 import { markAiActive } from '../../../modules/activity';
 import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
-import { trimSubAgentHistoryForContext } from './contextTrim';
+import {
+    compactSubAgentHistoryForContext
+} from './contextTrim';
 
 // TODO(02#05): 本文件保留了 `as any`（result/response 为上游 LLM 响应，形状随渠道/流式模式变化，
 // 且 ContentPart 等类型未完全覆盖所有可选字段）。这些断言只做字段探测，不改运行时语义；
@@ -640,7 +642,7 @@ export function createDefaultExecutor(
             // 修改原因：子代理延续——当 continueFromRunId 指定时，将旧 run 的完整 transcript 前置。
             // 修改方式：展开 baseContents 到 history 数组头部，新 user prompt 追加在末尾。
             // 修改目的：新子代理可以直接看到旧子代理完成了什么，实现跨调用接力。
-            const history: Content[] = [
+            let history: Content[] = [
                 ...baseContents,
                 { role: 'user', parts: [{ text: userPrompt }] }
             ];
@@ -746,20 +748,24 @@ export function createDefaultExecutor(
                 
                 steps++;
                 
-                // 调用 AI
                 const operation = createOperationSignal();
                 const operationSignal = operation.signal;
                 let retryFailedInThisCall = false;
-                // 请求历史归一化保持 agentInbox 字节稳定：一次性消费由 mailbox drain/claim 保证，
-                // 已经发给模型的内容不能在后续请求中删除，否则 provider 缓存前缀会失配。
-                // 归一化结果就是本轮实际发送的历史，随后写入 lastSentHistory 供续跑精确复用。
+                // 子代理拥有独立的 provider history：完整 transcript 继续留在 Monitor，
+                // 请求历史在完整工具回合边界做压缩，并把摘要随 lastSentHistory 持久化，
+                // 这样 continueFromRunId 续跑不会重新携带已经压缩掉的巨型工具结果。
+                const compactedHistory = compactSubAgentHistoryForContext(history, channelConfig, {
+                    modelOverride: config.channel.modelId,
+                    systemPrompt,
+                    toolDeclarations: effectiveTools
+                });
+                if (compactedHistory !== history) {
+                    history = compactedHistory;
+                }
                 const sentHistory = stripReplayedAgentInboxForModel(history);
-                // 修改原因（SEC）：子代理 history 只增不减，长任务会撞上模型上下文上限直接失败。
-                // 修改方式：发送前做请求级上下文裁剪（保留首条任务消息与末尾配对，超长字符串截断），
-                //         裁剪结果即为本轮实际发送内容；updateLastSentHistory 同步记录裁剪结果，
-                //         保证 continueFromRunId 续跑前缀与实际发送历史一致。
-                // 修改目的：子代理长任务在撞上限前自动收敛上下文，不再直接失败。
-                const trimmedHistory = trimSubAgentHistoryForContext(sentHistory, channelConfig);
+                // compactSubAgentHistoryForContext 已同时完成旧回合裁剪、输出预留和超大值收敛。
+                // sentHistory 就是本轮真实发送历史，随后写入 lastSentHistory 供续跑精确复用。
+                const trimmedHistory = sentHistory;
                 const generateRequest: GenerateRequest = {
                     configId: config.channel.channelId,
                     history: trimmedHistory,
