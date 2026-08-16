@@ -681,6 +681,62 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         ]);
     });
 
+    test('DeepSeek assistant 纯文本未返回 reasoning 时补单空格字段', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '直接回答。' }] },
+            { role: 'model', parts: [{ text: '这是直接输出的文本。' }] },
+            { role: 'user', parts: [{ text: '继续。' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'deepseek-v4-pro',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        const assistantTurnItems = request.body.input.filter((item: any) =>
+            item.type === 'reasoning' || (item.type === 'message' && item.role === 'assistant')
+        );
+        expect(assistantTurnItems).toEqual([
+            {
+                type: 'reasoning',
+                content: [{ type: 'reasoning_text', text: ' ' }]
+            },
+            {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: '这是直接输出的文本。' }]
+            }
+        ]);
+    });
+
+    test('非 DeepSeek assistant 纯文本缺少 reasoning 时不补字段', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: '直接回答。' }] },
+            { role: 'model', parts: [{ text: '普通模型文本。' }] },
+            { role: 'user', parts: [{ text: '继续。' }] }
+        ];
+
+        const request = formatter.buildRequest(
+            { configId: 'responses-test', history },
+            createOpenAIResponsesConfig({
+                id: 'responses-test', name: 'Responses Test', model: 'gpt-5',
+                sendHistoryThoughts: true,
+                sendHistoryThoughtSignatures: false
+            })
+        );
+
+        expect(request.body.input.filter((item: any) => item.type === 'reasoning')).toHaveLength(0);
+        expect(request.body.input.filter((item: any) =>
+            item.type === 'message' && item.role === 'assistant'
+        )).toHaveLength(1);
+    });
+
     test('非 DeepSeek assistant 工具调用缺少 reasoning 时不补字段', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [

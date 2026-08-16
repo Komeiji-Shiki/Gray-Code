@@ -298,9 +298,6 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             const useDeepSeekReasoningTextFallback =
                 options?.useDeepSeekReasoningTextFallback === true &&
                 role === 'assistant';
-            const shouldEnsureDeepSeekReasoningText =
-                useDeepSeekReasoningTextFallback &&
-                content.parts.some(part => !!part.functionCall && !part.functionCall.rejected);
             
             // 缓存当前正在构建的 message 类型项的内容
             let messageParts: any[] = [];
@@ -571,13 +568,19 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             // 提交剩余积攒的消息内容
             flushMessage();
 
+            const contentInputItems = input.slice(contentInputStart);
+            const hasAssistantOutput = contentInputItems.some(item =>
+                (item?.type === 'message' && item.role === 'assistant') ||
+                item?.type === 'function_call'
+            );
             if (
-                shouldEnsureDeepSeekReasoningText &&
-                !input.slice(contentInputStart).some(hasReasoningTextContent)
+                useDeepSeekReasoningTextFallback &&
+                hasAssistantOutput &&
+                !contentInputItems.some(hasReasoningTextContent)
             ) {
                 // Responses 把 assistant 的思维链字段编码为独立 reasoning input item，
-                // DeepSeek 再将它与同一 assistant 工具调用消息合并。模型完全跳过思考时
-                // 不会留下 thought part，因此在该消息的输入片段开头补单空格字段。
+                // DeepSeek 再将它与同一 assistant 输出消息合并。模型无论是直接调用工具
+                // 还是直接输出文本，只要完全跳过思考，都在该消息片段开头补单空格字段。
                 input.splice(contentInputStart, 0, {
                     type: 'reasoning',
                     content: createDeepSeekReasoningTextFallbackContent()
