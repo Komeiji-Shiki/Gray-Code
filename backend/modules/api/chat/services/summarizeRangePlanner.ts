@@ -103,9 +103,9 @@ export type SummarizeRangePlan =
  * 决策优先级：
  * 1. 按预算从最后一轮往前保留（最后一轮无条件保留）；
  * 2. minKeepRounds 作为“最少保留轮数”下限，可能进一步扩大保留范围；
- * 3. 若两者叠加后没有任何轮可总结：
- *    - auto 模式防死锁优先：回退到纯预算结果，仍不行则只保留最后一轮；
- *    - manual 模式尊重用户配置，返回轮数不足；
+ * 3. 若最少保留轮数覆盖了全部多轮历史：
+ *    - manual 在合并历史确实超过预算时按“单个超大轮”进入轮内切分；
+ *    - auto 仍回退为只保留当前轮，避免自动总结覆盖当前任务。
  * 4. 只有一轮且该轮体积超过预算时，请求轮内截断。
  */
 export function planSummarizeRounds(options: {
@@ -115,7 +115,7 @@ export function planSummarizeRounds(options: {
     keepBudgetTokens: number;
     /** 最少保留轮数（下限保护，内部至少按 1 处理） */
     minKeepRounds: number;
-    /** manual：尊重 minKeepRounds 并在不足时报错；auto：防死锁优先 */
+    /** manual/auto 的轮级保护模式；manual 在多轮全被保护且超预算时允许轮内切分 */
     mode: 'manual' | 'auto';
 }): SummarizeRangePlan {
     const { roundTokens, keepBudgetTokens, mode } = options;
@@ -145,26 +145,23 @@ export function planSummarizeRounds(options: {
         return { type: 'rounds', keepFromRound: keepFrom };
     }
 
-    // 3) 没有任何轮可总结，进入回退级联
-    if (budgetKeepFrom >= 1) {
-        // 是 minKeepRounds 挡住的：auto 防死锁优先回退到纯预算结果；manual 尊重配置
-        return mode === 'auto'
-            ? { type: 'rounds', keepFromRound: budgetKeepFrom }
-            : { type: 'none', reason: 'not_enough_rounds' };
-    }
-
-    // budgetKeepFrom === 0：预算装得下总结点之后的全部轮
+    // 预算已经允许总结更早轮次时，仍按 minKeepRounds 保留最近轮数。
     if (totalRounds - minKeepRounds >= 1) {
-        // 仍有可总结轮（通常是手动总结、或预算配置过大时的自动总结）：
-        // 退化为旧行为——保留 minKeepRounds 轮，总结其余
         return { type: 'rounds', keepFromRound: totalRounds - minKeepRounds };
     }
 
-    if (totalRounds > 1) {
-        // 轮数不足 minKeepRounds 但仍有多轮：auto 防死锁只保留当前轮；manual 报错
-        return mode === 'auto'
-            ? { type: 'rounds', keepFromRound: totalRounds - 1 }
+    // 3) 手动总结在“两轮也全部受保护”时，把活跃历史视为一个长轮，
+    //    沿用单轮逻辑寻找内容比例更合适的安全 model 切点。
+    const totalTokens = roundTokens.reduce((sum, tokens) => sum + tokens, 0);
+    if (mode === 'manual' && totalRounds > 1 && totalRounds <= minKeepRounds) {
+        return totalTokens > keepBudgetTokens
+            ? { type: 'intra_round' }
             : { type: 'none', reason: 'not_enough_rounds' };
+    }
+
+    // 4) 自动总结在多轮不足保护值时只保留当前轮；手动路径已在上面按单轮处理。
+    if (totalRounds > 1) {
+        return { type: 'rounds', keepFromRound: totalRounds - 1 };
     }
 
     // 只有一轮：该轮体积超过预算时才值得轮内截断，否则没有可总结内容
@@ -253,8 +250,8 @@ export interface MessageGranularSummarizePlan {
 /**
  * 在轮级规划结果基础上向前寻找更细的安全切点。
  *
- * 轮级规划先保证 keepRecentRounds 的语义；随后允许在“原本会被整轮总结掉”的最后一个肥轮
- * 内部选择 model 消息边界，从而尽量把保留后缀填满 keepBudgetTokens，而不是直接丢掉整轮。
+ * 轮级规划先保证 keepRecentRounds 的语义；但手动总结在保护值覆盖全部多轮且总量超预算时，
+ * 将活跃历史视为一个长轮，允许在完整消息序列中选择 model 切点；自动总结仍严格保护当前轮。
  * 切点后的历史必须没有孤儿 functionResponse，确保 functionCall/functionResponse 原子性。
  */
 export function planSummarizeMessages(options: {

@@ -12,6 +12,7 @@ import type { SettingsManager } from '../../modules/settings/SettingsManager';
 import type { ConfigManager } from '../../modules/config/ConfigManager';
 import type { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
 import type { UsageIndexMessage } from '../../modules/conversation/usageStats';
+import type { Content } from '../../modules/conversation/types';
 
 /**
  * 子代理类型
@@ -280,11 +281,26 @@ export interface SubAgentResult {
     cancelled?: boolean;
 }
 
+export interface SubAgentSummaryRequestOptions {
+    /** 生成总结时使用的渠道配置 ID */
+    configId: string;
+    /** 当前子代理模型，未指定时使用渠道默认模型 */
+    modelOverride?: string;
+    /** 与当前子代理模型请求共享的中止信号 */
+    abortSignal?: AbortSignal;
+}
+
 /**
- * 子代理执行上下文
- * 
- * 提供执行器所需的依赖
+ * 子代理请求级自动总结生成器。
+ *
+ * 实现由宿主注入，保证子代理使用与主模型相同的总结提示词、模型选择和响应解析，
+ * 但只返回一条内存中的总结消息，不直接改写主会话历史。
  */
+export type SubAgentSummaryGenerator = (
+    history: Content[],
+    options: SubAgentSummaryRequestOptions
+) => Promise<Content | undefined>;
+
 export interface SubAgentExecutorContext {
     /** 渠道管理器（用于调用 AI） */
     channelManager: ChannelManager;
@@ -315,6 +331,13 @@ export interface SubAgentExecutorContext {
      * 修改目的：共享工具执行内核，但保持 SubAgent 模型能力、toolMode 和多模态开关独立于主会话。
      */
     toolExecutionService?: ToolExecutionService;
+
+    /**
+     * 主模型总结服务的无持久化入口：子代理上下文超预算时用它生成摘要。
+     * 未注入时仍可执行请求级裁剪，但不会伪造一份本地预览作为“总结”发给模型。
+     */
+    summarizeHistory?: SubAgentSummaryGenerator;
+
 
     /** 对话 ID，用于把 SubAgent 内部记录保存到 conversation 子记录 */
     conversationId?: string;

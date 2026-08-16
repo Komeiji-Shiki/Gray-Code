@@ -15,8 +15,6 @@ const SUBAGENT_CONTEXT_BUDGET_DEFAULT_TOKENS = 128000;
 const SUBAGENT_CONTEXT_BUDGET_RATIO = 0.8;
 /** 单个字符串的初始保留上限，后续还会按总预算继续收缩。 */
 const SUBAGENT_MAX_SINGLE_STRING_CHARS = 200000;
-const SUBAGENT_COMPACTION_SUMMARY_MAX_CHARS = 8000;
-const SUBAGENT_COMPACTION_PREVIEW_CHARS = 640;
 const SUBAGENT_COMPACTION_MAX_ROUNDS = 8;
 const SUBAGENT_MIN_RETAINED_CHARS = 128;
 
@@ -27,6 +25,10 @@ export interface SubAgentContextTrimOptions {
     systemPrompt?: string;
     /** 本次请求实际暴露给模型的工具声明，计入输入预算。 */
     toolDeclarations?: unknown[];
+    /**
+     * 使用主模型同源的总结服务压缩被移除的旧回合；返回 undefined 时只做请求级裁剪。
+     */
+    summarizeHistory?: (history: Content[]) => Promise<Content | undefined>;
 }
 
 interface HistorySelection {
@@ -279,48 +281,6 @@ function selectHistoryForBudget(history: Content[], budget: number): HistorySele
     };
 }
 
-function previewValue(value: unknown, maxChars = SUBAGENT_COMPACTION_PREVIEW_CHARS): string {
-    let text: string;
-    try {
-        text = typeof value === 'string' ? value : JSON.stringify(value);
-    } catch {
-        text = '[unserializable value]';
-    }
-    text = text || '';
-    return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
-}
-
-function buildCompactionSummary(dropped: Content[]): Content | undefined {
-    if (dropped.length === 0) return undefined;
-    const lines: string[] = [
-        '[Earlier sub-agent context was compacted. Preserve these completed-work facts:]'
-    ];
-    for (const message of dropped) {
-        for (const part of message.parts || []) {
-            if (part.functionCall) {
-                lines.push(`- tool call ${part.functionCall.name} (${part.functionCall.id || 'no-id'}): ${previewValue(part.functionCall.args)}`);
-            } else if (part.functionResponse) {
-                lines.push(`- tool result ${part.functionResponse.name} (${part.functionResponse.id || 'no-id'}): ${previewValue(part.functionResponse.response)}`);
-            } else if (part.text?.trim()) {
-                lines.push(`- ${previewValue(part.text)}`);
-            }
-            if (lines.join('\n').length >= SUBAGENT_COMPACTION_SUMMARY_MAX_CHARS) break;
-        }
-        if (lines.join('\n').length >= SUBAGENT_COMPACTION_SUMMARY_MAX_CHARS) break;
-    }
-    let text = lines.join('\n');
-    if (text.length > SUBAGENT_COMPACTION_SUMMARY_MAX_CHARS) {
-        text = text.slice(0, SUBAGENT_COMPACTION_SUMMARY_MAX_CHARS) + '\n[…earlier details omitted]';
-    }
-    return {
-        role: 'user',
-        parts: [{ text }],
-        isSummary: true,
-        isAutoSummary: true,
-        timestamp: Date.now()
-    } as Content;
-}
-
 /**
  * 仅做请求级裁剪的兼容入口。不会插入摘要，供旧调用方和纯裁剪测试继续使用。
  */
@@ -339,21 +299,23 @@ export function trimSubAgentHistoryForContext(
  * 子代理独立上下文压缩：
  * - 只在发送给 provider 的 history 中替换旧回合；Monitor transcript 不变；
  * - 只删除完整工具回合，不拆当前 functionCall/functionResponse；
- * - 摘要是普通 user summary，不携带伪造的 thought signature；保留区中的 Gemini /
- *   OpenAI Responses reasoning 元数据原样保留。
+ * - 通过主模型同源的总结服务生成 isSummary 消息；总结失败时只保留请求级裁剪结果。
  */
-export function compactSubAgentHistoryForContext(
+export async function compactSubAgentHistoryForContext(
     history: Content[],
     channelConfig: BaseChannelConfig,
     options?: SubAgentContextTrimOptions
-): Content[] {
+): Promise<Content[]> {
     const budget = resolveHistoryBudget(channelConfig, options);
     if (estimateSubAgentHistoryTokens(history) <= budget) return history;
     const selection = selectHistoryForBudget(history, budget);
 
-    const summary = buildCompactionSummary(selection.dropped);
-    const withSummary = summary && selection.retained.length > 0
-        ? [selection.retained[0], summary, ...selection.retained.slice(1)]
-        : selection.retained;
+    let withSummary = selection.retained;
+    if (selection.dropped.length > 0 && options?.summarizeHistory) {
+        const summary = await options.summarizeHistory(selection.dropped);
+        if (summary && selection.retained.length > 0) {
+            withSummary = [selection.retained[0], summary, ...selection.retained.slice(1)];
+        }
+    }
     return cloneAndFitHistory(withSummary, budget);
 }

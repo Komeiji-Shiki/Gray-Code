@@ -195,7 +195,7 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
         expect(result[1].parts?.[0].text).toContain('sub-agent context trim');
     });
 
-    test('独立压缩插入摘要但保留最近工具调用、配对和 provider 推理元数据', () => {
+    test('独立压缩调用主模型总结服务，保留最近工具调用、配对和 provider 推理元数据', async () => {
         const currentCall = modelCallMsg('c3', 'read_file', 20);
         currentCall.parts[0].thoughtSignatures = { gemini: 'sig-c3' };
         const history: Content[] = [
@@ -204,10 +204,22 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
             modelCallMsg('c2', 'read_file', 1000), toolResultMsg('c2', 1000),
             currentCall, toolResultMsg('c3', 1000)
         ];
-        const result = compactSubAgentHistoryForContext(history, channelConfig(300), {
-            systemPrompt: 'agent system prompt'
+        const generatedSummary: Content = {
+            role: 'user',
+            parts: [{ text: 'model-generated sub-agent summary' }],
+            isSummary: true,
+            isAutoSummary: true
+        };
+        const summarizeHistory = jest.fn(async (dropped: Content[]) => {
+            expect(dropped.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(true);
+            return generatedSummary;
         });
-        expect(result.some(message => message.isSummary === true)).toBe(true);
+        const result = await compactSubAgentHistoryForContext(history, channelConfig(300), {
+            systemPrompt: 'agent system prompt',
+            summarizeHistory
+        });
+        expect(summarizeHistory).toHaveBeenCalledTimes(1);
+        expect(result.some(message => message.parts?.[0]?.text === 'model-generated sub-agent summary')).toBe(true);
         expect(result.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(false);
         expect(result.some(message => message.parts?.some(part => part.functionCall?.id === 'c3'))).toBe(true);
         expect(result.find(message => message.parts?.some(part => part.functionCall?.id === 'c3'))?.parts[0].thoughtSignatures)

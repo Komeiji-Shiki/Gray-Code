@@ -17,7 +17,9 @@ export type {
     SubAgentRegistryEntry,
     SubAgentExecutor,
     SubAgentExecutorContext,
-    SubAgentExecutorFactory
+    SubAgentExecutorFactory,
+    SubAgentSummaryRequestOptions,
+    SubAgentSummaryGenerator
 } from './types';
 
 // F2：嵌套深度上限常量

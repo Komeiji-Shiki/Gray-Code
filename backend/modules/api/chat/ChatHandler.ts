@@ -210,6 +210,14 @@ export class ChatHandler {
     getToolExecutionService(): ToolExecutionService {
         return this.toolExecutionService;
     }
+
+    /**
+     * 获取总结服务，供子代理请求级自动总结复用同一套总结模型语义。
+     */
+    getSummarizeService(): SummarizeService {
+        return this.summarizeService;
+    }
+
     
     /**
      * 处理非流式对话请求

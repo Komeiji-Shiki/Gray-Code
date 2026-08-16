@@ -114,10 +114,19 @@ describe('planSummarizeRounds', () => {
         })).toEqual({ type: 'rounds', keepFromRound: 1 });
     });
 
-    test('肥尾轮 + minKeep 挡住总结：manual 尊重配置返回轮数不足', () => {
+    test('肥尾轮 + minKeep 挡住总结：manual 按单个长轮进入轮内切分', () => {
         expect(planSummarizeRounds({
             roundTokens: [30000, 30000],
             keepBudgetTokens: 2000,
+            minKeepRounds: 2,
+            mode: 'manual'
+        })).toEqual({ type: 'intra_round' });
+    });
+
+    test('两轮总量未超过预算：manual 仍遵循单轮逻辑，不强行生成总结', () => {
+        expect(planSummarizeRounds({
+            roundTokens: [100, 100],
+            keepBudgetTokens: 10000,
             minKeepRounds: 2,
             mode: 'manual'
         })).toEqual({ type: 'none', reason: 'not_enough_rounds' });
@@ -139,7 +148,7 @@ describe('planSummarizeRounds', () => {
         })).toEqual(expected);
     });
 
-    test('预算装得下全部轮且轮数不足 minKeep：auto 只保留当前轮，manual 报错', () => {
+    test('预算装得下全部轮且轮数不足 minKeep：auto 保留当前轮，manual 按单轮逻辑无内容可总结', () => {
         expect(planSummarizeRounds({
             roundTokens: [100, 100],
             keepBudgetTokens: 10000,
@@ -317,6 +326,23 @@ describe('planSummarizeMessages', () => {
         });
 
         expect(plan).toEqual({ cutIndex: 5, boundary: 'intra_round' });
+    });
+
+    test('manual 两轮且 keepRecentRounds=2：按单轮逻辑允许切入最后一轮', () => {
+        const messages = [
+            user('old'), fc('a'), fr('a'), modelText('old done'),
+            user('current'), modelText('short current answer')
+        ];
+        const plan = planSummarizeMessages({
+            messages,
+            messageTokens: [100, 100, 100, 100, 5, 5],
+            keepBudgetTokens: 6,
+            minKeepRounds: 2,
+            mode: 'manual'
+        });
+
+        expect(plan).toEqual({ cutIndex: 5, boundary: 'intra_round' });
+        expect(validateHistoryIntegrityForTest(messages.slice(plan!.cutIndex))).toBe(true);
     });
 
     function validateHistoryIntegrityForTest(history: Content[]): boolean {

@@ -7,14 +7,15 @@
  * 永远失败，前端报「总结失败: 对话历史在总结期间发生变化」。
  *
  * 修复：markAndInsertSummarizedAtomically 新增 allowCoverLastRealUserRound 开关，
- * 手动总结在「整个历史仅一条真实用户消息」时放行（用户主动总结，无后续回合需要保护），
+ * 手动总结在「单轮」以及显式按单轮逻辑规划的两轮场景放行（用户主动总结），
  * 把这一轮的前半部分拿去总结；自动总结保持严格 STALE（回合内吞掉当前用户消息会毁掉
  * 回复上下文，见 summarizeOverflowTrim.test.ts 的 H2 用例）。
  *
  * 放行不破坏的既有保护：
  * - 首条用户消息仍不标记（锚点原样保留并永远发送）
  * - insertIndex 越界（并发删除把历史缩短到区间之外）仍 STALE
- * - 多轮历史（realUserCount > 1）仍 STALE
+ * - 手动总结的多轮历史仍遵守正常轮级边界；仅在当前轮数不超过 keepRecentRounds 且总量超预算时，
+ *   按单轮逻辑进入轮内切分（用户明确点击总结的场景）
  */
 
 import type { Content } from '../../modules/conversation/types';
@@ -156,23 +157,26 @@ describe('SummarizeService.handleSummarizeContext - 单轮（唯一真实用户�
 });
 
 describe('SummarizeService.handleSummarizeContext - 放行边界', () => {
-    test('多轮历史（realUserCount > 1）范围覆盖最后一条真实用户消息：放行（用户主动总结预期行为）', async () => {
-        // 两轮：规划预算 100 装不下任何保留后缀，切点被迫深入轮内（done，index 6）
-        // → insertIndex=6 > lastRealUserMessageIndex=3（user2）。手动总结是用户主动操作，
-        // 覆盖当前轮正是预期行为——单轮与多轮一致放行；首条用户消息保护仍生效。
+    test('多轮历史（realUserCount > 1）且保留轮数等于当前轮数：手动按单轮逻辑轮内总结', async () => {
+        // 两轮且 keepRecentRounds=2：总量超过保留预算时，规划器应把活跃历史
+        // 当作一个长轮，允许切点进入最后一轮，而不是固定保留第二轮。
         const twoRounds: Content[] = [
             userMsg('r1', 40), fcMsg('fc1', 40), frMsg('fc1', 40),
             userMsg('r2', 40), fcMsg('fc2', 40), frMsg('fc2', 40),
             modelMsg('done', 40)
         ];
 
-        const { service, liveHistory } = createSummarizeHarness({ fullHistory: twoRounds });
+        const { service, liveHistory } = createSummarizeHarness({
+            fullHistory: twoRounds,
+            keepRecentRounds: 2
+        });
 
         const result = await service.handleSummarizeContext({ conversationId: 'conv1', configId: 'cfg1' });
 
         expect(result.success).toBe(true);
         if (result.success) {
-            // 标记 [1, 6)（r1 受首条用户消息保护不标记）= fc1/fr1/r2/fc2/fr2
+            // 单轮轮内切点最终落在 index 6（最后一条 model 消息前），
+            // 首条用户消息仍受保护，其后的两轮内容均可进入总结范围。
             expect(result.insertIndex).toBe(6);
             expect(result.removedCount).toBe(5);
             expect(result.summarizedMessageCount).toBe(5);
@@ -218,5 +222,42 @@ describe('SummarizeService.handleSummarizeContext - 放行边界', () => {
         expect(liveHistory[0].isSummarized).toBeUndefined();
         expect(liveHistory[1]).toMatchObject({ isSummary: true, index: 1 });
         expect(liveHistory.slice(2).map(msgLabel)).toEqual(['fc1', 'fc1', 'r2', 'fc2', 'fc2', 'done']);
+    });
+});
+
+describe('SummarizeService.generateSummaryForHistory - 子代理请求级总结', () => {
+    test('复用自动总结提示词/模型覆盖且只返回内存总结消息', async () => {
+        const summaryText = 'A detailed model-generated summary that preserves the task, completed work, progress, and next steps.';
+        const { service, generate, liveHistory } = createSummarizeHarness({
+            fullHistory: [],
+            generateContent: {
+                role: 'model',
+                parts: [{ text: summaryText }],
+                usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 30 }
+            }
+        });
+        const history: Content[] = [userMsg('task', 40), modelMsg('completed work', 40)];
+
+        const result = await service.generateSummaryForHistory({
+            history,
+            configId: 'cfg1',
+            modelOverride: 'sub-model'
+        });
+
+        expect(result).toMatchObject({
+            role: 'user',
+            isSummary: true,
+            isAutoSummary: true,
+            usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 30 }
+        });
+        expect(result?.parts[0].text).toContain(summaryText);
+        expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+            configId: 'cfg1',
+            modelOverride: 'sub-model',
+            skipTools: true,
+            skipRetry: true
+        }));
+        expect(liveHistory).toHaveLength(0);
+        expect(history[0].isSummarized).toBeUndefined();
     });
 });

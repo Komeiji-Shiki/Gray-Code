@@ -166,6 +166,171 @@ export class SummarizeService {
         return clampMaxAutoSummarizeAttempts(config?.maxAutoSummarizeAttemptsPerTurn);
     }
 
+    /**
+     * 为请求级上下文压缩生成一条自动总结消息。
+     *
+     * 与主会话自动总结共用：总结设置、独立总结渠道选择、自动总结提示词、
+     * 内置总结系统提示词、流式响应收集和低质量结果校验；这里只生成内存消息，
+     * 不触碰 ConversationManager，因此不会把子代理的压缩结果写进主会话历史。
+     */
+    async generateSummaryForHistory(options: {
+        history: Content[];
+        configId: string;
+        modelOverride?: string;
+        abortSignal?: AbortSignal;
+    }): Promise<Content | undefined> {
+        try {
+            if (!Array.isArray(options.history) || options.history.length === 0) {
+                return undefined;
+            }
+
+            const summarizeConfig = this.settingsManager?.getSummarizeConfig?.();
+            const useSeparateModel = !!summarizeConfig?.useSeparateModel;
+            const summarizeChannelId = typeof summarizeConfig?.summarizeChannelId === 'string'
+                ? summarizeConfig.summarizeChannelId.trim()
+                : '';
+            const summarizeModelId = typeof summarizeConfig?.summarizeModelId === 'string'
+                ? summarizeConfig.summarizeModelId.trim()
+                : '';
+            let actualConfigId = options.configId;
+            let actualModelId = typeof options.modelOverride === 'string'
+                ? options.modelOverride.trim() || undefined
+                : undefined;
+
+            if (useSeparateModel && summarizeChannelId) {
+                const dedicatedConfig = await this.configManager.getConfig(summarizeChannelId);
+                if (dedicatedConfig?.enabled) {
+                    actualConfigId = summarizeChannelId;
+                    actualModelId = summarizeModelId || undefined;
+                }
+            }
+
+            const config = await this.configManager.getConfig(actualConfigId);
+            if (!config?.enabled) {
+                return undefined;
+            }
+
+            const defaultPrompt = t('modules.api.chat.prompts.autoSummarizePrompt');
+            const configuredPrompt = typeof summarizeConfig?.autoSummarizePrompt === 'string'
+                ? summarizeConfig.autoSummarizePrompt.trim()
+                : '';
+            const prompt = configuredPrompt || defaultPrompt;
+            const cleanedMessages = this.cleanMessagesForSummarize(options.history, config);
+            if (cleanedMessages.length === 0) {
+                return undefined;
+            }
+
+            const summaryBudget = this.resolveSummaryInputBudget(
+                config,
+                actualModelId,
+                clampSummarizeMaxInputRatio(summarizeConfig?.summarizeMaxInputRatio),
+                prompt
+            );
+            const summaryMessages = this.fitSummaryHistoryToBudget(
+                cleanedMessages,
+                summaryBudget.maxHistoryTokens,
+                config.type
+            );
+            if (summaryMessages.length === 0) {
+                return undefined;
+            }
+            const estimatedHistoryTokens = this.estimateMessagesTokens(summaryMessages, config.type);
+            if (estimatedHistoryTokens > summaryBudget.maxHistoryTokens) {
+                this.log.warn('subagent.summary_context_overflow', {
+                    configId: actualConfigId,
+                    estimatedHistoryTokens,
+                    ...summaryBudget
+                });
+                return undefined;
+            }
+
+            const response = await this.channelManager.generate({
+                configId: actualConfigId,
+                history: [
+                    ...summaryMessages,
+                    { role: 'user', parts: [{ text: prompt }] }
+                ],
+                abortSignal: options.abortSignal,
+                skipTools: true,
+                dynamicSystemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT,
+                skipRetry: true,
+                ...(actualModelId ? { modelOverride: actualModelId } : {})
+            });
+
+            let finalContent: Content;
+            if (this.isAsyncGenerator(response)) {
+                const accumulator = new StreamAccumulator();
+                accumulator.setProviderType(config.type as 'gemini' | 'gemini-interactions' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
+                try {
+                    for await (const chunk of response) {
+                        if (options.abortSignal?.aborted) {
+                            return undefined;
+                        }
+                        accumulator.add(chunk);
+                    }
+                } finally {
+                    await response.return?.(undefined);
+                }
+                finalContent = accumulator.getContent();
+            } else {
+                finalContent = (response as GenerateResponse).content;
+            }
+
+            const summaryText = finalContent.parts
+                .filter(part => part.text && !part.thought)
+                .map(part => part.text)
+                .join('\n')
+                .trim();
+            if (summaryText.length < MIN_SUMMARY_LENGTH) {
+                this.log.warn('subagent.summary_low_quality', { summaryLength: summaryText.length });
+                return undefined;
+            }
+
+            return {
+                role: 'user',
+                parts: [{ text: `${t('modules.api.chat.prompts.summaryPrefix')}\n\n${summaryText}` }],
+                isSummary: true,
+                isAutoSummary: true,
+                timestamp: Date.now(),
+                usageMetadata: {
+                    promptTokenCount: finalContent.usageMetadata?.promptTokenCount,
+                    candidatesTokenCount: finalContent.usageMetadata?.candidatesTokenCount
+                }
+            };
+        } catch (error) {
+            this.log.warn('subagent.summary_failed', {
+                error: error instanceof Error ? error.message : String(error)
+            });
+            return undefined;
+        }
+    }
+
+    /**
+     * 总结输入过大时沿用主流程的“缩小总结范围”思路：从最旧的完整消息/工具对开始
+     * 收缩，只把仍能装进总结模型预算的较新部分交给总结模型。子代理首条任务消息
+     * 会在请求级历史中单独保留，因此这里优先保留被裁剪旧回合的最新进展。
+     */
+    private fitSummaryHistoryToBudget(
+        messages: Content[],
+        maxHistoryTokens: number,
+        channelType: string
+    ): Content[] {
+        let start = 0;
+        while (start < messages.length
+            && this.estimateMessagesTokens(messages.slice(start), channelType) > maxHistoryTokens) {
+            const current = messages[start];
+            const next = messages[start + 1];
+            const nextIsFunctionResponse = next?.parts?.some(part => !!part.functionResponse) === true;
+            start += current.role === 'model' && nextIsFunctionResponse ? 2 : 1;
+        }
+
+        while (start < messages.length
+            && messages[start].parts?.some(part => !!part.functionResponse) === true) {
+            start++;
+        }
+        return messages.slice(start);
+    }
+
     private resolveSummaryInputBudget(
         config: BaseChannelConfig,
         modelOverride: string | undefined,

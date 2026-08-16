@@ -754,10 +754,17 @@ export function createDefaultExecutor(
                 // 子代理拥有独立的 provider history：完整 transcript 继续留在 Monitor，
                 // 请求历史在完整工具回合边界做压缩，并把摘要随 lastSentHistory 持久化，
                 // 这样 continueFromRunId 续跑不会重新携带已经压缩掉的巨型工具结果。
-                const compactedHistory = compactSubAgentHistoryForContext(history, channelConfig, {
+                const compactedHistory = await compactSubAgentHistoryForContext(history, channelConfig, {
                     modelOverride: config.channel.modelId,
                     systemPrompt,
-                    toolDeclarations: effectiveTools
+                    toolDeclarations: effectiveTools,
+                    summarizeHistory: context.summarizeHistory
+                        ? (droppedHistory) => context.summarizeHistory!(droppedHistory, {
+                            configId: config.channel.channelId,
+                            modelOverride: config.channel.modelId,
+                            abortSignal: operationSignal
+                        })
+                        : undefined
                 });
                 if (compactedHistory !== history) {
                     history = compactedHistory;

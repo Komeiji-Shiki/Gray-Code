@@ -674,6 +674,13 @@ export class BackendRuntime {
             settingsManager,
             configManager,
             toolExecutionService: chatHandler.getToolExecutionService(),
+            summarizeHistory: (history, options) =>
+                chatHandler.getSummarizeService().generateSummaryForHistory({
+                    history,
+                    configId: options.configId,
+                    modelOverride: options.modelOverride,
+                    abortSignal: options.abortSignal
+                }),
             // 修改原因：子代理 token 消耗需要归集到发起它的主会话用量统计（UsagePage）。
             // 修改方式：把 ConversationManager 的索引追加入口注入 SubAgent 执行上下文，
             //          executor 每轮 generate 后把 usageMetadata 以 source='subagent' 条目写入主会话索引。
