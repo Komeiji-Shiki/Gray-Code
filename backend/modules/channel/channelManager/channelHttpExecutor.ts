@@ -6,16 +6,65 @@
  */
 
 import { t } from '../../../i18n';
+import { Logger } from '../../../core/logger';
 import { ChannelError, ErrorType } from '../types';
 import type { HttpRequestOptions, HttpResponse } from '../types';
 import { createProxyFetch, proxyStreamFetch } from '../proxyFetch';
 import { parseStreamBuffer } from '../streamBufferParser';
 import {
     extractUpstreamErrorMessage,
+    extractUpstreamErrorFields,
+    summarizeResponsesRequest,
     MAX_STREAM_BUFFER_LENGTH,
     assertStreamBufferWithinLimit,
     readBodyTextWithLimit
 } from './channelResponseHelpers';
+
+const log = Logger.get('ChannelHttpExecutor');
+
+function isResponsesEndpoint(url: string): boolean {
+    try {
+        const pathname = new URL(url).pathname.replace(/\/+$/, '');
+        return pathname.endsWith('/responses');
+    } catch {
+        return false;
+    }
+}
+
+function logResponsesRequest(url: string, body: unknown) {
+    if (!isResponsesEndpoint(url)) return undefined;
+    const diagnostic = summarizeResponsesRequest(url, body);
+    if (diagnostic) {
+        log.info('responses_request_diagnostic', { ...diagnostic });
+    }
+    return diagnostic;
+}
+
+function logResponsesRejection(
+    diagnostic: ReturnType<typeof summarizeResponsesRequest>,
+    status: number,
+    body: unknown
+): void {
+    if (!diagnostic) return;
+    log.warn('responses_request_rejected', {
+        status,
+        ...extractUpstreamErrorFields(body),
+        reasoningContentPaths: diagnostic.reasoningContentPaths
+    });
+}
+
+function logResponsesFailure(
+    diagnostic: ReturnType<typeof summarizeResponsesRequest>,
+    error: unknown
+): void {
+    if (!diagnostic) return;
+    const details = error instanceof ChannelError ? error.details : undefined;
+    log.warn('responses_request_failed', {
+        ...extractUpstreamErrorFields(details),
+        error: error instanceof Error ? error.message : String(error),
+        reasoningContentPaths: diagnostic.reasoningContentPaths
+    });
+}
 
 /**
  * 渠道 HTTP / 流式执行器
@@ -32,6 +81,7 @@ export class ChannelHttpExecutor {
      */
     async executeRequest(options: HttpRequestOptions, externalSignal?: AbortSignal): Promise<HttpResponse> {
         const { url, method, headers, body, timeout = 60000 } = options;
+        const diagnostic = logResponsesRequest(url, body);
         const proxyUrl = this.getProxyUrl();
         
         // 使用代理 fetch 或原生 fetch
@@ -67,6 +117,9 @@ export class ChannelHttpExecutor {
                 responseBody = JSON.parse(rawResponseBody);
             } catch {
                 // 非 JSON（含非 2xx 的纯文本错误体）：保留原文
+            }
+            if (response.status < 200 || response.status >= 300) {
+                logResponsesRejection(diagnostic, response.status, responseBody);
             }
             const responseHeaders: Record<string, string> = {};
             response.headers.forEach((value, key) => {
@@ -114,6 +167,7 @@ export class ChannelHttpExecutor {
         externalSignal?: AbortSignal
     ): AsyncGenerator<any> {
         const { url, method, headers, body, timeout = 120000 } = options;
+        const diagnostic = logResponsesRequest(url, body);
         const proxyUrl = this.getProxyUrl();
         
         const controller = new AbortController();
@@ -122,6 +176,7 @@ export class ChannelHttpExecutor {
         // 每次收到有效内容时重置超时，避免模型慢速生成时被误判为超时
         let timeoutId: NodeJS.Timeout | undefined;
         let isTimedOut = false;
+        let rejectionLogged = false;
         
         const resetTimeout = () => {
             if (timeoutId) {
@@ -256,6 +311,8 @@ export class ChannelHttpExecutor {
                     } catch {
                         // 非 JSON：保留原文（extractUpstreamErrorMessage 直接返回文本）
                     }
+                    rejectionLogged = true;
+                    logResponsesRejection(diagnostic, response.status, errorBody);
                     const upstreamMessage = extractUpstreamErrorMessage(errorBody);
                     throw new ChannelError(
                         ErrorType.API_ERROR,
@@ -361,6 +418,9 @@ export class ChannelHttpExecutor {
                 );
             }
         } catch (error) {
+            if (diagnostic && !rejectionLogged) {
+                logResponsesFailure(diagnostic, error);
+            }
             if (error instanceof ChannelError) {
                 throw error;
             }

@@ -2,9 +2,73 @@ import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/opena
 import { StreamAccumulator } from '../../modules/channel';
 import type { Content } from '../../modules/conversation/types';
 import { createOpenAIResponsesConfig } from '../__fixtures__/channelFixtures';
+import {
+    extractUpstreamErrorFields,
+    summarizeResponsesRequest
+} from '../../modules/channel/channelManager/channelResponseHelpers';
 
 
 describe('OpenAI Responses reasoning 与 usage', () => {
+    test('请求诊断能定位 reasoning content 数组且不记录正文或密钥', () => {
+        const diagnostic = summarizeResponsesRequest(
+            'https://api.openai.com/v1/responses?api_key=should-not-log',
+            {
+                model: 'gpt-5',
+                stream: true,
+                instructions: 'private system prompt',
+                input: [
+                    {
+                        type: 'message',
+                        role: 'user',
+                        content: [{ type: 'input_text', text: 'private user text' }]
+                    },
+                    {
+                        type: 'reasoning',
+                        content: [{ type: 'reasoning_text', text: 'private reasoning text' }]
+                    }
+                ],
+                tools: [{ type: 'function', name: 'private-tool' }]
+            }
+        );
+
+        expect(diagnostic).toMatchObject({
+            endpointHost: 'api.openai.com',
+            model: 'gpt-5',
+            inputLength: 2,
+            reasoningContentPaths: ['input[1].content'],
+            toolsLength: 1
+        });
+        expect(diagnostic?.inputItems[1]).toMatchObject({
+            index: 1,
+            type: 'reasoning',
+            content: {
+                kind: 'array',
+                length: 1,
+                itemTypes: ['reasoning_text']
+            }
+        });
+
+        const serialized = JSON.stringify(diagnostic);
+        expect(serialized).not.toContain('private user text');
+        expect(serialized).not.toContain('private reasoning text');
+        expect(serialized).not.toContain('should-not-log');
+        expect(extractUpstreamErrorFields({
+            error: {
+                message: JSON.stringify({
+                    error: {
+                        code: 'array_above_max_length',
+                        param: 'input[1].content',
+                        type: 'invalid_request_error'
+                    }
+                })
+            }
+        })).toEqual({
+            code: 'array_above_max_length',
+            param: 'input[1].content',
+            type: 'invalid_request_error'
+        });
+    });
+
     test('非流式 candidatesTokenCount 使用含 reasoning 的总 output_tokens', () => {
         const formatter = new OpenAIResponsesFormatter();
         const response = formatter.parseResponse({

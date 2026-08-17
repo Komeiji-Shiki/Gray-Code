@@ -10,9 +10,200 @@ import { ChannelError, ErrorType } from '../types';
 import type { StreamChunk } from '../types';
 import type { Content } from '../../conversation';
 
+export interface ResponsesRequestDiagnostic {
+    endpointHost?: string;
+    model?: string;
+    stream?: boolean;
+    bodyKeys: string[];
+    inputLength: number;
+    inputItems: Array<Record<string, unknown>>;
+    omittedInputItems?: number;
+    reasoningContentPaths: string[];
+    include?: string[];
+    toolsLength?: number;
+}
+
+function asRecord(value: unknown): Record<string, any> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return undefined;
+    }
+    return value as Record<string, any>;
+}
+
+function getEndpointHost(url: string): string | undefined {
+    try {
+        return new URL(url).host || undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+function summarizeResponsesInputItem(item: unknown, index: number): Record<string, unknown> {
+    const record = asRecord(item);
+    if (!record) {
+        return {
+            index,
+            type: typeof item,
+            keys: []
+        };
+    }
+
+    const summary: Record<string, unknown> = {
+        index,
+        type: typeof record.type === 'string' ? record.type : null,
+        role: typeof record.role === 'string' ? record.role : null,
+        keys: Object.keys(record).sort()
+    };
+
+    if (Object.prototype.hasOwnProperty.call(record, 'content')) {
+        const content = record.content;
+        if (Array.isArray(content)) {
+            const itemTypes = Array.from(new Set(content.map(entry => {
+                const entryRecord = asRecord(entry);
+                return typeof entryRecord?.type === 'string' ? entryRecord.type : typeof entry;
+            })));
+            summary.content = {
+                kind: 'array',
+                length: content.length,
+                itemTypes
+            };
+        } else if (typeof content === 'string') {
+            summary.content = {
+                kind: 'string',
+                length: content.length
+            };
+        } else {
+            summary.content = {
+                kind: content === null ? 'null' : typeof content
+            };
+        }
+    }
+
+    if (Array.isArray(record.summary)) {
+        summary.summaryLength = record.summary.length;
+    }
+    if (Object.prototype.hasOwnProperty.call(record, 'encrypted_content')) {
+        summary.hasEncryptedContent = typeof record.encrypted_content === 'string'
+            && record.encrypted_content.length > 0;
+    }
+
+    return summary;
+}
+
 /**
- * 从上游 API 的非 2xx 响应体中提取人类可读的错误消息。
+ * 生成 OpenAI Responses 请求的脱敏结构摘要。
  *
+ * 该摘要用于定位上游 schema 错误，不包含 input 文本、instructions、工具参数、
+ * reasoning 文本、encrypted_content 或 API key。input 项只记录字段形状，因此可以
+ * 安全写入 OutputChannel。返回 undefined 表示这不是带 input 数组的 Responses 请求。
+ */
+export function summarizeResponsesRequest(
+    url: string,
+    body: unknown
+): ResponsesRequestDiagnostic | undefined {
+    const record = asRecord(body);
+    if (!record || !Array.isArray(record.input)) {
+        return undefined;
+    }
+
+    const allItems = record.input.map((item, index) => summarizeResponsesInputItem(item, index));
+    const maxVisibleItems = 64;
+    const omittedInputItems = Math.max(0, allItems.length - maxVisibleItems);
+    const inputItems = omittedInputItems > 0
+        ? [
+            ...allItems.slice(0, Math.floor(maxVisibleItems / 2)),
+            { omitted: omittedInputItems },
+            ...allItems.slice(-Math.ceil(maxVisibleItems / 2))
+        ]
+        : allItems;
+
+    const reasoningContentPaths = record.input
+        .map((item, index) => {
+            const itemRecord = asRecord(item);
+            if (itemRecord?.type !== 'reasoning') return undefined;
+            const content = itemRecord.content;
+            const hasContent = Array.isArray(content)
+                ? content.length > 0
+                : typeof content === 'string'
+                    ? content.length > 0
+                    : content !== undefined && content !== null;
+            return hasContent ? `input[${index}].content` : undefined;
+        })
+        .filter((path): path is string => !!path);
+
+    const diagnostic: ResponsesRequestDiagnostic = {
+        endpointHost: getEndpointHost(url),
+        model: typeof record.model === 'string' ? record.model : undefined,
+        stream: typeof record.stream === 'boolean' ? record.stream : undefined,
+        bodyKeys: Object.keys(record).sort(),
+        inputLength: record.input.length,
+        inputItems,
+        omittedInputItems: omittedInputItems > 0 ? omittedInputItems : undefined,
+        reasoningContentPaths,
+        include: Array.isArray(record.include)
+            ? record.include.filter((value): value is string => typeof value === 'string')
+            : undefined,
+        toolsLength: Array.isArray(record.tools) ? record.tools.length : undefined
+    };
+
+    return diagnostic;
+}
+
+export interface UpstreamErrorFields {
+    code?: string;
+    param?: string;
+    type?: string;
+}
+
+function parseJsonRecord(value: unknown): Record<string, any> | undefined {
+    if (typeof value !== 'string') {
+        return asRecord(value);
+    }
+    try {
+        return asRecord(JSON.parse(value));
+    } catch {
+        return undefined;
+    }
+}
+
+/** 提取上游错误体中的定位字段，供日志诊断使用。 */
+export function extractUpstreamErrorFields(body: unknown): UpstreamErrorFields {
+    let current: unknown = body;
+    const result: UpstreamErrorFields = {};
+
+    // 兼容本地网关常见的多层包装：
+    // { error: { message: "{\\"error\\":{\\"param\\":...}}" } }
+    for (let depth = 0; depth < 4; depth++) {
+        const record = parseJsonRecord(current);
+        if (!record) break;
+
+        for (const key of ['code', 'param', 'type'] as const) {
+            if (!result[key] && typeof record[key] === 'string' && record[key].trim()) {
+                result[key] = record[key].trim();
+            }
+        }
+        if (result.code && result.param && result.type) break;
+
+        const nestedError = record.error;
+        const parsedError = parseJsonRecord(nestedError);
+        if (parsedError && parsedError !== record) {
+            current = parsedError;
+            continue;
+        }
+
+        const parsedMessage = parseJsonRecord(record.message);
+        if (parsedMessage && parsedMessage !== record) {
+            current = parsedMessage;
+            continue;
+        }
+
+        break;
+    }
+
+    return result;
+}
+
+/**
  * 支持格式：
  * - Anthropic:         { error: { message: "..." } }
  * - OpenAI/OpenRouter: { error: { message: "...", code: 429, metadata: {...} } }
