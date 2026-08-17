@@ -323,3 +323,44 @@ export function planSummarizeMessages(options: {
     return null;
 }
 
+/**
+ * 自动总结的最终切点规划。
+ *
+ * 在通用消息级规划之上统一施加“当前真实用户回合不可被自动总结覆盖”的保护：
+ * - 多轮历史最多总结到当前回合起点；
+ * - 单轮长工具回合允许在安全 model 边界内切分，但首条任务消息仍由调用方保留。
+ *
+ * 主会话与 SubAgent 必须共用该函数，避免一个按轮保护、另一个按消息直接删除。
+ */
+export function planAutoSummarizeMessages(options: {
+    messages: Content[];
+    messageTokens: number[];
+    keepBudgetTokens: number;
+    minKeepRounds: number;
+}): MessageGranularSummarizePlan | null {
+    const plan = planSummarizeMessages({ ...options, mode: 'auto' });
+    if (!plan) return null;
+
+    let lastRealUserMessageIndex = -1;
+    for (let i = options.messages.length - 1; i >= 0; i--) {
+        if (isRealUserMessage(options.messages[i])) {
+            lastRealUserMessageIndex = i;
+            break;
+        }
+    }
+    if (lastRealUserMessageIndex < 0) return null;
+
+    let cutIndex = plan.cutIndex;
+    if (lastRealUserMessageIndex === 0) {
+        if (cutIndex <= 0) return null;
+    } else {
+        cutIndex = Math.min(cutIndex, lastRealUserMessageIndex);
+        if (cutIndex <= 0) return null;
+    }
+
+    return {
+        cutIndex,
+        boundary: isRealUserMessage(options.messages[cutIndex]) ? 'round' : 'intra_round'
+    };
+}
+

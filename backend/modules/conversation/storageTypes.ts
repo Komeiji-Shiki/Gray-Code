@@ -7,6 +7,7 @@
  * 避免与 storage.ts 形成运行时循环依赖。
  */
 
+import type { SubAgentContextCompactionRecord } from '../../../shared/subAgentContextCompaction';
 import type { Content, ConversationHistory, ConversationMetadata, HistorySnapshot } from './types';
 
 export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error' | 'segment_missing';
@@ -78,6 +79,8 @@ export interface ConversationStorageLocation {
  */
 export interface SubAgentTranscriptData {
     contents: Content[];
+    /** provider 上下文总结/硬 fallback 的小型持久诊断记录。 */
+    contextCompactions?: SubAgentContextCompactionRecord[];
     lastSentHistory?: Content[];
     /**
      * 新格式把 provider history 中可由 contents 重建的消息保存为索引，只内嵌无法匹配的消息。

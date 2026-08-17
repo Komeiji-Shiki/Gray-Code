@@ -244,13 +244,15 @@ describe('SummarizeService.generateSummaryForHistory - 子代理请求级总结'
             modelOverride: 'sub-model'
         });
 
-        expect(result).toMatchObject({
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect(result.summary).toMatchObject({
             role: 'user',
             isSummary: true,
             isAutoSummary: true,
             usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 30 }
         });
-        expect(result?.parts[0].text).toContain(summaryText);
+        expect(result.summary.parts[0].text).toContain(summaryText);
         expect(generate).toHaveBeenCalledWith(expect.objectContaining({
             configId: 'cfg1',
             modelOverride: 'sub-model',

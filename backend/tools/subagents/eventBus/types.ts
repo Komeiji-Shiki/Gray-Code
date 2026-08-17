@@ -5,6 +5,7 @@
  * （subagentMonitor.event / manifest 前端契约）逐字保留，runEventBus.ts 仅保留 re-export 壳。
  */
 
+import type { SubAgentContextCompactionRecord } from '../../../../shared/subAgentContextCompaction';
 import type { Content } from '../../../modules/conversation/types';
 import type { SubAgentTranscriptData } from '../../../modules/conversation/storage';
 import type { ToolProgressEvent } from '../../types';
@@ -74,11 +75,14 @@ export interface SubAgentRunPersistedRecord {
      * 修改目的：续跑请求前缀与旧 run 最后一次实际发送逐条一致，命中 provider 前缀缓存；
      *          旧 metadata 缺该字段时由 executor 降级处理（过滤卡片 contents）。
      */
+    /** provider 上下文自动总结与硬 fallback 的持久诊断记录。 */
+    contextCompactions?: SubAgentContextCompactionRecord[];
     lastSentHistory?: Content[];
 }
 
 export interface SubAgentRunSnapshot extends SubAgentRunPersistedRecord {
     contents: Content[];
+    contextCompactions: SubAgentContextCompactionRecord[];
     events: SubAgentRunEvent[];
     conversationId?: string;
     contentRevision: number;
@@ -110,6 +114,7 @@ export interface SubAgentRunContentWindow {
     totalCount: number;
     contentRevision: number;
     eventSequence: number;
+    contextCompactions: SubAgentContextCompactionRecord[];
     hasMoreBefore: boolean;
     hasMoreAfter: boolean;
 }
@@ -163,6 +168,8 @@ const MAX_RETAINED_SNAPSHOTS = 200;
  */
 const PERSIST_THROTTLE_MS = 1500;
 
+const MAX_RETAINED_CONTEXT_COMPACTIONS = 100;
+
 const TERMINAL_RUN_STATUSES: ReadonlySet<SubAgentRunStatus> = new Set<SubAgentRunStatus>([
     'completed',
     'failed',
@@ -185,6 +192,7 @@ export {
     MAX_EVENTS_PER_RUN,
     MAX_RETAINED_SNAPSHOTS,
     PERSIST_THROTTLE_MS,
+    MAX_RETAINED_CONTEXT_COMPACTIONS,
     TERMINAL_RUN_STATUSES,
     MAX_FLUSH_RETRY_ATTEMPTS
 };

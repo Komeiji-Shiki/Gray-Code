@@ -28,6 +28,10 @@ import { markAiActive } from '../../../modules/activity';
 import { SUBAGENT_NESTING_PROMPT_NOTICE, SUBAGENT_TOOL_DISCIPLINE_NOTICE } from './prompts';
 import { stripReplayedAgentInboxForModel } from './inbox';
 import {
+    ensureSubAgentTranscriptTracking,
+    withSubAgentTranscriptIndex
+} from './historyMetadata';
+import {
     compactSubAgentHistoryForContext
 } from './contextTrim';
 
@@ -140,15 +144,16 @@ export function createDefaultExecutor(
             //          初始卡片消息，其余保留（至少不再把卡片发给模型）。
             // 修改目的：continueFromRunId 续跑能命中旧 run 的 provider 前缀缓存，不浪费首轮 token。
             if (Array.isArray(oldSnapshot.lastSentHistory)) {
-                baseContents = JSON.parse(JSON.stringify(oldSnapshot.lastSentHistory)) as Content[];
+                baseContents = (JSON.parse(JSON.stringify(oldSnapshot.lastSentHistory)) as Content[])
+                    .map(ensureSubAgentTranscriptTracking);
             } else {
-                baseContents = JSON.parse(JSON.stringify(
+                baseContents = (JSON.parse(JSON.stringify(
                     (oldSnapshot.contents || []).filter(
                         content => !(content.parts || []).some(
                             part => typeof part.text === 'string' && part.text.includes('# SubAgent Invocation')
                         )
                     )
-                )) as Content[];
+                )) as Content[]).map(ensureSubAgentTranscriptTracking);
             }
         }
 
@@ -210,6 +215,18 @@ export function createDefaultExecutor(
                 initialContents: [...baseContents, initialPromptContent]
             });
         }
+        const runSnapshot = subAgentRunEventBus.getSnapshot(runId);
+        const invocationTranscriptIndex = runSnapshot && runSnapshot.contents.length > 0
+            ? runSnapshot.contents.length - 1
+            : undefined;
+        let contextCompactionSequence = Math.max(
+            0,
+            ...(runSnapshot?.contextCompactions || []).map(record => record.sequence)
+        );
+        const createCompactionIdentity = () => {
+            const sequence = ++contextCompactionSequence;
+            return { id: `${runId}:context:${sequence}`, sequence };
+        };
         // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
         // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
         // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
@@ -644,7 +661,12 @@ export function createDefaultExecutor(
             // 修改目的：新子代理可以直接看到旧子代理完成了什么，实现跨调用接力。
             let history: Content[] = [
                 ...baseContents,
-                { role: 'user', parts: [{ text: userPrompt }] }
+                withSubAgentTranscriptIndex({
+                    role: 'user',
+                    parts: [{ text: userPrompt }],
+                    isUserInput: true,
+                    timestamp: Date.now()
+                } as Content, invocationTranscriptIndex)
             ];
 
             /** 收到信件后最多放宽 5 次模型迭代，足够执行工具并基于结果回复，同时保持总上限。 */
@@ -658,14 +680,16 @@ export function createDefaultExecutor(
                     parts: [{ text: formatAgentMessagesForModel(messages) }],
                     timestamp: Date.now()
                 } as Content;
-                history.push(content);
-                mailboxContinuationActivated = true;
+                let transcriptIndex: number | undefined;
                 try {
-                    await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(content);
+                    const contents = await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(content);
+                    transcriptIndex = contents.length > 0 ? contents.length - 1 : undefined;
                 } catch (error) {
                     // 模型投递优先于 Monitor 落盘：仓储失败不能把已经领取的信件重新删掉或终止 run。
                     console.warn(`[SubAgentExecutor] Failed to persist inbox messages for ${runId}:`, error);
                 }
+                history.push(withSubAgentTranscriptIndex(content, transcriptIndex));
+                mailboxContinuationActivated = true;
             };
 
             const responsePartsContainInbox = (parts: ContentPart[] | undefined): boolean =>
@@ -751,24 +775,25 @@ export function createDefaultExecutor(
                 const operation = createOperationSignal();
                 const operationSignal = operation.signal;
                 let retryFailedInThisCall = false;
-                // 子代理拥有独立的 provider history：完整 transcript 继续留在 Monitor，
-                // 请求历史在完整工具回合边界做压缩，并把摘要随 lastSentHistory 持久化，
-                // 这样 continueFromRunId 续跑不会重新携带已经压缩掉的巨型工具结果。
-                const compactedHistory = await compactSubAgentHistoryForContext(history, channelConfig, {
+                // 子代理拥有独立的 provider history：完整 transcript 继续留在 Monitor；软阈值
+                // 使用主会话同源的自动总结策略，只有明确越过模型硬上限才执行可见 fallback。
+                const compactionResult = await compactSubAgentHistoryForContext(history, channelConfig, {
                     modelOverride: config.channel.modelId,
                     systemPrompt,
                     toolDeclarations: effectiveTools,
+                    summaryConfig: context.settingsManager?.getSummarizeConfig?.(),
+                    createCompactionIdentity,
+                    onCompactionRecord: record => subAgentRunEventBus.upsertContextCompaction(runId, record),
                     summarizeHistory: context.summarizeHistory
-                        ? (droppedHistory) => context.summarizeHistory!(droppedHistory, {
+                        ? (summaryCandidate) => context.summarizeHistory!(summaryCandidate, {
                             configId: config.channel.channelId,
                             modelOverride: config.channel.modelId,
                             abortSignal: operationSignal
                         })
                         : undefined
                 });
-                if (compactedHistory !== history) {
-                    history = compactedHistory;
-                }
+                history = compactionResult.history;
+                const completedCompactionIds = compactionResult.completedCompactionIds;
                 const sentHistory = stripReplayedAgentInboxForModel(history);
                 // compactSubAgentHistoryForContext 已同时完成旧回合裁剪、输出预留和超大值收敛。
                 // sentHistory 就是本轮真实发送历史，随后写入 lastSentHistory 供续跑精确复用。
@@ -1022,6 +1047,17 @@ export function createDefaultExecutor(
                 //          无主会话归属或未注入归集回调时跳过（见 reportUsageToMainConversation）。
                 // 修改目的：用量统计页能汇总展示子代理消耗（source='subagent'），且不影响主会话历史。
                 await reportUsageToMainConversation(response, currentConversationId, context.usageIndexAppend);
+                const providerPromptTokensAfter = response?.content?.usageMetadata?.promptTokenCount;
+                const latestCompletedCompactionId = completedCompactionIds[completedCompactionIds.length - 1];
+                if (
+                    latestCompletedCompactionId
+                    && typeof providerPromptTokensAfter === 'number'
+                    && Number.isFinite(providerPromptTokensAfter)
+                ) {
+                    subAgentRunEventBus.patchContextCompaction(runId, latestCompletedCompactionId, {
+                        providerPromptTokensAfter: Math.max(0, providerPromptTokensAfter)
+                    });
+                }
                 // 本轮 LLM 调用成功：重置 run 级重试计数（下一次失败重新从 0 累计）
                 llmCallRetryCount = 0;
                 
@@ -1101,10 +1137,13 @@ export function createDefaultExecutor(
                     subAgentRunEventBus.updateLastModelContent(runId, response.content);
                     const responseParts = response.content.parts || [];
                     if (responseParts.length > 0) {
-                        history.push({
+                        const transcriptContents = subAgentRunEventBus.getSnapshot(runId)?.contents || [];
+                        const transcriptIndex = transcriptContents.length > 0 ? transcriptContents.length - 1 : undefined;
+                        history.push(withSubAgentTranscriptIndex({
+                            ...response.content,
                             role: 'model',
                             parts: responseParts
-                        });
+                        }, transcriptIndex));
                     }
                 }
                 
@@ -1261,14 +1300,17 @@ export function createDefaultExecutor(
                     isFunctionResponse: true,
                     timestamp: Date.now()
                 } as Content;
-                history.push({
-                    role: 'user',
-                    parts: toolResultParts
-                });
                 // 修改原因：SubAgent 工具结果写入也要经过统一 transcript 仓储接口，避免继续新增“只属于事件总线旧 API”的写路径。
                 // 修改方式：通过 runEventBus 暴露的 getTranscriptRepository().appendContent 写入 functionResponse content。
                 // 修改目的：让主聊天与 SubAgent 的 transcript append 语义完全对齐，同时不改变 event bus 的广播和持久化效果。
-                await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(functionResponseContent);
+                const transcriptContents = await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(functionResponseContent);
+                const transcriptIndex = transcriptContents.length > 0 ? transcriptContents.length - 1 : undefined;
+                history.push(withSubAgentTranscriptIndex({
+                    role: 'user',
+                    parts: toolResultParts,
+                    isFunctionResponse: true,
+                    timestamp: functionResponseContent.timestamp
+                } as Content, transcriptIndex));
             }
             
         } catch (e) {

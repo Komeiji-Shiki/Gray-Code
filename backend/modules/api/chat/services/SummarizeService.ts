@@ -8,6 +8,7 @@ import { t } from '../../../../i18n';
 import { randomUUID } from 'node:crypto';
 import { Logger } from '../../../../core/logger';
 import { ErrorType } from '../../../channel/types';
+import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
 import { isRealUserMessage } from '../../../conversation/helpers';
 import {
     repairParentChainAfterDelete,
@@ -30,7 +31,9 @@ import {
     resolveMaxContextTokensForConfig
 } from './ContextTrimService';
 import type { TokenEstimationService } from './TokenEstimationService';
+import type { SubAgentSummaryGenerationResult } from './subAgentSummaryTypes';
 import {
+    planAutoSummarizeMessages,
     planSummarizeMessages,
     resolveKeepRecentTokenBudget
 } from './summarizeRangePlanner';
@@ -178,10 +181,15 @@ export class SummarizeService {
         configId: string;
         modelOverride?: string;
         abortSignal?: AbortSignal;
-    }): Promise<Content | undefined> {
+    }): Promise<SubAgentSummaryGenerationResult> {
+        const failure = (
+            code: Extract<SubAgentSummaryGenerationResult, { success: false }>['code'],
+            message: string
+        ): SubAgentSummaryGenerationResult => ({ success: false, code, message });
+
         try {
-            if (!Array.isArray(options.history) || options.history.length === 0) {
-                return undefined;
+            if (!Array.isArray(options.history) || options.history.length < 2) {
+                return failure('EMPTY_HISTORY', 'No complete sub-agent history range is available to summarize.');
             }
 
             const summarizeConfig = this.settingsManager?.getSummarizeConfig?.();
@@ -206,8 +214,11 @@ export class SummarizeService {
             }
 
             const config = await this.configManager.getConfig(actualConfigId);
-            if (!config?.enabled) {
-                return undefined;
+            if (!config) {
+                return failure('CONFIG_NOT_FOUND', `Summary channel config not found: ${actualConfigId}`);
+            }
+            if (!config.enabled) {
+                return failure('CONFIG_DISABLED', `Summary channel config is disabled: ${actualConfigId}`);
             }
 
             const defaultPrompt = t('modules.api.chat.prompts.autoSummarizePrompt');
@@ -215,39 +226,42 @@ export class SummarizeService {
                 ? summarizeConfig.autoSummarizePrompt.trim()
                 : '';
             const prompt = configuredPrompt || defaultPrompt;
-            const cleanedMessages = this.cleanMessagesForSummarize(options.history, config);
-            if (cleanedMessages.length === 0) {
-                return undefined;
-            }
-
             const summaryBudget = this.resolveSummaryInputBudget(
                 config,
                 actualModelId,
                 clampSummarizeMaxInputRatio(summarizeConfig?.summarizeMaxInputRatio),
                 prompt
             );
-            const summaryMessages = this.fitSummaryHistoryToBudget(
-                cleanedMessages,
+            const fitted = this.fitSummaryHistoryPrefixToBudget(
+                options.history,
                 summaryBudget.maxHistoryTokens,
                 config.type
             );
-            if (summaryMessages.length === 0) {
-                return undefined;
-            }
-            const estimatedHistoryTokens = this.estimateMessagesTokens(summaryMessages, config.type);
-            if (estimatedHistoryTokens > summaryBudget.maxHistoryTokens) {
+            if (!fitted) {
                 this.log.warn('subagent.summary_context_overflow', {
                     configId: actualConfigId,
-                    estimatedHistoryTokens,
+                    candidateMessageCount: options.history.length,
                     ...summaryBudget
                 });
-                return undefined;
+                return failure(
+                    'CONTEXT_OVERFLOW',
+                    'No complete prefix of the planned sub-agent history fits the summary model input budget.'
+                );
+            }
+
+            const cleanedMessages = this.cleanMessagesForSummarize(fitted.messages, config);
+            if (cleanedMessages.length === 0) {
+                return failure('NO_FIT_RANGE', 'The selected sub-agent history range became empty after request cleanup.');
+            }
+            const estimatedHistoryTokens = this.estimateMessagesTokens(cleanedMessages, config.type);
+            if (estimatedHistoryTokens > summaryBudget.maxHistoryTokens) {
+                return failure('CONTEXT_OVERFLOW', 'The cleaned sub-agent summary input still exceeds the summary model budget.');
             }
 
             const response = await this.channelManager.generate({
                 configId: actualConfigId,
                 history: [
-                    ...summaryMessages,
+                    ...cleanedMessages,
                     { role: 'user', parts: [{ text: prompt }] }
                 ],
                 abortSignal: options.abortSignal,
@@ -264,7 +278,7 @@ export class SummarizeService {
                 try {
                     for await (const chunk of response) {
                         if (options.abortSignal?.aborted) {
-                            return undefined;
+                            return failure('ABORTED', 'Sub-agent automatic summarization was cancelled.');
                         }
                         accumulator.add(chunk);
                     }
@@ -283,10 +297,10 @@ export class SummarizeService {
                 .trim();
             if (summaryText.length < MIN_SUMMARY_LENGTH) {
                 this.log.warn('subagent.summary_low_quality', { summaryLength: summaryText.length });
-                return undefined;
+                return failure('LOW_QUALITY_SUMMARY', 'The summary model returned an empty or low-quality summary.');
             }
 
-            return {
+            const summary: Content = {
                 role: 'user',
                 parts: [{ text: `${t('modules.api.chat.prompts.summaryPrefix')}\n\n${summaryText}` }],
                 isSummary: true,
@@ -297,38 +311,57 @@ export class SummarizeService {
                     candidatesTokenCount: finalContent.usageMetadata?.candidatesTokenCount
                 }
             };
+            const summaryTokenCount = typeof finalContent.usageMetadata?.candidatesTokenCount === 'number'
+                ? Math.max(0, finalContent.usageMetadata.candidatesTokenCount)
+                : this.estimateSingleMessageTokensLocally(summary);
+
+            return {
+                success: true,
+                summary,
+                consumedMessageCount: fitted.consumedMessageCount,
+                sourceTokenCount: fitted.estimatedTokens,
+                summaryTokenCount,
+                summaryRequestPromptTokens: finalContent.usageMetadata?.promptTokenCount,
+                summaryRequestOutputTokens: finalContent.usageMetadata?.candidatesTokenCount
+            };
         } catch (error) {
-            this.log.warn('subagent.summary_failed', {
-                error: error instanceof Error ? error.message : String(error)
-            });
-            return undefined;
+            const message = error instanceof Error ? error.message : String(error);
+            this.log.warn('subagent.summary_failed', { error: message });
+            return this.isAbortError(error) || options.abortSignal?.aborted
+                ? failure('ABORTED', 'Sub-agent automatic summarization was cancelled.')
+                : failure('GENERATION_FAILED', message);
         }
     }
 
     /**
-     * 总结输入过大时沿用主流程的“缩小总结范围”思路：从最旧的完整消息/工具对开始
-     * 收缩，只把仍能装进总结模型预算的较新部分交给总结模型。子代理首条任务消息
-     * 会在请求级历史中单独保留，因此这里优先保留被裁剪旧回合的最新进展。
+     * 总结候选超出总结模型预算时，只缩短候选的尾部，返回能装入的最大完整前缀。
+     * 调用方仅替换 consumedMessageCount 覆盖的消息；未进入总结请求的尾部继续留在
+     * provider history，绝不再出现“删除整段、只总结后半段”的信息空洞。
      */
-    private fitSummaryHistoryToBudget(
+    private fitSummaryHistoryPrefixToBudget(
         messages: Content[],
         maxHistoryTokens: number,
         channelType: string
-    ): Content[] {
-        let start = 0;
-        while (start < messages.length
-            && this.estimateMessagesTokens(messages.slice(start), channelType) > maxHistoryTokens) {
-            const current = messages[start];
-            const next = messages[start + 1];
-            const nextIsFunctionResponse = next?.parts?.some(part => !!part.functionResponse) === true;
-            start += current.role === 'model' && nextIsFunctionResponse ? 2 : 1;
+    ): { messages: Content[]; consumedMessageCount: number; estimatedTokens: number } | undefined {
+        const perMessageTokens = messages.map(message => this.estimateMessageTokensForBudget(message, channelType));
+        const prefixTokens = new Array<number>(messages.length + 1).fill(0);
+        for (let i = 0; i < messages.length; i++) {
+            prefixTokens[i + 1] = prefixTokens[i] + perMessageTokens[i];
         }
 
-        while (start < messages.length
-            && messages[start].parts?.some(part => !!part.functionResponse) === true) {
-            start++;
+        // 至少消费两条消息：只总结首条任务或旧 summary 没有新增信息，也不能形成有效压缩。
+        for (let end = messages.length; end >= 2; end--) {
+            const estimatedTokens = prefixTokens[end];
+            if (estimatedTokens > maxHistoryTokens) continue;
+            const candidate = messages.slice(0, end);
+            if (!validateHistoryIntegrity(candidate).valid) continue;
+            return {
+                messages: candidate,
+                consumedMessageCount: end,
+                estimatedTokens
+            };
         }
-        return messages.slice(start);
+        return undefined;
     }
 
     private resolveSummaryInputBudget(
@@ -1783,13 +1816,20 @@ export class SummarizeService {
         // 绝对 token 数配置（如 30000）仍表示固定保留预算。
         const totalActiveTokens = messageTokens.reduce((sum, tokens) => sum + tokens, 0);
         const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, totalActiveTokens);
-        const plan = planSummarizeMessages({
-            messages: historyAfterSummary,
-            messageTokens,
-            keepBudgetTokens,
-            minKeepRounds: options.keepRecentRounds,
-            mode
-        });
+        const plan = mode === 'auto'
+            ? planAutoSummarizeMessages({
+                messages: historyAfterSummary,
+                messageTokens,
+                keepBudgetTokens,
+                minKeepRounds: options.keepRecentRounds
+            })
+            : planSummarizeMessages({
+                messages: historyAfterSummary,
+                messageTokens,
+                keepBudgetTokens,
+                minKeepRounds: options.keepRecentRounds,
+                mode
+            });
 
         this.log.info(`${mode}.range_plan`, {
             conversationId,
@@ -1801,57 +1841,7 @@ export class SummarizeService {
         });
 
         if (plan) {
-            let cutIndex = plan.cutIndex;
-            // 自动总结严格保护当前回合：切点不得越过最后一条真实用户消息。
-            // 越过后 markAndInsertSummarizedAtomically 的锁内 STALE 检查会拒绝本次总结，
-            // 而拒绝发生在 AI 生成完成之后——白白消耗一次总结模型调用。钳制到当前回合
-            // 起点后：多轮时切点最多落在当前回合边界（保留整个当前回合，总结更早内容）；
-            // 单轮（唯一轮即当前回合）时无安全切点，直接放弃（不调 AI）。
-            // 手动总结不受此限制：用户主动总结覆盖当前轮正是预期行为（锁内放行）。
-            if (mode === 'auto') {
-                let lastRealUserMessageIndex = -1;
-                for (let i = historyAfterSummary.length - 1; i >= 0; i--) {
-                    if (isRealUserMessage(historyAfterSummary[i])) {
-                        lastRealUserMessageIndex = i;
-                        break;
-                    }
-                }
-                if (lastRealUserMessageIndex < 0) {
-                    // 无真实用户消息（异常历史）：无法安全总结
-                    return {
-                        ok: false,
-                        code: rounds.length === 0 ? 'NOT_ENOUGH_CONTENT' : 'NOT_ENOUGH_ROUNDS',
-                        currentRounds: rounds.length
-                    };
-                }
-                if (lastRealUserMessageIndex === 0) {
-                    // 单轮长工具回合（唯一真实用户消息就是第一条，即首条锚点）：允许轮内截断，
-                    // 总结该轮「已完成的工具前缀」。轮首用户消息受「首条用户消息保护」永不标记
-                    // （锁内 markStart 钳制在它之后），模型始终能看到原始任务；planner 的切点
-                    // 落在安全的 model 消息上，不拆散 functionCall/functionResponse 配对。
-                    // 无工具交互的纯文本单轮同样允许（切点后保留区非空即可），总结输入超预算
-                    // 时由 handleAutoSummarize 的溢出收缩 / CONTEXT_OVERFLOW 兜底。
-                    if (cutIndex <= 0) {
-                        return {
-                            ok: false,
-                            code: 'NOT_ENOUGH_ROUNDS',
-                            currentRounds: rounds.length
-                        };
-                    }
-                } else {
-                    // 多轮：切点钳制到当前回合起点（保留整个当前轮，总结更早内容）。
-                    // 不能深入当前轮——非首条用户消息没有「锚点保护」，被标记后模型会丢失
-                    // 当前任务上下文。
-                    cutIndex = Math.min(cutIndex, lastRealUserMessageIndex);
-                    if (cutIndex <= 0) {
-                        return {
-                            ok: false,
-                            code: 'NOT_ENOUGH_ROUNDS',
-                            currentRounds: rounds.length
-                        };
-                    }
-                }
-            }
+            const cutIndex = plan.cutIndex;
             const summarizeEndIndex = historyStartIndex + cutIndex;
             if (plan.boundary === 'intra_round') {
                 this.log.info(`${mode}.intra_round_split`, {

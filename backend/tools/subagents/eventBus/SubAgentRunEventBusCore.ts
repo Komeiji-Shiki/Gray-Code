@@ -5,6 +5,7 @@
  * 恢复/淘汰）在 persist.ts 的派生类中实现，核心通过 protected 抽象方法调用。
  */
 
+import type { SubAgentContextCompactionRecord } from '../../../../shared/subAgentContextCompaction';
 import type { ITranscriptRepository } from '../../../modules/conversation/TranscriptRepository';
 import type { Content } from '../../../modules/conversation/types';
 import type { ToolProgressEvent } from '../../types';
@@ -14,6 +15,7 @@ import { ensureSnapshotProtocolFields, isLiveOnlyEvent, stampRunEvent, toManifes
 import {
     DEFAULT_CONTENT_WINDOW_LIMIT,
     MAX_EVENTS_PER_RUN,
+    MAX_RETAINED_CONTEXT_COMPACTIONS,
     TERMINAL_RUN_STATUSES,
     type SubAgentRunContentWindow,
     type SubAgentRunContentWindowOptions,
@@ -131,6 +133,7 @@ export abstract class SubAgentRunEventBusCore {
             // 修改目的：避免前端在首个 manifest/window 上收到 undefined revision，导致旧窗口保护失效。
             contentRevision: 0,
             eventSequence: 0,
+            contextCompactions: [],
             transcriptLoaded: true
         };
         this.snapshots.set(runId, snapshot);
@@ -226,6 +229,7 @@ export abstract class SubAgentRunEventBusCore {
                 // 修改目的：保证 Monitor 对异常/恢复事件也能执行同一 stale 判断。
                 contentRevision: 0,
                 eventSequence: 0,
+                contextCompactions: [],
                 transcriptLoaded: true
             };
             this.snapshots.set(normalized.runId, snapshot);
@@ -335,6 +339,7 @@ export abstract class SubAgentRunEventBusCore {
         // 显式改写后 provider 前缀本来也已经变化，旧缓存不再可命中，因此直接失效；续跑
         // 会走 executor 的既有 fallback，从当前 contents（过滤 Invocation 展示卡）重建历史。
         delete snapshot.lastSentHistory;
+        snapshot.contextCompactions = [];
         this.commitContentChange(snapshot, now);
         return snapshot;
     }
@@ -374,6 +379,50 @@ export abstract class SubAgentRunEventBusCore {
         snapshot.updatedAt = now;
         // 与内容类写入共用节流持久化窗口；不 bump contentRevision、不发 content_snapshot
         this.enqueuePersist(runId);
+    }
+
+    /** 追加或替换一条 provider 上下文压缩诊断记录，并实时广播给 Monitor。 */
+    upsertContextCompaction(
+        runId: string,
+        record: SubAgentContextCompactionRecord,
+        eventType: ToolProgressEvent['type'] = `context_compaction_${record.status}` as ToolProgressEvent['type']
+    ): void {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot) return;
+        ensureSnapshotProtocolFields(snapshot);
+        const records = snapshot.contextCompactions;
+        const index = records.findIndex(item => item.id === record.id);
+        const cloned = JSON.parse(JSON.stringify(record)) as SubAgentContextCompactionRecord;
+        if (index >= 0) {
+            records[index] = cloned;
+        } else {
+            records.push(cloned);
+            if (records.length > MAX_RETAINED_CONTEXT_COMPACTIONS) {
+                records.splice(0, records.length - MAX_RETAINED_CONTEXT_COMPACTIONS);
+            }
+        }
+        this.emit({
+            runId,
+            agentName: snapshot.agentName,
+            type: eventType,
+            payload: cloned
+        });
+        this.enqueuePersist(runId);
+    }
+
+    /** 在普通模型响应返回后，用 provider 实报 prompt token 回填最近一次压缩记录。 */
+    patchContextCompaction(
+        runId: string,
+        recordId: string,
+        patch: Partial<SubAgentContextCompactionRecord>,
+        eventType: ToolProgressEvent['type'] = 'context_compaction_usage_updated'
+    ): void {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot) return;
+        ensureSnapshotProtocolFields(snapshot);
+        const current = snapshot.contextCompactions.find(item => item.id === recordId);
+        if (!current) return;
+        this.upsertContextCompaction(runId, { ...current, ...patch, id: current.id }, eventType);
     }
 
     subscribe(listener: SubAgentRunListener): () => void {
@@ -449,6 +498,7 @@ export abstract class SubAgentRunEventBusCore {
             totalCount,
             contentRevision: snapshot.contentRevision,
             eventSequence: snapshot.eventSequence,
+            contextCompactions: JSON.parse(JSON.stringify(snapshot.contextCompactions || [])) as SubAgentContextCompactionRecord[],
             hasMoreBefore: startIndex > 0,
             hasMoreAfter: endIndex < totalCount
         };

@@ -195,16 +195,18 @@ describe('SubAgent executor - 续跑缓存域（任务1）', () => {
 
         expect(result2.success).toBe(true);
         expect(continueGenerateMock).toHaveBeenCalledTimes(1);
-        // 深比较：续跑实际发送的 history == 旧 run 最后一次实际发送的 history + 新 user 消息
-        expect(run2SentHistory).toEqual([
-            ...oldHistories[1],
-            { role: 'user', parts: [{ text: 'continue again' }] }
-        ]);
+        // 续跑实际发送 history = 旧 run 最后一次 provider history 原样前缀 + 一条新 user 消息。
+        // 新消息允许携带不会进入 provider 格式的 transcript 索引/时间戳等内部元数据。
+        expect(run2SentHistory).toHaveLength(oldHistories[1].length + 1);
+        expect(run2SentHistory[oldHistories[1].length]).toMatchObject({
+            role: 'user',
+            parts: [{ text: 'continue again' }]
+        });
         // provider 前缀缓存命中条件：续跑发送历史的前缀与旧 run 最后一次实际发送逐条一致
         expect(run2SentHistory.slice(0, oldHistories[1].length)).toEqual(oldHistories[1]);
         // history[0] 不含 # SubAgent Invocation 卡片（续跑前缀与旧 run 实际发送逐条一致）
         expect(JSON.stringify(run2SentHistory[0])).not.toContain('SubAgent Invocation');
-        expect(run2SentHistory[0]).toEqual({ role: 'user', parts: [{ text: 'do something' }] });
+        expect(run2SentHistory[0]).toMatchObject({ role: 'user', parts: [{ text: 'do something' }] });
         // 缓存域一致：conversationId 沿用旧 runId
         expect(run2Request.conversationId).toBe(oldRunId);
         // run 复用：续跑沿用旧 runId，Monitor 里是同一条记录（事件时间线连续：两次 run_completed + 一次 run_resumed）

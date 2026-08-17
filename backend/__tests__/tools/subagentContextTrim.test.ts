@@ -210,30 +210,107 @@ describe('trimSubAgentHistoryForContext（SEC）', () => {
             isSummary: true,
             isAutoSummary: true
         };
-        const summarizeHistory = jest.fn(async (dropped: Content[]) => {
-            expect(dropped.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(true);
-            return generatedSummary;
+        const summarizeHistory = jest.fn(async (candidate: Content[]) => {
+            expect(candidate.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(true);
+            return {
+                success: true as const,
+                summary: generatedSummary,
+                consumedMessageCount: candidate.length,
+                sourceTokenCount: estimateSubAgentHistoryTokens(candidate),
+                summaryTokenCount: 20
+            };
         });
         const result = await compactSubAgentHistoryForContext(history, channelConfig(300), {
             systemPrompt: 'agent system prompt',
+            summaryConfig: {
+                keepRecentRounds: 1,
+                keepRecentTokens: '50%',
+                maxAutoSummarizeAttemptsPerTurn: 1
+            },
             summarizeHistory
         });
         expect(summarizeHistory).toHaveBeenCalledTimes(1);
-        expect(result.some(message => message.parts?.[0]?.text === 'model-generated sub-agent summary')).toBe(true);
-        expect(result.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(false);
-        expect(result.some(message => message.parts?.some(part => part.functionCall?.id === 'c3'))).toBe(true);
-        expect(result.find(message => message.parts?.some(part => part.functionCall?.id === 'c3'))?.parts[0].thoughtSignatures)
+        expect(result.history.some(message => message.parts?.[0]?.text === 'model-generated sub-agent summary')).toBe(true);
+        expect(result.history.some(message => message.parts?.some(part => part.functionCall?.id === 'c1'))).toBe(false);
+        expect(result.history.some(message => message.parts?.some(part => part.functionCall?.id === 'c3'))).toBe(true);
+        expect(result.history.find(message => message.parts?.some(part => part.functionCall?.id === 'c3'))?.parts[0].thoughtSignatures)
             .toEqual({ gemini: 'sig-c3' });
-        expectNoOrphanResponses(result);
+        expectNoOrphanResponses(result.history);
     });
 
+    test('总结失败但未越过模型硬上限时保持原 history，不静默删除旧回合', async () => {
+        const config = {
+            ...channelConfig(1000),
+            model: 'model-x',
+            models: [{ id: 'model-x', name: 'model-x', contextWindow: 10000 }]
+        } as BaseChannelConfig;
+        const history: Content[] = [
+            userMsg('完整任务要求：不得删除'),
+            modelCallMsg('c1', 'read_file', 1200), toolResultMsg('c1', 1200),
+            modelCallMsg('c2', 'read_file', 1200), toolResultMsg('c2', 1200)
+        ];
+        const records: Array<{ status: string }> = [];
+        const result = await compactSubAgentHistoryForContext(history, config, {
+            modelOverride: 'model-x',
+            summaryConfig: {
+                keepRecentRounds: 1,
+                keepRecentTokens: '50%',
+                maxAutoSummarizeAttemptsPerTurn: 1
+            },
+            summarizeHistory: async () => ({
+                success: false,
+                code: 'GENERATION_FAILED',
+                message: 'temporary failure'
+            }),
+            onCompactionRecord: record => records.push(record)
+        });
 
-    test('预算按渠道 maxContextTokens 的 80% 计算（缺省 128000）', () => {
-        // 无 maxContextTokens：预算 = 128000 * 0.8 = 102400 token
+        expect(result.history).toBe(history);
+        expect(result.changed).toBe(false);
+        expect(result.history[0].parts?.[0].text).toBe('完整任务要求：不得删除');
+        expect(records.map(record => record.status)).toEqual(['running', 'failed']);
+    });
+
+    test('越过硬上限时 fallback 仍逐字保留首条任务，并公开记录裁剪边界', async () => {
+        const config = {
+            ...channelConfig(1000),
+            model: 'model-x',
+            models: [{ id: 'model-x', name: 'model-x', contextWindow: 1000 }]
+        } as BaseChannelConfig;
+        const task = '首条任务必须逐字保留：' + 'T'.repeat(300);
+        const history: Content[] = [
+            userMsg(task),
+            modelCallMsg('c1', 'read_file', 3000), toolResultMsg('c1', 3000),
+            modelCallMsg('c2', 'read_file', 3000), toolResultMsg('c2', 3000)
+        ];
+        const records: Array<{ status: string; strategy: string }> = [];
+        const result = await compactSubAgentHistoryForContext(history, config, {
+            modelOverride: 'model-x',
+            summaryConfig: {
+                keepRecentRounds: 1,
+                keepRecentTokens: '50%',
+                maxAutoSummarizeAttemptsPerTurn: 1
+            },
+            summarizeHistory: async () => ({
+                success: false,
+                code: 'GENERATION_FAILED',
+                message: 'summary unavailable'
+            }),
+            onCompactionRecord: record => records.push(record)
+        });
+
+        expect(result.history[0].parts?.[0].text).toBe(task);
+        expect(records.some(record => record.status === 'fallback' && record.strategy === 'hard_fallback')).toBe(true);
+        expect(result.estimatedTokensAfter).toBeLessThanOrEqual(1000);
+        expectNoOrphanResponses(result.history);
+    });
+
+    test('预算按渠道 maxContextTokens 的 80% 计算（模型元数据缺失时默认窗口为 256000）', () => {
+        // 无 maxContextTokens：默认输入窗口 256000，软阈值 = 204800 token
         const history = [
             userMsg('task'),
-            modelTextMsg('x'.repeat(300000)), // ≈ 75000 token
-            modelTextMsg('y'.repeat(300000))  // 合计 ≈ 150000 token > 102400
+            modelTextMsg('x'.repeat(300000)), // 含安全系数约 112500 token
+            modelTextMsg('y'.repeat(300000))  // 合计约 225000 token > 204800
         ];
         const config = channelConfig(128000);
         delete (config as Partial<BaseChannelConfig>).maxContextTokens;

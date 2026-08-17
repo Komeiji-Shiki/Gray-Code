@@ -9,6 +9,7 @@ import { SubAgentRunEventBus, SUBAGENT_RUNS_METADATA_KEY } from '../../tools/sub
 import type { SubAgentRunConversationStore } from '../../tools/subagents';
 import type { Content } from '../../modules/conversation/types';
 import type { SubAgentTranscriptData } from '../../modules/conversation/storage';
+import { getSubAgentTranscriptIndex } from '../../tools/subagents/executor/historyMetadata';
 
 /** 让持久化队列（微任务链）排空 */
 const flushPersistQueue = () => new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -529,6 +530,60 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         });
     });
 
+    test('上下文总结记录实时进入窗口并随独立 transcript 持久化恢复', async () => {
+        const bus = new SubAgentRunEventBus();
+        const external = createExternalStore();
+        bus.createRun('run_compaction', 'Agent', undefined, {
+            conversationId: 'conv_compaction',
+            conversationStore: external.store,
+            initialContents: [textContent('user', 'task'), textContent('model', 'old result')]
+        });
+        bus.upsertContextCompaction('run_compaction', {
+            id: 'run_compaction:context:1',
+            sequence: 1,
+            attempt: 1,
+            status: 'running',
+            strategy: 'summary',
+            startedAt: 10,
+            estimatedTokensBefore: 216000,
+            thresholdTokens: 200000
+        });
+        bus.upsertContextCompaction('run_compaction', {
+            id: 'run_compaction:context:1',
+            sequence: 1,
+            attempt: 1,
+            status: 'completed',
+            strategy: 'summary',
+            startedAt: 10,
+            completedAt: 20,
+            estimatedTokensBefore: 216000,
+            thresholdTokens: 200000,
+            estimatedTokensAfter: 7400,
+            summarizedMessageCount: 1,
+            sourceStartIndex: 1,
+            sourceEndIndex: 2,
+            boundaryContentIndex: 2
+        });
+
+        expect(bus.getContentWindow('run_compaction')?.contextCompactions).toHaveLength(1);
+        expect(bus.getContentWindow('run_compaction')?.contextCompactions[0]).toMatchObject({
+            status: 'completed',
+            estimatedTokensAfter: 7400,
+            boundaryContentIndex: 2
+        });
+        await bus.flushConversation('conv_compaction');
+        expect(external.transcripts.get('conv_compaction:run_compaction')?.contextCompactions).toHaveLength(1);
+
+        const reloadedBus = new SubAgentRunEventBus();
+        await reloadedBus.loadConversationSnapshots('conv_compaction', external.store);
+        await reloadedBus.loadRunTranscript('run_compaction');
+        expect(reloadedBus.getContentWindow('run_compaction')?.contextCompactions[0]).toMatchObject({
+            id: 'run_compaction:context:1',
+            status: 'completed',
+            estimatedTokensAfter: 7400
+        });
+    });
+
     test('读取旧内嵌格式时迁移到独立 transcript 并清除元数据大字段', async () => {
         const legacyContents = [textContent('user', 'legacy')];
         const legacyHistory = [textContent('model', 'history')];
@@ -636,10 +691,12 @@ describe('SubAgentRunEventBus - 独立 transcript 存储', () => {
         const reloadedBus = new SubAgentRunEventBus();
         await reloadedBus.loadConversationSnapshots('conv_projected', external.store);
         const restored = await reloadedBus.loadRunTranscript('projected_run');
-        expect(restored?.lastSentHistory).toEqual([
+        const restoredHistory = restored?.lastSentHistory || [];
+        expect(restoredHistory.map(content => ({ role: content.role, parts: content.parts }))).toEqual([
             textContent('user', 'actual provider prompt'),
             largeToolResult
         ]);
+        expect(getSubAgentTranscriptIndex(restoredHistory[1])).toBe(1);
     });
 
     test('flushRun 会等待终态 metadata 写入完成', async () => {

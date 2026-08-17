@@ -142,6 +142,7 @@ describe('SubAgent 接续 - 会话归属校验（F-06）', () => {
 describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () => {
     afterEach(() => {
         subAgentConcurrencyLimiter.release('cont_lsh_old');
+        subAgentConcurrencyLimiter.release('cont_prefix_exact');
         subAgentConcurrencyLimiter.release('cont_deleted_context');
     });
 
@@ -238,6 +239,46 @@ describe('SubAgent 接续 - lastSentHistory（续跑前缀缓存依据）', () =
             { role: 'user', parts: [{ text: 'old task' }] },
             { role: 'model', parts: [{ text: 'old reply' }] }
         ]);
+    });
+
+    test('真实续跑请求逐条复用 lastSentHistory 前缀，只在尾部追加本次任务', async () => {
+        const oldPrefix: Content[] = [
+            { role: 'user', parts: [{ text: 'original task' }] },
+            { role: 'user', parts: [{ text: '[summary] compacted old work' }], isSummary: true, isAutoSummary: true },
+            { role: 'model', parts: [{ text: 'latest retained answer' }] }
+        ];
+        subAgentRunEventBus.createRun('cont_prefix_exact', 'Tester', { agentType: 'tester', prompt: 'old' }, {
+            conversationId: 'conv_1',
+            initialContents: [
+                { role: 'user', parts: [{ text: '# SubAgent Invocation\noriginal task' }], isUserInput: true },
+                { role: 'model', parts: [{ text: 'latest retained answer' }] }
+            ] as Content[]
+        });
+        subAgentRunEventBus.updateLastSentHistory('cont_prefix_exact', oldPrefix);
+        subAgentRunEventBus.emit({ runId: 'cont_prefix_exact', agentName: 'Tester', type: 'run_completed', timestamp: Date.now() });
+
+        let sentHistory: Content[] = [];
+        const generate = jest.fn(async (request: any) => {
+            sentHistory = JSON.parse(JSON.stringify(request.history));
+            return { content: { role: 'model', parts: [{ text: 'continued result' }] }, model: 'model-x' };
+        });
+        const executor = createDefaultExecutor(createSubAgentConfig(), createContext({
+            conversationId: 'conv_1',
+            channelManager: { generate } as any,
+            toolRegistry: { getAllDeclarations: () => [] } as any
+        }));
+
+        const result = await executor({
+            agentType: 'tester',
+            prompt: 'continue with new requirement',
+            continueFromRunId: 'cont_prefix_exact',
+            conversationId: 'conv_1'
+        });
+
+        expect(result.success).toBe(true);
+        expect(generate).toHaveBeenCalledTimes(1);
+        expect(sentHistory.slice(0, oldPrefix.length)).toEqual(oldPrefix);
+        expect(JSON.stringify(sentHistory[oldPrefix.length])).toContain('continue with new requirement');
     });
 
     test('Monitor 删除工具结果后，续跑下一次 provider history 不再包含已删除 marker', async () => {

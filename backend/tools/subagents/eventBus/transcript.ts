@@ -6,6 +6,7 @@
 
 import type { Content } from '../../../modules/conversation/types';
 import type { SubAgentTranscriptData } from '../../../modules/conversation/storage';
+import { withSubAgentTranscriptIndex } from '../executor/historyMetadata';
 import { MANIFEST_PREVIEW_MAX_LENGTH, type SubAgentRunSnapshot } from './types';
 
 export function cloneContentsForWindow(contents: Content[]): Content[] {
@@ -135,10 +136,10 @@ export function restoreLastSentHistory(data: SubAgentTranscriptData): Content[] 
         const source = data.contents[entry.contentIndex];
         if (!source || typeof source !== 'object' || !Array.isArray(source.parts)) return undefined;
         // Provider formatter只消费 role/parts；显示层的 index/timestamp/isFunctionResponse 等字段不属于请求前缀。
-        restored.push({
+        restored.push(withSubAgentTranscriptIndex({
             role: source.role,
             parts: JSON.parse(JSON.stringify(source.parts || []))
-        } as Content);
+        } as Content, entry.contentIndex));
     }
     return restored;
 }

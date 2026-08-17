@@ -27,12 +27,10 @@ import { accumulateContextTokens } from './tokenAccumulator';
 import { performContextTrim } from './contextTrimPlanner';
 import { getTrimState, saveTrimState, clearTrimState, CURRENT_TRIM_STATE_SCHEMA_VERSION } from './trimState';
 
+import { evaluateAutoSummaryNeed } from './autoSummaryDecision';
+
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
-
-const AUTO_SUMMARY_USEFUL_HISTORY_RATIO = 0.01;
-const MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 256;
-const MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS = 8_192;
 
 export interface ContextTrimEvaluationOptions {
     /**
@@ -474,29 +472,20 @@ export async function getHistoryWithContextTrimInfo(
         // - 用户消息优先使用 estimatedTokenCount（由 TokenCount API 或本地估算预写入）
         // - 模型消息使用 usageMetadata（candidates/thoughts）或回退估算
         // 不再额外维护 totalTokenCount/安全系数等并行判定逻辑。
-        const exceedsSoftThreshold = fullTokenResult.estimatedTotalTokens > threshold;
         const hardInputTokenLimit = resolveModelContextWindowForConfig(config, modelOverride)?.maxInputTokens;
-        const compressibleHistoryTokens = Math.max(0, fullTokenResult.estimatedTotalTokens - promptTokens);
-        const minimumUsefulHistoryTokens = Math.max(
-            MIN_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,
-            Math.min(
-                MAX_AUTO_SUMMARY_USEFUL_HISTORY_TOKENS,
-                Math.floor(maxContextTokens * AUTO_SUMMARY_USEFUL_HISTORY_RATIO)
-            )
-        );
-        // 固定 prompt 自身已经越过总结软阈值时，总结无法把总量压回阈值以下。若此时只有很少的
-        // 新历史可压缩，反复总结只会每轮省几百到一两千 token；跳过这次低收益总结并继续主请求。
-        const lowSavingsBecauseFixedPromptExceedsThreshold =
-            exceedsSoftThreshold &&
-            promptTokens >= threshold &&
-            compressibleHistoryTokens < minimumUsefulHistoryTokens;
-        const needsAutoSummarize = exceedsSoftThreshold && !lowSavingsBecauseFixedPromptExceedsThreshold;
-        // 跳过低收益总结不等于忽略真正的模型窗口。只有已经逼近硬窗口时才直接进入请求级 fallback；
-        // 位于软阈值与硬窗口之间时原样继续，避免把总结阈值升级成 Agent 请求禁令。
-        const needsContextFallback =
-            !needsAutoSummarize &&
-            hardInputTokenLimit !== undefined &&
-            fullTokenResult.estimatedTotalTokens > hardInputTokenLimit;
+        const {
+            compressibleHistoryTokens,
+            minimumUsefulHistoryTokens,
+            lowSavingsBecauseFixedPromptExceedsThreshold,
+            needsAutoSummarize,
+            needsContextFallback
+        } = evaluateAutoSummaryNeed({
+            estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
+            thresholdTokens: threshold,
+            fixedPromptTokens: promptTokens,
+            maxInputTokens: maxContextTokens,
+            hardInputTokenLimit
+        });
 
         deps.log.debug('trim.auto_summarize_check', {
             conversationId,

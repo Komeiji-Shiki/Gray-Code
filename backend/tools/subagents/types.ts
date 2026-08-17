@@ -11,6 +11,7 @@ import type { McpManager } from '../../modules/mcp/McpManager';
 import type { SettingsManager } from '../../modules/settings/SettingsManager';
 import type { ConfigManager } from '../../modules/config/ConfigManager';
 import type { ToolExecutionService } from '../../modules/api/chat/services/ToolExecutionService';
+import type { SubAgentSummaryGenerationResult } from '../../modules/api/chat/services/subAgentSummaryTypes';
 import type { UsageIndexMessage } from '../../modules/conversation/usageStats';
 import type { Content } from '../../modules/conversation/types';
 
@@ -299,7 +300,7 @@ export interface SubAgentSummaryRequestOptions {
 export type SubAgentSummaryGenerator = (
     history: Content[],
     options: SubAgentSummaryRequestOptions
-) => Promise<Content | undefined>;
+) => Promise<SubAgentSummaryGenerationResult>;
 
 export interface SubAgentExecutorContext {
     /** 渠道管理器（用于调用 AI） */

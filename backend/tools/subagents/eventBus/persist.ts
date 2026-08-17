@@ -5,6 +5,7 @@
  * 事件发布/订阅核心、run 快照与状态、transcript 写入口在基类中，本类只负责落盘。
  */
 
+import type { SubAgentContextCompactionRecord } from '../../../../shared/subAgentContextCompaction';
 import type { Content } from '../../../modules/conversation/types';
 import type { SubAgentTranscriptData } from '../../../modules/conversation/storage';
 import { SubAgentRunEventBusCore } from './SubAgentRunEventBusCore';
@@ -119,6 +120,9 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
                 return snapshot;
             }
             snapshot.contents = Array.isArray(external?.contents) ? external.contents : [];
+            snapshot.contextCompactions = Array.isArray(external?.contextCompactions)
+                ? JSON.parse(JSON.stringify(external.contextCompactions)) as SubAgentContextCompactionRecord[]
+                : [];
             const lastSentHistory = external ? restoreLastSentHistory(external) : undefined;
             if (Array.isArray(lastSentHistory)) {
                 snapshot.lastSentHistory = JSON.parse(JSON.stringify(lastSentHistory)) as Content[];
@@ -208,6 +212,9 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
             // 旧内嵌格式必须先读取现有数组并迁移，迁移完成后的本次快照仍可直接使用。
             const legacyContents = Array.isArray(record.contents) ? record.contents : undefined;
             const legacyLastSentHistory = Array.isArray(record.lastSentHistory) ? record.lastSentHistory : undefined;
+            const legacyContextCompactions = Array.isArray(record.contextCompactions)
+                ? record.contextCompactions
+                : undefined;
             const contents = legacyContents ?? [];
             const snapshot: SubAgentRunSnapshot = {
                 ...record,
@@ -219,6 +226,9 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
                 // 修改目的：历史 run 也能参与前端 stale window 判断，不需要专门兼容分支。
                 contentRevision: Number.isFinite(record.contentRevision) ? record.contentRevision! : 0,
                 eventSequence: Number.isFinite(record.eventSequence) ? record.eventSequence! : 0,
+                contextCompactions: Array.isArray(legacyContextCompactions)
+                    ? JSON.parse(JSON.stringify(legacyContextCompactions)) as SubAgentContextCompactionRecord[]
+                    : [],
                 transcriptLoaded: !record.transcriptRef || !!legacyContents,
                 // 修改原因：lastSentHistory 是续跑复用 provider 前缀缓存的唯一依据，恢复时深拷贝避免与持久化对象共享引用。
                 // 修改方式：仅在字段为数组时显式重建；旧数据缺字段时保持 undefined，由 executor 降级处理。
@@ -229,10 +239,12 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
             if (!record.transcriptRef && Array.isArray(record.contents) && store.saveSubAgentTranscript) {
                 record.transcriptRef = await store.saveSubAgentTranscript(conversationId, record.runId, {
                     contents,
+                    ...(legacyContextCompactions ? { contextCompactions: legacyContextCompactions } : {}),
                     ...(legacyLastSentHistory ? { lastSentHistory: legacyLastSentHistory } : {})
                 });
                 record.contentCount = contents.length;
                 delete record.contents;
+                delete record.contextCompactions;
                 delete record.lastSentHistory;
                 migratedLegacyRecord = true;
             }
@@ -315,6 +327,9 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
                 const terminal = TERMINAL_RUN_STATUSES.has(snapshot.status);
                 const transcriptData: SubAgentTranscriptData = {
                     contents: snapshot.contents,
+                    ...(snapshot.contextCompactions.length > 0
+                        ? { contextCompactions: snapshot.contextCompactions }
+                        : {}),
                     ...(Array.isArray(snapshot.lastSentHistory)
                         ? (terminal
                             ? { lastSentHistoryProjection: buildLastSentHistoryProjection(snapshot.contents, snapshot.lastSentHistory) }
@@ -342,6 +357,9 @@ export class SubAgentRunEventBusPersistence extends SubAgentRunEventBusCore {
                         ? { transcriptRef }
                         : {
                             contents: snapshot.contents,
+                            ...(snapshot.contextCompactions.length > 0
+                                ? { contextCompactions: snapshot.contextCompactions }
+                                : {}),
                             ...(Array.isArray(snapshot.lastSentHistory) ? { lastSentHistory: snapshot.lastSentHistory } : {})
                         })
                 };

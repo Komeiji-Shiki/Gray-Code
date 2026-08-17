@@ -18,6 +18,7 @@ export function ensureSnapshotProtocolFields(snapshot: SubAgentRunSnapshot): voi
     // 修改目的：manifest、window、event 的 freshness 判断在新旧数据上使用同一语义。
     snapshot.contentRevision = Number.isFinite(snapshot.contentRevision) ? snapshot.contentRevision : 0;
     snapshot.eventSequence = Number.isFinite(snapshot.eventSequence) ? snapshot.eventSequence : 0;
+    snapshot.contextCompactions = Array.isArray(snapshot.contextCompactions) ? snapshot.contextCompactions : [];
 }
 
 export function stampRunEvent(snapshot: SubAgentRunSnapshot, event: SubAgentRunEvent): SubAgentRunEvent {

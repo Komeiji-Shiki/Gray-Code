@@ -21,6 +21,8 @@ export interface ToolProgressEvent {
         | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted' | 'run_detached'
         | 'retrying' | 'retrySuccess' | 'retryFailed'
         | 'llm_delta' | 'content_snapshot'
+        | 'context_compaction_running' | 'context_compaction_completed' | 'context_compaction_failed'
+        | 'context_compaction_fallback' | 'context_compaction_usage_updated'
         | 'tool_started' | 'tool_progress' | 'tool_completed' | 'tool_failed';
     /** 工具调用 ID；工具级事件使用 */
     toolId?: string;
