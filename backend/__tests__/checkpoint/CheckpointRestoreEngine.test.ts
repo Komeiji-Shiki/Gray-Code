@@ -722,6 +722,39 @@ describe('CheckpointRestoreEngine', () => {
         }
     });
 
+    test('CP-ATOMIC-1: 后续文件校验失败时回滚已完成的替换', async () => {
+        const ctx = await setupContext();
+        try {
+            await writeFile(ctx.workspaceDir, 'a.txt', 'current a');
+            await writeFile(ctx.workspaceDir, 'b.txt', 'current b');
+            const chain = [await createFullBackup(ctx, 'cp_full', { 'a.txt': 'restored a' })];
+            chain[0].fileHashes![scoped(ctx, 'b.txt')] = md5('declared b');
+            const target: RestoreTargetState = {
+                fileHashes: {
+                    [scoped(ctx, 'a.txt')]: md5('restored a'),
+                    [scoped(ctx, 'b.txt')]: md5('declared b')
+                },
+                emptyDirs: []
+            };
+            const current = await collectCurrentState(ctx);
+            const result = await restoreWorkspaceSnapshot(
+                { checkpointsDir: ctx.checkpointsDir, roots: ctx.roots },
+                chain,
+                target,
+                current.hashes,
+                current.emptyDirs
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.restored).toBe(0);
+            await expect(readWorkspaceFile(ctx, 'a.txt')).resolves.toBe('current a');
+            await expect(readWorkspaceFile(ctx, 'b.txt')).resolves.toBe('current b');
+        } finally {
+            await fs.rm(ctx.workspaceDir, { recursive: true, force: true });
+            await fs.rm(ctx.checkpointsDir, { recursive: true, force: true });
+        }
+    });
+
     test('CP-PROG-1: deletion phase reports progress covering the full restore', async () => {
         const ctx = await setupContext();
         try {

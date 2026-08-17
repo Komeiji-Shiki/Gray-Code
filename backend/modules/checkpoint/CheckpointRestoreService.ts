@@ -15,6 +15,7 @@
 
 import { t } from '../../i18n';
 import * as vscode from 'vscode';
+import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { SettingsManager } from '../settings';
 import type { ConversationManager } from '../conversation';
@@ -152,8 +153,13 @@ export class CheckpointRestoreService {
     private async filterRestoreTargetScoped(
         fileHashes: Record<string, string>,
         emptyDirs: string[],
-        roots: readonly RuntimeWorkspaceRoot[]
-    ): Promise<{ fileHashes: Record<string, string>; emptyDirs: string[] }> {
+        roots: readonly RuntimeWorkspaceRoot[],
+        fileStats?: Record<string, { size: number }>
+    ): Promise<{
+        fileHashes: Record<string, string>;
+        emptyDirs: string[];
+        sizeExcludedPaths: string[];
+    }> {
         const resolvers = new Map<string, CheckpointIgnoreResolver>();
         const getResolver = (root: RuntimeWorkspaceRoot): CheckpointIgnoreResolver => {
             let resolver = resolvers.get(root.id);
@@ -165,19 +171,33 @@ export class CheckpointRestoreService {
         };
 
         const filteredFileHashes: Record<string, string> = {};
+        const sizeExcludedPaths = new Set<string>();
+        const configuredMaxSize = this.settingsManager.getCheckpointConfig().exclusion?.maxFileSizeBytes
+            ?? DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES;
+        const maxSize = configuredMaxSize > 0 ? configuredMaxSize : undefined;
         // 文件恢复目标和工作区扫描使用同一忽略口径，确保比较一致。
         // C-15: 逐文件串行 await isIgnored 在 10 万+文件时明显慢（首个 isIgnored 还会触发
         // .gitignore 读取），改为共享 runBounded 有界并发。
         const fileTargets = Object.entries(fileHashes).map(([rawKey, hash]) => ({ rawKey, hash }));
         await runBounded(fileTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ rawKey, hash }) => {
-            const scopedKey = toScopedKey(rawKey, roots);
             try {
+                const scopedKey = toScopedKey(rawKey, roots);
                 const parsed = parseWorkspaceScopedPath(scopedKey, roots as RuntimeWorkspaceRoot[]);
-                if (!(await getResolver(parsed.root).isIgnored(parsed.relativePath, false))) {
-                    filteredFileHashes[scopedKey] = hash;
+                // 先应用当前忽略规则。被当前规则忽略的目标不会恢复，也不需要读取其
+                // 旧存档尺寸；这避免旧记录的损坏尺寸元数据阻断无关路径的恢复。
+                if (await getResolver(parsed.root).isIgnored(parsed.relativePath, false)) {
+                    return;
                 }
+                const storedSize = fileStats?.[rawKey]?.size ?? fileStats?.[scopedKey]?.size;
+                if (maxSize !== undefined && storedSize !== undefined && storedSize > maxSize) {
+                    sizeExcludedPaths.add(scopedKey);
+                    return;
+                }
+                // 没有尺寸时保留目标交给恢复引擎处理：缺失/不可读备份必须继续返回
+                // missing_in_chain/hash_mismatch 等既有失败清单，而不是被过滤成假成功。
+                filteredFileHashes[scopedKey] = hash;
             } catch (err) {
-                console.warn(`[CheckpointManager] Skip unparsable checkpoint path ${scopedKey}:`, err);
+                console.warn(`[CheckpointManager] Skip unparsable checkpoint path ${rawKey}:`, err);
             }
         });
 
@@ -200,7 +220,8 @@ export class CheckpointRestoreService {
 
         return {
             fileHashes: filteredFileHashes,
-            emptyDirs: filteredEmptyDirs
+            emptyDirs: filteredEmptyDirs,
+            sizeExcludedPaths: [...sizeExcludedPaths].sort()
         };
     }
 
@@ -243,6 +264,94 @@ export class CheckpointRestoreService {
     }
 
     /**
+     * 为旧记录补采恢复侧所需的备份文件尺寸。
+     *
+     * 新 manifest/新记录已经把 size 写入 fileStats；较早的记录可能只有完整
+     * fileHashes。恢复仍必须服从当前 maxFileSizeBytes，因此按恢复引擎相同的
+     * 增量链索引规则，从实际备份源文件读取尺寸，且只保留目标状态中的路径。
+     */
+    private async collectBackupFileStats(
+        chain: readonly RestoreChainEntry[],
+        targetFileHashes: Record<string, string>,
+        roots: readonly RuntimeWorkspaceRoot[]
+    ): Promise<Record<string, { size: number }>> {
+        const checkpointsRoot = path.resolve(this.checkpointsDir);
+        const targetKeys = new Set(Object.keys(targetFileHashes).map(key => toScopedKey(key, roots)));
+        const candidates = new Map<string, string>();
+        const isInside = (root: string, target: string): boolean => {
+            const relative = path.relative(root, target);
+            return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+        };
+
+        for (const entry of chain) {
+            if (!entry.fileHashes || !isSafeCheckpointDirName(entry.backupDir)) {
+                continue;
+            }
+            const backupRoot = path.resolve(checkpointsRoot, entry.backupDir);
+            if (!isInside(checkpointsRoot, backupRoot)) {
+                continue;
+            }
+            const trackedPaths = entry.changes
+                ? new Set(entry.changes.filter(change => change.type !== 'deleted').map(change => change.path))
+                : undefined;
+            for (const rawKey of Object.keys(entry.fileHashes)) {
+                if (trackedPaths && !trackedPaths.has(rawKey)) {
+                    continue;
+                }
+                const scopedKey = toScopedKey(rawKey, roots);
+                if (!targetKeys.has(scopedKey)) {
+                    continue;
+                }
+                const relative = rawKey.replace(/\\/g, '/').replace(/^\/+/, '');
+                const backupPath = path.resolve(backupRoot, ...relative.split('/').filter(Boolean));
+                if (isInside(backupRoot, backupPath)) {
+                    // 按旧→新覆盖，和 CheckpointRestoreEngine.buildFileIndex 的备份源选择一致。
+                    candidates.set(scopedKey, backupPath);
+                }
+            }
+        }
+
+        const fileStats: Record<string, { size: number }> = {};
+        await runBounded([...candidates.entries()], DEFAULT_CHECKPOINT_CONCURRENCY, async ([scopedKey, backupPath]) => {
+            try {
+                const stat = await fs.lstat(backupPath, { bigint: true });
+                if (stat.isFile()) {
+                    fileStats[scopedKey] = { size: Number(stat.size) };
+                }
+            } catch {
+                // 缺失/不可读的备份由恢复引擎报告 missing_in_chain；这里不伪造尺寸。
+            }
+        });
+        return fileStats;
+    }
+
+    /**
+     * 仅在当前启用单文件大小限制且旧记录缺少尺寸时读取备份目录。
+     * 已有统计优先，补采统计只填充缺失的 scoped 键。
+     */
+    private async resolveRestoreFileStats(
+        checkpoint: CheckpointRecord,
+        chain: readonly RestoreChainEntry[],
+        roots: readonly RuntimeWorkspaceRoot[]
+    ): Promise<Record<string, { size: number }> | undefined> {
+        const configuredMaxSize = this.settingsManager.getCheckpointConfig().exclusion?.maxFileSizeBytes
+            ?? DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES;
+        const existing = { ...(checkpoint.fileStats ?? {}) };
+        if (configuredMaxSize <= 0 || !checkpoint.fileHashes) {
+            return Object.keys(existing).length > 0 ? existing : undefined;
+        }
+        const missingSize = Object.keys(checkpoint.fileHashes).some(rawKey => {
+            const scopedKey = toScopedKey(rawKey, roots);
+            return existing[rawKey]?.size === undefined && existing[scopedKey]?.size === undefined;
+        });
+        if (!missingSize) {
+            return existing;
+        }
+        const discovered = await this.collectBackupFileStats(chain, checkpoint.fileHashes, roots);
+        return { ...discovered, ...existing };
+    }
+
+    /**
      * 恢复公共准备（CP-09）：prune 缺失记录、工作区校验、增量链完整性验证、
      * 收集当前工作区状态、计算删除边界。
      *
@@ -259,11 +368,13 @@ export class CheckpointRestoreService {
         // 查找检查点（缺失备份目录的记录先裁剪）
         let checkpoints = await this.queryService.getCheckpointRecords(conversationId);
         let missingBackupDirs: string[] = [];
+        let unavailableBackupDirs: string[] = [];
         let autoPrunedCheckpointCount = 0;
 
         const pruneResult = await this.queryService.pruneMissingBackupCheckpointRecords(conversationId, checkpoints);
         checkpoints = pruneResult.checkpoints;
         missingBackupDirs = pruneResult.missingBackupDirs;
+        unavailableBackupDirs = pruneResult.unavailableBackupDirs ?? [];
         autoPrunedCheckpointCount = pruneResult.prunedCount;
 
         const foundCheckpoint = checkpoints.find(cp => cp.id === checkpointId);
@@ -293,6 +404,9 @@ export class CheckpointRestoreService {
         if (!checkpoint) {
             return failResult(t('modules.checkpoint.restore.checkpointNotFound'));
         }
+        if (unavailableBackupDirs.length > 0) {
+            return failResult(`Checkpoint backup is temporarily unavailable: ${unavailableBackupDirs.join(', ')}`);
+        }
 
         // CP-01: 新格式存档（带工作区身份元数据）必须通过工作区校验，
         // 防止项目 A 的存档被静默恢复到项目 B；旧存档无身份元数据，保持兼容。
@@ -314,23 +428,6 @@ export class CheckpointRestoreService {
         if (hasLegacyKeys && roots.length > 1) {
             return failResult(t('modules.checkpoint.restore.multiRootLegacyNotSupported'));
         }
-
-        // 先用当前规则裁剪目标状态（每个根独立 ignore 作用域），再进行 diff / restore。
-        // CP-PARTIAL-2：部分快照标记随目标状态透传给恢复引擎（computeRestorePlan 据此
-        // 禁用 deletedInSnapshot 判定——部分快照缺失的文件只是不在扫描范围内）。
-        const filteredTarget = checkpoint.fileHashes
-            ? await this.filterRestoreTargetScoped(
-                checkpoint.fileHashes,
-                checkpoint.emptyDirs || [],
-                roots
-            )
-            : undefined;
-        const targetState = filteredTarget
-            ? {
-                ...filteredTarget,
-                ...(checkpoint.partial === true ? { partial: true } : {})
-            }
-            : undefined;
 
         // 旧版存档（无 fileHashes）：单根走 legacy 语义（只复制、绝不删除）；多根明确拒绝
         if (!checkpoint.fileHashes) {
@@ -392,12 +489,21 @@ export class CheckpointRestoreService {
             }
         }
 
-        // 验证链的完整性（确保所有备份目录都存在）；缺失记录在链内裁剪
+        // 验证链的完整性。只有明确 missing 的目录允许裁剪；unavailable/unsafe 均保留记录并失败。
         const chainMissingBackupDirs: string[] = [];
+        const chainUnavailableBackupDirs: string[] = [];
         for (const cp of chain) {
-            if (!(await this.queryService.backupDirectoryExists(cp.backupDir))) {
+            const status = await this.queryService.getBackupDirectoryStatus(cp.backupDir);
+            if (status === 'missing') {
                 chainMissingBackupDirs.push(cp.backupDir);
+            } else if (status === 'unavailable' || status === 'unsafe') {
+                chainUnavailableBackupDirs.push(cp.backupDir);
             }
+        }
+        if (chainUnavailableBackupDirs.length > 0) {
+            return failResult(
+                `Checkpoint backup is temporarily unavailable or unsafe: ${Array.from(new Set(chainUnavailableBackupDirs)).join(', ')}`
+            );
         }
         if (chainMissingBackupDirs.length > 0) {
             const chainMissingSet = new Set(chainMissingBackupDirs);
@@ -419,6 +525,35 @@ export class CheckpointRestoreService {
             );
         }
 
+        // CPF-01/CPF-08：先把增量链各节点从 manifest 回填为恢复引擎可消费的轻量条目。
+        // 这一步也为旧记录缺少 fileStats 时的备份尺寸补采提供真实文件来源。
+        const chainEntries: RestoreChainEntry[] = [];
+        for (const cp of chain) {
+            const enriched = await this.manifestRepository.enrichRecord(cp);
+            chainEntries.push({
+                checkpointId: cp.id,
+                backupDir: cp.backupDir,
+                fileHashes: enriched.fileHashes,
+                changes: enriched.changes
+            });
+        }
+
+        // 先用当前规则裁剪目标状态（每个根独立 ignore 作用域），再进行 diff / restore。
+        // CP-PARTIAL-2：部分快照标记随目标状态透传给恢复引擎（computeRestorePlan 据此
+        // 禁用 deletedInSnapshot 判定——部分快照缺失的文件只是不在扫描范围内）。
+        const effectiveFileStats = await this.resolveRestoreFileStats(checkpoint, chainEntries, roots);
+        const filteredTarget = await this.filterRestoreTargetScoped(
+            checkpoint.fileHashes,
+            checkpoint.emptyDirs || [],
+            roots,
+            effectiveFileStats
+        );
+        const targetState: RestoreTargetState = {
+            fileHashes: filteredTarget.fileHashes,
+            emptyDirs: filteredTarget.emptyDirs,
+            ...(checkpoint.partial === true ? { partial: true } : {})
+        };
+
         // 工作区当前状态与目标状态使用同一 ignore 口径收集（每个根独立 resolver）
         const { currentHashes, currentEmptyDirs } = await this.collectCurrentWorkspaceState(roots);
 
@@ -427,20 +562,14 @@ export class CheckpointRestoreService {
         for (const rawKey of checkpoint.unbackedPaths ?? []) {
             protectedScopedPaths.add(toScopedKey(rawKey, roots));
         }
-        // M-3: 快照时被规则排除的文件/目录（manifest.excluded，reason ∈ {default, gitignore, custom}）
-        // 同样纳入保护：用户之后放宽规则（关闭类别/删除自定义模式）后，这些快照时已存在的文件
-        // 会进入 currentHashes，若无保护会被当作“快照后新建文件”删除（deleteUntrackedFiles=true），
-        // 违反 CP-09“只删快照后新建文件”语义。
-        // - forced：永远被当前规则忽略，永远不会进入 currentHashes，无需保护
-        // - size/unreadable（文件级）：已在 unbackedPaths 覆盖（快照时可见但未备份）
-        // - unreadable（目录级，resolver 阶段不可读目录）：只进 manifest.excluded、不在
-        //   unbackedPaths；目录保持不可读时内部文件不会进入 currentHashes，无需保护
-        // 目录级排除条目（整目录被排除，如 `ws_x/dist`）只记录目录自身，不递归记录内部文件：
-        // 由恢复引擎的前缀匹配（isProtectedScopedPath）保护目录内全部文件。
+        for (const scopedKey of filteredTarget?.sizeExcludedPaths ?? []) {
+            protectedScopedPaths.add(scopedKey);
+        }
+        // 快照时无法可靠观测或被规则排除的文件/目录都必须长期保护。目录条目由
+        // isProtectedScopedPath 的祖先匹配覆盖整棵子树；旧 manifest 没有 isDirectory
+        // 字段也保持保守保护，避免规则/权限变化后把内容误判为快照后新建。
         for (const entry of restoreManifest?.excluded ?? []) {
-            if (entry.reason === 'default' || entry.reason === 'gitignore' || entry.reason === 'custom') {
-                protectedScopedPaths.add(toScopedKey(entry.path, roots));
-            }
+            protectedScopedPaths.add(toScopedKey(entry.path, roots));
         }
 
         // #29: 只删除目标快照 fileHashes 中记录过的路径，
@@ -450,19 +579,8 @@ export class CheckpointRestoreService {
             deletableScopedPaths.add(toScopedKey(rawKey, roots));
         }
 
-        // CPF-01/CPF-08: 增量链节点同样从 manifest 回填 fileHashes/changes（新格式记录元数据不含），
-        // 恢复引擎据此构建 O(1) 文件路径索引
-        const chainEntries: RestoreChainEntry[] = [];
-        for (const cp of chain) {
-            const enriched = await this.manifestRepository.enrichRecord(cp);
-            chainEntries.push({
-                checkpointId: cp.id,
-                backupDir: cp.backupDir,
-                fileHashes: enriched.fileHashes,
-                // 增量节点磁盘上只保存 changes 里的文件；引擎据此限定备份文件边界
-                changes: enriched.changes
-            });
-        }
+        // CPF-01/CPF-08：增量链节点已在上方从 manifest 回填 fileHashes/changes，
+        // 恢复引擎据此构建 O(1) 文件路径索引。
 
         return {
             ok: true,
@@ -494,6 +612,9 @@ export class CheckpointRestoreService {
     ): Promise<{ currentHashes: Record<string, string>; currentEmptyDirs: string[] }> {
         const currentHashes: Record<string, string> = {};
         const currentEmptyDirs: string[] = [];
+        const configuredMaxSize = this.settingsManager.getCheckpointConfig().exclusion?.maxFileSizeBytes
+            ?? DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES;
+        const maxSize = configuredMaxSize > 0 ? configuredMaxSize : undefined;
         // CP-PERF-1: 先收集全部待哈希目标（scoped 键映射与旧实现一致），
         // 再用共享 runBounded 有界并发 + 共享流式哈希，避免对全工作区逐文件顺序读盘。
         const hashTargets: Array<{ filePath: string; scopedPath: string }> = [];
@@ -511,6 +632,10 @@ export class CheckpointRestoreService {
         }
         await runBounded(hashTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ filePath, scopedPath }) => {
             try {
+                const stat = await fs.lstat(filePath, { bigint: true });
+                if (!stat.isFile() || (maxSize !== undefined && Number(stat.size) > maxSize)) {
+                    return;
+                }
                 const hash = await hashFileStreaming(filePath);
                 if (hash) {
                     currentHashes[scopedPath] = hash;
@@ -612,6 +737,7 @@ export class CheckpointRestoreService {
 
         // 以备份目录内容构造目标状态（相对路径键，引擎内自动包装为 scoped）
         const rawHashes: Record<string, string> = {};
+        const rawStats: Record<string, { size: number }> = {};
         // CP-PERF-1: 备份内容哈希同样有界并发（共享 runBounded + 流式哈希）；
         // 读取失败的文件与 getFileHash 返回 null 的旧语义一致地跳过。
         const backupHashTargets: Array<{ backupFile: string; relativePath: string }> = [];
@@ -623,8 +749,13 @@ export class CheckpointRestoreService {
         }
         await runBounded(backupHashTargets, DEFAULT_CHECKPOINT_CONCURRENCY, async ({ backupFile, relativePath }) => {
             try {
+                const stat = await fs.lstat(backupFile, { bigint: true });
+                if (!stat.isFile()) return;
                 const hash = await hashFileStreaming(backupFile);
-                if (hash) rawHashes[relativePath] = hash;
+                if (hash) {
+                    rawHashes[relativePath] = hash;
+                    rawStats[relativePath] = { size: Number(stat.size) };
+                }
             } catch {
                 // 读取失败跳过，与 getFileHash 返回 null 的旧语义一致
             }
@@ -634,7 +765,7 @@ export class CheckpointRestoreService {
             .filter(Boolean);
 
         // 当前规则裁剪目标状态 + 当前工作区状态（同一 ignore 口径）
-        const targetState = await this.filterRestoreTargetScoped(rawHashes, rawEmptyDirs, roots);
+        const targetState = await this.filterRestoreTargetScoped(rawHashes, rawEmptyDirs, roots, rawStats);
         const { currentHashes, currentEmptyDirs } = await this.collectCurrentWorkspaceState(roots);
 
         // 引擎执行：白名单为空集 → 不删除任何文件；
@@ -644,6 +775,7 @@ export class CheckpointRestoreService {
             {
                 checkpointsDir: this.checkpointsDir,
                 roots,
+                protectedScopedPaths: new Set(targetState.sizeExcludedPaths),
                 deletableScopedPaths: new Set<string>(),
                 skipHashVerification: true,
                 signal

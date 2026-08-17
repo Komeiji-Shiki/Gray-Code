@@ -12,11 +12,12 @@ import { t } from '../../i18n';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as crypto from 'crypto';
+import { pipeline } from 'stream/promises';
 import type { ConversationManager } from '../conversation';
 import type { CheckpointConfig } from '../settings';
 import { buildWorkspaceSnapshot, type SnapshotFileStat } from './CheckpointSnapshotBuilder';
 import { DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES, buildIgnoreSnapshot } from './CheckpointExclusionProfiles';
-import { toScopedKey } from './CheckpointRestoreEngine';
+import { isProtectedScopedPath, toScopedKey } from './CheckpointRestoreEngine';
 import { createWorkspaceSnapshot, parseWorkspaceScopedPath, type RuntimeWorkspaceRoot } from './CheckpointWorkspace';
 import { Logger } from '../../core/logger';
 import type {
@@ -214,6 +215,8 @@ export class CheckpointBackupExecutor {
             //   判为 added」的伪全量存档（fileCount=全工作区文件数的失真统计）；
             // - 恢复侧：恢复部分快照时未受影响文件与工作区哈希一致（skipped），不会
             //   落入 untrackedToDelete 误删清单（此前用户确认后会把未扫描文件全删）。
+            const absentPathSet = new Set(snapshot.absent ?? []);
+            const unreadablePathSet = new Set((snapshot.unreadable ?? []).map(entry => entry.scopedPath));
             if (snapshotPartial && previousHashes) {
                 for (const [scopedPath, hash] of Object.entries(previousHashes)) {
                     if (!(scopedPath in currentHashes)) {
@@ -224,12 +227,17 @@ export class CheckpointBackupExecutor {
                         }
                     }
                 }
-                // 部分快照分支 stat 失败的受影响文件（delete_file 删除/不可读）：从继承
-                // 映射中剔除——文件在快照时已不存在，若保留上一存档的哈希，恢复时会被
-                // 当作「与目标一致」跳过，被删文件「复活」。
-                for (const entry of snapshot.unreadable) {
-                    delete currentHashes[entry.scopedPath];
-                    delete currentStats[entry.scopedPath];
+                // 只有 absent 能证明路径在快照时不存在；unreadable 仅表示无法观测。
+                // 两者都不能继承上一快照的旧哈希，但只有 unreadable 会进入保护集合。
+                // 目录路径按祖先前缀处理，递归删除目录时会清掉继承映射中的整棵子树。
+                for (const scopedPath of Object.keys(currentHashes)) {
+                    if (
+                        isProtectedScopedPath(scopedPath, absentPathSet) ||
+                        isProtectedScopedPath(scopedPath, unreadablePathSet)
+                    ) {
+                        delete currentHashes[scopedPath];
+                        delete currentStats[scopedPath];
+                    }
                 }
             }
             // CP-PARTIAL-3：空目录同样继承上一存档（去重合并，scoped 归一化）——部分
@@ -238,7 +246,13 @@ export class CheckpointBackupExecutor {
             if (snapshotPartial && lastCheckpoint?.emptyDirs) {
                 const mergedEmptyDirs = new Set(snapshot.emptyDirs.map(dir => toScopedKey(dir, roots)));
                 for (const dir of lastCheckpoint.emptyDirs) {
-                    mergedEmptyDirs.add(toScopedKey(dir, roots));
+                    const scopedDir = toScopedKey(dir, roots);
+                    if (
+                        !isProtectedScopedPath(scopedDir, absentPathSet) &&
+                        !isProtectedScopedPath(scopedDir, unreadablePathSet)
+                    ) {
+                        mergedEmptyDirs.add(scopedDir);
+                    }
                 }
                 snapshot.emptyDirs = [...mergedEmptyDirs].sort();
             }
@@ -279,15 +293,15 @@ export class CheckpointBackupExecutor {
                 isIncremental = true;
                 baseCheckpointId = lastCheckpoint.id;
 
-                // 构建变更列表（scoped 键）
-                // CP-PARTIAL-2：部分快照的 currentHashes 只含受影响文件，「previous 有而
-                // current 没有」的文件只是不在扫描范围内（并非被删除）——deleted 判定对
-                // 部分快照不可靠，禁用（否则恢复链把未删除的文件误标 deleted，污染
-                // deletedInSnapshot 判定与后续存档的增量比较）。
+                // 部分快照不能把所有“映射缺失”都判为删除；仅 absent 明确证明路径
+                // 在快照时不存在。目录 absent 会覆盖其全部后代路径。
+                const explicitDeleted = snapshotPartial
+                    ? deleted.filter(p => isProtectedScopedPath(p, absentPathSet))
+                    : deleted;
                 changes = [
                     ...added.map(p => ({ path: p, type: 'added' as const, hash: currentHashes[p] })),
                     ...modified.map(p => ({ path: p, type: 'modified' as const, hash: currentHashes[p] })),
-                    ...(snapshotPartial ? [] : deleted.map(p => ({ path: p, type: 'deleted' as const })))
+                    ...explicitDeleted.map(p => ({ path: p, type: 'deleted' as const }))
                 ];
 
                 // 只复制变更的文件（如果没有变更，则不复制任何文件）
@@ -353,7 +367,7 @@ export class CheckpointBackupExecutor {
 
             // 大小超限与不可读文件合并进 unbackedPaths：
             // 恢复时这些路径绝不能自动删除（protectedScopedPaths 边界）
-            for (const entry of [...snapshot.sizeExcluded, ...snapshot.unreadable]) {
+            for (const entry of [...(snapshot.sizeExcluded ?? []), ...(snapshot.unreadable ?? [])]) {
                 if (!unbackedPathSet.has(entry.scopedPath)) {
                     unbackedPathSet.add(entry.scopedPath);
                     unbackedPaths.push(entry.scopedPath);
@@ -411,6 +425,7 @@ export class CheckpointBackupExecutor {
                 changes: changes as CheckpointManifest['changes'],
                 excluded: snapshot.excluded,
                 ignoreSnapshot: exclusionSnapshot,
+                ...(snapshot.absent && snapshot.absent.length > 0 ? { absentPaths: [...snapshot.absent].sort() } : {}),
                 // CP-PARTIAL-2：部分快照标记（只写 true，缺省 = 全量，与读取侧兼容）
                 ...(snapshotPartial ? { partial: true } : {})
             };
@@ -444,6 +459,7 @@ export class CheckpointBackupExecutor {
                 excludedBytes: snapshot.excluded.reduce((sum, entry) => sum + (entry.size ?? 0), 0),
                 ignoreSnapshot: exclusionSnapshot,
                 unbackedPaths: unbackedPaths.length > 0 ? unbackedPaths.sort() : undefined,
+                absentPaths: snapshot.absent && snapshot.absent.length > 0 ? [...snapshot.absent].sort() : undefined,
                 emptyDirs: snapshot.emptyDirs,
                 workspaceRoots: workspaceSnapshot.workspaceRoots,
                 workspaceFingerprint: workspaceSnapshot.workspaceFingerprint,
@@ -526,16 +542,58 @@ export class CheckpointBackupExecutor {
             const srcPath = path.join(parsed.root.fsPath, ...parsed.relativePath.split('/'));
             const destPath = path.join(backupDir, ...scopedPath.split('/'));
             await fs.mkdir(path.dirname(destPath), { recursive: true });
-            const stat = await fs.stat(srcPath);
-            await fs.copyFile(srcPath, destPath);
-            // CP-TOCTOU-1: 复制后重新流式哈希校验落盘备份（源文件可能已变）
-            if (expectedHash) {
-                const backupHash = await hashFileStreaming(destPath);
-                if (backupHash !== expectedHash) {
-                    throw new Error(`backup content changed during copy (expected ${expectedHash}, got ${backupHash})`);
+
+            // CP-SYMLINK-2：不要用路径式 fs.stat + fs.copyFile。源路径可能在两次
+            // 操作之间被替换为符号链接，copyFile 会跟随链接。先检查每一级词法路径，
+            // 再打开源文件并固定文件句柄；复制期间即使源路径被替换，读取的仍是已打开
+            // 的 inode，而不是后来链接指向的目标。
+            const assertNoSymlink = async (): Promise<void> => {
+                let currentPath = parsed.root.fsPath;
+                for (const segment of parsed.relativePath.split('/').filter(Boolean)) {
+                    currentPath = path.join(currentPath, segment);
+                    const entry = await fs.lstat(currentPath);
+                    if (entry.isSymbolicLink()) {
+                        throw new Error(`Refusing to back up symlink path: ${scopedPath}`);
+                    }
                 }
+            };
+            await assertNoSymlink();
+
+            const sourceHandle = await fs.open(srcPath, 'r');
+            let destinationHandle: Awaited<ReturnType<typeof fs.open>> | undefined;
+            try {
+                // 重新检查打开后的词法路径，并确认句柄本身仍是普通文件。
+                await assertNoSymlink();
+                const sourceStat = await sourceHandle.stat();
+                if (!sourceStat.isFile()) {
+                    throw new Error(`Refusing to back up non-regular file: ${scopedPath}`);
+                }
+                // 句柄真实路径若已经越出对应工作区根，说明发生了链接竞态。
+                const realSourcePath = path.resolve(await fs.realpath(srcPath));
+                const realRootPath = path.resolve(await fs.realpath(parsed.root.fsPath));
+                const relativeRealPath = path.relative(realRootPath, realSourcePath);
+                if (relativeRealPath === '' || relativeRealPath.startsWith('..') || path.isAbsolute(relativeRealPath)) {
+                    throw new Error(`Refusing to back up path outside workspace root: ${scopedPath}`);
+                }
+
+                destinationHandle = await fs.open(destPath, 'w');
+                await pipeline(
+                    sourceHandle.createReadStream({ autoClose: true }),
+                    destinationHandle.createWriteStream({ autoClose: true })
+                );
+
+                // CP-TOCTOU-1: 复制后重新流式哈希校验落盘备份（源文件可能已变）
+                if (expectedHash) {
+                    const backupHash = await hashFileStreaming(destPath);
+                    if (backupHash !== expectedHash) {
+                        throw new Error(`backup content changed during copy (expected ${expectedHash}, got ${backupHash})`);
+                    }
+                }
+                return { ok: true, bytes: Number(sourceStat.size) };
+            } finally {
+                await destinationHandle?.close().catch(() => undefined);
+                await sourceHandle.close().catch(() => undefined);
             }
-            return { ok: true, bytes: stat.size };
         } catch (err) {
             // C-13: 超大备份逐文件告警会刷屏——只打印前 MAX_COPY_FAILURE_WARN 条，
             // 其余由调用方的 unbackedPaths 统计/日志（full_backup/incremental_backup）聚合。

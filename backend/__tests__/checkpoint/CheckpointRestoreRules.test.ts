@@ -131,6 +131,54 @@ describe('checkpoint restore rules (R5a)', () => {
         }
     });
 
+    test('M-2b：旧 fileHashes-only 存档恢复时从备份目录补采文件尺寸并执行当前上限', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-g2-m2b-workspace-');
+        const storageRoot = await createTempDirectory('limcode-g2-m2b-storage-');
+        const checkpointId = 'cp-old-size-only';
+        try {
+            // 当前工作区文件小于上限，但旧存档中的备份副本超过当前上限。
+            await writeFile(workspaceRoot, 'large.bin', 'current content');
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId: 'conv-m2b',
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 1,
+                contentHash: 'old-size-only',
+                type: 'full',
+                fileHashes: { 'large.bin': 'old-large-hash' }
+                // 故意没有 fileStats / manifest 尺寸，模拟旧格式记录。
+            };
+            await writeFile(
+                path.join(storageRoot, 'checkpoints', checkpointId),
+                'large.bin',
+                'x'.repeat(2048)
+            );
+
+            const harness = await createCheckpointManagerHarness(workspaceRoot, storageRoot, [checkpoint]);
+            harness.setCheckpointConfig({
+                exclusion: {
+                    enabledProfiles: {},
+                    maxFileSizeBytes: 1024,
+                    customPatterns: []
+                }
+            });
+
+            const result = await harness.manager.restoreCheckpoint('conv-m2b', checkpointId);
+            expect(result.success).toBe(true);
+            expect(result.restored).toBe(0);
+            // 旧记录也不能绕过当前大小限制覆盖工作区文件。
+            await expect(fs.readFile(path.join(workspaceRoot, 'large.bin'), 'utf-8'))
+                .resolves.toBe('current content');
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
     test('M-3：manifest.excluded（default/gitignore/custom）受保护，放宽规则后恢复不删除', async () => {
         const workspaceRoot = await createTempDirectory('limcode-g2-m3-workspace-');
         const storageRoot = await createTempDirectory('limcode-g2-m3-storage-');

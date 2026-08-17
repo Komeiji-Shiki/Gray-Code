@@ -68,7 +68,8 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledWith('n1', {
       mode: 'chat-and-workspace',
-      confirmedDiscardDirty: true
+      confirmedDiscardDirty: true,
+      confirmedDirtyFiles: ['/ws/unsaved.txt']
     })
     expect(chatStoreMock.restoreCheckpoint).not.toHaveBeenCalled()
     await nextTick()
@@ -85,7 +86,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
 
     await wrapper.find('.dialog-btn.confirm').trigger('click')
 
-    expect(chatStoreMock.restoreCheckpoint).toHaveBeenCalledWith('cp-1', false, true)
+    expect(chatStoreMock.restoreCheckpoint).toHaveBeenCalledWith('cp-1', false, true, undefined, ['/ws/a.txt'])
     expect(chatStoreMock.switchBranchCandidate).not.toHaveBeenCalled()
   })
 
@@ -100,7 +101,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
 
     await wrapper.find('.dialog-btn.confirm').trigger('click')
 
-    expect(chatStoreMock.restoreAndDelete).toHaveBeenCalledWith(1, 'cp-2', true, true)
+    expect(chatStoreMock.restoreAndDelete).toHaveBeenCalledWith(1, 'cp-2', true, true, undefined, [])
   })
 
   test('取消按钮清空待确认动作且不执行任何续作', async () => {

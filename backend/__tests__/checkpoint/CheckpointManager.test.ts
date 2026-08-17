@@ -470,9 +470,9 @@ describe('CheckpointManager restore ignore semantics', () => {
             expect(mismatches.length).toBe(1);
             expect(mismatches[0].path).toBe('c.txt');
 
-            // d.txt should have been restored successfully
-            expect(result.restored).toBe(1);
-            await expect(fs.readFile(path.join(workspaceRoot, 'd.txt'), 'utf-8')).resolves.toBe('restored d\n');
+            // 事务式恢复：任一目标文件缺失/校验失败时全部回滚，d.txt 也保持原内容。
+            expect(result.restored).toBe(0);
+            await expect(fs.readFile(path.join(workspaceRoot, 'd.txt'), 'utf-8')).resolves.toBe('current d\n');
         } finally {
             await fs.rm(workspaceRoot, { recursive: true, force: true });
             await fs.rm(storageRoot, { recursive: true, force: true });
@@ -1560,6 +1560,49 @@ describe('CheckpointManager metadata RMW migration', () => {
         }
     });
 
+    test('STALE_RESTORE_PREVIEW：预览后新增文件不会被确认删除', async () => {
+        const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
+        const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
+        const conversationId = 'conv-stale-preview';
+        const checkpointId = 'cp-stale-preview';
+        const trackedContent = 'tracked v1\n';
+
+        try {
+            const backupRoot = path.join(storageRoot, 'checkpoints', checkpointId);
+            await writeFile(backupRoot, 'tracked.txt', trackedContent);
+            await writeFile(workspaceRoot, 'tracked.txt', 'current changed\n');
+
+            const checkpoint: CheckpointRecord = {
+                id: checkpointId,
+                conversationId,
+                messageIndex: 0,
+                toolName: 'write_file',
+                phase: 'after',
+                timestamp: Date.now(),
+                backupDir: checkpointId,
+                fileCount: 1,
+                contentHash: 'hash-stale-preview',
+                type: 'full',
+                fileHashes: { 'tracked.txt': hashContent(trackedContent) },
+                emptyDirs: []
+            };
+            const manager = await createCheckpointManager(workspaceRoot, storageRoot, [checkpoint], []);
+            const preview = await manager.previewRestore(conversationId, checkpointId);
+            expect(preview.previewId).toEqual(expect.any(String));
+
+            await writeFile(workspaceRoot, 'important.txt', 'created after preview\n');
+            const stale = await manager.restoreCheckpoint(conversationId, checkpointId, {
+                deleteUntrackedFiles: true,
+                previewId: preview.previewId
+            });
+            expect(stale).toMatchObject({ success: false, error: 'STALE_RESTORE_PREVIEW' });
+            await expect(pathExists(path.join(workspaceRoot, 'important.txt'))).resolves.toBe(true);
+        } finally {
+            await fs.rm(workspaceRoot, { recursive: true, force: true });
+            await fs.rm(storageRoot, { recursive: true, force: true });
+        }
+    });
+
     test('previewRestore prunes orphan backup dirs without any record references', async () => {
         const workspaceRoot = await createTempDirectory('limcode-checkpoint-workspace-');
         const storageRoot = await createTempDirectory('limcode-checkpoint-storage-');
@@ -1988,8 +2031,9 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(keysB.some(k => k.endsWith('/a.ts'))).toBe(false);
                 expect(keysB.some(k => k.endsWith('/b.ts'))).toBe(true);
                 expect(keysB.some(k => k.endsWith('/c.ts'))).toBe(true);
-                // 被删文件记录进 unbackedPaths（恢复侧保护，绝不删除）
-                expect(cpB!.unbackedPaths?.some(p => p.endsWith('/a.ts'))).toBe(true);
+                // ENOENT 是合法 absent 状态：不进入 unbackedPaths，不对当前新建路径施加保护。
+                expect(cpB!.unbackedPaths?.some(p => p.endsWith('/a.ts'))).not.toBe(true);
+                expect(cpB!.absentPaths?.some(p => p.endsWith('/a.ts'))).toBe(true);
             } finally {
                 await fs.rm(workspaceRoot, { recursive: true, force: true });
                 await fs.rm(storageRoot, { recursive: true, force: true });

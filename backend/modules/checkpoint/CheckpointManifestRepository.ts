@@ -768,6 +768,7 @@ export class CheckpointManifestRepository {
             changes: (record.changes ?? []) as CheckpointManifest['changes'],
             excluded,
             ignoreSnapshot,
+            ...(record.absentPaths && record.absentPaths.length > 0 ? { absentPaths: record.absentPaths } : {}),
             // CP-PARTIAL-2：部分快照标记随迁移产物保留（manifest 缺失时语义不回退为全量）
             ...(record.partial === true ? { partial: true } : {})
         };
@@ -803,6 +804,7 @@ export class CheckpointManifestRepository {
             fileStats,
             emptyDirs: manifest.emptyDirs.length > 0 ? manifest.emptyDirs : record.emptyDirs,
             changes: manifest.changes.length > 0 ? manifest.changes : record.changes,
+            ...(manifest.absentPaths ? { absentPaths: manifest.absentPaths } : {}),
             // CP-PARTIAL-2：部分快照标记从 manifest 回填（恢复侧据此禁用删除判定）
             ...(manifest.partial === true ? { partial: true } : {})
         };

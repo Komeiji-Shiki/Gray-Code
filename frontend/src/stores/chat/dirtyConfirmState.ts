@@ -21,6 +21,8 @@ export interface DirtyRestorePending {
   checkpointId: string
   /** 恢复确认框中已确认删除快照后新建文件？ */
   deleteUntrackedFiles: boolean
+  /** 预览恢复令牌，dirty 确认续作必须沿用同一令牌。 */
+  previewId?: string
   /** retry/delete/edit 入口需要按消息 id 定位消息下标 */
   messageId?: string
   newContent?: string

@@ -17,12 +17,14 @@ import { t } from '../../i18n';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as crypto from 'crypto';
 import type { SettingsManager } from '../settings';
 import type { ConversationManager } from '../conversation';
 import { getDiffManager } from '../../core/services/diffManager';
 import {
     computeRestorePlan,
-    restoreWorkspaceSnapshot
+    restoreWorkspaceSnapshot,
+    type RestorePlan
 } from './CheckpointRestoreEngine';
 import {
     createRuntimeWorkspaceRoots,
@@ -43,6 +45,8 @@ import type {
 } from './types';
 import { CheckpointManifestRepository, isSafeCheckpointDirName } from './CheckpointManifestRepository';
 import { CheckpointQueryService } from './CheckpointQueryService';
+import type { CheckpointQueryResult } from './CheckpointQueryService';
+import type { CheckpointSummaryWithSize } from '../../../shared/protocol';
 import { CheckpointRetentionService } from './CheckpointRetentionService';
 import { throwIfAborted } from './checkpointConcurrency';
 // CPF-12: 恢复侧辅助拆分为独立服务/模块（方法体原样平移，纯重构）
@@ -77,15 +81,72 @@ export { computeForcedKeepIds } from './CheckpointDeletionService';
 
 const log = Logger.get('CheckpointManager');
 
+const RESTORE_PREVIEW_TTL_MS = 10 * 60 * 1000;
+
+interface RestorePreviewToken {
+    conversationId: string;
+    checkpointId: string;
+    workspaceStateFingerprint: string;
+    untrackedScopedPaths: string[];
+    expiresAt: number;
+}
+
+function buildRestoreStateFingerprint(
+    currentHashes: Record<string, string>,
+    currentEmptyDirs: string[],
+    plan?: RestorePlan
+): string {
+    const canonicalHashes = Object.entries(currentHashes).sort(([a], [b]) => a.localeCompare(b));
+    const canonicalPlan = plan
+        ? {
+            added: [...plan.added].sort(),
+            modified: [...plan.modified].sort(),
+            toDelete: [...plan.toDelete].sort(),
+            deletedInSnapshot: [...plan.deletedInSnapshot].sort(),
+            untrackedToDelete: [...plan.untrackedToDelete].sort(),
+            untrackedEmptyDirs: [...plan.untrackedEmptyDirs].sort(),
+            targetHashes: Object.entries(plan.targetHashes).sort(([a], [b]) => a.localeCompare(b)),
+            targetEmptyDirs: [...plan.targetEmptyDirs].sort()
+        }
+        : null;
+    return crypto.createHash('sha256').update(JSON.stringify({
+        currentHashes: canonicalHashes,
+        currentEmptyDirs: [...currentEmptyDirs].sort(),
+        plan: canonicalPlan
+    })).digest('hex');
+}
+
 /**
  * 检查点管理器
  */
 export class CheckpointManager {
     private _checkpointsDir: string;
+    private readonly restorePreviewTokens = new Map<string, RestorePreviewToken>();
+
+    private issueRestorePreviewToken(
+        conversationId: string,
+        checkpointId: string,
+        workspaceStateFingerprint: string,
+        untrackedScopedPaths: string[]
+    ): string {
+        const now = Date.now();
+        for (const [id, token] of this.restorePreviewTokens) {
+            if (token.expiresAt <= now) {
+                this.restorePreviewTokens.delete(id);
+            }
+        }
+        const previewId = crypto.randomUUID();
+        this.restorePreviewTokens.set(previewId, {
+            conversationId,
+            checkpointId,
+            workspaceStateFingerprint,
+            untrackedScopedPaths: [...untrackedScopedPaths].sort(),
+            expiresAt: now + RESTORE_PREVIEW_TTL_MS
+        });
+        return previewId;
+    }
 
     /**
-     * 检查点存储目录（只读暴露）。
-     *
      * MIG-05：完整性检查等只读诊断场景需要存档备份目录位置；构造时已确定
      * （customDataPath 或 globalStorageUri 下 checkpoints 子目录），
      * 本 getter 仅暴露该值，不改变任何行为。
@@ -429,7 +490,19 @@ export class CheckpointManager {
      * 不再下发完整 fileHashes 映射；withSize=true 时附加 size 字段：
      * 优先使用创建时记录的 backupBytes，旧存档缺失时按需懒扫描一次并写回摘要缓存（CPF-09/CPF-10）。
      */
-    async getCheckpoints(conversationId: string, options?: { withSize?: boolean }): Promise<Array<CheckpointSummary & { size?: number }>> {
+    async getCheckpoints(
+        conversationId: string,
+        options: { withSize: true }
+    ): Promise<CheckpointSummaryWithSize[] & { error?: string }>;
+    async getCheckpoints(
+        conversationId: string,
+        options?: { withSize?: false }
+    ): Promise<Array<CheckpointSummary & { size?: number }> & { error?: string }>;
+    async getCheckpoints(
+        conversationId: string,
+        options?: { withSize?: boolean }
+    ): Promise<CheckpointQueryResult>;
+    async getCheckpoints(conversationId: string, options?: { withSize?: boolean }): Promise<CheckpointQueryResult> {
         return this.queryService.getCheckpoints(conversationId, options);
     }
     
@@ -444,14 +517,12 @@ export class CheckpointManager {
     /**
      * 恢复检查点
      *
-     * @param options.deleteUntrackedFiles 是否删除快照后新建的文件（CP-09）。
-     *        默认 false（#29 保护：快照后新建文件不被静默删除）；
-     *        恢复确认流程在用户确认待删除文件清单后传 true。
+     * @param options.previewId 预览令牌；提供时执行会在恢复锁内复验预览指纹。
      */
     async restoreCheckpoint(
         conversationId: string,
         checkpointId: string,
-        options?: { deleteUntrackedFiles?: boolean }
+        options?: { deleteUntrackedFiles?: boolean; previewId?: string }
     ): Promise<RestoreResult> {
         // CP-02: 使用全部工作区根，不再只使用第一个根目录
         const roots = this.getRuntimeWorkspaceRoots();
@@ -494,6 +565,41 @@ export class CheckpointManager {
                         deletableScopedPaths
                     } = prepared.ctx;
 
+                    let confirmedUntrackedScopedPaths: ReadonlySet<string> | undefined;
+                    if (options?.previewId) {
+                        const token = this.restorePreviewTokens.get(options.previewId);
+                        const previewPlan = targetState
+                            ? computeRestorePlan(
+                                { checkpointsDir: this._checkpointsDir, roots, protectedScopedPaths, deletableScopedPaths },
+                                chainEntries,
+                                targetState,
+                                currentHashes,
+                                currentEmptyDirs
+                            )
+                            : undefined;
+                        const currentFingerprint = buildRestoreStateFingerprint(currentHashes, currentEmptyDirs, previewPlan);
+                        if (
+                            !token ||
+                            token.expiresAt <= Date.now() ||
+                            token.conversationId !== conversationId ||
+                            token.checkpointId !== checkpointId ||
+                            token.workspaceStateFingerprint !== currentFingerprint
+                        ) {
+                            if (token && token.expiresAt <= Date.now()) this.restorePreviewTokens.delete(options.previewId);
+                            reportProgress({ phase: 'failed' });
+                            return {
+                                success: false,
+                                restored: 0,
+                                deleted: 0,
+                                skipped: 0,
+                                error: 'STALE_RESTORE_PREVIEW'
+                            };
+                        }
+                        // 一次性消费令牌，确保确认过的精确删除集合不能被重复请求重放。
+                        this.restorePreviewTokens.delete(options.previewId);
+                        confirmedUntrackedScopedPaths = new Set(token.untrackedScopedPaths);
+                    }
+
                     // 校验已通过（prepareRestore ok）：恢复前取消所有 pending diffs
                     //（恢复后它们将无效），并拒绝所有未响应的工具调用（持久化「用户拒绝」占位）。
                     // 副作用只对有效恢复生效——校验失败的恢复不会取消/拒绝任何东西。
@@ -535,6 +641,7 @@ export class CheckpointManager {
                             protectedScopedPaths,
                             deletableScopedPaths,
                             deleteUntrackedFiles: options?.deleteUntrackedFiles === true,
+                            confirmedUntrackedScopedPaths,
                             signal,
                             onProgress: (processed, total) => reportProgress({ phase: 'restoring', processed, total })
                         },
@@ -659,6 +766,13 @@ export class CheckpointManager {
                     // 旧版存档（无 fileHashes）：恢复只复制、绝不删除，清单为空；
                     // legacy 标记让前端区分「预览未知」与「无变更」，避免误导
                     if (!targetState) {
+                        const workspaceStateFingerprint = buildRestoreStateFingerprint(currentHashes, currentEmptyDirs);
+                        const previewId = this.issueRestorePreviewToken(
+                            conversationId,
+                            checkpointId,
+                            workspaceStateFingerprint,
+                            []
+                        );
                         return {
                             success: true,
                             restored: -1, // legacy 以备份目录内容为目标，预览无法预知数量，执行结果会展示实际值
@@ -668,6 +782,8 @@ export class CheckpointManager {
                             deletablePaths: [],
                             untrackedPaths: [],
                             legacy: true,
+                            previewId,
+                            workspaceStateFingerprint,
                             unbackedPaths: this.restoreService.toDisplayUnbackedPaths(checkpoint.unbackedPaths, roots),
                             missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
                             autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
@@ -690,6 +806,14 @@ export class CheckpointManager {
                         currentEmptyDirs
                     );
 
+                    const workspaceStateFingerprint = buildRestoreStateFingerprint(currentHashes, currentEmptyDirs, plan);
+                    const previewId = this.issueRestorePreviewToken(
+                        conversationId,
+                        checkpointId,
+                        workspaceStateFingerprint,
+                        [...plan.untrackedToDelete, ...plan.untrackedEmptyDirs]
+                    );
+
                     return {
                         success: true,
                         restored: plan.added.length + plan.modified.length,
@@ -708,6 +832,8 @@ export class CheckpointManager {
                             ...plan.untrackedToDelete.map(p => this.restoreService.toDisplayPath(p, roots)),
                             ...plan.untrackedEmptyDirs.map(p => this.restoreService.toDisplayPath(p, roots))
                         ],
+                        previewId,
+                        workspaceStateFingerprint,
                         unbackedPaths: this.restoreService.toDisplayUnbackedPaths(checkpoint.unbackedPaths, roots),
                         missingBackupDirs: missingBackupDirs.length > 0 ? missingBackupDirs : undefined,
                         autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,

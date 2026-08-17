@@ -337,15 +337,17 @@ export class CheckpointIgnoreResolver {
         let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
         try {
             entries = await fs.readdir(currentDir, { withFileTypes: true });
-        } catch {
-            // M-6: 不可读目录不再静默跳过——产出 excluded 条目（预览据此置 complete=false 并统计）
-            if (currentDir !== this.rootDir) {
-                result.excluded.push({
-                    path: normalizeCheckpointPath(path.relative(this.rootDir, currentDir)),
-                    reason: 'unreadable',
-                    isDirectory: true
-                });
+        } catch (error) {
+            // 根目录不可读时绝不能把空结果伪装成成功的完整快照；调用方必须中止建档。
+            if (currentDir === this.rootDir) {
+                throw error;
             }
+            // 子目录不可读时保留目录级排除项，恢复时按整棵子树保护。
+            result.excluded.push({
+                path: normalizeCheckpointPath(path.relative(this.rootDir, currentDir)),
+                reason: 'unreadable',
+                isDirectory: true
+            });
             return result;
         }
 

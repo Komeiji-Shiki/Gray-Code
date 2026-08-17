@@ -36,6 +36,8 @@ export interface CheckpointExcludedEntry {
     source?: string;
     /** 文件字节数（reason === 'size' 时存在） */
     size?: number;
+    /** 目录级排除项；恢复时按子树保护。旧 manifest 缺省时仍按路径前缀保守处理。 */
+    isDirectory?: boolean;
 }
 
 /** 排除统计（按原因聚合 + 样本列表；样本必须限制数量，完整清单进 manifest） */
@@ -117,6 +119,8 @@ export interface CheckpointManifestMeta {
      * 不在扫描范围内，并非被工具删除，绝不能默认删除。缺省（undefined）= 全量快照。
      */
     partial?: boolean;
+    /** 快照时明确不存在的受影响路径（ENOENT/ENOTDIR，作为 absent 状态保存） */
+    absentPaths?: string[];
 }
 
 /**
@@ -278,6 +282,12 @@ export interface RestorePreviewResult {
     missingBackupDirs?: string[];
     autoPrunedCheckpointCount?: number;
     unbackedPaths?: string[];
+    /** 本次预览的不可伪造确认令牌；恢复必须携带并在锁内复验工作区计划。 */
+    previewId?: string;
+    /** 预览时工作区与恢复计划的稳定指纹，用于诊断陈旧确认。 */
+    workspaceStateFingerprint?: string;
+    /** 预览中明确确认的 dirty 文档路径；恢复时出现集合变化会拒绝执行。 */
+    dirtyFiles?: string[];
     /** EX-11: 恢复预览同样携带排除说明（与 restoreCheckpoint 一致） */
     excludedNote?: CheckpointExcludedNote;
 }
@@ -326,6 +336,8 @@ export interface CheckpointRecord {
     unbackedPaths?: string[];
     /** 空目录列表（相对路径） */
     emptyDirs?: string[];
+    /** 快照时明确不存在的受影响路径（ENOENT/ENOTDIR，作为 absent 状态保存） */
+    absentPaths?: string[];
     /** 存档时的工作区根目录集合（CP-01：恢复前校验当前工作区身份；旧存档无此字段） */
     workspaceRoots?: CheckpointWorkspaceRoot[];
     /** 工作区身份指纹（roots 集合的哈希，用于恢复前快速校验） */

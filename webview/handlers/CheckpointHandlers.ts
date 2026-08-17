@@ -79,7 +79,11 @@ export const getCheckpoints: MessageHandler = async (data, requestId, ctx) => {
     return;
   }
   const checkpoints = await ctx.checkpointManager.getCheckpoints(conversationId, { withSize });
-  ctx.sendResponse(requestId, { checkpoints });
+  if (checkpoints.error) {
+    ctx.sendResponse(requestId, { success: false, checkpoints: [], error: checkpoints.error });
+    return;
+  }
+  ctx.sendResponse(requestId, { success: true, checkpoints });
 };
 
 /**
@@ -106,7 +110,7 @@ export const previewRestore: MessageHandler = async (data, requestId, ctx) => {
  * 入参新增：{ confirmedDiscardDirty?: boolean }
  */
 export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty } = data;
+  const { conversationId, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty, confirmedDirtyFiles, previewId } = data;
 
   // L-9：入参显式校验（与 previewRestore / deleteCheckpoint 同口径）——
   // 非法 id 不再流入 cancelStreamAndSubAgents / restoreCheckpoint 后端路径
@@ -115,7 +119,35 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
     return;
   }
 
-  // BCP-05（决策 11）：dirty 拦截。命中且未确认 → 返回 dirtyFiles，不做任何写入。
+  if (confirmedDiscardDirty === true) {
+    const dirtyFiles = detectDirtyFilesInWorkspace();
+    const expectedDirtyFiles = Array.isArray(confirmedDirtyFiles)
+      ? confirmedDirtyFiles.filter((file: unknown): file is string => typeof file === 'string').sort()
+      : [];
+    if (JSON.stringify(dirtyFiles.slice().sort()) !== JSON.stringify(expectedDirtyFiles)) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        restored: 0,
+        deleted: 0,
+        skipped: 0,
+        dirtyFiles,
+        previewId,
+        error: 'STALE_DIRTY_CONFIRMATION'
+      });
+      return;
+    }
+  }
+  if (deleteUntrackedFiles === true && (!isValidId(previewId))) {
+    ctx.sendResponse(requestId, {
+      success: false,
+      restored: 0,
+      deleted: 0,
+      skipped: 0,
+      error: 'STALE_RESTORE_PREVIEW'
+    });
+    return;
+  }
+  // BCP-05：未确认 dirty 时只返回当前集合，不做任何写入。
   if (confirmedDiscardDirty !== true) {
     const dirtyFiles = detectDirtyFilesInWorkspace();
     if (dirtyFiles.length > 0) {
@@ -125,6 +157,7 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
         deleted: 0,
         skipped: 0,
         dirtyFiles,
+        previewId,
       });
       return;
     }
@@ -139,7 +172,8 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
 
   const result = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId, {
     // CP-09: 用户在恢复确认框中确认了待删除文件清单（含快照后新建文件）后才传 true
-    deleteUntrackedFiles: deleteUntrackedFiles === true
+    deleteUntrackedFiles: deleteUntrackedFiles === true,
+    ...(isValidId(previewId) ? { previewId } : {})
   });
 
   // 回退本身已经成功，派生元数据刷新失败只记录告警，不能误报恢复失败。
@@ -271,6 +305,7 @@ export const previewExclusions: MessageHandler = async (data, requestId, ctx) =>
       ...(exclusion?.customPatterns ?? [])
     ],
     enabledProfiles: exclusion?.enabledProfiles ?? DEFAULT_ENABLED_PROFILES,
+    profilePatterns: exclusion?.profilePatterns,
     maxFileSizeBytes: exclusion?.maxFileSizeBytes ?? DEFAULT_EXCLUSION_MAX_FILE_SIZE_BYTES,
     excludeAbsolutePaths: [path.dirname(checkpointsDir)]
   });

@@ -656,6 +656,9 @@ export type CheckpointRecord = CheckpointSummary & {
   /** 快照时可见但备份复制失败的文件 */
   unbackedPaths?: string[]
 
+  /** 快照时明确不存在的受影响路径（ENOENT/ENOTDIR） */
+  absentPaths?: string[]
+
   /** 空目录列表（相对路径） */
   emptyDirs?: string[]
 }
@@ -687,6 +690,8 @@ export interface CheckpointManifestExcludedEntry {
   rule?: string
   /** 规则来源说明（如 `logs` 类别名、`.gitignore` 路径、`custom`） */
   source?: string
+  /** 是否为目录排除项；存在时恢复按整棵子树保护 */
+  isDirectory?: boolean
   /** 文件字节数（reason === 'size' 时存在） */
   size?: number
 }

@@ -13,6 +13,10 @@ import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools';
 import { ChannelError, ErrorType } from '../../backend/modules/channel';
+import {
+  isConversationMutationGated,
+  BRANCH_BUSY_STREAMING_MESSAGE
+} from '../handlers/streamGuard';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
@@ -69,6 +73,19 @@ export class StreamRequestHandler {
       // 等待失败不应阻断新流启动（等待内部已有超时兜底，此处仅防御性兜底）
       console.warn('[StreamRequestHandler] Failed to wait for retired stream completion:', error);
     }
+  }
+
+  private rejectIfMutationGated(
+    conversationId: string,
+    requestId: string,
+    finalizeRequest = true
+  ): boolean {
+    if (!isConversationMutationGated(conversationId)) return false;
+    this.deps.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
+    if (finalizeRequest) {
+      this.deps.finalizeRequest(requestId);
+    }
+    return true;
   }
 
   /**
@@ -204,6 +221,9 @@ export class StreamRequestHandler {
       this.deps.finalizeRequest(requestId);
       return;
     }
+    if (this.rejectIfMutationGated(data.conversationId, requestId)) {
+      return;
+    }
     const {
       conversationId,
       message,
@@ -228,6 +248,11 @@ export class StreamRequestHandler {
       // 旧流；若 create() 后不复查，「停止」操作会丢失（新流照常启动）。
       const cancelEpoch = this.deps.abortManager.getCancelEpoch(conversationId);
       await this.awaitOldStreamCompletion(conversationId);
+      // 初次入口检查与等待旧流退出之间可能建立分支事务闸；在创建新控制器前
+      // 必须再次检查，避免已在途的流请求穿过闸启动。
+      if (this.rejectIfMutationGated(conversationId, requestId, false)) {
+        return;
+      }
       controller = this.deps.abortManager.create(conversationId);
       // P1 复查：等待期间有取消 → 立即取消刚创建的控制器、不启动新流。
       // 汇报协议与 handleStreamError 的取消路径一致（cancelled 结尾事件 + cancelled 响应）。
@@ -279,6 +304,9 @@ export class StreamRequestHandler {
       this.deps.finalizeRequest(requestId);
       return;
     }
+    if (this.rejectIfMutationGated(data.conversationId, requestId)) {
+      return;
+    }
     const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -290,6 +318,9 @@ export class StreamRequestHandler {
       // cancelStream 不得丢失：已取消则不启动新流。
       const cancelEpoch = this.deps.abortManager.getCancelEpoch(conversationId);
       await this.awaitOldStreamCompletion(conversationId);
+      if (this.rejectIfMutationGated(conversationId, requestId, false)) {
+        return;
+      }
       controller = this.deps.abortManager.create(conversationId);
       if (this.deps.abortManager.getCancelEpoch(conversationId) !== cancelEpoch) {
         controller.abort();
@@ -331,6 +362,9 @@ export class StreamRequestHandler {
       this.deps.finalizeRequest(requestId);
       return;
     }
+    if (this.rejectIfMutationGated(data.conversationId, requestId)) {
+      return;
+    }
     const { conversationId, toolResponses, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
@@ -342,6 +376,9 @@ export class StreamRequestHandler {
       // P1（TOCTOU）：快照取消代次并复查——等待窗口内用户点过「停止」则不启动确认流。
       const cancelEpoch = this.deps.abortManager.getCancelEpoch(conversationId);
       await this.awaitRetiredStreamCompletion(conversationId);
+      if (this.rejectIfMutationGated(conversationId, requestId, false)) {
+        return;
+      }
       controller = this.deps.abortManager.create(conversationId);
       if (this.deps.abortManager.getCancelEpoch(conversationId) !== cancelEpoch) {
         controller.abort();

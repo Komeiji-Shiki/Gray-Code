@@ -109,6 +109,8 @@ export interface RestoreEngineOptions {
      * 实现 CP-09「撤销工具新建文件」语义。
      */
     deleteUntrackedFiles?: boolean;
+    /** 预览令牌确认过的精确 untracked 集合；提供时不得扩大到执行时新出现的路径。 */
+    confirmedUntrackedScopedPaths?: ReadonlySet<string>;
     /**
      * 跳过备份内容哈希校验（CP-LEGACY-HASH-2）。
      *
@@ -443,128 +445,244 @@ export async function restoreWorkspaceSnapshot(
     // 快照后新建的文件/空目录默认保留（#29）；用户确认删除清单后（CP-09）才一并清理。
     // 快照时被工具删除的文件（deletedInSnapshot）是目标快照语义的一部分：快照状态中它们
     // 已不存在，恢复应默认删除（不归入 untracked 保留，否则恢复后文件“复活”）。
+    const confirmedUntrackedScopedPaths = options.confirmedUntrackedScopedPaths;
+    const confirmedUntrackedToDelete = confirmedUntrackedScopedPaths
+        ? untrackedToDelete.filter(scopedKey => confirmedUntrackedScopedPaths.has(scopedKey))
+        : untrackedToDelete;
+    const confirmedUntrackedEmptyDirs = confirmedUntrackedScopedPaths
+        ? untrackedEmptyDirs.filter(scopedKey => confirmedUntrackedScopedPaths.has(scopedKey))
+        : untrackedEmptyDirs;
     const deletionList = options.deleteUntrackedFiles
-        ? [...toDelete, ...deletedInSnapshot, ...untrackedToDelete]
+        ? [...toDelete, ...deletedInSnapshot, ...confirmedUntrackedToDelete]
         : [...toDelete, ...deletedInSnapshot];
 
     // 1. 构建增量链文件索引（恢复执行时才需要）
     const fileIndex = buildFileIndex(chain, checkpointsDir, roots);
 
-    // 2. 恢复需要添加/修改的文件（有界并发 + 进度回调 + 取消检查）。
-    //    复制阶段先于删除阶段（CP-ORDER-1）：备份缺失/复制失败时用户当前文件保持完整，
-    //    不存在「已删未补」的破坏性中间态；全部复制成功后最后再删除多余文件。
+    // 2. 先把所有恢复文件校验并复制到目标旁的 staging 临时文件。
+    //    临时文件与目标位于同一目录，后续 rename 才具备同卷原子替换语义。
     const filesToRestore = [...added, ...modified];
-    // 进度 total 覆盖复制 + 删除全量（CP-PROG-1），删除阶段进度条不再停滞
     const progressTotal = deletionList.length + filesToRestore.length;
     let processed = 0;
-    await runBounded(filesToRestore, options.concurrency ?? DEFAULT_CHECKPOINT_CONCURRENCY, async scopedKey => {
-        throwIfAborted(options.signal);
-        const indexEntry = fileIndex.get(scopedKey);
-        if (!indexEntry) {
-            failures.push({ path: scopedKey, reason: 'missing_in_chain' });
-            processed += 1;
-            options.onProgress?.(processed, progressTotal);
-            return;
-        }
+    const transactionId = `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    let tempCounter = 0;
+    const makeTempPath = (targetPath: string, kind: 'stage' | 'rollback'): string =>
+        path.join(path.dirname(targetPath), `.graycode-restore-${kind}-${transactionId}-${tempCounter++}.tmp`);
+    const stagedFiles: Array<{
+        scopedKey: string;
+        destination: string;
+        stagedPath: string;
+        rollbackPath?: string;
+        committed: boolean;
+    }> = [];
+    const movedFiles: Array<{ scopedKey: string; absolutePath: string; rollbackPath: string }> = [];
+    const movedDirectories: Array<{ absolutePath: string; rollbackPath: string }> = [];
+    const createdDirectories: string[] = [];
 
-        let destination: string;
-        try {
-            destination = (await resolveScopedPath(scopedKey, roots)).absolutePath;
-        } catch {
-            failures.push({ path: scopedKey, reason: 'copy_failed' });
-            processed += 1;
-            options.onProgress?.(processed, progressTotal);
-            return;
-        }
-
-        try {
-            // 校验备份内容与目标哈希一致（共享流式哈希实现，CP-DUP-1）。
-            // CP-LEGACY-HASH-2: legacy 恢复（skipHashVerification=true）时，fileHashes 是
-            // 引擎外对备份目录逐文件流式哈希得到的 rawHashes，与备份内容必然一致——
-            // 跳过重复哈希，避免每个文件被扫描+校验两次。
-            if (!options.skipHashVerification) {
-                const backupHash = await hashFileStreaming(indexEntry.backupPath);
-                if (backupHash !== indexEntry.hash) {
-                    failures.push({ path: scopedKey, reason: 'hash_mismatch' });
-                    processed += 1;
-                    options.onProgress?.(processed, progressTotal);
-                    return;
-                }
-            }
-
-            await fs.mkdir(path.dirname(destination), { recursive: true });
-            await fs.copyFile(indexEntry.backupPath, destination);
-            restored += 1;
-            modifiedPaths.push(destination);
-        } catch (error) {
-            // 备份文件缺失（fileHashes 声称有但实际不存在）归为 missing_in_chain；
-            // 其余（权限、IO 等）归为 copy_failed
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-                failures.push({ path: scopedKey, reason: 'missing_in_chain' });
-            } else {
-                failures.push({ path: scopedKey, reason: 'copy_failed' });
+    const cleanupTemporaryPaths = async (): Promise<void> => {
+        for (const item of stagedFiles) {
+            await fs.rm(item.stagedPath, { force: true }).catch(() => undefined);
+            if (item.rollbackPath) {
+                await fs.rm(item.rollbackPath, { recursive: true, force: true }).catch(() => undefined);
             }
         }
-        processed += 1;
-        options.onProgress?.(processed, progressTotal);
-    });
+        for (const item of movedFiles) {
+            await fs.rm(item.rollbackPath, { recursive: true, force: true }).catch(() => undefined);
+        }
+        for (const item of movedDirectories) {
+            await fs.rm(item.rollbackPath, { recursive: true, force: true }).catch(() => undefined);
+        }
+    };
 
-    throwIfAborted(options.signal);
-
-    // 3. 删除多余文件（plan.toDelete 已过滤受保护路径；untracked 仅在确认后删除）。
-    //    仅在复制阶段全部成功后执行（CP-ORDER-1）：复制失败时跳过删除，
-    //    用户「本可保留」的当前文件不会在恢复失败后一并丢失。
-    //    有界并发（CPF-06）；取消信号在循环内检查（CPF-11）；删除阶段同样上报进度（CP-PROG-1）
-    if (failures.length === 0) {
-        await runBounded(deletionList, options.concurrency ?? DEFAULT_CHECKPOINT_CONCURRENCY, async scopedKey => {
-            throwIfAborted(options.signal);
-            let absolutePath: string;
+    const rollbackTransaction = async (): Promise<void> => {
+        // 先恢复被删除的目录/文件，再恢复被替换的文件；全部逆序以处理嵌套路径。
+        for (const item of [...movedDirectories].reverse()) {
             try {
-                absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
-            } catch {
-                failures.push({ path: scopedKey, reason: 'delete_failed' });
+                await fs.rm(item.absolutePath, { recursive: true, force: true });
+                await fs.rename(item.rollbackPath, item.absolutePath);
+            } catch (error) {
+                console.error('[CheckpointRestoreEngine] Failed to roll back deleted directory:', error);
+            }
+        }
+        for (const item of [...movedFiles].reverse()) {
+            try {
+                await fs.rm(item.absolutePath, { recursive: true, force: true });
+                await fs.rename(item.rollbackPath, item.absolutePath);
+            } catch (error) {
+                console.error('[CheckpointRestoreEngine] Failed to roll back deleted file:', error);
+            }
+        }
+        for (const item of [...stagedFiles].reverse()) {
+            try {
+                if (item.committed) {
+                    await fs.rm(item.destination, { recursive: true, force: true });
+                }
+                if (item.rollbackPath) {
+                    await fs.rename(item.rollbackPath, item.destination);
+                }
+            } catch (error) {
+                console.error('[CheckpointRestoreEngine] Failed to roll back replaced file:', error);
+            }
+        }
+        for (const directory of [...createdDirectories].reverse()) {
+            await fs.rmdir(directory).catch(() => undefined);
+        }
+        await cleanupTemporaryPaths();
+    };
+
+    try {
+        await runBounded(filesToRestore, options.concurrency ?? DEFAULT_CHECKPOINT_CONCURRENCY, async scopedKey => {
+            throwIfAborted(options.signal);
+            const indexEntry = fileIndex.get(scopedKey);
+            if (!indexEntry) {
+                failures.push({ path: scopedKey, reason: 'missing_in_chain' });
                 processed += 1;
                 options.onProgress?.(processed, progressTotal);
                 return;
             }
+
+            let destination: string;
             try {
-                await fs.unlink(absolutePath);
-                deleted += 1;
-                deletedPaths.push(absolutePath);
+                destination = (await resolveScopedPath(scopedKey, roots)).absolutePath;
             } catch {
-                failures.push({ path: scopedKey, reason: 'delete_failed' });
+                failures.push({ path: scopedKey, reason: 'copy_failed' });
+                processed += 1;
+                options.onProgress?.(processed, progressTotal);
+                return;
+            }
+
+            try {
+                if (!options.skipHashVerification) {
+                    const backupHash = await hashFileStreaming(indexEntry.backupPath);
+                    if (backupHash !== indexEntry.hash) {
+                        failures.push({ path: scopedKey, reason: 'hash_mismatch' });
+                        processed += 1;
+                        options.onProgress?.(processed, progressTotal);
+                        return;
+                    }
+                }
+
+                await fs.mkdir(path.dirname(destination), { recursive: true });
+                const stagedPath = makeTempPath(destination, 'stage');
+                const staged = { scopedKey, destination, stagedPath, committed: false };
+                stagedFiles.push(staged);
+                await fs.copyFile(indexEntry.backupPath, stagedPath);
+            } catch (error) {
+                failures.push({
+                    path: scopedKey,
+                    reason: (error as NodeJS.ErrnoException).code === 'ENOENT'
+                        ? 'missing_in_chain'
+                        : 'copy_failed'
+                });
             }
             processed += 1;
             options.onProgress?.(processed, progressTotal);
         });
-    }
 
-    throwIfAborted(options.signal);
-
-    // 4. 恢复空目录（L4：循环内检查取消信号）
-    for (const scopedKey of targetEmptyDirs) {
         throwIfAborted(options.signal);
-        try {
-            const absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
-            await fs.mkdir(absolutePath, { recursive: true });
-        } catch {
-            // 空目录恢复失败不视为整体失败（不影响文件内容）
+        if (failures.length > 0) {
+            await rollbackTransaction();
+            return { success: false, restored: 0, deleted: 0, skipped, failures, modifiedPaths: [], deletedPaths: [] };
         }
-    }
 
-    // 5. 删除多余的空目录。直接消费 plan.untrackedEmptyDirs（computeRestorePlan 已按
-    //    「目标存在 / 受保护路径」过滤）——此前在此处重算同套过滤逻辑，两处口径可能漂移（C-6）。
-    //    快照后出现的空目录默认保留（#29），仅在用户确认删除快照后新建内容时清理
-    if (options.deleteUntrackedFiles) {
-        for (const scopedKey of untrackedEmptyDirs) {
+        // 3. 所有 staging 文件都已校验成功后，原子替换目标并保留旧文件回滚。
+        for (const item of stagedFiles) {
+            throwIfAborted(options.signal);
+            try {
+                try {
+                    await fs.lstat(item.destination);
+                    item.rollbackPath = makeTempPath(item.destination, 'rollback');
+                    await fs.rename(item.destination, item.rollbackPath);
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                }
+                await fs.rename(item.stagedPath, item.destination);
+                item.committed = true;
+                restored += 1;
+                modifiedPaths.push(item.destination);
+            } catch {
+                failures.push({ path: item.scopedKey, reason: 'copy_failed' });
+                break;
+            }
+        }
+        if (failures.length > 0) {
+            await rollbackTransaction();
+            return { success: false, restored: 0, deleted: 0, skipped, failures, modifiedPaths: [], deletedPaths: [] };
+        }
+
+        // 4. 文件删除同样先改名到回滚临时项；删除阶段失败时可以完整恢复。
+        for (const scopedKey of deletionList) {
+            throwIfAborted(options.signal);
+            let absolutePath: string;
+            try {
+                absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
+                const stat = await fs.lstat(absolutePath);
+                if (!stat.isFile()) {
+                    throw new Error('restore deletion target is not a regular file');
+                }
+                const rollbackPath = makeTempPath(absolutePath, 'rollback');
+                await fs.rename(absolutePath, rollbackPath);
+                movedFiles.push({ scopedKey, absolutePath, rollbackPath });
+                deleted += 1;
+                deletedPaths.push(absolutePath);
+            } catch {
+                failures.push({ path: scopedKey, reason: 'delete_failed' });
+                break;
+            }
+            processed += 1;
+            options.onProgress?.(processed, progressTotal);
+        }
+        if (failures.length > 0) {
+            await rollbackTransaction();
+            return { success: false, restored: 0, deleted: 0, skipped, failures, modifiedPaths: [], deletedPaths: [] };
+        }
+
+        // 5. 恢复目标空目录；取消时由事务回滚文件，已新建的空目录一并清理。
+        for (const scopedKey of targetEmptyDirs) {
             throwIfAborted(options.signal);
             try {
                 const absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
-                await fs.rmdir(absolutePath);
+                try {
+                    await fs.lstat(absolutePath);
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                    await fs.mkdir(absolutePath, { recursive: true });
+                    createdDirectories.push(absolutePath);
+                }
             } catch {
-                // 目录非空或不存在：忽略
+                // 空目录恢复失败不视为整体失败（不影响文件内容）
             }
         }
+
+        // 6. 删除确认过的快照后新建空目录：按深度优先改名，避免父目录先被处理。
+        if (options.deleteUntrackedFiles) {
+            const emptyDirsToDelete = [...confirmedUntrackedEmptyDirs].sort((a, b) => b.length - a.length);
+            for (const scopedKey of emptyDirsToDelete) {
+                throwIfAborted(options.signal);
+                try {
+                    const absolutePath = (await resolveScopedPath(scopedKey, roots)).absolutePath;
+                    const rollbackPath = makeTempPath(absolutePath, 'rollback');
+                    const beforeMoveEntries = await fs.readdir(absolutePath);
+                    if (beforeMoveEntries.length > 0) {
+                        continue;
+                    }
+                    await fs.rename(absolutePath, rollbackPath);
+                    // 二次确认改名后的目录仍为空；若窗口内出现文件，立即恢复原目录。
+                    if ((await fs.readdir(rollbackPath)).length > 0) {
+                        await fs.rename(rollbackPath, absolutePath);
+                        continue;
+                    }
+                    movedDirectories.push({ absolutePath, rollbackPath });
+                } catch {
+                    // 目录非空、不存在或无法改名：保持原状，与旧语义一致
+                }
+            }
+        }
+
+        await cleanupTemporaryPaths();
+    } catch (error) {
+        await rollbackTransaction();
+        throw error;
     }
 
     return {

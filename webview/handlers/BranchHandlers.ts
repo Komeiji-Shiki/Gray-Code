@@ -34,7 +34,7 @@ import {
     detectDirtyFilesInWorkspace,
 } from '../utils/WorkspaceRestoreGuard';
 import { enrichGraphWorkspaceInfo } from './branchWritePolicy';
-import { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
+import { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE, tryAcquireConversationMutationGate } from './streamGuard';
 // TREE-13 流式互斥守卫已拆到 streamGuard.ts（第三批模块化重构），此处 re-export 保持
 // 既有 import（ChatHandlers 已改走 streamGuard；测试仍可从 BranchHandlers 导入）不破坏。
 export { isConversationStreaming, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
@@ -192,11 +192,13 @@ export const createRerollCandidate: MessageHandler = withBranchBoundary(async (d
  *   ④ previewRestore（存档不可恢复 → WORKSPACE_CHECKPOINT_BROKEN）；
  *   ⑤ restoreCheckpoint（失败 → WORKSPACE_STATE_UNAVAILABLE，**不切分支**）；
  *   ⑥ 切换（切图 → 主历史重写 → 锁外检查点清理）。
+ * 所有 mode 都先取得会话级事务闸；从闸建立到上述流程结束，新的主流、重试流和工具确认流
+ * 均被拒绝，避免 chat-only 在异步切图/历史重写期间出现竞态。
  * 锁序（M-3 强约束）：恢复（工作区/存档锁）在切图（会话写锁）**之前**完成，锁不嵌套；
  * 存档操作锁仍只在会话写锁之外获取。
  */
 export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (data, requestId, ctx) => {
-  const { conversationId, nodeId, mode, confirmedDiscardDirty } = data || {};
+  const { conversationId, nodeId, mode, confirmedDiscardDirty, confirmedDirtyFiles } = data || {};
   // L-7（R4 复查）：入参显式类型校验
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof nodeId !== 'string' || !nodeId.trim()) {
@@ -208,29 +210,37 @@ export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (d
     ctx.sendError(requestId, 'BRANCH_INVALID_ARGS', 'mode must be "chat-only" or "chat-and-workspace"');
     return;
   }
-  // TREE-13：流式生成期间拒绝变更类分支操作（BRANCH_BUSY）
-  if (rejectIfStreaming(ctx, conversationId, requestId)) {
-    return;
-  }
   const service = resolveBranchService(ctx);
 
-  // 任何工作区恢复、图指针修改之前先确认主历史已完整入图。旧实现直到图切换后的历史重写
-  // 才发现缺口，chat-and-workspace 模式甚至可能已经恢复了文件；现在保证失败为零副作用。
-  // 注：此前「冻结会话 + 总结后切分支被永久阻塞」的根因是超龄空占位让 deferred 图同步
-  // 永不收敛——该问题已由空占位超龄判定（isActiveEmptyPlaceholder）在源头修复（占位超龄
-  // 后 syncMainHistoryAfterStructuralMutation 直接收敛、append 前先收敛），此处保持
-  // 严格拒绝契约（未入图消息不丢，由调用方按错误提示重试/等待同步完成）。
-  await service.assertMainHistoryRepresentedInGraph(conversationId);
+  // TREE-13：先取得会话级事务闸，再检查已有流。这样从本次检查开始到切图、历史重写及
+  // 检查点清理结束，chat-only 与 chat-and-workspace 都不会再接受新流；若已有流在闸
+  // 建立前已经运行，则下面的检查会拒绝本次切换并由 finally 释放闸。
+  const releaseMutationGate = tryAcquireConversationMutationGate(conversationId);
+  if (!releaseMutationGate) {
+    ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
+    return;
+  }
 
-  // BCP-03/04：切换模式（决策 1：缺省仅切聊天）。chat-and-workspace 先恢复目标分支
-  // 绑定的工作区存档，再执行切换——恢复失败**不切分支**（「不静默切换」硬约束）。
-  const workspaceMode = mode === 'chat-and-workspace';
-  let workspaceRestored = false;
-  /** R2-07：本次切换是否实际执行了工作区恢复（区别于「恢复被省略」的零文件变更路径） */
-  let workspaceActuallyRestored = false;
-  let restoredSummary: { restored: number; deleted: number; skipped: number } | undefined;
+  try {
+    if (rejectIfStreaming(ctx, conversationId, requestId)) {
+      return;
+    }
 
-  if (workspaceMode) {
+    // 任何工作区恢复、图指针修改之前先确认主历史已完整入图。旧实现直到图切换后的历史重写
+    // 才发现缺口，chat-and-workspace 模式甚至可能已经恢复了文件；现在保证失败为零副作用。
+    // 注：此前「冻结会话 + 总结后切分支被永久阻塞」的根因是超龄空占位让 deferred 图同步
+    // 永不收敛——该问题已由空占位超龄判定（isActiveEmptyPlaceholder）在源头修复（占位超龄
+    // 后 syncMainHistoryAfterStructuralMutation 直接收敛、append 前先收敛），此处保持
+    // 严格拒绝契约（未入图消息不丢，由调用方按错误提示重试/等待同步完成）。
+    await service.assertMainHistoryRepresentedInGraph(conversationId);
+
+    // BCP-03/04：切换模式（决策 1：缺省仅切聊天）。chat-and-workspace 先恢复目标分支
+    // 绑定的工作区存档，再执行切换——恢复失败**不切分支**（「不静默切换」硬约束）。
+    const workspaceMode = mode === 'chat-and-workspace';
+    let workspaceRestored = false;
+    let restoredSummary: { restored: number; deleted: number; skipped: number } | undefined;
+
+    if (workspaceMode) {
     // 1. 安全校验：目标节点必须绑定工作区存档（BCP-02 字段，只读；不存在 → WORKSPACE_STATE_UNAVAILABLE）
     const graphResult = await service.getBranchGraph(conversationId);
     const targetGraph = graphResult.graph;
@@ -250,6 +260,16 @@ export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (d
 
     // 2. dirty 检测（决策 11）：有未保存文件且未确认 → 返回 dirtyFiles，前端先确认；
     //    不取消流、不恢复、不切分支（零副作用，用户取消确认时一切保持原状）。
+    if (confirmedDiscardDirty === true) {
+      const dirtyFiles = detectDirtyFilesInWorkspace();
+      const expectedDirtyFiles = Array.isArray(confirmedDirtyFiles)
+        ? confirmedDirtyFiles.filter((file: unknown): file is string => typeof file === 'string').sort()
+        : [];
+      if (JSON.stringify(dirtyFiles.slice().sort()) !== JSON.stringify(expectedDirtyFiles)) {
+        ctx.sendResponse(requestId, { success: false, mode: 'chat-and-workspace', dirtyFiles, error: 'STALE_DIRTY_CONFIRMATION' });
+        return;
+      }
+    }
     if (confirmedDiscardDirty !== true) {
       const dirtyFiles = detectDirtyFilesInWorkspace();
       if (dirtyFiles.length > 0) {
@@ -281,35 +301,29 @@ export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (d
       return;
     }
 
-    // 5. 恢复（BCP-03：恢复可安全省略——目标存档与当前工作区一致/无变化时跳过实际恢复；
-    //    legacy 存档 preview.restored === -1，不命中省略条件，仍执行恢复）
-    if (preview.restored !== 0 || preview.deletedIfUnconfirmed !== 0) {
-      let restored;
-      try {
-        restored = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId, {
-          // 分支切换恢复不删除快照后新建文件（deleteUntrackedFiles=false，#29 保护）
-          deleteUntrackedFiles: false,
-        });
-      } catch (restoreError) {
-        throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
-          `工作区恢复失败：${(restoreError as Error)?.message ?? String(restoreError)}`);
-      }
-      if (!restored.success) {
-        throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
-          `工作区恢复失败：${restored.error ?? 'unknown error'}`);
-      }
-      workspaceRestored = true;
-      workspaceActuallyRestored = true;
-      restoredSummary = {
-        restored: restored.restored,
-        deleted: restored.deleted ?? 0,
-        skipped: restored.skipped ?? 0,
-      };
-    } else {
-      // 省略实际恢复：工作区与目标存档一致，直接标记恢复完成（无文件变更）
-      workspaceRestored = true;
-      restoredSummary = { restored: 0, deleted: 0, skipped: preview.skipped ?? 0 };
+    // 5. 恢复必须携带预览令牌。即使预览显示零文件变化，也在恢复锁内重新
+    //    校验工作区指纹；预览结束后新增/修改文件会得到 STALE_RESTORE_PREVIEW，
+    //    不会被静默带入切分支事务。
+    let restored;
+    try {
+      restored = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId, {
+        deleteUntrackedFiles: false,
+        previewId: preview.previewId
+      });
+    } catch (restoreError) {
+      throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
+        `工作区恢复失败：${(restoreError as Error)?.message ?? String(restoreError)}`);
     }
+    if (!restored.success) {
+      throw new BranchError('WORKSPACE_STATE_UNAVAILABLE',
+        `工作区恢复失败：${restored.error ?? 'unknown error'}`);
+    }
+    workspaceRestored = true;
+    restoredSummary = {
+      restored: restored.restored,
+      deleted: restored.deleted ?? 0,
+      skipped: restored.skipped ?? 0,
+    };
   }
 
   // 切换前的活跃尾（主历史重写失败时回滚图状态的锚点）：有图取图活跃尾，
@@ -328,22 +342,10 @@ export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (d
     }
   }
 
-  // 6. 真正切图前再次检查。恢复（await 期间可能启动新流）到切图之间仍有 TOCTOU 窗口，
-  //    二次校验封闭该窗口，避免迟到 chunk 写入切换后的历史。
-  //    R2-07：恢复已实际执行（工作区文件已被改写）时不再拦截——命中 BRANCH_BUSY 会让
-  //    文件已恢复但分支/历史未切换，且错误信息不提示「文件已部分恢复」；
-  //    仅当恢复被省略（零文件变更）或纯聊天模式时才二次检查。
-  if (!workspaceActuallyRestored && rejectIfStreaming(ctx, conversationId, requestId)) {
+  // 6. 真正切图前再次检查。事务闸已阻止新流启动；若有未被闸覆盖的
+  //    外部流，先拒绝切图，绝不只打印告警继续执行。
+  if (rejectIfStreaming(ctx, conversationId, requestId)) {
     return;
-  }
-  // R2-08：恢复已实际执行时不再拦截，但若此刻确有新流在跑（恢复窗口内启动），留痕告警——
-  // 该流未被取消，其迟到 chunk 可能写入切换后的分支历史；错误信息不提示「文件已部分恢复」。
-  if (workspaceActuallyRestored && isConversationStreaming(ctx, conversationId)) {
-    console.warn(
-      '[BranchHandlers] switchBranchCandidate: workspace restored while a stream is still active for conversation',
-      conversationId,
-      '— proceeding with branch switch; late stream chunks may land in the switched branch history'
-    );
   }
 
   // 图状态切换（BranchService，会话写锁内）——恢复（工作区锁）已完成，锁不嵌套
@@ -396,6 +398,9 @@ export const switchBranchCandidate: MessageHandler = withBranchBoundary(async (d
     branchGraph,
     ...(workspaceMode ? { workspaceRestored, restoredSummary } : {}),
   });
+  } finally {
+    releaseMutationGate();
+  }
 });
 
 /**

@@ -42,6 +42,7 @@ import {
 import { StreamAbortManager } from '../../../webview/stream/StreamAbortManager';
 import { createMessageHandlerRegistry } from '../../../webview/handlers';
 import type { HandlerContext, MessageHandler } from '../../../webview/types';
+import { isConversationMutationGated } from '../../../webview/handlers/streamGuard';
 
 /** 线性历史：root(user) → model(a1) */
 function linearHistory(): ConversationHistory {
@@ -680,6 +681,43 @@ describe('切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支
         expect(await readActiveTail('c1')).toBe(ids[2]);
     });
 
+    test('BCP-05 chat-only 切换全程持有事务闸，闸内新切换请求被拒绝', async () => {
+        const ids = await seedWithCandidates('c1');
+        let releaseAssertion!: () => void;
+        const assertionBlocked = new Promise<void>(resolve => {
+            releaseAssertion = resolve;
+        });
+        jest.spyOn(service, 'assertMainHistoryRepresentedInGraph').mockImplementation(async () => {
+            await assertionBlocked;
+        });
+
+        const firstSwitch = switchBranchCandidate(
+            { conversationId: 'c1', nodeId: ids[2] },
+            'req-gate-1',
+            makeCtx()
+        );
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(isConversationMutationGated('c1')).toBe(true);
+
+        await switchBranchCandidate(
+            { conversationId: 'c1', nodeId: ids[2] },
+            'req-gate-2',
+            makeCtx()
+        );
+        expect(errors).toContainEqual(expect.objectContaining({
+            requestId: 'req-gate-2',
+            code: 'BRANCH_BUSY'
+        }));
+
+        releaseAssertion();
+        await firstSwitch;
+        expect(isConversationMutationGated('c1')).toBe(false);
+        expect(responses).toContainEqual(expect.objectContaining({
+            requestId: 'req-gate-1',
+            data: expect.objectContaining({ success: true })
+        }));
+    });
+
     test('BCP-05 安全闸：目标节点无 workspaceCheckpointId → WORKSPACE_STATE_UNAVAILABLE，不恢复不切分支', async () => {
         const ids = await seedWithCandidates('c1');
 
@@ -815,10 +853,11 @@ describe('切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支
         expect(await readActiveTail('c1')).toBe(ids[3]);
     });
 
-    test('BCP-03 恢复可安全省略：预览无文件变更 → 跳过 restoreCheckpoint，仍返回 workspaceRestored:true', async () => {
+    test('BCP-03 预览无文件变更仍执行带令牌的恢复校验', async () => {
         const ids = await seedWithCandidates('c1');
         await bindWorkspaceCheckpoint('c1', ids[2], 'cp_ws_1');
-        previewSpy.mockResolvedValue({ success: true, restored: 0, deletedIfUnconfirmed: 0, skipped: 3 });
+        previewSpy.mockResolvedValue({ success: true, restored: 0, deletedIfUnconfirmed: 0, skipped: 3, previewId: 'preview-s8' });
+        restoreSpy.mockResolvedValue({ success: true, restored: 0, deleted: 0, skipped: 3 });
 
         await switchBranchCandidate(
             { conversationId: 'c1', nodeId: ids[2], mode: 'chat-and-workspace' },
@@ -827,7 +866,10 @@ describe('切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支
         );
 
         expect(errors).toHaveLength(0);
-        expect(restoreSpy).not.toHaveBeenCalled();
+        expect(restoreSpy).toHaveBeenCalledWith('c1', 'cp_ws_1', {
+            deleteUntrackedFiles: false,
+            previewId: 'preview-s8'
+        });
         expect(responses[0].data).toMatchObject({
             success: true,
             workspaceRestored: true,
@@ -849,7 +891,7 @@ describe('切换 + 工作区恢复联动（mode / 安全闸 / 失败不切分支
         restoreSpy.mockResolvedValue({ success: true, restored: 1, deleted: 0, skipped: 0 });
 
         await switchBranchCandidate(
-            { conversationId: 'c1', nodeId: ids[2], mode: 'chat-and-workspace', confirmedDiscardDirty: true },
+            { conversationId: 'c1', nodeId: ids[2], mode: 'chat-and-workspace', confirmedDiscardDirty: true, confirmedDirtyFiles: [path.join(tempDir, 'dirty.ts')] },
             'req-s9',
             makeCtx()
         );

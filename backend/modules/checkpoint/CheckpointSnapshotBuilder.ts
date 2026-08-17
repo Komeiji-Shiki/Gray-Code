@@ -48,6 +48,7 @@ export interface SnapshotExcludedEntry {
     scopedPath: string;
     reason: 'size' | 'unreadable';
     size?: number;
+    isDirectory?: boolean;
 }
 
 export interface SnapshotBuildOptions {
@@ -93,6 +94,8 @@ export interface CheckpointSnapshotBuildResult {
     sizeExcluded: SnapshotExcludedEntry[];
     /** 无法读取/哈希失败的文件 */
     unreadable: SnapshotExcludedEntry[];
+    /** 快照时明确不存在的受影响路径（仅 ENOENT/ENOTDIR；不是读取失败，也不受恢复保护） */
+    absent: string[];
     /**
      * 被排除路径的完整清单（EX-01/EX-09，scoped 格式）。
      * 包含：强制排除 / 默认类别 / .gitignore / 自定义模式 / 大小上限 / 不可读。
@@ -131,6 +134,7 @@ export async function buildWorkspaceSnapshot(
     const emptyDirs: string[] = [];
     const sizeExcluded: SnapshotExcludedEntry[] = [];
     const unreadable: SnapshotExcludedEntry[] = [];
+    const absent: string[] = [];
     const excluded: CheckpointExcludedEntry[] = [];
     const rootStats: CheckpointSnapshotBuildResult['roots'] = [];
 
@@ -179,7 +183,9 @@ export async function buildWorkspaceSnapshot(
                 fileHashes,
                 fileStats,
                 sizeExcluded,
-                unreadable
+                unreadable,
+                absent,
+                excluded
             });
         });
 
@@ -195,7 +201,7 @@ export async function buildWorkspaceSnapshot(
         excluded.push({ path: entry.scopedPath, reason: 'size', size: entry.size });
     }
     for (const entry of unreadable) {
-        excluded.push({ path: entry.scopedPath, reason: 'unreadable' });
+        excluded.push({ path: entry.scopedPath, reason: 'unreadable', isDirectory: entry.isDirectory });
     }
 
     return {
@@ -204,6 +210,7 @@ export async function buildWorkspaceSnapshot(
         emptyDirs,
         sizeExcluded,
         unreadable,
+        absent,
         excluded,
         roots: rootStats
     };
@@ -221,20 +228,42 @@ interface StatAndHashEntryParams {
     fileStats: Record<string, SnapshotFileStat>;
     sizeExcluded: SnapshotExcludedEntry[];
     unreadable: SnapshotExcludedEntry[];
-    /** 调用方已 stat（部分快照分支判定文件/目录用）；缺省时内部 stat */
+    absent: string[];
+    excluded: CheckpointExcludedEntry[];
+    /** 调用方已 lstat（部分快照分支判定文件/目录用）；缺省时内部 lstat */
     stat?: BigIntStats;
 }
 
 /**
  * 单文件 stat + 哈希（全量/部分快照分支共用）。
  *
- * 逻辑与全量分支原实现逐位一致：大小上限排除 → stat 未变化复用上一快照哈希 →
- * 流式哈希；任何失败（stat/哈希异常）记录为不可读，不进入哈希表。
+ * 逻辑与全量分支一致：lstat 拒绝链接/特殊文件 → 大小上限排除 → stat 未变化复用上一快照哈希 →
+ * 流式哈希；ENOENT/ENOTDIR 记为 absent，其余读取失败记为 unreadable。
  */
 async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
-    const { absolutePath, scopedPath, maxSize, previous, fileHashes, fileStats, sizeExcluded, unreadable } = params;
+    const {
+        absolutePath,
+        scopedPath,
+        maxSize,
+        previous,
+        fileHashes,
+        fileStats,
+        sizeExcluded,
+        unreadable,
+        absent,
+        excluded
+    } = params;
     try {
-        const stat = params.stat ?? (await fs.stat(absolutePath, { bigint: true }));
+        const stat = params.stat ?? (await fs.lstat(absolutePath, { bigint: true }));
+        if (!stat.isFile()) {
+            excluded.push({
+                path: scopedPath,
+                reason: 'unsupported_file_type',
+                source: 'filesystem',
+                isDirectory: stat.isDirectory()
+            });
+            return;
+        }
         const size = Number(stat.size);
         const mtimeMs = Number(stat.mtimeMs);
         const mtimeNs = stat.mtimeNs.toString();
@@ -267,8 +296,13 @@ async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
         const hash = await hashFileStreaming(absolutePath);
         fileHashes[scopedPath] = hash;
         fileStats[scopedPath] = { mtimeMs, size, mtimeNs };
-    } catch {
-        // 文件无法访问（权限、已删除等）：记录为不可读，不进入哈希
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+            absent.push(scopedPath);
+            return;
+        }
+        // 权限、I/O 或哈希读取失败才属于不可读；明确缺失不进入保护集合。
         unreadable.push({ scopedPath, reason: 'unreadable' });
     }
 }
@@ -282,7 +316,8 @@ async function statAndHashEntry(params: StatAndHashEntryParams): Promise<void> {
  * - 忽略规则判定（同一 CheckpointIgnoreResolver 四层排除模型）；忽略 → 计入 excluded；
  * - 目录：仅空目录进入 emptyDirs（非空目录不递归——其内容不在受影响路径内时无需记录）；
  * - 文件：大小上限 / previous 复用 / 流式哈希（与全量分支同一 statAndHashEntry 逻辑）；
- * - stat 失败（ENOENT 等）→ unreadable。
+ * - lstat 的 ENOENT/ENOTDIR → absent；权限或 I/O 错误 → unreadable；
+ * - 符号链接与特殊文件 → unsupported_file_type，绝不跟随链接目标。
  *
  * 注意：受影响路径清单来自模型传入参数；副作用不可知的批次（execute_command 等）由
  * 调用方回退全量（affectedPaths 缺省），保证快照完整性。
@@ -301,6 +336,7 @@ async function buildAffectedPathsSnapshot(
     const emptyDirs: string[] = [];
     const sizeExcluded: SnapshotExcludedEntry[] = [];
     const unreadable: SnapshotExcludedEntry[] = [];
+    const absent: string[] = [];
     const excluded: CheckpointExcludedEntry[] = [];
     const fileCountByRoot = new Map<string, number>();
 
@@ -328,16 +364,17 @@ async function buildAffectedPathsSnapshot(
         const relativePath = path.relative(root.fsPath, absPath).replace(/\\/g, '/');
         const scopedPath = createWorkspaceScopedPath(root.id, relativePath);
 
-        // 先 stat 确定真实类型（文件/目录），再按类型判定忽略规则——目录路径以尾斜杠形式
-        // 参与目录型规则匹配，与全量分支 collectEntries 先取 dirent.isDirectory 再
-        // shouldIgnore 的顺序一致（此前在 stat 前以 isDirectory=false 判定，目录型规则
-        // 对受影响路径中的目录不生效）。
+        // lstat 不跟随符号链接；明确缺失与无法读取必须保持不同语义。
         let stat: BigIntStats;
         try {
-            stat = await fs.stat(absPath, { bigint: true });
-        } catch {
-            // stat 失败（ENOENT 等，如 delete_file 删除后目标已不存在）→ 不可读
-            unreadable.push({ scopedPath, reason: 'unreadable' });
+            stat = await fs.lstat(absPath, { bigint: true });
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT' || code === 'ENOTDIR') {
+                absent.push(scopedPath);
+            } else {
+                unreadable.push({ scopedPath, reason: 'unreadable' });
+            }
             continue;
         }
 
@@ -348,7 +385,18 @@ async function buildAffectedPathsSnapshot(
                 path: scopedPath,
                 reason: ignoreResult.reason ?? 'custom',
                 rule: ignoreResult.rule,
-                source: ignoreResult.source
+                source: ignoreResult.source,
+                isDirectory: stat.isDirectory()
+            });
+            continue;
+        }
+
+        if (!stat.isFile() && !stat.isDirectory()) {
+            excluded.push({
+                path: scopedPath,
+                reason: 'unsupported_file_type',
+                source: 'filesystem',
+                isDirectory: false
             });
             continue;
         }
@@ -359,7 +407,7 @@ async function buildAffectedPathsSnapshot(
             try {
                 entries = await fs.readdir(absPath);
             } catch {
-                unreadable.push({ scopedPath, reason: 'unreadable' });
+                unreadable.push({ scopedPath, reason: 'unreadable', isDirectory: true });
                 continue;
             }
             if (entries.length === 0) {
@@ -378,6 +426,8 @@ async function buildAffectedPathsSnapshot(
             fileStats,
             sizeExcluded,
             unreadable,
+            absent,
+            excluded,
             stat
         });
     }
@@ -390,7 +440,7 @@ async function buildAffectedPathsSnapshot(
         excluded.push({ path: entry.scopedPath, reason: 'size', size: entry.size });
     }
     for (const entry of unreadable) {
-        excluded.push({ path: entry.scopedPath, reason: 'unreadable' });
+        excluded.push({ path: entry.scopedPath, reason: 'unreadable', isDirectory: entry.isDirectory });
     }
 
     // 各根目录统计（诊断与日志用）：fileCount = 该根下处理的文件数
@@ -400,6 +450,7 @@ async function buildAffectedPathsSnapshot(
         emptyDirs,
         sizeExcluded,
         unreadable,
+        absent,
         excluded,
         roots: roots.map(root => ({
             rootId: root.id,
@@ -418,7 +469,8 @@ function toScopedExcludedEntry(
         path: createWorkspaceScopedPath(root.id, entry.path),
         reason: entry.reason,
         rule: entry.rule,
-        source: entry.source
+        source: entry.source,
+        isDirectory: entry.isDirectory
     };
 }
 

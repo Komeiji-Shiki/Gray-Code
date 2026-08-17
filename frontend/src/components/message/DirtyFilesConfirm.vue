@@ -54,7 +54,8 @@ function confirmDiscard(): void {
   if (pending.kind === 'switch' && pending.switch) {
     void runDirtyContinuation(() => chatStore.switchBranchCandidate(pending.switch!.nodeId, {
       mode: 'chat-and-workspace',
-      confirmedDiscardDirty: true
+      confirmedDiscardDirty: true,
+      confirmedDirtyFiles: pending.files
     }))
     return
   }
@@ -62,17 +63,23 @@ function confirmDiscard(): void {
   if (pending.kind === 'restore' && pending.restore) {
     const r = pending.restore
     if (r.entry === 'restore') {
-      void runDirtyContinuation(() => chatStore.restoreCheckpoint(r.checkpointId, r.deleteUntrackedFiles, true))
+      void runDirtyContinuation(() => chatStore.restoreCheckpoint(
+        r.checkpointId,
+        r.deleteUntrackedFiles,
+        true,
+        r.previewId,
+        pending.files
+      ))
       return
     }
     const index = r.messageId ? chatStore.allMessages.findIndex(m => m.id === r.messageId) : -1
     if (index === -1) return
     if (r.entry === 'retry') {
-      void runDirtyContinuation(() => chatStore.restoreAndRetry(index, r.checkpointId, r.deleteUntrackedFiles, true))
+      void runDirtyContinuation(() => chatStore.restoreAndRetry(index, r.checkpointId, r.deleteUntrackedFiles, true, r.previewId, pending.files))
     } else if (r.entry === 'delete') {
-      void runDirtyContinuation(() => chatStore.restoreAndDelete(index, r.checkpointId, r.deleteUntrackedFiles, true))
+      void runDirtyContinuation(() => chatStore.restoreAndDelete(index, r.checkpointId, r.deleteUntrackedFiles, true, r.previewId, pending.files))
     } else if (r.entry === 'edit') {
-      void runDirtyContinuation(() => chatStore.restoreAndEdit(index, r.newContent || '', r.attachments, r.checkpointId, r.deleteUntrackedFiles, true))
+      void runDirtyContinuation(() => chatStore.restoreAndEdit(index, r.newContent || '', r.attachments, r.checkpointId, r.deleteUntrackedFiles, true, r.previewId, pending.files))
     }
   }
 }

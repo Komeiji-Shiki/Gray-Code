@@ -68,6 +68,9 @@ function attachError(result: CheckpointQueryResult, error: unknown): CheckpointQ
     return result;
 }
 
+/** 备份目录探测结果：只有 missing 才允许裁剪元数据。 */
+export type BackupDirectoryStatus = 'exists' | 'missing' | 'unavailable' | 'unsafe';
+
 export class CheckpointQueryService {
     constructor(
         private readonly conversationManager: ConversationManager,
@@ -284,22 +287,33 @@ export class CheckpointQueryService {
         }
     }
 
-    /** 判断某个备份目录是否存在 */
-    async backupDirectoryExists(backupDir: string): Promise<boolean> {
-        // CP-PATH-1: 越界/损坏目录名视为不存在（不触碰文件系统）——
-        // 下游 pruneMissingBackupCheckpointRecords 会据此裁剪无法安全恢复的记录，
-        // 保证恶意记录不会带着越界目录名继续流入恢复扫描路径。
+    /** 探测备份目录状态；权限或瞬时 I/O 错误必须 fail-closed 保留记录。 */
+    async getBackupDirectoryStatus(backupDir: string): Promise<BackupDirectoryStatus> {
         if (!isSafeCheckpointDirName(backupDir)) {
             console.warn(`[CheckpointQueryService] Refusing to check unsafe backupDir ${backupDir}`);
-            return false;
+            return 'unsafe';
         }
         try {
             const backupPath = path.join(this.checkpointsDir, backupDir);
             await fs.access(backupPath);
-            return true;
-        } catch {
-            return false;
+            return 'exists';
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT' || code === 'ENOTDIR') {
+                return 'missing';
+            }
+            log.warn('backup_directory_temporarily_unavailable', {
+                backupDir,
+                code,
+                error: error instanceof Error ? error.message : String(error)
+            });
+            return 'unavailable';
         }
+    }
+
+    /** 兼容旧调用方的布尔视图；需要区分瞬时错误时使用 getBackupDirectoryStatus。 */
+    async backupDirectoryExists(backupDir: string): Promise<boolean> {
+        return (await this.getBackupDirectoryStatus(backupDir)) === 'exists';
     }
 
     /**
@@ -415,13 +429,19 @@ export class CheckpointQueryService {
     async pruneMissingBackupCheckpointRecords(
         conversationId: string,
         checkpoints: CheckpointRecord[]
-    ): Promise<{ checkpoints: CheckpointRecord[]; missingBackupDirs: string[]; prunedCount: number }> {
+    ): Promise<{
+        checkpoints: CheckpointRecord[];
+        missingBackupDirs: string[];
+        prunedCount: number;
+        unavailableBackupDirs?: string[];
+    }> {
         if (checkpoints.length === 0) {
             return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
         }
 
-        const backupDirExists = new Map<string, boolean>();
+        const backupDirStatus = new Map<string, BackupDirectoryStatus>();
         const missingBackupDirs: string[] = [];
+        const unavailableBackupDirs: string[] = [];
         for (const checkpoint of checkpoints) {
             // CP-PATH-1: 越界/损坏 backupDir 绝不静默删除记录——保留记录 + 告警，
             // 不进入 missingBackupDirs（与删除路径「拒绝删除并告警」口径一致）
@@ -429,21 +449,33 @@ export class CheckpointQueryService {
                 console.warn(`[CheckpointQueryService] Refusing to prune checkpoint ${checkpoint.id}: unsafe backupDir ${checkpoint.backupDir}`);
                 continue;
             }
-            if (!backupDirExists.has(checkpoint.backupDir)) {
-                const exists = await this.backupDirectoryExists(checkpoint.backupDir);
-                backupDirExists.set(checkpoint.backupDir, exists);
+            if (!backupDirStatus.has(checkpoint.backupDir)) {
+                backupDirStatus.set(
+                    checkpoint.backupDir,
+                    await this.getBackupDirectoryStatus(checkpoint.backupDir)
+                );
             }
-            if (!backupDirExists.get(checkpoint.backupDir)) {
+            const status = backupDirStatus.get(checkpoint.backupDir);
+            if (status === 'missing') {
                 missingBackupDirs.push(checkpoint.backupDir);
+            } else if (status === 'unavailable') {
+                unavailableBackupDirs.push(checkpoint.backupDir);
             }
         }
 
         const uniqueMissing = Array.from(new Set(missingBackupDirs));
+        const uniqueUnavailable = Array.from(new Set(unavailableBackupDirs));
         if (uniqueMissing.length === 0) {
             await this.removeOrphanBackupDirs(checkpoints);
-            return { checkpoints, missingBackupDirs: [], prunedCount: 0 };
+            return {
+                checkpoints,
+                missingBackupDirs: [],
+                prunedCount: 0,
+                ...(uniqueUnavailable.length > 0 ? { unavailableBackupDirs: uniqueUnavailable } : {})
+            };
         }
 
+        const confirmedMissingDirs = new Set<string>();
         try {
             const pruned = await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', async current => {
                 const list = Array.isArray(current) ? current as CheckpointRecord[] : [];
@@ -456,13 +488,23 @@ export class CheckpointQueryService {
                         kept.push(cp);
                         continue;
                     }
-                    if (backupDirExists.get(cp.backupDir) !== true) {
-                        // TOCTOU 复核：预检时缺失/未知的目录在链内现场复核一次
-                        //（目录可能已被并发创建/恢复；与未知目录的现场核验对称）
-                        const exists = await this.backupDirectoryExists(cp.backupDir);
-                        backupDirExists.set(cp.backupDir, exists);
-                        if (!exists) {
+                    const cachedStatus = backupDirStatus.get(cp.backupDir);
+                    if (cachedStatus === 'unavailable') {
+                        kept.push(cp);
+                        continue;
+                    }
+                    if (cachedStatus !== 'exists') {
+                        // TOCTOU 复核：只有明确 missing 的目录才现场复核并允许裁剪；
+                        // unavailable 始终保留，不把瞬时故障升级成数据删除。
+                        const status = await this.getBackupDirectoryStatus(cp.backupDir);
+                        backupDirStatus.set(cp.backupDir, status);
+                        if (status === 'missing') {
                             foundMissing.push(cp.backupDir);
+                            confirmedMissingDirs.add(cp.backupDir);
+                            continue;
+                        }
+                        if (status === 'unavailable' || status === 'unsafe') {
+                            kept.push(cp);
                             continue;
                         }
                     }
@@ -476,7 +518,16 @@ export class CheckpointQueryService {
             if (Array.isArray(pruned)) {
                 // Math.max 兜底：并发新增记录时 pruned.length 可能大于 checkpoints.length
                 const prunedCount = Math.max(0, checkpoints.length - pruned.length);
-                return { checkpoints: pruned, missingBackupDirs: uniqueMissing, prunedCount };
+                const finalUnavailable = [...backupDirStatus.entries()]
+                    .filter(([, status]) => status === 'unavailable')
+                    .map(([backupDir]) => backupDir)
+                    .sort();
+                return {
+                    checkpoints: pruned,
+                    missingBackupDirs: [...confirmedMissingDirs].sort(),
+                    prunedCount,
+                    ...(finalUnavailable.length > 0 ? { unavailableBackupDirs: finalUnavailable } : {})
+                };
             }
             // fail-closed：写回被拒（返回非数组）时未删除任何记录——不报告缺失目录，
             // 避免调用方误以为记录已被裁剪（missingBackupDirs 清空）

@@ -703,14 +703,21 @@ export async function loadCheckpoints(state: ChatStoreState): Promise<void> {
   }
   
   try {
-    const result = await sendToExtension<{ checkpoints: CheckpointSummary[] }>(MESSAGE_NAMES['checkpoint.getCheckpoints'], {
+    const result = await sendToExtension<{
+      success?: boolean
+      checkpoints?: CheckpointSummary[]
+      error?: string
+    }>(MESSAGE_NAMES['checkpoint.getCheckpoints'], {
       conversationId
     })
     
     // 校验归属：await 期间会话已切换时丢弃迟到响应，避免旧会话检查点覆盖当前会话
     if (!validateSessionIdentity(state, conversationId)) return
 
-    if (result?.checkpoints) {
+    if (result?.success === false || result?.error) {
+      throw new Error(result.error || 'Failed to load checkpoints')
+    }
+    if (Array.isArray(result?.checkpoints)) {
       state.checkpoints.value = result.checkpoints
     } else {
       state.checkpoints.value = []

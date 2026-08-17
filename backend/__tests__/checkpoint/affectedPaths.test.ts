@@ -6,7 +6,7 @@
  *   非白名单工具回退 / 相对路径 resolve / 绝对路径原样 / 路径穿越防御 / 参数非法
  * - workspaceUriToFsPath：file:// URI 解码为 fsPath；非 file:// 回退 null
  * - buildWorkspaceSnapshot 部分快照分支（affectedPaths 非空）：
- *   只哈希受影响路径 / 不存在 → unreadable / 忽略规则 → excluded /
+  *   只哈希受影响路径 / 不存在 → absent / 忽略规则 → excluded /
  *   previous 复用 / 空目录 / 多根归属 / 越界路径跳过 / 缺省保持全量
  * - 链路透传（createToolLoopHarness）：批次检查点 options 携带 affectedPaths（去重），
  *   批内含副作用不可知工具时回退全量（不传 affectedPaths）
@@ -42,11 +42,21 @@ function md5(content: string): string {
 describe('extractAffectedPaths', () => {
     const root = path.resolve('/ws');
 
-    test('白名单工具提取 args.path（相对路径 resolve 到工作区根）', () => {
-        for (const name of ['write_file', 'apply_diff', 'insert_code', 'delete_code', 'delete_file', 'create_directory']) {
-            expect(extractAffectedPaths(name, { path: 'src/a.ts' }, root))
+    test('按真实工具 schema 提取单路径、多文件和路径数组', () => {
+        const cases: Array<[string, unknown]> = [
+            ['write_file', { path: 'src/a.ts' }],
+            ['apply_diff', { path: 'src/a.ts' }],
+            ['insert_code', { files: [{ path: 'src/a.ts', line: 1, content: 'x' }] }],
+            ['delete_code', { files: [{ path: 'src/a.ts', start_line: 1, end_line: 2 }] }],
+            ['delete_file', { paths: ['src/a.ts'] }],
+            ['create_directory', { paths: ['src/a.ts'] }]
+        ];
+        for (const [name, args] of cases) {
+            expect(extractAffectedPaths(name, args, root))
                 .toEqual([path.resolve(root, 'src/a.ts')]);
         }
+        expect(extractAffectedPaths('delete_file', { paths: ['a.ts', 'b.ts'] }, root))
+            .toEqual([path.resolve(root, 'a.ts'), path.resolve(root, 'b.ts')]);
     });
 
     test('search_in_files：一律返回 null（replace 影响面 = pattern × 目录子树，静态不可知）', () => {
@@ -158,7 +168,7 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
         }
     });
 
-    test('受影响路径不存在（ENOENT）→ unreadable，不进 fileHashes', async () => {
+    test('受影响路径不存在（ENOENT）→ absent，不进 unreadable/fileHashes', async () => {
         const rootDir = await createTempWorkspace();
         try {
             await writeFile(rootDir, 'a.ts', 'AAA');
@@ -168,9 +178,9 @@ describe('buildWorkspaceSnapshot - CP-PARTIAL-1 部分快照分支', () => {
             const result = await buildWorkspaceSnapshot({ roots, affectedPaths: [missing] });
 
             const scoped = createWorkspaceScopedPath(roots[0].id, 'gone.ts');
-            expect(result.unreadable).toEqual([{ scopedPath: scoped, reason: 'unreadable' }]);
-            // unreadable 同样进入 excluded（与全量分支一致，EX-09）
-            expect(result.excluded).toContainEqual({ path: scoped, reason: 'unreadable' });
+            expect(result.absent).toEqual([scoped]);
+            expect(result.unreadable).toEqual([]);
+            expect(result.excluded).not.toContainEqual(expect.objectContaining({ path: scoped }));
             expect(result.fileHashes[scoped]).toBeUndefined();
         } finally {
             await fs.rm(rootDir, { recursive: true, force: true });

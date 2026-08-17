@@ -393,7 +393,7 @@ export const useChatStore = defineStore('chat', () => {
 
   const loadBranchGraph = () => loadBranchGraphAction(state)
   const refreshBranchGraph = () => refreshBranchGraphAction(state)
-  const switchBranchCandidate = (nodeId: string, options?: { mode?: 'chat-only' | 'chat-and-workspace'; confirmedDiscardDirty?: boolean }) =>
+  const switchBranchCandidate = (nodeId: string, options?: { mode?: 'chat-only' | 'chat-and-workspace'; confirmedDiscardDirty?: boolean; confirmedDirtyFiles?: string[] }) =>
     switchBranchCandidateAction(state, nodeId, options)
   const deleteBranchCandidate = (nodeId: string) => deleteBranchCandidateAction(state, nodeId)
   const restoreBranchCandidate = (nodeId: string) => restoreBranchCandidateAction(state, nodeId)
@@ -618,14 +618,14 @@ export const useChatStore = defineStore('chat', () => {
   const addCheckpoint = (checkpoint: CheckpointRecord) => addCheckpointFn(state, checkpoint)
   const createManualCheckpoint = () => createManualCheckpointFn(state)
   const previewRestore = (checkpointId: string) => previewRestoreFn(state, checkpointId)
-  const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean, confirmedDiscardDirty?: boolean) =>
-    restoreCheckpointFn(state, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty)
-  const restoreAndRetry = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean) =>
-    restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
-  const restoreAndDelete = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean) =>
-    restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
-  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean) =>
-    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty)
+  const restoreCheckpoint = (checkpointId: string, deleteUntrackedFiles?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[]) =>
+    restoreCheckpointFn(state, checkpointId, deleteUntrackedFiles, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
+  const restoreAndRetry = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[]) =>
+    restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
+  const restoreAndDelete = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[]) =>
+    restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
+  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[]) =>
+    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
   const restoreSummarizedMessages = (summaryMessageId: string) => restoreSummarizedMessagesFn(state, summaryMessageId)

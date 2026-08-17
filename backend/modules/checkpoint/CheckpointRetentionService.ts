@@ -70,7 +70,8 @@ export class CheckpointRetentionService {
                     }
                 }
 
-                for (let i = 0; i < excess && i < sorted.length; i++) {
+                let successfulDeletionCount = 0;
+                for (let i = 0; i < sorted.length && successfulDeletionCount < excess; i++) {
                     const cp = sorted[i];
                     // CP-RET-1: 对引用被删项的全部后继循环执行合并——异常元数据可能出现
                     // 多节点引用同一 base，只合并第一个会让其余依赖者悬空断链。
@@ -95,6 +96,7 @@ export class CheckpointRetentionService {
                     const removed = await this.deps.deleteCheckpointInternal(conversationId, cp.id);
                     if (removed) {
                         deleted.add(cp.id);
+                        successfulDeletionCount += 1;
                     }
                 }
             }
@@ -255,7 +257,26 @@ export class CheckpointRetentionService {
             );
         }
 
-        // 5. 持久化更新后的后继元数据（deleteCheckpoint 随后会基于最新列表删除被删项）
+        // 5. 合并后重新统计后继目录中的实际用户文件。fileCount/backupBytes 表示物理备份
+        // 内容，不含 manifest/files 元数据；若沿用合并前摘要，设置页会长期低估磁盘占用。
+        const mergedDiskFiles = await this.listBackupFiles(successorBackupPath);
+        let mergedBackupBytes = 0;
+        let mergedFileCount = 0;
+        for (const relative of mergedDiskFiles) {
+            try {
+                const stat = await fs.stat(path.join(successorBackupPath, ...relative.split('/')));
+                if (stat.isFile()) {
+                    mergedFileCount += 1;
+                    mergedBackupBytes += stat.size;
+                }
+            } catch (error) {
+                console.warn(`[CheckpointRetentionService] Failed to stat merged file ${relative}:`, error);
+            }
+        }
+        successor.fileCount = mergedFileCount;
+        successor.backupBytes = mergedBackupBytes;
+
+        // 6. 持久化更新后的后继元数据（deleteCheckpoint 随后会基于最新列表删除被删项）
         //    替换在链内原子完成：并发删除/创建时不会基于旧列表整体写回互相覆盖
         await this.conversationManager.updateCustomMetadata(conversationId, 'checkpoints', current => {
             const list = Array.isArray(current) ? current as CheckpointRecord[] : [];

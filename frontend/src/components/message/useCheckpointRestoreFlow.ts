@@ -245,7 +245,12 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
     try {
       if (kind === 'restore') {
         // 用户在确认框中已确认待删除文件清单（含快照后新建文件）→ deleteUntrackedFiles: true
-        const result = await chatStore.restoreCheckpoint(checkpointId, true)
+        const result = await chatStore.restoreCheckpoint(
+          checkpointId,
+          true,
+          false,
+          action.preview.previewId
+        )
 
         // CP-10 / H-3: 恢复结果用独立提示分级展示（成功/部分成功/警告/失败），
         // 不再塞入 chatStore.error，避免错误条“重试”误触发 LLM 重新生成。
@@ -277,15 +282,15 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
 
       if (kind === 'retry') {
         // 用户在确认框中已确认待删除文件清单 → 允许删除快照后新建文件
-        await chatStore.restoreAndRetry(actualIndex, checkpointId, true)
+        await chatStore.restoreAndRetry(actualIndex, checkpointId, true, false, action.preview.previewId)
       } else if (kind === 'delete') {
-        await chatStore.restoreAndDelete(actualIndex, checkpointId, true)
+        await chatStore.restoreAndDelete(actualIndex, checkpointId, true, false, action.preview.previewId)
         pendingDeleteMessageId.value = null
         pendingDeleteBackendIndex.value = null
         // R3-#7: 回档并删除确认后关闭删除确认对话框（此前 DeleteDialog 残留打开）
         showDeleteConfirm.value = false
       } else if (kind === 'edit') {
-        await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true)
+        await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true, false, action.preview.previewId)
       }
     } catch (error) {
       console.error('[MessageList] Restore operation failed:', error)

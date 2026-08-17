@@ -18,5 +18,23 @@ export const BRANCH_BUSY_STREAMING_MESSAGE = '会话正在流式生成中，请�
  * summary 请求不拦截分支操作。
  */
 export function isConversationStreaming(ctx: HandlerContext, conversationId: string): boolean {
-    return ctx.streamAbortControllers?.isActive(conversationId) ?? false;
+  return ctx.streamAbortControllers?.isActive(conversationId) ?? false;
+}
+
+/** 会话级分支/工作区事务闸：从取消旧流到切图完成期间禁止启动新流。 */
+const conversationMutationGates = new Set<string>();
+
+export function tryAcquireConversationMutationGate(conversationId: string): (() => void) | null {
+  if (conversationMutationGates.has(conversationId)) return null;
+  conversationMutationGates.add(conversationId);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    conversationMutationGates.delete(conversationId);
+  };
+}
+
+export function isConversationMutationGated(conversationId: string): boolean {
+  return conversationMutationGates.has(conversationId);
 }

@@ -186,20 +186,26 @@ export function useCheckpointCleanup() {
     const requestSeq = ++expandedLoadRequestSeq
     isExpandedLoading.value = true
     try {
-      const response = await sendToExtension<{ checkpoints: CheckpointSummaryWithSize[] }>(
+      const response = await sendToExtension<{
+        success?: boolean
+        checkpoints?: CheckpointSummaryWithSize[]
+        error?: string
+      }>(
         MESSAGE_NAMES['checkpoint.getCheckpoints'],
         { conversationId, withSize: true }
       )
       // M-5: 过期响应竞态防护——响应返回时仍展开同一对话才赋值，
       // 避免“展开 A → 收起 → 展开 B”时 A 的响应覆盖 B 的列表
       if (expandedConversationId.value !== conversationId) return
+      if (response?.success === false || response?.error) {
+        throw new Error(response.error || 'Failed to load checkpoints')
+      }
       expandedCheckpoints.value = (response?.checkpoints || [])
         .slice()
         .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
     } catch (error) {
       if (expandedConversationId.value !== conversationId) return
-      console.error('Failed to load checkpoints:', error)
-      expandedCheckpoints.value = []
+      console.error('Failed to load checkpoints, keeping previous list:', error)
     } finally {
       // M-5: 过期响应时 isExpandedLoading 不复位（旧实现导致收起后 loading 卡死）——
       // 仅最新请求复位加载态，新请求进行中时旧请求的 finally 不误关 loading

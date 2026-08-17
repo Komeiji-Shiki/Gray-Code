@@ -188,10 +188,11 @@ export async function ensureStreamBatchBeforeCheckpoint(
             'tool_batch',
             'before',
             undefined,
-            // CPF-07 精确判定：批内已见工具名透传（CheckpointManager 按 beforeTools 求交）
+            // CP-STREAM-BEFORE：流式早启动时后续工具调用尚未全部到达，before 不能使用
+            // 当前已见路径。这里故意省略 affectedPaths，直接做全量快照；after 仍可使用
+            // 批次累计路径优化，避免把不完整 before 当成整个工具批次的执行前状态。
             {
-                batchToolNames: Array.from(batch.batchToolNames),
-                ...(batch.affectedPaths ? { affectedPaths: batch.affectedPaths } : {})
+                batchToolNames: Array.from(batch.batchToolNames)
             }
         );
         if (checkpoint) {

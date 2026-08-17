@@ -9,6 +9,7 @@
 import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import type { MessageHandler } from '../types';
+import { isConversationMutationGated, BRANCH_BUSY_STREAMING_MESSAGE } from './streamGuard';
 
 // ========== 上下文总结 ==========
 
@@ -31,6 +32,10 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
   const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
   if (!conversationId) {
     ctx.sendError(requestId, 'SUMMARIZE_ERROR', 'Invalid conversation ID');
+    return;
+  }
+  if (isConversationMutationGated(conversationId)) {
+    ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
     return;
   }
   const abortManager = ctx.streamAbortControllers;

@@ -188,10 +188,11 @@ describe('CheckpointRetentionService', () => {
 
             await harness.service.cleanupOldCheckpoints('conv');
 
-            // 合并被拒绝 → 删除中止 → 记录全部保留，外部目录未被触碰
-            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-dep', 'cp-evil']);
+            // 越界节点合并失败后继续检查下一个候选：成功删除 cp-dep 以满足 max=1，
+            // 但 cp-evil 本身仍被保留；外部目录未被触碰。
+            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-evil']);
             await expect(fs.readFile(path.join(outsideDir, 'victim.txt'), 'utf-8')).resolves.toBe('do not touch');
-            expect(harness.deletedIds()).toEqual([]);
+            expect(harness.deletedIds()).toEqual(['cp-dep']);
         } finally {
             await fs.rm(harness.storageRoot, { recursive: true, force: true });
         }
@@ -215,9 +216,9 @@ describe('CheckpointRetentionService', () => {
 
             await harness.service.cleanupOldCheckpoints('conv');
 
-            // X 无法删除 → 保留；Y 正常删除（X 不在其“排序在后”的后继集合中，不触发合并中止）
-            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-x', 'cp-z']);
-            expect(harness.deletedIds()).toEqual(['cp-y']);
+            // X 无法删除 → 保留；Y 正常删除；继续检查 Z 以满足 max=1。
+            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-x']);
+            expect(harness.deletedIds()).toEqual(['cp-y', 'cp-z']);
         } finally {
             await fs.rm(harness.storageRoot, { recursive: true, force: true });
         }
@@ -272,9 +273,9 @@ describe('CheckpointRetentionService', () => {
 
             await harness.service.cleanupOldCheckpoints('conv');
 
-            // cp-evil 删除被拒绝 → 保留；cp-mid 正常删除；cp-late 因 max=1 保留
-            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-evil', 'cp-late']);
-            expect(harness.deletedIds()).toEqual(['cp-mid']);
+            // cp-evil 删除被拒绝 → 保留；cp-mid、cp-late 继续清理以满足 max=1
+            expect(harness.stored().map(c => c.id).sort()).toEqual(['cp-evil']);
+            expect(harness.deletedIds()).toEqual(['cp-mid', 'cp-late']);
         } finally {
             await fs.rm(harness.storageRoot, { recursive: true, force: true });
         }

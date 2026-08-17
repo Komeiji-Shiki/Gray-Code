@@ -7,11 +7,13 @@
  * 供快照构建器只对列出的路径 stat + 哈希（部分快照）。
  *
  * 契约：
- * - 返回绝对路径数组（单个工具调用至多一个路径，调用方跨调用聚合去重）；
+ * - 返回绝对路径数组（一个工具调用可包含多个路径，调用方跨调用聚合去重）；
  * - 返回 null 表示无法确定受影响路径（调用方回退全量扫描，保证快照完整性）。
  *
- * 白名单工具（args 中的 `path` 字段，均为 string）：
- *   write_file / apply_diff / insert_code / delete_code / delete_file / create_directory
+ * 白名单参数结构：
+ * - write_file / apply_diff：`path`
+ * - insert_code / delete_code：`files[].path`
+ * - delete_file / create_directory：`paths[]`
  * search_in_files 一律返回 null：replace 模式的影响面 = pattern × 目录子树，静态不可知
  *   （args.path 通常是目录，而部分快照对非空目录不递归——被替换的文件不会进入快照，
  *   恢复时既无法还原内容又会被误判）；search 模式只读。两者均回退全量（安全侧）。
@@ -25,14 +27,14 @@
  */
 import * as path from 'path';
 
-/** 白名单：工具名 → args 中承载文件路径的字段（均为 string） */
-const AFFECTED_PATH_FIELDS: Record<string, string> = {
+/** 白名单工具的真实参数结构。 */
+const AFFECTED_PATH_SOURCES: Record<string, 'path' | 'files' | 'paths'> = {
     write_file: 'path',
     apply_diff: 'path',
-    insert_code: 'path',
-    delete_code: 'path',
-    delete_file: 'path',
-    create_directory: 'path'
+    insert_code: 'files',
+    delete_code: 'files',
+    delete_file: 'paths',
+    create_directory: 'paths'
 };
 
 /**
@@ -109,7 +111,7 @@ export function workspaceUriToFsPath(uri: string): string | null {
  * @param toolName 工具名（write_file / apply_diff / ...）
  * @param args 工具调用参数（模型传入）
  * @param workspaceRootFsPath 工作区根 fsPath（相对路径 resolve 的基准）
- * @returns 绝对路径数组（至多一个元素）；null = 无法确定受影响路径（回退全量）
+ * @returns 绝对路径数组；null = 无法确定受影响路径（回退全量）
  */
 export function extractAffectedPaths(
     toolName: string,
@@ -122,25 +124,39 @@ export function extractAffectedPaths(
     if (toolName === 'search_in_files') {
         return null;
     }
-    if (!(toolName in AFFECTED_PATH_FIELDS)) {
+    if (!(toolName in AFFECTED_PATH_SOURCES)) {
         // 非白名单工具（execute_command 等副作用不可知）→ 无法确定
         return null;
     }
 
-    const field = AFFECTED_PATH_FIELDS[toolName] ?? 'path';
-    const raw = (args as Record<string, unknown> | null | undefined)?.[field];
-    if (typeof raw !== 'string' || raw.length === 0) {
+    const record = args as Record<string, unknown> | null | undefined;
+    const source = AFFECTED_PATH_SOURCES[toolName];
+    let rawPaths: unknown[];
+    if (source === 'path') {
+        rawPaths = [record?.path];
+    } else if (source === 'paths') {
+        rawPaths = Array.isArray(record?.paths) ? record.paths : [];
+    } else {
+        rawPaths = Array.isArray(record?.files)
+            ? record.files.map(item => (item as Record<string, unknown> | null | undefined)?.path)
+            : [];
+    }
+    if (rawPaths.length === 0 || rawPaths.some(raw => typeof raw !== 'string' || raw.length === 0)) {
         return null;
     }
 
-    const resolved = path.isAbsolute(raw)
-        ? path.resolve(raw)
-        : path.resolve(workspaceRootFsPath, raw);
+    const resolvedPaths: string[] = [];
+    for (const raw of rawPaths as string[]) {
+        const resolved = path.isAbsolute(raw)
+            ? path.resolve(raw)
+            : path.resolve(workspaceRootFsPath, raw);
 
-    // 路径穿越防御：resolve 后必须位于工作区根内，否则回退全量
-    if (!isPathWithin(workspaceRootFsPath, resolved)) {
-        return null;
+        // 任一路径越界都回退全量，不能只采可信子集后遗漏其余副作用。
+        if (!isPathWithin(workspaceRootFsPath, resolved)) {
+            return null;
+        }
+        resolvedPaths.push(resolved);
     }
 
-    return [resolved];
+    return [...new Set(resolvedPaths)];
 }

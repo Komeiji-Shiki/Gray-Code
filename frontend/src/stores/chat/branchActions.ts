@@ -351,7 +351,7 @@ function restoreSwitchSnapshot(state: ChatStoreState, snapshot: BranchSwitchSnap
 export async function switchBranchCandidate(
   state: ChatStoreState,
   nodeId: string,
-  options?: { mode?: SwitchBranchWorkspaceMode; confirmedDiscardDirty?: boolean }
+  options?: { mode?: SwitchBranchWorkspaceMode; confirmedDiscardDirty?: boolean; confirmedDirtyFiles?: string[] }
 ): Promise<boolean> {
   const conversationId = state.currentConversationId.value
   if (!conversationId) return false
@@ -371,7 +371,8 @@ export async function switchBranchCandidate(
       conversationId,
       nodeId,
       mode,
-      ...(options?.confirmedDiscardDirty === true ? { confirmedDiscardDirty: true } : {})
+      ...(options?.confirmedDiscardDirty === true ? { confirmedDiscardDirty: true } : {}),
+      ...(options?.confirmedDirtyFiles ? { confirmedDirtyFiles: options.confirmedDirtyFiles } : {})
     })
     if (!validateSessionIdentity(state, conversationId)) return false
 

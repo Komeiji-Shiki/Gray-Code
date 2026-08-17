@@ -108,6 +108,8 @@ export async function previewRestore(
   missingBackupDirs?: string[]
   autoPrunedCheckpointCount?: number
   unbackedPaths?: string[]
+  previewId?: string
+  workspaceStateFingerprint?: string
 }> {
   if (!state.currentConversationId.value) {
     return { success: false, restored: 0, deleted: 0, skipped: 0, deletablePaths: [], untrackedPaths: [], error: 'No conversation selected' }
@@ -127,6 +129,8 @@ export async function previewRestore(
       missingBackupDirs?: string[]
       autoPrunedCheckpointCount?: number
       unbackedPaths?: string[]
+      previewId?: string
+      workspaceStateFingerprint?: string
     }>(
       MESSAGE_NAMES['checkpoint.previewRestore'],
       {
@@ -207,7 +211,9 @@ export async function restoreCheckpoint(
   state: ChatStoreState,
   checkpointId: string,
   deleteUntrackedFiles?: boolean,
-  confirmedDiscardDirty?: boolean
+  confirmedDiscardDirty?: boolean,
+  previewId?: string,
+  confirmedDirtyFiles?: string[]
 ): Promise<{
   success: boolean
   restored: number
@@ -219,6 +225,7 @@ export async function restoreCheckpoint(
   autoPrunedCheckpointCount?: number
   failures?: Array<{ path: string; reason: string }>
   unbackedPaths?: string[]
+  previewId?: string
 }> {
   if (!state.currentConversationId.value) {
     return { success: false, restored: 0, error: 'No conversation selected' }
@@ -239,20 +246,27 @@ export async function restoreCheckpoint(
       autoPrunedCheckpointCount?: number
       failures?: Array<{ path: string; reason: string }>
       unbackedPaths?: string[]
+      previewId?: string
     }>(
       MESSAGE_NAMES['checkpoint.restore'],
       {
         conversationId,
         checkpointId,
         deleteUntrackedFiles: deleteUntrackedFiles === true,
-        ...(confirmedDiscardDirty === true ? { confirmedDiscardDirty: true } : {})
+        ...(confirmedDiscardDirty === true ? { confirmedDiscardDirty: true } : {}),
+        ...(typeof previewId === 'string' ? { previewId } : {}),
+        ...(confirmedDirtyFiles ? { confirmedDirtyFiles } : {})
       }
     )
     
     const normalized = result || { success: false, restored: 0, error: 'Unknown error' }
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，前端弹确认框
     // （已确认（confirmedDiscardDirty=true）时后端不会返回 dirtyFiles，此处再防御一次）
-    if (confirmedDiscardDirty !== true && normalized.dirtyFiles && normalized.dirtyFiles.length > 0) {
+    if (
+      normalized.dirtyFiles &&
+      normalized.dirtyFiles.length > 0 &&
+      (confirmedDiscardDirty !== true || normalized.error === 'STALE_DIRTY_CONFIRMATION')
+    ) {
       // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（conversationId 在函数入口固化，
       // 与 IPC 目标一致，避免 await 期间切换会话把归属错记到新会话）
       setPendingDirtyConfirm(conversationId, {
@@ -261,12 +275,16 @@ export async function restoreCheckpoint(
         restore: {
           entry: 'restore',
           checkpointId,
-          deleteUntrackedFiles: deleteUntrackedFiles === true
+          deleteUntrackedFiles: deleteUntrackedFiles === true,
+          previewId: normalized.previewId ?? previewId
         }
       })
       return normalized
     }
     if (normalized.success) {
+      if (!validateSessionIdentity(state, conversationId)) {
+        return normalized
+      }
       // R3-#14: 恢复成功后无条件刷新检查点列表（此前仅在 autoPrune 时刷新，
       // 恢复导致的列表变化可能未反映到前端）
       try {
@@ -302,7 +320,9 @@ export async function restoreAndRetry(
   currentModelName: string,
   cancelStream: () => Promise<void>,
   confirmedDeleteUntracked: boolean = false,
-  confirmedDiscardDirty?: boolean
+  confirmedDiscardDirty?: boolean,
+  previewId?: string,
+  confirmedDirtyFiles?: string[]
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -322,7 +342,7 @@ export async function restoreAndRetry(
   if (!validateSessionIdentity(state, originConvId)) return
   // R3-#13: 按 id 定位后重算索引（await cancelStream 期间数组可能已变化，
   // 直接以下标重读校验/切片会错位），目标消息不存在时中止
-  const targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+  let targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
   if (targetIndex === -1) return
 
   state.error.value = null
@@ -332,7 +352,18 @@ export async function restoreAndRetry(
   let branchReplayContext: BranchStreamReplayContext | null = null
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
-    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
+    const restoreResult = await restoreCheckpoint(
+      state,
+      checkpointId,
+      confirmedDeleteUntracked,
+      confirmedDiscardDirty,
+      previewId,
+      confirmedDirtyFiles
+    )
+    if (!validateSessionIdentity(state, originConvId)) {
+      state.isLoading.value = false
+      return
+    }
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作（含本入口参数），
     // 不写错误条（确认框由 DirtyFilesConfirm.vue 弹出），流程在此暂停等待确认。
     if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
@@ -344,6 +375,7 @@ export async function restoreAndRetry(
           entry: 'retry',
           checkpointId,
           deleteUntrackedFiles: confirmedDeleteUntracked,
+          previewId,
           messageId: targetMessageId
         }
       })
@@ -361,10 +393,14 @@ export async function restoreAndRetry(
       return
     }
 
+    targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+    if (targetIndex === -1) {
+      state.isLoading.value = false
+      return
+    }
+
     // 2. 计算后端索引（在删除本地消息之前）
     const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
-
-    // 3. 本地截断窗口（决策 7：旧回答由后端 startReroll 保留进分支图 sidecar，不再破坏性删除）
     state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
     rebuildMessageIndexById(state)
     clearCheckpointsFromIndex(state, backendIndex, checkpointId)
@@ -472,7 +508,9 @@ export async function restoreAndDelete(
   checkpointId: string,
   cancelStream: () => Promise<void>,
   confirmedDeleteUntracked: boolean = false,
-  confirmedDiscardDirty?: boolean
+  confirmedDiscardDirty?: boolean,
+  previewId?: string,
+  confirmedDirtyFiles?: string[]
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -490,7 +528,7 @@ export async function restoreAndDelete(
   // 校验归属
   if (!validateSessionIdentity(state, originConvId)) return
   // R3-#13: 按 id 定位后重算索引（await cancelStream 期间数组可能已变化）
-  const targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+  let targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
   if (targetIndex === -1) return
 
   state.error.value = null
@@ -498,7 +536,18 @@ export async function restoreAndDelete(
 
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
-    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
+    const restoreResult = await restoreCheckpoint(
+      state,
+      checkpointId,
+      confirmedDeleteUntracked,
+      confirmedDiscardDirty,
+      previewId,
+      confirmedDirtyFiles
+    )
+    if (!validateSessionIdentity(state, originConvId)) {
+      state.isLoading.value = false
+      return
+    }
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，不写错误条
     if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
       // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（originConvId，await 前固化）
@@ -509,6 +558,7 @@ export async function restoreAndDelete(
           entry: 'delete',
           checkpointId,
           deleteUntrackedFiles: confirmedDeleteUntracked,
+          previewId,
           messageId: targetMessageId
         }
       })
@@ -522,6 +572,12 @@ export async function restoreAndDelete(
           message: restoreResult.error || '恢复检查点失败'
         }
       }
+      state.isLoading.value = false
+      return
+    }
+
+    targetIndex = state.allMessages.value.findIndex(m => m.id === targetMessageId)
+    if (targetIndex === -1) {
       state.isLoading.value = false
       return
     }
@@ -604,7 +660,9 @@ export async function restoreAndEdit(
   currentModelName: string,
   cancelStream: () => Promise<void>,
   confirmedDeleteUntracked: boolean = false,
-  confirmedDiscardDirty?: boolean
+  confirmedDiscardDirty?: boolean,
+  previewId?: string,
+  confirmedDirtyFiles?: string[]
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -635,7 +693,18 @@ export async function restoreAndEdit(
   let branchReplayContext: BranchStreamReplayContext | null = null
   try {
     // 1. 先恢复检查点（只有调用方确认了待删除文件清单才删除快照后新建文件）
-    const restoreResult = await restoreCheckpoint(state, checkpointId, confirmedDeleteUntracked, confirmedDiscardDirty)
+    const restoreResult = await restoreCheckpoint(
+      state,
+      checkpointId,
+      confirmedDeleteUntracked,
+      confirmedDiscardDirty,
+      previewId,
+      confirmedDirtyFiles
+    )
+    if (!validateSessionIdentity(state, originConvId)) {
+      state.isLoading.value = false
+      return
+    }
     // BCP-05（决策 11）：后端拦截到未保存文件 → 登记待确认动作，不写错误条
     if (restoreResult.dirtyFiles && restoreResult.dirtyFiles.length > 0) {
       // BCP-05 归属：经 setPendingDirtyConfirm 记录发起会话（originConvId，await 前固化）
@@ -646,6 +715,7 @@ export async function restoreAndEdit(
           entry: 'edit',
           checkpointId,
           deleteUntrackedFiles: confirmedDeleteUntracked,
+          previewId,
           messageId: targetMessageId,
           newContent,
           attachments

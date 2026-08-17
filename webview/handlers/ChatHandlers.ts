@@ -22,6 +22,7 @@ import { ErrorType } from '../../backend/modules/channel';
 import { StreamChunkProcessor } from '../stream/StreamChunkProcessor';
 import {
     isConversationStreaming,
+    isConversationMutationGated,
     BRANCH_BUSY_STREAMING_MESSAGE,
 } from './streamGuard';
 import type { HandlerContext, MessageHandler } from '../types';
@@ -350,7 +351,7 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
   // TREE-13 互斥：主流仍在生成时拒绝创建 reroll 候选（BRANCH_BUSY）。
   // 不加此检查时 abortManager.create() 会静默中止主流，基于被截断的历史创建候选，
   // 与 BranchHandlers 全部变更操作的流式互斥口径不一致。
-  if (isConversationStreaming(ctx, conversationId)) {
+  if (isConversationMutationGated(conversationId) || isConversationStreaming(ctx, conversationId)) {
     ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
     return;
   }
@@ -452,7 +453,7 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
 
   // TREE-13 互斥：主流仍在生成时拒绝创建编辑候选（BRANCH_BUSY），
   // 避免 abortManager.create() 静默中止主流并基于被截断的历史创建候选。
-  if (isConversationStreaming(ctx, conversationId)) {
+  if (isConversationMutationGated(conversationId) || isConversationStreaming(ctx, conversationId)) {
     ctx.sendError(requestId, 'BRANCH_BUSY', BRANCH_BUSY_STREAMING_MESSAGE);
     return;
   }

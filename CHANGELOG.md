@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+  - 收紧检查点与分支联动边界：分支切换从 chat-only 到 chat-and-workspace 统一使用会话事务闸，覆盖取消流、工作区恢复、切图、历史重写和检查点清理期间的新流启动；恢复旧式 fileHashes-only 存档时从增量链实际备份文件补采尺寸并执行当前单文件大小上限，无法验证尺寸则 fail-closed；备份复制改用 lstat、打开文件句柄与流式复制，拒绝符号链接及其竞态跟随。新增分支事务闸、旧存档大小限制和备份符号链接回归测试。
   - 修复已有总结后的同一长回合再次达到上下文上限时被误判为“当前 0 轮、没有可总结内容”：最后一个总结之后若只有模型/工具消息，现将其识别为上一真实用户回合的延续，按用户配置的 `keepRecentTokens` 在完整工具配对边界选择切点，以“旧总结 + 前半段”生成承接总结，并保留首条用户消息与最近实际记录；无旧总结的异常无用户历史、未超过保留预算或找不到安全切点时仍不生成无效总结。新增自动总结回归测试，覆盖旧总结承接、累计覆盖数、逻辑截断及最终有效消息顺序。
   - 修复 `memory_wake` 首次调用携带 `snapshotT=0` 时把已有永久记忆错误显示为「No memories yet」：部分模型/工具客户端会用 0 填充尚无快照值的可选数值参数，原实现却把它解释为“只读取总数为 0 的历史快照”，导致磁盘中的全局与工作区记忆均被遮蔽，并因两个空作用域各自返回 1 页而显示 `Part 1/2`。现首次快照值 0 与省略参数同义，按各作用域当前总数读取；双作用域顶层 `totalParts` 改为并行分页所需次数 `max(globalParts, workspaceParts)`，不再错误相加。参数 schema/中英文说明同步收紧为整数，并新增“已有记忆 + snapshotT=0”及空双作用域页数回归测试。
   - 修复 OpenAI Responses 历史 reasoning 回放混用 DeepSeek plain `reasoning_text` 与 GPT 加密签名协议的问题：`allowReasoningContent` 现仅在模型为 DeepSeek 且 `sendHistoryThoughts=true` 时启用，继续按 `content[].reasoning_text` 原样回传无状态 thinking 上下文，不再受签名开关影响；官方 GPT/Responses 则仅在 `sendHistoryThoughtSignatures=true` 时回传 `encrypted_content + summary`。非 DeepSeek 的 content-only reasoning、未开启签名时的 summary-only reasoning 以及来自其他渠道的裸 thought 现在直接过滤，不再构造成第三方端点不支持的 `reasoning` 输入项，也不再降级为普通 assistant 文本而泄露思考内容；补充 DeepSeek、官方 GPT、Codex、旧格式与开关组合回归测试。

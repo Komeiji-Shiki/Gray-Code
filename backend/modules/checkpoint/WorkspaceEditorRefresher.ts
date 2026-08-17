@@ -1,15 +1,14 @@
 /**
  * GrayCode - 工作区文档刷新器（CPF-12：从 CheckpointManager 拆分）
  *
- * 恢复检查点后刷新 VSCode 中被修改/删除的打开文档（把文档 buffer 替换为磁盘内容后
- * 静默保存，applyEdit 失败时回退 revert），并关闭涉及受影响文件的 diff 视图
+ * 恢复检查点后刷新 VSCode 中被修改/删除的打开文档（交给 VS Code 原生 revert 处理编码与 dirty buffer，
+ * 避免把非 UTF-8 文件按 UTF-8 重编码），并关闭涉及受影响文件的 diff 视图
  * （关闭前采样聊天输入框焦点，关闭后按需归还焦点）。
  *
- * 纯重构：方法体自 CheckpointManager.refreshAffectedDocuments 原样平移，不改变行为。
+ * 采用 VS Code 原生 revert，保证文档自身编码探测与 dirty buffer 丢弃语义。
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs/promises';
 import { restoreChatInputFocus, shouldRestoreChatInputFocus } from '../../core/chatFocusGuard';
 import { Logger } from '../../core/logger';
 
@@ -42,28 +41,11 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
             
             const docPath = caseFold(doc.uri.fsPath);
             
-            // 检查文档是否在受影响列表中
-            if (modifiedSet.has(docPath)) {
-                // 恢复场景：磁盘上已是恢复后的内容，打开着的文档 buffer 是旧内容。
-                // 绝不能直接 doc.save()（会把用户旧 buffer 写回磁盘，覆盖刚恢复的内容），
-                // 也不能直接 revert（dirty 时会弹 VSCode 原生"是否放弃更改？"确认框阻塞流程）。
-                // 方案：把文档 buffer 替换为磁盘内容后静默 save，丢弃旧 buffer。
+            // 直接交给 VS Code 的 revert 命令丢弃 buffer：它会沿用文档自身的编码检测，
+            // 避免把 GBK/UTF-16 等非 UTF-8 文件先按 UTF-8 解码再保存造成内容损坏。
+            // 对被恢复删除的 dirty 文档也必须执行 revert，否则用户稍后保存旧 buffer 会把文件重建。
+            if (modifiedSet.has(docPath) || deletedSet.has(docPath)) {
                 try {
-                    if (doc.isDirty) {
-                        const diskText = await fs.readFile(doc.uri.fsPath, 'utf8');
-                        const edit = new vscode.WorkspaceEdit();
-                        const fullRange = new vscode.Range(
-                            doc.positionAt(0),
-                            doc.positionAt(doc.getText().length)
-                        );
-                        edit.replace(doc.uri, fullRange, diskText);
-                        const applied = await vscode.workspace.applyEdit(edit);
-                        if (applied) {
-                            await doc.save();
-                            continue;
-                        }
-                    }
-                    // applyEdit 失败时回退到 revert（可能弹框，作为最后手段）
                     await vscode.commands.executeCommand('workbench.action.files.revert', doc.uri);
                 } catch (err) {
                     log.warn('refresh_document_revert_failed', {
@@ -72,7 +54,6 @@ export async function refreshAffectedDocuments(modifiedFiles: string[], deletedF
                     });
                 }
             }
-            // 删除的文件不做任何处理，让 VSCode 自然显示"文件已删除"的状态
         }
         
         // 关闭涉及受影响文件的 diff 视图。
