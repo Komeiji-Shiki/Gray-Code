@@ -34,7 +34,28 @@ const MONITOR_EVENT_PAYLOAD_SAFE_KEYS = new Set([
     // 修改方式：把 contentRevision/eventSequence 纳入小字段白名单，仍然禁止 contents/response/result 等大对象。
     // 修改目的：前端可用单调字段拒绝 stale delta 和旧窗口响应，而不回退到 full snapshot。
     'contentRevision',
-    'eventSequence'
+    'eventSequence',
+    // provider 上下文压缩记录（仅计数、状态与 transcript 边界，不含正文）
+    'sequence',
+    'attempt',
+    'strategy',
+    'startedAt',
+    'completedAt',
+    'estimatedTokensBefore',
+    'thresholdTokens',
+    'hardLimitTokens',
+    'previousProviderPromptTokens',
+    'estimatedTokensAfter',
+    'providerPromptTokensAfter',
+    'summaryRequestTokens',
+    'summaryOutputTokens',
+    'summarizedMessageCount',
+    'retainedMessageCount',
+    'sourceStartIndex',
+    'sourceEndIndex',
+    'boundaryContentIndex',
+    'errorCode',
+    'errorMessage'
 ]);
 
 const MONITOR_EVENT_PAYLOAD_BIG_KEYS = new Set([

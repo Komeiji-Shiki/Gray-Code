@@ -5,16 +5,28 @@
  * 从 ChannelSettings.vue 模板拆分（纯结构性拆分，行为零变化）：
  * - 纯展示组件：展开状态 / 开关 / 阈值 / 模式均由父组件注入，自身不持有业务状态。
  */
-import { CustomSelect, type SelectOption } from '../../common'
+import { CustomSelect, Tooltip, type SelectOption } from '../../common'
+import { computed } from 'vue'
 import { t } from '@/i18n'
 
-defineProps<{
+interface ContextBudgetInfo {
+  declaredContextTokens: number
+  effectiveInputTokens: number
+  maxOutputTokens?: number
+  contextWindowIncludesOutput: boolean
+  source: 'channel' | 'model' | 'default'
+}
+
+const props = defineProps<{
   show: boolean
   contextManagementEnabled: boolean
   contextThreshold: string | number
   contextManagementMode: string
   contextManagementModeOptions: SelectOption[]
   contextThresholdError: boolean
+  contextBudget: ContextBudgetInfo
+  summaryKeepRecentTokens: string | number | undefined
+  summaryKeepRecentRounds: number
 }>()
 
 const emit = defineEmits<{
@@ -23,6 +35,80 @@ const emit = defineEmits<{
   (e: 'update:threshold', value: string): void
   (e: 'update:mode', value: string): void
 }>()
+
+function formatTokens(value: number): string {
+  return Math.max(0, Math.floor(value)).toLocaleString()
+}
+
+function parsePositiveNumber(value: unknown): number | undefined {
+  const parsed = typeof value === 'number' ? value : Number(String(value).trim())
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
+}
+
+const thresholdHelp = computed(() => {
+  const raw = String(props.contextThreshold ?? '').trim()
+  const percentMatch = raw.match(/^(\d+(?:\.\d+)?)%$/)
+  const percentage = percentMatch ? Number(percentMatch[1]) : undefined
+  const absolute = percentage === undefined ? parsePositiveNumber(raw) : undefined
+  const effectiveInputTokens = props.contextBudget.effectiveInputTokens
+  const triggerTokens = percentage === undefined
+    ? (absolute ?? Math.floor(effectiveInputTokens * 0.8))
+    : Math.floor(effectiveInputTokens * percentage / 100)
+  const lines: string[] = []
+
+  if (percentage !== undefined) {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.percentage', {
+      percent: percentage,
+      budget: formatTokens(effectiveInputTokens),
+      trigger: formatTokens(triggerTokens)
+    }))
+  } else if (absolute !== undefined) {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.absolute', {
+      trigger: formatTokens(absolute)
+    }))
+  } else {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.invalid'))
+  }
+
+  if (props.contextBudget.maxOutputTokens !== undefined && props.contextBudget.contextWindowIncludesOutput) {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.outputBudget', {
+      declared: formatTokens(props.contextBudget.declaredContextTokens),
+      output: formatTokens(props.contextBudget.maxOutputTokens),
+      input: formatTokens(effectiveInputTokens)
+    }))
+  } else {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.inputBudget', {
+      input: formatTokens(effectiveInputTokens)
+    }))
+  }
+
+  const keepRaw = props.summaryKeepRecentTokens ?? '50%'
+  const keepText = String(keepRaw).trim()
+  const keepPercentMatch = keepText.match(/^(\d+(?:\.\d+)?)%$/)
+  if (keepPercentMatch) {
+    const keepPercent = Number(keepPercentMatch[1])
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.summaryPercent', {
+      keepPercent,
+      summarizePercent: Math.max(0, 100 - keepPercent),
+      rounds: props.summaryKeepRecentRounds
+    }))
+  } else if (parsePositiveNumber(keepText) !== undefined) {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.summaryAbsolute', {
+      keepTokens: formatTokens(parsePositiveNumber(keepText)!),
+      rounds: props.summaryKeepRecentRounds
+    }))
+  } else {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.summaryDefault', {
+      rounds: props.summaryKeepRecentRounds
+    }))
+  }
+
+  lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.tokenBasis'))
+  if (triggerTokens > effectiveInputTokens) {
+    lines.push(t('components.settings.channelSettings.form.contextManagement.threshold.tooltip.overBudget'))
+  }
+  return lines.join('\n')
+})
 </script>
 
 <template>
@@ -61,8 +147,22 @@ const emit = defineEmits<{
 
         <!-- 阈值（两种模式共用） -->
         <div class="option-item option-with-toggle">
-          <div class="option-header">
+          <div class="option-header threshold-option-header">
             <label>{{ t('components.settings.channelSettings.form.contextManagement.threshold.label') }}</label>
+            <Tooltip
+              :content="thresholdHelp"
+              placement="top-right"
+              multiline
+              max-width="380px"
+            >
+              <button
+                type="button"
+                class="threshold-info"
+                :aria-label="t('components.settings.channelSettings.form.contextManagement.threshold.infoLabel')"
+              >
+                <i class="codicon codicon-info"></i>
+              </button>
+            </Tooltip>
           </div>
           <input
             type="text"
@@ -73,10 +173,10 @@ const emit = defineEmits<{
             @input="(e: any) => emit('update:threshold', e.target.value)"
           />
           <span v-if="contextThresholdError" class="option-hint" style="color: var(--vscode-errorForeground)">
-            {{ t('components.settings.channelSettings.form.contextManagement.threshold.hint') }}（输入无效，已恢复为保存值）
+            {{ t('components.settings.channelSettings.form.contextManagement.threshold.shortHint') }}（{{ t('components.settings.channelSettings.form.contextManagement.threshold.invalidHint') }}）
           </span>
-          <span class="option-hint">
-            {{ t('components.settings.channelSettings.form.contextManagement.threshold.hint') }}
+          <span v-else class="option-hint">
+            {{ t('components.settings.channelSettings.form.contextManagement.threshold.shortHint') }}
           </span>
         </div>
 
@@ -87,8 +187,37 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
+.threshold-option-header {
+  align-items: center;
+}
+
+.threshold-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: help;
+}
+
+.threshold-info:hover,
+.threshold-info:focus-visible {
+  color: var(--vscode-textLink-foreground);
+  outline: none;
+}
+
+.threshold-info .codicon {
+  font-size: 14px;
+}
+
 .form-group {
   display: flex;
+
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;

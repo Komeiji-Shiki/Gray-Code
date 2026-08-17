@@ -1124,7 +1124,22 @@ const zhCN = {
                         threshold: {
                             label: '上下文阈值',
                             placeholder: '80% 或 100000',
-                            hint: '当总 token 数超过阈值时，优先由模型总结旧内容，并原文保留历史用户输入；总结失败时仅对本次请求执行工具调用配对安全的细粒度裁剪'
+                            hint: '当总 token 数超过阈值时，优先由模型总结旧内容，并原文保留历史用户输入；总结失败时仅对本次请求执行工具调用配对安全的细粒度裁剪',
+                            shortHint: '支持百分比（如 80%）或绝对 token 数（如 100000）；悬停 ⓘ 查看实际触发点与总结范围',
+                            invalidHint: '输入无效，已恢复为保存值',
+                            infoLabel: '查看上下文阈值、token 计算和总结范围说明',
+                            tooltip: {
+                                percentage: '按当前有效输入预算 {budget} 的 {percent}% 触发自动总结，约为 {trigger} token。',
+                                absolute: '按绝对值触发：估算请求 token 超过 {trigger} 才开始自动总结。',
+                                invalid: '当前阈值格式无效，将按默认 80% 计算。',
+                                outputBudget: '有效输入预算 = 总窗口 {declared} − 最大输出预留 {output} = {input} token。',
+                                inputBudget: '当前有效输入预算约为 {input} token。',
+                                summaryPercent: '当前总结设置保留最近 {keepPercent}%，因此首次大约总结较早的 {summarizePercent}%；至少保留最近 {rounds} 个回合。工具调用配对和安全消息边界可能使实际范围略有不同。',
+                                summaryAbsolute: '当前总结设置保留最近约 {keepTokens} token；实际总结量取决于触发时的历史长度，并至少保留最近 {rounds} 个回合。',
+                                summaryDefault: '当前总结保留预算使用默认值，通常保留最近约 50%，因此大约总结较早的一半；至少保留最近 {rounds} 个回合。',
+                                tokenBasis: '判定依据是本次请求上下文的 token 估算：包括系统提示词、动态上下文和对话历史；有上游用量时优先使用 provider 的 prompt token，否则使用渠道计数或本地估算。',
+                                overBudget: '注意：当前触发值高于有效输入预算，可能在到达总结阈值前先进入硬上限安全裁剪；模型硬上限未知时，也可能先被 provider 拒绝。'
+                            }
                         },
                         extraCut: {
                             label: '额外裁剪量',
@@ -2880,6 +2895,21 @@ const zhCN = {
                 retryFailed: '自动重试失败：{error}',
                 readOnly: '历史运行 · 仅可查看',
                 controlUnavailable: '该运行已不在可控制状态，操作未生效',
+                compaction: {
+                    runningTitle: '正在自动总结上下文',
+                    running: '上下文预计 {before} token，已超过 {threshold} token 阈值，正在生成总结…',
+                    completedTitle: '自动总结完成',
+                    completed: '上下文预计由 {before} 降至 {after} token，压缩了 {count} 条记录。',
+                    completedExact: '上下文由约 {before} token 压缩后，本次请求上游实报 {after} token；共压缩 {count} 条记录。',
+                    failedTitle: '自动总结未完成',
+                    failed: '原 provider 上下文保持不变：{error}',
+                    fallbackTitle: '已执行硬上限安全裁剪',
+                    fallback: '上下文约由 {before} 降至 {after} token，处理了 {count} 条记录；首条任务与已有总结保持原文。',
+                    boundaryTitle: '模型上下文总结边界',
+                    boundary: '此位置之前已有 {count} 条记录由总结代替；原文仍完整保留在 Monitor 中。',
+                    previousProviderTokens: '总结前最近一次普通请求由上游实报 {count} prompt token。',
+                    unknownError: '未知错误'
+                },
                 status: {
                     queued: '排队中',
                     running: '运行中',

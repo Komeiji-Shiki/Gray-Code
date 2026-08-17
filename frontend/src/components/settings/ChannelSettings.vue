@@ -291,6 +291,73 @@ const contextThreshold = computed(() => {
   return currentConfig.value?.contextThreshold ?? '80%'
 })
 
+const summaryKeepRecentTokensHint = ref<string | number>('50%')
+const summaryKeepRecentRoundsHint = ref(2)
+
+interface ContextBudgetHint {
+  declaredContextTokens: number
+  effectiveInputTokens: number
+  maxOutputTokens?: number
+  contextWindowIncludesOutput: boolean
+  source: 'channel' | 'model' | 'default'
+}
+
+function positiveTokenValue(value: unknown): number | undefined {
+  const parsed = typeof value === 'number' ? value : Number(String(value ?? '').trim())
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined
+}
+
+const contextBudgetHint = computed<ContextBudgetHint>(() => {
+  const config = currentConfig.value
+  const selectedModel = config?.models?.find(model => model.id === config.model)
+  const configuredContext = config?.maxContextTokens !== undefined
+    ? (positiveTokenValue(maxContextTokensDraft.value) ?? positiveTokenValue(config.maxContextTokens))
+    : undefined
+  const modelContext = positiveTokenValue(selectedModel?.contextWindow)
+  const declaredContextTokens = configuredContext ?? modelContext ?? 256000
+  const source: ContextBudgetHint['source'] = configuredContext !== undefined
+    ? 'channel'
+    : (modelContext !== undefined ? 'model' : 'default')
+
+  let outputKey: 'maxOutputTokens' | 'max_tokens' | 'max_output_tokens' | undefined
+  if (config?.type === 'gemini' || config?.type === 'gemini-interactions') outputKey = 'maxOutputTokens'
+  if (config?.type === 'openai' || config?.type === 'anthropic') outputKey = 'max_tokens'
+  if (config?.type === 'openai-responses') outputKey = 'max_output_tokens'
+  const configuredOutput = outputKey
+    && config?.optionsEnabled?.[outputKey] === true
+    ? positiveTokenValue(config.options?.[outputKey])
+    : undefined
+  const maxOutputTokens = configuredOutput ?? positiveTokenValue(selectedModel?.maxOutputTokens)
+  const contextWindowIncludesOutput = selectedModel?.contextWindowIncludesOutput
+    ?? (config?.type === 'openai' || config?.type === 'openai-responses' || config?.type === 'anthropic')
+  const effectiveInputTokens = contextWindowIncludesOutput
+    ? Math.max(1, declaredContextTokens - (maxOutputTokens ?? 0))
+    : declaredContextTokens
+
+  return {
+    declaredContextTokens,
+    effectiveInputTokens,
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    contextWindowIncludesOutput,
+    source
+  }
+})
+
+async function loadSummaryHintConfig() {
+  try {
+    const response = await sendToExtension<any>(MESSAGE_NAMES.getSummarizeConfig, {})
+    if (!response) return
+    if (typeof response.keepRecentTokens === 'string' || typeof response.keepRecentTokens === 'number') {
+      summaryKeepRecentTokensHint.value = response.keepRecentTokens
+    }
+    if (typeof response.keepRecentRounds === 'number' && Number.isFinite(response.keepRecentRounds)) {
+      summaryKeepRecentRoundsHint.value = Math.max(1, Math.floor(response.keepRecentRounds))
+    }
+  } catch (error) {
+    console.warn('Failed to load summary settings for context threshold help:', error)
+  }
+}
+
 // 上下文管理统一为“模型总结优先 + 失败时细粒度临时裁剪”。旧 trim 值只作为后端迁移输入。
 const contextManagementMode = computed(() => 'summarize')
 
@@ -665,7 +732,8 @@ async function updateConfigField(field: string, value: any) {
         name: m.name,
         description: m.description,
         contextWindow: m.contextWindow,
-        maxOutputTokens: m.maxOutputTokens
+        maxOutputTokens: m.maxOutputTokens,
+        contextWindowIncludesOutput: m.contextWindowIncludesOutput
       }))
     }
 
@@ -738,7 +806,10 @@ onMounted(async () => {
   // await 期间用 isLoading 抑制空态渲染，避免加载中误显示「无渠道」引导
   isLoading.value = true
   try {
-    await preloadChannelConfigs()
+    await Promise.all([
+      preloadChannelConfigs(),
+      loadSummaryHintConfig()
+    ])
     const cachedConfigs = getChannelConfigsCache()
     if (cachedConfigs === null) {
       await loadConfigs()
@@ -830,6 +901,9 @@ onMounted(async () => {
         :context-management-mode="contextManagementMode"
         :context-management-mode-options="contextManagementModeOptions"
         :context-threshold-error="contextThresholdError"
+        :context-budget="contextBudgetHint"
+        :summary-keep-recent-tokens="summaryKeepRecentTokensHint"
+        :summary-keep-recent-rounds="summaryKeepRecentRoundsHint"
         @update:show="showContextThreshold = $event"
         @update:enabled="updateContextManagementEnabled"
         @update:threshold="updateContextThreshold"

@@ -9,9 +9,13 @@ const props = withDefaults(defineProps<{
   content?: string
   placement?: 'top' | 'top-left' | 'top-right' | 'bottom' | 'left' | 'right'
   disabled?: boolean
+  multiline?: boolean
+  maxWidth?: string
 }>(), {
   placement: 'top',
-  disabled: false
+  disabled: false,
+  multiline: false,
+  maxWidth: '360px'
 })
 
 const visible = ref(false)
@@ -38,7 +42,8 @@ function hide() {
       <div
         v-if="visible"
         ref="tooltipRef"
-        :class="tooltipClass"
+        :class="[tooltipClass, { multiline }]"
+        :style="{ maxWidth }"
       >
         <div class="tooltip-content">
           {{ content }}
@@ -58,6 +63,7 @@ function hide() {
 .tooltip {
   position: absolute;
   z-index: 1000;
+  max-width: 360px;
   padding: 6px 10px;
   background: var(--vscode-editorHoverWidget-background);
   border: 1px solid var(--vscode-editorHoverWidget-border);
@@ -67,6 +73,12 @@ function hide() {
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   pointer-events: none;
+}
+
+.tooltip.multiline {
+  white-space: pre-line;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .tooltip-content {

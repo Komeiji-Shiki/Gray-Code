@@ -1,9 +1,17 @@
 <script setup lang="ts">
+import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { useI18n } from '@/i18n'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
+import SubAgentContextCompactionNotice from './SubAgentContextCompactionNotice.vue'
+import {
+  buildContextCompactionTimeline,
+  latestContextBoundaryCompaction,
+  latestContextCompaction,
+  upsertContextCompactionRecord
+} from './monitorContextCompaction'
 import { contentToMessageEnhanced } from '@/stores/chat/parsers'
 import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
 import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
@@ -100,6 +108,7 @@ const AUTO_FOLLOW_THRESHOLD_PX = 80
 // 修改目的：保持 Content[]/MessageItem 渲染语义不分叉，同时把首屏 payload 限制为 run 列表元数据。
 const manifests = ref<SubAgentRunManifest[]>([])
 const windowsByRunId = ref<Record<string, SubAgentRunContentWindow>>({})
+const contextCompactionsByRunId = ref<Record<string, SubAgentContextCompactionRecord[]>>({})
 const eventsByRunId = ref<Record<string, SubAgentRunEvent[]>>({})
 // 修改原因：工具状态是运行时事件状态，不能只从窗口内 functionResponse 反推，否则刷新丢失时工具卡会卡住。
 // 修改方式：为每个 run 维护 toolId -> ToolUsage 状态 overlay，事件到达时用纯 reducer 更新。
@@ -273,8 +282,17 @@ function applyManifestPayload(data: any) {
   updateActiveRunIds(data?.activeRunIds)
 }
 
+function applyWindowContextCompactions(contentWindow: SubAgentRunContentWindow | undefined) {
+  if (!contentWindow?.runId || !Array.isArray(contentWindow.contextCompactions)) return
+  contextCompactionsByRunId.value = {
+    ...contextCompactionsByRunId.value,
+    [contentWindow.runId]: contentWindow.contextCompactions
+  }
+}
+
 function upsertWindow(contentWindow: SubAgentRunContentWindow | undefined, options?: { preservePrefix?: boolean }) {
   if (!contentWindow?.runId) return
+  applyWindowContextCompactions(contentWindow)
   const current = windowsByRunId.value[contentWindow.runId]
   const replacement = options?.preservePrefix
     ? replaceRunContentWindowPreservingPrefix(contentWindow, current)
@@ -288,11 +306,22 @@ function upsertWindow(contentWindow: SubAgentRunContentWindow | undefined, optio
 
 function prependWindow(contentWindow: SubAgentRunContentWindow | undefined) {
   if (!contentWindow?.runId) return
+  applyWindowContextCompactions(contentWindow)
   const merged = prependRunContentWindow(windowsByRunId.value[contentWindow.runId], contentWindow)
   if (!merged) return
   windowsByRunId.value = {
     ...windowsByRunId.value,
     [contentWindow.runId]: merged
+  }
+}
+
+function applyContextCompactionEvent(event: SubAgentRunEvent) {
+  if (!event?.runId || !event.type.startsWith('context_compaction_')) return
+  const payload = event.payload as SubAgentContextCompactionRecord | undefined
+  if (!payload?.id) return
+  contextCompactionsByRunId.value = {
+    ...contextCompactionsByRunId.value,
+    [event.runId]: upsertContextCompactionRecord(contextCompactionsByRunId.value[event.runId], payload)
   }
 }
 
@@ -799,6 +828,18 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
 }
 
 const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
+const focusedContextCompactions = computed(() => {
+  const runId = focusedRun.value?.runId
+  return runId ? contextCompactionsByRunId.value[runId] || [] : []
+})
+const latestCompaction = computed(() => latestContextCompaction(focusedContextCompactions.value))
+const latestBoundaryCompaction = computed(() => latestContextBoundaryCompaction(focusedContextCompactions.value))
+const renderTimeline = computed(() => buildContextCompactionTimeline(
+  renderMessages.value,
+  latestBoundaryCompaction.value,
+  focusedWindow.value?.startIndex ?? 0,
+  focusedWindow.value?.endIndex ?? 0
+))
 
 // 修改原因：Monitor 是实时监视面板，但过去从不跟随新内容，用户必须一直手动往下拖才能看到 SubAgent 正在输出什么。
 // 修改方式：复用主聊天 MessageList 的做法——监听滚动容器判断是否贴底，贴底时随尾部内容增长自动滚到底部。
@@ -827,11 +868,15 @@ const tailSignature = computed(() => {
   const last = contents[contents.length - 1]
   const parts = last?.parts || []
   const lastPart = parts[parts.length - 1]
+  const compaction = latestCompaction.value
   return [
     run.runId,
     last?.index ?? contents.length - 1,
     parts.length,
-    (lastPart?.text || '').length
+    (lastPart?.text || '').length,
+    compaction?.sequence ?? 0,
+    compaction?.status ?? '',
+    compaction?.providerPromptTokensAfter ?? ''
   ].join('|')
 })
 
@@ -1099,6 +1144,7 @@ onMounted(async () => {
       }
       if (message.data?.event) {
         appendEvent(message.data.event)
+        applyContextCompactionEvent(message.data.event)
         // 重试类事件（retrying/retryFailed）经子代理独立开关播提示音
         handleMonitorRunSoundEvent(message.data.event)
         if (message.data.event.type === 'llm_delta') {
@@ -1288,17 +1334,30 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <MessageItem
-          v-for="(message, index) in renderMessages"
-          :key="message.id"
-          :message="message"
-          :message-index="message.backendIndex ?? index"
-          @edit="noop"
-          @restore-and-edit="noop"
-          @delete="handleDelete"
-          @retry="handleRetry"
-          @restore-and-retry="noop"
-          @copy="handleCopy"
+        <template v-for="(entry, index) in renderTimeline" :key="entry.key">
+          <SubAgentContextCompactionNotice
+            v-if="entry.kind === 'compaction'"
+            :record="entry.record"
+            variant="boundary"
+          />
+          <MessageItem
+            v-else
+            :message="entry.message"
+            :message-index="entry.message.backendIndex ?? index"
+            @edit="noop"
+            @restore-and-edit="noop"
+            @delete="handleDelete"
+            @retry="handleRetry"
+            @restore-and-retry="noop"
+            @copy="handleCopy"
+          />
+        </template>
+
+        <!-- 运行中的总结提示固定出现在当前消息尾部；完成后保留 token 前后统计。 -->
+        <SubAgentContextCompactionNotice
+          v-if="latestCompaction"
+          :record="latestCompaction"
+          variant="status"
         />
       </div>
     </CustomScrollbar>

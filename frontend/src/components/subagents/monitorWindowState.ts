@@ -7,6 +7,7 @@
  * 修改目的：保持 Monitor 仍使用 Content[]/MessageItem 渲染语义，但窗口状态更新可独立回归测试。
  */
 
+import type { SubAgentContextCompactionRecord } from '@shared/subAgentContextCompaction'
 import type { Content } from '../../types'
 
 export interface SubAgentRunContentWindowState {
@@ -27,6 +28,7 @@ export interface SubAgentRunContentWindowState {
    * 目的：为响应去旧和后续 AgentRunEvent replay 提供统一序号。
    */
   eventSequence?: number
+  contextCompactions?: SubAgentContextCompactionRecord[]
   hasMoreBefore: boolean
   hasMoreAfter: boolean
 }
@@ -90,6 +92,7 @@ export function prependRunContentWindow(
     totalCount: older.totalCount,
     contentRevision: Math.max(revisionOf(current), revisionOf(older)),
     eventSequence: Math.max(sequenceOf(current), sequenceOf(older)),
+    contextCompactions: older.contextCompactions ?? current.contextCompactions,
     hasMoreBefore: older.hasMoreBefore,
     hasMoreAfter: current.hasMoreAfter || older.hasMoreAfter
   }

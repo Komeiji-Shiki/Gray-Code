@@ -1122,7 +1122,22 @@ const ja: LanguageMessages = {
                         threshold: {
                             label: 'コンテキストしきい値',
                             placeholder: '80% または 100000',
-                            hint: '合計トークン数がしきい値を超えると、まずモデルが古い内容を要約し、過去のユーザー入力を原文で保持します。要約に失敗した場合のみ、ツール呼び出しの対応関係を保つ細粒度トリミングを現在のリクエストに適用します。'
+                            hint: '合計トークン数がしきい値を超えると、まずモデルが古い内容を要約し、過去のユーザー入力を原文で保持します。要約に失敗した場合のみ、ツール呼び出しの対応関係を保つ細粒度トリミングを現在のリクエストに適用します。',
+                            shortHint: '割合（例：80%）または絶対トークン数（例：100000）を指定します。ⓘ にカーソルを置くと実際の発動点と要約範囲を表示します',
+                            invalidHint: '入力が無効なため、保存済みの値に戻しました',
+                            infoLabel: 'コンテキストしきい値、トークン計算、要約範囲の説明を表示',
+                            tooltip: {
+                                percentage: '現在の有効入力予算 {budget} トークンの {percent}%、約 {trigger} トークンで自動要約を開始します。',
+                                absolute: '絶対値モード：推定リクエストが {trigger} トークンを超えると自動要約を開始します。',
+                                invalid: 'しきい値の形式が無効なため、デフォルトの 80% を使用します。',
+                                outputBudget: '有効入力予算 = 合計ウィンドウ {declared} − 最大出力予約 {output} = {input} トークン。',
+                                inputBudget: '現在の有効入力予算は約 {input} トークンです。',
+                                summaryPercent: '現在の要約設定は最新 {keepPercent}% を保持するため、初回は古い約 {summarizePercent}% を要約します。最新 {rounds} ラウンドは保護されます。ツールの対応関係と安全な境界により実際の範囲は変わることがあります。',
+                                summaryAbsolute: '現在の要約設定は最新約 {keepTokens} トークンを保持します。要約量は履歴の長さに依存し、最新 {rounds} ラウンドは保護されます。',
+                                summaryDefault: '要約保持予算はデフォルトです。通常は最新約 50% を保持し、古い約半分を要約します。最新 {rounds} ラウンドは保護されます。',
+                                tokenBasis: '判定には、このリクエストのシステムプロンプト、動的コンテキスト、会話履歴のトークン推定を使用します。利用可能ならプロバイダーの prompt token を優先し、それ以外はチャネル計数またはローカル推定を使用します。',
+                                overBudget: '注意：発動値が有効入力予算を超えています。要約しきい値に達する前にハード上限の安全トリムが実行される場合があります。モデルのハード上限が不明な場合は、先にプロバイダーから拒否される可能性があります。'
+                            }
                         },
                         extraCut: {
                             label: '追加カット量',
@@ -2878,6 +2893,21 @@ const ja: LanguageMessages = {
                 retryFailed: '自動リトライ失敗：{error}',
                 readOnly: '過去の実行 · 閲覧のみ',
                 controlUnavailable: 'この実行は制御可能な状態ではないため、操作は反映されませんでした',
+                compaction: {
+                    runningTitle: 'コンテキストを自動要約中',
+                    running: '推定コンテキストは {before} トークンで、しきい値 {threshold} を超えています。要約を生成中…',
+                    completedTitle: '自動要約が完了しました',
+                    completed: '推定コンテキストを {before} から {after} トークンへ圧縮し、{count} 件を要約しました。',
+                    completedExact: '推定 {before} トークンを圧縮後、このリクエストでプロバイダーが報告した prompt token は {after} です。{count} 件を要約しました。',
+                    failedTitle: '自動要約を完了できませんでした',
+                    failed: 'プロバイダーへ送るコンテキストは変更していません：{error}',
+                    fallbackTitle: 'ハード上限の安全トリムを実行しました',
+                    fallback: 'コンテキストを約 {before} から {after} トークンへ縮小し、{count} 件を処理しました。最初のタスクと既存要約は原文のままです。',
+                    boundaryTitle: 'モデルコンテキストの要約境界',
+                    boundary: 'この位置より前の {count} 件は要約で置き換えられています。原文は Monitor に完全保存されています。',
+                    previousProviderTokens: '要約前の直近通常リクエストで、プロバイダーは {count} prompt token と報告しました。',
+                    unknownError: '不明なエラー'
+                },
                 status: {
                     queued: '待機中',
                     running: '実行中',

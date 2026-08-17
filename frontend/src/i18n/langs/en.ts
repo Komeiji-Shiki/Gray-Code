@@ -1122,7 +1122,22 @@ const en: LanguageMessages = {
                         threshold: {
                             label: 'Context Threshold',
                             placeholder: '80% or 100000',
-                            hint: 'When total tokens exceed this threshold, summarize older content first and preserve historical user inputs verbatim. If summarization fails, apply tool-pair-safe granular trimming to this request only.'
+                            hint: 'When total tokens exceed this threshold, summarize older content first and preserve historical user inputs verbatim. If summarization fails, apply tool-pair-safe granular trimming to this request only.',
+                            shortHint: 'Use a percentage (for example 80%) or an absolute token count (for example 100000); hover ⓘ for the effective trigger and summary range',
+                            invalidHint: 'Invalid input; restored the saved value',
+                            infoLabel: 'View context threshold, token counting, and summary range details',
+                            tooltip: {
+                                percentage: 'Automatic summarization triggers at {percent}% of the current effective input budget ({budget} tokens), about {trigger} tokens.',
+                                absolute: 'Absolute mode: automatic summarization starts when the estimated request exceeds {trigger} tokens.',
+                                invalid: 'The threshold format is invalid, so the default 80% rule is used.',
+                                outputBudget: 'Effective input budget = total window {declared} − reserved maximum output {output} = {input} tokens.',
+                                inputBudget: 'The current effective input budget is about {input} tokens.',
+                                summaryPercent: 'The current summary setting keeps the newest {keepPercent}%, so the first pass usually summarizes the older {summarizePercent}%; at least the newest {rounds} rounds are protected. Tool-pair and safe-boundary rules may change the exact range.',
+                                summaryAbsolute: 'The current summary setting keeps about {keepTokens} newest tokens; the amount summarized depends on history length, with at least the newest {rounds} rounds protected.',
+                                summaryDefault: 'The summary retention uses the default: it usually keeps about the newest 50%, so roughly the older half is summarized; at least the newest {rounds} rounds are protected.',
+                                tokenBasis: 'The decision uses an estimate of this request context: system prompt, dynamic context, and conversation history. Provider prompt usage is preferred when available; otherwise channel counting or a local estimate is used.',
+                                overBudget: 'Warning: this trigger is above the effective input budget. Hard-limit safety trimming may run before the summary threshold is reached; if the model hard limit is unknown, the provider may reject first.'
+                            }
                         },
                         extraCut: {
                             label: 'Extra Cut',
@@ -2878,6 +2893,21 @@ const en: LanguageMessages = {
                 retryFailed: 'Auto-retry failed: {error}',
                 readOnly: 'Historical run · view only',
                 controlUnavailable: 'This run is no longer controllable; the action had no effect',
+                compaction: {
+                    runningTitle: 'Automatically summarizing context',
+                    running: 'Estimated context is {before} tokens, above the {threshold}-token threshold. Generating a summary…',
+                    completedTitle: 'Automatic summary completed',
+                    completed: 'Estimated context decreased from {before} to {after} tokens; {count} records were compressed.',
+                    completedExact: 'After compressing an estimated {before} tokens, the provider reported {after} prompt tokens for this request; {count} records were compressed.',
+                    failedTitle: 'Automatic summary did not complete',
+                    failed: 'The provider context was left unchanged: {error}',
+                    fallbackTitle: 'Hard-limit safety trim applied',
+                    fallback: 'Context decreased from about {before} to {after} tokens and handled {count} records; the initial task and existing summary remain verbatim.',
+                    boundaryTitle: 'Model context summary boundary',
+                    boundary: '{count} records before this point are represented by a summary; their full text remains available in Monitor.',
+                    previousProviderTokens: 'Before summarization, the provider reported {count} prompt tokens for the latest normal request.',
+                    unknownError: 'Unknown error'
+                },
                 status: {
                     queued: 'Queued',
                     running: 'Running',
