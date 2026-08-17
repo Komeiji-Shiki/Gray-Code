@@ -525,4 +525,63 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
     expect(vi.mocked(sendToExtension).mock.calls.filter(c => c[0] === 'conversation.getBranchGraph')).toHaveLength(0)
     expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
+
+  test('编辑带附件：chat.editBranchStream 请求携带附件列表（丢图回归）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    const attachment = {
+      id: 'att-1', name: 'pic.png', type: 'image' as const, size: 100,
+      mimeType: 'image/png', data: 'aGVsbG8=', thumbnail: undefined
+    }
+
+    // branch 模式：请求透传 attachments
+    await editAndRetry(state, createComputed(), 1, '新回答', [attachment], async () => {}, 'branch')
+    const editCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall).toBeDefined()
+    expect(editCall![1]).toMatchObject({
+      newText: '新回答',
+      userNodeId: 'msg_u1',
+      mode: 'branch',
+      attachments: [attachment]
+    })
+    // 本地窗口同步保留附件（刷新前编辑后消息仍显示图片）
+    expect(state.allMessages.value[1].attachments).toEqual([attachment])
+    expect(state.allMessages.value[1].parts).toEqual([{ text: '新回答' }])
+
+    // keep 模式：同样携带附件（真·原地保存也不丢图）
+    vi.mocked(sendToExtension).mockClear()
+    await editAndRetry(state, createComputed(), 1, '又改了', [attachment], async () => {}, 'keep')
+    const keepCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(keepCall).toBeDefined()
+    expect(keepCall![1]).toMatchObject({
+      newText: '又改了',
+      mode: 'keep',
+      attachments: [attachment]
+    })
+  })
+
+  test('编辑无附件：请求仍携带空数组（后端按传入清空附件）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    await editAndRetry(state, createComputed(), 1, '新回答', undefined, async () => {}, 'keep')
+    const keepCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(keepCall).toBeDefined()
+    expect(keepCall![1]).toMatchObject({
+      newText: '新回答',
+      mode: 'keep',
+      attachments: []
+    })
+  })
 })

@@ -37,7 +37,9 @@ import {
     importLinearHistory,
     validate,
 } from '../../modules/conversation/branch/BranchGraph';
-import { resolveEditTargetNode } from '../../modules/api/chat/services/ChatFlowService';
+import { resolveEditTargetNode, buildEditUserParts } from '../../modules/api/chat/services/ChatFlowService';
+import type { AttachmentData } from '../../modules/api/chat/types';
+import type { ContentPart } from '../../modules/conversation/types';
 import { BranchError } from '../../modules/conversation/branch/types';
 import { ChannelError, ErrorType } from '../../modules/channel/types';
 import { registerChatHandlers, editBranchStream } from '../../../webview/handlers/ChatHandlers';
@@ -695,6 +697,43 @@ describe('webview handler：chat.editBranchStream', () => {
         expect(errors).toHaveLength(0);
         expect(abortManager.isActive('c1')).toBe(false);
         expect(abortManager.get('c1')).toBeUndefined();
+
+    });
+    test('attachments 透传：编辑请求携带附件列表（丢图回归：webview 层必须把附件转给后端）', async () => {
+        const abortManager = new StreamAbortManager();
+        let receivedRequest: any;
+        const fakeChatHandler = {
+            handleEditBranchStream: async function* (request: any) {
+                receivedRequest = request;
+                yield { conversationId: 'c1' }; // complete（无 content）
+            },
+        } as any;
+
+        const ctx = makeCtx({
+            chatHandler: fakeChatHandler,
+            streamAbortControllers: abortManager,
+        });
+
+        const attachments = [
+            { id: 'att-1', name: 'pic.png', type: 'image', size: 100, mimeType: 'image/png', data: 'aGVsbG8=' },
+        ];
+        await editBranchStream(
+            { conversationId: 'c1', newText: 'edited', attachments, configId: 'cfg' },
+            'req-att-1',
+            ctx
+        );
+
+        expect(receivedRequest).toBeDefined();
+        expect(receivedRequest.attachments).toEqual(attachments);
+        // 非数组/缺失时归一化为 undefined（后端走保留原消息附件分支）
+        receivedRequest = undefined;
+        const pending = editBranchStream(
+            { conversationId: 'c1', newText: 'edited', attachments: 'not-an-array' as any, configId: 'cfg' },
+            'req-att-2',
+            ctx
+        );
+        await pending;
+        expect(receivedRequest!.attachments).toBeUndefined();
     });
 
     test('方案 B：流失败透传底层 ChannelError.type（EDIT_BRANCH_ERROR + type=TIMEOUT_ERROR，前端据此判断可重试）', async () => {
@@ -721,6 +760,77 @@ describe('webview handler：chat.editBranchStream', () => {
     });
 });
 
+
+describe('buildEditUserParts 附件保留（编辑保存丢图回归）', () => {
+    const buildViaAttachments = (
+        message: string,
+        attachments: AttachmentData[] | undefined,
+        originalParts: ContentPart[],
+    ): ContentPart[] =>
+        buildEditUserParts(message, attachments, originalParts, (msg, atts) =>
+            Array.isArray(atts) && atts.length > 0
+                ? [
+                      ...atts.map(att => ({ inlineData: { mimeType: att.mimeType, data: att.data, id: att.id, name: att.name } })),
+                      ...(msg ? [{ text: msg }] : []),
+                  ]
+                : msg
+                  ? [{ text: msg }]
+                  : [],
+        );
+
+    const attachment: AttachmentData = {
+        id: 'att-1',
+        name: 'pic.png',
+        type: 'image',
+        size: 100,
+        mimeType: 'image/png',
+        data: 'aGVsbG8=',
+    };
+
+    const originalPartsWithImage: ContentPart[] = [
+        { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=', id: 'att-old', name: 'old.png' } },
+        { text: '旧问题' },
+    ];
+
+    test('显式传入 attachments：按传入列表重建（inlineData + text）', () => {
+        const parts = buildViaAttachments('新问题', [attachment], originalPartsWithImage);
+        expect(parts).toEqual([
+            { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=', id: 'att-1', name: 'pic.png' } },
+            { text: '新问题' },
+        ]);
+    });
+
+    test('显式传入空数组：用户主动删光附件 → 只保留文本 parts', () => {
+        const parts = buildViaAttachments('新问题', [], originalPartsWithImage);
+        expect(parts).toEqual([{ text: '新问题' }]);
+    });
+
+    test('未传 attachments（旧前端）：保留原消息 inlineData 附件 + 替换文本（丢图回归修复）', () => {
+        const parts = buildViaAttachments('新问题', undefined, originalPartsWithImage);
+        expect(parts).toEqual([
+            { inlineData: { mimeType: 'image/png', data: 'aGVsbG8=', id: 'att-old', name: 'old.png' } },
+            { text: '新问题' },
+        ]);
+    });
+
+    test('未传 attachments 且原消息无附件：纯文本 parts', () => {
+        const parts = buildViaAttachments('新问题', undefined, [{ text: '旧问题' }]);
+        expect(parts).toEqual([{ text: '新问题' }]);
+    });
+
+    test('未传 attachments 且原消息有多个 inlineData：全部保留（顺序不变）', () => {
+        const parts = buildViaAttachments('新问题', undefined, [
+            { inlineData: { mimeType: 'image/png', data: 'AAA' } },
+            { inlineData: { mimeType: 'image/jpeg', data: 'BBB' } },
+            { text: '旧问题' },
+        ]);
+        expect(parts).toEqual([
+            { inlineData: { mimeType: 'image/png', data: 'AAA' } },
+            { inlineData: { mimeType: 'image/jpeg', data: 'BBB' } },
+            { text: '新问题' },
+        ]);
+    });
+});
 
 describe('keep 模式：原地编辑（保持当前分支）', () => {
     let tempDir: string;
