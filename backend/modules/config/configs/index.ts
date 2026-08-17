@@ -14,7 +14,11 @@ export type { GeminiConfig, GeminiOptionsEnabled, ThinkingConfig, ThinkingLevel,
 export type { GeminiInteractionsConfig } from './gemini-interactions';
 export type { OpenAIConfig } from './openai';
 export type { AnthropicConfig } from './anthropic';
-export type { OpenAIResponsesConfig, OpenAIResponsesOptionsEnabled } from './openai-responses';
+export type {
+    OpenAIResponsesConfig,
+    OpenAIResponsesOptionsEnabled,
+    OpenAIResponsesReasoningSignatureMode
+} from './openai-responses';
 
 /**
  * 渠道配置联合类型

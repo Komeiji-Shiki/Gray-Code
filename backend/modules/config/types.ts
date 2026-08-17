@@ -13,6 +13,7 @@ export type {
     OpenAIConfig,
     AnthropicConfig,
     OpenAIResponsesConfig,
+    OpenAIResponsesReasoningSignatureMode,
     ChannelConfig,
     ModelInfo,
     TokenCountMethod,

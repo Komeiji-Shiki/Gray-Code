@@ -183,6 +183,7 @@ export interface ChannelConfig {
   customBodyEnabled?: boolean
   sendHistoryThoughtSignatures?: boolean
   sendCurrentThoughtSignatures?: boolean
+  reasoningSignatureMode?: 'official' | 'codex'
   sendHistoryThoughts?: boolean
   historyThinkingRounds?: number
   sendCurrentThoughts?: boolean

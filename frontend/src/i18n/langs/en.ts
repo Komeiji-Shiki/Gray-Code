@@ -3092,6 +3092,15 @@ const en: LanguageMessages = {
                     summaryConcise: 'Concise',
                     summaryDetailed: 'Detailed'
                 },
+                reasoningSignatureMode: {
+                    label: 'Reasoning Signature Replay Format',
+                    placeholder: 'Select replay format',
+                    hint: 'Official keeps the full GPT Responses item; Codex compatibility omits status and keeps encrypted_content.',
+                    official: 'Official GPT Responses',
+                    officialDescription: 'Keep id, status, summary, and encrypted_content',
+                    codex: 'Codex Proxy Compatibility',
+                    codexDescription: 'Keep id, summary, and encrypted_content; omit status'
+                },
                 thinkingBackfill: {
                     sendSignaturesHint: 'Maintain reasoning context across turns',
                     sendContentHint: 'When enabled, reasoning_content from historical conversations will be sent'

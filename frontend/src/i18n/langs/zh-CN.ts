@@ -3094,6 +3094,15 @@ const zhCN = {
                     summaryConcise: '简洁',
                     summaryDetailed: '详细'
                 },
+                reasoningSignatureMode: {
+                    label: '思考签名回传格式',
+                    placeholder: '选择回传格式',
+                    hint: '官方模式保留完整 GPT Responses 项；Codex 兼容模式省略 status，保留 encrypted_content。',
+                    official: '官方 GPT Responses',
+                    officialDescription: '保留 id、status、summary、encrypted_content',
+                    codex: 'Codex 反代兼容',
+                    codexDescription: '保留 id、summary、encrypted_content，省略 status'
+                },
                 thinkingBackfill: {
                     sendSignaturesHint: '保持跨多轮交互的思考上下文',
                     sendContentHint: '启用后，将发送历史对话中的 reasoning_content，这将增加上下文长度'

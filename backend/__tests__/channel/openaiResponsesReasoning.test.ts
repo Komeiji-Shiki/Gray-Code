@@ -207,6 +207,52 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(reasoningItem).not.toHaveProperty('content');
     });
 
+    test('Codex 反代兼容模式回传 encrypted_content 但省略 status', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const history: Content[] = [
+            {
+                role: 'model',
+                parts: [{
+                    text: 'Check the inputs',
+                    thought: true,
+                    thoughtSignatures: { 'openai-responses': 'encrypted-reasoning' },
+                    openaiResponsesReasoning: {
+                        id: 'rs_1',
+                        status: 'completed',
+                        summary: [{ type: 'summary_text', text: 'Check the inputs' }]
+                    }
+                }, { text: 'The answer is 42.' }]
+            },
+            { role: 'user', parts: [{ text: 'Continue.' }] }
+        ];
+
+        const request = formatter.buildRequest({ configId: 'responses-test', history }, createOpenAIResponsesConfig({
+            id: 'responses-test',
+            name: 'Responses Test',
+            reasoningSignatureMode: 'codex',
+            preferStream: true,
+            sendHistoryThoughtSignatures: true,
+            options: {
+                stream: true,
+                reasoning: {
+                    effort: 'medium',
+                    summaryEnabled: true,
+                    summary: 'auto'
+                }
+            }
+        }));
+        const reasoningItem = request.body.input.find((item: any) => item.type === 'reasoning');
+
+        expect(reasoningItem).toEqual({
+            type: 'reasoning',
+            id: 'rs_1',
+            encrypted_content: 'encrypted-reasoning',
+            summary: [{ type: 'summary_text', text: 'Check the inputs' }]
+        });
+        expect(reasoningItem).not.toHaveProperty('status');
+        expect(reasoningItem).not.toHaveProperty('content');
+    });
+
     test('关闭「发送思考签名」时不回传 reasoning item（兼容不支持 reasoning 输入的第三方端点）', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
@@ -249,9 +295,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
             .map((part: any) => part.text);
 
-        // 不回传 reasoning item，但可见摘要降级为普通 assistant 文本保留
+        // 不回传 reasoning item，也不把思考摘要降级为普通 assistant 文本
         expect(reasoningItems).toHaveLength(0);
-        expect(assistantTexts.join('')).toContain('Check the inputs');
+        expect(assistantTexts.join('')).not.toContain('Check the inputs');
         expect(assistantTexts.join('')).toContain('The answer is 42.');
     });
 
@@ -348,6 +394,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             createOpenAIResponsesConfig({
                 id: 'responses-test',
                 name: 'Responses Test',
+                model: 'deepseek-v4-flash',
                 preferStream: true,
                 sendHistoryThoughts: true,
                 sendHistoryThoughtSignatures: true,
@@ -401,6 +448,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             createOpenAIResponsesConfig({
                 id: 'responses-test',
                 name: 'Responses Test',
+                model: 'deepseek-v4-flash',
                 preferStream: true,
                 sendHistoryThoughts: true,
                 sendHistoryThoughtSignatures: false,
@@ -428,10 +476,9 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(reasoningItems[0]).not.toHaveProperty('summary');
     });
 
-    test('只剩摘要（无 content 无 encrypted_content）且签名关闭时降级为 assistant 文本', () => {
-        // summary-only reasoning item 对官方 API 无效（官方要求 encrypted_content 或 content
-        // 才能恢复推理上下文），第三方端点可能 400「输入项类型 'reasoning' 当前暂不支持」；
-        // 应降级为可见文本保留信息，不构造无效 reasoning item。
+    test('只剩摘要（无 content 无 encrypted_content）且签名关闭时不回传思考', () => {
+        // summary-only reasoning 没有可回放的 reasoning_text，且签名关闭时直接丢弃；
+        // 不构造 reasoning item，也不把摘要降级成普通 assistant 文本。
         // 本用例模拟官方 encrypted 形态在 historyFormatting 剥离 thoughtSignatures 后的 part。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
@@ -475,11 +522,11 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
             .map((part: any) => part.text);
         expect(reasoningItems).toHaveLength(0);
-        expect(assistantTexts.join('')).toContain('Check the inputs');
+        expect(assistantTexts.join('')).not.toContain('Check the inputs');
         expect(assistantTexts.join('')).toContain('The answer is 42.');
     });
 
-    test('关闭 sendHistoryThoughts 时 content-only reasoning 降级为 assistant 文本', () => {
+    test('关闭 sendHistoryThoughts 时 content-only reasoning 不回传也不降级', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -522,13 +569,13 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
             .map((part: any) => part.text);
         expect(reasoningItems).toHaveLength(0);
-        expect(assistantTexts.join('')).toContain('先检查工具结果，再决定下一步');
+        expect(assistantTexts.join('')).not.toContain('先检查工具结果，再决定下一步');
         expect(assistantTexts.join('')).toContain('继续调用工具。');
     });
 
-    test('官方形态同时带 content 且签名关闭时按 reasoning_text 回传（有效形态不受守卫误伤）', () => {
-        // 场景 d：part 既有 encrypted_content 又有 content 数组、签名开关关闭时，
-        // content 是有效回传形态，不应被 summary-only 守卫误伤。
+    test('非 DeepSeek content-only reasoning 不回传也不降级', () => {
+        // 即使历史 part 同时带有签名，签名开关关闭时也不把 content-only reasoning
+        // 发给非 DeepSeek endpoint。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -556,15 +603,17 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             })
         );
         const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
-        expect(reasoningItems).toHaveLength(1);
-        expect(reasoningItems[0].content?.[0]).toEqual({ type: 'reasoning_text', text: '完整思维链' });
-        expect(reasoningItems[0]).not.toHaveProperty('encrypted_content');
-        expect(reasoningItems[0]).not.toHaveProperty('summary');
+        const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')
+            .flatMap((item: any) => item.content)
+            .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
+            .map((part: any) => part.text);
+        expect(reasoningItems).toHaveLength(0);
+        expect(assistantTexts.join('')).not.toContain('完整思维链');
+        expect(assistantTexts.join('')).toContain('正文。');
     });
 
-    test('裸 thought（无元数据）+ sendHistoryThoughts=true 时按 reasoning_text 包装回传', () => {
-        // 场景 e：历史来自其他渠道（gemini/anthropic）的裸 thought 在内容开关开启时
-        // 走 hasPlainThought 路径，与 openai 渠道「永远携带 reasoning_content」语义对齐。
+    test('非 DeepSeek 裸 thought 不包装且不降级', () => {
+        // 历史来自其他渠道的裸 thought 也不能被非 DeepSeek Responses 请求重新包装。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -586,8 +635,13 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             })
         );
         const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
-        expect(reasoningItems).toHaveLength(1);
-        expect(reasoningItems[0].content?.[0]).toEqual({ type: 'reasoning_text', text: '来自其他渠道的思考' });
+        const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')
+            .flatMap((item: any) => item.content)
+            .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
+            .map((part: any) => part.text);
+        expect(reasoningItems).toHaveLength(0);
+        expect(assistantTexts.join('')).not.toContain('来自其他渠道的思考');
+        expect(assistantTexts.join('')).toContain('正文。');
     });
 
     test('裸 thought + sendHistoryThoughts=false 时按旧语义丢弃（不包装）', () => {
@@ -621,8 +675,8 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTexts.join('')).not.toContain('来自其他渠道的思考');
     });
 
-    test('id/status + text 的旧流式记录（无 content/summary）按 reasoning_text 兜底回传', () => {
-        // 场景 f：仅 id/status + text 的旧记录没有标准数组字段，displayText 兜底分支补全。
+    test('非 DeepSeek 的旧 reasoning 记录不回传也不降级', () => {
+        // 旧格式只有 id/status + text 时，非 DeepSeek 也直接丢弃 thought。
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             {
@@ -648,8 +702,13 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             })
         );
         const reasoningItems = request.body.input.filter((item: any) => item.type === 'reasoning');
-        expect(reasoningItems).toHaveLength(1);
-        expect(reasoningItems[0].content?.[0]).toEqual({ type: 'reasoning_text', text: '旧格式思维链' });
+        const assistantTexts = request.body.input.filter((item: any) => item.type === 'message')
+            .flatMap((item: any) => item.content)
+            .filter((part: any) => part.type === 'output_text' || part.type === 'input_text')
+            .map((part: any) => part.text);
+        expect(reasoningItems).toHaveLength(0);
+        expect(assistantTexts.join('')).not.toContain('旧格式思维链');
+        expect(assistantTexts.join('')).toContain('正文。');
     });
 
     test('DeepSeek 空 reasoning item 仅在 reasoning_text 字段内补单空格', () => {

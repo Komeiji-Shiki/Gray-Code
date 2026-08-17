@@ -3092,6 +3092,15 @@ const ja: LanguageMessages = {
                     summaryConcise: '簡潔',
                     summaryDetailed: '詳細'
                 },
+                reasoningSignatureMode: {
+                    label: '思考署名の再送形式',
+                    placeholder: '再送形式を選択',
+                    hint: '公式モードは完全な GPT Responses 項目を保持し、Codex 互換モードは status を省略して encrypted_content を保持します。',
+                    official: '公式 GPT Responses',
+                    officialDescription: 'id、status、summary、encrypted_content を保持',
+                    codex: 'Codex リバースプロキシ互換',
+                    codexDescription: 'id、summary、encrypted_content を保持し、status を省略'
+                },
                 thinkingBackfill: {
                     sendSignaturesHint: '以前のターンの思考署名を送信',
                     sendContentHint: '有効にすると、履歴会話の reasoning_content が送信されます。これによりコンテキスト長が増加します'

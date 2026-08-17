@@ -9,7 +9,10 @@ import { createHash } from 'crypto';
 import { t } from '../../../i18n';
 import { BaseFormatter } from './base';
 import type { Content, ContentPart } from '../../conversation/types';
-import type { OpenAIResponsesConfig } from '../../config/types';
+import type {
+    OpenAIResponsesConfig,
+    OpenAIResponsesReasoningSignatureMode
+} from '../../config/types';
 import type { ToolDeclaration } from '../../../tools/types';
 import { applyCustomBody } from '../../config/configs/base';
 import { throwIfStreamError } from './streamError';
@@ -142,25 +145,19 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         processedHistory = this.cleanInternalFields(processedHistory);
 
         // 转换历史消息为 OpenAI Responses input 格式。
-        // reasoning item 是 OpenAI Responses 的专用输入类型，第三方兼容端点可能不支持，
-        // 因此两类 reasoning 数据分开控制：
-        // - sendHistoryThoughts：控制 content/summary 形式的 reasoning_text 回传。
-        //   DeepSeek 等兼容端点在 thinking mode 下要求历史思考必须按 reasoning_text
-        //   原样回传（否则 400「The reasoning_text in the thinking mode must be passed
-        //   back to the API」），因此不能把它绑定到签名开关。
-        // - sendHistoryThoughtSignatures：控制 encrypted_content 形式的 reasoning item 回传
-        //   （OpenAI 官方加密思考形态）。
-        // 既无 content 又无 encrypted_content、只剩 summary 的 part 不构成有效 reasoning item
-        // （官方 API 要求 encrypted_content 或 content 才能恢复推理上下文，部分第三方端点
-        // 会 400「输入项类型 'reasoning' 当前暂不支持」），由 convertToResponsesInput
-        // 内部守卫降级为可见文本，避免构造无效输入项。
-        // 裸 thought（无 openaiResponsesReasoning 元数据）：sendHistoryThoughts=false 时
-        // 按旧语义丢弃；=true 时由 hasPlainThought 路径包装为 reasoning_text（与 openai
-        // 渠道永远携带 reasoning_content 的语义对齐）。
+        // reasoning item 的两种回放形态分开控制：
+        // - DeepSeek：允许 content/summary 形式的 reasoning_text 回传。DeepSeek 无状态
+        //   thinking mode 要求下一轮把 reasoning_text 原样放回 input。
+        // - 官方 GPT/Responses：保留 encrypted_content + summary 的签名回传，由
+        //   sendHistoryThoughtSignatures 控制；不能因为 DeepSeek 的兼容限制而删掉 GPT 思考衔接。
+        // - 非 DeepSeek 的 content-only reasoning：不构造 reasoning item，也不降级成普通文本，
+        //   避免把不被当前 Responses endpoint 接受的 reasoning_text 发出去。
+        const isDeepSeek = isDeepSeekModel(config.model);
         const input = this.convertToResponsesInput(processedHistory, {
-            allowReasoningContent: config.sendHistoryThoughts === true,
+            allowReasoningContent: isDeepSeek && config.sendHistoryThoughts === true,
             allowReasoningSignatures: config.sendHistoryThoughtSignatures === true,
-            useDeepSeekReasoningTextFallback: isDeepSeekModel(config.model)
+            reasoningSignatureMode: config.reasoningSignatureMode ?? 'official',
+            useDeepSeekReasoningTextFallback: isDeepSeek
         });
 
         // 构建请求体
@@ -276,6 +273,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         options?: {
             allowReasoningContent?: boolean;
             allowReasoningSignatures?: boolean;
+            reasoningSignatureMode?: OpenAIResponsesReasoningSignatureMode;
             useDeepSeekReasoningTextFallback?: boolean;
         }
     ): any[] {
@@ -332,6 +330,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 const reasoningSummary = normalizeReasoningSummary(reasoningMetadata);
                 const reasoningContent = normalizeReasoningContent(reasoningMetadata);
                 const displayText = part.text || getReasoningDisplayText(reasoningMetadata) || legacyAdjacentText;
+                const reasoningSignatureMode = options?.reasoningSignatureMode ?? 'official';
                 const hasPlainThought = options?.allowReasoningContent === true &&
                     part.thought === true &&
                     typeof part.text === 'string' &&
@@ -366,33 +365,20 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 // 「发送历史思考签名」控制 encrypted_content。没有 Responses 元数据的
                 // 裸 thought 不会被猜测成 reasoning item，避免把其他 provider 的思考误发。
                 if (hasResponsesReasoning) {
+                    // 没有当前 endpoint 支持的 reasoning 回放形态时直接丢弃。
+                    // 尤其不能把非 DeepSeek 的 content-only reasoning 降级成 output_text：
+                    // 那会把思考内容伪装成普通回答，并且无法解决 schema 不兼容。
                     if (!canReplayPlainReasoning && !canReplaySignedReasoning) {
-                        if (displayText) {
-                            messageParts.push({
-                                type: role === 'assistant' ? 'output_text' : 'input_text',
-                                text: displayText
-                            });
-                        }
                         continue;
                     }
 
-                    // summary-only 守卫：既无 reasoning_text content 又未开启签名回传时，
-                    // 只剩 summary 的 reasoning item 对官方 API 无效（官方要求 encrypted_content
-                    // 或 content 才能恢复推理上下文），第三方端点也可能报「输入项类型 'reasoning'
-                    // 当前暂不支持」；此时降级为可见文本保留信息，不构造无效 reasoning item。
-                    // 注意：DeepSeek content-only 形态（reasoningContent.length > 0）不受影响，
-                    // 必须按 reasoning_text 回传以满足 thinking mode 要求。
+                    // summary-only reasoning 没有可回放的 reasoning_text；签名路径未开启时
+                    // 直接丢弃，不再把摘要降级成普通 assistant 文本。
                     if (
                         !canReplaySignedReasoning &&
                         reasoningContent.length === 0 &&
                         reasoningSummary.length > 0
                     ) {
-                        if (displayText) {
-                            messageParts.push({
-                                type: role === 'assistant' ? 'output_text' : 'input_text',
-                                text: displayText
-                            });
-                        }
                         continue;
                     }
 
@@ -401,7 +387,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         type: 'reasoning'
                     };
                     if (reasoningMetadata?.id) reasoningItem.id = reasoningMetadata.id;
-                    if (reasoningMetadata?.status) reasoningItem.status = reasoningMetadata.status;
+                    if (reasoningSignatureMode === 'official' && reasoningMetadata?.status) {
+                        reasoningItem.status = reasoningMetadata.status;
+                    }
 
                     if (canReplaySignedReasoning) {
                         // OpenAI 官方 Responses 的加密推理回传：保留 encrypted_content

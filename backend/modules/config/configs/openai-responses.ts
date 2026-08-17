@@ -7,6 +7,9 @@
 
 import type { BaseChannelConfig, ModelInfo } from './base';
 
+/** Responses 历史 reasoning 签名的回传格式。 */
+export type OpenAIResponsesReasoningSignatureMode = 'official' | 'codex';
+
 /**
  * 配置项启用状态
  *
@@ -69,6 +72,14 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
      * 未设置或为空时回退为基于 conversationId 哈希生成。
      */
     promptCacheKey?: string;
+
+    /**
+     * 历史 reasoning 签名回传格式。
+     *
+     * - official：完整保留官方 GPT Responses reasoning item 字段；
+     * - codex：兼容 Codex 反代，省略反代不接受的 status 字段。
+     */
+    reasoningSignatureMode?: OpenAIResponsesReasoningSignatureMode;
 
     /** 可用模型列表 */
     models?: ModelInfo[];

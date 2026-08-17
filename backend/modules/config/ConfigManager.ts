@@ -428,6 +428,7 @@ export class ConfigManager {
                     ...baseDefaults,
                     url: 'https://api.openai.com/v1',
                     promptCacheKeyEnabled: false,
+                    reasoningSignatureMode: 'official' as const,
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,

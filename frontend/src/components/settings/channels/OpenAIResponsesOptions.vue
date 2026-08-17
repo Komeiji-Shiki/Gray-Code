@@ -42,6 +42,19 @@ const summaryOptions = computed<SelectOption[]>(() => [
   { value: 'detailed', label: t('components.channels.openai-responses.thinking.summaryDetailed'), description: '' }
 ])
 
+const reasoningSignatureModeOptions = computed<SelectOption[]>(() => [
+  {
+    value: 'official',
+    label: t('components.channels.openai-responses.reasoningSignatureMode.official'),
+    description: t('components.channels.openai-responses.reasoningSignatureMode.officialDescription')
+  },
+  {
+    value: 'codex',
+    label: t('components.channels.openai-responses.reasoningSignatureMode.codex'),
+    description: t('components.channels.openai-responses.reasoningSignatureMode.codexDescription')
+  }
+])
+
 // 默认配置值
 const DEFAULT_VALUES: Record<string, any> = {
   temperature: 1.0,
@@ -124,6 +137,12 @@ function onSendThoughtSignaturesChange(e: any) {
   const value = e.target.checked
   emit('update:field', 'sendHistoryThoughtSignatures', value)
   emit('update:field', 'sendCurrentThoughtSignatures', value)
+}
+
+function onReasoningSignatureModeChange(value: string) {
+  if (value === 'official' || value === 'codex') {
+    emit('update:field', 'reasoningSignatureMode', value)
+  }
 }
 </script>
 
@@ -301,6 +320,20 @@ function onSendThoughtSignaturesChange(e: any) {
             <span class="checkbox-text">{{ t('components.channels.common.thinkingBackfill.signatures') }}</span>
           </label>
           <span class="option-hint">{{ t('components.channels.common.thinkingBackfill.signaturesHint') }}</span>
+        </div>
+
+        <div class="option-item">
+          <label>{{ t('components.channels.openai-responses.reasoningSignatureMode.label') }}</label>
+          <CustomSelect
+            :model-value="config.reasoningSignatureMode ?? 'official'"
+            :options="reasoningSignatureModeOptions"
+            :disabled="!(config.sendHistoryThoughtSignatures ?? false)"
+            :placeholder="t('components.channels.openai-responses.reasoningSignatureMode.placeholder')"
+            @update:model-value="onReasoningSignatureModeChange"
+          />
+          <span class="option-hint">
+            {{ t('components.channels.openai-responses.reasoningSignatureMode.hint') }}
+          </span>
         </div>
         
         <!-- 历史思考回合数配置 - 条件展开 -->
