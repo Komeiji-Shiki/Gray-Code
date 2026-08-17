@@ -1,9 +1,20 @@
 /**
- * Markdown-it 的 $$...$$ 块规则。
+ * Markdown-it 的块级数学规则。
  *
- * 独立于 KaTeX renderer，供完整 MarkdownRenderer 与流式边界解析器共享，
- * 确保 table 的 blockquote terminator 链在两处完全一致。
+ * 支持 $$...$$ 与 \[...\] 两种常见的显示公式定界符。规则独立于 KaTeX
+ * renderer，供完整 MarkdownRenderer 与流式边界解析器共享，确保 table 的
+ * blockquote terminator 链在两处完全一致。
  */
+interface MathBlockDelimiter {
+  opener: string
+  closer: string
+}
+
+const MATH_BLOCK_DELIMITERS: MathBlockDelimiter[] = [
+  { opener: '$$', closer: '$$' },
+  { opener: '\\[', closer: '\\]' }
+]
+
 export function markdownItMathBlock(
   state: any,
   startLine: number,
@@ -12,20 +23,22 @@ export function markdownItMathBlock(
 ): boolean {
   let pos = state.bMarks[startLine] + state.tShift[startLine]
   let max = state.eMarks[startLine]
+  const sourceStart = state.src.slice(pos, max)
+  const delimiter = MATH_BLOCK_DELIMITERS.find(({ opener }) => sourceStart.startsWith(opener))
 
-  if (pos + 2 > max) return false
-  if (state.src.slice(pos, pos + 2) !== '$$') return false
+  if (!delimiter) return false
 
   // 作为 paragraph/list/blockquote terminator 探测时，只需确认 opener。
   if (silent) return true
 
-  const firstLine = state.src.slice(pos + 2, max)
-  if (firstLine.trim().endsWith('$$')) {
+  const { opener, closer } = delimiter
+  const firstLine = sourceStart.slice(opener.length)
+  if (firstLine.trim().endsWith(closer)) {
     const token = state.push('math_block', 'div', 0)
     token.block = true
-    token.markup = '$$'
+    token.markup = opener
     token.map = [startLine, startLine + 1]
-    token.content = firstLine.trim().slice(0, -2)
+    token.content = firstLine.trim().slice(0, -closer.length)
     state.line = startLine + 1
     return true
   }
@@ -37,13 +50,13 @@ export function markdownItMathBlock(
     max = state.eMarks[nextLine]
 
     const line = state.src.slice(pos, max)
-    const endPos = line.indexOf('$$')
+    const endPos = line.indexOf(closer)
     if (endPos !== -1) {
       content += `\n${line.slice(0, endPos)}`
 
       const token = state.push('math_block', 'div', 0)
       token.block = true
-      token.markup = '$$'
+      token.markup = opener
       token.map = [startLine, nextLine + 1]
       token.content = content
       state.line = nextLine + 1

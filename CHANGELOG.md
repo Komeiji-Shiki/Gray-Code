@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+  - 修复聊天消息中的 LaTeX 公式无法渲染：完整 Markdown 与用户消息现在同时支持 `$...$` / `$$...$$`、`\(...\)` 与 `\[...\]` 定界符，并保留代码块中的公式原文。
   - 修复编辑消息并保存后图片/附件丢失（编辑分支流 TREE-03）：`chat.editBranchStream` 此前无附件字段，前端 `editAndRetry` 只把附件更新到本地窗口，后端 `EditBranchRequestData` 亦无 `attachments`，keep/根节点/非根节点三处写入一律 `parts: [{ text }]`，把原消息的 inlineData 附件 parts 整包覆盖——刷新/切分支后图片永久丢失。现链路贯通：前端编辑请求携带编辑后保留的附件列表（`branchReplayContext` 同步快照，错误重放与 `restoreAndEdit` 一并带回）；webview `editBranchStream` handler 归一化透传；后端 `EditBranchRequestData` 新增 `attachments`，并新增纯函数 `buildEditUserParts`——显式传入（含空数组）按传入重建 parts（删除图片 = 传空数组），未传（旧前端）保留原消息 inlineData 附件 parts 仅替换文本，与 `handleEditAndRetry / handleEditAndRetryStream` 的 `buildUserMessageParts` 语义对齐。新增后端纯函数 6 用例 + webview 附件透传 1 用例 + 前端请求携带附件 2 用例。
   - 收紧检查点与分支联动边界：分支切换从 chat-only 到 chat-and-workspace 统一使用会话事务闸，覆盖取消流、工作区恢复、切图、历史重写和检查点清理期间的新流启动；恢复旧式 fileHashes-only 存档时从增量链实际备份文件补采尺寸并执行当前单文件大小上限，无法验证尺寸则 fail-closed；备份复制改用 lstat、打开文件句柄与流式复制，拒绝符号链接及其竞态跟随。新增分支事务闸、旧存档大小限制和备份符号链接回归测试。
   - 修复已有总结后的同一长回合再次达到上下文上限时被误判为“当前 0 轮、没有可总结内容”：最后一个总结之后若只有模型/工具消息，现将其识别为上一真实用户回合的延续，按用户配置的 `keepRecentTokens` 在完整工具配对边界选择切点，以“旧总结 + 前半段”生成承接总结，并保留首条用户消息与最近实际记录；无旧总结的异常无用户历史、未超过保留预算或找不到安全切点时仍不生成无效总结。新增自动总结回归测试，覆盖旧总结承接、累计覆盖数、逻辑截断及最终有效消息顺序。

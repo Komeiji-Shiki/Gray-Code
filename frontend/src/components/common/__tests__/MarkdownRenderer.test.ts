@@ -226,6 +226,57 @@ describe('MarkdownRenderer 流式代码块滚动修复', () => {
     })
   })
 
+  test('支持 \\( \\) 行内与 \\[ \\] 块级公式，并渲染 \\text{}', async () => {
+    const content = String.raw`**计算：** \(9.80-9.11=0.69\)
+
+距离：\(5000\text{ cm}=50\text{ m}\)
+
+\[
+\frac{1}{2}
+\]`
+    const wrapper = mountRenderer({ content })
+    await flushRender()
+
+    const container = wrapper.get('.markdown-content')
+    expect(container.findAll('.katex')).toHaveLength(3)
+    expect(container.find('.katex-block').exists()).toBe(true)
+    expect(wrapper.html()).not.toContain('\\text{')
+    expect(container.find('strong').text()).toBe('计算：')
+    wrapper.unmount()
+  })
+
+  test('数学定界符在行内代码和 fenced code 中保持原文', async () => {
+    const content = '`\\(x\\)`\n\n```text\n\\(y\\)\n```'
+    const wrapper = mountRenderer({ content })
+    await flushRender()
+
+    const container = wrapper.get('.markdown-content')
+    expect(container.findAll('.katex')).toHaveLength(0)
+    expect(container.find('code').text()).toContain('\\(x\\)')
+    expect(container.find('.code-line-content').text()).toContain('\\(y\\)')
+    wrapper.unmount()
+  })
+
+  test('latexOnly 与流式路径都支持反斜杠数学定界符', async () => {
+    const userContent = String.raw`用户输入：\(x^2\) 以及 \[
+ y = \frac{1}{2}
+\]`
+    const userWrapper = mountRenderer({ content: userContent, latexOnly: true })
+    await flushRender()
+    expect(userWrapper.findAll('.katex')).toHaveLength(2)
+    expect(userWrapper.html()).not.toContain('\\frac')
+    userWrapper.unmount()
+
+    const streamingWrapper = mountRenderer({
+      content: String.raw`答案：\(x^2 + y^2\)`,
+      isStreaming: true
+    })
+    await tick()
+    await tick()
+    expect(streamingWrapper.find('.katex').exists()).toBe(true)
+    streamingWrapper.unmount()
+  })
+
   test('CSS 静态断言：流式规则放开 pre 高度、keep-expanded 保留展开态、is-nowrap 在其后生效', () => {
     const source = MarkdownRendererSource
     // 流式规则存在且放开 max-height

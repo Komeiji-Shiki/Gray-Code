@@ -13,7 +13,7 @@ import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import hljs from 'highlight.js'
 import katex from 'katex'
 import { t } from '@/i18n'
-import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE } from '@/components/common/markdownUtils'
+import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE, RENDER_LATEX_ONLY_PAREN_INLINE_RE, RENDER_LATEX_ONLY_BRACKET_BLOCK_RE } from '@/components/common/markdownUtils'
 import { markdownItMathBlock } from '@/utils/markdownMathBlock'
 import { fileExistenceCache, codeHighlightCache, setCachedCodeHighlight } from './markdownItCore'
 import {
@@ -258,7 +258,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
     label: true,
     labelAfter: true
   })
-  // LaTeX (KaTeX) 支持：通过 markdown-it 规则解析 $...$ / $$...$$，避免 regex + 占位符的二次渲染问题
+  // LaTeX (KaTeX) 支持：通过 markdown-it 规则解析 $...$ / $$...$$ 与 \\(...\\) / \\[...\\]，避免 regex + 占位符的二次渲染问题
   md.use(markdownItKatex)
   // 工作区文件引用：把路径/行号变成可点击链接
   md.use(markdownItWorkspaceFileLinks)
@@ -442,89 +442,98 @@ export function getMarkdownItInstance(renderProfile: RenderProfile): MarkdownIt 
 
 /**
  * 仅渲染 LaTeX（保留原始文本格式）
- * 用于用户消息：保持原始文本，只渲染 LaTeX 公式，保留换行和空格
+ * 用于用户消息：保持原始文本，只渲染 LaTeX 公式，保留换行和空格。
+ * 支持 `$...$` / `$$...$$` 与 `\\(...\\)` / `\\[...\\]`。
  */
 function renderLatexOnly(content: string): string {
   if (!content) return ''
-  
+
   // 存储 LaTeX 公式及其位置
   const formulas: { placeholder: string; rendered: string }[] = []
   let processed = content
-  
-  // 提取并渲染块级公式 $$...$$
-  processed = processed.replace(RENDER_LATEX_ONLY_BLOCK_RE, (match, formula) => {
-    const placeholder = `MS_LATEX_BLOCK_${formulas.length}`
+
+  const renderFormula = (match: string, formula: string, displayMode: boolean): string => {
+    const placeholder = `MS_LATEX_${displayMode ? 'BLOCK' : 'INLINE'}_${formulas.length}`
     try {
       formulas.push({
         placeholder,
-        rendered: `<div class="katex-block">${katex.renderToString(formula.trim(), {
-          displayMode: true,
-          throwOnError: false,
-          output: 'html'
-        })}</div>`
+        rendered: displayMode
+          ? `<div class="katex-block">${katex.renderToString(formula.trim(), {
+              displayMode: true,
+              throwOnError: false,
+              output: 'html'
+            })}</div>`
+          : katex.renderToString(formula.trim(), {
+              displayMode: false,
+              throwOnError: false,
+              output: 'html'
+            })
       })
     } catch (e) {
-      console.warn('KaTeX block render error:', e)
+      console.warn(`KaTeX ${displayMode ? 'block' : 'inline'} render error:`, e)
       formulas.push({
         placeholder,
-        rendered: `<div class="katex-error">${escapeHtml(match)}</div>`
+        rendered: displayMode
+          ? `<div class="katex-error">${escapeHtml(match)}</div>`
+          : `<span class="katex-error">${escapeHtml(match)}</span>`
       })
     }
     return placeholder
-  })
-  
-  // 提取并渲染行内公式 $...$
-  // #69：添加空格护栏 (?!\s)/(?<!\s) 避免货币金额 $100 误判为公式
-  processed = processed.replace(RENDER_LATEX_ONLY_INLINE_RE, (match, formula) => {
-    const placeholder = `MS_LATEX_INLINE_${formulas.length}`
-    try {
-      formulas.push({
-        placeholder,
-        rendered: katex.renderToString(formula.trim(), {
-          displayMode: false,
-          throwOnError: false,
-          output: 'html'
-        })
-      })
-    } catch (e) {
-      console.warn('KaTeX inline render error:', e)
-      formulas.push({
-        placeholder,
-        rendered: `<span class="katex-error">${escapeHtml(match)}</span>`
-      })
-    }
-    return placeholder
-  })
-  
+  }
+
+  // 先提取块级公式，避免其内部的内容再次被行内定界符处理。
+  processed = processed.replace(RENDER_LATEX_ONLY_BLOCK_RE, (match, formula) => (
+    renderFormula(match, formula, true)
+  ))
+  processed = processed.replace(RENDER_LATEX_ONLY_BRACKET_BLOCK_RE, (match, formula) => (
+    renderFormula(match, formula, true)
+  ))
+
+  // 再提取行内公式。美元定界符保留金额误判护栏，\\(...\\) 允许跨行内容。
+  processed = processed.replace(RENDER_LATEX_ONLY_INLINE_RE, (match, formula) => (
+    renderFormula(match, formula, false)
+  ))
+  processed = processed.replace(RENDER_LATEX_ONLY_PAREN_INLINE_RE, (match, formula) => (
+    renderFormula(match, formula, false)
+  ))
+
   // 转义 HTML 特殊字符（保持原始文本）
   processed = escapeHtml(processed)
-  
+
   // 还原 LaTeX 公式
   for (const { placeholder, rendered } of formulas) {
     processed = processed.replace(placeholder, rendered)
   }
-  
+
   // 保留换行
   processed = processed.replace(/\n/g, '<br>')
-  
+
   // 保留多个连续空格
   processed = processed.replace(/ {2,}/g, (match) => '&nbsp;'.repeat(match.length))
-  
+
   // 保留行首空格
   processed = processed.replace(/(^|<br>)( +)/g, (_match, prefix, spaces) => {
     return prefix + '&nbsp;'.repeat(spaces.length)
   })
-  
+
   return processed
 }
 
 /**
- * markdown-it KaTeX 插件：解析 $...$（行内）与 $$...$$（块级）
+ * markdown-it KaTeX 插件：解析 $...$ / $$...$$ 与 \\(...\\) / \\[...\\]
  * - 由 markdown-it 的 token 体系处理，可天然避开 code block / inline code
  * - 解决 KaTeX 产物（含 svg/path）在 markdown 二次处理时被破坏的问题
  */
 function markdownItKatex(md: MarkdownIt) {
-  const renderFormula = (formula: string, displayMode: boolean) => {
+  const isEscaped = (source: string, index: number): boolean => {
+    let backslashCount = 0
+    for (let i = index - 1; i >= 0 && source[i] === '\\'; i--) {
+      backslashCount++
+    }
+    return backslashCount % 2 === 1
+  }
+
+  const renderFormula = (formula: string, displayMode: boolean, markup: string) => {
     try {
       return katex.renderToString(formula.trim(), {
         displayMode,
@@ -532,65 +541,82 @@ function markdownItKatex(md: MarkdownIt) {
         output: 'html'
       })
     } catch {
-      const raw = displayMode ? `$$${formula}$$` : `$${formula}$`
+      const raw = markup === '\\['
+        ? `\\[${formula}\\]`
+        : markup === '\\('
+          ? `\\(${formula}\\)`
+          : displayMode
+            ? `$$${formula}$$`
+            : `$${formula}$`
       return `<span class="katex-error">${escapeHtml(raw)}</span>`
     }
   }
 
-  // 行内公式：$...$
+  // 行内公式：$...$ 与 \\(...\\)
   const mathInline = (state: any, silent: boolean) => {
     const start = state.pos
     const src: string = state.src
+    let opener: '$' | '\\('
+    let closer: '$' | '\\)'
+    let contentStart: number
 
-    if (src[start] !== '$') return false
-    // $$...$$ 交给 block 规则处理
-    if (src[start + 1] === '$') return false
-    // 转义 \$ 不处理
-    if (start > 0 && src[start - 1] === '\\') return false
-    // "$ " 这种不算公式
-    if (src[start + 1] === ' ' || src[start + 1] === '\n') return false
+    if (src.startsWith('\\(', start)) {
+      // 转义的 \\( 不作为公式开头；否则 markdown-it 的 escape 规则会先吞掉它。
+      if (isEscaped(src, start)) return false
+      opener = '\\('
+      closer = '\\)'
+      contentStart = start + 2
+    } else {
+      if (src[start] !== '$' || isEscaped(src, start)) return false
+      // $$...$$ 交给 block 规则处理
+      if (src[start + 1] === '$') return false
+      // "$ " 这种不算公式
+      if (src[start + 1] === ' ' || src[start + 1] === '\n') return false
+      opener = '$'
+      closer = '$'
+      contentStart = start + 1
+    }
 
-    let pos = start + 1
-    while (pos < state.posMax) {
-      pos = src.indexOf('$', pos)
-      if (pos === -1) return false
-
-      // 跳过转义的 \$
-      if (src[pos - 1] === '\\') {
-        pos += 1
+    let closePos = contentStart
+    while (closePos < state.posMax) {
+      closePos = src.indexOf(closer, closePos)
+      if (closePos === -1) return false
+      if (isEscaped(src, closePos)) {
+        closePos += closer.length
         continue
       }
 
-      const content = src.slice(start + 1, pos)
-      // 首尾空格不允许，减少误判（例如 $ 100）
-      if (!content || content.startsWith(' ') || content.endsWith(' ')) {
-        pos += 1
+      const content = src.slice(contentStart, closePos)
+      // 美元定界符首尾空格通常表示普通文本；\\(...\\) 交给 KaTeX trim。
+      if (!content || (opener === '$' && (content.startsWith(' ') || content.endsWith(' ')))) {
+        closePos += closer.length
         continue
       }
 
       if (!silent) {
         const token = state.push('math_inline', 'span', 0)
-        token.markup = '$'
+        token.markup = opener
         token.content = content
       }
 
-      state.pos = pos + 1
+      state.pos = closePos + closer.length
       return true
     }
 
     return false
   }
 
-  md.inline.ruler.after('backticks', 'math_inline', mathInline)
+  // 必须位于 escape 之前，否则 \\( 会先被 Markdown 普通转义规则消费。
+  md.inline.ruler.before('escape', 'math_inline', mathInline)
   md.block.ruler.after('fence', 'math_block', markdownItMathBlock, {
     alt: ['paragraph', 'reference', 'blockquote', 'list']
   })
 
   md.renderer.rules.math_inline = (tokens: any, idx: number) => {
-    return renderFormula(tokens[idx].content, false)
+    return renderFormula(tokens[idx].content, false, tokens[idx].markup)
   }
   md.renderer.rules.math_block = (tokens: any, idx: number) => {
-    return `<div class="katex-block">${renderFormula(tokens[idx].content, true)}</div>`
+    return `<div class="katex-block">${renderFormula(tokens[idx].content, true, tokens[idx].markup)}</div>`
   }
 }
 

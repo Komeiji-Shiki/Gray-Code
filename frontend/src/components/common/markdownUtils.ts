@@ -27,13 +27,23 @@ export function escapeHtml(text: string): string {
  * - (?!\s)  后面不能是空白（避免 $ 100 这种货币金额）
  * - (?<!\s) 前面不能是空白（避免首尾空白被当公式内容）
  *
- * 与 markdownItKatex 插件内的 mathInline 规则对齐
+ * 与 markdownItKatex 插件内的 dollar math 规则对齐
  */
 export const RENDER_LATEX_ONLY_INLINE_RE =
   /(?<!\$)\$(?!\$)(?!\s)((?:[^$\\]|\\.)+?)(?<!\s)\$(?!\$)/g
 
+/** 仅渲染 LaTeX 时使用的 \(...\) 行内公式正则。 */
+export const RENDER_LATEX_ONLY_PAREN_INLINE_RE =
+  /(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g
+
+/** 仅渲染 LaTeX 时使用的 \[...\] 块级公式正则。 */
+export const RENDER_LATEX_ONLY_BRACKET_BLOCK_RE =
+  /(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g
+
 /**
  * 仅渲染 LaTeX 时使用的块级公式正则
+ *
+ * 仅渲染路径按先后顺序处理 $$、\[...\] 与行内定界符；块级正则允许跨行。
  */
 export const RENDER_LATEX_ONLY_BLOCK_RE = /\$\$([\s\S]*?)\$\$/g
 
