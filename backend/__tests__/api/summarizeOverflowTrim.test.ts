@@ -256,6 +256,46 @@ describe('SummarizeService.handleAutoSummarize - 溢出裁剪', () => {
         expect(liveHistory.slice(4).map(msgLabel)).toEqual(['r2', 'fc2', 'fc2', 'done']);
     });
 
+    test('旧总结后的同轮延续没有真实用户消息：按保留预算截断前半段并承接旧总结', async () => {
+        const { service, generate, liveHistory } = createSummarizeHarness({
+            fullHistory: [
+                userMsg('initial task', 100, { id: 'u1' }),
+                summaryMsg('sum1', { summarizedMessageCount: 4 }),
+                fcMsg('fc1', 100), frMsg('fc1', 100),
+                fcMsg('fc2', 100), frMsg('fc2', 100),
+                fcMsg('fc3', 100), frMsg('fc3', 100), modelMsg('done', 100)
+            ],
+            lastSummaryIndex: 1,
+            keepRecentTokens: '50%',
+            keepRecentRounds: 2,
+            maxContextTokens: 2000
+        });
+
+        const result = await service.handleAutoSummarize('conv1', 'cfg1');
+
+        expect(result.success).toBe(true);
+        if (result.success) {
+            // 旧总结后的活跃后缀共 700 token，保留预算 350：保留 fc3/fr3/done（300），
+            // 把 fc1/fr1/fc2/fr2 四条纳入新总结并插入原 index 6。
+            expect(result.insertIndex).toBe(6);
+            expect(result.removedCount).toBe(4);
+            expect(result.summarizedMessageCount).toBe(8);
+        }
+        expect(generate).toHaveBeenCalledTimes(1);
+        const requestHistory = (generate.mock.calls[0][0] as { history: Content[] }).history;
+        // 新总结输入 = 旧总结 + 本次截断的前半段 + 总结提示词。
+        expect(requestHistory.slice(0, -1).map(msgLabel)).toEqual(['sum1', 'fc1', 'fc1', 'fc2', 'fc2']);
+
+        // 物理历史保留被标记的原文；过滤 isSummarized 后的有效顺序为：
+        // 首条用户消息 → sum1 + 承接它的新总结 → 最近实际记录。新用户消息由调用方随后追加。
+        const effectiveHistory = liveHistory.filter(message => !message.isSummarized);
+        expect(effectiveHistory).toHaveLength(6);
+        expect(msgLabel(effectiveHistory[0])).toBe('initial task');
+        expect(msgLabel(effectiveHistory[1])).toBe('sum1');
+        expect(effectiveHistory[2]).toMatchObject({ isSummary: true, isAutoSummary: true, index: 6 });
+        expect(effectiveHistory.slice(3).map(msgLabel)).toEqual(['fc3', 'fc3', 'done']);
+    });
+
     test('最后一个总结缺 summarizedMessageCount：往前找更早总结的累计值，不回退数组下标', async () => {
         const { service, generate, liveHistory } = createSummarizeHarness({
             fullHistory: [

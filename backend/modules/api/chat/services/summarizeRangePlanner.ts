@@ -180,7 +180,7 @@ export interface IntraRoundSplitResult {
 }
 
 /**
- * 在单个超大轮内部规划截断点
+ * 在单个超大轮内部，或旧总结之后仍属于同一轮的延续后缀中规划截断点
  *
  * 合法切点必须是 model 消息：
  * - 保留部分之前会插入 user 角色的总结消息，user -> model 顺序合法；
@@ -193,7 +193,7 @@ export interface IntraRoundSplitResult {
  * @returns 切点，或 null（轮内没有可用切点，无法截断）
  */
 export function planIntraRoundSplit(options: {
-    /** 当前轮的消息序列（第一条应为轮首 user 消息） */
+    /** 当前轮的消息序列，或旧总结后的无真实用户延续后缀 */
     messages: Content[];
     /** 与 messages 一一对应的估算 token 数 */
     messageTokens: number[];
@@ -202,7 +202,7 @@ export function planIntraRoundSplit(options: {
 }): IntraRoundSplitResult | null {
     const { messages, messageTokens, keepBudgetTokens } = options;
 
-    // 候选切点：轮首之后的所有 model 消息
+    // 候选切点：范围起点之后的所有 model 消息（cutIndex=0 不会产生可总结前缀）
     const candidates: number[] = [];
     for (let i = 1; i < messages.length; i++) {
         if (messages[i]?.role === 'model') {

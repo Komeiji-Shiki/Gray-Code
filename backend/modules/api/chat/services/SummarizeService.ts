@@ -34,6 +34,7 @@ import type { TokenEstimationService } from './TokenEstimationService';
 import type { SubAgentSummaryGenerationResult } from './subAgentSummaryTypes';
 import {
     planAutoSummarizeMessages,
+    planIntraRoundSplit,
     planSummarizeMessages,
     resolveKeepRecentTokenBudget
 } from './summarizeRangePlanner';
@@ -1816,20 +1817,37 @@ export class SummarizeService {
         // 绝对 token 数配置（如 30000）仍表示固定保留预算。
         const totalActiveTokens = messageTokens.reduce((sum, tokens) => sum + tokens, 0);
         const keepBudgetTokens = resolveKeepRecentTokenBudget(options.keepRecentTokens, totalActiveTokens);
-        const plan = mode === 'auto'
-            ? planAutoSummarizeMessages({
+
+        // 已有总结可能位于唯一真实用户消息之后：继续执行同一轮工具链时，最后一个总结
+        // 之后只剩 model/functionResponse 消息，identifyRounds 会得到 0。此时不能按“无回合”
+        // 直接拒绝；这段内容是上一轮的活跃后缀，应按用户配置的保留预算选择安全 model
+        // 切点。总结输入仍从旧总结开始，因此新总结会承接旧总结并合并前半段；切点后的
+        // 实际记录继续原样保留。没有旧总结的异常无用户历史仍保持原有拒绝语义。
+        const continuationSplit = rounds.length === 0
+            && lastSummaryIndex >= 0
+            && totalActiveTokens > keepBudgetTokens
+            ? planIntraRoundSplit({
                 messages: historyAfterSummary,
                 messageTokens,
-                keepBudgetTokens,
-                minKeepRounds: options.keepRecentRounds
+                keepBudgetTokens
             })
-            : planSummarizeMessages({
-                messages: historyAfterSummary,
-                messageTokens,
-                keepBudgetTokens,
-                minKeepRounds: options.keepRecentRounds,
-                mode
-            });
+            : null;
+        const plan = continuationSplit
+            ? { cutIndex: continuationSplit.cutIndex, boundary: 'intra_round' as const }
+            : mode === 'auto'
+                ? planAutoSummarizeMessages({
+                    messages: historyAfterSummary,
+                    messageTokens,
+                    keepBudgetTokens,
+                    minKeepRounds: options.keepRecentRounds
+                })
+                : planSummarizeMessages({
+                    messages: historyAfterSummary,
+                    messageTokens,
+                    keepBudgetTokens,
+                    minKeepRounds: options.keepRecentRounds,
+                    mode
+                });
 
         this.log.info(`${mode}.range_plan`, {
             conversationId,
