@@ -442,7 +442,7 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
  * 由 MessageRouter 以 fire-and-forget 方式调用（STREAM_MESSAGE_TYPES 含 chat.editBranchStream，H2）。
  */
 export const editBranchStream: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, userNodeId, newText, configId, modelOverride, promptModeId, streamId, mode } = data || {};
+  const { conversationId, userNodeId, newText, attachments, configId, modelOverride, promptModeId, streamId, mode } = data || {};
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof configId !== 'string' || !configId.trim()
       || typeof newText !== 'string' || !newText.trim()) {
@@ -486,6 +486,8 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
       conversationId,
       userNodeId: typeof userNodeId === 'string' && userNodeId.trim() ? userNodeId : undefined,
       newText,
+      // 编辑后保留的附件列表（与 handleEditAndRetry 同语义；旧前端不传 → 后端保留原消息附件）
+      attachments: Array.isArray(attachments) ? attachments : undefined,
       configId,
       modelOverride,
       promptModeId,

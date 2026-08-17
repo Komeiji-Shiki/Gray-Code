@@ -791,14 +791,15 @@ export async function restoreAndEdit(
     const effectiveMode = 'branch'
 
     // 6. 调用后端编辑分支（TREE-03/决策 7：创建编辑候选，旧分支保留，不覆盖原消息）。
-    //    注意：chat.editBranchStream 无附件字段（后端 EditBranchRequestData 仅文本 parts），
-    //    附件只更新本地窗口（targetMessage.attachments 已在上方处理）。
+    //    附件随请求透传（后端 buildEditUserParts 重建 parts 的 inlineData；缺省时后端保留原消息附件）。
     const modelOverride = resolveConversationModelOverride(state)
     branchReplayContext = {
       kind: 'editBranch',
       conversationId: originConvId,
       userNodeId: targetMessageId,
       newText: newContent,
+      // 编辑后保留的附件快照（重放路径原样带回）
+      attachments,
       configId: state.configId.value,
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
@@ -814,6 +815,8 @@ export async function restoreAndEdit(
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
       userNodeId: targetMessageId,
       newText: newContent,
+      // 编辑后保留的附件（用户删除图片后保存 = 空数组，后端据此清掉对应 inlineData）
+      attachments: attachments && attachments.length > 0 ? attachments : [],
       configId: state.configId.value,
       modelOverride,
       streamId,

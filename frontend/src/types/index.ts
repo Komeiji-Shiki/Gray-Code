@@ -575,6 +575,8 @@ export type BranchStreamReplayContext =
       conversationId: string
       userNodeId: string
       newText: string
+      /** 编辑后保留的附件列表（后端 buildEditUserParts 按此重建 parts；留空数组 = 用户主动删光附件） */
+      attachments?: Attachment[]
       configId: string
       modelOverride?: string
       promptModeId?: string

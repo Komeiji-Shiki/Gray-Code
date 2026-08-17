@@ -392,6 +392,10 @@ async function replayBranchStreamAfterError(
       const targetMessage = state.allMessages.value[targetIndex]
       targetMessage.content = context.newText
       targetMessage.parts = [{ text: context.newText }]
+      // 重放路径同步恢复附件（编辑请求快照中的附件列表；后端按此重建 parts 的 inlineData）
+      targetMessage.attachments = context.attachments && context.attachments.length > 0
+        ? context.attachments
+        : undefined
       // keep 模式（真·原地保存）：只改写目标消息，后续消息全部保留，不截断
       if (!isKeepReplay) {
         state.allMessages.value = state.allMessages.value.slice(0, targetIndex + 1)
@@ -455,6 +459,8 @@ async function replayBranchStreamAfterError(
         // 流式失败后编辑候选仍在活跃路径；省略 ID 让后端选择当前活跃 user 尾节点。
         ...(isStreamLevelFailure ? {} : { userNodeId: context.userNodeId }),
         newText: context.newText,
+        // 重放原编辑请求的附件快照（缺失时后端保留原消息附件，不丢图）
+        attachments: context.attachments,
         configId: context.configId,
         modelOverride: context.modelOverride,
         streamId,
@@ -688,6 +694,8 @@ export async function editAndRetry(
       conversationId: originConvId,
       userNodeId: targetMessageId,
       newText: newMessage,
+      // 编辑后保留的附件快照（重放路径原样带回；本地窗口在下方已同步更新）
+      attachments,
       configId: state.configId.value,
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
@@ -699,8 +707,7 @@ export async function editAndRetry(
     state._lastCancelledStreamId.value = null
     // TREE-03：主流程走 chat.editBranchStream——后端创建编辑候选（新 user 节点），
     // 原消息及其子树保留进分支图 sidecar（决策 7/10：不覆盖原消息、失败可切回）。
-    // 注意：编辑分支接口无附件字段（后端 EditBranchRequestData 仅文本 parts），
-    // 附件只更新本地窗口（targetMessage.attachments 已在上方处理）。
+    // 附件随请求透传（后端 buildEditUserParts 重建 parts 的 inlineData；缺省时后端保留原消息附件）。
     await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
       conversationId: originConvId,
       // 被编辑用户消息的稳定节点 ID（BR-01：Content.id 与 BranchGraph 节点 id 对齐）
@@ -708,6 +715,8 @@ export async function editAndRetry(
       // 索引漂移校验：后端据 messageId 校验目标消息未被其他请求移动
       messageId: targetMessageId,
       newText: newMessage,
+      // 编辑后保留的附件（用户删除图片后保存 = 空数组，后端据此清掉对应 inlineData）
+      attachments: attachments && attachments.length > 0 ? attachments : [],
       configId: state.configId.value,
       modelOverride,
       streamId,

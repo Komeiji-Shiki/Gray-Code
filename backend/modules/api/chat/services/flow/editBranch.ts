@@ -15,7 +15,8 @@ import type {
   ChatStreamCheckpointsData,
   ChatStreamCompleteData,
 } from '../../types';
-import type { Content } from '../../../../conversation/types';
+import type { Content, ContentPart } from '../../../../conversation/types';
+import type { AttachmentData } from '../../types';
 import {
   BranchError,
   activePath,
@@ -42,6 +43,16 @@ export interface EditBranchRequestData {
   userNodeId?: string;
   /** 新文本（替换用户消息的文本 parts） */
   newText: string;
+  /**
+   * 编辑后保留的附件列表（可选）。
+   *
+   * 与 handleEditAndRetry / handleEditAndRetryStream 的 attachments 语义一致：附件会由
+   * buildUserMessageParts 构建为 parts 的 inlineData。
+   * - 显式传入（含空数组）：以传入列表为准（用户删除图片 = 传空数组）；
+   * - undefined（旧前端未传）：保留原消息的 inlineData 附件 parts，仅替换文本，
+   *   避免「编辑保存后图片/附件丢失」。
+   */
+  attachments?: AttachmentData[];
   /** 配置 ID */
   configId: string;
   /** 模型覆盖（可选） */
@@ -160,6 +171,39 @@ export function resolveEditTargetNode(
   );
 }
 
+
+/**
+ * 构建编辑后的用户消息 parts（TREE-03 编辑分支附件保留策略，纯函数可单测）。
+ *
+ * - 调用方显式传入 attachments（含空数组）：以传入列表为准，由 buildUserMessageParts
+ *   重建（用户删除图片后保存 = 传空数组，合理清掉对应 inlineData）；
+ * - attachments 为 undefined（旧前端未传该字段）：保留原消息的 inlineData 附件 parts
+ *   并替换文本部分——修复「编辑消息保存后图片/附件丢失」：此前一律写
+ *   parts: [{ text }] 会把原消息的附件 parts 整包覆盖。
+ *
+ * @param buildUserMessageParts 附件 → parts 的构建器（MessageBuilderService 方法），
+ *   注入以便纯函数单测。
+ */
+export function buildEditUserParts(
+  newText: string,
+  attachments: AttachmentData[] | undefined,
+  originalParts: ReadonlyArray<ContentPart>,
+  buildUserMessageParts: (message: string, attachments?: AttachmentData[]) => ContentPart[],
+): ContentPart[] {
+  if (attachments !== undefined) {
+    return buildUserMessageParts(newText, attachments);
+  }
+  const preservedParts: ContentPart[] = [];
+  for (const part of originalParts) {
+    if (part.inlineData) {
+      preservedParts.push({ inlineData: part.inlineData });
+    }
+  }
+  if (newText) {
+    preservedParts.push({ text: newText });
+  }
+  return preservedParts;
+}
 /** 线性模式父节点解析：向前跳过 functionResponse（决策 8：FR 不独立成节点） */
 function findLinearParentId(history: ReadonlyArray<Content>, index: number): string | null {
   for (let j = index - 1; j >= 0; j -= 1) {
@@ -196,6 +240,25 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       };
     }
     return null;
+  }
+
+  /**
+   * 构建编辑后的用户消息 parts（TREE-03 编辑分支专用附件保留策略）。
+   *
+   * 详细语义见模块级纯函数 buildEditUserParts（本方法为注入
+   * messageBuilderService 的薄封装，纯函数可直接单测）。
+   */
+  private buildEditUserParts(
+    newText: string,
+    attachments: AttachmentData[] | undefined,
+    originalMessage: Content | undefined,
+  ): ContentPart[] {
+    return buildEditUserParts(
+      newText,
+      attachments,
+      originalMessage?.parts ?? [],
+      (msg, atts) => this.messageBuilderService.buildUserMessageParts(msg, atts),
+    );
   }
 
   /**
@@ -507,15 +570,21 @@ export class ChatFlowEditBranch extends ChatFlowContext {
         // 3.8.1 建图（图节点内容同步需要；无图时建线性基线图）
         await branchService.ensureBranchGraph(conversationId);
 
-        // 3.8.2 改写目标消息（清除 token 计数，强制在裁剪评估中重新计算）
+        // 3.8.2 改写目标消息（清除 token 计数，强制在裁剪评估中重新计算；
+        // 附件保留策略见 buildEditUserParts：显式传入按传入重建，未传保留原消息附件）
+        const keepParts = this.buildEditUserParts(
+          request.newText,
+          request.attachments,
+          historyBefore[targetIndex],
+        );
         await this.conversationManager.updateMessage(conversationId, targetIndex, {
-          parts: [{ text: request.newText }],
+          parts: keepParts,
           isUserInput: true,
           tokenCountByChannel: {},
         });
 
         // 3.8.3 同步分支图节点内容 + 更新候选摘要（BR-01 同源：节点 id == Content.id）
-        await branchService.updateActiveNodeParts(conversationId, target.nodeId, [{ text: request.newText }]);
+        await branchService.updateActiveNodeParts(conversationId, target.nodeId, keepParts);
 
         // 3.8.4 清除裁剪状态（编辑后应重新计算裁剪起点）
         await this.toolIterationLoopService.clearTrimState(conversationId);
@@ -547,13 +616,18 @@ export class ChatFlowEditBranch extends ChatFlowContext {
           // 建图（图节点内容同步需要；无图时建线性基线图）
           await branchService.ensureBranchGraph(conversationId);
 
-          // 改写根节点（清除 token 计数，强制在裁剪评估中重新计算）
+          // 改写根节点（清除 token 计数，强制在裁剪评估中重新计算；附件保留同 keep）
+          const rootEditParts = this.buildEditUserParts(
+            request.newText,
+            request.attachments,
+            historyBefore[targetIndex],
+          );
           await this.conversationManager.updateMessage(conversationId, targetIndex, {
-            parts: [{ text: request.newText }],
+            parts: rootEditParts,
             isUserInput: true,
             tokenCountByChannel: {},
           });
-          await branchService.updateActiveNodeParts(conversationId, target.nodeId, [{ text: request.newText }]);
+          await branchService.updateActiveNodeParts(conversationId, target.nodeId, rootEditParts);
 
           // 创建模型候选占位（流式结果写入此节点；根节点下挂候选与 reroll 同语义）
           const modelCreated = await branchService.createRerollCandidate(conversationId, target.nodeId, {
@@ -581,9 +655,16 @@ export class ChatFlowEditBranch extends ChatFlowContext {
           editStarted = { modelCandidateNodeId, parentNodeId: null };
         } else {
           // —— 非根节点：创建新 user 编辑候选（旧子树保留进 sidecar） ——
+          // 附件保留：显式传入按传入重建；未传（旧前端）继承被编辑消息的 inlineData 附件。
+          const originalEditIndex = historyBefore.findIndex(message => message.id === target.nodeId);
+          const editCandidateParts = this.buildEditUserParts(
+            request.newText,
+            request.attachments,
+            originalEditIndex >= 0 ? historyBefore[originalEditIndex] : undefined,
+          );
           const created = await branchService.editCandidate(conversationId, target.parentNodeId!, {
             role: 'user',
-            parts: [{ text: request.newText }],
+            parts: editCandidateParts,
           });
           const newUserNodeId = created.nodeId;
 
@@ -627,7 +708,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
           // 3.11 追加编辑后的用户消息（id 对齐新用户节点，BR-01 同源：节点 id == Content.id）
           await this.conversationManager.addContent(conversationId, {
             role: 'user',
-            parts: [{ text: request.newText }],
+            parts: editCandidateParts,
             id: newUserNodeId,
             isUserInput: true,
           });

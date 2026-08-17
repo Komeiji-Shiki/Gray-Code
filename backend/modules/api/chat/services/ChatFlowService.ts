@@ -57,7 +57,7 @@ import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../../../core/streamConstant
 // —— 文件级导出符号（保持与拆分前完全一致）——
 export { ChatStreamOutput, ChatStreamCancelledData } from './flow/context';
 export { RerollRequestData, resolveRerollTruncateIndex } from './flow/reroll';
-export { EditBranchRequestData, EditTargetResolution, resolveEditTargetNode } from './flow/editBranch';
+export { EditBranchRequestData, EditTargetResolution, resolveEditTargetNode, buildEditUserParts } from './flow/editBranch';
 export { resolveRetryTruncateIndex } from './flow/retry';
 
 export class ChatFlowService {
