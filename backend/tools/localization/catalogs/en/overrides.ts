@@ -34,7 +34,7 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
             'If the output is split into multiple parts, read them in order until you see "You are awake.".',
         parameters: {
             part: 'Part number to read (1-based). If omitted, starts from part 1.',
-            snapshotT: 'Total number of memories at snapshot time. If omitted, uses the current total. Used to keep consistency across multiple wake calls.'
+            snapshotT: 'Total number of memories at snapshot time. If omitted, or set to 0 on the first call, uses the current total. Used to keep consistency across multiple wake calls.'
         }
     },
 

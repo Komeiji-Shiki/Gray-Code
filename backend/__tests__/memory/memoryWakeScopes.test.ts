@@ -136,7 +136,7 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(wsSection).not.toContain('global-memory-alpha');
     });
 
-    test('双作用域都为空：输出 No memories yet', async () => {
+    test('双作用域都为空：输出 No memories yet 且顶层只有一页', async () => {
         await globalMm.init();
         setGlobalMemoryManager(globalMm);
 
@@ -144,6 +144,30 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.success).toBe(true);
         expect(result.data.text).toContain('No memories yet');
         expect(result.data.text).toContain('You are awake.');
+        expect(result.data.totalMemories).toBe(0);
+        expect(result.data.part).toBe(1);
+        expect(result.data.totalParts).toBe(1);
+    });
+
+    test('首次 wake 的 snapshotT=0 按未指定处理，不会遮蔽已有记忆', async () => {
+        await globalMm.init();
+        await globalMm.note('global-memory-visible');
+        setGlobalMemoryManager(globalMm);
+
+        const wsMm = await getMemoryManagerForWorkspace(uriOf(wsDir));
+        await wsMm!.note('workspace-memory-visible');
+
+        // 可选数值参数在部分模型/客户端中会以 0 占位；首次调用必须读取当前快照，
+        // 不能把显式 0 当成“只读取零条记忆”的真实历史快照。
+        const result = await wakeWith({ part: 1, snapshotT: 0 }, uriOf(wsDir));
+        expect(result.success).toBe(true);
+        expect(result.data.text).toContain('global-memory-visible');
+        expect(result.data.text).toContain('workspace-memory-visible');
+        expect(result.data.text).not.toContain('No memories yet');
+        expect(result.data.totalMemories).toBe(2);
+        expect(result.data.part).toBe(1);
+        expect(result.data.totalParts).toBe(1);
+        expect(result.data.awake).toBe(true);
     });
 
     test('memory_recall 合并全局与工作区命中并标注来源', async () => {
@@ -194,9 +218,9 @@ describe('memory 工具双作用域（全局 + 工作区）', () => {
         expect(result.data.text).toContain('ws-2');
         expect(result.data.text).toContain('ws-3');
 
-        // 顶层元数据为两段合并口径
+        // 顶层元数据反映共用 part 并行推进所需的实际调用次数，而不是两段页数相加。
         expect(result.data.totalMemories).toBe(9);
-        expect(result.data.totalParts).toBe(5); // 3（全局）+ 2（工作区）
+        expect(result.data.totalParts).toBe(3); // max(3（全局）, 2（工作区）)
         expect(result.data.part).toBe(2);
         expect(result.data.awake).toBe(false);
     });

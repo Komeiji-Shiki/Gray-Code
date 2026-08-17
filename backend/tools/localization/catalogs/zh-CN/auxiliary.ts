@@ -23,7 +23,7 @@ export const auxiliary: Record<string, ToolDescriptionLocalization> = {
             '如果输出被分成多个部分，按顺序读取直到看到 "You are awake." 为止。',
         parameters: {
             part: '要读取的部分号（1-based）。不传则从第 1 部分开始。',
-            snapshotT: '快照时的记忆总数。不传则用当前总数。用于跨多次 wake 调用保持一致性。'
+            snapshotT: '快照时的记忆总数。不传或首次调用传 0 时使用当前总数。用于跨多次 wake 调用保持一致性。'
         }
     },
 

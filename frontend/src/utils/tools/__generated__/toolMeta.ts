@@ -306,8 +306,8 @@ export const toolMeta: Record<string, ToolMeta> = {
   'memory_wake': {
     description: "唤醒永久记忆。在每次会话开始时、做任何其他事情之前必须先调用此工具。\n输出包含两部分：全局记忆与当前工作区记忆（按工作区隔离），以 --- Global memory --- / --- Workspace memory --- 标注。\n它会输出你的记忆摘要：近期的记忆保持原文，远期的记忆被压缩为摘要。\n如果输出被分成多个部分，按顺序读取直到看到 \"You are awake.\" 为止。\n参数：part（可选，部分号，1-based）；snapshotT（可选，记忆快照总数）。",
     parameters: {
-      "part": {"type":"number","description":"要读取的部分号（1-based）。不传则从第 1 部分开始。"},
-      "snapshotT": {"type":"number","description":"快照时的记忆总数。不传则用当前总数。用于跨多次 wake 调用保持一致性。"},
+      "part": {"type":"integer","description":"要读取的部分号（1-based）。不传则从第 1 部分开始。"},
+      "snapshotT": {"type":"integer","description":"快照时的记忆总数。不传或首次调用传 0 时使用当前总数。用于跨多次 wake 调用保持一致性。"},
     },
     source: "backend/tools/memory/memory_wake.ts",
   },

@@ -31,12 +31,14 @@ export function createMemoryWakeDeclaration(): ToolDeclaration {
             type: 'object',
             properties: {
                 part: {
-                    type: 'number',
+                    type: 'integer',
+                    minimum: 1,
                     description: '要读取的部分号（1-based）。不传则从第 1 部分开始。',
                 },
                 snapshotT: {
-                    type: 'number',
-                    description: '快照时的记忆总数。不传则用当前总数。用于跨多次 wake 调用保持一致性。',
+                    type: 'integer',
+                    minimum: 0,
+                    description: '快照时的记忆总数。不传或首次调用传 0 时使用当前总数。用于跨多次 wake 调用保持一致性。',
                 },
             },
         },
@@ -99,6 +101,20 @@ function appendWakeSection(lines: string[], result: WakeResult, label: string): 
     }
 }
 
+function parseWakeInteger(
+    value: unknown,
+    name: 'part' | 'snapshotT',
+    zeroMeansOmitted: boolean
+): number | undefined {
+    if (value === undefined || value === null || (zeroMeansOmitted && value === 0)) {
+        return undefined;
+    }
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+        throw new Error(`${name} must be a positive integer.`);
+    }
+    return value;
+}
+
 async function memoryWakeHandler(args: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> {
     const globalMgr = getGlobalMemoryManager();
     if (!globalMgr) {
@@ -106,8 +122,11 @@ async function memoryWakeHandler(args: Record<string, unknown>, context?: ToolCo
     }
 
     try {
-        const part = typeof args.part === 'number' ? args.part : undefined;
-        const snapshotT = typeof args.snapshotT === 'number' ? args.snapshotT : undefined;
+        const part = parseWakeInteger(args.part, 'part', false);
+        // 首次 wake 没有可沿用的快照。部分模型/工具客户端会为可选数值参数填 0；
+        // 0 不可能对应需要续读的有效快照（空快照在第 1 页已经 awake），因此按“未传”
+        // 处理并读取各作用域当前总数，避免把已有记忆伪装成空记忆。
+        const snapshotT = parseWakeInteger(args.snapshotT, 'snapshotT', true);
 
         // 双作用域各自独立唤醒（全局 + 当前工作区）
         const globalResult = await wakeScope(globalMgr, part, snapshotT);
@@ -193,7 +212,9 @@ async function memoryWakeHandler(args: Record<string, unknown>, context?: ToolCo
                 // 顶层元数据合并两个作用域口径（原先只取全局，与文本矛盾）
                 blocks: [...(globalResult?.blocks ?? []), ...(wsResult?.blocks ?? [])],
                 part: Math.max(globalResult?.part ?? 0, wsResult?.part ?? 0),
-                totalParts: (globalResult?.totalParts ?? 0) + (wsResult?.totalParts ?? 0),
+                // 两个作用域在同一次调用中并行读取相同 part；完成全部读取所需的调用次数
+                // 是两者页数的最大值，而不是页数之和。求和会让两个空作用域显示 Part 1/2。
+                totalParts: Math.max(globalResult?.totalParts ?? 0, wsResult?.totalParts ?? 0),
                 totalMemories: (globalResult?.totalMemories ?? 0) + (wsResult?.totalMemories ?? 0),
                 awake,
                 // 压缩提示：返回两段中非空的那个（合并提示文本，带作用域标注）
