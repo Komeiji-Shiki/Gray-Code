@@ -76,6 +76,9 @@ function hide() {
 }
 
 .tooltip.multiline {
+  /* containing block（.tooltip-wrapper）宽度只有触发器那么大，width:auto 会被 shrink-to-fit 压成几像素宽，
+     导致 pre-line 长文本折成每行几个字的碎行；这里强制按内容撑开（仍受 max-width 约束） */
+  width: max-content;
   white-space: pre-line;
   line-height: 1.45;
   text-align: left;

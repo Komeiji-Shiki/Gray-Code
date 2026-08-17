@@ -153,7 +153,7 @@ const thresholdHelp = computed(() => {
               :content="thresholdHelp"
               placement="top-right"
               multiline
-              max-width="380px"
+              max-width="440px"
             >
               <button
                 type="button"
