@@ -27,7 +27,7 @@ import { createProxyStreamSink, sendRequestOverSocket, type ProxyStreamSink } fr
 import { readProxyStreamBody } from './proxyFetch/proxyStreamReader';
 
 // 公共 API 再导出：保持 proxyFetch.ts 对外导出符号完全不变
-export { resolveProxyInsecureSkipVerify, closeSocketGracefully } from './proxyFetch/proxyShared';
+export { resolveProxyInsecureSkipVerify, closeSocketGracefully, USER_AGENT } from './proxyFetch/proxyShared';
 export { parseProxyLeg } from './proxyFetch/proxyConnectTunnel';
 export { decodeChunkedBuffer } from './proxyFetch/proxyChunked';
 export { extractUpstreamErrorMessage };
@@ -65,8 +65,15 @@ async function fetchWithProxy(
  */
 export function createProxyFetch(proxyUrl?: string): (url: string | URL, init?: ProxyFetchInit) => Promise<Response> {
     if (!proxyUrl) {
-        // 无代理，使用原生 fetch（原生 fetch 无 timeout 选项：调用方自行以 AbortSignal 控制超时）
-        return fetch as (url: string | URL, init?: ProxyFetchInit) => Promise<Response>;
+        // 无代理：包装原生 fetch 注入默认 User-Agent，与代理路径行为一致
+        // （原生 fetch 无 timeout 选项：调用方自行以 AbortSignal 控制超时；调用方显式 UA 优先生效）
+        return async (url: string | URL, init?: ProxyFetchInit): Promise<Response> => {
+            const headers = {
+                'User-Agent': USER_AGENT,
+                ...(init?.headers as Record<string, string> | undefined)
+            };
+            return fetch(url, { ...init, headers });
+        };
     }
 
     return async (url: string | URL, init?: ProxyFetchInit): Promise<Response> => {

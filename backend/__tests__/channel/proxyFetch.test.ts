@@ -15,6 +15,7 @@ import {
     extractUpstreamErrorMessage,
     decodeChunkedBuffer
 } from '../../modules/channel';
+import { createProxyFetch, USER_AGENT } from '../../modules/channel/proxyFetch';
 import * as https from 'https';
 import * as http from 'http';
 
@@ -302,5 +303,90 @@ describe('decodeChunkedBuffer', () => {
     test('数据不够一个完整 chunk 时停止', () => {
         const input = Buffer.from('F\r\n01234', 'utf8'); // 声称 15 字节但只有 5 字节
         expect(decodeChunkedBuffer(input)).toBe('');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// createProxyFetch 无代理路径（默认 User-Agent 注入）
+// ---------------------------------------------------------------------------
+describe('createProxyFetch（无代理）', () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+        global.fetch = originalFetch;
+    });
+
+    interface MockFetchInit {
+        method?: string;
+        headers?: Record<string, string>;
+        body?: string;
+        signal?: AbortSignal;
+    }
+
+    function makeFetchMock(body: unknown = 'ok', status = 200): jest.Mock {
+        return jest.fn(async (_url: string | URL, _init?: MockFetchInit) =>
+            new Response(typeof body === 'string' ? body : JSON.stringify(body), {
+                status,
+                headers: { 'Content-Type': 'application/json' }
+            })
+        );
+    }
+
+    test('原生 fetch 被包装并注入默认 User-Agent（身份标识）', async () => {
+        const fetchMock = makeFetchMock({ ok: true });
+        global.fetch = fetchMock as any;
+
+        const proxyFetch = createProxyFetch();
+        const response = await proxyFetch('https://api.example.com/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer test-key' },
+            body: '{"model":"gpt-4"}'
+        });
+
+        expect(response.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(url).toBe('https://api.example.com/v1/chat/completions');
+        expect(init?.method).toBe('POST');
+        expect(init?.body).toBe('{"model":"gpt-4"}');
+        // 调用方 headers 之外注入默认 UA，且不丢失既有 headers
+        expect(init?.headers).toEqual({
+            'User-Agent': USER_AGENT,
+            'Authorization': 'Bearer test-key'
+        });
+    });
+
+    test('调用方显式传入的 User-Agent 优先生效', async () => {
+        const fetchMock = makeFetchMock();
+        global.fetch = fetchMock as any;
+
+        const proxyFetch = createProxyFetch();
+        await proxyFetch('https://api.example.com/v1/chat/completions', {
+            headers: { 'User-Agent': 'CustomAgent/1.0' }
+        });
+
+        const [, init] = fetchMock.mock.calls[0];
+        expect(init?.headers?.['User-Agent']).toBe('CustomAgent/1.0');
+    });
+
+    test('不带 init 时也注入默认 User-Agent', async () => {
+        const fetchMock = makeFetchMock();
+        global.fetch = fetchMock as any;
+
+        const proxyFetch = createProxyFetch();
+        await proxyFetch('https://api.example.com/v1/models');
+
+        const [, init] = fetchMock.mock.calls[0];
+        expect(init?.headers).toEqual({ 'User-Agent': USER_AGENT });
+    });
+
+    test('传入代理地址时走代理分支（不包装原生 fetch）', async () => {
+        const fetchMock = makeFetchMock();
+        global.fetch = fetchMock as any;
+
+        const proxyFetch = createProxyFetch('http://127.0.0.1:7890');
+        // 代理分支不会调用原生 fetch（CONNECT 隧道由 net socket 实现）
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(typeof proxyFetch).toBe('function');
     });
 });

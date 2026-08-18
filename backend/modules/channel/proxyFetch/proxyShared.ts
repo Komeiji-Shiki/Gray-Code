@@ -83,8 +83,9 @@ export function extractUpstreamErrorMessage(body: unknown): string | undefined {
 /**
  * 默认代理请求 User-Agent。GrayCode 是当前扩展的正式产品名（扩展 ID：Komeiji-Shiki.graycode）；
  * LimCode 仅是部分历史模块注释中的旧称，因此这里有意保持 GrayCode。
+ * 值收敛在 core/productMetadata（PRODUCT_USER_AGENT），此处仅作别名导出保持既有引用兼容。
  */
-export const USER_AGENT = 'GrayCode';
+export { PRODUCT_USER_AGENT as USER_AGENT } from '../../../core/productMetadata';
 
 /**
  * 优雅关闭 socket：先发 FIN，等待 close 事件（5s 超时兜底防止定时器泄漏）。

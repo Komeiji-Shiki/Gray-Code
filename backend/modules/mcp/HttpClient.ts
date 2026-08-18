@@ -6,7 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { t } from '../../i18n';
-import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
+import { createGrayCodeMcpClientInfo, PRODUCT_USER_AGENT } from '../../core/productMetadata';
 
 /**
  * SSE 读流缓冲上限（字符数）：无换行的超长尾行跨 chunk 累积时 bufferParts 永续增长，
@@ -416,9 +416,10 @@ export class HttpMcpClient extends EventEmitter {
             params
         };
         
-        // 协议头放在用户自定义 headers 之后：Content-Type/Accept 是 MCP 必需，
-        // 不能被用户 headers 覆盖导致服务器拒绝
+        // 默认 User-Agent 标识请求来源；用户自定义 headers 在后可覆盖。
+        // 协议头放在最后：Content-Type/Accept 是 MCP 必需，不能被用户 headers 覆盖导致服务器拒绝
         const headers: Record<string, string> = {
+            'User-Agent': PRODUCT_USER_AGENT,
             ...this.headers,
             'Content-Type': 'application/json',
             'Accept': 'application/json, text/event-stream'
@@ -783,8 +784,9 @@ export class HttpMcpClient extends EventEmitter {
             params
         };
         
-        // 协议头优先（与 sendRequest 同口径），不被用户自定义 headers 覆盖
+        // 默认 User-Agent 标识请求来源；协议头优先（与 sendRequest 同口径），不被用户自定义 headers 覆盖
         const headers: Record<string, string> = {
+            'User-Agent': PRODUCT_USER_AGENT,
             ...this.headers,
             'Content-Type': 'application/json'
         };

@@ -9,7 +9,7 @@ import { t } from '../../../i18n';
 import { Logger } from '../../../core/logger';
 import { ChannelError, ErrorType } from '../types';
 import type { HttpRequestOptions, HttpResponse } from '../types';
-import { createProxyFetch, proxyStreamFetch } from '../proxyFetch';
+import { createProxyFetch, proxyStreamFetch, USER_AGENT } from '../proxyFetch';
 import { parseStreamBuffer } from '../streamBufferParser';
 import {
     extractUpstreamErrorMessage,
@@ -292,10 +292,11 @@ export class ChannelHttpExecutor {
                     );
                 }
             } else {
-                // 原生 fetch 流式请求
+                // 原生 fetch 流式请求（无代理）：合并默认 User-Agent，与代理路径一致；
+                // 调用方显式传入的 UA 优先生效
                 const response = await fetch(url, {
                     method,
-                    headers,
+                    headers: { 'User-Agent': USER_AGENT, ...headers },
                     body: body ? JSON.stringify(body) : undefined,
                     signal: controller.signal
                 });
