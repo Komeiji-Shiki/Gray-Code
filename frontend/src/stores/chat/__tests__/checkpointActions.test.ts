@@ -9,7 +9,7 @@
  * - restoreAndRetry 中 deleteMessage 失败中止重试（不调 retryStream、设置错误、重载历史+检查点）
  * - restoreAndRetry 成功路径调用 retryStream
  * - restoreAndDelete 中 deleteMessage 失败设置错误并重载历史+检查点
- * - restoreAndEdit 成功 / 失败重载兜底 / 附件仅更新本地窗口（chat.editBranchStream 无附件字段）
+ * - restoreAndEdit 成功 / 失败重载兜底 / 附件随请求透传（不丢图）并更新本地窗口
  */
 import { ref } from 'vue'
 import { vi, describe, expect, beforeEach } from 'vitest'
@@ -580,7 +580,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
       newText: 'edited content',
       configId: 'cfg_1'
     })
-    expect(editCall![1].attachments).toBeUndefined()
+    expect(editCall![1].attachments).toEqual([])
     // 本地消息已改写并截断后续消息，随后追加流式助手消息
     expect(state.allMessages.value[1].content).toBe('edited content')
     expect(state.allMessages.value).toHaveLength(3)
@@ -591,7 +591,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     expect(state._pendingBranchRefreshAfterStream.value).toBe('conv_1')
   })
 
-  test('附件仅更新本地窗口（chat.editBranchStream 无附件字段，不随 IPC 上送）', async () => {
+  test('附件随请求透传至后端并更新本地窗口（不丢图）', async () => {
     mockSend
       .mockResolvedValueOnce({ success: true, restored: 1, deleted: 0, skipped: 0 }) // checkpoint.restore
       .mockResolvedValueOnce({ success: true }) // chat.editBranchStream
@@ -609,7 +609,7 @@ describe('restoreAndEdit（决策 7：回档后走编辑分支，旧分支保留
     await restoreAndEdit(state, 1, 'edited', attachments, 'cp_1', 'model-x', async () => {})
 
     const editCall = mockSend.mock.calls.find(c => c[0] === 'chat.editBranchStream')
-    expect(editCall![1].attachments).toBeUndefined()
+    expect(editCall![1].attachments).toEqual(attachments)
     expect(state.allMessages.value[1].attachments).toEqual(attachments)
   })
 
