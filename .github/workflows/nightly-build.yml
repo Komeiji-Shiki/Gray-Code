@@ -4,10 +4,12 @@ name: Nightly Build
 #   - 最近 24 小时内有新提交 → 重新打包 vsix
 #   - 没有新提交 → 跳过打包，任务直接成功结束（不浪费资源）
 #
-# 打包产物（两种途径都能拿到）：
+# 打包产物（三种途径都能拿到）：
 #   - Actions Artifact：本次运行 Summary 页面可下载
-#   - GitHub Release：发布/覆盖到 tag=nightly 的 Release，下载链接稳定：
+#   - GitHub Release（固定）：发布/覆盖到 tag=nightly 的 Release，下载链接稳定（扩展自动更新用）：
 #     https://github.com/Komeiji-Shiki/Gray-Code/releases/tag/nightly
+#   - GitHub Release（归档）：每天新建 tag=nightly-YYYYMMDD 的 Release（如 nightly-20260819），
+#     在 Releases 列表中置顶展示，便于人类浏览与回滚；仅保留最近 14 天自动清理
 #
 # 手动触发：Actions → Nightly Build → Run workflow（可勾选 force 强制打包）
 # 注意：schedule 触发器只在默认分支（main/master）上生效。
@@ -152,6 +154,7 @@ jobs:
           '
           printf '%s\n' "$nightly" > .nightly-version.txt
           echo "nightly_version=$(cat .nightly-version.txt)" >> "$GITHUB_OUTPUT"
+          echo "nightly_date=${today}" >> "$GITHUB_OUTPUT"
 
       - name: Package vsix
         # vsce package 会先执行 vscode:prepublish（即 npm run build），无需显式 Build 步骤；
@@ -167,7 +170,7 @@ jobs:
           path: graycode-nightly.vsix
           if-no-files-found: error
 
-      - name: Publish / overwrite nightly release
+      - name: Publish / overwrite nightly release (fixed tag for auto-update)
         if: steps.should.outputs.build == 'true'
         uses: softprops/action-gh-release@v2
         with:
@@ -180,9 +183,82 @@ jobs:
             版本：v${{ steps.version.outputs.nightly_version }}
 
             > 注意：nightly 为每日自动构建（预览版），仅供测试，不建议作为正式版本安装。
+            > 固定标签，供扩展「nightly 渠道」自动更新使用（直链稳定）。
+            > 历史归档见 nightly-YYYYMMDD 标签的 Release。
           files: graycode-nightly.vsix
           overwrite_files: true
           prerelease: true
+          make_latest: false
+
+      - name: Publish dated nightly release (archived, for timeline)
+        if: steps.should.outputs.build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly-${{ steps.version.outputs.nightly_date }}
+          # 归档 Release 同样使用真实版本号，便于 compareVersions 与人类识别
+          name: v${{ steps.version.outputs.nightly_version }}
+          body: |
+            自动构建归档：${{ steps.time.outputs.now }}
+            Commit: `${{ github.sha }}`
+            版本：v${{ steps.version.outputs.nightly_version }}
+            Tag: `nightly-${{ steps.version.outputs.nightly_date }}`
+
+            > 每日归档，仅保留最近 14 天；最新版请用固定标签 nightly（自动更新直链）。
+          files: graycode-nightly.vsix
+          prerelease: true
+          make_latest: false
+
+      - name: Cleanup old dated nightly releases (keep 14 most recent)
+        if: steps.should.outputs.build == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${{ github.repository }}"
+          keep=14
+          echo "Listing dated nightly releases (nightly-YYYYMMDD) ..."
+          # gh + jq 在 ubuntu-latest 默认可用；清理失败不阻塞主流程
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "⚠️ jq not found, skip cleanup"
+            exit 0
+          fi
+          set +e
+          gh api "repos/${repo}/releases?per_page=100" --paginate --jq '[.[] | select(.tag_name | test("^nightly-[0-9]{8}$"))] | sort_by(.created_at) | reverse | .[] | "\(.id) \(.tag_name) \(.created_at)"' > /tmp/dated_list.txt 2>&1
+          api_exit=$?
+          set -e
+          if [ $api_exit -ne 0 ]; then
+            echo "⚠️ 无法列出 releases（API 失败），跳过清理："
+            cat /tmp/dated_list.txt || true
+            exit 0
+          fi
+          if [ ! -s /tmp/dated_list.txt ]; then
+            echo "No dated nightly releases found, nothing to clean"
+            exit 0
+          fi
+          total=$(wc -l < /tmp/dated_list.txt | tr -d " ")
+          echo "Found $total dated nightly releases, keeping $keep most recent"
+          cat /tmp/dated_list.txt
+          if [ "$total" -le "$keep" ]; then
+            echo "Within keep limit, no deletion needed"
+            exit 0
+          fi
+          tail -n +$((keep+1)) /tmp/dated_list.txt | while read -r id tag created; do
+            if [ -z "$id" ]; then continue; fi
+            echo "🗑️ Deleting old dated nightly: $tag (id=$id, created=$created)"
+            if gh api --method DELETE "repos/${repo}/releases/$id" >/dev/null 2>&1; then
+              echo "  -> release deleted"
+            else
+              echo "  ⚠️ failed to delete release $id"
+              continue
+            fi
+            if gh api --method DELETE "repos/${repo}/git/refs/tags/$tag" >/dev/null 2>&1; then
+              echo "  -> tag $tag deleted"
+            else
+              echo "  (tag $tag may already gone)"
+            fi
+          done
+          echo "Cleanup done."
+
 
       - name: Summary
         if: always()
