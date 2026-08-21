@@ -10,12 +10,35 @@ import { t } from '../../i18n';
  * - 图片：image/png, image/jpeg, image/webp
  * - 文档：application/pdf, text/plain
  */
-const MULTIMODAL_MIME_TYPES: Record<string, string> = {
-    // 图片（仅支持这 3 种）
+/**
+ * 支持作为图片读取的扩展名与 MIME 映射（单一来源）。
+ *
+ * 覆盖常见图片格式：PNG/JPEG/GIF/WebP（多数端点原生支持），以及
+ * BMP/TIFF/SVG/ICO/HEIC/HEIF/AVIF（视端点能力，由 DeepSeek Vision 预处理等
+ * 下游环节用 sharp 转码为标准格式；无法转码时会返回明确的错误提示）。
+ */
+const IMAGE_MIME_TYPES: Record<string, string> = {
     '.png': 'image/png',
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
+    '.jfif': 'image/jpeg',
+    '.gif': 'image/gif',
     '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+    '.avif': 'image/avif',
+};
+
+/** 支持作为图片读取的扩展名集合（供 isImageFile / BINARY_EXTENSIONS 复用） */
+const IMAGE_EXTENSIONS = new Set(Object.keys(IMAGE_MIME_TYPES));
+
+const MULTIMODAL_MIME_TYPES: Record<string, string> = {
+    ...IMAGE_MIME_TYPES,
     // 文档（仅支持 PDF）
     '.pdf': 'application/pdf',
 };
@@ -24,7 +47,7 @@ const MULTIMODAL_MIME_TYPES: Record<string, string> = {
  * 支持多模态返回的文件扩展名（图片和 PDF）
  */
 const MULTIMODAL_EXTENSIONS = new Set([
-    '.png', '.jpg', '.jpeg', '.webp',  // 图片
+    ...IMAGE_EXTENSIONS,
     '.pdf',                              // 文档
 ]);
 
@@ -33,19 +56,19 @@ const MULTIMODAL_EXTENSIONS = new Set([
  */
 export const MULTIMODAL_SUPPORTED_TYPES = {
     /** 图片类型 */
-    images: ['image/png', 'image/jpeg', 'image/webp'],
+    images: Object.values(IMAGE_MIME_TYPES),
     /** 文档类型 */
     documents: ['application/pdf', 'text/plain'],
     /** 所有支持的类型 */
-    all: ['image/png', 'image/jpeg', 'image/webp', 'application/pdf', 'text/plain']
+    all: [...Object.values(IMAGE_MIME_TYPES), 'application/pdf', 'text/plain']
 };
 
 /**
  * 所有已知的二进制文件扩展名
  */
 const BINARY_EXTENSIONS = new Set([
-    // 图片
-    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif', '.bmp', '.svg', '.ico', '.tiff',
+    // 图片（与 IMAGE_EXTENSIONS 保持单一来源，避免列表漂移）
+    ...IMAGE_EXTENSIONS,
     // 音频
     '.mp3', '.wav', '.aiff', '.aac', '.ogg', '.flac', '.m4a', '.wma',
     // 视频
@@ -86,7 +109,7 @@ export function isBinaryFile(filePath: string): boolean {
  */
 export function isImageFile(filePath: string): boolean {
     const ext = path.extname(filePath).toLowerCase();
-    return ['.png', '.jpg', '.jpeg', '.webp'].includes(ext);
+    return IMAGE_EXTENSIONS.has(ext);
 }
 
 /**

@@ -93,7 +93,7 @@ export interface ReadFileDescriptions {
  *
  * 顶层说明按多模态能力分支：
  * - 未启用多模态 / OpenAI function_call 回退：纯文本；
- * - OpenAI 其他模式（xml/json）：文本 + 图片（PNG/JPEG/WebP）；
+ * - OpenAI 其他模式（xml/json）：文本 + 图片（常见图片格式）；
  * - Gemini / Anthropic：文本 + 图片 + 文档（PDF）。
  *
  * 中英文都明确：path 与 files 互斥、顶层 startLine/endLine 只属于单文件模式、
@@ -149,16 +149,16 @@ export function buildReadFileDescriptions(options: ReadFileDescriptionOptions): 
             // OpenAI xml/json 模式只支持图片
             description = pick(
                 lang,
-                '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP）。图片会作为多模态数据返回。',
-                'Read one or more files from the workspace. Currently supported types: text files and images (PNG/JPEG/WebP). Images are returned as multimodal data.'
+                '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP/GIF/BMP 等常见格式）。图片会作为多模态数据返回。',
+                'Read one or more files from the workspace. Currently supported types: text files and images (common formats such as PNG/JPEG/WebP/GIF/BMP). Images are returned as multimodal data.'
             ) + modeNote + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
         }
     } else {
         // Gemini 和 Anthropic 全面支持
         description = pick(
             lang,
-            '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP）、文档（PDF）。图片和文档会作为多模态数据返回。',
-            'Read one or more files from the workspace. Currently supported types: text files, images (PNG/JPEG/WebP), and documents (PDF). Images and documents are returned as multimodal data.'
+            '读取工作区中的一个或多个文件。当前支持类型：文本文件、图片（PNG/JPEG/WebP/GIF/BMP 等常见格式）、文档（PDF）。图片和文档会作为多模态数据返回。',
+            'Read one or more files from the workspace. Currently supported types: text files, images (common formats such as PNG/JPEG/WebP/GIF/BMP), and documents (PDF). Images and documents are returned as multimodal data.'
         ) + modeNote + lineNumberNote + lineRangeNote + lineRangeBinaryRestrictionNote;
     }
 
