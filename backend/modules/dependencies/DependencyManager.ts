@@ -15,6 +15,10 @@ import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { pathToFileURL } from 'url';
 import { t } from '../../i18n';
+// cross-spawn 在 Windows 上能正确解析 .cmd/.bat（npm.cmd 等）并保持参数边界：
+// 原生 execFile 对 .cmd 的解析在扩展进程环境（PATH 隔离）中不可靠，导致依赖安装
+// 在 Windows 下静默失败（仅返回 "Command failed"）。与 MCP StdioClient 同一兼容策略。
+const crossSpawn = require('cross-spawn') as typeof childProcess.spawn;
 
 const execFile = promisify(childProcess.execFile);
 const mkdir = promisify(fs.mkdir);
@@ -77,10 +81,10 @@ export class DependencyManager {
     private installedCache: Map<string, boolean> = new Map();
     
     /** 进行中的安装任务（同依赖串行化：第二个调用复用其结果；不同依赖可并行） */
-    private installsInFlight: Map<string, Promise<boolean>> = new Map();
+    private installsInFlight: Map<string, Promise<{ success: boolean; error?: string }>> = new Map();
     
     /** 进行中的卸载任务（同依赖串行化：第二个调用复用其结果） */
-    private uninstallsInFlight: Map<string, Promise<boolean>> = new Map();
+    private uninstallsInFlight: Map<string, Promise<{ success: boolean; error?: string }>> = new Map();
     
     /** 复制阶段全局串行队列：不同依赖并行安装时共享同一个 depsDir，复制阶段必须互斥执行 */
     private copyQueue: Promise<void> = Promise.resolve();
@@ -301,7 +305,7 @@ export class DependencyManager {
      * 不同依赖互不阻塞，可并行安装（各自使用独立的临时目录）。
      * 同一依赖的卸载进行中时，安装会等待其完成后再执行，避免安装复制与卸载清理互相干扰。
      */
-    async install(name: string): Promise<boolean> {
+    async install(name: string): Promise<{ success: boolean; error?: string }> {
         const config = this.optionalDependencies[name];
         if (!config) {
             this.emitProgress({
@@ -309,7 +313,7 @@ export class DependencyManager {
                 dependency: name,
                 error: t('modules.dependencies.errors.unknownDependency', { name })
             });
-            return false;
+            return { success: false, error: t('modules.dependencies.errors.unknownDependency', { name }) };
         }
         
         // 同依赖并发安装：复用进行中的安装任务
@@ -347,17 +351,21 @@ export class DependencyManager {
     private async doInstall(
         name: string,
         config: { version: string; descriptionKey: string; estimatedSize: number }
-    ): Promise<boolean> {
+    ): Promise<{ success: boolean; error?: string }> {
         this.emitProgress({
             type: 'start',
             dependency: name,
             message: t('modules.dependencies.progress.installing', { name })
         });
         
-        // 每次安装使用独立临时目录，避免并发安装（不同依赖）互相删除/覆盖
+        // 每次安装使用独立临时目录，避免并发安装（不同依赖）互相删除/覆盖。
+        // scoped 包（如 @napi-rs/canvas）名称含 `/`：直接拼接会生成带子目录的路径
+        //（deps-temp-@napi-rs/canvas-...），mkdir 后 npm 在错误 cwd 执行、node_modules 检查失败。
+        // 把 `/` 替换为 `-` 生成合法的单段目录名。
+        const safeName = name.replace(/[\/]/g, '-');
         const tempDir = path.join(
             this.graycodeDir,
-            `deps-temp-${name}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+            `deps-temp-${safeName}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
         );
         
         try {
@@ -386,21 +394,39 @@ export class DependencyManager {
             });
             
             // 使用 npm 安装
-            // argv 数组直传（execFile 不经过 shell）：tempDir 来自可配置存储路径，
+            // argv 数组直传（crossSpawn 不经过 shell）：tempDir 来自可配置存储路径，
             // 字符串拼接进 shell 命令会受引号/$()/& 等特殊字符影响（注入面/命令异常）；
-            // Windows 上 npm 实际是 npm.cmd，execFile 不经过 shell 也能解析 .cmd 启动器。
+            // Windows 上 npm 实际是 npm.cmd，crossSpawn 会解析 .cmd 启动器并保持参数边界。
             // maxBuffer 放大到 64MB：npm 输出较多时不会被默认 1MB 上限误杀
             const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-            const { stdout, stderr } = await execFile(
-                npmCommand,
-                ['install', '--prefix', tempDir, '--no-save'],
-                {
+            const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+                const child = crossSpawn(npmCommand, ['install', '--prefix', tempDir, '--no-save'], {
                     cwd: tempDir,
                     timeout: 300000,  // 5分钟超时
-                    maxBuffer: 64 * 1024 * 1024,
                     windowsHide: true
+                });
+                let stdout = '';
+                let stderr = '';
+                child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+                child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+                // maxBuffer 保护：输出超出上限时同样视为失败（Node 原生 execFile 行为）
+                const MAX_BUFFER = 64 * 1024 * 1024;
+                child.on('error', (err) => reject(err));
+                child.on('close', (code) => {
+                    if (code === 0) {
+                        resolve({ stdout, stderr });
+                    } else {
+                        const err = new Error(`npm install exited with code ${code}`);
+                        (err as any).stderr = stderr;
+                        (err as any).stdout = stdout;
+                        reject(err);
+                    }
+                });
+                if (stdout.length > MAX_BUFFER || stderr.length > MAX_BUFFER) {
+                    child.kill();
+                    reject(new Error('npm output exceeded buffer limit'));
                 }
-            );
+            });
             
             // 只记摘要：npm 输出可达数十 MB，整体 console.log 会刷屏并拖慢 extension host
             console.log(`[deps] npm install ${name} finished (stdout ${stdout?.length ?? 0} chars, stderr ${stderr?.length ?? 0} chars)`);
@@ -519,7 +545,7 @@ export class DependencyManager {
             });
             
             // 清除缓存并更新安装状态
-            this.loadedModules.delete(name);
+            this.clearLoadedModules(name);
             this.installedCache.set(name, true);
             
             this.emitProgress({
@@ -528,10 +554,18 @@ export class DependencyManager {
                 message: t('modules.dependencies.progress.installSuccess', { name })
             });
             
-            return true;
+            return { success: true };
             
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
+            // npm 失败时真实报错在 error.stderr（原生 execFile 只抛 "Command failed"）——
+            // 必须取出来拼进错误信息，否则前端只能看到无意义的失败，无法定位根因
+            const anyError = error as any;
+            const stderrDetails = anyError?.stderr
+                ? String(anyError.stderr).trim().split('\n').slice(-15).join('\n')
+                : '';
+            const errorMessage = error instanceof Error
+                ? (error.message + (stderrDetails ? `\n${stderrDetails}` : ''))
+                : String(error);
             
             this.emitProgress({
                 type: 'error',
@@ -539,7 +573,7 @@ export class DependencyManager {
                 error: t('modules.dependencies.errors.installFailed', { error: errorMessage })
             });
             
-            return false;
+            return { success: false, error: t('modules.dependencies.errors.installFailed', { error: errorMessage }) };
         } finally {
             // 成功与失败路径都清理临时目录，避免残留
             try {
@@ -557,7 +591,7 @@ export class DependencyManager {
      * 后续调用直接复用其结果（卸载幂等）；同一依赖的安装进行中时，卸载会等待其完成
      * 后再执行（避免卸载残留清理误删安装复制中的目录），反之安装也会等待卸载完成。
      */
-    async uninstall(name: string): Promise<boolean> {
+    async uninstall(name: string): Promise<{ success: boolean; error?: string }> {
         // 同依赖卸载进行中：复用其结果（卸载幂等，避免并发重复清理残留）
         const uninstallInFlight = this.uninstallsInFlight.get(name);
         if (uninstallInFlight) {
@@ -588,7 +622,7 @@ export class DependencyManager {
     /**
      * 执行卸载（仅由 uninstall 调用，受 uninstallsInFlight 并发保护）
      */
-    private async doUninstall(name: string): Promise<boolean> {
+    private async doUninstall(name: string): Promise<{ success: boolean; error?: string }> {
         try {
             const targetDir = path.join(this.depsDir, name);
             await rm(targetDir, { recursive: true, force: true });
@@ -681,16 +715,28 @@ export class DependencyManager {
             });
             
             // 清除缓存并更新安装状态
-            this.loadedModules.delete(name);
+            this.clearLoadedModules(name);
             this.installedCache.set(name, false);
             
-            return true;
+            return { success: true };
         } catch (error) {
             console.error(t('modules.dependencies.errors.uninstallFailed', { name }), error);
-            return false;
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return { success: false, error: errorMessage };
         }
     }
     
+    /**
+     * 清除某个依赖的全部已加载模块缓存（含带子路径的缓存键，如 pdfjs-dist#legacy/build/pdf.mjs）。
+     */
+    private clearLoadedModules(name: string): void {
+        for (const key of [...this.loadedModules.keys()]) {
+            if (key === name || key.startsWith(`${name}#`)) {
+                this.loadedModules.delete(key);
+            }
+        }
+    }
+
     /**
      * 获取某个可选依赖的安装目录。
      *
@@ -707,10 +753,12 @@ export class DependencyManager {
      * @param name 依赖名称
      * @returns 加载的模块，如果未安装则返回 null
      */
-    async load<T = any>(name: string): Promise<T | null> {
+    async load<T = any>(name: string, subpath?: string): Promise<T | null> {
+        // 缓存键：带子路径时区分多个入口（如 pdfjs-dist 的 build/ 与 legacy/build/）
+        const cacheKey = subpath ? `${name}#${subpath}` : name;
         // 检查缓存
-        if (this.loadedModules.has(name)) {
-            return this.loadedModules.get(name);
+        if (this.loadedModules.has(cacheKey)) {
+            return this.loadedModules.get(cacheKey);
         }
         
         // 检查是否已安装
@@ -722,7 +770,9 @@ export class DependencyManager {
         }
         
         try {
-            const modulePath = this.getDependencyPath(name);
+            const modulePath = subpath
+                ? path.join(this.getDependencyPath(name), subpath)
+                : this.getDependencyPath(name);
             let mod: any;
 
             // 优先使用 CommonJS，兼容现有 sharp 等依赖。
@@ -740,7 +790,7 @@ export class DependencyManager {
                 mod = await nativeImport(pathToFileURL(resolvedPath).href);
             }
 
-            this.loadedModules.set(name, mod);
+            this.loadedModules.set(cacheKey, mod);
             // 加载成功：同步更新安装状态缓存，避免 isInstalledSync（缓存）与磁盘状态不一致
             this.installedCache.set(name, true);
             return mod;
@@ -815,6 +865,20 @@ export async function getSharp(): Promise<any | null> {
 export async function getPdfjs(): Promise<any | null> {
     try {
         const manager = DependencyManager.getInstance();
+        // pdfjs-dist 4.x 的默认入口 build/pdf.mjs 是浏览器构建：在多处使用 DOM API
+        // （如 document.createElement）测量/排版字体，Node 环境渲染时抛
+        // "Cannot read properties of undefined (reading 'createElement')"；
+        // legacy/build/pdf.mjs 是 Node 专用构建，官方推荐 Node 环境使用。
+        // 少数旧本版未提供 legacy/build/pdf.mjs 时回退主入口。
+        const legacyEntry = 'legacy/build/pdf.mjs';
+        const legacyPath = path.join(manager.getDependencyPath('pdfjs-dist'), legacyEntry);
+        try {
+            if (fs.existsSync(legacyPath)) {
+                return await manager.load('pdfjs-dist', legacyEntry);
+            }
+        } catch {
+            // legacy 构建存在但加载失败（罕见）：回退主入口，交由调用方报错
+        }
         return await manager.load('pdfjs-dist');
     } catch {
         return null;

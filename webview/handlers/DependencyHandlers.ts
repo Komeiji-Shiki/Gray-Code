@@ -29,8 +29,10 @@ export const installDependency: MessageHandler = async (data, requestId, ctx) =>
       ctx.sendError(requestId, 'INSTALL_DEPENDENCY_ERROR', 'name is required');
       return;
     }
-    const success = await ctx.dependencyManager.install(name);
-    ctx.sendResponse(requestId, { success });
+    const result = await ctx.dependencyManager.install(name);
+    // R2-08 复查：安装失败时把真实错误透传前端（此前仅返回 { success: false }，
+    // 前端只能看到固定“安装失败”文案，无法定位根因）。
+    ctx.sendResponse(requestId, { success: result.success, error: result.error });
   } catch (error: any) {
     ctx.sendError(requestId, 'INSTALL_DEPENDENCY_ERROR', error.message || t('webview.errors.installDependencyFailed'));
   }
@@ -47,8 +49,9 @@ export const uninstallDependency: MessageHandler = async (data, requestId, ctx) 
       ctx.sendError(requestId, 'UNINSTALL_DEPENDENCY_ERROR', 'name is required');
       return;
     }
-    const success = await ctx.dependencyManager.uninstall(name);
-    ctx.sendResponse(requestId, { success });
+    const result = await ctx.dependencyManager.uninstall(name);
+    // R2-08 复查：卸载失败时把真实错误透传前端（与安装同口径）
+    ctx.sendResponse(requestId, { success: result.success, error: result.error });
   } catch (error: any) {
     ctx.sendError(requestId, 'UNINSTALL_DEPENDENCY_ERROR', error.message || t('webview.errors.uninstallDependencyFailed'));
   }

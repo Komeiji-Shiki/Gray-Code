@@ -260,7 +260,7 @@ async function installDependency(name: string) {
   progressMessage.value = '';
   
   try {
-    const result = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES['dependencies.install'], { name });
+    const result = await sendToExtension<{ success: boolean; error?: string }>(MESSAGE_NAMES['dependencies.install'], { name });
     
     if (result.success) {
       progressType.value = 'success';
@@ -269,7 +269,7 @@ async function installDependency(name: string) {
       scheduleProgressClear();
     } else {
       progressType.value = 'error';
-      progressMessage.value = t('components.settings.dependencySettings.progress.installFailed', { name });
+      progressMessage.value = t('components.settings.dependencySettings.progress.installFailed', { name }) + (result.error ? `: ${result.error}` : '');
     }
   } catch (error: any) {
     progressType.value = 'error';
@@ -285,7 +285,7 @@ async function uninstallDependency(name: string) {
   progressMessage.value = '';
   
   try {
-    const result = await sendToExtension<{ success: boolean }>(MESSAGE_NAMES['dependencies.uninstall'], { name });
+    const result = await sendToExtension<{ success: boolean; error?: string }>(MESSAGE_NAMES['dependencies.uninstall'], { name });
     
     if (result.success) {
       progressType.value = 'success';
@@ -294,7 +294,7 @@ async function uninstallDependency(name: string) {
       scheduleProgressClear();
     } else {
       progressType.value = 'error';
-      progressMessage.value = t('components.settings.dependencySettings.progress.uninstallFailed', { name });
+      progressMessage.value = t('components.settings.dependencySettings.progress.uninstallFailed', { name }) + (result.error ? `: ${result.error}` : '');
     }
   } catch (error: any) {
     progressType.value = 'error';
