@@ -55,6 +55,9 @@ backend/**
 webview/**
 esbuild.config.js
 
+# 共享源码（esbuild 已 bundle 进 dist/extension.js）
+shared/**
+
 # 内部开发文档（不打包）
 docs/**
 *.plan.md
