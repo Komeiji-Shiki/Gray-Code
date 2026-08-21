@@ -22,6 +22,13 @@
   - HTTP 请求默认携带 `User-Agent: GrayCode` 身份标识：此前仅配置代理的路径会注入 UA（自研 CONNECT 隧道实现内），无代理直连路径直接使用原生 fetch，请求头无应用标识（API 端只能看到 undici/Node 默认 UA）。现 `createProxyFetch` 无代理分支包装原生 fetch 注入默认 UA（调用方显式传入的 UA 优先生效，语义与代理路径一致），聊天流式无代理分支同步合并；UA 常量收敛到 `core/productMetadata`（`PRODUCT_USER_AGENT`，`proxyShared.USER_AGENT` 改为别名导出保持兼容），MCP HTTP 客户端请求同样携带默认 UA（用户自定义 headers 可覆盖，协议必需头仍最后置顶不被覆盖）。新增 createProxyFetch 无代理 UA 注入回归测试。
   - 聊天消息列表新增楼层号与存档序号：用户消息与模型回复（含总结消息）在角色名称右侧显示 `#N` 楼层号（tool 及内部消息不占楼）；存档（checkpoint）横条在标签旁显示 `#N` 存档序号（按创建时间升序，第 N 次存档）。楼层号基于已加载消息顺序动态计算，存档序号同时间戳时按消息索引 / before 优先稳定排序。
   - 扩展依赖管理面板新增 DeepSeek Vision 功能级分组：`deepseek_vision` 面板列出 `sharp` / `pdfjs-dist` / `@napi-rs/canvas` 三个依赖（此前仅媒体工具面板可见 sharp，Vision 依赖无法在面板一键安装/卸载）。
+
+  - DeepSeek Vision 图像预处理新增 GIF 动画拆帧：DeepSeek 对 GIF 仅取第一帧，现按时间轴采样（每秒最多 5 帧；sharp 未提供帧延迟元数据时按 100ms/帧估算）拆成逐帧 PNG（透明区域填充白色），附带 `[GIF frame x/y (s-s): name]` 标记，帧数超过 DeepSeek 600 图上限时提前报错；拆帧产物继续经 800×800 分块处理。新增 3 个拆帧回归测试。
+  - read_file 工具支持读取更多图片格式：PNG/JPEG/JFIF/GIF/WebP/BMP/SVG/ICO/TIFF/HEIC/HEIF/AVIF 统一纳入多模态图片读取（图片扩展名集合单一来源，与二进制判定复用，避免列表漂移），发送前由 DeepSeek Vision 预处理用 sharp 转为官方格式（无法转码时返回明确错误提示）；工具声明描述与三语说明同步。
+  - Anthropic 渠道新增 DeepSeek Vision 图像预处理开关（位于 metadata.user_id 开关旁）：与 OpenAI/Responses 渠道同机制，为 `deepseek-v4-flash-vision-exp` 启用 PDF 逐页栅格化、大图分块与 GIF 拆帧；`AnthropicConfig` 新增 `deepSeekVisionEnabled` 字段（默认关闭），前端配置界面与三语文案同步。
+  - Anthropic 渠道 tool_result 支持嵌套多模态结果：read_file 等工具返回的图片/PDF（functionResponse.parts 中的 inlineData）现按 Anthropic 官方 content 块数组（text/image/document）发送，此前会在 formatter 阶段被静默丢弃；与 Gemini/Responses 的多模态工具结果能力对齐，可配合 DeepSeek Vision 预处理（PDF → 分页图片）使用。
+  - 聊天输入框支持从 Windows 资源管理器拖拽图片/PDF/GIF/视频：拖入的可读文件按附件链路处理（与粘贴一致，发送时经 DeepSeek Vision 预处理），不再因工作区外路径解析失败而静默丢弃；VS Code 文件树拖拽与 Ctrl+Shift 路径文本语义保持不变，编辑消息对话框同步支持。
+  - OpenAI 渠道设置页 DeepSeek 三卡片（user_id / Vision 预处理 / PDF 附件发送）改为紧凑布局：组内卡片间距归零，与下方设置保持原间距。
   
 ### Fixed
   - 修复聊天消息中的 LaTeX 公式无法渲染：完整 Markdown 与用户消息现在同时支持 `$...$` / `$$...$$`、`\(...\)` 与 `\[...\]` 定界符，并保留代码块中的公式原文。
@@ -41,6 +48,7 @@
   - 修复 Gemini 模型列表与 Interactions API 兼容问题：规范化 `models/` 模型 ID、正确合并基础 URL 查询参数、补齐分页与非 2xx 上游错误信息脱敏透传，并完善流式参数增量、终态状态、失败事件和 `budget_exceeded` 处理；模型窗口/输出上限元数据同步供上下文预算使用。
   - 修复自动总结 preserve 路径下总结文本覆盖范围与落盘标记范围不一致：复用主请求前缀的总结请求现在携带「总结截止锚点」——提示词以保留区（最近保留、不参与总结的内容）首条文本为边界，明确要求模型忽略该消息及之后的一切内容；发送前缀与缓存域保持不变，总结文本与实际标记的 isSummarized 范围对齐。
   - 修复 `fileData` 图片在 OpenAI Responses 请求体中被误作 `input_file` 发送：现按 `input_image` 发送（token 计数请求同步改为 `input_image` 格式）。
+  - 修复工具执行存档「批次后存档」紧挨「批次前存档」的冗余问题（CP-SKIP）：此前 apply_diff 执行后存档与下一个工具（如 execute_command）执行前存档之间无文件变化时，后者仍创建空增量节点（changes=[]、零文件、仅写 manifest/元数据）并在聊天流中展示为独立存档点——内容签名（contentHash）与上一存档完全相同，属纯冗余。现 `CheckpointBackupExecutor` 在计算内容签名后、写 manifest 前判定：非 forceCreate（手动存档）且与上一存档的 contentHash 一致（并校验 unbackedPaths/absentPaths 保护清单一致）时回收已创建的备份目录、上报终态进度、返回 null 跳过创建——不写 manifest、不建记录、前端不再展示该冗余点；上一存档保持为增量链基准，后续存档继续基于它做增量比较（与「没有发生过这次创建」语义等价，恢复口径不变）。部分快照场景由继承补全后的完整映射判定（受影响文件哈希未变即跳过），全量快照直接反映工作区整体状态；删除/超限等保护状态变化（absent/超限清单不一致）不会误跳过。forceCreate 手动存档保持无条件创建（用户显式请求）。新增 7 个 CP-SKIP 回归测试（全量无变化跳过 / 部分快照受影响文件变化不跳过 / 部分快照受影响文件未变跳过 / forceCreate 强制创建 / absent 状态变化不跳过 / 跳过后续增量链连续 / 空目录变化不跳过），并把决策 12 固化测试与 H1 空增量节点测试同步修订为新语义（内容无变化 → 跳过，不再产生空增量节点）。
 
 
 ## [1.5.4] - 2026-08-13
