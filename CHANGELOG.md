@@ -7,6 +7,9 @@
 -->
 ## [Unreleased]
 
+### Added
+  - DeepSeek Vision 图像预处理新增「拆分/压缩」切换复选框：输入区有图片附件且渠道开启 DeepSeek Vision 预处理、模型为 Vision 模型时，输入框右下角出现复选框（默认勾选）——勾选保持既有大图分块防压缩行为；取消勾选则不拆分，主动把图片等比例压缩至 800×800 总像素预算内（同时约束单边长不超过 4096，极端超宽/全景图同样收进限制），由用户按清晰度/体积偏好逐次选择。选项随本次发送、消息排队与同一回合的工具确认请求一起透传到 ChannelManager；预处理缓存键按处理模式隔离（分块/压缩结果不混用），单图压缩输出保留原文件名（不带 tile 后缀）。新增 6 个预处理回归测试与 5 个输入区复选框前端测试。
+
 ### Fixed
   - 修复 DeepSeek Vision PDF 预处理在 pdfjs-dist 4.x 下报 `No "GlobalWorkerOptions.workerSrc" specified.` 与 `Cannot read properties of undefined (reading 'createElement')`：两层根因——①pdfjs 4.x 的 fake worker（`disableWorker: true`）内部仍会执行 `await import(workerSrc)` 加载 `pdf.worker.mjs`，未设置 `GlobalWorkerOptions.workerSrc` 时 getter 直接抛错；②包默认入口 `build/pdf.mjs` 是浏览器构建，Node 环境渲染时会访问 DOM API（`document.createElement` 用于字体测量/排版）。现修复为：`DependencyManager.load` 支持子路径入口（缓存键 `name#subpath`，卸载/重建时一并清理），`getPdfjs` 优先加载 Node 专用构建 `legacy/build/pdf.mjs`（缺失时回退主入口）；渲染前将对应的 `legacy/build/pdf.worker.mjs`（回退 `build/pdf.worker.mjs`）转为 `file://` URL 写入 `GlobalWorkerOptions.workerSrc`。新增 load 子路径加载/缓存/卸载回归测试。
   - 修复同错误在 VS Code/Electron 扩展宿主中仍复现的第三层根因：pdf.js 的 isNodeJS 检测在 `process.versions.electron` 存在且 `process.type` 非 'browser'（多数扩展宿主进程）时为 false，默认画布工厂变为 `DOMCanvasFactory`——渲染透明分组/注解等需要 scratch canvas 的页面（`CachedCanvases`/`annotationCanvas`）时其 `_document`（`globalThis.document`）为 undefined 直接崩溃；同时 `disableFontFace`/`isOffscreenCanvasSupported` 默认值随 isNodeJS 翻转导致 FontLoader/OffscreenCanvas 路径访问 DOM。现 `renderPdf` 显式注入基于 `@napi-rs/canvas` 的 Node 画布工厂类（`getDocument` 的 `CanvasFactory` 参数要求传类而非实例，构造参数为 `{ ownerDocument, enableHWA }`），并显式 `disableFontFace: true`/`isOffscreenCanvasSupported: false`；标准字体与 CMap 读取改用文件系统工厂（DOM 版 `fetch` file:// 在 Node 宿主必然失败，文本会渲染为空白/方块）。在模拟 isNodeJS=false 宿主下全量渲染 25 页真实 PDF 验证通过，并新增 PDF 渲染回归断言。

@@ -1,4 +1,5 @@
 import {
+    calculateDeepSeekDownscaleSize,
     calculateDeepSeekTileGrid,
     buildDeepSeekTileRegions,
     clearDeepSeekVisionCache,
@@ -39,6 +40,7 @@ function createSharpMock(
             metadata: jest.fn().mockResolvedValue({ width, height }),
             rotate: jest.fn(() => chain),
             extract: jest.fn(() => chain),
+            resize: jest.fn(() => chain),
             jpeg: jest.fn(() => chain),
             png: jest.fn(() => chain),
             webp: jest.fn(() => chain),
@@ -142,6 +144,116 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(countHistoryImages(result)).toBe(4);
         // The input history is a request source and must not be rewritten in place.
         expect(history[0].parts).toHaveLength(1);
+    });
+
+    test('calculates aspect-preserving downscale sizes within the pixel budget', () => {
+        // 1600×1600 → 800×800（scale 0.5）
+        expect(calculateDeepSeekDownscaleSize(1_600, 1_600)).toEqual({ width: 800, height: 800 });
+        // 3200×800 → 1600×400（保持 4:1 宽高比）
+        expect(calculateDeepSeekDownscaleSize(3_200, 800)).toEqual({ width: 1_600, height: 400 });
+        // 1920×1080 → 1066×600（1024×640 预算等比例取整）
+        const sized = calculateDeepSeekDownscaleSize(1_920, 1_080);
+        expect(sized.width * sized.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_PIXELS);
+        expect(sized.width / sized.height).toBeCloseTo(1_920 / 1_080, 2);
+        // 极端超宽全景图：总像素预算之外还要压到 4096 长边限制内
+        const panorama = calculateDeepSeekDownscaleSize(40_960, 200);
+        expect(Math.max(panorama.width, panorama.height)).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_LONG_EDGE);
+        expect(panorama.width * panorama.height).toBeLessThanOrEqual(DEEPSEEK_VISION_MAX_TILE_PIXELS);
+        // 已达标图片原样返回，不触发无谓重编码
+        expect(calculateDeepSeekDownscaleSize(800, 800)).toEqual({ width: 800, height: 800 });
+        expect(calculateDeepSeekDownscaleSize(400, 300)).toEqual({ width: 400, height: 300 });
+        // 非法尺寸
+        expect(() => calculateDeepSeekDownscaleSize(0, 800)).toThrow();
+        expect(() => calculateDeepSeekDownscaleSize(-1, 800)).toThrow();
+        expect(() => calculateDeepSeekDownscaleSize(7.5, 800)).toThrow();
+    });
+
+    test('downscales an oversized image to a single part instead of splitting', async () => {
+        const sharp = createSharpMock(1_600, 1_600);
+        mockGetSharp.mockResolvedValue(sharp);
+        const history = [{ role: 'user' as const, parts: [imagePart(1_600, 1_600)] }];
+
+        const result = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp',
+            true,
+            undefined,
+            false
+        );
+
+        // 不拆分：只输出 1 张，文件名不带 tile- 后缀
+        expect(result[0].parts).toHaveLength(1);
+        expect(result[0].parts[0].inlineData?.name).toBe('diagram.png');
+        expect(countHistoryImages(result)).toBe(1);
+        // resize 被调用且目标尺寸为 800×800（预算内），extract（分块）不被调用。
+        // 注意：每次 sharp(buffer) 调用都会返回新 chain，resize 发生在最后一次
+        // pipeline 构造的 chain 上（rotate 之后），因此遍历全部结果链查找。
+        const factory = sharp as jest.Mock;
+        const chains = factory.mock.results.map(r => r.value) as any[];
+        const resizeCalls = chains.flatMap(chain => (chain?.resize?.mock?.calls ?? []) as [number, number][]);
+        expect(resizeCalls).toHaveLength(1);
+        expect(resizeCalls[0][0]).toBe(800);
+        expect(resizeCalls[0][1]).toBe(800);
+        expect(chains.flatMap(chain => (chain?.extract?.mock?.calls ?? []) as unknown[])).toHaveLength(0);
+        // 输入不被改写
+        expect(history[0].parts).toHaveLength(1);
+    });
+
+    test('keeps a within-budget image untouched in downscale mode', async () => {
+        const sharp = createSharpMock(800, 800);
+        mockGetSharp.mockResolvedValue(sharp);
+        const history = [{ role: 'user' as const, parts: [imagePart(800, 800)] }];
+
+        const result = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp',
+            true,
+            undefined,
+            false
+        );
+
+        expect(result[0].parts).toHaveLength(1);
+        expect(result[0].parts[0].inlineData?.name).toBe('diagram.png');
+        const factory = sharp as jest.Mock;
+        const chains = factory.mock.results.map(r => r.value) as any[];
+        expect(chains.flatMap(chain => (chain?.resize?.mock?.calls ?? []) as unknown[])).toHaveLength(0);
+        expect(chains.flatMap(chain => (chain?.extract?.mock?.calls ?? []) as unknown[])).toHaveLength(0);
+    });
+
+    test('does not mix tile and downscale cache entries for the same image bytes', async () => {
+        const sharp = createSharpMock(1_600, 1_600);
+        mockGetSharp.mockResolvedValue(sharp);
+        const history = [{ role: 'user' as const, parts: [imagePart(1_600, 1_600)] }];
+
+        // 先 downscale：缓存一份压缩结果
+        const downscaled = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp',
+            true,
+            undefined,
+            false
+        );
+        expect(downscaled[0].parts).toHaveLength(1);
+
+        // 再 tile：命中模式隔离后的分块缓存（不是 1 张，而是 4 张）
+        const tiled = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp',
+            true,
+            undefined,
+            true
+        );
+        expect(tiled[0].parts).toHaveLength(4);
+
+        // 再次 downscale：仍然只有 1 张
+        const downscaledAgain = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp',
+            true,
+            undefined,
+            false
+        );
+        expect(downscaledAgain[0].parts).toHaveLength(1);
     });
 
     test('renders every PDF page as an image while preserving page order', async () => {

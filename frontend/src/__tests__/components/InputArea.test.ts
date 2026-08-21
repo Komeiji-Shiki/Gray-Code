@@ -319,3 +319,118 @@ describe('InputArea 发送失败恢复', () => {
     expect(runtime.config.listConfigIds).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('InputArea DeepSeek Vision 拆分复选框', () => {
+  let wrapper: VueWrapper | undefined
+
+  const visionConfig = {
+    id: 'cfg_1',
+    name: 'DeepSeek Vision',
+    type: 'openai',
+    enabled: true,
+    model: 'deepseek-v4-flash-vision-exp',
+    deepSeekVisionEnabled: true
+  }
+
+  async function mountWithVisionConfig(attachments: Attachment[], overrides: Record<string, unknown> = {}) {
+    runtime.config.listConfigIds.mockResolvedValue(['cfg_1'] as any)
+    runtime.config.getConfig.mockResolvedValue({ ...visionConfig, ...overrides } as any)
+    runtime.chatStore.configId = 'cfg_1'
+
+    const mounted = mount(InputArea, {
+      props: { attachments },
+      global: { stubs }
+    })
+    await nextTick()
+    await flushPromises()
+    return mounted
+  }
+
+  beforeEach(() => {
+    runtime.chatStore = reactive({
+      editorNodes: [] as EditorNode[],
+      inputValue: '',
+      isWaitingForResponse: false,
+      messageQueue: [] as any[],
+      hasPendingToolConfirmation: false,
+      currentConfig: { model: 'deepseek-v4-flash-vision-exp' },
+      selectedModelId: 'deepseek-v4-flash-vision-exp',
+      configId: 'cfg_1',
+      currentPromptModeId: 'code',
+      autoSummaryStatus: null,
+      tokenUsagePercent: 0,
+      usedTokens: 0,
+      maxContextTokens: 100,
+      currentConversationId: null,
+      setEditorNodes(nodes: EditorNode[]) { this.editorNodes = nodes },
+      setInputValue(v: string) { this.inputValue = v },
+      clearInputValue() { this.inputValue = '' },
+      enqueueMessage: vi.fn(),
+      setCurrentPromptModeId: vi.fn(),
+      createManualCheckpoint: vi.fn()
+    })
+    runtime.settingsStore = reactive({
+      promptModesVersion: 0,
+      tpsBarEnabled: false,
+      showSettings: vi.fn()
+    })
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = undefined
+    vi.restoreAllMocks()
+  })
+
+  test('有图片附件 + Vision 预处理开启 + Vision 模型：复选框显示且默认勾选（拆分）', async () => {
+    wrapper = await mountWithVisionConfig([makeAttachment()])
+
+    const toggle = wrapper.find('.vision-split-toggle')
+    expect(toggle.exists()).toBe(true)
+    expect((toggle.find('input').element as HTMLInputElement).checked).toBe(true)
+
+    // 发送时 options 携带 deepSeekVisionTileSplit: true
+    runtime.chatStore.editorNodes = makeTextNodes('hi')
+    await nextTick()
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+    const emitted = wrapper.emitted('send')
+    expect(emitted).toBeTruthy()
+    const last = emitted![emitted!.length - 1]
+    expect(last[2]).toEqual({ deepSeekVisionTileSplit: true })
+  })
+
+  test('取消勾选：发送时携带 deepSeekVisionTileSplit: false（压缩模式）', async () => {
+    wrapper = await mountWithVisionConfig([makeAttachment()])
+    runtime.chatStore.editorNodes = makeTextNodes('hi')
+    await nextTick()
+
+    const checkbox = wrapper.find('.vision-split-toggle input')
+    await checkbox.setValue(false)
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+
+    const emitted = wrapper.emitted('send')
+    const last = emitted![emitted!.length - 1]
+    expect(last[2]).toEqual({ deepSeekVisionTileSplit: false })
+  })
+
+  test('无图片附件：复选框不显示', async () => {
+    wrapper = await mountWithVisionConfig([])
+    expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
+  })
+
+  test('图片附件但 deepSeekVisionEnabled 关闭：复选框不显示', async () => {
+    wrapper = await mountWithVisionConfig([makeAttachment()], { deepSeekVisionEnabled: false })
+    expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
+  })
+
+  test('图片附件 + 预处理开启但模型非 Vision：复选框不显示', async () => {
+    wrapper = await mountWithVisionConfig([makeAttachment()], { model: 'deepseek-chat' })
+    // 当前模型来自 chatStore.selectedModelId，保持 vision 时也覆盖为 chat
+    runtime.chatStore.selectedModelId = 'deepseek-chat'
+    await nextTick()
+    expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
+  })
+})
