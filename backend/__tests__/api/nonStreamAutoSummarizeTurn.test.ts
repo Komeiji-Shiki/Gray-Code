@@ -116,6 +116,8 @@ describe('非流式循环自动总结的回合级计数与 abort 信号', () => 
             'cfg-1',
             undefined,
             'deepseek-v4-flash',
+            // 第 5 参为 requestContext（preserve 路径上下文透传），只断言其存在与关键字段
+            expect.objectContaining({ preservePrefix: true }),
         );
     });
 

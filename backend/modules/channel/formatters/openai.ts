@@ -221,8 +221,9 @@ export class OpenAIFormatter extends BaseFormatter {
      * DeepSeek Chat Completions 支持 user_id 顶层字段。
      *
      * 只有调用方显式传入 conversationId 时才生成 user_id。
-     * 主聊天请求会传入真实对话 ID；总结、子代理等内部请求默认不传，
-     * 这样可以避免把不同前缀空间误并到主聊天 KVCache 隔离域里。
+     * 主聊天请求会传入真实对话 ID；preserve 路径的总结请求也透传同一 conversationId，
+     * 与主请求共享同一 user_id（KVCache 隔离域一致）；独立模型/子代理等内部请求不传，
+     * 避免把不同前缀空间误并到主聊天 KVCache 隔离域里。
      * 此功能由渠道设置 deepSeekUserIdEnabled 显式控制，默认关闭，避免误判兼容服务。
      *
      * 续跑（continueFromRunId）时 executor 会把 conversationId 直接沿用旧 runId，

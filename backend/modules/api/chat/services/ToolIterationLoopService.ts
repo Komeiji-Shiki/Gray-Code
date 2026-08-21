@@ -671,6 +671,10 @@ export class ToolIterationLoopService {
             }
 
             // 3. 获取对话历史（应用上下文裁剪）
+            // 先计算本轮主请求将使用的 system prompt，自动总结会复用同一前缀。
+            const dynamicSystemPrompt = (isFirstMessage && iteration === 1)
+                ? this.promptManager.refreshAndGetPrompt(promptModeSnapshot, runtimeContext)
+                : this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
             const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
             let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
@@ -717,7 +721,15 @@ export class ToolIterationLoopService {
                         conversationId,
                         configId,
                         merged.signal,
-                        modelOverride
+                        modelOverride,
+                        {
+                            preservePrefix: true,
+                            dynamicSystemPrompt,
+                            promptContext,
+                            dynamicContextStrategy,
+                            promptModeSnapshot,
+                            history: trimResult.history
+                        }
                     );
                 } finally {
                     merged.dispose();
@@ -816,12 +828,8 @@ export class ToolIterationLoopService {
             contextManagementEvaluatedForTurn = true;
             const { history } = trimResult;
 
-            // 4. 获取静态系统提示词（可被 API provider 缓存）
-            // 静态部分包含：操作系统、时区、用户语言、工作区路径、工具定义
-            const dynamicSystemPrompt = (isFirstMessage && iteration === 1)
-                ? this.promptManager.refreshAndGetPrompt(promptModeSnapshot, runtimeContext)
-                : this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
-
+            // 4. 主请求与自动总结共用同一份静态 system prompt；总结请求只在末尾追加 user 指令。
+            // （dynamicSystemPrompt 已在本轮上下文管理前计算，避免总结前后出现前缀差异。）
             // 5. 记录请求开始时间
             const requestStartTime = Date.now();
 
@@ -1810,6 +1818,8 @@ export class ToolIterationLoopService {
             }
 
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）
+            // 先计算主请求 system prompt；自动总结将复用它，只在末尾追加 user 指令。
+            const dynamicSystemPrompt = this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
             let trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
@@ -1849,7 +1859,15 @@ export class ToolIterationLoopService {
                         conversationId,
                         configId,
                         merged.signal,
-                        modelOverride
+                        modelOverride,
+                        {
+                            preservePrefix: true,
+                            dynamicSystemPrompt,
+                            promptContext,
+                            dynamicContextStrategy,
+                            promptModeSnapshot,
+                            history: trimResult.history
+                        }
                     );
                 } finally {
                     merged.dispose();
@@ -1900,12 +1918,8 @@ export class ToolIterationLoopService {
             contextManagementEvaluatedForTurn = true;
             const history = trimResult.history;
 
-            // 获取静态系统提示词（可被 API provider 缓存）
-            // 与流式路径（runToolLoop 顶部）的差异说明：流式在 isFirstMessage && iteration===1 时
-            // 用 refreshAndGetPrompt 强制刷新一次（环境上下文新鲜度优先），后续迭代与非流式一致
-            // 复用 getSystemPrompt 的缓存；非流式路径首轮不强制刷新，行为差异是有意设计。
-            const dynamicSystemPrompt = this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
-
+            // 主请求与自动总结共用同一份静态 system prompt；总结请求只在末尾追加 user 指令。
+            // （dynamicSystemPrompt 已在本轮上下文管理前计算。）
             // 调用 AI（非流式）；透传 abortSignal：非流式模型生成阶段同样需要支持取消
             const response = await this.channelManager.generate({
                 configId,

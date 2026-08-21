@@ -22,8 +22,9 @@ import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { Content, ContentPart } from '../../../conversation/types';
 import type { SummaryTokenStats } from '../../../conversation/types';
 import { getGlobalBranchService } from '../../../conversation/branch/BranchService';
-import type { GenerateResponse, StreamChunk } from '../../../channel/types';
+import type { GenerateResponse, StreamChunk, RequestPromptContext } from '../../../channel/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
+import type { DynamicContextStrategy, ResolvedPromptModeSnapshot } from '../../../settings/types';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import type { ContextTrimService } from './ContextTrimService';
 import {
@@ -68,6 +69,61 @@ Follow this exact structure:
 6. Open Questions / Risks
 Use concise bullet points under each section.
 Preserve exact technical details (file paths, function names, config keys, IDs, and numbers).`;
+
+/** 仅追加到总结 user 消息末尾的详细操作要求；不改变其他请求参数。 */
+const DETAILED_SUMMARIZE_USER_PROMPT = `Temporarily pause the current task and do not continue implementation or call tools. Read and analyze every preceding message carefully, then produce a detailed standalone handoff summary so the task can resume without rereading the full history. Preserve exact user requirements, decisions, file paths, symbols, configuration keys, API names, IDs, numbers, error messages, test results, constraints, unresolved questions, and risks. Clearly distinguish the original goal, completed work, current state, pending work, and the exact next actions. Include important edge cases and explain why key implementation choices were made. Do not answer the original task, modify files, or omit unfinished details; output only the comprehensive summary.`;
+
+/** 总结截止锚点提示模板：提示模型忽略锚点消息及其之后的内容（保留区逐字保留）。 */
+const SUMMARY_ANCHOR_HINT = `\n\nIMPORTANT BOUNDARY: The summary must cover ONLY the conversation up to (but not including) the message quoted below. Everything starting from that message must be preserved verbatim and MUST NOT appear in the summary. Stop at the boundary and ignore all messages after it. Boundary message: "{anchor}"`;
+
+/** 锚点文本最大长度（字符）。 */
+const SUMMARY_ANCHOR_MAX_CHARS = 120;
+
+/**
+ * 从保留区（fullHistory 中从 insertIndex 起）提取第一条有文本的消息作为总结截止锚点。
+ *
+ * 保留区是「最近保留、不参与总结」的内容；用其首条文本做锚点，总结模型即可把
+ * 总结范围与落盘标记范围对齐（提示词只影响文本，不改变发送前缀，缓存继续命中）。
+ * 保留区没有可引用的文本（全为工具消息等）时返回 undefined。
+ */
+export function extractSummaryAnchorText(fullHistory: Content[], insertIndex: number): string | undefined {
+    for (let i = insertIndex; i < fullHistory.length; i++) {
+        const text = extractFirstMessageText(fullHistory[i]);
+        if (text) return text;
+    }
+    return undefined;
+}
+
+/** 提取消息中第一条有意义的文本（拼接所有 text part，压缩空白，截断到锚点长度）。 */
+function extractFirstMessageText(message: Content): string | undefined {
+    const parts = message.parts;
+    if (!Array.isArray(parts)) return undefined;
+    const text = parts
+        .filter(p => typeof p.text === 'string' && p.text.trim() && !p.thought)
+        .map(p => p.text)
+        .join('\n')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!text) return undefined;
+    return text.length > SUMMARY_ANCHOR_MAX_CHARS
+        ? text.slice(0, SUMMARY_ANCHOR_MAX_CHARS)
+        : text;
+}
+
+interface AutoSummaryRequestContext {
+    /** 当前主请求已经计算出的、可复用的动态 system prompt。 */
+    dynamicSystemPrompt?: string;
+    /** 当前主请求的动态上下文插入位置与消息快照。 */
+    promptContext?: RequestPromptContext;
+    /** 当前主请求使用的动态上下文策略。 */
+    dynamicContextStrategy?: DynamicContextStrategy;
+    /** 当前主请求使用的提示词/工具策略快照。 */
+    promptModeSnapshot?: ResolvedPromptModeSnapshot;
+    /** 触发总结时主请求实际准备发送的完整历史（含最新工具调用/结果）。 */
+    history?: Content[];
+    /** 是否要求总结请求保持主请求前缀，而不是走清洗隔离路径。 */
+    preservePrefix?: boolean;
+}
 const SUMMARY_PROVIDER_RESERVE_RATIO = 0.02;
 const MIN_SUMMARY_PROVIDER_RESERVE_TOKENS = 32;
 // summarizeMaxInputRatio 是“自动总结缩小范围”的软预算设置；手动总结不应被默认 50% 提前拒绝。
@@ -226,12 +282,12 @@ export class SummarizeService {
             const configuredPrompt = typeof summarizeConfig?.autoSummarizePrompt === 'string'
                 ? summarizeConfig.autoSummarizePrompt.trim()
                 : '';
-            const prompt = configuredPrompt || defaultPrompt;
+            const basePrompt = configuredPrompt || defaultPrompt;
             const summaryBudget = this.resolveSummaryInputBudget(
                 config,
                 actualModelId,
                 clampSummarizeMaxInputRatio(summarizeConfig?.summarizeMaxInputRatio),
-                prompt
+                basePrompt
             );
             const fitted = this.fitSummaryHistoryPrefixToBudget(
                 options.history,
@@ -263,7 +319,10 @@ export class SummarizeService {
                 configId: actualConfigId,
                 history: [
                     ...cleanedMessages,
-                    { role: 'user', parts: [{ text: prompt }] }
+                    {
+                        role: 'user',
+                        parts: [{ text: this.buildDetailedSummaryPrompt(basePrompt) }]
+                    }
                 ],
                 abortSignal: options.abortSignal,
                 skipTools: true,
@@ -365,11 +424,19 @@ export class SummarizeService {
         return undefined;
     }
 
+    private buildDetailedSummaryPrompt(prompt: string, anchorText?: string): string {
+        const anchorHint = anchorText
+            ? SUMMARY_ANCHOR_HINT.replace('{anchor}', anchorText)
+            : '';
+        return `${prompt}\n\n${DETAILED_SUMMARIZE_USER_PROMPT}${anchorHint}`;
+    }
+
     private resolveSummaryInputBudget(
         config: BaseChannelConfig,
         modelOverride: string | undefined,
         inputRatio: number,
-        prompt: string
+        prompt: string,
+        dynamicSystemPrompt?: string
     ): {
         modelMaxContextTokens: number;
         modelMaxInputTokens: number;
@@ -390,7 +457,7 @@ export class SummarizeService {
         const maxInputTokens = Math.max(1, Math.floor(modelMaxInputTokens * inputRatio));
         const systemPromptTokens = this.estimateSingleMessageTokensLocally({
             role: 'user',
-            parts: [{ text: BUILTIN_SUMMARIZE_SYSTEM_PROMPT }]
+            parts: [{ text: dynamicSystemPrompt || BUILTIN_SUMMARIZE_SYSTEM_PROMPT }]
         });
         const userPromptTokens = this.estimateSingleMessageTokensLocally({
             role: 'user',
@@ -560,7 +627,7 @@ export class SummarizeService {
             // 7. 构建总结请求（用户提示词可在设置中配置）
             const defaultPrompt = t('modules.api.chat.prompts.defaultSummarizePrompt');
             const configuredManualPrompt = configSummarizePrompt.trim();
-            const prompt = configuredManualPrompt || defaultPrompt;
+            const basePrompt = configuredManualPrompt || defaultPrompt;
 
             // 清理历史中不应发送给 API 的内部字段
             const cleanedMessages = this.cleanMessagesForSummarize(messagesToSummarize, config);
@@ -569,7 +636,7 @@ export class SummarizeService {
                 config,
                 actualModelId,
                 MANUAL_SUMMARY_MAX_INPUT_RATIO,
-                prompt
+                basePrompt
             );
             const estimatedHistoryTokens = this.estimateMessagesTokens(cleanedMessages, config.type);
             if (estimatedHistoryTokens > summaryBudget.maxHistoryTokens) {
@@ -605,7 +672,7 @@ export class SummarizeService {
                 ...cleanedMessages,
                 {
                     role: 'user',
-                    parts: [{ text: prompt }]
+                    parts: [{ text: this.buildDetailedSummaryPrompt(basePrompt) }]
                 }
             ];
 
@@ -976,7 +1043,8 @@ export class SummarizeService {
         conversationId: string,
         configId: string,
         abortSignal?: AbortSignal,
-        modelOverride?: string
+        modelOverride?: string,
+        requestContext?: AutoSummaryRequestContext
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         try {
             const currentModelOverride = typeof modelOverride === 'string'
@@ -1050,7 +1118,14 @@ export class SummarizeService {
                 };
             }
 
-            // 3. 获取对话历史
+            // 复用主渠道/模型时，总结请求必须保持主请求前缀：system prompt、动态上下文、
+            // 工具声明和原始历史都不改写，只在尾部追加总结 user 消息。独立总结模型仍走
+            // 清洗隔离路径，避免把主模型专属内容发给另一渠道。
+            const preserveRequestPrefix = requestContext?.preservePrefix === true
+                && actualConfigId === configId;
+            const summaryDynamicSystemPrompt = preserveRequestPrefix
+                ? requestContext?.dynamicSystemPrompt
+                : undefined;
             const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
 
             this.log.info('auto.history_loaded', { conversationId, fullHistoryLength: fullHistory.length });
@@ -1106,12 +1181,13 @@ export class SummarizeService {
             // provider 消息包装预留输入预算，不能只统计被总结的历史消息。
             const defaultAutoPrompt = t('modules.api.chat.prompts.autoSummarizePrompt');
             const configuredAutoPrompt = configAutoSummarizePrompt.trim();
-            const prompt = configuredAutoPrompt || defaultAutoPrompt;
+            const basePrompt = configuredAutoPrompt || defaultAutoPrompt;
             const summaryBudget = this.resolveSummaryInputBudget(
                 config,
                 actualModelId,
                 configSummarizeMaxInputRatio,
-                prompt
+                basePrompt,
+                summaryDynamicSystemPrompt
             );
 
             // 估算待总结消息的 token 量（口径与 resolveSummarizeRange 的预算估算一致：
@@ -1313,30 +1389,53 @@ export class SummarizeService {
                 keepRecentRounds
             });
 
+            const summaryMessages = preserveRequestPrefix && requestContext?.history
+                ? requestContext.history
+                : (preserveRequestPrefix ? messagesToSummarize : cleanedMessages);
+            // preserve 路径下发送历史包含保留区（最近 keepRecent 内容）；用保留区首条文本做
+            // 总结截止锚点，提示模型不要总结它及之后的内容，使总结文本范围与落盘标记范围一致。
+            const summaryAnchorText = preserveRequestPrefix && insertIndex < fullHistory.length
+                ? extractSummaryAnchorText(fullHistory, insertIndex)
+                : undefined;
             const summaryRequestHistory: Content[] = [
-                ...cleanedMessages,
+                ...summaryMessages,
                 {
                     role: 'user',
-                    parts: [{ text: prompt }]
+                    parts: [{ text: this.buildDetailedSummaryPrompt(basePrompt, summaryAnchorText) }]
                 }
             ];
 
-            // 9. 调用 AI 生成总结
+            // 9. 调用 AI 生成总结。复用前缀时保留主请求的动态上下文、工具声明、
+            // conversationId 和 system prompt；总结指令只存在于最后的 user 消息中。
             const generateOptions: {
                 configId: string;
                 history: Content[];
                 abortSignal?: AbortSignal;
-                skipTools: boolean;
-                skipRetry: boolean;
+                skipTools?: boolean;
+                skipRetry?: boolean;
                 modelOverride?: string;
-                dynamicSystemPrompt: string;
+                dynamicSystemPrompt?: string;
+                promptContext?: RequestPromptContext;
+                dynamicContextStrategy?: DynamicContextStrategy;
+                promptModeSnapshot?: ResolvedPromptModeSnapshot;
+                conversationId?: string;
             } = {
                 configId: actualConfigId,
                 history: summaryRequestHistory,
                 abortSignal,
-                skipTools: true,
-                dynamicSystemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT,
-                skipRetry: true
+                ...(preserveRequestPrefix
+                    ? {
+                        dynamicSystemPrompt: summaryDynamicSystemPrompt,
+                        ...(requestContext?.promptContext ? { promptContext: requestContext.promptContext } : {}),
+                        ...(requestContext?.dynamicContextStrategy ? { dynamicContextStrategy: requestContext.dynamicContextStrategy } : {}),
+                        ...(requestContext?.promptModeSnapshot ? { promptModeSnapshot: requestContext.promptModeSnapshot } : {}),
+                        conversationId
+                    }
+                    : {
+                        skipTools: true,
+                        skipRetry: true,
+                        dynamicSystemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT
+                    })
             };
 
             if (actualModelId) {
