@@ -50,8 +50,8 @@ describe('InputAttachments', () => {
 
   it('renders a media tile with icon placeholder when no thumbnail', () => {
     const wrapper = mountAttachments([makeAttachment({ type: 'audio', mimeType: 'audio/mp3' })])
-    expect(wrapper.get('.attachment-tile.is-media .media-placeholder').exists()).toBe(true)
-    expect(wrapper.get('.media-placeholder .codicon-unmute').exists()).toBe(true)
+    expect(wrapper.find('.attachment-tile.is-media .media-placeholder').exists()).toBe(true)
+    expect(wrapper.find('.media-placeholder .codicon-unmute').exists()).toBe(true)
   })
 
   it('renders a document attachment as a compact chip', () => {
@@ -65,7 +65,7 @@ describe('InputAttachments', () => {
     const chip = wrapper.get('.attachment-tile:not(.is-media)')
     expect(chip.text()).toContain('report.pdf')
     expect(chip.text()).toContain('2 KB')
-    expect(chip.get('.codicon-file').exists()).toBe(true)
+    expect(chip.find('.codicon-file').exists()).toBe(true)
   })
 
   it('emits preview when clicking the media tile', async () => {
