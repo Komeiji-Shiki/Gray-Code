@@ -181,6 +181,137 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(document.destroy).toHaveBeenCalled();
     });
 
+    test('splits a GIF animation into sampled frames (max 5 fps)', async () => {
+        // 6 帧、每帧 100ms（总时长 0.6s）：采样点 t=0/200/400 → 帧 1/3/5，尾部补帧 6。
+        const factory = jest.fn((input: any, options?: any) => {
+            if (options?.animated === true && options.page === undefined) {
+                return {
+                    metadata: jest.fn().mockResolvedValue({ pages: 6, delay: [100, 100, 100, 100, 100, 100] })
+                };
+            }
+            const chain: any = {
+                metadata: jest.fn().mockResolvedValue({ width: 800, height: 800 }),
+                rotate: jest.fn(() => chain),
+                extract: jest.fn(() => chain),
+                flatten: jest.fn(() => chain),
+                jpeg: jest.fn(() => chain),
+                png: jest.fn(() => chain),
+                webp: jest.fn(() => chain),
+                toBuffer: jest.fn().mockResolvedValue(Buffer.from('gif-frame'))
+            };
+            return chain;
+        });
+        mockGetSharp.mockResolvedValue(factory);
+
+        const history = [{
+            role: 'user' as const,
+            parts: [{
+                inlineData: {
+                    mimeType: 'image/gif',
+                    data: Buffer.from('GIF89a-test').toString('base64'),
+                    name: 'anim.gif',
+                    id: 'gif-1'
+                }
+            }]
+        }];
+
+        const result = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+
+        expect(result[0].parts.map(part => part.text || part.inlineData?.name)).toEqual([
+            '[GIF frame 1/6 (0.0s-0.1s): anim.gif]',
+            'anim.gif frame-1-tile-1',
+            '[GIF frame 3/6 (0.2s-0.3s): anim.gif]',
+            'anim.gif frame-3-tile-1',
+            '[GIF frame 5/6 (0.4s-0.5s): anim.gif]',
+            'anim.gif frame-5-tile-1',
+            '[GIF frame 6/6 (0.5s-0.6s): anim.gif]',
+            'anim.gif frame-6-tile-1'
+        ]);
+        expect(result[0].parts.filter(part => part.inlineData)).toHaveLength(4);
+        expect(countHistoryImages(result)).toBe(4);
+        // 帧渲染按采样索引逐一进行（1/3/5/6 → 内部 0/2/4/5）。
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 0, animated: true });
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 2, animated: true });
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 4, animated: true });
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 5, animated: true });
+    });
+
+    test('falls back to 100ms frame duration when GIF metadata has no delay', async () => {
+        const factory = jest.fn((input: any, options?: any) => {
+            if (options?.animated === true && options.page === undefined) {
+                return { metadata: jest.fn().mockResolvedValue({ pages: 4 }) };
+            }
+            const chain: any = {
+                metadata: jest.fn().mockResolvedValue({ width: 400, height: 400 }),
+                rotate: jest.fn(() => chain),
+                extract: jest.fn(() => chain),
+                flatten: jest.fn(() => chain),
+                jpeg: jest.fn(() => chain),
+                png: jest.fn(() => chain),
+                webp: jest.fn(() => chain),
+                toBuffer: jest.fn().mockResolvedValue(Buffer.from('gif-frame'))
+            };
+            return chain;
+        });
+        mockGetSharp.mockResolvedValue(factory);
+
+        const history = [{
+            role: 'user' as const,
+            parts: [{
+                inlineData: {
+                    mimeType: 'image/gif',
+                    data: Buffer.from('GIF89a-test').toString('base64'),
+                    name: 'anim.gif'
+                }
+            }]
+        }];
+
+        const result = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+
+        // 4 帧 × 100ms：采样 t=0/200(帧3) + 尾部帧4。
+        expect(result[0].parts.map(part => part.text || part.inlineData?.name)).toEqual([
+            '[GIF frame 1/4 (0.0s-0.1s): anim.gif]',
+            'anim.gif frame-1-tile-1',
+            '[GIF frame 3/4 (0.2s-0.3s): anim.gif]',
+            'anim.gif frame-3-tile-1',
+            '[GIF frame 4/4 (0.3s-0.4s): anim.gif]',
+            'anim.gif frame-4-tile-1'
+        ]);
+    });
+
+    test('rejects GIFs with more frames than the DeepSeek image limit', async () => {
+        const factory = jest.fn((input: any, options?: any) => {
+            if (options?.animated === true && options.page === undefined) {
+                return { metadata: jest.fn().mockResolvedValue({ pages: DEEPSEEK_VISION_MAX_IMAGES + 1, delay: [100] }) };
+            }
+            const chain: any = { metadata: jest.fn().mockResolvedValue({ width: 400, height: 400 }) };
+            return chain;
+        });
+        mockGetSharp.mockResolvedValue(factory);
+
+        const history = [{
+            role: 'user' as const,
+            parts: [{
+                inlineData: {
+                    mimeType: 'image/gif',
+                    data: Buffer.from('GIF89a-test').toString('base64'),
+                    name: 'anim.gif'
+                }
+            }]
+        }];
+
+        await expect(prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        )).rejects.toThrow(/600-image request limit/);
+    });
+
     test('rejects requests exceeding the DeepSeek image count', () => {
         const body = {
             input: Array.from({ length: DEEPSEEK_VISION_MAX_IMAGES + 1 }, () => ({

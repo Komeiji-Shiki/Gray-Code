@@ -38,6 +38,14 @@ export const DEEPSEEK_VISION_MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 
 /** PDF 页面渲染倍率：PDF 默认坐标约为 72 DPI，2 倍约为 144 DPI。 */
 const PDF_RENDER_SCALE = 2;
+/** GIF 帧采样上限：每秒最多 5 帧（避免高帧率/长动画把请求冲击成图片堆）。 */
+export const GIF_MAX_FPS = 5;
+
+/** GIF 帧采样间隔（毫秒）。 */
+export const GIF_FRAME_INTERVAL_MS = 1000 / GIF_MAX_FPS;
+
+/** sharp metadata 未提供 delay 时假定的每帧时长（毫秒，约 10fps）。 */
+const GIF_DEFAULT_FRAME_DELAY_MS = 100;
 
 /** 防止异常 PDF 页面尺寸在栅格化时一次性申请过大的画布。 */
 const PDF_MAX_CANVAS_PIXELS = 40_000_000;
@@ -285,6 +293,12 @@ class DeepSeekVisionProcessor {
             return result;
         }
 
+        if (mimeType === 'image/gif') {
+            // 修改原因：DeepSeek 对 GIF 只取第一帧。这里按时间轴采样（每秒最多
+            // GIF_MAX_FPS 帧）把动画拆成多张 PNG，让模型看到完整动画内容。
+            return this.transformGif(buffer, inlineData.name || 'attachment.gif', inlineData.id);
+        }
+
         if (!mimeType.startsWith('image/')) {
             // 文本、音频等附件不属于 DeepSeek Vision 的图片输入，保留给
             // formatter 的既有文本/占位处理。
@@ -449,6 +463,99 @@ class DeepSeekVisionProcessor {
         return { width, height };
     }
 
+
+    /**
+     * 把 GIF 动画按时间轴采样拆帧后逐帧发送。
+     *
+     * 背景：DeepSeek 对 GIF 只取第一帧。这里读取动画元数据（帧数 + 每帧延迟），
+     * 按每秒最多 GIF_MAX_FPS 帧（GIF_FRAME_INTERVAL_MS 间隔）在时间轴上采样，
+     * 把选中的帧渲染为 PNG 并复用 transformRasterImage 做大小分块，
+     * 确保模型能看到动画的完整演进而不只是首帧。
+     */
+    private async transformGif(buffer: Buffer, displayName: string, id?: string): Promise<ContentPart[]> {
+        const sharp = await this.getSharpFactory();
+        if (!sharp) {
+            throw this.sharpRequiredError('image/gif');
+        }
+
+        let frameCount = 1;
+        let delays: number[] = [];
+        try {
+            const metadata = await sharp(buffer, { animated: true }).metadata();
+            frameCount = Number(metadata.pages) || 1;
+            // delay 数组单位是毫秒（libvips 语义）；缺失时按每帧 100ms 估算时间轴。
+            delays = Array.isArray(metadata.delay)
+                ? metadata.delay.map((d: number) => (Number.isFinite(d) && Number(d) > 0 ? Number(d) : GIF_DEFAULT_FRAME_DELAY_MS))
+                : Array.from({ length: frameCount }, () => GIF_DEFAULT_FRAME_DELAY_MS);
+        } catch (error) {
+            throw new DeepSeekVisionPreprocessingError(`Unable to read GIF metadata: ${this.errorMessage(error)}`);
+        }
+
+        if (frameCount > DEEPSEEK_VISION_MAX_IMAGES) {
+            throw new DeepSeekVisionPreprocessingError(
+                `The GIF has ${frameCount} frames, exceeding DeepSeek's ${DEEPSEEK_VISION_MAX_IMAGES}-image request limit.`
+            );
+        }
+
+        // 时间轴：每帧的起始时间（毫秒）。
+        const frameStarts: number[] = [];
+        let totalDurationMs = 0;
+        for (const delay of delays) {
+            frameStarts.push(totalDurationMs);
+            totalDurationMs += delay;
+        }
+
+        const findFrameAt = (timeMs: number): number => {
+            let index = 0;
+            for (let i = 0; i < frameStarts.length; i++) {
+                if (frameStarts[i] <= timeMs) {
+                    index = i;
+                } else {
+                    break;
+                }
+            }
+            return index;
+        };
+
+        // 采样：t = 0, GIF_FRAME_INTERVAL_MS, 2*GIF_FRAME_INTERVAL_MS, ...
+        // 至少覆盖首帧；尾部最后一帧即使显示时间短也保留（避免动画结尾丢失）。
+        const selectedFrames = new Set<number>();
+        for (let sampleTime = 0; sampleTime < totalDurationMs; sampleTime += GIF_FRAME_INTERVAL_MS) {
+            selectedFrames.add(findFrameAt(sampleTime));
+        }
+        selectedFrames.add(frameCount - 1);
+
+        const result: ContentPart[] = [];
+        const selectedIndexes = [...selectedFrames].sort((a, b) => a - b);
+        for (const frameIndex of selectedIndexes) {
+            this.throwIfAborted();
+            const frameBuffer = await this.renderGifFrame(sharp, buffer, frameIndex);
+            const frameImages = await this.transformRasterImage(frameBuffer, 'image/png');
+            const startSeconds = (frameStarts[frameIndex] / 1000).toFixed(1);
+            const endSeconds = ((frameStarts[frameIndex] + delays[frameIndex]) / 1000).toFixed(1);
+            result.push({
+                text: `[GIF frame ${frameIndex + 1}/${frameCount} (${startSeconds}s-${endSeconds}s): ${displayName}]`
+            });
+            result.push(...frameImages.map((image, index) => ({
+                inlineData: {
+                    mimeType: image.mimeType,
+                    data: image.data,
+                    id,
+                    name: `${displayName} frame-${frameIndex + 1}-tile-${index + 1}`
+                }
+            })));
+        }
+
+        return result;
+    }
+
+    /** 提取 GIF 的单个帧并编码为 PNG（透明背景填充白色，避免模型把透明区域看作黑色）。 */
+    private async renderGifFrame(sharp: any, buffer: Buffer, frameIndex: number): Promise<Buffer> {
+        return await sharp(buffer, { page: frameIndex, animated: true })
+            .flatten({ background: '#ffffff' })
+            .png({ compressionLevel: 9 })
+            .toBuffer();
+    }
     private async renderPdf(buffer: Buffer): Promise<RenderedPdfPage[]> {
         const canvasModule = await getCanvas();
         const pdfjsModule = await getPdfjs();
