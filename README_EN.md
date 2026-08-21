@@ -50,7 +50,8 @@ Try one of these prompts:
 - **Structured workflows** — Design, Plan, Progress, Review, and TODO tools keep complex work traceable from proposal through validation.
 - **Extensible agents** — Connect MCP servers, load reusable Skills, and delegate specialized work to foreground or background Sub-Agents.
 - **Local persistent memory** — Separate global and workspace memories retain conventions, knowledge, and decisions without an external memory service.
-- **Long-running work** — Message queues, automatic summarization, checkpoints, branching conversations, background result delivery, and usage statistics support extended tasks.
+- **Long-running work** — Message queues, automatic summarization, checkpoints, background result delivery, and usage statistics support extended tasks.
+- **Tree-branching conversations** — Retry and edit never overwrite old replies: every candidate branch can be switched to and grow independently, optionally restoring matching workspace checkpoints when switching, so alternative approaches can be explored without losing anything.
 
 [Explore all features →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features)
 
