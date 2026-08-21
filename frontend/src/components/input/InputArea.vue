@@ -649,6 +649,7 @@ watch(() => settingsStore.promptModesVersion, () => {
         @composition-start="handleCompositionStart"
         @composition-end="handleCompositionEnd"
         @paste="handlePasteFiles"
+        @drop-files="handlePasteFiles"
         @drop-file-items="handleDropFileItems"
         @open-context="handleOpenContext"
         @trigger-at-picker="handleTriggerAtPicker"

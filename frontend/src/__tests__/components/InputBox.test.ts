@@ -395,3 +395,115 @@ describe('InputBox 双撤销栈跨栈边界（前端 M2）', () => {
     delete (document as { execCommand?: unknown }).execCommand
   })
 })
+
+// ========== drag & drop ==========
+
+describe('InputBox drag & drop', () => {
+  let wrapper: VueWrapper
+
+  interface MockDropDataTransfer {
+    items?: DataTransferItem[]
+    files?: File[]
+    getData?: (format: string) => string
+    dropEffect?: string
+  }
+
+  function createDropEvent(dataTransfer: MockDropDataTransfer, mods?: { ctrlKey?: boolean; shiftKey?: boolean }): DragEvent {
+    const event = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        items: [],
+        files: [],
+        dropEffect: 'copy',
+        getData: () => '',
+        ...dataTransfer
+      } as unknown as DataTransfer,
+      configurable: true
+    })
+    Object.defineProperty(event, 'ctrlKey', { value: !!mods?.ctrlKey, configurable: true })
+    Object.defineProperty(event, 'shiftKey', { value: !!mods?.shiftKey, configurable: true })
+    return event
+  }
+
+  function fileItem(file: File): DataTransferItem {
+    return {
+      kind: 'file',
+      type: file.type || 'application/octet-stream',
+      getAsFile: () => file,
+      getAsString: () => undefined,
+      webkitGetAsEntry: () => null
+    } as unknown as DataTransferItem
+  }
+
+  beforeEach(() => {
+    wrapper = mount(InputBox, {
+      props: { nodes: [] }
+    })
+  })
+
+  afterEach(() => {
+    wrapper.unmount()
+    vi.restoreAllMocks()
+  })
+
+  test('拖入 PNG 图片：emit drop-files 且不触发路径逻辑', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const png = new File(['x'], 'photo.png', { type: 'image/png' })
+
+    editor.dispatchEvent(createDropEvent({ items: [fileItem(png)] }))
+
+    expect(wrapper.emitted('drop-files')![0]).toEqual([[png]])
+    expect(wrapper.emitted('drop-file-items')).toBeUndefined()
+  })
+
+  test('拖入 GIF/PDF/视频：均按附件处理', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const gif = new File(['x'], 'anim.gif', { type: 'image/gif' })
+    const pdf = new File(['x'], 'doc.pdf', { type: 'application/pdf' })
+    const mp4 = new File(['x'], 'clip.mp4', { type: 'video/mp4' })
+
+    editor.dispatchEvent(createDropEvent({ items: [fileItem(gif), fileItem(pdf), fileItem(mp4)] }))
+
+    expect(wrapper.emitted('drop-files')![0]).toEqual([[gif, pdf, mp4]])
+  })
+
+  test('拖入 txt（非目标类型）：走原有路径逻辑，不 emit drop-files', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const txt = new File(['x'], 'note.txt', { type: 'text/plain' })
+
+    editor.dispatchEvent(createDropEvent({ items: [fileItem(txt)], files: [txt] }))
+
+    expect(wrapper.emitted('drop-files')).toBeUndefined()
+    // extractVscodeDropItems 兜底 dt.files 时用文件名作为候选路径 → 仍走路径逻辑
+    expect(wrapper.emitted('drop-file-items')).toBeTruthy()
+  })
+
+  test('Ctrl+Shift 拖入图片：保持路径文本语义，不 emit drop-files', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const png = new File(['x'], 'photo.png', { type: 'image/png' })
+
+    editor.dispatchEvent(createDropEvent({ items: [fileItem(png)], files: [png] }, { ctrlKey: true, shiftKey: true }))
+
+    expect(wrapper.emitted('drop-files')).toBeUndefined()
+  })
+
+  test('items 为空时由 dt.files 兜底收集', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const jpg = new File(['x'], 'shot.jpg', { type: 'image/jpeg' })
+
+    editor.dispatchEvent(createDropEvent({ items: [], files: [jpg] }))
+
+    expect(wrapper.emitted('drop-files')![0]).toEqual([[jpg]])
+  })
+
+  test('混合拖入：只收集目标类型文件', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    const webp = new File(['x'], 'pic.webp', { type: 'image/webp' })
+    const txt = new File(['x'], 'note.txt', { type: 'text/plain' })
+    const zip = new File(['x'], 'archive.zip', { type: 'application/zip' })
+
+    editor.dispatchEvent(createDropEvent({ items: [fileItem(webp), fileItem(txt), fileItem(zip)] }))
+
+    expect(wrapper.emitted('drop-files')![0]).toEqual([[webp]])
+  })
+})

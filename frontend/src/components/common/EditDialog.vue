@@ -480,6 +480,7 @@ function handleRemoveAttachment(id: string) {
                 @update:nodes="handleNodesUpdate"
                 @remove-context="handleRemoveContext"
                 @paste="handlePasteFiles"
+                @drop-files="handlePasteFiles"
                 @drop-file-items="handleDropFileItems"
                 @open-context="handleOpenContext"
                 @trigger-at-picker="handleTriggerAtPicker"

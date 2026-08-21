@@ -58,6 +58,8 @@ const emit = defineEmits<{
   'composition-start': []
   'composition-end': []
   paste: [files: File[]]
+  /** contenteditable 内拖入的可读文件（图片/PDF/视频）：交给父层走附件链路 */
+  'drop-files': [files: File[]]
   /** contenteditable 内部拖拽文件/URI：交给父层解析为工作区相对路径 */
   'drop-file-items': [items: string[], insertAsTextPath: boolean, dragMeta?: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }]
   'trigger-at-picker': [query: string, triggerPosition: number]
@@ -618,6 +620,60 @@ function handlePaste(e: ClipboardEvent) {
 
 // ========== drag & drop ==========
 
+/**
+ * 拖拽附件类型白名单：图片（含 GIF/HEIC 等）、PDF、视频。
+ *
+ * 与后端多模态支持对齐：图片/PDF 可经 DeepSeek Vision 预处理（分块/栅格化/拆帧），
+ * 视频由 useAttachments 缩略图链路处理；其他文件（文本、压缩包等）保持非附件语义。
+ */
+const DROP_ATTACHMENT_MIME_PREFIXES = ['image/', 'video/'] as const
+const DROP_ATTACHMENT_EXTENSIONS = new Set([
+  // 图片（与 backend/tools/shared/multimodal.ts 的 IMAGE_MIME_TYPES 对齐）
+  '.png', '.jpg', '.jpeg', '.jfif', '.gif', '.webp', '.bmp', '.svg', '.ico', '.tif', '.tiff', '.heic', '.heif', '.avif',
+  // 文档
+  '.pdf',
+  // 视频
+  '.mp4', '.mov', '.avi', '.wmv', '.webm', '.mkv', '.3gp', '.flv', '.m4v'
+])
+
+function isDropAttachmentFile(file: File): boolean {
+  const mime = (file.type || '').toLowerCase()
+  if (mime === 'application/pdf') return true
+  if (DROP_ATTACHMENT_MIME_PREFIXES.some(prefix => mime.startsWith(prefix))) return true
+  const ext = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
+  return DROP_ATTACHMENT_EXTENSIONS.has(ext)
+}
+
+/**
+ * 从拖拽数据中收集可读文件（优先 DataTransfer.items 的 File，再兜底 dt.files）。
+ * 从 VS Code 文件树拖入时通常没有 File 对象（只有 uri-list），返回值保持为空。
+ */
+function collectDropFiles(dt: DataTransfer): File[] {
+  const files: File[] = []
+  const seen = new Set<string>()
+
+  const tryAdd = (file: File | null) => {
+    if (!file || !isDropAttachmentFile(file)) return
+    const key = `${file.name}:${file.size}:${file.lastModified}`
+    if (seen.has(key)) return
+    seen.add(key)
+    files.push(file)
+  }
+
+  if (dt.items) {
+    for (let i = 0; i < dt.items.length; i++) {
+      const item = dt.items[i]
+      if (item.kind === 'file') tryAdd(item.getAsFile())
+    }
+  }
+  if (files.length === 0 && dt.files) {
+    for (let i = 0; i < dt.files.length; i++) {
+      tryAdd(dt.files[i])
+    }
+  }
+  return files
+}
+
 function handleDragEnter(e: DragEvent) {
   e.preventDefault()
   e.stopPropagation()
@@ -654,6 +710,20 @@ function handleDrop(e: DragEvent) {
   if (!dt) return
 
   const insertAsTextPath = e.ctrlKey && e.shiftKey
+
+  // 修改原因：从 Windows 资源管理器拖入的图片/PDF/视频在 DataTransfer 中有可读的
+  // File 对象，但旧实现只提取 uriOrPath 字符串，工作区外路径经 resolveWorkspaceItems
+  // 解析后为空并被静默丢弃（表现为“拖不进去”）。
+  // 修改方式：非 Ctrl+Shift 拖入时优先收集可读文件，按附件链路处理；
+  // 无 File 对象（VS Code 文件树拖拽、纯 URI）仍走原有路径解析逻辑。
+  if (!insertAsTextPath) {
+    const files = collectDropFiles(dt)
+    if (files.length > 0) {
+      emit('drop-files', files)
+      return
+    }
+  }
+
   const items = extractVscodeDropItems(dt).map(i => i.uriOrPath)
   if (items.length > 0) {
     emit('drop-file-items', items, insertAsTextPath, {
