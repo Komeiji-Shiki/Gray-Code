@@ -10,6 +10,9 @@ import {
     prepareDeepSeekVisionHistory,
     validateDeepSeekVisionRequestBody
 } from '../../modules/channel/deepseekVision';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { getCanvas, getDependencyPath, getPdfjs, getSharp } from '../../modules/dependencies';
 
 jest.mock('../../modules/dependencies', () => ({
@@ -57,9 +60,24 @@ function imagePart(width = 800, height = 800, data = Buffer.from('image').toStri
 }
 
 describe('DeepSeek Vision preprocessing', () => {
+    let tempPdfjsDir: string;
+
     beforeEach(() => {
         jest.clearAllMocks();
         mockGetDependencyPath.mockReturnValue('/deps/pdfjs-dist');
+        // 创建真实临时 pdfjs-dist 目录（含 legacy/build/pdf.worker.mjs，与生产结构一致），
+        // 用于验证 workerSrc 设置；build/pdf.worker.mjs 用于验证 fallback 路径。
+        tempPdfjsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'graycode-pdfjs-'));
+        fs.mkdirSync(path.join(tempPdfjsDir, 'legacy', 'build'), { recursive: true });
+        fs.writeFileSync(path.join(tempPdfjsDir, 'legacy', 'build', 'pdf.worker.mjs'), '');
+        fs.mkdirSync(path.join(tempPdfjsDir, 'build'), { recursive: true });
+        fs.writeFileSync(path.join(tempPdfjsDir, 'build', 'pdf.worker.mjs'), '');
+    });
+
+    afterEach(() => {
+        if (tempPdfjsDir) {
+            fs.rmSync(tempPdfjsDir, { recursive: true, force: true });
+        }
     });
 
     test('only recognizes DeepSeek vision model identifiers', () => {
@@ -125,6 +143,8 @@ describe('DeepSeek Vision preprocessing', () => {
     test('renders every PDF page as an image while preserving page order', async () => {
         const sharp = createSharpMock(800, 800);
         mockGetSharp.mockResolvedValue(sharp);
+        // 指向真实临时目录（含 build/pdf.worker.mjs），确保 workerSrc 被设置
+        mockGetDependencyPath.mockReturnValue(tempPdfjsDir);
 
         const pages = [1, 2].map(pageNumber => ({
             getViewport: jest.fn(() => ({ width: 800, height: 800 })),
@@ -148,9 +168,11 @@ describe('DeepSeek Vision preprocessing', () => {
             ImageData: class ImageData {},
             createCanvas: jest.fn(() => canvas)
         });
-        mockGetPdfjs.mockResolvedValue({
+        const pdfjsMockModule = {
+            GlobalWorkerOptions: { workerSrc: undefined },
             getDocument: jest.fn(() => ({ promise: Promise.resolve(document) }))
-        });
+        };
+        mockGetPdfjs.mockResolvedValue(pdfjsMockModule);
 
         const history = [{
             role: 'user' as const,
@@ -179,6 +201,28 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(document.getPage).toHaveBeenCalledWith(1);
         expect(document.getPage).toHaveBeenCalledWith(2);
         expect(document.destroy).toHaveBeenCalled();
+        // 修复：fake worker 需要 workerSrc，验证其被设置为 legacy/build/pdf.worker.mjs 的 file:// URL
+        // pathToFileURL 生成的 URL 使用正斜杠（file:///C:/.../pdf.worker.mjs）
+        expect(pdfjsMockModule.GlobalWorkerOptions.workerSrc)
+            .toMatch(/^file:\/\/.*legacy.*pdf\.worker\.mjs$/);
+
+        // 修复：isNodeJS=false 的宿主（VS Code/Electron 中 process.type 非 'browser'）下 pdf.js
+        // 默认实例化 DOMCanvasFactory，渲染透明分组/注解页时访问 document.createElement 崩溃
+        // （"Cannot read properties of undefined (reading 'createElement')"），因此必须显式注入
+        // Node 画布工厂（大写 CanvasFactory 参数传类），并关闭 DOM 相关默认行为（disableFontFace /
+        // isOffscreenCanvasSupported）。同时标准字体/CMap 工厂必须是文件工厂（DOM 工厂 fetch file://
+        // 在 Node 宿主中必然失败，文本会空白/方块）。
+        const getDocumentCalls = pdfjsMockModule.getDocument.mock.calls as any[];
+        expect(getDocumentCalls.length).toBeGreaterThan(0);
+        const getDocumentParams = getDocumentCalls[0][0];
+        expect(getDocumentParams.disableFontFace).toBe(true);
+        expect(getDocumentParams.isOffscreenCanvasSupported).toBe(false);
+        expect(typeof getDocumentParams.CanvasFactory).toBe('function');
+        const factoryInstance = new getDocumentParams.CanvasFactory({});
+        const scratch = factoryInstance.create(320, 240);
+        expect(scratch.canvas).toBe(canvas);
+        expect(scratch.context).toBeDefined();
+        expect(getDocumentParams.StandardFontDataFactory).toBeDefined();
     });
 
     test('splits a GIF animation into sampled frames (max 5 fps)', async () => {

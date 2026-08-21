@@ -7,6 +7,8 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
+import { pathToFileURL } from 'url';
 import type { Content, ContentPart } from '../conversation/types';
 import {
     getCanvas,
@@ -204,6 +206,88 @@ interface EncodedImage {
     data: string;
     width: number;
     height: number;
+}
+
+/**
+ * 构造基于 @napi-rs/canvas 的 Node 画布工厂类（传给 pdf.js 的 CanvasFactory 参数）。
+ *
+ * pdf.js 的默认工厂选择依赖其 isNodeJS 检测：`process.versions.electron` 存在且
+ * `process.type` 非 'browser'（VS Code 扩展宿主在多数 Electron 进程中即如此）时
+ * isNodeJS 为 false，默认会实例化 DOMCanvasFactory；其内部使用
+ * `globalThis.document.createElement("canvas")`，Node 宿主中 document 为 undefined，
+ * 渲染透明分组/注解等需要 scratch canvas 的页面（CachedCanvases / annotationCanvas）时
+ * 直接抛 "Cannot read properties of undefined (reading 'createElement')"。
+ *
+ * 注意：pdf.js 只认 getDocument 参数中的大写 `CanvasFactory`（要求构造函数/类，
+ * 而非实例），实例化时传入 `{ ownerDocument, enableHWA }`，据此显式注入 Node 工厂。
+ */
+function createNodeCanvasFactory(canvasModule: any): any {
+    return class NodeCanvasFactory {
+        constructor(_options?: any) {}
+
+        create(width: number, height: number): any {
+            const canvas = canvasModule.createCanvas(
+                Math.max(1, Math.ceil(width)),
+                Math.max(1, Math.ceil(height))
+            );
+            return { canvas, context: canvas.getContext('2d') };
+        }
+
+        reset(canvasAndContext: any, width: number, height: number): void {
+            canvasAndContext.canvas.width = Math.max(1, Math.ceil(width));
+            canvasAndContext.canvas.height = Math.max(1, Math.ceil(height));
+        }
+
+        destroy(canvasAndContext: any): void {
+            canvasAndContext.canvas.width = 0;
+            canvasAndContext.canvas.height = 0;
+            canvasAndContext.canvas = null;
+            canvasAndContext.context = null;
+        }
+    };
+}
+
+/**
+ * 从文件系统读取 PDF 标准字体数据（基于路径的工厂）。
+ *
+ * pdf.js 默认的 DOMStandardFontDataFactory 通过 fetch 加载 standardFontDataUrl，
+ * Node 宿主中 file:// URL 不可 fetch，标准字体加载失败只会静默告警，但文本会
+ * 渲染为空白/方块——视觉模型看到的图会缺字。这里直接按 baseUrl 读本地文件。
+ */
+class FileStandardFontDataFactory {
+    private readonly baseUrl: string;
+
+    constructor({ baseUrl }: { baseUrl: string }) {
+        this.baseUrl = baseUrl;
+    }
+
+    async fetch({ filename }: { filename: string }): Promise<Uint8Array> {
+        return new Uint8Array(await fs.promises.readFile(path.join(this.baseUrl, filename)));
+    }
+}
+
+/**
+ * 从文件系统读取 CMap（.bcmap）数据，供 CJK 等复合字体映射使用。
+ *
+ * 与 FileStandardFontDataFactory 同理：DOMCMapReaderFactory 在 Node 宿主中
+ * fetch file:// 会失败，导致 CJK 文本空白。
+ */
+class FileCMapReaderFactory {
+    private readonly baseUrl: string;
+    readonly isCompressed: boolean;
+
+    constructor({ baseUrl, isCompressed = true }: { baseUrl: string; isCompressed?: boolean }) {
+        this.baseUrl = baseUrl;
+        this.isCompressed = isCompressed;
+    }
+
+    async fetch({ name }: { name: string }): Promise<{ cMapData: Uint8Array; isCompressed: boolean }> {
+        const suffix = this.isCompressed ? '.bcmap' : '';
+        return {
+            cMapData: new Uint8Array(await fs.promises.readFile(path.join(this.baseUrl, `${name}${suffix}`))),
+            isCompressed: this.isCompressed
+        };
+    }
 }
 
 class DeepSeekVisionProcessor {
@@ -581,9 +665,28 @@ class DeepSeekVisionProcessor {
             throw new DeepSeekVisionPreprocessingError('The installed pdfjs-dist module has no getDocument API.');
         }
 
-        const standardFontsRoot = getDependencyPath('pdfjs-dist');
+        // pdfjs-dist 4.x 的 fake worker（disableWorker: true）内部仍会执行
+        // `await import(workerSrc)` 加载 pdf.worker.mjs；若不设置 GlobalWorkerOptions.workerSrc，
+        // PDFWorker.workerSrc getter 会直接抛 "No GlobalWorkerOptions.workerSrc specified."。
+        // Node 环境下 import() 需要 file:// URL，裸路径会解析失败（ERR_MODULE_NOT_FOUND）。
+        // 主模块走的是 legacy build（getPdfjs 加载 legacy/build/pdf.mjs），fake worker
+        // 必须对应加载 legacy/build/pdf.worker.mjs，避免浏览器构建在 Node 下访问 DOM API 失败。
+        const pdfjsRoot = getDependencyPath('pdfjs-dist');
+        if (pdfjsRoot) {
+            const workerPath = path.join(pdfjsRoot, 'legacy', 'build', 'pdf.worker.mjs');
+            const fallbackWorkerPath = path.join(pdfjsRoot, 'build', 'pdf.worker.mjs');
+            const resolvedWorkerPath = fs.existsSync(workerPath) ? workerPath : fallbackWorkerPath;
+            if (fs.existsSync(resolvedWorkerPath)) {
+                pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(resolvedWorkerPath).href;
+            }
+        }
+
+        const standardFontsRoot = pdfjsRoot;
         const standardFontDataUrl = standardFontsRoot
             ? `${path.join(standardFontsRoot, 'standard_fonts')}${path.sep}`
+            : undefined;
+        const cMapRoot = pdfjsRoot && fs.existsSync(path.join(pdfjsRoot, 'cmaps'))
+            ? path.join(pdfjsRoot, 'cmaps')
             : undefined;
 
         let document: any;
@@ -592,7 +695,24 @@ class DeepSeekVisionProcessor {
                 data: new Uint8Array(buffer),
                 disableWorker: true,
                 useSystemFonts: false,
-                ...(standardFontDataUrl ? { standardFontDataUrl } : {})
+                // isNodeJS=false 的宿主（VS Code/Electron）中 pdf.js 默认走 DOM 路径：
+                // disableFontFace 默认 false → FontLoader 访问 document（style/fonts），
+                // isOffscreenCanvasSupported 默认 true → worker 侧 OffscreenCanvas 检测。
+                // 与 Node 默认行为对齐需要显式关闭；字体数据由下方工厂从文件系统读取。
+                disableFontFace: true,
+                isOffscreenCanvasSupported: false,
+                // 显式注入 Node 画布工厂：默认工厂在 isNodeJS=false 宿主中为
+                // DOMCanvasFactory，渲染透明分组/注解页时访问 document.createElement 崩溃。
+                CanvasFactory: createNodeCanvasFactory(canvasModule),
+                ...(standardFontDataUrl ? {
+                    standardFontDataUrl,
+                    StandardFontDataFactory: FileStandardFontDataFactory
+                } : {}),
+                ...(cMapRoot ? {
+                    cMapUrl: `${cMapRoot}${path.sep}`,
+                    cMapPacked: true,
+                    CMapReaderFactory: FileCMapReaderFactory
+                } : {})
             }).promise;
         } catch (error) {
             throw new DeepSeekVisionPreprocessingError(
