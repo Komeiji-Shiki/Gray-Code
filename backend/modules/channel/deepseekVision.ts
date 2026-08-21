@@ -8,8 +8,10 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
+import { createHash } from 'crypto';
 import { pathToFileURL } from 'url';
 import type { Content, ContentPart } from '../conversation/types';
+import { LruCache } from './deepseekVisionCache';
 import {
     getCanvas,
     getDependencyPath,
@@ -51,6 +53,21 @@ const GIF_DEFAULT_FRAME_DELAY_MS = 100;
 
 /** 防止异常 PDF 页面尺寸在栅格化时一次性申请过大的画布。 */
 const PDF_MAX_CANVAS_PIXELS = 40_000_000;
+
+/** PDF 渲染结果缓存：最多缓存 8 个文档（按内容哈希）。 */
+const PDF_CACHE_MAX_ENTRIES = 8;
+/** PDF 渲染结果缓存：总字节预算 128 MiB。 */
+const PDF_CACHE_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
+/** PDF 渲染结果缓存：单个文档超过 64 MiB 不缓存（防止一条巨无霸挤占预算）。 */
+const PDF_CACHE_MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+/** 图片分块结果缓存：最多 64 个条目。 */
+const RASTER_CACHE_MAX_ENTRIES = 64;
+/** 图片分块结果缓存：总字节预算 64 MiB（按 base64 编码后长度计）。 */
+const RASTER_CACHE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+/** GIF 帧 PNG 缓存：最多 128 帧。 */
+const GIF_FRAME_CACHE_MAX_ENTRIES = 128;
+/** GIF 帧 PNG 缓存：总字节预算 64 MiB。 */
+const GIF_FRAME_CACHE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
 const DEEPSEEK_IMAGE_MIME_TYPES = new Set([
     'image/jpeg',
@@ -206,6 +223,40 @@ interface EncodedImage {
     data: string;
     width: number;
     height: number;
+}
+
+/**
+ * 模块级预处理结果缓存（按输入字节 sha256 键控）。
+ *
+ * 缓存跨请求共享：ChannelManager 的请求转发与 TokenCountService 的 token
+ * 估算都调用 prepareDeepSeekVisionHistory，同一附件字节只渲染一次。
+ * 只缓存成功的 resolved 值，不缓存 in-flight promise——并发未命中时各自
+ * 渲染一次最坏只是重复计算，不会让某个请求的 abort 把共享 promise 连带拒绝。
+ */
+const pdfRenderCache = new LruCache<string, RenderedPdfPage[]>(
+    PDF_CACHE_MAX_ENTRIES,
+    PDF_CACHE_MAX_TOTAL_BYTES,
+    PDF_CACHE_MAX_ENTRY_BYTES
+);
+const rasterImageCache = new LruCache<string, EncodedImage[]>(
+    RASTER_CACHE_MAX_ENTRIES,
+    RASTER_CACHE_MAX_TOTAL_BYTES
+);
+const gifFrameCache = new LruCache<string, Buffer>(
+    GIF_FRAME_CACHE_MAX_ENTRIES,
+    GIF_FRAME_CACHE_MAX_TOTAL_BYTES
+);
+
+/** 清空全部预处理结果缓存（测试隔离 / 手动释放内存用）。 */
+export function clearDeepSeekVisionCache(): void {
+    pdfRenderCache.clear();
+    rasterImageCache.clear();
+    gifFrameCache.clear();
+}
+
+/** 内容哈希：相同字节得到相同键，附件 id/名称等元数据不参与键。 */
+function contentHash(buffer: Buffer): string {
+    return createHash('sha256').update(buffer).digest('hex');
 }
 
 /**
@@ -445,6 +496,13 @@ class DeepSeekVisionProcessor {
     }
 
     private async transformRasterImage(buffer: Buffer, inputMimeType: string): Promise<EncodedImage[]> {
+        // 缓存命中：同一图片字节（含 PDF 页 PNG、GIF 帧 PNG）的分块结果复用。
+        const cacheKey = `${contentHash(buffer)}|${inputMimeType}`;
+        const cached = rasterImageCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const sharp = await this.getSharpFactory();
         if (!sharp) {
             throw this.sharpRequiredError(inputMimeType);
@@ -500,6 +558,8 @@ class DeepSeekVisionProcessor {
             });
         }
 
+        const totalBytes = encoded.reduce((sum, image) => sum + image.data.length, 0);
+        rasterImageCache.set(cacheKey, encoded, totalBytes);
         return encoded;
     }
 
@@ -611,9 +671,17 @@ class DeepSeekVisionProcessor {
 
         const result: ContentPart[] = [];
         const selectedIndexes = [...selectedFrames].sort((a, b) => a - b);
+        // 帧提取+PNG 编码是 GIF 链路中的大头，按（GIF 哈希#帧号）缓存；
+        // 帧的分块结果由 rasterImageCache 兜底。
+        const gifHash = contentHash(buffer);
         for (const frameIndex of selectedIndexes) {
             this.throwIfAborted();
-            const frameBuffer = await this.renderGifFrame(sharp, buffer, frameIndex);
+            const frameCacheKey = `${gifHash}#${frameIndex}`;
+            let frameBuffer = gifFrameCache.get(frameCacheKey);
+            if (!frameBuffer) {
+                frameBuffer = await this.renderGifFrame(sharp, buffer, frameIndex);
+                gifFrameCache.set(frameCacheKey, frameBuffer, frameBuffer.length);
+            }
             const frameImages = await this.transformRasterImage(frameBuffer, 'image/png');
             const startSeconds = (frameStarts[frameIndex] / 1000).toFixed(1);
             const endSeconds = ((frameStarts[frameIndex] + delays[frameIndex]) / 1000).toFixed(1);
@@ -641,6 +709,14 @@ class DeepSeekVisionProcessor {
             .toBuffer();
     }
     private async renderPdf(buffer: Buffer): Promise<RenderedPdfPage[]> {
+        // 缓存命中：同一份 PDF 字节在多轮对话/请求转发/token 估算之间复用，
+        // 不再重新 getDocument + 逐页栅格化。
+        const cacheKey = contentHash(buffer);
+        const cached = pdfRenderCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const canvasModule = await getCanvas();
         const pdfjsModule = await getPdfjs();
         if (!canvasModule || !pdfjsModule) {
@@ -770,6 +846,8 @@ class DeepSeekVisionProcessor {
             await this.cleanupPdf(document);
         }
 
+        const totalBytes = pages.reduce((sum, page) => sum + page.data.length, 0);
+        pdfRenderCache.set(cacheKey, pages, totalBytes);
         return pages;
     }
 

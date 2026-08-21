@@ -1,6 +1,7 @@
 import {
     calculateDeepSeekTileGrid,
     buildDeepSeekTileRegions,
+    clearDeepSeekVisionCache,
     countHistoryImages,
     DEEPSEEK_VISION_MAX_IMAGES,
     DEEPSEEK_VISION_MAX_REQUEST_BYTES,
@@ -10,6 +11,7 @@ import {
     prepareDeepSeekVisionHistory,
     validateDeepSeekVisionRequestBody
 } from '../../modules/channel/deepseekVision';
+import { LruCache } from '../../modules/channel/deepseekVisionCache';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -64,6 +66,8 @@ describe('DeepSeek Vision preprocessing', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        // 预处理缓存是模块级的，测试间必须隔离：多个 GIF 测试使用相同输入字节。
+        clearDeepSeekVisionCache();
         mockGetDependencyPath.mockReturnValue('/deps/pdfjs-dist');
         // 创建真实临时 pdfjs-dist 目录（含 legacy/build/pdf.worker.mjs，与生产结构一致），
         // 用于验证 workerSrc 设置；build/pdf.worker.mjs 用于验证 fallback 路径。
@@ -371,5 +375,169 @@ describe('DeepSeek Vision preprocessing', () => {
         const body = { prompt: 'x'.repeat(DEEPSEEK_VISION_MAX_REQUEST_BYTES + 1) };
 
         expect(() => validateDeepSeekVisionRequestBody(body)).toThrow(/48/);
+    });
+
+    test('reuses cached PDF render for identical attachment bytes', async () => {
+        const sharp = createSharpMock(800, 800);
+        mockGetSharp.mockResolvedValue(sharp);
+        mockGetDependencyPath.mockReturnValue(tempPdfjsDir);
+
+        const pages = [1, 2].map(pageNumber => ({
+            getViewport: jest.fn(() => ({ width: 800, height: 800 })),
+            render: jest.fn(() => ({ promise: Promise.resolve() })),
+            cleanup: jest.fn(),
+            pageNumber
+        }));
+        const document = {
+            numPages: pages.length,
+            getPage: jest.fn(async (pageNumber: number) => pages[pageNumber - 1]),
+            cleanup: jest.fn(),
+            destroy: jest.fn(async () => undefined)
+        };
+        const canvas = {
+            getContext: jest.fn(() => ({})),
+            toBuffer: jest.fn(() => Buffer.from('rendered-page'))
+        };
+        mockGetCanvas.mockResolvedValue({
+            DOMMatrix: class DOMMatrix {},
+            Path2D: class Path2D {},
+            ImageData: class ImageData {},
+            createCanvas: jest.fn(() => canvas)
+        });
+        const pdfjsMockModule = {
+            GlobalWorkerOptions: { workerSrc: undefined },
+            getDocument: jest.fn(() => ({ promise: Promise.resolve(document) }))
+        };
+        mockGetPdfjs.mockResolvedValue(pdfjsMockModule);
+
+        const history = [{
+            role: 'user' as const,
+            parts: [{
+                inlineData: {
+                    mimeType: 'application/pdf',
+                    data: Buffer.from('%PDF-cache-test').toString('base64'),
+                    name: 'report.pdf',
+                    id: 'pdf-1'
+                }
+            }]
+        }];
+
+        const first = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+        const second = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+
+        // 第二次请求命中 PDF 渲染缓存：getDocument 不再执行，结果与第一次一致。
+        expect(pdfjsMockModule.getDocument).toHaveBeenCalledTimes(1);
+        expect(second).toEqual(first);
+    });
+
+    test('reuses cached image tiling for identical bytes', async () => {
+        const sharp = createSharpMock(1_600, 1_600);
+        mockGetSharp.mockResolvedValue(sharp);
+        const history = [{ role: 'user' as const, parts: [imagePart(1_600, 1_600)] }];
+
+        const first = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+        const callsAfterFirst = sharp.mock.calls.length;
+        const second = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+
+        // 第二次只做 transformInlineData 的 metadata 判断（1 次 sharp 调用），
+        // 分块 pipeline 命中 rasterImageCache 后不再执行。
+        expect(sharp.mock.calls.length).toBe(callsAfterFirst + 1);
+        expect(second).toEqual(first);
+    });
+
+    test('reuses cached GIF frames for identical bytes', async () => {
+        const factory = jest.fn((input: any, options?: any) => {
+            if (options?.animated === true && options.page === undefined) {
+                return {
+                    metadata: jest.fn().mockResolvedValue({ pages: 6, delay: [100, 100, 100, 100, 100, 100] })
+                };
+            }
+            const chain: any = {
+                metadata: jest.fn().mockResolvedValue({ width: 800, height: 800 }),
+                rotate: jest.fn(() => chain),
+                extract: jest.fn(() => chain),
+                flatten: jest.fn(() => chain),
+                jpeg: jest.fn(() => chain),
+                png: jest.fn(() => chain),
+                webp: jest.fn(() => chain),
+                toBuffer: jest.fn().mockResolvedValue(Buffer.from('gif-frame'))
+            };
+            return chain;
+        });
+        mockGetSharp.mockResolvedValue(factory);
+
+        const history = [{
+            role: 'user' as const,
+            parts: [{
+                inlineData: {
+                    mimeType: 'image/gif',
+                    data: Buffer.from('GIF89a-cache-test').toString('base64'),
+                    name: 'anim.gif',
+                    id: 'gif-1'
+                }
+            }]
+        }];
+
+        const first = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+        const callsAfterFirst = factory.mock.calls.length;
+        const second = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        );
+
+        // 第二次只做 GIF metadata 分析（1 次），帧提取与分块全部命中缓存。
+        expect(factory.mock.calls.length).toBe(callsAfterFirst + 1);
+        expect(second).toEqual(first);
+    });
+});
+
+describe('LruCache', () => {
+    test('evicts the least recently used entry at capacity', () => {
+        const cache = new LruCache<string, number>(2);
+        cache.set('a', 1, 1);
+        cache.set('b', 2, 1);
+        cache.get('a'); // refresh a
+        cache.set('c', 3, 1);
+        expect(cache.get('a')).toBe(1);
+        expect(cache.get('b')).toBeUndefined();
+        expect(cache.get('c')).toBe(3);
+    });
+
+    test('evicts oldest entries beyond the byte budget', () => {
+        const cache = new LruCache<string, number>(10, 5);
+        cache.set('a', 1, 3);
+        cache.set('b', 2, 3);
+        expect(cache.get('a')).toBeUndefined();
+        expect(cache.get('b')).toBe(2);
+        expect(cache.bytes).toBe(3);
+    });
+
+    test('does not cache entries larger than the per-entry budget', () => {
+        const cache = new LruCache<string, number>(10, 100, 10);
+        cache.set('big', 1, 11);
+        expect(cache.has('big')).toBe(false);
+    });
+
+    test('clear resets entries and byte accounting', () => {
+        const cache = new LruCache<string, number>(10);
+        cache.set('a', 1, 5);
+        cache.clear();
+        expect(cache.size).toBe(0);
+        expect(cache.bytes).toBe(0);
     });
 });
