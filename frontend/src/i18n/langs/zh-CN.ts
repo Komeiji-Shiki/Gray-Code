@@ -3012,6 +3012,11 @@ const zhCN = {
                     title: '请求用户标识（metadata.user_id）',
                     enable: '启用后为每个请求注入稳定的 metadata.user_id',
                     hint: '基于对话 ID（子代理为运行 ID）生成哈希标识，让主会话与各子代理的请求在服务端按运行域区分，缓存互不混淆；不包含任何隐私信息'
+                },
+                deepSeekVision: {
+                    title: 'DeepSeek Vision 图像预处理',
+                    hint: '为 deepseek-v4-flash-vision-exp 启用 PDF 逐页图像化，并将超过约 800×800 总像素的图片切成多个分块，避免 DeepSeek 自动缩小；需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
+                    toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
                 }
             },
             gemini: {

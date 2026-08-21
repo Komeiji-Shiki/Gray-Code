@@ -404,6 +404,7 @@ export class ConfigManager {
                 return {
                     ...baseDefaults,
                     url: 'https://api.anthropic.com/v1',
+                    deepSeekVisionEnabled: false,
                     options: {
                         ...baseDefaults.options,
                         temperature: 1.0,

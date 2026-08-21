@@ -3010,6 +3010,11 @@ const en: LanguageMessages = {
                     title: 'Request User ID (metadata.user_id)',
                     enable: 'Inject a stable metadata.user_id into each request',
                     hint: 'Generates a hashed identifier from the conversation ID (run ID for sub-agents), so the main session and each sub-agent are distinguished server-side and caches never mix; contains no private information'
+                },
+                deepSeekVision: {
+                    title: 'DeepSeek Vision preprocessing',
+                    hint: 'Enable PDF page rendering and split images above approximately 800×800 total pixels for deepseek-v4-flash-vision-exp, avoiding DeepSeek downscaling. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
+                    toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
                 }
             },
             gemini: {

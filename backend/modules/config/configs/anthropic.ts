@@ -197,4 +197,14 @@ export interface AnthropicConfig extends BaseChannelConfig {
      * 与 OpenAI 渠道的 deepSeekUserIdEnabled 机制对齐，默认关闭。
      */
     anthropicUserIdEnabled?: boolean;
+
+    /**
+     * 是否为 DeepSeek Vision 模型启用 PDF/图片预处理。
+     *
+     * 与 OpenAI 渠道的 deepSeekVisionEnabled 机制一致：当模型为
+     * deepseek-v4-flash-vision-exp 时，在请求发出前把 PDF 附件栅格化为逐页图片、
+     * 对超过约 800×800 总像素的图片分块，避免 DeepSeek 服务端缩小。
+     * 需要扩展依赖 sharp、pdfjs-dist 与 @napi-rs/canvas。
+     */
+    deepSeekVisionEnabled?: boolean;
 }

@@ -3010,6 +3010,11 @@ const ja: LanguageMessages = {
                     title: 'リクエストユーザー識別子（metadata.user_id）',
                     enable: '各リクエストに安定した metadata.user_id を注入します',
                     hint: '会話 ID（サブエージェントは実行 ID）からハッシュ識別子を生成し、メインセッションと各サブエージェントのリクエストをサーバー側で区別し、キャッシュの混在を防ぎます。個人情報は含みません'
+                },
+                deepSeekVision: {
+                    title: 'DeepSeek Vision 画像前処理',
+                    hint: 'deepseek-v4-flash-vision-exp で PDF のページ単位画像化を有効にし、約 800×800 総ピクセルを超える画像を分割して DeepSeek の自動縮小を避けます。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
+                    toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
                 }
             },
             gemini: {

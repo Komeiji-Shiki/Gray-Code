@@ -535,6 +535,27 @@ function handleThinkingNumberChange(field: string, event: any) {
         <span class="option-hint">{{ t('components.channels.anthropic.userId.hint') }}</span>
       </div>
     </div>
+
+    <!-- DeepSeek Vision 图片/PDF 预处理 -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-eye"></i>
+          {{ t('components.channels.anthropic.deepSeekVision.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.anthropic.deepSeekVision.toggleHint')">
+          <input
+            type="checkbox"
+            :checked="config.deepSeekVisionEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'deepSeekVisionEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.anthropic.deepSeekVision.hint') }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
