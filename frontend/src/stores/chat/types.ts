@@ -153,6 +153,7 @@ export interface QueuedMessage {
    */
   sendOptions?: {
     dynamicContextStrategyOverride?: 'single' | 'preserve'
+    deepSeekVisionTileSplit?: boolean
   }
   /** 序列化后的编辑器内容（包含 @上下文标记） */
   content: string

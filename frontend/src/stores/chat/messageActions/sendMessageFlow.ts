@@ -147,6 +147,12 @@ export interface SendMessageOptions {
   source?: 'user' | 'background_task' | 'agent_message'
   /** agent_message 领取凭据；后端在内部消息落库后确认消费。 */
   agentMessageClaimId?: string
+  /**
+   * DeepSeek Vision 图像处理模式：true=大图拆分防压缩（默认）；false=不拆分，
+   * 主动等比例压缩至 800×800 像素预算内。仅当附件含图片且渠道开启
+   * deepSeekVisionEnabled、模型为 DeepSeek Vision 时由输入区复选框提供。
+   */
+  deepSeekVisionTileSplit?: boolean
 }
 
 /**
@@ -538,6 +544,7 @@ export async function sendMessage(
       dynamicContextStrategyOverride: options?.dynamicContextStrategyOverride,
       source: options?.source,
       agentMessageClaimId: options?.agentMessageClaimId,
+      deepSeekVisionTileSplit: options?.deepSeekVisionTileSplit,
       streamId
     })
     // 发送被后端明确拒绝（渠道/参数校验失败等）：走 catch 同款清理（移除空气泡与 user 占位）

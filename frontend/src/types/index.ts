@@ -418,6 +418,11 @@ export interface ChatRequest {
   source?: 'user' | 'background_task' | 'agent_message'
   /** agent_message 领取凭据；随 chatStream 交由后端落库确认。 */
   agentMessageClaimId?: string
+  /**
+   * DeepSeek Vision 图像处理模式（可选）：true=大图拆分防压缩；false=不拆分，
+   * 主动等比例压缩至 800×800 像素预算内。
+   */
+  deepSeekVisionTileSplit?: boolean
 }
 
 export interface RetryRequest {

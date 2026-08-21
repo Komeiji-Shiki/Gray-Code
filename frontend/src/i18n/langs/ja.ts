@@ -358,6 +358,8 @@ const ja: LanguageMessages = {
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',
+            visionSplitPrevention: '分割して縮小を防ぐ',
+            visionSplitPreventionHint: 'チェックあり: 大きな画像を分割してサーバー側の縮小を回避します（細部を維持）；チェックなし: 分割せず、800×800 ピクセル予算内に等比縮小します',
             remove: '削除',
             tokenUsage: '使用量',
             context: 'コンテキスト',

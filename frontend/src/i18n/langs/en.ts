@@ -358,6 +358,8 @@ const en: LanguageMessages = {
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',
+            visionSplitPrevention: 'Split to prevent downscaling',
+            visionSplitPreventionHint: 'Checked: split large images into full-resolution tiles to avoid server-side downscaling; unchecked: keep single image and proactively scale it into the 800×800 pixel budget',
             remove: 'Remove',
             tokenUsage: 'Usage',
             context: 'Context',

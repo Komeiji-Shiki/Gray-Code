@@ -45,7 +45,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  send: [content: string, attachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }, onResult?: (ok: boolean) => void]
+  send: [content: string, attachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean }, onResult?: (ok: boolean) => void]
   cancel: []
   clearAttachments: []
   attachFile: []
@@ -98,6 +98,38 @@ const modeOptions = computed<PromptMode[]>(() => promptModes.value)
 const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.configId))
 const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
+
+// ========== DeepSeek Vision 图像处理复选框 ==========
+
+/**
+ * 大图是否拆分防压缩。
+ *
+ * true=将超过 800×800 像素预算的图片切成完整分块（默认，避免 DeepSeek 服务端压缩）；
+ * false=不拆分，主动等比例压缩至预算内。仅当附件含图片、渠道开启
+ * deepSeekVisionEnabled 且模型名包含 deepseek+vision 时，复选框才会出现在输入框右下角。
+ */
+const visionSplitChecked = ref(true)
+
+/** 附件中是否包含图片（GIF/HEIC 等也按 mimeType 前缀判定）。 */
+const hasImageAttachments = computed(() =>
+  (props.attachments || []).some(att =>
+    (att.mimeType || '').toLowerCase().startsWith('image/') || att.type === 'image'
+  )
+)
+
+/** 与后端 isDeepSeekVisionModel 同口径的轻量判断（前端无进程内共享函数）。 */
+function isDeepSeekVisionModelName(model?: string): boolean {
+  const normalized = (model || '').trim().toLowerCase()
+  return normalized.includes('deepseek') && normalized.includes('vision')
+}
+
+/** 当前渠道是否开启了 DeepSeek Vision 图像预处理。 */
+const visionPreprocessingEnabled = computed(() => currentConfig.value?.deepSeekVisionEnabled === true)
+
+/** 复选框可见条件：有图片附件 + 预处理开启 + 模型是 DeepSeek Vision。 */
+const visionSplitToggleVisible = computed(() =>
+  hasImageAttachments.value && visionPreprocessingEnabled.value && isDeepSeekVisionModelName(currentModel.value)
+)
 async function loadConfigs() {
   isLoadingConfigs.value = true
   try {
@@ -188,9 +220,18 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
   const currentAttachments = props.attachments || []
   // 普通发送不主动下发策略覆盖，避免输入区旧模式缓存把后端已保存的 preserve 误覆盖成 single。
   // 只有“发送并保留旧动态上下文原位”按钮会传入显式 preserve override。
-  const sendOptions = options?.dynamicContextStrategyOverride
-    ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride }
-    : undefined
+  // DeepSeek Vision 复选框可见时（有图片 + 预处理开启 + Vision 模型）附带本次拆分/压缩选择。
+  const sendOptions: { dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean } | undefined =
+    options?.dynamicContextStrategyOverride || visionSplitToggleVisible.value
+      ? {
+          ...(options?.dynamicContextStrategyOverride
+            ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride }
+            : {}),
+          ...(visionSplitToggleVisible.value
+            ? { deepSeekVisionTileSplit: visionSplitChecked.value }
+            : {})
+        }
+      : undefined
 
   // 备份本次发送的正文节点：直接发送是异步的（父组件 await sendMessage 后才回报结果），
   // 发送失败（忙时投递拒绝带附件消息 / IPC 异常）时用备份恢复输入，避免正文静默丢失。
@@ -657,6 +698,16 @@ watch(() => settingsStore.promptModesVersion, () => {
         @at-query-change="handleAtQueryChange"
         @at-picker-keydown="handleAtPickerKeydown"
       />
+
+      <!-- DeepSeek Vision 大图处理模式：有图片附件 + 预处理开启 + Vision 模型时在右下角显示 -->
+      <label
+        v-if="visionSplitToggleVisible"
+        class="vision-split-toggle"
+        :title="t('components.input.visionSplitPreventionHint')"
+      >
+        <input v-model="visionSplitChecked" type="checkbox" />
+        <span>{{ t('components.input.visionSplitPrevention') }}</span>
+      </label>
     </div>
 
     <div class="bottom-toolbar">
@@ -777,6 +828,39 @@ watch(() => settingsStore.promptModesVersion, () => {
 
 .input-box-container {
   position: relative;
+}
+
+/* DeepSeek Vision 大图处理复选框：悬浮于输入框右下角（重叠在文本上，背景衬底避免遮字不清） */
+.vision-split-toggle {
+  position: absolute;
+  right: var(--spacing-sm, 8px);
+  bottom: var(--spacing-xs, 4px);
+  z-index: 11;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--vscode-descriptionForeground);
+  background: color-mix(in srgb, var(--vscode-editor-background) 85%, transparent);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  cursor: pointer;
+  user-select: none;
+}
+
+.vision-split-toggle:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+.vision-split-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.vision-split-toggle span {
+  white-space: nowrap;
 }
 
 .bottom-toolbar {

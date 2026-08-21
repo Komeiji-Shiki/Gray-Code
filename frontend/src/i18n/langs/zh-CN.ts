@@ -360,6 +360,8 @@ const zhCN = {
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',
+            visionSplitPrevention: '拆分防压缩',
+            visionSplitPreventionHint: '勾选：大图拆分成多个分块避免服务端压缩（细节保留更完整）；取消勾选：不拆分，主动等比例压缩至 800×800 像素预算内',
             remove: '移除',
             tokenUsage: '使用量',
             context: '上下文',
