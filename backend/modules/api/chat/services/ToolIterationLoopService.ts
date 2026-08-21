@@ -143,6 +143,14 @@ export interface ToolIterationLoopConfig {
      * 本轮动态上下文策略。
      */
     dynamicContextStrategy?: DynamicContextStrategy;
+
+    /**
+     * DeepSeek Vision 图像处理模式（可选）。
+     *
+     * true（或省略）时超过 800×800 像素预算的图片被切分成完整分块避免 DeepSeek
+     * 服务端压缩；false 时不拆分、主动等比例压缩至预算内（由输入区复选框控制）。
+     */
+    deepSeekVisionTileSplit?: boolean;
 }
 
 /**
@@ -568,6 +576,8 @@ export class ToolIterationLoopService {
             createBeforeModelCheckpoint = true
         } = loopConfig;
 
+        const deepSeekVisionTileSplit = loopConfig.deepSeekVisionTileSplit ?? true;
+
         const isNewTurn = loopConfig.isNewTurn !== false;
         let dynamicContextStrategy: DynamicContextStrategy = loopConfig.dynamicContextStrategy ?? 'single';
 
@@ -843,7 +853,8 @@ export class ToolIterationLoopService {
                 dynamicContextStrategy,
                 modelOverride,
                 promptModeSnapshot,
-                conversationId
+                conversationId,
+                deepSeekVisionTileSplit
             });
 
             // 7. 处理响应
@@ -1728,7 +1739,8 @@ export class ToolIterationLoopService {
         dynamicContextStrategy: DynamicContextStrategy = 'single',
         isNewTurn: boolean = true,
         abortSignal?: AbortSignal,
-        summarizeAbortSignal?: AbortSignal
+        summarizeAbortSignal?: AbortSignal,
+        deepSeekVisionTileSplit?: boolean
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         // 非流式 abort 结算状态：追踪「最近一次已落盘的 assistant 消息」的工具调用，
@@ -1930,7 +1942,8 @@ export class ToolIterationLoopService {
                 dynamicContextStrategy,
                 modelOverride,
                 promptModeSnapshot,
-                conversationId
+                conversationId,
+                deepSeekVisionTileSplit
             });
 
             // 类型守卫：确保是 GenerateResponse

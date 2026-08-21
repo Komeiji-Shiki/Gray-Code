@@ -236,6 +236,7 @@ export class StreamRequestHandler {
       dynamicContextStrategyOverride,
       source,
       agentMessageClaimId,
+      deepSeekVisionTileSplit,
       streamId: clientStreamId
     } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
@@ -273,6 +274,7 @@ export class StreamRequestHandler {
         hiddenFunctionResponse,
         promptModeId: this.normalizePromptModeId(promptModeId),
         dynamicContextStrategyOverride,
+        deepSeekVisionTileSplit,
         source,
         agentMessageClaimId,
         abortSignal: controller.signal,

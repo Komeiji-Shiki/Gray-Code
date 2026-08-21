@@ -119,6 +119,15 @@ export interface ChatRequestData {
      * 本次发送的动态上下文策略覆盖。
      */
     dynamicContextStrategyOverride?: DynamicContextStrategy;
+
+    /**
+     * DeepSeek Vision 图像处理模式（可选）。
+     *
+     * true（或省略）时超过 800×800 像素预算的图片被切分成完整分块避免服务端压缩；
+     * false 时不拆分、主动等比例压缩至预算内。仅当渠道开启 deepSeekVisionEnabled
+     * 且模型为 DeepSeek Vision 时生效（由输入区复选框提供）。
+     */
+    deepSeekVisionTileSplit?: boolean;
 }
 
 // ==================== 响应数据 ====================

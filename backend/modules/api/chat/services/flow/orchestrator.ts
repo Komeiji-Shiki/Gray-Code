@@ -224,6 +224,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
+      request.deepSeekVisionTileSplit,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -442,6 +443,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       isNewTurn: !hiddenFunctionResponse && !isInternalMessageSource(request.source),
       promptModeSnapshot,
       dynamicContextStrategy,
+      deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
     })) {
       yield output as ChatStreamOutput;
     }
