@@ -69,6 +69,12 @@ export interface EditBranchRequestData {
    * - 'keep'：直接改写活跃路径上的原用户消息并截断其后内容（保持当前分支，不产生新候选）。
    */
   mode?: 'branch' | 'keep';
+
+  /**
+   * DeepSeek Vision 图像处理模式（可选）：编辑后重发图片时沿用最近一次选择；
+   * 省略时后端默认拆分（与 ChatRequestData 同口径）。
+   */
+  deepSeekVisionTileSplit?: boolean;
 }
 
 /** TREE-03：编辑目标解析结果 */
@@ -386,6 +392,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
+      // 编辑后重发图片时沿用前端透传的拆分/压缩选择（省略 = 后端默认拆分）
+      request.deepSeekVisionTileSplit,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -803,6 +811,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
         isNewTurn: true,
         promptModeSnapshot,
         dynamicContextStrategy,
+        // 编辑后重发图片时沿用编辑对话框的拆分/压缩选择（省略 = 后端默认拆分）
+        deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1008,6 +1018,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       maxIterations: maxToolIterations,
       promptModeSnapshot,
       dynamicContextStrategy,
+      // 编辑后重发图片时沿用前端透传的拆分/压缩选择（省略 = 后端默认拆分）
+      deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
     })) {
       yield output as ChatStreamOutput;
     }

@@ -151,11 +151,11 @@ async function handleCancel() {
 }
 
 // 处理编辑消息 - 使用 allMessages 索引（mode：'branch' 新建分支（默认）；'keep' 原地改写保持当前分支）
-async function handleEdit(messageId: string, newContent: string, editAttachments: Attachment[], mode: 'branch' | 'keep' = 'branch') {
+async function handleEdit(messageId: string, newContent: string, editAttachments: Attachment[], mode: 'branch' | 'keep' = 'branch', deepSeekVisionTileSplit?: boolean) {
   const index = chatStore.allMessages.findIndex((m: Message) => m.id === messageId)
   if (index !== -1) {
     try {
-      await chatStore.editAndRetry(index, newContent, editAttachments, mode)
+      await chatStore.editAndRetry(index, newContent, editAttachments, mode, deepSeekVisionTileSplit)
     } catch (err) {
       console.error('编辑失败:', err)
     }

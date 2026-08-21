@@ -364,8 +364,8 @@ export const useChatStore = defineStore('chat', () => {
   const retryAfterError = () => retryAfterErrorFn(state, computed)
   const dismissError = () => dismissErrorFn(state)
   
-  const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[], mode?: 'branch' | 'keep') =>
-    editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream, mode)
+  const editAndRetry = (messageIndex: number, newMessage: string, attachments?: Attachment[], mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean) =>
+    editAndRetryFn(state, computed, messageIndex, newMessage, attachments, cancelStream, mode, deepSeekVisionTileSplit)
   
   const deleteMessage = (targetIndex: number) => deleteMessageFn(state, targetIndex, cancelStream)
   const deleteSingleMessage = (targetIndex: number) => deleteSingleMessageFn(state, targetIndex, cancelStream)
@@ -560,8 +560,8 @@ export const useChatStore = defineStore('chat', () => {
 
   const moveQueuedMessage = (fromIndex: number, toIndex: number) => moveQueuedMessageFn(state, fromIndex, toIndex)
 
-  const updateQueuedMessage = (id: string, content: string, attachments: Attachment[]) =>
-    updateQueuedMessageFn(state, id, content, attachments)
+  const updateQueuedMessage = (id: string, content: string, attachments: Attachment[], deepSeekVisionTileSplit?: boolean) =>
+    updateQueuedMessageFn(state, id, content, attachments, deepSeekVisionTileSplit)
 
   const sendQueuedMessageNow = (id: string) => sendQueuedMessageNowFn(state, queueActionDeps, id)
 
@@ -624,8 +624,8 @@ export const useChatStore = defineStore('chat', () => {
     restoreAndRetryFn(state, messageIndex, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
   const restoreAndDelete = (messageIndex: number, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[]) =>
     restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
-  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[]) =>
-    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles)
+  const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string, confirmedDeleteUntracked?: boolean, confirmedDiscardDirty?: boolean, previewId?: string, confirmedDirtyFiles?: string[], deepSeekVisionTileSplit?: boolean) =>
+    restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream, confirmedDeleteUntracked, confirmedDiscardDirty, previewId, confirmedDirtyFiles, deepSeekVisionTileSplit)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
   const restoreSummarizedMessages = (summaryMessageId: string) => restoreSummarizedMessagesFn(state, summaryMessageId)
@@ -933,6 +933,10 @@ export const useChatStore = defineStore('chat', () => {
     inputValue: state.inputValue,
     setInputValue,
     clearInputValue,
+
+    // DeepSeek Vision「拆分防压缩」偏好（InputArea 与 EditDialog 共享）
+    visionSplitChecked: state.visionSplitChecked,
+    setVisionSplitChecked: (value: boolean) => { state.visionSplitChecked.value = value },
 
     // 编辑器节点 & 附件（对话级隔离）
     editorNodes: state.editorNodes,

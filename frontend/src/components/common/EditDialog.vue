@@ -7,7 +7,7 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch, nextTick } from 'vue'
-import type { CheckpointRecord, Attachment } from '../../types'
+import type { CheckpointRecord, Attachment, ChannelConfig } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
 import type { EditorNode } from '../../types/editorNode'
 import { getContexts, getPlainText, serializeNodes } from '../../types/editorNode'
@@ -22,6 +22,9 @@ import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { t } from '../../i18n'
 import { getFileType } from '../../utils/file'
 import { generateId } from '../../utils/format'
+import { isDeepSeekVisionModelName } from '../../utils/deepSeekVision'
+import { useChatStore } from '../../stores/chatStore'
+import * as configService from '../../services/config'
 
 interface Props {
   modelValue?: boolean
@@ -46,15 +49,74 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   /** 普通编辑（mode：'branch' 新建分支（默认）；'keep' 原地改写原消息，保持当前分支） */
-  edit: [newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
+  edit: [newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean]
   /** 回档并编辑 */
-  restoreAndEdit: [newContent: string, attachments: Attachment[], checkpointId: string]
+  restoreAndEdit: [newContent: string, attachments: Attachment[], checkpointId: string, deepSeekVisionTileSplit?: boolean]
   cancel: []
 }>()
 
 const visible = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value)
+})
+
+const chatStore = useChatStore()
+
+/**
+ * 当前编辑时的渠道配置（打开对话框时按 chatStore.configId 拉取，用于判断
+ * DeepSeek Vision 复选框可见性——与 InputArea 的 currentConfig 同来源）。
+ */
+const visionConfig = ref<ChannelConfig | null>(null)
+
+/** DeepSeek Vision 复选框的偏好值（与 InputArea 共享 chatStore 状态）。 */
+const visionSplitChecked = computed<boolean>({
+  get: () => chatStore.visionSplitChecked ?? true,
+  set: (value: boolean) => chatStore.setVisionSplitChecked?.(value)
+})
+
+/** 附件中是否包含图片。 */
+const hasImageAttachments = computed(() =>
+  allAttachments.value.some(att =>
+    (att.mimeType || '').toLowerCase().startsWith('image/') || att.type === 'image'
+  )
+)
+
+/** 复选框可见条件：有图片附件 + 渠道开启预处理 + 模型是 DeepSeek Vision（与 InputArea 同口径）。 */
+const visionSplitToggleVisible = computed(() => {
+  const model = chatStore.selectedModelId || visionConfig.value?.model || ''
+  return hasImageAttachments.value
+    && visionConfig.value?.deepSeekVisionEnabled === true
+    && isDeepSeekVisionModelName(model)
+})
+
+// 当对话框打开时，初始化编辑内容、附件和上下文，并拉取渠道配置供 Vision 复选框判断
+watch(visible, (newValue) => {
+  if (!newValue) return
+
+  const parsed = parseMessageToNodes(props.originalContent)
+  editorNodes.value = parsed.nodes
+
+  showFilePicker.value = false
+  filePickerQuery.value = ''
+
+  clearAttachments() // 清除之前的新附件
+  removedOriginalAttachmentIds.value = new Set() // 重置已删除的原有附件
+
+  // 拉取当前渠道配置（失败时保持 null，复选框按不可见处理，与 InputArea 加载失败行为一致）
+  const configId = chatStore.configId
+  if (configId) {
+    configService.getConfig(configId).then((config) => {
+      visionConfig.value = config
+    }).catch(() => {
+      visionConfig.value = null
+    })
+  } else {
+    visionConfig.value = null
+  }
+
+  nextTick(() => {
+    inputBoxRef.value?.focus()
+  })
 })
 
 // Editor nodes (text + inline context chips)
@@ -84,24 +146,6 @@ const allAttachments = computed(() => [
   ...props.originalAttachments.filter(att => !removedOriginalAttachmentIds.value.has(att.id)),
   ...newAttachments.value
 ])
-
-// 当对话框打开时，初始化编辑内容、附件和上下文
-watch(visible, (newValue) => {
-  if (!newValue) return
-
-  const parsed = parseMessageToNodes(props.originalContent)
-  editorNodes.value = parsed.nodes
-
-  showFilePicker.value = false
-  filePickerQuery.value = ''
-
-  clearAttachments() // 清除之前的新附件
-  removedOriginalAttachmentIds.value = new Set() // 重置已删除的原有附件
-
-  nextTick(() => {
-    inputBoxRef.value?.focus()
-  })
-})
 
 /** 是否有可用的检查点 */
 const hasCheckpoints = computed(() => props.checkpoints.length > 0)
@@ -410,7 +454,7 @@ function handleEdit(mode: 'branch' | 'keep' = 'branch') {
   const finalContent = getFinalContent()
   if (finalContent || allAttachments.value.length > 0) {
     visible.value = false
-    emit('edit', finalContent, serializeAttachments(allAttachments.value), mode)
+    emit('edit', finalContent, serializeAttachments(allAttachments.value), mode, visionSplitToggleVisible.value ? visionSplitChecked.value : undefined)
     clearAttachments()
     editorNodes.value = []
   }
@@ -420,7 +464,7 @@ function handleRestoreAndEdit() {
   const finalContent = getFinalContent()
   if (latestCheckpoint.value && (finalContent || allAttachments.value.length > 0)) {
     visible.value = false
-    emit('restoreAndEdit', finalContent, serializeAttachments(allAttachments.value), latestCheckpoint.value.id)
+    emit('restoreAndEdit', finalContent, serializeAttachments(allAttachments.value), latestCheckpoint.value.id, visionSplitToggleVisible.value ? visionSplitChecked.value : undefined)
     clearAttachments()
     editorNodes.value = []
   }
@@ -523,6 +567,16 @@ function handleRemoveAttachment(id: string) {
               <i class="codicon codicon-info"></i>
               {{ t('components.common.editDialog.rootMessageHint') }}
             </p>
+
+            <!-- DeepSeek Vision 大图处理复选框（与输入区同口径：有图片附件 + 预处理开启 + Vision 模型） -->
+            <label
+              v-if="visionSplitToggleVisible"
+              class="vision-split-toggle"
+              :title="t('components.input.visionSplitPreventionHint')"
+            >
+              <input v-model="visionSplitChecked" type="checkbox" />
+              <span>{{ t('components.input.visionSplitPrevention') }}</span>
+            </label>
           </div>
 
           <div class="dialog-footer">
@@ -699,6 +753,34 @@ function handleRemoveAttachment(id: string) {
 .dialog-body .root-message-hint .codicon {
   flex-shrink: 0;
   margin-top: 1px;
+}
+
+/* DeepSeek Vision 大图处理复选框：与输入区同款样式，置于附件列表下方 */
+.vision-split-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-input-background, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vision-split-toggle:hover {
+  border-color: var(--vscode-focusBorder);
+}
+
+.vision-split-toggle input {
+  margin: 0;
+}
+
+.vision-split-toggle span {
+  white-space: nowrap;
 }
 
 .dialog-footer {

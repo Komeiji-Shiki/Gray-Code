@@ -650,6 +650,7 @@ export async function restoreAndDelete(
  * @param confirmedDeleteUntracked 用户是否已在确认框中确认待删除文件清单（含快照后新建文件）。
  *        只有确认过的调用才允许删除快照后新建文件，默认 false（#29 保护）。
  * @param confirmedDiscardDirty BCP-05（决策 11）：用户已在未保存文件确认框中确认后传 true。
+ * @param deepSeekVisionTileSplit DeepSeek Vision 图像处理模式；undefined = 后端默认拆分。
  */
 export async function restoreAndEdit(
   state: ChatStoreState,
@@ -662,7 +663,8 @@ export async function restoreAndEdit(
   confirmedDeleteUntracked: boolean = false,
   confirmedDiscardDirty?: boolean,
   previewId?: string,
-  confirmedDirtyFiles?: string[]
+  confirmedDirtyFiles?: string[],
+  deepSeekVisionTileSplit?: boolean
 ): Promise<void> {
   if (!state.currentConversationId.value || messageIndex < 0 || messageIndex >= state.allMessages.value.length) {
     return
@@ -718,7 +720,8 @@ export async function restoreAndEdit(
           previewId,
           messageId: targetMessageId,
           newContent,
-          attachments
+          attachments,
+          deepSeekVisionTileSplit
         }
       })
       state.isLoading.value = false
@@ -804,7 +807,8 @@ export async function restoreAndEdit(
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
       // 根节点 branch（TREE-03-R）：后端原地改写根节点 + 截断其后 + 重新生成
-      mode: effectiveMode
+      mode: effectiveMode,
+      deepSeekVisionTileSplit
     }
     state._pendingBranchReplayContext.value = branchReplayContext
     const streamId = generateId()
@@ -822,7 +826,8 @@ export async function restoreAndEdit(
       streamId,
       promptModeId: state.currentPromptModeId.value,
       // 根节点 branch（TREE-03-R）：后端原地改写根节点 + 截断其后 + 重新生成
-      mode: effectiveMode
+      mode: effectiveMode,
+      deepSeekVisionTileSplit
     })
 
   } catch (err: any) {

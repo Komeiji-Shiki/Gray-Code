@@ -62,6 +62,8 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
     messageId?: string
     newContent?: string
     attachments?: Attachment[]
+    /** DeepSeek Vision 图像处理模式（编辑消息时随请求透传；undefined = 后端默认拆分） */
+    deepSeekVisionTileSplit?: boolean
     preview: Awaited<ReturnType<typeof chatStore.previewRestore>>
   }
   const showRestoreConfirm = ref(false)
@@ -180,13 +182,13 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
   }
 
   // 处理回档并编辑
-  async function handleRestoreAndEdit(messageId: string, newContent: string, attachments: Attachment[], checkpointId: string) {
+  async function handleRestoreAndEdit(messageId: string, newContent: string, attachments: Attachment[], checkpointId: string, deepSeekVisionTileSplit?: boolean) {
     // 找到消息在 allMessages 中的索引
     const actualIndex = chatStore.allMessages.findIndex(m => m.id === messageId)
     if (actualIndex === -1) return
 
     // 先预览恢复（待删除文件清单），确认后才执行
-    await openRestoreConfirm({ kind: 'edit', checkpointId, messageId, newContent, attachments })
+    await openRestoreConfirm({ kind: 'edit', checkpointId, messageId, newContent, attachments, deepSeekVisionTileSplit })
   }
 
   // 检查特定工具的检查点是否需要合并显示（前后内容一致时合并）
@@ -290,7 +292,7 @@ export function useCheckpointRestoreFlow(options: UseCheckpointRestoreFlowOption
         // R3-#7: 回档并删除确认后关闭删除确认对话框（此前 DeleteDialog 残留打开）
         showDeleteConfirm.value = false
       } else if (kind === 'edit') {
-        await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true, false, action.preview.previewId)
+        await chatStore.restoreAndEdit(actualIndex, action.newContent || '', action.attachments, checkpointId, true, false, action.preview.previewId, undefined, action.deepSeekVisionTileSplit)
       }
     } catch (error) {
       console.error('[MessageList] Restore operation failed:', error)

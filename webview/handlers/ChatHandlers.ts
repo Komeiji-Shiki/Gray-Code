@@ -341,7 +341,7 @@ export const chatInputFocusState: MessageHandler = async (data, requestId, ctx) 
  * 由 MessageRouter 以 fire-and-forget 方式调用（STREAM_MESSAGE_TYPES 含 chat.rerollStream，H2）。
  */
 export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, assistantNodeId, configId, modelOverride, promptModeId, streamId } = data || {};
+  const { conversationId, assistantNodeId, configId, modelOverride, promptModeId, streamId, deepSeekVisionTileSplit } = data || {};
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof configId !== 'string' || !configId.trim()) {
     ctx.sendError(requestId, 'REROLL_INVALID_ARGS', 'conversationId and configId are required');
@@ -389,6 +389,7 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
       configId,
       modelOverride,
       promptModeId,
+      deepSeekVisionTileSplit: typeof deepSeekVisionTileSplit === 'boolean' ? deepSeekVisionTileSplit : undefined,
       abortSignal: controller.signal,
       summarizeAbortSignal: summarizeController.signal,
     });
@@ -442,7 +443,7 @@ export const rerollStream: MessageHandler = async (data, requestId, ctx) => {
  * 由 MessageRouter 以 fire-and-forget 方式调用（STREAM_MESSAGE_TYPES 含 chat.editBranchStream，H2）。
  */
 export const editBranchStream: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, userNodeId, newText, attachments, configId, modelOverride, promptModeId, streamId, mode } = data || {};
+  const { conversationId, userNodeId, newText, attachments, configId, modelOverride, promptModeId, streamId, mode, deepSeekVisionTileSplit } = data || {};
   if (typeof conversationId !== 'string' || !conversationId.trim()
       || typeof configId !== 'string' || !configId.trim()
       || typeof newText !== 'string' || !newText.trim()) {
@@ -492,6 +493,7 @@ export const editBranchStream: MessageHandler = async (data, requestId, ctx) => 
       modelOverride,
       promptModeId,
       mode: resolvedMode,
+      deepSeekVisionTileSplit: typeof deepSeekVisionTileSplit === 'boolean' ? deepSeekVisionTileSplit : undefined,
       abortSignal: controller.signal,
       summarizeAbortSignal: summarizeController.signal,
     });

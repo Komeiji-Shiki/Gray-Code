@@ -432,6 +432,13 @@ export function createChatState(): ChatStoreState {
   
   /** 输入框内容（跨视图保持） */
   const inputValue = ref('')
+
+  /**
+   * DeepSeek Vision「拆分防压缩」偏好（默认 true = 拆分）。
+   * 提升到 store：InputArea 与 EditDialog 共享，重发图片的路径（reroll/retry/
+   * 编辑分支）以它为默认值透传后端，避免编辑/重试后回退默认拆分。
+   */
+  const visionSplitChecked = ref(true)
   
   /** 工作区筛选模式（默认当前工作区） */
   const workspaceFilter = ref<WorkspaceFilter>('current')
@@ -563,6 +570,7 @@ export function createChatState(): ChatStoreState {
     sessionSnapshots,
     backgroundStreamBuffers,
     toolResponseCache,
+    visionSplitChecked,
     branchGraph,
     branchGraphLoading,
     isSwitchingBranch

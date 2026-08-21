@@ -998,4 +998,21 @@ describe('editAndRetry 编辑分支主流程（TREE-03）', () => {
     // 错误不写入当前会话（原会话无标签页快照可写）
     expect(state.error.value).toBeNull()
   })
+
+  test('reroll 重发历史图片：request 携带 state.visionSplitChecked（用户最近拆分/压缩选择）', async () => {
+    const user = createMessage({ id: 'msg_user', role: 'user', content: '问题', localOnly: false, backendIndex: 0 })
+    const assistant = createMessage({ id: 'msg_assistant', role: 'assistant', content: '旧回答', localOnly: false, backendIndex: 1 })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, assistant]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any]),
+      visionSplitChecked: ref(false)
+    })
+
+    await retryFromMessage(state, createComputed(), 1, async () => {})
+
+    const rerollCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.rerollStream')
+    expect(rerollCall).toBeDefined()
+    expect(rerollCall![1]).toMatchObject({ deepSeekVisionTileSplit: false })
+  })
 })

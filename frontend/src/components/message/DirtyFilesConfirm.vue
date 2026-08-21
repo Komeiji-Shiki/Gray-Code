@@ -79,7 +79,7 @@ function confirmDiscard(): void {
     } else if (r.entry === 'delete') {
       void runDirtyContinuation(() => chatStore.restoreAndDelete(index, r.checkpointId, r.deleteUntrackedFiles, true, r.previewId, pending.files))
     } else if (r.entry === 'edit') {
-      void runDirtyContinuation(() => chatStore.restoreAndEdit(index, r.newContent || '', r.attachments, r.checkpointId, r.deleteUntrackedFiles, true, r.previewId, pending.files))
+      void runDirtyContinuation(() => chatStore.restoreAndEdit(index, r.newContent || '', r.attachments, r.checkpointId, r.deleteUntrackedFiles, true, r.previewId, pending.files, r.deepSeekVisionTileSplit))
     }
   }
 }

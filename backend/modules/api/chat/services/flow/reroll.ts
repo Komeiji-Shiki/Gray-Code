@@ -38,6 +38,12 @@ export interface RerollRequestData {
   summarizeAbortSignal?: AbortSignal;
   /** Prompt 模式 ID（可选） */
   promptModeId?: string;
+
+  /**
+   * DeepSeek Vision 图像处理模式（可选）：reroll 会重发历史用户消息中的所有图片，
+   * 沿用前端透传的最近一次选择；省略时后端默认拆分（与 ChatRequestData 同口径）。
+   */
+  deepSeekVisionTileSplit?: boolean;
 }
 
 /**
@@ -194,6 +200,8 @@ export class ChatFlowReroll extends ChatFlowContext {
         isNewTurn: false,
         promptModeSnapshot,
         dynamicContextStrategy,
+        // 重发历史图片时沿用前端最近一次拆分/压缩选择（省略 = 后端默认拆分）
+        deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
       })) {
         yield output as ChatStreamOutput;
       }

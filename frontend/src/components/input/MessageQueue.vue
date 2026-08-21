@@ -82,10 +82,10 @@ function handleStartEdit(id: string) {
   showEditDialog.value = true
 }
 
-/** 编辑完成 */
-function handleEditDone(newContent: string, attachments: Attachment[]) {
+/** 编辑完成（EditDialog 事件携带 mode 参数；排队消息无分支模式，忽略之） */
+function handleEditDone(newContent: string, attachments: Attachment[], _mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean) {
   if (editingId.value) {
-    chatStore.updateQueuedMessage(editingId.value, newContent, attachments)
+    chatStore.updateQueuedMessage(editingId.value, newContent, attachments, deepSeekVisionTileSplit)
   }
   editingId.value = null
   editingContent.value = ''

@@ -269,6 +269,14 @@ export interface ChatStoreState {
   currentWorkspaceUri: Ref<string | null>
   /** 输入框内容 */
   inputValue: Ref<string>
+  /**
+   * DeepSeek Vision「拆分防压缩」偏好（默认 true，即大图拆分）。
+   *
+   * 提升到 store 以便 InputArea 与 EditDialog 共享：用户在输入区取消勾选后，
+   * 编辑消息对话框打开时继承同一选择；reroll/重试/编辑分支等重发图片的路径也
+   * 以此为默认值透传给后端，避免编辑/重试后回退到默认拆分行为。
+   */
+  visionSplitChecked: Ref<boolean>
   /** 工作区筛选模式 */
   workspaceFilter: Ref<WorkspaceFilter>
   /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */

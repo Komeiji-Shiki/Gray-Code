@@ -31,8 +31,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
-  restoreAndEdit: [messageId: string, newContent: string, attachments: Attachment[], checkpointId: string]
+  edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean]
+  restoreAndEdit: [messageId: string, newContent: string, attachments: Attachment[], checkpointId: string, deepSeekVisionTileSplit?: boolean]
   delete: [messageId: string]
   retry: [messageId: string]
   restoreAndRetry: [messageId: string, checkpointId: string]
@@ -153,13 +153,13 @@ function startEdit() {
 }
 
 // 处理编辑保存
-function handleEdit(newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch') {
-  emit('edit', props.message.id, newContent, attachments, mode)
+function handleEdit(newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch', deepSeekVisionTileSplit?: boolean) {
+  emit('edit', props.message.id, newContent, attachments, mode, deepSeekVisionTileSplit)
 }
 
 // 处理回档并编辑
-function handleRestoreAndEdit(newContent: string, attachments: Attachment[], checkpointId: string) {
-  emit('restoreAndEdit', props.message.id, newContent, attachments, checkpointId)
+function handleRestoreAndEdit(newContent: string, attachments: Attachment[], checkpointId: string, deepSeekVisionTileSplit?: boolean) {
+  emit('restoreAndEdit', props.message.id, newContent, attachments, checkpointId, deepSeekVisionTileSplit)
 }
 
 // 处理操作

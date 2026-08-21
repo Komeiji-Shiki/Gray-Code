@@ -309,7 +309,7 @@ export class StreamRequestHandler {
     if (this.rejectIfMutationGated(data.conversationId, requestId)) {
       return;
     }
-    const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
+    const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId, deepSeekVisionTileSplit } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
     const processor = new StreamChunkProcessor(() => this.deps.getClientView(clientId), conversationId, streamId);
     let controller: AbortController | undefined;
@@ -336,6 +336,7 @@ export class StreamRequestHandler {
         configId,
         modelOverride,
         promptModeId: this.normalizePromptModeId(promptModeId),
+        deepSeekVisionTileSplit: typeof deepSeekVisionTileSplit === 'boolean' ? deepSeekVisionTileSplit : undefined,
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });

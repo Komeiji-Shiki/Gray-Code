@@ -243,6 +243,8 @@ export class ChatFlowRetry extends ChatFlowContext {
       isNewTurn: false,
       promptModeSnapshot,
       dynamicContextStrategy,
+      // 重发历史图片时沿用前端最近一次拆分/压缩选择（省略 = 后端默认拆分）
+      deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
     })) {
       yield output as ChatStreamOutput;
     }

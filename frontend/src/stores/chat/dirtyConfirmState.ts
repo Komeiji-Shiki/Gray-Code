@@ -27,6 +27,8 @@ export interface DirtyRestorePending {
   messageId?: string
   newContent?: string
   attachments?: Attachment[]
+  /** DeepSeek Vision 图像处理模式（edit 入口随请求透传；undefined = 后端默认拆分） */
+  deepSeekVisionTileSplit?: boolean
 }
 
 /** 分支切换恢复的续作参数 */

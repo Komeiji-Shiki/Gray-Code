@@ -254,7 +254,9 @@ export async function retryFromMessage(
       assistantNodeId: targetMessageId,
       configId: state.configId.value,
       modelOverride,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      // 用户最近一次拆分/压缩选择：重试图片消息时保持同一处理方式（undefined = 后端默认拆分）
+      deepSeekVisionTileSplit: state.visionSplitChecked?.value
     }
     state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
@@ -267,7 +269,8 @@ export async function retryFromMessage(
       configId: state.configId.value,
       modelOverride,
       streamId,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      deepSeekVisionTileSplit: state.visionSplitChecked?.value
     })
   } catch (err: any) {
     const branchReplayContext = replayContext
@@ -451,7 +454,9 @@ async function replayBranchStreamAfterError(
         configId: context.configId,
         modelOverride: context.modelOverride,
         streamId,
-        promptModeId: context.promptModeId
+        promptModeId: context.promptModeId,
+        // 重放保持原请求的拆分/压缩选择
+        deepSeekVisionTileSplit: context.deepSeekVisionTileSplit
       })
     } else {
       await sendToExtension(MESSAGE_NAMES['chat.editBranchStream'], {
@@ -465,7 +470,9 @@ async function replayBranchStreamAfterError(
         modelOverride: context.modelOverride,
         streamId,
         promptModeId: context.promptModeId,
-        mode: context.mode ?? 'branch'
+        mode: context.mode ?? 'branch',
+        // 重放保持原请求的拆分/压缩选择
+        deepSeekVisionTileSplit: context.deepSeekVisionTileSplit
       })
     }
   } catch (err: any) {
@@ -577,7 +584,9 @@ export async function retryAfterError(
       configId: state.configId.value,
       modelOverride,
       streamId,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      // 重试重发历史图片时保持用户最近的拆分/压缩选择（undefined = 后端默认拆分）
+      deepSeekVisionTileSplit: state.visionSplitChecked?.value
     })
   } catch (err: any) {
     if (state.isStreaming.value) {
@@ -606,7 +615,8 @@ export async function editAndRetry(
   newMessage: string,
   attachments: Attachment[] | undefined,
   cancelStream: CancelStreamCallback,
-  mode: 'branch' | 'keep' = 'branch'
+  mode: 'branch' | 'keep' = 'branch',
+  deepSeekVisionTileSplit?: boolean
 ): Promise<void> {
   if ((!newMessage.trim() && (!attachments || attachments.length === 0)) || !state.currentConversationId.value) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
@@ -699,7 +709,9 @@ export async function editAndRetry(
       configId: state.configId.value,
       modelOverride,
       promptModeId: state.currentPromptModeId.value,
-      mode: effectiveMode
+      mode: effectiveMode,
+      // 编辑时的拆分/压缩选择（重放保持原值；undefined = 后端默认拆分）
+      deepSeekVisionTileSplit
     }
     state._pendingBranchReplayContext.value = replayContext
     const streamId = generateId()
@@ -723,7 +735,9 @@ export async function editAndRetry(
       promptModeId: state.currentPromptModeId.value,
       // 根节点 branch：后端原地改写根节点 + 截断其后 + 重新生成（TREE-03-R），
       // 与普通编辑同一套候选语义；keep 仅在用户显式选择「原地保存」时透传
-      mode: effectiveMode
+      mode: effectiveMode,
+      // 编辑对话框的拆分/压缩选择（undefined 时后端默认拆分）
+      deepSeekVisionTileSplit
     })
   } catch (err: any) {
     const branchReplayContext = replayContext

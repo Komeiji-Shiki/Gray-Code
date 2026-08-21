@@ -33,6 +33,7 @@ import type { EditorNode } from '../../types/editorNode'
 import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
 import { isAgentMessageRoundPending } from '../../stores/chat/agentMessageClaimGate'
+import { isDeepSeekVisionModelName } from '../../utils/deepSeekVision'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -102,13 +103,16 @@ const currentModels = computed(() => currentConfig.value?.models || [])
 // ========== DeepSeek Vision 图像处理复选框 ==========
 
 /**
- * 大图是否拆分防压缩。
+ * 大图是否拆分防压缩（偏好提升到 chatStore，InputArea 与 EditDialog 共享）。
  *
  * true=将超过 800×800 像素预算的图片切成完整分块（默认，避免 DeepSeek 服务端压缩）；
  * false=不拆分，主动等比例压缩至预算内。仅当附件含图片、渠道开启
  * deepSeekVisionEnabled 且模型名包含 deepseek+vision 时，复选框才会出现在输入框右下角。
  */
-const visionSplitChecked = ref(true)
+const visionSplitChecked = computed<boolean>({
+  get: () => chatStore.visionSplitChecked ?? true,
+  set: (value: boolean) => chatStore.setVisionSplitChecked?.(value)
+})
 
 /** 附件中是否包含图片（GIF/HEIC 等也按 mimeType 前缀判定）。 */
 const hasImageAttachments = computed(() =>
@@ -116,12 +120,6 @@ const hasImageAttachments = computed(() =>
     (att.mimeType || '').toLowerCase().startsWith('image/') || att.type === 'image'
   )
 )
-
-/** 与后端 isDeepSeekVisionModel 同口径的轻量判断（前端无进程内共享函数）。 */
-function isDeepSeekVisionModelName(model?: string): boolean {
-  const normalized = (model || '').trim().toLowerCase()
-  return normalized.includes('deepseek') && normalized.includes('vision')
-}
 
 /** 当前渠道是否开启了 DeepSeek Vision 图像预处理。 */
 const visionPreprocessingEnabled = computed(() => currentConfig.value?.deepSeekVisionEnabled === true)

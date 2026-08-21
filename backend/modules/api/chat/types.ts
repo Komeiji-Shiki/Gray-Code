@@ -293,6 +293,15 @@ export interface RetryRequestData {
 
     /** Prompt 模式 ID（可选） */
     promptModeId?: string;
+
+    /**
+     * DeepSeek Vision 图像处理模式（可选）。
+     *
+     * true（或省略）时超过 800×800 像素预算的图片被切分成完整分块避免服务端压缩；
+     * false 时不拆分、主动等比例压缩至预算内。重试会重发历史图片，前端把用户的
+     * 最近一次选择透传过来，避免重试后回退到默认拆分。
+     */
+    deepSeekVisionTileSplit?: boolean;
 }
 
 // ==================== 编辑并重试 ====================
@@ -352,6 +361,12 @@ export interface EditAndRetryRequestData {
      * 旧前端不带该字段时保持旧行为（仅按索引操作）。
      */
     messageId?: string;
+
+    /**
+     * DeepSeek Vision 图像处理模式（可选）：编辑后重发图片时沿用最近一次选择；
+     * 省略时后端默认拆分（与 ChatRequestData 同口径）。
+     */
+    deepSeekVisionTileSplit?: boolean;
 }
 
 // ==================== 删除消息 ====================

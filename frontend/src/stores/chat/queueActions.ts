@@ -117,17 +117,26 @@ export function moveQueuedMessage(state: ChatStoreState, fromIndex: number, toIn
 }
 
 /**
- * 更新队列中指定消息的内容和附件（编辑）
+ * 更新队列中指定消息的内容和附件（编辑），并在传入了拆分/压缩偏好时
+ * 合并进 sendOptions（保留其余选项，如 dynamicContextStrategyOverride）。
  */
 export function updateQueuedMessage(
   state: ChatStoreState,
   id: string,
   content: string,
-  attachments: Attachment[]
+  attachments: Attachment[],
+  deepSeekVisionTileSplit?: boolean
 ): void {
   state.messageQueue.value = state.messageQueue.value.map(m =>
     m.id === id
-      ? { ...m, content, attachments: [...attachments] }
+      ? {
+          ...m,
+          content,
+          attachments: [...attachments],
+          ...(deepSeekVisionTileSplit !== undefined
+            ? { sendOptions: { ...m.sendOptions, deepSeekVisionTileSplit } }
+            : {})
+        }
       : m
   )
 }

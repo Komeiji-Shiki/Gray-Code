@@ -165,13 +165,13 @@ const {
 } = virtualWindow
 
 const emit = defineEmits<{
-  edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep']
+  edit: [messageId: string, newContent: string, attachments: Attachment[], mode?: 'branch' | 'keep', deepSeekVisionTileSplit?: boolean]
   delete: [messageId: string]
   retry: [messageId: string]
   copy: [content: string]
   restoreCheckpoint: [checkpointId: string]
   restoreAndRetry: [messageId: string, checkpointId: string]
-  restoreAndEdit: [messageId: string, newContent: string, attachments: Attachment[], checkpointId: string]
+  restoreAndEdit: [messageId: string, newContent: string, attachments: Attachment[], checkpointId: string, deepSeekVisionTileSplit?: boolean]
 }>()
 
 // ============ U1 忙时投递（M3-1）轻量回显 ============
@@ -198,8 +198,8 @@ watch(
 // ============ 消息操作（emit / store 直通，无重逻辑） ============
 
 // 处理编辑
-function handleEdit(messageId: string, newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch') {
-  emit('edit', messageId, newContent, attachments, mode)
+function handleEdit(messageId: string, newContent: string, attachments: Attachment[], mode: 'branch' | 'keep' = 'branch', deepSeekVisionTileSplit?: boolean) {
+  emit('edit', messageId, newContent, attachments, mode, deepSeekVisionTileSplit)
 }
 
 // 处理重试 - 直接调用 store 方法（确认已在 MessageItem 的 RetryDialog 中完成）

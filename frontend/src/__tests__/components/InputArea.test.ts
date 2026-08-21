@@ -160,6 +160,8 @@ describe('InputArea 发送失败恢复', () => {
       usedTokens: 0,
       maxContextTokens: 100,
       currentConversationId: null,
+      visionSplitChecked: true,
+      setVisionSplitChecked(v: boolean) { this.visionSplitChecked = v },
       setEditorNodes(nodes: EditorNode[]) { this.editorNodes = nodes },
       setInputValue(v: string) { this.inputValue = v },
       clearInputValue() { this.inputValue = '' },
@@ -362,6 +364,8 @@ describe('InputArea DeepSeek Vision 拆分复选框', () => {
       usedTokens: 0,
       maxContextTokens: 100,
       currentConversationId: null,
+      visionSplitChecked: true,
+      setVisionSplitChecked(v: boolean) { this.visionSplitChecked = v },
       setEditorNodes(nodes: EditorNode[]) { this.editorNodes = nodes },
       setInputValue(v: string) { this.inputValue = v },
       clearInputValue() { this.inputValue = '' },
@@ -424,6 +428,23 @@ describe('InputArea DeepSeek Vision 拆分复选框', () => {
   test('图片附件但 deepSeekVisionEnabled 关闭：复选框不显示', async () => {
     wrapper = await mountWithVisionConfig([makeAttachment()], { deepSeekVisionEnabled: false })
     expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
+  })
+
+  test('store 偏好为 false（用户此前取消勾选）：复选框默认不勾选且发送携带 false（编辑/重试保持一致）', async () => {
+    runtime.chatStore.visionSplitChecked = false
+    wrapper = await mountWithVisionConfig([makeAttachment()])
+
+    const checkbox = wrapper.find('.vision-split-toggle input') as any
+    expect(checkbox.element.checked).toBe(false)
+
+    runtime.chatStore.editorNodes = makeTextNodes('hi')
+    await nextTick()
+    await wrapper.find('.send-button-stub').trigger('click')
+
+    const emitted = wrapper.emitted('send')
+    expect(emitted).toBeTruthy()
+    const last = emitted![emitted!.length - 1]
+    expect(last[2]).toEqual({ deepSeekVisionTileSplit: false })
   })
 
   test('图片附件 + 预处理开启但模型非 Vision：复选框不显示', async () => {

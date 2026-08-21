@@ -584,4 +584,28 @@ describe('编辑分支流结束 → 分支图刷新链路（主人实测回归�
       attachments: []
     })
   })
+
+  test('编辑带 Vision 图片：request 携带 deepSeekVisionTileSplit（压缩模式不丢失）', async () => {
+    const user = createMessage({ id: 'msg_u0', role: 'user', content: '问题', localOnly: false, backendIndex: 0, parentId: null })
+    const target = createMessage({ id: 'msg_u1', role: 'user', content: '追问', localOnly: false, backendIndex: 1, parentId: 'msg_u0' })
+    const state = createState({
+      currentConversationId: ref('conv_1'),
+      allMessages: ref([user, target]),
+      conversations: ref([{ id: 'conv_1', title: 't', createdAt: 1, updatedAt: 1, messageCount: 2 } as any])
+    })
+
+    const attachment = {
+      id: 'att-1', name: 'pic.png', type: 'image' as const, size: 100,
+      mimeType: 'image/png', data: 'aGVsbG8=', thumbnail: undefined
+    }
+
+    // 取消勾选（压缩模式）后编辑保存：请求必须携带 false，否则后端默认拆分
+    await editAndRetry(state, createComputed(), 1, '新回答', [attachment], async () => {}, 'branch', false)
+    const editCall = vi.mocked(sendToExtension).mock.calls.find(c => c[0] === 'chat.editBranchStream')
+    expect(editCall).toBeDefined()
+    expect(editCall![1]).toMatchObject({
+      newText: '新回答',
+      deepSeekVisionTileSplit: false
+    })
+  })
 })

@@ -574,6 +574,8 @@ export type BranchStreamReplayContext =
       configId: string
       modelOverride?: string
       promptModeId?: string
+      /** DeepSeek Vision 图像处理模式：重放时保持原请求选择（未选择时 undefined = 后端默认拆分） */
+      deepSeekVisionTileSplit?: boolean
     }
   | {
       kind: 'editBranch'
@@ -587,6 +589,8 @@ export type BranchStreamReplayContext =
       promptModeId?: string
       /** 编辑模式：'branch' 新建分支（默认）；'keep' 原地改写原消息，保持当前分支 */
       mode?: 'branch' | 'keep'
+      /** DeepSeek Vision 图像处理模式：重放时保持原请求选择（未选择时 undefined = 后端默认拆分） */
+      deepSeekVisionTileSplit?: boolean
     }
 
 export interface ErrorInfo {
