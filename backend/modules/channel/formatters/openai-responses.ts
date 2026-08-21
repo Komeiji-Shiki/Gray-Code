@@ -87,7 +87,7 @@ function getReasoningDisplayText(item: any): string | undefined {
 }
 
 const PROMPT_CACHE_KEY_PREFIX = 'graycode-cache-';
-const DEEPSEEK_REASONING_TEXT_FALLBACK = ' ';
+const DEEPSEEK_REASONING_TEXT_FALLBACK = '';
 
 function isDeepSeekModel(model: string): boolean {
     return model.toLowerCase().includes('deepseek');
@@ -102,8 +102,7 @@ function hasReasoningTextContent(item: any): boolean {
         Array.isArray(item.content) &&
         item.content.some((entry: any) =>
             entry?.type === 'reasoning_text' &&
-            typeof entry.text === 'string' &&
-            entry.text.length > 0
+            typeof entry.text === 'string'
         );
 }
 
@@ -413,7 +412,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         reasoningItem.content = [{ type: 'reasoning_text', text: displayText }];
                     } else if (canReplayEmptyDeepSeekReasoning) {
                         // DeepSeek 可能返回只有 id/status、没有文本的 reasoning item；下一轮
-                        // 仍要求该项携带 reasoning_text，因此仅在原项的字段内补单空格。
+                        // 仍要求该项携带 reasoning_text，因此仅在原项的字段内补空字符串。
                         reasoningItem.content = createDeepSeekReasoningTextFallbackContent();
                     }
 
@@ -546,10 +545,17 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         });
                     }
                 } else if (part.fileData) {
-                    messageParts.push({
-                        type: 'input_file',
-                        file_url: part.fileData.fileUri
-                    });
+                    if (isImageMimeType(part.fileData.mimeType)) {
+                        messageParts.push({
+                            type: 'input_image',
+                            image_url: part.fileData.fileUri
+                        });
+                    } else {
+                        messageParts.push({
+                            type: 'input_file',
+                            file_url: part.fileData.fileUri
+                        });
+                    }
                 }
             }
 
@@ -568,7 +574,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             ) {
                 // Responses 把 assistant 的思维链字段编码为独立 reasoning input item，
                 // DeepSeek 再将它与同一 assistant 输出消息合并。模型无论是直接调用工具
-                // 还是直接输出文本，只要完全跳过思考，都在该消息片段开头补单空格字段。
+                // 还是直接输出文本，只要完全跳过思考，都在该消息片段开头补空字符串字段。
                 input.splice(contentInputStart, 0, {
                     type: 'reasoning',
                     content: createDeepSeekReasoningTextFallbackContent()

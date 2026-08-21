@@ -139,10 +139,8 @@ export function buildOpenAIResponsesCountInput(contents: Content[]): { input: an
                 const { mimeType, data } = part.inlineData;
                 if (isImageMimeType(mimeType)) {
                     inputParts.push({
-                        type: 'image_url',
-                        image_url: {
-                            url: `data:${mimeType};base64,${data}`
-                        }
+                        type: 'input_image',
+                        image_url: `data:${mimeType};base64,${data}`
                     });
                 } else if (isTextMimeType(mimeType)) {
                     inputParts.push({ type: 'text', text: buildTextAttachmentContent(data) });

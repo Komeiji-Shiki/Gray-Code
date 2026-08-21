@@ -711,7 +711,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTexts.join('')).toContain('正文。');
     });
 
-    test('DeepSeek 空 reasoning item 仅在 reasoning_text 字段内补单空格', () => {
+    test('DeepSeek 空 reasoning item 仅在 reasoning_text 字段内补空字符串', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             { role: 'user', parts: [{ text: '读取文件。' }] },
@@ -754,11 +754,11 @@ describe('OpenAI Responses reasoning 与 usage', () => {
             type: 'reasoning',
             id: 'rs_ds_empty_1',
             status: 'completed',
-            content: [{ type: 'reasoning_text', text: ' ' }]
+            content: [{ type: 'reasoning_text', text: '' }]
         }]);
     });
 
-    test('DeepSeek assistant 工具调用未返回 reasoning 时补单空格字段', () => {
+    test('DeepSeek assistant 工具调用未返回 reasoning 时补空字符串字段', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             { role: 'user', parts: [{ text: '读取文件。' }] },
@@ -793,7 +793,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTurnItems).toEqual([
             {
                 type: 'reasoning',
-                content: [{ type: 'reasoning_text', text: ' ' }]
+                content: [{ type: 'reasoning_text', text: '' }]
             },
             {
                 type: 'function_call',
@@ -804,7 +804,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         ]);
     });
 
-    test('DeepSeek assistant 纯文本未返回 reasoning 时补单空格字段', () => {
+    test('DeepSeek assistant 纯文本未返回 reasoning 时补空字符串字段', () => {
         const formatter = new OpenAIResponsesFormatter();
         const history: Content[] = [
             { role: 'user', parts: [{ text: '直接回答。' }] },
@@ -827,7 +827,7 @@ describe('OpenAI Responses reasoning 与 usage', () => {
         expect(assistantTurnItems).toEqual([
             {
                 type: 'reasoning',
-                content: [{ type: 'reasoning_text', text: ' ' }]
+                content: [{ type: 'reasoning_text', text: '' }]
             },
             {
                 type: 'message',
