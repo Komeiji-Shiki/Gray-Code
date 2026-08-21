@@ -26,6 +26,8 @@ const { t } = useI18n()
 const props = defineProps<{
   message: Message
   messageIndex: number  // 后端消息索引
+  /** 楼层号（用户消息/模型回复各占一楼；不传则不显示） */
+  floor?: number
 }>()
 
 const emit = defineEmits<{
@@ -210,6 +212,7 @@ function handleRestoreAndRetry(checkpointId: string) {
         <span class="role-label">
           {{ roleDisplayName }}
         </span>
+        <span v-if="floor" class="message-floor">#{{ floor }}</span>
       </div>
 
       <!-- 操作按钮 -->
@@ -335,6 +338,14 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 .assistant-message .role-label {
   color: var(--vscode-descriptionForeground);
+}
+
+/* 楼层号徽标（角色名称右侧） */
+.message-floor {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  user-select: none;
 }
 
 /* 工具消息标签 */

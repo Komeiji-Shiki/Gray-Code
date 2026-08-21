@@ -160,7 +160,8 @@ const {
   scrollbarRef,
   hasMore,
   loadMore,
-  messageRenderRows
+  messageRenderRows,
+  checkpointFloorByCheckpointId
 } = virtualWindow
 
 const emit = defineEmits<{
@@ -317,6 +318,7 @@ function handleContinue() {
                   <span class="checkpoint-label">
                     {{ shouldMergeForTool(row.item.backendIndex, cp.toolName) ? getMergedLabel(cp) : getCheckpointLabel(cp, 'before') }}
                   </span>
+                  <span class="checkpoint-floor">#{{ checkpointFloorByCheckpointId.get(cp.id) }}</span>
                   <span class="checkpoint-meta">{{ t('components.message.checkpoint.fileCount', { count: cp.fileCount }) }}</span>
                 </div>
                 <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
@@ -333,14 +335,16 @@ function handleContinue() {
             <SummaryMessage
               v-if="row.item.message.isSummary"
               :message="row.item.message"
-            :message-index="row.item.backendIndex"
+              :message-index="row.item.backendIndex"
+              :floor="row.item.floor"
             />
             
             <!-- 普通消息使用 MessageItem -->
             <MessageItem
               v-else
               :message="row.item.message"
-            :message-index="row.item.backendIndex"
+              :message-index="row.item.backendIndex"
+              :floor="row.item.floor"
               @edit="handleEdit"
               @delete="handleDelete"
               @retry="handleRetry"
@@ -366,6 +370,7 @@ function handleContinue() {
                   </div>
                   <div class="checkpoint-info">
                     <span class="checkpoint-label">{{ getCheckpointLabel(cp, 'after') }}</span>
+                    <span class="checkpoint-floor">#{{ checkpointFloorByCheckpointId.get(cp.id) }}</span>
                     <span class="checkpoint-meta">{{ t('components.message.checkpoint.fileCount', { count: cp.fileCount }) }}</span>
                   </div>
                   <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
@@ -1211,6 +1216,13 @@ function handleContinue() {
 .checkpoint-meta {
   color: var(--vscode-descriptionForeground);
   opacity: 0.8;
+}
+
+.checkpoint-floor {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .checkpoint-time {

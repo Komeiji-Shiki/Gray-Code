@@ -20,6 +20,7 @@ import { CustomScrollbar } from '../common'
 import { pruneMediumTrimmedByMessageId } from './mediumTrimState'
 import { pruneBackgroundTaskViewModes, pruneThoughtViewModes } from './messageViewModes'
 import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeState } from './messageListUiState'
+import { computeMessageFloorMap, computeCheckpointFloorMap } from './messageListUtils'
 import { clearLineDiffCache } from '../../utils/lineDiff'
 import type { Message, CheckpointRecord } from '../../types'
 
@@ -108,7 +109,16 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     backendIndex: number
     beforeCheckpoints: CheckpointRecord[]
     afterCheckpoints: CheckpointRecord[]
+    /** 楼层号（用户消息/模型回复各占一楼；tool 及内部消息不计） */
+    floor?: number
   }
+
+  // 楼层号映射：按对话消息顺序对 user/assistant 消息编号（总结消息也是 user role，计入）。
+  // 基于全部已加载消息（props.messages）计算，窗口内渲染行直接按 message.id 取值。
+  const floorByMessageId = computed(() => computeMessageFloorMap(props.messages))
+
+  // 存档序号：按创建时间升序编号（第 N 次存档）。
+  const checkpointFloorByCheckpointId = computed(() => computeCheckpointFloorMap(chatStore.checkpoints))
 
   const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
     const visibleMessages = props.messages.slice(safeWindowStart.value, windowEnd.value)
@@ -122,7 +132,8 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
         message,
         backendIndex,
         beforeCheckpoints: cpGroup?.before || [],
-        afterCheckpoints: cpGroup?.after || []
+        afterCheckpoints: cpGroup?.after || [],
+        floor: floorByMessageId.value.get(message.id)
       }
     })
   })
@@ -570,6 +581,7 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     scrollbarRef,
     hasMore,
     loadMore,
-    messageRenderRows
+    messageRenderRows,
+    checkpointFloorByCheckpointId
   }
 }

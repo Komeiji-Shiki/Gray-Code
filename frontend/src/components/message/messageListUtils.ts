@@ -113,3 +113,43 @@ export function computeVirtualRows<T>(rows: T[], options: ComputeVirtualRowsOpti
     reason: rawStartIndex !== startIndex ? 'clamped' : undefined
   }
 }
+
+/**
+ * 计算楼层号映射：用户消息与模型回复各占一楼（按消息顺序依次编号）。
+ *
+ * tool 消息（工具调用/结果）与内部消息不占楼；总结消息 role 为 user，正常计入，
+ * 保证楼层号连续。返回 Map<messageId, floor>。
+ */
+export function computeMessageFloorMap<T extends { id: string; role: string }>(messages: T[]): Map<string, number> {
+  const map = new Map<string, number>()
+  let floor = 0
+  for (const message of messages) {
+    if (message.role === 'user' || message.role === 'assistant') {
+      floor++
+      map.set(message.id, floor)
+    }
+  }
+  return map
+}
+
+/**
+ * 计算存档序号映射：按创建时间升序编号（第 N 次存档）。
+ *
+ * 同时间戳时按消息索引 / before-先 稳定排序（checkpoint 列表顺序无契约，必须显式定序）。
+ * 返回 Map<checkpointId, 序号>。
+ */
+export function computeCheckpointFloorMap<T extends { id: string; timestamp: number; messageIndex: number; phase: string }>(checkpoints: T[]): Map<string, number> {
+  const sorted = [...checkpoints]
+  sorted.sort((a, b) =>
+    a.timestamp - b.timestamp
+    || a.messageIndex - b.messageIndex
+    || (a.phase === 'before' ? 0 : 1) - (b.phase === 'before' ? 0 : 1)
+  )
+  const map = new Map<string, number>()
+  let seq = 0
+  for (const cp of sorted) {
+    seq++
+    map.set(cp.id, seq)
+  }
+  return map
+}

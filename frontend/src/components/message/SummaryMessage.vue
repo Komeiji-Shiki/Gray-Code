@@ -18,6 +18,8 @@ const { t } = useI18n()
 const props = defineProps<{
   message: Message
   messageIndex: number
+  /** 楼层号（总结消息计入楼层，保证楼层连续；不传则不显示） */
+  floor?: number
 }>()
 
 const emit = defineEmits<{
@@ -122,6 +124,7 @@ async function handleRestore() {
         <i class="codicon" :class="isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
         <i class="codicon codicon-fold summary-icon"></i>
         <span class="summary-title">{{ t('components.message.summary.title') }}</span>
+        <span v-if="floor" class="message-floor">#{{ floor }}</span>
         <span v-if="message.summarizedMessageCount" class="summary-count">
           {{ t('components.message.summary.compressed', { count: message.summarizedMessageCount }) }}
         </span>
@@ -232,6 +235,14 @@ async function handleRestore() {
   font-size: 12px;
   font-weight: 600;
   color: var(--vscode-foreground);
+}
+
+/* 楼层号徽标（总结标题右侧） */
+.message-floor {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.6;
+  user-select: none;
 }
 
 .summary-count {
