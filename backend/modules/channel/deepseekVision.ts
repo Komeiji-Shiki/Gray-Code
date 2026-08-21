@@ -784,9 +784,17 @@ class DeepSeekVisionProcessor {
         return result;
     }
 
-    /** 提取 GIF 的单个帧并编码为 PNG（透明背景填充白色，避免模型把透明区域看作黑色）。 */
+    /**
+     * 提取 GIF 的单个帧并编码为 PNG（透明背景填充白色，避免模型把透明区域看作黑色）。
+     *
+     * 为什么必须显式指定 pages: 1：sharp/libvips 对 animated 输入会把所有帧读为
+     * 垂直堆叠的 "toilet roll"（metadata.height = pages × pageHeight）。只给 page 而
+     * 不给 pages 时，输出是从该帧到结尾的全部剩余帧的垂直卷——本地实测 62 帧 GIF
+     * 的 frame 0 输出 240×15128（62 帧叠图），模型看到的是一张超长拼图而不是单帧。
+     * pages: 1 让输出精确回到单帧，供后续分块/压缩链路正常处理。
+     */
     private async renderGifFrame(sharp: any, buffer: Buffer, frameIndex: number): Promise<Buffer> {
-        return await sharp(buffer, { page: frameIndex, animated: true })
+        return await sharp(buffer, { page: frameIndex, pages: 1, animated: true })
             .flatten({ background: '#ffffff' })
             .png({ compressionLevel: 9 })
             .toBuffer();

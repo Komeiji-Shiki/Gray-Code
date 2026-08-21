@@ -392,11 +392,11 @@ describe('DeepSeek Vision preprocessing', () => {
         ]);
         expect(result[0].parts.filter(part => part.inlineData)).toHaveLength(4);
         expect(countHistoryImages(result)).toBe(4);
-        // 帧渲染按采样索引逐一进行（1/3/5/6 → 内部 0/2/4/5）。
-        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 0, animated: true });
-        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 2, animated: true });
-        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 4, animated: true });
-        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 5, animated: true });
+        // 帧渲染按采样索引逐一进行（1/3/5/6 → 内部 0/2/4/5）；pages: 1 保证输出单帧（垂直卷修复）。
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 0, pages: 1, animated: true });
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 2, pages: 1, animated: true });
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 4, pages: 1, animated: true });
+        expect(factory).toHaveBeenCalledWith(expect.any(Buffer), { page: 5, pages: 1, animated: true });
     });
 
     test('falls back to 100ms frame duration when GIF metadata has no delay', async () => {
