@@ -427,6 +427,7 @@ export class CheckpointManager {
                 backupDir,
                 roots,
                 affectedPaths: options?.affectedPaths,
+                forceCreate,
                 signal,
                 reportProgress
             }),

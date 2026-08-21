@@ -366,7 +366,7 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
         }
     });
 
-    test('H1：空增量节点（changes=[]）不覆盖更早节点，恢复漂移文件成功', async () => {
+    test('H1（CP-SKIP 修订）：内容无变化不产生空增量节点，恢复漂移文件成功', async () => {
         const workspaceRoot = await createTempDirectory('limcode-cp3-workspace-');
         const storageRoot = await createTempDirectory('limcode-cp3-storage-');
         try {
@@ -378,18 +378,16 @@ describe('CheckpointManager Phase 3 (manifest / summary / progress)', () => {
             expect(cp1).not.toBeNull();
             expect(cp1!.type).toBe('full');
 
-            // cp2 = 空增量节点（工作区无变化 → changes=[]）
+            // 工作区无变化 → CP-SKIP 跳过（旧行为：cp2 = 空增量节点 changes=[]；
+            // 修订后：空节点与 cp1 记录的恢复状态完全相同，属冗余，直接跳过）
             const cp2 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
-            expect(cp2).not.toBeNull();
-            expect(cp2!.type).toBe('incremental');
-            expect(cp2!.changes).toEqual([]);
+            expect(cp2).toBeNull();
 
-            // 工作区漂移：a.txt 改为 v2（与 cp2 快照不一致）
+            // 工作区漂移：a.txt 改为 v2（与 cp1 快照不一致）
             await writeFile(workspaceRoot, 'a.txt', 'v2');
 
-            // 恢复 cp2：链 = [cp1(full), cp2(空增量)]；a.txt 必须由 cp1 提供。
-            // 修复前：cp2 被当作完整节点，把 a.txt 指到自己的空备份目录 → missing_in_chain
-            const restore = await harness.manager.restoreCheckpoint('conv-1', cp2!.id);
+            // 恢复 cp1：链 = [cp1(full)]；a.txt 由 cp1 提供，恢复漂移文件成功
+            const restore = await harness.manager.restoreCheckpoint('conv-1', cp1!.id);
             expect(restore.success).toBe(true);
             expect(restore.failures).toBeUndefined();
             await expect(fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf-8')).resolves.toBe('v1');

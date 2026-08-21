@@ -71,7 +71,15 @@ async function createCheckpointManager(
     storageRoot: string,
     checkpoints: CheckpointRecord[],
     customIgnorePatterns: string[] = [],
-    multiConversation?: Record<string, CheckpointRecord[]>
+    multiConversation?: Record<string, CheckpointRecord[]>,
+    checkpointConfigOverride?: Partial<{
+        enabled: boolean;
+        beforeTools: string[];
+        afterTools: string[];
+        messageCheckpoint: { beforeMessages: string[]; afterMessages: string[] };
+        maxCheckpoints: number;
+        customIgnorePatterns: string[];
+    }>
 ): Promise<CheckpointManager> {
     (vscode.workspace as any).workspaceFolders = [
         {
@@ -124,7 +132,8 @@ async function createCheckpointManager(
                 afterMessages: []
             },
             maxCheckpoints: -1,
-            customIgnorePatterns
+            customIgnorePatterns,
+            ...checkpointConfigOverride
         })
     };
     // 模拟真实 withMetadataWriteSerialized 链：并发调用串行执行，第二个 updater 基于第一个写回后的最新列表
@@ -2072,6 +2081,190 @@ describe('CheckpointManager metadata RMW migration', () => {
                 expect(cpC!.changes).toHaveLength(1);
                 expect(cpC!.changes![0].path.endsWith('/b.ts')).toBe(true);
                 expect(cpC!.fileCount).toBe(1);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+    });
+
+    // ==================== CP-SKIP-1/2：内容无变化跳过创建 ====================
+
+    describe('CP-SKIP 内容无变化跳过创建', () => {
+        beforeEach(() => {
+            jest.clearAllMocks();
+        });
+
+        test('内容无变化（全量扫描）：跳过创建，返回 null，不新增存档记录', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-1-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-1-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                // 第一个存档：无 lastCheckpoint，必须创建（链头）
+                const cpA = await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+                expect(cpA).not.toBeNull();
+
+                // 内容无变化（a.ts 未改）→ 自动创建路径应跳过
+                const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'before');
+                expect(cpB).toBeNull();
+
+                // 存档记录数不变（仍只有 1 个）
+                const records = await manager.getCheckpoints('conv-cp-skip');
+                expect(records).toHaveLength(1);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('受影响文件变化（部分快照）：不跳过，正常创建', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-2-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-2-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                await writeFile(workspaceRoot, 'b.ts', 'b1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                // 链头：全量
+                await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+
+                // 修改 a.ts 后创建部分快照（受影响 a.ts）→ 内容变化，必须创建
+                await writeFile(workspaceRoot, 'a.ts', 'a2');
+                const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after', {
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                expect(cpB).not.toBeNull();
+                expect(cpB!.fileHashes![Object.keys(cpB!.fileHashes!).find(k => k.endsWith('/a.ts'))!])
+                    .toBe(hashContent('a2'));
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('部分快照受影响文件未变：跳过（与上一存档记录内容一致）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-3-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-3-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                // 链头：全量
+                await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+
+                // 部分快照但 a.ts 未变 → contentHash 与链头一致 → 跳过
+                const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after', {
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                expect(cpB).toBeNull();
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('forceCreate（手动存档）：内容无变化也强制创建', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-4-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-4-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+                // 内容无变化，但 forceCreate 显式请求 → 无条件创建
+                const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after', { forceCreate: true });
+                expect(cpB).not.toBeNull();
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('受影响文件被删除（absent 状态变化）：不跳过，创建存档记录保护状态', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-5-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-5-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                // 链头：全量（a.ts 存在）
+                await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+
+                // delete_file 删除 a.ts 后创建部分快照（受影响路径 a.ts）
+                await fs.rm(path.join(workspaceRoot, 'a.ts'));
+                const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after', {
+                    affectedPaths: [path.join(workspaceRoot, 'a.ts')]
+                });
+                // absent 状态变化 → 不跳过（CP-SKIP-2 保护）
+                expect(cpB).not.toBeNull();
+                expect(cpB!.absentPaths?.some(p => p.endsWith('/a.ts'))).toBe(true);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('跳过创建后增量链保持连续（下一存档仍基于原基准）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-6-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-6-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                // 链头：全量
+                await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+                // 无变化 → 跳过
+                expect(await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'before')).toBeNull();
+
+                // a.ts 变化 → 创建，且增量链基准仍是链头（baseCheckpointId = 链头）
+                await writeFile(workspaceRoot, 'a.ts', 'a2');
+                const cpC = await manager.createCheckpoint('conv-cp-skip', 2, 'tool_batch', 'after');
+                expect(cpC).not.toBeNull();
+                expect(cpC!.type).toBe('incremental');
+                expect(cpC!.changes).toHaveLength(1);
+            } finally {
+                await fs.rm(workspaceRoot, { recursive: true, force: true });
+                await fs.rm(storageRoot, { recursive: true, force: true });
+            }
+        });
+
+        test('空目录变化：不跳过（contentHash 含 emptyDirs）', async () => {
+            const workspaceRoot = await createTempDirectory('limcode-cp-skip-7-');
+            const storageRoot = await createTempDirectory('limcode-cp-skip-7-storage-');
+            try {
+                await writeFile(workspaceRoot, 'a.ts', 'a1');
+                const manager = await createCheckpointManager(workspaceRoot, storageRoot, [], [], undefined, {
+                    beforeTools: ['tool_batch'],
+                    afterTools: ['tool_batch']
+                });
+
+                // 链头：全量
+                await manager.createCheckpoint('conv-cp-skip', 0, 'tool_batch', 'after', { forceCreate: true });
+
+                // 新增空目录 → emptyDirs 变化 → contentHash 不同 → 不跳过
+                await fs.mkdir(path.join(workspaceRoot, 'new-dir'));
+                const cpB = await manager.createCheckpoint('conv-cp-skip', 1, 'tool_batch', 'after');
+                expect(cpB).not.toBeNull();
             } finally {
                 await fs.rm(workspaceRoot, { recursive: true, force: true });
                 await fs.rm(storageRoot, { recursive: true, force: true });

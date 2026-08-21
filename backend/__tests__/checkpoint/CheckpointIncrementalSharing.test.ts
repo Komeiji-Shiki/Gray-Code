@@ -1,5 +1,5 @@
 /**
- * BCP-07 验证测试：分支存档共享不可变内容（决策 12 固化——不做内容哈希去重）。
+ * BCP-07 验证测试：分支存档共享不可变内容（决策 12 修订——同内容跳过创建，CP-SKIP）。
  *
  * 关联规划：checkpoint-history-branch-architecture.plan.md 第七阶段 BCP-07（L123）+ 决策 12（L2034）；
  * 研究依据：.graycode/research/bcp-phase-research.md §6（增量链文件级天然共享）+ §7.2 场景 22。
@@ -9,8 +9,9 @@
  *    未变文件在后续存档中不重复存储 —— 通过 backupDir 布局 + manifest.changes 断言；
  * 2. 恢复按增量链引用 base：restore 时未变文件从 base 的备份目录恢复，
  *    不要求每个存档都有完整副本 —— 通过 restoreCheckpoint 集成断言（含多跳链）。
- * 3. 决策 12 语义固化：同内容重复创建 → 记录重复（内容哈希不同 id）但备份文件零重复；
- *    内容哈希去重不做（会改变存档列表语义），存档列表按创建次数增长、磁盘按增量链共享。
+ * 3. 决策 12 修订语义（CP-SKIP）：同内容重复创建 → 跳过（不产生空增量节点）；
+ *    旧行为保留空增量节点（内容哈希相同仍建记录），修订后内容签名一致即跳过——
+ *    空节点与上一节点记录的恢复状态完全相同，属冗余；跳过省元数据写入与展示噪音。
  */
 
 import * as crypto from 'crypto';
@@ -205,7 +206,7 @@ describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', (
         }
     });
 
-    test('决策 12：同内容重复创建 → 存档记录重复（无哈希去重）但备份文件零重复', async () => {
+    test('决策 12：同内容重复创建 → 跳过（CP-SKIP，不再产生空增量节点）', async () => {
         const workspaceRoot = await createTempDirectory('limcode-bcp07-workspace-');
         const storageRoot = await createTempDirectory('limcode-bcp07-storage-');
         try {
@@ -216,30 +217,19 @@ describe('增量链文件级共享 + base 引用恢复（决策 12 固化）', (
             expect(cp1).not.toBeNull();
             expect(cp1!.type).toBe('full');
 
-            // 工作区无任何变化 → cp2 为空增量节点（changes=[]），不复制任何文件
+            // 工作区无任何变化 → CP-SKIP 跳过创建（不产生空增量节点：
+            // 内容签名与 cp1 一致，新节点与上一节点记录的恢复状态完全相同，冗余）
             const cp2 = await harness.manager.createCheckpoint('conv-1', 0, 'write_file', 'after');
-            expect(cp2).not.toBeNull();
-            expect(cp2!.type).toBe('incremental');
-            expect(cp2!.changes).toEqual([]);
-            expect(cp2!.fileCount).toBe(0);
-            expect(cp2!.backupBytes).toBe(0);
+            expect(cp2).toBeNull();
 
-            // 决策 12 语义：同内容存档仍创建新记录（contentHash 相同但 id 不同）——
-            // 不做内容哈希去重（去重会改变存档列表语义：多条同内容记录并展示为一次）
+            // 存档记录数不变（仍只有 1 个）
             const records = harness.storedCheckpoints();
-            expect(records).toHaveLength(2);
-            expect(records[0]!.id).not.toBe(records[1]!.id);
-            expect(records[0]!.contentHash).toBe(records[1]!.contentHash);
-            expect(cp2!.contentHash).toBe(cp1!.contentHash);
+            expect(records).toHaveLength(1);
+            expect(records[0]!.id).toBe(cp1!.id);
 
-            // 但磁盘零重复：cp2 备份目录为空（无任何文件副本，仅 manifest/files 元数据）
-            const cp2Dir = path.join(storageRoot, 'checkpoints', cp2!.id);
-            const entries = await fs.readdir(cp2Dir);
-            expect(entries.filter(e => e !== 'manifest.json' && e !== 'files.json')).toEqual([]);
-
-            // 恢复 cp2 仍成功：文件全部由 base（cp1）经增量链提供
+            // 恢复 cp1 仍成功：文件由全量节点提供
             await writeFile(workspaceRoot, 'a.txt', 'drifted');
-            const restore = await harness.manager.restoreCheckpoint('conv-1', cp2!.id);
+            const restore = await harness.manager.restoreCheckpoint('conv-1', cp1!.id);
             expect(restore.success).toBe(true);
             expect(restore.failures).toBeUndefined();
             expect(await fs.readFile(path.join(workspaceRoot, 'a.txt'), 'utf-8')).toBe('v1');

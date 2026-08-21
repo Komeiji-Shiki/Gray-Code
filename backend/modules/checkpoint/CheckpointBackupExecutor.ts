@@ -63,6 +63,8 @@ export interface CheckpointBackupExecutorParams {
     roots: RuntimeWorkspaceRoot[];
     /** CP-PARTIAL-1：受影响文件绝对路径（工具执行存档按参数限定的文件构建部分快照；缺省 = 全量扫描） */
     affectedPaths?: string[];
+    /** CP-SKIP-1：手动创建（用户显式请求）——跳过「内容无变化不创建」判定，无条件创建存档 */
+    forceCreate?: boolean;
     signal: AbortSignal;
     reportProgress: (patch: Partial<CheckpointOperationProgress>) => void;
 }
@@ -99,6 +101,7 @@ export class CheckpointBackupExecutor {
             backupDir,
             roots,
             affectedPaths,
+            forceCreate,
             signal,
             reportProgress
         } = params;
@@ -393,6 +396,44 @@ export class CheckpointBackupExecutor {
                 updateHashPart(`${scopedPath}:empty-dir`);
             }
             const contentHash = contentHashBuilder.digest('hex').substring(0, 16);
+
+            // CP-SKIP-1：内容无变化跳过创建——与上一存档的完整内容签名（文件哈希 + 空目录）
+            // 完全一致时不再创建新存档，避免「批次后存档」紧挨「批次前存档」的冗余展示与磁盘浪费
+            // （如 apply_diff 执行后存档 → execute_command 执行前存档，两者之间无文件变化）。
+            // 判定依据 contentHash（记录级字段，无需读 manifest）：部分快照继承补全后的映射
+            // 与 lastCheckpoint 一致 ⟺ 受影响文件哈希未变；全量快照则直接反映工作区整体状态。
+            // 跳过仅对自动创建路径生效：forceCreate（手动存档）是用户显式请求，无条件创建。
+            // 安全边界：跳过不写 manifest/记录，上一存档保持为增量链基准（lastCheckpoint 不变），
+            // 后续存档继续基于它做增量比较——与「没有发生过这次创建」语义等价。
+            // CP-SKIP-2：除 contentHash 外还需比较 unbackedPaths（大小超限/不可读保护清单）与
+            // absentPaths（明确不存在的受影响路径）——这两类状态不参与 contentHash 计算，但影响
+            // 恢复时的保护判定：若某文件从可读变为超限/不存在，必须创建存档记录新保护状态，
+            // 不能因文件哈希未变而跳过（否则恢复时该文件失去保护，可能被误删）。
+            const unbackedSorted = [...unbackedPathSet].sort();
+            const lastUnbackedSorted = [...(lastCheckpoint?.unbackedPaths ?? [])].sort();
+            const absentSorted = [...(snapshot.absent ?? [])].sort();
+            const lastAbsentSorted = [...(lastCheckpoint?.absentPaths ?? [])].sort();
+            const unbackedSame = unbackedSorted.length === lastUnbackedSorted.length
+                && unbackedSorted.every((p, i) => p === lastUnbackedSorted[i]);
+            const absentSame = absentSorted.length === lastAbsentSorted.length
+                && absentSorted.every((p, i) => p === lastAbsentSorted[i]);
+            if (!forceCreate && lastCheckpoint && lastCheckpoint.contentHash === contentHash
+                && unbackedSame && absentSame) {
+                log.info('checkpoint_skip_unchanged', {
+                    conversationId,
+                    checkpointId,
+                    toolName,
+                    phase,
+                    lastCheckpointId: lastCheckpoint.id
+                });
+                // 回收已创建的备份目录（不写 manifest/记录，目录不能残留）
+                backupDirCreated = false;
+                await fs.rm(backupDir, { recursive: true, force: true });
+                // 进度推进到终态：跳过是正常完成（无文件复制），否则 getOperationProgress
+                // 会把本条非终态记录当作「进行中操作」返回，前端创建指示器永久挂起。
+                reportProgress({ phase: 'done', processed: 0, total: 0 });
+                return null;
+            }
 
             // CPF-01/EX-10: 完整数据（哈希/stat/空目录/变更/排除清单/规则快照）写入独立 manifest，
             // 会话元数据只保留摘要（fileHashes/fileStats 不再写入记录）
