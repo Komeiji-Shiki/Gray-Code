@@ -5,6 +5,9 @@
 export {
     DependencyManager,
     getSharp,
+    getPdfjs,
+    getCanvas,
+    getDependencyPath,
     type DependencyInfo,
     type InstallProgressEvent
 } from './DependencyManager';

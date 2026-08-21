@@ -55,6 +55,12 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
     model: string;
     
     /**
+     * 是否启用 DeepSeek Vision 专用图片/PDF 预处理。
+     * 默认关闭；开启后由请求准备层将 PDF 按页转换为图片并切分大图。
+     */
+    deepSeekVisionEnabled?: boolean;
+
+    /**
      * 是否发送 prompt_cache_key（OpenAI 兼容网关的会话缓存透传）。
      *
      * 开启后基于主聊天 conversationId 生成稳定且不含隐私信息的 prompt_cache_key，

@@ -1616,6 +1616,7 @@ const zhCN = {
                 uninstall: '卸载',
                 estimatedSize: '约 {size}MB',
                 empty: '暂无需要依赖的工具',
+                panelDeepSeekVision: 'DeepSeek Vision 图像预处理',
                 progress: {
                     processing: '正在处理 {dependency}...',
                     complete: '{dependency} 处理完成',
@@ -3049,6 +3050,11 @@ const zhCN = {
                     hint: '为 DeepSeek Chat Completions 请求发送顶层 user_id，用于按对话隔离 KVCache。仅在当前主聊天请求存在对话 ID 时生效；总结、子代理等内部请求默认不会发送。请只为 DeepSeek 渠道开启。',
                     toggleHint: '开启后基于当前对话 ID 生成稳定且不包含隐私信息的 user_id'
                 },
+                deepSeekVision: {
+                    title: 'DeepSeek Vision 图像预处理',
+                    hint: '为 deepseek-v4-flash-vision-exp 启用 PDF 逐页图像化，并将超过约 800×800 总像素的图片切成多个分块，避免 DeepSeek 自动缩小；需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
+                    toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
+                },
                 pdfAttachment: {
                     title: 'PDF 附件发送',
                     hint: '将 PDF 附件作为原生 file 内容块发送给 API。仅官方 OpenAI 端点及支持 file 类型的兼容端点可用，不支持的端点会返回 400 错误；请确认端点支持后再开启。',
@@ -3091,6 +3097,11 @@ const zhCN = {
                 }
             },
             'openai-responses': {
+                deepSeekVision: {
+                    title: 'DeepSeek Vision 图像预处理',
+                    hint: '为 deepseek-v4-flash-vision-exp 启用 PDF 逐页图像化，并将超过约 800×800 总像素的图片切成多个分块，避免 DeepSeek 自动缩小；需要在扩展依赖中安装 sharp、pdfjs-dist 与 @napi-rs/canvas。',
+                    toggleHint: '启用 DeepSeek Vision 的 PDF 页面渲染与大图分块'
+                },
                 promptCacheKey: {
                     title: 'Prompt Cache Key（会话缓存透传）',
                     hint: '为支持该字段的 OpenAI 兼容网关（如 openai-api-server-via-codex）发送 prompt_cache_key，用于复用 Codex 后端会话缓存。开启后基于当前对话 ID 生成稳定且不含隐私信息的 key；总结、子代理等内部请求默认不会发送。',

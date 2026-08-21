@@ -13,6 +13,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as childProcess from 'child_process';
 import { promisify } from 'util';
+import { pathToFileURL } from 'url';
 import { t } from '../../i18n';
 
 const execFile = promisify(childProcess.execFile);
@@ -93,6 +94,16 @@ export class DependencyManager {
             version: '^0.33.5',
             descriptionKey: 'modules.dependencies.descriptions.sharp',
             estimatedSize: 30  // MB
+        },
+        'pdfjs-dist': {
+            version: '^4.10.38',
+            descriptionKey: 'modules.dependencies.descriptions.pdfjsDist',
+            estimatedSize: 18  // MB
+        },
+        '@napi-rs/canvas': {
+            version: '^1.0.7',
+            descriptionKey: 'modules.dependencies.descriptions.napiCanvas',
+            estimatedSize: 12  // MB
         }
     };
     
@@ -681,6 +692,16 @@ export class DependencyManager {
     }
     
     /**
+     * 获取某个可选依赖的安装目录。
+     *
+     * ESM 依赖（例如 pdfjs-dist）需要用绝对路径动态 import；路径由管理器
+     * 统一提供，避免调用方重新拼接自定义依赖目录。
+     */
+    getDependencyPath(name: string): string {
+        return path.join(this.depsDir, name);
+    }
+
+    /**
      * 动态加载依赖
      * 
      * @param name 依赖名称
@@ -701,25 +722,31 @@ export class DependencyManager {
         }
         
         try {
-            const modulePath = path.join(this.depsDir, name);
-            // 卸载后重装同一路径时，Node 的 require.cache 仍缓存旧版本模块（loadedModules
-            // 缓存已随卸载/安装清除，但 require.cache 不会自动失效）：加载前主动清除该模块
-            // 的缓存条目，保证重装后 require 读到新版本。require.resolve 失败（模块未安装/
-            // 损坏）时跳过清理，交由下方 require 统一按加载失败处理。
+            const modulePath = this.getDependencyPath(name);
+            let mod: any;
+
+            // 优先使用 CommonJS，兼容现有 sharp 等依赖。
             try {
+                // 卸载后重装同一路径时，Node 的 require.cache 仍缓存旧版本模块
+                //（loadedModules 缓存已随卸载/安装清除，但 require.cache 不会自动失效）。
                 delete require.cache[require.resolve(modulePath)];
+                mod = require(modulePath);
             } catch {
-                // resolve 失败：模块不存在或损坏，跳过缓存清理
+                // pdfjs-dist 4.x 是 ESM。使用原生 import() 加载，不能让 TypeScript
+                // 把它降级为 require()，因此通过 Function 保留 Node 的原生动态 import。
+                const resolvedPath = require.resolve(modulePath);
+                const nativeImport = new Function('specifier', 'return import(specifier);') as
+                    (specifier: string) => Promise<any>;
+                mod = await nativeImport(pathToFileURL(resolvedPath).href);
             }
-            // 使用 require 加载
-            const mod = require(modulePath);
+
             this.loadedModules.set(name, mod);
             // 加载成功：同步更新安装状态缓存，避免 isInstalledSync（缓存）与磁盘状态不一致
             this.installedCache.set(name, true);
             return mod;
         } catch (error) {
             console.error(t('modules.dependencies.errors.loadFailed', { name }), error);
-            // require 失败（模块损坏/平台不兼容/安装被删除）：同步置 false，与磁盘状态对齐
+            // require/import 失败（模块损坏/平台不兼容/安装被删除）：同步置 false，与磁盘状态对齐
             this.installedCache.set(name, false);
             return null;
         }
@@ -761,6 +788,17 @@ export class DependencyManager {
 }
 
 /**
+ * 获取安装目录下的依赖路径（如果 DependencyManager 已初始化）。
+ */
+export function getDependencyPath(name: string): string | null {
+    try {
+        return DependencyManager.getInstance().getDependencyPath(name);
+    } catch {
+        return null;
+    }
+}
+
+/**
  * 获取 sharp 模块（如果已安装）
  */
 export async function getSharp(): Promise<any | null> {
@@ -769,6 +807,26 @@ export async function getSharp(): Promise<any | null> {
         return await manager.load('sharp');
     } catch {
         // 如果 DependencyManager 未初始化，返回 null
+        return null;
+    }
+}
+
+/** 获取 pdfjs-dist 模块（如果已安装）。 */
+export async function getPdfjs(): Promise<any | null> {
+    try {
+        const manager = DependencyManager.getInstance();
+        return await manager.load('pdfjs-dist');
+    } catch {
+        return null;
+    }
+}
+
+/** 获取 @napi-rs/canvas 模块（如果已安装）。 */
+export async function getCanvas(): Promise<any | null> {
+    try {
+        const manager = DependencyManager.getInstance();
+        return await manager.load('@napi-rs/canvas');
+    } catch {
         return null;
     }
 }

@@ -377,6 +377,7 @@ export class ConfigManager {
                     ...baseDefaults,
                     url: 'https://api.openai.com/v1',
                     deepSeekUserIdEnabled: false,
+                    deepSeekVisionEnabled: false,
                     pdfAttachmentEnabled: false,
                     options: {
                         ...baseDefaults.options,
@@ -427,6 +428,7 @@ export class ConfigManager {
                 return {
                     ...baseDefaults,
                     url: 'https://api.openai.com/v1',
+                    deepSeekVisionEnabled: false,
                     promptCacheKeyEnabled: false,
                     reasoningSignatureMode: 'official' as const,
                     options: {

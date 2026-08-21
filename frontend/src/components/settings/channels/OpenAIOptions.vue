@@ -152,6 +152,27 @@ function onSendThoughtsChange(e: any) {
       </div>
     </div>
 
+    <!-- DeepSeek Vision 图片/PDF 预处理 -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-eye"></i>
+          {{ t('components.channels.openai.deepSeekVision.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.openai.deepSeekVision.toggleHint')">
+          <input
+            type="checkbox"
+            :checked="config.deepSeekVisionEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'deepSeekVisionEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.openai.deepSeekVision.hint') }}</span>
+      </div>
+    </div>
+
     <!-- PDF 附件发送（file 内容块） -->
     <div class="option-section">
       <div class="option-section-header">

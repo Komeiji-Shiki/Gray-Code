@@ -172,7 +172,9 @@ const ja: BackendLanguageMessages = {
 
         dependencies: {
             descriptions: {
-                sharp: '背景除去でマスク適用に使用する高性能画像処理ライブラリ'
+                sharp: '背景除去でマスク適用に使用する高性能画像処理ライブラリ',
+                pdfjsDist: 'DeepSeek Vision のページ単位画像入力に使用する PDF ページレンダリングライブラリ',
+                napiCanvas: 'PDF ページを画像にラスタライズする Node.js ネイティブキャンバス実装'
             },
             errors: {
                 requiresContext: 'DependencyManager は初回呼び出し時に ExtensionContext が必要です',

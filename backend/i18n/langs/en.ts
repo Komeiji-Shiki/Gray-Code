@@ -172,7 +172,9 @@ const en: BackendLanguageMessages = {
 
         dependencies: {
             descriptions: {
-                sharp: 'High-performance image processing library for mask application in background removal'
+                sharp: 'High-performance image processing library for mask application in background removal',
+                pdfjsDist: 'PDF page rendering library for DeepSeek Vision page-by-page image input',
+                napiCanvas: 'Native Node.js canvas implementation for rasterizing PDF pages into images'
             },
             errors: {
                 requiresContext: 'DependencyManager requires ExtensionContext on first call',

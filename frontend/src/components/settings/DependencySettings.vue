@@ -193,6 +193,10 @@ const toolPanels = computed<ToolPanel[]>(() => {
 
 // 获取工具显示名称
 function getToolDisplayName(name: string): string {
+  // DeepSeek Vision 是功能级面板（非工具），使用专门文案
+  if (name === 'deepseek_vision') {
+    return t('components.settings.dependencySettings.panelDeepSeekVision')
+  }
   // 可以在这里添加工具名称的国际化映射
   // 目前使用默认格式化：将下划线转为空格并首字母大写
   return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());

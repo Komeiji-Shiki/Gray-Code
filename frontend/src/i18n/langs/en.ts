@@ -1614,6 +1614,7 @@ const en: LanguageMessages = {
                 uninstall: 'Uninstall',
                 estimatedSize: 'About {size}MB',
                 empty: 'No tools requiring dependencies',
+                panelDeepSeekVision: 'DeepSeek Vision image preprocessing',
                 progress: {
                     processing: 'Processing {dependency}...',
                     complete: '{dependency} processing complete',
@@ -3047,6 +3048,11 @@ const en: LanguageMessages = {
                     hint: 'Send the top-level user_id field for DeepSeek Chat Completions to isolate KVCache per conversation. It only applies when the current main chat request has a conversation ID; internal requests such as summaries and sub-agents do not send it by default. Enable this only for DeepSeek channels.',
                     toggleHint: 'Generate a stable privacy-safe user_id from the current conversation ID'
                 },
+                deepSeekVision: {
+                    title: 'DeepSeek Vision preprocessing',
+                    hint: 'Enable PDF page rendering and split images above approximately 800×800 total pixels for deepseek-v4-flash-vision-exp, avoiding DeepSeek downscaling. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
+                    toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
+                },
                 pdfAttachment: {
                     title: 'PDF attachment',
                     hint: 'Send PDF attachments as native file content blocks. Only official OpenAI endpoints and compatible endpoints that support the file type work; unsupported endpoints return a 400 error, so enable this only after confirming your endpoint supports it.',
@@ -3089,6 +3095,11 @@ const en: LanguageMessages = {
                 }
             },
             'openai-responses': {
+                deepSeekVision: {
+                    title: 'DeepSeek Vision preprocessing',
+                    hint: 'Enable PDF page rendering and split images above approximately 800×800 total pixels for deepseek-v4-flash-vision-exp, avoiding DeepSeek downscaling. Install sharp, pdfjs-dist, and @napi-rs/canvas in Extension Dependencies.',
+                    toggleHint: 'Enable DeepSeek Vision PDF rendering and large-image tiling'
+                },
                 promptCacheKey: {
                     title: 'Prompt Cache Key (Session Cache Passthrough)',
                     hint: 'Send prompt_cache_key for OpenAI-compatible gateways that support it (e.g. openai-api-server-via-codex) to reuse the Codex backend session cache. When enabled, a stable privacy-safe key is derived from the current conversation ID; internal requests such as summarization and sub-agents do not send it.',

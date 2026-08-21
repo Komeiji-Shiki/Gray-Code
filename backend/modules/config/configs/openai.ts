@@ -56,6 +56,14 @@ export interface OpenAIConfig extends BaseChannelConfig {
     deepSeekUserIdEnabled?: boolean;
 
     /**
+     * 是否启用 DeepSeek Vision 专用图片/PDF 预处理。
+     *
+     * 开启后会将 PDF 按页栅格化，并把超过 DeepSeek 约 800×800 总像素预算的
+     * 图片切成多个分块；默认关闭，避免普通 OpenAI 兼容端点收到额外图片块。
+     */
+    deepSeekVisionEnabled?: boolean;
+
+    /**
      * 是否将 PDF 附件作为原生 file 内容块发送（Chat Completions 的
      * {"type": "file", "file": {...}} 格式）。
      * 仅官方 OpenAI 端点及支持 file 类型的兼容端点可用，默认关闭；

@@ -26,6 +26,11 @@ import { Logger } from '../../core/logger';
 import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
 import { ChannelHttpExecutor } from './channelManager/channelHttpExecutor';
 import { extractUpstreamErrorMessage, isResponseContentEmpty, streamChunkHasContent } from './channelManager/channelResponseHelpers';
+import {
+    isDeepSeekVisionModel,
+    prepareDeepSeekVisionHistory,
+    validateDeepSeekVisionRequestBody
+} from './deepseekVision';
 
 
 /**
@@ -272,6 +277,26 @@ export class ChannelManager {
         if (request.modelOverride) {
             config = { ...config, model: request.modelOverride };
         }
+
+        // DeepSeek Vision 的 PDF/图片预处理是异步的，因此在 formatter 之前
+        // 使用不持久化的请求历史副本完成，不能改变会话历史或前端显示内容。
+        try {
+            request = {
+                ...request,
+                history: await prepareDeepSeekVisionHistory(
+                    request.history,
+                    config.model,
+                    (config as any).deepSeekVisionEnabled === true,
+                    request.abortSignal
+                )
+            };
+        } catch (error) {
+            throw new ChannelError(
+                ErrorType.VALIDATION_ERROR,
+                `DeepSeek Vision preprocessing failed: ${error instanceof Error ? error.message : String(error)}`,
+                error
+            );
+        }
         
         // 3. 获取格式转换器
         const formatter = formatterRegistry.get(config.type);
@@ -317,6 +342,18 @@ export class ChannelManager {
                 t('modules.channel.errors.buildRequestFailed', { error: error instanceof Error ? error.message : t('errors.unknown') }),
                 error
             );
+        }
+
+        if (isDeepSeekVisionModel(config.model)) {
+            try {
+                validateDeepSeekVisionRequestBody(httpRequest.body);
+            } catch (error) {
+                throw new ChannelError(
+                    ErrorType.VALIDATION_ERROR,
+                    `DeepSeek Vision request validation failed: ${error instanceof Error ? error.message : String(error)}`,
+                    error
+                );
+            }
         }
         
         // 7. 获取重试配置
@@ -485,6 +522,26 @@ export class ChannelManager {
         if (request.modelOverride) {
             config = { ...config, model: request.modelOverride };
         }
+
+        // 与非流式路径保持一致：DeepSeek Vision 的图片/PDF 仅在发送副本中
+        // 预处理，不能把分块后的内容写回对话历史。
+        try {
+            request = {
+                ...request,
+                history: await prepareDeepSeekVisionHistory(
+                    request.history,
+                    config.model,
+                    (config as any).deepSeekVisionEnabled === true,
+                    request.abortSignal
+                )
+            };
+        } catch (error) {
+            throw new ChannelError(
+                ErrorType.VALIDATION_ERROR,
+                `DeepSeek Vision preprocessing failed: ${error instanceof Error ? error.message : String(error)}`,
+                error
+            );
+        }
         
         // 3. 获取格式转换器
         const formatter = formatterRegistry.get(config.type);
@@ -526,6 +583,18 @@ export class ChannelManager {
         
         // 5. 构建请求
         const httpRequest = formatter.buildRequest(request, config, tools);
+
+        if (isDeepSeekVisionModel(config.model)) {
+            try {
+                validateDeepSeekVisionRequestBody(httpRequest.body);
+            } catch (error) {
+                throw new ChannelError(
+                    ErrorType.VALIDATION_ERROR,
+                    `DeepSeek Vision request validation failed: ${error instanceof Error ? error.message : String(error)}`,
+                    error
+                );
+            }
+        }
         
         // 5.5 缓存保活：当 promptCachingKeepAlive 启用时，若流式请求在 4 分 30 秒内未完成则自动发送保活请求
         const keepAliveEnabled = config.type === 'anthropic'

@@ -21,6 +21,7 @@ import {
     buildAnthropicCountUrl as buildAnthropicCountUrlImpl
 } from './tokenCount/tokenCountUrlBuilder';
 import { estimateLocalTokens } from './tokenCount/localTokenEstimator';
+import { prepareDeepSeekVisionHistory } from './deepseekVision';
 
 export type { TokenCountResult } from './tokenCount/types';
 
@@ -96,17 +97,22 @@ export class TokenCountService {
         }
         
         try {
+            const preparedContents = await prepareDeepSeekVisionHistory(
+                contents,
+                channelConfig.model,
+                true
+            );
             switch (channelType) {
                 case 'gemini':
                 case 'gemini-interactions':
                     // Interactions 渠道与 gemini 共用 countTokens 端点
-                    return await this.countGeminiTokens(channelConfig, contents, proxyUrl);
+                    return await this.countGeminiTokens(channelConfig, preparedContents, proxyUrl);
                 case 'openai':
-                    return await this.countOpenAITokens(channelConfig, contents, proxyUrl);
+                    return await this.countOpenAITokens(channelConfig, preparedContents, proxyUrl);
                 case 'openai-responses':
-                    return await this.countOpenAIResponsesTokens(channelConfig, contents, proxyUrl);
+                    return await this.countOpenAIResponsesTokens(channelConfig, preparedContents, proxyUrl);
                 case 'anthropic':
-                    return await this.countAnthropicTokens(channelConfig, contents, proxyUrl);
+                    return await this.countAnthropicTokens(channelConfig, preparedContents, proxyUrl);
                 default:
                     return {
                         success: false,
@@ -166,17 +172,22 @@ export class TokenCountService {
         }
         
         try {
+            const preparedContents = await prepareDeepSeekVisionHistory(
+                contents,
+                apiConfig?.model || (channelConfig as any).model,
+                (channelConfig as any).deepSeekVisionEnabled === true
+            );
             switch (actualMethod) {
                 case 'gemini':
-                    return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
+                    return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, preparedContents, proxyUrl);
                 case 'openai_custom':
-                    return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
+                    return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, preparedContents, proxyUrl);
                 case 'openai_responses':
-                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
+                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, preparedContents, proxyUrl);
                 case 'anthropic':
-                    return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents, proxyUrl);
+                    return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, preparedContents, proxyUrl);
                 case 'local':
-                    return estimateLocalTokens(contents);
+                    return estimateLocalTokens(preparedContents);
                 default:
                     return {
                         success: false,

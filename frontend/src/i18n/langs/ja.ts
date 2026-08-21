@@ -1614,6 +1614,7 @@ const ja: LanguageMessages = {
                 uninstall: 'アンインストール',
                 estimatedSize: '約 {size}MB',
                 empty: '依存関係を必要とするツールがありません',
+                panelDeepSeekVision: 'DeepSeek Vision 画像前処理',
                 progress: {
                     processing: '{dependency} を処理中...',
                     complete: '{dependency} の処理が完了しました',
@@ -3047,6 +3048,11 @@ const ja: LanguageMessages = {
                     hint: 'DeepSeek Chat Completions リクエストにトップレベルの user_id を送信し、会話ごとに KVCache を分離します。現在のメインチャットリクエストに会話 ID がある場合のみ有効です。要約やサブエージェントなどの内部リクエストでは既定で送信されません。DeepSeek チャンネルでのみ有効にしてください。',
                     toggleHint: '現在の会話 ID から安定したプライバシー安全な user_id を生成します'
                 },
+                deepSeekVision: {
+                    title: 'DeepSeek Vision 画像前処理',
+                    hint: 'deepseek-v4-flash-vision-exp で PDF のページ単位画像化を有効にし、約 800×800 総ピクセルを超える画像を分割して DeepSeek の自動縮小を避けます。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
+                    toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
+                },
                 pdfAttachment: {
                     title: 'PDF 添付ファイル送信',
                     hint: 'PDF 添付ファイルをネイティブの file コンテンツブロックとして API に送信します。公式 OpenAI エンドポイントおよび file タイプをサポートする互換エンドポイントでのみ利用できます。非対応エンドポイントでは 400 エラーが返るため、対応確認後に有効にしてください。',
@@ -3089,6 +3095,11 @@ const ja: LanguageMessages = {
                 }
             },
             'openai-responses': {
+                deepSeekVision: {
+                    title: 'DeepSeek Vision 画像前処理',
+                    hint: 'deepseek-v4-flash-vision-exp で PDF のページ単位画像化を有効にし、約 800×800 総ピクセルを超える画像を分割して DeepSeek の自動縮小を避けます。拡張機能の依存関係で sharp、pdfjs-dist、@napi-rs/canvas をインストールしてください。',
+                    toggleHint: 'DeepSeek Vision の PDF レンダリングと大画像分割を有効にする'
+                },
                 promptCacheKey: {
                     title: 'Prompt Cache Key（セッションキャッシュ透過）',
                     hint: '対応する OpenAI 互換ゲートウェイ（例: openai-api-server-via-codex）に prompt_cache_key を送信し、Codex バックエンドのセッションキャッシュを再利用します。有効にすると現在の会話 ID から安定したプライバシー安全なキーを生成します。要約・サブエージェントなどの内部リクエストでは送信されません。',

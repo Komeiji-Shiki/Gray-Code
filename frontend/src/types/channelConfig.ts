@@ -207,6 +207,7 @@ export interface ChannelConfig {
   apiKey?: string
   useAuthorizationHeader?: boolean
   deepSeekUserIdEnabled?: boolean
+  deepSeekVisionEnabled?: boolean
   pdfAttachmentEnabled?: boolean
   promptCacheKeyEnabled?: boolean
   promptCacheKey?: string

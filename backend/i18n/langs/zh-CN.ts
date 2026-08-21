@@ -173,7 +173,9 @@ const zhCN = {
 
         dependencies: {
             descriptions: {
-                sharp: '高性能图像处理库，用于抠图功能的遮罩应用'
+                sharp: '高性能图像处理库，用于抠图功能的遮罩应用',
+                pdfjsDist: 'PDF 页面渲染库，用于 DeepSeek Vision 的逐页图像输入',
+                napiCanvas: 'Node.js 原生画布实现，用于将 PDF 页面栅格化为图像'
             },
             errors: {
                 requiresContext: 'DependencyManager 需要首次调用时传入 ExtensionContext',

@@ -134,7 +134,9 @@ export const TOOL_DEPENDENCIES: Record<string, string[]> = {
   'remove_background': ['sharp'],
   'crop_image': ['sharp'],
   'resize_image': ['sharp'],
-  'rotate_image': ['sharp']
+  'rotate_image': ['sharp'],
+  /** DeepSeek Vision 功能级依赖（图片分块 + PDF 逐页栅格化） */
+  'deepseek_vision': ['sharp', 'pdfjs-dist', '@napi-rs/canvas']
 }
 
 /**
