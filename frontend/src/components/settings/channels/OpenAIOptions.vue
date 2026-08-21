@@ -131,6 +131,8 @@ function onSendThoughtsChange(e: any) {
 
 <template>
   <div class="openai-options">
+    <!-- DeepSeek 三卡片紧凑组（组内卡片之间不留间距） -->
+    <div class="deepseek-toggles-group">
     <!-- DeepSeek user_id -->
     <div class="option-section">
       <div class="option-section-header">
@@ -192,6 +194,7 @@ function onSendThoughtsChange(e: any) {
       <div class="option-section-content">
         <span class="option-hint">{{ t('components.channels.openai.pdfAttachment.hint') }}</span>
       </div>
+    </div>
     </div>
 
     <!-- 温度 -->
@@ -456,6 +459,16 @@ function onSendThoughtsChange(e: any) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* DeepSeek 三卡片紧凑组：组内卡片紧贴，整组与上下内容仍保持原间距 */
+.deepseek-toggles-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.deepseek-toggles-group .option-section {
+  margin-top: 0;
 }
 
 .option-item {
