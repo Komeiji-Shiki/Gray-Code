@@ -105,6 +105,28 @@ export function buildGeminiApiUrl(
 }
 
 /**
+ * Gemini Part oneof data 守卫：判断 part 是否携带至少一个 data 成员
+ * thought / thoughtSignature / thoughtSignatures / redactedThinking 不属于 data，
+ * 仅含这些字段的 part 会触发 GenerateContentRequest.contents[*].parts[*].data 400
+ */
+function hasGeminiPartData(part: ContentPart): boolean {
+    if (typeof part.text === 'string' && part.text.length > 0) return true;
+    if (part.inlineData?.mimeType && part.inlineData?.data) return true;
+    if (part.fileData?.fileUri) return true;
+    if (part.functionCall) return true;
+    if (part.functionResponse) return true;
+    if ((part as any).executableCode) return true;
+    if ((part as any).codeExecutionResult) return true;
+    return false;
+}
+
+function sanitizeGeminiContents(contents: Content[]): Content[] {
+    return contents
+        .map(c => ({ ...c, parts: c.parts.filter(hasGeminiPartData) }))
+        .filter(c => c.parts.length > 0);
+}
+
+/**
  * Gemini 格式转换器
  * 
  * 支持 Google Gemini API 的完整功能：
@@ -184,6 +206,10 @@ export class GeminiFormatter extends BaseFormatter {
         if (maxImagesEnabled && maxImages && maxImages > 0) {
             processedHistory = limitTotalImageParts(processedHistory, maxImages);
         }
+
+        // 兜底：过滤所有 oneof data 未初始化的空壳 part（含 thought-only 空壳），
+        // 并丢弃变空的 content，彻底避免 GenerateContentRequest 400
+        processedHistory = sanitizeGeminiContents(processedHistory);
 
         // 构建请求体
         const body: any = {
@@ -712,9 +738,9 @@ export class GeminiFormatter extends BaseFormatter {
                         return [restPart];
                     }
                     return [part];
-                }).filter(part => Object.keys(part).length > 0)
+                }).filter(hasGeminiPartData)
             };
-        });
+        }).filter(c => c.parts.length > 0);
     }
     
     /**
@@ -735,7 +761,7 @@ export class GeminiFormatter extends BaseFormatter {
                         const { redactedThinking, ...rest } = part;
                         return rest;
                     })
-                    .filter(part => Object.keys(part).length > 0)
+                    .filter(hasGeminiPartData)
             }))
             .filter(content => content.parts.length > 0);
     }

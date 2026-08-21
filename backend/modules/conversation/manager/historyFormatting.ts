@@ -466,6 +466,8 @@ export function formatHistoryForAPI(
             // - 空对象
             // - 仅包含 thought: true 的“空 thought 块”（常见于：原本只有 thoughtSignatures，后续又被配置过滤掉签名）
             //   这类 part 在不同模型/渠道下可能导致兼容性问题。
+            // - Gemini 400 防御：oneof data 未初始化的空壳 part（仅剩 thought/thoughtSignature/redactedThinking 等非 data 字段）
+            //   必须丢弃，否则 GenerateContentRequest.contents[*].parts[*].data 校验失败
             .filter((part): part is ContentPart => {
                 if (part === null) return false;
                 // BR-07：孤儿 functionResponse 过滤——functionResponse.id 必须匹配
@@ -481,6 +483,16 @@ export function formatHistoryForAPI(
                 const keys = Object.keys(part);
                 if (keys.length === 0) return false;
                 if (keys.length === 1 && keys[0] === 'thought' && (part as any).thought === true) return false;
+                // Gemini oneof data 守卫：part 必须至少携带一个 data 成员
+                // thought / thoughtSignature / thoughtSignatures / redactedThinking 不属于 data
+                const hasData = (typeof part.text === 'string' && part.text.length > 0)
+                    || (!!part.inlineData?.mimeType && !!part.inlineData?.data)
+                    || !!part.fileData?.fileUri
+                    || !!part.functionCall
+                    || !!part.functionResponse
+                    || !!(part as any).executableCode
+                    || !!(part as any).codeExecutionResult;
+                if (!hasData) return false;
                 return true;
             });
         
