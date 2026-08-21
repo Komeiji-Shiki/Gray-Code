@@ -407,12 +407,36 @@ export class AnthropicFormatter extends BaseFormatter {
 
                 for (const [index, part] of functionResponseParts.entries()) {
                     const resp = part.functionResponse!;
+                    const toolUseId = resp.id || `toolu_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
+
+                    // 修改原因：Anthropic 官方支持 tool_result.content 为块数组（text/image/document），
+                    // 旧实现只序列化文本，read_file 等工具返回的嵌套多模态（functionResponse.parts 中的
+                    // inlineData 图片/PDF，以及 DeepSeek Vision 预处理后从 PDF 栅格化的分页图片）会被
+                    // 静默丢弃。这里把嵌套媒体转换为 content 块一并发送。
+                    const mediaBlocks = resp.parts?.length
+                        ? this.buildFunctionResponseMediaBlocks(resp.parts)
+                        : [];
+                    if (mediaBlocks.length === 0) {
+                        contentArray.push({
+                            type: 'tool_result',
+                            tool_use_id: toolUseId,
+                            content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                        });
+                        continue;
+                    }
+
+                    // 文本结果 + 媒体块合并为 content 块数组（Anthropic 允许 tool_result 的
+                    // content 同时包含 text/image/document 块）。
+                    const resultBlocks: any[] = [];
+                    const textResult = serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>);
+                    if (textResult) {
+                        resultBlocks.push({ type: 'text', text: textResult });
+                    }
+                    resultBlocks.push(...mediaBlocks);
                     contentArray.push({
                         type: 'tool_result',
-                        // 无 id 时生成：计数器+随机后缀保证同消息内多个 tool_result 不重复
-                        // （对齐本文件 tool_use 的 id 生成；裸 Date.now() 同毫秒会碰撞）
-                        tool_use_id: resp.id || `toolu_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
-                        content: serializeToolResultForLLM(resp.name, resp.response as Record<string, unknown>)
+                        tool_use_id: toolUseId,
+                        content: resultBlocks
                     });
                 }
                 // 工具结果消息可能同时携带截图/文件等附件；作为同一 user 消息的后续内容块发送，
@@ -443,6 +467,55 @@ export class AnthropicFormatter extends BaseFormatter {
                 this.pushMergedMessage(messages, role, contentArray);
             }
         }
+    }
+
+    /**
+     * 把 functionResponse.parts 中的嵌套多模态（inlineData/fileData）转换为
+     * Anthropic tool_result content 块数组（text/image/document）。
+     *
+     * 修改原因：Anthropic 官方允许 tool_result.content 为块数组（text/image/document），
+     * 旧实现仅序列化文本导致工具返回的图片/PDF 被静默丢弃；该方法与顶层
+     * buildMessageContent 的 MIME 分支保持一致（DeepSeek Vision 预处理后
+     * PDF 会先被栅格化为分页 image 块，走 image 分支）。
+     */
+    private buildFunctionResponseMediaBlocks(parts: ContentPart[]): any[] {
+        const blocks: any[] = [];
+        for (const part of parts) {
+            if (part.inlineData) {
+                const { mimeType, data } = part.inlineData;
+                if (isImageMimeType(mimeType)) {
+                    blocks.push({
+                        type: 'image',
+                        source: { type: 'base64', media_type: mimeType, data }
+                    });
+                } else if (isPdfMimeType(mimeType)) {
+                    blocks.push({
+                        type: 'document',
+                        source: { type: 'base64', media_type: mimeType, data }
+                    });
+                } else if (isTextMimeType(mimeType)) {
+                    blocks.push({ type: 'text', text: buildTextAttachmentContent(data) });
+                } else {
+                    blocks.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
+                }
+            } else if (part.fileData) {
+                const { mimeType, fileUri } = part.fileData;
+                if (isImageMimeType(mimeType)) {
+                    blocks.push({
+                        type: 'image',
+                        source: { type: 'url', url: fileUri }
+                    });
+                } else if (isPdfMimeType(mimeType)) {
+                    blocks.push({
+                        type: 'document',
+                        source: { type: 'url', url: fileUri }
+                    });
+                } else {
+                    blocks.push({ type: 'text', text: buildUnsupportedAttachmentText(mimeType) });
+                }
+            }
+        }
+        return blocks;
     }
     
     /**
