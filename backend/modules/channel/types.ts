@@ -150,6 +150,15 @@ export interface GenerateRequest {
     conversationId?: string;
 
     /**
+     * DeepSeek Vision 图像处理模式（可选）。
+     *
+     * true（或省略）时超过 800×800 像素预算的图片被切成完整分块，避免 DeepSeek
+     * 服务端压缩；false 时不拆分，主动等比例缩放至预算内。仅 deepSeekVisionEnabled
+     * 且模型为 DeepSeek Vision 时生效。
+     */
+    deepSeekVisionTileSplit?: boolean;
+
+    /**
      * 本次请求已解析好的提示词模式快照（可选）
      *
      * 用于在请求链路中传递模板和工具策略，避免依赖全局当前模式。

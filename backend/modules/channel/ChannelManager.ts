@@ -287,7 +287,8 @@ export class ChannelManager {
                     request.history,
                     config.model,
                     (config as any).deepSeekVisionEnabled === true,
-                    request.abortSignal
+                    request.abortSignal,
+                    request.deepSeekVisionTileSplit ?? true
                 )
             };
         } catch (error) {
@@ -532,7 +533,8 @@ export class ChannelManager {
                     request.history,
                     config.model,
                     (config as any).deepSeekVisionEnabled === true,
-                    request.abortSignal
+                    request.abortSignal,
+                    request.deepSeekVisionTileSplit ?? true
                 )
             };
         } catch (error) {
