@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github&label=Releases" alt="Latest Release" /></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
@@ -52,6 +53,19 @@ Try one of these prompts:
 - **Long-running work** — Message queues, automatic summarization, checkpoints, branching conversations, background result delivery, and usage statistics support extended tasks.
 
 [Explore all features →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features)
+
+## DeepSeek Vision Support
+
+GrayCode provides dedicated image preprocessing for DeepSeek vision models (e.g. `deepseek-v4-flash-vision-exp`), to work around their API limitations. Enable it with the **DeepSeek Vision preprocessing** switch in channel settings (available for OpenAI Chat Completions, OpenAI Responses, and Anthropic channels):
+
+- **PDF page rasterization** — Render every PDF page to an image before sending, avoiding the limitations of plain-text extraction; rendering uses optional `pdfjs-dist` and `@napi-rs/canvas`.
+- **Large-image tiling** — Split large images into tiles under an 800×800 total-pixel budget (each tile at most 4096 on the long edge), preventing DeepSeek from compressing or rejecting them.
+- **GIF frame extraction** — DeepSeek only reads the first GIF frame; GrayCode samples the timeline (up to 5 frames per second) and sends the frames as individual PNGs.
+- **Official format normalization** — `read_file` supports PNG/JPEG/JFIF/GIF/WebP/BMP/SVG/ICO/TIFF/HEIC/HEIF/AVIF; images are converted to DeepSeek's official format before sending (using optional `sharp`).
+- **Split / compress toggle** — The input box shows a checkbox (split by default): keep it checked to preserve tiling; uncheck it to scale images down into the 800×800 total-pixel budget, choosing between clarity and size per message.
+- **Pre-send validation** — Validates the 800×800 tiling, 4096 long edge, 600 images, 32 MiB per image, and 48 MiB request body limits.
+
+The related dependencies (`sharp` / `pdfjs-dist` / `@napi-rs/canvas`) can be installed or removed in one click from the DeepSeek Vision group of the extension's dependency manager.
 
 ## Common Workflows
 

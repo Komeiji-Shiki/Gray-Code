@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Komeiji-Shiki/Gray-Code/releases"><img src="https://img.shields.io/github/v/release/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github&label=Releases" alt="Latest Release" /></a>
   <a href="https://marketplace.visualstudio.com/items?itemName=Komeiji-Shiki.graycode"><img src="https://img.shields.io/visual-studio-marketplace/v/Komeiji-Shiki.graycode?style=flat-square&logo=visualstudiocode&label=Marketplace" alt="VS Code Marketplace" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Komeiji-Shiki/Gray-Code/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
   <a href="https://github.com/Komeiji-Shiki/Gray-Code/stargazers"><img src="https://img.shields.io/github/stars/Komeiji-Shiki/Gray-Code?style=flat-square&logo=github" alt="GitHub Stars" /></a>
@@ -54,6 +55,19 @@ GrayCode 把 AI 编程能力带进 VS Code：理解工作区、搜索和修改�
 - **长任务与长对话** —— 支持消息队列、自动总结、存档点、树状分支对话、后台结果回流，以及 Token、成本和使用时间统计。
 
 [查看完整功能说明 →](https://github.com/Komeiji-Shiki/Gray-Code/wiki/Features-zh-CN)
+
+## DeepSeek 视觉模型支持
+
+GrayCode 针对 DeepSeek 视觉模型（如 `deepseek-v4-flash-vision-exp`）的接口限制提供专用图像预处理，可在渠道设置的「DeepSeek Vision 预处理」开关中启用（OpenAI Chat Completions、OpenAI Responses 与 Anthropic 渠道均可用）：
+
+- **PDF 逐页栅格化** —— 将 PDF 每页渲染为图片后发送，规避纯文本抽取的局限；渲染使用可选的 `pdfjs-dist` 与 `@napi-rs/canvas`。
+- **大图分块** —— 对大图按 800×800 总像素预算切割成多块（单块长边不超过 4096），避免图片被 DeepSeek 压缩或拒收。
+- **GIF 动画拆帧** —— DeepSeek 只取 GIF 第一帧，GrayCode 按时间轴采样（每秒最多 5 帧）拆成逐帧 PNG 后发送。
+- **官方格式规范化** —— `read_file` 支持 PNG/JPEG/JFIF/GIF/WebP/BMP/SVG/ICO/TIFF/HEIC/HEIF/AVIF 等图片格式，发送前统一转为 DeepSeek 官方格式（使用可选的 `sharp`）。
+- **拆分 / 压缩切换** —— 输入框提供复选框（默认拆分）：勾选保持分块防压缩；取消勾选则把图片等比例压缩进 800×800 总像素预算，可逐次按清晰度与体积偏好选择。
+- **请求前校验** —— 发送前校验 800×800 分块、4096 长边、600 张图片、32 MiB 单图与 48 MiB 请求体等上限。
+
+相关依赖（`sharp` / `pdfjs-dist` / `@napi-rs/canvas`）可在扩展的「依赖管理」面板 DeepSeek Vision 分组中一键安装或卸载。
 
 ## 常用工作流
 
