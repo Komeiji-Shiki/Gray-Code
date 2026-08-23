@@ -167,13 +167,13 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
             text,
             createdAt: Date.now()
         };
-        let insertPosition: number | undefined;
+        let insertion: { position?: number; persisted: boolean } = { persisted: false };
         try {
-            insertPosition = await insertAgentMessageCardIntoHistory(context, mailboxConversationId, card);
+            insertion = await insertAgentMessageCardIntoHistory(context, mailboxConversationId, card);
         } catch (error) {
-            // 插入失败不影响投递结果；前端事件不带 insertPosition 时跳过本地插入，
-            // 消息仍可从子代理 transcript / 历史重载路径恢复可见性。
-            console.warn('[agent_send_message] Failed to insert agent message card into history:', error);
+            // mailbox 投递已经成功；即使持久层持续失败，也必须发送未持久化卡片事件，
+            // 让当前窗口可见，而不是把展示消息彻底吞掉。
+            console.warn('[agent_send_message] Failed to persist agent message card after retries:', error);
         }
         TaskManager.emitEvent({
             taskId: `agentmsg:${result.data.messageId}`,
@@ -184,7 +184,8 @@ export async function agentSendMessageHandler(args: Record<string, any>, context
                 messageId: result.data.messageId,
                 toRunId: result.data.toRunId,
                 card,
-                ...(typeof insertPosition === 'number' ? { insertPosition } : {})
+                persisted: insertion.persisted,
+                ...(typeof insertion.position === 'number' ? { insertPosition: insertion.position } : {})
             }
         });
     }
@@ -260,16 +261,16 @@ async function insertAgentMessageCardIntoHistory(
     context: ToolContext | undefined,
     conversationId: string,
     card: AgentMessageCardInfo
-): Promise<number | undefined> {
+): Promise<{ position?: number; persisted: boolean }> {
     const store = context?.conversationStore as (ConversationStore & {
         getHistory?: (conversationId: string) => Promise<Readonly<Content[]>>;
         insertContent?: (conversationId: string, position: number, content: Content) => Promise<void>;
+        insertContentAtResolvedPosition?: (
+            conversationId: string,
+            content: Content,
+            resolvePosition: (history: ReadonlyArray<Content>) => number
+        ) => Promise<number>;
     }) | undefined;
-    if (!store?.getHistory || typeof store.insertContent !== 'function') {
-        return undefined;
-    }
-    const history = await store.getHistory(conversationId);
-    const position = resolveAgentCardInsertPosition(history as Readonly<Content[]>, card.toRunId);
     const content: Content = {
         role: 'user',
         parts: [],
@@ -277,8 +278,49 @@ async function insertAgentMessageCardIntoHistory(
         agentMessage: card,
         timestamp: card.createdAt
     };
-    await store.insertContent(conversationId, position, content);
-    return position;
+
+    if (store?.insertContentAtResolvedPosition) {
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const position = await store.insertContentAtResolvedPosition(
+                    conversationId,
+                    content,
+                    history => resolveAgentCardInsertPosition(history, card.toRunId)
+                );
+                return { position, persisted: true };
+            } catch (error) {
+                lastError = error;
+                if (attempt < 2) {
+                    await new Promise(resolve => setTimeout(resolve, 20 * (attempt + 1)));
+                }
+            }
+        }
+
+        // 计算本地展示位置；该位置只用于未持久化卡片，不会推进后端索引。
+        if (store.getHistory) {
+            try {
+                const history = await store.getHistory(conversationId);
+                return {
+                    position: resolveAgentCardInsertPosition(history, card.toRunId),
+                    persisted: false
+                };
+            } catch {
+                // 下方抛出原始持久化错误，handler 仍会发送无位置的本地尾插事件。
+            }
+        }
+        throw lastError;
+    }
+
+    // 非运行时测试/降级存储：旧接口仍可完成持久化；真实 ConversationManager 总是走上方锁内接口。
+    if (store?.getHistory && store.insertContent) {
+        const history = await store.getHistory(conversationId);
+        const position = resolveAgentCardInsertPosition(history, card.toRunId);
+        await store.insertContent(conversationId, position, content);
+        return { position, persisted: true };
+    }
+
+    return { persisted: false };
 }
 
 /**

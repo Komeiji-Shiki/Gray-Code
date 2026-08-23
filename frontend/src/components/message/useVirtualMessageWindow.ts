@@ -23,6 +23,22 @@ import { messageListUiStateByTab, MESSAGE_LIST_UI_STATE_CAP, type RestoreNoticeS
 import { computeMessageFloorMap, computeCheckpointFloorMap } from './messageListUtils'
 import { clearLineDiffCache } from '../../utils/lineDiff'
 import type { Message, CheckpointRecord } from '../../types'
+import type { MessageListUiState } from './messageListUiState'
+
+/** 根据稳定消息锚点恢复滑动窗口；消息 prepend 后仍能回到原阅读段。 */
+export function resolveRestoredWindowStart(
+  messages: ReadonlyArray<Pick<Message, 'id'>>,
+  visibleCount: number,
+  saved: Pick<MessageListUiState, 'anchorMessageId' | 'anchorWindowOffset' | 'windowStart'>
+): number {
+  const anchorIndex = saved.anchorMessageId
+    ? messages.findIndex(message => message.id === saved.anchorMessageId)
+    : -1
+  if (anchorIndex >= 0 && typeof saved.anchorWindowOffset === 'number') {
+    return Math.max(0, anchorIndex - saved.anchorWindowOffset)
+  }
+  return Math.max(0, saved.windowStart ?? (messages.length - visibleCount))
+}
 
 export interface UseVirtualMessageWindowOptions {
   chatStore: ReturnType<typeof useChatStore>
@@ -401,9 +417,17 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     // 避免关闭活跃标签页后 watcher 又把旧记录写回造成泄漏）
     if (!chatStore.openTabs.some(t => t.id === tabId)) return
     const container = scrollbarRef.value?.getContainer()
+    const anchor = container ? captureTopAnchor(container) : { messageId: null, offset: 0 }
+    const anchorWindowOffset = anchor.messageId
+      ? enhancedVisibleMessages.value.findIndex(item => item.message.id === anchor.messageId)
+      : -1
     uiStateByTab.set(tabId, {
       scrollTop: container?.scrollTop || 0,
       visibleCount: visibleCount.value,
+      windowStart: safeWindowStart.value,
+      anchorMessageId: anchor.messageId,
+      anchorOffset: anchor.offset,
+      anchorWindowOffset: anchorWindowOffset >= 0 ? anchorWindowOffset : undefined,
       buildExpanded: isBuildExpanded.value,
       todoExpanded: isTodoExpanded.value,
       restoreNotice: restoreNotice.value ? { ...restoreNotice.value } : null
@@ -425,15 +449,22 @@ export function useVirtualMessageWindow(options: UseVirtualMessageWindowOptions)
     const saved = uiStateByTab.get(tabId)
     if (saved) {
       visibleCount.value = clampVisibleCount(saved.visibleCount)
-      anchorToTail()
+      windowStart.value = resolveRestoredWindowStart(props.messages, visibleCount.value, saved)
       isBuildExpanded.value = saved.buildExpanded
       isTodoExpanded.value = saved.todoExpanded
       restoreNotice.value = saved.restoreNotice ?? null
       needsScrollToBottom.value = false
-      nextTick(() => {
+      nextTick(async () => {
         const container = scrollbarRef.value?.getContainer()
         if (container) {
-          container.scrollTop = saved.scrollTop
+          if (saved.anchorMessageId) {
+            await restoreTopAnchor(container, {
+              messageId: saved.anchorMessageId,
+              offset: saved.anchorOffset ?? 0
+            })
+          } else {
+            container.scrollTop = saved.scrollTop
+          }
         }
         suppressConversationReset.value = false
       })

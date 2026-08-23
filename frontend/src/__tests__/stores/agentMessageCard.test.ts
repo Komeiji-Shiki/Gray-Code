@@ -66,6 +66,7 @@ describe('agent 间消息卡片（A-COMM 展示层）', () => {
     store.isStreaming = false
     store.isWaitingForResponse = false
     store.windowStartIndex = 0
+    store.totalMessages = 3
     store.allMessages = [makeMessage(0), makeMessage(1), makeMessage(2)]
 
     const bgStore = useBackgroundTaskStore()
@@ -90,6 +91,8 @@ describe('agent 间消息卡片（A-COMM 展示层）', () => {
     expect(card.agentMessage?.messageId).toBe('card_1')
     expect(card.agentMessage?.text).toBe('hello B')
     expect(card.backendIndex).toBe(2)
+    expect(card.localOnly).toBe(false)
+    expect(store.totalMessages).toBe(4)
     // 插入点之后的消息索引同步后移（与后端 insertContent 一致）
     expect(store.allMessages[3].id).toBe('msg_2')
     expect(store.allMessages[3].backendIndex).toBe(3)
@@ -155,6 +158,64 @@ describe('agent 间消息卡片（A-COMM 展示层）', () => {
 
     expect(store.allMessages).toHaveLength(2)
     expect(store.allMessages.some(m => m.agentMessage?.messageId === 'card_3')).toBe(false)
+  })
+
+  test('插入点晚于当前窗口右边界时忽略，不把未来卡片错误钳到窗口末尾', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.windowStartIndex = 5
+    store.totalMessages = 20
+    store.allMessages = [makeMessage(5), makeMessage(6)]
+
+    const bgStore = useBackgroundTaskStore()
+    bgStore.handleTaskEvent({
+      taskId: 'agentmsg:card_right',
+      taskType: 'agent_message',
+      type: 'progress',
+      data: {
+        conversationId: 'conv_1',
+        messageId: 'card_right',
+        toRunId: 'run_b',
+        card: makeCard('card_right', 'run_b', 'future window'),
+        insertPosition: 12,
+        persisted: true
+      },
+      createdAt: 6000
+    })
+    await settle()
+
+    expect(store.allMessages).toHaveLength(2)
+    expect(store.totalMessages).toBe(20)
+  })
+
+  test('持久化失败事件在窗口尾部显示本地卡片，但不推进后端总数和索引', async () => {
+    const store = useChatStore()
+    store.currentConversationId = 'conv_1'
+    store.windowStartIndex = 0
+    store.totalMessages = 1
+    store.allMessages = [makeMessage(0)]
+
+    const bgStore = useBackgroundTaskStore()
+    bgStore.handleTaskEvent({
+      taskId: 'agentmsg:card_local',
+      taskType: 'agent_message',
+      type: 'progress',
+      data: {
+        conversationId: 'conv_1',
+        messageId: 'card_local',
+        toRunId: 'run_b',
+        card: makeCard('card_local', 'run_b', 'local fallback'),
+        persisted: false
+      },
+      createdAt: 6000
+    })
+    await settle()
+
+    const card = store.allMessages.at(-1)
+    expect(card?.agentMessage?.messageId).toBe('card_local')
+    expect(card?.localOnly).toBe(true)
+    expect(card?.backendIndex).toBeUndefined()
+    expect(store.totalMessages).toBe(1)
   })
 
   test('非当前会话的事件不插入（后端已持久化，切回时历史加载覆盖）', async () => {

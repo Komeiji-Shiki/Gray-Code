@@ -753,6 +753,84 @@ describe('agent_send_message - agent 间消息卡片（A-COMM 展示层）', () 
         expect(result.success).toBe(true);
     });
 
+
+    test('锁内位置解析使用写入瞬间的最新历史，不经过 getHistory 读后写窗口', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
+        const latestHistory = [
+            { role: 'user', parts: [{ text: 'task' }] },
+            { role: 'model', parts: [{ functionCall: { id: 'tool_1', name: 'subagents', args: {} } }] },
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: {
+                    id: 'tool_1', name: 'subagents', response: { data: { runId: 'run_b' } }
+                } }]
+            },
+            { role: 'user', parts: [{ text: 'concurrent append' }] }
+        ];
+        const getHistory = jest.fn();
+        const inserted: number[] = [];
+        const store = {
+            getCustomMetadata: async () => undefined,
+            setCustomMetadata: async () => undefined,
+            getHistory,
+            insertContentAtResolvedPosition: async (
+                _conversationId: string,
+                _content: unknown,
+                resolvePosition: (history: readonly any[]) => number
+            ) => {
+                const position = resolvePosition(latestHistory);
+                inserted.push(position);
+                return position;
+            }
+        };
+
+        const events: TaskEvent[] = [];
+        const dispose = TaskManager.onTaskEvent(event => events.push(event));
+        try {
+            const result = await agentSendMessageHandler(
+                { targetRunId: 'run_b', message: 'atomic position' },
+                { mailboxConversationId: 'conv_1', mailboxRunId: 'run_a', conversationStore: store }
+            );
+            expect(result.success).toBe(true);
+            expect(getHistory).not.toHaveBeenCalled();
+            expect(inserted).toEqual([3]);
+            expect(events.at(-1)?.data).toMatchObject({ insertPosition: 3, persisted: true });
+        } finally {
+            dispose();
+        }
+    });
+
+    test('历史持久化连续失败后仍发送未持久化卡片事件供当前窗口显示', async () => {
+        agentMailbox.registerRun('conv_1', 'run_a', 'Agent A');
+        agentMailbox.registerRun('conv_1', 'run_b', 'Agent B');
+        const history = [{ role: 'user', parts: [{ text: 'task' }] }];
+        const insert = jest.fn().mockRejectedValue(new Error('disk unavailable'));
+        const store = {
+            getCustomMetadata: async () => undefined,
+            setCustomMetadata: async () => undefined,
+            getHistory: async () => history,
+            insertContentAtResolvedPosition: insert
+        };
+        const events: TaskEvent[] = [];
+        const dispose = TaskManager.onTaskEvent(event => events.push(event));
+        try {
+            const result = await agentSendMessageHandler(
+                { targetRunId: 'run_b', message: 'still visible' },
+                { mailboxConversationId: 'conv_1', mailboxRunId: 'run_a', conversationStore: store }
+            );
+            expect(result.success).toBe(true);
+            expect(insert).toHaveBeenCalledTimes(3);
+            expect(events.at(-1)?.data).toMatchObject({
+                insertPosition: 1,
+                persisted: false,
+                card: expect.objectContaining({ text: 'still visible' })
+            });
+        } finally {
+            dispose();
+        }
+    });
     test('resolveAgentCardInsertPosition：按 functionCall.id 推导 runId 定位；未命中兜底末尾', () => {
         const history = [
             { role: 'user', parts: [{ text: 'task' }] },

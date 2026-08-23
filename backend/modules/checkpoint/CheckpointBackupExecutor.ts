@@ -426,9 +426,10 @@ export class CheckpointBackupExecutor {
                     phase,
                     lastCheckpointId: lastCheckpoint.id
                 });
-                // 回收已创建的备份目录（不写 manifest/记录，目录不能残留）
-                backupDirCreated = false;
+                // 回收已创建的备份目录（不写 manifest/记录，目录不能残留）。
+                // 只有 rm 成功后才清除 created 标记；失败时外层 catch 会再执行统一回收。
                 await fs.rm(backupDir, { recursive: true, force: true });
+                backupDirCreated = false;
                 // 进度推进到终态：跳过是正常完成（无文件复制），否则 getOperationProgress
                 // 会把本条非终态记录当作「进行中操作」返回，前端创建指示器永久挂起。
                 reportProgress({ phase: 'done', processed: 0, total: 0 });

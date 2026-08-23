@@ -189,11 +189,20 @@ export interface ConversationStore {
      */
     setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
 
+    /** 读取完整历史（agent 卡片锚点定位使用）。 */
+    getHistory?(conversationId: string): Promise<ReadonlyArray<unknown>>;
+
     /**
-     * 在指定位置插入一条完整 Content（agent 间消息卡片写入历史使用）。
-     * 运行时注入的实际对象是 ConversationManager；此处仅声明为可选方法，
-     * 未注入（测试/子代理降级路径）时调用方静默跳过。
+     * 在 transcript 写锁内依据最新历史解析位置并插入 Content。
+     * 返回最终绝对索引，消除 getHistory → insertContent 两步之间的索引竞态。
      */
+    insertContentAtResolvedPosition?(
+        conversationId: string,
+        content: unknown,
+        resolvePosition: (history: ReadonlyArray<unknown>) => number
+    ): Promise<number>;
+
+    /** 旧的固定位置插入接口；非原子降级路径使用。 */
     insertContent?(conversationId: string, position: number, content: unknown): Promise<void>;
 }
 

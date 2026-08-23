@@ -155,8 +155,10 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
     const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : ''
     const toRunId = typeof data?.toRunId === 'string' ? data.toRunId : ''
     const rawCard = data?.card
-    const insertPosition = typeof data?.insertPosition === 'number' ? data.insertPosition : -1
-    if (!conversationId || !toRunId || !rawCard || typeof rawCard !== 'object' || insertPosition < 0) return
+    const persisted = data?.persisted !== false
+    const insertPosition = typeof data?.insertPosition === 'number' ? data.insertPosition : undefined
+    if (!conversationId || !toRunId || !rawCard || typeof rawCard !== 'object') return
+    if (persisted && insertPosition === undefined) return
     const rawMessageId = (rawCard as Record<string, unknown>).messageId
     if (typeof rawMessageId !== 'string' || !rawMessageId) return
 
@@ -166,7 +168,8 @@ export const useBackgroundTaskStore = defineStore('backgroundTasks', () => {
       if (typeof chat.insertAgentMessageCard !== 'function') return
       chat.insertAgentMessageCard({
         card: rawCard as AgentMessageCardInfo,
-        insertPosition
+        insertPosition,
+        persisted
       })
     } catch (error) {
       // 后端已持久化：本地同步失败不影响数据完整性，历史重载会覆盖。

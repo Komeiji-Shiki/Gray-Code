@@ -1520,36 +1520,43 @@ export class ConversationManager {
         }
     }
 
-    /**
-     * 在指定位置插入完整的 Content 对象
-     */
+    /** 在指定数值位置插入；实际钳制与写入委托给锁内解析版本。 */
     async insertContent(
         conversationId: string,
         position: number,
         content: Content
     ): Promise<void> {
+        await this.insertContentAtResolvedPosition(conversationId, content, () => position);
+    }
+
+    /**
+     * 在 transcript mutate 锁内基于最新历史解析插入位置。
+     * Agent 卡片不能先 getHistory 再拿陈旧 position 写回：工具结果/后台消息可能在两步间插入。
+     */
+    async insertContentAtResolvedPosition(
+        conversationId: string,
+        content: Content,
+        resolvePosition: (history: ReadonlyArray<Content>) => number
+    ): Promise<number> {
         const contentCopy = JSON.parse(JSON.stringify(content));
-        // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
         }
+        let insertedIndex = 0;
         await this.getTranscriptRepository(conversationId).mutateContents(history => {
-            const index = Math.max(0, Math.min(position, history.length));
+            const requestedPosition = resolvePosition(history);
+            const finitePosition = Number.isFinite(requestedPosition) ? Math.trunc(requestedPosition) : history.length;
+            const index = Math.max(0, Math.min(finitePosition, history.length));
+            insertedIndex = index;
             const oldParent = index > 0 ? history[index - 1] : null;
             const oldParentId = oldParent?.id ?? null;
             const inserted = ensureNodeId(contentCopy, oldParent);
             history.splice(index, 0, inserted);
-            // R5b-2.4：插入后修复线性 parentId 链（插入点之后 parentId===旧父id 的消息
-            // 重链到新插入消息，与 deleteMessagesInRange 的 repairParentChainAfterDelete 语义对称）
             repairParentChainAfterInsert(history, index, oldParentId, inserted.id as string);
-            return history.slice(); // 有变更必须返回新引用（契约：返回原引用=跳过写回）
+            return history.slice();
         });
         await this.invalidateContextManagementState(conversationId, contentCopy.isSummary ? 'summary_inserted' : 'content_inserted');
 
-        // M-conv：与 insertMessage 同口径，插入后同步分支图活跃路径（结构性变更，图缺插入消息
-        // 会在切分支重建主历史时静默丢消息）。走会话级串行队列；失败仅告警，无全局
-        // BranchService 时静默跳过。（总结插入的正常路径经 SummarizeService.markAndInsertSummarized
-        // 的原子 mutate + syncBranchGraphAfterSummaryMutation，不经过本方法，此处覆盖其它调用方。）
         const branchService = getGlobalBranchService();
         if (branchService) {
             try {
@@ -1559,11 +1566,12 @@ export class ConversationManager {
             } catch (error) {
                 log.warn('branch_insert_sync_failed', {
                     conversationId,
-                    position,
+                    position: insertedIndex,
                     error: (error as Error)?.message ?? String(error),
                 });
             }
         }
+        return insertedIndex;
     }
 
     // ==================== 批量操作 ====================

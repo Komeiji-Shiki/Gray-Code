@@ -39,8 +39,10 @@ export interface BackgroundTaskChatState {
 export interface AgentMessageCardInsertPayload {
   /** 卡片元数据 */
   card: AgentMessageCardInfo
-  /** 后端插入位置（绝对索引；后端已插入，前端据此对齐窗口） */
-  insertPosition: number
+  /** 后端最终插入位置；持久化失败时可省略，前端只做本地尾插展示。 */
+  insertPosition?: number
+  /** true=后端历史已增长；false=仅本地可见回退，不推进后端索引/总数。 */
+  persisted: boolean
 }
 
 /** chatStore 向 backgroundTaskStore 暴露的会话状态/操作面 */

@@ -15,6 +15,12 @@ export interface RestoreNoticeState {
 export interface MessageListUiState {
   scrollTop: number
   visibleCount: number
+  /** 滑动窗口起点；旧记录缺失时回退尾部窗口。 */
+  windowStart?: number
+  /** 顶部可见消息锚点，用于消息 prepend/append 后恢复同一阅读位置。 */
+  anchorMessageId?: string | null
+  anchorOffset?: number
+  anchorWindowOffset?: number
   buildExpanded: boolean
   todoExpanded: boolean
   /** R3-#8: 恢复结果提示随标签页 UI 状态持久化，切换标签页/组件重建后不丢失 */
