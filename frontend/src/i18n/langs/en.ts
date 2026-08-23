@@ -34,6 +34,7 @@ const en: LanguageMessages = {
         no: 'No',
         ok: 'OK',
         copy: 'Copy',
+        copyFailed: 'Copy failed',
         paste: 'Paste',
         reset: 'Reset',
         default: 'Default',
@@ -409,7 +410,10 @@ const en: LanguageMessages = {
                 enableTooltip: 'Enable this skill in current conversation',
                 hint: 'AI can load skill content on demand via read_skill tool when it determines the task matches a skill',
                 openDirectory: 'Open Skills Directory',
-                refresh: 'Refresh Skills list'
+                refresh: 'Refresh Skills list',
+                toggleFailed: 'Failed to toggle skill state',
+                removeFailed: 'Failed to remove skill config',
+                openDirectoryFailed: 'Failed to open Skills directory'
             },
             promptContext: {
                 title: 'Prompt Context',

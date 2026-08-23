@@ -36,6 +36,7 @@ const zhCN = {
         no: '否',
         ok: '确定',
         copy: '复制',
+        copyFailed: '复制失败',
         paste: '粘贴',
         reset: '重置',
         default: '默认',
@@ -411,7 +412,10 @@ const zhCN = {
                 enableTooltip: '在当前对话中启用此 Skill',
                 hint: 'AI 在判断任务匹配可用 Skill 时，会通过 read_skill 工具按需加载内容',
                 openDirectory: '打开 Skills 存储目录',
-                refresh: '刷新 Skills 列表'
+                refresh: '刷新 Skills 列表',
+                toggleFailed: '切换 Skill 状态失败',
+                removeFailed: '移除 Skill 配置失败',
+                openDirectoryFailed: '打开 Skills 目录失败'
             },
             promptContext: {
                 title: '提示词上下文',

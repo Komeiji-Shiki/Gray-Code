@@ -34,6 +34,7 @@ function makeConversation(id: string, overrides: Partial<Conversation> = {}): Co
 
 function mountList(conversations: Conversation[] = [makeConversation('c1')], currentId: string | null = null): VueWrapper {
   return mount(ConversationList, {
+    attachTo: document.body,
     props: {
       conversations,
       currentId,
@@ -71,7 +72,7 @@ describe('ConversationList 删除确认流程', () => {
   test('点击垃圾桶弹出确认框，确认后发出 delete 事件（回归：确认后 delete 不再丢失）', async () => {
     await clickTrash(wrapper)
 
-    const dialog = wrapper.find('.dialog')
+    const dialog = wrapper.find('[role="dialog"]')
     expect(dialog.exists()).toBe(true)
     expect(dialog.text()).toContain('删除对话')
 
@@ -81,27 +82,27 @@ describe('ConversationList 删除确认流程', () => {
 
     expect(wrapper.emitted('delete')).toEqual([['c1']])
     await nextTick()
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 
   test('取消按钮关闭确认框且不发出 delete 事件', async () => {
     await clickTrash(wrapper)
-    expect(wrapper.find('.dialog').exists()).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
 
     await wrapper.find('.dialog-btn.cancel').trigger('click')
 
     expect(wrapper.emitted('delete')).toBeUndefined()
     await nextTick()
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 
   test('Esc 关闭确认框且不发出 delete 事件', async () => {
     await clickTrash(wrapper)
-    await wrapper.find('.dialog').trigger('keydown', { key: 'Escape' })
+    await wrapper.find('[role="dialog"]').trigger('keydown', { key: 'Escape' })
 
     expect(wrapper.emitted('delete')).toBeUndefined()
     await nextTick()
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 
   test('确认框确认后再次点击垃圾桶可再次删除（pendingDeleteId 已被清理）', async () => {

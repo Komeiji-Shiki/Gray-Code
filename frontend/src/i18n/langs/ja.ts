@@ -34,6 +34,7 @@ const ja: LanguageMessages = {
         no: 'いいえ',
         ok: 'OK',
         copy: 'コピー',
+        copyFailed: 'コピーに失敗しました',
         paste: '貼り付け',
         reset: 'リセット',
         default: 'デフォルト',
@@ -409,7 +410,10 @@ const ja: LanguageMessages = {
                 enableTooltip: '現在の会話でこの Skill を有効にする',
                 hint: 'AI はタスクが利用可能な Skill に一致すると判断した場合、read_skill ツールで内容を読み込みます',
                 openDirectory: 'Skills ディレクトリを開く',
-                refresh: 'Skills リストを更新'
+                refresh: 'Skills リストを更新',
+                toggleFailed: 'Skill 状態の切り替えに失敗しました',
+                removeFailed: 'Skill 設定の削除に失敗しました',
+                openDirectoryFailed: 'Skills ディレクトリを開けませんでした'
             },
             promptContext: {
                 title: 'プロンプトコンテキスト',

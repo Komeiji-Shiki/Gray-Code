@@ -298,7 +298,7 @@ describe('BranchSwitcherBar 工作区联动确认框', () => {
     await rows[2].find('.branch-candidate-main').trigger('click')
 
     expect(chatStoreMock.switchBranchCandidate).not.toHaveBeenCalled()
-    expect(wrapper.find('.dialog').exists()).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
@@ -348,7 +348,7 @@ describe('BranchSwitcherBar 工作区联动确认框', () => {
 
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledWith('a3')
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

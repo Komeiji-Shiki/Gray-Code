@@ -113,7 +113,7 @@ describe('ChannelSettings 无渠道空态', () => {
 
     await wrapper.find('.config-empty .btn.primary').trigger('click')
 
-    expect(wrapper.find('.config-dialog').exists()).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
   })
 
   test('删除最后一个渠道后回到空态，并复位 chatStore 为无渠道', async () => {

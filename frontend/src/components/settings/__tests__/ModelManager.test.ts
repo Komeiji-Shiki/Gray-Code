@@ -12,6 +12,12 @@ import ModelManager from '../ModelManager.vue'
 import ModelSelectionDialog from '../ModelSelectionDialog.vue'
 import { t } from '@/i18n'
 
+const showNotificationMock = vi.hoisted(() => vi.fn())
+vi.mock('@/utils/vscode', () => ({
+  sendToExtension: vi.fn(),
+  showNotification: (message: string, type: string) => showNotificationMock(message, type)
+}))
+
 function mountManager(props: Record<string, unknown> = {}) {
   return mount(ModelManager, {
     props: {
@@ -50,7 +56,6 @@ describe('ModelManager.openDialog 等待 prepare', () => {
   })
 
   test('prepare 被拒绝：不显示对话框，并给用户已有通用错误提示', async () => {
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const prepare = vi.fn().mockRejectedValue(new Error('save failed'))
     const wrapper = mountManager({ prepare })
@@ -60,7 +65,10 @@ describe('ModelManager.openDialog 等待 prepare', () => {
 
     expect(prepare).toHaveBeenCalledTimes(1)
     expect(wrapper.findComponent(ModelSelectionDialog).props('visible')).toBe(false)
-    expect(alertSpy).toHaveBeenCalledWith(t('components.settings.modelSelectionDialog.error'))
+    expect(showNotificationMock).toHaveBeenCalledWith(
+      expect.stringContaining(t('components.settings.modelSelectionDialog.error')),
+      'error'
+    )
   })
 
   test('未提供 prepare：点击后立即显示对话框', async () => {

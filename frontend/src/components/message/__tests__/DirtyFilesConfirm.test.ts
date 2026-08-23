@@ -27,6 +27,7 @@ vi.mock('../../../stores/chatStore', () => ({
 
 function mountDirty(): VueWrapper {
   return mount(DirtyFilesConfirm, {
+    attachTo: document.body,
     global: {
       stubs: { teleport: true }
     }
@@ -51,7 +52,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
   })
 
   test('无待确认动作时不渲染对话框', () => {
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 
   test('确认「丢弃更改并继续」后按 kind=switch 分发续作（回归：确认后动作不再丢失）', async () => {
@@ -62,7 +63,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     }
     await nextTick()
 
-    expect(wrapper.find('.dialog').exists()).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
     await wrapper.find('.dialog-btn.confirm').trigger('click')
 
     expect(chatStoreMock.switchBranchCandidate).toHaveBeenCalledTimes(1)
@@ -73,7 +74,7 @@ describe('DirtyFilesConfirm 丢弃更改确认流程', () => {
     })
     expect(chatStoreMock.restoreCheckpoint).not.toHaveBeenCalled()
     await nextTick()
-    expect(wrapper.find('.dialog').exists()).toBe(false)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
   })
 
   test('确认后按 kind=restore 的 entry=restore 分发续作', async () => {

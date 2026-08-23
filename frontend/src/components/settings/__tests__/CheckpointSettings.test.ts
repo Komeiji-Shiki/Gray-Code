@@ -65,7 +65,8 @@ const CustomScrollbarStub = defineComponent({
 const GLOBAL_STUBS = {
   CustomCheckbox: CustomCheckboxStub,
   CustomScrollbar: CustomScrollbarStub,
-  PatternListEditor: true
+  PatternListEditor: true,
+  teleport: true
 }
 
 const BASE_CONFIG = {
@@ -284,9 +285,9 @@ describe('confirmDelete 失败保留列表', () => {
     await convCheckboxes[0].trigger('click')
     await convCheckboxes[1].trigger('click')
     await wrapper.find('.batch-delete-btn').trigger('click')
-    expect(wrapper.find('.delete-confirm-dialog').exists()).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
 
-    await wrapper.find('.btn-delete').trigger('click')
+    await wrapper.find('.dialog-btn.confirm').trigger('click')
     await flushPromises()
 
     // convA 被移除；convB（失败）保留
@@ -324,7 +325,7 @@ describe('confirmDelete 失败保留列表', () => {
     const wrapper = await mountSettings()
     await wrapper.find('.conversation-item .cb-stub').trigger('click')
     await wrapper.find('.batch-delete-btn').trigger('click')
-    await wrapper.find('.btn-delete').trigger('click')
+    await wrapper.find('.dialog-btn.confirm').trigger('click')
     await flushPromises()
 
     expect(wrapper.findAll('.conversation-item')).toHaveLength(1)
