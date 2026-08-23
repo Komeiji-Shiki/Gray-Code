@@ -425,6 +425,20 @@ describe('InputArea DeepSeek Vision 拆分复选框', () => {
     expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
   })
 
+  test('纯文本续轮在 Vision 渠道仍携带 store 模式，供历史与工具续跑继承', async () => {
+    runtime.chatStore.visionSplitChecked = false
+    wrapper = await mountWithVisionConfig([])
+    runtime.chatStore.editorNodes = makeTextNodes('text follow-up')
+    await nextTick()
+
+    await wrapper.find('.send-button-stub').trigger('click')
+    await flushPromises()
+
+    const emitted = wrapper.emitted('send')
+    expect(emitted).toBeTruthy()
+    expect(emitted![emitted!.length - 1][2]).toEqual({ deepSeekVisionTileSplit: false })
+  })
+
   test('图片附件但 deepSeekVisionEnabled 关闭：复选框不显示', async () => {
     wrapper = await mountWithVisionConfig([makeAttachment()], { deepSeekVisionEnabled: false })
     expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)

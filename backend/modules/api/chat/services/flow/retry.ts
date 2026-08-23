@@ -115,6 +115,7 @@ export class ChatFlowRetry extends ChatFlowContext {
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
+      request.deepSeekVisionTileSplit,
     );
 
     if (loopResult.exceededMaxIterations) {

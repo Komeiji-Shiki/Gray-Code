@@ -331,6 +331,10 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       };
     }
 
+    const editVisionMode = request.deepSeekVisionTileSplit
+      ?? message.deepSeekVisionTileSplit
+      ?? true;
+
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
     const dynamicContextStrategy = this.resolveDynamicContextStrategy(promptModeSnapshot);
 
@@ -354,6 +358,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       // 与流式路径（handleEditAndRetryStream 2165）一致：保留 request.attachments
       parts: this.messageBuilderService.buildUserMessageParts(newMessage, request.attachments),
       isUserInput: true,
+      deepSeekVisionTileSplit: editVisionMode,
       // 清除旧的 token 计数，强制重新计算
       tokenCountByChannel: {}
     });
@@ -392,8 +397,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       // H5：透传取消信号（自动总结调用使用 merged signal）
       request.abortSignal,
       request.summarizeAbortSignal,
-      // 编辑后重发图片时沿用前端透传的拆分/压缩选择（省略 = 后端默认拆分）
-      request.deepSeekVisionTileSplit,
+      // 编辑后重发图片使用消息持久化的模式
+      editVisionMode,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -514,6 +519,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt(conversationId);
     let editStarted: { modelCandidateNodeId: string; parentNodeId: string | null } | undefined;
+    let editVisionMode = request.deepSeekVisionTileSplit ?? true;
     let editSetup: {
       branchService: BranchService;
       oldUserNodeId: string;
@@ -555,6 +561,10 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       const historyBefore = await this.conversationManager.getMessagesRaw(conversationId);
       // mode：keep 原地改写（不重新生成）；branch 根节点（TREE-03-R）原地改写 + 截断重生成
       const target = resolveEditTargetNode(graphResult.graph, historyBefore, request.userNodeId, request.mode);
+      const originalTargetMessage = historyBefore.find(message => message.id === target.nodeId);
+      editVisionMode = request.deepSeekVisionTileSplit
+        ?? originalTargetMessage?.deepSeekVisionTileSplit
+        ?? true;
 
       // 3.8 按编辑模式分流：
       // - 'keep'：真·原地保存——只改写目标消息文本，后续消息与分支全部保留，不重新生成；
@@ -588,11 +598,15 @@ export class ChatFlowEditBranch extends ChatFlowContext {
         await this.conversationManager.updateMessage(conversationId, targetIndex, {
           parts: keepParts,
           isUserInput: true,
+          deepSeekVisionTileSplit: editVisionMode,
           tokenCountByChannel: {},
         });
 
-        // 3.8.3 同步分支图节点内容 + 更新候选摘要（BR-01 同源：节点 id == Content.id）
+        // 3.8.3 同步分支图节点内容、消息级 Vision 模式与候选摘要。
         await branchService.updateActiveNodeParts(conversationId, target.nodeId, keepParts);
+        await branchService.updateNodeMetadata(conversationId, target.nodeId, {
+          deepSeekVisionTileSplit: editVisionMode,
+        });
 
         // 3.8.4 清除裁剪状态（编辑后应重新计算裁剪起点）
         await this.toolIterationLoopService.clearTrimState(conversationId);
@@ -633,9 +647,13 @@ export class ChatFlowEditBranch extends ChatFlowContext {
           await this.conversationManager.updateMessage(conversationId, targetIndex, {
             parts: rootEditParts,
             isUserInput: true,
+            deepSeekVisionTileSplit: editVisionMode,
             tokenCountByChannel: {},
           });
           await branchService.updateActiveNodeParts(conversationId, target.nodeId, rootEditParts);
+          await branchService.updateNodeMetadata(conversationId, target.nodeId, {
+            deepSeekVisionTileSplit: editVisionMode,
+          });
 
           // 创建模型候选占位（流式结果写入此节点；根节点下挂候选与 reroll 同语义）
           const modelCreated = await branchService.createRerollCandidate(conversationId, target.nodeId, {
@@ -719,6 +737,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
             parts: editCandidateParts,
             id: newUserNodeId,
             isUserInput: true,
+            deepSeekVisionTileSplit: editVisionMode,
           });
 
           // 3.11b 把持久化后的用户消息元数据补写进图节点——editCandidate 建节点时只有
@@ -811,8 +830,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
         isNewTurn: true,
         promptModeSnapshot,
         dynamicContextStrategy,
-        // 编辑后重发图片时沿用编辑对话框的拆分/压缩选择（省略 = 后端默认拆分）
-        deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
+        // 编辑后重发图片使用新用户消息持久化的模式
+        deepSeekVisionTileSplit: editVisionMode,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -932,6 +951,10 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       return;
     }
 
+    const editVisionMode = request.deepSeekVisionTileSplit
+      ?? message.deepSeekVisionTileSplit
+      ?? true;
+
     // H1：先等旧流完全退出，再执行截断与更新（避免旧流结算落在编辑截断之后）
     await this.waitForOldStreamExit(conversationId);
 
@@ -965,6 +988,7 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       await this.conversationManager.updateMessage(conversationId, messageIndex, {
         parts: editParts,
         isUserInput: true,
+        deepSeekVisionTileSplit: editVisionMode,
         // 清除旧的 token 计数，强制重新计算
         tokenCountByChannel: {}
       });
@@ -1018,8 +1042,8 @@ export class ChatFlowEditBranch extends ChatFlowContext {
       maxIterations: maxToolIterations,
       promptModeSnapshot,
       dynamicContextStrategy,
-      // 编辑后重发图片时沿用前端透传的拆分/压缩选择（省略 = 后端默认拆分）
-      deepSeekVisionTileSplit: request.deepSeekVisionTileSplit,
+      // 编辑后重发图片使用消息持久化的模式
+      deepSeekVisionTileSplit: editVisionMode,
     })) {
       yield output as ChatStreamOutput;
     }

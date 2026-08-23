@@ -30,6 +30,11 @@ function createHarness(overrides: {
     const conversationManager = {
         getHistory: jest.fn().mockResolvedValue([]),
         getHistoryRef: jest.fn().mockResolvedValue([
+            {
+                id: 'user-1', role: 'user', isUserInput: true,
+                deepSeekVisionTileSplit: false,
+                parts: [{ text: 'inspect image' }]
+            },
             { id: 'msg-1', role: 'model', parts: [{ functionCall: { id: 'call_1', name: 'stub_tool', args: {} } }] }
         ]),
         getCustomMetadata: jest.fn().mockResolvedValue(undefined),
@@ -67,7 +72,14 @@ function createHarness(overrides: {
         toolExecutionService as never,
         toolCallParserService as never
     );
-    return { service, conversationManager, toolExecutionService, toolCallParserService, checkpointService };
+    return {
+        service,
+        conversationManager,
+        toolExecutionService,
+        toolCallParserService,
+        checkpointService,
+        toolIterationLoopService
+    };
 }
 
 /** next() 永不 resolve 的伪生成器（模拟不响应 abort 且永不结束的工具执行） */
@@ -212,7 +224,14 @@ describe('handleToolConfirmation 循环与 abort race', () => {
                 phase: 'after'
             })
         };
-        const { service, conversationManager, toolExecutionService, toolCallParserService, checkpointService: cpService } = createHarness({
+        const {
+            service,
+            conversationManager,
+            toolExecutionService,
+            toolCallParserService,
+            checkpointService: cpService,
+            toolIterationLoopService
+        } = createHarness({
             checkpointService,
             executeFunctionCallsWithProgress: jest.fn()
                 .mockReturnValueOnce(makeCompletingGen(call1))
@@ -259,5 +278,10 @@ describe('handleToolConfirmation 循环与 abort race', () => {
         const settledIds = settleCalls.flatMap(call => (call[1] ?? []).map(p => p.functionResponse?.id));
         expect(settledIds).toContain('call_1');
         expect(settledIds).toContain('call_2');
+
+        // 人工工具确认后的模型续跑从历史真实用户消息恢复压缩模式，不回退默认 true。
+        expect(toolIterationLoopService.runToolLoop).toHaveBeenCalledWith(
+            expect.objectContaining({ deepSeekVisionTileSplit: false })
+        );
     });
 });

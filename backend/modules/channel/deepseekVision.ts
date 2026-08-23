@@ -372,24 +372,35 @@ class FileCMapReaderFactory {
 
 class DeepSeekVisionProcessor {
     private sharpFactoryPromise?: Promise<any | null>;
+    /** 当前请求转换后的图片总数；按历史顺序增量维护，超限立即停止重处理。 */
+    private imageCount = 0;
 
     constructor(private readonly abortSignal?: AbortSignal) {}
 
-    async transformHistory(history: Content[], tileSplit: boolean = true): Promise<Content[]> {
+    async transformHistory(history: Content[], fallbackTileSplit: boolean = true): Promise<Content[]> {
         const transformed: Content[] = [];
+        this.imageCount = countHistoryImages(history);
+        if (this.imageCount > DEEPSEEK_VISION_MAX_IMAGES) {
+            throw new DeepSeekVisionPreprocessingError(
+                `DeepSeek Vision requests support at most ${DEEPSEEK_VISION_MAX_IMAGES} images; history contains ${this.imageCount}.`
+            );
+        }
 
+        // 没有显式模式的 functionResponse 等 user 消息继承最近真实用户回合；
+        // 每条真实用户消息自己的模式只作用于该消息及其后续工具结果，不会被新轮次改写。
+        let inheritedTileSplit = fallbackTileSplit;
         for (const content of history) {
             this.throwIfAborted();
 
-            // DeepSeek Vision 只允许图片出现在 user 输入中。工具返回的多媒体
-            // 通常也已经归入 user 消息；assistant/system 历史保持原样，避免改变
-            // 既有工具/思考回放语义。
             if (content.role !== 'user') {
                 transformed.push(content);
                 continue;
             }
 
-            const parts = await this.transformParts(content.parts, tileSplit);
+            if (typeof content.deepSeekVisionTileSplit === 'boolean') {
+                inheritedTileSplit = content.deepSeekVisionTileSplit;
+            }
+            const parts = await this.transformParts(content.parts, inheritedTileSplit);
             transformed.push({ ...content, parts });
         }
 
@@ -434,13 +445,15 @@ class DeepSeekVisionProcessor {
         const buffer = Buffer.from(inlineData.data, 'base64');
 
         if (mimeType === 'application/pdf') {
-            const pages = await this.renderPdf(buffer);
             const result: ContentPart[] = [];
             const displayName = inlineData.name || 'attachment.pdf';
 
-            for (const page of pages) {
+            // 逐页渲染并立即转换：达到最终图片上限时当场停止，不再先把整份 PDF
+            // 全量栅格化进内存后才发现分块结果超限。
+            await this.renderPdfPages(buffer, async page => {
                 this.throwIfAborted();
                 const pageImages = await this.transformRasterImage(page.data, 'image/png', tileSplit);
+                this.reserveProducedImages(pageImages.length);
                 result.push({
                     text: `[PDF page ${page.pageNumber}/${page.pageCount}: ${displayName}]`
                 });
@@ -452,14 +465,14 @@ class DeepSeekVisionProcessor {
                         name: `${displayName} page-${page.pageNumber}-tile-${index + 1}`
                     }
                 })));
-            }
+            });
 
             return result;
         }
 
         if (mimeType === 'image/gif') {
-            // 修改原因：DeepSeek 对 GIF 只取第一帧。这里按时间轴采样（每秒最多
-            // GIF_MAX_FPS 帧）把动画拆成多张 PNG，让模型看到完整动画内容。
+            // 原 GIF 在初始图片计数中占 1；拆帧前先移除，再逐个登记实际输出。
+            this.imageCount -= 1;
             return this.transformGif(buffer, inlineData.name || 'attachment.gif', inlineData.id, tileSplit);
         }
 
@@ -510,6 +523,7 @@ class DeepSeekVisionProcessor {
         }
 
         const images = await this.transformRasterImage(buffer, mimeType, tileSplit);
+        this.replaceInputImageWithOutputs(images.length);
         const { inlineData: _inlineData, ...partMetadata } = part;
         return images.map((image, index) => ({
             ...partMetadata,
@@ -709,11 +723,17 @@ class DeepSeekVisionProcessor {
         let delays: number[] = [];
         try {
             const metadata = await sharp(buffer, { animated: true }).metadata();
-            frameCount = Number(metadata.pages) || 1;
-            // delay 数组单位是毫秒（libvips 语义）；缺失时按每帧 100ms 估算时间轴。
-            delays = Array.isArray(metadata.delay)
-                ? metadata.delay.map((d: number) => (Number.isFinite(d) && Number(d) > 0 ? Number(d) : GIF_DEFAULT_FRAME_DELAY_MS))
-                : Array.from({ length: frameCount }, () => GIF_DEFAULT_FRAME_DELAY_MS);
+            const parsedFrameCount = Number(metadata.pages);
+            frameCount = Number.isFinite(parsedFrameCount) && parsedFrameCount > 0
+                ? Math.max(1, Math.trunc(parsedFrameCount))
+                : 1;
+            const rawDelays = Array.isArray(metadata.delay) ? metadata.delay : [];
+            // metadata.delay 在损坏/特殊 GIF 上可能少于或多于 pages：严格按 frameCount
+            // 重建，缺项/非法项回落 100ms，多余项丢弃，后续索引永远有对应时间。
+            delays = Array.from({ length: frameCount }, (_, index) => {
+                const value = Number(rawDelays[index]);
+                return Number.isFinite(value) && value > 0 ? value : GIF_DEFAULT_FRAME_DELAY_MS;
+            });
         } catch (error) {
             throw new DeepSeekVisionPreprocessingError(`Unable to read GIF metadata: ${this.errorMessage(error)}`);
         }
@@ -766,6 +786,7 @@ class DeepSeekVisionProcessor {
                 gifFrameCache.set(frameCacheKey, frameBuffer, frameBuffer.length);
             }
             const frameImages = await this.transformRasterImage(frameBuffer, 'image/png', tileSplit);
+            this.reserveProducedImages(frameImages.length);
             const startSeconds = (frameStarts[frameIndex] / 1000).toFixed(1);
             const endSeconds = ((frameStarts[frameIndex] + delays[frameIndex]) / 1000).toFixed(1);
             result.push({
@@ -799,13 +820,18 @@ class DeepSeekVisionProcessor {
             .png({ compressionLevel: 9 })
             .toBuffer();
     }
-    private async renderPdf(buffer: Buffer): Promise<RenderedPdfPage[]> {
-        // 缓存命中：同一份 PDF 字节在多轮对话/请求转发/token 估算之间复用，
-        // 不再重新 getDocument + 逐页栅格化。
+    private async renderPdfPages(
+        buffer: Buffer,
+        onPage: (page: RenderedPdfPage) => Promise<void>
+    ): Promise<void> {
         const cacheKey = contentHash(buffer);
         const cached = pdfRenderCache.get(cacheKey);
         if (cached) {
-            return cached;
+            for (const page of cached) {
+                this.throwIfAborted();
+                await onPage(page);
+            }
+            return;
         }
 
         const canvasModule = await getCanvas();
@@ -816,8 +842,6 @@ class DeepSeekVisionProcessor {
             );
         }
 
-        // pdfjs uses these browser globals while drawing standard font paths.
-        // @napi-rs/canvas provides compatible Node implementations.
         const globalScope = globalThis as any;
         for (const name of ['DOMMatrix', 'Path2D', 'ImageData']) {
             if (!globalScope[name] && canvasModule[name]) {
@@ -832,12 +856,6 @@ class DeepSeekVisionProcessor {
             throw new DeepSeekVisionPreprocessingError('The installed pdfjs-dist module has no getDocument API.');
         }
 
-        // pdfjs-dist 4.x 的 fake worker（disableWorker: true）内部仍会执行
-        // `await import(workerSrc)` 加载 pdf.worker.mjs；若不设置 GlobalWorkerOptions.workerSrc，
-        // PDFWorker.workerSrc getter 会直接抛 "No GlobalWorkerOptions.workerSrc specified."。
-        // Node 环境下 import() 需要 file:// URL，裸路径会解析失败（ERR_MODULE_NOT_FOUND）。
-        // 主模块走的是 legacy build（getPdfjs 加载 legacy/build/pdf.mjs），fake worker
-        // 必须对应加载 legacy/build/pdf.worker.mjs，避免浏览器构建在 Node 下访问 DOM API 失败。
         const pdfjsRoot = getDependencyPath('pdfjs-dist');
         if (pdfjsRoot) {
             const workerPath = path.join(pdfjsRoot, 'legacy', 'build', 'pdf.worker.mjs');
@@ -848,9 +866,8 @@ class DeepSeekVisionProcessor {
             }
         }
 
-        const standardFontsRoot = pdfjsRoot;
-        const standardFontDataUrl = standardFontsRoot
-            ? `${path.join(standardFontsRoot, 'standard_fonts')}${path.sep}`
+        const standardFontDataUrl = pdfjsRoot
+            ? `${path.join(pdfjsRoot, 'standard_fonts')}${path.sep}`
             : undefined;
         const cMapRoot = pdfjsRoot && fs.existsSync(path.join(pdfjsRoot, 'cmaps'))
             ? path.join(pdfjsRoot, 'cmaps')
@@ -862,14 +879,8 @@ class DeepSeekVisionProcessor {
                 data: new Uint8Array(buffer),
                 disableWorker: true,
                 useSystemFonts: false,
-                // isNodeJS=false 的宿主（VS Code/Electron）中 pdf.js 默认走 DOM 路径：
-                // disableFontFace 默认 false → FontLoader 访问 document（style/fonts），
-                // isOffscreenCanvasSupported 默认 true → worker 侧 OffscreenCanvas 检测。
-                // 与 Node 默认行为对齐需要显式关闭；字体数据由下方工厂从文件系统读取。
                 disableFontFace: true,
                 isOffscreenCanvasSupported: false,
-                // 显式注入 Node 画布工厂：默认工厂在 isNodeJS=false 宿主中为
-                // DOMCanvasFactory，渲染透明分组/注解页时访问 document.createElement 崩溃。
                 CanvasFactory: createNodeCanvasFactory(canvasModule),
                 ...(standardFontDataUrl ? {
                     standardFontDataUrl,
@@ -887,64 +898,84 @@ class DeepSeekVisionProcessor {
             );
         }
 
-        const pageCount = Number(document.numPages) || 0;
-        if (pageCount <= 0) {
-            await this.cleanupPdf(document);
-            throw new DeepSeekVisionPreprocessingError('The PDF attachment contains no pages.');
-        }
-        if (pageCount > DEEPSEEK_VISION_MAX_IMAGES) {
-            await this.cleanupPdf(document);
-            throw new DeepSeekVisionPreprocessingError(
-                `The PDF has ${pageCount} pages, exceeding DeepSeek's ${DEEPSEEK_VISION_MAX_IMAGES}-image request limit.`
-            );
-        }
+        // 只在完整文档渲染成功且原始页 PNG 总量不超过单项预算时缓存；一旦超出，
+        // 立即释放已收集引用，后续页面仍逐页处理但不再为缓存保留第二份数据。
+        let cachePages: RenderedPdfPage[] | null = [];
+        let cacheBytes = 0;
 
-        const pages: RenderedPdfPage[] = [];
         try {
+            const pageCount = Number(document.numPages) || 0;
+            if (pageCount <= 0) {
+                throw new DeepSeekVisionPreprocessingError('The PDF attachment contains no pages.');
+            }
+            if (pageCount > DEEPSEEK_VISION_MAX_IMAGES) {
+                throw new DeepSeekVisionPreprocessingError(
+                    `The PDF has ${pageCount} pages, exceeding DeepSeek's ${DEEPSEEK_VISION_MAX_IMAGES}-image request limit.`
+                );
+            }
+
             for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
                 this.throwIfAborted();
-                const page = await document.getPage(pageNumber);
-                const baseViewport = page.getViewport({ scale: PDF_RENDER_SCALE });
-                const basePixels = baseViewport.width * baseViewport.height;
-                const renderScale = basePixels > PDF_MAX_CANVAS_PIXELS
-                    ? PDF_RENDER_SCALE * Math.sqrt(PDF_MAX_CANVAS_PIXELS / basePixels)
-                    : PDF_RENDER_SCALE;
-                const viewport = page.getViewport({ scale: renderScale });
-                const canvas = canvasModule.createCanvas(
-                    Math.max(1, Math.ceil(viewport.width)),
-                    Math.max(1, Math.ceil(viewport.height))
-                );
-
+                let page: any;
+                let canvas: any;
+                let rendered: RenderedPdfPage;
                 try {
+                    page = await document.getPage(pageNumber);
+                    const baseViewport = page.getViewport({ scale: PDF_RENDER_SCALE });
+                    const basePixels = baseViewport.width * baseViewport.height;
+                    const renderScale = basePixels > PDF_MAX_CANVAS_PIXELS
+                        ? PDF_RENDER_SCALE * Math.sqrt(PDF_MAX_CANVAS_PIXELS / basePixels)
+                        : PDF_RENDER_SCALE;
+                    const viewport = page.getViewport({ scale: renderScale });
+                    canvas = canvasModule.createCanvas(
+                        Math.max(1, Math.ceil(viewport.width)),
+                        Math.max(1, Math.ceil(viewport.height))
+                    );
                     await page.render({
                         canvasContext: canvas.getContext('2d'),
                         viewport
                     }).promise;
-                    pages.push({
+                    rendered = {
                         data: canvas.toBuffer('image/png'),
                         pageNumber,
                         pageCount
-                    });
+                    };
+                } catch (error) {
+                    throw new DeepSeekVisionPreprocessingError(
+                        `Unable to render PDF page ${pageNumber}: ${this.errorMessage(error)}`
+                    );
                 } finally {
-                    page.cleanup?.();
+                    await page?.cleanup?.();
+                    if (canvas) {
+                        canvas.width = 0;
+                        canvas.height = 0;
+                    }
                 }
+
+                if (cachePages) {
+                    cacheBytes += rendered.data.length;
+                    if (cacheBytes <= PDF_CACHE_MAX_ENTRY_BYTES) {
+                        cachePages.push(rendered);
+                    } else {
+                        cachePages = null;
+                    }
+                }
+
+                // 先处理当前页再继续 getPage：图片数量超限或转换失败会立即中止剩余页面。
+                await onPage(rendered);
             }
-        } catch (error) {
-            throw new DeepSeekVisionPreprocessingError(
-                `Unable to render PDF page: ${this.errorMessage(error)}`
-            );
+
+            if (cachePages) {
+                pdfRenderCache.set(cacheKey, cachePages, cacheBytes);
+            }
         } finally {
             await this.cleanupPdf(document);
         }
-
-        const totalBytes = pages.reduce((sum, page) => sum + page.data.length, 0);
-        pdfRenderCache.set(cacheKey, pages, totalBytes);
-        return pages;
     }
 
     private async cleanupPdf(document: any): Promise<void> {
         try {
-            document.cleanup?.();
+            await document.cleanup?.();
         } catch {
             // cleanup is best effort; the rendered buffers are already detached.
         }
@@ -953,6 +984,23 @@ class DeepSeekVisionProcessor {
         } catch {
             // cleanup is best effort.
         }
+    }
+
+    private reserveProducedImages(count: number): void {
+        if (!Number.isInteger(count) || count < 0) {
+            throw new DeepSeekVisionPreprocessingError('Invalid DeepSeek Vision output image count.');
+        }
+        if (this.imageCount + count > DEEPSEEK_VISION_MAX_IMAGES) {
+            throw new DeepSeekVisionPreprocessingError(
+                `DeepSeek Vision preprocessing would produce more than ${DEEPSEEK_VISION_MAX_IMAGES} images.`
+            );
+        }
+        this.imageCount += count;
+    }
+
+    private replaceInputImageWithOutputs(outputCount: number): void {
+        this.imageCount = Math.max(0, this.imageCount - 1);
+        this.reserveProducedImages(outputCount);
     }
 
     private async getSharpFactory(): Promise<any | null> {

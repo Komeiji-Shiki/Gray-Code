@@ -455,7 +455,8 @@ export async function sendMessage(
           ? (state.allMessages.value[state.allMessages.value.length - 1]?.id ?? null)
           : null,
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
-        source: options?.source
+        source: options?.source,
+        deepSeekVisionTileSplit: options?.deepSeekVisionTileSplit
       }
       // BR-01：记录窗口消息 id 并随 chatStream 传给后端原样落库，
       // 保证主历史 Content.id 与窗口消息 id 一致（编辑/重试/分支操作按 id 定位）

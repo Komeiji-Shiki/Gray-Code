@@ -124,9 +124,14 @@ const hasImageAttachments = computed(() =>
 /** 当前渠道是否开启了 DeepSeek Vision 图像预处理。 */
 const visionPreprocessingEnabled = computed(() => currentConfig.value?.deepSeekVisionEnabled === true)
 
-/** 复选框可见条件：有图片附件 + 预处理开启 + 模型是 DeepSeek Vision。 */
+/** 当前渠道/模型是否启用 DeepSeek Vision 预处理。 */
+const visionProcessingActive = computed(() =>
+  visionPreprocessingEnabled.value && isDeepSeekVisionModelName(currentModel.value)
+)
+
+/** 复选框可见条件：有图片附件 + 当前渠道/模型启用预处理。 */
 const visionSplitToggleVisible = computed(() =>
-  hasImageAttachments.value && visionPreprocessingEnabled.value && isDeepSeekVisionModelName(currentModel.value)
+  hasImageAttachments.value && visionProcessingActive.value
 )
 async function loadConfigs() {
   isLoadingConfigs.value = true
@@ -216,16 +221,15 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
 
   const content = serializeNodes(editorNodes.value).trim()
   const currentAttachments = props.attachments || []
-  // 普通发送不主动下发策略覆盖，避免输入区旧模式缓存把后端已保存的 preserve 误覆盖成 single。
-  // 只有“发送并保留旧动态上下文原位”按钮会传入显式 preserve override。
-  // DeepSeek Vision 复选框可见时（有图片 + 预处理开启 + Vision 模型）附带本次拆分/压缩选择。
+  // DeepSeek Vision 渠道始终附带当前处理偏好，即使本轮只有文本：后续工具确认/工具图片
+  // 仍属于本回合，且历史中的旧附件会按各自消息上持久化的模式重放。
   const sendOptions: { dynamicContextStrategyOverride?: 'single' | 'preserve'; deepSeekVisionTileSplit?: boolean } | undefined =
-    options?.dynamicContextStrategyOverride || visionSplitToggleVisible.value
+    options?.dynamicContextStrategyOverride || visionProcessingActive.value
       ? {
           ...(options?.dynamicContextStrategyOverride
             ? { dynamicContextStrategyOverride: options.dynamicContextStrategyOverride }
             : {}),
-          ...(visionSplitToggleVisible.value
+          ...(visionProcessingActive.value
             ? { deepSeekVisionTileSplit: visionSplitChecked.value }
             : {})
         }

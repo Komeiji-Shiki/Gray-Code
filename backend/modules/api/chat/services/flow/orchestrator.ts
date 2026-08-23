@@ -42,6 +42,18 @@ function isInternalMessageSource(source: ChatRequestData['source']): boolean {
   return source === 'background_task' || source === 'agent_message';
 }
 
+/** 最近真实用户消息持久化的 Vision 模式；工具确认续跑不再依赖前端临时状态。 */
+function resolvePersistedDeepSeekVisionMode(history: ReadonlyArray<Content>, fallback = true): boolean {
+  for (let index = history.length - 1; index >= 0; index--) {
+    const message = history[index];
+    if (message.role === 'user' && message.isUserInput === true
+        && typeof message.deepSeekVisionTileSplit === 'boolean') {
+      return message.deepSeekVisionTileSplit;
+    }
+  }
+  return fallback;
+}
+
 function isValidAgentMessageClaim(request: ChatRequestData): boolean {
   if (request.source !== 'agent_message') return true;
   const claimId = request.agentMessageClaimId?.trim();
@@ -196,6 +208,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
           isUserInput: !internalMessage,
           source: request.source,
+          ...(!internalMessage
+            ? { deepSeekVisionTileSplit: request.deepSeekVisionTileSplit ?? true }
+            : {}),
           ...(turnDynamicContext
             ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
             : {})
@@ -387,6 +402,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         await this.conversationManager.addMessage(conversationId, 'user', userParts, {
           isUserInput: !internalMessage,
           source: request.source,
+          ...(!internalMessage
+            ? { deepSeekVisionTileSplit: request.deepSeekVisionTileSplit ?? true }
+            : {}),
           ...(turnDynamicContext
             ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
             : {})
@@ -483,6 +501,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
 
     // 3. 寻找最后一条包含工具调用的 model 消息及其索引
     const history = await this.conversationManager.getHistoryRef(conversationId);
+    const deepSeekVisionTileSplit = resolvePersistedDeepSeekVisionMode(history);
     if (history.length === 0) {
       yield {
         conversationId,
@@ -553,6 +572,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         isNewTurn: false,
         promptModeSnapshot,
         dynamicContextStrategy,
+        deepSeekVisionTileSplit,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1030,6 +1050,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       isNewTurn: false,
       promptModeSnapshot,
       dynamicContextStrategy,
+      deepSeekVisionTileSplit,
     })) {
       yield output as ChatStreamOutput;
     }

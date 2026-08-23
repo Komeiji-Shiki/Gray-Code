@@ -246,6 +246,7 @@ function handleRestoreAndRetry(checkpointId: string) {
       :checkpoints="checkpointsBeforeMessage"
       :original-content="message.content"
       :original-attachments="message.attachments || []"
+      :original-deep-seek-vision-tile-split="message.deepSeekVisionTileSplit"
       :is-root-message="message.parentId == null"
       @edit="handleEdit"
       @restore-and-edit="handleRestoreAndEdit"

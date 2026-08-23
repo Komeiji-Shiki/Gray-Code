@@ -34,6 +34,8 @@ interface Props {
   originalContent?: string
   /** 原始消息附件 */
   originalAttachments?: Attachment[]
+  /** 原消息持久化的 DeepSeek Vision 处理模式；打开编辑时优先继承。 */
+  originalDeepSeekVisionTileSplit?: boolean
   /** 是否为会话首条消息（根节点）：无父节点可挂编辑候选，保存仅原地改写、不会重新生成 */
   isRootMessage?: boolean
 }
@@ -43,6 +45,7 @@ const props = withDefaults(defineProps<Props>(), {
   checkpoints: () => [],
   originalContent: '',
   originalAttachments: () => [],
+  originalDeepSeekVisionTileSplit: undefined,
   isRootMessage: false
 })
 
@@ -68,10 +71,10 @@ const chatStore = useChatStore()
  */
 const visionConfig = ref<ChannelConfig | null>(null)
 
-/** DeepSeek Vision 复选框的偏好值（与 InputArea 共享 chatStore 状态）。 */
-const visionSplitChecked = computed<boolean>({
-  get: () => chatStore.visionSplitChecked ?? true,
-  set: (value: boolean) => chatStore.setVisionSplitChecked?.(value)
+/** 编辑中的本地选择；打开时优先继承原消息，修改时同步为输入区后续默认偏好。 */
+const visionSplitChecked = ref(true)
+watch(visionSplitChecked, value => {
+  if (visible.value) chatStore.setVisionSplitChecked?.(value)
 })
 
 /** 附件中是否包含图片。 */
@@ -89,9 +92,19 @@ const visionSplitToggleVisible = computed(() => {
     && isDeepSeekVisionModelName(model)
 })
 
-// 当对话框打开时，初始化编辑内容、附件和上下文，并拉取渠道配置供 Vision 复选框判断
+let visionConfigLoadGeneration = 0
+
+// 打开时初始化编辑状态；渠道配置响应仅允许写回同一次打开、同一个 configId。
 watch(visible, (newValue) => {
-  if (!newValue) return
+  const generation = ++visionConfigLoadGeneration
+  if (!newValue) {
+    visionConfig.value = null
+    return
+  }
+
+  visionSplitChecked.value = props.originalDeepSeekVisionTileSplit
+    ?? chatStore.visionSplitChecked
+    ?? true
 
   const parsed = parseMessageToNodes(props.originalContent)
   editorNodes.value = parsed.nodes
@@ -102,16 +115,17 @@ watch(visible, (newValue) => {
   clearAttachments() // 清除之前的新附件
   removedOriginalAttachmentIds.value = new Set() // 重置已删除的原有附件
 
-  // 拉取当前渠道配置（失败时保持 null，复选框按不可见处理，与 InputArea 加载失败行为一致）
+  // 在异步请求发出前清空旧配置，避免快速切换渠道后短暂显示上一渠道的复选框。
+  visionConfig.value = null
   const configId = chatStore.configId
   if (configId) {
     configService.getConfig(configId).then((config) => {
+      if (generation !== visionConfigLoadGeneration || !visible.value || chatStore.configId !== configId) return
       visionConfig.value = config
     }).catch(() => {
+      if (generation !== visionConfigLoadGeneration || !visible.value || chatStore.configId !== configId) return
       visionConfig.value = null
     })
-  } else {
-    visionConfig.value = null
   }
 
   nextTick(() => {

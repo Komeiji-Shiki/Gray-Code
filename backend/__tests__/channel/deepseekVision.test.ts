@@ -616,6 +616,177 @@ describe('DeepSeek Vision preprocessing', () => {
         expect(factory.mock.calls.length).toBe(callsAfterFirst + 1);
         expect(second).toEqual(first);
     });
+
+    test('消息级模式固定旧图片：纯文本续轮的新偏好不会重处理旧附件', async () => {
+        const sharp = createSharpMock(1_600, 1_600);
+        mockGetSharp.mockResolvedValue(sharp);
+        const history = [
+            {
+                role: 'user' as const,
+                deepSeekVisionTileSplit: false,
+                parts: [imagePart(1_600, 1_600, Buffer.from('message-mode-image').toString('base64'))]
+            },
+            { role: 'model' as const, parts: [{ text: 'seen' }] },
+            {
+                role: 'user' as const,
+                deepSeekVisionTileSplit: true,
+                parts: [{ text: 'text-only follow-up' }]
+            }
+        ];
+
+        const result = await prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp',
+            true,
+            undefined,
+            true
+        );
+
+        // 第一条消息持久化为压缩模式，所以即使当前请求 fallback=true 也仍是一张。
+        expect(result[0].parts).toHaveLength(1);
+        expect(result[0].parts[0].inlineData?.name).toBe('diagram.png');
+    });
+
+    test('functionResponse 图片继承之前最近真实用户消息的处理模式', async () => {
+        const sharp = createSharpMock(1_600, 1_600);
+        mockGetSharp.mockResolvedValue(sharp);
+        const history = [
+            { role: 'user' as const, deepSeekVisionTileSplit: false, parts: [{ text: 'inspect' }] },
+            { role: 'model' as const, parts: [{ functionCall: { id: 'call-1', name: 'read_file', args: {} } }] },
+            {
+                role: 'user' as const,
+                isFunctionResponse: true,
+                parts: [{
+                    functionResponse: {
+                        id: 'call-1',
+                        name: 'read_file',
+                        response: { success: true },
+                        parts: [imagePart(1_600, 1_600, Buffer.from('tool-mode-image').toString('base64'))]
+                    }
+                }]
+            }
+        ];
+
+        const result = await prepareDeepSeekVisionHistory(history, 'deepseek-v4-flash-vision-exp');
+        const nested = result[2].parts[0].functionResponse?.parts ?? [];
+        expect(nested.filter(part => part.inlineData)).toHaveLength(1);
+    });
+
+    test('PDF 分块达到 600 图上限后立即停止，不继续渲染剩余页面', async () => {
+        const sharp = createSharpMock(1_600, 1_600);
+        mockGetSharp.mockResolvedValue(sharp);
+        mockGetDependencyPath.mockReturnValue(tempPdfjsDir);
+
+        const page = {
+            getViewport: jest.fn(() => ({ width: 1_600, height: 1_600 })),
+            render: jest.fn(() => ({ promise: Promise.resolve() })),
+            cleanup: jest.fn()
+        };
+        const document = {
+            numPages: 200,
+            getPage: jest.fn(async () => page),
+            cleanup: jest.fn(async () => undefined),
+            destroy: jest.fn(async () => undefined)
+        };
+        const canvas = {
+            width: 1_600,
+            height: 1_600,
+            getContext: jest.fn(() => ({})),
+            toBuffer: jest.fn(() => Buffer.from('same-rendered-page'))
+        };
+        mockGetCanvas.mockResolvedValue({ createCanvas: jest.fn(() => canvas) });
+        mockGetPdfjs.mockResolvedValue({
+            GlobalWorkerOptions: { workerSrc: undefined },
+            getDocument: jest.fn(() => ({ promise: Promise.resolve(document) }))
+        });
+
+        const history = [{
+            role: 'user' as const,
+            parts: [{ inlineData: { mimeType: 'application/pdf', data: Buffer.from('%PDF-early-stop').toString('base64') } }]
+        }];
+
+        await expect(prepareDeepSeekVisionHistory(
+            history,
+            'deepseek-v4-flash-vision-exp'
+        )).rejects.toThrow(/more than 600 images/);
+
+        // 每页 4 块：150 页恰好 600，第 151 页即中止，余下 49 页不渲染。
+        expect(document.getPage).toHaveBeenCalledTimes(151);
+        expect(document.destroy).toHaveBeenCalled();
+    });
+
+    test('PDF cleanup Promise 完成后才调用 destroy', async () => {
+        const order: string[] = [];
+        const sharp = createSharpMock(800, 800);
+        mockGetSharp.mockResolvedValue(sharp);
+        mockGetDependencyPath.mockReturnValue(tempPdfjsDir);
+        const page = {
+            getViewport: jest.fn(() => ({ width: 800, height: 800 })),
+            render: jest.fn(() => ({ promise: Promise.resolve() })),
+            cleanup: jest.fn(async () => undefined)
+        };
+        const document = {
+            numPages: 1,
+            getPage: jest.fn(async () => page),
+            cleanup: jest.fn(async () => {
+                order.push('cleanup:start');
+                await Promise.resolve();
+                order.push('cleanup:end');
+            }),
+            destroy: jest.fn(async () => { order.push('destroy'); })
+        };
+        const canvas = {
+            width: 800,
+            height: 800,
+            getContext: jest.fn(() => ({})),
+            toBuffer: jest.fn(() => Buffer.from('cleanup-page'))
+        };
+        mockGetCanvas.mockResolvedValue({ createCanvas: jest.fn(() => canvas) });
+        mockGetPdfjs.mockResolvedValue({
+            GlobalWorkerOptions: { workerSrc: undefined },
+            getDocument: jest.fn(() => ({ promise: Promise.resolve(document) }))
+        });
+
+        await prepareDeepSeekVisionHistory([{
+            role: 'user',
+            parts: [{ inlineData: { mimeType: 'application/pdf', data: Buffer.from('%PDF-cleanup-order').toString('base64') } }]
+        }], 'deepseek-v4-flash-vision-exp');
+
+        expect(order).toEqual(['cleanup:start', 'cleanup:end', 'destroy']);
+    });
+
+    test('GIF delay 少于帧数时逐帧补默认值，不产生 NaN 时间标签', async () => {
+        const factory = jest.fn((_input: any, options?: any) => {
+            if (options?.animated === true && options.page === undefined) {
+                return { metadata: jest.fn().mockResolvedValue({ pages: 4, delay: [100] }) };
+            }
+            const chain: any = {
+                metadata: jest.fn().mockResolvedValue({ width: 400, height: 400 }),
+                rotate: jest.fn(() => chain),
+                extract: jest.fn(() => chain),
+                flatten: jest.fn(() => chain),
+                jpeg: jest.fn(() => chain),
+                png: jest.fn(() => chain),
+                webp: jest.fn(() => chain),
+                toBuffer: jest.fn().mockResolvedValue(Buffer.from('short-delay-frame'))
+            };
+            return chain;
+        });
+        mockGetSharp.mockResolvedValue(factory);
+
+        const result = await prepareDeepSeekVisionHistory([{
+            role: 'user',
+            parts: [{ inlineData: {
+                mimeType: 'image/gif',
+                data: Buffer.from('GIF89a-short-delay').toString('base64'),
+                name: 'short.gif'
+            } }]
+        }], 'deepseek-v4-flash-vision-exp');
+
+        const labels = result[0].parts.filter(part => part.text).map(part => part.text);
+        expect(labels.join('\n')).not.toContain('NaN');
+        expect(labels).toContain('[GIF frame 4/4 (0.3s-0.4s): short.gif]');
+    });
 });
 
 describe('LruCache', () => {

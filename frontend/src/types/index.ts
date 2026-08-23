@@ -34,6 +34,8 @@ export interface Content {
   summaryTokenStats?: SummaryTokenStats
   /** 系统内部消息来源；后台任务和 agent 消息都不构成真实用户新回合。 */
   source?: 'user' | 'background_task' | 'agent_message'
+  /** 本条用户消息持久化的 DeepSeek Vision 处理模式；工具结果继承最近用户回合。 */
+  deepSeekVisionTileSplit?: boolean
   /**
    * agent 间消息卡片元数据（A-COMM 展示层）。
    * 仅 source='agent_message' 且收件方为子代理的消息携带：主模型 ↔ 子代理、
@@ -151,6 +153,8 @@ export interface Message {
    * 消息来源：'user' 为正常用户输入，其他值为系统内部回流
    */
   source?: 'user' | 'background_task' | 'agent_message'
+  /** 用户消息所属回合的 DeepSeek Vision 处理模式。 */
+  deepSeekVisionTileSplit?: boolean
   /** agent 间消息卡片元数据（A-COMM 展示层；见 Content.agentMessage） */
   agentMessage?: AgentMessageCardInfo
   /**

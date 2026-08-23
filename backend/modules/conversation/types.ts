@@ -274,6 +274,15 @@ export interface Content {
     source?: 'user' | 'background_task' | 'agent_message';
 
     /**
+     * 本条真实用户消息选择的 DeepSeek Vision 图像处理模式。
+     *
+     * 这是消息级历史语义，不是一次请求的临时开关：旧图片在后续纯文本轮次、
+     * 工具确认续跑、reroll/edit/retry 中都按其所属用户回合的原始选择重放。
+     * functionResponse 等没有该字段的 user 消息继承它之前最近的真实用户消息。
+     */
+    deepSeekVisionTileSplit?: boolean;
+
+    /**
      * agent 间消息卡片元数据（A-COMM 展示层）。
      *
      * 仅 source='agent_message' 且收件方为子代理（非主会话）的消息携带：

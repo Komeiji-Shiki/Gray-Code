@@ -651,6 +651,9 @@ export async function editAndRetry(
   targetMessage.content = newMessage
   targetMessage.parts = [{ text: newMessage }]
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
+  if (typeof deepSeekVisionTileSplit === 'boolean') {
+    targetMessage.deepSeekVisionTileSplit = deepSeekVisionTileSplit
+  }
 
   if (effectiveMode === 'keep') {
     // 真·原地保存：只改写本条消息，后续消息 / 检查点 / 分支全部保留，
