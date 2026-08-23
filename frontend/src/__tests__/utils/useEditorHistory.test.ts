@@ -60,6 +60,20 @@ describe('useEditorHistory', () => {
     )
   })
 
+  test('reset discards another editing session and establishes a fresh baseline', () => {
+    const history = useEditorHistory()
+    history.record([], 0, 'baseline')
+    history.record(text('old draft'), 9, 'boundary')
+
+    history.reset(text('new draft'), 9)
+    expect(history.canUndo.value).toBe(false)
+    expect(history.canRedo.value).toBe(false)
+
+    history.record(text('new draft pasted'), 16, 'paste')
+    expect(history.undo()?.nodes).toEqual(text('new draft'))
+    expect(history.undo()).toBeNull()
+  })
+
   test('pending operation kind overrides browser inputType once', () => {
     const history = useEditorHistory()
     history.markNext('paste')

@@ -62,6 +62,11 @@ const editorNodes = computed({
   set: (nodes: EditorNode[]) => chatStore.setEditorNodes(nodes)
 })
 
+// 同一 InputBox DOM 会承载多个标签页/对话；撤销历史必须随编辑会话切换边界。
+const editorUndoScope = computed(() =>
+  `${chatStore.activeTabId ?? 'unbound-tab'}:${chatStore.currentConversationId ?? 'draft'}`
+)
+
 // 当 store 中的 inputValue 被外部设置（如恢复快照）但 editorNodes 为空时，从文本创建节点
 watch(() => chatStore.inputValue, (val) => {
   if (val && chatStore.editorNodes.length === 0) {
@@ -689,6 +694,7 @@ watch(() => settingsStore.promptModesVersion, () => {
       <InputBox
         ref="inputBoxRef"
         :nodes="editorNodes"
+        :undo-scope="editorUndoScope"
         :disabled="false"
         :placeholder="props.placeholder"
         :popup-expanded="showFilePicker"

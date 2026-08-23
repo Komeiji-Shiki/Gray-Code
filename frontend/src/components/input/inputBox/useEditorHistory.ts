@@ -113,6 +113,17 @@ export function useEditorHistory(options: EditorHistoryOptions = {}) {
     }
   }
 
+  function reset(nodes: EditorNode[], caretOffset: number = 0) {
+    pendingKind = null
+    entries.value = [{
+      nodes: snapshotNodes(nodes),
+      caretOffset,
+      kind: 'baseline',
+      timestamp: now()
+    }]
+    index.value = 0
+  }
+
   function record(
     nodes: EditorNode[],
     caretOffset: number,
@@ -177,6 +188,7 @@ export function useEditorHistory(options: EditorHistoryOptions = {}) {
     markNext,
     record,
     redo,
+    reset,
     resolveKind,
     undo
   }

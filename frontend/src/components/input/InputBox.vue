@@ -50,6 +50,8 @@ const props = withDefaults(defineProps<{
   maxRows?: number
   popupExpanded?: boolean
   popupControls?: string
+  /** 撤销历史所属输入会话；变化时以当前 nodes 建立全新基线 */
+  undoScope?: string | null
   /** Enter 键行为：true=Enter 发送（Shift+Enter 换行）；false=Enter 换行 */
   submitOnEnter?: boolean
 }>(), {
@@ -115,8 +117,9 @@ const atTrigger = useAtTrigger({
 // During that brief window, the chip exists in DOM but not yet in props.nodes.
 const transientContexts = new Map<string, PromptContextItem>()
 
-// 输入状态标记
-let isInputting = false
+// 输入组件发出的 nodes 会由受控父组件回流为 props；保留本次节点快照以识别内部回流，
+// 其余 props 替换（切换/新建对话、发送清空、恢复草稿）都必须建立新的撤销基线。
+let pendingInternalNodes: EditorNode[] | null = null
 
 // ========== height + overlay scrollbar ==========
 
@@ -486,10 +489,10 @@ function redo() {
 
 function restoreHistoryEntry(entry: EditorHistoryEntry) {
   if (!editorRef.value) return
-  isInputting = true
+  pendingInternalNodes = entry.nodes
   emit('update:nodes', entry.nodes)
   nextTick(() => {
-    if (!editorRef.value) { isInputting = false; return }
+    if (!editorRef.value) return
     renderNodesToDom()
     const point = getDomPointFromTextOffset(editorRef.value, entry.caretOffset)
     const range = document.createRange()
@@ -501,15 +504,12 @@ function restoreHistoryEntry(entry: EditorHistoryEntry) {
       selection.addRange(range)
     }
     adjustHeight()
-    isInputting = false
   })
 }
 
 function handleInput(event?: Event, forcedHistoryKind?: EditorHistoryKind) {
   const editor = editorRef.value
   if (!editor) return
-
-  isInputting = true
 
   const newNodes = extractNodesFromEditor(editor, {
     knownNodes: props.nodes,
@@ -521,11 +521,10 @@ function handleInput(event?: Event, forcedHistoryKind?: EditorHistoryKind) {
 
   atTrigger.onTextChanged(textContent, cursorPos)
 
+  pendingInternalNodes = newNodes
   emit('update:nodes', newNodes)
   // 输入路径 DOM 已由浏览器直接编辑，newNodes 即 DOM 的真实状态（props 将同步为相同值）：
-  // 必须在此同步指纹——watch(props.nodes) 触发时 isInputting 仍为 true 会被短路跳过，
-  // 指纹若长期停留在初始值，后续外部清空（发送）时 getNodesFingerprint([]) === '0'
-  // 与陈旧指纹碰撞，跳过 DOM 重建导致残留旧文本（placeholder 与文本叠放）。
+  // 必须在此同步指纹；否则后续外部清空可能与陈旧指纹碰撞，跳过 DOM 重建并残留旧文本。
   lastRenderedNodesFingerprint = getNodesFingerprint(newNodes)
   const inputEvent = typeof InputEvent !== 'undefined' && event instanceof InputEvent ? event : undefined
   const historyKind = editorHistory.resolveKind(inputEvent?.inputType, forcedHistoryKind)
@@ -534,7 +533,6 @@ function handleInput(event?: Event, forcedHistoryKind?: EditorHistoryKind) {
   }
 
   nextTick(() => {
-    isInputting = false
     adjustHeight()
   })
 }
@@ -949,53 +947,66 @@ function truncatePreview(content: string, maxLines = 10, maxChars = 500): string
   return result
 }
 
-watch(() => props.nodes, () => {
-  if (previewContext.value) {
-    const stillExists = props.nodes.some(n => n.type === 'context' && n.context.id === previewContext.value!.id)
-    if (!stillExists) previewContext.value = null
-  }
-  if (hoveredContextId.value) {
-    const stillHoveredExists = props.nodes.some(n => n.type === 'context' && n.context.id === hoveredContextId.value)
-    if (!stillHoveredExists) hoveredContextId.value = null
-  }
+watch(
+  [() => props.undoScope, () => props.nodes],
+  ([undoScope, nodes], [previousUndoScope]) => {
+    const nodesFingerprint = getNodesFingerprint(nodes)
+    const isInternalEcho =
+      undoScope === previousUndoScope &&
+      pendingInternalNodes !== null &&
+      editorNodesEqual(pendingInternalNodes, nodes)
+    pendingInternalNodes = null
 
-  for (const id of Array.from(transientContexts.keys())) {
-    if (props.nodes.some(n => n.type === 'context' && n.context.id === id)) {
-      transientContexts.delete(id)
+    if (previewContext.value) {
+      const stillExists = nodes.some(n => n.type === 'context' && n.context.id === previewContext.value!.id)
+      if (!stillExists) previewContext.value = null
     }
-  }
+    if (hoveredContextId.value) {
+      const stillHoveredExists = nodes.some(n => n.type === 'context' && n.context.id === hoveredContextId.value)
+      if (!stillHoveredExists) hoveredContextId.value = null
+    }
 
-  if (!isInputting && editorRef.value) {
-    // 轻量指纹相同（全部节点内容）说明 DOM 与 nodes 大概率已同步，
-    // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM。
-    // 例外：props.nodes 为空（发送清空）时必须强制提取比对——空数组指纹恒为 '0'，
-    // 而 lastRenderedNodesFingerprint 在用户直接编辑路径下由 handleInput 维护，
-    // 若历史渲染从未发生（指纹仍为初始 '0'）会碰撞跳过重建，DOM 残留旧内容。
-    if (props.nodes.length === 0 || getNodesFingerprint(props.nodes) !== lastRenderedNodesFingerprint) {
-      const domNodes = extractNodesFromEditor(editorRef.value, {
-        knownNodes: props.nodes,
-        transientContexts
-      })
-      // 受控 contenteditable 只有在外部状态确实不同步时才重建 DOM。
-      // 无意义的 innerHTML 重建会清空浏览器原生的复制、粘贴和撤销历史。
-      if (!editorNodesEqual(domNodes, props.nodes)) {
-        renderNodesToDom()
-      } else {
-        // DOM 已与 nodes 同步（浏览器直接编辑路径）：同步指纹，
-        // 避免下次外部状态变化（如发送清空）时指纹碰撞而跳过必要重建。
-        lastRenderedNodesFingerprint = getNodesFingerprint(props.nodes)
+    for (const id of Array.from(transientContexts.keys())) {
+      if (nodes.some(n => n.type === 'context' && n.context.id === id)) {
+        transientContexts.delete(id)
       }
     }
-  }
 
-  nextTick(() => adjustHeight())
-})
+    if (!isInternalEcho) {
+      if (editorRef.value) {
+        // 轻量指纹相同（全部节点内容）说明 DOM 与 nodes 大概率已同步，
+        // 跳过全量 DOM 提取比对，避免每键击都遍历整棵编辑器 DOM。
+        // 例外：nodes 为空（发送清空）时必须强制提取比对——空数组指纹恒为 '0'，
+        // 防止历史指纹碰撞后跳过必要重建。
+        if (nodes.length === 0 || nodesFingerprint !== lastRenderedNodesFingerprint) {
+          const domNodes = extractNodesFromEditor(editorRef.value, {
+            knownNodes: nodes,
+            transientContexts
+          })
+          // 受控 contenteditable 只有在外部状态确实不同步时才重建 DOM。
+          // 无意义的 innerHTML 重建会清空浏览器原生的复制、粘贴和撤销历史。
+          if (!editorNodesEqual(domNodes, nodes)) {
+            renderNodesToDom()
+          } else {
+            lastRenderedNodesFingerprint = nodesFingerprint
+          }
+        }
+      }
+
+      // 外部状态代表新的编辑上下文，而不是一个可撤销的用户操作。
+      // 丢弃旧栈可防止新对话首次 Ctrl+Z 恢复上一对话的草稿。
+      editorHistory.reset(nodes, getPlainText(nodes).length)
+    }
+
+    nextTick(() => adjustHeight())
+  }
+)
 
 onMounted(() => {
   nextTick(() => {
     renderNodesToDom()
     adjustHeight()
-    editorHistory.record(props.nodes, 0, 'baseline')
+    editorHistory.reset(props.nodes, getPlainText(props.nodes).length)
   })
 
   // 扩展端关闭 diff 标签归还焦点后，把光标放回输入框。

@@ -20,6 +20,7 @@
   - DeepSeek Vision PDF、图片分块/压缩与 GIF 帧预处理结果新增按内容哈希的有界 LRU 缓存；输入区附件改为横向紧凑排布；扩展打包排除已 bundle 的 `shared/` TypeScript 源码。
 
 ### Fixed
+  - 修复聊天输入框自定义撤销栈跨对话串线：同一个 `InputBox` DOM 切换/新建标签页、发送清空或恢复外部草稿时，现以新输入态重建撤销基线，并通过标签页与对话身份划分边界；新对话首次粘贴后按 `Ctrl+Z` 只会回到该对话的空输入，不再恢复上一对话内容。
   - 修复前端启用大规模动态导入后生产 Webview 整体丢失组件样式的问题：Vite 不再把所有 CSS 资源强制争用 `index.css`，主入口样式稳定保留为 Webview 固定加载的 `index.css`，异步页面、设置页签与工具详情样式改用独立哈希文件名，保留按需加载且不再依赖 Rollup 碰撞编号。
   - 补齐前端核心无障碍语义：Tooltip 文案现在成为图标按钮可访问名称；自定义渠道/模型/模式/设置搜索下拉框声明 combobox/listbox/option 关系并归还焦点；对话标签支持 roving tabindex 与方向键导航；工具、思考、总结、构建/TODO 展开区改用原生按钮；输入框、token 环、文件选择器、Modal、设置侧栏、上下文 chip、状态提示和附件预览补齐 ARIA、键盘及高对比/减少动效行为。
   - 修复前端 `agentMessageCard` 测试使用 ES2022 `Array.prototype.at()`，与项目 ES2020 TypeScript 目标不兼容并阻断 CI 类型检查的问题。

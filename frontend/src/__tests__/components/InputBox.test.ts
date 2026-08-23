@@ -230,9 +230,10 @@ describe('InputBox 外部状态同步（发送后清空回归）', () => {
       components: { InputBox },
       setup() {
         const nodes = ref<EditorNode[]>([])
-        return { nodes }
+        const undoScope = ref('tab-a:draft')
+        return { nodes, undoScope }
       },
-      template: '<InputBox :nodes="nodes" @update:nodes="nodes = $event" />'
+      template: '<InputBox :nodes="nodes" :undo-scope="undoScope" @update:nodes="nodes = $event" />'
     })
     return wrapper
   }
@@ -260,6 +261,44 @@ describe('InputBox 外部状态同步（发送后清空回归）', () => {
     // 回归断言：DOM 必须被重建清空——旧文本残留即「placeholder 与文本叠放」现象
     expect(editor.textContent ?? '').not.toContain('hello')
     expect(editor.classList.contains('is-empty')).toBe(true)
+    wrapper.unmount()
+  })
+
+  test('切换到空白对话后粘贴再撤销：只回到新对话空基线，不恢复旧输入', async () => {
+    const wrapper = mountWithParent()
+    await nextTick()
+    await nextTick()
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+
+    // 对话 A 留下输入与撤销快照。
+    editor.textContent = 'old conversation draft'
+    editor.dispatchEvent(new Event('input', { bubbles: true }))
+    await nextTick()
+    await nextTick()
+
+    // 同一个 InputBox DOM 切到空白对话 B。
+    ;(wrapper.vm as any).undoScope = 'tab-b:draft'
+    ;(wrapper.vm as any).nodes = []
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent ?? '').toBe('')
+
+    // B 中首次粘贴后撤销，目标只能是 B 的空基线，不能越界回到 A。
+    editor.dispatchEvent(createPasteEvent([createClipboardItem('string')], 'new paste'))
+    await nextTick()
+    expect(editor.textContent).toBe('new paste')
+
+    editor.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true
+    }))
+    await nextTick()
+    await nextTick()
+
+    expect(editor.textContent ?? '').toBe('')
+    expect((wrapper.vm as any).nodes).toEqual([])
     wrapper.unmount()
   })
 
