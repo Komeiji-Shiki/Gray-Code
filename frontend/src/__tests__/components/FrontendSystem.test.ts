@@ -4,6 +4,8 @@ import { describe, expect, test } from 'vitest'
 import AppSource from '../../App.vue?raw'
 import SettingsPanelSource from '../../components/settings/SettingsPanel.vue?raw'
 import ToolItemSource from '../../components/message/toolMessage/ToolItem.vue?raw'
+import ViteConfigSource from '../../../vite.config.ts?raw'
+import { resolveWebviewAssetFileName } from '../../build/webviewAssetNaming'
 
 function collectTypeScriptFiles(directory: string): string[] {
   const files: string[] = []
@@ -37,6 +39,15 @@ describe('frontend visual and async architecture contracts', () => {
     expect(primitivesSource).toContain('.gc-visually-hidden')
     expect(primitivesSource).toContain('@media (prefers-reduced-motion: reduce)')
     expect(ToolItemSource).not.toMatch(/#555555|#777777/)
+  })
+
+  test('Vite keeps the Webview entry stylesheet stable without collapsing lazy chunk CSS names', () => {
+    expect(ViteConfigSource).toContain('assetFileNames: resolveWebviewAssetFileName')
+    expect(resolveWebviewAssetFileName({ name: 'index.css' })).toBe('index.css')
+    expect(resolveWebviewAssetFileName({ names: ['index.css'] })).toBe('index.css')
+    expect(resolveWebviewAssetFileName({ name: 'MessageList.css' })).toBe('assets/[name]-[hash][extname]')
+    expect(resolveWebviewAssetFileName({ names: ['SettingsPanel.css'] })).toBe('assets/[name]-[hash][extname]')
+    expect(resolveWebviewAssetFileName({ name: 'file-icons.woff2' })).toBe('assets/[name][extname]')
   })
 
   test('App and SettingsPanel keep heavy views behind dynamic import boundaries', () => {
