@@ -147,7 +147,7 @@ describe('getGeminiModels - URL 与认证', () => {
             ]);
             const url = (global.fetch as jest.Mock).mock.calls[0][0] as string;
             expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=AIza-dual-auth-1');
-            expect(capturedInit.headers['x-goog-api-key']).toBe('AIza-dual-auth-1');
+            expect(new Headers(capturedInit.headers).get('x-goog-api-key')).toBe('AIza-dual-auth-1');
         } finally {
             global.fetch = originalFetch;
         }
@@ -191,8 +191,9 @@ describe('getGeminiModels - URL 与认证', () => {
             await getGeminiModels(createConfig({ apiKey: 'AIza-bearer-1', useAuthorizationHeader: true }));
             const url = (global.fetch as jest.Mock).mock.calls[0][0] as string;
             expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000');
-            expect(capturedInit.headers['Authorization']).toBe('Bearer AIza-bearer-1');
-            expect(capturedInit.headers['x-goog-api-key']).toBeUndefined();
+            const headers = new Headers(capturedInit.headers);
+            expect(headers.get('authorization')).toBe('Bearer AIza-bearer-1');
+            expect(headers.get('x-goog-api-key')).toBeNull();
         } finally {
             global.fetch = originalFetch;
         }
@@ -209,8 +210,9 @@ describe('getGeminiModels - URL 与认证', () => {
             await getGeminiModels(createConfig({ type: 'gemini-interactions', apiKey: 'AIza-int-bearer-1', useAuthorizationHeader: true }));
             const url = (global.fetch as jest.Mock).mock.calls[0][0] as string;
             expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000');
-            expect(capturedInit.headers['Authorization']).toBe('Bearer AIza-int-bearer-1');
-            expect(capturedInit.headers['x-goog-api-key']).toBeUndefined();
+            const headers = new Headers(capturedInit.headers);
+            expect(headers.get('authorization')).toBe('Bearer AIza-int-bearer-1');
+            expect(headers.get('x-goog-api-key')).toBeNull();
         } finally {
             global.fetch = originalFetch;
         }
@@ -227,7 +229,7 @@ describe('getGeminiModels - URL 与认证', () => {
             await getGeminiModels(createConfig({ type: 'gemini-interactions', apiKey: 'AIza-int-dual-1' }));
             const url = (global.fetch as jest.Mock).mock.calls[0][0] as string;
             expect(url).toContain('key=AIza-int-dual-1');
-            expect(capturedInit.headers['x-goog-api-key']).toBe('AIza-int-dual-1');
+            expect(new Headers(capturedInit.headers).get('x-goog-api-key')).toBe('AIza-int-dual-1');
         } finally {
             global.fetch = originalFetch;
         }
