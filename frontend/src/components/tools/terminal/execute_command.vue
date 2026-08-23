@@ -14,6 +14,8 @@ import { computed, ref, watch, onMounted, nextTick } from 'vue'
 import { useTerminalStore } from '../../../stores/terminalStore'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '../../../composables/useI18n'
+import { copyToClipboard } from '../../../utils/format'
+import { showNotification } from '../../../utils/vscode'
 
 const { t } = useI18n()
 
@@ -238,15 +240,15 @@ const copied = ref(false)
 async function copyOutput() {
   if (!output.value) return
   
-  try {
-    await navigator.clipboard.writeText(output.value)
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 1000)
-  } catch (err) {
-    console.error('复制失败:', err)
+  const ok = await copyToClipboard(output.value)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+    return
   }
+  copied.value = true
+  setTimeout(() => {
+    copied.value = false
+  }, 1000)
 }
 
 // 滚动到底部

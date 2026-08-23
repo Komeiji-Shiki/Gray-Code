@@ -15,6 +15,8 @@ import {
   type TodoItem
 } from '../../../utils/todoList'
 import { isPerfEnabled } from '../../../utils/perf'
+import { copyToClipboard } from '../../../utils/format'
+import { showNotification } from '../../../utils/vscode'
 import { useI18n } from '../../../i18n'
 
 const props = defineProps<{
@@ -195,19 +197,19 @@ function toMarkdownList(items: TodoItem[]): string {
 }
 
 async function copyMarkdown() {
-  try {
-    const text = toMarkdownList(sortedTodos.value)
-    if (!text) return
-    await navigator.clipboard.writeText(text)
-    copiedMarkdown.value = true
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => {
-      copiedMarkdown.value = false
-      copyTimer = null
-    }, 1000)
-  } catch (e) {
-    console.error(t('components.message.tool.todoPanel.copyFailed'), e)
+  const text = toMarkdownList(sortedTodos.value)
+  if (!text) return
+  const ok = await copyToClipboard(text)
+  if (!ok) {
+    await showNotification(t('components.message.tool.todoPanel.copyFailed'), 'error')
+    return
   }
+  copiedMarkdown.value = true
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    copiedMarkdown.value = false
+    copyTimer = null
+  }, 1000)
 }
 
 onBeforeUnmount(() => {

@@ -331,9 +331,15 @@ function handleContinue() {
                 </div>
                 <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
                 <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
-                  <button class="checkpoint-action" :disabled="isRestorePreviewing || showRestoreConfirm" @click="restoreCheckpoint(cp)">
-                    <i v-if="isRestorePreviewing && previewingCheckpointId === cp.id" class="codicon codicon-loading codicon-modifier-spin"></i>
-                    <i v-else class="codicon codicon-discard"></i>
+                  <button
+                    type="button"
+                    class="checkpoint-action gc-icon-button"
+                    :disabled="isRestorePreviewing || showRestoreConfirm"
+                    :aria-label="t('components.message.checkpoint.restoreTooltip')"
+                    @click="restoreCheckpoint(cp)"
+                  >
+                    <i v-if="isRestorePreviewing && previewingCheckpointId === cp.id" class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
+                    <i v-else class="codicon codicon-discard" aria-hidden="true"></i>
                   </button>
                 </Tooltip>
               </div>
@@ -383,9 +389,15 @@ function handleContinue() {
                   </div>
                   <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
                   <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
-                    <button class="checkpoint-action" :disabled="isRestorePreviewing || showRestoreConfirm" @click="restoreCheckpoint(cp)">
-                      <i v-if="isRestorePreviewing && previewingCheckpointId === cp.id" class="codicon codicon-loading codicon-modifier-spin"></i>
-                      <i v-else class="codicon codicon-discard"></i>
+                    <button
+                      type="button"
+                      class="checkpoint-action gc-icon-button"
+                      :disabled="isRestorePreviewing || showRestoreConfirm"
+                      :aria-label="t('components.message.checkpoint.restoreTooltip')"
+                      @click="restoreCheckpoint(cp)"
+                    >
+                      <i v-if="isRestorePreviewing && previewingCheckpointId === cp.id" class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
+                      <i v-else class="codicon codicon-discard" aria-hidden="true"></i>
                     </button>
                   </Tooltip>
                 </div>

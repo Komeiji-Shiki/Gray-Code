@@ -252,7 +252,7 @@ function handleModeChange(mode: string) {
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
-  background: rgba(var(--vscode-textLink-foreground), 0.1);
+  background: color-mix(in srgb, var(--vscode-textLink-foreground) 10%, transparent);
   color: var(--vscode-textLink-foreground);
   border: 1px solid var(--vscode-textLink-foreground);
   border-radius: 4px;

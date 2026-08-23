@@ -78,7 +78,7 @@ defineEmits<{
 
     <!-- 搜索框 -->
     <div class="search-box">
-      <i class="codicon codicon-search"></i>
+      <i class="codicon codicon-search" aria-hidden="true"></i>
       <input
         :value="searchQuery"
         @input="$emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
@@ -88,10 +88,13 @@ defineEmits<{
       />
       <button
         v-if="searchQuery"
-        class="clear-search"
+        type="button"
+        class="clear-search gc-icon-button"
+        :title="t('components.settings.settingsPanel.search.clear')"
+        :aria-label="t('components.settings.settingsPanel.search.clear')"
         @click="$emit('update:searchQuery', '')"
       >
-        <i class="codicon codicon-close"></i>
+        <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
 
@@ -160,8 +163,14 @@ defineEmits<{
     <div v-if="deleteFeedback" class="delete-feedback">
       <i class="codicon codicon-warning"></i>
       <span>{{ deleteFeedback.message }}</span>
-      <button class="feedback-close" @click="$emit('closeDeleteFeedback')">
-        <i class="codicon codicon-close"></i>
+      <button
+        type="button"
+        class="feedback-close gc-icon-button"
+        :title="t('common.close')"
+        :aria-label="t('common.close')"
+        @click="$emit('closeDeleteFeedback')"
+      >
+        <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
 
@@ -201,10 +210,13 @@ defineEmits<{
                 @update:modelValue="(v: boolean) => toggleConversationSelected(conv.conversationId, v)"
               />
               <button
-                class="expand-btn"
+                type="button"
+                class="expand-btn gc-icon-button"
+                :aria-expanded="expandedConversationId === conv.conversationId"
+                :aria-label="expandedConversationId === conv.conversationId ? t('common.collapse') : t('common.expand')"
                 @click="toggleExpandConversation(conv)"
               >
-                <i class="codicon" :class="expandedConversationId === conv.conversationId ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
+                <i class="codicon" :class="expandedConversationId === conv.conversationId ? 'codicon-chevron-down' : 'codicon-chevron-right'" aria-hidden="true"></i>
               </button>
               <div class="conversation-info">
                 <div class="conversation-title">{{ conv.title }}</div>
@@ -230,11 +242,14 @@ defineEmits<{
                 </div>
               </div>
               <button
-                class="delete-btn"
+                type="button"
+                class="delete-btn gc-icon-button gc-icon-button--danger"
                 :disabled="isBatchDeleting"
+                :title="t('common.delete')"
+                :aria-label="`${t('common.delete')}: ${conv.title}`"
                 @click="showDeleteConfirmDialog(conv)"
               >
-                <i class="codicon codicon-trash"></i>
+                <i class="codicon codicon-trash" aria-hidden="true"></i>
               </button>
 
               <!-- 展开的存档点列表 -->
@@ -303,11 +318,14 @@ defineEmits<{
                       <i class="codicon codicon-filter"></i>
                     </button>
                     <button
-                      class="delete-btn"
+                      type="button"
+                      class="delete-btn gc-icon-button gc-icon-button--danger"
                       :disabled="isBatchDeleting"
+                      :title="t('common.delete')"
+                      :aria-label="`${t('common.delete')}: ${getToolLabel(cp.toolName)}`"
                       @click="requestDeleteSingleCheckpoint(cp)"
                     >
-                      <i class="codicon codicon-trash"></i>
+                      <i class="codicon codicon-trash" aria-hidden="true"></i>
                     </button>
                   </div>
                 </template>

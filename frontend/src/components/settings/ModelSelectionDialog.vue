@@ -2,7 +2,7 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
-import { CustomScrollbar } from '../common'
+import { CustomScrollbar, Modal } from '../common'
 import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
 
@@ -132,122 +132,122 @@ watch(() => props.visible, (visible) => {
 </script>
 
 <template>
-  <div v-if="visible" class="dialog-overlay" @click.self="close">
-    <div class="dialog">
-      <!-- 头部 -->
-      <div class="dialog-header">
-        <h4>{{ t('components.settings.modelSelectionDialog.title') }}</h4>
+  <Modal
+    :model-value="visible"
+    :aria-label="t('components.settings.modelSelectionDialog.title')"
+    width="560px"
+    initial-focus-selector=".filter-input"
+    body-padding="compact"
+    @close="close"
+  >
+    <template #header>
+      <div class="model-dialog-heading">
+        <h3>{{ t('components.settings.modelSelectionDialog.title') }}</h3>
         <button
           v-if="availableModels.length > 0"
-          class="select-all-btn"
-          :title="isAllSelected ? t('components.settings.modelSelectionDialog.deselectAll') : t('components.settings.modelSelectionDialog.selectAll')"
+          type="button"
+          class="select-all-btn gc-button gc-button--ghost"
+          :aria-pressed="isAllSelected"
           @click="toggleSelectAll"
         >
-          <i :class="['codicon', isAllSelected ? 'codicon-close-all' : 'codicon-check-all']"></i>
+          <i :class="['codicon', isAllSelected ? 'codicon-close-all' : 'codicon-check-all']" aria-hidden="true"></i>
           <span>{{ isAllSelected ? t('components.settings.modelSelectionDialog.deselectAll') : t('components.settings.modelSelectionDialog.selectAll') }}</span>
         </button>
-        <button class="close-btn" :title="t('components.settings.modelSelectionDialog.close')" @click="close">
-          <i class="codicon codicon-close"></i>
+      </div>
+    </template>
+
+    <div class="dialog-body">
+      <div v-if="error" class="error-state gc-feedback gc-feedback--error" role="alert">
+        <i class="codicon codicon-error" aria-hidden="true"></i>
+        <span>{{ error }}</span>
+        <button type="button" class="retry-btn gc-button" @click="loadModels">
+          {{ t('components.settings.modelSelectionDialog.retry') }}
         </button>
       </div>
-      
-      <!-- 内容 -->
-      <div class="dialog-body">
-        <!-- 错误状态 -->
-        <div v-if="error" class="error-state">
-          <i class="codicon codicon-error"></i>
-          <span>{{ error }}</span>
-          <button class="retry-btn" @click="loadModels">{{ t('components.settings.modelSelectionDialog.retry') }}</button>
+
+      <div v-else-if="isLoading" class="loading-state" role="status" aria-live="polite">
+        <i class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
+        <span>{{ t('components.settings.modelSelectionDialog.loading') }}</span>
+      </div>
+
+      <div v-else-if="availableModels.length === 0" class="empty-state" role="status">
+        <i class="codicon codicon-info" aria-hidden="true"></i>
+        <span>{{ t('components.settings.modelSelectionDialog.empty') }}</span>
+      </div>
+
+      <div v-else class="model-list-wrapper">
+        <div class="filter-input-container">
+          <i class="codicon codicon-search" aria-hidden="true"></i>
+          <input
+            v-model="filterKeyword"
+            type="text"
+            :placeholder="t('components.settings.modelSelectionDialog.filterPlaceholder')"
+            :aria-label="t('components.settings.modelSelectionDialog.filterPlaceholder')"
+            class="filter-input"
+          />
+          <button
+            v-if="filterKeyword"
+            type="button"
+            class="filter-clear-btn gc-icon-button"
+            :title="t('components.settings.modelSelectionDialog.clearFilter')"
+            :aria-label="t('components.settings.modelSelectionDialog.clearFilter')"
+            @click="filterKeyword = ''"
+          >
+            <i class="codicon codicon-close" aria-hidden="true"></i>
+          </button>
         </div>
-        
-        <!-- 加载状态 -->
-        <div v-else-if="isLoading" class="loading-state">
-          <i class="codicon codicon-loading codicon-modifier-spin"></i>
-          <span>{{ t('components.settings.modelSelectionDialog.loading') }}</span>
-        </div>
-        
-        <!-- 空状态 -->
-        <div v-else-if="availableModels.length === 0" class="empty-state">
-          <i class="codicon codicon-info"></i>
-          <span>{{ t('components.settings.modelSelectionDialog.empty') }}</span>
-        </div>
-        
-        <!-- 模型列表 -->
-        <div v-else class="model-list-wrapper">
-          <!-- 筛选输入框 -->
-          <div class="filter-input-container">
-            <i class="codicon codicon-search"></i>
-            <input
-              v-model="filterKeyword"
-              type="text"
-              :placeholder="t('components.settings.modelSelectionDialog.filterPlaceholder')"
-              class="filter-input"
-            />
+
+        <CustomScrollbar :max-height="300" :width="5" :offset="1">
+          <div class="model-list">
+            <div v-if="filteredModels.length === 0 && filterKeyword" class="no-results" role="status">
+              <i class="codicon codicon-search" aria-hidden="true"></i>
+              <span>{{ t('components.settings.modelSelectionDialog.noResults') }}</span>
+            </div>
+
             <button
-              v-if="filterKeyword"
-              class="filter-clear-btn"
-              :title="t('components.settings.modelSelectionDialog.clearFilter')"
-              @click="filterKeyword = ''"
+              v-for="model in filteredModels"
+              :key="model.id"
+              type="button"
+              :class="[
+                'model-item',
+                'gc-choice-card',
+                {
+                  'is-selected': selectedModelIds.has(model.id),
+                  added: addedModelIds.includes(model.id)
+                }
+              ]"
+              :aria-pressed="addedModelIds.includes(model.id) ? undefined : selectedModelIds.has(model.id)"
+              @click="toggleModel(model.id, addedModelIds.includes(model.id))"
             >
-              <i class="codicon codicon-close"></i>
+              <span class="model-checkbox" aria-hidden="true">
+                <i :class="['codicon', selectedModelIds.has(model.id) ? 'codicon-check' : 'codicon-blank']"></i>
+              </span>
+              <span class="model-info">
+                <span class="model-id">{{ model.id }}</span>
+                <span v-if="model.name && model.name !== model.id" class="model-name">{{ model.name }}</span>
+                <span v-if="model.description" class="model-desc">{{ model.description }}</span>
+              </span>
+              <span v-if="addedModelIds.includes(model.id)" class="added-badge gc-badge gc-badge--success">
+                {{ t('components.settings.modelSelectionDialog.added') }} ×
+              </span>
             </button>
           </div>
-          
-          <CustomScrollbar :max-height="300" :width="5" :offset="1">
-            <div class="model-list">
-              <!-- 筛选无结果提示 -->
-              <div v-if="filteredModels.length === 0 && filterKeyword" class="no-results">
-                <i class="codicon codicon-search"></i>
-                <span>{{ t('components.settings.modelSelectionDialog.noResults') }}</span>
-              </div>
-              
-              <div
-                v-for="model in filteredModels"
-                :key="model.id"
-                :class="[
-                  'model-item',
-                  {
-                    selected: selectedModelIds.has(model.id),
-                    added: addedModelIds.includes(model.id)
-                  }
-                ]"
-                @click="toggleModel(model.id, addedModelIds.includes(model.id))"
-              >
-                <div class="model-checkbox">
-                  <i
-                    :class="[
-                      'codicon',
-                      selectedModelIds.has(model.id) ? 'codicon-check' : 'codicon-blank'
-                    ]"
-                  ></i>
-                </div>
-                <div class="model-info">
-                  <span class="model-id">{{ model.id }}</span>
-                  <span v-if="model.name && model.name !== model.id" class="model-name">{{ model.name }}</span>
-                  <span v-if="model.description" class="model-desc">{{ model.description }}</span>
-                </div>
-                <button
-                  v-if="addedModelIds.includes(model.id)"
-                  class="added-badge"
-                  @click.stop="emit('remove', model.id)"
-                >
-                  {{ t('components.settings.modelSelectionDialog.added') }} ×
-                </button>
-              </div>
-            </div>
-          </CustomScrollbar>
-        </div>
+        </CustomScrollbar>
       </div>
-      
-      <!-- 底部 -->
-      <div class="dialog-footer">
+    </div>
+
+    <template #footer>
+      <div class="dialog-footer-content">
         <span class="selection-count">
           {{ t('components.settings.modelSelectionDialog.selectionCount', { count: selectedModelIds.size }) }}
         </span>
         <div class="dialog-actions">
-          <button class="btn secondary" @click="close">{{ t('components.settings.modelSelectionDialog.cancel') }}</button>
+          <button type="button" class="gc-button" @click="close">
+            {{ t('components.settings.modelSelectionDialog.cancel') }}
+          </button>
           <button
-            class="btn primary"
+            type="button"
+            class="gc-button gc-button--primary"
             :disabled="selectedModelIds.size === 0"
             @click="confirm"
           >
@@ -255,98 +255,35 @@ watch(() => props.visible, (visible) => {
           </button>
         </div>
       </div>
-    </div>
-  </div>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.dialog {
-  width: 90%;
-  max-width: 560px;
-  max-height: 80vh;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 2px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-/* 头部 */
-.dialog-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-}
-
-.dialog-header h4 {
+.model-dialog-heading {
+  min-width: 0;
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gc-space-3);
+}
+
+.model-dialog-heading h3 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 .select-all-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none;
-  border-radius: 2px;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s;
+  flex-shrink: 0;
+  font-size: var(--gc-font-size-caption);
 }
 
-.select-all-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
 
-.select-all-btn .codicon {
-  font-size: 12px;
-}
-
-.close-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 2px;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.close-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-}
 
 /* 内容 */
 .dialog-body {
-  flex: 1;
-  padding: 8px;
   min-height: 300px;
 }
 
@@ -373,19 +310,7 @@ watch(() => props.visible, (visible) => {
 }
 
 .retry-btn {
-  margin-top: 8px;
-  padding: 6px 12px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none;
-  border-radius: 2px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.retry-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  margin-top: var(--gc-space-2);
 }
 
 /* 旋转动画 */
@@ -432,26 +357,10 @@ watch(() => props.visible, (visible) => {
 }
 
 .filter-clear-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 2px;
-  color: var(--vscode-descriptionForeground);
-  cursor: pointer;
+  width: var(--gc-control-height-sm);
+  height: var(--gc-control-height-sm);
+  min-width: var(--gc-control-height-sm);
   flex-shrink: 0;
-}
-
-.filter-clear-btn:hover {
-  color: var(--vscode-foreground);
-}
-
-.filter-clear-btn .codicon {
-  font-size: 12px;
 }
 
 /* 无结果提示 */
@@ -486,30 +395,16 @@ watch(() => props.visible, (visible) => {
 }
 
 .model-item {
-  display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--vscode-list-hoverBackground);
-  border-radius: 2px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.model-item:hover:not(.disabled) {
-  background: var(--vscode-list-activeSelectionBackground);
-}
-
-.model-item.selected {
-  background: color-mix(in srgb, var(--vscode-charts-blue) 15%, var(--vscode-list-hoverBackground));
+  gap: var(--gc-space-3);
 }
 
 .model-item.added {
-  background: color-mix(in srgb, var(--vscode-charts-green) 10%, var(--vscode-list-hoverBackground));
+  background: color-mix(in srgb, var(--gc-success) 10%, var(--gc-surface-muted));
 }
 
 .model-item.added:hover {
-  background: color-mix(in srgb, var(--vscode-charts-green) 15%, var(--vscode-list-hoverBackground));
+  background: color-mix(in srgb, var(--gc-success) 15%, var(--gc-surface-hover));
 }
 
 .model-checkbox {
@@ -522,10 +417,12 @@ watch(() => props.visible, (visible) => {
   border: 1px solid var(--vscode-input-border);
   border-radius: 3px;
   background: var(--vscode-input-background);
-  transition: all 0.15s;
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
-.model-item.selected .model-checkbox {
+.model-item.is-selected .model-checkbox {
   background: var(--vscode-button-background);
   border-color: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
@@ -566,69 +463,24 @@ watch(() => props.visible, (visible) => {
 
 .added-badge {
   flex-shrink: 0;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: var(--vscode-charts-green, #89d185);
-  background: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
-  border: none;
-  border-radius: 2px;
-  cursor: pointer;
-  transition: all 0.15s;
+  cursor: inherit;
 }
 
-.added-badge:hover {
-  color: var(--vscode-errorForeground);
-  background: color-mix(in srgb, var(--vscode-errorForeground) 20%, transparent);
-}
-
-/* 底部 */
-.dialog-footer {
+.dialog-footer-content {
+  width: 100%;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  border-top: 1px solid var(--vscode-panel-border);
+  justify-content: space-between;
+  gap: var(--gc-space-3);
 }
 
 .selection-count {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-muted);
 }
 
 .dialog-actions {
   display: flex;
-  gap: 8px;
-}
-
-.btn {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 2px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.btn.primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.btn.primary:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.btn.primary:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn.secondary {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-}
-
-.btn.secondary:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
+  gap: var(--gc-space-2);
 }
 </style>

@@ -238,11 +238,13 @@ onUnmounted(() => {
                                 :disabled="!config.gemini?.enabled"
                             />
                             <button
-                                class="toggle-visibility-btn"
-                                @click="toggleApiKeyVisibility('gemini')"
                                 type="button"
+                                class="toggle-visibility-btn gc-icon-button"
+                                :title="showApiKey.gemini ? t('common.hide') : t('common.show')"
+                                :aria-label="showApiKey.gemini ? t('common.hide') : t('common.show')"
+                                @click="toggleApiKeyVisibility('gemini')"
                             >
-                                <i :class="['codicon', showApiKey.gemini ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                                <i :class="['codicon', showApiKey.gemini ? 'codicon-eye-closed' : 'codicon-eye']" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -300,11 +302,13 @@ onUnmounted(() => {
                                 :disabled="!config['gemini-interactions']?.enabled"
                             />
                             <button
-                                class="toggle-visibility-btn"
-                                @click="toggleApiKeyVisibility('gemini-interactions')"
                                 type="button"
+                                class="toggle-visibility-btn gc-icon-button"
+                                :title="showApiKey['gemini-interactions'] ? t('common.hide') : t('common.show')"
+                                :aria-label="showApiKey['gemini-interactions'] ? t('common.hide') : t('common.show')"
+                                @click="toggleApiKeyVisibility('gemini-interactions')"
                             >
-                                <i :class="['codicon', showApiKey['gemini-interactions'] ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                                <i :class="['codicon', showApiKey['gemini-interactions'] ? 'codicon-eye-closed' : 'codicon-eye']" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -370,11 +374,13 @@ onUnmounted(() => {
                                 :disabled="!config.openai?.enabled"
                             />
                             <button
-                                class="toggle-visibility-btn"
-                                @click="toggleApiKeyVisibility('openai')"
                                 type="button"
+                                class="toggle-visibility-btn gc-icon-button"
+                                :title="showApiKey.openai ? t('common.hide') : t('common.show')"
+                                :aria-label="showApiKey.openai ? t('common.hide') : t('common.show')"
+                                @click="toggleApiKeyVisibility('openai')"
                             >
-                                <i :class="['codicon', showApiKey.openai ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                                <i :class="['codicon', showApiKey.openai ? 'codicon-eye-closed' : 'codicon-eye']" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -466,11 +472,13 @@ Authorization: Bearer {apiKey}
                                 :disabled="!config.anthropic?.enabled"
                             />
                             <button
-                                class="toggle-visibility-btn"
-                                @click="toggleApiKeyVisibility('anthropic')"
                                 type="button"
+                                class="toggle-visibility-btn gc-icon-button"
+                                :title="showApiKey.anthropic ? t('common.hide') : t('common.show')"
+                                :aria-label="showApiKey.anthropic ? t('common.hide') : t('common.show')"
+                                @click="toggleApiKeyVisibility('anthropic')"
                             >
-                                <i :class="['codicon', showApiKey.anthropic ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                                <i :class="['codicon', showApiKey.anthropic ? 'codicon-eye-closed' : 'codicon-eye']" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>
@@ -527,11 +535,13 @@ Authorization: Bearer {apiKey}
                                 :disabled="!config['openai-responses']?.enabled"
                             />
                             <button
-                                class="toggle-visibility-btn"
-                                @click="toggleApiKeyVisibility('openai-responses')"
                                 type="button"
+                                class="toggle-visibility-btn gc-icon-button"
+                                :title="showApiKey['openai-responses'] ? t('common.hide') : t('common.show')"
+                                :aria-label="showApiKey['openai-responses'] ? t('common.hide') : t('common.show')"
+                                @click="toggleApiKeyVisibility('openai-responses')"
                             >
-                                <i :class="['codicon', showApiKey['openai-responses'] ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                                <i :class="['codicon', showApiKey['openai-responses'] ? 'codicon-eye-closed' : 'codicon-eye']" aria-hidden="true"></i>
                             </button>
                         </div>
                     </div>

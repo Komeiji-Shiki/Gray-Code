@@ -11,6 +11,8 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
+import { copyToClipboard } from '@/utils/format'
+import { showNotification } from '@/utils/vscode'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -84,12 +86,12 @@ interface ReadResult {
 // 获取读取结果列表
 const readResults = computed((): ReadResult[] => {
   const result = props.result as Record<string, any> | undefined
-  
+
   // 批量结果
   if (result?.data?.results) {
     return result.data.results as ReadResult[]
   }
-  
+
   // 如果没有结果，为每个路径创建空结果
   return pathList.value.map(p => ({
     path: p,
@@ -120,11 +122,11 @@ function getLineRangeSummary(result: ReadResult): string | null {
   if (result.startLine === undefined && result.endLine === undefined) {
     return null
   }
-  
+
   const start = result.startLine ?? 1
   const end = result.endLine ?? result.totalLines ?? '?'
   const total = result.totalLines ?? '?'
-  
+
   return `L${start}-${end} / ${total}`
 }
 
@@ -132,10 +134,10 @@ function getLineRangeSummary(result: ReadResult): string | null {
 function isPartialRead(result: ReadResult): boolean {
   if (result.totalLines === undefined) return false
   if (result.startLine === undefined && result.endLine === undefined) return false
-  
+
   const start = result.startLine ?? 1
   const end = result.endLine ?? result.totalLines
-  
+
   return start > 1 || end < result.totalLines
 }
 
@@ -198,36 +200,36 @@ function isCopied(path: string): boolean {
 // 复制单个文件内容
 async function copyFileContent(result: ReadResult) {
   if (!result.content) return
-  
-  try {
-    // 移除行号前缀（格式如 "   1 | "）
-    const lines = getContentLines(result.content)
-    const rawContent = lines
-      .map(line => {
-        const match = line.match(/^\s*\d+\s*\|\s?(.*)$/)
-        return match ? match[1] : line
-      })
-      .join('\n')
-    await navigator.clipboard.writeText(rawContent)
-    
-    // 显示对钩状态
-    copiedFiles.value.add(result.path)
-    
-    // 清除之前的定时器
-    const existingTimeout = copyTimeouts.get(result.path)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-    }
-    
-    // 1秒后恢复
-    const timeout = setTimeout(() => {
-      copiedFiles.value.delete(result.path)
-      copyTimeouts.delete(result.path)
-    }, 1000)
-    copyTimeouts.set(result.path, timeout)
-  } catch (err) {
-    console.error('复制失败:', err)
+
+  // 移除行号前缀（格式如 "   1 | "）
+  const lines = getContentLines(result.content)
+  const rawContent = lines
+    .map(line => {
+      const match = line.match(/^\s*\d+\s*\|\s?(.*)$/)
+      return match ? match[1] : line
+    })
+    .join('\n')
+  const ok = await copyToClipboard(rawContent)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+    return
   }
+
+  // 显示对钩状态
+  copiedFiles.value.add(result.path)
+
+  // 清除之前的定时器
+  const existingTimeout = copyTimeouts.get(result.path)
+  if (existingTimeout) {
+    clearTimeout(existingTimeout)
+  }
+
+  // 1秒后恢复
+  const timeout = setTimeout(() => {
+    copiedFiles.value.delete(result.path)
+    copyTimeouts.delete(result.path)
+  }, 1000)
+  copyTimeouts.set(result.path, timeout)
 }
 
 // 清理定时器
@@ -259,13 +261,13 @@ onBeforeUnmount(() => {
         <span class="stat total">{{ t('components.tools.file.readFilePanel.total', { count: readResults.length }) }}</span>
       </div>
     </div>
-    
+
     <!-- 全局错误 -->
     <div v-if="error && readResults.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
       <span class="error-text">{{ error }}</span>
     </div>
-    
+
     <!-- 文件列表 -->
     <div v-else class="file-list">
       <div
@@ -281,50 +283,52 @@ onBeforeUnmount(() => {
               'codicon',
               result.success ? 'codicon-file-text' : 'codicon-error'
             ]"></span>
-            <span class="file-name clickable" :title="result.path" @click.stop="openFile(result.path)">{{ getFileName(result.path) }}</span>
-            <span v-if="getFileExtension(result.path)" class="file-ext clickable" :title="result.path" @click.stop="openFile(result.path)">.{{ getFileExtension(result.path) }}</span>
+            <button type="button" class="file-name clickable gc-link-button" :title="result.path" @click.stop="openFile(result.path)">{{ getFileName(result.path) }}</button>
+            <button v-if="getFileExtension(result.path)" type="button" class="file-ext clickable gc-link-button" :title="result.path" @click.stop="openFile(result.path)">.{{ getFileExtension(result.path) }}</button>
             <span v-if="result.lineCount" class="line-count">{{ t('components.tools.file.readFilePanel.lines', { count: result.lineCount }) }}</span>
           </div>
           <div class="file-actions">
             <button
               v-if="result.content"
+              type="button"
               class="action-btn"
               :class="{ 'copied': isCopied(result.path) }"
               :title="isCopied(result.path) ? t('components.tools.file.readFilePanel.copied') : t('components.tools.file.readFilePanel.copyContent')"
+              :aria-label="isCopied(result.path) ? t('components.tools.file.readFilePanel.copied') : t('components.tools.file.readFilePanel.copyContent')"
               @click.stop="copyFileContent(result)"
             >
               <span :class="['codicon', isCopied(result.path) ? 'codicon-check' : 'codicon-copy']"></span>
             </button>
           </div>
         </div>
-        
+
         <!-- 文件路径 -->
-        <div class="file-path clickable" :title="result.path" @click.stop="openFile(result.path)">{{ result.path }}</div>
-        
+        <button type="button" class="file-path clickable gc-link-button" :title="result.path" @click.stop="openFile(result.path)">{{ result.path }}</button>
+
         <!-- 行范围信息（仅当使用行范围时显示） -->
         <div v-if="getLineRangeSummary(result)" class="line-range-info">
           <span class="codicon codicon-list-selection"></span>
           <span class="range-text">{{ getLineRangeSummary(result) }}</span>
           <span v-if="isPartialRead(result)" class="partial-badge">partial</span>
         </div>
-        
+
         <!-- 错误信息 -->
         <div v-if="!result.success && result.error" class="file-error">
           {{ result.error }}
         </div>
-        
+
         <!-- 二进制文件提示 -->
         <div v-else-if="result.type === 'binary'" class="file-binary">
           <span class="codicon codicon-file-binary"></span>
           <span>{{ t('components.tools.file.readFilePanel.binaryFile') }} ({{ result.size ? Math.round(result.size / 1024) + ' KB' : t('components.tools.file.readFilePanel.unknownSize') }})</span>
         </div>
-        
+
         <!-- 多模态文件提示 -->
         <div v-else-if="result.type === 'multimodal'" class="file-multimodal">
           <span class="codicon codicon-file-media"></span>
           <span>{{ result.mimeType }} ({{ result.size ? Math.round(result.size / 1024) + ' KB' : '' }})</span>
         </div>
-        
+
         <!-- 文本内容 -->
         <div v-else-if="result.content" class="file-content" :class="{ 'expanded': isFileExpanded(result.path) }">
           <div class="content-wrapper">
@@ -332,7 +336,7 @@ onBeforeUnmount(() => {
               <pre class="content-code"><code>{{ getDisplayContent(result) }}</code></pre>
             </CustomScrollbar>
           </div>
-          
+
           <!-- 展开/收起按钮 -->
           <div v-if="needsExpand(result)" class="expand-section">
             <button class="expand-btn" @click="toggleFile(result.path)">
@@ -341,7 +345,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        
+
         <!-- 空文件 -->
         <div v-else-if="result.success" class="file-empty">
           <span class="codicon codicon-file"></span>

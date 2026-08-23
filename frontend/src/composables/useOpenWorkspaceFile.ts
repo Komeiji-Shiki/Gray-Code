@@ -5,12 +5,12 @@
  * - openFile: 仅打开文件
  * - openFileAt: 打开文件并定位到指定行（1-based），后端会临时高亮目标范围
  *
- * 失败时静默处理（文件可能尚未创建、已被删除或位于工作区之外），
- * 与现有调用方（MessageTaskCards / MarkdownRenderer 等）的行为保持一致。
+ * 失败时统一显示非阻塞通知，避免用户点击文件入口后毫无反馈。
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { sendToExtension } from '../utils/vscode'
+import { sendToExtension, showNotification } from '../utils/vscode'
+import { t } from '../i18n'
 
 export function useOpenWorkspaceFile() {
   /** 打开文件（不定位行号） */
@@ -19,8 +19,9 @@ export function useOpenWorkspaceFile() {
     if (!target) return
     try {
       await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path: target })
-    } catch {
-      // 静默失败：文件不存在 / 不在工作区内
+    } catch (error) {
+      console.error('[useOpenWorkspaceFile] Failed to open file:', error)
+      await showNotification(`${t('components.common.markdown.openFileFailed')}: ${target}`, 'error')
     }
   }
 
@@ -52,8 +53,9 @@ export function useOpenWorkspaceFile() {
         startLine: start,
         ...(end !== undefined ? { endLine: end } : {})
       })
-    } catch {
-      // 静默失败
+    } catch (error) {
+      console.error('[useOpenWorkspaceFile] Failed to open file at location:', error)
+      await showNotification(`${t('components.common.markdown.openFileFailed')}: ${target}`, 'error')
     }
   }
 

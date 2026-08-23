@@ -14,7 +14,8 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '@/composables'
-import { escapeRegExp } from '@/utils/format'
+import { escapeRegExp, copyToClipboard } from '@/utils/format'
+import { showNotification } from '@/utils/vscode'
 import { createSafeUiRegex } from '@/utils/regexGuard'
 
 const props = defineProps<{
@@ -316,17 +317,17 @@ function toggleExpand() {
 
 async function copyContent() {
   if (!resultText.value) return
-  try {
-    await navigator.clipboard.writeText(resultText.value)
-    copied.value = true
-    if (copyTimer) clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => {
-      copied.value = false
-      copyTimer = null
-    }, 1000)
-  } catch (e) {
-    console.error('Copy failed:', e)
+  const ok = await copyToClipboard(resultText.value)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+    return
   }
+  copied.value = true
+  if (copyTimer) clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => {
+    copied.value = false
+    copyTimer = null
+  }, 1000)
 }
 
 onBeforeUnmount(() => {

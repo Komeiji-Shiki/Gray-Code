@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { IconButton, Tooltip, CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
+import { showNotification } from '../../utils/vscode'
 import { useChatStore } from '../../stores'
 import type { SkillItem } from '../../services/skills'
 import {
@@ -74,6 +75,7 @@ async function handleToggleSkillEnabled(id: string, enabled: boolean) {
     if (skill) skill.enabled = enabled
   } catch (error: any) {
     console.error('Failed to toggle skill enabled:', error)
+    await showNotification(t('components.input.skillsPanel.toggleFailed'), 'error')
   }
 }
 
@@ -84,6 +86,7 @@ async function handleRemoveSkillConfig(id: string) {
     skills.value = skills.value.filter(s => s.id !== id)
   } catch (error: any) {
     console.error('Failed to remove skill config:', error)
+    await showNotification(t('components.input.skillsPanel.removeFailed'), 'error')
   }
 }
 
@@ -95,6 +98,7 @@ async function handleOpenSkillsDirectory() {
     }
   } catch (error: any) {
     console.error('Failed to open skills directory:', error)
+    await showNotification(t('components.input.skillsPanel.openDirectoryFailed'), 'error')
   }
 }
 

@@ -14,7 +14,8 @@ import {
 } from './monitorContextCompaction'
 import { contentToMessageEnhanced } from '@/stores/chat/parsers'
 import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
-import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
+import { copyToClipboard } from '@/utils/format'
+import { onMessageFromExtension, sendToExtension, showNotification } from '@/utils/vscode'
 import { setVscodeWindowFocused } from '@/services/soundEventController'
 import { shouldApplyEventFocus } from './monitorFocusPolicy'
 import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
@@ -1024,10 +1025,13 @@ function findContentIndexByMessageId(messageId: string): number | null {
 
 async function handleCopy(content: string) {
   // 修改原因：Monitor 复用 MessageItem 的复制按钮，但没有主窗口 MessageList 的上层 copy handler。
-  // 修改方式：在 Monitor 内部直接调用 Clipboard API。
+  // 修改方式：在 Monitor 内部直接调用 clipboard 工具（含 execCommand 回退）。
   // 修改目的：让子聊天窗口每一楼的复制按钮和主窗口一样可用，同时不依赖主聊天 store。
   if (!content) return
-  await navigator.clipboard?.writeText(content)
+  const ok = await copyToClipboard(content)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+  }
 }
 
 async function mutateRunMessage(messageId: string, messageType: 'delete' | 'retry') {

@@ -6,7 +6,7 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, showNotification } from '../../utils/vscode'
 import { formatFileSize } from '../../utils/file'
 import { useI18n } from '../../i18n'
 import type { Attachment } from '../../types'
@@ -55,6 +55,7 @@ async function previewAttachment(attachment: Attachment) {
     })
   } catch (error) {
     console.error('Failed to preview attachment:', error)
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
   }
 }
 
@@ -72,53 +73,55 @@ function handleRemove(attachmentId: string) {
       class="attachment-item"
       :class="{ 'has-preview': hasPreview(attachment) }"
     >
-      <!-- 图片预览 -->
-      <img
-        v-if="attachment.type === 'image' && attachment.thumbnail"
-        :src="attachment.thumbnail"
-        :alt="attachment.name"
-        class="attachment-preview clickable"
-        @click="previewAttachment(attachment)"
-        :title="t('components.message.attachment.clickToPreview')"
-      />
-      <!-- 视频预览（缩略图 + 播放图标） -->
-      <div
-        v-else-if="attachment.type === 'video' && attachment.thumbnail"
+      <button
+        v-if="hasPreview(attachment)"
+        type="button"
         class="media-preview-wrapper clickable"
-        @click="previewAttachment(attachment)"
+        :class="{ 'audio-placeholder': attachment.type === 'audio' }"
         :title="t('components.message.attachment.clickToPreview')"
+        :aria-label="`${t('components.message.attachment.clickToPreview')}: ${attachment.name}`"
+        @click="previewAttachment(attachment)"
       >
         <img
+          v-if="(attachment.type === 'image' || attachment.type === 'video') && attachment.thumbnail"
           :src="attachment.thumbnail"
           :alt="attachment.name"
           class="attachment-preview"
         />
-        <i class="codicon codicon-play media-overlay-icon"></i>
-      </div>
-      <!-- 音频预览（音乐图标） -->
-      <div
-        v-else-if="attachment.type === 'audio'"
-        class="media-preview-wrapper audio-placeholder clickable"
-        @click="previewAttachment(attachment)"
-        :title="t('components.message.attachment.clickToPreview')"
-      >
-        <i class="codicon codicon-unmute media-center-icon"></i>
-      </div>
-      <!-- 其他文件显示图标 -->
+        <i
+          v-if="attachment.type === 'video'"
+          class="codicon codicon-play media-overlay-icon"
+          aria-hidden="true"
+        ></i>
+        <i
+          v-else-if="attachment.type === 'audio'"
+          class="codicon codicon-unmute media-center-icon"
+          aria-hidden="true"
+        ></i>
+      </button>
+      <img
+        v-else-if="attachment.type === 'image' && attachment.thumbnail"
+        :src="attachment.thumbnail"
+        :alt="attachment.name"
+        class="attachment-preview"
+      />
       <i
         v-else
         :class="['codicon', getAttachmentIconClass(attachment.type), 'attachment-icon']"
+        aria-hidden="true"
       ></i>
       <span class="attachment-name">{{ attachment.name }}</span>
       <span class="attachment-size">{{ formatFileSize(attachment.size) }}</span>
       <!-- 删除按钮（仅在非只读模式显示） -->
       <button
         v-if="!readonly"
-        class="remove-btn"
+        type="button"
+        class="remove-btn gc-icon-button gc-icon-button--danger"
         @click.stop="handleRemove(attachment.id)"
         :title="t('components.message.attachment.removeAttachment')"
+        :aria-label="`${t('components.message.attachment.removeAttachment')}: ${attachment.name}`"
       >
-        <i class="codicon codicon-close"></i>
+        <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
   </div>
@@ -185,9 +188,13 @@ function handleRemove(attachmentId: string) {
   position: relative;
   width: 32px;
   height: 32px;
+  min-width: 32px;
+  padding: 0;
   flex-shrink: 0;
-  border-radius: 4px;
+  border: 0;
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
+  background: transparent;
 }
 
 .media-preview-wrapper .attachment-preview {
@@ -197,7 +204,11 @@ function handleRemove(attachmentId: string) {
 
 /* 音频占位背景 */
 .audio-placeholder {
-  background: linear-gradient(135deg, #3a3d41, #2d2d30);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--gc-text-primary) 18%, var(--gc-surface-base)),
+    var(--gc-surface-muted)
+  );
   display: flex;
   align-items: center;
   justify-content: center;
@@ -209,7 +220,7 @@ function handleRemove(attachmentId: string) {
   bottom: 2px;
   right: 2px;
   font-size: 10px;
-  color: white;
+  color: var(--vscode-button-foreground, #fff);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
@@ -254,7 +265,8 @@ function handleRemove(attachmentId: string) {
   opacity: 0;
 }
 
-.attachment-item:hover .remove-btn {
+.attachment-item:hover .remove-btn,
+.attachment-item:focus-within .remove-btn {
   opacity: 1;
 }
 

@@ -56,8 +56,14 @@ const emit = defineEmits<{
   <div class="mcp-edit-view">
     <div class="edit-header">
       <h4>{{ isCreating ? t('components.settings.mcpSettings.form.addTitle') : t('components.settings.mcpSettings.form.editTitle') }}</h4>
-      <button class="close-btn" @click="emit('cancel')">
-        <i class="codicon codicon-close"></i>
+      <button
+        type="button"
+        class="close-btn gc-icon-button"
+        :title="t('common.close')"
+        :aria-label="t('common.close')"
+        @click="emit('cancel')"
+      >
+        <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
 

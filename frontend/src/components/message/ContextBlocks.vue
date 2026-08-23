@@ -7,7 +7,7 @@
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { ref, onUnmounted } from 'vue'
 import type { PromptContextItem } from '../../types/promptContext'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, showNotification } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { getFileIcon } from '../../utils/fileIcons'
 import { languageFromPath } from '../../utils/languageFromPath'
@@ -114,6 +114,7 @@ async function handleClick(item: PromptContextItem) {
     })
   } catch (error) {
     console.error('Failed to show context content:', error)
+    await showNotification(error instanceof Error ? error.message : t('common.error'), 'error')
   }
 }
 
@@ -134,19 +135,22 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
 
 <template>
   <div class="context-blocks">
-    <div
+    <button
       v-for="item in contexts"
       :key="item.id"
+      type="button"
       class="context-tag"
       :class="{ 'hovered': hoveredId === item.id }"
       @mouseenter="handleMouseEnter(item)"
       @mouseleave="handleMouseLeave"
+      @focus="handleMouseEnter(item)"
+      @blur="handleMouseLeave"
       @click="handleClick(item)"
     >
-      <i :class="getTypeIcon(item).class"></i>
+      <i :class="getTypeIcon(item).class" aria-hidden="true"></i>
       <span class="context-title">{{ item.title }}</span>
       <span class="context-type">{{ getTypeLabel(item.type) }}</span>
-    </div>
+    </button>
     
     <!-- 预览弹窗 -->
     <Transition name="fade">
@@ -157,7 +161,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
         @mouseleave="handleMouseLeave"
       >
         <div class="preview-header">
-          <i :class="getTypeIcon(previewItem).class"></i>
+          <i :class="getTypeIcon(previewItem).class" aria-hidden="true"></i>
           <span class="preview-title">{{ previewItem.title }}</span>
           <span class="preview-hint">{{ t('components.message.contextBlocks.clickToView') }}</span>
         </div>
@@ -182,21 +186,23 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background: rgba(0, 122, 204, 0.16);
-  border: 1px solid rgba(0, 122, 204, 0.28);
+  background: color-mix(in srgb, var(--gc-info) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gc-info) 28%, transparent);
   color: var(--vscode-foreground);
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard);
   max-width: 200px;
   user-select: none;
 }
 
 .context-tag:hover,
 .context-tag.hovered {
-  background: rgba(0, 122, 204, 0.28);
-  border-color: rgba(0, 122, 204, 0.45);
+  background: color-mix(in srgb, var(--gc-info) 28%, transparent);
+  border-color: color-mix(in srgb, var(--gc-info) 45%, transparent);
 }
 
 .context-tag .codicon {
@@ -213,10 +219,10 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
 }
 
 .context-type {
-  font-size: 9px;
+  font-size: var(--gc-font-size-micro);
   opacity: 0.7;
   padding: 1px 4px;
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--gc-text-primary) 10%, transparent);
   border-radius: 6px;
   flex-shrink: 0;
 }
@@ -232,7 +238,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
   border: 1px solid var(--vscode-editorWidget-border);
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  z-index: 100;
+  z-index: var(--gc-layer-popover);
   max-height: 300px;
   overflow: hidden;
 }

@@ -12,7 +12,9 @@
 
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
-import { useOpenWorkspaceFile } from '@/composables'
+import { useOpenWorkspaceFile, useI18n } from '@/composables'
+import { copyToClipboard } from '@/utils/format'
+import { showNotification } from '@/utils/vscode'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -21,6 +23,7 @@ const props = defineProps<{
 }>()
 
 const { openFileAt } = useOpenWorkspaceFile()
+const { t } = useI18n()
 
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
@@ -162,19 +165,19 @@ function getDisplayContent(file: MergedFile): string {
 // 复制单个文件内容
 async function copyFileContent(file: MergedFile) {
   if (!file.content) return
-  try {
-    await navigator.clipboard.writeText(file.content)
-    copiedFiles.value.add(file.path)
-    const existing = copyTimeouts.get(file.path)
-    if (existing) clearTimeout(existing)
-    const timeout = setTimeout(() => {
-      copiedFiles.value.delete(file.path)
-      copyTimeouts.delete(file.path)
-    }, 1000)
-    copyTimeouts.set(file.path, timeout)
-  } catch (err) {
-    console.error('复制失败:', err)
+  const ok = await copyToClipboard(file.content)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+    return
   }
+  copiedFiles.value.add(file.path)
+  const existing = copyTimeouts.get(file.path)
+  if (existing) clearTimeout(existing)
+  const timeout = setTimeout(() => {
+    copiedFiles.value.delete(file.path)
+    copyTimeouts.delete(file.path)
+  }, 1000)
+  copyTimeouts.set(file.path, timeout)
 }
 
 function isCopied(path: string): boolean {
@@ -227,17 +230,19 @@ onBeforeUnmount(() => {
         <div class="file-header">
           <div class="file-info">
             <span class="codicon codicon-diff-added file-icon"></span>
-            <span class="file-name clickable" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ getFileNameWithoutExt(file.path) }}</span>
-            <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFileAt(file.path, file.line)">.{{ getFileExtension(file.path) }}</span>
+            <button type="button" class="file-name clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ getFileNameWithoutExt(file.path) }}</button>
+            <button v-if="getFileExtension(file.path)" type="button" class="file-ext clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.line)">.{{ getFileExtension(file.path) }}</button>
             <span class="insert-badge">第 {{ file.line }} 行前插入</span>
             <span class="line-count">{{ getContentLines(file.content).length }} 行</span>
           </div>
           <div class="file-actions">
             <button
               v-if="file.content"
+              type="button"
               class="action-btn"
               :class="{ copied: isCopied(file.path) }"
               :title="isCopied(file.path) ? '已复制' : '复制内容'"
+              :aria-label="isCopied(file.path) ? '已复制' : '复制内容'"
               @click.stop="copyFileContent(file)"
             >
               <span :class="['codicon', isCopied(file.path) ? 'codicon-check' : 'codicon-copy']"></span>
@@ -246,7 +251,7 @@ onBeforeUnmount(() => {
         </div>
 
      <!-- 文件路径 -->
-        <div class="file-path clickable" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ file.path }}</div>
+        <button type="button" class="file-path clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.line)">{{ file.path }}</button>
 
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">

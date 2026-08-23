@@ -119,8 +119,8 @@ function getFileName(filePath: string): string {
           item.success ? 'codicon-check' : 'codicon-error'
         ]"></span>
         <div class="file-info">
-          <span class="file-name clickable" :title="item.path" @click.stop="openFile(item.path)">{{ getFileName(item.path) }}</span>
-          <span class="file-path clickable" :title="item.path" @click.stop="openFile(item.path)">{{ item.path }}</span>
+          <button type="button" class="file-name clickable gc-link-button" :title="item.path" @click.stop="openFile(item.path)">{{ getFileName(item.path) }}</button>
+          <button type="button" class="file-path clickable gc-link-button" :title="item.path" @click.stop="openFile(item.path)">{{ item.path }}</button>
           <span v-if="!item.success && item.error" class="file-error">
             {{ item.error }}
           </span>

@@ -151,15 +151,15 @@ function getFileNameWithoutExt(fp: string): string {
         <div class="file-header">
           <div class="file-info">
             <span class="codicon codicon-diff-removed file-icon"></span>
-            <span class="file-name clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ getFileNameWithoutExt(file.path) }}</span>
-            <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">.{{ getFileExtension(file.path) }}</span>
+            <button type="button" class="file-name clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ getFileNameWithoutExt(file.path) }}</button>
+            <button v-if="getFileExtension(file.path)" type="button" class="file-ext clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">.{{ getFileExtension(file.path) }}</button>
             <span class="delete-badge">{{ t('components.message.tool.deleteCode.badge', { start: file.start_line, end: file.end_line }) }}</span>
             <span class="line-count">{{ t('components.message.tool.deleteCode.lineCount', { count: file.deletedCount }) }}</span>
           </div>
         </div>
 
         <!-- 文件路径 -->
-        <div class="file-path clickable" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ file.path }}</div>
+        <button type="button" class="file-path clickable gc-link-button" :title="file.path" @click.stop="openFileAt(file.path, file.start_line, file.end_line)">{{ file.path }}</button>
 
         <!-- 状态显示 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">

@@ -13,6 +13,8 @@ import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import VirtualDiffLines from '../../common/VirtualDiffLines.vue'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
+import { copyToClipboard } from '@/utils/format'
+import { showNotification } from '@/utils/vscode'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -181,7 +183,7 @@ const diffList = computed((): DiffBlock[] => {
 
   const argsDiffs = (props.args.diffs as DiffBlock[] | undefined) || []
   const failedDiffs = (props.result?.data as Record<string, any>)?.failedDiffs as any[] | undefined
-  
+
   // 向后兼容旧格式（带有 results 或 diffs 的情况）
   const data = props.result?.data as Record<string, any> | undefined
   if (data?.results || data?.diffs) {
@@ -374,24 +376,24 @@ function isCopied(index: number): boolean {
 
 // 复制替换后的内容
 async function copyReplace(diff: DiffBlock, index: number) {
-  try {
-    await navigator.clipboard.writeText(diff.replace)
-    
-    copiedDiffs.value.add(index)
-    
-    const existingTimeout = copyTimeouts.get(index)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-    }
-    
-    const timeout = setTimeout(() => {
-      copiedDiffs.value.delete(index)
-      copyTimeouts.delete(index)
-    }, 1000)
-    copyTimeouts.set(index, timeout)
-  } catch (err) {
-    console.error('复制失败:', err)
+  const ok = await copyToClipboard(diff.replace)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+    return
   }
+
+  copiedDiffs.value.add(index)
+
+  const existingTimeout = copyTimeouts.get(index)
+  if (existingTimeout) {
+    clearTimeout(existingTimeout)
+  }
+
+  const timeout = setTimeout(() => {
+    copiedDiffs.value.delete(index)
+    copyTimeouts.delete(index)
+  }, 1000)
+  copyTimeouts.set(index, timeout)
 }
 
 // 清理定时器
@@ -412,20 +414,20 @@ onBeforeUnmount(() => {
         <span class="title">{{ t('components.tools.file.applyDiffPanel.title') }}</span>
       </div>
       <div class="header-stats">
-        <span class="stat clickable" :title="filePath" @click.stop="openFile(filePath)">
-          <span class="codicon codicon-file"></span>
+        <button type="button" class="stat clickable gc-link-button" :title="filePath" @click.stop="openFile(filePath)">
+          <span class="codicon codicon-file" aria-hidden="true"></span>
           {{ getFileNameWithoutExt(filePath) }}<span v-if="getFileExtension(filePath)" class="file-ext">.{{ getFileExtension(filePath) }}</span>
-        </span>
+        </button>
         <span class="stat">{{ changesCount }} {{ t('components.tools.file.applyDiffPanel.changes') }}</span>
       </div>
     </div>
-    
+
     <!-- 文件路径 -->
-    <div class="file-path-bar clickable" :title="filePath" @click.stop="openFile(filePath)">
-      <span class="codicon codicon-file-code"></span>
+    <button type="button" class="file-path-bar clickable gc-link-button" :title="filePath" @click.stop="openFile(filePath)">
+      <span class="codicon codicon-file-code" aria-hidden="true"></span>
       <span class="path">{{ filePath }}</span>
-    </div>
-    
+    </button>
+
     <!-- 结果状态 -->
     <div v-if="resultData" class="result-status" :class="{ 'is-error': isFailed && !isPartial, 'is-partial': isPartial }">
       <span v-if="!isFailed && !isPartial" class="codicon codicon-check status-icon success"></span>
@@ -458,13 +460,13 @@ onBeforeUnmount(() => {
         </CustomScrollbar>
       </div>
     </div>
-    
+
     <!-- 全局错误 -->
     <div v-if="error && !resultData" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
       <span class="error-text">{{ error }}</span>
     </div>
-    
+
         <!-- Diff 列表 -->
     <div class="diff-list">
       <div
@@ -477,7 +479,7 @@ onBeforeUnmount(() => {
         <div class="diff-header" :class="{ 'is-failed': diff.success === false, 'is-rejected': diff.rejected }">
           <div class="diff-info">
             <span class="diff-number">{{ t('components.tools.file.applyDiffPanel.diffNumber') }}{{ index + 1 }}</span>
-            
+
             <!-- 状态图标 -->
             <span v-if="diff.rejected" class="status-icon rejected" :title="t('components.tools.file.applyDiffPanel.rejectedBlock')">
               <span class="codicon codicon-close"></span>
@@ -508,16 +510,18 @@ onBeforeUnmount(() => {
           </div>
           <div class="diff-actions">
             <button
+              type="button"
               class="action-btn"
               :class="{ 'copied': isCopied(index) }"
               :title="isCopied(index) ? t('components.tools.file.applyDiffPanel.copied') : t('components.tools.file.applyDiffPanel.copyNew')"
+              :aria-label="isCopied(index) ? t('components.tools.file.applyDiffPanel.copied') : t('components.tools.file.applyDiffPanel.copyNew')"
               @click.stop="copyReplace(diff, index)"
             >
               <span :class="['codicon', isCopied(index) ? 'codicon-check' : 'codicon-copy']"></span>
             </button>
           </div>
         </div>
-        
+
         <!-- Diff 内容 -->
         <div class="diff-content" v-if="diff.success !== false">
             <VirtualDiffLines
@@ -525,7 +529,7 @@ onBeforeUnmount(() => {
               :line-number-width="diff.lineDiff.lineNumberWidth"
               :max-height="300"
             />
-          
+
           <!-- 展开/收起按钮 -->
           <div v-if="needsExpand(diff)" class="expand-section">
             <button class="expand-btn" @click="toggleExpand(index)">

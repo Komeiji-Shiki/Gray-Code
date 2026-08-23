@@ -10,6 +10,8 @@
 
 import { computed, ref } from 'vue'
 import { useI18n } from '@/composables'
+import { copyToClipboard } from '@/utils/format'
+import { showNotification } from '@/utils/vscode'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -227,20 +229,18 @@ function formatEntryForCopy(entry: Entry): string {
 
 // 复制单个目录的条目列表
 async function copyDirEntries(result: ListResult) {
-  try {
-    await navigator.clipboard.writeText(result.entries.map(formatEntryForCopy).join('\n'))
-  } catch (err) {
-    console.error('复制失败:', err)
+  const ok = await copyToClipboard(result.entries.map(formatEntryForCopy).join('\n'))
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
   }
 }
 
 // 复制所有条目列表
 async function copyAllEntries() {
-  try {
-    const allEntries = listResults.value.flatMap(r => r.entries.map(formatEntryForCopy))
-    await navigator.clipboard.writeText(allEntries.join('\n'))
-  } catch (err) {
-    console.error('复制失败:', err)
+  const allEntries = listResults.value.flatMap(r => r.entries.map(formatEntryForCopy))
+  const ok = await copyToClipboard(allEntries.join('\n'))
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
   }
 }
 </script>

@@ -17,7 +17,7 @@
 
 import { MESSAGE_NAMES } from '@shared/protocol'
 import { computed, ref } from 'vue'
-import { sendToExtension } from '../../../utils/vscode'
+import { sendToExtension, showNotification } from '../../../utils/vscode'
 import { useChatStore } from '../../../stores/chatStore'
 import { useDependency } from '../../../composables/useDependency'
 import { useI18n } from '../../../composables/useI18n'
@@ -268,6 +268,7 @@ async function openImageInVSCode(path: string) {
     await sendToExtension(MESSAGE_NAMES.openWorkspaceFile, { path })
   } catch (err) {
     console.error('打开文件失败:', err)
+    await showNotification(`${tk('openFileFailed')} ${path}`, 'error')
   }
 }
 
@@ -482,11 +483,13 @@ function getImagePath(index: number): string | undefined {
       <div v-if="resultData.paths && resultData.paths.length > 0" class="paths-list">
         <div class="paths-header">{{ tk('savePaths') }}</div>
         <div v-for="p in resultData.paths" :key="p" class="path-item">
-          <span class="codicon codicon-file-media"></span>
-          <span
-            class="path-text clickable"
+          <span class="codicon codicon-file-media" aria-hidden="true"></span>
+          <button
+            type="button"
+            class="path-text clickable gc-link-button"
+            :title="p"
             @click="openImageInVSCode(p)"
-          >{{ p }}</span>
+          >{{ p }}</button>
         </div>
       </div>
     </div>

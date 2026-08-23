@@ -18,9 +18,9 @@ import ModelSelector from '../../input/ModelSelector.vue'
 import type { ChannelOption, ModelInfo } from '../../input/types'
 import type { ChannelConfig } from '../../../types'
 import { useI18n, useOpenWorkspaceFile } from '@/composables'
-import { loadDiffContent as loadDiffContentFromBackend, onExtensionCommand } from '@/utils/vscode'
+import { loadDiffContent as loadDiffContentFromBackend, onExtensionCommand, showNotification } from '@/utils/vscode'
 import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
-import { generateId } from '@/utils/format'
+import { generateId, copyToClipboard } from '@/utils/format'
 import { computeLineDiffCached, type LineDiffEntry, type LineDiffResult } from '@/utils/lineDiff'
 import { useChatStore } from '@/stores'
 import * as configService from '@/services/config'
@@ -145,7 +145,7 @@ function getPlanTitle(planContent: string, planPath?: string): string {
 async function executePlan(planContent: string, planPath?: string) {
   if (isExecutingPlan.value || !planContent.trim()) return
   isExecutingPlan.value = true
-  
+
   try {
     // 一次性渠道/模型覆盖：仅本次请求生效，不写后端全局设置与对话元数据
     const planChannelId = selectedChannelId.value || undefined
@@ -251,12 +251,12 @@ const fileList = computed((): WriteFileEntry[] => {
 // 获取写入结果列表（从结果中）
 const writeResults = computed((): WriteResult[] => {
   const result = props.result as Record<string, any> | undefined
-  
+
   // 批量结果
   if (result?.data?.results) {
     return result.data.results as WriteResult[]
   }
-  
+
   // 如果没有结果，为每个文件创建空结果
   return fileList.value.map(f => ({
     path: f.path,
@@ -308,13 +308,13 @@ watch(writeResults, async (results) => {
 // 加载 diff 内容
 async function loadDiffContent(filePath: string, diffContentId: string) {
   if (loadingDiffs.value.has(filePath)) return
-  
+
   loadingDiffs.value.add(filePath)
   diffLoadErrors.value.delete(filePath)
-  
+
   try {
     const response = await loadDiffContentFromBackend(diffContentId)
-    
+
     if (response) {
       diffContents.value.set(filePath, response)
       // 自动切换到 diff 视图
@@ -402,11 +402,11 @@ function getDisplayContent(file: MergedFile): string {
   const lines = getContentLines(file.content)
   const maxLineNum = lines.length
   const padWidth = String(maxLineNum).length
-  
+
   const displayLines = isFileExpanded(file.path) || lines.length <= previewLineCount
     ? lines
     : lines.slice(0, previewLineCount)
-  
+
   return displayLines.map((line, index) =>
     `${String(index + 1).padStart(padWidth)} | ${line}`
   ).join('\n')
@@ -440,28 +440,28 @@ function isCopied(path: string): boolean {
 // 复制单个文件内容
 async function copyFileContent(file: MergedFile) {
   if (!file.content) return
-  
-  try {
-    await navigator.clipboard.writeText(file.content)
-    
-    // 显示对钩状态
-    copiedFiles.value.add(file.path)
-    
-    // 清除之前的定时器
-    const existingTimeout = copyTimeouts.get(file.path)
-    if (existingTimeout) {
-      clearTimeout(existingTimeout)
-    }
-    
-    // 1秒后恢复
-    const timeout = setTimeout(() => {
-      copiedFiles.value.delete(file.path)
-      copyTimeouts.delete(file.path)
-    }, 1000)
-    copyTimeouts.set(file.path, timeout)
-  } catch (err) {
-    console.error('复制失败:', err)
+
+  const ok = await copyToClipboard(file.content)
+  if (!ok) {
+    await showNotification(t('common.copyFailed'), 'error')
+    return
   }
+
+  // 显示对钩状态
+  copiedFiles.value.add(file.path)
+
+  // 清除之前的定时器
+  const existingTimeout = copyTimeouts.get(file.path)
+  if (existingTimeout) {
+    clearTimeout(existingTimeout)
+  }
+
+  // 1秒后恢复
+  const timeout = setTimeout(() => {
+    copiedFiles.value.delete(file.path)
+    copyTimeouts.delete(file.path)
+  }, 1000)
+  copyTimeouts.set(file.path, timeout)
 }
 
 // 获取操作图标
@@ -642,10 +642,10 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        
+
         <!-- Plan 路径 -->
         <div class="plan-path">{{ file.path }}</div>
-        
+
         <!-- Plan 预览内容 -->
         <div class="plan-content">
           <CustomScrollbar :max-height="isPlanExpanded(file.path) ? 500 : 200">
@@ -654,7 +654,7 @@ onBeforeUnmount(() => {
             </div>
           </CustomScrollbar>
         </div>
-        
+
         <!-- Plan 执行区域 -->
         <div class="plan-execute">
           <div class="execute-selector">
@@ -684,13 +684,13 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    
+
     <!-- 全局错误 -->
     <div v-if="error && mergedFiles.length === 0" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
       <span class="error-text">{{ error }}</span>
     </div>
-    
+
     <!-- 文件列表 -->
     <div v-else class="file-list">
       <div
@@ -706,8 +706,8 @@ onBeforeUnmount(() => {
               'codicon',
               file.result?.success === false ? 'codicon-error' : getActionIcon(file.result?.action)
             ]"></span>
-            <span class="file-name clickable" :title="file.path" @click.stop="openFile(file.path)">{{ getFileNameWithoutExt(file.path) }}</span>
-            <span v-if="getFileExtension(file.path)" class="file-ext clickable" :title="file.path" @click.stop="openFile(file.path)">.{{ getFileExtension(file.path) }}</span>
+            <button type="button" class="file-name clickable gc-link-button" :title="file.path" @click.stop="openFile(file.path)">{{ getFileNameWithoutExt(file.path) }}</button>
+            <button v-if="getFileExtension(file.path)" type="button" class="file-ext clickable gc-link-button" :title="file.path" @click.stop="openFile(file.path)">.{{ getFileExtension(file.path) }}</button>
             <span v-if="file.result?.action" :class="['action-badge', file.result.action]">
               {{ getActionLabel(file.result.action) }}
             </span>
@@ -718,24 +718,26 @@ onBeforeUnmount(() => {
           <div class="file-actions">
             <button
               v-if="file.content"
+              type="button"
               class="action-btn"
               :class="{ 'copied': isCopied(file.path) }"
               :title="isCopied(file.path) ? t('components.tools.file.writeFilePanel.copied') : t('components.tools.file.writeFilePanel.copyContent')"
+              :aria-label="isCopied(file.path) ? t('components.tools.file.writeFilePanel.copied') : t('components.tools.file.writeFilePanel.copyContent')"
               @click.stop="copyFileContent(file)"
             >
               <span :class="['codicon', isCopied(file.path) ? 'codicon-check' : 'codicon-copy']"></span>
             </button>
           </div>
         </div>
-        
+
         <!-- 文件路径 -->
-        <div class="file-path clickable" :title="file.path" @click.stop="openFile(file.path)">{{ file.path }}</div>
-        
+        <button type="button" class="file-path clickable gc-link-button" :title="file.path" @click.stop="openFile(file.path)">{{ file.path }}</button>
+
         <!-- 错误信息 -->
         <div v-if="file.result && !file.result.success && file.result.error" class="file-error">
           {{ file.result.error }}
         </div>
-        
+
         <!-- 视图切换按钮 -->
         <div v-if="hasDiffContent(file.path)" class="view-toggle">
           <button
@@ -753,13 +755,13 @@ onBeforeUnmount(() => {
             {{ t('components.tools.file.writeFilePanel.viewDiff') }}
           </button>
         </div>
-        
+
         <!-- 加载中 -->
         <div v-if="isLoadingDiff(file.path)" class="loading-diff">
           <span class="codicon codicon-loading codicon-modifier-spin"></span>
           {{ t('components.tools.file.writeFilePanel.loadingDiff') }}
         </div>
-        
+
         <!-- Diff 视图 -->
         <div v-else-if="getRenderedFileDiff(file.path) && getViewMode(file.path) === 'diff'" class="diff-view">
           <div class="diff-stats-bar">
@@ -777,7 +779,7 @@ onBeforeUnmount(() => {
             :line-number-width="getRenderedFileDiff(file.path)!.lineDiff.lineNumberWidth"
             :max-height="300"
           />
-          
+
           <!-- 展开/收起按钮 -->
           <div v-if="needsDiffExpand(getRenderedFileDiff(file.path)!)" class="expand-section">
             <button class="expand-btn" @click="toggleDiffExpand(file.path)">
@@ -786,7 +788,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        
+
         <!-- 原内容视图 -->
         <div v-else-if="file.content" class="file-content" :class="{ 'expanded': isFileExpanded(file.path) }">
           <div class="content-wrapper">
@@ -794,7 +796,7 @@ onBeforeUnmount(() => {
               <pre class="content-code"><code>{{ getDisplayContent(file) }}</code></pre>
             </CustomScrollbar>
           </div>
-          
+
           <!-- 展开/收起按钮 -->
           <div v-if="needsExpand(file)" class="expand-section">
             <button class="expand-btn" @click="toggleFile(file.path)">
@@ -803,7 +805,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </div>
-        
+
         <!-- 空文件 -->
         <div v-else class="file-empty">
           <span class="codicon codicon-file"></span>

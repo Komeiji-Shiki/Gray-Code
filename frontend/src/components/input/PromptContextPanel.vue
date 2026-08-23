@@ -722,7 +722,7 @@ const enabledCount = computed(() => props.items.filter(i => i.enabled).length)
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(var(--vscode-editor-background), 0.95);
+  background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
   border-radius: 6px;
   z-index: 10;
 }

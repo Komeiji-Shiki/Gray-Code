@@ -4,7 +4,7 @@ import { ref, computed } from 'vue'
 import ModelSelectionDialog from './ModelSelectionDialog.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import CustomScrollbar from '../common/CustomScrollbar.vue'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, showNotification } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import type { ModelInfo } from '@/types'
 
@@ -40,6 +40,11 @@ const filterKeyword = ref('')
 // 已添加模型的 ID 列表
 const addedModelIds = computed(() => props.models.map(m => m.id))
 
+async function notifyFailure(message: string, error?: unknown) {
+  const detail = error instanceof Error && error.message ? `${message}: ${error.message}` : message
+  await showNotification(detail, 'error')
+}
+
 // 筛选后的模型列表
 const filteredModels = computed(() => {
   if (!filterKeyword.value.trim()) {
@@ -61,7 +66,7 @@ async function openDialog() {
     showDialog.value = true
   } catch (error) {
     console.error('Failed to prepare before fetching models:', error)
-    alert(t('components.settings.modelSelectionDialog.error'))
+    await notifyFailure(t('components.settings.modelSelectionDialog.error'), error)
   }
 }
 
@@ -86,13 +91,13 @@ async function handleConfirm(selectedModels: ModelInfo[]) {
     emit('update:models', updatedModels)
   } catch (error) {
     console.error('Failed to add models:', error)
-    alert(t('components.settings.modelManager.errors.addFailed'))
+    await notifyFailure(t('components.settings.modelManager.errors.addFailed'), error)
   }
 }
 
 // 处理对话框移除
-function handleDialogRemove(modelId: string) {
-  removeModel(modelId)
+async function handleDialogRemove(modelId: string) {
+  await removeModel(modelId)
 }
 
 // 手动添加模型
@@ -103,7 +108,7 @@ async function addCustomModel() {
   
   // 添加前查重：已存在同 ID 模型时提示并阻止，避免重复添加
   if (props.models.some(m => m.id === id)) {
-    alert(t('components.settings.modelManager.errors.addFailed'))
+    await notifyFailure(t('components.settings.modelManager.errors.addFailed'))
     return
   }
   
@@ -123,7 +128,7 @@ async function addCustomModel() {
     newModelId.value = ''
   } catch (error) {
     console.error('Failed to add model:', error)
-    alert(t('components.settings.modelManager.errors.addFailed'))
+    await notifyFailure(t('components.settings.modelManager.errors.addFailed'), error)
   }
 }
 
@@ -144,7 +149,7 @@ async function removeModel(modelId: string) {
     }
   } catch (error) {
     console.error('Failed to remove model:', error)
-    alert(t('components.settings.modelManager.errors.removeFailed'))
+    await notifyFailure(t('components.settings.modelManager.errors.removeFailed'), error)
   }
 }
 
@@ -177,7 +182,7 @@ async function confirmClearAllModels() {
     // 局部回滚：恢复删除前的本地列表（后端部分删除时，下次加载会与后端对齐）
     emit('update:models', originalModels)
     emit('update:selectedModel', originalSelected)
-    alert(t('components.settings.modelManager.errors.removeFailed'))
+    await notifyFailure(t('components.settings.modelManager.errors.removeFailed'), error)
   }
 }
 
@@ -191,7 +196,7 @@ async function selectModel(modelId: string) {
     emit('update:selectedModel', modelId)
   } catch (error) {
     console.error('Failed to set active model:', error)
-    alert(t('components.settings.modelManager.errors.setActiveFailed'))
+    await notifyFailure(t('components.settings.modelManager.errors.setActiveFailed'), error)
   }
 }
 </script>
@@ -201,17 +206,18 @@ async function selectModel(modelId: string) {
     <div class="section-header">
       <label>{{ t('components.settings.modelManager.title') }}</label>
       <div class="header-actions">
-        <button class="fetch-btn" @click="openDialog">
-          <i class="codicon codicon-add"></i>
+        <button type="button" class="fetch-btn gc-button gc-button--primary" @click="openDialog">
+          <i class="codicon codicon-add" aria-hidden="true"></i>
           <span>{{ t('components.settings.modelManager.fetchModels') }}</span>
         </button>
         <button
-          class="clear-btn"
+          type="button"
+          class="clear-btn gc-button"
           :disabled="models.length === 0"
           :title="t('components.settings.modelManager.clearAllTooltip')"
           @click="showClearConfirmDialog"
         >
-          <i class="codicon codicon-clear-all"></i>
+          <i class="codicon codicon-clear-all" aria-hidden="true"></i>
           <span>{{ t('components.settings.modelManager.clearAll') }}</span>
         </button>
       </div>
@@ -221,28 +227,31 @@ async function selectModel(modelId: string) {
     <div v-if="models.length > 0" class="model-list-container">
       <!-- 筛选输入框 -->
       <div class="filter-input-container">
-        <i class="codicon codicon-search"></i>
+        <i class="codicon codicon-search" aria-hidden="true"></i>
         <input
           v-model="filterKeyword"
           type="text"
           :placeholder="t('components.settings.modelManager.filterPlaceholder')"
+          :aria-label="t('components.settings.modelManager.filterPlaceholder')"
           class="filter-input"
         />
         <button
           v-if="filterKeyword"
-          class="filter-clear-btn"
+          type="button"
+          class="filter-clear-btn gc-icon-button"
           :title="t('components.settings.modelManager.clearFilter')"
+          :aria-label="t('components.settings.modelManager.clearFilter')"
           @click="filterKeyword = ''"
         >
-          <i class="codicon codicon-close"></i>
+          <i class="codicon codicon-close" aria-hidden="true"></i>
         </button>
       </div>
       
       <CustomScrollbar class="model-list-scrollbar">
         <div class="model-list">
           <!-- 筛选无结果提示 -->
-          <div v-if="filteredModels.length === 0 && filterKeyword" class="no-results">
-            <i class="codicon codicon-search"></i>
+          <div v-if="filteredModels.length === 0 && filterKeyword" class="no-results" role="status">
+            <i class="codicon codicon-search" aria-hidden="true"></i>
             <span>{{ t('components.settings.modelManager.noResults') }}</span>
           </div>
           
@@ -250,27 +259,35 @@ async function selectModel(modelId: string) {
             v-for="model in filteredModels"
             :key="model.id"
             :class="['model-item', { enabled: selectedModel === model.id }]"
-            @click="selectModel(model.id)"
           >
-            <div class="model-status">
-              <i
-                :class="[
-                  'codicon',
-                  selectedModel === model.id ? 'codicon-circle-filled' : 'codicon-circle-outline'
-                ]"
-              ></i>
-            </div>
-            <div class="model-info">
-              <span class="model-id">{{ model.id }}</span>
-              <span v-if="model.name && model.name !== model.id" class="model-name">{{ model.name }}</span>
-              <span v-if="model.description" class="model-desc">{{ model.description }}</span>
-            </div>
             <button
-              class="model-remove-btn"
-              :title="t('components.settings.modelManager.removeTooltip')"
-              @click.stop="removeModel(model.id)"
+              type="button"
+              class="model-select-button"
+              :aria-pressed="selectedModel === model.id"
+              @click="selectModel(model.id)"
             >
-              <i class="codicon codicon-close"></i>
+              <span class="model-status" aria-hidden="true">
+                <i
+                  :class="[
+                    'codicon',
+                    selectedModel === model.id ? 'codicon-circle-filled' : 'codicon-circle-outline'
+                  ]"
+                ></i>
+              </span>
+              <span class="model-info">
+                <span class="model-id">{{ model.id }}</span>
+                <span v-if="model.name && model.name !== model.id" class="model-name">{{ model.name }}</span>
+                <span v-if="model.description" class="model-desc">{{ model.description }}</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              class="model-remove-btn gc-icon-button gc-icon-button--danger"
+              :title="t('components.settings.modelManager.removeTooltip')"
+              :aria-label="`${t('components.settings.modelManager.removeTooltip')}: ${model.id}`"
+              @click="removeModel(model.id)"
+            >
+              <i class="codicon codicon-close" aria-hidden="true"></i>
             </button>
           </div>
         </div>
@@ -278,8 +295,8 @@ async function selectModel(modelId: string) {
     </div>
     
     <!-- 空状态 -->
-    <div v-else class="empty-models">
-      <i class="codicon codicon-info"></i>
+    <div v-else class="empty-models" role="status">
+      <i class="codicon codicon-info" aria-hidden="true"></i>
       <span>{{ t('components.settings.modelManager.empty') }}</span>
     </div>
     
@@ -288,16 +305,19 @@ async function selectModel(modelId: string) {
       <input
         v-model="newModelId"
         type="text"
+        class="gc-field"
         :placeholder="t('components.settings.modelManager.addPlaceholder')"
         @keyup.enter="addCustomModel"
       />
       <button
-        class="add-btn"
+        type="button"
+        class="add-btn gc-icon-button"
         :title="t('components.settings.modelManager.addTooltip')"
+        :aria-label="t('components.settings.modelManager.addTooltip')"
         :disabled="!newModelId.trim()"
         @click="addCustomModel"
       >
-        <i class="codicon codicon-add"></i>
+        <i class="codicon codicon-add" aria-hidden="true"></i>
       </button>
     </div>
     
@@ -498,18 +518,32 @@ async function selectModel(modelId: string) {
 
 .model-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  align-items: stretch;
+  gap: var(--gc-space-1);
+  padding: 0;
   background: var(--vscode-list-hoverBackground);
-  border-radius: 2px;
-  cursor: pointer;
-  /* 只过渡背景和边框颜色，避免影响布局 */
-  transition: background 0.15s, border-color 0.15s;
   border-left: 2px solid transparent;
+  border-radius: var(--gc-radius-sm);
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
-.model-item:hover {
+.model-select-button {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-2) 10px;
+  color: var(--gc-text-primary);
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+
+.model-item:hover .model-select-button,
+.model-select-button:focus-visible {
   background: var(--vscode-list-activeSelectionBackground);
 }
 
@@ -581,7 +615,8 @@ async function selectModel(modelId: string) {
   opacity: 0;
 }
 
-.model-item:hover .model-remove-btn {
+.model-item:hover .model-remove-btn,
+.model-item:focus-within .model-remove-btn {
   opacity: 1;
 }
 
@@ -601,7 +636,7 @@ async function selectModel(modelId: string) {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
   background: var(--vscode-textBlockQuote-background);
-  border-radius: 2px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .empty-models .codicon {

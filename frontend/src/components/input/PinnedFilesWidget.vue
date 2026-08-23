@@ -463,7 +463,7 @@ watch(() => chatStore.currentConversationId, async () => {
 
 .pinned-files-panel.drag-over {
   border-color: var(--vscode-focusBorder);
-  box-shadow: 0 0 0 2px rgba(var(--vscode-focusBorder), 0.3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--vscode-focusBorder) 30%, transparent);
 }
 
 .drag-overlay {
@@ -477,7 +477,7 @@ watch(() => chatStore.currentConversationId, async () => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(var(--vscode-editor-background), 0.95);
+  background: color-mix(in srgb, var(--vscode-editor-background) 95%, transparent);
   border-radius: 6px;
   z-index: 10;
 }
