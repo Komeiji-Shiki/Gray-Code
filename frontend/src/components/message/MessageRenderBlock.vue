@@ -468,6 +468,8 @@ onUnmounted(releaseThoughtDisplay)
 
 .thought-toggle {
   min-width: 0;
+  /* 占满标题栏剩余空间：图标+文案+时间之外（含中间空白）的区域也能点击折叠/展开 */
+  flex: 1;
   display: flex;
   align-items: center;
   gap: var(--gc-space-2);
