@@ -350,10 +350,9 @@ describe('createProxyFetch（无代理）', () => {
         expect(init?.method).toBe('POST');
         expect(init?.body).toBe('{"model":"gpt-4"}');
         // 调用方 headers 之外注入默认 UA，且不丢失既有 headers
-        expect(init?.headers).toEqual({
-            'User-Agent': USER_AGENT,
-            'Authorization': 'Bearer test-key'
-        });
+        const headers = new Headers(init?.headers);
+        expect(headers.get('user-agent')).toBe(USER_AGENT);
+        expect(headers.get('authorization')).toBe('Bearer test-key');
     });
 
     test('调用方显式传入的 User-Agent 优先生效', async () => {
@@ -366,7 +365,7 @@ describe('createProxyFetch（无代理）', () => {
         });
 
         const [, init] = fetchMock.mock.calls[0];
-        expect(init?.headers?.['User-Agent']).toBe('CustomAgent/1.0');
+        expect(new Headers(init?.headers).get('user-agent')).toBe('CustomAgent/1.0');
     });
 
     test('不带 init 时也注入默认 User-Agent', async () => {
@@ -377,7 +376,40 @@ describe('createProxyFetch（无代理）', () => {
         await proxyFetch('https://api.example.com/v1/models');
 
         const [, init] = fetchMock.mock.calls[0];
-        expect(init?.headers).toEqual({ 'User-Agent': USER_AGENT });
+        expect(new Headers(init?.headers).get('user-agent')).toBe(USER_AGENT);
+    });
+
+    test('支持 Headers 实例与小写 user-agent，覆盖语义大小写无关', async () => {
+        const fetchMock = makeFetchMock();
+        global.fetch = fetchMock as any;
+
+        const proxyFetch = createProxyFetch();
+        await proxyFetch('https://api.example.com/v1/models', {
+            headers: new Headers([
+                ['user-agent', 'HeadersAgent/2.0'],
+                ['x-extra', 'yes']
+            ])
+        });
+
+        const [, init] = fetchMock.mock.calls[0];
+        const headers = new Headers(init?.headers);
+        expect(headers.get('user-agent')).toBe('HeadersAgent/2.0');
+        expect(headers.get('x-extra')).toBe('yes');
+    });
+
+    test('支持 HeadersInit 元组数组并补入默认 UA', async () => {
+        const fetchMock = makeFetchMock();
+        global.fetch = fetchMock as any;
+
+        const proxyFetch = createProxyFetch();
+        await proxyFetch('https://api.example.com/v1/models', {
+            headers: [['x-tuple', 'ok']]
+        });
+
+        const [, init] = fetchMock.mock.calls[0];
+        const headers = new Headers(init?.headers);
+        expect(headers.get('user-agent')).toBe(USER_AGENT);
+        expect(headers.get('x-tuple')).toBe('ok');
     });
 
     test('传入代理地址时走代理分支（不包装原生 fetch）', async () => {

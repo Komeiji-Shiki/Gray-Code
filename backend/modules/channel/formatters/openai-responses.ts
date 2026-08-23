@@ -238,13 +238,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      * - 其余情况返回 undefined（请求体不带该字段，不影响不识别它的端点）。
      */
     private buildPromptCacheKey(request: GenerateRequest, config: OpenAIResponsesConfig): string | undefined {
+        // 总开关优先：输入框即使保留了旧自定义值，关闭功能后也不得继续发送。
+        if (!config.promptCacheKeyEnabled) {
+            return undefined;
+        }
+
         const explicitKey = config.promptCacheKey?.trim();
         if (explicitKey) {
             return explicitKey;
-        }
-
-        if (!config.promptCacheKeyEnabled) {
-            return undefined;
         }
 
         const conversationId = request.conversationId?.trim();

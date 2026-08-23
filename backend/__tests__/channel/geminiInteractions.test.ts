@@ -223,6 +223,60 @@ describe('GeminiInteractionsFormatter.buildRequest', () => {
         expect(input2[2]).toEqual({ type: 'function_call', id: 'fc_2', name: 'read_file', arguments: {} });
     });
 
+    test('缺少 Gemini 签名的 thought 不生成无效 step，普通模型正文保留', () => {
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: 'q' }] },
+            {
+                role: 'model',
+                parts: [
+                    { thought: true, text: 'cross-provider private thought' },
+                    { text: 'visible answer' }
+                ]
+            }
+        ];
+
+        const input = (formatter.buildRequest(makeRequest(history), makeConfig()).body as any).input;
+        expect(input).toEqual([
+            { type: 'user_input', content: [{ type: 'text', text: 'q' }] },
+            { type: 'model_output', content: [{ type: 'text', text: 'visible answer' }] }
+        ]);
+    });
+
+    test('相邻摘要 part 与仅签名 part 合并为一个合法 thought step', () => {
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: 'q' }] },
+            {
+                role: 'model',
+                parts: [
+                    { thought: true, text: 'summary' },
+                    { thought: true, thoughtSignatures: { gemini: 'sig-adjacent' } },
+                    { text: 'answer' }
+                ]
+            }
+        ];
+
+        const input = (formatter.buildRequest(makeRequest(history), makeConfig()).body as any).input;
+        expect(input[1]).toEqual({
+            type: 'thought',
+            signature: 'sig-adjacent',
+            summary: [{ type: 'text', text: 'summary' }]
+        });
+    });
+
+    test('function_result 缺少 call_id 时明确失败，不生成随机不可配对 ID', () => {
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: 'q' }] },
+            { role: 'model', parts: [{ functionCall: { id: 'fc-1', name: 'read_file', args: {} } }] },
+            {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{ functionResponse: { name: 'read_file', response: { success: true } } }]
+            }
+        ];
+
+        expect(() => formatter.buildRequest(makeRequest(history), makeConfig())).toThrow(/missing the call_id/);
+    });
+
     test('generation_config 映射：level 模式 / budget 模式 / includeThoughts=false', () => {
         // level 模式
         const r1 = formatter.buildRequest(

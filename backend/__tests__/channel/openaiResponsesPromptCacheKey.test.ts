@@ -83,10 +83,26 @@ describe('OpenAIResponsesFormatter prompt_cache_key', () => {
         expect(request.body.prompt_cache_key).toBeUndefined();
     });
 
-    test('uses the explicit promptCacheKey value when provided, regardless of the enabled flag', () => {
+    test('does not add an explicit promptCacheKey while the feature switch is disabled', () => {
         const formatter = new OpenAIResponsesFormatter();
         const config = createOpenAIResponsesConfig({
             promptCacheKeyEnabled: false,
+            promptCacheKey: 'my-custom-session-key'
+        });
+
+        const request = formatter.buildRequest({
+            configId: config.id,
+            history: createHistory(),
+            conversationId: 'conv_any'
+        }, config);
+
+        expect(request.body.prompt_cache_key).toBeUndefined();
+    });
+
+    test('uses the explicit promptCacheKey value when the feature switch is enabled', () => {
+        const formatter = new OpenAIResponsesFormatter();
+        const config = createOpenAIResponsesConfig({
+            promptCacheKeyEnabled: true,
             promptCacheKey: 'my-custom-session-key'
         });
 

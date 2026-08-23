@@ -705,6 +705,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                 continue;
             }
 
+            const messageStepStart = steps.length;
             // 同消息内最近的 thought step（用于合并散落的旧格式签名）
             let lastThoughtStep: any = null;
 
@@ -733,6 +734,12 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
                     // 函数结果：flush 前置内容块，独立 step
                     flush();
                     const fr = part.functionResponse;
+                    if (typeof fr.id !== 'string' || !fr.id) {
+                        throw new ChannelError(
+                            ErrorType.VALIDATION_ERROR,
+                            'Gemini Interactions function_result is missing the call_id required to pair with function_call.'
+                        );
+                    }
                     const resultBlocks: any[] = [];
 
                     if (fr.response !== undefined) {
@@ -754,19 +761,21 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
 
                     steps.push({
                         type: 'function_result',
-                        // call_id 必需：与 function_call step 的 id 配对；缺失时生成占位（畸形历史兜底）
-                        call_id: typeof fr.id === 'string' && fr.id
-                            ? fr.id
-                            : `fr_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+                        call_id: fr.id,
                         name: fr.name,
                         result: resultBlocks.length > 0
                             ? resultBlocks
                             : [{ type: 'text', text: '{}' }]
                     });
                 } else if (part.thought) {
-                    // 思考步骤：signature + summary
+                    // 思考步骤必须携带 Gemini signature。流式历史可能把摘要和签名保存为
+                    // 相邻 parts：仅签名 part 优先合并到前一个摘要 step，避免丢摘要。
                     flush();
                     const sig = part.thoughtSignatures?.gemini;
+                    if (sig && !part.text && lastThoughtStep && !lastThoughtStep.signature) {
+                        lastThoughtStep.signature = sig;
+                        continue;
+                    }
                     const step: any = { type: 'thought' };
                     if (sig) {
                         step.signature = sig;
@@ -801,6 +810,15 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
             }
 
             flush();
+
+            // Interactions 无状态回放要求 thought 带加密 signature。跨渠道裸 thought、
+            // 丢签名旧历史不能包装成无效 thought step；只过滤协议元数据，不改普通正文。
+            for (let index = steps.length - 1; index >= messageStepStart; index--) {
+                const step = steps[index];
+                if (step?.type === 'thought' && (typeof step.signature !== 'string' || !step.signature)) {
+                    steps.splice(index, 1);
+                }
+            }
         }
 
         return steps;

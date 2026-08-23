@@ -34,6 +34,23 @@ export { extractUpstreamErrorMessage };
 export type { FetchOptions, ProxyFetchInit, FetchResponse };
 export type { ProxyStreamSink };
 
+/** 标准 HeadersInit 合并：支持对象、元组数组、Headers，并以大小写无关语义处理 UA。 */
+function mergeHeadersWithDefaultUserAgent(input?: HeadersInit): Headers {
+    const headers = new Headers(input);
+    if (!headers.has('user-agent')) {
+        headers.set('User-Agent', USER_AGENT);
+    }
+    return headers;
+}
+
+function headersToRecord(headers: Headers): Record<string, string> {
+    const record: Record<string, string> = {};
+    headers.forEach((value, key) => {
+        record[key] = value;
+    });
+    return record;
+}
+
 /**
  * 通过 HTTP 代理发起请求（CONNECT 隧道方式）
  */
@@ -68,10 +85,7 @@ export function createProxyFetch(proxyUrl?: string): (url: string | URL, init?: 
         // 无代理：包装原生 fetch 注入默认 User-Agent，与代理路径行为一致
         // （原生 fetch 无 timeout 选项：调用方自行以 AbortSignal 控制超时；调用方显式 UA 优先生效）
         return async (url: string | URL, init?: ProxyFetchInit): Promise<Response> => {
-            const headers = {
-                'User-Agent': USER_AGENT,
-                ...(init?.headers as Record<string, string> | undefined)
-            };
+            const headers = mergeHeadersWithDefaultUserAgent(init?.headers);
             return fetch(url, { ...init, headers });
         };
     }
@@ -80,10 +94,7 @@ export function createProxyFetch(proxyUrl?: string): (url: string | URL, init?: 
         const targetUrl = typeof url === 'string' ? new URL(url) : url;
         const options: FetchOptions = {
             method: init?.method || 'GET',
-            headers: {
-                'User-Agent': USER_AGENT,
-                ...(init?.headers as Record<string, string> || {})
-            },
+            headers: headersToRecord(mergeHeadersWithDefaultUserAgent(init?.headers)),
             body: init?.body as string | undefined,
             // 修复：透传调用方指定的 timeout（此前硬编码 120s，调用方超时被忽略）
             timeout: init?.timeout ?? 120000,
@@ -136,7 +147,7 @@ export async function* proxyStreamFetch(
 ): AsyncGenerator<string> {
     if (!proxyUrl) {
         // 无代理，使用原生 fetch
-        const headersWithUserAgent = { 'User-Agent': USER_AGENT, ...init.headers };
+        const headersWithUserAgent = mergeHeadersWithDefaultUserAgent(init.headers);
         const response = await fetch(url, {
             method: init.method,
             headers: headersWithUserAgent,
