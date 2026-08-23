@@ -39,6 +39,7 @@
   - 修复 `createProxyFetch` 通过对象展开合并请求头、不支持 `Headers` 与元组数组且无法大小写无关覆盖 User-Agent：现统一使用标准 `Headers` 归一化全部 `HeadersInit` 形态，调用方任意大小写的 UA 均优先。
   - 修复 CP-SKIP 回收无变化备份目录前过早清除 `backupDirCreated`，导致首次 `rm` 失败后外层错误清理不再重试并遗留孤儿目录。
   - 修复弹窗迁移后的测试回归：`ConversationList`/`DirtyFilesConfirm`/`BranchSwitcherBar`/`ChannelSettings`/`CheckpointSettings`/`ModelManager` 的 6 个旧测试文件更新为公共 `Modal` 的 DOM 结构（`role="dialog"`、`.dialog-btn` 语义类），Esc 相关测试配合 `attachTo: document.body` 使事件冒泡到 Modal 的 document 级监听器。
+  - 修复消息思考过程标题栏迁移为原生按钮后点击区域缩小的问题：`thought-toggle` 加 `flex: 1` 占满标题栏剩余空间，除右侧视图切换按钮外的整个标题区域（含中间空白）恢复为可直接点击折叠/展开。
 
 ## [1.5.5] - 2026-08-21
 
