@@ -25,6 +25,7 @@ import { generateId } from '../../utils/format'
 import { isDeepSeekVisionModelName } from '../../utils/deepSeekVision'
 import { useChatStore } from '../../stores/chatStore'
 import * as configService from '../../services/config'
+import Modal from './Modal.vue'
 
 interface Props {
   modelValue?: boolean
@@ -508,410 +509,249 @@ function handleRemoveAttachment(id: string) {
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition name="dialog-fade">
-      <div v-if="visible" class="dialog-overlay">
-        <div class="dialog edit-dialog">
-          <div class="dialog-header">
-            <i class="codicon codicon-edit dialog-icon"></i>
-            <span class="dialog-title">{{ t('components.common.editDialog.title') }}</span>
-          </div>
+  <Modal
+    v-model="visible"
+    :aria-label="t('components.common.editDialog.title')"
+    width="500px"
+    :closable="false"
+    :mask-closable="false"
+    initial-focus-selector=".input-editor"
+    body-padding="compact"
+    @close="handleCancel"
+  >
+    <template #header>
+      <div class="dialog-heading">
+        <i class="codicon codicon-edit dialog-icon" aria-hidden="true"></i>
+        <h3>{{ t('components.common.editDialog.title') }}</h3>
+      </div>
+    </template>
 
-          <div class="dialog-body">
-            <!-- 输入区域 -->
-            <div class="edit-input-wrapper">
-              <FilePickerPanel
-                ref="filePickerRef"
-                :visible="showFilePicker"
-                :query="filePickerQuery"
-                @select="handleSelectFileFromPicker"
-                @close="handleCloseAtPicker"
-              />
+    <div class="dialog-body">
+      <div class="edit-input-wrapper">
+        <FilePickerPanel
+          ref="filePickerRef"
+          :visible="showFilePicker"
+          :query="filePickerQuery"
+          @select="handleSelectFileFromPicker"
+          @close="handleCloseAtPicker"
+        />
 
-              <InputBox
-                ref="inputBoxRef"
-                :nodes="editorNodes"
-                :placeholder="t('components.common.editDialog.placeholder')"
-                :submit-on-enter="false"
-                :min-rows="4"
-                :max-rows="14"
-                @update:nodes="handleNodesUpdate"
-                @remove-context="handleRemoveContext"
-                @paste="handlePasteFiles"
-                @drop-files="handlePasteFiles"
-                @drop-file-items="handleDropFileItems"
-                @open-context="handleOpenContext"
-                @trigger-at-picker="handleTriggerAtPicker"
-                @close-at-picker="handleCloseAtPicker"
-                @at-query-change="handleAtQueryChange"
-                @at-picker-keydown="handleAtPickerKeydown"
-              />
-            </div>
+        <InputBox
+          ref="inputBoxRef"
+          :nodes="editorNodes"
+          :placeholder="t('components.common.editDialog.placeholder')"
+          :submit-on-enter="false"
+          :min-rows="4"
+          :max-rows="14"
+          @update:nodes="handleNodesUpdate"
+          @remove-context="handleRemoveContext"
+          @paste="handlePasteFiles"
+          @drop-files="handlePasteFiles"
+          @drop-file-items="handleDropFileItems"
+          @open-context="handleOpenContext"
+          @trigger-at-picker="handleTriggerAtPicker"
+          @close-at-picker="handleCloseAtPicker"
+          @at-query-change="handleAtQueryChange"
+          @at-picker-keydown="handleAtPickerKeydown"
+        />
+      </div>
 
-            <!-- 附件区域 -->
-            <div class="attachment-section">
-              <button class="attachment-btn" @click="triggerFileInput" :title="t('components.common.editDialog.addAttachment')">
-                <i class="codicon codicon-add"></i>
-                <span>{{ t('components.common.editDialog.addAttachment') }}</span>
-              </button>
-              <input
-                ref="fileInputRef"
-                type="file"
-                multiple
-                accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.json,.js,.ts,.py,.java,.c,.cpp,.h,.css,.html,.xml,.md"
-                style="display: none"
-                @change="handleFileSelect"
-              />
+      <div class="attachment-section">
+        <button
+          type="button"
+          class="attachment-btn gc-button"
+          :title="t('components.common.editDialog.addAttachment')"
+          @click="triggerFileInput"
+        >
+          <i class="codicon codicon-add" aria-hidden="true"></i>
+          <span>{{ t('components.common.editDialog.addAttachment') }}</span>
+        </button>
+        <input
+          ref="fileInputRef"
+          type="file"
+          multiple
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.json,.js,.ts,.py,.java,.c,.cpp,.h,.css,.html,.xml,.md"
+          style="display: none"
+          @change="handleFileSelect"
+        />
 
-              <div v-if="allAttachments.length > 0" class="attachment-list">
-                <MessageAttachments
-                  :attachments="allAttachments"
-                  :readonly="false"
-                  @remove="handleRemoveAttachment"
-                />
-              </div>
-            </div>
-
-            <p v-if="hasCheckpoints" class="checkpoint-hint">
-              <i class="codicon codicon-info"></i>
-              {{ t('components.common.editDialog.checkpointHint') }}
-            </p>
-
-            <p v-if="isRootMessage" class="root-message-hint">
-              <i class="codicon codicon-info"></i>
-              {{ t('components.common.editDialog.rootMessageHint') }}
-            </p>
-
-            <!-- DeepSeek Vision 大图处理复选框（与输入区同口径：有图片附件 + 预处理开启 + Vision 模型） -->
-            <label
-              v-if="visionSplitToggleVisible"
-              class="vision-split-toggle"
-              :title="t('components.input.visionSplitPreventionHint')"
-            >
-              <input v-model="visionSplitChecked" type="checkbox" />
-              <span>{{ t('components.input.visionSplitPrevention') }}</span>
-            </label>
-          </div>
-
-          <div class="dialog-footer">
-            <button class="dialog-btn cancel" @click="handleCancel">
-              <span class="btn-label">{{ t('components.common.editDialog.cancel') }}</span>
-            </button>
-
-            <button
-              v-if="latestCheckpoint"
-              class="dialog-btn restore"
-              :disabled="!canSubmit"
-              @click="handleRestoreAndEdit"
-            >
-              <i class="codicon codicon-discard"></i>
-              <span class="btn-label">{{ formatCheckpointDesc(latestCheckpoint) }}</span>
-            </button>
-
-            <button
-              class="dialog-btn keep-branch"
-              :disabled="!canSubmit"
-              @click="handleEdit('keep')"
-            >
-              <i class="codicon codicon-source-control"></i>
-              <span class="btn-label">{{ t('components.common.editDialog.saveInPlace') }}</span>
-            </button>
-
-            <button
-              class="dialog-btn confirm"
-              :disabled="!canSubmit"
-              :title="isRootMessage ? t('components.common.editDialog.rootSaveHint') : undefined"
-              @click="handleEdit('branch')"
-            >
-              <span class="btn-label">{{ t('components.common.editDialog.save') }}</span>
-            </button>
-          </div>
+        <div v-if="allAttachments.length > 0" class="attachment-list">
+          <MessageAttachments
+            :attachments="allAttachments"
+            :readonly="false"
+            @remove="handleRemoveAttachment"
+          />
         </div>
       </div>
-    </Transition>
-  </Teleport>
+
+      <p v-if="hasCheckpoints" class="checkpoint-hint gc-feedback gc-feedback--warning">
+        <i class="codicon codicon-info" aria-hidden="true"></i>
+        <span>{{ t('components.common.editDialog.checkpointHint') }}</span>
+      </p>
+
+      <p v-if="isRootMessage" class="root-message-hint gc-feedback">
+        <i class="codicon codicon-info" aria-hidden="true"></i>
+        <span>{{ t('components.common.editDialog.rootMessageHint') }}</span>
+      </p>
+
+      <label
+        v-if="visionSplitToggleVisible"
+        class="vision-split-toggle"
+        :title="t('components.input.visionSplitPreventionHint')"
+      >
+        <input v-model="visionSplitChecked" type="checkbox" />
+        <span>{{ t('components.input.visionSplitPrevention') }}</span>
+      </label>
+    </div>
+
+    <template #footer>
+      <button type="button" class="dialog-btn cancel gc-button" @click="handleCancel">
+        <span class="btn-label">{{ t('components.common.editDialog.cancel') }}</span>
+      </button>
+
+      <button
+        v-if="latestCheckpoint"
+        type="button"
+        class="dialog-btn restore gc-button"
+        :disabled="!canSubmit"
+        @click="handleRestoreAndEdit"
+      >
+        <i class="codicon codicon-discard" aria-hidden="true"></i>
+        <span class="btn-label">{{ formatCheckpointDesc(latestCheckpoint) }}</span>
+      </button>
+
+      <button
+        type="button"
+        class="dialog-btn keep-branch gc-button"
+        :disabled="!canSubmit"
+        @click="handleEdit('keep')"
+      >
+        <i class="codicon codicon-source-control" aria-hidden="true"></i>
+        <span class="btn-label">{{ t('components.common.editDialog.saveInPlace') }}</span>
+      </button>
+
+      <button
+        type="button"
+        class="dialog-btn confirm gc-button gc-button--primary"
+        :disabled="!canSubmit"
+        :title="isRootMessage ? t('components.common.editDialog.rootSaveHint') : undefined"
+        @click="handleEdit('branch')"
+      >
+        <span class="btn-label">{{ t('components.common.editDialog.save') }}</span>
+      </button>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+.dialog-heading {
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 1000;
+  gap: var(--gc-space-2);
 }
 
-.dialog {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
-  min-width: 320px;
-  max-width: 90%;
-  width: calc(100% - 32px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-.edit-dialog {
-  /* 使用最大宽度限制，不再固定宽度 */
-  max-width: min(500px, 90%);
-}
-
-@media (max-width: 400px) {
-  .dialog {
-    min-width: unset;
-    width: calc(100% - 16px);
-    margin: 0 8px;
-  }
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+.dialog-heading h3 {
+  margin: 0;
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 .dialog-icon {
-  font-size: 18px;
-  color: var(--vscode-editorInfo-foreground);
-}
-
-.dialog-title {
-  font-weight: 500;
-  font-size: 14px;
+  flex-shrink: 0;
+  color: var(--gc-link);
+  font-size: var(--gc-icon-size-lg);
 }
 
 .dialog-body {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-3);
 }
 
 .edit-input-wrapper {
   position: relative;
 }
 
-/* Make InputBox fit edit dialog sizing */
 .edit-input-wrapper :deep(.input-editor) {
-  min-height: 100px;
-  max-height: 300px;
-  border-radius: 4px;
-  padding: 10px;
+  min-height: 96px !important;
+  max-height: 280px !important;
+  border-radius: var(--gc-radius-sm);
 }
 
-/* 附件区域 */
 .attachment-section {
-  margin-top: 12px;
+  margin-top: var(--gc-space-1);
 }
 
 .attachment-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px dashed var(--vscode-panel-border);
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s;
-}
-
-.attachment-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  border-color: var(--vscode-focusBorder);
-}
-
-.attachment-btn .codicon {
-  font-size: 14px;
+  color: var(--gc-text-muted);
 }
 
 .attachment-list {
-  margin-top: 8px;
+  margin-top: var(--gc-space-2);
 }
 
-.dialog-body .checkpoint-hint {
-  margin-top: 12px;
-  padding: 8px 10px;
-  background: var(--vscode-editorInfo-background, rgba(0, 120, 212, 0.1));
-  border-radius: 4px;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--vscode-editorInfo-foreground, #3794ff);
+.checkpoint-hint,
+.root-message-hint {
+  margin: 0;
 }
 
-.dialog-body .checkpoint-hint .codicon {
-  flex-shrink: 0;
-  margin-top: 1px;
+.checkpoint-hint .codicon {
+  color: var(--gc-warning);
 }
 
-.dialog-body .root-message-hint {
-  margin-top: 12px;
-  padding: 8px 10px;
-  background: var(--vscode-editorWarning-background, rgba(204, 122, 0, 0.12));
-  border-radius: 4px;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--vscode-editorWarning-foreground, #cc7a00);
+.root-message-hint .codicon {
+  color: var(--gc-info);
 }
 
-.dialog-body .root-message-hint .codicon {
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-/* DeepSeek Vision 大图处理复选框：与输入区同款样式，置于附件列表下方 */
 .vision-split-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  padding: 2px 8px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-  background: var(--vscode-input-background, rgba(127, 127, 127, 0.08));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
-  border-radius: 4px;
+  align-self: flex-start;
+  gap: var(--gc-space-1);
+  padding: 2px var(--gc-space-2);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-caption);
   cursor: pointer;
   user-select: none;
 }
 
 .vision-split-toggle:hover {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .vision-split-toggle input {
   margin: 0;
 }
 
-.vision-split-toggle span {
-  white-space: nowrap;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 6px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--vscode-panel-border);
-  /* 修复：四个按钮强制单行——flex-wrap 会把最后一个「保存」挤到第二行 */
-  flex-wrap: nowrap;
-}
-
 .dialog-btn {
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  border: none;
-  transition: background-color 0.15s, opacity 0.15s;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  /* 允许在窄窗口下收缩，文字走省略号而非换行 */
   min-width: 0;
-  flex-shrink: 1;
+  flex: 0 1 auto;
 }
 
-/* 按钮文字：单行省略，配合 min-width: 0 保证窄窗口下不换行不溢出 */
 .dialog-btn .btn-label {
-  white-space: nowrap;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* 长文案按钮（回档/就地保存）在窄窗口下优先截断，保住「保存」留在同一行 */
-.dialog-btn.restore {
-  max-width: 200px;
-}
-
-.dialog-btn.keep-branch {
-  max-width: 190px;
-}
-
-.dialog-btn.confirm {
-  flex-shrink: 0;
-}
-
-.dialog-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.dialog-btn.cancel {
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
-}
-
-.dialog-btn.cancel:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
+  white-space: nowrap;
 }
 
 .dialog-btn.restore {
-  background: var(--vscode-editorInfo-foreground);
-  color: white;
-}
-
-.dialog-btn.restore:hover:not(:disabled) {
-  opacity: 0.9;
-}
-
-.dialog-btn.restore .codicon {
-  font-size: 12px;
+  max-width: 220px;
+  color: var(--gc-warning);
 }
 
 .dialog-btn.keep-branch {
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
+  color: var(--gc-info);
 }
 
-.dialog-btn.keep-branch:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.dialog-btn.keep-branch .codicon {
-  font-size: 12px;
-}
-
-.dialog-btn.confirm {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.dialog-btn.confirm:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
-}
-
-/* 动画 */
-.dialog-fade-enter-active,
-.dialog-fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-
-.dialog-fade-enter-active .dialog,
-.dialog-fade-leave-active .dialog {
-  transition: transform 0.15s ease;
-}
-
-.dialog-fade-enter-from,
-.dialog-fade-leave-to {
-  opacity: 0;
-}
-
-.dialog-fade-enter-from .dialog,
-.dialog-fade-leave-to .dialog {
-  transform: scale(0.95);
+@media (max-width: 420px) {
+  .dialog-btn.restore .btn-label,
+  .dialog-btn.keep-branch .btn-label {
+    display: none;
+  }
 }
 </style>

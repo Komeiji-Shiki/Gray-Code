@@ -1,13 +1,8 @@
 <script setup lang="ts">
-/**
- * CheckpointDeleteConfirmDialog - 删除确认弹窗（对话批量 / 存档点批量）
- *
- * 从 CheckpointSettings.vue 模板拆分（C3 批次，纯结构性拆分，行为零变化）：
- * - 纯展示组件：确认状态与动作全部由父组件通过 props/emits 注入（状态仍归父组件的
- *   useCheckpointCleanup 单一实例持有），自身不持有任何响应式状态。
- */
+/** CheckpointDeleteConfirmDialog - 对话或存档点批量删除确认。 */
 import { t } from '@/i18n'
 import type { DeleteConfirmState } from '@/composables/useCheckpointCleanup'
+import { Modal } from '../../common'
 
 defineProps<{
   state: DeleteConfirmState | null
@@ -15,138 +10,109 @@ defineProps<{
   formatSize: (size: number) => string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'cancel'): void
   (e: 'confirm'): void
 }>()
 </script>
 
 <template>
-  <!-- 删除确认对话框 -->
-  <div v-if="state" class="delete-confirm-overlay" @click.self="$emit('cancel')">
-    <div class="delete-confirm-dialog">
-      <div class="dialog-header">
-        <i class="codicon codicon-warning"></i>
-        <span>{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.title') }}</span>
+  <Modal
+    :model-value="!!state"
+    :aria-label="t('components.settings.checkpoint.sections.cleanup.confirmDelete.title')"
+    width="420px"
+    :closable="false"
+    :mask-closable="true"
+    initial-focus="last"
+    body-padding="compact"
+    @close="emit('cancel')"
+  >
+    <template #header>
+      <div class="dialog-heading">
+        <i class="codicon codicon-warning" aria-hidden="true"></i>
+        <h3>{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.title') }}</h3>
       </div>
-      <div class="dialog-body">
-        <p>{{ state.title }}</p>
-        <p class="delete-stats">
-          {{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.stats', {
-            count: state.count,
-            size: formatSize(state.size)
-          }) }}
-        </p>
-        <p class="warning-text">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.warning') }}</p>
-      </div>
-      <div class="dialog-footer">
-        <button class="btn-cancel" @click="$emit('cancel')">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.cancel') }}</button>
-        <button class="btn-delete" :disabled="isBatchDeleting" @click="$emit('confirm')">{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.delete') }}</button>
-      </div>
-    </div>
-  </div>
+    </template>
+
+    <template v-if="state">
+      <p class="dialog-title-text">{{ state.title }}</p>
+      <p class="delete-stats">
+        {{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.stats', {
+          count: state.count,
+          size: formatSize(state.size)
+        }) }}
+      </p>
+      <p class="warning-text gc-feedback gc-feedback--warning">
+        <i class="codicon codicon-warning" aria-hidden="true"></i>
+        <span>{{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.warning') }}</span>
+      </p>
+    </template>
+
+    <template v-if="state" #footer>
+      <button type="button" class="gc-button dialog-btn cancel" @click="emit('cancel')">
+        {{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.cancel') }}
+      </button>
+      <button
+        type="button"
+        class="gc-button danger-confirm dialog-btn confirm"
+        :disabled="isBatchDeleting"
+        @click="emit('confirm')"
+      >
+        {{ t('components.settings.checkpoint.sections.cleanup.confirmDelete.delete') }}
+      </button>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>
-/* 删除确认对话框 */
-.delete-confirm-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+.dialog-heading {
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 1000;
+  gap: var(--gc-space-2);
 }
 
-.delete-confirm-dialog {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
-  width: 400px;
-  max-width: 90%;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+.dialog-heading .codicon {
+  flex-shrink: 0;
+  color: var(--gc-warning);
+  font-size: var(--gc-icon-size-lg);
 }
 
-.dialog-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
-  font-weight: 500;
-  font-size: 14px;
+.dialog-heading h3,
+.dialog-title-text,
+.delete-stats,
+.warning-text {
+  margin: 0;
 }
 
-.dialog-header .codicon-warning {
-  color: var(--vscode-inputValidation-warningForeground);
-  font-size: 18px;
+.dialog-heading h3 {
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-medium);
 }
 
-.dialog-body {
-  padding: 16px;
-}
-
-.dialog-body p {
-  margin: 0 0 8px;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.dialog-body p:last-child {
-  margin-bottom: 0;
+.dialog-title-text {
+  color: var(--gc-text-primary);
+  font-size: var(--gc-font-size-control);
+  line-height: var(--gc-line-height-normal);
 }
 
 .delete-stats {
-  color: var(--vscode-descriptionForeground);
+  margin-top: var(--gc-space-2);
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-body);
 }
 
 .warning-text {
-  color: var(--vscode-inputValidation-warningForeground);
-  font-weight: 500;
+  margin-top: var(--gc-space-3);
+  font-weight: var(--gc-font-weight-medium);
 }
 
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--vscode-panel-border);
+.danger-confirm {
+  color: var(--vscode-button-foreground, var(--gc-text-on-accent));
+  background: var(--gc-danger);
 }
 
-.btn-cancel,
-.btn-delete {
-  padding: 6px 14px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  border: none;
-}
-
-.btn-cancel {
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-}
-
-.btn-cancel:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-.btn-delete {
-  background: var(--vscode-inputValidation-errorBackground);
-  color: var(--vscode-inputValidation-errorForeground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
-}
-
-.btn-delete:hover {
-  opacity: 0.9;
-}
-
-.btn-delete:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.danger-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gc-danger) 86%, var(--gc-text-primary));
 }
 </style>

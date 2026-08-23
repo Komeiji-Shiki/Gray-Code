@@ -13,4 +13,7 @@
 - 常规卡片使用 `--gc-radius-md`，控件使用 `--gc-radius-sm`，胶囊徽标使用 `--gc-radius-pill`。
 - 局部绘图层级保持在 100 以下；粘性栏、浮层、模态框与启动层使用 `--gc-layer-*`。
 - 可点击图标必须有可访问名称；自定义控件应优先放到 `components/common/`，不要在业务组件重复实现。
+- 文字按钮、图标按钮、可选卡片和交互式文本分别使用 `.gc-button`、`.gc-icon-button`、`.gc-choice-card`、`.gc-link-button`；状态反馈使用 `.gc-feedback`。
+- 不要用 `rgba(var(--vscode-*), alpha)` 调整 VS Code 颜色变量透明度；变量值通常是完整颜色，应使用 `color-mix(in srgb, var(--vscode-*) 10%, transparent)`。
+- 新弹窗必须复用 `components/common/Modal.vue`，由公共组件负责层级、滚动锁、焦点陷阱、Escape 和焦点归还。
 - 动画只使用统一时长和缓动，并提供 `prefers-reduced-motion` 行为。

@@ -62,6 +62,105 @@
   background: transparent;
 }
 
+:where(.gc-icon-button) {
+  width: var(--gc-control-height-md);
+  height: var(--gc-control-height-md);
+  min-width: var(--gc-control-height-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--gc-text-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-sm);
+  line-height: 1;
+  transition:
+    color var(--gc-duration-fast) var(--gc-ease-standard),
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard),
+    opacity var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+:where(.gc-icon-button:hover:not(:disabled)) {
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-hover);
+}
+
+:where(.gc-icon-button--danger:hover:not(:disabled), .gc-icon-button--danger[aria-pressed="true"]) {
+  color: var(--gc-danger);
+}
+
+:where(.gc-link-button) {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: var(--gc-link);
+  background: transparent;
+  border: 0;
+  border-radius: var(--gc-radius-xs);
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+:where(.gc-link-button:hover:not(:disabled)) {
+  color: var(--vscode-textLink-activeForeground, var(--gc-link));
+  text-decoration: underline;
+}
+
+:where(.gc-choice-card) {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-2) var(--gc-space-3);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+:where(.gc-choice-card:hover:not(:disabled)) {
+  background: var(--gc-surface-hover);
+}
+
+:where(.gc-choice-card[aria-checked="true"], .gc-choice-card[aria-selected="true"], .gc-choice-card.is-selected) {
+  color: var(--vscode-list-activeSelectionForeground, var(--gc-text-primary));
+  background: var(--gc-surface-selected);
+  border-color: var(--gc-focus-border);
+}
+
+:where(.gc-feedback) {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-2) var(--gc-space-3);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-body);
+}
+
+:where(.gc-feedback--success) {
+  border-color: color-mix(in srgb, var(--gc-success) 55%, var(--gc-border-subtle));
+}
+
+:where(.gc-feedback--warning) {
+  border-color: color-mix(in srgb, var(--gc-warning) 55%, var(--gc-border-subtle));
+}
+
+:where(.gc-feedback--error) {
+  border-color: color-mix(in srgb, var(--gc-danger) 55%, var(--gc-border-subtle));
+}
+
 :where(.gc-button:disabled) {
   color: var(--gc-text-disabled);
   opacity: var(--gc-opacity-disabled);
@@ -95,6 +194,26 @@
   color: var(--gc-text-muted);
   background: var(--gc-surface-muted);
   border: 1px solid var(--gc-border-subtle);
+}
+
+:where(.gc-badge--success) {
+  color: var(--gc-success);
+  border-color: color-mix(in srgb, var(--gc-success) 45%, var(--gc-border-subtle));
+}
+
+:where(.gc-badge--warning) {
+  color: var(--gc-warning);
+  border-color: color-mix(in srgb, var(--gc-warning) 45%, var(--gc-border-subtle));
+}
+
+:where(.gc-badge--danger) {
+  color: var(--gc-danger);
+  border-color: color-mix(in srgb, var(--gc-danger) 45%, var(--gc-border-subtle));
+}
+
+:where(.gc-badge--info) {
+  color: var(--gc-info);
+  border-color: color-mix(in srgb, var(--gc-info) 45%, var(--gc-border-subtle));
 }
 
 :where(.gc-notice) {
@@ -143,7 +262,7 @@
 }
 
 @media (forced-colors: active) {
-  :where(.gc-card, .gc-button, .gc-field, .gc-badge, .gc-notice) {
+  :where(.gc-card, .gc-button, .gc-icon-button, .gc-choice-card, .gc-field, .gc-badge, .gc-feedback, .gc-notice) {
     border-color: CanvasText;
     forced-color-adjust: auto;
   }

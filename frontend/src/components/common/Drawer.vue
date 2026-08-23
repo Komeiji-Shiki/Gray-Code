@@ -5,6 +5,7 @@
 
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
+import { t } from '../../i18n'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -98,8 +99,15 @@ onUnmounted(() => {
             <!-- 头部 -->
             <div v-if="title || closable" class="drawer-header">
               <h3 v-if="title" class="drawer-title">{{ title }}</h3>
-              <button v-if="closable" class="drawer-close" @click="close">
-                <i class="codicon codicon-close"></i>
+              <button
+                v-if="closable"
+                type="button"
+                class="drawer-close gc-icon-button"
+                :title="t('common.close')"
+                :aria-label="t('common.close')"
+                @click="close"
+              >
+                <i class="codicon codicon-close" aria-hidden="true"></i>
               </button>
             </div>
 

@@ -10,13 +10,25 @@ import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
 const props = withDefaults(defineProps<{
   modelValue: boolean
   title?: string
+  ariaLabel?: string
+  ariaDescribedby?: string
   width?: string
   closable?: boolean
   maskClosable?: boolean
+  closeOnEscape?: boolean
+  initialFocus?: 'first' | 'last' | 'container'
+  initialFocusSelector?: string
+  bodyPadding?: 'default' | 'compact' | 'none'
 }>(), {
+  ariaLabel: '',
+  ariaDescribedby: '',
   width: '500px',
   closable: true,
-  maskClosable: true
+  maskClosable: true,
+  closeOnEscape: true,
+  initialFocus: 'first',
+  initialFocusSelector: '',
+  bodyPadding: 'default'
 })
 
 const emit = defineEmits<{
@@ -26,7 +38,7 @@ const emit = defineEmits<{
 
 const instanceId = getCurrentInstance()?.uid ?? 0
 const titleId = `gc-modal-title-${instanceId}`
-const accessibleLabel = computed(() => props.title || t('common.dialog'))
+const accessibleLabel = computed(() => props.ariaLabel || props.title || t('common.dialog'))
 
 const visible = computed({
   get: () => props.modelValue,
@@ -77,7 +89,8 @@ function handleKeydown(e: KeyboardEvent) {
   if (inOtherDialog) return
   if (!visible.value) return
 
-  if (e.key === 'Escape' && props.closable) {
+  if (e.key === 'Escape' && props.closeOnEscape) {
+    e.preventDefault()
     close()
     return
   }
@@ -113,9 +126,15 @@ watch(visible, (val) => {
       const root = modalRoot.value
       if (!root) return
       const focusables = getFocusableElements(root)
-      // root 带 tabindex="-1"：无任何可聚焦元素时（纯信息对话框）root.focus() 也能生效，
-      // 焦点进入对话框内，Esc/Tab 继续由 handleKeydown 处理
-      ;(focusables[0] || root).focus()
+      const selectedTarget = props.initialFocusSelector
+        ? root.querySelector<HTMLElement>(props.initialFocusSelector)
+        : null
+      const focusTarget = selectedTarget || (props.initialFocus === 'container'
+        ? root
+        : props.initialFocus === 'last'
+          ? focusables.at(-1)
+          : focusables[0])
+      ;(focusTarget || root).focus()
     })
   } else if (!val && ownsScrollLock) {
     unlockBodyScroll()
@@ -150,12 +169,17 @@ onUnmounted(() => {
           role="dialog"
           aria-modal="true"
           tabindex="-1"
-          :aria-labelledby="title ? titleId : undefined"
-          :aria-label="title ? undefined : accessibleLabel"
+          :aria-labelledby="title && !$slots.header ? titleId : undefined"
+          :aria-label="title && !$slots.header ? undefined : accessibleLabel"
+          :aria-describedby="ariaDescribedby || undefined"
         >
           <!-- 头部 -->
-          <div v-if="title || closable" class="modal-header">
-            <h3 v-if="title" :id="titleId" class="modal-title">{{ title }}</h3>
+          <div v-if="$slots.header || title || closable" class="modal-header">
+            <div class="modal-heading">
+              <slot name="header">
+                <h3 v-if="title" :id="titleId" class="modal-title">{{ title }}</h3>
+              </slot>
+            </div>
             <button
               v-if="closable"
               type="button"
@@ -169,7 +193,7 @@ onUnmounted(() => {
           </div>
 
           <!-- 内容 -->
-          <div class="modal-body">
+          <div :class="['modal-body', `padding-${bodyPadding}`]">
             <slot />
           </div>
 
@@ -218,6 +242,11 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+.modal-heading {
+  min-width: 0;
+  flex: 1;
+}
+
 .modal-title {
   margin: 0;
   font-size: var(--gc-font-size-title);
@@ -245,9 +274,20 @@ onUnmounted(() => {
 }
 
 .modal-body {
-  padding: var(--gc-space-5);
   overflow-y: auto;
   flex: 1;
+}
+
+.modal-body.padding-default {
+  padding: var(--gc-space-5);
+}
+
+.modal-body.padding-compact {
+  padding: var(--gc-space-4);
+}
+
+.modal-body.padding-none {
+  padding: 0;
 }
 
 .modal-footer {

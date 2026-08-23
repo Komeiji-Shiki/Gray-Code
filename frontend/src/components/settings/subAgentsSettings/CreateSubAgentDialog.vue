@@ -1,12 +1,10 @@
 <script setup lang="ts">
 /**
- * CreateSubAgentDialog - 新建子代理对话框
- *
- * 从 SubAgentsSettings.vue 模板拆分（S7 批次，纯结构性拆分，行为零变化）：
- * - 纯展示组件：预设模板/渠道选项/名称草稿/错误文案与回调均由父组件注入。
+ * CreateSubAgentDialog - 新建子代理对话框。
+ * 业务状态仍由父组件持有，弹窗行为统一交给 Modal。
  */
 import { useI18n } from '@/i18n'
-import { CustomSelect, type SelectOption } from '../../common'
+import { CustomSelect, Modal, type SelectOption } from '../../common'
 import type { SubAgentPreset } from './types'
 
 defineProps<{
@@ -37,294 +35,177 @@ function onNameInput(event: Event) {
 </script>
 
 <template>
-  <div class="dialog-overlay" @click.self="onClose">
-    <div class="dialog">
-      <div class="dialog-header">
-        <h4>{{ t('components.settings.subagents.createDialog.title') }}</h4>
-        <button class="close-btn" @click="onClose">
-          <i class="codicon codicon-close"></i>
-        </button>
+  <Modal
+    :model-value="true"
+    :title="t('components.settings.subagents.createDialog.title')"
+    width="500px"
+    initial-focus-selector=".agent-name-input"
+    body-padding="compact"
+    @close="onClose"
+  >
+    <div class="dialog-content">
+      <fieldset class="form-group template-group">
+        <legend>{{ t('components.settings.subagents.createDialog.templateLabel') }}</legend>
+        <div
+          class="preset-list"
+          role="radiogroup"
+          :aria-label="t('components.settings.subagents.createDialog.templateLabel')"
+        >
+          <button
+            type="button"
+            class="preset-card gc-choice-card"
+            :class="{ 'is-selected': selectedPresetId === '' }"
+            role="radio"
+            :aria-checked="selectedPresetId === ''"
+            @click="onSelectPreset('')"
+          >
+            <i class="codicon codicon-file" aria-hidden="true"></i>
+            <span class="preset-info">
+              <span class="preset-name">{{ t('components.settings.subagents.presets.blank.name') }}</span>
+              <span class="preset-desc">{{ t('components.settings.subagents.presets.blank.description') }}</span>
+            </span>
+          </button>
+          <button
+            v-for="preset in presets"
+            :key="preset.presetId"
+            type="button"
+            class="preset-card gc-choice-card"
+            :class="{ 'is-selected': selectedPresetId === preset.presetId }"
+            role="radio"
+            :aria-checked="selectedPresetId === preset.presetId"
+            @click="onSelectPreset(preset.presetId)"
+          >
+            <i :class="['codicon', preset.icon]" aria-hidden="true"></i>
+            <span class="preset-info">
+              <span class="preset-name">{{ presetName(preset) }}</span>
+              <span class="preset-desc">{{ presetDescription(preset) }}</span>
+            </span>
+          </button>
+        </div>
+      </fieldset>
+
+      <div class="form-group">
+        <label for="subagent-create-name">{{ t('components.settings.subagents.createDialog.nameLabel') }}</label>
+        <input
+          id="subagent-create-name"
+          :value="newAgentName"
+          type="text"
+          class="agent-name-input gc-field"
+          :placeholder="t('components.settings.subagents.createDialog.namePlaceholder')"
+          :aria-invalid="!!createError"
+          :aria-describedby="createError ? 'subagent-create-error' : undefined"
+          @input="onNameInput"
+          @keyup.enter="onCreate"
+        />
       </div>
 
-      <div class="dialog-body">
-        <!-- 预设模板选择：空白 + 内置模板；选中后预填名称/提示词/工具配置，创建后均可在编辑界面调整 -->
-        <div class="form-group">
-          <label>{{ t('components.settings.subagents.createDialog.templateLabel') }}</label>
-          <div class="preset-list">
-            <div
-              class="preset-card"
-              :class="{ selected: selectedPresetId === '' }"
-              @click="onSelectPreset('')"
-            >
-              <i class="codicon codicon-file"></i>
-              <div class="preset-info">
-                <span class="preset-name">{{ t('components.settings.subagents.presets.blank.name') }}</span>
-                <span class="preset-desc">{{ t('components.settings.subagents.presets.blank.description') }}</span>
-              </div>
-            </div>
-            <div
-              v-for="preset in presets"
-              :key="preset.presetId"
-              class="preset-card"
-              :class="{ selected: selectedPresetId === preset.presetId }"
-              @click="onSelectPreset(preset.presetId)"
-            >
-              <i class="codicon" :class="preset.icon"></i>
-              <div class="preset-info">
-                <span class="preset-name">{{ presetName(preset) }}</span>
-                <span class="preset-desc">{{ presetDescription(preset) }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label>{{ t('components.settings.subagents.createDialog.nameLabel') }}</label>
-          <input
-            :value="newAgentName"
-            type="text"
-            :placeholder="t('components.settings.subagents.createDialog.namePlaceholder')"
-            @input="onNameInput"
-            @keyup.enter="onCreate"
-          />
-        </div>
-
-        <div class="form-group">
-          <label>{{ t('components.settings.subagents.channel') }}</label>
-          <CustomSelect
-            :modelValue="newAgentChannelId"
-            :options="channelOptions"
-            :placeholder="t('components.settings.subagents.selectChannel')"
-            @update:modelValue="emit('update:newAgentChannelId', $event)"
-          />
-        </div>
-
-        <div v-if="createError" class="error-message">
-          {{ createError }}
-        </div>
+      <div class="form-group">
+        <label>{{ t('components.settings.subagents.channel') }}</label>
+        <CustomSelect
+          :model-value="newAgentChannelId"
+          :options="channelOptions"
+          :placeholder="t('components.settings.subagents.selectChannel')"
+          :aria-label="t('components.settings.subagents.channel')"
+          @update:model-value="emit('update:newAgentChannelId', $event)"
+        />
       </div>
 
-      <div class="dialog-footer">
-        <button class="secondary-btn" @click="onClose">
-          {{ t('common.cancel') }}
-        </button>
-        <button class="primary-btn" @click="onCreate" :disabled="isCreating">
-          <i v-if="isCreating" class="codicon codicon-loading codicon-modifier-spin"></i>
-          {{ t('common.create') }}
-        </button>
+      <div
+        v-if="createError"
+        id="subagent-create-error"
+        class="error-message gc-feedback gc-feedback--error"
+        role="alert"
+      >
+        <i class="codicon codicon-error" aria-hidden="true"></i>
+        <span>{{ createError }}</span>
       </div>
     </div>
-  </div>
+
+    <template #footer>
+      <button type="button" class="gc-button" @click="onClose">
+        {{ t('common.cancel') }}
+      </button>
+      <button
+        type="button"
+        class="gc-button gc-button--primary"
+        :disabled="isCreating"
+        @click="onCreate"
+      >
+        <i v-if="isCreating" class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
+        {{ t('common.create') }}
+      </button>
+    </template>
+  </Modal>
 </template>
 
 <style scoped>
-.dialog-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+.dialog-content {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
+  flex-direction: column;
+  gap: var(--gc-space-4);
+}
+
+.form-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-2);
+}
+
+.template-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form-group label,
+.form-group legend {
+  padding: 0;
+  color: var(--gc-text-primary);
+  font-size: var(--gc-font-size-body);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 .preset-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gc-space-2);
   max-height: 260px;
   overflow-y: auto;
 }
 
-.preset-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  cursor: pointer;
-  background: var(--vscode-editor-background);
-}
-
-.preset-card:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.preset-card.selected {
-  border-color: var(--vscode-focusBorder);
-  background: var(--vscode-list-activeSelectionBackground);
-}
-
 .preset-card > .codicon {
   margin-top: 2px;
-  font-size: 16px;
-  color: var(--vscode-symbolIcon-classForeground);
+  flex-shrink: 0;
+  color: var(--vscode-symbolIcon-classForeground, var(--gc-info));
+  font-size: var(--gc-icon-size-md);
 }
 
 .preset-info {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
 }
 
 .preset-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
+  color: inherit;
+  font-size: var(--gc-font-size-body);
+  font-weight: var(--gc-font-weight-semibold);
 }
 
 .preset-desc {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  line-height: 1.4;
+  color: var(--gc-text-muted);
+  font-size: var(--gc-font-size-caption);
+  line-height: var(--gc-line-height-normal);
 }
 
-.dialog {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-widget-border);
-  border-radius: 8px;
-  min-width: 400px;
-  max-width: 500px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-}
-
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid var(--vscode-widget-border);
-}
-
-.dialog-header h4 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.close-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  border: none;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  border-radius: 4px;
-}
-
-.close-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-}
-
-.dialog-body {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px;
-  border-top: 1px solid var(--vscode-widget-border);
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-group label {
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.form-group input,
-.form-group textarea {
-  padding: 6px 10px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  color: var(--vscode-input-foreground);
-  font-size: 13px;
-  font-family: inherit;
-  resize: vertical;
-}
-
-.form-group input:focus,
-.form-group textarea:focus {
-  outline: none;
-  border-color: var(--vscode-focusBorder);
+.preset-card[aria-checked="true"] .preset-desc {
+  color: inherit;
+  opacity: var(--gc-opacity-muted);
 }
 
 .error-message {
-  padding: 8px 12px;
-  background: var(--vscode-inputValidation-errorBackground);
-  border: 1px solid var(--vscode-inputValidation-errorBorder);
-  border-radius: 4px;
-  color: var(--vscode-errorForeground);
-  font-size: 12px;
-}
-
-.primary-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: none;
-  border-radius: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.primary-btn:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.primary-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.secondary-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  border: none;
-  border-radius: 4px;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.secondary-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
-}
-
-/* Loading 动画 */
-.codicon-modifier-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  margin: 0;
 }
 </style>
