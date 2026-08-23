@@ -40,6 +40,7 @@
   - 修复 CP-SKIP 回收无变化备份目录前过早清除 `backupDirCreated`，导致首次 `rm` 失败后外层错误清理不再重试并遗留孤儿目录。
   - 修复弹窗迁移后的测试回归：`ConversationList`/`DirtyFilesConfirm`/`BranchSwitcherBar`/`ChannelSettings`/`CheckpointSettings`/`ModelManager` 的 6 个旧测试文件更新为公共 `Modal` 的 DOM 结构（`role="dialog"`、`.dialog-btn` 语义类），Esc 相关测试配合 `attachTo: document.body` 使事件冒泡到 Modal 的 document 级监听器。
   - 修复消息思考过程标题栏迁移为原生按钮后点击区域缩小的问题：`thought-toggle` 加 `flex: 1` 占满标题栏剩余空间，除右侧视图切换按钮外的整个标题区域（含中间空白）恢复为可直接点击折叠/展开。
+  - 修复公共 `Modal` 初始焦点逻辑使用 ES2022 `Array.prototype.at()` 与项目 ES2020 TypeScript 目标不兼容并阻断 CI 类型检查的问题（改为数组索引取末元素）。
 
 ## [1.5.5] - 2026-08-21
 

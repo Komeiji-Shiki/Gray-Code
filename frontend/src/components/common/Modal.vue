@@ -132,7 +132,7 @@ watch(visible, (val) => {
       const focusTarget = selectedTarget || (props.initialFocus === 'container'
         ? root
         : props.initialFocus === 'last'
-          ? focusables.at(-1)
+          ? focusables[focusables.length - 1]
           : focusables[0])
       ;(focusTarget || root).focus()
     })
