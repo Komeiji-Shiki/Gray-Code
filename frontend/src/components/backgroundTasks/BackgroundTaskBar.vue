@@ -195,8 +195,14 @@ async function openDetails(task: BackgroundTaskRecord): Promise<void> {
     <div v-if="expandedTerminal" class="task-output-panel">
       <div class="output-header">
         <span class="output-title">{{ expandedTerminal.command || t('components.backgroundTasks.outputTitle') }}</span>
-        <button class="chip-btn" @click="expandedTerminalId = null">
-          <i class="codicon codicon-close"></i>
+        <button
+          type="button"
+          class="chip-btn gc-icon-button"
+          :title="t('common.close')"
+          :aria-label="t('common.close')"
+          @click="expandedTerminalId = null"
+        >
+          <i class="codicon codicon-close" aria-hidden="true"></i>
         </button>
       </div>
       <pre class="output-content">{{ expandedTerminal.output || t('components.backgroundTasks.noOutput') }}</pre>
