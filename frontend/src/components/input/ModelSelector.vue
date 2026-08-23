@@ -4,7 +4,7 @@
  * 点击后向上弹出模型列表下拉框
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, getCurrentInstance } from 'vue'
 import { CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
 import { useSearchableDropdown } from '../../composables'
@@ -30,7 +30,17 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement>()
 
-const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<ModelInfo>(containerRef, {
+const {
+  isOpen,
+  toggle,
+  closeAndRestoreFocus,
+  inputRef,
+  triggerRef,
+  searchQuery,
+  filteredItems,
+  highlightedIndex,
+  handleKeydown: handleDropdownKeydown
+} = useSearchableDropdown<ModelInfo>(containerRef, {
   items: () => props.models,
   getKey: (m) => m.id,
   selectedKey: () => props.modelValue,
@@ -39,7 +49,14 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
 })
 
 void inputRef // used in template via ref="inputRef"
+void triggerRef // used in template via ref="triggerRef"
 const filteredModels = computed(() => filteredItems.value)
+const instanceId = getCurrentInstance()?.uid ?? 0
+const listboxId = `gc-model-listbox-${instanceId}`
+const accessibleLabel = computed(() => t('components.input.modelSelector.placeholder'))
+const activeOptionId = computed(() => isOpen.value && highlightedIndex.value >= 0
+  ? `gc-model-option-${instanceId}-${highlightedIndex.value}`
+  : undefined)
 
 const selectedModel = computed(() => props.models.find(m => m.id === props.modelValue))
 
@@ -56,7 +73,7 @@ function getModelDisplayTitle(model?: ModelInfo): string {
 
 function selectModel(model: ModelInfo) {
   emit('update:modelValue', model.id)
-  close()
+  closeAndRestoreFocus()
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -71,14 +88,21 @@ function handleKeydown(event: KeyboardEvent) {
     @keydown="handleKeydown"
   >
     <button
+      ref="triggerRef"
       type="button"
       class="model-trigger"
+      role="combobox"
+      aria-haspopup="listbox"
+      :aria-label="accessibleLabel"
+      :aria-expanded="isOpen"
+      :aria-controls="listboxId"
+      :aria-activedescendant="activeOptionId"
       :disabled="disabled"
             @click="toggle"
       :title="getModelDisplayTitle(selectedModel)"
     >
       <span class="model-id" :title="getModelDisplayTitle(selectedModel)">{{ modelValue || t('components.input.modelSelector.placeholder') }}</span>
-            <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
+            <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
     </button>
 
     <Transition name="dropdown">
@@ -89,17 +113,26 @@ function handleKeydown(event: KeyboardEvent) {
             v-model="searchQuery"
             type="text"
             class="search-input"
+            role="combobox"
+            aria-autocomplete="list"
+            :aria-label="t('components.input.modelSelector.searchPlaceholder')"
+            :aria-expanded="isOpen"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             :placeholder="t('components.input.modelSelector.searchPlaceholder')"
             @click.stop
           />
         </div>
 
         <CustomScrollbar :max-height="220" :width="5" :offset="1">
-          <div class="models-list">
+          <div :id="listboxId" class="models-list" role="listbox" :aria-label="accessibleLabel">
             <template v-if="filteredModels.length > 0">
               <div
                 v-for="(model, index) in filteredModels"
+                :id="`gc-model-option-${instanceId}-${index}`"
                 :key="model.id"
+                role="option"
+                :aria-selected="model.id === modelValue"
                                 :class="['model-item', { selected: model.id === modelValue, highlighted: index === highlightedIndex }]"
                 :title="getModelDisplayTitle(model)"
                 @click="selectModel(model)"
@@ -109,10 +142,10 @@ function handleKeydown(event: KeyboardEvent) {
                   <span class="model-name">{{ model.name || model.id }}</span>
                   <span v-if="model.name && model.name !== model.id" class="model-id-hint">{{ model.id }}</span>
                 </div>
-                <span v-if="model.id === modelValue" class="check-icon">✓</span>
+                <span v-if="model.id === modelValue" class="check-icon" aria-hidden="true">✓</span>
               </div>
             </template>
-            <div v-else class="empty-state">
+            <div v-else class="empty-state" role="status">
                             <span>{{ searchQuery ? t('components.input.modelSelector.noMatch') : t('components.input.modelSelector.addInSettings') }}</span>
             </div>
           </div>
@@ -129,7 +162,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .model-selector.disabled {
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
   pointer-events: none;
 }
 
@@ -139,22 +172,22 @@ function handleKeydown(event: KeyboardEvent) {
   justify-content: space-between;
   width: 100%;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  font-size: 12px;
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-body);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background-color 0.15s;
 }
 
 .model-trigger:hover:not(:disabled) {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .model-selector.open .model-trigger {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .model-id {
@@ -183,11 +216,11 @@ function handleKeydown(event: KeyboardEvent) {
   width: 180px;
   min-width: 180px;
   margin-bottom: 4px;
-  background: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
-  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
-  z-index: 1000;
+  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
+  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  border-radius: var(--gc-radius-sm);
+  box-shadow: var(--gc-shadow-md);
+  z-index: var(--gc-layer-popover);
   overflow: visible;
 }
 

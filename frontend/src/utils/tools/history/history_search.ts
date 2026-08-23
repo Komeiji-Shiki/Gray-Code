@@ -4,9 +4,10 @@
  * 搜索和读取被上下文总结压缩的历史对话内容
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
-import HistorySearchPanel from '../../../components/tools/history/history_search.vue'
+
+const HistorySearchPanel = lazyToolComponent(() => import('../../../components/tools/history/history_search.vue'))
 
 registerTool('history_search', {
   name: 'history_search',

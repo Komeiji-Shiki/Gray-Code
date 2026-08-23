@@ -191,15 +191,15 @@ describe('MessageRenderBlock thought 三段式视图', () => {
     const setThoughtViewMode = vi.fn()
     const wrapper = mountBlock({ setThoughtViewMode })
 
-    await wrapper.get('.thought-header').trigger('click')
+    await wrapper.get('.thought-toggle').trigger('click')
     expect(setThoughtViewMode).toHaveBeenLastCalledWith('medium')
 
     await wrapper.setProps({ thoughtViewMode: 'medium' })
-    await wrapper.get('.thought-header').trigger('click')
+    await wrapper.get('.thought-toggle').trigger('click')
     expect(setThoughtViewMode).toHaveBeenLastCalledWith('expanded')
 
     await wrapper.setProps({ thoughtViewMode: 'expanded' })
-    await wrapper.get('.thought-header').trigger('click')
+    await wrapper.get('.thought-toggle').trigger('click')
     expect(setThoughtViewMode).toHaveBeenLastCalledWith('collapsed')
 
     wrapper.unmount()

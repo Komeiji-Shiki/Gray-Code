@@ -313,6 +313,16 @@ describe('InputBox 双撤销栈跨栈边界（前端 M2）', () => {
     editor.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
+  function typeNativeInput(text: string, inputType: string) {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    editor.textContent = text
+    editor.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType,
+      data: text.slice(-1)
+    }))
+  }
+
   function pressUndo() {
     const editor = wrapper.get('.input-editor').element as HTMLDivElement
     editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true }))
@@ -393,6 +403,112 @@ describe('InputBox 双撤销栈跨栈边界（前端 M2）', () => {
     expect(editor.textContent).toBe('base')
 
     delete (document as { execCommand?: unknown }).execCommand
+  })
+
+  test('连续原生输入在合并窗口内只占一个撤销步骤，重做恢复整段', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    await nextTick()
+    await nextTick()
+
+    typeNativeInput('a', 'insertText')
+    typeNativeInput('ab', 'insertText')
+    typeNativeInput('abc', 'insertText')
+    await nextTick()
+
+    pressUndo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('')
+
+    pressRedo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('abc')
+  })
+
+  test('IME 中间输入合并为一次 composition 历史事务', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    await nextTick()
+    await nextTick()
+
+    editor.dispatchEvent(new Event('compositionstart', { bubbles: true }))
+    typeNativeInput('n', 'insertCompositionText')
+    typeNativeInput('你', 'insertCompositionText')
+    editor.dispatchEvent(new Event('compositionend', { bubbles: true }))
+    await Promise.resolve()
+    await nextTick()
+
+    pressUndo()
+    await nextTick()
+    await nextTick()
+    expect(editor.textContent).toBe('')
+  })
+
+  test('beforeinput historyUndo/historyRedo 接入自定义历史', async () => {
+    const editor = wrapper.get('.input-editor').element as HTMLDivElement
+    await nextTick()
+    typeText('base')
+    await nextTick()
+    typeText('base!')
+    await nextTick()
+
+    const undoEvent = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyUndo'
+    })
+    editor.dispatchEvent(undoEvent)
+    await nextTick()
+    await nextTick()
+    expect(undoEvent.defaultPrevented).toBe(true)
+    expect(editor.textContent).toBe('base')
+
+    const redoEvent = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'historyRedo'
+    })
+    editor.dispatchEvent(redoEvent)
+    await nextTick()
+    await nextTick()
+    expect(redoEvent.defaultPrevented).toBe(true)
+    expect(editor.textContent).toBe('base!')
+  })
+
+  test('点击上下文 chip 删除按钮后可通过 Ctrl+Z 恢复', async () => {
+    await nextTick()
+    await nextTick()
+    const inputBox = wrapper.findComponent(InputBox)
+    const vm = inputBox.vm as unknown as {
+      insertContextAtCaret: (context: {
+        id: string
+        type: 'file'
+        title: string
+        content: string
+        enabled: boolean
+        addedAt: number
+      }) => boolean
+    }
+    expect(vm.insertContextAtCaret({
+      id: 'ctx-undo',
+      type: 'file',
+      title: 'README.md',
+      content: '',
+      enabled: true,
+      addedAt: 1
+    })).toBe(true)
+    await nextTick()
+    expect(wrapper.find('.context-chip').exists()).toBe(true)
+
+    await wrapper.get('.context-chip__remove').trigger('click')
+    await nextTick()
+    await nextTick()
+    expect(wrapper.find('.context-chip').exists()).toBe(false)
+
+    pressUndo()
+    await nextTick()
+    await nextTick()
+    expect(wrapper.find('.context-chip').exists()).toBe(true)
   })
 })
 
@@ -505,5 +621,25 @@ describe('InputBox drag & drop', () => {
     editor.dispatchEvent(createDropEvent({ items: [fileItem(webp), fileItem(txt), fileItem(zip)] }))
 
     expect(wrapper.emitted('drop-files')![0]).toEqual([[webp]])
+  })
+})
+
+
+describe('InputBox accessibility semantics', () => {
+  test('editable host is a multiline textbox and disabled mode removes editability', async () => {
+    const wrapper = mount(InputBox, {
+      props: { nodes: [], placeholder: 'Ask GrayCode' }
+    })
+    const editor = wrapper.get('.input-editor')
+    expect(editor.attributes('role')).toBe('textbox')
+    expect(editor.attributes('aria-multiline')).toBe('true')
+    expect(editor.attributes('aria-label')).toBe('Ask GrayCode')
+    expect(editor.attributes('contenteditable')).toBe('true')
+
+    await wrapper.setProps({ disabled: true })
+    expect(editor.attributes('aria-disabled')).toBe('true')
+    expect(editor.attributes('contenteditable')).toBe('false')
+    expect(editor.attributes('tabindex')).toBe('-1')
+    wrapper.unmount()
   })
 })

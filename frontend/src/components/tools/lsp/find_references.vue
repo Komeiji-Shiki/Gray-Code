@@ -91,12 +91,17 @@ function isFileExpanded(path: string): boolean {
           class="file-group"
         >
           <!-- 文件头部 -->
-          <div class="file-header" @click="toggleFile(group.path)">
-            <span :class="['expand-icon', 'codicon', isFileExpanded(group.path) ? 'codicon-chevron-down' : 'codicon-chevron-right']"></span>
-            <span class="codicon codicon-file"></span>
+          <button
+            type="button"
+            class="file-header"
+            :aria-expanded="isFileExpanded(group.path)"
+            @click="toggleFile(group.path)"
+          >
+            <span :class="['expand-icon', 'codicon', isFileExpanded(group.path) ? 'codicon-chevron-down' : 'codicon-chevron-right']" aria-hidden="true"></span>
+            <span class="codicon codicon-file" aria-hidden="true"></span>
             <span class="file-path">{{ group.path }}</span>
             <span class="ref-count">({{ group.count }})</span>
-          </div>
+          </button>
           
           <!-- 引用列表 -->
           <div v-if="isFileExpanded(group.path)" class="ref-list">
@@ -198,8 +203,13 @@ function isFileExpanded(path: string): boolean {
 }
 
 .file-header {
+  width: 100%;
   display: flex;
   align-items: center;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
   gap: 4px;
   padding: 6px 8px;
   cursor: pointer;

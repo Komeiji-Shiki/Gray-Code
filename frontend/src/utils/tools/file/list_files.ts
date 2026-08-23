@@ -2,10 +2,11 @@
  * list_files 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
-import ListFilesComponent from '../../../components/tools/file/list_files.vue'
+
+const ListFilesComponent = lazyToolComponent(() => import('../../../components/tools/file/list_files.vue'))
 
 // 注册 list_files 工具
 registerTool('list_files', {

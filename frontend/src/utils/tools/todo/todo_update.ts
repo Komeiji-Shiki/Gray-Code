@@ -2,9 +2,10 @@
  * todo_update 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
-import TodoWritePanel from '../../../components/tools/todo/todo_write.vue'
+
+const TodoWritePanel = lazyToolComponent(() => import('../../../components/tools/todo/todo_write.vue'))
 
 type OpName = 'add' | 'set_status' | 'set_content' | 'cancel' | 'remove'
 

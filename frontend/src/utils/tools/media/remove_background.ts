@@ -4,11 +4,12 @@
  * 抠图工具的显示配置
  */
 
-import { registerTool } from '../../toolRegistry'
-import RemoveBackgroundPanel from '../../../components/tools/media/remove_background.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
+
+const RemoveBackgroundPanel = lazyToolComponent(() => import('../../../components/tools/media/remove_background.vue'))
 
 /**
  * 单个任务类型

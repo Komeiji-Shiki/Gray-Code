@@ -5,19 +5,14 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { defineAsyncComponent, onMounted, onBeforeUnmount, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { MessageList } from './components/message'
 import { InputArea } from './components/input'
 import BackgroundTaskBar from './components/backgroundTasks/BackgroundTaskBar.vue'
 import { WelcomePanel } from './components/home'
-import { HistoryPage } from './components/history'
-import { UsagePage } from './components/usage'
-import { SettingsPanel } from './components/settings'
 import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
 import UpdateModal from './components/common/UpdateModal.vue'
-import SubAgentMonitor from './components/subagents/SubAgentMonitor.vue'
 import Splash from './components/Splash.vue'
 import StartupBackdrop from './components/StartupBackdrop.vue'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
@@ -34,6 +29,13 @@ import { registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscod
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
 import { preloadChannelConfigs } from './services/channelConfigCache'
+
+// 非首屏页面只在对应视图首次打开时加载；v-if/v-show 继续负责原有挂载与保活语义。
+const SubAgentMonitor = defineAsyncComponent(() => import('./components/subagents/SubAgentMonitor.vue'))
+const MessageList = defineAsyncComponent(() => import('./components/message/MessageList.vue'))
+const HistoryPage = defineAsyncComponent(() => import('./components/history/HistoryPage.vue'))
+const UsagePage = defineAsyncComponent(() => import('./components/usage/UsagePage.vue'))
+const SettingsPanel = defineAsyncComponent(() => import('./components/settings/SettingsPanel.vue'))
 
 // i18n
 const { t } = useI18n()
@@ -428,9 +430,12 @@ onBeforeUnmount(() => {
         <div
           v-if="chatStore.autoSummaryStatus && chatStore.autoSummaryStatus.isSummarizing"
           class="auto-summary-panel"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
           :class="{ 'with-retry': chatStore.retryStatus && chatStore.retryStatus.isRetrying }"
         >
-          <i class="codicon codicon-loading spin auto-summary-icon"></i>
+          <i class="codicon codicon-loading spin auto-summary-icon" aria-hidden="true"></i>
           <span>
             {{
               chatStore.autoSummaryStatus.message ||
@@ -440,10 +445,12 @@ onBeforeUnmount(() => {
             }}
           </span>
           <button
+            type="button"
             class="auto-summary-cancel-btn"
             :title="t('app.autoSummaryPanel.cancelTooltip')"
+            :aria-label="t('app.autoSummaryPanel.cancelTooltip')"
             @click="handleCancelSummarize"
-          ><i class="codicon codicon-close"></i>
+          ><i class="codicon codicon-close" aria-hidden="true"></i>
           </button>
         </div>
         
@@ -451,19 +458,27 @@ onBeforeUnmount(() => {
         <div
           v-if="chatStore.retryStatus && chatStore.retryStatus.isRetrying"
           class="retry-panel"
+          role="status"
+          aria-live="polite"
         >
           <div class="retry-header">
-            <i class="codicon codicon-warning warning-icon"></i>
+            <i class="codicon codicon-warning warning-icon" aria-hidden="true"></i>
             <span class="retry-title">{{ t('app.retryPanel.title') }}</span>
             <div class="retry-progress-inline">
-              <i class="codicon codicon-sync spin"></i>
+              <i class="codicon codicon-sync spin" aria-hidden="true"></i>
               <span>{{ chatStore.retryStatus.attempt }}/{{ chatStore.retryStatus.maxAttempts }}</span>
               <span v-if="chatStore.retryStatus.nextRetryIn" class="retry-countdown">
                 ({{ Math.ceil((chatStore.retryStatus.nextRetryIn || 0) / 1000) }}s)
               </span>
             </div>
-            <button class="retry-cancel-btn" @click="handleCancel" :title="t('app.retryPanel.cancelTooltip')">
-              <i class="codicon codicon-close"></i>
+            <button
+              type="button"
+              class="retry-cancel-btn"
+              @click="handleCancel"
+              :title="t('app.retryPanel.cancelTooltip')"
+              :aria-label="t('app.retryPanel.cancelTooltip')"
+            >
+              <i class="codicon codicon-close" aria-hidden="true"></i>
             </button>
           </div>
           <div class="retry-body">
@@ -556,12 +571,12 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-  background: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.12));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
+  box-shadow: var(--gc-shadow-sm);
 }
 
 .auto-summary-icon {
@@ -585,12 +600,12 @@ onBeforeUnmount(() => {
   color: var(--vscode-foreground);
   opacity: 0.75;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .auto-summary-cancel-btn:hover {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .auto-summary-panel.with-retry {
@@ -605,10 +620,10 @@ onBeforeUnmount(() => {
   left: 12px;
   right: 12px;
   z-index: 100;
-  background: var(--vscode-textBlockQuote-background, rgba(127, 127, 127, 0.1));
-  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
+  box-shadow: var(--gc-shadow-md);
   overflow: hidden;
   max-height: 200px;
 }
@@ -657,16 +672,18 @@ onBeforeUnmount(() => {
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 4px;
-  color: var(--vscode-foreground);
+  border-radius: var(--gc-radius-sm);
+  color: var(--gc-text-primary);
   cursor: pointer;
   opacity: 0.7;
-  transition: opacity 0.15s, background 0.15s;
+  transition:
+    opacity var(--gc-duration-fast) var(--gc-ease-standard),
+    background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .retry-cancel-btn:hover {
   opacity: 1;
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .retry-body {

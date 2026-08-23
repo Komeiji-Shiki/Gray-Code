@@ -62,11 +62,19 @@ function handleDownload() {
 </script>
 
 <template>
-  <div :class="['attachment-item', { compact, clickable: canPreview }]" @click="handlePreview">
+  <div
+    :class="['attachment-item', { compact, clickable: canPreview }]"
+    :role="canPreview ? 'button' : undefined"
+    :tabindex="canPreview ? 0 : undefined"
+    :aria-label="canPreview ? `${t('components.attachment.preview')}: ${attachment.name}` : undefined"
+    @click="handlePreview"
+    @keydown.enter.prevent="handlePreview"
+    @keydown.space.prevent="handlePreview"
+  >
     <!-- 缩略图或图标 -->
     <div class="attachment-thumbnail">
       <img v-if="thumbnailUrl" :src="thumbnailUrl" :alt="attachment.name" class="thumbnail-image" />
-      <i v-else :class="['codicon', typeIconClass, 'thumbnail-icon']"></i>
+      <i v-else :class="['codicon', typeIconClass, 'thumbnail-icon']" aria-hidden="true"></i>
     </div>
 
     <!-- 文件信息 -->
@@ -111,12 +119,14 @@ function handleDownload() {
 .attachment-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 8px;
-  transition: all 0.15s;
+  gap: var(--gc-space-3);
+  padding: var(--gc-space-2) var(--gc-space-3);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-lg);
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard);
   min-width: 200px;
   max-width: 400px;
 }

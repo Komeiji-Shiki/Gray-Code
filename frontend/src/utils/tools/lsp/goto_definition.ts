@@ -2,9 +2,10 @@
  * goto_definition 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
-import GotoDefinitionComponent from '../../../components/tools/lsp/goto_definition.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
+
+const GotoDefinitionComponent = lazyToolComponent(() => import('../../../components/tools/lsp/goto_definition.vue'))
 
 // 注册 goto_definition 工具
 registerTool('goto_definition', {

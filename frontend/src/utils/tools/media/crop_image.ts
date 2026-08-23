@@ -4,11 +4,12 @@
  * 裁切图片工具的显示配置
  */
 
-import { registerTool } from '../../toolRegistry'
-import CropImagePanel from '../../../components/tools/media/crop_image.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
+
+const CropImagePanel = lazyToolComponent(() => import('../../../components/tools/media/crop_image.vue'))
 
 /**
  * 单个任务类型

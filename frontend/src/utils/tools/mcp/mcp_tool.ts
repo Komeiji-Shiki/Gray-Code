@@ -9,11 +9,12 @@
  * 不再手写 startsWith('mcp__') 或 split('__')。
  */
 
-import { toolRegistry, type ToolConfig } from '../../toolRegistry'
-import McpToolComponent from '../../../components/tools/mcp/mcp_tool.vue'
+import { lazyToolComponent, toolRegistry, type ToolConfig } from '../../toolRegistry'
 // WP12：统一使用 codec 编解码 MCP 工具名
 import { isMcpToolName, decodeMcpToolName } from './mcpToolNameCodec'
 import { t } from '../../../i18n'
+
+const McpToolComponent = lazyToolComponent(() => import('../../../components/tools/mcp/mcp_tool.vue'))
 
 /**
  * 解析 MCP 工具名称

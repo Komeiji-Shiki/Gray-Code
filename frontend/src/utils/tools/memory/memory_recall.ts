@@ -1,9 +1,10 @@
 /**
  * memory_recall 工具注册
  */
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
-import MemoryResult from '../../../components/tools/memory/MemoryResult.vue'
+
+const MemoryResult = lazyToolComponent(() => import('../../../components/tools/memory/MemoryResult.vue'))
 
 registerTool('memory_recall', {
   name: 'memory_recall',

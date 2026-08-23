@@ -2,11 +2,12 @@
  * apply_diff 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
-import ApplyDiffComponent from '../../../components/tools/file/apply_diff.vue'
+
+const ApplyDiffComponent = lazyToolComponent(() => import('../../../components/tools/file/apply_diff.vue'))
 
 // 单个 diff 块类型
 interface DiffBlock {

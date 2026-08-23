@@ -2,9 +2,10 @@
  * read_file 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
-import ReadFileComponent from '../../../components/tools/file/read_file.vue'
+
+const ReadFileComponent = lazyToolComponent(() => import('../../../components/tools/file/read_file.vue'))
 
 export function formatReadFileDescription(args: Record<string, unknown>): string {
   const formatRequest = (request: Record<string, unknown>): string => {

@@ -3,7 +3,8 @@
  * 提示框组件
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, getCurrentInstance, provide, toRef } from 'vue'
+import { TOOLTIP_CONTENT_KEY } from './tooltipContext'
 
 const props = withDefaults(defineProps<{
   content?: string
@@ -19,6 +20,10 @@ const props = withDefaults(defineProps<{
 })
 
 const visible = ref(false)
+const tooltipId = `gc-tooltip-${getCurrentInstance()?.uid ?? 0}`
+
+// Slotted controls can consume the same text as their accessible name.
+provide(TOOLTIP_CONTENT_KEY, toRef(props, 'content'))
 
 const tooltipClass = computed(() => {
   return ['tooltip', props.placement]
@@ -36,12 +41,21 @@ function hide() {
 </script>
 
 <template>
-  <div class="tooltip-wrapper" @mouseenter="show" @mouseleave="hide" @focusin="show" @focusout="hide">
+  <div
+    class="tooltip-wrapper"
+    @mouseenter="show"
+    @mouseleave="hide"
+    @focusin="show"
+    @focusout="hide"
+    @keydown.esc="hide"
+  >
     <slot />
     <Transition name="tooltip-fade">
       <div
         v-if="visible"
+        :id="tooltipId"
         ref="tooltipRef"
+        role="tooltip"
         :class="[tooltipClass, { multiline }]"
         :style="{ maxWidth }"
       >
@@ -62,16 +76,16 @@ function hide() {
 
 .tooltip {
   position: absolute;
-  z-index: 1000;
+  z-index: var(--gc-layer-popover);
   max-width: 360px;
   padding: 6px 10px;
-  background: var(--vscode-editorHoverWidget-background);
-  border: 1px solid var(--vscode-editorHoverWidget-border);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--vscode-editorHoverWidget-foreground);
+  background: var(--vscode-editorHoverWidget-background, var(--gc-surface-raised));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--gc-border-strong));
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-body);
+  color: var(--vscode-editorHoverWidget-foreground, var(--gc-text-primary));
   white-space: nowrap;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--gc-shadow-sm);
   pointer-events: none;
 }
 
@@ -188,7 +202,7 @@ function hide() {
 /* 动画 */
 .tooltip-fade-enter-active,
 .tooltip-fade-leave-active {
-  transition: opacity 0.15s;
+  transition: opacity var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .tooltip-fade-enter-from,

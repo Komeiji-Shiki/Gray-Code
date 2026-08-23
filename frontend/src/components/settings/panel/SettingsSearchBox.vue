@@ -8,7 +8,7 @@
  * - 仅保留模板 ref 与 DOM 副作用：外部点击关闭下拉、选中项滚动跟随、
  *   Esc/回车/方向键的键盘交互（通过 emits 回传父组件处理）。
  */
-import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { computed, getCurrentInstance, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { t } from '@/i18n'
 import type { SettingsTab } from '@/stores/settingsStore'
 import type { SearchIndexEntry } from './types'
@@ -32,11 +32,22 @@ const emit = defineEmits<{
 
 const searchRootRef = ref<HTMLElement>()
 const searchInputRef = ref<HTMLInputElement>()
+const instanceId = getCurrentInstance()?.uid ?? 0
+const resultsId = `gc-settings-search-results-${instanceId}`
+
+function getResultId(index: number): string {
+  return `gc-settings-search-result-${instanceId}-${index}`
+}
+
+const activeResultId = computed(() => {
+  if (!props.focused || !props.searchActive || props.results.length === 0) return undefined
+  return getResultId(Math.min(props.activeIndex, props.results.length - 1))
+})
 
 // M-2：键盘导航/鼠标悬停时让选中项保持在下拉可视区域内（结果超出 max-height 时跟随滚动）
 watch(() => props.activeIndex, () => {
   nextTick(() => {
-    document.querySelector('.settings-search-result.active')?.scrollIntoView({ block: 'nearest' })
+    searchRootRef.value?.querySelector('.settings-search-result.active')?.scrollIntoView({ block: 'nearest' })
   })
 })
 
@@ -87,11 +98,17 @@ onUnmounted(() => {
       class="settings-search-box"
       :class="{ focused, 'has-query': !!query }"
     >
-      <i class="codicon codicon-search settings-search-icon"></i>
+      <i class="codicon codicon-search settings-search-icon" aria-hidden="true"></i>
       <input
         ref="searchInputRef"
         :value="query"
         type="text"
+        role="combobox"
+        aria-autocomplete="list"
+        :aria-label="t('components.settings.settingsPanel.search.placeholder')"
+        :aria-expanded="focused"
+        :aria-controls="resultsId"
+        :aria-activedescendant="activeResultId"
         :placeholder="t('components.settings.settingsPanel.search.placeholder')"
         @focus="emit('update:focused', true)"
         @input="emit('update:query', ($event.target as HTMLInputElement).value)"
@@ -102,38 +119,46 @@ onUnmounted(() => {
       />
       <button
         v-if="query"
+        type="button"
         class="settings-search-clear"
         :title="t('components.settings.settingsPanel.search.clear')"
+        :aria-label="t('components.settings.settingsPanel.search.clear')"
         @click="clearSearch"
       >
-        <i class="codicon codicon-close"></i>
+        <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
     <Transition name="settings-search-dropdown">
       <div
         v-if="focused"
+        :id="resultsId"
         class="settings-search-results"
+        role="listbox"
+        :aria-label="t('components.settings.settingsPanel.search.placeholder')"
         :class="{ 'is-empty': searchActive && results.length === 0 }"
       >
         <template v-if="searchActive && results.length > 0">
           <div
             v-for="(result, index) in results"
+            :id="getResultId(index)"
             :key="result.key"
             class="settings-search-result"
+            role="option"
+            :aria-selected="index === activeIndex"
             :class="{ active: index === activeIndex }"
             @mousedown.prevent="emit('open', result)"
             @mouseenter="emit('update:activeIndex', index)"
           >
-            <i :class="['codicon', tabIcon(result.tab)]"></i>
+            <i :class="['codicon', tabIcon(result.tab)]" aria-hidden="true"></i>
             <span class="settings-search-result-label">{{ t(result.labelKey) }}</span>
             <span class="settings-search-result-tab">{{ t(`components.settings.tabs.${result.tab}`) }}</span>
           </div>
         </template>
-        <div v-else-if="searchActive" class="settings-search-no-results">
+        <div v-else-if="searchActive" class="settings-search-no-results" role="status">
           <i class="codicon codicon-search"></i>
           {{ t('components.settings.settingsPanel.search.noResults') }}
         </div>
-        <div v-else class="settings-search-no-results">
+        <div v-else class="settings-search-no-results" role="status">
           <i class="codicon codicon-search"></i>
           {{ t('components.settings.settingsPanel.search.hint') }}
         </div>
@@ -158,16 +183,18 @@ onUnmounted(() => {
   gap: 6px;
   height: 26px;
   padding: 0 8px;
-  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, #3c3c3c));
-  border-radius: 4px;
-  background: var(--vscode-input-background, #3c3c3c);
-  color: var(--vscode-input-foreground, var(--vscode-foreground));
-  transition: border-color 0.15s, box-shadow 0.15s;
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  transition:
+    border-color var(--gc-duration-fast) var(--gc-ease-standard),
+    box-shadow var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .settings-search-box.focused {
-  border-color: var(--vscode-focusBorder, #3794ff);
-  box-shadow: 0 0 0 1px var(--vscode-focusBorder, #3794ff);
+  border-color: var(--gc-focus-border);
+  box-shadow: 0 0 0 1px var(--gc-focus-border);
 }
 
 .settings-search-icon {
@@ -200,7 +227,7 @@ onUnmounted(() => {
   height: 16px;
   padding: 0;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--gc-radius-xs);
   background: transparent;
   color: var(--vscode-descriptionForeground, #9d9d9d);
   cursor: pointer;
@@ -208,8 +235,8 @@ onUnmounted(() => {
 }
 
 .settings-search-clear:hover {
-  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.2));
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .settings-search-clear .codicon {
@@ -221,16 +248,16 @@ onUnmounted(() => {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 2147482000;
+  z-index: var(--gc-layer-popover);
   max-height: 300px;
   overflow-y: auto;
   padding: 4px 0;
-  background: var(--vscode-dropdown-background, var(--vscode-editorWidget-background, #252526));
-  border: 1px solid var(--vscode-dropdown-border, var(--vscode-widget-border, #454545));
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
-  font-size: 12px;
-  color: var(--vscode-foreground);
+  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
+  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  border-radius: var(--gc-radius-sm);
+  box-shadow: var(--gc-shadow-md);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-primary);
 }
 
 .settings-search-result {
@@ -292,7 +319,9 @@ onUnmounted(() => {
 
 .settings-search-dropdown-enter-active,
 .settings-search-dropdown-leave-active {
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition:
+    opacity var(--gc-duration-fast) var(--gc-ease-standard),
+    transform var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .settings-search-dropdown-enter-from,

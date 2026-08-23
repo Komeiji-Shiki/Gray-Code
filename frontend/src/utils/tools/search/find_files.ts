@@ -2,10 +2,11 @@
  * find_files 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
-import FindFilesComponent from '../../../components/tools/search/find_files.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
 import { getToolDisplayName } from '../../toolLocalization'
+
+const FindFilesComponent = lazyToolComponent(() => import('../../../components/tools/search/find_files.vue'))
 
 // 注册 find_files 工具
 registerTool('find_files', {

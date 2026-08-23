@@ -2,10 +2,11 @@
  * create_plan 工具注册（前端展示）
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { t } from '../../../i18n'
 import { getToolMetaDescription } from '../toolMetaLookup'
-import TodoWritePanel from '../../../components/tools/todo/todo_write.vue'
+
+const TodoWritePanel = lazyToolComponent(() => import('../../../components/tools/todo/todo_write.vue'))
 
 registerTool('create_plan', {
   name: 'create_plan',

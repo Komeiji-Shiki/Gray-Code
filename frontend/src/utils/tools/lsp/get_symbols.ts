@@ -2,10 +2,11 @@
  * get_symbols 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
-import GetSymbolsComponent from '../../../components/tools/lsp/get_symbols.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
 import { getToolDisplayName } from '../../toolLocalization'
+
+const GetSymbolsComponent = lazyToolComponent(() => import('../../../components/tools/lsp/get_symbols.vue'))
 
 // 注册 get_symbols 工具
 registerTool('get_symbols', {

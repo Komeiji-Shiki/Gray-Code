@@ -605,10 +605,15 @@ async function handleCreateCheckpoint() {
 
 const tokenRingColor = computed(() => {
   const percent = chatStore.tokenUsagePercent
-  if (percent >= 90) return '#f14c4c'
-  if (percent >= 75) return '#cca700'
-  return '#89d185'
+  if (percent >= 90) return 'var(--gc-danger)'
+  if (percent >= 75) return 'var(--gc-warning)'
+  return 'var(--gc-success)'
 })
+
+const tokenUsageAriaLabel = computed(() => [
+  `${t('components.input.tokenUsage')}: ${chatStore.tokenUsagePercent.toFixed(1)}%`,
+  `${t('components.input.context')}: ${formatNumber(chatStore.usedTokens)} / ${formatNumber(chatStore.maxContextTokens)}`
+].join('; '))
 
 const ringRadius = 8
 const ringCircumference = 2 * Math.PI * ringRadius
@@ -686,6 +691,8 @@ watch(() => settingsStore.promptModesVersion, () => {
         :nodes="editorNodes"
         :disabled="false"
         :placeholder="props.placeholder"
+        :popup-expanded="showFilePicker"
+        popup-controls="gc-file-picker-listbox"
         @update:nodes="handleNodesUpdate"
         @remove-context="handleRemovePromptContextItem"
         @send="handleSend"
@@ -718,6 +725,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           <IconButton
             icon="codicon-attach"
             size="small"
+            :aria-label="t('components.input.attachFile')"
             :disabled="props.uploading"
             class="attach-button"
             @click="handleAttachFile"
@@ -732,6 +740,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           <IconButton
             icon="codicon-save"
             size="small"
+            :aria-label="t('components.input.createCheckpoint')"
             :loading="isCreatingCheckpoint"
             :disabled="!chatStore.currentConversationId || isCreatingCheckpoint || chatStore.isWaitingForResponse"
             class="checkpoint-button"
@@ -748,6 +757,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           <IconButton
             icon="codicon-fold"
             size="small"
+            :aria-label="t('components.input.summarizeContext')"
             :disabled="chatStore.isWaitingForResponse || chatStore.usedTokens === 0 || isSummarizing"
             :loading="isSummarizing"
             class="summarize-button"
@@ -755,8 +765,14 @@ watch(() => settingsStore.promptModesVersion, () => {
           />
         </Tooltip>
 
-        <div class="token-ring-wrapper">
-          <svg class="token-ring" width="22" height="22" viewBox="0 0 22 22">
+        <div
+          class="token-ring-wrapper"
+          role="img"
+          tabindex="0"
+          :aria-label="tokenUsageAriaLabel"
+          aria-describedby="token-usage-tooltip"
+        >
+          <svg class="token-ring" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false">
             <circle
               cx="11"
               cy="11"
@@ -778,7 +794,7 @@ watch(() => settingsStore.promptModesVersion, () => {
               transform="rotate(-90 11 11)"
             />
           </svg>
-          <div class="token-tooltip">
+          <div id="token-usage-tooltip" class="token-tooltip" role="tooltip">
             <div class="token-tooltip-row">
               <span class="token-tooltip-label">{{ t('components.input.tokenUsage') }}</span>
               <span class="token-tooltip-value">{{ chatStore.tokenUsagePercent.toFixed(1) }}%</span>
@@ -908,7 +924,8 @@ watch(() => settingsStore.promptModesVersion, () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: default;
+  min-width: var(--gc-control-height-sm);
+  min-height: var(--gc-control-height-sm);
 }
 
 .token-ring {
@@ -922,17 +939,20 @@ watch(() => settingsStore.promptModesVersion, () => {
   padding: 4px 8px;
   background: var(--vscode-editorWidget-background);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 3px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  border-radius: var(--gc-radius-sm);
+  box-shadow: var(--gc-shadow-sm);
   white-space: nowrap;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s, visibility 0.15s;
-  z-index: 1000;
+  transition:
+    opacity var(--gc-duration-fast) var(--gc-ease-standard),
+    visibility var(--gc-duration-fast) var(--gc-ease-standard);
+  z-index: var(--gc-layer-popover);
   pointer-events: none;
 }
 
-.token-ring-wrapper:hover .token-tooltip {
+.token-ring-wrapper:hover .token-tooltip,
+.token-ring-wrapper:focus-visible .token-tooltip {
   opacity: 1;
   visibility: visible;
 }
@@ -960,7 +980,7 @@ watch(() => settingsStore.promptModesVersion, () => {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: 10px;
+  font-size: var(--gc-font-size-micro);
   line-height: 1.5;
 }
 
@@ -971,6 +991,6 @@ watch(() => settingsStore.promptModesVersion, () => {
 .token-tooltip-value {
   color: var(--vscode-foreground);
   font-family: var(--vscode-editor-font-family);
-  font-size: 10px;
+  font-size: var(--gc-font-size-micro);
 }
 </style>

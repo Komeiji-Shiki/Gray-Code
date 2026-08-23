@@ -1,0 +1,108 @@
+:root {
+  /* Spacing: 4px base grid. */
+  --gc-space-0: 0;
+  --gc-space-1: 4px;
+  --gc-space-2: 8px;
+  --gc-space-3: 12px;
+  --gc-space-4: 16px;
+  --gc-space-5: 20px;
+  --gc-space-6: 24px;
+  --gc-space-8: 32px;
+
+  /* Typography: compact enough for a VS Code webview without dropping below 10px. */
+  --gc-font-size-micro: 10px;
+  --gc-font-size-caption: 11px;
+  --gc-font-size-body: 12px;
+  --gc-font-size-control: 13px;
+  --gc-font-size-title: 14px;
+  --gc-font-size-display: 20px;
+  --gc-line-height-tight: 1.25;
+  --gc-line-height-normal: 1.5;
+  --gc-line-height-relaxed: 1.65;
+  --gc-font-weight-regular: 400;
+  --gc-font-weight-medium: 500;
+  --gc-font-weight-semibold: 600;
+
+  /* Shape and control density. */
+  --gc-radius-xs: 2px;
+  --gc-radius-sm: 4px;
+  --gc-radius-md: 6px;
+  --gc-radius-lg: 8px;
+  --gc-radius-pill: 999px;
+  --gc-control-height-sm: 24px;
+  --gc-control-height-md: 28px;
+  --gc-control-height-lg: 32px;
+  --gc-icon-size-sm: 14px;
+  --gc-icon-size-md: 16px;
+  --gc-icon-size-lg: 18px;
+
+  /* Motion. */
+  --gc-duration-instant: 80ms;
+  --gc-duration-fast: 120ms;
+  --gc-duration-normal: 180ms;
+  --gc-duration-slow: 260ms;
+  --gc-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --gc-ease-emphasized: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Theme-derived semantic colors. VS Code remains the source of truth. */
+  --gc-surface-base: var(--vscode-editor-background);
+  --gc-surface-panel: var(--vscode-sideBar-background, var(--gc-surface-base));
+  --gc-surface-raised: var(--vscode-editorWidget-background, var(--gc-surface-panel));
+  --gc-surface-muted: var(--vscode-editor-inactiveSelectionBackground, color-mix(in srgb, var(--vscode-foreground) 6%, transparent));
+  --gc-surface-hover: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+  --gc-surface-active: var(--vscode-toolbar-activeBackground, color-mix(in srgb, var(--vscode-foreground) 14%, transparent));
+  --gc-surface-selected: var(--vscode-list-activeSelectionBackground, var(--gc-surface-active));
+
+  --gc-text-primary: var(--vscode-foreground);
+  --gc-text-muted: var(--vscode-descriptionForeground, color-mix(in srgb, var(--vscode-foreground) 68%, transparent));
+  --gc-text-disabled: var(--vscode-disabledForeground, color-mix(in srgb, var(--vscode-foreground) 45%, transparent));
+  --gc-text-on-accent: var(--vscode-button-foreground);
+
+  --gc-border-subtle: var(--vscode-panel-border, color-mix(in srgb, var(--vscode-foreground) 18%, transparent));
+  --gc-border-control: var(--vscode-input-border, var(--gc-border-subtle));
+  --gc-border-strong: var(--vscode-widget-border, color-mix(in srgb, var(--vscode-foreground) 32%, transparent));
+  --gc-focus-border: var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+
+  --gc-accent: var(--vscode-button-background, var(--vscode-textLink-foreground));
+  --gc-accent-hover: var(--vscode-button-hoverBackground, var(--gc-accent));
+  --gc-link: var(--vscode-textLink-foreground);
+  --gc-success: var(--vscode-testing-iconPassed, var(--vscode-terminal-ansiGreen));
+  --gc-warning: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow));
+  --gc-danger: var(--vscode-errorForeground, var(--vscode-testing-iconFailed));
+  --gc-info: var(--vscode-charts-blue, var(--gc-link));
+
+  --gc-shadow-sm: 0 2px 8px color-mix(in srgb, #000 22%, transparent);
+  --gc-shadow-md: 0 6px 20px color-mix(in srgb, #000 32%, transparent);
+  --gc-opacity-muted: 0.72;
+  --gc-opacity-disabled: 0.45;
+
+  /* Shared stacking order. Local drawing layers should stay below 100. */
+  --gc-layer-sticky: 100;
+  --gc-layer-popover: 1000;
+  --gc-layer-modal: 2000;
+  --gc-layer-notification: 3000;
+  --gc-layer-splash: 4000;
+
+  /* Backward-compatible aliases used by existing components. */
+  --spacing-xs: var(--gc-space-1);
+  --spacing-sm: var(--gc-space-2);
+  --spacing-md: var(--gc-space-4);
+  --spacing-lg: var(--gc-space-6);
+  --spacing-xl: var(--gc-space-8);
+  --radius-sm: var(--gc-radius-xs);
+  --radius-md: var(--gc-radius-sm);
+  --radius-lg: var(--gc-radius-md);
+  --transition-fast: var(--gc-duration-fast) var(--gc-ease-standard);
+  --transition-normal: var(--gc-duration-normal) var(--gc-ease-standard);
+}
+
+@media (forced-colors: active) {
+  :root {
+    --gc-border-subtle: CanvasText;
+    --gc-border-control: CanvasText;
+    --gc-border-strong: CanvasText;
+    --gc-focus-border: Highlight;
+    --gc-accent: Highlight;
+    --gc-text-on-accent: HighlightText;
+  }
+}

@@ -468,4 +468,15 @@ describe('InputArea DeepSeek Vision 拆分复选框', () => {
     await nextTick()
     expect(wrapper.find('.vision-split-toggle').exists()).toBe(false)
   })
+
+  test('token ring is keyboard focusable and exposes current usage as one accessible label', async () => {
+    wrapper = mountWithParent(async () => true)
+    await nextTick()
+
+    const tokenRing = wrapper.get('.token-ring-wrapper')
+    expect(tokenRing.attributes('role')).toBe('img')
+    expect(tokenRing.attributes('tabindex')).toBe('0')
+    expect(tokenRing.attributes('aria-label')).toContain('components.input.tokenUsage: 0.0%')
+    expect(tokenRing.attributes('aria-label')).toContain('0 / 100')
+  })
 })

@@ -26,6 +26,7 @@ const en: LanguageMessages = {
         warning: 'Warning',
         info: 'Info',
         close: 'Close',
+        dialog: 'Dialog',
         back: 'Back',
         next: 'Next',
         done: 'Done',
@@ -239,7 +240,8 @@ const en: LanguageMessages = {
             newChat: 'New Chat',
             chat: 'Chat',
             newTab: 'New Tab',
-            closeTab: 'Close Tab'
+            closeTab: 'Close Tab',
+            tabListLabel: 'Conversation tabs'
         },
 
         usage: {
@@ -590,6 +592,7 @@ const en: LanguageMessages = {
                     awaitingApproval: 'Awaiting approval',
                     executing: 'Executing',
                     awaitingApply: 'Awaiting apply',
+                    background: 'Running in background',
                     success: 'Success',
                     error: sharedEn.components.message.responseViewer.toolStatuses.error,
                     warning: 'Warning',

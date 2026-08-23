@@ -2,10 +2,11 @@
  * execute_command 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
-import ExecuteCommandComponent from '../../../components/tools/terminal/execute_command.vue'
+
+const ExecuteCommandComponent = lazyToolComponent(() => import('../../../components/tools/terminal/execute_command.vue'))
 
 // 注册 execute_command 工具
 registerTool('execute_command', {

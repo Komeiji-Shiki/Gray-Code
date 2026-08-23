@@ -24,6 +24,7 @@ export function useSearchableDropdown<T>(containerRef: Ref<HTMLElement | undefin
   const searchQuery = ref('')
   const highlightedIndex = ref(-1)
   const inputRef = ref<HTMLInputElement>()
+  const triggerRef = ref<HTMLButtonElement>()
   // 打开后的 focus 定时器：保存句柄以便关闭/卸载时清除
   let focusTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -73,6 +74,11 @@ export function useSearchableDropdown<T>(containerRef: Ref<HTMLElement | undefin
     highlightedIndex.value = filteredItems.value.length > 0 ? 0 : -1
   })
 
+  function closeAndRestoreFocus() {
+    close()
+    queueMicrotask(() => triggerRef.value?.focus())
+  }
+
   function selectHighlighted(): T | null {
     if (highlightedIndex.value < 0 || highlightedIndex.value >= filteredItems.value.length) return null
     return filteredItems.value[highlightedIndex.value]
@@ -104,7 +110,7 @@ export function useSearchableDropdown<T>(containerRef: Ref<HTMLElement | undefin
       }
       case 'Escape':
         event.preventDefault()
-        close()
+        closeAndRestoreFocus()
         break
     }
   }
@@ -116,9 +122,11 @@ export function useSearchableDropdown<T>(containerRef: Ref<HTMLElement | undefin
     toggle,
 
     inputRef,
+    triggerRef,
     searchQuery,
     filteredItems,
 
+    closeAndRestoreFocus,
     highlightedIndex,
     handleKeydown
   }

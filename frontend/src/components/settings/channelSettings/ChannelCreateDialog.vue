@@ -26,8 +26,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div v-if="show" class="config-dialog" @click="emit('cancel')">
-    <div class="dialog-content" @click.stop>
+  <div v-if="show" class="config-dialog" @click.self="emit('cancel')">
+    <div class="dialog-content">
       <h4>{{ t('components.settings.channelSettings.dialog.new.title') }}</h4>
 
       <div class="form-group">

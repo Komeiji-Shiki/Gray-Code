@@ -2,11 +2,12 @@
  * delete_code 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
-import DeleteCodeComponent from '../../../components/tools/file/delete_code.vue'
+
+const DeleteCodeComponent = lazyToolComponent(() => import('../../../components/tools/file/delete_code.vue'))
 
 // 单个删除条目类型
 interface DeleteEntry {

@@ -257,10 +257,15 @@ defineExpose({
 
 <template>
   <Transition name="slide-up">
-    <div v-if="visible" class="file-picker-panel">
+    <div
+      v-if="visible"
+      class="file-picker-panel"
+      role="region"
+      :aria-label="t('components.input.filePicker.title')"
+    >
       <!-- 头部 -->
       <div class="panel-header">
-        <i class="codicon codicon-search"></i>
+        <i class="codicon codicon-search" aria-hidden="true"></i>
         <span class="header-title">{{ t('components.input.filePicker.title') }}</span>
         <span class="header-subtitle">{{ t('components.input.filePicker.subtitle') }}</span>
         <span v-if="query" class="query-badge">{{ query }}</span>
@@ -268,15 +273,16 @@ defineExpose({
       
       <!-- 文件列表 -->
       <CustomScrollbar ref="scrollbarRef" class="file-list">
+        <div id="gc-file-picker-listbox" class="file-options" role="listbox" :aria-label="t('components.input.filePicker.title')">
         <!-- 加载中 -->
-        <div v-if="isLoading" class="loading-state">
-          <i class="codicon codicon-loading codicon-modifier-spin"></i>
+        <div v-if="isLoading" class="loading-state" role="status" aria-live="polite">
+          <i class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i>
           <span>{{ t('components.input.filePicker.loading') }}</span>
         </div>
         
         <!-- 空状态 -->
-        <div v-else-if="files.length === 0" class="empty-state">
-          <i class="codicon codicon-info"></i>
+        <div v-else-if="files.length === 0" class="empty-state" role="status">
+          <i class="codicon codicon-info" aria-hidden="true"></i>
           <span>{{ t('components.input.filePicker.empty') }}</span>
         </div>
         
@@ -285,17 +291,21 @@ defineExpose({
         <template v-else>
           <div
             v-for="(file, index) in highlightedPaths"
+            :id="`gc-file-picker-option-${index}`"
             :key="file.path"
             class="file-item"
+            role="option"
+            :aria-selected="index === selectedIndex"
             :class="{ selected: index === selectedIndex, 'is-open': file.isOpen }"
             @click="selectFile(file, $event)"
             @mouseenter="selectedIndex = index"
           >
-            <i :class="getFileIcon(file)"></i>
+            <i :class="getFileIcon(file)" aria-hidden="true"></i>
             <span class="file-path" v-html="file.highlightedPath"></span>
             <span v-if="file.isOpen" class="open-badge">•</span>
           </div>
         </template>
+        </div>
       </CustomScrollbar>
       
       <!-- 底部提示 -->
@@ -318,11 +328,11 @@ defineExpose({
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--vscode-editorWidget-background);
-  border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 100;
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-strong);
+  border-radius: var(--gc-radius-md);
+  box-shadow: var(--gc-shadow-md);
+  z-index: var(--gc-layer-sticky);
   max-height: 300px;
   display: flex;
   flex-direction: column;
@@ -335,7 +345,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
@@ -375,6 +385,10 @@ defineExpose({
   padding: 4px;
 }
 
+.file-options {
+  min-height: 100%;
+}
+
 /* 加载和空状态 */
 .loading-state,
 .empty-state {
@@ -397,13 +411,13 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
-  transition: background-color 0.1s;
+  transition: background-color var(--gc-duration-instant) var(--gc-ease-standard);
 }
 
 .file-item:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .file-item.selected {
@@ -423,11 +437,11 @@ defineExpose({
 
 /* 已打开的文件 - 浅蓝色背景 */
 .file-item.is-open {
-  background: rgba(30, 144, 255, 0.08);
+  background: color-mix(in srgb, var(--gc-info) 8%, transparent);
 }
 
 .file-item.is-open:hover {
-  background: rgba(30, 144, 255, 0.15);
+  background: color-mix(in srgb, var(--gc-info) 15%, transparent);
 }
 
 .file-item.is-open.selected {

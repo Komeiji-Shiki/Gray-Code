@@ -4,7 +4,7 @@
  * 支持选择渠道配置
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, getCurrentInstance } from 'vue'
 import { CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
 import { useSearchableDropdown } from '../../composables'
@@ -32,7 +32,17 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement>()
 
-const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<ChannelOption>(containerRef, {
+const {
+  isOpen,
+  toggle,
+  closeAndRestoreFocus,
+  inputRef,
+  triggerRef,
+  searchQuery,
+  filteredItems,
+  highlightedIndex,
+  handleKeydown: handleDropdownKeydown
+} = useSearchableDropdown<ChannelOption>(containerRef, {
   items: () => props.options,
   getKey: (opt) => opt.id,
   selectedKey: () => props.modelValue,
@@ -44,7 +54,14 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
 })
 
 void inputRef // used in template via ref="inputRef"
+void triggerRef // used in template via ref="triggerRef"
 const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
+const instanceId = getCurrentInstance()?.uid ?? 0
+const listboxId = `gc-channel-listbox-${instanceId}`
+const accessibleLabel = computed(() => props.placeholder || t('components.input.channelSelector.placeholder'))
+const activeOptionId = computed(() => isOpen.value && highlightedIndex.value >= 0
+  ? `gc-channel-option-${instanceId}-${highlightedIndex.value}`
+  : undefined)
 
 function getChannelDisplayTitle(option?: ChannelOption): string {
   if (!option) return props.placeholder || t('components.input.channelSelector.placeholder')
@@ -55,7 +72,7 @@ function getChannelDisplayTitle(option?: ChannelOption): string {
 
 function selectChannel(option: ChannelOption) {
   emit('update:modelValue', option.id)
-  close()
+  closeAndRestoreFocus()
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -70,8 +87,15 @@ function handleKeydown(event: KeyboardEvent) {
     @keydown="handleKeydown"
   >
     <button
+      ref="triggerRef"
       type="button"
       class="selector-trigger"
+      role="combobox"
+      aria-haspopup="listbox"
+      :aria-label="accessibleLabel"
+      :aria-expanded="isOpen"
+      :aria-controls="listboxId"
+      :aria-activedescendant="activeOptionId"
       :disabled="disabled"
       :title="getChannelDisplayTitle(selectedOption)"
       @click="toggle"
@@ -80,7 +104,7 @@ function handleKeydown(event: KeyboardEvent) {
         <span class="selected-label" :title="selectedOption.name">{{ selectedOption.name }}</span>
       </span>
       <span v-else class="placeholder">{{ placeholder || t('components.input.channelSelector.placeholder') }}</span>
-      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
+      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
     </button>
 
     <Transition name="dropdown">
@@ -92,6 +116,12 @@ function handleKeydown(event: KeyboardEvent) {
             v-model="searchQuery"
             type="text"
             class="search-input"
+            role="combobox"
+            aria-autocomplete="list"
+            :aria-label="t('components.input.channelSelector.searchPlaceholder')"
+            :aria-expanded="isOpen"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             :placeholder="t('components.input.channelSelector.searchPlaceholder')"
             @click.stop
           />
@@ -99,10 +129,13 @@ function handleKeydown(event: KeyboardEvent) {
 
         <!-- 渠道列表 -->
         <CustomScrollbar :max-height="220" :width="5" :offset="1">
-          <div class="channels-list">
+          <div :id="listboxId" class="channels-list" role="listbox" :aria-label="accessibleLabel">
             <div
                             v-for="(option, index) in filteredItems"
+              :id="`gc-channel-option-${instanceId}-${index}`"
               :key="option.id"
+              role="option"
+              :aria-selected="option.id === modelValue"
               :class="[
                 'channel-item',
                 {
@@ -118,10 +151,10 @@ function handleKeydown(event: KeyboardEvent) {
                 <span class="channel-name">{{ option.name }}</span>
                 <span class="channel-model">{{ option.model }}</span>
               </div>
-              <span v-if="option.id === modelValue" class="check-icon">✓</span>
+              <span v-if="option.id === modelValue" class="check-icon" aria-hidden="true">✓</span>
             </div>
 
-                        <div v-if="filteredItems.length === 0" class="empty-state">
+                        <div v-if="filteredItems.length === 0" class="empty-state" role="status">
               <span>{{ t('components.input.channelSelector.noMatch') }}</span>
             </div>
           </div>
@@ -138,7 +171,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .channel-selector.disabled {
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
   pointer-events: none;
 }
 
@@ -148,22 +181,22 @@ function handleKeydown(event: KeyboardEvent) {
   justify-content: space-between;
   width: 100%;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  font-size: 12px;
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-body);
   cursor: pointer;
   text-align: left;
   transition: border-color 0.15s, background-color 0.15s;
 }
 
 .selector-trigger:hover:not(:disabled) {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .channel-selector.open .selector-trigger {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .selected-value {
@@ -202,11 +235,11 @@ function handleKeydown(event: KeyboardEvent) {
   left: 0;
   right: 0;
   margin-bottom: 4px;
-  background: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
-  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
-  z-index: 1000;
+  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
+  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  border-radius: var(--gc-radius-sm);
+  box-shadow: var(--gc-shadow-md);
+  z-index: var(--gc-layer-popover);
   overflow: visible;
 }
 

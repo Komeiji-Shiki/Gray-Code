@@ -24,6 +24,9 @@
  * 注：TPS 实时可视化条不在此处——它位于聊天面板底部（components/input/TpsBar.vue）。
  */
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { useI18n } from '../i18n'
+
+const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   /** 外部 ready 信号：App.vue 传入 languageLoaded（语言/设置加载完成） */
@@ -151,7 +154,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="splash" :class="{ leaving: fading, merged: merging }" role="status" aria-label="Gray Code 正在启动">
+  <div class="splash" :class="{ leaving: fading, merged: merging }" role="status" aria-live="polite">
+    <span class="gc-visually-hidden">{{ t('common.loading') }}</span>
     <div class="splash-inner" :class="{ settled: drawDone }">
       <!-- Gray logo：色块层（下）先渗入上色，线稿层（上）描完后退位为细描边 -->
       <svg

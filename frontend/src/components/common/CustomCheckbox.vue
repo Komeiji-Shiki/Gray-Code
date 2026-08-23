@@ -1,19 +1,27 @@
 <script setup lang="ts">
-/**
- * 自定义勾选框组件
- * 支持 v-model 双向绑定
- */
+import { computed, getCurrentInstance } from 'vue'
+import { t } from '@/i18n'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: boolean
   label?: string
   hint?: string
+  ariaLabel?: string
   disabled?: boolean
-}>()
+}>(), {
+  label: '',
+  hint: '',
+  ariaLabel: '',
+  disabled: false
+})
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
 }>()
+
+const instanceId = getCurrentInstance()?.uid ?? 0
+const hintId = `gc-checkbox-hint-${instanceId}`
+const accessibleLabel = computed(() => props.ariaLabel || props.label || t('common.enable'))
 
 function toggle(event: Event) {
   const target = event.target as HTMLInputElement
@@ -28,12 +36,14 @@ function toggle(event: Event) {
         type="checkbox"
         :checked="modelValue"
         :disabled="disabled"
+        :aria-label="accessibleLabel"
+        :aria-describedby="hint ? hintId : undefined"
         @change="toggle"
       />
-      <span class="checkmark"></span>
+      <span class="checkmark" aria-hidden="true"></span>
       <span v-if="label" class="checkbox-text">{{ label }}</span>
     </label>
-    <span v-if="hint" class="checkbox-hint">{{ hint }}</span>
+    <span v-if="hint" :id="hintId" class="checkbox-hint">{{ hint }}</span>
   </div>
 </template>
 
@@ -41,22 +51,22 @@ function toggle(event: Event) {
 .checkbox-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--gc-space-1);
 }
 
 .custom-checkbox {
   display: flex;
   align-items: center;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: normal;
+  font-size: var(--gc-font-size-control);
+  font-weight: var(--gc-font-weight-regular);
   position: relative;
   padding-left: 26px;
   user-select: none;
 }
 
 .custom-checkbox.disabled {
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
   cursor: not-allowed;
 }
 
@@ -75,10 +85,13 @@ function toggle(event: Event) {
   transform: translateY(-50%);
   height: 16px;
   width: 16px;
-  background: var(--vscode-input-background);
-  border: 1.5px solid var(--vscode-foreground);
-  border-radius: 3px;
-  transition: all 0.15s;
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  border: 1.5px solid var(--gc-border-strong);
+  border-radius: var(--gc-radius-sm);
+  transition:
+    opacity var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard),
+    background-color var(--gc-duration-fast) var(--gc-ease-standard);
   opacity: 0.6;
 }
 
@@ -87,13 +100,13 @@ function toggle(event: Event) {
 }
 
 .custom-checkbox:focus-within .checkmark {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
   opacity: 1;
 }
 
 .custom-checkbox input:checked ~ .checkmark {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--gc-accent);
+  border-color: var(--gc-accent);
 }
 
 .custom-checkbox .checkmark::after {
@@ -104,7 +117,7 @@ function toggle(event: Event) {
   top: 50%;
   width: 4px;
   height: 8px;
-  border: solid var(--vscode-button-foreground);
+  border: solid var(--gc-text-on-accent);
   border-width: 0 2px 2px 0;
   transform: translate(-50%, -60%) rotate(45deg);
 }
@@ -118,8 +131,8 @@ function toggle(event: Event) {
 }
 
 .checkbox-hint {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-caption);
+  color: var(--gc-text-muted);
   margin-left: 26px;
 }
 </style>

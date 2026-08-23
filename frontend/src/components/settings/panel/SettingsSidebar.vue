@@ -26,15 +26,24 @@ defineEmits<{
 
 <template>
   <!-- 左侧页签（可折叠：展开显示图标+文字，折叠仅图标+tooltip；汉堡按钮在顶部） -->
-  <div class="settings-sidebar" :class="{ collapsed }">
+  <nav
+    class="settings-sidebar"
+    :class="{ collapsed }"
+    :aria-label="t('common.settings')"
+  >
     <button
+      type="button"
       class="settings-tab settings-sidebar-toggle"
       :data-tooltip="collapsed ? t('components.settings.settingsPanel.sidebarExpand') : t('components.settings.settingsPanel.sidebarCollapse')"
+      :title="collapsed ? t('components.settings.settingsPanel.sidebarExpand') : t('components.settings.settingsPanel.sidebarCollapse')"
+      :aria-label="collapsed ? t('components.settings.settingsPanel.sidebarExpand') : t('components.settings.settingsPanel.sidebarCollapse')"
+      :aria-expanded="!collapsed"
       @click="$emit('update:collapsed', !collapsed)"
     >
-      <i class="codicon codicon-menu"></i>
+      <i class="codicon codicon-menu" aria-hidden="true"></i>
     </button>
     <button
+      type="button"
       v-for="tab in tabs"
       :key="tab.id"
       :class="['settings-tab', {
@@ -43,25 +52,28 @@ defineEmits<{
         dimmed: searchActive && !tabsWithMatches.has(tab.id)
       }]"
       :data-tooltip="tab.label"
+      :title="collapsed ? tab.label : undefined"
+      :aria-label="tab.label"
+      :aria-current="activeTab === tab.id ? 'page' : undefined"
       @click="$emit('select', tab.id)"
     >
-      <i :class="['codicon', tab.icon]"></i>
+      <i :class="['codicon', tab.icon]" aria-hidden="true"></i>
       <span v-if="!collapsed" class="settings-tab-label">{{ tab.label }}</span>
     </button>
-  </div>
+  </nav>
 </template>
 
 <style scoped>
 /* 左侧页签（可折叠：默认展开显示图标+文字，折叠仅图标） */
 .settings-sidebar {
   width: 132px;
-  border-right: 1px solid var(--vscode-panel-border);
-  padding: 8px 4px;
+  border-right: 1px solid var(--gc-border-subtle);
+  padding: var(--gc-space-2) var(--gc-space-1);
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
-  transition: width 0.2s ease;
+  gap: var(--gc-radius-xs);
+  transition: width var(--gc-duration-normal) var(--gc-ease-standard);
 }
 
 .settings-sidebar.collapsed {
@@ -78,25 +90,27 @@ defineEmits<{
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: var(--gc-space-2);
   width: 100%;
-  height: 30px;
-  padding: 0 10px;
+  height: var(--gc-control-height-lg);
+  padding: 0 var(--gc-space-3);
   background: transparent;
   border: none;
-  border-radius: 6px;
-  color: var(--vscode-foreground);
+  border-radius: var(--gc-radius-md);
+  color: var(--gc-text-primary);
   cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .settings-tab:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .settings-tab-label {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
@@ -115,12 +129,14 @@ defineEmits<{
   background: var(--vscode-editorWidget-background);
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-editorWidget-border);
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-body);
   white-space: nowrap;
   opacity: 0;
   visibility: hidden;
-  transition: opacity 0.15s, visibility 0.15s;
+  transition:
+    opacity var(--gc-duration-fast) var(--gc-ease-standard),
+    visibility var(--gc-duration-fast) var(--gc-ease-standard);
   pointer-events: none;
   z-index: 1000;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
@@ -157,5 +173,29 @@ defineEmits<{
 
 .settings-tab.dimmed {
   opacity: 0.35;
+}
+
+@media (max-width: 520px) {
+  .settings-sidebar {
+    width: 48px;
+  }
+
+  .settings-tab-label {
+    display: none;
+  }
+
+  .settings-tab:hover::after,
+  .settings-tab:focus-visible::after {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-sidebar,
+  .settings-tab,
+  .settings-tab::after {
+    transition: none;
+  }
 }
 </style>

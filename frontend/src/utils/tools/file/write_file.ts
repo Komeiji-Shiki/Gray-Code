@@ -2,11 +2,12 @@
  * write_file 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
-import WriteFileComponent from '../../../components/tools/file/write_file.vue'
+
+const WriteFileComponent = lazyToolComponent(() => import('../../../components/tools/file/write_file.vue'))
 
 // 注册 write_file 工具
 registerTool('write_file', {

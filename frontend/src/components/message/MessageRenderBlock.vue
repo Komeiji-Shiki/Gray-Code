@@ -288,50 +288,68 @@ onUnmounted(releaseThoughtDisplay)
 
   <!-- 思考块：三段式视图（折叠 / 中展开 / 完全展开），对齐后台任务回流消息 -->
   <div v-if="block.type === 'thought'" class="thought-block" :class="`view-${thoughtViewMode}`">
-    <div class="thought-header" @click="cycleThoughtViewMode">
-      <i
-        class="codicon"
-        :class="thoughtViewMode === 'collapsed' ? 'codicon-chevron-right' : 'codicon-chevron-down'"
-      ></i>
-      <i
-        class="codicon codicon-lightbulb thought-icon"
-        :class="{ 'thinking-pulse': isThinking }"
-      ></i>
-      <span class="thought-label">
-        {{ isThinking ? t('components.message.thought.thinking') : t('components.message.thought.thoughtProcess') }}
-      </span>
-      <span
-        v-if="thinkingTimeDisplay"
-        class="thought-time"
-        :class="{ 'thinking-active': isThinking }"
+    <div class="thought-header">
+      <button
+        type="button"
+        class="thought-toggle"
+        :aria-expanded="thoughtViewMode !== 'collapsed'"
+        @click="cycleThoughtViewMode"
       >
-        {{ thinkingTimeDisplay }}
-      </span>
+        <i
+          class="codicon"
+          :class="thoughtViewMode === 'collapsed' ? 'codicon-chevron-right' : 'codicon-chevron-down'"
+          aria-hidden="true"
+        ></i>
+        <i
+          class="codicon codicon-lightbulb thought-icon"
+          :class="{ 'thinking-pulse': isThinking }"
+          aria-hidden="true"
+        ></i>
+        <span class="thought-label">
+          {{ isThinking ? t('components.message.thought.thinking') : t('components.message.thought.thoughtProcess') }}
+        </span>
+        <span
+          v-if="thinkingTimeDisplay"
+          class="thought-time"
+          :class="{ 'thinking-active': isThinking }"
+        >
+          {{ thinkingTimeDisplay }}
+        </span>
+      </button>
       <!-- 三段式视图切换：折叠 / 中展开（滚动） / 完全展开（参考后台任务） -->
-      <div class="thought-view-controls" @click.stop>
+      <div class="thought-view-controls">
         <button
+          type="button"
           class="thought-view-btn"
           :class="{ active: thoughtViewMode === 'collapsed' }"
           :title="t('components.message.thought.viewCollapsed')"
+          :aria-label="t('components.message.thought.viewCollapsed')"
+          :aria-pressed="thoughtViewMode === 'collapsed'"
           @click="setThoughtViewMode('collapsed')"
         >
-          <i class="codicon codicon-chevron-up"></i>
+          <i class="codicon codicon-chevron-up" aria-hidden="true"></i>
         </button>
         <button
+          type="button"
           class="thought-view-btn"
           :class="{ active: thoughtViewMode === 'medium' }"
           :title="t('components.message.thought.viewMedium')"
+          :aria-label="t('components.message.thought.viewMedium')"
+          :aria-pressed="thoughtViewMode === 'medium'"
           @click="setThoughtViewMode('medium')"
         >
-          <i class="codicon codicon-list-flat"></i>
+          <i class="codicon codicon-list-flat" aria-hidden="true"></i>
         </button>
         <button
+          type="button"
           class="thought-view-btn"
           :class="{ active: thoughtViewMode === 'expanded' }"
           :title="t('components.message.thought.viewExpanded')"
+          :aria-label="t('components.message.thought.viewExpanded')"
+          :aria-pressed="thoughtViewMode === 'expanded'"
           @click="setThoughtViewMode('expanded')"
         >
-          <i class="codicon codicon-chevron-down"></i>
+          <i class="codicon codicon-chevron-down" aria-hidden="true"></i>
         </button>
       </div>
     </div>
@@ -443,18 +461,32 @@ onUnmounted(releaseThoughtDisplay)
 .thought-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-2) var(--gc-space-3);
   user-select: none;
-  transition: background-color 0.15s;
 }
 
-.thought-header:hover {
-  background: var(--vscode-list-hoverBackground);
+.thought-toggle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-2);
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  border-radius: var(--gc-radius-sm);
+  transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
-.thought-header .codicon {
+.thought-toggle:hover {
+  background: var(--gc-surface-hover);
+}
+
+.thought-header .codicon,
+.thought-toggle .codicon {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }

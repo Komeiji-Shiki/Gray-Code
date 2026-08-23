@@ -32,6 +32,11 @@ import {
   removeLineBreakForward
 } from './inputBox/useEditorDeletion'
 import { useAtTrigger } from './inputBox/useAtTrigger'
+import {
+  useEditorHistory,
+  type EditorHistoryEntry,
+  type EditorHistoryKind
+} from './inputBox/useEditorHistory'
 
 const { t } = useI18n()
 
@@ -43,6 +48,8 @@ const props = withDefaults(defineProps<{
   maxLength?: number
   minRows?: number
   maxRows?: number
+  popupExpanded?: boolean
+  popupControls?: string
   /** Enter 键行为：true=Enter 发送（Shift+Enter 换行）；false=Enter 换行 */
   submitOnEnter?: boolean
 }>(), {
@@ -82,15 +89,9 @@ const isDragOver = ref(false)
 
 
 // ========== 自定义撤销/重做历史栈 ==========
-// VS Code Webview 中浏览器原生 undo 栈不可靠（execCommand 产生的记录常丢失），
-// 因此自行维护历史快照，接管 Ctrl+Z / Ctrl+Y。
-interface HistoryEntry {
-  nodes: EditorNode[]
-  caretOffset: number
-}
-const history = ref<HistoryEntry[]>([])
-const historyIndex = ref(-1)
-const MAX_HISTORY = 100
+// DOM 编辑统一镜像为 EditorNode 快照；具体合并、分支和容量规则由 composable 管理。
+const editorHistory = useEditorHistory()
+let isComposingInput = false
 // 滚动条状态
 const thumbHeight = ref(0)
 const thumbTop = ref(0)
@@ -406,6 +407,40 @@ function handleRemoveContext(id: string) {
     hoverTimer = null
   }
 
+  // Remove through the editor path as well as the legacy event so the operation becomes
+  // one custom-history entry and Ctrl+Z can restore the chip.
+  const editor = editorRef.value
+  const chip = editor
+    ? Array.from(editor.querySelectorAll<HTMLElement>('.context-chip'))
+      .find(element => element.dataset.contextId === id)
+    : undefined
+  if (editor && chip) {
+    const originalIndex = Array.from(editor.childNodes).indexOf(chip)
+    const previous = chip.previousSibling
+    const next = chip.nextSibling
+    chip.remove()
+    transientContexts.delete(id)
+
+    // Context chips are surrounded by editing ZWSP nodes. Keep one caret anchor, not two.
+    if (
+      previous?.nodeType === Node.TEXT_NODE && (previous as Text).data === '\u200B' &&
+      next?.nodeType === Node.TEXT_NODE && (next as Text).data === '\u200B'
+    ) {
+      next.remove()
+    }
+
+    const selection = window.getSelection()
+    if (selection) {
+      const range = document.createRange()
+      range.setStart(editor, Math.min(Math.max(originalIndex, 0), editor.childNodes.length))
+      range.collapse(true)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    }
+    editor.focus()
+    handleInput(undefined, 'structure')
+  }
+
   emit('remove-context', id)
 }
 
@@ -439,32 +474,17 @@ function renderNodesToDom() {
 
 // ========== input / key / IME ==========
 
-function pushHistory(nodes: EditorNode[], caretOffset: number) {
-  if (historyIndex.value < history.value.length - 1) {
-    history.value = history.value.slice(0, historyIndex.value + 1)
-  }
-  // 容量上限：追加前先淘汰最旧条目，避免 push 后溢出（shift 后 historyIndex 越界）
-  if (history.value.length >= MAX_HISTORY) {
-    history.value.shift()
-  }
-  history.value.push({ nodes: JSON.parse(JSON.stringify(nodes)), caretOffset })
-  // 新条目总是栈顶，historyIndex 直接指向末尾，避免 shift 后索引漂移
-  historyIndex.value = history.value.length - 1
-}
-
 function undo() {
-  if (historyIndex.value <= 0) return
-  historyIndex.value--
-  restoreHistoryEntry(history.value[historyIndex.value])
+  const entry = editorHistory.undo()
+  if (entry) restoreHistoryEntry(entry)
 }
 
 function redo() {
-  if (historyIndex.value >= history.value.length - 1) return
-  historyIndex.value++
-  restoreHistoryEntry(history.value[historyIndex.value])
+  const entry = editorHistory.redo()
+  if (entry) restoreHistoryEntry(entry)
 }
 
-function restoreHistoryEntry(entry: HistoryEntry) {
+function restoreHistoryEntry(entry: EditorHistoryEntry) {
   if (!editorRef.value) return
   isInputting = true
   emit('update:nodes', entry.nodes)
@@ -485,7 +505,7 @@ function restoreHistoryEntry(entry: HistoryEntry) {
   })
 }
 
-function handleInput() {
+function handleInput(event?: Event, forcedHistoryKind?: EditorHistoryKind) {
   const editor = editorRef.value
   if (!editor) return
 
@@ -507,12 +527,26 @@ function handleInput() {
   // 指纹若长期停留在初始值，后续外部清空（发送）时 getNodesFingerprint([]) === '0'
   // 与陈旧指纹碰撞，跳过 DOM 重建导致残留旧文本（placeholder 与文本叠放）。
   lastRenderedNodesFingerprint = getNodesFingerprint(newNodes)
-  pushHistory(newNodes, cursorPos)
+  const inputEvent = typeof InputEvent !== 'undefined' && event instanceof InputEvent ? event : undefined
+  const historyKind = editorHistory.resolveKind(inputEvent?.inputType, forcedHistoryKind)
+  if (!isComposingInput) {
+    editorHistory.record(newNodes, cursorPos, historyKind)
+  }
 
   nextTick(() => {
     isInputting = false
     adjustHeight()
   })
+}
+
+function handleBeforeInput(event: InputEvent) {
+  if (event.inputType === 'historyUndo') {
+    event.preventDefault()
+    undo()
+  } else if (event.inputType === 'historyRedo') {
+    event.preventDefault()
+    redo()
+  }
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -550,15 +584,16 @@ function handleKeydown(e: KeyboardEvent) {
 
     if (handled) {
       e.preventDefault()
-      handleInput()
+      handleInput(undefined, 'deleting')
       return
     }
   }
 
   if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault()
+    editorHistory.markNext('structure')
     const br = insertLineBreakAtCaret(editor)
-    if (br.ok && !br.inputFired) handleInput()
+    if (br.ok && !br.inputFired) handleInput(undefined, 'structure')
     return
   }
 
@@ -570,18 +605,34 @@ function handleKeydown(e: KeyboardEvent) {
     }
 
     e.preventDefault()
+    editorHistory.markNext('structure')
     const br = insertLineBreakAtCaret(editor)
-    if (br.ok && !br.inputFired) handleInput()
+    if (br.ok && !br.inputFired) handleInput(undefined, 'structure')
     return
   }
 }
 
 function handleCompositionStart() {
+  isComposingInput = true
   emit('composition-start')
 }
 
 function handleCompositionEnd() {
+  isComposingInput = false
   emit('composition-end')
+
+  // Some Chromium versions emit the final input after compositionend, others only emitted
+  // intermediate composition inputs. A microtask snapshot covers both; duplicate detection
+  // prevents an extra undo step when the terminal input was already recorded.
+  queueMicrotask(() => {
+    const editor = editorRef.value
+    if (!editor) return
+    const nodes = extractNodesFromEditor(editor, {
+      knownNodes: props.nodes,
+      transientContexts
+    })
+    editorHistory.record(nodes, getCaretTextOffset(editor), 'composition')
+  })
 }
 
 function handlePaste(e: ClipboardEvent) {
@@ -612,10 +663,11 @@ function handlePaste(e: ClipboardEvent) {
   if (!editor || !text) return
 
   e.preventDefault()
+  editorHistory.markNext('paste')
   const result = insertPlainTextAsSingleUndo(editor, text)
   // execCommand 路径会自动派发 input 事件（handleInput 同步状态）；
   // 手动 DOM 回退路径不派发，需要手动同步。
-  if (result.ok && !result.inputFired) handleInput()
+  if (result.ok && !result.inputFired) handleInput(undefined, 'paste')
 }
 
 // ========== drag & drop ==========
@@ -782,7 +834,7 @@ function replaceAtTriggerWithText(replacement: string = '') {
 
   if (!replaced) return
 
-  handleInput()
+  handleInput(undefined, 'structure')
 }
 
 function getAtTriggerPosition(): number | null {
@@ -801,8 +853,9 @@ function insertPathsAsAtText(files: { path: string; isDirectory: boolean }[]) {
     .join('')
 
   if (text) {
+    editorHistory.markNext('structure')
     const result = insertTextAtCaret(editorRef.value, text)
-    if (result.ok && !result.inputFired) handleInput()
+    if (result.ok && !result.inputFired) handleInput(undefined, 'structure')
   }
 }
 
@@ -840,7 +893,7 @@ function insertContextAtCaret(context: PromptContextItem): boolean {
   selection.removeAllRanges()
   selection.addRange(newRange)
 
-  handleInput()
+  handleInput(undefined, 'structure')
   return true
 }
 
@@ -942,7 +995,7 @@ onMounted(() => {
   nextTick(() => {
     renderNodesToDom()
     adjustHeight()
-    pushHistory(props.nodes, 0)
+    editorHistory.record(props.nodes, 0, 'baseline')
   })
 
   // 扩展端关闭 diff 标签归还焦点后，把光标放回输入框。
@@ -1001,9 +1054,19 @@ defineExpose({
       ref="editorRef"
       class="input-editor"
       :class="{ disabled: !!disabled, 'is-empty': props.nodes.length === 0 }"
-      contenteditable="true"
+      :contenteditable="disabled ? 'false' : 'true'"
+      role="textbox"
+      aria-multiline="true"
+      :aria-label="placeholderText"
+      :aria-placeholder="placeholderText"
+      :aria-disabled="disabled || undefined"
+      :aria-haspopup="popupControls ? 'listbox' : undefined"
+      :aria-expanded="popupControls ? !!popupExpanded : undefined"
+      :aria-controls="popupControls"
+      :tabindex="disabled ? -1 : 0"
       :data-placeholder="placeholderText"
       @input="handleInput"
+      @beforeinput="handleBeforeInput"
       @keydown="handleKeydown"
       @scroll="handleScroll"
       @compositionstart="handleCompositionStart"

@@ -1,0 +1,150 @@
+/*
+ * GrayCode visual primitives.
+ *
+ * Keep selectors deliberately low-specificity so scoped component styles can refine them.
+ * Colors always originate from tokens.css and therefore from the active VS Code theme.
+ */
+
+:where(.gc-card) {
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-raised);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
+  box-shadow: var(--gc-shadow-sm);
+}
+
+:where(.gc-button) {
+  min-height: var(--gc-control-height-md);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gc-space-1);
+  padding: 0 var(--gc-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-body);
+  font-weight: var(--gc-font-weight-medium);
+  line-height: 1;
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-muted);
+  transition:
+    color var(--gc-duration-fast) var(--gc-ease-standard),
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    border-color var(--gc-duration-fast) var(--gc-ease-standard),
+    opacity var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+:where(.gc-button:hover:not(:disabled)) {
+  background: var(--gc-surface-hover);
+}
+
+:where(.gc-button:active:not(:disabled)) {
+  background: var(--gc-surface-active);
+}
+
+:where(.gc-button--primary) {
+  color: var(--gc-text-on-accent);
+  background: var(--gc-accent);
+}
+
+:where(.gc-button--primary:hover:not(:disabled)) {
+  background: var(--gc-accent-hover);
+}
+
+:where(.gc-button--danger) {
+  color: var(--gc-danger);
+  border-color: color-mix(in srgb, var(--gc-danger) 55%, transparent);
+  background: transparent;
+}
+
+:where(.gc-button--ghost) {
+  padding-inline: var(--gc-space-2);
+  background: transparent;
+}
+
+:where(.gc-button:disabled) {
+  color: var(--gc-text-disabled);
+  opacity: var(--gc-opacity-disabled);
+}
+
+:where(.gc-field) {
+  width: 100%;
+  min-height: var(--gc-control-height-lg);
+  padding: 0 var(--gc-space-3);
+  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-control);
+  transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+:where(.gc-field:focus-visible) {
+  border-color: var(--gc-focus-border);
+}
+
+:where(.gc-badge) {
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gc-space-1);
+  padding: 1px var(--gc-space-2);
+  border-radius: var(--gc-radius-pill);
+  font-size: var(--gc-font-size-micro);
+  line-height: var(--gc-line-height-tight);
+  color: var(--gc-text-muted);
+  background: var(--gc-surface-muted);
+  border: 1px solid var(--gc-border-subtle);
+}
+
+:where(.gc-notice) {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-2) var(--gc-space-3);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
+  color: var(--gc-text-primary);
+  background: var(--gc-surface-raised);
+}
+
+:where(.gc-notice--warning) {
+  border-color: color-mix(in srgb, var(--gc-warning) 55%, var(--gc-border-subtle));
+}
+
+:where(.gc-notice--danger) {
+  border-color: color-mix(in srgb, var(--gc-danger) 55%, var(--gc-border-subtle));
+}
+
+:where(.gc-visually-hidden) {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+:where(.gc-spin) {
+  animation: gc-spin 1s linear infinite;
+}
+
+@keyframes gc-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.gc-spin) {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :where(.gc-card, .gc-button, .gc-field, .gc-badge, .gc-notice) {
+    border-color: CanvasText;
+    forced-color-adjust: auto;
+  }
+}

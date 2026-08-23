@@ -5,6 +5,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { useSettingsStore } from '@/stores'
 import type { SmoothMode } from '@/utils/smoothStream'
+import { CustomSwitch } from '@/components/common'
 
 const { t } = useI18n()
 const settingsStore = useSettingsStore()
@@ -136,29 +137,30 @@ onMounted(() => {
 
     <template v-else>
       <div class="form-group" data-search-anchor="loading-text">
-        <label class="group-label">
+        <label class="group-label" for="appearance-loading-text">
           <i class="codicon codicon-loading codicon-modifier-spin"></i>
           {{ t('components.settings.appearanceSettings.loadingText.title') }}
         </label>
         <p class="field-description">{{ t('components.settings.appearanceSettings.loadingText.description') }}</p>
 
         <input
+          id="appearance-loading-text"
           v-model="loadingText"
           type="text"
-          class="text-input"
+          class="text-input gc-field"
           :placeholder="t('components.settings.appearanceSettings.loadingText.placeholder')"
         />
         <p class="field-hint">{{ t('components.settings.appearanceSettings.loadingText.defaultHint', { text: defaultLoadingText }) }}</p>
       </div>
 
       <div class="form-group" data-search-anchor="smooth-output">
-        <label class="group-label">
+        <label class="group-label" for="appearance-smooth-output">
           <i class="codicon codicon-type"></i>
           {{ t('components.settings.appearanceSettings.smoothStreaming.title') }}
         </label>
         <p class="field-description">{{ t('components.settings.appearanceSettings.smoothStreaming.description') }}</p>
 
-        <select v-model="smoothStreamingMode" class="text-input select-input" :disabled="isSaving">
+        <select id="appearance-smooth-output" v-model="smoothStreamingMode" class="text-input select-input gc-field" :disabled="isSaving">
           <option value="off">{{ t('components.settings.appearanceSettings.smoothStreaming.off') }}</option>
           <option value="smooth">{{ t('components.settings.appearanceSettings.smoothStreaming.smooth') }}</option>
           <option value="balanced">{{ t('components.settings.appearanceSettings.smoothStreaming.balanced') }}</option>
@@ -178,14 +180,11 @@ onMounted(() => {
             </p>
           </div>
 
-          <label class="toggle-switch">
-            <input
-              v-model="selectionContextEnabled"
-              type="checkbox"
-              :disabled="isSaving"
-            />
-            <span class="toggle-slider"></span>
-          </label>
+          <CustomSwitch
+            v-model="selectionContextEnabled"
+            :aria-label="t('components.settings.appearanceSettings.selectionContext.title')"
+            :disabled="isSaving"
+          />
         </div>
       </div>
 
@@ -201,14 +200,11 @@ onMounted(() => {
             </p>
           </div>
 
-          <label class="toggle-switch">
-            <input
-              v-model="tpsBarEnabled"
-              type="checkbox"
-              :disabled="isSaving"
-            />
-            <span class="toggle-slider"></span>
-          </label>
+          <CustomSwitch
+            v-model="tpsBarEnabled"
+            :aria-label="t('components.settings.appearanceSettings.tpsBar.title')"
+            :disabled="isSaving"
+          />
         </div>
       </div>
 
@@ -224,29 +220,26 @@ onMounted(() => {
             </p>
           </div>
 
-          <label class="toggle-switch">
-            <input
-              v-model="splashEnabled"
-              type="checkbox"
-              :disabled="isSaving"
-            />
-            <span class="toggle-slider"></span>
-          </label>
+          <CustomSwitch
+            v-model="splashEnabled"
+            :aria-label="t('components.settings.appearanceSettings.splash.title')"
+            :disabled="isSaving"
+          />
         </div>
       </div>
 
       <div class="actions">
-        <button class="action-btn primary" @click="saveConfig" :disabled="isSaving">
+        <button type="button" class="action-btn primary gc-button gc-button--primary" @click="saveConfig" :disabled="isSaving">
           <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
           <span v-else>{{ t('common.save') }}</span>
         </button>
 
-        <button class="action-btn" @click="resetToDefault" :disabled="isSaving">
+        <button type="button" class="action-btn gc-button" @click="resetToDefault" :disabled="isSaving">
           <i class="codicon codicon-discard"></i>
           {{ t('common.reset') }}
         </button>
 
-        <span v-if="saveMessage" class="save-message" :class="saveMessageType">
+        <span v-if="saveMessage" class="save-message" :class="saveMessageType" role="status" aria-live="polite">
           {{ saveMessage }}
         </span>
       </div>
@@ -258,47 +251,47 @@ onMounted(() => {
 .appearance-settings {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--gc-space-4);
 }
 
 .loading {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--vscode-descriptionForeground);
-  padding: 16px 0;
+  gap: var(--gc-space-2);
+  color: var(--gc-text-muted);
+  padding: var(--gc-space-4) 0;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-3);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
 }
 
 .toggle-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--gc-space-4);
 }
 
 .toggle-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gc-space-2);
 }
 
 .group-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 500;
+  gap: var(--gc-space-2);
+  font-size: var(--gc-font-size-control);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 .group-label .codicon {
@@ -307,8 +300,8 @@ onMounted(() => {
 
 .field-description {
   margin: 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-muted);
 }
 
 .text-input {
@@ -318,13 +311,12 @@ onMounted(() => {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  outline: none;
-  transition: border-color 0.15s;
+  border-radius: var(--gc-radius-sm);
+  transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .text-input:focus {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .select-input {
@@ -339,68 +331,14 @@ onMounted(() => {
 
 .field-hint {
   margin: 0;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 36px;
-  height: 20px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  inset: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 10px;
-  transition: 0.2s;
-}
-
-.toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 14px;
-  width: 14px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--vscode-foreground);
-  border-radius: 50%;
-  transition: 0.2s;
-}
-
-.toggle-switch input:checked + .toggle-slider {
-  background-color: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
-}
-
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(16px);
-  background-color: var(--vscode-button-foreground);
-}
-
-.toggle-switch input:focus + .toggle-slider {
-  border-color: var(--vscode-focusBorder);
-}
-
-.toggle-switch input:disabled + .toggle-slider {
-  opacity: 0.6;
+  font-size: var(--gc-font-size-caption);
+  color: var(--gc-text-muted);
 }
 
 .actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--gc-space-2);
 }
 
 .action-btn {
@@ -408,7 +346,7 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   border: none;
@@ -436,7 +374,7 @@ onMounted(() => {
 }
 
 .save-message {
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
 }
 
 .save-message.success {

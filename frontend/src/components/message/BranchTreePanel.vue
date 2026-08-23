@@ -200,7 +200,7 @@ function cancelRename(): void {
     </button>
 
     <div v-if="panelOpen" class="branch-tree-overlay">
-      <div class="branch-tree-backdrop" @click="closePanel"></div>
+      <div class="branch-tree-backdrop" aria-hidden="true" @click="closePanel"></div>
       <section ref="panelBoxRef" tabindex="-1" class="branch-tree-panel-box" role="dialog" :aria-label="t('components.message.branchTree.title')">
         <header class="branch-tree-header">
           <span class="branch-tree-title">

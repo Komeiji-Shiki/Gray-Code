@@ -29,7 +29,8 @@ import DirtyFilesConfirm from './DirtyFilesConfirm.vue'
 import { useChatStore } from '../../stores'
 import { useI18n } from '../../i18n'
 import type { Message, Attachment } from '../../types'
-import { isRetryableError, recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions'
+import { isRetryableError } from '../../stores/chat/messageActions/retryFlows'
+import { recentInterruptDeliveries, clearInterruptDeliveries } from '../../stores/chat/messageActions/interruptNotices'
 import { useBuildPanel } from './useBuildPanel'
 import { useTodoPanel } from './useTodoPanel'
 import { useCheckpointRestoreFlow } from './useCheckpointRestoreFlow'
@@ -255,24 +256,31 @@ function handleContinue() {
         <template v-for="row in messageRenderRows" :key="row.key">
           <div v-if="row.kind === 'build'" class="build-sticky-shell">
             <div class="build-bar" :class="{ expanded: isBuildExpanded }">
-              <div class="build-header" @click="isBuildExpanded = !isBuildExpanded">
-                <div class="build-title">
-                  <i class="codicon codicon-tools build-icon"></i>
+              <div class="build-header">
+                <button
+                  type="button"
+                  class="build-title build-title-button"
+                  :aria-expanded="isBuildExpanded"
+                  @click="isBuildExpanded = !isBuildExpanded"
+                >
+                  <i class="codicon codicon-tools build-icon" aria-hidden="true"></i>
                   <span class="build-label">{{ buildPanelLabel }}</span>
                   <span class="build-sep">·</span>
                   <span class="build-name">{{ buildPanelName }}</span>
-                </div>
+                </button>
 
                 <div class="build-actions">
                   <span v-if="buildTotal > 0" class="build-progress">{{ buildCompleted }}/{{ buildTotal }}</span>
                   <span v-else class="build-progress">—</span>
 
                   <button
+                    type="button"
                     class="build-btn"
                     :title="isBuildExpanded ? t('common.collapse') : t('common.expand')"
+                    :aria-label="isBuildExpanded ? t('common.collapse') : t('common.expand')"
                     @click.stop="isBuildExpanded = !isBuildExpanded"
                   >
-                    <i class="codicon" :class="isBuildExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
+                    <i class="codicon" :class="isBuildExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
@@ -397,24 +405,31 @@ function handleContinue() {
 
           <div v-else-if="row.kind === 'todo'" class="todo-sticky-shell">
             <div class="build-bar todo-snapshot-bar" :class="{ expanded: isTodoExpanded }">
-              <div class="build-header" @click="toggleTodoExpanded()">
-                <div class="build-title">
-                  <i class="codicon codicon-checklist build-icon todo-snapshot-icon"></i>
+              <div class="build-header">
+                <button
+                  type="button"
+                  class="build-title build-title-button"
+                  :aria-expanded="isTodoExpanded"
+                  @click="toggleTodoExpanded()"
+                >
+                  <i class="codicon codicon-checklist build-icon todo-snapshot-icon" aria-hidden="true"></i>
                   <span class="build-label">{{ t('components.message.tool.todoWrite.label') }}</span>
                   <span class="build-sep">·</span>
                   <span class="build-name">{{ todoPanelName }}</span>
-                </div>
+                </button>
 
                 <div class="build-actions">
                   <span v-if="todoTotal > 0" class="build-progress">{{ todoCompleted }}/{{ todoTotal }}</span>
                   <span v-else class="build-progress">—</span>
 
                   <button
+                    type="button"
                     class="build-btn"
                     :title="isTodoExpanded ? t('common.collapse') : t('common.expand')"
+                    :aria-label="isTodoExpanded ? t('common.collapse') : t('common.expand')"
                     @click.stop="toggleTodoExpanded()"
                   >
-                    <i class="codicon" :class="isTodoExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
+                    <i class="codicon" :class="isTodoExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
@@ -630,8 +645,7 @@ function handleContinue() {
   justify-content: space-between;
   gap: var(--spacing-sm, 8px);
   padding: 6px 10px;
-  background: var(--vscode-editor-inactiveSelectionBackground);
-  cursor: pointer;
+  background: var(--gc-surface-muted);
   user-select: none;
 }
 
@@ -640,6 +654,16 @@ function handleContinue() {
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+
+.build-title-button {
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--gc-radius-sm);
+  cursor: pointer;
 }
 
 .build-icon {
@@ -691,16 +715,18 @@ function handleContinue() {
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
   background: transparent;
   color: var(--vscode-descriptionForeground);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .build-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  background: var(--gc-surface-hover);
+  color: var(--gc-text-primary);
 }
 
 .build-current {

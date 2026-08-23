@@ -5,7 +5,7 @@
  * 纯展示 + 本地动作执行；确认/拒绝、diff 孤儿检测、确认流绑定等状态与副作用
  * 全部保留在 ToolMessage.vue，通过 props/emits 交互，不改变既有语义。
  */
-import type { Component, ComponentPublicInstance } from 'vue'
+import { getCurrentInstance, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage } from '../../../types'
 import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../../utils/toolRegistry'
 import { useChatStore } from '../../../stores'
@@ -36,6 +36,31 @@ const emit = defineEmits<{
   confirm: []
   reject: []
 }>()
+
+const instanceId = getCurrentInstance()?.uid ?? 0
+const contentId = `gc-tool-content-${instanceId}`
+const streamingPreviewId = `gc-tool-streaming-${instanceId}`
+
+function getToolStatusLabel(tool: ToolUsage): string {
+  if (tool.awaitingConfirmation || tool.status === 'awaiting_approval') {
+    return t('components.message.responseViewer.toolStatuses.awaitingApproval')
+  }
+
+  const statusKey: Record<string, string> = {
+    streaming: 'streaming',
+    queued: 'queued',
+    executing: 'executing',
+    awaiting_apply: 'awaitingApply',
+    background: 'background',
+    success: 'success',
+    warning: 'warning',
+    error: 'error'
+  }
+  const key = tool.status ? statusKey[tool.status] : undefined
+  return key
+    ? t(`components.message.responseViewer.toolStatuses.${key}`)
+    : t('components.message.responseViewer.toolStatuses.unknown')
+}
 
 // 获取工具显示名称
 function getToolLabel(tool: ToolUsage): string {
@@ -171,7 +196,12 @@ function getVisibleToolActions(tool: ToolUsage): ToolActionConfig[] {
 
 function getToolActionClass(action: ToolActionConfig): string[] {
   const variant = action.variant || 'default'
-  return ['tool-action-btn', `tool-action-${variant}`]
+  return [
+    'gc-button',
+    variant === 'primary' ? 'gc-button--primary' : variant === 'danger' ? 'gc-button--danger' : 'gc-button--ghost',
+    'tool-action-btn',
+    `tool-action-${variant}`
+  ]
 }
 
 function getActionErrorMessage(error: unknown, fallback: string): string {
@@ -194,92 +224,96 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 <template>
   <div class="tool-item">
-    <!-- 工具头部 - 可点击展开/收起（如果可展开） -->
-    <div
-      :class="['tool-header', { 'not-expandable': !isExpandable }]"
-      @click="isExpandable && emit('toggle')"
-    >
-      <div class="tool-info">
-        <!-- 展开/收起图标（仅当可展开时显示） -->
-        <span
-          v-if="isExpandable"
-          :class="[
-            'expand-icon',
-            'codicon',
-            isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'
-          ]"
-        ></span>
-
-        <!-- 工具图标 -->
-        <span :class="['tool-icon', 'codicon', getToolIcon(tool)]"></span>
-
-        <!-- 工具名称 -->
-        <span class="tool-name">{{ getToolLabel(tool) }}</span>
-
-        <!-- 状态图标 -->
-        <div v-if="tool.status || tool.awaitingConfirmation" class="status-icon-wrapper">
+    <div class="tool-header">
+      <component
+        :is="isExpandable ? 'button' : 'div'"
+        :type="isExpandable ? 'button' : undefined"
+        :class="['tool-summary', { 'tool-summary-static': !isExpandable }]"
+        :aria-expanded="isExpandable ? isExpanded : undefined"
+        :aria-controls="isExpandable ? contentId : undefined"
+        @click="isExpandable && emit('toggle')"
+      >
+        <div class="tool-info">
           <span
+            v-if="isExpandable"
             :class="[
-              'status-icon',
+              'expand-icon',
               'codicon',
-              getStatusIcon(tool.status, tool.awaitingConfirmation),
-              getStatusClass(tool.status, tool.awaitingConfirmation)
+              isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'
             ]"
+            aria-hidden="true"
           ></span>
-        </div>
 
-        <!-- 执行时间 -->
-        <span v-if="tool.duration" class="tool-duration">
-          {{ tool.duration }}ms
-        </span>
-      </div>
+          <span :class="['tool-icon', 'codicon', getToolIcon(tool)]" aria-hidden="true"></span>
+          <span class="tool-name">{{ getToolLabel(tool) }}</span>
 
-      <!-- 工具描述和操作按钮 -->
-      <div class="tool-description-row">
-        <div class="tool-description">
-          {{ getToolDescription(tool) }}
-        </div>
-
-        <div class="tool-action-buttons">
-          <!-- 确认按钮：当工具等待用户批准时显示 -->
-          <button
-            v-if="tool.status === 'awaiting_approval' && !isProcessing"
-            class="confirm-btn"
-            :title="t('components.message.tool.confirmExecution')"
-            :disabled="isProcessing"
-            @click.stop="emit('confirm')"
-          >
-            <span class="confirm-btn-icon codicon codicon-check"></span>
-            <span class="confirm-btn-text">{{ t('components.message.tool.confirm') }}</span>
-          </button>
-
-          <!-- 拒绝按钮：当工具等待用户批准时显示 -->
-          <button
-            v-if="tool.status === 'awaiting_approval' && !isProcessing"
-            class="reject-btn"
-            :title="t('components.message.tool.reject')"
-            :disabled="isProcessing"
-            @click.stop="emit('reject')"
-          >
-            <span class="reject-btn-icon codicon codicon-close"></span>
-            <span class="reject-btn-text">{{ t('components.message.tool.reject') }}</span>
-          </button>
-
-          <!-- 通用工具操作按钮：diff 预览、SubAgent 详情等都走 ToolConfig.actions -->
-          <button
-            v-for="action in getVisibleToolActions(tool)"
-            :key="action.id"
-            :class="getToolActionClass(action)"
-            :title="getToolActionTitle(action, tool)"
-            @click.stop="runToolAction(action, tool)"
+          <div
+            v-if="tool.status || tool.awaitingConfirmation"
+            class="status-icon-wrapper"
+            role="status"
+            :aria-label="getToolStatusLabel(tool)"
           >
             <span
-              v-if="action.icon"
-              :class="['tool-action-icon', 'codicon', action.icon]"
+              :class="[
+                'status-icon',
+                'codicon',
+                getStatusIcon(tool.status, tool.awaitingConfirmation),
+                getStatusClass(tool.status, tool.awaitingConfirmation)
+              ]"
+              aria-hidden="true"
             ></span>
-            <span class="tool-action-text">{{ getToolActionLabel(action, tool) }}</span>
-          </button>
+          </div>
+
+          <span v-if="tool.duration" class="tool-duration">
+            {{ tool.duration }}ms
+          </span>
         </div>
+
+        <span class="tool-description">
+          {{ getToolDescription(tool) }}
+        </span>
+      </component>
+
+      <div class="tool-action-buttons">
+        <button
+          v-if="tool.status === 'awaiting_approval' && !isProcessing"
+          type="button"
+          class="gc-button gc-button--primary confirm-btn"
+          :title="t('components.message.tool.confirmExecution')"
+          :disabled="isProcessing"
+          @click.stop="emit('confirm')"
+        >
+          <span class="confirm-btn-icon codicon codicon-check" aria-hidden="true"></span>
+          <span class="confirm-btn-text">{{ t('components.message.tool.confirm') }}</span>
+        </button>
+
+        <button
+          v-if="tool.status === 'awaiting_approval' && !isProcessing"
+          type="button"
+          class="gc-button gc-button--ghost reject-btn"
+          :title="t('components.message.tool.reject')"
+          :disabled="isProcessing"
+          @click.stop="emit('reject')"
+        >
+          <span class="reject-btn-icon codicon codicon-close" aria-hidden="true"></span>
+          <span class="reject-btn-text">{{ t('components.message.tool.reject') }}</span>
+        </button>
+
+        <button
+          v-for="action in getVisibleToolActions(tool)"
+          :key="action.id"
+          type="button"
+          :class="getToolActionClass(action)"
+          :title="getToolActionTitle(action, tool)"
+          @click.stop="runToolAction(action, tool)"
+        >
+          <span
+            v-if="action.icon"
+            :class="['tool-action-icon', 'codicon', action.icon]"
+            aria-hidden="true"
+          ></span>
+          <span class="tool-action-text">{{ getToolActionLabel(action, tool) }}</span>
+        </button>
       </div>
     </div>
 
@@ -287,19 +321,21 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
     <div
       v-if="showStreamingPreview"
       class="streaming-preview"
+      :id="streamingPreviewId"
+      :aria-label="t('components.message.tool.streamingArgs')"
       :ref="registerStreamingPreviewRef"
     >
       <pre class="streaming-preview-content">{{ streamingPreviewText }}</pre>
     </div>
 
     <!-- 工具详细内容 - 展开时显示（仅当可展开时） -->
-    <div v-if="showContent" class="tool-content">
+    <div v-if="showContent" :id="contentId" class="tool-content">
       <component :is="contentHost" :tool="tool" />
     </div>
 
     <!-- Diff 警戒值警告（pending 或已结束都可展示） -->
-    <div v-if="diffGuardWarning" class="diff-guard-warning">
-      <i class="codicon codicon-warning"></i>
+    <div v-if="diffGuardWarning" class="diff-guard-warning" role="alert">
+      <i class="codicon codicon-warning" aria-hidden="true"></i>
       <span class="diff-guard-text">
         {{ diffGuardWarning.warning }}
       </span>
@@ -314,60 +350,74 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .tool-item {
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--radius-sm, 2px);
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-sm);
   overflow: hidden;
 }
 
 .tool-header {
   display: flex;
-  flex-direction: column;
-  gap: var(--spacing-xs, 4px);
-  padding: 4px var(--spacing-sm, 8px);
-  cursor: pointer;
-  transition: background-color var(--transition-fast, 0.1s);
+  align-items: center;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-1) var(--gc-space-2);
+  transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .tool-header:hover {
-  background: var(--vscode-list-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
-.tool-header.not-expandable {
+.tool-summary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-1);
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-summary-static {
   cursor: default;
 }
 
-.tool-header.not-expandable:hover {
-  background: transparent;
+.tool-summary:focus-visible {
+  outline: 1px solid var(--gc-focus-border);
+  outline-offset: 2px;
 }
 
 .tool-info {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs, 4px);
+  gap: var(--gc-space-1);
 }
 
 .expand-icon {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-muted);
   transition: transform var(--transition-fast, 0.1s);
 }
 
 .tool-icon {
-  font-size: 14px;
-  color: var(--vscode-charts-blue);
+  font-size: var(--gc-font-size-title);
+  color: var(--gc-info);
 }
 
 .tool-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
+  font-size: var(--gc-font-size-body);
+  font-weight: var(--gc-font-weight-semibold);
+  color: var(--gc-text-primary);
   font-family: var(--vscode-font-family);
 }
 
 .status-icon {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-muted);
   margin-left: var(--spacing-xs, 4px);
 }
 
@@ -376,24 +426,24 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .status-icon.status-success {
-  color: var(--vscode-testing-iconPassed);
+  color: var(--gc-success);
 }
 
 .status-icon.status-error {
-  color: var(--vscode-testing-iconFailed);
+  color: var(--gc-danger);
 }
 
 .status-icon.status-running {
-  color: var(--vscode-testing-runAction);
-  animation: spin 1s linear infinite;
+  color: var(--gc-info);
+  animation: gc-spin 1s linear infinite;
 }
 
 .status-icon.status-warning {
-  color: var(--vscode-charts-yellow);
+  color: var(--gc-warning);
 }
 
 .status-icon.status-pending {
-  color: var(--vscode-inputValidation-warningForeground);
+  color: var(--gc-warning);
 }
 
 .status-icon-wrapper {
@@ -402,164 +452,53 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   margin-left: var(--spacing-xs, 4px);
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
 .tool-duration {
   margin-left: auto;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.tool-description-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--spacing-sm, 8px);
-  margin-left: 28px; /* 对齐图标 */
+  font-size: var(--gc-font-size-caption);
+  color: var(--gc-text-muted);
 }
 
 .tool-action-buttons {
   display: flex;
   align-items: center;
-  gap: var(--spacing-xs, 4px);
+  gap: var(--gc-space-1);
   flex-shrink: 0;
 }
 
 .tool-description {
-  flex: 1;
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.4;
+  margin-left: 28px;
+  overflow: hidden;
+  color: var(--gc-text-muted);
   font-family: var(--vscode-editor-font-family);
-}
-
-/* 确认按钮 - 极简无边框设计 */
-.confirm-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  background: transparent;
-  border: none;
-  border-radius: 2px;
-  color: var(--vscode-foreground);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
-}
-
-.confirm-btn:hover {
-  background: rgba(128, 128, 128, 0.15);
-}
-
-.confirm-btn:active {
-  background: rgba(128, 128, 128, 0.2);
-}
-
-.confirm-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.confirm-btn-icon {
-  font-size: 12px;
-}
-
-.confirm-btn-text {
+  font-size: var(--gc-font-size-caption);
+  line-height: 1.4;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 拒绝按钮 - 无边框设计 */
-.reject-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  background: transparent;
-  border: none;
-  border-radius: 2px;
-  color: var(--vscode-descriptionForeground);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
-}
-
-.reject-btn:hover {
-  background: rgba(128, 128, 128, 0.1);
-  color: var(--vscode-foreground);
-}
-
-.reject-btn:active {
-  background: rgba(128, 128, 128, 0.15);
-}
-
-.reject-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.reject-btn-icon {
-  font-size: 12px;
-}
-
-.reject-btn-text {
-  white-space: nowrap;
-}
-
+/* Tool actions share the global button primitive; local rules only preserve compact density. */
+.confirm-btn,
+.reject-btn,
 .tool-action-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  background: transparent;
-  border: 1px solid #555555;
-  border-radius: 2px;
-  color: var(--vscode-foreground);
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.12s ease;
-  flex-shrink: 0;
+  min-height: var(--gc-control-height-sm);
+  padding: 0 var(--gc-space-3);
+  font-size: var(--gc-font-size-caption);
+  white-space: nowrap;
 }
 
-.tool-action-btn:hover {
-  background: rgba(128, 128, 128, 0.1);
-  border-color: #777777;
-}
-
-.tool-action-btn:active {
-  background: rgba(128, 128, 128, 0.2);
-}
-
-.tool-action-primary {
-  border-color: var(--vscode-button-background);
-}
-
-.tool-action-primary:hover {
-  background: var(--vscode-button-hoverBackground);
-  color: var(--vscode-button-foreground);
+.confirm-btn-icon,
+.reject-btn-icon,
+.tool-action-icon {
+  font-size: var(--gc-font-size-body);
 }
 
 .tool-action-danger {
-  border-color: var(--vscode-errorForeground);
-  color: var(--vscode-errorForeground);
+  color: var(--gc-danger);
 }
 
-.tool-action-icon {
-  font-size: 12px;
-  opacity: 0.85;
-}
-
-.tool-action-text {
+.tool-action-text,
+.confirm-btn-text,
+.reject-btn-text {
   white-space: nowrap;
 }
 
@@ -567,14 +506,14 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 .streaming-preview {
   max-height: 150px;
   overflow-y: auto;
-  border-top: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-top: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-muted);
   padding: 4px var(--spacing-sm, 8px);
 }
 
 .streaming-preview-content {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--gc-font-size-caption);
   font-family: var(--vscode-editor-font-family);
   color: var(--vscode-foreground);
   white-space: pre-wrap;
@@ -585,8 +524,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .tool-content {
   padding: 4px var(--spacing-sm, 8px);
-  border-top: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-top: 1px solid var(--gc-border-subtle);
+  background: var(--gc-surface-muted);
 }
 
 /* 默认内容样式 */
@@ -612,10 +551,10 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .section-data {
   padding: var(--spacing-xs, 4px);
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: var(--radius-sm, 2px);
-  font-size: 11px;
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-xs);
+  font-size: var(--gc-font-size-caption);
   font-family: var(--vscode-editor-font-family);
   color: var(--vscode-foreground);
   white-space: pre;
@@ -650,23 +589,41 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   align-items: flex-start;
   gap: 6px;
   padding: 6px 10px;
-  background: var(--vscode-inputValidation-warningBackground, rgba(255, 170, 0, 0.1));
-  border: 1px solid var(--vscode-inputValidation-warningBorder, #ffaa00);
-  border-radius: 4px;
+  background: var(--vscode-inputValidation-warningBackground, color-mix(in srgb, var(--gc-warning) 10%, transparent));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--gc-warning));
+  border-radius: var(--gc-radius-sm);
   margin-bottom: 4px;
 }
 
 .diff-guard-warning .codicon {
   font-size: 13px;
-  color: var(--vscode-editorWarning-foreground, #ffaa00);
+  color: var(--gc-warning);
   flex-shrink: 0;
   margin-top: 1px;
 }
 
 .diff-guard-text {
-  font-size: 11px;
+  font-size: var(--gc-font-size-caption);
   line-height: 1.4;
   color: var(--vscode-foreground);
   word-break: break-word;
+}
+
+@media (max-width: 520px) {
+  .tool-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .tool-action-buttons {
+    margin-left: 28px;
+    flex-wrap: wrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-icon.status-running {
+    animation: none;
+  }
 }
 </style>

@@ -5,10 +5,11 @@
  * AI 通过 read_skill 按需读取 Skill 内容，不再使用拼接注入。
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
-import ReadSkillComponent from '../../../components/tools/skills/read_skill.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+
+const ReadSkillComponent = lazyToolComponent(() => import('../../../components/tools/skills/read_skill.vue'))
 
 // 注册 read_skill 工具
 registerTool('read_skill', {

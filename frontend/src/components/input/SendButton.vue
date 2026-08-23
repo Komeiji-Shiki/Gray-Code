@@ -39,40 +39,48 @@ function handleCancel() {
   <!-- loading 状态：保留发送入口（消息会入队；若正在等待命令完成，命令转入后台、AI 优先响应） + 停止按钮 -->
   <div v-if="loading" class="send-button-group">
     <button
+      type="button"
       class="send-button"
       :disabled="disabled"
       :title="t('components.input.sendWhileBusy')"
+      :aria-label="t('components.input.sendWhileBusy')"
       @click="handleClick"
     >
-      <i class="codicon codicon-send send-icon"></i>
+      <i class="codicon codicon-send send-icon" aria-hidden="true"></i>
     </button>
 
     <button
+      type="button"
       class="send-button"
       :title="t('components.input.stopGenerating')"
+      :aria-label="t('components.input.stopGenerating')"
       @click="handleCancel"
     >
-      <i class="codicon codicon-primitive-square stop-icon"></i>
+      <i class="codicon codicon-primitive-square stop-icon" aria-hidden="true"></i>
     </button>
   </div>
 
   <div v-else class="send-button-group">
     <button
+      type="button"
       class="send-button preserve-send-button"
       :disabled="disabled"
       :title="t('components.input.sendPreserveDynamicContext')"
+      :aria-label="t('components.input.sendPreserveDynamicContext')"
       @click="handlePreserveDynamicContextClick"
     >
-      <i class="codicon codicon-pinned preserve-send-icon"></i>
+      <i class="codicon codicon-pinned preserve-send-icon" aria-hidden="true"></i>
     </button>
 
     <button
+      type="button"
       class="send-button"
       :disabled="disabled"
       :title="t('components.input.send')"
+      :aria-label="t('components.input.send')"
       @click="handleClick"
     >
-      <i class="codicon codicon-send send-icon"></i>
+      <i class="codicon codicon-send send-icon" aria-hidden="true"></i>
     </button>
   </div>
 </template>
@@ -82,14 +90,16 @@ function handleCancel() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--gc-control-height-lg);
+  height: var(--gc-control-height-lg);
   background: transparent;
   color: var(--vscode-foreground);
   border: none;
-  border-radius: var(--radius-sm, 2px);
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
-  transition: background-color var(--transition-fast, 0.1s), opacity var(--transition-fast, 0.1s);
+  transition:
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    opacity var(--gc-duration-fast) var(--gc-ease-standard);
   flex-shrink: 0;
 }
 
@@ -108,15 +118,15 @@ function handleCancel() {
 }
 
 .send-button:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .send-button:active:not(:disabled) {
-  background: var(--vscode-toolbar-activeBackground);
+  background: var(--gc-surface-active);
 }
 
 .send-button:disabled {
-  opacity: 0.3;
+  opacity: var(--gc-opacity-disabled);
   cursor: not-allowed;
 }
 

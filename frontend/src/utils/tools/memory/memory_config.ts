@@ -1,10 +1,11 @@
 /**
  * memory_config 工具注册
  */
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
-import MemoryResult from '../../../components/tools/memory/MemoryResult.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+
+const MemoryResult = lazyToolComponent(() => import('../../../components/tools/memory/MemoryResult.vue'))
 
 registerTool('memory_config', {
   name: 'memory_config',

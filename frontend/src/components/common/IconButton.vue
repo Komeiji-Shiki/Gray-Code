@@ -3,11 +3,13 @@
  * 图标按钮组件
  */
 
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
+import { TOOLTIP_CONTENT_KEY } from './tooltipContext'
 
 const props = withDefaults(defineProps<{
   icon?: string
   tooltip?: string
+  ariaLabel?: string
   disabled?: boolean
   loading?: boolean
   variant?: 'default' | 'primary' | 'danger'
@@ -20,6 +22,12 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   click: [event: MouseEvent]
 }>()
+
+const injectedTooltip = inject(TOOLTIP_CONTENT_KEY, undefined)
+const accessibleLabel = computed(() => {
+  const iconLabel = props.icon?.replace(/^codicon-/, '').replace(/-/g, ' ')
+  return props.ariaLabel || props.tooltip || injectedTooltip?.value || iconLabel || 'button'
+})
 
 const buttonClass = computed(() => {
   return [
@@ -55,13 +63,14 @@ function handleClick(event: MouseEvent) {
     :class="buttonClass"
     :disabled="disabled || loading"
     :title="tooltip"
-    :aria-label="tooltip || icon || 'button'"
+    :aria-label="accessibleLabel"
+    :aria-busy="loading || undefined"
     type="button"
     @click="handleClick"
   >
-    <span v-if="loading" class="spinner"></span>
-    <i v-else-if="isCodiconIcon" :class="codiconClass"></i>
-    <span v-else-if="icon" class="icon">{{ icon }}</span>
+    <span v-if="loading" class="spinner" aria-hidden="true"></span>
+    <i v-else-if="isCodiconIcon" :class="codiconClass" aria-hidden="true"></i>
+    <span v-else-if="icon" class="icon" aria-hidden="true">{{ icon }}</span>
     <slot v-else />
   </button>
 </template>
@@ -73,9 +82,12 @@ function handleClick(event: MouseEvent) {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: var(--radius-sm, 2px);
+  border-radius: var(--gc-radius-sm);
   cursor: pointer;
-  transition: opacity var(--transition-fast, 0.1s);
+  transition:
+    color var(--gc-duration-fast) var(--gc-ease-standard),
+    background-color var(--gc-duration-fast) var(--gc-ease-standard),
+    opacity var(--gc-duration-fast) var(--gc-ease-standard);
   font-family: inherit;
   flex-shrink: 0;
   background: transparent;
@@ -84,27 +96,27 @@ function handleClick(event: MouseEvent) {
 
 /* 尺寸 */
 .icon-button.small {
-  width: 24px;
-  height: 24px;
-  font-size: 14px;
+  width: var(--gc-control-height-sm);
+  height: var(--gc-control-height-sm);
+  font-size: var(--gc-icon-size-sm);
 }
 
 .icon-button.medium {
-  width: 28px;
-  height: 28px;
-  font-size: 16px;
+  width: var(--gc-control-height-md);
+  height: var(--gc-control-height-md);
+  font-size: var(--gc-icon-size-md);
 }
 
 .icon-button.large {
-  width: 32px;
-  height: 32px;
-  font-size: 18px;
+  width: var(--gc-control-height-lg);
+  height: var(--gc-control-height-lg);
+  font-size: var(--gc-icon-size-lg);
 }
 
 /* 变体 - 扁平化设计 */
 .icon-button.default {
-  color: var(--vscode-foreground);
-  opacity: 0.7;
+  color: var(--gc-text-primary);
+  opacity: var(--gc-opacity-muted);
 }
 
 .icon-button.default:hover:not(:disabled) {
@@ -112,8 +124,8 @@ function handleClick(event: MouseEvent) {
 }
 
 .icon-button.primary {
-  background: var(--vscode-foreground);
-  color: var(--vscode-editor-background);
+  background: var(--gc-accent);
+  color: var(--gc-text-on-accent);
 }
 
 .icon-button.primary:hover:not(:disabled) {
@@ -121,8 +133,8 @@ function handleClick(event: MouseEvent) {
 }
 
 .icon-button.danger {
-  color: var(--vscode-foreground);
-  opacity: 0.7;
+  color: var(--gc-danger);
+  opacity: var(--gc-opacity-muted);
 }
 
 .icon-button.danger:hover:not(:disabled) {
@@ -132,7 +144,7 @@ function handleClick(event: MouseEvent) {
 /* 状态 */
 .icon-button:disabled,
 .icon-button.loading {
-  opacity: 0.3;
+  opacity: var(--gc-opacity-disabled);
   cursor: not-allowed;
 }
 

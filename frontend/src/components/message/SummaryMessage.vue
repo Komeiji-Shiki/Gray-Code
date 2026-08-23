@@ -118,11 +118,16 @@ async function handleRestore() {
     data-marker-color="rgba(221, 185, 47, 0.9)"
     :data-marker-tooltip-prefix="t('components.message.summary.markerPrefix')"
   >
-    <div class="summary-bar" @click="isExpanded = !isExpanded">
+    <div class="summary-bar">
       <!-- 左侧：图标和标题 -->
-      <div class="summary-left">
-        <i class="codicon" :class="isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
-        <i class="codicon codicon-fold summary-icon"></i>
+      <button
+        type="button"
+        class="summary-toggle"
+        :aria-expanded="isExpanded"
+        @click="isExpanded = !isExpanded"
+      >
+        <i class="codicon" :class="isExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'" aria-hidden="true"></i>
+        <i class="codicon codicon-fold summary-icon" aria-hidden="true"></i>
         <span class="summary-title">{{ t('components.message.summary.title') }}</span>
         <span v-if="floor" class="message-floor">#{{ floor }}</span>
         <span v-if="message.summarizedMessageCount" class="summary-count">
@@ -131,7 +136,7 @@ async function handleRestore() {
         <span v-if="message.isAutoSummary" class="summary-auto-badge">
           {{ t('components.message.summary.autoTriggered') }}
         </span>
-      </div>
+      </button>
       
       <!-- 右侧：删除按钮 + 时间和 Token 信息 -->
       <div class="summary-right">
@@ -144,20 +149,24 @@ async function handleRestore() {
         </span>
         <span class="summary-time">{{ formattedTime }}</span>
         <button
+          type="button"
           class="delete-button"
           :disabled="isRestoring"
           @click.stop="handleRestore"
           :title="t('components.message.summary.restoreTitle')"
+          :aria-label="t('components.message.summary.restoreTitle')"
         >
-          <i class="codicon codicon-discard"></i>
+          <i class="codicon codicon-discard" aria-hidden="true"></i>
         </button>
         <button
+          type="button"
           class="delete-button"
           :disabled="isDeleting"
           @click.stop="handleDelete"
           :title="t('components.message.summary.deleteTitle')"
+          :aria-label="t('components.message.summary.deleteTitle')"
         >
-          <i class="codicon codicon-trash"></i>
+          <i class="codicon codicon-trash" aria-hidden="true"></i>
         </button>
       </div>
     </div>
@@ -199,9 +208,8 @@ async function handleRestore() {
     rgba(128, 128, 128, 0.035) 38%,
     transparent
   );
-  cursor: pointer;
   user-select: none;
-  transition: background-color 0.15s;
+  transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .summary-bar:hover {
@@ -213,19 +221,26 @@ async function handleRestore() {
   );
 }
 
-.summary-left {
+.summary-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gc-space-2);
   min-width: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--gc-radius-sm);
+  cursor: pointer;
 }
 
-.summary-left .codicon {
+.summary-toggle .codicon {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
 
-.summary-left .summary-icon {
+.summary-toggle .summary-icon {
   flex-shrink: 0;
   font-size: 14px;
   color: var(--vscode-charts-yellow, #ddb92f);

@@ -11,33 +11,15 @@
  * 所有响应式状态仍由本组件持有，子组件仅通过 props/emits 通信。
  * 注意：SEARCH_INDEX 必须留在本文件（settingsSearchAnchorConsistency.test.ts 直接解析本文件源码做 L-3 校验）。
  */
-import { ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
+import { defineAsyncComponent, ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useSettingsStore, type SettingsTab } from '@/stores/settingsStore'
 import { MESSAGE_NAMES } from '@shared/protocol'
-import ChannelSettings from './ChannelSettings.vue'
-import ToolsSettings from './ToolsSettings.vue'
-import AutoExecSettings from './AutoExecSettings.vue'
-import McpSettings from './McpSettings.vue'
-import CheckpointSettings from './CheckpointSettings.vue'
-import SummarizeSettings from './SummarizeSettings.vue'
-import GenerateImageSettings from './GenerateImageSettings.vue'
-import DependencySettings from './DependencySettings.vue'
-import ContextSettings from './ContextSettings.vue'
-import PromptSettings from './PromptSettings.vue'
-import TokenCountSettings from './TokenCountSettings.vue'
-import SubAgentsSettings from './SubAgentsSettings.vue'
-import MemorySettings from './MemorySettings.vue'
-import AppearanceSettings from './AppearanceSettings.vue'
-import SoundSettings from './SoundSettings.vue'
-import UsageTimeSection from '../usage/UsageTimeSection.vue'
 import { CustomScrollbar } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
 import type { SupportedLanguage } from '@/i18n/types'
 import SettingsSidebar from './panel/SettingsSidebar.vue'
 import SettingsSearchBox from './panel/SettingsSearchBox.vue'
-import GeneralSettingsSection from './panel/GeneralSettingsSection.vue'
-import UsageSummaryCard from './panel/UsageSummaryCard.vue'
 import StorageMigrateDialog from './panel/StorageMigrateDialog.vue'
 import type { TabItem, SearchIndexEntry } from './panel/types'
 import { useStoragePathSettings } from '@/composables/useStoragePathSettings'
@@ -45,6 +27,26 @@ import { useUpdateSettings } from '@/composables/useUpdateSettings'
 import { useSettingsImportExport } from '@/composables/useSettingsImportExport'
 import { useUsageStats } from '@/composables/useUsageStats'
 import { useOneShotTimer } from '@/composables/useOneShotTimer'
+
+// 设置外壳保持同步；每个页签在首次进入时单独加载，避免主聊天与设置首页携带全部配置 UI。
+const ChannelSettings = defineAsyncComponent(() => import('./ChannelSettings.vue'))
+const ToolsSettings = defineAsyncComponent(() => import('./ToolsSettings.vue'))
+const AutoExecSettings = defineAsyncComponent(() => import('./AutoExecSettings.vue'))
+const McpSettings = defineAsyncComponent(() => import('./McpSettings.vue'))
+const CheckpointSettings = defineAsyncComponent(() => import('./CheckpointSettings.vue'))
+const SummarizeSettings = defineAsyncComponent(() => import('./SummarizeSettings.vue'))
+const GenerateImageSettings = defineAsyncComponent(() => import('./GenerateImageSettings.vue'))
+const DependencySettings = defineAsyncComponent(() => import('./DependencySettings.vue'))
+const ContextSettings = defineAsyncComponent(() => import('./ContextSettings.vue'))
+const PromptSettings = defineAsyncComponent(() => import('./PromptSettings.vue'))
+const TokenCountSettings = defineAsyncComponent(() => import('./TokenCountSettings.vue'))
+const SubAgentsSettings = defineAsyncComponent(() => import('./SubAgentsSettings.vue'))
+const MemorySettings = defineAsyncComponent(() => import('./MemorySettings.vue'))
+const AppearanceSettings = defineAsyncComponent(() => import('./AppearanceSettings.vue'))
+const SoundSettings = defineAsyncComponent(() => import('./SoundSettings.vue'))
+const GeneralSettingsSection = defineAsyncComponent(() => import('./panel/GeneralSettingsSection.vue'))
+const UsageTimeSection = defineAsyncComponent(() => import('../usage/UsageTimeSection.vue'))
+const UsageSummaryCard = defineAsyncComponent(() => import('./panel/UsageSummaryCard.vue'))
 
 const settingsStore = useSettingsStore()
 const { t, setLanguage } = useI18n()
@@ -1027,9 +1029,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="settings-panel">
+  <section class="settings-panel" aria-labelledby="settings-panel-title">
     <div class="settings-header">
-      <h3>{{ t('components.settings.settingsPanel.title') }}</h3>
+      <h3 id="settings-panel-title">{{ t('components.settings.settingsPanel.title') }}</h3>
       <!-- T12：拆至 SettingsSearchBox（搜索框 + 结果下拉） -->
       <SettingsSearchBox
         v-model:query="searchQuery"
@@ -1041,8 +1043,14 @@ onMounted(() => {
         @open="openSearchResult"
         @move="moveSearchSelection"
       />
-      <button class="settings-close-btn" :title="t('components.settings.settingsPanel.backToChat')" @click="settingsStore.showChat">
-        <i class="codicon codicon-close"></i>
+      <button
+        type="button"
+        class="settings-close-btn"
+        :title="t('components.settings.settingsPanel.backToChat')"
+        :aria-label="t('components.settings.settingsPanel.backToChat')"
+        @click="settingsStore.showChat"
+      >
+        <i class="codicon codicon-close" aria-hidden="true"></i>
       </button>
     </div>
     
@@ -1059,7 +1067,7 @@ onMounted(() => {
       
       <!-- 右侧内容 -->
       <CustomScrollbar ref="scrollbarRef" class="settings-main-scrollbar">
-        <div class="settings-main">
+        <div class="settings-main" role="region" :aria-label="t(`components.settings.tabs.${settingsStore.activeTab}`)">
           <!-- 渠道设置 -->
           <div v-if="settingsStore.activeTab === 'channel'" class="settings-section">
             <h4>{{ t('components.settings.settingsPanel.sections.channel.title') }}</h4>
@@ -1252,7 +1260,7 @@ onMounted(() => {
       :is-migrating="isMigrating"
       @confirm="executeMigration"
     />
-  </div>
+  </section>
 </template>
 
 <style scoped>
@@ -1262,8 +1270,8 @@ onMounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--vscode-sideBar-background);
-  z-index: 100;
+  background: var(--gc-surface-panel);
+  z-index: var(--gc-layer-sticky);
   display: flex;
   flex-direction: column;
 }
@@ -1272,30 +1280,29 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  padding: var(--gc-space-3) var(--gc-space-4);
+  border-bottom: 1px solid var(--gc-border-subtle);
 }
 
 .settings-header h3 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 .settings-close-btn {
   background: transparent;
   border: none;
-  color: var(--vscode-foreground);
-  cursor: pointer;
-  padding: 4px;
+  color: var(--gc-text-primary);
+  padding: var(--gc-space-1);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--gc-radius-sm);
 }
 
 .settings-close-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .settings-content {
@@ -1314,20 +1321,20 @@ onMounted(() => {
 }
 
 .settings-main {
-  padding: 16px;
+  padding: var(--gc-space-4);
   min-height: min-content;
 }
 
 .settings-section h4 {
   margin: 0 0 4px 0;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-medium);
 }
 
 .settings-description {
   margin: 0 0 16px 0;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-muted);
 }
 
 /* 搜索结果跳转后的临时闪烁高亮 */
@@ -1336,14 +1343,18 @@ onMounted(() => {
 }
 
 @keyframes settings-search-flash {
-  0% {
-    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
-  }
-  60% {
-    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+  0%, 60% {
+    background-color: var(--vscode-editor-findMatchHighlightBackground, color-mix(in srgb, var(--gc-warning) 28%, transparent));
   }
   100% {
     background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-flash {
+    animation: none;
+    outline: 1px solid var(--gc-focus-border);
   }
 }
 </style>

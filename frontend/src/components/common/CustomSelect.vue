@@ -4,7 +4,7 @@
  * 支持 v-model 双向绑定
  */
 
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, getCurrentInstance, nextTick } from 'vue'
 import CustomScrollbar from './CustomScrollbar.vue'
 import type { SelectOption } from './types'
 import { t } from '@/i18n'
@@ -15,12 +15,14 @@ const props = withDefaults(defineProps<{
   modelValue: string
   options: SelectOption[]
   placeholder?: string
+  ariaLabel?: string
   disabled?: boolean
   searchable?: boolean
   dropUp?: boolean  // 向上展开
   compact?: boolean  // 紧凑模式
 }>(), {
   placeholder: '',
+  ariaLabel: '',
   disabled: false,
   searchable: false,
   dropUp: false,
@@ -35,7 +37,14 @@ const isOpen = ref(false)
 const searchQuery = ref('')
 const highlightedIndex = ref(-1)
 const containerRef = ref<HTMLElement>()
+const triggerRef = ref<HTMLButtonElement>()
 const inputRef = ref<HTMLInputElement>()
+const instanceId = getCurrentInstance()?.uid ?? 0
+const listboxId = `gc-select-listbox-${instanceId}`
+
+function getOptionId(index: number): string {
+  return `gc-select-option-${instanceId}-${index}`
+}
 
 const selectedOption = computed(() => {
   return props.options.find(opt => opt.value === props.modelValue)
@@ -43,6 +52,13 @@ const selectedOption = computed(() => {
 
 // 未传入 placeholder 时回退到 i18n 默认值（跟随语言切换）
 const resolvedPlaceholder = computed(() => props.placeholder || t('components.common.customSelect.placeholder'))
+const accessibleLabel = computed(() => props.ariaLabel || resolvedPlaceholder.value)
+const activeOptionId = computed(() => {
+  if (!isOpen.value || highlightedIndex.value < 0 || highlightedIndex.value >= filteredOptions.value.length) {
+    return undefined
+  }
+  return getOptionId(highlightedIndex.value)
+})
 
 const filteredOptions = computed(() => {
   if (!searchQuery.value) {
@@ -61,14 +77,17 @@ function open() {
   highlightedIndex.value = props.options.findIndex(opt => opt.value === props.modelValue)
   if (props.searchable) {
     searchQuery.value = ''
-    setTimeout(() => inputRef.value?.focus(), 10)
+    nextTick(() => inputRef.value?.focus())
   }
 }
 
-function close() {
+function close(options: { restoreFocus?: boolean } = {}) {
   isOpen.value = false
   searchQuery.value = ''
   highlightedIndex.value = -1
+  if (options.restoreFocus) {
+    nextTick(() => triggerRef.value?.focus())
+  }
 }
 
 function toggle() {
@@ -81,7 +100,7 @@ function toggle() {
 
 function selectOption(option: SelectOption) {
   emit('update:modelValue', option.value)
-  close()
+  close({ restoreFocus: true })
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -111,8 +130,19 @@ function handleKeydown(event: KeyboardEvent) {
         selectOption(filteredOptions.value[highlightedIndex.value])
       }
       break
+    case 'Home':
+      event.preventDefault()
+      highlightedIndex.value = 0
+      break
+    case 'End':
+      event.preventDefault()
+      highlightedIndex.value = Math.max(filteredOptions.value.length - 1, 0)
+      break
     case 'Escape':
       event.preventDefault()
+      close({ restoreFocus: true })
+      break
+    case 'Tab':
       close()
       break
   }
@@ -144,8 +174,15 @@ onUnmounted(() => {
     @keydown="handleKeydown"
   >
     <button
+      ref="triggerRef"
       type="button"
       class="select-trigger"
+      role="combobox"
+      aria-haspopup="listbox"
+      :aria-label="accessibleLabel"
+      :aria-expanded="isOpen"
+      :aria-controls="listboxId"
+      :aria-activedescendant="activeOptionId"
       :disabled="disabled"
       @click="toggle"
     >
@@ -153,7 +190,7 @@ onUnmounted(() => {
         <span class="selected-label">{{ selectedOption.label }}</span>
       </span>
       <span v-else class="placeholder">{{ resolvedPlaceholder }}</span>
-      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
+      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
     </button>
 
     <Transition name="dropdown">
@@ -164,16 +201,25 @@ onUnmounted(() => {
             v-model="searchQuery"
             type="text"
             class="search-input"
+            role="combobox"
+            aria-autocomplete="list"
+            :aria-label="t('common.search')"
+            :aria-expanded="isOpen"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             :placeholder="t('components.common.customSelect.searchPlaceholder')"
             @click.stop
           />
         </div>
 
         <CustomScrollbar :max-height="200" :width="5" :offset="1">
-          <div class="options-list">
+          <div :id="listboxId" class="options-list" role="listbox" :aria-label="accessibleLabel">
             <div
               v-for="(option, index) in filteredOptions"
+              :id="getOptionId(index)"
               :key="option.value"
+              role="option"
+              :aria-selected="option.value === modelValue"
               :class="[
                 'option-item',
                 {
@@ -188,10 +234,10 @@ onUnmounted(() => {
                 <span class="option-label">{{ option.label }}</span>
                 <span v-if="option.description" class="option-description">{{ option.description }}</span>
               </div>
-              <span v-if="option.value === modelValue" class="check-icon">✓</span>
+              <span v-if="option.value === modelValue" class="check-icon" aria-hidden="true">✓</span>
             </div>
 
-            <div v-if="filteredOptions.length === 0" class="empty-state">
+            <div v-if="filteredOptions.length === 0" class="empty-state" role="status">
               <span>{{ t('components.common.customSelect.noMatch') }}</span>
             </div>
           </div>
@@ -208,7 +254,7 @@ onUnmounted(() => {
 }
 
 .custom-select.disabled {
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
   pointer-events: none;
 }
 
@@ -217,23 +263,26 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
+  min-height: var(--gc-control-height-lg);
   padding: 6px 10px;
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  font-size: 13px;
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  font-size: var(--gc-font-size-control);
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s, background-color 0.15s;
+  transition:
+    border-color var(--gc-duration-fast) var(--gc-ease-standard),
+    background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .select-trigger:hover:not(:disabled) {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .custom-select.open .select-trigger {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .selected-value {
@@ -256,9 +305,9 @@ onUnmounted(() => {
 
 .select-arrow {
   flex-shrink: 0;
-  font-size: 10px;
-  margin-left: 8px;
-  transition: transform 0.15s;
+  font-size: var(--gc-font-size-micro);
+  margin-left: var(--gc-space-2);
+  transition: transform var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .select-arrow.arrow-up {
@@ -270,12 +319,12 @@ onUnmounted(() => {
   top: 100%;
   left: 0;
   right: 0;
-  margin-top: 4px;
-  background: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  z-index: 1000;
+  margin-top: var(--gc-space-1);
+  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
+  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  border-radius: var(--gc-radius-sm);
+  box-shadow: var(--gc-shadow-md);
+  z-index: var(--gc-layer-popover);
   overflow: hidden;
 }
 
@@ -290,7 +339,7 @@ onUnmounted(() => {
 /* 紧凑模式 */
 .custom-select.compact .select-trigger {
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
 }
 
 .custom-select.compact .select-arrow {
@@ -317,7 +366,7 @@ onUnmounted(() => {
   border-radius: 3px;
   padding: 4px 8px;
   color: var(--vscode-input-foreground);
-  font-size: 12px;
+  font-size: var(--gc-font-size-body);
   outline: none;
 }
 
@@ -335,7 +384,7 @@ onUnmounted(() => {
   padding: 6px 8px;
   margin: 0;
   cursor: pointer;
-  transition: background-color 0.1s;
+  transition: background-color var(--gc-duration-instant) var(--gc-ease-standard);
 }
 
 .option-item:hover,
@@ -357,15 +406,15 @@ onUnmounted(() => {
 }
 
 .option-label {
-  font-size: 13px;
+  font-size: var(--gc-font-size-control);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .option-description {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-caption);
+  color: var(--gc-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -385,13 +434,15 @@ onUnmounted(() => {
 .empty-state {
   padding: 16px;
   text-align: center;
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
+  font-size: var(--gc-font-size-body);
+  color: var(--gc-text-muted);
 }
 
 .dropdown-enter-active,
 .dropdown-leave-active {
-  transition: opacity 0.15s, transform 0.15s;
+  transition:
+    opacity var(--gc-duration-fast) var(--gc-ease-standard),
+    transform var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .dropdown-enter-from,

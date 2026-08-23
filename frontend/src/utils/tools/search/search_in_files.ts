@@ -2,10 +2,11 @@
  * search_in_files 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { createDiffPreviewAction } from '../diffPreviewAction'
 import { t } from '../../../i18n'
-import SearchInFilesComponent from '../../../components/tools/search/search_in_files.vue'
+
+const SearchInFilesComponent = lazyToolComponent(() => import('../../../components/tools/search/search_in_files.vue'))
 
 // 注册 search_in_files 工具
 registerTool('search_in_files', {

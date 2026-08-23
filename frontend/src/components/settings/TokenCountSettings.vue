@@ -199,15 +199,15 @@ onUnmounted(() => {
             
             <!-- Gemini 配置 -->
             <div class="channel-panel" :class="{ expanded: expandedPanels.gemini }" data-search-anchor="token-count-gemini">
-                <div class="panel-header" @click="togglePanel('gemini')">
+                <button type="button" class="panel-header" :aria-expanded="expandedPanels.gemini" @click="togglePanel('gemini')">
                     <div class="panel-title">
-                        <i :class="['codicon', expandedPanels.gemini ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <i :class="['codicon', expandedPanels.gemini ? 'codicon-chevron-down' : 'codicon-chevron-right']" aria-hidden="true"></i>
                         <span class="channel-name">Gemini</span>
                         <span v-if="config.gemini?.enabled" class="status-badge enabled">
                             {{ t('common.enabled') }}
                         </span>
                     </div>
-                </div>
+                </button>
                 
                 <div v-if="expandedPanels.gemini" class="panel-content">
                     <div class="form-group">
@@ -261,15 +261,15 @@ onUnmounted(() => {
             
             <!-- Gemini Interactions 配置（与 gemini 共用 countTokens 端点） -->
             <div class="channel-panel" :class="{ expanded: expandedPanels['gemini-interactions'] }" data-search-anchor="token-count-gemini-interactions">
-                <div class="panel-header" @click="togglePanel('gemini-interactions')">
+                <button type="button" class="panel-header" :aria-expanded="expandedPanels['gemini-interactions']" @click="togglePanel('gemini-interactions')">
                     <div class="panel-title">
-                        <i :class="['codicon', expandedPanels['gemini-interactions'] ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <i :class="['codicon', expandedPanels['gemini-interactions'] ? 'codicon-chevron-down' : 'codicon-chevron-right']" aria-hidden="true"></i>
                         <span class="channel-name">Gemini Interactions</span>
                         <span v-if="config['gemini-interactions']?.enabled" class="status-badge enabled">
                             {{ t('common.enabled') }}
                         </span>
                     </div>
-                </div>
+                </button>
                 
                 <div v-if="expandedPanels['gemini-interactions']" class="panel-content">
                     <div class="form-group">
@@ -323,15 +323,15 @@ onUnmounted(() => {
             
             <!-- OpenAI 配置 -->
             <div class="channel-panel" :class="{ expanded: expandedPanels.openai }" data-search-anchor="token-count-openai">
-                <div class="panel-header" @click="togglePanel('openai')">
+                <button type="button" class="panel-header" :aria-expanded="expandedPanels.openai" @click="togglePanel('openai')">
                     <div class="panel-title">
-                        <i :class="['codicon', expandedPanels.openai ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <i :class="['codicon', expandedPanels.openai ? 'codicon-chevron-down' : 'codicon-chevron-right']" aria-hidden="true"></i>
                         <span class="channel-name">OpenAI</span>
                         <span class="status-badge custom-api">
                             {{ t('components.settings.tokenCountSettings.customApi') }}
                         </span>
                     </div>
-                </div>
+                </button>
                 
                 <div v-if="expandedPanels.openai" class="panel-content">
                     <div class="api-doc-notice">
@@ -428,15 +428,15 @@ Authorization: Bearer {apiKey}
             
             <!-- Anthropic 配置 -->
             <div class="channel-panel" :class="{ expanded: expandedPanels.anthropic }" data-search-anchor="token-count-anthropic">
-                <div class="panel-header" @click="togglePanel('anthropic')">
+                <button type="button" class="panel-header" :aria-expanded="expandedPanels.anthropic" @click="togglePanel('anthropic')">
                     <div class="panel-title">
-                        <i :class="['codicon', expandedPanels.anthropic ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <i :class="['codicon', expandedPanels.anthropic ? 'codicon-chevron-down' : 'codicon-chevron-right']" aria-hidden="true"></i>
                         <span class="channel-name">Anthropic</span>
                         <span v-if="config.anthropic?.enabled" class="status-badge enabled">
                             {{ t('common.enabled') }}
                         </span>
                     </div>
-                </div>
+                </button>
                 
                 <div v-if="expandedPanels.anthropic" class="panel-content">
                     <div class="form-group">
@@ -489,15 +489,15 @@ Authorization: Bearer {apiKey}
             
             <!-- OpenAI Responses 配置 -->
             <div class="channel-panel" :class="{ expanded: expandedPanels['openai-responses'] }" data-search-anchor="token-count-openai-responses">
-                <div class="panel-header" @click="togglePanel('openai-responses')">
+                <button type="button" class="panel-header" :aria-expanded="expandedPanels['openai-responses']" @click="togglePanel('openai-responses')">
                     <div class="panel-title">
-                        <i :class="['codicon', expandedPanels['openai-responses'] ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <i :class="['codicon', expandedPanels['openai-responses'] ? 'codicon-chevron-down' : 'codicon-chevron-right']" aria-hidden="true"></i>
                         <span class="channel-name">OpenAI Responses</span>
                         <span v-if="config['openai-responses']?.enabled" class="status-badge enabled">
                             {{ t('common.enabled') }}
                         </span>
                     </div>
-                </div>
+                </button>
                 
                 <div v-if="expandedPanels['openai-responses']" class="panel-content">
                     <div class="form-group">
@@ -612,17 +612,22 @@ Authorization: Bearer {apiKey}
 }
 
 .panel-header {
+    width: 100%;
     display: flex;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    border: 0;
     align-items: center;
     justify-content: space-between;
     padding: 12px;
-    background: var(--vscode-editor-background);
+    background: var(--gc-surface-base);
     cursor: pointer;
     user-select: none;
 }
 
 .panel-header:hover {
-    background: var(--vscode-list-hoverBackground);
+    background: var(--gc-surface-hover);
 }
 
 .panel-title {

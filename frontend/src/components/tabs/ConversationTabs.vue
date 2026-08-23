@@ -149,11 +149,42 @@ function truncateTitle(title: string, maxLen = TAB_TITLE_MAX_LENGTH): string {
   return title.slice(0, maxLen) + '...'
 }
 
-function handleTabKeydown(event: KeyboardEvent, tabId: string) {
+function activateTabAt(index: number) {
+  if (props.tabs.length === 0) return
+  const normalizedIndex = (index + props.tabs.length) % props.tabs.length
+  const tab = props.tabs[normalizedIndex]
+  emit('switchTab', tab.id)
+  nextTick(() => {
+    const container = scrollbarRef.value?.getContainer?.()
+    const target = container?.querySelector<HTMLElement>(`[data-tab-index="${normalizedIndex}"]`)
+    target?.focus()
+  })
+}
+
+function handleTabKeydown(event: KeyboardEvent, tabId: string, index: number) {
   if (event.target !== event.currentTarget) return
-  if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault()
-    emit('switchTab', tabId)
+  switch (event.key) {
+    case 'Enter':
+    case ' ':
+      event.preventDefault()
+      emit('switchTab', tabId)
+      break
+    case 'ArrowLeft':
+      event.preventDefault()
+      activateTabAt(index - 1)
+      break
+    case 'ArrowRight':
+      event.preventDefault()
+      activateTabAt(index + 1)
+      break
+    case 'Home':
+      event.preventDefault()
+      activateTabAt(0)
+      break
+    case 'End':
+      event.preventDefault()
+      activateTabAt(props.tabs.length - 1)
+      break
   }
 }
 
@@ -194,10 +225,11 @@ watch(() => props.tabs.length, () => {
       :min-thumb-height="20"
       class="tabs-scrollbar"
     >
-      <div class="tabs-container">
+      <div class="tabs-container" role="tablist" :aria-label="t('components.tabs.tabListLabel')">
         <div
           v-for="(tab, index) in tabs"
           :key="tab.id"
+          :data-tab-index="index"
           class="tab-item"
           :class="{
             active: tab.id === activeTabId,
@@ -216,8 +248,8 @@ watch(() => props.tabs.length, () => {
           :title="tab.title || t('components.tabs.newChat')"
           role="tab"
           :aria-selected="tab.id === activeTabId"
-          tabindex="0"
-          @keydown="handleTabKeydown($event, tab.id)"
+          :tabindex="tab.id === activeTabId ? 0 : -1"
+          @keydown="handleTabKeydown($event, tab.id, index)"
         >
           <!-- 流式指示器 -->
           <i v-if="tab.isStreaming" class="codicon codicon-loading spin tab-spinner"></i>
@@ -229,13 +261,15 @@ watch(() => props.tabs.length, () => {
 
           <!-- 关闭按钮 -->
           <button
+            type="button"
             class="tab-close-btn"
             draggable="false"
             @dragstart.stop.prevent
             @click="handleClose($event, tab.id)"
             :title="t('components.tabs.closeTab')"
+            :aria-label="t('components.tabs.closeTab')"
           >
-            <i class="codicon codicon-close"></i>
+            <i class="codicon codicon-close" aria-hidden="true"></i>
           </button>
         </div>
       </div>
@@ -243,11 +277,13 @@ watch(() => props.tabs.length, () => {
 
     <!-- 新建标签页按钮 -->
     <button
+      type="button"
       class="tab-new-btn"
       @click="emit('newTab')"
       :title="t('components.tabs.newTab')"
+      :aria-label="t('components.tabs.newTab')"
     >
-      <i class="codicon codicon-add"></i>
+      <i class="codicon codicon-add" aria-hidden="true"></i>
     </button>
   </div>
 </template>
@@ -382,7 +418,7 @@ watch(() => props.tabs.length, () => {
 }
 
 .tab-title {
-  font-size: 11px;
+  font-size: var(--gc-font-size-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;

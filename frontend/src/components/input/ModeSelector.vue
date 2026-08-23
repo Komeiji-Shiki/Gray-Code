@@ -4,7 +4,7 @@
  * 用于在输入区域选择提示词模式
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, getCurrentInstance } from 'vue'
 import { CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
 import { useSearchableDropdown } from '../../composables'
@@ -33,7 +33,17 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLElement>()
 
-const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<PromptMode>(containerRef, {
+const {
+  isOpen,
+  toggle,
+  closeAndRestoreFocus,
+  inputRef,
+  triggerRef,
+  searchQuery,
+  filteredItems,
+  highlightedIndex,
+  handleKeydown: handleDropdownKeydown
+} = useSearchableDropdown<PromptMode>(containerRef, {
   items: () => props.options,
   getKey: (opt) => opt.id,
   selectedKey: () => props.modelValue,
@@ -42,7 +52,14 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
 })
 
 void inputRef // used in template via ref="inputRef"
+void triggerRef // used in template via ref="triggerRef"
 const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
+const instanceId = getCurrentInstance()?.uid ?? 0
+const listboxId = `gc-mode-listbox-${instanceId}`
+const accessibleLabel = computed(() => props.placeholder || t('components.input.mode.selectMode'))
+const activeOptionId = computed(() => isOpen.value && highlightedIndex.value >= 0
+  ? `gc-mode-option-${instanceId}-${highlightedIndex.value}`
+  : undefined)
 
 function getModeDisplayTitle(option?: PromptMode): string {
   return option?.name || t('components.input.mode.selectMode')
@@ -50,12 +67,12 @@ function getModeDisplayTitle(option?: PromptMode): string {
 
 function selectMode(option: PromptMode) {
   emit('update:modelValue', option.id)
-  close()
+  closeAndRestoreFocus()
 }
 
 function openSettings() {
   emit('openSettings')
-  close()
+  closeAndRestoreFocus()
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -67,15 +84,23 @@ function handleKeydown(event: KeyboardEvent) {
   <div ref="containerRef" class="mode-selector" :class="{ disabled, open: isOpen }">
     <!-- 触发按钮 -->
     <button
+      ref="triggerRef"
+      type="button"
       class="mode-trigger"
+      role="combobox"
+      aria-haspopup="listbox"
+      :aria-label="accessibleLabel"
+      :aria-expanded="isOpen"
+      :aria-controls="listboxId"
+      :aria-activedescendant="activeOptionId"
       :disabled="disabled"
       @click="toggle"
       @keydown="handleKeydown"
       :title="getModeDisplayTitle(selectedOption)"
     >
-      <i :class="['codicon', selectedOption?.icon ? `codicon-${selectedOption.icon}` : 'codicon-symbol-method']"></i>
+      <i :class="['codicon', selectedOption?.icon ? `codicon-${selectedOption.icon}` : 'codicon-symbol-method']" aria-hidden="true"></i>
       <span class="mode-name">{{ selectedOption?.name || t('components.input.mode.selectMode') }}</span>
-      <i class="codicon codicon-chevron-down arrow-icon" :class="{ open: isOpen }"></i>
+      <i class="codicon codicon-chevron-down arrow-icon" :class="{ open: isOpen }" aria-hidden="true"></i>
     </button>
 
     <!-- 下拉面板 -->
@@ -88,6 +113,12 @@ function handleKeydown(event: KeyboardEvent) {
             v-model="searchQuery"
             type="text"
             class="search-input"
+            role="combobox"
+            aria-autocomplete="list"
+            :aria-label="t('components.input.mode.search')"
+            :aria-expanded="isOpen"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             :placeholder="t('components.input.mode.search')"
             @keydown="handleKeydown"
             @click.stop
@@ -95,10 +126,13 @@ function handleKeydown(event: KeyboardEvent) {
         </div>
 
         <CustomScrollbar :max-height="180" :width="5" :offset="1">
-          <div class="mode-list">
+          <div :id="listboxId" class="mode-list" role="listbox" :aria-label="accessibleLabel">
             <div
               v-for="(option, index) in filteredItems"
+              :id="`gc-mode-option-${instanceId}-${index}`"
               :key="option.id"
+              role="option"
+              :aria-selected="option.id === modelValue"
               class="mode-item"
               :class="{ 
                 selected: option.id === modelValue,
@@ -108,13 +142,13 @@ function handleKeydown(event: KeyboardEvent) {
               :title="getModeDisplayTitle(option)"
               @mouseenter="highlightedIndex = index"
             >
-              <i :class="['codicon', option.icon ? `codicon-${option.icon}` : 'codicon-symbol-method']"></i>
+              <i :class="['codicon', option.icon ? `codicon-${option.icon}` : 'codicon-symbol-method']" aria-hidden="true"></i>
               <span class="mode-item-name">{{ option.name }}</span>
-              <i v-if="option.id === modelValue" class="codicon codicon-check"></i>
+              <i v-if="option.id === modelValue" class="codicon codicon-check" aria-hidden="true"></i>
             </div>
 
             <!-- 无结果提示 -->
-            <div v-if="filteredItems.length === 0" class="no-results">
+            <div v-if="filteredItems.length === 0" class="no-results" role="status">
               {{ t('components.input.mode.noResults') }}
             </div>
           </div>
@@ -124,8 +158,8 @@ function handleKeydown(event: KeyboardEvent) {
         <div class="mode-divider"></div>
 
         <!-- 设置按钮 -->
-        <button class="mode-settings-btn" @click="openSettings">
-          <i class="codicon codicon-settings-gear"></i>
+        <button type="button" class="mode-settings-btn" @click="openSettings">
+          <i class="codicon codicon-settings-gear" aria-hidden="true"></i>
           <span>{{ t('components.input.mode.manageMode') }}</span>
         </button>
       </div>
@@ -141,7 +175,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .mode-selector.disabled {
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
   pointer-events: none;
 }
 
@@ -150,11 +184,11 @@ function handleKeydown(event: KeyboardEvent) {
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 4px;
-  color: var(--vscode-input-foreground);
-  font-size: 12px;
+  background: var(--vscode-input-background, var(--gc-surface-base));
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-sm);
+  color: var(--vscode-input-foreground, var(--gc-text-primary));
+  font-size: var(--gc-font-size-body);
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -165,16 +199,16 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 .mode-trigger:hover:not(:disabled) {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .mode-selector.open .mode-trigger {
-  border-color: var(--vscode-focusBorder);
+  border-color: var(--gc-focus-border);
 }
 
 .mode-trigger:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
 }
 
 .mode-trigger .codicon:first-child {
@@ -206,11 +240,11 @@ function handleKeydown(event: KeyboardEvent) {
   margin-top: 4px;
   min-width: 200px;
   width: 200px;
-  background: var(--vscode-dropdown-background);
-  border: 1px solid var(--vscode-dropdown-border);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
-  z-index: 1000;
+  background: var(--vscode-dropdown-background, var(--gc-surface-raised));
+  border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
+  border-radius: var(--gc-radius-md);
+  box-shadow: var(--gc-shadow-md);
+  z-index: var(--gc-layer-popover);
   overflow: hidden;
 }
 

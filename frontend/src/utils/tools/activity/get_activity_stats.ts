@@ -5,10 +5,11 @@
  * （总览 + 每日/每月条形图 + 24 小时作息热力图）。
  */
 
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
-import ActivityStatsResult from '../../../components/tools/activity/ActivityStatsResult.vue'
 import { getToolMetaDescription } from '../toolMetaLookup'
+
+const ActivityStatsResult = lazyToolComponent(() => import('../../../components/tools/activity/ActivityStatsResult.vue'))
 
 registerTool('get_activity_stats', {
   name: 'get_activity_stats',

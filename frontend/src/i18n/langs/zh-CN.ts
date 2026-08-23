@@ -28,6 +28,7 @@ const zhCN = {
         warning: '警告',
         info: '信息',
         close: '关闭',
+        dialog: '对话框',
         back: '返回',
         next: '下一步',
         done: '完成',
@@ -241,7 +242,8 @@ const zhCN = {
             newChat: '新对话',
             chat: '对话',
             newTab: '新建标签页',
-            closeTab: '关闭标签页'
+            closeTab: '关闭标签页',
+            tabListLabel: '对话标签页'
         },
 
         usage: {
@@ -592,6 +594,7 @@ const zhCN = {
                     awaitingApproval: '等待确认',
                     executing: '执行中',
                     awaitingApply: '等待应用',
+                    background: '后台运行',
                     success: '成功',
                     error: sharedZhCN.components.message.responseViewer.toolStatuses.error,
                     warning: '警告',

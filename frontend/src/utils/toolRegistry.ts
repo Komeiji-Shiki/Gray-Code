@@ -3,7 +3,7 @@
  * 管理所有工具的显示配置
  */
 
-import type { Component } from 'vue'
+import { defineAsyncComponent, type Component } from 'vue'
 import type { ToolUsage } from '../types'
 
 export interface ToolActionContext {
@@ -117,6 +117,19 @@ export const toolRegistry = new ToolRegistry()
  */
 export function registerTool(name: string, config: ToolConfig): void {
   toolRegistry.register(name, config)
+}
+
+/**
+ * Wrap a tool detail SFC in a real dynamic import boundary.
+ * Registration metadata stays synchronous, while the heavy renderer is fetched only when expanded.
+ */
+export function lazyToolComponent(
+  loader: () => Promise<{ default: Component }>
+): Component {
+  return defineAsyncComponent({
+    loader,
+    suspensible: false
+  })
 }
 
 /**

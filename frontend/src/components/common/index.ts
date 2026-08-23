@@ -5,6 +5,7 @@
 export { default as EmptyState } from './EmptyState.vue'
 export { default as CustomScrollbar } from './CustomScrollbar.vue'
 export { default as CustomCheckbox } from './CustomCheckbox.vue'
+export { default as CustomSwitch } from './CustomSwitch.vue'
 export { default as CustomSelect } from './CustomSelect.vue'
 export { default as LoadingSpinner } from './LoadingSpinner.vue'
 export { default as IconButton } from './IconButton.vue'

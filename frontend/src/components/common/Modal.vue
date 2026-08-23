@@ -3,7 +3,8 @@
  * 通用模态框组件
  */
 
-import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick, getCurrentInstance } from 'vue'
+import { t } from '@/i18n'
 import { lockBodyScroll, unlockBodyScroll } from '../../utils/bodyScrollLock'
 
 const props = withDefaults(defineProps<{
@@ -22,6 +23,10 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   close: []
 }>()
+
+const instanceId = getCurrentInstance()?.uid ?? 0
+const titleId = `gc-modal-title-${instanceId}`
+const accessibleLabel = computed(() => props.title || t('common.dialog'))
 
 const visible = computed({
   get: () => props.modelValue,
@@ -138,12 +143,28 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="modal-fade">
       <div v-if="visible" class="modal-overlay" @click.self="handleMaskClick">
-        <div ref="modalRoot" class="modal" :style="{ width }" role="dialog" aria-modal="true" tabindex="-1" :aria-label="title || 'Dialog'">
+        <div
+          ref="modalRoot"
+          class="modal"
+          :style="{ width }"
+          role="dialog"
+          aria-modal="true"
+          tabindex="-1"
+          :aria-labelledby="title ? titleId : undefined"
+          :aria-label="title ? undefined : accessibleLabel"
+        >
           <!-- 头部 -->
           <div v-if="title || closable" class="modal-header">
-            <h3 v-if="title" class="modal-title">{{ title }}</h3>
-            <button v-if="closable" class="modal-close" @click="close">
-              <i class="codicon codicon-close"></i>
+            <h3 v-if="title" :id="titleId" class="modal-title">{{ title }}</h3>
+            <button
+              v-if="closable"
+              type="button"
+              class="modal-close"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              @click="close"
+            >
+              <i class="codicon codicon-close" aria-hidden="true"></i>
             </button>
           </div>
 
@@ -169,84 +190,84 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: color-mix(in srgb, #000 50%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-  padding: 20px;
+  z-index: var(--gc-layer-modal);
+  padding: var(--gc-space-5);
 }
 
 .modal {
-  background: var(--vscode-editor-background);
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  background: var(--gc-surface-base);
+  border: 1px solid var(--gc-border-subtle);
+  border-radius: var(--gc-radius-md);
   max-width: 90vw;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--gc-shadow-md);
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+  padding: var(--gc-space-4) var(--gc-space-5);
+  border-bottom: 1px solid var(--gc-border-subtle);
   flex-shrink: 0;
 }
 
 .modal-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--vscode-foreground);
+  font-size: var(--gc-font-size-title);
+  font-weight: var(--gc-font-weight-medium);
+  color: var(--gc-text-primary);
 }
 
 .modal-close {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--gc-control-height-md);
+  height: var(--gc-control-height-md);
   border: none;
   background: transparent;
-  color: var(--vscode-foreground);
-  font-size: 18px;
+  color: var(--gc-text-primary);
+  font-size: var(--gc-icon-size-lg);
   cursor: pointer;
-  border-radius: 4px;
-  transition: background-color 0.15s;
+  border-radius: var(--gc-radius-sm);
+  transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
 .modal-close:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  background: var(--gc-surface-hover);
 }
 
 .modal-body {
-  padding: 20px;
+  padding: var(--gc-space-5);
   overflow-y: auto;
   flex: 1;
 }
 
 .modal-footer {
-  padding: 16px 20px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: var(--gc-space-4) var(--gc-space-5);
+  border-top: 1px solid var(--gc-border-subtle);
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--gc-space-2);
   flex-shrink: 0;
 }
 
 /* 动画 */
 .modal-fade-enter-active,
 .modal-fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--gc-duration-normal) var(--gc-ease-standard);
 }
 
 .modal-fade-enter-active .modal,
 .modal-fade-leave-active .modal {
-  transition: transform 0.2s ease;
+  transition: transform var(--gc-duration-normal) var(--gc-ease-emphasized);
 }
 
 .modal-fade-enter-from,
@@ -256,6 +277,21 @@ onUnmounted(() => {
 
 .modal-fade-enter-from .modal,
 .modal-fade-leave-to .modal {
-  transform: scale(0.95);
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-fade-enter-active,
+  .modal-fade-leave-active,
+  .modal-fade-enter-active .modal,
+  .modal-fade-leave-active .modal {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .modal {
+    border-color: CanvasText;
+  }
 }
 </style>

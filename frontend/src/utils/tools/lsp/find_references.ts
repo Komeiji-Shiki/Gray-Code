@@ -2,9 +2,10 @@
  * find_references 工具注册
  */
 
-import { registerTool } from '../../toolRegistry'
-import FindReferencesComponent from '../../../components/tools/lsp/find_references.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
+
+const FindReferencesComponent = lazyToolComponent(() => import('../../../components/tools/lsp/find_references.vue'))
 
 // 注册 find_references 工具
 registerTool('find_references', {

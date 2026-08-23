@@ -4,11 +4,12 @@
  * 旋转图片工具的显示配置
  */
 
-import { registerTool } from '../../toolRegistry'
-import RotateImagePanel from '../../../components/tools/media/rotate_image.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
+
+const RotateImagePanel = lazyToolComponent(() => import('../../../components/tools/media/rotate_image.vue'))
 
 /**
  * 单个任务类型

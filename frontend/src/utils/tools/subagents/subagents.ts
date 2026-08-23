@@ -3,12 +3,13 @@
  */
 
 import { MESSAGE_NAMES } from '@shared/protocol'
-import { registerTool } from '../../toolRegistry'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolDisplayName } from '../../toolLocalization'
 import type { ToolUsage } from '../../../types'
 import { t } from '../../../i18n'
 import { sendToExtension } from '../../../utils/vscode'
-import SubAgentsComponent from '../../../components/tools/subagents/subagents.vue'
+
+const SubAgentsComponent = lazyToolComponent(() => import('../../../components/tools/subagents/subagents.vue'))
 
 function normalizeToolIdForRunId(toolId: string): string {
   return toolId.trim().replace(/[^A-Za-z0-9_-]/g, '_')

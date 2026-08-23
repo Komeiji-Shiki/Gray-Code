@@ -5,11 +5,12 @@
  * 支持单张和批量生成两种模式
  */
 
-import { registerTool } from '../../toolRegistry'
-import GenerateImagePanel from '../../../components/tools/media/generate_image.vue'
+import { lazyToolComponent, registerTool } from '../../toolRegistry'
 import { getToolMetaDescription } from '../toolMetaLookup'
 import { getToolDisplayName } from '../../toolLocalization'
 import { t } from '../../../i18n'
+
+const GenerateImagePanel = lazyToolComponent(() => import('../../../components/tools/media/generate_image.vue'))
 
 /**
  * 单个任务类型

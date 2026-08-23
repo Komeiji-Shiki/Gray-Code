@@ -26,6 +26,7 @@ const ja: LanguageMessages = {
         warning: '警告',
         info: '情報',
         close: '閉じる',
+        dialog: 'ダイアログ',
         back: '戻る',
         next: '次へ',
         done: '完了',
@@ -239,7 +240,8 @@ const ja: LanguageMessages = {
             newChat: '新しい会話',
             chat: 'チャット',
             newTab: '新しいタブ',
-            closeTab: 'タブを閉じる'
+            closeTab: 'タブを閉じる',
+            tabListLabel: '会話タブ'
         },
 
         usage: {
@@ -590,6 +592,7 @@ const ja: LanguageMessages = {
                     awaitingApproval: '確認待ち',
                     executing: '実行中',
                     awaitingApply: '適用待ち',
+                    background: 'バックグラウンドで実行中',
                     success: '成功',
                     error: sharedJa.components.message.responseViewer.toolStatuses.error,
                     warning: '警告',

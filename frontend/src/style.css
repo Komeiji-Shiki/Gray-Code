@@ -10,28 +10,10 @@
   box-sizing: border-box;
 }
 
-:root {
-  /* 8pt 间距系统 */
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
-  
-  /* 扁平化圆角 */
-  --radius-sm: 2px;
-  --radius-md: 3px;
-  --radius-lg: 4px;
-  
-  /* 过渡动画 */
-  --transition-fast: 0.1s ease;
-  --transition-normal: 0.15s ease;
-}
-
 body {
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
-  line-height: 1.5;
+  line-height: var(--gc-line-height-normal);
   color: var(--vscode-foreground);
   background-color: var(--vscode-editor-background);
   -webkit-font-smoothing: antialiased;
@@ -72,7 +54,7 @@ body {
 
 /* 焦点样式 - 扁平化 */
 :focus-visible {
-  outline: 1px solid var(--vscode-focusBorder);
+  outline: 1px solid var(--gc-focus-border);
   outline-offset: -1px;
 }
 
@@ -88,7 +70,7 @@ button {
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: var(--gc-opacity-disabled);
 }
 
 /* 输入框基础重置 */

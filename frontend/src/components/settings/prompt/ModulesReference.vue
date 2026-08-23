@@ -59,17 +59,26 @@ const emit = defineEmits<{
             class="module-item"
             :class="{ expanded: expandedModule === module.id }"
           >
-            <div class="module-header" @click="emit('toggle-module', module.id)">
-              <div class="module-info">
+            <div class="module-header">
+              <button
+                type="button"
+                class="module-toggle"
+                :aria-expanded="expandedModule === module.id"
+                @click="emit('toggle-module', module.id)"
+              >
+                <div class="module-info">
                 <code class="module-id">{{ formatModuleId(module.id) }}</code>
                 <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-              </div>
+                </div>
+              </button>
               <button
+                type="button"
                 class="insert-btn"
-                @click.stop="emit('insert-static', module.id)"
+                @click="emit('insert-static', module.id)"
                 :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                :aria-label="t('components.settings.promptSettings.modulesReference.insertTooltip')"
               >
-                <i class="codicon codicon-add"></i>
+                <i class="codicon codicon-add" aria-hidden="true"></i>
               </button>
             </div>
 
@@ -106,17 +115,26 @@ const emit = defineEmits<{
             class="module-item"
             :class="{ expanded: expandedModule === module.id }"
           >
-            <div class="module-header" @click="emit('toggle-module', module.id)">
-              <div class="module-info">
+            <div class="module-header">
+              <button
+                type="button"
+                class="module-toggle"
+                :aria-expanded="expandedModule === module.id"
+                @click="emit('toggle-module', module.id)"
+              >
+                <div class="module-info">
                 <code class="module-id">{{ formatModuleId(module.id) }}</code>
                 <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
-              </div>
+                </div>
+              </button>
               <button
+                type="button"
                 class="insert-btn"
-                @click.stop="emit('insert-dynamic', module.id)"
+                @click="emit('insert-dynamic', module.id)"
                 :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                :aria-label="t('components.settings.promptSettings.modulesReference.insertTooltip')"
               >
-                <i class="codicon codicon-add"></i>
+                <i class="codicon codicon-add" aria-hidden="true"></i>
               </button>
             </div>
 
@@ -208,12 +226,13 @@ const emit = defineEmits<{
   justify-content: space-between;
   align-items: center;
   padding: 8px 10px;
-  cursor: pointer;
-  transition: background-color 0.15s;
+  cursor: default;
+  transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
-.module-header:hover {
-  background: var(--vscode-list-hoverBackground);
+.module-header:hover,
+.module-header:focus-within {
+  background: var(--gc-surface-hover);
 }
 
 .module-info {
@@ -247,7 +266,20 @@ const emit = defineEmits<{
   border: 1px solid var(--vscode-panel-border);
   border-radius: 4px;
   cursor: pointer;
-  transition: background-color 0.15s;
+  transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+.module-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 .insert-btn:hover:not(:disabled) {
