@@ -8,12 +8,25 @@
 ## [Unreleased]
 
 ### Added
-  - DeepSeek Vision 图像预处理新增「拆分/压缩」切换复选框：输入区有图片附件且渠道开启 DeepSeek Vision 预处理、模型为 Vision 模型时，输入框右下角出现复选框（默认勾选）——勾选保持既有大图分块防压缩行为；取消勾选则不拆分，主动把图片等比例压缩至 800×800 总像素预算内（同时约束单边长不超过 4096，极端超宽/全景图同样收进限制），由用户按清晰度/体积偏好逐次选择。选项随本次发送、消息排队与同一回合的工具确认请求一起透传到 ChannelManager；预处理缓存键按处理模式隔离（分块/压缩结果不混用），单图压缩输出保留原文件名（不带 tile 后缀）。新增 6 个预处理回归测试与 5 个输入区复选框前端测试。
+  - DeepSeek Vision 图像预处理新增「拆分/压缩」切换：勾选时按 800×800 总像素预算分块，取消时把整图等比例压缩到预算内，并统一约束 4096 长边。偏好由 `chatStore` 在输入区与编辑对话框间共享，队列消息保留各自发送选项，分块/压缩缓存键严格隔离。
+
+### Changed
+  - DeepSeek Vision 处理模式升级为消息级历史语义：真实用户消息持久化 `deepSeekVisionTileSplit`，历史中的每张旧附件始终按所属回合的原始选择重放；纯文本续轮仍携带当前偏好供本回合工具结果使用，functionResponse 继承最近真实用户回合，人工工具确认、reroll、retry、编辑分支与错误重放不再依赖易丢失的组件临时状态。
+  - PDF 预处理改为逐页栅格化、逐页转换并增量核算最终图片数，达到 DeepSeek 600 图上限立即停止剩余页面；仅在完整渲染成功且页 PNG 总量未超过单项预算时写入 PDF 缓存，不再为不可缓存的大文档长期保留第二份页数据。
+  - 可选依赖管理由「独立临时安装后逐顶层目录覆盖」重做为完整受管依赖树事务：`sharp` / `pdfjs-dist` / `@napi-rs/canvas` 的安装与卸载进入同一全局队列，npm 在 staging 中生成完整 `node_modules`，校验全部直接依赖后以同目录 rename 整树提交，提交失败恢复旧树，消除部分替换、共享传递依赖互相覆盖及安装/卸载并发清理竞态。
+  - DeepSeek Vision PDF、图片分块/压缩与 GIF 帧预处理结果新增按内容哈希的有界 LRU 缓存；输入区附件改为横向紧凑排布；扩展打包排除已 bundle 的 `shared/` TypeScript 源码。
 
 ### Fixed
-  - 修复 DeepSeek Vision「拆分/压缩」复选框在编辑消息/重试后回退为默认拆分（主人实测：取消勾选发送后编辑用户消息再保存，变回拆分）：复选框状态原为 InputArea 组件本地 ref，且编辑消息（chat.editBranchStream）、reroll（chat.rerollStream）、错误条重试（retryStream）三条路径均不透传 deepSeekVisionTileSplit，后端对缺省值按 `?? true`（拆分）处理。现：①偏好提升到 chatStore（default true），InputArea 与编辑消息对话框（EditDialog）共享——打开编辑对话框时复选框继承输入区最后选择；②编辑对话框按与输入区同口径显示复选框（有图片附件 + 渠道开启预处理 + Vision 模型）并随保存透传；③修复透传链：editAndRetry / restoreAndEdit / retryFromMessage / retryAfterError / replayBranchStreamAfterError（重放快照固化原值）→ webview ChatHandlers/StreamRequestHandler → 后端 RetryRequestData / RerollRequestData / EditBranchRequestData / EditAndRetryRequestData 及 retry/reroll/editBranch 流程的 runToolLoop / runNonStreamLoop；④排队消息编辑同步更新 sendOptions。新增 4 个回归测试（编辑透传 false、reroll 携带 store 偏好、输入区继承 store 偏好）。
-  - 修复 DeepSeek Vision PDF 预处理在 pdfjs-dist 4.x 下报 `No "GlobalWorkerOptions.workerSrc" specified.` 与 `Cannot read properties of undefined (reading 'createElement')`：两层根因——①pdfjs 4.x 的 fake worker（`disableWorker: true`）内部仍会执行 `await import(workerSrc)` 加载 `pdf.worker.mjs`，未设置 `GlobalWorkerOptions.workerSrc` 时 getter 直接抛错；②包默认入口 `build/pdf.mjs` 是浏览器构建，Node 环境渲染时会访问 DOM API（`document.createElement` 用于字体测量/排版）。现修复为：`DependencyManager.load` 支持子路径入口（缓存键 `name#subpath`，卸载/重建时一并清理），`getPdfjs` 优先加载 Node 专用构建 `legacy/build/pdf.mjs`（缺失时回退主入口）；渲染前将对应的 `legacy/build/pdf.worker.mjs`（回退 `build/pdf.worker.mjs`）转为 `file://` URL 写入 `GlobalWorkerOptions.workerSrc`。新增 load 子路径加载/缓存/卸载回归测试。
-  - 修复同错误在 VS Code/Electron 扩展宿主中仍复现的第三层根因：pdf.js 的 isNodeJS 检测在 `process.versions.electron` 存在且 `process.type` 非 'browser'（多数扩展宿主进程）时为 false，默认画布工厂变为 `DOMCanvasFactory`——渲染透明分组/注解等需要 scratch canvas 的页面（`CachedCanvases`/`annotationCanvas`）时其 `_document`（`globalThis.document`）为 undefined 直接崩溃；同时 `disableFontFace`/`isOffscreenCanvasSupported` 默认值随 isNodeJS 翻转导致 FontLoader/OffscreenCanvas 路径访问 DOM。现 `renderPdf` 显式注入基于 `@napi-rs/canvas` 的 Node 画布工厂类（`getDocument` 的 `CanvasFactory` 参数要求传类而非实例，构造参数为 `{ ownerDocument, enableHWA }`），并显式 `disableFontFace: true`/`isOffscreenCanvasSupported: false`；标准字体与 CMap 读取改用文件系统工厂（DOM 版 `fetch` file:// 在 Node 宿主必然失败，文本会渲染为空白/方块）。在模拟 isNodeJS=false 宿主下全量渲染 25 页真实 PDF 验证通过，并新增 PDF 渲染回归断言。
+  - 修复依赖卸载入口仅检查非空字符串、可通过 `..` 越出 `node_modules` 的问题：安装、卸载、状态读取与路径解析统一使用受管依赖白名单及 resolved-path 包含性校验；未知名称在任何文件操作前拒绝。修复 npm 输出上限只在注册监听器时检查一次、后续 stdout/stderr 可无限累积的问题，现按每个到达 chunk 的真实字节数实时限流并终止超限子进程。
+  - 修复 DeepSeek Vision 压缩模式在人工工具确认后回退分块、非流式 retry 漏传、纯文本续轮重处理旧图片、编辑时只继承全局最后选择等问题；编辑消息的本地展示与 BranchGraph 元数据同步保存新模式。编辑对话框的渠道配置加载增加打开代次和 configId 双校验，并在请求前清空旧配置，迟到响应不再串入新渠道。
+  - 修复 pdfjs-dist 4.x 在 Node/VS Code Electron 宿主中的 PDF 渲染：加载 `legacy/build/pdf.mjs` 并设置对应 `pdf.worker.mjs` file URL，显式注入 `@napi-rs/canvas` CanvasFactory、文件系统标准字体/CMap 工厂，关闭 DOM FontFace/OffscreenCanvas 路径；`document.cleanup()` Promise 现在完成后才执行 destroy。
+  - 修复 GIF 单帧提取未指定 `pages:1` 时输出从目标帧到结尾的垂直卷；`metadata.delay` 现在严格按 `frameCount` 归一，缺失/非法项补 100ms、多余项截断，不再产生 `NaN` 时间标签或越界帧索引。
+  - 修复关闭 OpenAI Responses `promptCacheKeyEnabled` 后，输入框中保留的自定义 key 仍绕过开关继续发送；总开关现在优先于显式 key。
+  - 修复 Gemini Interactions 无状态回放把缺少 Gemini 签名的裸 thought 包装成无效 step，以及 function_result 缺少 call_id 时生成随机 ID：相邻摘要/仅签名 parts 会合并为合法 thought，跨渠道无签名 thought 被过滤，缺 call_id 直接返回明确验证错误，不再破坏函数配对与请求前缀稳定性。
+  - 修复 Agent 消息卡片先读历史再按陈旧数值索引插入的竞态：新增 ConversationManager 锁内位置解析接口，基于写入瞬间的最新 transcript 定位；持久化短暂失败会重试，持续失败仍发送未持久化本地卡片事件供当前窗口显示。前端同时校验窗口左右边界，仅持久化卡片后移 backendIndex 并同步 `totalMessages`/会话 messageCount，本地回退不伪造后端索引。
+  - 修复消息虚拟滑动窗口切换标签页时只保存 scrollTop、恢复却强制贴尾的问题：状态新增窗口起点与顶部稳定消息锚点，历史 prepend/append 后按消息 ID、窗口内偏移和像素偏移恢复原阅读位置。
+  - 修复 `createProxyFetch` 通过对象展开合并请求头、不支持 `Headers` 与元组数组且无法大小写无关覆盖 User-Agent：现统一使用标准 `Headers` 归一化全部 `HeadersInit` 形态，调用方任意大小写的 UA 均优先。
+  - 修复 CP-SKIP 回收无变化备份目录前过早清除 `backupDirCreated`，导致首次 `rm` 失败后外层错误清理不再重试并遗留孤儿目录。
 
 ## [1.5.5] - 2026-08-21
 

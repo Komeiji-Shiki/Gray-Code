@@ -87,8 +87,9 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
         const { history: rawHistory } = request;
         const toolMode = c.toolMode || 'function_call';
 
-        // 剔除 Anthropic 专有 redactedThinking（与 gemini 渠道同口径）
-        const history = this.stripRedactedThinking(rawHistory);
+        // 先合并流式历史中的“摘要 part + 仅签名 part”；stripRedactedThinking 会移除
+        // 无正文的孤立 part，合并必须发生在它之前。
+        const history = this.stripRedactedThinking(this.coalesceAdjacentThoughtSignatures(rawHistory));
 
         // 根据模式处理历史记录（复用 GeminiFormatter 的 XML/JSON/function_call 预处理）
         let processedHistory: Content[];
@@ -663,6 +664,35 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
      */
     getSupportedType(): string {
         return 'gemini-interactions';
+    }
+
+    /**
+     * 流式累计历史可能把 thought 摘要与最后到达的 signature 保存成相邻 parts。
+     * cleanInternalFields 会删除没有正文的孤立 part，因此必须在清理前把签名并回摘要。
+     */
+    private coalesceAdjacentThoughtSignatures(history: Content[]): Content[] {
+        return history.map(message => {
+            const parts: ContentPart[] = [];
+            for (let index = 0; index < message.parts.length; index++) {
+                const current = message.parts[index];
+                const next = message.parts[index + 1];
+                const nextSignature = next?.thoughtSignatures?.gemini;
+                if (current.thought && current.text && !current.thoughtSignatures?.gemini
+                    && next?.thought && !next.text && nextSignature) {
+                    parts.push({
+                        ...current,
+                        thoughtSignatures: {
+                            ...current.thoughtSignatures,
+                            gemini: nextSignature
+                        }
+                    });
+                    index += 1;
+                    continue;
+                }
+                parts.push(current);
+            }
+            return { ...message, parts };
+        });
     }
 
     /**

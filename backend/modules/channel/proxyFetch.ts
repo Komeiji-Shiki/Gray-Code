@@ -35,7 +35,7 @@ export type { FetchOptions, ProxyFetchInit, FetchResponse };
 export type { ProxyStreamSink };
 
 /** 标准 HeadersInit 合并：支持对象、元组数组、Headers，并以大小写无关语义处理 UA。 */
-function mergeHeadersWithDefaultUserAgent(input?: HeadersInit): Headers {
+function mergeHeadersWithDefaultUserAgent(input?: RequestInit['headers']): Headers {
     const headers = new Headers(input);
     if (!headers.has('user-agent')) {
         headers.set('User-Agent', USER_AGENT);

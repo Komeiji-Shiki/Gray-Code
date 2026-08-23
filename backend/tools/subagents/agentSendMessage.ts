@@ -286,7 +286,7 @@ async function insertAgentMessageCardIntoHistory(
                 const position = await store.insertContentAtResolvedPosition(
                     conversationId,
                     content,
-                    history => resolveAgentCardInsertPosition(history, card.toRunId)
+                    history => resolveAgentCardInsertPosition(history as Readonly<Content[]>, card.toRunId)
                 );
                 return { position, persisted: true };
             } catch (error) {
@@ -302,7 +302,7 @@ async function insertAgentMessageCardIntoHistory(
             try {
                 const history = await store.getHistory(conversationId);
                 return {
-                    position: resolveAgentCardInsertPosition(history, card.toRunId),
+                    position: resolveAgentCardInsertPosition(history as Readonly<Content[]>, card.toRunId),
                     persisted: false
                 };
             } catch {
@@ -315,7 +315,7 @@ async function insertAgentMessageCardIntoHistory(
     // 非运行时测试/降级存储：旧接口仍可完成持久化；真实 ConversationManager 总是走上方锁内接口。
     if (store?.getHistory && store.insertContent) {
         const history = await store.getHistory(conversationId);
-        const position = resolveAgentCardInsertPosition(history, card.toRunId);
+        const position = resolveAgentCardInsertPosition(history as Readonly<Content[]>, card.toRunId);
         await store.insertContent(conversationId, position, content);
         return { position, persisted: true };
     }
