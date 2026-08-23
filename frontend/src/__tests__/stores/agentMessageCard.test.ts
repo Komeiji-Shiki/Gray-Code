@@ -211,7 +211,7 @@ describe('agent 间消息卡片（A-COMM 展示层）', () => {
     })
     await settle()
 
-    const card = store.allMessages.at(-1)
+    const card = store.allMessages[store.allMessages.length - 1]
     expect(card?.agentMessage?.messageId).toBe('card_local')
     expect(card?.localOnly).toBe(true)
     expect(card?.backendIndex).toBeUndefined()

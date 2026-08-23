@@ -17,6 +17,7 @@
   - DeepSeek Vision PDF、图片分块/压缩与 GIF 帧预处理结果新增按内容哈希的有界 LRU 缓存；输入区附件改为横向紧凑排布；扩展打包排除已 bundle 的 `shared/` TypeScript 源码。
 
 ### Fixed
+  - 修复前端 `agentMessageCard` 测试使用 ES2022 `Array.prototype.at()`，与项目 ES2020 TypeScript 目标不兼容并阻断 CI 类型检查的问题。
   - 修复依赖卸载入口仅检查非空字符串、可通过 `..` 越出 `node_modules` 的问题：安装、卸载、状态读取与路径解析统一使用受管依赖白名单及 resolved-path 包含性校验；未知名称在任何文件操作前拒绝。修复 npm 输出上限只在注册监听器时检查一次、后续 stdout/stderr 可无限累积的问题，现按每个到达 chunk 的真实字节数实时限流并终止超限子进程。
   - 修复 DeepSeek Vision 压缩模式在人工工具确认后回退分块、非流式 retry 漏传、纯文本续轮重处理旧图片、编辑时只继承全局最后选择等问题；编辑消息的本地展示与 BranchGraph 元数据同步保存新模式。编辑对话框的渠道配置加载增加打开代次和 configId 双校验，并在请求前清空旧配置，迟到响应不再串入新渠道。
   - 修复 pdfjs-dist 4.x 在 Node/VS Code Electron 宿主中的 PDF 渲染：加载 `legacy/build/pdf.mjs` 并设置对应 `pdf.worker.mjs` file URL，显式注入 `@napi-rs/canvas` CanvasFactory、文件系统标准字体/CMap 工厂，关闭 DOM FontFace/OffscreenCanvas 路径；`document.cleanup()` Promise 现在完成后才执行 destroy。
