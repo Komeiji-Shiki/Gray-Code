@@ -373,19 +373,16 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
       // - 普通模式：用户文本消息 + before/after checkpoint
       // - 隐藏模式：写入（或替换）functionResponse，不创建可见 user 文本消息，也不创建用户消息 checkpoint
       if (!hiddenFunctionResponse) {
-        // 4. 为用户消息创建存档点（如果配置了执行前）
+        // 4. 为用户消息创建存档点（如果配置了执行前）。仅创建快照，**不在此 yield**：
+        //    ★ 关键修复：任何 yield 都必须发生在用户消息落库之后。消费端（
+        //    StreamChunkProcessor.consume）在视图关闭/重载时 break 会触发生成器 return()——
+        //    若在 addMessage 之前 yield，生成器被 return 后 addMessage 永远不会执行：
+        //    主历史缺消息，但前端窗口仍保留乐观插入的消息，随后编辑/重试按 id 定位
+        //    必然报 NODE_NOT_FOUND（新对话首条消息即必现，用户实测）。
         const beforeUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
           conversationId,
           'before',
         );
-        if (beforeUserCheckpoint) {
-          // 立即发送用户消息前存档点到前端
-          yield {
-            conversationId,
-            checkpoints: [beforeUserCheckpoint],
-            checkpointOnly: true as const,
-          } satisfies ChatStreamCheckpointsData;
-        }
 
         // 5. 添加用户消息到历史（包含附件）；携带前端稳定节点 id（BR-01 对齐）
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
@@ -422,6 +419,16 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
           conversationId,
           'after',
         );
+        // 6.5 统一在此 yield 存档点（先 before 后 after）。before 快照的创建时机仍在
+        //     addMessage 之前（快照语义不变），仅 yield 延迟到消息落库之后，
+        //     保证生成器在落库前后的任何终止点都不会留下「窗口有消息、历史无消息」的幽灵。
+        if (beforeUserCheckpoint) {
+          yield {
+            conversationId,
+            checkpoints: [beforeUserCheckpoint],
+            checkpointOnly: true as const,
+          } satisfies ChatStreamCheckpointsData;
+        }
         if (afterUserCheckpoint) {
           yield {
             conversationId,

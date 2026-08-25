@@ -378,6 +378,7 @@ export function createChatFlowHarness(options: {
     };
     const toolIterationLoopService = {
         clearTrimState: jest.fn().mockResolvedValue(undefined),
+        createTurnDynamicContext: jest.fn().mockResolvedValue(undefined),
         runNonStreamLoop: jest.fn().mockResolvedValue({
             content: { role: 'model' as const, parts: [{ text: 'ok' }] },
             exceededMaxIterations: false,
