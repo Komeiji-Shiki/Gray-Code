@@ -41,6 +41,8 @@
   - 修复弹窗迁移后的测试回归：`ConversationList`/`DirtyFilesConfirm`/`BranchSwitcherBar`/`ChannelSettings`/`CheckpointSettings`/`ModelManager` 的 6 个旧测试文件更新为公共 `Modal` 的 DOM 结构（`role="dialog"`、`.dialog-btn` 语义类），Esc 相关测试配合 `attachTo: document.body` 使事件冒泡到 Modal 的 document 级监听器。
   - 修复消息思考过程标题栏迁移为原生按钮后点击区域缩小的问题：`thought-toggle` 加 `flex: 1` 占满标题栏剩余空间，除右侧视图切换按钮外的整个标题区域（含中间空白）恢复为可直接点击折叠/展开。
   - 修复公共 `Modal` 初始焦点逻辑使用 ES2022 `Array.prototype.at()` 与项目 ES2020 TypeScript 目标不兼容并阻断 CI 类型检查的问题（改为数组索引取末元素）。
+  - 修复编辑消息对话框与工具动作按钮（查看差异等）在迁移到 `.gc-*` 视觉原语后失去按钮感：`.gc-button` 基础边框为透明、`.gc-button--ghost` 完全透明，深色主题下按钮退化为纯文字（编辑对话框底部四按钮与「查看差异」动作按钮均受影响）。现在 `.gc-button` 改为可见的 `--gc-border-subtle` 边框，`.gc-button--ghost` 补 1px 边框（`.gc-button--primary` 覆盖为透明保持主色按钮纯净）；编辑对话框恢复迁移前的提示语义配色（checkpoint 备份提示=信息蓝、首条消息提示=警告黄），回档按钮补警告色底色。
+  - 修复编辑消息报 `NODE_NOT_FOUND: node not found: <id>`（新对话首条消息即必现的原理性根因）：`handleChatStream` 在用户消息落库（`addMessage`）之前 yield before-checkpoint chunk，消费端在视图关闭/重载时 break 会触发生成器 `return()`，`addMessage` 被直接跳过——主历史缺消息而前端窗口保留乐观插入的消息，随后编辑/重试按前端窗口 id 在后端定位必然失败。现在 before checkpoint 仍按原顺序创建（快照语义不变），但 checkpoints chunk 的 yield 统一移到 `addMessage` 之后，生成器在消息落库前的任何终止点都不会跳过落库；新增回归测试（消费端在第一个 checkpoint chunk 后终止生成器，断言消息仍落库且携带前端传入的稳定节点 id）。
 
 ## [1.5.5] - 2026-08-21
 
