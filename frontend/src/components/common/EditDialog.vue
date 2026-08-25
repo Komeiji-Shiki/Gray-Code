@@ -584,12 +584,12 @@ function handleRemoveAttachment(id: string) {
         </div>
       </div>
 
-      <p v-if="hasCheckpoints" class="checkpoint-hint gc-feedback gc-feedback--warning">
+      <p v-if="hasCheckpoints" class="checkpoint-hint gc-feedback">
         <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.common.editDialog.checkpointHint') }}</span>
       </p>
 
-      <p v-if="isRootMessage" class="root-message-hint gc-feedback">
+      <p v-if="isRootMessage" class="root-message-hint gc-feedback gc-feedback--warning">
         <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.common.editDialog.rootMessageHint') }}</span>
       </p>
@@ -697,11 +697,11 @@ function handleRemoveAttachment(id: string) {
 }
 
 .checkpoint-hint .codicon {
-  color: var(--gc-warning);
+  color: var(--gc-info);
 }
 
 .root-message-hint .codicon {
-  color: var(--gc-info);
+  color: var(--gc-warning);
 }
 
 .vision-split-toggle {
@@ -742,6 +742,7 @@ function handleRemoveAttachment(id: string) {
 .dialog-btn.restore {
   max-width: 220px;
   color: var(--gc-warning);
+  background: color-mix(in srgb, var(--gc-warning) 12%, transparent);
 }
 
 .dialog-btn.keep-branch {

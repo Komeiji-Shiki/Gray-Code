@@ -20,7 +20,9 @@
   justify-content: center;
   gap: var(--gc-space-1);
   padding: 0 var(--gc-space-3);
-  border: 1px solid transparent;
+  /* 可见边框：无底色按钮（ghost）与灰底按钮在深色主题下才有明确的按钮感；
+     主色按钮（--primary）下方覆盖为 transparent 保持纯净视觉 */
+  border: 1px solid var(--gc-border-subtle);
   border-radius: var(--gc-radius-sm);
   font-size: var(--gc-font-size-body);
   font-weight: var(--gc-font-weight-medium);
@@ -45,6 +47,7 @@
 :where(.gc-button--primary) {
   color: var(--gc-text-on-accent);
   background: var(--gc-accent);
+  border-color: transparent;
 }
 
 :where(.gc-button--primary:hover:not(:disabled)) {
@@ -60,6 +63,7 @@
 :where(.gc-button--ghost) {
   padding-inline: var(--gc-space-2);
   background: transparent;
+  border: 1px solid var(--gc-border-subtle);
 }
 
 :where(.gc-icon-button) {
