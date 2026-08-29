@@ -467,13 +467,12 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .tool-description {
   margin-left: 28px;
-  overflow: hidden;
   color: var(--gc-text-muted);
   font-family: var(--vscode-editor-font-family);
   font-size: var(--gc-font-size-caption);
   line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* Tool actions share the global button primitive; local rules only preserve compact density. */

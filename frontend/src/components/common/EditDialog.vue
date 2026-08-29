@@ -559,7 +559,7 @@ function handleRemoveAttachment(id: string) {
       <div class="attachment-section">
         <button
           type="button"
-          class="attachment-btn gc-button"
+          class="attachment-btn"
           :title="t('components.common.editDialog.addAttachment')"
           @click="triggerFileInput"
         >
@@ -584,12 +584,12 @@ function handleRemoveAttachment(id: string) {
         </div>
       </div>
 
-      <p v-if="hasCheckpoints" class="checkpoint-hint gc-feedback">
+      <p v-if="hasCheckpoints" class="checkpoint-hint">
         <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.common.editDialog.checkpointHint') }}</span>
       </p>
 
-      <p v-if="isRootMessage" class="root-message-hint gc-feedback gc-feedback--warning">
+      <p v-if="isRootMessage" class="root-message-hint">
         <i class="codicon codicon-info" aria-hidden="true"></i>
         <span>{{ t('components.common.editDialog.rootMessageHint') }}</span>
       </p>
@@ -605,14 +605,14 @@ function handleRemoveAttachment(id: string) {
     </div>
 
     <template #footer>
-      <button type="button" class="dialog-btn cancel gc-button" @click="handleCancel">
+      <button type="button" class="dialog-btn cancel" @click="handleCancel">
         <span class="btn-label">{{ t('components.common.editDialog.cancel') }}</span>
       </button>
 
       <button
         v-if="latestCheckpoint"
         type="button"
-        class="dialog-btn restore gc-button"
+        class="dialog-btn restore"
         :disabled="!canSubmit"
         @click="handleRestoreAndEdit"
       >
@@ -622,7 +622,7 @@ function handleRemoveAttachment(id: string) {
 
       <button
         type="button"
-        class="dialog-btn keep-branch gc-button"
+        class="dialog-btn keep-branch"
         :disabled="!canSubmit"
         @click="handleEdit('keep')"
       >
@@ -632,7 +632,7 @@ function handleRemoveAttachment(id: string) {
 
       <button
         type="button"
-        class="dialog-btn confirm gc-button gc-button--primary"
+        class="dialog-btn confirm"
         :disabled="!canSubmit"
         :title="isRootMessage ? t('components.common.editDialog.rootSaveHint') : undefined"
         @click="handleEdit('branch')"
@@ -684,7 +684,26 @@ function handleRemoveAttachment(id: string) {
 }
 
 .attachment-btn {
-  color: var(--gc-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px dashed var(--vscode-panel-border);
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.attachment-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  border-color: var(--vscode-focusBorder);
+}
+
+.attachment-btn .codicon {
+  font-size: 14px;
 }
 
 .attachment-list {
@@ -693,34 +712,48 @@ function handleRemoveAttachment(id: string) {
 
 .checkpoint-hint,
 .root-message-hint {
-  margin: 0;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
 }
 
-.checkpoint-hint .codicon {
-  color: var(--gc-info);
-}
-
+.checkpoint-hint .codicon,
 .root-message-hint .codicon {
-  color: var(--gc-warning);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.checkpoint-hint {
+  background: var(--vscode-editorInfo-background, rgba(0, 120, 212, 0.1));
+  color: var(--vscode-editorInfo-foreground, #3794ff);
+}
+
+.root-message-hint {
+  background: var(--vscode-editorWarning-background, rgba(204, 122, 0, 0.12));
+  color: var(--vscode-editorWarning-foreground, #cc7a00);
 }
 
 .vision-split-toggle {
   display: inline-flex;
   align-items: center;
   align-self: flex-start;
-  gap: var(--gc-space-1);
-  padding: 2px var(--gc-space-2);
-  color: var(--gc-text-muted);
-  background: var(--gc-surface-muted);
-  border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
-  font-size: var(--gc-font-size-caption);
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-input-background, rgba(127, 127, 127, 0.08));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.2));
+  border-radius: 4px;
   cursor: pointer;
   user-select: none;
 }
 
 .vision-split-toggle:hover {
-  border-color: var(--gc-focus-border);
+  border-color: var(--vscode-focusBorder);
 }
 
 .vision-split-toggle input {
@@ -730,6 +763,16 @@ function handleRemoveAttachment(id: string) {
 .dialog-btn {
   min-width: 0;
   flex: 0 1 auto;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.15s, opacity 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 1;
 }
 
 .dialog-btn .btn-label {
@@ -739,14 +782,56 @@ function handleRemoveAttachment(id: string) {
   white-space: nowrap;
 }
 
+.dialog-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dialog-btn.cancel {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.dialog-btn.cancel:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
 .dialog-btn.restore {
   max-width: 220px;
-  color: var(--gc-warning);
-  background: color-mix(in srgb, var(--gc-warning) 12%, transparent);
+  background: var(--vscode-editorInfo-foreground);
+  color: #fff;
+}
+
+.dialog-btn.restore:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.dialog-btn.restore .codicon {
+  font-size: 12px;
 }
 
 .dialog-btn.keep-branch {
-  color: var(--gc-info);
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.dialog-btn.keep-branch:hover:not(:disabled) {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.dialog-btn.keep-branch .codicon {
+  font-size: 12px;
+}
+
+.dialog-btn.confirm {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.dialog-btn.confirm:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
 }
 
 @media (max-width: 420px) {

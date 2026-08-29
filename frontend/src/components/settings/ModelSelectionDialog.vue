@@ -137,7 +137,7 @@ watch(() => props.visible, (visible) => {
     :aria-label="t('components.settings.modelSelectionDialog.title')"
     width="560px"
     initial-focus-selector=".filter-input"
-    body-padding="compact"
+    body-padding="none"
     @close="close"
   >
     <template #header>
@@ -146,7 +146,7 @@ watch(() => props.visible, (visible) => {
         <button
           v-if="availableModels.length > 0"
           type="button"
-          class="select-all-btn gc-button gc-button--ghost"
+          class="select-all-btn"
           :aria-pressed="isAllSelected"
           @click="toggleSelectAll"
         >
@@ -157,10 +157,10 @@ watch(() => props.visible, (visible) => {
     </template>
 
     <div class="dialog-body">
-      <div v-if="error" class="error-state gc-feedback gc-feedback--error" role="alert">
+      <div v-if="error" class="error-state" role="alert">
         <i class="codicon codicon-error" aria-hidden="true"></i>
         <span>{{ error }}</span>
-        <button type="button" class="retry-btn gc-button" @click="loadModels">
+        <button type="button" class="retry-btn" @click="loadModels">
           {{ t('components.settings.modelSelectionDialog.retry') }}
         </button>
       </div>
@@ -188,7 +188,7 @@ watch(() => props.visible, (visible) => {
           <button
             v-if="filterKeyword"
             type="button"
-            class="filter-clear-btn gc-icon-button"
+            class="filter-clear-btn"
             :title="t('components.settings.modelSelectionDialog.clearFilter')"
             :aria-label="t('components.settings.modelSelectionDialog.clearFilter')"
             @click="filterKeyword = ''"
@@ -210,7 +210,6 @@ watch(() => props.visible, (visible) => {
               type="button"
               :class="[
                 'model-item',
-                'gc-choice-card',
                 {
                   'is-selected': selectedModelIds.has(model.id),
                   added: addedModelIds.includes(model.id)
@@ -227,7 +226,7 @@ watch(() => props.visible, (visible) => {
                 <span v-if="model.name && model.name !== model.id" class="model-name">{{ model.name }}</span>
                 <span v-if="model.description" class="model-desc">{{ model.description }}</span>
               </span>
-              <span v-if="addedModelIds.includes(model.id)" class="added-badge gc-badge gc-badge--success">
+              <span v-if="addedModelIds.includes(model.id)" class="added-badge">
                 {{ t('components.settings.modelSelectionDialog.added') }} ×
               </span>
             </button>
@@ -242,12 +241,12 @@ watch(() => props.visible, (visible) => {
           {{ t('components.settings.modelSelectionDialog.selectionCount', { count: selectedModelIds.size }) }}
         </span>
         <div class="dialog-actions">
-          <button type="button" class="gc-button" @click="close">
+          <button type="button" class="btn secondary" @click="close">
             {{ t('components.settings.modelSelectionDialog.cancel') }}
           </button>
           <button
             type="button"
-            class="gc-button gc-button--primary"
+            class="btn primary"
             :disabled="selectedModelIds.size === 0"
             @click="confirm"
           >
@@ -266,24 +265,41 @@ watch(() => props.visible, (visible) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--gc-space-3);
+  gap: 12px;
 }
 
 .model-dialog-heading h3 {
   margin: 0;
-  font-size: var(--gc-font-size-title);
-  font-weight: var(--gc-font-weight-medium);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .select-all-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
-  font-size: var(--gc-font-size-caption);
+  padding: 4px 10px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 2px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 
+.select-all-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
 
+.select-all-btn .codicon {
+  font-size: 12px;
+}
 
 /* 内容 */
 .dialog-body {
+  padding: 8px;
   min-height: 300px;
 }
 
@@ -310,7 +326,19 @@ watch(() => props.visible, (visible) => {
 }
 
 .retry-btn {
-  margin-top: var(--gc-space-2);
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: none;
+  border-radius: 2px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.retry-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
 }
 
 /* 旋转动画 */
@@ -357,10 +385,26 @@ watch(() => props.visible, (visible) => {
 }
 
 .filter-clear-btn {
-  width: var(--gc-control-height-sm);
-  height: var(--gc-control-height-sm);
-  min-width: var(--gc-control-height-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
   flex-shrink: 0;
+}
+
+.filter-clear-btn:hover {
+  color: var(--vscode-foreground);
+}
+
+.filter-clear-btn .codicon {
+  font-size: 12px;
 }
 
 /* 无结果提示 */
@@ -395,16 +439,35 @@ watch(() => props.visible, (visible) => {
 }
 
 .model-item {
+  display: flex;
   align-items: center;
-  gap: var(--gc-space-3);
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--vscode-list-hoverBackground);
+  border: none;
+  border-radius: 2px;
+  font: inherit;
+  text-align: left;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.model-item:hover {
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.model-item.is-selected {
+  background: color-mix(in srgb, var(--vscode-charts-blue) 15%, var(--vscode-list-hoverBackground));
 }
 
 .model-item.added {
-  background: color-mix(in srgb, var(--gc-success) 10%, var(--gc-surface-muted));
+  background: color-mix(in srgb, var(--vscode-charts-green) 10%, var(--vscode-list-hoverBackground));
 }
 
 .model-item.added:hover {
-  background: color-mix(in srgb, var(--gc-success) 15%, var(--gc-surface-hover));
+  background: color-mix(in srgb, var(--vscode-charts-green) 15%, var(--vscode-list-hoverBackground));
 }
 
 .model-checkbox {
@@ -417,9 +480,7 @@ watch(() => props.visible, (visible) => {
   border: 1px solid var(--vscode-input-border);
   border-radius: 3px;
   background: var(--vscode-input-background);
-  transition:
-    background-color var(--gc-duration-fast) var(--gc-ease-standard),
-    border-color var(--gc-duration-fast) var(--gc-ease-standard);
+  transition: all 0.15s;
 }
 
 .model-item.is-selected .model-checkbox {
@@ -463,24 +524,68 @@ watch(() => props.visible, (visible) => {
 
 .added-badge {
   flex-shrink: 0;
-  cursor: inherit;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--vscode-charts-green, #89d185);
+  background: color-mix(in srgb, var(--vscode-charts-green) 20%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
 }
 
+.added-badge:hover {
+  color: var(--vscode-errorForeground);
+  background: color-mix(in srgb, var(--vscode-errorForeground) 20%, transparent);
+}
+
+/* 底部 */
 .dialog-footer-content {
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--gc-space-3);
+  gap: 12px;
 }
 
 .selection-count {
-  font-size: var(--gc-font-size-body);
-  color: var(--gc-text-muted);
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
 }
 
 .dialog-actions {
   display: flex;
-  gap: var(--gc-space-2);
+  gap: 8px;
+}
+
+.btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 2px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.secondary {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.btn.secondary:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
 }
 </style>
