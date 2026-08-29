@@ -43,6 +43,8 @@
   - 修复公共 `Modal` 初始焦点逻辑使用 ES2022 `Array.prototype.at()` 与项目 ES2020 TypeScript 目标不兼容并阻断 CI 类型检查的问题（改为数组索引取末元素）。
   - 修复编辑消息对话框与工具动作按钮（查看差异等）在迁移到 `.gc-*` 视觉原语后失去按钮感：`.gc-button` 基础边框为透明、`.gc-button--ghost` 完全透明，深色主题下按钮退化为纯文字（编辑对话框底部四按钮与「查看差异」动作按钮均受影响）。现在 `.gc-button` 改为可见的 `--gc-border-subtle` 边框，`.gc-button--ghost` 补 1px 边框（`.gc-button--primary` 覆盖为透明保持主色按钮纯净）；编辑对话框恢复迁移前的提示语义配色（checkpoint 备份提示=信息蓝、首条消息提示=警告黄），回档按钮补警告色底色。
   - 修复编辑消息报 `NODE_NOT_FOUND: node not found: <id>`（新对话首条消息即必现的原理性根因）：`handleChatStream` 在用户消息落库（`addMessage`）之前 yield before-checkpoint chunk，消费端在视图关闭/重载时 break 会触发生成器 `return()`，`addMessage` 被直接跳过——主历史缺消息而前端窗口保留乐观插入的消息，随后编辑/重试按前端窗口 id 在后端定位必然失败。现在 before checkpoint 仍按原顺序创建（快照语义不变），但 checkpoints chunk 的 yield 统一移到 `addMessage` 之后，生成器在消息落库前的任何终止点都不会跳过落库；新增回归测试（消费端在第一个 checkpoint chunk 后终止生成器，断言消息仍落库且携带前端传入的稳定节点 id）。
+  - 修复模型选择与编辑消息对话框在迁移到公共 `Modal` 与 `.gc-*` 视觉原语后观感退化的问题（保留重构成果——Modal 焦点管理、原生 button、aria 语义与角色标注不动，仅恢复视觉）：模型列表行改回无边框列表式（受 `--vscode-list-*` 控制的行背景、hover 高亮、选中蓝/已添加绿混色），全选按钮恢复次级按钮底色，底部按钮改回 `btn primary/secondary` 样式；编辑对话框的取消/原地保存按钮补回 `--vscode-panel-border` 边框与 hover 背景，保存按钮恢复主按钮底色，回档按钮恢复信息蓝底白字，附件按钮恢复虚线边框，检查点/首条消息提示改回编辑器信息/警告背景色块（无边框），DeepSeek Vision 拆分复选框恢复输入背景样式。
+  - 修复工具消息描述在迁移后 `white-space: nowrap` 把多行内容折叠成单行的问题：`read_file` 等工具批量读取多个文件时 descriptionFormatter 以换行分隔的文件名被压成一行，视觉上误以为只读取了一个文件。`.tool-description` 恢复 `pre-wrap` + `word-break: break-all`，多个文件名还原为逐行展示。
 
 ## [1.5.5] - 2026-08-21
 
