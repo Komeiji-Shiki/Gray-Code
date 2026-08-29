@@ -95,25 +95,25 @@ function handleRestoreAndRetry() {
     </template>
 
     <p class="dialog-message">{{ t('components.common.retryDialog.message') }}</p>
-    <p v-if="hasCheckpoints" class="checkpoint-hint gc-feedback gc-feedback--warning">
+    <p v-if="hasCheckpoints" class="checkpoint-hint">
       <i class="codicon codicon-info" aria-hidden="true"></i>
       <span>{{ t('components.common.retryDialog.checkpointHint') }}</span>
     </p>
 
     <template #footer>
-      <button type="button" class="gc-button" @click="handleCancel">
+      <button type="button" class="dialog-btn cancel" @click="handleCancel">
         {{ t('components.common.retryDialog.cancel') }}
       </button>
       <button
         v-if="latestCheckpoint"
         type="button"
-        class="gc-button restore-button"
+        class="dialog-btn restore"
         @click="handleRestoreAndRetry"
       >
         <i class="codicon codicon-discard" aria-hidden="true"></i>
         <span>{{ formatCheckpointDesc(latestCheckpoint) }}</span>
       </button>
-      <button type="button" class="gc-button gc-button--primary" @click="handleRetry">
+      <button type="button" class="dialog-btn confirm" @click="handleRetry">
         {{ t('components.common.retryDialog.retry') }}
       </button>
     </template>
@@ -150,10 +150,63 @@ function handleRestoreAndRetry() {
 }
 
 .checkpoint-hint {
-  margin: var(--gc-space-3) 0 0;
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  background: var(--vscode-editorInfo-background, rgba(0, 120, 212, 0.1));
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vscode-editorInfo-foreground, #3794ff);
 }
 
-.restore-button {
-  color: var(--gc-warning);
+.checkpoint-hint .codicon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.dialog-btn {
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  transition: background-color 0.15s, opacity 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dialog-btn.cancel {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.dialog-btn.cancel:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.dialog-btn.restore {
+  background: var(--vscode-editorInfo-foreground);
+  color: #fff;
+}
+
+.dialog-btn.restore:hover {
+  opacity: 0.9;
+}
+
+.dialog-btn.restore .codicon {
+  font-size: 12px;
+}
+
+.dialog-btn.confirm {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.dialog-btn.confirm:hover {
+  background: var(--vscode-button-hoverBackground);
 }
 </style>
