@@ -7,9 +7,9 @@
  * 列表视图与编辑表单已拆分到 mcpSettings/ 子组件（纯展示 + props/emits）。
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
 import { ConfirmDialog } from '../common'
 import { useI18n } from '@/i18n'
 import { formatMcpArgsInput, parseMcpArgsInput } from '@/utils/mcpArgs'
@@ -520,14 +520,25 @@ async function openConfigFile() {
   }
 }
 
+// 外部批量变更（设置导入等）后重拉列表：本组件自身的增删改已 await loadServers，
+// MCP 域没有单服务器粒度推送，收到通知即重拉（约定见 webview/utils/configChangeNotifier）。
+let unsubscribeMcpChanged: (() => void) | null = null
+
 // 初始化
 onMounted(() => {
   loadServers()
+  unsubscribeMcpChanged = onExtensionCommand(PUSH_MESSAGE_NAMES['mcp.configChanged'], () => {
+    void loadServers()
+  })
 })
 
 onUnmounted(() => {
   // 清理在途的 ID 校验防抖计时器
   resetIdValidation()
+  if (unsubscribeMcpChanged) {
+    unsubscribeMcpChanged()
+    unsubscribeMcpChanged = null
+  }
 })
 </script>
 

@@ -25,7 +25,9 @@ const { chatStoreMock } = vi.hoisted(() => ({
 }))
 
 vi.mock('@/utils/vscode', () => ({
-  sendToExtension: vi.fn()
+  sendToExtension: vi.fn(),
+  // 组件订阅了 channels.configChanged，mock 必须提供该导出
+  onExtensionCommand: vi.fn(() => () => {})
 }))
 
 vi.mock('@/stores', () => ({

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { MESSAGE_NAMES } from '@shared/protocol'
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ConfirmDialog, type SelectOption } from '../common'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
 import { preloadChannelConfigs, getChannelConfigsCache, setChannelConfigsCache } from '@/services/channelConfigCache'
 import { useChatStore } from '@/stores'
 import { useDeferredNumberInput } from '@/composables/useDeferredNumberInput'
@@ -781,6 +781,30 @@ function onRetryIntervalInput(value: string) {
   handleRetryIntervalInput(value, v => updateRetryInterval(v))
 }
 
+// 渠道选中态同步：优先沿用聊天当前使用的渠道，其次保持已选渠道，最后回退第一个。
+// 抽成函数供 onMounted 与外部变更重拉后复用（两处逻辑必须一致，否则导入后会停在空选中态）。
+function syncSelectedConfigId(): void {
+  if (chatStore.configId && configs.value.some(c => c.id === chatStore.configId)) {
+    currentConfigId.value = chatStore.configId
+  } else if (configs.value.length > 0 && !currentConfigId.value) {
+    // 如果 chatStore 没有配置或配置不存在，才选择第一个
+    currentConfigId.value = configs.value[0].id
+  }
+}
+
+// 外部批量变更（设置导入等）后重拉：本组件自身的单次编辑已就地刷新，不能重复跑全量请求，
+// 因此只处理不带 configId 的推送（约定见 webview/utils/configChangeNotifier）。
+async function reloadFromExternalChange(): Promise<void> {
+  await loadConfigs()
+  syncSelectedConfigId()
+  // 覆盖导入会改变当前使用渠道的内容（url / 模型 / 选项等），chatStore 的渠道快照需一并刷新
+  if (chatStore.configId) {
+    await chatStore.loadCurrentConfig()
+  }
+}
+
+let unsubscribeConfigChanged: (() => void) | null = null
+
 // 是否已完成初始化（防止初始化时的 watch 触发同步）
 const isInitialized = ref(false)
 
@@ -821,15 +845,26 @@ onMounted(async () => {
   }
 
   // 优先使用 chatStore 的配置 ID
-  if (chatStore.configId && configs.value.some(c => c.id === chatStore.configId)) {
-    currentConfigId.value = chatStore.configId
-  } else if (configs.value.length > 0 && !currentConfigId.value) {
-    // 如果 chatStore 没有配置或配置不存在，才选择第一个
-    currentConfigId.value = configs.value[0].id
-  }
+  syncSelectedConfigId()
+
+  // 设置导入等外部批量变更渠道后重拉列表（不监听则需重启插件才能看到新导入的渠道）
+  unsubscribeConfigChanged = onExtensionCommand(
+    PUSH_MESSAGE_NAMES['channels.configChanged'],
+    (data?: { configId?: string }) => {
+      if (data?.configId) return
+      void reloadFromExternalChange()
+    }
+  )
 
   // 标记初始化完成
   isInitialized.value = true
+})
+
+onUnmounted(() => {
+  if (unsubscribeConfigChanged) {
+    unsubscribeConfigChanged()
+    unsubscribeConfigChanged = null
+  }
 })
 </script>
 

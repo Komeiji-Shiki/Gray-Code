@@ -13,9 +13,9 @@
  */
 import { defineAsyncComponent, ref, reactive, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useSettingsStore, type SettingsTab } from '@/stores/settingsStore'
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
 import { CustomScrollbar } from '../common'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, onExtensionCommand } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
 import type { SupportedLanguage } from '@/i18n/types'
 import SettingsSidebar from './panel/SettingsSidebar.vue'
@@ -1020,11 +1020,24 @@ async function updateLanguage(lang: string) {
 
 
 
+// 设置导入完成后重新拉取表单值：面板常驻挂载，不监听则刚导入的 VSCode 设置要重启插件才显示。
+let unsubscribeSettingsImported: (() => void) | null = null
+
 // 初始化
 onMounted(() => {
   loadSettings()
   loadAppInfo()
   loadUsageStats()
+  unsubscribeSettingsImported = onExtensionCommand(PUSH_MESSAGE_NAMES['settings.imported'], () => {
+    void loadSettings()
+  })
+})
+
+onUnmounted(() => {
+  if (unsubscribeSettingsImported) {
+    unsubscribeSettingsImported()
+    unsubscribeSettingsImported = null
+  }
 })
 </script>
 

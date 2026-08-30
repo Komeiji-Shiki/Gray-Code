@@ -4,7 +4,7 @@
  * 使用Pinia store管理状态
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '@shared/protocol'
 import { defineAsyncComponent, onMounted, onBeforeUnmount, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { InputArea } from './components/input'
@@ -28,7 +28,7 @@ import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import { registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks, setVscodeWindowFocused } from './services/soundEventController'
 import { createAgentStopNotificationController, type AgentStopNotificationController } from './services/agentStopNotificationController'
 import { disposeAllSmoothStreams } from './stores/chat/smoothStreamManager'
-import { preloadChannelConfigs } from './services/channelConfigCache'
+import { preloadChannelConfigs, setChannelConfigsCache } from './services/channelConfigCache'
 
 // 非首屏页面只在对应视图首次打开时加载；v-if/v-show 继续负责原有挂载与保活语义。
 const SubAgentMonitor = defineAsyncComponent(() => import('./components/subagents/SubAgentMonitor.vue'))
@@ -294,6 +294,15 @@ onMounted(async () => {
         case 'windowFocusChanged':
           // VSCode 窗口焦点状态：音效控制器据此决定是否播放提示音（聚焦时不播）
           setVscodeWindowFocused(message.data?.focused === true)
+          break
+        case PUSH_MESSAGE_NAMES['channels.configChanged']:
+          // 外部批量变更（不带 configId，即设置导入）：渠道设置页此刻可能并未挂载
+          // （用户在其他页签），就没有人失效这份模块级预加载缓存，下次进入渠道页仍会
+          // 直接复用旧列表。在常驻的根组件里统一失效，保证不依赖“谁恰好挂着”。
+          // 渠道页已挂载时它自己会重拉并回填缓存，两处失效幂等。
+          if (!message.data?.configId) {
+            setChannelConfigsCache(null)
+          }
           break
       }
     }

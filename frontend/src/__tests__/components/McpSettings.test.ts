@@ -1,10 +1,22 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, vi } from 'vitest'
 
-const { sendToExtension } = vi.hoisted(() => ({ sendToExtension: vi.fn() }))
+const { sendToExtension, onExtensionCommand, commandHandlers } = vi.hoisted(() => {
+  // 捕获组件注册的推送命令处理器，便于测试直接触发后端广播
+  const commandHandlers = new Map<string, (data: any) => void>()
+  return {
+    sendToExtension: vi.fn(),
+    commandHandlers,
+    onExtensionCommand: vi.fn((command: string, handler: (data: any) => void) => {
+      commandHandlers.set(command, handler)
+      return () => commandHandlers.delete(command)
+    })
+  }
+})
 
 vi.mock('@/utils/vscode', () => ({
-  sendToExtension
+  sendToExtension,
+  onExtensionCommand
 }))
 
 vi.mock('@/i18n', async (importOriginal) => {
@@ -82,6 +94,33 @@ describe('McpSettings stdio arguments', () => {
       command: 'node',
       args: originalArgs
     })
+  })
+
+  test('收到 mcp.configChanged 推送后重拉服务器列表（导入 MCP 配置无需重启插件）', async () => {
+    wrapper = mount(McpSettings)
+    await flushPromises()
+
+    const handler = commandHandlers.get('mcp.configChanged')
+    expect(handler).toBeDefined()
+    const loadCountBefore = sendToExtension.mock.calls.filter(([command]) => command === 'getMcpServers').length
+
+    handler!({})
+    await flushPromises()
+
+    expect(
+      sendToExtension.mock.calls.filter(([command]) => command === 'getMcpServers').length
+    ).toBe(loadCountBefore + 1)
+  })
+
+  test('卸载后取消订阅（不残留全局推送监听）', async () => {
+    wrapper = mount(McpSettings)
+    await flushPromises()
+    expect(commandHandlers.has('mcp.configChanged')).toBe(true)
+
+    wrapper.unmount()
+    wrapper = undefined as unknown as VueWrapper
+
+    expect(commandHandlers.has('mcp.configChanged')).toBe(false)
   })
 
   test('shows the string-array validation message for invalid argument JSON', async () => {
