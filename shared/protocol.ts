@@ -385,6 +385,10 @@ export const PUSH_MESSAGE_NAMES = {
   'tools.applyDiffConfigChanged': 'tools.applyDiffConfigChanged',
   // 渠道/模型配置变更（设置面板保存后推送，输入区据此刷新下拉框）
   'channels.configChanged': 'channels.configChanged',
+  // MCP 服务器配置变更（设置导入等外部批量写入后推送，MCP 设置页据此刷新列表）
+  'mcp.configChanged': 'mcp.configChanged',
+  // VSCode 设置项批量变更（设置导入完成后推送，设置面板据此重新拉取表单值）
+  'settings.imported': 'settings.imported',
 } as const;
 
 /** 推送消息名字面量联合类型（等价于 PUSH_MESSAGE_NAMES 的全部值） */

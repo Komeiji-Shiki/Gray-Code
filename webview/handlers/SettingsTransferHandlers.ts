@@ -4,11 +4,13 @@
  * 消息 key：settings.export / settings.import。
  *
  * 对话框 / 写文件 / 解析导入流程已收敛到 utils/settingsTransfer（发现 7），
- * 此处仅保留 webview handler 的入口适配：把共享流程的结果直接回响应。
+ * 此处仅保留 webview handler 的入口适配：把共享流程的结果直接回响应，
+ * 并按实际导入成功的配置域广播刷新通知（否则界面要重启插件才可见）。
  */
 
 import { MESSAGE_NAMES } from '../../shared/protocol';
-import type { MessageHandler } from '../types';
+import type { HandlerContext, MessageHandler } from '../types';
+import { notifyImportedScopesChanged } from '../utils/configChangeNotifier';
 import {
     exportSettingsToFile,
     importSettingsFromFile,
@@ -49,6 +51,9 @@ export const importSettings: MessageHandler = async (data, requestId, ctx) => {
             imported: outcome.result.imported,
             errors: outcome.result.errors
         });
+        // 导入写入的是后端数据，webview 侧列表/表单是挂载时拉取的快照：
+        // 不广播就只能等重启插件（重置模块缓存）才看得到刚导入的渠道/MCP/设置值。
+        notifyImportedScopesChanged(ctx, outcome.result.imported);
     } catch (error: any) {
         ctx.sendError(requestId, 'IMPORT_ERROR', error.message || 'Failed to import settings');
     }

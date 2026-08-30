@@ -2,9 +2,10 @@
  * 配置管理消息处理器
  */
 
-import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '../../shared/protocol';
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
+import { notifyChannelsChanged } from '../utils/configChangeNotifier';
 import type { CreateConfigInput, UpdateConfigInput } from '../../backend/modules/config';
 import type {
   AddModelsRequest,
@@ -69,24 +70,6 @@ export const getConfig: MessageHandler = async (data, requestId, ctx) => {
     ctx.sendError(requestId, 'GET_CONFIG_ERROR', getErrorMessage(error, 'Failed to get config'));
   }
 };
-
-/**
- * 渠道/模型配置变更后向主聊天视图推送刷新命令，
- * 让输入区的渠道/模型下拉框立即同步（无需重启扩展）。
- * 路由上下文优先走 ctx.postMessage；非路由上下文（测试/直连）回退 ctx.view 直投。
- */
-function notifyChannelsChanged(ctx: HandlerContext, configId?: string): void {
-  const message = {
-    type: PUSH_MESSAGE_NAMES.command,
-    command: PUSH_MESSAGE_NAMES['channels.configChanged'],
-    data: configId ? { configId } : {}
-  };
-  if (ctx.postMessage) {
-    ctx.postMessage(message);
-    return;
-  }
-  ctx.view?.webview.postMessage(message);
-}
 
 export const createConfig: MessageHandler = async (data, requestId, ctx) => {
   if (!isCreateConfigInput(data)) {
