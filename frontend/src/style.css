@@ -4,10 +4,26 @@
  * 遵循 8pt 间距系统
  */
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+/*
+ * 基础重置单独放进 @layer gc-reset。
+ *
+ * 修改原因：primitives.css 刻意用 :where() 把原语写成零特异性（方便组件 scoped 样式细化），
+ * 但 main.ts 里 style.css 排在 primitives.css 之后加载，于是 button / input 元素选择器和
+ * `* { padding: 0 }` 会反过来吃掉原语的 border、background、color 与内边距：
+ * Modal 底部的 .gc-button 只剩文字（没有按钮感），.gc-field 的左右内边距归零
+ * （placeholder 文字贴到 :focus-visible 的描边上）。
+ * 修改方式：只把「重置」降级进命名层——未分层样式恒高于任何分层样式，
+ * 重置继续兜住裸元素，但不再压制带 class 的原语。
+ * body / #app / 滚动条 / ::selection / :focus-visible 保持未分层，
+ * 它们与组件样式之间仍按原来的特异性和加载顺序竞争，避免顺带改变焦点框与滚动条观感。
+ * 修改目的：修层叠层级的设计缺陷，而不是给单个组件补样式或加 !important。
+ */
+@layer gc-reset {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 }
 
 body {
@@ -58,30 +74,31 @@ body {
   outline-offset: -1px;
 }
 
-/* 按钮基础重置 */
-button {
-  font-family: inherit;
-  font-size: inherit;
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: inherit;
-}
+/* 按钮与输入框基础重置：同属 gc-reset 层，理由见文件开头说明 */
+@layer gc-reset {
+  button {
+    font-family: inherit;
+    font-size: inherit;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: inherit;
+  }
 
-button:disabled {
-  cursor: not-allowed;
-  opacity: var(--gc-opacity-disabled);
-}
+  button:disabled {
+    cursor: not-allowed;
+    opacity: var(--gc-opacity-disabled);
+  }
 
-/* 输入框基础重置 */
-input,
-textarea {
-  font-family: inherit;
-  font-size: inherit;
-  color: inherit;
-  background: transparent;
-  border: none;
-  outline: none;
+  input,
+  textarea {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+    background: transparent;
+    border: none;
+    outline: none;
+  }
 }
 
 /* 工具提示基础样式 */
