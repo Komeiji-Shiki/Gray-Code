@@ -604,6 +604,10 @@ async function selectModel(modelId: string) {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* .model-item 是 align-items: stretch，而本按钮有固定高度：
+     不显式声明 align-self 时 stretch 会退化成顶端对齐，两行高的条目里叉号就会偏上 */
+  align-self: center;
+  margin-inline-end: var(--gc-space-1);
   width: 20px;
   height: 20px;
   padding: 0;
