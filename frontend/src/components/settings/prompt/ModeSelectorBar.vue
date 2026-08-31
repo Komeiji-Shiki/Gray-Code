@@ -41,6 +41,7 @@ const emit = defineEmits<{
         :options="modeOptions"
         :placeholder="t('components.settings.promptSettings.modes.label')"
         :searchable="true"
+        :dropdown-fit-content="true"
         class="mode-select-dropdown"
         @update:model-value="emit('update:modelValue', $event)"
       />
@@ -164,18 +165,7 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
-/* 展开时列表项自动换行 */
-.mode-select-dropdown :deep(.select-dropdown) {
-  min-width: 200px;
-  width: auto;
-  max-width: 300px;
-}
-
-.mode-select-dropdown :deep(.option-label) {
-  white-space: normal;
-  word-break: break-word;
-}
-
+/* 面板宽度按选项内容自适应、长模式名换行，已由 CustomSelect 的 dropdown-fit-content 提供 */
 .mode-actions {
   display: flex;
   align-items: center;

@@ -42,6 +42,8 @@ describe('common accessibility primitives', () => {
   test('CustomSelect declares combobox/listbox/option relationships and restores trigger focus', async () => {
     const wrapper = remember(mount(CustomSelect, {
       attachTo: document.body,
+      // 选项面板正常会 Teleport 到 body，测试里打桩留在组件子树内才能直接查询
+      global: { stubs: { teleport: true } },
       props: {
         modelValue: 'a',
         ariaLabel: 'Model',

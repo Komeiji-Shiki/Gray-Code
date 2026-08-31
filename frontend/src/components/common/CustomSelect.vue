@@ -2,6 +2,9 @@
 /**
  * 自定义下拉选择框组件
  * 支持 v-model 双向绑定
+ *
+ * 选项面板 Teleport 到 body 后按视口坐标定位：对话框的 overflow 滚动容器、
+ * 带 contain / transform 的祖先元素都不会再裁掉它或改写它的定位参照。
  */
 
 import { ref, computed, onMounted, onUnmounted, watch, getCurrentInstance, nextTick } from 'vue'
@@ -18,15 +21,17 @@ const props = withDefaults(defineProps<{
   ariaLabel?: string
   disabled?: boolean
   searchable?: boolean
-  dropUp?: boolean  // 向上展开
+  dropUp?: boolean  // 强制向上展开；默认由视口剩余空间自动决定展开方向
   compact?: boolean  // 紧凑模式
+  dropdownFitContent?: boolean  // 面板宽度按选项内容自适应（默认与触发器等宽）
 }>(), {
   placeholder: '',
   ariaLabel: '',
   disabled: false,
   searchable: false,
   dropUp: false,
-  compact: false
+  compact: false,
+  dropdownFitContent: false
 })
 
 const emit = defineEmits<{
@@ -41,6 +46,23 @@ const triggerRef = ref<HTMLButtonElement>()
 const inputRef = ref<HTMLInputElement>()
 const instanceId = getCurrentInstance()?.uid ?? 0
 const listboxId = `gc-select-listbox-${instanceId}`
+
+// ==================== 面板定位（挂到 body，按视口坐标摆放） ====================
+/** 面板与触发器之间的间距 */
+const PANEL_GAP = 4
+/** 面板与视口边缘的最小留白 */
+const PANEL_VIEWPORT_MARGIN = 8
+/** 选项列表期望的最大高度 */
+const PANEL_LIST_MAX_HEIGHT = 200
+/** 空间再紧也要保证的最低可滚动高度 */
+const PANEL_LIST_MIN_HEIGHT = 96
+/** searchable 时搜索框连同分隔线占用的高度，用于从面板总高里扣掉 */
+const PANEL_SEARCH_ROW_HEIGHT = 40
+
+const dropdownRef = ref<HTMLElement>()
+const panelStyle = ref<Record<string, string>>({})
+const panelDropUp = ref(false)
+const listMaxHeight = ref(PANEL_LIST_MAX_HEIGHT)
 
 function getOptionId(index: number): string {
   return `gc-select-option-${instanceId}-${index}`
@@ -71,6 +93,86 @@ const filteredOptions = computed(() => {
   )
 })
 
+/**
+ * 按触发器的视口矩形计算面板位置：下方放不下且上方更宽裕时朝上展开，
+ * 列表最大高度按剩余空间压缩，保证面板始终完整落在视口内。
+ */
+function updatePanelPosition() {
+  const trigger = triggerRef.value
+  if (!trigger || !isOpen.value) return
+
+  const rect = trigger.getBoundingClientRect()
+  // 触发器被滚出视口（对话框背景滚动、宿主面板折叠等）时直接收起，避免浮层悬空
+  if (rect.bottom < 0 || rect.top > window.innerHeight) {
+    close()
+    return
+  }
+
+  const spaceBelow = window.innerHeight - rect.bottom - PANEL_GAP - PANEL_VIEWPORT_MARGIN
+  const spaceAbove = rect.top - PANEL_GAP - PANEL_VIEWPORT_MARGIN
+  const dropUp = props.dropUp || (spaceBelow < PANEL_LIST_MAX_HEIGHT && spaceAbove > spaceBelow)
+  listMaxHeight.value = Math.min(
+    PANEL_LIST_MAX_HEIGHT,
+    Math.max(PANEL_LIST_MIN_HEIGHT, dropUp ? spaceAbove : spaceBelow)
+  )
+  const left = Math.min(
+    Math.max(rect.left, PANEL_VIEWPORT_MARGIN),
+    Math.max(PANEL_VIEWPORT_MARGIN, window.innerWidth - rect.width - PANEL_VIEWPORT_MARGIN)
+  )
+
+  const next: Record<string, string> = {
+    left: `${left}px`,
+    top: dropUp ? 'auto' : `${rect.bottom + PANEL_GAP}px`,
+    bottom: dropUp ? `${window.innerHeight - rect.top + PANEL_GAP}px` : 'auto',
+    maxHeight: `${listMaxHeight.value + (props.searchable ? PANEL_SEARCH_ROW_HEIGHT : 0)}px`
+  }
+  // 内容自适应时不写死宽度：交给 shrink-to-fit 取内容宽，再用 min-width 保证不窄于触发器
+  if (props.dropdownFitContent) {
+    next.minWidth = `${rect.width}px`
+  } else {
+    next.width = `${rect.width}px`
+  }
+  panelStyle.value = next
+  panelDropUp.value = dropUp
+}
+
+/** 内容自适应的面板可能比触发器宽，测量后把右侧溢出拉回视口内 */
+function clampPanelIntoViewport() {
+  const panel = dropdownRef.value
+  if (!panel) return
+  const box = panel.getBoundingClientRect()
+  const overflow = box.right - (window.innerWidth - PANEL_VIEWPORT_MARGIN)
+  if (overflow <= 0) return
+  panelStyle.value = {
+    ...panelStyle.value,
+    left: `${Math.max(PANEL_VIEWPORT_MARGIN, box.left - overflow)}px`
+  }
+}
+
+function refreshPanelPosition() {
+  updatePanelPosition()
+  if (props.dropdownFitContent) {
+    nextTick(clampPanelIntoViewport)
+  }
+}
+
+let positionTracked = false
+
+/** 视口尺寸或任意祖先容器滚动时，面板要跟着触发器走 */
+function startTrackingPosition() {
+  if (positionTracked) return
+  positionTracked = true
+  window.addEventListener('resize', refreshPanelPosition)
+  window.addEventListener('scroll', refreshPanelPosition, true)
+}
+
+function stopTrackingPosition() {
+  if (!positionTracked) return
+  positionTracked = false
+  window.removeEventListener('resize', refreshPanelPosition)
+  window.removeEventListener('scroll', refreshPanelPosition, true)
+}
+
 function open() {
   if (props.disabled) return
   isOpen.value = true
@@ -79,16 +181,26 @@ function open() {
     searchQuery.value = ''
     nextTick(() => inputRef.value?.focus())
   }
+  startTrackingPosition()
+  nextTick(refreshPanelPosition)
 }
 
 function close(options: { restoreFocus?: boolean } = {}) {
   isOpen.value = false
   searchQuery.value = ''
   highlightedIndex.value = -1
+  stopTrackingPosition()
   if (options.restoreFocus) {
     nextTick(() => triggerRef.value?.focus())
   }
 }
+
+watch(
+  () => [props.dropUp, props.dropdownFitContent, props.searchable],
+  () => {
+    if (isOpen.value) refreshPanelPosition()
+  }
+)
 
 function toggle() {
   if (isOpen.value) {
@@ -140,6 +252,8 @@ function handleKeydown(event: KeyboardEvent) {
       break
     case 'Escape':
       event.preventDefault()
+      // 浮层打开时 Esc 只收浮层，不能把承载它的对话框一起关掉
+      event.stopPropagation()
       close({ restoreFocus: true })
       break
     case 'Tab':
@@ -149,9 +263,12 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 function handleClickOutside(event: MouseEvent) {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    close()
+  const target = event.target as Node
+  // 面板被 Teleport 到 body，不再属于容器子树，点击面板内部同样算「没点外面」
+  if (containerRef.value?.contains(target) || dropdownRef.value?.contains(target)) {
+    return
   }
+  close()
 }
 
 watch(searchQuery, () => {
@@ -164,6 +281,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  stopTrackingPosition()
 })
 </script>
 
@@ -193,57 +311,69 @@ onUnmounted(() => {
       <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']" aria-hidden="true">▼</span>
     </button>
 
-    <Transition name="dropdown">
-      <div v-if="isOpen" class="select-dropdown">
-        <div v-if="searchable" class="search-wrapper">
-          <input
-            ref="inputRef"
-            v-model="searchQuery"
-            type="text"
-            class="search-input"
-            role="combobox"
-            aria-autocomplete="list"
-            :aria-label="t('common.search')"
-            :aria-expanded="isOpen"
-            :aria-controls="listboxId"
-            :aria-activedescendant="activeOptionId"
-            :placeholder="t('components.common.customSelect.searchPlaceholder')"
-            @click.stop
-          />
-        </div>
-
-        <CustomScrollbar :max-height="200" :width="5" :offset="1">
-          <div :id="listboxId" class="options-list" role="listbox" :aria-label="accessibleLabel">
-            <div
-              v-for="(option, index) in filteredOptions"
-              :id="getOptionId(index)"
-              :key="option.value"
-              role="option"
-              :aria-selected="option.value === modelValue"
-              :class="[
-                'option-item',
-                {
-                  selected: option.value === modelValue,
-                  highlighted: index === highlightedIndex
-                }
-              ]"
-              @click="selectOption(option)"
-              @mouseenter="highlightedIndex = index"
-            >
-              <div class="option-content">
-                <span class="option-label">{{ option.label }}</span>
-                <span v-if="option.description" class="option-description">{{ option.description }}</span>
-              </div>
-              <span v-if="option.value === modelValue" class="check-icon" aria-hidden="true">✓</span>
-            </div>
-
-            <div v-if="filteredOptions.length === 0" class="empty-state" role="status">
-              <span>{{ t('components.common.customSelect.noMatch') }}</span>
-            </div>
+    <!--
+      面板 Teleport 到 body：对话框的 overflow 滚动容器（Modal 的 modal-body）
+      不会再把它裁成一条，位置由 updatePanelPosition 写成视口坐标。
+    -->
+    <Teleport to="body">
+      <Transition name="dropdown">
+        <div
+          v-if="isOpen"
+          ref="dropdownRef"
+          :class="['select-dropdown', { 'is-drop-up': panelDropUp, 'fit-content': dropdownFitContent }]"
+          :style="panelStyle"
+          @keydown="handleKeydown"
+        >
+          <div v-if="searchable" class="search-wrapper">
+            <input
+              ref="inputRef"
+              v-model="searchQuery"
+              type="text"
+              class="search-input"
+              role="combobox"
+              aria-autocomplete="list"
+              :aria-label="t('common.search')"
+              :aria-expanded="isOpen"
+              :aria-controls="listboxId"
+              :aria-activedescendant="activeOptionId"
+              :placeholder="t('components.common.customSelect.searchPlaceholder')"
+              @click.stop
+            />
           </div>
-        </CustomScrollbar>
-      </div>
-    </Transition>
+
+          <CustomScrollbar :max-height="listMaxHeight" :width="5" :offset="1">
+            <div :id="listboxId" class="options-list" role="listbox" :aria-label="accessibleLabel">
+              <div
+                v-for="(option, index) in filteredOptions"
+                :id="getOptionId(index)"
+                :key="option.value"
+                role="option"
+                :aria-selected="option.value === modelValue"
+                :class="[
+                  'option-item',
+                  {
+                    selected: option.value === modelValue,
+                    highlighted: index === highlightedIndex
+                  }
+                ]"
+                @click="selectOption(option)"
+                @mouseenter="highlightedIndex = index"
+              >
+                <div class="option-content">
+                  <span class="option-label">{{ option.label }}</span>
+                  <span v-if="option.description" class="option-description">{{ option.description }}</span>
+                </div>
+                <span v-if="option.value === modelValue" class="check-icon" aria-hidden="true">✓</span>
+              </div>
+
+              <div v-if="filteredOptions.length === 0" class="empty-state" role="status">
+                <span>{{ t('components.common.customSelect.noMatch') }}</span>
+              </div>
+            </div>
+          </CustomScrollbar>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -314,26 +444,26 @@ onUnmounted(() => {
   transform: rotate(180deg);
 }
 
+/* 面板挂到 body：left / width / top / bottom / max-height 由内联样式按视口坐标写入 */
 .select-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  margin-top: var(--gc-space-1);
+  position: fixed;
+  /* 对话框内部拉出的浮层要压在 Modal 之上，又仍低于通知层 */
+  z-index: calc(var(--gc-layer-modal) + 10);
   background: var(--vscode-dropdown-background, var(--gc-surface-raised));
   border: 1px solid var(--vscode-dropdown-border, var(--gc-border-strong));
   border-radius: var(--gc-radius-sm);
   box-shadow: var(--gc-shadow-md);
-  z-index: var(--gc-layer-popover);
   overflow: hidden;
 }
 
-/* 向上展开 */
-.custom-select.drop-up .select-dropdown {
-  top: auto;
-  bottom: 100%;
-  margin-top: 0;
-  margin-bottom: 4px;
+/* 内容自适应模式：面板最宽不超过视口留白内的上限，超出后选项文案换行而非截断 */
+.select-dropdown.fit-content {
+  max-width: min(420px, calc(100vw - 16px));
+}
+
+.select-dropdown.fit-content .option-label {
+  white-space: normal;
+  word-break: break-word;
 }
 
 /* 紧凑模式 */
@@ -449,5 +579,11 @@ onUnmounted(() => {
 .dropdown-leave-to {
   opacity: 0;
   transform: translateY(-4px);
+}
+
+/* 朝上展开时位移方向相反，保证面板始终朝触发器靠 */
+.select-dropdown.is-drop-up.dropdown-enter-from,
+.select-dropdown.is-drop-up.dropdown-leave-to {
+  transform: translateY(4px);
 }
 </style>
