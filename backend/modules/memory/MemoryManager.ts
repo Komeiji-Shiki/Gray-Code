@@ -132,8 +132,8 @@ export class MemoryManager {
         return this.store.pendingCount(T);
     }
 
-    /** 生成压缩提示 */
-    private async napPrompt(lo: number, hi: number, remaining: number): Promise<NapPrompt> {
+    /** 生成压缩提示；required 仅用于 wake 已被缺失摘要阻塞的场景。 */
+    private async napPrompt(lo: number, hi: number, remaining: number, required = false): Promise<NapPrompt> {
         let body: string;
         if (hi - lo <= RAW_MAX) {
             const entries = await this.logSlice(lo, hi);
@@ -151,18 +151,21 @@ export class MemoryManager {
             body = halves.join('\n');
         }
         const tail = remaining === 0 ? '' :
-            remaining === 1 ? '\n1 compression remains after this one.' :
-            `\n${remaining} compressions remain after this one.`;
+            remaining === 1 ? '\n1 maintenance compression remains after this one.' :
+            `\n${remaining} maintenance compressions remain after this one.`;
 
         const blockId = `${lo}-${hi - 1}`;
         // 修改原因：compress 的摘要预算已按树记录宽度钳制（min(entryChars, TREE_REC-1)，见 compress），
         //          提示语必须使用同一预算并按字节计，否则模型按 entryChars 生成超长摘要必然被拒。
         const summaryLimit = Math.min(this.config.entryChars, TREE_REC - 1);
-        const prompt = `Compress memories #${lo}-${hi - 1} into one line of at most ${summaryLimit} bytes.\n` +
-            `Keep what has lasting effect, drop what does not. Invent nothing.\n\n${body}${tail}\n` +
+        const urgency = required
+            ? 'This block is required before memory_wake can finish.'
+            : 'Deferred maintenance: do not interrupt the current user task. Compress it after the current deliverable, or when memory_wake later requires it.';
+        const prompt = `${urgency}\nCompress memories #${lo}-${hi - 1} into one line of at most ${summaryLimit} bytes.\n` +
+            `Preserve durable decisions, preferences, constraints, and facts with their context. Drop transient progress and repetition. Invent nothing.\n\n${body}${tail}\n` +
             `Run: memory_compress "${blockId}" "<your line>"`;
 
-        return { blockId, lo, hi, prompt, remaining };
+        return { blockId, lo, hi, prompt, remaining, required };
     }
 
     /** 获取下一个待压缩的提示 */
@@ -262,7 +265,7 @@ export class MemoryManager {
                 if (pc > 0) {
                     // 直接用实际缺失的块构造提示，而不是 nextNap 返回的
                     // "第一个待压缩块"（可能不是 wake 实际缺失的那个块）。
-                    const nap = await this.napPrompt(lo, hi, pc - 1);
+                    const nap = await this.napPrompt(lo, hi, pc - 1, true);
                     throw new Error(
                         `Cannot wake: the memory context needs #${lo}-${hi - 1}, ` +
                         `which is not compressed yet.\nDo the ${plural(pc, 'compression')} below, ` +

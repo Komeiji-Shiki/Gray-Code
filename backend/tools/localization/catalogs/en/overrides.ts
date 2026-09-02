@@ -28,10 +28,10 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
     // zoom 的二叉树节点（#a-b blockId）、forget 的三种 blockId（范围 16-31 / 单个 5 / 闭区间 1,3）。
     memory_wake: {
         description:
-            'Wake up permanent memory. Must be called at the start of every session, before doing anything else.\n' +
+            'Wake up permanent memory at the start of a new work session when prior agreements may affect the task. A simple, history-independent reply that needs no tools does not require it.\n' +
             'The output has two parts: global memory and current workspace memory (isolated per workspace), marked with --- Global memory --- / --- Workspace memory ---.\n' +
             'It outputs your memory digest: recent memories are kept verbatim, older memories are compressed into summaries.\n' +
-            'If the output is split into multiple parts, read them in order until you see "You are awake.".',
+            'If the output is split into multiple parts, read them in order until you see "You are awake.". pendingCompression in a successful result may be deferred; do not interrupt the current user task.',
         parameters: {
             part: 'Part number to read (1-based). If omitted, starts from part 1.',
             snapshotT: 'Total number of memories at snapshot time. If omitted, or set to 0 on the first call, uses the current total. Used to keep consistency across multiple wake calls.'
@@ -40,11 +40,11 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
 
     memory_note: {
         description:
-            'Record a permanent memory. Call it when you learn something new or something worth remembering happens.\n' +
+            'Record a permanent memory that is likely to remain useful in future sessions.\n' +
             'The memory is saved to the current workspace\'s memory store (separate from global memory; memory_wake reads both).\n' +
             'Single line of text, limited by the entryChars cap in memory_config (default max 280 characters, counted in bytes, accented characters take 2 bytes; can be raised up to 1000 via memory_config).\n' +
-            'Do not record redundant content, things you already know, or things you just recorded.\n' +
-            'If a compression prompt (pendingCompression) is returned, run memory_compress before your next operation.',
+            'Do not record transient progress, work logs, repository-reconstructable content, secrets, or duplicates.\n' +
+            'If pendingCompression is returned, it is deferred maintenance. Do not interrupt the current user task; compress after the current deliverable.',
         parameters: {
             text: 'The memory text to record. Single line, limited by the entryChars cap in memory_config (default max 280 characters).'
         }
@@ -65,13 +65,14 @@ export const overrides: Record<string, ToolDescriptionLocalization> = {
         description:
             'Run pending memory compression merges.\n' +
             'The memory system uses a binary tree structure: adjacent memories are merged pairwise into one-line summaries, and summaries are merged further.\n' +
-            'memory_note may return compression prompts — execute them in order.\n' +
+            'pendingCompression from a successful memory_note or memory_wake is deferred maintenance and must not interrupt the current user task. It is immediately required only when memory_wake fails because a summary is missing.\n' +
+            'Once maintenance starts, follow prompts in order. Independent scopes may be handled with calls in the same response.\n' +
             'Parameters: blockId (block ID, e.g. "0-1"); summary (compressed summary text, one line, limited by the entryChars cap, default ≤280 bytes).\n' +
             'With no arguments, returns the next pending compression prompt.\n' +
             'Scope: with a workspace open, defaults to the current workspace memory; pass scope="global" to operate on global memory.',
         parameters: {
             blockId: 'Block ID to compress (e.g. "0-1"). Copy it from the compression prompt.',
-            summary: 'The compressed summary text. One line, limited by the entryChars cap (default max 280 bytes). Keep content with lasting impact, drop what no longer matters. Do not fabricate.',
+            summary: 'The compressed summary text. One line, limited by the entryChars cap (default max 280 bytes). Preserve durable decisions, preferences, constraints, facts, and necessary context; drop transient progress and repetition. Do not fabricate.',
             scope: 'Memory scope. With a workspace open, defaults to the current workspace memory; pass "global" to operate on global memory, or "workspace" to explicitly operate on workspace memory.'
         }
     },

@@ -105,6 +105,8 @@ export interface NapPrompt {
     prompt: string;
     /** 剩余待压缩数量 */
     remaining: number;
+    /** 是否为 memory_wake 当前完成读取所必需；false 表示可延后的维护任务 */
+    required: boolean;
 }
 
 /** 记忆配置 */

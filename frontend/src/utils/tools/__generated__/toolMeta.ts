@@ -263,10 +263,10 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/file/list_files.ts",
   },
   'memory_compress': {
-    description: "执行待处理的记忆压缩合并。\n记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\nmemory_note 可能会返回压缩提示——按顺序执行它们。\n参数：blockId（块 ID，如 \"0-1\"）；summary（压缩后的摘要文本，一行，长度受 entryChars 上限约束，默认 ≤280 字节）。\n不传参数时，返回下一个待压缩的提示。\n作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope=\"global\"。",
+    description: "执行待处理的记忆压缩合并。\n记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\n成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。\n参数：blockId（块 ID，如 \"0-1\"）；summary（压缩后的摘要文本，一行，长度受 entryChars 上限约束，默认 ≤280 字节）。\n不传参数时，返回下一个待压缩的提示。\n作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope=\"global\"。",
     parameters: {
       "blockId": {"type":"string","description":"要压缩的块 ID（如 \"0-1\"）。从压缩提示中复制。"},
-      "summary": {"type":"string","description":"压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留有持久影响的内容，丢弃不再重要的。不要编造。"},
+      "summary": {"type":"string","description":"压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。"},
       "scope": {"type":"string","description":"记忆作用域。有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 \"global\"，如需显式操作工作区记忆请传 \"workspace\"。","enum":["global","workspace"]},
     },
     source: "backend/tools/memory/memory_compress.ts",
@@ -290,7 +290,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/memory/memory_forget.ts",
   },
   'memory_note': {
-    description: "记录一条永久记忆。当你学到新东西、发生值得记住的事情时调用。\n记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 1000）。\n不要记录冗余的、已经知道的或刚才已经记录过的内容。\n如果返回了压缩提示（pendingCompression），请在下一次操作前执行 memory_compress。",
+    description: "记录一条对未来会话仍有价值的永久记忆。\n记忆保存到当前工作区的记忆存储（与全局记忆分开，memory_wake 会同时读取两者）。\n一行文本，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符，按字节计，重音字符占 2 字节；可经 memory_config 调高至 1000）。\n不要记录临时进度、工作日志、可从仓库重建的内容、秘密或重复信息。\n如果返回 pendingCompression，它只是可延后的维护提示；不要中断当前用户任务，完成当前交付后再压缩。",
     parameters: {
       "text": {"type":"string","description":"要记录的记忆文本。一行，长度受 memory_config 的 entryChars 上限控制（默认最多 280 字符）。","required":true},
     },
@@ -304,7 +304,7 @@ export const toolMeta: Record<string, ToolMeta> = {
     source: "backend/tools/memory/memory_recall.ts",
   },
   'memory_wake': {
-    description: "唤醒永久记忆。在每次会话开始时、做任何其他事情之前必须先调用此工具。\n输出包含两部分：全局记忆与当前工作区记忆（按工作区隔离），以 --- Global memory --- / --- Workspace memory --- 标注。\n它会输出你的记忆摘要：近期的记忆保持原文，远期的记忆被压缩为摘要。\n如果输出被分成多个部分，按顺序读取直到看到 \"You are awake.\" 为止。\n参数：part（可选，部分号，1-based）；snapshotT（可选，记忆快照总数）。",
+    description: "唤醒永久记忆。在新的工作会话开始、且历史约定可能影响任务时调用；简单且与历史无关的无工具回复无需调用。\n输出包含两部分：全局记忆与当前工作区记忆（按工作区隔离），以 --- Global memory --- / --- Workspace memory --- 标注。\n它会输出你的记忆摘要：近期的记忆保持原文，远期的记忆被压缩为摘要。\n如果输出被分成多个部分，按顺序读取直到看到 \"You are awake.\" 为止。成功结果中的 pendingCompression 可延后，不要中断当前用户任务。\n参数：part（可选，部分号，1-based）；snapshotT（可选，记忆快照总数）。",
     parameters: {
       "part": {"type":"integer","description":"要读取的部分号（1-based）。不传则从第 1 部分开始。"},
       "snapshotT": {"type":"integer","description":"快照时的记忆总数。不传或首次调用传 0 时使用当前总数。用于跨多次 wake 调用保持一致性。"},

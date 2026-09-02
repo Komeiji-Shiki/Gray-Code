@@ -88,4 +88,18 @@ describe('permanent memory toggle', () => {
         expect(disabledPrompt).not.toContain('CUSTOM MEMORY INSTRUCTIONS');
         expect(disabledPrompt).not.toContain('{{$MEMORY}}');
     });
+
+    test('default guidance defers routine compression without hiding wake blockers', async () => {
+        const manager = new SettingsManager(new TestSettingsStorage());
+        await manager.initialize();
+        setGlobalSettingsManager(manager);
+
+        const promptManager = new PromptManager({ includeWorkspaceFiles: false });
+        const prompt = promptManager.getSystemPrompt(legacyMode);
+
+        expect(prompt).toContain('压缩不得打断当前用户任务');
+        expect(prompt).toContain('它只是可延后的维护提示');
+        expect(prompt).toContain('只有 memory_wake 明确因缺少必要摘要而失败时');
+        expect(prompt).not.toContain('在你进行下一步操作之前执行 memory_compress');
+    });
 });

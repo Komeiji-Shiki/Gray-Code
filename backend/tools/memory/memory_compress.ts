@@ -14,7 +14,8 @@ export function createMemoryCompressDeclaration(): ToolDeclaration {
         description:
             '执行待处理的记忆压缩合并。\n' +
             '记忆系统使用二叉树结构：相邻记忆两两合并为一行摘要，摘要再合并。\n' +
-            'memory_note 可能会返回压缩提示——按顺序执行它们。\n' +
+            '成功的 memory_note 或 memory_wake 返回的 pendingCompression 是可延后的维护提示，不要因此中断当前用户任务；memory_wake 因缺少摘要失败时才必须立即处理。\n' +
+            '开始维护后按提示顺序执行；不同作用域的独立压缩可以在同一响应中调用。\n' +
             '参数：blockId（块 ID，如 "0-1"）；summary（压缩后的摘要文本，一行，长度受 entryChars 上限约束，默认 ≤280 字节）。\n' +
             '不传参数时，返回下一个待压缩的提示。\n' +
             '作用域：有工作区时默认作用于当前工作区记忆；如需操作全局记忆请传 scope="global"。',
@@ -28,7 +29,7 @@ export function createMemoryCompressDeclaration(): ToolDeclaration {
                 },
                 summary: {
                     type: 'string',
-                    description: '压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留有持久影响的内容，丢弃不再重要的。不要编造。',
+                    description: '压缩后的摘要文本。一行，长度受 entryChars 上限约束（默认最多 280 字节）。保留持久的决定、偏好、约束、事实及必要上下文，丢弃临时进度和重复。不要编造。',
                 },
                 scope: {
                     type: 'string',

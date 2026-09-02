@@ -3,6 +3,7 @@
  * 1. truncateLog 在锁内读取 logLen，与截断原子化（并发 note 追加的新记录被截断时计入 removed）
  * 2. compress 仅在 treePut 成功时置 said=true（块已存在/并行会话已处理时不误报 done:1）
  * 3. wake 缺失摘要时基于实际缺失的块构造提示（而非 nextNap 的第一个待压缩块）
+ * 4. 普通待压缩提示与阻塞 wake 的必要压缩具有不同紧迫度
  */
 import * as os from 'os';
 import * as path from 'path';
@@ -112,6 +113,22 @@ describe('MemoryManager.compress', () => {
             fs.rmSync(dir, { recursive: true, force: true });
         }
     });
+
+    test('note 返回的待压缩任务是可延后维护，不要求打断当前任务', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mm-deferred-compress-'));
+        try {
+            const mm = new MemoryManager(dir, { entryChars: 280 } as any);
+            await mm.init();
+            await mm.note('durable preference one');
+            const result = await mm.note('durable preference two');
+
+            expect(result.pendingCompression?.required).toBe(false);
+            expect(result.pendingCompression?.prompt).toContain('Deferred maintenance');
+            expect(result.pendingCompression?.prompt).toContain('do not interrupt the current user task');
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('MemoryManager.wake', () => {
@@ -130,6 +147,8 @@ describe('MemoryManager.wake', () => {
             expect(error.message).toContain('needs #0-3');
             // 提示必须指向实际缺失的块 0-3，而不是第一个待压缩块 2-3
             expect(error.message).toContain('Compress memories #0-3');
+            expect(error.message).toContain('required before memory_wake can finish');
+            expect(error.message).not.toContain('Deferred maintenance');
             expect(error.message).not.toContain('Compress memories #2-3');
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
