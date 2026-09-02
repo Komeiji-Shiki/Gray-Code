@@ -141,8 +141,9 @@ describe('CustomSelect 事件边界', () => {
     const items = panel.querySelectorAll<HTMLElement>('.option-item')
     items[1].dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
-    // 选中后收起并回传新值
-    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['openai'])
+    // 选中后收起并回传新值（取最后一次 emit；前端 tsconfig 的 lib 是 ES2020，不用 Array.prototype.at）
+    const updates = wrapper.emitted('update:modelValue') ?? []
+    expect(updates[updates.length - 1]).toEqual(['openai'])
     expect(document.body.querySelector('.select-dropdown')).toBeNull()
 
     await wrapper.get('.select-trigger').trigger('click')
@@ -182,7 +183,8 @@ describe('CustomSelect 事件边界', () => {
 
     searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await nextTick()
-    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual(['openai'])
+    const confirmed = wrapper.emitted('update:modelValue') ?? []
+    expect(confirmed[confirmed.length - 1]).toEqual(['openai'])
   })
 
   test('宿主容器滚动时面板重新定位', async () => {
