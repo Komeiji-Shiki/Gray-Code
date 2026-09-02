@@ -505,7 +505,7 @@
 
 ### Added
   - 新增长期使用时间统计（`backend/modules/activity`）：ActivityTracker 以「60 秒心跳 + 用户活动事件」采集 IDE 活跃时间（监听编辑/光标/滚动/切换编辑器/终端/窗口聚焦，连续 5 分钟无活动或失焦即暂停，过滤挂机），采样按天落盘至 `<dataPath>/activity/YYYY-MM-DD.json`（串行队列防并发覆盖，原子写入防损坏）；统计层提供每日使用时长与活跃会话、24 小时作息热力、当前连续工作时长（间隔 ≤15 分钟视为同一会话，跨天拼接不腰斩）。
-  - AI 工作期间同样记为活跃：模型流式生成（`StreamChunkProcessor` chunk 打点）、工具执行（`ToolExecutionService.runSingleToolCall` begin/end 引用计数）、子代理生成（`SubAgentExecutor` 流式循环打点）与后台任务事件（`TaskManager` 事件兜底）都会刷新活跃状态——主人在看 AI 输出时长时间不操作编辑器不会被误判为离开，AI 工作中窗口失焦（后台跑任务）也不暂停统计。
+  - AI 工作期间同样记为活跃：模型流式生成（`StreamChunkProcessor` chunk 打点）、工具执行（`ToolExecutionService.runSingleToolCall` begin/end 引用计数）、子代理生成（`SubAgentExecutor` 流式循环打点）与后台任务事件（`TaskManager` 事件兜底）都会刷新活跃状态——用户在浏览 AI 输出时长时间不操作编辑器不会被误判为离开，AI 工作中窗口失焦（后台跑任务）也不暂停统计。
   - 新增 AI 工具 `get_activity_stats`：AI 可查询用户每日使用时长、最近作息（可选 24h 热力）与连续工作时长，返回本地时间字符串；数据仅含时间戳不含用户内容。
   - 用量统计页新增「使用时间」区块（`UsageTimeSection.vue`）：今日已用/当前连续工作/近 7 天合计总览卡片 + 每日使用时长条形图 + 近 7 天 × 24 小时作息热力网格（悬停查看详情）；新消息处理器 `activity.getStats`（30 秒结果缓存，force 绕过）。
   - `StoragePathManager` 存储目录列表新增 `activity`（随迁移/清理/统计联动）；工具分类新增「使用时间」（codicon-watch）并补齐三语 i18n。
