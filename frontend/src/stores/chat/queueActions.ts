@@ -12,7 +12,7 @@
  * - useBackgroundTaskStore（P2 回执投递）为跨 store 依赖，直接模块级引用。
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, type CancelStreamResponse, type ForegroundWorkTransition } from '@shared/protocol'
 import type { Attachment } from '../../types'
 import type { ChatStoreState, QueuedMessage } from './types'
 import type { SendMessageOptions } from './messageActions'
@@ -32,7 +32,63 @@ export interface QueueActionDeps {
     options?: SendMessageOptions
   ) => Promise<boolean>
   /** 取消当前流（store 层包装，签名与 useChatStore().cancelStream 一致） */
-  cancelStream: (options?: CancelStreamOptions) => Promise<void>
+  cancelStream: (options?: CancelStreamOptions) => Promise<CancelStreamResponse | void>
+}
+
+/** 入队后仍在等待 terminal.detachToBackground 回执的任务；按 store 隔离，避免标签页串线。 */
+const pendingTerminalDetachByState = new WeakMap<ChatStoreState, Map<string, Promise<ForegroundWorkTransition>>>()
+
+function normalizeForegroundWorkTransition(
+  value?: Partial<ForegroundWorkTransition>
+): ForegroundWorkTransition {
+  const terminalCommands = Number.isFinite(value?.terminalCommands)
+    ? Math.max(0, Math.floor(value?.terminalCommands ?? 0))
+    : 0
+  const subAgentTasks = Number.isFinite(value?.subAgentTasks)
+    ? Math.max(0, Math.floor(value?.subAgentTasks ?? 0))
+    : 0
+  return { terminalCommands, subAgentTasks }
+}
+
+function mergeForegroundWorkTransitions(
+  ...values: Array<Partial<ForegroundWorkTransition> | undefined>
+): ForegroundWorkTransition {
+  return values.reduce<ForegroundWorkTransition>((total, value) => {
+    const normalized = normalizeForegroundWorkTransition(value)
+    return {
+      terminalCommands: total.terminalCommands + normalized.terminalCommands,
+      subAgentTasks: total.subAgentTasks + normalized.subAgentTasks
+    }
+  }, { terminalCommands: 0, subAgentTasks: 0 })
+}
+
+function withForegroundWorkTransition(
+  options: QueuedMessage['sendOptions'],
+  transition: ForegroundWorkTransition
+): QueuedMessage['sendOptions'] {
+  if (transition.terminalCommands + transition.subAgentTasks === 0) return options
+  return { ...options, foregroundWorkTransition: transition }
+}
+
+async function resolveQueuedForegroundWorkTransition(
+  state: ChatStoreState,
+  item: QueuedMessage
+): Promise<ForegroundWorkTransition> {
+  const pending = pendingTerminalDetachByState.get(state)?.get(item.id)
+  if (!pending) {
+    return normalizeForegroundWorkTransition(item.sendOptions?.foregroundWorkTransition)
+  }
+
+  try {
+    return mergeForegroundWorkTransitions(
+      item.sendOptions?.foregroundWorkTransition,
+      await pending
+    )
+  } finally {
+    const pendingById = pendingTerminalDetachByState.get(state)
+    pendingById?.delete(item.id)
+    if (pendingById?.size === 0) pendingTerminalDetachByState.delete(state)
+  }
 }
 
 /**
@@ -59,9 +115,16 @@ export function enqueueMessage(
   // 空闲时无前台命令可转移，跳过无效 IPC；无会话归属（空白标签页）时
   // conversationId 为 null，无法转移，同样跳过（避免向后端发送 null 会话）
   if ((state.isStreaming.value || state.isWaitingForResponse.value) && state.currentConversationId.value) {
-    void sendToExtension(MESSAGE_NAMES['terminal.detachToBackground'], {
-      conversationId: state.currentConversationId.value
-    }).catch(() => {})
+    const pendingById = pendingTerminalDetachByState.get(state) ?? new Map<string, Promise<ForegroundWorkTransition>>()
+    pendingTerminalDetachByState.set(state, pendingById)
+    const detachPromise = sendToExtension<{ success?: boolean; detached?: unknown }>(
+      MESSAGE_NAMES['terminal.detachToBackground'],
+      { conversationId: state.currentConversationId.value }
+    ).then(result => ({
+      terminalCommands: Array.isArray(result?.detached) ? result.detached.length : 0,
+      subAgentTasks: 0
+    })).catch(() => ({ terminalCommands: 0, subAgentTasks: 0 }))
+    pendingById.set(item.id, detachPromise)
   }
 }
 
@@ -73,6 +136,7 @@ export function dequeueMessage(state: ChatStoreState): QueuedMessage | null {
   if (queue.length === 0) return null
   const first = queue[0]
   state.messageQueue.value = queue.slice(1)
+  pendingTerminalDetachByState.get(state)?.delete(first.id)
   return first
 }
 
@@ -100,6 +164,7 @@ function takeNextForConversation(
  */
 export function removeQueuedMessage(state: ChatStoreState, id: string): void {
   state.messageQueue.value = state.messageQueue.value.filter(m => m.id !== id)
+  pendingTerminalDetachByState.get(state)?.delete(id)
 }
 
 /**
@@ -153,7 +218,9 @@ export async function sendQueuedMessageNow(
   const item = state.messageQueue.value.find(m => m.id === id)
   if (!item) return
 
-  // 从队列中移除
+  let foregroundWorkTransition = await resolveQueuedForegroundWorkTransition(state, item)
+  item.sendOptions = withForegroundWorkTransition(item.sendOptions, foregroundWorkTransition)
+  // 等待 terminal detach 回执后再移除，确保只上报实际成功转后台的命令。
   removeQueuedMessage(state, id)
 
   // “立即发送”会替换当前回合；先要求后端同步解除前台 SubAgent 的父信号绑定，
@@ -162,7 +229,12 @@ export async function sendQueuedMessageNow(
   // 保持原顺序，等待下次动作边界/回合结束重试，保证任何路径下排队消息不静默丢失。
   if (state.isWaitingForResponse.value) {
     try {
-      await deps.cancelStream({ preserveSubAgents: true })
+      const cancelResult = await deps.cancelStream({ preserveSubAgents: true })
+      foregroundWorkTransition = mergeForegroundWorkTransitions(
+        foregroundWorkTransition,
+        cancelResult?.foregroundWorkTransition
+      )
+      item.sendOptions = withForegroundWorkTransition(item.sendOptions, foregroundWorkTransition)
     } catch (err) {
       console.error('[chatStore] cancelStream failed during immediate send, put back to queue head:', err)
       state.messageQueue.value = [item, ...state.messageQueue.value]
@@ -171,7 +243,11 @@ export async function sendQueuedMessageNow(
   }
 
   // 发送消息
-  const sent = await deps.sendMessage(item.content, item.attachments, item.sendOptions)
+  const sent = await deps.sendMessage(
+    item.content,
+    item.attachments,
+    item.sendOptions
+  )
   // 发送失败（sendMessage 内部已 catch）：放回队首，等待下次动作边界/回合结束重试，
   // 与 processQueue 的失败回退语义一致，避免消息被静默丢弃
   if (!sent) {
@@ -195,10 +271,16 @@ export async function processQueue(state: ChatStoreState, deps: QueueActionDeps)
   if (!taken) return
   const { next, rest } = taken
   state.messageQueue.value = rest
+  const foregroundWorkTransition = await resolveQueuedForegroundWorkTransition(state, next)
 
   // 发送下一条排队消息；发送失败（IPC 异常等）时放回队首保持原顺序，
   // 由下一个投递时机再次尝试，不静默丢弃排队消息
-  const sent = await deps.sendMessage(next.content, next.attachments, next.sendOptions)
+  next.sendOptions = withForegroundWorkTransition(next.sendOptions, foregroundWorkTransition)
+  const sent = await deps.sendMessage(
+    next.content,
+    next.attachments,
+    next.sendOptions
+  )
   if (!sent) {
     state.messageQueue.value = [next, ...state.messageQueue.value]
   }
@@ -257,10 +339,17 @@ export async function processQueueAfterAction(state: ChatStoreState, deps: Queue
 
   queueAfterActionDrainingByState.set(state, true)
   try {
+    let foregroundWorkTransition = await resolveQueuedForegroundWorkTransition(state, next)
+    next.sendOptions = withForegroundWorkTransition(next.sendOptions, foregroundWorkTransition)
     // 当前回合仍在响应中（动作边界必然如此，防御性判断以兼容迟到的调度）：
     // 替换当前回合前先把前台 SubAgent 转为后台，再取消旧流。
     if (state.isWaitingForResponse.value) {
-      await deps.cancelStream({ preserveSubAgents: true })
+      const cancelResult = await deps.cancelStream({ preserveSubAgents: true })
+      foregroundWorkTransition = mergeForegroundWorkTransitions(
+        foregroundWorkTransition,
+        cancelResult?.foregroundWorkTransition
+      )
+      next.sendOptions = withForegroundWorkTransition(next.sendOptions, foregroundWorkTransition)
     }
 
     // 投递窗口内会话已切换（tab 切换）：放回队列——消息保留自身 conversationId，
@@ -279,7 +368,11 @@ export async function processQueueAfterAction(state: ChatStoreState, deps: Queue
       return
     }
 
-    const sent = await deps.sendMessage(next.content, next.attachments, next.sendOptions)
+    const sent = await deps.sendMessage(
+      next.content,
+      next.attachments,
+      next.sendOptions
+    )
     if (!sent) {
       // 发送未成功（IPC 失败 / 会话切换校验未过等）：放回队首保持原顺序，
       // 由下一个动作边界或回合终结时再次尝试，不静默丢弃排队消息。

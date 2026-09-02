@@ -71,12 +71,16 @@ describe('StreamAbortManager - 新流启动时前台 SubAgent 转后台', () => 
             oldStreamWasAbortedWhenDetached = oldStream.signal.aborted;
         });
 
-        manager.cancelForNewTurn('conv_replace');
+        const result = manager.cancelForNewTurn('conv_replace');
 
         expect(oldStreamWasAbortedWhenDetached).toBe(false);
         expect(oldStream.signal.aborted).toBe(true);
         expect(subAgentRunController.isDetached('detach_replace')).toBe(true);
         expect(subAgentRunController.isActive('detach_replace')).toBe(true);
+        expect(result).toEqual({
+            cancelled: true,
+            foregroundWorkTransition: { terminalCommands: 0, subAgentTasks: 1 },
+        });
     });
 
     test('detach 后注册为正常后台任务，并在终态事件中回传完整报告', () => {

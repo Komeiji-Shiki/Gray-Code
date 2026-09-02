@@ -312,7 +312,10 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
       if (type === 'cancelStream') {
         // 模拟 cancelStream 往返期间用户切到了其他会话
         store.currentConversationId = 'conv_other'
-        return { success: true }
+        return {
+          cancelled: true,
+          foregroundWorkTransition: { terminalCommands: 0, subAgentTasks: 1 }
+        }
       }
       return { success: true }
     })
@@ -324,6 +327,8 @@ describe('processQueueAfterAction：动作边界自动投递排队消息', () =>
     expect(store.messageQueue).toHaveLength(1)
     expect(store.messageQueue[0].content).toBe('本会话的消息')
     expect(store.messageQueue[0].conversationId).toBe('conv_1')
+    expect(store.messageQueue[0].sendOptions?.foregroundWorkTransition)
+      .toEqual({ terminalCommands: 0, subAgentTasks: 1 })
   })
 
   test('投递窗口内并发发送者抢先开启新流：放回队列，不降级为 inbox 中断', async () => {

@@ -4,7 +4,7 @@
  * 包含检查点的 CRUD 和恢复操作
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, type CancelStreamResponse } from '@shared/protocol'
 import type { Message, Attachment, CheckpointRecord, CheckpointManifest } from '../../types'
 import type { ChatStoreState, BranchStreamReplayContext } from './types'
 import { sendToExtension } from '../../utils/vscode'
@@ -318,7 +318,7 @@ export async function restoreAndRetry(
   messageIndex: number,
   checkpointId: string,
   currentModelName: string,
-  cancelStream: () => Promise<void>,
+  cancelStream: () => Promise<CancelStreamResponse | void>,
   confirmedDeleteUntracked: boolean = false,
   confirmedDiscardDirty?: boolean,
   previewId?: string,
@@ -506,7 +506,7 @@ export async function restoreAndDelete(
   state: ChatStoreState,
   messageIndex: number,
   checkpointId: string,
-  cancelStream: () => Promise<void>,
+  cancelStream: () => Promise<CancelStreamResponse | void>,
   confirmedDeleteUntracked: boolean = false,
   confirmedDiscardDirty?: boolean,
   previewId?: string,
@@ -659,7 +659,7 @@ export async function restoreAndEdit(
   attachments: Attachment[] | undefined,
   checkpointId: string,
   currentModelName: string,
-  cancelStream: () => Promise<void>,
+  cancelStream: () => Promise<CancelStreamResponse | void>,
   confirmedDeleteUntracked: boolean = false,
   confirmedDiscardDirty?: boolean,
   previewId?: string,

@@ -37,6 +37,7 @@ describe('chatStream 中途终止时用户消息必须落库', () => {
             configId: 'cfg-1',
             message: '你好',
             messageId: frontendMessageId,
+            foregroundWorkTransition: { terminalCommands: 2.9, subAgentTasks: -1 },
         } as never);
 
         // 消费第一个 chunk 后主动终止生成器——等价于 StreamChunkProcessor.consume 在
@@ -50,7 +51,10 @@ describe('chatStream 中途终止时用户消息必须落库', () => {
             'c1',
             'user',
             expect.any(Array),
-            expect.objectContaining({ isUserInput: true }),
+            expect.objectContaining({
+                isUserInput: true,
+                foregroundWorkTransition: { terminalCommands: 2, subAgentTasks: 0 },
+            }),
             frontendMessageId,
         );
     });

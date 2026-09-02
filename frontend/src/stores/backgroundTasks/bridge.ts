@@ -24,6 +24,7 @@ import type { Attachment, AgentMessageCardInfo } from '../../types'
 import type { SendMessageOptions } from '../chat/messageActions'
 import type { CancelStreamOptions } from '../chat/toolActions'
 import { ref } from 'vue'
+import type { CancelStreamResponse } from '@shared/protocol'
 
 /** 会话忙闲/归属状态快照（每次 getState() 重新求值，保证实时性） */
 export interface BackgroundTaskChatState {
@@ -50,7 +51,7 @@ export interface BackgroundTaskChatBridge {
   /** 实时读取会话状态（供即时判断与 watch getter 求值） */
   getState(): BackgroundTaskChatState
   /** 取消当前流（动作边界替换回合；签名与 useChatStore().cancelStream 一致） */
-  cancelStream(options?: CancelStreamOptions): Promise<void>
+  cancelStream(options?: CancelStreamOptions): Promise<CancelStreamResponse | void>
   /** 发送消息（签名与 useChatStore().sendMessage 一致） */
   sendMessage(
     messageText: string,
@@ -89,7 +90,7 @@ interface ChatStoreLike {
   isStreaming: boolean
   isWaitingForResponse: boolean
   currentConversationId: string | null
-  cancelStream?: (options?: CancelStreamOptions) => Promise<void>
+  cancelStream?: (options?: CancelStreamOptions) => Promise<CancelStreamResponse | void>
   sendMessage: (
     messageText: string,
     attachments?: Attachment[],
@@ -106,7 +107,7 @@ function wrapChatStore(store: ChatStoreLike): BackgroundTaskChatBridge {
       currentConversationId: store.currentConversationId ?? null
     }),
     cancelStream: (options) =>
-      store.cancelStream ? store.cancelStream(options) : Promise.resolve(),
+      store.cancelStream ? store.cancelStream(options) : Promise.resolve({ cancelled: false }),
     sendMessage: (messageText, attachments, options) =>
       store.sendMessage(messageText, attachments, options),
     ...(typeof store.insertAgentMessageCard === 'function'

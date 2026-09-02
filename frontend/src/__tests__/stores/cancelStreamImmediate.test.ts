@@ -72,7 +72,10 @@ describe('cancelStream immediate feedback', () => {
   })
 
   test('preserveSubAgents 将未完成子代理标记为后台，不显示错误状态', async () => {
-    vi.mocked(sendToExtension).mockResolvedValue({ cancelled: true })
+    vi.mocked(sendToExtension).mockResolvedValue({
+      cancelled: true,
+      foregroundWorkTransition: { terminalCommands: 0, subAgentTasks: 1 }
+    })
     const state = createChatState()
     state.currentConversationId.value = 'conv_detach_subagent'
     state.streamingMessageId.value = 'assistant_with_subagent'
@@ -93,7 +96,7 @@ describe('cancelStream immediate feedback', () => {
       }]
     } as any]
 
-    await cancelStream(state, {} as ChatStoreComputed, { preserveSubAgents: true })
+    const result = await cancelStream(state, {} as ChatStoreComputed, { preserveSubAgents: true })
 
     expect(state.allMessages.value[0]?.tools?.[0]?.status).toBe('background')
     const response = state.allMessages.value
@@ -105,5 +108,6 @@ describe('cancelStream immediate feedback', () => {
       conversationId: 'conv_detach_subagent',
       preserveSubAgents: true
     })
+    expect(result.foregroundWorkTransition).toEqual({ terminalCommands: 0, subAgentTasks: 1 })
   })
 })

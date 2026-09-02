@@ -1123,7 +1123,16 @@ export class ConversationManager {
         conversationId: string,
         role: 'user' | 'model' | 'system',
         parts: ContentPart[],
-        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary' | 'source' | 'turnDynamicContext' | 'turnDynamicContextStrategy'>>,
+        metadata?: Partial<Pick<Content,
+            | 'isUserInput'
+            | 'isFunctionResponse'
+            | 'isSummary'
+            | 'source'
+            | 'deepSeekVisionTileSplit'
+            | 'foregroundWorkTransition'
+            | 'turnDynamicContext'
+            | 'turnDynamicContextStrategy'
+        >>,
         messageId?: string,
     ): Promise<void> {
         // MED-3 / H1-2：新的真实 user 消息 = 新回合开始。清空主会话信箱未消费消息，

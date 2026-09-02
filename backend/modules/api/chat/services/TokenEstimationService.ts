@@ -12,6 +12,7 @@
 
 import type { Content, ContentPart, ChannelTokenCounts } from '../../../conversation/types';
 import { cleanFunctionResponseForAPI } from '../../../conversation/helpers';
+import { createForegroundWorkTransitionPart } from '../../../conversation/foregroundWorkTransition';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { TokenCountService } from '../../../channel/TokenCountService';
@@ -108,11 +109,12 @@ export class TokenEstimationService {
             // 每次调用前更新代理设置（以便运行时更改代理生效）
             this.tokenCountService.setProxyUrl(this.settingsManager.getEffectiveProxyUrl());
             
-            // 直接传入整个用户消息
+            // 使用与真实 API 历史相同的固定转后台提醒，避免缓存的消息 token 数低估。
+            const messageForCount = this.cleanMessageForTokenCount(targetMessage);
             const result = await this.tokenCountService.countTokens(
                 normalizedChannelType,
                 tokenCountConfig,
-                [targetMessage]
+                [messageForCount]
             );
             
             if (result.success && result.totalTokens !== undefined) {
@@ -455,9 +457,16 @@ export class TokenEstimationService {
     
     /** 使用与历史 API 格式化一致的 functionResponse 字段集合进行计数，避免 UI/运行时元数据虚增裁剪预算。 */
     private cleanMessageForTokenCount(message: Content): Content {
+        const foregroundWorkTransitionPart = message.role === 'user'
+            ? createForegroundWorkTransitionPart(message.foregroundWorkTransition)
+            : undefined;
+        const { foregroundWorkTransition, ...rest } = message;
         return {
-            ...message,
-            parts: message.parts.map(part => {
+            ...rest,
+            parts: [
+                ...(foregroundWorkTransitionPart ? [foregroundWorkTransitionPart] : []),
+                ...message.parts,
+            ].map(part => {
                 if (!part.functionResponse) return part;
                 return {
                     ...part,
@@ -486,8 +495,15 @@ export class TokenEstimationService {
      */
     estimateMessageTokens(message: Content): number {
         let tokens = 0;
-        
-        for (const part of message.parts) {
+
+        const foregroundWorkTransitionPart = message.role === 'user'
+            ? createForegroundWorkTransitionPart(message.foregroundWorkTransition)
+            : undefined;
+        const parts = foregroundWorkTransitionPart
+            ? [foregroundWorkTransitionPart, ...message.parts]
+            : message.parts;
+
+        for (const part of parts) {
             if (part.text) {
                 tokens += Math.ceil(part.text.length / 4);
             }

@@ -182,7 +182,14 @@ export abstract class BaseFormatter {
      */
     protected cleanInternalFields(history: Content[]): Content[] {
         return history.map(content => {
-            const { isUserInput, source, turnDynamicContext, turnDynamicContextStrategy, ...rest } = content;
+            const {
+                isUserInput,
+                source,
+                foregroundWorkTransition,
+                turnDynamicContext,
+                turnDynamicContextStrategy,
+                ...rest
+            } = content;
             return rest;
         });
     }

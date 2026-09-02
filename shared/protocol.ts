@@ -830,6 +830,21 @@ export function validateMessagePayload(type: string, data: unknown): SchemaValid
  */
 
 /**
+ * 用户新消息替换当前回合时，已经实际从前台转入后台的工作数量。
+ * 两端只传计数；模型提示文本由后端固定生成，不能由 Webview 自由注入。
+ */
+export interface ForegroundWorkTransition {
+  terminalCommands: number;
+  subAgentTasks: number;
+}
+
+/** cancelStream 的终态响应；普通停止不会携带 foregroundWorkTransition。 */
+export interface CancelStreamResponse {
+  cancelled: boolean;
+  foregroundWorkTransition?: ForegroundWorkTransition;
+}
+
+/**
  * Token 详情条目
  *
  * 按模态（modality）分类的 token 统计。

@@ -21,6 +21,7 @@ import { registerDetachedSubAgentTask } from '../../backend/tools/subagents';
 import { AbortControllerRegistry } from './abort/AbortControllerRegistry';
 import { RetiredStreamChain } from './abort/RetiredStreamChain';
 import { OLD_STREAM_EXIT_WAIT_TIMEOUT_MS } from '../../backend/core/streamConstants';
+import type { CancelStreamResponse } from '../../shared/protocol';
 
 /**
  * 旧流退出等待超时（毫秒），定义于 backend/core/streamConstants（第五批层反转修复：
@@ -154,8 +155,22 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 普通 cancel 仍表示用户显式停止，会保留父级取消传播；只有排队消息的“立即发送”
    * 等明确替换当前回合的操作才调用本方法。
    */
-  cancelForNewTurn(conversationId: string): boolean {
-    return this.registry.cancelForNewTurn(conversationId);
+  cancelForNewTurn(conversationId: string): CancelStreamResponse {
+    // 在这里收集实际成功 detach 的 run 数量，供新回合生成可信状态提示；
+    // registry.cancelForNewTurn 只返回是否取消，无法区分“调用了保留路径”和“确有任务转后台”。
+    const detachedSubAgentRunIds = this.detachActiveSubAgents(conversationId);
+    const cancelled = this.registry.cancel(conversationId);
+    return {
+      cancelled,
+      ...(detachedSubAgentRunIds.length > 0
+        ? {
+            foregroundWorkTransition: {
+              terminalCommands: 0,
+              subAgentTasks: detachedSubAgentRunIds.length
+            }
+          }
+        : {})
+    };
   }
 
   /**
@@ -355,7 +370,8 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
    * 后台 run（attachedToParent=false）不受影响；已 detach 的 run 跳过；其他会话的 run 不受影响。
    * （依赖 backend/tools/subagents，第五批模块化重构再处理）
    */
-  private detachActiveSubAgents(conversationId: string): void {
+  private detachActiveSubAgents(conversationId: string): string[] {
+    const detachedRunIds: string[] = [];
     try {
       const snapshots = subAgentRunEventBus.getSnapshots();
       for (const snapshot of snapshots) {
@@ -364,10 +380,12 @@ export class StreamAbortManager implements IRunController<ConversationRunScope> 
         if (subAgentRunController.isDetached(snapshot.runId)) continue;
         if (subAgentRunController.detachFromParent(snapshot.runId)) {
           registerDetachedSubAgentTask(snapshot);
+          detachedRunIds.push(snapshot.runId);
         }
       }
     } catch (err) {
       console.warn('[StreamAbortManager] Failed to detach active subagents before starting new stream:', err);
     }
+    return detachedRunIds;
   }
 }

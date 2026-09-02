@@ -119,6 +119,13 @@ describe('MessageRouter 流式请求路由生命周期', () => {
     expect(oldStream.signal.aborted).toBe(true);
     expect(subAgentRunController.isDetached('router_detach_fg')).toBe(true);
     expect(subAgentRunController.isActive('router_detach_fg')).toBe(true);
+    const response = h.monitorMessages.find(
+      (message: any) => message.type === 'response' && message.requestId === 'req_cancel_preserve'
+    );
+    expect(response?.data).toEqual({
+      cancelled: true,
+      foregroundWorkTransition: { terminalCommands: 0, subAgentTasks: 1 }
+    });
   });
 
   test('chatStream started:true 后出错：错误仍路由到发起方而非主聊天（回归）', async () => {
@@ -175,11 +182,18 @@ describe('MessageRouter 流式请求路由生命周期', () => {
       yield { content: 'done' };
     })());
 
-    await h.router.route('chatStream', { conversationId: 'conv_s2', message: 'hi' }, 'req_s2', h.ctx, 'subagent-monitor');
+    await h.router.route('chatStream', {
+      conversationId: 'conv_s2',
+      message: 'hi',
+      foregroundWorkTransition: { terminalCommands: 1, subAgentTasks: 2 }
+    }, 'req_s2', h.ctx, 'subagent-monitor');
     await flushAsync();
 
     const started = h.monitorMessages.find((m: any) => m.type === 'response' && m.requestId === 'req_s2');
     expect(started).toBeDefined();
+    expect(h.chatHandler.handleChatStream).toHaveBeenCalledWith(expect.objectContaining({
+      foregroundWorkTransition: { terminalCommands: 1, subAgentTasks: 2 }
+    }));
     expect(h.rawSendResponse).not.toHaveBeenCalled();
     expect(h.rawSendError).not.toHaveBeenCalled();
     expect((h.router as any).requestClients.size).toBe(0);

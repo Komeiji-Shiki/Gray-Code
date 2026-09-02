@@ -4,7 +4,7 @@
  * 定义对话相关的请求和响应类型
  */
 
-import type { Content, SummaryTokenStats } from '../../conversation/types';
+import type { Content, ForegroundWorkTransition, SummaryTokenStats } from '../../conversation/types';
 import type { StreamChunk } from '../../channel/types';
 import type { CheckpointRecord } from '../../checkpoint';
 import type { DynamicContextStrategy } from '../../settings/types';
@@ -128,6 +128,9 @@ export interface ChatRequestData {
      * 且模型为 DeepSeek Vision 时生效（由输入区复选框提供）。
      */
     deepSeekVisionTileSplit?: boolean;
+
+    /** 用户新消息替换旧回合时，已经实际转入后台的前台工作。 */
+    foregroundWorkTransition?: ForegroundWorkTransition;
 }
 
 // ==================== 响应数据 ====================

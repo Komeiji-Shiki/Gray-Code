@@ -10,12 +10,18 @@ import { t } from '../../../i18n';
 import type { Content, ContentPart, ConversationHistory } from '../types';
 import type { GetHistoryOptions } from './types';
 import { cleanFunctionResponseForAPI, ensureBackgroundTaskSourceForDisplay, isRealUserMessage } from '../helpers';
+import { createForegroundWorkTransitionPart } from '../foregroundWorkTransition';
 
 /** 把历史映射为返回给前端的显示消息：补绝对 index、过滤内部字段、深拷贝 */
 export function toDisplayMessages(history: ConversationHistory): Content[] {
     return history.map((message, index) => {
-        // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-        const { turnDynamicContext, ...rest } = ensureBackgroundTaskSourceForDisplay(message);
+        // 过滤后端内部字段；转后台提醒只进入模型历史，不污染用户可见原文。
+        const {
+            turnDynamicContext,
+            turnDynamicContextStrategy,
+            foregroundWorkTransition,
+            ...rest
+        } = ensureBackgroundTaskSourceForDisplay(message);
         return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
     });
 }
@@ -412,6 +418,14 @@ export function formatHistoryForAPI(
         }
         
         let parts = message.parts ?? [];
+        const foregroundWorkTransitionPart = message.role === 'user'
+            ? createForegroundWorkTransitionPart(message.foregroundWorkTransition)
+            : undefined;
+        if (foregroundWorkTransitionPart) {
+            // 持久字段在每次构造 API 历史时确定性还原，因此当前工具续跑、重试和未来回合
+            // 都看到相同提醒；用户原文仍保持为后续 parts，不改写展示内容。
+            parts = [foregroundWorkTransitionPart, ...parts];
+        }
         
         // 处理思考内容 (Thought Text/Reasoning Content)
         // 注意：思考发送不依赖于 includeThoughts（渠道是否支持思考）

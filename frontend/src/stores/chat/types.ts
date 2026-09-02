@@ -6,6 +6,7 @@ import type { Ref, ComputedRef } from 'vue'
 import type { Message, ErrorInfo, CheckpointSummary, Attachment, BranchStreamReplayContext } from '../../types'
 import type { EditorNode } from '../../types/editorNode'
 import type { SmoothMode } from '../../utils/smoothStream'
+import type { ForegroundWorkTransition } from '@shared/protocol'
 
 // 重新导出类型以供其他模块使用
 // CPF-03: 新代码使用 CheckpointSummary；CheckpointRecord 保留导出（结构同构，兼容旧消费方）
@@ -154,6 +155,8 @@ export interface QueuedMessage {
   sendOptions?: {
     dynamicContextStrategyOverride?: 'single' | 'preserve'
     deepSeekVisionTileSplit?: boolean
+    /** 入队期间确实从前台转入后台的工作；只用于下一回合的模型状态提示。 */
+    foregroundWorkTransition?: ForegroundWorkTransition
   }
   /** 序列化后的编辑器内容（包含 @上下文标记） */
   content: string

@@ -17,6 +17,7 @@ import {
   isConversationMutationGated,
   BRANCH_BUSY_STREAMING_MESSAGE
 } from '../handlers/streamGuard';
+import type { CancelStreamResponse } from '../../shared/protocol';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
@@ -237,6 +238,7 @@ export class StreamRequestHandler {
       source,
       agentMessageClaimId,
       deepSeekVisionTileSplit,
+      foregroundWorkTransition,
       streamId: clientStreamId
     } = data;
     const streamId = this.resolveStreamId(clientStreamId, requestId)
@@ -275,6 +277,7 @@ export class StreamRequestHandler {
         promptModeId: this.normalizePromptModeId(promptModeId),
         dynamicContextStrategyOverride,
         deepSeekVisionTileSplit,
+        foregroundWorkTransition,
         source,
         agentMessageClaimId,
         abortSignal: controller.signal,
@@ -424,17 +427,25 @@ export class StreamRequestHandler {
   ): Promise<void> {
     // “立即发送排队消息”是在替换当前回合：必须先解除前台 SubAgent 的父信号绑定，
     // 再取消旧流。普通停止操作仍走 cancel，继续保持真正终止的语义。
+    let cancelResult: CancelStreamResponse;
     if (options.preserveSubAgents === true) {
-      this.deps.abortManager.cancelForNewTurn(conversationId);
+      cancelResult = this.deps.abortManager.cancelForNewTurn(conversationId);
     } else {
-      this.deps.abortManager.cancel(conversationId);
+      cancelResult = { cancelled: this.deps.abortManager.cancel(conversationId) };
     }
 
     await this.cleanupAbortedConversations([conversationId], {
       preserveDetachedSubAgents: options.preserveSubAgents === true
     });
 
-    this.deps.sendResponse(requestId, { cancelled: true });
+    this.deps.sendResponse(requestId, {
+      // 保留既有响应语义：请求处理完成即 cancelled:true；底层是否恰好仍有活跃控制器
+      // 不改变前端本地已经结束当前回合的事实。
+      cancelled: true,
+      ...(cancelResult.foregroundWorkTransition
+        ? { foregroundWorkTransition: cancelResult.foregroundWorkTransition }
+        : {})
+    });
     this.deps.finalizeRequest(requestId);
   }
 

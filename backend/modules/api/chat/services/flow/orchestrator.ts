@@ -37,6 +37,7 @@ import {
 import { resolveAndPersistPostToolStopState } from '../postToolStopState';
 import { ChatStreamOutput, ChatStreamCancelledData, ChatFlowContext, ChatFlowDeps, isFirstMessageHistory } from './context';
 import { extractAffectedPaths, workspaceUriToFsPath } from '../../../../checkpoint/affectedPaths';
+import { normalizeForegroundWorkTransition } from '../../../../conversation/foregroundWorkTransition';
 
 function isInternalMessageSource(source: ChatRequestData['source']): boolean {
   return source === 'background_task' || source === 'agent_message';
@@ -197,6 +198,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
         const persistedMessageId = messageId || randomUUID();
         const internalMessage = isInternalMessageSource(request.source);
+        const foregroundWorkTransition = internalMessage
+          ? undefined
+          : normalizeForegroundWorkTransition(request.foregroundWorkTransition);
         const turnDynamicContext = internalMessage
           ? undefined
           : await this.toolIterationLoopService.createTurnDynamicContext(
@@ -211,6 +215,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
           ...(!internalMessage
             ? { deepSeekVisionTileSplit: request.deepSeekVisionTileSplit ?? true }
             : {}),
+          ...(foregroundWorkTransition ? { foregroundWorkTransition } : {}),
           ...(turnDynamicContext
             ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
             : {})
@@ -388,6 +393,9 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
         const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
         const persistedMessageId = messageId || randomUUID();
         const internalMessage = isInternalMessageSource(request.source);
+        const foregroundWorkTransition = internalMessage
+          ? undefined
+          : normalizeForegroundWorkTransition(request.foregroundWorkTransition);
         const turnDynamicContext = internalMessage
           ? undefined
           : await this.toolIterationLoopService.createTurnDynamicContext(
@@ -402,6 +410,7 @@ export class ChatFlowOrchestrator extends ChatFlowContext {
           ...(!internalMessage
             ? { deepSeekVisionTileSplit: request.deepSeekVisionTileSplit ?? true }
             : {}),
+          ...(foregroundWorkTransition ? { foregroundWorkTransition } : {}),
           ...(turnDynamicContext
             ? { turnDynamicContext, turnDynamicContextStrategy: dynamicContextStrategy }
             : {})

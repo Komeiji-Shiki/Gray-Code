@@ -4,7 +4,7 @@
  * 包含工具确认、取消、响应查询等操作
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, type CancelStreamResponse } from '@shared/protocol'
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed } from './types'
 import { sendToExtension } from '../../utils/vscode'
@@ -454,7 +454,7 @@ export async function cancelStream(
   state: ChatStoreState,
   _computed: ChatStoreComputed,
   options: CancelStreamOptions = {}
-): Promise<void> {
+): Promise<CancelStreamResponse> {
   const currentStreamingId = state.streamingMessageId.value
 
   // 仅在“真实流式生成中”才记录取消标记，避免非流式等待阶段残留旧标记。
@@ -472,7 +472,7 @@ export async function cancelStream(
   const conversationId = state.currentConversationId.value
   const hadActiveRequest = state.isWaitingForResponse.value || state.isStreaming.value || !!state.activeStreamId.value
   if (!conversationId || !hadActiveRequest) {
-    return
+    return { cancelled: false }
   }
   const cancelRequest = {
     conversationId,
@@ -509,9 +509,13 @@ export async function cancelStream(
   resetTurnBaseTokenEstimate()
 
   try {
-    await sendToExtension(MESSAGE_NAMES.cancelStream, cancelRequest)
+    const response = await sendToExtension<CancelStreamResponse>(MESSAGE_NAMES.cancelStream, cancelRequest)
+    return response?.cancelled === true
+      ? response
+      : { cancelled: true }
   } catch (err) {
     // 本地状态已经完成取消，后端错误只记录，不把 UI 恢复成永久等待。
     console.error('取消请求失败:', err)
+    return { cancelled: true }
   }
 }

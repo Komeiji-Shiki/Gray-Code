@@ -14,8 +14,8 @@
 
 // B1/T16：跨端共享类型迁入 shared/protocol.ts 单一来源；此处 re-export 保持既有导入方不破
 // （Content 接口在下方直接引用 ContentPart / UsageMetadata / SummaryTokenStats，故需 import 到本地作用域）
-import type { ContentPart, SummaryTokenStats, UsageMetadata } from '../../../shared/protocol';
-export type { ContentPart, OpenAIResponsesReasoningMetadata, SummaryTokenStats, ThoughtSignatures, TokenDetailsEntry, UsageMetadata } from '../../../shared/protocol';
+import type { ContentPart, ForegroundWorkTransition, SummaryTokenStats, UsageMetadata } from '../../../shared/protocol';
+export type { ContentPart, ForegroundWorkTransition, OpenAIResponsesReasoningMetadata, SummaryTokenStats, ThoughtSignatures, TokenDetailsEntry, UsageMetadata } from '../../../shared/protocol';
 
 /**
  * 修改原因：上下文裁剪状态原本用裸字符串分散在 API 服务里，历史变更入口无法统一失效它。
@@ -281,6 +281,14 @@ export interface Content {
      * functionResponse 等没有该字段的 user 消息继承它之前最近的真实用户消息。
      */
     deepSeekVisionTileSplit?: boolean;
+
+    /**
+     * 这条真实用户消息到达时，实际从前台转入后台的工作数量。
+     *
+     * 该字段随会话历史持久化，但不直接发送给模型或前端。formatHistoryForAPI 会用固定模板
+     * 把它还原为用户原文之前的运行时提醒，保证工具续跑、重试和后续回合都能看到同一信息。
+     */
+    foregroundWorkTransition?: ForegroundWorkTransition;
 
     /**
      * agent 间消息卡片元数据（A-COMM 展示层）。

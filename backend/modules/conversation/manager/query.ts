@@ -100,7 +100,12 @@ export class ConversationQueryService {
                 total: pagedHistory.value.total,
                 messages: pagedHistory.value.messages.map((message, i) => {
                     const index = pagedHistory.value!.startIndex + i;
-                    const { turnDynamicContext, ...rest } = ensureBackgroundTaskSourceForDisplay(message);
+                    const {
+                        turnDynamicContext,
+                        turnDynamicContextStrategy,
+                        foregroundWorkTransition,
+                        ...rest
+                    } = ensureBackgroundTaskSourceForDisplay(message);
                     return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
                 })
             };
@@ -139,8 +144,13 @@ export class ConversationQueryService {
         const slice = history.slice(start, endExclusive);
         const messages = slice.map((message, i) => {
             const index = start + i;
-            // 深拷贝并过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
-            const { turnDynamicContext, ...rest } = ensureBackgroundTaskSourceForDisplay(message);
+            // 深拷贝并过滤后端内部字段（前端只显示用户原文）。
+            const {
+                turnDynamicContext,
+                turnDynamicContextStrategy,
+                foregroundWorkTransition,
+                ...rest
+            } = ensureBackgroundTaskSourceForDisplay(message);
             return {
                 ...JSON.parse(JSON.stringify(rest)),
                 index

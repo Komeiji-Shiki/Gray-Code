@@ -10,7 +10,7 @@
  * P2 回执窗口、interrupt 限频等已修 bug 注释原样保留，一行未改。
  */
 
-import { MESSAGE_NAMES } from '@shared/protocol'
+import { MESSAGE_NAMES, type CancelStreamResponse, type ForegroundWorkTransition } from '@shared/protocol'
 import type { Message, Attachment } from '../../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from '../types'
 import { sendToExtension } from '../../../utils/vscode'
@@ -121,7 +121,7 @@ export function safeSetError(
 /**
  * 取消流式的回调类型
  */
-export type CancelStreamCallback = () => Promise<void>
+export type CancelStreamCallback = () => Promise<CancelStreamResponse | void>
 
 /**
  * 隐藏发送（不创建可见 user 消息）时，写入的一条 functionResponse
@@ -153,6 +153,11 @@ export interface SendMessageOptions {
    * deepSeekVisionEnabled、模型为 DeepSeek Vision 时由输入区复选框提供。
    */
   deepSeekVisionTileSplit?: boolean
+  /**
+   * 用户新消息替换旧回合时，已经实际转入后台的前台工作。
+   * 仅传给后端生成固定运行时提示，不改变聊天窗口显示的用户原文。
+   */
+  foregroundWorkTransition?: ForegroundWorkTransition
 }
 
 /**
@@ -546,6 +551,7 @@ export async function sendMessage(
       source: options?.source,
       agentMessageClaimId: options?.agentMessageClaimId,
       deepSeekVisionTileSplit: options?.deepSeekVisionTileSplit,
+      foregroundWorkTransition: options?.foregroundWorkTransition,
       streamId
     })
     // 发送被后端明确拒绝（渠道/参数校验失败等）：走 catch 同款清理（移除空气泡与 user 占位）

@@ -47,4 +47,38 @@ describe('sendQueuedMessageNow', () => {
     })
     expect(store.messageQueue).toHaveLength(0)
   })
+
+  test('把实际转后台的命令和子代理计数随新回合发送，用户原文不被改写', async () => {
+    vi.mocked(sendToExtension).mockImplementation(async (type: string) => {
+      if (type === 'getWorkspaceUri') return null
+      if (type === 'terminal.detachToBackground') {
+        return { success: true, detached: ['terminal-1'] }
+      }
+      if (type === 'cancelStream') {
+        return {
+          cancelled: true,
+          foregroundWorkTransition: { terminalCommands: 0, subAgentTasks: 2 }
+        }
+      }
+      return { success: true }
+    })
+
+    const store = useChatStore()
+    store.currentConversationId = 'conv_transition'
+    store.isStreaming = true
+    store.isWaitingForResponse = true
+    store.activeStreamId = 'stream_transition'
+
+    store.enqueueMessage('不要误以为任务取消了')
+    const queuedId = store.messageQueue[0].id
+    await store.sendQueuedMessageNow(queuedId)
+
+    const chatStreamCall = vi.mocked(sendToExtension).mock.calls.find(([type]) => type === 'chatStream')
+    expect(chatStreamCall?.[1]).toMatchObject({
+      conversationId: 'conv_transition',
+      message: '不要误以为任务取消了',
+      foregroundWorkTransition: { terminalCommands: 1, subAgentTasks: 2 }
+    })
+    expect((chatStreamCall?.[1] as { message?: string })?.message).not.toContain('GrayCode runtime notice')
+  })
 })
