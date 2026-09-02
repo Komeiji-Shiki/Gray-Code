@@ -1,12 +1,17 @@
 import { computed } from 'vue'
 import { useI18n } from '@/i18n'
 import type { PromptModule, PromptAssemblyMode } from '@/components/settings/prompt/types'
+import {
+  CODE_MODE_TEMPLATE,
+  DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+} from '@shared/defaultPromptTemplates'
 
 /**
  * PromptSettings 的默认模板与模块目录（S7 批次拆分，纯重构，行为零变化）。
  *
- * 原 PromptSettings.vue 顶部的静态变量 / 动态变量目录与 code/design/plan/ask 四套默认
- * 模板是纯数据（仅模块 name/description 依赖 t() 跟随语言），拆到独立 composable。
+ * 原 PromptSettings.vue 顶部的静态变量 / 动态变量目录与模式默认模板是纯数据
+ * （仅模块 name/description 依赖 t() 跟随语言），拆到独立 composable；Code 与动态
+ * 上下文模板进一步和后端共用，避免两处默认值漂移。
  */
 export function usePromptModeDefaults() {
   const { t } = useI18n()
@@ -199,41 +204,6 @@ The following skills are currently active...
   // 动态变量 ID 集合
   const dynamicModuleIds = new Set(['TODO_LIST', 'WORKSPACE_FILES', 'OPEN_TABS', 'ACTIVE_EDITOR', 'DIAGNOSTICS', 'PINNED_FILES', 'SKILLS'])
 
-  // 默认静态系统提示词模板（代码模式）
-  const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
-
-{{$ENVIRONMENT}}
-
-{{$CONTEXT_BADGE_FORMAT}}
-
-{{$TOOLS}}
-
-{{$MCP_TOOLS}}
-
-{{$MEMORY}}
-
-====
-
-GUIDELINES
-
-- Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
-- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
-- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
-- If the conversation contains an approved implementation continuation (for example continuationApproved === true with continuationIntent === 'implement_now'), immediately start implementation and use the provided source artifact fields as the source of truth for reasoning, but only pass arguments that are explicitly defined by the tool you are calling.
-- Treat legacy handoff fields such as planExecutionPrompt, planPath, or planContent as the same kind of approved implementation continuation when unified continuation fields are absent.
-- Do not say that the plan is ready for review, and do not create another plan unless the user explicitly asks to revise it.
-- For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
-- When TODO status changes in a meaningful way during approved implementation, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the approved plan document.
-- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields (sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, continuationIntent). sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'.
-- If a TODO moves into in_progress, completed, or cancelled, sync the plan promptly.
-- If the plan itself must change, use update_plan with updateMode: 'revision', then stop and wait for the user to confirm the revised plan.
-- For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
-- If the task is simple and doesn't require tools, just respond directly without calling any tools.
-- You can use Mermaid syntax in fenced code blocks (\`\`\`mermaid) to create diagrams and flowcharts when explaining complex concepts.
-- Always maintain code readability and maintainability.
-- Do not omit any code.`
-
   // 默认静态系统提示词模板（设计模式）
   const DESIGN_MODE_TEMPLATE = `You are a professional software architect and design consultant. Your primary role is to help users clarify requirements, design solutions, and plan implementation strategies.
 
@@ -355,22 +325,8 @@ ASK MODE
 
   const DEFAULT_TEMPLATE = CODE_MODE_TEMPLATE
 
-  // 默认动态上下文模板
-  const DEFAULT_DYNAMIC_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
-
-{{$TODO_LIST}}
-
-{{$WORKSPACE_FILES}}
-
-{{$OPEN_TABS}}
-
-{{$ACTIVE_EDITOR}}
-
-{{$DIAGNOSTICS}}
-
-{{$PINNED_FILES}}
-
-{{$SKILLS}}`
+  // 与后端默认值共享同一来源，保证“恢复默认”和新建配置行为一致。
+  const DEFAULT_DYNAMIC_TEMPLATE = DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
 
   // 默认模式 ID
   const DEFAULT_MODE_ID = 'code'

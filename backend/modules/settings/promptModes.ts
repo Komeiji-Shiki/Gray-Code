@@ -8,53 +8,19 @@
 
 import type { PromptMode, SystemPromptConfig } from './types';
 import { MEMORY_TOOL_NAMES } from '../memory';
+import {
+    CODE_MODE_TEMPLATE,
+    DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+} from '../../../shared/defaultPromptTemplates';
+
+export { CODE_MODE_TEMPLATE, DEFAULT_DYNAMIC_CONTEXT_TEMPLATE } from '../../../shared/defaultPromptTemplates';
 
 /**
- * 默认静态系统提示词模板
+ * 默认静态系统提示词模板（历史导出名）。
+ *
+ * 与实际默认 Code 模式保持同一来源，避免旧调用方拿到不同于“恢复默认”的模板。
  */
-export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
-
-{{$ENVIRONMENT}}
-
-{{$CONTEXT_BADGE_FORMAT}}
-
-{{$TOOLS}}
-
-{{$MCP_TOOLS}}
-
-{{$MEMORY}}
-
-====
-
-GUIDELINES
-
-- Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
-- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
-- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
-- For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
-- For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
-- If the task is simple and doesn't require tools, just respond directly without calling any tools.
-- You can use Mermaid syntax in fenced code blocks (\`\`\`mermaid) to create diagrams and flowcharts when explaining complex concepts.
-- Always maintain code readability and maintainability.
-- Do not omit any code.`;
-
-/**
- * 默认动态上下文模板
- */
-export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
-
-{{$TODO_LIST}}
-
-{{$WORKSPACE_FILES}}
-
-{{$OPEN_TABS}}
-
-{{$ACTIVE_EDITOR}}
-
-{{$DIAGNOSTICS}}
-
-{{$PINNED_FILES}}`;
+export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = CODE_MODE_TEMPLATE;
 
 
 /**
@@ -81,43 +47,6 @@ export const ASK_MODE_ID = 'ask';
  * 审查模式 ID
  */
 export const REVIEW_MODE_ID = 'review';
-
-/**
- * 代码模式系统提示词模板
- */
-export const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
-
-{{$ENVIRONMENT}}
-
-{{$CONTEXT_BADGE_FORMAT}}
-
-{{$TOOLS}}
-
-{{$MCP_TOOLS}}
-
-{{$MEMORY}}
-
-====
-
-GUIDELINES
-
-- Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
-- **IMPORTANT: Avoid blind duplicate tool calls.** Do not repeat the same failed call with identical parameters unless another tool call, a code change, or an external state change could reasonably affect the result. Re-running checks after relevant changes is allowed.
-- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
-- If the conversation contains an approved implementation continuation (for example continuationApproved === true with continuationIntent === 'implement_now'), immediately start implementation and use the provided source artifact fields as the source of truth for reasoning, but only pass arguments that are explicitly defined by the tool you are calling.
-- Treat legacy handoff fields such as planExecutionPrompt, planPath, or planContent as the same kind of approved implementation continuation when unified continuation fields are absent.
-- Do not say that the plan is ready for review, and do not create another plan unless the user explicitly asks to revise it.
-- For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
-- When TODO status changes in a meaningful way during approved implementation, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the approved plan document.
-- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields (sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, continuationIntent). sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'.
-
-- If a TODO moves into in_progress, completed, or cancelled, sync the plan promptly.
-- If the plan itself must change, use update_plan with updateMode: 'revision', then stop and wait for the user to confirm the revised plan.
-- For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
-- If the task is simple and doesn't require tools, just respond directly without calling any tools.
-- Always maintain code readability and maintainability.
-- Do not omit any code.`;
 
 /**
  * 设计模式系统提示词模板
