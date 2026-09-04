@@ -183,6 +183,12 @@ const SEARCH_INDEX: SearchIndexEntry[] = [
     anchor: '[data-search-anchor="custom-headers"]'
   },
   {
+    key: 'channel-opencode-session', tab: 'channel',
+    labelKey: 'components.settings.channelSettings.form.openCodeSession.title',
+    keywords: ['OpenCode', 'OpenCode Go', 'opencode', 'x-opencode-session', '会话', 'session', 'セッション'],
+    anchor: '[data-search-anchor="opencode-session"]'
+  },
+  {
     key: 'channel-auto-retry', tab: 'channel',
     labelKey: 'components.settings.channelSettings.form.autoRetry.title',
     keywords: ['重试', 'retry', 'リトライ', '自动重试', '重试次数', '重试间隔'],

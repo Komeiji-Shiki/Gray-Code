@@ -1181,6 +1181,11 @@ const zhCN = {
                         title: '自定义标头',
                         enableTitle: '启用自定义标头'
                     },
+                    openCodeSession: {
+                        title: 'OpenCode Go 会话标识',
+                        enableTitle: '为 OpenCode Go 请求启用 x-opencode-session',
+                        hint: '为该渠道的全部推理请求自动添加 x-opencode-session。主对话和子代理使用由对话 ID 派生的稳定 UUID；无对话 ID 的内部请求使用该渠道的固定 UUID，不会发送原始本地 ID。仅在 OpenCode Go 端点开启。'
+                    },
                     autoRetry: {
                         title: '自动重试',
                         enableTitle: '启用自动重试',

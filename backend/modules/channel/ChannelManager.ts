@@ -31,6 +31,7 @@ import {
     prepareDeepSeekVisionHistory,
     validateDeepSeekVisionRequestBody
 } from './deepseekVision';
+import { applyOpenCodeSessionHeader } from './opencodeSession';
 
 
 /**
@@ -345,6 +346,11 @@ export class ChannelManager {
             );
         }
 
+        // OpenCode Go 要求所有推理请求带有稳定会话标识。统一在 formatter 之后
+        // 注入，因而 OpenAI、Responses、Anthropic 和 Gemini 等所有渠道类型以及
+        // 后续新增 formatter 均共享同一逻辑；重试复用同一 httpRequest，ID 不会变化。
+        httpRequest = applyOpenCodeSessionHeader(httpRequest, request, config);
+
         if (isDeepSeekVisionModel(config.model)) {
             try {
                 validateDeepSeekVisionRequestBody(httpRequest.body);
@@ -584,7 +590,11 @@ export class ChannelManager {
                 ));
         
         // 5. 构建请求
-        const httpRequest = formatter.buildRequest(request, config, tools);
+        const httpRequest = applyOpenCodeSessionHeader(
+            formatter.buildRequest(request, config, tools),
+            request,
+            config
+        );
 
         if (isDeepSeekVisionModel(config.model)) {
             try {

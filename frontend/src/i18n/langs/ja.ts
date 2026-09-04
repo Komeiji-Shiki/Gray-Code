@@ -1179,6 +1179,11 @@ const ja: LanguageMessages = {
                         title: 'カスタムヘッダー',
                         enableTitle: 'カスタムヘッダーを有効化'
                     },
+                    openCodeSession: {
+                        title: 'OpenCode Go セッション ID',
+                        enableTitle: 'OpenCode Go リクエストで x-opencode-session を有効化',
+                        hint: 'このチャネルのすべての推論リクエストに x-opencode-session を自動追加します。メインチャットとサブエージェントは会話 ID から導出した安定 UUID を使い、会話 ID のない内部リクエストはこのチャネル固定の UUID を使います。元のローカル ID は送信されません。OpenCode Go エンドポイントでのみ有効化してください。'
+                    },
                     autoRetry: {
                         title: '自動リトライ',
                         enableTitle: '自動リトライを有効化',

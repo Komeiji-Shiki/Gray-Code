@@ -1179,6 +1179,11 @@ const en: LanguageMessages = {
                         title: 'Custom Headers',
                         enableTitle: 'Enable custom headers'
                     },
+                    openCodeSession: {
+                        title: 'OpenCode Go Session ID',
+                        enableTitle: 'Enable x-opencode-session for OpenCode Go requests',
+                        hint: 'Automatically adds x-opencode-session to every inference request for this channel. Main chats and sub-agents use a stable UUID derived from the conversation ID; unscoped internal requests use a fixed UUID for this channel. Raw local IDs are never sent. Enable only for OpenCode Go endpoints.'
+                    },
                     autoRetry: {
                         title: 'Auto Retry',
                         enableTitle: 'Enable auto retry',

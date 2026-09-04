@@ -51,6 +51,15 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         return { manager, id };
     }
 
+    test('所有新渠道默认关闭 OpenCode 会话兼容', () => {
+        const manager = new ConfigManager(new MemoryStorageAdapter());
+        const channelTypes = ['gemini', 'gemini-interactions', 'openai', 'anthropic', 'openai-responses'] as const;
+
+        for (const type of channelTypes) {
+            expect(manager.getDefaultConfig(type).openCodeSessionEnabled).toBe(false);
+        }
+    });
+
     test('类型变更成功：type 更新，ID / createdAt 保持不变，updatedAt 更新', async () => {
         const { manager, id } = await createGeminiManager();
         const before = await manager.getConfig(id) as any;
@@ -184,13 +193,14 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.options.thinkingConfig).toBeDefined();
     });
 
-    test('openai -> anthropic：openai 特有字段（deepSeekUserIdEnabled/pdfAttachmentEnabled）重置', async () => {
+    test('openai -> anthropic：OpenAI 特有字段重置，通用 OpenCode 会话兼容保留', async () => {
         const manager = new ConfigManager(new MemoryStorageAdapter());
         const id = await manager.createConfig({
             name: 'DeepSeek',
             type: 'openai',
             deepSeekUserIdEnabled: true,
             pdfAttachmentEnabled: true,
+            openCodeSessionEnabled: true,
             useAuthorizationHeader: true,
             options: {
                 reasoning: { effort: 'high', summaryEnabled: true, summary: 'auto' },
@@ -212,6 +222,7 @@ describe('ConfigManager.updateConfig 渠道类型变更', () => {
         expect(after.deepSeekUserIdEnabled).toBeUndefined();
         expect(after.pdfAttachmentEnabled).toBeUndefined();
         expect(after.useAuthorizationHeader).toBeUndefined();
+        expect(after.openCodeSessionEnabled).toBe(true);
         expect(after.options.frequency_penalty).toBeUndefined();
         expect(after.options.presence_penalty).toBeUndefined();
         expect(after.optionsEnabled.frequency_penalty).toBeUndefined();

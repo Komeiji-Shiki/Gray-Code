@@ -179,6 +179,7 @@ export interface ChannelConfig {
   toolMode?: ToolMode
   customHeaders?: CustomHeader[]
   customHeadersEnabled?: boolean
+  openCodeSessionEnabled?: boolean
   customBody?: CustomBodyConfig
   customBodyEnabled?: boolean
   sendHistoryThoughtSignatures?: boolean

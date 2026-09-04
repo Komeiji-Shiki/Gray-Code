@@ -146,6 +146,8 @@ export interface GenerateRequest {
      * 如果提供，重试状态回调会携带该 ID，便于前端按对话隔离重试状态。
      * OpenAI 兼容渠道启用 deepSeekUserIdEnabled 时，会基于该 ID 生成稳定 user_id，
      * 用于 DeepSeek 同一对话内的 KVCache 隔离；未传入时不会生成 provider 侧 user_id。
+     * 渠道启用 openCodeSessionEnabled 时，所有推理请求也会使用该 ID 生成稳定的
+     * x-opencode-session；无该 ID 的内部请求会稳定回退到渠道 ID，避免遗漏请求头。
      */
     conversationId?: string;
 

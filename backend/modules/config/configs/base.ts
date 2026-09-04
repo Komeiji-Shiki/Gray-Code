@@ -246,6 +246,15 @@ export interface BaseChannelConfig {
      * 是否启用自定义标头功能
      */
     customHeadersEnabled?: boolean;
+
+    /**
+     * 是否为 OpenCode Go 推理请求自动发送 x-opencode-session。
+     *
+     * 开启后以当前对话 ID（无对话 ID 的内部请求回退到渠道 ID）生成稳定、
+     * 不含原始本地标识的 UUID 形态值。该兼容项默认关闭，只应在 OpenCode Go
+     * 端点上启用。
+     */
+    openCodeSessionEnabled?: boolean;
     
     /**
      * 自定义请求 body

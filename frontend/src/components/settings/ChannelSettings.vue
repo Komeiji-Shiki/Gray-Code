@@ -18,6 +18,7 @@ import ChannelTokenCountMethod from './channelSettings/ChannelTokenCountMethod.v
 import ChannelProviderOptions from './channelSettings/ChannelProviderOptions.vue'
 import ChannelCustomBody from './channelSettings/ChannelCustomBody.vue'
 import ChannelCustomHeaders from './channelSettings/ChannelCustomHeaders.vue'
+import ChannelOpenCodeSession from './channelSettings/ChannelOpenCodeSession.vue'
 import ChannelAutoRetry from './channelSettings/ChannelAutoRetry.vue'
 
 // Chat Store - 用于同步配置状态
@@ -987,6 +988,11 @@ onUnmounted(() => {
         @update:show="showCustomHeaders = $event"
         @update:enabled="updateCustomHeadersEnabled"
         @update:headers="updateCustomHeaders"
+      />
+
+      <ChannelOpenCodeSession
+        :enabled="currentConfig.openCodeSessionEnabled ?? false"
+        @update:enabled="(v: boolean) => updateConfigField('openCodeSessionEnabled', v)"
       />
 
       <ChannelAutoRetry
