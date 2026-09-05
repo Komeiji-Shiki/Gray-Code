@@ -219,6 +219,10 @@ export async function createAttachment(file: File): Promise<Attachment> {
 
 // 生成缩略图
 export function createThumbnail(file: File, maxSize = 200): Promise<string> {
+  return createImageThumbnail(file, maxSize).then(result => result.dataUrl)
+}
+
+export function createImageThumbnail(file: File, maxSize = 200): Promise<{ dataUrl: string; width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     const canvas = document.createElement('canvas')
@@ -236,7 +240,7 @@ export function createThumbnail(file: File, maxSize = 200): Promise<string> {
       reject(new Error(message))
     }
     const timeoutId = window.setTimeout(() => finishReject(t('utils.file.thumbnailTimeout')), 10000)
-    const finishResolve = (value: string) => {
+    const finishResolve = (value: { dataUrl: string; width: number; height: number }) => {
       if (settled) return
       settled = true
       window.clearTimeout(timeoutId)
@@ -262,7 +266,7 @@ export function createThumbnail(file: File, maxSize = 200): Promise<string> {
         canvas.width = width
         canvas.height = height
         ctx.drawImage(img, 0, 0, width, height)
-        finishResolve(canvas.toDataURL(file.type))
+        finishResolve({ dataUrl: canvas.toDataURL(file.type), width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
       } catch {
         finishReject(t('utils.file.thumbnailFailed'))
       }

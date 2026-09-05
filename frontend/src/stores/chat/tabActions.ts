@@ -53,7 +53,8 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     pendingModelOverride: state.pendingModelOverride.value,
     pendingConfigIdOverride: state.pendingConfigIdOverride.value,
     editorNodes: [...state.editorNodes.value],
-    attachments: [...state.attachments.value],
+    // Attachment imports capture this draft; preserve ownership across tab switches.
+    attachments: state.attachments.value,
     messageQueue: [...state.messageQueue.value],
     currentPromptModeId: state.currentPromptModeId.value,
     toolResponseCache: Array.from(state.toolResponseCache.value.entries()),
@@ -97,7 +98,7 @@ export function restoreSessionFromSnapshot(
   state.pendingModelOverride.value = snapshot.pendingModelOverride
   state.pendingConfigIdOverride.value = snapshot.pendingConfigIdOverride ?? null
   state.editorNodes.value = [...snapshot.editorNodes]
-  state.attachments.value = [...snapshot.attachments]
+  state.attachments.value = snapshot.attachments
   state.messageQueue.value = [...snapshot.messageQueue]
   state.currentPromptModeId.value = snapshot.currentPromptModeId
   // 恢复工具响应缓存快照；旧快照无此字段时回退空 Map

@@ -84,6 +84,17 @@ function makeQueuedMessage(id: string, conversationId: string | null) {
 }
 
 describe('tabActions snapshot lifecycle', () => {
+  test('pending attachment imports retain their original draft across snapshot restore', () => {
+    const state = mockState()
+    const draft = state.attachments.value
+    const snapshot = snapshotCurrentSession(state)
+    resetConversationState(state)
+    draft.push({ id: 'attachment-a', name: 'a.txt', size: 1, type: 'code', mimeType: 'text/plain' })
+    expect(state.attachments.value).toEqual([])
+    restoreSessionFromSnapshot(state, snapshot)
+    expect(state.attachments.value).toBe(draft)
+    expect(state.attachments.value[0].name).toBe('a.txt')
+  })
   test('closeTab of the active tab does not leave an orphan snapshot', () => {
     const state = mockState()
     state.openTabs.value = [

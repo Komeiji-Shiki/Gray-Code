@@ -14,7 +14,7 @@ import {
   validateFile,
   getFileType,
   formatFileSize,
-  createThumbnail,
+  createImageThumbnail,
   inferMimeType
 } from '../utils/file'
 import { generateId } from '../utils/format'
@@ -27,8 +27,18 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
   
   // 状态：优先使用外部传入的 ref（store 驱动），否则使用本地 ref
   const attachments: Ref<Attachment[]> = externalAttachments ?? ref<Attachment[]>([])
-  const uploading = ref(false)
-  const uploadProgress = ref(0)
+  const invalidatedTargets = new WeakSet<Attachment[]>()
+  const uploadBatches = ref(new Map<symbol, { total: number; completed: number }>())
+  const uploading = computed(() => uploadBatches.value.size > 0)
+  const uploadProgress = computed(() => {
+    let total = 0
+    let completed = 0
+    for (const batch of uploadBatches.value.values()) {
+      total += batch.total
+      completed += batch.completed
+    }
+    return total > 0 ? Math.round(completed / total * 100) : 0
+  })
 
   // 计算属性
   const hasAttachments = computed(() => attachments.value.length > 0)
@@ -53,7 +63,8 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
   /**
    * 添加附件
    */
-  async function addAttachment(file: File): Promise<Attachment | null> {
+  async function addAttachment(file: File, target = attachments.value): Promise<Attachment | null> {
+    if (invalidatedTargets.has(target)) return null
     // 验证文件
     const validation = validateFile(file)
     if (!validation.valid) {
@@ -80,39 +91,9 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
     // 为图片创建缩略图
     if (type === 'image') {
       try {
-        const thumbnail = await createThumbnail(file)
-        attachment.thumbnail = thumbnail
-        
-        // 获取图片尺寸
-        const img = new Image()
-        img.src = thumbnail
-        await new Promise((resolve) => {
-          // 超时保护：onload/onerror 均不触发时（异常图片数据）10s 后放弃尺寸读取，
-          // 避免 Promise 永久挂起阻塞附件添加（对齐 createThumbnail 的超时策略）
-          let settled = false
-          const timeoutId = window.setTimeout(() => {
-            if (settled) return
-            settled = true
-            resolve(null)
-          }, 10000)
-          img.onload = () => {
-            if (settled) return
-            settled = true
-            window.clearTimeout(timeoutId)
-            attachment.metadata = {
-              width: img.width,
-              height: img.height
-            }
-            resolve(null)
-          }
-          img.onerror = () => {
-            if (settled) return
-            settled = true
-            window.clearTimeout(timeoutId)
-            // 缩略图加载失败：不阻塞附件添加，仅跳过尺寸元数据
-            resolve(null)
-          }
-        })
+        const image = await createImageThumbnail(file)
+        attachment.thumbnail = image.dataUrl
+        attachment.metadata = { width: image.width, height: image.height }
       } catch (error) {
         console.error(t('composables.useAttachments.errors.createThumbnailFailed'), error)
       }
@@ -145,7 +126,9 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
       return null
     }
 
-    attachments.value.push(attachment)
+    // The originating draft remains the owner while another tab is active.
+    if (invalidatedTargets.has(target)) return null
+    target.push(attachment)
     return attachment
   }
 
@@ -153,26 +136,27 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
    * 批量添加附件
    */
   async function addAttachments(files: File[]): Promise<Attachment[]> {
-    uploading.value = true
-    uploadProgress.value = 0
+    const target = attachments.value
+    const batchId = Symbol('attachment batch')
+    uploadBatches.value.set(batchId, { total: files.length, completed: 0 })
 
     try {
       const results: Attachment[] = []
       const total = files.length
 
       for (let i = 0; i < files.length; i++) {
-        const attachment = await addAttachment(files[i])
+        if (invalidatedTargets.has(target)) break
+        const attachment = await addAttachment(files[i], target)
         if (attachment) {
           results.push(attachment)
         }
-        uploadProgress.value = Math.round(((i + 1) / total) * 100)
+        uploadBatches.value.set(batchId, { total, completed: i + 1 })
       }
 
       return results
     } finally {
       // 无论成功/异常都复位上传状态，避免异常路径残留 uploading=true 卡住 UI
-      uploading.value = false
-      uploadProgress.value = 0
+      uploadBatches.value.delete(batchId)
     }
   }
 
@@ -190,6 +174,7 @@ export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
    * 清空所有附件
    */
   function clearAttachments(): void {
+    invalidatedTargets.add(attachments.value)
     attachments.value = []
   }
 
