@@ -2,6 +2,7 @@
 
 > 整理日期：2026-09-05。源码基线：`1239458d`（`main`），扩展清单版本：`1.5.5`。
 > 本文根据当前仓库的目录、导入关系、初始化代码、构建配置和测试配置整理。描述的是静态代码结构，不代表已经启动扩展或验证全部功能。
+> 后续修复补充：存储迁移已改为先安排、重载后执行（见第 7 节）；上面的提交号及下列数量保留为首次整理时的统计基线。
 
 ## 1. 项目定位与阅读入口
 
@@ -181,7 +182,7 @@ Gray-Code-main/
 
 [BackendRuntime.initialize()](backend/bootstrap/index.ts) 的主要顺序如下，实际错误处理与清理逻辑以该文件为准：
 
-1. 初始化设置与通知服务，再确定有效数据路径和存储适配器。
+1. 初始化设置与通知服务，执行已安排的存储迁移，再确定有效数据路径和创建存储适配器。
 2. 创建会话、用量索引和分支服务；旧历史迁移在后台执行。
 3. 创建渠道配置管理器，初始化 Skills，注册内置工具与动态工具声明工厂。
 4. 创建渠道、存档、完整性检查命令，以及 Chat / Models / Settings 应用处理器。
@@ -441,6 +442,8 @@ sequenceDiagram
 会话历史由 `FileSystemStorageAdapter`、`TranscriptRepository` 与 `TranscriptMutation` 等维护，分支图由 `BranchGraphRepository` 和 `BranchService` 管理，用量索引由 `FileUsageIndexStore` 维护。工作区文件存档由 `checkpoint/` 管理，和 `snapshots/` 的对话快照用途不同。
 
 存储还包括两条路径：应用设置主要通过 `VSCodeSettingsStorage` 进入 VS Code 配置；渠道配置由 `MementoStorageAdapter(context.globalState, 'graycode.configs')` 保存。默认数据路径中的 `settings/` 用于旧设置兼容。修改存储功能时，要同时查看设置、globalState 和文件数据的实际写入路径。
+
+存储迁移采用两阶段入口：运行中的 `StoragePathHandlers` 只调用 `scheduleMigration()`，把目标写入 `storagePath.pendingMigration`，不改变当前有效路径或清理数据。重载后，`BackendRuntime.initStorage()` 在创建会话、存档、MCP、记忆和活动统计等数据服务之前调用 `applyPendingMigration()`；复制成功后切换路径并清除意图。迁移前应结束任务并关闭其他使用 GrayCode 的窗口，当前实现不提供跨窗口的分布式写锁。
 
 工作流文档的路径规则则在 `tools/design/`、`tools/plan/`、`tools/progress/`、`tools/review/` 内定义，落到工作区；它们与扩展数据目录的对话记录分开管理。
 
