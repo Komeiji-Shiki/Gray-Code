@@ -336,9 +336,15 @@ export class FileUsageIndexStore implements UsageIndexStore {
             return false;
         }
 
+        // 重建可能先读到已落盘的主消息，再轮到该消息的增量索引任务执行。
+        // 按稳定消息 ID 幂等追加；没有 ID 的旧消息仍逐条保留。
+        const seenMainIds = new Set(existing.messages
+            .filter(message => (!message.source || message.source === 'main') && message.id)
+            .map(message => message.id!));
         const added: UsageIndexMessage[] = [];
         for (const message of appended) {
             if (message.role !== 'model') continue;
+            if (message.id && seenMainIds.has(message.id)) continue;
             const tokens = extractMessageTokens(message);
             if (!tokens) continue;
             const ts = message.timestamp;
@@ -350,6 +356,7 @@ export class FileUsageIndexStore implements UsageIndexStore {
             // TREE-08：主历史条目记录稳定 id，供分支合并去重（旧消息无 id 时省略）
             if (typeof message.id === 'string' && message.id.length > 0) {
                 entry.id = message.id;
+                seenMainIds.add(message.id);
             }
             added.push(entry);
         }

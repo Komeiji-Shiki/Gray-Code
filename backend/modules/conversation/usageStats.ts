@@ -336,9 +336,19 @@ async function loadOne(source: UsageStatsSource, conversationId: string, indexSt
 
     try {
         const metadata = await readMetadataLight(source, conversationId);
+        // 文件索引支持队列内重建：直接在队列里读取最新历史，避免先加载一份随后丢弃的全量历史。
+        const rebuildInQueue = indexStore && typeof indexStore.rebuild === 'function';
+        if (rebuildInQueue) {
+            const index = await rebuildIndexForConversation(source, conversationId, indexStore, []);
+            if (index) return { metadata, messages: [], index };
+        }
         const messages = typeof source.getMessagesRaw === 'function'
             ? await source.getMessagesRaw(conversationId)
             : await source.getMessages(conversationId);
+        if (indexStore && !rebuildInQueue) {
+            const index = await rebuildIndexForConversation(source, conversationId, indexStore, messages);
+            if (index) return { metadata, messages: [], index };
+        }
         return { metadata, messages };
     } catch {
         return null;
@@ -742,17 +752,6 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
             }
         }
         let loaded = await loadOne(source, conversationId, indexStore);
-        if (loaded && indexStore && !loaded.index && Array.isArray(loaded.messages)) {
-            // 索引缺失/过期：队列内重建写回（R2 1.1）。重建回调在 store 写队列内基于最新历史
-            // 构造并合并盘面 subagent 条目（调用方队列外读到的 H0/旧索引可能已过期，期间并发
-            // 落盘的 main 条目不能被重建覆盖）。重建结果回填 loaded.index，主循环按索引路径
-            // 聚合（含 subagent），缓存回填也使用合并后的完整明细（R2 2.1）。
-            const rebuilt = await rebuildIndexForConversation(source, conversationId, indexStore, loaded.messages);
-            if (rebuilt) {
-                loaded.index = rebuilt;
-                loaded.messages = [];
-            }
-        }
         // TREE-08：合并分支图非活跃候选节点消耗（读取时叠加，不写入 usage.json；
         // 无分支图/损坏/读取失败按主历史统计，与旧版行为一致）
         if (loaded && branchGraphReader) {
@@ -872,4 +871,3 @@ export async function aggregateUsageStats(source: UsageStatsSource, options?: Us
         generatedAt: Date.now()
     };
 }
-

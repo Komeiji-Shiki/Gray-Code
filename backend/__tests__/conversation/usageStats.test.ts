@@ -753,16 +753,20 @@ describe('aggregateUsageStats 队列内重建（R2 1.1 / 2.1）', () => {
     test('重建回调在队列内重读最新历史：并发落盘的 main 条目不被重建覆盖（R2 1.1）', async () => {
         const { store, entries } = createRebuildingMemoryIndexStore();
         let historyReads = 0;
+        let rebuilding = false;
+        const rebuild = store.rebuild.bind(store);
+        store.rebuild = async (id, build) => {
+            rebuilding = true;
+            try { return await rebuild(id, build); }
+            finally { rebuilding = false; }
+        };
         const source = {
             async listConversations() { return ['conv-a']; },
             async getMetadata() { return { title: 'Alpha' } as ConversationMetadata; },
             async getMessages() { return []; },
             async getMessagesRaw() {
                 historyReads++;
-                if (historyReads === 1) {
-                    // loadOne 读到的 H0：只有 1 条 main 消息
-                    return [modelMessage({ prompt: 100, candidates: 50, modelVersion: 'model-x', timestamp: day })];
-                }
+                expect(rebuilding).toBe(true);
                 // 重建回调在队列内重读：已包含并发追加的第 2 条 main 消息
                 return [
                     modelMessage({ prompt: 100, candidates: 50, modelVersion: 'model-x', timestamp: day }),
@@ -772,6 +776,7 @@ describe('aggregateUsageStats 队列内重建（R2 1.1 / 2.1）', () => {
         } as UsageStatsSource;
 
         const stats = await aggregateUsageStats(source, { indexStore: store });
+        expect(historyReads).toBe(1);
         // 重建回调在队列内重读到最新历史：本次统计即包含并发落盘的 main 条目（300）
         expect(stats.totals.promptTokens).toBe(300);
         expect(stats.totals.modelMessages).toBe(2);

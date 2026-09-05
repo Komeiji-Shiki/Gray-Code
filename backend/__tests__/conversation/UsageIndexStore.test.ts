@@ -11,6 +11,7 @@
 
 import { FileUsageIndexStore } from '../../modules/conversation';
 import type { UsageIndex, UsageIndexMessage } from '../../modules/conversation/usageStats';
+import { buildConversationUsageIndex } from '../../modules/conversation/usageStats';
 import type { Content } from '../../modules/conversation';
 import { Uri } from 'vscode';
 
@@ -126,6 +127,46 @@ function seedIndex(conversationId: string, messages: UsageIndexMessage[]): Usage
 
 
 describe('FileUsageIndexStore 并发写（per-conversation 队列）', () => {
+    test('重建先读到已落盘消息时，排队的增量追加不重复计费', async () => {
+        const { store, state } = createStore();
+        const id = 'conv-rebuild-then-append';
+        const message: Content = {
+            id: 'm1', role: 'model', parts: [{ text: 'answer' }],
+            usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50 }
+        };
+        let release!: () => void;
+        let entered!: () => void;
+        const ready = new Promise<void>(resolve => { entered = resolve; });
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const rebuilt = store.rebuild(id, async () => {
+            entered();
+            await gate;
+            return buildConversationUsageIndex(id, [message]);
+        });
+        await ready;
+        const appended = store.appendUsage(id, [message]);
+        release();
+        await Promise.all([rebuilt, appended]);
+
+        const index = (await store.read(id))!;
+        expect(index.messages.map(item => item.id)).toEqual(['m1']);
+        expect(index.messages.reduce((total, item) => total + item.prompt + item.candidates, 0)).toBe(150);
+        expect(state.writeCalls).toHaveLength(1);
+    });
+
+    test('同批稳定 ID 去重，无 ID 且 token 相同的两条旧消息均保留', async () => {
+        const { store } = createStore();
+        const id = 'conv-append-idempotent';
+        await store.write(id, seedIndex(id, []));
+        const message: Content = {
+            role: 'model', parts: [{ text: 'answer' }],
+            usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50 }
+        };
+        await store.appendUsage(id, [{ ...message, id: 'm1' }, { ...message, id: 'm1' }, message, message]);
+        await store.appendUsage(id, [{ ...message, id: 'm1' }]);
+        expect((await store.read(id))!.messages.map(item => item.id)).toEqual(['m1', undefined, undefined]);
+    });
+
     test('并行 appendUsageMessages（并行子代理归集）不丢失更新', async () => {
         const { store, state } = createStore();
         const id = 'conv-parallel';
