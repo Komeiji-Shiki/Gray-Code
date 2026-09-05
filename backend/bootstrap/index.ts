@@ -291,6 +291,11 @@ export class BackendRuntime {
     /** 2-5. 存储路径管理器 + 存储适配器 + Diff 存储管理器（前置：settingsManager） */
     private async initStorage(settingsManager: SettingsManager): Promise<void> {
         this.storagePathManager = new StoragePathManager(settingsManager, this.context);
+        // 当前窗口重载后，所有持有旧路径的服务尚未创建，此时才执行已安排的迁移。
+        const migration = await this.storagePathManager.applyPendingMigration();
+        if (migration && !migration.success) {
+            throw new Error(`Storage migration failed: ${migration.error || 'Unknown error'}`);
+        }
         await this.storagePathManager.ensureDirectories();
 
         // 有效数据存储路径（可能是自定义路径）

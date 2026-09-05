@@ -2851,8 +2851,8 @@ const ja: LanguageMessages = {
                 },
                 dialog: {
                     migrateTitle: 'データ移行の確認',
-                    migrateMessage: '既存のデータを新しいパスに移行しますか？すべての会話履歴とチェックポイントがコピーされます。',
-                    migrateWarning: '移行中はウィンドウを閉じないでください',
+                    migrateMessage: '次回の再読み込み時に、新しいパスへのデータ移行を予約しますか？会話履歴とチェックポイントがコピーされます。',
+                    migrateWarning: '実行中のタスクを終了し、GrayCode を使用中の他のウィンドウを閉じてから再読み込みしてください。移行中はウィンドウを閉じないでください。',
                     confirm: '移行を確認',
                     cancel: 'キャンセル'
                 },
@@ -2862,7 +2862,7 @@ const ja: LanguageMessages = {
                     alreadyDefault: 'すでにデフォルトパスです',
                     alreadyDefaultTitle: 'すでにデフォルトパスです',
                     applyEmptyHint: '先にストレージパスを選択または入力してください',
-                    migrationSuccess: 'データ移行が完了しました。変更を有効にするにはウィンドウを再読み込みしてください',
+                    migrationSuccess: '移行を予約しました。再読み込みすると移行を開始します。それまでは元のデータパスを使用します。',
                     migrationFailed: 'データ移行に失敗しました: {error}',
                     validationFailed: 'パスの検証に失敗しました: {error}',
                     openInExplorerFailed: 'ストレージディレクトリを開けませんでした: {error}'

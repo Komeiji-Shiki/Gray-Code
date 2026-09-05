@@ -2853,8 +2853,8 @@ const zhCN = {
                 },
                 dialog: {
                     migrateTitle: '确认迁移数据',
-                    migrateMessage: '是否将现有数据迁移到新路径？这将复制所有对话历史和存档点。',
-                    migrateWarning: '迁移过程中请勿关闭窗口',
+                    migrateMessage: '是否在下次重载时将现有数据迁移到新路径？这将复制所有对话历史和存档点。',
+                    migrateWarning: '请先结束任务并关闭其他使用 GrayCode 的窗口，再重载当前窗口；迁移期间请勿关闭窗口。',
                     confirm: '确认迁移',
                     cancel: '取消'
                 },
@@ -2864,7 +2864,7 @@ const zhCN = {
                     alreadyDefault: '当前已是默认路径，无需重置',
                     alreadyDefaultTitle: '当前已是默认路径',
                     applyEmptyHint: '请先选择或输入一个存储路径',
-                    migrationSuccess: '数据迁移完成，请重新加载窗口以使更改生效',
+                    migrationSuccess: '迁移已安排，请重新加载窗口以开始迁移；重载前继续使用原数据路径',
                     migrationFailed: '数据迁移失败: {error}',
                     validationFailed: '路径验证失败: {error}',
                     openInExplorerFailed: '打开存储目录失败: {error}'

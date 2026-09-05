@@ -43,8 +43,9 @@ export function useStoragePathSettings() {
       if (response) {
         storageSettings.currentPath = response.effectivePath || ''
         storageSettings.defaultPath = response.defaultPath || ''
-        storageSettings.customPath = response.config?.customDataPath || ''
+        storageSettings.customPath = response.config?.pendingMigration?.targetPath || response.config?.customDataPath || ''
         storageSettings.isCustom = !!response.config?.customDataPath
+        needsReload.value = !!response.config?.pendingMigration
       }
     } catch (error) {
       console.error('Failed to load storage config:', error)

@@ -2,12 +2,14 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { StoragePathManager, isSameStoragePath } from '../../modules/settings/StoragePathManager';
+import { ActivityStore, toDateStr } from '../../modules/activity/ActivityStore';
 
 interface TestStorageConfig {
     customDataPath?: string;
     migrationStatus?: string;
     lastMigrationAt?: number;
     migrationError?: string;
+    pendingMigration?: { targetPath: string; resetToDefault: boolean };
 }
 
 function createSettingsManager(initialConfig: TestStorageConfig = { migrationStatus: 'none' }) {
@@ -40,6 +42,97 @@ describe('StoragePathManager', () => {
     afterEach(async () => {
         await fs.rm(tempRoot, { recursive: true, force: true });
         jest.restoreAllMocks();
+    });
+
+    test.each(['separate', 'nested'])('migrates and restores root-level branch retention settings (%s)', async layout => {
+        const filename = 'branches.config.json';
+        const content = JSON.stringify({ retentionDays: 0 });
+        const sourceFile = path.join(defaultPath, filename);
+        await fs.writeFile(sourceFile, content);
+        const settingsManager = createSettingsManager();
+        const manager = new StoragePathManager(settingsManager as any, { globalStorageUri: { fsPath: defaultPath } } as any);
+        const targetPath = path.join(layout === 'nested' ? defaultPath : tempRoot, 'new-storage');
+
+        expect(await manager.getStorageStats()).toMatchObject({ fileCount: 1, totalSize: Buffer.byteLength(content) });
+        expect(await manager.migrateData(targetPath)).toMatchObject({ success: true, copiedFiles: 1 });
+        await expect(fs.readFile(path.join(targetPath, filename), 'utf8')).resolves.toBe(content);
+        await expect(fs.access(sourceFile)).rejects.toMatchObject({ code: 'ENOENT' });
+
+        await expect(manager.resetToDefault()).resolves.toEqual({ success: true });
+        await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe(content);
+        await expect(fs.access(path.join(targetPath, filename))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    test('refuses a destination already containing root-level branch settings', async () => {
+        const targetPath = path.join(tempRoot, 'target');
+        await fs.mkdir(targetPath);
+        const filename = path.join(targetPath, 'branches.config.json');
+        await fs.writeFile(filename, '{"retentionDays":7}');
+        const manager = new StoragePathManager(createSettingsManager() as any, { globalStorageUri: { fsPath: defaultPath } } as any);
+        expect((await manager.migrateData(targetPath)).success).toBe(false);
+        await expect(fs.readFile(filename, 'utf8')).resolves.toBe('{"retentionDays":7}');
+    });
+
+    test('scheduling preserves the live path; next startup migrates writes made before reload', async () => {
+        const settings = createSettingsManager();
+        const context = { globalStorageUri: { fsPath: defaultPath } } as any;
+        const manager = new StoragePathManager(settings as any, context);
+        const targetPath = path.join(tempRoot, 'target');
+        const conversationDir = path.join(defaultPath, 'conversations');
+        await fs.mkdir(conversationDir);
+        await fs.writeFile(path.join(conversationDir, 'before.json'), 'before scheduling');
+        const activity = new ActivityStore(path.join(defaultPath, 'activity'));
+        const time = new Date(2026, 8, 5, 12).getTime();
+        const day = toDateStr(time);
+        await activity.appendSample(time);
+        await activity.flushDay(day);
+
+        await expect(manager.scheduleMigration(targetPath)).resolves.toEqual({ success: true });
+        expect(manager.getEffectiveDataPath()).toBe(defaultPath);
+        await expect(fs.access(targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+        await fs.writeFile(path.join(conversationDir, 'late.json'), 'written before reload');
+        await activity.appendSample(time + 60_000);
+        await activity.flushDay(day);
+
+        const restarted = new StoragePathManager(settings as any, context);
+        expect((await restarted.applyPendingMigration())?.success).toBe(true);
+        expect(restarted.getEffectiveDataPath()).toBe(targetPath);
+        expect(settings.getStoragePathConfig().pendingMigration).toBeUndefined();
+        await expect(fs.readFile(path.join(targetPath, 'conversations', 'late.json'), 'utf8')).resolves.toBe('written before reload');
+        const newActivity = new ActivityStore(path.join(targetPath, 'activity'));
+        await expect(newActivity.loadDay(day)).resolves.toEqual([time, time + 60_000]);
+        expect(await restarted.applyPendingMigration()).toBeUndefined();
+    });
+
+    test('a scheduled reset tolerates preserved skills and runs only on next startup', async () => {
+        const settings = createSettingsManager();
+        const context = { globalStorageUri: { fsPath: defaultPath } } as any;
+        const manager = new StoragePathManager(settings as any, context);
+        await fs.mkdir(path.join(defaultPath, 'skills'));
+        await fs.writeFile(path.join(defaultPath, 'skills', 'skill.md'), 'skill');
+        const targetPath = path.join(tempRoot, 'custom');
+        await manager.migrateData(targetPath);
+        await expect(manager.scheduleMigration(defaultPath, true)).resolves.toEqual({ success: true });
+        expect(manager.getEffectiveDataPath()).toBe(targetPath);
+        const restarted = new StoragePathManager(settings as any, context);
+        expect((await restarted.applyPendingMigration())?.success).toBe(true);
+        expect(restarted.getEffectiveDataPath()).toBe(defaultPath);
+        expect(settings.getStoragePathConfig().pendingMigration).toBeUndefined();
+    });
+
+    test('failed startup migration keeps the old path and the scheduled target for retry', async () => {
+        const settings = createSettingsManager();
+        const manager = new StoragePathManager(settings as any, { globalStorageUri: { fsPath: defaultPath } } as any);
+        const sourceFile = path.join(defaultPath, 'branches.config.json');
+        await fs.writeFile(sourceFile, '{"retentionDays":0}');
+        const targetPath = path.join(tempRoot, 'target');
+        await manager.scheduleMigration(targetPath);
+        jest.spyOn(manager as any, 'copyStorageData').mockRejectedValueOnce(new Error('copy failed'));
+        expect((await manager.applyPendingMigration())?.success).toBe(false);
+        expect(manager.getEffectiveDataPath()).toBe(defaultPath);
+        expect(settings.getStoragePathConfig().pendingMigration?.targetPath).toBe(targetPath);
+        await expect(fs.readFile(sourceFile, 'utf8')).resolves.toBe('{"retentionDays":0}');
+        expect((await manager.applyPendingMigration())?.success).toBe(true);
     });
 
     test('migrates safely into a subdirectory of the current storage path', async () => {

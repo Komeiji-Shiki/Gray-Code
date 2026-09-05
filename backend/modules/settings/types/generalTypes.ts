@@ -80,6 +80,12 @@ export interface StoragePathConfig {
      * 例如: "D:\\GrayCodeData" 或 "/home/user/GrayCode-data"
      */
     customDataPath?: string;
+
+    /** 在下一次启动、数据服务创建之前执行的迁移；当前运行实例继续使用原路径。 */
+    pendingMigration?: {
+        targetPath: string;
+        resetToDefault: boolean;
+    };
     
     /**
      * 最后一次成功迁移的时间戳

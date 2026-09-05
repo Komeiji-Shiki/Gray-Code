@@ -2,10 +2,10 @@
  * 存储路径管理消息处理器
  */
 
-import { MESSAGE_NAMES, PUSH_MESSAGE_NAMES } from '../../shared/protocol';
+import { MESSAGE_NAMES } from '../../shared/protocol';
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
-import type { HandlerContext, MessageHandler } from '../types';
+import type { MessageHandler } from '../types';
 
 /**
  * 获取存储路径配置
@@ -39,27 +39,12 @@ export const validateStoragePath: MessageHandler = async (data, requestId, ctx) 
 };
 
 /**
- * 推送存储迁移进度：优先走 ctx.postMessage（registry 路由，自带 clientId/isAlive/回退语义，
- * 与其余推送路径同口径），仅无路由能力（非路由上下文/测试直连）时降级直投 ctx.view。
- */
-function pushMigrationProgress(ctx: HandlerContext, status: unknown): void {
-  const message = { type: PUSH_MESSAGE_NAMES.storageMigrationProgress, data: status };
-  if (ctx.postMessage) {
-    ctx.postMessage(message);
-    return;
-  }
-  ctx.view?.webview.postMessage(message);
-}
-
-/**
- * 迁移存储数据
+ * 安排下次启动时迁移存储数据
  */
 export const migrateStorage: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { path: newPath } = data;
-    const result = await ctx.storagePathManager.migrateData(newPath, (status) => {
-      pushMigrationProgress(ctx, status);
-    });
+    const result = await ctx.storagePathManager.scheduleMigration(newPath);
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'MIGRATE_STORAGE_ERROR', error.message || t('webview.errors.migrateStorageFailed'));
@@ -71,9 +56,7 @@ export const migrateStorage: MessageHandler = async (data, requestId, ctx) => {
  */
 export const resetStoragePath: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const result = await ctx.storagePathManager.resetToDefault((status) => {
-      pushMigrationProgress(ctx, status);
-    });
+    const result = await ctx.storagePathManager.scheduleMigration(ctx.storagePathManager.getDefaultDataPath(), true);
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'RESET_STORAGE_PATH_ERROR', error.message || t('webview.errors.resetStoragePathFailed'));

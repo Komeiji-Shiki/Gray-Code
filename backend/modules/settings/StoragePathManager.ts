@@ -17,6 +17,7 @@ import type { StorageStats } from './types';
  */
 // 记忆目录随自定义存储路径一起迁移/清理/统计：memory 为全局记忆，memory-workspaces 下每个 <hash>/ 子目录对应一个工作区记忆
 const STORAGE_SUBDIRS = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills', 'activity', 'tokenizers', 'memory', 'memory-workspaces'];
+const STORAGE_FILES = ['branches.config.json'];
 
 /**
  * 判断两个路径是否指向同一存储位置（同路径判定）。
@@ -87,6 +88,35 @@ export class StoragePathManager {
      */
     getDefaultDataPath(): string {
         return this.defaultDataPath;
+    }
+
+    /** 运行中只保存意图，不复制/清理仍被会话和后台任务使用的数据。 */
+    async scheduleMigration(targetPath: string, resetToDefault = false): Promise<{ success: boolean; error?: string }> {
+        // 重置允许默认目录中的遗留数据（例如刻意保留的 skills），沿用 resetToDefault 的合并语义。
+        if (resetToDefault) {
+            targetPath = this.defaultDataPath;
+        } else {
+            const validation = await this.validatePath(targetPath);
+            if (!validation.valid) return { success: false, error: validation.error };
+        }
+        await this.settingsManager.updateStoragePathConfig({
+            pendingMigration: { targetPath, resetToDefault }
+        });
+        return { success: true };
+    }
+
+    /** 仅供 bootstrap 在创建任何数据服务之前调用；失败时保留意图以便重试。 */
+    async applyPendingMigration(): Promise<{ success: boolean; error?: string } | undefined> {
+        const pending = this.settingsManager.getStoragePathConfig().pendingMigration;
+        if (!pending) return undefined;
+        const result = pending.resetToDefault
+            ? await this.resetToDefault()
+            : await this.migrateData(pending.targetPath);
+        // 同路径短路等成功分支没有配置提交，也需要消费本次迁移意图。
+        if (result.success && this.settingsManager.getStoragePathConfig().pendingMigration) {
+            await this.settingsManager.updateStoragePathConfig({ pendingMigration: undefined });
+        }
+        return result;
     }
     
     /**
@@ -208,7 +238,7 @@ export class StoragePathManager {
             // 已有存储数据的无关目录不接受重复迁移；与当前路径重叠的目标由迁移中转流程处理。
             if (exists && !(await this.pathsOverlap(this.getEffectiveDataPath(), targetPath))) {
                 const entries = await fs.readdir(targetPath);
-                if (entries.some((entry) => STORAGE_SUBDIRS.includes(entry))) {
+                if (entries.some((entry) => STORAGE_SUBDIRS.includes(entry) || STORAGE_FILES.includes(entry))) {
                     return { valid: false, error: '目标目录已包含扩展数据（conversations/checkpoints 等），请选择其他目录' };
                 }
             }
@@ -280,7 +310,16 @@ export class StoragePathManager {
             this.getDirectorySize(path.join(basePath, 'memory-workspaces'))
         ]);
 
-        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity, tokenizers, memory, memoryWorkspaces];
+        const rootFiles = await Promise.all(STORAGE_FILES.map(async file => {
+            try {
+                const stat = await fs.stat(path.join(basePath, file));
+                return { size: stat.size, count: 1 };
+            } catch (error: any) {
+                if (error?.code === 'ENOENT') return { size: 0, count: 0 };
+                throw error;
+            }
+        }));
+        const allStats = [conversations, checkpoints, snapshots, mcp, dependencies, diffs, skills, activity, tokenizers, memory, memoryWorkspaces, ...rootFiles];
         const totalSize = allStats.reduce((sum, stat) => sum + stat.size, 0);
         const fileCount = allStats.reduce((sum, stat) => sum + stat.count, 0);
         
@@ -418,6 +457,7 @@ export class StoragePathManager {
         onProgress?: (status: { phase: string; current: number; total: number }) => void
     ): Promise<number> {
         let totalCopied = copiedFiles;
+        await fs.mkdir(targetPath, { recursive: true });
 
         for (const subDir of STORAGE_SUBDIRS) {
             const srcDir = path.join(sourcePath, subDir);
@@ -444,6 +484,16 @@ export class StoragePathManager {
             });
         }
 
+        for (const file of STORAGE_FILES) {
+            try {
+                await fs.copyFile(path.join(sourcePath, file), path.join(targetPath, file));
+            } catch (error: any) {
+                if (error?.code === 'ENOENT') continue;
+                throw error;
+            }
+            totalCopied++;
+            onProgress?.({ phase: `${phase} ${file}...`, current: totalCopied, total: totalFiles });
+        }
         return totalCopied;
     }
 
@@ -461,6 +511,9 @@ export class StoragePathManager {
                 continue;
             }
             await fs.rm(path.join(storagePath, subDir), { recursive: true, force: true });
+        }
+        for (const file of STORAGE_FILES) {
+            await fs.rm(path.join(storagePath, file), { force: true });
         }
     }
 
@@ -552,6 +605,7 @@ export class StoragePathManager {
             // 旧顺序在删除源数据后、配置落盘前崩溃，配置仍指向源路径而数据已被删，造成数据丢失
             await this.settingsManager.updateStoragePathConfig({
                 customDataPath: newPath,
+                pendingMigration: undefined,
                 migrationStatus: 'completed',
                 lastMigrationAt: Date.now(),
                 migrationError: undefined
@@ -593,6 +647,7 @@ export class StoragePathManager {
             try {
                 await this.settingsManager.updateStoragePathConfig({
                     customDataPath: originalConfig.customDataPath,
+                    pendingMigration: originalConfig.pendingMigration,
                     migrationStatus: 'failed',
                     lastMigrationAt: originalConfig.lastMigrationAt,
                     migrationError: errorMessage
@@ -693,6 +748,7 @@ export class StoragePathManager {
             if (isSameStoragePath(customComparisonPath, defaultComparisonPath)) {
                 await this.settingsManager.updateStoragePathConfig({
                     customDataPath: undefined,
+                    pendingMigration: undefined,
                     migrationStatus: 'none',
                     lastMigrationAt: undefined,
                     migrationError: undefined
@@ -719,6 +775,7 @@ export class StoragePathManager {
             // 配置仍指向自定义路径而数据已被删，造成数据丢失
             await this.settingsManager.updateStoragePathConfig({
                 customDataPath: undefined,
+                pendingMigration: undefined,
                 migrationStatus: 'none',
                 lastMigrationAt: undefined,
                 migrationError: undefined
@@ -749,6 +806,7 @@ export class StoragePathManager {
             try {
                 await this.settingsManager.updateStoragePathConfig({
                     customDataPath: config.customDataPath,
+                    pendingMigration: config.pendingMigration,
                     migrationStatus: config.migrationStatus,
                     lastMigrationAt: config.lastMigrationAt,
                     migrationError: config.migrationError

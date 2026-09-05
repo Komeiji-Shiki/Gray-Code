@@ -2851,8 +2851,8 @@ const en: LanguageMessages = {
                 },
                 dialog: {
                     migrateTitle: 'Confirm Data Migration',
-                    migrateMessage: 'Do you want to migrate existing data to the new path? This will copy all conversation history and checkpoints.',
-                    migrateWarning: 'Do not close the window during migration',
+                    migrateMessage: 'Schedule migration to the new path on the next reload? This will copy all conversation history and checkpoints.',
+                    migrateWarning: 'Finish running tasks and close other windows using GrayCode before reloading this window. Do not close it during migration.',
                     confirm: 'Confirm Migration',
                     cancel: 'Cancel'
                 },
@@ -2862,7 +2862,7 @@ const en: LanguageMessages = {
                     alreadyDefault: 'Already using the default path',
                     alreadyDefaultTitle: 'Already using the default path',
                     applyEmptyHint: 'Please select or enter a storage path first',
-                    migrationSuccess: 'Data migration completed, please reload window for changes to take effect',
+                    migrationSuccess: 'Migration scheduled. Reload to start migrating; the current session continues using the original data path.',
                     migrationFailed: 'Data migration failed: {error}',
                     validationFailed: 'Path validation failed: {error}',
                     openInExplorerFailed: 'Failed to open storage directory: {error}'
