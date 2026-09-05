@@ -1,3 +1,4 @@
+import { StringLruCache } from '../../../utils/stringLruCache'
 /**
  * MarkdownRenderer 模块级单例（跨消息块共享）
  *
@@ -18,7 +19,7 @@ export const fileExistenceCache = new Map<string, boolean>()
 export const imageCache = new Map<string, string>()
 
 /** highlightAuto 结果缓存：避免相同无标注代码块重复遍历 192 种语法 */
-export const codeHighlightCache = new Map<string, string>()
+export const codeHighlightCache = new StringLruCache(500, 4 * 1024 * 1024)
 
 /** 有界缓存写入：容量超限时淘汰最旧条目（FIFO），防止长会话无界增长 */
 const CACHE_MAX_SIZE = 500
@@ -28,49 +29,6 @@ export function setCached<V>(map: Map<string, V>, key: string, value: V): void {
     const oldestKey = map.keys().next().value
     if (oldestKey !== undefined) {
       map.delete(oldestKey)
-    }
-  }
-}
-
-/** 估算字符串驻留字节数（UTF-16，每字符 2 字节），与图片缓存口径一致 */
-export function estimateStringBytes(value: string): number {
-  return value.length * 2
-}
-
-/**
- * 代码高亮结果缓存字节预算：长代码块的高亮 HTML 可达数百 KB，仅按条数限界
- * （500 条）会让流式期间增长中的代码块反复写入大块结果，驻留内存膨胀到数十 MB；
- * 超限按 FIFO 淘汰最旧条目（与图片缓存同一策略）。
- */
-const CODE_HIGHLIGHT_CACHE_MAX_BYTES = 4 * 1024 * 1024
-let codeHighlightCacheBytes = 0
-
-/** 代码高亮缓存写入：字节预算 + 条数上限双限界 */
-export function setCachedCodeHighlight(map: Map<string, string>, key: string, value: string): void {
-  const bytes = estimateStringBytes(value)
-  const existing = map.get(key)
-  if (existing !== undefined) {
-    codeHighlightCacheBytes -= estimateStringBytes(existing)
-  }
-  map.set(key, value)
-  codeHighlightCacheBytes += bytes
-
-  // 字节预算超限：按 FIFO 淘汰最旧条目，直到回到预算内（至少保留 1 条，避免单条超大时清空缓存）
-  while (codeHighlightCacheBytes > CODE_HIGHLIGHT_CACHE_MAX_BYTES && map.size > 1) {
-    const oldestKey = map.keys().next().value
-    if (oldestKey === undefined) break
-    const oldest = map.get(oldestKey)!
-    map.delete(oldestKey)
-    codeHighlightCacheBytes -= estimateStringBytes(oldest)
-  }
-
-  // 条数上限兜底（与其它缓存一致）
-  if (map.size > CACHE_MAX_SIZE) {
-    const oldestKey = map.keys().next().value
-    if (oldestKey !== undefined) {
-      const oldest = map.get(oldestKey)!
-      map.delete(oldestKey)
-      codeHighlightCacheBytes -= estimateStringBytes(oldest)
     }
   }
 }

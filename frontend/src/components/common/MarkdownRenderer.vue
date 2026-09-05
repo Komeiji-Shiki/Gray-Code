@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { StringLruCache } from '../../utils/stringLruCache'
 /**
  * MarkdownRenderer - Markdown 和 LaTeX 渲染组件
  *
@@ -23,7 +24,7 @@
 
 import { ref, shallowRef, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from '@/i18n'
-import { renderMermaid, fileExistenceCache, estimateStringBytes } from './markdown/markdownItCore'
+import { renderMermaid, fileExistenceCache } from './markdown/markdownItCore'
 import { extractPotentialFilePaths } from './markdown/workspaceFileRefs'
 import { renderContent, type RenderProfile } from './markdown/markdownItEngine'
 import { createCodeBlockDomController } from './markdown/codeBlockDom'
@@ -84,8 +85,7 @@ const STREAM_RENDER_MAX_WAIT_MS = 180
 const COMPLETED_RENDER_CACHE_LIMIT = 128
 /** 完成态渲染缓存字节预算：长消息 HTML 可达数百 KB，仅按条数限界会让缓存驻留内存膨胀到数十 MB */
 const COMPLETED_RENDER_CACHE_MAX_BYTES = 8 * 1024 * 1024
-const completedRenderCache = new Map<string, string>()
-let completedRenderCacheBytes = 0
+const completedRenderCache = new StringLruCache(COMPLETED_RENDER_CACHE_LIMIT, COMPLETED_RENDER_CACHE_MAX_BYTES)
 
 let renderTimer: number | null = null
 /** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
@@ -121,36 +121,9 @@ function buildWorkspaceFileExistenceSignature(content: string): string {
 
 function getMemoizedCompletedRender(cacheKey: string, content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
   const cached = completedRenderCache.get(cacheKey)
-  if (cached !== undefined) {
-    // LRU：命中时刷新顺序，尽量保留最近使用的已完成消息 HTML。
-    completedRenderCache.delete(cacheKey)
-    completedRenderCache.set(cacheKey, cached)
-    return cached
-  }
-
+  if (cached !== undefined) return cached
   const html = renderContent(content, latexOnly, renderProfile)
   completedRenderCache.set(cacheKey, html)
-  completedRenderCacheBytes += estimateStringBytes(html)
-
-  // 字节预算超限：按 FIFO 淘汰最旧条目，直到回到预算内（至少保留 1 条，避免单条超大时清空缓存）
-  while (completedRenderCacheBytes > COMPLETED_RENDER_CACHE_MAX_BYTES && completedRenderCache.size > 1) {
-    const oldestKey = completedRenderCache.keys().next().value
-    if (typeof oldestKey !== 'string') break
-    const oldest = completedRenderCache.get(oldestKey)!
-    completedRenderCache.delete(oldestKey)
-    completedRenderCacheBytes -= estimateStringBytes(oldest)
-  }
-
-  // 条数上限兜底（与其它缓存一致）
-  if (completedRenderCache.size > COMPLETED_RENDER_CACHE_LIMIT) {
-    const oldestKey = completedRenderCache.keys().next().value
-    if (typeof oldestKey === 'string') {
-      const oldest = completedRenderCache.get(oldestKey)!
-      completedRenderCache.delete(oldestKey)
-      completedRenderCacheBytes -= estimateStringBytes(oldest)
-    }
-  }
-
   return html
 }
 

@@ -15,7 +15,7 @@ import katex from 'katex'
 import { t } from '@/i18n'
 import { escapeHtml, sanitizeHtml, RENDER_LATEX_ONLY_INLINE_RE, RENDER_LATEX_ONLY_BLOCK_RE, RENDER_LATEX_ONLY_PAREN_INLINE_RE, RENDER_LATEX_ONLY_BRACKET_BLOCK_RE } from '@/components/common/markdownUtils'
 import { markdownItMathBlock } from '@/utils/markdownMathBlock'
-import { fileExistenceCache, codeHighlightCache, setCachedCodeHighlight } from './markdownItCore'
+import { fileExistenceCache, codeHighlightCache } from './markdownItCore'
 import {
   WORKSPACE_FILE_REF_FIND_RE,
   parsePositiveInt,
@@ -360,7 +360,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
       } else {
         try {
           highlighted = hljs.highlight(code, { language: lang }).value
-          setCachedCodeHighlight(codeHighlightCache, cacheKey, highlighted)
+          codeHighlightCache.set(cacheKey, highlighted)
         } catch {
           highlighted = escapeHtml(code)
         }
@@ -374,7 +374,7 @@ function createMarkdownIt(options: { allowHtml: boolean }) {
         highlighted = cached
       } else {
         highlighted = hljs.highlightAuto(code).value
-        setCachedCodeHighlight(codeHighlightCache, cacheKey, highlighted)
+        codeHighlightCache.set(cacheKey, highlighted)
       }
     } else {
       // 完全无标注：跳过 auto，仅转义原文
