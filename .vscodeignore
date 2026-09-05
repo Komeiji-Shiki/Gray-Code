@@ -8,7 +8,7 @@ tsconfig.json
 .graycode/**
 .limcode/**
 fast-tavern-main/**
-.tmp/**
+**/.tmp/**
 extension.ts
 index.ts
 

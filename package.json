@@ -2,7 +2,7 @@
   "name": "graycode",
   "displayName": "Gray Code",
   "description": "Gray Code is an AI coding assistant extension with multimodal support and advanced features.",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "publisher": "Komeiji-Shiki",
   "icon": "resources/icon.png",
   "engines": {
