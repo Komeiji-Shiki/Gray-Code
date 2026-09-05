@@ -824,10 +824,16 @@ describe('DiffManager lifecycle closure', () => {
         // 非手动保存路径：waitUntil 必须被调用，且仍记录 flushed 标记
         fireWillSave((vscode as any).TextDocumentSaveReason.FocusOut);
 
-        expect(waitUntilArgs).toEqual([checkpointReady, checkpointReady]);
+        expect(waitUntilArgs).toHaveLength(2);
+        const settled = [false, false];
+        const pendingSaves = waitUntilArgs.map((gate, index) => Promise.resolve(gate).then(() => { settled[index] = true; }));
+        await flushMicrotasks();
+        expect(settled).toEqual([false, false]);
         expect((manager as any).nonManualSaveFlushed.has(diff.id)).toBe(true);
 
         resolveCheckpoint();
+        await Promise.all(pendingSaves);
+        expect(settled).toEqual([true, true]);
     });
 
     test('createPendingDiff stores structuredHunkPlan and checkpointReady from options', async () => {
