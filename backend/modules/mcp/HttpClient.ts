@@ -5,6 +5,8 @@
  */
 
 import { EventEmitter } from 'events';
+import { collectMcpList, createServerRequestReply, isJsonRpcResponse } from './protocol';
+import type { McpRawToolResult } from './types';
 import { t } from '../../i18n';
 import { createGrayCodeMcpClientInfo, PRODUCT_USER_AGENT } from '../../core/productMetadata';
 
@@ -168,9 +170,7 @@ export class HttpMcpClient extends EventEmitter {
         // 发送初始化请求
         const initResult = await this.sendRequest<InitializeResult>('initialize', {
             protocolVersion: '2025-12-19',
-            capabilities: {
-                roots: { listChanged: true }
-            },
+            capabilities: {},
             clientInfo: createGrayCodeMcpClientInfo()
         });
         
@@ -190,8 +190,7 @@ export class HttpMcpClient extends EventEmitter {
         // 获取工具列表（如果支持）
         if (this.capabilities?.tools) {
             try {
-                const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
-                this.tools = toolsResult.tools || [];
+                this.tools = await collectMcpList<McpTool>(params => this.sendRequest('tools/list', params), 'tools');
             } catch {
                 // 忽略获取工具失败；标记供上层区分「服务器真无工具」与「拉取失败」
                 this.listFetchFailed = true;
@@ -201,8 +200,7 @@ export class HttpMcpClient extends EventEmitter {
         // 获取资源列表（如果支持）
         if (this.capabilities?.resources) {
             try {
-                const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
-                this.resources = resourcesResult.resources || [];
+                this.resources = await collectMcpList<McpResource>(params => this.sendRequest('resources/list', params), 'resources');
             } catch {
                 // 忽略获取资源失败；标记供上层区分「服务器真无资源」与「拉取失败」
                 this.listFetchFailed = true;
@@ -212,8 +210,7 @@ export class HttpMcpClient extends EventEmitter {
         // 获取提示列表（如果支持）
         if (this.capabilities?.prompts) {
             try {
-                const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
-                this.prompts = promptsResult.prompts || [];
+                this.prompts = await collectMcpList<McpPrompt>(params => this.sendRequest('prompts/list', params), 'prompts');
             } catch {
                 // 忽略获取提示失败；标记供上层区分「服务器真无提示」与「拉取失败」
                 this.listFetchFailed = true;
@@ -267,13 +264,13 @@ export class HttpMcpClient extends EventEmitter {
 
         const results = await Promise.allSettled([
             this.capabilities?.tools
-                ? this.sendRequest<{ tools: McpTool[] }>('tools/list', {}).then(result => result.tools || [])
+                ? collectMcpList<McpTool>(params => this.sendRequest('tools/list', params), 'tools')
                 : Promise.resolve([] as McpTool[]),
             this.capabilities?.resources
-                ? this.sendRequest<{ resources: McpResource[] }>('resources/list', {}).then(result => result.resources || [])
+                ? collectMcpList<McpResource>(params => this.sendRequest('resources/list', params), 'resources')
                 : Promise.resolve([] as McpResource[]),
             this.capabilities?.prompts
-                ? this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {}).then(result => result.prompts || [])
+                ? collectMcpList<McpPrompt>(params => this.sendRequest('prompts/list', params), 'prompts')
                 : Promise.resolve([] as McpPrompt[]),
         ]);
 
@@ -353,10 +350,7 @@ export class HttpMcpClient extends EventEmitter {
      *
      * @param signal 外部取消信号（可选）；中止时立即拒绝，无需等待内部超时
      */
-    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{
-        content: Array<{ type: string; text?: string; data?: string; mimeType?: string; uri?: string }>;
-        isError?: boolean;
-    }> {
+    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpRawToolResult> {
         return await this.sendRequest('tools/call', {
             name,
             arguments: args
@@ -428,6 +422,9 @@ export class HttpMcpClient extends EventEmitter {
         // 如果有 session ID，添加到请求头
         if (this.sessionId) {
             headers['Mcp-Session-Id'] = this.sessionId;
+        }
+        if (this.protocolVersion) {
+            headers['MCP-Protocol-Version'] = this.protocolVersion;
         }
         
         // 创建 AbortController 用于超时控制（保持到 body 读取完成）
@@ -508,6 +505,9 @@ export class HttpMcpClient extends EventEmitter {
             // JSON 响应（controller 保持到 json() 完成，body 读取同样受超时保护）
             try {
                 const jsonResponse = await response.json() as JsonRpcResponse;
+                if (!isJsonRpcResponse(jsonResponse) || jsonResponse.id !== id) {
+                    throw new Error('Invalid or mismatched MCP JSON-RPC response');
+                }
                 
                 if (jsonResponse.error) {
                     // 错误码拼入信息：上层只展示 message，不丢 code
@@ -611,38 +611,44 @@ export class HttpMcpClient extends EventEmitter {
             // 当前事件 data 累计长度：服务器持续下发 data: 行而不以空行结束事件时
             // eventData 无界累积，超过上限视为连接故障（垃圾数据流），emitError + 抛错
             let eventDataLength = 0;
-            const dispatchEvent = () => {
+            const dispatchEvent = async () => {
                 if (eventData === null) return;
                 const jsonStr = eventData.join('\n').trim();
                 eventData = null;
                 eventDataLength = 0;
                 if (!jsonStr || jsonStr === '[DONE]') return;
 
-                let event: (Partial<JsonRpcResponse> & { method?: string; params?: unknown }) | undefined;
+                let event: unknown;
                 try {
-                    event = JSON.parse(jsonStr) as Partial<JsonRpcResponse> & { method?: string; params?: unknown };
+                    event = JSON.parse(jsonStr);
                 } catch {
                     // 忽略解析错误（多行 data 已在合并后解析）
                     return;
                 }
 
                 // 只消费与请求 id 匹配的响应，服务器下发的通知不会被误当结果
-                if (event.jsonrpc === '2.0' && event.id === expectedId) {
+                const reply = createServerRequestReply(event);
+                if (reply) {
+                    await this.sendRpcMessage(reply);
+                    return;
+                }
+                if (isJsonRpcResponse(event) && event.id === expectedId) {
                     if (event.error) {
                         // 错误码拼入信息：上层只展示 message，不丢 code
                         throw new Error(`MCP error ${event.error.code}: ${event.error.message}`);
                     }
                     matched = true;
                     result = event.result as T;
-                } else if (event.jsonrpc === '2.0'
-                    && event.id === undefined
-                    && typeof event.method === 'string') {
+                } else if (event && typeof event === 'object'
+                    && 'jsonrpc' in event && event.jsonrpc === '2.0'
+                    && !('id' in event)
+                    && 'method' in event && typeof event.method === 'string') {
                     // 服务器通知（无 id）：按 method 派发，供 McpManager 刷新列表缓存等
-                    this.emit('notification', event.method, event.params);
+                    this.emit('notification', event.method, 'params' in event ? event.params : undefined);
                 }
             };
             // 解析一段 SSE 文本：data: 行累积进 eventData，空行触发事件派发
-            const parseChunkText = (text: string, keepTail: boolean) => {
+            const parseChunkText = async (text: string, keepTail: boolean) => {
                 const lines = text.split('\n');
                 if (keepTail) {
                     // 末尾不完整的行保留到下一 chunk
@@ -667,7 +673,7 @@ export class HttpMcpClient extends EventEmitter {
                             throw eventOverflowError;
                         }
                     } else if (line === '' && eventData !== null) {
-                        dispatchEvent();
+                        await dispatchEvent();
                         if (matched) break;
                     }
                 }
@@ -699,9 +705,9 @@ export class HttpMcpClient extends EventEmitter {
                     // 「if (done && eventData !== null)」位于 done 提前 break 之后，属死代码。
                     streamEnded = true;
                     bufferParts.push(decoder.decode());
-                    parseChunkText(bufferParts.join(''), false);
+                    await parseChunkText(bufferParts.join(''), false);
                     if (eventData !== null) {
-                        dispatchEvent();
+                        await dispatchEvent();
                     }
                     break;
                 }
@@ -726,7 +732,7 @@ export class HttpMcpClient extends EventEmitter {
                     this.emitError(bufferOverflowError);
                     throw bufferOverflowError;
                 }
-                parseChunkText(chunkText, true);
+                await parseChunkText(chunkText, true);
 
                 if (matched) {
                     // 已拿到结果，提前关闭读流（某些服务器不会主动关闭 SSE 流）
@@ -778,21 +784,24 @@ export class HttpMcpClient extends EventEmitter {
      * 发送通知（无需响应，同样受超时与 disconnect 中止保护）
      */
     private async sendNotification(method: string, params?: any): Promise<void> {
-        const notification = {
-            jsonrpc: '2.0',
-            method,
-            params
-        };
+        await this.sendRpcMessage({ jsonrpc: '2.0', method, params });
+    }
+
+    private async sendRpcMessage(notification: object): Promise<void> {
         
         // 默认 User-Agent 标识请求来源；协议头优先（与 sendRequest 同口径），不被用户自定义 headers 覆盖
         const headers: Record<string, string> = {
             'User-Agent': PRODUCT_USER_AGENT,
             ...this.headers,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/event-stream'
         };
         
         if (this.sessionId) {
             headers['Mcp-Session-Id'] = this.sessionId;
+        }
+        if (this.protocolVersion) {
+            headers['MCP-Protocol-Version'] = this.protocolVersion;
         }
         
         const controller = new AbortController();

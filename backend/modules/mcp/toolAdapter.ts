@@ -60,6 +60,7 @@ function convertInputSchemaToParameters(inputSchema?: McpToolSchema): ToolDeclar
     }
 
     return {
+        ...inputSchema,
         type: 'object',
         properties: inputSchema.properties || {},
         required: inputSchema.required || []
@@ -107,10 +108,11 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
                     break;
 
                 case 'image':
+                case 'audio':
                     // MCP 图片内容
                     if (content.data) {
                         multimodalData.push({
-                            mimeType: content.mimeType || 'image/png',
+                            mimeType: content.mimeType || (content.type === 'audio' ? 'audio/wav' : 'image/png'),
                             data: content.data,
                             name: content.uri
                         });
@@ -119,14 +121,19 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
 
                 case 'resource':
                     // 嵌入资源 - 可能包含文本或二进制数据
-                    if (content.text) {
-                        textContents.push(content.text);
-                    } else if (content.data) {
+                    if (content.resource?.text !== undefined || content.text !== undefined) {
+                        textContents.push(content.resource?.text ?? content.text ?? '');
+                    } else if (content.resource?.blob || content.data) {
                         multimodalData.push({
-                            mimeType: content.mimeType || 'application/octet-stream',
-                            data: content.data,
-                            name: content.uri
+                            mimeType: content.resource?.mimeType || content.mimeType || 'application/octet-stream',
+                            data: content.resource?.blob || content.data!,
+                            name: content.resource?.uri || content.uri
                         });
+                    }
+                    break;
+                case 'resource_link':
+                    if (content.uri) {
+                        textContents.push([content.name, content.uri, content.description].filter(Boolean).join('\n'));
                     }
                     break;
             }
@@ -135,9 +142,11 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
 
     return {
         success: true,
-        data: textContents.length > 0 ? textContents.join('\n') : undefined,
+        data: mcpResult.structuredContent !== undefined
+            ? (textContents.length > 0
+                ? { text: textContents.join('\n'), structuredContent: mcpResult.structuredContent }
+                : mcpResult.structuredContent)
+            : (textContents.length > 0 ? textContents.join('\n') : undefined),
         multimodal: multimodalData.length > 0 ? multimodalData : undefined
     };
 }
-
-

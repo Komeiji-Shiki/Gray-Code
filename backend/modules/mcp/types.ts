@@ -203,17 +203,26 @@ export interface McpToolCallRequest {
 /**
  * MCP 工具调用结果
  */
-export interface McpToolCallResult {
+export interface McpToolContent {
+    type: 'text' | 'image' | 'audio' | 'resource' | 'resource_link';
+    text?: string;
+    data?: string;
+    mimeType?: string;
+    uri?: string;
+    name?: string;
+    description?: string;
+    resource?: McpResourceContent;
+}
+
+export interface McpRawToolResult {
+    content?: McpToolContent[];
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+}
+
+export interface McpToolCallResult extends McpRawToolResult {
     /** 是否成功 */
     success: boolean;
-    /** 结果内容 */
-    content?: Array<{
-        type: 'text' | 'image' | 'resource';
-        text?: string;
-        data?: string;
-        mimeType?: string;
-        uri?: string;
-    }>;
     /** 错误信息 */
     error?: string;
     /** 是否为错误结果 */

@@ -55,13 +55,8 @@ export async function performToolCall(
             success: !result.isError,
             // 透传 uri：McpToolCallResult.content 类型契约声明了 uri?（types.ts），
             // 服务器返回 resource 类型内容时携带的 uri 不能在此被丢弃
-            content: (result.content || []).map(c => ({
-                type: c.type as 'text' | 'image' | 'resource',
-                text: c.text,
-                data: c.data,
-                mimeType: c.mimeType,
-                uri: c.uri
-            })),
+            content: result.content || [],
+            structuredContent: result.structuredContent,
             isError: result.isError
         };
     } catch (error) {

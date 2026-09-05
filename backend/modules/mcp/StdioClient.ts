@@ -6,6 +6,8 @@
 
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
+import { collectMcpList, createServerRequestReply, isJsonRpcResponse } from './protocol';
+import type { McpRawToolResult } from './types';
 import { createGrayCodeMcpClientInfo } from '../../core/productMetadata';
 
 // cross-spawn keeps argv boundaries on Windows while resolving PATHEXT commands
@@ -227,9 +229,7 @@ export class StdioMcpClient extends EventEmitter {
             // 发送初始化请求（带超时和进程退出检测）
             const initResult = await this.sendRequest<InitializeResult>('initialize', {
                 protocolVersion: '2024-11-05',
-                capabilities: {
-                    roots: { listChanged: true }
-                },
+                capabilities: {},
                 clientInfo: createGrayCodeMcpClientInfo()
             });
             
@@ -243,8 +243,7 @@ export class StdioMcpClient extends EventEmitter {
             // 获取工具列表（如果支持）
             if (this.capabilities?.tools) {
                 try {
-                    const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
-                    this.tools = toolsResult.tools || [];
+                    this.tools = await collectMcpList<McpTool>(params => this.sendRequest('tools/list', params), 'tools');
                 } catch {
                     this.listFetchFailed = true; // tools/list 失败被吞：标记供上层判定连接质量
                 }
@@ -253,8 +252,7 @@ export class StdioMcpClient extends EventEmitter {
             // 获取资源列表（如果支持）
             if (this.capabilities?.resources) {
                 try {
-                    const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
-                    this.resources = resourcesResult.resources || [];
+                    this.resources = await collectMcpList<McpResource>(params => this.sendRequest('resources/list', params), 'resources');
                 } catch {
                     this.listFetchFailed = true;
                 }
@@ -263,8 +261,7 @@ export class StdioMcpClient extends EventEmitter {
             // 获取提示列表（如果支持）
             if (this.capabilities?.prompts) {
                 try {
-                    const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
-                    this.prompts = promptsResult.prompts || [];
+                    this.prompts = await collectMcpList<McpPrompt>(params => this.sendRequest('prompts/list', params), 'prompts');
                 } catch {
                     this.listFetchFailed = true;
                 }
@@ -401,8 +398,7 @@ export class StdioMcpClient extends EventEmitter {
         // 刷新工具列表（如果支持）
         if (this.capabilities?.tools) {
             try {
-                const toolsResult = await this.sendRequest<{ tools: McpTool[] }>('tools/list', {});
-                this.tools = toolsResult.tools || [];
+                this.tools = await collectMcpList<McpTool>(params => this.sendRequest('tools/list', params), 'tools');
             } catch (error) {
                 anyFailed = true;
                 console.error('[MCP] Failed to refresh tools list:', error);
@@ -412,8 +408,7 @@ export class StdioMcpClient extends EventEmitter {
         // 刷新资源列表（如果支持）
         if (this.capabilities?.resources) {
             try {
-                const resourcesResult = await this.sendRequest<{ resources: McpResource[] }>('resources/list', {});
-                this.resources = resourcesResult.resources || [];
+                this.resources = await collectMcpList<McpResource>(params => this.sendRequest('resources/list', params), 'resources');
             } catch (error) {
                 anyFailed = true;
                 console.error('[MCP] Failed to refresh resources list:', error);
@@ -423,8 +418,7 @@ export class StdioMcpClient extends EventEmitter {
         // 刷新提示列表（如果支持）
         if (this.capabilities?.prompts) {
             try {
-                const promptsResult = await this.sendRequest<{ prompts: McpPrompt[] }>('prompts/list', {});
-                this.prompts = promptsResult.prompts || [];
+                this.prompts = await collectMcpList<McpPrompt>(params => this.sendRequest('prompts/list', params), 'prompts');
             } catch (error) {
                 anyFailed = true;
                 console.error('[MCP] Failed to refresh prompts list:', error);
@@ -456,10 +450,7 @@ export class StdioMcpClient extends EventEmitter {
      *
      * @param signal 外部取消信号（可选）；中止时拒绝 pending 并清理监听
      */
-    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{
-        content: Array<{ type: string; text?: string; data?: string; mimeType?: string; uri?: string }>;
-        isError?: boolean;
-    }> {
+    async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpRawToolResult> {
         return await this.sendRequest('tools/call', {
             name,
             arguments: args
@@ -611,7 +602,7 @@ export class StdioMcpClient extends EventEmitter {
     }
     
     /** 直接向 stdin 写入一条 JSON-RPC 消息（带换行）；进程已退出时忽略 */
-    private writeRaw(payload: Record<string, unknown>): void {
+    private writeRaw(payload: object): void {
         if (!this.process || !this.process.stdin) return;
         try {
             this.process.stdin.write(JSON.stringify(payload) + '\n');
@@ -694,37 +685,33 @@ export class StdioMcpClient extends EventEmitter {
     /**
      * 处理 JSON-RPC 消息
      */
-    private handleMessage(message: JsonRpcResponse | any): void {
-        // 检查是响应还是通知
-        if ('id' in message && message.id !== null) {
-            // 这是响应
+    private handleMessage(message: unknown): void {
+        // Server request IDs are independent of our outbound request IDs.
+        const reply = createServerRequestReply(message);
+        if (reply) {
+            this.writeRaw(reply);
+            return;
+        }
+        if (isJsonRpcResponse(message)) {
             const pending = this.pendingRequests.get(message.id);
             if (pending) {
                 this.pendingRequests.delete(message.id);
-                
                 if (message.error) {
-                    // 错误码拼入信息：上层（McpManager）只展示 message，不丢 code
                     pending.reject(new Error(`MCP error ${message.error.code}: ${message.error.message}`));
                 } else {
                     pending.resolve(message.result);
                 }
             }
-        } else if ('method' in message) {
-            // 服务器发来的 JSON-RPC 请求（带 id）：客户端不支持服务器发起的请求，
-            // 回 method-not-found 错误，避免服务器等待响应而挂起
-            if (message.id !== undefined && message.id !== null) {
-                this.writeRaw({
-                    jsonrpc: '2.0',
-                    id: message.id,
-                    error: { code: -32601, message: `Method not found: ${String(message.method)}` }
-                });
-                return;
+            return;
+        }
+        if (message && typeof message === 'object') {
+            const notification = message as Record<string, unknown>;
+            if (notification.jsonrpc === '2.0' && notification.id === undefined && typeof notification.method === 'string') {
+                this.emit('notification', notification.method, notification.params);
             }
-            // 无 id 的通知：按 method 派发
-            this.emit('notification', message.method, message.params);
         }
     }
-    
+
     /**
      * 附加 stderr 输出（带 64KB 上限，超出截断并标记）
      */
