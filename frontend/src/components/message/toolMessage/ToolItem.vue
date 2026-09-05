@@ -223,7 +223,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 </script>
 
 <template>
-  <div class="tool-item">
+  <div class="tool-item" :class="getStatusClass(tool.status, tool.awaitingConfirmation)">
     <div class="tool-header">
       <component
         :is="isExpandable ? 'button' : 'div'"
@@ -352,15 +352,29 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   flex-direction: column;
   background: var(--gc-surface-base);
   border: 1px solid var(--gc-border-subtle);
-  border-radius: var(--gc-radius-sm);
+  border-inline-start-width: 2px;
+  border-radius: var(--gc-radius-md);
   overflow: hidden;
+}
+
+.tool-item.status-running {
+  border-inline-start-color: var(--gc-info);
+}
+
+.tool-item.status-pending,
+.tool-item.status-warning {
+  border-inline-start-color: var(--gc-warning);
+}
+
+.tool-item.status-error {
+  border-inline-start-color: var(--gc-danger);
 }
 
 .tool-header {
   display: flex;
   align-items: center;
   gap: var(--gc-space-2);
-  padding: var(--gc-space-1) var(--gc-space-2);
+  padding: var(--gc-space-2) var(--gc-space-3);
   transition: background-color var(--gc-duration-fast) var(--gc-ease-standard);
 }
 
@@ -395,20 +409,25 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   display: flex;
   align-items: center;
   gap: var(--gc-space-1);
+  min-width: 0;
 }
 
 .expand-icon {
+  flex-shrink: 0;
   font-size: var(--gc-font-size-body);
   color: var(--gc-text-muted);
   transition: transform var(--transition-fast, 0.1s);
 }
 
 .tool-icon {
-  font-size: var(--gc-font-size-title);
-  color: var(--gc-info);
+  flex-shrink: 0;
+  font-size: var(--gc-icon-size-sm);
+  color: var(--gc-text-muted);
 }
 
 .tool-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--gc-font-size-body);
   font-weight: var(--gc-font-weight-semibold);
   color: var(--gc-text-primary);
@@ -454,6 +473,9 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 
 .tool-duration {
   margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   font-size: var(--gc-font-size-caption);
   color: var(--gc-text-muted);
 }
@@ -465,14 +487,22 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   flex-shrink: 0;
 }
 
+.tool-action-buttons:empty {
+  display: none;
+}
+
 .tool-description {
-  margin-left: 28px;
+  margin-left: calc(var(--gc-font-size-body) + var(--gc-icon-size-sm) + var(--gc-space-1) + var(--gc-space-1));
   color: var(--gc-text-muted);
   font-family: var(--vscode-editor-font-family);
   font-size: var(--gc-font-size-caption);
-  line-height: 1.4;
+  line-height: var(--gc-line-height-normal);
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.tool-summary-static .tool-description {
+  margin-left: calc(var(--gc-icon-size-sm) + var(--gc-space-1));
 }
 
 /* Tool actions share the global button primitive; local rules only preserve compact density. */
@@ -507,7 +537,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   overflow-y: auto;
   border-top: 1px solid var(--gc-border-subtle);
   background: var(--gc-surface-muted);
-  padding: 4px var(--spacing-sm, 8px);
+  padding: var(--gc-space-2) var(--gc-space-3);
 }
 
 .streaming-preview-content {
@@ -522,7 +552,7 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
 }
 
 .tool-content {
-  padding: 4px var(--spacing-sm, 8px);
+  padding: var(--gc-space-2) var(--gc-space-3);
   border-top: 1px solid var(--gc-border-subtle);
   background: var(--gc-surface-muted);
 }
@@ -615,8 +645,8 @@ async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
   }
 
   .tool-action-buttons {
-    margin-left: 28px;
     flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }
 

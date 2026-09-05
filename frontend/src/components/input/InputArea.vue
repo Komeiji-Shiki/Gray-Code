@@ -852,14 +852,29 @@ watch(() => settingsStore.promptModesVersion, () => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm, 8px);
-  padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-background);
-  border-top: 1px solid var(--vscode-panel-border);
+  min-width: 0;
+  gap: var(--gc-space-2);
+  margin: var(--gc-space-2);
+  padding: var(--gc-space-2);
+  background: var(--vscode-input-background, var(--gc-surface-raised));
+  border: 1px solid var(--gc-border-control);
+  border-radius: var(--gc-radius-lg);
+  transition: border-color var(--gc-duration-fast) var(--gc-ease-standard);
+}
+
+.input-area:focus-within {
+  border-color: var(--gc-focus-border);
 }
 
 .input-box-container {
   position: relative;
+}
+
+/* 输入区共用外框；保留编辑器自身的尺寸、拖拽和滚动行为。 */
+.input-box-container :deep(.input-editor) {
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--gc-radius-sm);
 }
 
 /* DeepSeek Vision 大图处理复选框：悬浮于输入框右下角（重叠在文本上，背景衬底避免遮字不清） */
@@ -899,13 +914,16 @@ watch(() => settingsStore.promptModesVersion, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--gc-space-2);
+  min-width: 0;
 }
 
 .toolbar-left,
 .toolbar-right {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm, 8px);
+  flex-shrink: 0;
+  gap: var(--gc-space-1);
 }
 
 /* TPS 实时可视化条：占据底部行中间弹性区，总结上下文按钮左侧 */
@@ -922,6 +940,27 @@ watch(() => settingsStore.promptModesVersion, () => {
 
   .tps-slot {
     padding: 0 4px;
+  }
+}
+
+@media (max-width: 360px) {
+  .bottom-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-right {
+    margin-left: auto;
+  }
+
+  .tps-slot {
+    order: 1;
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .input-area {
+    transition: none;
   }
 }
 
@@ -994,7 +1033,7 @@ watch(() => settingsStore.promptModesVersion, () => {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  font-size: var(--gc-font-size-micro);
+  font-size: var(--gc-font-size-caption);
   line-height: 1.5;
 }
 
@@ -1005,6 +1044,6 @@ watch(() => settingsStore.promptModesVersion, () => {
 .token-tooltip-value {
   color: var(--vscode-foreground);
   font-family: var(--vscode-editor-font-family);
-  font-size: var(--gc-font-size-micro);
+  font-size: var(--gc-font-size-caption);
 }
 </style>

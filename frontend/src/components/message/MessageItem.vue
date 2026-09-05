@@ -290,15 +290,15 @@ function handleRestoreAndRetry(checkpointId: string) {
 .message-item {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm, 8px);
-  padding: var(--spacing-md, 16px) var(--spacing-md, 16px);
-  border-bottom: 1px solid var(--vscode-panel-border);
+  gap: var(--gc-space-3);
+  padding: var(--gc-space-4);
+  border-bottom: 1px solid color-mix(in srgb, var(--gc-border-subtle) 65%, transparent);
   transition: background-color var(--transition-fast, 0.1s);
   /* 性能优化：布局隔离 */
   contain: layout;
 }
 
-.message-item:last-child {
+.message-item:last-child:not(.user-message) {
   border-bottom: none;
 }
 
@@ -309,9 +309,13 @@ function handleRestoreAndRetry(checkpointId: string) {
   max-width: 100%;
 }
 
-/* 用户消息淡蓝色背景 — 滚动时快速定位 */
+/* 用户消息使用轻量卡片，助手正文保留完整阅读宽度。 */
 .user-message {
-  background-color: color-mix(in srgb, var(--vscode-textLink-foreground) 6%, transparent);
+  margin: var(--gc-space-2) var(--gc-space-3);
+  padding: var(--gc-space-3);
+  background-color: color-mix(in srgb, var(--gc-link) 6%, var(--gc-surface-base));
+  border: 1px solid color-mix(in srgb, var(--gc-link) 18%, var(--gc-border-subtle));
+  border-radius: var(--gc-radius-md);
 }
 
 /* 消息头部 */
@@ -329,9 +333,9 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .role-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vscode-foreground);
+  font-size: var(--gc-font-size-body);
+  font-weight: var(--gc-font-weight-semibold);
+  color: var(--gc-text-primary);
 }
 
 .user-message .role-label {
@@ -344,9 +348,9 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* 楼层号徽标（角色名称右侧） */
 .message-floor {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.6;
+  font-size: var(--gc-font-size-caption);
+  color: var(--gc-text-muted);
+  font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
@@ -383,5 +387,12 @@ function handleRestoreAndRetry(checkpointId: string) {
 /* 键盘聚焦（Tab 导航到消息内任意可聚焦元素）时同样显示操作按钮，保证纯键盘可用 */
 .message-item:focus-within .message-header :deep(.message-actions) {
   opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-item,
+  .message-header :deep(.message-actions) {
+    transition: none;
+  }
 }
 </style>

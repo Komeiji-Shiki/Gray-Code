@@ -42,8 +42,6 @@ const emit = defineEmits<{
       />
     </div>
 
-    <span class="selector-separator"></span>
-
     <div class="channel-selector-wrapper">
       <ChannelSelector
         :model-value="props.configId"
@@ -54,8 +52,6 @@ const emit = defineEmits<{
         @update:model-value="emit('channel-change', $event)"
       />
     </div>
-
-    <span class="selector-separator"></span>
 
     <div class="model-selector-wrapper">
       <ModelSelector
@@ -70,48 +66,68 @@ const emit = defineEmits<{
 
 <style scoped>
 .selector-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1fr) minmax(0, 1.4fr);
   align-items: center;
-  gap: var(--spacing-sm, 8px);
-  padding-top: 4px;
-  border-top: 1px solid var(--vscode-panel-border);
-  max-width: 420px;
-}
-
-.mode-selector-wrapper {
-  flex-shrink: 0;
-}
-
-.channel-selector-wrapper {
-  flex: 1;
+  gap: var(--gc-space-2);
   min-width: 0;
-  max-width: 140px;
+  padding-top: var(--gc-space-2);
+  border-top: 1px solid var(--gc-border-subtle);
 }
 
-.channel-selector-wrapper :deep(.channel-selector) {
+.mode-selector-wrapper,
+.channel-selector-wrapper,
+.model-selector-wrapper {
+  min-width: 0;
+}
+
+.mode-selector-wrapper :deep(.mode-selector),
+.channel-selector-wrapper :deep(.channel-selector),
+.model-selector-wrapper :deep(.model-selector) {
   width: 100%;
+  min-width: 0;
+}
+
+.selector-bar :deep(.mode-trigger),
+.selector-bar :deep(.selector-trigger),
+.selector-bar :deep(.model-trigger) {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: var(--gc-control-height-md);
+  padding: 0 var(--gc-space-2);
+  background: var(--gc-surface-base);
+}
+
+.selector-bar :deep(.mode-name),
+.selector-bar :deep(.placeholder) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .channel-selector-wrapper :deep(.selector-dropdown) {
-  width: 180px;
-  min-width: 180px;
-}
-
-.model-selector-wrapper {
-  flex: 1;
+  left: auto;
+  right: 0;
+  width: max(100%, 180px);
   min-width: 0;
-  max-width: 140px;
+  max-width: calc(100vw - var(--gc-space-8));
 }
 
-.model-selector-wrapper :deep(.model-selector) {
-  width: 100%;
+.model-selector-wrapper :deep(.model-dropdown) {
+  width: max(100%, 240px);
+  min-width: 0;
+  max-width: calc(100vw - var(--gc-space-8));
 }
 
-.selector-separator {
-  width: 1px;
-  height: 14px;
-  background: var(--vscode-panel-border);
-  opacity: 0.6;
-  flex-shrink: 0;
+@media (max-width: 380px) {
+  .selector-bar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .model-selector-wrapper {
+    grid-column: 1 / -1;
+  }
 }
 </style>
