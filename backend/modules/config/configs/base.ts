@@ -546,3 +546,13 @@ export function applyCustomBody(originalBody: any, customBody?: CustomBodyConfig
     
     return result;
 }
+
+/** Resolve transport and payload streaming from the same effective configuration. */
+export function resolveConfiguredStream(config: BaseChannelConfig & { options?: { stream?: boolean } }): boolean {
+    const configured = config.options?.stream ?? config.preferStream ?? false;
+    // generateContent chooses its transport in the URL, not a body.stream field.
+    if (config.type === 'gemini') return configured;
+    const stream = applyCustomBody({ stream: configured }, config.customBody, config.customBodyEnabled).stream;
+    if (typeof stream !== 'boolean') throw new TypeError('customBody.stream must be a boolean');
+    return stream;
+}

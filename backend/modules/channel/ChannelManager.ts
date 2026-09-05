@@ -1,3 +1,4 @@
+import { resolveConfiguredStream } from '../config/configs/base';
 /**
  * GrayCode - 渠道管理器
  *
@@ -153,8 +154,7 @@ export class ChannelManager {
         
         // 2. 决定是否使用流式
         // 优先级：config.options.stream > config.preferStream > 默认值（false）
-        const optionsStream = config.options?.stream;
-        const useStream = optionsStream ?? config.preferStream ?? false;
+        const useStream = resolveConfiguredStream(config);
         
         // 3. 根据 stream 决定调用哪个方法
         if (useStream) {

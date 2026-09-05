@@ -1,3 +1,5 @@
+import { parseToolArguments } from './toolArguments';
+import { resolveConfiguredStream } from '../../config/configs/base';
 /**
  * GrayCode - OpenAI Responses 格式转换器
  *
@@ -183,7 +185,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         Object.assign(body, genConfig);
 
         // 决定是否使用流式
-        const useStream = config.options?.stream ?? config.preferStream ?? false;
+        const useStream = resolveConfiguredStream(config);
         
         // 始终将 stream 添加到请求体
         body.stream = useStream;
@@ -610,6 +612,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             parts.push({
                                 text: contentPart.text
                             });
+                        } else if (contentPart.type === 'refusal' && typeof contentPart.refusal === 'string') {
+                            parts.push({ text: contentPart.refusal });
                         }
                     }
                 }
@@ -648,12 +652,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 }
             } else if (item.type === 'function_call') {
                 // 处理函数调用
-                let args: Record<string, unknown> = {};
-                try {
-                    args = JSON.parse(item.arguments || '{}');
-                } catch {
-                    args = {};
-                }
+                const args = parseToolArguments(item.arguments, item.name);
                 parts.push({
                     functionCall: {
                         name: item.name,
@@ -754,6 +753,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 }
                 break;
             
+            case 'response.refusal.delta':
             case 'response.output_text.delta':
             case 'response.text.delta': // 兼容旧版本
                 // 文本增量
@@ -843,6 +843,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 });
                 break;
             
+            case 'response.incomplete':
             case 'response.completed':
             case 'response.done': // 兼容旧版本
                 // 响应完成
@@ -862,7 +863,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     };
                 }
                 
-                finishReason = chunk.response?.status;
+                finishReason = chunk.type === 'response.incomplete'
+                    ? chunk.response?.incomplete_details?.reason || 'incomplete'
+                    : chunk.response?.status;
                 break;
             
             case 'response.failed':
@@ -874,11 +877,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     chunk
                 );
 
-            case 'response.incomplete':
-                // 响应不完整
-                done = true;
-                finishReason = chunk.response?.incomplete_details?.reason || 'incomplete';
-                break;
+
                 
         }
 
@@ -929,7 +928,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             if (effort === 'custom') {
                 effort = options.reasoning.effortCustom?.trim() || undefined;
             }
-            if (effort && effort !== 'none') {
+            if (effort) {
                 reasoning.effort = effort;
             }
             

@@ -1,3 +1,4 @@
+import { resolveConfiguredStream } from '../../config/configs/base';
 /**
  * GrayCode - Gemini Interactions API 格式转换器
  *
@@ -188,7 +189,7 @@ export class GeminiInteractionsFormatter extends GeminiFormatter {
         }
 
         // 是否流式（完全由配置决定）
-        const useStream = c.options?.stream ?? c.preferStream ?? false;
+        const useStream = resolveConfiguredStream(c);
         if (useStream) {
             body.stream = true;
         }

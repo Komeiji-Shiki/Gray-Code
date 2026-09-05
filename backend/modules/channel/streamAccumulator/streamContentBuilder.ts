@@ -6,6 +6,7 @@
  */
 
 import type { Content, ContentPart, UsageMetadata, ThoughtSignatures } from '../../conversation';
+import { parseToolArguments } from '../formatters/toolArguments';
 
 export interface BuildContentOptions {
     parsePartialArgs: boolean;
@@ -58,7 +59,7 @@ export function tryParseFunctionCallArgs(fc: any): boolean {
         : [fc.partialArgs];
     for (const candidate of candidates) {
         try {
-            fc.args = JSON.parse(candidate);
+            fc.args = parseToolArguments(candidate, fc.name || 'unknown');
             // 参数已并入流式增量：预填标记失效，后续按普通累积语义继续
             fc.prefilledArgs = false;
             // 清空已消费的增量片段（合并路径与新块路径共用此成功点）：
@@ -89,12 +90,11 @@ export function buildContentFromState(state: StreamContentBuildState, options: B
                     fc.index === options.finalizeFunctionCallIndex;
                 // 预填 input（prefilledArgs）时 args 非空但可能不完整（增量尚未并入），
                 // 同样走「预填 + 增量 / 增量自身」语义解析（见 tryParseFunctionCallArgs）
-                if ((options.parsePartialArgs || shouldFinalizeFunctionCall) && fc.partialArgs &&
-                    ((!fc.args || Object.keys(fc.args).length === 0) || fc.prefilledArgs === true)) {
+                if ((options.parsePartialArgs || shouldFinalizeFunctionCall) && fc.partialArgs) {
                     if (!tryParseFunctionCallArgs(fc) && options.warnOnParseFailure) {
-                        const fnName = fc.name || 'unknown';
-                        const preview = String(fc.partialArgs || '').slice(0, 200);
-                        console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
+                        // Final invocations must be valid objects; partial/cancelled
+                        // snapshots still preserve display state without executing it.
+                        parseToolArguments(fc.partialArgs, fc.name || 'unknown');
                     }
                 }
 

@@ -36,11 +36,7 @@ const effortOptions = computed<SelectOption[]>(() => [
 ])
 
 // 输出详细程度选项
-const summaryOptions = computed<SelectOption[]>(() => [
-  { value: 'auto', label: t('components.channels.openai.thinking.summaryAuto'), description: '' },
-  { value: 'concise', label: t('components.channels.openai.thinking.summaryConcise'), description: '' },
-  { value: 'detailed', label: t('components.channels.openai.thinking.summaryDetailed'), description: '' }
-])
+
 
 // 默认配置值
 const DEFAULT_VALUES: Record<string, any> = {
@@ -370,31 +366,7 @@ function onSendThoughtsChange(e: any) {
           </span>
         </div>
         
-        <!-- 输出详细程度 -->
-        <div class="option-item option-with-toggle">
-          <div class="option-header">
-            <label>{{ t('components.channels.openai.thinking.summaryLabel') }}</label>
-            <label class="toggle-switch small" :title="t('components.channels.common.toggleHint')">
-              <input
-                type="checkbox"
-                :checked="getReasoningValue('summaryEnabled', false)"
-                :disabled="!isOptionEnabled('reasoning')"
-                @change="(e: any) => updateReasoning('summaryEnabled', e.target.checked)"
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <CustomSelect
-            :model-value="getReasoningValue('summary', 'auto')"
-            :options="summaryOptions"
-            :disabled="!isOptionEnabled('reasoning') || !getReasoningValue('summaryEnabled', false)"
-            :placeholder="t('components.channels.openai.thinking.summaryPlaceholder')"
-            @update:model-value="(v: string) => updateReasoning('summary', v)"
-          />
-          <span class="option-hint">
-            {{ t('components.channels.openai.thinking.summaryHint') }}
-          </span>
-        </div>
+
       </div>
     </div>
     

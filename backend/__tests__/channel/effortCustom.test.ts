@@ -103,7 +103,7 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
             history: createHistory()
         }, createOpenAIConfig());
 
-        expect(request.body.reasoning).toEqual({ effort: 'max' });
+        expect(request.body.reasoning_effort).toBe('max');
     });
 
     test('effort=custom 但 effortCustom 为空白时不发送 reasoning', () => {
@@ -119,7 +119,7 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
         expect(request.body.reasoning).toBeUndefined();
     });
 
-    test('effort=none 时仍不发送 effort（不回归）', () => {
+    test('effort=none 显式禁用推理，不回退到供应商默认值', () => {
         const request = formatter.buildRequest({
             configId: 'openai-test',
             history: createHistory()
@@ -129,7 +129,7 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
             }
         }));
 
-        expect(request.body.reasoning).toBeUndefined();
+        expect(request.body.reasoning_effort).toBe('none');
     });
 
     test('预设档位不受影响：xhigh / max / ultra 直接透传', () => {
@@ -142,7 +142,7 @@ describe('思考强度 custom 档位（OpenAIFormatter）', () => {
                     reasoning: { effort: preset }
                 }
             }));
-            expect(request.body.reasoning).toEqual({ effort: preset });
+            expect(request.body.reasoning_effort).toBe(preset);
         }
     });
 });

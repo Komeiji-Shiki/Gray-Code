@@ -132,6 +132,9 @@ export class StreamResponseProcessor {
      * 获取最终内容
      */
     getContent(): Content {
+        if (this.cancelled || this.config.abortSignal?.aborted) {
+            return this.accumulator.getStreamingContent({ parsePartialArgs: true, includeInternalFields: false });
+        }
         return this.accumulator.getFinalContent();
     }
 

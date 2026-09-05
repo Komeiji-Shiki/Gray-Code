@@ -1,3 +1,4 @@
+import { resolveConfiguredStream } from '../../config/configs/base';
 /**
  * GrayCode - Anthropic 格式转换器
  *
@@ -164,7 +165,7 @@ export class AnthropicFormatter extends BaseFormatter {
         Object.assign(body, genConfig);
         
         // 决定是否使用流式（始终发送 stream 字段）
-        const useStream = (config.options as any)?.stream ?? (config as any).preferStream ?? false;
+        const useStream = resolveConfiguredStream(config);
         body.stream = useStream;
         
         // 构建 URL

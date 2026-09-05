@@ -1,3 +1,5 @@
+import { parseToolArguments } from './toolArguments';
+import { resolveConfiguredStream } from '../../config/configs/base';
 /**
  * GrayCode - OpenAI 格式转换器
  *
@@ -164,7 +166,7 @@ export class OpenAIFormatter extends BaseFormatter {
         Object.assign(body, genConfig);
         
         // 决定是否使用流式（完全由配置决定）
-        const useStream = config.options?.stream ?? config.preferStream ?? false;
+        const useStream = resolveConfiguredStream(config);
         
         // 始终将 stream 添加到请求体（明确发送 true 或 false）
         body.stream = useStream;
@@ -181,7 +183,7 @@ export class OpenAIFormatter extends BaseFormatter {
             ? config.url.slice(0, -1)
             : config.url;
         
-        const url = `${baseUrl}/chat/completions`;
+        const url = baseUrl.endsWith('/chat/completions') ? baseUrl : `${baseUrl}/chat/completions`;
         
         // 构建请求头
         const headers: Record<string, string> = {
@@ -669,28 +671,10 @@ export class OpenAIFormatter extends BaseFormatter {
         const reasoning = config.options?.reasoning;
         
         if (reasoningEnabled && reasoning) {
-            const reasoningConfig: any = {};
-            
-            // 思考强度 (effort): none, low, medium, high, xhigh, max, ultra, custom
-            let effort: string | undefined = reasoning.effort;
-            // 自定义模式：使用 effortCustom 的值原样透传
-            if (effort === 'custom') {
-                effort = reasoning.effortCustom?.trim() || undefined;
-            }
-            if (effort && effort !== 'none') {
-                reasoningConfig.effort = effort;
-            }
-            
-            // 输出详细程度 (summary): auto, concise, detailed
-            // 只有当 summaryEnabled 为 true 时才发送
-            if (reasoning.summaryEnabled && reasoning.summary) {
-                reasoningConfig.summary = reasoning.summary;
-            }
-            
-            // 只有当有配置项时才添加 reasoning
-            if (Object.keys(reasoningConfig).length > 0) {
-                genConfig.reasoning = reasoningConfig;
-            }
+            const effort = reasoning.effort === 'custom'
+                ? reasoning.effortCustom?.trim()
+                : reasoning.effort;
+            if (effort) genConfig.reasoning_effort = effort;
         }
         
         return genConfig;
@@ -737,6 +721,10 @@ export class OpenAIFormatter extends BaseFormatter {
         }
         
         // 构建完整的 Content
+        if (typeof message.refusal === 'string' && message.refusal) {
+            parts.push({ text: message.refusal });
+        }
+
         const content: Content = {
             role: 'model',  // 统一使用 'model'
             parts,
@@ -787,12 +775,7 @@ export class OpenAIFormatter extends BaseFormatter {
         if (message.tool_calls && Array.isArray(message.tool_calls)) {
             for (const toolCall of message.tool_calls) {
                 if (toolCall.type === 'function') {
-                    let args: Record<string, unknown> = {};
-                    try {
-                        args = JSON.parse(toolCall.function.arguments || '{}');
-                    } catch {
-                        args = {};
-                    }
+                    const args = parseToolArguments(toolCall.function.arguments, toolCall.function.name);
                     parts.push({
                         functionCall: {
                             name: toolCall.function.name,
@@ -863,6 +846,10 @@ export class OpenAIFormatter extends BaseFormatter {
             }
             
             // 提取普通内容增量
+            if (typeof delta?.refusal === 'string' && delta.refusal) {
+                parts.push({ text: delta.refusal });
+            }
+
             if (delta?.content) {
                 parts.push({ text: delta.content });
             }
