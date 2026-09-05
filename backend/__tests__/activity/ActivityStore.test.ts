@@ -24,6 +24,7 @@ describe('ActivityStore', () => {
     });
 
     afterEach(async () => {
+        jest.restoreAllMocks();
         await fs.rm(dir, { recursive: true, force: true });
     });
 
@@ -35,6 +36,23 @@ describe('ActivityStore', () => {
     });
 
     describe('appendSample / loadDay', () => {
+        test.each(['EIO', 'EACCES', 'EPERM'])('preserves a valid file after %s and retries the next read', async code => {
+            const time = localTime(new Date());
+            const date = toDateStr(time);
+            const file = path.join(dir, `${date}.json`);
+            const content = JSON.stringify({ date, samples: [time] });
+            await fs.writeFile(file, content);
+            const error = Object.assign(new Error('temporary read failure'), { code });
+            const read = jest.spyOn(jest.requireActual<typeof import('fs/promises')>('fs/promises'), 'readFile')
+                .mockRejectedValueOnce(error);
+
+            await expect(store.loadDay(date)).rejects.toBe(error);
+            read.mockRestore();
+
+            await expect(fs.readFile(file, 'utf8')).resolves.toBe(content);
+            await expect(store.loadDay(date)).resolves.toEqual([time]);
+        });
+
         test('appends samples in order', async () => {
             const t = localTime(new Date(), 10, 0);
             expect(await store.appendSample(t)).toBe(true);

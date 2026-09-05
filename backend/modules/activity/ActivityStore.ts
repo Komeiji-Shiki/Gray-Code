@@ -83,9 +83,21 @@ export class ActivityStore {
             return cached;
         }
 
+        let raw: string;
+        try {
+            raw = await fs.readFile(this.dayFilePath(date), 'utf-8');
+        } catch (error: unknown) {
+            // I/O 失败不等于内容损坏：保留文件且不缓存空值，后续读取仍可重试。
+            if ((error as { code?: string } | null)?.code !== 'ENOENT') {
+                throw error;
+            }
+            const empty: number[] = [];
+            this.cache.set(date, empty);
+            return empty;
+        }
+
         let samples: number[] = [];
         try {
-            const raw = await fs.readFile(this.dayFilePath(date), 'utf-8');
             const parsed = JSON.parse(raw) as Partial<DayActivityFile>;
             if (!parsed || !Array.isArray(parsed.samples)) {
                 // 合法 JSON 但结构不符（samples 缺失/非数组）：同样视为坏文件，走下方删除重建路径
@@ -103,14 +115,12 @@ export class ActivityStore {
                 }
             }
             samples = deduped;
-        } catch (error: unknown) {
-            if ((error as { code?: string } | null)?.code !== 'ENOENT') {
-                // 文件损坏：删除坏文件，按无数据处理（下次写入时重建）
-                try {
-                    await fs.rm(this.dayFilePath(date), { force: true });
-                } catch {
-                    // 忽略清理失败
-                }
+        } catch {
+            // 已成功读取、但 JSON 或数据结构损坏：沿用重建坏文件的行为。
+            try {
+                await fs.rm(this.dayFilePath(date), { force: true });
+            } catch {
+                // 忽略清理失败
             }
         }
 
