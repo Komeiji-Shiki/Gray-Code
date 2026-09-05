@@ -105,6 +105,7 @@ const handleAttachFile = openFilePicker
 
 // 处理发送消息
 async function handleSend(content: string, messageAttachments: Attachment[], options?: { dynamicContextStrategyOverride?: 'single' | 'preserve' }, onSendResult?: (ok: boolean) => void) {
+  const originTabId = chatStore.activeTabId
   if (!content.trim() && messageAttachments.length === 0) {
     onSendResult?.(false)
     return
@@ -122,6 +123,11 @@ async function handleSend(content: string, messageAttachments: Attachment[], opt
     // 拒绝失败也继续发送（消息不丢，后端 prepareConversationForRequest 会兜底拒绝）
   }
 
+  if (chatStore.activeTabId !== originTabId) {
+    onSendResult?.(false)
+    return
+  }
+
   // 正常发送消息：先立即清除附件（发送失败时恢复，避免已上传附件丢失）
   clearAttachments()
 
@@ -134,7 +140,13 @@ async function handleSend(content: string, messageAttachments: Attachment[], opt
   // sendMessage 的失败路径不抛异常而是返回 false（见 messageActions.sendMessage 内部 catch），
   // 这里依据返回值恢复附件：发送失败时把刚清除的附件放回输入区，避免用户已上传内容丢失
   if (!sent && messageAttachments.length > 0) {
-    storeAttachmentsRef.value.push(...messageAttachments)
+    const target = chatStore.activeTabId === originTabId
+      ? storeAttachmentsRef.value
+      : originTabId ? chatStore.sessionSnapshots.get(originTabId)?.attachments : undefined
+    if (target) {
+      const existing = new Set(target.map(attachment => attachment.id))
+      target.push(...messageAttachments.filter(attachment => !existing.has(attachment.id)))
+    }
   }
   // 把发送结果回报给 InputArea：失败时由 InputArea 恢复正文（editorNodes + inputValue），
   // 与附件恢复一起保证“发送失败不丢用户输入”

@@ -240,6 +240,44 @@ describe('App 开屏动画启动偏好', () => {
     delete window.__GRAYCODE_STARTUP_SPLASH_ENABLED
   })
 
+  test('发送失败的附件只恢复到原标签快照', async () => {
+    const send = deferred<boolean>()
+    runtime.chatStore.activeTabId = 'tab-a'
+    runtime.chatStore.sendMessage.mockReturnValue(send.promise)
+    const snapshot = { attachments: [] }
+    runtime.chatStore.sessionSnapshots.set('tab-a', snapshot)
+    wrapper = mount(App)
+    settingsRequest.resolve(makeSettingsResponse(true))
+    await flushPromises()
+    const attachment = { id: 'attachment-a', name: 'a.png', type: 'image', mimeType: 'image/png', size: 1 }
+    const onResult = vi.fn()
+    wrapper.getComponent({ name: 'InputArea' }).vm.$emit('send', 'A', [attachment], undefined, onResult)
+    runtime.chatStore.activeTabId = 'tab-b'
+    runtime.chatStore.__storeAttachments.value = []
+    send.resolve(false)
+    await flushPromises()
+    expect(runtime.chatStore.__storeAttachments.value).toEqual([])
+    expect(snapshot.attachments).toEqual([attachment])
+    expect(onResult).toHaveBeenCalledWith(false)
+  })
+
+  test('等待拒绝工具期间切换标签，不向新标签发送旧正文', async () => {
+    const cancel = deferred<void>()
+    runtime.chatStore.activeTabId = 'tab-a'
+    runtime.chatStore.hasPendingToolConfirmation = true
+    runtime.chatStore.cancelStreamAndRejectTools.mockReturnValue(cancel.promise)
+    wrapper = mount(App)
+    settingsRequest.resolve(makeSettingsResponse(true))
+    await flushPromises()
+    const onResult = vi.fn()
+    wrapper.getComponent({ name: 'InputArea' }).vm.$emit('send', 'A', [], undefined, onResult)
+    runtime.chatStore.activeTabId = 'tab-b'
+    cancel.resolve()
+    await flushPromises()
+    expect(runtime.chatStore.sendMessage).not.toHaveBeenCalled()
+    expect(onResult).toHaveBeenCalledWith(false)
+  })
+
   test('同步偏好开启时首帧立即挂载 Splash，不等待配置请求返回', async () => {
     wrapper = mount(App)
     await nextTick()

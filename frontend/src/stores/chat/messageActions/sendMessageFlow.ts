@@ -20,7 +20,7 @@ import { updateTabConversationId, updateTabTitle } from '../tabActions'
 import { clearCheckpointsFromIndex } from '../checkpointActions'
 import { persistConversationModelConfig, persistConversationPromptMode } from '../configActions'
 import { validateSessionIdentity } from '../utils'
-import { rebuildMessageIndexById, appendMessage, getMessageIndexById, replaceMessageAt, setToolResponseCacheEntry } from '../state'
+import { rebuildMessageIndexById, appendMessage, replaceMessageAt, setToolResponseCacheEntry } from '../state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from '../windowUtils'
 import { recordInterruptDelivery, INTERRUPT_MESSAGE_MAX_LENGTH } from './interruptNotices'
 import { isAgentMessageRoundPending } from '../agentMessageClaimGate'
@@ -36,13 +36,24 @@ function cleanupFailedSendPlaceholders(
   pendingUserMessageId: string | undefined,
   assistantMessageId: string | null
 ): void {
-  if (!pendingUserMessageId && !assistantMessageId) return
+  const remaining = removeFailedSendPlaceholders(state.allMessages.value, pendingUserMessageId, assistantMessageId)
+  if (remaining === state.allMessages.value) return
+  state.allMessages.value = remaining
+  rebuildMessageIndexById(state)
+  setTotalMessagesFromWindow(state)
+}
 
-  const all = state.allMessages.value
+/** 活跃窗口与后台快照共用同一套失败占位清理规则。 */
+function removeFailedSendPlaceholders(
+  all: Message[],
+  pendingUserMessageId: string | undefined,
+  assistantMessageId: string | null
+): Message[] {
+  if (!pendingUserMessageId && !assistantMessageId) return all
   const removeIds = new Set<string>()
 
   if (assistantMessageId) {
-    const idx = getMessageIndexById(state, assistantMessageId)
+    const idx = all.findIndex(message => message.id === assistantMessageId)
     if (idx !== -1) {
       const msg = all[idx]
       const isEmptyPlaceholder = msg?.localOnly === true
@@ -61,11 +72,7 @@ function cleanupFailedSendPlaceholders(
     removeIds.add(pendingUserMessageId)
   }
 
-  if (removeIds.size === 0) return
-
-  state.allMessages.value = all.filter(m => !removeIds.has(m.id))
-  rebuildMessageIndexById(state)
-  setTotalMessagesFromWindow(state)
+  return removeIds.size === 0 ? all : all.filter(m => !removeIds.has(m.id))
 }
 
 /**
@@ -394,6 +401,17 @@ export async function sendMessage(
 
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   let originConvId: string | null = state.currentConversationId.value
+  const originTabId = state.activeTabId?.value ?? null
+  const isOriginCurrent = () => state.currentConversationId.value === originConvId
+    && (!originTabId || state.activeTabId.value === originTabId)
+  const ownsSend = (messageId: string | null, streamId: string | null) =>
+    (assistantMessageId !== null && messageId === assistantMessageId) || (!messageId && !streamId)
+  const originSnapshot = () => {
+    const tab = originTabId
+      ? state.openTabs.value.find(item => item.id === originTabId)
+      : state.openTabs.value.find(item => item.conversationId === originConvId)
+    return tab ? state.sessionSnapshots.value.get(tab.id) : undefined
+  }
   const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
   // 一次性渠道覆盖：仅本次请求生效，不改全局 configId/后端设置
   const effectiveConfigId = (options?.configIdOverride || '').trim() || state.configId.value
@@ -574,7 +592,8 @@ export async function sendMessage(
         targetConvId,
         currentConversationId: state.currentConversationId.value
       })
-      return false
+      // 后端已接受且原标签仍在承接：发送成功，不能让调用方把正文和附件恢复成重复草稿。
+      return targetTabStillOpen
     }
 
   } catch (err: any) {
@@ -584,20 +603,39 @@ export async function sendMessage(
     // toolActions.cancelStream 的写入与 types.ts 声明），比对其 messageId 与本次发送的
     // 占位消息 id（assistantMessageId）才能命中「用户取消 + 迟到失败」场景；不能与
     // activeStreamId（streamId）比较——两者类型不同永不相等（原实现导致恒 false）。
-    const wasStreamCancelled = state._lastCancelledStreamId.value?.messageId === assistantMessageId
-    if (!wasStreamCancelled) {
-      safeSetError(state, originConvId, {
-        code: err.code || 'SEND_ERROR',
-        message: err.message || 'Failed to send message'
-      })
+    const error = { code: err.code || 'SEND_ERROR', message: err.message || 'Failed to send message' }
+    if (isOriginCurrent()) {
+      // 同会话也可能已开始下一条流；旧请求只能清理自己拥有的发送状态。
+      if (ownsSend(state.streamingMessageId.value, state.activeStreamId.value)) {
+        const wasStreamCancelled = state._lastCancelledStreamId.value?.messageId === assistantMessageId
+        if (!wasStreamCancelled) state.error.value = error
+        cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
+        resetPendingSendState(state)
+      }
+    } else {
+      const snapshot = originSnapshot()
+      if (snapshot && ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)) {
+        snapshot.error = error
+        snapshot.allMessages = removeFailedSendPlaceholders(snapshot.allMessages, pendingUserMessageId, assistantMessageId)
+        snapshot.totalMessages = snapshot.windowStartIndex + snapshot.allMessages.length
+        snapshot.streamingMessageId = null
+        snapshot.activeStreamId = null
+        snapshot.isStreaming = false
+        snapshot.isWaitingForResponse = false
+        snapshot.pendingModelOverride = null
+        snapshot.pendingConfigIdOverride = null
+        const tab = state.openTabs.value.find(item => item.id === originTabId || item.conversationId === originConvId)
+        if (tab) tab.isStreaming = false
+      }
     }
-    // 发送失败清理：占位仍为空（localOnly && 无 parts/content/tools）时
-    // 按本次 push 的 pendingUserMessageId + assistantMessageId 移除两条
-    cleanupFailedSendPlaceholders(state, pendingUserMessageId, assistantMessageId)
-    resetPendingSendState(state)
     return false
   } finally {
-    state.isLoading.value = false
+    if (isOriginCurrent()) {
+      if (ownsSend(state.streamingMessageId.value, state.activeStreamId.value)) state.isLoading.value = false
+    } else {
+      const snapshot = originSnapshot()
+      if (snapshot && ownsSend(snapshot.streamingMessageId, snapshot.activeStreamId)) snapshot.isLoading = false
+    }
   }
 
   return true

@@ -160,6 +160,8 @@ describe('InputArea 发送失败恢复', () => {
       usedTokens: 0,
       maxContextTokens: 100,
       currentConversationId: null,
+      activeTabId: 'tab-a',
+      sessionSnapshots: new Map(),
       visionSplitChecked: true,
       setVisionSplitChecked(v: boolean) { this.visionSplitChecked = v },
       setEditorNodes(nodes: EditorNode[]) { this.editorNodes = nodes },
@@ -244,6 +246,24 @@ describe('InputArea 发送失败恢复', () => {
     expect(runtime.chatStore.inputValue).toBe('')
     // 成功路径不恢复附件（保持已清除状态）
     expect((wrapper.vm as any).attachments).toEqual([])
+  })
+
+  test('切换标签后收到失败：正文恢复到原快照，不写入当前空输入框', async () => {
+    let finish!: (value: boolean) => void
+    wrapper = mountWithParent(() => new Promise(resolve => { finish = resolve }))
+    runtime.chatStore.editorNodes = makeTextNodes('A draft')
+    await nextTick()
+    await wrapper.find('.send-button-stub').trigger('click')
+    runtime.chatStore.sessionSnapshots.set('tab-a', { editorNodes: [], inputValue: '' })
+    runtime.chatStore.activeTabId = 'tab-b'
+    runtime.chatStore.editorNodes = []
+    finish(false)
+    await flushPromises()
+    expect(runtime.chatStore.editorNodes).toEqual([])
+    expect(runtime.chatStore.inputValue).toBe('')
+    expect(runtime.chatStore.sessionSnapshots.get('tab-a')).toMatchObject({
+      editorNodes: makeTextNodes('A draft'), inputValue: 'A draft'
+    })
   })
 
   test('发送失败但用户已开始输入新内容：不覆盖用户新输入', async () => {

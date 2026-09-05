@@ -243,13 +243,21 @@ function handleSend(options?: { dynamicContextStrategyOverride?: 'single' | 'pre
   // 备份本次发送的正文节点：直接发送是异步的（父组件 await sendMessage 后才回报结果），
   // 发送失败（忙时投递拒绝带附件消息 / IPC 异常）时用备份恢复输入，避免正文静默丢失。
   const pendingNodes = editorNodes.value
+  const originTabId = chatStore.activeTabId
 
   // 发送结果回调：仅处理失败恢复。成功/清空仍走下方同步路径（点击即清空，
   // 避免发送窗口内重复点击双发）；失败且用户尚未开始输入新内容时把正文节点恢复回输入框
   // （附件由父组件在失败分支恢复；inputValue 由下方 editorNodes 反向同步 watch 自动更新）。
   const onSendResult = (ok: boolean) => {
-    if (!ok && editorNodes.value.length === 0) {
-      editorNodes.value = pendingNodes
+    if (ok) return
+    if (chatStore.activeTabId === originTabId) {
+      if (editorNodes.value.length === 0) editorNodes.value = pendingNodes
+    } else if (originTabId) {
+      const snapshot = chatStore.sessionSnapshots.get(originTabId)
+      if (snapshot && snapshot.editorNodes.length === 0) {
+        snapshot.editorNodes = pendingNodes
+        snapshot.inputValue = getPlainText(pendingNodes)
+      }
     }
   }
 
