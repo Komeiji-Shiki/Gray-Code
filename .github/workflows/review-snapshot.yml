@@ -1,0 +1,21 @@
+name: Review source snapshot
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    if: github.head_ref == 'feat/provider-desktop-browser-review'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: git archive --format=tar.gz HEAD -o "$RUNNER_TEMP/gray-code-source.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gray-code-review-source
+          path: ${{ runner.temp }}/gray-code-source.tar.gz
+          retention-days: 1
